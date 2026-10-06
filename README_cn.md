@@ -69,6 +69,21 @@ uv run python -m tcenv.cli profile gemm best.metal                        # xctr
 
 怎么读这些数字：一次运行报告的加速比是**确认后**的加速比（胜者及其并列者用新种子、两倍重复次数重新测量）。套件表还会列出该任务手写朴素内核相对同一基线的加速比，因为有些基线偏弱（例如 Lion 和 BitDelta GEMM 没有融合的库实现）。朴素内核已经胜过基线时，收益里有一部分来自基线本身偏弱。
 
+## 硬件特性反馈（可选，默认关闭）
+
+`search.hw_feedback = true`（`taic run ... --hw-feedback`、`taic resume ... --hw-feedback`，或驱动脚本的搜索选项里写 `hw_feedback=True`，和 `profile_poor` 一样）会在规划者和补丁作者读到的、每个**正确**种子的评测反馈后面，
+profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词），并把 `taic/skills/hardware_feedback.md` 作为 Skill 2c 加进系统提示。这一段由 `taic/hwfeedback.py` 根据 `docs/hardware_features.md` 的静态检测器
+（`taic/hwfeatures.py`：源码、编译出的 AIR、以及这颗候选自己测得的 roofline）生成，内容是：
+
+* 内核已经用了哪些 Apple GPU 特性（矩阵单元及其累加器类型和 fragment 个数、threadgroup 暂存与 padding、双缓冲或寄存器预取、device 读写的宽度、SIMD 归约与 shuffle、online softmax 等），以及离 roofline 多远；
+* 这一类任务本应有、却没找到的特性，至多三条，每条一句具体提示（例如「没有 simdgroup_matrix：矩阵乘在标量 FMA 上跑；roofline 显示是下界的 3.0 倍」），并且总带一句说明：这些是静态分析给的提示，不是要求，以实测时间为准；
+* 已经在 roofline 的约 90% 以上的内核不列任何缺失项（超过 roofline 的部分硬件特性帮不上忙；逐元素任务就处于这种状态，标量读写已经接近带宽：`docs/hardware_features.md` 第 6 节）；
+  内核有 32 个以上累加器 fragment 时给出警告（参考 GEMM 慢了 12 到 26 倍），处于寄存器压力上限时也一样。
+
+为什么默认关闭：这是实验，目前没有证据表明它有用。关闭时，所有系统提示、用户消息和反馈字符串与以前**逐字节相同**；`tests/test_hw_feedback.py` 用这项功能出现之前的代码录下的哈希来核对
+（176 份系统提示、110 条用户消息、12 段反馈文字，外加四次脚本化搜索里的每一个请求），所以正在跑或正在续跑的实验不受影响。`taic.toml` 和 `taic.paper.toml` 没有提到它。它记在 `run_config.json` 里，`taic resume` 会保留。
+这段分析不会弄坏或拖慢搜索：超时（20 秒）、失败或没有 Metal 工具链时，直接去掉这一段并记一条警告。A/B 实验：`experiments.p1_runs` 的 `fa_flash_hw` 就是只改了这个开关的 `fa_flash`（n=1，随机搜索，只能算轶事）；这次运行于 2026-10-07 06:08 启动，因检测器修正中途停过一次并用 `taic resume` 接着跑（第 1 轮看到的是修正前的提示块，见 `docs/hardware_features.md` 第 9 节），结果还没出来（见 `runs/p1/fa_flash_hw`；对照是 `fa_flash`：确认后 0.735x、$3.123、8 轮，被预算截停）。
+
 ## 看板与预算告警
 
 `uv run python -m observe` 启动只读看板（默认 `http://127.0.0.1:8765`；改了代码要重启，页面在启动时读入）。它把每次运行的预算和已花费并排显示，并对越过预算的运行告警。规则是一个纯函数 `observe.budget.budget_status(spent, budget, stop_reason, running)`：

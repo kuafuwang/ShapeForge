@@ -2,6 +2,7 @@
 
 * ``fa_flash``  FlashAttention with the paper's budget and the default model (the pilot used a 1.5 USD budget and stopped after 3 rounds);
 * ``fa_pro``    the same with a stronger model of the same provider (``deepseek-v4-pro``, 4.4x the price per token);
+* ``fa_flash_hw``  ``fa_flash`` with ``search.hw_feedback``: does a short static hardware-feature analysis in the feedback (and Skill 2c) help the model? (see taic/hwfeedback.py);
 * ``fa_64x32t256`` / ``fa_32x16t128``  the same operator under another launch contract (query tile, key tile, threads): if the hand-picked
   contract limited the search, one of these would beat ``fa_flash``;
 * ``fa_flash_prof``  ``fa_flash`` with ``search.profile_poor``: does feeding Instruments findings (register spills, code size, GPU idle) to the model help?
@@ -48,6 +49,9 @@ PAPER_REGIME = dict(profile_poor=True, plan_mix=True, init_samples=3, patience=1
 # fa_pro 改的是模型名；mamba2_bf16 把小数定成 bf16，其余条目用调用时的 dtype（默认 fp16）。
 RUNS: dict[str, dict] = {
     "fa_flash": dict(task="flash_attention", model=None, budget=PAPER_BUDGET_USD),
+    # A/B of search.hw_feedback: IDENTICAL to fa_flash (same task, shape, contract, model, search options; launch it with the same --budget 3.0 --preset base) except that the
+    # static hardware-feature block is appended to the seed feedback of the planner and the patch authors and Skill 2c is in the system prompt. n=1 on a stochastic search: an anecdote.
+    "fa_flash_hw": dict(task="flash_attention", model=None, budget=PAPER_BUDGET_USD, search=dict(hw_feedback=True)),
     "fa_pro": dict(task="flash_attention", model="deepseek-v4-pro", budget=PAPER_BUDGET_USD),
     "fa_64x32t256": dict(task="flash_attention@64x32t256", model=None, budget=PAPER_BUDGET_USD),
     "fa_32x16t128": dict(task="flash_attention@32x16t128", model=None, budget=PAPER_BUDGET_USD),

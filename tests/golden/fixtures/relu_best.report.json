@@ -1,0 +1,270 @@
+{
+ "task": "relu",
+ "dtype": "fp16",
+ "size": "paper",
+ "mode": "full",
+ "status": "ok",
+ "stage": "done",
+ "message": "compiled, ABI ok, safe, correct and benchmarked",
+ "seed": 272565785261759,
+ "compile": {
+  "ok": true,
+  "compile_s": 0.0258467079984257,
+  "pipeline_s": 0.0016951249999692664,
+  "language_version": "4.0"
+ },
+ "abi": {
+  "ok": true,
+  "violations": []
+ },
+ "pipeline": {
+  "max_total_threads_per_threadgroup": 1024,
+  "thread_execution_width": 32,
+  "static_threadgroup_bytes": 0,
+  "launch_threads_per_threadgroup": 128,
+  "launch_threadgroups": 16384,
+  "hints": []
+ },
+ "safety": {
+  "ok": true,
+  "violations": [],
+  "nondeterminism": [],
+  "validation": [],
+  "shader_validation": "clean"
+ },
+ "correctness": {
+  "ok": true,
+  "cases": [
+   {
+    "case": "normal",
+    "seed": 272565785269678,
+    "ok": true,
+    "scaled_err": 0.0,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.0,
+    "n_bad": 0,
+    "n_elems": 16777216,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "y",
+     "index": [
+      0
+     ],
+     "got": 4.171875,
+     "want": 4.171875,
+     "scaled_err": 0.0
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "wide_range",
+    "seed": 272565785277597,
+    "ok": true,
+    "scaled_err": 0.0,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.0,
+    "n_bad": 0,
+    "n_elems": 16777216,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "y",
+     "index": [
+      0
+     ],
+     "got": 0.0,
+     "want": 0.0,
+     "scaled_err": 0.0
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "large",
+    "seed": 272565785285516,
+    "ok": true,
+    "scaled_err": 0.0,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.0,
+    "n_bad": 0,
+    "n_elems": 16777216,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "y",
+     "index": [
+      0
+     ],
+     "got": 3322.0,
+     "want": 3322.0,
+     "scaled_err": 0.0
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "tiny",
+    "seed": 272565785293435,
+    "ok": true,
+    "scaled_err": 0.0,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.0,
+    "n_bad": 0,
+    "n_elems": 16777216,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "y",
+     "index": [
+      0
+     ],
+     "got": 0.0,
+     "want": 0.0,
+     "scaled_err": 0.0
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "outlier",
+    "seed": 272565785301354,
+    "ok": true,
+    "scaled_err": 0.0,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.0,
+    "n_bad": 0,
+    "n_elems": 16777216,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "y",
+     "index": [
+      0
+     ],
+     "got": 2.458984375,
+     "want": 2.458984375,
+     "scaled_err": 0.0
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "ieee",
+    "seed": 272565785309273,
+    "ok": true,
+    "scaled_err": 0.0,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.0,
+    "n_bad": 0,
+    "n_elems": 16777216,
+    "nan_count": 64,
+    "unwritten": 0,
+    "worst": {
+     "output": "y",
+     "index": [
+      0
+     ],
+     "got": Infinity,
+     "want": Infinity,
+     "scaled_err": 0.0
+    },
+    "safety": [],
+    "message": ""
+   }
+  ],
+  "tolerance": {
+   "rtol": 0.002,
+   "atol_rel": 0.001,
+   "exact": false
+  },
+  "baseline_errors": []
+ },
+ "benchmark": {
+  "candidate": {
+   "median_s": 0.00014563179070666043,
+   "mean_s": 0.00014596518140729307,
+   "min_s": 0.00014329360461953574,
+   "cv": 0.009252642244961348,
+   "reps": 15,
+   "iters": 43,
+   "median_us": 145.63179070666044
+  },
+  "candidate_gpu_us_median": 141.7490310031585,
+  "baselines": {
+   "mlx": {
+    "median_s": 0.00014339723323549455,
+    "mean_s": 0.0001438729644319715,
+    "min_s": 0.0001407916666115246,
+    "cv": 0.013912684709754234,
+    "reps": 15,
+    "iters": 30,
+    "median_us": 143.39723323549455
+   },
+   "torch_mps": {
+    "median_s": 0.0001431467999981788,
+    "mean_s": 0.00014312696615189242,
+    "min_s": 0.0001404551384509362,
+    "cv": 0.011815841290459905,
+    "reps": 15,
+    "iters": 65,
+    "median_us": 143.14679999817878
+   }
+  },
+  "candidate_serial_us": 143.85906171001906,
+  "dispatch": "concurrent (as MLX); candidate_serial_us is the strictly serial time of the same kernel",
+  "rotation_sets": 3,
+  "noise_cv": 0.013912684709754234,
+  "attempts": 1,
+  "noisy": false,
+  "gpu_lock_wait_s": 1.9170001905877143e-06,
+  "protocol": "interleaved, 15 reps, median per-iteration wall time of back-to-back launches over 3 rotating buffer sets, concurrent dispatch for the candidate as for MLX",
+  "best_baseline": "torch_mps"
+ },
+ "roofline": {
+  "bound": "memory",
+  "min_bytes": 67108864.0,
+  "flops": 16777216,
+  "arithmetic_intensity": 0.25,
+  "ridge_intensity": 32.86610531024317,
+  "achieved_gbps": 460.8119125251599,
+  "bandwidth_fraction": 1.0256817845352935,
+  "achieved_tflops": 0.11520297813128998,
+  "compute_fraction": 0.00780197238806712,
+  "lower_bound_us": 149.37187497707782,
+  "time_over_lower_bound": 0.9749612551158554,
+  "peak_gbps_measured": 449.2737606078677,
+  "peak_tflops_measured": 14.765878729267158
+ },
+ "speedup": 0.9829364818188149,
+ "speedups": {
+  "mlx": 0.9846561148474317,
+  "torch_mps": 0.9829364818188149
+ },
+ "candidate_us": 145.63179070666044,
+ "baseline_us": {
+  "mlx": 143.39723323549455,
+  "torch_mps": 143.14679999817878
+ },
+ "compiler_baseline": {
+  "name": "triton_msl",
+  "estimated_us": 173.42617857112276,
+  "basis": "ratio to mlx (1.209) from an isolated interleaved run x this run's mlx time",
+  "best_num_warps": 2,
+  "versions": {
+   "triton": "3.7.0",
+   "torch": "2.14.1",
+   "python": "3.14.4",
+   "triton_msl": "0.3.0"
+  },
+  "speedup": 1.1908538494898226
+ },
+ "verification": {
+  "status": "unsupported",
+  "message": "no formal equivalence checker exists for Metal Shading Language / AIR; eligibility rests on safety checks and randomized differential tests, which can find bugs but cannot prove their absence",
+  "counterexample": null
+ },
+ "elapsed_s": 4.478924709001149,
+ "eligible": true
+}

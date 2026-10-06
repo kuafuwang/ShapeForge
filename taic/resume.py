@@ -260,6 +260,7 @@ def infer_settings(run_dir: Path, events: list[dict] | None = None) -> dict:
             "Profiler evidence for this kernel" in m.get("content", "") for e in chats if str(e.get("label", "")).startswith("r") for m in e.get("messages", []) if m.get("role") == "user"
         )
         search["profile_poor"], prov["search.profile_poor"] = bool(seen), "recorded prompts / profiles/"
+        search["hw_feedback"], prov["search.hw_feedback"] = "# Skill 2c:" in system, "recorded system prompt"  # Skill 2c is only in the prompt of runs started with search.hw_feedback
     # planner prompt: number of plans, and whether the last plan is the local one
     for e in chats:
         if str(e.get("label", "")).startswith("r1.plan"):

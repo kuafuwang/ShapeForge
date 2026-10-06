@@ -1,0 +1,49 @@
+{
+ "fa_flash_best": {
+  "task": "flash_attention",
+  "dtype": "fp16",
+  "size": "paper",
+  "from": "runs/p1/fa_flash candidate r5.p2.fix2",
+  "status": "ok",
+  "speedup": 0.7303668643065286
+ },
+ "fa_flash_init": {
+  "task": "flash_attention",
+  "dtype": "fp16",
+  "size": "paper",
+  "from": "runs/p1/fa_flash candidate init",
+  "status": "ok",
+  "speedup": 0.32347588722891896
+ },
+ "fa_pro_best": {
+  "task": "flash_attention",
+  "dtype": "fp16",
+  "size": "paper",
+  "from": "runs/p1/fa_pro candidate r5.p0",
+  "status": "ok",
+  "speedup": 0.5681644610363056
+ },
+ "gemm_paper_best": {
+  "task": "gemm",
+  "dtype": "fp16",
+  "size": "paper",
+  "from": "runs/p1/gemm_paper candidate r6.p2",
+  "status": "ok",
+  "speedup": 1.0038887397587382
+ },
+ "relu_best": {
+  "task": "relu",
+  "dtype": "fp16",
+  "size": "paper",
+  "from": "runs/suite_full/relu_fp16 candidate r5.p0",
+  "status": "ok",
+  "speedup": 0.9829364818188149
+ },
+ "compile_error": {
+  "task": "gemm",
+  "dtype": "fp16",
+  "size": "paper",
+  "from": "runs/p1/gemm_paper/candidates/019_r5.p2",
+  "status": "compile_error"
+ }
+}

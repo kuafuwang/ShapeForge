@@ -1,0 +1,288 @@
+{
+ "task": "flash_attention",
+ "dtype": "fp16",
+ "size": "paper",
+ "mode": "full",
+ "status": "ok",
+ "stage": "done",
+ "message": "compiled, ABI ok, safe, correct and benchmarked",
+ "seed": 174660458329443,
+ "compile": {
+  "ok": true,
+  "compile_s": 0.038048415997764096,
+  "pipeline_s": 0.0017516670013719704,
+  "language_version": "4.0"
+ },
+ "abi": {
+  "ok": true,
+  "violations": []
+ },
+ "pipeline": {
+  "max_total_threads_per_threadgroup": 1024,
+  "thread_execution_width": 32,
+  "static_threadgroup_bytes": 4224,
+  "launch_threads_per_threadgroup": 128,
+  "launch_threadgroups": 512,
+  "hints": []
+ },
+ "safety": {
+  "ok": true,
+  "violations": [],
+  "nondeterminism": [],
+  "validation": [],
+  "shader_validation": "clean"
+ },
+ "correctness": {
+  "ok": true,
+  "cases": [
+   {
+    "case": "normal",
+    "seed": 174660458337362,
+    "ok": true,
+    "scaled_err": 0.8788740066494476,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.20162332676070868,
+    "n_bad": 0,
+    "n_elems": 1048576,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "o",
+     "index": [
+      1,
+      0,
+      849,
+      57
+     ],
+     "got": -2.6404857635498047e-05,
+     "want": 1.9035414879908785e-05,
+     "scaled_err": 0.8788740066494476
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "wide_range",
+    "seed": 174660458345281,
+    "ok": true,
+    "scaled_err": 0.5868520711651029,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.22161077770242463,
+    "n_bad": 0,
+    "n_elems": 1048576,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "o",
+     "index": [
+      1,
+      7,
+      870,
+      4
+     ],
+     "got": 0.128173828125,
+     "want": 0.12715788185596466,
+     "scaled_err": 0.5868520711651029
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "large",
+    "seed": 174660458353200,
+    "ok": true,
+    "scaled_err": 0.3043545984400522,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.17832287699643837,
+    "n_bad": 0,
+    "n_elems": 1048576,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "o",
+     "index": [
+      1,
+      5,
+      925,
+      50
+     ],
+     "got": -0.062225341796875,
+     "want": -0.06315808743238449,
+     "scaled_err": 0.3043545984400522
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "tiny",
+    "seed": 174660458361119,
+    "ok": true,
+    "scaled_err": 0.8967106671218297,
+    "allow": 1.7934213342436593,
+    "baseline_scaled_err": 0.8967106671218297,
+    "n_bad": 0,
+    "n_elems": 1048576,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "o",
+     "index": [
+      1,
+      7,
+      741,
+      13
+     ],
+     "got": 5.960464477539063e-08,
+     "want": 8.865028888749293e-08,
+     "scaled_err": 0.8967106671218297
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "outlier",
+    "seed": 174660458369038,
+    "ok": true,
+    "scaled_err": 0.7704132328908667,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.2245786559424587,
+    "n_bad": 0,
+    "n_elems": 1048576,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "o",
+     "index": [
+      1,
+      4,
+      394,
+      37
+     ],
+     "got": 0.0015249252319335938,
+     "want": 0.0014736165758222342,
+     "scaled_err": 0.7704132328908667
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "ieee",
+    "seed": 174660458376957,
+    "ok": true,
+    "scaled_err": 0.8045719739020135,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.20979549736388775,
+    "n_bad": 0,
+    "n_elems": 1048576,
+    "nan_count": 12288,
+    "unwritten": 0,
+    "worst": {
+     "output": "o",
+     "index": [
+      0,
+      0,
+      112,
+      22
+     ],
+     "got": 5.40614128112793e-05,
+     "want": 9.507216600468382e-05,
+     "scaled_err": 0.8045719739020135
+    },
+    "safety": [],
+    "message": ""
+   }
+  ],
+  "tolerance": {
+   "rtol": 0.002,
+   "atol_rel": 0.001,
+   "exact": false
+  },
+  "baseline_errors": []
+ },
+ "benchmark": {
+  "candidate": {
+   "median_s": 0.00044380241935516916,
+   "mean_s": 0.0004464765247370627,
+   "min_s": 0.0004348400323050878,
+   "cv": 0.03117058636692042,
+   "reps": 15,
+   "iters": 31,
+   "median_us": 443.80241935516915
+  },
+  "candidate_gpu_us_median": 439.50940861607035,
+  "baselines": {
+   "mlx": {
+    "median_s": 0.00032413858139608597,
+    "mean_s": 0.00032541447132058775,
+    "min_s": 0.0003226879767722959,
+    "cv": 0.00921959106564089,
+    "reps": 15,
+    "iters": 43,
+    "median_us": 324.13858139608595
+   },
+   "torch_mps": {
+    "median_s": 0.00038362961105222994,
+    "mean_s": 0.0003844308648156045,
+    "min_s": 0.0003820729166869165,
+    "cv": 0.0051979838947251045,
+    "reps": 15,
+    "iters": 36,
+    "median_us": 383.62961105222996
+   }
+  },
+  "candidate_serial_us": 516.8487407866417,
+  "dispatch": "concurrent (as MLX); candidate_serial_us is the strictly serial time of the same kernel",
+  "rotation_sets": 16,
+  "noise_cv": 0.03117058636692042,
+  "attempts": 2,
+  "noisy": false,
+  "gpu_lock_wait_s": 1.915999746415764e-06,
+  "protocol": "interleaved, 15 reps, median per-iteration wall time of back-to-back launches over 16 rotating buffer sets, concurrent dispatch for the candidate as for MLX",
+  "best_baseline": "mlx"
+ },
+ "roofline": {
+  "bound": "compute",
+  "min_bytes": 8388608.0,
+  "flops": 4294967296.0,
+  "arithmetic_intensity": 512.0,
+  "ridge_intensity": 30.260026432946404,
+  "achieved_gbps": 18.90167253298975,
+  "bandwidth_fraction": 0.03873559582617227,
+  "achieved_tflops": 9.677656336890752,
+  "compute_fraction": 0.6554067329368526,
+  "lower_bound_us": 290.8710937390424,
+  "time_over_lower_bound": 1.5257701054107853,
+  "peak_gbps_measured": 487.966484827337,
+  "peak_tflops_measured": 14.765878729267158
+ },
+ "speedup": 0.7303668643065286,
+ "speedups": {
+  "mlx": 0.7303668643065286,
+  "torch_mps": 0.86441532159656
+ },
+ "candidate_us": 443.80241935516915,
+ "baseline_us": {
+  "mlx": 324.13858139608595,
+  "torch_mps": 383.62961105222996
+ },
+ "compiler_baseline": {
+  "name": "triton_msl",
+  "estimated_us": 3261.857955303152,
+  "basis": "ratio to mlx (10.063) from an isolated interleaved run x this run's mlx time",
+  "best_num_warps": 2,
+  "versions": {
+   "triton": "3.7.0",
+   "torch": "2.14.1",
+   "python": "3.14.4",
+   "triton_msl": "0.3.0"
+  },
+  "speedup": 7.349797596963369
+ },
+ "verification": {
+  "status": "unsupported",
+  "message": "no formal equivalence checker exists for Metal Shading Language / AIR; eligibility rests on safety checks and randomized differential tests, which can find bugs but cannot prove their absence",
+  "counterexample": null
+ },
+ "elapsed_s": 3.863564082999801,
+ "eligible": true
+}

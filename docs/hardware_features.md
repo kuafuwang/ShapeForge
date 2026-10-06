@@ -2,7 +2,7 @@
 
 Question this answers: *can we tell whether the code the LLM produced uses the hardware-specific features that the paper (`docs/2609.36800v1.pdf`, arXiv 2609.36800v1) credits for its speedups, and the best hardware features of this GPU?*
 
-Short answer: **yes for presence** (static source analysis, confirmed on the compiler's output, judged against measured numbers), **not for causation** (that needs an ablation, section 8). The detector is `experiments/hw_features.py`; its results over every run on disk are in `runs/hw_features/REPORT.md` (regenerate with the command in section 4.6).
+Short answer: **yes for presence** (static source analysis, confirmed on the compiler's output, judged against measured numbers), **not for causation** (that needs an ablation, section 8). The detector core is `taic/hwfeatures.py` (importable from the search loop), the report CLI is `experiments/hw_features.py`; its results over every run on disk are in `runs/hw_features/REPORT.md` (regenerate with the command in section 4.6).
 
 Contents: 1 the paper's features (table 1) - 2 their Apple/Metal analogues (table 2) - 3 what an optimal kernel of each task is expected to use (table 3) - 4 the detector - 5 validation - 6 findings - 7 limits - 8 optional ablation - 9 integration.
 
@@ -102,7 +102,7 @@ Reasoning per family:
 
 ## 4. The detector
 
-`experiments/hw_features.py` (module + CLI). One kernel source in, one `HardwareFeatureReport` out (`to_json()`, dataclass fields `source`, `compiled`, `measured`, `performance_test`, `features`, `missing`, `summary`).
+`taic/hwfeatures.py` (the detector; `experiments/hw_features.py` is the CLI and report on top of it, and re-exports the whole API). One kernel source in, one `HardwareFeatureReport` out (`to_json()`, dataclass fields `source`, `compiled`, `measured`, `performance_test`, `features`, `missing`, `summary`).
 
 ### 4.1 Three evidence levels (never mixed)
 
@@ -157,7 +157,7 @@ uv run python -m experiments.hw_features                       # default roots (
 uv run python -m experiments.hw_features runs/p1 runs/suite_full --out runs/hw_features --jobs 2
 uv run python -m experiments.hw_features --source my_kernel.metal --task gemm [--json] [--no-compile]
 uv run python -m experiments.hw_features --ablate              # prints the optional ablation plan (section 8)
-nice -n 15 uv run pytest tests/test_hw_features.py -q          # 33 tests, no GPU
+nice -n 15 uv run pytest tests/test_hw_features.py -q          # 35 tests, no GPU
 ```
 
 Outputs: `REPORT.md` (tables below), `data.json` (aggregates), `kernels.jsonl` (one report per kernel), `.cache/` (compile cache).
@@ -170,7 +170,7 @@ Outputs: `REPORT.md` (tables below), `data.json` (aggregates), `kernels.jsonl` (
 * **Naive kernels**: none of the 16 `tasks/*/naive.metal` is reported as using a matrix unit or wide accesses (bitdelta's 4-byte `uint` loads aside).
 * **Negative cases**: a feature named only in a comment, only in a string literal, or a plain scalar kernel claim nothing.
 * **Source vs compiler**: over all kernels that compile (428 at the snapshot of section 6), the source-level matrix-unit flag, float-accumulator flag, widest device load, widest device store and the presence of SIMD reductions / shuffles agree with the AIR in 100 % of the cases; threadgroup bytes agree in all but one.
-* **Tests**: `tests/test_hw_features.py`, 33 tests (synthetic matrix / scalar / comment-only / string-only / vector-width / double-buffer / online-softmax / register-prefetch / bit-packing kernels, macros and helper inlining, the generated reference GEMM, all 16 naive kernels, compiled evidence, verdict logic, run loading, the CLI on a fake runs directory, table 3 vs code); compile tests skip when the Metal toolchain is missing.
+* **Tests**: `tests/test_hw_features.py`, 35 tests (synthetic matrix / scalar / comment-only / string-only / vector-width / double-buffer / online-softmax / register-prefetch / bit-packing kernels, macros and helper inlining, the generated reference GEMM, all 16 naive kernels, compiled evidence, verdict logic, run loading, the CLI on a fake runs directory, table 3 vs code); compile tests skip when the Metal toolchain is missing.
 
 ---
 
@@ -205,9 +205,20 @@ Snapshot of 2026-10-07 05:46: 35 runs (9 still partial, because their experiment
 
 To attribute a speedup to one feature, build a variant of the best kernel with only that feature removed (matrix unit -> scalar FMA loop over the same tile; wide accesses -> scalar accesses of the same addresses; register blocking -> 1 fragment per SIMD group; pipelining -> load, barrier, compute, barrier; padding -> pad 0; epilogue on fragments -> store to threadgroup first), keep the ABI and tolerance, and evaluate it with `tcenv.evaluate.evaluate(task, dtype, size, source)` (interleaved protocol, exclusive GPU lock). `variant_time / original_time` is the feature's contribution *in that kernel*. `python -m experiments.hw_features --ablate` prints the same text. This needs GPU time under the exclusive lock, so it was not done here.
 
-## 9. Integration recommended (not done: other agents own these files)
+## 9. Integration
 
-* **Dashboard**: `observe/scan.py` could call `experiments.hw_features.build_report(...)` lazily for the selected run's best kernel (source-only is ~ms; compile adds ~40 ms and is cached) and show the one-line summary + the missing list next to the speedup; `data.json` of `runs/hw_features` gives a ready table per run.
-* **Run results**: `taic.orchestrator` could store `summary` in `result.json` (`best_features`) at the end of a run, so older and newer runs are comparable without re-analysis.
-* **README**: add a "Hardware features" paragraph pointing to this file and the command in 4.6.
-* **Prompts**: if a feature should be *taught*, `taic/skills/apple_gpu_optimization.md` already lists them; the detector shows the LLM finds the matrix unit, staging, 16-byte accesses and online softmax without help, and discovers pipelining / register-built fragments only in the later rounds.
+**Done: feedback to the search loop (opt-in).** The core of the detector now lives in `taic/hwfeatures.py` (importable without `experiments`; `experiments/hw_features.py` is the report CLI on top of it, with its 35 tests; the feedback has its own in `tests/test_hw_feedback.py`). `taic/hwfeedback.py` wraps it: `hw_feedback(task, source, report) -> str | None` returns a block of at most 12 lines / about 150 words for a *correct* candidate, built from the source, the cached AIR compile (about 40 ms, 10 s limit) and the candidate's own roofline; it returns `None` and logs a warning on any failure, on a 20 s overrun, for failed candidates and for tasks without expectations (the semantic tests).
+
+* **Switch**: `search.hw_feedback` (`SearchConfig`, default `false`; not in `taic.toml` / `taic.paper.toml`). Turned on by `taic run ... --hw-feedback`, `taic resume ... --hw-feedback`, or `hw_feedback=True` in the search options of a driver (`experiments.p1_runs` run `fa_flash_hw`). Recorded in `run_config.json`; `taic resume` keeps it (`SEARCH_FIELDS`), and for runs without `run_config.json` it is read from the recorded system prompt (Skill 2c present).
+* **Where the block goes**: `Orchestrator._rounds` appends it to the evidence string that already carries the profiler evidence, so it reaches the planner and every patch author of the round, right after the measured feedback of the seed. Repair requests of failed candidates and `quick_check` are untouched.
+* **What it says** (see `taic/hwfeedback.py`): what the kernel uses; how far it is from the roofline; up to three expected-but-missing features of the task class (table 3), each with one Apple-GPU hint; a warning for 32 or more accumulator fragments (reference GEMMs were 12 to 26 times slower) or for `maxTotalThreadsPerThreadgroup` equal to the launch size; a caveat line (hints from static analysis, not requirements, the measured time decides). A kernel at about 90 % of its roofline gets **no** missing list: hardware features cannot help beyond the roofline, and for the saturated elementwise tasks section 6 found wide loads `present but not effective`.
+* **Skill 2c** (`taic/skills/hardware_feedback.md`, 20 lines) is appended to the system prompt only when the switch is on, after Skill 2b, with the same gating pattern.
+* **Byte identity when off**: `tests/test_hw_feedback.py` compares every system prompt (all tasks x fp16/bf16 x tools x profiler evidence: 176), every user message (110), `format_feedback` of recorded reports (12) and every request of four scripted searches against `tests/golden/hw_off.json`, recorded from the code *before* the wiring (`python -m tests.hw_golden --record` rewrites it; only do that on purpose).
+* **A/B**: `fa_flash_hw` = `fa_flash` (same task, shape, contract, model `deepseek-flash`, budget 3 USD, preset `base`, patience 4, 12 rounds) with only the switch changed. n=1 on a stochastic search: an anecdote. Status when this was written: launched 2026-10-07 06:08 (`experiments.p1_runs --runs fa_flash_hw --out runs/p1 --budget 3.0 --preset base`); in round 1 the block told the model that online softmax was missing from a seed that has one (its exponential goes through a helper, `exp2_acc`: a detector false negative), and also missed a padding stride written as `D + PAD`. Both were fixed in `taic/hwfeatures.py` (and `fast_math` is no longer hinted at all, because kernels avoid the fast exp on purpose), the run was stopped and continued with `taic.cli resume` at 06:28 (same budget, same system prompt, ledger carried over), so **round 1 of this run saw the old block, later rounds the fixed one**. Result: not in yet, see `runs/p1/fa_flash_hw`.
+* **Reading the A/B**: `uv run python -m experiments.hw_feedback_ab runs/p1/fa_flash_hw runs/p1/fa_flash` lists, per round, the features the block named as missing (for the control run: the list that the block *would* have shown for the same seed), how many of the three plans talk about them, and how many patch candidates gain one that the seed lacked (static detector). It measures influence on proposals, not speed; n=1 per arm.
+
+**Not done** (other agents own these files):
+
+* **Dashboard**: `observe/scan.py` could call `experiments.hw_features.build_report(...)` (or `taic.hwfeatures.build_report`) lazily for the selected run's best kernel and show the one-line summary and the missing list next to the speedup; `runs/hw_features/data.json` has a ready table per run.
+* **Run results**: `taic.orchestrator` could store the summary in `result.json` (`best_features`) at the end of a run, so older and newer runs are comparable without re-analysis.
+* **Turning it on by default** is not recommended before more than one A/B pair says it helps.

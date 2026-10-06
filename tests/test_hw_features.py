@@ -309,6 +309,29 @@ def test_online_softmax_versus_two_pass():
     assert "single_pass" in present(ONLINE) and "single_pass" not in present(TWO_PASS)
 
 
+def test_padding_through_a_named_pad_constant_is_found():
+    src = """
+    kernel void k(device const half* x [[buffer(0)]], device half* y [[buffer(1)]], uint lid [[thread_index_in_threadgroup]]) {
+        constexpr uint PAD = 8;
+        constexpr uint ST = 64 + PAD;
+        threadgroup half tile[32 * ST];
+        tile[(lid / 64) * ST + lid % 64] = x[lid];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        y[lid] = tile[(lid / 64) * ST + lid % 64];
+    }"""
+    ev = feats(src)["threadgroup"]
+    assert ev["padded"] and any("ST = 64 + PAD" in e for e in ev["padding_evidence"])
+    unrelated = "kernel void k(device half* y [[buffer(0)]], uint i [[thread_position_in_grid]]) { constexpr uint N2 = 7 + 1; y[i * N2] = 0; }"
+    assert not feats(unrelated)["threadgroup"]["padded"]
+
+
+def test_online_softmax_is_found_through_an_exp_wrapper_helper():
+    src = ONLINE.replace("exp2(", "exp2_acc(").replace("kernel void softmax_kernel", "inline float exp2_acc(float x) { return exp2(x); }\nkernel void softmax_kernel")
+    assert feats(src)["online_softmax"]["present"]
+    assert not feats(TWO_PASS.replace("exp2(", "exp2_acc("))["online_softmax"]["present"]
+    assert not feats(ONLINE.replace("exp2(", "expand("))["online_softmax"]["present"]  # 'expand' is not an exponential
+
+
 def test_register_prefetch_requires_loads_in_flight_across_the_barrier():
     assert feats(PIPELINED, kernel_name="gemm_kernel")["threadgroup"]["register_prefetch"]
     assert "pipelining" in present(PIPELINED)

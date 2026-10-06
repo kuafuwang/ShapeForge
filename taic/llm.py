@@ -92,6 +92,7 @@ class SearchConfig:
     profile_poor: bool = False  # when a round's seed is slower than the strongest baseline, trace it with Instruments and give the findings to the planner and the patch authors
     profile_poor_below: float = 1.0  # "slower": speedup of the seed over the strongest baseline below this
     profile_max: int = 4  # traces per run at most (each takes tens of seconds under the exclusive GPU lock)
+    hw_feedback: bool = False  # append a short static hardware-feature analysis (taic/hwfeedback.py) to the feedback of every correct seed and teach it as Skill 2c; off = prompts and feedback byte-identical to before
 
 
 def _read_toml(path: Path) -> dict:

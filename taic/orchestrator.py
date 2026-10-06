@@ -198,7 +198,7 @@ class Orchestrator:
         self.evaluate_fn = evaluate_fn or evaluate
         self.log = log
         self.seed = seed
-        self.system = prompts.system_prompt(self.task, use_tools=llm_cfg.use_tools, profiler_evidence=search.profile_poor)
+        self.system = prompts.system_prompt(self.task, use_tools=llm_cfg.use_tools, profiler_evidence=search.profile_poor, hw_feedback=search.hw_feedback)
         self.index = SkillIndex("msl_reference")
         # 同一时刻只允许一次 GPU 评测、quick_check 或 Instruments。两份内核抢同一块卡会把计时测脏，挂死时也不能再有内核在跑。
         self.gpu_lock = asyncio.Lock()
@@ -603,6 +603,12 @@ class Orchestrator:
             seed = (self._by_label(part.seed_label) if part is not None else None) or self.best
             self.log(f"-- round {rnd}{' (continued)' if part is not None else ''}: seed {seed.label} at {seed.speedup:.3f}x, spent ${self.ledger.total_usd:.3f}")
             evidence = await self._profile_seed(seed, rnd)
+            if self.search.hw_feedback:  # opt-in (search.hw_feedback): the static hardware-feature block goes where the profiler evidence goes; None on any failure
+                from .hwfeedback import hw_feedback
+
+                block = await asyncio.to_thread(hw_feedback, self.task, seed.source, seed.report, log=self.log)
+                if block:
+                    evidence += "\n\n" + block
             # 规划已经花过请求并记在转录里时不再重做，避免同一轮出现两套方案。
             if part is not None and part.plans:
                 plans = part.plans

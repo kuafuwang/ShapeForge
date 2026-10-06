@@ -139,6 +139,27 @@ twice the repetitions); the suite table also lists the speedup of the task's nai
 baselines are weak (for example Lion and the BitDelta GEMM have no fused library implementation), and a naive kernel that already beats
 the baseline means part of any gain is baseline weakness.
 
+## Hardware-feature feedback (optional, off by default)
+
+`search.hw_feedback = true` (`taic run ... --hw-feedback`, `taic resume ... --hw-feedback`, or `hw_feedback=True` in the search options of a driver, as for `profile_poor`)
+appends a short block (at most 12 lines, about 150 words) to the evaluation feedback of every *correct* seed that the planner and the patch authors read, in the place where the
+profiler evidence goes, and adds `taic/skills/hardware_feedback.md` to the system prompt as Skill 2c. The block is computed by `taic/hwfeedback.py` from the static detector of
+`docs/hardware_features.md` (`taic/hwfeatures.py`: the source, the compiled AIR, and the roofline measured for this candidate) and says:
+
+* which Apple-GPU features the kernel uses (matrix unit with its accumulator type and fragment count, threadgroup staging and padding, double buffering or register prefetch, width of the
+  device loads and stores, SIMD reductions and shuffles, online softmax, ...) and how far it is from the roofline;
+* which features that are expected for this kind of task are missing, at most three, each with one concrete hint (for example "no simdgroup_matrix: the matrix product runs on scalar FMA;
+  the roofline shows 3.0x the lower bound"), always with the caveat that these are hints from static analysis, not requirements, and that the measured time decides;
+* nothing as missing for a kernel that is already at about 90% of its roofline (hardware features cannot help beyond it; the elementwise tasks are in that state, and scalar loads already
+  reach most of the bandwidth there: `docs/hardware_features.md` section 6), and a warning when a kernel has 32 or more accumulator fragments (the reference GEMMs were 12 to 26 times slower)
+  or sits at the register-pressure limit.
+
+Why off by default: it is an experiment and nothing yet shows that it helps. With the switch off, every system prompt, user message and feedback string is **byte-identical** to before; `tests/test_hw_feedback.py`
+checks that against hashes recorded from the code before the feature existed (176 system prompts, 110 user messages, 12 feedback texts and every request of four scripted searches), so runs that are
+running or resumed are not affected. `taic.toml` and `taic.paper.toml` do not mention it. It is recorded in `run_config.json` and kept by `taic resume`. The analysis never breaks or slows a search: a timeout
+(20 s), a failure or a missing Metal toolchain drops the block and logs a warning. A/B experiment: `experiments.p1_runs` run `fa_flash_hw` is `fa_flash` with only this switch changed
+(n=1 on a stochastic search: an anecdote); the run was started on 2026-10-07 06:08, stopped once and continued with `taic resume` after a detector fix (round 1 saw the earlier block, `docs/hardware_features.md` section 9), and its result is not in yet (look at `runs/p1/fa_flash_hw`; the comparison is `fa_flash`: 0.735x confirmed, $3.123, 8 rounds, stopped by budget).
+
 ## Dashboard and budget alerts
 
 `uv run python -m observe` serves a read-only dashboard (default `http://127.0.0.1:8765`; restart it after updating the code, the page is

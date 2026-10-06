@@ -1,0 +1,276 @@
+{
+ "task": "gemm",
+ "dtype": "fp16",
+ "size": "paper",
+ "mode": "full",
+ "status": "ok",
+ "stage": "done",
+ "message": "compiled, ABI ok, safe, correct and benchmarked",
+ "seed": 213319654164323,
+ "compile": {
+  "ok": true,
+  "compile_s": 0.03428200000053039,
+  "pipeline_s": 0.0017777920002117753,
+  "language_version": "4.0"
+ },
+ "abi": {
+  "ok": true,
+  "violations": []
+ },
+ "pipeline": {
+  "max_total_threads_per_threadgroup": 1024,
+  "thread_execution_width": 32,
+  "static_threadgroup_bytes": 9728,
+  "launch_threads_per_threadgroup": 128,
+  "launch_threadgroups": 1024,
+  "hints": []
+ },
+ "safety": {
+  "ok": true,
+  "violations": [],
+  "nondeterminism": [],
+  "validation": [],
+  "shader_validation": "clean"
+ },
+ "correctness": {
+  "ok": true,
+  "cases": [
+   {
+    "case": "normal",
+    "seed": 213319654172242,
+    "ok": true,
+    "scaled_err": 0.2070664768917548,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.2070664768917548,
+    "n_bad": 0,
+    "n_elems": 4194304,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "C",
+     "index": [
+      1615,
+      1696
+     ],
+     "got": -128.25,
+     "want": -128.3125,
+     "scaled_err": 0.2070664768917548
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "wide_range",
+    "seed": 213319654180161,
+    "ok": true,
+    "scaled_err": 0.2040860610319571,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.2040860610319571,
+    "n_bad": 0,
+    "n_elems": 4194304,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "C",
+     "index": [
+      1450,
+      1994
+     ],
+     "got": 512.5,
+     "want": 512.7493896484375,
+     "scaled_err": 0.2040860610319571
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "large",
+    "seed": 213319654188080,
+    "ok": true,
+    "scaled_err": 0.20603357238759515,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.20603357238759515,
+    "n_bad": 0,
+    "n_elems": 4194304,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "C",
+     "index": [
+      1866,
+      1050
+     ],
+     "got": 16384.0,
+     "want": 16391.998046875,
+     "scaled_err": 0.20603357238759515
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "tiny",
+    "seed": 213319654195999,
+    "ok": true,
+    "scaled_err": 0.9732875734774807,
+    "allow": 1.9465751469549615,
+    "baseline_scaled_err": 0.9732875734774807,
+    "n_bad": 0,
+    "n_elems": 4194304,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "C",
+     "index": [
+      1847,
+      1771
+     ],
+     "got": -0.0,
+     "want": -2.980230107141324e-08,
+     "scaled_err": 0.9732875734774807
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "outlier",
+    "seed": 213319654203918,
+    "ok": true,
+    "scaled_err": 0.20664426970068228,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.20664426970068228,
+    "n_bad": 0,
+    "n_elems": 4194304,
+    "nan_count": 0,
+    "unwritten": 0,
+    "worst": {
+     "output": "C",
+     "index": [
+      594,
+      501
+     ],
+     "got": 128.0,
+     "want": 128.0625,
+     "scaled_err": 0.20664426970068228
+    },
+    "safety": [],
+    "message": ""
+   },
+   {
+    "case": "ieee",
+    "seed": 213319654211837,
+    "ok": true,
+    "scaled_err": 0.20896690241916097,
+    "allow": 1.0,
+    "baseline_scaled_err": 0.20896690241916097,
+    "n_bad": 0,
+    "n_elems": 4194304,
+    "nan_count": 212876,
+    "unwritten": 0,
+    "worst": {
+     "output": "C",
+     "index": [
+      1901,
+      501
+     ],
+     "got": 128.125,
+     "want": 128.06271362304688,
+     "scaled_err": 0.20896690241916097
+    },
+    "safety": [],
+    "message": ""
+   }
+  ],
+  "tolerance": {
+   "rtol": 0.002,
+   "atol_rel": 0.001,
+   "exact": false
+  },
+  "baseline_errors": []
+ },
+ "benchmark": {
+  "candidate": {
+   "median_s": 0.0011821667499134492,
+   "mean_s": 0.0011847701499391405,
+   "min_s": 0.0011679114995786222,
+   "cv": 0.009656754923875027,
+   "reps": 15,
+   "iters": 8,
+   "median_us": 1182.1667499134492
+  },
+  "candidate_gpu_us_median": 1162.4583335105854,
+  "baselines": {
+   "mlx": {
+    "median_s": 0.0011867638887552959,
+    "mean_s": 0.001183687955522651,
+    "min_s": 0.0011555463331913212,
+    "cv": 0.013590809870119491,
+    "reps": 15,
+    "iters": 9,
+    "median_us": 1186.763888755296
+   },
+   "torch_mps": {
+    "median_s": 0.0012012462724338877,
+    "mean_s": 0.0012006106181202498,
+    "min_s": 0.0011915416362171527,
+    "cv": 0.005129000179182776,
+    "reps": 15,
+    "iters": 11,
+    "median_us": 1201.2462724338877
+   }
+  },
+  "candidate_serial_us": 1221.7117500767927,
+  "dispatch": "concurrent (as MLX); candidate_serial_us is the strictly serial time of the same kernel",
+  "rotation_sets": 8,
+  "noise_cv": 0.013590809870119491,
+  "attempts": 1,
+  "noisy": false,
+  "gpu_lock_wait_s": 2.0000006770715117e-06,
+  "protocol": "interleaved, 15 reps, median per-iteration wall time of back-to-back launches over 8 rotating buffer sets, concurrent dispatch for the candidate as for MLX",
+  "best_baseline": "mlx"
+ },
+ "roofline": {
+  "bound": "compute",
+  "min_bytes": 25165824.0,
+  "flops": 17179869184.0,
+  "arithmetic_intensity": 682.6666666666666,
+  "ridge_intensity": 31.08155136177421,
+  "achieved_gbps": 21.2878800743148,
+  "bandwidth_fraction": 0.0448100888572003,
+  "achieved_tflops": 14.532526130732236,
+  "compute_fraction": 0.9841964976948918,
+  "lower_bound_us": 1163.4843749561696,
+  "time_over_lower_bound": 1.0160572633027267,
+  "peak_gbps_measured": 475.0689100875139,
+  "peak_tflops_measured": 14.765878729267158
+ },
+ "speedup": 1.0038887397587382,
+ "speedups": {
+  "mlx": 1.0038887397587382,
+  "torch_mps": 1.0161394511576607
+ },
+ "candidate_us": 1182.1667499134492,
+ "baseline_us": {
+  "mlx": 1186.763888755296,
+  "torch_mps": 1201.2462724338877
+ },
+ "compiler_baseline": {
+  "name": "triton_msl",
+  "estimated_us": 1381.2131213087744,
+  "basis": "ratio to mlx (1.164) from an isolated interleaved run x this run's mlx time",
+  "best_num_warps": 8,
+  "versions": {
+   "triton": "3.7.0",
+   "torch": "2.14.1",
+   "python": "3.14.4",
+   "triton_msl": "0.3.0"
+  },
+  "speedup": 1.1683741920586905
+ },
+ "verification": {
+  "status": "unsupported",
+  "message": "no formal equivalence checker exists for Metal Shading Language / AIR; eligibility rests on safety checks and randomized differential tests, which can find bugs but cannot prove their absence",
+  "counterexample": null
+ },
+ "elapsed_s": 3.6490506670015748,
+ "eligible": true
+}

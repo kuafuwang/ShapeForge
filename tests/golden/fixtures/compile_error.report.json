@@ -1,0 +1,34 @@
+{
+ "task": "gemm",
+ "dtype": "fp16",
+ "size": "paper",
+ "mode": "full",
+ "status": "compile_error",
+ "stage": "compile",
+ "message": "Metal compiler rejected the kernel",
+ "seed": 7156204678133,
+ "compile": {
+  "ok": false,
+  "errors": "kernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n"
+ },
+ "abi": {},
+ "pipeline": {},
+ "safety": {
+  "validation": []
+ },
+ "correctness": {},
+ "benchmark": {},
+ "roofline": {},
+ "speedup": null,
+ "speedups": {},
+ "candidate_us": null,
+ "baseline_us": {},
+ "compiler_baseline": {},
+ "verification": {
+  "status": "unsupported",
+  "message": "no formal equivalence checker exists for Metal Shading Language / AIR; eligibility rests on safety checks and randomized differential tests, which can find bugs but cannot prove their absence",
+  "counterexample": null
+ },
+ "elapsed_s": 0.7326527090008312,
+ "eligible": false
+}

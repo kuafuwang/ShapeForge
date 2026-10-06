@@ -27,6 +27,8 @@ def cmd_run(a: argparse.Namespace) -> int:
         search.profile_best = True
     if a.profile_poor:
         search.profile_poor = True
+    if getattr(a, "hw_feedback", False):  # opt-in: static hardware-feature block in the feedback + Skill 2c in the system prompt (taic/hwfeedback.py)
+        search.hw_feedback = True
     if a.plan_mix:
         search.plan_mix = True
     if a.init_samples:
@@ -42,7 +44,7 @@ def cmd_run(a: argparse.Namespace) -> int:
 
 
 SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "max_quick_checks", "min_improvement", "noise_z", "confirm_top", "eval_reps", "max_hangs",
-                 "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "profile_poor", "profile_poor_below", "profile_max")
+                 "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback")
 LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "extra_body", "max_tokens", "request_timeout_s", "max_retries")
 
 
@@ -85,6 +87,9 @@ def _resume_config(a: argparse.Namespace, settings: dict, info: dict):
         if getattr(a, flag):
             setattr(search, k, True)
             prov[f"search.{k}"] = "command line"
+    if getattr(a, "hw_feedback", False):
+        search.hw_feedback = True
+        prov["search.hw_feedback"] = "command line"
     if a.no_tools:
         cfg.use_tools = False
         prov["llm.use_tools"] = "command line"
@@ -133,7 +138,7 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
     except (rs.ResumeError, LLMError, control.ControlError, KeyError) as e:
         raise ResumeRefused(f"cannot resume {run_dir}: {e}", 5) from e
     orch = Orchestrator(snap.task, snap.dtype, snap.size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log, resuming=True)
-    variants = {prompts.system_prompt(orch.task, use_tools=cfg.use_tools, profiler_evidence=pe) for pe in (False, True)}
+    variants = {prompts.system_prompt(orch.task, use_tools=cfg.use_tools, profiler_evidence=pe, hw_feedback=hw) for pe in (False, True) for hw in (False, True)}
     # 系统提示若已和现在的 prompts.py 不同，仍用转录里的原文。换提示会让同一次实验的前后轮次对着不同契约说话。
     prompt_changed = bool(snap.system) and snap.system not in variants  # False: the prompt files still produce the prompt the run began with
     # dry_run 只装内存。restore 在这个开关下不写转录、不改 state.json。
@@ -206,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--profile-best", action="store_true", help="xctrace profile of the winning kernel after the search")
     p.add_argument("--profile-poor", action="store_true", help="trace a round's seed with Instruments when it is slower than the best baseline and give the findings to the model")
     p.add_argument("--plan-mix", action="store_true", help="the last plan of every round is a local, low-risk change; the others are structural")
+    p.add_argument("--hw-feedback", action="store_true", help="append a short static hardware-feature analysis of the seed to the planner and patch feedback and teach it as Skill 2c (off by default)")
     p.add_argument("--init-samples", type=int, default=None, help="sample this many initial kernels in parallel; the best eligible one seeds the search")
     p.add_argument("--patience", type=int, default=None, help="stop after this many rounds without a new best (default 4)")
     p.add_argument("--run-dir", default=None)
@@ -227,6 +233,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--profile-best", action="store_true")
     r.add_argument("--profile-poor", action="store_true")
     r.add_argument("--plan-mix", action="store_true")
+    r.add_argument("--hw-feedback", action="store_true")
     r.add_argument("--init-samples", type=int, default=None)
     r.add_argument("--patience", type=int, default=None, help="not recorded by runs older than run_config.json: give the value the run was started with")
     r.set_defaults(fn=cmd_resume)
