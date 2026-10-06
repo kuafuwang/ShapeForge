@@ -24,11 +24,11 @@ uv sync
 uv run python -m tcenv.cli tasks                       # 12 个内核（+ 第二阶段：flash_attention、lion、bitdelta_gemm）
 uv run python -m tcenv.cli naive gemm                  # 测试框架自检：一个手写内核走完整条流水线
 uv run python -m tcenv.cli eval softmax my_kernel.metal
-uv run python -m taic.cli run softmax --budget 1.0     # 让大模型 lowering 一个内核（凭据：~/.pi/agent/models.json 或 OPENAI_*）
+uv run python -m taic.cli run softmax --budget 1.0     # 让大模型 lowering 一个内核，这里只给 $1 冒烟预算（默认是论文的 $15，见「预算」）
 uv run pytest -q                                       # 环境、编排器（脚本化的大模型）、实验脚本
 ```
 
-配置在 `taic.toml` 里；凭据从不写入仓库（从该文件所指的路径读取，或从 `OPENAI_API_KEY` / `OPENAI_BASE_URL` 读取），并会在每一份记录里被打码。
+配置在 `taic.toml` 里，论文的搜索预算由 `paper` 预设 `taic.paper.toml` 叠加在其上（见「预算」）；凭据从不写入仓库（从该文件所指的路径读取，或从 `OPENAI_API_KEY` / `OPENAI_BASE_URL` 读取），并会在每一份记录里被打码。
 
 ## GPU 安全（请先读）
 
@@ -49,16 +49,43 @@ Apple GPU 同时驱动显示器，**正在运行的 Metal 内核无法被抢占*
 * 候选要替换当前最优，必须同时快过 `min_improvement`，并且快过两次加速比的 `noise_z` 个标准误；
 * 结束时，最优者以及在噪声范围内与它并列的最多 `confirm_top - 1` 个候选会被重新测量；最快的成为结果（`result.json` 的 `confirmations`）。
 
+## 预算
+
+论文给每次搜索设了固定的美元上限（arXiv 2609.36800v1，`docs/2609.36800v1.pdf`）：第 4.3 节和表 1，「卷积、矩阵乘、FlashAttention 每次运行最多 $15，较简单的逐元素 SwiGLU 内核 $1」；第 4.4 节和图 5，十个已发表内核「在 $15 预算下」。搜索一直重复到预算耗尽（第 3.3 节）；预算在每次 LLM 请求之前检查，所以已经发出的请求可以略微超出上限。本仓库照此办理，**默认预算是每次运行 $15**（`SearchConfig`、`taic.cli run`、`run_suite`、`repeatability`、`p1_runs`）。图 4 的 12 内核网格没有写明上限，同样用 $15；重复性实验（表 1）像论文一样给 SwiGLU $1。
+
+* **配置在哪。** `taic.paper.toml` 是叠加在 `taic.toml` 之上的预设（设了 `budget_usd = 15` 和 `max_rounds = 100`：$15 时结束运行的是预算而不是轮数，原来的 12 轮上限会在花掉约三分之一的钱时就停下）。`--preset base` 或 `TAIC_PRESET=base` 只读 `taic.toml`；`--config FILE` 原样使用。`patience`（连续 N 轮没有新最优就停）不变，早早收敛的运行仍会提前结束，所以不再进步的内核花不到 $15。
+* **覆盖。** 到处都有 `--budget USD`，`run_suite` 和 `repeatability` 还有 `--budget-scale F`（例如 `0.2` 做冒烟）。语义测试（每次 $0.15）、`counter_teaching`（$1）和单元测试特意保留小预算。
+* **最坏情况。** 若每次运行都花满预算：`run_suite --tasks all --dtypes fp16,bf16` 是 24 次运行、$360；`repeatability` 是 5 次 x（$15 + $15 + $1）= $155（加上 `flash_attention` 为 $230）；`p1_runs` 是 11 次运行、$165。这三个驱动都有可选的 `--max-total-usd USD`（默认关闭）：整次调用放不下的运行会被跳过。目前没有任何运行接近上限：已结束运行里花得最多的是 $3.12（8 轮 FlashAttention，被 $3 预算截停）。
+* **更早的结果不可比。** 它们用的是更小的预算，看板逐运行显示（每个 `result.json` 也记录 `budget_usd`）：`runs/suite_full` 每个内核 $0.5–$1.2，`runs/repeat_*` 每次试验 $3，`runs/p1` 多数 $3（后来启动的 `*_paper` 运行是 $15），`runs/semantic_main` $0.15，`runs/pilot_suite_mini_old_protocol` $1.25–$1.5。在那里以 `budget_exhausted` 结束的运行，在论文预算下本会继续搜索。
+
 ## 实验（论文第 4 节）
 
 ```bash
-uv run python -m experiments.run_suite --tasks all --dtypes fp16,bf16     # 图 4：加速比相对花费，12 个内核
-uv run python -m experiments.repeatability --tasks conv2d,gemm,swiglu --trials 5   # 表 1
+uv run python -m experiments.run_suite --tasks all --dtypes fp16,bf16     # 图 4：加速比相对花费，12 个内核（每次 $15；冒烟用 --budget-scale 0.2）
+uv run python -m experiments.repeatability --tasks conv2d,gemm,swiglu --trials 5   # 表 1（$15，swiglu $1）
 uv run python -m experiments.semantic_tests --n-random 10                 # 第 4.1 节
 uv run python -m tcenv.cli profile gemm best.metal                        # xctrace：spill、代码体积、热状态
 ```
 
 怎么读这些数字：一次运行报告的加速比是**确认后**的加速比（胜者及其并列者用新种子、两倍重复次数重新测量）。套件表还会列出该任务手写朴素内核相对同一基线的加速比，因为有些基线偏弱（例如 Lion 和 BitDelta GEMM 没有融合的库实现）。朴素内核已经胜过基线时，收益里有一部分来自基线本身偏弱。
+
+## 看板与预算告警
+
+`uv run python -m observe` 启动只读看板（默认 `http://127.0.0.1:8765`；改了代码要重启，页面在启动时读入）。它把每次运行的预算和已花费并排显示，并对越过预算的运行告警。规则是一个纯函数 `observe.budget.budget_status(spent, budget, stop_reason, running)`：
+
+| 级别 | 颜色 | 条件 |
+|---|---|---|
+| `OVER BUDGET`（超预算） | 红 | 已花费 > 预算；显示超出的美元数和百分比 |
+| `BUDGET EXHAUSTED`（预算耗尽） | 橙 | 搜索以 `stop_reason == "budget_exhausted"` 结束（可以仍在预算内：闸门在下一次请求前触发） |
+| `NEAR BUDGET`（接近预算） | 黄 | 仍在运行且已用至少 80% |
+
+一次运行可以既超预算又耗尽，这时两个徽章都带。预算或花费未知的运行（旧结果）显示为「预算 —」，从不告警。界面上：
+
+* 顶部固定横幅：各级别计数、总花费对预算合计、超出合计，以及每个被标记运行的可点击标签（首个 HTML 响应里就已渲染，没有 JavaScript 也能看到）；
+* 历史列表：每次运行的预算、已花费、占比；被标记的运行带彩色徽章；筛选（全部 / 告警 / 超预算 / 耗尽 / 接近）和排序（时间 / 预算占比），可以把超预算的运行排到最前；
+* 选中某次运行后，状态卡片和搜索面板重复显示徽章和精确金额。
+
+`/api/budget` 以 JSON 返回同样的汇总，`/?run=p1%2Ffa_pro` 直接打开指定运行。数字取自每次运行自己的 `state.json` / `result.json` / `ledger.json`，所以这次改动之前启动的运行按它当时实际拥有的预算判断。
 
 ## 编译器基线（可选）：用 triton-msl 把 Triton 编译成 Metal
 

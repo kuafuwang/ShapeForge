@@ -23,14 +23,15 @@ uv sync
 uv run python -m tcenv.cli tasks                       # the 12 kernels (+ phase 2: flash_attention, lion, bitdelta_gemm, mamba2_chunk_scan)
 uv run python -m tcenv.cli naive gemm                  # harness self-check: a hand-written kernel through the whole pipeline
 uv run python -m tcenv.cli eval softmax my_kernel.metal
-uv run python -m taic.cli run softmax --budget 1.0     # let the LLM lower one kernel (credentials: ~/.pi/agent/models.json or OPENAI_*)
+uv run python -m taic.cli run softmax --budget 1.0     # let the LLM lower one kernel with a $1 smoke budget (default: the paper's $15, see Budget)
 uv run pytest -q                                       # environment, orchestrator (scripted LLM), experiment scripts
 ```
 
 When a test fails, read `logs/pytest/triage/triage_summary.md`, then the markdown file it points at. The JSON block between `---BEGIN_AI_FAILURE_HANDOFF---` and `---END_AI_FAILURE_HANDOFF---` is the ground truth for that failure (status, feedback, and a single-process reproduce command). Re-run with the command at the top of that file. Leave it single-process: the GPU also drives the display, so the suite does not use `-n`.
 
-Configuration is in `taic.toml`; credentials are never stored in the repository (they are read from the file named there, or from
-`OPENAI_API_KEY` / `OPENAI_BASE_URL`) and are redacted in every transcript.
+Configuration is in `taic.toml`, with the paper's search budget layered on top by the `paper` preset `taic.paper.toml` (see Budget); credentials
+are never stored in the repository (they are read from the file named there, or from `OPENAI_API_KEY` / `OPENAI_BASE_URL`) and are redacted in
+every transcript.
 
 ## GPU safety (read this)
 
@@ -99,11 +100,35 @@ The contract (tile sizes, threads per group, buffer ABI) is fixed by us, not by 
 addressable as `gemm@BMxBNxBKtT` and `flash_attention@BMxBNtT` (for example `gemm@128x64x32t256`, `flash_attention@64x32t256`) anywhere a task name is
 accepted. `experiments/contract_sensitivity.py` sweeps them (results below).
 
+## Budget
+
+The paper caps every search at a fixed USD amount (arXiv 2609.36800v1, `docs/2609.36800v1.pdf`): Section 4.3 and Table 1, "a maximum API
+budget of $15 per run for convolution, matrix multiplication, and FlashAttention, and $1 for the simpler elementwise SwiGLU kernel"; Section 4.4
+and Figure 5, "under a $15 budget" for the ten published kernels. The search repeats until the budget is exhausted (Section 3.3); the gate is
+checked before each LLM request, so a request already in flight can finish a little above the cap. This repository does the same, and
+**the default budget is $15 per run** (`SearchConfig`, `taic.cli run`, `run_suite`, `repeatability`, `p1_runs`). The 12-kernel grid of Figure 4
+states no cap, so it uses $15 too; the repeatability experiment (Table 1) gives SwiGLU $1, as the paper does.
+
+* **Where it lives.** `taic.paper.toml` is a preset read on top of `taic.toml` (it sets `budget_usd = 15` and `max_rounds = 100`: at $15 the
+  budget ends a run, not the round count, whereas the old limit of 12 rounds would have stopped it at about a third of the money). `--preset base`
+  or `TAIC_PRESET=base` reads `taic.toml` alone; `--config FILE` is used as it is. `patience` (stop after N rounds without a new best) is unchanged
+  and still ends runs that converged early, so a kernel that stops improving spends less than $15.
+* **Override.** `--budget USD` everywhere, `--budget-scale F` on `run_suite` and `repeatability` (for example `0.2` for a smoke run). The
+  semantic tests (`$0.15` per run), `counter_teaching` (`$1`) and the unit tests keep their small budgets on purpose.
+* **Worst case.** If every run used its whole budget: `run_suite --tasks all --dtypes fp16,bf16` is 24 runs, $360; `repeatability` is 5 trials
+  x ($15 + $15 + $1) = $155 (with `flash_attention` $230); `p1_runs` is 11 runs, $165. `--max-total-usd USD` (on those three drivers, default off)
+  skips any run whose budget would not fit under a cap on the whole invocation. Nothing has come close so far: the largest spend of a finished run
+  is $3.12 (an 8-round FlashAttention search that was stopped by its $3 budget).
+* **Earlier results are not comparable.** They were produced with smaller budgets, which the dashboard shows per run (and each `result.json`
+  records as `budget_usd`): `runs/suite_full` $0.5-$1.2 per kernel, `runs/repeat_*` $3 per trial, `runs/p1` $3 for most runs (the `*_paper`
+  runs started later have $15), `runs/semantic_main` $0.15, `runs/pilot_suite_mini_old_protocol` $1.25-$1.5. A run that stopped on
+  `budget_exhausted` there would have continued under the paper's budget.
+
 ## Experiments (paper Section 4)
 
 ```bash
-uv run python -m experiments.run_suite --tasks all --dtypes fp16,bf16     # Figure 4: speedup vs cost, 12 kernels
-uv run python -m experiments.repeatability --tasks conv2d,gemm,swiglu --trials 5   # Table 1
+uv run python -m experiments.run_suite --tasks all --dtypes fp16,bf16     # Figure 4: speedup vs cost, 12 kernels ($15 per run; --budget-scale 0.2 for a smoke run)
+uv run python -m experiments.repeatability --tasks conv2d,gemm,swiglu --trials 5   # Table 1 ($15, swiglu $1)
 uv run python -m experiments.semantic_tests --n-random 10                 # Section 4.1
 uv run python -m tcenv.cli profile gemm best.metal                        # xctrace: spills, code size, thermal state
 uv run python -m observe                                                  # local dashboard at http://127.0.0.1:8765
@@ -113,6 +138,30 @@ How to read the numbers: the reported speedup of a run is the *confirmed* one (t
 twice the repetitions); the suite table also lists the speedup of the task's naive hand-written kernel over the same baselines, because some
 baselines are weak (for example Lion and the BitDelta GEMM have no fused library implementation), and a naive kernel that already beats
 the baseline means part of any gain is baseline weakness.
+
+## Dashboard and budget alerts
+
+`uv run python -m observe` serves a read-only dashboard (default `http://127.0.0.1:8765`; restart it after updating the code, the page is
+read at start-up). It shows every run's budget next to what it spent, and raises an alert for runs that crossed it. The rule is one pure
+function, `observe.budget.budget_status(spent, budget, stop_reason, running)`:
+
+| level | colour | when |
+|---|---|---|
+| `OVER BUDGET` (超预算) | red | spent > budget; the overrun is shown in dollars and percent |
+| `BUDGET EXHAUSTED` (预算耗尽) | orange | the search stopped with `stop_reason == "budget_exhausted"` (can be within budget: the gate fires before the next request) |
+| `NEAR BUDGET` (接近预算) | yellow | still running and at least 80 % of the budget used |
+
+A run can be both over budget and exhausted; it then carries both badges. A run whose budget or spend is unknown (older results) is shown as
+"budget —" and never flagged. What you see:
+
+* a sticky banner at the top with the counts per level, the total spend against the summed budgets, the summed overrun and one clickable chip
+  per flagged run (it is also rendered into the first HTML response, so it is there without JavaScript);
+* in the history list: budget, spent and percent used for every run, a coloured badge on flagged runs, filter pills (all / flagged / over /
+  exhausted / near) and sort pills (time / share of budget used), so the over-budget runs can be pulled to the top;
+* on the selected run, the status card and the search panel repeat the badge with the exact amounts.
+
+`/api/budget` returns the same summary as JSON, and `/?run=p1%2Ffa_pro` opens a given run directly. Note that the figures come from each run's
+own `state.json` / `result.json` / `ledger.json`, so a run launched before this change is judged by the budget it actually had.
 
 ## Compiler baseline (optional): Triton -> Metal with triton-msl
 
