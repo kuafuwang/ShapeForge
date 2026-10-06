@@ -1,0 +1,32 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+logs/pytest/
+runs/
+*.egg-info/
+dist/
+.DS_Store
+# never commit credentials
+models.json
+*.key
+.env
+.venvs/
+
+# generated / local artifacts
+*.trace
+*.gputrace
+*.dSYM/
+*.xml
+*.metallib
+*.air
+*.so
+*.dylib
+*.o
+build/
+.mypy_cache/
+.ruff_cache/
+.idea/
+cmake-build-*/
+.env.*
+*.pem
