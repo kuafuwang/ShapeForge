@@ -1,0 +1,377 @@
+"""Budget alerts of the dashboard (over budget / budget exhausted / near budget) and the paper-level budget defaults. No GPU, no model calls."""
+
+from __future__ import annotations
+
+import json
+import time
+import urllib.request
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from observe import scan
+from observe.budget import NEAR_FRACTION, budget_status, render_banner_html, summarize
+
+from .test_observe import dashboard  # noqa: F401  (pytest fixture: the dashboard served on a free port)
+
+# ------------------------------------------------------------------------------------------------ the classification
+
+
+def test_over_budget_shows_the_overrun_in_dollars_and_percent():
+    st = budget_status(3.123, 3.0, "budget_exhausted", False)
+    assert st["level"] == "over" and st["label"] == "OVER BUDGET" and st["flagged"]
+    assert st["flags"] == ["over", "exhausted"]  # both apply; over is the worse one
+    assert st["over_usd"] == pytest.approx(0.123) and st["over_pct"] == pytest.approx(4.1) and st["used_pct"] == pytest.approx(104.1)
+    assert "over by $0.123 (+4.1%)" in st["text"] and "$3.123 / $3.00" in st["text"]
+
+
+def test_over_budget_without_a_budget_stop_reason():
+    st = budget_status(3.036, 3.0, "converged (4 rounds without improvement)", False)
+    assert st["level"] == "over" and st["flags"] == ["over"]
+
+
+def test_exhausted_under_the_cap_is_flagged_because_money_ended_the_search():
+    st = budget_status(2.97, 3.0, "budget_exhausted", False)
+    assert st["level"] == "exhausted" and st["label"] == "BUDGET EXHAUSTED" and st["flags"] == ["exhausted"]
+    assert st["over_usd"] == 0.0 and st["over_pct"] == 0.0 and st["used_pct"] == pytest.approx(99.0)
+
+
+def test_exactly_the_budget_is_not_over_but_a_budget_stop_is_exhausted():
+    assert budget_status(3.0, 3.0, "converged", False)["level"] == "ok"
+    assert budget_status(3.0, 3.0, "budget_exhausted", False)["level"] == "exhausted"
+    assert budget_status(3.0000000001, 3.0, "converged", False)["level"] == "ok"  # float noise
+
+
+def test_near_budget_only_applies_to_a_run_that_is_still_running():
+    assert NEAR_FRACTION == 0.8
+    assert budget_status(2.4, 3.0, "", True)["level"] == "near"
+    assert budget_status(2.39, 3.0, "", True)["level"] == "ok"
+    near = budget_status(2.7, 3.0, "", True)
+    assert near["label"] == "NEAR BUDGET" and near["flagged"] and near["used_pct"] == pytest.approx(90.0)
+    assert budget_status(2.7, 3.0, "converged", False)["level"] == "ok"  # finished at 90%: nothing to warn about
+
+
+def test_a_running_run_that_is_already_over_is_over_not_near():
+    st = budget_status(3.01, 3.0, "", True)
+    assert st["level"] == "over" and st["flags"] == ["over"]
+
+
+@pytest.mark.parametrize("spent,budget", [(None, None), (1.0, None), (1.0, 0), (1.0, -2.0), (None, 3.0), ("abc", 3.0), (1.0, float("nan")), (True, 3.0), (float("inf"), 3.0)])
+def test_missing_or_unusable_numbers_never_raise_and_are_not_flagged(spent, budget):
+    st = budget_status(spent, budget, None, True)
+    assert st["level"] == "unknown" and not st["flagged"] and st["flags"] == [] and st["label"] == ""
+    assert st["over_usd"] is None and st["over_pct"] is None and st["used_pct"] is None
+
+
+def test_a_budget_stop_is_flagged_even_when_the_numbers_are_missing():
+    st = budget_status(None, None, "budget_exhausted", False)
+    assert st["level"] == "exhausted" and st["flagged"]
+    assert budget_status("3.2", "3.0", None, False)["level"] == "over"  # numbers stored as strings still work
+
+
+def test_old_results_without_a_stop_reason_are_classified_from_the_money_alone():
+    assert budget_status(0.2, 0.25, None, False)["level"] == "ok"
+    assert budget_status(0.3, 0.25, None, False)["level"] == "over"
+
+
+# ------------------------------------------------------------------------------------------------ the banner data
+
+
+def _row(run_id, spent, budget, stop="", status="done", task="gemm"):
+    return {"id": run_id, "task": task, "dtype": "fp16", "status": status, "spent_usd": spent, "budget_usd": budget, "stop_reason": stop,
+            "budget": budget_status(spent, budget, stop, status == "running")}
+
+
+def test_summary_counts_names_and_totals_the_flagged_runs_worst_first():
+    rows = [
+        _row("a/ok", 1.0, 3.0, "converged"),
+        _row("a/near", 2.6, 3.0, "", "running"),
+        _row("a/exh", 2.97, 3.0, "budget_exhausted"),
+        _row("a/over_small", 3.03, 3.0, "converged"),
+        _row("a/over_big", 3.3, 3.0, "budget_exhausted"),
+        _row("a/nobudget", 0.5, None, "converged"),
+    ]
+    rep = summarize(rows)
+    assert (rep["n_runs"], rep["n_over"], rep["n_exhausted"], rep["n_near"], rep["n_flagged"]) == (6, 2, 2, 1, 4)
+    assert [f["id"] for f in rep["flagged"]] == ["a/over_big", "a/over_small", "a/exh", "a/near"]
+    assert rep["level"] == "over"
+    assert rep["total_spent_usd"] == pytest.approx(1.0 + 2.6 + 2.97 + 3.03 + 3.3 + 0.5)
+    assert rep["total_budget_usd"] == pytest.approx(15.0) and rep["total_over_usd"] == pytest.approx(0.33)
+
+
+def test_summary_of_clean_runs_is_ok():
+    rep = summarize([_row("a", 1.0, 3.0, "converged"), _row("b", 0.1, 3.0, "converged")])
+    assert rep["n_flagged"] == 0 and rep["level"] == "ok" and rep["flagged"] == []
+    assert "预算正常" in render_banner_html(rep)
+    assert summarize([])["n_runs"] == 0
+
+
+def test_banner_html_names_the_runs_and_escapes_them():
+    rows = [_row('p1/<b>"x"</b>', 3.1, 3.0, "budget_exhausted", task="<i>")]
+    html = render_banner_html(summarize(rows))
+    assert "OVER BUDGET" in html and "BUDGET EXHAUSTED" in html and "BUDGET ALERT" in html
+    assert "<b>\"x\"</b>" not in html and "&lt;b&gt;" in html and "&lt;i&gt;" in html
+    assert "/?run=p1%2F%3Cb%3E%22x%22%3C%2Fb%3E" in html
+
+
+# ------------------------------------------------------------------------------------------------ from run directories
+
+
+def _result(root: Path, name: str, *, spent, budget, stop="max_rounds", task="gemm", **extra):
+    directory = root / name
+    directory.mkdir(parents=True)
+    doc = {"task": task, "dtype": "fp16", "stop_reason": stop, "confirmed_speedup": 1.1, "trace": [], **extra}
+    if spent is not None:
+        doc["spent_usd"] = spent
+    if budget is not None:
+        doc["budget_usd"] = budget
+    (directory / "result.json").write_text(json.dumps(doc))
+    return directory
+
+
+def _live(root: Path, name: str, *, spent, budget):
+    import os
+
+    directory = root / name
+    directory.mkdir(parents=True)
+    (directory / "state.json").write_text(json.dumps({
+        "pid": os.getpid(), "updated_at": time.time(), "started_at": time.time(), "phase": "evaluate", "task": "conv2d", "dtype": "fp16",
+        "spent_usd": spent, "budget_usd": budget, "trace": [],
+    }))
+    return directory
+
+
+@pytest.fixture
+def runs_dir(tmp_path, monkeypatch):
+    runs = tmp_path / "runs"  # the same directory the ``dashboard`` fixture serves
+    runs.mkdir(exist_ok=True)
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    # the shapes of real runs: p1/fa_flash (3.123 of 3.00, budget_exhausted), p1/fa_pro (3.036 of 3.00), a run that stopped under its cap
+    _result(runs / "p1", "fa_flash", spent=3.1229796840000015, budget=3.0, stop="budget_exhausted", task="flash_attention")
+    _result(runs / "p1", "fa_pro", spent=3.036134728000001, budget=3.0, stop="budget_exhausted", task="flash_attention")
+    _result(runs / "suite", "relu_fp16", spent=0.2376, budget=0.5, stop="converged (4 rounds without improvement)", task="relu")
+    _result(runs / "suite", "rope_fp16", spent=0.79, budget=0.8, stop="budget_exhausted", task="rope")
+    _result(runs / "suite", "old_run", spent=0.3, budget=None, stop="max_rounds", task="sigmoid")  # an older run without a budget field
+    _live(runs / "p1", "conv2d_paper", spent=13.0, budget=15.0)
+    return runs
+
+
+def test_history_rows_carry_the_budget_status(runs_dir):
+    by_id = {row["id"]: row for row in scan.history()}
+    fa = by_id["p1/fa_flash"]
+    assert fa["budget_usd"] == 3.0 and fa["budget"]["level"] == "over" and fa["budget"]["over_usd"] == pytest.approx(0.1229796840000015)
+    assert by_id["p1/fa_pro"]["budget"]["over_pct"] == pytest.approx(1.2)
+    assert by_id["suite/relu_fp16"]["budget"]["level"] == "ok"
+    assert by_id["suite/rope_fp16"]["budget"]["level"] == "exhausted"  # stopped by money, ended under the cap
+    assert by_id["suite/old_run"]["budget"]["level"] == "unknown" and by_id["suite/old_run"]["budget_usd"] is None
+    live = by_id["p1/conv2d_paper"]
+    assert live["status"] == "running" and live["budget"]["level"] == "near" and live["budget"]["used_pct"] == pytest.approx(86.7)
+
+
+def test_budget_report_names_the_runs_that_exceeded(runs_dir):
+    rep = scan.budget_report()
+    assert rep["n_runs"] == 6 and rep["n_over"] == 2 and rep["n_exhausted"] == 3 and rep["n_near"] == 1
+    assert [f["id"] for f in rep["flagged"]] == ["p1/fa_flash", "p1/fa_pro", "suite/rope_fp16", "p1/conv2d_paper"]
+    assert rep["total_over_usd"] == pytest.approx(0.1229796840000015 + 0.036134728000001, abs=1e-6)
+
+
+def test_spend_and_budget_fall_back_to_state_and_to_ledger_json(runs_dir):
+    d = _result(runs_dir / "x", "no_money_in_result", spent=None, budget=None, stop="budget_exhausted")
+    (d / "state.json").write_text(json.dumps({"task": "gemm", "dtype": "fp16", "phase": "done", "ledger": {"total_usd": 1.5, "budget_usd": 1.0}}))
+    e = _result(runs_dir / "x", "only_ledger_file", spent=None, budget=None, stop="converged")
+    (e / "ledger.json").write_text(json.dumps({"summary": {"total_usd": 2.2, "budget_usd": 2.0}}))
+    f = _result(runs_dir / "x", "flat_ledger_file", spent=None, budget=None, stop="converged")
+    (f / "ledger.json").write_text(json.dumps({"total_usd": 0.5, "budget_usd": 2.0}))
+    by_id = {row["id"]: row for row in scan.history()}
+    assert by_id["x/no_money_in_result"]["budget"]["level"] == "over" and by_id["x/no_money_in_result"]["spent_usd"] == 1.5
+    assert by_id["x/only_ledger_file"]["budget"]["over_usd"] == pytest.approx(0.2) and by_id["x/only_ledger_file"]["budget_usd"] == 2.0
+    assert by_id["x/flat_ledger_file"]["budget"]["level"] == "ok"
+
+
+def test_run_detail_and_frame_include_the_budget(runs_dir):
+    detail = scan.run_detail("p1/fa_flash")
+    assert detail["budget"]["level"] == "over" and detail["budget"]["label"] == "OVER BUDGET"
+    frame = scan.frame("p1/fa_pro")
+    assert frame["budget"]["n_over"] == 2 and frame["selected"] == "p1/fa_pro" and frame["run"]["budget"]["level"] == "over"
+
+
+# ------------------------------------------------------------------------------------------------ the served page
+
+
+def _get(port: int, path: str) -> str:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as resp:
+        return resp.read().decode("utf-8")
+
+
+def test_the_page_has_the_banner_with_the_over_budget_runs_at_first_paint(dashboard, runs_dir):  # noqa: F811
+    port, _ = dashboard
+    page = _get(port, "/")
+    assert 'id="budget-banner"' in page and "<!--BUDGET_BANNER-->" not in page
+    assert "BUDGET ALERT" in page and "2 OVER BUDGET" in page and "3 BUDGET EXHAUSTED" in page and "1 NEAR BUDGET" in page
+    for run_id in ("p1/fa_flash", "p1/fa_pro", "suite/rope_fp16", "p1/conv2d_paper"):
+        assert f'data-run="{run_id}"' in page
+    assert "over by $0.123 (+4.1%)" in page and "over by $0.036 (+1.2%)" in page and "$3.123 / $3.00" in page
+    assert 'class="chip over"' in page and 'class="chip exhausted"' in page and 'class="chip near"' in page
+    assert "总花费" in page
+
+
+def test_the_page_script_renders_badges_filters_and_sorting(dashboard):  # noqa: F811
+    port, _ = dashboard
+    page = _get(port, "/")
+    for needle in ("OVER BUDGET", "BUDGET EXHAUSTED", "NEAR BUDGET", "renderBanner", "FILTERS", "SORTS", "badge ", ".badge.over", ".badge.exhausted", ".badge.near", "hist-tools"):
+        assert needle in page, needle
+
+
+def test_the_budget_api_and_the_history_api_expose_the_alerts(dashboard, runs_dir):  # noqa: F811
+    port, _ = dashboard
+    rep = json.loads(_get(port, "/api/budget"))
+    assert rep["n_over"] == 2 and {f["id"] for f in rep["flagged"] if f["level"] == "over"} == {"p1/fa_flash", "p1/fa_pro"}
+    rows = {row["id"]: row for row in json.loads(_get(port, "/api/history"))}
+    assert rows["p1/fa_flash"]["budget"]["label"] == "OVER BUDGET" and rows["suite/rope_fp16"]["budget"]["label"] == "BUDGET EXHAUSTED"
+    assert rows["p1/conv2d_paper"]["budget"]["label"] == "NEAR BUDGET"
+    one = json.loads(_get(port, "/api/runs/p1/fa_pro"))
+    assert one["budget"]["level"] == "over" and one["budget"]["over_usd"] == pytest.approx(0.036134728000001)
+
+
+def test_a_damaged_run_directory_does_not_break_the_page(dashboard):  # noqa: F811
+    port, runs = dashboard
+    (runs / "bad").mkdir()
+    (runs / "bad" / "result.json").write_text("{not json")
+    page = _get(port, "/")
+    assert 'id="budget-banner"' in page and "预算正常" in page
+
+
+# ------------------------------------------------------------------------------------------------ the paper-level budget defaults
+
+
+def test_the_default_budget_is_the_papers_15_usd_and_the_round_limit_does_not_end_a_run_first(monkeypatch):
+    from taic.llm import PAPER_BUDGET_USD, SearchConfig, load_config
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-0123456789abcdef")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://x")
+    monkeypatch.delenv("TAIC_PRESET", raising=False)
+    assert PAPER_BUDGET_USD == 15.0 and SearchConfig().budget_usd == 15.0
+    _, s = load_config()
+    assert s.budget_usd == 15.0 and s.max_rounds >= 40
+    assert s.patience == 4  # stagnation stopping is unchanged
+    _, s = load_config(budget_usd=3.0)
+    assert s.budget_usd == 3.0  # the command line can still override it
+
+
+def test_the_base_preset_is_taic_toml_alone_and_taic_toml_is_not_the_paper_file(monkeypatch):
+    import tomllib
+
+    from taic.llm import REPO_ROOT, load_config
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-0123456789abcdef")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://x")
+    raw = tomllib.loads((REPO_ROOT / "taic.toml").read_text())["search"]
+    _, s = load_config(preset="base")
+    assert (s.budget_usd, s.max_rounds, s.patience) == (raw.get("budget_usd", 15.0), raw.get("max_rounds", 12), raw.get("patience", 4))
+    monkeypatch.setenv("TAIC_PRESET", "base")
+    assert load_config()[1].budget_usd == s.budget_usd  # the environment selects it too
+    assert load_config(preset="paper")[1].budget_usd == 15.0  # ... and the argument wins
+
+
+def test_an_explicit_config_file_is_used_as_it_is_and_a_bad_preset_is_an_error(tmp_path, monkeypatch):
+    from taic.llm import LLMError, load_config
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-0123456789abcdef")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://x")
+    toml = tmp_path / "mine.toml"
+    toml.write_text("[search]\nbudget_usd = 0.75\n")
+    assert load_config(toml)[1].budget_usd == 0.75  # no preset is layered over an explicit file
+    with pytest.raises(LLMError, match="not found"):
+        load_config(preset="nope")
+    with pytest.raises(LLMError, match="bad config preset"):
+        load_config(preset="../taic")
+
+
+def test_budget_for_is_15_usd_except_swiglu_in_table_1():
+    from experiments.common import budget_for, fits_cap
+
+    assert budget_for("gemm") == 15.0 and budget_for("softmax") == 15.0 and budget_for("flash_attention@64x32t256") == 15.0
+    assert budget_for("swiglu") == 15.0 and budget_for("swiglu", table1=True) == 1.0 and budget_for("conv2d", table1=True) == 15.0
+    assert budget_for("gemm", 0.2) == pytest.approx(3.0) and budget_for("swiglu", 2.0, table1=True) == 2.0
+    assert fits_cap(0.0, 15.0, None) and fits_cap(10.0, 15.0, 25.0) and not fits_cap(10.1, 15.0, 25.0)
+
+
+def test_p1_runs_all_default_to_the_paper_budget():
+    from experiments import p1_runs
+    from taic.llm import PAPER_BUDGET_USD
+
+    assert {n: s["budget"] for n, s in p1_runs.RUNS.items()} == {n: PAPER_BUDGET_USD for n in p1_runs.RUNS}
+
+
+def _stub_run_one(seen, spent):
+    def one(task, dtype, size, run_dir, *, budget=None, **kw):
+        seen.append((task, budget))
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "result.json").write_text(json.dumps({
+            "task": task, "dtype": dtype, "model": "m", "stop_reason": "converged (4 rounds without improvement)", "rounds": 4, "evaluations": 9,
+            "spent_usd": spent, "budget_usd": budget, "confirmed_speedup": 1.1, "best_speedup": 1.1, "candidate_us": 5.0, "baseline_us": {"mlx": 5.5},
+        }))
+        return SimpleNamespace(stop_reason="converged (4 rounds without improvement)")
+
+    return one
+
+
+def test_run_suite_gives_every_run_the_paper_budget_and_honours_the_optional_total_cap(tmp_path, monkeypatch):
+    import experiments.run_suite as rs
+
+    seen, logs = [], []
+    monkeypatch.setattr(rs, "run_one", _stub_run_one(seen, 6.0))
+    rows = rs.run_suite(["relu", "sigmoid", "silu"], ["fp16"], "small", tmp_path / "a", with_naive=False, log=logs.append)
+    assert seen == [("relu", 15.0), ("sigmoid", 15.0), ("silu", 15.0)] and len(rows) == 3  # no cap by default
+    seen.clear()
+    rows = rs.run_suite(["relu", "sigmoid", "silu"], ["fp16"], "small", tmp_path / "b", max_total_usd=25.0, with_naive=False, log=logs.append)
+    assert seen == [("relu", 15.0), ("sigmoid", 15.0)] and len(rows) == 2  # 6 + 6 spent, a third $15 budget would not fit under $25
+    assert any("does not fit under --max-total-usd $25.00" in line for line in logs)
+    seen.clear()
+    rs.run_suite(["relu"], ["fp16"], "small", tmp_path / "c", budget=1.5, with_naive=False, log=logs.append)
+    assert seen == [("relu", 1.5)]  # --budget overrides it
+    seen.clear()
+    rs.run_suite(["relu"], ["fp16"], "small", tmp_path / "d", budget_scale=0.2, with_naive=False, log=logs.append)
+    assert seen[0][1] == pytest.approx(3.0)  # --budget-scale 0.2 is a $3 smoke run
+    assert "budget USD" in rs.markdown_table(rows) and "15.00" in rs.markdown_table(rows)
+
+
+def test_repeatability_uses_table_1_budgets_and_the_total_cap(tmp_path, monkeypatch):
+    import experiments.repeatability as rp
+
+    seen, logs = [], []
+    monkeypatch.setattr(rp, "run_one", _stub_run_one(seen, 0.5))
+    table = rp.run_repeatability(["gemm", "swiglu"], "fp16", "small", tmp_path / "a", trials=2, log=logs.append)
+    assert seen == [("gemm", 15.0), ("gemm", 15.0), ("swiglu", 1.0), ("swiglu", 1.0)]
+    assert table["gemm"]["budget_usd"] == 15.0 and table["swiglu"]["budget_usd"] == 1.0
+    seen.clear()
+    table = rp.run_repeatability(["gemm", "swiglu"], "fp16", "small", tmp_path / "b", trials=3, max_total_usd=15.2, log=logs.append)
+    # gemm: the first trial fits ($15 <= $15.2), the second would not ($0.5 spent + $15); the $1 swiglu trials still fit
+    assert seen == [("gemm", 15.0), ("swiglu", 1.0), ("swiglu", 1.0), ("swiglu", 1.0)]
+    assert len(table["gemm"]["trials"]) == 1 and len(table["swiglu"]["trials"]) == 3 and any("does not fit under --max-total-usd" in line for line in logs)
+    assert "$15.00" in rp.markdown(table)
+
+
+def test_p1_runs_cap_budget_override_and_the_note_about_results_at_another_budget(tmp_path, monkeypatch):
+    from experiments import p1_runs
+
+    seen, logs = [], []
+    monkeypatch.setattr(p1_runs, "run_one", _stub_run_one(seen, 7.0))
+    monkeypatch.setattr(p1_runs, "naive_reference", lambda *a, **kw: {"speedup": 1.0})
+    out = tmp_path / "p1"
+    (out / "fa_flash").mkdir(parents=True)
+    (out / "fa_flash" / "result.json").write_text(json.dumps({
+        "task": "flash_attention", "dtype": "fp16", "model": "m", "stop_reason": "budget_exhausted", "rounds": 8, "evaluations": 9, "spent_usd": 3.12, "budget_usd": 3.0,
+    }))
+    rows = p1_runs.run_named(["fa_flash", "fa_pro", "fa_paper", "gemm_paper"], out, log=logs.append, max_total_usd=20.0)
+    text = "\n".join(logs)
+    assert "fa_flash was run with a $3.00 budget" in text and "(skip fa_flash: already done, with a $3.00 budget, not $15.00)" in text
+    assert [t for t, _ in seen] == ["flash_attention"] and [r["run"] for r in rows] == ["fa_flash", "fa_pro"]
+    assert seen[0][1] == 15.0 and "fa_paper: its $15.00 budget does not fit under --max-total-usd $20.00" in text
+    summary = json.loads((out / "summary.json").read_text())
+    assert {r["run"]: r["budget_usd"] for r in summary} == {"fa_flash": 3.0, "fa_pro": 15.0}  # each row shows the budget its run really had
+    assert "budget USD" in p1_runs.markdown(summary) and "| 3.00 |" in p1_runs.markdown(summary)
+    seen.clear()
+    p1_runs.run_named(["mamba2"], out, log=logs.append, budget=2.0)
+    assert seen == [("mamba2_chunk_scan", 2.0)]

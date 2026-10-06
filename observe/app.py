@@ -11,9 +11,10 @@ from starlette.applications import Starlette
 from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse
 from starlette.routing import Route
 
-from observe import scan
+from observe import budget, scan
 
 _PAGE = (Path(__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
+_BANNER_SLOT = "<!--BUDGET_BANNER-->"
 
 
 def _json(data: dict | list, status: int = 200) -> JSONResponse:
@@ -21,7 +22,11 @@ def _json(data: dict | list, status: int = 200) -> JSONResponse:
 
 
 async def index(_request) -> HTMLResponse:
-    return HTMLResponse(_PAGE, headers={"Cache-Control": "no-store"})
+    try:  # the banner is drawn on the server once so the alert is visible at first paint (and without JavaScript); the page script keeps it current
+        banner = budget.render_banner_html(scan.budget_report())
+    except Exception:  # noqa: BLE001  a damaged run directory must never take the page down
+        banner = ""
+    return HTMLResponse(_PAGE.replace(_BANNER_SLOT, banner), headers={"Cache-Control": "no-store"})
 
 
 async def api_overview(_request) -> JSONResponse:
@@ -30,6 +35,10 @@ async def api_overview(_request) -> JSONResponse:
 
 async def api_history(_request) -> JSONResponse:
     return _json(scan.history())
+
+
+async def api_budget(_request) -> JSONResponse:
+    return _json(scan.budget_report())
 
 
 async def api_run(request) -> JSONResponse:
@@ -65,6 +74,7 @@ app = Starlette(
         Route("/", index),
         Route("/api/overview", api_overview),
         Route("/api/history", api_history),
+        Route("/api/budget", api_budget),
         Route("/api/stream", api_stream),
         Route("/api/runs/{run_id:path}", api_run),
     ]

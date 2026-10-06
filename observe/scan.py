@@ -7,6 +7,7 @@ import os
 import time
 from pathlib import Path
 
+from observe.budget import budget_status, summarize
 from observe.publish import gpu_dir, gpu_events_path, observe_dir
 
 STALE_S = 15.0
@@ -133,6 +134,24 @@ def _when(directory: Path, state: dict | None) -> float:
         return 0.0
 
 
+def _first(*values):
+    return next((value for value in values if value is not None), None)
+
+
+def money_fields(directory: Path, state: dict | None, result: dict | None) -> tuple[object, object]:
+    """(spent USD, budget USD) of a run, from the best source that has them: result.json, state.json, the ledger inside state.json,
+    ledger.json. Older runs lack some of these; a missing value stays ``None``."""
+    ledger = (state or {}).get("ledger") or {}
+    spent = _first((result or {}).get("spent_usd"), (state or {}).get("spent_usd"), ledger.get("total_usd"))
+    budget = _first((result or {}).get("budget_usd"), (state or {}).get("budget_usd"), ledger.get("budget_usd"))
+    if spent is None or budget is None:
+        doc = _load(directory / "ledger.json") or {}
+        summary = doc.get("summary") if isinstance(doc.get("summary"), dict) else doc
+        spent = _first(spent, summary.get("total_usd"))
+        budget = _first(budget, summary.get("budget_usd"))
+    return spent, budget
+
+
 def history() -> list[dict]:
     rows = []
     for directory, state, result in _search_dirs():
@@ -141,9 +160,7 @@ def history() -> list[dict]:
         dtype = (result or state or {}).get("dtype") or ""
         phase = (state or {}).get("phase") or ""
         stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
-        spent = (result or {}).get("spent_usd")
-        if spent is None and state:
-            spent = state.get("spent_usd")
+        spent, budget = money_fields(directory, state, result)
         rows.append({
             "id": _rel(directory),
             "started_at": _when(directory, state),
@@ -153,7 +170,8 @@ def history() -> list[dict]:
             "stop_reason": stop,
             "speedup": _speedup(state, result),
             "spent_usd": spent,
-            "budget_usd": (result or state or {}).get("budget_usd"),
+            "budget_usd": budget,
+            "budget": budget_status(spent, budget, stop, status == "running"),
             "round": (state or {}).get("round"),
             "max_rounds": (state or {}).get("max_rounds"),
             "inflight_label": (state or {}).get("inflight_label"),
@@ -299,6 +317,11 @@ def _heartbeat(progress: dict | None) -> dict | None:
     return {"letter": progress.get("heartbeat"), "age_s": progress.get("heartbeat_age_s"), "stage": progress.get("stage")}
 
 
+def budget_report(rows: list[dict] | None = None) -> dict:
+    """The banner of the page: counts of runs over budget / exhausted / near, who they are, and the total spend."""
+    return summarize(history() if rows is None else rows)
+
+
 def overview() -> dict:
     from tasks import list_tasks
 
@@ -330,9 +353,13 @@ def run_detail(run_id: str) -> dict | None:
     result = _load(directory / "result.json")
     trace = (state or {}).get("trace") or (result or {}).get("trace") or []
     confirmations = (state or {}).get("confirmations") or (result or {}).get("confirmations") or []
+    status = liveness(state, result)
+    spent, budget = money_fields(directory, state, result)
+    stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
     return {
         "id": _rel(directory),
-        "status": liveness(state, result),
+        "status": status,
+        "budget": budget_status(spent, budget, stop, status == "running"),
         "state": state,
         "result": result,
         "trace": trace,
@@ -354,6 +381,7 @@ def frame(run_id: str | None) -> dict:
     return {
         "overview": overview(),
         "history": hist,
+        "budget": budget_report(hist),
         "selected": chosen,
         "run": run_detail(chosen) if chosen else None,
     }
