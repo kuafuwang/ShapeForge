@@ -521,6 +521,46 @@ _MATH_FNS = ("exp", "exp2", "exp10", "log", "log2", "log10", "sin", "cos", "tan"
 _EPI_MATH = {"exp", "exp2", "exp10", "log", "log2", "log10", "tanh", "sin", "cos", "sqrt", "rsqrt", "pow", "erf", "divide", "recip", "sigmoid"}
 
 
+_DEF_RX = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)\(([^)\n]*)\)[ \t]*((?:[^\n\\]|\\[ \t]*\n|\\.)*)", re.M)
+
+
+def expand_macros(code: str, depth: int = 3) -> str:
+    """Expand function-like ``#define`` macros (kernels written with macros keep their MMA / loads inside the macro body)."""
+    macros: dict[str, tuple[list[str], str]] = {}
+
+    def grab(m: re.Match) -> str:
+        params = [p.strip() for p in m.group(2).split(",") if p.strip()]
+        macros[m.group(1)] = (params, re.sub(r"\\[ \t]*\n", " ", m.group(3)))
+        return re.sub(r"[^\n]", " ", m.group(0))
+
+    out = _DEF_RX.sub(grab, code)
+    if not macros:
+        return code
+    pat = re.compile(r"\b(" + "|".join(map(re.escape, macros)) + r")\s*\(")
+    for _ in range(depth):
+        pieces: list[str] = []
+        pos, changed = 0, False
+        while True:
+            m = pat.search(out, pos)
+            if not m:
+                break
+            pc = match_close(out, m.end() - 1, "(", ")")
+            if pc < 0:
+                break
+            params, body = macros[m.group(1)]
+            args = split_top(out[m.end() : pc])
+            if params and len(args) >= len(params):
+                sub = dict(zip(params, args))
+                body = re.sub(r"\b(" + "|".join(map(re.escape, params)) + r")\b", lambda mm: sub[mm.group(1)], body)
+            pieces.append(out[pos : m.start()] + body)
+            pos, changed = pc + 1, True
+        pieces.append(out[pos:])
+        out = "".join(pieces)
+        if not changed:
+            break
+    return out
+
+
 def _num(v: Any) -> int | None:
     return int(v) if isinstance(v, (int, float)) and v == int(v) else None
 
@@ -537,7 +577,7 @@ def _space_of(expr: str, tg_names: set[str], dev_names: set[str]) -> str:
 def analyze_source(source: str, *, consts: dict[str, float] | None = None, kernel_name: str | None = None) -> dict:
     """Source-level evidence (everything the text proves). ``consts`` are the contract constants (BLOCK_M, N, ...)."""
     raw_code = strip_comments_and_strings(source)
-    code = normalize(raw_code)
+    code = expand_macros(normalize(raw_code))
     funcs = parse_functions(code)
     kernels = [f for f in funcs if f.is_kernel]
     kern = next((f for f in kernels if f.name == kernel_name), kernels[0] if kernels else None)
@@ -574,10 +614,10 @@ def analyze_source(source: str, *, consts: dict[str, float] | None = None, kerne
         tg_arrays.append({"name": name, "type": ty, "dims": dims, "sizes": [None if s is None else int(s) for s in sizes], "elems": elems,
                           "bytes": (elems * tb[2]) if (elems is not None and tb) else None})
     tg_names = {a["name"] for a in tg_arrays}
-    tg_ptrs = set(re.findall(r"\bthreadgroup\s+(?:const\s+)?[\w:<>, ]+?\s*\*\s*(?:restrict\s+)?([A-Za-z_]\w*)", scan))
+    tg_ptrs = set(re.findall(r"\bthreadgroup\s+(?:const\s+)?[\w:<>, ]+?\s*\*\s*(?:(?:const|__restrict__|__restrict|restrict)\s+)*([A-Za-z_]\w*)", scan))
     dev_names: set[str] = set()
     typed_ptrs: dict[str, tuple[str, str]] = {}  # name -> (space, element type)
-    for m in re.finditer(r"\b(device|constant|threadgroup)\s+(?:const\s+)?([A-Za-z_][\w:]*)\s*\*\s*(?:const\s+)?(?:restrict\s+)?([A-Za-z_]\w*)", scan):
+    for m in re.finditer(r"\b(device|constant|threadgroup)\s+(?:const\s+)?([A-Za-z_][\w:]*)\s*\*\s*(?:(?:const|__restrict__|__restrict|restrict)\s+)*([A-Za-z_]\w*)", scan):
         sp, ty, nm = m.groups()
         typed_ptrs[nm] = (sp, ty)
         if sp in ("device", "constant"):
@@ -590,11 +630,11 @@ def analyze_source(source: str, *, consts: dict[str, float] | None = None, kerne
     tg_all = tg_names | tg_ptrs
     # pointer aliases of device buffers: `device const half* qb = q + off;`
     for _ in range(2):
-        for m in re.finditer(r"(?:device|constant)\s+(?:const\s+)?[\w:]+\s*\*\s*(?:const\s+)?([A-Za-z_]\w*)\s*=\s*([^;]+);", scan):
+        for m in re.finditer(r"(?:device|constant)\s+(?:const\s+)?[\w:]+\s*\*\s*(?:(?:const|__restrict__|__restrict|restrict)\s+)*([A-Za-z_]\w*)\s*=\s*([^;]+);", scan):
             if set(re.findall(r"[A-Za-z_]\w*", m.group(2))) & dev_names:
                 dev_names.add(m.group(1))
-    in_bufs = [m.group(1) for m in re.finditer(r"device\s+const\s+[\w:]+\s*\*\s*(?:restrict\s+)?([A-Za-z_]\w*)", params)]
-    out_bufs = [m.group(1) for m in re.finditer(r"device\s+(?!const)[\w:]+\s*\*\s*(?:restrict\s+)?([A-Za-z_]\w*)", params)]
+    in_bufs = [m.group(1) for m in re.finditer(r"device\s+const\s+[\w:]+\s*\*\s*(?:(?:__restrict__|__restrict|restrict)\s+)?([A-Za-z_]\w*)", params)]
+    out_bufs = [m.group(1) for m in re.finditer(r"device\s+(?!const)[\w:]+\s*\*\s*(?:(?:__restrict__|__restrict|restrict)\s+)?([A-Za-z_]\w*)", params)]
 
     # ---- matrix unit ---------------------------------------------------------------------------------------------------------------
     mat_decl: dict[str, dict] = {}
@@ -712,7 +752,7 @@ def analyze_source(source: str, *, consts: dict[str, float] | None = None, kerne
 
     def is_store_after(txt: str, j: int) -> bool:
         k = j
-        while k < len(txt) and txt[k].isspace():
+        while k < len(txt) and (txt[k].isspace() or txt[k] == ")"):  # `*(cast<T*>(p)) = v`: the closing parens belong to the deref
             k += 1
         if k < len(txt) and txt[k] == "[":  # cast(...)[i]
             e = match_close(txt, k, "[", "]")
@@ -729,7 +769,12 @@ def analyze_source(source: str, *, consts: dict[str, float] | None = None, kerne
             p = k - 1
             while p >= 0 and txt[p].isspace():
                 p -= 1
-            return p < 0 or not (txt[p].isalnum() or txt[p] in "_)]")
+            if p < 0:
+                return True
+            w = re.search(r"([A-Za-z_]\w*)$", txt[: p + 1])
+            if w and w.group(1) in ("return", "else", "case", "do"):
+                return True
+            return not (txt[p].isalnum() or txt[p] in "_)]")
         return False
 
     def add_site(sp: str, ty: str, kind: str, via: str, pos: int):
@@ -758,11 +803,29 @@ def analyze_source(source: str, *, consts: dict[str, float] | None = None, kerne
         # `*(T*)&x[i]` or `((T*)x)[i]`
         if deref_before(scan, m.start()) or re.match(r"\s*\)\s*\[", scan[k : k + 8]):
             add_site(m.group(1), m.group(2), "store" if is_store_after(scan, k + (scan[k : k + 8].find(")") + 1 if scan[k : k + 8].lstrip().startswith(")") else 0)) else "load", "c-cast", m.start())
-    for nm, (sp, ty) in typed_ptrs.items():
-        for m in re.finditer(rf"(?<![\w.]){re.escape(nm)}\s*\[", scan):
-            e = match_close(scan, m.end() - 1, "[", "]")
-            if e > 0:
-                add_site(sp, ty, "store" if is_store_after(scan, e + 1) else "load", "typed-pointer", m.start())
+    # typed pointers are scoped per function (a helper's `pa` may be a threadgroup pointer while the kernel's `pa` is a device pointer)
+    scopes = ([params + "\n" + kbody] + [helpers[h].params + "\n" + helpers[h].body for h in used_helpers]) if kern else [scan]
+    ptr_rx = re.compile(r"\b(device|constant|threadgroup)\s+(?:const\s+)?([A-Za-z_][\w:]*)\s*\*\s*(?:(?:const|__restrict__|__restrict|restrict)\s+)*([A-Za-z_]\w*)")
+    auto_rx = re.compile(r"\b(?:const\s+)?auto\s+([A-Za-z_]\w*)\s*=\s*reinterpret_cast\s*<\s*(?:const\s+)?(device|constant|threadgroup)\s+(?:const\s+)?([\w:]+)\s*\*\s*>")
+    for sc in scopes:
+        local: dict[str, tuple[str, str]] = {}
+        for m in ptr_rx.finditer(sc):
+            local[m.group(3)] = (m.group(1), m.group(2))
+        for m in auto_rx.finditer(sc):
+            local[m.group(1)] = (m.group(2), m.group(3))
+        for nm, (sp, ty) in local.items():
+            for m in re.finditer(rf"(?<![\w.]){re.escape(nm)}\s*\[(?!\[)", sc):  # `x[i]`, not the attribute `x [[buffer(0)]]`
+                e = match_close(sc, m.end() - 1, "[", "]")
+                if e > 0:
+                    add_site(sp, ty, "store" if is_store_after(sc, e + 1) else "load", "typed-pointer", m.start())
+            for m in re.finditer(rf"(?<![\w.]){re.escape(nm)}\b(?!\s*\[(?!\[))", sc):
+                if deref_before(sc, m.start()):  # `*p`, `*(p + i)`, `x = *p++`
+                    add_site(sp, ty, "store" if is_store_after(sc, m.end()) else "load", "typed-pointer-deref", m.start())
+    for m in re.finditer(r"__builtin_nontemporal_(store|load)\s*\(", scan):  # streaming accesses through the builtin
+        pc = match_close(scan, m.end() - 1, "(", ")")
+        cm = re.search(r"(device|threadgroup)\s+(?:const\s+)?([\w:]+)\s*\*", scan[m.end() : pc])
+        if cm:
+            add_site(cm.group(1), cm.group(2), m.group(1), "nontemporal", m.start())
     ev["memory"] = _summarize_sites(sites)
 
     # input read passes (static) ------------------------------------------------------------------------------------------------
@@ -789,7 +852,9 @@ def analyze_source(source: str, *, consts: dict[str, float] | None = None, kerne
     loaded_at: dict[str, int] = {}
     tg_store_uses: list[tuple[int, set[str]]] = []
     mma_pos = [m.start() for m in re.finditer(r"\bsimdgroup_multiply(?:_accumulate)?\s*\(", expanded)]
-    dev_rx = re.compile(r"reinterpret_cast\s*<\s*(?:const\s+)?device|\(\s*(?:const\s+)?device\s+[\w:]+\s*\*\s*\)|\b(?:" + "|".join(map(re.escape, sorted(dev_names))) + r")\b\s*(?:\[|\+)" if dev_names else r"(?!x)x")
+    dev_core = r"reinterpret_cast\s*<\s*(?:const\s+)?device|\(\s*(?:const\s+)?device\s+[\w:]+\s*\*\s*\)|\b(?:" + "|".join(map(re.escape, sorted(dev_names))) + r")\b\s*(?:\[|\+)" if dev_names else r"reinterpret_cast\s*<\s*(?:const\s+)?device|\(\s*(?:const\s+)?device\s+[\w:]+\s*\*\s*\)"
+    dev_helpers = [h for h in used_helpers if re.search(dev_core, helpers[h].body)] if kern else []
+    dev_rx = re.compile(dev_core + (r"|\b(?:" + "|".join(map(re.escape, dev_helpers)) + r")\s*\(" if dev_helpers else ""))
     tg_store_rx = re.compile(r"^\s*\*\s*\(?\s*reinterpret_cast\s*<\s*(?:const\s+)?threadgroup\b|^\s*\*?\s*\(\s*(?:const\s+)?threadgroup\b")
     for pos, st in stmts:
         eq = _assign_split(st)
@@ -844,7 +909,7 @@ def analyze_source(source: str, *, consts: dict[str, float] | None = None, kerne
         for d in a["dims"]:
             if re.search(r"\(\s*\w+\s*\+\s*\d{1,2}u?\s*\)|\*\s*\w+\s*\+\s*\d{1,2}u?\s*$", d.strip()):
                 pad_ev.append(f"{a['name']}[{d.strip()}]")
-    parity_arith = bool(re.search(r"\bswap\s*\(|\^\s*=?\s*1u?\b|\(\s*\w+\s*&\s*1u?\s*\)\s*(?:\?|\*|==|!=)|\b\w+\s*&\s*1u?\s*(?:\?|==|!=)|%\s*2u?\b|\b(?:stage|phase|parity|cur|curr|nxt|buf_idx)\w*\b", scan))
+    parity_arith = bool(re.search(r"\bswap\s*\(|\^\s*=?\s*1u?\b|\(\s*\w+\s*&\s*1u?\s*\)\s*(?:\?|\*|==|!=)|\b\w+\s*&\s*1u?\s*(?:\?|==|!=|\])|%\s*2u?\b|\b(?:stage|phase|parity|cur|curr|nxt|buf_idx)\w*\b", scan))
     parity_idx = parity_arith
     stem = lambda n: re.sub(r"_?(?:0|1|a|b|A|B|ping|pong)$", "", n)  # noqa: E731
     sibling = []
@@ -967,7 +1032,7 @@ def _summarize_sites(sites: list[dict]) -> dict:
 # ======================================================================================================================================
 
 _TOOLCHAIN: dict[str, Any] = {}
-PARSER_VERSION = 3  # bump when parse_air changes: it is part of the compile-cache key
+PARSER_VERSION = 7  # bump when parse_air changes: it is part of the compile-cache key
 
 
 def metal_toolchain() -> str | None:
@@ -991,13 +1056,22 @@ def _ll_type_bytes(ty: str) -> int:
     return _LL_BYTES.get(ty.strip(), 0)
 
 
+def _ll_size(ty: str) -> int:
+    """Byte size of an LLVM type such as ``[64 x [80 x half]]``, ``<4 x i32>`` or ``float``."""
+    ty = ty.strip()
+    m = re.match(r"\[(\d+) x (.+)\]$", ty)
+    if m:
+        return int(m.group(1)) * _ll_size(m.group(2))
+    return _ll_type_bytes(ty)
+
+
 def parse_air(text: str) -> dict:
     """Facts from the AIR (LLVM IR) text of one compiled kernel."""
     calls = re.findall(r"\bcall\b[^\n@]*@(air\.[\w.]+)\(", text)
     intr: dict[str, int] = {}
     for c in calls:
         intr[c] = intr.get(c, 0) + 1
-    mat = {"multiply_accumulate": 0, "multiply": 0, "load": 0, "store": 0, "init": 0, "acc_types": set(), "operand_types": set(), "load_spaces": set()}
+    mat = {"multiply_accumulate": 0, "multiply": 0, "load": 0, "store": 0, "init": 0, "init_f32": 0, "acc_types": set(), "operand_types": set(), "load_spaces": set()}
     simd: dict[str, int] = {}
     math_fns: dict[str, int] = {}
     barrier_flags: list[int] = []
@@ -1007,6 +1081,8 @@ def parse_air(text: str) -> dict:
             op, suffix = m.groups()
             key = "init" if op.startswith("init") else op
             mat[key] += n
+            if key == "init" and suffix.startswith("v64f32"):
+                mat["init_f32"] += n
             parts = suffix.split(".")
             if op == "multiply_accumulate" and len(parts) >= 4:
                 mat["acc_types"].add(parts[0].lstrip("v0123456789"))
@@ -1037,13 +1113,8 @@ def parse_air(text: str) -> dict:
         return {str(b): n for (s, b), n in sorted(d.items()) if s in space and b}
 
     tg_globals = []
-    for m in re.finditer(r"@(\S+) = (?:internal )?(?:unnamed_addr )?addrspace\(3\) global (\[(\d+) x ([^\]]+)\]|<\d+ x \w+>|\w+)", text):
-        arr = re.fullmatch(r"\[(\d+) x (.+)\]", m.group(2))
-        nbytes = 0
-        if arr:
-            nbytes = int(arr.group(1)) * (_ll_type_bytes(arr.group(2)) or 0)
-        else:
-            nbytes = _ll_type_bytes(m.group(2))
+    for m in re.finditer(r"^@(\S+) = [^\n]*?addrspace\(3\) global (.+?)(?: undef| zeroinitializer| poison)?(?:,[^\n]*)?$", text, re.M):
+        nbytes = _ll_size(m.group(2).strip())
         tg_globals.append({"name": m.group(1).split("E", 1)[-1][-24:], "bytes": nbytes})
     inner_of = dict(re.findall(r'^(%"struct\.metal::simdgroup_matrix(?:\.\d+)?") = type \{ (%"struct\.metal::_simdgroup_matrix(?:\.\d+)?") \}', text, re.M))
     elem_of = dict(re.findall(r'^(%"struct\.metal::_simdgroup_matrix(?:\.\d+)?") = type \{ <64 x (\w+)> \}', text, re.M))
@@ -1137,11 +1208,31 @@ FEATURES: dict[str, dict] = {
     "tensor_api": {"title": "Metal 4 tensor / cooperative-tensor API", "paper": "P3 (Blackwell tensor memory + descriptor MMA) - nearest Apple analogue", "family": "compute"},
 }
 
+# paper feature (docs/hardware_features.md table 1) -> detector features that implement its Apple analogue (any of them present counts)
+PAPER_TO_DETECTOR: dict[str, tuple[str, tuple[str, ...]]] = {
+    "P1": ("Tensor Core MMA (mma.sync / ldmatrix)", ("matrix_unit",)),
+    "P2": ("larger MMA tiles per instruction group (WGMMA m64n256)", ("register_blocking",)),
+    "P3": ("tcgen05 + tensor memory, descriptor MMA", ("tensor_api",)),
+    "P4": ("decode directly into MMA operands", ("operand_in_registers",)),
+    "P5": ("shared-memory swizzle (bank conflicts)", ("tg_padding",)),
+    "P6": ("shared-memory staging", ("tg_staging",)),
+    "P7": ("double buffering / multi-stage pipeline", ("double_buffering",)),
+    "P8": ("cp.async / TMA copy-compute overlap", ("register_prefetch", "async_copy")),
+    "P9": ("warp shuffles and reductions", ("simd_reduce", "simd_shuffle")),
+    "P10": ("packed / vectorized accesses", ("vector_access",)),
+    "P11": ("softmax kept in registers (online)", ("online_softmax",)),
+    "P12": ("epilogue / layout conversion on registers", ("epilogue_on_fragments",)),
+    "P13": ("thread mapping per warp", ("simdgroup_tiling",)),
+    "P14": ("funnel shift / byte permute / lop3 / packed formats", ("bit_packing",)),
+    "P15": ("fewer synchronization points", ("few_barriers",)),
+    "P16": ("target-specific math (tanh, exp2)", ("fast_math",)),
+}
+
 # Expected features per task: "required" (an optimal kernel has it), "recommended" (the paper / the repo's skills say it pays), absent = not applicable.
 _ELEMENTWISE = {"vector_access": "required", "single_pass": "required"}
 _ROWWISE = {"vector_access": "required", "single_pass": "required", "simd_reduce": "required", "few_barriers": "recommended"}
 _GEMMLIKE = {"matrix_unit": "required", "float_accumulate": "required", "register_blocking": "required", "tg_staging": "required", "vector_access": "recommended",
-             "tg_padding": "recommended", "pipelining": "recommended", "unroll": "recommended"}
+             "tg_padding": "recommended", "pipelining": "recommended"}
 EXPECTED: dict[str, dict[str, str]] = {
     "sigmoid": {**_ELEMENTWISE, "fast_math": "recommended"},
     "relu": dict(_ELEMENTWISE),
@@ -1156,9 +1247,9 @@ EXPECTED: dict[str, dict[str, str]] = {
     "gemm": dict(_GEMMLIKE),
     "gemm_silu": {**_GEMMLIKE, "epilogue_on_fragments": "required", "fast_math": "recommended"},
     "conv2d": {**_GEMMLIKE, "vector_access": "required"},
-    "flash_attention": {**_GEMMLIKE, "online_softmax": "required", "simd_shuffle": "recommended", "operand_in_registers": "recommended", "few_barriers": "recommended", "fast_math": "recommended", "tg_padding": "recommended"},
+    "flash_attention": {**_GEMMLIKE, "tg_staging": "recommended", "online_softmax": "required", "simd_shuffle": "recommended", "operand_in_registers": "recommended", "few_barriers": "recommended", "fast_math": "recommended"},
     "bitdelta_gemm": {**_GEMMLIKE, "bit_packing": "required", "operand_in_registers": "recommended"},
-    "mamba2_chunk_scan": {**{k: v for k, v in _GEMMLIKE.items() if k not in ("tg_padding",)}, "matrix_unit": "recommended", "float_accumulate": "recommended", "register_blocking": "recommended", "tg_staging": "required",
+    "mamba2_chunk_scan": {**{k: v for k, v in _GEMMLIKE.items() if k not in ("tg_padding",)}, "matrix_unit": "recommended", "float_accumulate": "recommended", "register_blocking": "recommended", "tg_staging": "recommended",
                           "fast_math": "recommended"},
 }
 TASK_FAMILY = {**{t: "elementwise" for t in ("sigmoid", "relu", "silu", "swiglu", "lion", "rope")}, **{t: "rowwise" for t in ("rmsnorm", "softmax", "reduction_sum", "gemv")},
@@ -1190,7 +1281,7 @@ def detect_features(src: dict, comp: dict | None, pipeline: dict | None = None) 
     facc = bool(mat["present"] and mat["acc_types"] and all(t == "float" for t in mat["acc_types"]))
     put("float_accumulate", facc, ("f32" in (cm or {}).get("acc_types", [])) if ok and mat["present"] else None, f"accumulator types {mat['acc_types']}" if mat["present"] else "no matrix unit")
     tiles = mat["acc_tiles"] or 0
-    ctiles = (comp or {}).get("fragment_tiles_f32", 0) if ok else None
+    ctiles = max((comp or {}).get("fragment_tiles_f32", 0), cm.get("init_f32", 0)) if ok else None
     put("register_blocking", mat["present"] and tiles >= 4, (ctiles >= 4) if ok and mat["present"] else None, f"{tiles} accumulator fragment(s) ({mat['acc_dims']})" + (f"; AIR f32 fragment arrays: {ctiles}" if ok else ""))
     put("simdgroup_tiling", simd["simdgroup_index_used"], None, "simdgroup_index_in_threadgroup used" if simd["simdgroup_index_used"] else "no per-SIMD-group index")
     put("tg_staging", tg["staging"], (comp["tg_global_bytes"] >= 512) if ok else None, f"{tg['declared_bytes']} B declared in {len(tg['arrays'])} array(s); tiles: {tg['tile_arrays']}" + (f"; AIR threadgroup globals {comp['tg_global_bytes']} B" if ok else ""))
@@ -1220,10 +1311,10 @@ def detect_features(src: dict, comp: dict | None, pipeline: dict | None = None) 
     put("single_pass", sp, None, f"static read passes per input: {passes}")
     sy = src["sync"]
     nb = sy["main_loop_barrier_sites"] if sy["main_loop_barrier_sites"] is not None else sy["threadgroup_barrier_sites"]
-    put("few_barriers", nb <= 2, (comp["barriers"]["workgroup"] <= 4) if ok else None, f"{sy['threadgroup_barrier_sites']} barrier site(s), {nb} in the main loop / kernel" + (f"; AIR {comp['barriers']['workgroup']}" if ok else ""))
+    put("few_barriers", nb <= 2, None, f"{sy['threadgroup_barrier_sites']} barrier site(s), {nb} in the main loop / kernel" + (f"; AIR {comp['barriers']['workgroup']}" if ok else ""))
     put("unroll", src["unroll"]["pragmas"] > 0, None, f"{src['unroll']['pragmas']} unroll pragma(s) over {src['unroll']['loops']} loop(s)")
     m = src["math"]
-    fast_air = bool(ok and comp["math"] and any(k.startswith("fast_") for k in comp["math"]))
+    fast_air = bool(ok and comp["math"] and any(k.startswith("fast_") or k.startswith("exp2") for k in comp["math"]))
     put("fast_math", bool(m["fast_namespace"]) or m["exp2_with_log2e_fold"] or fast_air, fast_air if ok else None, f"{m['fast_namespace'] or ''} exp2+log2e fold: {m['exp2_with_log2e_fold']}; AIR intrinsics {sorted((comp or {}).get('math', {}))}" if ok else f"{m['fast_namespace']} exp2+log2e fold: {m['exp2_with_log2e_fold']}")
     put("tensor_api", mat["tensor_api"], None, "metal_tensor / cooperative_tensor / matmul2d referenced" if mat["tensor_api"] else "none")
     return out
@@ -1741,6 +1832,10 @@ def discovery_table(items: list[tuple[KernelRef, HardwareFeatureReport]], runs: 
     return out
 
 
+def width_txt(n: int | None) -> str:
+    return f"{n} B" if n and n >= 4 else "scalar"
+
+
 def cell(x: Any) -> str:
     return str(x).replace("|", "\\|").replace("\n", " ")
 
@@ -1751,6 +1846,38 @@ def fmt(x: Any, nd: int = 2) -> str:
     if isinstance(x, float):
         return f"{x:.{nd}f}"
     return str(x)
+
+
+def agreement_table(items: list[tuple[KernelRef, HardwareFeatureReport]]) -> list[dict]:
+    """Source evidence vs compiled (AIR) evidence over every kernel that compiled: the detector's own consistency check."""
+    checks: dict[str, dict] = {k: {"n": 0, "agree": 0, "disagree": []} for k in ("matrix unit present", "float accumulators", "device load width (max bytes)", "device store width (max bytes)",
+                                                                                   "SIMD reductions present", "SIMD shuffles present", "threadgroup bytes (declared == AIR globals)", "accumulator fragment count (informational)")}
+
+    def rec(name: str, kid: str, a: Any, b: Any):
+        c = checks[name]
+        c["n"] += 1
+        if a == b:
+            c["agree"] += 1
+        elif len(c["disagree"]) < 4:
+            c["disagree"].append(f"{kid}: source {a} vs AIR {b}")
+
+    for r, h in items:
+        c = h.compiled
+        if not c or not c.get("ok"):
+            continue
+        s, cm = h.source, c["matrix"]
+        rec("matrix unit present", r.kid, s["matrix"]["present"], cm["multiply_accumulate"] + cm["multiply"] > 0)
+        if s["matrix"]["present"] or cm["multiply_accumulate"]:
+            rec("float accumulators", r.kid, s["matrix"]["acc_types"] == ["float"], cm["acc_types"] == ["f32"])
+            rec("accumulator fragment count (informational)", r.kid, s["matrix"]["acc_tiles"], max(c["fragment_tiles_f32"], cm.get("init_f32", 0)))
+        rec("device load width (max bytes)", r.kid, s["memory"]["device_load"]["max_bytes"], max((int(b) for b in c["device_load_bytes"]), default=0))
+        if not (s["memory"]["device_store"]["max_bytes"] == 0 and "device" in s["matrix"]["store_to"]):
+            rec("device store width (max bytes)", r.kid, s["memory"]["device_store"]["max_bytes"], max((int(b) for b in c["device_store_bytes"]), default=0))
+        rec("SIMD reductions present", r.kid, bool(s["simd"]["reduce"]), any(k.split("_", 1)[-1] in _SIMD_REDUCE or k.startswith("simd_prefix") for k in c["simd"]))
+        rec("SIMD shuffles present", r.kid, bool(s["simd"]["shuffle"]), any("shuffle" in k or "broadcast" in k for k in c["simd"]))
+        if s["threadgroup"]["declared_bytes"] or c["tg_global_bytes"]:
+            rec("threadgroup bytes (declared == AIR globals)", r.kid, s["threadgroup"]["declared_bytes"], c["tg_global_bytes"])
+    return [{"check": k, **v} for k, v in checks.items()]
 
 
 def render_report(items: list[tuple[KernelRef, HardwareFeatureReport]], runs: dict[str, dict], out: Path, *, compiled: bool, generated: str) -> str:
@@ -1772,19 +1899,34 @@ def render_report(items: list[tuple[KernelRef, HardwareFeatureReport]], runs: di
         f = h.features
         m = h.measured or {}
         L.append(f"| {r.label} | {'yes' if f['matrix_unit']['source'] else 'NO'} / {'yes' if f['matrix_unit']['compiled'] else ('NO' if f['matrix_unit']['compiled'] is False else '-')} | {h.source['matrix']['acc_tiles']} | {','.join(h.source['matrix']['acc_types'])} | "
-                 f"{'yes' if f['tg_staging']['present'] else 'no'} | {'yes' if f['tg_padding']['present'] else 'no'} | {h.source['memory']['device_load']['max_bytes']}/{h.source['memory']['device_store']['max_bytes']} B | {fmt(m.get('candidate_us'), 1)} | {fmt(m.get('achieved_tflops'), 1)} |")
+                 f"{'yes' if f['tg_staging']['present'] else 'no'} | {'yes' if f['tg_padding']['present'] else 'no'} | {width_txt(h.source['memory']['device_load']['max_bytes'])} / {width_txt(h.source['memory']['device_store']['max_bytes'])} | {fmt(m.get('candidate_us'), 1)} | {fmt(m.get('achieved_tflops'), 1)} |")
     n_ok = sum(1 for _, h in refs_ if h.features["matrix_unit"]["present"])
     L += ["", f"**{n_ok} of {len(refs_)} reference GEMMs are detected as matrix-unit users** (expected: all).", ""]
+    small = [(h.measured or {}).get("candidate_us") for _, h in refs_ if (h.source["matrix"]["acc_tiles"] or 0) <= 16 and (h.measured or {}).get("candidate_us")]
+    big = [(h.measured or {}).get("candidate_us") for _, h in refs_ if (h.source["matrix"]["acc_tiles"] or 0) >= 32 and (h.measured or {}).get("candidate_us")]
+    if small and big:
+        L += [f"Register blocking is detected correctly but is not monotone: the contracts with <= 16 accumulator fragments per SIMD group take {fmt(min(small), 0)}-{fmt(max(small), 0)} us (median {fmt(statistics.median(small), 0)}), "
+              f"those with >= 32 fragments {fmt(min(big), 0)}-{fmt(max(big), 0)} us (median {fmt(statistics.median(big), 0)}): too many live accumulators spill (see `tcenv.cli profile`), so *present* does not mean *effective*.", ""]
     L += ["### 1b. Naive kernels (`tasks/*/naive.metal`) must not claim a matrix unit unless they use one", "", "| task | matrix unit | vector ld/st | simd ops | staging | unroll | note |", "| --- | --- | --- | --- | --- | --- | --- |"]
     for r, h in by_kind("naive"):
-        L.append(f"| {r.label} | {'yes' if h.features['matrix_unit']['present'] else 'no'} | {h.source['memory']['device_load']['max_bytes'] or 'scalar'}/{h.source['memory']['device_store']['max_bytes'] or 'scalar'} | {','.join(sorted(k.replace('simd_', '') for k in h.source['simd']['ops'])) or '-'} | "
+        L.append(f"| {r.label} | {'yes' if h.features['matrix_unit']['present'] else 'no'} | {width_txt(h.source['memory']['device_load']['max_bytes'])} / {width_txt(h.source['memory']['device_store']['max_bytes'])} | {','.join(sorted(k.replace('simd_', '') for k in h.source['simd']['ops'])) or '-'} | "
                  f"{'yes' if h.features['tg_staging']['present'] else 'no'} | {'yes' if h.features['unroll']['present'] else 'no'} | {h.compiled.get('error', '')[:60] if h.compiled and not h.compiled.get('ok') else ''} |")
     L += [""]
-    L += ["### 1c. Negative cases (a feature named only in a comment or a string must not count)", "", "| case | features detected (must be none of matrix / simd / staging / unroll / vector) |", "| --- | --- |"]
+    L += ["### 1c. Negative cases (a feature named only in a comment or a string must not count)", "", "`single_pass` and `few_barriers` hold trivially for a one-line kernel and are not counted as claims.", "", "| case | features claimed | verdict |", "| --- | --- | --- |"]
     for r, h in by_kind("synthetic"):
-        pres = [fid for fid, f in h.features.items() if f["present"]]
-        L.append(f"| {r.label} | {', '.join(pres) or 'none'} |")
+        pres = [fid for fid, f in h.features.items() if f["present"] and fid not in ("single_pass", "few_barriers")]
+        L.append(f"| {r.label} | {', '.join(pres) or 'none'} | {'PASS' if not pres else 'FAIL'} |")
     L += [""]
+    agree = agreement_table(items)
+    if any(a["n"] for a in agree):
+        ncomp = sum(1 for _, h in items if h.compiled and h.compiled.get("ok"))
+        nfail = sum(1 for _, h in items if h.compiled and not h.compiled.get("ok") and not h.compiled.get("skipped"))
+        L += [f"### 1d. Source evidence vs compiled evidence (consistency of the two levels over the {ncomp} kernels that compiled; {nfail} failed to compile, which the harness also reported as `compile_error`)", "",
+              "The fragment count row is informational: the AIR also counts score / scratch fragments and drops arrays the optimizer promoted to SSA values, so equality is not expected.", "",
+              "| check | kernels | agree | disagree | first disagreements |", "| --- | ---: | ---: | ---: | --- |"]
+        for a in agree:
+            L.append(f"| {a['check']} | {a['n']} | {a['agree']} | {a['n'] - a['agree']} | {cell('; '.join(a['disagree'])) or '-'} |")
+        L += [""]
 
     # --- best kernels -----------------------------------------------------------------------------------------------------------------
     L += ["## 2. Best kernel of every run: which hardware features it uses", "",
@@ -1799,15 +1941,15 @@ def render_report(items: list[tuple[KernelRef, HardwareFeatureReport]], runs: di
     L += ["## 3. Measured vs the no-feature ceiling (best kernels)", "",
           "Ceiling = what the same task reaches with the *naive scalar kernel* under the same protocol (fallback: 0.37 x the matrix peak for compute-bound tasks, 0.87 x the bandwidth peak for memory-bound ones). "
           "`above` = at least 1.10x the ceiling (compute) / 1.02x (memory). Primary feature of a family: matrix unit (compute), vector accesses and SIMD reductions (memory); every other feature is judged with the same test and is *joint* (ablation needed).", "",
-          "| run | task | best | achieved | ceiling | ratio | result | peak fraction | pipeline max threads | TG bytes |", "| --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: |"]
+          "| run | task | best | achieved | ceiling (basis) | ratio | result | peak fraction | pipeline max threads | TG bytes |", "| --- | --- | --- | ---: | --- | ---: | --- | ---: | ---: | ---: |"]
     for b in sorted([x for x in best if not (x["task"] or "").startswith("sem_")], key=lambda b: (b["task"] or "", b["run"])):
         p = b["perf"]
         frac = b["measured"].get("compute_fraction") if p.get("kind") == "compute" else b["measured"].get("bandwidth_fraction")
-        L.append(f"| {b['run']} | {b['task']} | {b['label']} | {fmt(p.get('achieved'))} {p.get('unit', '')} | {fmt(p.get('ceiling'))} | {fmt(p.get('ratio'))} | {p['result']} | {fmt(frac)} | {b['measured'].get('max_total_threads') or '-'} | {b['measured'].get('static_threadgroup_bytes') or '-'} |")
+        L.append(f"| {b['run']} | {b['task']} | {b['label']} | {fmt(p.get('achieved'))} {p.get('unit', '')} | {fmt(p.get('ceiling'))} ({'naive kernel' if 'naive' in (p.get('ceiling_basis') or '') else 'fallback'}) | {fmt(p.get('ratio'))} | {p['result']} | {fmt(frac)} | {b['measured'].get('max_total_threads') or '-'} | {b['measured'].get('static_threadgroup_bytes') or '-'} |")
     L += [""]
 
     # --- per-feature verdict matrix ------------------------------------------------------------------------------------------------------
-    L += ["## 4. Per-feature verdicts of the best kernels", "", "`+` used and effective, `~` present but not effective, `-` expected but missing, `.` not applicable / not expected, `?` present but not measured or effect unknown. Lower-case in the legend of `docs/hardware_features.md`.", ""]
+    L += ["## 4. Per-feature verdicts of the best kernels", "", "`+` used and effective, `~` present but not effective, `-` expected but missing, `.` not applicable / not expected, `?` present but not measured or effect unknown.", ""]
     cols = [f for f in FEATURES if f not in ("async_copy", "tensor_api")]
     L += ["| run | task | " + " | ".join(c.replace("_", " ") for c in cols) + " |", "| --- | --- | " + " | ".join("---" for _ in cols) + " |"]
     sym = {"used and effective": "+", "present but not effective": "~", "expected but missing": "-", "not applicable": ".", "present, not expected": "+*", "present, not measured": "?", "present, effect unknown": "?"}
@@ -1817,8 +1959,25 @@ def render_report(items: list[tuple[KernelRef, HardwareFeatureReport]], runs: di
         L.append(f"| {b['run']} | {b['task']} | " + " | ".join(sym.get(h.features[c]["verdict"], "?") for c in cols) + " |")
     L += ["", "`+*` = present although the task does not list the feature as expected (counts as effective when the kernel beats its ceiling).", ""]
 
+    # --- paper feature scoreboard -----------------------------------------------------------------------------------------------------------
+    comp_tasks = {"gemm", "gemm_silu", "conv2d", "flash_attention", "bitdelta_gemm", "mamba2_chunk_scan"}
+    cb = sorted([b for b in best if base_task(b["task"]) in comp_tasks], key=lambda b: (base_task(b["task"]), b["run"]))
+    if cb:
+        short = lambda b: re.sub(r"^repeat_[\w-]+/", "rep/", re.sub(r"^pilot_suite_mini_old_protocol/", "pilot/", re.sub(r"^suite_full/", "suite/", re.sub(r"^p1/", "", b["run"]))))  # noqa: E731
+        L += ["## 5. Which of the paper's hardware features appear in the best kernels (compute-bound runs)", "",
+              "Paper features P1-P16 as listed in `docs/hardware_features.md` table 1, through their Apple analogue (detector feature in the last column). `X` = the run's best kernel has it (source level, and AIR where the compiler can confirm it), `.` = absent. "
+              "P17 (input reuse across overlapping windows) is not detectable from text and is not scored; P3 has no analogue on M4 Max (the Metal 4 tensor API is refused by the harness's include screen).", "",
+              "| paper feature | " + " | ".join(f"{short(b)}{'*' if b['partial'] else ''}" for b in cb) + " | detector feature(s) |", "| --- | " + " | ".join("---" for _ in cb) + " | --- |"]
+        for pid, (title, fids) in PAPER_TO_DETECTOR.items():
+            cells = []
+            for b in cb:
+                h = hmap[b["kid"]]
+                cells.append("X" if any(h.features[f]["present"] for f in fids) else ".")
+            L.append(f"| {pid} {title} | " + " | ".join(cells) + f" | {', '.join(fids)} |")
+        L += ["", "Columns: " + "; ".join(f"`{short(b)}` = {b['run']} ({b['task']}, best {b['label']})" for b in cb) + ". `*` = partial run.", ""]
+
     # --- headline findings -------------------------------------------------------------------------------------------------------------
-    L += ["## 5. Headline findings", ""]
+    L += ["## 5b. Headline findings", ""]
     L += _headline(best, hmap, items)
 
     # --- win rates ------------------------------------------------------------------------------------------------------------------------
@@ -1830,16 +1989,33 @@ def render_report(items: list[tuple[KernelRef, HardwareFeatureReport]], runs: di
              ["vector_access", "simd_reduce", "simd_shuffle", "single_pass", "few_barriers", "fast_math", "unroll"]))
     L += ["## 6. Does the LLM find the features, and do accepted wins contain them?", "",
           "`win` = the candidate became the new best of its run when it was evaluated; `correct` = it passed every gate (status ok). Counts are over every candidate of runs that have a trace on disk (semantic tasks excluded; partial runs included). "
-          "`n < 10` is marked `~` (anecdotal). A feature that (almost) every candidate has cannot discriminate wins from non-wins: read the `without` column's n before the rate.", ""]
-    for fam, tasks, keys in fams:
-        sub = [(r, h) for r, h in items if base_task(r.task) in tasks]
+          "`~` marks n < 10 (anecdotal): fewer than 10 accepted wins in the first column, fewer than 10 candidates in a win-rate column. A feature that (almost) every candidate has cannot discriminate wins from non-wins: read the `without` n before any rate.", ""]
+    def wr_rows(sub, keys):
         t = winrate_table(sub, keys)
-        L += [f"### {fam}", "", "| feature | with: n / correct / wins | win rate | without: n / correct / wins | win rate | median speedup (ok) with / without |", "| --- | --- | ---: | --- | ---: | --- |"]
+        rows = []
+        pct = lambda k, n: f"{k} / {n} ({100 * k / n:.0f}%)" if n else "-"  # noqa: E731
         for fid, d in t.items():
             w, wo = d["with"], d["without"]
-            mark = lambda x: "~" if x["n"] < 10 else ""  # noqa: E731
-            L.append(f"| {fid} | {w['n']}{mark(w)} / {w['correct']} / {w['wins']} | {fmt(100 * w['win_rate'], 0) + '%' if w['win_rate'] is not None else '-'} | {wo['n']}{mark(wo)} / {wo['correct']} / {wo['wins']} | {fmt(100 * wo['win_rate'], 0) + '%' if wo['win_rate'] is not None else '-'} | {fmt(w['median_speedup_ok'])} / {fmt(wo['median_speedup_ok'])} |")
-        L += ["", f"**First correct candidate vs best candidate, per run** ({fam.split(' (')[0]})", "", "| feature | runs | in the first correct candidate | in the best | gained during the search | lost |", "| --- | ---: | ---: | ---: | ---: | ---: |"]
+            n_w, n_o = w["wins"] + wo["wins"], (w["n"] - w["wins"]) + (wo["n"] - wo["wins"])
+            tag = "~" if n_w < 10 else ""
+            rate = lambda x: (fmt(100 * x["win_rate"], 0) + "%" + ("~" if x["n"] < 10 else "")) if x["win_rate"] is not None else "-"  # noqa: E731
+            rows.append(f"| {fid} | {pct(w['wins'], n_w)}{tag} | {pct(w['n'] - w['wins'], n_o)} | {w['n']} / {w['correct']} / {w['wins']} | {rate(w)} | {wo['n']} / {wo['correct']} / {wo['wins']} | {rate(wo)} | {fmt(w['median_speedup_ok'])} / {fmt(wo['median_speedup_ok'])} |")
+        return rows
+
+    head = ["| feature | accepted wins that have it | rejected / non-winning candidates that have it | with: n / correct / wins | win rate with | without: n / correct / wins | win rate without | median speedup (ok) with / without |", "| --- | --- | --- | --- | ---: | --- | ---: | --- |"]
+    for fam, tasks, keys in fams:
+        L += [f"### {fam}", ""]
+        if tasks is compute_tasks:
+            L += ["Compute-bound tasks differ by a factor of 2 in speedup (GEMM ~0.95, FlashAttention ~0.4-0.7), so win rates and median speedups are given **per task**; pooling would credit a feature with its task's speed.", ""]
+            for tk in ("gemm", "flash_attention", "conv2d", "mamba2_chunk_scan"):
+                sub = [(r, h) for r, h in items if base_task(r.task) == tk]
+                nn = sum(1 for r, h in sub if r.kind in ("candidate", "best") and r.trace)
+                if nn:
+                    L += [f"**{tk}** ({nn} candidates with a trace)", ""] + head + wr_rows(sub, keys) + [""]
+        else:
+            sub = [(r, h) for r, h in items if base_task(r.task) in tasks]
+            L += ["All memory-bound tasks sit at 0.95-1.05x of the baseline, so pooling them does not mix scales.", ""] + head + wr_rows(sub, keys) + [""]
+        L += [f"**First correct candidate vs best candidate, per run** ({fam.split(' (')[0]})", "", "| feature | runs | in the first correct candidate | in the best | gained during the search | lost |", "| --- | ---: | ---: | ---: | ---: | ---: |"]
         for fid, d in discovery_table(items, runs, keys, tasks).items():
             L.append(f"| {fid} | {d['runs']}{'~' if d['runs'] < 10 else ''} | {d['first']} | {d['best']} | {d['gained']} | {d['lost']} |")
         L += [""]
