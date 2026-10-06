@@ -226,3 +226,12 @@ def test_aclose_closes_the_http_client_and_tolerates_clients_without_close():
         c = cfg()
         run(LLM(c, CostLedger(c), client=client).aclose())  # never raises
     assert closed == ["async", "sync"]
+
+
+def test_paper_preset_has_the_paper_budget_and_a_longer_patience_while_base_is_untouched():
+    from taic.llm import load_config
+
+    _, paper = load_config(preset="paper")
+    _, base = load_config(preset="base")
+    assert paper.budget_usd == 15.0 and paper.max_rounds == 100 and paper.patience == 12
+    assert base.patience == 4 and base.budget_usd != 15.0  # taic.toml alone, which the running experiments keep reading

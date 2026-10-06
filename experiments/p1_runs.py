@@ -6,7 +6,7 @@
   contract limited the search, one of these would beat ``fa_flash``;
 * ``fa_flash_prof``  ``fa_flash`` with ``search.profile_poor``: does feeding Instruments findings (register spills, code size, GPU idle) to the model help?
 * ``fa_flash_cnt``  ``fa_flash_prof`` recorded with a GPU-counter template (limiters, occupancy, ...) and with the profiler skill in the system prompt: do the counters add anything?
-* ``fa_paper`` / ``gemm_paper`` / ``conv2d_paper``  the paper's regime: 15 USD per run, patience 8, up to 40 rounds, with ``profile_poor``, ``plan_mix`` and
+* ``fa_paper`` / ``gemm_paper`` / ``conv2d_paper``  the paper's regime: 15 USD per run, patience 12, up to 40 rounds, with ``profile_poor``, ``plan_mix`` and
   ``init_samples=3`` (Section 3.3); compare with the same kernels at the default search settings to see what the search aids buy (the budget is the same);
 * ``mamba2``    the phase-2 Mamba-2 chunk-scan kernel.
 
@@ -36,7 +36,7 @@ from .common import fits_cap, naive_reference, read_confirm, read_result, run_on
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-PAPER_REGIME = dict(profile_poor=True, plan_mix=True, init_samples=3, patience=8, max_rounds=40)
+PAPER_REGIME = dict(profile_poor=True, plan_mix=True, init_samples=3, patience=12, max_rounds=40)
 
 RUNS: dict[str, dict] = {
     "fa_flash": dict(task="flash_attention", model=None, budget=PAPER_BUDGET_USD),

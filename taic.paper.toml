@@ -12,4 +12,5 @@
 budget_usd = 15.0                # per kernel, the paper's budget; override with --budget / --budget-scale
 max_rounds = 100                 # a safety net only: at $15 the budget, not the round count, ends a run (8 rounds of FlashAttention already cost $3.1 with
                                  # deepseek-flash, so the old limit of 12 would have stopped a $15 run at about a third of its money).
-                                 # patience (stop after N rounds without a new best) is unchanged: it still ends runs that converged early.
+patience = 12                    # stop after this many rounds without a new best: 3x the base value of 4, so that a $15 run is not cut off by a short
+                                 # plateau but a run that has really converged still ends early (the paper runs to the end of the budget; this is the compromise).

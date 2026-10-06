@@ -111,7 +111,7 @@ states no cap, so it uses $15 too; the repeatability experiment (Table 1) gives 
 
 * **Where it lives.** `taic.paper.toml` is a preset read on top of `taic.toml` (it sets `budget_usd = 15` and `max_rounds = 100`: at $15 the
   budget ends a run, not the round count, whereas the old limit of 12 rounds would have stopped it at about a third of the money). `--preset base`
-  or `TAIC_PRESET=base` reads `taic.toml` alone; `--config FILE` is used as it is. `patience` (stop after N rounds without a new best) is unchanged
+  or `TAIC_PRESET=base` reads `taic.toml` alone; `--config FILE` is used as it is. the preset raises `patience` (stop after N rounds without a new best) from 4 to 12, so a short plateau does not end a $15 run but a converged one still stops early
   and still ends runs that converged early, so a kernel that stops improving spends less than $15.
 * **Override.** `--budget USD` everywhere, `--budget-scale F` on `run_suite` and `repeatability` (for example `0.2` for a smoke run). The
   semantic tests (`$0.15` per run), `counter_teaching` (`$1`) and the unit tests keep their small budgets on purpose.
