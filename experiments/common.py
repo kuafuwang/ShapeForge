@@ -7,19 +7,26 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from taic.llm import load_config
+from taic.llm import PAPER_BUDGET_USD, load_config
 from taic.orchestrator import Orchestrator, RunResult
 
-# Per-kernel USD budgets. The paper spent $1.5 on elementwise and $5-12 on GEMM/conv candidates with a frontier model;
-# deepseek-flash costs roughly 1/20 of that per token, so the same *shape* of budgets is much smaller in dollars.
-BUDGETS = {
-    "sigmoid": 0.5, "relu": 0.5, "silu": 0.5, "swiglu": 0.6, "rmsnorm": 0.8, "softmax": 1.2, "reduction_sum": 0.8,
-    "rope": 0.8, "gemv": 1.0, "gemm": 2.5, "gemm_silu": 2.5, "conv2d": 3.0, "flash_attention": 3.0, "mamba2_chunk_scan": 3.0,
-}
+# Per-kernel USD budgets: the paper's, in dollars, whatever the model. Every kernel gets the paper's $15 (Sections 4.3 and 4.4 of
+# arXiv 2609.36800; the 12-kernel grid of Figure 4 states no cap, so the same ceiling is used). Runs that converge earlier (``patience``) spend less.
+# Earlier versions of this file used 0.5-3.0 USD per kernel (a fraction of the paper's, scaled by price); those results are
+# not comparable with these (the dashboard and each result.json show the budget a run actually had).
+# The one exception, Table 1 (repeatability, Section 4.3): the elementwise SwiGLU kernel is given $1, the others $15.
+TABLE1_BUDGETS: dict[str, float] = {"swiglu": 1.0}
 
 
-def budget_for(task: str, scale: float = 1.0) -> float:
-    return BUDGETS.get(task, 1.0) * scale
+def budget_for(task: str, scale: float = 1.0, *, table1: bool = False) -> float:
+    """Budget of one run of ``task`` times ``scale``: the paper's $15 (``table1=True``: Table 1's per-kernel budgets, used by the repeatability experiment)."""
+    base = task.split("@", 1)[0]  # a contract variant such as gemm@128x64x32t256 has the budget of gemm
+    return (TABLE1_BUDGETS.get(base, PAPER_BUDGET_USD) if table1 else PAPER_BUDGET_USD) * scale
+
+
+def fits_cap(spent_usd: float, budget_usd: float, max_total_usd: float | None) -> bool:
+    """``--max-total-usd``: a run may start only if its whole budget still fits under the experiment-wide cap (``None``: no cap)."""
+    return max_total_usd is None or spent_usd + budget_usd <= max_total_usd + 1e-9
 
 
 def run_one(
@@ -33,13 +40,14 @@ def run_one(
     max_rounds: int | None = None,
     model: str | None = None,
     config_path: str | None = None,
+    preset: str | None = None,
     client: Any = None,
     evaluate_fn: Callable | None = None,
     log: Callable[[str], None] = print,
     use_tools: bool | None = None,
     **search_overrides,
 ) -> RunResult:
-    cfg, search = load_config(config_path, model=model, budget_usd=budget, branches=branches, max_rounds=max_rounds, **search_overrides)
+    cfg, search = load_config(config_path, model=model, preset=preset, budget_usd=budget, branches=branches, max_rounds=max_rounds, **search_overrides)
     if use_tools is not None:
         cfg.use_tools = use_tools
     orch = Orchestrator(task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log)

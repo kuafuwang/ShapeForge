@@ -51,9 +51,18 @@ class LLMConfig:
     price_cache_read: float = 0.006
 
 
+# The paper's per-run API budget: "a maximum API budget of $15 per run for convolution, matrix multiplication, and FlashAttention"
+# (Section 4.3, Table 1; $1 for the elementwise SwiGLU kernel) and "under a $15 budget" for the ten published kernels (Section 4.4, Figure 5).
+PAPER_BUDGET_USD = 15.0
+# Settings layered over taic.toml when no explicit config file is given: ``taic.<preset>.toml`` (only the keys it lists are replaced).
+# The paper preset holds the paper-level budget and a round limit high enough that the budget, not the round count, ends a run.
+# Select another one with ``--preset NAME`` or ``TAIC_PRESET=NAME``; ``base`` means taic.toml alone.
+DEFAULT_PRESET = "paper"
+
+
 @dataclass
 class SearchConfig:
-    budget_usd: float = 2.0
+    budget_usd: float = PAPER_BUDGET_USD
     branches: int = 3
     max_repair_tries: int = 3
     max_rounds: int = 12
@@ -73,9 +82,35 @@ class SearchConfig:
     profile_max: int = 4  # traces per run at most (each takes tens of seconds under the exclusive GPU lock)
 
 
-def load_config(path: str | Path | None = None, *, model: str | None = None, **search_overrides) -> tuple[LLMConfig, SearchConfig]:
-    path = Path(path) if path else REPO_ROOT / "taic.toml"
-    raw = tomllib.loads(path.read_text()) if path.exists() else {}
+def _read_toml(path: Path) -> dict:
+    return tomllib.loads(path.read_text()) if path.exists() else {}
+
+
+def load_raw_config(path: str | Path | None = None, preset: str | None = None) -> dict:
+    """The parsed settings. An explicit ``path`` is used as it is. Otherwise ``taic.toml`` is read and the preset file
+    ``taic.<preset>.toml`` (``preset``, else ``$TAIC_PRESET``, else ``DEFAULT_PRESET``) replaces the keys it lists, section by section.
+    ``base`` (or ``none``) selects ``taic.toml`` alone."""
+    if path:
+        return _read_toml(Path(path))
+    raw = _read_toml(REPO_ROOT / "taic.toml")
+    name = preset or os.environ.get("TAIC_PRESET") or DEFAULT_PRESET
+    if name in ("base", "none"):
+        return raw
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+        raise LLMError(f"bad config preset name {name!r}")
+    overlay = REPO_ROOT / f"taic.{name}.toml"
+    if not overlay.exists():
+        raise LLMError(f"config preset '{name}' not found: {overlay} does not exist (use --preset base for taic.toml alone)")
+    for section, values in _read_toml(overlay).items():
+        if isinstance(values, dict):
+            raw[section] = {**raw.get(section, {}), **values}
+        else:
+            raw[section] = values
+    return raw
+
+
+def load_config(path: str | Path | None = None, *, model: str | None = None, preset: str | None = None, **search_overrides) -> tuple[LLMConfig, SearchConfig]:
+    raw = load_raw_config(path, preset)
     llm = dict(raw.get("llm", {}))
     search = dict(raw.get("search", {}))
     search.update({k: v for k, v in search_overrides.items() if v is not None})

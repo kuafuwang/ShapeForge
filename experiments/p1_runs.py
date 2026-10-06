@@ -1,12 +1,13 @@
 """Single, named search runs for the questions the suite cannot answer:
 
-* ``fa_flash``  FlashAttention with the full budget and the default model (the pilot used a 1.5 USD budget and stopped after 3 rounds);
+* ``fa_flash``  FlashAttention with the paper's budget and the default model (the pilot used a 1.5 USD budget and stopped after 3 rounds);
 * ``fa_pro``    the same with a stronger model of the same provider (``deepseek-v4-pro``, 4.4x the price per token);
 * ``fa_64x32t256`` / ``fa_32x16t128``  the same operator under another launch contract (query tile, key tile, threads): if the hand-picked
   contract limited the search, one of these would beat ``fa_flash``;
 * ``fa_flash_prof``  ``fa_flash`` with ``search.profile_poor``: does feeding Instruments findings (register spills, code size, GPU idle) to the model help?
+* ``fa_flash_cnt``  ``fa_flash_prof`` recorded with a GPU-counter template (limiters, occupancy, ...) and with the profiler skill in the system prompt: do the counters add anything?
 * ``fa_paper`` / ``gemm_paper`` / ``conv2d_paper``  the paper's regime: 15 USD per run, patience 8, up to 40 rounds, with ``profile_poor``, ``plan_mix`` and
-  ``init_samples=3`` (Section 3.3); compare with the 3 USD runs of the suite to see what budget plus search aids buy (the two effects are not separated);
+  ``init_samples=3`` (Section 3.3); compare with the same kernels at the default search settings to see what the search aids buy (the budget is the same);
 * ``mamba2``    the phase-2 Mamba-2 chunk-scan kernel.
 
     uv run python -m experiments.p1_runs --runs fa_flash,fa_pro --out runs/p1
@@ -14,6 +15,11 @@
 
 Runs within one process are sequential and resumable (a finished run is skipped); several processes may share one ``--out`` with disjoint
 ``--runs`` (``summary.json`` / ``summary.md`` always list every finished run). Every run is bounded by its USD budget; the GPU lock protects the timings.
+
+Every run has the paper's budget of 15 USD (``--budget USD`` sets another one for the runs of this invocation). The runs in ``runs/p1`` that were
+finished or started before that change had 3 USD (their ``result.json`` says so, and so does the ``budget`` column of the summary), so they are not directly
+comparable; a finished run is skipped by name, so to repeat one at the new budget use a fresh ``--out``. Worst case if every run below is started: 11 x 15 = 165 USD;
+``--max-total-usd`` is an optional cap (default off) on what one invocation may spend: a run whose budget would not fit under it is skipped and logged.
 """
 
 from __future__ import annotations
@@ -24,25 +30,31 @@ from pathlib import Path
 
 from observe.publish import job_state
 
-from .common import naive_reference, read_confirm, read_result, run_one, summarize
+from taic.llm import PAPER_BUDGET_USD
+
+from .common import fits_cap, naive_reference, read_confirm, read_result, run_one, summarize
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 PAPER_REGIME = dict(profile_poor=True, plan_mix=True, init_samples=3, patience=8, max_rounds=40)
 
 RUNS: dict[str, dict] = {
-    "fa_flash": dict(task="flash_attention", model=None, budget=3.0),
-    "fa_pro": dict(task="flash_attention", model="deepseek-v4-pro", budget=3.0),
-    "fa_64x32t256": dict(task="flash_attention@64x32t256", model=None, budget=3.0),
-    "fa_32x16t128": dict(task="flash_attention@32x16t128", model=None, budget=3.0),
+    "fa_flash": dict(task="flash_attention", model=None, budget=PAPER_BUDGET_USD),
+    "fa_pro": dict(task="flash_attention", model="deepseek-v4-pro", budget=PAPER_BUDGET_USD),
+    "fa_64x32t256": dict(task="flash_attention@64x32t256", model=None, budget=PAPER_BUDGET_USD),
+    "fa_32x16t128": dict(task="flash_attention@32x16t128", model=None, budget=PAPER_BUDGET_USD),
     # the same search as fa_flash, plus: a slow seed is traced with Instruments (spills, code size, GPU idle) and the findings go to the planner and the patch authors
-    "fa_flash_prof": dict(task="flash_attention", model=None, budget=3.0, search=dict(profile_poor=True)),
+    "fa_flash_prof": dict(task="flash_attention", model=None, budget=PAPER_BUDGET_USD, search=dict(profile_poor=True)),
+    # fa_flash_prof plus GPU counters (start with TCENV_XCTRACE_TEMPLATE=<template saved from Instruments, see README) and Skill 2b that teaches the model to read them.
+    # Budget, model and every other setting equal fa_flash / fa_flash_prof on purpose: the three runs differ only in the evidence the planner sees. Run the three
+    # into the same --out so that they share a budget (runs/p1 holds fa_flash and fa_flash_prof from before the budget was raised to the paper's, at 3 USD).
+    "fa_flash_cnt": dict(task="flash_attention", model=None, budget=PAPER_BUDGET_USD, search=dict(profile_poor=True)),
     # the paper's regime (Section 4.3: $15 per run, run until the budget is gone) with the search aids of Section 3.3: profiler findings, local+structural plans, repeated sampling of the seed
-    "fa_paper": dict(task="flash_attention", model=None, budget=15.0, search=PAPER_REGIME),
-    "gemm_paper": dict(task="gemm", model=None, budget=15.0, search=PAPER_REGIME),
-    "conv2d_paper": dict(task="conv2d", model=None, budget=15.0, search=PAPER_REGIME),
-    "mamba2": dict(task="mamba2_chunk_scan", model=None, budget=3.0),
-    "mamba2_bf16": dict(task="mamba2_chunk_scan", model=None, budget=3.0, dtype="bf16"),
+    "fa_paper": dict(task="flash_attention", model=None, budget=PAPER_BUDGET_USD, search=PAPER_REGIME),
+    "gemm_paper": dict(task="gemm", model=None, budget=PAPER_BUDGET_USD, search=PAPER_REGIME),
+    "conv2d_paper": dict(task="conv2d", model=None, budget=PAPER_BUDGET_USD, search=PAPER_REGIME),
+    "mamba2": dict(task="mamba2_chunk_scan", model=None, budget=PAPER_BUDGET_USD),
+    "mamba2_bf16": dict(task="mamba2_chunk_scan", model=None, budget=PAPER_BUDGET_USD, dtype="bf16"),
 }
 
 
@@ -58,19 +70,37 @@ def finished_rows(out: Path) -> list[dict]:
     return rows
 
 
-def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = "fp16", log=print, **overrides) -> list[dict]:
+def budget_notes(out: Path, names: list[str], budget: float | None) -> list[str]:
+    """One line per finished run in ``out`` whose recorded budget differs from the budget the requested runs are about to get (results at different budgets are not comparable)."""
+    wanted = {budget if budget is not None else RUNS[n]["budget"] for n in names}
+    notes = []
+    for n in RUNS:
+        res = read_result(out / n)
+        if res and res.get("budget_usd") is not None and res["budget_usd"] not in wanted:
+            notes.append(f"note: {out / n} was run with a ${res['budget_usd']:.2f} budget, the runs started now get " + " / ".join(f"${w:.2f}" for w in sorted(wanted)) + "; do not compare their speedups directly")
+    return notes
+
+
+def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = "fp16", log=print, budget: float | None = None, max_total_usd: float | None = None, **overrides) -> list[dict]:
     out.mkdir(parents=True, exist_ok=True)
     rows = []
     names = list(names)
+    for note in budget_notes(out, names, budget):
+        log(note)
     for i, n in enumerate(names):
         spec = RUNS[n]
+        b = budget if budget is not None else spec["budget"]
         job_state(out / "state.json", script="p1_runs", current={"run": n, "task": spec["task"]}, queue=[{"run": x} for x in names[i + 1 :]], done=rows)
         dt = spec.get("dtype", dtype)
         rd = out / n
         res = read_result(rd)
         if res is None:
-            log(f"\n##### {n}: {spec['task']} {dt} model={spec['model'] or 'default'} budget=${spec['budget']}")
-            r = run_one(spec["task"], dt, size, rd, budget=spec["budget"], model=spec["model"], log=log, **{**spec.get("search", {}), **overrides})
+            spent = sum(r["spent_usd"] for r in rows)
+            if not fits_cap(spent, b, max_total_usd):
+                log(f"(skip {n}: its ${b:.2f} budget does not fit under --max-total-usd ${max_total_usd:.2f}; this invocation has spent ${spent:.2f})")
+                continue
+            log(f"\n##### {n}: {spec['task']} {dt} model={spec['model'] or 'default'} budget=${b:.2f}")
+            r = run_one(spec["task"], dt, size, rd, budget=b, model=spec["model"], log=log, **{**spec.get("search", {}), **overrides})
             res = read_result(rd)
             if r.stop_reason.startswith(("gpu_hang", "repeated_worker_crashes")):
                 log("== aborted: GPU hang circuit breaker")
@@ -79,7 +109,8 @@ def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = 
                 job_state(out / "state.json", script="p1_runs", current={"run": n}, queue=[], done=rows, phase="aborted")
                 return rows
         else:
-            log(f"(skip {n}: already done)")
+            was = res.get("budget_usd")
+            log(f"(skip {n}: already done" + (f", with a ${was:.2f} budget, not ${b:.2f}" if was is not None and abs(was - b) > 1e-9 else "") + ")")
         naive = naive_reference(spec["task"], dt, size, out)
         rows.append({"run": n, **summarize(res, read_confirm(rd), naive)})
         (out / "summary.json").write_text(json.dumps(finished_rows(out), indent=1))
@@ -89,9 +120,9 @@ def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = 
 
 def markdown(rows: list[dict]) -> str:
     f = lambda v, d=3: "-" if v is None else f"{v:.{d}f}"
-    L = ["| run | task | model | confirmed speedup | best (search) | candidate us | best baseline | naive kernel | vs triton-msl | rounds | evals | spent USD | stop |", "| --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |"]
+    L = ["| run | task | model | confirmed speedup | best (search) | candidate us | best baseline | naive kernel | vs triton-msl | rounds | evals | budget USD | spent USD | stop |", "| --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
     for r in rows:
-        L.append(f"| {r['run']} | {r['task']} | {r['model']} | {f(r.get('confirmed_speedup'))}x | {f(r.get('best_speedup'))}x | {f(r.get('candidate_us'), 1)} | {r.get('best_baseline') or '-'} | {f(r.get('naive_speedup'))}x | {f(r.get('vs_triton_msl'))} | {r['rounds']} | {r['evaluations']} | {r['spent_usd']:.3f} | {r['stop_reason']} |")
+        L.append(f"| {r['run']} | {r['task']} | {r['model']} | {f(r.get('confirmed_speedup'))}x | {f(r.get('best_speedup'))}x | {f(r.get('candidate_us'), 1)} | {r.get('best_baseline') or '-'} | {f(r.get('naive_speedup'))}x | {f(r.get('vs_triton_msl'))} | {r['rounds']} | {r['evaluations']} | {f(r.get('budget_usd'), 2)} | {r['spent_usd']:.3f} | {r['stop_reason']} |")
     L.append(f"\nTotal spent: ${sum(r['spent_usd'] for r in rows):.3f}")
     return "\n".join(L)
 
@@ -100,6 +131,9 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", default="fa_flash")
     ap.add_argument("--out", default="runs/p1")
+    ap.add_argument("--budget", type=float, default=None, help="USD budget of every run of this invocation (default: the paper's $15)")
+    ap.add_argument("--max-total-usd", type=float, default=None, help="optional cap on what this invocation may spend: skip a run whose budget would not fit under it (default: off)")
+    ap.add_argument("--preset", default=None, help="config preset: 'paper' (default, taic.paper.toml) or 'base' (taic.toml alone)")
     ap.add_argument("--report", action="store_true", help="only print the table of the finished runs")
     a = ap.parse_args(argv)
     out = REPO_ROOT / a.out if not Path(a.out).is_absolute() else Path(a.out)
@@ -108,7 +142,7 @@ def main(argv=None) -> int:
         (out / "summary.md").write_text(md + "\n")
         print(md)
         return 0
-    run_named(a.runs.split(","), out)
+    run_named(a.runs.split(","), out, budget=a.budget, max_total_usd=a.max_total_usd, **({"preset": a.preset} if a.preset else {}))
     md = markdown(finished_rows(out))
     (out / "summary.md").write_text(md + "\n")
     print("\n" + md)

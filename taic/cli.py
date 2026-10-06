@@ -13,7 +13,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     from .llm import load_config
     from .orchestrator import Orchestrator
 
-    cfg, search = load_config(a.config, model=a.model, budget_usd=a.budget, branches=a.branches, max_rounds=a.max_rounds)
+    cfg, search = load_config(a.config, model=a.model, preset=a.preset, budget_usd=a.budget, branches=a.branches, max_rounds=a.max_rounds)
     if a.no_tools:
         cfg.use_tools = False
     if a.profile_best:
@@ -41,9 +41,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("task")
     p.add_argument("--dtype", default="fp16", choices=["fp16", "bf16"])
     p.add_argument("--size", default="paper", choices=["paper", "small", "plan"])
-    p.add_argument("--config", default=None)
+    p.add_argument("--config", default=None, help="one config file, used as it is (no preset is layered on it)")
+    p.add_argument("--preset", default=None, help="settings layered over taic.toml: 'paper' (default, taic.paper.toml: the paper's $15 budget) or 'base' (taic.toml alone); also $TAIC_PRESET")
     p.add_argument("--model", default=None)
-    p.add_argument("--budget", type=float, default=None, help="USD budget for this kernel")
+    p.add_argument("--budget", type=float, default=None, help="USD budget for this kernel (default: the preset's budget_usd, the paper's $15)")
     p.add_argument("--branches", type=int, default=None)
     p.add_argument("--max-rounds", type=int, default=None)
     p.add_argument("--effort", default=None, choices=["off", "low", "high", "max"])

@@ -1,0 +1,15 @@
+# Paper-level search budget. This file is a *preset*: it is read on top of taic.toml and replaces only the keys listed here.
+# It is the default preset (taic/llm.py: DEFAULT_PRESET); `--preset base` or TAIC_PRESET=base reads taic.toml alone.
+#
+# Source: arXiv 2609.36800v1 (docs/2609.36800v1.pdf)
+#   - Section 3.3 (p. 6): the diagnose-plan-branch-evaluate cycle repeats "until the search budget is exhausted".
+#   - Section 4.3 (p. 8) and Table 1: "a maximum API budget of $15 per run for convolution, matrix multiplication, and FlashAttention,
+#     and $1 for the simpler elementwise SwiGLU kernel"; the gate is checked before each request and an in-flight request can finish above it.
+#   - Section 4.4 (p. 8) and Figure 5 (p. 9): "under a $15 budget" for the ten published kernels.
+#   (Figure 4, the 12-kernel grid, states no cap: elementwise runs cost under $1.50, convolution and GEMM $5-$12.)
+
+[search]
+budget_usd = 15.0                # per kernel, the paper's budget; override with --budget / --budget-scale
+max_rounds = 100                 # a safety net only: at $15 the budget, not the round count, ends a run (8 rounds of FlashAttention already cost $3.1 with
+                                 # deepseek-flash, so the old limit of 12 would have stopped a $15 run at about a third of its money).
+                                 # patience (stop after N rounds without a new best) is unchanged: it still ends runs that converged early.
