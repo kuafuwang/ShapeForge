@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>运行观测</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --card: #fff;
+    --ink: #1c1c1e;
+    --muted: #6b7280;
+    --line: #e6e8ee;
+    --blue: #0a66c2;
+    --green: #17803d;
+    --red: #c2413a;
+    --amber: #b45309;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  button, input { font: inherit; }
+  .layout { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+  aside {
+    background: var(--card);
+    border-right: 1px solid var(--line);
+    padding: 16px 12px;
+    overflow: auto;
+    max-height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  aside h2 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .hist {
+    display: block; width: 100%; text-align: left; border: 1px solid transparent;
+    background: transparent; border-radius: 8px; padding: 8px; margin-bottom: 4px; cursor: pointer;
+  }
+  .hist:hover { background: #f6f7f9; }
+  .hist.on { background: #eef5fc; border-color: #d3e4f6; }
+  .hist b { display: block; font-size: 13px; }
+  .hist span { color: var(--muted); font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--green); margin-right: 6px; }
+  .dot.off { background: #c5c8d0; }
+  main { padding: 18px 20px 32px; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  header h1 { margin: 0; font-size: 22px; font-weight: 650; }
+  .live { color: var(--green); font-weight: 600; font-size: 13px; }
+  .cards, .components { display: grid; gap: 10px; }
+  .cards { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 12px; }
+  .components { grid-template-columns: repeat(6, minmax(0, 1fr)); margin-top: 12px; }
+  .card, .panel {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  }
+  .card .k { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .card .v { font-size: 20px; font-weight: 650; }
+  .card .s { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .blue { color: var(--blue); }
+  .green { color: var(--green); }
+  .red { color: var(--red); }
+  .split { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 12px; }
+  .panel h2 { margin: 0 0 8px; font-size: 15px; }
+  .sub { color: var(--muted); font-size: 12px; margin: -4px 0 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; }
+  th, td { padding: 6px 4px; border-bottom: 1px solid var(--line); }
+  tr.pick { cursor: pointer; }
+  tr.pick.on { background: #eef5fc; }
+  .tag { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  svg.chart { width: 100%; height: 150px; margin-top: 8px; }
+  .stage { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; }
+  .stage.on { background: #eef5fc; }
+  .stage .name { flex: 1; }
+  .stage .meta { color: var(--muted); font-size: 12px; }
+  .mark { width: 16px; text-align: center; }
+  .excerpt {
+    margin-top: 10px; background: #f7f8fa; border-radius: 8px; padding: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; color: #333; max-height: 120px; overflow: auto;
+  }
+  .events { margin-top: 12px; }
+  .events li { margin: 3px 0; }
+  .empty { color: var(--muted); padding: 8px 0; }
+  @media (max-width: 1100px) {
+    .layout { grid-template-columns: 1fr; }
+    aside { position: static; max-height: 220px; }
+    .cards, .components, .split { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <h2>历史</h2>
+    <div id="history"></div>
+  </aside>
+  <main>
+    <header>
+      <h1>运行观测</h1>
+      <div class="live"><span class="dot" id="live-dot"></span><span id="live-label">连接中</span></div>
+    </header>
+    <section class="cards" id="status"></section>
+    <section class="split">
+      <div class="panel" id="search"></div>
+      <div class="panel" id="eval"></div>
+    </section>
+    <section class="components" id="components"></section>
+    <section class="panel events" id="locks"></section>
+  </main>
+</div>
+<script>
+const PHASE = { start: "开始", llm: "问模型", plan: "规划", evaluate: "评测", confirm: "确认", profile: "录制", done: "结束" };
+const STAGES = [["screen", "安检"], ["compile", "编译"], ["abi", "签名"], ["safety", "内存安全"], ["correctness", "对答案"], ["bench", "计时"]];
+const FAIL = { rejected: "screen", compile_error: "compile", abi_error: "abi", unsafe: "safety", incorrect: "correctness" };
+
+let pinned = null;
+let candLabel = null;
+let source = null;
+let seen = false;
+let lastSig = "";
+
+function el(tag, props, kids) {
+  const node = document.createElement(tag);
+  if (props) {
+    for (const [key, value] of Object.entries(props)) {
+      if (key === "class") node.className = value;
+      else if (key.startsWith("on") && typeof value === "function") node.addEventListener(key.slice(2), value);
+      else if (value != null) node.setAttribute(key, value);
+    }
+  }
+  for (const kid of kids || []) {
+    node.append(kid == null ? "" : kid);
+  }
+  return node;
+}
+function t(text) { return document.createTextNode(text == null ? "" : String(text)); }
+function money(value, digits) {
+  if (value == null || value === "") return "—";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return "$" + n.toFixed(digits == null ? 2 : digits);
+}
+function speed(value) {
+  if (value == null || value === "") return "—";
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(2) + "x" : "—";
+}
+function when(epoch) {
+  if (!epoch) return "";
+  const d = new Date(epoch * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  return p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+function phaseText(row) {
+  if (!row) return "未在跑";
+  if (row.status === "interrupted") return "中断";
+  if (row.status === "done") return row.stop_reason || "结束";
+  const name = PHASE[row.phase] || row.phase || "进行中";
+  return row.inflight_label ? name + " " + row.inflight_label : name;
+}
+
+function stable(frame) {
+  const copy = JSON.parse(JSON.stringify(frame));
+  if (copy.overview) {
+    delete copy.overview.now;
+    if (copy.overview.heartbeat) delete copy.overview.heartbeat.age_s;
+    for (const item of copy.overview.live_evals || []) delete item.heartbeat_age_s;
+  }
+  if (copy.run && copy.run.eval_progress) delete copy.run.eval_progress.heartbeat_age_s;
+  return JSON.stringify(copy);
+}
+
+function updateHeartbeat(beat) {
+  const value = document.getElementById("heartbeat-value");
+  const sub = document.getElementById("heartbeat-sub");
+  if (!value) return;
+  if (!beat || !beat.letter) {
+    value.textContent = "—";
+    value.className = "v";
+    if (sub) sub.textContent = "";
+    return;
+  }
+  const hot = beat.letter === "B" && Number(beat.age_s) > 2;
+  value.textContent = beat.letter;
+  value.className = "v " + (hot ? "red" : "green");
+  if (sub) sub.textContent = beat.age_s == null ? "" : Number(beat.age_s).toFixed(1) + " 秒";
+}
+
+function render(frame) {
+  seen = true;
+  document.getElementById("live-label").textContent = "实时";
+  document.getElementById("live-dot").className = "dot";
+  const sig = stable(frame);
+  if (sig !== lastSig) {
+    lastSig = sig;
+    renderHistory(frame);
+    renderStatus(frame.overview);
+    renderSearch(frame.run);
+    renderEval(frame.run, frame.overview);
+    renderComponents(frame.overview);
+    renderLocks(frame.overview.gpu);
+  }
+  updateHeartbeat(frame.overview && frame.overview.heartbeat);
+}
+
+function renderHistory(frame) {
+  const box = document.getElementById("history");
+  const scroll = box.scrollTop;
+  box.replaceChildren();
+  const rows = frame.history || [];
+  if (!rows.length) {
+    box.append(el("div", { class: "empty" }, [t("还没有运行")]));
+    return;
+  }
+  for (const row of rows) {
+    const on = row.id === frame.selected;
+    const title = (row.task || row.id) + (row.dtype ? " " + row.dtype : "");
+    const meta = when(row.started_at) + "  " + (row.status === "running" ? "进行中" : row.status === "interrupted" ? "中断" : speed(row.speedup));
+    box.append(el("button", { class: "hist" + (on ? " on" : ""), type: "button", onclick: () => pin(row.id) }, [
+      el("b", null, [t(title)]),
+      el("span", null, [t(meta)]),
+    ]));
+  }
+  box.scrollTop = scroll;
+}
+
+function pin(id) {
+  if (pinned === id) return;
+  pinned = id;
+  candLabel = null;
+  connect();
+}
+
+function card(title, valueNode, sub, subId) {
+  const note = el("div", { class: "s" }, [t(sub || "")]);
+  if (subId) note.id = subId;
+  return el("div", { class: "card" }, [
+    el("div", { class: "k" }, [t(title)]),
+    valueNode,
+    sub || subId ? note : null,
+  ]);
+}
+
+function renderStatus(overview) {
+  const gpu = overview.gpu || { holders: [], waiters: [] };
+  const holder = (gpu.holders || [])[0];
+  const waiters = gpu.waiters || [];
+  const live = (overview.live_runs || [])[0];
+  const solo = (overview.live_evals || [])[0];
+  const beat = overview.heartbeat;
+  const box = document.getElementById("status");
+  const holdValue = holder
+    ? el("div", { class: "v green" }, [t(holder.mode === "ex" ? "独占" : "共享")])
+    : el("div", { class: "v" }, [t("空闲")]);
+  const holdSub = holder ? "pid " + holder.pid + (holder.what ? " · " + holder.what : "") : "没有人占着";
+  const waitValue = el("div", { class: "v" }, [t(waiters.length ? String(waiters.length) : "无")]);
+  const waitSub = waiters.length ? waiters.map((w) => "pid " + w.pid).join("，") : "";
+  let searchValue, searchSub;
+  if (live) {
+    const round = live.round ? "第 " + live.round + " 轮" + (live.max_rounds ? " / " + live.max_rounds : "") : "";
+    searchValue = el("div", { class: "v" }, [t((live.task || "") + (live.dtype ? " " + live.dtype : ""))]);
+    searchSub = [round, phaseText(live)].filter(Boolean).join(" · ");
+  } else if (solo) {
+    searchValue = el("div", { class: "v" }, [t(solo.task || "单独判卷")]);
+    searchSub = "单独判卷" + (solo.stage ? " · " + (labelOf(solo.stage) || solo.stage) : "");
+  } else {
+    searchValue = el("div", { class: "v" }, [t("未在跑")]);
+    searchSub = "";
+  }
+  const spent = live ? live.spent_usd : null;
+  const budget = live ? live.budget_usd : null;
+  const budgetValue = el("div", { class: "v" }, [
+    el("span", { class: "blue" }, [t(money(spent))]),
+    t(budget == null ? "" : " / " + money(budget)),
+  ]);
+  const beatValue = el("div", { class: "v", id: "heartbeat-value" }, [t("—")]);
+  box.replaceChildren(
+    card("GPU 锁", holdValue, holdSub),
+    card("等待", waitValue, waitSub),
+    card("搜索", searchValue, searchSub),
+    card("预算", budgetValue, ""),
+    card("心跳", beatValue, "", "heartbeat-sub"),
+  );
+  updateHeartbeat(beat);
+}
+
+function labelOf(stage) {
+  const found = STAGES.find((pair) => pair[0] === stage);
+  return found ? found[1] : "";
+}
+
+function renderSearch(run) {
+  const box = document.getElementById("search");
+  box.replaceChildren(el("h2", null, [t("一次搜索")]));
+  if (!run) {
+    box.append(el("div", { class: "empty" }, [t("选一次运行，或等一次搜索开始")]));
+    return;
+  }
+  const trace = run.trace || [];
+  const table = el("table", null, []);
+  table.append(el("thead", null, [el("tr", null, [el("th", null, [t("候选")]), el("th", null, [t("状态")]), el("th", null, [t("加速比")])])]));
+  const body = el("tbody", null, []);
+  const rows = trace.length ? trace : (run.candidates || []).map((c) => ({ label: c.label, status: c.status, speedup: c.speedup }));
+  if (!candLabel && rows.length) candLabel = rows[rows.length - 1].label;
+  for (const row of rows) {
+    const tag = row.improved ? "新起点" : row.within_noise ? "噪声内" : (String(row.label || "").startsWith("init") ? "初稿" : "");
+    const status = row.status === "compile_error"
+      ? el("span", { class: "red" }, [t(row.status)])
+      : t(row.status || "—");
+    body.append(el("tr", { class: "pick" + (row.label === candLabel ? " on" : ""), onclick: () => { candLabel = row.label; renderSearch(run); renderEval(run, lastOverview); } }, [
+      el("td", null, [t(row.label || ""), tag ? el("span", { class: "tag" }, [t(tag)]) : null]),
+      el("td", null, [status]),
+      el("td", null, [t(speed(row.speedup))]),
+    ]));
+  }
+  table.append(body);
+  box.append(table);
+  box.append(chart(trace));
+}
+
+let lastOverview = null;
+
+function chart(trace) {
+  const pts = (trace || []).filter((row) => row.best_speedup != null).map((row) => [Number(row.cost_usd) || 0, Number(row.best_speedup)]);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "chart");
+  svg.setAttribute("viewBox", "0 0 320 150");
+  if (pts.length < 1) return svg;
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]).concat([1]);
+  const minX = 0;
+  const maxX = Math.max(...xs, 0.01);
+  const minY = Math.min(...ys, 0.4);
+  const maxY = Math.max(...ys, 1.05);
+  const X = (x) => 36 + (x - minX) / (maxX - minX) * 270;
+  const Y = (y) => 12 + (maxY - y) / (maxY - minY) * 110;
+  const d = pts.map((p, i) => (i ? "H" + X(p[0]) + "V" + Y(p[1]) : "M" + X(p[0]) + " " + Y(p[1]))).join(" ");
+  const axis = document.createElementNS(svg.namespaceURI, "line");
+  axis.setAttribute("x1", "36"); axis.setAttribute("x2", "306"); axis.setAttribute("y1", String(Y(1))); axis.setAttribute("y2", String(Y(1)));
+  axis.setAttribute("stroke", "#c5c8d0"); axis.setAttribute("stroke-dasharray", "4 3");
+  const path = document.createElementNS(svg.namespaceURI, "path");
+  path.setAttribute("d", d); path.setAttribute("fill", "none"); path.setAttribute("stroke", "#0a66c2"); path.setAttribute("stroke-width", "2");
+  const label = document.createElementNS(svg.namespaceURI, "text");
+  label.setAttribute("x", "250"); label.setAttribute("y", String(Y(1) - 4)); label.setAttribute("fill", "#6b7280"); label.setAttribute("font-size", "11");
+  label.textContent = "对照";
+  const xlab = document.createElementNS(svg.namespaceURI, "text");
+  xlab.setAttribute("x", "150"); xlab.setAttribute("y", "146"); xlab.setAttribute("fill", "#6b7280"); xlab.setAttribute("font-size", "11");
+  xlab.textContent = "累计美元";
+  svg.append(axis, path, label, xlab);
+  return svg;
+}
+
+function stageState(run) {
+  const progress = run && run.eval_progress;
+  const live = run && run.status === "running" && progress && !progress.finished;
+  if (live) return { mode: "live", progress };
+  const cand = (run.candidates || []).find((c) => c.label === candLabel) || (run.candidates || []).slice(-1)[0];
+  return { mode: "past", cand };
+}
+
+function renderEval(run, overview) {
+  lastOverview = overview;
+  const box = document.getElementById("eval");
+  box.replaceChildren(el("h2", null, [t("一次评测")]));
+  if (!run) {
+    box.append(el("div", { class: "empty" }, [t("还没有评测")]));
+    return;
+  }
+  const view = stageState(run);
+  const who = view.mode === "live" ? (run.state && run.state.inflight_label) || (view.progress && view.progress.task) : (view.cand && view.cand.label);
+  box.append(el("div", { class: "sub" }, [t([who, run.state && run.state.task, run.state && run.state.dtype].filter(Boolean).join(" "))]));
+  const order = STAGES.map((pair) => pair[0]);
+  let current = "screen";
+  let failed = null;
+  if (view.mode === "live") {
+    current = view.progress.stage || "screen";
+    if (current === "done") current = "bench";
+  } else if (view.cand && view.cand.status) {
+    failed = FAIL[view.cand.status] || null;
+    if (view.cand.status === "ok") current = "done";
+    else if (failed) current = failed;
+    else current = view.cand.stage || "screen";
+  } else {
+    const row = (run.trace || []).find((item) => item.label === candLabel) || (run.trace || []).slice(-1)[0];
+    failed = row ? FAIL[row.status] || null : null;
+    if (row && row.status === "ok") current = "done";
+    else if (failed) current = failed;
+    else current = null;
+  }
+  const here = order.indexOf(current);
+  STAGES.forEach((pair, index) => {
+    const [key, name] = pair;
+    let mark = "○";
+    let klass = "stage";
+    let meta = "未到";
+    if (failed === key) {
+      mark = "×"; klass += " on"; meta = (view.cand && view.cand.status) || "失败";
+    } else if (current === "done" || (here > index && failed !== key)) {
+      mark = "✓"; meta = "完成";
+    } else if (key === current || (key === "safety" && current === "correctness" && here === index)) {
+      mark = "●"; klass += " on"; meta = "进行中";
+    }
+    if (view.mode === "live" && key === "correctness" && current === "correctness") {
+      const p = view.progress;
+      meta = "进行中" + (p.case ? "  用例 " + p.case : "") + (p.cases_total ? "  " + (p.cases_done || 0) + "/" + p.cases_total : "");
+      klass = "stage on"; mark = "●";
+    }
+    if (view.mode === "live" && key === "bench" && current === "bench") {
+      const p = view.progress;
+      meta = "第 " + (p.attempt || 1) + " 次" + (p.attempts_max ? " / " + p.attempts_max : "") + (p.noisy ? "  太吵" : "");
+    }
+    if (view.mode === "past" && view.cand && view.cand.status === "ok" && view.cand.mode === "quick" && key === "bench") {
+      mark = "○"; meta = "未到"; klass = "stage";
+    }
+    const markNode = el("span", { class: "mark" + (mark === "×" ? " red" : mark === "✓" || mark === "●" ? " green" : "") }, [t(mark)]);
+    box.append(el("div", { class: klass }, [markNode, el("span", { class: "name" }, [t(name)]), el("span", { class: "meta" }, [t(meta)])]));
+  });
+  if (view.mode === "past" && view.cand) {
+    const bits = [];
+    if (view.cand.candidate_us != null) bits.push(Number(view.cand.candidate_us).toFixed(1) + " 微秒");
+    if (view.cand.speedup != null) bits.push(speed(view.cand.speedup));
+    const roof = view.cand.roofline || {};
+    if (roof.bound) bits.push("屋顶 " + roof.bound);
+    if (view.cand.message) bits.push(view.cand.message);
+    if (bits.length) box.append(el("div", { class: "sub" }, [t(bits.join(" · "))]));
+    if (view.cand.excerpt) box.append(el("div", { class: "excerpt" }, [t(view.cand.excerpt)]));
+  }
+}
+
+function renderComponents(overview) {
+  const exp = (overview.experiments || []).find((job) => job.status === "running") || (overview.experiments || [])[0];
+  const live = (overview.live_runs || [])[0];
+  const tasks = overview.tasks || [];
+  const gpu = overview.gpu || {};
+  const holder = (gpu.holders || [])[0];
+  const box = document.getElementById("components");
+  const expText = !exp ? "" : exp.status === "running"
+    ? (exp.script + (exp.current ? " · " + JSON.stringify(exp.current).replace(/[{}"]/g, "") : ""))
+    : (exp.status === "done" ? "已结束" : exp.phase || exp.status);
+  box.replaceChildren(
+    card("题目", el("div", { class: "v blue" }, [t(String(tasks.length))]), ""),
+    card("搜索", el("div", { class: "v" + (live ? " blue" : "") }, [t(live ? "进行中" : "空闲")]), live ? (live.task || "") : ""),
+    card("验证环境", el("div", { class: "v" }, [t(live && live.phase === "evaluate" ? "评测" : (overview.live_evals || []).length ? "判卷" : "空闲")]), ""),
+    card("GPU 锁", el("div", { class: "v" + (holder ? " green" : "") }, [t(holder ? (holder.mode === "ex" ? "独占" : "共享") : "空闲")]), ""),
+    card("账本", el("div", { class: "v" }, [t(live ? money(live.spent_usd, 2) : "—")]), ""),
+    card("批量实验", el("div", { class: "v" }, [t(exp && exp.status === "running" ? "进行中" : "未在跑")]), expText),
+  );
+}
+
+function renderLocks(gpu) {
+  const box = document.getElementById("locks");
+  box.replaceChildren(el("h2", null, [t("最近的锁")]));
+  const events = (gpu && gpu.events) || [];
+  if (!events.length) {
+    box.append(el("div", { class: "empty" }, [t("还没有锁记录")]));
+    return;
+  }
+  const list = el("ul", null, []);
+  for (const event of events.slice(-8).reverse()) {
+    const kind = { wait: "开始等", acquire: "拿到", release: "放开", give_up: "放弃" }[event.kind] || event.kind;
+    list.append(el("li", null, [t(when(event.t) + "  pid " + event.pid + "  " + kind + "  " + (event.mode || "") + "  " + (event.what || ""))]));
+  }
+  box.append(list);
+}
+
+function connect() {
+  if (source) source.close();
+  const query = pinned ? "?run=" + encodeURIComponent(pinned) : "";
+  source = new EventSource("/api/stream" + query);
+  source.onmessage = (event) => {
+    try { render(JSON.parse(event.data)); }
+    catch (err) { /* ignore a partial frame */ }
+  };
+  source.onerror = () => {
+    document.getElementById("live-label").textContent = seen ? "重连" : "连接中";
+    document.getElementById("live-dot").className = "dot off";
+  };
+}
+connect();
+</script>
+</body>
+</html>
