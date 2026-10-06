@@ -1,5 +1,8 @@
 """Task registry. ``get_task(name, dtype, size)`` builds a fully specified ``tcenv.task.Task``."""
 
+# 搜索（taic.orchestrator）和验证（tcenv.evaluate）都只调用 get_task，拿到同一份 Task。
+# 题面在 triton_source，对错看 reference，速度跟 baselines 比；contract 的 kernel_name、grid、threads、args、constants 由环境锁定，模型改不了。
+# 普通题加载 tasks/<名字>/task.py 的 build。名字以 sem_ 开头交给 semantic.build。名字里 @ 之后是另一套 tile/threads，走该题的 build_variant。
 from __future__ import annotations
 
 import importlib
@@ -7,8 +10,10 @@ from functools import lru_cache
 
 # "paper": the size used for every experiment. "small": quick tests. "plan": the exact size in the implementation plan, defined only
 # where "paper" deviates from it (reduction_sum: 256x4096 is launch-bound, see the README).
+# paper 给正式实验，small 给快速检查，plan 只在 paper 和实现方案不一致的题上出现（目前是 reduction_sum）。
 SIZES = ("paper", "small", "plan")
 
+# 第一阶段算子。目录名必须和这里一致，get_task 靠 importlib 加载 tasks.<名字>.task。
 TASK_NAMES = (
     "sigmoid",
     "relu",
@@ -25,24 +30,29 @@ TASK_NAMES = (
 )
 
 # Tasks added in phase 2 (recent-paper kernels).
+# 第二阶段算子。get_task 接受它们，list_tasks 默认不列出。
 PHASE2_TASK_NAMES: tuple[str, ...] = ("flash_attention", "lion", "bitdelta_gemm", "mamba2_chunk_scan")
 
 
 def list_tasks(include_phase2: bool = False) -> tuple[str, ...]:
+    # 给实验枚举题目名。include_phase2 为真时把 PHASE2_TASK_NAMES 接在 TASK_NAMES 后面。
     return TASK_NAMES + (PHASE2_TASK_NAMES if include_phase2 else ())
 
 
+# 四道固定的语义恢复题。它们不在 TASK_NAMES 里，get_task 靠 sem_ 前缀认出来。
 SEMANTIC_NAMES = ("sem_gemm_neg", "sem_relu_gelu_comment", "sem_gelu_named_relu", "sem_attention_odd_scale")
 
 
 @lru_cache(maxsize=64)
 def get_task(name: str, dtype: str = "fp16", size: str = "paper"):
+    # 同一 (name, dtype, size) 命中缓存。size="plan" 时，该题的 SHAPES 里必须真有 "plan" 这一档。
     if name.startswith("sem_"):  # semantic-recovery tasks (paper Section 4.1)
         if size not in ("paper", "small"):
             raise ValueError("size must be 'paper' or 'small'")
         from . import semantic
 
         return semantic.build(name, dtype, size)
+    # @ 前是算子名，后面是启动契约变体（tile / threads）。公式和 reference 不变。
     base, _, variant = name.partition("@")  # "gemm@128x64x32t256": the same operator under another launch contract (tile / threads)
     if base not in TASK_NAMES + PHASE2_TASK_NAMES:
         raise KeyError(f"unknown task {name!r}; known: {list(TASK_NAMES + PHASE2_TASK_NAMES)}")

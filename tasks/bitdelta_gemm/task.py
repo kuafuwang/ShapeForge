@@ -1,3 +1,7 @@
+# BitDelta 矩阵乘。description：y = scale * (x @ W)，W 是打包在 bits 里的 ±1 矩阵，要在核内解码，乘积按 fp32 累加后舍入一次。SCALE = 0.02。
+# 标准答案是 reference：unpack_pm1 把 int32 字展开成 ±1 的 float32，再计算 (x.float() @ w).double() * SCALE。
+# 四条基线都是先解包再做稠密乘。mlx 与 torch_mps 把解包和乘法分成两步；mlx_compile 与 torch_compile 把解码收进一次编译，矩阵乘保持单独一次调用。
+# 模型不能改 contract：核名 bitdelta_gemm_kernel，grid=(N/BLOCK_N, M/BLOCK_M, 1)，threads=(128, 1, 1)，缓冲 x、u32 的 bits、标量 scale、y，常量 M/N/K/BLOCK_*。
 import torch
 
 from tcenv.contract import AbiArg, Contract
@@ -11,6 +15,7 @@ SHAPES = {"paper": (512, 4096, 4096), "small": (128, 256, 256)}  # (M, N, K)
 EDGE_WORDS = [0, -1, 0x55555555, -0x55555556, 1, -(1 << 31), 0x0F0F0F0F, -0x0F0F0F10]
 
 
+# 第 kb 个字的第 j 位是行 kb*32+j 的符号：1 映成 +1，0 映成 -1。reference 用这份展开当 W。
 def unpack_pm1(words: torch.Tensor) -> torch.Tensor:
     """[K//32, N] int32 words -> [K, N] float32 of +-1 (bit j of word kb is row kb*32 + j)."""
     w = words.to(torch.int64)

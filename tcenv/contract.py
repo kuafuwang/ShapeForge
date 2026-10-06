@@ -10,6 +10,9 @@ Paper correspondence (Section 3.1):
 A candidate kernel is *valid* only if it exposes exactly this ABI. The harness
 (not the model) chooses the launch configuration.
 """
+# 契约关。compile 把这里生成的文件头接到候选正文前面；abi 关再拿编译结果对这份契约。
+# 契约固定函数名、每个参数的槽位与读写、以及并发度（grid 上有多少线程组、每组多少线程）。这些在 tasks 里由框架写成 Contract。模型提交的是带这个签名的内核函数，改不了这份对象。
+# 模型改不了它：提示词里展示的是 describe() 和 abi_stub()，编译器看到的头来自 render_header()，对不上就在 abi 关失败。
 
 from __future__ import annotations
 
@@ -56,6 +59,7 @@ class AbiArg:
         d = get_dtype(self.dtype)
         return d.nbytes if self.role == "scalar" else self.numel * d.nbytes
 
+    # 模型必须照这个签名写参数：输入只读、输出可写、标量是 constant。abi 关对的就是槽位、名字和这三种读写。
     @property
     def msl_declaration(self) -> str:
         msl = get_dtype(self.dtype).msl
@@ -77,6 +81,7 @@ class Contract:
     gpu: str = "Apple M4 Max (Apple9 GPU family)"
 
     # -- derived -------------------------------------------------------------
+    # 并发度由框架指定：grid 是线程组个数，threads 是每组线程数。模型不能在源码里另选一套启动配置。
     @property
     def threads_per_tg(self) -> int:
         return self.threads[0] * self.threads[1] * self.threads[2]
@@ -112,6 +117,7 @@ class Contract:
         raise KeyError(name)
 
     # -- rendering -------------------------------------------------------------
+    # 头里的 constexpr 要写成 Metal 字面量：float 加 f，half / bfloat 不加；uint 加 u，ulong 加 ul。describe() 给模型看的是原来的值。
     @staticmethod
     def _fmt_const(msl_type: str, value: Any) -> str:
         if msl_type in ("float", "half", "bfloat"):
@@ -120,6 +126,7 @@ class Contract:
             return f"{int(value)}u" if msl_type == "uint" else f"{int(value)}ul"
         return str(int(value))
 
+    # 编译单元最前面的文件头：Metal 标准头、using，以及契约里每一条 constant constexpr。这一段不是模型写的。
     def render_header(self) -> str:
         lines = [HEADER_BEGIN, "#include <metal_stdlib>", "#include <metal_simdgroup>", "#include <metal_simdgroup_matrix>", "using namespace metal;"]
         for name, msl_type, value in self.constants:
@@ -127,12 +134,14 @@ class Contract:
         lines.append(HEADER_END)
         return "\n".join(lines) + "\n"
 
+    # 把头和候选正文接成编译器真正看到的那一份，并返回头占了多少行，供诊断行号映回模型自己的源码。
     def assemble(self, kernel_code: str) -> tuple[str, int]:
         """Return (full MSL source, number of header lines preceding the candidate's code)."""
         header = self.render_header()
         offset = header.count("\n")
         return header + kernel_code, offset
 
+    # 给模型看的签名骨架。送去编译的是 assemble 接出来的全文。
     def abi_stub(self) -> str:
         """Kernel signature skeleton shown to the model."""
         decls = ",\n    ".join(a.msl_declaration for a in self.args)
@@ -141,6 +150,7 @@ class Contract:
             "    /* ...plus any [[thread_position_in_grid]]-style attribute parameters you want... */\n)"
         )
 
+    # 写进提示词的契约正文。判卷用的仍是 tasks 里这份对象：函数名、并发度、编译期常量、每个 buffer 的槽位和读写。
     def describe(self) -> str:
         """Human/LLM readable summary of the whole contract."""
         out = [f"target gpu       : {self.gpu}", f"kernel name      : {self.kernel_name}"]
@@ -156,11 +166,13 @@ class Contract:
             out.append(f"  [[buffer({a.index})]] {a.role:6s} {a.dtype:5s} {a.name}{shape}{val}  {a.doc}".rstrip())
         return "\n".join(out)
 
+    # 编译器的行号属于「头 + 正文」这一份。减掉头的行数，反馈才能指向模型写的 kernel.metal。
     def rewrite_compiler_lines(self, message: str, header_lines: int) -> str:
         """Map ``program_source:L:C`` locations back to the candidate's own line numbers."""
 
         def sub(m: re.Match) -> str:
             line = int(m.group(1)) - header_lines
+            # 减完还不足 1，诊断落在框架生成的头里，行号改标成 <contract header>。
             return f"kernel.metal:{line}:{m.group(2)}" if line >= 1 else f"<contract header>:{m.group(1)}:{m.group(2)}"
 
         return re.sub(r"program_source:(\d+):(\d+)", sub, message)

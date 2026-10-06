@@ -1,3 +1,7 @@
+# 按行求和。description：y[r] = sum_c x[r, c]，核内用 fp32 累加（输入可以抵消），再舍入一次。SHAPES 有 paper、small、plan 三档。
+# 标准答案是 reference：在 float64 上做 sum(-1)。error_scale 用各行的 sum(abs(x)) 当这行的误差尺度。
+# 基线是 baselines：mlx 的 mx.sum(axis=-1)，torch_mps 的 torch.sum(dim=-1)。
+# 模型不能改 contract：核名 reduction_sum_kernel，grid=(M, 1, 1)，threads=(128, 1, 1)，缓冲 x 和 y，常量 M、N。
 import torch
 
 from tcenv.contract import AbiArg, Contract
@@ -37,6 +41,7 @@ def build(dtype: str, size: str) -> Task:
         return {"y": inp["x"].double().sum(-1)}
 
     def error_scale(inp, ref):
+        # 容差按各行绝对值和缩放：正确的 fp32 求和，误差跟着 sum(|x|) 走。
         # The error of a correct fp32 summation scales with sum |x|, not with |sum x| (cancellation).
         return {"y": inp["x"].double().abs().sum(-1)}
 

@@ -1,3 +1,7 @@
+# 按行 softmax。description：y = exp(x - max(x)) / sum(exp(x - max(x)))，统计量在 fp32，结果舍入一次。SHAPES 的 paper 是 (8192, 2048)。
+# 标准答案是 reference：对转成 float64 的 x 做 torch.softmax(..., dim=-1)。
+# 基线是 baselines：mlx 的 mx.softmax(axis=-1, precise=True)，torch_mps 的 torch.softmax(dim=-1)。
+# 模型不能改 contract：核名 softmax_kernel，grid=(M, 1, 1)，threads=(256, 1, 1)，缓冲 x/y，常量 M、N。
 import torch
 
 from tcenv.contract import AbiArg, Contract

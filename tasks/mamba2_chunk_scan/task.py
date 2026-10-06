@@ -1,3 +1,7 @@
+# Mamba-2 的 chunk scan，一个 B/C 组。description 里的 y[t] 由三部分相加：块内 s<=t 的因果和、exp(cs[t]) 乘 C[t] 与 state 的点积、D*x[t]。CHUNK = 64。
+# 标准答案是 reference：用内嵌的 _RefOps 调用 ssd_chunk_scan。_RefOps.f32 把张量转成 double，式子和下面的库基线相同。
+# 基线都走 ssd_chunk_scan。mlx、mlx_compile、torch_mps 把乘加操作数升到 fp32；mlx_half_compile 和 torch_half 传 half=True，乘加保持输入 dtype。
+# 模型不能改 contract：核名 mamba2_chunk_scan_kernel，grid=(NC, B*H, 1)，threads=(128, 1, 1)，从 x 到 y 八个参数，常量 BATCH/SEQLEN/NHEADS/HEADDIM/DSTATE/CHUNK/NCHUNKS。
 import torch
 
 from tcenv.contract import AbiArg, Contract
@@ -14,6 +18,7 @@ DT_LO, DT_HI = 1.0e-3, 5.0e-2  # step sizes
 A_LO, A_HI = 1.0, 8.0  # |A| per head (A is negative): the decay of a chunk, exp(cs), stays a normal fp32 number (>= e^-26)
 
 
+# 库基线和标准答案共用这一式。half=False 时乘加操作数升到 fp32；half=True 时乘加保持输入 dtype。
 def ssd_chunk_scan(x, dt, cs, bm, cm, d, st, *, ops, batch, seq, heads, headdim, dstate, half=False):
     """The operator in framework ops (the formulation of the Mamba-2 paper, listing 1, for one group): this is what the vendor baselines run.
     ``ops`` supplies einsum / exp / where / tril so that the same code runs on MLX and torch. The decay factors and the sums are fp32.
@@ -131,6 +136,7 @@ def build(dtype: str, size: str) -> Task:
         return {"x": mk((B, S, H, P), 0), "dt": dt, "dA_cumsum": cs, "Bmat": mk((B, S, N), 31), "Cmat": mk((B, S, N), 62),
                 "Dskip": mk((H,), 124), "states": mk((B, NC, H, P, N), 93)}
 
+    # 标准答案的 ops：f32 改成 double，因果掩码建在 CPU 上。
     class _RefOps(_TorchOps):
         f32 = staticmethod(lambda a: a.double())
         where = staticmethod(lambda m, a, b: torch.where(m, a, torch.zeros((), dtype=a.dtype)))

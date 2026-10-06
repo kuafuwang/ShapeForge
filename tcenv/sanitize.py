@@ -10,6 +10,15 @@ Three independent mechanisms:
      which instruments device/threadgroup memory accesses and barrier usage.
 """
 
+# 正确性数值比较之前的安全层，也负责把着色器校验的环境变量送进单独的子进程。
+# 保护带：缓冲放在更大分配的中间，两侧填已知图案；图案被改就是越界写。输入两侧用 0xFF，越界读会把 NaN 灌进结果；输出两侧用 0xCD，专门留给出界的写。
+# NaN 投毒：输出有效载荷先填满 0xFF。浮点读出来是 NaN，整数是 -1。比较时整元素仍等于该图案，就是没被写过。
+# 输入不可变：load_inputs 留下字节快照，启动后 safety_violations 发现字节变了，就是核写了输入。
+# 确定性由 testing.run_correctness 比较多次启动：结果正确且保护带完好时，全零初值与毒化初值不同，说明核依赖输出里的旧内容；
+# 两者相同而再次毒化仍不同，说明有数据竞争或无序原子。poison() 负责毒化初值。
+# 着色器校验按整块 MTLBuffer 的长度算界，保护带和 256 字节对齐都在这块里面，余量中的小越界只有图案被改才抓得到。
+# 校验子进程改用 tight 分配（没有这圈余量），边界才和逻辑长度重合。
+
 from __future__ import annotations
 
 import os
@@ -24,6 +33,7 @@ GUARD_BYTES = 16384
 GUARD_PATTERN = 0xCD
 POISON_PATTERN = 0xFF  # NaN for fp16/bf16/fp32; -1 for ints
 
+# 校验会插桩 device / threadgroup 访存和 barrier。REPORT_TO_STDERR 让父进程从 stderr 看见违例。
 VALIDATION_ENV = {
     "MTL_DEBUG_LAYER": "1",
     "MTL_SHADER_VALIDATION": "1",
@@ -43,12 +53,14 @@ _VALIDATION_MARKERS = re.compile(
 )
 
 
+# 从着色器校验子进程的 stderr 里抽出失败行。校验跑在另一个进程，违例只出现在那里。
 def validation_problems(stderr_text: str) -> list[str]:
     """Extract lines of stderr that indicate a validation failure."""
     out = []
     for line in stderr_text.splitlines():
         if _VALIDATION_MARKERS.search(line):
             out.append(line.strip()[:400])
+    # 一份核最多留 12 条，避免把整份评测报告刷满。
     return out[:12]
 
 
@@ -56,6 +68,8 @@ def _round_up(n: int, m: int) -> int:
     return (n + m - 1) // m * m
 
 
+# 逻辑缓冲放在更大分配的中间，两侧图案被改写就是越界写。
+# tight 时不要两侧：着色器校验按 MTLBuffer 的长度算界，收成正好 nbytes 才能看见越界。
 class GuardedBuffer:
     """A buffer embedded in a larger allocation. ``tight=True`` allocates exactly ``nbytes`` with no
     margins so that Metal's shader validation sees every out-of-bounds access."""
@@ -67,6 +81,7 @@ class GuardedBuffer:
         self.pattern = pattern
         self.guard = 0 if tight else guard
         guard = self.guard
+        # 有效长度向上对齐到 256。多出来的尾巴仍算界外，写进对齐空隙也是越界。
         self.padded = nbytes if tight else _round_up(nbytes, 256)
         self.total = guard + self.padded + guard
         self.buf = ctx.new_buffer(self.total)
@@ -89,12 +104,15 @@ class GuardedBuffer:
             raise ValueError(f"expected {self.nbytes} bytes, got {len(raw)}")
         self.mem[self.guard : self.guard + self.nbytes] = raw
 
+    # 把输出有效载荷填成全 1。浮点上是 NaN，整数上是 -1，没写过的元素会保持这个图案。
+    # 确定性复跑另用全零初值对照；两次不同说明结果依赖输出里的旧内容。比较在 testing.run_correctness。
     def poison(self) -> None:
         self.mem[self.guard : self.guard + self.nbytes] = bytes([POISON_PATTERN]) * self.nbytes
 
     def read(self) -> bytes:
         return bytes(self.mem[self.guard : self.guard + self.nbytes])
 
+    # 头尾图案被改就是越界写。尾段含 256 字节对齐空隙，写进空隙同样算越界。
     def guard_violations(self) -> list[str]:
         out = []
         head = bytes(self.mem[: self.guard])
@@ -108,6 +126,7 @@ class GuardedBuffer:
         return out
 
 
+# 一次启动用的整组参数。输入保护带用 0xFF，越界读会把结果污染成 NaN；输出保护带用 0xCD，越界写和「读到的毒」才能分开。
 class ArgSet:
     """A full set of bound arguments for one launch of a contract."""
 
@@ -127,6 +146,7 @@ class ArgSet:
         for gb in self.buffers.values():
             gb.reset_guards()
 
+    # 留下本次写入的原始字节。启动后 safety_violations 用这份快照判断输入有没有被核改掉。
     def load_inputs(self, raw_by_name: dict[str, bytes]) -> None:
         for a in self.contract.inputs:
             self.buffers[a.name].write(raw_by_name[a.name])
@@ -148,6 +168,7 @@ class ArgSet:
     def read_outputs(self) -> dict[str, bytes]:
         return {a.name: self.buffers[a.name].read() for a in self.contract.outputs}
 
+    # 两类错误：保护带图案破损是越界写；输入字节和快照不同是核改了输入。
     def safety_violations(self) -> list[str]:
         out: list[str] = []
         for name, gb in self.buffers.items():
@@ -159,6 +180,7 @@ class ArgSet:
         return out
 
 
+# 标量按契约宽度收成小端字节，GPU 上的 constant 引用按这个布局读。
 def scalar_bytes(a: AbiArg) -> bytes:
     import struct
 
@@ -168,6 +190,7 @@ def scalar_bytes(a: AbiArg) -> bytes:
     if d.name == "fp16":
         return struct.pack("<e", float(a.value))
     if d.name == "bf16":
+        # struct 没有 bfloat16，用 torch 取出同样的 16 位再交给 setBytes。
         import torch
 
         return torch.tensor([float(a.value)], dtype=torch.bfloat16).view(torch.int16).numpy().tobytes()
@@ -175,6 +198,7 @@ def scalar_bytes(a: AbiArg) -> bytes:
     return struct.pack(fmt, int(a.value))
 
 
+# 复制一份环境再叠上校验开关。这些变量是进程级的，只交给单独再起的校验子进程。
 def env_with_validation(base: dict[str, str] | None = None) -> dict[str, str]:
     env = dict(os.environ if base is None else base)
     env.update(VALIDATION_ENV)

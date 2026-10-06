@@ -1,3 +1,8 @@
+# 行主序矩阵乘。build 的 description：C = A @ B，A 是 [M,K]，B 是 [K,N]，C 是 [M,N]，fp32 累加，结果舍入一次。普通 gemm 的 epilogue_ref 是恒等。
+# 标准答案在 reference：A、B 用 float 做 @（CPU 上按 fp32 累加），再转 double 交给 epilogue_ref。
+# 速度基线是 baselines 里的 mlx（a @ b）和 torch_mps（torch.matmul）。
+# 模型不能改 contract：kernel_name、grid=(N/BLOCK_N, M/BLOCK_M, 1)、threads、缓冲 A/B/C 的槽位和形状，以及常量 M/N/K/BLOCK_M/BLOCK_N/BLOCK_K。
+# 题面由 load_text 读取 kernel_triton.py。build_variant 只换 tile 和线程数，算子和 reference 保持这一套。
 import torch
 
 from tcenv.contract import AbiArg, Contract
@@ -12,6 +17,7 @@ THREADS = 128
 DEFAULT_VARIANT = f"{BLOCK_M}x{BLOCK_N}x{BLOCK_K}t{THREADS}"
 
 
+# 把 "<BM>x<BN>x<BK>t<threads>" 拆成 tile 和线程数。tile 必须整除 M、N、K，线程数必须是 32 的倍数。
 def parse_variant(variant: str, shape: tuple[int, int, int]) -> tuple[int, int, int, int]:
     """``"<BM>x<BN>x<BK>t<threads>"`` -> (BM, BN, BK, threads); the tile must divide the problem and the threads must be whole SIMD groups."""
     m = re.fullmatch(r"(\d+)x(\d+)x(\d+)t(\d+)", variant)
@@ -36,6 +42,7 @@ def _torch(a, b):
     return torch.matmul(a, b)
 
 
+# gemm 与 gemm_silu 共用。epilogue_ref 接在 fp32 乘积之后；epilogue_msl 和 epilogue_def 写进朴素 Metal。
 def build_gemm(name: str, dtype: str, size: str, *, epilogue_ref, epilogue_msl: str, epilogue_def: str, baselines, description: str, extra_flops: float, variant: str = "") -> Task:
     check_dtype(dtype)
     M, N, K = SHAPES[size]
@@ -71,6 +78,7 @@ def build_gemm(name: str, dtype: str, size: str, *, epilogue_ref, epilogue_msl: 
     subs = {"M": str(M), "N": str(N), "K": str(K), "BM": str(BLOCK_M), "BN": str(BLOCK_N), "BK": str(BLOCK_K), "NW": str(THREADS // 32)}
     naive = load_text("gemm", "naive.metal", dtype, {"KERNEL": f"{name}_kernel", "EPILOGUE": epilogue_msl, "EPILOGUE_DEF": epilogue_def,
                                                     "THREADS": str(THREADS), "TM": str(BLOCK_M * BLOCK_N // (THREADS * 8)), "TPR": str(BLOCK_N // 8)})
+    # meta 里另放一份 Triton→MSL 编译器接受的题面。和库比速度看 baselines。
     meta = {}
     if name == "gemm":  # the only variant triton-msl accepts for this operator (see tcenv.triton_runner)
         meta["triton_baseline_variant"] = {"source": load_text("gemm", "kernel_triton_msl.py", dtype, subs), "note": "program-id roles swapped, M/N/K as runtime scalars"}
@@ -98,6 +106,7 @@ def build(dtype: str, size: str) -> Task:
     )
 
 
+# 同一算子、同一 reference 和 baselines，只把 variant 交给 parse_variant，换掉 grid 用的 tile 和 threads。
 def build_variant(dtype: str, size: str, variant: str) -> Task:
     """The same operator under another launch contract (tile and threads); used by the contract-sensitivity study."""
     return build_gemm(

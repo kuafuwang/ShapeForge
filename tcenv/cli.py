@@ -1,5 +1,10 @@
 """``tcenv`` command line: evaluate kernels, time baselines, calibrate, inspect tasks."""
 
+# 流水线入口，验证环境从这些子命令进去。
+# eval 读用户给出的 kernel 文件，交给 evaluate()。naive 把任务自带的 naive_msl 交给同一个 evaluate()，
+# 调用链上没有模型请求，接口费用为零，用来自检评测架。profile 先跑 quick，通过后再做 Instruments 跟踪。
+# tasks 只打印契约（网格、参数、字节、FLOP），停在任务表。
+
 from __future__ import annotations
 
 import argparse
@@ -8,17 +13,20 @@ import sys
 from pathlib import Path
 
 
+# eval、naive、baseline、profile、show 共用 dtype 和 size，比的是同一道题、同一种宽度。
 def _common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--dtype", default="fp16", choices=["fp16", "bf16"])
     p.add_argument("--size", default="paper", choices=["paper", "small", "plan"])
 
 
+# 进行中的阶段写到按 pid 区分的观察文件，长评测在命令行外面也能看到走到哪一步。
 def _live_progress():
     from observe.publish import tcenv_live_path
 
     return tcenv_live_path()
 
 
+# 外部 kernel 文件这条路。quick 停在编译、ABI、安全和正确性；默认 full 会再跑着色器校验子进程和计时。
 def cmd_eval(a: argparse.Namespace) -> int:
     from .evaluate import evaluate
     from .report import format_feedback
@@ -32,6 +40,8 @@ def cmd_eval(a: argparse.Namespace) -> int:
     return 0 if rep.status == "ok" else 1
 
 
+# 自检评测架。源码是任务里写好的 naive_msl，本函数只调用 evaluate()，和 eval 同一条编译、检查、计时路径。
+# 调用链上没有模型请求，接口费用为零。
 def cmd_naive(a: argparse.Namespace) -> int:
     from tasks import get_task
 
@@ -44,6 +54,7 @@ def cmd_naive(a: argparse.Namespace) -> int:
     return 0 if rep.status == "ok" else 1
 
 
+# 只测 MLX / PyTorch 基线。计时段独占 GPU 锁，测完用同一批中位数算 roofline，看基线离带宽和算力下界有多远。
 def cmd_baseline(a: argparse.Namespace) -> int:
     from tasks import get_task
 
@@ -65,6 +76,7 @@ def cmd_baseline(a: argparse.Namespace) -> int:
     return 0
 
 
+# 跟踪建立在 quick 已经通过的前提下，录制本身在 xctrace 里独占 GPU 锁。
 def cmd_profile(a: argparse.Namespace) -> int:
     """Instruments trace of an *already validated* kernel (the full evaluation must pass first)."""
     from . import xctrace
@@ -73,6 +85,7 @@ def cmd_profile(a: argparse.Namespace) -> int:
     src = Path(a.kernel).read_text()
     rep = evaluate(a.task, a.dtype, a.size, src, mode="quick", progress_path=_live_progress())
     if rep.status != "ok":
+        # quick 覆盖编译、ABI、安全和正确性；任一步失败，Instruments 录制不会开始。
         print(f"refusing to profile: the kernel does not pass the quick evaluation ({rep.status}: {rep.message[:200]})")
         return 1
     summ = xctrace.profile_kernel(a.task, a.dtype, a.size, src)
@@ -82,6 +95,7 @@ def cmd_profile(a: argparse.Namespace) -> int:
     return 0
 
 
+# 另一条基线：在隔离虚拟环境里用 triton-msl 把任务的 Triton 规格编成 Metal 再计时。缺环境就停。
 def cmd_triton_baseline(a: argparse.Namespace) -> int:
     from tasks import list_tasks
 
@@ -98,9 +112,11 @@ def cmd_triton_baseline(a: argparse.Namespace) -> int:
     for n in names:
         r = tb.measure(n, a.dtype, a.size, reps=a.reps, wait_quiet_s=a.wait_quiet * 60.0)
         bad += r["status"] != "ok"
+    # 全部任务都失败才返回非零；只要有一个成功就返回 0。
     return 1 if bad == len(names) else 0
 
 
+# 测这台机器的峰值带宽和算力，给 roofline 当天花板。
 def cmd_calibrate(a: argparse.Namespace) -> int:
     from .metal_runtime import get_context
     from .profile import get_calibration
@@ -110,6 +126,7 @@ def cmd_calibrate(a: argparse.Namespace) -> int:
     return 0
 
 
+# 进验证前先看任务表。dtype 固定 fp16，只为把契约（网格、线程、参数名、最小字节、FLOP）打印出来。
 def cmd_tasks(a: argparse.Namespace) -> int:
     from tasks import get_task, list_tasks
 
@@ -120,6 +137,7 @@ def cmd_tasks(a: argparse.Namespace) -> int:
     return 0
 
 
+# 打印单个任务的说明、契约、ABI 桩和 Triton 源码，供人对照着写核。
 def cmd_show(a: argparse.Namespace) -> int:
     from tasks import get_task
 
@@ -131,6 +149,7 @@ def cmd_show(a: argparse.Namespace) -> int:
     return 0
 
 
+# 子命令分发。eval 走外部核，naive 走任务自带参考核，profile 先 quick 再跟踪，tasks 只列契约。
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="tcenv", description="Triton Compiler Environment for Apple GPUs (MSL)")
     sub = ap.add_subparsers(dest="cmd", required=True)

@@ -1,3 +1,7 @@
+# 按行 RMSNorm。description：y[r, :] = x[r, :] * rsqrt(mean(x[r, :]^2) + eps) * w，平方和在 fp32 累加，结果舍入一次。EPS = 1e-6。
+# 标准答案是 reference：在 float64 上计算 x * torch.rsqrt((x * x).mean(-1) + EPS) * w。
+# 基线是 baselines：mlx 的 mx.fast.rms_norm(x, w, EPS)，torch_mps 的 F.rms_norm。
+# 模型不能改 contract：核名 rmsnorm_kernel，grid=(M, 1, 1)，threads=(256, 1, 1)，缓冲 x/w/y，常量 M、H、EPS。
 import torch
 import torch.nn.functional as F
 

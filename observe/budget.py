@@ -11,6 +11,9 @@ Pure functions, no I/O, so that they can be tested without a run directory. Thre
 A run can be both over and exhausted (``flags`` lists every level that applies, ``level`` is the worst one).
 """
 
+# 看板顶部的预算告警。三档都在纯函数里判定：只看花费、预算、停止原因和是否仍在跑，不读 runs/。
+# OVER BUDGET 是花费超过预算；BUDGET EXHAUSTED 是停止原因恰好为 budget_exhausted；NEAR BUDGET 只打给仍在跑且已用到 80% 的运行。
+
 from __future__ import annotations
 
 import html
@@ -27,6 +30,7 @@ LABELS_CN = {"over": "超预算", "exhausted": "预算耗尽", "near": "接近�
 SEVERITY = {"over": 0, "exhausted": 1, "near": 2, "ok": 3, "unknown": 4}
 
 
+# 旧结果缺字段，或写成布尔、NaN 时不能拿去比大小。布尔是 int 的子类，不先排除的话 True 会变成 1 美元。
 def _num(value: Any) -> float | None:
     """A finite number, or ``None`` for a missing, non-numeric, boolean or NaN/inf value (older runs lack fields)."""
     if value is None or isinstance(value, bool):
@@ -38,6 +42,8 @@ def _num(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+# 三档可以同时成立，level 取 flags 里最重的一档。缺预算或缺花费不会抛错。
+# 刚好花到预算不算超（要多出 1e-9 以上）。耗尽只认停止原因，哪怕花费仍略低于上限。接近预算要求仍在跑，已结束的高花费不挂这一档。
 def budget_status(spent: Any, budget: Any, stop_reason: Any = None, running: bool = False) -> dict:
     """Classify one run. ``spent`` / ``budget`` are USD (``None`` when unknown), ``stop_reason`` as in ``result.json``,
     ``running`` is true while the search is still going.
@@ -49,12 +55,17 @@ def budget_status(spent: Any, budget: Any, stop_reason: Any = None, running: boo
     s = _num(spent)
     b = _num(budget)
     if b is not None and b <= 0:
+        # 非正预算无法算百分比。改成缺失后走 unknown，除非停止原因单独构成「耗尽」。
         b = None
     exhausted = str(stop_reason or "").strip() == EXHAUSTED_STOP_REASON
     known = s is not None and b is not None
+    # 超预算：两边都是有限数，且花费比预算至少大过浮点噪声。刚好等于预算不是 OVER BUDGET。
     over = known and s - b > _EPS
+    # 接近预算：必须仍在跑，并且还没超、也还没因 budget_exhausted 停下。门槛是预算的 80%。
     near = known and bool(running) and not over and not exhausted and s >= NEAR_FRACTION * b - _EPS
+    # 书写顺序就是严重程度。又超又耗尽时 level 是 over，两档都留在 flags 里。
     flags = [name for name, on in (("over", over), ("exhausted", exhausted), ("near", near)) if on]
+    # 没有告警时，数齐了是 ok，缺花费或缺预算是 unknown。唯独停止原因是 budget_exhausted 时，缺数字也算 exhausted。
     level = flags[0] if flags else ("ok" if known else "unknown")
     used_pct = round(s / b * 100.0, 1) if known else None
     over_usd = (max(s - b, 0.0) if over else 0.0) if known else None
@@ -84,6 +95,7 @@ def budget_status(spent: Any, budget: Any, stop_reason: Any = None, running: boo
     }
 
 
+# 历史行可能已经带好 budget 字典。有 level 就沿用，避免横幅和表格各算一次、边界上档位不一致。
 def status_of(row: dict) -> dict:
     """The ``budget`` status of a history row (computed from its fields when the row carries none)."""
     existing = row.get("budget")
@@ -92,6 +104,7 @@ def status_of(row: dict) -> dict:
     return budget_status(row.get("spent_usd"), row.get("budget_usd"), row.get("stop_reason"), row.get("status") == "running")
 
 
+# 横幅上的个数按 flags 累加，所以一条又超又耗尽的运行会同时计入 OVER 和 EXHAUSTED。排序只为了把最严重的放在最前。
 def summarize(rows: list[dict]) -> dict:
     """The banner: how many runs are over budget / exhausted / near, which ones (worst first), and the total spend of ``rows``."""
     flagged = []
@@ -123,6 +136,7 @@ def summarize(rows: list[dict]) -> dict:
                 "over_pct": st["over_pct"],
                 "text": st["text"],
             })
+    # 先按档位，再按超出的百分比、已用百分比。同一档里超出越多越靠前。
     flagged.sort(key=lambda item: (SEVERITY[item["level"]], -(item["over_pct"] or 0.0), -(item["used_pct"] or 0.0), str(item["id"])))
     return {
         "n_runs": len(rows),
@@ -138,6 +152,7 @@ def summarize(rows: list[dict]) -> dict:
     }
 
 
+# 首屏在服务端把告警画进 HTML，没开 JavaScript 也能看见。页面脚本随后用同一份报告重画。
 def render_banner_html(report: dict) -> str:
     """The banner as HTML, for the first paint and for readers without JavaScript. The page script redraws it from the same report on every frame."""
     esc = html.escape

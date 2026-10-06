@@ -22,6 +22,9 @@ comparable; a finished run is skipped by name, so to repeat one at the new budge
 ``--max-total-usd`` is an optional cap (default off) on what one invocation may spend: a run whose budget would not fit under it is skipped and logged.
 """
 
+# 套件回答不了的单点问题：同一算子换模型、换启动契约、换搜索辅助，或补上阶段 2 的 Mamba-2。
+# 和 run_suite 不同，这里没有「题 × 小数」的网格，也没有 --budget-scale。RUNS 里每一条自己带任务名，预算都是论文的 $15。
+
 from __future__ import annotations
 
 import argparse
@@ -36,8 +39,13 @@ from .common import fits_cap, naive_reference, read_confirm, read_result, run_on
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# PAPER_REGIME 只挂在 fa_paper / gemm_paper / conv2d_paper。fa_flash_prof 和 fa_flash_cnt 的 search 字典都只有 profile_poor。
+# fa_flash_cnt 多出来的 GPU 计数器不在这张表里，启动时要另设 TCENV_XCTRACE_TEMPLATE。
+# 没有 search 字典的条目沿用默认预设。max_rounds=40 会盖过预设里的轮数上限；套件不会逐题传入这组键。
 PAPER_REGIME = dict(profile_poor=True, plan_mix=True, init_samples=3, patience=12, max_rounds=40)
 
+# 键是 --runs 的名字，也是目录名。task 才是交给搜索的算子；@ 后面是另一套启动契约。预算字段全是论文的 $15。
+# fa_pro 改的是模型名；mamba2_bf16 把小数定成 bf16，其余条目用调用时的 dtype（默认 fp16）。
 RUNS: dict[str, dict] = {
     "fa_flash": dict(task="flash_attention", model=None, budget=PAPER_BUDGET_USD),
     "fa_pro": dict(task="flash_attention", model="deepseek-v4-pro", budget=PAPER_BUDGET_USD),
@@ -58,6 +66,7 @@ RUNS: dict[str, dict] = {
 }
 
 
+# 汇总扫的是 RUNS 里每一个名字，不限于本次命令点名的那些。多个进程分头写同一个 --out 时，别人已经写完的运行也要出现在表上。
 def finished_rows(out: Path) -> list[dict]:
     """One row per finished run found in ``out``, whichever process ran it (several processes may share one output directory)."""
     rows = []
@@ -70,6 +79,7 @@ def finished_rows(out: Path) -> list[dict]:
     return rows
 
 
+# 同目录里已完成的运行如果用的是另一笔预算（例如改预算之前的 $3），只提示不能横比加速比，不会把它们重跑。
 def budget_notes(out: Path, names: list[str], budget: float | None) -> list[str]:
     """One line per finished run in ``out`` whose recorded budget differs from the budget the requested runs are about to get (results at different budgets are not comparable)."""
     wanted = {budget if budget is not None else RUNS[n]["budget"] for n in names}
@@ -81,6 +91,7 @@ def budget_notes(out: Path, names: list[str], budget: float | None) -> list[str]
     return notes
 
 
+# 按名字顺序跑。result.json 已在就跳过，哪怕当时的预算和这次要给的不一样；要按新预算重跑得换一个 --out。
 def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = "fp16", log=print, budget: float | None = None, max_total_usd: float | None = None, **overrides) -> list[dict]:
     out.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -89,6 +100,7 @@ def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = 
         log(note)
     for i, n in enumerate(names):
         spec = RUNS[n]
+        # --budget 把本次点名的每一条都改成同一个美元数。不写时用该条目自己的 PAPER_BUDGET_USD，这里没有 scale。
         b = budget if budget is not None else spec["budget"]
         job_state(out / "state.json", script="p1_runs", current={"run": n, "task": spec["task"]}, queue=[{"run": x} for x in names[i + 1 :]], done=rows)
         dt = spec.get("dtype", dtype)
@@ -100,6 +112,7 @@ def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = 
                 log(f"(skip {n}: its ${b:.2f} budget does not fit under --max-total-usd ${max_total_usd:.2f}; this invocation has spent ${spent:.2f})")
                 continue
             log(f"\n##### {n}: {spec['task']} {dt} model={spec['model'] or 'default'} budget=${b:.2f}")
+            # spec["search"] 里的键盖过预设。没有这份字典时，协议停在预设上，变的只是任务名、模型和这一条的预算。
             r = run_one(spec["task"], dt, size, rd, budget=b, model=spec["model"], log=log, **{**spec.get("search", {}), **overrides})
             res = read_result(rd)
             if r.stop_reason.startswith(("gpu_hang", "repeated_worker_crashes")):
@@ -109,6 +122,7 @@ def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = 
                 job_state(out / "state.json", script="p1_runs", current={"run": n}, queue=[], done=rows, phase="aborted")
                 return rows
         else:
+            # 预算对不上也只跳过。旧的 result.json 留在原地，日志里写明两笔数字。
             was = res.get("budget_usd")
             log(f"(skip {n}: already done" + (f", with a ${was:.2f} budget, not ${b:.2f}" if was is not None and abs(was - b) > 1e-9 else "") + ")")
         naive = naive_reference(spec["task"], dt, size, out)
@@ -118,6 +132,7 @@ def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = 
     return rows
 
 
+# 表的第一列是具名跑法。fa_pro 和 fa_flash 的 task 都是 flash_attention，模型和搜索选项才是这两行的差别。
 def markdown(rows: list[dict]) -> str:
     f = lambda v, d=3: "-" if v is None else f"{v:.{d}f}"
     L = ["| run | task | model | confirmed speedup | best (search) | candidate us | best baseline | naive kernel | vs triton-msl | rounds | evals | budget USD | spent USD | stop |", "| --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
@@ -127,6 +142,7 @@ def markdown(rows: list[dict]) -> str:
     return "\n".join(L)
 
 
+# --report 只读已有结果打表，不启动搜索。开跑之后打表用的仍是磁盘上全部已完成名字，不限于本次 --runs。
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", default="fa_flash")
@@ -138,6 +154,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     out = REPO_ROOT / a.out if not Path(a.out).is_absolute() else Path(a.out)
     if a.report:
+        # 只重写 summary.md。没有 result.json 的名字不会出现，因为 finished_rows 读不到它们。
         md = markdown(finished_rows(out))
         (out / "summary.md").write_text(md + "\n")
         print(md)

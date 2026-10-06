@@ -1,3 +1,7 @@
+# Lion 优化器的一步。description：c = b1*m + (1-b1)*g，p_out = p*(1 - lr*wd) - lr*sign(c)，m_out = b2*m + (1-b2)*g。系数是模块上的 LR、WD、BETA1、BETA2。
+# 标准答案是 reference：p、g、m 转成 double 后按同一式子写出 p_out 和 m_out。error_scale 在 sign 的间断点放宽 p_out 的容差。
+# 基线有三条。mlx 是 mx.compile 的同一步；torch_mps 是未融合的逐算子 _torch；torch_compile 用 torch.compile 把这一步收成一个 Metal 核。
+# 模型不能改 contract：核名 lion_kernel，grid=(n/BLOCK_SIZE, 1, 1)，threads=(128, 1, 1)，缓冲 p/g/m/p_out/m_out，常量 N/BLOCK_SIZE/LR/WD/BETA1/BETA2。
 import torch
 
 from tcenv.contract import AbiArg, Contract
@@ -50,6 +54,7 @@ def build(dtype: str, size: str) -> Task:
     def gen_inputs(case, seed):
         out = {nm: sample(case, (n,), seed + 7 * i, dtype, mag=1.0, large=1.0e3) for i, nm in enumerate(("p", "g", "m"))}
         if case == "tiny" and dtype != "fp16":
+            # tiny 且不是 fp16 时把 p、g、m 乘 1e3，让 (1-beta)*x 留在正规数范围，避免 sign 两侧对调。
             # fp32 subnormals are flushed by the GPU: keep the products (1-beta)*x of the step formula in the normal range,
             # otherwise sign(beta1*m + (1-beta1)*g) legitimately flips for every implementation.
             out = {k: v * 1.0e3 for k, v in out.items()}

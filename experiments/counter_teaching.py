@@ -12,6 +12,9 @@ Only the planner request is sent (no patches, no GPU work apart from exporting t
 Usage: ``python -m experiments.counter_teaching --trace <capture.trace> --task gemm --size small --out runs/counter_teaching``
 """
 
+# 和语义测试是同一类检查的另一面：模型有没有读到眼前的证据，还是在复述提示里点过的名字。
+# 这里不改内核。同一条轨迹拆成四种提示，看规划回复是否依据计数器读数，而不是因为技能文本里写了 occupancy、limiter 就这么诊断。
+
 from __future__ import annotations
 
 import argparse
@@ -34,6 +37,7 @@ INTRO = (
 OLD_INTRO = "\n\nProfiler evidence for this kernel (Instruments Metal System Trace; taken because the kernel is slower than the strongest baseline). Use it to choose and implement changes:\n"
 BASE_FEEDBACK = "STATUS: ok  (stage reached: bench)\n(offline diagnosis test: baseline timings are not attached to this feedback)"
 
+# 事后在回复全文里数这些词。百分数那一条用来看它有没有引用一个读数，而不是只复述技能里的术语。
 MARKERS = {
     "occupancy": r"occupanc",
     "limiter": r"limiter",
@@ -44,17 +48,22 @@ MARKERS = {
 }
 
 
+# 返回的是（系统提示是否带 Skill 2b，贴在反馈后的证据）。none 两样都空。
+# trace_only 去掉计数器；untaught 保留读数但用旧导语；taught 才换上点名 limiter / occupancy 的导语，并打开技能。
 def conditions(summ: xctrace.TraceSummary) -> dict[str, tuple[bool, str]]:
     """name -> (system prompt carries Skill 2b, evidence text appended to the feedback)"""
+    # 拷一份再把计数器清空，这样格式化出来的正文里没有那些读数。
     no_counters = xctrace.TraceSummary(**{**summ.__dict__, "counters": {}})
     return {
         "none": (False, ""),
         "trace_only": (False, OLD_INTRO + xctrace.format_for_llm(no_counters)),
         "counters_untaught": (False, OLD_INTRO + xctrace.format_for_llm(summ)),
+        # 这一档的导语自己会点出 limiter、occupancy。和 untaught 比的时候，多出来的词可能来自导语或技能，不一定来自读数。
         "counters_taught": (True, INTRO + xctrace.format_for_llm(summ)),
     }
 
 
+# 只发规划那一次请求。标记是对回复文本的正则，用来统计它说出了哪些词，内核不会被编译或再测。
 async def ask(llm: LLM, system: str, task, source: str, feedback: str, k: int, label: str) -> dict:
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": prompts.plan_user(task, source, feedback, [], k)}]
     reply = await llm.chat(msgs, label=label)
@@ -63,6 +72,7 @@ async def ask(llm: LLM, system: str, task, source: str, feedback: str, k: int, l
     return {"label": label, "analysis": analysis, "plans": plans, "markers": {n: bool(re.search(p, text, re.I)) for n, p in MARKERS.items()}, "raw": text}
 
 
+# 四种条件各采样多次，看的是出现频率。内核源码每次相同，变的只有证据正文和要不要把读计数器的技能放进系统提示。
 async def main_async(a) -> None:
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -76,6 +86,7 @@ async def main_async(a) -> None:
     llm = LLM(cfg, ledger, Transcript(out / "transcript.jsonl"), max_concurrency=4)
     jobs, names = [], []
     for name, (taught, evidence) in conditions(summ).items():
+        # taught 决定技能在不在系统提示里；evidence 另附在反馈后面。两边独立，才能分开「会背提示里的词」和「看见了轨迹里的数」。
         system = prompts.system_prompt(task, use_tools=cfg.use_tools, profiler_evidence=taught)
         for i in range(a.samples):
             jobs.append(ask(llm, system, task, source, BASE_FEEDBACK + evidence, a.k, f"{name}.{i}"))
@@ -100,6 +111,7 @@ async def main_async(a) -> None:
     print("\n".join(lines))
 
 
+# 必须给一条用计数器模板录的 .trace。默认 $1 只够这些规划请求，不会按论文的 $15 去搜内核。
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--trace", required=True, help="a .trace bundle recorded with a counter template")

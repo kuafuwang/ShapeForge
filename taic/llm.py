@@ -4,6 +4,9 @@ Paper correspondence: this is the "model" box of TAIC (GPT-6 Astra there; DeepSe
 requests go through ``chat.completions.create`` because that is the interface every OpenAI-compatible endpoint supports.
 """
 
+# 流水线里的位置：编排器负责一轮轮问模型、评测内核。本文件是模型这一侧——每次对话怎么换成美元、
+# 发请求之前预算够不够、密钥怎样从对话记录里抹掉。预算、耐心、轮数三个停机旋钮定义在这里，拿它们结束循环的是编排器。
+
 from __future__ import annotations
 
 import asyncio
@@ -20,10 +23,15 @@ from typing import Any, Awaitable, Callable
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+# 请求本身失败（鉴权、坏参数、重试耗尽，或不可重试的 4xx）。编排器里：规划失败改用内置备用方案，搜索继续；
+# 并行的初始样本或一轮分支里，失败的那一支丢掉，其余继续；只有全部失败，或没有并行的那一次失败，才结束运行，停因是 llm_error。
 class LLMError(RuntimeError):
     """A request failed in a way retrying cannot fix (bad request, auth, ...)."""
 
 
+# 已经入账的美元达到预算。只在发请求之前抛，不会从一次已经发出的 HTTP 里抛出。
+# 编排器把它当成致命：并行里只要有一支抛出，整次搜索就停，停因是 budget_exhausted。不会像 LLMError 那样丢掉一支再继续。
+# 两种停法之后仍会复测赢家；那是 GPU 计时，不再问模型。
 class BudgetExhausted(RuntimeError):
     """The USD budget was used up; raised *before* a request is issued (the paper's budget gate)."""
 
@@ -60,6 +68,10 @@ PAPER_BUDGET_USD = 15.0
 DEFAULT_PRESET = "paper"
 
 
+# 三个旋钮截的不是同一件事：
+# budget_usd 在本文件的 CostLedger.check 里截还没发出的模型请求——已花费达到它就抛 BudgetExhausted，一轮中途也会停。
+# patience 截「没有换上新的最优内核」的轮数：一轮全部评完后才加一，达到就停，停因是 converged。这个比较在编排器里。
+# max_rounds 截优化轮数；初始内核在这个循环之外，循环走完则停因是 max_rounds。这个比较也在编排器里。
 @dataclass
 class SearchConfig:
     budget_usd: float = PAPER_BUDGET_USD
@@ -109,6 +121,7 @@ def load_raw_config(path: str | Path | None = None, preset: str | None = None) -
     return raw
 
 
+# 把 toml 和密钥文件收成模型配置和搜索配置。缓存命中单价若密钥文件没写 cacheRead，就按输入单价，而不是数据类默认的 0.006。
 def load_config(path: str | Path | None = None, *, model: str | None = None, preset: str | None = None, **search_overrides) -> tuple[LLMConfig, SearchConfig]:
     raw = load_raw_config(path, preset)
     llm = dict(raw.get("llm", {}))
@@ -144,6 +157,7 @@ def load_config(path: str | Path | None = None, *, model: str | None = None, pre
         max_retries=int(llm.get("max_retries", 6)),
         price_in=float(price.get("input", 0.30)),
         price_out=float(price.get("output", 1.20)),
+        # 没有 cacheRead 时回落到 input（再没有才是 0.30）。命中缓存不会自动按数据类默认的 0.006 计。
         price_cache_read=float(price.get("cacheRead", price.get("input", 0.30))),
     )
     allowed = SearchConfig.__dataclass_fields__.keys()
@@ -155,6 +169,7 @@ def load_config(path: str | Path | None = None, *, model: str | None = None, pre
 # ---------------------------------------------------------------------------------------------
 
 
+# 把用量拆成缓存命中的输入、未命中的输入、输出。三种 token 单价不同，不能都按 prompt_tokens 计。
 def split_usage(usage: Any) -> tuple[int, int, int]:
     """(cache-hit input tokens, cache-miss input tokens, output tokens). DeepSeek reports hit/miss explicitly;
     other endpoints expose ``prompt_tokens_details.cached_tokens``."""
@@ -170,23 +185,92 @@ def split_usage(usage: Any) -> tuple[int, int, int]:
     out = int(g(usage, "completion_tokens", 0) or 0)
     hit = g(usage, "prompt_cache_hit_tokens")
     miss = g(usage, "prompt_cache_miss_tokens")
+    # 两边都有就直接用，不再拿 prompt_tokens 重算。缺任意一边时，命中改从 cached_tokens 取，未命中 = 输入总量减去命中；只给出的那一边作废。
     if hit is None or miss is None:
         hit = g(g(usage, "prompt_tokens_details"), "cached_tokens", 0) or 0
         miss = max(prompt - int(hit), 0)
     return int(hit), int(miss), out
 
 
+# 一次运行共用的美元账。budget_usd 为 None 时不设门。费用在应答回来之后才加上，发请求前还不知道这一次要花多少。
 class CostLedger:
     def __init__(self, cfg: LLMConfig, budget_usd: float | None = None) -> None:
         self.cfg = cfg
         self.budget_usd = budget_usd
+        self.initial_budget_usd = budget_usd
         self.total_usd = 0.0
         self.in_tokens_hit = 0
         self.in_tokens_miss = 0
         self.out_tokens = 0
         self.requests: list[dict] = []
         self.t0 = time.time()
+        # live top-up: a small JSON file the dashboard (or ``taic.cli``) writes into the run directory, read before every budget gate
+        self.control_path: Path | None = None
+        self.on_budget_change: Callable[[float, float, dict], None] | None = None
+        self.on_control_problem: Callable[[str], None] | None = None
+        self._control_sig: tuple[int, int] | None = None
 
+    # -- live budget control ------------------------------------------------------------------
+    # 开始盯运行目录里的 control.json。先记住文件现在的修改时间和大小：启动时已经在的那一份先不当成新请求，
+    # 要等它再变一次才采纳，避免把上一次会话留下的数字又加一遍。
+    def watch_control(self, path: Path | None) -> None:
+        """Start reading ``path`` (``<run_dir>/control.json``) before every budget gate. A file that already exists is ignored until it changes:
+        it describes an earlier session, and whoever started this one has already folded it into the budget."""
+        self.control_path = Path(path) if path else None
+        self._control_sig = self._signature()
+
+    # 只看修改时间和长度，不读内容。文件不在就是没有新请求。
+    def _signature(self) -> tuple[int, int] | None:
+        if self.control_path is None:
+            return None
+        try:
+            st = self.control_path.stat()
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
+    # 活进程加钱的地方：文件变了才读。新总预算 = max(文件里的数, 已花费)。可以比当前预算高，于是继续问模型；
+    # 也可以比当前预算低，但不会低于已经花掉的美元。文件里的数若低于已花费，预算被抬到恰好等于已花费，紧接着的比较就会判定花完。
+    def refresh_budget(self) -> bool:
+        """Take a new total budget from the control file if it changed since the last look. Never lowers the budget below what is already spent
+        and ignores (with a note through ``on_control_problem``) a damaged file. Returns whether the budget changed."""
+        if self.control_path is None or self.budget_usd is None:
+            return False
+        sig = self._signature()
+        # 文件没出现，或修改时间与长度都没变：不重读。
+        if sig is None or sig == self._control_sig:
+            return False
+        # 先记下这次的签名。文件内容坏掉时预算不动，也不会在之后每次发请求时重复报警。
+        self._control_sig = sig
+        from . import control
+
+        doc = control.read_json(self.control_path)
+        requested, problem = control.parse_control(doc)
+        if requested is None:
+            if self.on_control_problem:
+                self.on_control_problem(f"control file ignored: {problem}")
+            return False
+        # 下界是已花费，不是当前预算。文件里的数更小，预算就变成已花费，而不是那个更小的请求。
+        new = max(requested, self.total_usd)
+        old = self.budget_usd
+        # 和当前预算几乎相同则不当成一次变更。
+        if abs(new - old) < 1e-12:
+            return False
+        self.budget_usd = new
+        if self.on_budget_change:
+            self.on_budget_change(old, new, doc)
+        return True
+
+    # 接着跑时把上一份请求账搬过来。已花费用最后一条里的累计值；账是空的就从 0 开始。否则预算门会以为还没花过钱。
+    def restore(self, requests: list[dict]) -> None:
+        """Carry over the requests of an earlier session (from a transcript or ``ledger.json``): totals, token counts and the request list."""
+        self.requests = [dict(r) for r in requests]
+        self.total_usd = float(self.requests[-1]["total_usd"]) if self.requests else 0.0
+        self.in_tokens_hit = sum(int(r.get("hit", 0)) for r in self.requests)
+        self.in_tokens_miss = sum(int(r.get("miss", 0)) for r in self.requests)
+        self.out_tokens = sum(int(r.get("out", 0)) for r in self.requests)
+
+    # 单价是美元 / 百万 token：命中 × price_cache_read，未命中 × price_in，输出 × price_out。
     def cost_of(self, usage: Any) -> float:
         hit, miss, out = split_usage(usage)
         c = self.cfg
@@ -206,8 +290,11 @@ class CostLedger:
     def remaining(self) -> float | None:
         return None if self.budget_usd is None else self.budget_usd - self.total_usd
 
+    # 先看控制文件有没有改总预算，再比较已经入账的总额。不预估下一次，所以刚放行的请求回来后总额可以高于预算。
     def check(self) -> None:
-        """The budget gate: evaluated before every request. A request that is already in flight may overshoot it."""
+        """The budget gate: evaluated before every request. A request that is already in flight may overshoot it.
+        A raised budget in the run's control file is picked up here first (see ``watch_control``)."""
+        self.refresh_budget()
         if self.budget_usd is not None and self.total_usd >= self.budget_usd:
             raise BudgetExhausted(f"budget ${self.budget_usd:.2f} exhausted (spent ${self.total_usd:.4f})")
 
@@ -227,15 +314,18 @@ class CostLedger:
 # ---------------------------------------------------------------------------------------------
 
 
+# 运行目录里的 transcript.jsonl。密钥不能落盘：已知秘密整段替换，再按 sk- 形态扫一遍。
 class Transcript:
     """Append-only JSONL log of every request/response. Secrets are redacted."""
 
+    # 短于 8 个字符的秘密不进表，避免把普通短词替换掉。
     def __init__(self, path: Path | None, secrets: list[str] | None = None) -> None:
         self.path = path
         self._secrets = [s for s in (secrets or []) if s and len(s) >= 8]
         if path:
             path.parent.mkdir(parents=True, exist_ok=True)
 
+    # 先按表里的原文替换；sk- 开头且后面至少 12 个字符的形态再扫一遍，盖住没放进表里的密钥。
     def redact(self, text: str) -> str:
         for s in self._secrets:
             text = text.replace(s, "<redacted>")
@@ -276,6 +366,7 @@ class LLM:
         self.cfg = cfg
         self.ledger = ledger
         self.transcript = transcript or Transcript(None)
+        # 无论调用方有没有把密钥放进 secrets，打码表都带上这把 api_key（含短于 8 字符的）。
         self.transcript._secrets = list({*self.transcript._secrets, cfg.api_key}) if cfg.api_key else self.transcript._secrets
         if client is None:
             from openai import AsyncOpenAI
@@ -355,6 +446,8 @@ class LLM:
         return d
 
     # -- single request with retries ---------------------------------------------------------
+    # 一次补全。预算门在并发信号量之外、也在 HTTP 之前：好几次可能都看到「还没超」然后一起发出去。
+    # 费用要等响应才入账，所以已经发出的请求可以让总额略超预算。过了门的这一次，后面的重试不再查预算。
     async def chat(self, messages: list[dict], *, tools: list[dict] | None = None, label: str = "", max_tokens: int | None = None) -> Reply:
         import openai
 
@@ -390,6 +483,7 @@ class LLM:
                     self.transcript.log({"event": "error", "label": label, "status": e.status_code, "error": str(e)})
                     if e.status_code == 400 and "reasoning_content" in str(e) and any("reasoning_content" in m for m in messages):
                         # the endpoint does not accept echoed reasoning on this kind of turn: drop it and try once more
+                        # 这次 continue 不增加 attempt，并且把回显推理关掉，后面的请求也不再带 reasoning_content。
                         messages = [{k: v for k, v in m.items() if k != "reasoning_content"} for m in messages]
                         self.cfg.echo_reasoning_content = False
                         await self._note_llm(label, "retry", attempt=attempt, error="HTTP 400")
@@ -437,26 +531,44 @@ class LLM:
         label: str = "",
         max_turns: int = 6,
         max_tokens: int | None = None,
+        start_turn: int = 0,
+        pending: list[dict] | None = None,
     ) -> tuple[Reply, list[dict]]:
         """Run the model until it answers without calling a tool. Returns (final reply, full message list).
-        When the turn limit is reached tools are withdrawn so the model must produce an answer."""
+        When the turn limit is reached tools are withdrawn so the model must produce an answer.
+
+        Resuming an interrupted conversation: ``messages`` already hold the turns before ``start_turn`` and the assistant message of turn ``start_turn``;
+        ``pending`` lists that message's tool calls whose results were never obtained. They are answered first and the loop goes on at ``start_turn + 1``,
+        so request labels (``<label>#t<turn>``) continue where the interrupted session stopped."""
+        # 模型可能一直叫工具。轮号用尽后把工具撤掉，逼它给出正文。中断后续跑时，缺结果的工具调用先补上，轮号不从头计。
         msgs = list(messages)
-        for turn in range(max_turns + 1):
+        first = start_turn
+        if pending:
+            # 这些调用已经问过模型，只补工具结果，不再发一次请求。
+            await self._answer_tools(msgs, pending, handlers)
+            first = start_turn + 1
+        for turn in range(first, max_turns + 1):
+            # 前 max_turns 轮可以叫工具；到达上限的那一轮不再提供工具。
             use = tools if turn < max_turns else None
             reply = await self.chat(msgs, tools=use, label=f"{label}#t{turn}", max_tokens=max_tokens)
             msgs.append(reply.message)
             if not reply.tool_calls:
                 return reply, msgs
-            for tc in reply.tool_calls:
-                handler = handlers.get(tc["name"])
-                try:
-                    args = json.loads(tc["arguments"] or "{}")
-                    if handler is None:
-                        out = f"error: unknown tool '{tc['name']}'"
-                    else:
-                        r = handler(args)
-                        out = await r if asyncio.iscoroutine(r) else r
-                except Exception as e:  # noqa: BLE001 - tool errors go back to the model
-                    out = f"error: {type(e).__name__}: {e}"
-                msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": str(out)})
+            await self._answer_tools(msgs, reply.tool_calls, handlers)
         raise LLMError("unreachable")
+
+    @staticmethod
+    async def _answer_tools(msgs: list[dict], tool_calls: list[dict], handlers: dict[str, ToolHandler]) -> None:
+        """Run the tool calls of an assistant message and append their results to ``msgs``."""
+        for tc in tool_calls:
+            handler = handlers.get(tc["name"])
+            try:
+                args = json.loads(tc["arguments"] or "{}")
+                if handler is None:
+                    out = f"error: unknown tool '{tc['name']}'"
+                else:
+                    r = handler(args)
+                    out = await r if asyncio.iscoroutine(r) else r
+            except Exception as e:  # noqa: BLE001 - tool errors go back to the model
+                out = f"error: {type(e).__name__}: {e}"
+            msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": str(out)})

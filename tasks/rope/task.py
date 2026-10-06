@@ -1,3 +1,7 @@
+# 旋转位置编码。description：作用在 x[B,H,S,D] 上，位置是 S 的下标，频率是 BASE^(-i/(D/2))，旋转的一对是 (x[..., i], x[..., i+D/2])。BASE = 10000，角度在 fp32 里现算。
+# 标准答案是 reference：在 float64 上用 BASE 和 arange 造 inv_freq，输出 cat([x1*c - x2*s, x1*s + x2*c])。
+# 基线是 baselines 里的 mlx：mx.fast.rope，traditional=False，base=BASE，scale=1.0，offset=0。
+# 模型不能改 contract：核名 rope_kernel，grid=(S/BLOCK_S, B*H, 1)，threads=(128, 1, 1)，缓冲 x/y，常量 B/H/S/D/BASE/BLOCK_S。
 import torch
 
 from tcenv.contract import AbiArg, Contract

@@ -1,3 +1,7 @@
+# 矩阵乘向量。description：y = A @ x，A 是行主序 [M, K]，核内乘积按 fp32 累加后舍入一次。BLOCK_M = 4。
+# 标准答案是 reference：把 A 和 x 转成 double 再做 @。
+# 基线是 baselines：mlx 的 a @ x，torch_mps 的 torch.mv。
+# 模型不能改 contract：核名 gemv_kernel，grid=(M/BLOCK_M, 1, 1)，threads=(128, 1, 1)，缓冲 A/x/y，常量 M、K、BLOCK_M。
 import torch
 
 from tcenv.contract import AbiArg, Contract
@@ -54,5 +58,6 @@ def build(dtype: str, size: str) -> Task:
         flops=2.0 * M * K, min_bytes=float((M * K + K + M) * 2),
         rtol=rtol, atol_rel=atol_rel,
         naive_msl=load_text("gemv", "naive.metal", dtype),
+        # ieee 特殊值放在输入 A 上。triton_baseline_variant 是 Triton→MSL 编译器用的另一份题面，速度对照用 baselines。
         meta={"ieee_inputs": ("A",), "triton_baseline_variant": {"source": load_text("gemv", "kernel_triton_msl.py", dtype, {"M": str(M), "K": str(K)}), "note": "one program per row, 1-D accumulator"}},
     )

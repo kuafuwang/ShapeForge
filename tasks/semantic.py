@@ -15,6 +15,12 @@ All arithmetic is 32-bit two's complement with wraparound; operations whose Trit
 (negative modulo, division, shifts by >= 32, constants outside int32) are never generated.
 """
 
+# 语义恢复：名字和注释故意写错，看模型跟的是标签还是正文里的计算。get_task 见到 sem_ 前缀就调用 build。
+# sem_gemm_neg 把 gemm 题面的 acc = tl.dot(a, b, acc) 改成 acc -= tl.dot(a, b)，参考用 epilogue_ref 对 C 取负，baselines 为空。
+# sem_relu_gelu_comment 的注释写成 GELU，正文是 tl.where(x > 0, x, 0.0)，参考 torch.relu；sem_gelu_named_relu 的注释写成 ReLU，正文是 _gelu_ref 的 tanh 近似。
+# 上面两题复用逐元素骨架，kernel_name 是 relu_kernel，baselines 为空。模型不能改的是那份元素级契约（核名、缓冲 x/y、grid、threads、N、BLOCK_SIZE）。
+# sem_attention_odd_scale 走 flash_attention.build_attention(odd_scale=True)：契约常量 SM_SCALE 仍是 1/sqrt(D)，题面把 qk 标度写成 SM_SCALE + log2(e)。
+# sem_int_<种子> 由 IntProgram 从同一份语句生成 Triton 题面、evaluate 标准答案和朴素 MSL；exact=True，按 int32 逐位比较，baselines 为空。
 from __future__ import annotations
 
 import random
@@ -27,6 +33,7 @@ from tcenv.contract import AbiArg, Contract
 from tcenv.task import Task
 
 INT_PREFIX = "sem_int_"
+# 四个固定错位题。sem_int_<种子> 不在这里，由 _build_int 按名字里的种子现生成。
 FIXED_NAMES = ("sem_gemm_neg", "sem_relu_gelu_comment", "sem_gelu_named_relu", "sem_attention_odd_scale")
 BLOCK = 256
 NUM_WARPS = 2
@@ -37,6 +44,7 @@ M32 = 1 << 32
 
 
 def wrap(t: torch.Tensor) -> torch.Tensor:
+    # 折回 int32 补码，结果仍放在 int64 里。整数题多数运算做完都会过它。
     """Wrap an int64 tensor to int32 two's complement (kept in int64)."""
     return ((t + (1 << 31)) % M32) - (1 << 31)
 
@@ -61,6 +69,7 @@ class Stmt:
 
 @dataclass
 class IntProgram:
+    # 一份程序三份视图：triton_source 是题面，evaluate 是标准答案，msl 是用来核对评测环境的朴素 Metal。
     seed: int
     stmts: list[Stmt] = field(default_factory=list)
     final: list[str] = field(default_factory=list)
@@ -68,6 +77,7 @@ class IntProgram:
     # -- generation ---------------------------------------------------------------------------------
     @staticmethod
     def generate(seed: int, n_stmts: int = 105) -> "IntProgram":
+        # 按种子抽约 n_stmts 条语句。sum、max、min 至少各一条。生成器避开负取模、除法，以及移位量大于等于 32 的语句。
         rng = random.Random(seed)
         prog = IntProgram(seed)
         blocks = ["xv", "yv", "idx"]  # block-valued names available as operands
@@ -144,6 +154,7 @@ class IntProgram:
 
     # -- views ---------------------------------------------------------------------------------------
     def triton_source(self, n: int) -> str:
+        # 视图一，发给模型的 Triton 正文。结果是最后四个块变量相异或，再加上 idx & 7。
         L = [
             "# Triton specification: a synthetic integer kernel (no recognizable algorithm). All arithmetic is int32 with wraparound.",
             f"# Launch: grid = (N // BLOCK,), num_warps = {NUM_WARPS}, N = {n}, BLOCK = {BLOCK}, K = {SCALAR_K} (runtime scalar argument)",
@@ -195,6 +206,7 @@ class IntProgram:
         return [f"{d} = {red}({s.a}, axis=0)"]
 
     def evaluate(self, x: torch.Tensor, y: torch.Tensor, k: int = SCALAR_K) -> torch.Tensor:
+        # 视图二，标准答案，和 Triton 语句逐步对应。右移沿用已折回的值做算术右移；bin、sbin、左移、取负、hash、循环和 sum 的结果再经 wrap。
         """Exact reference: int64 arithmetic wrapped to int32 after every operation. x, y: [P*BLOCK] int."""
         P = x.numel() // BLOCK
         env: dict[str, torch.Tensor] = {
@@ -254,6 +266,7 @@ class IntProgram:
         return res.reshape(-1).to(torch.int32)
 
     def msl(self) -> str:
+        # 视图三，朴素 MSL，用 uint 做回绕。归约先在 simdgroup 内做，再合并 NUM_WARPS 个槽。评测拿它检查环境。
         """Naive MSL translation (uint arithmetic for guaranteed wraparound)."""
         names_b = {"xv", "yv", "idx"} | {s.dst for s in self.stmts if s.kind not in ("sum", "max", "min")}
         L = ["inline uint sh(int v, uint k) { return uint(v >> k); }", ""]
@@ -328,6 +341,7 @@ INT_N = {"paper": 1 << 16, "small": 1 << 12}
 
 
 def _build_int(name: str, size: str) -> Task:
+    # 整数题的契约：核名 sem_int_kernel，grid=(n/BLOCK, 1, 1)，threads=(THREADS, 1, 1)，缓冲 x、y、标量 K、输出 out。模型不能改这些。
     seed = int(name[len(INT_PREFIX) :])
     prog = IntProgram.generate(seed)
     n = INT_N[size]
@@ -369,9 +383,11 @@ def _build_int(name: str, size: str) -> Task:
 
 
 def _gelu_ref(x: torch.Tensor) -> torch.Tensor:
+    # sem_gelu_named_relu 的标准答案。系数 0.7978845608028654 和 0.044715 与下面题面正文里的常数相同。
     return 0.5 * x * (1.0 + torch.tanh(0.7978845608028654 * (x + 0.044715 * x**3)))
 
 
+# 题面字符串：头注释和 docstring 写成 GELU，函数名是 relu_kernel，真正执行的是 y = tl.where(x > 0, x, 0.0)。
 RELU_COMMENT_GELU = '''# Triton specification: GELU activation (tanh approximation), element type {{TL}}
 # Launch: grid = (N // BLOCK_SIZE,), num_warps = {{NUM_WARPS}}, N = {{N}}, BLOCK_SIZE = {{BLOCK_SIZE}}
 import triton
@@ -390,6 +406,7 @@ def relu_kernel(x_ptr, y_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
     tl.store(y_ptr + offsets, y.to({{TL}}), mask=mask)
 '''
 
+# 题面字符串：头注释和 docstring 写成 ReLU，函数名仍是 relu_kernel，正文是 tanh 近似 GELU。
 GELU_NAMED_RELU = '''# Triton specification: ReLU activation, element type {{TL}}
 # Launch: grid = (N // BLOCK_SIZE,), num_warps = {{NUM_WARPS}}, N = {{N}}, BLOCK_SIZE = {{BLOCK_SIZE}}
 import triton
@@ -411,6 +428,7 @@ def relu_kernel(x_ptr, y_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
     tl.store(y_ptr + offsets, y.to({{TL}}), mask=mask)
 '''
 
+# 朴素 Metal：按真正的 tanh 近似 GELU 写，给 sem_gelu_named_relu 核对环境。relu 那题直接借用 relu/naive.metal。
 GELU_NAIVE = """kernel void relu_kernel(device const {{T}}* x [[buffer(0)]],
                         device {{T}}* y [[buffer(1)]],
                         uint tg [[threadgroup_position_in_grid]],
@@ -431,6 +449,7 @@ GELU_NAIVE = """kernel void relu_kernel(device const {{T}}* x [[buffer(0)]],
 
 
 def build(name: str, dtype: str, size: str) -> Task:
+    # sem_ 的总装。整数题走 _build_int；两个名字错位题换掉题面字符串；注意力走 odd_scale；gemm 只改题面和朴素 Metal 的累加，contract 用 gemm 的那一份。
     from ._common import check_dtype, load_text
     from ._elementwise import BLOCK_SIZE, NUM_WARPS, SIZES, build_elementwise
 
@@ -475,10 +494,12 @@ def build(name: str, dtype: str, size: str) -> Task:
             epilogue_ref=lambda c: -c, epilogue_msl="", epilogue_def="", baselines=(),
             description="Matrix multiplication as described in the specification's code (read the accumulation carefully).", extra_flops=0.0,
         )
+        # 题面从 gemm 的 kernel_triton.py 读入后，把累加那一行改成减法，说明文字加上 standard GEMM，核名保持 gemm_kernel。
         src = t.triton_source
         assert "acc = tl.dot(a, b, acc)" in src
         src = src.replace("acc = tl.dot(a, b, acc)", "acc -= tl.dot(a, b)").replace("matrix multiplication C = A @ B", "matrix multiplication C = A @ B (standard GEMM)")
         t.triton_source = src
+        # 朴素 Metal 里的 += 同步改成 -=，与上面的 epilogue_ref（对 C 取负）是同一条计算。
         t.naive_msl = t.naive_msl.replace("acc[i][j] += a[i] * b[j]", "acc[i][j] -= a[i] * b[j]")
         t.name = name
         return t

@@ -9,6 +9,12 @@
   coefficient of variation.
 """
 
+# 计时协议所在。候选与 MLX / PyTorch 放进同一次 interleaved，比的是同一把 perf_counter 墙钟。
+# 候选的窗口是 commit 到 waitUntilCompleted 的 wall_s（编码在窗口外）；MLX 的窗口是 mx.eval（构图在窗口外）；PyTorch 的窗口含启动循环和 mps.synchronize。
+# 两边都是「这一批的墙钟 ÷ k」，再取重复的中位数。加速比在 evaluate 里用这份 median_s 计算：基线耗时 ÷ 候选耗时，大于 1 表示候选更快。
+# roofline 拿走同一份候选 median_s，对照标定过的峰值带宽和算力：最小字节、FLOP 各除以峰值得到两条时间下界，较大者是硬件下界，
+# 用来说明时间卡在访存还是计算、离下界有多远。本文件自己不加锁；评测、基线命令和 triton-msl 在独占锁里调用它。
+
 from __future__ import annotations
 
 import random
@@ -17,6 +23,7 @@ from dataclasses import dataclass, asdict
 from typing import Callable
 
 
+# 对外认 median_s。加速比和 roofline 都用它；cv 留给调用方判断这次测量是否安静。
 @dataclass
 class BenchStats:
     median_s: float
@@ -36,6 +43,8 @@ class BenchStats:
         return d
 
 
+# 一批的墙钟大约 target_s，把单次启动和同步的固定开销摊进 k。
+# 从 1 次启动探起：evaluate 对单次 launch 有数秒级看门狗，一上来就跑满 kmax 会把病态核放大成挂起。
 def choose_iters(run_k: Callable[[int], float], target_s: float = 0.015, kmin: int = 4, kmax: int = 4000) -> int:
     """Pick the batch size ``k`` so that one timed batch lasts about ``target_s``.
 
@@ -44,13 +53,17 @@ def choose_iters(run_k: Callable[[int], float], target_s: float = 0.015, kmin: i
     """
     run_k(1)  # warm-up, discarded: pays one-time costs (pipeline creation, JIT compilation of a compiled baseline)
     per = max(run_k(1), 1e-8)
+    # 单次已经超过 0.1 秒时一批只启动 1 次，避免 k 把单次 launch 的看门狗打满。
     if per > 0.1:  # slow: one launch per batch
         return 1
+    # 再用最多 8 次、大约 0.05 秒的一小批，把「每次多少秒」从单次估计修正成一小批的平均。
     probe = max(1, min(8, int(0.05 / per)))
     per = max(run_k(probe) / probe, 1e-8)
     return int(max(kmin, min(kmax, target_s / per)))
 
 
+# 每一轮打乱顺序再各测一批。热和后台负载会同时作用在候选和基线上，中位数之比才稳得住。
+# 返回的 median_s 同时是加速比的分子分母，和 roofline 的 time_s。kmin 让每一批至少转过全部缓冲区组。
 def interleaved(
     runners: dict[str, Callable[[int], float]],
     *,
@@ -70,6 +83,7 @@ def interleaved(
         rng.shuffle(order)
         for n in order:
             t = runners[n](ks[n]) / ks[n]
+            # 开头几轮不进样本。机器刚从闲置进入计时，这几轮放进中位数会把加速比拉偏。
             if rep >= warmup_reps:
                 samples[n].append(t)
     out: dict[str, BenchStats] = {}

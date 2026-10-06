@@ -1,3 +1,7 @@
+# 3×3 卷积。description：stride 1、无 padding、无 bias，激活是 NHWC，权重是 [OC, KH, KW, C]，fp32 累加后舍入一次。KH = KW = 3。
+# 标准答案是 reference。输入都有限时走 F.conv2d（先换成 NCHW）；出现 NaN 或 Inf 时改成逐 tap 的 fp32 乘加，与函数里避开 Winograd 的分支一致。
+# 基线是 baselines：mlx 的 mx.conv2d(x, w)；torch_mps 把 NHWC 换成 NCHW 后调用 F.conv2d。
+# 模型不能改 contract：核名 conv2d_kernel，grid=(OC/BLOCK_N, M_TOTAL/BLOCK_M, 1)，threads=(128, 1, 1)，缓冲 x/w/y，以及常量 N/H/W/C/OC/KH/KW/OH/OW/M_TOTAL/K_TOTAL/BLOCK_*。
 import torch
 import torch.nn.functional as F
 
@@ -53,6 +57,7 @@ def build(dtype: str, size: str) -> Task:
             "w": sample(case, (OC, KH, KW, C), seed + 31, dtype, mag=mag, large=20.0, spike=5.0),
         }
 
+    # 标准答案的两支：输入有限时用 F.conv2d；出现 NaN 或 Inf 时改成逐 tap 的 fp32 乘加。
     def reference(inp):
         if not (torch.isfinite(inp["x"]).all() and torch.isfinite(inp["w"]).all()):
             # CPU conv2d may use a Winograd transform, which smears one Inf over a whole tile as NaN (Inf * 0); IEEE semantics

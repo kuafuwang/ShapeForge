@@ -1,3 +1,8 @@
+# 非因果注意力。默认 description：每个 (batch, head) 上 o = softmax(q k^T * scale) v，用在线 softmax 递推；分数、统计和累加器在 fp32，输出舍入一次。
+# 标准答案是 reference：在 float 上调用 F.scaled_dot_product_attention，scale 用 eff_scale。odd_scale 时 eff_scale = (sm_scale + LOG2E) * ln(2)，否则 eff_scale = 1/sqrt(D)。
+# 基线是 baselines：mx.fast.scaled_dot_product_attention 和 F.scaled_dot_product_attention，传入的 scale 与 eff_scale 相同。
+# 模型不能改 contract：核名 flash_attention_kernel，grid=(S/BLOCK_M, B*H, 1)，threads，缓冲 q/k/v/o，常量 B/H/S/D/BLOCK_M/BLOCK_N/SM_SCALE。其中 SM_SCALE 始终是 1/sqrt(D)。
+# 题面来自 kernel_triton.py。odd_scale 只替换题面里的 QK_SCALE_EXPR。build_variant 只改 query tile、key tile 和 threads。
 import math
 
 import torch
@@ -15,6 +20,7 @@ THREADS = 128
 DEFAULT_VARIANT = f"{BLOCK_M}x{BLOCK_N}t{THREADS}"
 
 
+# 解析 "<BLOCK_M>x<BLOCK_N>t<threads>"。threads/BLOCK_M 必须是不超过 32 的 2 的幂，并且整除 head 维 D。
 def parse_variant(variant: str, seq: int, head_dim: int) -> tuple[int, int, int]:
     """``"<BLOCK_M>x<BLOCK_N>t<threads>"`` -> (BLOCK_M, BLOCK_N, threads). The naive kernel lets ``threads / BLOCK_M`` threads (a power of two, at most one SIMD group)
     share a query row, so the thread count is tied to the query tile."""
@@ -48,6 +54,7 @@ def _torch_factory(scale):
     return f
 
 
+# odd_scale 改的是题面里的 QK_SCALE_EXPR 和 reference 用的 eff_scale。契约常量 SM_SCALE 写入的是 1/sqrt(D)。
 def build_attention(name: str, dtype: str, size: str, *, odd_scale: bool = False, description: str | None = None, variant: str = "") -> Task:
     """``odd_scale``: the paper's misleading-cue variant, ``qk_scale = SM_SCALE + log2(e)`` (a *sum*, not a product)."""
     check_dtype(dtype)
@@ -108,6 +115,7 @@ def build(dtype: str, size: str) -> Task:
     return build_attention("flash_attention", dtype, size)
 
 
+# 同一注意力、同一 eff_scale，只换 query tile、key tile 和线程数。
 def build_variant(dtype: str, size: str, variant: str) -> Task:
     """The same operator under another launch contract (query tile, key tile, threads); used by the contract-sensitivity study."""
     return build_attention("flash_attention", dtype, size, variant=variant)
