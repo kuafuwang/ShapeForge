@@ -531,9 +531,17 @@ def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | N
     plans_by_round: dict[int, list[dict] | None] = {}
     for r in range(1, last_round):  # complete rounds
         plans, how = _round_plans(events, r, k)
-        if plans is None:
-            plans = [dict(p) for p in FALLBACK_PLANS[:k]]
-            notes.append(f"round {r}: the planner's reply is not in the transcript ({how}); the generic plans are assumed") if how != "fallback" else None
+        if plans is None and how == "fallback":
+            plans = [dict(p) for p in FALLBACK_PLANS[:k]]  # both planner replies were unusable: the orchestrator used its generic plans
+        elif plans is None:
+            # no planner reply in the transcript (it is missing or damaged): the titles stored with the candidates in result.json are the next best thing
+            titles: dict[int, str] = {}
+            for c in (result or {}).get("candidates") or []:
+                li = _label_info(str(c.get("label", "")))
+                if li and li["round"] == r and c.get("plan"):
+                    titles.setdefault(li["plan"], str(c["plan"]))
+            plans = [{"title": titles.get(i, f"(plan {i + 1} of round {r}: title not recorded)"), "change": "", "expected_gain": ""} for i in range(k)]
+            notes.append(f"round {r}: the planner's reply is not in the transcript ({how}); plan titles are taken from result.json" if titles else f"round {r}: the planner's reply is not in the transcript ({how}) and result.json has no plan titles: the history line of that round is approximate")
         plans_by_round[r] = plans
         for i, p in enumerate(plans):
             st, lab, _ = _branch(r, i, chats, cands, search, kernel_name)

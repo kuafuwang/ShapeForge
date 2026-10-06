@@ -163,6 +163,50 @@ A run can be both over budget and exhausted; it then carries both badges. A run 
 `/api/budget` returns the same summary as JSON, and `/?run=p1%2Ffa_pro` opens a given run directly. Note that the figures come from each run's
 own `state.json` / `result.json` / `ledger.json`, so a run launched before this change is judged by the budget it actually had.
 
+## Adding budget and resuming runs
+
+A run that ran out of money (`stop_reason == "budget_exhausted"`) or whose process died (a crash, a closed editor window) can be continued
+from its own directory; nothing already spent is spent again. Two ways, one idea:
+
+* **Live top-up** of a run that is still going: `<run_dir>/control.json` (`{"budget_usd": <new TOTAL>}`, written atomically). The search reads it
+  before every budget gate (one `stat`), raises its budget to it, never below what is already spent, and logs `budget $a -> $b`. Every change is
+  appended to `<run_dir>/budget_events.json` (`requested` by whoever asked, `applied` by the run, `resume` for a restart; each with time, old and
+  new budget, amount and who: `dashboard` / `cli`). Only processes started after this feature read the file: `state.json` of such a process says
+  `"control_supported": true`; a run started by an older version cannot be topped up live (wait for it to stop, then resume it).
+* **Resume** of a stopped run: `uv run python -m taic.cli resume <run_dir> [--add-budget USD | --budget TOTAL] [--dry-run]`. It rebuilds the state
+  from the directory and goes on with the rounds that were not finished, then confirms and finishes as usual. Before it overwrites anything,
+  `result.json` / `confirm_report.json` are kept as `*.before_topup_<n>.json` (and `state.json` as `state.before_resume_<n>.json`), so the earlier
+  result is never lost. `--dry-run` rebuilds everything in memory, prints what would be continued (including the checks between the sources) and writes
+  nothing, calls no model, uses no GPU. A run that stopped for any other reason (converged, `max_rounds`, GPU hang, model errors) is **not** resumable
+  and there is no override; a run still alive, or one that is being resumed (`<run_dir>/resume.lock` of a live pid), is refused.
+
+What a resume rebuilds, and from where (`taic/resume.py` has the details):
+
+| state | source | exact? |
+|---|---|---|
+| money spent, tokens, request list | `transcript.jsonl` (usage, cost and running total of every request); `ledger.json` / `state.json` only cross-check it | yes, for every request that was answered |
+| candidates, reports, best kernel, evaluation cache | `candidates/*/{kernel.metal,report.json}`; selection replayed and compared with the trace in `state.json` | yes |
+| hypotheses tried (`history`), stagnation counter | the planner's replies in the transcript plus each branch's candidates; checked against the history block of every recorded planner prompt | yes (a branch whose model request *failed* is worded as "no valid kernel after repair") |
+| the interrupted round | its plans come from the transcript (no new planner request); finished branches stay finished; a part-way branch continues from its recorded conversation: tool calls without a result are answered locally, the next request carries the label that was due (`r4.p0.fix1#t1` ...) | yes, up to the requests that were in flight |
+| system prompt | the one in the transcript is reused, even if the prompt files were edited since | yes |
+| settings | `run_config.json` (new runs, no credentials in it); older runs: budget and round limit from `state.json`; tool use, profiler skill, plan mix, branches, repair tries and initial samples from the recorded prompts and labels | `patience` and `reasoning_effort` are not recorded by older runs: pass `--patience` (default: `taic.toml`, i.e. what runs older than the presets used) |
+| profiler evidence of earlier rounds | `profiles/r*_<seed>.{txt,json}` | yes; traces that failed are not listed |
+
+Not recoverable: model requests that were in flight when the process died (the provider may have billed them, the ledger never saw them: the
+resume notes list them), and the per-request wall-clock times of earlier sessions (`t` is `null` there). The dry run lists both.
+
+**Dashboard.** On a budget-exhausted / over-budget / interrupted run (and on a running run that reached NEAR BUDGET) the run's card, its banner chip
+and the search panel carry an **Add budget** button. It opens a dialog with the current budget, what is spent, the best speedup so far, `+$3 / +$5 /
++$15` and a custom amount, the resulting total, and the sentence "this spends real LLM money, up to $X more"; after Confirm the page keeps showing
+the live state of the run, with a TOPPED UP badge (such a run is not directly comparable with fixed-budget runs) and its budget history
+(`$3.00 -> $8.00 (+$5.00, 04:35, dashboard)`). A run that cannot be continued shows the reason instead of the button. The page is read-only
+otherwise. The write path (`POST /api/runs/<run>/budget` with `{"amount_usd": 5}` or `{"new_budget_usd": 8}`; `GET /api/runs/<run>/control`
+says what is possible) spends money and starts GPU work, so: the server only answers on a loopback `Host`, a browser `Origin` must be the page's
+own, every POST needs the per-process random token the served page carries (`X-Observe-Token`), the amount must be positive and at most
+`OBSERVE_MAX_TOPUP_USD` (default 25), the run must resolve inside `runs/` (no `..`, no symlink out), and one request per run is in flight at a time.
+A live run gets `control.json`; a stopped run gets a detached `uv run python -m taic.cli resume ...` (own session, log in `<run_dir>/resume_<n>.log`).
+`OBSERVE_CONTROL_DRYRUN=1` performs every check, records the command that *would* run in `budget_events.json` (kind `dryrun`) and starts nothing.
+
 ## Compiler baseline (optional): Triton -> Metal with triton-msl
 
 Upstream Triton has no Metal backend. The specification text of every task is real Triton, so it can be compiled by the community backend

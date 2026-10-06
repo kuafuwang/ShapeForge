@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>运行观测</title>
+<!--OBSERVE_TOKEN-->
 <style>
   :root {
     --bg: #f4f5f7;
@@ -144,6 +145,34 @@
   .chip.exhausted i { color: var(--orange); }
   .chip.near i { color: #8a6d00; }
   .budget-line { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 0 0 8px; }
+  /* add budget: the one control of the page. Everything else is read-only. */
+  .btn-budget {
+    border: 1px solid var(--blue); background: #fff; color: var(--blue); border-radius: 8px; padding: 2px 10px; font-size: 12px; font-weight: 650; cursor: pointer;
+  }
+  .btn-budget:hover { background: #eef5fc; }
+  .btn-budget:disabled { border-color: var(--line); color: var(--muted); cursor: not-allowed; background: #f6f7f9; }
+  .btn-budget.primary { background: var(--blue); color: #fff; }
+  .btn-budget.primary:disabled { background: #c5d8ec; color: #fff; border-color: #c5d8ec; }
+  .chipwrap { display: inline-flex; gap: 4px; align-items: center; }
+  .why { color: var(--muted); font-size: 12px; }
+  .badge.topped { background: #e0efff; color: var(--blue); border-color: #b9d6f5; }
+  .budget-hist { list-style: none; margin: 0 0 8px; padding: 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .budget-hist li { margin: 2px 0; }
+  #budget-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
+  #budget-modal.open { display: flex; }
+  #budget-modal .box { background: #fff; border-radius: 14px; padding: 18px 20px; width: min(460px, 94vw); max-height: 92vh; overflow: auto; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
+  #budget-modal h3 { margin: 0 0 4px; font-size: 17px; }
+  #budget-modal .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 10px 0; font-size: 13px; }
+  #budget-modal .facts b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; }
+  #budget-modal .amounts { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
+  #budget-modal .amounts .pill { padding: 3px 12px; font-size: 13px; }
+  #budget-modal input[type=number] { width: 96px; border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; }
+  #budget-modal .warn { background: #fff7e6; border: 1px solid #f6d58e; border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 10px 0; }
+  #budget-modal .total { font-size: 14px; margin: 6px 0; }
+  #budget-modal .msg { font-size: 13px; margin: 8px 0; }
+  #budget-modal .msg.err { color: var(--red); }
+  #budget-modal .msg.ok { color: var(--green); }
+  #budget-modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
   @media (max-width: 1100px) {
     .layout { grid-template-columns: 1fr; }
     aside { position: static; max-height: 220px; }
@@ -173,7 +202,15 @@
     <section class="panel events" id="locks"></section>
   </main>
 </div>
+<div id="budget-modal" role="dialog" aria-modal="true" aria-labelledby="bm-title">
+  <div class="box">
+    <h3 id="bm-title">加预算 Add budget</h3>
+    <div class="sub" id="bm-run"></div>
+    <div id="bm-body"></div>
+  </div>
+</div>
 <script>
+const OBSERVE_TOKEN = (document.querySelector('meta[name="observe-token"]') || {}).content || "";
 const PHASE = { start: "开始", llm: "问模型", plan: "规划", evaluate: "评测", confirm: "确认", profile: "录制", done: "结束" };
 const STAGES = [["screen", "安检"], ["compile", "编译"], ["abi", "签名"], ["safety", "内存安全"], ["correctness", "对答案"], ["bench", "计时"]];
 const FAIL = { rejected: "screen", compile_error: "compile", abi_error: "abi", unsafe: "safety", incorrect: "correctness" };
@@ -311,7 +348,7 @@ function renderBanner(report) {
     if (n) head.push(el("span", { class: "bb-count " + flag }, [t(n + " " + BUDGET_LABEL[flag] + " " + BUDGET_LABEL_CN[flag])]));
   }
   head.push(el("span", { class: "bb-total" }, [t(total + (report.total_over_usd ? " · 超出合计 +" + money(report.total_over_usd, 3) : ""))]));
-  const chips = (report.flagged || []).map((item) => el("a", {
+  const chips = (report.flagged || []).map((item) => el("span", { class: "chipwrap" }, [el("a", {
     class: "chip " + item.level, href: "/?run=" + encodeURIComponent(item.id), "data-run": item.id, title: "点击查看这次运行",
     onclick: (event) => { event.preventDefault(); pin(item.id); },
   }, [
@@ -319,7 +356,8 @@ function renderBanner(report) {
     el("span", null, [t((item.task || "") + (item.dtype ? " " + item.dtype : ""))]),
     el("i", null, [t(item.flags.map((f) => BUDGET_LABEL[f]).join(" + "))]),
     el("span", null, [t(item.text)]),
-  ]));
+    item.topped_up ? el("span", { class: "badge topped", title: TOPPED_TIP }, [t("已加预算 TOPPED UP")]) : null,
+  ]), budgetButton(item.id, item.control, true)]));
   box.append(el("div", { class: "bb alert " + report.level, "data-level": report.level }, [
     el("div", { class: "bb-head" }, head),
     el("div", { class: "bb-list" }, chips),
@@ -387,11 +425,164 @@ function renderHistory(frame) {
       el("div", { class: "money" + level }, [t(moneyText(b, row))]),
     ];
     const marks = badges(b, true);
+    if (row.topped_up) marks.push(el("span", { class: "badge topped", title: TOPPED_TIP }, [t("已加预算 TOPPED UP")]));
     if (marks.length) kids.push(el("div", { class: "tags" }, marks));
     box.append(el("button", { class: "hist" + level + (on ? " on" : ""), type: "button", title: row.id, onclick: () => pin(row.id) }, kids));
   }
   box.scrollTop = scroll;
 }
+
+const TOPPED_TIP = "这次运行加过预算：它的预算不是固定的，不能直接和固定预算的运行比较。 This run was topped up: not directly comparable with fixed-budget runs.";
+
+function historyLine(e) {
+  const a = e.amount_usd != null ? ", " + (e.amount_usd >= 0 ? "+" : "-") + money(Math.abs(e.amount_usd)) : "";
+  const kind = e.kind === "resume" ? "续跑" : "";
+  return money(e.old_budget_usd) + " -> " + money(e.new_budget_usd) + " (" + (a ? a.slice(2) + ", " : "") + (e.time ? e.time.slice(11, 16) : "") + ", " + (e.who || "") + (kind ? ", " + kind : "") + ")";
+}
+
+// The button (or, when nothing can be added, the reason). ``hint`` is the small summary every history row carries: {action, reason}.
+function budgetButton(runId, hint, compact) {
+  if (!hint) return null;
+  if (!hint.action) {
+    return hint.reason && !compact ? el("span", { class: "why", title: hint.reason }, [t("不能加预算：" + hint.reason)]) : null;
+  }
+  const label = hint.action === "resume" ? "加预算并续跑 Add budget" : "加预算 Add budget";
+  return el("button", {
+    type: "button", class: "btn-budget", "data-run": runId, title: hint.action === "resume" ? "这次运行已停下，会用新预算从原目录续跑" : "运行中：把新预算写进控制文件，下一次请求前生效",
+    onclick: (event) => { event.preventDefault(); event.stopPropagation(); openBudget(runId); },
+  }, [t(label)]);
+}
+
+let modalState = null;
+
+function closeBudget() {
+  document.getElementById("budget-modal").classList.remove("open");
+  modalState = null;
+}
+
+function msg(text, cls) {
+  const box = document.getElementById("bm-msg");
+  if (!box) return;
+  box.className = "msg" + (cls ? " " + cls : "");
+  box.textContent = text || "";
+}
+
+async function openBudget(runId) {
+  const modal = document.getElementById("budget-modal");
+  modal.classList.add("open");
+  document.getElementById("bm-run").textContent = runId;
+  const body = document.getElementById("bm-body");
+  body.replaceChildren(el("div", { class: "msg" }, [t("读取中…")]));
+  modalState = { run: runId, info: null, amount: null, busy: false };
+  let info;
+  try {
+    const r = await fetch("/api/runs/" + runId.split("/").map(encodeURIComponent).join("/") + "/control", { headers: { Accept: "application/json" } });
+    info = await r.json();
+    if (!r.ok) throw new Error(info && info.error ? info.error : "HTTP " + r.status);
+  } catch (err) {
+    body.replaceChildren(
+      el("div", { class: "msg err" }, [t("读不到这次运行的控制信息，不能加预算：" + err.message)]),
+      el("div", { class: "actions" }, [el("button", { type: "button", class: "btn-budget", onclick: closeBudget }, [t("关闭")])]),
+    );
+    return;
+  }
+  modalState.info = info;
+  drawModal();
+}
+
+function drawModal() {
+  const info = modalState.info;
+  const body = document.getElementById("bm-body");
+  const b = info.budget || {};
+  const facts = el("div", { class: "facts" }, [
+    el("div", null, [t("当前预算 Budget"), el("b", null, [t(money(b.current_usd))])]),
+    el("div", null, [t("已花 Spent"), el("b", null, [t(money(b.spent_usd, 3))])]),
+    el("div", null, [t("当前最好加速比 Best"), el("b", null, [t(speed(info.best_speedup))])]),
+    el("div", null, [t("状态 Status"), el("b", null, [t(info.kind + (info.stop_reason ? " · " + info.stop_reason : ""))])]),
+  ]);
+  const kids = [facts];
+  const applied = (info.history && info.history.applied) || [];
+  if (applied.length) {
+    const list = el("ul", { class: "budget-hist" }, [el("li", null, [t("原预算 " + money(b.initial_usd))])]);
+    for (const e of applied) list.append(el("li", null, [t(historyLine(e))]));
+    kids.push(list);
+  }
+  for (const w of info.warnings || []) kids.push(el("div", { class: "why" }, [t("注意：" + w)]));
+  if (!info.can_add_budget) {
+    kids.push(el("div", { class: "msg err" }, [t("不能加预算：" + (info.reason_if_not || "这次运行不能继续"))]));
+    kids.push(el("div", { class: "actions" }, [el("button", { type: "button", class: "btn-budget", onclick: closeBudget }, [t("关闭")])]));
+    body.replaceChildren(...kids);
+    return;
+  }
+  const live = info.action === "topup_live";
+  kids.push(el("div", { class: "sub" }, [t(live ? "运行中：新预算写进控制文件，运行在下一次请求前读取。 Live: written to the run's control file." : "这次运行已停下：会用新预算从原目录续跑，不重花已花的钱。 Stopped: resumes in place; nothing already spent is spent again.")]));
+  const amounts = el("div", { class: "amounts" }, []);
+  for (const a of info.suggested_amounts || [3, 5, 15]) {
+    amounts.append(el("button", { type: "button", class: "pill" + (modalState.amount === a ? " on" : ""), "data-amount": a, onclick: () => { modalState.amount = a; drawModal(); } }, [t("+" + money(a, 0))]));
+  }
+  const custom = el("input", { type: "number", min: "0.01", step: "0.5", id: "bm-custom", placeholder: "自定义 USD" });
+  if (modalState.amount != null && !(info.suggested_amounts || []).includes(modalState.amount)) custom.value = modalState.amount;
+  custom.addEventListener("input", () => { const v = parseFloat(custom.value); modalState.amount = Number.isFinite(v) ? v : null; updateTotal(); });
+  amounts.append(custom);
+  kids.push(amounts);
+  kids.push(el("div", { class: "total", id: "bm-total" }, []));
+  kids.push(el("div", { class: "warn", id: "bm-warn" }, []));
+  kids.push(el("div", { class: "msg", id: "bm-msg" }, []));
+  kids.push(el("div", { class: "actions" }, [
+    el("button", { type: "button", class: "btn-budget", id: "bm-cancel", onclick: closeBudget }, [t("取消 Cancel")]),
+    el("button", { type: "button", class: "btn-budget primary", id: "bm-confirm", onclick: confirmBudget }, [t("确认 Confirm")]),
+  ]));
+  body.replaceChildren(...kids);
+  updateTotal();
+}
+
+function amountError(info, amount) {
+  if (amount == null || !Number.isFinite(amount) || amount <= 0) return "选一个金额，或填一个大于 0 的数。";
+  if (amount > info.max_topup_usd + 1e-9) return "一次最多加 " + money(info.max_topup_usd) + "（OBSERVE_MAX_TOPUP_USD）。";
+  return "";
+}
+
+function updateTotal() {
+  const info = modalState && modalState.info;
+  if (!info) return;
+  const a = modalState.amount;
+  const cur = (info.budget || {}).current_usd;
+  const err = amountError(info, a);
+  const total = cur != null && a != null ? cur + a : null;
+  const box = document.getElementById("bm-total");
+  const warn = document.getElementById("bm-warn");
+  box.replaceChildren(t(a != null && !err && total != null ? "新的总预算 New budget：" + money(cur) + " + " + money(a) + " = " + money(total) : (err || "")));
+  warn.replaceChildren(t(a != null && !err ? "这会花真实的 LLM 费用，最多再花约 " + money(a) + "（已在途的请求可能略超）。 This spends real LLM money, up to " + money(a) + " more (requests already in flight may overshoot slightly)." + (info.dry_run ? "  【试运行 DRY RUN：只记录，不会真的执行】" : "") : "金额选好之后，这里会写明最多会花多少钱。"));
+  for (const node of document.querySelectorAll("#bm-body .pill[data-amount]")) node.className = "pill" + (Number(node.dataset.amount) === a ? " on" : "");
+  document.getElementById("bm-confirm").disabled = !!err || modalState.busy;
+}
+
+async function confirmBudget() {
+  if (!modalState || modalState.busy) return;
+  const info = modalState.info;
+  if (amountError(info, modalState.amount)) return;
+  modalState.busy = true;
+  document.getElementById("bm-confirm").disabled = true;
+  msg(info.action === "resume" ? "续跑中… resuming…" : "写入中… writing…", "");
+  try {
+    const r = await fetch("/api/runs/" + modalState.run.split("/").map(encodeURIComponent).join("/") + "/budget", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Observe-Token": OBSERVE_TOKEN }, body: JSON.stringify({ amount_usd: modalState.amount }),
+    });
+    const doc = await r.json();
+    if (!r.ok || !doc.ok) throw new Error(doc && doc.error ? doc.error : "HTTP " + r.status);
+    const what = doc.dry_run ? "【试运行】已记录，没有启动任何进程：" + (doc.command ? doc.command.join(" ") : "不会写控制文件") : doc.action === "resume" ? "已启动续跑（pid " + doc.pid + "，日志 " + doc.log + "）。下面的页面会实时显示进展。" : "已写入控制文件：运行会在下一次请求前读到新预算。";
+    msg(what, "ok");
+    document.getElementById("bm-cancel").textContent = "关闭 Close";
+    document.getElementById("bm-confirm").style.display = "none";
+  } catch (err) {
+    modalState.busy = false;
+    msg("没有执行：" + err.message, "err");
+    document.getElementById("bm-confirm").disabled = false;
+  }
+}
+
+document.getElementById("budget-modal").addEventListener("click", (event) => { if (event.target.id === "budget-modal") closeBudget(); });
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeBudget(); });
 
 function pin(id) {
   if (pinned === id) return;
@@ -400,13 +591,14 @@ function pin(id) {
   connect();
 }
 
-function card(title, valueNode, sub, subId) {
+function card(title, valueNode, sub, subId, extra) {
   const note = el("div", { class: "s" }, [t(sub || "")]);
   if (subId) note.id = subId;
   return el("div", { class: "card" }, [
     el("div", { class: "k" }, [t(title)]),
     valueNode,
     sub || subId ? note : null,
+    extra ? el("div", { class: "s" }, [extra]) : null,
   ]);
 }
 
@@ -444,12 +636,13 @@ function renderStatus(overview) {
     t(budget == null ? "" : " / " + money(budget)),
   ]);
   const budgetSub = lb ? (lb.flagged ? lb.flags.map((f) => BUDGET_LABEL[f]).join(" + ") : lb.used_pct != null ? lb.used_pct.toFixed(0) + "%" : "") : "";
+  const budgetBtn = live && lb && lb.flagged ? budgetButton(live.id, live.control, false) : null;
   const beatValue = el("div", { class: "v", id: "heartbeat-value" }, [t("—")]);
   box.replaceChildren(
     card("GPU 锁", holdValue, holdSub),
     card("等待", waitValue, waitSub),
     card("搜索", searchValue, searchSub),
-    card("预算", budgetValue, budgetSub),
+    card("预算", budgetValue, budgetSub, null, budgetBtn),
     card("心跳", beatValue, "", "heartbeat-sub"),
   );
   updateHeartbeat(beat);
@@ -469,7 +662,19 @@ function renderSearch(run) {
   }
   if (run.budget) {
     const level = run.budget.flagged ? " " + run.budget.level : "";
-    box.append(el("div", { class: "budget-line" }, [el("span", { class: "money" + level }, [t(moneyText(run.budget, null))])].concat(badges(run.budget))));
+    const line = [el("span", { class: "money" + level }, [t(moneyText(run.budget, null))])].concat(badges(run.budget));
+    if (run.topped_up) line.push(el("span", { class: "badge topped", title: TOPPED_TIP }, [t("已加预算 TOPPED UP")]));
+    line.push(budgetButton(run.id, run.control, false));
+    box.append(el("div", { class: "budget-line" }, line));
+    const events = (run.budget_events || []).filter((e) => e.kind === "applied" || e.kind === "resume");
+    const waiting = (run.budget_events || []).filter((e) => e.kind === "requested").slice(-1).filter((e) => !events.some((x) => x.new_budget_usd === e.new_budget_usd));
+    if (events.length || waiting.length) {
+      const list = el("ul", { class: "budget-hist", title: TOPPED_TIP }, []);
+      if (run.initial_budget_usd != null) list.append(el("li", null, [t("原预算 " + money(run.initial_budget_usd))]));
+      for (const e of events) list.append(el("li", null, [t(historyLine(e))]));
+      for (const e of waiting) list.append(el("li", null, [t(historyLine(e) + "  （等运行读取 waiting）")]));
+      box.append(list);
+    }
   }
   const trace = run.trace || [];
   const table = el("table", null, []);

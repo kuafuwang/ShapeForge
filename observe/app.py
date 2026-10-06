@@ -15,11 +15,12 @@ from starlette.applications import Starlette
 from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse
 from starlette.routing import Route
 
-from observe import budget, scan
+from observe import actions, budget, scan
 
 # 导入时读一次。运行中的进程不会再看磁盘上的 index.html，所以改页面模板一定要重启。
 _PAGE = (Path(__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
 _BANNER_SLOT = "<!--BUDGET_BANNER-->"
+_TOKEN_SLOT = "<!--OBSERVE_TOKEN-->"
 
 
 # 几个只读接口共用同一种 JSON。页面脚本和 curl 看到的结构都是 scan 刚扫出来的。
@@ -28,12 +29,14 @@ def _json(data: dict | list, status: int = 200) -> JSONResponse:
 
 
 # 首屏外壳是导入时的那份 HTML，只有预算横幅在这次请求里填。横幅读盘失败时仍返回页面，一个坏目录不能让看板打不开。
-async def index(_request) -> HTMLResponse:
+async def index(request) -> HTMLResponse:
     try:  # the banner is drawn on the server once so the alert is visible at first paint (and without JavaScript); the page script keeps it current
         banner = budget.render_banner_html(scan.budget_report())
     except Exception:  # noqa: BLE001  a damaged run directory must never take the page down
         banner = ""
-    return HTMLResponse(_PAGE.replace(_BANNER_SLOT, banner), headers={"Cache-Control": "no-store"})
+    token = actions.page_token(request.headers)  # only a loopback Host gets it; the write path checks it on every POST
+    page = _PAGE.replace(_BANNER_SLOT, banner).replace(_TOKEN_SLOT, f'<meta name="observe-token" content="{token}">')
+    return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
 
 # 总览：GPU 锁、仍在跑的搜索、实验队列。每次调用都重新读盘，没有进程内缓存。
@@ -60,6 +63,34 @@ async def api_run(request) -> JSONResponse:
 
 
 # 页面开着时靠这条长连接更新。每 0.1 秒重扫一帧，变的是磁盘上的结果，不是启动时导入的代码。
+def _refused(e: actions.Refused) -> JSONResponse:
+    return _json({"ok": False, "error": e.message}, status=e.status)
+
+
+async def api_control(request) -> JSONResponse:
+    """What 'add budget' would do for this run (read-only)."""
+    try:
+        if not actions.host_is_loopback(request.headers):
+            raise actions.Refused(403, "refused: this server only answers on 127.0.0.1 / localhost (Host header check)")
+        return _json(await asyncio.to_thread(actions.describe, request.path_params["run_id"]))
+    except actions.Refused as e:
+        return _refused(e)
+
+
+async def api_add_budget(request) -> JSONResponse:
+    """The only write path of the dashboard: add budget to a run (see observe/actions.py for the checks)."""
+    try:
+        actions.check_origin(request.headers)
+        actions.check_token(request.headers)
+        raw = await request.body()
+        if len(raw) > 4096:
+            raise actions.Refused(413, "the body is too large")
+        body = actions.parse_body(raw)
+        return _json(await asyncio.to_thread(actions.add_budget, request.path_params["run_id"], body))
+    except actions.Refused as e:
+        return _refused(e)
+
+
 async def api_stream(request) -> StreamingResponse:
     run_id = request.query_params.get("run") or ""
 
@@ -91,6 +122,8 @@ app = Starlette(
         Route("/api/history", api_history),
         Route("/api/budget", api_budget),
         Route("/api/stream", api_stream),
+        Route("/api/runs/{run_id:path}/control", api_control, methods=["GET"]),
+        Route("/api/runs/{run_id:path}/budget", api_add_budget, methods=["POST"]),
         Route("/api/runs/{run_id:path}", api_run),
     ]
 )

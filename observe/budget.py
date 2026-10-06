@@ -135,6 +135,8 @@ def summarize(rows: list[dict]) -> dict:
                 "over_usd": st["over_usd"],
                 "over_pct": st["over_pct"],
                 "text": st["text"],
+                "control": row.get("control"),  # what 'add budget' would do for this run (history rows carry it; see observe.scan.control_hint)
+                "topped_up": bool(row.get("topped_up")),
             })
     # 先按档位，再按超出的百分比、已用百分比。同一档里超出越多越靠前。
     flagged.sort(key=lambda item: (SEVERITY[item["level"]], -(item["over_pct"] or 0.0), -(item["used_pct"] or 0.0), str(item["id"])))

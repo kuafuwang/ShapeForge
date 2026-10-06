@@ -254,7 +254,8 @@ def test_the_default_budget_is_the_papers_15_usd_and_the_round_limit_does_not_en
     assert PAPER_BUDGET_USD == 15.0 and SearchConfig().budget_usd == 15.0
     _, s = load_config()
     assert s.budget_usd == 15.0 and s.max_rounds >= 40
-    assert s.patience == 4  # stagnation stopping is unchanged
+    assert s.patience == 12  # the paper preset raised it from taic.toml's 4 (commit 31aa8e9); `--preset base` still gives 4
+    assert load_config(preset="base")[1].patience == 4
     _, s = load_config(budget_usd=3.0)
     assert s.budget_usd == 3.0  # the command line can still override it
 

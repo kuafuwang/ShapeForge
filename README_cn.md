@@ -87,6 +87,29 @@ uv run python -m tcenv.cli profile gemm best.metal                        # xctr
 
 `/api/budget` 以 JSON 返回同样的汇总，`/?run=p1%2Ffa_pro` 直接打开指定运行。数字取自每次运行自己的 `state.json` / `result.json` / `ledger.json`，所以这次改动之前启动的运行按它当时实际拥有的预算判断。
 
+## 加预算与续跑
+
+预算用完（`stop_reason == "budget_exhausted"`）或进程死掉（崩溃、编辑器窗口被关）的搜索，可以从它自己的目录继续；已经花掉的钱不会再花一次。两条路，同一个思路：
+
+* **在线加预算**（搜索还在跑）：往 `<run_dir>/control.json` 原子写 `{"budget_usd": <新的总预算>}`。搜索在每次预算闸门前读它（一次 `stat`），把预算抬到这个数，永远不低于已经花掉的钱，并记录 `budget $a -> $b`。每次变化追加到 `<run_dir>/budget_events.json`（`requested` 是提出的人写的，`applied` 是搜索读到后写的，`resume` 是重新启动；每条有时间、旧新预算、金额、来源 `dashboard` / `cli`）。只有这次改动之后启动的进程才读这个文件，它的 `state.json` 里有 `"control_supported": true`；更早启动的进程不能在线加，等它停了再续跑。
+* **续跑**已经停下的搜索：`uv run python -m taic.cli resume <run_dir> [--add-budget 美元 | --budget 新总额] [--dry-run]`。它从目录重建搜索状态，接着做没做完的轮次，再照常确认、收尾。覆盖任何文件之前，`result.json` / `confirm_report.json` 先留成 `*.before_topup_<n>.json`（旧 `state.json` 留成 `state.before_resume_<n>.json`），先前的结果不会丢。`--dry-run` 只在内存里重建、打印会从哪里继续（含各来源之间的核对），不写任何文件、不问模型、不用 GPU。因为别的原因停下的（收敛、`max_rounds`、GPU 挂死、模型出错）**不能**续跑，也没有强制开关；还活着的、或有活进程持着 `<run_dir>/resume.lock`（正在续跑）的目录会被拒绝。
+
+续跑从哪里重建什么（细节见 `taic/resume.py`）：
+
+| 状态 | 来源 | 是否精确 |
+|---|---|---|
+| 已花美元、token、请求列表 | `transcript.jsonl`（每次请求的 usage、花费、累计）；`ledger.json` / `state.json` 只用来核对 | 是（每个已经回复的请求） |
+| 候选、成绩单、最好的内核、评测缓存 | `candidates/*/{kernel.metal,report.json}`；重放选择过程并与 `state.json` 的轨迹对照 | 是 |
+| 试过的假设（`history`）、停滞轮数 | 转录里规划器的回复加每个分支的候选；并与每一份已记录的规划提示里的历史块逐条核对 | 是（模型请求*失败*的分支会写成「修复后仍无有效内核」） |
+| 被打断的那一轮 | 方案取自转录（不再发规划请求）；已完成的分支保持完成；做到一半的分支从它记录下来的对话接着走：没有结果的工具调用在本地补答，下一个请求用原来该用的标签（`r4.p0.fix1#t1` ……） | 是（在途请求除外） |
+| 系统提示 | 沿用转录里那一份，即使提示文件后来改过 | 是 |
+| 设置 | `run_config.json`（新运行，不含凭据）；旧运行：预算和轮数上限取自 `state.json`，工具、画像技能、plan_mix、分支数、修复次数、初稿份数取自记录下来的提示和标签 | 旧运行没记 `patience` 和 `reasoning_effort`：用 `--patience` 给（默认取 `taic.toml`，即预设出现之前的运行用的值） |
+| 前几轮的画像证据 | `profiles/r*_<种子>.{txt,json}` | 是；失败的画像不在列表里 |
+
+不能恢复的：进程死掉时还在途的模型请求（服务商可能已计费，账本从没见过；续跑会列出它们），以及早先会话里每个请求的墙钟时间（那里 `t` 为 `null`）。试跑会把这两点列出来。
+
+**看板。** 在预算耗尽 / 超预算 / 已中断的运行上（以及在跑且到了「接近预算」的运行上），运行的状态卡、顶部横幅的标签和搜索面板都有一个**加预算 Add budget**按钮。点开是一个小窗：当前预算、已花、目前最好加速比，`+$3 / +$5 / +$15` 和自定义金额，换算后的新总预算，以及「这会花真实的 LLM 费用，最多再花 $X」；确认之后页面照旧实时显示这次运行，并带「已加预算 TOPPED UP」徽章（它和固定预算的运行没有可比性）和预算历史（`$3.00 -> $8.00 (+$5.00, 04:35, dashboard)`）。不能继续的运行显示原因，不显示按钮。页面其余部分仍然只读。唯一的写入口（`POST /api/runs/<run>/budget`，请求体 `{"amount_usd": 5}` 或 `{"new_budget_usd": 8}`；`GET /api/runs/<run>/control` 说明现在能做什么）会花钱、会启动 GPU 工作，所以：服务只回应回环地址的 `Host`，浏览器的 `Origin` 必须是页面自己的，每个 POST 都要带页面里的每进程随机令牌（`X-Observe-Token`），金额必须为正且不超过 `OBSERVE_MAX_TOPUP_USD`（默认 25），运行目录必须落在 `runs/` 内（不许 `..`，不许符号链接逃出），每个运行同一时刻只处理一个请求。在线运行写 `control.json`；已停的运行启动一个独立会话的 `uv run python -m taic.cli resume ...`（日志在 `<run_dir>/resume_<n>.log`）。`OBSERVE_CONTROL_DRYRUN=1` 做完所有检查，把「会执行的命令」记进 `budget_events.json`（类型 `dryrun`），什么都不启动。
+
 ## 编译器基线（可选）：用 triton-msl 把 Triton 编译成 Metal
 
 上游 Triton 没有 Metal 后端。每个任务的规格文本都是真正的 Triton，因此可以用社区后端 [triton-msl](https://pypi.org/project/triton-msl/)（alpha）来编译。它放在隔离环境里（`.venvs/triton-msl`，Python 3.14），只通过 `tcenv.triton_runner` 使用；主环境从不导入 Triton。

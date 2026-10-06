@@ -180,6 +180,49 @@ def money_fields(directory: Path, state: dict | None, result: dict | None) -> tu
 
 
 # 每一行在读盘时就算好预算档位，NEAR 用的「是否在跑」和这一行的 status 是同一次判断。
+# 「加预算」按钮要不要出现，只看已经读进内存的 state / result：不再多读文件。
+# 运行中且进程读控制文件 → 在线加；跑完因预算停下、或进程已死且有可续的内核 → 续跑；其余给出原因。
+def control_hint(directory: Path, state: dict | None, result: dict | None, status: str) -> dict:
+    from taic.resume import STOP_BUDGET, has_best
+
+    stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
+    if status == "running":
+        if (state or {}).get("control_supported"):
+            return {"action": "topup_live", "reason": ""}
+        return {"action": None, "reason": "started by an older version: it cannot be topped up live; wait for it to stop, then resume it"}
+    if (directory / "resume.lock").exists():
+        return {"action": None, "reason": "a resume of this run is starting"}
+    if status == "interrupted":
+        if has_best(state, result):
+            return {"action": "resume", "reason": ""}
+        return {"action": None, "reason": "no valid kernel was found before the process stopped: start a new run"}
+    if status == "done" and stop == STOP_BUDGET:
+        if has_best(state, result):
+            return {"action": "resume", "reason": ""}
+        return {"action": None, "reason": "stopped for budget without a valid kernel: start a new run"}
+    if status == "done":
+        return {"action": None, "reason": f"stopped for '{stop or 'unknown reason'}', not for budget: only runs that ran out of budget (or were interrupted) can be continued"}
+    return {"action": None, "reason": ""}
+
+
+# 加过预算的运行不能和固定预算的运行直接比。首次预算取第一条生效事件里的旧值。
+def topup_fields(directory: Path) -> dict:
+    if not (directory / "budget_events.json").exists():
+        return {"topped_up": False, "initial_budget_usd": None}
+    from taic import control
+
+    hist = control.budget_history(directory)
+    return {"topped_up": hist["topped_up"], "initial_budget_usd": hist["initial_budget_usd"]}
+
+
+def _budget_events(directory: Path) -> list[dict]:
+    if not (directory / "budget_events.json").exists():
+        return []
+    from taic import control
+
+    return control.read_events(directory)
+
+
 def history() -> list[dict]:
     rows = []
     for directory, state, result in _search_dirs():
@@ -200,6 +243,8 @@ def history() -> list[dict]:
             "spent_usd": spent,
             "budget_usd": budget,
             "budget": budget_status(spent, budget, stop, status == "running"),
+            "control": control_hint(directory, state, result, status),
+            **topup_fields(directory),
             "round": (state or {}).get("round"),
             "max_rounds": (state or {}).get("max_rounds"),
             "inflight_label": (state or {}).get("inflight_label"),
@@ -402,6 +447,9 @@ def run_detail(run_id: str) -> dict | None:
         "id": _rel(directory),
         "status": status,
         "budget": budget_status(spent, budget, stop, status == "running"),
+        "control": control_hint(directory, state, result, status),
+        **topup_fields(directory),
+        "budget_events": _budget_events(directory),
         "state": state,
         "result": result,
         "trace": trace,
