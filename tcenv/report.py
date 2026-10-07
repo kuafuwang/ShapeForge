@@ -44,7 +44,7 @@ def format_feedback(rep: EvalReport, *, max_errors_chars: int = 2500) -> str:
                 L.append(f"  {flag} {c['case']:<11s} worst scaled error {err if isinstance(err, str) else format(err, '.3g'):>8}  allowed {c['allow'] if isinstance(c['allow'], str) else format(c['allow'], '.3g')}")
                 if not c["ok"] and c.get("message"):
                     L.append(f"       {c['message']}")
-    if rep.status == "ok" and rep.benchmark:
+    if rep.status == "ok" and isinstance(rep.benchmark, dict) and rep.benchmark.get("candidate"):
         b = rep.benchmark
         L.append("\nPerformance (interleaved benchmark, median per launch):")
         cand = b["candidate"]

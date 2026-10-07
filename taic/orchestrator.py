@@ -249,18 +249,13 @@ def profiler_evidence_text(body: str) -> str:
     )
 
 
-# 加速比是两次中位数之比，这里给出它的相对标准误。报告里没有逐次计时（cv、reps）时标准误视为 0，换种子只剩固定的 min_improvement 门槛。
+# 加速比是两次中位数之比。标准误的公式在 tcenv.bench，这里只按报告取出 cv 和 reps。没有逐次样本，也不把它叫成置信区间。
 def speedup_se(rep: EvalReport | None) -> float:
-    """Relative standard error of a measured speedup (ratio of two medians), from the per-repetition cvs.
-    0 when the report has no timing statistics."""
-    b = (rep.benchmark if rep else None) or {}
-    try:
-        c, base = b["candidate"], b["baselines"][b["best_baseline"]]
-        n = max(1, min(c["reps"], base["reps"]))
-        # 中位数的标准误约为 sqrt(pi/2)·σ/sqrt(n)；候选和基线的误差按独立合成。
-        return math.sqrt(math.pi / 2) * math.hypot(c["cv"], base["cv"]) / math.sqrt(n)  # SE of a median ~ sqrt(pi/2) sigma / sqrt(n)
-    except (KeyError, TypeError):
-        return 0.0
+    """Approximate relative standard error of a measured speedup. 0 when the report has no timing statistics.
+    Not a confidence interval."""
+    from tcenv.bench import speedup_se_of_report
+
+    return speedup_se_of_report(rep)
 
 
 class Orchestrator:
@@ -916,7 +911,7 @@ class Orchestrator:
             if self.search.stop_at_roofline and at_roofline(seed.report, self._required_gain(seed, seed)):
                 gap = (getattr(seed.report, "roofline", None) or {}).get("time_over_lower_bound")
                 res.stop_reason = "at_roofline"
-                self.log(f"-- stop: {seed.label} is {gap:.3f}x its roofline lower bound, inside the noise gate, and no baseline beats that bound")
+                self.log(f"-- heuristic stop: {seed.label} is {gap:.3f}x its estimated lower bound, inside the noise gate. This is not a physical optimum.")
                 return
             evidence = await self._profile_seed(seed, rnd)
             if self.search.hw_feedback:  # opt-in (search.hw_feedback): the static hardware-feature block goes where the profiler evidence goes; None on any failure

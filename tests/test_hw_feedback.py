@@ -134,7 +134,7 @@ def test_a_bound_the_baseline_already_beats_is_not_called_the_ceiling():
         rep["baseline_us"] = {"mlx": 994.0, "torch_mps": 777.0}
 
     b = block("gemm_paper_best", mutate=beat)
-    assert "does not hold" in b and "777" in b and "Winograd" in b
+    assert "does not hold" in b and "777" in b and "Winograd" not in b
     assert "cannot help beyond the roofline" not in b and b.rstrip().endswith(CAVEAT)
 
 

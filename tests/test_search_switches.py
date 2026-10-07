@@ -41,11 +41,19 @@ def test_a_baseline_faster_than_the_bound_is_named_and_does_not_count_as_at_the_
         "baseline_us": {"mlx": 994.0, "torch_mps": 777.0},
     }
     note = target_note(report)
-    assert note and "777.0 us" in note and "Winograd" in note and "does not hold" in note
+    assert note and "777.0 us" in note and "does not hold" in note and "Winograd" not in note
+    assert "different algorithm" in note and "peak calibration" in note
     assert at_roofline(report, 1.02) is False  # the bound is the wrong target, so the search is not stopped
-    assert target_note({"roofline": {"lower_bound_us": 100, "time_over_lower_bound": 1.01}, "baseline_us": {"mlx": 120}}) is None
-    assert at_roofline({"roofline": {"lower_bound_us": 100, "time_over_lower_bound": 1.01}, "baseline_us": {"mlx": 120}}, 1.02) is True
-    assert at_roofline({"roofline": {"lower_bound_us": 100, "time_over_lower_bound": 1.5}, "baseline_us": {"mlx": 120}}, 1.02) is False
+    quiet = {
+        "roofline": {"lower_bound_us": 100, "time_over_lower_bound": 1.01, "peak_gbps_measured": 400.0},
+        "baseline_us": {"mlx": 120},
+        "benchmark": {"noisy": False},
+    }
+    assert target_note(quiet) is None
+    assert at_roofline(quiet, 1.02) is True
+    assert at_roofline({**quiet, "benchmark": {"noisy": True}}, 1.02) is False
+    assert at_roofline({"roofline": {"lower_bound_us": 100, "time_over_lower_bound": 1.01}, "baseline_us": {"mlx": 120}, "benchmark": {"noisy": False}}, 1.02) is False
+    assert at_roofline({**quiet, "roofline": {"lower_bound_us": 100, "time_over_lower_bound": 1.5, "peak_gbps_measured": 400.0}}, 1.02) is False
 
 
 def test_the_same_threadgroup_overflow_compares_equal_and_states_the_limit():
@@ -138,6 +146,7 @@ def test_the_search_stops_at_the_roofline_and_not_when_the_bound_is_wrong(tmp_pa
                 "bound": "compute", "lower_bound_us": bound_us, "time_over_lower_bound": 1.001, "flops": 0,
                 "achieved_gbps": 10.0, "bandwidth_fraction": 0.02, "peak_gbps_measured": 449.0,
             }
+            r.benchmark = {"noisy": False}
             return r
 
         return ev

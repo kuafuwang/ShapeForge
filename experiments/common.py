@@ -220,7 +220,17 @@ def conclusion_of_run(run_dir: Path, result: dict | None) -> dict:
     if not result:
         return published_conclusion(None)
     best, winner, status = _confirmation_files(Path(run_dir), result.get("confirm_winner_label"))
-    return published_conclusion(result, best_metal_sha256=best, confirm_status=status, winner_metal_sha256=winner)
+    got = published_conclusion(result, best_metal_sha256=best, confirm_status=status, winner_metal_sha256=winner)
+    if got["publication"] == "confirmed":
+        try:
+            doc = json.loads((Path(run_dir) / "confirm_report.json").read_text())
+        except (OSError, ValueError):
+            doc = None
+        from tcenv.bench import timing_is_uncertain
+
+        if timing_is_uncertain(doc):
+            return {"speedup": None, "publication": "不确定"}
+    return got
 
 
 def published_conclusion(result: dict | None, *, best_metal_sha256: str | None = None, confirm_status: str | None = None, winner_metal_sha256: str | None = None) -> dict:
@@ -250,14 +260,11 @@ def published_conclusion(result: dict | None, *, best_metal_sha256: str | None =
 
 
 def summarize(res: dict, confirm: dict | None, naive: dict | None = None, *, run_dir: Path | None = None) -> dict:
-    """One row of the suite table. ``published_speedup`` is set only when the confirmation is bound to its source."""
-    best_sha = winner_sha = None
-    confirm_status = (confirm or {}).get("status")
+    """One row of the suite table. ``published_speedup`` is set only for a bound, quiet confirmation."""
     if run_dir is not None:
-        best_sha, winner_sha, report_status = _confirmation_files(Path(run_dir), res.get("confirm_winner_label"))
-        if confirm_status is None:
-            confirm_status = report_status
-    conclusion = published_conclusion(res, best_metal_sha256=best_sha, confirm_status=confirm_status, winner_metal_sha256=winner_sha)
+        conclusion = conclusion_of_run(Path(run_dir), res)
+    else:
+        conclusion = published_conclusion(res, confirm_status=(confirm or {}).get("status"))
     row = {
         "task": res["task"], "dtype": res["dtype"], "model": res["model"], "stop_reason": res["stop_reason"], "rounds": res["rounds"],
         "evaluations": res["evaluations"], "spent_usd": res["spent_usd"], "budget_usd": res["budget_usd"],

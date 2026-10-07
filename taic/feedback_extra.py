@@ -1,9 +1,9 @@
 """Extra sentences the search can append to a planner or repair prompt. Every helper returns "" or None when it has nothing to say,
 so a switch that is off never changes the text the model sees.
 
-The roofline lower bound counts the direct algorithm's operations. A baseline that is faster than that bound did less work (a 3x3 stride-1
-convolution is the case we measured: torch-mps at 777 us against a 932 us direct-convolution bound). Telling the model it is "at the peak"
-then points it at a micro-tweak instead of a different algorithm.
+The roofline lower bound uses this algorithm's operation-count estimate and a measured peak. A baseline that is faster than that bound
+shows the bound does not apply. The reason can be a different algorithm, the operation count, the peak calibration, or the timing method.
+It is not evidence that one particular algorithm, such as Winograd, was used.
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ def bound_beaten_line(report: Any) -> str | None:
         return None
     name, us, lb = beat
     return (
-        f"The roofline lower bound ({lb:.0f} us) does not hold here: {name} is already at {us:.0f} us, so it uses fewer operations "
-        f"(a 3x3 stride-1 convolution is usually Winograd). The reachable target is {us:.0f} us, not the bound."
+        f"The roofline lower bound ({lb:.0f} us) does not hold here: {name} is already at {us:.0f} us. "
+        f"The bound's assumptions (operation count, measured peak, or timing) do not apply. The reachable target is {us:.0f} us, not the bound."
     )
 
 
@@ -65,24 +65,29 @@ def target_note(report: Any) -> str | None:
         return None
     name, us, lb = beat
     return (
-        f"The roofline lower bound ({lb:.1f} us) counts the direct algorithm's operations, and it does not hold for this task: "
-        f"the fastest baseline ({name}, {us:.1f} us) is faster than that bound, so it uses an algorithm with fewer operations "
-        f"(for a 3x3 stride-1 convolution the usual one is Winograd). "
-        f"The reachable target is {us:.1f} us, not the lower bound. A kernel near the bound can still be slower than the baseline, "
-        f"and closing the gap means a different algorithm, not a tweak of the direct one."
+        f"The roofline lower bound ({lb:.1f} us) assumes this algorithm's operation count and a measured peak, and it does not hold for this task: "
+        f"the fastest baseline ({name}, {us:.1f} us) is already faster than that bound. "
+        f"That can come from a different algorithm, a different operation-count estimate, the peak calibration, or the timing method. "
+        f"It is not evidence for one particular algorithm. "
+        f"The measured baseline time is {us:.1f} us. A kernel near the bound can still be slower than the baseline."
     )
 
 
 def at_roofline(report: Any, required_gain: float) -> bool:
-    """The seed is already inside the noise gate of its own roofline, and no baseline is faster than that bound.
+    """Heuristic: the seed is inside the noise gate of its estimated lower bound, the timing is quiet, and calibration is present.
 
-    ``required_gain`` is the factor a replacement must beat the seed by (``Orchestrator._required_gain``). When the seed's
-    time/lower-bound is no larger than that, another round cannot clear the noise gate by going faster on the same algorithm.
-    A baseline that beats the bound means the bound is the wrong target, so this does not fire.
+    A baseline that beats the bound, a noisy measurement, or a missing measured peak means this does not fire.
+    Firing is not a claim that the kernel has reached a physical optimum.
     """
     if baseline_faster_than_bound(report) is not None:
         return False
+    rep = _report(report)
+    bench = rep.get("benchmark") or {}
+    if not isinstance(bench, dict) or bench.get("noisy") is not False:
+        return False
     roof, _ = _roof_and_baselines(report)
+    if not isinstance(roof.get("peak_gbps_measured"), (int, float)) or roof.get("peak_gbps_measured") <= 0:
+        return False
     gap = roof.get("time_over_lower_bound")
     if not isinstance(gap, (int, float)) or gap <= 0 or not isinstance(required_gain, (int, float)):
         return False

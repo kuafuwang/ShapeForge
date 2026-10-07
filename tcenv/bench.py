@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 import statistics
 from dataclasses import dataclass, asdict
@@ -98,3 +99,57 @@ def interleaved(
             iters=ks[n],
         )
     return out
+
+
+# evaluate.NOISY_CV uses this same cutoff when it marks benchmark.noisy. Kept here so a report can be labelled without importing the evaluator.
+QUIET_CV = 0.05
+
+
+def approximate_speedup_se(candidate_cv, candidate_reps, baseline_cv, baseline_reps) -> float:
+    """Approximate relative standard error of a ratio of two medians.
+
+    SE of a median is about sqrt(pi/2) * sigma / sqrt(n). The candidate and baseline errors are combined as if independent.
+    The inputs are the cvs and repetition counts already on the report. This is not a confidence interval, and it is not a 95% interval.
+    """
+    try:
+        n = max(1, min(int(candidate_reps), int(baseline_reps)))
+        return math.sqrt(math.pi / 2) * math.hypot(float(candidate_cv), float(baseline_cv)) / math.sqrt(n)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _benchmark(report) -> dict:
+    if report is None:
+        return {}
+    if isinstance(report, dict):
+        bench = report.get("benchmark") or {}
+        return bench if isinstance(bench, dict) else {}
+    bench = getattr(report, "benchmark", None) or {}
+    return bench if isinstance(bench, dict) else {}
+
+
+def speedup_se_of_report(report) -> float:
+    """The approximate relative standard error stored by a report, or 0 when the report has no timing statistics."""
+    bench = _benchmark(report)
+    try:
+        candidate = bench["candidate"]
+        baseline = bench["baselines"][bench["best_baseline"]]
+    except (KeyError, TypeError):
+        return 0.0
+    return approximate_speedup_se(candidate.get("cv"), candidate.get("reps"), baseline.get("cv"), baseline.get("reps"))
+
+
+def timing_is_uncertain(report) -> bool:
+    """True when the kept measurement is marked noisy or a reported cv is above the quiet cutoff."""
+    bench = _benchmark(report)
+    if bench.get("noisy") is True:
+        return True
+    try:
+        cvs = [float(bench["candidate"]["cv"])]
+        bases = bench.get("baselines") or {}
+        name = bench.get("best_baseline")
+        if name in bases:
+            cvs.append(float(bases[name]["cv"]))
+    except (KeyError, TypeError, ValueError):
+        return False
+    return any(cv > QUIET_CV for cv in cvs)
