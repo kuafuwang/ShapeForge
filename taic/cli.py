@@ -16,7 +16,7 @@ from pathlib import Path
 # 一次新搜索从这里进入。load_config 把预设和命令行里非空的预算、分支数、轮数上限合成 LLMConfig 与 SearchConfig，再交给 Orchestrator.run。有 best_speedup 则进程成功，一颗合格内核都没有则失败。
 def cmd_run(a: argparse.Namespace) -> int:
     from .llm import load_config
-    from .orchestrator import Orchestrator
+    from .orchestrator import Orchestrator, RunStartError
 
     # 预设与预算的汇合点。a.config 有值时整份文件原样使用，不再叠预设；a.budget 为 None 时保留预设里的 budget_usd（paper 即 PAPER_BUDGET_USD）。
     cfg, search = load_config(a.config, model=a.model, preset=a.preset, budget_usd=a.budget, branches=a.branches, max_rounds=a.max_rounds)
@@ -39,11 +39,16 @@ def cmd_run(a: argparse.Namespace) -> int:
     if a.effort:
         cfg.reasoning_effort = a.effort
     _apply_max_tokens(a, cfg)
-    orch = Orchestrator(
-        a.task, a.dtype, a.size, cfg, search,
-        run_dir=Path(a.run_dir) if a.run_dir else None,
-        from_run=Path(a.from_run) if a.from_run else None,
-    )
+    try:
+        orch = Orchestrator(
+            a.task, a.dtype, a.size, cfg, search,
+            run_dir=Path(a.run_dir) if a.run_dir else None,
+            from_run=Path(a.from_run) if a.from_run else None,
+            seed=getattr(a, "seed", None),
+        )
+    except RunStartError as e:
+        print(str(e), file=sys.stderr)
+        return 5
     res = asyncio.run(orch.run())
     print(json.dumps({k: getattr(res, k) for k in ("task", "dtype", "model", "best_speedup", "confirmed_speedup", "spent_usd", "stop_reason", "run_dir")}, indent=2))
     return 0 if res.best_speedup else 2
@@ -179,7 +184,9 @@ def run_prepared(a: argparse.Namespace, orch, snap, info: dict, new_budget: floa
         moved = rs.snapshot_results(run_dir)
         if moved:
             orch.log(f"kept the earlier results as {', '.join(moved)}")
-        control.record_event(run_dir, "resume", info["budget_usd"], new_budget, who=a.who, note=f"{info['kind']} run continued at round {first}", spent_usd=snap.spent_usd)
+        event = control.record_event(run_dir, "resume", info["budget_usd"], new_budget, who=a.who, note=f"{info['kind']} run continued at round {first}", spent_usd=snap.spent_usd)
+        if not event.get("persisted"):
+            orch.log("budget event was not saved; budget_events.json is not a complete record")
         return asyncio.run(orch.run())
     finally:
         control.release_run_lock(run_dir)

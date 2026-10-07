@@ -354,7 +354,8 @@ def test_double_resume_is_refused_while_the_first_one_runs(tmp_path):
 
     o2, snap, report, info, nb = cli.prepare_resume(ns(run_dir, add_budget=5.0), client=FakeClient(script), evaluate_fn=fake_eval([]), log=lambda s: None)
     cli.run_prepared(ns(run_dir, add_budget=5.0), o2, snap, info, nb)
-    assert holder["code"] == 3 and "being resumed" in holder["msg"]
+    # restore() 已经把本进程 pid 写进 state.json，锁也是这个 pid，所以第二次续跑看到的是「仍在运行」，退出码仍是 3。
+    assert holder["code"] == 3 and "still running" in holder["msg"]
 
 
 # ------------------------------------------------------------------------------------------------ rebuilding from older directories

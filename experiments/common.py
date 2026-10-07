@@ -168,6 +168,7 @@ def run_one(
     if max_tokens is not None:
         # 单次回复上限，思考也算。不传就用 taic.toml 的 48000。
         cfg.max_tokens = max_tokens
+    # RunStartError（目录已有文件，或 run_config.json 写失败）从这里原样抛给调用方，不进入 run()。
     orch = Orchestrator(task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log)
     return asyncio.run(orch.run())
 

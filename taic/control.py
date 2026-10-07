@@ -181,7 +181,8 @@ def read_events(run_dir: Path) -> list[dict]:
 # 仪表盘和搜索会同时追加。原子替换挡不住「两边都读到旧列表、后写的覆盖先写的」，所以先拿独占锁再读-改-写。
 def record_event(run_dir: Path, kind: str, old_budget_usd: float | None, new_budget_usd: float | None, *, who: str = "cli", note: str = "", **extra) -> dict:
     """Append one entry to ``budget_events.json`` (read-modify-write under an exclusive file lock, so the dashboard and the search process can both write).
-    Never raises: the history is an audit trail, losing one line must not stop a search."""
+    Never raises: losing one line must not stop a search. The returned dict has ``persisted`` False when the line did not land;
+    that file is then not a complete bill."""
     now = time.time()
     event = {
         "t": now, "time": iso(now), "kind": kind, "who": who,
@@ -201,8 +202,9 @@ def record_event(run_dir: Path, kind: str, old_budget_usd: float | None, new_bud
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
     except Exception:  # noqa: BLE001
-        pass
-    return event
+        # 落盘失败的那一行不在文件里。返回值带 persisted=False，调用方不能把账本当成完整账单。
+        return {**event, "persisted": False}
+    return {**event, "persisted": True}
 
 
 # 仪表盘用。requested 若还没有同金额的 applied 或 resume，算搜索还没采纳；只把最后一条这种挂起显示出来。

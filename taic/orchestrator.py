@@ -24,6 +24,7 @@ import hashlib
 import json
 import math
 import os
+import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -43,6 +44,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 FEEDBACK_CHARS = 6000
 INITIAL_RESTARTS = 2
 
+
+def _git_identity(root: Path) -> tuple[str, bool | None]:
+    """(commit hash, dirty). ``("unknown", None)`` when git cannot be read. This does not touch the GPU."""
+    try:
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, timeout=5, check=True).stdout.strip()
+        if not commit:
+            return "unknown", None
+        dirty = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, timeout=5, check=True).stdout
+        return commit, bool(dirty.strip())
+    except (OSError, subprocess.SubprocessError):
+        return "unknown", None
+
 # 规划回复抽不出方案、或规划请求本身失败时，仍用这三套通用改法把这一轮补丁做完，搜索不因此停。
 FALLBACK_PLANS = [
     {"title": "vectorized 16-byte memory access", "change": "Make every thread load/store 16 bytes at a time (uint4 / half4 pairs) over consecutive addresses and unroll so that several loads are in flight before use.", "expected_gain": ""},
@@ -54,6 +67,10 @@ FALLBACK_PLANS = [
 # GPU 挂死或 worker 连续崩溃时立刻结束整次搜索。捕获之后不再开新的评测；默认一次 timeout 就够触发它。
 class StopRun(Exception):
     """Raised when the run must end immediately (GPU hang circuit breaker)."""
+
+
+class RunStartError(Exception):
+    """A new run was refused before any model request: the directory already holds a run, or ``run_config.json`` could not be written."""
 
 
 # 一颗被评过（或即将评）的内核。能否成为下一轮种子不看标签，只看 eligible 加上是否快过测量噪声。
@@ -214,7 +231,17 @@ class Orchestrator:
         self.cfg, self.search = llm_cfg, search
         stamp = time.strftime("%Y%m%d-%H%M%S")
         self.run_dir = Path(run_dir) if run_dir else REPO_ROOT / "runs" / f"{stamp}_{task_name}_{dtype}_{llm_cfg.model}"
+        self.log = log
+        self.seed = seed
+        self.system = prompts.system_prompt(self.task, use_tools=llm_cfg.use_tools, profiler_evidence=search.profile_poor, hw_feedback=search.hw_feedback)
+        self.from_run = Path(from_run) if from_run else None
+        # 新运行不接管已经有文件的目录。续跑（resuming=True）才读既有目录，并且不改写 run_config.json。
+        if not resuming and self.run_dir.exists() and any(self.run_dir.iterdir()):
+            raise RunStartError(f"refused: {self.run_dir} already holds files; resume it with `taic resume` or choose a new directory")
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        # 配置写失败就停在这里：还没有账本、转录和 state.json，也不会进入 run()。
+        if not resuming:
+            self._write_run_config()
         # 预算闸门的账本。之后每次 LLM.chat 发请求前，CostLedger.check 先 refresh_budget（读 control.json），再比较已花费。
         self.ledger = CostLedger(llm_cfg, search.budget_usd)
         # 已存在的 control.json 先被忽略，直到文件再变：那是上一会话的请求，启动者已经折进当前预算。损坏的文件只记一笔，不改上限。
@@ -225,9 +252,6 @@ class Orchestrator:
         # 并发度至少为分支数 K（search.branches）。模型请求因此可以同时在飞；占 GPU 的评测不走这个信号量。
         self.llm = LLM(llm_cfg, self.ledger, Transcript(self.run_dir / "transcript.jsonl"), client=client, max_concurrency=max(2, search.branches))
         self.evaluate_fn = evaluate_fn or evaluate
-        self.log = log
-        self.seed = seed
-        self.system = prompts.system_prompt(self.task, use_tools=llm_cfg.use_tools, profiler_evidence=search.profile_poor, hw_feedback=search.hw_feedback)
         self.index = SkillIndex("msl_reference")
         # 同一时刻只允许一次 GPU 评测、quick_check 或 Instruments。两份内核抢同一块卡会把计时测脏，挂死时也不能再有内核在跑。
         self.gpu_lock = asyncio.Lock()
@@ -255,10 +279,8 @@ class Orchestrator:
         self._branch_fail: dict[str, str] = {}  # branch label -> why its last attempt failed (used when search.rich_history is on)
         self._search_seed: Candidate | None = None
         self._confirm_winner: Candidate | None = None
-        self.from_run = Path(from_run) if from_run else None
         # 续跑时目录里已有上一会话的 state.json。先空写会把看板抹掉，所以等到 restore 把账本和候选装回来再发布。
         if not resuming:
-            self._write_run_config()
             self._publish_state()
 
     # 续跑要把上一会话已经花掉的墙钟算进去，否则轨迹上的时间从 0 重新开始，和账本对不上。
@@ -266,19 +288,34 @@ class Orchestrator:
         """Search time of the whole run, including earlier sessions of a resumed one."""
         return self._t_offset + (time.time() - self.t0)
 
-    # 给 `taic resume` 留的设置。故意不写 API key 和端点；写失败不能打断搜索。
+    # 给 `taic resume` 留的设置。故意不写 API key 和端点。写失败向上抛，调用方不得进入 run()。
     def _write_run_config(self) -> None:
-        """The settings of this run, for ``taic.cli resume`` (no credentials: the API key and the endpoint stay out of it)."""
+        """The settings of this run, for ``taic.cli resume`` (no credentials: the API key and the endpoint stay out of it).
+
+        Raises ``RunStartError`` when the file cannot be written. The directory created for this attempt may stay empty;
+        an older run directory is never deleted or overwritten (that case is refused before this method)."""
+        llm = {k: v for k, v in asdict(self.cfg).items() if k not in ("api_key", "base_url")}
+        contract_text = self.task.contract.describe()
+        triton_text = self.task.triton_source
+        commit, dirty = _git_identity(REPO_ROOT)
         try:
-            llm = {k: v for k, v in asdict(self.cfg).items() if k not in ("api_key", "base_url")}
             control.write_json_atomic(self.run_dir / control.CONFIG_FILE, {
+                "schema_version": 1,
                 "task": self.task_name, "dtype": self.dtype, "size": self.size, "seed": self.seed,
                 "llm": llm, "search": asdict(self.search),
                 "system_prompt_sha1": hashlib.sha1(self.system.encode()).hexdigest(),
+                "contract_description_sha256": hashlib.sha256(contract_text.encode("utf-8")).hexdigest(),
+                "triton_source_sha256": hashlib.sha256(triton_text.encode("utf-8")).hexdigest(),
+                "hash_scope": "sha256 of contract.describe() and of task.triton_source only; reference and baseline implementations are not included",
+                "git_commit": commit,
+                "git_dirty": dirty,
+                "settings_source": "llm and search values passed into Orchestrator at start (config file, preset and command-line overrides already applied)",
+                "cost_may_be_incomplete": True,
+                "cost_note": "A process can die after the provider bills a request and before transcript.jsonl records it, so a resumed ledger can under-count the real bill. A budget_events.json line that fails to land is dropped; that file is not a complete bill. This is not a hard dollar cap. Reconciling with the provider bill needs separate authorization.",
                 "created_at": time.time(),
             })
-        except Exception:  # noqa: BLE001 - a settings file must never stop a search
-            return
+        except OSError as e:
+            raise RunStartError(f"cannot start: run_config.json was not written ({e})") from e
 
     # control.json 在下一次预算闸门被接受之后通知这里。上限只升不降到已花费之下（这是 refresh_budget 的不变量）；本函数把新上限同步到 search.budget_usd，搜索继续，而不是停掉。
     def _budget_changed(self, old: float, new: float, doc: dict) -> None:
@@ -286,7 +323,9 @@ class Orchestrator:
         self.search.budget_usd = new
         who = str(doc.get("who") or "dashboard")
         self.log(f"  budget ${old:.2f} -> ${new:.2f} (requested by {who}; spent ${self.ledger.total_usd:.3f})")
-        control.record_event(self.run_dir, "applied", old, new, who=who, spent_usd=self.ledger.total_usd)
+        written = control.record_event(self.run_dir, "applied", old, new, who=who, spent_usd=self.ledger.total_usd)
+        if not written.get("persisted"):
+            self.log("  budget event was not saved; budget_events.json is not a complete record")
         self._publish_state()
 
     # 控制文件里的 max_rounds / patience 只升不降。仪表盘的「重置」用它去掉次数上限；搜索仍会在新预算花完时停下。
