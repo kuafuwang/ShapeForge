@@ -143,8 +143,10 @@ def read_control(run_dir: Path) -> dict | None:
 
 
 # 向活搜索提出新的总预算，并记一条 requested。这里只校验「是正数」，不和已花费比较；下界在读文件的账本里。
-def write_control(run_dir: Path, budget_usd: float, *, who: str, amount_usd: float | None = None, old_budget_usd: float | None = None, note: str = "") -> dict:
-    """Ask the running search of ``run_dir`` to raise its total budget to ``budget_usd``. Atomic; records a ``requested`` event."""
+def write_control(run_dir: Path, budget_usd: float, *, who: str, amount_usd: float | None = None, old_budget_usd: float | None = None, note: str = "", max_rounds: int | None = None, patience: int | None = None) -> dict:
+    """Ask the running search of ``run_dir`` to raise its total budget to ``budget_usd``. Atomic; records a ``requested`` event.
+
+    ``max_rounds`` and ``patience``, when given, are raised the same way (a live search only takes a value higher than the one it already has)."""
     b = _finite_positive(budget_usd)
     if b is None:
         raise ControlError(f"the new budget must be a positive number, got {budget_usd!r}")
@@ -152,6 +154,10 @@ def write_control(run_dir: Path, budget_usd: float, *, who: str, amount_usd: flo
     # 旧文件缺失或损坏时序号从 1 重新计，不让坏序号把这次请求写崩。
     seq = int(prev.get("seq", 0)) + 1 if isinstance(prev, dict) and isinstance(prev.get("seq"), (int, float)) else 1
     doc = {"budget_usd": b, "who": who, "amount_usd": amount_usd, "seq": seq, "requested_at": time.time()}
+    if max_rounds is not None:
+        doc["max_rounds"] = int(max_rounds)
+    if patience is not None:
+        doc["patience"] = int(patience)
     write_json_atomic(control_path(run_dir), doc)
     record_event(run_dir, "requested", old_budget_usd, b, who=who, note=note)
     return doc

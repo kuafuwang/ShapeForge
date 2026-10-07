@@ -8,7 +8,7 @@ model = "deepseek-flash"         # DeepSeek V4.1 Flash; "deepseek-v4-flash" / "d
 reasoning_effort = "high"        # low / high / max (DeepSeek thinkingLevelMap); "off" disables thinking
 echo_reasoning_content = true    # models.json: requiresReasoningContentOnAssistantMessages
 use_tools = true                 # lookup_msl / quick_check function calling; false = full docs in the prompt, repair loop only
-max_tokens = 48000               # per request (reasoning tokens included)
+max_tokens = 48000               # per request; reasoning tokens count. 96000 and half of the 384K API maximum were considered on 2026-10-07 and set back the same day. Override per run with --max-tokens.
 request_timeout_s = 900
 max_retries = 6
 extra_body = {}

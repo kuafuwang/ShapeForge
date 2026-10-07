@@ -175,6 +175,15 @@ def test_load_config_reads_credentials_and_prices_from_models_json(tmp_path, mon
     assert "k-123456789" not in repr(load_config(toml)[0]) and "env-key" not in repr(load_config(toml)[0])
 
 
+def test_output_cap_defaults_to_48000_and_a_config_file_can_replace_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-0123456789abcdef")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://x")
+    assert load_config(preset="base")[0].max_tokens == 48000  # taic.toml. 96000 and half of 384K were considered the same day and set back.
+    toml = tmp_path / "taic.toml"
+    toml.write_text('[llm]\nmodel = "deepseek-flash"\nmax_tokens = 256000\n[search]\nbudget_usd = 1\n')
+    assert load_config(toml)[0].max_tokens == 256000
+
+
 def test_repo_config_loads_with_local_credentials():
     c, s = load_config()
     assert c.model == "deepseek-flash" and c.price_out == pytest.approx(1.2) and s.budget_usd > 0

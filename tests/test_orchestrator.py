@@ -73,12 +73,12 @@ def llm_script(init: str, patches: dict[str, str] | None = None, fixes: list[str
     return route
 
 
-def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=3, max_rounds=2, max_repair=2, evaluate_fn=None, max_hangs=1, **search_kw):
+def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=3, max_rounds=2, max_repair=2, evaluate_fn=None, max_hangs=1, log=None, from_run=None, **search_kw):
     llm_cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False, truncation_retry=False)
     # The production default is on. Scripted tests pin the switches off unless the test passes one, so a prompt assertion stays about the thing it names.
     off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
     search = SearchConfig(budget_usd=budget, branches=branches, max_rounds=max_rounds, max_repair_tries=max_repair, max_hangs=max_hangs, eval_reps=3, **{**off, **search_kw})
-    return Orchestrator("relu", "fp16", "small", llm_cfg, search, run_dir=tmp_path / "run", evaluate_fn=evaluate_fn or fake_eval(calls), client=FakeClient(script), log=lambda s: None)
+    return Orchestrator("relu", "fp16", "small", llm_cfg, search, run_dir=tmp_path / "run", evaluate_fn=evaluate_fn or fake_eval(calls), client=FakeClient(script), log=log or (lambda s: None), from_run=from_run)
 
 
 def run(orch):
@@ -496,3 +496,56 @@ def test_the_profiler_skill_is_only_in_the_system_prompt_of_runs_that_can_attach
     plain = make_orch(tmp_path / "a", llm_script(code("speed=0.9")), calls, max_rounds=1)
     prof = make_orch(tmp_path / "b", llm_script(code("speed=0.9")), calls, max_rounds=1, profile_poor=True)
     assert "Skill 2b" not in plain.system and "Skill 2b" in prof.system
+
+
+def _prompts(orch) -> list[str]:
+    return [c["messages"][-1]["content"] for c in orch.llm.client.calls]
+
+
+def _prior(path: Path, marker: str, **result) -> Path:
+    path.mkdir()
+    body = code(marker).split("```metal\n", 1)[1].rsplit("```", 1)[0]
+    (path / "best.metal").write_text(body)
+    (path / "result.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "size": "small", **result}))
+    return path
+
+
+def test_a_run_without_from_still_asks_for_a_first_draft(tmp_path):
+    calls = []
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), calls, max_rounds=0)
+    res = run(orch)
+    assert any("Translate this Triton kernel" in text for text in _prompts(orch))
+    assert res.best_label == "init"
+
+
+def test_from_run_skips_the_first_draft_when_the_kernel_is_still_eligible(tmp_path):
+    calls = []
+    prior = _prior(tmp_path / "prior", "speed=1.4")
+    script = llm_script(code("speed=0.1"), patches={"A": code("speed=0.5"), "B": code("speed=0.5"), "C": code("speed=0.5")})
+    orch = make_orch(tmp_path, script, calls, max_rounds=1, from_run=prior)
+    res = run(orch)
+    prompts = _prompts(orch)
+    assert not any("Translate this Triton kernel" in text for text in prompts)
+    plan = next(text for text in prompts if "Diagnose the dominant bottleneck" in text)
+    assert "speed=1.4" in plan
+    assert res.best_label == "prior" and res.best_speedup == pytest.approx(1.4)
+    assert calls[0][1].count("speed=1.4") == 1  # the re-measurement, not a number copied from result.json
+
+
+def test_from_run_falls_back_to_a_first_draft_when_the_kernel_is_no_longer_eligible(tmp_path):
+    calls = []
+    prior = _prior(tmp_path / "prior", "status=compile_error")
+    orch = make_orch(tmp_path, llm_script(code("speed=1.1")), calls, max_rounds=0, from_run=prior)
+    res = run(orch)
+    assert any("Translate this Triton kernel" in text for text in _prompts(orch))
+    assert res.best_label == "init" and res.best_speedup == pytest.approx(1.1)
+
+
+def test_from_run_does_not_use_a_kernel_recorded_for_a_different_task(tmp_path):
+    calls = []
+    prior = _prior(tmp_path / "prior", "speed=9.9", task="gemm")
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), calls, max_rounds=0, from_run=prior)
+    res = run(orch)
+    assert any("Translate this Triton kernel" in text for text in _prompts(orch))
+    assert not any("speed=9.9" in source for _mode, source in calls)
+    assert res.best_label == "init"

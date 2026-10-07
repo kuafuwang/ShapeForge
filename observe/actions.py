@@ -1,4 +1,4 @@
-"""The dashboard's one write path: adding budget to a run. Everything else in ``observe`` stays read-only.
+"""The dashboard's write paths: adding budget to one run, and resetting every run.
 
 What a click can do (``POST /api/runs/<run>/budget``):
 
@@ -6,10 +6,15 @@ What a click can do (``POST /api/runs/<run>/budget``):
 * a run that stopped for budget, or whose process died: start ``python -m taic.cli resume`` for it as a detached process;
 * anything else: refused with the reason (a run that converged, hit its round limit or a GPU hang is not continued; there is no override).
 
+``POST /api/budget/reset`` is the one-click reset: every search that can continue gets $15 added and its round limit and patience lifted.
+A run that hung the GPU, failed in the model, or never produced a kernel is skipped. The experiment ``cap.json``, when there is one, is raised by the same amount so the add is not refused.
+
+``POST /api/stop`` sends SIGTERM to every live search and experiment queue in this repo, including the process group so a GPU worker started by that search stops too. The dashboard process is never a target.
+
 This spends real money and can start GPU work, so every POST needs: a loopback ``Host``, a same-origin ``Origin`` (when the browser sends one), the
 per-process random token that the served page carries (``X-Observe-Token``), a positive amount under ``OBSERVE_MAX_TOPUP_USD`` (default 25), a run
 that resolves inside ``runs/`` (no ``..``, no symlink out) and at most one request in flight per run. ``OBSERVE_CONTROL_DRYRUN=1`` does all of the
-checks, records the command that *would* run in ``budget_events.json`` and starts nothing.
+checks, records the command that *would* run in ``budget_events.json`` and starts nothing. The reset amount is fixed at $15 and is not taken from the request body.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ import math
 import os
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -255,6 +261,258 @@ def add_budget(run_id: str, body: dict) -> dict:
         except Exception:  # noqa: BLE001 - the child takes the lock itself
             pass
         return {"ok": True, "dry_run": False, "action": "resume", "old_budget_usd": current, "new_budget_usd": total, "amount_usd": amount, "pid": proc.pid, "log": log.name, "command": cmd}
+
+
+# 一键重置：每个能继续的搜索在现有预算上加这么多，并把轮数上限和耐心次数抬到下面两个数。次数上限实际上不再拦住搜索，钱花完仍会停。
+RESET_ADD_USD = 15.0
+RESET_MAX_ROUNDS = 100_000
+RESET_PATIENCE = 100_000
+
+
+def _reset_plan_for(run_id: str) -> dict:
+    """What a reset would do for one search. Does not write."""
+    run_dir = _run_dir(run_id)
+    info = resume.inspect_run(run_dir, allow_count_stops=True)
+    current = float(info["budget_usd"]) if info["budget_usd"] is not None else None
+    spent = float(info["spent_usd"] or 0.0)
+    item = {"id": run_id, "kind": info["kind"], "stop_reason": info["stop_reason"], "old_budget_usd": current, "action": "skip", "reason": "", "new_budget_usd": None}
+    if current is None:
+        item["reason"] = "没有记下预算"
+        return item
+    # 已经超支时，在现有预算上加 15 仍可能低于已花费。取预算和已花费里较高的那个再加 15，这样一定多出 15 美元可用。
+    item["new_budget_usd"] = max(current, spent) + RESET_ADD_USD
+    if info["kind"] == "resuming":
+        item["reason"] = info["reason"] or "正在被另一个进程续跑"
+        return item
+    if info["kind"] == "running":
+        if not info["can_topup_live"]:
+            item["reason"] = info["live_reason"] or "运行中的进程不读控制文件"
+            return item
+        if info["history"]["pending"]:
+            item["reason"] = "上一笔加预算还没被这次搜索读到"
+            return item
+        item["action"] = "topup_live"
+        return item
+    if info["resumable"]:
+        item["action"] = "resume"
+        return item
+    item["new_budget_usd"] = None
+    item["reason"] = info["reason"] or "不能重置"
+    return item
+
+
+def reset_preview() -> dict:
+    """``GET /api/budget/reset``: which searches would be reset, and which would be skipped. Writes nothing."""
+    rows = [_reset_plan_for(row["id"]) for row in scan.history()]
+    return {
+        "add_usd": RESET_ADD_USD,
+        "max_rounds": RESET_MAX_ROUNDS,
+        "patience": RESET_PATIENCE,
+        "dry_run": dry_run(),
+        "runs": [row for row in rows if row["action"] != "skip"],
+        "skipped": [row for row in rows if row["action"] == "skip"],
+    }
+
+
+def _raise_experiment_caps(rows: list[dict]) -> list[dict]:
+    """Raise each experiment cap by the extra dollars this reset will reserve, so the add is not refused.
+
+    A finished run is reserved at what it spent, while the reset reserves its new budget. The difference can be more than $15."""
+    from experiments.common import find_cap, run_commitment, write_cap
+
+    grouped: dict[Path, dict] = {}
+    for row in rows:
+        run_dir = _run_dir(row["id"])
+        found = find_cap(run_dir)
+        if found is None:
+            continue
+        exp_dir, cap = found
+        this = run_commitment(run_dir)
+        extra = max(0.0, max(this, float(row["new_budget_usd"])) - this)
+        slot = grouped.setdefault(exp_dir, {"old": cap, "add": 0.0, "n": 0})
+        slot["add"] += extra
+        slot["n"] += 1
+    out = []
+    for exp_dir, slot in grouped.items():
+        new = slot["old"] + slot["add"]
+        if not dry_run() and slot["add"] > 0:
+            write_cap(exp_dir, new)
+        out.append({"experiment": str(exp_dir), "old_cap_usd": slot["old"], "new_cap_usd": new, "n_runs": slot["n"], "added_usd": slot["add"]})
+    return out
+
+
+def _reset_resume_command(run_dir: Path, total: float) -> list[str]:
+    cmd = _resume_command(run_dir, total)
+    return [*cmd[:-2], "--max-rounds", str(RESET_MAX_ROUNDS), "--patience", str(RESET_PATIENCE), "--lift-count-limits", *cmd[-2:]]
+
+
+def _apply_reset(item: dict) -> dict:
+    try:
+        return _apply_reset_unchecked(item)
+    except Refused as e:
+        return {**item, "action": "skip", "reason": e.message, "new_budget_usd": None}
+
+
+def _apply_reset_unchecked(item: dict) -> dict:
+    run_dir = _run_dir(item["id"])
+    current, total = item["old_budget_usd"], item["new_budget_usd"]
+    note = "reset: add $15 and lift the round limit and patience"
+    with _lock_for(item["id"]):
+        if item["action"] == "topup_live":
+            if not dry_run():
+                _enforce_experiment_cap(run_dir, total)
+            if dry_run():
+                ev = control.record_event(run_dir, "dryrun", current, total, who="dashboard", note="would write control.json; " + note, action="reset")
+                return {**item, "dry_run": True, "event": ev}
+            doc = control.write_control(
+                run_dir, total, who="dashboard", amount_usd=total - current, old_budget_usd=current, note=note,
+                max_rounds=RESET_MAX_ROUNDS, patience=RESET_PATIENCE,
+            )
+            return {**item, "dry_run": False, "control": doc}
+        cmd = _reset_resume_command(run_dir, total)
+        if not dry_run():
+            _enforce_experiment_cap(run_dir, total)
+        if dry_run():
+            ev = control.record_event(run_dir, "dryrun", current, total, who="dashboard", note="would start: " + " ".join(cmd), action="reset", command=cmd)
+            return {**item, "dry_run": True, "command": cmd, "event": ev}
+        control.record_event(run_dir, "requested", current, total, who="dashboard", note=note, action="reset")
+        log = _next_log(run_dir)
+        with open(log, "ab") as out:
+            proc = subprocess.Popen(cmd, cwd=REPO_ROOT, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            control.write_json_atomic(control.lock_path(run_dir), {"pid": proc.pid, "started_at": time.time(), "who": "dashboard", "starting": True})
+        except Exception:  # noqa: BLE001 - the child takes the lock itself
+            pass
+        return {**item, "dry_run": False, "pid": proc.pid, "log": log.name, "command": cmd}
+
+
+def reset_budgets() -> dict:
+    """``POST /api/budget/reset``. Adds $15 to every search that can continue and lifts its round limit and patience."""
+    plan = reset_preview()
+    caps = _raise_experiment_caps(plan["runs"])
+    results = [_apply_reset(row) if row["action"] != "skip" else row for row in plan["runs"] + plan["skipped"]]
+    # preview split them; apply keeps skips unchanged and replaces the ones it carried out
+    done = [row for row in results if row["action"] != "skip"]
+    skipped = [row for row in results if row["action"] == "skip"]
+    return {"ok": True, "add_usd": RESET_ADD_USD, "max_rounds": RESET_MAX_ROUNDS, "patience": RESET_PATIENCE, "dry_run": dry_run(), "caps": caps, "runs": done, "skipped": skipped}
+
+
+def _parse_ps(text: str) -> list[tuple[int, str]]:
+    """``(pid, command)`` lines from ``ps -ax -o pid=,command=`` that are a search or an experiment script of this repo."""
+    found = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        pid_s, _, cmd = line.partition(" ")
+        try:
+            pid = int(pid_s)
+        except ValueError:
+            continue
+        if _is_search_command(cmd):
+            found.append((pid, cmd.strip()))
+    return found
+
+
+def _is_search_command(cmd: str) -> bool:
+    """A process this button may stop. The dashboard itself is not one of them."""
+    if "-m observe" in cmd or cmd.rstrip().endswith("observe"):
+        return False
+    return "-m taic.cli" in cmd or "-m experiments." in cmd
+
+
+def _ps_commands() -> list[tuple[int, str]]:
+    try:
+        text = subprocess.check_output(["ps", "-ax", "-o", "pid=,command="], text=True, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    return _parse_ps(text)
+
+
+def _stop_groups() -> tuple[list[dict], list[dict]]:
+    """Process groups to signal, and commands that were seen but refused. One group is signaled once even if several searches share it."""
+    labels: dict[int, list[str]] = {}
+    commands: dict[int, str] = {}
+    for row in scan.history():
+        if row.get("status") != "running":
+            continue
+        directory = scan.resolve_run(row["id"])
+        state = scan._load(directory / "state.json") if directory is not None else None
+        pid = (state or {}).get("pid")
+        if not scan.pid_alive(pid):
+            continue
+        labels.setdefault(int(pid), []).append(row["id"])
+    for job in scan.experiment_jobs():
+        if job.get("status") != "running":
+            continue
+        directory = scan.resolve_run(job["id"])
+        state = scan._load(directory / "state.json") if directory is not None else None
+        pid = (state or {}).get("pid")
+        if not scan.pid_alive(pid):
+            continue
+        labels.setdefault(int(pid), []).append(f"{job['id']}（{job.get('script') or '队列'}）")
+    for pid, cmd in _ps_commands():
+        if scan.pid_alive(pid):
+            commands[pid] = cmd
+            labels.setdefault(pid, [])
+    own_pgid = os.getpgrp()
+    groups: dict[int, dict] = {}
+    refused: list[dict] = []
+    for pid, names in labels.items():
+        if pid <= 1 or pid in (os.getpid(), os.getppid()):
+            refused.append({"pid": pid, "ids": names, "reason": "这是看板自己的进程"})
+            continue
+        try:
+            pgid = os.getpgid(pid)
+        except OSError:
+            refused.append({"pid": pid, "ids": names, "reason": "进程已经不在"})
+            continue
+        if pgid == own_pgid:
+            refused.append({"pid": pid, "ids": names, "reason": "和看板在同一个进程组"})
+            continue
+        cmd = commands.get(pid) or _command_of(pid)
+        if not _is_search_command(cmd):
+            refused.append({"pid": pid, "ids": names, "reason": "不是本仓库的搜索进程", "command": cmd})
+            continue
+        slot = groups.setdefault(pgid, {"pgid": pgid, "pids": [], "ids": [], "command": ""})
+        slot["pids"].append(pid)
+        for name in names:
+            if name not in slot["ids"]:
+                slot["ids"].append(name)
+        if cmd and not slot["command"]:
+            slot["command"] = cmd
+    return list(groups.values()), refused
+
+
+def _command_of(pid: int) -> str:
+    try:
+        text = subprocess.check_output(["ps", "-o", "command=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+    return text.strip()
+
+
+def stop_preview() -> dict:
+    """``GET /api/stop``: which live searches would be stopped. Writes nothing and signals nothing."""
+    groups, refused = _stop_groups()
+    return {"groups": groups, "refused": refused, "dry_run": dry_run()}
+
+
+def stop_runs() -> dict:
+    """``POST /api/stop``. SIGTERM each live search's process group so the search, its queue and its GPU worker stop."""
+    groups, refused = _stop_groups()
+    stopped = []
+    for group in groups:
+        if dry_run():
+            stopped.append({**group, "signaled": False, "dry_run": True})
+            continue
+        try:
+            os.kill(-int(group["pgid"]), signal.SIGTERM)
+        except OSError as e:
+            refused.append({**group, "reason": f"信号没有送到：{e}"})
+            continue
+        stopped.append({**group, "signaled": True, "dry_run": False})
+    return {"ok": True, "dry_run": dry_run(), "stopped": stopped, "refused": refused}
 
 
 def parse_body(raw: bytes):

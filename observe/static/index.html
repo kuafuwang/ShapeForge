@@ -25,7 +25,10 @@
     font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
   button, input { font: inherit; }
-  .layout { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+  .layout { display: grid; grid-template-columns: var(--side, 232px) 6px 1fr; min-height: 100vh; }
+  .split-x { cursor: col-resize; background: transparent; border: 0; padding: 0; position: relative; }
+  .split-x::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: var(--line); }
+  .split-x:hover::after, .split-x.dragging::after { background: var(--blue); }
   aside {
     background: var(--card);
     border-right: 1px solid var(--line);
@@ -35,7 +38,12 @@
     position: sticky;
     top: 0;
   }
-  aside h2 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  aside h2 { margin: 0 0 4px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  aside .hint { margin: 0 0 10px; font-size: 11px; line-height: 1.4; color: var(--muted); }
+  .same { margin: 0 0 12px; padding: 8px 10px; background: #f7f8fa; border-radius: 8px; }
+  .same p { margin: 0 0 6px; font-size: 12px; line-height: 1.45; color: var(--muted); }
+  .same button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 3px 0; cursor: pointer; font-size: 12px; color: var(--ink); }
+  .same button:hover { color: var(--blue); }
   .hist {
     display: block; width: 100%; text-align: left; border: 1px solid transparent;
     background: transparent; border-radius: 8px; padding: 8px; margin-bottom: 4px; cursor: pointer;
@@ -47,7 +55,9 @@
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--green); margin-right: 6px; }
   .dot.off { background: #c5c8d0; }
   main { padding: 18px 20px 32px; }
-  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 12px; position: relative; z-index: 6; }
+  header h1 { margin: 0; }
+  .head-actions { display: flex; align-items: center; gap: 12px; }
   header h1 { margin: 0; font-size: 22px; font-weight: 650; }
   .live { color: var(--green); font-weight: 600; font-size: 13px; }
   .cards, .components { display: grid; gap: 10px; }
@@ -153,28 +163,35 @@
   .btn-budget:disabled { border-color: var(--line); color: var(--muted); cursor: not-allowed; background: #f6f7f9; }
   .btn-budget.primary { background: var(--blue); color: #fff; }
   .btn-budget.primary:disabled { background: #c5d8ec; color: #fff; border-color: #c5d8ec; }
+  .btn-stop { border-color: var(--red); color: var(--red); background: #fff; }
+  .btn-stop:hover { background: #fdf2f2; }
   .chipwrap { display: inline-flex; gap: 4px; align-items: center; }
   .why { color: var(--muted); font-size: 12px; }
   .badge.topped { background: #e0efff; color: var(--blue); border-color: #b9d6f5; }
   .budget-hist { list-style: none; margin: 0 0 8px; padding: 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .budget-hist li { margin: 2px 0; }
   #budget-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
-  #budget-modal.open { display: flex; }
-  #budget-modal .box { background: #fff; border-radius: 14px; padding: 18px 20px; width: min(460px, 94vw); max-height: 92vh; overflow: auto; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
-  #budget-modal h3 { margin: 0 0 4px; font-size: 17px; }
+  #reset-modal, #stop-modal, #settings-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
+  #budget-modal.open, #reset-modal.open, #stop-modal.open, #settings-modal.open { display: flex; }
+  #budget-modal .box, #reset-modal .box, #stop-modal .box, #settings-modal .box { background: #fff; border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); max-height: 92vh; overflow: auto; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
+  #budget-modal h3, #reset-modal h3, #stop-modal h3, #settings-modal h3 { margin: 0 0 4px; font-size: 17px; }
   #budget-modal .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 10px 0; font-size: 13px; }
   #budget-modal .facts b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; }
   #budget-modal .amounts { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
   #budget-modal .amounts .pill { padding: 3px 12px; font-size: 13px; }
   #budget-modal input[type=number] { width: 96px; border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; }
-  #budget-modal .warn { background: #fff7e6; border: 1px solid #f6d58e; border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 10px 0; }
+  #budget-modal .warn, #reset-modal .warn, #stop-modal .warn, #settings-modal .warn { background: #fff7e6; border: 1px solid #f6d58e; border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 10px 0; }
   #budget-modal .total { font-size: 14px; margin: 6px 0; }
-  #budget-modal .msg { font-size: 13px; margin: 8px 0; }
-  #budget-modal .msg.err { color: var(--red); }
-  #budget-modal .msg.ok { color: var(--green); }
-  #budget-modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  #budget-modal .msg, #reset-modal .msg, #stop-modal .msg, #settings-modal .msg { font-size: 13px; margin: 8px 0; }
+  #budget-modal .msg.err, #reset-modal .msg.err, #stop-modal .msg.err, #settings-modal .msg.err { color: var(--red); }
+  #budget-modal .msg.ok, #reset-modal .msg.ok, #stop-modal .msg.ok, #settings-modal .msg.ok { color: var(--green); }
+  #budget-modal .actions, #reset-modal .actions, #stop-modal .actions, #settings-modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .model-group { margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
+  .model-choice { display: flex; gap: 8px; align-items: baseline; margin: 4px 0; font-size: 14px; }
+  .model-choice code { color: var(--muted); font-size: 12px; }
   @media (max-width: 1100px) {
     .layout { grid-template-columns: 1fr; }
+    .split-x { display: none; }
     aside { position: static; max-height: 220px; }
     .cards, .components, .split { grid-template-columns: 1fr 1fr; }
   }
@@ -183,15 +200,22 @@
 <body>
 <div class="layout">
   <aside>
-    <h2>历史</h2>
+    <h2>每一次搜索</h2>
+    <p class="hint">一行是一次独立搜索。同名算子可以有很多次，点一行才是那一次的成绩，不会互相覆盖。</p>
     <div id="hist-tools"></div>
     <div id="history"></div>
   </aside>
+  <div id="split-x" class="split-x" role="separator" aria-orientation="vertical" title="拖动调整宽度，双击恢复默认"></div>
   <main>
     <section id="budget-banner"><!--BUDGET_BANNER--></section>
     <header>
       <h1>运行观测</h1>
-      <div class="live"><span class="dot" id="live-dot"></span><span id="live-label">连接中</span></div>
+      <div class="head-actions">
+        <button type="button" class="btn-budget" id="settings-open">设置</button>
+        <button type="button" class="btn-budget" id="reset-all">重置全部搜索</button>
+        <button type="button" class="btn-budget btn-stop" id="stop-all">停止全部搜索</button>
+        <div class="live"><span class="dot" id="live-dot"></span><span id="live-label">连接中</span></div>
+      </div>
     </header>
     <section class="cards" id="status"></section>
     <section class="split">
@@ -207,6 +231,24 @@
     <h3 id="bm-title">加预算 Add budget</h3>
     <div class="sub" id="bm-run"></div>
     <div id="bm-body"></div>
+  </div>
+</div>
+<div id="reset-modal" role="dialog" aria-modal="true" aria-labelledby="reset-title">
+  <div class="box">
+    <h3 id="reset-title">重置全部搜索</h3>
+    <div id="reset-body"></div>
+  </div>
+</div>
+<div id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+  <div class="box">
+    <h3 id="settings-title">选择模型</h3>
+    <div id="settings-body"></div>
+  </div>
+</div>
+<div id="stop-modal" role="dialog" aria-modal="true" aria-labelledby="stop-title">
+  <div class="box">
+    <h3 id="stop-title">停止全部搜索</h3>
+    <div id="stop-body"></div>
   </div>
 </div>
 <script>
@@ -233,6 +275,8 @@ function el(tag, props, kids) {
     for (const [key, value] of Object.entries(props)) {
       if (key === "class") node.className = value;
       else if (key.startsWith("on") && typeof value === "function") node.addEventListener(key.slice(2), value);
+      else if (key === "disabled") node.disabled = Boolean(value);
+      else if (key === "checked") node.checked = Boolean(value);
       else if (value != null) node.setAttribute(key, value);
     }
   }
@@ -248,6 +292,13 @@ function money(value, digits) {
   if (!Number.isFinite(n)) return "—";
   return "$" + n.toFixed(digits == null ? 2 : digits);
 }
+function runStateText(row) {
+  const sp = speed(row.speedup);
+  if (row.status === "running") return "进行中 · 第 " + (row.round || "?") + " 轮 · 目前 " + sp;
+  if (row.status === "interrupted") return "中断 · 当时 " + sp;
+  return "已结束 · " + sp;
+}
+
 function speed(value) {
   if (value == null || value === "") return "—";
   const n = Number(value);
@@ -305,7 +356,7 @@ function render(frame) {
     renderBanner(frame.budget);
     renderHistory(frame);
     renderStatus(frame.overview);
-    renderSearch(frame.run);
+    renderSearch(frame.run, frame.history);
     renderEval(frame.run, frame.overview);
     renderComponents(frame.overview);
     renderLocks(frame.overview.gpu);
@@ -416,8 +467,8 @@ function renderHistory(frame) {
   for (const row of rows) {
     const on = row.id === frame.selected;
     const b = row.budget || {};
-    const title = (row.task || row.id) + (row.dtype ? " " + row.dtype : "");
-    const meta = row.id + " · " + when(row.started_at) + "  " + (row.status === "running" ? "进行中" : row.status === "interrupted" ? "中断" : speed(row.speedup));
+    const title = row.id;
+    const meta = (row.task || "") + (row.dtype ? " " + row.dtype : "") + " · " + when(row.started_at) + "  " + runStateText(row);
     const level = b.flagged ? " " + b.level : "";
     const kids = [
       el("b", null, [t(title)]),
@@ -582,6 +633,207 @@ async function confirmBudget() {
 }
 
 document.getElementById("budget-modal").addEventListener("click", (event) => { if (event.target.id === "budget-modal") closeBudget(); });
+
+function closeReset() {
+  document.getElementById("reset-modal").classList.remove("open");
+}
+
+function resetLine(row) {
+  if (row.action === "skip") return row.id + " — " + (row.reason || "跳过");
+  const how = row.action === "topup_live" ? "运行中，马上加上" : "已停下，续跑并加上";
+  return row.id + " — " + how + " " + money(row.old_budget_usd) + " → " + money(row.new_budget_usd);
+}
+
+async function openReset() {
+  const modal = document.getElementById("reset-modal");
+  const body = document.getElementById("reset-body");
+  modal.classList.add("open");
+  body.replaceChildren(el("div", { class: "msg" }, [t("正在读取每一次搜索…")]));
+  let plan;
+  try {
+    const r = await fetch("/api/budget/reset");
+    plan = await r.json();
+    if (!r.ok) throw new Error((plan && plan.error) || "读取失败");
+  } catch (err) {
+    body.replaceChildren(el("div", { class: "msg err" }, [t(String(err.message || err))]), el("div", { class: "actions" }, [el("button", { type: "button", class: "btn-budget", onclick: closeReset }, [t("关闭")])]));
+    return;
+  }
+  const n = (plan.runs || []).length;
+  const added = (plan.runs || []).reduce((sum, row) => sum + (Number(row.new_budget_usd) - Number(row.old_budget_usd)), 0);
+  const kids = [el("div", { class: "warn" }, [t("每个能继续的搜索：去掉轮数上限和耐心次数，并在现有预算上加 15 美元。没有合格内核、显卡挂死或模型报错的搜索会跳过。确认后会真的加钱；已经停下的搜索会重新跑起来。")])];
+  kids.push(el("div", { class: "total" }, [t("将处理 " + n + " 个搜索，合计 +" + money(added) + "。跳过 " + (plan.skipped || []).length + " 个。")]));
+  if (n) kids.push(el("ul", { class: "budget-hist" }, plan.runs.map((row) => el("li", null, [t(resetLine(row))]))));
+  if ((plan.skipped || []).length) kids.push(el("ul", { class: "budget-hist" }, plan.skipped.map((row) => el("li", null, [t(resetLine(row))]))));
+  kids.push(el("div", { class: "msg" }, [t("预算改成「当前预算和已花费里较高的那个 + 15 美元」。正在跑的搜索如果是这次改动之前启动的，会马上加上这笔钱；轮数上限要等那个进程用新代码继续时才去掉。")]));
+  const msg = el("div", { class: "msg", id: "reset-msg" }, []);
+  kids.push(msg);
+  kids.push(el("div", { class: "actions" }, [
+    el("button", { type: "button", class: "btn-budget", id: "reset-cancel", onclick: closeReset }, [t("取消")]),
+    el("button", { type: "button", class: "btn-budget primary", id: "reset-confirm", onclick: confirmReset, disabled: n === 0 }, [t("确认重置")]),
+  ]));
+  body.replaceChildren(...kids);
+}
+
+async function confirmReset() {
+  const button = document.getElementById("reset-confirm");
+  const msg = document.getElementById("reset-msg");
+  button.disabled = true;
+  msg.className = "msg";
+  msg.replaceChildren(t("正在重置…"));
+  try {
+    const r = await fetch("/api/budget/reset", { method: "POST", headers: { "Content-Type": "application/json", "X-Observe-Token": OBSERVE_TOKEN }, body: "{}" });
+    const doc = await r.json();
+    if (!r.ok) throw new Error((doc && doc.error) || "重置失败");
+    const done = (doc.runs || []).length;
+    const added = (doc.runs || []).reduce((sum, row) => sum + (Number(row.new_budget_usd) - Number(row.old_budget_usd)), 0);
+    msg.className = "msg ok";
+    msg.replaceChildren(t("已处理 " + done + " 个搜索，合计 +" + money(added) + "。"));
+    document.getElementById("reset-cancel").replaceChildren(t("关闭"));
+  } catch (err) {
+    msg.className = "msg err";
+    msg.replaceChildren(t(String(err.message || err)));
+    button.disabled = false;
+  }
+}
+
+document.getElementById("reset-all").addEventListener("click", openReset);
+document.getElementById("reset-modal").addEventListener("click", (event) => { if (event.target.id === "reset-modal") closeReset(); });
+
+function closeStop() {
+  document.getElementById("stop-modal").classList.remove("open");
+}
+
+function stopLine(group) {
+  const names = (group.ids && group.ids.length) ? group.ids.join("，") : (group.command || ("pid " + (group.pids || []).join(",")));
+  return names + " — 进程组 " + group.pgid;
+}
+
+function refusedLine(row) {
+  const who = (row.ids && row.ids.length) ? row.ids.join("，") : ("pid " + row.pid);
+  return who + " — " + (row.reason || "跳过");
+}
+
+async function openStop() {
+  const modal = document.getElementById("stop-modal");
+  const body = document.getElementById("stop-body");
+  modal.classList.add("open");
+  body.replaceChildren(el("div", { class: "msg" }, [t("正在查看正在跑的搜索…")]));
+  let plan;
+  try {
+    const r = await fetch("/api/stop");
+    plan = await r.json();
+    if (!r.ok) throw new Error((plan && plan.error) || "读取失败");
+  } catch (err) {
+    body.replaceChildren(el("div", { class: "msg err" }, [t(String(err.message || err))]), el("div", { class: "actions" }, [el("button", { type: "button", class: "btn-budget", onclick: closeStop }, [t("关闭")])]));
+    return;
+  }
+  const groups = plan.groups || [];
+  const kids = [el("div", { class: "warn" }, [t("停止正在跑的搜索，以及还会接着开下一个任务的实验队列。显卡上由这些搜索拉起的评测进程一起停。已经结束的搜索不动。停完之后，有合格内核的搜索以后还能续跑。")])];
+  kids.push(el("div", { class: "total" }, [t("将停止 " + groups.length + " 组进程。跳过 " + (plan.refused || []).length + " 个。")]));
+  if (groups.length) kids.push(el("ul", { class: "budget-hist" }, groups.map((group) => el("li", null, [t(stopLine(group))]))));
+  if ((plan.refused || []).length) kids.push(el("ul", { class: "budget-hist" }, plan.refused.map((row) => el("li", null, [t(refusedLine(row))]))));
+  const msg = el("div", { class: "msg", id: "stop-msg" }, []);
+  kids.push(msg);
+  kids.push(el("div", { class: "actions" }, [
+    el("button", { type: "button", class: "btn-budget", id: "stop-cancel", onclick: closeStop }, [t("取消")]),
+    el("button", { type: "button", class: "btn-budget btn-stop", id: "stop-confirm", onclick: confirmStop, disabled: groups.length === 0 }, [t("确认停止")]),
+  ]));
+  body.replaceChildren(...kids);
+}
+
+async function confirmStop() {
+  const button = document.getElementById("stop-confirm");
+  const msg = document.getElementById("stop-msg");
+  button.disabled = true;
+  msg.className = "msg";
+  msg.replaceChildren(t("正在停止…"));
+  try {
+    const r = await fetch("/api/stop", { method: "POST", headers: { "Content-Type": "application/json", "X-Observe-Token": OBSERVE_TOKEN }, body: "{}" });
+    const doc = await r.json();
+    if (!r.ok) throw new Error((doc && doc.error) || "停止失败");
+    msg.className = "msg ok";
+    msg.replaceChildren(t("已向 " + (doc.stopped || []).length + " 组进程发出停止。页面过一会儿会显示它们已停下。"));
+    document.getElementById("stop-cancel").replaceChildren(t("关闭"));
+  } catch (err) {
+    msg.className = "msg err";
+    msg.replaceChildren(t(String(err.message || err)));
+    button.disabled = false;
+  }
+}
+
+document.getElementById("stop-all").addEventListener("click", openStop);
+document.getElementById("stop-modal").addEventListener("click", (event) => { if (event.target.id === "stop-modal") closeStop(); });
+
+function closeSettings() {
+  document.getElementById("settings-modal").classList.remove("open");
+}
+
+async function openSettings() {
+  const modal = document.getElementById("settings-modal");
+  const body = document.getElementById("settings-body");
+  modal.classList.add("open");
+  body.replaceChildren(el("div", { class: "msg" }, [t("正在读取模型列表…")]));
+  let plan;
+  try {
+    const r = await fetch("/api/settings/model");
+    plan = await r.json();
+    if (!r.ok) throw new Error((plan && plan.error) || "读取失败");
+  } catch (err) {
+    body.replaceChildren(el("div", { class: "msg err" }, [t(String(err.message || err))]), el("div", { class: "actions" }, [el("button", { type: "button", class: "btn-budget", onclick: closeSettings }, [t("关闭")])]));
+    return;
+  }
+  const kids = [el("div", { class: "warn" }, [t("已经在跑的搜索仍用启动时的模型。下一次新开的搜索会用这里选的模型，包括实验队列里还没开始的下一个。")])];
+  let provider = "";
+  for (const choice of plan.choices || []) {
+    if (choice.provider !== provider) {
+      provider = choice.provider;
+      kids.push(el("div", { class: "model-group" }, [t(provider)]));
+    }
+    const selected = choice.provider === plan.provider && choice.id === plan.model;
+    const input = el("input", { type: "radio", name: "model-choice", "data-provider": choice.provider, "data-model": choice.id, checked: selected });
+    kids.push(el("label", { class: "model-choice" }, [input, el("span", null, [t(choice.name + "  "), el("code", null, [t(choice.id)])])]));
+  }
+  const msg = el("div", { class: "msg", id: "settings-msg" }, []);
+  kids.push(msg);
+  kids.push(el("div", { class: "actions" }, [
+    el("button", { type: "button", class: "btn-budget", id: "settings-cancel", onclick: closeSettings }, [t("取消")]),
+    el("button", { type: "button", class: "btn-budget primary", id: "settings-save", onclick: saveSettings, disabled: !(plan.choices || []).length }, [t("保存")]),
+  ]));
+  body.replaceChildren(...kids);
+}
+
+async function saveSettings() {
+  const picked = document.querySelector('#settings-modal input[name="model-choice"]:checked');
+  const msg = document.getElementById("settings-msg");
+  const button = document.getElementById("settings-save");
+  if (!picked) {
+    msg.className = "msg err";
+    msg.replaceChildren(t("先选一个模型"));
+    return;
+  }
+  button.disabled = true;
+  msg.className = "msg";
+  msg.replaceChildren(t("正在保存…"));
+  try {
+    const r = await fetch("/api/settings/model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Observe-Token": OBSERVE_TOKEN },
+      body: JSON.stringify({ provider: picked.dataset.provider, model: picked.dataset.model }),
+    });
+    const doc = await r.json();
+    if (!r.ok) throw new Error((doc && doc.error) || "保存失败");
+    msg.className = "msg ok";
+    msg.replaceChildren(t("已保存：" + doc.provider + " / " + doc.model));
+    document.getElementById("settings-cancel").replaceChildren(t("关闭"));
+  } catch (err) {
+    msg.className = "msg err";
+    msg.replaceChildren(t(String(err.message || err)));
+    button.disabled = false;
+  }
+}
+
+document.getElementById("settings-open").addEventListener("click", openSettings);
+document.getElementById("settings-modal").addEventListener("click", (event) => { if (event.target.id === "settings-modal") closeSettings(); });
 document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeBudget(); });
 
 function pin(id) {
@@ -617,10 +869,13 @@ function renderStatus(overview) {
   const waitValue = el("div", { class: "v" }, [t(waiters.length ? String(waiters.length) : "无")]);
   const waitSub = waiters.length ? waiters.map((w) => "pid " + w.pid).join("，") : "";
   let searchValue, searchSub;
+  const nLive = (overview.live_runs || []).length;
   if (live) {
     const round = live.round ? "第 " + live.round + " 轮" + (live.max_rounds ? " / " + live.max_rounds : "") : "";
-    searchValue = el("div", { class: "v" }, [t((live.task || "") + (live.dtype ? " " + live.dtype : ""))]);
-    searchSub = [round, phaseText(live)].filter(Boolean).join(" · ");
+    searchValue = el("div", { class: "v" }, [t(live.id || live.task || "")]);
+    const task = (live.task || "") + (live.dtype ? " " + live.dtype : "");
+    searchSub = [task, round, phaseText(live)].filter(Boolean).join(" · ");
+    if (nLive > 1) searchSub += " · 另有 " + (nLive - 1) + " 个搜索在跑";
   } else if (solo) {
     searchValue = el("div", { class: "v" }, [t(solo.task || "单独判卷")]);
     searchSub = "单独判卷" + (solo.stage ? " · " + (labelOf(solo.stage) || solo.stage) : "");
@@ -653,12 +908,27 @@ function labelOf(stage) {
   return found ? found[1] : "";
 }
 
-function renderSearch(run) {
+function renderSearch(run, history) {
   const box = document.getElementById("search");
-  box.replaceChildren(el("h2", null, [t("一次搜索")]));
+  box.replaceChildren(el("h2", null, [t(run && run.id ? run.id : "一次搜索")]));
   if (!run) {
     box.append(el("div", { class: "empty" }, [t("选一次运行，或等一次搜索开始")]));
     return;
+  }
+  const task = (run.state && run.state.task) || (run.result && run.result.task) || "";
+  const dtype = (run.state && run.state.dtype) || (run.result && run.result.dtype) || "";
+  const round = run.state && run.state.round;
+  box.append(el("div", { class: "sub" }, [t([task, dtype, round ? "第 " + round + " 轮" : "", run.status === "running" ? "进行中" : run.status === "interrupted" ? "中断" : "已结束"].filter(Boolean).join(" · "))]));
+  const others = (history || []).filter((row) => row.id !== run.id && row.task === task && (!dtype || row.dtype === dtype));
+  if (others.length) {
+    const note = el("div", { class: "same" }, []);
+    note.append(el("p", null, [t("下面的表只属于这一次搜索。同一个算子还有 " + others.length + " 次搜索，成绩都在，点一行打开：")]));
+    const shown = others.slice().sort((a, b) => (b.status === "running") - (a.status === "running") || (Number(b.speedup) || 0) - (Number(a.speedup) || 0)).slice(0, 8);
+    for (const row of shown) {
+      note.append(el("button", { type: "button", onclick: () => pin(row.id) }, [t(row.id + " · " + runStateText(row))]));
+    }
+    if (others.length > shown.length) note.append(el("p", null, [t("还有 " + (others.length - shown.length) + " 次，在左侧列表里。")]));
+    box.append(note);
   }
   if (run.budget) {
     const level = run.budget.flagged ? " " + run.budget.level : "";
@@ -687,7 +957,7 @@ function renderSearch(run) {
     const status = row.status === "compile_error"
       ? el("span", { class: "red" }, [t(row.status)])
       : t(row.status || "—");
-    body.append(el("tr", { class: "pick" + (row.label === candLabel ? " on" : ""), onclick: () => { candLabel = row.label; renderSearch(run); renderEval(run, lastOverview); } }, [
+    body.append(el("tr", { class: "pick" + (row.label === candLabel ? " on" : ""), onclick: () => { candLabel = row.label; renderSearch(run, (lastFrame && lastFrame.history) || []); renderEval(run, lastOverview); } }, [
       el("td", null, [t(row.label || ""), tag ? el("span", { class: "tag" }, [t(tag)]) : null]),
       el("td", null, [status]),
       el("td", null, [t(speed(row.speedup))]),
@@ -819,7 +1089,7 @@ function renderComponents(overview) {
     : (exp.status === "done" ? "已结束" : exp.phase || exp.status);
   box.replaceChildren(
     card("题目", el("div", { class: "v blue" }, [t(String(tasks.length))]), ""),
-    card("搜索", el("div", { class: "v" + (live ? " blue" : "") }, [t(live ? "进行中" : "空闲")]), live ? (live.task || "") : ""),
+    card("搜索", el("div", { class: "v" + (live ? " blue" : "") }, [t(live ? "进行中" : "空闲")]), live ? (live.id || live.task || "") : ""),
     card("验证环境", el("div", { class: "v" }, [t(live && live.phase === "evaluate" ? "评测" : (overview.live_evals || []).length ? "判卷" : "空闲")]), ""),
     card("GPU 锁", el("div", { class: "v" + (holder ? " green" : "") }, [t(holder ? (holder.mode === "ex" ? "独占" : "共享") : "空闲")]), ""),
     card("账本", el("div", { class: "v" }, [t(live ? money(live.spent_usd, 2) : "—")]), ""),
@@ -857,6 +1127,38 @@ function connect() {
   };
 }
 connect();
+
+(function () {
+  const key = "observe-side-width";
+  const layout = document.querySelector(".layout");
+  const bar = document.getElementById("split-x");
+  const saved = Number(localStorage.getItem(key));
+  if (saved >= 180 && saved <= 800) layout.style.setProperty("--side", saved + "px");
+  let dragging = false;
+  bar.addEventListener("mousedown", (event) => {
+    dragging = true;
+    bar.classList.add("dragging");
+    document.body.style.userSelect = "none";
+    event.preventDefault();
+  });
+  bar.addEventListener("dblclick", () => {
+    layout.style.removeProperty("--side");
+    localStorage.removeItem(key);
+  });
+  window.addEventListener("mousemove", (event) => {
+    if (!dragging) return;
+    const width = Math.max(180, Math.min(event.clientX, Math.round(window.innerWidth * 0.6)));
+    layout.style.setProperty("--side", width + "px");
+  });
+  window.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    bar.classList.remove("dragging");
+    document.body.style.userSelect = "";
+    const width = parseInt(getComputedStyle(layout).getPropertyValue("--side"), 10);
+    if (Number.isFinite(width)) localStorage.setItem(key, String(width));
+  });
+})();
 </script>
 </body>
 </html>

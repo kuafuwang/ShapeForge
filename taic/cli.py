@@ -38,7 +38,12 @@ def cmd_run(a: argparse.Namespace) -> int:
         search.patience = a.patience
     if a.effort:
         cfg.reasoning_effort = a.effort
-    orch = Orchestrator(a.task, a.dtype, a.size, cfg, search, run_dir=Path(a.run_dir) if a.run_dir else None)
+    _apply_max_tokens(a, cfg)
+    orch = Orchestrator(
+        a.task, a.dtype, a.size, cfg, search,
+        run_dir=Path(a.run_dir) if a.run_dir else None,
+        from_run=Path(a.from_run) if a.from_run else None,
+    )
     res = asyncio.run(orch.run())
     print(json.dumps({k: getattr(res, k) for k in ("task", "dtype", "model", "best_speedup", "confirmed_speedup", "spent_usd", "stop_reason", "run_dir")}, indent=2))
     return 0 if res.best_speedup else 2
@@ -99,6 +104,7 @@ def _resume_config(a: argparse.Namespace, settings: dict, info: dict):
     if a.effort:
         cfg.reasoning_effort = a.effort
         prov["llm.reasoning_effort"] = "command line"
+    _apply_max_tokens(a, cfg, prov)
     return cfg, search, prov
 
 
@@ -122,7 +128,7 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
     from .orchestrator import Orchestrator
 
     run_dir = Path(a.run_dir).resolve()
-    info = rs.inspect_run(run_dir)
+    info = rs.inspect_run(run_dir, allow_count_stops=bool(getattr(a, "lift_count_limits", False)))
     if not info["resumable"]:
         raise ResumeRefused(f"cannot resume {run_dir}: {info['reason'] or info['kind']}", 3)
     events, _ = rs.read_transcript(run_dir)
@@ -210,6 +216,30 @@ def _add_search_switches(p: argparse.ArgumentParser) -> None:
     p.add_argument("--truncation-retry", action=argparse.BooleanOptionalAction, default=None, help="a length-capped reply with no kernel is retried once without the echoed reasoning, and does not spend a repair turn (default: on)")
 
 
+def _positive_int(text: str) -> int:
+    try:
+        n = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be an integer") from None
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return n
+
+
+def _add_max_tokens(p: argparse.ArgumentParser) -> None:
+    """Per-request generation cap. Omitted means taic.toml (48000). Reasoning tokens count toward it."""
+    p.add_argument("--max-tokens", type=_positive_int, default=None, help="cap on one model reply, reasoning included (default: 48000 in taic.toml)")
+
+
+def _apply_max_tokens(a: argparse.Namespace, cfg, prov: dict | None = None) -> None:
+    n = getattr(a, "max_tokens", None)
+    if n is None:
+        return
+    cfg.max_tokens = n
+    if prov is not None:
+        prov["llm.max_tokens"] = "command line"
+
+
 def _apply_search_switches(a: argparse.Namespace, cfg, search, prov: dict | None = None) -> None:
     """Apply an explicit ``--flag`` or ``--no-flag``. An omitted flag leaves the config default."""
     for dest, _help in _SEARCH_SWITCHES:
@@ -243,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--branches", type=int, default=None)
     p.add_argument("--max-rounds", type=int, default=None)
     p.add_argument("--effort", default=None, choices=["off", "low", "high", "max"])
+    _add_max_tokens(p)
     p.add_argument("--no-tools", action="store_true")
     p.add_argument("--profile-best", action="store_true", help="xctrace profile of the winning kernel after the search")
     p.add_argument("--profile-poor", action="store_true", help="trace a round's seed with Instruments when it is slower than the best baseline and give the findings to the model")
@@ -252,6 +283,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--init-samples", type=int, default=None, help="sample this many initial kernels in parallel; the best eligible one seeds the search")
     p.add_argument("--patience", type=int, default=None, help="stop after this many rounds without a new best (default 4)")
     p.add_argument("--run-dir", default=None)
+    p.add_argument("--from", dest="from_run", default=None, help="directory of a previous run: if its best.metal is still eligible for this task, skip writing a first draft and improve that kernel")
     p.set_defaults(fn=cmd_run)
     # 续跑不重开搜索。--budget 是新的总上限，--add-budget 加在原上限上；预算已经花满时，至少要给其中一个，否则新上限不会高于已花费。
     r = sub.add_parser("resume", help="continue a run that was interrupted or stopped for budget, from its directory (no money is spent again)")
@@ -266,6 +298,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--branches", type=int, default=None)
     r.add_argument("--max-rounds", type=int, default=None)
     r.add_argument("--effort", default=None, choices=["off", "low", "high", "max"])
+    _add_max_tokens(r)
     r.add_argument("--no-tools", action="store_true")
     r.add_argument("--profile-best", action="store_true")
     r.add_argument("--profile-poor", action="store_true")
@@ -274,6 +307,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_search_switches(r)
     r.add_argument("--init-samples", type=int, default=None)
     r.add_argument("--patience", type=int, default=None, help="not recorded by runs older than run_config.json: give the value the run was started with")
+    r.add_argument("--lift-count-limits", action="store_true", help="also continue a run that stopped because it used its round limit or its patience")
     r.set_defaults(fn=cmd_resume)
     a = ap.parse_args(argv)
     return a.fn(a)

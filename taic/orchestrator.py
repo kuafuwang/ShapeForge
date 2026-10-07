@@ -206,6 +206,7 @@ class Orchestrator:
         log: Callable[[str], None] = print,
         seed: int | None = None,
         resuming: bool = False,
+        from_run: Path | None = None,
     ) -> None:
         """``resuming``: the directory already holds a run (see ``taic.resume``); nothing in it is rewritten until ``restore()`` has loaded it."""
         self.task = get_task(task_name, dtype, size)
@@ -219,6 +220,7 @@ class Orchestrator:
         # 已存在的 control.json 先被忽略，直到文件再变：那是上一会话的请求，启动者已经折进当前预算。损坏的文件只记一笔，不改上限。
         self.ledger.watch_control(self.run_dir / control.CONTROL_FILE)
         self.ledger.on_budget_change = self._budget_changed
+        self.ledger.on_control = self._control_limits
         self.ledger.on_control_problem = lambda msg: self.log(f"  {msg}")
         # 并发度至少为分支数 K（search.branches）。模型请求因此可以同时在飞；占 GPU 的评测不走这个信号量。
         self.llm = LLM(llm_cfg, self.ledger, Transcript(self.run_dir / "transcript.jsonl"), client=client, max_concurrency=max(2, search.branches))
@@ -253,6 +255,7 @@ class Orchestrator:
         self._branch_fail: dict[str, str] = {}  # branch label -> why its last attempt failed (used when search.rich_history is on)
         self._search_seed: Candidate | None = None
         self._confirm_winner: Candidate | None = None
+        self.from_run = Path(from_run) if from_run else None
         # 续跑时目录里已有上一会话的 state.json。先空写会把看板抹掉，所以等到 restore 把账本和候选装回来再发布。
         if not resuming:
             self._write_run_config()
@@ -285,6 +288,23 @@ class Orchestrator:
         self.log(f"  budget ${old:.2f} -> ${new:.2f} (requested by {who}; spent ${self.ledger.total_usd:.3f})")
         control.record_event(self.run_dir, "applied", old, new, who=who, spent_usd=self.ledger.total_usd)
         self._publish_state()
+
+    # 控制文件里的 max_rounds / patience 只升不降。仪表盘的「重置」用它去掉次数上限；搜索仍会在新预算花完时停下。
+    def _control_limits(self, doc: dict) -> None:
+        """Raise ``max_rounds`` and ``patience`` when the control file asks for a higher value."""
+        notes = []
+        for key in ("max_rounds", "patience"):
+            raw = doc.get(key)
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                continue
+            value = int(raw)
+            current = int(getattr(self.search, key))
+            if value > current:
+                setattr(self.search, key, value)
+                notes.append(f"{key} {current} -> {value}")
+        if notes:
+            self.log("  " + ", ".join(notes) + f" (requested by {doc.get('who') or 'dashboard'})")
+            self._publish_state()
 
     # 给外部看板写 state.json。写失败被吞掉，搜索不能因为看板上的一次 IO 错误停下来。
     def _publish_state(self, phase: str | None = None, *, inflight: str | None = None, stop_reason: str = "") -> None:
@@ -597,12 +617,55 @@ class Orchestrator:
         await self.llm.aclose()  # the HTTP client must be closed on the loop that used it (asyncio.run closes the loop afterwards)
         return self._finish(res)
 
+    # --from 只在 best.metal 存在、且 result.json 里的题和这次一致时才把源码交回来。对不上或没有文件就返回 None，调用方从头写。
+    def _prior_kernel_text(self) -> str | None:
+        """The previous run's ``best.metal`` when it belongs to this task, else None. The caller re-evaluates it."""
+        root = self.from_run
+        if root is None:
+            return None
+        metal = root / "best.metal"
+        if not metal.is_file():
+            self.log(f"-- --from {root}: no best.metal; writing the first version from scratch")
+            return None
+        recorded = root / "result.json"
+        if recorded.is_file():
+            try:
+                doc = json.loads(recorded.read_text())
+            except json.JSONDecodeError:
+                self.log(f"-- --from {root}: result.json is not JSON; writing the first version from scratch")
+                return None
+            mismatch = [f"{key} is {doc.get(key)!r}, this run is {got!r}" for key, got in (("task", self.task_name), ("dtype", self.dtype), ("size", self.size)) if doc.get(key) not in (None, got)]
+            if mismatch:
+                self.log(f"-- --from {root}: not this task ({'; '.join(mismatch)}); writing the first version from scratch")
+                return None
+        else:
+            self.log(f"-- --from {root}: no result.json; re-evaluating best.metal on {self.task_name} {self.dtype} {self.size}")
+        return metal.read_text()
+
     # 初始生成，然后进入逐轮「诊断 → 规划 → K 路补丁」。只有 _eval 认定安全、算对且快过噪声的候选才会变成下一轮种子。
     async def _search(self, res: RunResult) -> None:
-        # 1. initial implementation
+        # 1. initial implementation, unless the user pointed at a previous kernel that is still eligible
         self._round = 0
         self._publish_state("llm")
+        if self.from_run is not None:
+            source = self._prior_kernel_text()
+            if source is not None:
+                self.log(f"-- re-evaluating {self.from_run / 'best.metal'} on {self.task_name} {self.dtype} {self.size}")
+                await self._eval(source, "prior")
+                if self.best:
+                    self.log(f"-- seed is that kernel at {self.best.speedup:.3f}x (measured now); skipping the first draft")
+                else:
+                    self.log(f"-- {self.from_run / 'best.metal'} is no longer eligible; writing the first version from scratch")
         # 初始生成最多重开 INITIAL_RESTARTS 次。一次都没有合格种子就停，原因是 no_valid_initial_kernel，后面的轮次不会开始。
+        if not self.best:
+            await self._initial_generation()
+        if not self.best:
+            res.stop_reason = "no_valid_initial_kernel"
+            return
+        # 2..5. rounds
+        await self._rounds(res, 1, 0)
+
+    async def _initial_generation(self) -> None:
         for restart in range(INITIAL_RESTARTS):
             base = [{"role": "system", "content": self.system}, {"role": "user", "content": prompts.initial_user(self.task)}]
             n = max(1, self.search.init_samples)
@@ -626,11 +689,6 @@ class Orchestrator:
                         self.log(f"  initial sample {i + 1} skipped: {str(o)[:200]}")
             if self.best:
                 break
-        if not self.best:
-            res.stop_reason = "no_valid_initial_kernel"
-            return
-        # 2..5. rounds
-        await self._rounds(res, 1, 0)
 
     # 续跑不重做已经有合格种子的初始生成，只把没做完的轮次交给 _rounds。上一会话没有种子，则和全新搜索一样停在 no_valid_initial_kernel。
     async def _search_resumed(self, res: RunResult) -> None:
@@ -652,8 +710,10 @@ class Orchestrator:
     # 每一轮：可选的 Instruments 证据、诊断规划、再 K 路补丁。分支同时启动，所以模型请求重叠；每路进入 _eval 时在 gpu_lock 上排队，GPU 评测串行。只有换过种子才不算停滞。
     async def _rounds(self, res: RunResult, first_round: int, stagnant: int, partial: Any = None) -> None:
         """Rounds ``first_round`` to ``max_rounds``. ``partial`` (a ``taic.resume.RoundPartial``) describes the first round of a resumed run that a restart
-        interrupted: its seed, its plans if they were already made, the branches that finished and the conversations of those that were part-way."""
-        for rnd in range(first_round, self.search.max_rounds + 1):
+        interrupted: its seed, its plans if they were already made, the branches that finished and the conversations of those that were part-way.
+        The limit is read again every round: a control file can raise it while a round is in flight."""
+        rnd = first_round
+        while rnd <= self.search.max_rounds:
             res.rounds = rnd
             self._round = rnd
             self._stagnant = stagnant
@@ -732,6 +792,7 @@ class Orchestrator:
             if stagnant >= self.search.patience:
                 res.stop_reason = f"converged ({self.search.patience} rounds without improvement)"
                 return
+            rnd += 1
         res.stop_reason = "max_rounds"
 
     # 复测池：当前优胜者，再加上最多 confirm_top-1 颗合格内核。优胜者相对它们的优势没有超过 _required_gain 时，它们算噪声范围内的并列，必须一起重测，不能只信搜索过程中的最大值。

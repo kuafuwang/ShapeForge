@@ -259,7 +259,7 @@ def test_the_page_script_and_markup_carry_the_control(runs):
     port, _root = runs
     status, page = call(port, "GET", "/")
     assert status == 200
-    for needle in ("X-Observe-Token", "budget-modal", "/budget", "/control", "Add budget"):
+    for needle in ("X-Observe-Token", "budget-modal", "reset-all", "stop-all", "settings-open", "/api/budget/reset", "/api/stop", "/api/settings/model", "/control", "Add budget"):
         assert needle in page, needle
 
 
@@ -283,3 +283,111 @@ def test_budget_status_is_judged_against_the_current_budget_and_the_original_sta
     assert row["topped_up"] is True and row["initial_budget_usd"] == 3.0 and row["control"]["action"] == "topup_live"
     detail = scan.run_detail("p1/fa_flash")
     assert detail["topped_up"] is True and detail["budget_events"][0]["kind"] == "resume" and detail["control"]["action"] == "topup_live"
+
+
+def test_reset_adds_15_dollars_lifts_count_limits_and_skips_a_hang(runs, monkeypatch):
+    port, root = runs
+    live = mk(root, "live", "running", spent=2.5, budget=3.0, control_supported=True)
+    (live / "resume.lock").write_text(json.dumps({"pid": os.getpid(), "started_at": time.time()}))
+    stopped = mk(root, "patience", "finished", stop="converged (4 rounds without improvement)", spent=1.0, budget=3.0)
+    hang = mk(root, "hang", "finished", stop="gpu_hang_circuit_breaker", spent=1.0, budget=3.0)
+    (root / "cap.json").write_text(json.dumps({"max_total_usd": 5.0}))
+    started = []
+
+    class Proc:
+        pid = 424242
+
+    def fake_popen(cmd, **_k):
+        started.append(cmd)
+        return Proc()
+
+    monkeypatch.setattr(actions.subprocess, "Popen", fake_popen)
+    tok = token_of(port)
+    status, preview = call(port, "GET", "/api/budget/reset")
+    assert status == 200
+    assert {row["id"] for row in preview["runs"]} == {"live", "patience"}
+    assert [row["id"] for row in preview["skipped"]] == ["hang"]
+    assert next(row for row in preview["runs"] if row["id"] == "live")["new_budget_usd"] == pytest.approx(18.0)
+    status, doc = call(port, "POST", "/api/budget/reset", {}, headers={actions.TOKEN_HEADER: tok})
+    assert status == 200 and doc["ok"] is True
+    assert {row["id"] for row in doc["runs"]} == {"live", "patience"}
+    assert [row["id"] for row in doc["skipped"]] == ["hang"]
+    ctl = json.loads((live / "control.json").read_text())
+    assert ctl["budget_usd"] == pytest.approx(18.0) and ctl["max_rounds"] == 100_000 and ctl["patience"] == 100_000
+    assert started and "--lift-count-limits" in started[0] and "100000" in started[0]
+    assert str(stopped.resolve()) in started[0]
+    assert not (hang / "control.json").exists() and not (hang / "resume.lock").exists()
+    cap = json.loads((root / "cap.json").read_text())["max_total_usd"]
+    assert cap > 5.0
+    # a plain add-budget still refuses a run that stopped on patience
+    assert post(port, "patience", {"amount_usd": 5})[0] == 409
+
+
+def test_parse_ps_keeps_search_processes_and_drops_the_dashboard():
+    text = "\n".join([
+        "11 /usr/bin/python -m taic.cli resume runs/p1/fa_paper",
+        "12 uv run python -m experiments.search_ab --which fa",
+        "13 /usr/bin/python -m observe",
+        "14 /usr/bin/python -m tcenv.worker /tmp/req.json",
+        "not-a-pid hello",
+    ])
+    assert actions._parse_ps(text) == [
+        (11, "/usr/bin/python -m taic.cli resume runs/p1/fa_paper"),
+        (12, "uv run python -m experiments.search_ab --which fa"),
+    ]
+
+
+def test_stop_signals_the_search_process_group_and_not_the_dashboard(runs, monkeypatch):
+    port, root = runs
+    live = mk(root, "live", "running", spent=1.0, budget=3.0, control_supported=True)
+    state = json.loads((live / "state.json").read_text())
+    state["pid"] = 4242
+    (live / "state.json").write_text(json.dumps(state))
+    mk(root, "done", "finished", stop="max_rounds", spent=1.0, budget=3.0)
+    monkeypatch.setattr(actions, "_ps_commands", lambda: [(4242, "/usr/bin/python -m taic.cli resume runs/live")])
+    monkeypatch.setattr(actions, "_command_of", lambda pid: "/usr/bin/python -m taic.cli resume runs/live" if int(pid) == 4242 else "python -m pytest")
+
+    def alive(pid):
+        return int(pid) in (os.getpid(), 4242)
+
+    monkeypatch.setattr(scan, "pid_alive", alive)
+    monkeypatch.setattr(actions.os, "getpgid", lambda pid: 9000 if int(pid) == 4242 else os.getpgrp())
+    signaled = []
+    monkeypatch.setattr(actions.os, "kill", lambda pid, sig: signaled.append((pid, sig)))
+    tok = token_of(port)
+    status, preview = call(port, "GET", "/api/stop")
+    assert status == 200
+    assert [group["pgid"] for group in preview["groups"]] == [9000]
+    assert preview["groups"][0]["ids"] == ["live"]
+    assert all(row.get("pid") != os.getpid() for row in preview["groups"])
+    status, doc = call(port, "POST", "/api/stop", {}, headers={actions.TOKEN_HEADER: tok})
+    assert status == 200 and doc["ok"] is True
+    assert signaled == [(-9000, __import__("signal").SIGTERM)]
+    assert not (live / "result.json").exists()  # stopping does not invent a finished result
+    # a finished search is not in the stop list
+    assert all("done" not in group["ids"] for group in doc["stopped"])
+
+
+def test_model_picker_saves_the_choice_and_hides_the_key(runs, tmp_path, monkeypatch):
+    port, _root = runs
+    secret = "sk-SECRET-do-not-leak"
+    cred = tmp_path / "models.json"
+    cred.write_text(json.dumps({"providers": {"deepseek": {"apiKey": secret, "baseUrl": "https://secret.example", "models": [
+        {"id": "deepseek-flash", "name": "DeepSeek V4.1 Flash"},
+        {"id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro"},
+    ]}}}))
+    cfg = tmp_path / "taic.toml"
+    cfg.write_text(f'[llm]\ncredentials_file = "{cred}"\nprovider = "deepseek"\nmodel = "deepseek-flash"  # keep this comment\n[search]\nbudget_usd = 2\n')
+    monkeypatch.setenv("TAIC_CONFIG", str(cfg))
+    status, doc = call(port, "GET", "/api/settings/model")
+    assert status == 200 and doc["model"] == "deepseek-flash" and doc["provider"] == "deepseek"
+    assert [row["id"] for row in doc["choices"]] == ["deepseek-flash", "deepseek-v4-pro"]
+    blob = json.dumps(doc)
+    assert secret not in blob and "secret.example" not in blob and "apiKey" not in blob
+    tok = token_of(port)
+    status, saved = call(port, "POST", "/api/settings/model", {"provider": "deepseek", "model": "deepseek-v4-pro"}, headers={actions.TOKEN_HEADER: tok})
+    assert status == 200 and saved == {"provider": "deepseek", "model": "deepseek-v4-pro"}
+    text = cfg.read_text()
+    assert 'provider = "deepseek"' in text and 'model = "deepseek-v4-pro"  # keep this comment' in text
+    assert secret not in text
+    assert call(port, "POST", "/api/settings/model", {"provider": "deepseek", "model": "nope"}, headers={actions.TOKEN_HEADER: tok})[0] == 400

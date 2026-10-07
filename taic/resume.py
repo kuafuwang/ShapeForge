@@ -153,7 +153,19 @@ def has_best(state: dict | None, result: dict | None) -> bool:
     return False
 
 
-def inspect_run(run_dir: Path, *, pid_check=control.pid_alive) -> dict:
+def _same_pid(a, b) -> bool:
+    try:
+        return int(a) > 0 and int(a) == int(b)
+    except (TypeError, ValueError):
+        return False
+
+
+def _count_stop(stop: str) -> bool:
+    """A stop that is a count of rounds: the hard round cap, or patience (rounds without a new best)."""
+    return stop == "max_rounds" or stop.startswith("converged (")
+
+
+def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops: bool = False) -> dict:
     """Whether and how ``run_dir`` can be continued, from its small files only (the dashboard calls this for every click).
 
     ``kind``: ``running`` (a live process owns it; ``can_topup_live`` says whether it polls the control file), ``resuming`` (a resume holds the lock),
@@ -180,7 +192,7 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive) -> dict:
         info["needs_budget"] = spent is not None and budget is not None and float(spent) >= float(budget) - 1e-9
     except (TypeError, ValueError):
         pass
-    if holder:
+    if holder and not _same_pid(holder.get("pid"), pid):
         info.update(kind="resuming", reason=f"already being resumed by pid {holder.get('pid')}")
         return info
     if state is None and result is None:
@@ -205,6 +217,14 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive) -> dict:
         info["kind"] = "budget_exhausted"
         if not has_best(state, result):
             info["reason"] = "stopped for budget without a valid kernel: start a new run"
+            return info
+        info["resumable"] = True
+        return info
+    if allow_count_stops and _count_stop(stop):
+        # 仪表盘「重置」才打开这条路：轮数或耐心次数用完的运行可以续，显卡挂死和模型报错仍然不行。
+        info["kind"] = "count_limited"
+        if not has_best(state, result):
+            info["reason"] = "stopped on a round limit without a valid kernel: start a new run"
             return info
         info["resumable"] = True
         return info

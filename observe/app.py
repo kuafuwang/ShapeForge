@@ -91,6 +91,56 @@ async def api_add_budget(request) -> JSONResponse:
         return _refused(e)
 
 
+async def api_reset(request) -> JSONResponse:
+    """GET previews the one-click reset. POST adds $15 to every continuable search and lifts its round limit and patience."""
+    try:
+        if request.method == "GET":
+            if not actions.host_is_loopback(request.headers):
+                raise actions.Refused(403, "refused: this server only answers on 127.0.0.1 / localhost (Host header check)")
+            return _json(await asyncio.to_thread(actions.reset_preview))
+        actions.check_origin(request.headers)
+        actions.check_token(request.headers)
+        return _json(await asyncio.to_thread(actions.reset_budgets))
+    except actions.Refused as e:
+        return _refused(e)
+
+
+async def api_stop(request) -> JSONResponse:
+    """GET lists the live searches a stop would signal. POST sends SIGTERM to those process groups."""
+    try:
+        if request.method == "GET":
+            if not actions.host_is_loopback(request.headers):
+                raise actions.Refused(403, "refused: this server only answers on 127.0.0.1 / localhost (Host header check)")
+            return _json(await asyncio.to_thread(actions.stop_preview))
+        actions.check_origin(request.headers)
+        actions.check_token(request.headers)
+        return _json(await asyncio.to_thread(actions.stop_runs))
+    except actions.Refused as e:
+        return _refused(e)
+
+
+async def api_model(request) -> JSONResponse:
+    """GET lists models. POST writes the chosen provider and model into taic.toml."""
+    from observe import settings
+
+    try:
+        if request.method == "GET":
+            if not actions.host_is_loopback(request.headers):
+                raise actions.Refused(403, "refused: this server only answers on 127.0.0.1 / localhost (Host header check)")
+            return _json(await asyncio.to_thread(settings.model_choices))
+        actions.check_origin(request.headers)
+        actions.check_token(request.headers)
+        raw = await request.body()
+        if len(raw) > 4096:
+            raise actions.Refused(413, "the body is too large")
+        body = actions.parse_body(raw)
+        if not isinstance(body, dict):
+            raise actions.Refused(400, "the body must be a JSON object")
+        return _json(await asyncio.to_thread(settings.set_default_model, body.get("provider"), body.get("model")))
+    except actions.Refused as e:
+        return _refused(e)
+
+
 async def api_stream(request) -> StreamingResponse:
     run_id = request.query_params.get("run") or ""
 
@@ -121,6 +171,9 @@ app = Starlette(
         Route("/api/overview", api_overview),
         Route("/api/history", api_history),
         Route("/api/budget", api_budget),
+        Route("/api/budget/reset", api_reset, methods=["GET", "POST"]),
+        Route("/api/stop", api_stop, methods=["GET", "POST"]),
+        Route("/api/settings/model", api_model, methods=["GET", "POST"]),
         Route("/api/stream", api_stream),
         Route("/api/runs/{run_id:path}/control", api_control, methods=["GET"]),
         Route("/api/runs/{run_id:path}/budget", api_add_budget, methods=["POST"]),

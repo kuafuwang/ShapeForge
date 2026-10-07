@@ -152,6 +152,7 @@ def run_one(
     branches: int | None = None,
     max_rounds: int | None = None,
     model: str | None = None,
+    max_tokens: int | None = None,
     config_path: str | None = None,
     preset: str | None = None,
     client: Any = None,
@@ -164,6 +165,9 @@ def run_one(
     if use_tools is not None:
         # 只有调用方显式传入时才覆盖预设里的开关。
         cfg.use_tools = use_tools
+    if max_tokens is not None:
+        # 单次回复上限，思考也算。不传就用 taic.toml 的 48000。
+        cfg.max_tokens = max_tokens
     orch = Orchestrator(task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log)
     return asyncio.run(orch.run())
 

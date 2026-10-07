@@ -150,6 +150,26 @@ def test_a_running_search_continues_past_its_old_budget_after_a_top_up(tmp_path)
     assert json.loads((tmp_path / "run" / "run_config.json").read_text())["search"]["budget_usd"] == 0.5
 
 
+def test_a_running_search_picks_up_a_higher_round_limit(tmp_path):
+    calls = []
+    seen = {"n": 0}
+
+    def script(messages, **kw):
+        seen["n"] += 1
+        if seen["n"] == 2:  # during round 1 the dashboard lifts the round limit without changing the budget
+            control.write_control(tmp_path / "run", 5.0, who="dashboard", max_rounds=3, patience=100)
+        last = messages[-1]["content"]
+        if "Translate this Triton kernel" in last:
+            return make_response(code("speed=1.0"), usage=BIG)
+        if "Diagnose the dominant bottleneck" in last:
+            return make_response('```json\n{"bottleneck":"m","analysis":"a","plans":[{"title":"A","change":"c"}]}\n```', usage=BIG)
+        return make_response(code(f"speed={1.1 + 0.01 * seen['n']:.2f}"), usage=BIG)
+
+    orch = make_orch(tmp_path, script, calls, budget=5.0, branches=1, max_rounds=1, patience=50)
+    res = run(orch)
+    assert res.rounds == 3 and res.stop_reason == "max_rounds"  # the control file raised the limit from 1 while round 1 was running
+
+
 def test_run_config_holds_the_settings_and_no_credentials(tmp_path):
     calls = []
     orch = make_orch(tmp_path, lambda m, **kw: make_response(code("speed=1.0")), calls, max_rounds=0)

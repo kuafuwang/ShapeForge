@@ -41,6 +41,10 @@ class BudgetExhausted(RuntimeError):
 # ---------------------------------------------------------------------------------------------
 
 
+# 单次输出上限，思考和正文都算。2026-10-07 考虑过 96000 和接口最大值的一半（196608，写满大约 17 分钟），当天改回 48000。
+DEFAULT_MAX_TOKENS = 48000
+
+
 @dataclass
 class LLMConfig:
     base_url: str
@@ -50,7 +54,7 @@ class LLMConfig:
     echo_reasoning_content: bool = True
     use_tools: bool = True
     extra_body: dict = field(default_factory=dict)
-    max_tokens: int = 48000
+    max_tokens: int = DEFAULT_MAX_TOKENS
     request_timeout_s: float = 900.0
     max_retries: int = 6
     truncation_retry: bool = True  # a length-capped reply with no kernel is asked again once, without the echoed reasoning, and does not spend a repair turn
@@ -159,7 +163,7 @@ def load_config(path: str | Path | None = None, *, model: str | None = None, pre
         echo_reasoning_content=bool(llm.get("echo_reasoning_content", True)),
         use_tools=bool(llm.get("use_tools", True)),
         extra_body=dict(llm.get("extra_body", {})),
-        max_tokens=int(llm.get("max_tokens", 48000)),
+        max_tokens=int(llm.get("max_tokens", DEFAULT_MAX_TOKENS)),
         request_timeout_s=float(llm.get("request_timeout_s", 900)),
         max_retries=int(llm.get("max_retries", 6)),
         price_in=float(price.get("input", 0.30)),
@@ -216,6 +220,7 @@ class CostLedger:
         # live top-up: a small JSON file the dashboard (or ``taic.cli``) writes into the run directory, read before every budget gate
         self.control_path: Path | None = None
         self.on_budget_change: Callable[[float, float, dict], None] | None = None
+        self.on_control: Callable[[dict], None] | None = None
         self.on_control_problem: Callable[[str], None] | None = None
         self._control_sig: tuple[int, int] | None = None
 
@@ -259,6 +264,9 @@ class CostLedger:
             if self.on_control_problem:
                 self.on_control_problem(f"control file ignored: {problem}")
             return False
+        # 轮数和耐心次数跟预算写在同一份文件里。预算数字没变时也要通知，否则只抬上限的请求会被丢掉。
+        if self.on_control:
+            self.on_control(doc)
         # 下界是已花费，不是当前预算。文件里的数更小，预算就变成已花费，而不是那个更小的请求。
         new = max(requested, self.total_usd)
         old = self.budget_usd
