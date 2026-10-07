@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import control
+from .policy import candidate_eligible, comparison_speedup, next_stagnant, relation_to_best
 
 FEEDBACK_CHARS = 6000  # as in the orchestrator
 STOP_BUDGET = "budget_exhausted"
@@ -361,15 +362,14 @@ def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
 
 
 def _eligible(report, correctness_only: bool) -> bool:
-    if report is None or not report.eligible:
+    if report is None:
         return False
-    return True if correctness_only else report.speedup is not None
+    return candidate_eligible(bool(report.eligible), report.speedup, correctness_only=correctness_only)
 
 
 def _speedup(report, correctness_only: bool) -> float:
-    if not _eligible(report, correctness_only):
-        return 0.0
-    return report.speedup if report.speedup is not None else 1.0
+    recorded = None if report is None else report.speedup
+    return comparison_speedup(_eligible(report, correctness_only), recorded)
 
 
 def _replay(cands: list[dict], search) -> list[dict]:
@@ -381,16 +381,15 @@ def _replay(cands: list[dict], search) -> list[dict]:
     for c in cands:
         rep = c["report"]
         sp = _speedup(rep, search.correctness_only)
-        improved = within = False
-        if _eligible(rep, search.correctness_only):
-            if best is None:
-                improved = True
-            else:
-                gain = max(search.min_improvement, 1.0 + search.noise_z * math.hypot(speedup_se(rep), speedup_se(best["report"])))
-                if sp > best["sp"] * gain:
-                    improved = True
-                elif sp > best["sp"]:
-                    within = True
+        eligible = _eligible(rep, search.correctness_only)
+        best_sp = None if best is None else best["sp"]
+        best_se = 0.0 if best is None else speedup_se(best["report"])
+        relation = relation_to_best(
+            eligible, sp, best_sp, speedup_se(rep), best_se,
+            min_improvement=search.min_improvement, noise_z=search.noise_z,
+        )
+        improved = relation == "replace"
+        within = relation == "tie"
         if improved:
             best = {"report": rep, "sp": sp, "label": c["label"]}
         out.append({"idx": c["idx"], "label": c["label"], "status": rep.status, "speedup": rep.speedup, "best_speedup": best["sp"] if best else None, "improved": improved, "within_noise": within})
@@ -593,10 +592,7 @@ def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | N
             else:
                 tag = _failed_branch(r, i, cands) if search.rich_history else "no valid kernel after repair"
             history.append(f"round {r}: {p['title']} -> {tag}")
-        if any(t.get("improved") for t in entries_by_round.get(r, [])):
-            stagnant = 0
-        else:
-            stagnant += 1
+        stagnant = next_stagnant(any(t.get("improved") for t in entries_by_round.get(r, [])), stagnant)
     for r, plans in plans_by_round.items():
         for i, p in enumerate(plans):
             for c in cands:

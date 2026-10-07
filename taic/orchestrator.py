@@ -22,7 +22,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import math
 import os
 import secrets
 import subprocess
@@ -38,6 +37,7 @@ from tcenv.report import format_feedback
 from . import control, prompts
 from .feedback_extra import abi_signature, at_roofline, failure_phrase, status_lines, target_note, threadgroup_limit_note
 from .llm import LLM, BudgetExhausted, CostLedger, LLMConfig, LLMError, SearchConfig, Transcript
+from .policy import candidate_eligible, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain
 from .parse import extract_metal, parse_plans
 from .tools import LOOKUP_TOOL, QUICK_CHECK_TOOL, SkillIndex, make_handlers
 
@@ -145,19 +145,21 @@ class Candidate:
     # 只做正确性恢复时为真：合格不看加速比，结束时也不做 _confirm。
     correctness_only: bool = False
 
-    # 安全且数值正确（EvalReport.status 为 ok）才算合格。正式搜索还要求报告里真有 speedup；缺计时的候选不能换种子。
+    # 安全且数值正确（EvalReport.status 为 ok）才算合格。正式搜索还要求报告里真有 speedup；缺计时的候选不能换种子。规则在 policy.candidate_eligible。
     @property
     def eligible(self) -> bool:
-        if self.correctness_only:
-            return self.report is not None and self.report.eligible
-        return self.report is not None and self.report.eligible and self.report.speedup is not None
+        report = self.report
+        return candidate_eligible(
+            report is not None and bool(report.eligible),
+            None if report is None else report.speedup,
+            correctness_only=self.correctness_only,
+        )
 
-    # 不合格时加速比按 0，缺失的计时不可能把当前种子挤掉。
+    # 不合格时加速比按 0，缺失的计时不可能把当前种子挤掉。和续跑回放共用 policy.comparison_speedup。
     @property
     def speedup(self) -> float:
-        if not self.eligible:
-            return 0.0
-        return self.report.speedup if self.report.speedup is not None else 1.0
+        report = self.report
+        return comparison_speedup(self.eligible, None if report is None else report.speedup)
 
     def brief(self) -> dict:
         r = self.report
@@ -515,7 +517,7 @@ class Orchestrator:
     # a 必须比 b 快出这么多倍才算真正变快：至少 min_improvement，并且要盖过两者加速比标准误合成后再乘 noise_z。差一点只记 within_noise，不能当下一轮种子。
     def _required_gain(self, a: Candidate, b: Candidate) -> float:
         """Factor by which ``a`` must be measured faster than ``b`` before it counts as faster."""
-        return max(self.search.min_improvement, 1.0 + self.search.noise_z * math.hypot(speedup_se(a.report), speedup_se(b.report)))
+        return required_gain(self.search.min_improvement, self.search.noise_z, speedup_se(a.report), speedup_se(b.report))
 
     # 一颗候选的完整评测，也是唯一更新当前种子的地方。不安全、算错、或快不过测量噪声，都留在记录里但种子不变。默认 max_hangs 为 1，所以一次 timeout 就抛 StopRun，整次搜索停；连续 3 次 crash 同样停。
     async def _eval(self, source: str, label: str, *, plan: str | None = None) -> Candidate:
@@ -554,9 +556,15 @@ class Orchestrator:
         cand.cost_usd, cand.t_s = self.ledger.total_usd, self._elapsed()
         # 换种子的三道闸：EvalReport.eligible（status 为 ok，即安全且算对）、正式搜索还要有加速比，并且快过 _required_gain。只是略快则标 within_noise，下一轮仍用旧种子。
         # selection: eligible AND faster (relative to the baseline measured in the same run) than the best so far,
-        # by more than both the fixed margin and the measurement noise of the two speedups
-        would_replace = cand.eligible and (self.best is None or cand.speedup > self.best.speedup * self._required_gain(cand, self.best))
-        would_tie = bool(cand.eligible and self.best is not None and not would_replace and cand.speedup > self.best.speedup)
+        # by more than both the fixed margin and the measurement noise of the two speedups. The same function replays a stored report.
+        best = self.best
+        relation = relation_to_best(
+            cand.eligible, cand.speedup, None if best is None else best.speedup,
+            speedup_se(cand.report), 0.0 if best is None else speedup_se(best.report),
+            min_improvement=self.search.min_improvement, noise_z=self.search.noise_z,
+        )
+        would_replace = relation == "replace"
+        would_tie = relation == "tie"
         recheck_doc = None
         # 闸门默认关。打开时，将要升种子或落入噪声内并列的候选先用另一颗种子做不计时的正确性复查。复查不过就不升种子。
         if self.search.differential_recheck and (would_replace or would_tie):
@@ -975,8 +983,8 @@ class Orchestrator:
             if llm_errors and len(llm_errors) == len(plans):  # one failed request skips its branch; all of them failing ends the run
                 raise llm_errors[0]
             # 停滞看本轮开始时的种子对象是否仍是 self.best。轮内换成另一颗就清零；只是 within_noise 不会换对象，因此算停滞。连续 patience 轮就收敛停止。
-            stagnant = 0 if self.best is not before else stagnant + 1
-            if stagnant >= self.search.patience:
+            stagnant = next_stagnant(self.best is not before, stagnant)
+            if patience_exhausted(stagnant, self.search.patience):
                 res.stop_reason = f"converged ({self.search.patience} rounds without improvement)"
                 return
             rnd += 1
@@ -993,7 +1001,7 @@ class Orchestrator:
                 continue
             seen.add(_sha(c.source))
             # 优胜者并没有显著快过 c，c 就留在并列里。源码相同的候选只进池一次。
-            if self.best.speedup <= c.speedup * self._required_gain(self.best, c):
+            if in_confirm_pool(self.best.speedup, c.speedup, self._required_gain(self.best, c)):
                 pool.append(c)
         return pool
 
