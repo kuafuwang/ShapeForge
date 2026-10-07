@@ -103,6 +103,7 @@ class SearchConfig:
     target_note: bool = True  # when a baseline is faster than the roofline bound, say so and give that baseline's time as the target
     rich_history: bool = True  # a failed branch's history line names the failure (abi / incorrect / no code) instead of one generic sentence
     status_lines: bool = True  # the planner and the patch author are told the noise floor and how much budget, round count and patience remain
+    differential_recheck: bool = False  # before a candidate becomes the seed or a within-noise tie, recheck correctness on an independent seed (quick, no timing). Off leaves the old selection.
 
 
 def _read_toml(path: Path) -> dict:

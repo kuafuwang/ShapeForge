@@ -56,7 +56,7 @@ def cmd_run(a: argparse.Namespace) -> int:
 
 SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "max_quick_checks", "min_improvement", "noise_z", "confirm_top", "eval_reps", "max_hangs",
                  "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
-                 "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines")
+                 "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck")
 LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry")
 
 

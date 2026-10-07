@@ -90,6 +90,27 @@ def _load_run_seed(run_dir: Path) -> int | None:
         recorded = doc.get("seed")
     return _valid_run_seed(recorded)
 
+
+_RECHECK_KEYS = ("class", "task", "dtype", "size", "label", "source_sha256", "search_seed", "recheck_seed", "case", "tolerance", "speed_relation", "counts_as_kernel_error", "retest_command", "human_permission_required")
+
+
+def check_recheck_record(doc: dict) -> list[str]:
+    """What's missing from a differential-recheck record. Empty means the record is complete enough to read offline.
+    This does not run the kernel."""
+    if not isinstance(doc, dict):
+        return ["the record is not an object"]
+    missing = [key for key in _RECHECK_KEYS if key not in doc]
+    problems = [f"missing {key}" for key in missing]
+    if "counterexample" in doc:
+        problems.append("a differential failure is not a VerifyResult.counterexample")
+    kind = doc.get("class")
+    if kind in ("timeout", "crash") and doc.get("counts_as_kernel_error") is True:
+        problems.append(f"{kind} is an environment failure and must not be stored as a kernel error")
+    if doc.get("human_permission_required") is False:
+        problems.append("the retest command requires a person to allow it")
+    return problems
+
+
 # 规划回复抽不出方案、或规划请求本身失败时，仍用这三套通用改法把这一轮补丁做完，搜索不因此停。
 FALLBACK_PLANS = [
     {"title": "vectorized 16-byte memory access", "change": "Make every thread load/store 16 bytes at a time (uint4 / half4 pairs) over consecutive addresses and unroll so that several loads are in flight before use.", "expected_gain": ""},
@@ -539,17 +560,28 @@ class Orchestrator:
         # 换种子的三道闸：EvalReport.eligible（status 为 ok，即安全且算对）、正式搜索还要有加速比，并且快过 _required_gain。只是略快则标 within_noise，下一轮仍用旧种子。
         # selection: eligible AND faster (relative to the baseline measured in the same run) than the best so far,
         # by more than both the fixed margin and the measurement noise of the two speedups
-        if cand.eligible and (self.best is None or cand.speedup > self.best.speedup * self._required_gain(cand, self.best)):
+        would_replace = cand.eligible and (self.best is None or cand.speedup > self.best.speedup * self._required_gain(cand, self.best))
+        would_tie = bool(cand.eligible and self.best is not None and not would_replace and cand.speedup > self.best.speedup)
+        recheck_doc = None
+        # 闸门默认关。打开时，将要升种子或落入噪声内并列的候选先用另一颗种子做不计时的正确性复查。复查不过就不升种子。
+        if self.search.differential_recheck and (would_replace or would_tie):
+            recheck_doc = await self._differential_recheck(cand, "new_best" if would_replace else "within_noise")
+            if recheck_doc is not None:
+                would_replace = False
+                would_tie = False
+        if would_replace:
             if self.best:
                 self.best.is_best = False
             cand.is_best = True
             self.best = cand
-        elif cand.eligible and cand.speedup > self.best.speedup:
+        elif would_tie:
             cand.within_noise = True
         self._save(cand)
+        if recheck_doc is not None:
+            self._store_recheck(cand, recheck_doc)
         r = cand.report
         self.trace.append(
-            {"idx": cand.idx, "label": label, "status": r.status, "speedup": r.speedup, "cost_usd": cand.cost_usd, "t_s": cand.t_s, "best_speedup": self.best.speedup if self.best else None, "improved": cand.is_best, "within_noise": cand.within_noise, "eval_seed": used_seed, "eval_seed_from": seed_from}
+            {"idx": cand.idx, "label": label, "status": r.status, "speedup": r.speedup, "cost_usd": cand.cost_usd, "t_s": cand.t_s, "best_speedup": self.best.speedup if self.best else None, "improved": cand.is_best, "within_noise": cand.within_noise, "eval_seed": used_seed, "eval_seed_from": seed_from, "differential_recheck": None if recheck_doc is None else recheck_doc["class"]}
         )
         self._publish_state(inflight=None)
         sp = f"{r.speedup:.3f}x" if r.speedup else "-"
@@ -565,6 +597,71 @@ class Orchestrator:
         if self.run_seed is None:
             return None
         return eval_seed(self.run_seed, phase, label, source)
+
+    async def _differential_recheck(self, cand: Candidate, speed_relation: str) -> dict | None:
+        """Correctness-only recheck on the ``recheck`` seed. Returns None when it passes.
+
+        A returned document means the candidate is not promoted. ``timeout`` and ``crash`` set the existing hang
+        counters and are marked ``counts_as_kernel_error`` false, so they are not cached as a wrong kernel.
+        The document is not a ``VerifyResult`` and has no ``counterexample``."""
+        phase_seed = self._phase_seed("recheck", cand.label, cand.source)
+        async with self.gpu_lock:
+            if self.hangs >= self.search.max_hangs:
+                raise StopRun("gpu_hang_circuit_breaker")
+            rep = await asyncio.to_thread(
+                self.evaluate_fn, self.task_name, self.dtype, self.size, cand.source, mode="quick", seed=phase_seed, reps=3,
+                progress_path=self.run_dir / "eval_progress.json",
+            )
+        self.evaluations += 1
+        if rep.status == "ok":
+            return None
+        kernel_error = rep.status not in ("timeout", "crash")
+        if rep.status == "timeout":
+            self.hangs += 1
+        elif rep.status == "crash":
+            self.crashes_in_a_row += 1
+        else:
+            self.crashes_in_a_row = 0
+        return self._failure_record(cand, rep, phase_seed, speed_relation, kernel_error)
+
+    def _failure_record(self, cand: Candidate, rep: EvalReport, phase_seed: int | None, speed_relation: str, kernel_error: bool) -> dict:
+        """Metadata for a failed remeasure. The retest command is for a person to run; this method does not run it."""
+        search_seed = cand.report.seed if cand.report is not None else None
+        recheck_seed = phase_seed if phase_seed is not None else rep.seed
+        case = None
+        for item in ((rep.correctness or {}).get("cases") or []):
+            if isinstance(item, dict) and item.get("ok") is False:
+                case = item.get("case")
+                break
+        tolerance = (rep.correctness or {}).get("tolerance") or {"rtol": self.task.rtol, "atol_rel": self.task.atol_rel, "exact": self.task.exact}
+        kernel_path = f"candidates/{cand.idx:03d}_{cand.label}/kernel.metal"
+        command = f"uv run python -m tcenv.cli eval {self.task_name} {kernel_path} --dtype {self.dtype} --size {self.size} --quick --seed {recheck_seed}"
+        kind = rep.status if rep.status in ("incorrect", "unsafe", "timeout", "crash") else "other"
+        return {
+            "class": kind,
+            "task": self.task_name,
+            "dtype": self.dtype,
+            "size": self.size,
+            "label": cand.label,
+            "source_sha256": hashlib.sha256(cand.source.encode("utf-8")).hexdigest(),
+            "search_seed": search_seed,
+            "recheck_seed": recheck_seed,
+            "case": case,
+            "tolerance": tolerance,
+            "speed_relation": speed_relation,
+            "counts_as_kernel_error": kernel_error,
+            "search_report": cand.report.to_json() if cand.report is not None else None,
+            "recheck_report": rep.to_json(),
+            "retest_command": command,
+            "human_permission_required": True,
+        }
+
+    def _store_recheck(self, cand: Candidate, doc: dict) -> None:
+        text = json.dumps(doc, indent=1, default=str)
+        (self.run_dir / "candidates" / f"{cand.idx:03d}_{cand.label}" / "differential_recheck.json").write_text(text)
+        folder = self.run_dir / "rechecks"
+        folder.mkdir(exist_ok=True)
+        (folder / f"{cand.label}.json").write_text(text)
 
     # quick_check 用的轻量评测：编译、ABI、安全、正确性，不跑基准，所以模型不能靠它在噪声里挑「看起来更快」的版本。与完整评测共用 gpu_lock 和 hangs；这里的 timeout 只记数，停搜发生在下一次 _eval 进锁时。
     # 工具调用没有稳定的 call id，所以这里仍把 seed 留空，由评测器另抽，并记在它返回的报告里。不能说这次自查可以按 run_seed 重放。
@@ -941,6 +1038,11 @@ class Orchestrator:
                 self._publish_state("confirm", inflight=c.label)
                 continue
             entry["status"], entry["confirmed_speedup"] = rep.status, rep.speedup if rep.status == "ok" else None
+            if rep.status != "ok":
+                failed = self._failure_record(c, rep, phase_seed, "confirm", rep.status not in ("timeout", "crash"))
+                folder = self.run_dir / "rechecks"
+                folder.mkdir(exist_ok=True)
+                (folder / f"confirm_{c.label}.json").write_text(json.dumps(failed, indent=1, default=str))
             self._confirmations = res.confirmations
             self._publish_state("confirm", inflight=c.label)
             self.log(f"   {c.label}: confirmed {rep.speedup:.3f}x" if rep.status == "ok" and rep.speedup else f"   {c.label}: confirmation {rep.status} {rep.message[:120]}")
