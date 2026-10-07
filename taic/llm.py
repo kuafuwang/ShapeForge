@@ -53,7 +53,7 @@ class LLMConfig:
     max_tokens: int = 48000
     request_timeout_s: float = 900.0
     max_retries: int = 6
-    truncation_retry: bool = False  # a length-capped reply with no kernel is asked again once, without the echoed reasoning, and does not spend a repair turn
+    truncation_retry: bool = True  # a length-capped reply with no kernel is asked again once, without the echoed reasoning, and does not spend a repair turn
     # USD per million tokens
     price_in: float = 0.30
     price_out: float = 1.20
@@ -94,11 +94,11 @@ class SearchConfig:
     profile_poor_below: float = 1.0  # "slower": speedup of the seed over the strongest baseline below this
     profile_max: int = 4  # traces per run at most (each takes tens of seconds under the exclusive GPU lock)
     hw_feedback: bool = False  # append a short static hardware-feature analysis (taic/hwfeedback.py) to the feedback of every correct seed and teach it as Skill 2c; off = prompts and feedback byte-identical to before
-    stop_at_roofline: bool = False  # end the search when the seed is already inside the noise gate of its roofline and no baseline beats that bound
-    abi_guard: bool = False  # stop a branch that repeats the same ABI failure, and state the threadgroup-memory limit in the repair prompt
-    target_note: bool = False  # when a baseline is faster than the roofline bound, say so and give that baseline's time as the target
-    rich_history: bool = False  # a failed branch's history line names the failure (abi / incorrect / no code) instead of one generic sentence
-    status_lines: bool = False  # the planner and the patch author are told the noise floor and how much budget, round count and patience remain
+    stop_at_roofline: bool = True  # end the search when the seed is already inside the noise gate of its roofline and no baseline beats that bound
+    abi_guard: bool = True  # stop a branch that repeats the same ABI failure, and state the threadgroup-memory limit in the repair prompt
+    target_note: bool = True  # when a baseline is faster than the roofline bound, say so and give that baseline's time as the target
+    rich_history: bool = True  # a failed branch's history line names the failure (abi / incorrect / no code) instead of one generic sentence
+    status_lines: bool = True  # the planner and the patch author are told the noise floor and how much budget, round count and patience remain
 
 
 def _read_toml(path: Path) -> dict:

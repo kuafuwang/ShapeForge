@@ -162,11 +162,11 @@ running or resumed are not affected. `taic.toml` and `taic.paper.toml` do not me
 
 When the hardware-feature block is on and a baseline is already more than 5% faster than the roofline lower bound, the block does not say the kernel is at the ceiling. That bound counts the direct algorithm's operations, and a baseline that beats it is using fewer of them (the measured case is conv2d: torch-mps at 777 us against a 932 us direct-convolution bound, about 1.2x the measured matrix peak). The reachable target is that baseline's time.
 
-## Search switches (optional, all off by default)
+## Search switches (on by default)
 
-Each one is a flag on `taic run` / `taic resume` and a field of the search or LLM config (`truncation_retry` is on the LLM config; the others are on the search config). A driver passes them like `profile_poor`, including `truncation_retry=True`. They are recorded in `run_config.json` and kept by `taic resume`. With all of them off, prompts and feedback stay byte-identical to before.
+Each one is on unless a run passes `--no-<flag>` (`--no-stop-at-roofline`, and the same for the others) or sets the field to false. `truncation_retry` is on the LLM config; the others are on the search config. They are recorded in `run_config.json`. `taic resume` keeps a recorded value; a run that never recorded the switch (started before it existed) is continued with the default, which is on. Passing every `--no-*` flag makes the prompts and feedback byte-identical to the code from before these switches.
 
-| switch | what it changes |
+| switch | what it changes (on unless `--no-<flag>`) |
 | --- | --- |
 | `--truncation-retry` | a reply cut off at `max_tokens` with no kernel is asked once more, without the echoed reasoning, and that retry does not use up a repair turn |
 | `--stop-at-roofline` | stop when the seed is already inside the noise gate of its roofline and no baseline beats that bound (`stop_reason=at_roofline`) |

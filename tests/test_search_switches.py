@@ -18,12 +18,12 @@ def _task():
 
 
 def test_switches_default_off_and_do_not_change_the_prompt_text():
-    assert SearchConfig().stop_at_roofline is False
-    assert SearchConfig().abi_guard is False
-    assert SearchConfig().target_note is False
-    assert SearchConfig().rich_history is False
-    assert SearchConfig().status_lines is False
-    assert LLMConfig(base_url="http://x", api_key="k", model="m").truncation_retry is False
+    assert SearchConfig().stop_at_roofline is True
+    assert SearchConfig().abi_guard is True
+    assert SearchConfig().target_note is True
+    assert SearchConfig().rich_history is True
+    assert SearchConfig().status_lines is True
+    assert LLMConfig(base_url="http://x", api_key="k", model="m").truncation_retry is True
     task = _task()
     plain = plan_user(task, "kernel void relu_kernel() {}", "feedback", ["round 1: A -> 1.100x (new best)"], 3)
     assert plan_user(task, "kernel void relu_kernel() {}", "feedback", ["round 1: A -> 1.100x (new best)"], 3, status="") == plain

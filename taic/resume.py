@@ -449,11 +449,11 @@ def _failed_branch(rnd: int, i: int, cands: list[dict]) -> str:
     own = [c for c in cands if (li := _label_info(c["label"])) and li["round"] == rnd and li["plan"] == i]
     if not own:
         return "no code: no kernel block"
-    rep = own[-1].get("report") or {}
-    status = str(rep.get("status") or "")
+    rep = own[-1].get("report")
+    status = str(getattr(rep, "status", "") or "")
     if status in ("", "unevaluated"):
         return "no code: no kernel block"
-    return failure_phrase(status, str(rep.get("message") or ""))
+    return failure_phrase(status, str(getattr(rep, "message", "") or ""))
 
 
 def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | None = None) -> Snapshot:

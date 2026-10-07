@@ -22,11 +22,13 @@ SWITCHES = dict(
     status_lines=True,
     truncation_retry=True,
 )
+# The production default is already on. The off arm has to say so, or it would be the same search as the on arm.
+OFF = {k: False for k in SWITCHES}
 
 
 def _run(name: str, task: str, out, *, on: bool, budget: float) -> None:
     print(f"\n##### {name} switches={'on' if on else 'off'} budget=${budget:.2f}", flush=True)
-    run_one(task, "fp16", "paper", out / name, budget=budget, preset="base", **(SWITCHES if on else {}))
+    run_one(task, "fp16", "paper", out / name, budget=budget, preset="base", **(SWITCHES if on else OFF))
 
 
 def main(argv=None) -> int:

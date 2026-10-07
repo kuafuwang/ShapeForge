@@ -74,8 +74,10 @@ def llm_script(init: str, patches: dict[str, str] | None = None, fixes: list[str
 
 
 def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=3, max_rounds=2, max_repair=2, evaluate_fn=None, max_hangs=1, **search_kw):
-    llm_cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
-    search = SearchConfig(budget_usd=budget, branches=branches, max_rounds=max_rounds, max_repair_tries=max_repair, max_hangs=max_hangs, eval_reps=3, **search_kw)
+    llm_cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False, truncation_retry=False)
+    # The production default is on. Scripted tests pin the switches off unless the test passes one, so a prompt assertion stays about the thing it names.
+    off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
+    search = SearchConfig(budget_usd=budget, branches=branches, max_rounds=max_rounds, max_repair_tries=max_repair, max_hangs=max_hangs, eval_reps=3, **{**off, **search_kw})
     return Orchestrator("relu", "fp16", "small", llm_cfg, search, run_dir=tmp_path / "run", evaluate_fn=evaluate_fn or fake_eval(calls), client=FakeClient(script), log=lambda s: None)
 
 

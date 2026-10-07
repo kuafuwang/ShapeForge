@@ -118,8 +118,10 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
 
     for task, kernel, rep_name, plan_mix in (("relu", KERNEL, "relu_best", False), ("relu", KERNEL, "relu_best", True), ("flash_attention", "flash_attention_kernel", "fa_flash_best", False), ("gemm", "gemm_kernel", "gemm_paper_best", True)):
         script = llm_script(code("speed=0.9", kernel), patches={"A": code("speed=1.0", kernel), "B": code("speed=1.3", kernel), "C": code("speed=0.6", kernel)})
-        llm_cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
-        search = SearchConfig(budget_usd=5.0, branches=3, max_rounds=2, max_repair_tries=2, eval_reps=3, plan_mix=plan_mix, **(extra_search or {}))
+        llm_cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False, truncation_retry=False)
+        # This hash is the switches-off prompt. The production default is on; the off path is what the golden file records.
+        off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
+        search = SearchConfig(budget_usd=5.0, branches=3, max_rounds=2, max_repair_tries=2, eval_reps=3, plan_mix=plan_mix, **{**off, **(extra_search or {})})
         with tempfile.TemporaryDirectory() as td:
             client = FakeClient(script)
             orch = Orchestrator(task, "fp16", "small", llm_cfg, search, run_dir=Path(td) / "run", evaluate_fn=_scripted_eval(rep_name), client=client, log=lambda s: None)

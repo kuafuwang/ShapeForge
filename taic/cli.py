@@ -29,11 +29,7 @@ def cmd_run(a: argparse.Namespace) -> int:
         search.profile_poor = True
     if getattr(a, "hw_feedback", False):  # opt-in: static hardware-feature block in the feedback + Skill 2c in the system prompt (taic/hwfeedback.py)
         search.hw_feedback = True
-    for flag in ("stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines"):
-        if getattr(a, flag, False):
-            setattr(search, flag, True)
-    if getattr(a, "truncation_retry", False):
-        cfg.truncation_retry = True
+    _apply_search_switches(a, cfg, search)
     if a.plan_mix:
         search.plan_mix = True
     if a.init_samples:
@@ -96,13 +92,7 @@ def _resume_config(a: argparse.Namespace, settings: dict, info: dict):
     if getattr(a, "hw_feedback", False):
         search.hw_feedback = True
         prov["search.hw_feedback"] = "command line"
-    for flag in ("stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines"):
-        if getattr(a, flag, False):
-            setattr(search, flag, True)
-            prov[f"search.{flag}"] = "command line"
-    if getattr(a, "truncation_retry", False):
-        cfg.truncation_retry = True
-        prov["llm.truncation_retry"] = "command line"
+    _apply_search_switches(a, cfg, search, prov)
     if a.no_tools:
         cfg.use_tools = False
         prov["llm.use_tools"] = "command line"
@@ -204,14 +194,37 @@ def cmd_resume(a: argparse.Namespace) -> int:
     return 0 if res.best_speedup else 2
 
 
+_SEARCH_SWITCHES = (
+    ("stop_at_roofline", "stop when the seed is already inside the noise gate of its roofline and no baseline beats that bound"),
+    ("abi_guard", "stop a branch that repeats the same ABI failure, and state the 32768 B threadgroup limit in the repair prompt"),
+    ("target_note", "when a baseline is faster than the roofline bound, tell the model and give that baseline's time as the target"),
+    ("rich_history", "a failed branch's history line names the failure instead of one generic sentence"),
+    ("status_lines", "tell the model the noise floor and the budget, round and patience that remain"),
+)
+
+
 def _add_search_switches(p: argparse.ArgumentParser) -> None:
-    """The opt-in search switches. Each defaults off, so a run that does not pass it keeps the previous prompts and stops."""
-    p.add_argument("--stop-at-roofline", action="store_true", help="stop when the seed is already inside the noise gate of its roofline and no baseline beats that bound")
-    p.add_argument("--abi-guard", action="store_true", help="stop a branch that repeats the same ABI failure, and state the 32768 B threadgroup limit in the repair prompt")
-    p.add_argument("--target-note", action="store_true", help="when a baseline is faster than the roofline bound, tell the model and give that baseline's time as the target")
-    p.add_argument("--rich-history", action="store_true", help="a failed branch's history line names the failure instead of one generic sentence")
-    p.add_argument("--status-lines", action="store_true", help="tell the model the noise floor and the budget, round and patience that remain")
-    p.add_argument("--truncation-retry", action="store_true", help="a length-capped reply with no kernel is retried once without the echoed reasoning, and does not spend a repair turn")
+    """``--flag`` / ``--no-flag``. Omitted means the config default, which is on."""
+    for dest, help_text in _SEARCH_SWITCHES:
+        p.add_argument("--" + dest.replace("_", "-"), action=argparse.BooleanOptionalAction, default=None, help=help_text + " (default: on)")
+    p.add_argument("--truncation-retry", action=argparse.BooleanOptionalAction, default=None, help="a length-capped reply with no kernel is retried once without the echoed reasoning, and does not spend a repair turn (default: on)")
+
+
+def _apply_search_switches(a: argparse.Namespace, cfg, search, prov: dict | None = None) -> None:
+    """Apply an explicit ``--flag`` or ``--no-flag``. An omitted flag leaves the config default."""
+    for dest, _help in _SEARCH_SWITCHES:
+        value = getattr(a, dest, None)
+        if value is None:
+            continue
+        setattr(search, dest, value)
+        if prov is not None:
+            prov[f"search.{dest}"] = "command line"
+    value = getattr(a, "truncation_retry", None)
+    if value is None:
+        return
+    cfg.truncation_retry = value
+    if prov is not None:
+        prov["llm.truncation_retry"] = "command line"
 
 
 # `run` 开新搜索，`resume` 续旧目录。两边的 --budget 含义不同：run 是这一次内核的总上限，resume 是续跑后的新总上限，必须高于已经花掉的金额。
