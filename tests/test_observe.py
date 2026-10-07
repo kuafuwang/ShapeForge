@@ -139,6 +139,7 @@ def dashboard(tmp_path, monkeypatch):
     runs.mkdir()
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
     monkeypatch.setenv("AI_LOWERLING_OBSERVE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "books.sqlite"))
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error", access_log=False))
     thread = threading.Thread(target=server.run, daemon=True)

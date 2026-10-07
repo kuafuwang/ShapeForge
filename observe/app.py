@@ -17,8 +17,9 @@ from starlette.routing import Route
 
 from observe import actions, budget, scan
 
-# 导入时读一次。运行中的进程不会再看磁盘上的 index.html，所以改页面模板一定要重启。
+# 导入时读一次。运行中的进程不会再看磁盘上的页面，所以改页面模板一定要重启。
 _PAGE = (Path(__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
+_BOOKS_PAGE = (Path(__file__).parent / "static" / "books.html").read_text(encoding="utf-8")
 _BANNER_SLOT = "<!--BUDGET_BANNER-->"
 _TOKEN_SLOT = "<!--OBSERVE_TOKEN-->"
 
@@ -37,6 +38,14 @@ async def index(request) -> HTMLResponse:
     token = actions.page_token(request.headers)  # only a loopback Host gets it; the write path checks it on every POST
     page = _PAGE.replace(_BANNER_SLOT, banner).replace(_TOKEN_SLOT, f'<meta name="observe-token" content="{token}">')
     return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+
+async def books_page(_request) -> HTMLResponse:
+    return HTMLResponse(_BOOKS_PAGE, headers={"Cache-Control": "no-store"})
+
+
+async def api_books(_request) -> JSONResponse:
+    return _json(await asyncio.to_thread(scan.books_report))
 
 
 # 总览：GPU 锁、仍在跑的搜索、实验队列。每次调用都重新读盘，没有进程内缓存。
@@ -168,6 +177,8 @@ async def api_stream(request) -> StreamingResponse:
 app = Starlette(
     routes=[
         Route("/", index),
+        Route("/books", books_page),
+        Route("/api/books", api_books),
         Route("/api/overview", api_overview),
         Route("/api/history", api_history),
         Route("/api/budget", api_budget),

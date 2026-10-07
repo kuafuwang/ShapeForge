@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from observe.budget import budget_status, summarize
+from observe.books import sync as sync_books
 from observe.publish import gpu_dir, gpu_events_path, observe_dir
 
 # 超过这么久没再写 state.json，心跳才算停。还要 pid 已经不在，才会把运行标成中断。
@@ -506,3 +507,8 @@ def frame(run_id: str | None) -> dict:
         "selected": chosen,
         "run": run_detail(chosen) if chosen else None,
     }
+
+
+def books_report() -> dict:
+    """Refresh the spend book from the runs on disk and return its totals."""
+    return sync_books(history())

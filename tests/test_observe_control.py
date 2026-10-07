@@ -259,8 +259,12 @@ def test_the_page_script_and_markup_carry_the_control(runs):
     port, _root = runs
     status, page = call(port, "GET", "/")
     assert status == 200
-    for needle in ("X-Observe-Token", "budget-modal", "reset-all", "stop-all", "settings-open", "/api/budget/reset", "/api/stop", "/api/settings/model", "/control", "Add budget"):
+    for needle in ("X-Observe-Token", "budget-modal", "reset-all", "stop-all", "settings-open", 'href="/books"', "/api/budget/reset", "/api/stop", "/api/settings/model", "/control", "Add budget"):
         assert needle in page, needle
+    status, books_page = call(port, "GET", "/books")
+    assert status == 200 and "花费账本" in books_page and "/api/books" in books_page and 'href="/"' in books_page
+    status, books = call(port, "GET", "/api/books")
+    assert status == 200 and books["schema_version"] == 1 and "by_operator" in books and "by_month" in books
 
 
 # ------------------------------------------------------------------------------------------------ what the page then shows

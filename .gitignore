@@ -4,6 +4,8 @@ __pycache__/
 .pytest_cache/
 logs/pytest/
 runs/
+# spend book (data/books.sqlite). Local record, not a cache.
+data/
 *.egg-info/
 dist/
 .DS_Store

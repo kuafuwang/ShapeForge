@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>花费账本</title>
+<style>
+  :root { --bg: #f4f5f7; --card: #fff; --ink: #1c1c1e; --muted: #6b7280; --line: #e6e8ee; --blue: #0a66c2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  a { color: var(--blue); }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  h1 { margin: 0; font-size: 22px; font-weight: 650; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+  .hint { margin: 8px 0 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .books { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  .books h2 { margin: 0 0 8px; font-size: 15px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line); }
+  td.num, th.num { text-align: right; }
+  tr.sub td { color: var(--muted); font-size: 12px; }
+  .err { color: #c2413a; }
+  @media (max-width: 800px) { .books { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>花费账本</h1>
+      <p class="hint" id="note">正在读取…</p>
+    </div>
+    <a href="/">返回运行观测</a>
+  </header>
+  <section class="panel">
+    <div class="books" id="books"></div>
+  </section>
+</main>
+<script>
+function el(tag, props, kids) {
+  const node = document.createElement(tag);
+  if (props) {
+    for (const [key, value] of Object.entries(props)) {
+      if (key === "class") node.className = value;
+      else if (value != null) node.setAttribute(key, value);
+    }
+  }
+  for (const kid of kids || []) node.append(kid == null ? "" : kid);
+  return node;
+}
+function t(text) { return document.createTextNode(text == null ? "" : String(text)); }
+function money(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? "$" + n.toFixed(2) : "—";
+}
+
+function render(books) {
+  const note = document.getElementById("note");
+  note.className = "hint";
+  note.textContent = "累计花费从每次搜索诞生起一直累加，重置只提高当前预算。月份按搜索开始的本地时间。文件在 data/books.sqlite，结构版本 " + (books.schema_version != null ? books.schema_version : "—") + "。";
+  const opRows = (books.by_operator || []).map((row) => el("tr", null, [
+    el("td", null, [t(row.operator)]),
+    el("td", { class: "num" }, [t(row.runs)]),
+    el("td", { class: "num" }, [t(money(row.spent_usd))]),
+    el("td", { class: "num" }, [t(money(row.budget_usd))]),
+  ]));
+  const monthRows = [];
+  for (const row of books.by_month || []) {
+    monthRows.push(el("tr", null, [
+      el("td", null, [t(row.month)]),
+      el("td", { class: "num" }, [t(row.runs)]),
+      el("td", { class: "num" }, [t(money(row.spent_usd))]),
+    ]));
+    for (const op of row.operators || []) {
+      monthRows.push(el("tr", { class: "sub" }, [
+        el("td", null, [t(op.operator)]),
+        el("td", { class: "num" }, [t(op.runs)]),
+        el("td", { class: "num" }, [t(money(op.spent_usd))]),
+      ]));
+    }
+  }
+  document.getElementById("books").replaceChildren(
+    el("div", null, [
+      el("h2", null, [t("按算子  累计 " + money(books.spent_usd))]),
+      el("table", null, [
+        el("thead", null, [el("tr", null, [el("th", null, [t("算子")]), el("th", { class: "num" }, [t("搜索")]), el("th", { class: "num" }, [t("累计花费")]), el("th", { class: "num" }, [t("当前预算")])])]),
+        el("tbody", null, opRows),
+      ]),
+    ]),
+    el("div", null, [
+      el("h2", null, [t("按月")]),
+      el("table", null, [
+        el("thead", null, [el("tr", null, [el("th", null, [t("月份")]), el("th", { class: "num" }, [t("搜索")]), el("th", { class: "num" }, [t("累计花费")])])]),
+        el("tbody", null, monthRows),
+      ]),
+    ]),
+  );
+}
+
+async function load() {
+  const note = document.getElementById("note");
+  try {
+    const response = await fetch("/api/books");
+    const books = await response.json();
+    if (!response.ok) throw new Error((books && books.error) || "读取失败");
+    render(books);
+  } catch (err) {
+    note.className = "hint err";
+    note.textContent = String(err.message || err);
+  }
+}
+load();
+setInterval(load, 2000);
+</script>
+</body>
+</html>
