@@ -26,7 +26,7 @@ from tasks import list_tasks
 
 from observe.publish import job_state
 
-from .common import budget_for, fits_cap, naive_reference, read_confirm, read_result, run_one, summarize
+from .common import budget_for, experiment_commitment, fits_cap, naive_reference, read_confirm, read_result, run_one, summarize, write_cap
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -35,6 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # --resume 为真时，该目录已经有 result.json 就不再启动搜索。文件不存在才整格重跑。
 def run_suite(tasks, dtypes, size, suite_dir: Path, *, budget_scale=1.0, budget=None, max_total_usd=None, branches=None, max_rounds=None, model=None, resume=True, client=None, evaluate_fn=None, log=print, with_naive=True, **overrides) -> list[dict]:
     suite_dir.mkdir(parents=True, exist_ok=True)
+    write_cap(suite_dir, max_total_usd)
     rows: list[dict] = []
     items = [(dtype, task) for dtype in dtypes for task in tasks]
     for i, (dtype, task) in enumerate(items):
@@ -45,7 +46,7 @@ def run_suite(tasks, dtypes, size, suite_dir: Path, *, budget_scale=1.0, budget=
         # 命令行给了 --budget 就整套共用这笔钱，scale 不再乘。否则用论文的 $15 乘 --budget-scale，协议字段不在这里改。
         b = budget if budget is not None else budget_for(task, budget_scale)
         if res is None:
-            spent = sum(r["spent_usd"] for r in rows)
+            spent = experiment_commitment(suite_dir)
             if not fits_cap(spent, b, max_total_usd):
                 # 上限比的是「已花费 + 这一格的整份预算」。提前收敛省下的钱不算进去，放不下就留空这一格。
                 log(f"(skip {task} {dtype}: its ${b:.2f} budget does not fit under --max-total-usd ${max_total_usd:.2f}; the suite has spent ${spent:.2f})")

@@ -36,7 +36,7 @@ from observe.publish import job_state
 
 from taic.llm import PAPER_BUDGET_USD
 
-from .common import fits_cap, naive_reference, read_confirm, read_result, run_one, summarize
+from .common import experiment_commitment, fits_cap, naive_reference, read_confirm, read_result, run_one, summarize, write_cap
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -98,6 +98,7 @@ def budget_notes(out: Path, names: list[str], budget: float | None) -> list[str]
 # 按名字顺序跑。result.json 已在就跳过，哪怕当时的预算和这次要给的不一样；要按新预算重跑得换一个 --out。
 def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = "fp16", log=print, budget: float | None = None, max_total_usd: float | None = None, **overrides) -> list[dict]:
     out.mkdir(parents=True, exist_ok=True)
+    write_cap(out, max_total_usd)
     rows = []
     names = list(names)
     for note in budget_notes(out, names, budget):
@@ -111,7 +112,7 @@ def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = 
         rd = out / n
         res = read_result(rd)
         if res is None:
-            spent = sum(r["spent_usd"] for r in rows)
+            spent = experiment_commitment(out)
             if not fits_cap(spent, b, max_total_usd):
                 log(f"(skip {n}: its ${b:.2f} budget does not fit under --max-total-usd ${max_total_usd:.2f}; this invocation has spent ${spent:.2f})")
                 continue

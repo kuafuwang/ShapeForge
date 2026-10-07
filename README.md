@@ -160,6 +160,25 @@ running or resumed are not affected. `taic.toml` and `taic.paper.toml` do not me
 (20 s), a failure or a missing Metal toolchain drops the block and logs a warning. A/B experiment: `experiments.p1_runs` run `fa_flash_hw` is `fa_flash` with only this switch changed
 (n=1 on a stochastic search: an anecdote); the run was started on 2026-10-07 06:08, stopped once and continued with `taic resume` after a detector fix (round 1 saw the earlier block, `docs/hardware_features.md` section 9), and its result is not in yet (look at `runs/p1/fa_flash_hw`; the comparison is `fa_flash`: 0.735x confirmed, $3.123, 8 rounds, stopped by budget).
 
+When the hardware-feature block is on and a baseline is already more than 5% faster than the roofline lower bound, the block does not say the kernel is at the ceiling. That bound counts the direct algorithm's operations, and a baseline that beats it is using fewer of them (the measured case is conv2d: torch-mps at 777 us against a 932 us direct-convolution bound, about 1.2x the measured matrix peak). The reachable target is that baseline's time.
+
+## Search switches (optional, all off by default)
+
+Each one is a flag on `taic run` / `taic resume` and a field of the search or LLM config (`truncation_retry` is on the LLM config; the others are on the search config). A driver passes them like `profile_poor`, including `truncation_retry=True`. They are recorded in `run_config.json` and kept by `taic resume`. With all of them off, prompts and feedback stay byte-identical to before.
+
+| switch | what it changes |
+| --- | --- |
+| `--truncation-retry` | a reply cut off at `max_tokens` with no kernel is asked once more, without the echoed reasoning, and that retry does not use up a repair turn |
+| `--stop-at-roofline` | stop when the seed is already inside the noise gate of its roofline and no baseline beats that bound (`stop_reason=at_roofline`) |
+| `--abi-guard` | stop a branch that hits the same ABI failure twice, and tell the repair the threadgroup limit (32768 B) and the size it just declared |
+| `--target-note` | when a baseline is more than 5% faster than the roofline bound, tell the model the bound does not hold and the target is that baseline's time |
+| `--rich-history` | a failed branch's history line names the failure (`abi: ...`, `incorrect: ...`, `no code: ...`) instead of one generic sentence |
+| `--status-lines` | the planner and the patch author are told the noise floor ("at least X% faster") and the round, patience and budget that remain |
+
+`result.json` and `state.json` also record `search_seed_label` (the kernel the search was mutating) and `confirm_winner_label` (the kernel the fresh-seed remeasure kept). A resume continues from the search seed.
+
+`--max-total-usd` on the suite, the repeatability experiment and `p1_runs` is checked against the dollars reserved on disk: a live run counts its current budget (so a dashboard top-up and a run resumed on the side both count), a finished run counts what it spent. The cap is written to `cap.json` in the experiment directory, and the dashboard refuses a top-up that would break it.
+
 ## Dashboard and budget alerts
 
 `uv run python -m observe` serves a read-only dashboard (default `http://127.0.0.1:8765`; restart it after updating the code, the page is

@@ -34,6 +34,7 @@ from tcenv.evaluate import EvalReport, evaluate
 from tcenv.report import format_feedback
 
 from . import control, prompts
+from .feedback_extra import abi_signature, at_roofline, failure_phrase, status_lines, target_note, threadgroup_limit_note
 from .llm import LLM, BudgetExhausted, CostLedger, LLMConfig, LLMError, SearchConfig, Transcript
 from .parse import extract_metal, parse_plans
 from .tools import LOOKUP_TOOL, QUICK_CHECK_TOOL, SkillIndex, make_handlers
@@ -126,6 +127,9 @@ class RunResult:
     initial_budget_usd: float | None = None  # the budget the run started with (``budget_usd`` is the budget it ended with: they differ after a top-up)
     budget_events: list = field(default_factory=list)  # every budget change that took effect (live top-ups and resumes), oldest first
     resumes: int = 0  # how many times the run was continued after an interruption or a budget stop
+    search_seed_label: str | None = None  # the kernel the search was mutating when it stopped; confirm may publish a different one
+    search_seed_speedup: float | None = None  # that kernel's speedup as measured during the search
+    confirm_winner_label: str | None = None  # the kernel the fresh-seed remeasure kept; None when confirmation did not run
 
 
 # 源码的内容身份：评测缓存、复测去重、profiler 缓存都用它。同一份文本不会被当成两个内核。
@@ -137,6 +141,29 @@ def _sha(source: str) -> str:
 def nudge_user(kernel_name: str) -> str:
     """The reminder sent when a reply holds no ```metal block defining the kernel."""
     return f"Your reply did not contain a ```metal code block defining `kernel void {kernel_name}`. Reply again with the complete kernel in exactly one ```metal block."
+
+
+def _strip_reasoning(messages: list[dict]) -> list[dict]:
+    """A copy of ``messages`` without ``reasoning_content``. A truncated thinking trace is tens of thousands of tokens and buys nothing on the retry."""
+    out = []
+    for m in messages:
+        if m.get("role") == "assistant" and "reasoning_content" in m:
+            m = {k: v for k, v in m.items() if k != "reasoning_content"}
+        out.append(m)
+    return out
+
+
+def _retry_without_reasoning(messages: list[dict]) -> list[dict]:
+    """The follow-up after a length-capped reply that contained no kernel.
+
+    The echoed reasoning is dropped. An assistant turn with no visible text is dropped too, so the same question is asked again
+    instead of being continued from an empty reply. ``experiments/truncation_replay.py`` compares this with the other arms; change
+    this function if that replay picks a different winner.
+    """
+    messages = _strip_reasoning(messages)
+    if messages and messages[-1].get("role") == "assistant" and not (messages[-1].get("content") or "").strip():
+        messages = messages[:-1]
+    return messages
 
 
 # 种子慢于最强基线时，附在规划与每一路补丁反馈后面的 Instruments 文字。抓取失败或没开 profile_poor 时根本不会用到它，搜索照常进行。
@@ -223,6 +250,9 @@ class Orchestrator:
         self._round_plans: list[dict] = []
         self._resume = None  # a ``taic.resume.Snapshot`` while a resumed run has not yet caught up with where it stopped
         self._resumes = 0
+        self._branch_fail: dict[str, str] = {}  # branch label -> why its last attempt failed (used when search.rich_history is on)
+        self._search_seed: Candidate | None = None
+        self._confirm_winner: Candidate | None = None
         # 续跑时目录里已有上一会话的 state.json。先空写会把看板抹掉，所以等到 restore 把账本和候选装回来再发布。
         if not resuming:
             self._write_run_config()
@@ -286,6 +316,9 @@ class Orchestrator:
                 "round_plans": self._round_plans,
                 "best_speedup": self.best.speedup if self.best else None,
                 "best_label": self.best.label if self.best else None,
+                "search_seed_label": self._search_seed.label if self._search_seed else (self.best.label if self.best else None),
+                "search_seed_speedup": self._search_seed.speedup if self._search_seed else (self.best.speedup if self.best else None),
+                "confirm_winner_label": self._confirm_winner.label if self._confirm_winner else None,
                 "hangs": self.hangs,
                 "evaluations": self.evaluations,
                 "stop_reason": stop_reason,
@@ -438,17 +471,17 @@ class Orchestrator:
 
     # ------------------------------------------------------------------ generation with repair
     # 一个模型回合。美元检查在 LLM.chat 入口的 CostLedger.check：已花费达到预算就抛 BudgetExhausted，本回合发不出去。已经在飞的其它分支可能略超，闸门不预扣。
-    async def _ask(self, messages: list[dict], label: str, *, start_turn: int = 0, pending: list[dict] | None = None, quick_used: int = 0) -> tuple[str, list[dict]]:
-        """One model turn (with tools when enabled). Returns (reply text, conversation including the reply).
+    async def _ask(self, messages: list[dict], label: str, *, start_turn: int = 0, pending: list[dict] | None = None, quick_used: int = 0) -> tuple[str, list[dict], str | None]:
+        """One model turn (with tools when enabled). Returns (reply text, conversation including the reply, finish_reason).
         ``start_turn`` / ``pending`` / ``quick_used`` continue a tool conversation interrupted by a restart (see ``chat_with_tools``)."""
         self._publish_state("llm")
         if self.cfg.use_tools:
             # 续跑时 quick_used 是中断前已经用掉的次数，这里只把剩余额度交给这一段对话，避免熔断被绕过。
             handlers = make_handlers(self.index, self._quick, max(0, self.search.max_quick_checks - quick_used))
             reply, msgs = await self.llm.chat_with_tools(messages, [LOOKUP_TOOL, QUICK_CHECK_TOOL], handlers, label=label, start_turn=start_turn, pending=pending)
-            return reply.text(), msgs
+            return reply.text(), msgs, reply.finish_reason
         reply = await self.llm.chat(messages, label=label)
-        return reply.text(), messages + [reply.message]
+        return reply.text(), messages + [reply.message], reply.finish_reason
 
     # 从一轮提示写出内核，并最多再修补 max_repair_tries 次。抽不出 Metal 只追问、不产生候选；评测不合格就把失败反馈塞回。完整评测一旦 timeout，_eval 会先停掉整次搜索；若 max_hangs 尚未触达，这颗内核不再继续修补。
     async def _develop(self, messages: list[dict], label: str, *, plan: str | None = None, resume: Any = None) -> Candidate | None:
@@ -458,20 +491,31 @@ class Orchestrator:
         ``resume`` (a ``taic.resume.BranchResume``) continues a conversation that a restart interrupted: ``resume.messages`` is the conversation as it stood,
         ``resume.attempt`` the repair attempt it was in, and ``resume.reply_text`` / ``resume.pending`` say how far the current attempt had got."""
         name = self.task.contract.kernel_name
+        last_abi = None
         for attempt in range(resume.attempt if resume is not None else 0, self.search.max_repair_tries + 1):
             tag = label if attempt == 0 else f"{label}.fix{attempt}"
-            if resume is not None and attempt == resume.attempt:
-                r, resume = resume, None
-                # 模型已经答过、但答案还没评测：沿用记下的回复，避免再花一次请求得到另一颗内核。
-                if r.reply_text is not None:  # the model had answered; the answer was not evaluated yet
-                    text, messages = r.reply_text, r.messages
+            retried = False
+            while True:
+                if resume is not None and attempt == resume.attempt and not retried:
+                    r, resume = resume, None
+                    # 模型已经答过、但答案还没评测：沿用记下的回复，避免再花一次请求得到另一颗内核。
+                    if r.reply_text is not None:  # the model had answered; the answer was not evaluated yet
+                        text, messages, finish = r.reply_text, r.messages, None
+                    else:
+                        text, messages, finish = await self._ask(r.messages, tag, start_turn=r.turn, pending=r.pending or None, quick_used=r.quick_used)
                 else:
-                    text, messages = await self._ask(r.messages, tag, start_turn=r.turn, pending=r.pending or None, quick_used=r.quick_used)
-            else:
-                text, messages = await self._ask(messages, tag)
-            source = extract_metal(text, name)
+                    text, messages, finish = await self._ask(messages, tag)
+                source = extract_metal(text, name)
+                # 截断且没有内核：不占用这一次修补。丢掉回传的思考再问一次，问完无论结果如何都回到原来的流程。
+                if source is None and finish == "length" and self.cfg.truncation_retry and not retried:
+                    messages = _retry_without_reasoning(messages)
+                    retried = True
+                    self.log(f"  [{tag}] truncated with no kernel; retrying once without the echoed reasoning")
+                    continue
+                break
             # 没有声明 kernel void <kernel_name> 的代码块不算写出内核。只追问，不进入评测。
             if source is None:
+                self._branch_fail[label] = "no code: truncated" if finish == "length" else "no code: no kernel block"
                 messages = messages + [{"role": "user", "content": nudge_user(name)}]
                 self.log(f"  [{tag}] no code block in reply")
                 continue
@@ -481,18 +525,32 @@ class Orchestrator:
             # 超时不再修补：挂死的内核继续改只会再占 GPU。默认 max_hangs 下 _eval 已经抛出 StopRun，走不到这里。
             if cand.report.status in ("timeout",):
                 return None
+            self._branch_fail[label] = failure_phrase(cand.report.status, cand.report.message)
+            # 同一句 ABI 错误连着出现两次就停掉这一支，不再把剩下的修补次数花在同一个超限上。
+            if self.search.abi_guard and cand.report.status == "abi_error":
+                sig = abi_signature(cand.report.message)
+                if last_abi is not None and sig == last_abi:
+                    self.log(f"  [{tag}] the same ABI failure repeated; this branch stops")
+                    return None
+                last_abi = sig
+            else:
+                last_abi = None
             # 反馈被截到 FEEDBACK_CHARS。模型看不见后半段，修补可能漏掉排在后面的违规。
             fb = format_feedback(cand.report)[:FEEDBACK_CHARS]
+            if self.search.abi_guard:
+                note = threadgroup_limit_note(cand.report.message)
+                if note:
+                    fb += "\n\n" + note
             messages = messages + [{"role": "user", "content": prompts.repair_user(fb, attempt + 1, self.search.max_repair_tries)}]
         return None
 
     # ------------------------------------------------------------------ planning
     # 诊断当前种子的瓶颈并给出 K（search.branches）份互不相同的改法。规划请求失败或 JSON 抽不出方案时，用 FALLBACK_PLANS 顶上，这一轮搜索不因此结束。
-    async def _plan(self, seed: Candidate, rnd: int, evidence: str = "") -> list[dict]:
+    async def _plan(self, seed: Candidate, rnd: int, evidence: str = "", status: str = "") -> list[dict]:
         self._publish_state("plan")
         k = self.search.branches
         fb = format_feedback(seed.report)[:FEEDBACK_CHARS] + evidence
-        msgs = [{"role": "system", "content": self.system}, {"role": "user", "content": prompts.plan_user(self.task, seed.source, fb, self.history, k, mixed=self.search.plan_mix)}]
+        msgs = [{"role": "system", "content": self.system}, {"role": "user", "content": prompts.plan_user(self.task, seed.source, fb, self.history, k, mixed=self.search.plan_mix, status=status)}]
         for attempt in range(2):
             try:
                 reply = await self.llm.chat(msgs, label=f"r{rnd}.plan{'' if attempt == 0 else '.retry'}")
@@ -532,6 +590,7 @@ class Orchestrator:
         except LLMError as e:
             res.stop_reason = f"llm_error: {e}"
             self.log(f"== stop: {e}")
+        self._search_seed = self.best  # the kernel the search would mutate next; confirmation may publish a different one
         await self._confirm(res)
         if self.search.profile_best:
             await self._profile_best()
@@ -602,6 +661,11 @@ class Orchestrator:
             # 续跑的第一轮用中断时记下的种子。若改用现在的 self.best，补丁会对着另一颗内核改。
             seed = (self._by_label(part.seed_label) if part is not None else None) or self.best
             self.log(f"-- round {rnd}{' (continued)' if part is not None else ''}: seed {seed.label} at {seed.speedup:.3f}x, spent ${self.ledger.total_usd:.3f}")
+            if self.search.stop_at_roofline and at_roofline(seed.report, self._required_gain(seed, seed)):
+                gap = (getattr(seed.report, "roofline", None) or {}).get("time_over_lower_bound")
+                res.stop_reason = "at_roofline"
+                self.log(f"-- stop: {seed.label} is {gap:.3f}x its roofline lower bound, inside the noise gate, and no baseline beats that bound")
+                return
             evidence = await self._profile_seed(seed, rnd)
             if self.search.hw_feedback:  # opt-in (search.hw_feedback): the static hardware-feature block goes where the profiler evidence goes; None on any failure
                 from .hwfeedback import hw_feedback
@@ -609,12 +673,22 @@ class Orchestrator:
                 block = await asyncio.to_thread(hw_feedback, self.task, seed.source, seed.report, log=self.log)
                 if block:
                     evidence += "\n\n" + block
+            if self.search.target_note:
+                note = target_note(seed.report)
+                if note:
+                    evidence += "\n\n" + note
+            status = ""
+            if self.search.status_lines:
+                status = status_lines(
+                    rnd=rnd, max_rounds=self.search.max_rounds, patience_left=max(0, self.search.patience - stagnant),
+                    spent=self.ledger.total_usd, budget=self.ledger.budget_usd, required_gain=self._required_gain(seed, seed),
+                )
             # 规划已经花过请求并记在转录里时不再重做，避免同一轮出现两套方案。
             if part is not None and part.plans:
                 plans = part.plans
                 self.log(f"  plans of round {rnd} recovered from the transcript: " + "; ".join(p["title"] for p in plans))
             else:
-                plans = await self._plan(seed, rnd, evidence)
+                plans = await self._plan(seed, rnd, evidence, status)
             self._round_plans = plans
             fb = format_feedback(seed.report)[:FEEDBACK_CHARS] + evidence
 
@@ -626,7 +700,7 @@ class Orchestrator:
                     br = part.resume[i]
                     self.log(f"  branch r{rnd}.p{i} continues at attempt {br.attempt}")
                     return await self._develop(br.messages, f"r{rnd}.p{i}", plan=plan["title"], resume=br)
-                msgs = [{"role": "system", "content": self.system}, {"role": "user", "content": prompts.patch_user(self.task, seed.source, fb, plan)}]
+                msgs = [{"role": "system", "content": self.system}, {"role": "user", "content": prompts.patch_user(self.task, seed.source, fb, plan, status=status)}]
                 return await self._develop(msgs, f"r{rnd}.p{i}", plan=plan["title"])
 
             before = seed
@@ -634,7 +708,7 @@ class Orchestrator:
             outcomes = await asyncio.gather(*[branch(i, p) for i, p in enumerate(plans)], return_exceptions=True)
             fatal = [o for o in outcomes if isinstance(o, (BudgetExhausted, StopRun))]
             llm_errors = [o for o in outcomes if isinstance(o, LLMError)]
-            for p, o in zip(plans, outcomes):
+            for i, (p, o) in enumerate(zip(plans, outcomes)):
                 if isinstance(o, Candidate):
                     tag = f"{o.speedup:.3f}x" + (" (new best)" if o.is_best else " (within measurement noise of the best)" if o.within_noise else " (not better)")
                 elif isinstance(o, LLMError):
@@ -643,7 +717,7 @@ class Orchestrator:
                 elif isinstance(o, BaseException):
                     tag = f"aborted ({type(o).__name__})"
                 else:
-                    tag = "no valid kernel after repair"
+                    tag = self._branch_fail.get(f"r{rnd}.p{i}", "no valid kernel after repair") if self.search.rich_history else "no valid kernel after repair"
                 self.history.append(f"round {rnd}: {p['title']} -> {tag}")
             other = [o for o in outcomes if isinstance(o, BaseException) and not isinstance(o, (BudgetExhausted, StopRun, LLMError))]
             if other:
@@ -719,6 +793,7 @@ class Orchestrator:
             return
         # 重测最快的一颗才是对外结果。它若不是搜索时的 self.best 就换上头衔；best_speedup 仍是搜索过程中的测量，复测值记在 confirmed_speedup。
         win, rep = max(confirmed, key=lambda cr: cr[1].speedup)
+        self._confirm_winner = win
         if win is not self.best:
             self.log(f"   {win.label} is faster than {self.best.label} when re-measured; it becomes the result")
             self.best.is_best, win.is_best = False, True
@@ -797,6 +872,10 @@ class Orchestrator:
         res.candidates = [c.brief() for c in self.candidates]
         res.ledger = self.ledger.summary()
         res.profiles = self.profiles
+        if self._search_seed:
+            res.search_seed_label, res.search_seed_speedup = self._search_seed.label, self._search_seed.speedup
+        if self._confirm_winner:
+            res.confirm_winner_label = self._confirm_winner.label
         if self.best:
             res.best_label, res.best_speedup = self.best.label, self.best.speedup
             (self.run_dir / "best.metal").write_text(self.best.source)

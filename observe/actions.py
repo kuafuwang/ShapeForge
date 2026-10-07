@@ -205,6 +205,15 @@ def _next_log(run_dir: Path) -> Path:
     return run_dir / f"resume_{n}.log"
 
 
+def _enforce_experiment_cap(run_dir: Path, total: float) -> None:
+    """Refuse a top-up that would reserve more than the experiment's cap.json allows. No cap file means no extra limit."""
+    from experiments.common import cap_allows
+
+    ok, why = cap_allows(run_dir, total)
+    if not ok:
+        raise Refused(400, why)
+
+
 def add_budget(run_id: str, body: dict) -> dict:
     """``POST /api/runs/<run>/budget`` after the origin and token checks. Returns what was done (or, in dry-run mode, what would be)."""
     run_dir = _run_dir(run_id)
@@ -221,6 +230,7 @@ def add_budget(run_id: str, body: dict) -> dict:
             if pending:
                 raise Refused(409, "a previous top-up of this run has not been read by the run yet; wait a moment")
             amount, total = _amount_and_total(body, current, spent)
+            _enforce_experiment_cap(run_dir, total)
             if dry_run():
                 ev = control.record_event(run_dir, "dryrun", current, total, who="dashboard", note="would write control.json", action="topup_live")
                 return {"ok": True, "dry_run": True, "action": "topup_live", "old_budget_usd": current, "new_budget_usd": total, "amount_usd": amount, "event": ev}
@@ -229,6 +239,7 @@ def add_budget(run_id: str, body: dict) -> dict:
         if not info["resumable"]:
             raise Refused(409, info["reason"] or "this run cannot be continued")
         amount, total = _amount_and_total(body, current, spent)
+        _enforce_experiment_cap(run_dir, total)
         cmd = _resume_command(run_dir, total)
         if dry_run():
             ev = control.record_event(run_dir, "dryrun", current, total, who="dashboard", note="would start: " + " ".join(cmd), action="resume", command=cmd)

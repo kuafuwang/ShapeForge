@@ -37,6 +37,109 @@ def fits_cap(spent_usd: float, budget_usd: float, max_total_usd: float | None) -
     return max_total_usd is None or spent_usd + budget_usd <= max_total_usd + 1e-9
 
 
+CAP_FILE = "cap.json"
+
+
+def _num(value) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return v if v == v else None  # NaN is not a commitment
+
+
+def _read(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+# 一次搜索占多少钱：活着的进程按「当前预算和已花费里更大的那个」预留（看板加过预算、单独续跑的都算），
+# 已经结束的只算实际花掉的。实验脚本自己的 state.json 没有 spent_usd，不算进这笔账。
+def run_commitment(run_dir: Path) -> float:
+    """Dollars reserved by one search directory: its live budget while a process holds it, otherwise what it spent."""
+    from taic.control import pid_alive
+
+    run_dir = Path(run_dir)
+    state = _read(run_dir / "state.json")
+    state = state if isinstance(state, dict) else {}
+    if "spent_usd" not in state and "script" in state:
+        return 0.0
+    result = _read(run_dir / "result.json")
+    result = result if isinstance(result, dict) else {}
+    spent = _num(state.get("spent_usd"))
+    if spent is None:
+        spent = _num(result.get("spent_usd")) or 0.0
+    control = _read(run_dir / "control.json")
+    budget = _num(control.get("budget_usd")) if isinstance(control, dict) else None
+    if budget is None:
+        budget = _num(state.get("budget_usd"))
+    if budget is None:
+        budget = _num(result.get("budget_usd"))
+    lock = _read(run_dir / "resume.lock")
+    live = pid_alive(lock.get("pid")) if isinstance(lock, dict) else False
+    if not live and "spent_usd" in state:
+        live = pid_alive(state.get("pid")) and not result
+    if live:
+        return max(spent, budget or 0.0)
+    return float(result.get("spent_usd") if result and _num(result.get("spent_usd")) is not None else spent)
+
+
+def experiment_commitment(exp_dir: Path) -> float:
+    """Reserved dollars of every search under ``exp_dir`` (finished runs count what they spent; live ones count their budget).
+
+    A directory is a search when it holds ``state.json`` or ``result.json``. The experiment's own ``state.json`` (it has ``script`` and no
+    ``spent_usd``) contributes nothing, and a directory is counted once even when it has both files.
+    """
+    exp_dir = Path(exp_dir)
+    if not exp_dir.is_dir():
+        return 0.0
+    dirs = {p.parent.resolve() for name in ("state.json", "result.json") for p in exp_dir.rglob(name)}
+    return sum(run_commitment(d) for d in dirs)
+
+
+def write_cap(exp_dir: Path, max_total_usd: float | None) -> None:
+    """Record the experiment cap so the dashboard can refuse a top-up that would break it. ``None`` writes nothing."""
+    if max_total_usd is None:
+        return
+    from taic.control import write_json_atomic
+
+    write_json_atomic(Path(exp_dir) / CAP_FILE, {"max_total_usd": float(max_total_usd)})
+
+
+def read_cap(exp_dir: Path) -> float | None:
+    doc = _read(Path(exp_dir) / CAP_FILE)
+    return _num(doc.get("max_total_usd")) if isinstance(doc, dict) else None
+
+
+def find_cap(run_dir: Path) -> tuple[Path, float] | None:
+    """The nearest ancestor of ``run_dir`` that has a ``cap.json``, and the cap it records."""
+    p = Path(run_dir).resolve().parent
+    while True:
+        cap = read_cap(p)
+        if cap is not None:
+            return p, cap
+        if p.parent == p:
+            return None
+        p = p.parent
+
+
+def cap_allows(run_dir: Path, new_total: float) -> tuple[bool, str]:
+    """Whether raising ``run_dir`` to ``new_total`` still fits the experiment cap. No cap file means it is allowed."""
+    found = find_cap(run_dir)
+    if found is None:
+        return True, ""
+    exp_dir, cap = found
+    this = run_commitment(run_dir)
+    reserved = experiment_commitment(exp_dir) - this + max(this, float(new_total))
+    if reserved <= cap + 1e-9:
+        return True, ""
+    return False, f"refused: ${reserved:.2f} would be reserved under the experiment cap of ${cap:.2f} ({exp_dir / CAP_FILE})"
+
+
 # 单次搜索的唯一入口。新的 run_dir 会启动一次空的搜索，本函数不读上一次的最优核。
 # budget 只替换预设里的美元字段；patience、max_rounds 等仍来自预设，除非调用方在参数里另给。
 def run_one(

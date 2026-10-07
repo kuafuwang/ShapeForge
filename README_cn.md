@@ -84,6 +84,25 @@ profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词�
 （176 份系统提示、110 条用户消息、12 段反馈文字，外加四次脚本化搜索里的每一个请求），所以正在跑或正在续跑的实验不受影响。`taic.toml` 和 `taic.paper.toml` 没有提到它。它记在 `run_config.json` 里，`taic resume` 会保留。
 这段分析不会弄坏或拖慢搜索：超时（20 秒）、失败或没有 Metal 工具链时，直接去掉这一段并记一条警告。A/B 实验：`experiments.p1_runs` 的 `fa_flash_hw` 就是只改了这个开关的 `fa_flash`（n=1，随机搜索，只能算轶事）；这次运行于 2026-10-07 06:08 启动，因检测器修正中途停过一次并用 `taic resume` 接着跑（第 1 轮看到的是修正前的提示块，见 `docs/hardware_features.md` 第 9 节），结果还没出来（见 `runs/p1/fa_flash_hw`；对照是 `fa_flash`：确认后 0.735x、$3.123、8 轮，被预算截停）。
 
+硬件特性反馈打开时，如果某个基线已经比 roofline 下界快 5% 以上，这段话不会再说「已经到顶」。下界按直接算法的运算量来算，基线比它还快，说明基线用了更少的运算（测到的例子是 conv2d：torch-mps 777 微秒，直接卷积的下界 932 微秒，大约是实测矩阵峰值的 1.2 倍）。可达目标是那个基线的时间。
+
+## 搜索开关（可选，全部默认关闭）
+
+每一个都是 `taic run` / `taic resume` 的旗标，也是搜索配置或模型配置里的一个字段（`truncation_retry` 在模型配置上，其余在搜索配置上）。驱动脚本像传 `profile_poor` 一样传它们，包括 `truncation_retry=True`。它们写进 `run_config.json`，`taic resume` 会保留。全部关闭时，提示和反馈与以前逐字节相同。
+
+| 开关 | 改变什么 |
+| --- | --- |
+| `--truncation-retry` | 回复被 `max_tokens` 截断且没有内核时，丢掉回传的思考再问一次，这一次不占用修补次数 |
+| `--stop-at-roofline` | 种子已经落在自己 roofline 的噪声门限以内，且没有基线比这个下界更快时，停止搜索（`stop_reason=at_roofline`） |
+| `--abi-guard` | 同一支连续两次碰到同一个 ABI 错误就停掉这一支，并在修补提示里写明线程组内存上限（32768 B）和这次声明的大小 |
+| `--target-note` | 某个基线比 roofline 下界快 5% 以上时，告诉模型这个下界不成立，目标是该基线的时间 |
+| `--rich-history` | 失败分支的历史行写明失败种类（`abi:`、`incorrect:`、`no code:`），不再只有一句笼统的话 |
+| `--status-lines` | 告诉规划者和补丁作者这次至少要快百分之几才算赢，以及还剩几轮、多少耐心和多少预算 |
+
+`result.json` 和 `state.json` 另外记下 `search_seed_label`（搜索正在改的那颗内核）和 `confirm_winner_label`（换种子重测后留下的那颗）。续跑从搜索种子接着改。
+
+套件、重复性实验和 `p1_runs` 的 `--max-total-usd` 按磁盘上预留的钱来算：还在跑的运行算它的当前预算（看板上加过的、旁边单独续跑的都算进去），已经结束的只算实际花掉的。上限写在实验目录的 `cap.json` 里，看板拒绝一笔会冲破这个上限的加预算。
+
 ## 看板与预算告警
 
 `uv run python -m observe` 启动只读看板（默认 `http://127.0.0.1:8765`；改了代码要重启，页面在启动时读入）。它把每次运行的预算和已花费并排显示，并对越过预算的运行告警。规则是一个纯函数 `observe.budget.budget_status(spent, budget, stop_reason, running)`：

@@ -25,7 +25,7 @@ from pathlib import Path
 
 from observe.publish import job_state
 
-from .common import budget_for, fits_cap, read_result, run_one
+from .common import budget_for, experiment_commitment, fits_cap, read_result, run_one, write_cap
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TASKS = ("conv2d", "gemm", "swiglu")
@@ -35,6 +35,7 @@ DEFAULT_TASKS = ("conv2d", "gemm", "swiglu")
 # --resume 只认这一次 trial 自己的 result.json；上一格的结果不会被拷进来当起点。
 def run_repeatability(tasks, dtype, size, out_dir: Path, *, trials=5, budget_scale=1.0, budget=None, max_total_usd=None, max_rounds=None, branches=None, model=None, resume=True, client_factory=None, evaluate_fn=None, log=print, **overrides) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
+    write_cap(out_dir, max_total_usd)
     table: dict[str, dict] = {}
     tasks = list(tasks)
     for ti, task in enumerate(tasks):
@@ -49,7 +50,7 @@ def run_repeatability(tasks, dtype, size, out_dir: Path, *, trials=5, budget_sca
             rd = out_dir / task / f"trial_{t + 1}"
             res = read_result(rd) if resume else None
             if res is None:
-                spent = sum(v["spent_usd"] for v in table.values()) + sum(costs)
+                spent = experiment_commitment(out_dir)
                 if not fits_cap(spent, b, max_total_usd):
                     # 放不下就停这道题剩下的 trial。下一道题仍会按它自己的预算再问一次上限（swiglu 的 $1 可能还放得下）。
                     log(f"(skip {task} trial {t + 1}/{trials}: its ${b:.2f} budget does not fit under --max-total-usd ${max_total_usd:.2f}; the experiment has spent ${spent:.2f})")

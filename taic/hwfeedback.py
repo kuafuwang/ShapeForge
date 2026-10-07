@@ -141,14 +141,20 @@ def _hints(hr: "hw.HardwareFeatureReport", measured: dict, roof: dict) -> list[s
     return out
 
 
-def format_block(hr: "hw.HardwareFeatureReport", measured: dict, roof: dict) -> str:
-    """The text block for one analysed kernel (see the module docstring); at most 12 lines."""
+def format_block(hr: "hw.HardwareFeatureReport", measured: dict, roof: dict, *, bound_beaten: str | None = None) -> str:
+    """The text block for one analysed kernel (see the module docstring); at most 12 lines.
+
+    ``bound_beaten`` replaces the saturated/missing section when a baseline is already faster than the roofline bound:
+    the kernel is not at a ceiling the hardware cannot pass, the bound is the wrong target.
+    """
     perf, frac = _performance(hr, measured, roof)
     lines = ["Hardware-feature analysis of this kernel (static analysis of the source and the compiled AIR, not a measurement):", "Uses: " + _uses(hr) + "."]
     if perf:
         lines.append(perf)
     saturated = frac is not None and (1.0 / frac) <= SATURATED_BELOW
-    if saturated:
+    if bound_beaten:
+        lines.append(bound_beaten)
+    elif saturated:
         lines.append(f"This kernel is at {min(100.0, 100 * frac):.0f}% of its {roof.get('bound', '')} roofline: hardware features cannot help beyond the roofline, so none is listed as missing.")
     else:
         hints = _hints(hr, measured, roof)
@@ -193,7 +199,9 @@ def _compute(task: Any, source: str, report: Any) -> str | None:
     ceil = hw.Ceilings(peak_tflops=roof.get("peak_tflops_measured"), peak_gbps=roof.get("peak_gbps_measured"))
     hr = hw.build_report(source, label="candidate", task=name, dtype=task_obj.dtype, size=task_obj.size, measured=measured, ceilings=ceil, compile_evidence=True, cache_dir=CACHE_DIR,
                          task_obj=task_obj, compile_timeout=COMPILE_TIMEOUT_S)
-    return format_block(hr, measured or {}, roof)
+    from .feedback_extra import bound_beaten_line
+
+    return format_block(hr, measured or {}, roof, bound_beaten=bound_beaten_line(rep))
 
 
 def hw_feedback(task: Any, source: str, report: Any, *, log: Callable[[str], None] | None = None) -> str | None:

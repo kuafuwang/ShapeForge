@@ -110,7 +110,7 @@ MIXED_PLANS = (
 
 
 # 一轮的诊断加规划：从 roofline、流水线统计和源码指出主导瓶颈，再要 K 份互不相同的方案（JSON）。抽不出 JSON 时不在这里收场，编排器会重试或改用 FALLBACK_PLANS。
-def plan_user(task: Task, best_source: str, best_feedback: str, history: list[str], k: int, mixed: bool = False) -> str:
+def plan_user(task: Task, best_source: str, best_feedback: str, history: list[str], k: int, mixed: bool = False, status: str = "") -> str:
     # 只带最近 24 条尝试。更早的失败假设不会出现，模型有可能把它们再提一遍。
     hist = "\n".join(f"- {h}" for h in history[-24:]) or "- (none yet)"
     # 混合规划时最后一份是低风险局部改动；否则 K 份都要求是结构性的，避免分支挤在同一种微调上。
@@ -121,7 +121,7 @@ def plan_user(task: Task, best_source: str, best_feedback: str, history: list[st
             f"propose {k} DIFFERENT optimization plans, each a concrete structural change "
             "(not a micro-tweak) that could be implemented independently of the others, ordered from most to least promising.\n"
         )
-    return (
+    text = (
         f"Current best kernel for `{task.name}` ({task.dtype}):\n```metal\n{best_source.rstrip()}\n```\n\n"
         f"Evaluation feedback of this kernel:\n{best_feedback}\n\n"
         f"Hypotheses already tried and their outcomes (do not repeat failed ones):\n{hist}\n\n"
@@ -129,13 +129,19 @@ def plan_user(task: Task, best_source: str, best_feedback: str, history: list[st
         'Reply with JSON only, in a ```json block: {"bottleneck": "<one sentence>", "analysis": "<2-4 sentences>", '
         '"plans": [{"title": "<short>", "change": "<precise description of what to change in the kernel and why it helps>", "expected_gain": "<estimate>"}]}'
     )
+    if not status:
+        return text
+    return text.replace("\n\nDiagnose the dominant bottleneck", "\n\n" + status.rstrip() + "\n\nDiagnose the dominant bottleneck", 1)
 
 
 # 一路分支的补丁。只落实这一份 plan，已经能工作的部分保持不动，因此不许借改写改掉契约或签名。回复仍是完整内核的一个 metal 块。
-def patch_user(task: Task, best_source: str, best_feedback: str, plan: dict) -> str:
-    return (
+def patch_user(task: Task, best_source: str, best_feedback: str, plan: dict, status: str = "") -> str:
+    text = (
         f"Current best kernel for `{task.name}` ({task.dtype}):\n```metal\n{best_source.rstrip()}\n```\n\n"
         f"Evaluation feedback of this kernel:\n{best_feedback}\n\n"
         f"Implement exactly this optimization plan and nothing else:\n**{plan['title']}**\n{plan['change']}\n\n"
         "Keep everything that already works. Reply with the complete new kernel in one ```metal block."
     )
+    if not status:
+        return text
+    return text.replace("\n\nImplement exactly this optimization plan", "\n\n" + status.rstrip() + "\n\nImplement exactly this optimization plan", 1)

@@ -29,6 +29,11 @@ def cmd_run(a: argparse.Namespace) -> int:
         search.profile_poor = True
     if getattr(a, "hw_feedback", False):  # opt-in: static hardware-feature block in the feedback + Skill 2c in the system prompt (taic/hwfeedback.py)
         search.hw_feedback = True
+    for flag in ("stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines"):
+        if getattr(a, flag, False):
+            setattr(search, flag, True)
+    if getattr(a, "truncation_retry", False):
+        cfg.truncation_retry = True
     if a.plan_mix:
         search.plan_mix = True
     if a.init_samples:
@@ -44,8 +49,9 @@ def cmd_run(a: argparse.Namespace) -> int:
 
 
 SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "max_quick_checks", "min_improvement", "noise_z", "confirm_top", "eval_reps", "max_hangs",
-                 "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback")
-LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "extra_body", "max_tokens", "request_timeout_s", "max_retries")
+                 "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
+                 "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines")
+LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry")
 
 
 # 续跑的配置以这次运行自己记下的设置为准，命令行只覆盖显式给出的项。没有 run_config.json 的老运行用 base，避免被后来的 paper 预设改掉当时的预算和轮数。dry_run 即使没有 API 凭证也要能组出配置，否则「先看看」会因为没钥匙而做不成。
@@ -90,6 +96,13 @@ def _resume_config(a: argparse.Namespace, settings: dict, info: dict):
     if getattr(a, "hw_feedback", False):
         search.hw_feedback = True
         prov["search.hw_feedback"] = "command line"
+    for flag in ("stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines"):
+        if getattr(a, flag, False):
+            setattr(search, flag, True)
+            prov[f"search.{flag}"] = "command line"
+    if getattr(a, "truncation_retry", False):
+        cfg.truncation_retry = True
+        prov["llm.truncation_retry"] = "command line"
     if a.no_tools:
         cfg.use_tools = False
         prov["llm.use_tools"] = "command line"
@@ -191,6 +204,16 @@ def cmd_resume(a: argparse.Namespace) -> int:
     return 0 if res.best_speedup else 2
 
 
+def _add_search_switches(p: argparse.ArgumentParser) -> None:
+    """The opt-in search switches. Each defaults off, so a run that does not pass it keeps the previous prompts and stops."""
+    p.add_argument("--stop-at-roofline", action="store_true", help="stop when the seed is already inside the noise gate of its roofline and no baseline beats that bound")
+    p.add_argument("--abi-guard", action="store_true", help="stop a branch that repeats the same ABI failure, and state the 32768 B threadgroup limit in the repair prompt")
+    p.add_argument("--target-note", action="store_true", help="when a baseline is faster than the roofline bound, tell the model and give that baseline's time as the target")
+    p.add_argument("--rich-history", action="store_true", help="a failed branch's history line names the failure instead of one generic sentence")
+    p.add_argument("--status-lines", action="store_true", help="tell the model the noise floor and the budget, round and patience that remain")
+    p.add_argument("--truncation-retry", action="store_true", help="a length-capped reply with no kernel is retried once without the echoed reasoning, and does not spend a repair turn")
+
+
 # `run` 开新搜索，`resume` 续旧目录。两边的 --budget 含义不同：run 是这一次内核的总上限，resume 是续跑后的新总上限，必须高于已经花掉的金额。
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="taic", description="Triton AI Compiler for Apple GPUs (Triton -> MSL)")
@@ -212,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--profile-poor", action="store_true", help="trace a round's seed with Instruments when it is slower than the best baseline and give the findings to the model")
     p.add_argument("--plan-mix", action="store_true", help="the last plan of every round is a local, low-risk change; the others are structural")
     p.add_argument("--hw-feedback", action="store_true", help="append a short static hardware-feature analysis of the seed to the planner and patch feedback and teach it as Skill 2c (off by default)")
+    _add_search_switches(p)
     p.add_argument("--init-samples", type=int, default=None, help="sample this many initial kernels in parallel; the best eligible one seeds the search")
     p.add_argument("--patience", type=int, default=None, help="stop after this many rounds without a new best (default 4)")
     p.add_argument("--run-dir", default=None)
@@ -234,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--profile-poor", action="store_true")
     r.add_argument("--plan-mix", action="store_true")
     r.add_argument("--hw-feedback", action="store_true")
+    _add_search_switches(r)
     r.add_argument("--init-samples", type=int, default=None)
     r.add_argument("--patience", type=int, default=None, help="not recorded by runs older than run_config.json: give the value the run was started with")
     r.set_defaults(fn=cmd_resume)

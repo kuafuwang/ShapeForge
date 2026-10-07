@@ -128,6 +128,16 @@ def test_block_of_an_attention_kernel_without_pipelining_gives_hints_not_orders(
     assert not any(w in b.lower() for w in (" must ", "you have to", "required"))  # a hint, not an instruction
 
 
+def test_a_bound_the_baseline_already_beats_is_not_called_the_ceiling():
+    def beat(rep):
+        rep["roofline"]["lower_bound_us"] = 931.8
+        rep["baseline_us"] = {"mlx": 994.0, "torch_mps": 777.0}
+
+    b = block("gemm_paper_best", mutate=beat)
+    assert "does not hold" in b and "777" in b and "Winograd" in b
+    assert "cannot help beyond the roofline" not in b and b.rstrip().endswith(CAVEAT)
+
+
 def test_a_kernel_at_the_roofline_gets_no_missing_list():
     for name in ("gemm_paper_best", "relu_best"):
         b = block(name)

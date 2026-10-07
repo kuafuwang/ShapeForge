@@ -442,6 +442,20 @@ def _branch(rnd: int, i: int, chats: list[dict], cands: list[dict], search, kern
     return "partial", None, BranchResume(attempt + 1, conv + [{"role": "user", "content": prompts.repair_user(fb, attempt + 1, max_try)}], 0, [], None, 0, f"{tag} failed evaluation: next is repair attempt {attempt + 1}")
 
 
+def _failed_branch(rnd: int, i: int, cands: list[dict]) -> str:
+    """The history line of a branch that never produced an eligible kernel, when ``search.rich_history`` is on."""
+    from .feedback_extra import failure_phrase
+
+    own = [c for c in cands if (li := _label_info(c["label"])) and li["round"] == rnd and li["plan"] == i]
+    if not own:
+        return "no code: no kernel block"
+    rep = own[-1].get("report") or {}
+    status = str(rep.get("status") or "")
+    if status in ("", "unevaluated"):
+        return "no code: no kernel block"
+    return failure_phrase(status, str(rep.get("message") or ""))
+
+
 def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | None = None) -> Snapshot:
     """Rebuild the search state of ``run_dir`` (read-only). ``search`` is the ``SearchConfig`` the continued run will use (it fixes ``branches``,
     ``max_repair_tries`` and the selection margins that the rebuild replays); ``kernel_name`` is the task's kernel."""
@@ -504,6 +518,12 @@ def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | N
     if len(recorded) > len(cands):
         notes.append(f"state.json lists {len(recorded) - len(cands)} more candidate(s) than candidates/ holds: those entries are dropped")
     best_label = next((t["label"] for t in reversed(trace) if t.get("improved")), None)
+    # 确认测量可能把 best_label 换成重测赢家。续跑要接着改搜索时的种子，而不是那颗抛硬币赢的内核。老运行没有这个字段，仍用轨迹。
+    seed_recorded = (result or {}).get("search_seed_label") or (state or {}).get("search_seed_label")
+    if seed_recorded and any(c["label"] == seed_recorded for c in cands):
+        if seed_recorded != best_label:
+            notes.append(f"the recorded best is {best_label}, but the search seed was {seed_recorded}: the resume continues from the search seed")
+        best_label = seed_recorded
     checks["best_label_state"] = (state or {}).get("best_label")
     checks["best_label"] = best_label
     if state and state.get("best_label") and state["best_label"] != best_label and not (result and result.get("stop_reason")):
@@ -551,7 +571,7 @@ def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | N
                 t = next(t for t in trace if t["label"] == lab)
                 tag = f"{_speedup(cand['report'], search.correctness_only):.3f}x" + (" (new best)" if best_at_end[r] == lab else " (within measurement noise of the best)" if t.get("within_noise") else " (not better)")
             else:
-                tag = "no valid kernel after repair"
+                tag = _failed_branch(r, i, cands) if search.rich_history else "no valid kernel after repair"
             history.append(f"round {r}: {p['title']} -> {tag}")
         if any(t.get("improved") for t in entries_by_round.get(r, [])):
             stagnant = 0
