@@ -6,24 +6,28 @@
 from __future__ import annotations
 
 import argparse
-import json
 from collections import defaultdict
 from pathlib import Path
 
 
-def collect(dirs: list[Path]) -> list[dict]:
-    rows = []
+def collect(dirs: list[Path]) -> tuple[list[dict], list[str]]:
+    """Spend rows, and paths that are present but unreadable. A damaged result is not omitted as if the run never happened."""
+    from taic.artifacts import RESULT_SCHEMA_VERSION, NeedsInspection, read_versioned
+
+    rows: list[dict] = []
+    inspections: list[str] = []
     for d in dirs:
         for p in sorted(Path(d).rglob("result.json")):
             try:
-                r = json.loads(p.read_text())
-            except (OSError, json.JSONDecodeError):
+                r = read_versioned(p, RESULT_SCHEMA_VERSION)
+            except NeedsInspection as e:
+                inspections.append(str(e))
                 continue
-            if "spent_usd" not in r:
+            if not isinstance(r, dict) or "spent_usd" not in r:
                 continue
             rows.append({"group": str(d), "run": str(p.parent), "task": r.get("task"), "dtype": r.get("dtype"), "model": r.get("model"),
                          "spent_usd": float(r["spent_usd"]), "budget_usd": r.get("budget_usd"), "evaluations": r.get("evaluations", 0)})
-    return rows
+    return rows, inspections
 
 
 def markdown(rows: list[dict]) -> str:
@@ -44,9 +48,11 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("dirs", nargs="+")
     a = ap.parse_args(argv)
-    rows = collect([Path(d) for d in a.dirs])
+    rows, inspections = collect([Path(d) for d in a.dirs])
+    for line in inspections:
+        print(line)
     print(markdown(rows))
-    return 0
+    return 2 if inspections else 0
 
 
 if __name__ == "__main__":

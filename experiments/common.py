@@ -174,17 +174,19 @@ def run_one(
     return asyncio.run(orch.run())
 
 
-# 各脚本的 --resume 只认这一份文件在不在。不在就当这次还没跑完；candidates/ 里的半成品不会被接上。
+# 各脚本的 --resume 只在 result.json 不存在时才开新的一次搜索。文件在，但损坏或版本更新，要人来看，不能当成还没跑过。
 def read_result(run_dir: Path) -> dict | None:
-    p = Path(run_dir) / "result.json"
-    # 只看文件在不在。写到一半仍然算「有」，解析失败会抛出去，看板那种「截断当缺失」不在这里。
-    return json.loads(p.read_text()) if p.exists() else None
+    from taic.artifacts import RESULT_SCHEMA_VERSION, read_versioned
+
+    return read_versioned(Path(run_dir) / "result.json", RESULT_SCHEMA_VERSION)
 
 
-# 换种子复测写在另一份文件。没有它时「相对 triton-msl」一列为空，搜索本身仍算跑完。
+# 换种子复测写在另一份文件。没有它时「相对 triton-msl」一列为空，搜索本身仍算跑完。文件损坏则不能当成没测过。
 def read_confirm(run_dir: Path) -> dict | None:
-    p = Path(run_dir) / "confirm_report.json"
-    return json.loads(p.read_text()) if p.exists() else None
+    from taic.artifacts import read_versioned
+    from tcenv.schema import REPORT_SCHEMA_VERSION
+
+    return read_versioned(Path(run_dir) / "confirm_report.json", REPORT_SCHEMA_VERSION)
 
 
 # 一行里同时留下搜索期加速比、换种子确认后的加速比，以及手写朴素核，后面才能把「基线弱」和「搜索强」分开。

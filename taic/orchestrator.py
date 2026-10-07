@@ -35,6 +35,7 @@ from tcenv.evaluate import EvalReport, evaluate
 from tcenv.report import format_feedback
 
 from . import control, prompts
+from .artifacts import LEDGER_SCHEMA_VERSION, RESULT_SCHEMA_VERSION, STATE_SCHEMA_VERSION
 from .feedback_extra import abi_signature, at_roofline, failure_phrase, status_lines, target_note, threadgroup_limit_note
 from .llm import LLM, BudgetExhausted, CostLedger, LLMConfig, LLMError, SearchConfig, Transcript
 from .policy import candidate_eligible, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain
@@ -416,6 +417,7 @@ class Orchestrator:
             from observe.publish import publish
 
             publish(self.run_dir / "state.json", {
+                "schema_version": STATE_SCHEMA_VERSION,
                 "pid": os.getpid(),
                 "updated_at": time.time(),
                 "started_at": self._started_at,
@@ -511,7 +513,7 @@ class Orchestrator:
         d.mkdir(parents=True, exist_ok=True)
         (d / "kernel.metal").write_text(c.source)
         if c.report:
-            (d / "report.json").write_text(json.dumps(c.report.to_json(), indent=1))
+            control.write_json_atomic(d / "report.json", c.report.to_json())
             (d / "feedback.txt").write_text(format_feedback(c.report))
 
     # a 必须比 b 快出这么多倍才算真正变快：至少 min_improvement，并且要盖过两者加速比标准误合成后再乘 noise_z。差一点只记 within_noise，不能当下一轮种子。
@@ -824,11 +826,13 @@ class Orchestrator:
             return None
         recorded = root / "result.json"
         if recorded.is_file():
+            # 文件在但读不了，或版本比这份代码新：不能当成「没有成绩」再从头写一版。
+            from .artifacts import RESULT_SCHEMA_VERSION, NeedsInspection, read_versioned
+
             try:
-                doc = json.loads(recorded.read_text())
-            except json.JSONDecodeError:
-                self.log(f"-- --from {root}: result.json is not JSON; writing the first version from scratch")
-                return None
+                doc = read_versioned(recorded, RESULT_SCHEMA_VERSION)
+            except NeedsInspection as e:
+                raise RunStartError(f"--from {root}: {e}; it is not treated as a run that was never done") from e
             mismatch = [f"{key} is {doc.get(key)!r}, this run is {got!r}" for key, got in (("task", self.task_name), ("dtype", self.dtype), ("size", self.size)) if doc.get(key) not in (None, got)]
             if mismatch:
                 self.log(f"-- --from {root}: not this task ({'; '.join(mismatch)}); writing the first version from scratch")
@@ -1067,7 +1071,7 @@ class Orchestrator:
             self.best = win
         res.confirmed_status, res.confirmed_speedup = rep.status, rep.speedup
         res.candidate_us, res.baseline_us = rep.candidate_us, rep.baseline_us
-        (self.run_dir / "confirm_report.json").write_text(json.dumps(rep.to_json(), indent=1))
+        control.write_json_atomic(self.run_dir / "confirm_report.json", rep.to_json())
 
     # 种子慢于最强基线（speedup < profile_poor_below）时才抓 Instruments，附给规划和每一路补丁。失败、超过 profile_max 或已经挂死都不影响搜索；同一源码只抓一次。痕迹在 gpu_lock 里跑，和评测一样独占 GPU。
     async def _profile_seed(self, seed: Candidate, rnd: int) -> str:
@@ -1148,8 +1152,11 @@ class Orchestrator:
         if self.best:
             res.best_label, res.best_speedup = self.best.label, self.best.speedup
             (self.run_dir / "best.metal").write_text(self.best.source)
-        (self.run_dir / "result.json").write_text(json.dumps(asdict(res), indent=1, default=str))
-        (self.run_dir / "ledger.json").write_text(json.dumps({"summary": self.ledger.summary(), "requests": self.ledger.requests}, indent=1))
+        # ledger.json 只是账本的检查点。已记账的请求在 transcript.jsonl 里，这里不改写那份记录。
+        result_doc = asdict(res)
+        result_doc["schema_version"] = RESULT_SCHEMA_VERSION
+        control.write_json_atomic(self.run_dir / "result.json", result_doc)
+        control.write_json_atomic(self.run_dir / "ledger.json", {"schema_version": LEDGER_SCHEMA_VERSION, "summary": self.ledger.summary(), "requests": self.ledger.requests})
         self._confirmations = res.confirmations
         self._publish_state("done", stop_reason=res.stop_reason)
         sp = f"{res.confirmed_speedup:.3f}x confirmed" if res.confirmed_status == "ok" and res.confirmation_source_sha256 else (f"{res.best_speedup:.3f}x (not confirmed)" if res.best_speedup else "no valid kernel")

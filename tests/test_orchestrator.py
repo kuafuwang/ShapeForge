@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from taic.llm import LLMConfig, SearchConfig
-from taic.orchestrator import Orchestrator
+from taic.orchestrator import Orchestrator, RunStartError
 from tcenv.evaluate import EvalReport
 
 from .fakes import FakeClient, make_response, make_usage
@@ -102,8 +102,12 @@ def test_happy_path_selects_the_fastest_eligible_candidate_and_confirms_it(tmp_p
     assert all(res.trace[i]["cost_usd"] <= res.trace[i + 1]["cost_usd"] for i in range(len(res.trace) - 1))
     # artifacts
     assert (tmp_path / "run" / "best.metal").read_text().count("speed=1.3") == 1
-    assert json.loads((tmp_path / "run" / "result.json").read_text())["best_label"] == "r1.p1"
-    assert (tmp_path / "run" / "transcript.jsonl").exists() and (tmp_path / "run" / "ledger.json").exists()
+    result = json.loads((tmp_path / "run" / "result.json").read_text())
+    assert result["best_label"] == "r1.p1" and result["schema_version"] == 1
+    transcript = (tmp_path / "run" / "transcript.jsonl").read_text()
+    assert transcript and json.loads((tmp_path / "run" / "ledger.json").read_text())["schema_version"] == 1
+    assert json.loads((tmp_path / "run" / "candidates" / "000_init" / "report.json").read_text())["schema_version"] == 1
+    assert json.loads((tmp_path / "run" / "state.json").read_text())["schema_version"] == 1
     assert (tmp_path / "run" / "candidates" / "000_init" / "kernel.metal").exists()
 
 
@@ -539,6 +543,16 @@ def test_from_run_falls_back_to_a_first_draft_when_the_kernel_is_no_longer_eligi
     res = run(orch)
     assert any("Translate this Triton kernel" in text for text in _prompts(orch))
     assert res.best_label == "init" and res.best_speedup == pytest.approx(1.1)
+
+
+def test_from_run_refuses_a_damaged_result_instead_of_starting_over(tmp_path):
+    calls = []
+    prior = _prior(tmp_path / "prior", "speed=1.4")
+    (prior / "result.json").write_text("{not json")
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), calls, max_rounds=0, from_run=prior)
+    with pytest.raises(RunStartError, match="needs human inspection"):
+        run(orch)
+    assert calls == []
 
 
 def test_from_run_does_not_use_a_kernel_recorded_for_a_different_task(tmp_path):

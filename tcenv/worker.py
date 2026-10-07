@@ -42,8 +42,33 @@ def _install_heartbeat(path: str | None) -> None:
 
 
 # 无论评测正常返回还是框架自己抛异常，都要留下 JSON。父进程把「没有报告」单独当成 crash。
+def _refuse(raw: object, err: BaseException) -> None:
+    """Leave an explicit refusal when the request itself cannot be read. Do not start an evaluation."""
+    from .evaluate import EvalReport
+    from .schema import write_json_atomic
+
+    message = str(err)
+    if not isinstance(raw, dict) or not raw.get("out"):
+        sys.stderr.write(message + "\n")
+        return
+    rep = EvalReport(
+        task=str(raw.get("task") or ""), dtype=str(raw.get("dtype") or ""), size=str(raw.get("size") or ""),
+        mode=str(raw.get("mode") or ""), seed=int(raw["seed"]) if isinstance(raw.get("seed"), int) and not isinstance(raw.get("seed"), bool) else 0,
+    )
+    rep.status = "crash"
+    rep.message = message
+    write_json_atomic(Path(raw["out"]), rep.to_json())
+
+
 def main() -> int:
-    req = json.loads(Path(sys.argv[1]).read_text())
+    raw = json.loads(Path(sys.argv[1]).read_text())
+    from .schema import SchemaError, read_request
+
+    try:
+        req = read_request(raw)
+    except SchemaError as e:
+        _refuse(raw, e)
+        return 2
     out = Path(req["out"])
     try:
         _install_heartbeat(req.get("heartbeat"))
@@ -64,16 +89,19 @@ def main() -> int:
             reps=req["reps"],
             cases=tuple(req["cases"]) if req.get("cases") else None,
         )
-        out.write_text(json.dumps(rep.to_json()))
+        from .schema import write_json_atomic
+
+        write_json_atomic(out, rep.to_json())
         return 0
     except Exception as e:  # noqa: BLE001
         # 框架异常也写成 status crash，并带上回溯的尾部。否则父进程只能看到进程退出、没有报告。
         from .evaluate import EvalReport
+        from .schema import write_json_atomic
 
         rep = EvalReport(task=req["task"], dtype=req["dtype"], size=req["size"], mode=req["mode"], seed=req["seed"])
         rep.status = "crash"
         rep.message = f"harness error: {type(e).__name__}: {e}\n" + "".join(traceback.format_exc().splitlines(True)[-8:])
-        out.write_text(json.dumps(rep.to_json()))
+        write_json_atomic(out, rep.to_json())
         return 1
 
 

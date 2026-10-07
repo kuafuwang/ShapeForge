@@ -138,7 +138,8 @@ def test_cost_report_sums_spend_per_group_and_model(tmp_path):
         (tmp_path / d / name / "result.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "model": model, "spent_usd": usd, "budget_usd": 2.0, "evaluations": 3}))
     (tmp_path / "a" / "junk").mkdir()
     (tmp_path / "a" / "junk" / "result.json").write_text("{not json")
-    rows = cost_report.collect([tmp_path / "a", tmp_path / "b"])
+    rows, inspections = cost_report.collect([tmp_path / "a", tmp_path / "b"])
     assert len(rows) == 3
+    assert len(inspections) == 1 and "needs human inspection" in inspections[0] and "junk" in inspections[0]
     md = cost_report.markdown(rows)
     assert "| 2 | 6 | 0.750 |" in md and "**1.750**" in md

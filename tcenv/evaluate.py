@@ -30,6 +30,8 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+from .schema import REPORT_SCHEMA_VERSION, REQUEST_SCHEMA_VERSION, SchemaError, migrate_report, write_json_atomic
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 STATUS_OK = "ok"
@@ -93,16 +95,15 @@ class EvalReport:
 
     def to_json(self) -> dict:
         d = asdict(self)
-        d["eligible"] = self.eligible
+        d["eligible"] = self.eligible  # derived; older readers still look for it
+        d["schema_version"] = REPORT_SCHEMA_VERSION
         return d
 
-    # 读回子进程写的 JSON。eligible 由 status 推出来，不进构造参数；报告里多出来的键忽略。
+    # 读回子进程写的 JSON。没有 schema_version 的旧文件按版本 0 迁移。更新的版本或本版本不认识的字段直接拒绝，不再丢掉后照常构造。
     @staticmethod
     def from_json(d: dict) -> "EvalReport":
-        d = dict(d)
-        d.pop("eligible", None)
         known = {f.name for f in fields(EvalReport)}
-        return EvalReport(**{k: v for k, v in d.items() if k in known})
+        return EvalReport(**migrate_report(d, known))
 
 
 # ---------------------------------------------------------------------------
@@ -498,11 +499,12 @@ def _run_worker(
         stage_path = tdp / "stage.json"
         err_path = tdp / "stderr.txt"
         req = {
+            "schema_version": REQUEST_SCHEMA_VERSION,
             "task": task, "dtype": dtype, "size": size, "kernel_path": str(kernel_path), "mode": mode, "seed": seed,
             "reps": reps, "cases": cases, "out": str(out_path), "heartbeat": str(hb_path), "stage": str(stage_path),
         }
         req_path = tdp / "request.json"
-        req_path.write_text(json.dumps(req))
+        write_json_atomic(req_path, req)
         env = env_with_validation() if validation else dict(os.environ)
         env["PYTHONPATH"] = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
         env.setdefault("TORCHINDUCTOR_COMPILE_THREADS", "1")  # no compile-worker pool that could outlive a SIGKILLed worker
@@ -536,7 +538,15 @@ def _run_worker(
             return base
         stderr = err_path.read_text(errors="replace")
         if out_path.exists():
-            rep = EvalReport.from_json(json.loads(out_path.read_text()))
+            try:
+                rep = EvalReport.from_json(json.loads(out_path.read_text()))
+            except SchemaError:
+                raise
+            except (OSError, ValueError) as e:
+                base.status = "crash"
+                base.message = f"worker left a damaged report and needs human inspection: {e}"
+                base.elapsed_s = time.perf_counter() - t0
+                return base
         else:
             # 监督没有杀它，进程自己退出了却没有 report.json：GPU fault 或段错误，框架来不及写判决。
             base.status = "crash"

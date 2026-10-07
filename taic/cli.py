@@ -152,7 +152,7 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
         first = snap.partial.rnd if snap.partial else snap.next_round
         if first > search.max_rounds:
             raise rs.ResumeError(f"all {search.max_rounds} rounds were used (the run is past round {first - 1}): raise the limit with --max-rounds")
-    except (rs.ResumeError, LLMError, control.ControlError, KeyError) as e:
+    except (rs.ResumeError, rs.NeedsInspection, LLMError, control.ControlError, KeyError) as e:
         raise ResumeRefused(f"cannot resume {run_dir}: {e}", 5) from e
     orch = Orchestrator(snap.task, snap.dtype, snap.size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log, resuming=True)
     variants = {prompts.system_prompt(orch.task, use_tools=cfg.use_tools, profiler_evidence=pe, hw_feedback=hw) for pe in (False, True) for hw in (False, True)}

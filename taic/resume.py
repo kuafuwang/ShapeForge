@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import control
+from .artifacts import LEDGER_SCHEMA_VERSION, NeedsInspection, RESULT_SCHEMA_VERSION, STATE_SCHEMA_VERSION, read_versioned
 from .policy import candidate_eligible, comparison_speedup, next_stagnant, relation_to_best
 
 FEEDBACK_CHARS = 6000  # as in the orchestrator
@@ -172,7 +173,16 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops
     ``kind``: ``running`` (a live process owns it; ``can_topup_live`` says whether it polls the control file), ``resuming`` (a resume holds the lock),
     ``interrupted`` (no result, no live process), ``budget_exhausted`` (finished, stopped for money), ``finished`` (any other stop), ``unknown``."""
     run_dir = Path(run_dir)
-    state, result = _doc(run_dir / "state.json"), _doc(run_dir / "result.json")
+    try:
+        state, result = read_versioned(run_dir / "state.json", STATE_SCHEMA_VERSION), read_versioned(run_dir / "result.json", RESULT_SCHEMA_VERSION)
+    except NeedsInspection as e:
+        info: dict = {
+            "run_dir": str(run_dir), "kind": "unknown", "stop_reason": "", "phase": "", "resumable": False, "reason": str(e), "needs_budget": False,
+            "can_topup_live": False, "live_reason": "", "spent_usd": None, "budget_usd": None, "initial_budget_usd": None,
+            "pid": None, "round": None, "max_rounds": None, "best_speedup": None, "control_supported": False, "history": control.budget_history(run_dir, None),
+            "suggested_amounts": list(SUGGESTED_AMOUNTS), "task": None, "dtype": None,
+        }
+        return info
     ledger = (state or {}).get("ledger") or {}
     spent = _first((result or {}).get("spent_usd"), (state or {}).get("spent_usd"), ledger.get("total_usd"))
     budget = _first((result or {}).get("budget_usd"), (state or {}).get("budget_usd"), ledger.get("budget_usd"))
@@ -343,6 +353,7 @@ def _label_info(label: str) -> dict | None:
 
 def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
     from tcenv.evaluate import EvalReport
+    from tcenv.schema import SchemaError
 
     out = []
     root = Path(run_dir) / "candidates"
@@ -352,11 +363,19 @@ def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
         m = CAND_DIR_RE.match(d.name)
         if not m or not (d / "kernel.metal").exists():
             continue
-        rep = control.read_json(d / "report.json")
-        if not isinstance(rep, dict):
-            notes.append(f"candidate {d.name} has no readable report.json: skipped")
+        report_path = d / "report.json"
+        if not report_path.exists():
+            notes.append(f"candidate {d.name} has no report.json: skipped")
             continue
-        out.append({"idx": int(m["idx"]), "label": m["label"], "source": (d / "kernel.metal").read_text(), "report": EvalReport.from_json(rep), "plan": None})
+        try:
+            rep = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            raise NeedsInspection(f"{report_path} is damaged and needs human inspection") from e
+        try:
+            report = EvalReport.from_json(rep)
+        except SchemaError as e:
+            raise NeedsInspection(f"{report_path} needs human inspection: {e}") from e
+        out.append({"idx": int(m["idx"]), "label": m["label"], "source": (d / "kernel.metal").read_text(), "report": report, "plan": None})
     out.sort(key=lambda c: c["idx"])
     return out
 
@@ -483,7 +502,7 @@ def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | N
     run_dir = Path(run_dir)
     notes: list[str] = []
     checks: dict = {}
-    state, result = _doc(run_dir / "state.json"), _doc(run_dir / "result.json")
+    state, result = read_versioned(run_dir / "state.json", STATE_SCHEMA_VERSION), read_versioned(run_dir / "result.json", RESULT_SCHEMA_VERSION)
     if state is None and result is None:
         raise ResumeError(f"{run_dir} has neither state.json nor result.json")
     events, bad = read_transcript(run_dir)
@@ -495,12 +514,16 @@ def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | N
 
     # --- ledger -------------------------------------------------------------------------------
     requests = _requests_from_transcript(events, notes)
-    ledger_doc = _doc(run_dir / "ledger.json") or {}
+    ledger_doc = read_versioned(run_dir / "ledger.json", LEDGER_SCHEMA_VERSION) or {}
     from_state = _first((state or {}).get("spent_usd"), ((state or {}).get("ledger") or {}).get("total_usd"))
     from_ledger = _first(((ledger_doc.get("summary") or {}).get("total_usd")), (result or {}).get("spent_usd"))
+    # 检查点里的请求列表不能顶替转录。两边都有时，用转录里的每一笔。转录缺了而账本里还有请求时，要人来看，不能把检查点当成已经记过的账。
+    if isinstance((state or {}).get("requests"), list) and (state or {}).get("requests"):
+        notes.append("state.json holds a requests list; it was not applied. transcript.jsonl is the billed-request record")
     if not requests and isinstance(ledger_doc.get("requests"), list) and ledger_doc["requests"]:
-        requests = [dict(r) for r in ledger_doc["requests"]]
-        notes.append("transcript.jsonl is missing: the ledger comes from ledger.json")
+        raise NeedsInspection(f"{run_dir / 'ledger.json'} has a request list but transcript.jsonl does not; a checkpoint cannot replace the billed transcript and needs human inspection")
+    if requests and isinstance(ledger_doc.get("requests"), list) and ledger_doc["requests"]:
+        notes.append("ledger.json holds a request list; it was not applied. transcript.jsonl is the billed-request record")
     total = float(requests[-1]["total_usd"]) if requests else 0.0
     checks["ledger_requests"] = len(requests)
     checks["ledger_total_usd"] = total

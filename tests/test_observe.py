@@ -34,10 +34,11 @@ def test_publish_writes_json(tmp_path):
     assert json.loads(path.read_text())["phase"] == "evaluate"
 
 
-def test_from_json_drops_unknown_fields():
-    rep = EvalReport.from_json({"task": "relu", "dtype": "fp16", "size": "small", "mode": "quick", "status": "ok", "future_field": 1})
-    assert rep.status == "ok"
-    assert not hasattr(rep, "future_field")
+def test_from_json_refuses_a_field_this_version_does_not_know():
+    from tcenv.schema import SchemaError
+
+    with pytest.raises(SchemaError, match="needs human inspection"):
+        EvalReport.from_json({"task": "relu", "dtype": "fp16", "size": "small", "mode": "quick", "status": "ok", "future_field": 1})
 
 
 def _write_run(root, name, *, phase, pid, stop="", with_result=False):
