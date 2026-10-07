@@ -181,6 +181,7 @@ class RunResult:
     search_seed_label: str | None = None  # the kernel the search was mutating when it stopped; confirm may publish a different one
     search_seed_speedup: float | None = None  # that kernel's speedup as measured during the search
     confirm_winner_label: str | None = None  # the kernel the fresh-seed remeasure kept; None when confirmation did not run
+    confirmation_source_sha256: str | None = None  # sha256 of the confirmed winner's kernel text; None when confirmation did not bind a source
 
 
 # 源码的内容身份：评测缓存、复测去重、profiler 缓存都用它。同一份文本不会被当成两个内核。
@@ -1037,6 +1038,8 @@ class Orchestrator:
             res.search_seed_label, res.search_seed_speedup = self._search_seed.label, self._search_seed.speedup
         if self._confirm_winner:
             res.confirm_winner_label = self._confirm_winner.label
+            if res.confirmed_status == "ok":
+                res.confirmation_source_sha256 = hashlib.sha256(self._confirm_winner.source.encode("utf-8")).hexdigest()
         if self.best:
             res.best_label, res.best_speedup = self.best.label, self.best.speedup
             (self.run_dir / "best.metal").write_text(self.best.source)
@@ -1044,6 +1047,6 @@ class Orchestrator:
         (self.run_dir / "ledger.json").write_text(json.dumps({"summary": self.ledger.summary(), "requests": self.ledger.requests}, indent=1))
         self._confirmations = res.confirmations
         self._publish_state("done", stop_reason=res.stop_reason)
-        sp = f"{res.confirmed_speedup:.3f}x confirmed" if res.confirmed_speedup else (f"{res.best_speedup:.3f}x" if res.best_speedup else "no valid kernel")
+        sp = f"{res.confirmed_speedup:.3f}x confirmed" if res.confirmed_status == "ok" and res.confirmation_source_sha256 else (f"{res.best_speedup:.3f}x (not confirmed)" if res.best_speedup else "no valid kernel")
         self.log(f"== done: {sp} | spent ${res.spent_usd:.3f} | {res.evaluations} evaluations | stop: {res.stop_reason} | {self.run_dir}")
         return res

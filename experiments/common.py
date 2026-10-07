@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Callable
@@ -187,12 +188,81 @@ def read_confirm(run_dir: Path) -> dict | None:
 
 
 # 一行里同时留下搜索期加速比、换种子确认后的加速比，以及手写朴素核，后面才能把「基线弱」和「搜索强」分开。
-def summarize(res: dict, confirm: dict | None, naive: dict | None = None) -> dict:
-    """One row of the suite table."""
+def _sha256_file(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _confirmation_files(run_dir: Path, winner_label: str | None) -> tuple[str | None, str | None, str | None]:
+    """(best.metal sha256, winner candidate kernel.metal sha256, confirm_report status)."""
+    best = _sha256_file(run_dir / "best.metal")
+    report = None
+    try:
+        doc = json.loads((run_dir / "confirm_report.json").read_text())
+        if isinstance(doc, dict):
+            report = doc.get("status")
+    except (OSError, ValueError):
+        report = None
+    winner = None
+    if isinstance(winner_label, str) and winner_label:
+        root = run_dir / "candidates"
+        if root.is_dir():
+            found = [p for p in root.iterdir() if p.is_dir() and len(p.name) > 4 and p.name[3] == "_" and p.name[4:] == winner_label]
+            if len(found) == 1:
+                winner = _sha256_file(found[0] / "kernel.metal")
+    return best, winner, report
+
+
+def conclusion_of_run(run_dir: Path, result: dict | None) -> dict:
+    """The publication verdict for one run directory. A bare ``result.json`` is not enough to call a number confirmed."""
+    if not result:
+        return published_conclusion(None)
+    best, winner, status = _confirmation_files(Path(run_dir), result.get("confirm_winner_label"))
+    return published_conclusion(result, best_metal_sha256=best, confirm_status=status, winner_metal_sha256=winner)
+
+
+def published_conclusion(result: dict | None, *, best_metal_sha256: str | None = None, confirm_status: str | None = None, winner_metal_sha256: str | None = None) -> dict:
+    """What a finished run may show as its confirmed speedup.
+
+    A number is returned only when ``confirmed_status`` is ok, the confirm report is ok, ``best.metal`` and the
+    winner candidate's ``kernel.metal`` both hash to ``confirmation_source_sha256``, and ``confirm_winner_label``
+    named that candidate. A result that has no ``confirmation_source_sha256`` key is an older file: ``旧版未绑定源码``.
+    Anything else that is finished is ``未确认`` and does not fall back to ``best_speedup``.
+    """
+    if not result:
+        return {"speedup": None, "publication": "in_progress"}
+    if "confirmation_source_sha256" not in result:
+        return {"speedup": None, "publication": "旧版未绑定源码"}
+    recorded = result.get("confirmation_source_sha256")
+    winner = result.get("confirm_winner_label")
+    bound = (
+        result.get("confirmed_status") == "ok"
+        and confirm_status == "ok"
+        and isinstance(recorded, str) and recorded != ""
+        and recorded == best_metal_sha256 == winner_metal_sha256
+        and isinstance(winner, str) and winner != ""
+    )
+    if bound:
+        return {"speedup": result.get("confirmed_speedup"), "publication": "confirmed"}
+    return {"speedup": None, "publication": "未确认"}
+
+
+def summarize(res: dict, confirm: dict | None, naive: dict | None = None, *, run_dir: Path | None = None) -> dict:
+    """One row of the suite table. ``published_speedup`` is set only when the confirmation is bound to its source."""
+    best_sha = winner_sha = None
+    confirm_status = (confirm or {}).get("status")
+    if run_dir is not None:
+        best_sha, winner_sha, report_status = _confirmation_files(Path(run_dir), res.get("confirm_winner_label"))
+        if confirm_status is None:
+            confirm_status = report_status
+    conclusion = published_conclusion(res, best_metal_sha256=best_sha, confirm_status=confirm_status, winner_metal_sha256=winner_sha)
     row = {
         "task": res["task"], "dtype": res["dtype"], "model": res["model"], "stop_reason": res["stop_reason"], "rounds": res["rounds"],
         "evaluations": res["evaluations"], "spent_usd": res["spent_usd"], "budget_usd": res["budget_usd"],
         "best_speedup": res.get("best_speedup"), "confirmed_speedup": res.get("confirmed_speedup"),
+        "published_speedup": conclusion["speedup"], "publication": conclusion["publication"],
         "candidate_us": res.get("candidate_us"), "baseline_us": res.get("baseline_us") or {},
         "profiles": len(res.get("profiles") or []), "spilled_bytes_seen": max([p.get("spilled_bytes") or 0 for p in res.get("profiles") or []], default=0),
     }

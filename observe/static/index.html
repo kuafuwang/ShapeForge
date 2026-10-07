@@ -295,10 +295,11 @@ function money(value, digits) {
   return "$" + n.toFixed(digits == null ? 2 : digits);
 }
 function runStateText(row) {
-  const sp = speed(row.speedup);
-  if (row.status === "running") return "进行中 · 第 " + (row.round || "?") + " 轮 · 目前 " + sp;
-  if (row.status === "interrupted") return "中断 · 当时 " + sp;
-  return "已结束 · " + sp;
+  const headline = (row.status === "running" || row.status === "interrupted" || row.publication === "confirmed" || row.publication === "in_progress" || !row.publication)
+    ? speed(row.speedup) : row.publication;
+  if (row.status === "running") return "进行中 · 第 " + (row.round || "?") + " 轮 · 目前 " + headline;
+  if (row.status === "interrupted") return "中断 · 当时 " + headline;
+  return "已结束 · " + headline;
 }
 
 function speed(value) {
@@ -921,6 +922,10 @@ function renderSearch(run, history) {
   const dtype = (run.state && run.state.dtype) || (run.result && run.result.dtype) || "";
   const round = run.state && run.state.round;
   box.append(el("div", { class: "sub" }, [t([task, dtype, round ? "第 " + round + " 轮" : "", run.status === "running" ? "进行中" : run.status === "interrupted" ? "中断" : "已结束"].filter(Boolean).join(" · "))]));
+  if (run.result) {
+    const pub = run.publication === "confirmed" ? ("确认 " + speed(run.published_speedup)) : (run.publication || "未确认");
+    box.append(el("div", { class: "sub" }, [t("对外结论 " + pub)]));
+  }
   const others = (history || []).filter((row) => row.id !== run.id && row.task === task && (!dtype || row.dtype === dtype));
   if (others.length) {
     const note = el("div", { class: "same" }, []);

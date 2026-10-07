@@ -63,7 +63,8 @@ def test_history_separates_a_live_run_from_a_finished_one(tmp_path, monkeypatch)
     by_id = {row["id"]: row for row in scan.history()}
     assert by_id["live"]["status"] == "running"
     assert by_id["old"]["status"] == "done"
-    assert by_id["old"]["speedup"] == 1.1
+    assert by_id["old"]["publication"] == "旧版未绑定源码"
+    assert by_id["old"]["speedup"] is None
 
 
 def test_a_dead_gpu_pid_is_not_a_holder(tmp_path, monkeypatch):

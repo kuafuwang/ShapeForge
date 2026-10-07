@@ -10,8 +10,9 @@ import os
 import time
 from pathlib import Path
 
-from observe.budget import budget_status, summarize
+from experiments.common import conclusion_of_run
 from observe.books import sync as sync_books
+from observe.budget import budget_status, summarize
 from observe.publish import gpu_dir, gpu_events_path, observe_dir
 
 # 超过这么久没再写 state.json，心跳才算停。还要 pid 已经不在，才会把运行标成中断。
@@ -138,12 +139,11 @@ def _search_dirs() -> list[tuple[Path, dict | None, dict | None]]:
 
 
 # 跑完优先用换种子确认的加速比；确认值缺失才退回搜索期的最优。还在跑时 result 还没有，只能看 state 里的当前最优。
-def _speedup(state: dict | None, result: dict | None) -> float | None:
+def _speedup(directory: Path, state: dict | None, result: dict | None) -> float | None:
+    """Headline speedup. A finished run contributes a number only when its confirmation is bound to the source on disk.
+    A run that is still in progress shows the search's current best."""
     if result:
-        value = result.get("confirmed_speedup")
-        if value is None:
-            value = result.get("best_speedup")
-        return value
+        return conclusion_of_run(directory, result)["speedup"]
     if state:
         return state.get("best_speedup")
     return None
@@ -261,6 +261,7 @@ def history() -> list[dict]:
         stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
         spent, budget = money_fields(directory, state, result)
         alert_budget, alert_stop = _budget_for_alert(directory, spent, budget, stop)
+        conclusion = conclusion_of_run(directory, result) if result else {"speedup": None, "publication": "in_progress"}
         rows.append({
             "id": _rel(directory),
             "started_at": _when(directory, state),
@@ -268,7 +269,8 @@ def history() -> list[dict]:
             "dtype": dtype,
             "phase": phase,
             "stop_reason": stop,
-            "speedup": _speedup(state, result),
+            "speedup": conclusion["speedup"] if result else (state or {}).get("best_speedup"),
+            "publication": conclusion["publication"],
             "spent_usd": spent,
             "budget_usd": alert_budget,
             "budget": budget_status(spent, alert_budget, alert_stop, status == "running"),
@@ -485,6 +487,8 @@ def run_detail(run_id: str) -> dict | None:
         "trace": trace,
         "confirmations": confirmations,
         "candidates": _candidates(directory),
+        "publication": (conclusion_of_run(directory, result)["publication"] if result else "in_progress"),
+        "published_speedup": (conclusion_of_run(directory, result)["speedup"] if result else (state or {}).get("best_speedup")),
         "eval_progress": _age(_load(directory / "eval_progress.json")),
         "llm": _load(directory / "llm.json"),
     }
