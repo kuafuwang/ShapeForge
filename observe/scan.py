@@ -179,6 +179,33 @@ def money_fields(directory: Path, state: dict | None, result: dict | None) -> tu
     return spent, budget
 
 
+# 重置或加预算先写在 budget_events.json，新进程接手后才会改 result.json。告警用已经答应的较高预算，不等那次接手。
+def _granted_budget(directory: Path) -> float | None:
+    """The highest budget a reset or top-up has already recorded for this run."""
+    best = None
+    for event in _budget_events(directory):
+        if event.get("kind") not in ("requested", "applied", "resume"):
+            continue
+        amount = event.get("new_budget_usd")
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+            continue
+        if best is None or float(amount) > best:
+            best = float(amount)
+    return best
+
+
+def _budget_for_alert(directory: Path, spent, budget, stop: str) -> tuple[object, str]:
+    """Budget and stop reason used only for the alert. A granted budget above what was spent retires the old budget_exhausted flag."""
+    granted = _granted_budget(directory)
+    shown = budget
+    if granted is not None and (shown is None or granted > float(shown)):
+        shown = granted
+    # 只在重置已经把预算抬到花费之上时撤掉「预算耗尽」。原来停在上限之内的旧结果仍要告警。
+    if granted is not None and stop == "budget_exhausted" and spent is not None and shown is not None and float(shown) > float(spent):
+        return shown, ""
+    return shown, stop
+
+
 # 每一行在读盘时就算好预算档位，NEAR 用的「是否在跑」和这一行的 status 是同一次判断。
 # 「加预算」按钮要不要出现，只看已经读进内存的 state / result：不再多读文件。
 # 运行中且进程读控制文件 → 在线加；跑完因预算停下、或进程已死且有可续的内核 → 续跑；其余给出原因。
@@ -232,6 +259,7 @@ def history() -> list[dict]:
         phase = (state or {}).get("phase") or ""
         stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
         spent, budget = money_fields(directory, state, result)
+        alert_budget, alert_stop = _budget_for_alert(directory, spent, budget, stop)
         rows.append({
             "id": _rel(directory),
             "started_at": _when(directory, state),
@@ -241,8 +269,8 @@ def history() -> list[dict]:
             "stop_reason": stop,
             "speedup": _speedup(state, result),
             "spent_usd": spent,
-            "budget_usd": budget,
-            "budget": budget_status(spent, budget, stop, status == "running"),
+            "budget_usd": alert_budget,
+            "budget": budget_status(spent, alert_budget, alert_stop, status == "running"),
             "control": control_hint(directory, state, result, status),
             **topup_fields(directory),
             "round": (state or {}).get("round"),
@@ -443,10 +471,11 @@ def run_detail(run_id: str) -> dict | None:
     status = liveness(state, result)
     spent, budget = money_fields(directory, state, result)
     stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
+    alert_budget, alert_stop = _budget_for_alert(directory, spent, budget, stop)
     return {
         "id": _rel(directory),
         "status": status,
-        "budget": budget_status(spent, budget, stop, status == "running"),
+        "budget": budget_status(spent, alert_budget, alert_stop, status == "running"),
         "control": control_hint(directory, state, result, status),
         **topup_fields(directory),
         "budget_events": _budget_events(directory),

@@ -169,6 +169,26 @@ def test_history_rows_carry_the_budget_status(runs_dir):
     assert live["status"] == "running" and live["budget"]["level"] == "near" and live["budget"]["used_pct"] == pytest.approx(86.7)
 
 
+def test_a_recorded_reset_clears_the_budget_alert_before_the_next_process_starts(runs_dir):
+    run = runs_dir / "p1" / "fa_flash"
+    (run / "budget_events.json").write_text(json.dumps([
+        {"kind": "requested", "old_budget_usd": 3.0, "new_budget_usd": 18.122979684, "note": "reset: add $15 and lift the round limit and patience"},
+    ]))
+    rope = runs_dir / "suite" / "rope_fp16"
+    (rope / "budget_events.json").write_text(json.dumps([
+        {"kind": "requested", "old_budget_usd": 0.8, "new_budget_usd": 15.79, "note": "reset"},
+    ]))
+    by_id = {row["id"]: row for row in scan.history()}
+    fa = by_id["p1/fa_flash"]
+    assert fa["budget_usd"] == pytest.approx(18.122979684) and fa["budget"]["level"] == "ok"
+    assert fa["stop_reason"] == "budget_exhausted"  # the old result stays; only the alert uses the granted budget
+    assert by_id["suite/rope_fp16"]["budget"]["level"] == "ok"
+    assert by_id["p1/fa_pro"]["budget"]["level"] == "over"  # no reset recorded, the old alert remains
+    rep = scan.budget_report()
+    assert "p1/fa_flash" not in [item["id"] for item in rep["flagged"]]
+    assert "suite/rope_fp16" not in [item["id"] for item in rep["flagged"]]
+
+
 def test_budget_report_names_the_runs_that_exceeded(runs_dir):
     rep = scan.budget_report()
     assert rep["n_runs"] == 6 and rep["n_over"] == 2 and rep["n_exhausted"] == 3 and rep["n_near"] == 1
