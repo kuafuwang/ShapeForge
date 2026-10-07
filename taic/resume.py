@@ -162,6 +162,14 @@ def _same_pid(a, b) -> bool:
         return False
 
 
+def _launching_us(holder: dict) -> bool:
+    """The lock was written by the process that spawned this resume (the dashboard's ``uv run``), or it names this process.
+    That is our own start, not another resume."""
+    if not isinstance(holder, dict):
+        return False
+    return _same_pid(holder.get("pid"), os.getpid()) or _same_pid(holder.get("pid"), os.getppid())
+
+
 def _count_stop(stop: str) -> bool:
     """A stop that is a count of rounds: the hard round cap, or patience (rounds without a new best)."""
     return stop == "max_rounds" or stop.startswith("converged (")
@@ -203,7 +211,7 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops
         info["needs_budget"] = spent is not None and budget is not None and float(spent) >= float(budget) - 1e-9
     except (TypeError, ValueError):
         pass
-    if holder and not _same_pid(holder.get("pid"), pid):
+    if holder and not _same_pid(holder.get("pid"), pid) and not _launching_us(holder):
         info.update(kind="resuming", reason=f"already being resumed by pid {holder.get('pid')}")
         return info
     if state is None and result is None:
@@ -375,7 +383,15 @@ def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
             report = EvalReport.from_json(rep)
         except SchemaError as e:
             raise NeedsInspection(f"{report_path} needs human inspection: {e}") from e
-        out.append({"idx": int(m["idx"]), "label": m["label"], "source": (d / "kernel.metal").read_text(), "report": report, "plan": None})
+        rejected = False
+        recheck_path = d / "differential_recheck.json"
+        if recheck_path.is_file():
+            try:
+                rec = json.loads(recheck_path.read_text(encoding="utf-8"))
+                rejected = bool(isinstance(rec, dict) and rec.get("counts_as_kernel_error"))
+            except (OSError, ValueError):
+                rejected = False
+        out.append({"idx": int(m["idx"]), "label": m["label"], "source": (d / "kernel.metal").read_text(), "report": report, "plan": None, "recheck_rejected": rejected})
     out.sort(key=lambda c: c["idx"])
     return out
 
@@ -403,10 +419,13 @@ def _replay(cands: list[dict], search) -> list[dict]:
         eligible = _eligible(rep, search.correctness_only)
         best_sp = None if best is None else best["sp"]
         best_se = 0.0 if best is None else speedup_se(best["report"])
-        relation = relation_to_best(
-            eligible, sp, best_sp, speedup_se(rep), best_se,
-            min_improvement=search.min_improvement, noise_z=search.noise_z,
-        )
+        if c.get("recheck_rejected"):
+            relation = "keep"
+        else:
+            relation = relation_to_best(
+                eligible, sp, best_sp, speedup_se(rep), best_se,
+                min_improvement=search.min_improvement, noise_z=search.noise_z,
+            )
         improved = relation == "replace"
         within = relation == "tie"
         if improved:
@@ -560,9 +579,14 @@ def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | N
     if len(recorded) > len(cands):
         notes.append(f"state.json lists {len(recorded) - len(cands)} more candidate(s) than candidates/ holds: those entries are dropped")
     best_label = next((t["label"] for t in reversed(trace) if t.get("improved")), None)
-    # 确认测量可能把 best_label 换成重测赢家。续跑要接着改搜索时的种子，而不是那颗抛硬币赢的内核。老运行没有这个字段，仍用轨迹。
+    # 确认测量可能把 best_label 换成重测赢家。续跑要接着改搜索时的种子，而不是那颗抛硬币赢的内核。
+    # 但 state.json 落后于磁盘上更新的候选时，不能用旧标签盖住重放选中的新核。
     seed_recorded = (result or {}).get("search_seed_label") or (state or {}).get("search_seed_label")
-    if seed_recorded and any(c["label"] == seed_recorded for c in cands):
+    newer_improved = [t["label"] for t in trace[n_rec:] if t.get("improved")]
+    if newer_improved and seed_recorded and seed_recorded != newer_improved[-1]:
+        notes.append(f"search_seed_label {seed_recorded} is older than {newer_improved[-1]} evaluated after state.json: the resume continues from the newer kernel")
+        best_label = newer_improved[-1]
+    elif seed_recorded and any(c["label"] == seed_recorded for c in cands):
         if seed_recorded != best_label:
             notes.append(f"the recorded best is {best_label}, but the search seed was {seed_recorded}: the resume continues from the search seed")
         best_label = seed_recorded

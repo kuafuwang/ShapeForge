@@ -540,8 +540,12 @@ def _run_worker(
         if out_path.exists():
             try:
                 rep = EvalReport.from_json(json.loads(out_path.read_text()))
-            except SchemaError:
-                raise
+            except SchemaError as e:
+                # 比这份代码新、或不是对象的报告留在返回值里给人看。再抛出去会连临时目录一起删掉，续跑会当成这次评测还没做过。
+                base.status = "crash"
+                base.message = f"worker report needs human inspection: {e}"
+                base.elapsed_s = time.perf_counter() - t0
+                return base
             except (OSError, ValueError) as e:
                 base.status = "crash"
                 base.message = f"worker left a damaged report and needs human inspection: {e}"

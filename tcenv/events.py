@@ -114,7 +114,7 @@ def note_gpu(kind: str, mode: str, what: str) -> None:
     """Record a GPU-lock wait, acquire, release, or give-up. Never raises."""
     try:
         install_file_log()
-        emit("gpu", kind=kind, mode=mode, what=what)
+        emit("gpu", action=kind, mode=mode, what=what)
     except Exception:
         return
 
@@ -143,7 +143,7 @@ def _on_event(kind: str, payload: dict) -> None:
     elif kind == "append":
         _append_jsonl(payload["path"], payload["doc"])
     elif kind == "gpu":
-        _record_gpu(payload["kind"], payload["mode"], payload["what"])
+        _record_gpu(payload["action"], payload["mode"], payload["what"])
     elif kind == "progress-bind":
         _bind_progress(payload.get("path"))
     elif kind == "progress":

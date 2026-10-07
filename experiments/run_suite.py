@@ -56,7 +56,7 @@ def run_suite(tasks, dtypes, size, suite_dir: Path, *, budget_scale=1.0, budget=
             res = read_result(rd)
             if r.stop_reason.startswith(("gpu_hang", "repeated_worker_crashes")):
                 # 一台 GPU 上连环占卡没有意义：这一格记下来，后面的题不再启动。
-                rows.append(summarize(res, read_confirm(rd), None))
+                rows.append(summarize(res, read_confirm(rd), None, run_dir=rd))
                 (suite_dir / "summary.json").write_text(json.dumps(rows, indent=1))
                 job_state(suite_dir / "state.json", script="run_suite", current={"task": task, "dtype": dtype}, queue=rest, done=rows, phase="aborted")
                 log("== suite aborted: GPU hang circuit breaker")
@@ -65,7 +65,7 @@ def run_suite(tasks, dtypes, size, suite_dir: Path, *, budget_scale=1.0, budget=
             # 跳过的是搜索。这一格仍进汇总，确认加速比从已写好的 result.json 来。
             log(f"(skip {task} {dtype}: already done)")
         naive = naive_reference(task, dtype, size, suite_dir, evaluate_fn=evaluate_fn) if with_naive else None
-        rows.append(summarize(res, read_confirm(rd), naive))
+        rows.append(summarize(res, read_confirm(rd), naive, run_dir=rd))
         (suite_dir / "summary.json").write_text(json.dumps(rows, indent=1))
     job_state(suite_dir / "state.json", script="run_suite", current=None, queue=[], done=rows, phase="done")
     return rows

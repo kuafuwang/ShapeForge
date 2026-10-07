@@ -79,7 +79,7 @@ def finished_rows(out: Path) -> list[dict]:
         if not res:
             continue
         nf = out / f"naive_{spec['task']}_{spec.get('dtype', 'fp16')}.json"
-        rows.append({"run": n, "options": spec.get("search") or {}, **summarize(res, read_confirm(out / n), json.loads(nf.read_text()) if nf.exists() else None)})
+        rows.append({"run": n, "options": spec.get("search") or {}, **summarize(res, read_confirm(out / n), json.loads(nf.read_text()) if nf.exists() else None, run_dir=out / n)})
     return rows
 
 
@@ -122,7 +122,7 @@ def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = 
             res = read_result(rd)
             if r.stop_reason.startswith(("gpu_hang", "repeated_worker_crashes")):
                 log("== aborted: GPU hang circuit breaker")
-                rows.append({"run": n, **summarize(res, read_confirm(rd), None)})
+                rows.append({"run": n, **summarize(res, read_confirm(rd), None, run_dir=rd)})
                 (out / "summary.json").write_text(json.dumps(finished_rows(out), indent=1))
                 job_state(out / "state.json", script="p1_runs", current={"run": n}, queue=[], done=rows, phase="aborted")
                 return rows
@@ -131,7 +131,7 @@ def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = 
             was = res.get("budget_usd")
             log(f"(skip {n}: already done" + (f", with a ${was:.2f} budget, not ${b:.2f}" if was is not None and abs(was - b) > 1e-9 else "") + ")")
         naive = naive_reference(spec["task"], dt, size, out)
-        rows.append({"run": n, **summarize(res, read_confirm(rd), naive)})
+        rows.append({"run": n, **summarize(res, read_confirm(rd), naive, run_dir=rd)})
         (out / "summary.json").write_text(json.dumps(finished_rows(out), indent=1))
     job_state(out / "state.json", script="p1_runs", current=None, queue=[], done=rows, phase="done")
     return rows

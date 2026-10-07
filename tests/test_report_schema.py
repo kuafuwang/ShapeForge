@@ -33,6 +33,11 @@ def test_a_legacy_report_loads_and_a_round_trip_records_the_version():
     assert again.status == "ok" and again.speedup == pytest.approx(1.2)
 
 
+def test_eligible_true_without_a_status_loads_as_ok():
+    rep = EvalReport.from_json({"task": "relu", "dtype": "fp16", "size": "small", "mode": "full", "eligible": True, "speedup": 1.1})
+    assert rep.status == "ok" and rep.eligible and rep.speedup == pytest.approx(1.1)
+
+
 def test_a_report_with_an_unknown_field_or_a_newer_version_needs_inspection():
     with pytest.raises(SchemaError, match="needs human inspection"):
         EvalReport.from_json(_legacy_report(future_field=1))

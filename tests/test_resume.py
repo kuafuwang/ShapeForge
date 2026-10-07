@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -96,6 +97,9 @@ def test_events_history_and_pending_requests(tmp_path):
     assert h["topped_up"] is True and h["initial_budget_usd"] == 3.0 and h["pending"] == []
     ev = control.read_events(tmp_path)
     assert [e["kind"] for e in ev] == ["requested", "applied"] and ev[1]["amount_usd"] == 5.0
+    control.record_event(tmp_path, "requested", 8.0, 8.0, who="dashboard")
+    h = control.budget_history(tmp_path, 8.0)
+    assert [e["new_budget_usd"] for e in h["pending"]] == [8.0]
 
 
 def test_write_control_rejects_bad_numbers(tmp_path):
@@ -331,10 +335,17 @@ def test_a_live_run_and_a_held_lock_cannot_be_resumed(tmp_path):
     assert info["can_topup_live"] is False and "older version" in info["live_reason"]
     (tmp_path / "state.json").write_text(json.dumps({"pid": 2**22 + 777, "phase": "llm", "task": "relu", "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0}))
     assert rs.inspect_run(tmp_path)["kind"] == "interrupted" and rs.inspect_run(tmp_path)["resumable"]
-    control.acquire_run_lock(tmp_path)
-    info = rs.inspect_run(tmp_path)
-    assert info["kind"] == "resuming" and info["resumable"] is False
-    control.release_run_lock(tmp_path)
+    # 锁上是本进程或它的父进程：这是看板刚拉起的续跑，不是别人占着。
+    (tmp_path / "resume.lock").write_text(json.dumps({"pid": os.getppid(), "starting": True}))
+    assert rs.inspect_run(tmp_path)["kind"] != "resuming"
+    other = subprocess.Popen(["sleep", "30"])
+    try:
+        (tmp_path / "resume.lock").write_text(json.dumps({"pid": other.pid, "started_at": 1}))
+        info = rs.inspect_run(tmp_path)
+        assert info["kind"] == "resuming" and info["resumable"] is False
+    finally:
+        other.kill()
+        other.wait(timeout=5)
 
 
 def test_double_resume_is_refused_while_the_first_one_runs(tmp_path):
@@ -452,6 +463,47 @@ def test_trace_entries_missing_from_state_json_are_rebuilt_by_replaying_the_sele
     assert [t["label"] for t in snap.trace] == [t["label"] for t in full]
     assert [t["improved"] for t in snap.trace] == [t["improved"] for t in full] or snap.best_label == next(t["label"] for t in reversed(full) if t["improved"])
     assert any("rebuilt by replaying" in n for n in snap.notes)
+
+
+def _ok_report(speed: float):
+    from tcenv.evaluate import EvalReport
+
+    report = EvalReport(task="relu", dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done", speedup=speed)
+    report.speedups = {"mlx": speed}
+    return report
+
+
+def test_a_recheck_rejection_is_not_replayed_as_the_new_seed(tmp_path):
+    run = tmp_path / "run"
+    for idx, label, speed, rejected in ((0, "init", 1.1, False), (1, "r1.p0", 2.0, True)):
+        folder = run / "candidates" / f"{idx:03d}_{label}"
+        folder.mkdir(parents=True)
+        (folder / "kernel.metal").write_text(f"kernel void k_{label}() {{}}\n")
+        (folder / "report.json").write_text(json.dumps(_ok_report(speed).to_json()))
+        if rejected:
+            (folder / "differential_recheck.json").write_text(json.dumps({"counts_as_kernel_error": True}))
+    notes: list[str] = []
+    cands = rs._read_candidates(run, notes)
+    replay = rs._replay(cands, SearchConfig(branches=1, min_improvement=1.005, noise_z=0))
+    assert cands[1]["recheck_rejected"] is True
+    assert [row["improved"] for row in replay] == [True, False]
+    assert replay[-1]["best_speedup"] == pytest.approx(1.1)
+
+
+def test_a_stale_search_seed_does_not_hide_a_newer_kernel(tmp_path):
+    run = tmp_path / "run"
+    for idx, label, speed in ((0, "init", 1.1), (1, "r1.p0", 1.8)):
+        folder = run / "candidates" / f"{idx:03d}_{label}"
+        folder.mkdir(parents=True)
+        (folder / "kernel.metal").write_text(f"kernel void k_{label}() {{}}\n")
+        (folder / "report.json").write_text(json.dumps(_ok_report(speed).to_json()))
+    (run / "state.json").write_text(json.dumps({
+        "task": "relu", "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
+        "trace": [{"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0}],
+    }))
+    snap = rs.load_snapshot(run, SearchConfig(branches=1, max_repair_tries=1, min_improvement=1.005, noise_z=0), "k")
+    assert snap.best_label == "r1.p0"
+    assert any("older than r1.p0" in note for note in snap.notes)
 
 
 def test_chat_with_tools_continues_a_conversation_at_the_given_turn(tmp_path):

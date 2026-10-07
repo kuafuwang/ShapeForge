@@ -28,6 +28,24 @@ def test_emit_writes_nothing_until_the_file_log_is_subscribed(tmp_path):
         events.install_file_log()
 
 
+def test_a_gpu_lock_note_is_written(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_LOWERLING_OBSERVE_DIR", str(tmp_path))
+    saved = list(events._listeners)
+    events.reset()
+    try:
+        events.note_gpu("acquire", "ex", "benchmark")
+        holder = tmp_path / "gpu.d" / f"{os.getpid()}.json"
+        assert json.loads(holder.read_text())["role"] == "holder"
+        lines = (tmp_path / "observe" / "gpu_events.jsonl").read_text().splitlines()
+        assert json.loads(lines[-1])["kind"] == "acquire"
+    finally:
+        events.note_gpu("release", "ex", "benchmark")
+        events.reset()
+        for listener in saved:
+            events.subscribe(listener)
+        events.install_file_log()
+
+
 def test_core_imports_do_not_load_the_dashboard_stack(tmp_path):
     """A fresh interpreter blocks starlette and uvicorn, then imports judging, policy and config."""
     root = Path(__file__).resolve().parents[1]

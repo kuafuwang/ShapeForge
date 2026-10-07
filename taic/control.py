@@ -218,9 +218,27 @@ def budget_history(run_dir: Path, current_budget: float | None = None) -> dict:
         if e.get("old_budget_usd") is not None:
             initial = e["old_budget_usd"]
             break
-    # 金额四舍五入到 9 位小数再比较，避免浮点尾数让同一笔预算对不上、一直显示成未采纳。
-    applied_new = {round(float(e["new_budget_usd"]), 9) for e in effective if e.get("new_budget_usd") is not None}
-    pending = [e for e in events if e.get("kind") == "requested" and e.get("new_budget_usd") is not None and round(float(e["new_budget_usd"]), 9) not in applied_new]
+    pending = []
+    for index, event in enumerate(events):
+        if event.get("kind") != "requested" or event.get("new_budget_usd") is None:
+            continue
+        try:
+            amount = round(float(event["new_budget_usd"]), 9)
+        except (TypeError, ValueError):
+            continue
+        later_hit = False
+        for item in events[index + 1:]:
+            if item.get("kind") not in ("applied", "resume") or item.get("new_budget_usd") is None:
+                continue
+            try:
+                if round(float(item["new_budget_usd"]), 9) == amount:
+                    later_hit = True
+                    break
+            except (TypeError, ValueError):
+                continue
+        if later_hit:
+            continue
+        pending.append(event)
     return {
         "initial_budget_usd": initial if initial is not None else current_budget,
         "budget_usd": current_budget,

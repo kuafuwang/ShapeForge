@@ -58,7 +58,10 @@ def test_a_baseline_under_the_bound_is_not_called_a_physical_optimum_or_winograd
     assert at_roofline(missing_peak, 1.02) is False
 
 
-def test_a_summary_does_not_publish_the_search_best_or_a_noisy_confirmation(tmp_path):
+def test_a_corrupt_timing_block_does_not_raise_and_an_incomplete_benchmark_is_uncertain():
+    from tcenv.bench import speedup_se_of_report, timing_is_uncertain
+    assert speedup_se_of_report({"benchmark": {"candidate": 5, "baselines": {"mlx": {"cv": 0.01, "reps": 3}}, "best_baseline": "mlx"}}) == 0.0
+    assert timing_is_uncertain({"benchmark": {"noisy": False}}) is True
     from experiments.common import summarize
 
     raw = {

@@ -6,6 +6,7 @@ import http.client
 import json
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -80,8 +81,13 @@ def test_control_for_every_situation(runs):
     mk(root, "patience", "finished", stop="converged (4 rounds without improvement)", spent=1.0)
     mk(root, "dead", "interrupted", spent=1.0)
     held = mk(root, "held", "interrupted", spent=1.0)
-    (held / "resume.lock").write_text(json.dumps({"pid": os.getpid(), "started_at": time.time()}))
-    got = {name: call(port, "GET", f"/api/runs/{name}/control")[1] for name in ("live_new", "live_old", "exhausted", "patience", "dead", "held")}
+    other = subprocess.Popen(["sleep", "30"])
+    try:
+        (held / "resume.lock").write_text(json.dumps({"pid": other.pid, "started_at": time.time()}))
+        got = {name: call(port, "GET", f"/api/runs/{name}/control")[1] for name in ("live_new", "live_old", "exhausted", "patience", "dead", "held")}
+    finally:
+        other.kill()
+        other.wait(timeout=5)
     assert got["live_new"]["action"] == "topup_live" and got["live_new"]["can_topup_live"] and not got["live_new"]["can_resume"]
     assert got["live_old"]["action"] is None and "older version" in got["live_old"]["reason_if_not"] and "wait for it to stop" in got["live_old"]["reason_if_not"]
     assert got["exhausted"]["action"] == "resume" and got["exhausted"]["can_resume"] and got["exhausted"]["budget"]["needs_budget"] is True
@@ -233,26 +239,31 @@ def test_resume_is_started_detached_with_a_log_and_a_second_click_is_refused(run
     port, root = runs
     d = mk(root, "exhausted", "exhausted")
     started = []
+    other = subprocess.Popen(["sleep", "30"])
 
     class FakeProc:
-        pid = os.getpid()  # a live pid, so that the lock looks held
+        pid = other.pid  # a live pid that is not this dashboard process
 
     def fake_popen(cmd, **kw):
         started.append((cmd, kw))
         return FakeProc()
 
     monkeypatch.setattr(actions.subprocess, "Popen", fake_popen)
-    status, doc = post(port, "exhausted", {"new_budget_usd": 10})
-    assert status == 200 and doc["action"] == "resume" and doc["new_budget_usd"] == 10.0 and doc["log"] == "resume_1.log"
-    (cmd, kw), = started
-    assert kw["start_new_session"] is True and Path(kw["cwd"]) == actions.REPO_ROOT and kw["stdin"] is not None
-    assert cmd[cmd.index("--budget") + 1] == "10.000000" and "resume" in cmd and "--who" in cmd
-    assert (d / "resume_1.log").exists()
-    lock = json.loads((d / "resume.lock").read_text())
-    assert lock["pid"] == os.getpid() and lock["starting"] is True
-    assert [e["kind"] for e in control.read_events(d)] == ["requested"]
-    status, doc = post(port, "exhausted", {"amount_usd": 5})
-    assert status == 409 and "already being resumed" in doc["error"] and len(started) == 1
+    try:
+        status, doc = post(port, "exhausted", {"new_budget_usd": 10})
+        assert status == 200 and doc["action"] == "resume" and doc["new_budget_usd"] == 10.0 and doc["log"] == "resume_1.log"
+        (cmd, kw), = started
+        assert kw["start_new_session"] is True and Path(kw["cwd"]) == actions.REPO_ROOT and kw["stdin"] is not None
+        assert cmd[cmd.index("--budget") + 1] == "10.000000" and "resume" in cmd and "--who" in cmd
+        assert (d / "resume_1.log").exists()
+        lock = json.loads((d / "resume.lock").read_text())
+        assert lock["pid"] == other.pid and lock["starting"] is True
+        assert [e["kind"] for e in control.read_events(d)] == ["requested"]
+        status, doc = post(port, "exhausted", {"amount_usd": 5})
+        assert status == 409 and "already being resumed" in doc["error"] and len(started) == 1
+    finally:
+        other.kill()
+        other.wait(timeout=5)
 
 
 def test_the_page_script_and_markup_carry_the_control(runs):

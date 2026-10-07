@@ -134,22 +134,31 @@ def speedup_se_of_report(report) -> float:
     try:
         candidate = bench["candidate"]
         baseline = bench["baselines"][bench["best_baseline"]]
-    except (KeyError, TypeError):
+        if not isinstance(candidate, dict) or not isinstance(baseline, dict):
+            return 0.0
+        return approximate_speedup_se(candidate.get("cv"), candidate.get("reps"), baseline.get("cv"), baseline.get("reps"))
+    except (KeyError, TypeError, AttributeError, ValueError):
         return 0.0
-    return approximate_speedup_se(candidate.get("cv"), candidate.get("reps"), baseline.get("cv"), baseline.get("reps"))
 
 
 def timing_is_uncertain(report) -> bool:
     """True when the kept measurement is marked noisy or a reported cv is above the quiet cutoff."""
     bench = _benchmark(report)
+    if not bench:
+        return False
     if bench.get("noisy") is True:
         return True
+    candidate = bench.get("candidate")
+    if not isinstance(candidate, dict) or "cv" not in candidate:
+        # 有计时块却没有可用的 cv，不能把它当成安静的测量。
+        return True
     try:
-        cvs = [float(bench["candidate"]["cv"])]
+        cvs = [float(candidate["cv"])]
         bases = bench.get("baselines") or {}
         name = bench.get("best_baseline")
-        if name in bases:
-            cvs.append(float(bases[name]["cv"]))
+        base = bases.get(name) if isinstance(bases, dict) else None
+        if isinstance(base, dict) and "cv" in base:
+            cvs.append(float(base["cv"]))
     except (KeyError, TypeError, ValueError):
-        return False
+        return True
     return any(cv > QUIET_CV for cv in cvs)

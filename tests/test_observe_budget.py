@@ -189,6 +189,44 @@ def test_a_recorded_reset_clears_the_budget_alert_before_the_next_process_starts
     assert "suite/rope_fp16" not in [item["id"] for item in rep["flagged"]]
 
 
+def test_a_finished_undershoot_keeps_the_exhausted_flag(runs_dir):
+    run = runs_dir / "suite" / "rope_fp16"
+    (run / "result.json").write_text(json.dumps({
+        "task": "rope", "dtype": "fp16", "stop_reason": "budget_exhausted",
+        "spent_usd": 14.9, "budget_usd": 15.0, "best_label": "init", "trace": [],
+    }))
+    (run / "budget_events.json").write_text(json.dumps([
+        {"kind": "resume", "old_budget_usd": 0.8, "new_budget_usd": 15.0},
+    ]))
+    row = next(item for item in scan.history() if item["id"] == "suite/rope_fp16")
+    assert row["budget_usd"] == 15.0 and row["budget"]["level"] == "exhausted"
+
+
+def test_a_dead_resume_lock_does_not_keep_an_unapplied_request_or_block_the_button(runs_dir):
+    run = runs_dir / "p1" / "fa_flash"
+    (run / "budget_events.json").write_text(json.dumps([
+        {"kind": "requested", "old_budget_usd": 3.0, "new_budget_usd": 18.0, "note": "reset"},
+    ]))
+    (run / "result.json").write_text(json.dumps({
+        **json.loads((run / "result.json").read_text()),
+        "best_label": "init",
+    }))
+    (run / "resume.lock").write_text(json.dumps({"pid": 2**22 + 9, "starting": True}))
+    row = next(item for item in scan.history() if item["id"] == "p1/fa_flash")
+    assert row["budget_usd"] == 3.0 and row["budget"]["level"] == "over"
+    assert row["control"]["action"] == "resume"
+
+
+def test_a_later_budget_cut_replaces_the_older_grant(runs_dir):
+    run = runs_dir / "p1" / "fa_pro"
+    (run / "budget_events.json").write_text(json.dumps([
+        {"kind": "applied", "old_budget_usd": 3.0, "new_budget_usd": 30.0},
+        {"kind": "applied", "old_budget_usd": 30.0, "new_budget_usd": 15.0},
+    ]))
+    row = next(item for item in scan.history() if item["id"] == "p1/fa_pro")
+    assert row["budget_usd"] == 15.0
+
+
 def test_budget_report_names_the_runs_that_exceeded(runs_dir):
     rep = scan.budget_report()
     assert rep["n_runs"] == 6 and rep["n_over"] == 2 and rep["n_exhausted"] == 3 and rep["n_near"] == 1

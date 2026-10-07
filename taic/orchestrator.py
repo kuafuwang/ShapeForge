@@ -32,6 +32,7 @@ from typing import Any, Callable
 
 from tasks import get_task
 from tcenv.evaluate import EvalReport, evaluate
+from tcenv.schema import SchemaError
 from tcenv.report import format_feedback
 
 from . import control, prompts
@@ -95,6 +96,31 @@ def _load_run_seed(run_dir: Path) -> int | None:
 _RECHECK_KEYS = ("class", "task", "dtype", "size", "label", "source_sha256", "search_seed", "recheck_seed", "case", "tolerance", "speed_relation", "counts_as_kernel_error", "retest_command", "human_permission_required")
 
 
+def _strip_counterexample(doc):
+    """Drop VerifyResult.counterexample anywhere in a stored report. A recheck file must not carry that field."""
+    if isinstance(doc, dict):
+        return {key: _strip_counterexample(value) for key, value in doc.items() if key != "counterexample"}
+    if isinstance(doc, list):
+        return [_strip_counterexample(value) for value in doc]
+    return doc
+
+
+def _report_without_counterexample(report: EvalReport | None):
+    if report is None:
+        return None
+    return _strip_counterexample(report.to_json())
+
+
+def _contains_counterexample(doc) -> bool:
+    if isinstance(doc, dict):
+        if "counterexample" in doc:
+            return True
+        return any(_contains_counterexample(value) for value in doc.values())
+    if isinstance(doc, list):
+        return any(_contains_counterexample(value) for value in doc)
+    return False
+
+
 def check_recheck_record(doc: dict) -> list[str]:
     """What's missing from a differential-recheck record. Empty means the record is complete enough to read offline.
     This does not run the kernel."""
@@ -102,7 +128,7 @@ def check_recheck_record(doc: dict) -> list[str]:
         return ["the record is not an object"]
     missing = [key for key in _RECHECK_KEYS if key not in doc]
     problems = [f"missing {key}" for key in missing]
-    if "counterexample" in doc:
+    if "counterexample" in doc or _contains_counterexample(doc):
         problems.append("a differential failure is not a VerifyResult.counterexample")
     kind = doc.get("class")
     if kind in ("timeout", "crash") and doc.get("counts_as_kernel_error") is True:
@@ -142,6 +168,8 @@ class Candidate:
     is_best: bool = False
     # 比当时的种子快，但优势没有超过测量噪声，不能成为下一轮种子；结束时仍可能和优胜者一起进入复测。
     within_noise: bool = False  # measured faster than the best at the time, but not by more than the measurement noise
+    # 第二种子复查判了核错。搜索报告仍可能是 ok，但不能进确认池，也不能当发布胜者。
+    recheck_rejected: bool = False
 
     # 只做正确性恢复时为真：合格不看加速比，结束时也不做 _confirm。
     correctness_only: bool = False
@@ -318,6 +346,8 @@ class Orchestrator:
         self.index = SkillIndex("msl_reference")
         # 同一时刻只允许一次 GPU 评测、quick_check 或 Instruments。两份内核抢同一块卡会把计时测脏，挂死时也不能再有内核在跑。
         self.gpu_lock = asyncio.Lock()
+        # 升种子要等复查回来再写。锁盖住比较和写入，另一条分支不能对着旧种子同时通过。
+        self._promote_lock = asyncio.Lock()
         self.t0 = time.time()
         self.best: Candidate | None = None
         self.candidates: list[Candidate] = []
@@ -468,7 +498,8 @@ class Orchestrator:
         for c in snap.candidates:
             t = by_idx.get(c["idx"], {})
             cand = Candidate(idx=c["idx"], label=c["label"], source=c["source"], report=c["report"], plan=c.get("plan"), cost_usd=t.get("cost_usd", 0.0), t_s=t.get("t_s", 0.0),
-                             is_best=False, within_noise=bool(t.get("within_noise")), correctness_only=self.search.correctness_only)
+                             is_best=False, within_noise=bool(t.get("within_noise")), correctness_only=self.search.correctness_only,
+                             recheck_rejected=bool(c.get("recheck_rejected")))
             self.candidates.append(cand)
             # 与 _eval 相同：超时和 worker 崩溃是环境故障，不能当成这颗内核的永久判决。
             if cand.report is not None and cand.report.status not in ("timeout", "crash"):
@@ -556,31 +587,32 @@ class Orchestrator:
                 self.hangs += 1
             self.crashes_in_a_row = self.crashes_in_a_row + 1 if rep.status == "crash" else 0
         cand.cost_usd, cand.t_s = self.ledger.total_usd, self._elapsed()
-        # 换种子的三道闸：EvalReport.eligible（status 为 ok，即安全且算对）、正式搜索还要有加速比，并且快过 _required_gain。只是略快则标 within_noise，下一轮仍用旧种子。
-        # selection: eligible AND faster (relative to the baseline measured in the same run) than the best so far,
-        # by more than both the fixed margin and the measurement noise of the two speedups. The same function replays a stored report.
-        best = self.best
-        relation = relation_to_best(
-            cand.eligible, cand.speedup, None if best is None else best.speedup,
-            speedup_se(cand.report), 0.0 if best is None else speedup_se(best.report),
-            min_improvement=self.search.min_improvement, noise_z=self.search.noise_z,
-        )
-        would_replace = relation == "replace"
-        would_tie = relation == "tie"
-        recheck_doc = None
-        # 闸门默认关。打开时，将要升种子或落入噪声内并列的候选先用另一颗种子做不计时的正确性复查。复查不过就不升种子。
-        if self.search.differential_recheck and (would_replace or would_tie):
-            recheck_doc = await self._differential_recheck(cand, "new_best" if would_replace else "within_noise")
-            if recheck_doc is not None:
-                would_replace = False
-                would_tie = False
-        if would_replace:
-            if self.best:
-                self.best.is_best = False
-            cand.is_best = True
-            self.best = cand
-        elif would_tie:
-            cand.within_noise = True
+        async with self._promote_lock:
+            best = self.best
+            relation = relation_to_best(
+                cand.eligible, cand.speedup, None if best is None else best.speedup,
+                speedup_se(cand.report), 0.0 if best is None else speedup_se(best.report),
+                min_improvement=self.search.min_improvement, noise_z=self.search.noise_z,
+            )
+            would_replace = relation == "replace"
+            would_tie = relation == "tie"
+            recheck_doc = None
+            # 闸门默认关。打开时，将要升种子或落入噪声内并列的候选先用另一颗种子做不计时的正确性复查。复查不过就不升种子。
+            # 复查在这把锁里等待，所以另一条分支不能同时对着旧种子通过比较。
+            if self.search.differential_recheck and (would_replace or would_tie):
+                recheck_doc = await self._differential_recheck(cand, "new_best" if would_replace else "within_noise")
+                if recheck_doc is not None:
+                    would_replace = False
+                    would_tie = False
+                    if recheck_doc.get("counts_as_kernel_error"):
+                        cand.recheck_rejected = True
+            if would_replace:
+                if self.best:
+                    self.best.is_best = False
+                cand.is_best = True
+                self.best = cand
+            elif would_tie:
+                cand.within_noise = True
         self._save(cand)
         if recheck_doc is not None:
             self._store_recheck(cand, recheck_doc)
@@ -655,8 +687,8 @@ class Orchestrator:
             "tolerance": tolerance,
             "speed_relation": speed_relation,
             "counts_as_kernel_error": kernel_error,
-            "search_report": cand.report.to_json() if cand.report is not None else None,
-            "recheck_report": rep.to_json(),
+            "search_report": _report_without_counterexample(cand.report),
+            "recheck_report": _report_without_counterexample(rep),
             "retest_command": command,
             "human_permission_required": True,
         }
@@ -1001,7 +1033,7 @@ class Orchestrator:
         for c in sorted(self.candidates, key=lambda c: c.speedup, reverse=True):
             if len(pool) >= self.search.confirm_top:
                 break
-            if not c.eligible or _sha(c.source) in seen:
+            if not c.eligible or c.recheck_rejected or _sha(c.source) in seen:
                 continue
             seen.add(_sha(c.source))
             # 优胜者并没有显著快过 c，c 就留在并列里。源码相同的候选只进池一次。
@@ -1039,6 +1071,8 @@ class Orchestrator:
                     )
                 entry["eval_seed"] = phase_seed if phase_seed is not None else rep.seed
                 entry["eval_seed_from"] = "confirm" if phase_seed is not None else "random"
+            except SchemaError:
+                raise
             except Exception as e:  # noqa: BLE001 - a failed confirmation must not lose the run
                 entry["status"] = f"error: {type(e).__name__}: {e}"
                 self._confirmations = res.confirmations

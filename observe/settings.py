@@ -64,6 +64,25 @@ def model_choices() -> dict:
     return {"provider": str(llm.get("provider") or ""), "model": str(llm.get("model") or ""), "choices": choices}
 
 
+def _replace_in_llm(text: str, key: str, value: str) -> tuple[str, bool]:
+    """Replace the first ``key = "..."`` line inside ``[llm]``, before the next section."""
+    lines = text.splitlines(keepends=True)
+    in_llm = False
+    replaced = False
+    out = []
+    pattern = re.compile(rf'^(\s*{key}\s*=\s*")[^"]*(")')
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_llm = stripped == "[llm]"
+        if in_llm and not replaced and pattern.match(line):
+            out.append(pattern.sub(rf"\g<1>{value}\2", line, count=1))
+            replaced = True
+            continue
+        out.append(line)
+    return "".join(out), replaced
+
+
 def set_default_model(provider: str, model: str) -> dict:
     """Write ``provider`` and ``model`` into ``taic.toml``. Both must already be listed in the credentials file."""
     if not isinstance(provider, str) or not isinstance(model, str) or not _SAFE.fullmatch(provider) or not _SAFE.fullmatch(model):
@@ -72,9 +91,11 @@ def set_default_model(provider: str, model: str) -> dict:
     if not any(row["provider"] == provider and row["id"] == model for row in current["choices"]):
         raise Refused(400, f"unknown model {provider}/{model}")
     path, text, _llm = _read_config()
-    new, n_provider = re.subn(r'^(provider\s*=\s*")[^"]*(")', rf"\g<1>{provider}\2", text, count=1, flags=re.M)
-    new, n_model = re.subn(r'^(model\s*=\s*")[^"]*(")', rf"\g<1>{model}\2", new, count=1, flags=re.M)
-    if n_provider != 1 or n_model != 1:
-        raise Refused(500, f"{path} has no provider or model line to replace")
-    path.write_text(new, encoding="utf-8")
+    new, n_provider = _replace_in_llm(text, "provider", provider)
+    new, n_model = _replace_in_llm(new, "model", model)
+    if not n_provider or not n_model:
+        raise Refused(500, f"{path} has no provider or model line under [llm]")
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(new, encoding="utf-8")
+    os.replace(tmp, path)
     return {"provider": provider, "model": model}

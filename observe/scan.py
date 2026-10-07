@@ -181,36 +181,76 @@ def money_fields(directory: Path, state: dict | None, result: dict | None) -> tu
 
 
 # 重置或加预算先写在 budget_events.json，新进程接手后才会改 result.json。告警用已经答应的较高预算，不等那次接手。
+def _as_float(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return number
+
+
 def _granted_budget(directory: Path) -> float | None:
-    """The highest budget a reset or top-up has already recorded for this run."""
-    best = None
+    """The allowance a reset or top-up recorded, including a later cut.
+
+    A trailing ``requested`` event counts only while a resume is still starting or has not left a dead lock.
+    A failed resume (lock file, dead pid) does not keep the promised budget.
+    """
+    from taic import control
+
+    applied = None
+    pending = None
     for event in _budget_events(directory):
-        if event.get("kind") not in ("requested", "applied", "resume"):
+        amount = _as_float(event.get("new_budget_usd"))
+        if amount is None:
             continue
-        amount = event.get("new_budget_usd")
-        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
-            continue
-        if best is None or float(amount) > best:
-            best = float(amount)
-    return best
+        kind = event.get("kind")
+        if kind in ("applied", "resume"):
+            applied = amount
+            pending = None
+        elif kind == "requested":
+            pending = amount
+    if pending is None:
+        return applied
+    lock = directory / "resume.lock"
+    if lock.exists() and control.lock_holder(directory) is None:
+        return applied
+    return pending
 
 
 def _budget_for_alert(directory: Path, spent, budget, stop: str) -> tuple[object, str]:
-    """Budget and stop reason used only for the alert. A granted budget above what was spent retires the old budget_exhausted flag."""
+    """Budget and stop reason used only for the alert.
+
+    A grant that is still above the budget written on the result retires an old
+    budget_exhausted flag: the reset was recorded and the run has not adopted it.
+    A finished run whose own budget already equals that grant keeps the flag,
+    even when it stopped a little under the cap.
+    """
     granted = _granted_budget(directory)
-    shown = budget
-    if granted is not None and (shown is None or granted > float(shown)):
-        shown = granted
-    # 只在重置已经把预算抬到花费之上时撤掉「预算耗尽」。原来停在上限之内的旧结果仍要告警。
-    if granted is not None and stop == "budget_exhausted" and spent is not None and shown is not None and float(shown) > float(spent):
+    on_disk = _as_float(budget)
+    shown = on_disk
+    granted_n = _as_float(granted)
+    spent_n = _as_float(spent)
+    if granted_n is not None and (shown is None or granted_n != shown):
+        shown = granted_n
+    grant_not_on_result = (
+        granted_n is not None
+        and on_disk is not None
+        and granted_n > on_disk + 1e-9
+    )
+    if grant_not_on_result and stop == "budget_exhausted" and spent_n is not None and shown is not None and shown > spent_n:
         return shown, ""
-    return shown, stop
+    return shown if shown is not None else budget, stop
 
 
 # 每一行在读盘时就算好预算档位，NEAR 用的「是否在跑」和这一行的 status 是同一次判断。
 # 「加预算」按钮要不要出现，只看已经读进内存的 state / result：不再多读文件。
 # 运行中且进程读控制文件 → 在线加；跑完因预算停下、或进程已死且有可续的内核 → 续跑；其余给出原因。
 def control_hint(directory: Path, state: dict | None, result: dict | None, status: str) -> dict:
+    from taic import control
     from taic.resume import STOP_BUDGET, has_best
 
     stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
@@ -218,7 +258,7 @@ def control_hint(directory: Path, state: dict | None, result: dict | None, statu
         if (state or {}).get("control_supported"):
             return {"action": "topup_live", "reason": ""}
         return {"action": None, "reason": "started by an older version: it cannot be topped up live; wait for it to stop, then resume it"}
-    if (directory / "resume.lock").exists():
+    if control.lock_holder(directory):
         return {"action": None, "reason": "a resume of this run is starting"}
     if status == "interrupted":
         if has_best(state, result):

@@ -53,7 +53,7 @@ def migrate_report(doc: dict, known_fields: set[str]) -> dict:
     """
     document_version(doc, max_version=REPORT_SCHEMA_VERSION, what="report")
     out = dict(doc)
-    out.pop("eligible", None)
+    eligible = out.pop("eligible", None)
     unknown = set(out) - set(known_fields) - {"schema_version"}
     if unknown:
         names = ", ".join(sorted(unknown))
@@ -62,6 +62,9 @@ def migrate_report(doc: dict, known_fields: set[str]) -> dict:
     missing = [name for name in ("task", "dtype", "size", "mode") if name not in out]
     if missing:
         raise SchemaError(f"report is missing {missing}")
+    # 老文件有时只写了 eligible，没有 status。eligible 为真就当成当时的 ok，否则读出来会变成 pending、不能当种子。
+    if "status" not in out and eligible is True:
+        out["status"] = "ok"
     return out
 
 
