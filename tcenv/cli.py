@@ -21,7 +21,7 @@ def _common(p: argparse.ArgumentParser) -> None:
 
 # 进行中的阶段写到按 pid 区分的观察文件，长评测在命令行外面也能看到走到哪一步。
 def _live_progress():
-    from observe.publish import tcenv_live_path
+    from tcenv.events import tcenv_live_path
 
     return tcenv_live_path()
 

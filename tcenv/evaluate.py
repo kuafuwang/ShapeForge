@@ -45,9 +45,9 @@ OWN_RUNNERS = ("candidate", "candidate_serial")
 # 进度写不出去也不能改判卷结果，所以上报失败就当没这回事。
 def _note_stage(**fields) -> None:
     try:
-        from observe.progress import update
+        from tcenv.events import update_progress
 
-        update(**fields)
+        update_progress(**fields)
     except Exception:
         return
 
@@ -412,7 +412,7 @@ def _sync_progress(stage_path: Path, hb_path: Path, dest: Path, seen: list) -> N
             doc["heartbeat_at"] = hb[1]
         if not doc:
             return
-        from observe.publish import publish
+        from tcenv.events import publish
 
         publish(dest, doc)
     except Exception:
@@ -591,7 +591,7 @@ def evaluate(
     def _live(rep: EvalReport) -> EvalReport:
         if progress_path is not None:
             try:
-                from observe.publish import publish
+                from tcenv.events import publish
 
                 publish(progress_path, {
                     "task": rep.task, "dtype": rep.dtype, "size": rep.size, "mode": rep.mode,
@@ -611,7 +611,7 @@ def evaluate(
         return _live(rep)
     if progress_path is not None:
         try:
-            from observe.publish import publish
+            from tcenv.events import publish
 
             publish(progress_path, {"task": task, "dtype": dtype, "size": size, "mode": mode, "stage": "screen", "status": "running", "updated_at": time.time()})
         except Exception:

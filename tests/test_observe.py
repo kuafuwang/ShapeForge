@@ -24,7 +24,7 @@ def test_publish_swallows_write_errors(tmp_path, monkeypatch):
     def boom(*_args, **_kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr("observe.publish.os.replace", boom)
+    monkeypatch.setattr("tcenv.events.os.replace", boom)
     publish(tmp_path / "state.json", {"phase": "plan"})
 
 

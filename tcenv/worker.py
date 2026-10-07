@@ -73,9 +73,9 @@ def main() -> int:
     try:
         _install_heartbeat(req.get("heartbeat"))
         if req.get("stage"):
-            from observe.progress import bind
+            from tcenv.events import bind_progress
 
-            bind(req["stage"])
+            bind_progress(req["stage"])
         from .evaluate import evaluate_in_process
 
         source = Path(req["kernel_path"]).read_text()

@@ -414,7 +414,7 @@ class Orchestrator:
         if phase is not None:
             self._phase = phase
         try:
-            from observe.publish import publish
+            from tcenv.events import publish
 
             publish(self.run_dir / "state.json", {
                 "schema_version": STATE_SCHEMA_VERSION,
@@ -498,7 +498,7 @@ class Orchestrator:
             return
         self.llm.transcript.log({"event": "resume", "n": self._resumes, "spent_usd": self.ledger.total_usd, "budget_usd": self.ledger.budget_usd, "round": self._round, "best": snap.best_label, "pid": os.getpid()})
         try:  # requests that were in flight when the earlier session died are not in flight any more
-            from observe.publish import publish
+            from tcenv.events import publish
 
             prev = control.read_json(self.run_dir / "llm.json") or {}
             publish(self.run_dir / "llm.json", {"inflight": {}, "updated_at": time.time(), "last": prev.get("last")})

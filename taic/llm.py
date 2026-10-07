@@ -446,7 +446,7 @@ class LLM:
                     inflight[label] = entry
                 doc["inflight"] = inflight
                 doc["updated_at"] = now
-                from observe.publish import publish
+                from tcenv.events import publish
 
                 publish(path, doc)
         except Exception:

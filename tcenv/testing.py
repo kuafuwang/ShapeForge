@@ -261,9 +261,9 @@ def run_correctness(
     cases = cases or task.cases
     for i, case in enumerate(cases):
         try:
-            from observe.progress import update
+            from tcenv.events import update_progress
 
-            update(stage="correctness", case=case, cases_done=i, cases_total=len(cases))
+            update_progress(stage="correctness", case=case, cases_done=i, cases_total=len(cases))
         except Exception:
             pass
         data = prepare_case(task, case, seed + 7919 * (i + 1))

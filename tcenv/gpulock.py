@@ -64,7 +64,7 @@ def holder() -> str:
 # 把加锁事件送到观察页。观察写失败时直接返回，加锁本身继续。
 def _gpu_note(kind: str, mode: str, what: str) -> None:
     try:
-        from observe.publish import note_gpu
+        from tcenv.events import note_gpu
 
         note_gpu(kind, mode, what)
     except Exception:
