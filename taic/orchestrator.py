@@ -24,6 +24,7 @@ import hashlib
 import json
 import math
 import os
+import secrets
 import subprocess
 import time
 from dataclasses import asdict, dataclass, field
@@ -55,6 +56,39 @@ def _git_identity(root: Path) -> tuple[str, bool | None]:
         return commit, bool(dirty.strip())
     except (OSError, subprocess.SubprocessError):
         return "unknown", None
+
+
+_EVAL_PHASES = ("search", "confirm", "recheck")
+
+
+def eval_seed(run_seed: int, phase: str, label: str, source: str) -> int:
+    """48-bit seed for one evaluation, derived from the run seed and the candidate's identity.
+
+    ``source`` is the kernel text before the contract header is prepended. ``phase`` is ``search``, ``confirm`` or ``recheck``.
+    The label is the one that exists before evaluation (``r2.p1.fix1``, ``init.s2``, ``prior``), not ``Candidate.idx``.
+    The same inputs always return the same seed. This does not control the model provider's sampling or the GPU's temperature."""
+    if phase not in _EVAL_PHASES:
+        raise ValueError(f"phase must be one of {_EVAL_PHASES}")
+    source_sha256 = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    payload = json.dumps(["ai_lowerling/eval_seed/v1", int(run_seed), phase, label, source_sha256], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return int.from_bytes(hashlib.sha256(payload).digest()[:6], "big")
+
+
+def _valid_run_seed(value) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if 0 <= value < 2**64:
+        return value
+    return None
+
+
+def _load_run_seed(run_dir: Path) -> int | None:
+    """The seed recorded for this run, or None for a run that predates ``run_seed`` (those evaluations stay random)."""
+    doc = control.read_json(Path(run_dir) / control.CONFIG_FILE) or {}
+    recorded = doc.get("run_seed")
+    if recorded is None:
+        recorded = doc.get("seed")
+    return _valid_run_seed(recorded)
 
 # 规划回复抽不出方案、或规划请求本身失败时，仍用这三套通用改法把这一轮补丁做完，搜索不因此停。
 FALLBACK_PLANS = [
@@ -232,13 +266,22 @@ class Orchestrator:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         self.run_dir = Path(run_dir) if run_dir else REPO_ROOT / "runs" / f"{stamp}_{task_name}_{dtype}_{llm_cfg.model}"
         self.log = log
-        self.seed = seed
         self.system = prompts.system_prompt(self.task, use_tools=llm_cfg.use_tools, profiler_evidence=search.profile_poor, hw_feedback=search.hw_feedback)
         self.from_run = Path(from_run) if from_run else None
-        # 新运行不接管已经有文件的目录。续跑（resuming=True）才读既有目录，并且不改写 run_config.json。
+        # 新运行不接管已经有文件的目录。续跑（resuming=True）才读既有目录，并且不改写 run_config.json、不重新抽 run_seed。
         if not resuming and self.run_dir.exists() and any(self.run_dir.iterdir()):
             raise RunStartError(f"refused: {self.run_dir} already holds files; resume it with `taic resume` or choose a new directory")
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        if resuming:
+            self.run_seed = _load_run_seed(self.run_dir)
+        elif seed is None:
+            self.run_seed = secrets.randbits(64)
+        else:
+            chosen = _valid_run_seed(seed)
+            if chosen is None:
+                raise RunStartError("refused: --seed must be a decimal integer with 0 <= seed < 2**64")
+            self.run_seed = chosen
+        self.seed = self.run_seed
         # 配置写失败就停在这里：还没有账本、转录和 state.json，也不会进入 run()。
         if not resuming:
             self._write_run_config()
@@ -301,7 +344,7 @@ class Orchestrator:
         try:
             control.write_json_atomic(self.run_dir / control.CONFIG_FILE, {
                 "schema_version": 1,
-                "task": self.task_name, "dtype": self.dtype, "size": self.size, "seed": self.seed,
+                "task": self.task_name, "dtype": self.dtype, "size": self.size, "seed": self.seed, "run_seed": self.run_seed,
                 "llm": llm, "search": asdict(self.search),
                 "system_prompt_sha1": hashlib.sha1(self.system.encode()).hexdigest(),
                 "contract_description_sha256": hashlib.sha256(contract_text.encode("utf-8")).hexdigest(),
@@ -464,9 +507,12 @@ class Orchestrator:
         self.candidates.append(cand)
         self._publish_state("evaluate", inflight=label)
         key = _sha(source)
-        # 同一源码的稳定结论可复用，避免把 GPU 时间花在已经量过的文本上。
+        phase_seed = self._phase_seed("search", label, source)
+        # 同一源码的稳定结论可复用。复用的是当时那份报告的 seed，不能把它说成一次新种子上的测量。
         if key in self.cache:
             cand.report = self.cache[key]
+            seed_from = "cached report"
+            used_seed = cand.report.seed
         else:
             async with self.gpu_lock:
                 # 已经有超时把 hangs 推到 max_hangs 时，还在排队的评测不再上 GPU，整次搜索在这里停下。
@@ -474,11 +520,13 @@ class Orchestrator:
                     raise StopRun("gpu_hang_circuit_breaker")
                 rep = await asyncio.to_thread(
                     self.evaluate_fn, self.task_name, self.dtype, self.size, source,
-                    mode="quick" if self.search.correctness_only else "full", seed=None, reps=self.search.eval_reps,
+                    mode="quick" if self.search.correctness_only else "full", seed=phase_seed, reps=self.search.eval_reps,
                     progress_path=self.run_dir / "eval_progress.json",
                 )
                 self.evaluations += 1
             cand.report = rep
+            seed_from = "search" if phase_seed is not None else "random"
+            used_seed = phase_seed if phase_seed is not None else rep.seed
             # timeout / crash 不进缓存：那是环境故障，不能当成这颗内核的永久判决。
             if rep.status not in ("timeout", "crash"):
                 self.cache[key] = rep
@@ -500,7 +548,7 @@ class Orchestrator:
         self._save(cand)
         r = cand.report
         self.trace.append(
-            {"idx": cand.idx, "label": label, "status": r.status, "speedup": r.speedup, "cost_usd": cand.cost_usd, "t_s": cand.t_s, "best_speedup": self.best.speedup if self.best else None, "improved": cand.is_best, "within_noise": cand.within_noise}
+            {"idx": cand.idx, "label": label, "status": r.status, "speedup": r.speedup, "cost_usd": cand.cost_usd, "t_s": cand.t_s, "best_speedup": self.best.speedup if self.best else None, "improved": cand.is_best, "within_noise": cand.within_noise, "eval_seed": used_seed, "eval_seed_from": seed_from}
         )
         self._publish_state(inflight=None)
         sp = f"{r.speedup:.3f}x" if r.speedup else "-"
@@ -511,7 +559,14 @@ class Orchestrator:
             raise StopRun("gpu_hang_circuit_breaker" if self.hangs >= self.search.max_hangs else "repeated_worker_crashes")
         return cand
 
+    def _phase_seed(self, phase: str, label: str, source: str) -> int | None:
+        """Derived seed for a recorded run. None keeps the evaluator's own random draw (runs with no ``run_seed``)."""
+        if self.run_seed is None:
+            return None
+        return eval_seed(self.run_seed, phase, label, source)
+
     # quick_check 用的轻量评测：编译、ABI、安全、正确性，不跑基准，所以模型不能靠它在噪声里挑「看起来更快」的版本。与完整评测共用 gpu_lock 和 hangs；这里的 timeout 只记数，停搜发生在下一次 _eval 进锁时。
+    # 工具调用没有稳定的 call id，所以这里仍把 seed 留空，由评测器另抽，并记在它返回的报告里。不能说这次自查可以按 run_seed 重放。
     async def _quick(self, source: str) -> str:
         """quick_check tool: compile + ABI + safety + correctness, no benchmark. Serialized on the GPU like everything else."""
         async with self.gpu_lock:
@@ -857,7 +912,10 @@ class Orchestrator:
         if not self.best or self.hangs >= self.search.max_hangs or self.search.correctness_only:
             return
         pool = self._confirm_pool()
-        self.log(f"-- confirming {', '.join(c.label for c in pool)} with a fresh seed")
+        if self.run_seed is None:
+            self.log(f"-- confirming {', '.join(c.label for c in pool)} with a fresh seed")
+        else:
+            self.log(f"-- confirming {', '.join(c.label for c in pool)} with seeds derived for the confirm phase")
         self._confirmations = res.confirmations
         self._publish_state("confirm", inflight=", ".join(c.label for c in pool))
         confirmed: list[tuple[Candidate, EvalReport]] = []
@@ -868,11 +926,14 @@ class Orchestrator:
             self._publish_state("confirm", inflight=c.label)
             try:
                 async with self.gpu_lock:
-                    # seed=None 时 evaluate 另抽随机输入；重复次数是搜索测量的两倍，用来压低单次噪声。复测同样独占 GPU。
+                    # run_seed 为空的旧运行仍由评测器另抽。新运行用 confirm 阶段的派生种子，和搜索阶段不是同一个数。
+                    phase_seed = self._phase_seed("confirm", c.label, c.source)
                     rep = await asyncio.to_thread(
-                        self.evaluate_fn, self.task_name, self.dtype, self.size, c.source, mode="full", seed=None, reps=self.search.eval_reps * 2,
+                        self.evaluate_fn, self.task_name, self.dtype, self.size, c.source, mode="full", seed=phase_seed, reps=self.search.eval_reps * 2,
                         progress_path=self.run_dir / "eval_progress.json",
                     )
+                entry["eval_seed"] = phase_seed if phase_seed is not None else rep.seed
+                entry["eval_seed_from"] = "confirm" if phase_seed is not None else "random"
             except Exception as e:  # noqa: BLE001 - a failed confirmation must not lose the run
                 entry["status"] = f"error: {type(e).__name__}: {e}"
                 self._confirmations = res.confirmations

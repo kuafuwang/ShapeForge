@@ -243,6 +243,17 @@ def _add_search_switches(p: argparse.ArgumentParser) -> None:
     p.add_argument("--truncation-retry", action=argparse.BooleanOptionalAction, default=None, help="a length-capped reply with no kernel is retried once without the echoed reasoning, and does not spend a repair turn (default: on)")
 
 
+def _u64(text: str) -> int:
+    """An unsigned 64-bit seed written in decimal."""
+    try:
+        n = int(text, 10)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a decimal integer") from None
+    if n < 0 or n >= 2**64:
+        raise argparse.ArgumentTypeError("must satisfy 0 <= seed < 2**64")
+    return n
+
+
 def _positive_int(text: str) -> int:
     try:
         n = int(text)
@@ -310,6 +321,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--init-samples", type=int, default=None, help="sample this many initial kernels in parallel; the best eligible one seeds the search")
     p.add_argument("--patience", type=int, default=None, help="stop after this many rounds without a new best (default 4)")
     p.add_argument("--run-dir", default=None)
+    p.add_argument("--seed", type=_u64, default=None, help="unsigned 64-bit run seed (default: a new random one). resume keeps the seed the run recorded")
     p.add_argument("--from", dest="from_run", default=None, help="directory of a previous run: if its best.metal is still eligible for this task, skip writing a first draft and improve that kernel")
     p.set_defaults(fn=cmd_run)
     # 续跑不重开搜索。--budget 是新的总上限，--add-budget 加在原上限上；预算已经花满时，至少要给其中一个，否则新上限不会高于已花费。
