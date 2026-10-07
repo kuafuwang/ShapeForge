@@ -376,6 +376,35 @@ def test_settings_of_a_run_without_run_config_are_inferred_from_its_prompts(tmp_
     assert inferred["system"] and "patience" not in inferred["search"]  # not recorded by older runs
 
 
+def test_a_resume_lists_settings_the_old_run_did_not_record_and_still_continues(tmp_path, monkeypatch, capsys):
+    calls = []
+    orch = make_orch(tmp_path, script_for(usage=BIG), calls, budget=0.5, max_rounds=3, max_repair=2, patience=20)
+    res = run(orch)
+    assert res.stop_reason == "budget_exhausted"
+    run_dir = tmp_path / "run"
+    recorded = cli.prepare_resume(ns(run_dir, dry_run=True, add_budget=5), client=FakeClient(script_for()), evaluate_fn=fake_eval([]), log=lambda s: None)
+    assert recorded[2]["unrecorded_settings"] == []  # this run wrote run_config.json
+    (run_dir / "run_config.json").unlink()
+    before = {p.relative_to(run_dir): p.read_bytes() for p in run_dir.rglob("*") if p.is_file()}
+    code = cli.cmd_resume(ns(run_dir, dry_run=True, add_budget=5))
+    assert code == 0
+    after = {p.relative_to(run_dir): p.read_bytes() for p in run_dir.rglob("*") if p.is_file()}
+    assert after == before
+    listed = json.loads(capsys.readouterr().out)["unrecorded_settings"]
+    sources = {row["key"]: row["source"] for row in listed}
+    assert "search.patience" in sources and "search.stop_at_roofline" in sources and "llm.truncation_retry" in sources
+    assert all("not recorded by this run" in source for source in sources.values())
+
+    def started(*_a, **_k):
+        return argparse.Namespace(task="relu", dtype="fp16", model="fake", best_speedup=1.0, confirmed_speedup=None, spent_usd=0.5, budget_usd=5.5, stop_reason="budget_exhausted", run_dir=str(run_dir))
+
+    monkeypatch.setattr(cli, "run_prepared", started)
+    code = cli.cmd_resume(ns(run_dir, add_budget=5))
+    assert code == 0
+    announced = capsys.readouterr().out
+    assert "the resume is not refused" in announced and "search.patience" in announced and "not recorded by this run" in announced
+
+
 def test_the_ledger_is_rebuilt_from_the_transcript_when_state_is_behind_and_never_under_counted(tmp_path):
     counter = {"kill_at": 12}
     calls = []

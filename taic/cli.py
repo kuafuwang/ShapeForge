@@ -89,6 +89,9 @@ def _resume_config(a: argparse.Namespace, settings: dict, info: dict):
     for k in SEARCH_FIELDS:
         if f"search.{k}" not in prov:
             prov[f"search.{k}"] = f"preset '{preset}' / default (not recorded by this run)"
+    for k in LLM_FIELDS:
+        if f"llm.{k}" not in prov:
+            prov[f"llm.{k}"] = f"preset '{preset}' / default (not recorded by this run)"
     # 这里 0 也算显式给出，会盖过目录里的值。新搜索的 cmd_run 把 0 当成没写，两边不一样。
     flags = {"patience": a.patience, "branches": a.branches, "max_rounds": a.max_rounds, "init_samples": a.init_samples}
     for k, v in flags.items():
@@ -164,8 +167,24 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
                         else " (identical to what the current prompt files produce)")) if snap.system else "rebuilt from the current prompt files (no transcript)"),
         settings={k: getattr(search, k) for k in SEARCH_FIELDS} | {"model": cfg.model, "use_tools": cfg.use_tools, "reasoning_effort": cfg.reasoning_effort},
         provenance=prov, command=f"uv run python -m taic.cli resume {run_dir}" + (f" --add-budget {a.add_budget}" if a.add_budget is not None else "") + (f" --budget {a.budget}" if a.budget is not None else ""),
+        unrecorded_settings=unrecorded_settings(prov),
     )
     return orch, snap, report, info, new_budget
+
+
+def unrecorded_settings(prov: dict) -> list[dict]:
+    """Keys filled from a preset or a default because this run did not record them. Each item is ``{"key", "source"}``."""
+    return [{"key": key, "source": source} for key, source in sorted(prov.items()) if isinstance(source, str) and "not recorded by this run" in source]
+
+
+def _announce_unrecorded(report: dict, log) -> None:
+    """Say which settings were filled in. A resume that can continue still continues."""
+    rows = report.get("unrecorded_settings") or []
+    if not rows:
+        return
+    log("settings this run did not record, filled from the named source (the resume is not refused):")
+    for row in rows:
+        log(f"  {row['key']}: {row['source']}")
 
 
 # 检查通过之后才占目录锁、把旧结果留档、记下 resume 预算事件，然后进入原来的搜索循环。别的进程占着锁就拒绝，避免两套搜索同时改同一个 run。
@@ -199,6 +218,7 @@ def cmd_resume(a: argparse.Namespace) -> int:
         if a.dry_run:
             print(json.dumps(report, indent=2, default=str))
             return 0
+        _announce_unrecorded(report, orch.log)
         res = run_prepared(a, orch, snap, info, new_budget)
     except ResumeRefused as e:
         print(str(e), file=sys.stderr)
