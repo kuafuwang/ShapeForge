@@ -24,4 +24,5 @@ def build(dtype: str, size: str):
         baselines=(BaselineImpl("mlx", "mlx", _mlx), BaselineImpl("torch_mps", "torch", torch.sigmoid)),
         flops_per_elem=4,
         description="y[i] = 1 / (1 + exp(-x[i])), evaluated in fp32 and rounded to the element type once.",
+        domain_case=dtype == "fp16",
     )

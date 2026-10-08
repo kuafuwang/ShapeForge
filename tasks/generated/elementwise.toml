@@ -1,0 +1,46 @@
+# Unary and binary pointwise kernels. One expression; the reference, the Triton spec, the naive Metal and the baselines are rendered from it.
+# domain_case is legal only for a single fp16 input. The manifest hash is recorded on the generated task.
+
+[[kernel]]
+task = "gen_relu"
+kernel = "relu"
+inputs = ["x"]
+expr = "relu(x)"
+flops_per_elem = 1
+description = "y[i] = max(x[i], 0). Values <= 0 map to +0."
+large = 10000.0
+normal_mag = 3.0
+domain_case = true
+
+[[kernel]]
+task = "gen_sigmoid"
+kernel = "sigmoid"
+inputs = ["x"]
+expr = "sigmoid(x)"
+flops_per_elem = 4
+description = "y[i] = 1 / (1 + exp(-x[i])), evaluated in fp32 and rounded to the element type once."
+large = 10000.0
+normal_mag = 3.0
+domain_case = true
+
+[[kernel]]
+task = "gen_silu"
+kernel = "silu"
+inputs = ["x"]
+expr = "silu(x)"
+flops_per_elem = 5
+description = "y[i] = x[i] * sigmoid(x[i]), evaluated in fp32 and rounded once."
+large = 10000.0
+normal_mag = 3.0
+domain_case = true
+
+[[kernel]]
+task = "gen_swiglu"
+kernel = "swiglu"
+inputs = ["gate", "up"]
+expr = "silu(gate) * up"
+flops_per_elem = 7
+description = "y[i] = silu(gate[i]) * up[i] with silu(g) = g * sigmoid(g); evaluated in fp32, rounded once."
+large = 200.0
+normal_mag = 3.0
+domain_case = false

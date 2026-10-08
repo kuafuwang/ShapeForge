@@ -218,6 +218,30 @@ def test_loops_inside_comments_do_not_trigger_the_screen():
     assert screen_source("// while (true) {}\n/* for (;;) */ kernel void k() { for (uint i = 0; i < 4; ++i) {} }") == []
 
 
+def test_parentheses_do_not_hide_an_unconditional_loop():
+    from tcenv.screen import screen_source
+
+    for src in ("while((true)) {}", "while(true == true) {}", "for(int i = (0); ; i++) {}", "for(; (true); ) {}"):
+        assert screen_source(src), src
+    assert screen_source("for (uint i = 0; i < 4; ++i) {}") == []
+    assert screen_source("while (i < n) {}") == []
+
+
+def test_a_stack_trace_is_not_a_shader_validation_failure():
+    from tcenv.sanitize import validation_problems
+
+    assert validation_problems("stack trace follows\ntraceback (most recent call last)\ngraceful shutdown\n") == []
+    assert validation_problems("validation error: race condition on device memory")
+
+
+def test_sem_relu_gelu_comment_reference_follows_the_written_comparison():
+    task = get_task("sem_relu_gelu_comment", "fp16", "small")
+    y = task.reference({"x": torch.tensor([float("nan"), -1.0, 2.0, float("-inf"), -0.0], dtype=torch.float16)})["y"]
+    assert y[0].item() == 0.0 and y[1].item() == 0.0 and y[2].item() == 2.0 and y[3].item() == 0.0
+    assert str(y[4].item()) == "0.0"
+    assert "x > 0" in task.triton_source and "v > 0.0f" in task.naive_msl
+
+
 def test_non_metal_includes_are_refused():
     from tcenv.screen import screen_source
 

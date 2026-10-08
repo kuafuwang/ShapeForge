@@ -38,6 +38,7 @@ class CaseData:
     raw: dict[str, bytes]
     ref: dict[str, torch.Tensor]
     scale: dict[str, torch.Tensor]
+    input_sha256: str = ""
 
 
 IEEE_CASE = "ieee"
@@ -72,6 +73,21 @@ def _finite(t: torch.Tensor) -> torch.Tensor:
 
 
 def prepare_case(task: Task, case: str, seed: int) -> CaseData:
+    from .domain import DOMAIN_CASE, domain_input, tensor_sha256
+
+    # 全域扫描不走采样分布，也不走 RMS 缩放和量程守卫。65504 的 relu 参考值就是该类型的最大值，守卫会把它误判成 harness bug。
+    if case == DOMAIN_CASE:
+        inputs = task.contract.inputs
+        if task.dtype != "fp16" or len(inputs) != 1:
+            raise ValueError(f"domain sweep needs one fp16 input, got {task.name} {task.dtype}")
+        arg = inputs[0]
+        values = domain_input(arg.shape[0], seed)
+        rounded = {arg.name: values}
+        raw = {arg.name: to_raw(values, arg.dtype)}
+        ref = {k: v.reshape(task.contract.arg(k).shape) for k, v in task.reference(rounded).items()}
+        scale = {k: torch.zeros((), dtype=torch.float64) for k in ref}
+        return CaseData(case, seed, rounded, raw, ref, scale, tensor_sha256(values))
+
     ieee = case == IEEE_CASE
     logical = task.gen_inputs(task.meta.get("ieee_base", "normal") if ieee else case, seed)
     rounded: dict[str, torch.Tensor] = {}
@@ -137,6 +153,7 @@ class CaseResult:
     nan_count: int
     unwritten: int
     worst: dict | None
+    input_sha256: str = ""
     safety: list[str] = field(default_factory=list)
     message: str = ""
 
@@ -179,7 +196,8 @@ def check_case(
             errs.append(e)
         base_err = min(errs)  # the most accurate baseline defines how well the op *can* be done
     allow = 1.0
-    if base_err is not None and not task.exact:
+    # 基线自己的误差可以放宽抽样题。全域扫描不放宽，否则一个同样出错的基线会把错值放过去。
+    if data.case != "domain" and base_err is not None and not task.exact:
         allow = min(ALLOW_CAP, max(1.0, K_BASELINE * base_err))
 
     for a in task.contract.outputs:
@@ -202,6 +220,10 @@ def check_case(
                 "want": float(data.ref[a.name].reshape(-1)[idx]),
                 "scaled_err": m if m != float("inf") else "inf",
             }
+            if data.case == "domain" and task.contract.inputs:
+                iv = data.rounded[task.contract.inputs[0].name].reshape(-1)[idx]
+                bits = int(iv.view(torch.int16).item()) & 0xFFFF
+                worst_info["input_bits"] = f"0x{bits:04x}"
         worst_all = max(worst_all, m)
         per_out.append((a.name, m))
 
@@ -229,6 +251,7 @@ def check_case(
         unwritten=unwritten_total,
         worst=worst_info,
         message=msg,
+        input_sha256=data.input_sha256,
     )
 
 

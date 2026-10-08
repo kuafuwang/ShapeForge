@@ -26,7 +26,7 @@ from tasks import list_tasks
 
 from observe.publish import job_state
 
-from .common import budget_for, experiment_commitment, fits_cap, naive_reference, read_confirm, read_result, run_one, summarize, write_cap
+from .common import budget_for, experiment_commitment, fits_cap, naive_reference, read_confirm, read_result, run_one, shown_speedup, summarize, write_cap
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -72,13 +72,20 @@ def run_suite(tasks, dtypes, size, suite_dir: Path, *, budget_scale=1.0, budget=
 
 
 # 写进 summary.md 的那张表。缺测印成横杠，读表的人不会把「没跑」看成 0 倍。
+def _published_cell(row: dict) -> str:
+    value = shown_speedup(row)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{value:.3f}x"
+    return row.get("publication") or "-"
+
+
 def markdown_table(rows: list[dict]) -> str:
-    L = ["| task | dtype | confirmed speedup vs best baseline | naive kernel (reference) | vs triton-msl | candidate us | best baseline | baselines (us) | budget USD | spent USD | evals | stop |", "| --- | --- | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: | ---: | --- |"]
+    L = ["| task | dtype | published speedup vs best baseline | naive kernel (reference) | vs triton-msl | candidate us | best baseline | baselines (us) | budget USD | spent USD | evals | stop |", "| --- | --- | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: | ---: | --- |"]
     f = lambda v, p=3: "-" if v is None else f"{v:.{p}f}"
     for r in rows:
         b = r.get("baseline_us") or {}
         L.append(
-            f"| {r['task']} | {r['dtype']} | {f(r['confirmed_speedup'])}x | {f(r.get('naive_speedup'))}x | {f(r.get('vs_triton_msl'))}{'x' if r.get('vs_triton_msl') else ''} | {f(r['candidate_us'], 1)} | {r.get('best_baseline') or '-'} | {', '.join(f'{n} {v:.0f}' for n, v in sorted(b.items(), key=lambda kv: kv[1]))} | {'-' if r.get('budget_usd') is None else format(r['budget_usd'], '.2f')} | {r['spent_usd']:.3f} | {r['evaluations']} | {r['stop_reason']} |"
+            f"| {r['task']} | {r['dtype']} | {_published_cell(r)} | {f(r.get('naive_speedup'))}x | {f(r.get('vs_triton_msl'))}{'x' if r.get('vs_triton_msl') else ''} | {f(r['candidate_us'], 1)} | {r.get('best_baseline') or '-'} | {', '.join(f'{n} {v:.0f}' for n, v in sorted(b.items(), key=lambda kv: kv[1]))} | {'-' if r.get('budget_usd') is None else format(r['budget_usd'], '.2f')} | {r['spent_usd']:.3f} | {r['evaluations']} | {r['stop_reason']} |"
         )
     return "\n".join(L)
 

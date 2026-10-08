@@ -296,3 +296,5 @@ through triton-msl is 10x slower than MLX's fused attention and is refused for b
 `tcenv/` environment (contract, Metal runtime, ABI check, sanitizers, testing, benchmark, profile, worker, xctrace) -
 `taic/` agent (LLM client + ledger, tools, prompts, orchestrator, skills) - `tasks/` kernels (Triton spec, contract, reference, baselines, naive MSL) -
 `experiments/` - `observe/` (local read-only dashboard) - `tests/` - `runs/` (artifacts, git-ignored).
+
+`docs/` (Chinese notes): `docs/架构说明.md` how the parts divide the work - `docs/诚实说明.md` what the pipeline does **not** prove, and how to check every claim - `docs/算子工程师边界.md` what this route replaces and does not replace in human roles (with the evidence paths) - `docs/工程改进实施计划.md` the hand-off plan (it authorizes no spend by itself).

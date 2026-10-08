@@ -21,7 +21,7 @@ Files in a run directory (all JSON, all written atomically):
 # budget_events.json：record_event 追加，read_events / budget_history 读。write_control 写的 kind 是 requested。
 #   applied（搜索采纳新预算时）和 resume（停下的运行换预算再启动）由调用方传入 kind，不在本文件里分支。
 # resume.lock：acquire_run_lock 创建，lock_holder 查看；release_run_lock 只在 pid 是自己时删除。
-#   活着的别的 pid 占着就拒绝；pid 已死、文件损坏，或锁就是本进程上次留下的，都算过期，可以接管。
+#   活着的别的 pid 占着就拒绝。接管在独占 flock 里完成：先写上自己的 pid 并 fsync，再放开，读到的文件不会是空的。
 # run_config.json：这里只有文件名。模块说明由编排器写入启动时的设置，且不含密钥；本文件不读写它。
 
 from __future__ import annotations
@@ -267,33 +267,33 @@ def lock_holder(run_dir: Path) -> dict | None:
     return None
 
 
+def _lock_is_ours(doc) -> bool:
+    """The file names this process, or the dashboard's ``uv`` parent marked ``starting``."""
+    return isinstance(doc, dict) and (doc.get("pid") == os.getpid() or (doc.get("starting") and doc.get("pid") == os.getppid()))
+
+
 # 一个运行目录只许一个活进程继续：两个进程一起写候选内核和状态，会把同一次运行拆成两份互相覆盖的账。
-# 谁先独占创建锁文件谁持有。对方 pid 还活着就拒绝；pid 已死、文件损坏，或就是自己上次留下的，都算过期，删掉再抢。
+# 独占 flock 盖住「读旧内容」和「写上自己的 pid」。写完并 fsync 之后才放开，对方读到的不会是空文件。
+# 对方 pid 还活着就拒绝。pid 已死、文件是空的，或就是自己上次留下的，在这把 flock 里改写成自己的 pid。
 def acquire_run_lock(run_dir: Path, who: str = "resume") -> Path:
     """Claim ``run_dir`` for this process. Raises ``RunLockError`` if a live process holds it; a lock whose pid is dead is stale and replaced."""
     path = lock_path(run_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps({"pid": os.getpid(), "started_at": time.time(), "who": who})
-    # 过期锁刚被别人抢走时，创建会再失败，所以最多试三次。
-    for _ in range(3):
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-        except FileExistsError:
-            doc = read_json(path)
-            # 活着的别的 pid：这个目录已经有人在继续。
-            # 仪表盘启动子进程后立刻替它占锁（"starting"）。子进程可能是 `uv run` 再起的 python，所以父进程 pid 也算自己人。
-            mine = isinstance(doc, dict) and (doc.get("pid") == os.getpid() or (doc.get("starting") and doc.get("pid") == os.getppid()))
-            if isinstance(doc, dict) and pid_alive(doc.get("pid")) and not mine:
-                raise RunLockError(f"{run_dir} is already being resumed by pid {doc.get('pid')} (started {iso(doc.get('started_at'))})")
-            try:  # stale (dead pid, damaged file, or ours from an earlier call): take it over
-                path.unlink()
-            except FileNotFoundError:
-                pass
-            continue
-        with os.fdopen(fd, "w") as f:
-            f.write(payload)
-        return path
-    raise RunLockError(f"could not take the lock of {run_dir}")
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        doc = read_json(path)
+        if isinstance(doc, dict) and pid_alive(doc.get("pid")) and not _lock_is_ours(doc):
+            raise RunLockError(f"{run_dir} is already being resumed by pid {doc.get('pid')} (started {iso(doc.get('started_at'))})")
+        payload = json.dumps({"pid": os.getpid(), "started_at": time.time(), "who": who})
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.ftruncate(fd, 0)
+        os.write(fd, payload.encode())
+        os.fsync(fd)
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+    return path
 
 
 # 只删除本进程写下的锁。别的 pid 的锁不动，避免把刚接手的进程清掉。

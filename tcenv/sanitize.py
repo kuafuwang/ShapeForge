@@ -48,7 +48,7 @@ VALIDATION_ENV = {
 _VALIDATION_MARKERS = re.compile(
     r"(Invalid (device|threadgroup|constant|texture)[a-z ]* (load|store|access|read|write)|executing kernel function|"
     r"failed assertion|Execution of the command buffer was aborted|GPU (Soft|Hard) Fault|Page Fault|Insufficient Permission|"
-    r"validation (error|failure)|race|uninitialized threadgroup)",
+    r"validation (error|failure)|\brace\b|uninitialized threadgroup)",
     re.IGNORECASE,
 )
 

@@ -32,6 +32,7 @@ from typing import Any, Callable
 
 from tasks import get_task
 from tcenv.evaluate import EvalReport, evaluate
+from tcenv.task import task_fingerprint
 from tcenv.schema import SchemaError
 from tcenv.report import format_feedback
 
@@ -60,13 +61,14 @@ def _git_identity(root: Path) -> tuple[str, bool | None]:
         return "unknown", None
 
 
-_EVAL_PHASES = ("search", "confirm", "recheck")
+_EVAL_PHASES = ("search", "confirm", "recheck", "domain")
 
 
 def eval_seed(run_seed: int, phase: str, label: str, source: str) -> int:
     """48-bit seed for one evaluation, derived from the run seed and the candidate's identity.
 
-    ``source`` is the kernel text before the contract header is prepended. ``phase`` is ``search``, ``confirm`` or ``recheck``.
+    ``source`` is the kernel text before the contract header is prepended. ``phase`` is ``search``, ``confirm``, ``recheck`` or ``domain``.
+    Adding ``domain`` does not change the payload of the other phases.
     The label is the one that exists before evaluation (``r2.p1.fix1``, ``init.s2``, ``prior``), not ``Candidate.idx``.
     The same inputs always return the same seed. This does not control the model provider's sampling or the GPU's temperature."""
     if phase not in _EVAL_PHASES:
@@ -399,7 +401,8 @@ class Orchestrator:
                 "system_prompt_sha1": hashlib.sha1(self.system.encode()).hexdigest(),
                 "contract_description_sha256": hashlib.sha256(contract_text.encode("utf-8")).hexdigest(),
                 "triton_source_sha256": hashlib.sha256(triton_text.encode("utf-8")).hexdigest(),
-                "hash_scope": "sha256 of contract.describe() and of task.triton_source only; reference and baseline implementations are not included",
+                "task_fingerprint": task_fingerprint(self.task),
+                "hash_scope": "task_fingerprint hashes the contract, the triton source, the naive kernel, cases, tolerances, flops, min_bytes and the ieee/domain meta. The two hashes above are contract.describe() and task.triton_source. reference and baseline implementations are not included",
                 "git_commit": commit,
                 "git_dirty": dirty,
                 "settings_source": "llm and search values passed into Orchestrator at start (config file, preset and command-line overrides already applied)",
@@ -1042,6 +1045,25 @@ class Orchestrator:
         return pool
 
     # 搜索结束后用新的随机种子（evaluate 在 seed=None 时另抽）和两倍 eval_reps 重测优胜者与并列者，取重测最快的一颗，避免「多次噪声测量里挑最大值」。correctness_only 或已经挂死则不做。重测中再遇 timeout 就停下剩余复测。
+    async def _domain_sweep(self, win) -> None:
+        """Correctness-only full-domain check of the confirmed winner. A failure leaves the published number unchanged."""
+        if not (self.task.meta or {}).get("domain_case"):
+            return
+        phase_seed = self._phase_seed("domain", win.label, win.source)
+        try:
+            async with self.gpu_lock:
+                rep = await asyncio.to_thread(
+                    self.evaluate_fn, self.task_name, self.dtype, self.size, win.source, mode="quick", seed=phase_seed, reps=1,
+                    cases=("domain",), progress_path=self.run_dir / "eval_progress.json",
+                )
+            doc = rep.to_json()
+        except Exception as e:  # noqa: BLE001 - the sweep is evidence, not a second chance to lose the confirmation
+            doc = {"status": f"error: {type(e).__name__}: {e}", "correctness": {"coverage": {"kind": "sampling", "scope": ""}}}
+            self.log(f"   domain sweep failed: {doc['status']}")
+        control.write_json_atomic(self.run_dir / "domain_report.json", doc)
+        kind = ((doc.get("correctness") or {}).get("coverage") or {}).get("kind")
+        self.log(f"   domain sweep: {doc.get('status')} ({kind})")
+
     async def _confirm(self, res: RunResult) -> None:
         """Re-measure the winner and its statistical ties with a fresh seed and twice the repetitions; the fastest
         re-measured kernel is the result (the search maximum alone is biased upward by noise)."""
@@ -1106,6 +1128,7 @@ class Orchestrator:
         res.confirmed_status, res.confirmed_speedup = rep.status, rep.speedup
         res.candidate_us, res.baseline_us = rep.candidate_us, rep.baseline_us
         control.write_json_atomic(self.run_dir / "confirm_report.json", rep.to_json())
+        await self._domain_sweep(win)
 
     # 种子慢于最强基线（speedup < profile_poor_below）时才抓 Instruments，附给规划和每一路补丁。失败、超过 profile_max 或已经挂死都不影响搜索；同一源码只抓一次。痕迹在 gpu_lock 里跑，和评测一样独占 GPU。
     async def _profile_seed(self, seed: Candidate, rnd: int) -> str:

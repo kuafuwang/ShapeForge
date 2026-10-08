@@ -176,7 +176,8 @@ def build(dtype: str, size: str) -> Task:
         gen_inputs=gen_inputs, reference=reference,
         baselines=(BaselineImpl("mlx", "mlx", _mlx), BaselineImpl("mlx_compile", "mlx", _mlx_compile), BaselineImpl("mlx_half_compile", "mlx", _mlx_half_compile),
                    BaselineImpl("torch_mps", "torch", _torch), BaselineImpl("torch_half", "torch", _torch_half)),
-        flops=float(B * H * NC * (2 * CHUNK * CHUNK * N + 2 * CHUNK * CHUNK * P + 2 * CHUNK * P * N)),
+        # C·B 的 einsum 没有 head 轴，B/C 全 head 共享，这一项只乘 B·NC。对 x 和对 state 的两项按 head 算。
+        flops=float(B * NC * (2 * CHUNK * CHUNK * N) + B * H * NC * (2 * CHUNK * CHUNK * P + 2 * CHUNK * P * N)),
         min_bytes=float(2 * (2 * B * S * H * P + B * S * H + B * H * S + 2 * B * S * N + H + B * NC * H * P * N)),
         rtol=rtol, atol_rel=atol_rel,
         naive_msl=load_text("mamba2_chunk_scan", "naive.metal", dtype),

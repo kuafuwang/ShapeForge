@@ -11,7 +11,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-from .common import read_confirm, read_result  # noqa: E402
+from .common import conclusion_of_run, read_confirm, read_result  # noqa: E402
 
 DTYPE_STYLE = {"fp16": ("#1f77b4", "FP16"), "bf16": ("#d62728", "BF16"), "fp32": ("#2ca02c", "FP32")}
 ORDER = ["conv2d", "gemm_silu", "gemm", "gemv", "sigmoid", "relu", "silu", "swiglu", "rmsnorm", "reduction_sum", "rope", "softmax"]
@@ -28,6 +28,7 @@ def _collect(suite_dir: Path) -> dict[str, dict[str, dict]]:
     for d in sorted(Path(suite_dir).iterdir()):
         if d.is_dir() and (d / "result.json").exists():
             r = read_result(d)
+            r["published_speedup"] = conclusion_of_run(d, r)["speedup"]
             out.setdefault(r["task"], {})[r["dtype"]] = r
     return out
 
@@ -49,8 +50,8 @@ def plot_frontiers(suite_dir: Path, dest: Path | None = None) -> Path:
                 xs, ys = zip(*pts)
                 ax.step(xs, ys, where="post", color=color, alpha=0.5)
                 ax.plot(xs, ys, "o", color=color, label=label, markersize=4)
-            if res.get("confirmed_speedup"):
-                ax.axhline(res["confirmed_speedup"], color=color, lw=0.6, ls=":")
+            if res.get("published_speedup"):
+                ax.axhline(res["published_speedup"], color=color, lw=0.6, ls=":")
         ax.axhline(1.0, color="black", ls="--", lw=0.8)
         ax.set_title(task, fontsize=10)
         ax.set_xlabel("cumulative API cost (USD)", fontsize=8)
@@ -75,9 +76,9 @@ def plot_summary(suite_dir: Path, dest: Path | None = None) -> Path:
         xs, ys = [], []
         for i, t in enumerate(tasks):
             r = data[t].get(dt)
-            if r and (r.get("confirmed_speedup") or r.get("best_speedup")):
+            if r and r.get("published_speedup"):
                 xs.append(i + j * w - 0.4 + w / 2)
-                ys.append(r.get("confirmed_speedup") or r["best_speedup"])
+                ys.append(r["published_speedup"])
         ax.bar(xs, ys, width=w, color=DTYPE_STYLE.get(dt, ("gray", dt))[0], label=DTYPE_STYLE.get(dt, ("gray", dt))[1])
     ax.axhline(1.0, color="black", ls="--", lw=0.8)
     ax.set_xticks(range(len(tasks)))

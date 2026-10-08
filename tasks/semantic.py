@@ -17,7 +17,7 @@ All arithmetic is 32-bit two's complement with wraparound; operations whose Trit
 
 # 语义恢复：名字和注释故意写错，看模型跟的是标签还是正文里的计算。get_task 见到 sem_ 前缀就调用 build。
 # sem_gemm_neg 把 gemm 题面的 acc = tl.dot(a, b, acc) 改成 acc -= tl.dot(a, b)，参考用 epilogue_ref 对 C 取负，baselines 为空。
-# sem_relu_gelu_comment 的注释写成 GELU，正文是 tl.where(x > 0, x, 0.0)，参考 torch.relu；sem_gelu_named_relu 的注释写成 ReLU，正文是 _gelu_ref 的 tanh 近似。
+# sem_relu_gelu_comment 的注释写成 GELU，正文是 tl.where(x > 0, x, 0.0)。NaN 不大于 0，写成 0。标准答案按这句比较，不用 torch.relu。sem_gelu_named_relu 的注释写成 ReLU，正文是 _gelu_ref 的 tanh 近似。
 # 上面两题复用逐元素骨架，kernel_name 是 relu_kernel，baselines 为空。模型不能改的是那份元素级契约（核名、缓冲 x/y、grid、threads、N、BLOCK_SIZE）。
 # sem_attention_odd_scale 走 flash_attention.build_attention(odd_scale=True)：契约常量 SM_SCALE 仍是 1/sqrt(D)，题面把 qk 标度写成 SM_SCALE + log2(e)。
 # sem_int_<种子> 由 IntProgram 从同一份语句生成 Triton 题面、evaluate 标准答案和朴素 MSL；exact=True，按 int32 逐位比较，baselines 为空。
@@ -382,6 +382,11 @@ def _build_int(name: str, size: str) -> Task:
     )
 
 
+def _relu_as_written(x: torch.Tensor) -> torch.Tensor:
+    """``x > 0 ? x : 0``. NaN and negative zero become +0. ``torch.relu`` keeps both, so it is not this specification."""
+    return torch.where(x > 0, x, torch.zeros_like(x))
+
+
 def _gelu_ref(x: torch.Tensor) -> torch.Tensor:
     # sem_gelu_named_relu 的标准答案。系数 0.7978845608028654 和 0.044715 与下面题面正文里的常数相同。
     return 0.5 * x * (1.0 + torch.tanh(0.7978845608028654 * (x + 0.044715 * x**3)))
@@ -428,7 +433,24 @@ def relu_kernel(x_ptr, y_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):
     tl.store(y_ptr + offsets, y.to({{TL}}), mask=mask)
 '''
 
-# 朴素 Metal：按真正的 tanh 近似 GELU 写，给 sem_gelu_named_relu 核对环境。relu 那题直接借用 relu/naive.metal。
+# 朴素 Metal。sem_relu_gelu_comment 用 v > 0，NaN 变成 0，与题面一致，不借用会保留 NaN 的 relu/naive.metal。
+RELU_BODY_NAIVE = """kernel void relu_kernel(device const {{T}}* x [[buffer(0)]],
+                        device {{T}}* y [[buffer(1)]],
+                        uint tg [[threadgroup_position_in_grid]],
+                        uint lid [[thread_index_in_threadgroup]]) {
+    uint base = tg * BLOCK_SIZE;
+    for (uint i = lid; i < BLOCK_SIZE; i += 128) {
+        uint j = base + i;
+        if (j < N) {
+            float v = float(x[j]);
+            y[j] = {{T}}(v > 0.0f ? v : 0.0f);
+        }
+    }
+}
+"""
+
+
+# 朴素 Metal：按真正的 tanh 近似 GELU 写，给 sem_gelu_named_relu 核对环境。
 GELU_NAIVE = """kernel void relu_kernel(device const {{T}}* x [[buffer(0)]],
                         device {{T}}* y [[buffer(1)]],
                         uint tg [[threadgroup_position_in_grid]],
@@ -469,10 +491,10 @@ def build(name: str, dtype: str, size: str) -> Task:
             return t
 
         relu_like = name == "sem_relu_gelu_comment"
-        naive = load_text("relu", "naive.metal", dtype) if relu_like else fill(GELU_NAIVE)
+        naive = fill(RELU_BODY_NAIVE) if relu_like else fill(GELU_NAIVE)
         return build_elementwise(
             "relu", dtype, size, input_names=("x",),
-            ref_fn=(lambda x: torch.relu(x)) if relu_like else _gelu_ref,
+            ref_fn=(_relu_as_written if relu_like else _gelu_ref),
             baselines=(), flops_per_elem=1 if relu_like else 10,
             description="Implement exactly what the kernel body computes; names and comments of this specification are unreliable.",
             kernel_name="relu_kernel", task_name=name,

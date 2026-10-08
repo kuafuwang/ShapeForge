@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from taic.llm import PAPER_BUDGET_USD, load_config
+from taic.llm import PAPER_BUDGET_USD, SearchConfig, load_config
 from taic.orchestrator import Orchestrator, RunResult
 
 # Per-kernel USD budgets: the paper's, in dollars, whatever the model. Every kernel gets the paper's $15 (Sections 4.3 and 4.4 of
@@ -259,6 +259,54 @@ def published_conclusion(result: dict | None, *, best_metal_sha256: str | None =
     if bound:
         return {"speedup": result.get("confirmed_speedup"), "publication": "confirmed"}
     return {"speedup": None, "publication": "未确认"}
+
+
+def publication_role(
+    conclusion: dict | None,
+    domain: dict | None,
+    *,
+    source_sha256: str | None,
+    task_fingerprint: str | None,
+    recorded_fingerprint: str | None,
+    min_improvement: float | None = None,
+) -> str | None:
+    """``primary`` when a confirmed speedup clears the noise gate and a passing domain sweep is bound to that same source and task.
+
+    ``None`` while the run is still in progress. Anything else, including a correct kernel that is slower than the baselines, is ``fallback``.
+    The value is derived. It is not written into ``result.json``.
+    """
+    if conclusion is None or conclusion.get("publication") == "in_progress":
+        return None
+    if min_improvement is None:
+        min_improvement = SearchConfig.min_improvement
+    speed = conclusion.get("speedup")
+    cov = {}
+    if isinstance(domain, dict):
+        nested = domain.get("coverage")
+        cov = nested if isinstance(nested, dict) else domain
+    speed_ok = isinstance(speed, (int, float)) and not isinstance(speed, bool) and speed >= min_improvement
+    bound = (
+        conclusion.get("publication") == "confirmed"
+        and speed_ok
+        and cov.get("kind") == "domain_sweep"
+        and cov.get("passed") is True
+        and isinstance(source_sha256, str) and source_sha256 != ""
+        and cov.get("source_sha256") == source_sha256
+        and isinstance(task_fingerprint, str) and task_fingerprint != ""
+        and cov.get("task_fingerprint") == task_fingerprint == recorded_fingerprint
+    )
+    return "primary" if bound else "fallback"
+
+
+def shown_speedup(row: dict):
+    """The number a summary table may print. ``None`` when the publication gate did not accept one.
+
+    A row that never went through the gate has no ``published_speedup`` key and prints nothing, rather than
+    ``confirmed_speedup`` or ``best_speedup``.
+    """
+    if "published_speedup" not in row:
+        return None
+    return row.get("published_speedup")
 
 
 def summarize(res: dict, confirm: dict | None, naive: dict | None = None, *, run_dir: Path | None = None) -> dict:

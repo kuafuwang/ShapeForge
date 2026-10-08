@@ -251,6 +251,17 @@ def _evaluate_in_process(
         "tolerance": {"rtol": task.rtol, "atol_rel": task.atol_rel, "exact": task.exact},
         "baseline_errors": baseline_cache.get("errors", []),
     }
+    import platform
+
+    from .domain import coverage_for_report
+
+    # 评测入口编译时不传 math，metal_runtime.compile 的默认是 fast。证据范围把这一点写明，换工具链后旧记录作废。
+    rep.correctness["coverage"] = coverage_for_report(task, results, kernel_source, {
+        "device": dev_info.get("name"),
+        "macos": platform.mac_ver()[0],
+        "msl": dev_info.get("language_version"),
+        "math_mode": "fast",
+    })
     rep.safety = {"ok": not safety and not nondet, "violations": safety, "nondeterminism": nondet, "validation": []}
     # 同一次运行同时带回安全违例和数值结果。有违例或非确定就定 unsafe；安全干净之后，数值不过才定 incorrect。
     if safety or nondet:

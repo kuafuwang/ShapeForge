@@ -39,6 +39,7 @@ def build_elementwise(
     triton_source: str | None = None,
     naive_msl: str | None = None,
     task_name: str | None = None,
+    domain_case: bool = False,
 ) -> Task:
     check_dtype(dtype)
     n = SIZES[size]
@@ -60,6 +61,10 @@ def build_elementwise(
         return {"y": ref_fn(*[inp[nm].to(torch.float64) for nm in input_names])}
 
     rtol, atol_rel = default_tolerances(dtype)
+    # 全域扫描只对一元 fp16 有定义。二元题和 bf16 在这里直接拒绝，避免一个开关悄悄扫出错的域。
+    if domain_case and (dtype != "fp16" or len(input_names) != 1):
+        raise ValueError(f"domain_case is only valid for a unary fp16 elementwise task, got {name!r} {dtype} {input_names}")
+    meta = {"domain_case": True} if domain_case else {}
     nbuf = len(input_names) + 1
     src_dir = name  # directory holding kernel_triton.py / naive.metal
     return Task(
@@ -78,4 +83,5 @@ def build_elementwise(
         rtol=rtol,
         atol_rel=atol_rel,
         naive_msl=naive_msl if naive_msl is not None else load_text(src_dir, "naive.metal", dtype),
+        meta=meta,
     )

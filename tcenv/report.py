@@ -63,6 +63,9 @@ def format_feedback(rep: EvalReport, *, max_errors_chars: int = 2500) -> str:
             L.append(f"  triton_msl (Triton spec compiled to Metal by a community backend, estimated): {cb['estimated_us']:.2f} us -> candidate is {cb['speedup']:.3f}x {'FASTER' if cb['speedup'] > 1 else 'slower'}")
     if rep.status == "ok" and rep.verification:
         L.append(f"\nFormal verification: {rep.verification.get('status')} (eligibility rests on safety checks and randomized differential tests)")
+        scope = ((rep.correctness or {}).get("coverage") or {}).get("scope")
+        if scope:
+            L.append(f"Evidence: {rep.correctness['coverage'].get('kind')}: {scope}")
     if rep.roofline:
         r = rep.roofline
         L.append("\nRoofline (measured peaks on this machine):")

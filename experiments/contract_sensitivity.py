@@ -261,8 +261,10 @@ def report(out: Path, dtype: str = "fp16", size: str = "paper", p1: Path | None 
         rows = [r for r in json.loads((p1 / "summary.json").read_text()) if str(r["task"]).startswith("flash_attention")]
         if rows:
             L += ["## 3. FlashAttention: the LLM search under three launch contracts (same budget, same model)", "",
-                  "| run | contract | confirmed speedup | candidate us | best baseline | spent USD |", "| --- | --- | ---: | ---: | --- | ---: |"]
+                  "| run | contract | published speedup | candidate us | best baseline | spent USD |", "| --- | --- | ---: | ---: | --- | ---: |"]
             for r in rows:
-                L.append(f"| {r['run']} | {r['task'].partition('@')[2] or '32x32t128 (default)'} | {r['confirmed_speedup'] and round(r['confirmed_speedup'], 3)}x | {r['candidate_us'] and round(r['candidate_us'], 1)} | {r['best_baseline']} | {r['spent_usd']:.2f} |")
+                published = r.get("published_speedup") if "published_speedup" in r else None
+                speed_cell = f"{round(published, 3)}x" if isinstance(published, (int, float)) and not isinstance(published, bool) else (r.get("publication") or "-")
+                L.append(f"| {r['run']} | {r['task'].partition('@')[2] or '32x32t128 (default)'} | {speed_cell} | {r['candidate_us'] and round(r['candidate_us'], 1)} | {r['best_baseline']} | {r['spent_usd']:.2f} |")
             L.append("")
     return "\n".join(L)

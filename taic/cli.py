@@ -151,6 +151,11 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
         search.budget_usd = new_budget
         task = get_task(info["task"], info["dtype"], doc.get("size", "paper"))
         snap = rs.load_snapshot(run_dir, search, task.contract.kernel_name, settings=settings)
+        # inspect 用的是 result/state 里的花费，转录可以更高。新上限必须盖过重建后的花费。
+        if new_budget <= snap.spent_usd + 1e-9:
+            raise rs.ResumeError(
+                f"budget ${new_budget:.2f} does not exceed what the transcript has already spent (${snap.spent_usd:.4f}): add budget with --add-budget USD or --budget TOTAL"
+            )
         first = snap.partial.rnd if snap.partial else snap.next_round
         if first > search.max_rounds:
             raise rs.ResumeError(f"all {search.max_rounds} rounds were used (the run is past round {first - 1}): raise the limit with --max-rounds")

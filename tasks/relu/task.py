@@ -24,4 +24,5 @@ def build(dtype: str, size: str):
         baselines=(BaselineImpl("mlx", "mlx", _mlx), BaselineImpl("torch_mps", "torch", torch.relu)),
         flops_per_elem=1,
         description="y[i] = max(x[i], 0). Values <= 0 map to +0.",
+        domain_case=dtype == "fp16",
     )

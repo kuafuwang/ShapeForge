@@ -30,6 +30,15 @@ def sequential_scan(inp, B, S, H, P, N):
     return y
 
 
+def test_paper_flops_count_the_shared_bc_product_once():
+    task = get_task("mamba2_chunk_scan", "fp16", "paper")
+    batch, seq, heads, headdim, dstate = 2, 2048, 8, 64, 64
+    chunks = seq // CHUNK
+    shared = batch * chunks * (2 * CHUNK * CHUNK * dstate)
+    per_head = batch * heads * chunks * (2 * CHUNK * CHUNK * headdim + 2 * CHUNK * headdim * dstate)
+    assert task.flops == shared + per_head == 570_425_344
+
+
 @pytest.mark.parametrize("case", ["normal", "wide_range", "large", "outlier"])
 def test_reference_equals_the_sequential_state_recurrence(case):
     t = get_task("mamba2_chunk_scan", "fp16", "small")

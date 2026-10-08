@@ -37,7 +37,10 @@ def test_v1_config_records_two_hashes_and_no_credentials(tmp_path):
     assert doc["schema_version"] == 1
     assert doc["contract_description_sha256"] == hashlib.sha256(task.contract.describe().encode("utf-8")).hexdigest()
     assert doc["triton_source_sha256"] == hashlib.sha256(task.triton_source.encode("utf-8")).hexdigest()
+    from tcenv.task import task_fingerprint
+
     assert "reference" in doc["hash_scope"] and "baseline" in doc["hash_scope"]
+    assert doc["task_fingerprint"] == task_fingerprint(task)
     assert doc["cost_may_be_incomplete"] is True
     assert doc["git_commit"] == "unknown" or len(doc["git_commit"]) >= 7
     assert doc["git_dirty"] in (True, False, None)

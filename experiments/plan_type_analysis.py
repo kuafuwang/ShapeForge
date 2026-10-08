@@ -39,6 +39,7 @@ import argparse
 import bisect
 import difflib
 import glob
+import hashlib
 import json
 import math
 import re
@@ -1291,6 +1292,60 @@ def nocode_tables(runs: list[Run], branches: list[dict], small_n: int) -> dict:
 # ----------------------------------------------------------------------------------------------------------------------
 # Question 2
 # ----------------------------------------------------------------------------------------------------------------------
+def _file_sha256(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _timing_uncertain(report: dict | None) -> bool:
+    """Same cutoff as ``tcenv.bench.QUIET_CV``. This module does not import the evaluator."""
+    bench = (report or {}).get("benchmark") if isinstance(report, dict) else None
+    if not isinstance(bench, dict) or not bench:
+        return False
+    if bench.get("noisy") is True:
+        return True
+    candidate = bench.get("candidate")
+    if not isinstance(candidate, dict) or "cv" not in candidate:
+        return True
+    try:
+        cvs = [float(candidate["cv"])]
+        bases = bench.get("baselines") or {}
+        base = bases.get(bench.get("best_baseline")) if isinstance(bases, dict) else None
+        if isinstance(base, dict) and "cv" in base:
+            cvs.append(float(base["cv"]))
+    except (TypeError, ValueError):
+        return True
+    return any(cv > 0.05 for cv in cvs)
+
+
+def _published_speed(run: Run) -> float | None:
+    """The confirmation this run may print. Missing, unbound, failed or noisy confirmations print nothing."""
+    res = run.result or {}
+    if "confirmation_source_sha256" not in res or res.get("confirmed_status") != "ok":
+        return None
+    recorded = res.get("confirmation_source_sha256")
+    winner = res.get("confirm_winner_label")
+    if not isinstance(recorded, str) or not recorded or not isinstance(winner, str) or not winner:
+        return None
+    if (run.confirm or {}).get("status") != "ok":
+        return None
+    root = Path(run.path)
+    best = _file_sha256(root / "best.metal")
+    folder = root / "candidates"
+    found = [p for p in folder.iterdir() if p.is_dir() and len(p.name) > 4 and p.name[3] == "_" and p.name[4:] == winner] if folder.is_dir() else []
+    winner_hash = _file_sha256(found[0] / "kernel.metal") if len(found) == 1 else None
+    if recorded != best or recorded != winner_hash:
+        return None
+    if _timing_uncertain(run.confirm):
+        return None
+    speed = res.get("confirmed_speedup")
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+        return None
+    return float(speed)
+
+
 def q2_row(run: Run, sat: float) -> dict:
     by_idx = run.by_idx
     order = [by_idx[i] for i in run.order]
@@ -1307,7 +1362,8 @@ def q2_row(run: Run, sat: float) -> dict:
     base_us = conf.get("baseline_us") or res.get("baseline_us") or (best.baseline_us if best else {}) or {}
     best_base = min(base_us.values()) if base_us else None
     lb = roof.get("lower_bound_us")
-    speed = res.get("confirmed_speedup") or res.get("best_speedup") or (best.speedup if best else None)
+    # 有 result 时只取发布门槛放过的确认值。没有 result 的半成品仍用搜索中的最好，表头写的是 best speedup。
+    speed = _published_speed(run) if res else (best.speedup if best else None)
     improved = [c for c in order if c.improved]
     last_imp = improved[-1] if improved else None
     spent = run.spent_usd

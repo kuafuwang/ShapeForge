@@ -36,7 +36,7 @@ from observe.publish import job_state
 
 from taic.llm import PAPER_BUDGET_USD
 
-from .common import experiment_commitment, fits_cap, naive_reference, read_confirm, read_result, run_one, summarize, write_cap
+from .common import experiment_commitment, fits_cap, naive_reference, read_confirm, read_result, run_one, shown_speedup, summarize, write_cap
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -140,9 +140,11 @@ def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = 
 # 表的第一列是具名跑法。fa_pro 和 fa_flash 的 task 都是 flash_attention，模型和搜索选项才是这两行的差别。
 def markdown(rows: list[dict]) -> str:
     f = lambda v, d=3: "-" if v is None else f"{v:.{d}f}"
-    L = ["| run | task | model | confirmed speedup | best (search) | candidate us | best baseline | naive kernel | vs triton-msl | rounds | evals | budget USD | spent USD | stop |", "| --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
+    L = ["| run | task | model | published speedup | best (search) | candidate us | best baseline | naive kernel | vs triton-msl | rounds | evals | budget USD | spent USD | stop |", "| --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
     for r in rows:
-        L.append(f"| {r['run']} | {r['task']} | {r['model']} | {f(r.get('confirmed_speedup'))}x | {f(r.get('best_speedup'))}x | {f(r.get('candidate_us'), 1)} | {r.get('best_baseline') or '-'} | {f(r.get('naive_speedup'))}x | {f(r.get('vs_triton_msl'))} | {r['rounds']} | {r['evaluations']} | {f(r.get('budget_usd'), 2)} | {r['spent_usd']:.3f} | {r['stop_reason']} |")
+        published = shown_speedup(r)
+        published_cell = f"{published:.3f}x" if isinstance(published, (int, float)) and not isinstance(published, bool) else (r.get("publication") or "-")
+        L.append(f"| {r['run']} | {r['task']} | {r['model']} | {published_cell} | {f(r.get('best_speedup'))}x | {f(r.get('candidate_us'), 1)} | {r.get('best_baseline') or '-'} | {f(r.get('naive_speedup'))}x | {f(r.get('vs_triton_msl'))} | {r['rounds']} | {r['evaluations']} | {f(r.get('budget_usd'), 2)} | {r['spent_usd']:.3f} | {r['stop_reason']} |")
     L.append(f"\nTotal spent: ${sum(r['spent_usd'] for r in rows):.3f}")
     return "\n".join(L)
 

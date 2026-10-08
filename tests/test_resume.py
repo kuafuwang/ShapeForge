@@ -8,6 +8,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,54 @@ def test_run_lock_is_exclusive_and_stale_locks_are_replaced(tmp_path):
     control.acquire_run_lock(tmp_path)
     control.release_run_lock(tmp_path)
     assert not (tmp_path / "resume.lock").exists()
+    (tmp_path / "resume.lock").write_text("")
+    control.acquire_run_lock(tmp_path)
+    assert json.loads((tmp_path / "resume.lock").read_text())["pid"] == os.getpid()
+    control.release_run_lock(tmp_path)
+
+
+def test_two_processes_cannot_both_hold_the_run_lock(tmp_path):
+    script = r"""
+import os, sys, time
+sys.path.insert(0, os.environ["REPO"])
+from pathlib import Path
+from taic import control
+try:
+    control.acquire_run_lock(Path(os.environ["RUN"]))
+    print("GOT", flush=True)
+    time.sleep(30)
+except control.RunLockError:
+    print("REFUSED", flush=True)
+"""
+    env = os.environ.copy()
+    env["REPO"] = str(Path(__file__).resolve().parents[1])
+    env["RUN"] = str(tmp_path)
+    holder = subprocess.Popen([sys.executable, "-c", script], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "GOT"
+        other = subprocess.Popen([sys.executable, "-c", script], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        out, err = other.communicate(timeout=5)
+        assert (out.strip() or err.strip()) == "REFUSED"
+    finally:
+        holder.kill()
+        holder.wait(timeout=5)
+
+
+def test_a_budget_that_clears_the_file_spend_but_not_the_transcript_is_refused(tmp_path):
+    run = tmp_path / "run"
+    folder = run / "candidates" / "000_init"
+    folder.mkdir(parents=True)
+    (folder / "kernel.metal").write_text("kernel void k_init() {}\n")
+    (folder / "report.json").write_text(json.dumps(_ok_report(1.1).to_json()))
+    (run / "state.json").write_text(json.dumps({
+        "task": "relu", "dtype": "fp16", "size": "small", "phase": "llm", "pid": 2**22 + 3,
+        "best_label": "init", "spent_usd": 1.0, "budget_usd": 5.0,
+        "trace": [{"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0}],
+    }))
+    (run / "transcript.jsonl").write_text(json.dumps({"event": "chat", "label": "init", "cost_usd": 4.0, "total_usd": 4.0, "usage": {}}) + "\n")
+    with pytest.raises(cli.ResumeRefused) as caught:
+        cli.prepare_resume(ns(run, dry_run=True, budget=2.0), log=lambda _s: None)
+    assert caught.value.code == 5 and "4.0000" in str(caught.value)
 
 
 # ------------------------------------------------------------------------------------------------ a live run picks up a top-up

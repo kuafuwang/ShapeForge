@@ -2,7 +2,7 @@
 
 # 搜索（taic.orchestrator）和验证（tcenv.evaluate）都只调用 get_task，拿到同一份 Task。
 # 题面在 triton_source，对错看 reference，速度跟 baselines 比；contract 的 kernel_name、grid、threads、args、constants 由环境锁定，模型改不了。
-# 普通题加载 tasks/<名字>/task.py 的 build。名字以 sem_ 开头交给 semantic.build。名字里 @ 之后是另一套 tile/threads，走该题的 build_variant。
+# 普通题加载 tasks/<名字>/task.py 的 build。名字以 sem_ 开头交给 semantic.build。名字以 gen_ 开头从逐元素清单生成。名字里 @ 之后是另一套 tile/threads，走该题的 build_variant。
 from __future__ import annotations
 
 import importlib
@@ -52,6 +52,12 @@ def get_task(name: str, dtype: str = "fp16", size: str = "paper"):
         from . import semantic
 
         return semantic.build(name, dtype, size)
+    if name.startswith("gen_"):
+        if size not in ("paper", "small"):
+            raise ValueError("size must be 'paper' or 'small'")
+        from .generated.elementwise import build as build_generated
+
+        return build_generated(name, dtype, size)
     # @ 前是算子名，后面是启动契约变体（tile / threads）。公式和 reference 不变。
     base, _, variant = name.partition("@")  # "gemm@128x64x32t256": the same operator under another launch contract (tile / threads)
     if base not in TASK_NAMES + PHASE2_TASK_NAMES:

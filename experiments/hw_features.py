@@ -426,7 +426,7 @@ def render_report(items: list[tuple[KernelRef, HardwareFeatureReport]], runs: di
           "`missing` lists expected features (required first) that the source does not contain.", "",
           "| run | task | best | partial | confirmed speedup | summary | missing |", "| --- | --- | --- | --- | ---: | --- | --- |"]
     for b in sorted(best, key=lambda b: (b["task"] or "", b["run"])):
-        L.append(f"| {b['run']} | {b['task']} | {b['label']} | {'yes' if b['partial'] else 'no'} | {fmt(b['confirmed_speedup'] or b['best_speedup'], 3)} | {cell(b['summary'])} | {', '.join(x.replace('_', ' ') for x in b['missing']) or '-'} |")
+        L.append(f"| {b['run']} | {b['task']} | {b['label']} | {'yes' if b['partial'] else 'no'} | {fmt(b.get('confirmed_speedup'), 3)} | {cell(b['summary'])} | {', '.join(x.replace('_', ' ') for x in b['missing']) or '-'} |")
     L += [""]
 
     # --- effectiveness ----------------------------------------------------------------------------------------------------------------

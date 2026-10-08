@@ -1,8 +1,8 @@
 """Experiment 2 (paper Table 1): run-to-run variation of AI lowering under a fixed search budget.
 
-Several independent runs (fresh model samples, fresh evaluation seeds) per kernel; the reported number of a run is the
-*confirmed* speedup of its best kernel (re-measured with a new seed), which is not biased by selecting a maximum of noisy
-measurements.
+Several independent runs (fresh model samples, fresh evaluation seeds) per kernel. The number kept for a trial is the
+published speedup: a confirmation bound to the remeasured kernel and quiet enough to print. A noisy or unbound
+confirmation is left out, and the search-best number is not used in its place.
 
     uv run python -m experiments.repeatability --tasks conv2d,gemm,swiglu --trials 5
 
@@ -25,7 +25,7 @@ from pathlib import Path
 
 from observe.publish import job_state
 
-from .common import budget_for, experiment_commitment, fits_cap, read_result, run_one, write_cap
+from .common import budget_for, conclusion_of_run, experiment_commitment, fits_cap, read_result, run_one, write_cap
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TASKS = ("conv2d", "gemm", "swiglu")
@@ -59,7 +59,7 @@ def run_repeatability(tasks, dtype, size, out_dir: Path, *, trials=5, budget_sca
                 # 提供了 client_factory 时，每个新 trial 调用一次。换的是客户端，不是上一格的核。
                 run_one(task, dtype, size, rd, budget=b, max_rounds=max_rounds, branches=branches, model=model, client=client_factory() if client_factory else None, evaluate_fn=evaluate_fn, log=log, **overrides)
                 res = read_result(rd)
-            vals.append(res.get("confirmed_speedup") or res.get("best_speedup"))
+            vals.append(conclusion_of_run(rd, res)["speedup"])
             costs.append(res["spent_usd"])
             if res["stop_reason"].startswith("gpu_hang"):
                 # 只停这道题剩下的 trial。已经记下的样本仍留在表里，下一道题还会继续。

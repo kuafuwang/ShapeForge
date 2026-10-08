@@ -109,11 +109,14 @@ def test_p1_runs_name_buildable_tasks_and_the_report_renders(tmp_path):
         t = get_task(spec["task"], spec.get("dtype", "fp16"), "paper")
         assert t.contract.kernel_name, name
     rows = [
-        {"run": "fa_flash", "task": "flash_attention", "model": "deepseek-flash", "confirmed_speedup": 0.9, "best_speedup": 0.92, "candidate_us": 400.0, "best_baseline": "mlx", "naive_speedup": 0.1, "vs_triton_msl": 8.0, "rounds": 7, "evaluations": 30, "spent_usd": 1.5, "stop_reason": "budget"},
+        {"run": "fa_flash", "task": "flash_attention", "model": "deepseek-flash", "confirmed_speedup": 0.9, "published_speedup": 0.9, "publication": "confirmed", "best_speedup": 0.92, "candidate_us": 400.0, "best_baseline": "mlx", "naive_speedup": 0.1, "vs_triton_msl": 8.0, "rounds": 7, "evaluations": 30, "spent_usd": 1.5, "stop_reason": "budget"},
         {"run": "fa_pro", "task": "flash_attention", "model": "deepseek-v4-pro", "confirmed_speedup": None, "best_speedup": None, "candidate_us": None, "best_baseline": None, "naive_speedup": None, "vs_triton_msl": None, "rounds": 1, "evaluations": 1, "spent_usd": 0.2, "stop_reason": "x"},
     ]
     md = p1_runs.markdown(rows)
     assert "fa_flash" in md and "0.900x" in md and "Total spent: $1.700" in md
+    withheld = {**rows[0], "confirmed_speedup": 1.337, "published_speedup": None, "publication": "不确定", "best_speedup": 2.47}
+    hidden = p1_runs.markdown([withheld])
+    assert "不确定" in hidden and "1.337" not in hidden
     # the contract report reads the three sources it knows
     (tmp_path / "p1").mkdir()
     (tmp_path / "p1" / "summary.json").write_text(json.dumps([{**rows[0], "task": "flash_attention@64x32t256", "run": "fa_64x32t256"}, rows[0]]))

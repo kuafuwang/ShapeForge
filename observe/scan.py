@@ -528,7 +528,7 @@ def run_detail(run_id: str) -> dict | None:
         "confirmations": confirmations,
         "candidates": _candidates(directory),
         "publication": (conclusion_of_run(directory, result)["publication"] if result else "in_progress"),
-        "published_speedup": (conclusion_of_run(directory, result)["speedup"] if result else (state or {}).get("best_speedup")),
+        "published_speedup": conclusion_of_run(directory, result)["speedup"] if result else None,
         "eval_progress": _age(_load(directory / "eval_progress.json")),
         "llm": _load(directory / "llm.json"),
     }
