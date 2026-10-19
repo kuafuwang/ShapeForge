@@ -2,32 +2,77 @@
 
 ``compute()`` calls the prompt and feedback functions with ``hw_feedback`` off (the arguments from before that switch, or ``hw_feedback=False``).
 ``tests/golden/hw_off.json`` is that output. Regenerate it on purpose when a prompt change other than the switch should become the new off baseline.
-The orchestrator hashes include the committee handoff on round 2; round 1 is still the prompt function alone.
+A request hash covers the body ``chat.completions.create`` is given, not only ``messages``: model, max_tokens, reasoning_effort, extra_body, and tools.
+``REQUEST_KEYS`` is the whitelist of keys ``LLM._params`` may produce; the test fails when the two sets diverge.
+Feedback entries store the text. System prompts stay hashes. Orchestrator entries are ordered by the request label, so round 1 and round 2 cannot trade places unnoticed.
+``_meta`` (when, which commit, why) is written by ``--record`` and is not part of ``compute()``.
 
-    uv run python -m tests.hw_golden --record      # rewrite tests/golden/hw_off.json from the current code (only do this on purpose)
+    uv run python -m tests.hw_golden --record --reason "why the off baseline should change"
+    # more than FORCE_AFTER keys also needs --force
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
+import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 GOLDEN = GOLDEN_DIR / "hw_off.json"
 FIXTURES = GOLDEN_DIR / "fixtures"
+# Keys ``LLM._params`` is allowed to put on the wire. ``messages`` is added by ``chat`` and is hashed with them.
+REQUEST_KEYS = frozenset({"model", "max_tokens", "reasoning_effort", "extra_body", "tools"})
+_NOT_SENT = frozenset({"stream", "_label"})
+FORCE_AFTER = 40
+_LABEL = contextvars.ContextVar("hw_golden_label", default="")
 
 
 def sha(text: str) -> str:
     return hashlib.sha1(text.encode()).hexdigest()
 
 
+def dumps(data: dict, meta: dict) -> str:
+    """The only spelling ``--record`` may write and the format test may accept."""
+    return json.dumps({"_meta": meta, **data}, indent=0, sort_keys=True)
+
+
+def fixture_digest(name: str) -> str:
+    """sha256 of the metal source and the report, so a fixture edit cannot pass as a prompt change."""
+    metal = (FIXTURES / f"{name}.metal").read_bytes()
+    report = (FIXTURES / f"{name}.report.json").read_bytes()
+    return hashlib.sha256(metal + b"\0" + report).hexdigest()
+
+
 def fixture(name: str) -> tuple[dict, str, dict]:
     """(index entry, kernel source, report json) of a recorded candidate."""
     idx = json.loads((FIXTURES / "index.json").read_text())[name]
     return idx, (FIXTURES / f"{name}.metal").read_text(), json.loads((FIXTURES / f"{name}.report.json").read_text())
+
+
+def param_keys() -> set[str]:
+    """Every key ``LLM._params`` emits across effort, tools, and max_tokens."""
+    from taic.llm import CostLedger, LLM, LLMConfig
+    from taic.tools import LOOKUP_TOOL, QUICK_CHECK_TOOL
+
+    tools = [LOOKUP_TOOL, QUICK_CHECK_TOOL]
+    keys: set[str] = set()
+    for effort in (None, "off", "low", "high"):
+        for extra in ({}, {"top_p": 1}):
+            cfg = LLMConfig(base_url="http://x", api_key="k", model="m", reasoning_effort="high", extra_body=dict(extra))
+            llm = LLM(cfg, CostLedger(1.0), client=object())
+            for tool_arg in (None, tools):
+                for limit in (None, 1024):
+                    keys |= set(llm._params(tool_arg, limit, effort))
+    return keys
+
+
+def _request_body(call: dict) -> dict:
+    return {key: value for key, value in call.items() if key not in _NOT_SENT}
 
 
 def task_grid() -> list[tuple[str, str, str]]:
@@ -82,8 +127,30 @@ def feedback_texts() -> dict[str, str]:
     for name in sorted(idx):
         rep = EvalReport.from_json(json.loads((FIXTURES / f"{name}.report.json").read_text()))
         text = format_feedback(rep)
-        out[f"format_feedback|{name}"] = sha(text)
-        out[f"format_feedback_cut|{name}"] = sha(text[:6000])
+        out[f"format_feedback|{name}"] = text
+        out[f"format_feedback_cut|{name}"] = text[:6000]
+    return out
+
+
+def outbound_requests() -> dict[str, str]:
+    """Complete request bodies, including the tool schema and the three effort settings, with the messages held fixed."""
+    from taic.llm import CostLedger, LLM, LLMConfig
+    from taic.tools import LOOKUP_TOOL, QUICK_CHECK_TOOL
+
+    tools = [LOOKUP_TOOL, QUICK_CHECK_TOOL]
+    messages = [{"role": "user", "content": "PING"}]
+    specs = (
+        ("effort=off|tools=0|max=default|model=fake", "fake", "off", None, None),
+        ("effort=high|tools=0|max=default|model=fake", "fake", "high", None, None),
+        ("effort=low|tools=0|max=default|model=fake", "fake", "low", None, None),
+        ("effort=high|tools=1|max=default|model=fake", "fake", "high", tools, None),
+        ("effort=off|tools=1|max=1024|model=other", "other", "off", tools, 1024),
+    )
+    out = {}
+    for name, model, effort, tool_arg, limit in specs:
+        cfg = LLMConfig(base_url="http://x", api_key="k", model=model, reasoning_effort="high")
+        body = {"messages": messages, **LLM(cfg, CostLedger(1.0), client=object())._params(tool_arg, limit, effort)}
+        out[name] = sha(json.dumps(body, sort_keys=True))
     return out
 
 
@@ -106,8 +173,36 @@ def _scripted_eval(report_name: str):
     return ev
 
 
+def _bind_labels(client):
+    """Remember ``chat``'s label on the recorded call without putting it on the wire."""
+    from taic import llm as llm_mod
+
+    original_create = client.chat.completions.create
+    original_chat = llm_mod.LLM.chat
+
+    async def create(**kw):
+        result = await original_create(**kw)
+        client.calls[-1]["_label"] = _LABEL.get()
+        return result
+
+    async def chat(self, messages, *, tools=None, label="", max_tokens=None, reasoning_effort=None):
+        token = _LABEL.set(label)
+        try:
+            return await original_chat(self, messages, tools=tools, label=label, max_tokens=max_tokens, reasoning_effort=reasoning_effort)
+        finally:
+            _LABEL.reset(token)
+
+    client.chat.completions.create = create
+    llm_mod.LLM.chat = chat
+    return llm_mod, original_chat
+
+
 def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]:
-    """Every request an orchestrator sends in a scripted two-round search (hash per request, sorted: the three branches run concurrently)."""
+    """Every request an orchestrator sends in a scripted two-round search.
+
+    Each entry is ``(label, sha)`` sorted by label. Hashing the messages alone, then sorting those hashes,
+    hid which round a request belonged to.
+    """
     from taic.llm import LLMConfig, SearchConfig
     from taic.orchestrator import Orchestrator
 
@@ -125,22 +220,84 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
         search = SearchConfig(budget_usd=5.0, branches=3, max_rounds=2, max_repair_tries=2, eval_reps=3, plan_mix=plan_mix, **{**off, **(extra_search or {})})
         with tempfile.TemporaryDirectory() as td:
             client = FakeClient(script)
-            orch = Orchestrator(task, "fp16", "small", llm_cfg, search, run_dir=Path(td) / "run", evaluate_fn=_scripted_eval(rep_name), client=client, log=lambda s: None)
-            asyncio.run(orch.run())
-            hashes = sorted(sha(json.dumps(c["messages"], sort_keys=True)) for c in client.calls)
-        out[f"orchestrator|{task}|plan_mix={int(plan_mix)}"] = {"requests": len(hashes), "sha": sha("\n".join(hashes)), "each": hashes}
+            llm_mod, original_chat = _bind_labels(client)
+            try:
+                orch = Orchestrator(task, "fp16", "small", llm_cfg, search, run_dir=Path(td) / "run", evaluate_fn=_scripted_eval(rep_name), client=client, log=lambda s: None)
+                asyncio.run(orch.run())
+            finally:
+                llm_mod.LLM.chat = original_chat
+        ranked = []
+        for index, call in enumerate(client.calls):
+            label = call.get("_label") or ""
+            if not label:
+                raise RuntimeError("a model request was recorded without its label")
+            ranked.append((label, index, sha(json.dumps(_request_body(call), sort_keys=True))))
+        ranked.sort()
+        each = [{"label": label, "sha": digest} for label, _index, digest in ranked]
+        joined = "\n".join(f"{row['label']} {row['sha']}" for row in each)
+        out[f"orchestrator|{task}|plan_mix={int(plan_mix)}"] = {"requests": len(each), "sha": sha(joined), "each": each}
     return out
 
 
 def compute(extra_system: dict | None = None, extra_search: dict | None = None) -> dict:
-    return {"system_prompt": system_prompts(extra_system), "user_messages": user_messages(), "feedback": feedback_texts(), "orchestrator": orchestrator_messages(extra_search)}
+    return {
+        "system_prompt": system_prompts(extra_system),
+        "user_messages": user_messages(),
+        "feedback": feedback_texts(),
+        "outbound": outbound_requests(),
+        "orchestrator": orchestrator_messages(extra_search),
+    }
+
+
+def changed_keys(got: dict, want: dict) -> list[str]:
+    """Section:key pairs whose recorded value differs. ``_meta`` is provenance, not a prompt."""
+    lines = []
+    sections = (set(want) | set(got)) - {"_meta"}
+    for sec in sorted(sections):
+        left = got.get(sec) or {}
+        right = want.get(sec) or {}
+        if not isinstance(left, dict) or not isinstance(right, dict):
+            if left != right:
+                lines.append(sec)
+            continue
+        for key in sorted(set(left) | set(right)):
+            if left.get(key) != right.get(key):
+                lines.append(f"{sec}:{key}")
+    return lines
+
+
+def _git_commit() -> str:
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=GOLDEN_DIR.parents[1], text=True).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def _reason(argv: list[str]) -> str:
+    if "--reason" not in argv:
+        return ""
+    index = argv.index("--reason")
+    if index + 1 >= len(argv):
+        return ""
+    return argv[index + 1]
 
 
 if __name__ == "__main__":
     if "--record" in sys.argv:
+        reason = _reason(sys.argv)
+        if not reason.strip():
+            sys.exit("refusing to record without --reason \"why this baseline should change\"")
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
         data = compute()
-        GOLDEN.write_text(json.dumps(data, indent=0, sort_keys=True))
+        previous = json.loads(GOLDEN.read_text()) if GOLDEN.exists() else {}
+        diff = changed_keys(data, previous)
+        print(f"{len(diff)} keys differ")
+        for line in diff:
+            print(line)
+        if len(diff) > FORCE_AFTER and "--force" not in sys.argv:
+            sys.exit(f"refusing to record {len(diff)} changes without --force")
+        meta = {"recorded_at": datetime.now().astimezone().isoformat(timespec="seconds"), "git_commit": _git_commit(), "reason": reason}
+        GOLDEN.write_text(dumps(data, meta))
         print({k: len(v) for k, v in data.items()}, "->", GOLDEN)
     else:
         print(__doc__)

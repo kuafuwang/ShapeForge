@@ -5,7 +5,8 @@
   "size": "paper",
   "from": "runs/p1/fa_flash candidate r5.p2.fix2",
   "status": "ok",
-  "speedup": 0.7303668643065286
+  "speedup": 0.7303668643065286,
+  "sha256": "ca563090a8904f9578b98ef7edad0b019522daed6ee418f172dd28b5b20cfd00"
  },
  "fa_flash_init": {
   "task": "flash_attention",
@@ -13,7 +14,8 @@
   "size": "paper",
   "from": "runs/p1/fa_flash candidate init",
   "status": "ok",
-  "speedup": 0.32347588722891896
+  "speedup": 0.32347588722891896,
+  "sha256": "a4f78871b604a9cba20443edf56f1a16454a894aa4f3b4e832ee60ca1c9df02c"
  },
  "fa_pro_best": {
   "task": "flash_attention",
@@ -21,7 +23,8 @@
   "size": "paper",
   "from": "runs/p1/fa_pro candidate r5.p0",
   "status": "ok",
-  "speedup": 0.5681644610363056
+  "speedup": 0.5681644610363056,
+  "sha256": "3a1260f6c0763f753e09e43cfe32afeb1049845f5c2b89365508f2679ebe2212"
  },
  "gemm_paper_best": {
   "task": "gemm",
@@ -29,7 +32,8 @@
   "size": "paper",
   "from": "runs/p1/gemm_paper candidate r6.p2",
   "status": "ok",
-  "speedup": 1.0038887397587382
+  "speedup": 1.0038887397587382,
+  "sha256": "afe94219a9ac144abb963cbdce4db8f6471e27b8d4780386045fa8cd90bf951d"
  },
  "relu_best": {
   "task": "relu",
@@ -37,13 +41,15 @@
   "size": "paper",
   "from": "runs/suite_full/relu_fp16 candidate r5.p0",
   "status": "ok",
-  "speedup": 0.9829364818188149
+  "speedup": 0.9829364818188149,
+  "sha256": "1ab20f143d7ac38bd6d6ef06cebf646ecb8684835d102c8283797749b685d0a8"
  },
  "compile_error": {
   "task": "gemm",
   "dtype": "fp16",
   "size": "paper",
   "from": "runs/p1/gemm_paper/candidates/019_r5.p2",
-  "status": "compile_error"
+  "status": "compile_error",
+  "sha256": "609c0fa0460f3d442df82618de6cc8e684a368d5bf6f309a82aee0808bfe6bc9"
  }
 }

@@ -33,8 +33,8 @@ def _baseline_beats_bound(rep: EvalReport) -> tuple[str, float, float] | None:
 def _measured_head(rep: EvalReport) -> list[str]:
     """Short measured lines placed before the long sections, so a later 6000-character cut cannot drop them.
 
-    A missing field is omitted. A baseline that beats the bound replaces the "times the lower bound" line:
-    that multiple would say the kernel is near a peak the baseline has already passed.
+    A missing field is omitted. A baseline that beats the bound replaces the "times the lower bound" line
+    and adds that a faster baseline is not a reason to switch algorithm.
     """
     lines: list[str] = []
     roof = rep.roofline if isinstance(rep.roofline, dict) else {}
@@ -45,7 +45,10 @@ def _measured_head(rep: EvalReport) -> list[str]:
     gap = _num(roof.get("time_over_lower_bound"))
     if beat is not None:
         name, us, lb = beat
-        lines.append(f"lower bound {lb:.1f} us is not the target: fastest baseline ({name}) is already {us:.1f} us")
+        lines.append(
+            f"lower bound {lb:.1f} us is not the target: fastest baseline ({name}) is already {us:.1f} us. "
+            "A faster baseline is not a reason to switch algorithm; every case, including ieee, still has to match the reference."
+        )
     elif gap is not None and gap > 0:
         lines.append(f"candidate is {gap:.2f}x the lower bound")
     if bound == "compute":

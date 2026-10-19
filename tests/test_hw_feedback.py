@@ -50,13 +50,32 @@ def lines_of(text: str) -> list[str]:
 
 
 def _diff(got: dict, want: dict) -> list[str]:
-    return [f"{sec}:{k}" for sec in want for k in sorted(set(want[sec]) | set(got.get(sec, {}))) if got.get(sec, {}).get(k) != want[sec].get(k)]
+    return G.changed_keys(got, want)
 
 
 def test_switch_off_is_byte_identical_to_the_behaviour_recorded_before_the_feature():
     golden = json.loads(G.GOLDEN.read_text())
-    assert len(golden["system_prompt"]) >= 100 and len(golden["user_messages"]) >= 100 and len(golden["feedback"]) >= 12 and len(golden["orchestrator"]) == 4
+    assert len(golden["system_prompt"]) >= 100 and len(golden["user_messages"]) >= 100 and len(golden["feedback"]) >= 12 and len(golden["outbound"]) >= 4 and len(golden["orchestrator"]) == 4
     assert _diff(G.compute(), golden) == []
+
+
+def test_the_golden_file_is_exactly_what_the_generator_writes():
+    disk = json.loads(G.GOLDEN.read_text())
+    meta = disk.pop("_meta")
+    for key in ("recorded_at", "git_commit", "reason"):
+        assert meta.get(key)
+    assert G.GOLDEN.read_text() == G.dumps(G.compute(), meta)
+
+
+def test_the_request_whitelist_is_exactly_what_params_sends():
+    assert G.param_keys() == set(G.REQUEST_KEYS)
+
+
+def test_fixture_bytes_match_the_index_digest():
+    index = json.loads((G.FIXTURES / "index.json").read_text())
+    assert index
+    for name, entry in index.items():
+        assert entry["sha256"] == G.fixture_digest(name)
 
 
 def test_switch_off_with_the_argument_spelled_out_is_the_same_thing():

@@ -63,6 +63,8 @@ def test_a_baseline_faster_than_the_bound_is_not_reported_as_near_the_peak():
     assert "1.06x the lower bound" not in text
     assert "x above it" not in text
     assert "lower bound 931.8 us is not the target: fastest baseline (torch_mps) is already 773.5 us" in text
+    assert "not a reason to switch algorithm" in text
+    assert "including ieee" in text
 
 
 def test_a_missing_gap_omits_the_times_line_and_a_missing_roofline_omits_the_head():
