@@ -446,6 +446,79 @@ def _heartbeat(progress: dict | None) -> dict | None:
 
 
 # 聊天行里只留标签和时刻。messages、reply、usage 不进这一帧，提示词和密钥不会出现在时间线上。
+def _retry_kind(error: str) -> str:
+    text = error.lower()
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    if "connection" in text:
+        return "connection"
+    if "rate" in text or "429" in text:
+        return "rate_limit"
+    if "internalserver" in text or "500" in text or "502" in text or "503" in text:
+        return "server"
+    return "retry"
+
+
+def _model_notes(directory: Path) -> list[dict]:
+    """Model turns that did not become a candidate.
+
+    A timeout while thinking, a connection or rate-limit retry, an HTTP error, a reply cut off by length,
+    a body that only called a tool, an empty final reply, and a branch the search aborted. Prompts,
+    reasoning text and kernel source stay out of this list.
+    """
+    notes = []
+    path = directory / "transcript.jsonl"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(item, dict):
+            continue
+        event = item.get("event")
+        label = item.get("label") if isinstance(item.get("label"), str) else ""
+        model = item.get("model") if isinstance(item.get("model"), str) else ""
+        if event == "retry":
+            err = str(item.get("error") or "")
+            notes.append({"label": label, "model": model, "kind": _retry_kind(err), "detail": err[:180], "seconds": None})
+            continue
+        if event == "error":
+            err = str(item.get("error") or "")
+            status = item.get("status")
+            detail = f"HTTP {status}: {err}" if status else err
+            notes.append({"label": label, "model": model, "kind": "http", "detail": detail[:180], "seconds": None})
+            continue
+        if event == "warning" and item.get("message") == "reply truncated by max_tokens":
+            notes.append({"label": label, "model": model, "kind": "truncated", "detail": "reply truncated by max_tokens", "seconds": None})
+            continue
+        if event != "chat":
+            continue
+        reply = item.get("reply") if isinstance(item.get("reply"), dict) else {}
+        content = reply.get("content") if isinstance(reply.get("content"), str) else ""
+        calls = [call for call in (reply.get("tool_calls") or []) if isinstance(call, dict)]
+        if item.get("finish_reason") == "tool_calls" and not content.strip():
+            names = [str((call.get("function") or {}).get("name") or "tool") for call in calls]
+            notes.append({"label": label, "model": model, "kind": "tool", "detail": ", ".join(names), "seconds": item.get("seconds")})
+        elif not content.strip() and not calls:
+            notes.append({"label": label, "model": model, "kind": "empty", "detail": str(item.get("finish_reason") or ""), "seconds": item.get("seconds")})
+    for doc in (_load(directory / "state.json"), _load(directory / "result.json")):
+        history = (doc or {}).get("history") if isinstance(doc, dict) else None
+        if not isinstance(history, list):
+            continue
+        for line in history:
+            if not isinstance(line, str):
+                continue
+            if "aborted" not in line and "gave up" not in line and "llm_error" not in line:
+                continue
+            notes.append({"label": "", "model": "", "kind": "stopped", "detail": line[:180], "seconds": None})
+        break
+    return notes
+
+
 def _chat_events(directory: Path) -> list[dict]:
     path = directory / "transcript.jsonl"
     try:
@@ -868,6 +941,7 @@ def run_detail(run_id: str) -> dict | None:
         "trace": trace,
         "confirmations": confirmations,
         "candidates": _candidates(directory),
+        "model_notes": _model_notes(directory),
         "publication": conclusion["publication"],
         "published_speedup": conclusion["speedup"],
         "eval_progress": progress,

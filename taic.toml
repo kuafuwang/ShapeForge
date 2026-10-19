@@ -14,7 +14,7 @@ max_retries = 6
 extra_body = {}
 
 [search]
-budget_usd = 2.0                 # per kernel; override per task
+budget_usd = 50.0                # debug ceiling per kernel while measuring kimi; paper preset stays 15. Override per task.
 branches = 3                     # K parallel patch requests per round
 max_repair_tries = 3             # compile/ABI/safety repair turns for one candidate
 max_rounds = 12                  # hard cap on diagnose-plan-branch-evaluate rounds
@@ -46,5 +46,5 @@ model = "deepseek-flash"
 name = "second"
 
 [[committees.members]]
-provider = "deepseek"
-model = "deepseek-flash"
+provider = "moonshot"
+model = "kimi-k3"

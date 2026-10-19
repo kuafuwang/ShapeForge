@@ -8,6 +8,7 @@ import json
 import pytest
 
 from observe import query as scan
+from observe.detail import _model_notes
 
 SOURCE = "kernel void gemm() {}\n"
 T0 = 1_700_000_000.0
@@ -133,3 +134,26 @@ def test_scan_reads_timeline_marks_confirmed_point_and_handoff(tmp_path, monkeyp
         "confirm_winner_label": "init", "confirmation_source_sha256": digest,
     }))
     assert scan.run_detail("unbound")["confirmed_point"] is None
+
+
+def test_model_notes_show_a_timeout_and_an_empty_tool_reply(tmp_path):
+    run = tmp_path / "kimi"
+    run.mkdir()
+    secret = "reasoning secret that must not reach the page"
+    (run / "transcript.jsonl").write_text("\n".join([
+        json.dumps({"event": "retry", "label": "r2.p1#t0", "attempt": 1, "error": "APITimeoutError: Request timed out.", "sleep_s": 2.0}),
+        json.dumps({"event": "chat", "label": "r2.p1#t0", "model": "kimi-k3", "seconds": 874.8, "finish_reason": "tool_calls",
+                    "reply": {"role": "assistant", "content": "", "reasoning_content": secret, "tool_calls": [{"function": {"name": "quick_check", "arguments": "{}"}}]}}),
+        json.dumps({"event": "retry", "label": "init#t0", "attempt": 1, "error": "APIConnectionError: Connection error."}),
+        json.dumps({"event": "error", "label": "r2.p0#t0", "status": 400, "error": "bad request"}),
+        json.dumps({"event": "warning", "label": "r2.p0#t0", "message": "reply truncated by max_tokens"}),
+        json.dumps({"event": "chat", "label": "r1.plan", "model": "deepseek-flash", "seconds": 40, "finish_reason": "stop",
+                    "reply": {"role": "assistant", "content": "```json\n{}\n```", "reasoning_content": secret}}),
+    ]) + "\n")
+    (run / "state.json").write_text(json.dumps({"history": ["round 2: plan -> aborted (BudgetExhausted)"]}))
+    notes = _model_notes(run)
+    assert [row["kind"] for row in notes] == ["timeout", "tool", "connection", "http", "truncated", "stopped"]
+    assert notes[0]["seconds"] is None
+    assert notes[1]["model"] == "kimi-k3" and notes[1]["detail"] == "quick_check"
+    blob = json.dumps(notes)
+    assert secret not in blob and "arguments" not in blob

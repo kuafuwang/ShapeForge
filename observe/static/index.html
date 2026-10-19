@@ -24,7 +24,7 @@
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; }
   th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 6px 4px; font-variant-numeric: tabular-nums; }
-  tr.pick { cursor: pointer; }
+  tr.pick, tr[data-run], tr[data-exp] { cursor: pointer; }
   tr.pick.on { background: #eef5fc; }
   .badge { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 700; }
   .badge.over { background: var(--red); color: #fff; }
@@ -56,6 +56,8 @@
   .bb-count.near { background: #fde047; color: #4a3b00; }
   .bb-total { color: var(--muted); font-size: 12px; }
   .bb-list { max-height: 12rem; overflow-x: hidden; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  .note-list { max-height: 12rem; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .note-list thead th { position: sticky; top: 0; background: #fff; z-index: 1; }
   .bb-list .chip { display: block; overflow-wrap: anywhere; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; color: inherit; text-decoration: none; }
   .workspace { display: flex; flex-direction: column; gap: 12px; }
   #side { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; max-height: 46vh; overflow: auto; }
@@ -313,6 +315,26 @@ function newestFirst(rows) {
   return Array.isArray(rows) ? rows.slice().reverse() : [];
 }
 
+const NOTE_KIND = {
+  timeout: "思考未完成，请求超时",
+  connection: "连接失败后重试",
+  rate_limit: "请求过频后重试",
+  server: "服务端错误后重试",
+  retry: "请求失败后重试",
+  http: "请求被拒绝",
+  truncated: "回复被长度截断",
+  tool: "已返回，正文没有内核",
+  empty: "回复是空的",
+  stopped: "这一支被搜索中止",
+};
+
+function modelNotes(doc) {
+  const rows = newestFirst(doc.model_notes);
+  if (!rows.length) return `<p class="muted">没有超时，也没有只调用工具、正文为空的回复。</p>`;
+  const body = rows.map((row) => `<tr><td>${esc(row.label)}</td><td>${esc(row.model || "—")}</td><td>${esc(NOTE_KIND[row.kind] || row.kind)}</td><td>${esc(row.detail)}</td><td>${esc(num(row.seconds))}</td></tr>`).join("");
+  return `<div class="note-list"><table><thead><tr><th>标签</th><th>模型</th><th>情况</th><th>说明</th><th>秒</th></tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
 const STAGES = [["screen", "安检"], ["compile", "编译"], ["abi", "签名"], ["safety", "内存安全"], ["correctness", "对答案"], ["bench", "计时"]];
 const FAIL = {rejected: "screen", compile_error: "compile", abi_error: "abi", unsafe: "safety", incorrect: "correctness"};
 let selectedCandidate = "";
@@ -424,6 +446,7 @@ function renderDetail(doc) {
     `<h3>确认点</h3>${confirm}` +
     `<h3>委员会交接</h3>${handoffBlock}` +
     `<h3>预算事件</h3>` + (events ? `<table><thead><tr><th>时间</th><th>种类</th><th>谁</th><th>旧预算</th><th>新预算</th><th>备注</th></tr></thead><tbody>${events}</tbody></table>` : `<p class="muted">没有预算事件。</p>`) +
+    `<h3>模型请求</h3>` + modelNotes(doc) +
     `<h3>候选</h3>` + (candidates ? `<table><thead><tr><th>序号</th><th>标签</th><th>状态</th><th>阶段</th><th>加速比</th><th>标记</th><th>说明</th></tr></thead><tbody>${candidates}</tbody></table>` : `<p class="muted">没有候选。</p>`) +
     `<h3>特征格子</h3>` + (grid ? `<table><thead><tr><th>标签</th><th>签名</th><th>加速比</th><th></th></tr></thead><tbody>${grid}</tbody></table>` : `<p class="muted">空</p>`) +
     `<h3>计划结局</h3>` + (plans ? `<table><thead><tr><th>轮</th><th>标签</th><th>方案</th><th>结局</th><th>加速比</th></tr></thead><tbody>${plans}</tbody></table>` : `<p class="muted">空</p>`) +
