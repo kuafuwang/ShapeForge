@@ -6,6 +6,7 @@ import http.client
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import time
 from pathlib import Path
@@ -270,7 +271,7 @@ def test_the_page_script_and_markup_carry_the_control(runs):
     port, _root = runs
     status, page = call(port, "GET", "/")
     assert status == 200
-    for needle in ("X-Observe-Token", "budget-modal", "reset-all", "stop-all", "settings-open", "花费账本", "/api/budget/reset", "/api/stop", "/api/settings/model", "/control", "Add budget"):
+    for needle in ("X-Observe-Token", "budget-modal", "reset-all", "stop-all", "settings-open", "settings-committees", "data-committee", "花费账本", "/api/budget/reset", "/api/stop", "/api/settings/model", "/control", "Add budget"):
         assert needle in page, needle
     status, ledger = call(port, "GET", "/api/v2/ledger")
     assert status == 200 and "by_operator" in ledger and "by_month" in ledger
@@ -404,3 +405,77 @@ def test_model_picker_saves_the_choice_and_hides_the_key(runs, tmp_path, monkeyp
     assert 'provider = "deepseek"' in text and 'model = "deepseek-v4-pro"  # keep this comment' in text
     assert secret not in text
     assert call(port, "POST", "/api/settings/model", {"provider": "deepseek", "model": "nope"}, headers={actions.TOKEN_HEADER: tok})[0] == 400
+
+
+def test_each_committee_can_keep_its_own_model(runs, tmp_path, monkeypatch):
+    port, _root = runs
+    secret = "sk-SECRET-do-not-leak"
+    cred = tmp_path / "models.json"
+    cred.write_text(json.dumps({"providers": {"deepseek": {"apiKey": secret, "baseUrl": "https://secret.example", "models": [
+        {"id": "deepseek-flash", "name": "DeepSeek V4.1 Flash"},
+        {"id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro"},
+    ]}}}))
+    cfg = tmp_path / "taic.toml"
+    cfg.write_text(
+        f'[llm]\ncredentials_file = "{cred}"\nprovider = "deepseek"\nmodel = "deepseek-flash"  # keep this comment\n'
+        '[[committees]]\nname = "first"\n[[committees.members]]\nprovider = "deepseek"\nmodel = "deepseek-flash"\n'
+        '[[committees]]\nname = "second"\n[[committees.members]]\nprovider = "deepseek"\nmodel = "deepseek-flash"\n'
+    )
+    monkeypatch.setenv("TAIC_CONFIG", str(cfg))
+    status, doc = call(port, "GET", "/api/settings/model")
+    assert status == 200 and [(row["name"], row["model"]) for row in doc["committees"]] == [("first", "deepseek-flash"), ("second", "deepseek-flash")]
+    assert secret not in json.dumps(doc)
+    tok = token_of(port)
+    status, saved = call(port, "POST", "/api/settings/model", {"committees": [
+        {"name": "second", "provider": "deepseek", "model": "deepseek-v4-pro"},
+        {"name": "first", "provider": "deepseek", "model": "deepseek-flash"},
+    ]}, headers={actions.TOKEN_HEADER: tok})
+    assert status == 200 and saved["committees"] == [
+        {"name": "first", "provider": "deepseek", "model": "deepseek-flash"},
+        {"name": "second", "provider": "deepseek", "model": "deepseek-v4-pro"},
+    ]
+    text = cfg.read_text()
+    assert 'model = "deepseek-flash"  # keep this comment' in text
+    assert text.count('model = "deepseek-v4-pro"') == 1
+    assert text.index('name = "second"') < text.index('model = "deepseek-v4-pro"')
+    assert secret not in text
+    assert call(port, "POST", "/api/settings/model", {"committees": [{"name": "first", "provider": "deepseek", "model": "deepseek-flash"}]}, headers={actions.TOKEN_HEADER: tok})[0] == 400
+
+
+def test_deletion_archives_the_directory_and_keeps_the_reason(runs, tmp_path, monkeypatch):
+    port, root = runs
+    monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
+    finished = mk(root, "box/done", "finished")
+    live = mk(root, "box/live", "running")
+    tok = token_of(port)
+    assert call(port, "GET", "/api/v2/runs?limit=50")[0] == 200
+    status, refused = call(port, "POST", "/api/records/delete", {"kind": "operator", "name": "flash_attention", "reason": "想清掉"}, headers={actions.TOKEN_HEADER: tok})
+    assert status == 409 and "still running" in refused["error"]
+    assert finished.is_dir() and live.is_dir()
+    from observe.deletions import log_path
+    assert not log_path().exists()
+    status, saved = call(port, "POST", "/api/records/delete", {"kind": "experiment", "name": "box/done", "reason": "这组做完了，不再看"}, headers={actions.TOKEN_HEADER: tok})
+    assert status == 200 and saved["runs"] == ["box/done"]
+    assert not finished.exists() and live.is_dir()
+    archived = list((tmp_path / "deleted").rglob("state.json"))
+    assert len(archived) == 1 and archived[0].is_file()
+    lines = log_path().read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1 and json.loads(lines[0])["reason"] == "这组做完了，不再看"
+    assert call(port, "POST", "/api/records/delete", {"kind": "experiment", "name": "box/done", "reason": ""}, headers={actions.TOKEN_HEADER: tok})[0] == 400
+    assert log_path().read_text(encoding="utf-8").splitlines() == lines
+    status, listed = call(port, "GET", "/api/records/deletions")
+    assert status == 200 and listed["deletions"][0]["reason"] == "这组做完了，不再看"
+    with sqlite3.connect(tmp_path / "observe.sqlite") as conn:
+        assert conn.execute("SELECT COUNT(*) FROM ledger WHERE run_id = ?", ("box/done",)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM runs WHERE run_id = ?", ("box/done",)).fetchone()[0] == 0
+    conv = root / "box" / "conv"
+    conv.mkdir(parents=True)
+    (conv / "state.json").write_text(json.dumps({"pid": DEAD_PID, "updated_at": time.time() - 600, "started_at": time.time() - 800, "phase": "done", "task": "conv2d", "dtype": "fp16", "spent_usd": 1.0, "budget_usd": 3.0}))
+    (conv / "result.json").write_text(json.dumps({"task": "conv2d", "dtype": "fp16", "stop_reason": "max_rounds", "spent_usd": 1.0, "budget_usd": 3.0, "confirmed_speedup": 1.1}))
+    assert call(port, "GET", "/api/v2/runs?limit=50")[0] == 200
+    status, saved = call(port, "POST", "/api/records/delete", {"kind": "operator", "name": "conv2d", "reason": "这个算子的记录不要了"}, headers={actions.TOKEN_HEADER: tok})
+    assert status == 200 and saved["runs"] == ["box/conv"]
+    assert not conv.exists() and live.is_dir()
+    logged = [json.loads(line) for line in log_path().read_text(encoding="utf-8").splitlines()]
+    assert logged[0]["reason"] == "这组做完了，不再看"
+    assert logged[1]["kind"] == "operator" and logged[1]["ip"] == "127.0.0.1" and logged[1]["reason"] == "这个算子的记录不要了"

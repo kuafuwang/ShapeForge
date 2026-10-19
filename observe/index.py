@@ -811,6 +811,31 @@ class Index:
         ).fetchone()
         return round(float(carry["total_usd"] or 0) + float(extra[0] or 0), 6)
 
+    def drop_archived(self, run_ids: list[str], experiment_ids: list[str]) -> None:
+        """Forget archived searches. The ledger rows stay, so a deletion cannot lower the recorded spend."""
+        with _WRITE:
+            wanted = set(run_ids)
+            for experiment_id in experiment_ids:
+                for row in self.conn.execute("SELECT run_id FROM runs WHERE experiment_id = ? OR run_id = ?", (experiment_id, experiment_id)):
+                    wanted.add(row["run_id"])
+                prefix = experiment_id + "/"
+                for row in self.conn.execute("SELECT run_id FROM runs"):
+                    if str(row["run_id"]).startswith(prefix):
+                        wanted.add(row["run_id"])
+            for run_id in wanted:
+                self.conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+            watched = [row["path"] for row in self.conn.execute("SELECT path FROM watched")]
+            for experiment_id in experiment_ids:
+                self.conn.execute("DELETE FROM experiments WHERE experiment_id = ?", (experiment_id,))
+                self.conn.execute("DELETE FROM arms WHERE experiment_id = ?", (experiment_id,))
+            prefixes = [item + "/" for item in list(wanted) + list(experiment_ids)]
+            exact = wanted | set(experiment_ids)
+            for path in watched:
+                if path in exact or any(str(path).startswith(prefix) for prefix in prefixes):
+                    self.conn.execute("DELETE FROM watched WHERE path = ?", (path,))
+            self._bump()
+            self.conn.commit()
+
     def resolve(self, run_id: str) -> Path | None:
         path = detail.resolve_run(run_id)
         if path is None:

@@ -287,6 +287,10 @@ def test_a_named_run_without_its_own_model_does_not_require_a_null_model():
         "filter-task", "filter-dtype", "filter-model", "filter-status",
         "runs-prev", "runs-next", "by_operator", "by_month",
         "budget-amount", "budget-save", 'method: "POST"', "X-Observe-Token", 'classList.add("open")',
+        "function newestFirst", "newestFirst(doc.candidates)", "newestFirst(doc.budget_events)", "newestFirst(handoff.rounds)", "newestFirst(doc.plan_outcomes)", "newestFirst(doc.by_month)", "newestFirst(doc.feature_grid)",
+        "安检", "阶段", "代码", 'class="excerpt"', "--blue: #0a66c2", "@keyframes breathe", 'class="breathe"',
+        'id="workspace"', 'id="side-toggle"', 'id="view-experiments"', 'id="view-compare"', 'id="view-detail"',
+        "delete-reason", "/api/records/delete", "删除记录只追加",
     ):
         assert needle in text, needle
 

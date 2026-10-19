@@ -169,7 +169,38 @@ async def api_model(request) -> JSONResponse:
         body = actions.parse_body(raw)
         if not isinstance(body, dict):
             raise actions.Refused(400, "the body must be a JSON object")
+        if "committees" in body:
+            return _json(await asyncio.to_thread(settings.set_committees, body.get("committees")))
         return _json(await asyncio.to_thread(settings.set_default_model, body.get("provider"), body.get("model")))
+    except actions.Refused as exc:
+        return _refused(exc)
+
+
+async def api_deletions(request) -> JSONResponse:
+    from observe.deletions import list_deletions
+
+    try:
+        if not actions.host_is_loopback(request.headers):
+            raise actions.Refused(403, "refused: this server only answers on 127.0.0.1 / localhost (Host header check)")
+        return _json(await asyncio.to_thread(list_deletions))
+    except actions.Refused as exc:
+        return _refused(exc)
+
+
+async def api_delete_records(request) -> JSONResponse:
+    from observe.deletions import delete_records
+
+    try:
+        actions.check_origin(request.headers)
+        actions.check_token(request.headers)
+        raw = await request.body()
+        if len(raw) > 8192:
+            raise actions.Refused(413, "the body is too large")
+        body = actions.parse_body(raw)
+        if not isinstance(body, dict):
+            raise actions.Refused(400, "the body must be a JSON object")
+        peer = request.client.host if request.client is not None else ""
+        return _json(await asyncio.to_thread(delete_records, body.get("kind"), body.get("name"), body.get("reason"), peer))
     except actions.Refused as exc:
         return _refused(exc)
 
@@ -215,6 +246,8 @@ app = Starlette(
         Route("/api/budget/reset", api_reset, methods=["GET", "POST"]),
         Route("/api/stop", api_stop, methods=["GET", "POST"]),
         Route("/api/settings/model", api_model, methods=["GET", "POST"]),
+        Route("/api/records/deletions", api_deletions, methods=["GET"]),
+        Route("/api/records/delete", api_delete_records, methods=["POST"]),
         Route("/api/runs/{run_id:path}/control", api_control, methods=["GET"]),
         Route("/api/runs/{run_id:path}/budget", api_add_budget, methods=["POST"]),
         Route("/api/runs/{run_id:path}", api_v1_run),

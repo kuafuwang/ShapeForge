@@ -6,34 +6,82 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>观测</title>
 <style>
-  :root { --line: #ddd; --muted: #667; --red: #b42318; --green: #067647; }
-  body { font: 14px/1.45 ui-sans-serif, system-ui, sans-serif; margin: 0; color: #1c1c1c; background: #f6f7f9; }
+  :root {
+    --bg: #f4f5f7; --card: #fff; --ink: #1c1c1e; --muted: #6b7280; --line: #e6e8ee;
+    --blue: #0a66c2; --green: #17803d; --red: #c2413a; --amber: #b45309;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  button, input, select { font: inherit; }
+  button { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; cursor: pointer; color: var(--ink); }
+  button.quiet { font-size: 11px; font-weight: 400; line-height: 1.3; padding: 0 5px; color: var(--muted); }
+  button:hover { border-color: #d3e4f6; color: var(--blue); }
   header, main { padding: 12px 16px; }
-  nav button, .btn-budget { margin-right: 6px; }
-  .view { display: none; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; background: var(--card); border-bottom: 1px solid var(--line); }
+  header strong { font-size: 20px; font-weight: 650; margin-right: 6px; }
+  .view { display: none; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
   .view.on { display: block; }
-  table { border-collapse: collapse; width: 100%; }
-  th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 4px 6px; font-variant-numeric: tabular-nums; }
-  .badge { display: inline-block; border-radius: 999px; padding: 1px 7px; font-size: 11px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; }
+  th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 6px 4px; font-variant-numeric: tabular-nums; }
+  tr.pick { cursor: pointer; }
+  tr.pick.on { background: #eef5fc; }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 700; }
   .badge.over { background: var(--red); color: #fff; }
-  .badge.exhausted { background: #b54708; color: #fff; }
-  .badge.near { background: #f5d90a; color: #1c1c1c; }
+  .badge.exhausted { background: var(--amber); color: #fff; }
+  .badge.near { background: #fde047; color: #4a3b00; }
   #hist-tools { margin-bottom: 8px; }
-  #budget-modal, #settings-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
-  #budget-modal.open, #settings-modal.open { display: flex; }
-  #budget-modal .box, #settings-modal .box { background: #fff; border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); }
-  .muted { color: var(--muted); }
-  .drift { color: var(--red); }
-  #budget-banner { margin-bottom: 10px; }
-  .bb.alert { background: #fff8f1; border: 1px solid #f0c9a0; border-radius: 10px; padding: 8px 10px; }
+  #budget-modal, #settings-modal, #delete-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
+  #budget-modal.open, #settings-modal.open, #delete-modal.open { display: flex; }
+  #budget-modal .box, #settings-modal .box, #delete-modal .box { background: var(--card); border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); }
+  #delete-reason { width: 100%; min-height: 72px; margin-top: 6px; }
+  .delete-warn { color: var(--red); font-weight: 650; margin: 0 0 8px; }
+  .muted, .sub { color: var(--muted); }
+  .sub { font-size: 12px; margin: 0 0 8px; }
+  .drift, .red { color: var(--red); }
+  .green { color: var(--green); }
+  @keyframes breathe {
+    0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(23, 128, 61, .45); }
+    50% { opacity: .35; transform: scale(.85); box-shadow: 0 0 0 7px rgba(23, 128, 61, 0); }
+  }
+  .breathe { display: inline-block; width: 9px; height: 9px; margin: 0 6px 1px 0; border-radius: 50%; background: var(--green); vertical-align: middle; animation: breathe 1.6s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .breathe { animation: none; } }
+  #budget-banner { margin: 0 0 10px; }
+  .bb.alert { background: #fff8f1; border: 1px solid #f0c9a0; border-radius: 12px; padding: 8px 10px; }
+  .bb.ok { color: var(--green); }
   .bb-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 6px; }
-  .bb-count { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 11px; }
+  .bb-count { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 700; }
   .bb-count.over { background: var(--red); color: #fff; }
-  .bb-count.exhausted { background: #b54708; color: #fff; }
-  .bb-count.near { background: #f5d90a; color: #1c1c1c; }
+  .bb-count.exhausted { background: var(--amber); color: #fff; }
+  .bb-count.near { background: #fde047; color: #4a3b00; }
   .bb-total { color: var(--muted); font-size: 12px; }
   .bb-list { max-height: 12rem; overflow-x: hidden; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
   .bb-list .chip { display: block; overflow-wrap: anywhere; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; color: inherit; text-decoration: none; }
+  .workspace { display: flex; flex-direction: column; gap: 12px; }
+  #side { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; max-height: 46vh; overflow: auto; }
+  .workspace.collapsed #side { max-height: none; overflow: hidden; }
+  .workspace.collapsed #side .side-block, .workspace.collapsed #side .side-title { display: none; }
+  .side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .side-head strong { font-size: 13px; color: var(--muted); }
+  .side-title { margin: 14px 0 6px; font-size: 13px; color: var(--muted); }
+  .side-block { overflow-x: auto; }
+  tr.on { background: #eef5fc; }
+  .detail-split { display: grid; grid-template-columns: 1fr minmax(240px, 320px); gap: 12px; align-items: start; }
+  .panel { background: #f7f8fa; border-radius: 12px; padding: 10px 12px; }
+  .panel h3 { margin: 12px 0 6px; font-size: 15px; }
+  .panel h3:first-child { margin-top: 0; }
+  .stage { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; }
+  .stage.on { background: #eef5fc; }
+  .stage .name { flex: 1; }
+  .stage .meta { color: var(--muted); font-size: 12px; }
+  .mark { width: 16px; text-align: center; }
+  .excerpt { margin: 0; background: #fff; border-radius: 8px; padding: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; color: #333; max-height: 220px; overflow: auto; }
+  #settings-committees label { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+  #settings-committees select { flex: 1; }
+  @media (max-width: 800px) {
+    .detail-split { grid-template-columns: 1fr; }
+    #side { max-height: 50vh; }
+  }
 </style>
 </head>
 <body>
@@ -42,7 +90,6 @@
   <button type="button" id="tab-experiments">实验</button>
   <button type="button" id="tab-compare">对照</button>
   <button type="button" id="tab-runs">运行</button>
-  <button type="button" id="tab-detail">详情</button>
   <button type="button" id="tab-ledger">花费账本</button>
   <button type="button" class="btn-budget" id="add-budget">加预算</button>
   <button type="button" class="btn-budget" id="settings-open">设置</button>
@@ -50,10 +97,18 @@
   <button type="button" class="btn-budget btn-stop" id="stop-all">停止全部搜索</button>
 </header>
 <main>
-  <section id="budget-banner"><!--BUDGET_BANNER--></section>
-  <section id="view-experiments" class="view on"></section>
-  <section id="view-compare" class="view"></section>
-  <section id="view-runs" class="view">
+  <div class="workspace" id="workspace">
+  <aside id="side">
+    <div class="side-head">
+      <strong>实验</strong>
+      <button type="button" id="side-toggle" aria-expanded="true" title="收起上面">收起</button>
+    </div>
+    <section id="budget-banner" class="side-block"><!--BUDGET_BANNER--></section>
+    <section id="view-experiments" class="side-block"></section>
+    <h3 class="side-title">对照</h3>
+    <section id="view-compare" class="side-block"><p class="muted">点一个实验看对照。</p></section>
+    <h3 class="side-title">运行</h3>
+    <section id="view-runs" class="side-block">
     <div id="hist-tools"></div>
     <form id="run-filters">
       <label>题目 <input id="filter-task" name="task"></label>
@@ -76,9 +131,13 @@
       <span id="runs-page" class="muted"></span>
     </form>
     <table id="runs"><thead><tr><th>运行</th><th>题目</th><th>发布</th><th>加速比</th><th>绑定</th><th>状态</th></tr></thead><tbody></tbody></table>
-  </section>
-  <section id="view-detail" class="view"></section>
-  <section id="view-ledger" class="view"></section>
+    </section>
+  </aside>
+  <div class="right">
+    <section id="view-detail" class="view on"><p class="muted">点上面一次运行，这里显示它的详情。</p></section>
+    <section id="view-ledger" class="view"></section>
+  </div>
+  </div>
 </main>
 <div id="budget-modal" role="dialog" aria-modal="true" aria-labelledby="bm-title">
   <div class="box">
@@ -93,12 +152,24 @@
 </div>
 <div id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
   <div class="box">
-    <h3 id="settings-title">下次搜索的模型</h3>
+    <h3 id="settings-title">下次搜索的两个委员会</h3>
     <p class="muted" id="settings-note"></p>
-    <label>模型 <select id="settings-model"></select></label>
+    <div id="settings-committees"></div>
     <div class="actions">
       <button type="button" id="settings-save">保存</button>
       <button type="button" id="settings-close">关闭</button>
+    </div>
+  </div>
+</div>
+<div id="delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+  <div class="box">
+    <h3 id="delete-title">删除记录</h3>
+    <p class="delete-warn">不要乱删。这次请求的 IP 会和理由一起写进删除记录，写下后不能再删。</p>
+    <p class="muted" id="delete-note"></p>
+    <label>理由 <textarea id="delete-reason" maxlength="500" placeholder="写明为什么删。IP 会一并记下。"></textarea></label>
+    <div class="actions">
+      <button type="button" id="delete-save">确认删除</button>
+      <button type="button" id="delete-close">关闭</button>
     </div>
   </div>
 </div>
@@ -149,27 +220,37 @@ async function refreshBanner() {
   renderBanner(report);
 }
 
+function showRight(name) {
+  visible = name === "ledger" ? "ledger" : "detail";
+  document.getElementById("view-detail").classList.toggle("on", visible === "detail");
+  document.getElementById("view-ledger").classList.toggle("on", visible === "ledger");
+  if (visible === "ledger") loadLedger();
+  else if (selectedRun) loadDetail(selectedRun);
+}
+
 function show(name) {
-  visible = name;
-  for (const id of ["experiments", "compare", "runs", "detail", "ledger"]) {
-    document.getElementById("view-" + id).classList.toggle("on", id === name);
-  }
-  if (name === "experiments") loadExperiments();
-  if (name === "compare" && selectedExperiment) loadCompare(selectedExperiment);
-  if (name === "runs") loadRuns();
-  if (name === "detail" && selectedRun) loadDetail(selectedRun);
-  if (name === "ledger") loadLedger();
+  if (name === "ledger" || name === "detail") showRight(name);
+  else if (name === "compare" && selectedExperiment) loadCompare(selectedExperiment);
+  else if (name === "runs") loadRuns();
+  else if (name === "experiments") loadExperiments();
 }
 
 async function loadExperiments() {
   const rows = await (await fetch("/api/v2/experiments")).json();
   const host = document.getElementById("view-experiments");
-  host.innerHTML = "<table><thead><tr><th>实验</th><th>种类</th><th>臂</th></tr></thead><tbody>" +
-    rows.map((row) => `<tr data-exp="${esc(row.experiment_id)}"><td>${esc(row.experiment_id)}</td><td>${esc(row.kind)}</td><td>${(row.arms || []).map((arm) => esc(arm.arm_id)).join(", ")}</td></tr>`).join("") +
+  host.innerHTML = "<table><thead><tr><th>实验</th><th>种类</th><th>臂</th><th></th></tr></thead><tbody>" +
+    rows.map((row) => `<tr class="${row.experiment_id === selectedExperiment ? "on" : ""}" data-exp="${esc(row.experiment_id)}"><td>${esc(row.experiment_id)}</td><td>${esc(row.kind)}</td><td>${(row.arms || []).map((arm) => esc(arm.arm_id)).join(", ")}</td><td><button type="button" class="quiet" data-delete-experiment="${esc(row.experiment_id)}">删除</button></td></tr>`).join("") +
     "</tbody></table>";
   host.querySelectorAll("[data-exp]").forEach((tr) => tr.addEventListener("click", () => {
     selectedExperiment = tr.dataset.exp;
-    show("compare");
+    host.querySelectorAll("[data-exp]").forEach((row) => row.classList.toggle("on", row.dataset.exp === selectedExperiment));
+    runsOffset = 0;
+    loadCompare(selectedExperiment);
+    loadRuns();
+  }));
+  host.querySelectorAll("[data-delete-experiment]").forEach((button) => button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openDelete("experiment", button.dataset.deleteExperiment);
   }));
 }
 
@@ -191,6 +272,7 @@ function runQuery() {
     const value = applied[key];
     if (value) params.set(key, value);
   }
+  if (selectedExperiment) params.set("experiment_id", selectedExperiment);
   return params;
 }
 
@@ -206,10 +288,19 @@ async function loadRuns() {
   document.getElementById("runs-prev").disabled = runsOffset <= 0;
   document.getElementById("runs-next").disabled = runsOffset + rows.length >= total;
   const body = document.querySelector("#runs tbody");
-  body.innerHTML = rows.map((row) => `<tr data-run="${esc(row.run_id)}"><td>${esc(row.run_id)}</td><td>${esc(row.task)}</td><td>${esc(row.publication)}</td><td>${esc(num(row.published_speedup))}</td><td>${esc(row.binding)}</td><td><span class="badge ${esc(row.status)}">${esc(row.status)}</span></td></tr>`).join("");
+  body.innerHTML = rows.map((row) => {
+    const live = row.status === "running" ? `<span class="breathe" title="进行中"></span>` : "";
+    const task = String(row.task || "").split("@")[0];
+    return `<tr class="${row.run_id === selectedRun ? "on" : ""}" data-run="${esc(row.run_id)}"><td>${esc(row.run_id)}</td><td>${esc(row.task)} <button type="button" class="quiet" title="按题目名归档这个算子下已结束的搜索" data-delete-operator="${esc(task)}">删除</button></td><td>${row.publication === "in_progress" ? live : ""}${esc(row.publication)}</td><td>${esc(num(row.published_speedup))}</td><td>${esc(row.binding)}</td><td>${live}<span class="badge ${esc(row.status)}">${esc(row.status)}</span></td></tr>`;
+  }).join("");
   body.querySelectorAll("[data-run]").forEach((tr) => tr.addEventListener("click", () => {
     selectedRun = tr.dataset.run;
-    show("detail");
+    body.querySelectorAll("[data-run]").forEach((row) => row.classList.toggle("on", row.dataset.run === selectedRun));
+    showRight("detail");
+  }));
+  body.querySelectorAll("[data-delete-operator]").forEach((button) => button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openDelete("operator", button.dataset.deleteOperator);
   }));
 }
 
@@ -218,27 +309,125 @@ function marksFor(doc, label) {
   return hit && hit.marks ? hit.marks.join("；") : "";
 }
 
+function newestFirst(rows) {
+  return Array.isArray(rows) ? rows.slice().reverse() : [];
+}
+
+const STAGES = [["screen", "安检"], ["compile", "编译"], ["abi", "签名"], ["safety", "内存安全"], ["correctness", "对答案"], ["bench", "计时"]];
+const FAIL = {rejected: "screen", compile_error: "compile", abi_error: "abi", unsafe: "safety", incorrect: "correctness"};
+let selectedCandidate = "";
+let detailDoc = null;
+let detailId = "";
+
+function pickCandidate(doc) {
+  const rows = doc.candidates || [];
+  const cand = rows.find((row) => row.label === selectedCandidate) || newestFirst(rows)[0] || null;
+  const progress = doc.eval_progress;
+  const inflight = doc.state && doc.state.inflight_label;
+  const live = doc.status === "running" && progress && !progress.finished && cand && inflight === cand.label;
+  return {mode: live ? "live" : "past", cand, progress};
+}
+
+function stageMarkup(doc) {
+  const view = pickCandidate(doc);
+  const order = STAGES.map((pair) => pair[0]);
+  let current = "screen";
+  let failed = null;
+  if (view.mode === "live") {
+    current = (view.progress && view.progress.stage) || "screen";
+    if (current === "done") current = "bench";
+  } else if (view.cand && view.cand.status) {
+    failed = FAIL[view.cand.status] || null;
+    if (view.cand.status === "ok") current = "done";
+    else if (failed) current = failed;
+    else current = view.cand.stage || "screen";
+  }
+  const here = order.indexOf(current);
+  const steps = STAGES.map((pair, index) => {
+    const key = pair[0];
+    const name = pair[1];
+    let mark = "○";
+    let klass = "stage";
+    let meta = "未到";
+    if (failed === key) {
+      mark = "×";
+      klass = "stage on";
+      meta = (view.cand && view.cand.status) || "失败";
+    } else if (current === "done" || (here > index && failed !== key)) {
+      mark = "✓";
+      meta = "完成";
+    } else if (key === current) {
+      mark = "●";
+      klass = "stage on";
+      meta = "进行中";
+    }
+    if (view.mode === "live" && key === "correctness" && current === "correctness" && view.progress) {
+      const progress = view.progress;
+      meta = "进行中" + (progress.case ? "  用例 " + progress.case : "") + (progress.cases_total ? "  " + (progress.cases_done || 0) + "/" + progress.cases_total : "");
+    }
+    if (view.mode === "live" && key === "bench" && current === "bench" && view.progress) {
+      const progress = view.progress;
+      meta = "第 " + (progress.attempt || 1) + " 次" + (progress.attempts_max ? " / " + progress.attempts_max : "") + (progress.noisy ? "  太吵" : "");
+    }
+    if (view.mode === "past" && view.cand && view.cand.status === "ok" && view.cand.mode === "quick" && key === "bench") {
+      mark = "○";
+      meta = "未到";
+      klass = "stage";
+    }
+    const tone = mark === "×" ? " red" : (mark === "✓" || mark === "●" ? " green" : "");
+    const lamp = String(meta).startsWith("进行中") ? `<span class="breathe" title="进行中"></span>` : "";
+    return `<div class="${klass}"><span class="mark${tone}">${mark}</span><span class="name">${esc(name)}</span><span class="meta">${lamp}${esc(meta)}</span></div>`;
+  }).join("");
+  const who = view.mode === "live"
+    ? ((doc.state && doc.state.inflight_label) || (view.progress && view.progress.task) || "")
+    : ((view.cand && view.cand.label) || "");
+  const bits = [];
+  if (view.mode === "past" && view.cand) {
+    if (view.cand.candidate_us != null) bits.push(`${Number(view.cand.candidate_us).toFixed(1)} 微秒`);
+    if (view.cand.speedup != null) bits.push(String(view.cand.speedup));
+    if (view.cand.roofline && view.cand.roofline.bound) bits.push("屋顶 " + view.cand.roofline.bound);
+  }
+  const code = view.cand && view.cand.excerpt
+    ? `<pre class="excerpt">${esc(view.cand.excerpt)}</pre>`
+    : `<p class="muted">这颗候选没有留下内核片段。</p>`;
+  return `<h3>阶段</h3><p class="sub">${esc(who)}</p>${steps}${bits.length ? `<p class="sub">${esc(bits.join(" · "))}</p>` : ""}<h3>代码</h3>${code}`;
+}
+
+function bindCandidatePicks(host) {
+  host.querySelectorAll("tr.pick").forEach((tr) => tr.addEventListener("click", () => {
+    selectedCandidate = tr.dataset.label || "";
+    const panel = document.getElementById("stage-panel");
+    if (panel && detailDoc) panel.innerHTML = stageMarkup(detailDoc);
+    host.querySelectorAll("tr.pick").forEach((row) => row.classList.toggle("on", row.dataset.label === selectedCandidate));
+  }));
+}
+
 function renderDetail(doc) {
   const point = doc.confirmed_point;
   const confirm = point
     ? `<p>确认点 ${esc(point.label)} · 加速比 ${esc(point.speedup)} · 花费 $${esc(num(point.cost_usd))}</p>`
     : `<p class="muted">确认点：还没有可以发布的确认测量。</p>`;
   const handoff = doc.handoff || {};
-  const rounds = (handoff.rounds || []).map((row) => `<tr><td>${esc(row.label)}</td><td>${esc(row.committee)}</td><td>${esc(row.model || "—")}</td></tr>`).join("");
+  const rounds = newestFirst(handoff.rounds).map((row) => `<tr><td>${esc(row.label)}</td><td>${esc(row.committee)}</td><td>${esc(row.model || "—")}</td></tr>`).join("");
   const handoffBlock = handoff.recorded
     ? `<table><thead><tr><th>轮次</th><th>委员会</th><th>模型</th></tr></thead><tbody>${rounds}</tbody></table>`
     : `<p class="muted">${esc(handoff.note || "没有委员会记录")}</p>`;
-  const events = (doc.budget_events || []).map((row) => `<tr><td>${esc(row.time || row.t)}</td><td>${esc(row.kind)}</td><td>${esc(row.who)}</td><td>${esc(num(row.old_budget_usd))}</td><td>${esc(num(row.new_budget_usd))}</td><td>${esc(row.note)}</td></tr>`).join("");
-  const candidates = (doc.candidates || []).map((row) => `<tr><td>${esc(num(row.idx))}</td><td>${esc(row.label)}</td><td>${esc(row.status)}</td><td>${esc(row.stage)}</td><td>${esc(num(row.speedup))}</td><td>${esc(marksFor(doc, row.label))}</td><td>${esc(row.message)}</td></tr>`).join("");
-  const grid = (doc.feature_grid || []).map((cell) => `<tr><td>${esc(cell.label)}</td><td>${esc((cell.signature || []).join(","))}</td><td>${esc(num(cell.speedup))}</td><td>${cell.published ? "发布" : ""}</td></tr>`).join("");
-  const plans = (doc.plan_outcomes || []).map((node) => `<tr><td>${esc(node.round)}</td><td>${esc(node.label)}</td><td>${esc(node.title)}</td><td>${esc(node.outcome)}</td><td>${esc(num(node.speedup))}</td></tr>`).join("");
-  return `<h2>${esc(doc.id)}</h2><p>${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>` +
+  const chosen = (doc.candidates || []).find((row) => row.label === selectedCandidate) || newestFirst(doc.candidates)[0];
+  if (chosen) selectedCandidate = chosen.label;
+  const events = newestFirst(doc.budget_events).map((row) => `<tr><td>${esc(row.time || row.t)}</td><td>${esc(row.kind)}</td><td>${esc(row.who)}</td><td>${esc(num(row.old_budget_usd))}</td><td>${esc(num(row.new_budget_usd))}</td><td>${esc(row.note)}</td></tr>`).join("");
+  const candidates = newestFirst(doc.candidates).map((row) => `<tr class="pick${row.label === selectedCandidate ? " on" : ""}" data-label="${esc(row.label)}"><td>${esc(num(row.idx))}</td><td>${esc(row.label)}</td><td>${esc(row.status)}</td><td>${esc(row.stage)}</td><td>${esc(num(row.speedup))}</td><td>${esc(marksFor(doc, row.label))}</td><td>${esc(row.message)}</td></tr>`).join("");
+  const grid = newestFirst(doc.feature_grid).map((cell) => `<tr><td>${esc(cell.label)}</td><td>${esc((cell.signature || []).join(","))}</td><td>${esc(num(cell.speedup))}</td><td>${cell.published ? "发布" : ""}</td></tr>`).join("");
+  const plans = newestFirst(doc.plan_outcomes).map((node) => `<tr><td>${esc(node.round)}</td><td>${esc(node.label)}</td><td>${esc(node.title)}</td><td>${esc(node.outcome)}</td><td>${esc(num(node.speedup))}</td></tr>`).join("");
+  const lamp = doc.status === "running" ? `<span class="breathe" title="进行中"></span>` : "";
+  return `<h2>${esc(doc.id)}</h2><p>${lamp}${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>` +
+    `<div class="detail-split"><div>` +
     `<h3>确认点</h3>${confirm}` +
     `<h3>委员会交接</h3>${handoffBlock}` +
     `<h3>预算事件</h3>` + (events ? `<table><thead><tr><th>时间</th><th>种类</th><th>谁</th><th>旧预算</th><th>新预算</th><th>备注</th></tr></thead><tbody>${events}</tbody></table>` : `<p class="muted">没有预算事件。</p>`) +
     `<h3>候选</h3>` + (candidates ? `<table><thead><tr><th>序号</th><th>标签</th><th>状态</th><th>阶段</th><th>加速比</th><th>标记</th><th>说明</th></tr></thead><tbody>${candidates}</tbody></table>` : `<p class="muted">没有候选。</p>`) +
     `<h3>特征格子</h3>` + (grid ? `<table><thead><tr><th>标签</th><th>签名</th><th>加速比</th><th></th></tr></thead><tbody>${grid}</tbody></table>` : `<p class="muted">空</p>`) +
-    `<h3>计划结局</h3>` + (plans ? `<table><thead><tr><th>轮</th><th>标签</th><th>方案</th><th>结局</th><th>加速比</th></tr></thead><tbody>${plans}</tbody></table>` : `<p class="muted">空</p>`);
+    `<h3>计划结局</h3>` + (plans ? `<table><thead><tr><th>轮</th><th>标签</th><th>方案</th><th>结局</th><th>加速比</th></tr></thead><tbody>${plans}</tbody></table>` : `<p class="muted">空</p>`) +
+    `</div><section class="panel" id="stage-panel">${stageMarkup(doc)}</section></div>`;
 }
 
 async function loadDetail(id) {
@@ -249,7 +438,13 @@ async function loadDetail(id) {
     host.innerHTML = `<p>找不到 ${esc(id)}</p>`;
     return;
   }
+  if (detailId !== id) {
+    detailId = id;
+    selectedCandidate = "";
+  }
+  detailDoc = doc;
   host.innerHTML = renderDetail(doc);
+  bindCandidatePicks(host);
 }
 
 function ledgerTable(title, headers, rows) {
@@ -257,14 +452,34 @@ function ledgerTable(title, headers, rows) {
   return `<h3>${esc(title)}</h3><table><thead><tr>${headers.map((name) => `<th>${esc(name)}</th>`).join("")}</tr></thead><tbody>${body || `<tr><td colspan="${headers.length}">空</td></tr>`}</tbody></table>`;
 }
 
+let deleteTarget = null;
+
+function openDelete(kind, name) {
+  deleteTarget = {kind, name};
+  document.getElementById("delete-note").textContent = kind === "experiment"
+    ? `将删除实验 ${name}。目录会归档，名单不再显示。花费账本的金额保留。`
+    : `将删除算子 ${name}：按题目名把这个算子下已结束的搜索一起归档。有一次还在跑就整次拒绝。花费账本的金额保留。`;
+  document.getElementById("delete-reason").value = "";
+  document.getElementById("delete-modal").classList.add("open");
+}
+
 async function loadLedger() {
   const doc = await (await fetch("/api/v2/ledger")).json();
   const operators = (doc.by_operator || []).map((row) => [row.operator, row.runs, row.spent_usd, row.budget_usd]);
-  const months = (doc.by_month || []).map((row) => [row.month, row.runs, row.spent_usd, (row.operators || []).map((item) => `${item.operator} $${item.spent_usd}`).join(", ")]);
+  const months = newestFirst(doc.by_month).map((row) => [row.month, row.runs, row.spent_usd, (row.operators || []).map((item) => `${item.operator} $${item.spent_usd}`).join(", ")]);
+  let deletions = [];
+  try {
+    deletions = newestFirst((await (await fetch("/api/records/deletions")).json()).deletions);
+  } catch (error) {
+    deletions = [];
+  }
+  const removed = deletions.map((row) => [row.t, row.kind, row.name, row.ip || "", row.reason, (row.runs || []).length]);
   document.getElementById("view-ledger").innerHTML =
     `<p>总额 $${esc(doc.spent_usd)} · 结转 $${esc(doc.carryover_usd)} · ${esc(doc.runs)} 次计入账本</p>` +
     ledgerTable("按算子", ["算子", "次数", "花费", "预算"], operators) +
-    ledgerTable("按月份", ["月份", "次数", "花费", "算子"], months);
+    ledgerTable("按月份", ["月份", "次数", "花费", "算子"], months) +
+    ledgerTable("删除记录", ["时间", "种类", "名字", "IP", "理由", "次数"], removed) +
+    `<p class="muted">删除记录只追加，页面上不能删。</p>`;
 }
 
 async function postJson(url, body) {
@@ -278,11 +493,31 @@ async function postJson(url, body) {
   return doc;
 }
 
-document.getElementById("tab-experiments").addEventListener("click", () => show("experiments"));
-document.getElementById("tab-compare").addEventListener("click", () => show("compare"));
-document.getElementById("tab-runs").addEventListener("click", () => show("runs"));
-document.getElementById("tab-detail").addEventListener("click", () => show("detail"));
-document.getElementById("tab-ledger").addEventListener("click", () => show("ledger"));
+function showSection(id) {
+  const box = document.getElementById("workspace");
+  if (box.classList.contains("collapsed")) document.getElementById("side-toggle").click();
+  const node = document.getElementById(id);
+  if (node) node.scrollIntoView({block: "nearest"});
+  if (visible === "ledger") showRight("detail");
+}
+
+document.getElementById("tab-experiments").addEventListener("click", () => showSection("view-experiments"));
+document.getElementById("tab-compare").addEventListener("click", () => showSection("view-compare"));
+document.getElementById("tab-runs").addEventListener("click", () => showSection("view-runs"));
+document.getElementById("tab-ledger").addEventListener("click", () => showRight(visible === "ledger" ? "detail" : "ledger"));
+document.getElementById("side-toggle").addEventListener("click", () => {
+  const box = document.getElementById("workspace");
+  const collapsed = !box.classList.contains("collapsed");
+  box.classList.toggle("collapsed", collapsed);
+  const button = document.getElementById("side-toggle");
+  button.textContent = collapsed ? "展开" : "收起";
+  button.title = collapsed ? "展开上面" : "收起上面";
+  button.setAttribute("aria-expanded", String(!collapsed));
+  try { localStorage.setItem("observe-side", collapsed ? "collapsed" : "open"); } catch (error) { /* the page still works without storage */ }
+});
+try {
+  if (localStorage.getItem("observe-side") === "collapsed") document.getElementById("side-toggle").click();
+} catch (error) { /* ignore a blocked storage read */ }
 document.getElementById("add-budget").addEventListener("click", () => {
   document.getElementById("budget-note").textContent = selectedRun ? selectedRun : "先在运行列表里选一次搜索";
   if (selectedRun) document.getElementById("budget-modal").classList.add("open");
@@ -301,23 +536,54 @@ document.getElementById("budget-save").addEventListener("click", async () => {
 document.getElementById("budget-close").addEventListener("click", () => document.getElementById("budget-modal").classList.remove("open"));
 document.getElementById("settings-open").addEventListener("click", async () => {
   const doc = await (await fetch("/api/settings/model")).json();
-  const select = document.getElementById("settings-model");
-  select.innerHTML = (doc.choices || []).map((item) => `<option value="${esc(item.provider)}\t${esc(item.id)}">${esc(item.provider)} ${esc(item.id)}</option>`).join("");
-  const current = `${doc.provider}\t${doc.model}`;
-  for (const option of select.options) if (option.value === current) option.selected = true;
-  document.getElementById("settings-note").textContent = `当前 ${doc.provider} ${doc.model}`;
+  const options = (doc.choices || []).map((item) => `<option value="${esc(item.provider)}\t${esc(item.id)}">${esc(item.provider)} ${esc(item.id)}</option>`).join("");
+  const rows = (doc.committees || []).length ? doc.committees : [
+    {name: "first", provider: doc.provider, model: doc.model},
+    {name: "second", provider: doc.provider, model: doc.model},
+  ];
+  const host = document.getElementById("settings-committees");
+  host.innerHTML = rows.map((row) => `<label>${esc(row.name)} <select data-committee="${esc(row.name)}">${options}</select></label>`).join("");
+  for (const select of host.querySelectorAll("select")) {
+    const row = rows.find((item) => item.name === select.dataset.committee) || {};
+    const current = `${row.provider}\t${row.model}`;
+    for (const option of select.options) if (option.value === current) option.selected = true;
+  }
+  document.getElementById("settings-note").textContent = "下一次搜索按这两个委员会读模型。正在跑的搜索不变。两个可以选同一个。";
   document.getElementById("settings-modal").classList.add("open");
 });
 document.getElementById("settings-save").addEventListener("click", async () => {
-  const [provider, model] = document.getElementById("settings-model").value.split("\t");
+  const committees = [...document.querySelectorAll("#settings-committees select")].map((select) => {
+    const [provider, model] = select.value.split("\t");
+    return {name: select.dataset.committee, provider, model};
+  });
   try {
-    await postJson("/api/settings/model", {provider, model});
+    await postJson("/api/settings/model", {committees});
     document.getElementById("settings-modal").classList.remove("open");
   } catch (error) {
     document.getElementById("settings-note").textContent = error.message;
   }
 });
 document.getElementById("settings-close").addEventListener("click", () => document.getElementById("settings-modal").classList.remove("open"));
+document.getElementById("delete-close").addEventListener("click", () => document.getElementById("delete-modal").classList.remove("open"));
+document.getElementById("delete-save").addEventListener("click", async () => {
+  if (!deleteTarget) return;
+  const reason = document.getElementById("delete-reason").value.trim();
+  if (!reason) {
+    document.getElementById("delete-note").textContent = "要写删除理由。";
+    return;
+  }
+  try {
+    await postJson("/api/records/delete", {kind: deleteTarget.kind, name: deleteTarget.name, reason});
+    document.getElementById("delete-modal").classList.remove("open");
+    if (deleteTarget.kind === "experiment" && selectedExperiment === deleteTarget.name) selectedExperiment = "";
+    deleteTarget = null;
+    loadExperiments();
+    loadRuns();
+    if (selectedExperiment) loadCompare(selectedExperiment);
+  } catch (error) {
+    document.getElementById("delete-note").textContent = error.message;
+  }
+});
 document.getElementById("reset-all").addEventListener("click", async () => {
   const preview = await (await fetch("/api/budget/reset")).json();
   const count = (preview.runs || []).length;
@@ -349,26 +615,26 @@ document.getElementById("budget-banner").addEventListener("click", (event) => {
   if (!link) return;
   event.preventDefault();
   selectedRun = link.dataset.run;
-  show("detail");
+  showRight("detail");
 });
 
+loadExperiments();
+loadRuns();
 const preset = new URLSearchParams(location.search).get("run");
 if (preset) {
   selectedRun = preset;
-  show("detail");
-} else {
-  loadExperiments();
+  showRight("detail");
 }
 const source = new EventSource("/api/v2/stream");
 source.onmessage = (event) => {
   const frame = JSON.parse(event.data);
   if (!frame.revision) return;
   refreshBanner();
-  if (visible === "runs") loadRuns();
-  if (visible === "detail" && selectedRun) loadDetail(selectedRun);
-  if (visible === "experiments") loadExperiments();
-  if (visible === "compare" && selectedExperiment) loadCompare(selectedExperiment);
+  loadExperiments();
+  if (selectedExperiment) loadCompare(selectedExperiment);
+  loadRuns();
   if (visible === "ledger") loadLedger();
+  else if (selectedRun) loadDetail(selectedRun);
 };
 </script>
 </body>
