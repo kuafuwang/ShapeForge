@@ -353,7 +353,7 @@ def _add_role_efforts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--plan-effort", default=None, choices=["off", "low", "high", "max"], help="reasoning effort for the planner only")
     p.add_argument("--patch-effort", default=None, choices=["off", "low", "high", "max"], help="reasoning effort for patch and repair turns")
     p.add_argument("--truncation-retry-effort", default=None, choices=["low", "off", "same"], help="reasoning effort of the one retry after a truncated empty reply (default: low)")
-    p.add_argument("--plan-ledger", action=argparse.BooleanOptionalAction, default=None, help="structured plan history (default: off)")
+    p.add_argument("--plan-ledger", action=argparse.BooleanOptionalAction, default=None, help="structured plan history (default: on)")
     p.add_argument("--diversity-archive", action=argparse.BooleanOptionalAction, default=None, help="after two stagnant rounds, patch one feature-different kernel (default: off)")
     p.add_argument("--fast-bench", action=argparse.BooleanOptionalAction, default=None, help="search timing skips serial dispatch and slower baselines (default: off)")
     p.add_argument("--experience-index", default=None, help="JSON file of measured hints for the planner")

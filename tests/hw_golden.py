@@ -275,7 +275,7 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
             patch_reasoning_effort=knobs.get("patch_reasoning_effort"),
         )
         # This hash is the switches-off prompt. The production default is on; the off path is what the golden file records.
-        off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
+        off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False, plan_ledger=False)
         search = SearchConfig(budget_usd=5.0, branches=3, max_rounds=2, max_repair_tries=2, eval_reps=3, plan_mix=plan_mix, **{**off, **(extra_search or {})})
         with tempfile.TemporaryDirectory() as td:
             client = FakeClient(script)

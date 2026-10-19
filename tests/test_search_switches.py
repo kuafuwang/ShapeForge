@@ -22,6 +22,7 @@ def test_switches_default_off_and_do_not_change_the_prompt_text():
     assert SearchConfig().abi_guard is True
     assert SearchConfig().target_note is True
     assert SearchConfig().rich_history is True
+    assert SearchConfig().plan_ledger is True
     assert SearchConfig().status_lines is True
     assert LLMConfig(base_url="http://x", api_key="k", model="m").truncation_retry is True
     task = _task()

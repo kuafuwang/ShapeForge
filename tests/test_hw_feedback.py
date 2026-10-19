@@ -274,7 +274,7 @@ def _fa_orch(tmp_path, plan=None, **search_kw):
     script = llm_script(code("speed=0.9", "flash_attention_kernel"), patches={"A": code("speed=1.0", "flash_attention_kernel"), "B": code("speed=1.3", "flash_attention_kernel"), "C": code("speed=0.6", "flash_attention_kernel"),
                                                                               "MMA": code("speed=1.1", "flash_attention_kernel"), "pad": code("speed=1.2", "flash_attention_kernel"), "unrelated": code("speed=0.7", "flash_attention_kernel")}, **extra)
     cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False, truncation_retry=False)
-    off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
+    off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False, plan_ledger=False)
     search = SearchConfig(budget_usd=5.0, branches=3, max_rounds=2, max_repair_tries=2, eval_reps=3, **{**off, **search_kw})
     return Orchestrator("flash_attention", "fp16", "small", cfg, search, run_dir=tmp_path / "run", evaluate_fn=G._scripted_eval("fa_pro_best"), client=FakeClient(script), log=lambda s: None)
 

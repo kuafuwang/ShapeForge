@@ -179,7 +179,7 @@ These stay off until a run turns them on. Off, the planner still sees the last 2
 
 | switch | default | what it changes when on |
 | --- | --- | --- |
-| `--plan-ledger` | off | the planner's history names whether a direction was timed and lost, or never reached a timing |
+| `--plan-ledger` / `--no-plan-ledger` | on | the planner's history names whether a direction was timed and lost, or never reached a timing. The evaluator still decides what is kept |
 | `--diversity-archive` | off | after two rounds without a new seed, the last branch that has not started yet patches an eligible kernel whose static features differ from the seed. At most four signatures are kept. A branch that already started keeps its recorded conversation on resume |
 | `--fast-bench` | off | search-stage timing skips the serial dispatch and, once this task's fastest baseline name is remembered, times only that baseline. Confirmation still times every baseline and the serial dispatch |
 | `--experience-index PATH` | empty | up to three hint lines from measured pairs go to the planner, excluding pairs from the same task. The repeatability experiment forces this empty |
