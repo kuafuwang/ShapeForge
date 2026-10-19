@@ -24,7 +24,7 @@ from pathlib import Path
 
 from tasks import list_tasks
 
-from observe.publish import job_state
+from tcenv.events import install_file_log, job_state
 
 from .common import budget_for, experiment_commitment, fits_cap, naive_reference, read_confirm, read_result, run_one, shown_speedup, summarize, write_cap
 
@@ -34,6 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # 网格是「每种小数 × 每道题」各一个目录 `{task}_{dtype}`，换小数不会接着上一格的最优核。
 # --resume 为真时，该目录已经有 result.json 就不再启动搜索。文件不存在才整格重跑。
 def run_suite(tasks, dtypes, size, suite_dir: Path, *, budget_scale=1.0, budget=None, max_total_usd=None, branches=None, max_rounds=None, model=None, resume=True, client=None, evaluate_fn=None, log=print, with_naive=True, **overrides) -> list[dict]:
+    install_file_log()
     suite_dir.mkdir(parents=True, exist_ok=True)
     write_cap(suite_dir, max_total_usd)
     rows: list[dict] = []

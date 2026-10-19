@@ -1,6 +1,7 @@
-"""Prompt construction. One system prompt serves every request type so that provider-side prefix caching applies."""
+"""Prompt construction. Initial, repair and patch requests share one system prompt so that provider-side prefix caching applies."""
 
-# 本文件只负责把每轮要说的话拼出来，不跑模型、也不评测。所有请求共用一份 system_prompt，服务商才能吃到前缀缓存；真正区分轮次的是后面的用户消息。
+# 本文件只负责把每轮要说的话拼出来，不跑模型、也不评测。记下来的 system_prompt 整次搜索不变，初始、修补和补丁请求都用它，服务商才能吃到前缀缓存。
+# 规划是例外：报告里的 roofline.bound 已知时，这一次请求的系统提示拿掉 memory 与 compute 两节，对应的一节放进 plan_user。bound 未知时规划请求也用原文。
 # 阅读顺序：HARNESS_RULES 与 system_prompt（契约和签名不许改）→ initial_user（初始生成）→ repair_user（修补）→ plan_user（诊断加规划）→ patch_user（按一份方案打补丁）。提示词正文一个字都不能改，注释都在字符串外面。
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from pathlib import Path
 
 from tcenv.task import Task
 
+from .symptom import section_for
 from .tools import SKILLS_DIR, SkillIndex
 
 # 每条请求都带着的系统约束。内核名、buffer 槽位、参数名和访问模式必须与契约一致；启动配置和编译期常量不许重定义，也不许再 #include。模型改了签名，评测的 ABI 检查会拒绝，这颗内核不能成为下一轮种子。
@@ -109,8 +111,29 @@ MIXED_PLANS = (
 )
 
 
+# bound 已知时，从这一次规划用的系统提示里拿掉两节优化章节。拿不干净就原样返回，避免只删掉一半。
+def planning_system(system: str, bound: str | None) -> str:
+    if bound not in ("memory", "compute"):
+        return system
+    chunks = [section_for(name) for name in ("memory", "compute")]
+    if any(not chunk or ("\n\n" + chunk) not in system for chunk in chunks):
+        return system
+    out = system
+    for chunk in chunks:
+        out = out.replace("\n\n" + chunk, "", 1)
+    return out
+
+
+def _roofline_notes(bound: str | None) -> str:
+    section = section_for(bound)
+    if not section:
+        return ""
+    return f"Measured roofline class: {bound}. Matching section of the Apple GPU optimization notes:\n\n{section}"
+
+
 # 一轮的诊断加规划：从 roofline、流水线统计和源码指出主导瓶颈，再要 K 份互不相同的方案（JSON）。抽不出 JSON 时不在这里收场，编排器会重试或改用 FALLBACK_PLANS。
-def plan_user(task: Task, best_source: str, best_feedback: str, history: list[str], k: int, mixed: bool = False, status: str = "") -> str:
+# bound 为 memory 或 compute 时，只在这条用户消息里附上对应的那一节。其它值不附，也不改原句。
+def plan_user(task: Task, best_source: str, best_feedback: str, history: list[str], k: int, mixed: bool = False, status: str = "", bound: str | None = None) -> str:
     # 只带最近 24 条尝试。更早的失败假设不会出现，模型有可能把它们再提一遍。
     hist = "\n".join(f"- {h}" for h in history[-24:]) or "- (none yet)"
     # 混合规划时最后一份是低风险局部改动；否则 K 份都要求是结构性的，避免分支挤在同一种微调上。
@@ -129,9 +152,15 @@ def plan_user(task: Task, best_source: str, best_feedback: str, history: list[st
         'Reply with JSON only, in a ```json block: {"bottleneck": "<one sentence>", "analysis": "<2-4 sentences>", '
         '"plans": [{"title": "<short>", "change": "<precise description of what to change in the kernel and why it helps>", "expected_gain": "<estimate>"}]}'
     )
-    if not status:
+    extra = []
+    if status:
+        extra.append(status.rstrip())
+    notes = _roofline_notes(bound)
+    if notes:
+        extra.append(notes)
+    if not extra:
         return text
-    return text.replace("\n\nDiagnose the dominant bottleneck", "\n\n" + status.rstrip() + "\n\nDiagnose the dominant bottleneck", 1)
+    return text.replace("\n\nDiagnose the dominant bottleneck", "\n\n" + "\n\n".join(extra) + "\n\nDiagnose the dominant bottleneck", 1)
 
 
 # 一路分支的补丁。只落实这一份 plan，已经能工作的部分保持不动，因此不许借改写改掉契约或签名。回复仍是完整内核的一个 metal 块。

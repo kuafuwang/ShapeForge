@@ -15,6 +15,7 @@
 # 整条搜索是「诊断 → 规划 → 分支补丁 → 评测」。先做出一颗合格种子，之后每轮根据测量反馈找出瓶颈、规划 K 份不同改法，模型并行写补丁，GPU 上逐个量。
 # 从上往下先看 run 与 _search 的轮次，再看 _eval：只有安全、算对、并且快过测量噪声的候选才能换成下一轮种子；一次完整评测超时会停掉整次搜索。
 # 美元预算不在本文件里比较。每次模型请求前，LLM.chat 里的 CostLedger.check 先用 refresh_budget 看 control.json 有没有加预算，再拿已花费和 budget_usd 比；不够就抛 BudgetExhausted。已经在飞的请求可能略超。
+# 每次搜索都是两个委员会轮流接手。初始稿和第 1 轮是 first，之后第 r 轮是 (r - 1) % 2。只在轮次边界换委员会。同一条候选的修补不换。
 # 结束时 _confirm 用新种子重测优胜者和噪声范围内的并列者。中断后续跑走 restore / _search_resumed，不把已评过的内核再评一遍。
 
 from __future__ import annotations
@@ -41,7 +42,9 @@ from .artifacts import LEDGER_SCHEMA_VERSION, RESULT_SCHEMA_VERSION, STATE_SCHEM
 from .feedback_extra import abi_signature, at_roofline, failure_phrase, status_lines, target_note, threadgroup_limit_note
 from .llm import LLM, BudgetExhausted, CostLedger, LLMConfig, LLMError, SearchConfig, Transcript
 from .policy import candidate_eligible, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain
+from .committees import committees_record, default_committees, handoff_for, order_committees, prefix_handoff
 from .parse import extract_metal, parse_plans
+from .symptom import bound_of
 from .tools import LOOKUP_TOOL, QUICK_CHECK_TOOL, SkillIndex, make_handlers
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -308,11 +311,18 @@ class Orchestrator:
         seed: int | None = None,
         resuming: bool = False,
         from_run: Path | None = None,
+        committees: list | None = None,
     ) -> None:
-        """``resuming``: the directory already holds a run (see ``taic.resume``); nothing in it is rewritten until ``restore()`` has loaded it."""
+        """``resuming``: the directory already holds a run (see ``taic.resume``); nothing in it is rewritten until ``restore()`` has loaded it.
+        ``committees``: exactly first and second. Omitted means two committees that copy ``llm_cfg``. There is no single-conversation mode."""
         self.task = get_task(task_name, dtype, size)
         self.task_name, self.dtype, self.size = task_name, dtype, size
         self.cfg, self.search = llm_cfg, search
+        try:
+            self.committees = default_committees(llm_cfg) if committees is None else order_committees(list(committees))
+        except LLMError as e:
+            raise RunStartError(str(e)) from e
+        self._committee_name = self.committees[0].name
         stamp = time.strftime("%Y%m%d-%H%M%S")
         self.run_dir = Path(run_dir) if run_dir else REPO_ROOT / "runs" / f"{stamp}_{task_name}_{dtype}_{llm_cfg.model}"
         self.log = log
@@ -336,6 +346,7 @@ class Orchestrator:
         if not resuming:
             self._write_run_config()
         # 预算闸门的账本。之后每次 LLM.chat 发请求前，CostLedger.check 先 refresh_budget（读 control.json），再比较已花费。
+        # 两个委员会共用这一本账和下面那一份转录。换委员会不新开预算。
         self.ledger = CostLedger(llm_cfg, search.budget_usd)
         # 已存在的 control.json 先被忽略，直到文件再变：那是上一会话的请求，启动者已经折进当前预算。损坏的文件只记一笔，不改上限。
         self.ledger.watch_control(self.run_dir / control.CONTROL_FILE)
@@ -343,7 +354,10 @@ class Orchestrator:
         self.ledger.on_control = self._control_limits
         self.ledger.on_control_problem = lambda msg: self.log(f"  {msg}")
         # 并发度至少为分支数 K（search.branches）。模型请求因此可以同时在飞；占 GPU 的评测不走这个信号量。
-        self.llm = LLM(llm_cfg, self.ledger, Transcript(self.run_dir / "transcript.jsonl"), client=client, max_concurrency=max(2, search.branches))
+        self._llm_slots = max(2, search.branches)
+        self._client_injected = client is not None
+        self.llm = LLM(llm_cfg, self.ledger, Transcript(self.run_dir / "transcript.jsonl"), client=client, max_concurrency=self._llm_slots)
+        self._llms = [self.llm]
         self.evaluate_fn = evaluate_fn or evaluate
         self.index = SkillIndex("msl_reference")
         # 同一时刻只允许一次 GPU 评测、quick_check 或 Instruments。两份内核抢同一块卡会把计时测脏，挂死时也不能再有内核在跑。
@@ -375,13 +389,68 @@ class Orchestrator:
         self._search_seed: Candidate | None = None
         self._confirm_winner: Candidate | None = None
         # 续跑时目录里已有上一会话的 state.json。先空写会把看板抹掉，所以等到 restore 把账本和候选装回来再发布。
+        # 新运行的初始稿用角色 0。续跑要等知道轮次后再绑，不能在这里先绑成角色 0。
         if not resuming:
+            self._activate_round(0)
             self._publish_state()
 
     # 续跑要把上一会话已经花掉的墙钟算进去，否则轨迹上的时间从 0 重新开始，和账本对不上。
     def _elapsed(self) -> float:
         """Search time of the whole run, including earlier sessions of a resumed one."""
         return self._t_offset + (time.time() - self.t0)
+
+    # 第 1 轮和初始稿是 first；之后按轮号在两个委员会之间换。续跑只看轮号，不看上一轮的对话。
+    def _activate_round(self, rnd: int) -> None:
+        """Bind the committee for round ``rnd``. The name changes even when the model id does not.
+
+        The same base URL, key and model keep the HTTP client. A changed model id updates the ledger's prices.
+        A different endpoint or key opens another client on the same ledger and transcript. A client passed
+        in by a test is reused for both committees, so one scripted queue serves the whole run."""
+        committee = self.committees[(max(int(rnd), 1) - 1) % 2]
+        self._committee_name = committee.name
+        nxt = committee.members[0].cfg
+        cur = self.llm.cfg
+        if cur is nxt:
+            return
+        same_model = cur.model == nxt.model
+        same_endpoint = cur.base_url == nxt.base_url and cur.api_key == nxt.api_key
+        if self._client_injected or same_endpoint:
+            if not same_model:
+                self._use_cfg(nxt)
+            return
+        self._open_llm(nxt, update_prices=not same_model)
+
+    def _use_cfg(self, cfg: LLMConfig) -> None:
+        """Keep the current HTTP client and follow ``cfg``. The model id changed, so the ledger prices follow it too."""
+        if cfg.api_key:
+            self.llm.transcript._secrets = list({*self.llm.transcript._secrets, cfg.api_key})
+        self.llm.cfg = cfg
+        self.ledger.cfg = cfg
+
+    def _open_llm(self, cfg: LLMConfig, *, update_prices: bool) -> None:
+        """A different endpoint or key: a new client, the same ledger and the same transcript. Closed with the others at the end of ``run``."""
+        fresh = LLM(cfg, self.ledger, self.llm.transcript, client=None, max_concurrency=self._llm_slots)
+        fresh.progress_path = self.llm.progress_path
+        self._llms.append(fresh)
+        self.llm = fresh
+        if update_prices:
+            self.ledger.cfg = cfg
+
+    def _handoff(self, rnd: int) -> str:
+        """Empty on the initial draft and on round 1. Every later round names its committee, including when the model id is unchanged."""
+        if rnd <= 1:
+            return ""
+        return handoff_for(self.committees[(rnd - 1) % 2].name)
+
+    async def _close_clients(self) -> None:
+        """Close every HTTP client this run opened. A scripted client has nothing to close."""
+        seen: set[int] = set()
+        for llm in self._llms:
+            ident = id(llm.client)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            await llm.aclose()
 
     # 给 `taic resume` 留的设置。故意不写 API key 和端点。写失败向上抛，调用方不得进入 run()。
     def _write_run_config(self) -> None:
@@ -393,8 +462,7 @@ class Orchestrator:
         contract_text = self.task.contract.describe()
         triton_text = self.task.triton_source
         commit, dirty = _git_identity(REPO_ROOT)
-        try:
-            control.write_json_atomic(self.run_dir / control.CONFIG_FILE, {
+        body = {
                 "schema_version": 1,
                 "task": self.task_name, "dtype": self.dtype, "size": self.size, "seed": self.seed, "run_seed": self.run_seed,
                 "llm": llm, "search": asdict(self.search),
@@ -409,7 +477,11 @@ class Orchestrator:
                 "cost_may_be_incomplete": True,
                 "cost_note": "A process can die after the provider bills a request and before transcript.jsonl records it, so a resumed ledger can under-count the real bill. A budget_events.json line that fails to land is dropped; that file is not a complete bill. This is not a hard dollar cap. Reconciling with the provider bill needs separate authorization.",
                 "created_at": time.time(),
-            })
+        }
+        # 两个委员会和各自唯一的成员。没有密钥，也没有端点。
+        body["committees"] = committees_record(self.committees)
+        try:
+            control.write_json_atomic(self.run_dir / control.CONFIG_FILE, body)
         except OSError as e:
             raise RunStartError(f"cannot start: run_config.json was not written ({e})") from e
 
@@ -458,7 +530,8 @@ class Orchestrator:
                 "task": self.task_name,
                 "dtype": self.dtype,
                 "size": self.size,
-                "model": self.cfg.model,
+                "model": self.llm.cfg.model,
+                "committee": self._committee_name,
                 "round": self._round,
                 "max_rounds": self.search.max_rounds,
                 "spent_usd": self.ledger.total_usd,
@@ -527,6 +600,8 @@ class Orchestrator:
         self._stagnant = snap.stagnant
         self._round = snap.partial.rnd if snap.partial else snap.rounds_done
         self._resume = snap
+        # 续跑的角色由将要进入的轮号决定，不把上一轮的对话带进来。
+        self._activate_round(snap.partial.rnd if snap.partial else snap.next_round)
         # 试跑只在内存里装好状态。写转录或 state.json 会让一次「看看能不能续」变成真的动了运行目录。
         if dry_run:
             return
@@ -793,6 +868,7 @@ class Orchestrator:
                 note = threadgroup_limit_note(cand.report.message)
                 if note:
                     fb += "\n\n" + note
+            # 这一支的修补留在开出它的委员会上：同一条对话里的短反馈，不换委员会，也不另起交接句。
             messages = messages + [{"role": "user", "content": prompts.repair_user(fb, attempt + 1, self.search.max_repair_tries)}]
         return None
 
@@ -802,7 +878,13 @@ class Orchestrator:
         self._publish_state("plan")
         k = self.search.branches
         fb = format_feedback(seed.report)[:FEEDBACK_CHARS] + evidence
-        msgs = [{"role": "system", "content": self.system}, {"role": "user", "content": prompts.plan_user(self.task, seed.source, fb, self.history, k, mixed=self.search.plan_mix, status=status)}]
+        # 用报告里的 roofline.bound，不从反馈正文里猜。未知时这两次调用都不改原文。同一 bound 下各轮规划请求的系统提示相同。
+        bound = bound_of(seed.report)
+        plan = prompts.plan_user(self.task, seed.source, fb, self.history, k, mixed=self.search.plan_mix, status=status, bound=bound)
+        msgs = [
+            {"role": "system", "content": prompts.planning_system(self.system, bound)},
+            {"role": "user", "content": prefix_handoff(self._handoff(rnd), plan)},
+        ]
         for attempt in range(2):
             try:
                 reply = await self.llm.chat(msgs, label=f"r{rnd}.plan{'' if attempt == 0 else '.retry'}")
@@ -827,6 +909,7 @@ class Orchestrator:
         res = RunResult(run_dir=str(self.run_dir), task=self.task_name, dtype=self.dtype, size=self.size, model=self.cfg.model, budget_usd=self.ledger.budget_usd)
         resumed = self._resume is not None
         self.log(f"== {'RESUME ' if resumed else ''}{self.task_name} {self.dtype} {self.size} | model {self.cfg.model} | budget ${self.ledger.budget_usd:.2f} | branches {self.search.branches} | run {self.run_dir.name}")
+        self.log("   committees: " + " | ".join(f"{c.name} {c.members[0].provider}/{c.members[0].model}" for c in self.committees))
         if resumed:
             self.log(f"   continuing from round {self._resume.partial.rnd if self._resume.partial else self._resume.next_round}, spent so far ${self.ledger.total_usd:.3f}, best {self.best.label if self.best else '-'}")
         try:
@@ -846,7 +929,7 @@ class Orchestrator:
         await self._confirm(res)
         if self.search.profile_best:
             await self._profile_best()
-        await self.llm.aclose()  # the HTTP client must be closed on the loop that used it (asyncio.run closes the loop afterwards)
+        await self._close_clients()  # every HTTP client this run opened, on the loop that used it (asyncio.run closes the loop afterwards)
         return self._finish(res)
 
     # --from 只在 best.metal 存在、且 result.json 里的题和这次一致时才把源码交回来。对不上或没有文件就返回 None，调用方从头写。
@@ -951,6 +1034,7 @@ class Orchestrator:
             res.rounds = rnd
             self._round = rnd
             self._stagnant = stagnant
+            self._activate_round(rnd)  # 只在轮次边界换委员会；这一轮里的修补不再换
             part = partial if (partial is not None and partial.rnd == rnd) else None
             # 续跑的第一轮用中断时记下的种子。若改用现在的 self.best，补丁会对着另一颗内核改。
             seed = (self._by_label(part.seed_label) if part is not None else None) or self.best
@@ -994,7 +1078,8 @@ class Orchestrator:
                     br = part.resume[i]
                     self.log(f"  branch r{rnd}.p{i} continues at attempt {br.attempt}")
                     return await self._develop(br.messages, f"r{rnd}.p{i}", plan=plan["title"], resume=br)
-                msgs = [{"role": "system", "content": self.system}, {"role": "user", "content": prompts.patch_user(self.task, seed.source, fb, plan, status=status)}]
+                patch = prompts.patch_user(self.task, seed.source, fb, plan, status=status)
+                msgs = [{"role": "system", "content": self.system}, {"role": "user", "content": prefix_handoff(self._handoff(rnd), patch)}]
                 return await self._develop(msgs, f"r{rnd}.p{i}", plan=plan["title"])
 
             before = seed

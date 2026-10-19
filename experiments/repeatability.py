@@ -23,7 +23,7 @@ import statistics
 import time
 from pathlib import Path
 
-from observe.publish import job_state
+from tcenv.events import install_file_log, job_state
 
 from .common import budget_for, conclusion_of_run, experiment_commitment, fits_cap, read_result, run_one, write_cap
 
@@ -34,6 +34,7 @@ DEFAULT_TASKS = ("conv2d", "gemm", "swiglu")
 # 目录是 `任务/trial_N`。接着上次的最优核会把多次试验收成一条更长的搜索，均值和标准差就不再是运行之间的波动。
 # --resume 只认这一次 trial 自己的 result.json；上一格的结果不会被拷进来当起点。
 def run_repeatability(tasks, dtype, size, out_dir: Path, *, trials=5, budget_scale=1.0, budget=None, max_total_usd=None, max_rounds=None, branches=None, model=None, resume=True, client_factory=None, evaluate_fn=None, log=print, **overrides) -> dict:
+    install_file_log()
     out_dir.mkdir(parents=True, exist_ok=True)
     write_cap(out_dir, max_total_usd)
     table: dict[str, dict] = {}

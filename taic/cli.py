@@ -1,6 +1,7 @@
 """``taic`` command line: run the AI compiler on a task."""
 
 # 命令行进入搜索的地方。`taic run` 开一次新搜索；`taic resume` 从已有 run 目录接着跑，已经花掉的模型请求和 GPU 评测不会再花一遍。
+# `taic brief` 只读：没有目录时打印仓库方位，有目录时打印一份短 JSON。不发模型请求，不上 GPU。
 # 新搜索的预算和预设不在这里写死。未指定 --config 时，load_config 读 taic.toml，再按预设名叠 taic.<preset>.toml；预设名是 --preset，否则环境变量 TAIC_PRESET，否则 DEFAULT_PRESET（paper，论文的 $15，即 PAPER_BUDGET_USD）。--budget 只在显式给出时覆盖 search.budget_usd。
 # 续跑的预算另算：目录里记下的花费和上限先恢复，--budget 改总上限，--add-budget 加在记下的上限上；两者都没有就沿用记下的上限或 control.json 里还没生效的请求，但新上限必须高于已花费。没记下的键才回到预设，默认 base（只有 taic.toml）。
 
@@ -15,10 +16,12 @@ from pathlib import Path
 
 # 一次新搜索从这里进入。load_config 把预设和命令行里非空的预算、分支数、轮数上限合成 LLMConfig 与 SearchConfig，再交给 Orchestrator.run。有 best_speedup 则进程成功，一颗合格内核都没有则失败。
 def cmd_run(a: argparse.Namespace) -> int:
-    from .llm import load_config
+    from .committees import load_committees
+    from .llm import LLMError, load_config, load_raw_config
     from .orchestrator import Orchestrator, RunStartError
 
     # 预设与预算的汇合点。a.config 有值时整份文件原样使用，不再叠预设；a.budget 为 None 时保留预设里的 budget_usd（paper 即 PAPER_BUDGET_USD）。
+    raw = load_raw_config(a.config, a.preset)
     cfg, search = load_config(a.config, model=a.model, preset=a.preset, budget_usd=a.budget, branches=a.branches, max_rounds=a.max_rounds)
     # 写在配置之后，所以这些开关优先于 taic.toml 和预设。没写的可选整数保持配置值；0 也当成没写。
     if a.no_tools:
@@ -40,13 +43,16 @@ def cmd_run(a: argparse.Namespace) -> int:
         cfg.reasoning_effort = a.effort
     _apply_max_tokens(a, cfg)
     try:
+        # 显式 --model 让两个委员会都用这个模型。没写时用配置里的两名成员，可以不同。
+        committees = load_committees(raw, active=cfg, model_override=a.model)
         orch = Orchestrator(
             a.task, a.dtype, a.size, cfg, search,
             run_dir=Path(a.run_dir) if a.run_dir else None,
             from_run=Path(a.from_run) if a.from_run else None,
             seed=getattr(a, "seed", None),
+            committees=committees,
         )
-    except (RunStartError, ValueError) as e:
+    except (RunStartError, ValueError, LLMError) as e:
         # 尺寸或任务名不合法是启动失败，和配置写不进去一样，退出码 5。
         print(str(e), file=sys.stderr)
         return 5
@@ -117,6 +123,44 @@ def _resume_config(a: argparse.Namespace, settings: dict, info: dict):
     return cfg, search, prov
 
 
+def _committees_for_resume(a: argparse.Namespace, cfg, run_dir: Path):
+    """The two committees of a continued run. Recorded members win, unless ``--model`` names one model for both.
+
+    A run started before committees existed gets two committees that copy its model. The round number still picks who is next.
+    """
+    from dataclasses import replace
+
+    from . import resume as rs
+    from .committees import Committee, Member, default_committees, load_committees, order_committees
+    from .llm import LLMError, load_raw_config
+
+    raw = load_raw_config(a.config, a.preset or "base")
+    provider = str((raw.get("llm") or {}).get("provider") or "deepseek")
+    if getattr(a, "model", None):
+        return default_committees(cfg, provider)
+    doc = rs._doc(run_dir / "run_config.json") or {}
+    recorded = doc.get("committees")
+    if not isinstance(recorded, list) or not recorded:
+        return default_committees(cfg, provider)
+    try:
+        return load_committees({"llm": raw.get("llm") or {}, "committees": recorded}, active=cfg)
+    except LLMError:
+        if not getattr(a, "dry_run", False):
+            raise
+        built = []
+        for item in recorded:
+            if not isinstance(item, dict):
+                continue
+            members = []
+            for member in item.get("members") or []:
+                if not isinstance(member, dict):
+                    continue
+                model = str(member.get("model") or cfg.model)
+                members.append(Member(str(member.get("provider") or provider), model, replace(cfg, model=model)))
+            built.append(Committee(str(item.get("name") or ""), members))
+        return order_committees(built)
+
+
 # 续跑在发请求之前就该停时用它。code 是进程退出码：目录不能续是 3，锁被占用是 4，设置或预算不合法是 5。
 class ResumeRefused(Exception):
     """The run cannot be continued; ``code`` is the exit status of the command."""
@@ -159,9 +203,10 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
         first = snap.partial.rnd if snap.partial else snap.next_round
         if first > search.max_rounds:
             raise rs.ResumeError(f"all {search.max_rounds} rounds were used (the run is past round {first - 1}): raise the limit with --max-rounds")
+        committees = _committees_for_resume(a, cfg, run_dir)
     except (rs.ResumeError, rs.NeedsInspection, LLMError, control.ControlError, KeyError, ValueError) as e:
         raise ResumeRefused(f"cannot resume {run_dir}: {e}", 5) from e
-    orch = Orchestrator(snap.task, snap.dtype, snap.size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log, resuming=True)
+    orch = Orchestrator(snap.task, snap.dtype, snap.size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log, resuming=True, committees=committees)
     variants = {prompts.system_prompt(orch.task, use_tools=cfg.use_tools, profiler_evidence=pe, hw_feedback=hw) for pe in (False, True) for hw in (False, True)}
     # 系统提示若已和现在的 prompts.py 不同，仍用转录里的原文。换提示会让同一次实验的前后轮次对着不同契约说话。
     prompt_changed = bool(snap.system) and snap.system not in variants  # False: the prompt files still produce the prompt the run began with
@@ -303,7 +348,15 @@ def _apply_search_switches(a: argparse.Namespace, cfg, search, prov: dict | None
         prov["llm.truncation_retry"] = "command line"
 
 
+def cmd_brief(a: argparse.Namespace) -> int:
+    """Repo orientation, or one compact JSON object for a run directory. Reads files and starts nothing."""
+    from .brief import run_brief
+
+    return run_brief(a.run_dir)
+
+
 # `run` 开新搜索，`resume` 续旧目录。两边的 --budget 含义不同：run 是这一次内核的总上限，resume 是续跑后的新总上限，必须高于已经花掉的金额。
+# `brief` 不接预算：没有 RUN_DIR 时是仓库方位，有目录时是一份短 JSON。
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="taic", description="Triton AI Compiler for Apple GPUs (Triton -> MSL)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -356,6 +409,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--patience", type=int, default=None, help="not recorded by runs older than run_config.json: give the value the run was started with")
     r.add_argument("--lift-count-limits", action="store_true", help="also continue a run that stopped because it used its round limit or its patience")
     r.set_defaults(fn=cmd_resume)
+    b = sub.add_parser("brief", help="read-only orientation, or JSON facts for one run directory (no model call, no GPU)")
+    b.add_argument("run_dir", nargs="?", default=None, help="run directory; omit for a repo orientation")
+    b.set_defaults(fn=cmd_brief)
     a = ap.parse_args(argv)
     return a.fn(a)
 

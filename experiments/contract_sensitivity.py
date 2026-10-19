@@ -127,9 +127,9 @@ def gemm_source(variant: str, dtype: str = "fp16") -> str:
 
 def run_gemm(variants: list[str], dtype: str, size: str, out: Path, reps: int) -> list[dict]:
     from tcenv.evaluate import evaluate
+    from tcenv.events import install_file_log, job_state
 
-    from observe.publish import job_state
-
+    install_file_log()
     out.mkdir(parents=True, exist_ok=True)
     rows: list[dict] = []
     path = out / f"gemm_{dtype}_{size}.json"

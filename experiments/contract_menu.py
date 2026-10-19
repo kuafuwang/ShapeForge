@@ -22,9 +22,8 @@ import statistics
 import sys
 from pathlib import Path
 
-from observe.publish import job_state
-
 from taic.control import write_json_atomic
+from tcenv.events import install_file_log, job_state
 
 from tasks import PHASE2_TASK_NAMES, TASK_NAMES, get_task
 
@@ -213,6 +212,7 @@ def run_menu(
     log=print,
 ) -> dict:
     """Validate the menu, then run every missing child whose budget still fits. ``run_fn`` defaults to :func:`experiments.common.run_one`."""
+    install_file_log()
     if budget <= 0:
         raise ValueError(f"budget must be positive, got {budget}")
     items = resolve_menu(base, tokens)

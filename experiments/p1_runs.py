@@ -32,9 +32,8 @@ import argparse
 import json
 from pathlib import Path
 
-from observe.publish import job_state
-
 from taic.llm import PAPER_BUDGET_USD
+from tcenv.events import install_file_log, job_state
 
 from .common import experiment_commitment, fits_cap, naive_reference, read_confirm, read_result, run_one, shown_speedup, summarize, write_cap
 
@@ -97,6 +96,7 @@ def budget_notes(out: Path, names: list[str], budget: float | None) -> list[str]
 
 # 按名字顺序跑。result.json 已在就跳过，哪怕当时的预算和这次要给的不一样；要按新预算重跑得换一个 --out。
 def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = "fp16", log=print, budget: float | None = None, max_total_usd: float | None = None, **overrides) -> list[dict]:
+    install_file_log()
     out.mkdir(parents=True, exist_ok=True)
     write_cap(out, max_total_usd)
     rows = []

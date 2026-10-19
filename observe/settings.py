@@ -2,6 +2,7 @@
 
 The credentials file holds API keys. This module never returns those keys, the base URL, or prices. A running search keeps the model it
 started with; the next search that reads ``taic.toml`` uses the new one, including the next task a live experiment queue has not started yet.
+The choice is written into ``[llm]`` and into each committee member, so both committees take the next turn on that model.
 """
 
 from __future__ import annotations
@@ -83,6 +84,27 @@ def _replace_in_llm(text: str, key: str, value: str) -> tuple[str, bool]:
     return "".join(out), replaced
 
 
+def _replace_in_members(text: str, provider: str, model: str) -> str:
+    """Point every committee member at ``provider`` / ``model``. A file with no members is unchanged."""
+    lines = text.splitlines(keepends=True)
+    in_member = False
+    provider_pat = re.compile(r'^(\s*provider\s*=\s*")[^"]*(")')
+    model_pat = re.compile(r'^(\s*model\s*=\s*")[^"]*(")')
+    out = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_member = stripped == "[[committees.members]]"
+        if in_member and provider_pat.match(line):
+            out.append(provider_pat.sub(rf"\g<1>{provider}\2", line, count=1))
+            continue
+        if in_member and model_pat.match(line):
+            out.append(model_pat.sub(rf"\g<1>{model}\2", line, count=1))
+            continue
+        out.append(line)
+    return "".join(out)
+
+
 def set_default_model(provider: str, model: str) -> dict:
     """Write ``provider`` and ``model`` into ``taic.toml``. Both must already be listed in the credentials file."""
     if not isinstance(provider, str) or not isinstance(model, str) or not _SAFE.fullmatch(provider) or not _SAFE.fullmatch(model):
@@ -93,6 +115,7 @@ def set_default_model(provider: str, model: str) -> dict:
     path, text, _llm = _read_config()
     new, n_provider = _replace_in_llm(text, "provider", provider)
     new, n_model = _replace_in_llm(new, "model", model)
+    new = _replace_in_members(new, provider, model)
     if not n_provider or not n_model:
         raise Refused(500, f"{path} has no provider or model line under [llm]")
     tmp = path.with_name(f".{path.name}.tmp")

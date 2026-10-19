@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -19,6 +20,11 @@ from observe.publish import gpu_dir, gpu_events_path, observe_dir
 STALE_S = 15.0
 # 总览只带最近这些条 GPU 事件，一帧才跟得上页面的轮询。
 EVENT_TAIL = 40
+# 小于这个数的 t 是从本次搜索开始算的秒，不是墙上的 unix 时间。
+_UNIX = 1_000_000_000
+# 旧运行的 state.json 没有 committee 这一键。页面只留这一句，不补两个委员会。
+NO_COMMITTEE_NOTE = "这次搜索没有委员会记录"
+_gpu_cache: dict = {"sig": None, "events": []}
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -502,6 +508,402 @@ def overview() -> dict:
     }
 
 
+# 聊天行里只留标签和时刻。messages、reply、usage 不进这一帧，提示词和密钥不会出现在时间线上。
+def _chat_events(directory: Path) -> list[dict]:
+    path = directory / "transcript.jsonl"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    kept_keys = ("seconds", "t", "started_at", "ended_at", "at")
+    out = []
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(item, dict) or item.get("event") != "chat":
+            continue
+        kept: dict = {}
+        label = item.get("label")
+        if isinstance(label, str) and label:
+            kept["label"] = label[:80]
+        for key in kept_keys:
+            number = _as_float(item.get(key))
+            if number is not None:
+                kept[key] = number
+        out.append(kept)
+    return out
+
+
+# ledger.json 里的 t 是请求结束时距账本起点的秒。转录只有耗时 seconds，没有墙上时刻时用它把条放到同一条钟上。
+def _ledger_elapsed(directory: Path) -> list[dict]:
+    doc = _load(directory / "ledger.json") or {}
+    reqs = doc.get("requests")
+    if not isinstance(reqs, list):
+        return []
+    out = []
+    for req in reqs:
+        if not isinstance(req, dict):
+            continue
+        elapsed = _as_float(req.get("t"))
+        if elapsed is None:
+            continue
+        label = req.get("label") if isinstance(req.get("label"), str) else ""
+        out.append({"label": label, "t": elapsed})
+    return out
+
+
+def _as_unix(value, origin: float | None) -> float | None:
+    number = _as_float(value)
+    if number is None:
+        return None
+    if number >= _UNIX:
+        return number
+    if origin is not None and number >= 0:
+        return origin + number
+    return None
+
+
+# 一条聊天的起止。seconds 是这一次请求花了多久，不是钟上的位置。t / ended_at / at 才是时刻。
+def _chat_window(chat: dict, origin: float | None) -> tuple[float, float] | None:
+    duration = _as_float(chat.get("seconds"))
+    if duration is not None and duration < 0:
+        duration = None
+    started = _as_unix(chat.get("started_at"), origin) if "started_at" in chat else None
+    ended = None
+    for key in ("ended_at", "at", "t"):
+        if key not in chat:
+            continue
+        ended = _as_unix(chat.get(key), origin)
+        if ended is not None:
+            break
+    if started is not None and ended is None and duration is not None:
+        ended = started + duration
+    if ended is not None and started is None and duration is not None:
+        started = ended - duration
+    if started is None or ended is None:
+        return None
+    if ended < started:
+        ended = started
+    return started, ended
+
+
+def _take_ledger(reqs: list[dict], label: str | None, cursor: int) -> tuple[float | None, int]:
+    if not label:
+        if cursor >= len(reqs):
+            return None, cursor
+        return reqs[cursor]["t"], cursor + 1
+    for index in range(cursor, len(reqs)):
+        if reqs[index]["label"] == label:
+            return reqs[index]["t"], index + 1
+    return None, cursor
+
+
+def _model_spans(directory: Path, origin: float | None) -> list[dict]:
+    chats = _chat_events(directory)
+    if not chats:
+        return []
+    ledger = _ledger_elapsed(directory)
+    cursor = 0
+    spans = []
+    for chat in chats:
+        window = _chat_window(chat, origin)
+        elapsed, cursor = _take_ledger(ledger, chat.get("label"), cursor)
+        if window is None and elapsed is not None and origin is not None:
+            end = elapsed if elapsed >= _UNIX else origin + elapsed
+            duration = _as_float(chat.get("seconds"))
+            start = end - duration if duration is not None and duration >= 0 else end
+            if end < start:
+                end = start
+            window = (start, end)
+        if window is None:
+            continue
+        span = {"start": window[0], "end": window[1]}
+        if chat.get("label"):
+            span["label"] = chat["label"]
+        spans.append(span)
+    return spans
+
+
+def _gpu_events_all() -> list[dict]:
+    path = gpu_events_path()
+    try:
+        stat = path.stat()
+    except OSError:
+        return []
+    sig = (str(path), stat.st_mtime_ns, stat.st_size)
+    if _gpu_cache["sig"] == sig:
+        return _gpu_cache["events"]
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict) and _as_float(item.get("t")) is not None:
+            out.append(item)
+    _gpu_cache["sig"] = sig
+    _gpu_cache["events"] = out
+    return out
+
+
+def _token(text: str, word: str) -> bool:
+    if not text or not word:
+        return False
+    return re.search(rf"(?<![A-Za-z0-9_]){re.escape(word)}(?![A-Za-z0-9_])", text) is not None
+
+
+def _same_pid(event: dict, pid) -> bool:
+    try:
+        return int(event.get("pid")) == int(pid)
+    except (TypeError, ValueError):
+        return False
+
+
+# 等锁条只收这一次搜索的等待：时间落在这次运行里，并且用途写着这个算子，或者 pid 就是这次搜索自己。
+def _wait_belongs(event: dict, task: str, dtype: str, pid) -> bool:
+    if _same_pid(event, pid):
+        return True
+    what = event.get("what") if isinstance(event.get("what"), str) else ""
+    if not task or not _token(what, task):
+        return False
+    if dtype and not _token(what, dtype):
+        return False
+    return True
+
+
+def _run_bounds(state: dict | None, result: dict | None, progress: dict | None, status: str) -> tuple[float | None, float | None]:
+    start = _as_float((state or {}).get("started_at"))
+    if start is None:
+        start = _as_float((result or {}).get("started_at"))
+    ends = []
+    for doc in (state, result, progress):
+        if not isinstance(doc, dict):
+            continue
+        for key in ("updated_at", "entered_at"):
+            number = _as_float(doc.get(key))
+            if number is not None and number >= _UNIX:
+                ends.append(number)
+    end = max(ends) if ends else None
+    if status == "running":
+        end = max(end or 0.0, time.time())
+    elif end is None:
+        end = start
+    if start is not None and end is not None and end < start:
+        end = start
+    return start, end
+
+
+def _lock_spans(state: dict | None, result: dict | None, progress: dict | None, status: str) -> list[dict]:
+    task = str((result or state or {}).get("task") or "")
+    dtype = str((result or state or {}).get("dtype") or "")
+    pid = (state or {}).get("pid")
+    start, end = _run_bounds(state, result, progress, status)
+    if start is None or end is None:
+        return []
+    lo, hi = start - 2.0, end + 2.0
+    pending: dict = {}
+    spans = []
+
+    def _emit(wait: dict, stop: float) -> None:
+        begin = float(wait["t"])
+        if stop < begin:
+            stop = begin
+        if stop < lo or begin > hi:
+            return
+        if not _wait_belongs(wait, task, dtype, pid):
+            return
+        # 同号 pid 以后会被别的进程再用。等到那一次拿到锁，会把这条等锁拉过整段空档，所以收到本次运行结束为止。
+        if stop > hi:
+            stop = hi
+        spans.append({"start": begin, "end": stop})
+
+    for event in sorted(_gpu_events_all(), key=lambda item: float(item["t"])):
+        kind = event.get("kind")
+        epid = event.get("pid")
+        if kind == "wait":
+            previous = pending.get(epid)
+            if previous is not None:
+                _emit(previous, float(previous["t"]))
+            pending[epid] = event
+            continue
+        if kind in ("acquire", "give_up") and epid in pending:
+            _emit(pending.pop(epid), float(event["t"]))
+    for wait in pending.values():
+        _emit(wait, float(wait["t"]))
+    return spans
+
+
+# 评测进度文件每次覆盖，盘上只有最近这一段。没有这份文件时这一道是空的。
+def _eval_spans(progress: dict | None) -> list[dict]:
+    if not progress:
+        return []
+    entered = _as_float(progress.get("entered_at"))
+    updated = _as_float(progress.get("updated_at"))
+    if entered is None and updated is None:
+        return []
+    start = entered if entered is not None else updated
+    end = updated if updated is not None else entered
+    if start is None or end is None:
+        return []
+    if end < start:
+        end = start
+    return [{"start": start, "end": end}]
+
+
+def _timeline(directory: Path, state: dict | None, result: dict | None, progress: dict | None, status: str) -> dict:
+    origin = _as_float((state or {}).get("started_at"))
+    if origin is None:
+        origin = _as_float((result or {}).get("started_at"))
+    return {
+        "lanes": [
+            {"label": "问模型", "spans": _model_spans(directory, origin)},
+            {"label": "等锁", "spans": _lock_spans(state, result, progress, status)},
+            {"label": "评测", "spans": _eval_spans(progress)},
+        ]
+    }
+
+
+_RECHECK_PASSED = {"ok", "passed", "pass"}
+
+
+def _recheck_failed(value) -> bool:
+    if value is None or value is False:
+        return False
+    if value is True:
+        return True
+    if isinstance(value, str):
+        text = value.strip().lower()
+        return bool(text) and text not in _RECHECK_PASSED
+    if isinstance(value, dict):
+        inner = value.get("class") if "class" in value else value.get("status")
+        return _recheck_failed(inner)
+    return False
+
+
+# 轨迹上已经写着 within_noise 和 differential_recheck。这两句放到状态旁边，不用打开评测面板。
+def _candidate_marks(trace) -> list[dict]:
+    rows = []
+    if not isinstance(trace, list):
+        return rows
+    for row in trace:
+        if not isinstance(row, dict):
+            rows.append({"label": None, "marks": []})
+            continue
+        marks = []
+        if row.get("within_noise") is True:
+            marks.append("噪声内没换种子")
+        if _recheck_failed(row.get("differential_recheck")):
+            marks.append("正确性复查没过")
+        rows.append({"label": row.get("label"), "marks": marks})
+    return rows
+
+
+# 确认点只用发布闸门放行的那个数。闸门没放行时这里是 None，不用搜索期的 best_speedup 顶上。
+def _confirmed_point(result: dict | None, trace, conclusion: dict) -> dict | None:
+    if not result or "confirmation_source_sha256" not in result:
+        return None
+    recorded = result.get("confirmation_source_sha256")
+    if not isinstance(recorded, str) or recorded == "":
+        return None
+    if conclusion.get("publication") != "confirmed":
+        return None
+    speed = conclusion.get("speedup")
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+        return None
+    cost = _as_float(result.get("spent_usd"))
+    if cost is None and isinstance(trace, list):
+        for row in reversed(trace):
+            if isinstance(row, dict):
+                cost = _as_float(row.get("cost_usd"))
+                if cost is not None:
+                    break
+    return {"cost_usd": cost, "speedup": speed, "label": "确认"}
+
+
+def _committee_models(directory: Path) -> dict[str, str]:
+    doc = _load(directory / "run_config.json") or {}
+    listed = doc.get("committees")
+    models: dict[str, str] = {}
+    if not isinstance(listed, list):
+        return models
+    for item in listed:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        members = item.get("members")
+        if name not in ("first", "second") or not isinstance(members, list) or not members:
+            continue
+        member = members[0]
+        if isinstance(member, dict) and isinstance(member.get("model"), str) and member["model"].strip():
+            models[name] = member["model"].strip()
+    return models
+
+
+def _round_number(value) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = int(value)
+    return number if number >= 0 else None
+
+
+def _highest_trace_round(trace) -> int:
+    highest = 0
+    if not isinstance(trace, list):
+        return highest
+    for row in trace:
+        if not isinstance(row, dict):
+            continue
+        label = row.get("label")
+        if not isinstance(label, str):
+            continue
+        match = re.match(r"r(\d+)\b", label)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return highest
+
+
+# 初稿和第 1 轮是 first，之后第 r 轮是 (r - 1) % 2。没有 committee 这一键的旧运行不编交接。
+def _handoff(directory: Path, state: dict | None, result: dict | None, trace) -> dict:
+    source = None
+    if isinstance(state, dict) and "committee" in state:
+        source = state
+    elif isinstance(result, dict) and "committee" in result:
+        source = result
+    if source is None:
+        return {"recorded": False, "note": NO_COMMITTEE_NOTE, "rounds": []}
+    models = _committee_models(directory)
+    current_name = source.get("committee") if source.get("committee") in ("first", "second") else None
+    current_model = source.get("model") if isinstance(source.get("model"), str) and source.get("model").strip() else None
+    current_round = _round_number(source.get("round"))
+    if current_round is None:
+        current_round = _round_number((state or {}).get("round"))
+    if current_round is None:
+        current_round = _round_number((result or {}).get("round"))
+    highest = current_round if current_round is not None else 0
+    highest = max(highest, _highest_trace_round(trace))
+    if current_round is None:
+        current_round = highest
+    rounds = []
+    for rnd in range(0, highest + 1):
+        name = ("first", "second")[(max(rnd, 1) - 1) % 2]
+        model = models.get(name)
+        if rnd == current_round and current_name == name and current_model:
+            model = current_model
+        rounds.append({
+            "round": rnd,
+            "label": "初稿" if rnd == 0 else f"第 {rnd} 轮",
+            "committee": name,
+            "model": model,
+        })
+    return {"recorded": True, "note": "", "rounds": rounds}
+
+
 # 详情把 state 和 result 叠在一起。截断的那一份是 None，另一份仍能提供轨迹、花费和停止原因。
 def run_detail(run_id: str) -> dict | None:
     directory = resolve_run(run_id)
@@ -515,6 +917,8 @@ def run_detail(run_id: str) -> dict | None:
     spent, budget = money_fields(directory, state, result)
     stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
     alert_budget, alert_stop = _budget_for_alert(directory, spent, budget, stop)
+    progress = _age(_load(directory / "eval_progress.json"))
+    conclusion = conclusion_of_run(directory, result) if result else {"speedup": None, "publication": "in_progress"}
     return {
         "id": _rel(directory),
         "status": status,
@@ -527,10 +931,14 @@ def run_detail(run_id: str) -> dict | None:
         "trace": trace,
         "confirmations": confirmations,
         "candidates": _candidates(directory),
-        "publication": (conclusion_of_run(directory, result)["publication"] if result else "in_progress"),
-        "published_speedup": conclusion_of_run(directory, result)["speedup"] if result else None,
-        "eval_progress": _age(_load(directory / "eval_progress.json")),
+        "publication": conclusion["publication"],
+        "published_speedup": conclusion["speedup"],
+        "eval_progress": progress,
         "llm": _load(directory / "llm.json"),
+        "timeline": _timeline(directory, state, result, progress, status),
+        "candidate_marks": _candidate_marks(trace),
+        "confirmed_point": _confirmed_point(result, trace, conclusion),
+        "handoff": _handoff(directory, state, result, trace),
     }
 
 

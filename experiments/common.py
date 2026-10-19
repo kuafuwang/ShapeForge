@@ -11,7 +11,8 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from taic.llm import PAPER_BUDGET_USD, SearchConfig, load_config
+from taic.committees import load_committees
+from taic.llm import PAPER_BUDGET_USD, SearchConfig, load_config, load_raw_config
 from taic.orchestrator import Orchestrator, RunResult
 
 # Per-kernel USD budgets: the paper's, in dollars, whatever the model. Every kernel gets the paper's $15 (Sections 4.3 and 4.4 of
@@ -162,6 +163,7 @@ def run_one(
     use_tools: bool | None = None,
     **search_overrides,
 ) -> RunResult:
+    raw = load_raw_config(config_path, preset)
     cfg, search = load_config(config_path, model=model, preset=preset, budget_usd=budget, branches=branches, max_rounds=max_rounds, **search_overrides)
     if use_tools is not None:
         # 只有调用方显式传入时才覆盖预设里的开关。
@@ -169,8 +171,9 @@ def run_one(
     if max_tokens is not None:
         # 单次回复上限，思考也算。不传就用 taic.toml 的 48000。
         cfg.max_tokens = max_tokens
-    # RunStartError（目录已有文件，或 run_config.json 写失败）从这里原样抛给调用方，不进入 run()。
-    orch = Orchestrator(task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log)
+    # 显式 model 让两个委员会都用它。否则用配置里的两名成员。RunStartError（目录已有文件，或 run_config.json 写失败）从这里原样抛给调用方，不进入 run()。
+    committees = load_committees(raw, active=cfg, model_override=model)
+    orch = Orchestrator(task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log, committees=committees)
     return asyncio.run(orch.run())
 
 

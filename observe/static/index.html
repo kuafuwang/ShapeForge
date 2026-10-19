@@ -91,6 +91,20 @@
     margin-top: 10px; background: #f7f8fa; border-radius: 8px; padding: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
     white-space: pre-wrap; color: #333; max-height: 120px; overflow: auto;
   }
+  .tl { margin: 4px 0 12px; }
+  .tl-cap { margin: 0 0 4px; font-size: 12px; color: var(--muted); }
+  .tl-row { display: grid; grid-template-columns: 52px 1fr; gap: 8px; align-items: center; margin: 3px 0; }
+  .tl-name { font-size: 12px; color: var(--ink); }
+  .tl-track { position: relative; height: 16px; background: #f3f4f6; border-radius: 8px; }
+  .tl-bar { position: absolute; top: 3px; height: 10px; border-radius: 5px; background: var(--blue); min-width: 3px; }
+  .tl-bar.lock { background: var(--amber); }
+  .tl-bar.eval { background: var(--green); }
+  .tl-scale { display: flex; justify-content: space-between; margin: 0 0 2px 60px; font-size: 11px; color: var(--muted); }
+  .handoff { margin: 0 0 10px; padding: 8px 10px; background: #f7f8fa; border-radius: 8px; }
+  .handoff p, .handoff div { margin: 0 0 3px; font-size: 13px; }
+  .handoff p { color: var(--muted); font-size: 12px; }
+  .tag.noise { color: var(--amber); }
+  .tag.fail { color: var(--red); }
   .events { margin-top: 12px; }
   .events li { margin: 3px 0; }
   .empty { color: var(--muted); padding: 8px 0; }
@@ -959,51 +973,142 @@ function renderSearch(run, history) {
   const body = el("tbody", null, []);
   const rows = trace.length ? trace : (run.candidates || []).map((c) => ({ label: c.label, status: c.status, speedup: c.speedup }));
   if (!candLabel && rows.length) candLabel = rows[rows.length - 1].label;
-  for (const row of rows) {
-    const tag = row.improved ? "新起点" : row.within_noise ? "噪声内" : (String(row.label || "").startsWith("init") ? "初稿" : "");
+  rows.forEach((row, index) => {
+    const tag = row.improved ? "新起点" : (String(row.label || "").startsWith("init") ? "初稿" : "");
     const status = row.status === "compile_error"
       ? el("span", { class: "red" }, [t(row.status)])
       : t(row.status || "—");
+    const recorded = (run.candidate_marks || [])[index] || {};
+    const phrases = recorded.label === row.label ? (recorded.marks || []) : [];
+    const statusKids = [status];
+    for (const phrase of phrases) {
+      statusKids.push(el("span", { class: phrase === "正确性复查没过" ? "tag fail" : "tag noise" }, [t(phrase)]));
+    }
     body.append(el("tr", { class: "pick" + (row.label === candLabel ? " on" : ""), onclick: () => { candLabel = row.label; renderSearch(run, (lastFrame && lastFrame.history) || []); renderEval(run, lastOverview); } }, [
       el("td", null, [t(row.label || ""), tag ? el("span", { class: "tag" }, [t(tag)]) : null]),
-      el("td", null, [status]),
+      el("td", null, statusKids),
       el("td", null, [t(speed(row.speedup))]),
     ]));
-  }
+  });
   table.append(body);
+  box.append(renderTimeline(run.timeline));
+  box.append(renderHandoff(run.handoff));
   box.append(table);
-  box.append(chart(trace));
+  box.append(chart(trace, run.confirmed_point));
 }
 
 let lastOverview = null;
 
-function chart(trace) {
+function renderHandoff(handoff) {
+  const box = el("div", { class: "handoff" }, []);
+  if (!handoff || !handoff.recorded) {
+    box.append(el("p", null, [t((handoff && handoff.note) || "这次搜索没有委员会记录")]));
+    return box;
+  }
+  box.append(el("p", null, [t("交接")]));
+  for (const name of ["first", "second"]) {
+    const taken = (handoff.rounds || []).filter((row) => row.committee === name);
+    const models = [...new Set(taken.map((row) => row.model).filter(Boolean))];
+    let text = name + " · 还没有轮次";
+    if (taken.length && models.length <= 1) {
+      text = name + " · " + (models[0] || "模型未记下") + " · " + taken.map((row) => row.label).join("、");
+    } else if (taken.length) {
+      text = name + " · " + taken.map((row) => row.label + " " + (row.model || "模型未记下")).join("、");
+    }
+    box.append(el("div", null, [t(text)]));
+  }
+  return box;
+}
+
+function renderTimeline(timeline) {
+  const wrap = el("div", { class: "tl" }, []);
+  const lanes = (timeline && timeline.lanes) || [
+    { label: "问模型", spans: [] },
+    { label: "等锁", spans: [] },
+    { label: "评测", spans: [] },
+  ];
+  wrap.append(el("div", { class: "tl-cap" }, [t("同一条钟")]));
+  let minT = Infinity;
+  let maxT = -Infinity;
+  for (const lane of lanes) {
+    for (const span of lane.spans || []) {
+      const start = Number(span.start);
+      const end = Number(span.end);
+      if (Number.isFinite(start)) { minT = Math.min(minT, start); maxT = Math.max(maxT, start); }
+      if (Number.isFinite(end)) { minT = Math.min(minT, end); maxT = Math.max(maxT, end); }
+    }
+  }
+  const widthT = maxT > minT ? maxT - minT : 1;
+  if (Number.isFinite(minT)) {
+    wrap.append(el("div", { class: "tl-scale" }, [t(when(minT)), t(when(maxT))]));
+  }
+  const tone = { "等锁": "lock", "评测": "eval" };
+  for (const lane of lanes) {
+    const track = el("div", { class: "tl-track" }, []);
+    if (Number.isFinite(minT)) {
+      for (const span of lane.spans || []) {
+        const start = Number(span.start);
+        const end = Number(span.end);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+        const bar = el("span", { class: "tl-bar " + (tone[lane.label] || ""), title: span.label || lane.label }, []);
+        bar.style.left = ((start - minT) / widthT * 100) + "%";
+        bar.style.width = Math.max((end - start) / widthT * 100, 0.8) + "%";
+        track.append(bar);
+      }
+    }
+    wrap.append(el("div", { class: "tl-row" }, [
+      el("div", { class: "tl-name" }, [t(lane.label)]),
+      track,
+    ]));
+  }
+  return wrap;
+}
+
+function chart(trace, confirmed) {
   const pts = (trace || []).filter((row) => row.best_speedup != null).map((row) => [Number(row.cost_usd) || 0, Number(row.best_speedup)]);
+  const mark = confirmed && confirmed.cost_usd != null && confirmed.speedup != null
+    && Number.isFinite(Number(confirmed.cost_usd)) && Number.isFinite(Number(confirmed.speedup))
+    ? [Number(confirmed.cost_usd), Number(confirmed.speedup)] : null;
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("class", "chart");
   svg.setAttribute("viewBox", "0 0 320 150");
-  if (pts.length < 1) return svg;
-  const xs = pts.map((p) => p[0]);
-  const ys = pts.map((p) => p[1]).concat([1]);
+  if (pts.length < 1 && !mark) return svg;
+  const xs = pts.map((p) => p[0]).concat(mark ? [mark[0]] : []);
+  const ys = pts.map((p) => p[1]).concat(mark ? [mark[1]] : []).concat([1]);
   const minX = 0;
   const maxX = Math.max(...xs, 0.01);
   const minY = Math.min(...ys, 0.4);
   const maxY = Math.max(...ys, 1.05);
   const X = (x) => 36 + (x - minX) / (maxX - minX) * 270;
   const Y = (y) => 12 + (maxY - y) / (maxY - minY) * 110;
-  const d = pts.map((p, i) => (i ? "H" + X(p[0]) + "V" + Y(p[1]) : "M" + X(p[0]) + " " + Y(p[1]))).join(" ");
   const axis = document.createElementNS(svg.namespaceURI, "line");
   axis.setAttribute("x1", "36"); axis.setAttribute("x2", "306"); axis.setAttribute("y1", String(Y(1))); axis.setAttribute("y2", String(Y(1)));
   axis.setAttribute("stroke", "#c5c8d0"); axis.setAttribute("stroke-dasharray", "4 3");
-  const path = document.createElementNS(svg.namespaceURI, "path");
-  path.setAttribute("d", d); path.setAttribute("fill", "none"); path.setAttribute("stroke", "#0a66c2"); path.setAttribute("stroke-width", "2");
   const label = document.createElementNS(svg.namespaceURI, "text");
   label.setAttribute("x", "250"); label.setAttribute("y", String(Y(1) - 4)); label.setAttribute("fill", "#6b7280"); label.setAttribute("font-size", "11");
   label.textContent = "对照";
   const xlab = document.createElementNS(svg.namespaceURI, "text");
   xlab.setAttribute("x", "150"); xlab.setAttribute("y", "146"); xlab.setAttribute("fill", "#6b7280"); xlab.setAttribute("font-size", "11");
   xlab.textContent = "累计美元";
-  svg.append(axis, path, label, xlab);
+  svg.append(axis, label, xlab);
+  if (pts.length) {
+    const d = pts.map((p, i) => (i ? "H" + X(p[0]) + "V" + Y(p[1]) : "M" + X(p[0]) + " " + Y(p[1]))).join(" ");
+    const path = document.createElementNS(svg.namespaceURI, "path");
+    path.setAttribute("d", d); path.setAttribute("fill", "none"); path.setAttribute("stroke", "#0a66c2"); path.setAttribute("stroke-width", "2");
+    svg.append(path);
+  }
+  if (mark) {
+    const mx = X(mark[0]);
+    const my = Y(mark[1]);
+    const dot = document.createElementNS(svg.namespaceURI, "circle");
+    dot.setAttribute("cx", String(mx)); dot.setAttribute("cy", String(my)); dot.setAttribute("r", "4"); dot.setAttribute("fill", "#17803d");
+    const cap = document.createElementNS(svg.namespaceURI, "text");
+    cap.setAttribute("x", String(mx > 250 ? mx - 28 : mx + 6));
+    cap.setAttribute("y", String(Math.max(12, my - 6)));
+    cap.setAttribute("fill", "#17803d"); cap.setAttribute("font-size", "11");
+    cap.textContent = "确认";
+    svg.append(dot, cap);
+  }
   return svg;
 }
 

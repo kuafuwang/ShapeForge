@@ -1,7 +1,8 @@
 """Hashes of everything the LLM is sent, computed with the *current* code, for the byte-identity regression of ``search.hw_feedback = false``.
 
-``compute()`` only calls the prompt / feedback functions with the arguments that existed before ``hw_feedback`` was added (or with ``hw_feedback=False``
-when ``off_kwargs`` says so), so the same function produced ``tests/golden/hw_off.json`` from the code before the feature and checks the code after it.
+``compute()`` calls the prompt and feedback functions with ``hw_feedback`` off (the arguments from before that switch, or ``hw_feedback=False``).
+``tests/golden/hw_off.json`` is that output. Regenerate it on purpose when a prompt change other than the switch should become the new off baseline.
+The orchestrator hashes include the committee handoff on round 2; round 1 is still the prompt function alone.
 
     uv run python -m tests.hw_golden --record      # rewrite tests/golden/hw_off.json from the current code (only do this on purpose)
 """

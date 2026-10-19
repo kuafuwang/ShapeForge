@@ -20,7 +20,7 @@ import json
 import time
 from pathlib import Path
 
-from observe.publish import job_state
+from tcenv.events import install_file_log, job_state
 
 from .common import read_result, run_one
 
@@ -32,6 +32,7 @@ MISLEADING = ("sem_gemm_neg", "sem_relu_gelu_comment", "sem_gelu_named_relu", "s
 # 判的是正确性。max_rounds=0 时改进轮的循环是空的，只留第一次生成和随后最多 --repairs 次编译反馈。
 # correctness_only 走快速评测、不做基准，所以「第一次就对」只看首个候选的 status 是不是 ok。
 def run_semantic(names: list[str], out_dir: Path, *, dtype="fp16", size="small", repairs=3, budget=0.15, model=None, resume=True, client_factory=None, evaluate_fn=None, log=print, **overrides) -> list[dict]:
+    install_file_log()
     out_dir.mkdir(parents=True, exist_ok=True)
     rows = []
     names = list(names)

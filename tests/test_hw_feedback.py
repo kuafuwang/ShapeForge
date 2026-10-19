@@ -1,4 +1,4 @@
-"""``search.hw_feedback``: off = byte-identical prompts and feedback (golden hashes recorded from the code before the feature), on = a short honest block
+"""``search.hw_feedback``: off = byte-identical prompts and feedback (golden hashes of the hw_feedback-off path), on = a short honest block
 in the seed feedback of the planner and the patch authors plus Skill 2c. Scripted LLM and evaluator: no network, no GPU (the AIR compile of the block is
 the Metal compiler front end only and is skipped gracefully without the toolchain)."""
 

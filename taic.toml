@@ -31,3 +31,20 @@ init_samples = 1               # initial kernels sampled in parallel; the best e
 profile_poor = false           # trace the seed of a round with Instruments when it is slower than the strongest baseline; spills, code size, GPU idle time go to the planner and the patch authors
 profile_poor_below = 1.0       # "slower": speedup of the seed below this
 profile_max = 4                # traces per run at most (tens of seconds each, exclusive GPU lock)
+
+# Two committees take turns. Each has one member today; handoff is between committees, not inside one.
+# A member is a provider and a model. Keys and base URLs stay in credentials_file.
+# An explicit --model uses that model for both committees. Otherwise these two lines are who takes each turn.
+[[committees]]
+name = "first"
+
+[[committees.members]]
+provider = "deepseek"
+model = "deepseek-flash"
+
+[[committees]]
+name = "second"
+
+[[committees.members]]
+provider = "deepseek"
+model = "deepseek-flash"

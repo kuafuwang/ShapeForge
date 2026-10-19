@@ -555,6 +555,69 @@ def test_from_run_refuses_a_damaged_result_instead_of_starting_over(tmp_path):
     assert calls == []
 
 
+def _with_bound(calls, bound):
+    base = fake_eval(calls)
+
+    def ev(*a, **k):
+        r = base(*a, **k)
+        if r.status == "ok":
+            r.roofline = {
+                "bound": bound,
+                "flops": 0,
+                "achieved_gbps": 400.0,
+                "bandwidth_fraction": 0.9,
+                "peak_gbps_measured": 449.0,
+                "time_over_lower_bound": 1.2,
+                "lower_bound_us": 100.0,
+            }
+        return r
+
+    return ev
+
+
+def _plan_calls(orch):
+    return [c for c in orch.llm.client.calls if "Diagnose the dominant bottleneck" in c["messages"][-1]["content"]]
+
+
+@pytest.mark.parametrize(
+    "bound, keep, drop",
+    [
+        ("memory", "## Memory-bound kernels", "## Compute-bound kernels"),
+        ("compute", "## Compute-bound kernels", "## Memory-bound kernels"),
+    ],
+)
+def test_the_planner_sees_only_the_matching_chapter_and_the_same_prompt_each_round(tmp_path, bound, keep, drop):
+    calls = []
+    script = llm_script(code("speed=0.9"), patches={"A": code("speed=0.8")})
+    orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=2, evaluate_fn=_with_bound(calls, bound))
+    run(orch)
+    plans = _plan_calls(orch)
+    assert len(plans) == 2
+    assert plans[0]["messages"][0]["content"] == plans[1]["messages"][0]["content"]
+    assert plans[0]["messages"][0]["content"] != orch.system
+    for call in plans:
+        system, user = call["messages"][0]["content"], call["messages"][-1]["content"]
+        assert keep not in system and drop not in system
+        assert keep in user and drop not in user
+        assert drop not in system + "\n" + user
+    assert keep in orch.system and drop in orch.system
+    init = next(c for c in orch.llm.client.calls if "Translate this Triton kernel" in c["messages"][-1]["content"])
+    assert init["messages"][0]["content"] == orch.system
+    patches = [c for c in orch.llm.client.calls if "Implement exactly this optimization plan" in c["messages"][-1]["content"]]
+    assert patches and all(c["messages"][0]["content"] == orch.system for c in patches)
+
+
+def test_a_seed_without_a_roofline_keeps_today_s_planning_prompt(tmp_path):
+    calls = []
+    orch = make_orch(tmp_path, llm_script(code("speed=0.9"), patches={"A": code("speed=0.8")}), calls, branches=1, max_rounds=1)
+    run(orch)
+    plan = _plan_calls(orch)[0]
+    assert plan["messages"][0]["content"] == orch.system
+    user = plan["messages"][-1]["content"]
+    assert "## Memory-bound kernels" not in user and "## Compute-bound kernels" not in user
+    assert "## Memory-bound kernels" in orch.system and "## Compute-bound kernels" in orch.system
+
+
 def test_from_run_does_not_use_a_kernel_recorded_for_a_different_task(tmp_path):
     calls = []
     prior = _prior(tmp_path / "prior", "speed=9.9", task="gemm")
