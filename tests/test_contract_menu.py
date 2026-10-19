@@ -202,3 +202,16 @@ def test_schedule_and_resolve_keep_the_default_contract_first():
     assert [slug for slug, _task in items] == ["64x32t256", "default", "32x16t128"]
     assert schedule(items, 2)[0][0] == "64x32t256"
     assert schedule(items, 2)[1] == ("default", "flash_attention", 1)
+
+
+def test_report_reprints_the_menu_without_starting_a_search(tmp_path):
+    from experiments.contract_menu import main
+
+    out = tmp_path / "menu"
+    out.mkdir()
+    (out / "menu.json").write_text(json.dumps({
+        "task": "gemm", "contracts": ["default"], "trials": 1, "budget_usd": 3.0,
+        "preset": "base", "dtype": "fp16", "size": "paper", "max_total_usd": None,
+    }))
+    assert main(["gemm", "--contracts", "default", "--out", str(out), "--report"]) == 0
+    assert (out / "summary.md").is_file()

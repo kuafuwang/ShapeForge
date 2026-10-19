@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from observe import scan
+from observe import query as scan
 
 SOURCE = "kernel void gemm() {}\n"
 T0 = 1_700_000_000.0

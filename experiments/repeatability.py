@@ -26,6 +26,7 @@ from pathlib import Path
 from tcenv.events import install_file_log, job_state
 
 from .common import budget_for, conclusion_of_run, experiment_commitment, fits_cap, read_result, run_one, write_cap
+from .manifest import attach, ensure
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TASKS = ("conv2d", "gemm", "swiglu")
@@ -46,6 +47,26 @@ def run_repeatability(tasks, dtype, size, out_dir: Path, *, trials=5, budget_sca
     write_cap(out_dir, max_total_usd)
     table: dict[str, dict] = {}
     tasks = list(tasks)
+    ensure(
+        out_dir,
+        kind="repeatability",
+        driver="repeatability",
+        frozen={
+            "tasks": tasks,
+            "dtype": dtype,
+            "size": size,
+            "preset": overrides.get("preset"),
+            "model": model,
+            "budget_usd": budget,
+            "budget_scale": budget_scale,
+            "max_total_usd": max_total_usd,
+            "trials": trials,
+            "max_rounds": max_rounds,
+            "branches": branches,
+            "experience_index": "",
+        },
+        arms=[{"arm_id": task, "delta": {}, "planned_n": trials} for task in tasks],
+    )
     for ti, task in enumerate(tasks):
         vals: list[float | None] = []
         costs: list[float] = []
@@ -56,6 +77,7 @@ def run_repeatability(tasks, dtype, size, out_dir: Path, *, trials=5, budget_sca
             rest += [{"task": other, "trial": i + 1} for other in tasks[ti + 1 :] for i in range(trials)]
             job_state(out_dir / "state.json", script="repeatability", current={"task": task, "trial": t + 1, "trials": trials}, queue=rest, done=[{"task": k, **v} for k, v in table.items()])
             rd = out_dir / task / f"trial_{t + 1}"
+            attach(out_dir, task, f"{task}/trial_{t + 1}")
             res = read_result(rd) if resume else None
             if res is None:
                 spent = experiment_commitment(out_dir)

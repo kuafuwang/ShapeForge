@@ -28,6 +28,7 @@ from tcenv.events import install_file_log, job_state
 from tasks import PHASE2_TASK_NAMES, TASK_NAMES, get_task
 
 from .common import conclusion_of_run, experiment_commitment, fits_cap, read_result, run_one, write_cap
+from .manifest import attach, ensure
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MENU_FILE = "menu.json"
@@ -238,6 +239,15 @@ def run_menu(
     else:
         write_json_atomic(menu_path, fresh)
     write_cap(out, max_total_usd)
+    ensure(
+        out,
+        kind="contract_menu",
+        driver="contract_menu",
+        frozen={key: fresh[key] for key in _LOCKED},
+        arms=[{"arm_id": slug, "delta": {"task": task}, "planned_n": trials} for slug, task in items],
+    )
+    for slug, _task, trial in schedule(items, trials):
+        attach(out, slug, f"{slug}/trial_{trial}")
     rows, pending = collect(out, items, trials)
     skipped: list[dict] = []
     aborted = None
@@ -246,6 +256,7 @@ def run_menu(
         rest = [{"slug": s, "task": t, "trial": n} for s, t, n in pending[index + 1 :]]
         job_state(out / "state.json", script="contract_menu", current={"slug": slug, "task": task, "trial": trial}, queue=rest, done=rows)
         rd = out / slug / f"trial_{trial}"
+        attach(out, slug, f"{slug}/trial_{trial}")
         spent = experiment_commitment(out)
         if not fits_cap(spent, budget, max_total_usd):
             log(f"(skip {slug} trial {trial}: its ${budget:.2f} budget does not fit under --max-total-usd ${max_total_usd:.2f}; the experiment has spent ${spent:.2f})")
@@ -287,6 +298,7 @@ def main(argv=None) -> int:
     ap.add_argument("--size", default="paper")
     ap.add_argument("--out", required=True)
     ap.add_argument("--prescreen-top", type=int, default=None, help="keep at most this many contracts after the static screen, always including default")
+    ap.add_argument("--report", action="store_true", help="reprint summary.md from the trials already on disk")
     args = ap.parse_args(argv)
     out = REPO_ROOT / args.out if not Path(args.out).is_absolute() else Path(args.out)
     tokens = [part for part in args.contracts.split(",")]

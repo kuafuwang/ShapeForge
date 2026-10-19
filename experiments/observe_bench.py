@@ -1,0 +1,136 @@
+"""Print the observe plan's synthetic timings. This is not a test and not a gate.
+
+The hot-cache index build is the number the plan caps at 5 seconds: the files are still in the
+page cache because this process just wrote them. A cold file cache is reported only when ``purge``
+succeeds. The lines are printed either way. Nothing here starts a kernel or calls a model.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import time
+from pathlib import Path
+
+
+def _write_runs(root: Path, count: int) -> None:
+    root.mkdir(parents=True)
+    state = {"task": "relu", "dtype": "fp16", "phase": "done", "pid": 1, "model": "bench"}
+    result = {"task": "relu", "dtype": "fp16", "stop_reason": "max_rounds", "spent_usd": 0.01, "budget_usd": 1}
+    for index in range(count):
+        directory = root / f"run_{index:04d}"
+        directory.mkdir()
+        state["started_at"] = index
+        state["updated_at"] = index
+        (directory / "state.json").write_text(json.dumps(state))
+        (directory / "result.json").write_text(json.dumps(result))
+        candidates = directory / "candidates"
+        candidates.mkdir()
+        for cand in range(50):
+            (candidates / f"{cand}.json").write_text("{}")
+
+
+def _write_wide(root: Path) -> None:
+    directory = root / "wide"
+    directory.mkdir()
+    (directory / "state.json").write_text(json.dumps({
+        "task": "gemm", "dtype": "fp16", "phase": "done", "started_at": 1, "updated_at": 1,
+        "committee": "first", "round": 1, "model": "bench",
+    }))
+    (directory / "result.json").write_text(json.dumps({
+        "task": "gemm", "dtype": "fp16", "stop_reason": "max_rounds", "spent_usd": 0.1, "budget_usd": 1,
+        "confirm_winner_label": "r1.p0",
+    }))
+    (directory / "run_config.json").write_text(json.dumps({
+        "task": "gemm", "dtype": "fp16", "size": "paper",
+        "search": {"plan_ledger": False},
+        "committees": [{"name": "first", "members": [{"model": "bench"}]}],
+    }))
+    candidates = directory / "candidates"
+    candidates.mkdir()
+    kernel = "kernel void k() {}\n"
+    for cand in range(400):
+        path = candidates / f"{cand:03d}_r1.p{cand}"
+        path.mkdir()
+        (path / "kernel.metal").write_text(kernel)
+        (path / "report.json").write_text(json.dumps({"speedup": 1.0, "status": "ok"}))
+
+
+def _purge() -> str:
+    try:
+        result = subprocess.run(["purge"], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"unavailable ({exc})"
+    if result.returncode == 0:
+        return "purge"
+    detail = (result.stderr or result.stdout or str(result.returncode)).strip()
+    return f"unavailable ({detail})"
+
+
+def _line(name: str, seconds: float, limit: float | None) -> None:
+    mark = ""
+    if limit is not None:
+        mark = "  within the plan" if seconds < limit else "  over the plan"
+    print(f"{name}: {seconds * 1000:.1f} ms{mark}")
+
+
+def main() -> None:
+    root = Path(tempfile.mkdtemp(prefix="observe-bench-"))
+    runs = root / "runs"
+    os.environ["AI_LOWERLING_RUNS_DIR"] = str(runs)
+    os.environ["OBSERVE_DB"] = str(root / "observe.sqlite")
+    os.environ["OBSERVE_CARRYOVER"] = str(root / "missing-carryover.json")
+    os.environ["AI_LOWERLING_BOOKS"] = str(root / "missing-books.sqlite")
+    os.environ["AI_LOWERLING_OBSERVE_DIR"] = str(root / "observe-cache")
+    try:
+        started = time.perf_counter()
+        _write_runs(runs, 1000)
+        print(f"write 1000 runs x 50 candidate files: {time.perf_counter() - started:.3f}s")
+
+        from observe.index import get_index
+        from observe.query import live_files, run_detail, runs_page
+
+        index = get_index()
+        started = time.perf_counter()
+        index.tick()
+        _line("hot-cache cold index (1000 finished runs)", time.perf_counter() - started, 5.0)
+
+        started = time.perf_counter()
+        index.tick()
+        _line("idle frame", time.perf_counter() - started, 0.050)
+        print(f"idle frame json_reads={index.stats['json_reads']} dir_lists={index.stats['dir_lists']}")
+
+        started = time.perf_counter()
+        page = runs_page()
+        _line("/api/v2/runs default page", time.perf_counter() - started, 0.100)
+        print(f"default page rows={len(page['runs'])} total={page['total']}")
+        print(f"idle live-state files={len(live_files())}")
+
+        _write_wide(runs)
+        started = time.perf_counter()
+        detail = run_detail("wide")
+        _line("detail with 400 candidates and the feature grid", time.perf_counter() - started, 1.0)
+        print(f"detail candidates={len(detail['candidates'])} grid={len(detail['feature_grid'])}")
+
+        index.conn.close()
+        import observe.index as index_mod
+
+        index_mod._SINGLE = None
+        for suffix in ("", "-wal", "-shm"):
+            path = Path(str(root / "observe.sqlite") + suffix) if suffix else root / "observe.sqlite"
+            path.unlink(missing_ok=True)
+        how = _purge()
+        print(f"cold file cache: {how}")
+        if how == "purge":
+            started = time.perf_counter()
+            get_index().tick()
+            print(f"cold-cache index build: {(time.perf_counter() - started) * 1000:.1f} ms  (not part of the 5s promise)")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    main()

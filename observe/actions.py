@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from observe import scan
+from observe import detail, query
 from taic import control, resume
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -109,7 +109,7 @@ def page_token(headers) -> str:
 
 
 def _run_dir(run_id: str) -> Path:
-    path = scan.resolve_run(run_id)
+    path = query.resolve_run(run_id)
     if path is None:
         raise Refused(404, "no such run")
     return path
@@ -198,6 +198,24 @@ def _lock_for(run_id: str) -> threading.Lock:
         return _locks.setdefault(run_id, threading.Lock())
 
 
+def _note_manifest_budget(run_dir: Path, total: float) -> None:
+    """A raised budget is an extension on the experiment manifest. Frozen conditions stay put."""
+    from experiments.manifest import ManifestError, extend_budget
+
+    current = run_dir.resolve()
+    for _ in range(8):
+        if current.parent == current:
+            return
+        current = current.parent
+        if not (current / "experiment.json").is_file():
+            continue
+        try:
+            extend_budget(current, run=run_dir.resolve().relative_to(current).as_posix(), new_cap=total)
+        except (ManifestError, ValueError, OSError):
+            return
+        return
+
+
 def _resume_command(run_dir: Path, total: float) -> list[str]:
     uv = shutil.which("uv")
     base = [uv, "run", "python"] if uv else [sys.executable]
@@ -241,6 +259,7 @@ def add_budget(run_id: str, body: dict) -> dict:
                 ev = control.record_event(run_dir, "dryrun", current, total, who="dashboard", note="would write control.json", action="topup_live")
                 return {"ok": True, "dry_run": True, "action": "topup_live", "old_budget_usd": current, "new_budget_usd": total, "amount_usd": amount, "event": ev}
             doc = control.write_control(run_dir, total, who="dashboard", amount_usd=amount, old_budget_usd=current)
+            _note_manifest_budget(run_dir, total)
             return {"ok": True, "dry_run": False, "action": "topup_live", "old_budget_usd": current, "new_budget_usd": total, "amount_usd": amount, "control": doc}
         if not info["resumable"]:
             raise Refused(409, info["reason"] or "this run cannot be continued")
@@ -251,6 +270,7 @@ def add_budget(run_id: str, body: dict) -> dict:
             ev = control.record_event(run_dir, "dryrun", current, total, who="dashboard", note="would start: " + " ".join(cmd), action="resume", command=cmd)
             return {"ok": True, "dry_run": True, "action": "resume", "old_budget_usd": current, "new_budget_usd": total, "amount_usd": amount, "command": cmd, "event": ev}
         control.record_event(run_dir, "requested", current, total, who="dashboard", note="resume requested", action="resume")
+        _note_manifest_budget(run_dir, total)
         log = _next_log(run_dir)
         with open(log, "ab") as out:
             proc = subprocess.Popen(cmd, cwd=REPO_ROOT, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
@@ -303,7 +323,7 @@ def _reset_plan_for(run_id: str) -> dict:
 
 def reset_preview() -> dict:
     """``GET /api/budget/reset``: which searches would be reset, and which would be skipped. Writes nothing."""
-    rows = [_reset_plan_for(row["id"]) for row in scan.history()]
+    rows = [_reset_plan_for(row["id"]) for row in query.history()]
     return {
         "add_usd": RESET_ADD_USD,
         "max_rounds": RESET_MAX_ROUNDS,
@@ -368,6 +388,7 @@ def _apply_reset_unchecked(item: dict) -> dict:
                 run_dir, total, who="dashboard", amount_usd=total - current, old_budget_usd=current, note=note,
                 max_rounds=RESET_MAX_ROUNDS, patience=RESET_PATIENCE,
             )
+            _note_manifest_budget(run_dir, total)
             return {**item, "dry_run": False, "control": doc}
         cmd = _reset_resume_command(run_dir, total)
         if not dry_run():
@@ -376,6 +397,7 @@ def _apply_reset_unchecked(item: dict) -> dict:
             ev = control.record_event(run_dir, "dryrun", current, total, who="dashboard", note="would start: " + " ".join(cmd), action="reset", command=cmd)
             return {**item, "dry_run": True, "command": cmd, "event": ev}
         control.record_event(run_dir, "requested", current, total, who="dashboard", note=note, action="reset")
+        _note_manifest_budget(run_dir, total)
         log = _next_log(run_dir)
         with open(log, "ab") as out:
             proc = subprocess.Popen(cmd, cwd=REPO_ROOT, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
@@ -433,26 +455,26 @@ def _stop_groups() -> tuple[list[dict], list[dict]]:
     """Process groups to signal, and commands that were seen but refused. One group is signaled once even if several searches share it."""
     labels: dict[int, list[str]] = {}
     commands: dict[int, str] = {}
-    for row in scan.history():
+    for row in query.history():
         if row.get("status") != "running":
             continue
-        directory = scan.resolve_run(row["id"])
-        state = scan._load(directory / "state.json") if directory is not None else None
+        directory = query.resolve_run(row["id"])
+        state = detail._load(directory / "state.json") if directory is not None else None
         pid = (state or {}).get("pid")
-        if not scan.pid_alive(pid):
+        if not query.pid_alive(pid):
             continue
         labels.setdefault(int(pid), []).append(row["id"])
-    for job in scan.experiment_jobs():
+    for job in query.experiment_jobs():
         if job.get("status") != "running":
             continue
-        directory = scan.resolve_run(job["id"])
-        state = scan._load(directory / "state.json") if directory is not None else None
+        directory = detail.resolve_run(job["id"])
+        state = detail._load(directory / "state.json") if directory is not None else None
         pid = (state or {}).get("pid")
-        if not scan.pid_alive(pid):
+        if not query.pid_alive(pid):
             continue
         labels.setdefault(int(pid), []).append(f"{job['id']}（{job.get('script') or '队列'}）")
     for pid, cmd in _ps_commands():
-        if scan.pid_alive(pid):
+        if query.pid_alive(pid):
             commands[pid] = cmd
             labels.setdefault(pid, [])
     own_pgid = os.getpgrp()

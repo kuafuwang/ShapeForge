@@ -168,12 +168,21 @@ Each one is on unless a run passes `--no-<flag>` (`--no-stop-at-roofline`, and t
 
 | switch | what it changes (on unless `--no-<flag>`) |
 | --- | --- |
-| `--truncation-retry` | a reply cut off at `max_tokens` with no kernel is asked once more, without the echoed reasoning, and that retry does not use up a repair turn |
+| `--truncation-retry` | a reply cut off at `max_tokens` with no kernel is asked once more, without the echoed reasoning, and that retry does not use up a repair turn. The retry uses `truncation_retry_effort`, which defaults to `low` (`same` keeps the run's effort) |
 | `--stop-at-roofline` | stop when the seed is already inside the noise gate of its roofline and no baseline beats that bound (`stop_reason=at_roofline`) |
 | `--abi-guard` | stop a branch that hits the same ABI failure twice, and tell the repair the threadgroup limit (32768 B) and the size it just declared |
 | `--target-note` | when a baseline is more than 5% faster than the roofline bound, tell the model the bound does not hold and the target is that baseline's time |
 | `--rich-history` | a failed branch's history line names the failure (`abi: ...`, `incorrect: ...`, `no code: ...`) instead of one generic sentence |
 | `--status-lines` | the planner and the patch author are told the noise floor ("at least X% faster") and the round, patience and budget that remain |
+
+These stay off until a run turns them on. Off, the planner still sees the last 24 history lines, every branch still patches the seed, and a search-stage benchmark still times the serial dispatch and every baseline.
+
+| switch | default | what it changes when on |
+| --- | --- | --- |
+| `--plan-ledger` | off | the planner's history names whether a direction was timed and lost, or never reached a timing |
+| `--diversity-archive` | off | after two rounds without a new seed, the last branch that has not started yet patches an eligible kernel whose static features differ from the seed. At most four signatures are kept. A branch that already started keeps its recorded conversation on resume |
+| `--fast-bench` | off | search-stage timing skips the serial dispatch and, once this task's fastest baseline name is remembered, times only that baseline. Confirmation still times every baseline and the serial dispatch |
+| `--experience-index PATH` | empty | up to three hint lines from measured pairs go to the planner, excluding pairs from the same task. The repeatability experiment forces this empty |
 
 `result.json` and `state.json` also record `search_seed_label` (the kernel the search was mutating) and `confirm_winner_label` (the kernel the fresh-seed remeasure kept). A resume continues from the search seed.
 
@@ -181,8 +190,9 @@ Each one is on unless a run passes `--no-<flag>` (`--no-stop-at-roofline`, and t
 
 ## Dashboard and budget alerts
 
-`uv run python -m observe` serves a read-only dashboard (default `http://127.0.0.1:8765`; restart it after updating the code, the page is
-read at start-up). It shows every run's budget next to what it spent, and raises an alert for runs that crossed it. The rule is one pure
+`uv run python -m observe` serves a local dashboard (default `http://127.0.0.1:8765`; restart it after updating the code, the page is
+read at start-up). Four views: experiments, arm comparison (published speedup, `fast_p`, dollars per unit of gain), a paged run list, and one run.
+Runs grouped from an old directory name are marked inferred and are not given a winner. The read API is `/api/v2`. It shows every run's budget next to what it spent, and raises an alert for runs that crossed it. The rule is one pure
 function, `observe.budget.budget_status(spent, budget, stop_reason, running)`:
 
 | level | colour | when |
@@ -297,4 +307,4 @@ through triton-msl is 10x slower than MLX's fused attention and is refused for b
 `taic/` agent (LLM client + ledger, tools, prompts, orchestrator, skills) - `tasks/` kernels (Triton spec, contract, reference, baselines, naive MSL) -
 `experiments/` - `observe/` (local read-only dashboard) - `tests/` - `runs/` (artifacts, git-ignored).
 
-`docs/` (Chinese notes): `docs/架构说明.md` how the parts divide the work - `docs/诚实说明.md` what the pipeline does **not** prove, and how to check every claim - `docs/算子工程师边界.md` what this route replaces and does not replace in human roles (with the evidence paths) - `docs/工程改进实施计划.md` the hand-off plan (it authorizes no spend by itself). Index of the directory: `docs/README.md`.
+`docs/` (Chinese notes): `docs/架构说明.md` how the parts divide the work - `docs/架构/可观测.md` how experiments are grouped and how the dashboard reads them - `docs/诚实说明.md` what the pipeline does **not** prove, and how to check every claim - `docs/算子工程师边界.md` what this route replaces and does not replace in human roles (with the evidence paths) - `docs/工程改进实施计划.md` the hand-off plan (it authorizes no spend by itself). Index of the directory: `docs/README.md`.

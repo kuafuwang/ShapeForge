@@ -219,6 +219,6 @@ To attribute a speedup to one feature, build a variant of the best kernel with o
 
 **Not done** (other agents own these files):
 
-* **Dashboard**: `observe/scan.py` could call `experiments.hw_features.build_report(...)` (or `taic.hwfeatures.build_report`) lazily for the selected run's best kernel and show the one-line summary and the missing list next to the speedup; `runs/hw_features/data.json` has a ready table per run.
+* **Dashboard**: opening the run detail computes the feature grid from that run's candidates (`taic/policy.py` `feature_signature`). It does not score the grid with a model.
 * **Run results**: `taic.orchestrator` could store the summary in `result.json` (`best_features`) at the end of a run, so older and newer runs are comparable without re-analysis.
 * **Turning it on by default** is not recommended before more than one A/B pair says it helps.

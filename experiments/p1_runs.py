@@ -36,6 +36,7 @@ from taic.llm import PAPER_BUDGET_USD
 from tcenv.events import install_file_log, job_state
 
 from .common import experiment_commitment, fits_cap, naive_reference, read_confirm, read_result, run_one, shown_speedup, summarize, write_cap
+from .manifest import attach, ensure
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -94,6 +95,20 @@ def budget_notes(out: Path, names: list[str], budget: float | None) -> list[str]
     return notes
 
 
+def _arm_delta(name: str, dtype: str, budget: float | None) -> dict:
+    """Switches that define this named run. A missing model means the preset's model, not a model of null."""
+    spec = RUNS[name]
+    delta = {
+        "task": spec["task"],
+        "dtype": spec.get("dtype", dtype),
+        "budget_usd": budget if budget is not None else spec["budget"],
+        **(spec.get("search") or {}),
+    }
+    if spec.get("model"):
+        delta["model"] = spec["model"]
+    return delta
+
+
 # 按名字顺序跑。result.json 已在就跳过，哪怕当时的预算和这次要给的不一样；要按新预算重跑得换一个 --out。
 def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = "fp16", log=print, budget: float | None = None, max_total_usd: float | None = None, **overrides) -> list[dict]:
     install_file_log()
@@ -101,6 +116,25 @@ def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = 
     write_cap(out, max_total_usd)
     rows = []
     names = list(names)
+    ensure(
+        out,
+        kind="suite",
+        driver="p1_runs",
+        frozen={
+            "size": size,
+            "dtype": dtype,
+            "preset": overrides.get("preset"),
+            "model": None,
+        },
+        arms=[
+            {
+                "arm_id": n,
+                "planned_n": 1,
+                "delta": _arm_delta(n, dtype, budget),
+            }
+            for n in names
+        ],
+    )
     for note in budget_notes(out, names, budget):
         log(note)
     for i, n in enumerate(names):
@@ -110,6 +144,7 @@ def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = 
         job_state(out / "state.json", script="p1_runs", current={"run": n, "task": spec["task"]}, queue=[{"run": x} for x in names[i + 1 :]], done=rows)
         dt = spec.get("dtype", dtype)
         rd = out / n
+        attach(out, n, n)
         res = read_result(rd)
         if res is None:
             spent = experiment_commitment(out)

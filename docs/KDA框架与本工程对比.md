@@ -247,4 +247,4 @@ runs/<一次搜索>/candidates/<序号>_<标签>/
 | 计时安静 | 确认报告未标成嘈杂，且候选和最强基线的变异系数都不高于 0.05 |
 | 确认 | 本工程搜索结束后的复测 |
 
-读第 2 章时不必打开的材料：`humanfia/humanize` 的 `flame_chase/__init__.py` 和它的单元测试；KDA² 分支 README；博客 `https://nvlabs.github.io/kda/blog/2026-09-27-kda-for-kda/`。本工程一侧是 `taic/prompts.py`、`taic/orchestrator.py`、`taic/skills/apple_gpu_optimization.md`，以及 `docs/架构说明.md` 的第 1.5 节和第 3.9 节。
+读第 2 章时不必打开的材料：`humanfia/humanize` 的 `flame_chase/__init__.py` 和它的单元测试；KDA² 分支 README；博客 `https://nvlabs.github.io/kda/blog/2026-09-27-kda-for-kda/`。本工程一侧是 `taic/prompts.py`、`taic/orchestrator.py`、`taic/skills/apple_gpu_optimization.md`，以及 `docs/架构说明.md` 的第 1.5 节和 [架构/搜索.md](架构/搜索.md) 的发布条件。

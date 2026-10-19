@@ -11,6 +11,9 @@ pytest_plugins = ["tests.handoff"]
 def _isolate_observe_cache(tmp_path, monkeypatch):
     """Dashboard files stay in the test tmp dir, not the real ``~/.cache``."""
     monkeypatch.setenv("AI_LOWERLING_OBSERVE_DIR", str(tmp_path / "observe-cache"))
+    monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
+    monkeypatch.setenv("OBSERVE_CARRYOVER", str(tmp_path / "ledger_carryover.json"))
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "books.sqlite"))
 
 
 @pytest.fixture(autouse=True)

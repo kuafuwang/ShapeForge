@@ -12,8 +12,7 @@ import time
 from pathlib import Path
 
 from experiments.common import conclusion_of_run
-from observe.books import sync as sync_books
-from observe.budget import budget_status, summarize
+from observe.budget import budget_status
 from observe.publish import gpu_dir, gpu_events_path, observe_dir
 
 # 超过这么久没再写 state.json，心跳才算停。还要 pid 已经不在，才会把运行标成中断。
@@ -119,29 +118,6 @@ def liveness(state: dict | None, result: dict | None) -> str:
         # 两个条件都要。只是 15 秒没写心跳但进程还在，仍算在跑；进程已死但时间戳还新，也先算在跑。
         return "interrupted"
     return "running"
-
-
-# 套件目录自己的 state.json 带 script、没有本目录的 result.json，那是实验队列，交给 experiment_jobs，不进单次核的历史。
-# 核运行的 state 有 task、没有 script。result 截断时只要这份 state 还在，目录仍出现在历史里，由 liveness 判成在跑或中断。
-def _search_dirs() -> list[tuple[Path, dict | None, dict | None]]:
-    root = runs_root()
-    if not root.is_dir():
-        return []
-    dirs: set[Path] = set()
-    for name in ("state.json", "result.json"):
-        for path in root.rglob(name):
-            dirs.add(path.parent)
-    found: list[tuple[Path, dict | None, dict | None]] = []
-    for directory in dirs:
-        state = _load(directory / "state.json")
-        result = _load(directory / "result.json")
-        if state and state.get("script") and not result:
-            # 实验队列。result 读不出来（含半截）时也不能把它误当成一次核搜索。
-            continue
-        if result or (state and state.get("task") and not state.get("script")):
-            # 只有半截 result、又没有可读的搜索 state 时，两个条件都不成立，这个目录不会出现在历史里。
-            found.append((directory, state, result))
-    return found
 
 
 # 跑完优先用换种子确认的加速比；确认值缺失才退回搜索期的最优。还在跑时 result 还没有，只能看 state 里的当前最优。
@@ -297,38 +273,36 @@ def _budget_events(directory: Path) -> list[dict]:
     return control.read_events(directory)
 
 
-def history() -> list[dict]:
-    rows = []
-    for directory, state, result in _search_dirs():
-        status = liveness(state, result)
-        task = (result or state or {}).get("task") or ""
-        dtype = (result or state or {}).get("dtype") or ""
-        phase = (state or {}).get("phase") or ""
-        stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
-        spent, budget = money_fields(directory, state, result)
-        alert_budget, alert_stop = _budget_for_alert(directory, spent, budget, stop)
-        conclusion = conclusion_of_run(directory, result) if result else {"speedup": None, "publication": "in_progress"}
-        rows.append({
-            "id": _rel(directory),
-            "started_at": _when(directory, state),
-            "task": task,
-            "dtype": dtype,
-            "phase": phase,
-            "stop_reason": stop,
-            "speedup": conclusion["speedup"] if result else (state or {}).get("best_speedup"),
-            "publication": conclusion["publication"],
-            "spent_usd": spent,
-            "budget_usd": alert_budget,
-            "budget": budget_status(spent, alert_budget, alert_stop, status == "running"),
-            "control": control_hint(directory, state, result, status),
-            **topup_fields(directory),
-            "round": (state or {}).get("round"),
-            "max_rounds": (state or {}).get("max_rounds"),
-            "inflight_label": (state or {}).get("inflight_label"),
-            "status": status,
-        })
-    rows.sort(key=lambda row: row["started_at"], reverse=True)
-    return rows
+def row_from_files(directory: Path, state: dict | None, result: dict | None) -> dict:
+    """One history row from files already loaded. Does not walk ``runs/``."""
+    status = liveness(state, result)
+    stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
+    spent, budget = money_fields(directory, state, result)
+    alert_budget, alert_stop = _budget_for_alert(directory, spent, budget, stop)
+    conclusion = conclusion_of_run(directory, result) if result else {"speedup": None, "publication": "in_progress"}
+    return {
+        "id": _rel(directory),
+        "started_at": _when(directory, state),
+        "task": (result or state or {}).get("task") or "",
+        "dtype": (result or state or {}).get("dtype") or "",
+        "phase": (state or {}).get("phase") or "",
+        "stop_reason": stop,
+        "speedup": conclusion["speedup"] if result else (state or {}).get("best_speedup"),
+        "publication": conclusion["publication"],
+        "published_speedup": conclusion["speedup"],
+        "spent_usd": spent,
+        "budget_usd": alert_budget,
+        "disk_budget_usd": budget,
+        "budget": budget_status(spent, alert_budget, alert_stop, status == "running"),
+        "control": control_hint(directory, state, result, status),
+        **topup_fields(directory),
+        "round": (state or {}).get("round"),
+        "max_rounds": (state or {}).get("max_rounds"),
+        "inflight_label": (state or {}).get("inflight_label"),
+        "status": status,
+        "state": state,
+        "result": result,
+    }
 
 
 # 事件日志是追加写的，进程被杀掉时最后一行可能只写了一半。解析失败的那一行丢掉，前面完整的事件仍然留下。
@@ -388,34 +362,27 @@ def live_evals() -> list[dict]:
     return out
 
 
-# 长实验脚本写下的是带 script 的 state.json。phase 已是 done 或 aborted 就按文件说了算；否则和单次运行一样，用心跳加 pid 区分还在跑和中断。
-def experiment_jobs() -> list[dict]:
-    root = runs_root()
-    if not root.is_dir():
-        return []
-    rows = []
-    for path in root.rglob("state.json"):
-        state = _load(path)
-        if not state or not state.get("script"):
-            continue
-        phase = state.get("phase") or "run"
-        if phase in ("done", "aborted"):
-            status = phase
-        else:
-            # 和 liveness 同一条规则：心跳过期且进程不在才是中断。截断的 state.json 在上面 _load 失败，这条作业不会出现。
-            status = "interrupted" if time.time() - float(state.get("updated_at") or 0) > STALE_S and not pid_alive(state.get("pid")) else "running"
-        rows.append({
-            "id": _rel(path.parent),
-            "script": state.get("script"),
-            "phase": phase,
-            "status": status,
-            "current": state.get("current"),
-            "queue": state.get("queue") or [],
-            "done": state.get("done") or [],
-            "updated_at": state.get("updated_at"),
-        })
-    rows.sort(key=lambda row: float(row.get("updated_at") or 0), reverse=True)
-    return rows
+def experiment_job(directory: Path) -> dict | None:
+    """One experiment queue, when this directory's ``state.json`` is a driver script rather than a search."""
+    state = _load(directory / "state.json")
+    if not state or not state.get("script"):
+        return None
+    phase = state.get("phase") or "run"
+    if phase in ("done", "aborted"):
+        status = phase
+    else:
+        status = "interrupted" if time.time() - float(state.get("updated_at") or 0) > STALE_S and not pid_alive(state.get("pid")) else "running"
+    return {
+        "id": _rel(directory),
+        "script": state.get("script"),
+        "phase": phase,
+        "status": status,
+        "current": state.get("current"),
+        "queue": state.get("queue") or [],
+        "done": state.get("done") or [],
+        "updated_at": state.get("updated_at"),
+        "pid": state.get("pid"),
+    }
 
 
 # 详情页只留每个用例的对错和截短的消息。整份正确性报告太大，不进每一帧。
@@ -476,36 +443,6 @@ def _heartbeat(progress: dict | None) -> dict | None:
     if not progress or not progress.get("heartbeat"):
         return None
     return {"letter": progress.get("heartbeat"), "age_s": progress.get("heartbeat_age_s"), "stage": progress.get("stage")}
-
-
-# 传入的 rows 和历史表是同一批时，横幅不再扫一遍盘。单独调用才重新读 runs/。
-def budget_report(rows: list[dict] | None = None) -> dict:
-    """The banner of the page: counts of runs over budget / exhausted / near, who they are, and the total spend."""
-    return summarize(history() if rows is None else rows)
-
-
-# 总览的心跳来自最近启动、且仍在跑的那次搜索的 eval_progress.json；没有的话用仍活着的 tcenv 评测。
-def overview() -> dict:
-    from tasks import list_tasks
-
-    hist = history()
-    live = [row for row in hist if row["status"] == "running"]
-    progress = None
-    if live:
-        directory = resolve_run(live[0]["id"])
-        if directory is not None:
-            progress = _age(_load(directory / "eval_progress.json"))
-    evals = live_evals()
-    beat = _heartbeat(progress) or (_heartbeat(evals[0]) if evals else None)
-    return {
-        "gpu": gpu_snapshot(),
-        "live_runs": live,
-        "live_evals": evals,
-        "heartbeat": beat,
-        "tasks": list(list_tasks(include_phase2=True)),
-        "experiments": experiment_jobs(),
-        "now": time.time(),
-    }
 
 
 # 聊天行里只留标签和时刻。messages、reply、usage 不进这一帧，提示词和密钥不会出现在时间线上。
@@ -941,26 +878,3 @@ def run_detail(run_id: str) -> dict | None:
         "handoff": _handoff(directory, state, result, trace),
     }
 
-
-# 一帧就是页面要的全部数。查询串里的 run 已经不在 runs/ 下时，改选仍在跑的第一条，否则最近一条。
-def frame(run_id: str | None) -> dict:
-    hist = history()
-    chosen = run_id or ""
-    if chosen and resolve_run(chosen) is None:
-        # 目录被删掉或路径不合法时不要把坏 id 传给详情，否则页面会停在 404。
-        chosen = ""
-    if not chosen:
-        live = next((row for row in hist if row["status"] == "running"), None)
-        chosen = live["id"] if live else (hist[0]["id"] if hist else "")
-    return {
-        "overview": overview(),
-        "history": hist,
-        "budget": budget_report(hist),
-        "selected": chosen,
-        "run": run_detail(chosen) if chosen else None,
-    }
-
-
-def books_report() -> dict:
-    """Refresh the spend book from the runs on disk and return its totals."""
-    return sync_books(history())

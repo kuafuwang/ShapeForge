@@ -27,6 +27,7 @@ from tasks import list_tasks
 from tcenv.events import install_file_log, job_state
 
 from .common import budget_for, experiment_commitment, fits_cap, naive_reference, read_confirm, read_result, run_one, shown_speedup, summarize, write_cap
+from .manifest import attach, ensure
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -39,10 +40,29 @@ def run_suite(tasks, dtypes, size, suite_dir: Path, *, budget_scale=1.0, budget=
     write_cap(suite_dir, max_total_usd)
     rows: list[dict] = []
     items = [(dtype, task) for dtype in dtypes for task in tasks]
+    ensure(
+        suite_dir,
+        kind="suite",
+        driver="run_suite",
+        frozen={
+            "tasks": list(tasks),
+            "dtypes": list(dtypes),
+            "size": size,
+            "preset": overrides.get("preset"),
+            "model": model,
+            "budget_usd": budget,
+            "budget_scale": budget_scale,
+            "max_total_usd": max_total_usd,
+            "branches": branches,
+            "max_rounds": max_rounds,
+        },
+        arms=[{"arm_id": f"{task}_{dtype}", "delta": {"task": task, "dtype": dtype}, "planned_n": 1} for dtype, task in items],
+    )
     for i, (dtype, task) in enumerate(items):
         rest = [{"task": t, "dtype": d} for d, t in items[i + 1 :]]
         job_state(suite_dir / "state.json", script="run_suite", current={"task": task, "dtype": dtype}, queue=rest, done=rows)
         rd = suite_dir / f"{task}_{dtype}"
+        attach(suite_dir, f"{task}_{dtype}", f"{task}_{dtype}")
         res = read_result(rd) if resume else None
         # 命令行给了 --budget 就整套共用这笔钱，scale 不再乘。否则用论文的 $15 乘 --budget-scale，协议字段不在这里改。
         b = budget if budget is not None else budget_for(task, budget_scale)

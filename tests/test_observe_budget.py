@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from observe import scan
+from observe import query as scan
 from observe.budget import NEAR_FRACTION, budget_status, render_banner_html, summarize
 
 from .test_observe import dashboard  # noqa: F401  (pytest fixture: the dashboard served on a free port)
@@ -272,6 +272,22 @@ def test_the_page_has_the_banner_with_the_over_budget_runs_at_first_paint(dashbo
     assert "over by $0.123 (+4.1%)" in page and "over by $0.036 (+1.2%)" in page and "$3.123 / $3.00" in page
     assert 'class="chip over"' in page and 'class="chip exhausted"' in page and 'class="chip near"' in page
     assert "总花费" in page
+
+
+def test_a_named_run_without_its_own_model_does_not_require_a_null_model():
+    from experiments.p1_runs import _arm_delta
+
+    assert "model" not in _arm_delta("fa_flash", "fp16", None)
+    assert _arm_delta("fa_pro", "fp16", None)["model"] == "deepseek-v4-pro"
+    text = (Path(__file__).resolve().parents[1] / "observe" / "static" / "index.html").read_text(encoding="utf-8")
+    for needle in (
+        "confirmed_point", "handoff", "budget_events", "candidates",
+        "feature_grid", "plan_outcomes",
+        "filter-task", "filter-dtype", "filter-model", "filter-status",
+        "runs-prev", "runs-next", "by_operator", "by_month",
+        "budget-amount", "budget-save", 'method: "POST"', "X-Observe-Token", 'classList.add("open")',
+    ):
+        assert needle in text, needle
 
 
 def test_the_page_script_renders_badges_filters_and_sorting(dashboard):  # noqa: F811

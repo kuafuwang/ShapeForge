@@ -14,6 +14,7 @@ import argparse
 from pathlib import Path
 
 from .common import experiment_commitment, fits_cap, run_one, write_cap
+from .manifest import attach, ensure
 
 SWITCHES = dict(
     stop_at_roofline=True,
@@ -43,9 +44,34 @@ def run_selected(out: Path, jobs: list[tuple[str, str, bool]], *, budget: float,
     """Skip occupied directories and runs that do not fit the cap. ``runner`` defaults to ``run_one``."""
     out.mkdir(parents=True, exist_ok=True)
     write_cap(out, max_total_usd)
+    counts: dict[str, int] = {}
+    for _name, _task, on in jobs:
+        counts["on" if on else "off"] = counts.get("on" if on else "off", 0) + 1
+    if jobs:
+        ensure(
+            out,
+            kind="search_ab",
+            driver="search_ab",
+            frozen={
+                "tasks": sorted({task for _name, task, _on in jobs}),
+                "dtype": "fp16",
+                "size": "paper",
+                "preset": "base",
+                "model": None,
+                "committees": None,
+                "budget_usd": budget,
+                "max_total_usd": max_total_usd,
+            },
+            arms=[
+                {"arm_id": arm, "delta": dict(SWITCHES) if arm == "on" else {}, "planned_n": counts[arm]}
+                for arm in ("off", "on")
+                if arm in counts
+            ],
+        )
     go = runner or run_one
     notes = []
     for name, task, on in jobs:
+        attach(out, "on" if on else "off", name)
         dest = out / name
         if _occupied(dest):
             notes.append({"name": name, "skipped": "occupied"})

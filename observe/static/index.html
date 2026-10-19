@@ -1,1276 +1,358 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>运行观测</title>
 <!--OBSERVE_TOKEN-->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>观测</title>
 <style>
-  :root {
-    --bg: #f4f5f7;
-    --card: #fff;
-    --ink: #1c1c1e;
-    --muted: #6b7280;
-    --line: #e6e8ee;
-    --blue: #0a66c2;
-    --green: #17803d;
-    --red: #c2413a;
-    --amber: #b45309;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--ink);
-    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  }
-  button, input { font: inherit; }
-  .layout { display: grid; grid-template-columns: var(--side, 232px) 6px 1fr; min-height: 100vh; }
-  .split-x { cursor: col-resize; background: transparent; border: 0; padding: 0; position: relative; }
-  .split-x::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: var(--line); }
-  .split-x:hover::after, .split-x.dragging::after { background: var(--blue); }
-  aside {
-    background: var(--card);
-    border-right: 1px solid var(--line);
-    padding: 16px 12px;
-    overflow: auto;
-    max-height: 100vh;
-    position: sticky;
-    top: 0;
-  }
-  aside h2 { margin: 0 0 4px; font-size: 13px; color: var(--muted); font-weight: 600; }
-  aside .hint { margin: 0 0 10px; font-size: 11px; line-height: 1.4; color: var(--muted); }
-  .same { margin: 0 0 12px; padding: 8px 10px; background: #f7f8fa; border-radius: 8px; }
-  .same p { margin: 0 0 6px; font-size: 12px; line-height: 1.45; color: var(--muted); }
-  .same button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 3px 0; cursor: pointer; font-size: 12px; color: var(--ink); }
-  .same button:hover { color: var(--blue); }
-  .hist {
-    display: block; width: 100%; text-align: left; border: 1px solid transparent;
-    background: transparent; border-radius: 8px; padding: 8px; margin-bottom: 4px; cursor: pointer;
-  }
-  .hist:hover { background: #f6f7f9; }
-  .hist.on { background: #eef5fc; border-color: #d3e4f6; }
-  .hist b { display: block; font-size: 13px; }
-  .hist span { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--green); margin-right: 6px; }
-  .dot.off { background: #c5c8d0; }
-  main { padding: 18px 20px 32px; }
-  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 12px; position: relative; z-index: 6; }
-  header h1 { margin: 0; }
-  .head-actions { display: flex; align-items: center; gap: 12px; }
-  header h1 { margin: 0; font-size: 22px; font-weight: 650; }
-  .live { color: var(--green); font-weight: 600; font-size: 13px; }
-  .cards, .components { display: grid; gap: 10px; }
-  .cards { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 12px; }
-  .components { grid-template-columns: repeat(6, minmax(0, 1fr)); margin-top: 12px; }
-  .card, .panel {
-    background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
-  }
-  .card .k { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
-  .card .v { font-size: 20px; font-weight: 650; }
-  .card .s { color: var(--muted); font-size: 12px; margin-top: 4px; }
-  .blue { color: var(--blue); }
-  .green { color: var(--green); }
-  .red { color: var(--red); }
-  .split { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 12px; }
-  .panel h2 { margin: 0 0 8px; font-size: 15px; }
-  .sub { color: var(--muted); font-size: 12px; margin: -4px 0 8px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; }
-  th, td { padding: 6px 4px; border-bottom: 1px solid var(--line); }
-  tr.pick { cursor: pointer; }
-  tr.pick.on { background: #eef5fc; }
-  .tag { color: var(--muted); font-size: 12px; margin-left: 6px; }
-  svg.chart { width: 100%; height: 150px; margin-top: 8px; }
-  .stage { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; }
-  .stage.on { background: #eef5fc; }
-  .stage .name { flex: 1; }
-  .stage .meta { color: var(--muted); font-size: 12px; }
-  .mark { width: 16px; text-align: center; }
-  .excerpt {
-    margin-top: 10px; background: #f7f8fa; border-radius: 8px; padding: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-    white-space: pre-wrap; color: #333; max-height: 120px; overflow: auto;
-  }
-  .tl { margin: 4px 0 12px; }
-  .tl-cap { margin: 0 0 4px; font-size: 12px; color: var(--muted); }
-  .tl-row { display: grid; grid-template-columns: 52px 1fr; gap: 8px; align-items: center; margin: 3px 0; }
-  .tl-name { font-size: 12px; color: var(--ink); }
-  .tl-track { position: relative; height: 16px; background: #f3f4f6; border-radius: 8px; }
-  .tl-bar { position: absolute; top: 3px; height: 10px; border-radius: 5px; background: var(--blue); min-width: 3px; }
-  .tl-bar.lock { background: var(--amber); }
-  .tl-bar.eval { background: var(--green); }
-  .tl-scale { display: flex; justify-content: space-between; margin: 0 0 2px 60px; font-size: 11px; color: var(--muted); }
-  .handoff { margin: 0 0 10px; padding: 8px 10px; background: #f7f8fa; border-radius: 8px; }
-  .handoff p, .handoff div { margin: 0 0 3px; font-size: 13px; }
-  .handoff p { color: var(--muted); font-size: 12px; }
-  .tag.noise { color: var(--amber); }
-  .tag.fail { color: var(--red); }
-  .events { margin-top: 12px; }
-  .events li { margin: 3px 0; }
-  .empty { color: var(--muted); padding: 8px 0; }
-
-  /* budget alerts: red = over budget, orange = budget exhausted, yellow = near budget */
-  :root { --orange: #d9600a; --yellow: #eab308; }
-  .badge {
-    display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
-    letter-spacing: .02em; white-space: nowrap; border: 1px solid transparent; line-height: 1.5;
-  }
+  :root { --line: #ddd; --muted: #667; --red: #b42318; --green: #067647; }
+  body { font: 14px/1.45 ui-sans-serif, system-ui, sans-serif; margin: 0; color: #1c1c1c; background: #f6f7f9; }
+  header, main { padding: 12px 16px; }
+  nav button, .btn-budget { margin-right: 6px; }
+  .view { display: none; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .view.on { display: block; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 4px 6px; font-variant-numeric: tabular-nums; }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 7px; font-size: 11px; }
   .badge.over { background: var(--red); color: #fff; }
-  .badge.exhausted { background: var(--orange); color: #fff; }
-  .badge.near { background: #fde047; color: #4a3b00; border-color: var(--yellow); }
-  .money { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .money.over { color: var(--red); font-weight: 650; }
-  .money.exhausted { color: var(--orange); font-weight: 650; }
-  .money.near { color: #8a6d00; font-weight: 650; }
-  .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
-  .hist.over { border-left: 4px solid var(--red); background: #fdeceb; }
-  .hist.exhausted { border-left: 4px solid var(--orange); background: #fff0e3; }
-  .hist.near { border-left: 4px solid var(--yellow); background: #fefce8; }
-  .hist.over.on { background: #f9d9d6; border-color: var(--red); }
-  .hist.exhausted.on { background: #ffe3cc; border-color: var(--orange); }
-  .hist.near.on { background: #fdf6b8; border-color: var(--yellow); }
+  .badge.exhausted { background: #b54708; color: #fff; }
+  .badge.near { background: #f5d90a; color: #1c1c1c; }
   #hist-tools { margin-bottom: 8px; }
-  #hist-tools .row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 5px; align-items: center; }
-  #hist-tools .row > span { color: var(--muted); font-size: 11px; margin-right: 2px; }
-  .pill {
-    border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 1px 8px; font-size: 11px; cursor: pointer; color: var(--ink);
-  }
-  .pill.on { background: var(--ink); color: #fff; border-color: var(--ink); }
-  .pill.over.on { background: var(--red); border-color: var(--red); }
-  .pill.exhausted.on { background: var(--orange); border-color: var(--orange); }
-  .pill.near.on { background: #fde047; border-color: var(--yellow); color: #4a3b00; }
-  #budget-banner { position: sticky; top: 0; z-index: 5; }
-  .bb { border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; border: 1px solid var(--line); background: var(--card); box-shadow: 0 1px 2px rgba(0,0,0,.04); }
-  .bb.ok { border-left: 6px solid var(--green); font-size: 13px; }
-  .bb.ok b { color: var(--green); }
-  .bb.alert.over { border-left: 6px solid var(--red); background: #fdeceb; border-color: #f3c7c3; }
-  .bb.alert.exhausted { border-left: 6px solid var(--orange); background: #fff0e3; border-color: #f6d3b5; }
-  .bb.alert.near { border-left: 6px solid var(--yellow); background: #fefce8; border-color: #f2e39a; }
-  .bb-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
-  .bb-title { font-size: 16px; }
-  .bb.over .bb-title { color: var(--red); }
-  .bb.exhausted .bb-title { color: var(--orange); }
-  .bb-count { font-weight: 700; font-size: 13px; padding: 1px 9px; border-radius: 999px; }
-  .bb-count.over { background: var(--red); color: #fff; }
-  .bb-count.exhausted { background: var(--orange); color: #fff; }
-  .bb-count.near { background: #fde047; color: #4a3b00; }
-  .bb-total { color: var(--muted); font-size: 12px; margin-left: auto; }
-  .bb-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .chip {
-    display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: baseline; padding: 4px 10px; border-radius: 8px; border: 1px solid;
-    background: #fff; color: var(--ink); text-decoration: none; font-size: 12px; cursor: pointer;
-  }
-  .chip:hover { filter: brightness(.97); }
-  .chip.over { border-color: var(--red); }
-  .chip.exhausted { border-color: var(--orange); }
-  .chip.near { border-color: var(--yellow); }
-  .chip i { font-style: normal; font-weight: 700; }
-  .chip.over i { color: var(--red); }
-  .chip.exhausted i { color: var(--orange); }
-  .chip.near i { color: #8a6d00; }
-  .budget-line { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 0 0 8px; }
-  /* add budget: the one control of the page. Everything else is read-only. */
-  .btn-budget {
-    border: 1px solid var(--blue); background: #fff; color: var(--blue); border-radius: 8px; padding: 2px 10px; font-size: 12px; font-weight: 650; cursor: pointer;
-    text-decoration: none; display: inline-flex; align-items: center;
-  }
-  .btn-budget:hover { background: #eef5fc; }
-  .btn-budget:disabled { border-color: var(--line); color: var(--muted); cursor: not-allowed; background: #f6f7f9; }
-  .btn-budget.primary { background: var(--blue); color: #fff; }
-  .btn-budget.primary:disabled { background: #c5d8ec; color: #fff; border-color: #c5d8ec; }
-  .btn-stop { border-color: var(--red); color: var(--red); background: #fff; }
-  .btn-stop:hover { background: #fdf2f2; }
-  .chipwrap { display: inline-flex; gap: 4px; align-items: center; }
-  .why { color: var(--muted); font-size: 12px; }
-  .badge.topped { background: #e0efff; color: var(--blue); border-color: #b9d6f5; }
-  .budget-hist { list-style: none; margin: 0 0 8px; padding: 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .budget-hist li { margin: 2px 0; }
-  #budget-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
-  #reset-modal, #stop-modal, #settings-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
-  #budget-modal.open, #reset-modal.open, #stop-modal.open, #settings-modal.open { display: flex; }
-  #budget-modal .box, #reset-modal .box, #stop-modal .box, #settings-modal .box { background: #fff; border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); max-height: 92vh; overflow: auto; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
-  #budget-modal h3, #reset-modal h3, #stop-modal h3, #settings-modal h3 { margin: 0 0 4px; font-size: 17px; }
-  #budget-modal .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 10px 0; font-size: 13px; }
-  #budget-modal .facts b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; }
-  #budget-modal .amounts { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
-  #budget-modal .amounts .pill { padding: 3px 12px; font-size: 13px; }
-  #budget-modal input[type=number] { width: 96px; border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; }
-  #budget-modal .warn, #reset-modal .warn, #stop-modal .warn, #settings-modal .warn { background: #fff7e6; border: 1px solid #f6d58e; border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 10px 0; }
-  #budget-modal .total { font-size: 14px; margin: 6px 0; }
-  #budget-modal .msg, #reset-modal .msg, #stop-modal .msg, #settings-modal .msg { font-size: 13px; margin: 8px 0; }
-  #budget-modal .msg.err, #reset-modal .msg.err, #stop-modal .msg.err, #settings-modal .msg.err { color: var(--red); }
-  #budget-modal .msg.ok, #reset-modal .msg.ok, #stop-modal .msg.ok, #settings-modal .msg.ok { color: var(--green); }
-  #budget-modal .actions, #reset-modal .actions, #stop-modal .actions, #settings-modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
-  .model-group { margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
-  .model-choice { display: flex; gap: 8px; align-items: baseline; margin: 4px 0; font-size: 14px; }
-  .model-choice code { color: var(--muted); font-size: 12px; }
-  @media (max-width: 1100px) {
-    .layout { grid-template-columns: 1fr; }
-    .split-x { display: none; }
-    aside { position: static; max-height: 220px; }
-    .cards, .components, .split { grid-template-columns: 1fr 1fr; }
-  }
+  #budget-modal, #settings-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
+  #budget-modal.open, #settings-modal.open { display: flex; }
+  #budget-modal .box, #settings-modal .box { background: #fff; border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); }
+  .muted { color: var(--muted); }
+  .drift { color: var(--red); }
 </style>
 </head>
 <body>
-<div class="layout">
-  <aside>
-    <h2>每一次搜索</h2>
-    <p class="hint">一行是一次独立搜索。同名算子可以有很多次，点一行才是那一次的成绩，不会互相覆盖。</p>
+<header>
+  <strong>观测</strong>
+  <button type="button" id="tab-experiments">实验</button>
+  <button type="button" id="tab-compare">对照</button>
+  <button type="button" id="tab-runs">运行</button>
+  <button type="button" id="tab-detail">详情</button>
+  <button type="button" id="tab-ledger">花费账本</button>
+  <button type="button" class="btn-budget" id="add-budget">加预算</button>
+  <button type="button" class="btn-budget" id="settings-open">设置</button>
+  <button type="button" class="btn-budget" id="reset-all">重置全部搜索</button>
+  <button type="button" class="btn-budget btn-stop" id="stop-all">停止全部搜索</button>
+</header>
+<main>
+  <section id="budget-banner"><!--BUDGET_BANNER--></section>
+  <section id="view-experiments" class="view on"></section>
+  <section id="view-compare" class="view"></section>
+  <section id="view-runs" class="view">
     <div id="hist-tools"></div>
-    <div id="history"></div>
-  </aside>
-  <div id="split-x" class="split-x" role="separator" aria-orientation="vertical" title="拖动调整宽度，双击恢复默认"></div>
-  <main>
-    <section id="budget-banner"><!--BUDGET_BANNER--></section>
-    <header>
-      <h1>运行观测</h1>
-      <div class="head-actions">
-        <a class="btn-budget" href="/books">花费账本</a>
-        <button type="button" class="btn-budget" id="settings-open">设置</button>
-        <button type="button" class="btn-budget" id="reset-all">重置全部搜索</button>
-        <button type="button" class="btn-budget btn-stop" id="stop-all">停止全部搜索</button>
-        <div class="live"><span class="dot" id="live-dot"></span><span id="live-label">连接中</span></div>
-      </div>
-    </header>
-    <section class="cards" id="status"></section>
-    <section class="split">
-      <div class="panel" id="search"></div>
-      <div class="panel" id="eval"></div>
-    </section>
-    <section class="components" id="components"></section>
-    <section class="panel events" id="locks"></section>
-  </main>
-</div>
+    <form id="run-filters">
+      <label>题目 <input id="filter-task" name="task"></label>
+      <label>dtype
+        <select id="filter-dtype" name="dtype"><option value="">全部</option><option>fp16</option><option>bf16</option></select>
+      </label>
+      <label>模型 <input id="filter-model" name="model"></label>
+      <label>状态
+        <select id="filter-status" name="status">
+          <option value="">全部</option>
+          <option value="running">running</option>
+          <option value="done">done</option>
+          <option value="interrupted">interrupted</option>
+          <option value="unknown">unknown</option>
+        </select>
+      </label>
+      <button type="submit">筛选</button>
+      <button type="button" id="runs-prev">上一页</button>
+      <button type="button" id="runs-next">下一页</button>
+      <span id="runs-page" class="muted"></span>
+    </form>
+    <table id="runs"><thead><tr><th>运行</th><th>题目</th><th>发布</th><th>加速比</th><th>绑定</th><th>状态</th></tr></thead><tbody></tbody></table>
+  </section>
+  <section id="view-detail" class="view"></section>
+  <section id="view-ledger" class="view"></section>
+</main>
 <div id="budget-modal" role="dialog" aria-modal="true" aria-labelledby="bm-title">
   <div class="box">
     <h3 id="bm-title">加预算 Add budget</h3>
-    <div class="sub" id="bm-run"></div>
-    <div id="bm-body"></div>
-  </div>
-</div>
-<div id="reset-modal" role="dialog" aria-modal="true" aria-labelledby="reset-title">
-  <div class="box">
-    <h3 id="reset-title">重置全部搜索</h3>
-    <div id="reset-body"></div>
+    <p class="muted" id="budget-note">写入口仍走 /control，令牌放在 X-Observe-Token。</p>
+    <label>增加的美元 <input id="budget-amount" type="number" min="0.01" step="0.01" value="1"></label>
+    <div class="actions">
+      <button type="button" id="budget-save">确认</button>
+      <button type="button" id="budget-close">关闭</button>
+    </div>
   </div>
 </div>
 <div id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
   <div class="box">
-    <h3 id="settings-title">选择模型</h3>
-    <div id="settings-body"></div>
-  </div>
-</div>
-<div id="stop-modal" role="dialog" aria-modal="true" aria-labelledby="stop-title">
-  <div class="box">
-    <h3 id="stop-title">停止全部搜索</h3>
-    <div id="stop-body"></div>
+    <h3 id="settings-title">下次搜索的模型</h3>
+    <p class="muted" id="settings-note"></p>
+    <label>模型 <select id="settings-model"></select></label>
+    <div class="actions">
+      <button type="button" id="settings-save">保存</button>
+      <button type="button" id="settings-close">关闭</button>
+    </div>
   </div>
 </div>
 <script>
-const OBSERVE_TOKEN = (document.querySelector('meta[name="observe-token"]') || {}).content || "";
-const PHASE = { start: "开始", llm: "问模型", plan: "规划", evaluate: "评测", confirm: "确认", profile: "录制", done: "结束" };
-const STAGES = [["screen", "安检"], ["compile", "编译"], ["abi", "签名"], ["safety", "内存安全"], ["correctness", "对答案"], ["bench", "计时"]];
-const FAIL = { rejected: "screen", compile_error: "compile", abi_error: "abi", unsafe: "safety", incorrect: "correctness" };
+const OBSERVE_TOKEN = document.querySelector('meta[name="observe-token"]')?.content || "";
+const LABELS = {over: "OVER BUDGET", exhausted: "BUDGET EXHAUSTED", near: "NEAR BUDGET"};
+const FILTERS = [["all", "全部"], ["alert", "告警"], ["over", "超预算"], ["exhausted", "耗尽"], ["near", "接近"]];
+const SORTS = [["time", "时间"], ["used", "预算占比"]];
+let selectedExperiment = "";
+let selectedRun = "";
+let runsOffset = 0;
+let runsToken = 0;
+let visible = "experiments";
+const RUNS_LIMIT = 50;
+const applied = {task: "", dtype: "", model: "", status: ""};
 
-let pinned = new URLSearchParams(location.search).get("run");
-let candLabel = null;
-let source = null;
-let seen = false;
-let lastSig = "";
-let lastFrame = null;
-let filterMode = "all";
-let sortMode = "time";
-
-const BUDGET_LABEL = { over: "OVER BUDGET", exhausted: "BUDGET EXHAUSTED", near: "NEAR BUDGET" };
-const BUDGET_LABEL_CN = { over: "超预算", exhausted: "预算耗尽", near: "接近预算" };
-
-function el(tag, props, kids) {
-  const node = document.createElement(tag);
-  if (props) {
-    for (const [key, value] of Object.entries(props)) {
-      if (key === "class") node.className = value;
-      else if (key.startsWith("on") && typeof value === "function") node.addEventListener(key.slice(2), value);
-      else if (key === "disabled") node.disabled = Boolean(value);
-      else if (key === "checked") node.checked = Boolean(value);
-      else if (value != null) node.setAttribute(key, value);
-    }
-  }
-  for (const kid of kids || []) {
-    node.append(kid == null ? "" : kid);
-  }
-  return node;
-}
-function t(text) { return document.createTextNode(text == null ? "" : String(text)); }
-function money(value, digits) {
-  if (value == null || value === "") return "—";
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "—";
-  return "$" + n.toFixed(digits == null ? 2 : digits);
-}
-function runStateText(row) {
-  const headline = (row.status === "running" || row.status === "interrupted" || row.publication === "confirmed" || row.publication === "in_progress" || !row.publication)
-    ? speed(row.speedup) : row.publication;
-  if (row.status === "running") return "进行中 · 第 " + (row.round || "?") + " 轮 · 目前 " + headline;
-  if (row.status === "interrupted") return "中断 · 当时 " + headline;
-  return "已结束 · " + headline;
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 }
 
-function speed(value) {
-  if (value == null || value === "") return "—";
-  const n = Number(value);
-  return Number.isFinite(n) ? n.toFixed(2) + "x" : "—";
-}
-function when(epoch) {
-  if (!epoch) return "";
-  const d = new Date(epoch * 1000);
-  const p = (n) => String(n).padStart(2, "0");
-  return p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
-}
-function phaseText(row) {
-  if (!row) return "未在跑";
-  if (row.status === "interrupted") return "中断";
-  if (row.status === "done") return row.stop_reason || "结束";
-  const name = PHASE[row.phase] || row.phase || "进行中";
-  return row.inflight_label ? name + " " + row.inflight_label : name;
-}
-
-function stable(frame) {
-  const copy = JSON.parse(JSON.stringify(frame));
-  if (copy.overview) {
-    delete copy.overview.now;
-    if (copy.overview.heartbeat) delete copy.overview.heartbeat.age_s;
-    for (const item of copy.overview.live_evals || []) delete item.heartbeat_age_s;
-  }
-  if (copy.run && copy.run.eval_progress) delete copy.run.eval_progress.heartbeat_age_s;
-  return JSON.stringify(copy);
-}
-
-function updateHeartbeat(beat) {
-  const value = document.getElementById("heartbeat-value");
-  const sub = document.getElementById("heartbeat-sub");
-  if (!value) return;
-  if (!beat || !beat.letter) {
-    value.textContent = "—";
-    value.className = "v";
-    if (sub) sub.textContent = "";
-    return;
-  }
-  const hot = beat.letter === "B" && Number(beat.age_s) > 2;
-  value.textContent = beat.letter;
-  value.className = "v " + (hot ? "red" : "green");
-  if (sub) sub.textContent = beat.age_s == null ? "" : Number(beat.age_s).toFixed(1) + " 秒";
-}
-
-function render(frame) {
-  seen = true;
-  document.getElementById("live-label").textContent = "实时";
-  document.getElementById("live-dot").className = "dot";
-  lastFrame = frame;
-  const sig = stable(frame);
-  if (sig !== lastSig) {
-    lastSig = sig;
-    renderBanner(frame.budget);
-    renderHistory(frame);
-    renderStatus(frame.overview);
-    renderSearch(frame.run, frame.history);
-    renderEval(frame.run, frame.overview);
-    renderComponents(frame.overview);
-    renderLocks(frame.overview.gpu);
-  }
-  updateHeartbeat(frame.overview && frame.overview.heartbeat);
-}
-
-function badges(b, compact) {
-  if (!b || !b.flagged) return [];
-  return b.flags.map((flag) => {
-    let text = BUDGET_LABEL[flag];
-    if (flag === "over" && b.over_pct != null) text += compact ? " +" + Number(b.over_pct).toFixed(1) + "%" : " +" + money(b.over_usd, 3) + " (+" + Number(b.over_pct).toFixed(1) + "%)";
-    if (flag === "near" && b.used_pct != null) text += " " + Math.round(b.used_pct) + "%";
-    return el("span", { class: "badge " + flag, title: BUDGET_LABEL_CN[flag] + "：" + (b.text || "") }, [t(text)]);
-  });
-}
-
-function moneyText(b, row) {
-  if (!b) return "";
-  const spent = b.spent != null ? b.spent : (row && row.spent_usd);
-  const budget = b.budget != null ? b.budget : (row && row.budget_usd);
-  if (budget == null) return "预算 —  已用 " + money(spent, 3);
-  return "预算 " + money(budget) + "  已用 " + money(spent, 3) + (b.used_pct != null ? "  " + Number(b.used_pct).toFixed(0) + "%" : "");
+function num(value) {
+  return value == null || value === "" ? "—" : String(value);
 }
 
 function renderBanner(report) {
-  const box = document.getElementById("budget-banner");
-  box.replaceChildren();
-  if (!report) return;
-  const total = report.n_runs + " 个运行 · 总花费 " + money(report.total_spent_usd) + " / 预算合计 " + money(report.total_budget_usd);
-  const bad = report.n_over + report.n_exhausted;
-  document.title = (bad ? "⚠ " + bad + " 预算告警 · " : "") + "运行观测";
-  if (!report.n_flagged) {
-    box.append(el("div", { class: "bb ok", "data-level": "ok" }, [el("b", null, [t("预算正常")]), t("  没有超预算、预算耗尽或接近预算的运行 · " + total)]));
+  const slot = document.getElementById("budget-banner");
+  if (!slot || !report) return;
+  slot.dataset.level = report.level || "ok";
+  if (Array.isArray(report.flagged)) slot.innerHTML = bannerHtml(report);
+}
+
+function bannerHtml(report) {
+  const total = `${report.n_runs || 0} 个运行 · 总花费 $${Number(report.total_spent_usd || 0).toFixed(2)} / 预算合计 $${Number(report.total_budget_usd || 0).toFixed(2)}`;
+  if (!report.n_flagged) return `<div class="bb ok" data-level="ok"><b>预算正常</b> <span class="bb-total">没有超预算、预算耗尽或接近预算的运行 · ${esc(total)}</span></div>`;
+  const chips = (report.flagged || []).map((item) => `<a class="chip ${esc(item.level)}" href="/?run=${encodeURIComponent(item.id || "")}" data-run="${esc(item.id)}"><b>${esc(item.id)}</b> <span>${esc(item.text)}</span></a>`).join("");
+  return `<div class="bb alert ${esc(report.level)}" data-level="${esc(report.level)}"><div class="bb-list">${chips}</div><span class="bb-total">${esc(total)}</span></div>`;
+}
+
+async function refreshBanner() {
+  const report = await (await fetch("/api/v2/budget")).json();
+  renderBanner(report);
+}
+
+function show(name) {
+  visible = name;
+  for (const id of ["experiments", "compare", "runs", "detail", "ledger"]) {
+    document.getElementById("view-" + id).classList.toggle("on", id === name);
+  }
+  if (name === "experiments") loadExperiments();
+  if (name === "compare" && selectedExperiment) loadCompare(selectedExperiment);
+  if (name === "runs") loadRuns();
+  if (name === "detail" && selectedRun) loadDetail(selectedRun);
+  if (name === "ledger") loadLedger();
+}
+
+async function loadExperiments() {
+  const rows = await (await fetch("/api/v2/experiments")).json();
+  const host = document.getElementById("view-experiments");
+  host.innerHTML = "<table><thead><tr><th>实验</th><th>种类</th><th>臂</th></tr></thead><tbody>" +
+    rows.map((row) => `<tr data-exp="${esc(row.experiment_id)}"><td>${esc(row.experiment_id)}</td><td>${esc(row.kind)}</td><td>${(row.arms || []).map((arm) => esc(arm.arm_id)).join(", ")}</td></tr>`).join("") +
+    "</tbody></table>";
+  host.querySelectorAll("[data-exp]").forEach((tr) => tr.addEventListener("click", () => {
+    selectedExperiment = tr.dataset.exp;
+    show("compare");
+  }));
+}
+
+async function loadCompare(id) {
+  const doc = await (await fetch("/api/v2/experiments/" + id.split("/").map(encodeURIComponent).join("/"))).json();
+  const host = document.getElementById("view-compare");
+  const arms = (doc.arms || []).map((arm) => {
+    const fast = arm.fast && arm.fast["1"] ? arm.fast["1"].share : null;
+    return `<tr><td>${esc(arm.arm_id)}</td><td>${esc(num(arm.median))}</td><td>${esc(num(fast))}</td><td>${esc(num(arm.gain_per_usd))}</td><td>${esc(arm.n)}</td></tr>`;
+  }).join("");
+  host.innerHTML = `<p>${esc(doc.verdict)} ${esc(doc.reason)}</p>` +
+    `<p class="drift">drift: ${esc((doc.drift || []).join(", ") || "无")} · inferred: ${esc((doc.inferred || []).join(", ") || "无")}</p>` +
+    `<table><thead><tr><th>臂</th><th>发布加速比中位数</th><th>fast_p</th><th>每美元增益</th><th>次数</th></tr></thead><tbody>${arms}</tbody></table>`;
+}
+
+function runQuery() {
+  const params = new URLSearchParams({ limit: String(RUNS_LIMIT), offset: String(runsOffset) });
+  for (const key of ["task", "dtype", "model", "status"]) {
+    const value = applied[key];
+    if (value) params.set(key, value);
+  }
+  return params;
+}
+
+async function loadRuns() {
+  const token = ++runsToken;
+  const page = await (await fetch("/api/v2/runs?" + runQuery())).json();
+  if (token !== runsToken) return;
+  const total = page.total || 0;
+  const rows = page.runs || [];
+  const start = total ? runsOffset + 1 : 0;
+  const end = runsOffset + rows.length;
+  document.getElementById("runs-page").textContent = `${start}–${end} / ${total}`;
+  document.getElementById("runs-prev").disabled = runsOffset <= 0;
+  document.getElementById("runs-next").disabled = runsOffset + rows.length >= total;
+  const body = document.querySelector("#runs tbody");
+  body.innerHTML = rows.map((row) => `<tr data-run="${esc(row.run_id)}"><td>${esc(row.run_id)}</td><td>${esc(row.task)}</td><td>${esc(row.publication)}</td><td>${esc(num(row.published_speedup))}</td><td>${esc(row.binding)}</td><td><span class="badge ${esc(row.status)}">${esc(row.status)}</span></td></tr>`).join("");
+  body.querySelectorAll("[data-run]").forEach((tr) => tr.addEventListener("click", () => {
+    selectedRun = tr.dataset.run;
+    show("detail");
+  }));
+}
+
+function marksFor(doc, label) {
+  const hit = (doc.candidate_marks || []).find((row) => row && row.label === label);
+  return hit && hit.marks ? hit.marks.join("；") : "";
+}
+
+function renderDetail(doc) {
+  const point = doc.confirmed_point;
+  const confirm = point
+    ? `<p>确认点 ${esc(point.label)} · 加速比 ${esc(point.speedup)} · 花费 $${esc(num(point.cost_usd))}</p>`
+    : `<p class="muted">确认点：还没有可以发布的确认测量。</p>`;
+  const handoff = doc.handoff || {};
+  const rounds = (handoff.rounds || []).map((row) => `<tr><td>${esc(row.label)}</td><td>${esc(row.committee)}</td><td>${esc(row.model || "—")}</td></tr>`).join("");
+  const handoffBlock = handoff.recorded
+    ? `<table><thead><tr><th>轮次</th><th>委员会</th><th>模型</th></tr></thead><tbody>${rounds}</tbody></table>`
+    : `<p class="muted">${esc(handoff.note || "没有委员会记录")}</p>`;
+  const events = (doc.budget_events || []).map((row) => `<tr><td>${esc(row.time || row.t)}</td><td>${esc(row.kind)}</td><td>${esc(row.who)}</td><td>${esc(num(row.old_budget_usd))}</td><td>${esc(num(row.new_budget_usd))}</td><td>${esc(row.note)}</td></tr>`).join("");
+  const candidates = (doc.candidates || []).map((row) => `<tr><td>${esc(num(row.idx))}</td><td>${esc(row.label)}</td><td>${esc(row.status)}</td><td>${esc(row.stage)}</td><td>${esc(num(row.speedup))}</td><td>${esc(marksFor(doc, row.label))}</td><td>${esc(row.message)}</td></tr>`).join("");
+  const grid = (doc.feature_grid || []).map((cell) => `<tr><td>${esc(cell.label)}</td><td>${esc((cell.signature || []).join(","))}</td><td>${esc(num(cell.speedup))}</td><td>${cell.published ? "发布" : ""}</td></tr>`).join("");
+  const plans = (doc.plan_outcomes || []).map((node) => `<tr><td>${esc(node.round)}</td><td>${esc(node.label)}</td><td>${esc(node.title)}</td><td>${esc(node.outcome)}</td><td>${esc(num(node.speedup))}</td></tr>`).join("");
+  return `<h2>${esc(doc.id)}</h2><p>${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>` +
+    `<h3>确认点</h3>${confirm}` +
+    `<h3>委员会交接</h3>${handoffBlock}` +
+    `<h3>预算事件</h3>` + (events ? `<table><thead><tr><th>时间</th><th>种类</th><th>谁</th><th>旧预算</th><th>新预算</th><th>备注</th></tr></thead><tbody>${events}</tbody></table>` : `<p class="muted">没有预算事件。</p>`) +
+    `<h3>候选</h3>` + (candidates ? `<table><thead><tr><th>序号</th><th>标签</th><th>状态</th><th>阶段</th><th>加速比</th><th>标记</th><th>说明</th></tr></thead><tbody>${candidates}</tbody></table>` : `<p class="muted">没有候选。</p>`) +
+    `<h3>特征格子</h3>` + (grid ? `<table><thead><tr><th>标签</th><th>签名</th><th>加速比</th><th></th></tr></thead><tbody>${grid}</tbody></table>` : `<p class="muted">空</p>`) +
+    `<h3>计划结局</h3>` + (plans ? `<table><thead><tr><th>轮</th><th>标签</th><th>方案</th><th>结局</th><th>加速比</th></tr></thead><tbody>${plans}</tbody></table>` : `<p class="muted">空</p>`);
+}
+
+async function loadDetail(id) {
+  const response = await fetch("/api/v2/runs/" + id.split("/").map(encodeURIComponent).join("/"));
+  const doc = await response.json();
+  const host = document.getElementById("view-detail");
+  if (!response.ok) {
+    host.innerHTML = `<p>找不到 ${esc(id)}</p>`;
     return;
   }
-  const head = [el("b", { class: "bb-title" }, [t("⚠ 预算告警 BUDGET ALERT")])];
-  for (const flag of ["over", "exhausted", "near"]) {
-    const n = report["n_" + flag];
-    if (n) head.push(el("span", { class: "bb-count " + flag }, [t(n + " " + BUDGET_LABEL[flag] + " " + BUDGET_LABEL_CN[flag])]));
-  }
-  head.push(el("span", { class: "bb-total" }, [t(total + (report.total_over_usd ? " · 超出合计 +" + money(report.total_over_usd, 3) : ""))]));
-  const chips = (report.flagged || []).map((item) => el("span", { class: "chipwrap" }, [el("a", {
-    class: "chip " + item.level, href: "/?run=" + encodeURIComponent(item.id), "data-run": item.id, title: "点击查看这次运行",
-    onclick: (event) => { event.preventDefault(); pin(item.id); },
-  }, [
-    el("b", null, [t(item.id)]),
-    el("span", null, [t((item.task || "") + (item.dtype ? " " + item.dtype : ""))]),
-    el("i", null, [t(item.flags.map((f) => BUDGET_LABEL[f]).join(" + "))]),
-    el("span", null, [t(item.text)]),
-    item.topped_up ? el("span", { class: "badge topped", title: TOPPED_TIP }, [t("已加预算 TOPPED UP")]) : null,
-  ]), budgetButton(item.id, item.control, true)]));
-  box.append(el("div", { class: "bb alert " + report.level, "data-level": report.level }, [
-    el("div", { class: "bb-head" }, head),
-    el("div", { class: "bb-list" }, chips),
-  ]));
+  host.innerHTML = renderDetail(doc);
 }
 
-const FILTERS = [["all", "全部"], ["alert", "告警"], ["over", "超预算"], ["exhausted", "耗尽"], ["near", "接近"]];
-const SORTS = [["time", "时间"], ["used", "预算占比"]];
-
-function matches(row, mode) {
-  const b = row.budget || {};
-  if (mode === "all") return true;
-  if (mode === "alert") return !!b.flagged;
-  return (b.flags || []).includes(mode);
+function ledgerTable(title, headers, rows) {
+  const body = rows.map((row) => `<tr>${row.map((cell) => `<td>${esc(cell)}</td>`).join("")}</tr>`).join("");
+  return `<h3>${esc(title)}</h3><table><thead><tr>${headers.map((name) => `<th>${esc(name)}</th>`).join("")}</tr></thead><tbody>${body || `<tr><td colspan="${headers.length}">空</td></tr>`}</tbody></table>`;
 }
 
-function renderTools(rows) {
-  const box = document.getElementById("hist-tools");
-  box.replaceChildren();
-  const filters = el("div", { class: "row" }, [el("span", null, [t("筛选")])]);
-  for (const [key, name] of FILTERS) {
-    const n = rows.filter((row) => matches(row, key)).length;
-    filters.append(el("button", {
-      type: "button", class: "pill" + (key === "over" || key === "exhausted" || key === "near" ? " " + key : "") + (filterMode === key ? " on" : ""),
-      onclick: () => { filterMode = key; if (lastFrame) renderHistory(lastFrame); },
-    }, [t(name + " " + n)]));
-  }
-  const sorts = el("div", { class: "row" }, [el("span", null, [t("排序")])]);
-  for (const [key, name] of SORTS) {
-    sorts.append(el("button", {
-      type: "button", class: "pill" + (sortMode === key ? " on" : ""),
-      onclick: () => { sortMode = key; if (lastFrame) renderHistory(lastFrame); },
-    }, [t(name)]));
-  }
-  box.append(filters, sorts);
+async function loadLedger() {
+  const doc = await (await fetch("/api/v2/ledger")).json();
+  const operators = (doc.by_operator || []).map((row) => [row.operator, row.runs, row.spent_usd, row.budget_usd]);
+  const months = (doc.by_month || []).map((row) => [row.month, row.runs, row.spent_usd, (row.operators || []).map((item) => `${item.operator} $${item.spent_usd}`).join(", ")]);
+  document.getElementById("view-ledger").innerHTML =
+    `<p>总额 $${esc(doc.spent_usd)} · 结转 $${esc(doc.carryover_usd)} · ${esc(doc.runs)} 次计入账本</p>` +
+    ledgerTable("按算子", ["算子", "次数", "花费", "预算"], operators) +
+    ledgerTable("按月份", ["月份", "次数", "花费", "算子"], months);
 }
 
-function renderHistory(frame) {
-  const box = document.getElementById("history");
-  const scroll = box.scrollTop;
-  box.replaceChildren();
-  const all = frame.history || [];
-  renderTools(all);
-  if (!all.length) {
-    box.append(el("div", { class: "empty" }, [t("还没有运行")]));
-    return;
-  }
-  let rows = all.filter((row) => matches(row, filterMode));
-  if (sortMode === "used") {
-    rows = rows.slice().sort((a, b) => ((b.budget && b.budget.used_pct) ?? -1) - ((a.budget && a.budget.used_pct) ?? -1));
-  }
-  if (!rows.length) {
-    box.append(el("div", { class: "empty" }, [t("没有符合筛选的运行")]));
-    return;
-  }
-  for (const row of rows) {
-    const on = row.id === frame.selected;
-    const b = row.budget || {};
-    const title = row.id;
-    const meta = (row.task || "") + (row.dtype ? " " + row.dtype : "") + " · " + when(row.started_at) + "  " + runStateText(row);
-    const level = b.flagged ? " " + b.level : "";
-    const kids = [
-      el("b", null, [t(title)]),
-      el("span", null, [t(meta)]),
-      el("div", { class: "money" + level }, [t(moneyText(b, row))]),
-    ];
-    const marks = badges(b, true);
-    if (row.topped_up) marks.push(el("span", { class: "badge topped", title: TOPPED_TIP }, [t("已加预算 TOPPED UP")]));
-    if (marks.length) kids.push(el("div", { class: "tags" }, marks));
-    box.append(el("button", { class: "hist" + level + (on ? " on" : ""), type: "button", title: row.id, onclick: () => pin(row.id) }, kids));
-  }
-  box.scrollTop = scroll;
+async function postJson(url, body) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {"Content-Type": "application/json", "X-Observe-Token": OBSERVE_TOKEN},
+    body: JSON.stringify(body || {}),
+  });
+  const doc = await response.json();
+  if (!response.ok) throw new Error(doc.error || String(response.status));
+  return doc;
 }
 
-const TOPPED_TIP = "这次运行加过预算：它的预算不是固定的，不能直接和固定预算的运行比较。 This run was topped up: not directly comparable with fixed-budget runs.";
-
-function historyLine(e) {
-  const a = e.amount_usd != null ? ", " + (e.amount_usd >= 0 ? "+" : "-") + money(Math.abs(e.amount_usd)) : "";
-  const kind = e.kind === "resume" ? "续跑" : "";
-  return money(e.old_budget_usd) + " -> " + money(e.new_budget_usd) + " (" + (a ? a.slice(2) + ", " : "") + (e.time ? e.time.slice(11, 16) : "") + ", " + (e.who || "") + (kind ? ", " + kind : "") + ")";
-}
-
-// The button (or, when nothing can be added, the reason). ``hint`` is the small summary every history row carries: {action, reason}.
-function budgetButton(runId, hint, compact) {
-  if (!hint) return null;
-  if (!hint.action) {
-    return hint.reason && !compact ? el("span", { class: "why", title: hint.reason }, [t("不能加预算：" + hint.reason)]) : null;
-  }
-  const label = hint.action === "resume" ? "加预算并续跑 Add budget" : "加预算 Add budget";
-  return el("button", {
-    type: "button", class: "btn-budget", "data-run": runId, title: hint.action === "resume" ? "这次运行已停下，会用新预算从原目录续跑" : "运行中：把新预算写进控制文件，下一次请求前生效",
-    onclick: (event) => { event.preventDefault(); event.stopPropagation(); openBudget(runId); },
-  }, [t(label)]);
-}
-
-let modalState = null;
-
-function closeBudget() {
-  document.getElementById("budget-modal").classList.remove("open");
-  modalState = null;
-}
-
-function msg(text, cls) {
-  const box = document.getElementById("bm-msg");
-  if (!box) return;
-  box.className = "msg" + (cls ? " " + cls : "");
-  box.textContent = text || "";
-}
-
-async function openBudget(runId) {
-  const modal = document.getElementById("budget-modal");
-  modal.classList.add("open");
-  document.getElementById("bm-run").textContent = runId;
-  const body = document.getElementById("bm-body");
-  body.replaceChildren(el("div", { class: "msg" }, [t("读取中…")]));
-  modalState = { run: runId, info: null, amount: null, busy: false };
-  let info;
+document.getElementById("tab-experiments").addEventListener("click", () => show("experiments"));
+document.getElementById("tab-compare").addEventListener("click", () => show("compare"));
+document.getElementById("tab-runs").addEventListener("click", () => show("runs"));
+document.getElementById("tab-detail").addEventListener("click", () => show("detail"));
+document.getElementById("tab-ledger").addEventListener("click", () => show("ledger"));
+document.getElementById("add-budget").addEventListener("click", () => {
+  document.getElementById("budget-note").textContent = selectedRun ? selectedRun : "先在运行列表里选一次搜索";
+  if (selectedRun) document.getElementById("budget-modal").classList.add("open");
+});
+document.getElementById("budget-save").addEventListener("click", async () => {
+  if (!selectedRun) return;
   try {
-    const r = await fetch("/api/runs/" + runId.split("/").map(encodeURIComponent).join("/") + "/control", { headers: { Accept: "application/json" } });
-    info = await r.json();
-    if (!r.ok) throw new Error(info && info.error ? info.error : "HTTP " + r.status);
-  } catch (err) {
-    body.replaceChildren(
-      el("div", { class: "msg err" }, [t("读不到这次运行的控制信息，不能加预算：" + err.message)]),
-      el("div", { class: "actions" }, [el("button", { type: "button", class: "btn-budget", onclick: closeBudget }, [t("关闭")])]),
-    );
-    return;
-  }
-  modalState.info = info;
-  drawModal();
-}
-
-function drawModal() {
-  const info = modalState.info;
-  const body = document.getElementById("bm-body");
-  const b = info.budget || {};
-  const facts = el("div", { class: "facts" }, [
-    el("div", null, [t("当前预算 Budget"), el("b", null, [t(money(b.current_usd))])]),
-    el("div", null, [t("已花 Spent"), el("b", null, [t(money(b.spent_usd, 3))])]),
-    el("div", null, [t("当前最好加速比 Best"), el("b", null, [t(speed(info.best_speedup))])]),
-    el("div", null, [t("状态 Status"), el("b", null, [t(info.kind + (info.stop_reason ? " · " + info.stop_reason : ""))])]),
-  ]);
-  const kids = [facts];
-  const applied = (info.history && info.history.applied) || [];
-  if (applied.length) {
-    const list = el("ul", { class: "budget-hist" }, [el("li", null, [t("原预算 " + money(b.initial_usd))])]);
-    for (const e of applied) list.append(el("li", null, [t(historyLine(e))]));
-    kids.push(list);
-  }
-  for (const w of info.warnings || []) kids.push(el("div", { class: "why" }, [t("注意：" + w)]));
-  if (!info.can_add_budget) {
-    kids.push(el("div", { class: "msg err" }, [t("不能加预算：" + (info.reason_if_not || "这次运行不能继续"))]));
-    kids.push(el("div", { class: "actions" }, [el("button", { type: "button", class: "btn-budget", onclick: closeBudget }, [t("关闭")])]));
-    body.replaceChildren(...kids);
-    return;
-  }
-  const live = info.action === "topup_live";
-  kids.push(el("div", { class: "sub" }, [t(live ? "运行中：新预算写进控制文件，运行在下一次请求前读取。 Live: written to the run's control file." : "这次运行已停下：会用新预算从原目录续跑，不重花已花的钱。 Stopped: resumes in place; nothing already spent is spent again.")]));
-  const amounts = el("div", { class: "amounts" }, []);
-  for (const a of info.suggested_amounts || [3, 5, 15]) {
-    amounts.append(el("button", { type: "button", class: "pill" + (modalState.amount === a ? " on" : ""), "data-amount": a, onclick: () => { modalState.amount = a; drawModal(); } }, [t("+" + money(a, 0))]));
-  }
-  const custom = el("input", { type: "number", min: "0.01", step: "0.5", id: "bm-custom", placeholder: "自定义 USD" });
-  if (modalState.amount != null && !(info.suggested_amounts || []).includes(modalState.amount)) custom.value = modalState.amount;
-  custom.addEventListener("input", () => { const v = parseFloat(custom.value); modalState.amount = Number.isFinite(v) ? v : null; updateTotal(); });
-  amounts.append(custom);
-  kids.push(amounts);
-  kids.push(el("div", { class: "total", id: "bm-total" }, []));
-  kids.push(el("div", { class: "warn", id: "bm-warn" }, []));
-  kids.push(el("div", { class: "msg", id: "bm-msg" }, []));
-  kids.push(el("div", { class: "actions" }, [
-    el("button", { type: "button", class: "btn-budget", id: "bm-cancel", onclick: closeBudget }, [t("取消 Cancel")]),
-    el("button", { type: "button", class: "btn-budget primary", id: "bm-confirm", onclick: confirmBudget }, [t("确认 Confirm")]),
-  ]));
-  body.replaceChildren(...kids);
-  updateTotal();
-}
-
-function amountError(info, amount) {
-  if (amount == null || !Number.isFinite(amount) || amount <= 0) return "选一个金额，或填一个大于 0 的数。";
-  if (amount > info.max_topup_usd + 1e-9) return "一次最多加 " + money(info.max_topup_usd) + "（OBSERVE_MAX_TOPUP_USD）。";
-  return "";
-}
-
-function updateTotal() {
-  const info = modalState && modalState.info;
-  if (!info) return;
-  const a = modalState.amount;
-  const cur = (info.budget || {}).current_usd;
-  const err = amountError(info, a);
-  const total = cur != null && a != null ? cur + a : null;
-  const box = document.getElementById("bm-total");
-  const warn = document.getElementById("bm-warn");
-  box.replaceChildren(t(a != null && !err && total != null ? "新的总预算 New budget：" + money(cur) + " + " + money(a) + " = " + money(total) : (err || "")));
-  warn.replaceChildren(t(a != null && !err ? "这会花真实的 LLM 费用，最多再花约 " + money(a) + "（已在途的请求可能略超）。 This spends real LLM money, up to " + money(a) + " more (requests already in flight may overshoot slightly)." + (info.dry_run ? "  【试运行 DRY RUN：只记录，不会真的执行】" : "") : "金额选好之后，这里会写明最多会花多少钱。"));
-  for (const node of document.querySelectorAll("#bm-body .pill[data-amount]")) node.className = "pill" + (Number(node.dataset.amount) === a ? " on" : "");
-  document.getElementById("bm-confirm").disabled = !!err || modalState.busy;
-}
-
-async function confirmBudget() {
-  if (!modalState || modalState.busy) return;
-  const info = modalState.info;
-  if (amountError(info, modalState.amount)) return;
-  modalState.busy = true;
-  document.getElementById("bm-confirm").disabled = true;
-  msg(info.action === "resume" ? "续跑中… resuming…" : "写入中… writing…", "");
-  try {
-    const r = await fetch("/api/runs/" + modalState.run.split("/").map(encodeURIComponent).join("/") + "/budget", {
-      method: "POST", headers: { "Content-Type": "application/json", "X-Observe-Token": OBSERVE_TOKEN }, body: JSON.stringify({ amount_usd: modalState.amount }),
+    await postJson("/api/runs/" + selectedRun.split("/").map(encodeURIComponent).join("/") + "/budget", {
+      amount_usd: Number(document.getElementById("budget-amount").value),
     });
-    const doc = await r.json();
-    if (!r.ok || !doc.ok) throw new Error(doc && doc.error ? doc.error : "HTTP " + r.status);
-    const what = doc.dry_run ? "【试运行】已记录，没有启动任何进程：" + (doc.command ? doc.command.join(" ") : "不会写控制文件") : doc.action === "resume" ? "已启动续跑（pid " + doc.pid + "，日志 " + doc.log + "）。下面的页面会实时显示进展。" : "已写入控制文件：运行会在下一次请求前读到新预算。";
-    msg(what, "ok");
-    document.getElementById("bm-cancel").textContent = "关闭 Close";
-    document.getElementById("bm-confirm").style.display = "none";
-  } catch (err) {
-    modalState.busy = false;
-    msg("没有执行：" + err.message, "err");
-    document.getElementById("bm-confirm").disabled = false;
+    document.getElementById("budget-modal").classList.remove("open");
+  } catch (error) {
+    document.getElementById("budget-note").textContent = error.message;
   }
-}
-
-document.getElementById("budget-modal").addEventListener("click", (event) => { if (event.target.id === "budget-modal") closeBudget(); });
-
-function closeReset() {
-  document.getElementById("reset-modal").classList.remove("open");
-}
-
-function resetLine(row) {
-  if (row.action === "skip") return row.id + " — " + (row.reason || "跳过");
-  const how = row.action === "topup_live" ? "运行中，马上加上" : "已停下，续跑并加上";
-  return row.id + " — " + how + " " + money(row.old_budget_usd) + " → " + money(row.new_budget_usd);
-}
-
-async function openReset() {
-  const modal = document.getElementById("reset-modal");
-  const body = document.getElementById("reset-body");
-  modal.classList.add("open");
-  body.replaceChildren(el("div", { class: "msg" }, [t("正在读取每一次搜索…")]));
-  let plan;
+});
+document.getElementById("budget-close").addEventListener("click", () => document.getElementById("budget-modal").classList.remove("open"));
+document.getElementById("settings-open").addEventListener("click", async () => {
+  const doc = await (await fetch("/api/settings/model")).json();
+  const select = document.getElementById("settings-model");
+  select.innerHTML = (doc.choices || []).map((item) => `<option value="${esc(item.provider)}\t${esc(item.id)}">${esc(item.provider)} ${esc(item.id)}</option>`).join("");
+  const current = `${doc.provider}\t${doc.model}`;
+  for (const option of select.options) if (option.value === current) option.selected = true;
+  document.getElementById("settings-note").textContent = `当前 ${doc.provider} ${doc.model}`;
+  document.getElementById("settings-modal").classList.add("open");
+});
+document.getElementById("settings-save").addEventListener("click", async () => {
+  const [provider, model] = document.getElementById("settings-model").value.split("\t");
   try {
-    const r = await fetch("/api/budget/reset");
-    plan = await r.json();
-    if (!r.ok) throw new Error((plan && plan.error) || "读取失败");
-  } catch (err) {
-    body.replaceChildren(el("div", { class: "msg err" }, [t(String(err.message || err))]), el("div", { class: "actions" }, [el("button", { type: "button", class: "btn-budget", onclick: closeReset }, [t("关闭")])]));
-    return;
+    await postJson("/api/settings/model", {provider, model});
+    document.getElementById("settings-modal").classList.remove("open");
+  } catch (error) {
+    document.getElementById("settings-note").textContent = error.message;
   }
-  const n = (plan.runs || []).length;
-  const added = (plan.runs || []).reduce((sum, row) => sum + (Number(row.new_budget_usd) - Number(row.old_budget_usd)), 0);
-  const kids = [el("div", { class: "warn" }, [t("每个能继续的搜索：去掉轮数上限和耐心次数，并在现有预算上加 15 美元。没有合格内核、显卡挂死或模型报错的搜索会跳过。确认后会真的加钱；已经停下的搜索会重新跑起来。")])];
-  kids.push(el("div", { class: "total" }, [t("将处理 " + n + " 个搜索，合计 +" + money(added) + "。跳过 " + (plan.skipped || []).length + " 个。")]));
-  if (n) kids.push(el("ul", { class: "budget-hist" }, plan.runs.map((row) => el("li", null, [t(resetLine(row))]))));
-  if ((plan.skipped || []).length) kids.push(el("ul", { class: "budget-hist" }, plan.skipped.map((row) => el("li", null, [t(resetLine(row))]))));
-  kids.push(el("div", { class: "msg" }, [t("预算改成「当前预算和已花费里较高的那个 + 15 美元」。正在跑的搜索如果是这次改动之前启动的，会马上加上这笔钱；轮数上限要等那个进程用新代码继续时才去掉。")]));
-  const msg = el("div", { class: "msg", id: "reset-msg" }, []);
-  kids.push(msg);
-  kids.push(el("div", { class: "actions" }, [
-    el("button", { type: "button", class: "btn-budget", id: "reset-cancel", onclick: closeReset }, [t("取消")]),
-    el("button", { type: "button", class: "btn-budget primary", id: "reset-confirm", onclick: confirmReset, disabled: n === 0 }, [t("确认重置")]),
-  ]));
-  body.replaceChildren(...kids);
+});
+document.getElementById("settings-close").addEventListener("click", () => document.getElementById("settings-modal").classList.remove("open"));
+document.getElementById("reset-all").addEventListener("click", async () => {
+  const preview = await (await fetch("/api/budget/reset")).json();
+  const count = (preview.runs || []).length;
+  if (!count || !window.confirm(`重置 ${count} 个搜索，每个在现有预算上加 $${preview.add_usd}？`)) return;
+  try { await postJson("/api/budget/reset"); } catch (error) { window.alert(error.message); }
+});
+document.getElementById("stop-all").addEventListener("click", async () => {
+  const preview = await (await fetch("/api/stop")).json();
+  const count = (preview.groups || []).length;
+  if (!count || !window.confirm(`停止 ${count} 组正在跑的搜索？`)) return;
+  try { await postJson("/api/stop"); } catch (error) { window.alert(error.message); }
+});
+document.getElementById("run-filters").addEventListener("submit", (event) => {
+  event.preventDefault();
+  for (const key of ["task", "dtype", "model", "status"]) applied[key] = document.getElementById("filter-" + key).value.trim();
+  runsOffset = 0;
+  loadRuns();
+});
+document.getElementById("runs-prev").addEventListener("click", () => {
+  runsOffset = Math.max(0, runsOffset - RUNS_LIMIT);
+  loadRuns();
+});
+document.getElementById("runs-next").addEventListener("click", () => {
+  runsOffset += RUNS_LIMIT;
+  loadRuns();
+});
+document.getElementById("budget-banner").addEventListener("click", (event) => {
+  const link = event.target.closest("a[data-run]");
+  if (!link) return;
+  event.preventDefault();
+  selectedRun = link.dataset.run;
+  show("detail");
+});
+
+const preset = new URLSearchParams(location.search).get("run");
+if (preset) {
+  selectedRun = preset;
+  show("detail");
+} else {
+  loadExperiments();
 }
-
-async function confirmReset() {
-  const button = document.getElementById("reset-confirm");
-  const msg = document.getElementById("reset-msg");
-  button.disabled = true;
-  msg.className = "msg";
-  msg.replaceChildren(t("正在重置…"));
-  try {
-    const r = await fetch("/api/budget/reset", { method: "POST", headers: { "Content-Type": "application/json", "X-Observe-Token": OBSERVE_TOKEN }, body: "{}" });
-    const doc = await r.json();
-    if (!r.ok) throw new Error((doc && doc.error) || "重置失败");
-    const done = (doc.runs || []).length;
-    const added = (doc.runs || []).reduce((sum, row) => sum + (Number(row.new_budget_usd) - Number(row.old_budget_usd)), 0);
-    msg.className = "msg ok";
-    msg.replaceChildren(t("已处理 " + done + " 个搜索，合计 +" + money(added) + "。"));
-    document.getElementById("reset-cancel").replaceChildren(t("关闭"));
-  } catch (err) {
-    msg.className = "msg err";
-    msg.replaceChildren(t(String(err.message || err)));
-    button.disabled = false;
-  }
-}
-
-document.getElementById("reset-all").addEventListener("click", openReset);
-document.getElementById("reset-modal").addEventListener("click", (event) => { if (event.target.id === "reset-modal") closeReset(); });
-
-function closeStop() {
-  document.getElementById("stop-modal").classList.remove("open");
-}
-
-function stopLine(group) {
-  const names = (group.ids && group.ids.length) ? group.ids.join("，") : (group.command || ("pid " + (group.pids || []).join(",")));
-  return names + " — 进程组 " + group.pgid;
-}
-
-function refusedLine(row) {
-  const who = (row.ids && row.ids.length) ? row.ids.join("，") : ("pid " + row.pid);
-  return who + " — " + (row.reason || "跳过");
-}
-
-async function openStop() {
-  const modal = document.getElementById("stop-modal");
-  const body = document.getElementById("stop-body");
-  modal.classList.add("open");
-  body.replaceChildren(el("div", { class: "msg" }, [t("正在查看正在跑的搜索…")]));
-  let plan;
-  try {
-    const r = await fetch("/api/stop");
-    plan = await r.json();
-    if (!r.ok) throw new Error((plan && plan.error) || "读取失败");
-  } catch (err) {
-    body.replaceChildren(el("div", { class: "msg err" }, [t(String(err.message || err))]), el("div", { class: "actions" }, [el("button", { type: "button", class: "btn-budget", onclick: closeStop }, [t("关闭")])]));
-    return;
-  }
-  const groups = plan.groups || [];
-  const kids = [el("div", { class: "warn" }, [t("停止正在跑的搜索，以及还会接着开下一个任务的实验队列。显卡上由这些搜索拉起的评测进程一起停。已经结束的搜索不动。停完之后，有合格内核的搜索以后还能续跑。")])];
-  kids.push(el("div", { class: "total" }, [t("将停止 " + groups.length + " 组进程。跳过 " + (plan.refused || []).length + " 个。")]));
-  if (groups.length) kids.push(el("ul", { class: "budget-hist" }, groups.map((group) => el("li", null, [t(stopLine(group))]))));
-  if ((plan.refused || []).length) kids.push(el("ul", { class: "budget-hist" }, plan.refused.map((row) => el("li", null, [t(refusedLine(row))]))));
-  const msg = el("div", { class: "msg", id: "stop-msg" }, []);
-  kids.push(msg);
-  kids.push(el("div", { class: "actions" }, [
-    el("button", { type: "button", class: "btn-budget", id: "stop-cancel", onclick: closeStop }, [t("取消")]),
-    el("button", { type: "button", class: "btn-budget btn-stop", id: "stop-confirm", onclick: confirmStop, disabled: groups.length === 0 }, [t("确认停止")]),
-  ]));
-  body.replaceChildren(...kids);
-}
-
-async function confirmStop() {
-  const button = document.getElementById("stop-confirm");
-  const msg = document.getElementById("stop-msg");
-  button.disabled = true;
-  msg.className = "msg";
-  msg.replaceChildren(t("正在停止…"));
-  try {
-    const r = await fetch("/api/stop", { method: "POST", headers: { "Content-Type": "application/json", "X-Observe-Token": OBSERVE_TOKEN }, body: "{}" });
-    const doc = await r.json();
-    if (!r.ok) throw new Error((doc && doc.error) || "停止失败");
-    msg.className = "msg ok";
-    msg.replaceChildren(t("已向 " + (doc.stopped || []).length + " 组进程发出停止。页面过一会儿会显示它们已停下。"));
-    document.getElementById("stop-cancel").replaceChildren(t("关闭"));
-  } catch (err) {
-    msg.className = "msg err";
-    msg.replaceChildren(t(String(err.message || err)));
-    button.disabled = false;
-  }
-}
-
-document.getElementById("stop-all").addEventListener("click", openStop);
-document.getElementById("stop-modal").addEventListener("click", (event) => { if (event.target.id === "stop-modal") closeStop(); });
-
-function closeSettings() {
-  document.getElementById("settings-modal").classList.remove("open");
-}
-
-async function openSettings() {
-  const modal = document.getElementById("settings-modal");
-  const body = document.getElementById("settings-body");
-  modal.classList.add("open");
-  body.replaceChildren(el("div", { class: "msg" }, [t("正在读取模型列表…")]));
-  let plan;
-  try {
-    const r = await fetch("/api/settings/model");
-    plan = await r.json();
-    if (!r.ok) throw new Error((plan && plan.error) || "读取失败");
-  } catch (err) {
-    body.replaceChildren(el("div", { class: "msg err" }, [t(String(err.message || err))]), el("div", { class: "actions" }, [el("button", { type: "button", class: "btn-budget", onclick: closeSettings }, [t("关闭")])]));
-    return;
-  }
-  const kids = [el("div", { class: "warn" }, [t("已经在跑的搜索仍用启动时的模型。下一次新开的搜索会用这里选的模型，包括实验队列里还没开始的下一个。")])];
-  let provider = "";
-  for (const choice of plan.choices || []) {
-    if (choice.provider !== provider) {
-      provider = choice.provider;
-      kids.push(el("div", { class: "model-group" }, [t(provider)]));
-    }
-    const selected = choice.provider === plan.provider && choice.id === plan.model;
-    const input = el("input", { type: "radio", name: "model-choice", "data-provider": choice.provider, "data-model": choice.id, checked: selected });
-    kids.push(el("label", { class: "model-choice" }, [input, el("span", null, [t(choice.name + "  "), el("code", null, [t(choice.id)])])]));
-  }
-  const msg = el("div", { class: "msg", id: "settings-msg" }, []);
-  kids.push(msg);
-  kids.push(el("div", { class: "actions" }, [
-    el("button", { type: "button", class: "btn-budget", id: "settings-cancel", onclick: closeSettings }, [t("取消")]),
-    el("button", { type: "button", class: "btn-budget primary", id: "settings-save", onclick: saveSettings, disabled: !(plan.choices || []).length }, [t("保存")]),
-  ]));
-  body.replaceChildren(...kids);
-}
-
-async function saveSettings() {
-  const picked = document.querySelector('#settings-modal input[name="model-choice"]:checked');
-  const msg = document.getElementById("settings-msg");
-  const button = document.getElementById("settings-save");
-  if (!picked) {
-    msg.className = "msg err";
-    msg.replaceChildren(t("先选一个模型"));
-    return;
-  }
-  button.disabled = true;
-  msg.className = "msg";
-  msg.replaceChildren(t("正在保存…"));
-  try {
-    const r = await fetch("/api/settings/model", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Observe-Token": OBSERVE_TOKEN },
-      body: JSON.stringify({ provider: picked.dataset.provider, model: picked.dataset.model }),
-    });
-    const doc = await r.json();
-    if (!r.ok) throw new Error((doc && doc.error) || "保存失败");
-    msg.className = "msg ok";
-    msg.replaceChildren(t("已保存：" + doc.provider + " / " + doc.model));
-    document.getElementById("settings-cancel").replaceChildren(t("关闭"));
-  } catch (err) {
-    msg.className = "msg err";
-    msg.replaceChildren(t(String(err.message || err)));
-    button.disabled = false;
-  }
-}
-
-document.getElementById("settings-open").addEventListener("click", openSettings);
-document.getElementById("settings-modal").addEventListener("click", (event) => { if (event.target.id === "settings-modal") closeSettings(); });
-document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeBudget(); });
-
-function pin(id) {
-  if (pinned === id) return;
-  pinned = id;
-  candLabel = null;
-  connect();
-}
-
-function card(title, valueNode, sub, subId, extra) {
-  const note = el("div", { class: "s" }, [t(sub || "")]);
-  if (subId) note.id = subId;
-  return el("div", { class: "card" }, [
-    el("div", { class: "k" }, [t(title)]),
-    valueNode,
-    sub || subId ? note : null,
-    extra ? el("div", { class: "s" }, [extra]) : null,
-  ]);
-}
-
-function renderStatus(overview) {
-  const gpu = overview.gpu || { holders: [], waiters: [] };
-  const holder = (gpu.holders || [])[0];
-  const waiters = gpu.waiters || [];
-  const live = (overview.live_runs || [])[0];
-  const solo = (overview.live_evals || [])[0];
-  const beat = overview.heartbeat;
-  const box = document.getElementById("status");
-  const holdValue = holder
-    ? el("div", { class: "v green" }, [t(holder.mode === "ex" ? "独占" : "共享")])
-    : el("div", { class: "v" }, [t("空闲")]);
-  const holdSub = holder ? "pid " + holder.pid + (holder.what ? " · " + holder.what : "") : "没有人占着";
-  const waitValue = el("div", { class: "v" }, [t(waiters.length ? String(waiters.length) : "无")]);
-  const waitSub = waiters.length ? waiters.map((w) => "pid " + w.pid).join("，") : "";
-  let searchValue, searchSub;
-  const nLive = (overview.live_runs || []).length;
-  if (live) {
-    const round = live.round ? "第 " + live.round + " 轮" + (live.max_rounds ? " / " + live.max_rounds : "") : "";
-    searchValue = el("div", { class: "v" }, [t(live.id || live.task || "")]);
-    const task = (live.task || "") + (live.dtype ? " " + live.dtype : "");
-    searchSub = [task, round, phaseText(live)].filter(Boolean).join(" · ");
-    if (nLive > 1) searchSub += " · 另有 " + (nLive - 1) + " 个搜索在跑";
-  } else if (solo) {
-    searchValue = el("div", { class: "v" }, [t(solo.task || "单独判卷")]);
-    searchSub = "单独判卷" + (solo.stage ? " · " + (labelOf(solo.stage) || solo.stage) : "");
-  } else {
-    searchValue = el("div", { class: "v" }, [t("未在跑")]);
-    searchSub = "";
-  }
-  const spent = live ? live.spent_usd : null;
-  const budget = live ? live.budget_usd : null;
-  const lb = live ? live.budget : null;
-  const budgetValue = el("div", { class: "v" + (lb && lb.flagged ? " " + (lb.level === "over" ? "red" : "") : "") }, [
-    el("span", { class: lb && lb.flagged ? "" : "blue" }, [t(money(spent))]),
-    t(budget == null ? "" : " / " + money(budget)),
-  ]);
-  const budgetSub = lb ? (lb.flagged ? lb.flags.map((f) => BUDGET_LABEL[f]).join(" + ") : lb.used_pct != null ? lb.used_pct.toFixed(0) + "%" : "") : "";
-  const budgetBtn = live && lb && lb.flagged ? budgetButton(live.id, live.control, false) : null;
-  const beatValue = el("div", { class: "v", id: "heartbeat-value" }, [t("—")]);
-  box.replaceChildren(
-    card("GPU 锁", holdValue, holdSub),
-    card("等待", waitValue, waitSub),
-    card("搜索", searchValue, searchSub),
-    card("预算", budgetValue, budgetSub, null, budgetBtn),
-    card("心跳", beatValue, "", "heartbeat-sub"),
-  );
-  updateHeartbeat(beat);
-}
-
-function labelOf(stage) {
-  const found = STAGES.find((pair) => pair[0] === stage);
-  return found ? found[1] : "";
-}
-
-function renderSearch(run, history) {
-  const box = document.getElementById("search");
-  box.replaceChildren(el("h2", null, [t(run && run.id ? run.id : "一次搜索")]));
-  if (!run) {
-    box.append(el("div", { class: "empty" }, [t("选一次运行，或等一次搜索开始")]));
-    return;
-  }
-  const task = (run.state && run.state.task) || (run.result && run.result.task) || "";
-  const dtype = (run.state && run.state.dtype) || (run.result && run.result.dtype) || "";
-  const round = run.state && run.state.round;
-  box.append(el("div", { class: "sub" }, [t([task, dtype, round ? "第 " + round + " 轮" : "", run.status === "running" ? "进行中" : run.status === "interrupted" ? "中断" : "已结束"].filter(Boolean).join(" · "))]));
-  if (run.result) {
-    const pub = run.publication === "confirmed" ? ("确认 " + speed(run.published_speedup)) : (run.publication || "未确认");
-    box.append(el("div", { class: "sub" }, [t("对外结论 " + pub)]));
-  }
-  const others = (history || []).filter((row) => row.id !== run.id && row.task === task && (!dtype || row.dtype === dtype));
-  if (others.length) {
-    const note = el("div", { class: "same" }, []);
-    note.append(el("p", null, [t("下面的表只属于这一次搜索。同一个算子还有 " + others.length + " 次搜索，成绩都在，点一行打开：")]));
-    const shown = others.slice().sort((a, b) => (b.status === "running") - (a.status === "running") || (Number(b.speedup) || 0) - (Number(a.speedup) || 0)).slice(0, 8);
-    for (const row of shown) {
-      note.append(el("button", { type: "button", onclick: () => pin(row.id) }, [t(row.id + " · " + runStateText(row))]));
-    }
-    if (others.length > shown.length) note.append(el("p", null, [t("还有 " + (others.length - shown.length) + " 次，在左侧列表里。")]));
-    box.append(note);
-  }
-  if (run.budget) {
-    const level = run.budget.flagged ? " " + run.budget.level : "";
-    const line = [el("span", { class: "money" + level }, [t(moneyText(run.budget, null))])].concat(badges(run.budget));
-    if (run.topped_up) line.push(el("span", { class: "badge topped", title: TOPPED_TIP }, [t("已加预算 TOPPED UP")]));
-    line.push(budgetButton(run.id, run.control, false));
-    box.append(el("div", { class: "budget-line" }, line));
-    const events = (run.budget_events || []).filter((e) => e.kind === "applied" || e.kind === "resume");
-    const waiting = (run.budget_events || []).filter((e) => e.kind === "requested").slice(-1).filter((e) => !events.some((x) => x.new_budget_usd === e.new_budget_usd));
-    if (events.length || waiting.length) {
-      const list = el("ul", { class: "budget-hist", title: TOPPED_TIP }, []);
-      if (run.initial_budget_usd != null) list.append(el("li", null, [t("原预算 " + money(run.initial_budget_usd))]));
-      for (const e of events) list.append(el("li", null, [t(historyLine(e))]));
-      for (const e of waiting) list.append(el("li", null, [t(historyLine(e) + "  （等运行读取 waiting）")]));
-      box.append(list);
-    }
-  }
-  const trace = run.trace || [];
-  const table = el("table", null, []);
-  table.append(el("thead", null, [el("tr", null, [el("th", null, [t("候选")]), el("th", null, [t("状态")]), el("th", null, [t("加速比")])])]));
-  const body = el("tbody", null, []);
-  const rows = trace.length ? trace : (run.candidates || []).map((c) => ({ label: c.label, status: c.status, speedup: c.speedup }));
-  if (!candLabel && rows.length) candLabel = rows[rows.length - 1].label;
-  rows.forEach((row, index) => {
-    const tag = row.improved ? "新起点" : (String(row.label || "").startsWith("init") ? "初稿" : "");
-    const status = row.status === "compile_error"
-      ? el("span", { class: "red" }, [t(row.status)])
-      : t(row.status || "—");
-    const recorded = (run.candidate_marks || [])[index] || {};
-    const phrases = recorded.label === row.label ? (recorded.marks || []) : [];
-    const statusKids = [status];
-    for (const phrase of phrases) {
-      statusKids.push(el("span", { class: phrase === "正确性复查没过" ? "tag fail" : "tag noise" }, [t(phrase)]));
-    }
-    body.append(el("tr", { class: "pick" + (row.label === candLabel ? " on" : ""), onclick: () => { candLabel = row.label; renderSearch(run, (lastFrame && lastFrame.history) || []); renderEval(run, lastOverview); } }, [
-      el("td", null, [t(row.label || ""), tag ? el("span", { class: "tag" }, [t(tag)]) : null]),
-      el("td", null, statusKids),
-      el("td", null, [t(speed(row.speedup))]),
-    ]));
-  });
-  table.append(body);
-  box.append(renderTimeline(run.timeline));
-  box.append(renderHandoff(run.handoff));
-  box.append(table);
-  box.append(chart(trace, run.confirmed_point));
-}
-
-let lastOverview = null;
-
-function renderHandoff(handoff) {
-  const box = el("div", { class: "handoff" }, []);
-  if (!handoff || !handoff.recorded) {
-    box.append(el("p", null, [t((handoff && handoff.note) || "这次搜索没有委员会记录")]));
-    return box;
-  }
-  box.append(el("p", null, [t("交接")]));
-  for (const name of ["first", "second"]) {
-    const taken = (handoff.rounds || []).filter((row) => row.committee === name);
-    const models = [...new Set(taken.map((row) => row.model).filter(Boolean))];
-    let text = name + " · 还没有轮次";
-    if (taken.length && models.length <= 1) {
-      text = name + " · " + (models[0] || "模型未记下") + " · " + taken.map((row) => row.label).join("、");
-    } else if (taken.length) {
-      text = name + " · " + taken.map((row) => row.label + " " + (row.model || "模型未记下")).join("、");
-    }
-    box.append(el("div", null, [t(text)]));
-  }
-  return box;
-}
-
-function renderTimeline(timeline) {
-  const wrap = el("div", { class: "tl" }, []);
-  const lanes = (timeline && timeline.lanes) || [
-    { label: "问模型", spans: [] },
-    { label: "等锁", spans: [] },
-    { label: "评测", spans: [] },
-  ];
-  wrap.append(el("div", { class: "tl-cap" }, [t("同一条钟")]));
-  let minT = Infinity;
-  let maxT = -Infinity;
-  for (const lane of lanes) {
-    for (const span of lane.spans || []) {
-      const start = Number(span.start);
-      const end = Number(span.end);
-      if (Number.isFinite(start)) { minT = Math.min(minT, start); maxT = Math.max(maxT, start); }
-      if (Number.isFinite(end)) { minT = Math.min(minT, end); maxT = Math.max(maxT, end); }
-    }
-  }
-  const widthT = maxT > minT ? maxT - minT : 1;
-  if (Number.isFinite(minT)) {
-    wrap.append(el("div", { class: "tl-scale" }, [t(when(minT)), t(when(maxT))]));
-  }
-  const tone = { "等锁": "lock", "评测": "eval" };
-  for (const lane of lanes) {
-    const track = el("div", { class: "tl-track" }, []);
-    if (Number.isFinite(minT)) {
-      for (const span of lane.spans || []) {
-        const start = Number(span.start);
-        const end = Number(span.end);
-        if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
-        const bar = el("span", { class: "tl-bar " + (tone[lane.label] || ""), title: span.label || lane.label }, []);
-        bar.style.left = ((start - minT) / widthT * 100) + "%";
-        bar.style.width = Math.max((end - start) / widthT * 100, 0.8) + "%";
-        track.append(bar);
-      }
-    }
-    wrap.append(el("div", { class: "tl-row" }, [
-      el("div", { class: "tl-name" }, [t(lane.label)]),
-      track,
-    ]));
-  }
-  return wrap;
-}
-
-function chart(trace, confirmed) {
-  const pts = (trace || []).filter((row) => row.best_speedup != null).map((row) => [Number(row.cost_usd) || 0, Number(row.best_speedup)]);
-  const mark = confirmed && confirmed.cost_usd != null && confirmed.speedup != null
-    && Number.isFinite(Number(confirmed.cost_usd)) && Number.isFinite(Number(confirmed.speedup))
-    ? [Number(confirmed.cost_usd), Number(confirmed.speedup)] : null;
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", "chart");
-  svg.setAttribute("viewBox", "0 0 320 150");
-  if (pts.length < 1 && !mark) return svg;
-  const xs = pts.map((p) => p[0]).concat(mark ? [mark[0]] : []);
-  const ys = pts.map((p) => p[1]).concat(mark ? [mark[1]] : []).concat([1]);
-  const minX = 0;
-  const maxX = Math.max(...xs, 0.01);
-  const minY = Math.min(...ys, 0.4);
-  const maxY = Math.max(...ys, 1.05);
-  const X = (x) => 36 + (x - minX) / (maxX - minX) * 270;
-  const Y = (y) => 12 + (maxY - y) / (maxY - minY) * 110;
-  const axis = document.createElementNS(svg.namespaceURI, "line");
-  axis.setAttribute("x1", "36"); axis.setAttribute("x2", "306"); axis.setAttribute("y1", String(Y(1))); axis.setAttribute("y2", String(Y(1)));
-  axis.setAttribute("stroke", "#c5c8d0"); axis.setAttribute("stroke-dasharray", "4 3");
-  const label = document.createElementNS(svg.namespaceURI, "text");
-  label.setAttribute("x", "250"); label.setAttribute("y", String(Y(1) - 4)); label.setAttribute("fill", "#6b7280"); label.setAttribute("font-size", "11");
-  label.textContent = "对照";
-  const xlab = document.createElementNS(svg.namespaceURI, "text");
-  xlab.setAttribute("x", "150"); xlab.setAttribute("y", "146"); xlab.setAttribute("fill", "#6b7280"); xlab.setAttribute("font-size", "11");
-  xlab.textContent = "累计美元";
-  svg.append(axis, label, xlab);
-  if (pts.length) {
-    const d = pts.map((p, i) => (i ? "H" + X(p[0]) + "V" + Y(p[1]) : "M" + X(p[0]) + " " + Y(p[1]))).join(" ");
-    const path = document.createElementNS(svg.namespaceURI, "path");
-    path.setAttribute("d", d); path.setAttribute("fill", "none"); path.setAttribute("stroke", "#0a66c2"); path.setAttribute("stroke-width", "2");
-    svg.append(path);
-  }
-  if (mark) {
-    const mx = X(mark[0]);
-    const my = Y(mark[1]);
-    const dot = document.createElementNS(svg.namespaceURI, "circle");
-    dot.setAttribute("cx", String(mx)); dot.setAttribute("cy", String(my)); dot.setAttribute("r", "4"); dot.setAttribute("fill", "#17803d");
-    const cap = document.createElementNS(svg.namespaceURI, "text");
-    cap.setAttribute("x", String(mx > 250 ? mx - 28 : mx + 6));
-    cap.setAttribute("y", String(Math.max(12, my - 6)));
-    cap.setAttribute("fill", "#17803d"); cap.setAttribute("font-size", "11");
-    cap.textContent = "确认";
-    svg.append(dot, cap);
-  }
-  return svg;
-}
-
-function stageState(run) {
-  const progress = run && run.eval_progress;
-  const live = run && run.status === "running" && progress && !progress.finished;
-  if (live) return { mode: "live", progress };
-  const cand = (run.candidates || []).find((c) => c.label === candLabel) || (run.candidates || []).slice(-1)[0];
-  return { mode: "past", cand };
-}
-
-function renderEval(run, overview) {
-  lastOverview = overview;
-  const box = document.getElementById("eval");
-  box.replaceChildren(el("h2", null, [t("一次评测")]));
-  if (!run) {
-    box.append(el("div", { class: "empty" }, [t("还没有评测")]));
-    return;
-  }
-  const view = stageState(run);
-  const who = view.mode === "live" ? (run.state && run.state.inflight_label) || (view.progress && view.progress.task) : (view.cand && view.cand.label);
-  box.append(el("div", { class: "sub" }, [t([who, run.state && run.state.task, run.state && run.state.dtype].filter(Boolean).join(" "))]));
-  const order = STAGES.map((pair) => pair[0]);
-  let current = "screen";
-  let failed = null;
-  if (view.mode === "live") {
-    current = view.progress.stage || "screen";
-    if (current === "done") current = "bench";
-  } else if (view.cand && view.cand.status) {
-    failed = FAIL[view.cand.status] || null;
-    if (view.cand.status === "ok") current = "done";
-    else if (failed) current = failed;
-    else current = view.cand.stage || "screen";
-  } else {
-    const row = (run.trace || []).find((item) => item.label === candLabel) || (run.trace || []).slice(-1)[0];
-    failed = row ? FAIL[row.status] || null : null;
-    if (row && row.status === "ok") current = "done";
-    else if (failed) current = failed;
-    else current = null;
-  }
-  const here = order.indexOf(current);
-  STAGES.forEach((pair, index) => {
-    const [key, name] = pair;
-    let mark = "○";
-    let klass = "stage";
-    let meta = "未到";
-    if (failed === key) {
-      mark = "×"; klass += " on"; meta = (view.cand && view.cand.status) || "失败";
-    } else if (current === "done" || (here > index && failed !== key)) {
-      mark = "✓"; meta = "完成";
-    } else if (key === current || (key === "safety" && current === "correctness" && here === index)) {
-      mark = "●"; klass += " on"; meta = "进行中";
-    }
-    if (view.mode === "live" && key === "correctness" && current === "correctness") {
-      const p = view.progress;
-      meta = "进行中" + (p.case ? "  用例 " + p.case : "") + (p.cases_total ? "  " + (p.cases_done || 0) + "/" + p.cases_total : "");
-      klass = "stage on"; mark = "●";
-    }
-    if (view.mode === "live" && key === "bench" && current === "bench") {
-      const p = view.progress;
-      meta = "第 " + (p.attempt || 1) + " 次" + (p.attempts_max ? " / " + p.attempts_max : "") + (p.noisy ? "  太吵" : "");
-    }
-    if (view.mode === "past" && view.cand && view.cand.status === "ok" && view.cand.mode === "quick" && key === "bench") {
-      mark = "○"; meta = "未到"; klass = "stage";
-    }
-    const markNode = el("span", { class: "mark" + (mark === "×" ? " red" : mark === "✓" || mark === "●" ? " green" : "") }, [t(mark)]);
-    box.append(el("div", { class: klass }, [markNode, el("span", { class: "name" }, [t(name)]), el("span", { class: "meta" }, [t(meta)])]));
-  });
-  if (view.mode === "past" && view.cand) {
-    const bits = [];
-    if (view.cand.candidate_us != null) bits.push(Number(view.cand.candidate_us).toFixed(1) + " 微秒");
-    if (view.cand.speedup != null) bits.push(speed(view.cand.speedup));
-    const roof = view.cand.roofline || {};
-    if (roof.bound) bits.push("屋顶 " + roof.bound);
-    if (view.cand.message) bits.push(view.cand.message);
-    if (bits.length) box.append(el("div", { class: "sub" }, [t(bits.join(" · "))]));
-    if (view.cand.excerpt) box.append(el("div", { class: "excerpt" }, [t(view.cand.excerpt)]));
-  }
-}
-
-function renderComponents(overview) {
-  const exp = (overview.experiments || []).find((job) => job.status === "running") || (overview.experiments || [])[0];
-  const live = (overview.live_runs || [])[0];
-  const tasks = overview.tasks || [];
-  const gpu = overview.gpu || {};
-  const holder = (gpu.holders || [])[0];
-  const box = document.getElementById("components");
-  const expText = !exp ? "" : exp.status === "running"
-    ? (exp.script + (exp.current ? " · " + JSON.stringify(exp.current).replace(/[{}"]/g, "") : ""))
-    : (exp.status === "done" ? "已结束" : exp.phase || exp.status);
-  box.replaceChildren(
-    card("题目", el("div", { class: "v blue" }, [t(String(tasks.length))]), ""),
-    card("搜索", el("div", { class: "v" + (live ? " blue" : "") }, [t(live ? "进行中" : "空闲")]), live ? (live.id || live.task || "") : ""),
-    card("验证环境", el("div", { class: "v" }, [t(live && live.phase === "evaluate" ? "评测" : (overview.live_evals || []).length ? "判卷" : "空闲")]), ""),
-    card("GPU 锁", el("div", { class: "v" + (holder ? " green" : "") }, [t(holder ? (holder.mode === "ex" ? "独占" : "共享") : "空闲")]), ""),
-    card("账本", el("div", { class: "v" }, [t(live ? money(live.spent_usd, 2) : "—")]), ""),
-    card("批量实验", el("div", { class: "v" }, [t(exp && exp.status === "running" ? "进行中" : "未在跑")]), expText),
-  );
-}
-
-function renderLocks(gpu) {
-  const box = document.getElementById("locks");
-  box.replaceChildren(el("h2", null, [t("最近的锁")]));
-  const events = (gpu && gpu.events) || [];
-  if (!events.length) {
-    box.append(el("div", { class: "empty" }, [t("还没有锁记录")]));
-    return;
-  }
-  const list = el("ul", null, []);
-  for (const event of events.slice(-8).reverse()) {
-    const kind = { wait: "开始等", acquire: "拿到", release: "放开", give_up: "放弃" }[event.kind] || event.kind;
-    list.append(el("li", null, [t(when(event.t) + "  pid " + event.pid + "  " + kind + "  " + (event.mode || "") + "  " + (event.what || ""))]));
-  }
-  box.append(list);
-}
-
-function connect() {
-  if (source) source.close();
-  const query = pinned ? "?run=" + encodeURIComponent(pinned) : "";
-  source = new EventSource("/api/stream" + query);
-  source.onmessage = (event) => {
-    try { render(JSON.parse(event.data)); }
-    catch (err) { /* ignore a partial frame */ }
-  };
-  source.onerror = () => {
-    document.getElementById("live-label").textContent = seen ? "重连" : "连接中";
-    document.getElementById("live-dot").className = "dot off";
-  };
-}
-connect();
-
-(function () {
-  const key = "observe-side-width";
-  const layout = document.querySelector(".layout");
-  const bar = document.getElementById("split-x");
-  const saved = Number(localStorage.getItem(key));
-  if (saved >= 180 && saved <= 800) layout.style.setProperty("--side", saved + "px");
-  let dragging = false;
-  bar.addEventListener("mousedown", (event) => {
-    dragging = true;
-    bar.classList.add("dragging");
-    document.body.style.userSelect = "none";
-    event.preventDefault();
-  });
-  bar.addEventListener("dblclick", () => {
-    layout.style.removeProperty("--side");
-    localStorage.removeItem(key);
-  });
-  window.addEventListener("mousemove", (event) => {
-    if (!dragging) return;
-    const width = Math.max(180, Math.min(event.clientX, Math.round(window.innerWidth * 0.6)));
-    layout.style.setProperty("--side", width + "px");
-  });
-  window.addEventListener("mouseup", () => {
-    if (!dragging) return;
-    dragging = false;
-    bar.classList.remove("dragging");
-    document.body.style.userSelect = "";
-    const width = parseInt(getComputedStyle(layout).getPropertyValue("--side"), 10);
-    if (Number.isFinite(width)) localStorage.setItem(key, String(width));
-  });
-})();
+const source = new EventSource("/api/v2/stream");
+source.onmessage = (event) => {
+  const frame = JSON.parse(event.data);
+  if (!frame.revision) return;
+  refreshBanner();
+  if (visible === "runs") loadRuns();
+  if (visible === "detail" && selectedRun) loadDetail(selectedRun);
+  if (visible === "experiments") loadExperiments();
+  if (visible === "compare" && selectedExperiment) loadCompare(selectedExperiment);
+  if (visible === "ledger") loadLedger();
+};
 </script>
 </body>
 </html>

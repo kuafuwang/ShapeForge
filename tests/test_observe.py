@@ -15,7 +15,7 @@ import urllib.request
 
 import pytest
 
-from observe import scan
+from observe import query as scan
 from observe.publish import publish
 from tcenv.evaluate import EvalReport
 
@@ -139,6 +139,7 @@ def dashboard(tmp_path, monkeypatch):
 
     runs = tmp_path / "runs"
     runs.mkdir()
+    monkeypatch.setenv("OBSERVE_POLL_S", "0.05")
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
     monkeypatch.setenv("AI_LOWERLING_OBSERVE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "books.sqlite"))
@@ -160,16 +161,18 @@ def dashboard(tmp_path, monkeypatch):
 def test_stream_reports_a_phase_change(dashboard):
     port, runs = dashboard
     _write_run(runs, "gemm_fp16", phase="plan", pid=os.getpid())
-    reader = _Events(f"http://127.0.0.1:{port}/api/stream")
+    reader = _Events(f"http://127.0.0.1:{port}/api/v2/stream")
     reader.start()
-    _wait(reader.events, lambda frame: frame["run"] and frame["run"]["state"]["phase"] == "plan")
+    _wait(reader.events, lambda frame: "revision" in frame)
     state_path = runs / "gemm_fp16" / "state.json"
     doc = json.loads(state_path.read_text())
     doc["phase"] = "evaluate"
     doc["updated_at"] = time.time()
     publish(state_path, doc)
-    frame = _wait(reader.events, lambda item: item["run"] and item["run"]["state"]["phase"] == "evaluate")
-    assert frame["run"]["state"]["phase"] == "evaluate"
+    frame = _wait(reader.events, lambda item: "gemm_fp16" in item.get("runs", []))
+    detail = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v2/runs/gemm_fp16", timeout=5).read().decode())
+    assert detail["state"]["phase"] == "evaluate"
+    assert frame["revision"] >= 1
     reader.close()
 
 

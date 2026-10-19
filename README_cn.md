@@ -105,7 +105,7 @@ profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词�
 
 ## 看板与预算告警
 
-`uv run python -m observe` 启动只读看板（默认 `http://127.0.0.1:8765`；改了代码要重启，页面在启动时读入）。它把每次运行的预算和已花费并排显示，并对越过预算的运行告警。规则是一个纯函数 `observe.budget.budget_status(spent, budget, stop_reason, running)`：
+`uv run python -m observe` 启动本机看板（默认 `http://127.0.0.1:8765`；改了代码要重启，页面在启动时读入）。四个视图：实验、臂对照（发布加速比、`fast_p`、每美元增益）、分页的运行列表、单次运行。从旧目录名归到一组的运行标成推断，不下胜负。读接口是 `/api/v2`。它把每次运行的预算和已花费并排显示，并对越过预算的运行告警。规则是一个纯函数 `observe.budget.budget_status(spent, budget, stop_reason, running)`：
 
 | 级别 | 颜色 | 条件 |
 |---|---|---|

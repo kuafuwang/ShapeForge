@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
+
+from .manifest import ensure
 
 
 ARMS = (
@@ -18,6 +21,38 @@ ARMS = (
 
 def nominal_usd(n: int, budget: float) -> float:
     return n * len(ARMS) * budget
+
+
+def declare(out: Path, *, n: int, budget: float, max_total_usd: float | None) -> dict:
+    """Write the manifest for a committee comparison. This does not start a search."""
+    return ensure(
+        Path(out),
+        kind="committee_ab",
+        driver="committee_ab",
+        frozen={
+            "trials_per_arm": n,
+            "budget_usd": budget,
+            "max_total_usd": max_total_usd,
+            "task": None,
+            "dtype": None,
+            "size": None,
+            "preset": None,
+            "model": None,
+            "committees": None,
+        },
+        arms=[
+            {
+                "arm_id": arm["id"],
+                "planned_n": n,
+                "delta": {
+                    "committees": arm["committees"],
+                    "plan_effort": arm["plan_effort"],
+                    "patch_effort": arm["patch_effort"],
+                },
+            }
+            for arm in ARMS
+        ],
+    )
 
 
 def matrix(*, n: int, budget: float, max_total_usd: float | None) -> dict:
@@ -40,10 +75,13 @@ def main(argv=None) -> int:
     ap.add_argument("--n", type=int, default=3)
     ap.add_argument("--budget", type=float, default=3.0)
     ap.add_argument("--max-total-usd", type=float, default=None)
+    ap.add_argument("--out", default=None, help="write experiment.json here and still do not start a search")
     a = ap.parse_args(argv)
     if a.execute:
         print("refused: experiments.committee_ab does not start a paid search")
         return 2
+    if a.out:
+        declare(Path(a.out), n=a.n, budget=a.budget, max_total_usd=a.max_total_usd)
     print(json.dumps(matrix(n=a.n, budget=a.budget, max_total_usd=a.max_total_usd), indent=1))
     return 0
 
