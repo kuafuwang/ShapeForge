@@ -3,6 +3,7 @@
 ``compute()`` calls the prompt and feedback functions with ``hw_feedback`` off (the arguments from before that switch, or ``hw_feedback=False``).
 ``tests/golden/hw_off.json`` is that output. Regenerate it on purpose when a prompt change other than the switch should become the new off baseline.
 A request hash covers the body ``chat.completions.create`` is given, not only ``messages``: model, max_tokens, reasoning_effort, extra_body, and tools.
+Two extra searches record the call sites the parameter sample does not: a length-capped draft retried once at the truncation effort, and a search whose planner and patch requests use different efforts.
 ``REQUEST_KEYS`` is the whitelist of keys ``LLM._params`` may produce; the test fails when the two sets diverge.
 Feedback entries store the text. System prompts stay hashes. Orchestrator entries are ordered by the request label, so round 1 and round 2 cannot trade places unnoticed.
 ``_meta`` (when, which commit, why) is written by ``--record`` and is not part of ``compute()``.
@@ -197,6 +198,48 @@ def _bind_labels(client):
     return llm_mod, original_chat
 
 
+def _length_then_kernel(script):
+    """First draft hits the length cap with no kernel. The retry asks the same question again."""
+    from .fakes import make_response
+
+    state = {"truncated": False}
+
+    def route(messages, **kw):
+        last = messages[-1]["content"] if messages else ""
+        if not state["truncated"] and "Translate this Triton kernel" in last:
+            state["truncated"] = True
+            return make_response("", finish="length")
+        return script(messages, **kw)
+
+    return route
+
+
+def _orch_key(task: str, plan_mix: bool, knobs: dict) -> str:
+    parts = [f"orchestrator|{task}|plan_mix={int(plan_mix)}"]
+    if knobs.get("truncation_retry"):
+        parts.append("truncation_retry=1")
+    if knobs.get("plan_reasoning_effort"):
+        parts.append(f"plan_effort={knobs['plan_reasoning_effort']}")
+        parts.append(f"patch_effort={knobs['patch_reasoning_effort']}")
+    return "|".join(parts)
+
+
+def _check_knobs(knobs: dict, calls: list[dict]) -> None:
+    """The recorded calls are the ones the search actually sent, not a standalone ``_params`` sample."""
+    if knobs.get("truncation_retry"):
+        inits = [call for call in calls if call.get("_label") == "init"]
+        if len(inits) != 2 or "reasoning_effort" in inits[0] or inits[1].get("reasoning_effort") != "low":
+            raise RuntimeError("the length-capped draft was not retried once at effort low")
+    plan_effort = knobs.get("plan_reasoning_effort")
+    patch_effort = knobs.get("patch_reasoning_effort")
+    if plan_effort or patch_effort:
+        for call in calls:
+            label = str(call.get("_label") or "")
+            want = plan_effort if label.endswith(".plan") or ".plan." in label else patch_effort
+            if call.get("reasoning_effort") != want:
+                raise RuntimeError(f"{label} was sent with effort {call.get('reasoning_effort')}, not {want}")
+
+
 def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]:
     """Every request an orchestrator sends in a scripted two-round search.
 
@@ -212,9 +255,25 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
     out: dict[str, object] = {}
     import tempfile
 
-    for task, kernel, rep_name, plan_mix in (("relu", KERNEL, "relu_best", False), ("relu", KERNEL, "relu_best", True), ("flash_attention", "flash_attention_kernel", "fa_flash_best", False), ("gemm", "gemm_kernel", "gemm_paper_best", True)):
+    # The first four keep the knobs off. The last two are the only records of a truncation retry and of separate plan and patch efforts.
+    cases = (
+        ("relu", KERNEL, "relu_best", False, {}),
+        ("relu", KERNEL, "relu_best", True, {}),
+        ("flash_attention", "flash_attention_kernel", "fa_flash_best", False, {}),
+        ("gemm", "gemm_kernel", "gemm_paper_best", True, {}),
+        ("relu", KERNEL, "relu_best", False, {"truncation_retry": True}),
+        ("relu", KERNEL, "relu_best", False, {"plan_reasoning_effort": "high", "patch_reasoning_effort": "low"}),
+    )
+    for task, kernel, rep_name, plan_mix, knobs in cases:
         script = llm_script(code("speed=0.9", kernel), patches={"A": code("speed=1.0", kernel), "B": code("speed=1.3", kernel), "C": code("speed=0.6", kernel)})
-        llm_cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False, truncation_retry=False)
+        if knobs.get("truncation_retry"):
+            script = _length_then_kernel(script)
+        llm_cfg = LLMConfig(
+            base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False,
+            truncation_retry=bool(knobs.get("truncation_retry")),
+            plan_reasoning_effort=knobs.get("plan_reasoning_effort"),
+            patch_reasoning_effort=knobs.get("patch_reasoning_effort"),
+        )
         # This hash is the switches-off prompt. The production default is on; the off path is what the golden file records.
         off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
         search = SearchConfig(budget_usd=5.0, branches=3, max_rounds=2, max_repair_tries=2, eval_reps=3, plan_mix=plan_mix, **{**off, **(extra_search or {})})
@@ -226,6 +285,7 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
                 asyncio.run(orch.run())
             finally:
                 llm_mod.LLM.chat = original_chat
+        _check_knobs(knobs, client.calls)
         ranked = []
         for index, call in enumerate(client.calls):
             label = call.get("_label") or ""
@@ -235,7 +295,7 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
         ranked.sort()
         each = [{"label": label, "sha": digest} for label, _index, digest in ranked]
         joined = "\n".join(f"{row['label']} {row['sha']}" for row in each)
-        out[f"orchestrator|{task}|plan_mix={int(plan_mix)}"] = {"requests": len(each), "sha": sha(joined), "each": each}
+        out[_orch_key(task, plan_mix, knobs)] = {"requests": len(each), "sha": sha(joined), "each": each}
     return out
 
 

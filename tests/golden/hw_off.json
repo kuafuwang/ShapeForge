@@ -1,8 +1,8 @@
 {
 "_meta": {
-"git_commit": "8a25b550295ce3b5056ba11f96978ee17c872fff",
-"reason": "hash the whole outbound request, keep feedback text, and order orchestrator calls by label",
-"recorded_at": "2026-10-19T15:07:24+08:00"
+"git_commit": "4932d7690ceb86a8443b7f0e32575facc0bb6b2a",
+"reason": "record the truncation retry and the separate plan and patch efforts on the requests the search actually sends",
+"recorded_at": "2026-10-19T15:14:34+08:00"
 },
 "feedback": {
 "format_feedback_cut|compile_error": "STATUS: compile_error  (stage reached: compile)\nMetal compiler rejected the kernel\n\nMetal compiler errors (line numbers refer to your kernel source):\nkernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n",
@@ -144,6 +144,94 @@
 ],
 "requests": 9,
 "sha": "dac8e89ace8ae769ae4d87de1010791701cf0245"
+},
+"orchestrator|relu|plan_mix=0|plan_effort=high|patch_effort=low": {
+"each": [
+{
+"label": "init",
+"sha": "c55b9be6a22495502cd9abc90ef7b9dd59b6bfff"
+},
+{
+"label": "r1.p0",
+"sha": "9fd96907cf9e8ef3d173767b99e6e1d4a9c73c83"
+},
+{
+"label": "r1.p1",
+"sha": "1fe5b1c8946490034d153cb32214293a54aa6d64"
+},
+{
+"label": "r1.p2",
+"sha": "b9f3ec75177cc4163319bbadaba7936fd0430928"
+},
+{
+"label": "r1.plan",
+"sha": "69d1944f6bc1f67d62c6c091edb19ab48342d650"
+},
+{
+"label": "r2.p0",
+"sha": "3c8ba78c890fc1e4bada5bae1a2cb957bdee5c8b"
+},
+{
+"label": "r2.p1",
+"sha": "521af2ad4b61ff04274284bad86786401d1e4d2c"
+},
+{
+"label": "r2.p2",
+"sha": "4004aac42d56880ae6108033a272a3159af995a9"
+},
+{
+"label": "r2.plan",
+"sha": "d6797dc3af8711b01203400c759a066f20c23ccf"
+}
+],
+"requests": 9,
+"sha": "edb4ac39d7c6b962fd77c7fcef7512edd7b9be4a"
+},
+"orchestrator|relu|plan_mix=0|truncation_retry=1": {
+"each": [
+{
+"label": "init",
+"sha": "d18edef19a48f6327bb903a315a57bb399faeb5f"
+},
+{
+"label": "init",
+"sha": "c55b9be6a22495502cd9abc90ef7b9dd59b6bfff"
+},
+{
+"label": "r1.p0",
+"sha": "6b837fbb62cfdedee48ccd16159293d2fd19dd19"
+},
+{
+"label": "r1.p1",
+"sha": "50f99e42613ba8cb3d0988eeeb68758a1db20e3d"
+},
+{
+"label": "r1.p2",
+"sha": "3cc46f1629d2e0a0e5df09b3b20657a929651771"
+},
+{
+"label": "r1.plan",
+"sha": "60977263677fa888e76478d2e4b66cdb51ce1eea"
+},
+{
+"label": "r2.p0",
+"sha": "b153407d75d9be97ccd699f73656c606ae6f8341"
+},
+{
+"label": "r2.p1",
+"sha": "628700d8654721f94a165e52167be4682b3f1f01"
+},
+{
+"label": "r2.p2",
+"sha": "47ccefa9dbf5c093ac3d1157329f0d5cdafa33fd"
+},
+{
+"label": "r2.plan",
+"sha": "8f8140813e29af9954d1c8a7ff215190c1e144f2"
+}
+],
+"requests": 10,
+"sha": "4ab27ed59dce6445d6cc4421b188cff07c9f2a63"
 },
 "orchestrator|relu|plan_mix=1": {
 "each": [

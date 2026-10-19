@@ -55,7 +55,7 @@ def _diff(got: dict, want: dict) -> list[str]:
 
 def test_switch_off_is_byte_identical_to_the_behaviour_recorded_before_the_feature():
     golden = json.loads(G.GOLDEN.read_text())
-    assert len(golden["system_prompt"]) >= 100 and len(golden["user_messages"]) >= 100 and len(golden["feedback"]) >= 12 and len(golden["outbound"]) >= 4 and len(golden["orchestrator"]) == 4
+    assert len(golden["system_prompt"]) >= 100 and len(golden["user_messages"]) >= 100 and len(golden["feedback"]) >= 12 and len(golden["outbound"]) >= 4 and len(golden["orchestrator"]) == 6
     assert _diff(G.compute(), golden) == []
 
 
