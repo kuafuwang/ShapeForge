@@ -115,6 +115,7 @@ def pipeline_stats(kernel: CompiledKernel, contract, device_info: dict) -> dict:
         "max_total_threads_per_threadgroup": max_threads,
         "thread_execution_width": kernel.execution_width,
         "static_threadgroup_bytes": kernel.static_tg_bytes,
+        "max_threadgroup_memory_bytes": int(device_info["max_threadgroup_memory_bytes"]),
         "launch_threads_per_threadgroup": contract.threads_per_tg,
         "launch_threadgroups": contract.num_threadgroups,
         "hints": hints,

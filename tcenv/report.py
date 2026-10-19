@@ -8,11 +8,82 @@ from __future__ import annotations
 from .evaluate import EvalReport
 
 
+# 基线比下界快过 5% 时，下界的运算量假设不成立。与 taic.feedback_extra.CLEAR_OF_BOUND 同一条线。
+_CLEAR_OF_BOUND = 0.95
+
+
+def _num(value) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _baseline_beats_bound(rep: EvalReport) -> tuple[str, float, float] | None:
+    """(name, microseconds, lower bound) when the fastest baseline is clearly under the roofline bound."""
+    roof = rep.roofline if isinstance(rep.roofline, dict) else {}
+    bases = rep.baseline_us if isinstance(rep.baseline_us, dict) else {}
+    lb = _num(roof.get("lower_bound_us"))
+    usable = {k: float(v) for k, v in bases.items() if _num(v) is not None and float(v) > 0}
+    if lb is None or lb <= 0 or not usable:
+        return None
+    name, us = min(usable.items(), key=lambda kv: kv[1])
+    return (name, us, lb) if us < lb * _CLEAR_OF_BOUND else None
+
+
+def _measured_head(rep: EvalReport) -> list[str]:
+    """Short measured lines placed before the long sections, so a later 6000-character cut cannot drop them.
+
+    A missing field is omitted. A baseline that beats the bound replaces the "times the lower bound" line:
+    that multiple would say the kernel is near a peak the baseline has already passed.
+    """
+    lines: list[str] = []
+    roof = rep.roofline if isinstance(rep.roofline, dict) else {}
+    bound = roof.get("bound")
+    if bound in ("memory", "compute"):
+        lines.append(f"bound: {bound}")
+    beat = _baseline_beats_bound(rep)
+    gap = _num(roof.get("time_over_lower_bound"))
+    if beat is not None:
+        name, us, lb = beat
+        lines.append(f"lower bound {lb:.1f} us is not the target: fastest baseline ({name}) is already {us:.1f} us")
+    elif gap is not None and gap > 0:
+        lines.append(f"candidate is {gap:.2f}x the lower bound")
+    if bound == "compute":
+        frac = _num(roof.get("compute_fraction"))
+        if frac is not None:
+            lines.append(f"compute utilization: {frac:.0%}")
+    elif bound == "memory":
+        frac = _num(roof.get("bandwidth_fraction"))
+        if frac is not None:
+            lines.append(f"bandwidth utilization: {frac:.0%}")
+    bench = rep.benchmark if isinstance(rep.benchmark, dict) else {}
+    cand = bench.get("candidate") if isinstance(bench.get("candidate"), dict) else None
+    cv = _num(cand.get("cv")) if cand else None
+    if cv is not None:
+        lines.append(f"timing cv: {cv:.1%}")
+    pipe = rep.pipeline if isinstance(rep.pipeline, dict) else {}
+    static = pipe.get("static_threadgroup_bytes")
+    limit = pipe.get("max_threadgroup_memory_bytes")
+    if isinstance(static, int) and not isinstance(static, bool) and isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
+        lines.append(f"threadgroup memory: {static} B / {limit} B limit")
+    elif isinstance(static, int) and not isinstance(static, bool):
+        lines.append(f"threadgroup memory: {static} B")
+    cap = pipe.get("max_total_threads_per_threadgroup")
+    launch = pipe.get("launch_threads_per_threadgroup")
+    if isinstance(cap, int) and not isinstance(cap, bool) and isinstance(launch, int) and not isinstance(launch, bool):
+        lines.append(f"threadgroup thread cap {cap}, this launch {launch}")
+    if not lines:
+        return []
+    return ["Measured:", *[f"  {line}" for line in lines]]
+
+
 # 把已经写好的判决收成短文。编译错误按字符截断；安全、非确定、校验按条数截断。ABI 违例逐条全留。
 # 性能和形式验证只在 status 为 ok 时附上：已经判死的候选不再带着速度结论回去。
+# 数字头紧跟 STATUS。搜索再把全文截到固定字数时，砍的是后面的正确性散文，不是这几行。
 def format_feedback(rep: EvalReport, *, max_errors_chars: int = 2500) -> str:
     L: list[str] = []
     L.append(f"STATUS: {rep.status}  (stage reached: {rep.stage})")
+    L.extend(_measured_head(rep))
     if rep.message:
         L.append(rep.message)
 
@@ -68,15 +139,17 @@ def format_feedback(rep: EvalReport, *, max_errors_chars: int = 2500) -> str:
             L.append(f"Evidence: {rep.correctness['coverage'].get('kind')}: {scope}")
     if rep.roofline:
         r = rep.roofline
-        L.append("\nRoofline (measured peaks on this machine):")
-        L.append(
-            f"  bound: {r['bound']}; achieved {r['achieved_gbps']:.0f} GB/s ({r['bandwidth_fraction']:.0%} of {r['peak_gbps_measured']:.0f} GB/s peak)"
-            + (f", {r['achieved_tflops']:.2f} TFLOP/s ({r['compute_fraction']:.0%} of {r['peak_tflops_measured']:.1f})" if r["flops"] else "")
-        )
-        if r.get("time_over_lower_bound"):
+        if _num(r.get("achieved_gbps")) is not None and _num(r.get("peak_gbps_measured")) is not None and _num(r.get("bandwidth_fraction")) is not None:
+            L.append("\nRoofline (measured peaks on this machine):")
+            L.append(
+                f"  bound: {r['bound']}; achieved {r['achieved_gbps']:.0f} GB/s ({r['bandwidth_fraction']:.0%} of {r['peak_gbps_measured']:.0f} GB/s peak)"
+                + (f", {r['achieved_tflops']:.2f} TFLOP/s ({r['compute_fraction']:.0%} of {r['peak_tflops_measured']:.1f})" if r.get("flops") and _num(r.get("achieved_tflops")) is not None and _num(r.get("peak_tflops_measured")) is not None else "")
+            )
+        # 基线已经快过下界时，这句会把「离峰值还有百分之几」说成目标。数字头已经改写目标，这里不再重复。
+        if r.get("time_over_lower_bound") and _baseline_beats_bound(rep) is None:
             L.append(f"  roofline lower bound {r['lower_bound_us']:.1f} us; the candidate is {r['time_over_lower_bound']:.2f}x above it")
     # 编译通过后就会带上流水线统计。hints 在每线程寄存器把可驻留线程压低，或静态 threadgroup 内存超过设备上限一半时出现。
-    if rep.pipeline:
+    if rep.pipeline and all(k in rep.pipeline for k in ("max_total_threads_per_threadgroup", "launch_threads_per_threadgroup", "thread_execution_width", "static_threadgroup_bytes")):
         p = rep.pipeline
         L.append(
             f"\nPipeline: maxTotalThreadsPerThreadgroup={p['max_total_threads_per_threadgroup']} (launching {p['launch_threads_per_threadgroup']}), "

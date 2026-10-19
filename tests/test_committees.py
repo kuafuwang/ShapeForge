@@ -124,7 +124,10 @@ def test_same_model_still_hands_off_without_a_second_client(tmp_path, monkeypatc
     assert HANDOFF not in plans[0]["messages"][-1]["content"]
     for call in (plans[1], patches[1]):
         assert [m["role"] for m in call["messages"]] == ["system", "user"]
-        assert call["messages"][-1]["content"].startswith(handoff_for("second"))
+        body = call["messages"][-1]["content"]
+        prefix = handoff_for("second")
+        assert body.startswith(prefix)
+        assert "Measured:" in body[len(prefix):]
         assert all(m["role"] != "assistant" for m in call["messages"])
     assert all(model == "shared-model" for _kind, model in kinds)
     assert orch.ledger.cfg is cfg  # same model id does not replace the price config
