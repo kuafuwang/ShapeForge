@@ -272,6 +272,7 @@ def test_the_page_has_the_banner_with_the_over_budget_runs_at_first_paint(dashbo
     assert "over by $0.123 (+4.1%)" in page and "over by $0.036 (+1.2%)" in page and "$3.123 / $3.00" in page
     assert 'class="chip over"' in page and 'class="chip exhausted"' in page and 'class="chip near"' in page
     assert "总花费" in page
+    assert ".bb-list { max-height: 12rem; overflow-x: hidden; overflow-y: auto;" in page
 
 
 def test_a_named_run_without_its_own_model_does_not_require_a_null_model():
