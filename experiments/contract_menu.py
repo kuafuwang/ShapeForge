@@ -286,10 +286,22 @@ def main(argv=None) -> int:
     ap.add_argument("--dtype", default="fp16")
     ap.add_argument("--size", default="paper")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--report", action="store_true", help="rewrite summary.md from results already on disk")
+    ap.add_argument("--prescreen-top", type=int, default=None, help="keep at most this many contracts after the static screen, always including default")
     args = ap.parse_args(argv)
     out = REPO_ROOT / args.out if not Path(args.out).is_absolute() else Path(args.out)
     tokens = [part for part in args.contracts.split(",")]
+    if args.prescreen_top:
+        from .contract_sensitivity import static_screen_contracts
+
+        screened = static_screen_contracts(args.task, [t for t in tokens if t not in ("default", args.task)], args.dtype, args.size)
+        kept = ["default"]
+        for row in screened:
+            if row["kept"] and row["variant"] not in kept:
+                kept.append(row["variant"])
+            if len(kept) >= args.prescreen_top:
+                break
+        print(f"prescreen kept {kept}")
+        tokens = kept
     try:
         if args.report:
             saved = json_loads(out / MENU_FILE)

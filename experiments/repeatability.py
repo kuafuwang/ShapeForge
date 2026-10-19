@@ -31,6 +31,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TASKS = ("conv2d", "gemm", "swiglu")
 
 
+def repeatability_overrides(overrides: dict) -> dict:
+    """A trial must not read an experience index. Hints mined from the same task would leak into the holdout."""
+    out = {key: value for key, value in overrides.items() if key != "experience_index"}
+    out["experience_index"] = ""
+    return out
+
+
 # 目录是 `任务/trial_N`。接着上次的最优核会把多次试验收成一条更长的搜索，均值和标准差就不再是运行之间的波动。
 # --resume 只认这一次 trial 自己的 result.json；上一格的结果不会被拷进来当起点。
 def run_repeatability(tasks, dtype, size, out_dir: Path, *, trials=5, budget_scale=1.0, budget=None, max_total_usd=None, max_rounds=None, branches=None, model=None, resume=True, client_factory=None, evaluate_fn=None, log=print, **overrides) -> dict:
@@ -58,7 +65,7 @@ def run_repeatability(tasks, dtype, size, out_dir: Path, *, trials=5, budget_sca
                     break
                 log(f"\n##### {task} trial {t + 1}/{trials} (budget ${b:.2f})")
                 # 提供了 client_factory 时，每个新 trial 调用一次。换的是客户端，不是上一格的核。
-                run_one(task, dtype, size, rd, budget=b, max_rounds=max_rounds, branches=branches, model=model, client=client_factory() if client_factory else None, evaluate_fn=evaluate_fn, log=log, **overrides)
+                run_one(task, dtype, size, rd, budget=b, max_rounds=max_rounds, branches=branches, model=model, client=client_factory() if client_factory else None, evaluate_fn=evaluate_fn, log=log, **repeatability_overrides(overrides))
                 res = read_result(rd)
             vals.append(conclusion_of_run(rd, res)["speedup"])
             costs.append(res["spent_usd"])

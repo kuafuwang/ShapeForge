@@ -73,7 +73,7 @@ def test_a_run_dir_brief_keeps_search_best_off_the_published_number(tmp_path, ca
     assert doc["cands"][-1]["differential_recheck"] == "incorrect"
     assert doc["cands"][0]["within_noise"] is True and doc["cands"][-1]["within_noise"] is False
     assert "from-result" not in out
-    assert doc["counts"] == {"chat": 1, "retry": 1, "eval_stage": "bench"}
+    assert doc["counts"] == {"chat": 1, "retry": 1, "truncation_retries": 0, "eval_stage": "bench"}
     assert doc["paths"]["result"].endswith("result.json") and doc["paths"]["transcript"].endswith("transcript.jsonl")
     assert doc["paths"]["confirm"] is None and doc["paths"]["metal"] is None
     assert "gpu" not in doc
@@ -102,7 +102,7 @@ def test_candidate_dirs_supply_outcomes_when_the_trace_is_absent(tmp_path, capsy
     assert [c["label"] for c in doc["cands"]] == [f"c{i}" for i in range(1, 9)]
     assert doc["cands"][-1]["status"] == "ok" and doc["cands"][-1]["speedup"] == 8
     assert doc["cands"][-1]["within_noise"] is None and doc["cands"][-1]["differential_recheck"] == "timeout"
-    assert doc["counts"] == {"chat": None, "retry": None, "eval_stage": None}
+    assert doc["counts"] == {"chat": None, "retry": None, "truncation_retries": None, "eval_stage": None}
     assert "kernel void" not in out
 
 
@@ -168,7 +168,7 @@ def test_an_empty_directory_is_nulls(tmp_path, capsys):
     doc = json.loads(out)
     assert set(doc) == _KEYS
     assert doc["task"] is None and doc["published"] is None and doc["publication"] is None and doc["search_best"] is None
-    assert doc["cands"] == [] and doc["counts"] == {"chat": None, "retry": None, "eval_stage": None}
+    assert doc["cands"] == [] and doc["counts"] == {"chat": None, "retry": None, "truncation_retries": None, "eval_stage": None}
     assert all(v is None for v in doc["paths"].values())
 
 

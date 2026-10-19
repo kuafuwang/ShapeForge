@@ -5,6 +5,7 @@ The four arms, each a fresh request built from the original messages:
 * ``as_sent``       the messages exactly as they were sent (the control);
 * ``no_reasoning``  ``reasoning_content`` removed, and an empty truncated assistant turn dropped;
 * ``low_effort``    ``no_reasoning``, with ``reasoning_effort`` set to ``low``;
+* ``off_effort``    ``no_reasoning``, with ``reasoning_effort`` set to ``off``;
 * ``write_now``     ``no_reasoning`` plus one line telling the model to write the kernel immediately.
 
 Stops scheduling new requests once ``--max-usd`` (default 5) is spent. A few already started can finish past it.
@@ -26,7 +27,7 @@ from taic.orchestrator import _retry_without_reasoning
 from taic.parse import extract_metal
 
 REPO = Path(__file__).resolve().parent.parent
-ARMS = ("as_sent", "no_reasoning", "low_effort", "write_now")
+ARMS = ("as_sent", "no_reasoning", "low_effort", "write_now", "off_effort")
 KERNELS = {
     "fa_paper": "flash_attention_kernel",
     "conv2d_paper": "conv2d_kernel",
@@ -110,6 +111,7 @@ async def replay(*, n: int, max_usd: float, out: Path, concurrency: int) -> int:
     ledger = CostLedger(cfg, max_usd)
     normal = LLM(cfg, ledger, Transcript(out / "transcript.jsonl"), max_concurrency=concurrency)
     low = LLM(replace(cfg, reasoning_effort="low"), ledger, normal.transcript, max_concurrency=concurrency)
+    off = LLM(replace(cfg, reasoning_effort="off"), ledger, normal.transcript, max_concurrency=concurrency)
     samples = _samples(n)
     if not samples:
         print("no truncated replies found")
@@ -123,7 +125,7 @@ async def replay(*, n: int, max_usd: float, out: Path, concurrency: int) -> int:
             if ledger.total_usd >= max_usd:
                 return
             print(f"replay {sample['run']} {sample['label']} {arm} spent ${ledger.total_usd:.3f}", flush=True)
-            rows.append(await _one(low if arm == "low_effort" else normal, arm, sample))
+            rows.append(await _one(off if arm == "off_effort" else low if arm == "low_effort" else normal, arm, sample))
 
     await asyncio.gather(*[worker() for _ in range(concurrency)])
     (out / "data.json").write_text(json.dumps(rows, indent=1))
@@ -132,6 +134,7 @@ async def replay(*, n: int, max_usd: float, out: Path, concurrency: int) -> int:
     print(text)
     await normal.aclose()
     await low.aclose()
+    await off.aclose()
     return 0
 
 

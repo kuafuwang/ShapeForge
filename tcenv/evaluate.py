@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -37,6 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 STATUS_OK = "ok"
 # 安静机器上单次重复的 CV 远低于这个值（见行尾英文）。超过它说明测速时还有别的负载，bench 会重测并留下最安静的一次。
 NOISY_CV = 0.05  # quiet measurements here have a per-repetition CV of 0.5-1.5%; above this something else was using the machine
+_CORRECTNESS_CACHE: dict[tuple, dict] = {}
 # 吵的测速最多做这么多次；留下的是 CV 最小的那一次，三次都吵也仍然留下最安静的。
 BENCH_ATTEMPTS = 3  # noisy benchmarks are repeated; the quietest attempt is kept
 OWN_RUNNERS = ("candidate", "candidate_serial")
@@ -122,15 +124,50 @@ def evaluate_in_process(
     seed: int | None = None,
     reps: int = 15,
     cases: tuple[str, ...] | None = None,
+    fast_bench: bool = False,
 ) -> EvalReport:
     """Untimed stages hold the machine-wide GPU lock shared, the benchmark holds it exclusively (tcenv.gpulock)."""
     from .gpulock import gpu_lock
 
     with gpu_lock(f"{mode} evaluation of {task_name} {dtype} {size}", exclusive=False):
-        return _evaluate_in_process(task_name, dtype, size, kernel_source, mode=mode, seed=seed, reps=reps, cases=cases)
+        return _evaluate_in_process(task_name, dtype, size, kernel_source, mode=mode, seed=seed, reps=reps, cases=cases, fast_bench=fast_bench)
 
 
 # 关卡都在这个函数里。开头的 verify 只记账，失败与否都不看它。
+def _fast_bench_path(task_name: str, dtype: str, size: str) -> Path:
+    root = Path(os.environ.get("TCENV_FAST_BENCH_DIR", Path.home() / ".cache" / "ai_lowerling" / "fast_bench"))
+    safe = re.sub(r"[^A-Za-z0-9_.@-]+", "_", f"{task_name}_{dtype}_{size}")
+    return root / f"{safe}.json"
+
+
+def _remembered_baseline(task_name: str, dtype: str, size: str) -> str | None:
+    path = _fast_bench_path(task_name, dtype, size)
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    name = doc.get("best_baseline") if isinstance(doc, dict) else None
+    return name if isinstance(name, str) and name else None
+
+
+def selected_bench_names(baseline_names: list[str], *, fast_bench: bool, remembered: str | None) -> list[str]:
+    """Search-stage ``fast_bench`` drops the serial dispatch and every baseline except the remembered fastest one."""
+    names = ["candidate"]
+    if not fast_bench:
+        names.append("candidate_serial")
+    if fast_bench and remembered in baseline_names:
+        names.append(remembered)
+    else:
+        names.extend(baseline_names)
+    return names
+
+
+def _remember_baseline(task_name: str, dtype: str, size: str, name: str) -> None:
+    path = _fast_bench_path(task_name, dtype, size)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"best_baseline": name}))
+
+
 def _evaluate_in_process(
     task_name: str,
     dtype: str,
@@ -141,6 +178,7 @@ def _evaluate_in_process(
     seed: int | None,
     reps: int,
     cases: tuple[str, ...] | None,
+    fast_bench: bool = False,
 ) -> EvalReport:
     import torch  # noqa: F401  (imported early so failures are reported as crashes of the worker)
 
@@ -221,11 +259,15 @@ def _evaluate_in_process(
     argset = ArgSet(ctx, contract, tight=tight)
 
     baseline_cache: dict[str, Any] = {}
+    correctness_key = (task_name, dtype, size, seed)
+    remembered = _CORRECTNESS_CACHE.get(correctness_key)
 
     def baseline_fn(data):
         # validate 只对 CPU 参考使用名义容差，不用 MLX / PyTorch 基线自身的误差来放宽门槛。
         if mode == "validate":
             return None
+        if fast_bench and remembered is not None:
+            return remembered
         outs: dict[str, dict] = {}
         for impl in task.baselines:
             try:
@@ -233,6 +275,8 @@ def _evaluate_in_process(
                 outs[impl.name] = r.outputs()
             except Exception as e:  # noqa: BLE001
                 baseline_cache.setdefault("errors", []).append(f"{impl.name}: {type(e).__name__}: {e}")
+        if outs and fast_bench:
+            _CORRECTNESS_CACHE[correctness_key] = outs
         return outs or None
 
     # validate 只跑一个用例，并跳过「换输出初值再跑」的确定性检查。这一次要尽快让 shader validation 看见访存；全用例和确定性留在 quick / full。
@@ -304,10 +348,16 @@ def _evaluate_in_process(
     # 测速升级成独占锁。共享锁下可以并行做正确性检查；两份墙钟叠在一起会把 CV 抬过 NOISY_CV。
     with gpu_lock(f"benchmark of {task_name} {dtype} {size}") as lock_wait_s:
         calib = get_calibration()
-        runners: dict[str, Any] = {"candidate": cand_run, "candidate_serial": cand_serial_run}
+        runners: dict[str, Any] = {}
         base_runners = build_runners(task, data0.rounded)
-        for n, r in base_runners.items():
-            runners[n] = r.run_k
+        only = _remembered_baseline(task_name, dtype, size) if fast_bench else None
+        for name in selected_bench_names(list(base_runners), fast_bench=fast_bench, remembered=only):
+            if name == "candidate":
+                runners[name] = cand_run
+            elif name == "candidate_serial":
+                runners[name] = cand_serial_run
+            elif name in base_runners:
+                runners[name] = base_runners[name].run_k
         try:
             # 噪声是本轮除 candidate_serial 以外各计时器 CV 的最大值。serial 只作对照，不参与要不要重测。
             # 超过 NOISY_CV 就再测，因为这次墙钟里混进了别人的负载，不能用来比快慢。
@@ -350,7 +400,7 @@ def _evaluate_in_process(
         "candidate": cand.to_json(),
         "candidate_gpu_us_median": (sorted(cand_gpu)[len(cand_gpu) // 2] * 1e6) if cand_gpu else None,
         "baselines": {n: stats[n].to_json() for n in stats if n not in OWN_RUNNERS},
-        "candidate_serial_us": stats["candidate_serial"].median_us,
+        "candidate_serial_us": stats["candidate_serial"].median_us if "candidate_serial" in stats else None,
         "dispatch": "concurrent (as MLX); candidate_serial_us is the strictly serial time of the same kernel",
         "rotation_sets": R,
         "noise_cv": noise,  # largest per-repetition CV among the runners of the kept attempt
@@ -365,6 +415,8 @@ def _evaluate_in_process(
         best = min(rep.baseline_us, key=lambda n: rep.baseline_us[n])
         rep.speedup = rep.speedups[best]
         rep.benchmark["best_baseline"] = best
+        if fast_bench:
+            _remember_baseline(task_name, dtype, size, best)
     rep.roofline = roofline(task, cand.median_s, calib)
     try:  # compiler baseline (Triton -> Metal through triton-msl), when it was measured for this task
         from .triton_baseline import estimate, load_cached
@@ -494,6 +546,7 @@ def _run_worker(
     launch_deadline_s: float = LAUNCH_DEADLINE_S,
     worker_module: str = "tcenv.worker",
     progress_path: Path | None = None,
+    fast_bench: bool = False,
 ) -> EvalReport:
     """Run one worker under supervision.
 
@@ -514,6 +567,8 @@ def _run_worker(
             "task": task, "dtype": dtype, "size": size, "kernel_path": str(kernel_path), "mode": mode, "seed": seed,
             "reps": reps, "cases": cases, "out": str(out_path), "heartbeat": str(hb_path), "stage": str(stage_path),
         }
+        if fast_bench:
+            req["fast_bench"] = True
         req_path = tdp / "request.json"
         write_json_atomic(req_path, req)
         env = env_with_validation() if validation else dict(os.environ)
@@ -596,6 +651,7 @@ def evaluate(
     cases: list[str] | None = None,
     workdir: Path | None = None,
     progress_path: Path | None = None,
+    fast_bench: bool = False,
 ) -> EvalReport:
     """Evaluate ``kernel_source`` on ``task``. ``mode``: "quick" (compile+ABI+safety+correctness)
     or "full" (additionally shader validation and the benchmark)."""
@@ -644,7 +700,7 @@ def evaluate(
                 v.mode = "full"
                 v.elapsed_s = time.perf_counter() - t0
                 return _live(v)
-            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path)
+            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench)
             rep.safety = dict(rep.safety or {})
             rep.safety["validation"] = []
             rep.safety["shader_validation"] = "clean"

@@ -386,6 +386,7 @@ class Orchestrator:
         self._resume = None  # a ``taic.resume.Snapshot`` while a resumed run has not yet caught up with where it stopped
         self._resumes = 0
         self._branch_fail: dict[str, str] = {}  # branch label -> why its last attempt failed (used when search.rich_history is on)
+        self._branch_parent: dict[str, str] = {}
         self._search_seed: Candidate | None = None
         self._confirm_winner: Candidate | None = None
         # 续跑时目录里已有上一会话的 state.json。先空写会把看板抹掉，所以等到 restore 把账本和候选装回来再发布。
@@ -652,6 +653,7 @@ class Orchestrator:
                     self.evaluate_fn, self.task_name, self.dtype, self.size, source,
                     mode="quick" if self.search.correctness_only else "full", seed=phase_seed, reps=self.search.eval_reps,
                     progress_path=self.run_dir / "eval_progress.json",
+                    **({"fast_bench": True} if self.search.fast_bench and not self.search.correctness_only else {}),
                 )
                 self.evaluations += 1
             cand.report = rep
@@ -696,7 +698,7 @@ class Orchestrator:
             self._store_recheck(cand, recheck_doc)
         r = cand.report
         self.trace.append(
-            {"idx": cand.idx, "label": label, "status": r.status, "speedup": r.speedup, "cost_usd": cand.cost_usd, "t_s": cand.t_s, "best_speedup": self.best.speedup if self.best else None, "improved": cand.is_best, "within_noise": cand.within_noise, "eval_seed": used_seed, "eval_seed_from": seed_from, "differential_recheck": None if recheck_doc is None else recheck_doc["class"]}
+            {"idx": cand.idx, "label": label, "status": r.status, "speedup": r.speedup, "cost_usd": cand.cost_usd, "t_s": cand.t_s, "best_speedup": self.best.speedup if self.best else None, "improved": cand.is_best, "within_noise": cand.within_noise, "eval_seed": used_seed, "eval_seed_from": seed_from, "differential_recheck": None if recheck_doc is None else recheck_doc["class"], "parent_label": self._parent_of(label)}
         )
         self._publish_state(inflight=None)
         sp = f"{r.speedup:.3f}x" if r.speedup else "-"
@@ -706,6 +708,12 @@ class Orchestrator:
         if self.hangs >= self.search.max_hangs or self.crashes_in_a_row >= 3:
             raise StopRun("gpu_hang_circuit_breaker" if self.hangs >= self.search.max_hangs else "repeated_worker_crashes")
         return cand
+
+    def _parent_of(self, label: str) -> str | None:
+        for key, parent in self._branch_parent.items():
+            if label == key or label.startswith(key + "."):
+                return parent
+        return None
 
     def _phase_seed(self, phase: str, label: str, source: str) -> int | None:
         """Derived seed for a recorded run. None keeps the evaluator's own random draw (runs with no ``run_seed``)."""
@@ -798,16 +806,16 @@ class Orchestrator:
 
     # ------------------------------------------------------------------ generation with repair
     # 一个模型回合。美元检查在 LLM.chat 入口的 CostLedger.check：已花费达到预算就抛 BudgetExhausted，本回合发不出去。已经在飞的其它分支可能略超，闸门不预扣。
-    async def _ask(self, messages: list[dict], label: str, *, start_turn: int = 0, pending: list[dict] | None = None, quick_used: int = 0) -> tuple[str, list[dict], str | None]:
+    async def _ask(self, messages: list[dict], label: str, *, start_turn: int = 0, pending: list[dict] | None = None, quick_used: int = 0, reasoning_effort: str | None = None) -> tuple[str, list[dict], str | None]:
         """One model turn (with tools when enabled). Returns (reply text, conversation including the reply, finish_reason).
         ``start_turn`` / ``pending`` / ``quick_used`` continue a tool conversation interrupted by a restart (see ``chat_with_tools``)."""
         self._publish_state("llm")
         if self.cfg.use_tools:
             # 续跑时 quick_used 是中断前已经用掉的次数，这里只把剩余额度交给这一段对话，避免熔断被绕过。
             handlers = make_handlers(self.index, self._quick, max(0, self.search.max_quick_checks - quick_used))
-            reply, msgs = await self.llm.chat_with_tools(messages, [LOOKUP_TOOL, QUICK_CHECK_TOOL], handlers, label=label, start_turn=start_turn, pending=pending)
+            reply, msgs = await self.llm.chat_with_tools(messages, [LOOKUP_TOOL, QUICK_CHECK_TOOL], handlers, label=label, start_turn=start_turn, pending=pending, reasoning_effort=reasoning_effort)
             return reply.text(), msgs, reply.finish_reason
-        reply = await self.llm.chat(messages, label=label)
+        reply = await self.llm.chat(messages, label=label, reasoning_effort=reasoning_effort)
         return reply.text(), messages + [reply.message], reply.finish_reason
 
     # 从一轮提示写出内核，并最多再修补 max_repair_tries 次。抽不出 Metal 只追问、不产生候选；评测不合格就把失败反馈塞回。完整评测一旦 timeout，_eval 会先停掉整次搜索；若 max_hangs 尚未触达，这颗内核不再继续修补。
@@ -819,9 +827,11 @@ class Orchestrator:
         ``resume.attempt`` the repair attempt it was in, and ``resume.reply_text`` / ``resume.pending`` say how far the current attempt had got."""
         name = self.task.contract.kernel_name
         last_abi = None
+        patch_effort = self.cfg.patch_reasoning_effort
         for attempt in range(resume.attempt if resume is not None else 0, self.search.max_repair_tries + 1):
             tag = label if attempt == 0 else f"{label}.fix{attempt}"
             retried = False
+            ask_effort = patch_effort
             while True:
                 if resume is not None and attempt == resume.attempt and not retried:
                     r, resume = resume, None
@@ -829,15 +839,17 @@ class Orchestrator:
                     if r.reply_text is not None:  # the model had answered; the answer was not evaluated yet
                         text, messages, finish = r.reply_text, r.messages, None
                     else:
-                        text, messages, finish = await self._ask(r.messages, tag, start_turn=r.turn, pending=r.pending or None, quick_used=r.quick_used)
+                        text, messages, finish = await self._ask(r.messages, tag, start_turn=r.turn, pending=r.pending or None, quick_used=r.quick_used, reasoning_effort=ask_effort)
                 else:
-                    text, messages, finish = await self._ask(messages, tag)
+                    text, messages, finish = await self._ask(messages, tag, reasoning_effort=ask_effort)
                 source = extract_metal(text, name)
-                # 截断且没有内核：不占用这一次修补。丢掉回传的思考再问一次，问完无论结果如何都回到原来的流程。
+                # 截断且没有内核：不占用这一次修补。丢掉回传的思考再问一次。重试的推理强度默认降到 low。
                 if source is None and finish == "length" and self.cfg.truncation_retry and not retried:
                     messages = _retry_without_reasoning(messages)
                     retried = True
-                    self.log(f"  [{tag}] truncated with no kernel; retrying once without the echoed reasoning")
+                    retry_effort = self.cfg.truncation_retry_effort
+                    ask_effort = patch_effort if retry_effort in (None, "same") else retry_effort
+                    self.log(f"  [{tag}] truncated with no kernel; retrying once without the echoed reasoning (effort {ask_effort or 'same'})")
                     continue
                 break
             # 没有声明 kernel void <kernel_name> 的代码块不算写出内核。只追问，不进入评测。
@@ -872,6 +884,23 @@ class Orchestrator:
             messages = messages + [{"role": "user", "content": prompts.repair_user(fb, attempt + 1, self.search.max_repair_tries)}]
         return None
 
+    def _history_block(self) -> str | None:
+        """Structured ledger text when ``plan_ledger`` is on. ``None`` keeps the 24 plain history lines."""
+        if not self.search.plan_ledger:
+            return None
+        from .plan_ledger import format_ledger_for_planner, nodes_from_trace
+
+        nodes = nodes_from_trace(self.trace, self.history)
+        return format_ledger_for_planner(nodes)
+
+    def _diverse_parent(self):
+        """An eligible kernel whose static features differ from the seed, or None."""
+        if not self.search.diversity_archive or self.best is None:
+            return None
+        from .policy import select_diverse_parent
+
+        return select_diverse_parent(self.candidates, self.best, task_name=self.task_name)
+
     # ------------------------------------------------------------------ planning
     # 诊断当前种子的瓶颈并给出 K（search.branches）份互不相同的改法。规划请求失败或 JSON 抽不出方案时，用 FALLBACK_PLANS 顶上，这一轮搜索不因此结束。
     async def _plan(self, seed: Candidate, rnd: int, evidence: str = "", status: str = "") -> list[dict]:
@@ -880,14 +909,14 @@ class Orchestrator:
         fb = format_feedback(seed.report)[:FEEDBACK_CHARS] + evidence
         # 用报告里的 roofline.bound，不从反馈正文里猜。未知时这两次调用都不改原文。同一 bound 下各轮规划请求的系统提示相同。
         bound = bound_of(seed.report)
-        plan = prompts.plan_user(self.task, seed.source, fb, self.history, k, mixed=self.search.plan_mix, status=status, bound=bound)
+        plan = prompts.plan_user(self.task, seed.source, fb, self.history, k, mixed=self.search.plan_mix, status=status, bound=bound, history_block=self._history_block())
         msgs = [
             {"role": "system", "content": prompts.planning_system(self.system, bound)},
             {"role": "user", "content": prefix_handoff(self._handoff(rnd), plan)},
         ]
         for attempt in range(2):
             try:
-                reply = await self.llm.chat(msgs, label=f"r{rnd}.plan{'' if attempt == 0 else '.retry'}")
+                reply = await self.llm.chat(msgs, label=f"r{rnd}.plan{'' if attempt == 0 else '.retry'}", reasoning_effort=self.cfg.plan_reasoning_effort)
             except LLMError as e:
                 # 规划本身失败不杀搜索，退回通用方案，这一轮补丁仍会做。
                 self.log(f"  planner request failed ({str(e)[:160]}); using generic plans")
@@ -1051,6 +1080,13 @@ class Orchestrator:
                 block = await asyncio.to_thread(hw_feedback, self.task, seed.source, seed.report, log=self.log)
                 if block:
                     evidence += "\n\n" + block
+            if self.search.experience_index:
+                from .experience import load_index, retrieve_experience_hints
+                from .symptom import bound_of
+
+                hints = retrieve_experience_hints(load_index(Path(self.search.experience_index)), self.task_name, bound_of(seed.report), exclude_task=True)
+                if hints:
+                    evidence += "\n\n" + hints
             if self.search.target_note:
                 note = target_note(seed.report)
                 if note:
@@ -1074,11 +1110,22 @@ class Orchestrator:
                 # 中断前已经评完的分支直接沿用那颗候选，不再发请求、也不再占 GPU。
                 if part is not None and i in part.done:  # finished before the restart
                     return self._by_label(part.done[i])
+                parent = seed
+                # A branch that already started keeps the recorded conversation. One that has not started yet,
+                # including the unfinished branch of a resumed round, uses the same parent rule as a fresh round.
+                started = part is not None and (i in part.done or i in part.resume)
+                if not started and i == len(plans) - 1 and len(plans) > 1 and stagnant >= 2:
+                    alt = self._diverse_parent()
+                    if alt is not None and alt is not seed:
+                        parent = alt
+                        self._branch_parent[f"r{rnd}.p{i}"] = alt.label
+                        self.log(f"  branch r{rnd}.p{i} patches {alt.label} (feature archive, stagnant {stagnant})")
                 if part is not None and i in part.resume:  # part-way: continue the recorded conversation
                     br = part.resume[i]
                     self.log(f"  branch r{rnd}.p{i} continues at attempt {br.attempt}")
                     return await self._develop(br.messages, f"r{rnd}.p{i}", plan=plan["title"], resume=br)
-                patch = prompts.patch_user(self.task, seed.source, fb, plan, status=status)
+                base_fb = format_feedback(parent.report)[:FEEDBACK_CHARS] + evidence if parent is not seed else fb
+                patch = prompts.patch_user(self.task, parent.source, base_fb, plan, status=status)
                 msgs = [{"role": "system", "content": self.system}, {"role": "user", "content": prefix_handoff(self._handoff(rnd), patch)}]
                 return await self._develop(msgs, f"r{rnd}.p{i}", plan=plan["title"])
 

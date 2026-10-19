@@ -84,3 +84,70 @@ def next_stagnant(replaced: bool, stagnant: int) -> int:
 def patience_exhausted(stagnant: int, patience: int) -> bool:
     """True when rounds without a new seed have reached the patience limit."""
     return stagnant >= patience
+
+
+def feature_signature(source: str) -> tuple:
+    """Seven static source features. No compiler and no GPU."""
+    from .hwfeatures import analyze_source
+
+    ev = analyze_source(source)
+    matrix = ev.get("matrix") or {}
+    tiles = matrix.get("acc_tiles") or 0
+    if not isinstance(tiles, int):
+        tiles = 0
+    if tiles >= 32:
+        bucket = "32+"
+    elif tiles >= 16:
+        bucket = "16"
+    elif tiles >= 4:
+        bucket = "4"
+    elif tiles >= 1:
+        bucket = "1"
+    else:
+        bucket = "0"
+    group = ev.get("threadgroup") or {}
+    memory = ev.get("memory") or {}
+    load = (memory.get("device_load") or {}).get("max_bytes") or 0
+    online = ev.get("online_softmax") or {}
+    return (
+        bool(matrix.get("present")),
+        bucket,
+        bool(group.get("staging")),
+        group.get("double_buffer") == "explicit",
+        bool(group.get("register_prefetch")),
+        int(load) >= 8,
+        bool(online.get("present")),
+    )
+
+
+def _hamming(left: tuple, right: tuple) -> int:
+    return sum(a != b for a, b in zip(left, right))
+
+
+def select_diverse_parent(candidates: list, best, *, task_name: str = "", max_archive: int = 4):
+    """The eligible kernel in the archive farthest in feature space from ``best``, or None.
+
+    ``task_name`` is recorded by callers and is not used in the comparison. The archive keeps at most
+    ``max_archive`` signatures, each represented by its fastest kernel, and drops anything slower than
+    85% of the seed.
+    """
+    del task_name
+    if best is None:
+        return None
+    grouped: dict[tuple, object] = {}
+    for cand in candidates:
+        if not getattr(cand, "eligible", False) or getattr(cand, "recheck_rejected", False):
+            continue
+        if cand.source == best.source:
+            continue
+        if cand.speedup < 0.85 * best.speedup:
+            continue
+        sig = feature_signature(cand.source)
+        kept = grouped.get(sig)
+        if kept is None or cand.speedup > kept.speedup:
+            grouped[sig] = cand
+    archive = sorted(grouped.values(), key=lambda cand: cand.speedup, reverse=True)[:max_archive]
+    if not archive:
+        return None
+    seed_sig = feature_signature(best.source)
+    return max(archive, key=lambda cand: (_hamming(feature_signature(cand.source), seed_sig), cand.speedup, cand.label))

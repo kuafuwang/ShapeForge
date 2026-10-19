@@ -108,7 +108,7 @@ def summarize_run(run_dir: Path) -> dict:
         "publication": publication,
         "search_best": _first(docs, "best_speedup"),
         "cands": _cands(run, state, result),
-        "counts": {"chat": chat, "retry": retry, "eval_stage": _eval_stage(run, transcript_stage)},
+        "counts": {"chat": chat, "retry": retry, "truncation_retries": _truncation_retries(run / "transcript.jsonl"), "eval_stage": _eval_stage(run, transcript_stage)},
         "paths": _paths(run),
     }
     gpu = _gpu_events()
@@ -233,6 +233,19 @@ def _transcript_counts(path: Path) -> tuple[int | None, int | None, str | None]:
         if isinstance(found, str):
             stage = _text(found)
     return chat, retry, stage
+
+
+def _truncation_retries(path: Path) -> int | None:
+    """Replies the transcript marked as cut off by max_tokens. Missing file is null."""
+    if not path.is_file():
+        return None
+    n = 0
+    for ev in _jsonl(path):
+        if ev.get("event") == "warning" and ev.get("message") == "reply truncated by max_tokens":
+            n += 1
+        elif ev.get("finish_reason") == "length":
+            n += 1
+    return n
 
 
 def _eval_stage(run: Path, transcript_stage: str | None):

@@ -133,9 +133,9 @@ def _roofline_notes(bound: str | None) -> str:
 
 # 一轮的诊断加规划：从 roofline、流水线统计和源码指出主导瓶颈，再要 K 份互不相同的方案（JSON）。抽不出 JSON 时不在这里收场，编排器会重试或改用 FALLBACK_PLANS。
 # bound 为 memory 或 compute 时，只在这条用户消息里附上对应的那一节。其它值不附，也不改原句。
-def plan_user(task: Task, best_source: str, best_feedback: str, history: list[str], k: int, mixed: bool = False, status: str = "", bound: str | None = None) -> str:
-    # 只带最近 24 条尝试。更早的失败假设不会出现，模型有可能把它们再提一遍。
-    hist = "\n".join(f"- {h}" for h in history[-24:]) or "- (none yet)"
+def plan_user(task: Task, best_source: str, best_feedback: str, history: list[str], k: int, mixed: bool = False, status: str = "", bound: str | None = None, history_block: str | None = None) -> str:
+    # 只带最近 24 条尝试。history_block 非空时用它替换这一段；为空时字节与原来一致。
+    hist = history_block if history_block is not None else ("\n".join(f"- {h}" for h in history[-24:]) or "- (none yet)")
     # 混合规划时最后一份是低风险局部改动；否则 K 份都要求是结构性的，避免分支挤在同一种微调上。
     if mixed and k >= 2:
         kinds = f"propose {k} DIFFERENT optimization plans. " + MIXED_PLANS.format(m=k - 1, k=k).rstrip() + "\n"

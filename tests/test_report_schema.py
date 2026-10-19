@@ -133,12 +133,16 @@ def test_a_checkpoint_request_list_does_not_replace_the_transcript(tmp_path):
 
 
 def test_worker_request_version_0_loads_and_a_newer_request_is_refused():
+    from tcenv.schema import REQUEST_SCHEMA_VERSION
+
     base = {"task": "relu", "dtype": "fp16", "size": "small", "kernel_path": "k.metal", "mode": "quick", "seed": 1, "reps": 3, "out": "out.json"}
     assert read_request(base)["seed"] == 1
+    assert read_request({**base, "schema_version": 1})["reps"] == 3
+    assert read_request({**base, "schema_version": REQUEST_SCHEMA_VERSION, "fast_bench": True})["fast_bench"] is True
     with pytest.raises(SchemaError, match="needs human inspection"):
         read_request({**base, "skip_safety": True})
     with pytest.raises(SchemaError, match="needs human inspection"):
-        read_request({**base, "schema_version": 2})
+        read_request({**base, "schema_version": REQUEST_SCHEMA_VERSION + 1})
 
 
 def test_atomic_json_replace_leaves_only_the_finished_file(tmp_path):

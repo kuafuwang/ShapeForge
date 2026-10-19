@@ -120,9 +120,74 @@ def gemm_source(variant: str, dtype: str = "fp16") -> str:
     bm, bn, bk, th = parse(variant)
     wm, wn = simdgroup_layout(bm, bn, th)
     t = {"fp16": "half", "bf16": "bfloat"}[dtype]
-    # the Metal compiler allocates 4 bytes per threadgroup element of this kernel (reflection reports 2x the declared half bytes)
     pad = 8 if 4 * (bm * (bk + 8) + bk * (bn + 8)) <= 32768 else 0
     return GEMM_TEMPLATE.format(T=t, PAD=pad, THREADS=th, W=th // 32, WM=wm, WN=wn, SM=bm // wm, SN=bn // wn, FM=bm // wm // 8, FN=bn // wn // 8)
+
+
+def fa_source(variant: str, dtype: str = "fp16", size: str = "paper") -> str:
+    """A source-level stand-in used by the static screen. It is not a correct attention kernel."""
+    import importlib
+
+    mod = importlib.import_module("tasks.flash_attention.task")
+    task = mod.build_variant(dtype, size, variant)
+    constants = {name: value for name, _ty, value in task.contract.constants}
+    bm, bn, threads = int(constants["BLOCK_M"]), int(constants["BLOCK_N"]), int(task.contract.threads[0])
+    groups = max(1, threads // 32)
+    fragments = max(1, (bm // 8) * (bn // 8) // groups)
+    t = {"fp16": "half", "bf16": "bfloat"}[dtype]
+    return (
+        f"kernel void flash_attention_kernel(device const {t}* q [[buffer(0)]], device const {t}* k [[buffer(1)]], "
+        f"device const {t}* v [[buffer(2)]], device {t}* o [[buffer(3)]], uint3 gid [[thread_position_in_grid]]) {{\n"
+        f"    threadgroup {t} tile[{bm} * {bn}];\n"
+        f"    simdgroup_matrix<float, 8, 8> acc[{fragments}];\n"
+        f"    for (uint i = 0; i < {fragments}; ++i) acc[i] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);\n"
+        f"    simdgroup_multiply_accumulate(acc[0], acc[0], acc[0], acc[0]);\n"
+        f"    o[gid.x] = {t}(acc[0].thread_elements()[0]);\n"
+        f"}}\n"
+    )
+
+
+def static_screen_contracts(op: str, variants: list[str], dtype: str = "fp16", size: str = "paper") -> list[dict]:
+    """Drop contracts that do not build, that declare 32 KiB or more of threadgroup memory, or that keep 32 or more accumulator fragments.
+
+    No GPU. The fragment count is the source-level count from ``taic.hwfeatures.analyze_source``.
+    """
+    from taic.hwfeatures import analyze_source
+
+    rows = []
+    for variant in variants:
+        row = {"variant": variant, "op": op, "kept": False, "reason": ""}
+        try:
+            if op == "gemm":
+                source = gemm_source(variant, dtype)
+            elif op == "flash_attention":
+                source = fa_source(variant, dtype, size)
+            else:
+                row["reason"] = f"no static screen for {op}"
+                rows.append(row)
+                continue
+            ev = analyze_source(source)
+        except (ValueError, KeyError, ImportError) as e:
+            row["reason"] = str(e)
+            rows.append(row)
+            continue
+        tiles = (ev.get("matrix") or {}).get("acc_tiles") or 0
+        if op == "gemm":
+            bm, bn, _bk, th = parse(variant)
+            wm, wn = simdgroup_layout(bm, bn, th)
+            tiles = max(int(tiles or 0), (bm // wm // 8) * (bn // wn // 8))
+        declared = (ev.get("threadgroup") or {}).get("declared_bytes") or 0
+        row["acc_tiles"] = tiles
+        row["threadgroup_bytes"] = declared
+        if isinstance(tiles, int) and tiles >= 32:
+            row["reason"] = f"{tiles} accumulator fragments"
+        elif isinstance(declared, int) and declared > 32768:
+            row["reason"] = f"threadgroup {declared} B"
+        else:
+            row["kept"] = True
+            row["reason"] = "kept"
+        rows.append(row)
+    return rows
 
 
 def run_gemm(variants: list[str], dtype: str, size: str, out: Path, reps: int) -> list[dict]:
@@ -188,14 +253,20 @@ def summarize(rows: list[dict]) -> dict:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("op", choices=["gemm", "report"])
+    ap.add_argument("op", choices=["gemm", "report", "prescreen"])
     ap.add_argument("--dtype", default="fp16")
     ap.add_argument("--size", default="paper")
     ap.add_argument("--variants", default=",".join(VARIANTS))
     ap.add_argument("--reps", type=int, default=15)
     ap.add_argument("--out", default="runs/contract_sensitivity")
     ap.add_argument("--p1", default="runs/p1", help="directory of experiments.p1_runs results (FlashAttention rows of the report)")
+    ap.add_argument("--top", type=int, default=2)
     a = ap.parse_args(argv)
+    if a.op == "prescreen":
+        rows = static_screen_contracts("gemm", a.variants.split(","), a.dtype, a.size)
+        kept = [r for r in rows if r["kept"]][: a.top]
+        print(json.dumps({"kept": kept, "rows": rows}, indent=1))
+        return 0
     if a.op == "report":
         md = report(Path(a.out), a.dtype, a.size, Path(a.p1))
         (Path(a.out) / "REPORT.md").write_text(md + "\n")

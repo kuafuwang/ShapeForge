@@ -88,6 +88,7 @@ def main() -> int:
             seed=req["seed"],
             reps=req["reps"],
             cases=tuple(req["cases"]) if req.get("cases") else None,
+            fast_bench=bool(req.get("fast_bench")),
         )
         from .schema import write_json_atomic
 

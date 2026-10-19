@@ -333,7 +333,44 @@ def summarize(res: dict, confirm: dict | None, naive: dict | None = None, *, run
     row["naive_speedup"] = (naive or {}).get("speedup")
     row["vs_triton_msl"] = cb.get("speedup")
     row["triton_msl_us"] = cb.get("estimated_us")
+    published = row.get("published_speedup")
+    naive_speed = row.get("naive_speedup")
+    spent = row.get("spent_usd")
+    if isinstance(published, (int, float)) and not isinstance(published, bool) and isinstance(naive_speed, (int, float)) and not isinstance(naive_speed, bool) and naive_speed:
+        row["gain_over_naive"] = published / naive_speed
+    else:
+        row["gain_over_naive"] = None
+    if row["gain_over_naive"] is not None and isinstance(spent, (int, float)) and not isinstance(spent, bool) and spent > 0:
+        row["gain_per_usd"] = (published - naive_speed) / spent
+    else:
+        row["gain_per_usd"] = None
     return row
+
+
+def suite_metrics(rows: list[dict], thresholds: tuple[float, ...] = (0.95, 1.0, 1.005)) -> dict:
+    """fast_p counts rows whose published speedup is at least p. Search-only speedups are not counted."""
+    finished = [row for row in rows if isinstance(row, dict)]
+    out: dict[str, Any] = {"n": len(finished), "spent_usd": 0.0, "fast": {}}
+    spent = 0.0
+    published_values = []
+    for row in finished:
+        value = row.get("spent_usd")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            spent += float(value)
+        speed = row.get("published_speedup")
+        if isinstance(speed, (int, float)) and not isinstance(speed, bool):
+            published_values.append(float(speed))
+    out["spent_usd"] = spent
+    out["published_n"] = len(published_values)
+    if published_values:
+        ordered = sorted(published_values)
+        out["published_median"] = ordered[len(ordered) // 2]
+    else:
+        out["published_median"] = None
+    for threshold in thresholds:
+        hits = sum(1 for speed in published_values if speed >= threshold)
+        out["fast"][f"{threshold:g}"] = {"n": hits, "share": (hits / len(finished)) if finished else None}
+    return out
 
 
 # 手写朴素核不是搜索的起点，只是同一套评测协议下的参照，用来看出加速比里有多少来自基线太弱。

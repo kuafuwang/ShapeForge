@@ -291,3 +291,17 @@ def test_cmd_run_and_run_one_load_the_two_members(tmp_path, monkeypatch):
     captured.clear()
     code_bad = cli.main(["run", "relu", "--size", "small", "--config", str(bad), "--run-dir", str(tmp_path / "bad-run")])
     assert code_bad == 5 and captured == {}
+
+
+def test_a_member_can_carry_its_own_reasoning_effort():
+    active = _cfg("same-model")
+    raw = {
+        "llm": {"provider": "deepseek"},
+        "committees": [
+            {"name": "first", "members": [{"provider": "deepseek", "model": "same-model", "reasoning_effort": "high"}]},
+            {"name": "second", "members": [{"provider": "deepseek", "model": "same-model", "reasoning_effort": "low"}]},
+        ],
+    }
+    committees = load_committees(raw, active=active)
+    assert [c.members[0].cfg.reasoning_effort for c in committees] == ["high", "low"]
+

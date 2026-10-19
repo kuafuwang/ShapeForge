@@ -110,14 +110,14 @@ def load_committees(raw: dict | None, *, active: LLMConfig, model_override: str 
     cred_file = Path(os.path.expanduser(str(llm.get("credentials_file") or "~/.pi/agent/models.json")))
     cache: dict[str, dict] = {}
     built = [
-        Committee(name, [ _member(provider, model, active=active, active_provider=active_provider, cred_file=cred_file, cache=cache) ])
-        for name, provider, model in shape
+        Committee(name, [ _member(provider, model, active=active, active_provider=active_provider, cred_file=cred_file, cache=cache, reasoning_effort=effort) ])
+        for name, provider, model, effort in shape
     ]
     return order_committees(built)
 
 
 def _shape(listed: object) -> list[tuple[str, str, str]]:
-    """``(name, provider, model)`` for first and second. Member count is checked before any credentials read."""
+    """``(name, provider, model, reasoning_effort or None)`` for first and second. Member count is checked before any credentials read."""
     if not isinstance(listed, list):
         raise LLMError("committees must be a list of two committees")
     parsed: list[tuple[str, str, str]] = []
@@ -142,24 +142,27 @@ def _shape(listed: object) -> list[tuple[str, str, str]]:
         model = member.get("model")
         if not isinstance(provider, str) or not provider.strip() or not isinstance(model, str) or not model.strip():
             raise LLMError(f"committee {name!r} member needs a provider and a model")
-        parsed.append((name, provider.strip(), model.strip()))
+        parsed.append((name, provider.strip(), model.strip(), member.get("reasoning_effort") if isinstance(member.get("reasoning_effort"), str) else None))
     return parsed
 
 
-def _member(provider: str, model: str, *, active: LLMConfig, active_provider: str, cred_file: Path, cache: dict[str, dict]) -> Member:
+def _member(provider: str, model: str, *, active: LLMConfig, active_provider: str, cred_file: Path, cache: dict[str, dict], reasoning_effort: str | None = None) -> Member:
     if provider == active_provider and model == active.model:
-        return Member(provider, model, replace(active))
-    table = _providers(cred_file, cache)
-    prov = table.get(provider)
-    prov = prov if isinstance(prov, dict) else {}
-    price = _model_price(prov, model)
-    if provider == active_provider:
-        base_url, api_key = active.base_url, active.api_key
+        cfg = replace(active)
     else:
-        base_url, api_key = prov.get("baseUrl"), prov.get("apiKey")
-    if not base_url or not api_key:
-        raise LLMError(f"no credentials: set OPENAI_API_KEY/OPENAI_BASE_URL or provide provider '{provider}' in {cred_file}")
-    cfg = _priced(active, base_url=str(base_url), api_key=str(api_key), model=model, price=price)
+        table = _providers(cred_file, cache)
+        prov = table.get(provider)
+        prov = prov if isinstance(prov, dict) else {}
+        price = _model_price(prov, model)
+        if provider == active_provider:
+            base_url, api_key = active.base_url, active.api_key
+        else:
+            base_url, api_key = prov.get("baseUrl"), prov.get("apiKey")
+        if not base_url or not api_key:
+            raise LLMError(f"no credentials: set OPENAI_API_KEY/OPENAI_BASE_URL or provide provider '{provider}' in {cred_file}")
+        cfg = _priced(active, base_url=str(base_url), api_key=str(api_key), model=model, price=price)
+    if reasoning_effort:
+        cfg = replace(cfg, reasoning_effort=reasoning_effort)
     return Member(provider, model, cfg)
 
 

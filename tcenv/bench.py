@@ -33,6 +33,7 @@ class BenchStats:
     cv: float  # stdev / mean across repetitions
     reps: int
     iters: int
+    samples_s: tuple[float, ...] = ()  # one wall-clock sample per repetition, same order as the interleaved loop
 
     @property
     def median_us(self) -> float:
@@ -41,6 +42,8 @@ class BenchStats:
     def to_json(self) -> dict:
         d = asdict(self)
         d["median_us"] = self.median_us
+        if not d["samples_s"]:
+            d.pop("samples_s")
         return d
 
 
@@ -97,6 +100,7 @@ def interleaved(
             cv=(statistics.pstdev(xs) / mean) if mean > 0 else 0.0,
             reps=len(xs),
             iters=ks[n],
+            samples_s=tuple(xs),
         )
     return out
 
@@ -139,6 +143,46 @@ def speedup_se_of_report(report) -> float:
         return approximate_speedup_se(candidate.get("cv"), candidate.get("reps"), baseline.get("cv"), baseline.get("reps"))
     except (KeyError, TypeError, AttributeError, ValueError):
         return 0.0
+
+
+def paired_bootstrap_speedup_ci(cand_samples, base_samples, *, n_boot: int = 1000, seed: int = 0) -> tuple[float, float] | None:
+    """2.5 and 97.5 percentiles of (baseline sample / candidate sample) over paired draws.
+
+    The two sequences are the interleaved repetitions already stored on a report. This is a resampling interval, not a proof.
+    Returns None when either side has fewer than two samples.
+    """
+    import random
+
+    cand = [float(x) for x in cand_samples]
+    base = [float(x) for x in base_samples]
+    n = min(len(cand), len(base))
+    if n < 2:
+        return None
+    rng = random.Random(seed)
+    draws = []
+    for _ in range(n_boot):
+        picks = [rng.randrange(n) for _ in range(n)]
+        c = statistics.median(cand[i] for i in picks)
+        b = statistics.median(base[i] for i in picks)
+        if c > 0:
+            draws.append(b / c)
+    if len(draws) < 2:
+        return None
+    draws.sort()
+    lo = draws[int(0.025 * (len(draws) - 1))]
+    hi = draws[int(0.975 * (len(draws) - 1))]
+    return lo, hi
+
+
+def speedup_ci_of_report(report) -> tuple[float, float] | None:
+    """Paired bootstrap interval when the report stored per-repetition samples for the candidate and the best baseline."""
+    bench = _benchmark(report)
+    try:
+        candidate = bench["candidate"]
+        baseline = bench["baselines"][bench["best_baseline"]]
+        return paired_bootstrap_speedup_ci(candidate.get("samples_s") or (), baseline.get("samples_s") or ())
+    except (KeyError, TypeError, AttributeError, ValueError):
+        return None
 
 
 def timing_is_uncertain(report) -> bool:

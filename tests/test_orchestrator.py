@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 import json
 import re
 from pathlib import Path
@@ -626,3 +627,60 @@ def test_from_run_does_not_use_a_kernel_recorded_for_a_different_task(tmp_path):
     assert any("Translate this Triton kernel" in text for text in _prompts(orch))
     assert not any("speed=9.9" in source for _mode, source in calls)
     assert res.best_label == "init"
+
+
+def test_diversity_archive_patches_another_kernel_after_two_quiet_rounds_and_resume_picks_the_same_parent(tmp_path):
+    """The last branch of round 3 edits a feature-different kernel. A resume that starts that round over picks the same parent."""
+    alt = (
+        "```metal\n// speed=0.9\nkernel void relu_kernel(device const half* x [[buffer(0)]], device half* y [[buffer(1)]]) {\n"
+        "    simdgroup_matrix<float, 8, 8> acc[4];\n"
+        "    simdgroup_multiply_accumulate(acc[0], acc[0], acc[0], acc[0]);\n"
+        "}\n```"
+    )
+
+    def script(messages, **kw):
+        last = messages[-1]["content"]
+        if "Translate this Triton kernel" in last:
+            return make_response(code("speed=1.0"))
+        if "Diagnose the dominant bottleneck" in last or "Reply with the JSON object only" in last:
+            return make_response(PLAN)
+        if "Implement exactly this optimization plan" in last:
+            title = re.search(r"\*\*(.+?)\*\*", last).group(1)
+            return make_response(alt if title == "A" else code("speed=0.5"))
+        raise AssertionError(last[:100])
+
+    calls = []
+    orch = make_orch(tmp_path / "full", script, calls, max_rounds=3, patience=10, diversity_archive=True)
+    full = run(orch)
+    prompts = [m["content"] for call in orch.llm.client.calls for m in call["messages"] if m["role"] == "user" and "Implement exactly this optimization plan" in m["content"] and "**C**" in m["content"]]
+    assert len(prompts) == 3
+    assert "simdgroup_matrix" not in prompts[0] and "simdgroup_matrix" not in prompts[1]
+    assert "simdgroup_matrix" in prompts[2]
+    assert [(row["label"], row.get("parent_label")) for row in full.trace if row["label"] == "r3.p2"] == [("r3.p2", "r1.p0")]
+
+    armed = {"on": True}
+
+    def killing(messages, **kw):
+        last = messages[-1]["content"]
+        if armed["on"] and "Diagnose the dominant bottleneck" in last and "round 2:" in last:
+            armed["on"] = False
+            raise SystemExit("killed")
+        return script(messages, **kw)
+
+    killed = make_orch(tmp_path, killing, [], max_rounds=3, patience=10, diversity_archive=True)
+    with pytest.raises(SystemExit):
+        run(killed)
+    state = json.loads((tmp_path / "run" / "state.json").read_text())
+    state["pid"] = 2**22 + 4242
+    (tmp_path / "run" / "state.json").write_text(json.dumps(state))
+    from taic.cli import prepare_resume, run_prepared
+
+    args = argparse.Namespace(
+        run_dir=str(tmp_path / "run"), add_budget=None, budget=None, dry_run=False, who="cli", config=None, preset=None,
+        model=None, branches=None, max_rounds=None, effort=None, no_tools=False, profile_best=False, profile_poor=False,
+        plan_mix=False, hw_feedback=False, init_samples=None, patience=None, lift_count_limits=False, max_tokens=None,
+    )
+    resumed, snap, report, info, budget = prepare_resume(args, client=FakeClient(script), evaluate_fn=fake_eval([]), log=lambda _s: None)
+    again = run_prepared(args, resumed, snap, info, budget)
+    assert [(row["label"], row.get("parent_label")) for row in again.trace if row["label"] == "r3.p2"] == [("r3.p2", "r1.p0")]
+

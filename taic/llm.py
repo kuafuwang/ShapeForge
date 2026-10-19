@@ -58,6 +58,9 @@ class LLMConfig:
     request_timeout_s: float = 900.0
     max_retries: int = 6
     truncation_retry: bool = True  # a length-capped reply with no kernel is asked again once, without the echoed reasoning, and does not spend a repair turn
+    truncation_retry_effort: str | None = "low"  # effort on that one retry: "low", "off", or "same" (keep reasoning_effort). Default "low" because a high-effort retry was still cut off 14/20 times
+    plan_reasoning_effort: str | None = None  # planner requests only; None keeps reasoning_effort
+    patch_reasoning_effort: str | None = None  # patch and repair requests; None keeps reasoning_effort. A truncation retry still uses truncation_retry_effort
     # USD per million tokens
     price_in: float = 0.30
     price_out: float = 1.20
@@ -104,6 +107,10 @@ class SearchConfig:
     rich_history: bool = True  # a failed branch's history line names the failure (abi / incorrect / no code) instead of one generic sentence
     status_lines: bool = True  # the planner and the patch author are told the noise floor and how much budget, round count and patience remain
     differential_recheck: bool = False  # before a candidate becomes the seed or a within-noise tie, recheck correctness on an independent seed (quick, no timing). Off leaves the old selection.
+    plan_ledger: bool = False  # structured plan history (implementation failure is not a falsified direction). Off keeps the 24 text lines
+    diversity_archive: bool = False  # after two stagnant rounds, the last branch of a round patches a feature-different eligible kernel. Off keeps every branch on the seed
+    fast_bench: bool = False  # search-stage timing skips the serial dispatch and baselines other than the fastest one seen. Confirmation always times every baseline
+    experience_index: str | None = None  # path of a read-only hint file from taic.experience. None adds nothing to the planner prompt
 
 
 def _read_toml(path: Path) -> dict:
@@ -174,6 +181,11 @@ def load_config(path: str | Path | None = None, *, model: str | None = None, pre
     )
     if "truncation_retry" in search:
         cfg.truncation_retry = bool(search["truncation_retry"])
+    for key in ("truncation_retry_effort", "plan_reasoning_effort", "patch_reasoning_effort"):
+        if key in search and search[key] is not None:
+            setattr(cfg, key, search[key])
+        elif key in llm and llm[key] is not None:
+            setattr(cfg, key, llm[key])
     allowed = SearchConfig.__dataclass_fields__.keys()
     return cfg, SearchConfig(**{k: v for k, v in search.items() if k in allowed})
 
@@ -408,14 +420,15 @@ class LLM:
             pass
 
     # -- request construction ----------------------------------------------------------------
-    def _params(self, tools: list[dict] | None, max_tokens: int | None) -> dict:
+    def _params(self, tools: list[dict] | None, max_tokens: int | None, reasoning_effort: str | None = None) -> dict:
         c = self.cfg
         p: dict[str, Any] = {"model": c.model, "max_tokens": max_tokens or c.max_tokens}
         extra = dict(c.extra_body)
-        if c.reasoning_effort in (None, "off"):
+        effort = c.reasoning_effort if reasoning_effort is None else reasoning_effort
+        if effort in (None, "off"):
             extra.setdefault("thinking", {"type": "disabled"})
         else:
-            p["reasoning_effort"] = c.reasoning_effort
+            p["reasoning_effort"] = effort
         if extra:
             p["extra_body"] = extra
         if tools:
@@ -466,11 +479,11 @@ class LLM:
     # -- single request with retries ---------------------------------------------------------
     # 一次补全。预算门在并发信号量之外、也在 HTTP 之前：好几次可能都看到「还没超」然后一起发出去。
     # 费用要等响应才入账，所以已经发出的请求可以让总额略超预算。过了门的这一次，后面的重试不再查预算。
-    async def chat(self, messages: list[dict], *, tools: list[dict] | None = None, label: str = "", max_tokens: int | None = None) -> Reply:
+    async def chat(self, messages: list[dict], *, tools: list[dict] | None = None, label: str = "", max_tokens: int | None = None, reasoning_effort: str | None = None) -> Reply:
         import openai
 
         self.ledger.check()  # budget gate before the request is issued
-        params = self._params(tools, max_tokens)
+        params = self._params(tools, max_tokens, reasoning_effort)
         attempt = 0
         await self._note_llm(label, "inflight")
         async with self._sem:
@@ -551,6 +564,7 @@ class LLM:
         max_tokens: int | None = None,
         start_turn: int = 0,
         pending: list[dict] | None = None,
+        reasoning_effort: str | None = None,
     ) -> tuple[Reply, list[dict]]:
         """Run the model until it answers without calling a tool. Returns (final reply, full message list).
         When the turn limit is reached tools are withdrawn so the model must produce an answer.
@@ -568,7 +582,7 @@ class LLM:
         for turn in range(first, max_turns + 1):
             # 前 max_turns 轮可以叫工具；到达上限的那一轮不再提供工具。
             use = tools if turn < max_turns else None
-            reply = await self.chat(msgs, tools=use, label=f"{label}#t{turn}", max_tokens=max_tokens)
+            reply = await self.chat(msgs, tools=use, label=f"{label}#t{turn}", max_tokens=max_tokens, reasoning_effort=reasoning_effort)
             msgs.append(reply.message)
             if not reply.tool_calls:
                 return reply, msgs

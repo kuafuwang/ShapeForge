@@ -41,6 +41,18 @@ def cmd_run(a: argparse.Namespace) -> int:
         search.patience = a.patience
     if a.effort:
         cfg.reasoning_effort = a.effort
+    if getattr(a, "plan_effort", None):
+        cfg.plan_reasoning_effort = a.plan_effort
+    if getattr(a, "patch_effort", None):
+        cfg.patch_reasoning_effort = a.patch_effort
+    if getattr(a, "truncation_retry_effort", None):
+        cfg.truncation_retry_effort = a.truncation_retry_effort
+    for flag, key in (("plan_ledger", "plan_ledger"), ("diversity_archive", "diversity_archive"), ("fast_bench", "fast_bench")):
+        value = getattr(a, flag, None)
+        if value is not None:
+            setattr(search, key, value)
+    if getattr(a, "experience_index", None):
+        search.experience_index = a.experience_index
     _apply_max_tokens(a, cfg)
     try:
         # 显式 --model 让两个委员会都用这个模型。没写时用配置里的两名成员，可以不同。
@@ -63,8 +75,10 @@ def cmd_run(a: argparse.Namespace) -> int:
 
 SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "max_quick_checks", "min_improvement", "noise_z", "confirm_top", "eval_reps", "max_hangs",
                  "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
-                 "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck")
-LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry")
+                 "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck",
+                 "plan_ledger", "diversity_archive", "fast_bench", "experience_index")
+LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry",
+              "truncation_retry_effort", "plan_reasoning_effort", "patch_reasoning_effort")
 
 
 # 续跑的配置以这次运行自己记下的设置为准，命令行只覆盖显式给出的项。没有 run_config.json 的老运行用 base，避免被后来的 paper 预设改掉当时的预算和轮数。dry_run 即使没有 API 凭证也要能组出配置，否则「先看看」会因为没钥匙而做不成。
@@ -119,6 +133,23 @@ def _resume_config(a: argparse.Namespace, settings: dict, info: dict):
     if a.effort:
         cfg.reasoning_effort = a.effort
         prov["llm.reasoning_effort"] = "command line"
+    if getattr(a, "plan_effort", None):
+        cfg.plan_reasoning_effort = a.plan_effort
+        prov["llm.plan_reasoning_effort"] = "command line"
+    if getattr(a, "patch_effort", None):
+        cfg.patch_reasoning_effort = a.patch_effort
+        prov["llm.patch_reasoning_effort"] = "command line"
+    if getattr(a, "truncation_retry_effort", None):
+        cfg.truncation_retry_effort = a.truncation_retry_effort
+        prov["llm.truncation_retry_effort"] = "command line"
+    for flag, key in (("plan_ledger", "plan_ledger"), ("diversity_archive", "diversity_archive"), ("fast_bench", "fast_bench")):
+        value = getattr(a, flag, None)
+        if value is not None:
+            setattr(search, key, value)
+            prov[f"search.{key}"] = "command line"
+    if getattr(a, "experience_index", None):
+        search.experience_index = a.experience_index
+        prov["search.experience_index"] = "command line"
     _apply_max_tokens(a, cfg, prov)
     return cfg, search, prov
 
@@ -317,8 +348,15 @@ def _positive_int(text: str) -> int:
     return n
 
 
-def _add_max_tokens(p: argparse.ArgumentParser) -> None:
-    """Per-request generation cap. Omitted means taic.toml (48000). Reasoning tokens count toward it."""
+def _add_role_efforts(p: argparse.ArgumentParser) -> None:
+    """Role efforts, the new search switches, and the per-request token cap."""
+    p.add_argument("--plan-effort", default=None, choices=["off", "low", "high", "max"], help="reasoning effort for the planner only")
+    p.add_argument("--patch-effort", default=None, choices=["off", "low", "high", "max"], help="reasoning effort for patch and repair turns")
+    p.add_argument("--truncation-retry-effort", default=None, choices=["low", "off", "same"], help="reasoning effort of the one retry after a truncated empty reply (default: low)")
+    p.add_argument("--plan-ledger", action=argparse.BooleanOptionalAction, default=None, help="structured plan history (default: off)")
+    p.add_argument("--diversity-archive", action=argparse.BooleanOptionalAction, default=None, help="after two stagnant rounds, patch one feature-different kernel (default: off)")
+    p.add_argument("--fast-bench", action=argparse.BooleanOptionalAction, default=None, help="search timing skips serial dispatch and slower baselines (default: off)")
+    p.add_argument("--experience-index", default=None, help="JSON file of measured hints for the planner")
     p.add_argument("--max-tokens", type=_positive_int, default=None, help="cap on one model reply, reasoning included (default: 48000 in taic.toml)")
 
 
@@ -372,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--branches", type=int, default=None)
     p.add_argument("--max-rounds", type=int, default=None)
     p.add_argument("--effort", default=None, choices=["off", "low", "high", "max"])
-    _add_max_tokens(p)
+    _add_role_efforts(p)
     p.add_argument("--no-tools", action="store_true")
     p.add_argument("--profile-best", action="store_true", help="xctrace profile of the winning kernel after the search")
     p.add_argument("--profile-poor", action="store_true", help="trace a round's seed with Instruments when it is slower than the best baseline and give the findings to the model")
@@ -398,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--branches", type=int, default=None)
     r.add_argument("--max-rounds", type=int, default=None)
     r.add_argument("--effort", default=None, choices=["off", "low", "high", "max"])
-    _add_max_tokens(r)
+    _add_role_efforts(r)
     r.add_argument("--no-tools", action="store_true")
     r.add_argument("--profile-best", action="store_true")
     r.add_argument("--profile-poor", action="store_true")
