@@ -63,6 +63,7 @@ def task_markdown(messages: list[dict], *, repo: Path, kernel_path: Path, task_n
         f"Edit only `{kernel_path.name}` in this directory. Without a launch block it must contain "
         f"`kernel void {kernel_name}` on the contract grid and thread count. With one `/* taic-launch */` "
         "block, that block chooses each stage's kernel, grid, threads, workspace and optional `math safe`. "
+        "Write `launch NAME grid=16,1,1 threads=128,1,1`. `grid=(16, 1, 1)` is the same grid.\n"
         "Inputs stay `device const`. Do not add textures.\n"
         "A skill named taic-tools is loaded with this session. It defines two tools:\n"
         "lookup_msl: read `msl_reference.md` in this directory. That file is the Metal reference.\n"

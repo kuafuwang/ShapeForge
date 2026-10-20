@@ -30,8 +30,11 @@ What "valid" means (all of it is enforced mechanically by the evaluation environ
    write it. No textures or samplers. Do not add scalar arguments the contract does not list.
 2. Without that block, the launch configuration (threadgroups per grid and threads per threadgroup) and the compile-time
    constants are fixed by the contract and already defined in a header that the harness prepends. With the block, each
-   stage's grid and threads come from the block. Sizes may be integer expressions over the contract constants
-   (`M_TOTAL / BLOCK_M`). At most 32 stages: encoding sits outside the timer, and the cap is what keeps a long
+   stage's grid and threads come from the block. Write the line as `launch NAME grid=16,1,1 threads=128,1,1`.
+   Spaces and parentheses in those numbers are the same launch: `grid=(16, 1, 1)` and `grid=16, 1, 1` both mean 16 by 1 by 1.
+   Sizes may be integer expressions over the contract constants (`M_TOTAL / BLOCK_M`). A division must come out even.
+   A name that is not a contract constant is rejected before compilation. One `math fast` or `math safe` line only.
+   At most 32 stages: encoding sits outside the timer, and the cap is what keeps a long
    pipeline from hiding its setup there. One stage may launch at most 2^24 threadgroups (65536 is allowed; a larger
    grid is rejected). Do not redefine the constants and do not `#include` anything (the header already includes
    metal_stdlib, metal_simdgroup and metal_simdgroup_matrix). `math safe` in the block turns off fast-math for that candidate.

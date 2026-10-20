@@ -292,10 +292,13 @@ def _evaluate_in_process(
         problems = abi_mod.check_pipeline(
             contract, {k.name: k for k in kernels}, spec, max_tg_memory=dev_info["max_threadgroup_memory_bytes"],
         )
-    # 校验插桩会把静态线程组内存报成大约两倍。这一条单独出现时，不在校验进程里提前返回：
-    # 内核仍要在着色器校验下跑一次，设备上限留给后面不插桩的完整评测。
-    if mode == "validate" and abi_mod.only_static_threadgroup_limit(problems):
-        problems = []
+    # 插桩会把静态线程组内存报成大约两倍。超过设备上限后再启动，Metal 在
+    # validateComputeFunctionArguments 里断言并 SIGABRT，子进程变成 crash。
+    # 这种只回报那一条、不启动。父进程改用不插桩的完整评测去比 32768。
+    if mode == "validate":
+        problems = abi_mod.validation_problems(
+            problems, [k.static_tg_bytes for k in kernels], dev_info["max_threadgroup_memory_bytes"],
+        )
     rep.abi = {"ok": not problems, "violations": problems}
     if spec is None:
         rep.pipeline = pipeline_stats(kernel, contract, dev_info)

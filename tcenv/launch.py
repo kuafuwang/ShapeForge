@@ -274,7 +274,7 @@ def _parse_body(body: str, constants: dict[str, int]) -> LaunchSpec:
             seen_ws.add(name)
             workspaces.append(WorkspaceDecl(name, nbytes, zero))
         elif kind == "launch":
-            stages.append(_parse_launch_line(parts[1:], constants, seen_ws))
+            stages.append(_parse_launch_line(line, constants, seen_ws))
         else:
             raise LaunchRejected(f"unknown taic-launch line: {line}")
     if not stages:
@@ -284,17 +284,27 @@ def _parse_body(body: str, constants: dict[str, int]) -> LaunchSpec:
     return LaunchSpec(math, tuple(workspaces), tuple(stages))
 
 
-def _parse_launch_line(parts: list[str], constants: dict[str, int], workspaces: set[str]) -> StageDecl:
-    if not parts or not _NAME.fullmatch(parts[0]):
+_NEXT_FIELD = re.compile(r"\s+(grid|threads|threadgroup|workspace)\s*=")
+
+
+def _parse_launch_line(line: str, constants: dict[str, int], workspaces: set[str]) -> StageDecl:
+    rest = line[len("launch") :].strip()
+    name = re.match(r"[A-Za-z_][A-Za-z0-9_]*", rest)
+    if not name:
         raise LaunchRejected("launch line needs a kernel name")
-    kernel = parts[0]
+    kernel = name.group(0)
+    rest = rest[name.end() :]
     fields: dict[str, str] = {}
-    for item in parts[1:]:
-        if "=" not in item:
-            raise LaunchRejected(f"launch `{kernel}` has a bare word `{item}`")
-        key, _, value = item.partition("=")
-        if key in fields or key not in ("grid", "threads", "threadgroup", "workspace"):
+    while rest.strip():
+        rest = rest.lstrip()
+        key_at = re.match(r"(grid|threads|threadgroup|workspace)\s*=\s*", rest)
+        if not key_at:
+            word = rest.split()[0]
+            raise LaunchRejected(f"launch `{kernel}` has a bare word `{word}`")
+        key = key_at.group(1)
+        if key in fields:
             raise LaunchRejected(f"launch `{kernel}` has a bad or repeated field `{key}`")
+        value, rest = _read_field_value(rest[key_at.end() :])
         fields[key] = value
     if "grid" not in fields or "threads" not in fields:
         raise LaunchRejected(f"launch `{kernel}` needs grid= and threads=")
@@ -315,6 +325,38 @@ def _parse_launch_line(parts: list[str], constants: dict[str, int], workspaces: 
                 raise LaunchRejected(f"launch `{kernel}` workspace `{name}` is unknown or repeated")
             used.append(name)
     return StageDecl(kernel, grid, threads, tg, tuple(used))
+
+
+def _read_field_value(text: str) -> tuple[str, str]:
+    """The text after ``key=``. Spaces and a wrapping ``( ... )`` stay part of the value.
+
+    ``grid=(16, 1, 1)`` and ``grid=16,1,1`` are the same three numbers. The next
+    ``threads=`` / ``grid=`` / ``threadgroup=`` / ``workspace=`` ends the value.
+    """
+    if text.startswith("("):
+        end = _closing_paren(text)
+        if end is not None and (_NEXT_FIELD.match(text[end + 1 :]) or not text[end + 1 :].strip()):
+            return text[1:end].strip(), text[end + 1 :]
+    for match in _NEXT_FIELD.finditer(text):
+        if _paren_depth(text[: match.start()]) == 0:
+            return text[: match.start()].strip(), text[match.start() :]
+    return text.strip(), ""
+
+
+def _closing_paren(text: str) -> int | None:
+    depth = 0
+    for i, ch in enumerate(text):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+    return None
+
+
+def _paren_depth(text: str) -> int:
+    return text.count("(") - text.count(")")
 
 
 def _triple(text: str, constants: dict[str, int], what: str) -> tuple[int, int, int]:

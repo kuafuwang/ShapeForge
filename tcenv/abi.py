@@ -110,6 +110,8 @@ def check_pipeline(contract: Contract, kernels: dict, spec, *, max_tg_memory: in
                     )
         elif dynamic:
             problems.append(f"stage `{stage.kernel}` has a dynamic threadgroup parameter but the launch line does not declare threadgroup bytes")
+        if kernel.static_tg_bytes > max_tg_memory:
+            problems.append(f"static threadgroup memory {kernel.static_tg_bytes} B exceeds the device limit of {max_tg_memory} B")
         if stage.threads[0] * stage.threads[1] * stage.threads[2] > kernel.max_total_threads:
             problems.append(
                 f"stage `{stage.kernel}` launches {stage.threads[0] * stage.threads[1] * stage.threads[2]} threads per group "
@@ -142,6 +144,30 @@ def check_pipeline(contract: Contract, kernels: dict, spec, *, max_tg_memory: in
 
 
 _STATIC_TG_LIMIT = re.compile(r"^static threadgroup memory \d+ B exceeds the device limit of \d+ B$")
+
+
+def _is_threadgroup_limit_line(item: str) -> bool:
+    return "threadgroup memory" in item and "exceeds the device limit" in item
+
+
+def validation_problems(problems: list[str], static_bytes: list[int], max_tg_memory: int) -> list[str]:
+    """What a shader-validation pass should report before it decides to launch.
+
+    Instrumentation reports about twice the static threadgroup memory. When that figure
+    is already over the device max, launching makes Metal abort the process inside
+    ``validateComputeFunctionArguments``. Report the canonical static line and do not
+    launch. The parent then rechecks the same kernel without instrumentation.
+    A signature or binding failure is kept, and the size line is dropped, so the
+    inflated number cannot hide it.
+    """
+    inflated = [n for n in static_bytes if n > max_tg_memory]
+    if not inflated:
+        return problems
+    others = [item for item in problems if not _is_threadgroup_limit_line(item)]
+    if others:
+        return others
+    biggest = max(inflated)
+    return [f"static threadgroup memory {biggest} B exceeds the device limit of {max_tg_memory} B"]
 
 
 def only_static_threadgroup_limit(violations: list[str]) -> bool:

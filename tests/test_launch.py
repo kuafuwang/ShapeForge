@@ -2,7 +2,7 @@
 
 import pytest
 
-from tcenv.abi import check_pipeline, only_static_threadgroup_limit
+from tcenv.abi import check_pipeline, only_static_threadgroup_limit, validation_problems
 from tcenv.metal_runtime import pipeline_ops
 from tcenv.launch import LaunchRejected, check_launch_limits, parse_launch_spec
 from taic.policy import feature_signature
@@ -30,6 +30,19 @@ launch gemm grid=M_TOTAL/BLOCK_M,2,1 threads=128,1,1 threadgroup=4096 workspace=
     assert spec.workspaces[0].nbytes == 93312 * 2
     assert spec.stages[0].grid == (93312 // 64, 2, 1)
     assert spec.stages[0].threadgroup_bytes == 4096
+
+
+def test_spaces_and_parentheses_are_the_same_grid():
+    spec = _spec("""
+/* taic-launch
+launch gemm grid=(16, 1, 1) threads=(128, 1, 1)
+launch other grid=M_TOTAL / BLOCK_M, 2, 1 threads=32, 1, 1
+*/
+""")
+    assert spec.stages[0].grid == (16, 1, 1)
+    assert spec.stages[0].threads == (128, 1, 1)
+    assert spec.stages[1].grid == (93312 // 64, 2, 1)
+    assert spec.stages[1].threads == (32, 1, 1)
 
 
 def test_marker_in_a_line_comment_or_a_second_block_is_rejected():
@@ -193,6 +206,16 @@ def test_a_pipeline_warning_names_the_stage_that_is_at_the_register_limit():
     notes = _warnings(type("H", (), {"source": {"matrix": {"acc_tiles": 0}}})(), measured)
     assert any("stage gemm" in note for note in notes)
     assert not any("launch size 32" in note for note in notes)
+
+
+def test_instrumented_threadgroup_over_the_device_max_is_reported_and_not_a_signature_failure():
+    inflated = validation_problems([], [53280], 32768)
+    assert inflated == ["static threadgroup memory 53280 B exceeds the device limit of 32768 B"]
+    assert only_static_threadgroup_limit(inflated)
+    assert validation_problems(["missing kernel parameter `x`"], [53280], 32768) == ["missing kernel parameter `x`"]
+    assert validation_problems(["static threadgroup memory 100 B exceeds the device limit of 32768 B"], [16000], 32768) == [
+        "static threadgroup memory 100 B exceeds the device limit of 32768 B"
+    ]
 
 
 def test_a_pipeline_command_buffer_waits_two_seconds_per_stage_up_to_eight():
