@@ -80,7 +80,7 @@
   .runs-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; margin: 0 -10px; padding: 6px 10px; background: var(--card); }
   .runs-head .side-title { margin: 0; }
   .runs-panel { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
-  .runs-panel.collapsed { flex: 0 0 auto; }
+  .runs-panel.collapsed { flex: 0 0 auto; min-height: 0; }
   .runs-panel.collapsed #runs-body { display: none; }
   #runs-body { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
   #view-runs { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
@@ -288,8 +288,8 @@ function show(name) {
 async function loadExperiments() {
   const rows = await (await fetch("/api/v2/experiments")).json();
   const host = document.getElementById("view-experiments");
-  host.innerHTML = "<table><thead><tr><th>实验</th><th>种类</th><th>臂</th><th></th></tr></thead><tbody>" +
-    rows.map((row) => `<tr class="${row.experiment_id === selectedExperiment ? "on" : ""}" data-exp="${esc(row.experiment_id)}"><td>${esc(row.experiment_id)}</td><td>${esc(row.kind)}</td><td>${(row.arms || []).map((arm) => esc(arm.arm_id)).join(", ")}</td><td><button type="button" class="quiet" data-delete-experiment="${esc(row.experiment_id)}">删除</button></td></tr>`).join("") +
+  host.innerHTML = "<table><thead><tr><th>实验</th><th>种类</th><th>操作</th></tr></thead><tbody>" +
+    rows.map((row) => `<tr class="${row.experiment_id === selectedExperiment ? "on" : ""}" data-exp="${esc(row.experiment_id)}"><td>${esc(row.experiment_id)}</td><td>${esc(row.kind)}</td><td><button type="button" class="quiet" data-delete-experiment="${esc(row.experiment_id)}">删除</button></td></tr>`).join("") +
     "</tbody></table>";
   host.querySelectorAll("[data-exp]").forEach((tr) => tr.addEventListener("click", () => {
     selectedExperiment = tr.dataset.exp;
@@ -422,7 +422,21 @@ function turnSituation(row) {
   return NOTE_KIND[row.kind] || row.kind || "回合";
 }
 
-function renderTurn(row) {
+function turnKey(row) {
+  if (row.min_seq != null) return "seq:" + row.min_seq;
+  if (row.kind === "stopped") return "stopped:" + (row.error || "");
+  return "live:" + (row.label || "") + ":" + (row.kind || "");
+}
+
+function openTurnKeys() {
+  const host = document.getElementById("turns-live");
+  const keys = new Set();
+  if (!host) return keys;
+  host.querySelectorAll("details[open][data-turn]").forEach((node) => keys.add(node.dataset.turn));
+  return keys;
+}
+
+function renderTurn(row, openKeys) {
   const seconds = row.seconds == null ? "" : (Number(row.seconds).toFixed(0) + " 秒");
   const tokens = row.tokens == null ? "" : (row.tokens + " token");
   const cost = row.cost_usd == null ? "" : ("$" + num(row.cost_usd));
@@ -437,12 +451,14 @@ function renderTurn(row) {
   if (row.retries && row.retries.length) bits.push(`<p><b>重试</b> ${esc(row.retries.join("；"))}</p>`);
   if (row.error) bits.push(`<p><b>失败</b> ${esc(row.error)}</p>`);
   if (row.stale) bits.push(`<p class="muted">预览已停</p>`);
-  return `<details><summary>${esc(head)}</summary>${bits.join("")}</details>`;
+  const key = turnKey(row);
+  const open = openKeys && openKeys.has(key) ? " open" : "";
+  return `<details data-turn="${esc(key)}"${open}><summary>${esc(head)}</summary>${bits.join("")}</details>`;
 }
 
-function turnsFeed(rows, cursor) {
+function turnsFeed(rows, cursor, openKeys) {
   const earlier = cursor == null ? "" : `<p><button type="button" id="turns-earlier">更早</button></p>`;
-  const body = !rows || !rows.length ? `<p class="muted">还没有模型回合。</p>` : rows.map(renderTurn).join("");
+  const body = !rows || !rows.length ? `<p class="muted">还没有模型回合。</p>` : rows.map((row) => renderTurn(row, openKeys)).join("");
   return `<div class="note-list" id="turns-live">${earlier}${body}</div>`;
 }
 
@@ -839,9 +855,14 @@ function bindTurns() {
 
 function paintTurns(stick) {
   const host = document.getElementById("turns-live");
+  const open = openTurnKeys();
+  const beforeTop = host ? host.scrollTop : 0;
   const atBottom = stick && host && host.scrollHeight - host.scrollTop - host.clientHeight < 24;
-  paintLive("turns-live", turnsFeed(turnsRows, turnsCursor), atBottom);
+  paintLive("turns-live", turnsFeed(turnsRows, turnsCursor, open), false);
   bindTurns();
+  const again = document.getElementById("turns-live");
+  if (!again) return;
+  again.scrollTop = atBottom ? again.scrollHeight : beforeTop;
 }
 
 async function refreshTurns(reset) {
@@ -870,6 +891,7 @@ async function refreshTurns(reset) {
 async function loadEarlier() {
   if (turnsCursor == null || !selectedRun) return;
   const host = document.getElementById("turns-live");
+  const open = openTurnKeys();
   const beforeHeight = host ? host.scrollHeight : 0;
   const beforeTop = host ? host.scrollTop : 0;
   const response = await fetch("/api/v2/turns/" + selectedRun.split("/").map(encodeURIComponent).join("/") + "?before=" + encodeURIComponent(turnsCursor));
@@ -878,7 +900,7 @@ async function loadEarlier() {
   const older = doc.rows || [];
   turnsRows = older.concat(turnsRows);
   turnsCursor = doc.cursor == null ? null : doc.cursor;
-  paintLive("turns-live", turnsFeed(turnsRows, turnsCursor), false);
+  paintLive("turns-live", turnsFeed(turnsRows, turnsCursor, open), false);
   bindTurns();
   const again = document.getElementById("turns-live");
   if (again) again.scrollTop = beforeTop + (again.scrollHeight - beforeHeight);
