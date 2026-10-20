@@ -120,6 +120,7 @@ class LLMConfig:
     price_in: float = 0.30
     price_out: float = 1.20
     price_cache_read: float = 0.006
+    price_cache_write: float = 0.0  # USD / million tokens. 0 matches providers that do not charge for a cache fill
 
 
 # The paper's per-run API budget: "a maximum API budget of $15 per run for convolution, matrix multiplication, and FlashAttention"
@@ -234,6 +235,7 @@ def load_config(path: str | Path | None = None, *, model: str | None = None, pre
         price_out=float(price.get("output", 1.20)),
         # 没有 cacheRead 时回落到 input（再没有才是 0.30）。命中缓存不会自动按数据类默认的 0.006 计。
         price_cache_read=float(price.get("cacheRead", price.get("input", 0.30))),
+        price_cache_write=float(price.get("cacheWrite", price.get("input", 0.30)) or 0.0),
     )
     if "truncation_retry" in search:
         cfg.truncation_retry = bool(search["truncation_retry"])
@@ -252,9 +254,13 @@ def load_config(path: str | Path | None = None, *, model: str | None = None, pre
 
 
 # 把用量拆成缓存命中的输入、未命中的输入、输出。三种 token 单价不同，不能都按 prompt_tokens 计。
-def split_usage(usage: Any) -> tuple[int, int, int]:
-    """(cache-hit input tokens, cache-miss input tokens, output tokens). DeepSeek reports hit/miss explicitly;
-    other endpoints expose ``prompt_tokens_details.cached_tokens``."""
+def split_usage(usage: Any) -> tuple[int, int, int, int]:
+    """(cache-hit input tokens, cache-miss input tokens, cache-write tokens, output tokens).
+
+    DeepSeek reports hit and miss explicitly; those two already partition the prompt, so a cache-write
+    field is not subtracted again. Other endpoints expose ``prompt_tokens_details.cached_tokens`` and,
+    for Kimi, ``cache_write_tokens``. A cache fill is not a cache miss.
+    """
 
     def g(obj, name, default=None):
         if obj is None:
@@ -267,11 +273,16 @@ def split_usage(usage: Any) -> tuple[int, int, int]:
     out = int(g(usage, "completion_tokens", 0) or 0)
     hit = g(usage, "prompt_cache_hit_tokens")
     miss = g(usage, "prompt_cache_miss_tokens")
-    # 两边都有就直接用，不再拿 prompt_tokens 重算。缺任意一边时，命中改从 cached_tokens 取，未命中 = 输入总量减去命中；只给出的那一边作废。
+    details = g(usage, "prompt_tokens_details")
+    # 两边都有就直接用，不再拿 prompt_tokens 重算。缺任意一边时，命中改从 cached_tokens 取，
+    # 缓存写入单独计，未命中 = 输入总量减去命中再减去写入。
     if hit is None or miss is None:
-        hit = g(g(usage, "prompt_tokens_details"), "cached_tokens", 0) or 0
-        miss = max(prompt - int(hit), 0)
-    return int(hit), int(miss), out
+        hit = g(details, "cached_tokens", 0) or 0
+        write = int(g(details, "cache_write_tokens", 0) or 0)
+        miss = max(prompt - int(hit) - write, 0)
+    else:
+        write = 0
+    return int(hit), int(miss), write, out
 
 
 # 一次运行共用的美元账。budget_usd 为 None 时不设门。费用在应答回来之后才加上，发请求前还不知道这一次要花多少。
@@ -358,12 +369,12 @@ class CostLedger:
 
     # 单价是美元 / 百万 token：命中 × price_cache_read，未命中 × price_in，输出 × price_out。
     def cost_of(self, usage: Any) -> float:
-        hit, miss, out = split_usage(usage)
+        hit, miss, write, out = split_usage(usage)
         c = self.cfg
-        return (hit * c.price_cache_read + miss * c.price_in + out * c.price_out) / 1e6
+        return (hit * c.price_cache_read + write * c.price_cache_write + miss * c.price_in + out * c.price_out) / 1e6
 
     def add(self, usage: Any, label: str = "") -> float:
-        hit, miss, out = split_usage(usage)
+        hit, miss, _write, out = split_usage(usage)
         cost = self.cost_of(usage)
         self.total_usd += cost
         self.in_tokens_hit += hit
@@ -446,6 +457,7 @@ class Reply:
     usage: Any
     cost_usd: float
     message: dict  # assistant message ready to be appended to the conversation
+    echo_reasoning: bool = True  # later turns of this same conversation may keep echoing reasoning_content
 
     def text(self) -> str:
         return self.content or ""
@@ -535,10 +547,11 @@ class LLM:
         except Exception:
             return
 
-    def _assistant_message(self, msg: Any) -> dict:
+    def _assistant_message(self, msg: Any, *, echo: bool | None = None) -> dict:
         d: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
         rc = getattr(msg, "reasoning_content", None)
-        if rc and self.cfg.echo_reasoning_content:
+        keep = self.cfg.echo_reasoning_content if echo is None else echo
+        if rc and keep:
             d["reasoning_content"] = rc
         if getattr(msg, "tool_calls", None):
             d["tool_calls"] = [
@@ -646,13 +659,18 @@ class LLM:
     # -- single request with retries ---------------------------------------------------------
     # 一次补全。预算门在并发信号量之外、也在 HTTP 之前：好几次可能都看到「还没超」然后一起发出去。
     # 费用要等响应才入账，所以已经发出的请求可以让总额略超预算。过了门的这一次，后面的重试不再查预算。
-    async def chat(self, messages: list[dict], *, tools: list[dict] | None = None, label: str = "", max_tokens: int | None = None, reasoning_effort: str | None = None) -> Reply:
+    async def chat(self, messages: list[dict], *, tools: list[dict] | None = None, label: str = "", max_tokens: int | None = None, reasoning_effort: str | None = None, echo_reasoning: bool | None = None) -> Reply:
         import openai
 
         self.ledger.check()  # budget gate before the request is issued
         params = self._request_params(self._params(tools, max_tokens, reasoning_effort))
         attempt = 0
         context_shrunk = False
+        echo = self.cfg.echo_reasoning_content if echo_reasoning is None else echo_reasoning
+        usage = None
+        msg = SimpleNamespace(content="", reasoning_content=None, tool_calls=None)
+        finish = None
+        last_billed = 0.0
         await self._note_llm(label, "inflight")
         async with self._sem:
             while True:
@@ -668,11 +686,21 @@ class LLM:
                         raise _Transient("empty response")
                     break
                 except _Transient as e:
+                    # 这次已经向服务商生成过 token。重发之前先入账，预算门才能看见。
+                    if usage is not None:
+                        last_billed = self.ledger.add(usage, label)
+                        usage = None
                     attempt += 1
                     if attempt > self.cfg.max_retries:
                         if e.kind == "empty response":
-                            msg = SimpleNamespace(content="", reasoning_content=None, tool_calls=None)
-                            finish, usage = "stop", None
+                            reasoning = getattr(msg, "reasoning_content", None) or ""
+                            content = (getattr(msg, "content", None) or "").strip()
+                            # 正文是空的、核写在思考里时，把思考交给调用方。结束原因不再改写成一次干净的 stop 之前先保住这段文字。
+                            if not content and "kernel void" in reasoning:
+                                msg = SimpleNamespace(content=reasoning, reasoning_content=reasoning, tool_calls=None)
+                            else:
+                                msg = SimpleNamespace(content=content, reasoning_content=reasoning or None, tool_calls=None)
+                            finish = finish or "stop"
                             break
                         await self._note_llm(label, "error", error=e.kind[:200])
                         raise LLMError(f"{label}: gave up after {attempt - 1} retries: {e.kind}") from e
@@ -696,7 +724,7 @@ class LLM:
                     await asyncio.sleep(delay)
                 except openai.APIStatusError as e:  # 4xx: not retryable, except one context shrink and a rejected stream_options field
                     self.transcript.log({"event": "error", "label": label, "status": e.status_code, "error": str(e)})
-                    if e.status_code == 400 and "stream_options" in str(e).lower() and "stream_options" in params:
+                    if e.status_code == 400 and "stream_options" in str(e).lower() and "stream_options" in params and not _is_context(e.status_code, str(e)):
                         params.pop("stream_options", None)
                         self._send_stream_usage = False
                         await self._note_llm(label, "retry", attempt=attempt, error="HTTP 400 stream_options")
@@ -710,12 +738,13 @@ class LLM:
                             messages = rewritten
                             context_shrunk = True
                             if dropped_reasoning:
-                                self.cfg.echo_reasoning_content = False
+                                # 只停掉这一次对话后面的回传。别的分支仍按配置把思考带回去。
+                                echo = False
                             await self._note_llm(label, "retry", attempt=attempt, error=f"HTTP {e.status_code} context")
                             continue
                     await self._note_llm(label, "error", error=f"HTTP {e.status_code}"[:200])
                     raise LLMError(f"{label}: HTTP {e.status_code}: {e}") from e
-        cost = self.ledger.add(usage, label)
+        cost = self.ledger.add(usage, label) if usage is not None else last_billed
         reply = Reply(
             content=msg.content or "",
             reasoning_content=getattr(msg, "reasoning_content", None),
@@ -723,7 +752,8 @@ class LLM:
             finish_reason=finish,
             usage=usage,
             cost_usd=cost,
-            message=self._assistant_message(msg),
+            message=self._assistant_message(msg, echo=echo),
+            echo_reasoning=echo,
         )
         self.transcript.log(
             {
@@ -767,6 +797,7 @@ class LLM:
         # 模型可能一直叫工具。轮号用尽后把工具撤掉，逼它给出正文。中断后续跑时，缺结果的工具调用先补上，轮号不从头计。
         msgs = list(messages)
         first = start_turn
+        echo: bool | None = None
         if pending:
             # 这些调用已经问过模型，只补工具结果，不再发一次请求。
             await self._answer_tools(msgs, pending, handlers)
@@ -774,9 +805,14 @@ class LLM:
         for turn in range(first, max_turns + 1):
             # 前 max_turns 轮可以叫工具；到达上限的那一轮不再提供工具。
             use = tools if turn < max_turns else None
-            reply = await self.chat(msgs, tools=use, label=f"{label}#t{turn}", max_tokens=max_tokens, reasoning_effort=reasoning_effort)
+            reply = await self.chat(msgs, tools=use, label=f"{label}#t{turn}", max_tokens=max_tokens, reasoning_effort=reasoning_effort, echo_reasoning=echo)
+            if reply.echo_reasoning is False:
+                echo = False
             msgs.append(reply.message)
             if not reply.tool_calls:
+                return reply, msgs
+            # 这一轮已经不再提供工具。模型仍返回工具调用时不执行，避免撤工具之后还去跑 quick_check。
+            if use is None:
                 return reply, msgs
             # 输出顶到上限时，工具参数可能只写了一半。不执行，把这句写回，让模型重发或直接给内核。
             if reply.finish_reason == "length":

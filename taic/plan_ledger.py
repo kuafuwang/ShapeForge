@@ -77,7 +77,12 @@ def nodes_from_trace(trace: list[dict], history: list[str]) -> list[PlanNode]:
         speed = row.get("speedup")
         speed_f = float(speed) if isinstance(speed, (int, float)) and not isinstance(speed, bool) else None
         kind, hint = classify_outcome(status, tag, improved=bool(row.get("improved")), within_noise=bool(row.get("within_noise")), speedup=speed_f, parent_speedup=parent_speed)
-        if "not better" in tag and status == "ok":
+        recheck = row.get("differential_recheck")
+        # 同一轮里后一个分支把种子换掉后，历史行会写成 not better，但轨迹里 improved 仍是当时的结果。赢过的方向不能再标成已经证伪。
+        # 第二次种子上算错的，搜索报告仍是 ok。那是正确性没过，不是「写对了但没变快」。
+        if isinstance(recheck, str) and recheck not in ("", "timeout", "crash") and status == "ok":
+            kind, hint = "untested_impl_fail", "a second seed failed correctness, so this direction was not timed as a loss"
+        elif "not better" in tag and status == "ok" and not row.get("improved"):
             kind, hint = "falsified", ""
         nodes.append(PlanNode(rnd, f"r{rnd}.p{index}", title, kind, status or "history", speed_f, parent_speed, hint))
     return nodes

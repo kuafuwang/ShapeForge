@@ -30,7 +30,10 @@ def test_scan_reads_timeline_marks_confirmed_point_and_handoff(tmp_path, monkeyp
     winner = directory / "candidates" / "000_r1.p0"
     winner.mkdir(parents=True)
     (winner / "kernel.metal").write_text(SOURCE)
-    (directory / "confirm_report.json").write_text(json.dumps({"status": "ok", "speedup": 1.25}))
+    (directory / "confirm_report.json").write_text(json.dumps({
+        "status": "ok", "speedup": 1.25,
+        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"},
+    }))
     trace = [
         {"label": "init", "status": "ok", "speedup": 1.0, "best_speedup": 1.0, "cost_usd": 0.1, "within_noise": True, "differential_recheck": None},
         {"label": "r1.p0", "status": "ok", "speedup": 1.4, "best_speedup": 1.4, "cost_usd": 0.3, "within_noise": False, "differential_recheck": "incorrect"},

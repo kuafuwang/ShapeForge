@@ -48,7 +48,15 @@ def test_cost_is_cache_aware():
 
 def test_usage_without_deepseek_fields_falls_back_to_cached_tokens():
     u = {"prompt_tokens": 1000, "completion_tokens": 10, "prompt_tokens_details": {"cached_tokens": 600}}
-    assert split_usage(u) == (600, 400, 10)
+    assert split_usage(u) == (600, 400, 0, 10)
+
+
+def test_cache_write_tokens_are_not_billed_as_a_cache_miss():
+    u = {"prompt_tokens": 9012, "completion_tokens": 10, "prompt_tokens_details": {"cached_tokens": 6400, "cache_write_tokens": 2560}}
+    assert split_usage(u) == (6400, 52, 2560, 10)
+    led = CostLedger(cfg(price_cache_write=0.0))
+    cost = led.add(u)
+    assert cost == pytest.approx((6400 * 0.006 + 52 * 0.30 + 10 * 1.20) / 1e6)
 
 
 def test_budget_gate_is_checked_before_the_request():
@@ -89,6 +97,31 @@ def test_quota_on_429_is_not_retried():
     with pytest.raises(LLMError, match="quota"):
         run(llm.chat([{"role": "user", "content": "x"}]))
     assert len(client.calls) == 1
+
+
+def test_an_empty_retry_is_billed_and_a_kernel_in_reasoning_is_kept(monkeypatch):
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    usage = make_usage(miss=1_000_000, out=0)
+    client = FakeClient([make_response("", reasoning="kernel void k() {}", finish="stop", usage=usage)])
+    llm = LLM(cfg(max_retries=0), CostLedger(cfg()), client=client)
+    reply = run(llm.chat([{"role": "user", "content": "x"}]))
+    assert "kernel void" in reply.text()
+    assert llm.ledger.total_usd == pytest.approx(0.30)
+    assert len(client.calls) == 1
+
+
+def test_resume_ledger_includes_an_agent_turn():
+    from taic.resume import _requests_from_transcript
+
+    notes: list[str] = []
+    reqs = _requests_from_transcript([
+        {"event": "chat", "label": "plan", "cost_usd": 0.5, "total_usd": 0.5, "usage": {"prompt_tokens": 10, "completion_tokens": 1, "prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 10}},
+        {"event": "agent", "label": "r1.p0", "cost_usd": 1.2},
+    ], notes)
+    assert sum(r["cost_usd"] for r in reqs) == pytest.approx(1.7)
 
 
 def test_empty_stop_is_sent_again(monkeypatch):
@@ -160,7 +193,7 @@ def test_context_overflow_drops_reasoning_and_shortens_the_tool_result_once():
     sent = client.calls[1]["messages"]
     assert all("reasoning_content" not in m for m in sent)
     assert "omitted after a context-window error" in sent[-1]["content"]
-    assert llm.cfg.echo_reasoning_content is False
+    assert llm.cfg.echo_reasoning_content is True
 
 
 def test_a_tool_call_cut_off_by_length_is_not_executed():
@@ -233,6 +266,47 @@ def test_tools_are_withdrawn_at_the_turn_limit():
 
     reply, _ = run(llm.chat_with_tools([{"role": "user", "content": "go"}], [LOOKUP_TOOL], make_handlers(SkillIndex(), None, 3), max_turns=2))
     assert reply.text() == "final answer"
+
+
+# ----------------------------------------------------------------------------- red: the quota-exhausted branch
+# 这两个用例是 test 的"红"状态：今天跑会抛 LLMError("unreachable")。修好后它们必须转绿，
+# 且不是靠改这两条断言。见 docs/架构/搜索.md 的工具额度一段。
+
+
+def test_a_tool_call_after_the_tools_were_withdrawn_returns_instead_of_raising():
+    """Some providers echo the history's tool_calls even when ``tools`` is not offered.
+
+    The loop must return that reply (no kernel, empty text) so the caller takes its usual
+    "no code" path, instead of raising ``LLMError("unreachable")`` and failing the whole branch.
+    """
+    client = FakeClient(lambda m, **kw: make_response("", tool_calls=[("c", "lookup_msl", {"topic": "x"})]))
+    llm = LLM(cfg(), CostLedger(cfg()), client=client)
+    from taic.tools import LOOKUP_TOOL
+
+    reply, _ = run(llm.chat_with_tools([{"role": "user", "content": "go"}], [LOOKUP_TOOL], make_handlers(SkillIndex(), None, 3), max_turns=2))
+    assert len(client.calls) == 3  # max_turns + 1 requests: the last one is the forced answer
+    assert "tools" not in client.calls[-1]
+    assert reply.text() == ""
+
+
+def test_a_length_cut_on_the_forced_answer_returns_instead_of_raising():
+    """A reply truncated by ``max_tokens`` on the last turn must not end in ``unreachable``.
+
+    Truncated replies are 32.5% of the model spend, so this path is not hypothetical.
+    """
+
+    def script(messages, **kw):
+        if kw.get("tools"):
+            return make_response("", tool_calls=[("c", "lookup_msl", {"topic": "x"})])
+        return make_response("", tool_calls=[("c2", "lookup_msl", {"topic": "x"})], finish="length")
+
+    client = FakeClient(script)
+    llm = LLM(cfg(), CostLedger(cfg()), client=client)
+    from taic.tools import LOOKUP_TOOL
+
+    reply, _ = run(llm.chat_with_tools([{"role": "user", "content": "go"}], [LOOKUP_TOOL], make_handlers(SkillIndex(), None, 3), max_turns=2))
+    assert len(client.calls) == 3
+    assert reply.text() == ""
 
 
 def test_unknown_tool_and_handler_errors_go_back_to_the_model():

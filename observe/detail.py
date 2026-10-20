@@ -106,7 +106,14 @@ def _rel(path: Path) -> str:
 
 
 # 完成先看 result 能否读成对象，或 state 的 phase 已经是 done。结果缺失时：15 秒内有心跳或 pid 还在，当作仍在跑；心跳过期且进程不在是中断；连 state 都没有是未知。
-def liveness(state: dict | None, result: dict | None) -> str:
+def liveness(state: dict | None, result: dict | None, directory: Path | None = None) -> str:
+    if directory is not None:
+        from taic import control as run_control
+
+        holder = run_control.lock_holder(directory)
+        if holder and run_control.pid_alive(holder.get("pid")):
+            # 续跑已经拿锁，result.json 可能还没挪走。这段时间仍是在跑，不能当成可以删的已完成记录。
+            return "running"
     if result or (state and state.get("phase") == "done"):
         # result 能读出来就是完成。坏掉的 state 不会把已完成的运行打回「还在跑」。
         return "done"
@@ -275,7 +282,7 @@ def _budget_events(directory: Path) -> list[dict]:
 
 def row_from_files(directory: Path, state: dict | None, result: dict | None) -> dict:
     """One history row from files already loaded. Does not walk ``runs/``."""
-    status = liveness(state, result)
+    status = liveness(state, result, directory)
     stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
     spent, budget = money_fields(directory, state, result)
     alert_budget, alert_stop = _budget_for_alert(directory, spent, budget, stop)
@@ -1611,7 +1618,7 @@ def run_detail(run_id: str) -> dict | None:
     result = _load(directory / "result.json")
     trace = (state or {}).get("trace") or (result or {}).get("trace") or []
     confirmations = (state or {}).get("confirmations") or (result or {}).get("confirmations") or []
-    status = liveness(state, result)
+    status = liveness(state, result, directory)
     spent, budget = money_fields(directory, state, result)
     stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
     alert_budget, alert_stop = _budget_for_alert(directory, spent, budget, stop)

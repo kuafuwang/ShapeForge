@@ -13,6 +13,8 @@ from tcenv.evaluate import EvalReport
 
 from .fakes import FakeClient
 
+QUIET_BENCH = {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"}
+
 SOURCE = "kernel void relu_kernel() {}\n"
 
 
@@ -51,7 +53,7 @@ def test_a_bound_confirmation_shows_the_remeasured_number(tmp_path):
     (run / "candidates" / "000_r1.p0").mkdir(parents=True)
     (run / "best.metal").write_text(SOURCE)
     (run / "candidates" / "000_r1.p0" / "kernel.metal").write_text(SOURCE)
-    (run / "confirm_report.json").write_text(json.dumps({"status": "ok", "speedup": 1.25}))
+    (run / "confirm_report.json").write_text(json.dumps({"status": "ok", "speedup": 1.25, "benchmark": QUIET_BENCH}))
     result = _result(confirmed_status="ok", confirmed_speedup=1.25, confirmation_source_sha256=digest)
     got = published_conclusion(result, best_metal_sha256=digest, confirm_status="ok", winner_metal_sha256=digest)
     assert got == {"speedup": 1.25, "publication": "confirmed"}

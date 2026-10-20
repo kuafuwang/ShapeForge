@@ -246,6 +246,10 @@ def _evaluate_in_process(
     rep.stage = "abi"
     _note_stage(stage="abi", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
     problems = abi_mod.check_abi(contract, kernel, max_tg_memory=dev_info["max_threadgroup_memory_bytes"])
+    # 校验插桩会把静态线程组内存报成大约两倍。这一条单独出现时，不在校验进程里提前返回：
+    # 内核仍要在着色器校验下跑一次，设备上限留给后面不插桩的完整评测。
+    if mode == "validate" and abi_mod.only_static_threadgroup_limit(problems):
+        problems = []
     rep.abi = {"ok": not problems, "violations": problems}
     rep.pipeline = pipeline_stats(kernel, contract, dev_info)
     if problems:

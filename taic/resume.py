@@ -339,9 +339,16 @@ def _requests_from_transcript(events: list[dict], notes: list[str]) -> list[dict
     running = 0.0
     drift = 0.0
     for e in events:
+        if e.get("event") == "agent":
+            cost = e.get("cost_usd")
+            if isinstance(cost, bool) or not isinstance(cost, (int, float)):
+                continue
+            running += float(cost)
+            reqs.append({"t": None, "label": e.get("label", ""), "hit": 0, "miss": 0, "out": 0, "cost_usd": float(cost), "total_usd": running})
+            continue
         if e.get("event") != "chat":
             continue
-        hit, miss, out = split_usage(e.get("usage") if isinstance(e.get("usage"), dict) else {})
+        hit, miss, _write, out = split_usage(e.get("usage") if isinstance(e.get("usage"), dict) else {})
         cost = float(e.get("cost_usd") or 0.0)
         running += cost
         total = float(e.get("total_usd", running))
@@ -692,11 +699,14 @@ def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | N
     # --- counters, time, system prompt --------------------------------------------------------
     hangs = int(_first((state or {}).get("hangs"), (result or {}).get("hangs"), sum(1 for t in trace if t.get("status") == "timeout")) or 0)
     evaluations = int(_first((state or {}).get("evaluations"), (result or {}).get("evaluations"), len(trace)) or 0)
-    crashes = 0
-    for t in reversed(trace):
-        if t.get("status") != "crash":
-            break
-        crashes += 1
+    if isinstance(state, dict) and "crashes_in_a_row" in state:
+        crashes = int(state.get("crashes_in_a_row") or 0)
+    else:
+        crashes = 0
+        for t in reversed(trace):
+            if t.get("status") != "crash":
+                break
+            crashes += 1
     started = _first((state or {}).get("started_at"))
     elapsed = max([float(t.get("t_s") or 0.0) for t in trace] + [float((state or {}).get("updated_at") or 0.0) - float(started or 0.0) if started else 0.0])
     system = None

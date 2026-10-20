@@ -62,6 +62,7 @@ def test_a_corrupt_timing_block_does_not_raise_and_an_incomplete_benchmark_is_un
     from tcenv.bench import speedup_se_of_report, timing_is_uncertain
     assert speedup_se_of_report({"benchmark": {"candidate": 5, "baselines": {"mlx": {"cv": 0.01, "reps": 3}}, "best_baseline": "mlx"}}) == 0.0
     assert timing_is_uncertain({"benchmark": {"noisy": False}}) is True
+    assert timing_is_uncertain({"status": "ok", "speedup": 1.4}) is True
     from experiments.common import summarize
 
     raw = {

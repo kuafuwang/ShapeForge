@@ -550,6 +550,7 @@ class Orchestrator:
                 "search_seed_speedup": self._search_seed.speedup if self._search_seed else (self.best.speedup if self.best else None),
                 "confirm_winner_label": self._confirm_winner.label if self._confirm_winner else None,
                 "hangs": self.hangs,
+                "crashes_in_a_row": self.crashes_in_a_row,
                 "evaluations": self.evaluations,
                 "stop_reason": stop_reason,
                 "ledger": self.ledger.summary(),
@@ -811,6 +812,10 @@ class Orchestrator:
             # 记入与 _eval 相同的 hangs。本函数不抛 StopRun，这段反馈仍会交回模型。
             if rep.status == "timeout":
                 self.hangs += 1
+            elif rep.status == "crash":
+                self.crashes_in_a_row += 1
+            # 记数之后立刻落盘。进程若死在下一次完整评测之前，续跑仍能看见这次挂死。
+            self._publish_state("evaluate", inflight=None)
         return format_feedback(rep)[:FEEDBACK_CHARS]
 
     # ------------------------------------------------------------------ generation with repair
@@ -835,6 +840,13 @@ class Orchestrator:
         self.ledger.check()
         member = next(c.members[0] for c in self.committees if c.name == self._committee_name)
         remaining = self.ledger.remaining
+        share = getattr(self, "_pi_budget_cap", None)
+        if remaining is None:
+            budget_cap = 0.0 if share is None else share
+        elif share is None:
+            budget_cap = remaining
+        else:
+            budget_cap = min(remaining, share)
         try:
             source, cost, _tail = await asyncio.to_thread(
                 run_kernel_agent,
@@ -847,10 +859,14 @@ class Orchestrator:
                 kernel_name=self.task.contract.kernel_name,
                 provider=member.provider,
                 model=member.model,
-                budget_usd=0.0 if remaining is None else remaining,
+                budget_usd=budget_cap,
             )
         except AgentError as exc:
             self.log(f"  [{tag}] pi via hmz failed: {exc}")
+            if "did not finish within" in str(exc):
+                # 超时只杀掉 hmz 自己时，它拉起的评测子进程还会占着显卡。进程组已经杀掉；这次也计入挂死，旁边的分支不再提交内核。
+                self.hangs += 1
+                self._publish_state("llm", inflight=None)
             self.llm.transcript.log({
                 "event": "agent", "label": tag, "harness": "pi", "provider": member.provider, "model": member.model,
                 "cost_usd": None, "had_kernel": False, "error": str(exc)[:180],
@@ -1189,6 +1205,10 @@ class Orchestrator:
 
             before = seed
             # K 路一起启动：模型请求在锁外重叠，GPU 评测在各路的 _eval 里串行。
+            # pi 写核时，每一路拿到的上限是当时剩余预算的 1/K。否则每一路都会把全部剩余当成自己的上限。
+            n_plans = len(plans)
+            remaining = self.ledger.remaining
+            self._pi_budget_cap = (remaining / n_plans) if self.search.kernel_agent == "pi" and remaining is not None and n_plans else None
             outcomes = await asyncio.gather(*[branch(i, p) for i, p in enumerate(plans)], return_exceptions=True)
             fatal = [o for o in outcomes if isinstance(o, (BudgetExhausted, StopRun))]
             llm_errors = [o for o in outcomes if isinstance(o, LLMError)]
@@ -1241,11 +1261,17 @@ class Orchestrator:
             return
         phase_seed = self._phase_seed("domain", win.label, win.source)
         try:
+            if self.hangs >= self.search.max_hangs:
+                self.log("   domain sweep skipped: a GPU hang already stopped further launches")
+                return
             async with self.gpu_lock:
                 rep = await asyncio.to_thread(
                     self.evaluate_fn, self.task_name, self.dtype, self.size, win.source, mode="quick", seed=phase_seed, reps=1,
                     cases=("domain",), progress_path=self.run_dir / "eval_progress.json",
                 )
+            if rep.status == "timeout":
+                self.hangs += 1
+                self._publish_state("confirm", inflight=None)
             doc = rep.to_json()
         except Exception as e:  # noqa: BLE001 - the sweep is evidence, not a second chance to lose the confirmation
             doc = {"status": f"error: {type(e).__name__}: {e}", "correctness": {"coverage": {"kind": "sampling", "scope": ""}}}
@@ -1318,6 +1344,9 @@ class Orchestrator:
         res.confirmed_status, res.confirmed_speedup = rep.status, rep.speedup
         res.candidate_us, res.baseline_us = rep.candidate_us, rep.baseline_us
         control.write_json_atomic(self.run_dir / "confirm_report.json", rep.to_json())
+        if self.hangs >= self.search.max_hangs:
+            self.log("   domain sweep skipped: confirmation already hit the hang limit")
+            return
         await self._domain_sweep(win)
 
     # 种子慢于最强基线（speedup < profile_poor_below）时才抓 Instruments，附给规划和每一路补丁。失败、超过 profile_max 或已经挂死都不影响搜索；同一源码只抓一次。痕迹在 gpu_lock 里跑，和评测一样独占 GPU。

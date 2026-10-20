@@ -58,8 +58,8 @@ def choose_iters(run_k: Callable[[int], float], target_s: float = 0.015, kmin: i
     run_k(1)  # warm-up, discarded: pays one-time costs (pipeline creation, JIT compilation of a compiled baseline)
     per = max(run_k(1), 1e-8)
     # 单次已经超过 0.1 秒时一批只启动 1 次，避免 k 把单次 launch 的看门狗打满。
-    if per > 0.1:  # slow: one launch per batch
-        return 1
+    if per > 0.1:  # slow: do not grow toward kmax, but still cover every rotated buffer set
+        return max(1, kmin)
     # 再用最多 8 次、大约 0.05 秒的一小批，把「每次多少秒」从单次估计修正成一小批的平均。
     probe = max(1, min(8, int(0.05 / per)))
     per = max(run_k(probe) / probe, 1e-8)
@@ -189,7 +189,8 @@ def timing_is_uncertain(report) -> bool:
     """True when the kept measurement is marked noisy or a reported cv is above the quiet cutoff."""
     bench = _benchmark(report)
     if not bench:
-        return False
+        # 没有计时块就无法说明这次测量安静。确认报告缺了这一块时，不能把加速比当成已经复核过。
+        return True
     if bench.get("noisy") is True:
         return True
     candidate = bench.get("candidate")

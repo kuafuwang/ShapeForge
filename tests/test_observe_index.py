@@ -164,7 +164,7 @@ def test_feature_grid_keeps_the_fastest_in_each_cell(tmp_path, monkeypatch):
     assert len(detail["feature_grid"]) == 1
     assert detail["feature_grid"][0]["label"] == "r1.p0"
     assert detail["feature_grid"][0]["speedup"] == 1.2
-    assert detail["feature_grid"][0]["published"] is True
+    assert detail["feature_grid"][0]["published"] is False
     assert detail["plan_outcomes"] == []
 
 
@@ -235,7 +235,10 @@ def test_editing_the_winner_kernel_drops_the_confirmed_speedup(tmp_path, monkeyp
     cand.mkdir(parents=True)
     (cand / "kernel.metal").write_text(metal)
     (directory / "best.metal").write_text(metal)
-    (directory / "confirm_report.json").write_text(json.dumps({"status": "ok", "speedup": 1.4}))
+    (directory / "confirm_report.json").write_text(json.dumps({
+        "status": "ok", "speedup": 1.4,
+        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"},
+    }))
     (directory / "state.json").write_text(json.dumps({"task": "gemm", "dtype": "fp16", "phase": "done", "started_at": 1, "updated_at": 1}))
     (directory / "result.json").write_text(json.dumps({
         "task": "gemm", "dtype": "fp16", "stop_reason": "max_rounds", "spent_usd": 0.1, "budget_usd": 1,

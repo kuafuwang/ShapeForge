@@ -93,11 +93,15 @@ def feature_grid(directory: Path, result: dict | None) -> list[dict]:
     Identical source is signed once. The grid is cached until ``state.json`` or ``result.json`` changes.
     """
     winner = (result or {}).get("confirm_winner_label")
+    from experiments.common import conclusion_of_run
+
+    published_ok = conclusion_of_run(directory, result).get("publication") == "confirmed"
     key = (
         str(directory.resolve()),
         _file_signature(directory / "state.json"),
         _file_signature(directory / "result.json"),
         str(winner or ""),
+        published_ok,
     )
     cached = _GRID_CACHE.get(key)
     if cached is not None:
@@ -133,7 +137,7 @@ def feature_grid(directory: Path, result: dict | None) -> list[dict]:
                 "signature": list(signature),
                 "label": label,
                 "speedup": speed,
-                "published": label == winner,
+                "published": published_ok and label == winner,
             }
     rows = [best[signature] for signature in order if signature in best]
     for stale in [item for item in _GRID_CACHE if item[0] == key[0] and item != key]:

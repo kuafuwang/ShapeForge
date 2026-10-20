@@ -12,6 +12,7 @@ import math
 import os
 import re
 import shutil
+import signal
 import subprocess
 from pathlib import Path
 
@@ -140,7 +141,10 @@ def run_kernel_agent(
     (work / "TASK.md").write_text(task_markdown(
         messages, repo=repo, kernel_path=kernel_path, task_name=task_name, dtype=dtype, size=size, kernel_name=kernel_name,
     ))
-    cap = max(float(budget_usd), 0.01)
+    cap = float(budget_usd)
+    if cap <= 0:
+        # 调用方用 0 表示这次搜索没有美元上限。hmz 仍要一个正数；有上限时按调用方给的份额，不再抬到 0.01。
+        cap = 0.01
     argv = [
         binary, "exec", "-f", str(FLOW),
         "-a", f"assistant={agent_spec(provider, model)}",
@@ -149,16 +153,28 @@ def run_kernel_agent(
         "--", "Read TASK.md in this directory and do it. Leave the finished kernel in kernel.metal.",
     ]
     try:
-        proc = subprocess.run(argv, cwd=work, capture_output=True, text=True, timeout=timeout_s, env=os.environ.copy())
-    except subprocess.TimeoutExpired as exc:
-        raise AgentError(f"hmz did not finish within {timeout_s:.0f}s") from exc
+        proc = subprocess.Popen(
+            argv, cwd=work, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True, env=os.environ.copy(),
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                proc.kill()
+            proc.communicate()
+            raise AgentError(f"hmz did not finish within {timeout_s:.0f}s") from None
+    except AgentError:
+        raise
     except OSError as exc:
         raise AgentError(f"could not start hmz: {exc}") from exc
-    stream = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    stream = (stdout or "") + "\n" + (stderr or "")
     cost = cost_from_stream(stream)
     written = kernel_path.read_text() if kernel_path.exists() else ""
     source = kernel_text(written, kernel_name)
-    tail = (proc.stderr or proc.stdout or "").strip()[-400:]
+    tail = (stderr or stdout or "").strip()[-400:]
     if proc.returncode != 0 and source is None:
         raise AgentError(f"hmz exited {proc.returncode}: {tail}")
     return source, cost, tail

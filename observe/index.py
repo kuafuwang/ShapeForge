@@ -331,6 +331,7 @@ class Index:
             root = detail.runs_root()
             if root.is_dir():
                 self._note_dir(root, force=False)
+            self._refresh_watched()
             self._refresh_running()
             self.conn.commit()
             return self.revision(), list(self.changed)
@@ -406,10 +407,29 @@ class Index:
             self._ingest(directory)
         self._note_dir(directory, force=False)
 
+    def _refresh_watched(self) -> None:
+        """Notice a new child or a resumed run. Creating a nested directory changes its parent, not ``runs/``."""
+        root = detail.runs_root()
+        watched = list(self.conn.execute("SELECT path, mtime_ns FROM watched"))
+        for item in watched:
+            path = root if item["path"] in ("", ".") else root / item["path"]
+            try:
+                mtime = path.stat().st_mtime_ns
+            except OSError:
+                continue
+            if mtime != item["mtime_ns"]:
+                self._note_dir(path, force=True)
+
     def _refresh_running(self) -> None:
         for row in self.conn.execute("SELECT run_id, updated_at, pid, phase, status, row_json FROM runs WHERE status = 'running'").fetchall():
             path = detail.resolve_run(row["run_id"])
             if path is None:
+                self.conn.execute(
+                    "UPDATE runs SET status = 'missing', publication = NULL, published_speedup = NULL WHERE run_id = ?",
+                    (row["run_id"],),
+                )
+                self.changed.append(row["run_id"])
+                self._bump()
                 continue
             stored = self._stored_fingerprints(path)
             label, rel = _confirm_target(stored[3])

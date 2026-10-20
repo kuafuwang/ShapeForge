@@ -113,7 +113,10 @@ def test_a_bound_confirmation_publishes_the_remeasure_not_the_search_best(tmp_pa
     (run / "candidates" / "000_win").mkdir(parents=True)
     (run / "best.metal").write_text(source)
     (run / "candidates" / "000_win" / "kernel.metal").write_text(source)
-    (run / "confirm_report.json").write_text(json.dumps({"status": "ok", "speedup": 7.5}))
+    (run / "confirm_report.json").write_text(json.dumps({
+        "status": "ok", "speedup": 7.5,
+        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"},
+    }))
     (run / "state.json").write_text(json.dumps({
         "task": "relu", "dtype": "fp16", "size": "small", "committee": "first", "model": "m",
         "phase": "done", "stop_reason": "max_rounds", "round": 2, "spent_usd": 0.5, "budget_usd": 2, "best_speedup": 9.5,

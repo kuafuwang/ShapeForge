@@ -83,7 +83,7 @@ def _searches(root: Path) -> list[Path]:
 def _live(directory: Path) -> bool:
     state = detail._load(directory / "state.json")
     result = detail._load(directory / "result.json") if (directory / "result.json").exists() else None
-    return detail.liveness(state, result) == "running"
+    return detail.liveness(state, result, directory) == "running"
 
 
 def _relative(path: Path) -> str:

@@ -41,6 +41,22 @@ def test_an_abi_failure_is_not_a_falsified_direction():
     assert "falsified" not in text.split("untested")[0]
 
 
+def test_a_same_round_winner_replaced_by_a_sibling_is_not_falsified():
+    nodes = nodes_from_trace(
+        [{"label": "r2.p0", "status": "ok", "speedup": 1.4, "improved": True, "within_noise": False, "best_speedup": 1.8}],
+        ["round 2: vectorize the loads -> 1.400x (not better)"],
+    )
+    assert nodes[0].outcome_kind == "validated_win"
+
+
+def test_a_recheck_failure_is_not_a_timed_loss():
+    nodes = nodes_from_trace(
+        [{"label": "r2.p0", "status": "ok", "speedup": 1.4, "improved": False, "within_noise": False, "best_speedup": 1.0, "differential_recheck": "incorrect"}],
+        ["round 2: widen the tile -> 1.400x (not better)"],
+    )
+    assert nodes[0].outcome_kind == "untested_impl_fail"
+
+
 def test_diverse_parent_is_none_until_features_differ():
     same = "kernel void k() { o[0] = 1; }\n"
     other = "kernel void k() { simdgroup_matrix<float, 8, 8> acc[4]; simdgroup_multiply_accumulate(acc[0], acc[0], acc[0], acc[0]); }\n"

@@ -29,7 +29,7 @@ def test_choose_iters_still_uses_single_launches_for_slow_kernels():
         calls.append(k)
         return 0.3 * k
 
-    assert choose_iters(run_k) == 1 and max(calls) == 1  # never asked for a long batch
+    assert choose_iters(run_k) == 4 and max(calls) == 1  # kmin buffer sets, never a long probe batch
 
 
 def test_interleaved_reports_every_runner():

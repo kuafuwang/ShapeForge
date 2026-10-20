@@ -22,7 +22,10 @@ def _published(run_dir: Path, task: str, speedup: float, *, best: float, spent: 
     cand = run_dir / "candidates" / f"001_{label}"
     cand.mkdir(parents=True)
     (cand / "kernel.metal").write_text(text)
-    (run_dir / "confirm_report.json").write_text(json.dumps({"status": "ok"}))
+    (run_dir / "confirm_report.json").write_text(json.dumps({
+        "status": "ok",
+        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"},
+    }))
     (run_dir / "result.json").write_text(json.dumps({
         "task": task, "dtype": "fp16", "model": "fake", "stop_reason": "budget_exhausted", "rounds": 1, "evaluations": 1,
         "spent_usd": spent, "budget_usd": spent, "best_speedup": best, "confirmed_speedup": speedup,
