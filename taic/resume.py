@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import control
+from .llm import MAX_TOOL_TURNS
 from .artifacts import LEDGER_SCHEMA_VERSION, NeedsInspection, RESULT_SCHEMA_VERSION, STATE_SCHEMA_VERSION, read_versioned
 from .policy import candidate_eligible, comparison_speedup, next_stagnant, relation_to_best
 
@@ -488,7 +489,9 @@ def _branch(rnd: int, i: int, chats: list[dict], cands: list[dict], search, kern
     reply = conv[-1]
     max_try = search.max_repair_tries
     tcs = reply.get("tool_calls") or []
-    if tcs:
+    # 到达轮数上限的那一轮工具已经被撤掉（见 taic.llm.chat_with_tools）。那里返回的 reply 可能仍带 tool_calls，
+    # 当场没有执行，续跑也不该执行它，否则会把一次"没写出内核"变成一次偷偷的 GPU 调用。
+    if tcs and turn < MAX_TOOL_TURNS:
         pending = [{"id": t["id"], "name": t["function"]["name"], "arguments": t["function"]["arguments"]} for t in tcs]
         return "partial", None, BranchResume(attempt, conv, turn, pending, None, _quick_used(conv), f"waiting for {len(pending)} tool result(s) of {last['label']}")
     text = reply.get("content") or ""

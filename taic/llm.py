@@ -26,6 +26,8 @@ _PREVIEW_CHARS = 4096
 _PREVIEW_INTERVAL_S = 1.0
 _PREVIEW_GROWTH = 2048
 _PREVIEW_SECRET = re.compile(r"(?i)(sk-)(\S{0,80})")
+# 一次请求最多几轮（含最后一轮不给工具的那次）。resume 用同一个数判断某条 assistant 的 tool_calls 还算不算 pending。
+MAX_TOOL_TURNS = 6
 
 
 def _scrub_preview(text: str) -> str:
@@ -782,7 +784,7 @@ class LLM:
         handlers: dict[str, ToolHandler],
         *,
         label: str = "",
-        max_turns: int = 6,
+        max_turns: int = MAX_TOOL_TURNS,
         max_tokens: int | None = None,
         start_turn: int = 0,
         pending: list[dict] | None = None,
@@ -812,7 +814,15 @@ class LLM:
             if not reply.tool_calls:
                 return reply, msgs
             # 这一轮已经不再提供工具。模型仍返回工具调用时不执行，避免撤工具之后还去跑 quick_check。
+            # 但要把每个调用都补上一条工具结果：会话若以悬空的 tool_calls 结尾，续跑会把它当成
+            # "等待工具结果"，真的去执行这些被撤回的调用（见 taic/resume.py 的 _branch）。
             if use is None:
+                for tc in reply.tool_calls:
+                    msgs.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": "error: tools are not available on this turn; answer with the kernel",
+                    })
                 return reply, msgs
             # 输出顶到上限时，工具参数可能只写了一半。不执行，把这句写回，让模型重发或直接给内核。
             if reply.finish_reason == "length":

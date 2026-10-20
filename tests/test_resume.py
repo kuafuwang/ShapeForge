@@ -622,3 +622,22 @@ def test_a_killed_run_with_tool_calls_continues_to_the_same_result(tmp_path, kil
         return
     res = cli.run_prepared(ns(tmp_path / "run"), o2, snap, info, nb)
     assert snapshot_of(res, o2) == want
+
+
+def test_tool_calls_on_the_forced_answer_turn_are_not_pending():
+    """Reaching the turn limit withdraws the tools; a reply that still carries tool_calls was never executed.
+
+    Treating it as pending would make ``taic resume`` run a quick_check the search had deliberately refused.
+    """
+    from taic.llm import MAX_TOOL_TURNS
+
+    reply = {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "quick_check", "arguments": "{}"}}]}
+    chats = [{"label": f"r1.p0#t{MAX_TOOL_TURNS}", "messages": [{"role": "user", "content": "go"}], "reply": reply}]
+    state, label, resume = rs._branch(1, 0, chats, [], SearchConfig(branches=1, max_repair_tries=1), KERNEL)
+    assert state == "partial" and label is None
+    assert resume.pending == []
+    assert "no code block" in resume.note
+
+    earlier = [{"label": "r1.p0#t1", "messages": [{"role": "user", "content": "go"}], "reply": reply}]
+    state2, _label2, resume2 = rs._branch(1, 0, earlier, [], SearchConfig(branches=1, max_repair_tries=1), KERNEL)
+    assert state2 == "partial" and len(resume2.pending) == 1  # 工具仍可用：补上结果再继续

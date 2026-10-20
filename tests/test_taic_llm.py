@@ -283,10 +283,14 @@ def test_a_tool_call_after_the_tools_were_withdrawn_returns_instead_of_raising()
     llm = LLM(cfg(), CostLedger(cfg()), client=client)
     from taic.tools import LOOKUP_TOOL
 
-    reply, _ = run(llm.chat_with_tools([{"role": "user", "content": "go"}], [LOOKUP_TOOL], make_handlers(SkillIndex(), None, 3), max_turns=2))
+    reply, msgs = run(llm.chat_with_tools([{"role": "user", "content": "go"}], [LOOKUP_TOOL], make_handlers(SkillIndex(), None, 3), max_turns=2))
     assert len(client.calls) == 3  # max_turns + 1 requests: the last one is the forced answer
     assert "tools" not in client.calls[-1]
     assert reply.text() == ""
+    # 会话不能以悬空的 tool_calls 结尾，否则 resume 会把它当 pending，续跑时真的去执行这些被撤回的调用。
+    assert msgs[-2]["role"] == "assistant" and msgs[-2]["tool_calls"]
+    assert msgs[-1]["role"] == "tool" and "not available" in msgs[-1]["content"]
+    assert msgs[-1]["tool_call_id"] == msgs[-2]["tool_calls"][0]["id"]
 
 
 def test_a_length_cut_on_the_forced_answer_returns_instead_of_raising():
