@@ -149,7 +149,11 @@ LABEL_RE = re.compile(r"^(?P<branch>init\d*(?:\.s\d+)?|r(?P<round>\d+)\.p(?P<pla
 PLAN_TAG_RE = re.compile(r"^r(\d+)\.plan(?:\.retry)?$")
 PATCH_TAG_RE = re.compile(r"^r\d+\.p\d+$")
 PLAN_K_RE = re.compile(r"propose (\d+) DIFFERENT optimization plans")
-PATCH_RE = re.compile(r"Implement exactly this optimization plan and nothing else:\n\*\*(?P<title>.*?)\*\*\n(?P<change>.*?)\n\nKeep everything that already works", re.S)
+PATCH_RE = re.compile(
+    r"Implement exactly this optimization plan and nothing else:\n\*\*(?P<title>.*?)\*\*\n(?P<change>.*?)\n\n"
+    r"(?:Keep everything that already works|The current kernel is already saved as the search seed\.)",
+    re.S,
+)
 SEED_RE = re.compile(r"```metal\n(?P<src>.*?)\n```\n\nEvaluation feedback", re.S)
 MIXED_MARK = "LOCAL, low-risk change"
 

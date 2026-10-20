@@ -64,6 +64,9 @@ def task_markdown(messages: list[dict], *, repo: Path, kernel_path: Path, task_n
         f"quick_check: bash this command and read its output:\n{check}\n"
         "That command does not time the kernel. A time you measure yourself is not the search result. "
         "Do not run a benchmark. The search times this file after you exit and decides whether it stays.\n"
+        "If quick_check fails, leave the failing kernel in the file and stop. Do not restore an earlier kernel "
+        "to make the command pass. The search already saved the previous kernel. A file identical to it is "
+        "recorded as unchanged and does not count.\n"
         "A kernel that does not return can freeze the display."
     )
     return "\n\n".join([*pasted, rules]) + "\n"

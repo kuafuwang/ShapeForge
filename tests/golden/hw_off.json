@@ -1,8 +1,8 @@
 {
 "_meta": {
-"git_commit": "0de82a6015a144aadb0dd9c907d48a8fe28e8ac1",
-"reason": "Direct chat sends stream=True, so the hashed request body includes the stream flags.",
-"recorded_at": "2026-10-20T10:18:43+08:00"
+"git_commit": "003b14e9f4be3c88c0dc3abf70d74cd80d198ec0",
+"reason": "A patch that copies the current seed is unchanged and does not count, so the patch prompt no longer says to keep the old kernel.",
+"recorded_at": "2026-10-20T15:02:13+08:00"
 },
 "feedback": {
 "format_feedback_cut|compile_error": "STATUS: compile_error  (stage reached: compile)\nMetal compiler rejected the kernel\n\nMetal compiler errors (line numbers refer to your kernel source):\nkernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n",
@@ -27,15 +27,15 @@
 },
 {
 "label": "r1.p0",
-"sha": "2e085ac695c8ce504f7bfce02ff7926c60559da0"
+"sha": "7125fb1c478350d61875bb8e95a17678106f97f1"
 },
 {
 "label": "r1.p1",
-"sha": "60bfa4f456e31d143d4a2ae77bd4ecd4844cda96"
+"sha": "ce611f7db7561363288b3988b553710201cdb0b4"
 },
 {
 "label": "r1.p2",
-"sha": "06ce42f9005b7346a789c6dceb7ffdfa4819ae41"
+"sha": "576b50c1e22fe6e524422cb66898d315e18def0d"
 },
 {
 "label": "r1.plan",
@@ -43,15 +43,15 @@
 },
 {
 "label": "r2.p0",
-"sha": "aef34cdd07cb0fc500b2db940216961ed1ff3744"
+"sha": "e44a30b76063b25151428cda2d9419a8d067d07c"
 },
 {
 "label": "r2.p1",
-"sha": "53580104f039bf5c6b59f806b0478ffb50064b5e"
+"sha": "c0a54fe87713b6a6ee8baf630912b38ab9332349"
 },
 {
 "label": "r2.p2",
-"sha": "7a3d2ecbe40f96a5b0852ef2426f29131ba27caa"
+"sha": "a002b1ad682e6ffcc0c042c94cae752e15918ec6"
 },
 {
 "label": "r2.plan",
@@ -59,7 +59,7 @@
 }
 ],
 "requests": 9,
-"sha": "24e1297d13abe798e31943aa9c39032c842c2f32"
+"sha": "4772f943dce29127440a939da67ee6832ad673d8"
 },
 "orchestrator|gemm|plan_mix=1": {
 "each": [
@@ -69,15 +69,15 @@
 },
 {
 "label": "r1.p0",
-"sha": "dd6ee263034ef77917ab091a7abb33475a267be6"
+"sha": "a70630e2b6e9f0f833ff0f8db85d893d264802ce"
 },
 {
 "label": "r1.p1",
-"sha": "d241a7ac3f98707a3492d3f423cf6c4b85471788"
+"sha": "b0e4adbd7e72dc09d75d4020bb164c84cc066f04"
 },
 {
 "label": "r1.p2",
-"sha": "07642a47fac29aec0fcc8f1af55e898c81fe8586"
+"sha": "ccc4cc699aa365a7343f003416c69e657d776580"
 },
 {
 "label": "r1.plan",
@@ -85,15 +85,15 @@
 },
 {
 "label": "r2.p0",
-"sha": "412137ddb8c6f0f36dc3ae86e8a9ed83f3d76050"
+"sha": "9f9c71d910dd47d1835539d9b8d20aba6b3ad39d"
 },
 {
 "label": "r2.p1",
-"sha": "84e8c9f412bac40fbbb370c409b4dcc06f0f48d8"
+"sha": "1c4c23e05fd7054de05aaa20f37741b886d30906"
 },
 {
 "label": "r2.p2",
-"sha": "55223ff45618ae393eefde1ab59c00392820c3de"
+"sha": "3effceb4c9a8b5ca1bc4035b2b06feaf52366f4f"
 },
 {
 "label": "r2.plan",
@@ -101,7 +101,7 @@
 }
 ],
 "requests": 9,
-"sha": "fd74b389d527a942060099b93440427c12a6d7cc"
+"sha": "188e3d37ad48258d2d88c8ba03afea606283ade1"
 },
 "orchestrator|relu|plan_mix=0": {
 "each": [
@@ -111,15 +111,15 @@
 },
 {
 "label": "r1.p0",
-"sha": "bc93b5d7a1e1dbac82a6a64aa64fedcb2a9df5e4"
+"sha": "92a249adeb92fcdf4c87a13e891523829f2a07c6"
 },
 {
 "label": "r1.p1",
-"sha": "9daaa988aedd2f3897ce3ac80d1068b3031d7e1f"
+"sha": "c22866d849138b6d82c115e590d73dccae59704c"
 },
 {
 "label": "r1.p2",
-"sha": "4057b45e04b7be780e15043c2700c2e7e9549102"
+"sha": "51570d2b1549c405ce13f95505beab0522b52870"
 },
 {
 "label": "r1.plan",
@@ -127,15 +127,15 @@
 },
 {
 "label": "r2.p0",
-"sha": "f95886bcd306ebd17ffb39185b706b24f360f9af"
+"sha": "826413cbaea2641d56f5ce22a1b1ee5054762c93"
 },
 {
 "label": "r2.p1",
-"sha": "3ec64d9b2d383047cc690bb42947040ae92150a4"
+"sha": "2677c9648eca4c930974355c51859b0872832ad4"
 },
 {
 "label": "r2.p2",
-"sha": "b0bcef5c38c4007c008bc6e8ee4ee956a2af7923"
+"sha": "a447f8a775d4dc091b37df4baab9d42828c38d6d"
 },
 {
 "label": "r2.plan",
@@ -143,7 +143,7 @@
 }
 ],
 "requests": 9,
-"sha": "f8b0c5fd1d2c67d74369c0c170f8cffaa3db727f"
+"sha": "fb0be725746b1c4af28068adc585fd84f800ef9c"
 },
 "orchestrator|relu|plan_mix=0|plan_effort=high|patch_effort=low": {
 "each": [
@@ -153,15 +153,15 @@
 },
 {
 "label": "r1.p0",
-"sha": "e0f9e9b00d1a07cb5aa02f9d31525b575b0b20bd"
+"sha": "985a5dd8f8707c1da0a62dd53b067f7e7ddb01ae"
 },
 {
 "label": "r1.p1",
-"sha": "425a3e350a6aa7324c801e93aa71d437e6626b2a"
+"sha": "00fb80c80526a50444ea37ea6677794605b35f23"
 },
 {
 "label": "r1.p2",
-"sha": "fe41b54cb29f7618495e461ddd4606073c2205be"
+"sha": "13a43b7999f261f405b2c740c5219fec54a8ed97"
 },
 {
 "label": "r1.plan",
@@ -169,15 +169,15 @@
 },
 {
 "label": "r2.p0",
-"sha": "f04fb19cac846e53b67e6fc4b19f939e939204db"
+"sha": "6dd974a4538010b04e214c448163cd10610b2e07"
 },
 {
 "label": "r2.p1",
-"sha": "23aaa2a50b1e05706c13994992dd4f4c86820dec"
+"sha": "466b2779ada4d4b5241bb848b8410262ed49566e"
 },
 {
 "label": "r2.p2",
-"sha": "cd2bc3c1faa141fc9dfbab12fa59daf6dfb3d0af"
+"sha": "6fcc8433ca8d191f2bdf1fccd5e1f895bd9ee7bf"
 },
 {
 "label": "r2.plan",
@@ -185,7 +185,7 @@
 }
 ],
 "requests": 9,
-"sha": "8d2c210f675efdf547db6f81133b44370043180f"
+"sha": "462214f50360b65ba359d539f421d8cfe388924b"
 },
 "orchestrator|relu|plan_mix=0|truncation_retry=1": {
 "each": [
@@ -199,15 +199,15 @@
 },
 {
 "label": "r1.p0",
-"sha": "bc93b5d7a1e1dbac82a6a64aa64fedcb2a9df5e4"
+"sha": "92a249adeb92fcdf4c87a13e891523829f2a07c6"
 },
 {
 "label": "r1.p1",
-"sha": "9daaa988aedd2f3897ce3ac80d1068b3031d7e1f"
+"sha": "c22866d849138b6d82c115e590d73dccae59704c"
 },
 {
 "label": "r1.p2",
-"sha": "4057b45e04b7be780e15043c2700c2e7e9549102"
+"sha": "51570d2b1549c405ce13f95505beab0522b52870"
 },
 {
 "label": "r1.plan",
@@ -215,15 +215,15 @@
 },
 {
 "label": "r2.p0",
-"sha": "f95886bcd306ebd17ffb39185b706b24f360f9af"
+"sha": "826413cbaea2641d56f5ce22a1b1ee5054762c93"
 },
 {
 "label": "r2.p1",
-"sha": "3ec64d9b2d383047cc690bb42947040ae92150a4"
+"sha": "2677c9648eca4c930974355c51859b0872832ad4"
 },
 {
 "label": "r2.p2",
-"sha": "b0bcef5c38c4007c008bc6e8ee4ee956a2af7923"
+"sha": "a447f8a775d4dc091b37df4baab9d42828c38d6d"
 },
 {
 "label": "r2.plan",
@@ -231,7 +231,7 @@
 }
 ],
 "requests": 10,
-"sha": "d47db5a3137bd1d8896d4194141f70fab5d65206"
+"sha": "cb6dc63cebac4567b98a946f640141db5dbb473d"
 },
 "orchestrator|relu|plan_mix=1": {
 "each": [
@@ -241,15 +241,15 @@
 },
 {
 "label": "r1.p0",
-"sha": "bc93b5d7a1e1dbac82a6a64aa64fedcb2a9df5e4"
+"sha": "92a249adeb92fcdf4c87a13e891523829f2a07c6"
 },
 {
 "label": "r1.p1",
-"sha": "9daaa988aedd2f3897ce3ac80d1068b3031d7e1f"
+"sha": "c22866d849138b6d82c115e590d73dccae59704c"
 },
 {
 "label": "r1.p2",
-"sha": "4057b45e04b7be780e15043c2700c2e7e9549102"
+"sha": "51570d2b1549c405ce13f95505beab0522b52870"
 },
 {
 "label": "r1.plan",
@@ -257,15 +257,15 @@
 },
 {
 "label": "r2.p0",
-"sha": "f95886bcd306ebd17ffb39185b706b24f360f9af"
+"sha": "826413cbaea2641d56f5ce22a1b1ee5054762c93"
 },
 {
 "label": "r2.p1",
-"sha": "3ec64d9b2d383047cc690bb42947040ae92150a4"
+"sha": "2677c9648eca4c930974355c51859b0872832ad4"
 },
 {
 "label": "r2.p2",
-"sha": "b0bcef5c38c4007c008bc6e8ee4ee956a2af7923"
+"sha": "a447f8a775d4dc091b37df4baab9d42828c38d6d"
 },
 {
 "label": "r2.plan",
@@ -273,7 +273,7 @@
 }
 ],
 "requests": 9,
-"sha": "0008252b55c7ab1185f3452b3c551f0bb78d4a02"
+"sha": "da1d1b1734381339a2c7ac9d2d93d6681d9e4534"
 }
 },
 "outbound": {
@@ -484,28 +484,28 @@
 "initial|silu": "938d5572fa4b241d1dec126d756ad094a14f3ec8",
 "initial|softmax": "8ede5916e9f8693675c421ff7bb0efeb10bc86cf",
 "initial|swiglu": "8c5385f49523399877e11ce0bf80e8b6246820c8",
-"patch|bitdelta_gemm": "20633b0b4a59c3bb1d0a64dac80ae1c00c590fcf",
-"patch|conv2d": "2b95cd8ede4e3a49fa513804873d03dba7f28187",
-"patch|flash_attention": "1001f2c9906a22bc5ae2674b7b5a92c979153ed0",
-"patch|flash_attention@64x32t256": "4028240537b2e5dfd395222364d89399e573f81f",
-"patch|gemm": "eff98f4ad755257d1a407f5e924bc942b1274ae7",
-"patch|gemm@128x64x32t256": "8aab3fd95ab8a4eac9aed3415962020ce1b55678",
-"patch|gemm_silu": "f364a2cea6a3b5733a1a9ca3f2d7dbc34f89aca8",
-"patch|gemv": "1d3344a32827e8f079b76d65a072489104416c65",
-"patch|lion": "08b78f6a858524709f24300e4a4c126bee07a4d7",
-"patch|mamba2_chunk_scan": "69449ce5684c893b1a4f8b3633c643fcf9888ea8",
-"patch|reduction_sum": "422579e72980e94f5586c46fca4951e1e626997c",
-"patch|relu": "77d4dc1c3e3fb223139365c1a75b1e60945889f8",
-"patch|rmsnorm": "575ee2226660aa20759f80aa53fc50cf6184c268",
-"patch|rope": "89291edc801c159ee5704552a1846f3fbb645935",
-"patch|sem_attention_odd_scale": "56484a33db215ce77a67da513e3c1b6413c25808",
-"patch|sem_gelu_named_relu": "1264bfc6e24d9d484769f76e9536f727a5c6a3e6",
-"patch|sem_gemm_neg": "9f987939a314317f7ac1892cc50ebd0b868ff61e",
-"patch|sem_relu_gelu_comment": "13fc5d838bf4eae2881a4b82bb0c3f85c49a2f50",
-"patch|sigmoid": "34a56915e4c25dd09b63e1f798e516a1dbb128cb",
-"patch|silu": "73bb647b3201de64d6844bf1cb51aa10eb0a830e",
-"patch|softmax": "85cc88224ac16283a97b5e7890935759f6499603",
-"patch|swiglu": "7b5fc28a88af6d1a40435376e4d0befe0301caeb",
+"patch|bitdelta_gemm": "b72d217de0aa280f61de55ab1cf5c2a3ba6453a6",
+"patch|conv2d": "0a6c0432bf3f86f1d38588f505b9ca95cdde4d9e",
+"patch|flash_attention": "f3953f42bdc08b1604c6190a08d593ea30815544",
+"patch|flash_attention@64x32t256": "40e4598c516d4b18d500369f1a5c61c22fb111d8",
+"patch|gemm": "1cdb3ed70bee0fe80cd9df54a52be3eb8a14ff1e",
+"patch|gemm@128x64x32t256": "203cf4c36b0553eefe7c0aa1e36009b6e00b8437",
+"patch|gemm_silu": "5eae08175eb16d006f1794da2c1a7d092e52928c",
+"patch|gemv": "00304a18b3638a7c694968ad7d8c2ce6483a49d0",
+"patch|lion": "9f6173c2a5eebb4d843bcb8aece8373e2a2f502f",
+"patch|mamba2_chunk_scan": "9ac1e139fd30ee8c0c7e300150a8f31cda6335fa",
+"patch|reduction_sum": "129ac2454775fabf5f8971cf6430e0363880055c",
+"patch|relu": "73897c624625321be337c630312e6e694a3bc082",
+"patch|rmsnorm": "6618874d36ec0a1296b97f14a492a3765739998f",
+"patch|rope": "815e9f08aba56f25b72f8bcdb5fe6b48c7ee728d",
+"patch|sem_attention_odd_scale": "f52c060d8725c777d4aafc4a2345e6c8c591c2a6",
+"patch|sem_gelu_named_relu": "1a11af6caaf44cca878da073b1bd9eb73e05f653",
+"patch|sem_gemm_neg": "76b8e33055ef6131dc2ce74eb49407b40800ab0a",
+"patch|sem_relu_gelu_comment": "ce4b487b009d69488258facaa9f460f61f8a07cc",
+"patch|sigmoid": "b0cca418fb10da187695fbb1010c8ed3d6113cd7",
+"patch|silu": "926595a1358b086e5963b117a541f65b8f0c80f8",
+"patch|softmax": "70c0b113176b6b0d6cfa820d7a0ca8b8b84011c1",
+"patch|swiglu": "e3a36623f7612af3a3a845c4c7a0475651bbef87",
 "plan|bitdelta_gemm|mixed=0": "be802d1b2a04d37f076271f5eb4fe3b2d0233aa8",
 "plan|bitdelta_gemm|mixed=1": "3599c8c055dda3e34f2ecbbacf04ad42fa031338",
 "plan|conv2d|mixed=0": "bea296a00cfdd3a1bb81fc2217c91006cf74810b",

@@ -182,8 +182,11 @@ def test_identical_sources_are_evaluated_once(tmp_path):
     script = llm_script(same, patches={"A": same, "B": same, "C": same})
     orch = make_orch(tmp_path, script, calls, max_rounds=1)
     res = run(orch)
-    assert len([1 for m, s in calls if "speed=1.2" in s and m == "full"]) == 2  # once during the search + once for the confirmation re-run
-    assert res.best_label == "init"  # the copies are not "faster than the best"
+    assert len([1 for m, s in calls if "speed=1.2" in s and m == "full"]) == 2  # the seed, then the confirmation. Copies of the seed are not timed.
+    assert res.best_label == "init"
+    copies = [c for c in res.candidates if str(c["label"]).startswith("r1.")]
+    assert copies and all(c["status"] == "unchanged" for c in copies)
+    assert not any(".fix" in str(c["label"]) for c in copies)
 
 
 def test_unparsable_plan_falls_back_to_generic_plans(tmp_path):

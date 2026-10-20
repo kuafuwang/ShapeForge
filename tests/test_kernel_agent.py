@@ -33,6 +33,7 @@ def test_the_task_tells_the_agent_to_read_notes_and_run_tcenv_not_our_tools(tmp_
     assert "lookup_msl: read `msl_reference.md`" in text
     assert "quick_check: bash this command" in text
     assert "does not time the kernel" in text
+    assert "recorded as unchanged" in text
     assert "Ignore that reply format" in text
 
 

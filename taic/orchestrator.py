@@ -639,8 +639,17 @@ class Orchestrator:
         self._publish_state("evaluate", inflight=label)
         key = _sha(source)
         phase_seed = self._phase_seed("search", label, source)
-        # 同一源码的稳定结论可复用。复用的是当时那份报告的 seed，不能把它说成一次新种子上的测量。
-        if key in self.cache:
+        # 上一颗种子已经单独保存。这一支交回同一份源码，是把失败的尝试盖成又一次合格，不评测、不算成绩。
+        if self.best is not None and source == self.best.source:
+            cand.report = EvalReport(
+                task=self.task_name, dtype=self.dtype, size=self.size, mode="full",
+                status="unchanged", stage="screen",
+                message=f"identical to the current seed {self.best.label}. That kernel stays the seed. This branch does not count.",
+            )
+            seed_from = "unchanged"
+            used_seed = 0
+        elif key in self.cache:
+            # 同一源码的稳定结论可复用。复用的是当时那份报告的 seed，不能把它说成一次新种子上的测量。
             cand.report = self.cache[key]
             seed_from = "cached report"
             used_seed = cand.report.seed
@@ -906,6 +915,10 @@ class Orchestrator:
             cand = await self._eval(source, tag, plan=plan)
             if cand.eligible:
                 return cand
+            # 交回和种子相同的文件：这一支不合格，不再修补。修补会逼模型再交一版来凑过检查。
+            if cand.report.status == "unchanged":
+                self._branch_fail[label] = "unchanged: identical to the current seed"
+                return None
             # 超时不再修补：挂死的内核继续改只会再占 GPU。默认 max_hangs 下 _eval 已经抛出 StopRun，走不到这里。
             if cand.report.status in ("timeout",):
                 return None

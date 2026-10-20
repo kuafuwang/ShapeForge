@@ -163,13 +163,16 @@ def plan_user(task: Task, best_source: str, best_feedback: str, history: list[st
     return text.replace("\n\nDiagnose the dominant bottleneck", "\n\n" + "\n\n".join(extra) + "\n\nDiagnose the dominant bottleneck", 1)
 
 
-# 一路分支的补丁。只落实这一份 plan，已经能工作的部分保持不动，因此不许借改写改掉契约或签名。回复仍是完整内核的一个 metal 块。
+# 一路分支的补丁。只落实这一份 plan。上一颗种子已经保存；这一支交回的文件和种子相同，搜索记为 unchanged，不算合格。回复仍是完整内核的一个 metal 块。
 def patch_user(task: Task, best_source: str, best_feedback: str, plan: dict, status: str = "") -> str:
     text = (
         f"Current best kernel for `{task.name}` ({task.dtype}):\n```metal\n{best_source.rstrip()}\n```\n\n"
         f"Evaluation feedback of this kernel:\n{best_feedback}\n\n"
         f"Implement exactly this optimization plan and nothing else:\n**{plan['title']}**\n{plan['change']}\n\n"
-        "Keep everything that already works. Reply with the complete new kernel in one ```metal block."
+        "The current kernel is already saved as the search seed. This branch is scored only on the kernel you hand in.\n"
+        "If this plan fails a check, leave that failing kernel in the file. Do not paste the current kernel back to make the check pass.\n"
+        "A file identical to the current kernel is recorded as unchanged and does not count.\n"
+        "Reply with the complete new kernel in one ```metal block."
     )
     if not status:
         return text
