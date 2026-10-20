@@ -75,7 +75,8 @@ def test_tag_seeds_do_not_depend_on_which_branch_finishes_first(tmp_path):
     assert [seed for _src, seed, _mode in seen_f] == [seed for _src, seed, _mode in reversed(seen_b)]
 
 
-def test_confirm_uses_a_different_seed_and_a_cache_hit_keeps_the_old_one(tmp_path):
+def test_an_identical_patch_does_not_count_as_another_kernel(tmp_path):
+    """Same source as the current seed: no evaluation, no new seed, and the trace says so."""
     source = "kernel void k() { /* same */ }\n"
     calls = []
 
@@ -86,21 +87,44 @@ def test_confirm_uses_a_different_seed_and_a_cache_hit_keeps_the_old_one(tmp_pat
     orch = _orch(tmp_path, "run", evaluate_fn=ev)
 
     async def go():
-        first = await orch._eval(source, "r1.p0")
-        second = await orch._eval(source, "r1.p1")
+        return await orch._eval(source, "r1.p0"), await orch._eval(source, "r1.p1")
+
+    first, second = asyncio.run(go())
+    assert first.report.seed == eval_seed(1, "search", "r1.p0", source)
+    assert orch.trace[1]["eval_seed_from"] == "unchanged"
+    assert orch.trace[1]["eval_seed"] == 0 and orch.trace[1]["status"] == "unchanged"
+    assert len([c for c in calls if c["mode"] == "full" and c["reps"] == 3]) == 1
+
+
+def test_confirm_uses_a_different_seed_and_a_cache_hit_keeps_the_old_one(tmp_path):
+    """A cached source that is **not** the current seed still reuses the old report and its seed."""
+    seed_source = "kernel void k() { /* seed */ }\n"
+    other = "kernel void k() { /* other, evaluated once */ }\n"
+    calls = []
+
+    def ev(task, dtype, size, src, *, mode="full", seed=None, reps=15, **_kw):
+        calls.append({"seed": seed, "mode": mode, "reps": reps})
+        return _ok(task, dtype, size, src, seed=seed, mode=mode)
+
+    orch = _orch(tmp_path, "run", evaluate_fn=ev)
+
+    async def go():
+        first = await orch._eval(seed_source, "r1.p0")
+        await orch._eval(other, "r1.p1")       # 评一次，进缓存；它不是当前种子
+        second = await orch._eval(other, "r1.p2")  # 命中缓存
         res = RunResult(run_dir=str(orch.run_dir), task="relu", dtype="fp16", size="small", model="fake", budget_usd=5.0)
         await orch._confirm(res)
         return first, second, res
 
     first, second, res = asyncio.run(go())
-    assert first.report.seed == eval_seed(1, "search", "r1.p0", source)
-    assert orch.trace[1]["eval_seed_from"] == "cached report"
-    assert orch.trace[1]["eval_seed"] == first.report.seed
-    assert len([c for c in calls if c["mode"] == "full" and c["reps"] == 3]) == 1
+    assert first.report.seed == eval_seed(1, "search", "r1.p0", seed_source)
+    assert orch.trace[2]["eval_seed_from"] == "cached report"
+    assert orch.trace[2]["eval_seed"] == orch.trace[1]["eval_seed"]
+    assert len([c for c in calls if c["mode"] == "full" and c["reps"] == 3]) == 2
     assert res.confirmations[0]["eval_seed_from"] == "confirm"
-    assert res.confirmations[0]["eval_seed"] == eval_seed(1, "confirm", "r1.p0", source)
+    assert res.confirmations[0]["eval_seed"] == eval_seed(1, "confirm", "r1.p0", seed_source)
     assert res.confirmations[0]["eval_seed"] != orch.trace[0]["eval_seed"]
-    assert second.label == "r1.p1"
+    assert second.label == "r1.p2"  # 第三次请求复用第一次的评测结论
 
 
 def test_the_same_label_and_source_keep_the_seed_across_a_retry(tmp_path):
