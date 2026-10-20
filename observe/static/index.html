@@ -57,6 +57,8 @@
   .bb-total { color: var(--muted); font-size: 12px; }
   .bb-list { max-height: 12rem; overflow-x: hidden; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
   .note-list { max-height: 12rem; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .pi-live { max-height: 16rem; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px; background: #fff; }
+  .pi-live p { margin: 0 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .note-list thead th { position: sticky; top: 0; background: #fff; z-index: 1; }
   .bb-list .chip { display: block; overflow-wrap: anywhere; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; color: inherit; text-decoration: none; }
   .workspace { display: flex; flex-direction: column; gap: 12px; }
@@ -323,15 +325,65 @@ const NOTE_KIND = {
   retry: "请求失败后重试",
   http: "请求被拒绝",
   truncated: "回复被长度截断",
-  tool: "已返回，正文没有内核",
-  empty: "回复是空的",
+  tool: "正常工具调用，不是异常",
+  empty: "模型自己结束了这一轮，正文是空的",
   stopped: "这一支被搜索中止",
+  agent: "正常。hmz 调用 pi 写内核，不是异常。计时和换种子仍由搜索做。",
+  agent_empty: "hmz 跑完了，kernel.metal 里没有约定的内核。",
+  agent_error: "hmz 或 pi 这一场没有跑完。",
 };
+
+function toolSituation(detail) {
+  const names = String(detail || "").split(",").map((name) => name.trim()).filter(Boolean);
+  const parts = [];
+  if (names.includes("quick_check")) parts.push("草稿交给本机编译并对答案");
+  if (names.includes("lookup_msl")) parts.push("在本机查阅 MSL 资料");
+  const other = names.filter((name) => name !== "quick_check" && name !== "lookup_msl");
+  if (other.length) parts.push("调用 " + other.join("、"));
+  const what = parts.length ? parts.join("；") : "调用了工具";
+  return "正常工具调用，不是异常。" + what + "。";
+}
+
+function epicFeed(lines) {
+  const body = !lines || !lines.length
+    ? `<p class="muted">还没有这场的 epic。hmz 一开始就会写下开始、打开会话、花费和结束。</p>`
+    : lines.map((row) => `<p><b>${esc(row.who)}</b> ${esc(row.text)}</p>`).join("");
+  return `<div class="note-list pi-live" id="epic-live">${body}</div>`;
+}
+
+function chatFeed(lines) {
+  const body = !lines || !lines.length
+    ? `<p class="muted">只显示最近若干轮发出的话和收回的回复，每段都截短。更早的留在这次运行的 transcript.jsonl。</p>`
+    : lines.map((row) => `<p><b>${esc(row.who)}</b> ${esc(row.text)}</p>`).join("");
+  return `<div class="note-list pi-live" id="chat-live">${body}</div>`;
+}
+
+function piFeed(lines) {
+  const body = !lines || !lines.length
+    ? `<p class="muted">只显示这场会话最近的几十行。更早的留在 pi 自己的会话文件里。</p>`
+    : lines.map((row) => `<p><b>${esc(row.who)}</b> ${esc(row.text)}</p>`).join("");
+  return `<div class="note-list pi-live" id="pi-live">${body}</div>`;
+}
+
+function writerMode(doc) {
+  return doc && doc.kernel_writer === "pi" ? "pi" : "chat";
+}
+
+function writerNote(doc) {
+  if (writerMode(doc) === "pi") {
+    return `<p class="muted">这一场写内核走 hmz 和 pi。规划仍记在模型请求里。下面两块只在这种模式下刷新。</p>`;
+  }
+  return `<p class="muted">这一场由搜索直接调用模型。上面是请求摘要。下面只刷新最近若干轮发出和收回的文字，不加载整份记录。</p>`;
+}
 
 function modelNotes(doc) {
   const rows = newestFirst(doc.model_notes);
-  if (!rows.length) return `<p class="muted">没有超时，也没有只调用工具、正文为空的回复。</p>`;
-  const body = rows.map((row) => `<tr><td>${esc(row.label)}</td><td>${esc(row.model || "—")}</td><td>${esc(NOTE_KIND[row.kind] || row.kind)}</td><td>${esc(row.detail)}</td><td>${esc(num(row.seconds))}</td></tr>`).join("");
+  if (!rows.length) return `<p class="muted">没有要列出的模型请求。</p>`;
+  const body = rows.map((row) => {
+    const situation = row.kind === "tool" ? toolSituation(row.detail) : (NOTE_KIND[row.kind] || row.kind);
+    const detail = row.kind === "empty" && row.detail === "stop" ? "接口结束原因是 stop：这一轮正常结束，没有正文，也没有调用工具" : row.detail;
+    return `<tr><td>${esc(row.label)}</td><td>${esc(row.model || "—")}</td><td>${esc(situation)}</td><td>${esc(detail)}</td><td>${esc(num(row.seconds))}</td></tr>`;
+  }).join("");
   return `<div class="note-list"><table><thead><tr><th>标签</th><th>模型</th><th>情况</th><th>说明</th><th>秒</th></tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
@@ -446,7 +498,10 @@ function renderDetail(doc) {
     `<h3>确认点</h3>${confirm}` +
     `<h3>委员会交接</h3>${handoffBlock}` +
     `<h3>预算事件</h3>` + (events ? `<table><thead><tr><th>时间</th><th>种类</th><th>谁</th><th>旧预算</th><th>新预算</th><th>备注</th></tr></thead><tbody>${events}</tbody></table>` : `<p class="muted">没有预算事件。</p>`) +
-    `<h3>模型请求</h3>` + modelNotes(doc) +
+    `<h3>模型请求</h3>` + writerNote(doc) + modelNotes(doc) +
+    (writerMode(doc) === "pi"
+      ? `<h3>hmz epic</h3>` + epicFeed(null) + `<h3>pi 输出</h3>` + piFeed(null)
+      : `<h3>直调</h3>` + chatFeed(null)) +
     `<h3>候选</h3>` + (candidates ? `<table><thead><tr><th>序号</th><th>标签</th><th>状态</th><th>阶段</th><th>加速比</th><th>标记</th><th>说明</th></tr></thead><tbody>${candidates}</tbody></table>` : `<p class="muted">没有候选。</p>`) +
     `<h3>特征格子</h3>` + (grid ? `<table><thead><tr><th>标签</th><th>签名</th><th>加速比</th><th></th></tr></thead><tbody>${grid}</tbody></table>` : `<p class="muted">空</p>`) +
     `<h3>计划结局</h3>` + (plans ? `<table><thead><tr><th>轮</th><th>标签</th><th>方案</th><th>结局</th><th>加速比</th></tr></thead><tbody>${plans}</tbody></table>` : `<p class="muted">空</p>`) +
@@ -464,10 +519,12 @@ async function loadDetail(id) {
   if (detailId !== id) {
     detailId = id;
     selectedCandidate = "";
+    piStamp = "";
   }
   detailDoc = doc;
   host.innerHTML = renderDetail(doc);
   bindCandidatePicks(host);
+  refreshLive();
 }
 
 function ledgerTable(title, headers, rows) {
@@ -640,6 +697,41 @@ document.getElementById("budget-banner").addEventListener("click", (event) => {
   selectedRun = link.dataset.run;
   showRight("detail");
 });
+
+let piStamp = "";
+
+function paintLive(id, html, atBottom) {
+  const host = document.getElementById(id);
+  if (!host) return;
+  host.outerHTML = html;
+  const again = document.getElementById(id);
+  if (again && atBottom) again.scrollTop = again.scrollHeight;
+}
+
+async function refreshLive() {
+  if (!detailDoc || !selectedRun || visible !== "detail") return;
+  const mode = writerMode(detailDoc);
+  const path = mode === "pi" ? "/api/v2/pi/" : "/api/v2/chat/";
+  const host = document.getElementById(mode === "pi" ? "pi-live" : "chat-live");
+  const epic = mode === "pi" ? document.getElementById("epic-live") : null;
+  if (!host && !epic) return;
+  const stick = (box) => box && box.scrollHeight - box.scrollTop - box.clientHeight < 24;
+  const atBottom = stick(host);
+  const epicBottom = stick(epic);
+  const query = piStamp ? "?stamp=" + encodeURIComponent(piStamp) : "";
+  const response = await fetch(path + selectedRun.split("/").map(encodeURIComponent).join("/") + query);
+  if (!response.ok) return;
+  const doc = await response.json();
+  if (doc.same) return;
+  piStamp = doc.stamp || "";
+  if (mode === "pi") {
+    paintLive("epic-live", epicFeed(doc.epics), epicBottom);
+    paintLive("pi-live", piFeed(doc.lines), atBottom);
+  } else {
+    paintLive("chat-live", chatFeed(doc.lines), atBottom);
+  }
+}
+setInterval(refreshLive, 2000);
 
 loadExperiments();
 loadRuns();

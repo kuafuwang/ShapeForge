@@ -292,6 +292,10 @@ def test_a_named_run_without_its_own_model_does_not_require_a_null_model():
         'id="workspace"', 'id="side-toggle"', 'id="view-experiments"', 'id="view-compare"', 'id="view-detail"',
         "delete-reason", "/api/records/delete", "删除记录只追加",
         'class="note-list"', ".note-list { max-height: 12rem; overflow: auto;",
+        "正常工具调用，不是异常。", "草稿交给本机编译并对答案", "在本机查阅 MSL 资料",
+        "hmz 调用 pi 写内核，不是异常", 'id="pi-live"', "/api/v2/pi/",
+        "function writerMode", "doc.kernel_writer", "这一场由搜索直接调用模型",
+        'id="chat-live"', "/api/v2/chat/",
     ):
         assert needle in text, needle
 

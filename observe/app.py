@@ -74,6 +74,28 @@ async def api_v2_run(request) -> JSONResponse:
     return _json(doc)
 
 
+async def api_v2_chat(request) -> JSONResponse:
+    """The live direct-chat tail for one run. Polled on its own so the rest of the page is not redrawn."""
+    from observe.detail import chat_feed
+
+    stamp = request.query_params.get("stamp") or ""
+    feed = await asyncio.to_thread(chat_feed, request.path_params["run_id"], stamp=stamp)
+    if feed is None:
+        return _json({"error": "not found"}, status=404)
+    return _json(feed)
+
+
+async def api_v2_pi(request) -> JSONResponse:
+    """The live pi transcript for one run. Polled on its own so the rest of the page is not redrawn."""
+    from observe.detail import pi_feed
+
+    stamp = request.query_params.get("stamp") or ""
+    feed = await asyncio.to_thread(pi_feed, request.path_params["run_id"], stamp=stamp)
+    if feed is None:
+        return _json({"error": "not found"}, status=404)
+    return _json(feed)
+
+
 async def api_v2_experiments(_request) -> JSONResponse:
     return _json(await asyncio.to_thread(query.experiments))
 
@@ -239,6 +261,8 @@ app = Starlette(
         Route("/api/v2/budget", api_v2_budget),
         Route("/api/v2/ledger", api_v2_ledger),
         Route("/api/v2/stream", api_stream),
+        Route("/api/v2/chat/{run_id:path}", api_v2_chat),
+        Route("/api/v2/pi/{run_id:path}", api_v2_pi),
         Route("/api/v2/runs/{run_id:path}", api_v2_run),
         Route("/api/history", api_v1_history),
         Route("/api/overview", api_v2_overview),

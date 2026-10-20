@@ -18,6 +18,7 @@ import time
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Awaitable, Callable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -27,6 +28,46 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # 并行的初始样本或一轮分支里，失败的那一支丢掉，其余继续；只有全部失败，或没有并行的那一次失败，才结束运行，停因是 llm_error。
 class LLMError(RuntimeError):
     """A request failed in a way retrying cannot fix (bad request, auth, ...)."""
+
+
+class _Transient(Exception):
+    """An empty or unfinished completion. The same messages are sent again; the partial text is not."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(kind)
+        self.kind = kind
+
+
+def _is_quota(status: int | None, text: str) -> bool:
+    """402, or a 429 whose body is a balance problem rather than a rate limit."""
+    if status == 402:
+        return True
+    return bool(_QUOTA_TEXT.search(text or ""))
+
+
+def _is_context(status: int | None, text: str) -> bool:
+    """The provider rejected the prompt for size. A 429 that says 'too many tokens' is a rate limit, not this."""
+    if status == 413:
+        return True
+    if status == 429:
+        return False
+    return bool(_CONTEXT_TEXT.search(text or ""))
+
+
+def _shrink_for_context(messages: list[dict]) -> tuple[list[dict], bool]:
+    """Drop echoed reasoning and shorten long tool results. Returns the new list and whether reasoning was removed."""
+    out = []
+    dropped = False
+    for message in messages:
+        item = dict(message)
+        if "reasoning_content" in item:
+            item.pop("reasoning_content")
+            dropped = True
+        content = item.get("content")
+        if item.get("role") == "tool" and isinstance(content, str) and len(content) > _TOOL_SHRINK_AT:
+            item["content"] = content[:2400] + "\n\n[... tool result middle omitted after a context-window error ...]\n\n" + content[-800:]
+        out.append(item)
+    return out, dropped
 
 
 # 已经入账的美元达到预算。只在发请求之前抛，不会从一次已经发出的 HTTP 里抛出。
@@ -43,6 +84,10 @@ class BudgetExhausted(RuntimeError):
 
 # 单次输出上限，思考和正文都算。2026-10-07 考虑过 96000 和接口最大值的一半（196608，写满大约 17 分钟），当天改回 48000。
 DEFAULT_MAX_TOKENS = 48000
+# 工具结果超过这么多字符，并且服务商报了上下文超窗，才把中间换成省略号再请求一次。
+_TOOL_SHRINK_AT = 4096
+_QUOTA_TEXT = re.compile(r"insufficient[_\s-]?quota|insufficient balance|quota exceeded|exceeded your current quota|billing|credit balance", re.I)
+_CONTEXT_TEXT = re.compile(r"context length|context window|maximum context|prompt is too long|request entity too large|payload too large", re.I)
 
 
 @dataclass
@@ -55,7 +100,7 @@ class LLMConfig:
     use_tools: bool = True
     extra_body: dict = field(default_factory=dict)
     max_tokens: int = DEFAULT_MAX_TOKENS
-    request_timeout_s: float = 900.0
+    request_timeout_s: float = 900.0  # idle gap between streamed chunks. A reply may run longer while chunks keep arriving
     max_retries: int = 6
     truncation_retry: bool = True  # a length-capped reply with no kernel is asked again once, without the echoed reasoning, and does not spend a repair turn
     truncation_retry_effort: str | None = "low"  # effort on that one retry: "low", "off", or "same" (keep reasoning_effort). Default "low" because a high-effort retry was still cut off 14/20 times
@@ -111,6 +156,7 @@ class SearchConfig:
     diversity_archive: bool = False  # after two stagnant rounds, the last branch of a round patches a feature-different eligible kernel. Off keeps every branch on the seed
     fast_bench: bool = False  # search-stage timing skips the serial dispatch and baselines other than the fastest one seen. Confirmation always times every baseline
     experience_index: str | None = None  # path of a read-only hint file from taic.experience. None adds nothing to the planner prompt
+    kernel_agent: str = ""  # "" writes kernels through the chat API. "pi" writes each kernel via `hmz exec` and the pi coding agent. Planning stays on the API.
 
 
 def _read_toml(path: Path) -> dict:
@@ -316,6 +362,13 @@ class CostLedger:
         self.requests.append({"t": time.time() - self.t0, "label": label, "hit": hit, "miss": miss, "out": out, "cost_usd": cost, "total_usd": self.total_usd})
         return cost
 
+    def charge(self, usd: float, label: str = "") -> float:
+        """Add a cost that did not come from this process's own chat completion, such as one coding-agent turn."""
+        cost = float(usd)
+        self.total_usd += cost
+        self.requests.append({"t": time.time() - self.t0, "label": label, "hit": 0, "miss": 0, "out": 0, "cost_usd": cost, "total_usd": self.total_usd})
+        return cost
+
     @property
     def remaining(self) -> float | None:
         return None if self.budget_usd is None else self.budget_usd - self.total_usd
@@ -399,10 +452,17 @@ class LLM:
         # 无论调用方有没有把密钥放进 secrets，打码表都带上这把 api_key（含短于 8 字符的）。
         self.transcript._secrets = list({*self.transcript._secrets, cfg.api_key}) if cfg.api_key else self.transcript._secrets
         if client is None:
+            try:
+                import httpx2 as _http
+            except ImportError:  # the OpenAI SDK in this environment vendors HTTP as httpx2
+                import httpx as _http
             from openai import AsyncOpenAI
 
-            client = AsyncOpenAI(base_url=cfg.base_url, api_key=cfg.api_key, timeout=cfg.request_timeout_s, max_retries=0)
+            # read 是两块数据之间的空闲，不是整次回复的墙钟。思考过程只要还在往下流，就不会被 900 秒整段掐断。
+            timeout = _http.Timeout(connect=30.0, read=cfg.request_timeout_s, write=30.0, pool=30.0)
+            client = AsyncOpenAI(base_url=cfg.base_url, api_key=cfg.api_key, timeout=timeout, max_retries=0)
         self.client = client
+        self._send_stream_usage = True
         self._sem = asyncio.Semaphore(max_concurrency)
         self.progress_path: Path | None = None
         self._progress_lock = asyncio.Lock()
@@ -476,6 +536,84 @@ class LLM:
             ]
         return d
 
+    @staticmethod
+    def _retry_delay(attempt: int, error: Any) -> float:
+        """Seconds to wait. A numeric Retry-After is a floor under the local backoff."""
+        delay = min(60.0, 2.0**attempt) * (0.5 + random.random())
+        response = getattr(error, "response", None)
+        if response is None:
+            return delay
+        try:
+            after = float(response.headers.get("retry-after"))
+        except (TypeError, ValueError):
+            return delay
+        return max(delay, after)
+
+    def _request_params(self, params: dict) -> dict:
+        """Ask for a stream. Usage on the last chunk is optional; a provider that rejects it is remembered."""
+        out = dict(params)
+        out["stream"] = True
+        if self._send_stream_usage:
+            out["stream_options"] = {"include_usage": True}
+        return out
+
+    async def _read_completion(self, resp: Any, label: str) -> tuple[Any, str | None, Any, bool]:
+        """A complete chat object, or a stream folded into one message. The bool is true when bytes arrived as a stream."""
+        if not hasattr(resp, "__aiter__"):
+            choice = resp.choices[0]
+            return choice.message, choice.finish_reason, resp.usage, False
+        content: list[str] = []
+        reasoning: list[str] = []
+        tools: dict[int, dict[str, str]] = {}
+        finish = None
+        usage = None
+        noted = False
+        async for chunk in resp:
+            if getattr(chunk, "usage", None):
+                usage = chunk.usage
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            choice = choices[0]
+            if choice.finish_reason:
+                finish = choice.finish_reason
+            delta = choice.delta
+            if delta is None:
+                continue
+            piece = getattr(delta, "content", None)
+            thought = getattr(delta, "reasoning_content", None)
+            deltas = list(getattr(delta, "tool_calls", None) or [])
+            if (piece or thought or deltas) and not noted:
+                noted = True
+                await self._note_llm(label, "streaming")
+            if piece:
+                content.append(piece)
+            if thought:
+                reasoning.append(thought)
+            for call in deltas:
+                slot = tools.setdefault(int(getattr(call, "index", 0) or 0), {"id": "", "name": "", "arguments": ""})
+                if getattr(call, "id", None):
+                    slot["id"] = call.id
+                fn = getattr(call, "function", None)
+                if fn is None:
+                    continue
+                if getattr(fn, "name", None):
+                    slot["name"] += fn.name
+                if getattr(fn, "arguments", None):
+                    slot["arguments"] += fn.arguments
+        calls = None
+        if tools:
+            calls = [
+                SimpleNamespace(
+                    id=slot["id"] or f"call_{index}",
+                    type="function",
+                    function=SimpleNamespace(name=slot["name"], arguments=slot["arguments"]),
+                )
+                for index, slot in sorted(tools.items())
+            ]
+        message = SimpleNamespace(content="".join(content), reasoning_content="".join(reasoning) or None, tool_calls=calls)
+        return message, finish, usage, True
+
     # -- single request with retries ---------------------------------------------------------
     # 一次补全。预算门在并发信号量之外、也在 HTTP 之前：好几次可能都看到「还没超」然后一起发出去。
     # 费用要等响应才入账，所以已经发出的请求可以让总额略超预算。过了门的这一次，后面的重试不再查预算。
@@ -483,53 +621,78 @@ class LLM:
         import openai
 
         self.ledger.check()  # budget gate before the request is issued
-        params = self._params(tools, max_tokens, reasoning_effort)
+        params = self._request_params(self._params(tools, max_tokens, reasoning_effort))
         attempt = 0
+        context_shrunk = False
         await self._note_llm(label, "inflight")
         async with self._sem:
             while True:
                 try:
                     t0 = time.time()
                     resp = await self.client.chat.completions.create(messages=messages, **params)
+                    msg, finish, usage, streamed = await self._read_completion(resp, label)
+                    # 流干净地结束但没有 finish：半截丢掉，同一份消息再发。已经流出的字不写进下一次请求。
+                    if streamed and finish is None:
+                        raise _Transient("stream ended before a finish reason")
+                    # 正常 stop 却什么都没有：同一份消息再发。长度封顶的空回复留给截断重试，不在这里消耗次数。
+                    if finish in (None, "stop") and not (msg.content or "").strip() and not msg.tool_calls:
+                        raise _Transient("empty response")
                     break
+                except _Transient as e:
+                    attempt += 1
+                    if attempt > self.cfg.max_retries:
+                        if e.kind == "empty response":
+                            msg = SimpleNamespace(content="", reasoning_content=None, tool_calls=None)
+                            finish, usage = "stop", None
+                            break
+                        await self._note_llm(label, "error", error=e.kind[:200])
+                        raise LLMError(f"{label}: gave up after {attempt - 1} retries: {e.kind}") from e
+                    delay = self._retry_delay(attempt, None)
+                    self.transcript.log({"event": "retry", "label": label, "attempt": attempt, "error": e.kind, "sleep_s": delay})
+                    await self._note_llm(label, "retry", attempt=attempt, error=e.kind[:200])
+                    await asyncio.sleep(delay)
                 except (openai.RateLimitError, openai.APIConnectionError, openai.APITimeoutError, openai.InternalServerError) as e:
+                    # 429 上的余额不足不重试。限流才读 Retry-After。
+                    if isinstance(e, openai.RateLimitError) and _is_quota(getattr(e, "status_code", 429), str(e)):
+                        self.transcript.log({"event": "error", "label": label, "status": getattr(e, "status_code", 429), "error": str(e)})
+                        await self._note_llm(label, "error", error="quota"[:200])
+                        raise LLMError(f"{label}: quota: {e}") from e
                     attempt += 1
                     if attempt > self.cfg.max_retries:
                         await self._note_llm(label, "error", error=f"{type(e).__name__}: {e}"[:200])
                         raise LLMError(f"{label}: gave up after {attempt - 1} retries: {type(e).__name__}: {e}") from e
-                    delay = min(60.0, 2.0**attempt) * (0.5 + random.random())
-                    ra = None
-                    resp_obj = getattr(e, "response", None)
-                    if resp_obj is not None:
-                        try:
-                            ra = float(resp_obj.headers.get("retry-after"))
-                        except (TypeError, ValueError):
-                            ra = None
-                    if ra is not None:
-                        delay = max(delay, ra)
+                    delay = self._retry_delay(attempt, e)
                     self.transcript.log({"event": "retry", "label": label, "attempt": attempt, "error": f"{type(e).__name__}: {e}", "sleep_s": delay})
                     await self._note_llm(label, "retry", attempt=attempt, error=f"{type(e).__name__}"[:200])
                     await asyncio.sleep(delay)
-                except openai.APIStatusError as e:  # 4xx: not retryable
+                except openai.APIStatusError as e:  # 4xx: not retryable, except one context shrink and a rejected stream_options field
                     self.transcript.log({"event": "error", "label": label, "status": e.status_code, "error": str(e)})
-                    if e.status_code == 400 and "reasoning_content" in str(e) and any("reasoning_content" in m for m in messages):
-                        # the endpoint does not accept echoed reasoning on this kind of turn: drop it and try once more
-                        # 这次 continue 不增加 attempt，并且把回显推理关掉，后面的请求也不再带 reasoning_content。
-                        messages = [{k: v for k, v in m.items() if k != "reasoning_content"} for m in messages]
-                        self.cfg.echo_reasoning_content = False
-                        await self._note_llm(label, "retry", attempt=attempt, error="HTTP 400")
+                    if e.status_code == 400 and "stream_options" in str(e).lower() and "stream_options" in params:
+                        params.pop("stream_options", None)
+                        self._send_stream_usage = False
+                        await self._note_llm(label, "retry", attempt=attempt, error="HTTP 400 stream_options")
                         continue
+                    text = str(e)
+                    shrink = _is_context(e.status_code, text) or (e.status_code == 400 and "reasoning_content" in text)
+                    if shrink and not context_shrunk:
+                        rewritten, dropped_reasoning = _shrink_for_context(messages)
+                        if rewritten != messages:
+                            # 超窗或服务商拒收回显的思考：只改这一次的消息再发。去掉思考后，后面的请求也不再回传。
+                            messages = rewritten
+                            context_shrunk = True
+                            if dropped_reasoning:
+                                self.cfg.echo_reasoning_content = False
+                            await self._note_llm(label, "retry", attempt=attempt, error=f"HTTP {e.status_code} context")
+                            continue
                     await self._note_llm(label, "error", error=f"HTTP {e.status_code}"[:200])
                     raise LLMError(f"{label}: HTTP {e.status_code}: {e}") from e
-        choice = resp.choices[0]
-        msg = choice.message
-        cost = self.ledger.add(resp.usage, label)
+        cost = self.ledger.add(usage, label)
         reply = Reply(
             content=msg.content or "",
             reasoning_content=getattr(msg, "reasoning_content", None),
             tool_calls=[{"id": t.id, "name": t.function.name, "arguments": t.function.arguments} for t in (msg.tool_calls or [])],
-            finish_reason=choice.finish_reason,
-            usage=resp.usage,
+            finish_reason=finish,
+            usage=usage,
             cost_usd=cost,
             message=self._assistant_message(msg),
         )
@@ -542,7 +705,7 @@ class LLM:
                 "messages": messages,
                 "reply": reply.message,
                 "finish_reason": reply.finish_reason,
-                "usage": resp.usage.model_dump() if hasattr(resp.usage, "model_dump") else str(resp.usage),
+                "usage": usage.model_dump() if hasattr(usage, "model_dump") else (None if usage is None else str(usage)),
                 "cost_usd": cost,
                 "total_usd": self.ledger.total_usd,
             }
@@ -586,6 +749,15 @@ class LLM:
             msgs.append(reply.message)
             if not reply.tool_calls:
                 return reply, msgs
+            # 输出顶到上限时，工具参数可能只写了一半。不执行，把这句写回，让模型重发或直接给内核。
+            if reply.finish_reason == "length":
+                for tc in reply.tool_calls:
+                    msgs.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": "error: this tool call was cut off by the output limit before it could run. Resend the complete call, or answer with the kernel.",
+                    })
+                continue
             await self._answer_tools(msgs, reply.tool_calls, handlers)
         raise LLMError("unreachable")
 

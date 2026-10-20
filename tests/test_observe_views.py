@@ -8,7 +8,7 @@ import json
 import pytest
 
 from observe import query as scan
-from observe.detail import _model_notes
+from observe.detail import _chat_lines, _model_notes, _pi_lines_in, kernel_writer
 
 SOURCE = "kernel void gemm() {}\n"
 T0 = 1_700_000_000.0
@@ -157,3 +157,135 @@ def test_model_notes_show_a_timeout_and_an_empty_tool_reply(tmp_path):
     assert notes[1]["model"] == "kimi-k3" and notes[1]["detail"] == "quick_check"
     blob = json.dumps(notes)
     assert secret not in blob and "arguments" not in blob
+
+
+def test_model_notes_show_an_hmz_turn_that_wrote_a_kernel_and_one_that_failed(tmp_path):
+    run = tmp_path / "pi"
+    run.mkdir()
+    (run / "transcript.jsonl").write_text("\n".join([
+        json.dumps({"event": "agent", "label": "r1.p0", "harness": "pi", "provider": "deepseek", "model": "deepseek-flash", "cost_usd": 0.2, "had_kernel": True}),
+        json.dumps({"event": "agent", "label": "r1.p1", "harness": "pi", "provider": "moonshot", "model": "kimi-k3", "had_kernel": False, "error": "hmz exited 1"}),
+        json.dumps({"event": "agent", "label": "r1.p2", "harness": "pi", "provider": "deepseek", "model": "deepseek-flash", "cost_usd": 0.1, "had_kernel": False}),
+    ]) + "\n")
+    notes = _model_notes(run)
+    assert [row["kind"] for row in notes] == ["agent", "agent_error", "agent_empty"]
+    assert notes[0]["model"] == "pi/deepseek/deepseek-flash" and "$0.200" in notes[0]["detail"]
+    assert notes[1]["detail"] == "hmz exited 1"
+
+
+def test_pi_lines_keep_the_tool_name_and_drop_a_key(tmp_path):
+    session = tmp_path / "session.jsonl"
+    session.write_text("\n".join([
+        json.dumps({"type": "message", "message": {"role": "assistant", "content": [
+            {"type": "thinking", "thinking": "plan the kernel", "thinkingSignature": "secret-sig"},
+            {"type": "toolCall", "name": "bash", "id": "1", "arguments": {"command": "uv run python -m tcenv.cli eval relu kernel.metal --quick"}},
+            {"type": "text", "text": "wrote kernel.metal"},
+        ]}}),
+        json.dumps({"type": "message", "message": {"role": "toolResult", "content": [
+            {"type": "text", "text": "api_key sk-secret-value status ok"},
+        ]}}),
+        json.dumps({"type": "message", "message": {"role": "user", "content": [{"type": "text", "text": "the whole task prompt"}]}}),
+    ]) + "\n")
+    lines = _pi_lines_in(session)
+    blob = json.dumps(lines)
+    assert [row["who"] for row in lines] == ["思考", "工具", "pi", "结果"]
+    assert lines[1]["text"].startswith("bash ")
+    assert "secret-sig" not in blob and "sk-secret-value" not in blob and "the whole task prompt" not in blob
+    assert "api_key" in lines[3]["text"]
+
+
+def test_a_long_pi_session_only_keeps_the_tail(tmp_path):
+    from observe.detail import _PI_KEEP, _PI_TAIL_BYTES
+
+    session = tmp_path / "session.jsonl"
+    old = json.dumps({"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": "OLD-LINE-SHOULD-DROP"}]}})
+    filler = ("x" * 200 + "\n") * (_PI_TAIL_BYTES // 200 + 10)
+    new = json.dumps({"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": "NEW-TAIL"}]}})
+    session.write_text(old + "\n" + filler + new + "\n")
+    lines = _pi_lines_in(session)
+    blob = json.dumps(lines)
+    assert "OLD-LINE-SHOULD-DROP" not in blob
+    assert lines[-1]["text"] == "NEW-TAIL"
+    assert len(lines) <= _PI_KEEP
+
+
+def test_an_epic_shows_the_start_the_spend_and_how_it_ended(tmp_path):
+    from observe.detail import _epic_lines_in
+
+    epic = tmp_path / "epic.jsonl"
+    epic.write_text("\n".join([
+        json.dumps({"event": "began", "at": "t0", "task": "the whole prompt", "agents": [
+            {"agent": "assistant", "backend": "pi", "model": "deepseek/deepseek-flash", "effort": "auto", "provider": "", "name": "Golem"},
+        ], "budget": {"cost": 2.0}}),
+        json.dumps({"event": "opened", "backend": "pi", "session": "30840db1-662e-496d-88a6-132c06c20ee7", "where": "/secret/home"}),
+        json.dumps({"event": "usage", "cost": 0.0, "output_tokens": 100, "seconds": 12.2}),
+        json.dumps({"event": "ended", "how": "done"}),
+    ]) + "\n")
+    lines = _epic_lines_in(epic)
+    blob = json.dumps(lines)
+    assert [row["who"] for row in lines] == ["开始", "打开", "花费", "结束"]
+    assert "deepseek/deepseek-flash" in lines[0]["text"] and "$2.00" in lines[0]["text"]
+    assert lines[1]["text"].endswith("30840db1")
+    assert "the whole prompt" not in blob and "/secret/home" not in blob
+    assert lines[3]["text"] == "完成"
+
+
+def test_kernel_writer_follows_the_recorded_mode_and_old_runs_without_it(tmp_path):
+    chat = tmp_path / "chat"
+    chat.mkdir()
+    (chat / "run_config.json").write_text(json.dumps({"search": {"kernel_agent": ""}}))
+    (chat / "transcript.jsonl").write_text(json.dumps({"event": "chat", "label": "init"}) + "\n")
+    assert kernel_writer(chat) == "chat"
+
+    explicit = tmp_path / "explicit"
+    explicit.mkdir()
+    (explicit / "run_config.json").write_text(json.dumps({"search": {"kernel_agent": "pi"}}))
+    assert kernel_writer(explicit) == "pi"
+
+    old = tmp_path / "old"
+    old.mkdir()
+    assert kernel_writer(old) == "chat"
+    (old / "transcript.jsonl").write_text(json.dumps({"event": "agent", "label": "init", "had_kernel": True}) + "\n")
+    assert kernel_writer(old) == "pi"
+
+
+def test_chat_tail_shows_the_latest_turn_and_drops_the_system_prompt(tmp_path):
+    path = tmp_path / "transcript.jsonl"
+    secret = "sk-secret-value"
+    kernel = "kernel void conv2d_kernel() {" + ("x" * 400) + "}"
+    first = json.dumps({"event": "chat", "label": "old", "messages": [{"role": "user", "content": "FIRST_MARKER old turn"}], "reply": {"content": "old reply"}})
+    filler = json.dumps({"event": "chat", "label": "pad", "messages": [{"role": "user", "content": "pad"}], "reply": {"content": "pad"}})
+    last = json.dumps({
+        "event": "chat",
+        "label": "init#t1",
+        "messages": [
+            {"role": "system", "content": f"system {secret} and the whole prompt"},
+            {"role": "tool", "content": "earlier tool result"},
+            {"role": "user", "content": "LAST_MARKER please write the kernel"},
+        ],
+        "reply": {
+            "content": "a short answer",
+            "reasoning_content": "thinking about banks",
+            "tool_calls": [
+                {"function": {"name": "quick_check", "arguments": json.dumps({"kernel": kernel})}},
+                {"function": {"name": "lookup_msl", "arguments": json.dumps({"topic": "simdgroup"})}},
+            ],
+        },
+    })
+    path.write_text(first + "\n" + (filler + "\n") * 8000 + last + "\n")
+    lines = _chat_lines(path)
+    blob = json.dumps(lines)
+    assert secret not in blob and kernel not in blob and "whole prompt" not in blob and "FIRST_MARKER" not in blob
+    assert any(row["who"] == "发出" and "LAST_MARKER please write the kernel" in row["text"] for row in lines)
+    assert any(row["who"] == "收到" and "a short answer" in row["text"] for row in lines)
+    assert any(row["who"] == "思考" and "banks" in row["text"] for row in lines)
+    assert any(row["text"] == "quick_check" for row in lines)
+    assert any(row["text"] == "lookup_msl simdgroup" for row in lines)
+
+
+def test_chat_inflight_names_a_stream_without_a_prompt(tmp_path):
+    from observe.detail import _chat_inflight
+
+    path = tmp_path / "llm.json"
+    path.write_text(json.dumps({"inflight": {"init#t4": {"status": "streaming"}}}))
+    assert _chat_inflight(path) == [{"who": "正在接收", "text": "init#t4"}]

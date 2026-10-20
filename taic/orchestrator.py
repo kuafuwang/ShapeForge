@@ -818,6 +818,44 @@ class Orchestrator:
         reply = await self.llm.chat(messages, label=label, reasoning_effort=reasoning_effort)
         return reply.text(), messages + [reply.message], reply.finish_reason
 
+    async def _agent_turn(self, messages: list[dict], tag: str) -> tuple[str | None, str]:
+        """One pi turn through hmz. The file it leaves is the kernel. ``finish`` is ``stop`` so a length retry does not also run."""
+        from .kernel_agent import AgentError, run_kernel_agent
+        from .llm import REPO_ROOT
+
+        self.ledger.check()
+        member = next(c.members[0] for c in self.committees if c.name == self._committee_name)
+        remaining = self.ledger.remaining
+        try:
+            source, cost, _tail = await asyncio.to_thread(
+                run_kernel_agent,
+                messages,
+                work=self.run_dir / "agent_work" / tag.replace("/", "_"),
+                repo=REPO_ROOT,
+                task_name=self.task_name,
+                dtype=self.dtype,
+                size=self.size,
+                kernel_name=self.task.contract.kernel_name,
+                provider=member.provider,
+                model=member.model,
+                budget_usd=0.0 if remaining is None else remaining,
+            )
+        except AgentError as exc:
+            self.log(f"  [{tag}] pi via hmz failed: {exc}")
+            self.llm.transcript.log({
+                "event": "agent", "label": tag, "harness": "pi", "provider": member.provider, "model": member.model,
+                "cost_usd": None, "had_kernel": False, "error": str(exc)[:180],
+            })
+            raise
+        if cost:
+            self.ledger.charge(cost, tag)
+        self.log(f"  [{tag}] pi via hmz ({member.provider}/{member.model})" + ("" if source else "; kernel.metal has no kernel"))
+        self.llm.transcript.log({
+            "event": "agent", "label": tag, "harness": "pi", "provider": member.provider, "model": member.model,
+            "cost_usd": cost, "had_kernel": bool(source),
+        })
+        return source, "stop"
+
     # 从一轮提示写出内核，并最多再修补 max_repair_tries 次。抽不出 Metal 只追问、不产生候选；评测不合格就把失败反馈塞回。完整评测一旦 timeout，_eval 会先停掉整次搜索；若 max_hangs 尚未触达，这颗内核不再继续修补。
     async def _develop(self, messages: list[dict], label: str, *, plan: str | None = None, resume: Any = None) -> Candidate | None:
         """Generate a kernel from ``messages`` and repair it for up to ``max_repair_tries`` turns.
@@ -833,6 +871,12 @@ class Orchestrator:
             retried = False
             ask_effort = patch_effort
             while True:
+                if self.search.kernel_agent == "pi":
+                    # 续跑记下的工具调用不接着打。编程代理按这些消息重写 kernel.metal。
+                    resume = None
+                    text, finish = await self._agent_turn(messages, tag)
+                    source = text or None
+                    break
                 if resume is not None and attempt == resume.attempt and not retried:
                     r, resume = resume, None
                     # 模型已经答过、但答案还没评测：沿用记下的回复，避免再花一次请求得到另一颗内核。
@@ -855,8 +899,9 @@ class Orchestrator:
             # 没有声明 kernel void <kernel_name> 的代码块不算写出内核。只追问，不进入评测。
             if source is None:
                 self._branch_fail[label] = "no code: truncated" if finish == "length" else "no code: no kernel block"
-                messages = messages + [{"role": "user", "content": nudge_user(name)}]
-                self.log(f"  [{tag}] no code block in reply")
+                reminder = nudge_user(name) if self.search.kernel_agent != "pi" else f"`kernel.metal` did not contain `kernel void {name}`. Write the complete kernel into that file."
+                messages = messages + [{"role": "user", "content": reminder}]
+                self.log(f"  [{tag}] no kernel in the reply" if self.search.kernel_agent != "pi" else f"  [{tag}] kernel.metal did not declare {name}")
                 continue
             cand = await self._eval(source, tag, plan=plan)
             if cand.eligible:

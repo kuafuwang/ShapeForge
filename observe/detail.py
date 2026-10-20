@@ -459,6 +459,345 @@ def _retry_kind(error: str) -> str:
     return "retry"
 
 
+_SECRET = re.compile(r"(?i)(api[_-]?key|authorization|bearer\s+|sk-)(\S{0,80})")
+# 网页只留最近这么多行。更早的留在 pi 自己的会话文件里。
+_PI_KEEP = 40
+# 只读文件末尾。一场很长的会话不会每次轮询都整份解析。
+_PI_TAIL_BYTES = 256 * 1024
+
+
+def _clip(text: str, limit: int) -> str:
+    """One short line. A key-shaped token is not shown."""
+    cleaned = _SECRET.sub(r"\1…", text or "")
+    cleaned = " ".join(cleaned.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 1] + "…"
+
+
+def _pi_hint(arguments) -> str:
+    """A path or a command from a tool call, never the whole kernel."""
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            return _clip(arguments, 120)
+    if not isinstance(arguments, dict):
+        return ""
+    for key in ("command", "path", "file_path", "file", "target"):
+        value = arguments.get(key)
+        if isinstance(value, str) and value.strip():
+            return _clip(value, 160)
+    return ""
+
+
+def _tail_text(path: Path) -> str:
+    """The end of a session file. A partial first line is dropped so it is not parsed as JSON."""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            if size > _PI_TAIL_BYTES:
+                handle.seek(size - _PI_TAIL_BYTES)
+                handle.readline()
+            data = handle.read()
+    except OSError:
+        return ""
+    return data.decode("utf-8", errors="replace")
+
+
+def _pi_lines_in(path: Path) -> list[dict]:
+    """Readable lines from the tail of one pi session. Thinking signatures and the task prompt stay out."""
+    lines = []
+    for raw_line in _tail_text(path).splitlines():
+        try:
+            item = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        message = item.get("message") if isinstance(item, dict) else None
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        for part in message.get("content") or []:
+            if not isinstance(part, dict):
+                continue
+            kind = part.get("type")
+            if role == "assistant" and kind == "text":
+                text = _clip(str(part.get("text") or ""), 400)
+                if text:
+                    lines.append({"who": "pi", "text": text})
+            elif role == "assistant" and kind == "thinking":
+                text = _clip(str(part.get("thinking") or ""), 160)
+                if text:
+                    lines.append({"who": "思考", "text": text})
+            elif role == "assistant" and kind == "toolCall":
+                name = str(part.get("name") or "tool")
+                hint = _pi_hint(part.get("arguments"))
+                lines.append({"who": "工具", "text": name + (f" {hint}" if hint else "")})
+            elif role == "toolResult" and kind == "text":
+                text = _clip(str(part.get("text") or ""), 200)
+                if text:
+                    lines.append({"who": "结果", "text": text})
+    return lines[-_PI_KEEP:]
+
+
+def _pi_session_files(directory: Path, root: Path) -> list[Path]:
+    """Pi sessions whose folder name contains this run's directory name."""
+    token = directory.name
+    if not token or not root.is_dir():
+        return []
+    found = []
+    for path in root.glob("*/*.jsonl"):
+        if token in path.parent.name:
+            found.append(path)
+    found.sort(key=lambda item: item.stat().st_mtime)
+    return found
+
+
+def _pi_stamp(paths: list[Path]) -> str:
+    parts = []
+    for path in paths:
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        parts.append(f"{path.name}:{stat.st_mtime_ns}:{stat.st_size}")
+    return "|".join(parts)
+
+
+_EPIC_HOW = {"done": "完成", "failed": "失败", "stopped": "停下"}
+
+
+def _epic_files(directory: Path, root: Path) -> list[Path]:
+    """epic.jsonl files whose directory name contains this run."""
+    token = directory.name
+    if not token or not root.is_dir():
+        return []
+    found = [path for path in root.glob(f"*{token}*/**/epic.jsonl") if path.is_file()]
+    found.sort(key=lambda item: item.stat().st_mtime)
+    return found[-8:]
+
+
+def _epic_lines_in(path: Path) -> list[dict]:
+    """One epic the way hmz reads it: start, session, spend, end. Not the task text."""
+    lines = []
+    try:
+        raw = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return lines
+    for raw_line in raw[-80:]:
+        try:
+            item = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(item, dict):
+            continue
+        event = item.get("event")
+        if event == "began":
+            agents = item.get("agents") if isinstance(item.get("agents"), list) else []
+            first = agents[0] if agents and isinstance(agents[0], dict) else {}
+            backend = str(first.get("backend") or "")
+            model = str(first.get("model") or "")
+            budget = item.get("budget") if isinstance(item.get("budget"), dict) else {}
+            cost = budget.get("cost")
+            money = f" 预算 ${float(cost):.2f}" if isinstance(cost, (int, float)) and not isinstance(cost, bool) else ""
+            who = str(first.get("agent") or "assistant")
+            lines.append({"who": "开始", "text": _clip(f"{who} {backend}/{model}{money}".strip(), 180)})
+        elif event == "opened":
+            session = str(item.get("session") or "")
+            lines.append({"who": "打开", "text": _clip(f"{item.get('backend') or ''} 会话 {session[:8]}", 120)})
+        elif event == "usage":
+            cost = item.get("cost")
+            tokens = item.get("output_tokens")
+            seconds = item.get("seconds")
+            bits = []
+            if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+                bits.append(f"${float(cost):.3f}")
+            if isinstance(tokens, int) and not isinstance(tokens, bool):
+                bits.append(f"输出 {tokens} token")
+            if isinstance(seconds, (int, float)) and not isinstance(seconds, bool):
+                bits.append(f"{float(seconds):.0f} 秒")
+            if bits:
+                lines.append({"who": "花费", "text": " ".join(bits)})
+        elif event == "ended":
+            how = str(item.get("how") or "")
+            lines.append({"who": "结束", "text": _EPIC_HOW.get(how, how or "结束")})
+        elif event in ("reopened", "called", "returned"):
+            lines.append({"who": "流程", "text": str(event)})
+    return lines
+
+
+def _epic_feed(directory: Path, root: Path) -> list[dict]:
+    lines = []
+    for path in _epic_files(directory, root):
+        lines.extend(_epic_lines_in(path))
+    return lines[-_PI_KEEP:]
+
+
+def _chat_rows(item: dict) -> list[dict]:
+    """Sent and received text for one transcript event. The system prompt and kernel drafts stay out."""
+    event = item.get("event")
+    label = str(item.get("label") or "")
+    if event == "retry":
+        return [{"who": "重试", "text": _clip(f"{label} {item.get('error') or ''}", 200)}]
+    if event == "error":
+        return [{"who": "失败", "text": _clip(f"{label} HTTP {item.get('status') or ''} {item.get('error') or ''}", 200)}]
+    if event != "chat":
+        return []
+    rows = []
+    messages = item.get("messages") if isinstance(item.get("messages"), list) else []
+    sent = ""
+    for message in reversed(messages):
+        if not isinstance(message, dict) or message.get("role") == "system":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            sent = content
+            break
+    if sent:
+        rows.append({"who": "发出", "text": _clip(f"{label} {sent}", 400)})
+    reply = item.get("reply") if isinstance(item.get("reply"), dict) else {}
+    reasoning = reply.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning.strip():
+        rows.append({"who": "思考", "text": _clip(reasoning, 160)})
+    content = reply.get("content")
+    if isinstance(content, str) and content.strip():
+        rows.append({"who": "收到", "text": _clip(content, 400)})
+    for call in reply.get("tool_calls") or []:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function") if isinstance(call.get("function"), dict) else {}
+        name = str(function.get("name") or "tool")
+        hint = ""
+        raw_args = function.get("arguments")
+        if name == "lookup_msl" and isinstance(raw_args, str):
+            try:
+                parsed = json.loads(raw_args)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict) and isinstance(parsed.get("topic"), str):
+                hint = parsed["topic"]
+        rows.append({"who": "工具", "text": _clip(f"{name} {hint}".strip(), 180)})
+    if not any(row["who"] == "收到" or row["who"] == "工具" for row in rows):
+        rows.append({"who": "收到", "text": _clip(f"{label} 空回复 {item.get('finish_reason') or ''}".strip(), 160)})
+    return rows
+
+
+def _chat_lines(path: Path) -> list[dict]:
+    """Display lines from the tail of ``transcript.jsonl``. The file itself is not loaded whole."""
+    rows = []
+    for raw_line in _tail_text(path).splitlines():
+        try:
+            item = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            rows.extend(_chat_rows(item))
+    return rows[-_PI_KEEP:]
+
+
+def _chat_inflight(path: Path) -> list[dict]:
+    """One line for a request that has not been written to the transcript yet."""
+    doc = _load(path) or {}
+    inflight = doc.get("inflight") if isinstance(doc.get("inflight"), dict) else {}
+    rows = []
+    for label, entry in inflight.items():
+        status = entry.get("status") if isinstance(entry, dict) else ""
+        who = "正在接收" if status == "streaming" else "正在等待"
+        rows.append({"who": who, "text": str(label)})
+    return rows
+
+
+def chat_feed(run_id: str, *, stamp: str = "") -> dict | None:
+    """The tail of the direct chat transcript. ``None`` when the run does not exist.
+
+    ``same`` is true when ``stamp`` still matches, so the page can skip drawing.
+    """
+    directory = resolve_run(run_id)
+    if directory is None:
+        return None
+    watched = [path for path in (directory / "transcript.jsonl", directory / "llm.json") if path.is_file()]
+    current = _pi_stamp(watched)
+    if stamp and stamp == current:
+        return {"same": True, "stamp": current, "lines": []}
+    lines = _chat_lines(directory / "transcript.jsonl")
+    lines.extend(_chat_inflight(directory / "llm.json"))
+    return {"same": False, "stamp": current, "lines": lines[-_PI_KEEP:]}
+
+
+def kernel_writer(directory: Path) -> str:
+    """``pi`` when this run writes kernels through hmz. ``chat`` when the search calls the model itself.
+
+    ``run_config.json`` wins. A run recorded before that field existed is ``pi`` only when it already has an hmz workspace or an agent event.
+    """
+    cfg = _load(directory / "run_config.json") or {}
+    search = cfg.get("search") if isinstance(cfg.get("search"), dict) else {}
+    recorded = search.get("kernel_agent") if isinstance(search, dict) else None
+    if recorded == "pi":
+        return "pi"
+    if isinstance(recorded, str):
+        return "chat"
+    work = directory / "agent_work"
+    if work.is_dir() and any(work.iterdir()):
+        return "pi"
+    path = directory / "transcript.jsonl"
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                if '"event": "agent"' in line or '"event":"agent"' in line:
+                    return "pi"
+    except OSError:
+        return "chat"
+    return "chat"
+
+
+def pi_feed(run_id: str, *, sessions_root: Path | None = None, stamp: str = "") -> dict | None:
+    """The newest session's tail. ``None`` when the run does not exist.
+
+    ``same`` is true when ``stamp`` still matches the file, so the page can skip drawing.
+    """
+    directory = resolve_run(run_id)
+    if directory is None:
+        return None
+    if kernel_writer(directory) != "pi":
+        # 直调模型的一场没有 pi 会话。页面不画那两块，这里也不去扫家目录。
+        return {"same": stamp == "chat", "stamp": "chat", "lines": [], "epics": [], "kernel_writer": "chat"}
+    root = sessions_root if sessions_root is not None else Path.home() / ".pi" / "agent" / "sessions"
+    files = _pi_session_files(directory, root)
+    epics_root = Path.home() / ".hmz" / "epics"
+    epic_files = _epic_files(directory, epics_root)
+    current = _pi_stamp(files[-1:]) + "||" + _pi_stamp(epic_files)
+    if stamp and stamp == current:
+        return {"same": True, "stamp": current, "lines": [], "epics": [], "kernel_writer": "pi"}
+    lines = []
+    for path in files[-1:]:
+        lines.extend(_pi_lines_in(path))
+    return {
+        "same": False,
+        "stamp": current,
+        "lines": lines[-_PI_KEEP:],
+        "epics": _epic_feed(directory, epics_root),
+        "kernel_writer": "pi",
+    }
+
+
+def _agent_note(item: dict, label: str) -> dict:
+    """One hmz turn. The coding agent wrote a file; this is not a chat-tool call and not an exception by itself."""
+    parts = [item.get("harness") or "pi", item.get("provider") or "", item.get("model") or ""]
+    shown = "/".join(str(part) for part in parts if part)
+    error = str(item.get("error") or "")
+    had = bool(item.get("had_kernel"))
+    if error:
+        kind, detail = "agent_error", error[:180]
+    elif had:
+        kind, detail = "agent", "kernel.metal 里有约定的内核"
+    else:
+        kind, detail = "agent_empty", "kernel.metal 里没有约定的内核"
+    cost = item.get("cost_usd")
+    if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+        detail = f"{detail}。这场 ${float(cost):.3f}"
+    return {"label": label, "model": shown, "kind": kind, "detail": detail, "seconds": None}
+
+
 def _model_notes(directory: Path) -> list[dict]:
     """Model turns that did not become a candidate.
 
@@ -494,6 +833,9 @@ def _model_notes(directory: Path) -> list[dict]:
             continue
         if event == "warning" and item.get("message") == "reply truncated by max_tokens":
             notes.append({"label": label, "model": model, "kind": "truncated", "detail": "reply truncated by max_tokens", "seconds": None})
+            continue
+        if event == "agent":
+            notes.append(_agent_note(item, label))
             continue
         if event != "chat":
             continue
@@ -942,6 +1284,7 @@ def run_detail(run_id: str) -> dict | None:
         "confirmations": confirmations,
         "candidates": _candidates(directory),
         "model_notes": _model_notes(directory),
+        "kernel_writer": kernel_writer(directory),
         "publication": conclusion["publication"],
         "published_speedup": conclusion["speedup"],
         "eval_progress": progress,

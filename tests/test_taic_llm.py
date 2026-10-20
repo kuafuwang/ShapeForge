@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import openai
 import pytest
@@ -30,9 +31,9 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def status_error(cls, code, headers=None):
+def status_error(cls, code, headers=None, message="boom"):
     req = httpx.Request("POST", "http://x/v1/chat/completions")
-    return cls("boom", response=httpx.Response(code, request=req, headers=headers or {}), body=None)
+    return cls(message, response=httpx.Response(code, request=req, headers=headers or {}), body=None)
 
 
 # ----------------------------------------------------------------------------- cost
@@ -80,6 +81,102 @@ def test_bad_request_is_not_retried():
     with pytest.raises(LLMError):
         run(llm.chat([{"role": "user", "content": "x"}]))
     assert len(client.calls) == 1
+
+
+def test_quota_on_429_is_not_retried():
+    client = FakeClient([status_error(openai.RateLimitError, 429, message="insufficient_quota")])
+    llm = LLM(cfg(), CostLedger(cfg()), client=client)
+    with pytest.raises(LLMError, match="quota"):
+        run(llm.chat([{"role": "user", "content": "x"}]))
+    assert len(client.calls) == 1
+
+
+def test_empty_stop_is_sent_again(monkeypatch):
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    client = FakeClient([make_response("", finish="stop"), make_response("kernel void k() {}")])
+    llm = LLM(cfg(), CostLedger(cfg()), client=client)
+    assert "kernel void" in run(llm.chat([{"role": "user", "content": "x"}])).text()
+    assert len(client.calls) == 2
+
+
+def test_a_stream_that_ends_without_finish_is_discarded_and_sent_again(monkeypatch):
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+    async def half():
+        yield SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(content="half", reasoning_content=None, tool_calls=None), finish_reason=None)],
+            usage=None,
+        )
+
+    client = FakeClient([half(), make_response("done")])
+    llm = LLM(cfg(), CostLedger(cfg()), client=client)
+    assert run(llm.chat([{"role": "user", "content": "x"}])).text() == "done"
+    assert len(client.calls) == 2
+
+
+def test_stream_chunks_fold_into_one_reply():
+    async def chunks():
+        yield SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(content="hel", reasoning_content="think", tool_calls=None), finish_reason=None)],
+            usage=None,
+        )
+        yield SimpleNamespace(
+            choices=[SimpleNamespace(
+                delta=SimpleNamespace(
+                    content="lo",
+                    reasoning_content=None,
+                    tool_calls=[SimpleNamespace(index=0, id="c", function=SimpleNamespace(name="lookup_msl", arguments='{"topic":"x"}'))],
+                ),
+                finish_reason="tool_calls",
+            )],
+            usage=make_usage(),
+        )
+
+    client = FakeClient([chunks()])
+    reply = run(LLM(cfg(), CostLedger(cfg()), client=client).chat([{"role": "user", "content": "x"}]))
+    assert reply.text() == "hello" and reply.reasoning_content == "think"
+    assert reply.tool_calls == [{"id": "c", "name": "lookup_msl", "arguments": '{"topic":"x"}'}]
+    assert reply.finish_reason == "tool_calls"
+
+
+def test_context_overflow_drops_reasoning_and_shortens_the_tool_result_once():
+    client = FakeClient([
+        status_error(openai.BadRequestError, 400, message="maximum context length exceeded"),
+        make_response("ok"),
+    ])
+    llm = LLM(cfg(), CostLedger(cfg()), client=client)
+    messages = [
+        {"role": "user", "content": "x"},
+        {"role": "assistant", "content": "a", "reasoning_content": "secret"},
+        {"role": "tool", "tool_call_id": "t", "content": "Z" * 5000},
+    ]
+    assert run(llm.chat(messages)).text() == "ok"
+    sent = client.calls[1]["messages"]
+    assert all("reasoning_content" not in m for m in sent)
+    assert "omitted after a context-window error" in sent[-1]["content"]
+    assert llm.cfg.echo_reasoning_content is False
+
+
+def test_a_tool_call_cut_off_by_length_is_not_executed():
+    ran = []
+
+    def handler(_args):
+        ran.append(1)
+        return "ran"
+
+    first = make_response("partial", tool_calls=[("c1", "lookup_msl", {"topic": "x"})], finish="length")
+    client = FakeClient([first, make_response("kernel void k() {}")])
+    llm = LLM(cfg(), CostLedger(cfg()), client=client)
+    reply, msgs = run(llm.chat_with_tools([{"role": "user", "content": "go"}], [], {"lookup_msl": handler}))
+    assert ran == []
+    assert any(m["role"] == "tool" and "cut off by the output limit" in m["content"] for m in msgs)
+    assert "kernel void" in reply.text()
 
 
 def test_gives_up_after_max_retries(monkeypatch):

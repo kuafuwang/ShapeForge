@@ -10,6 +10,7 @@
 
 [search]
 budget_usd = 15.0                # per kernel, the paper's budget; override with --budget / --budget-scale
+kernel_agent = ""                # paper runs keep the chat API; --kernel-agent pi is the base-preset opt-in
 max_rounds = 100                 # a safety net only: at $15 the budget, not the round count, ends a run (8 rounds of FlashAttention already cost $3.1 with
                                  # deepseek-flash, so the old limit of 12 would have stopped a $15 run at about a third of its money).
 patience = 12                    # stop after this many rounds without a new best: 3x the base value of 4, so that a $15 run is not cut off by a short

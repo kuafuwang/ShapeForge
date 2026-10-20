@@ -9,12 +9,13 @@ reasoning_effort = "high"        # low / high / max (DeepSeek thinkingLevelMap);
 echo_reasoning_content = true    # models.json: requiresReasoningContentOnAssistantMessages
 use_tools = true                 # lookup_msl / quick_check function calling; false = full docs in the prompt, repair loop only
 max_tokens = 48000               # per request; reasoning tokens count. 96000 and half of the 384K API maximum were considered on 2026-10-07 and set back the same day. Override per run with --max-tokens.
-request_timeout_s = 900
+request_timeout_s = 900          # idle gap between streamed chunks, not a cap on the whole reply. Silence this long is retried.
 max_retries = 6
 extra_body = {}
 
 [search]
 budget_usd = 50.0                # debug ceiling per kernel while measuring kimi; paper preset stays 15. Override per task.
+kernel_agent = ""                # "pi": hmz + pi writes each kernel. Empty keeps the chat API. Paper preset forces empty.
 branches = 3                     # K parallel patch requests per round
 max_repair_tries = 3             # compile/ABI/safety repair turns for one candidate
 max_rounds = 12                  # hard cap on diagnose-plan-branch-evaluate rounds

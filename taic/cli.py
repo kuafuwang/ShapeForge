@@ -39,6 +39,8 @@ def cmd_run(a: argparse.Namespace) -> int:
         search.init_samples = a.init_samples
     if a.patience:
         search.patience = a.patience
+    if getattr(a, "kernel_agent", None):
+        search.kernel_agent = "" if a.kernel_agent == "off" else a.kernel_agent
     if a.effort:
         cfg.reasoning_effort = a.effort
     if getattr(a, "plan_effort", None):
@@ -76,7 +78,7 @@ def cmd_run(a: argparse.Namespace) -> int:
 SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "max_quick_checks", "min_improvement", "noise_z", "confirm_top", "eval_reps", "max_hangs",
                  "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
                  "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck",
-                 "plan_ledger", "diversity_archive", "fast_bench", "experience_index")
+                 "plan_ledger", "diversity_archive", "fast_bench", "experience_index", "kernel_agent")
 LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry",
               "truncation_retry_effort", "plan_reasoning_effort", "patch_reasoning_effort")
 
@@ -130,6 +132,9 @@ def _resume_config(a: argparse.Namespace, settings: dict, info: dict):
     if a.no_tools:
         cfg.use_tools = False
         prov["llm.use_tools"] = "command line"
+    if getattr(a, "kernel_agent", None):
+        search.kernel_agent = "" if a.kernel_agent == "off" else a.kernel_agent
+        prov["search.kernel_agent"] = "command line"
     if a.effort:
         cfg.reasoning_effort = a.effort
         prov["llm.reasoning_effort"] = "command line"
@@ -412,6 +417,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--effort", default=None, choices=["off", "low", "high", "max"])
     _add_role_efforts(p)
     p.add_argument("--no-tools", action="store_true")
+    p.add_argument("--kernel-agent", default=None, choices=["pi", "off"], help="write each kernel with hmz and the pi coding agent; off keeps the chat API (default: off)")
     p.add_argument("--profile-best", action="store_true", help="xctrace profile of the winning kernel after the search")
     p.add_argument("--profile-poor", action="store_true", help="trace a round's seed with Instruments when it is slower than the best baseline and give the findings to the model")
     p.add_argument("--plan-mix", action="store_true", help="the last plan of every round is a local, low-risk change; the others are structural")
@@ -438,6 +444,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--effort", default=None, choices=["off", "low", "high", "max"])
     _add_role_efforts(r)
     r.add_argument("--no-tools", action="store_true")
+    r.add_argument("--kernel-agent", default=None, choices=["pi", "off"], help="write each remaining kernel with hmz and pi; off keeps the chat API")
     r.add_argument("--profile-best", action="store_true")
     r.add_argument("--profile-poor", action="store_true")
     r.add_argument("--plan-mix", action="store_true")
