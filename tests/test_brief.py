@@ -208,7 +208,7 @@ def test_orientation_mentions_committees_and_skips_a_planted_key(monkeypatch, ca
     monkeypatch.setenv("OPENAI_BASE_URL", "https://secret.example.invalid/v1")
     code, out, _err = _brief(capsys)
     assert code == 0
-    assert "committees" in out and "Handoff is mandatory" in out and "Repair stays" in out
+    assert "committees" in out and "one new hmz session" in out and "agent_failed" in out
     assert SECRET not in out and "secret.example.invalid" not in out and "sk-" not in out
     assert len(out.splitlines()) <= 80
 

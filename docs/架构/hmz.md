@@ -1,6 +1,6 @@
 # hmz
 
-`hmz` 是别人写的启动器，用来驱动已经登录的编程代理。本仓库默认不调用它。只有 `--kernel-agent pi` 时，写内核这一步执行 `hmz exec`，跑一场 `kernel_once`。规划、换种子和确认仍在 `taic`。`flame_chase` 是 `hmz` 自带的双代理轮流，本仓库的搜索不用它。
+`hmz` 是别人写的启动器，用来驱动已经登录的编程代理。搜索写内核只走 `hmz exec`，跑一场 `kernel_once`。`--kernel-agent off` 拒绝启动。换种子和确认仍在 `taic`。搜索不再单独发规划请求。`flame_chase` 是 `hmz` 自带的双代理轮流，本仓库的搜索不用它。
 
 源码不进入本仓库。2026-10-19 装上的发布包是 PyPI 的 `hmz` 0.2.0。本机检出 `e2013a4` 里的 `flame_chase` 与该发布包相同。当天 GitHub `main` 的 `737f438` 不改这个文件。搜索循环、上下文和判卷仍在 [搜索.md](搜索.md)。
 
@@ -12,9 +12,15 @@
 
 ```text
 hmz exec -f taic/flows/kernel_once
-    -a assistant=pi/<provider>/<模型>
-    -p budget.cost=<还剩的美元>
+    -a assistant=pi/<provider>/<模型>[:effort]
+    -p turn_output_tokens=<这一场的输出 token>
+    -p turn_minutes=<主回合分钟>
+    -p wrap_output_tokens=<收尾回合的输出 token>
+    -p wrap_minutes=<收尾回合分钟>
+    -p budget.duration=<整场分钟>m
 ```
+
+单场美元上限是剩余预算和 `relay_budget_usd`（默认 2 美元）里较小的那个，再按该委员会的输出单价换成 `turn_output_tokens`。不是把剩余美元原样交给 `budget.cost`。
 
 `kernel_once` 是本仓库的流程：一个角色 `assistant`，写完一颗内核就停。两个委员会的轮换在搜索进程里。轮到谁，就把那个委员会的模型写进上面的 `pi/...`。
 
@@ -33,7 +39,7 @@ hmz exec -f taic/flows/kernel_once
 
 流程目录下的 `skills/<名字>/SKILL.md` 要由角色用 `_skills` 点名。`hmz` 才把它放进这场进程的虚拟家目录。不放进工作区。`pi --mode rpc` 不信任工作区里的 `.pi/skills`，也不加载工作区里的 `.pi/mcp.json`。
 
-本仓库的技能是 `taic/flows/kernel_once/skills/taic-tools/SKILL.md`，角色上写了 `_skills = ("taic-tools",)`。文件头点名两个工具。正文说明用法：`lookup_msl` 是用 `read` 读工作区里的 `msl_reference.md`；`quick_check` 是用 `bash` 跑 `TASK.md` 里那条 `tcenv eval --quick`，锁文件在 `/tmp/ai_lowerling-gpu.lock`。这条不计时。
+本仓库的技能是 `taic/flows/kernel_once/skills/taic-tools/SKILL.md`。它让代理读 `msl_reference.md`，并按 `TASK.md` 里的命令做 `--quick` 和 `--timed`。计时用机器上那把 GPU 锁。主回合有输出 token 和时长上限；到了上限，同一会话再写一次 NOTES，把核留在 `kernel.metal`。
 
 KDA 教 Nsight 是同一条路。`skills/ncu-report-skill/SKILL.md` 写明先测、再对症状、再写计划，并给出可照抄的 `ncu` 命令。`flame_chase` 自己不跑剖析。代理用终端执行技能里的命令。
 
@@ -43,6 +49,6 @@ KDA 教 Nsight 是同一条路。`skills/ncu-report-skill/SKILL.md` 写明先测
 | --- | --- |
 | `hmz exec`、`kernel_once`、本机 `pi`、权限围栏、代理会话、epic 的四行摘要、技能目录 | `flame_chase` 排整次搜索；`hmz web` 当搜索看板；Claude、Codex、Kimi Code、litellm；把 Humanize 源码搬进本仓库 |
 
-不用 `flame_chase` 排班，是因为两个委员会已经在搜索里轮换，交接的是当前内核和成绩单。由它排整次搜索，会把计时和换种子交回代理。写内核的那一场不弱：上场的仍是 `pi`。判卷比 `flame_chase` 多，它不判卷。
+不用 `flame_chase` 排班，是因为两个委员会已经在搜索里轮换。下一场读到的是新写的 `TASK.md`：当前核、成绩单和上一场失败反馈。由它排整次搜索，会把计时和换种子交回代理。写内核的那一场不弱：上场的仍是 `pi`。判卷比 `flame_chase` 多，它不判卷。
 
-规划不经过 `hmz`。搜索进程直接调用模型接口。省略 `--kernel-agent pi` 时，写内核也不经过 `hmz`，模型在搜索进程自己的聊天里，`lookup_msl` 和 `quick_check` 是注册进那次请求的函数。
+搜索不再单独规划。模型调用只发生在 `hmz` 拉起的 `pi` 里。`lookup_msl` 和 `quick_check` 不注册进当前搜索。

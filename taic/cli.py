@@ -318,7 +318,7 @@ def cmd_resume(a: argparse.Namespace) -> int:
 
 _SEARCH_SWITCHES = (
     ("stop_at_roofline", "stop when the seed is already inside the noise gate of its roofline and no baseline beats that bound"),
-    ("abi_guard", "stop a branch that repeats the same ABI failure, and state the 32768 B threadgroup limit in the repair prompt"),
+    ("abi_guard", "recorded switch; the live session does not stop a branch on a repeated ABI error"),
     ("target_note", "when a baseline is faster than the roofline bound, tell the model and give that baseline's time as the target"),
     ("rich_history", "a failed branch's history line names the failure instead of one generic sentence"),
     ("status_lines", "tell the model the noise floor and the budget, round and patience that remain"),
@@ -329,7 +329,7 @@ def _add_search_switches(p: argparse.ArgumentParser) -> None:
     """``--flag`` / ``--no-flag``. Omitted means the config default, which is on."""
     for dest, help_text in _SEARCH_SWITCHES:
         p.add_argument("--" + dest.replace("_", "-"), action=argparse.BooleanOptionalAction, default=None, help=help_text + " (default: on)")
-    p.add_argument("--truncation-retry", action=argparse.BooleanOptionalAction, default=None, help="a length-capped reply with no kernel is retried once without the echoed reasoning, and does not spend a repair turn (default: on)")
+    p.add_argument("--truncation-retry", action=argparse.BooleanOptionalAction, default=None, help="recorded switch; the live hmz session does not ask again after a cut-off reply (default: on)")
 
 
 def _u64(text: str) -> int:
@@ -417,7 +417,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--effort", default=None, choices=["off", "low", "high", "max"])
     _add_role_efforts(p)
     p.add_argument("--no-tools", action="store_true")
-    p.add_argument("--kernel-agent", default=None, choices=["pi", "off"], help="write each kernel with hmz and the pi coding agent; off keeps the chat API (default: off)")
+    p.add_argument("--kernel-agent", default=None, choices=["pi", "off"], help="kernel writing is hmz and pi; off refuses to start")
     p.add_argument("--profile-best", action="store_true", help="xctrace profile of the winning kernel after the search")
     p.add_argument("--profile-poor", action="store_true", help="trace a round's seed with Instruments when it is slower than the best baseline and give the findings to the model")
     p.add_argument("--plan-mix", action="store_true", help="the last plan of every round is a local, low-risk change; the others are structural")
@@ -444,7 +444,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--effort", default=None, choices=["off", "low", "high", "max"])
     _add_role_efforts(r)
     r.add_argument("--no-tools", action="store_true")
-    r.add_argument("--kernel-agent", default=None, choices=["pi", "off"], help="write each remaining kernel with hmz and pi; off keeps the chat API")
+    r.add_argument("--kernel-agent", default=None, choices=["pi", "off"], help="kernel writing is hmz and pi; off refuses to start")
     r.add_argument("--profile-best", action="store_true")
     r.add_argument("--profile-poor", action="store_true")
     r.add_argument("--plan-mix", action="store_true")

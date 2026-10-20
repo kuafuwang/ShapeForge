@@ -35,15 +35,16 @@ Two committees
   Every search is exactly two committees, named first and second. Each has one member (provider and model).
   Another count or other names is refused before any model call. A longer member list is not reduced to the first.
   If the config has no committees, both copy the [llm] model. --model assigns that one model to both.
-  Handoff is mandatory even when both members use the same model.
-  The initial draft (round 0) and round 1 bind first. From round 1, round r binds (r - 1) % 2. The switch is only at a round boundary.
-  From round 2 the new turn omits the previous turn's chat. A handoff sentence names the committee.
-  Repair stays in the conversation that started the candidate: same messages, same committee, no handoff sentence.
-  Connection retries stay inside taic/llm.py and keep the current committee.
+  The same model on both seats still starts a new session. There is no handoff sentence in TASK.md.
+  The initial draft and round 1 bind first. From round 1, round r binds (r - 1) % 2. The switch is only at a round boundary.
+  Each round is one new hmz session. The task file carries the kernel, the scorecard, and the last failure. It does not carry the previous chat.
+  A session that does not leave a new kernel is agent_failed. The next session goes to the other committee.
+  Two agent_failed sessions in a row stop the search. An incorrect kernel, or a file identical to the seed, clears that count.
+  A session that ends without a token bill stops the whole search (cost_incomplete).
   Both share one ledger, one transcript.jsonl, and one budget. Keys and endpoints stay out of the run directory.
 
 Evaluation
-  tcenv stages, in order: screen, compile, ABI, correctness, benchmark. The first failure ends that candidate.
+  tcenv order: screen, compile, ABI, guards and inputs, numeric check, benchmark. verify() runs first and stays unsupported.
   Evaluations inside one search take an asyncio lock in Orchestrator, so those measurements do not overlap.
   The machine lock is a flock in tcenv/gpulock.py. Timing holds it exclusively; compile and correctness hold it shared.
   Default path: ~/.cache/ai_lowerling/gpu.lock (TCENV_GPU_LOCK_FILE overrides it).
@@ -63,7 +64,8 @@ GPU lock cache
 Open next
   taic/cli.py
   taic/committees.py
-  taic/orchestrator.py: _activate_round, _handoff, _develop, _eval, _finish
+  taic/orchestrator.py: _guard_shape, _one_session, _rounds, _eval, _confirm
+  taic/kernel_agent.py: render_contract, run_kernel_agent
   experiments/common.py: conclusion_of_run
   tcenv/gpulock.py
   tcenv/evaluate.py
