@@ -1,6 +1,8 @@
 # DeepSeek Harness 的 Web 可观测
 
-这篇记 `/Users/kuafu/workspace/deepseek-harness` 本地检出 `687f282e86`（2026-10-17，`dsh` 0.2.1-rc.2）里，Web 界面怎样看见一场会话。结论对过这一版源码。浏览器入口是 `apps/web`。`packages/web/web` 是搜索和抓取，没有页面事件通道。
+这篇记的是别人的网页怎样看见一场会话，不是本仓库的看板。本仓库的看板仍由 `observe` 读 `runs/` 里的目录，实时靠轮询，没有他们那条 WebSocket。
+
+这篇对过 `/Users/kuafu/workspace/deepseek-harness` 本地检出 `687f282e86`（2026-10-17，`dsh` 0.2.1-rc.2）。那个检出不在本仓库里。浏览器入口是 `apps/web`。`packages/web/web` 是搜索和抓取，没有页面事件通道。
 
 ## 架构
 

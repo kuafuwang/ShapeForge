@@ -1,5 +1,7 @@
 # AI lowering on Apple GPUs: Triton -> Metal Shading Language
 
+The model writes kernel text. This repository compiles, checks, times, and decides what to keep. A number you can quote is the remeasured one after search, with the source hash bound and the timing quiet. The fastest candidate seen during search is a different number. A default run spends about $15 and alternates two models, `deepseek-flash` then `kimi-k3`. `taic run` and `taic resume` spend money and use the GPU that also drives the display. `uv run python -m taic.cli brief` only reads.
+
 A re-implementation, for an Apple M4 Max, of the setup of *"AI as a compiler: compiling Triton kernels without the Triton compiler"*.
 An LLM translates a Triton kernel directly into a Metal (MSL) kernel; an evaluation environment compiles, safety-checks,
 differentially tests, benchmarks and profiles every candidate, and the search keeps only candidates that are safe, correct and faster.
@@ -14,7 +16,7 @@ differentially tests, benchmarks and profiles every candidate, and the search ke
 | Nsight Compute | pipeline statistics, GPU timestamps, measured roofline, optional `xctrace` |
 | autotuned Triton baseline | faster of MLX and PyTorch-MPS; optionally Triton compiled by `triton-msl` (see below) |
 | FP8 | not available on Apple GPUs; FP16 and BF16 instead |
-| GPT-6 Astra, USD budget | any OpenAI-compatible endpoint (default `deepseek-flash`), cache-aware USD ledger |
+| GPT-6 Astra, USD budget | any OpenAI-compatible endpoint. Default committees alternate `deepseek-flash` and `kimi-k3`. Cache-aware USD ledger |
 
 ## Quick start
 
@@ -111,16 +113,14 @@ states no cap, so it uses $15 too; the repeatability experiment (Table 1) gives 
 
 * **Where it lives.** `taic.paper.toml` is a preset read on top of `taic.toml` (it sets `budget_usd = 15` and `max_rounds = 100`: at $15 the
   budget ends a run, not the round count, whereas the old limit of 12 rounds would have stopped it at about a third of the money). `--preset base`
-  or `TAIC_PRESET=base` reads `taic.toml` alone; `--config FILE` is used as it is. the preset raises `patience` (stop after N rounds without a new best) from 4 to 12, so a short plateau does not end a $15 run but a converged one still stops early
-  and still ends runs that converged early, so a kernel that stops improving spends less than $15.
+  or `TAIC_PRESET=base` reads `taic.toml` alone. That file's own ceiling is $50 per run, with `max_rounds = 12` and `patience = 4`; the $15 default is the paper preset, not `taic.toml` by itself. `--config FILE` is used as it is. The paper preset raises `patience` (stop after N rounds without a new best) from 4 to 12, so a short plateau does not end a $15 run, and a kernel that stops improving still spends less than $15.
 * **Override.** `--budget USD` everywhere, `--budget-scale F` on `run_suite` and `repeatability` (for example `0.2` for a smoke run). The
   semantic tests (`$0.15` per run), `counter_teaching` (`$1`) and the unit tests keep their small budgets on purpose.
-* **Worst case.** If every run used its whole budget: `run_suite --tasks all --dtypes fp16,bf16` is 24 runs, $360; `repeatability` is 5 trials
-  x ($15 + $15 + $1) = $155 (with `flash_attention` $230); `p1_runs` is 11 runs, $165. `--max-total-usd USD` (on those three drivers, default off)
-  skips any run whose budget would not fit under a cap on the whole invocation. Nothing has come close so far: the largest spend of a finished run
-  is $3.12 (an 8-round FlashAttention search that was stopped by its $3 budget).
+* **Worst case.** If every run used its whole budget: `run_suite --tasks all --dtypes fp16,bf16` is 24 runs, $360 (the default `--dtypes` is fp16 only: 12 runs, $180); `repeatability` is 5 trials
+  x ($15 + $15 + $1) = $155 (with `flash_attention` $230); `p1_runs` is 12 named runs, $180. `--max-total-usd USD` (on those three drivers, default off)
+  skips any run whose budget would not fit under a cap on the whole invocation. Finished runs on disk have spent more than the old $3.12 note: `runs/conv2d-two-models-20261019` spent about $46 under a $50 ceiling. The $3.12 figure is still the spend of `runs/p1/fa_flash`.
 * **Earlier results are not comparable.** They were produced with smaller budgets, which the dashboard shows per run (and each `result.json`
-  records as `budget_usd`): `runs/suite_full` $0.5-$1.2 per kernel, `runs/repeat_*` $3 per trial, `runs/p1` $3 for most runs (the `*_paper`
+  records as `budget_usd`): `runs/suite_full` is mostly $0.5-$1.2 per kernel, except `gemm_fp16`, whose budget field is now $15; `runs/repeat_*` $3 per trial, `runs/p1` $3 for most runs (the `*_paper`
   runs started later have $15), `runs/semantic_main` $0.15, `runs/pilot_suite_mini_old_protocol` $1.25-$1.5. A run that stopped on
   `budget_exhausted` there would have continued under the paper's budget.
 
@@ -154,17 +154,15 @@ profiler evidence goes, and adds `taic/skills/hardware_feedback.md` to the syste
   reach most of the bandwidth there: `docs/hardware_features.md` section 6), and a warning when a kernel has 32 or more accumulator fragments (the reference GEMMs were 12 to 26 times slower)
   or sits at the register-pressure limit.
 
-Why off by default: it is an experiment and nothing yet shows that it helps. With the switch off, every system prompt, user message and feedback string is **byte-identical** to before; `tests/test_hw_feedback.py`
-checks that against hashes recorded from the code before the feature existed (176 system prompts, 110 user messages, 12 feedback texts and every request of four scripted searches), so runs that are
-running or resumed are not affected. `taic.toml` and `taic.paper.toml` do not mention it. It is recorded in `run_config.json` and kept by `taic resume`. The analysis never breaks or slows a search: a timeout
+Why off by default: it is an experiment and nothing yet shows that it helps. With the switch off, `tests/test_hw_feedback.py` checks prompts and feedback against `tests/golden/hw_off.json` (176 system prompts, 110 user messages, 12 feedback texts). That file was recorded again on 2026-10-20, so it is not a snapshot from before the feature existed, and it covers more than four scripted searches. `taic.toml` and `taic.paper.toml` do not mention the switch. It is recorded in `run_config.json` and kept by `taic resume`. The analysis never breaks or slows a search: a timeout
 (20 s), a failure or a missing Metal toolchain drops the block and logs a warning. A/B experiment: `experiments.p1_runs` run `fa_flash_hw` is `fa_flash` with only this switch changed
-(n=1 on a stochastic search: an anecdote); the run was started on 2026-10-07 06:08, stopped once and continued with `taic resume` after a detector fix (round 1 saw the earlier block, `docs/hardware_features.md` section 9), and its result is not in yet (look at `runs/p1/fa_flash_hw`; the comparison is `fa_flash`: 0.735x confirmed, $3.123, 8 rounds, stopped by budget).
+(n=1 on a stochastic search: an anecdote); the run was started on 2026-10-07 06:08, stopped once and continued with `taic resume` after a detector fix (round 1 saw the earlier block; see `docs/hardware_features.md` section 9). The result is on disk: `runs/p1/fa_flash_hw` confirmed about 0.622x, spent about $2.89, and stopped after 8 rounds because four rounds brought no new seed. The comparison `fa_flash` confirmed about 0.735x, spent $3.12, 8 rounds, stopped by its $3 budget. Neither file has the source hash the publication gate now requires, so neither number is a published conclusion about the switch.
 
 When the hardware-feature block is on and a baseline is already more than 5% faster than the roofline lower bound, the block does not say the kernel is at the ceiling. That bound counts the direct algorithm's operations, and a baseline that beats it is using fewer of them (the measured case is conv2d: torch-mps at 777 us against a 932 us direct-convolution bound, about 1.2x the measured matrix peak). The reachable target is that baseline's time.
 
 ## Search switches (on by default)
 
-Each one is on unless a run passes `--no-<flag>` (`--no-stop-at-roofline`, and the same for the others) or sets the field to false. `truncation_retry` is on the LLM config; the others are on the search config. They are recorded in `run_config.json`. `taic resume` keeps a recorded value; a run that never recorded the switch (started before it existed) is continued with the default, which is on. Passing every `--no-*` flag makes the prompts and feedback byte-identical to the code from before these switches.
+Each one is on unless a run passes `--no-<flag>` (`--no-stop-at-roofline`, and the same for the others) or sets the field to false. `truncation_retry` is on the LLM config; the others are on the search config. They are recorded in `run_config.json`. `taic resume` keeps a recorded value; a run that never recorded the switch (started before it existed) is continued with the default, which is on. The six `--no-*` flags turn off the first table. The plan ledger is a separate switch and stays on unless `--no-plan-ledger` is also passed.
 
 | switch | what it changes (on unless `--no-<flag>`) |
 | --- | --- |
@@ -175,7 +173,7 @@ Each one is on unless a run passes `--no-<flag>` (`--no-stop-at-roofline`, and t
 | `--rich-history` | a failed branch's history line names the failure (`abi: ...`, `incorrect: ...`, `no code: ...`) instead of one generic sentence |
 | `--status-lines` | the planner and the patch author are told the noise floor ("at least X% faster") and the round, patience and budget that remain |
 
-These stay off until a run turns them on. Off, the planner still sees the last 24 history lines, every branch still patches the seed, and a search-stage benchmark still times the serial dispatch and every baseline.
+In the next table, only the plan ledger is on by default. The other three stay off until a run turns them on. With the plan ledger off, the planner still sees the last 24 history lines. With the others off, every branch still patches the seed, and a search-stage benchmark still times the serial dispatch and every baseline.
 
 | switch | default | what it changes when on |
 | --- | --- | --- |
@@ -191,7 +189,7 @@ These stay off until a run turns them on. Off, the planner still sees the last 2
 ## Dashboard and budget alerts
 
 `uv run python -m observe` serves a local dashboard (default `http://127.0.0.1:8765`; restart it after updating the code, the page is
-read at start-up). Four views: experiments, arm comparison (published speedup, `fast_p`, dollars per unit of gain), a paged run list, and one run.
+read at start-up). Views: experiments, arm comparison (published speedup, `fast_p`, dollars per unit of gain), a paged run list, one run, and a spend ledger. The page can add budget, reset budgets, stop runs, change the models used by the next search, and delete a record.
 Runs grouped from an old directory name are marked inferred and are not given a winner. The read API is `/api/v2`. It shows every run's budget next to what it spent, and raises an alert for runs that crossed it. The rule is one pure
 function, `observe.budget.budget_status(spent, budget, stop_reason, running)`:
 
@@ -227,8 +225,7 @@ from its own directory; nothing already spent is spent again. Two ways, one idea
   from the directory and goes on with the rounds that were not finished, then confirms and finishes as usual. Before it overwrites anything,
   `result.json` / `confirm_report.json` are kept as `*.before_topup_<n>.json` (and `state.json` as `state.before_resume_<n>.json`), so the earlier
   result is never lost. `--dry-run` rebuilds everything in memory, prints what would be continued (including the checks between the sources) and writes
-  nothing, calls no model, uses no GPU. A run that stopped for any other reason (converged, `max_rounds`, GPU hang, model errors) is **not** resumable
-  and there is no override; a run still alive, or one that is being resumed (`<run_dir>/resume.lock` of a live pid), is refused.
+  nothing, calls no model, uses no GPU. A run that stopped because it used its round limit or its patience can be continued with `--lift-count-limits` when it already has an eligible kernel. A GPU hang or a model error is still not resumable. A run still alive, or one that is being resumed (`<run_dir>/resume.lock` of a live pid), is refused. The dashboard "reset budgets" action adds $15 to every resumable run, raises `max_rounds` and `patience` to 100000, and passes `--lift-count-limits`.
 
 What a resume rebuilds, and from where (`taic/resume.py` has the details):
 
@@ -305,6 +302,6 @@ through triton-msl is 10x slower than MLX's fused attention and is refused for b
 
 `tcenv/` environment (contract, Metal runtime, ABI check, sanitizers, testing, benchmark, profile, worker, xctrace) -
 `taic/` agent (LLM client + ledger, tools, prompts, orchestrator, skills) - `tasks/` kernels (Triton spec, contract, reference, baselines, naive MSL) -
-`experiments/` - `observe/` (local read-only dashboard) - `tests/` - `runs/` (artifacts, git-ignored).
+`experiments/` - `observe/` (local dashboard; it can spend money and stop runs) - `tests/` - `runs/` (artifacts, git-ignored).
 
 `docs/` (Chinese notes): `docs/架构说明.md` how the parts divide the work - `docs/架构/可观测.md` how experiments are grouped and how the dashboard reads them - `docs/诚实说明.md` what the pipeline does **not** prove, and how to check every claim - `docs/算子工程师边界.md` what this route replaces and does not replace in human roles (with the evidence paths). Index of the directory: `docs/README.md`.

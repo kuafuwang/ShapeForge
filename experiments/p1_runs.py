@@ -19,7 +19,7 @@ Runs within one process are sequential and resumable (a finished run is skipped)
 
 Every run has the paper's budget of 15 USD (``--budget USD`` sets another one for the runs of this invocation). The runs in ``runs/p1`` that were
 finished or started before that change had 3 USD (their ``result.json`` says so, and so does the ``budget`` column of the summary), so they are not directly
-comparable; a finished run is skipped by name, so to repeat one at the new budget use a fresh ``--out``. Worst case if every run below is started: 11 x 15 = 165 USD;
+comparable; a finished run is skipped by name, so to repeat one at the new budget use a fresh ``--out``. Worst case if every run below is started: 12 x 15 = 180 USD;
 ``--max-total-usd`` is an optional cap (default off) on what one invocation may spend: a run whose budget would not fit under it is skipped and logged.
 """
 

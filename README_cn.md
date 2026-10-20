@@ -1,6 +1,12 @@
-# 在 Apple GPU 上做 AI Lowering：Triton → Metal Shading Language
+# 在苹果显卡上，让模型把 Triton 写成 Metal
 
-本文是 [README.md](README.md) 的中文译本。命令、路径和配置名与英文版一致。
+模型负责写小程序的文字。本仓库的程序负责编译、查安全、对答案、计时，并且只留下又安全、抽查算对、而且明显更快的那一版。模型看不见显卡，也不能自己宣布写对了或更快了。
+
+能对外说的倍数，是搜索结束后换一批输入再测过、源码对得上、计时也不吵的那一个。搜索过程里看起来最快的那次，是另一个数。规则在 `experiments/common.py` 的 `conclusion_of_run`。
+
+默认一次搜索大约 15 美元。两个模型轮流写：DeepSeek 的 `deepseek-flash`，然后是月之暗面的 `kimi-k3`。只设一家的密钥不够。`--preset base` 读的是 `taic.toml`，单次上限是 50 美元。`taic run` 和 `taic resume` 会花钱，也会占用这台同时画屏幕的显卡。只看摘要用 `uv run python -m taic.cli brief`，不花钱、不占显卡。
+
+本文其余部分与 [README.md](README.md) 对齐。命令、路径和配置名保持英文。下面这张表是和论文的对照，不是上手步骤。
 
 这是论文 *"AI as a compiler: compiling Triton kernels without the Triton compiler"* 的实验设置，在 Apple M4 Max 上的再实现。
 大模型把 Triton 内核直接翻译成 Metal（MSL）内核；评测环境对每个候选做编译、安全检查、差分测试、基准测试和性能剖析，搜索过程只保留安全、正确且更快的候选。
@@ -15,7 +21,7 @@
 | Nsight Compute | 流水线统计、GPU 时间戳、实测 roofline、可选的 `xctrace` |
 | 自动调优的 Triton 基线 | MLX 与 PyTorch-MPS 中较快的一方；可选地由 `triton-msl` 编译的 Triton（见下文） |
 | FP8 | Apple GPU 上不可用；改用 FP16 和 BF16 |
-| GPT-6 Astra、美元预算 | 任意 OpenAI 兼容端点（默认 `deepseek-flash`），带缓存感知的美元账本 |
+| GPT-6 Astra、美元预算 | 任意 OpenAI 兼容端点。默认两个席位轮流：`deepseek-flash` 与 `kimi-k3`。账本按缓存命中分开计价 |
 
 ## 快速开始
 
@@ -55,8 +61,8 @@ Apple GPU 同时驱动显示器，**正在运行的 Metal 内核无法被抢占*
 
 * **配置在哪。** `taic.paper.toml` 是叠加在 `taic.toml` 之上的预设（设了 `budget_usd = 15` 和 `max_rounds = 100`：$15 时结束运行的是预算而不是轮数，原来的 12 轮上限会在花掉约三分之一的钱时就停下）。`--preset base` 或 `TAIC_PRESET=base` 只读 `taic.toml`；`--config FILE` 原样使用。预设把 `patience`（连续 N 轮没有新最优就停）从 4 提到 12：短暂的平台期不会截断 $15 的运行，真正收敛的运行仍会提前结束，所以不再进步的内核花不到 $15。
 * **覆盖。** 到处都有 `--budget USD`，`run_suite` 和 `repeatability` 还有 `--budget-scale F`（例如 `0.2` 做冒烟）。语义测试（每次 $0.15）、`counter_teaching`（$1）和单元测试特意保留小预算。
-* **最坏情况。** 若每次运行都花满预算：`run_suite --tasks all --dtypes fp16,bf16` 是 24 次运行、$360；`repeatability` 是 5 次 x（$15 + $15 + $1）= $155（加上 `flash_attention` 为 $230）；`p1_runs` 是 11 次运行、$165。这三个驱动都有可选的 `--max-total-usd USD`（默认关闭）：整次调用放不下的运行会被跳过。目前没有任何运行接近上限：已结束运行里花得最多的是 $3.12（8 轮 FlashAttention，被 $3 预算截停）。
-* **更早的结果不可比。** 它们用的是更小的预算，看板逐运行显示（每个 `result.json` 也记录 `budget_usd`）：`runs/suite_full` 每个内核 $0.5–$1.2，`runs/repeat_*` 每次试验 $3，`runs/p1` 多数 $3（后来启动的 `*_paper` 运行是 $15），`runs/semantic_main` $0.15，`runs/pilot_suite_mini_old_protocol` $1.25–$1.5。在那里以 `budget_exhausted` 结束的运行，在论文预算下本会继续搜索。
+* **最坏情况。** 若每次运行都花满预算：`run_suite --tasks all --dtypes fp16,bf16` 是 24 次运行、$360（默认只写 `--dtypes` 时是 fp16，12 次、$180）；`repeatability` 是 5 次 x（$15 + $15 + $1）= $155（加上 `flash_attention` 为 $230）；`p1_runs` 把字典里 12 条都启动是 $180。这三个驱动都有可选的 `--max-total-usd USD`（默认关闭）：整次调用放不下的运行会被跳过。磁盘上已经有花到约 $46 的单次搜索（`runs/conv2d-two-models-20261019`，上限 $50）。早先「已结束运行最多 $3.12」只对当时的 `runs/p1/fa_flash` 成立。
+* **更早的结果不可比。** 它们用的是更小的预算，看板逐运行显示（每个 `result.json` 也记录 `budget_usd`）：`runs/suite_full` 多数内核 $0.5–$1.2，其中 `gemm_fp16` 的预算字段已是 $15；`runs/repeat_*` 每次试验 $3，`runs/p1` 多数 $3（后来启动的 `*_paper` 运行是 $15），`runs/semantic_main` $0.15，`runs/pilot_suite_mini_old_protocol` $1.25–$1.5。在那里以 `budget_exhausted` 结束的运行，在论文预算下本会继续搜索。
 
 ## 实验（论文第 4 节）
 
@@ -80,19 +86,18 @@ profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词�
 * 已经在 roofline 的约 90% 以上的内核不列任何缺失项（超过 roofline 的部分硬件特性帮不上忙；逐元素任务就处于这种状态，标量读写已经接近带宽：`docs/hardware_features.md` 第 6 节）；
   内核有 32 个以上累加器 fragment 时给出警告（参考 GEMM 慢了 12 到 26 倍），处于寄存器压力上限时也一样。
 
-为什么默认关闭：这是实验，目前没有证据表明它有用。关闭时，所有系统提示、用户消息和反馈字符串与以前**逐字节相同**；`tests/test_hw_feedback.py` 用这项功能出现之前的代码录下的哈希来核对
-（176 份系统提示、110 条用户消息、12 段反馈文字，外加四次脚本化搜索里的每一个请求），所以正在跑或正在续跑的实验不受影响。`taic.toml` 和 `taic.paper.toml` 没有提到它。它记在 `run_config.json` 里，`taic resume` 会保留。
-这段分析不会弄坏或拖慢搜索：超时（20 秒）、失败或没有 Metal 工具链时，直接去掉这一段并记一条警告。A/B 实验：`experiments.p1_runs` 的 `fa_flash_hw` 就是只改了这个开关的 `fa_flash`（n=1，随机搜索，只能算轶事）；这次运行于 2026-10-07 06:08 启动，因检测器修正中途停过一次并用 `taic resume` 接着跑（第 1 轮看到的是修正前的提示块，见 `docs/hardware_features.md` 第 9 节），结果还没出来（见 `runs/p1/fa_flash_hw`；对照是 `fa_flash`：确认后 0.735x、$3.123、8 轮，被预算截停）。
+为什么默认关闭：这是实验，目前没有证据表明它有用。关闭时，系统提示、用户消息和反馈与打开之前的形状对照；`tests/test_hw_feedback.py` 用 `tests/golden/hw_off.json` 核对 176 份系统提示、110 条用户消息、12 段反馈。这份黄金文件在 2026-10-20 重录过，里面的脚本化搜索不止早先写的四次。`taic.toml` 和 `taic.paper.toml` 没有提到它。它记在 `run_config.json` 里，`taic resume` 会保留。
+这段分析不会弄坏或拖慢搜索：超时（20 秒）、失败或没有 Metal 工具链时，直接去掉这一段并记一条警告。A/B 实验：`experiments.p1_runs` 的 `fa_flash_hw` 就是只改了这个开关的 `fa_flash`（n=1，随机搜索，只能算轶事）；这次运行于 2026-10-07 06:08 启动，因检测器修正中途停过一次并用 `taic resume` 接着跑（第 1 轮看到的是修正前的提示块，见 `docs/hardware_features.md` 第 9 节）。结果已经落盘：`runs/p1/fa_flash_hw` 的 `confirmed_speedup` 约 0.622，花了约 $2.89，8 轮后因连续 4 轮没有新种子而停。对照 `fa_flash` 的确认倍数约 0.735、$3.12、8 轮、预算耗尽。两次都是 $3 预算下的单次搜索，而且都没有绑上今天发布闸门要的源码指纹，不能当成「硬件提示有没有用」的结论。
 
 硬件特性反馈打开时，如果某个基线已经比 roofline 下界快 5% 以上，这段话不会再说「已经到顶」。下界按直接算法的运算量来算，基线比它还快，说明基线用了更少的运算（测到的例子是 conv2d：torch-mps 777 微秒，直接卷积的下界 932 微秒，大约是实测矩阵峰值的 1.2 倍）。可达目标是那个基线的时间。
 
 ## 搜索开关（默认打开）
 
-每一个默认都开着。关掉用 `--no-<旗标>`，例如 `--no-stop-at-roofline`，其余同名。`truncation_retry` 在模型配置上，其余在搜索配置上。它们写进 `run_config.json`。`taic resume` 保留已经记下的值；这次开关出现之前启动、目录里没有记下的运行，续跑时按默认处理，也就是打开。六个 `--no-*` 都加上时，提示和反馈与这些开关出现之前的代码逐字节相同。
+每一个默认都开着。关掉用 `--no-<旗标>`，例如 `--no-stop-at-roofline`，其余同名。`truncation_retry` 在模型配置上，其余在搜索配置上。它们写进 `run_config.json`。`taic resume` 保留已经记下的值；这次开关出现之前启动、目录里没有记下的运行，续跑时按默认处理，也就是打开。下面这六个 `--no-*` 只关掉这张表。计划账本是另一只开关，默认开着，要 `--no-plan-ledger` 才关。
 
 | 开关 | 改变什么（默认开，`--no-` 关掉） |
 | --- | --- |
-| `--truncation-retry` | 回复被 `max_tokens` 截断且没有内核时，丢掉回传的思考再问一次，这一次不占用修补次数 |
+| `--truncation-retry` | 回复被 `max_tokens` 截断且没有内核时，丢掉回传的思考再问一次，这一次不占用修补次数。重试时的推理强度默认降到 `low` |
 | `--stop-at-roofline` | 种子已经落在自己 roofline 的噪声门限以内，且没有基线比这个下界更快时，停止搜索（`stop_reason=at_roofline`） |
 | `--abi-guard` | 同一支连续两次碰到同一个 ABI 错误就停掉这一支，并在修补提示里写明线程组内存上限（32768 B）和这次声明的大小 |
 | `--target-note` | 某个基线比 roofline 下界快 5% 以上时，告诉模型这个下界不成立，目标是该基线的时间 |
@@ -101,11 +106,13 @@ profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词�
 
 `result.json` 和 `state.json` 另外记下 `search_seed_label`（搜索正在改的那颗内核）和 `confirm_winner_label`（换种子重测后留下的那颗）。续跑从搜索种子接着改。
 
+另外三只默认关着的开关：`--diversity-archive`（连续两轮没换种子时，最后一条分支可以改一颗写法不同、且不低于种子 85% 的合格核）、`--fast-bench`（搜索阶段少测几条基线；确认测量仍测全）、`--experience-index`（指向一份现成 JSON 才在规划里附最多 3 行旧提示，默认空）。计划账本默认开：规划看到的是每条尝试有没有被计时否定，关了才回到最近 24 行流水账。
+
 套件、重复性实验和 `p1_runs` 的 `--max-total-usd` 按磁盘上预留的钱来算：还在跑的运行算它的当前预算（看板上加过的、旁边单独续跑的都算进去），已经结束的只算实际花掉的。上限写在实验目录的 `cap.json` 里，看板拒绝一笔会冲破这个上限的加预算。
 
 ## 看板与预算告警
 
-`uv run python -m observe` 启动本机看板（默认 `http://127.0.0.1:8765`；改了代码要重启，页面在启动时读入）。四个视图：实验、臂对照（发布加速比、`fast_p`、每美元增益）、分页的运行列表、单次运行。从旧目录名归到一组的运行标成推断，不下胜负。读接口是 `/api/v2`。它把每次运行的预算和已花费并排显示，并对越过预算的运行告警。规则是一个纯函数 `observe.budget.budget_status(spent, budget, stop_reason, running)`：
+`uv run python -m observe` 启动本机看板（默认 `http://127.0.0.1:8765`；改了代码要重启，页面在启动时读入）。页面有实验、臂对照（发布加速比、`fast_p`、每美元增益）、分页的运行列表、单次运行，以及花费账本。看板会写磁盘：加预算、重置预算、停止进程、改下次搜索的默认模型、删除记录。从旧目录名归到一组的运行标成推断，不下胜负。读接口是 `/api/v2`。它把每次运行的预算和已花费并排显示，并对越过预算的运行告警。规则是一个纯函数 `observe.budget.budget_status(spent, budget, stop_reason, running)`：
 
 | 级别 | 颜色 | 条件 |
 |---|---|---|
@@ -126,7 +133,7 @@ profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词�
 预算用完（`stop_reason == "budget_exhausted"`）或进程死掉（崩溃、编辑器窗口被关）的搜索，可以从它自己的目录继续；已经花掉的钱不会再花一次。两条路，同一个思路：
 
 * **在线加预算**（搜索还在跑）：往 `<run_dir>/control.json` 原子写 `{"budget_usd": <新的总预算>}`。搜索在每次预算闸门前读它（一次 `stat`），把预算抬到这个数，永远不低于已经花掉的钱，并记录 `budget $a -> $b`。每次变化追加到 `<run_dir>/budget_events.json`（`requested` 是提出的人写的，`applied` 是搜索读到后写的，`resume` 是重新启动；每条有时间、旧新预算、金额、来源 `dashboard` / `cli`）。只有这次改动之后启动的进程才读这个文件，它的 `state.json` 里有 `"control_supported": true`；更早启动的进程不能在线加，等它停了再续跑。
-* **续跑**已经停下的搜索：`uv run python -m taic.cli resume <run_dir> [--add-budget 美元 | --budget 新总额] [--dry-run]`。它从目录重建搜索状态，接着做没做完的轮次，再照常确认、收尾。覆盖任何文件之前，`result.json` / `confirm_report.json` 先留成 `*.before_topup_<n>.json`（旧 `state.json` 留成 `state.before_resume_<n>.json`），先前的结果不会丢。`--dry-run` 只在内存里重建、打印会从哪里继续（含各来源之间的核对），不写任何文件、不问模型、不用 GPU。因为别的原因停下的（收敛、`max_rounds`、GPU 挂死、模型出错）**不能**续跑，也没有强制开关；还活着的、或有活进程持着 `<run_dir>/resume.lock`（正在续跑）的目录会被拒绝。
+* **续跑**已经停下的搜索：`uv run python -m taic.cli resume <run_dir> [--add-budget 美元 | --budget 新总额] [--dry-run]`。它从目录重建搜索状态，接着做没做完的轮次，再照常确认、收尾。覆盖任何文件之前，`result.json` / `confirm_report.json` 先留成 `*.before_topup_<n>.json`（旧 `state.json` 留成 `state.before_resume_<n>.json`），先前的结果不会丢。`--dry-run` 只在内存里重建、打印会从哪里继续（含各来源之间的核对），不写任何文件、不问模型、不用 GPU。因为收敛或轮数用完而停下、并且已经有合格稿的，可以加 `--lift-count-limits` 再续。图形芯片挂死和模型接口出错仍然不能续。还活着的、或有活进程持着 `<run_dir>/resume.lock`（正在续跑）的目录会被拒绝。看板「重置预算」会给每个还能继续的搜索加 15 美元，并把轮数和耐心抬到 10 万，续跑命令里带这个开关。
 
 续跑从哪里重建什么（细节见 `taic/resume.py`）：
 
@@ -142,7 +149,7 @@ profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词�
 
 不能恢复的：进程死掉时还在途的模型请求（服务商可能已计费，账本从没见过；续跑会列出它们），以及早先会话里每个请求的墙钟时间（那里 `t` 为 `null`）。试跑会把这两点列出来。
 
-**看板。** 在预算耗尽 / 超预算 / 已中断的运行上（以及在跑且到了「接近预算」的运行上），运行的状态卡、顶部横幅的标签和搜索面板都有一个**加预算 Add budget**按钮。点开是一个小窗：当前预算、已花、目前最好加速比，`+$3 / +$5 / +$15` 和自定义金额，换算后的新总预算，以及「这会花真实的 LLM 费用，最多再花 $X」；确认之后页面照旧实时显示这次运行，并带「已加预算 TOPPED UP」徽章（它和固定预算的运行没有可比性）和预算历史（`$3.00 -> $8.00 (+$5.00, 04:35, dashboard)`）。不能继续的运行显示原因，不显示按钮。页面其余部分仍然只读。唯一的写入口（`POST /api/runs/<run>/budget`，请求体 `{"amount_usd": 5}` 或 `{"new_budget_usd": 8}`；`GET /api/runs/<run>/control` 说明现在能做什么）会花钱、会启动 GPU 工作，所以：服务只回应回环地址的 `Host`，浏览器的 `Origin` 必须是页面自己的，每个 POST 都要带页面里的每进程随机令牌（`X-Observe-Token`），金额必须为正且不超过 `OBSERVE_MAX_TOPUP_USD`（默认 25），运行目录必须落在 `runs/` 内（不许 `..`，不许符号链接逃出），每个运行同一时刻只处理一个请求。在线运行写 `control.json`；已停的运行启动一个独立会话的 `uv run python -m taic.cli resume ...`（日志在 `<run_dir>/resume_<n>.log`）。`OBSERVE_CONTROL_DRYRUN=1` 做完所有检查，把「会执行的命令」记进 `budget_events.json`（类型 `dryrun`），什么都不启动。
+**看板。** 在预算耗尽 / 超预算 / 已中断的运行上（以及在跑且到了「接近预算」的运行上），运行的状态卡、顶部横幅的标签和搜索面板都有一个**加预算 Add budget**按钮。点开是一个小窗：当前预算、已花、目前最好加速比，`+$3 / +$5 / +$15` 和自定义金额，换算后的新总预算，以及「这会花真实的 LLM 费用，最多再花 $X」；确认之后页面照旧实时显示这次运行，并带「已加预算 TOPPED UP」徽章（它和固定预算的运行没有可比性）和预算历史（`$3.00 -> $8.00 (+$5.00, 04:35, dashboard)`）。不能继续的运行显示原因，不显示按钮。加预算的接口是 `POST /api/runs/<run>/budget`，请求体 `{"amount_usd": 5}` 或 `{"new_budget_usd": 8}`；`GET /api/runs/<run>/control` 说明现在能做什么。这个接口会花钱、会启动 GPU 工作，所以：服务只回应回环地址的 `Host`，浏览器的 `Origin` 必须是页面自己的，每个 POST 都要带页面里的每进程随机令牌（`X-Observe-Token`），金额必须为正且不超过 `OBSERVE_MAX_TOPUP_USD`（默认 25），运行目录必须落在 `runs/` 内（不许 `..`，不许符号链接逃出），每个运行同一时刻只处理一个请求。在线运行写 `control.json`；已停的运行启动一个独立会话的 `uv run python -m taic.cli resume ...`（日志在 `<run_dir>/resume_<n>.log`）。`OBSERVE_CONTROL_DRYRUN=1` 做完所有检查，把「会执行的命令」记进 `budget_events.json`（类型 `dryrun`），什么都不启动。
 
 ## 编译器基线（可选）：用 triton-msl 把 Triton 编译成 Metal
 
