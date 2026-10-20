@@ -49,6 +49,12 @@ class BenchStats:
 
 # 一批的墙钟大约 target_s，把单次启动和同步的固定开销摊进 k。
 # 从 1 次启动探起：evaluate 对单次 launch 有数秒级看门狗，一上来就跑满 kmax 会把病态核放大成挂起。
+# 一批 k 次 launch 共用一个心跳 B；父进程在 tcenv.evaluate.LAUNCH_DEADLINE_S 之后 SIGKILL。
+# 慢核的批量因此必须有上限，否则一条合法但慢的候选会被判成挂死（max_hangs=1 还会终止整次搜索）。
+# 0.8 × LAUNCH_DEADLINE_S：留 20% 余量给编码、提交和心跳写入的延迟。一致性由 tests/test_bench_limit.py 盯着。
+BATCH_WALL_BUDGET_S = 1.6
+
+
 def choose_iters(run_k: Callable[[int], float], target_s: float = 0.015, kmin: int = 4, kmax: int = 4000) -> int:
     """Pick the batch size ``k`` so that one timed batch lasts about ``target_s``.
 
@@ -58,12 +64,17 @@ def choose_iters(run_k: Callable[[int], float], target_s: float = 0.015, kmin: i
     run_k(1)  # warm-up, discarded: pays one-time costs (pipeline creation, JIT compilation of a compiled baseline)
     per = max(run_k(1), 1e-8)
     # 单次已经超过 0.1 秒时一批只启动 1 次，避免 k 把单次 launch 的看门狗打满。
-    if per > 0.1:  # slow: do not grow toward kmax, but still cover every rotated buffer set
-        return max(1, kmin)
+    if per > 0.1:
+        # 慢核：往 kmax 长大没有意义，但仍要尽量转过每一组缓冲区。上限由看门狗反推：
+        # 一批的墙钟 ≈ k × per，必须留在 BATCH_WALL_BUDGET_S 以内。
+        return int(max(1, min(kmin, BATCH_WALL_BUDGET_S / per)))
     # 再用最多 8 次、大约 0.05 秒的一小批，把「每次多少秒」从单次估计修正成一小批的平均。
     probe = max(1, min(8, int(0.05 / per)))
     per = max(run_k(probe) / probe, 1e-8)
-    return int(max(kmin, min(kmax, target_s / per)))
+    k = int(max(kmin, min(kmax, target_s / per)))
+    # 两条路径共用同一个上界：一批的墙钟必须留在看门狗以内。代价是 k 可能小于旋转组数——那时这一批只会
+    # 转过前 k 组缓冲（run() 每批都从第 0 组开始），比"把一批拖过 2 秒被判挂死"可接受。
+    return int(max(1, min(k, BATCH_WALL_BUDGET_S / per)))
 
 
 # 每一轮打乱顺序再各测一批。热和后台负载会同时作用在候选和基线上，中位数之比才稳得住。
