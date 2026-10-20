@@ -24,6 +24,10 @@ def extract_metal(text: str, kernel_name: str) -> str | None:
     blocks = [(tag.lower(), body) for tag, body in _FENCE.findall(text or "")]
     # 说明文字和 ```json 规划块不在候选里。
     code = [b for tag, b in blocks if tag in _METAL_TAGS]
+    # 带启动说明的块优先。说明不合法时也把这块送去评测，由评测拒绝，不退回旁边那颗契约核。
+    marked = [b for b in code if "taic-launch" in b]
+    if marked:
+        return marked[-1].strip("\n") + "\n"
     # 必须出现契约里的内核名。同名的多块取最后一块：模型常先贴片段，再贴完整内核。
     named = [b for b in code if re.search(r"\bkernel\s+void\s+" + re.escape(kernel_name) + r"\b", b)]
     if named:

@@ -38,7 +38,9 @@ def check_abi(contract: Contract, kernel: CompiledKernel, *, max_tg_memory: int 
         if b.name != a.name:
             problems.append(f"[[buffer({a.index})]] must be named `{a.name}` (found `{b.name}`)")
         if a.role == "input" and b.access != "read":
-            # 输入必须只读。核若能写输入，后面的输入快照会失败，评测数据也会被改掉。
+            # 输入必须只读。运行时本来就有输入快照（改了就判 unsafe），这条静态检查的用处是**在评测前**就退掉：
+            # 少一次编译和一次 GPU 启动，反馈也更快。放开它（换取就地算法）要等有人量过就地改写在本仓库
+            # 的真实收益，见 docs/conv2d约束排查.md「留下的」。
             problems.append(f"input `{a.name}` must be declared `device const {get_dtype(a.dtype).msl}*` (it is writable; kernels must not modify inputs)")
         elif a.role == "output" and b.access == "read":
             problems.append(f"output `{a.name}` is declared read-only; it must be a non-const `device` pointer")
@@ -71,6 +73,71 @@ def check_abi(contract: Contract, kernel: CompiledKernel, *, max_tg_memory: int 
     # 调用方省略时用 32768。evaluate 传入的是设备报告的 maxThreadgroupMemoryLength。
     if kernel.static_tg_bytes > max_tg_memory:
         problems.append(f"static threadgroup memory {kernel.static_tg_bytes} B exceeds the device limit of {max_tg_memory} B")
+    return problems
+
+
+def check_pipeline(contract: Contract, kernels: dict, spec, *, max_tg_memory: int = 32768) -> list[str]:
+    """Per-stage ABI for a ``taic-launch`` spec. ``kernels`` maps a kernel name to its compiled pipeline."""
+    problems: list[str] = []
+    contract_index = {a.name: a.index for a in contract.args}
+    writable_outputs: set[str] = set()
+    for stage in spec.stages:
+        kernel = kernels.get(stage.kernel)
+        if kernel is None:
+            problems.append(f"stage `{stage.kernel}` was not compiled")
+            continue
+        buffers = [b for b in kernel.bindings if b.kind == "buffer"]
+        indexes = [b.index for b in buffers]
+        names = [b.name for b in buffers]
+        if len(indexes) != len(set(indexes)):
+            problems.append(f"stage `{stage.kernel}` binds two parameters to the same buffer slot")
+        if len(names) != len(set(names)):
+            problems.append(f"stage `{stage.kernel}` binds the same buffer name twice")
+        if any(b.kind == "other" for b in kernel.bindings):
+            problems.append(f"stage `{stage.kernel}` uses a texture or sampler, which this evaluation does not bind")
+        if any(i > 30 for i in indexes):
+            problems.append(f"stage `{stage.kernel}` uses a buffer index above 30")
+        dynamic = [b for b in kernel.bindings if b.kind == "threadgroup"]
+        if stage.threadgroup_bytes:
+            if len(dynamic) != 1:
+                problems.append(f"stage `{stage.kernel}` declares threadgroup bytes but does not have exactly one [[threadgroup(n)]] parameter")
+            else:
+                total = kernel.static_tg_bytes + stage.threadgroup_bytes
+                if total > max_tg_memory:
+                    problems.append(
+                        f"stage `{stage.kernel}` combined threadgroup memory {total} B "
+                        f"(static {kernel.static_tg_bytes} + dynamic {stage.threadgroup_bytes}) exceeds the device limit of {max_tg_memory} B"
+                    )
+        elif dynamic:
+            problems.append(f"stage `{stage.kernel}` has a dynamic threadgroup parameter but the launch line does not declare threadgroup bytes")
+        if stage.threads[0] * stage.threads[1] * stage.threads[2] > kernel.max_total_threads:
+            problems.append(
+                f"stage `{stage.kernel}` launches {stage.threads[0] * stage.threads[1] * stage.threads[2]} threads per group "
+                f"but this pipeline supports at most {kernel.max_total_threads}"
+            )
+        listed = set(stage.workspaces)
+        for b in buffers:
+            if b.name in contract_index:
+                if b.index != contract_index[b.name]:
+                    problems.append(f"stage `{stage.kernel}` binds `{b.name}` at [[buffer({b.index})]]; the contract slot is {contract_index[b.name]}")
+                arg = contract.arg(b.name)
+                if arg.role == "input" and b.access != "read":
+                    problems.append(f"input `{b.name}` must stay `device const` in stage `{stage.kernel}`")
+                if arg.role == "output" and b.access != "read":
+                    writable_outputs.add(b.name)
+            elif b.name in listed:
+                pass
+            else:
+                problems.append(f"stage `{stage.kernel}` buffer `{b.name}` is neither a contract argument nor a workspace listed for this stage")
+        for name in listed:
+            if name not in names:
+                problems.append(f"stage `{stage.kernel}` lists workspace `{name}` but does not bind it")
+    missing = [a.name for a in contract.outputs if a.name not in writable_outputs]
+    if missing:
+        problems.append(
+            "pipeline does not bind these outputs as writable in any stage: " + ", ".join(missing)
+            + ". A stage may read an output, but some stage must write it; an unwritten output still fails at runtime."
+        )
     return problems
 
 

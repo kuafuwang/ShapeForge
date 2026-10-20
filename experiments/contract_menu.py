@@ -264,7 +264,7 @@ def run_menu(
             _write_report(out, items, rows, skipped, aborted)
             continue
         log(f"\n##### {task} trial {trial}/{trials} budget=${budget:.2f} preset={preset}")
-        result = runner(task, dtype, size, rd, budget=budget, preset=preset, log=log)
+        result = runner(task, dtype, size, rd, budget=budget, preset=preset, log=log, require_contract_launch=True)
         res = read_result(rd)
         if res is None:
             raise RuntimeError(f"{rd} produced no result.json")

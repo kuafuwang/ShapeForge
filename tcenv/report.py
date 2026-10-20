@@ -47,7 +47,7 @@ def _measured_head(rep: EvalReport) -> list[str]:
         name, us, lb = beat
         lines.append(
             f"lower bound {lb:.1f} us is not the target: fastest baseline ({name}) is already {us:.1f} us. "
-            "A faster baseline is not a reason to switch algorithm; every case, including ieee, still has to match the reference."
+            "Every case, including ieee, still has to match the reference."
         )
     elif gap is not None and gap > 0:
         lines.append(f"candidate is {gap:.2f}x the lower bound")
@@ -71,10 +71,16 @@ def _measured_head(rep: EvalReport) -> list[str]:
         lines.append(f"threadgroup memory: {static} B / {limit} B limit")
     elif isinstance(static, int) and not isinstance(static, bool):
         lines.append(f"threadgroup memory: {static} B")
-    cap = pipe.get("max_total_threads_per_threadgroup")
-    launch = pipe.get("launch_threads_per_threadgroup")
-    if isinstance(cap, int) and not isinstance(cap, bool) and isinstance(launch, int) and not isinstance(launch, bool):
-        lines.append(f"threadgroup thread cap {cap}, this launch {launch}")
+    stages = pipe.get("stages") if isinstance(pipe.get("stages"), list) else None
+    if stages:
+        lines.append(f"pipeline stages: {len(stages)}")
+    else:
+        cap = pipe.get("max_total_threads_per_threadgroup")
+        launch = pipe.get("launch_threads_per_threadgroup")
+        if isinstance(cap, int) and not isinstance(cap, bool) and isinstance(launch, int) and not isinstance(launch, bool):
+            lines.append(f"threadgroup thread cap {cap}, this launch {launch}")
+    if isinstance(rep.compile, dict) and rep.compile.get("launch"):
+        lines.append("achieved fractions use the reference algorithm's operation and byte counts")
     if not lines:
         return []
     return ["Measured:", *[f"  {line}" for line in lines]]
@@ -150,14 +156,26 @@ def format_feedback(rep: EvalReport, *, max_errors_chars: int = 2500) -> str:
             )
         # 基线已经快过下界时，这句会把「离峰值还有百分之几」说成目标。数字头已经改写目标，这里不再重复。
         if r.get("time_over_lower_bound") and _baseline_beats_bound(rep) is None:
-            L.append(f"  roofline lower bound {r['lower_bound_us']:.1f} us; the candidate is {r['time_over_lower_bound']:.2f}x above it")
+            L.append(f"  roofline lower bound {r['lower_bound_us']:.1f} us (reference algorithm); the candidate is {r['time_over_lower_bound']:.2f}x above it")
+        if r.get("bound_kind") == "reference_algorithm" and isinstance(rep.compile, dict) and rep.compile.get("launch"):
+            L.append("  achieved fractions use the reference algorithm's operation and byte counts")
     # 编译通过后就会带上流水线统计。hints 在每线程寄存器把可驻留线程压低，或静态 threadgroup 内存超过设备上限一半时出现。
     if rep.pipeline and all(k in rep.pipeline for k in ("max_total_threads_per_threadgroup", "launch_threads_per_threadgroup", "thread_execution_width", "static_threadgroup_bytes")):
         p = rep.pipeline
-        L.append(
-            f"\nPipeline: maxTotalThreadsPerThreadgroup={p['max_total_threads_per_threadgroup']} (launching {p['launch_threads_per_threadgroup']}), "
-            f"SIMD width {p['thread_execution_width']}, static threadgroup memory {p['static_threadgroup_bytes']} B"
-        )
+        stages = p.get("stages") if isinstance(p.get("stages"), list) else None
+        if stages:
+            L.append(f"\nPipeline: {len(stages)} stages, SIMD width {p['thread_execution_width']}")
+            for stage in stages:
+                L.append(
+                    f"  {stage.get('kernel')}: grid {stage.get('grid')} threads {stage.get('threads')}, "
+                    f"maxTotalThreadsPerThreadgroup={stage.get('max_total_threads_per_threadgroup')}, "
+                    f"static threadgroup memory {stage.get('static_threadgroup_bytes')} B"
+                )
+        else:
+            L.append(
+                f"\nPipeline: maxTotalThreadsPerThreadgroup={p['max_total_threads_per_threadgroup']} (launching {p['launch_threads_per_threadgroup']}), "
+                f"SIMD width {p['thread_execution_width']}, static threadgroup memory {p['static_threadgroup_bytes']} B"
+            )
         for h in p.get("hints", []):
             L.append(f"  hint: {h}")
     return "\n".join(L)

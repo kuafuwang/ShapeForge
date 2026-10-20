@@ -21,6 +21,8 @@ def test_pi_names_the_model_as_provider_and_id():
 def test_a_file_that_declares_the_kernel_is_the_source_without_a_fence():
     assert kernel_text("kernel void conv2d_kernel() {}\n", "conv2d_kernel").startswith("kernel void conv2d_kernel")
     assert kernel_text("kernel void other() {}\n", "conv2d_kernel") is None
+    staged = "/* taic-launch\nlaunch other grid=1,1,1 threads=32,1,1\n*/\nkernel void other() {}\n"
+    assert kernel_text(staged, "conv2d_kernel").startswith("/* taic-launch")
 
 
 def test_the_task_tells_the_agent_to_read_notes_and_run_tcenv_not_our_tools(tmp_path):

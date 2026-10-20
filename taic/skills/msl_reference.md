@@ -11,8 +11,8 @@ The harness already provides `#include <metal_stdlib>`, `<metal_simdgroup>`, `<m
 Keywords: attributes thread_position_in_grid threadgroup_position_in_grid thread_index_in_threadgroup simdgroup lane
 
 A threadgroup (TG) is the analogue of a Triton program / CUDA block; a SIMD group (32 threads) is a warp.
-The harness launches `dispatchThreadgroups(grid, threadsPerThreadgroup)` with the sizes given in the contract;
-you cannot change them. Request any of these as extra kernel parameters (they are not part of the buffer ABI):
+Without a `/* taic-launch */` block the harness launches `dispatchThreadgroups(grid, threadsPerThreadgroup)` with the sizes given in the contract.
+With that block, each `launch` line supplies its own grid and threads. Request any of these as extra kernel parameters (they are not part of the buffer ABI):
 
 ```metal
 kernel void k(device float* y [[buffer(0)]],
@@ -44,7 +44,7 @@ Keywords: device constant threadgroup thread address space pointer const restric
 - `device`: global memory (all buffers). Inputs must be `device const T*`, outputs `device T*` (ABI rule).
 - `constant`: read-only, cached; used for scalar arguments `constant uint& n [[buffer(i)]]`.
 - `threadgroup`: on-chip memory shared by one TG, **32 KiB per TG on this GPU**. Declare it as a *static array inside the
-  kernel body*; dynamic `threadgroup T* x [[threadgroup(0)]]` parameters are rejected by the harness.
+  kernel body*, or, on a stage whose `launch` line says `threadgroup=BYTES`, as one dynamic `threadgroup T* x [[threadgroup(0)]]` parameter. The byte count is the launch line, not a size the kernel picks at runtime. A dynamic length is checked against the device limit on its own; the shader-validation exemption for a doubled static size does not apply to it.
 - `thread`: private registers / stack.
 - Compile-time sizes come from the `constant constexpr` values of the contract header (e.g. `BLOCK_SIZE`), usable in array bounds.
 

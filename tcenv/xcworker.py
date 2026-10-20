@@ -24,21 +24,53 @@ def main() -> int:
     _install_heartbeat(req.get("heartbeat"))
     task = get_task(req["task"], req["dtype"], req["size"])
     ctx = get_context()
-    src, _ = task.contract.assemble(Path(req["kernel_path"]).read_text())
-    kernel = ctx.compile(src, task.contract.kernel_name)
+    candidate = Path(req["kernel_path"]).read_text()
+    src, _ = task.contract.assemble(candidate)
+    from .launch import LaunchRejected, parse_launch_spec
+
+    constants = {name: int(value) for name, _typ, value in task.contract.constants if isinstance(value, int) and not isinstance(value, bool)}
+    try:
+        spec = parse_launch_spec(candidate, constants)
+    except LaunchRejected as e:
+        print(f"taic-launch rejected: {e}", file=sys.stderr)
+        return 1
     data = prepare_case(task, task.cases[0], 4242)
-    argset = ArgSet(ctx, task.contract)
-    argset.load_inputs(data.raw)
-    argset.poison_outputs()
-    args = [argset.args()]
-    # one launch to warm up, then batches of launches for ~duration seconds
-    ctx.run(kernel, args, task.contract.grid, task.contract.threads)
+    if spec is None:
+        kernel = ctx.compile(src, task.contract.kernel_name, math="fast")
+        argset = ArgSet(ctx, task.contract)
+        argset.load_inputs(data.raw)
+        argset.poison_outputs()
+        args = [argset.args()]
+        ctx.run(kernel, args, task.contract.grid, task.contract.threads)
+        launch = lambda iters: ctx.run(kernel, args, task.contract.grid, task.contract.threads, iters=iters)
+        group, kernels_launched = 1, [task.contract.kernel_name]
+    else:
+        names = list(dict.fromkeys(stage.kernel for stage in spec.stages))
+        compiled = ctx.compile_all(src, names, math=spec.math)
+        by_name = {k.name: k for k in compiled}
+        ordered = [by_name[stage.kernel] for stage in spec.stages]
+        argset = ArgSet(ctx, task.contract, workspaces=spec.workspaces)
+        argset.load_inputs(data.raw)
+        argset.poison_outputs()
+        stage_args = [[argset.stage_args(k) for k in ordered]]
+        fills = [argset.workspace_fills()]
+        grids = [stage.grid for stage in spec.stages]
+        threads = [stage.threads for stage in spec.stages]
+        tg = [stage.threadgroup_bytes for stage in spec.stages]
+
+        def launch(iters, _ordered=ordered, _grids=grids, _threads=threads, _tg=tg, _args=stage_args, _fills=fills):
+            return ctx.run_pipeline(_ordered, _grids, _threads, _tg, _args, _fills, iters=iters, dispatch="concurrent")
+
+        launch(1)
+        group = len(spec.stages) + (1 if spec.workspaces else 0)
+        kernels_launched = names
     t_end = time.time() + float(req.get("duration_s", 3.0))
     n = 0
+    batch = int(req.get("batch", 20))
     while time.time() < t_end:
-        ctx.run(kernel, args, task.contract.grid, task.contract.threads, iters=int(req.get("batch", 20)))
-        n += int(req.get("batch", 20))
-    Path(req["out"]).write_text(json.dumps({"launches": n}))
+        launch(batch)
+        n += batch
+    Path(req["out"]).write_text(json.dumps({"launches": n, "dispatch_group": group, "kernels": kernels_launched}))
     return 0
 
 

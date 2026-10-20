@@ -130,7 +130,7 @@ class GuardedBuffer:
 class ArgSet:
     """A full set of bound arguments for one launch of a contract."""
 
-    def __init__(self, ctx: MetalContext, contract: Contract, *, guard: int = GUARD_BYTES, tight: bool = False) -> None:
+    def __init__(self, ctx: MetalContext, contract: Contract, *, guard: int = GUARD_BYTES, tight: bool = False, workspaces: tuple = ()) -> None:
         self.ctx = ctx
         self.contract = contract
         # Input margins are NaN so that out-of-bounds reads poison the result; output margins use a
@@ -139,12 +139,43 @@ class ArgSet:
             a.name: GuardedBuffer(ctx, a.nbytes, guard=guard, tight=tight, pattern=POISON_PATTERN if a.role == "input" else GUARD_PATTERN)
             for a in contract.buffers
         }
+        self.workspace_bufs: dict[str, GuardedBuffer] = {
+            w.name: GuardedBuffer(ctx, w.nbytes, guard=guard, tight=tight, pattern=GUARD_PATTERN)
+            for w in workspaces
+        }
+        self.workspace_zero = {w.name: w.zero for w in workspaces}
         self.scalar_bytes: dict[str, bytes] = {a.name: scalar_bytes(a) for a in contract.scalars}
         self._input_snapshot: dict[str, bytes] = {}
 
     def reset_guards_all(self) -> None:
-        for gb in self.buffers.values():
+        for gb in (*self.buffers.values(), *self.workspace_bufs.values()):
             gb.reset_guards()
+
+    def prepare_workspaces(self, *, poison: bool, fill_zero: bool) -> None:
+        """Host-side initial contents for a correctness launch. Bench zeros inside the timed buffer instead."""
+        for name, gb in self.workspace_bufs.items():
+            if fill_zero or self.workspace_zero.get(name) or not poison:
+                gb.mem[gb.guard : gb.guard + gb.nbytes] = bytes(gb.nbytes)
+            else:
+                gb.poison()
+
+    def stage_args(self, kernel) -> list[tuple[int, BufferArg | ScalarArg]]:
+        """Bindings for one compiled stage. Names select contract arguments or this set's workspaces."""
+        out: list[tuple[int, BufferArg | ScalarArg]] = []
+        for b in kernel.bindings:
+            if b.kind != "buffer":
+                continue
+            arg = next((a for a in self.contract.args if a.name == b.name), None)
+            if arg is not None and arg.role == "scalar":
+                out.append((b.index, ScalarArg(self.scalar_bytes[b.name])))
+            elif b.name in self.buffers:
+                out.append((b.index, self.buffers[b.name].arg))
+            elif b.name in self.workspace_bufs:
+                out.append((b.index, self.workspace_bufs[b.name].arg))
+        return out
+
+    def workspace_fills(self) -> list[tuple]:
+        return [(gb.buf, gb.guard, gb.nbytes) for gb in self.workspace_bufs.values()]
 
     # 留下本次写入的原始字节。启动后 safety_violations 用这份快照判断输入有没有被核改掉。
     def load_inputs(self, raw_by_name: dict[str, bytes]) -> None:
@@ -171,7 +202,7 @@ class ArgSet:
     # 两类错误：保护带图案破损是越界写；输入字节和快照不同是核改了输入。
     def safety_violations(self) -> list[str]:
         out: list[str] = []
-        for name, gb in self.buffers.items():
+        for name, gb in (*self.buffers.items(), *self.workspace_bufs.items()):
             for v in gb.guard_violations():
                 out.append(f"buffer `{name}`: {v}")
         for a in self.contract.inputs:

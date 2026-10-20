@@ -11,13 +11,13 @@ import time
 from pathlib import Path
 
 REPORT_SCHEMA_VERSION = 1
-REQUEST_SCHEMA_VERSION = 2  # 2 adds optional fast_bench. A worker that only knows version 1 refuses the request. Parent and worker must be this install when that field is sent. Version 1 requests, which omit it, still load.
+REQUEST_SCHEMA_VERSION = 3  # 3 adds optional require_contract_launch. Version 2 requests, which omit it, still load.
 
 # ``eligible`` is computed from ``status`` and written for older readers. It is not a stored field.
 REPORT_DERIVED = frozenset({"eligible"})
 REQUEST_FIELDS = frozenset({
     "schema_version", "task", "dtype", "size", "kernel_path", "mode", "seed", "reps", "cases", "out", "heartbeat", "stage",
-    "fast_bench",
+    "fast_bench", "require_contract_launch",
 })
 REQUEST_REQUIRED = frozenset({"task", "dtype", "size", "kernel_path", "mode", "seed", "reps", "out"})
 

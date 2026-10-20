@@ -148,14 +148,15 @@ class Contract:
         return (
             f"kernel void {self.kernel_name}(\n    {decls},\n"
             "    /* ...plus any [[thread_position_in_grid]]-style attribute parameters you want... */\n)"
+            "\n// This skeleton is the single-kernel path. A /* taic-launch */ block may name other kernels and bind buffers by name."
         )
 
     # 写进提示词的契约正文。判卷用的仍是 tasks 里这份对象：函数名、并发度、编译期常量、每个 buffer 的槽位和读写。
     def describe(self) -> str:
         """Human/LLM readable summary of the whole contract."""
         out = [f"target gpu       : {self.gpu}", f"kernel name      : {self.kernel_name}"]
-        out.append(f"threadgroups     : grid = {self.grid}  ({self.num_threadgroups} threadgroups, fixed by the harness)")
-        out.append(f"threads / group  : {self.threads}  ({self.threads_per_tg} threads = {self.num_warps} SIMD groups of {SIMD_WIDTH}; fixed)")
+        out.append(f"threadgroups     : grid = {self.grid}  ({self.num_threadgroups} threadgroups; used when the source has no taic-launch block)")
+        out.append(f"threads / group  : {self.threads}  ({self.threads_per_tg} threads = {self.num_warps} SIMD groups of {SIMD_WIDTH}; used when the source has no taic-launch block)")
         out.append("compile-time constants (already defined in the header):")
         for name, msl_type, value in self.constants:
             out.append(f"  constant constexpr {msl_type} {name} = {value}")

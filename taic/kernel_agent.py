@@ -33,8 +33,10 @@ def kernel_text(text: str, kernel_name: str) -> str | None:
     fenced = extract_metal(text, kernel_name)
     if fenced:
         return fenced
-    if _KERNEL.search(text or "") and re.search(r"\bkernel\s+void\s+" + re.escape(kernel_name) + r"\b", text or ""):
-        body = text.strip("\n")
+    body = (text or "").strip("\n")
+    if "taic-launch" in body and _KERNEL.search(body):
+        return body + "\n"
+    if _KERNEL.search(body) and re.search(r"\bkernel\s+void\s+" + re.escape(kernel_name) + r"\b", body):
         return body + "\n"
     return None
 
@@ -58,8 +60,10 @@ def task_markdown(messages: list[dict], *, repo: Path, kernel_path: Path, task_n
     rules = (
         "You are a coding agent. The messages above were written for a chat model that answers "
         "with one ```metal fence. Ignore that reply format.\n"
-        f"Edit only `{kernel_path.name}` in this directory. It must contain the complete kernel "
-        f"`kernel void {kernel_name}`. Do not change the kernel name, the launch grid, or the thread count.\n"
+        f"Edit only `{kernel_path.name}` in this directory. Without a launch block it must contain "
+        f"`kernel void {kernel_name}` on the contract grid and thread count. With one `/* taic-launch */` "
+        "block, that block chooses each stage's kernel, grid, threads, workspace and optional `math safe`. "
+        "Inputs stay `device const`. Do not add textures.\n"
         "A skill named taic-tools is loaded with this session. It defines two tools:\n"
         "lookup_msl: read `msl_reference.md` in this directory. That file is the Metal reference.\n"
         f"quick_check: bash this command and read its output:\n{check}\n"

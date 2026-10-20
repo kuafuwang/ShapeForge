@@ -55,6 +55,9 @@ def test_a_baseline_faster_than_the_bound_is_named_and_does_not_count_as_at_the_
     assert at_roofline({**quiet, "benchmark": {"noisy": True}}, 1.02) is False
     assert at_roofline({"roofline": {"lower_bound_us": 100, "time_over_lower_bound": 1.01}, "baseline_us": {"mlx": 120}, "benchmark": {"noisy": False}}, 1.02) is False
     assert at_roofline({**quiet, "roofline": {"lower_bound_us": 100, "time_over_lower_bound": 1.5, "peak_gbps_measured": 400.0}}, 1.02) is False
+    assert at_roofline({**quiet, "roofline": {"lower_bound_us": 100, "time_over_lower_bound": 0.90, "peak_gbps_measured": 400.0}}, 1.02) is False
+    launched = {**quiet, "compile": {"ok": True, "launch": "math=fast"}}
+    assert at_roofline(launched, 1.02) is True
 
 
 def test_the_same_threadgroup_overflow_compares_equal_and_states_the_limit():

@@ -276,6 +276,7 @@ def run_correctness(
     baseline_fns: Callable[[CaseData], dict[str, dict[str, torch.Tensor]] | None] | None = None,
     determinism: bool = True,
     fail_fast: bool = True,
+    launcher=None,
 ) -> tuple[list[CaseResult], list[str], list[str]]:
     """Returns (case results, safety problems, determinism problems)."""
     results: list[CaseResult] = []
@@ -292,7 +293,7 @@ def run_correctness(
         data = prepare_case(task, case, seed + 7919 * (i + 1))
         argset.reset_guards_all()
         argset.load_inputs(data.raw)
-        out1 = launch_once(ctx, kernel, task, argset)
+        out1 = launch_once(ctx, kernel, task, argset) if launcher is None else launcher(argset, poison=True, fill_zero=False)
         s = argset.safety_violations()
         base = baseline_fns(data) if baseline_fns else None
         res = check_case(task, data, out1, base)
@@ -301,14 +302,14 @@ def run_correctness(
             safety.extend(f"[{case}] {m}" for m in s)
         results.append(res)
         if determinism and res.ok and not s:  # on every case: a race or an output-dependence can hide behind one input distribution
-            out2 = launch_once(ctx, kernel, task, argset, fill_zero=True)
+            out2 = launch_once(ctx, kernel, task, argset, fill_zero=True) if launcher is None else launcher(argset, poison=False, fill_zero=True)
             if out2 != out1:
                 nondet.append(
                     "outputs depend on the initial contents of the output buffers (a run with zero-filled outputs differs from a NaN-filled run); "
                     "the kernel must write every output element and must not read or accumulate into outputs"
                 )
             else:
-                out3 = launch_once(ctx, kernel, task, argset)
+                out3 = launch_once(ctx, kernel, task, argset) if launcher is None else launcher(argset, poison=True, fill_zero=False)
                 if out3 != out1:
                     nondet.append("results differ between identical launches (data race or unordered atomics)")
         if fail_fast and (not res.ok or s or nondet):

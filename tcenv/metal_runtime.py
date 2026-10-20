@@ -117,6 +117,22 @@ _ACCESS = {
 }
 
 
+def _bindings_of(refl) -> list[Binding]:
+    bindings: list[Binding] = []
+    if refl is None:
+        return bindings
+    for b in refl.bindings():
+        bt = b.type()
+        access = _ACCESS.get(b.access(), "readwrite")
+        if bt == Metal.MTLBindingTypeBuffer:
+            bindings.append(Binding(str(b.name()), int(b.index()), "buffer", int(b.bufferDataType()), access, int(b.bufferDataSize()), bool(b.isUsed())))
+        elif bt == Metal.MTLBindingTypeThreadgroupMemory:
+            bindings.append(Binding(str(b.name()), int(b.index()), "threadgroup", None, access, None, bool(b.isUsed()), int(b.threadgroupMemoryDataSize())))
+        else:
+            bindings.append(Binding(str(b.name()), int(b.index()), "other", None, access, None, bool(b.isUsed())))
+    return bindings
+
+
 # 把 "3.2" 这种名字对上 MTLLanguageVersion3_2。绑定里没有这个常量时由调用方换下一个版本。
 def _language_version(name: str):
     attr = "MTLLanguageVersion" + name.replace(".", "_")
@@ -145,9 +161,16 @@ class MetalContext:
             "name": str(d.name()),
             "gpu_family": fam,
             "max_threads_per_threadgroup": int(d.maxThreadsPerThreadgroup().width),
+            "max_threads_per_threadgroup_xyz": (
+                int(d.maxThreadsPerThreadgroup().width),
+                int(d.maxThreadsPerThreadgroup().height),
+                int(d.maxThreadsPerThreadgroup().depth),
+            ),
             "max_threadgroup_memory_bytes": int(d.maxThreadgroupMemoryLength()),
             "unified_memory": bool(d.hasUnifiedMemory()),
             "recommended_working_set_gb": float(d.recommendedMaxWorkingSetSize()) / 2**30,
+            "recommended_working_set_bytes": int(d.recommendedMaxWorkingSetSize()),
+            "max_buffer_length": int(d.maxBufferLength()),
             "language_version": self.language_version(),
         }
 
@@ -180,7 +203,7 @@ class MetalContext:
         opts = Metal.MTLCompileOptions.alloc().init()
         opts.setLanguageVersion_(_language_version(lang))
         if math == "safe":
-            # 关掉 fast-math，浮点更接近 IEEE。评测入口使用默认的 fast，不传这个参数。
+            # 关掉 fast-math，浮点更接近 IEEE。没有 taic-launch 时评测不传 math，这里的默认是 fast。
             if hasattr(opts, "setMathMode_"):
                 opts.setMathMode_(Metal.MTLMathModeSafe)
             else:  # pragma: no cover - old macOS
@@ -211,23 +234,7 @@ class MetalContext:
                 "pipeline creation failed: " + (str(perr.localizedDescription()) if perr is not None else "unknown error")
             )
         t2 = time.perf_counter()
-
-        bindings: list[Binding] = []
-        if refl is not None:
-            for b in refl.bindings():
-                bt = b.type()
-                access = _ACCESS.get(b.access(), "readwrite")
-                # 反射分成普通缓冲、动态 threadgroup 长度，以及其他（纹理等）。元素类型能否向量化留给 check_abi。
-                if bt == Metal.MTLBindingTypeBuffer:
-                    bindings.append(
-                        Binding(str(b.name()), int(b.index()), "buffer", int(b.bufferDataType()), access, int(b.bufferDataSize()), bool(b.isUsed()))
-                    )
-                elif bt == Metal.MTLBindingTypeThreadgroupMemory:
-                    bindings.append(
-                        Binding(str(b.name()), int(b.index()), "threadgroup", None, access, None, bool(b.isUsed()), int(b.threadgroupMemoryDataSize()))
-                    )
-                else:
-                    bindings.append(Binding(str(b.name()), int(b.index()), "other", None, access, None, bool(b.isUsed())))
+        bindings = _bindings_of(refl)
         return CompiledKernel(
             name=kernel_name,
             pso=pso,
@@ -240,6 +247,35 @@ class MetalContext:
             language_version=lang,
             library=lib,
         )
+
+    def compile_all(self, source: str, kernel_names: Sequence[str], *, math: str = "fast", language: str | None = None) -> list[CompiledKernel]:
+        """One library, one pipeline per name, in order. ``compile_s`` is on the first kernel only."""
+        if not kernel_names:
+            raise MetalCompileError("compile_all needs at least one kernel name")
+        first = self.compile(source, kernel_names[0], math=math, language=language)
+        lib = first.library
+        out = [first]
+        for name in kernel_names[1:]:
+            t1 = time.perf_counter()
+            fn = lib.newFunctionWithName_(name)
+            if fn is None:
+                names = [str(n) for n in lib.functionNames()]
+                raise MetalCompileError(f"kernel function '{name}' not found in the compiled library (functions found: {names})")
+            pso, refl, perr = self.device.newComputePipelineStateWithFunction_options_reflection_error_(
+                fn, Metal.MTLPipelineOptionArgumentInfo | Metal.MTLPipelineOptionBufferTypeInfo, None, None
+            )
+            if pso is None:
+                raise MetalCompileError("pipeline creation failed: " + (str(perr.localizedDescription()) if perr is not None else "unknown error"))
+            t2 = time.perf_counter()
+            bindings = _bindings_of(refl)
+            out.append(CompiledKernel(
+                name=name, pso=pso, bindings=bindings,
+                max_total_threads=int(pso.maxTotalThreadsPerThreadgroup()),
+                execution_width=int(pso.threadExecutionWidth()),
+                static_tg_bytes=int(pso.staticThreadgroupMemoryLength()),
+                compile_s=0.0, pipeline_s=t2 - t1, language_version=first.language_version, library=lib,
+            ))
+        return out
 
     # -- buffers -------------------------------------------------------------
     # 共享存储让 CPU 用 memoryview 填保护带、GPU 读同一块地址。分配长度有 16 字节下限。
@@ -314,6 +350,115 @@ class MetalContext:
             err = cb.error()
             raise MetalRuntimeError(str(err.localizedDescription()) if err is not None else f"command buffer status {cb.status()}")
         return RunTiming(wall_s=wall, gpu_s=float(cb.GPUEndTime() - cb.GPUStartTime()), iters=iters)
+
+    def _fill_kernel(self) -> CompiledKernel:
+        cached = getattr(self, "_fill", None)
+        if cached is None:
+            src = (
+                "#include <metal_stdlib>\nusing namespace metal;\n"
+                "kernel void taic_fill_zero(device uint* p [[buffer(0)]], constant uint& nwords [[buffer(1)]], "
+                "uint gid [[thread_position_in_grid]]) { if (gid < nwords) p[gid] = 0u; }\n"
+            )
+            self._fill = self.compile(src, "taic_fill_zero", math="safe")
+        return self._fill
+
+    def run_pipeline(
+        self,
+        stages: Sequence[CompiledKernel],
+        grids: Sequence[tuple[int, int, int]],
+        threads: Sequence[tuple[int, int, int]],
+        threadgroup_bytes: Sequence[int],
+        arg_sets: Sequence[Sequence[Sequence[tuple]]],
+        fills: Sequence[Sequence[tuple]],
+        iters: int = 1,
+        dispatch: str = "serial",
+    ) -> RunTiming:
+        """Encode ``iters`` passes of ``stages`` into one command buffer.
+
+        ``arg_sets[set][stage]`` is that stage's bindings. ``fills[set]`` is ``(buf, offset, nbytes)``
+        zeroed, inside the timed buffer, before the stages of that iteration. A buffer barrier sits
+        between the fill and every pair of stages. Concurrent dispatch still barriers between stages
+        of one iteration, and between passes over the rotating sets.
+        """
+        import struct
+
+        if iters < 1:
+            raise ValueError("iters must be >= 1")
+        if dispatch not in ("serial", "concurrent"):
+            raise ValueError(f"dispatch must be 'serial' or 'concurrent', got {dispatch!r}")
+        if not stages:
+            raise ValueError("run_pipeline needs at least one stage")
+        nsets = len(arg_sets)
+        filled = [bool(one) for one in fills]
+        fill = self._fill_kernel() if any(filled) else None
+        cb = self.queue.commandBuffer()
+        enc = cb.computeCommandEncoderWithDispatchType_(Metal.MTLDispatchTypeConcurrent) if dispatch == "concurrent" else cb.computeCommandEncoder()
+        for op in pipeline_ops(iters, nsets, len(stages), concurrent=dispatch == "concurrent", filled=filled):
+            kind = op[0]
+            if kind in ("rotate_barrier", "barrier"):
+                enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+                continue
+            if kind == "fill":
+                s = op[1]
+                enc.setComputePipelineState_(fill.pso)
+                for buf, offset, nbytes in fills[s]:
+                    nwords = int(nbytes) // 4
+                    groups = max(1, (nwords + 255) // 256)
+                    enc.setBuffer_offset_atIndex_(buf, int(offset), 0)
+                    enc.setBytes_length_atIndex_(struct.pack("<I", nwords), 4, 1)
+                    enc.dispatchThreadgroups_threadsPerThreadgroup_(Metal.MTLSizeMake(groups, 1, 1), Metal.MTLSizeMake(256, 1, 1))
+                continue
+            s, si = op[1], op[2]
+            stage = stages[si]
+            enc.setComputePipelineState_(stage.pso)
+            for idx, arg in arg_sets[s][si]:
+                if isinstance(arg, BufferArg):
+                    enc.setBuffer_offset_atIndex_(arg.buf, arg.offset, idx)
+                else:
+                    enc.setBytes_length_atIndex_(arg.data, len(arg.data), idx)
+            dyn = next((b for b in stage.bindings if b.kind == "threadgroup"), None)
+            if dyn is not None:
+                enc.setThreadgroupMemoryLength_atIndex_(int(threadgroup_bytes[si]), int(dyn.index))
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                Metal.MTLSizeMake(*grids[si]), Metal.MTLSizeMake(*threads[si])
+            )
+        enc.endEncoding()
+        if _LAUNCH_HOOKS:
+            _LAUNCH_HOOKS[0]()
+        t0 = time.perf_counter()
+        try:
+            cb.commit()
+            cb.waitUntilCompleted()
+        finally:
+            if _LAUNCH_HOOKS:
+                _LAUNCH_HOOKS[1]()
+        wall = time.perf_counter() - t0
+        if cb.status() != Metal.MTLCommandBufferStatusCompleted:
+            err = cb.error()
+            raise MetalRuntimeError(str(err.localizedDescription()) if err is not None else f"command buffer status {cb.status()}")
+        return RunTiming(wall_s=wall, gpu_s=float(cb.GPUEndTime() - cb.GPUStartTime()), iters=iters)
+
+
+def pipeline_ops(iters: int, nsets: int, nstages: int, *, concurrent: bool, filled: Sequence[bool]) -> list[tuple]:
+    """Encode order for one command buffer.
+
+    Every iteration fills that rotation set before its stages, including iterations past the
+    first pass. A kernel that cached a transformed tile in workspace on iteration 0 cannot
+    reuse it on iteration ``nsets``.
+    """
+    ops: list[tuple] = []
+    for i in range(iters):
+        s = i % nsets
+        if concurrent and i > 0 and i % nsets == 0:
+            ops.append(("rotate_barrier", s))
+        if filled[s]:
+            ops.append(("fill", s))
+            ops.append(("barrier", s))
+        for si in range(nstages):
+            if si > 0:
+                ops.append(("barrier", s, si))
+            ops.append(("dispatch", s, si))
+    return ops
 
 
 _CTX: MetalContext | None = None

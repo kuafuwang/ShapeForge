@@ -69,6 +69,7 @@ def test_trials_are_interleaved_and_a_second_pass_skips_finished_runs(tmp_path):
     calls = []
 
     def run_fn(task, dtype, size, run_dir, **kw):
+        assert kw["require_contract_launch"] is True
         calls.append((task, kw["preset"], kw["budget"]))
         _unconfirmed(Path(run_dir), task, best=9.0, spent=kw["budget"])
         return type("R", (), {"stop_reason": "budget_exhausted"})()

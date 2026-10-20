@@ -122,6 +122,35 @@ def pipeline_stats(kernel: CompiledKernel, contract, device_info: dict) -> dict:
     }
 
 
+def pipeline_stats_many(pairs, device_info: dict) -> dict:
+    """``pairs`` is ``(compiled kernel, stage)``. Top-level keys stay the old shape; ``stages`` is the per-stage list."""
+    class _View:
+        def __init__(self, stage):
+            self.threads_per_tg = stage.threads[0] * stage.threads[1] * stage.threads[2]
+            self.num_threadgroups = stage.grid[0] * stage.grid[1] * stage.grid[2]
+
+    parts = []
+    for kernel, stage in pairs:
+        one = pipeline_stats(kernel, _View(stage), device_info)
+        one["kernel"] = stage.kernel
+        one["grid"] = list(stage.grid)
+        one["threads"] = list(stage.threads)
+        one["threadgroup_bytes"] = stage.threadgroup_bytes
+        one["workspace"] = list(stage.workspaces)
+        parts.append(one)
+    hints = [h for part in parts for h in part["hints"]]
+    return {
+        "max_total_threads_per_threadgroup": min(p["max_total_threads_per_threadgroup"] for p in parts),
+        "thread_execution_width": parts[0]["thread_execution_width"],
+        "static_threadgroup_bytes": max(p["static_threadgroup_bytes"] for p in parts),
+        "max_threadgroup_memory_bytes": parts[0]["max_threadgroup_memory_bytes"],
+        "launch_threads_per_threadgroup": parts[-1]["launch_threads_per_threadgroup"],
+        "launch_threadgroups": parts[-1]["launch_threadgroups"],
+        "hints": hints,
+        "stages": parts,
+    }
+
+
 def effective_peak_gbps(task, calib: dict) -> float:
     """Achievable bandwidth depends on the read/write mix: pure reads reach ``read_gbps``, an even read/write
     stream (copy) only ``copy_gbps``. Interpolate on the write fraction of the task's minimal traffic."""
@@ -156,4 +185,5 @@ def roofline(task, time_s: float, calib: dict) -> dict:
         "time_over_lower_bound": time_s / t_lb if t_lb > 0 else None,
         "peak_gbps_measured": peak_gbps,
         "peak_tflops_measured": calib["peak_tflops"].get(task.dtype),
+        "bound_kind": "reference_algorithm",
     }

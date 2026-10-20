@@ -34,7 +34,7 @@ Read them in this order:
    and run in parallel: spread the instructions across them (index math as integers, half and float mixed where precision allows, `select` instead of branches).
 
 2. **No limiter above ~40%: the kernel is latency-bound, not throughput-bound.** The units are idle because they wait. Then look at `Kernel Occupancy` and `Compute SIMD Groups Inflight` (average resident simdgroups per shader core):
-   - occupancy low because the grid is small (few threadgroups; the launch contract fixes the grid, you cannot add threads): make each simdgroup's work faster; give every thread several independent accumulators / loads in flight (instruction-level parallelism), unroll the inner loop, use wider loads.
+   - occupancy low because the grid is small (few threadgroups; without a taic-launch block the contract fixes the grid, and with one you set each stage's grid in that block): make each simdgroup's work faster; give every thread several independent accumulators / loads in flight (instruction-level parallelism), unroll the inner loop, use wider loads.
    - occupancy low although the grid is large: each thread uses too many registers or too much threadgroup memory (see `maxTotalThreadsPerThreadgroup` and `static threadgroup memory` in the pipeline statistics, and spills): shrink them.
    - occupancy fine but nothing busy: dependent chains (each load or FMA waits for the previous), barriers, or one thread doing serial work while the rest of the simdgroup waits: restructure so independent work is issued before the result is needed, merge or remove barriers.
 

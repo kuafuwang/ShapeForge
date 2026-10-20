@@ -687,3 +687,27 @@ def test_diversity_archive_patches_another_kernel_after_two_quiet_rounds_and_res
     again = run_prepared(args, resumed, snap, info, budget)
     assert [(row["label"], row.get("parent_label")) for row in again.trace if row["label"] == "r3.p2"] == [("r3.p2", "r1.p0")]
 
+
+def test_require_contract_launch_is_passed_into_evaluate(tmp_path):
+    calls = []
+    seen = []
+    base = fake_eval(calls)
+
+    def ev(*args, **kw):
+        seen.append(kw.get("require_contract_launch", False))
+        return base(*args, **kw)
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), calls, max_rounds=0, evaluate_fn=ev, require_contract_launch=True)
+    run(orch)
+    assert seen and all(seen)
+
+
+def test_a_saved_report_from_before_launch_protocol_is_not_cached(tmp_path):
+    orch = make_orch(tmp_path, llm_script(code("speed=1")), [], max_rounds=0)
+    path = orch.run_dir / "run_config.json"
+    path.write_text("{}")
+    assert orch._cache_this("kernel void k() {}\n") is True
+    assert orch._cache_this("/* taic-launch */\nkernel void k() {}\n") is False
+    path.write_text('{"launch_protocol": 1}')
+    assert orch._cache_this("/* taic-launch */\nkernel void k() {}\n") is True
+

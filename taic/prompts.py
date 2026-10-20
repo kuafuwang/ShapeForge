@@ -20,13 +20,23 @@ Language (MSL) kernel for the Apple GPU described below. There is no intermediat
 you choose instructions, thread mapping, data movement, synchronization and scheduling yourself.
 
 What "valid" means (all of it is enforced mechanically by the evaluation environment):
-1. The kernel must have exactly the name, buffer slots, argument names and access modes of the contract. Inputs are
-   `device const T*`, outputs `device T*`, scalars `constant T&`. You may add thread-position attribute parameters
-   ([[thread_position_in_grid]] etc., see the MSL reference for the dimension rule) but no other buffers, no dynamic
-   `threadgroup` parameters, no textures.
-2. The launch configuration (threadgroups per grid and threads per threadgroup) and the compile-time constants are
-   fixed by the contract and already defined in a header that the harness prepends. Do not redefine them and do not
-   `#include` anything (the header already includes metal_stdlib, metal_simdgroup and metal_simdgroup_matrix).
+1. Without a `/* taic-launch */` block, the kernel must have exactly the name, buffer slots, argument names and access
+   modes of the contract. Inputs are `device const T*`, outputs `device T*`, scalars `constant T&`. You may add
+   thread-position attribute parameters ([[thread_position_in_grid]] etc., see the MSL reference for the dimension rule)
+   but no other buffers, no dynamic `threadgroup` parameters, no textures.
+   With one `/* taic-launch */` block, that block is the only launch description: several `kernel` functions, each with
+   its own grid, threads, optional dynamic threadgroup bytes and optional workspace buffers. Contract inputs stay
+   `device const` in every stage. An output may be `device const` in a stage that only reads it, but some stage must
+   write it. No textures or samplers. Do not add scalar arguments the contract does not list.
+2. Without that block, the launch configuration (threadgroups per grid and threads per threadgroup) and the compile-time
+   constants are fixed by the contract and already defined in a header that the harness prepends. With the block, each
+   stage's grid and threads come from the block. Sizes may be integer expressions over the contract constants
+   (`M_TOTAL / BLOCK_M`). At most 32 stages: encoding sits outside the timer, and the cap is what keeps a long
+   pipeline from hiding its setup there. One stage may launch at most 2^24 threadgroups (65536 is allowed; a larger
+   grid is rejected). Do not redefine the constants and do not `#include` anything (the header already includes
+   metal_stdlib, metal_simdgroup and metal_simdgroup_matrix). `math safe` in the block turns off fast-math for that candidate.
+   Every workspace is filled with zeros inside the timed command buffer, on every iteration, before your stages.
+   That fill is part of your measured time. A smaller workspace pays less of it.
 3. Helpers (`inline` functions, structs, `constant constexpr` values of your own) may precede the kernel. Return the
    complete source text of everything you define.
 4. Results must match a float64/float32 CPU reference on adversarial random inputs (overflow-, underflow-, cancellation- and
@@ -34,7 +44,8 @@ What "valid" means (all of it is enforced mechanically by the evaluation environ
 5. Safety: every output element must be written, no out-of-bounds access (guard bands + Metal shader validation), inputs
    must not be modified, results must be bit-identical across launches, and the result must not depend on the initial
    contents of the output buffer (it is NaN-filled). No unbounded loops: a runaway GPU kernel can freeze the machine's
-   display, so `while (true)` / `for (;;)` are refused and any single launch that runs for seconds is killed.
+   display, so `while (true)` / `for (;;)` are refused. One kernel's command buffer is killed after 2 seconds. A pipeline's
+   one buffer is allowed 2 seconds per stage, up to 8 seconds. Past that the search treats it as a hang and stops.
 6. Performance is measured against the fastest vendor implementation of the same operator (MLX, PyTorch-MPS and, for composite
    operators, their compiled/fused variants); only a
    candidate that is correct, safe AND faster than the current best is kept.
@@ -88,8 +99,9 @@ def system_prompt(task: Task, *, use_tools: bool, profiler_evidence: bool = Fals
 # 初始生成。Triton 源码是语义规格，不是名字或注释；program 到 threadgroup 的启动映射保持不变。这一步只求正确且速度合理，结构级的性能改动留给后面的 patch_user。
 def initial_user(task: Task) -> str:
     return (
-        "Translate this Triton kernel into MSL for the contract above. It is the *specification*: follow its actual semantics, not its name or comments, "
-        "and keep the same launch mapping of programs to threadgroups.\n\n```python\n"
+        "Translate this Triton kernel into MSL for the contract above. It is the *specification*: follow its actual semantics, not its name or comments. "
+        "Without a taic-launch block, keep the contract's launch mapping of programs to threadgroups. "
+        "A taic-launch block may split the work into stages and choose each stage's grid and threads.\n\n```python\n"
         + task.triton_source.rstrip()
         + "\n```\n\nWrite a first correct, reasonably fast implementation."
     )

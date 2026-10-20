@@ -118,9 +118,19 @@ def _warnings(hr: "hw.HardwareFeatureReport", measured: dict) -> list[str]:
     tiles = hr.source["matrix"]["acc_tiles"] or 0
     if tiles >= SPILL_FRAGMENTS:
         out.append(f"Warning: {tiles} accumulator fragments per SIMD group; reference GEMMs with 32 or more fragments ran 12 to 26 times slower (register spills). Do not add fragments; fewer may be faster.")
-    mt, lt = measured.get("max_total_threads"), measured.get("launch_threads")
-    if mt and lt and mt <= lt and mt < 1024:
-        out.append(f"Warning: the pipeline reports maxTotalThreadsPerThreadgroup={mt}, equal to the launch size {lt}: the kernel is at the register-pressure limit, so more live state may spill.")
+    stages = measured.get("stages")
+    if isinstance(stages, list) and stages:
+        for stage in stages:
+            mt, lt = stage.get("max_total_threads"), stage.get("launch_threads")
+            if mt and lt and mt <= lt and mt < 1024:
+                out.append(
+                    f"Warning: stage {stage.get('kernel')} reports maxTotalThreadsPerThreadgroup={mt}, "
+                    f"equal to that stage's launch size {lt}: the kernel is at the register-pressure limit, so more live state may spill."
+                )
+    else:
+        mt, lt = measured.get("max_total_threads"), measured.get("launch_threads")
+        if mt and lt and mt <= lt and mt < 1024:
+            out.append(f"Warning: the pipeline reports maxTotalThreadsPerThreadgroup={mt}, equal to the launch size {lt}: the kernel is at the register-pressure limit, so more live state may spill.")
     return out
 
 

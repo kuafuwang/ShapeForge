@@ -125,12 +125,16 @@ def evaluate_in_process(
     reps: int = 15,
     cases: tuple[str, ...] | None = None,
     fast_bench: bool = False,
+    require_contract_launch: bool = False,
 ) -> EvalReport:
     """Untimed stages hold the machine-wide GPU lock shared, the benchmark holds it exclusively (tcenv.gpulock)."""
     from .gpulock import gpu_lock
 
     with gpu_lock(f"{mode} evaluation of {task_name} {dtype} {size}", exclusive=False):
-        return _evaluate_in_process(task_name, dtype, size, kernel_source, mode=mode, seed=seed, reps=reps, cases=cases, fast_bench=fast_bench)
+        return _evaluate_in_process(
+            task_name, dtype, size, kernel_source, mode=mode, seed=seed, reps=reps, cases=cases,
+            fast_bench=fast_bench, require_contract_launch=require_contract_launch,
+        )
 
 
 # 关卡都在这个函数里。开头的 verify 只记账，失败与否都不看它。
@@ -179,6 +183,7 @@ def _evaluate_in_process(
     reps: int,
     cases: tuple[str, ...] | None,
     fast_bench: bool = False,
+    require_contract_launch: bool = False,
 ) -> EvalReport:
     import torch  # noqa: F401  (imported early so failures are reported as crashes of the worker)
 
@@ -189,7 +194,7 @@ def _evaluate_in_process(
     from .bench import interleaved
     from .gpulock import gpu_lock
     from .metal_runtime import BufferArg, MetalCompileError, MetalRuntimeError, get_context
-    from .profile import get_calibration, pipeline_stats, roofline
+    from .profile import get_calibration, pipeline_stats, pipeline_stats_many, roofline
     from .sanitize import ArgSet
     from .testing import prepare_case, check_case, run_correctness
 
@@ -224,34 +229,79 @@ def _evaluate_in_process(
         rep.abi = {"ok": False, "violations": refused}
         return finish("rejected", "refused before compilation: " + refused[0])
 
+    from .launch import LaunchRejected, check_launch_limits, parse_launch_spec
+
+    constants = {}
+    for name, _typ, value in contract.constants:
+        if isinstance(value, bool) or not isinstance(value, int):
+            continue
+        constants[name] = int(value)
+    try:
+        spec = parse_launch_spec(kernel_source, constants)
+        if spec is not None and require_contract_launch:
+            raise LaunchRejected("a contract experiment requires the task's own launch; taic-launch is not allowed here")
+        if spec is not None:
+            mtp = dev_info.get("max_threads_per_threadgroup_xyz") or (dev_info["max_threads_per_threadgroup"],) * 3
+            check_launch_limits(
+                spec,
+                contract_names={a.name for a in contract.args},
+                max_threads_xyz=tuple(mtp),
+                max_threads_product=int(dev_info["max_threads_per_threadgroup"]),
+                max_threadgroup_memory_bytes=int(dev_info["max_threadgroup_memory_bytes"]),
+                recommended_working_set_bytes=int(dev_info.get("recommended_working_set_bytes") or 0),
+                max_buffer_length=int(dev_info.get("max_buffer_length") or 2**31),
+                rotation_sets=rotation_count(task),
+            )
+    except LaunchRejected as e:
+        rep.abi = {"ok": False, "violations": [str(e)]}
+        return finish("rejected", "refused before compilation: " + str(e))
+    except MemoryError as e:
+        return finish("rejected", f"refused before compilation: could not size the launch ({e})")
+
     # -- compile -------------------------------------------------------------
     rep.stage = "compile"
     _note_stage(stage="compile", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
     full_src, header_lines = contract.assemble(kernel_source)
     try:
-        kernel = ctx.compile(full_src, contract.kernel_name)
+        if spec is None:
+            kernels = [ctx.compile(full_src, contract.kernel_name)]
+        else:
+            names = list(dict.fromkeys(stage.kernel for stage in spec.stages))
+            kernels = ctx.compile_all(full_src, names, math=spec.math)
     except MetalCompileError as e:
         # 编译器诊断的是「契约头 + 候选正文」。行号减掉文件头，模型才对得上自己写的那几行。
         msg = contract.rewrite_compiler_lines(str(e), header_lines)
         rep.compile = {"ok": False, "errors": msg}
         return finish("compile_error", "Metal compiler rejected the kernel")
+    kernel = kernels[0]
     rep.compile = {
         "ok": True,
         "compile_s": kernel.compile_s,
-        "pipeline_s": kernel.pipeline_s,
+        "pipeline_s": sum(k.pipeline_s for k in kernels),
         "language_version": kernel.language_version,
+        "math_mode": spec.math if spec is not None else "fast",
+        "launch": None if spec is None else spec.digest(),
     }
 
     # -- abi -------------------------------------------------------------------
     rep.stage = "abi"
     _note_stage(stage="abi", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
-    problems = abi_mod.check_abi(contract, kernel, max_tg_memory=dev_info["max_threadgroup_memory_bytes"])
+    if spec is None:
+        problems = abi_mod.check_abi(contract, kernel, max_tg_memory=dev_info["max_threadgroup_memory_bytes"])
+    else:
+        problems = abi_mod.check_pipeline(
+            contract, {k.name: k for k in kernels}, spec, max_tg_memory=dev_info["max_threadgroup_memory_bytes"],
+        )
     # 校验插桩会把静态线程组内存报成大约两倍。这一条单独出现时，不在校验进程里提前返回：
     # 内核仍要在着色器校验下跑一次，设备上限留给后面不插桩的完整评测。
     if mode == "validate" and abi_mod.only_static_threadgroup_limit(problems):
         problems = []
     rep.abi = {"ok": not problems, "violations": problems}
-    rep.pipeline = pipeline_stats(kernel, contract, dev_info)
+    if spec is None:
+        rep.pipeline = pipeline_stats(kernel, contract, dev_info)
+    else:
+        by_name = {k.name: k for k in kernels}
+        rep.pipeline = pipeline_stats_many([(by_name[s.kernel], s) for s in spec.stages], dev_info)
     if problems:
         return finish("abi_error", "kernel does not match the required ABI / launch contract")
 
@@ -260,7 +310,10 @@ def _evaluate_in_process(
     _note_stage(stage="correctness", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
     # validate 用紧分配：缓冲两侧没有护栏，越界才会被 Metal shader validation 看见。quick / full 靠护栏图案抓越界。
     tight = mode == "validate"
-    argset = ArgSet(ctx, contract, tight=tight)
+    try:
+        argset = ArgSet(ctx, contract, tight=tight, workspaces=() if spec is None else spec.workspaces)
+    except MemoryError as e:
+        return finish("rejected", f"refused before launch: could not allocate the workspace ({e})")
 
     baseline_cache: dict[str, Any] = {}
     correctness_key = (task_name, dtype, size, seed)
@@ -285,9 +338,29 @@ def _evaluate_in_process(
 
     # validate 只跑一个用例，并跳过「换输出初值再跑」的确定性检查。这一次要尽快让 shader validation 看见访存；全用例和确定性留在 quick / full。
     use_cases = cases or (task.cases[:1] if mode == "validate" else task.cases)
+    launcher = None
+    if spec is not None:
+        by_name = {k.name: k for k in kernels}
+        ordered = [by_name[stage.kernel] for stage in spec.stages]
+        grids = [stage.grid for stage in spec.stages]
+        threadss = [stage.threads for stage in spec.stages]
+        tg_bytes = [stage.threadgroup_bytes for stage in spec.stages]
+
+        def launcher(one, *, poison, fill_zero, _ordered=ordered, _grids=grids, _threads=threadss, _tg=tg_bytes):
+            if fill_zero:
+                for a in contract.outputs:
+                    gb = one.buffers[a.name]
+                    gb.mem[gb.guard : gb.guard + a.nbytes] = bytes(a.nbytes)
+            elif poison:
+                one.poison_outputs()
+            one.prepare_workspaces(poison=poison, fill_zero=fill_zero)
+            ctx.run_pipeline(_ordered, _grids, _threads, _tg, [[one.stage_args(k) for k in _ordered]], [[]], iters=1, dispatch="serial")
+            return one.read_outputs()
+
     try:
         results, safety, nondet = run_correctness(
-            ctx, kernel, task, argset, seed, cases=use_cases, baseline_fns=baseline_fn, determinism=(mode != "validate")
+            ctx, kernel, task, argset, seed, cases=use_cases, baseline_fns=baseline_fn, determinism=(mode != "validate"),
+            launcher=launcher,
         )
     except MetalRuntimeError as e:
         rep.safety = {"ok": False, "violations": [f"GPU execution error: {e}"], "nondeterminism": [], "validation": []}
@@ -308,8 +381,13 @@ def _evaluate_in_process(
         "device": dev_info.get("name"),
         "macos": platform.mac_ver()[0],
         "msl": dev_info.get("language_version"),
-        "math_mode": "fast",
+        "math_mode": spec.math if spec is not None else "fast",
     })
+    if isinstance(rep.correctness.get("coverage"), dict):
+        # sampling_coverage drops the toolchain dict, so the mode is written again here.
+        rep.correctness["coverage"]["math_mode"] = spec.math if spec is not None else "fast"
+        if spec is not None:
+            rep.correctness["coverage"]["launch"] = spec.digest()
     rep.safety = {"ok": not safety and not nondet, "violations": safety, "nondeterminism": nondet, "validation": []}
     # 同一次运行同时带回安全违例和数值结果。有违例或非确定就定 unsafe；安全干净之后，数值不过才定 incorrect。
     if safety or nondet:
@@ -328,25 +406,49 @@ def _evaluate_in_process(
     R = rotation_count(task)
     sets = []
     for _ in range(R):
-        s = ArgSet(ctx, contract)
+        try:
+            s = ArgSet(ctx, contract, workspaces=() if spec is None else spec.workspaces)
+        except MemoryError as e:
+            return finish("rejected", f"refused before launch: could not allocate the workspace ({e})")
         s.load_inputs(data0.raw)
         s.poison_outputs()
         sets.append(s)
-    arg_sets = [s.args() for s in sets]
     gpu_samples: list[float] = []
-    launched: set[int] = set()  # buffer sets that were actually used (a batch smaller than R leaves the rest untouched)
+    launched: set[int] = set()
+    if spec is None:
+        arg_sets = [s.args() for s in sets]
 
-    # The candidate is dispatched the way MLX dispatches the independent calls of a graph (concurrent encoder, buffer barrier between
-    # passes over the rotating sets), otherwise the tail of every launch would be serialized against the next one and the candidate
-    # would be penalized by up to ~40% (experiments/dispatch_ab.py). The strictly serial time is reported alongside, for information.
-    def cand_run(k: int) -> float:
-        tm = ctx.run(kernel, arg_sets, contract.grid, contract.threads, iters=k, dispatch="concurrent")
-        gpu_samples.append(tm.gpu_per_iter_s)
-        launched.update(range(min(k, len(arg_sets))))
-        return tm.wall_s
+        def cand_run(k: int) -> float:
+            tm = ctx.run(kernel, arg_sets, contract.grid, contract.threads, iters=k, dispatch="concurrent")
+            gpu_samples.append(tm.gpu_per_iter_s)
+            launched.update(range(min(k, len(arg_sets))))
+            return tm.wall_s
 
-    def cand_serial_run(k: int) -> float:
-        return ctx.run(kernel, arg_sets, contract.grid, contract.threads, iters=k, dispatch="serial").wall_s
+        def cand_serial_run(k: int) -> float:
+            return ctx.run(kernel, arg_sets, contract.grid, contract.threads, iters=k, dispatch="serial").wall_s
+
+        dispatch_note = "concurrent (as MLX); candidate_serial_us is the strictly serial time of the same kernel"
+        protocol = f"interleaved, {reps} reps, median per-iteration wall time of back-to-back launches over {R} rotating buffer sets, concurrent dispatch for the candidate as for MLX"
+    else:
+        by_name = {k.name: k for k in kernels}
+        ordered = [by_name[stage.kernel] for stage in spec.stages]
+        grids = [stage.grid for stage in spec.stages]
+        threadss = [stage.threads for stage in spec.stages]
+        tg_bytes = [stage.threadgroup_bytes for stage in spec.stages]
+        stage_sets = [[one.stage_args(k) for k in ordered] for one in sets]
+        fills = [one.workspace_fills() for one in sets]
+
+        def cand_run(k: int) -> float:
+            tm = ctx.run_pipeline(ordered, grids, threadss, tg_bytes, stage_sets, fills, iters=k, dispatch="concurrent")
+            gpu_samples.append(tm.gpu_per_iter_s)
+            launched.update(range(min(k, len(stage_sets))))
+            return tm.wall_s
+
+        def cand_serial_run(k: int) -> float:
+            return ctx.run_pipeline(ordered, grids, threadss, tg_bytes, stage_sets, fills, iters=k, dispatch="serial").wall_s
+
+        dispatch_note = "pipeline, concurrent encoder with a buffer barrier between stages; candidate_serial_us is the same stages in a serial encoder"
+        protocol = f"interleaved, {reps} reps, median per-iteration wall time of a {len(spec.stages)}-stage pipeline over {R} rotating buffer sets; workspace is zeroed inside the timed buffer"
 
     attempts: list[tuple[float, dict, list[float]]] = []  # (noise, stats, candidate GPU samples) per attempt
     # 测速升级成独占锁。共享锁下可以并行做正确性检查；两份墙钟叠在一起会把 CV 抬过 NOISY_CV。
@@ -405,13 +507,13 @@ def _evaluate_in_process(
         "candidate_gpu_us_median": (sorted(cand_gpu)[len(cand_gpu) // 2] * 1e6) if cand_gpu else None,
         "baselines": {n: stats[n].to_json() for n in stats if n not in OWN_RUNNERS},
         "candidate_serial_us": stats["candidate_serial"].median_us if "candidate_serial" in stats else None,
-        "dispatch": "concurrent (as MLX); candidate_serial_us is the strictly serial time of the same kernel",
+        "dispatch": dispatch_note,
         "rotation_sets": R,
         "noise_cv": noise,  # largest per-repetition CV among the runners of the kept attempt
         "attempts": len(attempts),
         "noisy": noise > NOISY_CV,
         "gpu_lock_wait_s": lock_wait_s,
-        "protocol": f"interleaved, {reps} reps, median per-iteration wall time of back-to-back launches over {R} rotating buffer sets, concurrent dispatch for the candidate as for MLX",
+        "protocol": protocol,
     }
     rep.baseline_us = {n: stats[n].median_us for n in stats if n not in OWN_RUNNERS}
     rep.speedups = {n: stats[n].median_s / cand.median_s for n in stats if n not in OWN_RUNNERS}
@@ -442,8 +544,51 @@ def _evaluate_in_process(
 # ---------------------------------------------------------------------------
 
 
-# 一次 command buffer 从提交到完成，心跳 B 最多停这么久。再长父进程就 SIGKILL。合法启动是毫秒级。
+# 一次 command buffer 从提交到完成，心跳 B 最多停这么久。再长父进程就 SIGKILL。合法单核是毫秒级。
 LAUNCH_DEADLINE_S = 2.0  # a single GPU launch of a legitimate candidate takes milliseconds
+# 流水线仍是一条 command buffer，里面每一段各派发一次。每段给单核同样的 2 秒，总和封顶，避免 32 段把显示器占满一分钟。
+# 超过这个数仍然 SIGKILL，并且仍然计入 max_hangs：杀了之后分不出「还会自己结束」和「死循环」。
+PIPELINE_DEADLINE_CAP_S = 8.0
+
+
+def command_buffer_deadline_s(n_stages: int) -> float:
+    """How long the parent waits for one in-flight command buffer.
+
+    One kernel stays at 2 seconds. A pipeline is one buffer with one dispatch per stage,
+    so the wait is 2 seconds times the stage count, and never more than
+    ``PIPELINE_DEADLINE_CAP_S``.
+    """
+    stages = max(1, int(n_stages))
+    if stages == 1:
+        return LAUNCH_DEADLINE_S
+    return min(PIPELINE_DEADLINE_CAP_S, LAUNCH_DEADLINE_S * stages)
+
+
+def deadline_for_source(task: str, dtype: str, size: str, source: str) -> float:
+    """The command-buffer wait for this source. An unreadable launch block stays at 2 seconds.
+
+    The worker rejects that block before the GPU. A parsed pipeline uses one wait for every stage.
+    """
+    from tasks import get_task
+
+    from .launch import LaunchRejected, parse_launch_spec
+
+    try:
+        contract = get_task(task, dtype, size).contract
+    except Exception:  # noqa: BLE001 - an unknown task still has the single-kernel wait
+        return LAUNCH_DEADLINE_S
+    constants = {
+        name: int(value)
+        for name, _typ, value in contract.constants
+        if isinstance(value, int) and not isinstance(value, bool)
+    }
+    try:
+        spec = parse_launch_spec(source, constants)
+    except LaunchRejected:
+        return LAUNCH_DEADLINE_S
+    if spec is None:
+        return LAUNCH_DEADLINE_S
+    return command_buffer_deadline_s(len(spec.stages))
 # 杀掉失控核之后先歇一会儿再评下一份，给 GPU 从这次提交里恢复的时间。
 POST_KILL_COOLDOWN_S = 3.0  # give the GPU time to recover after a runaway kernel was killed
 
@@ -551,6 +696,7 @@ def _run_worker(
     worker_module: str = "tcenv.worker",
     progress_path: Path | None = None,
     fast_bench: bool = False,
+    require_contract_launch: bool = False,
 ) -> EvalReport:
     """Run one worker under supervision.
 
@@ -573,6 +719,8 @@ def _run_worker(
         }
         if fast_bench:
             req["fast_bench"] = True
+        if require_contract_launch:
+            req["require_contract_launch"] = True
         req_path = tdp / "request.json"
         write_json_atomic(req_path, req)
         env = env_with_validation() if validation else dict(os.environ)
@@ -594,10 +742,16 @@ def _run_worker(
                     stage_path=stage_path, progress_path=progress_path,
                 )
             if reason == "launch":
-                killed = (
-                    f"a single GPU launch ran for more than {launch_deadline_s:.0f}s (runaway or non-terminating kernel); "
-                    "the worker was killed immediately"
-                )
+                if launch_deadline_s > LAUNCH_DEADLINE_S:
+                    killed = (
+                        f"a pipeline command buffer ran for more than {launch_deadline_s:.0f}s "
+                        "(runaway or non-terminating kernel); the worker was killed immediately"
+                    )
+                else:
+                    killed = (
+                        f"a single GPU launch ran for more than {launch_deadline_s:.0f}s (runaway or non-terminating kernel); "
+                        "the worker was killed immediately"
+                    )
             elif reason == "timeout":
                 killed = f"evaluation exceeded {timeout:.0f}s; the worker was killed"
         # 单次启动过久和整段超时都记成 status timeout，具体是哪一种留在 message 里。
@@ -656,6 +810,7 @@ def evaluate(
     workdir: Path | None = None,
     progress_path: Path | None = None,
     fast_bench: bool = False,
+    require_contract_launch: bool = False,
 ) -> EvalReport:
     """Evaluate ``kernel_source`` on ``task``. ``mode``: "quick" (compile+ABI+safety+correctness)
     or "full" (additionally shader validation and the benchmark)."""
@@ -695,11 +850,12 @@ def evaluate(
         kp = Path(workdir or td) / "kernel.metal"
         kp.parent.mkdir(parents=True, exist_ok=True)
         kp.write_text(kernel_source)
+        deadline = deadline_for_source(task, dtype, size, kernel_source)
         if mode == "full":
             # 1) shader-validation pass: tight allocations, one case. Also yields fast compile/ABI feedback.
-            # 校验子进程在 bench 之前：打开会插桩访存和 barrier 的 shader validation，单次启动期限用两倍 LAUNCH_DEADLINE_S。
-            # 这次不过关就带着它的状态码返回。通过后第二个子进程再做完整评测并进入 bench，且不再设置校验环境。
-            v = _run_worker(task, dtype, size, kp, "validate", seed, reps, timeout or 120.0, validation=True, cases=cases, launch_deadline_s=2 * LAUNCH_DEADLINE_S, progress_path=progress_path)
+            # 校验子进程在 bench 之前：打开会插桩访存和 barrier 的 shader validation，期限是这次 command buffer 时限的两倍。
+            # 单核仍是 4 秒。流水线是「每段 2 秒、封顶 8 秒」的两倍。这次不过关就带着它的状态码返回。
+            v = _run_worker(task, dtype, size, kp, "validate", seed, reps, timeout or 120.0, validation=True, cases=cases, launch_deadline_s=2 * deadline, progress_path=progress_path, require_contract_launch=require_contract_launch)
             # 校验插桩会把静态线程组内存报成大约两倍。只有这一条时，不拿它否决内核，改由下面不插桩的编译去比 32768。
             from .abi import only_static_threadgroup_limit
 
@@ -708,7 +864,7 @@ def evaluate(
                 v.mode = "full"
                 v.elapsed_s = time.perf_counter() - t0
                 return _live(v)
-            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench)
+            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch)
             rep.safety = dict(rep.safety or {})
             rep.safety["validation"] = []
             rep.safety["shader_validation"] = (
@@ -716,6 +872,6 @@ def evaluate(
                 if size_only else "clean"
             )
         else:
-            rep = _run_worker(task, dtype, size, kp, "quick", seed, reps, timeout or 240.0, validation=False, cases=cases, progress_path=progress_path)
+            rep = _run_worker(task, dtype, size, kp, "quick", seed, reps, timeout or 240.0, validation=False, cases=cases, progress_path=progress_path, launch_deadline_s=deadline, require_contract_launch=require_contract_launch)
         rep.elapsed_s = time.perf_counter() - t0
         return _live(rep)

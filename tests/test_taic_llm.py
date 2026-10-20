@@ -372,6 +372,8 @@ def test_extract_metal_prefers_the_last_block_that_defines_the_kernel():
     assert "kernel void my_k" in extract_metal(text, "my_k")
     assert extract_metal("no code here", "my_k") is None
     assert extract_metal("```metal\nkernel void other() {}\n```", "my_k") is None
+    staged = "```metal\n/* taic-launch\nlaunch other grid=1,1,1 threads=32,1,1\n*/\nkernel void other() {}\n```\n"
+    assert "taic-launch" in extract_metal(staged, "my_k")
 
 
 def test_extract_json_handles_fences_nesting_and_braces_in_strings():

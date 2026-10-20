@@ -249,7 +249,11 @@ def _sha(source: str) -> str:
 # 回复里抽不出带约定内核名的 Metal 块时追问的那一句。抽失败只消耗这一问，不会产生候选，也不会上 GPU。
 def nudge_user(kernel_name: str) -> str:
     """The reminder sent when a reply holds no ```metal block defining the kernel."""
-    return f"Your reply did not contain a ```metal code block defining `kernel void {kernel_name}`. Reply again with the complete kernel in exactly one ```metal block."
+    return (
+        f"Your reply did not contain a ```metal code block defining `kernel void {kernel_name}`, "
+        "or a ```metal block with a /* taic-launch */ section and at least one `kernel void`. "
+        "Reply again with the complete kernel in exactly one ```metal block."
+    )
 
 
 def _strip_reasoning(messages: list[dict]) -> list[dict]:
@@ -478,6 +482,7 @@ class Orchestrator:
                 "cost_may_be_incomplete": True,
                 "cost_note": "A process can die after the provider bills a request and before transcript.jsonl records it, so a resumed ledger can under-count the real bill. A budget_events.json line that fails to land is dropped; that file is not a complete bill. This is not a hard dollar cap. Reconciling with the provider bill needs separate authorization.",
                 "created_at": time.time(),
+                "launch_protocol": 1,
         }
         # 两个委员会和各自唯一的成员。没有密钥，也没有端点。
         body["committees"] = committees_record(self.committees)
@@ -485,6 +490,22 @@ class Orchestrator:
             control.write_json_atomic(self.run_dir / control.CONFIG_FILE, body)
         except OSError as e:
             raise RunStartError(f"cannot start: run_config.json was not written ({e})") from e
+
+    def _cache_this(self, source: str) -> bool:
+        """A report saved before launch_protocol is not a verdict for a taic-launch kernel.
+
+        Runs started by this code write ``launch_protocol: 1``. A resumed directory that lacks the key
+        was evaluated by the single-kernel path, so a source that contains the marker is evaluated again
+        the next time the search asks for it.
+        """
+        if "taic-launch" not in source:
+            return True
+        path = self.run_dir / control.CONFIG_FILE
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        return body.get("launch_protocol") == 1
 
     # control.json 在下一次预算闸门被接受之后通知这里。上限只升不降到已花费之下（这是 refresh_budget 的不变量）；本函数把新上限同步到 search.budget_usd，搜索继续，而不是停掉。
     def _budget_changed(self, old: float, new: float, doc: dict) -> None:
@@ -580,7 +601,7 @@ class Orchestrator:
                              recheck_rejected=bool(c.get("recheck_rejected")))
             self.candidates.append(cand)
             # 与 _eval 相同：超时和 worker 崩溃是环境故障，不能当成这颗内核的永久判决。
-            if cand.report is not None and cand.report.status not in ("timeout", "crash"):
+            if cand.report is not None and cand.report.status not in ("timeout", "crash") and self._cache_this(cand.source):
                 self.cache.setdefault(_sha(cand.source), cand.report)
         self.best = self._by_label(snap.best_label)
         if self.best:
@@ -664,6 +685,7 @@ class Orchestrator:
                     mode="quick" if self.search.correctness_only else "full", seed=phase_seed, reps=self.search.eval_reps,
                     progress_path=self.run_dir / "eval_progress.json",
                     **({"fast_bench": True} if self.search.fast_bench and not self.search.correctness_only else {}),
+                    **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
                 )
                 self.evaluations += 1
             cand.report = rep
@@ -744,6 +766,7 @@ class Orchestrator:
             rep = await asyncio.to_thread(
                 self.evaluate_fn, self.task_name, self.dtype, self.size, cand.source, mode="quick", seed=phase_seed, reps=3,
                 progress_path=self.run_dir / "eval_progress.json",
+                **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
             )
         self.evaluations += 1
         if rep.status == "ok":
@@ -808,6 +831,7 @@ class Orchestrator:
             rep = await asyncio.to_thread(
                 self.evaluate_fn, self.task_name, self.dtype, self.size, source, mode="quick", seed=None, reps=3,
                 progress_path=self.run_dir / "eval_progress.json",
+                **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
             )
             # 记入与 _eval 相同的 hangs。本函数不抛 StopRun，这段反馈仍会交回模型。
             if rep.status == "timeout":
@@ -1268,6 +1292,7 @@ class Orchestrator:
                 rep = await asyncio.to_thread(
                     self.evaluate_fn, self.task_name, self.dtype, self.size, win.source, mode="quick", seed=phase_seed, reps=1,
                     cases=("domain",), progress_path=self.run_dir / "eval_progress.json",
+                    **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
                 )
             if rep.status == "timeout":
                 self.hangs += 1
@@ -1306,6 +1331,7 @@ class Orchestrator:
                     rep = await asyncio.to_thread(
                         self.evaluate_fn, self.task_name, self.dtype, self.size, c.source, mode="full", seed=phase_seed, reps=self.search.eval_reps * 2,
                         progress_path=self.run_dir / "eval_progress.json",
+                        **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
                     )
                 entry["eval_seed"] = phase_seed if phase_seed is not None else rep.seed
                 entry["eval_seed_from"] = "confirm" if phase_seed is not None else "random"

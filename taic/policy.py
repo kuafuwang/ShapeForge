@@ -90,7 +90,10 @@ def feature_signature(source: str) -> tuple:
     """Seven static source features. No compiler and no GPU."""
     from .hwfeatures import analyze_source
 
-    ev = analyze_source(source)
+    from tcenv.launch import declared_stage_kernels
+
+    launched = declared_stage_kernels(source)
+    ev = analyze_source(source, kernel_names=launched)
     matrix = ev.get("matrix") or {}
     tiles = matrix.get("acc_tiles") or 0
     if not isinstance(tiles, int):

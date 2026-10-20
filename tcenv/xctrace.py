@@ -73,15 +73,18 @@ def record(
         "xcrun", "xctrace", "record", "--template", TEMPLATE, "--output", str(trace), "--time-limit", f"{int(record_limit_s)}s", "--no-prompt",
         "--launch", "--", sys.executable, "-m", "tcenv.xcworker", str(rq),
     ]
+    from .evaluate import LAUNCH_DEADLINE_S, deadline_for_source
+
+    wait_s = deadline_for_source(task, dtype, size, kernel_source) if launch_deadline_s == LAUNCH_DEADLINE_S else launch_deadline_s
     t0 = time.perf_counter()
     with open(workdir / "xctrace.log", "w") as log:
         proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=str(REPO_ROOT))
         while proc.poll() is None:
             time.sleep(0.2)
             h = _read_heartbeat(hb)
-            if h and h[0] == "B" and time.time() - h[1] > launch_deadline_s:
+            if h and h[0] == "B" and time.time() - h[1] > wait_s:
                 _kill_tree(proc)
-                raise TraceError(f"a GPU launch ran for more than {launch_deadline_s}s while profiling; killed")
+                raise TraceError(f"a GPU launch ran for more than {wait_s}s while profiling; killed")
             if time.perf_counter() - t0 > record_limit_s + 30:
                 _kill_tree(proc)
                 raise TraceError("xctrace did not finish in time")
@@ -157,6 +160,7 @@ class CounterStat:
 class TraceSummary:
     window_s: float = 0.0
     n_dispatches: int = 0
+    dispatch_group: int = 1  # 1: one interval is one launch. >1: the median sums that many dispatches of one iteration
     dispatch_us_median: float | None = None
     dispatch_us_p10: float | None = None
     dispatch_us_p90: float | None = None
@@ -303,11 +307,26 @@ def _pct(xs: list[float], q: float) -> float:
     return s[int(q * (len(s) - 1))]
 
 
-def analyze(trace: Path, workdir: Path, *, kernel_name: str | None = None) -> TraceSummary:
+def analyze(trace: Path, workdir: Path, *, kernel_name: str | None = None, kernel_names: list[str] | None = None) -> TraceSummary:
     iv = export_table(trace, "metal-gpu-intervals", workdir / "gpu_intervals.xml")
     lo, hi, durs = compute_window(iv)
-    summ = TraceSummary(window_s=(hi - lo) / 1e9, n_dispatches=len(durs))
+    group, recorded_names = 1, None
+    out_path = workdir / "out.json"
+    if out_path.exists():
+        try:
+            meta = json.loads(out_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            meta = {}
+        if isinstance(meta, dict):
+            group = int(meta.get("dispatch_group") or 1)
+            if isinstance(meta.get("kernels"), list) and meta["kernels"]:
+                recorded_names = [str(n) for n in meta["kernels"]]
+    raw = len(durs)
+    if group > 1 and len(durs) >= group:
+        durs = [sum(durs[i : i + group]) for i in range(0, len(durs) - (len(durs) % group), group)]
+    summ = TraceSummary(window_s=(hi - lo) / 1e9, n_dispatches=raw, dispatch_group=group)
     summ.dispatch_us_median, summ.dispatch_us_p10, summ.dispatch_us_p90 = (_pct(durs, q) / 1e3 for q in (0.5, 0.1, 0.9))
+    kernel_names = recorded_names or kernel_names
 
     # GPU busy fraction inside the window
     st = export_table(trace, "metal-gpu-state-intervals", workdir / "gpu_state.xml")
@@ -324,7 +343,12 @@ def analyze(trace: Path, workdir: Path, *, kernel_name: str | None = None) -> Tr
         summ.spilled_bytes += int(float(row["spilled-bytes"][0] or 0))
 
     sh = export_table(trace, "metal-shader-profiler-shader-list", workdir / "shaders.xml")
-    sizes = [int(float(r["pc-end"][0])) - int(float(r["pc-start"][0])) for r in iter_rows(sh) if r["shader-type"][1] == "Compute" and (kernel_name is None or kernel_name in r["name"][1])]
+    names = kernel_names or ([kernel_name] if kernel_name else None)
+    sizes = [
+        int(float(r["pc-end"][0])) - int(float(r["pc-start"][0]))
+        for r in iter_rows(sh)
+        if r["shader-type"][1] == "Compute" and (names is None or any(n in r["name"][1] for n in names))
+    ]
     summ.shader_code_bytes = max(sizes) if sizes else None
 
     th = export_table(trace, "device-thermal-state-intervals", workdir / "thermal.xml")
@@ -378,8 +402,15 @@ def format_summary(summ: TraceSummary, top: int = 14) -> str:
     if summ.shader_code_bytes is not None:
         L.append(f"  compiled shader size: {summ.shader_code_bytes} bytes of GPU code")
     L.append(f"  thermal state: {', '.join(summ.thermal_states) or 'unknown'}" + ("  (throttling: timings are unreliable)" if any(t not in ("Nominal",) for t in summ.thermal_states) else ""))
+    if summ.dispatch_group > 1:
+        interval = (
+            f"GPU interval is the sum of {summ.dispatch_group} dispatches in one iteration "
+            f"(the stages, plus a zero-fill when the pipeline has workspace)"
+        )
+    else:
+        interval = "GPU interval per dispatch"
     L.append(
-        f"  indicative only (tracing perturbs timing): GPU interval per dispatch median {summ.dispatch_us_median:.1f} us "
+        f"  indicative only (tracing perturbs timing): {interval} median {summ.dispatch_us_median:.1f} us "
         f"(p10 {summ.dispatch_us_p10:.1f}, p90 {summ.dispatch_us_p90:.1f}); GPU active {summ.gpu_active_fraction:.0%} of the window"
     )
     if summ.counters:

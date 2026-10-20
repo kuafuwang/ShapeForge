@@ -209,7 +209,7 @@ def run_gemm(variants: list[str], dtype: str, size: str, out: Path, reps: int) -
         name = "gemm" if v == DEFAULT else f"gemm@{v}"
         try:
             src = gemm_source(v, dtype)
-            rep = evaluate(name, dtype, size, src, mode="full", reps=reps, progress_path=out / "eval_progress.json")
+            rep = evaluate(name, dtype, size, src, mode="full", reps=reps, progress_path=out / "eval_progress.json", require_contract_launch=True)
             row = {
                 "variant": v, "task": name, "status": rep.status, "message": rep.message[:300], "abi_violations": [str(x)[:200] for x in (rep.abi or {}).get("violations", [])][:3], "candidate_us": rep.candidate_us,
                 "baseline_us": rep.baseline_us, "speedup": rep.speedup, "noisy": (rep.benchmark or {}).get("noisy"),

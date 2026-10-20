@@ -170,6 +170,7 @@ class SearchConfig:
     fast_bench: bool = False  # search-stage timing skips the serial dispatch and baselines other than the fastest one seen. Confirmation always times every baseline
     experience_index: str | None = None  # path of a read-only hint file from taic.experience. None adds nothing to the planner prompt
     kernel_agent: str = ""  # "" writes kernels through the chat API. "pi" writes each kernel via `hmz exec` and the pi coding agent. Planning stays on the API.
+    require_contract_launch: bool = False  # contract-menu and variant runs reject a taic-launch block so the launch stays the one the menu chose
 
 
 def _read_toml(path: Path) -> dict:

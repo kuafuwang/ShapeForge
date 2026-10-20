@@ -7,7 +7,7 @@ obtained on this very machine with the harness (`tcenv calibrate`). Where Apple 
 Keywords: simd width threadgroup size registers occupancy unified memory slc cache bandwidth peak
 
 - 32-wide SIMD groups (warps). A threadgroup (TG) has at most **1024 threads** and **32 KiB** of threadgroup (shared) memory.
-  The contract fixes grid and TG size, so occupancy is controlled by register use and threadgroup memory only.
+  Without a `/* taic-launch */` block the contract fixes grid and TG size, so occupancy is controlled by register use and threadgroup memory. With that block, each stage chooses its own grid and TG size.
 - Many TGs are resident per GPU core at once when registers and threadgroup memory allow it; latency is hidden by switching between resident SIMD groups.
   `maxTotalThreadsPerThreadgroup` of the compiled pipeline (reported in the feedback) drops below 1024 when the kernel uses many registers; if it falls below
   the launch's threads per TG the contract is infeasible and the harness reports an ABI error.
@@ -21,7 +21,7 @@ Keywords: simd width threadgroup size registers occupancy unified memory slc cac
 ## The launch contract shapes the design
 Keywords: contract grid program tile persistent loop fixed launch
 
-The Triton program maps to one threadgroup; the grid and TG size are fixed. You decide how the TG's threads cover the tile that its program
+Without a `/* taic-launch */` block, the Triton program maps to one threadgroup and the grid and TG size stay on the contract. With that block, you choose each stage's grid and TG size. You decide how the TG's threads cover the tile that its program
 owns: how many elements per thread, which SIMD group handles which sub-tile, how the K loop is staged. Do not assume `gid` covers the data one
 element per thread; loop (with a bounded trip count) over `BLOCK_SIZE`-sized tiles. Use the contract constants (`BLOCK_M`, `N`, ...) so the
 compiler can fully unroll and fold index math.

@@ -575,22 +575,39 @@ def _space_of(expr: str, tg_names: set[str], dev_names: set[str]) -> str:
     return "unknown"
 
 
-def analyze_source(source: str, *, consts: dict[str, float] | None = None, kernel_name: str | None = None) -> dict:
-    """Source-level evidence (everything the text proves). ``consts`` are the contract constants (BLOCK_M, N, ...)."""
+def analyze_source(source: str, *, consts: dict[str, float] | None = None, kernel_name: str | None = None, kernel_names: list[str] | None = None) -> dict:
+    """Source-level evidence (everything the text proves). ``consts`` are the contract constants (BLOCK_M, N, ...).
+
+    ``kernel_names`` limits the scan to those kernels and the helpers they reach. An unused kernel in the
+    same file does not count. Without it, the named kernel, or else the first kernel, is the scan.
+    """
     raw_code = strip_comments_and_strings(source)
     code = expand_macros(normalize(raw_code))
     funcs = parse_functions(code)
     kernels = [f for f in funcs if f.is_kernel]
-    kern = next((f for f in kernels if f.name == kernel_name), kernels[0] if kernels else None)
+    by_name = {f.name: f for f in kernels}
+    if kernel_names:
+        chosen = [by_name[n] for n in dict.fromkeys(kernel_names) if n in by_name]
+    elif kernel_name and kernel_name in by_name:
+        chosen = [by_name[kernel_name]]
+    else:
+        chosen = kernels[:1]
     helpers = {f.name: f for f in funcs if not f.is_kernel}
     cst = collect_constants(code, consts)
-    ev: dict[str, Any] = {"kernel": kern.name if kern else None, "n_kernels": len(kernels), "lines": source.count("\n") + 1}
-    if kern is None:
+    ev: dict[str, Any] = {
+        "kernel": ",".join(f.name for f in chosen) if chosen else None,
+        "n_kernels": len(kernels),
+        "lines": source.count("\n") + 1,
+    }
+    if kernel_names:
+        ev["launched_kernels"] = list(dict.fromkeys(kernel_names))
+    if not chosen:
         ev["error"] = "no `kernel` function found"
         scan, kbody, params = code, code, ""
         used_helpers: list[str] = []
     else:
-        params, kbody = kern.params, kern.body
+        params = "\n".join(f.params for f in chosen)
+        kbody = "\n".join(f.body for f in chosen)
         reach, todo = set(), [kbody]
         while todo:
             txt = todo.pop()
@@ -602,7 +619,7 @@ def analyze_source(source: str, *, consts: dict[str, float] | None = None, kerne
         scan = params + "\n" + kbody + "\n" + "\n".join(helpers[h].params + "\n" + helpers[h].body for h in used_helpers)
         ev["helpers_used"] = used_helpers
         ev["helpers_unused"] = sorted(set(helpers) - reach)
-    expanded = expand_calls(kbody, {h: helpers[h] for h in used_helpers}) if kern else code
+    expanded = expand_calls(kbody, {h: helpers[h] for h in used_helpers}) if chosen else code
     ev["n_constants_evaluated"] = len(cst)
 
     # ---- address spaces -----------------------------------------------------------------------------------------------------------
@@ -805,7 +822,7 @@ def analyze_source(source: str, *, consts: dict[str, float] | None = None, kerne
         if deref_before(scan, m.start()) or re.match(r"\s*\)\s*\[", scan[k : k + 8]):
             add_site(m.group(1), m.group(2), "store" if is_store_after(scan, k + (scan[k : k + 8].find(")") + 1 if scan[k : k + 8].lstrip().startswith(")") else 0)) else "load", "c-cast", m.start())
     # typed pointers are scoped per function (a helper's `pa` may be a threadgroup pointer while the kernel's `pa` is a device pointer)
-    scopes = ([params + "\n" + kbody] + [helpers[h].params + "\n" + helpers[h].body for h in used_helpers]) if kern else [scan]
+    scopes = ([params + "\n" + kbody] + [helpers[h].params + "\n" + helpers[h].body for h in used_helpers]) if chosen else [scan]
     ptr_rx = re.compile(r"\b(device|constant|threadgroup)\s+(?:const\s+)?([A-Za-z_][\w:]*)\s*\*\s*(?:(?:const|__restrict__|__restrict|restrict)\s+)*([A-Za-z_]\w*)")
     auto_rx = re.compile(r"\b(?:const\s+)?auto\s+([A-Za-z_]\w*)\s*=\s*reinterpret_cast\s*<\s*(?:const\s+)?(device|constant|threadgroup)\s+(?:const\s+)?([\w:]+)\s*\*\s*>")
     for sc in scopes:
@@ -854,7 +871,7 @@ def analyze_source(source: str, *, consts: dict[str, float] | None = None, kerne
     tg_store_uses: list[tuple[int, set[str]]] = []
     mma_pos = [m.start() for m in re.finditer(r"\bsimdgroup_multiply(?:_accumulate)?\s*\(", expanded)]
     dev_core = r"reinterpret_cast\s*<\s*(?:const\s+)?device|\(\s*(?:const\s+)?device\s+[\w:]+\s*\*\s*\)|\b(?:" + "|".join(map(re.escape, sorted(dev_names))) + r")\b\s*(?:\[|\+)" if dev_names else r"reinterpret_cast\s*<\s*(?:const\s+)?device|\(\s*(?:const\s+)?device\s+[\w:]+\s*\*\s*\)"
-    dev_helpers = [h for h in used_helpers if re.search(dev_core, helpers[h].body)] if kern else []
+    dev_helpers = [h for h in used_helpers if re.search(dev_core, helpers[h].body)] if chosen else []
     dev_rx = re.compile(dev_core + (r"|\b(?:" + "|".join(map(re.escape, dev_helpers)) + r")\s*\(" if dev_helpers else ""))
     tg_store_rx = re.compile(r"^\s*\*\s*\(?\s*reinterpret_cast\s*<\s*(?:const\s+)?threadgroup\b|^\s*\*?\s*\(\s*(?:const\s+)?threadgroup\b")
     for pos, st in stmts:
@@ -1480,11 +1497,18 @@ def build_report(source: str, *, label: str, task: str | None = None, dtype: str
             header = t.contract.render_header()
         except Exception as e:  # noqa: BLE001 - an unresolvable task only disables header-dependent evidence
             extra = {**(extra or {}), "task_error": str(e)[:200]}
-    src = analyze_source(source, consts=consts, kernel_name=kname)
+    from tcenv.launch import declared_stage_kernels, launch_math
+
+    launched = declared_stage_kernels(source)
+    src = analyze_source(source, consts=consts, kernel_name=None if launched else kname, kernel_names=launched)
     comp = None
     if compile_evidence:
         if task and header:
-            comp = compile_air(header + source, cache_dir=cache_dir, timeout=compile_timeout)
+            math = launch_math(source)
+            if "taic-launch" in source and math is None:
+                comp = {"ok": False, "skipped": True, "error": "launch block did not parse; AIR evidence suppressed"}
+            else:
+                comp = compile_air(header + source, cache_dir=cache_dir, timeout=compile_timeout, fast_math=math != "safe")
         else:
             comp = {"ok": False, "skipped": True, "error": "no contract header (task unknown): not compiled"}
     feats = detect_features(src, comp)
@@ -1550,7 +1574,19 @@ def measured_from_report(rep: dict | None, task_obj: Any = None, calib: dict | N
     if p:
         m["max_total_threads"] = p.get("max_total_threads_per_threadgroup")
         m["static_threadgroup_bytes"] = p.get("static_threadgroup_bytes")
-        m["launch_threads"] = p.get("launch_threads_per_threadgroup")
+        stages = p.get("stages") if isinstance(p.get("stages"), list) else None
+        if stages:
+            m["launch_threads"] = None
+            m["stages"] = [
+                {
+                    "kernel": s.get("kernel"),
+                    "max_total_threads": s.get("max_total_threads_per_threadgroup"),
+                    "launch_threads": s.get("launch_threads_per_threadgroup"),
+                }
+                for s in stages
+            ]
+        else:
+            m["launch_threads"] = p.get("launch_threads_per_threadgroup")
     b = rep.get("benchmark") or {}
     if b:
         m["cv"] = (b.get("candidate") or {}).get("cv")

@@ -91,6 +91,13 @@ def at_roofline(report: Any, required_gain: float) -> bool:
     gap = roof.get("time_over_lower_bound")
     if not isinstance(gap, (int, float)) or gap <= 0 or not isinstance(required_gain, (int, float)):
         return False
+    # 种子已经快过参考算法下界的 0.95 倍，说明运算量假设不成立。有启动说明本身不停用这条早停。
+    if float(gap) < CLEAR_OF_BOUND:
+        return False
+    for key in ("compute_fraction", "bandwidth_fraction"):
+        frac = roof.get(key)
+        if isinstance(frac, (int, float)) and not isinstance(frac, bool) and float(frac) > 1.0 / CLEAR_OF_BOUND:
+            return False
     return float(gap) <= float(required_gain)
 
 
