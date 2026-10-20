@@ -341,3 +341,47 @@ def test_paper_preset_has_the_paper_budget_and_a_longer_patience_while_base_is_u
     _, base = load_config(preset="base")
     assert paper.budget_usd == 15.0 and paper.max_rounds == 100 and paper.patience == 12
     assert base.patience == 4 and base.budget_usd != 15.0  # taic.toml alone, which the running experiments keep reading
+
+
+def _stream_chunk(text: str = "", *, reasoning: str | None = None, finish: str | None = None):
+    delta = SimpleNamespace(content=text or None, reasoning_content=reasoning, tool_calls=None)
+    return SimpleNamespace(usage=None, choices=[SimpleNamespace(finish_reason=finish, delta=delta)])
+
+
+def test_streaming_preview_is_throttled_and_cleared_when_the_request_ends(tmp_path, monkeypatch):
+    import time
+
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(time, "monotonic", lambda: clock["t"])
+    path = tmp_path / "llm.json"
+    c = cfg()
+    llm = LLM(c, CostLedger(c), client=FakeClient([]))
+    llm.progress_path = path
+    seen = []
+
+    async def spy(label, status, **fields):
+        if "preview" in fields:
+            seen.append((clock["t"], fields["preview"], fields.get("thinking") or ""))
+        await orig(label, status, **fields)
+
+    orig = llm._note_llm
+    llm._note_llm = spy
+
+    async def chunks():
+        for index in range(25):
+            yield _stream_chunk("a" * 100, reasoning="sk-SUPERSECRET" if index == 0 else None)
+        clock["t"] = 1002.0
+        for _ in range(50):
+            yield _stream_chunk("b" * 100)
+        yield _stream_chunk(finish="stop")
+
+    run(llm._read_completion(chunks(), "lab"))
+    assert [item[0] for item in seen] == [1000.0, 1002.0]
+    assert all(len(item[1]) <= 4096 and len(item[2]) <= 4096 for item in seen)
+    stored = path.read_text(encoding="utf-8")
+    assert "SUPERSECRET" not in stored
+    assert "messages" not in json.loads(stored)["inflight"]["lab"]
+    run(llm._note_llm("lab", "ok"))
+    assert json.loads(path.read_text(encoding="utf-8"))["inflight"] == {}
+    run(llm._note_llm("lab", "error", error="boom"))
+    assert json.loads(path.read_text(encoding="utf-8"))["inflight"] == {}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -17,6 +18,7 @@ from taic.policy import feature_signature
 PAGE_LIMIT = 100
 _LIVE = {"last": None, "n": 0}
 _SENT = 0
+_GRID_CACHE: dict[tuple, list[dict]] = {}
 
 
 def gpu_snapshot() -> dict:
@@ -57,26 +59,56 @@ def resolve_run(run_id: str) -> Path | None:
     return get_index().resolve(run_id)
 
 
-def run_detail(run_id: str) -> dict | None:
+def run_detail(run_id: str, *, stamp: str = "") -> dict | None:
     directory = resolve_run(run_id)
     if directory is None:
         return None
+    current = _detail_stamp(run_id)
+    if stamp and stamp == current:
+        return {"same": True, "id": run_id, "detail_stamp": current}
     detail_doc = detail.run_detail(run_id)
     if detail_doc is None:
         return None
     config = detail._load(directory / "run_config.json")
     detail_doc["feature_grid"] = feature_grid(directory, detail_doc.get("result"))
     detail_doc["plan_outcomes"] = plan_outcomes(directory, config, detail_doc.get("state"), detail_doc.get("result"))
+    detail_doc["detail_stamp"] = _detail_stamp(run_id)
     return detail_doc
 
 
+def _detail_stamp(run_id: str) -> str:
+    """Identity of the detail payload. A transcript append does not change it."""
+    row = get_index().conn.execute(
+        "SELECT fp_state, fp_result, fp_config, fp_confirm, fp_extra FROM runs WHERE run_id = ?",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        return ""
+    return "|".join(str(row[key] or "") for key in ("fp_state", "fp_result", "fp_config", "fp_confirm", "fp_extra"))
+
+
 def feature_grid(directory: Path, result: dict | None) -> list[dict]:
-    """One cell per source signature. The cell keeps the fastest candidate seen during the search."""
+    """One cell per source signature. The cell keeps the fastest candidate seen during the search.
+
+    Identical source is signed once. The grid is cached until ``state.json`` or ``result.json`` changes.
+    """
+    winner = (result or {}).get("confirm_winner_label")
+    key = (
+        str(directory.resolve()),
+        _file_signature(directory / "state.json"),
+        _file_signature(directory / "result.json"),
+        str(winner or ""),
+    )
+    cached = _GRID_CACHE.get(key)
+    if cached is not None:
+        return cached
     root = directory / "candidates"
     if not root.is_dir():
+        _GRID_CACHE[key] = []
         return []
-    winner = (result or {}).get("confirm_winner_label")
     best: dict[tuple, dict] = {}
+    signed: dict[str, tuple] = {}
+    order: list[tuple] = []
     for path in sorted(item for item in root.iterdir() if item.is_dir()):
         source_path = path / "kernel.metal"
         try:
@@ -87,17 +119,27 @@ def feature_grid(directory: Path, result: dict | None) -> list[dict]:
         speed = report.get("speedup")
         if isinstance(speed, bool) or not isinstance(speed, (int, float)):
             speed = None
-        signature = feature_signature(source)
+        digest = hashlib.sha1(source.encode("utf-8")).hexdigest()
+        signature = signed.get(digest)
+        if signature is None:
+            signature = feature_signature(source)
+            signed[digest] = signature
         label = path.name.split("_", 1)[1] if "_" in path.name else path.name
         current = best.get(signature)
         if current is None or (speed is not None and (current["speedup"] is None or speed > current["speedup"])):
+            if current is None:
+                order.append(signature)
             best[signature] = {
                 "signature": list(signature),
                 "label": label,
                 "speedup": speed,
                 "published": label == winner,
             }
-    return list(best.values())
+    rows = [best[signature] for signature in order if signature in best]
+    for stale in [item for item in _GRID_CACHE if item[0] == key[0] and item != key]:
+        _GRID_CACHE.pop(stale, None)
+    _GRID_CACHE[key] = rows
+    return rows
 
 
 def plan_outcomes(directory: Path, config: dict | None, state: dict | None, result: dict | None) -> list[dict]:
@@ -393,11 +435,17 @@ def stream_revision() -> int:
 
 
 def poll_stream() -> dict:
-    """One idle frame. The revision and the changed run ids come from the same tick."""
+    """One idle frame. The detail revision and the turn revision move independently."""
     global _SENT
-    rev, changed = get_index().tick()
+    index = get_index()
+    rev, changed = index.tick()
     _SENT = max(_SENT, rev, live_revision())
-    return {"revision": _SENT, "runs": changed}
+    return {
+        "index_revision": _SENT,
+        "turns_revision": index.turns_revision(),
+        "revision": _SENT,
+        "runs": changed,
+    }
 
 
 def changed_runs() -> list[str]:

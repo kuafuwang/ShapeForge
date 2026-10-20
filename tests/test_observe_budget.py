@@ -289,13 +289,15 @@ def test_a_named_run_without_its_own_model_does_not_require_a_null_model():
         "budget-amount", "budget-save", 'method: "POST"', "X-Observe-Token", 'classList.add("open")',
         "function newestFirst", "newestFirst(doc.candidates)", "newestFirst(doc.budget_events)", "newestFirst(handoff.rounds)", "newestFirst(doc.plan_outcomes)", "newestFirst(doc.by_month)", "newestFirst(doc.feature_grid)",
         "安检", "阶段", "代码", 'class="excerpt"', "--blue: #0a66c2", "@keyframes breathe", 'class="breathe"',
-        'id="workspace"', 'id="side-toggle"', 'id="view-experiments"', 'id="view-compare"', 'id="view-detail"',
+        'id="workspace"', 'id="side-toggle"', 'id="runs-toggle"', 'id="detail-toggle"', 'id="view-experiments"', 'id="view-compare"', 'id="view-detail"',
+        "runs-table-scroll", "detail-scroll", "position: sticky", 'id="budget-toggle"',
         "delete-reason", "/api/records/delete", "删除记录只追加",
         'class="note-list"', ".note-list { max-height: 12rem; overflow: auto;",
         "正常工具调用，不是异常。", "草稿交给本机编译并对答案", "在本机查阅 MSL 资料",
         "hmz 调用 pi 写内核，不是异常", 'id="pi-live"', "/api/v2/pi/",
         "function writerMode", "doc.kernel_writer", "这一场由搜索直接调用模型",
-        'id="chat-live"', "/api/v2/chat/",
+        'id="turns-live"', "/api/v2/turns/", "更早",
+        'id="pi-live"', "/api/v2/pi/",
     ):
         assert needle in text, needle
 

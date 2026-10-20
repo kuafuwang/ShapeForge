@@ -20,7 +20,7 @@ from observe import detail, legacy
 from observe.budget import budget_status
 from observe.ledger import month_of, operator_name
 
-INDEX_SCHEMA_VERSION = 1
+INDEX_SCHEMA_VERSION = 2
 _SKIP_DIRS = {"candidates", "__pycache__"}
 _WRITE = threading.Lock()
 _SINGLE: "Index | None" = None
@@ -94,7 +94,7 @@ def _num(value) -> float | None:
 class Index:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
-        self.stats = {"json_reads": 0, "dir_lists": 0}
+        self.stats = {"json_reads": 0, "dir_lists": 0, "turn_parses": 0}
         self.changed: list[str] = []
         self._in_reanchor = False
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,6 +173,7 @@ class Index:
                 fp_config TEXT,
                 fp_confirm TEXT,
                 fp_extra TEXT,
+                turn_bytes INTEGER NOT NULL DEFAULT 0,
                 row_json TEXT
             );
             CREATE TABLE IF NOT EXISTS experiments (
@@ -219,6 +220,15 @@ class Index:
             CREATE INDEX IF NOT EXISTS runs_status ON runs(status);
             CREATE INDEX IF NOT EXISTS runs_started ON runs(started_at);
             CREATE INDEX IF NOT EXISTS runs_binding ON runs(binding);
+            CREATE TABLE IF NOT EXISTS turns (
+                run_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                label TEXT,
+                kind TEXT,
+                row_json TEXT,
+                PRIMARY KEY (run_id, seq)
+            );
+            CREATE INDEX IF NOT EXISTS turns_run_seq ON turns(run_id, seq);
             """
         )
         self.conn.execute(
@@ -227,6 +237,9 @@ class Index:
         )
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES ('revision', '0') ON CONFLICT(key) DO NOTHING"
+        )
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('turns_revision', '0') ON CONFLICT(key) DO NOTHING"
         )
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES ('built_at', ?) ON CONFLICT(key) DO NOTHING",
@@ -301,6 +314,16 @@ class Index:
             "UPDATE meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'revision'"
         )
 
+    def turns_revision(self) -> int:
+        row = self.conn.execute("SELECT value FROM meta WHERE key = 'turns_revision'").fetchone()
+        return int(row[0] if row else 0)
+
+    def _bump_turns(self) -> None:
+        """A new transcript row. The detail revision stays where it is."""
+        self.conn.execute(
+            "UPDATE meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'turns_revision'"
+        )
+
     def tick(self) -> tuple[int, list[str]]:
         """One incremental frame. Lists a directory only when its own mtime changed, and reads a finished run only when a fingerprint changed."""
         with _WRITE:
@@ -335,7 +358,7 @@ class Index:
             self.conn.commit()
 
     def _prepare_frame(self) -> None:
-        self.stats = {"json_reads": 0, "dir_lists": 0}
+        self.stats = {"json_reads": 0, "dir_lists": 0, "turn_parses": 0}
         self.changed = []
         root = str(detail.runs_root().resolve())
         row = self.conn.execute("SELECT value FROM meta WHERE key = 'runs_root'").fetchone()
@@ -391,6 +414,10 @@ class Index:
             stored = self._stored_fingerprints(path)
             label, rel = _confirm_target(stored[3])
             if self._fingerprints(path, label, rel) == stored:
+                # transcript.jsonl is not part of the detail fingerprint. A new line still has to land in the turns table,
+                # and that must not redraw the candidate list.
+                if self._catch_up_turns(path):
+                    self._bump_turns()
                 state = {"updated_at": row["updated_at"], "pid": row["pid"], "phase": row["phase"]}
                 status = detail.liveness(state, None)
                 if status != row["status"]:
@@ -435,6 +462,89 @@ class Index:
         self.stats["json_reads"] += 1
         return detail._load(path)
 
+    def _catch_up_turns(self, directory: Path) -> bool:
+        """Project new complete lines of ``transcript.jsonl`` into the turns table.
+
+        The byte offset is ``runs.turn_bytes``. A short file is projected again from the start.
+        A trailing partial line stays unread until the next frame. Returns true when the offset
+        or the table changed. Does not bump the detail revision.
+        """
+        run_id = self._rel(directory)
+        row = self.conn.execute("SELECT turn_bytes FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+        if row is None:
+            return False
+        turn_bytes = int(row["turn_bytes"] or 0)
+        path = directory / "transcript.jsonl"
+        try:
+            size = path.stat().st_size if path.is_file() else 0
+        except OSError:
+            size = 0
+        changed = False
+        if size < turn_bytes:
+            self.conn.execute("DELETE FROM turns WHERE run_id = ?", (run_id,))
+            turn_bytes = 0
+            changed = True
+        if size == turn_bytes:
+            if changed:
+                self.conn.execute("UPDATE runs SET turn_bytes = ? WHERE run_id = ?", (0, run_id))
+            return changed
+        self.stats["turn_seek"] = turn_bytes
+        try:
+            with path.open("rb") as handle:
+                handle.seek(turn_bytes)
+                data = handle.read()
+        except OSError:
+            return changed
+        last_nl = data.rfind(b"\n")
+        if last_nl < 0:
+            return changed
+        complete = data[: last_nl + 1]
+        new_offset = turn_bytes + last_nl + 1
+        seq_row = self.conn.execute("SELECT COALESCE(MAX(seq), 0) FROM turns WHERE run_id = ?", (run_id,)).fetchone()
+        seq = int(seq_row[0] or 0)
+        for raw in complete.splitlines():
+            self.stats["turn_parses"] = self.stats.get("turn_parses", 0) + 1
+            try:
+                item = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(item, dict):
+                continue
+            projected = detail.project_turn(item)
+            if projected is None:
+                continue
+            seq += 1
+            self.conn.execute(
+                "INSERT INTO turns (run_id, seq, label, kind, row_json) VALUES (?, ?, ?, ?, ?)",
+                (run_id, seq, projected.get("label") or "", projected.get("kind") or "", json.dumps(projected, ensure_ascii=False)),
+            )
+        self.conn.execute("UPDATE runs SET turn_bytes = ? WHERE run_id = ?", (new_offset, run_id))
+        return True
+
+    def _finished_without_turns(self, directory: Path) -> bool:
+        """A finished run that has never been projected. Opening its turn list builds the rows."""
+        row = self.conn.execute(
+            "SELECT status, turn_bytes FROM runs WHERE run_id = ?",
+            (self._rel(directory),),
+        ).fetchone()
+        if row is None:
+            return False
+        return row["status"] != "running" and int(row["turn_bytes"] or 0) == 0
+
+    def _project_turns(self, directory: Path) -> None:
+        """Catch up a run that is still going, or one that already has a projection to extend."""
+        if self._finished_without_turns(directory):
+            return
+        if self._catch_up_turns(directory):
+            self._bump_turns()
+
+    def ensure_turns(self, directory: Path) -> None:
+        """Project this run on demand. A second call with no new bytes does not parse the file again."""
+        with _WRITE:
+            if self._catch_up_turns(directory):
+                self._bump_turns()
+            self.conn.commit()
+
     def _ingest(self, directory: Path, *, force: bool = False) -> None:
         if not self._within_runs(directory):
             return
@@ -444,6 +554,7 @@ class Index:
         known = self.conn.execute("SELECT 1 FROM runs WHERE run_id = ?", (self._rel(directory),)).fetchone()
         tracked = "\x1f" in (stored[3] or "")
         if not force and fingerprints == stored and known and (tracked or not (directory / "best.metal").exists()):
+            self._project_turns(directory)
             return
         state = self._read_json(directory / "state.json")
         result_path = directory / "result.json"
@@ -466,12 +577,14 @@ class Index:
             return
         if broken and state is None and result is None:
             self._upsert_missing(directory, fingerprints)
+            self._project_turns(directory)
             return
         row = detail.row_from_files(directory, state, result)
         if broken and result is None and state is None:
             row["status"] = "missing"
         config = self._read_json(directory / "run_config.json")
         self._upsert_run(directory, row, config, fingerprints, manifest)
+        self._project_turns(directory)
 
     def _ingest_queue(self, directory: Path, state: dict) -> None:
         job = detail.experiment_job(directory)
@@ -824,6 +937,7 @@ class Index:
                         wanted.add(row["run_id"])
             for run_id in wanted:
                 self.conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+                self.conn.execute("DELETE FROM turns WHERE run_id = ?", (run_id,))
             watched = [row["path"] for row in self.conn.execute("SELECT path FROM watched")]
             for experiment_id in experiment_ids:
                 self.conn.execute("DELETE FROM experiments WHERE experiment_id = ?", (experiment_id,))

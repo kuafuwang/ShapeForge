@@ -22,6 +22,16 @@ from types import SimpleNamespace
 from typing import Any, Awaitable, Callable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+_PREVIEW_CHARS = 4096
+_PREVIEW_INTERVAL_S = 1.0
+_PREVIEW_GROWTH = 2048
+_PREVIEW_SECRET = re.compile(r"(?i)(sk-)(\S{0,80})")
+
+
+def _scrub_preview(text: str) -> str:
+    """The latest slice of an in-flight reply. A key-shaped token is not written to llm.json."""
+    shown = text[-_PREVIEW_CHARS:]
+    return _PREVIEW_SECRET.sub(r"\1…", shown)
 
 
 # 请求本身失败（鉴权、坏参数、重试耗尽，或不可重试的 4xx）。编排器里：规划失败改用内置备用方案，搜索继续；
@@ -568,6 +578,23 @@ class LLM:
         finish = None
         usage = None
         noted = False
+        last_preview_at = 0.0
+        last_preview_size = 0
+
+        async def _flush_preview() -> None:
+            nonlocal last_preview_at, last_preview_size
+            text = "".join(content)
+            thought = "".join(reasoning)
+            size = len(text) + len(thought)
+            if size - last_preview_size < _PREVIEW_GROWTH:
+                return
+            now = time.monotonic()
+            if last_preview_at and now - last_preview_at < _PREVIEW_INTERVAL_S:
+                return
+            last_preview_at = now
+            last_preview_size = size
+            await self._note_llm(label, "streaming", preview=_scrub_preview(text), thinking=_scrub_preview(thought))
+
         async for chunk in resp:
             if getattr(chunk, "usage", None):
                 usage = chunk.usage
@@ -590,6 +617,8 @@ class LLM:
                 content.append(piece)
             if thought:
                 reasoning.append(thought)
+            if piece or thought:
+                await _flush_preview()
             for call in deltas:
                 slot = tools.setdefault(int(getattr(call, "index", 0) or 0), {"id": "", "name": "", "arguments": ""})
                 if getattr(call, "id", None):

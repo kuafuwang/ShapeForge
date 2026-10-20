@@ -780,6 +780,346 @@ def pi_feed(run_id: str, *, sessions_root: Path | None = None, stamp: str = "") 
     }
 
 
+def _number(value) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _whole(value) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def project_turn(item: dict) -> dict | None:
+    """One slim row for the turns table. The system prompt, kernel source and secrets stay out."""
+    event = item.get("event")
+    if event not in ("chat", "retry", "error", "warning", "agent"):
+        return None
+    label = item.get("label") if isinstance(item.get("label"), str) else ""
+    model = item.get("model") if isinstance(item.get("model"), str) else ""
+    row: dict = {
+        "label": label,
+        "kind": event,
+        "model": model,
+        "seconds": _number(item.get("seconds")),
+        "finish_reason": item.get("finish_reason") if isinstance(item.get("finish_reason"), str) else "",
+        "error": "",
+        "sent": "",
+        "reply": "",
+        "thinking": "",
+        "tools": [],
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "cost_usd": _number(item.get("cost_usd")),
+        "had_kernel": False,
+    }
+    if event == "retry":
+        row["error"] = _clip(str(item.get("error") or ""), 180)
+        return row
+    if event == "error":
+        status = item.get("status")
+        err = str(item.get("error") or "")
+        row["error"] = _clip(f"HTTP {status}: {err}" if status else err, 180)
+        return row
+    if event == "warning":
+        row["error"] = _clip(str(item.get("message") or ""), 180)
+        return row
+    if event == "agent":
+        parts = [item.get("harness") or "pi", item.get("provider") or "", item.get("model") or ""]
+        row["model"] = "/".join(str(part) for part in parts if part)
+        row["error"] = _clip(str(item.get("error") or ""), 180)
+        row["had_kernel"] = bool(item.get("had_kernel"))
+        return row
+    messages = item.get("messages") if isinstance(item.get("messages"), list) else []
+    sent = ""
+    for message in reversed(messages):
+        if not isinstance(message, dict) or message.get("role") == "system":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            sent = content
+            break
+    if sent:
+        row["sent"] = _clip(sent, 400)
+    reply = item.get("reply") if isinstance(item.get("reply"), dict) else {}
+    reasoning = reply.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning.strip():
+        row["thinking"] = _clip(reasoning, 300)
+    content = reply.get("content")
+    if isinstance(content, str) and content.strip():
+        row["reply"] = _clip(content, 800)
+    tools = []
+    for call in reply.get("tool_calls") or []:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function") if isinstance(call.get("function"), dict) else {}
+        tools.append(str(function.get("name") or "tool"))
+    row["tools"] = tools
+    usage = item.get("usage") if isinstance(item.get("usage"), dict) else {}
+    row["prompt_tokens"] = _whole(usage.get("prompt_tokens"))
+    row["completion_tokens"] = _whole(usage.get("completion_tokens"))
+    return row
+
+
+def _present_turn(group: dict) -> dict:
+    """One page row. Events that share a label and sit next to each other are already one group."""
+    events = group["events"]
+    def last(kind: str) -> dict | None:
+        found = [event for event in events if event.get("kind") == kind]
+        return found[-1] if found else None
+
+    chat = last("chat")
+    agent = last("agent")
+    error = last("error")
+    retry = last("retry")
+    warning = last("warning")
+    model = ""
+    for event in reversed(events):
+        if event.get("model"):
+            model = str(event["model"])
+            break
+    retries = [str(event.get("error") or "") for event in events if event.get("kind") == "retry" and event.get("error")]
+    kind = "retry"
+    err = ""
+    sent = thinking = reply = ""
+    tools: list[str] = []
+    seconds = None
+    cost = None
+    tokens = None
+    if chat:
+        finish = chat.get("finish_reason") or ""
+        sent = str(chat.get("sent") or "")
+        thinking = str(chat.get("thinking") or "")
+        reply = str(chat.get("reply") or "")
+        tools = [str(name) for name in (chat.get("tools") or [])]
+        seconds = chat.get("seconds")
+        cost = chat.get("cost_usd")
+        prompt = chat.get("prompt_tokens")
+        completion = chat.get("completion_tokens")
+        if isinstance(prompt, int) or isinstance(completion, int):
+            tokens = int(prompt or 0) + int(completion or 0)
+        if finish == "length" or warning is not None:
+            kind = "truncated"
+        elif tools and not reply:
+            kind = "tool"
+        elif not reply and not tools:
+            kind = "empty"
+        else:
+            kind = "reply"
+        if error is not None:
+            err = str(error.get("error") or "")
+    elif agent is not None:
+        if agent.get("error"):
+            kind = "agent_error"
+        elif agent.get("had_kernel"):
+            kind = "agent"
+        else:
+            kind = "agent_empty"
+        err = str(agent.get("error") or "")
+        cost = agent.get("cost_usd")
+        seconds = agent.get("seconds")
+    elif error is not None:
+        kind = "http"
+        err = str(error.get("error") or "")
+    elif retry is not None:
+        err = str(retry.get("error") or "")
+        kind = _retry_kind(err)
+    elif warning is not None:
+        kind = "truncated"
+        err = str(warning.get("error") or "")
+    return {
+        "label": group["label"],
+        "min_seq": group["min_seq"],
+        "max_seq": group["max_seq"],
+        "kind": kind,
+        "model": model,
+        "seconds": seconds,
+        "tokens": tokens,
+        "cost_usd": cost,
+        "sent": sent,
+        "thinking": thinking,
+        "reply": reply,
+        "tools": tools,
+        "retries": retries,
+        "error": err,
+        "preview": "",
+        "preview_thinking": "",
+        "stale": False,
+    }
+
+
+def _turn_groups(events: list[dict]) -> list[dict]:
+    """Consecutive events with the same label are one group. A later repeat of that label is another group."""
+    groups: list[dict] = []
+    for event in events:
+        label = str(event.get("label") or "")
+        if groups and label and groups[-1]["label"] == label:
+            groups[-1]["events"].append(event)
+            groups[-1]["max_seq"] = event["seq"]
+            continue
+        groups.append({"label": label, "min_seq": event["seq"], "max_seq": event["seq"], "events": [event]})
+    return groups
+
+
+def _before_seq(before) -> int | None:
+    if before is None or before == "":
+        return None
+    try:
+        return int(before)
+    except (TypeError, ValueError):
+        return None
+
+
+def _turns_stamp(turn_bytes: int, directory: Path) -> str:
+    def part(path: Path) -> tuple[int, int]:
+        try:
+            stat = path.stat()
+        except OSError:
+            return (0, 0)
+        return (int(stat.st_size), int(stat.st_mtime_ns))
+
+    transcript = part(directory / "transcript.jsonl")
+    live = part(directory / "llm.json")
+    return f"{transcript[0]}.{transcript[1]}.{int(turn_bytes)}.{live[0]}.{live[1]}"
+
+
+def _stopped_turns(directory: Path) -> list[dict]:
+    """A branch the search aborted. These lines live in history, not in the transcript."""
+    rows = []
+    for doc in (_load(directory / "state.json"), _load(directory / "result.json")):
+        history = (doc or {}).get("history") if isinstance(doc, dict) else None
+        if not isinstance(history, list):
+            continue
+        for line in history:
+            if not isinstance(line, str):
+                continue
+            if "aborted" not in line and "gave up" not in line and "llm_error" not in line:
+                continue
+            rows.append({
+                "label": "",
+                "min_seq": None,
+                "max_seq": None,
+                "kind": "stopped",
+                "model": "",
+                "seconds": None,
+                "tokens": None,
+                "cost_usd": None,
+                "sent": "",
+                "thinking": "",
+                "reply": "",
+                "tools": [],
+                "retries": [],
+                "error": _clip(line, 180),
+                "preview": "",
+                "preview_thinking": "",
+                "stale": False,
+            })
+        break
+    return rows
+
+
+def _attach_preview(rows: list[dict], directory: Path, *, running: bool, tail: bool) -> None:
+    """The in-flight text sits on the row with that label. A label with no row yet is a new line at the end of the tail."""
+    doc = _load(directory / "llm.json") or {}
+    inflight = doc.get("inflight") if isinstance(doc.get("inflight"), dict) else {}
+    for label, entry in inflight.items():
+        if not isinstance(entry, dict):
+            continue
+        preview = entry.get("preview") if isinstance(entry.get("preview"), str) else ""
+        thinking = entry.get("thinking") if isinstance(entry.get("thinking"), str) else ""
+        status = entry.get("status") if isinstance(entry.get("status"), str) else ""
+        target = None
+        for row in reversed(rows):
+            if row.get("label") == label and row.get("min_seq") is not None:
+                target = row
+                break
+        if target is None:
+            if not tail:
+                continue
+            target = {
+                "label": str(label),
+                "min_seq": None,
+                "max_seq": None,
+                "kind": "streaming" if status == "streaming" else "waiting",
+                "model": "",
+                "seconds": None,
+                "tokens": None,
+                "cost_usd": None,
+                "sent": "",
+                "thinking": "",
+                "reply": "",
+                "tools": [],
+                "retries": [],
+                "error": "",
+                "preview": "",
+                "preview_thinking": "",
+                "stale": not running,
+            }
+            rows.append(target)
+        target["preview"] = preview
+        target["preview_thinking"] = thinking
+        target["stale"] = not running
+
+
+def turns_feed(run_id: str, *, before=None, limit: int = 40, stamp: str = "") -> dict | None:
+    """A window of merged turns. ``before`` is the smallest seq of the oldest group already on the page.
+
+    ``same`` is true when ``stamp`` still matches, and then the turns table is not read.
+    """
+    directory = resolve_run(run_id)
+    if directory is None:
+        return None
+    from observe.index import get_index
+
+    index = get_index()
+    index.ensure_turns(directory)
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 40
+    limit = max(1, min(limit, 200))
+    before_seq = _before_seq(before)
+    conn = index.read_only()
+    try:
+        stored = conn.execute("SELECT turn_bytes, status FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+        turn_bytes = int(stored["turn_bytes"] or 0) if stored else 0
+        running = bool(stored) and stored["status"] == "running"
+        current = _turns_stamp(turn_bytes, directory)
+        if stamp and stamp == current and before_seq is None:
+            return {"same": True, "stamp": current}
+        index.stats["turn_reads"] = index.stats.get("turn_reads", 0) + 1
+        fetched = conn.execute(
+            "SELECT seq, row_json FROM turns WHERE run_id = ? ORDER BY seq",
+            (run_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    events = []
+    for item in fetched:
+        try:
+            event = json.loads(item["row_json"] or "{}")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        event["seq"] = int(item["seq"])
+        events.append(event)
+    groups = _turn_groups(events)
+    eligible = [group for group in groups if before_seq is None or group["min_seq"] < before_seq]
+    window = eligible[-limit:]
+    cursor = None
+    if window and eligible and window[0]["min_seq"] > eligible[0]["min_seq"]:
+        cursor = window[0]["min_seq"]
+    rows = [_present_turn(group) for group in window]
+    tail = before_seq is None
+    if tail:
+        rows.extend(_stopped_turns(directory))
+    _attach_preview(rows, directory, running=running, tail=tail)
+    return {"same": False, "stamp": current, "cursor": cursor, "rows": rows}
+
+
 def _agent_note(item: dict, label: str) -> dict:
     """One hmz turn. The coding agent wrote a file; this is not a chat-tool call and not an exception by itself."""
     parts = [item.get("harness") or "pi", item.get("provider") or "", item.get("model") or ""]
@@ -832,6 +1172,8 @@ def _model_notes(directory: Path) -> list[dict]:
             notes.append({"label": label, "model": model, "kind": "http", "detail": detail[:180], "seconds": None})
             continue
         if event == "warning" and item.get("message") == "reply truncated by max_tokens":
+            if any(note["label"] == label and note["kind"] == "truncated" for note in notes):
+                continue
             notes.append({"label": label, "model": model, "kind": "truncated", "detail": "reply truncated by max_tokens", "seconds": None})
             continue
         if event == "agent":
@@ -847,6 +1189,10 @@ def _model_notes(directory: Path) -> list[dict]:
             notes.append({"label": label, "model": model, "kind": "tool", "detail": ", ".join(names), "seconds": item.get("seconds")})
         elif not content.strip() and not calls:
             notes.append({"label": label, "model": model, "kind": "empty", "detail": str(item.get("finish_reason") or ""), "seconds": item.get("seconds")})
+        elif item.get("finish_reason") == "length":
+            notes.append({"label": label, "model": model, "kind": "truncated", "detail": f"正文仍有 {len(content.strip())} 字", "seconds": item.get("seconds")})
+        else:
+            notes.append({"label": label, "model": model, "kind": "reply", "detail": f"正文 {len(content.strip())} 字", "seconds": item.get("seconds")})
     for doc in (_load(directory / "state.json"), _load(directory / "result.json")):
         history = (doc or {}).get("history") if isinstance(doc, dict) else None
         if not isinstance(history, list):
@@ -1283,7 +1629,6 @@ def run_detail(run_id: str) -> dict | None:
         "trace": trace,
         "confirmations": confirmations,
         "candidates": _candidates(directory),
-        "model_notes": _model_notes(directory),
         "kernel_writer": kernel_writer(directory),
         "publication": conclusion["publication"],
         "published_speedup": conclusion["speedup"],

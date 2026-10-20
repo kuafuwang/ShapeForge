@@ -9,6 +9,8 @@
 - [`pi编排与异常.md`](pi编排与异常.md)：Pi 怎样编排一轮模型调用，请求失败、超窗、截断和取消各自怎么收？
 - [`opencode编排与异常.md`](opencode编排与异常.md)：OpenCode 2.0.32 怎样编排一轮模型调用，请求失败、超窗、截断和取消各自怎么收？
 - [`deepseek-harness编排与异常.md`](deepseek-harness编排与异常.md)：DeepSeek Harness 怎样编排一轮模型调用，请求失败、超窗、截断和取消各自怎么收？
+- [`deepseek-harness-web可观测.md`](deepseek-harness-web可观测.md)：DeepSeek Harness 的 Web 界面怎样连上会话、事件长什么样、页面怎么刷新、默认画什么？
+- [`直调与hmz取舍.md`](直调与hmz取舍.md)：直调模型和把写内核交给 hmz，各自守什么、丢掉什么，调用 hmz 算不算 loop engineering？
 - [`架构改进评估.md`](架构改进评估.md)：这些缺口对应的花费数字，以及 P0 到 P3 已经写进代码的开关？
 - [`hardware_features.md`](hardware_features.md)：生成的核用了论文所归功的哪些硬件特性，这颗苹果芯片上对应的是什么？
 - [`代理理论.md`](代理理论.md)：哪些代理说法对得上这个仓库，哪些不该因为名字经典就加进来？

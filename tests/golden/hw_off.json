@@ -1,8 +1,8 @@
 {
 "_meta": {
-"git_commit": "4932d7690ceb86a8443b7f0e32575facc0bb6b2a",
-"reason": "record the truncation retry and the separate plan and patch efforts on the requests the search actually sends",
-"recorded_at": "2026-10-19T15:14:34+08:00"
+"git_commit": "0de82a6015a144aadb0dd9c907d48a8fe28e8ac1",
+"reason": "Direct chat sends stream=True, so the hashed request body includes the stream flags.",
+"recorded_at": "2026-10-20T10:18:43+08:00"
 },
 "feedback": {
 "format_feedback_cut|compile_error": "STATUS: compile_error  (stage reached: compile)\nMetal compiler rejected the kernel\n\nMetal compiler errors (line numbers refer to your kernel source):\nkernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n",
@@ -23,257 +23,257 @@
 "each": [
 {
 "label": "init",
-"sha": "90ca8f36e6a4225b944448e826ed087d5864a3ab"
+"sha": "2e1ca9085141eb4ecbfe15b795ea139093c87c34"
 },
 {
 "label": "r1.p0",
-"sha": "477c2975358a74927c9f67ec7d052b529b6504df"
+"sha": "2e085ac695c8ce504f7bfce02ff7926c60559da0"
 },
 {
 "label": "r1.p1",
-"sha": "c9d5dd385581be940246d415cb6e9ee61d7966de"
+"sha": "60bfa4f456e31d143d4a2ae77bd4ecd4844cda96"
 },
 {
 "label": "r1.p2",
-"sha": "bee7a4bcac5a561dea848d9ac460f080afbfab79"
+"sha": "06ce42f9005b7346a789c6dceb7ffdfa4819ae41"
 },
 {
 "label": "r1.plan",
-"sha": "6b837c383d63e818f37413298ee406c6ae53ab3a"
+"sha": "5709378a723c8200814132eaf3cdbb2967a38276"
 },
 {
 "label": "r2.p0",
-"sha": "d023335534bc0ce00c75dd88ed2b93ee3d4167e1"
+"sha": "aef34cdd07cb0fc500b2db940216961ed1ff3744"
 },
 {
 "label": "r2.p1",
-"sha": "357a5a39089e72da86de7d465eb1ca7c4b92a97b"
+"sha": "53580104f039bf5c6b59f806b0478ffb50064b5e"
 },
 {
 "label": "r2.p2",
-"sha": "14f3a84609245e2d80e34d43ea947c60ae03ebca"
+"sha": "7a3d2ecbe40f96a5b0852ef2426f29131ba27caa"
 },
 {
 "label": "r2.plan",
-"sha": "f7f8f80d66529cce937b25cd707998630615295d"
+"sha": "43b47dee602bd5eba73c8affb3a681de6f8a4b2f"
 }
 ],
 "requests": 9,
-"sha": "125156544553fdcca4bbebf1d9d35ce80da2e810"
+"sha": "24e1297d13abe798e31943aa9c39032c842c2f32"
 },
 "orchestrator|gemm|plan_mix=1": {
 "each": [
 {
 "label": "init",
-"sha": "6b26e17ebd1ce2e36c1583c82c7b2b8bfc0d455f"
+"sha": "c312d07a86e1d9ce4b8035bf8cce8fb34531d6d2"
 },
 {
 "label": "r1.p0",
-"sha": "327b666013926d4771f0980552fdeac6c0b6c27a"
+"sha": "dd6ee263034ef77917ab091a7abb33475a267be6"
 },
 {
 "label": "r1.p1",
-"sha": "cfe454bb088135309bed7af2f8622c25e3f7df0b"
+"sha": "d241a7ac3f98707a3492d3f423cf6c4b85471788"
 },
 {
 "label": "r1.p2",
-"sha": "b9e1e54ea81b520cd45b7aee0cbf90d57d2ad486"
+"sha": "07642a47fac29aec0fcc8f1af55e898c81fe8586"
 },
 {
 "label": "r1.plan",
-"sha": "2e3fef7bd579a822a583dfb92ec7975b760afbf7"
+"sha": "1bee646e962a9f020092858c3d69f4ef57b32491"
 },
 {
 "label": "r2.p0",
-"sha": "7e27e7f9d1f13bcf37104dcc33030f9c885ecf38"
+"sha": "412137ddb8c6f0f36dc3ae86e8a9ed83f3d76050"
 },
 {
 "label": "r2.p1",
-"sha": "7c6d4c821f9fe2c061280b3eff0cb96a48c91e7a"
+"sha": "84e8c9f412bac40fbbb370c409b4dcc06f0f48d8"
 },
 {
 "label": "r2.p2",
-"sha": "0b13471eb49971d2d74445a3e9fd86b6cd089577"
+"sha": "55223ff45618ae393eefde1ab59c00392820c3de"
 },
 {
 "label": "r2.plan",
-"sha": "3c0008652259e393f8e6c1acec122c68802d7071"
+"sha": "bc131e1fad8ce4422b851aea9feea1201e8d9da8"
 }
 ],
 "requests": 9,
-"sha": "a021ae4847b28e91b19b526a8e60997162cdad6a"
+"sha": "fd74b389d527a942060099b93440427c12a6d7cc"
 },
 "orchestrator|relu|plan_mix=0": {
 "each": [
 {
 "label": "init",
-"sha": "d18edef19a48f6327bb903a315a57bb399faeb5f"
+"sha": "5c3d6d080f08097675aa7b8d028797bb8330a991"
 },
 {
 "label": "r1.p0",
-"sha": "6b837fbb62cfdedee48ccd16159293d2fd19dd19"
+"sha": "bc93b5d7a1e1dbac82a6a64aa64fedcb2a9df5e4"
 },
 {
 "label": "r1.p1",
-"sha": "50f99e42613ba8cb3d0988eeeb68758a1db20e3d"
+"sha": "9daaa988aedd2f3897ce3ac80d1068b3031d7e1f"
 },
 {
 "label": "r1.p2",
-"sha": "3cc46f1629d2e0a0e5df09b3b20657a929651771"
+"sha": "4057b45e04b7be780e15043c2700c2e7e9549102"
 },
 {
 "label": "r1.plan",
-"sha": "60977263677fa888e76478d2e4b66cdb51ce1eea"
+"sha": "a9c860b4c56c40f31816de1d57933421136fe4c3"
 },
 {
 "label": "r2.p0",
-"sha": "b153407d75d9be97ccd699f73656c606ae6f8341"
+"sha": "f95886bcd306ebd17ffb39185b706b24f360f9af"
 },
 {
 "label": "r2.p1",
-"sha": "628700d8654721f94a165e52167be4682b3f1f01"
+"sha": "3ec64d9b2d383047cc690bb42947040ae92150a4"
 },
 {
 "label": "r2.p2",
-"sha": "47ccefa9dbf5c093ac3d1157329f0d5cdafa33fd"
+"sha": "b0bcef5c38c4007c008bc6e8ee4ee956a2af7923"
 },
 {
 "label": "r2.plan",
-"sha": "8f8140813e29af9954d1c8a7ff215190c1e144f2"
+"sha": "0ee3d933b855bb34739a1a3283568b783b7745e0"
 }
 ],
 "requests": 9,
-"sha": "dac8e89ace8ae769ae4d87de1010791701cf0245"
+"sha": "f8b0c5fd1d2c67d74369c0c170f8cffaa3db727f"
 },
 "orchestrator|relu|plan_mix=0|plan_effort=high|patch_effort=low": {
 "each": [
 {
 "label": "init",
-"sha": "c55b9be6a22495502cd9abc90ef7b9dd59b6bfff"
+"sha": "abca70ad68c6213cd3b579c81c4cd25d0c17af92"
 },
 {
 "label": "r1.p0",
-"sha": "9fd96907cf9e8ef3d173767b99e6e1d4a9c73c83"
+"sha": "e0f9e9b00d1a07cb5aa02f9d31525b575b0b20bd"
 },
 {
 "label": "r1.p1",
-"sha": "1fe5b1c8946490034d153cb32214293a54aa6d64"
+"sha": "425a3e350a6aa7324c801e93aa71d437e6626b2a"
 },
 {
 "label": "r1.p2",
-"sha": "b9f3ec75177cc4163319bbadaba7936fd0430928"
+"sha": "fe41b54cb29f7618495e461ddd4606073c2205be"
 },
 {
 "label": "r1.plan",
-"sha": "69d1944f6bc1f67d62c6c091edb19ab48342d650"
+"sha": "4871d44446df743309fc58e787d92f1a7152f561"
 },
 {
 "label": "r2.p0",
-"sha": "3c8ba78c890fc1e4bada5bae1a2cb957bdee5c8b"
+"sha": "f04fb19cac846e53b67e6fc4b19f939e939204db"
 },
 {
 "label": "r2.p1",
-"sha": "521af2ad4b61ff04274284bad86786401d1e4d2c"
+"sha": "23aaa2a50b1e05706c13994992dd4f4c86820dec"
 },
 {
 "label": "r2.p2",
-"sha": "4004aac42d56880ae6108033a272a3159af995a9"
+"sha": "cd2bc3c1faa141fc9dfbab12fa59daf6dfb3d0af"
 },
 {
 "label": "r2.plan",
-"sha": "d6797dc3af8711b01203400c759a066f20c23ccf"
+"sha": "846638eae8c0e99a539290f56793a9e8e4934b93"
 }
 ],
 "requests": 9,
-"sha": "edb4ac39d7c6b962fd77c7fcef7512edd7b9be4a"
+"sha": "8d2c210f675efdf547db6f81133b44370043180f"
 },
 "orchestrator|relu|plan_mix=0|truncation_retry=1": {
 "each": [
 {
 "label": "init",
-"sha": "d18edef19a48f6327bb903a315a57bb399faeb5f"
+"sha": "5c3d6d080f08097675aa7b8d028797bb8330a991"
 },
 {
 "label": "init",
-"sha": "c55b9be6a22495502cd9abc90ef7b9dd59b6bfff"
+"sha": "abca70ad68c6213cd3b579c81c4cd25d0c17af92"
 },
 {
 "label": "r1.p0",
-"sha": "6b837fbb62cfdedee48ccd16159293d2fd19dd19"
+"sha": "bc93b5d7a1e1dbac82a6a64aa64fedcb2a9df5e4"
 },
 {
 "label": "r1.p1",
-"sha": "50f99e42613ba8cb3d0988eeeb68758a1db20e3d"
+"sha": "9daaa988aedd2f3897ce3ac80d1068b3031d7e1f"
 },
 {
 "label": "r1.p2",
-"sha": "3cc46f1629d2e0a0e5df09b3b20657a929651771"
+"sha": "4057b45e04b7be780e15043c2700c2e7e9549102"
 },
 {
 "label": "r1.plan",
-"sha": "60977263677fa888e76478d2e4b66cdb51ce1eea"
+"sha": "a9c860b4c56c40f31816de1d57933421136fe4c3"
 },
 {
 "label": "r2.p0",
-"sha": "b153407d75d9be97ccd699f73656c606ae6f8341"
+"sha": "f95886bcd306ebd17ffb39185b706b24f360f9af"
 },
 {
 "label": "r2.p1",
-"sha": "628700d8654721f94a165e52167be4682b3f1f01"
+"sha": "3ec64d9b2d383047cc690bb42947040ae92150a4"
 },
 {
 "label": "r2.p2",
-"sha": "47ccefa9dbf5c093ac3d1157329f0d5cdafa33fd"
+"sha": "b0bcef5c38c4007c008bc6e8ee4ee956a2af7923"
 },
 {
 "label": "r2.plan",
-"sha": "8f8140813e29af9954d1c8a7ff215190c1e144f2"
+"sha": "0ee3d933b855bb34739a1a3283568b783b7745e0"
 }
 ],
 "requests": 10,
-"sha": "4ab27ed59dce6445d6cc4421b188cff07c9f2a63"
+"sha": "d47db5a3137bd1d8896d4194141f70fab5d65206"
 },
 "orchestrator|relu|plan_mix=1": {
 "each": [
 {
 "label": "init",
-"sha": "d18edef19a48f6327bb903a315a57bb399faeb5f"
+"sha": "5c3d6d080f08097675aa7b8d028797bb8330a991"
 },
 {
 "label": "r1.p0",
-"sha": "6b837fbb62cfdedee48ccd16159293d2fd19dd19"
+"sha": "bc93b5d7a1e1dbac82a6a64aa64fedcb2a9df5e4"
 },
 {
 "label": "r1.p1",
-"sha": "50f99e42613ba8cb3d0988eeeb68758a1db20e3d"
+"sha": "9daaa988aedd2f3897ce3ac80d1068b3031d7e1f"
 },
 {
 "label": "r1.p2",
-"sha": "3cc46f1629d2e0a0e5df09b3b20657a929651771"
+"sha": "4057b45e04b7be780e15043c2700c2e7e9549102"
 },
 {
 "label": "r1.plan",
-"sha": "8ace10ba00c0f1c505b831c8ca9ed418a2a7a1bc"
+"sha": "f39e220a800b7a86dc92b76870c2f06c5abb5c0d"
 },
 {
 "label": "r2.p0",
-"sha": "b153407d75d9be97ccd699f73656c606ae6f8341"
+"sha": "f95886bcd306ebd17ffb39185b706b24f360f9af"
 },
 {
 "label": "r2.p1",
-"sha": "628700d8654721f94a165e52167be4682b3f1f01"
+"sha": "3ec64d9b2d383047cc690bb42947040ae92150a4"
 },
 {
 "label": "r2.p2",
-"sha": "47ccefa9dbf5c093ac3d1157329f0d5cdafa33fd"
+"sha": "b0bcef5c38c4007c008bc6e8ee4ee956a2af7923"
 },
 {
 "label": "r2.plan",
-"sha": "6cce1aaa2ef8d52af4763d7754377a3f89fa5c3d"
+"sha": "9ebe38a9a4e6b4e923fb0abcc0bd8eb6d064a91b"
 }
 ],
 "requests": 9,
-"sha": "2778c567fce76fae09810cc7b7b417f34f658287"
+"sha": "0008252b55c7ab1185f3452b3c551f0bb78d4a02"
 }
 },
 "outbound": {

@@ -152,7 +152,8 @@ def test_model_notes_show_a_timeout_and_an_empty_tool_reply(tmp_path):
     ]) + "\n")
     (run / "state.json").write_text(json.dumps({"history": ["round 2: plan -> aborted (BudgetExhausted)"]}))
     notes = _model_notes(run)
-    assert [row["kind"] for row in notes] == ["timeout", "tool", "connection", "http", "truncated", "stopped"]
+    assert [row["kind"] for row in notes] == ["timeout", "tool", "connection", "http", "truncated", "reply", "stopped"]
+    assert notes[5]["label"] == "r1.plan" and notes[5]["detail"] == "正文 14 字" and notes[5]["seconds"] == 40
     assert notes[0]["seconds"] is None
     assert notes[1]["model"] == "kimi-k3" and notes[1]["detail"] == "quick_check"
     blob = json.dumps(notes)

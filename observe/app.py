@@ -68,18 +68,28 @@ async def api_v2_runs(request) -> JSONResponse:
 
 
 async def api_v2_run(request) -> JSONResponse:
-    doc = await asyncio.to_thread(query.run_detail, request.path_params["run_id"])
+    doc = await asyncio.to_thread(query.run_detail, request.path_params["run_id"], stamp=request.query_params.get("stamp") or "")
     if doc is None:
         return _json({"error": "not found"}, status=404)
     return _json(doc)
 
 
-async def api_v2_chat(request) -> JSONResponse:
-    """The live direct-chat tail for one run. Polled on its own so the rest of the page is not redrawn."""
-    from observe.detail import chat_feed
+async def api_v2_turns(request) -> JSONResponse:
+    """One window of model turns. A matching stamp returns no rows and does not read the turns table."""
+    from observe.detail import turns_feed
 
-    stamp = request.query_params.get("stamp") or ""
-    feed = await asyncio.to_thread(chat_feed, request.path_params["run_id"], stamp=stamp)
+    params = request.query_params
+    try:
+        limit = int(params.get("limit", "40"))
+    except ValueError:
+        limit = 40
+    feed = await asyncio.to_thread(
+        turns_feed,
+        request.path_params["run_id"],
+        before=params.get("before"),
+        limit=limit,
+        stamp=params.get("stamp") or "",
+    )
     if feed is None:
         return _json({"error": "not found"}, status=404)
     return _json(feed)
@@ -261,7 +271,7 @@ app = Starlette(
         Route("/api/v2/budget", api_v2_budget),
         Route("/api/v2/ledger", api_v2_ledger),
         Route("/api/v2/stream", api_stream),
-        Route("/api/v2/chat/{run_id:path}", api_v2_chat),
+        Route("/api/v2/turns/{run_id:path}", api_v2_turns),
         Route("/api/v2/pi/{run_id:path}", api_v2_pi),
         Route("/api/v2/runs/{run_id:path}", api_v2_run),
         Route("/api/history", api_v1_history),

@@ -696,14 +696,21 @@ def evaluate(
             # 校验子进程在 bench 之前：打开会插桩访存和 barrier 的 shader validation，单次启动期限用两倍 LAUNCH_DEADLINE_S。
             # 这次不过关就带着它的状态码返回。通过后第二个子进程再做完整评测并进入 bench，且不再设置校验环境。
             v = _run_worker(task, dtype, size, kp, "validate", seed, reps, timeout or 120.0, validation=True, cases=cases, launch_deadline_s=2 * LAUNCH_DEADLINE_S, progress_path=progress_path)
-            if v.status != STATUS_OK:
+            # 校验插桩会把静态线程组内存报成大约两倍。只有这一条时，不拿它否决内核，改由下面不插桩的编译去比 32768。
+            from .abi import only_static_threadgroup_limit
+
+            size_only = v.status == "abi_error" and only_static_threadgroup_limit((v.abi or {}).get("violations") or [])
+            if v.status != STATUS_OK and not size_only:
                 v.mode = "full"
                 v.elapsed_s = time.perf_counter() - t0
                 return _live(v)
             rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench)
             rep.safety = dict(rep.safety or {})
             rep.safety["validation"] = []
-            rep.safety["shader_validation"] = "clean"
+            rep.safety["shader_validation"] = (
+                "skipped: the validation pipeline's threadgroup size is the instrumented figure; the uninstrumented pipeline checked the 32768 B limit"
+                if size_only else "clean"
+            )
         else:
             rep = _run_worker(task, dtype, size, kp, "quick", seed, reps, timeout or 240.0, validation=False, cases=cases, progress_path=progress_path)
         rep.elapsed_s = time.perf_counter() - t0

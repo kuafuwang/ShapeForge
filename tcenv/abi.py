@@ -11,6 +11,8 @@ scalar types, no extra arguments, and a launch configuration the pipeline can ru
 
 from __future__ import annotations
 
+import re
+
 from .contract import Contract
 from .dtypes import get_dtype
 from .metal_runtime import CompiledKernel
@@ -70,3 +72,16 @@ def check_abi(contract: Contract, kernel: CompiledKernel, *, max_tg_memory: int 
     if kernel.static_tg_bytes > max_tg_memory:
         problems.append(f"static threadgroup memory {kernel.static_tg_bytes} B exceeds the device limit of {max_tg_memory} B")
     return problems
+
+
+_STATIC_TG_LIMIT = re.compile(r"^static threadgroup memory \d+ B exceeds the device limit of \d+ B$")
+
+
+def only_static_threadgroup_limit(violations: list[str]) -> bool:
+    """True when every violation is the static threadgroup-size line.
+
+    Shader validation compiles with threadgroup instrumentation, and that pipeline reports
+    about twice the memory the kernel declared. The uninstrumented pipeline is the check
+    against the device limit. A signature or launch failure is never this case.
+    """
+    return bool(violations) and all(_STATIC_TG_LIMIT.match(item) for item in violations)

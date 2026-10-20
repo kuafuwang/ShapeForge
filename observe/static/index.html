@@ -11,7 +11,10 @@
     --blue: #0a66c2; --green: #17803d; --red: #c2413a; --amber: #b45309;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); color: var(--ink); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { flex: none; }
+  main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
   button, input, select { font: inherit; }
   button { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; cursor: pointer; color: var(--ink); }
   button.quiet { font-size: 11px; font-weight: 400; line-height: 1.3; padding: 0 5px; color: var(--muted); }
@@ -50,6 +53,9 @@
   .bb.alert { background: #fff8f1; border: 1px solid #f0c9a0; border-radius: 12px; padding: 8px 10px; }
   .bb.ok { color: var(--green); }
   .bb-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 6px; }
+  .budget-toggle { margin-left: auto; }
+  #budget-banner.budget-collapsed .bb-list { display: none; }
+  #budget-banner.budget-collapsed .bb-head { margin-bottom: 0; }
   .bb-count { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 700; }
   .bb-count.over { background: var(--red); color: #fff; }
   .bb-count.exhausted { background: var(--amber); color: #fff; }
@@ -57,15 +63,37 @@
   .bb-total { color: var(--muted); font-size: 12px; }
   .bb-list { max-height: 12rem; overflow-x: hidden; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
   .note-list { max-height: 12rem; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+  #turns-live details { margin: 6px 8px; }
+  #turns-live summary { cursor: pointer; }
   .pi-live { max-height: 16rem; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px; background: #fff; }
   .pi-live p { margin: 0 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .note-list thead th { position: sticky; top: 0; background: #fff; z-index: 1; }
   .bb-list .chip { display: block; overflow-wrap: anywhere; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; color: inherit; text-decoration: none; }
-  .workspace { display: flex; flex-direction: column; gap: 12px; }
-  #side { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; max-height: 46vh; overflow: auto; }
-  .workspace.collapsed #side { max-height: none; overflow: hidden; }
-  .workspace.collapsed #side .side-block, .workspace.collapsed #side .side-title { display: none; }
-  .side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+  #side { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+  .workspace.collapsed #side { flex: 0 0 auto; }
+  .workspace.collapsed #side .side-block, .workspace.collapsed #side .side-title, .workspace.collapsed #side .runs-head, .workspace.collapsed #side .side-upper { display: none; }
+  .side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; margin: -10px -10px 8px; padding: 10px 10px 8px; background: var(--card); border-bottom: 1px solid var(--line); }
+  .side-upper { flex: 0 1 auto; min-height: 0; max-height: 42%; overflow: auto; }
+  #side:has(.runs-panel.collapsed) { flex: 0 1 auto; max-height: 36%; }
+  #side:has(.runs-panel.collapsed) .side-upper { max-height: none; flex: 1 1 auto; overflow: auto; }
+  .runs-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; margin: 0 -10px; padding: 6px 10px; background: var(--card); }
+  .runs-head .side-title { margin: 0; }
+  .runs-panel { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .runs-panel.collapsed { flex: 0 0 auto; }
+  .runs-panel.collapsed #runs-body { display: none; }
+  #runs-body { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  #view-runs { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .runs-table-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+  #runs thead th { position: sticky; top: 0; background: #fff; z-index: 1; }
+  .detail-panel { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .detail-panel.collapsed { flex: 0 0 auto; }
+  .detail-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; padding: 8px 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px 12px 0 0; }
+  .detail-head strong { font-size: 13px; color: var(--muted); }
+  .detail-panel.collapsed .detail-head { border-radius: 12px; }
+  .detail-panel.collapsed #detail-body { display: none; }
+  .detail-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--card); border: 1px solid var(--line); border-top: 0; border-radius: 0 0 12px 12px; padding: 14px; }
+  .detail-scroll .view { border: 0; padding: 0; background: transparent; border-radius: 0; }
   .side-head strong { font-size: 13px; color: var(--muted); }
   .side-title { margin: 14px 0 6px; font-size: 13px; color: var(--muted); }
   .side-block { overflow-x: auto; }
@@ -84,7 +112,6 @@
   #settings-committees select { flex: 1; }
   @media (max-width: 800px) {
     .detail-split { grid-template-columns: 1fr; }
-    #side { max-height: 50vh; }
   }
 </style>
 </head>
@@ -107,11 +134,18 @@
       <strong>实验</strong>
       <button type="button" id="side-toggle" aria-expanded="true" title="收起上面">收起</button>
     </div>
+    <div class="side-upper">
     <section id="budget-banner" class="side-block"><!--BUDGET_BANNER--></section>
     <section id="view-experiments" class="side-block"></section>
     <h3 class="side-title">对照</h3>
     <section id="view-compare" class="side-block"><p class="muted">点一个实验看对照。</p></section>
-    <h3 class="side-title">运行</h3>
+    </div>
+    <div id="runs-panel" class="runs-panel">
+    <div class="runs-head">
+      <h3 class="side-title">运行</h3>
+      <button type="button" id="runs-toggle" aria-expanded="true" title="收起运行">收起</button>
+    </div>
+    <div id="runs-body">
     <section id="view-runs" class="side-block">
     <div id="hist-tools"></div>
     <form id="run-filters">
@@ -134,12 +168,22 @@
       <button type="button" id="runs-next">下一页</button>
       <span id="runs-page" class="muted"></span>
     </form>
+    <div class="runs-table-scroll">
     <table id="runs"><thead><tr><th>运行</th><th>题目</th><th>发布</th><th>加速比</th><th>绑定</th><th>状态</th></tr></thead><tbody></tbody></table>
+    </div>
     </section>
+    </div>
+    </div>
   </aside>
-  <div class="right">
+  <div id="detail-panel" class="detail-panel">
+    <div class="detail-head">
+      <strong>详情</strong>
+      <button type="button" id="detail-toggle" aria-expanded="true" title="收起详情">收起</button>
+    </div>
+    <div id="detail-body" class="detail-scroll">
     <section id="view-detail" class="view on"><p class="muted">点上面一次运行，这里显示它的详情。</p></section>
     <section id="view-ledger" class="view"></section>
+    </div>
   </div>
   </div>
 </main>
@@ -204,6 +248,7 @@ function renderBanner(report) {
   if (!slot || !report) return;
   slot.dataset.level = report.level || "ok";
   if (Array.isArray(report.flagged)) slot.innerHTML = bannerHtml(report);
+  if (slot.classList.contains("budget-collapsed")) setBudgetCollapsed(true);
 }
 
 function bannerHtml(report) {
@@ -216,7 +261,7 @@ function bannerHtml(report) {
     const title = `${item.task || item.id || ""}${item.dtype ? " " + item.dtype : ""}`;
     return `<a class="chip ${esc(item.level)}" href="/?run=${encodeURIComponent(item.id || "")}" data-run="${esc(item.id)}"><b>${esc(item.id)}</b> <span>${esc(title)}</span> <i>${esc(names)}</i> <span>${esc(item.text)}</span></a>`;
   }).join("");
-  return `<div class="bb alert ${esc(report.level)}" data-level="${esc(report.level)}"><div class="bb-head"><b class="bb-title">⚠ 预算告警 BUDGET ALERT</b>${counts}<span class="bb-total">${esc(total + over)}</span></div><div class="bb-list">${chips}</div></div>`;
+  return `<div class="bb alert ${esc(report.level)}" data-level="${esc(report.level)}"><div class="bb-head"><b class="bb-title">⚠ 预算告警 BUDGET ALERT</b>${counts}<span class="bb-total">${esc(total + over)}</span><button type="button" id="budget-toggle" class="budget-toggle" aria-expanded="true" title="收起预算告警">收起</button></div><div class="bb-list">${chips}</div></div>`;
 }
 
 async function refreshBanner() {
@@ -225,6 +270,7 @@ async function refreshBanner() {
 }
 
 function showRight(name) {
+  if (document.getElementById("detail-panel").classList.contains("collapsed")) setDetailCollapsed(false);
   visible = name === "ledger" ? "ledger" : "detail";
   document.getElementById("view-detail").classList.toggle("on", visible === "detail");
   document.getElementById("view-ledger").classList.toggle("on", visible === "ledger");
@@ -325,12 +371,14 @@ const NOTE_KIND = {
   retry: "请求失败后重试",
   http: "请求被拒绝",
   truncated: "回复被长度截断",
+  reply: "正常。模型返回了正文。",
   tool: "正常工具调用，不是异常",
   empty: "模型自己结束了这一轮，正文是空的",
   stopped: "这一支被搜索中止",
   agent: "正常。hmz 调用 pi 写内核，不是异常。计时和换种子仍由搜索做。",
   agent_empty: "hmz 跑完了，kernel.metal 里没有约定的内核。",
-  agent_error: "hmz 或 pi 这一场没有跑完。",
+  waiting: "正在等待这一轮",
+  streaming: "正在接收这一轮",
 };
 
 function toolSituation(detail) {
@@ -351,13 +399,6 @@ function epicFeed(lines) {
   return `<div class="note-list pi-live" id="epic-live">${body}</div>`;
 }
 
-function chatFeed(lines) {
-  const body = !lines || !lines.length
-    ? `<p class="muted">只显示最近若干轮发出的话和收回的回复，每段都截短。更早的留在这次运行的 transcript.jsonl。</p>`
-    : lines.map((row) => `<p><b>${esc(row.who)}</b> ${esc(row.text)}</p>`).join("");
-  return `<div class="note-list pi-live" id="chat-live">${body}</div>`;
-}
-
 function piFeed(lines) {
   const body = !lines || !lines.length
     ? `<p class="muted">只显示这场会话最近的几十行。更早的留在 pi 自己的会话文件里。</p>`
@@ -371,20 +412,38 @@ function writerMode(doc) {
 
 function writerNote(doc) {
   if (writerMode(doc) === "pi") {
-    return `<p class="muted">这一场写内核走 hmz 和 pi。规划仍记在模型请求里。下面两块只在这种模式下刷新。</p>`;
+    return `<p class="muted">这一场写内核走 hmz 和 pi。规划在回合列表里。下面两块只在这种模式下刷新。</p>`;
   }
-  return `<p class="muted">这一场由搜索直接调用模型。上面是请求摘要。下面只刷新最近若干轮发出和收回的文字，不加载整份记录。</p>`;
+  return `<p class="muted">这一场由搜索直接调用模型。回合列表只保留截短的发出、思考和收到。更早的可以往上翻。</p>`;
 }
 
-function modelNotes(doc) {
-  const rows = newestFirst(doc.model_notes);
-  if (!rows.length) return `<p class="muted">没有要列出的模型请求。</p>`;
-  const body = rows.map((row) => {
-    const situation = row.kind === "tool" ? toolSituation(row.detail) : (NOTE_KIND[row.kind] || row.kind);
-    const detail = row.kind === "empty" && row.detail === "stop" ? "接口结束原因是 stop：这一轮正常结束，没有正文，也没有调用工具" : row.detail;
-    return `<tr><td>${esc(row.label)}</td><td>${esc(row.model || "—")}</td><td>${esc(situation)}</td><td>${esc(detail)}</td><td>${esc(num(row.seconds))}</td></tr>`;
-  }).join("");
-  return `<div class="note-list"><table><thead><tr><th>标签</th><th>模型</th><th>情况</th><th>说明</th><th>秒</th></tr></thead><tbody>${body}</tbody></table></div>`;
+function turnSituation(row) {
+  if (row.kind === "tool") return toolSituation((row.tools || []).join(", "));
+  return NOTE_KIND[row.kind] || row.kind || "回合";
+}
+
+function renderTurn(row) {
+  const seconds = row.seconds == null ? "" : (Number(row.seconds).toFixed(0) + " 秒");
+  const tokens = row.tokens == null ? "" : (row.tokens + " token");
+  const cost = row.cost_usd == null ? "" : ("$" + num(row.cost_usd));
+  const head = [turnSituation(row), row.label || "", row.model || "—", seconds, tokens, cost].filter(Boolean).join(" · ");
+  const bits = [];
+  if (row.sent) bits.push(`<p><b>发出</b> ${esc(row.sent)}</p>`);
+  if (row.thinking) bits.push(`<p><b>思考</b> ${esc(row.thinking)}</p>`);
+  if (row.preview_thinking) bits.push(`<p><b>正在想</b> ${esc(row.preview_thinking)}</p>`);
+  if (row.reply) bits.push(`<p><b>收到</b> ${esc(row.reply)}</p>`);
+  if (row.preview) bits.push(`<p><b>正在接收</b> ${esc(row.preview)}</p>`);
+  if (row.tools && row.tools.length) bits.push(`<p><b>工具</b> ${esc(row.tools.join("、"))}</p>`);
+  if (row.retries && row.retries.length) bits.push(`<p><b>重试</b> ${esc(row.retries.join("；"))}</p>`);
+  if (row.error) bits.push(`<p><b>失败</b> ${esc(row.error)}</p>`);
+  if (row.stale) bits.push(`<p class="muted">预览已停</p>`);
+  return `<details><summary>${esc(head)}</summary>${bits.join("")}</details>`;
+}
+
+function turnsFeed(rows, cursor) {
+  const earlier = cursor == null ? "" : `<p><button type="button" id="turns-earlier">更早</button></p>`;
+  const body = !rows || !rows.length ? `<p class="muted">还没有模型回合。</p>` : rows.map(renderTurn).join("");
+  return `<div class="note-list" id="turns-live">${earlier}${body}</div>`;
 }
 
 const STAGES = [["screen", "安检"], ["compile", "编译"], ["abi", "签名"], ["safety", "内存安全"], ["correctness", "对答案"], ["bench", "计时"]];
@@ -498,10 +557,10 @@ function renderDetail(doc) {
     `<h3>确认点</h3>${confirm}` +
     `<h3>委员会交接</h3>${handoffBlock}` +
     `<h3>预算事件</h3>` + (events ? `<table><thead><tr><th>时间</th><th>种类</th><th>谁</th><th>旧预算</th><th>新预算</th><th>备注</th></tr></thead><tbody>${events}</tbody></table>` : `<p class="muted">没有预算事件。</p>`) +
-    `<h3>模型请求</h3>` + writerNote(doc) + modelNotes(doc) +
+    `<h3>回合</h3>` + writerNote(doc) + `<div class="note-list" id="turns-live"></div>` +
     (writerMode(doc) === "pi"
       ? `<h3>hmz epic</h3>` + epicFeed(null) + `<h3>pi 输出</h3>` + piFeed(null)
-      : `<h3>直调</h3>` + chatFeed(null)) +
+      : "") +
     `<h3>候选</h3>` + (candidates ? `<table><thead><tr><th>序号</th><th>标签</th><th>状态</th><th>阶段</th><th>加速比</th><th>标记</th><th>说明</th></tr></thead><tbody>${candidates}</tbody></table>` : `<p class="muted">没有候选。</p>`) +
     `<h3>特征格子</h3>` + (grid ? `<table><thead><tr><th>标签</th><th>签名</th><th>加速比</th><th></th></tr></thead><tbody>${grid}</tbody></table>` : `<p class="muted">空</p>`) +
     `<h3>计划结局</h3>` + (plans ? `<table><thead><tr><th>轮</th><th>标签</th><th>方案</th><th>结局</th><th>加速比</th></tr></thead><tbody>${plans}</tbody></table>` : `<p class="muted">空</p>`) +
@@ -509,21 +568,31 @@ function renderDetail(doc) {
 }
 
 async function loadDetail(id) {
-  const response = await fetch("/api/v2/runs/" + id.split("/").map(encodeURIComponent).join("/"));
+  const query = detailId === id && detailStamp ? "?stamp=" + encodeURIComponent(detailStamp) : "";
+  const response = await fetch("/api/v2/runs/" + id.split("/").map(encodeURIComponent).join("/") + query);
   const doc = await response.json();
   const host = document.getElementById("view-detail");
   if (!response.ok) {
     host.innerHTML = `<p>找不到 ${esc(id)}</p>`;
     return;
   }
+  if (doc.same) {
+    refreshLive();
+    return;
+  }
   if (detailId !== id) {
     detailId = id;
     selectedCandidate = "";
     piStamp = "";
+    turnsStamp = "";
+    turnsRows = [];
+    turnsCursor = null;
   }
   detailDoc = doc;
+  detailStamp = doc.detail_stamp || "";
   host.innerHTML = renderDetail(doc);
   bindCandidatePicks(host);
+  refreshTurns(true);
   refreshLive();
 }
 
@@ -573,9 +642,41 @@ async function postJson(url, body) {
   return doc;
 }
 
+function setBudgetCollapsed(collapsed) {
+  const slot = document.getElementById("budget-banner");
+  slot.classList.toggle("budget-collapsed", collapsed);
+  const button = document.getElementById("budget-toggle");
+  if (button) {
+    button.textContent = collapsed ? "展开" : "收起";
+    button.title = collapsed ? "展开预算告警" : "收起预算告警";
+    button.setAttribute("aria-expanded", String(!collapsed));
+  }
+  try { localStorage.setItem("observe-budget", collapsed ? "collapsed" : "open"); } catch (error) { /* the page still works without storage */ }
+}
+
+function setDetailCollapsed(collapsed) {
+  document.getElementById("detail-panel").classList.toggle("collapsed", collapsed);
+  const button = document.getElementById("detail-toggle");
+  button.textContent = collapsed ? "展开" : "收起";
+  button.title = collapsed ? "展开详情" : "收起详情";
+  button.setAttribute("aria-expanded", String(!collapsed));
+  try { localStorage.setItem("observe-detail", collapsed ? "collapsed" : "open"); } catch (error) { /* the page still works without storage */ }
+}
+
+function setRunsCollapsed(collapsed) {
+  const panel = document.getElementById("runs-panel");
+  panel.classList.toggle("collapsed", collapsed);
+  const button = document.getElementById("runs-toggle");
+  button.textContent = collapsed ? "展开" : "收起";
+  button.title = collapsed ? "展开运行" : "收起运行";
+  button.setAttribute("aria-expanded", String(!collapsed));
+  try { localStorage.setItem("observe-runs", collapsed ? "collapsed" : "open"); } catch (error) { /* the page still works without storage */ }
+}
+
 function showSection(id) {
   const box = document.getElementById("workspace");
   if (box.classList.contains("collapsed")) document.getElementById("side-toggle").click();
+  if (id === "view-runs" && document.getElementById("runs-panel").classList.contains("collapsed")) setRunsCollapsed(false);
   const node = document.getElementById(id);
   if (node) node.scrollIntoView({block: "nearest"});
   if (visible === "ledger") showRight("detail");
@@ -595,8 +696,21 @@ document.getElementById("side-toggle").addEventListener("click", () => {
   button.setAttribute("aria-expanded", String(!collapsed));
   try { localStorage.setItem("observe-side", collapsed ? "collapsed" : "open"); } catch (error) { /* the page still works without storage */ }
 });
+document.getElementById("budget-banner").addEventListener("click", (event) => {
+  if (!event.target.closest("#budget-toggle")) return;
+  setBudgetCollapsed(!document.getElementById("budget-banner").classList.contains("budget-collapsed"));
+});
+document.getElementById("runs-toggle").addEventListener("click", () => {
+  setRunsCollapsed(!document.getElementById("runs-panel").classList.contains("collapsed"));
+});
+document.getElementById("detail-toggle").addEventListener("click", () => {
+  setDetailCollapsed(!document.getElementById("detail-panel").classList.contains("collapsed"));
+});
 try {
   if (localStorage.getItem("observe-side") === "collapsed") document.getElementById("side-toggle").click();
+  if (localStorage.getItem("observe-budget") === "collapsed") setBudgetCollapsed(true);
+  if (localStorage.getItem("observe-runs") === "collapsed") setRunsCollapsed(true);
+  if (localStorage.getItem("observe-detail") === "collapsed") setDetailCollapsed(true);
 } catch (error) { /* ignore a blocked storage read */ }
 document.getElementById("add-budget").addEventListener("click", () => {
   document.getElementById("budget-note").textContent = selectedRun ? selectedRun : "先在运行列表里选一次搜索";
@@ -699,6 +813,12 @@ document.getElementById("budget-banner").addEventListener("click", (event) => {
 });
 
 let piStamp = "";
+let turnsStamp = "";
+let turnsRows = [];
+let turnsCursor = null;
+let detailStamp = "";
+let seenIndex = "";
+let seenTurns = "";
 
 function paintLive(id, html, atBottom) {
   const host = document.getElementById(id);
@@ -708,30 +828,81 @@ function paintLive(id, html, atBottom) {
   if (again && atBottom) again.scrollTop = again.scrollHeight;
 }
 
+function turnsIdentity(stamp) {
+  return String(stamp || "").split(".").slice(0, 3).join(".");
+}
+
+function bindTurns() {
+  const button = document.getElementById("turns-earlier");
+  if (button) button.addEventListener("click", loadEarlier);
+}
+
+function paintTurns(stick) {
+  const host = document.getElementById("turns-live");
+  const atBottom = stick && host && host.scrollHeight - host.scrollTop - host.clientHeight < 24;
+  paintLive("turns-live", turnsFeed(turnsRows, turnsCursor), atBottom);
+  bindTurns();
+}
+
+async function refreshTurns(reset) {
+  if (!selectedRun || visible !== "detail") return;
+  if (!document.getElementById("turns-live")) return;
+  const parts = [];
+  if (!reset && turnsStamp) parts.push("stamp=" + encodeURIComponent(turnsStamp));
+  const query = parts.length ? "?" + parts.join("&") : "";
+  const response = await fetch("/api/v2/turns/" + selectedRun.split("/").map(encodeURIComponent).join("/") + query);
+  if (!response.ok) return;
+  const doc = await response.json();
+  if (doc.same) return;
+  const identity = turnsIdentity(doc.stamp);
+  if (reset || !turnsStamp || identity !== turnsIdentity(turnsStamp)) {
+    turnsRows = doc.rows || [];
+  } else {
+    const incoming = doc.rows || [];
+    const older = turnsRows.slice(0, Math.max(0, turnsRows.length - incoming.length));
+    turnsRows = older.concat(incoming);
+  }
+  turnsStamp = doc.stamp || "";
+  turnsCursor = doc.cursor == null ? null : doc.cursor;
+  paintTurns(true);
+}
+
+async function loadEarlier() {
+  if (turnsCursor == null || !selectedRun) return;
+  const host = document.getElementById("turns-live");
+  const beforeHeight = host ? host.scrollHeight : 0;
+  const beforeTop = host ? host.scrollTop : 0;
+  const response = await fetch("/api/v2/turns/" + selectedRun.split("/").map(encodeURIComponent).join("/") + "?before=" + encodeURIComponent(turnsCursor));
+  if (!response.ok) return;
+  const doc = await response.json();
+  const older = doc.rows || [];
+  turnsRows = older.concat(turnsRows);
+  turnsCursor = doc.cursor == null ? null : doc.cursor;
+  paintLive("turns-live", turnsFeed(turnsRows, turnsCursor), false);
+  bindTurns();
+  const again = document.getElementById("turns-live");
+  if (again) again.scrollTop = beforeTop + (again.scrollHeight - beforeHeight);
+}
+
 async function refreshLive() {
   if (!detailDoc || !selectedRun || visible !== "detail") return;
-  const mode = writerMode(detailDoc);
-  const path = mode === "pi" ? "/api/v2/pi/" : "/api/v2/chat/";
-  const host = document.getElementById(mode === "pi" ? "pi-live" : "chat-live");
-  const epic = mode === "pi" ? document.getElementById("epic-live") : null;
+  if (writerMode(detailDoc) !== "pi") return;
+  const host = document.getElementById("pi-live");
+  const epic = document.getElementById("epic-live");
   if (!host && !epic) return;
   const stick = (box) => box && box.scrollHeight - box.scrollTop - box.clientHeight < 24;
   const atBottom = stick(host);
   const epicBottom = stick(epic);
   const query = piStamp ? "?stamp=" + encodeURIComponent(piStamp) : "";
-  const response = await fetch(path + selectedRun.split("/").map(encodeURIComponent).join("/") + query);
+  const response = await fetch("/api/v2/pi/" + selectedRun.split("/").map(encodeURIComponent).join("/") + query);
   if (!response.ok) return;
   const doc = await response.json();
   if (doc.same) return;
   piStamp = doc.stamp || "";
-  if (mode === "pi") {
-    paintLive("epic-live", epicFeed(doc.epics), epicBottom);
-    paintLive("pi-live", piFeed(doc.lines), atBottom);
-  } else {
-    paintLive("chat-live", chatFeed(doc.lines), atBottom);
-  }
+  paintLive("epic-live", epicFeed(doc.epics), epicBottom);
+  paintLive("pi-live", piFeed(doc.lines), atBottom);
 }
-setInterval(refreshLive, 2000);
+setInterval(() => { refreshTurns(false); refreshLive(); }, 2000);
 
 loadExperiments();
 loadRuns();
@@ -743,13 +914,21 @@ if (preset) {
 const source = new EventSource("/api/v2/stream");
 source.onmessage = (event) => {
   const frame = JSON.parse(event.data);
-  if (!frame.revision) return;
-  refreshBanner();
-  loadExperiments();
-  if (selectedExperiment) loadCompare(selectedExperiment);
-  loadRuns();
-  if (visible === "ledger") loadLedger();
-  else if (selectedRun) loadDetail(selectedRun);
+  const indexRev = frame.index_revision || frame.revision || 0;
+  const turnsRev = frame.turns_revision || 0;
+  if (indexRev && String(indexRev) !== seenIndex) {
+    seenIndex = String(indexRev);
+    refreshBanner();
+    loadExperiments();
+    if (selectedExperiment) loadCompare(selectedExperiment);
+    loadRuns();
+    if (visible === "ledger") loadLedger();
+    else if (selectedRun) loadDetail(selectedRun);
+  }
+  if (turnsRev && String(turnsRev) !== seenTurns) {
+    seenTurns = String(turnsRev);
+    if (selectedRun && visible === "detail") refreshTurns(true);
+  }
 };
 </script>
 </body>

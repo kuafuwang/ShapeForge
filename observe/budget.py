@@ -176,4 +176,5 @@ def render_banner_html(report: dict) -> str:
             f'<a class="chip {item["level"]}" href="/?run={quote(run_id, safe="")}" data-run="{esc(run_id, quote=True)}">'
             f"<b>{esc(run_id)}</b> <span>{esc(title)}</span> <i>{esc(names)}</i> <span>{esc(item['text'])}</span></a>"
         )
+    head.append('<button type="button" id="budget-toggle" class="budget-toggle" aria-expanded="true" title="收起预算告警">收起</button>')
     return f'<div class="bb alert {report["level"]}" data-level="{report["level"]}"><div class="bb-head">{" ".join(head)}</div><div class="bb-list">{"".join(chips)}</div></div>'
