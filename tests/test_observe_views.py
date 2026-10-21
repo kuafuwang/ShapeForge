@@ -96,7 +96,10 @@ def test_scan_reads_timeline_marks_confirmed_point_and_handoff(tmp_path, monkeyp
     assert marks["init"] == ["噪声内没换种子"]
     assert marks["r1.p0"] == ["正确性复查没过"]
 
-    assert detail["confirmed_point"] == {"cost_usd": 0.5, "speedup": 1.25, "label": "确认"}
+    point = detail["confirmed_point"]
+    assert point["cost_usd"] == 0.5 and point["speedup"] == 1.25 and point["label"] == "确认"
+    assert point["search_speedup"] == detail["result"]["best_speedup"]
+    assert point["batches"] == [] and point["worst"] is None and point["best"] is None  # 这份夹具没有分批字段
     assert detail["confirmed_point"]["speedup"] != detail["result"]["best_speedup"]
     assert detail["publication"] == "confirmed"
 
@@ -293,3 +296,25 @@ def test_chat_inflight_names_a_stream_without_a_prompt(tmp_path):
     path = tmp_path / "llm.json"
     path.write_text(json.dumps({"inflight": {"init#t4": {"status": "streaming"}}}))
     assert _chat_inflight(path) == [{"who": "正在接收", "text": "init#t4"}]
+
+
+def test_the_confirmed_point_shows_the_search_number_apart_and_calls_it_not_published(tmp_path, monkeypatch):
+    """A reader must not mistake the search maximum for the confirmation. Both appear, one labelled not-published."""
+    from observe import detail
+
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(tmp_path))
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "state.json").write_text(json.dumps({"task": "conv2d", "dtype": "fp16", "phase": "done", "pid": 1}))
+    (run / "best.metal").write_text("kernel void conv2d_kernel() {}\n")
+    (run / "confirm_report.json").write_text(json.dumps({"status": "ok", "benchmark": {"candidate": {"median_us": 1.0, "cv": 0.01}}}))
+    (run / "result.json").write_text(json.dumps({
+        "task": "conv2d", "dtype": "fp16", "size": "paper", "stop_reason": "budget_exhausted",
+        "best_speedup": 1.7276, "confirmed_speedup": 1.6896, "confirmed_status": "ok",
+        "confirm_winner_label": "r19.p0", "spent_usd": 15.2,
+        "confirmation_source_sha256": __import__("hashlib").sha256(b"kernel void conv2d_kernel() {}\n").hexdigest(),
+    }))
+    got = detail._confirmed_point(
+        json.loads((run / "result.json").read_text()), [], {"speedup": 1.6896, "publication": "confirmed"},
+    )
+    assert got["speedup"] == 1.6896 and got["search_speedup"] == 1.7276

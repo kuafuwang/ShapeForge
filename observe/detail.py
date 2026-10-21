@@ -1555,7 +1555,16 @@ def _confirmed_point(result: dict | None, trace, conclusion: dict) -> dict | Non
                 cost = _as_float(row.get("cost_usd"))
                 if cost is not None:
                     break
-    return {"cost_usd": cost, "speedup": speed, "label": "确认"}
+    values = [float(v) for v in (result.get("confirmed_values") or []) if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    return {
+        "cost_usd": cost,
+        "speedup": speed,
+        "search_speedup": _as_float(result.get("best_speedup")),
+        "batches": values,
+        "worst": _as_float(result.get("confirmed_worst")),
+        "best": _as_float(result.get("confirmed_best")),
+        "label": "确认",
+    }
 
 
 def _committee_models(directory: Path) -> dict[str, str]:

@@ -452,7 +452,7 @@ const TERMS = [
   {name: "validated_tie", keys: ["validated_tie", "计划结局", "并列"], text: "写对了，测起来略快，但快的幅度没超过测量误差，所以没有换成种子。"},
   {name: "falsified", keys: ["falsified", "计划结局", "证伪"], text: "写对了，也计时了，但没有变得更快。这个方向被否掉。下一轮不应再走同一条路。"},
   {name: "untested_impl_fail", keys: ["untested_impl_fail", "计划结局", "没测到"], text: "内核没编译过、签名不对、算错、不安全，或运行中出错，根本没计时。换种子后再算错也算这里。不能据此说这个方向慢。可以改了再试。"},
-  {name: "确认点", keys: ["确认点", "confirmed"], text: "搜索结束时，用另一批输入把优胜核再测一遍得到的加速比。搜索过程里看到的最高倍数不算对外成绩。还没走到这一步，就写还没有可以发布的确认测量。"},
+  {name: "确认点", keys: ["确认点", "confirmed"], text: "搜索结束时，用几批独立输入把优胜核重测得到的加速比。对外公布的是这些批次的**中位数**；旁边的“最好/最差/极差”说明同一颗核在不同输入上差多少，极差大就说明这个数依赖数据，不能当精确值看。搜索过程里看到的最高倍数不算对外成绩。"},
   {name: "候选", keys: ["候选", "candidate"], text: "每一轮交上来、被外层评过的一颗内核。序号越大越新。双击序号才看它卡在哪一步、以及代码开头。"},
   {name: "加速比", keys: ["加速比", "speedup"], text: "这颗核相对于最强现成库有多快。1 是打平，大于 1 是更快，小于 1 是更慢。"},
   {name: "委员会交接", keys: ["委员会交接", "委员会", "first", "second"], text: "两个委员会轮流写核，一轮换一场新会话。这里只列出每一轮是谁写的，不包含对话。"},
@@ -719,8 +719,18 @@ function bindCandidatePicks(host) {
 
 function renderDetail(doc) {
   const point = doc.confirmed_point;
+  const searchBest = point && point.search_speedup != null && point.search_speedup !== point.speedup
+    ? ` · 搜索最好 ${esc(num(point.search_speedup))}（搜索口径，不对外，噪声偏大）`
+    : "";
+  const spread = point && point.best != null && point.worst != null && point.worst > 0
+    ? `，极差 ${esc(((point.best - point.worst) / point.worst * 100).toFixed(1))}%`
+    : "";
+  const batchNote = point && point.batches && point.batches.length > 1
+    ? `（${point.batches.length} 批独立输入，取中位；各批 ${point.batches.map((v) => esc(num(v))).join(" / ")}` +
+      `${point.best != null ? `；最好 ${esc(num(point.best))}` : ""}${point.worst != null ? `，最差 ${esc(num(point.worst))}` : ""}${spread}）`
+    : "";
   const confirm = point
-    ? `<p>确认点 ${esc(point.label)} · 加速比 ${esc(point.speedup)} · 花费 $${esc(num(point.cost_usd))}</p>`
+    ? `<p>确认点（可对外）：<b>${esc(point.speedup)}</b>${batchNote}${searchBest} · 花费 $${esc(num(point.cost_usd))}</p>`
     : `<p class="muted">确认点：还没有可以发布的确认测量。</p>`;
   const handoff = doc.handoff || {};
   const rounds = newestFirst(handoff.rounds).map((row) => `<tr><td>${esc(row.label)}</td><td>${esc(row.committee)}</td><td>${esc(row.model || "—")}</td></tr>`).join("");
@@ -728,7 +738,7 @@ function renderDetail(doc) {
     ? `<table><thead><tr><th>轮次</th><th>委员会</th><th>模型</th></tr></thead><tbody>${rounds}</tbody></table>`
     : `<p class="muted">${esc(handoff.note || "没有委员会记录")}</p>`;
   const events = newestFirst(doc.budget_events).map((row) => `<tr><td>${esc(row.time || row.t)}</td><td>${esc(row.kind)}</td><td>${esc(row.who)}</td><td>${esc(num(row.old_budget_usd))}</td><td>${esc(num(row.new_budget_usd))}</td><td>${esc(row.note)}</td></tr>`).join("");
-  const candidates = newestFirst(doc.candidates).map((row) => `<tr class="pick${row.label === selectedCandidate ? " on" : ""}" data-label="${esc(row.label)}"><td class="seq"><button type="button" class="quiet seq-open" title="双击查看阶段和代码">${esc(num(row.idx))}</button></td><td>${esc(row.label)}${row.label === seedKernel ? ' <span class="badge">种子核</span>' : ''}</td><td>${esc(row.status)}</td><td>${esc(row.stage)}</td><td>${esc(num(row.speedup))}</td><td>${esc(marksFor(doc, row.label))}</td><td>${esc(row.message)}</td></tr>`).join("");
+  const candidates = newestFirst(doc.candidates).map((row) => `<tr class="pick${row.label === selectedCandidate ? " on" : ""}" data-label="${esc(row.label)}"><td class="seq"><button type="button" class="quiet seq-open" title="双击查看阶段和代码">${esc(num(row.idx))}</button></td><td>${esc(row.label)}${row.label === seedKernel ? ' <span class="badge">种子核</span>' : ''}${row.label === confirmWinner ? ' <span class="badge">确认胜者</span>' : ''}</td><td>${esc(row.status)}</td><td>${esc(row.stage)}</td><td>${esc(num(row.speedup))}</td><td>${esc(marksFor(doc, row.label))}</td><td>${esc(row.message)}</td></tr>`).join("");
   const grid = newestFirst(doc.feature_grid).map((cell) => `<tr><td>${esc(cell.label)}</td><td>${esc((cell.signature || []).join(","))}</td><td>${esc(num(cell.speedup))}</td><td>${cell.published ? "发布" : ""}</td></tr>`).join("");
   const plans = newestFirst(doc.plan_outcomes).map((node) => `<tr><td>${esc(node.round)}</td><td>${esc(node.label)}</td><td>${esc(node.title)}</td><td>${esc(node.outcome)}</td><td>${esc(num(node.speedup))}</td></tr>`).join("");
   const lamp = doc.status === "running" ? `<span class="breathe" title="进行中"></span>` : "";
