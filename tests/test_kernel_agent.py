@@ -49,6 +49,11 @@ def test_the_contract_names_both_commands_and_does_not_ask_for_a_fence(tmp_path)
     assert "```metal block" not in text
     assert "does not time" not in text
     assert "先写出一颗外层评测合格的核" in text
+    assert "本场的主产出始终是 `kernel.metal`" in text
+    assert "# 这个系统怎么工作" in text
+    for title in ("# 需要帮助", "# 对系统的建议", "# 卡住的原因", "# 给下一棒的避坑提示", "# 被否决的前提"):
+        assert title in text
+    assert "必须写进「被否决的前提」节" in text
 
 
 def test_a_seeded_contract_leads_with_the_outer_measurement(tmp_path):
@@ -60,6 +65,14 @@ def test_a_seeded_contract_leads_with_the_outer_measurement(tmp_path):
     assert text.index("外层实测") < text.index("上一版自报")
     assert "--seed-report report.json" in text
     assert "不减少运算量" in text
+    brief.peer_tips = "- [r1 first/fake, evaluated 1.100x] float8 是保留字"
+    seeded = render_contract(brief, tmp_path / "kernel.metal")
+    assert seeded.index("上一轮 NOTES") < seeded.index("本任务前序避坑提示")
+    assert "一律按未验证处理" in seeded
+    assert "float8 是保留字" in seeded
+    seedless = _brief(tmp_path, seedless=True)
+    seedless.peer_tips = "- [init first/fake, agent_failed] simd_any 要在分支外"
+    assert "simd_any 要在分支外" in render_contract(seedless, tmp_path / "kernel.metal")
 
 
 def test_spent_on_a_result_line_is_priced_by_kind_and_result_lines_add():
@@ -146,3 +159,22 @@ def test_a_nonzero_exit_with_no_kernel_is_a_failure(tmp_path):
         effort=None, prices=PRICES, turn_output_tokens=10, turn_minutes=1, hmz=str(hmz),
     )
     assert result.source is None and result.status == "failed"
+    assert result.feedback == ""
+
+
+def test_feedback_is_read_with_the_notes_and_capped(tmp_path):
+    hmz = tmp_path / "hmz"
+    _fake_hmz(hmz, source="kernel void conv2d_kernel() {}\n")
+    script = hmz.read_text().replace(
+        "pathlib.Path('NOTES.md').write_text('kept this one\\n')\n",
+        "pathlib.Path('NOTES.md').write_text('kept this one\\n')\n"
+        "pathlib.Path('FEEDBACK.md').write_text('kind: none\\n' + ('坑' * 20000))\n",
+    )
+    hmz.write_text(script)
+    result = run_kernel_agent(
+        _brief(tmp_path), work=tmp_path / "work", provider="deepseek", model="deepseek-flash",
+        effort=None, prices=PRICES, turn_output_tokens=10, turn_minutes=1, hmz=str(hmz),
+    )
+    assert result.feedback.startswith("kind: none")
+    assert len(result.feedback) == 16384
+    assert result.notes.startswith("kept")

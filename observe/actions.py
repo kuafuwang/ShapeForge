@@ -193,6 +193,31 @@ def _amount_and_total(body: dict, current: float | None, spent: float) -> tuple[
     return amount, total
 
 
+def review_feedback(run_id: str, seq: int, digest: str, body: dict) -> dict:
+    """Record one claim review and refresh the index before returning the updated claim."""
+    from observe.feedback import apply_review, entries
+    from observe.index import get_index
+
+    if not isinstance(body, dict):
+        raise Refused(400, "the body must be an object")
+    if not isinstance(digest, str) or not digest.strip():
+        raise Refused(400, "the claim digest is empty")
+    run_dir = _run_dir(run_id)
+    with _lock_for(run_id):
+        try:
+            apply_review(run_dir, int(seq), digest, body)
+        except ValueError as exc:
+            raise Refused(400, str(exc)) from exc
+        get_index().refresh_feedback(run_id, run_dir)
+    for record in entries(run_dir)["records"]:
+        if record.get("seq") != int(seq):
+            continue
+        for claim in record["claims"]:
+            if claim.get("digest") == digest:
+                return claim
+    raise Refused(404, "no such feedback claim")
+
+
 def _lock_for(run_id: str) -> threading.Lock:
     with _guard:
         return _locks.setdefault(run_id, threading.Lock())

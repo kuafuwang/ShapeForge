@@ -2,7 +2,7 @@
 
 The search starts this with ``hmz exec``. The flow does not plan, time, or decide which kernel stays.
 The main turn has its own token and time budget. When that budget is spent, one short turn in the
-same session writes NOTES.md and leaves the best kernel in kernel.metal.
+same session leaves the best kernel in kernel.metal, then writes NOTES.md, then a short FEEDBACK.md.
 """
 
 from datetime import timedelta
@@ -40,8 +40,9 @@ class Params(FlowParams):
 
 _WRAP = (
     "Stop changing the kernel and do not run another check. "
-    "Write NOTES.md: each version, what changed, the self-check microseconds and cv, and whether you kept it. "
-    "Leave the best kernel you have in kernel.metal. "
+    "Leave the best kernel you have in kernel.metal. The kernel is the main result. "
+    "Then write NOTES.md: each version, what changed, the self-check microseconds and cv, and whether you kept it. "
+    "Last, write a short FEEDBACK.md: pitfalls for the next session on this task, and anything the system should change. "
     "Do not paste an older kernel back to hide a failure."
 )
 

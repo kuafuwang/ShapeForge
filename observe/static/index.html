@@ -34,9 +34,16 @@
   .badge.exhausted { background: var(--amber); color: #fff; }
   .badge.near { background: #fde047; color: #4a3b00; }
   #hist-tools { margin-bottom: 8px; }
-  #budget-modal, #settings-modal, #delete-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
-  #budget-modal.open, #settings-modal.open, #delete-modal.open { display: flex; }
-  #budget-modal .box, #settings-modal .box, #delete-modal .box { background: var(--card); border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); }
+  #budget-modal, #settings-modal, #delete-modal, #feedback-modal, #stage-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
+  #budget-modal.open, #settings-modal.open, #delete-modal.open, #feedback-modal.open, #stage-modal.open { display: flex; }
+  #budget-modal .box, #settings-modal .box, #delete-modal .box, #feedback-modal .box, #stage-modal .box { background: var(--card); border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); }
+  #stage-modal .box { width: min(760px, 94vw); max-height: 88vh; overflow: auto; }
+  #stage-modal .excerpt { max-height: 42vh; }
+  td.seq { cursor: pointer; }
+  #feedback-modal label { display: block; margin: 8px 0 4px; }
+  #feedback-modal select, #feedback-modal input, #feedback-modal textarea { width: 100%; }
+  #feedback-modal textarea { min-height: 72px; }
+  #feedback-modal-text { max-height: 120px; overflow: auto; }
   #delete-reason { width: 100%; min-height: 72px; margin-top: 6px; }
   .delete-warn { color: var(--red); font-weight: 650; margin: 0 0 8px; }
   .muted, .sub { color: var(--muted); }
@@ -95,7 +102,13 @@
   .detail-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--card); border: 1px solid var(--line); border-top: 0; border-radius: 0 0 12px 12px; padding: 14px; }
   .detail-scroll .view { border: 0; padding: 0; background: transparent; border-radius: 0; }
   .side-head strong { font-size: 13px; color: var(--muted); }
-  .side-title { margin: 14px 0 6px; font-size: 13px; color: var(--muted); }
+  .side-card { margin: 0 0 10px; border: 1px solid var(--line); border-left-width: 4px; border-radius: 10px; background: #fff; overflow: hidden; }
+  .side-experiments { border-left-color: var(--blue); }
+  .side-compare { border-left-color: var(--amber); }
+  .runs-panel { border-top: 4px solid var(--green); background: #f7f8fa; }
+  .side-title { margin: 0; padding: 8px 10px; font-size: 14px; font-weight: 650; color: var(--ink); background: #f7f8fa; border-bottom: 1px solid var(--line); }
+  .side-card .side-block { padding: 0 8px 8px; }
+  .runs-head { background: #f7f8fa; border-bottom: 1px solid var(--line); }
   .side-block { overflow-x: auto; }
   tr.on { background: #eef5fc; }
   .detail-split { display: grid; grid-template-columns: 1fr minmax(240px, 320px); gap: 12px; align-items: start; }
@@ -108,6 +121,23 @@
   .stage .meta { color: var(--muted); font-size: 12px; }
   .mark { width: 16px; text-align: center; }
   .excerpt { margin: 0; background: #fff; border-radius: 8px; padding: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; color: #333; max-height: 220px; overflow: auto; }
+  .fb-list { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
+  .fb-session { border: 1px solid var(--line); border-radius: 12px; background: #f7f8fa; overflow: hidden; }
+  .fb-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; padding: 10px 12px; background: #fff; border-bottom: 1px solid var(--line); }
+  .fb-head strong { font-size: 15px; }
+  .fb-meta { color: var(--muted); font-size: 12px; }
+  .fb-claims { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+  .fb-claim { background: #fff; border: 1px solid var(--line); border-left-width: 4px; border-radius: 8px; padding: 8px 10px; }
+  .fb-claim.fb-system { border-left-color: var(--blue); }
+  .fb-claim.fb-peer { border-left-color: var(--green); }
+  .fb-claim.fb-diagnostic { border-left-color: var(--amber); }
+  .fb-claim-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .fb-kind { font-weight: 650; }
+  .fb-claim .excerpt { background: #f7f8fa; }
+  .badge.fb-pending { background: #fde047; color: #4a3b00; }
+  .badge.fb-info { background: #eef2f6; color: var(--muted); }
+  .fb-raw { margin: 0 10px 10px; }
+  .fb-raw summary { cursor: pointer; color: var(--muted); font-size: 12px; }
   #settings-committees label { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
   #settings-committees select { flex: 1; }
   @media (max-width: 800px) {
@@ -118,6 +148,7 @@
 <body>
 <header>
   <strong>观测</strong>
+  <span id="feedback-badge" class="badge" hidden></span>
   <button type="button" id="tab-experiments">实验</button>
   <button type="button" id="tab-compare">对照</button>
   <button type="button" id="tab-runs">运行</button>
@@ -131,14 +162,19 @@
   <div class="workspace" id="workspace">
   <aside id="side">
     <div class="side-head">
-      <strong>实验</strong>
+      <strong>名单</strong>
       <button type="button" id="side-toggle" aria-expanded="true" title="收起上面">收起</button>
     </div>
     <div class="side-upper">
     <section id="budget-banner" class="side-block"><!--BUDGET_BANNER--></section>
-    <section id="view-experiments" class="side-block"></section>
-    <h3 class="side-title">对照</h3>
-    <section id="view-compare" class="side-block"><p class="muted">点一个实验看对照。</p></section>
+    <section class="side-card side-experiments">
+      <h3 class="side-title">实验</h3>
+      <section id="view-experiments" class="side-block"></section>
+    </section>
+    <section class="side-card side-compare">
+      <h3 class="side-title">对照</h3>
+      <section id="view-compare" class="side-block"><p class="muted">点一个实验看对照。</p></section>
+    </section>
     </div>
     <div id="runs-panel" class="runs-panel">
     <div class="runs-head">
@@ -221,6 +257,36 @@
     </div>
   </div>
 </div>
+<div id="stage-modal" role="dialog" aria-modal="true" aria-labelledby="stage-modal-title">
+  <div class="box">
+    <h3 id="stage-modal-title">候选</h3>
+    <div id="stage-modal-body"></div>
+    <div class="actions">
+      <button type="button" id="stage-close">关闭</button>
+    </div>
+  </div>
+</div>
+<div id="feedback-modal" role="dialog" aria-modal="true" aria-labelledby="feedback-modal-title">
+  <div class="box">
+    <h3 id="feedback-modal-title">处理反馈</h3>
+    <pre class="excerpt" id="feedback-modal-text"></pre>
+    <p class="muted" id="feedback-modal-source"></p>
+    <form id="feedback-review-form">
+      <label>状态 <select name="status"><option>pending</option><option>adopted</option><option>rejected</option><option>done</option></select></label>
+      <label>复核 <select name="verification"><option>unchecked</option><option>confirmed</option><option>refuted</option></select></label>
+      <label>证据来源 <select name="evidence_source"><option value=""></option><option>report</option><option>calibration</option><option>probe</option><option>code</option><option>other</option></select></label>
+      <textarea name="evidence" placeholder="证据"></textarea>
+      <label>备注 <input name="note" placeholder="备注"></label>
+      <label>topic <input name="topic" placeholder="topic"></label>
+      <label>change_ref <input name="change_ref" placeholder="change_ref"></label>
+      <p class="feedback-error" id="feedback-modal-error"></p>
+      <div class="actions">
+        <button type="button" id="feedback-save">保存审查</button>
+        <button type="button" id="feedback-close">关闭</button>
+      </div>
+    </form>
+  </div>
+</div>
 <script>
 const OBSERVE_TOKEN = document.querySelector('meta[name="observe-token"]')?.content || "";
 const LABELS = {over: "OVER BUDGET", exhausted: "BUDGET EXHAUSTED", near: "NEAR BUDGET"};
@@ -267,6 +333,11 @@ function bannerHtml(report) {
 async function refreshBanner() {
   const report = await (await fetch("/api/v2/budget")).json();
   renderBanner(report);
+  const overview = await (await fetch("/api/v2/overview")).json();
+  const slot = document.getElementById("feedback-badge");
+  const pending = Number(overview.feedback_pending || 0);
+  slot.hidden = pending <= 0;
+  slot.textContent = pending > 0 ? pending + " 条代理反馈待审查" : "";
 }
 
 function showRight(name) {
@@ -288,7 +359,7 @@ function show(name) {
 async function loadExperiments() {
   const rows = await (await fetch("/api/v2/experiments")).json();
   const host = document.getElementById("view-experiments");
-  host.innerHTML = "<table><thead><tr><th>实验</th><th>种类</th><th>操作</th></tr></thead><tbody>" +
+  host.innerHTML = "<table><thead><tr><th>目录</th><th>种类</th><th>操作</th></tr></thead><tbody>" +
     rows.map((row) => `<tr class="${row.experiment_id === selectedExperiment ? "on" : ""}" data-exp="${esc(row.experiment_id)}"><td>${esc(row.experiment_id)}</td><td>${esc(row.kind)}</td><td><button type="button" class="quiet" data-delete-experiment="${esc(row.experiment_id)}">删除</button></td></tr>`).join("") +
     "</tbody></table>";
   host.querySelectorAll("[data-exp]").forEach((tr) => tr.addEventListener("click", () => {
@@ -542,12 +613,20 @@ function stageMarkup(doc) {
   return `<h3>阶段</h3><p class="sub">${esc(who)}</p>${steps}${bits.length ? `<p class="sub">${esc(bits.join(" · "))}</p>` : ""}<h3>代码</h3>${code}`;
 }
 
+function openStage(label) {
+  if (!detailDoc || !label) return;
+  selectedCandidate = label;
+  const modal = document.getElementById("stage-modal");
+  document.getElementById("stage-modal-title").textContent = label;
+  document.getElementById("stage-modal-body").innerHTML = stageMarkup(detailDoc);
+  modal.classList.add("open");
+  document.querySelectorAll("#view-detail tr.pick").forEach((row) => row.classList.toggle("on", row.dataset.label === selectedCandidate));
+}
+
 function bindCandidatePicks(host) {
-  host.querySelectorAll("tr.pick").forEach((tr) => tr.addEventListener("click", () => {
-    selectedCandidate = tr.dataset.label || "";
-    const panel = document.getElementById("stage-panel");
-    if (panel && detailDoc) panel.innerHTML = stageMarkup(detailDoc);
-    host.querySelectorAll("tr.pick").forEach((row) => row.classList.toggle("on", row.dataset.label === selectedCandidate));
+  host.querySelectorAll("tr.pick button.seq-open").forEach((button) => button.addEventListener("dblclick", () => {
+    const row = button.closest("tr");
+    openStage(row && row.dataset.label);
   }));
 }
 
@@ -561,15 +640,13 @@ function renderDetail(doc) {
   const handoffBlock = handoff.recorded
     ? `<table><thead><tr><th>轮次</th><th>委员会</th><th>模型</th></tr></thead><tbody>${rounds}</tbody></table>`
     : `<p class="muted">${esc(handoff.note || "没有委员会记录")}</p>`;
-  const chosen = (doc.candidates || []).find((row) => row.label === selectedCandidate) || newestFirst(doc.candidates)[0];
-  if (chosen) selectedCandidate = chosen.label;
   const events = newestFirst(doc.budget_events).map((row) => `<tr><td>${esc(row.time || row.t)}</td><td>${esc(row.kind)}</td><td>${esc(row.who)}</td><td>${esc(num(row.old_budget_usd))}</td><td>${esc(num(row.new_budget_usd))}</td><td>${esc(row.note)}</td></tr>`).join("");
-  const candidates = newestFirst(doc.candidates).map((row) => `<tr class="pick${row.label === selectedCandidate ? " on" : ""}" data-label="${esc(row.label)}"><td>${esc(num(row.idx))}</td><td>${esc(row.label)}</td><td>${esc(row.status)}</td><td>${esc(row.stage)}</td><td>${esc(num(row.speedup))}</td><td>${esc(marksFor(doc, row.label))}</td><td>${esc(row.message)}</td></tr>`).join("");
+  const candidates = newestFirst(doc.candidates).map((row) => `<tr class="pick${row.label === selectedCandidate ? " on" : ""}" data-label="${esc(row.label)}"><td class="seq"><button type="button" class="quiet seq-open" title="双击查看阶段和代码">${esc(num(row.idx))}</button></td><td>${esc(row.label)}</td><td>${esc(row.status)}</td><td>${esc(row.stage)}</td><td>${esc(num(row.speedup))}</td><td>${esc(marksFor(doc, row.label))}</td><td>${esc(row.message)}</td></tr>`).join("");
   const grid = newestFirst(doc.feature_grid).map((cell) => `<tr><td>${esc(cell.label)}</td><td>${esc((cell.signature || []).join(","))}</td><td>${esc(num(cell.speedup))}</td><td>${cell.published ? "发布" : ""}</td></tr>`).join("");
   const plans = newestFirst(doc.plan_outcomes).map((node) => `<tr><td>${esc(node.round)}</td><td>${esc(node.label)}</td><td>${esc(node.title)}</td><td>${esc(node.outcome)}</td><td>${esc(num(node.speedup))}</td></tr>`).join("");
   const lamp = doc.status === "running" ? `<span class="breathe" title="进行中"></span>` : "";
   return `<h2>${esc(doc.id)}</h2><p>${lamp}${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>` +
-    `<div class="detail-split"><div>` +
+    `<div>` +
     `<h3>确认点</h3>${confirm}` +
     `<h3>委员会交接</h3>${handoffBlock}` +
     `<h3>预算事件</h3>` + (events ? `<table><thead><tr><th>时间</th><th>种类</th><th>谁</th><th>旧预算</th><th>新预算</th><th>备注</th></tr></thead><tbody>${events}</tbody></table>` : `<p class="muted">没有预算事件。</p>`) +
@@ -580,7 +657,54 @@ function renderDetail(doc) {
     `<h3>候选</h3>` + (candidates ? `<table><thead><tr><th>序号</th><th>标签</th><th>状态</th><th>阶段</th><th>加速比</th><th>标记</th><th>说明</th></tr></thead><tbody>${candidates}</tbody></table>` : `<p class="muted">没有候选。</p>`) +
     `<h3>特征格子</h3>` + (grid ? `<table><thead><tr><th>标签</th><th>签名</th><th>加速比</th><th></th></tr></thead><tbody>${grid}</tbody></table>` : `<p class="muted">空</p>`) +
     `<h3>计划结局</h3>` + (plans ? `<table><thead><tr><th>轮</th><th>标签</th><th>方案</th><th>结局</th><th>加速比</th></tr></thead><tbody>${plans}</tbody></table>` : `<p class="muted">空</p>`) +
-    `</div><section class="panel" id="stage-panel">${stageMarkup(doc)}</section></div>`;
+    feedbackMarkup(doc) +
+    `</div>`;
+}
+
+function feedbackMarkup(doc) {
+  const feedback = doc.feedback || {};
+  const records = feedback.records || [];
+  if (!records.length) return `<h3>代理反馈与队友交接</h3><p class="muted">这场没有反馈。</p>`;
+  const blocks = records.map((record) => {
+    const who = [[record.provider, record.model].filter(Boolean).join("/"), record.effort].filter(Boolean).join(":");
+    const meta = [record.round != null ? "第 " + record.round + " 轮" : "", record.committee, who, record.outcome || record.exit, record.best_speedup, record.work_dir].filter((part) => part != null && part !== "").join(" · ");
+    const claims = (record.claims || []).map((claim) => {
+      const handle = claim.status === "info" ? "" : `<button type="button" class="feedback-open" data-seq="${esc(claim.seq)}" data-digest="${esc(claim.digest)}">处理</button>`;
+      const tone = claim.audience === "system" || claim.audience === "peer" || claim.audience === "diagnostic" ? claim.audience : "system";
+      const statusClass = claim.status === "pending" ? " fb-pending" : (claim.status === "info" ? " fb-info" : "");
+      return `<article class="fb-claim fb-${esc(tone)}"><div class="fb-claim-head"><span class="fb-kind">${esc(claim.section)}</span> <span class="badge">${esc(claim.premise || claim.audience)}</span> <span class="badge${statusClass}">${esc(claim.status)}</span> ${handle}</div><pre class="excerpt">${esc(claim.text)}</pre></article>`;
+    }).join("");
+    const raw = record.raw ? `<details class="fb-raw"><summary>原文</summary><pre class="excerpt">${esc(record.raw)}</pre></details>` : "";
+    return `<section class="fb-session"><header class="fb-head"><strong>${esc(record.label || "一场")}</strong><span class="fb-meta">${esc(meta)}</span></header><div class="fb-claims">${claims}</div>${raw}</section>`;
+  }).join("");
+  return `<h3>代理反馈与队友交接</h3><div class="fb-list">${blocks}</div>`;
+}
+
+function bindFeedback(host, doc) {
+  host.querySelectorAll(".feedback-open").forEach((button) => {
+    button.addEventListener("click", () => {
+      const record = ((doc.feedback || {}).records || []).find((item) => String(item.seq) === button.dataset.seq);
+      const claim = record && (record.claims || []).find((item) => item.digest === button.dataset.digest);
+      if (!record || !claim) return;
+      const modal = document.getElementById("feedback-modal");
+      const form = document.getElementById("feedback-review-form");
+      modal.dataset.seq = claim.seq;
+      modal.dataset.digest = claim.digest;
+      modal._record = record;
+      document.getElementById("feedback-modal-title").textContent = claim.section || "处理反馈";
+      document.getElementById("feedback-modal-text").textContent = claim.text || "";
+      document.getElementById("feedback-modal-source").textContent = record.report_path ? `证据预填来源 ${record.report.source || ""} ${record.report_path}` : "";
+      form.querySelector('[name="status"]').value = claim.status || "pending";
+      form.querySelector('[name="verification"]').value = claim.verification || "unchecked";
+      form.querySelector('[name="evidence_source"]').value = claim.evidence_source || "";
+      form.querySelector('[name="evidence"]').value = claim.evidence || "";
+      form.querySelector('[name="note"]').value = claim.note || "";
+      form.querySelector('[name="topic"]').value = claim.topic || "";
+      form.querySelector('[name="change_ref"]').value = claim.change_ref || "";
+      document.getElementById("feedback-modal-error").textContent = "";
+      modal.classList.add("open");
+    });
+  });
 }
 
 async function loadDetail(id) {
@@ -599,6 +723,7 @@ async function loadDetail(id) {
   if (detailId !== id) {
     detailId = id;
     selectedCandidate = "";
+    document.getElementById("stage-modal").classList.remove("open");
     piStamp = "";
     turnsStamp = "";
     turnsRows = [];
@@ -608,6 +733,8 @@ async function loadDetail(id) {
   detailStamp = doc.detail_stamp || "";
   host.innerHTML = renderDetail(doc);
   bindCandidatePicks(host);
+  bindFeedback(host, doc);
+  if (document.getElementById("stage-modal").classList.contains("open") && selectedCandidate) openStage(selectedCandidate);
   refreshTurns(true);
   refreshLive();
 }
@@ -744,6 +871,39 @@ document.getElementById("budget-save").addEventListener("click", async () => {
   }
 });
 document.getElementById("budget-close").addEventListener("click", () => document.getElementById("budget-modal").classList.remove("open"));
+document.getElementById("feedback-close").addEventListener("click", () => document.getElementById("feedback-modal").classList.remove("open"));
+document.getElementById("stage-close").addEventListener("click", () => document.getElementById("stage-modal").classList.remove("open"));
+document.getElementById("feedback-review-form").querySelector('[name="evidence_source"]').addEventListener("change", (event) => {
+  const modal = document.getElementById("feedback-modal");
+  const evidence = document.getElementById("feedback-review-form").querySelector('[name="evidence"]');
+  const feedback = (detailDoc && detailDoc.feedback) || {};
+  if (event.target.value === "calibration" && feedback.calibration) evidence.value = JSON.stringify(feedback.calibration);
+  if (event.target.value === "report") {
+    const record = modal._record;
+    evidence.value = record && record.report ? JSON.stringify(record.report) : "";
+  }
+});
+document.getElementById("feedback-save").addEventListener("click", async () => {
+  const modal = document.getElementById("feedback-modal");
+  const form = document.getElementById("feedback-review-form");
+  const body = {
+    status: form.querySelector('[name="status"]').value,
+    verification: form.querySelector('[name="verification"]').value,
+    evidence_source: form.querySelector('[name="evidence_source"]').value,
+    evidence: form.querySelector('[name="evidence"]').value,
+    note: form.querySelector('[name="note"]').value,
+    topic: form.querySelector('[name="topic"]').value,
+    change_ref: form.querySelector('[name="change_ref"]').value,
+  };
+  try {
+    await postJson("/api/runs/" + selectedRun.split("/").map(encodeURIComponent).join("/") + "/feedback/" + encodeURIComponent(modal.dataset.seq) + "/claims/" + encodeURIComponent(modal.dataset.digest) + "/review", body);
+    modal.classList.remove("open");
+    loadDetail(selectedRun);
+    refreshBanner();
+  } catch (error) {
+    document.getElementById("feedback-modal-error").textContent = error.message;
+  }
+});
 document.getElementById("settings-open").addEventListener("click", async () => {
   const doc = await (await fetch("/api/settings/model")).json();
   const options = (doc.choices || []).map((item) => `<option value="${esc(item.provider)}\t${esc(item.id)}">${esc(item.provider)} ${esc(item.id)}</option>`).join("");

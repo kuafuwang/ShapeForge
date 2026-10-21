@@ -19,7 +19,7 @@ from taic.orchestrator import Orchestrator
 from tcenv.evaluate import EvalReport
 
 from .fakes import FakeClient, make_response, make_usage
-from .test_orchestrator import KERNEL, code, fake_eval, make_orch, run
+from .test_orchestrator import KERNEL, code, fake_eval, llm_script, make_orch, run
 
 CFG = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
 BIG = make_usage(miss=100_000, out=50_000)  # $0.09 per request with the default prices
@@ -612,4 +612,33 @@ def test_a_reply_that_only_asks_for_a_tool_does_not_become_a_kernel(tmp_path):
     res = run(make_tool_orch(tmp_path, script_with_tools(), []))
     assert res.stop_reason == "agent_failure"
     assert res.best_label is None
+
+
+def test_resume_restores_notes_and_the_feedback_sequence(tmp_path):
+    from taic.kernel_agent import AgentResult
+
+    calls = []
+
+    def write(brief, tag):
+        del brief
+        folder = tmp_path / "run" / "agent_work" / tag
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "NOTES.md").write_text("tile 32 overflowed\n")
+        source = code("speed=1.2").split("```metal\n", 1)[1].rsplit("```", 1)[0] + "\n"
+        feedback = "kind: none\n\n# 给下一棒的避坑提示\n- float8 是保留字\n"
+        return AgentResult(source=source, cost_usd=0.01, cost_incomplete=False, status="ok", notes="tile 32 overflowed\n", feedback=feedback)
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1")), calls, max_rounds=0)
+    orch.agent_runner = write
+    res = run(orch)
+    assert res.best_label == "init"
+    snap = rs.load_snapshot(orch.run_dir, orch.search, KERNEL)
+    follow = Orchestrator(
+        "relu", "fp16", "small", CFG, orch.search, run_dir=orch.run_dir, resuming=True,
+        evaluate_fn=fake_eval([]), client=FakeClient(lambda *_a, **_k: None), log=lambda _s: None,
+    )
+    follow.restore(snap)
+    assert "tile 32 overflowed" in follow._notes_summary
+    assert "float8" in follow._session_brief(False).peer_tips
+    assert follow._next_feedback_seq() == 2
 

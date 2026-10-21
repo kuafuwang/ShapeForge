@@ -28,6 +28,7 @@ _KERNEL = re.compile(r"\bkernel\s+void\s+(\w+)\b")
 _USAGE = re.compile(r"([A-Za-z_]+)=(-?\d+(?:\.\d+)?)")
 # 一场会话的墙钟。hmz 的回合预算先到；这个秒数只在进程不退出时杀掉它。
 PROCESS_TIMEOUT_S = 25 * 60 + 3 * 60 + 2 * 60 + 60
+_PEER_HEADER = "本任务前序避坑提示（队友交接，仅限本运行参考；凡未附探针文件名与实测数字的硬件/算法上限断言，一律按未验证处理，鼓励你写探针翻案）："
 WRAP_OUTPUT_TOKENS = 4000
 WRAP_MINUTES = 3
 FLOW_SLACK_MINUTES = 2
@@ -75,6 +76,7 @@ class SessionBrief:
     min_improvement: float = 1.005
     noise_z: float = 2.0
     seedless: bool = False
+    peer_tips: str = ""
 
 
 @dataclass
@@ -88,6 +90,7 @@ class AgentResult:
     error: str = ""
     spent: dict = field(default_factory=dict)
     notes: str = ""
+    feedback: str = ""
     self_checks: int = 0
     self_check_timeouts: int = 0
     self_check_gpu_s: float = 0.0
@@ -286,7 +289,19 @@ def render_contract(brief: SessionBrief, kernel_path: Path) -> str:
             "",
             "现在没有种子。先写出一颗外层评测合格的核。外层评测合格，它就成为种子。",
         ]
-    else:
+    lines += [
+        "",
+        "# 这个系统怎么工作",
+        "你在一场接力里：两个委员会轮流，一轮一场新会话，对话不带过去。往下传的有 `kernel.metal`、`NOTES.md`、外层成绩单，以及本运行内的「队友避坑提示」。",
+        "外层判卷是机械的：全量评测、三级贴核检查、确认计时绑源码指纹。你自报的数字不进种子，也不进发布加速比。",
+        "固定的是合同签名、容差、围栏和预算。可质疑的是笔记、文档、提示词和队友留下的前提。",
+        "你可以读整个仓库（`docs/`、评测源码），只能写本目录。",
+        "本场的主产出始终是 `kernel.metal`。`FEEDBACK.md` 写短、最后写。给系统的建议只给人看，有人在看板复核后改仓库。给下一棒的避坑提示只在本运行内往下传，不跨题目。放弃某个方向所依据的断言必须写进「被否决的前提」节，不要夹在避坑里。",
+        "文件开头一行 `kind: prompt|skill|tool|rule|decision|none`，可以写多个，用逗号分开。只留避坑、没有系统建议时写 `none`。",
+        "然后按这五个标题写，缺的可以留空：`# 需要帮助`、`# 对系统的建议`、`# 卡住的原因`、`# 给下一棒的避坑提示`、`# 被否决的前提`。",
+        "被否决的前提里，每一条写成 `[已实测: 探针文件 | 测的命题 | 数字]` 或 `[未验证]`。",
+    ]
+    if not brief.seedless:
         lines += ["", "# 当前现场", "种子 `kernel.metal` 已经放在本目录。"]
         if brief.scorecard:
             lines += ["", "外层成绩单：", brief.scorecard.strip()]
@@ -298,12 +313,16 @@ def render_contract(brief: SessionBrief, kernel_path: Path) -> str:
             lines += ["", "最近的历史：", brief.history.strip()]
         if brief.notes_summary:
             lines += ["", "上一轮 NOTES（硬件上限类断言未附实测数字的，按未验证处理）：", brief.notes_summary.strip()]
+        if brief.peer_tips:
+            lines += ["", _PEER_HEADER, brief.peer_tips.strip()]
         if brief.evidence:
             lines += ["", brief.evidence.strip()]
         lines += [
             "",
             "合同里的外层成绩和你自己跑出来的数字对不上时，先对种子原样跑一次 `--timed`，再改。",
         ]
+    elif brief.peer_tips:
+        lines += ["", _PEER_HEADER, brief.peer_tips.strip()]
     lines += [
         "",
         "# 证据",
@@ -409,13 +428,16 @@ def run_kernel_agent(
     notes_path = work / "NOTES.md"
     if notes_path.is_file():
         notes = notes_path.read_text()
+    from .agent_feedback import read_feedback_text
+
+    feedback, _over = read_feedback_text(work / "FEEDBACK.md")
     checks, timeouts, gpu_s = _self_check_summary(work)
     if status != "timeout" and proc.returncode not in (0, None):
         status = "failed"
         error = (stderr or stdout or "").strip()[-400:]
     return AgentResult(
         source=source, cost_usd=cost, cost_incomplete=not saw_result, status=status, error=error,
-        spent=spent, notes=notes, self_checks=checks, self_check_timeouts=timeouts, self_check_gpu_s=gpu_s,
+        spent=spent, notes=notes, feedback=feedback, self_checks=checks, self_check_timeouts=timeouts, self_check_gpu_s=gpu_s,
     )
 
 

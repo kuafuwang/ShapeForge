@@ -72,6 +72,9 @@ def run_detail(run_id: str, *, stamp: str = "") -> dict | None:
     config = detail._load(directory / "run_config.json")
     detail_doc["feature_grid"] = feature_grid(directory, detail_doc.get("result"))
     detail_doc["plan_outcomes"] = plan_outcomes(directory, config, detail_doc.get("state"), detail_doc.get("result"))
+    from observe.feedback import entries
+
+    detail_doc["feedback"] = entries(directory)
     detail_doc["detail_stamp"] = _detail_stamp(run_id)
     return detail_doc
 
@@ -338,6 +341,10 @@ def overview() -> dict:
             progress = detail._age(detail._load(directory / "eval_progress.json"))
     evals = detail.live_evals()
     beat = detail._heartbeat(progress) or (detail._heartbeat(evals[0]) if evals else None)
+    from observe.feedback import summary_from_index
+
+    with borrow() as index:
+        feedback = summary_from_index(index.conn)
     return {
         "gpu": detail.gpu_snapshot(),
         "live_runs": live,
@@ -345,6 +352,9 @@ def overview() -> dict:
         "heartbeat": beat,
         "tasks": list(list_tasks(include_phase2=True)),
         "experiments": experiment_jobs(),
+        "feedback_pending": feedback["pending_total"],
+        "feedback_frequent": feedback["frequent"],
+        "feedback_recurrence": feedback["recurrence"],
         "now": time.time(),
     }
 

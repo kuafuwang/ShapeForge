@@ -1,8 +1,8 @@
 {
 "_meta": {
-"git_commit": "29801b100856a268654e2c66364b969ede04bc9e",
-"reason": "the system prompt gains the wiki experience layer (measured entries), so its bytes change",
-"recorded_at": "2026-10-21T08:58:04+08:00"
+"git_commit": "6f5eb1fad264f3b6251bf5f3d1955a14b20c3a7c",
+"reason": "contract teaches the search loop and a feedback file; peer tips render when the run has them",
+"recorded_at": "2026-10-21T10:26:46+08:00"
 },
 "feedback": {
 "format_feedback_cut|compile_error": "STATUS: compile_error  (stage reached: compile)\nMetal compiler rejected the kernel\n\nMetal compiler errors (line numbers refer to your kernel source):\nkernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n",
@@ -23,57 +23,57 @@
 "each": [
 {
 "label": "0",
-"sha": "abc3bb34f675a1af0207f50b903567b4acb5eef2"
+"sha": "d7d531d938996a2cecf534a0b22daf1e60c733f6"
 },
 {
 "label": "1",
-"sha": "325aa48cb6a940848681cb6aca651032a0466101"
+"sha": "da5f6324ecd7dc6b78e19d2c1b18771c1504d50e"
 }
 ],
 "requests": 2,
-"sha": "b08a1fd1e3099d301ac61e401eea3153f81c5471"
+"sha": "8542582b3816bf9f9bc9fb7fa11603fdb9c59fef"
 },
 "orchestrator|gemm|plan_mix=1": {
 "each": [
 {
 "label": "0",
-"sha": "bfa72fe8f5cb5d4da32e4c2d5013b3e5b2949465"
+"sha": "2c05a7d5a1d73cc11343afa4e8c3340128006a3a"
 },
 {
 "label": "1",
-"sha": "01a9c5b949d5f2b82b5ae001d36e4c0b2be2c499"
+"sha": "22b5eb097f7e8a2fb7ceec09567d4e033df4aab0"
 }
 ],
 "requests": 2,
-"sha": "334ebde1ce78a772e11e66be725c60bacefdc9e4"
+"sha": "828792513ad1db10e04214637e2e4bab23a2b653"
 },
 "orchestrator|relu|plan_mix=0": {
 "each": [
 {
 "label": "0",
-"sha": "3b8bf0f7219835309debc813f17461007bcdc3d4"
+"sha": "49a86eea2c1ee52c6d5f28c9d8729428158ff97d"
 },
 {
 "label": "1",
-"sha": "ba84bddea955c0d2c631a28ab43000a281a77c41"
+"sha": "9393497fd0608af2632f43548242aa19de53fa2c"
 }
 ],
 "requests": 2,
-"sha": "26b9f443fd9886f12754fd7142d227549b22f3fe"
+"sha": "0ea3a785e23574d1737ef2b010232cdf9f26d76b"
 },
 "orchestrator|relu|plan_mix=1": {
 "each": [
 {
 "label": "0",
-"sha": "3b8bf0f7219835309debc813f17461007bcdc3d4"
+"sha": "49a86eea2c1ee52c6d5f28c9d8729428158ff97d"
 },
 {
 "label": "1",
-"sha": "ba84bddea955c0d2c631a28ab43000a281a77c41"
+"sha": "9393497fd0608af2632f43548242aa19de53fa2c"
 }
 ],
 "requests": 2,
-"sha": "26b9f443fd9886f12754fd7142d227549b22f3fe"
+"sha": "0ea3a785e23574d1737ef2b010232cdf9f26d76b"
 }
 },
 "outbound": {

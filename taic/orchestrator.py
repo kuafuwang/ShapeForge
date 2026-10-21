@@ -436,6 +436,7 @@ class Orchestrator:
         self._failure_feedback = ""
         self._notes_summary = ""
         self._evidence = ""
+        self._feedback_seq: int | None = None
         self._session_briefs: list = []
         # 续跑时目录里已有上一会话的 state.json。先空写会把看板抹掉，所以等到 restore 把账本和候选装回来再发布。
         # 新运行的初始稿用角色 0。续跑要等知道轮次后再绑，不能在这里先绑成角色 0。
@@ -669,6 +670,7 @@ class Orchestrator:
         self._resumes = snap.resumes + 1
         self._stagnant = snap.stagnant
         self._agent_failures = int(getattr(snap, "agent_failures", 0) or 0)
+        self._restore_handoff()
         self._round = snap.partial.rnd if snap.partial else snap.rounds_done
         self._resume = snap
         # 续跑的角色由将要进入的轮号决定，不把上一轮的对话带进来。
@@ -1245,8 +1247,10 @@ class Orchestrator:
         A session that ends without a new kernel after a crash or a timeout is ``agent_failed``.
         A clean exit that leaves the seed is ``unchanged`` and does not count as a failure.
         A changed file is evaluated whatever the process exit was.
+        Feedback is parsed once and recorded once, including when the session stops early.
         """
-        from .kernel_agent import AgentError, Prices, SessionBrief, run_kernel_agent
+        from .agent_feedback import parse_feedback
+        from .kernel_agent import AgentError, Prices, run_kernel_agent, output_tokens_for
 
         self.ledger.check()
         remaining = self.ledger.remaining
@@ -1255,79 +1259,240 @@ class Orchestrator:
         member = next(c.members[0] for c in self.committees if c.name == self._committee_name)
         slice_usd = self.search.relay_budget_usd if remaining is None else min(remaining, self.search.relay_budget_usd)
         prices = Prices(member.cfg.price_in, member.cfg.price_out, member.cfg.price_cache_read, member.cfg.price_cache_write)
-        from .kernel_agent import output_tokens_for
-
         tokens = output_tokens_for(slice_usd, prices.output)
         brief = self._session_brief(seedless)
         self._session_briefs.append(brief)
         self._publish_state("llm", inflight=tag)
         work = self.run_dir / "agent_work" / tag.replace("/", "_")
+        self._prepare_session_dir(work)
+        started = time.time()
+        seed_label = None if self.best is None else self.best.label
+        parsed = parse_feedback("")
+        outcome = None
+        cand = None
+        exit_kind = "agent_exception"
         try:
-            if self.agent_runner is None and self._client_injected:
-                raise RunStartError("a scripted run needs an agent_runner; it must not start hmz")
-            if self.agent_runner is not None:
-                result = self.agent_runner(brief, tag)
-                if asyncio.iscoroutine(result):
-                    result = await result
+            try:
+                if self.agent_runner is None and self._client_injected:
+                    raise RunStartError("a scripted run needs an agent_runner; it must not start hmz")
+                if self.agent_runner is not None:
+                    result = self.agent_runner(brief, tag)
+                    if asyncio.iscoroutine(result):
+                        result = await result
+                else:
+                    result = await asyncio.to_thread(
+                        run_kernel_agent, brief, work=work, provider=member.provider, model=member.model,
+                        effort=member.cfg.reasoning_effort, prices=prices, turn_output_tokens=tokens,
+                        turn_minutes=int(self.search.turn_minutes),
+                    )
+            except (AgentError, LLMError, Exception) as exc:
+                if isinstance(exc, (StopRun, BudgetExhausted, RunStartError)):
+                    raise
+                parsed = self._parsed_feedback(work, None, started)
+                self.log(f"  [{tag}] hmz failed: {exc}")
+                event = {
+                    "event": "agent", "label": tag, "harness": "pi", "provider": member.provider, "model": member.model,
+                    "committee": self._committee_name, "cost_usd": None, "cost_incomplete": True, "had_kernel": False,
+                    "outcome": "agent_failed", "error": str(exc)[:180], "self_checks": 0, "self_check_timeouts": 0,
+                }
+                event.update(self._feedback_slim(parsed))
+                self.llm.transcript.log(event)
+                outcome = None
+                exit_kind = "agent_exception"
+                return "agent_failed"
+            parsed = self._parsed_feedback(work, result, started)
+            if result.cost_usd is None and result.status == "ok":
+                self.llm.transcript.log(self._agent_event(tag, member, result, "cost_incomplete", parsed))
+                outcome = None
+                exit_kind = "cost_incomplete"
+                raise StopRun("cost_incomplete: the session finished without a token count, so the ledger cannot continue")
+            if result.cost_usd:
+                self.ledger.charge(result.cost_usd, tag)
+            self.hangs += int(result.self_check_timeouts or 0)
+            seed_source = None if self.best is None else self.best.source
+            changed = result.source is not None and result.source != seed_source
+            if result.status in ("timeout", "failed") and not changed:
+                outcome = "agent_failed"
+            elif not changed:
+                outcome = "unchanged"
             else:
-                result = await asyncio.to_thread(
-                    run_kernel_agent, brief, work=work, provider=member.provider, model=member.model,
-                    effort=member.cfg.reasoning_effort, prices=prices, turn_output_tokens=tokens,
-                    turn_minutes=int(self.search.turn_minutes),
-                )
-        except (AgentError, LLMError, Exception) as exc:
-            if isinstance(exc, (StopRun, BudgetExhausted, RunStartError)):
+                outcome = "evaluated"
+            self.llm.transcript.log(self._agent_event(tag, member, result, outcome, parsed))
+            self.log(f"  [{tag}] {self._committee_name} {member.provider}/{member.model} {outcome}" + (f" ({result.error[:120]})" if result.error else ""))
+            if result.self_check_timeouts and self.hangs >= self.search.max_hangs:
+                self._publish_state("llm", inflight=None)
+                if outcome == "evaluated":
+                    outcome = None
+                exit_kind = "hang_circuit_breaker"
+                raise StopRun("gpu_hang_circuit_breaker")
+            try:
+                if outcome == "evaluated":
+                    cand = await self._eval(result.source, tag)
+                    self._file_session_notes(cand, result)
+                    outer = self._outer_line(cand)
+                    self._notes_summary = _notes_for_next(outer, result.notes)
+                    if cand.report is not None and not cand.eligible and cand.report.status not in ("unchanged", "duplicate", "external_duplicate"):
+                        fb = format_feedback(cand.report)[:2000]
+                        note = threadgroup_limit_note(cand.report.message)
+                        if note:
+                            fb += "\n\n" + note
+                        self._failure_feedback = fb
+                    elif cand.is_best:
+                        self._failure_feedback = ""
+                elif outcome == "unchanged" and result.source:
+                    cand = await self._eval(result.source, tag)
+                    self._file_session_notes(cand, result)
+                    self._notes_summary = _notes_for_next(self._outer_line(cand), result.notes)
+                elif outcome == "unchanged":
+                    self._notes_summary = _notes_for_next("种子没换", result.notes)
+            except Exception as exc:
+                if isinstance(exc, StopRun) and "gpu_hang_circuit_breaker" in str(exc):
+                    if outcome == "evaluated":
+                        outcome = None
+                    cand = None
+                    exit_kind = "hang_circuit_breaker"
+                elif isinstance(exc, (StopRun, BudgetExhausted, RunStartError)):
+                    exit_kind = "normal"
+                    if cand is None:
+                        cand = self._by_label(tag)
+                else:
+                    outcome = None
+                    cand = None
+                    exit_kind = "eval_error"
                 raise
-            self.log(f"  [{tag}] hmz failed: {exc}")
-            self.llm.transcript.log({
-                "event": "agent", "label": tag, "harness": "pi", "provider": member.provider, "model": member.model,
-                "committee": self._committee_name, "cost_usd": None, "cost_incomplete": True, "had_kernel": False,
-                "outcome": "agent_failed", "error": str(exc)[:180], "self_checks": 0, "self_check_timeouts": 0,
-            })
-            return "agent_failed"
-        if result.cost_usd is None and result.status == "ok":
-            self.llm.transcript.log(self._agent_event(tag, member, result, "cost_incomplete"))
-            raise StopRun("cost_incomplete: the session finished without a token count, so the ledger cannot continue")
-        if result.cost_usd:
-            self.ledger.charge(result.cost_usd, tag)
-        self.hangs += int(result.self_check_timeouts or 0)
-        seed_source = None if self.best is None else self.best.source
-        changed = result.source is not None and result.source != seed_source
-        if result.status in ("timeout", "failed") and not changed:
-            outcome = "agent_failed"
-        elif not changed:
-            outcome = "unchanged"
-        else:
-            outcome = "evaluated"
-        self.llm.transcript.log(self._agent_event(tag, member, result, outcome))
-        self.log(f"  [{tag}] {self._committee_name} {member.provider}/{member.model} {outcome}" + (f" ({result.error[:120]})" if result.error else ""))
-        if result.self_check_timeouts and self.hangs >= self.search.max_hangs:
-            self._publish_state("llm", inflight=None)
-            raise StopRun("gpu_hang_circuit_breaker")
-        if outcome == "evaluated":
-            cand = await self._eval(result.source, tag)
-            self._file_session_notes(cand, result)
-            outer = self._outer_line(cand)
-            self._notes_summary = _notes_for_next(outer, result.notes)
-            if cand.report is not None and not cand.eligible and cand.report.status not in ("unchanged", "duplicate", "external_duplicate"):
-                fb = format_feedback(cand.report)[:2000]
-                note = threadgroup_limit_note(cand.report.message)
-                if note:
-                    fb += "\n\n" + note
-                self._failure_feedback = fb
-            elif cand.is_best:
-                self._failure_feedback = ""
-        elif outcome == "unchanged" and result.source:
-            cand = await self._eval(result.source, tag)
-            self._file_session_notes(cand, result)
-            self._notes_summary = _notes_for_next(self._outer_line(cand), result.notes)
-        elif outcome == "unchanged":
-            self._notes_summary = _notes_for_next("种子没换", result.notes)
-        return outcome
+            exit_kind = "normal"
+            return outcome
+        finally:
+            try:
+                self._record_feedback(tag, member, work, parsed, outcome, cand, exit_kind, seed_label)
+            except OSError:
+                pass
 
-    def _agent_event(self, tag: str, member, result, outcome: str) -> dict:
-        spent = result.spent or {}
+    def _prepare_session_dir(self, work: Path) -> None:
+        """Drop the previous session's notes and feedback before this one starts. The directory is reused on resume."""
+        work.mkdir(parents=True, exist_ok=True)
+        for name in ("NOTES.md", "FEEDBACK.md"):
+            try:
+                (work / name).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _parsed_feedback(self, work: Path, result, started: float) -> dict:
+        from .agent_feedback import FILE_CAP, parse_feedback, read_feedback_text
+
+        text = ""
+        if result is not None:
+            text = getattr(result, "feedback", "") or ""
+        path = work / "FEEDBACK.md"
+        file_over = False
+        if str(text).strip():
+            try:
+                file_over = path.is_file() and path.stat().st_size > FILE_CAP
+            except OSError:
+                file_over = False
+        else:
+            try:
+                fresh = path.is_file() and path.stat().st_mtime >= started - 1.0
+            except OSError:
+                fresh = False
+            if fresh:
+                text, file_over = read_feedback_text(path)
+        return parse_feedback(text, work=work, repo=REPO_ROOT, file_over=file_over)
+
+    def _feedback_slim(self, parsed: dict | None) -> dict:
+        parsed = parsed or {}
         return {
+            "feedback_kinds": parsed.get("kinds") or "",
+            "feedback_sections": list(parsed.get("section_names") or []),
+            "feedback_chars": int(parsed.get("chars") or 0),
+        }
+
+    def _next_feedback_seq(self) -> int:
+        from .agent_feedback import max_seq
+
+        if self._feedback_seq is None:
+            self._feedback_seq = max_seq(self.run_dir / "feedback.jsonl")
+        self._feedback_seq += 1
+        return self._feedback_seq
+
+    def _record_feedback(self, tag: str, member, work: Path, parsed: dict, outcome: str | None, cand, exit_kind: str, seed_label: str | None) -> None:
+        from .agent_feedback import round_of
+
+        raw = str((parsed or {}).get("raw") or "")
+        items = (parsed or {}).get("items") or []
+        report = None if cand is None else cand.report
+        record = {
+            "format": "agent_feedback",
+            "v": 1,
+            "seq": self._next_feedback_seq(),
+            "t": time.time(),
+            "task": self.task_name,
+            "dtype": self.dtype,
+            "size": self.size,
+            "label": tag,
+            "round": round_of(tag),
+            "committee": self._committee_name,
+            "provider": member.provider,
+            "model": member.model,
+            "effort": member.cfg.reasoning_effort,
+            "outcome": outcome,
+            "exit": exit_kind,
+            "candidate_status": None if report is None else report.status,
+            "candidate_us": None if report is None or not isinstance(report.candidate_us, (int, float)) else report.candidate_us,
+            "seed_label": seed_label,
+            "best_speedup": None if self.best is None else self.best.speedup,
+            "kinds": parsed.get("kinds") or "none",
+            "truncated": bool(parsed.get("truncated")),
+            "work_dir": f"agent_work/{tag.replace('/', '_')}",
+            "sections": parsed.get("sections") or {},
+            "items": items,
+            "unverified_premises": int(parsed.get("unverified_premises") or 0),
+            "raw": parsed.get("raw") or "",
+        }
+        path = self.run_dir / "feedback.jsonl"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        del work
+
+    def _restore_handoff(self) -> None:
+        """A resumed run otherwise forgets the previous session's NOTES and failure text."""
+        self._feedback_seq = None
+        root = self.run_dir / "agent_work"
+        chosen = None
+        if root.is_dir():
+            for path in root.glob("*/NOTES.md"):
+                try:
+                    stamp = path.stat().st_mtime
+                except OSError:
+                    continue
+                if chosen is None or stamp >= chosen[0]:
+                    chosen = (stamp, path)
+        if chosen is None:
+            return
+        try:
+            notes = chosen[1].read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        label = chosen[1].parent.name
+        cand = self._by_label(label)
+        if cand is None:
+            cand = next((item for item in self.candidates if item.label.replace("/", "_") == label), None)
+        if cand is None:
+            self._notes_summary = _notes_for_next("种子没换", notes)
+            return
+        self._notes_summary = _notes_for_next(self._outer_line(cand), notes)
+        if cand.report is not None and not cand.eligible and cand.report.status not in ("unchanged", "duplicate", "external_duplicate"):
+            fb = format_feedback(cand.report)[:2000]
+            note = threadgroup_limit_note(cand.report.message)
+            if note:
+                fb += "\n\n" + note
+            self._failure_feedback = fb
+        elif cand.is_best:
+            self._failure_feedback = ""
+
+    def _agent_event(self, tag: str, member, result, outcome: str, parsed: dict | None = None) -> dict:
+        spent = result.spent or {}
+        event = {
             "event": "agent", "label": tag, "harness": "pi", "provider": member.provider, "model": member.model,
             "committee": self._committee_name, "cost_usd": result.cost_usd, "cost_incomplete": bool(result.cost_incomplete),
             "had_kernel": bool(result.source), "outcome": outcome, "error": (result.error or "")[:180],
@@ -1335,6 +1500,8 @@ class Orchestrator:
             "self_check_gpu_s": result.self_check_gpu_s,
             "tokens": {k: int(v) for k, v in spent.items() if isinstance(v, (int, float))},
         }
+        event.update(self._feedback_slim(parsed))
+        return event
 
     def _file_session_notes(self, cand: Candidate, result) -> None:
         folder = self.run_dir / "candidates" / f"{cand.idx:03d}_{cand.label}"
@@ -1342,9 +1509,19 @@ class Orchestrator:
             return
         if result.notes:
             (folder / "NOTES.md").write_text(result.notes)
-        src = self.run_dir / "agent_work" / cand.label.replace("/", "_") / "self_checks.jsonl"
+        work = self.run_dir / "agent_work" / cand.label.replace("/", "_")
+        src = work / "self_checks.jsonl"
         if src.is_file():
             (folder / "self_checks.jsonl").write_text(src.read_text())
+        feedback = getattr(result, "feedback", "") or ""
+        copied = work / "FEEDBACK.md"
+        if not feedback and copied.is_file():
+            try:
+                feedback = copied.read_text(encoding="utf-8", errors="replace")[:16384]
+            except OSError:
+                feedback = ""
+        if feedback:
+            (folder / "FEEDBACK.md").write_text(feedback)
 
     def _outer_line(self, cand: Candidate) -> str:
         rep = cand.report
@@ -1366,6 +1543,11 @@ class Orchestrator:
             scorecard = format_feedback(seed.report)[:2000]
             bound = _operation_bound(seed.report)
         history = "\n".join(self.history[-8:])
+        tips = ""
+        if self.search.peer_tips:
+            from .agent_feedback import peer_tips_for
+
+            tips = peer_tips_for(self.run_dir)
         return SessionBrief(
             repo=REPO_ROOT, task_name=self.task_name, dtype=self.dtype, size=self.size,
             kernel_name=self.task.contract.kernel_name, triton_source=self.task.triton_source,
@@ -1376,6 +1558,7 @@ class Orchestrator:
             bound_line=bound, evidence=self._evidence, reps=self.search.eval_reps,
             require_contract_launch=self.search.require_contract_launch,
             min_improvement=self.search.min_improvement, noise_z=self.search.noise_z, seedless=seedless,
+            peer_tips=tips,
         )
 
     async def _initial_generation(self) -> None:

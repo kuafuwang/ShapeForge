@@ -20,7 +20,7 @@ from observe import detail, legacy
 from observe.budget import budget_status
 from observe.ledger import month_of, operator_name
 
-INDEX_SCHEMA_VERSION = 2
+INDEX_SCHEMA_VERSION = 3
 _SKIP_DIRS = {"candidates", "__pycache__"}
 _WRITE = threading.Lock()
 _SINGLE: "Index | None" = None
@@ -229,6 +229,44 @@ class Index:
                 PRIMARY KEY (run_id, seq)
             );
             CREATE INDEX IF NOT EXISTS turns_run_seq ON turns(run_id, seq);
+            CREATE TABLE IF NOT EXISTS feedback_items (
+                run_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                t REAL,
+                task TEXT,
+                dtype TEXT,
+                size TEXT,
+                label TEXT,
+                committee TEXT,
+                provider TEXT,
+                model TEXT,
+                outcome TEXT,
+                exit TEXT,
+                kinds TEXT,
+                has_system INTEGER NOT NULL DEFAULT 0,
+                pending_claims INTEGER NOT NULL DEFAULT 0,
+                unverified_premises INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (run_id, seq)
+            );
+            CREATE INDEX IF NOT EXISTS feedback_task ON feedback_items(task);
+            CREATE INDEX IF NOT EXISTS feedback_model ON feedback_items(model);
+            CREATE TABLE IF NOT EXISTS feedback_claims (
+                run_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                digest TEXT NOT NULL,
+                section TEXT,
+                audience TEXT,
+                premise TEXT,
+                status TEXT,
+                verification TEXT,
+                topic TEXT,
+                change_ref TEXT,
+                reviewed_at REAL,
+                PRIMARY KEY (run_id, seq, digest)
+            );
+            CREATE INDEX IF NOT EXISTS feedback_digest ON feedback_claims(digest);
+            CREATE INDEX IF NOT EXISTS feedback_topic ON feedback_claims(topic);
+            CREATE INDEX IF NOT EXISTS feedback_status ON feedback_claims(status);
             """
         )
         self.conn.execute(
@@ -365,7 +403,7 @@ class Index:
         row = self.conn.execute("SELECT value FROM meta WHERE key = 'runs_root'").fetchone()
         if row is not None and row[0] != root:
             self.conn.executescript(
-                "DELETE FROM runs; DELETE FROM experiments; DELETE FROM arms; DELETE FROM ledger; DELETE FROM watched;"
+                "DELETE FROM runs; DELETE FROM experiments; DELETE FROM arms; DELETE FROM ledger; DELETE FROM watched; DELETE FROM feedback_items; DELETE FROM feedback_claims;"
             )
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES ('runs_root', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -465,7 +503,7 @@ class Index:
             _fingerprint(directory / winner_rel) if winner_rel else "",
         ))
         extra = "|".join(
-            _fingerprint(directory / name) for name in ("budget_events.json", "ledger.json", "resume.lock")
+            _fingerprint(directory / name) for name in ("budget_events.json", "ledger.json", "resume.lock", "feedback.jsonl", "feedback_review.json")
         )
         extra += "|" + self._manifest_fingerprint(directory)
         return (
@@ -605,6 +643,9 @@ class Index:
         config = self._read_json(directory / "run_config.json")
         self._upsert_run(directory, row, config, fingerprints, manifest)
         self._project_turns(directory)
+        from observe.feedback import sync_run_index
+
+        sync_run_index(self.conn, self._rel(directory), directory)
 
     def _ingest_queue(self, directory: Path, state: dict) -> None:
         job = detail.experiment_job(directory)
@@ -958,6 +999,8 @@ class Index:
             for run_id in wanted:
                 self.conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
                 self.conn.execute("DELETE FROM turns WHERE run_id = ?", (run_id,))
+                self.conn.execute("DELETE FROM feedback_items WHERE run_id = ?", (run_id,))
+                self.conn.execute("DELETE FROM feedback_claims WHERE run_id = ?", (run_id,))
             watched = [row["path"] for row in self.conn.execute("SELECT path FROM watched")]
             for experiment_id in experiment_ids:
                 self.conn.execute("DELETE FROM experiments WHERE experiment_id = ?", (experiment_id,))
@@ -968,6 +1011,12 @@ class Index:
                 if path in exact or any(str(path).startswith(prefix) for prefix in prefixes):
                     self.conn.execute("DELETE FROM watched WHERE path = ?", (path,))
             self._bump()
+            self.conn.commit()
+
+    def refresh_feedback(self, run_id: str, directory: Path) -> None:
+        """Re-read one run's feedback files now. A finished run is not scanned again by an idle tick."""
+        with _WRITE:
+            self._ingest(Path(directory), force=True)
             self.conn.commit()
 
     def resolve(self, run_id: str) -> Path | None:

@@ -146,6 +146,26 @@ async def api_control(request) -> JSONResponse:
         return _refused(exc)
 
 
+async def api_review_feedback(request) -> JSONResponse:
+    try:
+        actions.check_origin(request.headers)
+        actions.check_token(request.headers)
+        raw = await request.body()
+        if len(raw) > 16384:
+            raise actions.Refused(413, "the body is too large")
+        body = actions.parse_body(raw)
+        try:
+            seq = int(request.path_params["seq"])
+        except (TypeError, ValueError) as exc:
+            raise actions.Refused(400, "seq must be an integer") from exc
+        reviewed = await asyncio.to_thread(
+            actions.review_feedback, request.path_params["run_id"], seq, request.path_params["digest"], body,
+        )
+        return _json(reviewed)
+    except actions.Refused as exc:
+        return _refused(exc)
+
+
 async def api_add_budget(request) -> JSONResponse:
     try:
         actions.check_origin(request.headers)
@@ -284,6 +304,7 @@ app = Starlette(
         Route("/api/records/delete", api_delete_records, methods=["POST"]),
         Route("/api/runs/{run_id:path}/control", api_control, methods=["GET"]),
         Route("/api/runs/{run_id:path}/budget", api_add_budget, methods=["POST"]),
+        Route("/api/runs/{run_id:path}/feedback/{seq}/claims/{digest}/review", api_review_feedback, methods=["POST"]),
         Route("/api/runs/{run_id:path}", api_v1_run),
         Route("/api/stream", api_stream),
     ]
