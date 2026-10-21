@@ -118,8 +118,8 @@ def test_confirm_uses_a_different_seed_and_a_cache_hit_keeps_the_old_one(tmp_pat
 
     first, second, res = asyncio.run(go())
     assert first.report.seed == eval_seed(1, "search", "r1.p0", seed_source)
-    assert orch.trace[2]["eval_seed_from"] == "cached report"
-    assert orch.trace[2]["eval_seed"] == orch.trace[1]["eval_seed"]
+    assert orch.trace[2]["eval_seed_from"] == "duplicate"
+    assert orch.trace[2]["eval_seed"] == 0
     assert len([c for c in calls if c["mode"] == "full" and c["reps"] == 3]) == 2
     assert res.confirmations[0]["eval_seed_from"] == "confirm"
     assert res.confirmations[0]["eval_seed"] == eval_seed(1, "confirm", "r1.p0", seed_source)

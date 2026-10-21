@@ -55,7 +55,7 @@ def _diff(got: dict, want: dict) -> list[str]:
 
 def test_switch_off_is_byte_identical_to_the_behaviour_recorded_before_the_feature():
     golden = json.loads(G.GOLDEN.read_text())
-    assert len(golden["system_prompt"]) >= 100 and len(golden["user_messages"]) >= 100 and len(golden["feedback"]) >= 12 and len(golden["outbound"]) >= 4 and len(golden["orchestrator"]) == 6
+    assert len(golden["system_prompt"]) >= 100 and len(golden["user_messages"]) >= 100 and len(golden["feedback"]) >= 12 and len(golden["outbound"]) >= 4 and len(golden["orchestrator"]) == 4
     assert _diff(G.compute(), golden) == []
 
 
@@ -275,23 +275,16 @@ def _fa_orch(tmp_path, plan=None, **search_kw):
                                                                               "MMA": code("speed=1.1", "flash_attention_kernel"), "pad": code("speed=1.2", "flash_attention_kernel"), "unrelated": code("speed=0.7", "flash_attention_kernel")}, **extra)
     cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False, truncation_retry=False)
     off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False, plan_ledger=False)
-    search = SearchConfig(budget_usd=5.0, branches=3, max_rounds=2, max_repair_tries=2, eval_reps=3, **{**off, **search_kw})
+    search = SearchConfig(budget_usd=5.0, branches=1, max_rounds=2, max_repair_tries=2, eval_reps=3, kernel_agent="pi", **{**off, **search_kw})
     return Orchestrator("flash_attention", "fp16", "small", cfg, search, run_dir=tmp_path / "run", evaluate_fn=G._scripted_eval("fa_pro_best"), client=FakeClient(script), log=lambda s: None)
 
 
 def test_switch_on_puts_the_block_where_the_profiler_evidence_goes_and_nowhere_else(tmp_path):
     orch = _fa_orch(tmp_path, hw_feedback=True)
     run(orch)
-    plans, patches = _requests(orch, "Diagnose the dominant bottleneck"), _requests(orch, "Implement exactly this optimization plan")
-    assert len(plans) == 2 and len(patches) == 6
-    for text in plans + patches:
-        assert text.count(HEADER) == 1
-        assert text.index("Evaluation feedback of this kernel:") < text.index(HEADER)
-    for text in plans:
-        assert text.index(HEADER) < text.index("Hypotheses already tried")
-    for text in patches:
-        assert text.index(HEADER) < text.index("Implement exactly this optimization plan")
-    assert all(HEADER not in c["messages"][-1]["content"] for c in orch.llm.client.calls if "Translate this Triton kernel" in c["messages"][-1]["content"])
+    seeded = [brief.evidence for brief in orch._session_briefs if not brief.seedless]
+    assert seeded and all(HEADER in text and text.count(HEADER) == 1 for text in seeded)
+    assert all(HEADER not in (brief.evidence or "") for brief in orch._session_briefs if brief.seedless)
     assert SKILL_TITLE in orch.system and orch.system == prompts.system_prompt(orch.task, use_tools=False, hw_feedback=True)
     assert json.loads((tmp_path / "run" / "run_config.json").read_text())["search"]["hw_feedback"] is True
 
@@ -299,7 +292,7 @@ def test_switch_on_puts_the_block_where_the_profiler_evidence_goes_and_nowhere_e
 def test_switch_off_never_mentions_the_block_and_records_false(tmp_path):
     orch = _fa_orch(tmp_path)
     run(orch)
-    assert not any(HEADER in m["content"] for c in orch.llm.client.calls for m in c["messages"])
+    assert not any(HEADER in (brief.evidence or "") for brief in orch._session_briefs)
     assert SKILL_TITLE not in orch.system
     assert json.loads((tmp_path / "run" / "run_config.json").read_text())["search"]["hw_feedback"] is False
 
@@ -308,9 +301,8 @@ def test_the_feedback_of_a_failed_candidate_stays_as_it_is(tmp_path):
     calls = []
     orch = make_orch(tmp_path, llm_script(code("status=compile_error"), fixes=[code("speed=1.2")]), calls, max_rounds=1, hw_feedback=True)
     run(orch)
-    repairs = _requests(orch, "evaluation of your kernel failed")
-    assert repairs and all(HEADER not in r for r in repairs)
-    assert any(HEADER in r for r in _requests(orch, "Diagnose the dominant bottleneck"))  # the seed (correct) does get it
+    failed = [brief for brief in orch._session_briefs if brief.failure]
+    assert failed and all(HEADER not in brief.failure for brief in failed)
 
 
 def test_a_failing_analysis_does_not_touch_the_search(tmp_path, monkeypatch):
@@ -318,7 +310,7 @@ def test_a_failing_analysis_does_not_touch_the_search(tmp_path, monkeypatch):
     orch = _fa_orch(tmp_path, hw_feedback=True)
     res = run(orch)
     assert res.best_label and res.rounds == 2
-    assert not any(HEADER in m["content"] for c in orch.llm.client.calls for m in c["messages"])
+    assert not any(HEADER in (brief.evidence or "") for brief in orch._session_briefs)
 
 
 # ------------------------------------------------------------------------------------------------ resume
@@ -337,8 +329,7 @@ def test_a_resumed_run_keeps_the_switch_the_prompt_and_the_block(tmp_path):
     assert report["settings"]["hw_feedback"] is True and report["provenance"]["search.hw_feedback"] == "run_config.json"
     assert "identical to what the current prompt files produce" in report["system_prompt"]  # not flagged as an edited prompt
     cli.run_prepared(ns(tmp_path / "run"), o2, snap, info, nb)
-    plans = [c["messages"][-1]["content"] for c in client.calls if "Diagnose the dominant bottleneck" in c["messages"][-1]["content"]]
-    assert plans and all(HEADER in p for p in plans)
+    assert any(HEADER in (brief.evidence or "") for brief in o2._session_briefs)
 
 
 def test_a_resumed_run_without_the_switch_stays_without_it(tmp_path):
@@ -351,7 +342,7 @@ def test_a_resumed_run_without_the_switch_stays_without_it(tmp_path):
     o2, snap, report, info, nb = cli.prepare_resume(ns(tmp_path / "run"), client=client, evaluate_fn=fake_eval([]), log=lambda s: None)
     assert o2.search.hw_feedback is False and SKILL_TITLE not in o2.system and report["settings"]["hw_feedback"] is False
     cli.run_prepared(ns(tmp_path / "run"), o2, snap, info, nb)
-    assert not any(HEADER in m["content"] for c in client.calls for m in c["messages"])
+    assert not any(HEADER in (brief.evidence or "") for brief in o2._session_briefs)
 
 
 def test_settings_of_a_run_without_run_config_are_read_from_its_recorded_prompt(tmp_path):
@@ -405,11 +396,10 @@ def test_the_ab_analysis_reads_the_block_and_counts_plans_that_talk_about_it(tmp
     orch = _fa_orch(tmp_path, plan=plan, hw_feedback=True)
     run(orch)
     r = ab.analyze(tmp_path / "run")
-    assert r["feedback_in_run"] is True and r["task"] == "flash_attention"
-    first = r["rounds"][0]
-    assert "matrix_unit" in first["list"] and first["list_source"] == "recorded in the planner request" and len(first["list"]) <= 3
-    assert first["plans"] == ["MMA", "pad", "unrelated"] and "MMA" in first["plans_mentioning_listed"] and "unrelated" not in first["plans_mentioning_listed"]
-    assert r["total"]["rounds_with_list"] >= 1 and r["total"]["plans_mentioning"] >= 1 and r["total"]["branches"] >= 3
+    assert r["task"] == "flash_attention"
+    seeded = [brief for brief in orch._session_briefs if not brief.seedless]
+    assert seeded and HEADER in seeded[0].evidence
+    assert r["rounds"] == []
     assert "plans mentioning a listed feature" in ab.markdown([r])
 
 
@@ -419,5 +409,5 @@ def test_the_ab_analysis_computes_the_list_for_a_control_run_that_had_no_block(t
     run(_fa_orch(tmp_path))  # switch off: no block in any request
     r = ab.analyze(tmp_path / "run")
     assert r["feedback_in_run"] is False
-    assert r["rounds"][0]["list"] and r["rounds"][0]["list_source"].startswith("computed from the seed")
+    assert r["rounds"] == []
     assert ab.listed_features("- matrix unit: x\n- (+2 lower-priority item(s) omitted)\n- tg padding: y") == ["matrix_unit", "tg_padding"]

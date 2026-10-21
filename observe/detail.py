@@ -834,10 +834,25 @@ def project_turn(item: dict) -> dict | None:
         row["error"] = _clip(str(item.get("message") or ""), 180)
         return row
     if event == "agent":
-        parts = [item.get("harness") or "pi", item.get("provider") or "", item.get("model") or ""]
+        parts = [item.get("committee") or "", item.get("harness") or "pi", item.get("provider") or "", item.get("model") or ""]
         row["model"] = "/".join(str(part) for part in parts if part)
         row["error"] = _clip(str(item.get("error") or ""), 180)
         row["had_kernel"] = bool(item.get("had_kernel"))
+        tokens = item.get("tokens") if isinstance(item.get("tokens"), dict) else {}
+        prompt = 0
+        completion = 0
+        for kind, value in tokens.items():
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            if kind == "output":
+                completion += int(value)
+            else:
+                prompt += int(value)
+        row["prompt_tokens"] = prompt or None
+        row["completion_tokens"] = completion or None
+        row["self_checks"] = _whole(item.get("self_checks"))
+        row["self_check_timeouts"] = _whole(item.get("self_check_timeouts"))
+        row["outcome"] = item.get("outcome") if isinstance(item.get("outcome"), str) else ""
         return row
     messages = item.get("messages") if isinstance(item.get("messages"), list) else []
     sent = ""
@@ -927,6 +942,18 @@ def _present_turn(group: dict) -> dict:
         err = str(agent.get("error") or "")
         cost = agent.get("cost_usd")
         seconds = agent.get("seconds")
+        prompt = agent.get("prompt_tokens")
+        completion = agent.get("completion_tokens")
+        if isinstance(prompt, int) or isinstance(completion, int):
+            tokens = int(prompt or 0) + int(completion or 0)
+        checks = agent.get("self_checks")
+        timeouts = agent.get("self_check_timeouts")
+        outcome = agent.get("outcome") or ""
+        sent = " ".join(part for part in (
+            f"自测 {checks} 次" if isinstance(checks, int) else "",
+            f"超时 {timeouts} 次" if isinstance(timeouts, int) and timeouts else "",
+            str(outcome),
+        ) if part)
     elif error is not None:
         kind = "http"
         err = str(error.get("error") or "")

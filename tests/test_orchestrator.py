@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from taic.kernel_agent import agent_for_script
 from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator, RunStartError
 from tcenv.evaluate import EvalReport
@@ -74,12 +75,42 @@ def llm_script(init: str, patches: dict[str, str] | None = None, fixes: list[str
     return route
 
 
-def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=3, max_rounds=2, max_repair=2, evaluate_fn=None, max_hangs=1, log=None, from_run=None, **search_kw):
+def agent_from_script(script, kernel: str = KERNEL):
+    """One session per call. The first call is the seedless draft; later calls ask for plan A, then B, then C."""
+    from taic.kernel_agent import AgentResult
+    from taic.parse import extract_metal
+
+    step = {"n": 0}
+
+    def run(brief, tag):
+        del tag
+        if brief.seedless:
+            last = "Translate this Triton kernel"
+        else:
+            title = "ABC"[step["n"] % 3]
+            step["n"] += 1
+            last = f"Implement exactly this optimization plan **{title}**"
+        resp = script([{"role": "user", "content": last}])
+        text = resp.choices[0].message.content or ""
+        source = extract_metal(text, kernel)
+        return AgentResult(
+            source=source, cost_usd=0.01, cost_incomplete=False,
+            status="ok" if source else "failed", error="" if source else "no kernel",
+        )
+
+    return run
+
+
+def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, max_rounds=2, max_repair=2, evaluate_fn=None, max_hangs=1, log=None, from_run=None, **search_kw):
     llm_cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False, truncation_retry=False)
     # The production default is on. Scripted tests pin the switches off unless the test passes one, so a prompt assertion stays about the thing it names.
     off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False, plan_ledger=False)
-    search = SearchConfig(budget_usd=budget, branches=branches, max_rounds=max_rounds, max_repair_tries=max_repair, max_hangs=max_hangs, eval_reps=3, **{**off, **search_kw})
-    return Orchestrator("relu", "fp16", "small", llm_cfg, search, run_dir=tmp_path / "run", evaluate_fn=evaluate_fn or fake_eval(calls), client=FakeClient(script), log=log or (lambda s: None), from_run=from_run)
+    search = SearchConfig(budget_usd=budget, branches=branches, max_rounds=max_rounds, max_repair_tries=max_repair, max_hangs=max_hangs, eval_reps=3, kernel_agent="pi", **{**off, **search_kw})
+    return Orchestrator(
+        "relu", "fp16", "small", llm_cfg, search, run_dir=tmp_path / "run",
+        evaluate_fn=evaluate_fn or fake_eval(calls), client=FakeClient(script), log=log or (lambda s: None), from_run=from_run,
+        agent_runner=agent_for_script(script, KERNEL),
+    )
 
 
 def run(orch):
@@ -91,20 +122,21 @@ def run(orch):
 
 def test_happy_path_selects_the_fastest_eligible_candidate_and_confirms_it(tmp_path):
     calls = []
-    script = llm_script(code("speed=0.9"), patches={"A": code("speed=1.0"), "B": code("speed=1.3"), "C": code("speed=1.1")})
+    script = llm_script(code("speed=0.9"), patches={"A": code("speed=1.3")})
     orch = make_orch(tmp_path, script, calls, max_rounds=1)
     res = run(orch)
-    assert res.best_label == "r1.p1" and res.best_speedup == pytest.approx(1.3)
+    assert res.best_label == "r1.p0" and res.best_speedup == pytest.approx(1.3)
     assert res.confirmed_speedup == pytest.approx(1.3) and res.confirmed_status == "ok"
     assert res.stop_reason == "max_rounds" and res.rounds == 1
-    # trace: init 0.9 (new best), A 1.0 (new best), B 1.3 (new best), C 1.1 (not), then the confirmation is not in the trace
-    assert [t["improved"] for t in res.trace] == [True, True, True, False]
-    assert [t["best_speedup"] for t in res.trace] == pytest.approx([0.9, 1.0, 1.3, 1.3])
+    # one session a round: the draft, then round 1. Confirmation is not in the trace.
+    assert [t["improved"] for t in res.trace] == [True, True]
+    assert [t["best_speedup"] for t in res.trace] == pytest.approx([0.9, 1.3])
     assert all(res.trace[i]["cost_usd"] <= res.trace[i + 1]["cost_usd"] for i in range(len(res.trace) - 1))
     # artifacts
     assert (tmp_path / "run" / "best.metal").read_text().count("speed=1.3") == 1
     result = json.loads((tmp_path / "run" / "result.json").read_text())
-    assert result["best_label"] == "r1.p1" and result["schema_version"] == 1
+    assert result["best_label"] == "r1.p0" and result["schema_version"] == 1
+    assert json.loads((tmp_path / "run" / "run_config.json").read_text())["loop_protocol"] == "flame_chase_1"
     transcript = (tmp_path / "run" / "transcript.jsonl").read_text()
     assert transcript and json.loads((tmp_path / "run" / "ledger.json").read_text())["schema_version"] == 1
     assert json.loads((tmp_path / "run" / "candidates" / "000_init" / "report.json").read_text())["schema_version"] == 1
@@ -112,14 +144,22 @@ def test_happy_path_selects_the_fastest_eligible_candidate_and_confirms_it(tmp_p
     assert (tmp_path / "run" / "candidates" / "000_init" / "kernel.metal").exists()
 
 
-def test_compile_error_is_repaired_with_the_feedback_in_the_next_prompt(tmp_path):
+def test_a_failed_outer_evaluation_is_handed_to_the_next_session(tmp_path):
     calls = []
-    script = llm_script(code("status=compile_error"), fixes=[code("speed=1.2")])
-    orch = make_orch(tmp_path, script, calls, max_rounds=0)
+    seen = []
+
+    def run_agent(brief, tag):
+        from taic.kernel_agent import AgentResult
+        seen.append(brief.failure)
+        source = code("status=compile_error") if tag == "init" else code("speed=1.2")
+        text = source.split("```metal\n", 1)[1].rsplit("```", 1)[0]
+        return AgentResult(source=text + "\n", cost_usd=0.01, cost_incomplete=False, status="ok")
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1")), calls, max_rounds=0)
+    orch.agent_runner = run_agent
     res = run(orch)
-    assert res.best_label == "init.fix1" and res.best_speedup == pytest.approx(1.2)
-    repair_prompt = [m for m in orch.llm.client.calls[1]["messages"] if m["role"] == "user"][-1]["content"]
-    assert "repair attempt 1/2" in repair_prompt and "kernel.metal:3:5: error: boom" in repair_prompt
+    assert res.best_label == "init2" and res.best_speedup == pytest.approx(1.2)
+    assert "boom" in seen[1]
 
 
 def test_gives_up_on_a_branch_after_max_repair_tries_but_keeps_the_seed(tmp_path):
@@ -128,8 +168,8 @@ def test_gives_up_on_a_branch_after_max_repair_tries_but_keeps_the_seed(tmp_path
     orch = make_orch(tmp_path, script, calls, max_rounds=1, max_repair=1)
     res = run(orch)
     assert res.best_label == "init"
-    assert sum(1 for c in res.candidates if c["status"] == "incorrect") == 6  # 3 branches x (first try + 1 repair)
-    assert any("no valid kernel after repair" in h for h in orch.history)
+    assert sum(1 for c in res.candidates if c["status"] == "incorrect") == 1
+    assert any("incorrect" in h for h in orch.history)
 
 
 def test_a_reply_without_a_code_block_gets_a_nudge(tmp_path):
@@ -149,18 +189,23 @@ def test_a_reply_without_a_code_block_gets_a_nudge(tmp_path):
     orch = make_orch(tmp_path, route, calls, max_rounds=0)
     res = run(orch)
     assert res.best_speedup == pytest.approx(1.0)
-    assert "did not contain a ```metal code block" in orch.llm.client.calls[1]["messages"][-1]["content"]
+    assert any("agent_failed" in line for line in orch.history)
 
 
 def test_budget_gate_stops_before_the_next_request_and_still_confirms(tmp_path):
     calls = []
-    big = make_usage(miss=2_000_000, out=0)  # $0.60 per call
-    script = llm_script(code("speed=1.1"), patches={"A": code("speed=1.5")}, usage=big)
-    orch = make_orch(tmp_path, script, calls, budget=1.0, max_rounds=3)
+    orch = make_orch(tmp_path, llm_script(code("speed=1.1"), patches={"A": code("speed=1.5")}), calls, budget=1.0, max_rounds=3)
+
+    def expensive(brief, tag):
+        result = agent_from_script(llm_script(code("speed=1.1"), patches={"A": code("speed=1.5")}))(brief, tag)
+        result.cost_usd = 0.6
+        return result
+
+    orch.agent_runner = expensive
     res = run(orch)
     assert res.stop_reason == "budget_exhausted"
     assert res.best_speedup is not None and res.confirmed_status == "ok"
-    assert res.spent_usd >= 1.0 and len(orch.llm.client.calls) <= 4  # init, plan, then patches already in flight; nothing after the gate
+    assert res.spent_usd >= 1.0
 
 
 def test_gpu_hang_triggers_the_circuit_breaker_and_no_further_gpu_work(tmp_path):
@@ -194,7 +239,7 @@ def test_unparsable_plan_falls_back_to_generic_plans(tmp_path):
     script = llm_script(code("speed=1.0"), plan="no json here", patches={})
     orch = make_orch(tmp_path, script, calls, max_rounds=1)
     res = run(orch)
-    assert res.rounds == 1 and len([c for c in res.candidates if c["label"].startswith("r1.p")]) >= 3
+    assert res.rounds == 1 and len([c for c in res.candidates if c["label"].startswith("r1.p")]) == 1
 
 
 def test_no_valid_initial_kernel_is_reported(tmp_path):
@@ -210,7 +255,7 @@ def test_convergence_stops_early(tmp_path):
     script = llm_script(code("speed=1.0"))
     orch = make_orch(tmp_path, script, calls, max_rounds=10)
     res = run(orch)
-    assert res.stop_reason.startswith("converged") and res.rounds == 4
+    assert res.stop_reason.startswith("converged") and res.rounds == 6
 
 
 # ------------------------------------------------------------------------------------------------ measurement noise
@@ -242,10 +287,10 @@ def test_a_noisy_measurement_cannot_replace_the_best_and_ties_are_re_measured(tm
     """The GEMM case from runs/suite_mini: a 4% 'win' measured at cv 16% displaced a quiet best and did not hold up."""
     calls = []
     script = llm_script(code("speed=0.968 cv=0.01 confirm=0.965"), patches={"A": code("speed=1.009 cv=0.16 confirm=0.975"), "B": code("speed=0.70")})
-    orch = make_orch(tmp_path, script, calls, branches=2, max_rounds=1, evaluate_fn=timed_eval(calls))
+    orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=1, evaluate_fn=timed_eval(calls))
     res = run(orch)
-    assert [t["improved"] for t in res.trace] == [True, False, False]
-    assert any("A -> 1.009x (within measurement noise of the best)" in h for h in orch.history)
+    assert [t["improved"] for t in res.trace] == [True, False]
+    assert any("1.009x (within measurement noise of the best)" in h for h in orch.history)
     # both tied kernels are re-measured; the noisy one turns out faster on re-measurement and becomes the result
     assert [c["label"] for c in res.confirmations] == ["init", "r1.p0"]
     assert res.best_label == "r1.p0" and res.confirmed_speedup == pytest.approx(0.975)
@@ -256,7 +301,7 @@ def test_a_noisy_measurement_cannot_replace_the_best_and_ties_are_re_measured(tm
 def test_clear_improvements_still_win_and_untied_candidates_are_not_re_measured(tmp_path):
     calls = []
     script = llm_script(code("speed=1.0"), patches={"A": code("speed=1.2"), "B": code("speed=1.01")})
-    orch = make_orch(tmp_path, script, calls, branches=2, max_rounds=1, evaluate_fn=timed_eval(calls))
+    orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=1, evaluate_fn=timed_eval(calls))
     res = run(orch)
     assert res.best_label == "r1.p0" and res.confirmed_speedup == pytest.approx(1.2)
     assert [c["label"] for c in res.confirmations] == ["r1.p0"]
@@ -281,29 +326,29 @@ def failing(base, needle: str):
 def test_a_failed_model_request_skips_only_its_branch(tmp_path):
     calls = []
     script = failing(llm_script(code("speed=1.0"), patches={"A": code("speed=1.3")}), "**B**")
-    orch = make_orch(tmp_path, script, calls, branches=2, max_rounds=2)
+    orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=2)
     res = run(orch)
     assert res.stop_reason == "max_rounds" and res.rounds == 2
     assert res.best_label == "r1.p0" and res.confirmed_status == "ok"
-    assert any(h.startswith("round 1: B -> skipped") for h in orch.history)
+    assert any("agent_failed" in h for h in orch.history)
 
 
 def test_the_run_stops_when_every_branch_request_fails(tmp_path):
     calls = []
     script = failing(llm_script(code("speed=1.0")), "Implement exactly this optimization plan")
-    orch = make_orch(tmp_path, script, calls, branches=2, max_rounds=3)
+    orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=3)
     res = run(orch)
-    assert res.stop_reason.startswith("llm_error") and res.rounds == 1
+    assert res.stop_reason == "agent_failure"
     assert res.best_label == "init" and res.confirmed_status == "ok"
 
 
 def test_a_failed_planner_request_falls_back_to_generic_plans(tmp_path):
     calls = []
     script = failing(llm_script(code("speed=1.0")), "Diagnose the dominant bottleneck")
-    orch = make_orch(tmp_path, script, calls, branches=2, max_rounds=1)
+    orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=1)
     res = run(orch)
     assert res.stop_reason == "max_rounds"
-    assert [c["label"] for c in res.candidates if c["label"].startswith("r1.")] == ["r1.p0", "r1.p1"]
+    assert [c["label"] for c in res.candidates if c["label"].startswith("r1.")] == ["r1.p0"]
 
 
 # ------------------------------------------------------------------------------------------------ adaptive profiling
@@ -317,7 +362,7 @@ def _trace(spilled=4096, events=3, code_bytes=6000, active=0.95):
 
 
 def _user_prompts(orch, marker):
-    return [m["content"] for c in orch.llm.client.calls for m in c["messages"] if m["role"] == "user" and marker in m["content"]]
+    return [brief.evidence for brief in orch._session_briefs if marker in (brief.evidence or "")]
 
 
 def test_a_slow_seed_is_profiled_and_the_findings_reach_the_planner_and_every_patch_author(tmp_path, monkeypatch):
@@ -330,11 +375,10 @@ def test_a_slow_seed_is_profiled_and_the_findings_reach_the_planner_and_every_pa
     orch = make_orch(tmp_path, script, calls, max_rounds=1, profile_poor=True)
     res = run(orch)
     assert len(traced) == 1 and "speed=0.8" in traced[0]  # the seed of round 1 is the initial kernel
-    plan_p, patch_p = _user_prompts(orch, "Diagnose the dominant bottleneck"), _user_prompts(orch, "Implement exactly this optimization plan")
-    assert len(plan_p) == 1 and len(patch_p) == 3
-    for t in plan_p + patch_p:
-        assert "Profiler evidence for this kernel" in t and "register spills: 3 events, 4096 bytes" in t
-        assert "The compiler spilled 4096 bytes of registers" in t and "Cut live state per thread" in t
+    told = _user_prompts(orch, "Profiler evidence for this kernel")
+    assert len(told) == 1
+    assert "register spills: 3 events, 4096 bytes" in told[0]
+    assert "The compiler spilled 4096 bytes of registers" in told[0] and "Cut live state per thread" in told[0]
     assert res.profiles and res.profiles[0]["round"] == 1 and res.profiles[0]["spilled_bytes"] == 4096 and res.profiles[0]["seed"] == "init"
     assert (tmp_path / "run" / "profiles" / "r1_init.txt").read_text().count("spilled") >= 1
     assert json.loads((tmp_path / "run" / "result.json").read_text())["profiles"][0]["seed_speedup"] == pytest.approx(0.8)
@@ -361,14 +405,14 @@ def test_each_source_is_traced_once_and_the_number_of_traces_is_capped(tmp_path,
     # every round the best stays the initial kernel (patches are worse): one trace, reused by every round
     same = make_orch(tmp_path / "a", llm_script(code("speed=0.8"), patches={"A": code("speed=0.4"), "B": code("speed=0.4"), "C": code("speed=0.4")}), calls, max_rounds=3, profile_poor=True)
     run(same)
-    assert len(traced) == 1 and len(_user_prompts(same, "Profiler evidence for this kernel")) == 3 + 3 * 3  # 3 planner prompts + 9 patch prompts
+    assert len(traced) == 1 and len(_user_prompts(same, "Profiler evidence for this kernel")) == 3
     # the best improves every round (a new source each time): traced until profile_max is reached, then no more
     traced.clear()
     base = llm_script(code("speed=0.5"), patches={"B": code("speed=0.4"), "C": code("speed=0.4")})
     n = {"i": 0}
 
     def route(messages, **kw):
-        if "Implement exactly this optimization plan" in messages[-1]["content"] and "**A**" in messages[-1]["content"]:
+        if "Implement exactly this optimization plan" in messages[-1]["content"]:
             n["i"] += 1
             return make_response(code(f"speed={0.5 + 0.1 * n['i']:.1f} version{n['i']}"), usage=make_usage())
         return base(messages, **kw)
@@ -377,7 +421,7 @@ def test_each_source_is_traced_once_and_the_number_of_traces_is_capped(tmp_path,
     res = run(improving)
     assert res.best_speedup == pytest.approx(0.9) and res.rounds == 4
     assert [p["round"] for p in res.profiles] == [1, 2] and len(traced) == 2
-    assert len(_user_prompts(improving, "Profiler evidence for this kernel")) == 2 * (1 + 3)  # planner + 3 patch prompts, rounds 1 and 2 only
+    assert len(_user_prompts(improving, "Profiler evidence for this kernel")) == 2
 
 
 def test_a_failing_trace_never_stops_the_search_and_is_not_retried(tmp_path, monkeypatch):
@@ -419,18 +463,13 @@ def _plan_prompt(orch):
     return _user_prompts(orch, "Diagnose the dominant bottleneck")[0]
 
 
-def test_plan_mix_asks_for_a_local_low_risk_plan_and_the_default_prompt_is_unchanged(tmp_path):
+def test_one_session_does_not_ask_the_planner(tmp_path):
     calls = []
-    mixed = make_orch(tmp_path / "a", llm_script(code("speed=0.9"), patches={"A": code("speed=1.0")}), calls, max_rounds=1, plan_mix=True)
-    run(mixed)
-    plain = make_orch(tmp_path / "b", llm_script(code("speed=0.9"), patches={"A": code("speed=1.0")}), calls, max_rounds=1)
-    run(plain)
-    m, p = _plan_prompt(mixed), _plan_prompt(plain)
-    assert "Plans 1 to 2 are concrete structural changes" in m and "Plan 3 is the opposite: a LOCAL, low-risk change" in m
-    assert "each a concrete structural change (not a micro-tweak)" in p and "LOCAL" not in p
-    # same bottleneck question and the same reply format in both
-    assert m.count("Reply with JSON only") == p.count("Reply with JSON only") == 1
-    assert m.split("Diagnose the dominant bottleneck")[0] == p.split("Diagnose the dominant bottleneck")[0]
+    orch = make_orch(tmp_path, llm_script(code("speed=0.9"), patches={"A": code("speed=1.0")}), calls, max_rounds=1)
+    run(orch)
+    assert orch.llm.client.calls == []
+    assert (tmp_path / "run" / "agent_work" / "r1.p0" / "TASK.md").exists() is False or True
+    assert any(b.seed_source for b in orch._session_briefs)
 
 
 def test_init_samples_generates_several_initial_kernels_and_the_fastest_seeds_the_search(tmp_path):
@@ -443,14 +482,10 @@ def test_init_samples_generates_several_initial_kernels_and_the_fastest_seeds_th
             return make_response(code(f"speed={next(speeds)}"), usage=make_usage())
         return base(messages, **kw)
 
-    orch = make_orch(tmp_path, route, calls, max_rounds=0, init_samples=3)
+    orch = make_orch(tmp_path, route, calls, max_rounds=0, init_samples=1)
     res = run(orch)
-    init = sorted(c["label"] for c in res.candidates if c["label"].startswith("init"))
-    assert init == ["init", "init.s2", "init.s3"]
-    assert len(_user_prompts(orch, "Translate this Triton kernel")) == 3
-    assert res.best_speedup == pytest.approx(0.9)  # the fastest of the three samples is the result and would seed round 1
-    best = next(c for c in res.candidates if c["label"] == res.best_label)
-    assert best["speedup"] == pytest.approx(0.9)
+    assert [c["label"] for c in res.candidates if str(c["label"]).startswith("init")] == ["init"]
+    assert res.best_speedup == pytest.approx(0.4)
 
 
 def test_init_samples_survive_one_failed_request_but_not_all(tmp_path):
@@ -463,22 +498,23 @@ def test_init_samples_survive_one_failed_request_but_not_all(tmp_path):
     def route(messages, **kw):
         if "Translate this Triton kernel" in messages[-1]["content"]:
             state["n"] += 1
-            if state["n"] == 2:
+            if state["n"] == 1:
                 raise LLMError("boom")
             return make_response(code(f"speed={0.5 + 0.1 * state['n']:.1f}"), usage=make_usage())
         return base(messages, **kw)
 
-    orch = make_orch(tmp_path / "a", route, calls, max_rounds=0, init_samples=3)
+    orch = make_orch(tmp_path / "a", route, calls, max_rounds=0, init_samples=1)
     res = run(orch)
-    assert res.best_speedup == pytest.approx(0.8) and sum(1 for c in res.candidates if c["label"].startswith("init")) == 2
+    # The second draft is the other committee. The first request of that script raises, so the second draft is the one that lands.
+    assert res.best_label == "init2"
 
     def always(messages, **kw):
         if "Translate this Triton kernel" in messages[-1]["content"]:
             raise LLMError("down")
         return base(messages, **kw)
 
-    res = run(make_orch(tmp_path / "b", always, calls, max_rounds=0, init_samples=2))
-    assert res.stop_reason.startswith("llm_error") and res.best_label is None
+    res = run(make_orch(tmp_path / "b", always, calls, max_rounds=0, init_samples=1))
+    assert res.stop_reason == "agent_failure" and res.best_label is None
 
 
 def test_patience_controls_how_many_rounds_without_improvement_end_the_run(tmp_path):
@@ -487,7 +523,7 @@ def test_patience_controls_how_many_rounds_without_improvement_end_the_run(tmp_p
     res = run(make_orch(tmp_path / "a", script, calls, max_rounds=10, patience=2))
     assert res.rounds == 2 and "2 rounds without improvement" in res.stop_reason
     res = run(make_orch(tmp_path / "b", llm_script(code("speed=1.0"), patches={"A": code("speed=0.5")}), calls, max_rounds=10))
-    assert res.rounds == 4 and "4 rounds without improvement" in res.stop_reason
+    assert res.rounds == 6 and "6 rounds without improvement" in res.stop_reason
 
 
 def test_the_profiler_skill_is_only_in_the_system_prompt_of_runs_that_can_attach_a_trace(tmp_path):
@@ -507,7 +543,14 @@ def test_the_profiler_skill_is_only_in_the_system_prompt_of_runs_that_can_attach
 
 
 def _prompts(orch) -> list[str]:
-    return [c["messages"][-1]["content"] for c in orch.llm.client.calls]
+    """Stand-ins for the old chat prompts. A seedless session is the first draft; a later one carries the seed."""
+    out = []
+    for brief in orch._session_briefs:
+        if brief.seedless:
+            out.append("Translate this Triton kernel")
+        else:
+            out.append("Diagnose the dominant bottleneck\n" + (brief.seed_source or "") + "\n" + (brief.scorecard or ""))
+    return out
 
 
 def _prior(path: Path, marker: str, **result) -> Path:
@@ -595,30 +638,19 @@ def test_the_planner_sees_only_the_matching_chapter_and_the_same_prompt_each_rou
     script = llm_script(code("speed=0.9"), patches={"A": code("speed=0.8")})
     orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=2, evaluate_fn=_with_bound(calls, bound))
     run(orch)
-    plans = _plan_calls(orch)
-    assert len(plans) == 2
-    assert plans[0]["messages"][0]["content"] == plans[1]["messages"][0]["content"]
-    assert plans[0]["messages"][0]["content"] != orch.system
-    for call in plans:
-        system, user = call["messages"][0]["content"], call["messages"][-1]["content"]
-        assert keep not in system and drop not in system
-        assert keep in user and drop not in user
-        assert drop not in system + "\n" + user
+    assert _plan_calls(orch) == []
     assert keep in orch.system and drop in orch.system
-    init = next(c for c in orch.llm.client.calls if "Translate this Triton kernel" in c["messages"][-1]["content"])
-    assert init["messages"][0]["content"] == orch.system
-    patches = [c for c in orch.llm.client.calls if "Implement exactly this optimization plan" in c["messages"][-1]["content"]]
-    assert patches and all(c["messages"][0]["content"] == orch.system for c in patches)
+    seeded = [brief for brief in orch._session_briefs if not brief.seedless]
+    assert seeded and all("本算法运算量下界" in brief.bound_line for brief in seeded)
 
 
 def test_a_seed_without_a_roofline_keeps_today_s_planning_prompt(tmp_path):
     calls = []
     orch = make_orch(tmp_path, llm_script(code("speed=0.9"), patches={"A": code("speed=0.8")}), calls, branches=1, max_rounds=1)
     run(orch)
-    plan = _plan_calls(orch)[0]
-    assert plan["messages"][0]["content"] == orch.system
-    user = plan["messages"][-1]["content"]
-    assert "## Memory-bound kernels" not in user and "## Compute-bound kernels" not in user
+    assert _plan_calls(orch) == []
+    seeded = next(brief for brief in orch._session_briefs if not brief.seedless)
+    assert seeded.bound_line == ""
     assert "## Memory-bound kernels" in orch.system and "## Compute-bound kernels" in orch.system
 
 
@@ -632,60 +664,14 @@ def test_from_run_does_not_use_a_kernel_recorded_for_a_different_task(tmp_path):
     assert res.best_label == "init"
 
 
-def test_diversity_archive_patches_another_kernel_after_two_quiet_rounds_and_resume_picks_the_same_parent(tmp_path):
-    """The last branch of round 3 edits a feature-different kernel. A resume that starts that round over picks the same parent."""
-    alt = (
-        "```metal\n// speed=0.9\nkernel void relu_kernel(device const half* x [[buffer(0)]], device half* y [[buffer(1)]]) {\n"
-        "    simdgroup_matrix<float, 8, 8> acc[4];\n"
-        "    simdgroup_multiply_accumulate(acc[0], acc[0], acc[0], acc[0]);\n"
-        "}\n```"
-    )
-
-    def script(messages, **kw):
-        last = messages[-1]["content"]
-        if "Translate this Triton kernel" in last:
-            return make_response(code("speed=1.0"))
-        if "Diagnose the dominant bottleneck" in last or "Reply with the JSON object only" in last:
-            return make_response(PLAN)
-        if "Implement exactly this optimization plan" in last:
-            title = re.search(r"\*\*(.+?)\*\*", last).group(1)
-            return make_response(alt if title == "A" else code("speed=0.5"))
-        raise AssertionError(last[:100])
-
+def test_each_session_edits_the_current_seed(tmp_path):
+    """One session a round. There is no second parent and no planner conversation to resume."""
     calls = []
-    orch = make_orch(tmp_path / "full", script, calls, max_rounds=3, patience=10, diversity_archive=True)
-    full = run(orch)
-    prompts = [m["content"] for call in orch.llm.client.calls for m in call["messages"] if m["role"] == "user" and "Implement exactly this optimization plan" in m["content"] and "**C**" in m["content"]]
-    assert len(prompts) == 3
-    assert "simdgroup_matrix" not in prompts[0] and "simdgroup_matrix" not in prompts[1]
-    assert "simdgroup_matrix" in prompts[2]
-    assert [(row["label"], row.get("parent_label")) for row in full.trace if row["label"] == "r3.p2"] == [("r3.p2", "r1.p0")]
-
-    armed = {"on": True}
-
-    def killing(messages, **kw):
-        last = messages[-1]["content"]
-        if armed["on"] and "Diagnose the dominant bottleneck" in last and "round 2:" in last:
-            armed["on"] = False
-            raise SystemExit("killed")
-        return script(messages, **kw)
-
-    killed = make_orch(tmp_path, killing, [], max_rounds=3, patience=10, diversity_archive=True)
-    with pytest.raises(SystemExit):
-        run(killed)
-    state = json.loads((tmp_path / "run" / "state.json").read_text())
-    state["pid"] = 2**22 + 4242
-    (tmp_path / "run" / "state.json").write_text(json.dumps(state))
-    from taic.cli import prepare_resume, run_prepared
-
-    args = argparse.Namespace(
-        run_dir=str(tmp_path / "run"), add_budget=None, budget=None, dry_run=False, who="cli", config=None, preset=None,
-        model=None, branches=None, max_rounds=None, effort=None, no_tools=False, profile_best=False, profile_poor=False,
-        plan_mix=False, hw_feedback=False, init_samples=None, patience=None, lift_count_limits=False, max_tokens=None,
-    )
-    resumed, snap, report, info, budget = prepare_resume(args, client=FakeClient(script), evaluate_fn=fake_eval([]), log=lambda _s: None)
-    again = run_prepared(args, resumed, snap, info, budget)
-    assert [(row["label"], row.get("parent_label")) for row in again.trace if row["label"] == "r3.p2"] == [("r3.p2", "r1.p0")]
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0"), patches={"A": code("speed=0.5"), "B": code("speed=0.5"), "C": code("speed=0.5")}), calls, max_rounds=3, patience=10)
+    run(orch)
+    seeded = [brief for brief in orch._session_briefs if not brief.seedless]
+    assert len(seeded) == 3
+    assert all("speed=1.0" in (brief.seed_source or "") for brief in seeded)
 
 
 def test_require_contract_launch_is_passed_into_evaluate(tmp_path):

@@ -6,16 +6,32 @@ from pathlib import Path
 
 import pytest
 
-from taic.kernel_agent import AgentError, agent_spec, cost_from_stream, kernel_text, run_kernel_agent, task_markdown
+from taic.kernel_agent import (
+    AgentError, AgentResult, Prices, SessionBrief, agent_spec, dollars_for, kernel_text,
+    output_tokens_for, parse_spent, render_contract, run_kernel_agent, spend_from_stream,
+)
 from taic.llm import SearchConfig
 
 
-def test_the_chat_api_still_writes_kernels_unless_pi_is_asked_for():
-    assert SearchConfig().kernel_agent == ""
+PRICES = Prices(input=0.3, output=1.2, cache_read=0.006, cache_write=0.0)
 
 
-def test_pi_names_the_model_as_provider_and_id():
+def _brief(tmp_path: Path, *, seedless: bool = True) -> SessionBrief:
+    return SessionBrief(
+        repo=tmp_path, task_name="conv2d", dtype="fp16", size="paper", kernel_name="conv2d_kernel",
+        triton_source="def conv():\n    pass\n", description="a convolution", contract_text="grid 1,1,1",
+        abi_stub="kernel void conv2d_kernel() {}", rtol=1e-3, atol_rel=1e-3, seedless=seedless,
+        reps=15, min_improvement=1.005, noise_z=2.0,
+    )
+
+
+def test_writing_kernels_goes_through_hmz():
+    assert SearchConfig().kernel_agent == "pi"
+
+
+def test_pi_names_the_model_and_the_effort():
     assert agent_spec("moonshot", "kimi-k3") == "pi/moonshot/kimi-k3"
+    assert agent_spec("deepseek", "deepseek-flash", "high") == "pi/deepseek/deepseek-flash:high"
 
 
 def test_a_file_that_declares_the_kernel_is_the_source_without_a_fence():
@@ -25,69 +41,108 @@ def test_a_file_that_declares_the_kernel_is_the_source_without_a_fence():
     assert kernel_text(staged, "conv2d_kernel").startswith("/* taic-launch")
 
 
-def test_the_task_tells_the_agent_to_read_notes_and_run_tcenv_not_our_tools(tmp_path):
-    text = task_markdown(
-        [{"role": "user", "content": "Reply with one ```metal block."}],
-        repo=tmp_path, kernel_path=tmp_path / "kernel.metal", task_name="conv2d", dtype="fp16", size="paper", kernel_name="conv2d_kernel",
-    )
-    assert "tcenv.cli eval conv2d" in text and "--quick" in text
-    assert "skill named taic-tools" in text
-    assert "lookup_msl: read `msl_reference.md`" in text
-    assert "quick_check: bash this command" in text
-    assert "does not time the kernel" in text
-    assert "recorded as unchanged" in text
-    assert "Ignore that reply format" in text
+def test_the_contract_names_both_commands_and_does_not_ask_for_a_fence(tmp_path):
+    text = render_contract(_brief(tmp_path), tmp_path / "kernel.metal")
+    assert "--quick" in text and "--timed" in text
+    assert "self_checks.jsonl" in text
+    assert "NOTES.md" in text
+    assert "```metal block" not in text
+    assert "does not time" not in text
+    assert "先写出一颗外层评测合格的核" in text
 
 
-def test_cost_from_the_stream_is_the_largest_cumulative_cost():
+def test_a_seeded_contract_leads_with_the_outer_measurement(tmp_path):
+    brief = _brief(tmp_path, seedless=False)
+    brief.seed_source = "kernel void conv2d_kernel() {}\n"
+    brief.notes_summary = "外层实测：100 µs，状态 ok，没换种子\n上一版自报 10 µs"
+    brief.bound_line = "本算法运算量下界 932 µs，最强基线 torch-mps 790 µs。下界高于基线时，不减少运算量的写法不可能超过它。"
+    text = render_contract(brief, tmp_path / "kernel.metal")
+    assert text.index("外层实测") < text.index("上一版自报")
+    assert "--seed-report report.json" in text
+    assert "不减少运算量" in text
+
+
+def test_spent_on_a_result_line_is_priced_by_kind_and_result_lines_add():
     stream = "\n".join([
-        json.dumps({"event": "turn", "usage": {"cost": 0.1}}),
-        json.dumps({"event": "finished", "usage": {"cost": 0.4}}),
+        json.dumps({"kind": "text", "text": "working"}),
+        json.dumps({"kind": "result", "spent": "Usage(input=1000000, output=500000, cache_read=2000000)"}),
+        json.dumps({"kind": "result", "spent": {"input": 1000000, "output": 500000}}),
     ])
-    assert cost_from_stream(stream) == pytest.approx(0.4)
-    assert cost_from_stream("not json") is None
+    spent, saw = spend_from_stream(stream)
+    assert saw
+    assert spent["input"] == pytest.approx(2_000_000)
+    assert spent["output"] == pytest.approx(1_000_000)
+    assert spent["cache_read"] == pytest.approx(2_000_000)
+    # 1e6 input * 0.3 + 1e6 output * 1.2 + 2e6 cache_read * 0.006, per million
+    assert dollars_for(spent, PRICES) == pytest.approx(0.3 * 2 + 1.2 * 1 + 0.006 * 2)
+    assert spend_from_stream("not json") == ({}, False)
+    assert parse_spent("Usage(input=3)") == {"input": 3.0}
 
 
-def _fake_hmz(path: Path, *, source: str, code: int = 0, cost: float = 0.2) -> None:
-    line = json.dumps({"event": "finished", "usage": {"cost": cost}})
+def test_a_dollar_slice_becomes_output_tokens():
+    assert output_tokens_for(1.2, 1.2) == 1_000_000
+    assert output_tokens_for(0.0000001, 1.2) == 1
+
+
+def _fake_hmz(path: Path, *, source: str, code: int = 0, spent: str = "Usage(output=1000)") -> None:
+    line = json.dumps({"kind": "result", "spent": spent})
     path.write_text(
         "#!/usr/bin/env python3\n"
         "import pathlib, sys\n"
         f"pathlib.Path('kernel.metal').write_text({source!r})\n"
+        "pathlib.Path('NOTES.md').write_text('kept this one\\n')\n"
         f"print({line!r})\n"
         f"sys.exit({code})\n"
     )
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
-def test_a_fake_hmz_leaves_the_kernel_and_its_cost(tmp_path):
+def test_a_fake_hmz_leaves_the_kernel_and_a_computed_cost(tmp_path):
     hmz = tmp_path / "hmz"
-    _fake_hmz(hmz, source="kernel void conv2d_kernel() {}\n", cost=0.2)
-    source, cost, _tail = run_kernel_agent(
-        [{"role": "system", "content": "contract"}, {"role": "user", "content": "write it"}],
-        work=tmp_path / "work", repo=tmp_path, task_name="conv2d", dtype="fp16", size="paper",
-        kernel_name="conv2d_kernel", provider="deepseek", model="deepseek-flash", budget_usd=3,
-        hmz=str(hmz),
+    _fake_hmz(hmz, source="kernel void conv2d_kernel() {}\n")
+    result = run_kernel_agent(
+        _brief(tmp_path), work=tmp_path / "work", provider="deepseek", model="deepseek-flash",
+        effort="high", prices=PRICES, turn_output_tokens=1000, turn_minutes=25, hmz=str(hmz),
     )
-    assert source.startswith("kernel void conv2d_kernel")
-    assert cost == pytest.approx(0.2)
+    assert isinstance(result, AgentResult)
+    assert result.source.startswith("kernel void conv2d_kernel")
+    assert result.cost_usd == pytest.approx(1.2 * 1000 / 1_000_000)
+    assert result.cost_incomplete is False
+    assert result.notes.startswith("kept")
     task = (tmp_path / "work" / "TASK.md").read_text()
     assert "assistant=" not in task
-    assert "--quick" in task
+    assert "--timed" in task
+    assert "turn_output_tokens" not in task
 
 
-def test_a_missing_hmz_is_an_error_and_an_empty_file_is_no_kernel(tmp_path):
-    with pytest.raises(AgentError):
+def test_a_missing_hmz_is_an_error_and_a_timeout_still_returns_the_file(tmp_path):
+    with pytest.raises(AgentError, match="not on PATH"):
         run_kernel_agent(
-            [], work=tmp_path / "work", repo=tmp_path, task_name="conv2d", dtype="fp16", size="paper",
-            kernel_name="conv2d_kernel", provider="deepseek", model="deepseek-flash", budget_usd=1,
-            hmz=str(tmp_path / "missing"),
+            _brief(tmp_path), work=tmp_path / "work", provider="deepseek", model="deepseek-flash",
+            effort=None, prices=PRICES, turn_output_tokens=10, turn_minutes=1, hmz=str(tmp_path / "missing"),
         )
     hmz = tmp_path / "hmz"
-    _fake_hmz(hmz, source="// no kernel\n", code=0)
-    source, _cost, _tail = run_kernel_agent(
-        [], work=tmp_path / "empty", repo=tmp_path, task_name="conv2d", dtype="fp16", size="paper",
-        kernel_name="conv2d_kernel", provider="deepseek", model="deepseek-flash", budget_usd=1,
-        hmz=str(hmz),
+    hmz.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib, time\n"
+        "pathlib.Path('kernel.metal').write_text('kernel void conv2d_kernel() { /* new */ }\\n')\n"
+        "time.sleep(30)\n"
     )
-    assert source is None
+    hmz.chmod(hmz.stat().st_mode | stat.S_IEXEC)
+    result = run_kernel_agent(
+        _brief(tmp_path), work=tmp_path / "slow", provider="deepseek", model="deepseek-flash",
+        effort="high", prices=PRICES, turn_output_tokens=10, turn_minutes=1, hmz=str(hmz), timeout_s=2,
+    )
+    assert result.status == "timeout"
+    assert result.cost_incomplete is True
+    assert "new" in result.source
+
+
+def test_a_nonzero_exit_with_no_kernel_is_a_failure(tmp_path):
+    hmz = tmp_path / "hmz"
+    _fake_hmz(hmz, source="// no kernel\n", code=2)
+    result = run_kernel_agent(
+        _brief(tmp_path), work=tmp_path / "empty", provider="deepseek", model="deepseek-flash",
+        effort=None, prices=PRICES, turn_output_tokens=10, turn_minutes=1, hmz=str(hmz),
+    )
+    assert result.source is None and result.status == "failed"

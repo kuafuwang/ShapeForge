@@ -31,6 +31,7 @@ DEFAULT_MAX_WAIT_S = 1800.0
 _fd: int | None = None
 _mode: str | None = None  # "sh" | "ex" while this process holds the lock
 _what: str = ""
+_writable: bool = True  # False when the lock file could only be opened read-only; flock still works, the holder text does not
 _wait_hooks: tuple[Callable[[], None], Callable[[], None]] | None = None
 
 
@@ -111,8 +112,8 @@ def released() -> Iterator[None]:
         # 本进程当前没握锁，例如父进程还没进入 gpu_lock。
         yield
         return
-    if mode == "ex":
-        # 先清掉独占说明，松开后别人不会读到已经失效的持有者。
+    if mode == "ex" and _writable:
+        # 先清掉独占说明，松开后别人不会读到已经失效的持有者。只读打开的锁写不了说明。
         os.ftruncate(fd, 0)
     fcntl.flock(fd, fcntl.LOCK_UN)
     _mode = None
@@ -130,7 +131,7 @@ def released() -> Iterator[None]:
 @contextmanager
 def gpu_lock(what: str, *, exclusive: bool = True, max_wait_s: float = DEFAULT_MAX_WAIT_S, log: Callable[[str], None] | None = None) -> Iterator[float]:
     """Hold the GPU lock for the block; yields the seconds spent waiting for it."""
-    global _fd, _mode, _what
+    global _fd, _mode, _what, _writable
     want = "ex" if exclusive else "sh"
     outer = _mode
     outer_what = _what
@@ -140,8 +141,15 @@ def gpu_lock(what: str, *, exclusive: bool = True, max_wait_s: float = DEFAULT_M
         return
     if _fd is None:
         path = lock_file()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        _fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+            _writable = True
+        except OSError:
+            # 编程代理的沙箱能读这台机器的家目录，不能写锁文件。flock 不需要写权限。
+            # 搜索进程会先把锁文件建出来，所以这里只打开已经存在的文件。
+            _fd = os.open(path, os.O_RDONLY)
+            _writable = False
     if outer == "sh":
         # 先放开共享再抢独占。两个仍握着共享的升级者会互相等死。
         # Upgrades release first: two shared holders that both wait for exclusive while still holding shared would deadlock.
@@ -165,14 +173,15 @@ def gpu_lock(what: str, *, exclusive: bool = True, max_wait_s: float = DEFAULT_M
     _mode = want
     _what = what
     _gpu_note("acquire", want, what)
-    if exclusive:
+    if exclusive and _writable:
         # 独占者把 pid 和用途写进锁文件，等待方的 holder() 才能打出是谁占着。共享持有者留空。
+        # 只读打开时跳过这两步，锁本身仍然是独占的。
         os.ftruncate(_fd, 0)
         os.pwrite(_fd, f"pid {os.getpid()}: {what}\n".encode(), 0)
     try:
         yield waited
     finally:
-        if exclusive:
+        if exclusive and _writable:
             os.ftruncate(_fd, 0)
         if outer == "sh":
             # 这段独占结束，回到外层的共享。先记下独占已经松开，否则日志里只有共享的重新获得。
@@ -185,4 +194,4 @@ def gpu_lock(what: str, *, exclusive: bool = True, max_wait_s: float = DEFAULT_M
         else:
             _gpu_note("release", want, what)
             os.close(_fd)  # closing the descriptor releases the lock
-            _fd, _mode, _what = None, None, ""
+            _fd, _mode, _what, _writable = None, None, "", True

@@ -289,6 +289,30 @@ def profiler_evidence_text(body: str) -> str:
     )
 
 
+def _notes_for_next(outer: str, notes: str, limit: int = 4000) -> str:
+    """The next session's NOTES block. The outer measurement is the first line, written by the search, not by the agent."""
+    body = (notes or "").strip()
+    if len(body) > limit:
+        body = body[:limit] + "\n…"
+    return f"外层实测：{outer}\n{body}".strip()
+
+
+def _operation_bound(report) -> str:
+    """One line from the report's roofline and baselines. Empty when either number is missing."""
+    from .feedback_extra import _roof_and_baselines
+
+    roof, bases = _roof_and_baselines(report)
+    bound = roof.get("lower_bound_us")
+    usable = {k: float(v) for k, v in bases.items() if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0}
+    if not isinstance(bound, (int, float)) or isinstance(bound, bool) or bound <= 0 or not usable:
+        return ""
+    name, us = min(usable.items(), key=lambda kv: kv[1])
+    line = f"本算法运算量下界 {float(bound):.0f} µs，最强基线 {name} {us:.0f} µs。"
+    if float(bound) > us:
+        line += "下界高于基线时，不减少运算量的写法不可能超过它。"
+    return line
+
+
 # 加速比是两次中位数之比。标准误的公式在 tcenv.bench，这里只按报告取出 cv 和 reps。没有逐次样本，也不把它叫成置信区间。
 def speedup_se(rep: EvalReport | None) -> float:
     """Approximate relative standard error of a measured speedup. 0 when the report has no timing statistics.
@@ -316,6 +340,8 @@ class Orchestrator:
         resuming: bool = False,
         from_run: Path | None = None,
         committees: list | None = None,
+        agent_runner: Callable[..., Any] | None = None,
+        external_roots: list[Path] | None = None,
     ) -> None:
         """``resuming``: the directory already holds a run (see ``taic.resume``); nothing in it is rewritten until ``restore()`` has loaded it.
         ``committees``: exactly first and second. Omitted means two committees that copy ``llm_cfg``. There is no single-conversation mode."""
@@ -393,6 +419,24 @@ class Orchestrator:
         self._branch_parent: dict[str, str] = {}
         self._search_seed: Candidate | None = None
         self._confirm_winner: Candidate | None = None
+        # 测试注入的写核函数。None 时走 hmz。注入之后不再做 hmz 预检，也不去扫仓库里的 runs。
+        if agent_runner is None and callable(getattr(client, "script", None)):
+            from .kernel_agent import agent_for_script
+
+            agent_runner = agent_for_script(client.script, self.task.contract.kernel_name)
+        self.agent_runner = agent_runner
+        # 测试注入了 HTTP 客户端时不扫仓库的 runs，避免把练习核判成别的运行的核。
+        if external_roots is None and client is not None:
+            self._external_roots = []
+        else:
+            self._external_roots = external_roots
+        self._external_texts: set[str] | None = None
+        self._from_text = ""
+        self._agent_failures = 0
+        self._failure_feedback = ""
+        self._notes_summary = ""
+        self._evidence = ""
+        self._session_briefs: list = []
         # 续跑时目录里已有上一会话的 state.json。先空写会把看板抹掉，所以等到 restore 把账本和候选装回来再发布。
         # 新运行的初始稿用角色 0。续跑要等知道轮次后再绑，不能在这里先绑成角色 0。
         if not resuming:
@@ -483,11 +527,13 @@ class Orchestrator:
                 "cost_note": "A process can die after the provider bills a request and before transcript.jsonl records it, so a resumed ledger can under-count the real bill. A budget_events.json line that fails to land is dropped; that file is not a complete bill. This is not a hard dollar cap. Reconciling with the provider bill needs separate authorization.",
                 "created_at": time.time(),
                 "launch_protocol": 1,
+                "loop_protocol": "flame_chase_1",
         }
         # 两个委员会和各自唯一的成员。没有密钥，也没有端点。
         body["committees"] = committees_record(self.committees)
         try:
             control.write_json_atomic(self.run_dir / control.CONFIG_FILE, body)
+            (self.run_dir / "system_prompt.txt").write_text(self.system)
         except OSError as e:
             raise RunStartError(f"cannot start: run_config.json was not written ({e})") from e
 
@@ -570,6 +616,7 @@ class Orchestrator:
                 "search_seed_label": self._search_seed.label if self._search_seed else (self.best.label if self.best else None),
                 "search_seed_speedup": self._search_seed.speedup if self._search_seed else (self.best.speedup if self.best else None),
                 "confirm_winner_label": self._confirm_winner.label if self._confirm_winner else None,
+                "agent_failures": self._agent_failures,
                 "hangs": self.hangs,
                 "crashes_in_a_row": self.crashes_in_a_row,
                 "evaluations": self.evaluations,
@@ -621,6 +668,7 @@ class Orchestrator:
         self._started_at = snap.started_at or self.t0
         self._resumes = snap.resumes + 1
         self._stagnant = snap.stagnant
+        self._agent_failures = int(getattr(snap, "agent_failures", 0) or 0)
         self._round = snap.partial.rnd if snap.partial else snap.rounds_done
         self._resume = snap
         # 续跑的角色由将要进入的轮号决定，不把上一轮的对话带进来。
@@ -657,18 +705,15 @@ class Orchestrator:
     async def _eval(self, source: str, label: str, *, plan: str | None = None) -> Candidate:
         """Full evaluation of a candidate (serialized on the GPU). Updates best/trace and enforces the hang breaker."""
         cand = Candidate(idx=len(self.candidates), label=label, source=source, plan=plan, correctness_only=self.search.correctness_only)
+        copied = self._copied_report(source)
         self.candidates.append(cand)
         self._publish_state("evaluate", inflight=label)
         key = _sha(source)
         phase_seed = self._phase_seed("search", label, source)
-        # 上一颗种子已经单独保存。这一支交回同一份源码，是把失败的尝试盖成又一次合格，不评测、不算成绩。
-        if self.best is not None and source == self.best.source:
-            cand.report = EvalReport(
-                task=self.task_name, dtype=self.dtype, size=self.size, mode="full",
-                status="unchanged", stage="screen",
-                message=f"identical to the current seed {self.best.label}. That kernel stays the seed. This branch does not count.",
-            )
-            seed_from = "unchanged"
+        # 贴回来的核不评测。当前种子、本场更早的候选、别的运行里的核，三条都是逐字比较。
+        if copied is not None:
+            cand.report = copied
+            seed_from = copied.status
             used_seed = 0
         elif key in self.cache:
             # 同一源码的稳定结论可复用。复用的是当时那份报告的 seed，不能把它说成一次新种子上的测量。
@@ -1035,7 +1080,17 @@ class Orchestrator:
     async def run(self) -> RunResult:
         res = RunResult(run_dir=str(self.run_dir), task=self.task_name, dtype=self.dtype, size=self.size, model=self.cfg.model, budget_usd=self.ledger.budget_usd)
         resumed = self._resume is not None
-        self.log(f"== {'RESUME ' if resumed else ''}{self.task_name} {self.dtype} {self.size} | model {self.cfg.model} | budget ${self.ledger.budget_usd:.2f} | branches {self.search.branches} | run {self.run_dir.name}")
+        self._guard_shape()
+        if self.agent_runner is None and not self._client_injected:
+            from .kernel_agent import AgentError, preflight
+
+            cred = Path(os.path.expanduser("~/.pi/agent/models.json"))
+            try:
+                preflight(self.committees, cred)
+            except AgentError as exc:
+                raise RunStartError(str(exc)) from exc
+            self._ensure_gpu_lock_file()
+        self.log(f"== {'RESUME ' if resumed else ''}{self.task_name} {self.dtype} {self.size} | model {self.cfg.model} | budget ${self.ledger.budget_usd:.2f} | one session a round | run {self.run_dir.name}")
         self.log("   committees: " + " | ".join(f"{c.name} {c.members[0].provider}/{c.members[0].model}" for c in self.committees))
         if resumed:
             self.log(f"   continuing from round {self._resume.partial.rnd if self._resume.partial else self._resume.next_round}, spent so far ${self.ledger.total_usd:.3f}, best {self.best.label if self.best else '-'}")
@@ -1109,28 +1164,234 @@ class Orchestrator:
         # 2..5. rounds
         await self._rounds(res, 1, 0)
 
+    def _copied_report(self, source: str) -> EvalReport | None:
+        """A mechanical refusal for a kernel that was pasted back, or None when the source has to be measured."""
+        if self.best is not None and source == self.best.source:
+            return EvalReport(
+                task=self.task_name, dtype=self.dtype, size=self.size, mode="full",
+                status="unchanged", stage="screen",
+                message=f"identical to the current seed {self.best.label}. That kernel stays the seed. This branch does not count.",
+            )
+        for cand in self.candidates:
+            # 超时和崩溃不是这颗核的判决。同一份源码还要再评一次。
+            if cand.source == source and (cand.report is None or cand.report.status not in ("timeout", "crash")):
+                return EvalReport(
+                    task=self.task_name, dtype=self.dtype, size=self.size, mode="full",
+                    status="duplicate", stage="screen",
+                    message=f"identical to earlier candidate {cand.label}. It does not count as an improvement.",
+                )
+        if self._from_text and source == self._from_text:
+            return None
+        if source in self._external_kernel_texts():
+            return EvalReport(
+                task=self.task_name, dtype=self.dtype, size=self.size, mode="full",
+                status="external_duplicate", stage="screen",
+                message="identical to a kernel from another run. It does not count as a result of this search.",
+            )
+        return None
+
+    def _external_kernel_texts(self) -> set[str]:
+        """Kernel texts from other runs, read once. An empty root list (tests) reads nothing."""
+        if self._external_texts is not None:
+            return self._external_texts
+        roots = self._external_roots
+        if roots is None:
+            runs = REPO_ROOT / "runs"
+            roots = [runs] if runs.is_dir() else []
+        texts: set[str] = set()
+        from_path = (self.from_run / "best.metal") if self.from_run is not None else None
+        if from_path is not None and from_path.is_file():
+            self._from_text = from_path.read_text()
+        for root in roots:
+            if not root.is_dir():
+                continue
+            for path in root.glob("*/candidates/*/kernel.metal"):
+                if self.run_dir in path.parents:
+                    continue
+                try:
+                    texts.add(path.read_text())
+                except OSError:
+                    continue
+            for path in root.glob("*/best.metal"):
+                if self.run_dir in path.parents:
+                    continue
+                if from_path is not None and path.resolve() == from_path.resolve():
+                    continue
+                try:
+                    texts.add(path.read_text())
+                except OSError:
+                    continue
+        self._external_texts = texts
+        return texts
+
+    def _guard_shape(self) -> None:
+        """Flame chase is one session a round. The old parallel shape is refused before any session starts."""
+        if self.search.kernel_agent != "pi":
+            raise RunStartError("kernel writing goes through hmz; kernel_agent must be pi")
+        if self.search.branches != 1 or self.search.init_samples != 1:
+            raise RunStartError("this search is one session a round: branches and init_samples must be 1")
+
+    def _ensure_gpu_lock_file(self) -> None:
+        """Create the machine lock so a read-only session can flock it. The session is not granted write access."""
+        from tcenv.gpulock import lock_file
+
+        path = lock_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch(exist_ok=True)
+
+    async def _one_session(self, tag: str, *, seedless: bool) -> str:
+        """One hmz session. Returns ``agent_failed``, ``unchanged`` or ``evaluated``.
+
+        A session that ends without a new kernel after a crash or a timeout is ``agent_failed``.
+        A clean exit that leaves the seed is ``unchanged`` and does not count as a failure.
+        A changed file is evaluated whatever the process exit was.
+        """
+        from .kernel_agent import AgentError, Prices, SessionBrief, run_kernel_agent
+
+        self.ledger.check()
+        remaining = self.ledger.remaining
+        if remaining is not None and remaining < 0.05:
+            raise BudgetExhausted(f"budget ${self.ledger.budget_usd:.2f} exhausted (spent ${self.ledger.total_usd:.4f})")
+        member = next(c.members[0] for c in self.committees if c.name == self._committee_name)
+        slice_usd = self.search.relay_budget_usd if remaining is None else min(remaining, self.search.relay_budget_usd)
+        prices = Prices(member.cfg.price_in, member.cfg.price_out, member.cfg.price_cache_read, member.cfg.price_cache_write)
+        from .kernel_agent import output_tokens_for
+
+        tokens = output_tokens_for(slice_usd, prices.output)
+        brief = self._session_brief(seedless)
+        self._session_briefs.append(brief)
+        self._publish_state("llm", inflight=tag)
+        work = self.run_dir / "agent_work" / tag.replace("/", "_")
+        try:
+            if self.agent_runner is None and self._client_injected:
+                raise RunStartError("a scripted run needs an agent_runner; it must not start hmz")
+            if self.agent_runner is not None:
+                result = self.agent_runner(brief, tag)
+                if asyncio.iscoroutine(result):
+                    result = await result
+            else:
+                result = await asyncio.to_thread(
+                    run_kernel_agent, brief, work=work, provider=member.provider, model=member.model,
+                    effort=member.cfg.reasoning_effort, prices=prices, turn_output_tokens=tokens,
+                    turn_minutes=int(self.search.turn_minutes),
+                )
+        except (AgentError, LLMError, Exception) as exc:
+            if isinstance(exc, (StopRun, BudgetExhausted, RunStartError)):
+                raise
+            self.log(f"  [{tag}] hmz failed: {exc}")
+            self.llm.transcript.log({
+                "event": "agent", "label": tag, "harness": "pi", "provider": member.provider, "model": member.model,
+                "committee": self._committee_name, "cost_usd": None, "cost_incomplete": True, "had_kernel": False,
+                "outcome": "agent_failed", "error": str(exc)[:180], "self_checks": 0, "self_check_timeouts": 0,
+            })
+            return "agent_failed"
+        if result.cost_usd is None and result.status == "ok":
+            self.llm.transcript.log(self._agent_event(tag, member, result, "cost_incomplete"))
+            raise StopRun("cost_incomplete: the session finished without a token count, so the ledger cannot continue")
+        if result.cost_usd:
+            self.ledger.charge(result.cost_usd, tag)
+        self.hangs += int(result.self_check_timeouts or 0)
+        seed_source = None if self.best is None else self.best.source
+        changed = result.source is not None and result.source != seed_source
+        if result.status in ("timeout", "failed") and not changed:
+            outcome = "agent_failed"
+        elif not changed:
+            outcome = "unchanged"
+        else:
+            outcome = "evaluated"
+        self.llm.transcript.log(self._agent_event(tag, member, result, outcome))
+        self.log(f"  [{tag}] {self._committee_name} {member.provider}/{member.model} {outcome}" + (f" ({result.error[:120]})" if result.error else ""))
+        if result.self_check_timeouts and self.hangs >= self.search.max_hangs:
+            self._publish_state("llm", inflight=None)
+            raise StopRun("gpu_hang_circuit_breaker")
+        if outcome == "evaluated":
+            cand = await self._eval(result.source, tag)
+            self._file_session_notes(cand, result)
+            outer = self._outer_line(cand)
+            self._notes_summary = _notes_for_next(outer, result.notes)
+            if cand.report is not None and not cand.eligible and cand.report.status not in ("unchanged", "duplicate", "external_duplicate"):
+                fb = format_feedback(cand.report)[:2000]
+                note = threadgroup_limit_note(cand.report.message)
+                if note:
+                    fb += "\n\n" + note
+                self._failure_feedback = fb
+            elif cand.is_best:
+                self._failure_feedback = ""
+        elif outcome == "unchanged" and result.source:
+            cand = await self._eval(result.source, tag)
+            self._file_session_notes(cand, result)
+            self._notes_summary = _notes_for_next(self._outer_line(cand), result.notes)
+        elif outcome == "unchanged":
+            self._notes_summary = _notes_for_next("种子没换", result.notes)
+        return outcome
+
+    def _agent_event(self, tag: str, member, result, outcome: str) -> dict:
+        spent = result.spent or {}
+        return {
+            "event": "agent", "label": tag, "harness": "pi", "provider": member.provider, "model": member.model,
+            "committee": self._committee_name, "cost_usd": result.cost_usd, "cost_incomplete": bool(result.cost_incomplete),
+            "had_kernel": bool(result.source), "outcome": outcome, "error": (result.error or "")[:180],
+            "self_checks": result.self_checks, "self_check_timeouts": result.self_check_timeouts,
+            "self_check_gpu_s": result.self_check_gpu_s,
+            "tokens": {k: int(v) for k, v in spent.items() if isinstance(v, (int, float))},
+        }
+
+    def _file_session_notes(self, cand: Candidate, result) -> None:
+        folder = self.run_dir / "candidates" / f"{cand.idx:03d}_{cand.label}"
+        if not folder.is_dir():
+            return
+        if result.notes:
+            (folder / "NOTES.md").write_text(result.notes)
+        src = self.run_dir / "agent_work" / cand.label.replace("/", "_") / "self_checks.jsonl"
+        if src.is_file():
+            (folder / "self_checks.jsonl").write_text(src.read_text())
+
+    def _outer_line(self, cand: Candidate) -> str:
+        rep = cand.report
+        if rep is None:
+            return "没有报告"
+        us = f"{rep.candidate_us:.0f} µs" if isinstance(rep.candidate_us, (int, float)) else "没有微秒数"
+        replaced = "换了种子" if cand.is_best else "没换种子"
+        return f"{us}，状态 {rep.status}，{replaced}"
+
+    def _session_brief(self, seedless: bool):
+        from .kernel_agent import SessionBrief
+
+        seed = self.best
+        report_json = ""
+        scorecard = ""
+        bound = ""
+        if seed is not None and seed.report is not None and not seedless:
+            report_json = json.dumps(seed.report.to_json())
+            scorecard = format_feedback(seed.report)[:2000]
+            bound = _operation_bound(seed.report)
+        history = "\n".join(self.history[-8:])
+        return SessionBrief(
+            repo=REPO_ROOT, task_name=self.task_name, dtype=self.dtype, size=self.size,
+            kernel_name=self.task.contract.kernel_name, triton_source=self.task.triton_source,
+            description=self.task.description, contract_text=self.task.contract.describe(),
+            abi_stub=self.task.contract.abi_stub(), rtol=self.task.rtol, atol_rel=self.task.atol_rel,
+            seed_source=None if seedless or seed is None else seed.source, seed_report_json=report_json,
+            scorecard=scorecard, history=history, failure=self._failure_feedback, notes_summary=self._notes_summary,
+            bound_line=bound, evidence=self._evidence, reps=self.search.eval_reps,
+            require_contract_launch=self.search.require_contract_launch,
+            min_improvement=self.search.min_improvement, noise_z=self.search.noise_z, seedless=seedless,
+        )
+
     async def _initial_generation(self) -> None:
         for restart in range(INITIAL_RESTARTS):
-            base = [{"role": "system", "content": self.system}, {"role": "user", "content": prompts.initial_user(self.task)}]
-            n = max(1, self.search.init_samples)
-            self.log(f"-- initial generation (attempt {restart + 1}/{INITIAL_RESTARTS}" + (f", {n} samples in parallel" if n > 1 else "") + ")")
+            # 第一次是 first。失败换 second。两场都失败由 _one_session 的计数在下面停下。
+            self._activate_round(1 if restart == 0 else 2)
             label = "init" if restart == 0 else f"init{restart + 1}"
-            if n == 1:
-                await self._develop(base, label)
-            else:
-                # init_samples 路初始样本的模型请求重叠。其中一路预算耗尽或 StopRun 会结束全部样本；单路 LLMError 只丢掉该样本，全部失败才结束运行。
-                outcomes = await asyncio.gather(*[self._develop(base, label if i == 0 else f"{label}.s{i + 1}") for i in range(n)], return_exceptions=True)
-                fatal = [o for o in outcomes if isinstance(o, (BudgetExhausted, StopRun))]
-                other = [o for o in outcomes if isinstance(o, BaseException) and not isinstance(o, (BudgetExhausted, StopRun, LLMError))]
-                if other:
-                    raise other[0]
-                if fatal:
-                    raise fatal[0]
-                if all(isinstance(o, LLMError) for o in outcomes):  # one failed request skips its sample; all of them failing ends the run
-                    raise outcomes[0]
-                for i, o in enumerate(outcomes):
-                    if isinstance(o, LLMError):
-                        self.log(f"  initial sample {i + 1} skipped: {str(o)[:200]}")
+            self.log(f"-- initial generation (attempt {restart + 1}/{INITIAL_RESTARTS}, {self._committee_name})")
+            outcome = await self._one_session(label, seedless=True)
+            if outcome == "agent_failed":
+                self._agent_failures += 1
+                self.history.append(f"initial: {self._committee_name} -> agent_failed")
+                if self._agent_failures >= 2:
+                    raise StopRun("agent_failure")
+                continue
+            self._agent_failures = 0
             if self.best:
                 break
 
@@ -1140,9 +1401,11 @@ class Orchestrator:
         snap = self._resume
         res.rounds = snap.rounds_done
         if not self.best:
+            await self._initial_generation()
+        if not self.best:
             res.stop_reason = "no_valid_initial_kernel"
             return
-        await self._rounds(res, snap.partial.rnd if snap.partial else snap.next_round, snap.stagnant, snap.partial)
+        await self._rounds(res, snap.next_round if snap.partial is None else snap.partial.rnd, snap.stagnant, None)
 
     # 续跑后的候选是新建对象。按标签从后往前找回同一颗内核，身份比较才会和中断前对得上。
     def _by_label(self, label: str | None) -> Candidate | None:
@@ -1153,26 +1416,25 @@ class Orchestrator:
 
     # 每一轮：可选的 Instruments 证据、诊断规划、再 K 路补丁。分支同时启动，所以模型请求重叠；每路进入 _eval 时在 gpu_lock 上排队，GPU 评测串行。只有换过种子才不算停滞。
     async def _rounds(self, res: RunResult, first_round: int, stagnant: int, partial: Any = None) -> None:
-        """Rounds ``first_round`` to ``max_rounds``. ``partial`` (a ``taic.resume.RoundPartial``) describes the first round of a resumed run that a restart
-        interrupted: its seed, its plans if they were already made, the branches that finished and the conversations of those that were part-way.
+        """One new hmz session per round, alternating committees. ``partial`` is ignored: a resumed round starts a fresh session.
+
         The limit is read again every round: a control file can raise it while a round is in flight."""
+        del partial
         rnd = first_round
         while rnd <= self.search.max_rounds:
             res.rounds = rnd
             self._round = rnd
             self._stagnant = stagnant
-            self._activate_round(rnd)  # 只在轮次边界换委员会；这一轮里的修补不再换
-            part = partial if (partial is not None and partial.rnd == rnd) else None
-            # 续跑的第一轮用中断时记下的种子。若改用现在的 self.best，补丁会对着另一颗内核改。
-            seed = (self._by_label(part.seed_label) if part is not None else None) or self.best
-            self.log(f"-- round {rnd}{' (continued)' if part is not None else ''}: seed {seed.label} at {seed.speedup:.3f}x, spent ${self.ledger.total_usd:.3f}")
+            self._activate_round(rnd)
+            seed = self.best
+            self.log(f"-- round {rnd}: seed {seed.label} at {seed.speedup:.3f}x, spent ${self.ledger.total_usd:.3f}, {self._committee_name}")
             if self.search.stop_at_roofline and at_roofline(seed.report, self._required_gain(seed, seed)):
                 gap = (getattr(seed.report, "roofline", None) or {}).get("time_over_lower_bound")
                 res.stop_reason = "at_roofline"
                 self.log(f"-- heuristic stop: {seed.label} is {gap:.3f}x its estimated lower bound, inside the noise gate. This is not a physical optimum.")
                 return
             evidence = await self._profile_seed(seed, rnd)
-            if self.search.hw_feedback:  # opt-in (search.hw_feedback): the static hardware-feature block goes where the profiler evidence goes; None on any failure
+            if self.search.hw_feedback:
                 from .hwfeedback import hw_feedback
 
                 block = await asyncio.to_thread(hw_feedback, self.task, seed.source, seed.report, log=self.log)
@@ -1189,77 +1451,38 @@ class Orchestrator:
                 note = target_note(seed.report)
                 if note:
                     evidence += "\n\n" + note
-            status = ""
             if self.search.status_lines:
-                status = status_lines(
+                evidence += "\n\n" + status_lines(
                     rnd=rnd, max_rounds=self.search.max_rounds, patience_left=max(0, self.search.patience - stagnant),
                     spent=self.ledger.total_usd, budget=self.ledger.budget_usd, required_gain=self._required_gain(seed, seed),
                 )
-            # 规划已经花过请求并记在转录里时不再重做，避免同一轮出现两套方案。
-            if part is not None and part.plans:
-                plans = part.plans
-                self.log(f"  plans of round {rnd} recovered from the transcript: " + "; ".join(p["title"] for p in plans))
-            else:
-                plans = await self._plan(seed, rnd, evidence, status)
-            self._round_plans = plans
-            fb = format_feedback(seed.report)[:FEEDBACK_CHARS] + evidence
-
-            async def branch(i: int, plan: dict) -> Candidate | None:
-                # 中断前已经评完的分支直接沿用那颗候选，不再发请求、也不再占 GPU。
-                if part is not None and i in part.done:  # finished before the restart
-                    return self._by_label(part.done[i])
-                parent = seed
-                # A branch that already started keeps the recorded conversation. One that has not started yet,
-                # including the unfinished branch of a resumed round, uses the same parent rule as a fresh round.
-                started = part is not None and (i in part.done or i in part.resume)
-                if not started and i == len(plans) - 1 and len(plans) > 1 and stagnant >= 2:
-                    alt = self._diverse_parent()
-                    if alt is not None and alt is not seed:
-                        parent = alt
-                        self._branch_parent[f"r{rnd}.p{i}"] = alt.label
-                        self.log(f"  branch r{rnd}.p{i} patches {alt.label} (feature archive, stagnant {stagnant})")
-                if part is not None and i in part.resume:  # part-way: continue the recorded conversation
-                    br = part.resume[i]
-                    self.log(f"  branch r{rnd}.p{i} continues at attempt {br.attempt}")
-                    return await self._develop(br.messages, f"r{rnd}.p{i}", plan=plan["title"], resume=br)
-                base_fb = format_feedback(parent.report)[:FEEDBACK_CHARS] + evidence if parent is not seed else fb
-                patch = prompts.patch_user(self.task, parent.source, base_fb, plan, status=status)
-                msgs = [{"role": "system", "content": self.system}, {"role": "user", "content": prefix_handoff(self._handoff(rnd), patch)}]
-                return await self._develop(msgs, f"r{rnd}.p{i}", plan=plan["title"])
-
+            self._evidence = evidence
             before = seed
-            # K 路一起启动：模型请求在锁外重叠，GPU 评测在各路的 _eval 里串行。
-            # pi 写核时，每一路拿到的上限是当时剩余预算的 1/K。否则每一路都会把全部剩余当成自己的上限。
-            n_plans = len(plans)
-            remaining = self.ledger.remaining
-            self._pi_budget_cap = (remaining / n_plans) if self.search.kernel_agent == "pi" and remaining is not None and n_plans else None
-            outcomes = await asyncio.gather(*[branch(i, p) for i, p in enumerate(plans)], return_exceptions=True)
-            fatal = [o for o in outcomes if isinstance(o, (BudgetExhausted, StopRun))]
-            llm_errors = [o for o in outcomes if isinstance(o, LLMError)]
-            for i, (p, o) in enumerate(zip(plans, outcomes)):
-                if isinstance(o, Candidate):
-                    tag = f"{o.speedup:.3f}x" + (" (new best)" if o.is_best else " (within measurement noise of the best)" if o.within_noise else " (not better)")
-                elif isinstance(o, LLMError):
-                    tag = "skipped (the model request failed)"
-                    self.log(f"  branch '{p['title']}' skipped: {str(o)[:200]}")
-                elif isinstance(o, BaseException):
-                    tag = f"aborted ({type(o).__name__})"
+            outcome = await self._one_session(f"r{rnd}.p0", seedless=False)
+            if outcome == "agent_failed":
+                self._agent_failures += 1
+                self.history.append(f"round {rnd}: {self._committee_name} -> agent_failed")
+                if self._agent_failures >= 2:
+                    res.stop_reason = "agent_failure"
+                    return
+            else:
+                self._agent_failures = 0
+                cand = self._by_label(f"r{rnd}.p0")
+                if cand is not None and cand.report is not None and cand.speedup:
+                    tag = f"{cand.speedup:.3f}x" + (" (new best)" if cand.is_best else " (within measurement noise of the best)" if cand.within_noise else " (not better)")
+                elif outcome == "unchanged":
+                    tag = "unchanged"
+                elif cand is not None and cand.report is not None:
+                    tag = failure_phrase(cand.report.status, cand.report.message) if self.search.rich_history else cand.report.status
                 else:
-                    tag = self._branch_fail.get(f"r{rnd}.p{i}", "no valid kernel after repair") if self.search.rich_history else "no valid kernel after repair"
-                self.history.append(f"round {rnd}: {p['title']} -> {tag}")
-            other = [o for o in outcomes if isinstance(o, BaseException) and not isinstance(o, (BudgetExhausted, StopRun, LLMError))]
-            if other:
-                raise other[0]
-            # 任一路预算耗尽或评测超时，整次搜索停。单路 LLMError 只丢掉该分支；K 路全部失败才结束运行。
-            if fatal:
-                raise fatal[0]
-            if llm_errors and len(llm_errors) == len(plans):  # one failed request skips its branch; all of them failing ends the run
-                raise llm_errors[0]
-            # 停滞看本轮开始时的种子对象是否仍是 self.best。轮内换成另一颗就清零；只是 within_noise 不会换对象，因此算停滞。连续 patience 轮就收敛停止。
+                    tag = outcome
+                self.history.append(f"round {rnd}: {self._committee_name} -> {tag}")
             stagnant = next_stagnant(self.best is not before, stagnant)
             if patience_exhausted(stagnant, self.search.patience):
                 res.stop_reason = f"converged ({self.search.patience} rounds without improvement)"
                 return
+            # 这一轮里看板可能加了预算或轮数。下一轮的 while 比的是已经读进来的上限。
+            self.ledger.check()
             rnd += 1
         res.stop_reason = "max_rounds"
 

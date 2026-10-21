@@ -420,7 +420,7 @@ def test_paper_preset_has_the_paper_budget_and_a_longer_patience_while_base_is_u
     _, paper = load_config(preset="paper")
     _, base = load_config(preset="base")
     assert paper.budget_usd == 15.0 and paper.max_rounds == 100 and paper.patience == 12
-    assert base.patience == 4 and base.budget_usd != 15.0  # taic.toml alone, which the running experiments keep reading
+    assert base.patience == 6 and base.budget_usd != 15.0  # taic.toml alone, which the running experiments keep reading
 
 
 def _stream_chunk(text: str = "", *, reasoning: str | None = None, finish: str | None = None):

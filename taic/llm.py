@@ -141,10 +141,10 @@ DEFAULT_PRESET = "paper"
 @dataclass
 class SearchConfig:
     budget_usd: float = PAPER_BUDGET_USD
-    branches: int = 3
-    max_repair_tries: int = 3
+    branches: int = 1  # flame chase is one session a round; a start with any other value is refused
+    max_repair_tries: int = 0  # unused: a failed outer evaluation is handed to the next session
     max_rounds: int = 12
-    max_quick_checks: int = 3
+    max_quick_checks: int = 0  # unused: the coding agent times itself with tcenv eval --timed
     min_improvement: float = 1.005
     noise_z: float = 2.0  # a replacement must also beat the best by this many standard errors of the speedup comparison
     confirm_top: int = 2  # re-measure up to this many statistically tied top candidates at the end and keep the fastest
@@ -152,9 +152,9 @@ class SearchConfig:
     max_hangs: int = 1
     correctness_only: bool = False  # semantic-recovery tests: judge correctness only (quick evaluation, no benchmark, no confirmation)
     profile_best: bool = False  # run an Instruments trace of the winning kernel at the end
-    patience: int = 4  # stop after this many rounds without a new best
-    plan_mix: bool = False  # planner: the last plan of a round is a local, low-risk (instruction- or parameter-level) change, the others are structural (paper Section 3.3 plans "range from local instruction-level edits to global changes")
-    init_samples: int = 1  # initial kernels sampled in parallel; the best eligible one seeds the search (repeated sampling, Brown et al. 2024)
+    patience: int = 6  # stop after this many rounds without a new best; one session is one round, so 6 gives each committee three turns
+    plan_mix: bool = False  # unused: the session chooses its own direction
+    init_samples: int = 1  # a start with any other value is refused
     profile_poor: bool = False  # when a round's seed is slower than the strongest baseline, trace it with Instruments and give the findings to the planner and the patch authors
     profile_poor_below: float = 1.0  # "slower": speedup of the seed over the strongest baseline below this
     profile_max: int = 4  # traces per run at most (each takes tens of seconds under the exclusive GPU lock)
@@ -169,7 +169,9 @@ class SearchConfig:
     diversity_archive: bool = False  # after two stagnant rounds, the last branch of a round patches a feature-different eligible kernel. Off keeps every branch on the seed
     fast_bench: bool = False  # search-stage timing skips the serial dispatch and baselines other than the fastest one seen. Confirmation always times every baseline
     experience_index: str | None = None  # path of a read-only hint file from taic.experience. None adds nothing to the planner prompt
-    kernel_agent: str = ""  # "" writes kernels through the chat API. "pi" writes each kernel via `hmz exec` and the pi coding agent. Planning stays on the API.
+    kernel_agent: str = "pi"  # hmz + pi writes every kernel. Any other value is refused at start.
+    relay_budget_usd: float = 2.0  # dollar cap of one session, converted to output tokens at that committee's price
+    turn_minutes: int = 25  # wall clock of the main turn inside kernel_once; the process timeout is longer and only a backstop
     require_contract_launch: bool = False  # contract-menu and variant runs reject a taic-launch block so the launch stays the one the menu chose
 
 

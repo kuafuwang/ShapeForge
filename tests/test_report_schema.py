@@ -82,6 +82,7 @@ def _candidate(run: Path, report: dict | str) -> None:
     (folder / "kernel.metal").write_text(f"kernel void {KERNEL}() {{}}\n")
     text = report if isinstance(report, str) else json.dumps(report)
     (folder / "report.json").write_text(text)
+    (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1"}))
     (run / "state.json").write_text(json.dumps({
         "task": "relu", "dtype": "fp16", "size": "small", "model": "fake", "spent_usd": 0.2, "round": 0, "best_label": "init",
         "requests": [{"label": "forged", "cost_usd": 9, "total_usd": 9, "hit": 0, "miss": 0, "out": 0}],
@@ -108,6 +109,7 @@ def test_a_damaged_candidate_report_needs_inspection_and_a_missing_one_does_not(
     folder.mkdir(parents=True)
     (folder / "kernel.metal").write_text("kernel void relu_kernel() {}\n")
     (missing_report / "state.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "spent_usd": 0.1}))
+    (missing_report / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1"}))
     with pytest.raises(ResumeError, match="no candidates"):
         load_snapshot(missing_report, SearchConfig(), KERNEL)
 

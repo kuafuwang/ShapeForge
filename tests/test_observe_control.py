@@ -382,6 +382,38 @@ def test_stop_signals_the_search_process_group_and_not_the_dashboard(runs, monke
     assert all("done" not in group["ids"] for group in doc["stopped"])
 
 
+def test_stop_also_signals_the_hmz_session_the_search_started(runs, monkeypatch):
+    port, root = runs
+    live = mk(root, "live", "running", spent=1.0, budget=3.0, control_supported=True)
+    state = json.loads((live / "state.json").read_text())
+    state["pid"] = 4242
+    (live / "state.json").write_text(json.dumps(state))
+    run_dir = str(live.resolve())
+    monkeypatch.setattr(actions, "_ps_commands", lambda: [(4242, "/usr/bin/python -m taic.cli run conv2d --run-dir " + run_dir)])
+    monkeypatch.setattr(actions, "_command_of", lambda pid: "/usr/bin/python -m taic.cli run conv2d" if int(pid) == 4242 else "")
+    monkeypatch.setattr(actions, "_process_table", lambda: [
+        {"pid": 4242, "ppid": 1, "pgid": 9000, "command": "python -m taic.cli run"},
+        {"pid": 5000, "ppid": 4242, "pgid": 5000, "command": "hmz exec"},
+        {"pid": 5001, "ppid": 5000, "pgid": 5000, "command": f"hmz internal fence {run_dir}/agent_work/r1.p1 -- pi"},
+        {"pid": 5002, "ppid": 5001, "pgid": 5000, "command": "pi --mode rpc"},
+    ])
+
+    def alive(pid):
+        return int(pid) in (os.getpid(), 4242)
+
+    monkeypatch.setattr(scan, "pid_alive", alive)
+    monkeypatch.setattr(actions.os, "getpgid", lambda pid: 9000 if int(pid) == 4242 else os.getpgrp())
+    signaled = []
+    monkeypatch.setattr(actions.os, "kill", lambda pid, sig: signaled.append((pid, sig)))
+    tok = token_of(port)
+    status, preview = call(port, "GET", "/api/stop")
+    assert status == 200
+    assert preview["groups"][0]["related_pgids"] == [5000]
+    status, doc = call(port, "POST", "/api/stop", {}, headers={actions.TOKEN_HEADER: tok})
+    assert status == 200 and doc["ok"] is True
+    assert signaled == [(-5000, __import__("signal").SIGTERM), (-9000, __import__("signal").SIGTERM)]
+
+
 def test_model_picker_saves_the_choice_and_hides_the_key(runs, tmp_path, monkeypatch):
     port, _root = runs
     secret = "sk-SECRET-do-not-leak"

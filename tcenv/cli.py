@@ -31,12 +31,29 @@ def cmd_eval(a: argparse.Namespace) -> int:
     from .evaluate import evaluate
     from .report import format_feedback
 
+    if a.quick and a.timed:
+        print("pass only one of --quick and --timed", file=sys.stderr)
+        return 2
     src = Path(a.kernel).read_text()
-    rep = evaluate(a.task, a.dtype, a.size, src, mode="quick" if a.quick else "full", seed=a.seed, reps=a.reps, progress_path=_live_progress())
+    mode = "timed" if a.timed else "quick" if a.quick else "full"
+    rep = evaluate(
+        a.task, a.dtype, a.size, src, mode=mode, seed=a.seed, reps=a.reps, progress_path=_live_progress(),
+        require_contract_launch=bool(a.require_contract_launch),
+        self_check_dir=Path(a.kernel).resolve().parent if a.timed else None,
+    )
     if a.json:
         print(json.dumps(rep.to_json(), indent=2))
     else:
         print(format_feedback(rep))
+    if a.timed and a.seed_report:
+        from .verdict import replacement_line
+
+        try:
+            seed_doc = json.loads(Path(a.seed_report).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"seed report was not read: {exc}", file=sys.stderr)
+            return 1
+        print(replacement_line(rep, seed_doc, min_improvement=a.min_improvement, noise_z=a.noise_z))
     return 0 if rep.status == "ok" else 1
 
 
@@ -159,6 +176,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("kernel")
     _common(p)
     p.add_argument("--quick", action="store_true", help="compile + ABI + safety + correctness only (no benchmark, no shader validation)")
+    p.add_argument("--timed", action="store_true", help="correctness plus the benchmark, without shader validation")
+    p.add_argument("--seed-report", default=None, help="the seed report.json; --timed then says whether this version would replace it")
+    p.add_argument("--min-improvement", type=float, default=1.005)
+    p.add_argument("--noise-z", type=float, default=2.0)
+    p.add_argument("--require-contract-launch", action="store_true")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--reps", type=int, default=15)
     p.add_argument("--json", action="store_true")

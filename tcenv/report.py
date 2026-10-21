@@ -154,6 +154,11 @@ def format_feedback(rep: EvalReport, *, max_errors_chars: int = 2500) -> str:
                 f"  bound: {r['bound']}; achieved {r['achieved_gbps']:.0f} GB/s ({r['bandwidth_fraction']:.0%} of {r['peak_gbps_measured']:.0f} GB/s peak)"
                 + (f", {r['achieved_tflops']:.2f} TFLOP/s ({r['compute_fraction']:.0%} of {r['peak_tflops_measured']:.1f})" if r.get("flops") and _num(r.get("achieved_tflops")) is not None and _num(r.get("peak_tflops_measured")) is not None else "")
             )
+            by_dtype = r.get("peak_tflops_by_dtype")
+            if isinstance(by_dtype, dict) and len(by_dtype) > 1:
+                peaks = ", ".join(f"{name} {float(value):.1f}" for name, value in by_dtype.items() if isinstance(value, (int, float)))
+                if peaks:
+                    L.append(f"  matrix peaks measured on this machine, by operand dtype (TFLOP/s): {peaks}. The bound above uses the task's dtype; another dtype's rate is its own measurement, not a fraction of it.")
         # 基线已经快过下界时，这句会把「离峰值还有百分之几」说成目标。数字头已经改写目标，这里不再重复。
         if r.get("time_over_lower_bound") and _baseline_beats_bound(rep) is None:
             L.append(f"  roofline lower bound {r['lower_bound_us']:.1f} us (reference algorithm); the candidate is {r['time_over_lower_bound']:.2f}x above it")

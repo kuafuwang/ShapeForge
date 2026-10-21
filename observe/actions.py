@@ -9,7 +9,7 @@ What a click can do (``POST /api/runs/<run>/budget``):
 ``POST /api/budget/reset`` is the one-click reset: every search that can continue gets $15 added and its round limit and patience lifted.
 A run that hung the GPU, failed in the model, or never produced a kernel is skipped. The experiment ``cap.json``, when there is one, is raised by the same amount so the add is not refused.
 
-``POST /api/stop`` sends SIGTERM to every live search and experiment queue in this repo, including the process group so a GPU worker started by that search stops too. The dashboard process is never a target.
+``POST /api/stop`` sends SIGTERM to every live search and experiment queue in this repo. It signals that process group, and also every process group of a descendant and of a process whose command names that run's directory. ``hmz`` is started in its own session, so a group signal to the search alone leaves ``pi`` running. The dashboard process is never a target.
 
 This spends real money and can start GPU work, so every POST needs: a loopback ``Host``, a same-origin ``Origin`` (when the browser sends one), the
 per-process random token that the served page carries (``X-Observe-Token``), a positive amount under ``OBSERVE_MAX_TOPUP_USD`` (default 25), a run
@@ -496,14 +496,102 @@ def _stop_groups() -> tuple[list[dict], list[dict]]:
         if not _is_search_command(cmd):
             refused.append({"pid": pid, "ids": names, "reason": "不是本仓库的搜索进程", "command": cmd})
             continue
-        slot = groups.setdefault(pgid, {"pgid": pgid, "pids": [], "ids": [], "command": ""})
+        slot = groups.setdefault(pgid, {"pgid": pgid, "pids": [], "ids": [], "command": "", "roots": []})
         slot["pids"].append(pid)
         for name in names:
             if name not in slot["ids"]:
                 slot["ids"].append(name)
+            root = _root_of(name)
+            if root and root not in slot["roots"]:
+                slot["roots"].append(root)
         if cmd and not slot["command"]:
             slot["command"] = cmd
+    _attach_related(list(groups.values()), own_pgid)
     return list(groups.values()), refused
+
+
+def _root_of(name: str) -> str:
+    """Absolute run directory for a history id. Experiment rows append ``（脚本）`` after the id."""
+    run_id = name.split("（", 1)[0]
+    directory = query.resolve_run(run_id)
+    if directory is None:
+        directory = detail.resolve_run(run_id)
+    if directory is None:
+        return ""
+    try:
+        return str(directory.resolve())
+    except OSError:
+        return str(directory)
+
+
+def _process_table() -> list[dict]:
+    """Every process: pid, parent, process group, command. Empty when ``ps`` cannot be read."""
+    try:
+        text = subprocess.check_output(["ps", "-ax", "-o", "pid=,ppid=,pgid=,command="], text=True, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    rows = []
+    for line in text.splitlines():
+        parts = line.strip().split(None, 3)
+        if len(parts) < 3:
+            continue
+        try:
+            pid, ppid, pgid = int(parts[0]), int(parts[1]), int(parts[2])
+        except ValueError:
+            continue
+        rows.append({"pid": pid, "ppid": ppid, "pgid": pgid, "command": parts[3] if len(parts) > 3 else ""})
+    return rows
+
+
+def _descendants(root: int, by_parent: dict[int, list[int]]) -> set[int]:
+    found: set[int] = set()
+    stack = [root]
+    while stack:
+        parent = stack.pop()
+        for child in by_parent.get(parent, []):
+            if child in found or child == root:
+                continue
+            found.add(child)
+            stack.append(child)
+    return found
+
+
+def _attach_related(groups: list[dict], own_pgid: int) -> None:
+    """Add the process groups of children and of processes that name this run.
+
+    ``hmz exec`` is started with a new session, so it is not in the search's group. A child that has
+    already been reparented still names ``agent_work`` under the run directory in its command.
+    """
+    table = _process_table()
+    by_parent: dict[int, list[int]] = {}
+    for row in table:
+        by_parent.setdefault(row["ppid"], []).append(row["pid"])
+    for group in groups:
+        pids = set(group["pids"])
+        for pid in list(pids):
+            pids |= _descendants(pid, by_parent)
+        roots = [root for root in group.get("roots", []) if root]
+        if roots:
+            for row in table:
+                if any(root in row["command"] for root in roots):
+                    pids.add(row["pid"])
+                    pids |= _descendants(row["pid"], by_parent)
+        pgids = []
+        seen = {int(group["pgid"])}
+        by_pid = {row["pid"]: row for row in table}
+        for pid in pids:
+            row = by_pid.get(pid)
+            pgid = row["pgid"] if row else None
+            if pgid is None:
+                try:
+                    pgid = os.getpgid(pid)
+                except OSError:
+                    continue
+            if pgid <= 1 or pgid == own_pgid or pgid in seen:
+                continue
+            seen.add(pgid)
+            pgids.append(pgid)
+        group["related_pgids"] = pgids
 
 
 def _command_of(pid: int) -> str:
@@ -520,20 +608,42 @@ def stop_preview() -> dict:
     return {"groups": groups, "refused": refused, "dry_run": dry_run()}
 
 
+def _signal_group(pgid: int) -> str | None:
+    """SIGTERM one process group. ``None`` when the signal was delivered."""
+    try:
+        os.kill(-int(pgid), signal.SIGTERM)
+    except ProcessLookupError:
+        return None
+    except OSError as e:
+        return str(e)
+    return None
+
+
 def stop_runs() -> dict:
-    """``POST /api/stop``. SIGTERM each live search's process group so the search, its queue and its GPU worker stop."""
+    """``POST /api/stop``. SIGTERM each live search, its process group, and the groups of processes it started.
+
+    ``hmz`` and ``pi`` run in their own session. Signaling only the search group leaves them calling the model.
+    """
     groups, refused = _stop_groups()
     stopped = []
     for group in groups:
+        search_pgid = int(group["pgid"])
+        # 先停 hmz / pi 那一组，再停搜索自己。反过来的话，搜索先死，hmz 变成孤儿并继续调模型。
+        pgids = [int(item) for item in group.get("related_pgids") or [] if int(item) != search_pgid]
+        pgids.append(search_pgid)
         if dry_run():
-            stopped.append({**group, "signaled": False, "dry_run": True})
+            stopped.append({**group, "pgids": pgids, "signaled": False, "dry_run": True})
             continue
-        try:
-            os.kill(-int(group["pgid"]), signal.SIGTERM)
-        except OSError as e:
-            refused.append({**group, "reason": f"信号没有送到：{e}"})
-            continue
-        stopped.append({**group, "signaled": True, "dry_run": False})
+        sent = []
+        for pgid in pgids:
+            error = _signal_group(pgid)
+            if error:
+                reason = f"信号没有送到：{error}" if pgid == search_pgid else f"关联进程组的信号没有送到：{error}"
+                refused.append({**group, "pgid": pgid, "reason": reason})
+                continue
+            sent.append(pgid)
+        if sent:
+            stopped.append({**group, "pgids": sent, "signaled": True, "dry_run": False})
     return {"ok": True, "dry_run": dry_run(), "stopped": stopped, "refused": refused}
 
 

@@ -185,5 +185,6 @@ def roofline(task, time_s: float, calib: dict) -> dict:
         "time_over_lower_bound": time_s / t_lb if t_lb > 0 else None,
         "peak_gbps_measured": peak_gbps,
         "peak_tflops_measured": calib["peak_tflops"].get(task.dtype),
+        "peak_tflops_by_dtype": dict(calib["peak_tflops"]),
         "bound_kind": "reference_algorithm",
     }

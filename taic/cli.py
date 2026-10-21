@@ -40,7 +40,10 @@ def cmd_run(a: argparse.Namespace) -> int:
     if a.patience:
         search.patience = a.patience
     if getattr(a, "kernel_agent", None):
-        search.kernel_agent = "" if a.kernel_agent == "off" else a.kernel_agent
+        if a.kernel_agent == "off":
+            print("kernel writing goes through hmz; --kernel-agent off is not available", file=sys.stderr)
+            return 5
+        search.kernel_agent = a.kernel_agent
     if a.effort:
         cfg.reasoning_effort = a.effort
     if getattr(a, "plan_effort", None):
@@ -78,7 +81,8 @@ def cmd_run(a: argparse.Namespace) -> int:
 SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "max_quick_checks", "min_improvement", "noise_z", "confirm_top", "eval_reps", "max_hangs",
                  "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
                  "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck",
-                 "plan_ledger", "diversity_archive", "fast_bench", "experience_index", "kernel_agent", "require_contract_launch")
+                 "plan_ledger", "diversity_archive", "fast_bench", "experience_index", "kernel_agent", "require_contract_launch",
+                 "relay_budget_usd", "turn_minutes")
 LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry",
               "truncation_retry_effort", "plan_reasoning_effort", "patch_reasoning_effort")
 
@@ -133,7 +137,9 @@ def _resume_config(a: argparse.Namespace, settings: dict, info: dict):
         cfg.use_tools = False
         prov["llm.use_tools"] = "command line"
     if getattr(a, "kernel_agent", None):
-        search.kernel_agent = "" if a.kernel_agent == "off" else a.kernel_agent
+        if a.kernel_agent == "off":
+            raise LLMError("kernel writing goes through hmz; --kernel-agent off is not available")
+        search.kernel_agent = a.kernel_agent
         prov["search.kernel_agent"] = "command line"
     if a.effort:
         cfg.reasoning_effort = a.effort

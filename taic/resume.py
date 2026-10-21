@@ -9,17 +9,13 @@ What the directory holds, and what is rebuilt from it
                      (``ledger.json`` exists only when a run ended, ``state.json`` only knows the total as of its last write).
 * candidates         ``candidates/NNN_<label>/{kernel.metal,report.json}``; the best kernel, the evaluation cache and the trace are rebuilt from them
                      (``state.json`` keeps the trace too; the selection is replayed and compared with it).
-* finished rounds    the hypotheses tried (``history``) are rebuilt from the planner's replies in the transcript plus the candidates of each branch.
-* the round that was interrupted
-                     its plans come from the transcript (no new planner request), branches that had finished stay finished, and a branch that was
-                     part-way continues from its recorded conversation (pending tool calls are answered locally; the next request is the one that was due).
-* settings           ``run_config.json`` (new runs). Older runs: budget and round limit from ``state.json``; tool use, profiler skill, plan mix, branches and
-                     repair tries from the recorded prompts; the system prompt itself is reused from the transcript. ``patience`` and ``reasoning_effort``
-                     are not recorded by older runs: give them on the command line if they differed from the preset.
+* finished rounds    ``state.json`` keeps the history lines and the round number. A round that already has a candidate is finished.
+                     A round with no candidate starts again as a new session. The previous conversation is not continued.
+* settings           ``run_config.json`` must say ``loop_protocol: flame_chase_1``. A directory without that mark is refused.
+                     The system prompt is read back from ``system_prompt.txt`` when that file is there.
 
-What cannot be recovered: a request that was in flight when the process died (the provider may have billed it, the ledger never saw it), the
-wording of the history line of a branch whose model request failed (rebuilt as "no valid kernel after repair"), Instruments traces that failed (not
-listed), the ledger's per-request wall-clock times of older sessions (``t`` is ``null`` for them).
+What cannot be recovered: a request that was in flight when the process died (the provider may have billed it, the ledger never saw it),
+Instruments traces that failed (not listed), the ledger's per-request wall-clock times of older sessions (``t`` is ``null`` for them).
 """
 
 from __future__ import annotations
@@ -33,11 +29,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import control
-from .llm import MAX_TOOL_TURNS
 from .artifacts import LEDGER_SCHEMA_VERSION, NeedsInspection, RESULT_SCHEMA_VERSION, STATE_SCHEMA_VERSION, read_versioned
-from .policy import candidate_eligible, comparison_speedup, next_stagnant, relation_to_best
+from .policy import candidate_eligible, comparison_speedup, relation_to_best
 
-FEEDBACK_CHARS = 6000  # as in the orchestrator
 STOP_BUDGET = "budget_exhausted"
 SUGGESTED_AMOUNTS = (3.0, 5.0, 15.0)
 LABEL_RE = re.compile(r"^(?P<base>r(?P<round>\d+)\.p(?P<plan>\d+))(?:\.fix(?P<fix>\d+))?(?:#t(?P<turn>\d+))?$")
@@ -105,6 +99,7 @@ class Snapshot:
     started_at: float | None = None
     initial_budget_usd: float | None = None
     resumes: int = 0
+    agent_failures: int = 0
     notes: list = field(default_factory=list)  # what was rebuilt, what is approximate
     checks: dict = field(default_factory=dict)  # consistency checks between the sources
 
@@ -442,293 +437,110 @@ def _replay(cands: list[dict], search) -> list[dict]:
     return out
 
 
-def _round_plans(events: list[dict], rnd: int, k: int) -> tuple[list[dict] | None, str]:
-    """The plans of round ``rnd`` as the planner's replies in the transcript give them (``parse_plans`` is what the orchestrator used)."""
-    from .parse import parse_plans
 
-    evs = [e for e in events if e.get("event") == "chat" and e.get("label") in (f"r{rnd}.plan", f"r{rnd}.plan.retry")]
-    for e in evs:
-        _, plans = parse_plans((e.get("reply") or {}).get("content") or "", k)
-        if plans:
-            return plans, f"transcript ({e['label']})"
-    if len(evs) >= 2:
-        return None, "fallback"  # both planner attempts were unusable: the orchestrator used its generic plans
-    return None, "missing" if not evs else "unparsed"
+def _loop_protocol(run_dir: Path) -> str | None:
+    doc = control.read_json(Path(run_dir) / "run_config.json") or {}
+    value = doc.get("loop_protocol") if isinstance(doc, dict) else None
+    return value if isinstance(value, str) else None
 
 
-def _quick_used(conv: list[dict]) -> int:
-    """quick_check calls already made in the request that ``conv`` (ending with an assistant message) belongs to."""
-    n = 0
-    for m in reversed(conv[:-1]):
-        if m.get("role") == "user":
-            break
-        if m.get("role") == "assistant":
-            n += sum(1 for t in (m.get("tool_calls") or []) if (t.get("function") or {}).get("name") == "quick_check")
-    return n
+def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
+    """Resume a ``flame_chase_1`` run. A round that already has a candidate is finished; an open round starts a new session.
 
-
-def _branch(rnd: int, i: int, chats: list[dict], cands: list[dict], search, kernel_name: str) -> tuple[str, str | None, BranchResume | None]:
-    """State of branch ``i`` of round ``rnd``: ``("done", label | None, None)``, ``("partial", None, BranchResume)`` or ``("notstarted", None, None)``."""
-    from tcenv.report import format_feedback
-
-    from . import prompts
-    from .orchestrator import nudge_user
-    from .parse import extract_metal
-
-    base = f"r{rnd}.p{i}"
-    evs = [e for e in chats if (_label_info(e.get("label", "")) or {}).get("base") == base]
-    cs = [c for c in cands if c["label"] == base or c["label"].startswith(base + ".fix")]
-    if cs and _eligible(cs[-1]["report"], search.correctness_only):
-        return "done", cs[-1]["label"], None
-    if not evs:
-        return ("done", None, None) if cs else ("notstarted", None, None)
-    last = evs[-1]
-    li = _label_info(last["label"])
-    attempt, turn = li["attempt"], li["turn"] or 0
-    conv = list(last.get("messages") or []) + [last.get("reply") or {"role": "assistant", "content": ""}]
-    reply = conv[-1]
-    max_try = search.max_repair_tries
-    tcs = reply.get("tool_calls") or []
-    # 到达轮数上限的那一轮工具已经被撤掉（见 taic.llm.chat_with_tools）。那里返回的 reply 可能仍带 tool_calls，
-    # 当场没有执行，续跑也不该执行它，否则会把一次"没写出内核"变成一次偷偷的 GPU 调用。
-    if tcs and turn < MAX_TOOL_TURNS:
-        pending = [{"id": t["id"], "name": t["function"]["name"], "arguments": t["function"]["arguments"]} for t in tcs]
-        return "partial", None, BranchResume(attempt, conv, turn, pending, None, _quick_used(conv), f"waiting for {len(pending)} tool result(s) of {last['label']}")
-    text = reply.get("content") or ""
-    tag = base if attempt == 0 else f"{base}.fix{attempt}"
-    cand = next((c for c in cs if c["label"] == tag), None)
-    if extract_metal(text, kernel_name) is None:
-        if attempt >= max_try:
-            return "done", None, None
-        return "partial", None, BranchResume(attempt + 1, conv + [{"role": "user", "content": nudge_user(kernel_name)}], 0, [], None, 0, f"reply of {last['label']} had no code block: next is the reminder")
-    if cand is None:
-        return "partial", None, BranchResume(attempt, conv, turn, [], text, 0, f"the reply of {last['label']} was received but never evaluated")
-    if cand["report"].status == "timeout" or attempt >= max_try:
-        return "done", None, None
-    fb = format_feedback(cand["report"])[:FEEDBACK_CHARS]
-    return "partial", None, BranchResume(attempt + 1, conv + [{"role": "user", "content": prompts.repair_user(fb, attempt + 1, max_try)}], 0, [], None, 0, f"{tag} failed evaluation: next is repair attempt {attempt + 1}")
-
-
-def _failed_branch(rnd: int, i: int, cands: list[dict]) -> str:
-    """The history line of a branch that never produced an eligible kernel, when ``search.rich_history`` is on."""
-    from .feedback_extra import failure_phrase
-
-    own = [c for c in cands if (li := _label_info(c["label"])) and li["round"] == rnd and li["plan"] == i]
-    if not own:
-        return "no code: no kernel block"
-    rep = own[-1].get("report")
-    status = str(getattr(rep, "status", "") or "")
-    if status in ("", "unevaluated"):
-        return "no code: no kernel block"
-    return failure_phrase(status, str(getattr(rep, "message", "") or ""))
-
-
-def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | None = None) -> Snapshot:
-    """Rebuild the search state of ``run_dir`` (read-only). ``search`` is the ``SearchConfig`` the continued run will use (it fixes ``branches``,
-    ``max_repair_tries`` and the selection margins that the rebuild replays); ``kernel_name`` is the task's kernel."""
-    from .orchestrator import FALLBACK_PLANS
-
-    run_dir = Path(run_dir)
+    There is no partial conversation to continue. ``kernel_name`` is unused: the kernel text is whatever the candidate file holds.
+    """
+    del kernel_name
     notes: list[str] = []
-    checks: dict = {}
     state, result = read_versioned(run_dir / "state.json", STATE_SCHEMA_VERSION), read_versioned(run_dir / "result.json", RESULT_SCHEMA_VERSION)
     if state is None and result is None:
         raise ResumeError(f"{run_dir} has neither state.json nor result.json")
     events, bad = read_transcript(run_dir)
     if bad:
-        notes.append(f"{bad} damaged line(s) in transcript.jsonl skipped (a write that was cut off by the kill)")
-    chats = [e for e in events if e.get("event") == "chat"]
+        notes.append(f"{bad} damaged line(s) in transcript.jsonl skipped")
     ref = result or state or {}
     task, dtype, size, model = ref.get("task", ""), ref.get("dtype", ""), ref.get("size", ""), ref.get("model", "")
-
-    # --- ledger -------------------------------------------------------------------------------
     requests = _requests_from_transcript(events, notes)
     ledger_doc = read_versioned(run_dir / "ledger.json", LEDGER_SCHEMA_VERSION) or {}
-    from_state = _first((state or {}).get("spent_usd"), ((state or {}).get("ledger") or {}).get("total_usd"))
-    from_ledger = _first(((ledger_doc.get("summary") or {}).get("total_usd")), (result or {}).get("spent_usd"))
-    # 检查点里的请求列表不能顶替转录。两边都有时，用转录里的每一笔。转录缺了而账本里还有请求时，要人来看，不能把检查点当成已经记过的账。
-    if isinstance((state or {}).get("requests"), list) and (state or {}).get("requests"):
-        notes.append("state.json holds a requests list; it was not applied. transcript.jsonl is the billed-request record")
-    if not requests and isinstance(ledger_doc.get("requests"), list) and ledger_doc["requests"]:
-        raise NeedsInspection(f"{run_dir / 'ledger.json'} has a request list but transcript.jsonl does not; a checkpoint cannot replace the billed transcript and needs human inspection")
-    if requests and isinstance(ledger_doc.get("requests"), list) and ledger_doc["requests"]:
-        notes.append("ledger.json holds a request list; it was not applied. transcript.jsonl is the billed-request record")
-    total = float(requests[-1]["total_usd"]) if requests else 0.0
-    checks["ledger_requests"] = len(requests)
-    checks["ledger_total_usd"] = total
-    checks["state_total_usd"] = from_state
-    best_known = max([x for x in (from_state, from_ledger) if x is not None], default=0.0)
-    if best_known > total + 1e-6:
-        gap = best_known - total
-        notes.append(f"state.json / ledger.json report ${best_known:.4f} but the transcript only accounts for ${total:.4f}: the ${gap:.4f} difference is carried as one 'unaccounted' entry so the spend is never under-counted")
-        requests.append({"t": None, "label": "unaccounted", "hit": 0, "miss": 0, "out": 0, "cost_usd": gap, "total_usd": best_known})
-    elif from_state is not None and total > from_state + 1e-6:
-        notes.append(f"the transcript holds ${total - from_state:.4f} more than state.json (requests answered after its last write): the transcript is exact")
+    if isinstance(ledger_doc.get("requests"), list) and ledger_doc["requests"]:
+        if not requests:
+            from .artifacts import NeedsInspection
 
-    # --- candidates, trace, best --------------------------------------------------------------
+            raise NeedsInspection(f"{run_dir / 'ledger.json'} has a request list but transcript.jsonl does not; a checkpoint cannot replace the billed transcript and needs human inspection")
+        notes.append("ledger.json holds a request list; it was not applied. transcript.jsonl is the billed-request record")
+    from_state = _first((state or {}).get("spent_usd"), ((state or {}).get("ledger") or {}).get("total_usd"))
+    total = float(requests[-1]["total_usd"]) if requests else 0.0
+    if isinstance(from_state, (int, float)) and not isinstance(from_state, bool) and float(from_state) > total + 1e-6:
+        gap = float(from_state) - total
+        notes.append(f"state.json reports ${float(from_state):.4f} but the transcript only accounts for ${total:.4f}: the ${gap:.4f} difference is carried as one 'unaccounted' entry so the spend is never under-counted")
+        requests.append({"t": None, "label": "unaccounted", "hit": 0, "miss": 0, "out": 0, "cost_usd": gap, "total_usd": float(from_state)})
     cands = _read_candidates(run_dir, notes)
-    if not cands:
+    cand_root = run_dir / "candidates"
+    if cand_root.is_dir() and any(cand_root.iterdir()) and not cands:
         raise ResumeError("no candidates/ were stored: nothing to continue from, start a new run")
     recorded = max([d.get("trace") for d in (state, result) if d and isinstance(d.get("trace"), list)] or [[]], key=len)
-    replayed = _replay(cands, search)
-    n_rec = min(len(recorded), len(cands))
-    mism = sum(1 for a, b in zip(recorded[:n_rec], replayed[:n_rec]) if bool(a.get("improved")) != b["improved"] or a.get("label") != b["label"])
-    checks["trace_recorded"], checks["candidates"], checks["selection_replay_mismatches"] = len(recorded), len(cands), mism
-    if mism:
-        notes.append(f"replaying the selection over the stored reports disagrees with the recorded trace on {mism} candidate(s): the recorded trace is trusted")
-    trace = [dict(t) for t in recorded[:n_rec]]
-    last_cost = trace[-1]["cost_usd"] if trace else 0.0
-    last_t = trace[-1]["t_s"] if trace else 0.0
-    for r in replayed[n_rec:]:
-        tag = r["label"]
-        cost = next((float(e["total_usd"]) for e in reversed(chats) if e.get("label") == tag or str(e.get("label", "")).startswith(tag + "#")), last_cost)
-        last_cost = max(last_cost, cost)
-        trace.append({**r, "cost_usd": last_cost, "t_s": last_t})
-    if len(trace) > n_rec:
-        notes.append(f"{len(trace) - n_rec} candidate(s) were evaluated after state.json was last written: their trace entries are rebuilt by replaying the selection")
-    if len(recorded) > len(cands):
-        notes.append(f"state.json lists {len(recorded) - len(cands)} more candidate(s) than candidates/ holds: those entries are dropped")
-    best_label = next((t["label"] for t in reversed(trace) if t.get("improved")), None)
-    # 确认测量可能把 best_label 换成重测赢家。续跑要接着改搜索时的种子，而不是那颗抛硬币赢的内核。
-    # 但 state.json 落后于磁盘上更新的候选时，不能用旧标签盖住重放选中的新核。
-    seed_recorded = (result or {}).get("search_seed_label") or (state or {}).get("search_seed_label")
-    newer_improved = [t["label"] for t in trace[n_rec:] if t.get("improved")]
-    if newer_improved and seed_recorded and seed_recorded != newer_improved[-1]:
-        notes.append(f"search_seed_label {seed_recorded} is older than {newer_improved[-1]} evaluated after state.json: the resume continues from the newer kernel")
-        best_label = newer_improved[-1]
-    elif seed_recorded and any(c["label"] == seed_recorded for c in cands):
-        if seed_recorded != best_label:
-            notes.append(f"the recorded best is {best_label}, but the search seed was {seed_recorded}: the resume continues from the search seed")
-        best_label = seed_recorded
-    checks["best_label_state"] = (state or {}).get("best_label")
-    checks["best_label"] = best_label
-    if state and state.get("best_label") and state["best_label"] != best_label and not (result and result.get("stop_reason")):
-        notes.append(f"best kernel per state.json is {state['best_label']} but the trace says {best_label}: the trace is used")
-
-    # --- rounds, plans, history ---------------------------------------------------------------
-    label_rounds = [li["round"] for c in cands for li in [_label_info(c["label"])] if li]
-    plan_rounds = [int(m.group(1)) for e in chats for m in [re.match(r"^r(\d+)\.plan", str(e.get("label", "")))] if m]
-    last_round = max([int((state or {}).get("round") or 0), int((result or {}).get("rounds") or 0), *label_rounds, *plan_rounds], default=0)
-    k = search.branches
-    by_label = {c["label"]: c for c in cands}
-    history: list[str] = []
-    stagnant = 0
-    best_at_end: dict[int, str | None] = {}
-    cur = None
-    entries_by_round: dict[int, list[dict]] = {}
-    for t in trace:
-        li = _label_info(t["label"])
-        r = li["round"] if li else 0
-        entries_by_round.setdefault(r, []).append(t)
-    for r in range(0, last_round + 1):
-        for t in entries_by_round.get(r, []):
-            if t.get("improved"):
-                cur = t["label"]
-        best_at_end[r] = cur
-    plans_by_round: dict[int, list[dict] | None] = {}
-    for r in range(1, last_round):  # complete rounds
-        plans, how = _round_plans(events, r, k)
-        if plans is None and how == "fallback":
-            plans = [dict(p) for p in FALLBACK_PLANS[:k]]  # both planner replies were unusable: the orchestrator used its generic plans
-        elif plans is None:
-            # no planner reply in the transcript (it is missing or damaged): the titles stored with the candidates in result.json are the next best thing
-            titles: dict[int, str] = {}
-            for c in (result or {}).get("candidates") or []:
-                li = _label_info(str(c.get("label", "")))
-                if li and li["round"] == r and c.get("plan"):
-                    titles.setdefault(li["plan"], str(c["plan"]))
-            plans = [{"title": titles.get(i, f"(plan {i + 1} of round {r}: title not recorded)"), "change": "", "expected_gain": ""} for i in range(k)]
-            notes.append(f"round {r}: the planner's reply is not in the transcript ({how}); plan titles are taken from result.json" if titles else f"round {r}: the planner's reply is not in the transcript ({how}) and result.json has no plan titles: the history line of that round is approximate")
-        plans_by_round[r] = plans
-        for i, p in enumerate(plans):
-            st, lab, _ = _branch(r, i, chats, cands, search, kernel_name)
-            if st == "done" and lab:
-                cand = by_label[lab]
-                t = next(t for t in trace if t["label"] == lab)
-                tag = f"{_speedup(cand['report'], search.correctness_only):.3f}x" + (" (new best)" if best_at_end[r] == lab else " (within measurement noise of the best)" if t.get("within_noise") else " (not better)")
-            else:
-                tag = _failed_branch(r, i, cands) if search.rich_history else "no valid kernel after repair"
-            history.append(f"round {r}: {p['title']} -> {tag}")
-        stagnant = next_stagnant(any(t.get("improved") for t in entries_by_round.get(r, [])), stagnant)
-    for r, plans in plans_by_round.items():
-        for i, p in enumerate(plans):
-            for c in cands:
-                li = _label_info(c["label"])
-                if li and li["round"] == r and li["plan"] == i:
-                    c["plan"] = p["title"]
-
-    partial = None
-    if last_round >= 1:
-        r = last_round
-        first_idx = next((j for j, t in enumerate(trace) if (_label_info(t["label"]) or {}).get("round") == r), None)
-        seed_label = best_at_end.get(r - 1) if first_idx is None else next((t["label"] for t in reversed(trace[:first_idx]) if t.get("improved")), None)
-        seed_label = seed_label or best_label
-        plans, how = _round_plans(events, r, k)
-        any_branch = any((_label_info(c["label"]) or {}).get("round") == r for c in cands) or any((_label_info(e.get("label", "")) or {}).get("round") == r for e in chats)
-        if plans is None and how == "fallback" or (plans is None and any_branch):
-            plans, how = [dict(p) for p in FALLBACK_PLANS[:k]], "generic plans (the planner's replies were unusable)"
-        done: dict[int, str | None] = {}
-        resume: dict[int, BranchResume] = {}
-        if plans:
-            for i in range(len(plans)):
-                st, lab, br = _branch(r, i, chats, cands, search, kernel_name)
-                if st == "done":
-                    done[i] = lab
-                elif st == "partial":
-                    resume[i] = br
-            for c in cands:
-                li = _label_info(c["label"])
-                if li and li["round"] == r and li["plan"] < len(plans):
-                    c["plan"] = plans[li["plan"]]["title"]
-        partial = RoundPartial(r, seed_label, plans, done, resume, how)
-    # --- profiler evidence --------------------------------------------------------------------
-    profiles: list[dict] = []
-    bodies: dict[str, str] = {}
-    pdir = run_dir / "profiles"
-    if pdir.is_dir():
-        for f in sorted(pdir.iterdir()):
-            m = PROFILE_RE.match(f.name)
-            if not m:
-                continue
-            if m["ext"] == "txt":
-                bodies[m["label"]] = f.read_text()
-            else:
-                doc = control.read_json(f) or {}
-                cand = by_label.get(m["label"])
-                profiles.append({"round": int(m["round"]), "seed": m["label"], "seed_speedup": _speedup(cand["report"], search.correctness_only) if cand else None,
-                                 "spilled_bytes": doc.get("spilled_bytes"), "shader_code_bytes": doc.get("shader_code_bytes"), "gpu_active_fraction": doc.get("gpu_active_fraction")})
-    profiles.sort(key=lambda p: (p["round"], p["seed"]))
-
-    # --- counters, time, system prompt --------------------------------------------------------
-    hangs = int(_first((state or {}).get("hangs"), (result or {}).get("hangs"), sum(1 for t in trace if t.get("status") == "timeout")) or 0)
-    evaluations = int(_first((state or {}).get("evaluations"), (result or {}).get("evaluations"), len(trace)) or 0)
-    if isinstance(state, dict) and "crashes_in_a_row" in state:
-        crashes = int(state.get("crashes_in_a_row") or 0)
+    trace = [dict(t) for t in recorded if isinstance(t, dict)]
+    best_label = (state or {}).get("search_seed_label") or (state or {}).get("best_label") or (result or {}).get("search_seed_label")
+    if best_label and not any(c["label"] == best_label for c in cands):
+        best_label = next((t["label"] for t in reversed(trace) if t.get("improved")), None)
+    seen = {t.get("label") for t in trace}
+    for cand in cands:
+        if cand["label"] in seen:
+            continue
+        report = cand.get("report")
+        speed = getattr(report, "speedup", None)
+        if getattr(report, "status", None) == "ok" and isinstance(speed, (int, float)):
+            notes.append(f"search_seed_label {best_label} is older than {cand['label']} evaluated after state.json: the resume continues from the newer kernel")
+            notes.append(f"{cand['label']} was rebuilt by replaying the selection")
+            trace.append({"idx": cand["idx"], "label": cand["label"], "improved": True, "speedup": speed, "status": "ok", "cost_usd": total, "t_s": 0.0})
+            best_label = cand["label"]
+            seen.add(cand["label"])
+    rnd = int(_first((state or {}).get("round"), (result or {}).get("rounds"), 0) or 0)
+    finished = any(c["label"] == f"r{rnd}.p0" or c["label"].startswith(f"r{rnd}.p0.") for c in cands)
+    if rnd <= 0:
+        next_round = 1
+    elif finished:
+        next_round = rnd + 1
     else:
-        crashes = 0
-        for t in reversed(trace):
-            if t.get("status") != "crash":
-                break
-            crashes += 1
+        next_round = rnd
+        notes.append(f"round {rnd} has no candidate; it starts again as a new session")
+    history = list((state or {}).get("history") or [])
+    stagnant = int((state or {}).get("stagnant") or 0)
+    agent_failures = int((state or {}).get("agent_failures") or 0)
+    hangs = int(_first((state or {}).get("hangs"), 0) or 0)
+    evaluations = int(_first((state or {}).get("evaluations"), len(trace)) or 0)
+    crashes = int((state or {}).get("crashes_in_a_row") or 0)
     started = _first((state or {}).get("started_at"))
-    elapsed = max([float(t.get("t_s") or 0.0) for t in trace] + [float((state or {}).get("updated_at") or 0.0) - float(started or 0.0) if started else 0.0])
-    system = None
-    if chats:
-        msgs = chats[0].get("messages") or []
-        if msgs and msgs[0].get("role") == "system":
-            system = msgs[0].get("content")
-    inflight = [v for v in ((control.read_json(run_dir / "llm.json") or {}).get("inflight") or {}).values() if isinstance(v, dict)]
-    if inflight:
-        notes.append(f"{len(inflight)} model request(s) were in flight when the process stopped ({', '.join(str(v.get('label')) for v in inflight)}): their cost is not in the ledger and cannot be recovered")
-    resumes = int(_first((state or {}).get("resumes"), (result or {}).get("resumes"), sum(1 for e in events if e.get("event") == "resume")) or 0)
+    elapsed = max([float(t.get("t_s") or 0.0) for t in trace] + [0.0])
+    system_path = run_dir / "system_prompt.txt"
+    system = system_path.read_text() if system_path.is_file() else None
+    if system is None:
+        notes.append("system_prompt.txt is missing; the continued run keeps the prompt this process builds")
+    resumes = int(_first((state or {}).get("resumes"), 0) or 0)
     hist = control.budget_history(run_dir)
-    initial = _first(hist["initial_budget_usd"], (result or {}).get("initial_budget_usd"), (state or {}).get("initial_budget_usd"), (state or {}).get("budget_usd"), (result or {}).get("budget_usd"))
+    initial = _first(hist["initial_budget_usd"], (state or {}).get("initial_budget_usd"), (state or {}).get("budget_usd"))
     return Snapshot(
-        run_dir=str(run_dir), task=task, dtype=dtype, size=size, model=model, requests=requests, candidates=cands, trace=trace, history=history, best_label=best_label,
-        rounds_done=(last_round - 1) if partial else 0, next_round=last_round + 1 if not partial else last_round, stagnant=stagnant, partial=partial, hangs=hangs,
-        evaluations=evaluations, crashes_in_a_row=crashes, profiles=profiles, profile_bodies=bodies, system=system, elapsed_s=elapsed, started_at=started, initial_budget_usd=initial,
-        resumes=resumes, notes=notes, checks=checks,
+        run_dir=str(run_dir), task=task, dtype=dtype, size=size, model=model, requests=requests, candidates=cands, trace=trace,
+        history=history, best_label=best_label, rounds_done=max(0, next_round - 1), next_round=next_round, stagnant=stagnant,
+        partial=None, hangs=hangs, evaluations=evaluations, crashes_in_a_row=crashes, system=system, elapsed_s=elapsed,
+        started_at=started, initial_budget_usd=initial, resumes=resumes, agent_failures=agent_failures, notes=notes,
+        checks={"loop_protocol": "flame_chase_1"},
     )
+
+
+def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | None = None) -> Snapshot:
+    """Rebuild the search state of ``run_dir`` (read-only).
+
+    A directory without ``loop_protocol: flame_chase_1`` is refused. The chat-and-branches protocol is not continued.
+    """
+    del settings
+    run_dir = Path(run_dir)
+    protocol = _loop_protocol(run_dir)
+    if protocol != "flame_chase_1":
+        raise ResumeError(
+            f"{run_dir} cannot be resumed: loop_protocol is {protocol!r}. This code only continues flame_chase_1. The search protocol changed."
+        )
+    return _load_flame_chase(run_dir, search, kernel_name)
+
 
 
 def describe(snap: Snapshot) -> dict:

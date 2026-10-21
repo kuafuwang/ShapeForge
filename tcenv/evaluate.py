@@ -814,9 +814,14 @@ def evaluate(
     progress_path: Path | None = None,
     fast_bench: bool = False,
     require_contract_launch: bool = False,
+    self_check_dir: Path | None = None,
 ) -> EvalReport:
-    """Evaluate ``kernel_source`` on ``task``. ``mode``: "quick" (compile+ABI+safety+correctness)
-    or "full" (additionally shader validation and the benchmark)."""
+    """Evaluate ``kernel_source`` on ``task``. ``mode``: "quick" (compile+ABI+safety+correctness),
+    "timed" (those, plus the benchmark, without shader validation), or "full" (validation and the benchmark).
+
+    ``self_check_dir`` is set for a coding agent's ``--timed`` run. A previous timeout or crash in that
+    directory is refused before any GPU work, and every timed result is appended to ``self_checks.jsonl``.
+    """
     seed = int(seed if seed is not None else secrets.randbits(48))
     t0 = time.perf_counter()
     from .screen import screen_source
@@ -835,13 +840,39 @@ def evaluate(
                 pass
         return rep
 
+    def _checked(rep: EvalReport) -> EvalReport:
+        if self_check_dir is not None and mode == "timed" and rep.status != "refused_hang":
+            from .selfcheck import append
+
+            bench = rep.benchmark if isinstance(rep.benchmark, dict) else {}
+            cand = bench.get("candidate") if isinstance(bench.get("candidate"), dict) else {}
+            append(self_check_dir, {
+                "status": rep.status,
+                "candidate_us": rep.candidate_us,
+                "cv": cand.get("cv"),
+                "speedup": rep.speedup,
+                "elapsed_s": rep.elapsed_s,
+            })
+        return _live(rep)
+
+    if mode == "timed" and self_check_dir is not None:
+        from .selfcheck import earlier_hang
+
+        blocked = earlier_hang(self_check_dir)
+        if blocked:
+            rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=seed, status="rejected", stage="screen")
+            rep.message = blocked
+            rep.elapsed_s = time.perf_counter() - t0
+            return _live(rep)
+
     # 明显的死循环和非法 include 在这里结束，不起子进程，也不把核提交到 GPU。
     refused = screen_source(kernel_source)
     if refused:  # never reaches a worker, let alone the GPU
         rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=seed, status="rejected", stage="screen")
         rep.message = "refused before compilation: " + refused[0]
         rep.abi = {"ok": False, "violations": refused}
-        return _live(rep)
+        rep.elapsed_s = time.perf_counter() - t0
+        return _checked(rep)
     if progress_path is not None:
         try:
             from tcenv.events import publish
@@ -866,7 +897,7 @@ def evaluate(
             if v.status != STATUS_OK and not size_only:
                 v.mode = "full"
                 v.elapsed_s = time.perf_counter() - t0
-                return _live(v)
+                return _checked(v)
             rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch)
             rep.safety = dict(rep.safety or {})
             rep.safety["validation"] = []
@@ -874,7 +905,11 @@ def evaluate(
                 "skipped: the validation pipeline's threadgroup size is the instrumented figure; the uninstrumented pipeline checked the 32768 B limit"
                 if size_only else "clean"
             )
+        elif mode == "timed":
+            # 和 full 同一套计时，不跑着色器校验。校验慢，而且插桩会把线程组内存报成大约两倍。
+            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch)
+            rep.mode = "timed"
         else:
             rep = _run_worker(task, dtype, size, kp, "quick", seed, reps, timeout or 240.0, validation=False, cases=cases, progress_path=progress_path, launch_deadline_s=deadline, require_contract_launch=require_contract_launch)
         rep.elapsed_s = time.perf_counter() - t0
-        return _live(rep)
+        return _checked(rep)

@@ -92,7 +92,6 @@ def system_prompt(task: Task, *, use_tools: bool, profiler_evidence: bool = Fals
         idx = SkillIndex("msl_reference")
         parts.append(
             "\n# Skill 3: MSL reference (retrieval)\nCall the `lookup_msl` tool for details. Sections available:\n" + idx.outline()
-            + "\nThe tool `quick_check` compiles and correctness-tests a candidate without benchmarking; use it to debug."
         )
     else:
         parts.append("\n# Skill 3: MSL reference\n" + SkillIndex("msl_reference").full_text())

@@ -1,26 +1,55 @@
 ---
 name: taic-tools
-description: Use lookup_msl to read Metal notes and quick_check to compile and test a kernel. Do not time it yourself.
+description: Read the Metal notes, check a kernel with the commands in TASK.md, and leave NOTES.md.
 ---
 
 # taic tools
 
-Two tools. Both are real. Neither is a chat function named `lookup_msl` or `quick_check`. You run them with the tools you already have (`read`, `write`, `bash`).
+These are the commands in `TASK.md`. You run them with the tools you already have (`read`, `write`, `bash`).
 
-## lookup_msl
+## Metal notes
 
-What it is: the Metal Shading Language notes for this search (attributes, address spaces, types, barriers, `simdgroup_matrix`).
+`read` the file `msl_reference.md` in the working directory. That file is the Metal reference for this compiler. Do not invent an API that is not in it.
 
-How to use it: `read` the file `msl_reference.md` in the working directory. The search copied it there. Read the section you need. Do not invent an API that is not in that file.
+Apple's own PDFs are in the repository named by the eval command's `--directory`, under `taic/skills/wiki/`. `INDEX.md` there says which file answers which question. The shading-language specification is the language. The feature-set tables say what Apple9 (this M4) actually has. A number measured on this machine outranks both PDFs. A blog does not.
 
-## quick_check
+## Checks
 
-What it is: compile the kernel, check the ABI and launch contract, check memory safety, and compare answers with the reference. It does not benchmark. A time you measure is not the search result. The search times `kernel.metal` after you exit.
+`TASK.md` gives two commands.
 
-How to use it: `bash` the exact command in `TASK.md`. The lock file must be `TCENV_GPU_LOCK_FILE=/tmp/ai_lowerling-gpu.lock`, because this session cannot write `~/.cache`. It looks like:
+- The validation command answers only whether the kernel compiles and matches the reference. It does not time the kernel.
+- The evaluation command answers correctness and timing. It prints microseconds, the speedup, cv, and whether this version would replace the seed under the outer rule. That line says the self-check does not count. The search times `kernel.metal` again after you exit.
 
+Run the commands from this directory. Do not change the GPU lock path. Do not delete the lock file.
+
+A `self_checks.jsonl` in this directory records every timed check. After a timeout or a crash, another timed check is refused. Leave the kernel as it is and stop.
+
+## Probes
+
+A claim about this machine — an operand dtype runs at half rate in the matrix unit, an instruction does not exist, a limit is such-and-such — is a hypothesis until you measure it. The scorecard prints matrix peaks measured per operand dtype; anything finer (accumulator width, a specific instruction, a specific shape) nobody has measured for you. When such a claim decides whether an algorithm is worth writing, measure that exact combination first with a small kernel through the same runtime the harness uses:
+
+```python
+import sys
+sys.path.insert(0, "<repo>")  # the --directory of the eval command in TASK.md
+from tcenv.metal_runtime import BufferArg, get_context
+from tcenv.gpulock import gpu_lock
+
+SRC = r"""#include <metal_stdlib>
+using namespace metal;
+kernel void probe(device float* out [[buffer(0)]]) { /* the operation under test */ }
+"""
+ctx = get_context()
+k = ctx.compile(SRC, "probe")
+out = ctx.new_buffer(4096)
+with gpu_lock("probe"):
+    tm = ctx.run(k, [[(0, BufferArg(out))]], (8192, 1, 1), (32, 1, 1), iters=4)
+print(tm.gpu_per_iter_s)
 ```
-uv run --directory <repo> python -m tcenv.cli eval <task> <kernel.metal> --dtype <dtype> --size <size> --quick
-```
 
-`--quick` is required. Read the command's output and fix `kernel.metal` if it fails. Do not delete or rewrite the GPU lock file. Do not run a benchmark. A kernel that does not return can freeze the display.
+Put the measured number and the probe file name in `NOTES.md`. An unmeasured limit claim is not a reason to drop an algorithm; if you drop one on a claim you did not measure, copy the claim into `NOTES.md` marked unverified, so the next session can re-open it.
+
+## Notes
+
+Keep `NOTES.md` current: what each version changed, the self-check microseconds and cv, and whether you kept it. Hardware-limit claims need the probe file and the measured number, or the word unverified next to them. The next session reads this file and does not see this conversation.
+
+Leave the last version in `kernel.metal`, including a version that failed. Do not paste an older kernel back to make a command pass.

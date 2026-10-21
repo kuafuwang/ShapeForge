@@ -136,8 +136,9 @@ def test_a_branch_that_repeats_one_abi_error_stops(tmp_path):
 
     orch = make_orch(tmp_path, route, calls, max_rounds=1, max_repair=3, evaluate_fn=ev, abi_guard=True)
     run(orch)
-    # three branches, each: first kernel + one repair, then the repeated ABI stops the branch (a third repair is not spent)
-    assert n["repairs"] == 3
+    # The session is not repaired in place. The limit is written into the feedback the next session would read.
+    assert n["repairs"] == 0
+    assert "32768" in orch._failure_feedback
 
 
 def test_the_search_stops_at_the_roofline_and_not_when_the_bound_is_wrong(tmp_path):
@@ -191,7 +192,7 @@ def test_a_failed_branch_is_named_in_the_history_only_when_asked(tmp_path):
     run(orch)
     text = "\n".join(orch.history)
     assert "incorrect:" in text and "outlier" in text
-    assert any("noise floor" in (c.get("content") or "") for c in _user_messages(orch))
+    assert any("noise floor" in (brief.evidence or "") for brief in orch._session_briefs)
 
 
 def _user_messages(orch):

@@ -442,7 +442,7 @@ function renderTurn(row, openKeys) {
   const cost = row.cost_usd == null ? "" : ("$" + num(row.cost_usd));
   const head = [turnSituation(row), row.label || "", row.model || "—", seconds, tokens, cost].filter(Boolean).join(" · ");
   const bits = [];
-  if (row.sent) bits.push(`<p><b>发出</b> ${esc(row.sent)}</p>`);
+  if (row.sent) bits.push(`<p><b>${row.kind && row.kind.indexOf("agent") === 0 ? "本场" : "发出"}</b> ${esc(row.sent)}</p>`);
   if (row.thinking) bits.push(`<p><b>思考</b> ${esc(row.thinking)}</p>`);
   if (row.preview_thinking) bits.push(`<p><b>正在想</b> ${esc(row.preview_thinking)}</p>`);
   if (row.reply) bits.push(`<p><b>收到</b> ${esc(row.reply)}</p>`);

@@ -159,6 +159,7 @@ def run_one(
     preset: str | None = None,
     client: Any = None,
     evaluate_fn: Callable | None = None,
+    agent_runner: Callable | None = None,
     log: Callable[[str], None] = print,
     use_tools: bool | None = None,
     **search_overrides,
@@ -173,7 +174,7 @@ def run_one(
         cfg.max_tokens = max_tokens
     # 显式 model 让两个委员会都用它。否则用配置里的两名成员。RunStartError（目录已有文件，或 run_config.json 写失败）从这里原样抛给调用方，不进入 run()。
     committees = load_committees(raw, active=cfg, model_override=model)
-    orch = Orchestrator(task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log, committees=committees)
+    orch = Orchestrator(task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log, committees=committees, agent_runner=agent_runner)
     return asyncio.run(orch.run())
 
 

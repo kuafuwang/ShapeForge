@@ -163,3 +163,19 @@ def test_a_process_holding_the_shared_lock_does_not_block_its_own_worker(lock_fi
     with gpulock.gpu_lock("pytest-like parent", exclusive=False):
         rep = ev._run_worker("relu", "fp16", "small", Path("/dev/null"), "quick", 1, 3, 60.0, validation=False, cases=None, worker_module="tests.fake_worker_exclusive")
     assert rep.status == "ok", rep.message
+
+
+def test_a_read_only_open_still_takes_the_exclusive_lock(lock_file):
+    """A coding agent can flock the machine lock without write permission on the file."""
+    lock_file.write_text("pid 1: outer\n")
+    lock_file.chmod(0o444)
+    gpulock._fd = None
+    gpulock._mode = None
+    gpulock._what = ""
+    gpulock._writable = True
+    with gpulock.gpu_lock("agent self-check", exclusive=True):
+        assert gpulock._writable is False
+        assert lock_file.read_text() == "pid 1: outer\n"
+        assert not other_process_can_lock(exclusive=True)
+    assert gpulock._fd is None
+    lock_file.chmod(0o644)

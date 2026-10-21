@@ -1,10 +1,14 @@
-"""One coding-agent turn in the workspace it is given.
+"""One coding-agent session in the workspace it is given.
 
 The search starts this with ``hmz exec``. The flow does not plan, time, or decide which kernel stays.
-``hmz exec -f <this directory> -a assistant=pi/<provider>/<model> -p budget.cost=<usd>``.
+The main turn has its own token and time budget. When that budget is spent, one short turn in the
+same session writes NOTES.md and leaves the best kernel in kernel.metal.
 """
 
-from hmz.flows import Agent, AgentCollection, EnvCollection, FlowContext, FlowParams, LocalEnv, flow
+from datetime import timedelta
+
+from hmz.flows import Agent, AgentCollection, Budget, EnvCollection, FlowContext, FlowParams, LocalEnv, flow
+from hmz.flows.errors import BudgetExceeded
 
 
 class Assistant(Agent):
@@ -26,13 +30,40 @@ class Envs(EnvCollection):
 
 
 class Params(FlowParams):
-    """Nothing of the flow's own. The dollar cap is ``-p budget.cost``."""
+    """Per-turn limits. The dollar cap is applied by the search as ``turn_output_tokens``."""
+
+    turn_output_tokens: int = 200_000
+    turn_minutes: int = 25
+    wrap_output_tokens: int = 4000
+    wrap_minutes: int = 3
+
+
+_WRAP = (
+    "Stop changing the kernel and do not run another check. "
+    "Write NOTES.md: each version, what changed, the self-check microseconds and cv, and whether you kept it. "
+    "Leave the best kernel you have in kernel.metal. "
+    "Do not paste an older kernel back to hide a failure."
+)
 
 
 @flow(agents=Agents, envs=Envs, params=Params)
 async def kernel_once(task: str, *, agents: Agents, envs: Envs, params: Params, ctx: FlowContext) -> None:
     """Run ``task`` once. A fresh session; nothing is carried to the next kernel."""
-    del params, ctx
+    del ctx
     assistant = agents["assistant"]
     session = await assistant.spawn()
-    await assistant.run(task, session=session, env=envs["workspace"])
+    env = envs["workspace"]
+    budget = Budget(
+        output_tokens=params.turn_output_tokens,
+        duration=timedelta(minutes=params.turn_minutes),
+        graceful=False,
+    )
+    try:
+        await assistant.run(task, session=session, env=env, budget=budget)
+    except BudgetExceeded:
+        wrap = Budget(
+            output_tokens=params.wrap_output_tokens,
+            duration=timedelta(minutes=params.wrap_minutes),
+            graceful=False,
+        )
+        await assistant.run(_WRAP, session=session, env=env, budget=wrap)

@@ -7,7 +7,7 @@ provider = "deepseek"
 model = "deepseek-flash"         # DeepSeek V4.1 Flash; "deepseek-v4-flash" / "deepseek-v4-pro" are also listed in models.json
 reasoning_effort = "high"        # low / high / max (DeepSeek thinkingLevelMap); "off" disables thinking
 echo_reasoning_content = true    # models.json: requiresReasoningContentOnAssistantMessages
-use_tools = true                 # lookup_msl / quick_check function calling; false = full docs in the prompt, repair loop only
+use_tools = true                 # kept for experiments that still call the chat API. The search itself does not.
 max_tokens = 48000               # per request; reasoning tokens count. 96000 and half of the 384K API maximum were considered on 2026-10-07 and set back the same day. Override per run with --max-tokens.
 request_timeout_s = 900          # idle gap between streamed chunks, not a cap on the whole reply. Silence this long is retried.
 max_retries = 6
@@ -15,20 +15,19 @@ extra_body = {}
 
 [search]
 budget_usd = 50.0                # debug ceiling per kernel while measuring kimi; paper preset stays 15. Override per task.
-kernel_agent = ""                # "pi": hmz + pi writes each kernel. Empty keeps the chat API. Paper preset forces empty.
-branches = 3                     # K parallel patch requests per round
-max_repair_tries = 3             # compile/ABI/safety repair turns for one candidate
-max_rounds = 12                  # hard cap on diagnose-plan-branch-evaluate rounds
-max_quick_checks = 3             # tool-called quick evaluations allowed per request
+kernel_agent = "pi"              # hmz + pi writes every kernel. One session a round.
+relay_budget_usd = 2.0           # dollar cap of one session, turned into output tokens at that model's price
+turn_minutes = 25                # main turn inside kernel_once. The process is killed later, only if hmz does not exit.
+branches = 1                     # one session a round. Any other value is refused at start.
+init_samples = 1                 # one initial draft. A failure hands the next draft to the other committee.
+max_rounds = 12                  # hard cap on sessions after the initial draft
 min_improvement = 1.005          # a candidate must be this much faster than the current best to replace it
 noise_z = 2.0                    # ... and faster by this many standard errors (from the measured cv), so noise cannot crown a winner
 confirm_top = 2                  # final re-measurement of up to this many candidates that are tied within noise; the fastest wins
 eval_reps = 15
 max_hangs = 1                    # stop the whole run after this many timed-out evaluations (a runaway GPU kernel can freeze the display)
 profile_best = false           # Instruments (xctrace) trace of the winning kernel after the search (slow; reports spills, code size, thermal state)
-patience = 4                   # stop after this many rounds without a new best
-plan_mix = false               # the last plan of a round is a local, low-risk change (instruction/parameter level), the others are structural (paper Section 3.3)
-init_samples = 1               # initial kernels sampled in parallel; the best eligible one seeds the search
+patience = 6                   # stop after this many rounds without a new best. One session is one round, so each committee is called three times.
 profile_poor = false           # trace the seed of a round with Instruments when it is slower than the strongest baseline; spills, code size, GPU idle time go to the planner and the patch authors
 profile_poor_below = 1.0       # "slower": speedup of the seed below this
 profile_max = 4                # traces per run at most (tens of seconds each, exclusive GPU lock)

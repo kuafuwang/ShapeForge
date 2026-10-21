@@ -12,7 +12,7 @@ from taic.llm import LLM, LLMConfig, LLMError, SearchConfig
 from taic.orchestrator import Orchestrator, RunStartError
 
 from .fakes import FakeClient
-from .test_orchestrator import code, fake_eval, llm_script, run
+from .test_orchestrator import agent_from_script, code, fake_eval, llm_script, run
 
 SECRET = "sk-committee-secret-0123456789"
 ENDPOINT = "http://committee-endpoint.invalid"
@@ -28,7 +28,7 @@ def _cfg(model: str = "fake", **kw) -> LLMConfig:
 
 def _search(**kw) -> SearchConfig:
     fields = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False,
-                  budget_usd=5.0, branches=1, max_rounds=2, max_repair_tries=1, eval_reps=3, patience=4)
+                  budget_usd=5.0, branches=1, max_rounds=2, max_repair_tries=1, eval_reps=3, patience=4, kernel_agent="pi")
     fields.update(kw)
     return SearchConfig(**fields)
 
@@ -45,6 +45,7 @@ def _orch(tmp_path, script, committees, cfg, *, search=None, client=None, log=No
     orch = Orchestrator(
         "relu", "fp16", "small", cfg, search or _search(),
         run_dir=tmp_path / "run", evaluate_fn=fake_eval([]), client=client, log=log or (lambda _s: None), committees=committees,
+        agent_runner=agent_from_script(script) if script is not None else None,
     )
     return orch, client
 
@@ -71,31 +72,14 @@ def test_different_models_hand_off_a_fresh_plan(tmp_path):
     cfg = _cfg("configured")
     committees = _pair(cfg, "model-a", "model-b")
     logs: list[str] = []
-    seen = {}
-
-    def route(messages, **kw):
-        last = messages[-1]["content"]
-        if HANDOFF in last and "Diagnose the dominant bottleneck" in last:
-            seen["messages"] = messages
-            seen["state"] = json.loads((tmp_path / "run" / "state.json").read_text())
-        base = llm_script(code("speed=1.0"), patches={"A": code("speed=1.1")})
-        return base(messages, **kw)
-
-    orch, client = _orch(tmp_path, route, committees, cfg, log=logs.append)
+    script = llm_script(code("speed=1.0"), patches={"A": code("speed=1.1")})
+    orch, client = _orch(tmp_path, script, committees, cfg, log=logs.append)
     run(orch)
-    kinds = _kinds(client)
-    assert [model for kind, model in kinds if kind in ("init", "plan", "patch")][:3] == ["model-a", "model-a", "model-a"]
-    plans = [(i, model) for i, (kind, model) in enumerate(kinds) if kind == "plan"]
-    assert [model for _, model in plans] == ["model-a", "model-b"]
-    plan2 = client.calls[plans[1][0]]
-    assert [m["role"] for m in plan2["messages"]] == ["system", "user"]
-    user = plan2["messages"][-1]["content"]
-    prefix = handoff_for("second")
-    assert user.startswith(prefix)
-    assert HANDOFF in user and "second" in prefix
-    assert FEEDBACK in user and "kernel void" in user
-    assert user[len(prefix):].startswith("Current best kernel")
-    assert seen["state"]["model"] == "model-b" and seen["state"]["committee"] == "second"
+    events = [json.loads(line) for line in (tmp_path / "run" / "transcript.jsonl").read_text().splitlines() if '"event": "agent"' in line]
+    assert [(e["committee"], e["model"]) for e in events] == [("first", "model-a"), ("first", "model-a"), ("second", "model-b")]
+    assert client.calls == []
+    state = json.loads((tmp_path / "run" / "state.json").read_text())
+    assert state["model"] == "model-b" and state["committee"] == "second"
     text = "\n".join(logs)
     assert SECRET not in text and ENDPOINT not in text
     assert not (tmp_path / "run" / "NOTES.md").exists()
@@ -117,19 +101,9 @@ def test_same_model_still_hands_off_without_a_second_client(tmp_path, monkeypatc
     orch, client = _orch(tmp_path, script, committees, cfg)
     run(orch)
     assert len(made) == 1 and made[0].client is client and orch.llm.client is client
-    kinds = _kinds(client)
-    plans = [client.calls[i] for i, (kind, _model) in enumerate(kinds) if kind == "plan"]
-    patches = [client.calls[i] for i, (kind, _model) in enumerate(kinds) if kind == "patch"]
-    assert len(plans) == 2 and len(patches) == 2
-    assert HANDOFF not in plans[0]["messages"][-1]["content"]
-    for call in (plans[1], patches[1]):
-        assert [m["role"] for m in call["messages"]] == ["system", "user"]
-        body = call["messages"][-1]["content"]
-        prefix = handoff_for("second")
-        assert body.startswith(prefix)
-        assert "Measured:" in body[len(prefix):]
-        assert all(m["role"] != "assistant" for m in call["messages"])
-    assert all(model == "shared-model" for _kind, model in kinds)
+    events = [json.loads(line) for line in (tmp_path / "run" / "transcript.jsonl").read_text().splitlines() if '"event": "agent"' in line]
+    assert [e["committee"] for e in events] == ["first", "first", "second"]
+    assert all(e["model"] == "shared-model" for e in events)
     assert orch.ledger.cfg is cfg  # same model id does not replace the price config
 
 
@@ -170,16 +144,12 @@ def test_round_1_repair_stays_on_the_first_committee(tmp_path):
     cfg = _cfg("configured")
     committees = _pair(cfg, "model-a", "model-b")
     script = llm_script(code("speed=1.0"), patches={"A": code("status=compile_error")}, fixes=[code("speed=1.2")])
-    orch, client = _orch(tmp_path, script, committees, cfg, search=_search(max_rounds=1))
+    orch, client = _orch(tmp_path, script, committees, cfg, search=_search(max_rounds=2))
     res = run(orch)
-    assert res.best_label == "r1.p0.fix1"
-    kinds = _kinds(client)
-    assert [model for _kind, model in kinds] == ["model-a", "model-a", "model-a", "model-a"]
-    repair = next(call for call in client.calls if "evaluation of your kernel failed" in call["messages"][-1]["content"])
-    assert repair["model"] == "model-a"
-    assert any(m["role"] == "assistant" for m in repair["messages"])
-    assert "repair attempt" in repair["messages"][-1]["content"]
-    assert HANDOFF not in repair["messages"][-1]["content"]
+    assert res.best_label == "init"
+    events = [json.loads(line) for line in (tmp_path / "run" / "transcript.jsonl").read_text().splitlines() if '"event": "agent"' in line]
+    assert [(e["label"], e["committee"]) for e in events] == [("init", "first"), ("r1.p0", "first"), ("r2.p0", "second")]
+    assert "boom" in orch._session_briefs[-1].failure
     assert client is orch.llm.client
 
 
@@ -263,12 +233,13 @@ def test_cmd_run_and_run_one_load_the_two_members(tmp_path, monkeypatch):
 
     script = llm_script(code("speed=1.0"))
     client = FakeClient(script)
-    res = run_one("relu", "fp16", "small", tmp_path / "ran", config_path=str(toml), client=client, evaluate_fn=fake_eval([]), log=lambda _s: None, preset="base")
+    res = run_one("relu", "fp16", "small", tmp_path / "ran", config_path=str(toml), client=client, evaluate_fn=fake_eval([]), log=lambda _s: None, preset="base", agent_runner=agent_from_script(script))
     assert res.best_label == "init"
     doc = json.loads((tmp_path / "ran" / "run_config.json").read_text())
     assert [m["model"] for c in doc["committees"] for m in c["members"]] == ["model-a", "model-b"]
     assert SECRET not in (tmp_path / "ran" / "run_config.json").read_text()
-    assert _kinds(client) == [("init", "model-a")]
+    agents = [json.loads(line) for line in (tmp_path / "ran" / "transcript.jsonl").read_text().splitlines() if '"event": "agent"' in line]
+    assert [(e["label"], e["model"]) for e in agents] == [("init", "model-a")]
 
     captured = {}
 

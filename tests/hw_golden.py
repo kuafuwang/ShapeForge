@@ -241,10 +241,9 @@ def _check_knobs(knobs: dict, calls: list[dict]) -> None:
 
 
 def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]:
-    """Every request an orchestrator sends in a scripted two-round search.
+    """The task contracts one scripted search hands to hmz, in order.
 
-    Each entry is ``(label, sha)`` sorted by label. Hashing the messages alone, then sorting those hashes,
-    hid which round a request belonged to.
+    The search does not send chat requests. Each entry hashes the contract text.
     """
     from taic.llm import LLMConfig, SearchConfig
     from taic.orchestrator import Orchestrator
@@ -255,19 +254,14 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
     out: dict[str, object] = {}
     import tempfile
 
-    # The first four keep the knobs off. The last two are the only records of a truncation retry and of separate plan and patch efforts.
     cases = (
         ("relu", KERNEL, "relu_best", False, {}),
         ("relu", KERNEL, "relu_best", True, {}),
         ("flash_attention", "flash_attention_kernel", "fa_flash_best", False, {}),
         ("gemm", "gemm_kernel", "gemm_paper_best", True, {}),
-        ("relu", KERNEL, "relu_best", False, {"truncation_retry": True}),
-        ("relu", KERNEL, "relu_best", False, {"plan_reasoning_effort": "high", "patch_reasoning_effort": "low"}),
     )
     for task, kernel, rep_name, plan_mix, knobs in cases:
-        script = llm_script(code("speed=0.9", kernel), patches={"A": code("speed=1.0", kernel), "B": code("speed=1.3", kernel), "C": code("speed=0.6", kernel)})
-        if knobs.get("truncation_retry"):
-            script = _length_then_kernel(script)
+        script = llm_script(code("speed=0.9", kernel), patches={"A": code("speed=1.0", kernel)})
         llm_cfg = LLMConfig(
             base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False,
             truncation_retry=bool(knobs.get("truncation_retry")),
@@ -276,7 +270,7 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
         )
         # This hash is the switches-off prompt. The production default is on; the off path is what the golden file records.
         off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False, plan_ledger=False)
-        search = SearchConfig(budget_usd=5.0, branches=3, max_rounds=2, max_repair_tries=2, eval_reps=3, plan_mix=plan_mix, **{**off, **(extra_search or {})})
+        search = SearchConfig(budget_usd=5.0, branches=1, max_rounds=1, max_repair_tries=0, eval_reps=3, plan_mix=plan_mix, kernel_agent="pi", **{**off, **(extra_search or {})})
         with tempfile.TemporaryDirectory() as td:
             client = FakeClient(script)
             llm_mod, original_chat = _bind_labels(client)
@@ -285,15 +279,11 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
                 asyncio.run(orch.run())
             finally:
                 llm_mod.LLM.chat = original_chat
-        _check_knobs(knobs, client.calls)
-        ranked = []
-        for index, call in enumerate(client.calls):
-            label = call.get("_label") or ""
-            if not label:
-                raise RuntimeError("a model request was recorded without its label")
-            ranked.append((label, index, sha(json.dumps(_request_body(call), sort_keys=True))))
-        ranked.sort()
-        each = [{"label": label, "sha": digest} for label, _index, digest in ranked]
+        from taic.kernel_agent import render_contract
+
+        each = []
+        for index, brief in enumerate(orch._session_briefs):
+            each.append({"label": f"{index}", "sha": sha(render_contract(brief, Path("kernel.metal")))})
         joined = "\n".join(f"{row['label']} {row['sha']}" for row in each)
         out[_orch_key(task, plan_mix, knobs)] = {"requests": len(each), "sha": sha(joined), "each": each}
     return out
