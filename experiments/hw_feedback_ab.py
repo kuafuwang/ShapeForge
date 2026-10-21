@@ -1,7 +1,7 @@
 """Did the hardware-feature feedback change what the model proposed and wrote? (read-only analysis of run directories; no GPU, no LLM)
 
 For every round of a run it takes the seed the planner saw and the list of features the feedback block named as missing. In a run with ``search.hw_feedback`` that list is
-parsed from the block in the planner request; in a run without it (the control, e.g. ``runs/p1/fa_flash``) the block that WOULD have been shown is computed from the same
+parsed from the block in the planner request; in a run without it (the control, e.g. ``runs/apple-m4-max/p1/fa_flash``) the block that WOULD have been shown is computed from the same
 seed with ``taic.hwfeedback``. Then it counts
 
 * plans of the round whose title or description mention one of the listed features (keyword match: a rough measure of "the model talks about it"),
@@ -9,7 +9,7 @@ seed with ``taic.hwfeedback``. Then it counts
 
 so the two kinds of run can be compared with the same yardstick. It measures influence on proposals, not on speed; one run of each is an anecdote.
 
-    uv run python -m experiments.hw_feedback_ab runs/p1/fa_flash_hw runs/p1/fa_flash [--json out.json]
+    uv run python -m experiments.hw_feedback_ab runs/apple-m4-max/p1/fa_flash_hw runs/apple-m4-max/p1/fa_flash [--json out.json]
 """
 
 from __future__ import annotations

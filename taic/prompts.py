@@ -11,12 +11,17 @@ from pathlib import Path
 from tcenv.task import Task
 
 from .symptom import section_for
-from .tools import SKILLS_DIR, SkillIndex
+from .target import skill_text
+from .tools import SkillIndex
 
-# 每条请求都带着的系统约束。内核名、buffer 槽位、参数名和访问模式必须与契约一致；启动配置和编译期常量不许重定义，也不许再 #include。模型改了签名，评测的 ABI 检查会拒绝，这颗内核不能成为下一轮种子。
+WIKI_DOCS = ("experience",)
+
+
+def _skill(name: str, target_id: str | None = None) -> str:
+    return skill_text(name, target_id)
 HARNESS_RULES = """\
 You are the code-generation backend of a compiler. You translate ONE Triton kernel directly into ONE Metal Shading
-Language (MSL) kernel for the Apple GPU described below. There is no intermediate IR and no existing compiler in the loop:
+Language (MSL) kernel for the target device named in the contract. There is no intermediate IR and no existing compiler in the loop:
 you choose instructions, thread mapping, data movement, synchronization and scheduling yourself.
 
 What "valid" means (all of it is enforced mechanically by the evaluation environment):
@@ -58,19 +63,9 @@ then EXACTLY ONE fenced code block tagged ```metal containing the complete kerne
 """
 
 
-# 把 skills 目录里的一篇参考整篇读进系统提示。文件缺失时组提示失败，这一轮请求发不出去。
-def _skill(name: str) -> str:
-    return (SKILLS_DIR / f"{name}.md").read_text()
-
-
-# 唯一的系统提示，初始生成、修补、诊断规划和补丁都用它，服务商才能做前缀缓存。contract.describe() 与 abi_stub() 把契约和签名骨架钉死，用户消息改不了函数签名。
-# 经验层：本仓库实测过的条目，按关键词和 MSL 参考一起检索。没有这一层，代理只能靠语言常识猜。
-WIKI_DOCS = ("wiki/experience",)
-
-
-def system_prompt(task: Task, *, use_tools: bool, profiler_evidence: bool = False, hw_feedback: bool = False) -> str:
+def system_prompt(task: Task, *, use_tools: bool, profiler_evidence: bool = False, hw_feedback: bool = False, target_id: str | None = None) -> str:
     c = task.contract
-    parts = [HARNESS_RULES, "# Target hardware and task\n"]
+    parts = [HARNESS_RULES, "# Target hardware and task\n", skill_text("device", target_id)]
     parts.append(task.description)
     parts.append("\nCompilation contract:\n" + c.describe())
     parts.append("\nRequired signature skeleton:\n```metal\n" + c.abi_stub() + "\n```")
@@ -84,15 +79,14 @@ def system_prompt(task: Task, *, use_tools: bool, profiler_evidence: bool = Fals
             "reference exactly there: NaN exactly where the reference is NaN, infinities of the same sign where it is infinite. So NaN must propagate "
             "(a comparison such as `v > 0 ? v : 0` or `max()` that silently drops a NaN is wrong), and reductions must not skip or mask non-finite values."
         )
-    parts.append("\n# Skill 1: Apple GPU optimization principles\n" + _skill("apple_gpu_optimization"))
-    parts.append("\n# Skill 2: interpreting the evaluation feedback (profiling)\n" + _skill("metal_profiling"))
+    parts.append("\n# Skill 1: Apple GPU optimization principles\n" + _skill("apple_gpu_optimization", target_id))
+    parts.append("\n# Skill 2: interpreting the evaluation feedback (profiling)\n" + _skill("metal_profiling", target_id))
     # 只有反馈可能带上 Instruments 痕迹时才多这一段。其它运行必须保持提示字节不变，否则前缀缓存会失效。
     if profiler_evidence:  # only when the feedback can carry an Instruments trace; every other run keeps the byte-identical prompt
-        parts.append("\n# Skill 2b: reading the profiler evidence (Instruments trace and GPU counters)\n" + _skill("profiler_evidence"))
+        parts.append("\n# Skill 2b: reading the profiler evidence (Instruments trace and GPU counters)\n" + _skill("profiler_evidence", target_id))
     if hw_feedback:  # only when search.hw_feedback appends the hardware-feature analysis to the feedback; off = the byte-identical prompt
-        parts.append("\n# Skill 2c: reading the hardware-feature analysis in the feedback\n" + _skill("hardware_feedback"))
-    # 开工具时只给目录，细节靠 lookup_msl，避免模型不查就编；关工具时没有这个工具，MSL 参考必须全文在场。
-    idx = SkillIndex("msl_reference", extra=WIKI_DOCS)
+        parts.append("\n# Skill 2c: reading the hardware-feature analysis in the feedback\n" + _skill("hardware_feedback", target_id))
+    idx = SkillIndex("msl_reference", extra=WIKI_DOCS, target_id=target_id)
     if use_tools:
         parts.append(
             "\n# Skill 3: MSL reference (retrieval)\nCall the `lookup_msl` tool for details. Sections available:\n" + idx.outline()

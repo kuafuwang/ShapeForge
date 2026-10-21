@@ -1,0 +1,21 @@
+schema_version = 1
+id = "apple-m4-max"
+backend = "metal"
+status = "active"
+display_name = "Apple M4 Max (Apple9 GPU family)"
+
+[device]
+match_name_contains = "M4 Max"
+match_family = "Apple9"
+calibration_device_name = "Apple M4 Max"
+
+[limits]
+max_buffer_index = 30
+max_threads_per_threadgroup = 1024
+max_threadgroup_memory_bytes = 32768
+counter_sample_us = 41
+
+[assets]
+device_doc = "device.md"
+experience = "experience.md"
+calibration = "calibration.json"

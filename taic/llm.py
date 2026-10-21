@@ -150,7 +150,7 @@ class SearchConfig:
     confirm_top: int = 2  # re-measure up to this many statistically tied top candidates at the end and keep the fastest
     # 确认阶段对每一颗候选跑几批独立输入，报中位数而不是某一批的最大值。
     # 一批的采样误差已经很小（30 次重复、cv≈2% → SE≈0.4%），但换一批输入会带来 1–2% 的数据相关差异；
-    # 见 runs/conv2d-feedback-20261021：搜索值 1.7276（9 颗里挑最大，向上偏约 0.9%），单批确认 1.6896，
+    # 见 runs/apple-m4-max/conv2d-feedback-20261021：搜索值 1.7276（9 颗里挑最大，向上偏约 0.9%），单批确认 1.6896，
     # 其中候选在确认那批输入上慢 1.8%。1 保留旧的单批行为。
     confirm_batches: int = 3
     eval_reps: int = 15

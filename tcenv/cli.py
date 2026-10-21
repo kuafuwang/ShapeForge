@@ -44,6 +44,7 @@ def cmd_eval(a: argparse.Namespace) -> int:
         require_contract_launch=bool(a.require_contract_launch),
         self_check_dir=Path(a.kernel).resolve().parent if a.timed else None,
         validate=bool(a.validate),
+        target_id=a.target,
     )
     if a.json:
         print(json.dumps(rep.to_json(), indent=2))
@@ -70,7 +71,7 @@ def cmd_naive(a: argparse.Namespace) -> int:
     from .report import format_feedback
 
     task = get_task(a.task, a.dtype, a.size)
-    rep = evaluate(a.task, a.dtype, a.size, task.naive_msl, mode="quick" if a.quick else "full", seed=a.seed, reps=a.reps, progress_path=_live_progress())
+    rep = evaluate(a.task, a.dtype, a.size, task.naive_msl, mode="quick" if a.quick else "full", seed=a.seed, reps=a.reps, progress_path=_live_progress(), target_id=a.target)
     print(format_feedback(rep))
     return 0 if rep.status == "ok" else 1
 
@@ -90,7 +91,7 @@ def cmd_baseline(a: argparse.Namespace) -> int:
     with gpu_lock(f"tcenv baseline {a.task} {a.dtype} {a.size}", log=print):
         runners = build_runners(task, data.rounded)
         stats = interleaved({n: r.run_k for n, r in runners.items()}, reps=a.reps)
-        calib = get_calibration()
+        calib = get_calibration(target_id=a.target)
     for n, s in stats.items():
         r = roofline(task, s.median_s, calib)
         print(f"{a.task:14s} {a.dtype} {n:10s} {s.median_us:10.2f} us  cv {s.cv:5.1%}  {r['achieved_gbps']:7.1f} GB/s ({r['bandwidth_fraction']:.0%})  {r['achieved_tflops']:6.2f} TFLOP/s ({r['compute_fraction']:.0%})")
@@ -104,7 +105,7 @@ def cmd_profile(a: argparse.Namespace) -> int:
     from .evaluate import evaluate
 
     src = Path(a.kernel).read_text()
-    rep = evaluate(a.task, a.dtype, a.size, src, mode="quick", progress_path=_live_progress())
+    rep = evaluate(a.task, a.dtype, a.size, src, mode="quick", progress_path=_live_progress(), target_id=a.target)
     if rep.status != "ok":
         # quick 覆盖编译、ABI、安全和正确性；任一步失败，Instruments 录制不会开始。
         print(f"refusing to profile: the kernel does not pass the quick evaluation ({rep.status}: {rep.message[:200]})")
@@ -141,9 +142,15 @@ def cmd_triton_baseline(a: argparse.Namespace) -> int:
 def cmd_calibrate(a: argparse.Namespace) -> int:
     from .metal_runtime import get_context
     from .profile import get_calibration
+    from .target import TargetError, require_active
 
+    try:
+        require_active(a.target)
+    except TargetError as exc:
+        print(str(exc), file=sys.stderr)
+        return 5
     print(json.dumps(get_context().info(), indent=2))
-    print(json.dumps(get_calibration(force=True), indent=2))
+    print(json.dumps(get_calibration(force=True, target_id=a.target), indent=2))
     return 0
 
 
@@ -188,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--require-contract-launch", action="store_true")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--reps", type=int, default=15)
+    p.add_argument("--target", default="apple-m4-max")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_eval)
 
@@ -197,12 +205,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--quick", action="store_true")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--reps", type=int, default=15)
+    p.add_argument("--target", default="apple-m4-max")
     p.set_defaults(fn=cmd_naive)
 
     p = sub.add_parser("baseline", help="time the MLX / torch-MPS baselines")
     p.add_argument("task")
     _common(p)
     p.add_argument("--reps", type=int, default=15)
+    p.add_argument("--target", default="apple-m4-max")
     p.set_defaults(fn=cmd_baseline)
 
     p = sub.add_parser("profile", help="Instruments (xctrace) Metal System Trace of a kernel that passes the quick evaluation")
@@ -210,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("kernel")
     _common(p)
     p.add_argument("--json", action="store_true")
+    p.add_argument("--target", default="apple-m4-max")
     p.set_defaults(fn=cmd_profile)
 
     p = sub.add_parser("triton-baseline", help="compile the Triton spec of a task to Metal with triton-msl (isolated venv) and cache its time relative to MLX")
@@ -217,9 +228,11 @@ def main(argv: list[str] | None = None) -> int:
     _common(p)
     p.add_argument("--reps", type=int, default=15)
     p.add_argument("--wait-quiet", type=float, default=0.0, metavar="MIN", help="wait up to MIN minutes for a quiet machine before each measurement (1-minute load average <= 6 on this 16-core machine, no other tcenv/pytest jobs)")
+    p.add_argument("--target", default="apple-m4-max")
     p.set_defaults(fn=cmd_triton_baseline)
 
     p = sub.add_parser("calibrate", help="measure peak bandwidth / TFLOPs for the roofline")
+    p.add_argument("--target", default="apple-m4-max")
     p.set_defaults(fn=cmd_calibrate)
 
     p = sub.add_parser("tasks", help="list tasks")
@@ -229,6 +242,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("show", help="print the contract and Triton source of a task")
     p.add_argument("task")
     _common(p)
+    p.add_argument("--target", default="apple-m4-max")
     p.set_defaults(fn=cmd_show)
 
     a = ap.parse_args(argv)

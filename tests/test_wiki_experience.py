@@ -13,8 +13,8 @@ import pytest
 
 from taic.tools import SkillIndex
 
-EXPERIENCE = Path(__file__).resolve().parent.parent / "taic" / "skills" / "wiki" / "experience.md"
-WIKI = ("wiki/experience",)
+EXPERIENCE = Path(__file__).resolve().parent.parent / "targets" / "apple-m4-max" / "experience.md"
+WIKI = ("experience",)
 
 
 def _entries() -> list[tuple[str, str]]:

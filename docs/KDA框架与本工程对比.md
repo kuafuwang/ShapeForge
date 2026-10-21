@@ -47,7 +47,7 @@
 
 1. 现在的 KDA 用 Humanize 的 `flame_chase`：流程只排轮次。两个已经登录的编程代理轮流改同一份工作区，写代码和跑测试在代理自己的循环里。每轮新开会话，下一位看不到上一轮的对话。整次运行的预算花完，或者一轮启动失败，循环就停。判卷在这个循环外面。
 2. 本工程把一份 Triton 核译成一份 Metal 核。没有 `/* taic-launch */` 时用题目自带的网格和线程；有这段时，同一次搜索里每一段可以自选。`gemm@` 和 `flash_attention@` 改契约常量。汇总里的加速比来自绑上源码指纹的确认，并且计时安静。第 3 章记下已经跑完的一组数字。
-3. 已经公开的 KDA 成果是内核和 Humanize 的流程代码。CAKE 编译器没有公开仓库。本工程的提示词用 `taic/skills/` 的苹果显卡笔记。
+3. 已经公开的 KDA 成果是内核和 Humanize 的流程代码。CAKE 编译器没有公开仓库。本工程的提示词用 `backends/metal/skills/` 的苹果显卡笔记。
 
 ## 异同（改进本工程时用）
 
@@ -218,8 +218,8 @@ runs/<一次搜索>/candidates/<序号>_<标签>/
 
 | 文件 | 模型用它做什么 |
 | --- | --- |
-| `taic/skills/apple_gpu_optimization.md` | 按这台苹果显卡来写。笔记依次讲机器概况、选定的启动配置怎样决定写法、搬数据为主的核、计算为主的核、分支与同步、数值安全、建议的改动顺序 |
-| `taic/skills/metal_profiling.md` | 读本工程自己的评测反馈：状态、正确性、耗时、上界、流水线统计。笔记写明这条路径把本机能稳定测到的量交给模型 |
+| `backends/metal/skills/apple_gpu_optimization.md` | 按这台苹果显卡来写。笔记依次讲机器概况、选定的启动配置怎样决定写法、搬数据为主的核、计算为主的核、分支与同步、数值安全、建议的改动顺序 |
+| `backends/metal/skills/metal_profiling.md` | 读本工程自己的评测反馈：状态、正确性、耗时、上界、流水线统计。笔记写明这条路径把本机能稳定测到的量交给模型 |
 
 规划时若耗时上界的类别是搬数据（memory）或计算（compute），对应的那一节放进这一次规划请求。可选的 Instruments 痕迹默认关着。打开后，慢于最强基线的种子才可能附上痕迹，每次搜索至多 4 次。
 
@@ -273,4 +273,4 @@ runs/<一次搜索>/candidates/<序号>_<标签>/
 | 计时安静 | 确认报告未标成嘈杂，且候选和最强基线的变异系数都不高于 0.05 |
 | 确认 | 本工程搜索结束后的复测 |
 
-读第 2 章时不必打开的材料：`humanfia/humanize` 的 `flame_chase/__init__.py` 和它的单元测试；KDA² 分支 README；博客 `https://nvlabs.github.io/kda/blog/2026-09-27-kda-for-kda/`。本工程一侧是 `taic/prompts.py`、`taic/orchestrator.py`、`taic/skills/apple_gpu_optimization.md`，以及 `docs/架构说明.md` 的第 1.5 节和 [架构/搜索.md](架构/搜索.md) 的发布条件。
+读第 2 章时不必打开的材料：`humanfia/humanize` 的 `flame_chase/__init__.py` 和它的单元测试；KDA² 分支 README；博客 `https://nvlabs.github.io/kda/blog/2026-09-27-kda-for-kda/`。本工程一侧是 `taic/prompts.py`、`taic/orchestrator.py`、`backends/metal/skills/apple_gpu_optimization.md`，以及 `docs/架构说明.md` 的第 1.5 节和 [架构/搜索.md](架构/搜索.md) 的发布条件。

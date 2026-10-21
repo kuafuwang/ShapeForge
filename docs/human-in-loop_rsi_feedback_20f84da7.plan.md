@@ -160,7 +160,7 @@ flowchart LR
    - **删除与重置同步清理**：`drop_archived`（958–960 行，删除只有 [observe/deletions.py](observe/deletions.py) 这一条调用路径）与切换 `runs_root` 时的重置（368 行）都要清掉两张新表的对应行，否则已删的运行会一直占着计数。
 
 2. **新增 [observe/feedback.py](observe/feedback.py)**（只做合并、聚合与展示，解析在 `taic/agent_feedback.py`）：
-   - `entries(run_dir)`：打开单场详情时合并 `feedback.jsonl` 与 `feedback_review.json`；每条附证据预填用的数字：该场候选目录（按条目的 `label` 定位 `candidates/*_<label>/report.json`）的微秒数、cv 与 roofline，找不到候选报告时退回种子报告，并带上来源路径字段供界面标注；另附 `runs/calibration.json` 峰值。
+   - `entries(run_dir)`：打开单场详情时合并 `feedback.jsonl` 与 `feedback_review.json`；每条附证据预填用的数字：该场候选目录（按条目的 `label` 定位 `candidates/*_<label>/report.json`）的微秒数、cv 与 roofline，找不到候选报告时退回种子报告，并带上来源路径字段供界面标注；另附 `targets/apple-m4-max/calibration.json` 峰值。
    - `summary_from_index(conn, *, task=None, model=None, kind=None, status=None)` 用 SQL 返回（`kind` 筛选用 `(',' || kinds || ',') LIKE '%,tool,%'` 形式的分词匹配，不用子串）：
      - `pending_total`：`status = 'pending'` 的 `system` 条目与前提条目总数（按条计，纯交接里未审的前提也算，因为 fp32 那次正是这种前提；人可以按条关掉它，徽标清得掉）；
      - 高频主张：按 `topic` 聚合，没有标签的按 `digest`（连 `feedback_items` 取模型与任务），列出出现在多少个运行、被哪些模型提过；

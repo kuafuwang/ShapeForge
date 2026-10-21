@@ -14,14 +14,14 @@ Order when two sentences disagree:
 3. An Apple WWDC session.
 4. A blog. A blog is a lead. It does not go in as a fact.
 
-`msl_reference.md` records this compiler as MSL 4.0 on an M4 Max (Apple9). The specification file may describe 4.1. A 4.1-only feature is not available until this compiler accepts it.
+`msl_reference.md` is the language note for this Metal backend. The specification file may describe a newer version. A feature is not available until this compiler accepts it. Chip peaks live in the target's `device.md`, not in this index.
 
 ## 两层，别混起来
 
 | 文件 | 是什么 | 谁在用它 |
 | --- | --- | --- |
 | `Metal-Shading-Language-Specification.pdf`、`Metal-Feature-Set-Tables.pdf` | Apple 的**规范层**：语言怎么写、这一代芯片有什么 | 代理按 `SKILL.md` 给的名字去读 |
-| `experience.md` | 本仓库的**经验层**：我们测到过什么 | 进系统提示，也拷进代理的工作区 |
+| `targets/<id>/experience.md` | 本仓库的**经验层**：我们在那块芯片上测到过什么 | 进系统提示，也拷进代理的工作区 |
 
 `experience.md` 的每一条都带四行：`观察`、`来源`、`本机实测`、`边界`，外加 `Confidence:`。规则只有一条：
 

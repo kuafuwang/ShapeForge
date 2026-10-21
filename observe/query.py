@@ -172,13 +172,13 @@ def plan_outcomes(directory: Path, config: dict | None, state: dict | None, resu
     ]
 
 
-def runs_page(*, experiment_id: str | None = None, task: str | None = None, dtype: str | None = None, model: str | None = None, status: str | None = None, limit: int = 50, offset: int = 0) -> dict:
+def runs_page(*, experiment_id: str | None = None, task: str | None = None, dtype: str | None = None, model: str | None = None, status: str | None = None, target: str | None = None, limit: int = 50, offset: int = 0) -> dict:
     tick()
     limit = max(1, min(int(limit or 50), PAGE_LIMIT))
     offset = max(0, int(offset or 0))
     clauses = ["status != 'missing'"]
     args: list = []
-    for column, value in (("experiment_id", experiment_id), ("task", task), ("dtype", dtype), ("model", model), ("status", status)):
+    for column, value in (("experiment_id", experiment_id), ("task", task), ("dtype", dtype), ("model", model), ("status", status), ("target_id", target)):
         if value:
             clauses.append(f"{column} = ?")
             args.append(value)
@@ -188,7 +188,7 @@ def runs_page(*, experiment_id: str | None = None, task: str | None = None, dtyp
         rows = [
             dict(row)
             for row in index.conn.execute(
-                f"SELECT run_id, experiment_id, arm_id, trial, task, dtype, model, status, publication, published_speedup, spent_usd, budget_usd, source, binding, started_at FROM runs WHERE {where} ORDER BY started_at DESC, run_id LIMIT ? OFFSET ?",
+                f"SELECT run_id, experiment_id, arm_id, trial, task, dtype, model, target_id, status, publication, published_speedup, spent_usd, budget_usd, source, binding, started_at FROM runs WHERE {where} ORDER BY started_at DESC, run_id LIMIT ? OFFSET ?",
                 [*args, limit, offset],
             )
         ]

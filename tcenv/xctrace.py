@@ -373,7 +373,7 @@ KEY_COUNTERS = (
     "GPU Read Bandwidth", "GPU Write Bandwidth", "Threadgroup Memory L1 Read Bandwidth", "Threadgroup Memory L1 Write Bandwidth",
 )
 SUB_PIPE_LIMITERS = ("F32 Limiter", "F16 Limiter", "Integer and Conditional Limiter", "Integer and Complex Limiter", "Control Flow Limiter")
-COUNTER_SAMPLE_US = 41  # interval of the Performance Limiters counter set on the M4 Max; shorter dispatches are blurred by the ramp at their edges
+# interval comes from the active target's counter_sample_us
 
 
 def _counter_line(n: str, c: CounterStat) -> str:
@@ -428,9 +428,15 @@ def _counter_advice(counters: dict[str, CounterStat], dispatch_us: float | None 
         return []
     name, top = max(lims, key=lambda kv: kv[1].p50)
     occ = counters.get("Kernel Occupancy")
+    from .target import DEFAULT_TARGET_ID, load_target
+
+    sample_us = load_target(DEFAULT_TARGET_ID).limits.counter_sample_us
     out = []
-    if dispatch_us is not None and dispatch_us < 4 * COUNTER_SAMPLE_US:
-        out.append(f"The dispatches last only {dispatch_us:.0f} us, about {dispatch_us / COUNTER_SAMPLE_US:.1f} counter samples each: the counters are blurred by the ramp-up and ramp-down at the edges, read them as indicative.")
+    if sample_us and dispatch_us is not None and dispatch_us < 4 * sample_us:
+        out.append(
+            f"The dispatches last only {dispatch_us:.0f} us, about {dispatch_us / sample_us:.1f} counter samples each: "
+            "the counters are blurred by the ramp-up and ramp-down at the edges, read them as indicative."
+        )
     if top.p50 >= 40:
         out.append(f"Counters: the highest limiter is {name} at {top.p50:.0f}% typical (p90 {top.p90:.0f}%). It limits on {LIMITER_MEANING[name]}")
         itl = counters.get("Instruction Throughput Limiter")

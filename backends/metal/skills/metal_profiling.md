@@ -43,8 +43,7 @@ Keywords: median cv gpu timestamp speedup baseline interleaved rotation
 ## Roofline section
 Keywords: roofline bound memory compute achieved GB/s TFLOP/s lower bound
 
-The roofline uses peaks *measured on this machine* (a read-only kernel and a copy kernel for bandwidth, the vendor fp16 GEMM for compute), not data-sheet numbers. The bandwidth
-peak is interpolated on the operator's read/write mix: ~527 GB/s for pure reads, ~449 GB/s for an even read/write stream such as an elementwise op.
+The roofline uses peaks measured on this chip (a read-only kernel and a copy kernel for bandwidth, the vendor GEMM for compute), not data-sheet numbers. The bandwidth peak is interpolated on the operator's read/write mix. The numbers are on the scorecard and in `device.md`.
 
 - `bound: memory|compute`: which side of the ridge point the operator is on given its minimal bytes and FLOPs.
 - `achieved ... GB/s (N% of peak)`: counted with the *minimal* traffic (each input and output byte once). Values near 85-95% of the measured peak are as good as it gets;

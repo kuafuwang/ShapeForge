@@ -61,6 +61,7 @@ async def api_v2_runs(request) -> JSONResponse:
         dtype=params.get("dtype") or None,
         model=params.get("model") or None,
         status=params.get("status") or None,
+        target=params.get("target") or None,
         limit=limit,
         offset=offset,
     )

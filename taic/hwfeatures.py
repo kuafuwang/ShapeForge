@@ -1277,7 +1277,7 @@ EXPECTED: dict[str, dict[str, str]] = {
 TASK_FAMILY = {**{t: "elementwise" for t in ("sigmoid", "relu", "silu", "swiglu", "lion", "rope")}, **{t: "rowwise" for t in ("rmsnorm", "softmax", "reduction_sum", "gemv")},
                **{t: "compute" for t in ("gemm", "gemm_silu", "conv2d", "flash_attention", "bitdelta_gemm", "mamba2_chunk_scan")}}
 PRIMARY = {"compute": {"matrix_unit"}, "elementwise": {"vector_access"}, "rowwise": {"vector_access", "simd_reduce"}}
-SCALAR_OVER_MATRIX = 5.5 / 14.8  # documented in taic/skills/apple_gpu_optimization.md ("measured": scalar-FMA GEMM ~5.5 vs matrix ~14.8 TFLOP/s)
+SCALAR_OVER_MATRIX = 5.5 / 14.8  # apple-m4-max device.md: scalar-FMA GEMM ~5.5 vs vendor matrix ~14.8 TFLOP/s
 NAIVE_FRACTION_OF_PEAK_BW = 0.87  # same file: "naive scalar versions already reach 80-87 % of the measured peak"
 EFFECT_MARGIN = {"compute": 1.10, "memory": 1.02}
 

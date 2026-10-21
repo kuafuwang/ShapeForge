@@ -11,13 +11,13 @@
   ``init_samples=3`` (Section 3.3); compare with the same kernels at the default search settings to see what the search aids buy (the budget is the same);
 * ``mamba2``    the phase-2 Mamba-2 chunk-scan kernel.
 
-    uv run python -m experiments.p1_runs --runs fa_flash,fa_pro --out runs/p1
-    uv run python -m experiments.p1_runs --report --out runs/p1
+    uv run python -m experiments.p1_runs --runs fa_flash,fa_pro --out runs/apple-m4-max/p1
+    uv run python -m experiments.p1_runs --report --out runs/apple-m4-max/p1
 
 Runs within one process are sequential and resumable (a finished run is skipped); several processes may share one ``--out`` with disjoint
 ``--runs`` (``summary.json`` / ``summary.md`` always list every finished run). Every run is bounded by its USD budget; the GPU lock protects the timings.
 
-Every run has the paper's budget of 15 USD (``--budget USD`` sets another one for the runs of this invocation). The runs in ``runs/p1`` that were
+Every run has the paper's budget of 15 USD (``--budget USD`` sets another one for the runs of this invocation). The runs in ``runs/apple-m4-max/p1`` that were
 finished or started before that change had 3 USD (their ``result.json`` says so, and so does the ``budget`` column of the summary), so they are not directly
 comparable; a finished run is skipped by name, so to repeat one at the new budget use a fresh ``--out``. Worst case if every run below is started: 12 x 15 = 180 USD;
 ``--max-total-usd`` is an optional cap (default off) on what one invocation may spend: a run whose budget would not fit under it is skipped and logged.
@@ -59,7 +59,7 @@ RUNS: dict[str, dict] = {
     "fa_flash_prof": dict(task="flash_attention", model=None, budget=PAPER_BUDGET_USD, search=dict(profile_poor=True)),
     # fa_flash_prof plus GPU counters (start with TCENV_XCTRACE_TEMPLATE=<template saved from Instruments, see README) and Skill 2b that teaches the model to read them.
     # Budget, model and every other setting equal fa_flash / fa_flash_prof on purpose: the three runs differ only in the evidence the planner sees. Run the three
-    # into the same --out so that they share a budget (runs/p1 holds fa_flash and fa_flash_prof from before the budget was raised to the paper's, at 3 USD).
+    # into the same --out so that they share a budget (runs/apple-m4-max/p1 holds fa_flash and fa_flash_prof from before the budget was raised to the paper's, at 3 USD).
     "fa_flash_cnt": dict(task="flash_attention", model=None, budget=PAPER_BUDGET_USD, search=dict(profile_poor=True)),
     # the paper's regime (Section 4.3: $15 per run, run until the budget is gone) with the search aids of Section 3.3: profiler findings, local+structural plans, repeated sampling of the seed
     "fa_paper": dict(task="flash_attention", model=None, budget=PAPER_BUDGET_USD, search=PAPER_REGIME),
@@ -188,7 +188,7 @@ def markdown(rows: list[dict]) -> str:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", default="fa_flash")
-    ap.add_argument("--out", default="runs/p1")
+    ap.add_argument("--out", default="runs/apple-m4-max/p1")
     ap.add_argument("--budget", type=float, default=None, help="USD budget of every run of this invocation (default: the paper's $15)")
     ap.add_argument("--max-total-usd", type=float, default=None, help="optional cap on what this invocation may spend: skip a run whose budget would not fit under it (default: off)")
     ap.add_argument("--preset", default=None, help="config preset: 'paper' (default, taic.paper.toml) or 'base' (taic.toml alone)")

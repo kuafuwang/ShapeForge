@@ -9,7 +9,7 @@ orchestrator does it, and the planner prompt of the search is sent to the real m
   counters_taught    evidence with counters, system prompt with Skill 2b (the setting of ``search.profile_poor = true``)
 
 Only the planner request is sent (no patches, no GPU work apart from exporting the trace tables), so a run costs a few cents.
-Usage: ``python -m experiments.counter_teaching --trace <capture.trace> --task gemm --size small --out runs/counter_teaching``
+Usage: ``python -m experiments.counter_teaching --trace <capture.trace> --task gemm --size small --out runs/apple-m4-max/counter_teaching``
 """
 
 # 和语义测试是同一类检查的另一面：模型有没有读到眼前的证据，还是在复述提示里点过的名字。
@@ -122,7 +122,7 @@ def main() -> None:
     ap.add_argument("--samples", type=int, default=3)
     ap.add_argument("--k", type=int, default=3)
     ap.add_argument("--budget", type=float, default=1.0)
-    ap.add_argument("--out", default="runs/counter_teaching")
+    ap.add_argument("--out", default="runs/apple-m4-max/counter_teaching")
     asyncio.run(main_async(ap.parse_args()))
 
 

@@ -15,6 +15,25 @@ from pathlib import Path
 
 
 # 一次新搜索从这里进入。load_config 把预设和命令行里非空的预算、分支数、轮数上限合成 LLMConfig 与 SearchConfig，再交给 Orchestrator.run。有 best_speedup 则进程成功，一颗合格内核都没有则失败。
+def _recorded_target(run_dir: Path, requested: str | None) -> str:
+    """The target stored on the run. A different --target is refused before any model call."""
+    import json
+
+    recorded = "apple-m4-max"
+    path = Path(run_dir) / "run_config.json"
+    if path.is_file():
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            target = doc.get("target") if isinstance(doc, dict) else None
+            if isinstance(target, dict) and target.get("id"):
+                recorded = str(target["id"])
+        except (OSError, json.JSONDecodeError):
+            recorded = "apple-m4-max"
+    if requested and requested != recorded:
+        raise ResumeRefused(f"this run is target {recorded}; --target {requested} does not match", 5)
+    return recorded
+
+
 def cmd_run(a: argparse.Namespace) -> int:
     from .committees import load_committees
     from .llm import LLMError, load_config, load_raw_config
@@ -67,9 +86,11 @@ def cmd_run(a: argparse.Namespace) -> int:
         orch = Orchestrator(
             a.task, a.dtype, a.size, cfg, search,
             run_dir=Path(a.run_dir) if a.run_dir else None,
-            from_run=Path(a.from_run) if a.from_run else None,
+            from_run=None if a.from_run in (None, "@catalog") else Path(a.from_run),
             seed=getattr(a, "seed", None),
             committees=committees,
+            target_id=getattr(a, "target", "apple-m4-max"),
+            from_catalog=a.from_run == "@catalog",
         )
     except (RunStartError, ValueError, LLMError) as e:
         # 尺寸或任务名不合法是启动失败，和配置写不进去一样，退出码 5。
@@ -250,7 +271,7 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
         committees = _committees_for_resume(a, cfg, run_dir)
     except (rs.ResumeError, rs.NeedsInspection, LLMError, control.ControlError, KeyError, ValueError) as e:
         raise ResumeRefused(f"cannot resume {run_dir}: {e}", 5) from e
-    orch = Orchestrator(snap.task, snap.dtype, snap.size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log, resuming=True, committees=committees)
+    orch = Orchestrator(snap.task, snap.dtype, snap.size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log, resuming=True, committees=committees, target_id=_recorded_target(run_dir, getattr(a, "target", None)))
     variants = {prompts.system_prompt(orch.task, use_tools=cfg.use_tools, profiler_evidence=pe, hw_feedback=hw) for pe in (False, True) for hw in (False, True)}
     # 系统提示若已和现在的 prompts.py 不同，仍用转录里的原文。换提示会让同一次实验的前后轮次对着不同契约说话。
     prompt_changed = bool(snap.system) and snap.system not in variants  # False: the prompt files still produce the prompt the run began with
@@ -403,8 +424,22 @@ def _apply_search_switches(a: argparse.Namespace, cfg, search, prov: dict | None
 def cmd_brief(a: argparse.Namespace) -> int:
     """Repo orientation, or one compact JSON object for a run directory. Reads files and starts nothing."""
     from .brief import run_brief
+    from .kernel_catalog import list_kernels
 
+    if getattr(a, "kernels", False):
+        rows = list_kernels(getattr(a, "target", None))
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return 0
     return run_brief(a.run_dir)
+
+
+def cmd_migrate_runs(a: argparse.Namespace) -> int:
+    from .migrate import migrate_runs
+
+    root = Path(a.root) if a.root else None
+    moved = migrate_runs(root, a.target)
+    print(json.dumps({"target": a.target, "moved": moved}, ensure_ascii=False))
+    return 0
 
 
 # `run` 开新搜索，`resume` 续旧目录。两边的 --budget 含义不同：run 是这一次内核的总上限，resume 是续跑后的新总上限，必须高于已经花掉的金额。
@@ -421,6 +456,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--preset", default=None, help="settings layered over taic.toml: 'paper' (default, taic.paper.toml: the paper's $15 budget) or 'base' (taic.toml alone); also $TAIC_PRESET")
     p.add_argument("--model", default=None)
     p.add_argument("--budget", type=float, default=None, help="USD budget for this kernel (default: the preset's budget_usd, the paper's $15)")
+    p.add_argument("--target", default="apple-m4-max", help="device profile id under targets/")
     p.add_argument("--branches", type=int, default=None)
     p.add_argument("--max-rounds", type=int, default=None)
     p.add_argument("--effort", default=None, choices=["off", "low", "high", "max"])
@@ -466,7 +502,13 @@ def main(argv: list[str] | None = None) -> int:
     r.set_defaults(fn=cmd_resume)
     b = sub.add_parser("brief", help="read-only orientation, or JSON facts for one run directory (no model call, no GPU)")
     b.add_argument("run_dir", nargs="?", default=None, help="run directory; omit for a repo orientation")
+    b.add_argument("--kernels", action="store_true", help="list confirmed kernels; optional --target filters one profile")
+    b.add_argument("--target", default=None)
     b.set_defaults(fn=cmd_brief)
+    m = sub.add_parser("migrate-runs", help="move flat run directories into runs/<target>/")
+    m.add_argument("--target", default="apple-m4-max")
+    m.add_argument("--root", default=None)
+    m.set_defaults(fn=cmd_migrate_runs)
     a = ap.parse_args(argv)
     return a.fn(a)
 

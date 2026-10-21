@@ -1,0 +1,7 @@
+{
+  "device": "example",
+  "copy_gbps": 0,
+  "read_gbps": 0,
+  "peak_gbps": 0,
+  "peak_tflops": {}
+}

@@ -19,7 +19,6 @@ MAX_STAGES = 32
 # 2^24 组 × 每组最多 1024 线程 = 1.7e10 线程，是仓库最大张量（paper 的 2^24 元素）的 1000 倍；
 # 65536 组（2^24 元素、每组 256 线程）必须放行。再大只可能是病态核，不值得为它保留解析路径。
 MAX_THREADGROUPS = 1 << 24
-MAX_BUFFER_INDEX = 30
 MARKER = "taic-launch"
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 

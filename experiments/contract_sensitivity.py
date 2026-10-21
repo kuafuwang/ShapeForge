@@ -259,7 +259,7 @@ def main(argv=None) -> int:
     ap.add_argument("--variants", default=",".join(VARIANTS))
     ap.add_argument("--reps", type=int, default=15)
     ap.add_argument("--out", default="runs/contract_sensitivity")
-    ap.add_argument("--p1", default="runs/p1", help="directory of experiments.p1_runs results (FlashAttention rows of the report)")
+    ap.add_argument("--p1", default="runs/apple-m4-max/p1", help="directory of experiments.p1_runs results (FlashAttention rows of the report)")
     ap.add_argument("--top", type=int, default=2)
     a = ap.parse_args(argv)
     if a.op == "prescreen":

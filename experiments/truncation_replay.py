@@ -9,7 +9,7 @@ The four arms, each a fresh request built from the original messages:
 * ``write_now``     ``no_reasoning`` plus one line telling the model to write the kernel immediately.
 
 Stops scheduling new requests once ``--max-usd`` (default 5) is spent. A few already started can finish past it.
-Writes ``runs/truncation_replay/REPORT.md`` and ``data.json``. No GPU.
+Writes ``runs/apple-m4-max/truncation_replay/REPORT.md`` and ``data.json``. No GPU.
 
     uv run python -m experiments.truncation_replay --max-usd 5
 """
@@ -142,7 +142,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--max-usd", type=float, default=5.0)
     ap.add_argument("--n", type=int, default=20)
-    ap.add_argument("--out", default="runs/truncation_replay")
+    ap.add_argument("--out", default="runs/apple-m4-max/truncation_replay")
     ap.add_argument("--concurrency", type=int, default=3)
     a = ap.parse_args(argv)
     return asyncio.run(replay(n=a.n, max_usd=a.max_usd, out=REPO / a.out, concurrency=a.concurrency))

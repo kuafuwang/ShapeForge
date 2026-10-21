@@ -30,6 +30,9 @@ Where a search starts
   Layers: taic.toml, then a preset (flag --preset, else TAIC_PRESET, else paper = taic.paper.toml).
   --config uses that file alone. --budget, when given, replaces budget_usd.
   uv run python -m taic.cli resume RUN_DIR continues a directory and does not resend billed requests.
+  --target names a profile under targets/. The default is apple-m4-max. A new run is stored in runs/<target>/.
+  uv run python -m taic.cli brief --kernels lists confirmed kernels under kernels/<target>/.
+  uv run python -m taic.cli migrate-runs moves flat run directories into runs/apple-m4-max/.
 
 Two committees
   Every search is exactly two committees, named first and second. Each has one member (provider and model).

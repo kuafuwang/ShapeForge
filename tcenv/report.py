@@ -95,6 +95,8 @@ def format_feedback(rep: EvalReport, *, max_errors_chars: int = 2500) -> str:
     L.extend(_measured_head(rep))
     if rep.message:
         L.append(rep.message)
+    for note in rep.device_warnings:
+        L.append(note)
 
     # 行号已经由契约层映回候选自己的源码。这里再按字符砍掉后半，避免整段编译器输出占满下一轮提示。
     if rep.compile and not rep.compile.get("ok", True):

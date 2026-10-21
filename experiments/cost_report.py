@@ -1,6 +1,6 @@
 """Total LLM spend of finished runs: ``result.json`` files grouped by directory and model.
 
-    uv run python -m experiments.cost_report runs/suite_full runs/p1 runs/repeatability
+    uv run python -m experiments.cost_report runs/apple-m4-max/suite_full runs/apple-m4-max/p1 runs/repeatability
 """
 
 from __future__ import annotations

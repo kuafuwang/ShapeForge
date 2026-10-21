@@ -1,0 +1,21 @@
+schema_version = 1
+id = "_template"
+backend = "metal"
+status = "reserved"
+display_name = "Example chip"
+
+[device]
+match_name_contains = "Example"
+match_family = "Unknown"
+calibration_device_name = "Example chip"
+
+[limits]
+max_buffer_index = 30
+max_threads_per_threadgroup = 1024
+max_threadgroup_memory_bytes = 32768
+counter_sample_us = 0
+
+[assets]
+device_doc = "device.md"
+experience = "experience.md"
+calibration = "calibration.json"

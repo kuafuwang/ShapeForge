@@ -195,6 +195,7 @@
     <div id="hist-tools"></div>
     <form id="run-filters">
       <label>题目 <input id="filter-task" name="task"></label>
+      <label>目标 <input id="filter-target" name="target"></label>
       <label>dtype
         <select id="filter-dtype" name="dtype"><option value="">全部</option><option>fp16</option><option>bf16</option></select>
       </label>
@@ -320,7 +321,7 @@ let runsOffset = 0;
 let runsToken = 0;
 let visible = "experiments";
 const RUNS_LIMIT = 50;
-const applied = {task: "", dtype: "", model: "", status: ""};
+const applied = {task: "", dtype: "", model: "", status: "", target: ""};
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
@@ -410,7 +411,7 @@ async function loadCompare(id) {
 
 function runQuery() {
   const params = new URLSearchParams({ limit: String(RUNS_LIMIT), offset: String(runsOffset) });
-  for (const key of ["task", "dtype", "model", "status"]) {
+  for (const key of ["task", "dtype", "model", "status", "target"]) {
     const value = applied[key];
     if (value) params.set(key, value);
   }
@@ -749,7 +750,7 @@ function renderDetail(doc) {
       (confirmWinner && confirmWinner !== seedKernel ? ` · 确认胜者（换一批输入重测后活下来的）：<b>${esc(confirmWinner)}</b>` : "") +
       `</p>`
     : "";
-  return `<h2>${esc(doc.id)}</h2><p>${lamp}${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>${seedLine}` +
+  return `<h2>${esc(doc.id)}</h2><p>${lamp}${esc(doc.target_line || "")} ${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>${seedLine}` +
     `<div>` +
     `<h3>确认点</h3>${confirm}` +
     `<h3>候选</h3>` + (candidates ? `<table><thead><tr><th>序号</th><th>标签</th><th>状态</th><th>阶段</th><th>加速比</th><th>标记</th><th>说明</th></tr></thead><tbody>${candidates}</tbody></table>` : `<p class="muted">没有候选。</p>`) +
@@ -1093,7 +1094,7 @@ document.getElementById("stop-all").addEventListener("click", async () => {
 });
 document.getElementById("run-filters").addEventListener("submit", (event) => {
   event.preventDefault();
-  for (const key of ["task", "dtype", "model", "status"]) applied[key] = document.getElementById("filter-" + key).value.trim();
+  for (const key of ["task", "dtype", "model", "status", "target"]) applied[key] = document.getElementById("filter-" + key).value.trim();
   runsOffset = 0;
   loadRuns();
 });

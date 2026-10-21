@@ -17,6 +17,14 @@ def _isolate_observe_cache(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_kernel_catalog(tmp_path, monkeypatch):
+    """Confirmed-kernel copies stay in the test tmp dir, not ``kernels/`` in the repo."""
+    import taic.kernel_catalog as catalog
+
+    monkeypatch.setattr(catalog, "REPO", tmp_path)
+
+
+@pytest.fixture(autouse=True)
 def _gpu_tests_share_the_gpu_lock(request):
     if request.node.get_closest_marker("gpu") is None:
         yield

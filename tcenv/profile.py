@@ -21,7 +21,34 @@ from pathlib import Path
 
 from .metal_runtime import BufferArg, CompiledKernel, MetalContext, get_context
 
-CALIB_PATH = Path(os.environ.get("TCENV_CALIBRATION", Path(__file__).resolve().parent.parent / "runs" / "calibration.json"))
+from .target import DEFAULT_TARGET_ID, calibration_file
+
+def get_calibration(force: bool = False, target_id: str | None = None) -> dict:
+    ctx = get_context()
+    info = ctx.info()
+    path, _source = calibration_file(target_id or DEFAULT_TARGET_ID)
+    if path.exists() and not force:
+        try:
+            data = json.loads(path.read_text())
+            if data.get("device") == info["name"]:
+                return data
+        except Exception:
+            pass
+    from .gpulock import gpu_lock
+
+    with gpu_lock("bandwidth / FLOP calibration"):
+        bw = measure_peak_bandwidth(ctx)
+        data = {
+            "device": info["name"],
+            "peak_gbps": max(bw["copy4_gbps"], bw["read4_gbps"]),
+            "copy_gbps": bw["copy4_gbps"],
+            "read_gbps": bw["read4_gbps"],
+            "peak_tflops": {d: measure_peak_flops(d) for d in ("fp16", "bf16", "fp32")},
+            "measured_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2))
+    return data
 
 _COPY_SRC = """
 #include <metal_stdlib>
@@ -73,39 +100,13 @@ def measure_peak_flops(dtype: str = "fp16", n: int = 4096) -> float:
     return best
 
 
-def get_calibration(force: bool = False) -> dict:
-    ctx = get_context()
-    info = ctx.info()
-    if CALIB_PATH.exists() and not force:
-        try:
-            data = json.loads(CALIB_PATH.read_text())
-            if data.get("device") == info["name"]:
-                return data
-        except Exception:
-            pass
-    from .gpulock import gpu_lock
-
-    with gpu_lock("bandwidth / FLOP calibration"):
-        bw = measure_peak_bandwidth(ctx)
-        data = {
-            "device": info["name"],
-            "peak_gbps": max(bw["copy4_gbps"], bw["read4_gbps"]),
-            "copy_gbps": bw["copy4_gbps"],
-            "read_gbps": bw["read4_gbps"],
-            "peak_tflops": {d: measure_peak_flops(d) for d in ("fp16", "bf16", "fp32")},
-            "measured_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-    CALIB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CALIB_PATH.write_text(json.dumps(data, indent=2))
-    return data
-
-
 def pipeline_stats(kernel: CompiledKernel, contract, device_info: dict) -> dict:
     max_threads = kernel.max_total_threads
+    cap = int(device_info.get("max_threads_per_threadgroup") or 0)
     hints = []
-    if max_threads < 1024:
+    if cap and max_threads < cap:
         hints.append(
-            f"maxTotalThreadsPerThreadgroup={max_threads} < 1024: the compiler reports high per-thread register usage; "
+            f"maxTotalThreadsPerThreadgroup={max_threads} < {cap}: the compiler reports high per-thread register usage; "
             "fewer simultaneously resident threads per core will hurt latency hiding"
         )
     tg_frac = kernel.static_tg_bytes / max(device_info["max_threadgroup_memory_bytes"], 1)

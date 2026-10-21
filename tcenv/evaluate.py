@@ -87,6 +87,11 @@ class EvalReport:
     baseline_us: dict = field(default_factory=dict)
     compiler_baseline: dict = field(default_factory=dict)  # optional triton-msl comparison (see tcenv.triton_baseline)
     verification: dict = field(default_factory=dict)  # formal equivalence check (tcenv.verify); always 'unsupported' for now
+    target_id: str = ""
+    backend: str = ""
+    device_name: str = ""
+    gpu_family: str = ""
+    device_warnings: list = field(default_factory=list)
     elapsed_s: float = 0.0
 
     # 实现上就是 status 为 ok。形式验证恒为 unsupported，不参与这一条。
@@ -127,6 +132,7 @@ def evaluate_in_process(
     fast_bench: bool = False,
     require_contract_launch: bool = False,
     validate: bool = False,
+    target_id: str = "apple-m4-max",
 ) -> EvalReport:
     """Untimed stages hold the machine-wide GPU lock shared, the benchmark holds it exclusively (tcenv.gpulock).
 
@@ -139,6 +145,7 @@ def evaluate_in_process(
         return _evaluate_in_process(
             task_name, dtype, size, kernel_source, mode=mode, seed=seed, reps=reps, cases=cases,
             fast_bench=fast_bench, require_contract_launch=require_contract_launch, validate=validate,
+            target_id=target_id,
         )
 
 
@@ -183,13 +190,14 @@ def _evaluate_in_process(
     size: str,
     kernel_source: str,
     *,
-    mode: str,
-    seed: int | None,
-    reps: int,
-    cases: tuple[str, ...] | None,
+    mode: str = "full",
+    seed: int | None = None,
+    reps: int = 15,
+    cases: tuple[str, ...] | None = None,
     fast_bench: bool = False,
     require_contract_launch: bool = False,
     validate: bool = False,
+    target_id: str = "apple-m4-max",
 ) -> EvalReport:
     import torch  # noqa: F401  (imported early so failures are reported as crashes of the worker)
 
@@ -207,13 +215,36 @@ def _evaluate_in_process(
     t_start = time.perf_counter()
     task = get_task(task_name, dtype, size)
     seed = int(seed if seed is not None else secrets.randbits(48))
-    rep = EvalReport(task=task_name, dtype=dtype, size=size, mode=mode, seed=seed)
+    rep = EvalReport(task=task_name, dtype=dtype, size=size, mode=mode, seed=seed, target_id=target_id)
     from .verify import verify
 
     rep.verification = verify(task, kernel_source).to_json()  # formal equivalence: unsupported for MSL (tcenv.verify)
+    from .target import TargetError, device_matches, limit_notes, require_active
+
+    try:
+        profile = require_active(target_id)
+    except TargetError as exc:
+        rep.stage = "device_check"
+        rep.status = "rejected"
+        rep.message = str(exc)
+        rep.elapsed_s = time.perf_counter() - t_start
+        return rep
     contract = task.contract
     ctx = get_context()
     dev_info = ctx.info()
+    rep.backend = profile.backend
+    rep.device_name = str(dev_info.get("name") or "")
+    rep.gpu_family = str(dev_info.get("gpu_family") or "")
+    if not device_matches(profile, dev_info):
+        rep.stage = "device_check"
+        rep.status = "rejected"
+        rep.message = (
+            f"device {rep.device_name} ({rep.gpu_family}) does not match target {profile.id} "
+            f"({profile.match_name_contains}, {profile.match_family})"
+        )
+        rep.elapsed_s = time.perf_counter() - t_start
+        return rep
+    rep.device_warnings = limit_notes(profile, dev_info)
 
     # 写上这一关的 status 后返回。失败时 stage 停在调用前设好的那一关，后面的关不再跑。
     def finish(status: str, message: str = "") -> EvalReport:
@@ -297,10 +328,11 @@ def _evaluate_in_process(
     else:
         problems = abi_mod.check_pipeline(
             contract, {k.name: k for k in kernels}, spec, max_tg_memory=dev_info["max_threadgroup_memory_bytes"],
+            max_buffer_index=profile.limits.max_buffer_index,
         )
     # 插桩会把静态线程组内存报成大约两倍。超过设备上限后再启动，Metal 在
     # validateComputeFunctionArguments 里断言并 SIGABRT，子进程变成 crash。
-    # 这种只回报那一条、不启动。父进程改用不插桩的完整评测去比 32768。
+    # 这种只回报那一条、不启动。父进程改用不插桩的完整评测去比目标档案里的线程组内存上限。
     if mode == "validate":
         problems = abi_mod.validation_problems(
             problems, [k.static_tg_bytes for k in kernels], dev_info["max_threadgroup_memory_bytes"],
@@ -462,7 +494,7 @@ def _evaluate_in_process(
     attempts: list[tuple[float, dict, list[float]]] = []  # (noise, stats, candidate GPU samples) per attempt
     # 测速升级成独占锁。共享锁下可以并行做正确性检查；两份墙钟叠在一起会把 CV 抬过 NOISY_CV。
     with gpu_lock(f"benchmark of {task_name} {dtype} {size}") as lock_wait_s:
-        calib = get_calibration()
+        calib = get_calibration(target_id=target_id)
         runners: dict[str, Any] = {}
         base_runners = build_runners(task, data0.rounded)
         only = _remembered_baseline(task_name, dtype, size) if fast_bench else None
@@ -706,6 +738,7 @@ def _run_worker(
     progress_path: Path | None = None,
     fast_bench: bool = False,
     require_contract_launch: bool = False,
+    target_id: str = "apple-m4-max",
 ) -> EvalReport:
     """Run one worker under supervision.
 
@@ -725,6 +758,7 @@ def _run_worker(
             "schema_version": REQUEST_SCHEMA_VERSION,
             "task": task, "dtype": dtype, "size": size, "kernel_path": str(kernel_path), "mode": mode, "seed": seed,
             "reps": reps, "cases": cases, "out": str(out_path), "heartbeat": str(hb_path), "stage": str(stage_path),
+            "target_id": target_id,
         }
         if fast_bench:
             req["fast_bench"] = True
@@ -822,6 +856,7 @@ def evaluate(
     require_contract_launch: bool = False,
     self_check_dir: Path | None = None,
     validate: bool = False,
+    target_id: str = "apple-m4-max",
 ) -> EvalReport:
     """Evaluate ``kernel_source`` on ``task``. ``mode``: "quick" (compile+ABI+safety+correctness),
     "timed" (those, plus the benchmark, without shader validation), or "full" (validation and the benchmark).
@@ -899,13 +934,16 @@ def evaluate(
             """Run the instrumented pass. Returns (a failure to stop on, whether the only complaint was the static limit)."""
             # 校验子进程在 bench 之前：打开会插桩访存和 barrier 的 shader validation，期限是这次 command buffer 时限的两倍。
             # 单核仍是 4 秒。流水线是「每段 2 秒、封顶 8 秒」的两倍。这次不过关就带着它的状态码返回。
-            v = _run_worker(task, dtype, size, kp, "validate", seed, reps, timeout or 120.0, validation=True, cases=cases, launch_deadline_s=2 * deadline, progress_path=progress_path, require_contract_launch=require_contract_launch)
-            # 校验插桩会把静态线程组内存报成大约两倍。只有这一条时，不拿它否决内核，改由下面不插桩的编译去比 32768。
+            v = _run_worker(task, dtype, size, kp, "validate", seed, reps, timeout or 120.0, validation=True, cases=cases, launch_deadline_s=2 * deadline, progress_path=progress_path, require_contract_launch=require_contract_launch, target_id=target_id)
+            # 校验插桩会把静态线程组内存报成大约两倍。只有这一条时，不拿它否决内核，改由下面不插桩的编译去比目标档案里的上限。
             from .abi import only_static_threadgroup_limit
 
             size_only = v.status == "abi_error" and only_static_threadgroup_limit((v.abi or {}).get("violations") or [])
             return (None if (v.status == STATUS_OK or size_only) else v), size_only
 
+        from .target import load_target
+
+        tg_limit = load_target(target_id).limits.max_threadgroup_memory_bytes
         size_only = False
         if mode == "full" or (mode == "timed" and validate):
             failed, size_only = _validation_pass()
@@ -914,25 +952,25 @@ def evaluate(
                 failed.elapsed_s = time.perf_counter() - t0
                 return _checked(failed)
         if mode == "full":
-            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch)
+            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, target_id=target_id)
             rep.safety = dict(rep.safety or {})
             rep.safety["validation"] = []
             rep.safety["shader_validation"] = (
-                "skipped: the validation pipeline's threadgroup size is the instrumented figure; the uninstrumented pipeline checked the 32768 B limit"
+                f"skipped: the validation pipeline's threadgroup size is the instrumented figure; the uninstrumented pipeline checked the {tg_limit} B limit"
                 if size_only else "clean"
             )
         elif mode == "timed":
             # 和 full 同一套计时。校验只在调用方要求时跑（--timed --validate）：它慢，而且插桩会把线程组内存报成大约两倍。
-            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch)
+            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, target_id=target_id)
             rep.mode = "timed"
             if validate:
                 rep.safety = dict(rep.safety or {})
                 rep.safety["validation"] = []
                 rep.safety["shader_validation"] = (
-                    "skipped: the validation pipeline's threadgroup size is the instrumented figure; the uninstrumented pipeline checked the 32768 B limit"
+                    f"skipped: the validation pipeline's threadgroup size is the instrumented figure; the uninstrumented pipeline checked the {tg_limit} B limit"
                     if size_only else "clean"
                 )
         else:
-            rep = _run_worker(task, dtype, size, kp, "quick", seed, reps, timeout or 240.0, validation=False, cases=cases, progress_path=progress_path, launch_deadline_s=deadline, require_contract_launch=require_contract_launch)
+            rep = _run_worker(task, dtype, size, kp, "quick", seed, reps, timeout or 240.0, validation=False, cases=cases, progress_path=progress_path, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, target_id=target_id)
         rep.elapsed_s = time.perf_counter() - t0
         return _checked(rep)

@@ -1660,9 +1660,16 @@ def run_detail(run_id: str) -> dict | None:
     alert_budget, alert_stop = _budget_for_alert(directory, spent, budget, stop)
     progress = _age(_load(directory / "eval_progress.json"))
     conclusion = conclusion_of_run(directory, result) if result else {"speedup": None, "publication": "in_progress"}
+    config = _load(directory / "run_config.json") or {}
+    named = config.get("target") if isinstance(config.get("target"), dict) else {}
+    target_id = named.get("id") or (state or {}).get("target_id") or (result or {}).get("target_id") or ""
+    backend = named.get("backend") or (state or {}).get("backend") or (result or {}).get("backend") or ""
     return {
         "id": _rel(directory),
         "status": status,
+        "target_id": target_id,
+        "backend": backend,
+        "target_line": f"目标: {target_id} ({backend})" if target_id else "",
         "budget": budget_status(spent, alert_budget, alert_stop, status == "running"),
         "control": control_hint(directory, state, result, status),
         **topup_fields(directory),

@@ -247,7 +247,7 @@ def test_feature_grid_signs_a_source_once_and_then_uses_the_cache(tmp_path, monk
 
 
 def test_fa_paper_signs_each_distinct_source_once(tmp_path, monkeypatch):
-    directory = Path("runs/p1/fa_paper")
+    directory = Path("runs/apple-m4-max/p1/fa_paper")
     candidates = directory / "candidates"
     if not candidates.is_dir():
         pytest.skip("fa_paper is not in this checkout")
@@ -271,10 +271,10 @@ def test_fa_paper_signs_each_distinct_source_once(tmp_path, monkeypatch):
 
     monkeypatch.setattr(query, "feature_signature", wrapped)
     query._GRID_CACHE.clear()
-    detail = run_detail("p1/fa_paper")
+    detail = run_detail("apple-m4-max/p1/fa_paper")
     assert calls["n"] == len(distinct)
     assert detail["detail_stamp"]
-    run_detail("p1/fa_paper")
+    run_detail("apple-m4-max/p1/fa_paper")
     assert calls["n"] == len(distinct)
-    assert run_detail("p1/fa_paper", stamp=detail["detail_stamp"])["same"] is True
+    assert run_detail("apple-m4-max/p1/fa_paper", stamp=detail["detail_stamp"])["same"] is True
     assert calls["n"] == len(distinct)

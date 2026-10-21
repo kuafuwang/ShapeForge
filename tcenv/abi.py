@@ -18,10 +18,24 @@ from .dtypes import get_dtype
 from .metal_runtime import CompiledKernel
 
 
+def _threadgroup_limit() -> int:
+    from .target import DEFAULT_TARGET_ID, load_target
+
+    return load_target(DEFAULT_TARGET_ID).limits.max_threadgroup_memory_bytes
+
+
+def _buffer_index_limit() -> int:
+    from .target import DEFAULT_TARGET_ID, load_target
+
+    return load_target(DEFAULT_TARGET_ID).limits.max_buffer_index
+
+
 # 反射对的是槽位、名字、读写、标量类型和这份 pipeline 的启动上限。缓冲指向的元素类型可以向量化，这里放行。
 # 返回人类可读的问题列表；空列表才算通过。
-def check_abi(contract: Contract, kernel: CompiledKernel, *, max_tg_memory: int = 32768) -> list[str]:
+def check_abi(contract: Contract, kernel: CompiledKernel, *, max_tg_memory: int | None = None) -> list[str]:
     """Return a list of human-readable violations (empty list means conformant)."""
+    if max_tg_memory is None:
+        max_tg_memory = _threadgroup_limit()
     problems: list[str] = []
     by_index = {}
     for b in kernel.bindings:
@@ -70,14 +84,18 @@ def check_abi(contract: Contract, kernel: CompiledKernel, *, max_tg_memory: int 
             f"launch infeasible: the contract launches {contract.threads_per_tg} threads per threadgroup but this pipeline supports at most "
             f"{kernel.max_total_threads} (register/threadgroup-memory pressure is too high; reduce live registers)"
         )
-    # 调用方省略时用 32768。evaluate 传入的是设备报告的 maxThreadgroupMemoryLength。
+    # 调用方省略时用目标档案里的线程组内存上限。evaluate 传入的是设备报告的 maxThreadgroupMemoryLength。
     if kernel.static_tg_bytes > max_tg_memory:
         problems.append(f"static threadgroup memory {kernel.static_tg_bytes} B exceeds the device limit of {max_tg_memory} B")
     return problems
 
 
-def check_pipeline(contract: Contract, kernels: dict, spec, *, max_tg_memory: int = 32768) -> list[str]:
+def check_pipeline(contract: Contract, kernels: dict, spec, *, max_tg_memory: int | None = None, max_buffer_index: int | None = None) -> list[str]:
     """Per-stage ABI for a ``taic-launch`` spec. ``kernels`` maps a kernel name to its compiled pipeline."""
+    if max_tg_memory is None:
+        max_tg_memory = _threadgroup_limit()
+    if max_buffer_index is None:
+        max_buffer_index = _buffer_index_limit()
     problems: list[str] = []
     contract_index = {a.name: a.index for a in contract.args}
     writable_outputs: set[str] = set()
@@ -95,8 +113,8 @@ def check_pipeline(contract: Contract, kernels: dict, spec, *, max_tg_memory: in
             problems.append(f"stage `{stage.kernel}` binds the same buffer name twice")
         if any(b.kind == "other" for b in kernel.bindings):
             problems.append(f"stage `{stage.kernel}` uses a texture or sampler, which this evaluation does not bind")
-        if any(i > 30 for i in indexes):
-            problems.append(f"stage `{stage.kernel}` uses a buffer index above 30")
+        if any(i > max_buffer_index for i in indexes):
+            problems.append(f"stage `{stage.kernel}` uses a buffer index above {max_buffer_index}")
         dynamic = [b for b in kernel.bindings if b.kind == "threadgroup"]
         if stage.threadgroup_bytes:
             if len(dynamic) != 1:

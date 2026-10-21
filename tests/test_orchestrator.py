@@ -139,7 +139,7 @@ def test_happy_path_selects_the_fastest_eligible_candidate_and_confirms_it(tmp_p
     assert json.loads((tmp_path / "run" / "run_config.json").read_text())["loop_protocol"] == "flame_chase_1"
     transcript = (tmp_path / "run" / "transcript.jsonl").read_text()
     assert transcript and json.loads((tmp_path / "run" / "ledger.json").read_text())["schema_version"] == 1
-    assert json.loads((tmp_path / "run" / "candidates" / "000_init" / "report.json").read_text())["schema_version"] == 1
+    assert json.loads((tmp_path / "run" / "candidates" / "000_init" / "report.json").read_text())["schema_version"] == 2
     assert json.loads((tmp_path / "run" / "state.json").read_text())["schema_version"] == 1
     assert (tmp_path / "run" / "candidates" / "000_init" / "kernel.metal").exists()
 
@@ -756,7 +756,7 @@ def test_a_new_run_freezes_guidance_and_an_old_run_still_copies_the_repo(tmp_pat
     assert (snap / "msl_reference.md").is_file()
     doc = json.loads((tmp_path / "run" / "run_config.json").read_text())
     hashes = doc["agent_guidance"]
-    assert set(hashes) == {"experience.md", "msl_reference.md", "SKILL.md"}
+    assert set(hashes) == {"experience.md", "msl_reference.md", "SKILL.md", "device.md"}
     assert hashes["experience.md"] == hashlib.sha256((snap / "experience.md").read_bytes()).hexdigest()
     (snap / "experience.md").write_text("FROZEN\n", encoding="utf-8")
     brief = orch._session_brief(True, "r1.p0")

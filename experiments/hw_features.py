@@ -4,7 +4,7 @@ What it does: for every run directory it reads each candidate's kernel and ``rep
 measured evidence, verdicts per feature) and writes ``REPORT.md``, ``data.json`` and ``kernels.jsonl``; it also analyses the validation set (the generated
 reference GEMMs, the naive kernels, negative cases) and computes win rates of the features over accepted wins and the rest. See ``docs/hardware_features.md``.
 
-    uv run python -m experiments.hw_features runs/p1 runs/suite_full --out runs/hw_features
+    uv run python -m experiments.hw_features runs/apple-m4-max/p1 runs/apple-m4-max/suite_full --out runs/hw_features
     uv run python -m experiments.hw_features --source kernel.metal --task gemm        # one file
 
 Only imports from ``tcenv`` / ``tasks`` happen lazily and read-only (contract header, task constants); nothing is written outside ``--out``.
@@ -563,9 +563,9 @@ def _headline(best: list[dict], hmap: dict, items) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("paths", nargs="*", help="run directories or roots that contain runs (e.g. runs/p1 runs/suite_full)")
+    ap.add_argument("paths", nargs="*", help="run directories or roots that contain runs (e.g. runs/apple-m4-max/p1 runs/apple-m4-max/suite_full)")
     ap.add_argument("--out", default="runs/hw_features", help="output directory (REPORT.md, data.json, kernels.jsonl, compile cache)")
-    ap.add_argument("--runs-root", default=str(REPO / "runs"), help="root used for relative run names, naive_*.json and calibration.json")
+    ap.add_argument("--runs-root", default=str(REPO / "runs"), help="root used for relative run names and naive_*.json")
     ap.add_argument("--no-compile", action="store_true", help="source evidence only (skip the AIR compile)")
     ap.add_argument("--no-validation", action="store_true", help="skip the reference GEMMs / naive kernels / negative cases")
     ap.add_argument("--jobs", type=int, default=2, help="parallel compiles (each runs under nice -n 15)")
@@ -579,7 +579,12 @@ def main(argv: list[str] | None = None) -> int:
         print(ablation_plan)
         return 0
     runs_root = Path(a.runs_root)
-    calib = _read_json(runs_root / "calibration.json")
+    try:
+        from tcenv.target import TargetError, read_calibration
+
+        calib, _path, _source = read_calibration()
+    except (OSError, json.JSONDecodeError, TargetError):
+        calib = None
     out = Path(a.out)
     if a.source:
         rep = build_report(Path(a.source).read_text(), label=a.source, task=a.task, dtype=a.dtype, compile_evidence=not a.no_compile, cache_dir=out / ".cache")
@@ -587,7 +592,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     out.mkdir(parents=True, exist_ok=True)
     cache = out / ".cache"
-    roots = [Path(p) for p in (a.paths or [str(runs_root / d) for d in ("p1", "suite_full", "semantic_main", "pilot_suite_mini_old_protocol", "counter_teaching")] + [str(p) for p in sorted(runs_root.glob("repeat_*"))] + [str(p) for p in sorted(runs_root.glob("2026*_fp16_*"))])]
+    nested = runs_root / "apple-m4-max"
+
+    def _root(name: str) -> Path:
+        moved = nested / name
+        return moved if moved.is_dir() else runs_root / name
+
+    roots = [Path(p) for p in (a.paths or [str(_root(d)) for d in ("p1", "suite_full", "semantic_main", "pilot_suite_mini_old_protocol", "counter_teaching")] + [str(p) for p in sorted(nested.glob("repeat_*"))] + [str(p) for p in sorted(nested.glob("2026*_fp16_*"))])]
     naive = load_naive_measurements(runs_root)
     runs: dict[str, dict] = {}
     refs: list[KernelRef] = []

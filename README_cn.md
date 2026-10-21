@@ -61,8 +61,8 @@ Apple GPU 同时驱动显示器，**正在运行的 Metal 内核无法被抢占*
 
 * **配置在哪。** `taic.paper.toml` 是叠加在 `taic.toml` 之上的预设（设了 `budget_usd = 15` 和 `max_rounds = 100`：$15 时结束运行的是预算而不是轮数，原来的 12 轮上限会在花掉约三分之一的钱时就停下）。`--preset base` 或 `TAIC_PRESET=base` 只读 `taic.toml`；`--config FILE` 原样使用。预设把 `patience`（连续 N 轮没有新最优就停）从 6 提到 12。`taic.toml` 自己是 6，不是 4。短暂的平台期不会截断 $15 的运行，真正收敛的运行仍会提前结束，所以不再进步的内核花不到 $15。
 * **覆盖。** 到处都有 `--budget USD`，`run_suite` 和 `repeatability` 还有 `--budget-scale F`（例如 `0.2` 做冒烟）。语义测试（每次 $0.15）、`counter_teaching`（$1）和单元测试特意保留小预算。
-* **最坏情况。** 若每次运行都花满预算：`run_suite --tasks all --dtypes fp16,bf16` 是 24 次运行、$360（默认只写 `--dtypes` 时是 fp16，12 次、$180）；`repeatability` 是 5 次 x（$15 + $15 + $1）= $155（加上 `flash_attention` 为 $230）；`p1_runs` 把字典里 12 条都启动是 $180。这三个驱动都有可选的 `--max-total-usd USD`（默认关闭）：整次调用放不下的运行会被跳过。磁盘上已经有花到约 $46 的单次搜索（`runs/conv2d-two-models-20261019`，上限 $50）。早先「已结束运行最多 $3.12」只对当时的 `runs/p1/fa_flash` 成立。
-* **更早的结果不可比。** 它们用的是更小的预算，看板逐运行显示（每个 `result.json` 也记录 `budget_usd`）：`runs/suite_full` 多数内核 $0.5–$1.2，其中 `gemm_fp16` 的预算字段已是 $15；`runs/repeat_*` 每次试验 $3，`runs/p1` 多数 $3（后来启动的 `*_paper` 运行是 $15），`runs/semantic_main` $0.15，`runs/pilot_suite_mini_old_protocol` $1.25–$1.5。在那里以 `budget_exhausted` 结束的运行，在论文预算下本会继续搜索。
+* **最坏情况。** 若每次运行都花满预算：`run_suite --tasks all --dtypes fp16,bf16` 是 24 次运行、$360（默认只写 `--dtypes` 时是 fp16，12 次、$180）；`repeatability` 是 5 次 x（$15 + $15 + $1）= $155（加上 `flash_attention` 为 $230）；`p1_runs` 把字典里 12 条都启动是 $180。这三个驱动都有可选的 `--max-total-usd USD`（默认关闭）：整次调用放不下的运行会被跳过。磁盘上已经有花到约 $46 的单次搜索（`runs/apple-m4-max/conv2d-two-models-20261019`，上限 $50）。早先「已结束运行最多 $3.12」只对当时的 `runs/apple-m4-max/p1/fa_flash` 成立。
+* **更早的结果不可比。** 它们用的是更小的预算，看板逐运行显示（每个 `result.json` 也记录 `budget_usd`）：`runs/apple-m4-max/suite_full` 多数内核 $0.5–$1.2，其中 `gemm_fp16` 的预算字段已是 $15；`runs/apple-m4-max/repeat_*` 每次试验 $3，`runs/apple-m4-max/p1` 多数 $3（后来启动的 `*_paper` 运行是 $15），`runs/semantic_main` $0.15，`runs/pilot_suite_mini_old_protocol` $1.25–$1.5。在那里以 `budget_exhausted` 结束的运行，在论文预算下本会继续搜索。
 
 ## 实验（论文第 4 节）
 
@@ -78,7 +78,7 @@ uv run python -m tcenv.cli profile gemm best.metal                        # xctr
 ## 硬件特性反馈（可选，默认关闭）
 
 `search.hw_feedback = true`（`taic run ... --hw-feedback`、`taic resume ... --hw-feedback`，或驱动脚本的搜索选项里写 `hw_feedback=True`，和 `profile_poor` 一样）会在这一场 `TASK.md` 的证据段里，
-profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词），并把 `taic/skills/hardware_feedback.md` 作为 Skill 2c 写进存盘的系统提示。`pi` 读的是任务书，不是那份提示。这一段由 `taic/hwfeedback.py` 根据 `docs/hardware_features.md` 的静态检测器
+profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词），并把 `backends/metal/skills/hardware_feedback.md` 作为 Skill 2c 写进存盘的系统提示。`pi` 读的是任务书，不是那份提示。这一段由 `taic/hwfeedback.py` 根据 `docs/hardware_features.md` 的静态检测器
 （`taic/hwfeatures.py`：源码、编译出的 AIR、以及这颗候选自己测得的 roofline）生成，内容是：
 
 * 内核已经用了哪些 Apple GPU 特性（矩阵单元及其累加器类型和 fragment 个数、threadgroup 暂存与 padding、双缓冲或寄存器预取、device 读写的宽度、SIMD 归约与 shuffle、online softmax 等），以及离 roofline 多远；
@@ -87,7 +87,7 @@ profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词�
   内核有 32 个以上累加器 fragment 时给出警告（参考 GEMM 慢了 12 到 26 倍），处于寄存器压力上限时也一样。
 
 为什么默认关闭：这是实验，目前没有证据表明它有用。关闭时，系统提示、用户消息和反馈与打开之前的形状对照；`tests/test_hw_feedback.py` 用 `tests/golden/hw_off.json` 核对 176 份系统提示、110 条用户消息、12 段反馈。这份黄金文件在 2026-10-20 重录过，里面的脚本化搜索不止早先写的四次。`taic.toml` 和 `taic.paper.toml` 没有提到它。它记在 `run_config.json` 里，`taic resume` 会保留。
-这段分析不会弄坏或拖慢搜索：超时（20 秒）、失败或没有 Metal 工具链时，直接去掉这一段并记一条警告。A/B 实验：`experiments.p1_runs` 的 `fa_flash_hw` 就是只改了这个开关的 `fa_flash`（n=1，随机搜索，只能算轶事）；这次运行于 2026-10-07 06:08 启动，因检测器修正中途停过一次并用 `taic resume` 接着跑（第 1 轮看到的是修正前的提示块，见 `docs/hardware_features.md` 第 9 节）。结果已经落盘：`runs/p1/fa_flash_hw` 的 `confirmed_speedup` 约 0.622，花了约 $2.89，8 轮后因连续 4 轮没有新种子而停。对照 `fa_flash` 的确认倍数约 0.735、$3.12、8 轮、预算耗尽。两次都是 $3 预算下的单次搜索，而且都没有绑上今天发布闸门要的源码指纹，不能当成「硬件提示有没有用」的结论。
+这段分析不会弄坏或拖慢搜索：超时（20 秒）、失败或没有 Metal 工具链时，直接去掉这一段并记一条警告。A/B 实验：`experiments.p1_runs` 的 `fa_flash_hw` 就是只改了这个开关的 `fa_flash`（n=1，随机搜索，只能算轶事）；这次运行于 2026-10-07 06:08 启动，因检测器修正中途停过一次并用 `taic resume` 接着跑（第 1 轮看到的是修正前的提示块，见 `docs/hardware_features.md` 第 9 节）。结果已经落盘：`runs/apple-m4-max/p1/fa_flash_hw` 的 `confirmed_speedup` 约 0.622，花了约 $2.89，8 轮后因连续 4 轮没有新种子而停。对照 `fa_flash` 的确认倍数约 0.735、$3.12、8 轮、预算耗尽。两次都是 $3 预算下的单次搜索，而且都没有绑上今天发布闸门要的源码指纹，不能当成「硬件提示有没有用」的结论。
 
 硬件特性反馈打开时，如果某个基线已经比 roofline 下界快 5% 以上，这段话不会再说「已经到顶」。下界按直接算法的运算量来算，基线比它还快，说明基线用了更少的运算（测到的例子是 conv2d：torch-mps 777 微秒，直接卷积的下界 932 微秒，大约是实测矩阵峰值的 1.2 倍）。可达目标是那个基线的时间。
 

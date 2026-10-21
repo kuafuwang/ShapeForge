@@ -116,9 +116,9 @@ states no cap, so it uses $15 too; the repeatability experiment (Table 1) gives 
   semantic tests (`$0.15` per run), `counter_teaching` (`$1`) and the unit tests keep their small budgets on purpose.
 * **Worst case.** If every run used its whole budget: `run_suite --tasks all --dtypes fp16,bf16` is 24 runs, $360 (the default `--dtypes` is fp16 only: 12 runs, $180); `repeatability` is 5 trials
   x ($15 + $15 + $1) = $155 (with `flash_attention` $230); `p1_runs` is 12 named runs, $180. `--max-total-usd USD` (on those three drivers, default off)
-  skips any run whose budget would not fit under a cap on the whole invocation. Finished runs on disk have spent more than the old $3.12 note: `runs/conv2d-two-models-20261019` spent about $46 under a $50 ceiling. The $3.12 figure is still the spend of `runs/p1/fa_flash`.
+  skips any run whose budget would not fit under a cap on the whole invocation. Finished runs on disk have spent more than the old $3.12 note: `runs/apple-m4-max/conv2d-two-models-20261019` spent about $46 under a $50 ceiling. The $3.12 figure is still the spend of `runs/apple-m4-max/p1/fa_flash`.
 * **Earlier results are not comparable.** They were produced with smaller budgets, which the dashboard shows per run (and each `result.json`
-  records as `budget_usd`): `runs/suite_full` is mostly $0.5-$1.2 per kernel, except `gemm_fp16`, whose budget field is now $15; `runs/repeat_*` $3 per trial, `runs/p1` $3 for most runs (the `*_paper`
+  records as `budget_usd`): `runs/apple-m4-max/suite_full` is mostly $0.5-$1.2 per kernel, except `gemm_fp16`, whose budget field is now $15; `runs/apple-m4-max/repeat_*` $3 per trial, `runs/apple-m4-max/p1` $3 for most runs (the `*_paper`
   runs started later have $15), `runs/semantic_main` $0.15, `runs/pilot_suite_mini_old_protocol` $1.25-$1.5. A run that stopped on
   `budget_exhausted` there would have continued under the paper's budget.
 
@@ -141,7 +141,7 @@ the baseline means part of any gain is baseline weakness.
 
 `search.hw_feedback = true` (`taic run ... --hw-feedback`, `taic resume ... --hw-feedback`, or `hw_feedback=True` in the search options of a driver, as for `profile_poor`)
 appends a short block (at most 12 lines, about 150 words) to the evidence written into that round's `TASK.md`, in the place where the
-profiler evidence goes, and adds `taic/skills/hardware_feedback.md` to the stored system prompt as Skill 2c. The `pi` session reads the task file, not that prompt. The block is computed by `taic/hwfeedback.py` from the static detector of
+profiler evidence goes, and adds `backends/metal/skills/hardware_feedback.md` to the stored system prompt as Skill 2c. The `pi` session reads the task file, not that prompt. The block is computed by `taic/hwfeedback.py` from the static detector of
 `docs/hardware_features.md` (`taic/hwfeatures.py`: the source, the compiled AIR, and the roofline measured for this candidate) and says:
 
 * which Apple-GPU features the kernel uses (matrix unit with its accumulator type and fragment count, threadgroup staging and padding, double buffering or register prefetch, width of the
@@ -154,7 +154,7 @@ profiler evidence goes, and adds `taic/skills/hardware_feedback.md` to the store
 
 Why off by default: it is an experiment and nothing yet shows that it helps. With the switch off, `tests/test_hw_feedback.py` checks prompts and feedback against `tests/golden/hw_off.json` (176 system prompts, 110 user messages, 12 feedback texts). That file was recorded again on 2026-10-20, so it is not a snapshot from before the feature existed, and it covers more than four scripted searches. `taic.toml` and `taic.paper.toml` do not mention the switch. It is recorded in `run_config.json` and kept by `taic resume`. The analysis never breaks or slows a search: a timeout
 (20 s), a failure or a missing Metal toolchain drops the block and logs a warning. A/B experiment: `experiments.p1_runs` run `fa_flash_hw` is `fa_flash` with only this switch changed
-(n=1 on a stochastic search: an anecdote); the run was started on 2026-10-07 06:08, stopped once and continued with `taic resume` after a detector fix (round 1 saw the earlier block; see `docs/hardware_features.md` section 9). The result is on disk: `runs/p1/fa_flash_hw` confirmed about 0.622x, spent about $2.89, and stopped after 8 rounds because four rounds brought no new seed. The comparison `fa_flash` confirmed about 0.735x, spent $3.12, 8 rounds, stopped by its $3 budget. Neither file has the source hash the publication gate now requires, so neither number is a published conclusion about the switch.
+(n=1 on a stochastic search: an anecdote); the run was started on 2026-10-07 06:08, stopped once and continued with `taic resume` after a detector fix (round 1 saw the earlier block; see `docs/hardware_features.md` section 9). The result is on disk: `runs/apple-m4-max/p1/fa_flash_hw` confirmed about 0.622x, spent about $2.89, and stopped after 8 rounds because four rounds brought no new seed. The comparison `fa_flash` confirmed about 0.735x, spent $3.12, 8 rounds, stopped by its $3 budget. Neither file has the source hash the publication gate now requires, so neither number is a published conclusion about the switch.
 
 When the hardware-feature block is on and a baseline is already more than 5% faster than the roofline lower bound, the block does not say the kernel is at the ceiling. That bound counts the direct algorithm's operations, and a baseline that beats it is using fewer of them (the measured case is conv2d: torch-mps at 777 us against a 932 us direct-convolution bound, about 1.2x the measured matrix peak). The reachable target is that baseline's time.
 

@@ -100,7 +100,7 @@ def test_load_config_turns_it_on_only_when_asked(monkeypatch):
 
 
 def test_skill_2c_is_in_the_prompt_only_with_the_switch():
-    skill = (REPO / "taic" / "skills" / "hardware_feedback.md").read_text()
+    skill = (REPO / "backends" / "metal" / "skills" / "hardware_feedback.md").read_text()
     section = "\n\n" + SKILL_TITLE + "\n" + skill  # the part starts with a newline and "\n".join adds another one
     for name in ("relu", "flash_attention"):
         task = get_task(name, "fp16", "paper")
@@ -116,7 +116,7 @@ def test_skill_2c_is_in_the_prompt_only_with_the_switch():
 
 
 def test_the_skill_is_short_and_says_what_it_must():
-    text = (REPO / "taic" / "skills" / "hardware_feedback.md").read_text()
+    text = (REPO / "backends" / "metal" / "skills" / "hardware_feedback.md").read_text()
     assert len(text.splitlines()) <= 40
     low = text.lower()
     for must in ("static", "hint", "not a measurement", "measured time decides", "90%", "roofline", "register pressure"):

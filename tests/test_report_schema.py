@@ -29,7 +29,7 @@ def test_a_legacy_report_loads_and_a_round_trip_records_the_version():
     rep = EvalReport.from_json(_legacy_report(speedup=1.2))
     assert rep.status == "ok" and rep.eligible and rep.speedup == pytest.approx(1.2)
     again = EvalReport.from_json(rep.to_json())
-    assert again.to_json()["schema_version"] == REPORT_SCHEMA_VERSION == 1
+    assert again.to_json()["schema_version"] == REPORT_SCHEMA_VERSION == 2
     assert again.status == "ok" and again.speedup == pytest.approx(1.2)
 
 
@@ -42,7 +42,7 @@ def test_a_report_with_an_unknown_field_or_a_newer_version_needs_inspection():
     with pytest.raises(SchemaError, match="needs human inspection"):
         EvalReport.from_json(_legacy_report(future_field=1))
     with pytest.raises(SchemaError, match="needs human inspection"):
-        EvalReport.from_json(_legacy_report(schema_version=2))
+        EvalReport.from_json(_legacy_report(schema_version=3))
     with pytest.raises(SchemaError, match="needs human inspection"):
         EvalReport.from_json(_legacy_report(schema_version=True))
 
@@ -137,10 +137,9 @@ def test_a_checkpoint_request_list_does_not_replace_the_transcript(tmp_path):
 def test_worker_request_version_0_loads_and_a_newer_request_is_refused():
     from tcenv.schema import REQUEST_SCHEMA_VERSION
 
-    base = {"task": "relu", "dtype": "fp16", "size": "small", "kernel_path": "k.metal", "mode": "quick", "seed": 1, "reps": 3, "out": "out.json"}
+    base = {"task": "relu", "dtype": "fp16", "size": "small", "kernel_path": "k.metal", "mode": "quick", "seed": 1, "reps": 3, "out": "out.json", "target_id": "apple-m4-max"}
     assert read_request(base)["seed"] == 1
-    assert read_request({**base, "schema_version": 1})["reps"] == 3
-    assert read_request({**base, "schema_version": REQUEST_SCHEMA_VERSION, "fast_bench": True})["fast_bench"] is True
+    assert read_request({**base, "schema_version": 4})["target_id"] == "apple-m4-max"
     with pytest.raises(SchemaError, match="needs human inspection"):
         read_request({**base, "skip_safety": True})
     with pytest.raises(SchemaError, match="needs human inspection"):

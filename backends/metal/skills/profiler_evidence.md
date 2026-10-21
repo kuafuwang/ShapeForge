@@ -41,7 +41,7 @@ Read them in this order:
 3. **`L1 Eviction Rate` and `Occupancy Manager Target`**: an eviction rate near 100% means the shader core's private memory (registers, stack, spills, threadgroup data) is thrashing the L1; the hardware then lowers occupancy on its own
    (the target falls below 100%). Remedy: a smaller per-thread working set (smaller register tiles, fewer live arrays, no spills).
 
-4. **Memory counters**: `GPU Read/Write Bandwidth` (GB/s to device memory) against the measured roofline peak (449-527 GB/s) says how close a memory-bound kernel is to the roof; `Last Level Cache` and `MMU` limiters
+4. **Memory counters**: `GPU Read/Write Bandwidth` (GB/s to device memory) against the measured roofline peak on the scorecard says how close a memory-bound kernel is to the roof; `Last Level Cache` and `MMU` limiters
    say whether the memory system is busy; `L1 Register Residency` high means registers dominate the L1 (register pressure); `Threadgroup Memory L1 ... Bandwidth` in GiB/s shows how hard threadgroup memory is used.
    A counter only matters when it is high for its unit: a high `Buffer L1 Miss Rate` next to near-zero bandwidth and low limiters is NOT evidence of a memory problem (very few accesses are happening), and a low limiter is not a "symptom" of anything.
 

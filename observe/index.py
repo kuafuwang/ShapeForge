@@ -20,7 +20,7 @@ from observe import detail, legacy
 from observe.budget import budget_status
 from observe.ledger import month_of, operator_name
 
-INDEX_SCHEMA_VERSION = 3
+INDEX_SCHEMA_VERSION = 4
 _SKIP_DIRS = {"candidates", "__pycache__"}
 _WRITE = threading.Lock()
 _SINGLE: "Index | None" = None
@@ -79,6 +79,13 @@ def _fingerprint(path: Path) -> str:
     except OSError:
         return ""
     return f"{stat.st_mtime_ns}:{stat.st_size}"
+
+
+def _target_id(config: dict | None) -> str:
+    target = (config or {}).get("target") if isinstance(config, dict) else None
+    if isinstance(target, dict) and target.get("id"):
+        return str(target["id"])
+    return "apple-m4-max"
 
 
 def _num(value) -> float | None:
@@ -146,6 +153,7 @@ class Index:
                 operator TEXT,
                 dtype TEXT,
                 size TEXT,
+                target_id TEXT,
                 model TEXT,
                 preset TEXT,
                 switch_delta_json TEXT,
@@ -216,7 +224,7 @@ class Index:
             );
             CREATE INDEX IF NOT EXISTS runs_experiment ON runs(experiment_id);
             CREATE INDEX IF NOT EXISTS runs_arm ON runs(arm_id);
-            CREATE INDEX IF NOT EXISTS runs_task ON runs(task);
+            CREATE INDEX IF NOT EXISTS runs_target ON runs(target_id);
             CREATE INDEX IF NOT EXISTS runs_status ON runs(status);
             CREATE INDEX IF NOT EXISTS runs_started ON runs(started_at);
             CREATE INDEX IF NOT EXISTS runs_binding ON runs(binding);
@@ -766,16 +774,16 @@ class Index:
         self.conn.execute(
             """
             INSERT INTO runs (
-                run_id, experiment_id, arm_id, trial, kind, task, operator, dtype, size, model, preset,
+                run_id, experiment_id, arm_id, trial, kind, task, operator, dtype, size, target_id, model, preset,
                 switch_delta_json, contract, status, phase, stop_reason, started_at, updated_at,
                 spent_usd, spent_max_usd, budget_usd, granted_budget_usd, publication, published_speedup,
                 naive_speedup, rounds, evaluations, inflight_label, pid, source, binding,
                 fp_state, fp_result, fp_config, fp_confirm, fp_extra, row_json
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(run_id) DO UPDATE SET
                 experiment_id = excluded.experiment_id, arm_id = excluded.arm_id, trial = excluded.trial,
                 kind = excluded.kind, task = excluded.task, operator = excluded.operator, dtype = excluded.dtype,
-                size = excluded.size, model = excluded.model, preset = excluded.preset,
+                size = excluded.size, target_id = excluded.target_id, model = excluded.model, preset = excluded.preset,
                 switch_delta_json = excluded.switch_delta_json, contract = excluded.contract,
                 status = excluded.status, phase = excluded.phase, stop_reason = excluded.stop_reason,
                 started_at = excluded.started_at, updated_at = excluded.updated_at,
@@ -790,7 +798,7 @@ class Index:
             """,
             (
                 run_id, experiment_id, arm_id, trial, kind, row.get("task") or "", operator_name(row.get("task")),
-                row.get("dtype") or "", (config or {}).get("size") or "", model or "", (config or {}).get("preset") or "",
+                row.get("dtype") or "", (config or {}).get("size") or "", _target_id(config), model or "", (config or {}).get("preset") or "",
                 json.dumps(delta, sort_keys=True), "", row.get("status"), row.get("phase") or "", row.get("stop_reason") or "",
                 row.get("started_at"), _num((row.get("state") or {}).get("updated_at")),
                 spent, spent_max, _num(row.get("disk_budget_usd")), _num(row.get("budget_usd")),

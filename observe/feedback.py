@@ -162,12 +162,11 @@ def _report_brief(doc: dict | None, source: str) -> dict | None:
 
 
 def _calibration() -> dict | None:
-    path = Path(__file__).resolve().parent.parent / "runs" / "calibration.json"
-    if not path.is_file():
-        return None
+    from tcenv.target import TargetError, read_calibration
+
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        doc, _path, _source = read_calibration()
+    except (OSError, json.JSONDecodeError, TargetError):
         return None
     if not isinstance(doc, dict):
         return None
@@ -176,8 +175,8 @@ def _calibration() -> dict | None:
         "fp16": peaks.get("fp16"),
         "bf16": peaks.get("bf16"),
         "fp32": peaks.get("fp32"),
-        "read_gbps": (doc.get("bandwidth_gbps") or {}).get("read") if isinstance(doc.get("bandwidth_gbps"), dict) else None,
-        "copy_gbps": (doc.get("bandwidth_gbps") or {}).get("copy") if isinstance(doc.get("bandwidth_gbps"), dict) else None,
+        "read_gbps": doc.get("read_gbps"),
+        "copy_gbps": doc.get("copy_gbps"),
     }
 
 

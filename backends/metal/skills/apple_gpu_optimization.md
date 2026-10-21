@@ -1,7 +1,6 @@
-# Apple GPU optimization principles (M4 Max, Apple9 family)
+# Apple GPU optimization principles
 
-General principles for writing fast Metal kernels, written for an engineer who knows CUDA/Triton. Numbers marked *measured* were
-obtained on this very machine with the harness (`tcenv calibrate`). Where Apple differs from NVIDIA this says so.
+General principles for writing fast Metal kernels, written for an engineer who knows CUDA/Triton. Peaks for the chip you are on are in `device.md` in the working directory, and on the scorecard roofline. Where Apple differs from NVIDIA this says so.
 
 ## Machine model
 Keywords: simd width threadgroup size registers occupancy unified memory slc cache bandwidth peak
@@ -13,8 +12,7 @@ Keywords: simd width threadgroup size registers occupancy unified memory slc cac
   the launch's threads per TG the contract is infeasible and the harness reports an ABI error.
 - Unified memory with a large system-level cache: small working sets run out of cache, so the harness rotates over several buffer sets and
   reports bandwidth against the *DRAM* roofline.
-- *Measured*: peak read bandwidth ~527 GB/s, copy (read+write) ~449 GB/s, fp16/bf16 matrix throughput of the vendor GEMM ~14.8 TFLOP/s, fp32 ~12.8.
-  A naive scalar-FMA GEMM reaches ~5.5 TFLOP/s; `simdgroup_matrix` is required to get close to the matrix peak.
+- Peaks (read bandwidth, copy bandwidth, vendor GEMM by dtype, scalar FMA) are measured per chip. Read `device.md` and the scorecard. `simdgroup_matrix` is what gets close to the matrix peak; a scalar-FMA GEMM does not.
 - fp16 and bf16 are both native storage types; do arithmetic in `float` unless you have a reason not to (half math has no throughput benefit for
   most kernels here and loses accuracy).
 

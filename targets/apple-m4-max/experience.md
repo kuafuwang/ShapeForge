@@ -21,7 +21,7 @@ Confidence: verified
 Keywords: launch contract grid threads flash attention tile choose variant
 Confidence: verified
 观察: 同一道题、同一颗核的写法、同一个模型与预算，只把启动契约从 64x32t256 换成 32x16t128，确认加速比从 0.610 升到 0.970。
-来源: `runs/p1/fa_64x32t256/result.json`、`runs/p1/fa_32x16t128/result.json`
+来源: `runs/apple-m4-max/p1/fa_64x32t256/result.json`、`runs/apple-m4-max/p1/fa_32x16t128/result.json`
 本机实测: 两次独立搜索的确认值，1.59 倍相对差。
 边界: 这是两次独立随机搜索的对照，不是配对实验；换题或换 shape 结论可能反过来。
 反例: 大 tile 在更长的序列上通常更好，因为每次加载复用得更多。
@@ -31,7 +31,7 @@ Confidence: verified
 Keywords: elementwise reduction bandwidth roof saturated relu silu softmax rmsnorm
 Confidence: verified
 观察: 一元逐元素与归约类题目的自研核基本在 0.95–1.03 倍之间，再改也挤不出空间。
-来源: `runs/suite_full/*_fp16/result.json`
+来源: `runs/apple-m4-max/suite_full/*_fp16/result.json`
 本机实测: relu 0.971、silu 0.968、sigmoid 0.951、swiglu 0.989、rmsnorm 0.995、softmax 0.974、reduction_sum 0.974、gemv 1.006、rope 1.025。
 边界: fp16 paper 尺寸；换成小尺寸时启动开销占比上升，结论会变。
 反例: 把相邻的两三个算子融进一段（省掉一遍读写）会把屋顶本身挪走，这时仍有空间。
@@ -41,7 +41,7 @@ Confidence: verified
 Keywords: fused operator mamba scan library gap mlx half compile opportunity
 Confidence: verified
 观察: 逐元素之外的融合算子，如果现成库没有为这个 shape 调过，自研能明显超过它。
-来源: `runs/p1/mamba2/result.json`
+来源: `runs/apple-m4-max/p1/mamba2/result.json`
 本机实测: mamba2_chunk_scan fp16 确认 1.459 倍（对 `mlx_half_compile` 183.19 µs，候选 125.53 µs），对原版 `mlx` 498.92 µs 约 3.97 倍。
 边界: 同一批 shape 与 dtype；库更新之后要重测。
 反例: 逐元素饱和题没有这种空间（见上一条）。
@@ -51,7 +51,7 @@ Confidence: verified
 Keywords: conv2d winograd algorithm library faster than roofline conv
 Confidence: verified
 观察: torch-mps 的 conv2d 比按直接卷积算出的 roofline 下界还快约 17%，System Trace 显示它跑的是 `ndArrayConvWinogradBatched`；在直接卷积这一层做微调打不过它。
-来源: `docs/conv2d约束排查.md`、`runs/p1/conv2d_paper/candidates/005_r2.p2/report.json`
+来源: `docs/conv2d约束排查.md`、`runs/apple-m4-max/p1/conv2d_paper/candidates/005_r2.p2/report.json`
 本机实测: 候选 951.9 µs，torch-mps 773.5–775.4 µs，直接卷积下界 931.8 µs。
 边界: paper 尺寸、fp16；下界是按直接卷积的乘加数算的，换算法后这个数不再是天花板。
 反例: Winograd 在输入含 NaN 或无穷大时与「逐抽头相加」的参考不一致，数值用例会判错——这是题目要求的，不是缺陷。
@@ -71,7 +71,7 @@ Confidence: verified
 Keywords: truncation retry reasoning effort low max tokens empty reply
 Confidence: verified
 观察: 回复被 `max_tokens` 截断且没有内核时，把重试的推理强度从 high 降到 low，二次截断变少、交出内核变多、单价更低。
-来源: `runs/truncation_replay/REPORT.md`
+来源: `runs/apple-m4-max/truncation_replay/REPORT.md`
 本机实测: `no_reasoning`（当时仍是 high）20 次里 14 次再截断、4 颗核；`low_effort` 10 次、6 颗核，均价 $0.0474 对 $0.0490。
 边界: deepseek-flash、48000 token 上限。换模型要重测。
 反例: 换到本来就少思考的模型时这条不适用。

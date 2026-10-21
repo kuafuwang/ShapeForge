@@ -1,0 +1,5 @@
+schema_version = 1
+id = "metal"
+language = "msl"
+file_ext = ".metal"
+runtime = "metal"

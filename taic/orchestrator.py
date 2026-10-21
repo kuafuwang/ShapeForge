@@ -244,6 +244,8 @@ class RunResult:
     search_seed_speedup: float | None = None  # that kernel's speedup as measured during the search
     confirm_winner_label: str | None = None  # the kernel the fresh-seed remeasure kept; None when confirmation did not run
     confirmation_source_sha256: str | None = None  # sha256 of the confirmed winner's kernel text; None when confirmation did not bind a source
+    target_id: str = ""
+    backend: str = ""
 
 
 # 源码的内容身份：评测缓存、复测去重、profiler 缓存都用它。同一份文本不会被当成两个内核。
@@ -347,10 +349,21 @@ class Orchestrator:
         committees: list | None = None,
         agent_runner: Callable[..., Any] | None = None,
         external_roots: list[Path] | None = None,
+        target_id: str = "apple-m4-max",
+        from_catalog: bool = False,
     ) -> None:
         """``resuming``: the directory already holds a run (see ``taic.resume``); nothing in it is rewritten until ``restore()`` has loaded it.
         ``committees``: exactly first and second. Omitted means two committees that copy ``llm_cfg``. There is no single-conversation mode."""
         self.task = get_task(task_name, dtype, size)
+        from dataclasses import replace
+        from tcenv.target import TargetError, require_active
+
+        try:
+            self.target = require_active(target_id)
+        except TargetError as e:
+            raise RunStartError(str(e)) from e
+        self.target_id = self.target.id
+        self.task.contract = replace(self.task.contract, gpu=self.target.display_name)
         self.task_name, self.dtype, self.size = task_name, dtype, size
         self.cfg, self.search = llm_cfg, search
         try:
@@ -359,10 +372,11 @@ class Orchestrator:
             raise RunStartError(str(e)) from e
         self._committee_name = self.committees[0].name
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        self.run_dir = Path(run_dir) if run_dir else REPO_ROOT / "runs" / f"{stamp}_{task_name}_{dtype}_{llm_cfg.model}"
+        self.run_dir = Path(run_dir) if run_dir else REPO_ROOT / "runs" / self.target_id / f"{stamp}_{task_name}_{dtype}_{llm_cfg.model}"
         self.log = log
-        self.system = prompts.system_prompt(self.task, use_tools=llm_cfg.use_tools, profiler_evidence=search.profile_poor, hw_feedback=search.hw_feedback)
+        self.system = prompts.system_prompt(self.task, use_tools=llm_cfg.use_tools, profiler_evidence=search.profile_poor, hw_feedback=search.hw_feedback, target_id=self.target_id)
         self.from_run = Path(from_run) if from_run else None
+        self.from_catalog = from_catalog
         # 新运行不接管已经有文件的目录。续跑（resuming=True）才读既有目录，并且不改写 run_config.json、不重新抽 run_seed。
         if not resuming and self.run_dir.exists() and any(self.run_dir.iterdir()):
             raise RunStartError(f"refused: {self.run_dir} already holds files; resume it with `taic resume` or choose a new directory")
@@ -518,7 +532,12 @@ class Orchestrator:
         triton_text = self.task.triton_source
         commit, dirty = _git_identity(REPO_ROOT)
         body = {
-                "schema_version": 1,
+                "schema_version": 2,
+                "target": {
+                    "id": self.target_id,
+                    "backend": self.target.backend,
+                    "display_name": self.target.display_name,
+                },
                 "task": self.task_name, "dtype": self.dtype, "size": self.size, "seed": self.seed, "run_seed": self.run_seed,
                 "llm": llm, "search": asdict(self.search),
                 "system_prompt_sha1": hashlib.sha1(self.system.encode()).hexdigest(),
@@ -550,12 +569,14 @@ class Orchestrator:
         A resume reads this directory and does not copy the repository again. The skill file
         stays where hmz loads it; only its hash is recorded.
         """
-        from .kernel_agent import EXPERIENCE, FLOW, SKILL
+        from .kernel_agent import FLOW
+        from .target import skill_path
 
         dest = self.run_dir / "agent_guidance"
         dest.mkdir(parents=True, exist_ok=True)
         hashes = {}
-        for name, src in (("experience.md", EXPERIENCE), ("msl_reference.md", SKILL)):
+        for name, key in (("device.md", "device"), ("experience.md", "experience"), ("msl_reference.md", "msl_reference")):
+            src = skill_path(key, self.target_id)
             data = src.read_bytes() if src.is_file() else b""
             (dest / name).write_bytes(data)
             hashes[name] = hashlib.sha256(data).hexdigest()
@@ -625,6 +646,8 @@ class Orchestrator:
                 "task": self.task_name,
                 "dtype": self.dtype,
                 "size": self.size,
+                "target_id": self.target_id,
+                "backend": self.target.backend,
                 "model": self.llm.cfg.model,
                 "committee": self._committee_name,
                 "round": self._round,
@@ -759,6 +782,7 @@ class Orchestrator:
                     progress_path=self.run_dir / "eval_progress.json",
                     **({"fast_bench": True} if self.search.fast_bench and not self.search.correctness_only else {}),
                     **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
+                    target_id=self.target_id,
                 )
                 self.evaluations += 1
             cand.report = rep
@@ -840,6 +864,7 @@ class Orchestrator:
                 self.evaluate_fn, self.task_name, self.dtype, self.size, cand.source, mode="quick", seed=phase_seed, reps=3,
                 progress_path=self.run_dir / "eval_progress.json",
                 **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
+                target_id=self.target_id,
             )
         self.evaluations += 1
         if rep.status == "ok":
@@ -905,6 +930,7 @@ class Orchestrator:
                 self.evaluate_fn, self.task_name, self.dtype, self.size, source, mode="quick", seed=None, reps=3,
                 progress_path=self.run_dir / "eval_progress.json",
                 **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
+                target_id=self.target_id,
             )
             # 记入与 _eval 相同的 hangs。本函数不抛 StopRun，这段反馈仍会交回模型。
             if rep.status == "timeout":
@@ -1145,8 +1171,19 @@ class Orchestrator:
     # --from 只在 best.metal 存在、且 result.json 里的题和这次一致时才把源码交回来。对不上或没有文件就返回 None，调用方从头写。
     def _prior_kernel_text(self) -> str | None:
         """The previous run's ``best.metal`` when it belongs to this task, else None. The caller re-evaluates it."""
+        if self.from_catalog:
+            from .kernel_catalog import catalog_dir
+
+            metal = catalog_dir(self.target_id, self.task_name, self.dtype, self.size) / "best.metal"
+            if not metal.is_file():
+                self.log(f"-- --from @catalog: no kernel for {self.target_id} {self.task_name} {self.dtype} {self.size}")
+                return None
+            return metal.read_text(encoding="utf-8")
         root = self.from_run
         if root is None:
+            return None
+        if not self._same_target(root):
+            self.log(f"-- --from {root} is not target {self.target_id}; writing the first version from scratch")
             return None
         metal = root / "best.metal"
         if not metal.is_file():
@@ -1233,15 +1270,15 @@ class Orchestrator:
         for root in roots:
             if not root.is_dir():
                 continue
-            for path in root.glob("*/candidates/*/kernel.metal"):
-                if self.run_dir in path.parents:
+            for path in list(root.glob("*/candidates/*/kernel.metal")) + list(root.glob("*/*/candidates/*/kernel.metal")):
+                if self.run_dir in path.parents or not self._same_target(path.parents[2]):
                     continue
                 try:
                     texts.add(path.read_text())
                 except OSError:
                     continue
-            for path in root.glob("*/best.metal"):
-                if self.run_dir in path.parents:
+            for path in list(root.glob("*/best.metal")) + list(root.glob("*/*/best.metal")):
+                if self.run_dir in path.parents or not self._same_target(path.parent):
                     continue
                 if from_path is not None and path.resolve() == from_path.resolve():
                     continue
@@ -1249,8 +1286,29 @@ class Orchestrator:
                     texts.add(path.read_text())
                 except OSError:
                     continue
+        catalog = REPO_ROOT / "kernels" / self.target_id
+        if self._external_roots is None and catalog.is_dir():
+            for path in catalog.glob("*/*/*/best.metal"):
+                try:
+                    texts.add(path.read_text(encoding="utf-8"))
+                except OSError:
+                    continue
         self._external_texts = texts
         return texts
+
+    def _same_target(self, run_dir: Path) -> bool:
+        cfg = run_dir / "run_config.json"
+        if cfg.is_file():
+            try:
+                doc = json.loads(cfg.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return False
+            target = doc.get("target") if isinstance(doc, dict) else None
+            recorded = target.get("id") if isinstance(target, dict) else None
+            if recorded:
+                return recorded == self.target_id
+            return self.target_id == "apple-m4-max"
+        return self.target_id == "apple-m4-max" or run_dir.parent.name == self.target_id
 
     def _guard_shape(self) -> None:
         """Flame chase is one session a round. The old parallel shape is refused before any session starts."""
@@ -1462,6 +1520,8 @@ class Orchestrator:
             "task": self.task_name,
             "dtype": self.dtype,
             "size": self.size,
+            "target_id": self.target_id,
+            "backend": self.target.backend,
             "label": tag,
             "round": round_of(tag),
             "committee": self._committee_name,
@@ -1598,6 +1658,7 @@ class Orchestrator:
             require_contract_launch=self.search.require_contract_launch,
             min_improvement=self.search.min_improvement, noise_z=self.search.noise_z, seedless=seedless,
             peer_tips=tips, label=label, work_dir=str(Path(work).resolve()), guidance_dir=guidance,
+            target_id=self.target_id,
         )
 
     async def _initial_generation(self) -> None:
@@ -1738,6 +1799,7 @@ class Orchestrator:
                     self.evaluate_fn, self.task_name, self.dtype, self.size, win.source, mode="quick", seed=phase_seed, reps=1,
                     cases=("domain",), progress_path=self.run_dir / "eval_progress.json",
                     **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
+                    target_id=self.target_id,
                 )
             if rep.status == "timeout":
                 self.hangs += 1
@@ -1786,6 +1848,7 @@ class Orchestrator:
                             self.evaluate_fn, self.task_name, self.dtype, self.size, c.source, mode="full", seed=phase_seed, reps=self.search.eval_reps * 2,
                             progress_path=self.run_dir / "eval_progress.json",
                             **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
+                            target_id=self.target_id,
                         )
                     seeds.append(phase_seed if phase_seed is not None else rep.seed)
                     if batch == 0:
@@ -1909,6 +1972,40 @@ class Orchestrator:
         except Exception as e:  # noqa: BLE001 - profiling is a bonus, never a failure
             (self.run_dir / "xctrace_profile.txt").write_text(f"profiling failed: {type(e).__name__}: {e}")
 
+    def _archive_if_confirmed(self, result_doc: dict) -> None:
+        """Copy a kernel into the catalog only after the publication gate binds it."""
+        from experiments.common import conclusion_of_run
+
+        verdict = conclusion_of_run(self.run_dir, result_doc)
+        if verdict.get("publication") != "confirmed" or self.best is None or not self.best.source:
+            return
+        from .kernel_catalog import archive_confirmed
+
+        report = {}
+        path = self.run_dir / "confirm_report.json"
+        if path.is_file():
+            try:
+                report = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                report = {}
+        archive_confirmed(
+            target_id=self.target_id,
+            backend=self.target.backend,
+            task=self.task_name,
+            dtype=self.dtype,
+            size=self.size,
+            source=self.best.source,
+            speedup=float(verdict.get("speedup") or 0),
+            run_id=self.run_dir.name,
+            label=self.best.label,
+            device_name=str(report.get("device_name") or ""),
+            gpu_family=str(report.get("gpu_family") or ""),
+            file_ext=self.target.file_ext or ".metal",
+            confirmed_values=list(result_doc.get("confirmed_values") or []),
+            candidate_us=result_doc.get("candidate_us"),
+            baseline_us=result_doc.get("baseline_us") or {},
+        )
+
     # 把优胜者源码和账本写成 result.json。有 confirmed_speedup 时对外强调复测值，否则用搜索时的 best_speedup。中途加过的预算在 budget_events 里，结束时的上限可以高于开跑时的 initial_budget_usd。
     def _finish(self, res: RunResult) -> RunResult:
         res.spent_usd = self.ledger.total_usd
@@ -1931,10 +2028,12 @@ class Orchestrator:
         if self.best:
             res.best_label, res.best_speedup = self.best.label, self.best.speedup
             (self.run_dir / "best.metal").write_text(self.best.source)
-        # ledger.json 只是账本的检查点。已记账的请求在 transcript.jsonl 里，这里不改写那份记录。
+        res.target_id = self.target_id
+        res.backend = self.target.backend
         result_doc = asdict(res)
         result_doc["schema_version"] = RESULT_SCHEMA_VERSION
         control.write_json_atomic(self.run_dir / "result.json", result_doc)
+        self._archive_if_confirmed(result_doc)
         control.write_json_atomic(self.run_dir / "ledger.json", {"schema_version": LEDGER_SCHEMA_VERSION, "summary": self.ledger.summary(), "requests": self.ledger.requests})
         self._confirmations = res.confirmations
         self._publish_state("done", stop_reason=res.stop_reason)

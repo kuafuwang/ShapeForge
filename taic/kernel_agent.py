@@ -21,10 +21,11 @@ from pathlib import Path
 from .llm import LLMError
 from .parse import extract_metal
 
+from .target import skill_path
+
 FLOW = Path(__file__).resolve().parent / "flows" / "kernel_once"
-SKILL = Path(__file__).resolve().parent / "skills" / "msl_reference.md"
-# 实测过的经验条目（KernelWiki 的经验层）。和 msl_reference 一起放进工作区，只读。
-EXPERIENCE = Path(__file__).resolve().parent / "skills" / "wiki" / "experience.md"
+SKILL = skill_path("msl_reference")
+EXPERIENCE = skill_path("experience")
 _KERNEL = re.compile(r"\bkernel\s+void\s+(\w+)\b")
 _USAGE = re.compile(r"([A-Za-z_]+)=(-?\d+(?:\.\d+)?)")
 _NAME_PART = re.compile(r"[^A-Za-z0-9._-]+")
@@ -82,6 +83,7 @@ class SessionBrief:
     label: str = "init"
     work_dir: str = ""
     guidance_dir: str = ""
+    target_id: str = "apple-m4-max"
 
 
 @dataclass
@@ -243,6 +245,7 @@ def _check_command(brief: SessionBrief, mode: str) -> str:
         "--dtype", _shell(brief.dtype),
         "--size", _shell(brief.size),
         "--quick" if mode == "quick" else "--timed",
+        "--target", _shell(brief.target_id),
     ]
     if mode == "timed":
         parts.append("--reps")
@@ -360,7 +363,7 @@ def render_contract(brief: SessionBrief) -> str:
         "```",
         _feedback_check_command(brief),
         "```",
-        "比较两版快慢或做消融之前，先读技能 `taic-tools` 的「测量」节。动手前先查 `runs/calibration.json`、仓库 `docs/`、本运行 `agent_work/*/NOTES.md`。",
+        "比较两版快慢或做消融之前，先读技能 `taic-tools` 的「测量」节。动手前先读本目录的 `device.md` 和 `experience.md`。再查仓库 `docs/`、本运行 `agent_work/*/NOTES.md`。",
     ]
     if not brief.seedless:
         lines += ["", "# 当前现场", f"种子在 `kernel.metal`。交卷写 `{submit}`，不要改种子文件。"]
@@ -430,12 +433,19 @@ def _guidance_source(brief: SessionBrief, name: str, fallback: Path) -> Path:
 
 
 def stage_guidance(work: Path, brief: SessionBrief) -> None:
-    """Copy ``experience.md`` and ``msl_reference.md`` into the session directory."""
+    """Copy the device note, experience, and the language reference. A frozen snapshot wins when the run has one."""
     work.mkdir(parents=True, exist_ok=True)
-    for name, fallback in (("msl_reference.md", SKILL), ("experience.md", EXPERIENCE)):
-        src = _guidance_source(brief, name, fallback)
-        if src.is_file():
-            shutil.copyfile(src, work / name)
+    mapping = (
+        ("device.md", skill_path("device", brief.target_id)),
+        ("msl_reference.md", skill_path("msl_reference", brief.target_id)),
+        ("experience.md", skill_path("experience", brief.target_id)),
+    )
+    snap = Path(brief.guidance_dir) if brief.guidance_dir else None
+    for name, src in mapping:
+        frozen = snap / name if snap is not None else None
+        chosen = frozen if frozen is not None and frozen.is_file() else src
+        if chosen.is_file():
+            shutil.copyfile(chosen, work / name)
 
 
 def run_kernel_agent(

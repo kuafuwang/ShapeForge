@@ -11,7 +11,7 @@ These are the commands in `TASK.md`. You run them with the tools you already hav
 
 `read` the file `msl_reference.md` in the working directory. That file is the Metal reference for this compiler. Do not invent an API that is not in it.
 
-Apple's own PDFs are in the repository named by the eval command's `--directory`, under `taic/skills/wiki/`. `INDEX.md` there says which file answers which question. The shading-language specification is the language. The feature-set tables say what Apple9 (this M4) actually has. A number measured on this machine outranks both PDFs. A blog does not.
+Apple's own PDFs are in the repository named by the eval command's `--directory`, under `backends/metal/wiki/`. `INDEX.md` there says which file answers which question. The shading-language specification is the language. The feature-set tables say what each Apple GPU family has. A number measured on this chip, in `device.md` or on the scorecard, outranks both PDFs. A blog does not.
 
 ## Checks
 

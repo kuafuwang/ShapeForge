@@ -10,16 +10,16 @@ import os
 import time
 from pathlib import Path
 
-REPORT_SCHEMA_VERSION = 1
-REQUEST_SCHEMA_VERSION = 3  # 3 adds optional require_contract_launch. Version 2 requests, which omit it, still load.
+REPORT_SCHEMA_VERSION = 2
+REQUEST_SCHEMA_VERSION = 4  # 4 requires target_id.
 
 # ``eligible`` is computed from ``status`` and written for older readers. It is not a stored field.
 REPORT_DERIVED = frozenset({"eligible"})
 REQUEST_FIELDS = frozenset({
     "schema_version", "task", "dtype", "size", "kernel_path", "mode", "seed", "reps", "cases", "out", "heartbeat", "stage",
-    "fast_bench", "require_contract_launch",
+    "fast_bench", "require_contract_launch", "target_id",
 })
-REQUEST_REQUIRED = frozenset({"task", "dtype", "size", "kernel_path", "mode", "seed", "reps", "out"})
+REQUEST_REQUIRED = frozenset({"task", "dtype", "size", "kernel_path", "mode", "seed", "reps", "out", "target_id"})
 
 
 class SchemaError(ValueError):

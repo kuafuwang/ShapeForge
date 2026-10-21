@@ -11,7 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
-SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+from tcenv.target import DEFAULT_TARGET_ID
+
+from .target import skill_text
+
+SKILLS_DIR = Path(__file__).resolve().parents[1] / "backends" / "metal" / "skills"
 _WORD = re.compile(r"[a-z0-9_]+")
 
 
@@ -41,19 +45,15 @@ def _sections(raw: str, doc_name: str) -> list["Section"]:
 class SkillIndex:
     """Keyword retrieval over the sections of a skill document (the 'PTX ISA retrieval' analogue)."""
 
-    def __init__(self, doc_name: str = "msl_reference", extra: tuple[str, ...] = ()) -> None:
-        """``extra`` are further skill documents (paths under ``taic/skills``) whose sections join the index.
-
-        The wiki's experience entries ride along this way: they are recalled by the same keyword lookup as the
-        MSL reference, and a run that does not want them keeps the byte-identical prompt by passing no ``extra``.
-        """
+    def __init__(self, doc_name: str = "msl_reference", extra: tuple[str, ...] = (), target_id: str | None = None) -> None:
+        """``extra`` are further documents (``experience`` lives on the target; other names are backend skills)."""
         self.doc = doc_name
-        raw = (SKILLS_DIR / f"{doc_name}.md").read_text()
-        # 二级标题之前的前言不参与检索，只在无工具模式的全文里保留。
+        self.target_id = target_id or DEFAULT_TARGET_ID
+        raw = skill_text(doc_name, self.target_id)
         self.preamble = raw.split("\n## ", 1)[0]
         self.sections: list[Section] = _sections(raw, doc_name)
         for name in extra:
-            self.sections.extend(_sections((SKILLS_DIR / f"{name}.md").read_text(), name))
+            self.sections.extend(_sections(skill_text(name, self.target_id), name))
 
     # 开工具时系统提示里只有这份目录，逼模型按主题来查，而不是凭记忆编 API。
     def outline(self) -> str:

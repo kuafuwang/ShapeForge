@@ -1,4 +1,4 @@
-# Metal Shading Language reference (compiler: MSL 4.0 on an Apple M4 Max, Apple9 GPU family)
+# Metal Shading Language reference (MSL, Apple GPU)
 
 This is the equivalent of the PTX ISA documentation: facts about the target language that you need to
 write correct, fast kernels. Every fenced block tagged `metal` is a complete kernel that was compiled with
