@@ -18,6 +18,7 @@ budget_usd = 50.0                # debug ceiling per kernel while measuring kimi
 kernel_agent = "pi"              # hmz + pi writes every kernel. One session a round.
 relay_budget_usd = 2.0           # dollar cap of one session, turned into output tokens at that model's price
 turn_minutes = 25                # main turn inside kernel_once. The process is killed later, only if hmz does not exit.
+peer_tips = true                 # this run's recent pitfalls go into the next TASK.md. --no-peer-tips turns that off. Tips never cross runs.
 branches = 1                     # one session a round. Any other value is refused at start.
 init_samples = 1                 # one initial draft. A failure hands the next draft to the other committee.
 max_rounds = 12                  # hard cap on sessions after the initial draft

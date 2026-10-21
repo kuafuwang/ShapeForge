@@ -290,7 +290,7 @@ def test_a_named_run_without_its_own_model_does_not_require_a_null_model():
         "function newestFirst", "newestFirst(doc.candidates)", "newestFirst(doc.budget_events)", "newestFirst(handoff.rounds)", "newestFirst(doc.plan_outcomes)", "newestFirst(doc.by_month)", "newestFirst(doc.feature_grid)",
         "安检", "阶段", "代码", 'class="excerpt"', "--blue: #0a66c2", "@keyframes breathe", 'class="breathe"',
         'id="workspace"', 'id="side-toggle"', 'id="runs-toggle"', 'id="detail-toggle"', 'id="view-experiments"', 'id="view-compare"', 'id="view-detail"',
-        "<th>实验</th><th>种类</th><th>操作</th>",
+        "<th>目录</th><th>种类</th><th>操作</th>",
         "runs-table-scroll", "detail-scroll", "position: sticky", 'id="budget-toggle"',
         "delete-reason", "/api/records/delete", "删除记录只追加",
         'class="note-list"', ".note-list { max-height: 12rem; overflow: auto;",

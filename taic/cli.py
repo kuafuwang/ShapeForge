@@ -82,7 +82,7 @@ SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "ma
                  "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
                  "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck",
                  "plan_ledger", "diversity_archive", "fast_bench", "experience_index", "kernel_agent", "require_contract_launch",
-                 "relay_budget_usd", "turn_minutes")
+                 "relay_budget_usd", "turn_minutes", "peer_tips")
 LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry",
               "truncation_retry_effort", "plan_reasoning_effort", "patch_reasoning_effort")
 
@@ -328,6 +328,7 @@ _SEARCH_SWITCHES = (
     ("target_note", "when a baseline is faster than the roofline bound, tell the model and give that baseline's time as the target"),
     ("rich_history", "a failed branch's history line names the failure instead of one generic sentence"),
     ("status_lines", "tell the model the noise floor and the budget, round and patience that remain"),
+    ("peer_tips", "put this run's recent peer tips into the next TASK.md; tips never cross runs"),
 )
 
 
