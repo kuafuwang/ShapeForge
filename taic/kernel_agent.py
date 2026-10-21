@@ -267,6 +267,7 @@ def render_contract(brief: SessionBrief, kernel_path: Path) -> str:
         timed,
         "```",
         "命令会把一行结果追加到本目录的 `self_checks.jsonl`。出现过 timeout 或 crash 之后，再跑 `--timed` 会被拒绝。",
+        "交卷前请在 `--timed` 后面加 `--validate` 跑最后一次：那一遍会开插桩校验（抓越界和竞争），外层也会做同一件事，早发现能省一场会话。",
         "在本目录运行。GPU 锁是机器上那一把，不要改锁路径，也不要自己另写一把。",
         "一个不返回的核会冻住显示器。",
         "",

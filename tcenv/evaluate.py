@@ -126,14 +126,19 @@ def evaluate_in_process(
     cases: tuple[str, ...] | None = None,
     fast_bench: bool = False,
     require_contract_launch: bool = False,
+    validate: bool = False,
 ) -> EvalReport:
-    """Untimed stages hold the machine-wide GPU lock shared, the benchmark holds it exclusively (tcenv.gpulock)."""
+    """Untimed stages hold the machine-wide GPU lock shared, the benchmark holds it exclusively (tcenv.gpulock).
+
+    ``validate`` asks for the instrumented shader-validation pass before the timed one. ``mode="full"`` always
+    runs it; ``mode="timed"`` runs it only when asked, so a self-check can pay for it once on the final version.
+    """
     from .gpulock import gpu_lock
 
     with gpu_lock(f"{mode} evaluation of {task_name} {dtype} {size}", exclusive=False):
         return _evaluate_in_process(
             task_name, dtype, size, kernel_source, mode=mode, seed=seed, reps=reps, cases=cases,
-            fast_bench=fast_bench, require_contract_launch=require_contract_launch,
+            fast_bench=fast_bench, require_contract_launch=require_contract_launch, validate=validate,
         )
 
 
@@ -184,6 +189,7 @@ def _evaluate_in_process(
     cases: tuple[str, ...] | None,
     fast_bench: bool = False,
     require_contract_launch: bool = False,
+    validate: bool = False,
 ) -> EvalReport:
     import torch  # noqa: F401  (imported early so failures are reported as crashes of the worker)
 
@@ -815,12 +821,16 @@ def evaluate(
     fast_bench: bool = False,
     require_contract_launch: bool = False,
     self_check_dir: Path | None = None,
+    validate: bool = False,
 ) -> EvalReport:
     """Evaluate ``kernel_source`` on ``task``. ``mode``: "quick" (compile+ABI+safety+correctness),
     "timed" (those, plus the benchmark, without shader validation), or "full" (validation and the benchmark).
 
     ``self_check_dir`` is set for a coding agent's ``--timed`` run. A previous timeout or crash in that
     directory is refused before any GPU work, and every timed result is appended to ``self_checks.jsonl``.
+
+    ``validate`` asks a ``timed`` run for the instrumented shader-validation pass first, so a self-check can pay
+    for it once on the version it intends to hand back. ``full`` always validates; ``quick`` never does.
     """
     seed = int(seed if seed is not None else secrets.randbits(48))
     t0 = time.perf_counter()
@@ -885,8 +895,8 @@ def evaluate(
         kp.parent.mkdir(parents=True, exist_ok=True)
         kp.write_text(kernel_source)
         deadline = deadline_for_source(task, dtype, size, kernel_source)
-        if mode == "full":
-            # 1) shader-validation pass: tight allocations, one case. Also yields fast compile/ABI feedback.
+        def _validation_pass() -> tuple[EvalReport | None, bool]:
+            """Run the instrumented pass. Returns (a failure to stop on, whether the only complaint was the static limit)."""
             # 校验子进程在 bench 之前：打开会插桩访存和 barrier 的 shader validation，期限是这次 command buffer 时限的两倍。
             # 单核仍是 4 秒。流水线是「每段 2 秒、封顶 8 秒」的两倍。这次不过关就带着它的状态码返回。
             v = _run_worker(task, dtype, size, kp, "validate", seed, reps, timeout or 120.0, validation=True, cases=cases, launch_deadline_s=2 * deadline, progress_path=progress_path, require_contract_launch=require_contract_launch)
@@ -894,10 +904,16 @@ def evaluate(
             from .abi import only_static_threadgroup_limit
 
             size_only = v.status == "abi_error" and only_static_threadgroup_limit((v.abi or {}).get("violations") or [])
-            if v.status != STATUS_OK and not size_only:
-                v.mode = "full"
-                v.elapsed_s = time.perf_counter() - t0
-                return _checked(v)
+            return (None if (v.status == STATUS_OK or size_only) else v), size_only
+
+        size_only = False
+        if mode == "full" or (mode == "timed" and validate):
+            failed, size_only = _validation_pass()
+            if failed is not None:
+                failed.mode = "full" if mode == "full" else "timed"
+                failed.elapsed_s = time.perf_counter() - t0
+                return _checked(failed)
+        if mode == "full":
             rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch)
             rep.safety = dict(rep.safety or {})
             rep.safety["validation"] = []
@@ -906,9 +922,16 @@ def evaluate(
                 if size_only else "clean"
             )
         elif mode == "timed":
-            # 和 full 同一套计时，不跑着色器校验。校验慢，而且插桩会把线程组内存报成大约两倍。
+            # 和 full 同一套计时。校验只在调用方要求时跑（--timed --validate）：它慢，而且插桩会把线程组内存报成大约两倍。
             rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch)
             rep.mode = "timed"
+            if validate:
+                rep.safety = dict(rep.safety or {})
+                rep.safety["validation"] = []
+                rep.safety["shader_validation"] = (
+                    "skipped: the validation pipeline's threadgroup size is the instrumented figure; the uninstrumented pipeline checked the 32768 B limit"
+                    if size_only else "clean"
+                )
         else:
             rep = _run_worker(task, dtype, size, kp, "quick", seed, reps, timeout or 240.0, validation=False, cases=cases, progress_path=progress_path, launch_deadline_s=deadline, require_contract_launch=require_contract_launch)
         rep.elapsed_s = time.perf_counter() - t0

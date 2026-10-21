@@ -1,8 +1,8 @@
 {
 "_meta": {
-"git_commit": "453efb48fd0352919af7ce12ee2bae9ab49d6f20",
-"reason": "contract teaches premise-checking with probes; scorecard prints measured matrix peaks per operand dtype",
-"recorded_at": "2026-10-21T08:26:07+08:00"
+"git_commit": "3c4ab0cd48cad28aeda49048dcb2bffe94c2fda2",
+"reason": "the task brief tells the coding agent to run --timed --validate on the final version",
+"recorded_at": "2026-10-21T08:53:02+08:00"
 },
 "feedback": {
 "format_feedback_cut|compile_error": "STATUS: compile_error  (stage reached: compile)\nMetal compiler rejected the kernel\n\nMetal compiler errors (line numbers refer to your kernel source):\nkernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n",
@@ -23,57 +23,57 @@
 "each": [
 {
 "label": "0",
-"sha": "74cd1a15444b8ad2978ca3f9a59bb5551ef5c705"
+"sha": "8ef0070cd141dcd56dd13bf7c3027b9d9a34bb53"
 },
 {
 "label": "1",
-"sha": "d39bd271b36a333c23db554ae95d4eca083ff671"
+"sha": "c48885a353c4f69e6bd5b8f6f4bea0c63d5a79c2"
 }
 ],
 "requests": 2,
-"sha": "75e5ba8e5c4853d3199ded6bcd14fe53a4440999"
+"sha": "60131b88d70e5969d4ec5da9a7237c9669ce4386"
 },
 "orchestrator|gemm|plan_mix=1": {
 "each": [
 {
 "label": "0",
-"sha": "4f016e9f05e0ce9aa21d5e217dfe53cd22443478"
+"sha": "42cdfeb9c6edc813218fd22e2ce6836a469d3bcc"
 },
 {
 "label": "1",
-"sha": "81fc124eafe63c806d8f8d2e9133871f2c14c7d2"
+"sha": "d6e2d5aa56c37483e0f0fa0d82747d4b7528df32"
 }
 ],
 "requests": 2,
-"sha": "3d38475166b3e2bdb6d97f13d64457c64be69a4b"
+"sha": "f79e73dba39cd92111a09121608680a1bedd51f8"
 },
 "orchestrator|relu|plan_mix=0": {
 "each": [
 {
 "label": "0",
-"sha": "daebe262e94cebea0da1d8e9500c6eed1900a501"
+"sha": "8cfda2019275eb3b570905585e17deda69151736"
 },
 {
 "label": "1",
-"sha": "e38decc4bf0918b3c5d1c6d5a4391842d2f62d33"
+"sha": "2847a15e49440190c41b782ee0668e1b620cae6e"
 }
 ],
 "requests": 2,
-"sha": "3cb1e4e7ee84f41660391f4dcf8ab83039e2be47"
+"sha": "818d3f7e786078f761a255df085a1c74648c9215"
 },
 "orchestrator|relu|plan_mix=1": {
 "each": [
 {
 "label": "0",
-"sha": "daebe262e94cebea0da1d8e9500c6eed1900a501"
+"sha": "8cfda2019275eb3b570905585e17deda69151736"
 },
 {
 "label": "1",
-"sha": "e38decc4bf0918b3c5d1c6d5a4391842d2f62d33"
+"sha": "2847a15e49440190c41b782ee0668e1b620cae6e"
 }
 ],
 "requests": 2,
-"sha": "3cb1e4e7ee84f41660391f4dcf8ab83039e2be47"
+"sha": "818d3f7e786078f761a255df085a1c74648c9215"
 }
 },
 "outbound": {
