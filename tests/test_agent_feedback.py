@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from taic.agent_feedback import parse_feedback, peer_tips_for
+from taic.agent_feedback import _kinds, parse_feedback, peer_tips_for
 
 
 def _write(path: Path, rows: list[dict], *, broken_at: int | None = None) -> None:
@@ -134,3 +134,38 @@ def test_peer_tips_keep_eight_and_skip_a_broken_middle_line(tmp_path):
     text = peer_tips_for(run)
     assert "r1.p0" not in text and "r2.p0" in text and "r9.p0" in text
     assert text.count("\n") + 1 == 8
+
+
+def test_the_contract_tells_the_agent_to_write_nothing_rather_than_a_placeholder():
+    """An empty section must cost zero tokens: the brief says omit it, not "无" or "（空）".
+
+    Output is billed, and a placeholder also becomes a reviewable claim on the board (7 of 44 pending
+    claims in runs/conv2d-feedback-20261021 were literally "无。"/"（空）").
+    """
+    from pathlib import Path
+
+    from tasks import get_task
+
+    from taic.kernel_agent import SessionBrief, render_contract
+
+    task = get_task("conv2d", "fp16", "small")
+    contract = task.contract
+    brief = SessionBrief(
+        task_name="conv2d", dtype="fp16", size="small", repo=Path("/repo"), label="r1.p0",
+        kernel_name=contract.kernel_name, triton_source=task.triton_source, description=task.description,
+        contract_text=contract.describe(), abi_stub="", rtol=task.rtol, atol_rel=task.atol_rel,
+        min_improvement=1.005, noise_z=2.0,
+    )
+    text = render_contract(brief)
+    assert "没有内容就不要写" in text
+    assert "不要写「无」「（空）」「none」这类占位符" in text
+    assert "整份 `FEEDBACK.md` 都没有内容时，不要创建这个文件" in text
+    # 没有系统建议时连 kind 行都不写；解析侧仍然把缺失视为 none。
+    assert "没有系统层面的建议或求助时，这一行也不要写" in text
+    assert _kinds("## 给下一棒的避坑提示\n- x\n") == "none"
+
+
+def test_a_file_with_only_sections_left_blank_is_not_a_record():
+    """The parser already treats an empty file as nothing; the brief change keeps it from happening at all."""
+    parsed = parse_feedback("", work=None, repo=None)
+    assert parsed["raw"] == "" and parsed["items"] == []
