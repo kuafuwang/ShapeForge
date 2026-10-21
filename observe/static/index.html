@@ -465,6 +465,9 @@ const TERMS = [
   {name: "计时", keys: ["计时", "bench"], text: "在这台机器的 GPU 上量中位时间，再算加速比。搜索过程中的计时偏乐观，对外数字要等确认点。"},
   {name: "ok", keys: ["ok", "状态 ok"], text: "这颗候选通过了安检、编译、签名、内存安全和对答案。表上的加速比来自这次计时。"},
   {name: "unchanged", keys: ["unchanged"], text: "交上来的源码和当前种子逐字相同。外层不把它当成一次新尝试，也不再占用 GPU 重测。"},
+  {name: "种子核", keys: ["种子核", "种子", "seed kernel", "best"], text: "搜索期里当前最好的那一颗核。每场从它开始改；只有比它快过噪声门槛的候选才会换掉它。看到「噪声内没换种子」，说的就是这颗没换。"},
+  {name: "评测种子", keys: ["评测种子", "随机种子", "run_seed", "eval_seed", "seed"], text: "一个整数，决定这次评测用哪一批随机输入。它由运行种子加阶段、标签、源码哈希派生：同一颗核在同一阶段用同一批输入，确认阶段换一批。它和上面的种子核没有关系。"},
+  {name: "搜索期种子与确认胜者", keys: ["search_seed_label", "confirm_winner_label", "确认胜者"], text: "搜索停下时正在改的那颗叫 search_seed_label；搜索结束后把最佳与噪声内的并列者换一批输入重测，活下来的那颗叫 confirm_winner_label。两者可以不是同一颗。"},
   {name: "duplicate", keys: ["duplicate", "external_duplicate"], text: "源码和本场更早的一颗候选相同，或和别的运行里已经交过的核相同。不重复评测。"},
   {name: "timeout", keys: ["timeout"], text: "一次 GPU 启动超时。搜索会因此停下，避免一个不返回的核冻住显示器。"},
   {name: "crash", keys: ["crash"], text: "评测进程崩溃。连续三次会停掉整次搜索。"},
@@ -725,11 +728,18 @@ function renderDetail(doc) {
     ? `<table><thead><tr><th>轮次</th><th>委员会</th><th>模型</th></tr></thead><tbody>${rounds}</tbody></table>`
     : `<p class="muted">${esc(handoff.note || "没有委员会记录")}</p>`;
   const events = newestFirst(doc.budget_events).map((row) => `<tr><td>${esc(row.time || row.t)}</td><td>${esc(row.kind)}</td><td>${esc(row.who)}</td><td>${esc(num(row.old_budget_usd))}</td><td>${esc(num(row.new_budget_usd))}</td><td>${esc(row.note)}</td></tr>`).join("");
-  const candidates = newestFirst(doc.candidates).map((row) => `<tr class="pick${row.label === selectedCandidate ? " on" : ""}" data-label="${esc(row.label)}"><td class="seq"><button type="button" class="quiet seq-open" title="双击查看阶段和代码">${esc(num(row.idx))}</button></td><td>${esc(row.label)}</td><td>${esc(row.status)}</td><td>${esc(row.stage)}</td><td>${esc(num(row.speedup))}</td><td>${esc(marksFor(doc, row.label))}</td><td>${esc(row.message)}</td></tr>`).join("");
+  const candidates = newestFirst(doc.candidates).map((row) => `<tr class="pick${row.label === selectedCandidate ? " on" : ""}" data-label="${esc(row.label)}"><td class="seq"><button type="button" class="quiet seq-open" title="双击查看阶段和代码">${esc(num(row.idx))}</button></td><td>${esc(row.label)}${row.label === seedKernel ? ' <span class="badge">种子核</span>' : ''}</td><td>${esc(row.status)}</td><td>${esc(row.stage)}</td><td>${esc(num(row.speedup))}</td><td>${esc(marksFor(doc, row.label))}</td><td>${esc(row.message)}</td></tr>`).join("");
   const grid = newestFirst(doc.feature_grid).map((cell) => `<tr><td>${esc(cell.label)}</td><td>${esc((cell.signature || []).join(","))}</td><td>${esc(num(cell.speedup))}</td><td>${cell.published ? "发布" : ""}</td></tr>`).join("");
   const plans = newestFirst(doc.plan_outcomes).map((node) => `<tr><td>${esc(node.round)}</td><td>${esc(node.label)}</td><td>${esc(node.title)}</td><td>${esc(node.outcome)}</td><td>${esc(num(node.speedup))}</td></tr>`).join("");
   const lamp = doc.status === "running" ? `<span class="breathe" title="进行中"></span>` : "";
-  return `<h2>${esc(doc.id)}</h2><p>${lamp}${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>` +
+  const seedKernel = (doc.state && doc.state.best_label) || (doc.result && doc.result.best_label) || "";
+  const confirmWinner = (doc.result && doc.result.confirm_winner_label) || "";
+  const seedLine = seedKernel
+    ? `<p class="muted">种子核（搜索期当前最好的一颗）：<b>${esc(seedKernel)}</b>` +
+      (confirmWinner && confirmWinner !== seedKernel ? ` · 确认胜者（换一批输入重测后活下来的）：<b>${esc(confirmWinner)}</b>` : "") +
+      `</p>`
+    : "";
+  return `<h2>${esc(doc.id)}</h2><p>${lamp}${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>${seedLine}` +
     `<div>` +
     `<h3>确认点</h3>${confirm}` +
     `<h3>候选</h3>` + (candidates ? `<table><thead><tr><th>序号</th><th>标签</th><th>状态</th><th>阶段</th><th>加速比</th><th>标记</th><th>说明</th></tr></thead><tbody>${candidates}</tbody></table>` : `<p class="muted">没有候选。</p>`) +
@@ -751,7 +761,8 @@ function feedbackMarkup(doc) {
   if (!records.length) return `<h3>代理反馈与队友交接</h3><p class="muted">这场没有反馈。</p>`;
   const blocks = records.map((record) => {
     const who = [[record.provider, record.model].filter(Boolean).join("/"), record.effort].filter(Boolean).join(":");
-    const meta = [record.round != null ? "第 " + record.round + " 轮" : "", record.committee, who, record.outcome || record.exit, record.best_speedup, record.work_dir].filter((part) => part != null && part !== "").join(" · ");
+    const meta = [record.round != null ? "第 " + record.round + " 轮" : "", record.committee, who, record.outcome || record.exit,
+      record.seed_label ? "当时的种子核 " + record.seed_label : "", record.best_speedup != null ? "种子成绩 " + num(record.best_speedup) : "", record.work_dir].filter((part) => part != null && part !== "").join(" · ");
     const claims = (record.claims || []).map((claim) => {
       const handle = claim.status === "info" ? "" : `<button type="button" class="feedback-open" data-seq="${esc(claim.seq)}" data-digest="${esc(claim.digest)}">处理</button>`;
       const tone = claim.audience === "system" || claim.audience === "peer" || claim.audience === "diagnostic" ? claim.audience : "system";

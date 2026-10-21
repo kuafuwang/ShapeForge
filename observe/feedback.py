@@ -212,6 +212,7 @@ def entries(directory: Path) -> dict:
             "outcome": record.get("outcome"),
             "exit": record.get("exit"),
             "best_speedup": record.get("best_speedup"),
+            "seed_label": record.get("seed_label"),
             "kinds": record.get("kinds"),
             "work_dir": record.get("work_dir"),
             "truncated": record.get("truncated"),
