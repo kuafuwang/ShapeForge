@@ -742,3 +742,60 @@ def test_confirmation_reports_the_median_of_independent_batches(tmp_path):
     assert res.confirmed_worst == pytest.approx(1.10)
     assert res.confirmed_best == pytest.approx(1.40)  # 极差 27%，正是"不能当精确值看"的样例
     assert res.confirmations[0]["confirmed_values"] == res.confirmed_values
+
+
+def test_a_new_run_freezes_guidance_and_an_old_run_still_copies_the_repo(tmp_path):
+    import hashlib
+
+    from taic.kernel_agent import EXPERIENCE, stage_guidance
+
+    script = llm_script(code("speed=1"))
+    orch = make_orch(tmp_path, script, [], max_rounds=0)
+    snap = tmp_path / "run" / "agent_guidance"
+    assert (snap / "experience.md").read_bytes() == EXPERIENCE.read_bytes()
+    assert (snap / "msl_reference.md").is_file()
+    doc = json.loads((tmp_path / "run" / "run_config.json").read_text())
+    hashes = doc["agent_guidance"]
+    assert set(hashes) == {"experience.md", "msl_reference.md", "SKILL.md"}
+    assert hashes["experience.md"] == hashlib.sha256((snap / "experience.md").read_bytes()).hexdigest()
+    (snap / "experience.md").write_text("FROZEN\n", encoding="utf-8")
+    brief = orch._session_brief(True, "r1.p0")
+    assert brief.work_dir.endswith("agent_work/r1.p0")
+    work = tmp_path / "session"
+    stage_guidance(work, brief)
+    assert (work / "experience.md").read_text(encoding="utf-8") == "FROZEN\n"
+    old = tmp_path / "old"
+    old.mkdir()
+    (old / "run_config.json").write_text("{}", encoding="utf-8")
+    resumed = Orchestrator(
+        "relu", "fp16", "small", orch.cfg, orch.search, run_dir=old, resuming=True,
+        evaluate_fn=fake_eval([]), client=FakeClient(script), log=lambda _line: None,
+        agent_runner=agent_for_script(script, KERNEL),
+    )
+    assert not (old / "agent_guidance").exists()
+    bare = resumed._session_brief(True, "init")
+    assert bare.guidance_dir == ""
+    copied = tmp_path / "fromrepo"
+    stage_guidance(copied, bare)
+    assert (copied / "experience.md").read_bytes() == EXPERIENCE.read_bytes()
+
+
+def test_a_failed_feedback_append_still_ages_an_unverified_premise(tmp_path):
+    """The seq is assigned before the append. A failed write must still move the expiry clock."""
+    orch = make_orch(tmp_path, llm_script(code("speed=1")), [], max_rounds=0)
+    claim = {
+        "section": "被否决的前提", "audience": "peer", "premise": "unverified",
+        "text": "[未验证] 矩阵单元只能吃 fp16", "digest": "same",
+    }
+    rows = []
+    for seq, label in ((1, "r1.p0"), (2, "r2.p0")):
+        rows.append(json.dumps({
+            "format": "agent_feedback", "v": 1, "seq": seq, "label": label,
+            "committee": "first", "model": "deepseek-flash", "outcome": "evaluated",
+            "best_speedup": 1.1, "items": [claim],
+        }, ensure_ascii=False))
+    (orch.run_dir / "feedback.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    orch._feedback_seq = 2
+    assert "fp16" in orch._session_brief(True, "r3.p0").peer_tips
+    orch._feedback_seq = 3
+    assert "fp16" not in orch._session_brief(True, "r4.p0").peer_tips

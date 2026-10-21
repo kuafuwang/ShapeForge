@@ -18,11 +18,12 @@ PRICES = Prices(input=0.3, output=1.2, cache_read=0.006, cache_write=0.0)
 
 
 def _brief(tmp_path: Path, *, seedless: bool = True) -> SessionBrief:
+    work = tmp_path / "agent_work" / "init"
     return SessionBrief(
         repo=tmp_path, task_name="conv2d", dtype="fp16", size="paper", kernel_name="conv2d_kernel",
         triton_source="def conv():\n    pass\n", description="a convolution", contract_text="grid 1,1,1",
         abi_stub="kernel void conv2d_kernel() {}", rtol=1e-3, atol_rel=1e-3, seedless=seedless,
-        reps=15, min_improvement=1.005, noise_z=2.0,
+        reps=15, min_improvement=1.005, noise_z=2.0, work_dir=str(work.resolve()),
     )
 
 
@@ -49,8 +50,13 @@ def test_the_submission_name_is_the_task_and_the_session():
 
 
 def test_the_contract_names_both_commands_and_does_not_ask_for_a_fence(tmp_path):
-    text = render_contract(_brief(tmp_path))
+    brief = _brief(tmp_path)
+    text = render_contract(brief)
+    submit = str(Path(brief.work_dir) / "conv2d-fp16-paper-init.metal")
     assert "--quick" in text and "--timed" in text
+    assert submit in text
+    commands = text.split("# 验证命令", 1)[1].split("# 晋升标准", 1)[0]
+    assert "kernel.metal" not in commands
     assert "conv2d-fp16-paper-init.metal" in text
     assert "self_checks.jsonl" in text
     assert "NOTES.md" in text
@@ -72,7 +78,13 @@ def test_a_seeded_contract_leads_with_the_outer_measurement(tmp_path):
     brief.bound_line = "本算法运算量下界 932 µs，最强基线 torch-mps 790 µs。下界高于基线时，不减少运算量的写法不可能超过它。"
     text = render_contract(brief)
     assert text.index("外层实测") < text.index("上一版自报")
-    assert "--seed-report report.json" in text
+    report = str(Path(brief.work_dir) / "report.json")
+    submit = str(Path(brief.work_dir) / "conv2d-fp16-paper-init.metal")
+    assert f"--seed-report {report}" in text
+    assert submit in text
+    timed = text.split("# 评测命令", 1)[1].split("# 晋升标准", 1)[0]
+    assert "kernel.metal" not in timed
+    assert str(Path(brief.work_dir) / "kernel.metal") in text
     assert "不减少运算量" in text
     brief.peer_tips = "- [r1 first/fake, evaluated 1.100x] float8 是保留字"
     seeded = render_contract(brief)

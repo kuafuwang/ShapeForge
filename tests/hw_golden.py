@@ -283,7 +283,12 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
 
         each = []
         for index, brief in enumerate(orch._session_briefs):
-            each.append({"label": f"{index}", "sha": sha(render_contract(brief))})
+            # The contract names this session's absolute paths. The golden tracks the wording, not the temp directory.
+            text = render_contract(brief)
+            if brief.work_dir:
+                text = text.replace(str(Path(brief.work_dir)), "<work>")
+            text = text.replace(str(Path(brief.repo).resolve()), "<repo>")
+            each.append({"label": f"{index}", "sha": sha(text)})
         joined = "\n".join(f"{row['label']} {row['sha']}" for row in each)
         out[_orch_key(task, plan_mix, knobs)] = {"requests": len(each), "sha": sha(joined), "each": each}
     return out

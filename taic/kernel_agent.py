@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -79,6 +80,8 @@ class SessionBrief:
     seedless: bool = False
     peer_tips: str = ""
     label: str = "init"
+    work_dir: str = ""
+    guidance_dir: str = ""
 
 
 @dataclass
@@ -219,25 +222,52 @@ def spend_from_stream(text: str) -> tuple[dict[str, float], bool]:
     return totals, saw
 
 
+def _shell(value: str) -> str:
+    return shlex.quote(str(value))
+
+
+def _work_path(brief: SessionBrief) -> Path:
+    if brief.work_dir:
+        return Path(brief.work_dir).resolve()
+    return Path.cwd()
+
+
 def _check_command(brief: SessionBrief, mode: str) -> str:
+    """Eval command with absolute paths. ``uv run --directory`` changes the working directory."""
     name = submission_name(brief.task_name, brief.dtype, brief.size, brief.label)
+    work = _work_path(brief)
+    repo = Path(brief.repo).resolve()
     parts = [
-        f"uv run --directory {brief.repo} python -m tcenv.cli eval {brief.task_name} {name}",
-        f"--dtype {brief.dtype}",
-        f"--size {brief.size}",
+        "uv", "run", "--directory", _shell(str(repo)),
+        "python", "-m", "tcenv.cli", "eval", _shell(brief.task_name), _shell(str(work / name)),
+        "--dtype", _shell(brief.dtype),
+        "--size", _shell(brief.size),
         "--quick" if mode == "quick" else "--timed",
     ]
     if mode == "timed":
-        parts.append(f"--reps {int(brief.reps)}")
-        parts.append(f"--min-improvement {brief.min_improvement}")
-        parts.append(f"--noise-z {brief.noise_z}")
+        parts.append("--reps")
+        parts.append(str(int(brief.reps)))
+        parts.append("--min-improvement")
+        parts.append(str(brief.min_improvement))
+        parts.append("--noise-z")
+        parts.append(str(brief.noise_z))
         if brief.seed_source and not brief.seedless:
-            parts.append("--seed-report report.json")
+            parts.extend(["--seed-report", _shell(str(work / "report.json"))])
         if brief.require_contract_launch:
             parts.append("--require-contract-launch")
     elif brief.require_contract_launch:
         parts.append("--require-contract-launch")
     return " ".join(parts)
+
+
+def _feedback_check_command(brief: SessionBrief) -> str:
+    work = _work_path(brief)
+    repo = Path(brief.repo).resolve()
+    return " ".join([
+        "uv", "run", "--directory", _shell(str(repo)),
+        "python", "-m", "taic.agent_feedback", "check", _shell(str(work / "FEEDBACK.md")),
+        "--work", _shell(str(work)),
+    ])
 
 
 def render_contract(brief: SessionBrief) -> str:
@@ -276,7 +306,7 @@ def render_contract(brief: SessionBrief) -> str:
         f"本场要交的文件是 `{submit}`。外层只读这个文件。开场时它不存在。",
         f"你写了它，外层就把里面的内容当作你交回的核。你不写它，外层记这场没有交回内核。",
         "`kernel.metal` 在有种子时已经放在本目录，只供阅读。外层不读它。改它不算交卷。",
-        f"最后一版即使不合格，也写进 `{submit}`。不要把种子原文抄进这个文件来过检查。",
+        f"交卷文件始终放目前最好的一版。自测合格且更快，就用 `cp` 复制成 `{submit}`。还没有合格版时放最近一版，不抄种子。",
         "",
         "`experience.md` 是这个项目已经测过的东西：哪些启动契约与 tile 划算、哪些算子已经贴着带宽屋顶、"
         "哪个库换了算法。它是线索不是规则：你自己测出来的数比它高。",
@@ -295,6 +325,7 @@ def render_contract(brief: SessionBrief) -> str:
         "```",
         timed,
         "```",
+        "上面两条命令里的交卷文件和 report.json 是绝对路径。不要改成相对路径。",
         "命令会把一行结果追加到本目录的 `self_checks.jsonl`。出现过 timeout 或 crash 之后，再跑 `--timed` 会被拒绝。",
         "交卷前请在 `--timed` 后面加 `--validate` 跑最后一次：那一遍会开插桩校验（抓越界和竞争），外层也会做同一件事，早发现能省一场会话。",
         "这个目录最多记 20 次 `--timed`，累计 120 秒。超过之后 `--timed` 会拒绝，你仍可交卷，外层照常测。",
@@ -313,15 +344,23 @@ def render_contract(brief: SessionBrief) -> str:
     lines += [
         "",
         "# 这个系统怎么工作",
-        "你在一场接力里：两个委员会轮流，一轮一场新会话，对话不带过去。下一场读到的种子在 `kernel.metal`，另有 `NOTES.md`、外层成绩单，以及本运行内的「队友避坑提示」。",
-        "外层判卷是机械的：全量评测、三级贴核检查、确认计时绑源码指纹。你自报的数字不进种子，也不进发布加速比。",
-        "固定的是合同签名、容差、围栏和预算。可质疑的是笔记、文档、提示词和队友留下的前提。",
-        "你可以读整个仓库（`docs/`、评测源码），只能写本目录。",
-        f"本场的主产出始终是 `{submit}`。`FEEDBACK.md` 写短、最后写。给系统的建议只给人看，有人在看板复核后改仓库。给下一棒的避坑提示只在本运行内往下传，不跨题目。放弃某个方向所依据的断言必须写进「被否决的前提」节，不要夹在避坑里。",
+        "你在一场接力里：两个委员会轮流，一轮一场新会话，对话不带过去。外层判卷是机械的。你自报的数字不进种子，也不进对外的加速比。",
+        "固定的是合同签名、容差、围栏和预算。可质疑的是笔记、文档和队友留下的前提。你可以读整个仓库，只能写本目录。",
+        f"本场的主产出始终是 `{submit}`。`NOTES.md` 和 `FEEDBACK.md` 当场追加，不要留到收尾。每试完一版，在 `NOTES.md` 记一行。每否决一个前提、每踩一个坑，就在 `FEEDBACK.md` 对应小节追加一行。",
+        "给系统的建议只给人看，有人在看板复核后改仓库。给下一棒的避坑提示只在本运行内往下传，不跨题目。放弃某个方向所依据的断言必须写进「被否决的前提」节，不要夹在避坑里。",
         "**没有内容就不要写。** 你的输出按 token 计费：某一节没话说就整节省略，不要写「无」「（空）」「none」这类占位符——它们是纯成本，看板还要逐条清理。整份 `FEEDBACK.md` 都没有内容时，不要创建这个文件。",
         "文件开头一行 `kind: prompt|skill|tool|rule|decision`，可以写多个，用逗号分开；没有系统层面的建议或求助时，这一行也不要写。",
         "有内容时按这五个标题写，只写有话的那几节：`# 需要帮助`、`# 对系统的建议`、`# 卡住的原因`、`# 给下一棒的避坑提示`、`# 被否决的前提`。",
-        "被否决的前提里，每一条写成 `[已实测: 探针文件 | 测的命题 | 数字]` 或 `[未验证]`。",
+        "被否决的前提只写这两种：",
+        "`[已实测: 文件名 | 一句命题 | 数字和单位]`",
+        "`[未验证 | 一句命题 | 为什么没测]`",
+        "探针格只写一个文件名。参数写进命题格或数字格。引用同运行别的会话，写 `r9.p0/sim_w63.py` 这种以 `agent_work` 为根的路径。",
+        "「已实测」要写清测的是哪条命题。「会不会算错」和「误差多大」是两条。",
+        "写完跑一次：",
+        "```",
+        _feedback_check_command(brief),
+        "```",
+        "比较两版快慢或做消融之前，先读技能 `taic-tools` 的「测量」节。动手前先查 `runs/calibration.json`、仓库 `docs/`、本运行 `agent_work/*/NOTES.md`。",
     ]
     if not brief.seedless:
         lines += ["", "# 当前现场", f"种子在 `kernel.metal`。交卷写 `{submit}`，不要改种子文件。"]
@@ -341,7 +380,9 @@ def render_contract(brief: SessionBrief) -> str:
             lines += ["", brief.evidence.strip()]
         lines += [
             "",
-            "合同里的外层成绩和你自己跑出来的数字对不上时，先把评测命令里的文件名换成 `kernel.metal` 跑一次 `--timed`，再改。交卷前的自测用上面的命令，文件名是交卷文件。",
+            "合同里的外层成绩和你自己跑出来的数字对不上时，先把评测命令里的交卷文件换成 "
+            + _shell(str(_work_path(brief) / "kernel.metal"))
+            + " 跑一次 `--timed`，再改。交卷前的自测用上面的命令，文件名是交卷文件。",
         ]
     elif brief.peer_tips:
         lines += ["", _PEER_HEADER, brief.peer_tips.strip()]
@@ -352,7 +393,7 @@ def render_contract(brief: SessionBrief) -> str:
         "涉及硬件上限的断言（速率、指令、容量）必须附探针文件名和实测数字；没有实测的写「未验证」。被否决的方向连同否决它的数字一起记，方便下一位复核。",
         "这是交给下一位的记录。下一位看不到这次对话。",
         "",
-        f"改完后把核写进 `{submit}`。外层只读这个文件。",
+        f"交卷文件 `{submit}` 里一直放目前最好的一版。外层只读这个文件。",
     ]
     return "\n".join(lines) + "\n"
 
@@ -377,6 +418,24 @@ def _self_check_summary(work: Path) -> tuple[int, int, float]:
         if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool):
             gpu_s += float(elapsed)
     return count, timeouts, gpu_s
+
+
+def _guidance_source(brief: SessionBrief, name: str, fallback: Path) -> Path:
+    """The frozen copy for this run when it exists, otherwise the file in the repository."""
+    if brief.guidance_dir:
+        snap = Path(brief.guidance_dir) / name
+        if snap.is_file():
+            return snap
+    return fallback
+
+
+def stage_guidance(work: Path, brief: SessionBrief) -> None:
+    """Copy ``experience.md`` and ``msl_reference.md`` into the session directory."""
+    work.mkdir(parents=True, exist_ok=True)
+    for name, fallback in (("msl_reference.md", SKILL), ("experience.md", EXPERIENCE)):
+        src = _guidance_source(brief, name, fallback)
+        if src.is_file():
+            shutil.copyfile(src, work / name)
 
 
 def run_kernel_agent(
@@ -411,10 +470,7 @@ def run_kernel_agent(
         seed_path.unlink(missing_ok=True)
     if brief.seed_report_json and not brief.seedless:
         (work / "report.json").write_text(brief.seed_report_json)
-    if SKILL.exists():
-        shutil.copyfile(SKILL, work / "msl_reference.md")
-    if EXPERIENCE.exists():
-        shutil.copyfile(EXPERIENCE, work / "experience.md")
+    stage_guidance(work, brief)
     (work / "TASK.md").write_text(render_contract(brief))
     flow_minutes = int(turn_minutes) + WRAP_MINUTES + FLOW_SLACK_MINUTES
     argv = [

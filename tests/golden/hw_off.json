@@ -1,8 +1,8 @@
 {
 "_meta": {
-"git_commit": "06e3e6ff420bcc1b15c6e281b1d62b0f2aa86a88",
-"reason": "the contract tells the agent to omit empty FEEDBACK sections and the kind line instead of writing placeholders",
-"recorded_at": "2026-10-21T17:53:39+08:00"
+"git_commit": "c2d340426d2ca677c5a307ed637a821f8087000b",
+"reason": "TASK.md now uses absolute eval paths, keeps the submission current with cp, and names the feedback check command. The golden hashes that wording with the session directory replaced by <work>.",
+"recorded_at": "2026-10-21T21:07:11+08:00"
 },
 "feedback": {
 "format_feedback_cut|compile_error": "STATUS: compile_error  (stage reached: compile)\nMetal compiler rejected the kernel\n\nMetal compiler errors (line numbers refer to your kernel source):\nkernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n",
@@ -23,57 +23,57 @@
 "each": [
 {
 "label": "0",
-"sha": "ef056ad08929756a425343fb6b1dc728a72bce8f"
+"sha": "ab9e42c4f7bc537c6beba002943ada27dcdc44a6"
 },
 {
 "label": "1",
-"sha": "71262b10ba4052d53c138c04c2fd377dfaa53fef"
+"sha": "55fcf48b0baad8750a8ef52d3d7f9ea783900c76"
 }
 ],
 "requests": 2,
-"sha": "f6200b64c3ade8561a5b86c6ce5cb9d18f8e91ba"
+"sha": "cf9d1c6e38dfce2083d5fe87e245a1109d936d05"
 },
 "orchestrator|gemm|plan_mix=1": {
 "each": [
 {
 "label": "0",
-"sha": "af0e16a598eb2fb8b7667d03d531b69d886a176a"
+"sha": "79b75ba8fd1729ee23c69f6b9da1930538d7d17e"
 },
 {
 "label": "1",
-"sha": "86608d32ceb9c3ff4e4a83036ee81c11add836db"
+"sha": "0bb6d211e890f9d44b0255db3ac3cc978a68cc8e"
 }
 ],
 "requests": 2,
-"sha": "6b16ccca912a5623eb60981f157992b6e3478526"
+"sha": "e15a267c206cb777809800f3d944a928f8536171"
 },
 "orchestrator|relu|plan_mix=0": {
 "each": [
 {
 "label": "0",
-"sha": "d7651bf36207597d3324a7fdb49a18145dfa1154"
+"sha": "65468e49fd7de630bdb15f22956cfbd09b6115cf"
 },
 {
 "label": "1",
-"sha": "6bab33c04d5c6276ffd52ad53e5f6c596ca8586a"
+"sha": "182a8bb68ca9c7a51a64338d5a2d09e170ec17df"
 }
 ],
 "requests": 2,
-"sha": "7e5ae5f7f5006f36f2e658b8de55d54fc9d2ebe5"
+"sha": "ba55882544d8b02d0810fd867111e8f00757acc0"
 },
 "orchestrator|relu|plan_mix=1": {
 "each": [
 {
 "label": "0",
-"sha": "d7651bf36207597d3324a7fdb49a18145dfa1154"
+"sha": "65468e49fd7de630bdb15f22956cfbd09b6115cf"
 },
 {
 "label": "1",
-"sha": "6bab33c04d5c6276ffd52ad53e5f6c596ca8586a"
+"sha": "182a8bb68ca9c7a51a64338d5a2d09e170ec17df"
 }
 ],
 "requests": 2,
-"sha": "7e5ae5f7f5006f36f2e658b8de55d54fc9d2ebe5"
+"sha": "ba55882544d8b02d0810fd867111e8f00757acc0"
 }
 },
 "outbound": {

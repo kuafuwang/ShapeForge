@@ -9,16 +9,22 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 from pathlib import Path
 
 FORMAT = "agent_feedback"
 VERSION = 1
+# Bumped when in-memory repair of old feedback.jsonl lines changes what the board shows.
+# observe/index.py appends this to the run fingerprint so a finished run is read again.
+PARSER_VERSION = "fbv2"
 FILE_CAP = 16384
 RAW_CAP = 4096
 TIP_CHARS = 250
 TIPS_CHARS = 2000
+VERIFIED_TIPS_CHARS = 4000
 TIP_KEEP = 8
 UNVERIFIED_SPAN = 2  # sessions after the one that first wrote an unverified premise; the third session no longer sees it
+_PLACEHOLDERS = frozenset({"无", "没有", "空", "none", "na"})
 
 SECTIONS = (
     "需要帮助",
@@ -45,7 +51,9 @@ _NUMBER = re.compile(r"(?<![A-Za-z])\d+(?:\.\d+)?")
 _PUNCT = re.compile(r"[^\w\s]+", re.UNICODE)
 _SPACE = re.compile(r"\s+")
 _MEASURED = re.compile(r"\[已实测:\s*([^|\]]+?)\s*\|\s*([^|\]]+?)\s*\|\s*([^\]]+?)\s*\]")
-_UNVERIFIED = re.compile(r"\[未验证(?::[^\]]*)?\]")
+_MARK = re.compile(r"\[(已实测|未验证|分析否决|推理否决)([^\]]*)\]")
+_FILE_TOKEN = re.compile(r"[A-Za-z0-9_./-]+\.(?:py|metal|md|json|sh|txt)")
+_WIPED = re.compile(r"^\[未验证:\s*探针文件不存在\]\s*$")
 _ROUND = re.compile(r"^r(\d+)\.p\d+$")
 
 
@@ -64,6 +72,8 @@ def empty_feedback() -> dict:
         "v": VERSION,
         "kinds": "none",
         "truncated": False,
+        "truncated_sections": [],
+        "placeholder_sections": [],
         "unrecognized_version": False,
         "sections": {},
         "section_names": [],
@@ -90,6 +100,8 @@ def parse_feedback(text: str, *, work: Path | None = None, repo: Path | None = N
             "v": version,
             "kinds": "none",
             "truncated": over or len(body) > RAW_CAP,
+            "truncated_sections": [],
+            "placeholder_sections": [],
             "unrecognized_version": True,
             "sections": {},
             "section_names": [],
@@ -99,12 +111,16 @@ def parse_feedback(text: str, *, work: Path | None = None, repo: Path | None = N
             "chars": len(body),
         }
     kinds = _kinds(body)
-    sections, section_cut = _sections(body)
+    sections, truncated_sections = _sections(body)
     items = []
     unverified = 0
+    placeholder_sections = []
     for name in SECTIONS:
         chunk = sections.get(name, "")
         if not chunk.strip():
+            continue
+        if _is_placeholder(chunk):
+            placeholder_sections.append(name)
             continue
         for piece in _pieces(chunk):
             item = _item(name, piece, work=work, repo=repo)
@@ -112,13 +128,15 @@ def parse_feedback(text: str, *, work: Path | None = None, repo: Path | None = N
                 unverified += 1
             items.append(item)
     raw = body[:RAW_CAP]
-    truncated = over or section_cut or len(body) > RAW_CAP
+    truncated = over or bool(truncated_sections) or len(body) > RAW_CAP
     names = [name for name in SECTIONS if sections.get(name, "").strip()]
     return {
         "format": FORMAT,
         "v": VERSION,
         "kinds": kinds,
         "truncated": truncated,
+        "truncated_sections": truncated_sections,
+        "placeholder_sections": placeholder_sections,
         "unrecognized_version": False,
         "sections": {name: sections[name] for name in names},
         "section_names": names,
@@ -145,14 +163,18 @@ def max_seq(path: Path) -> int:
 
 
 def load_records(path: Path) -> list[dict]:
-    """Every complete record. Broken lines are skipped."""
+    """Every complete record. Broken lines are skipped.
+
+    The file is not rewritten. Empty digests, premise text that a downgrade wiped, and
+    missing ``truncated_sections`` are filled in on the copy this function returns.
+    """
     if not path.is_file():
         return []
     rows = []
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         row = _load_line(line)
         if row is not None and row.get("format") == FORMAT:
-            rows.append(row)
+            rows.append(_repair_record(row))
     return rows
 
 
@@ -160,9 +182,10 @@ def peer_tips_for(run_dir: Path, *, now: int | None = None) -> str:
     """Tips for the session about to start. ``now`` is that session's number.
 
     Every finished session has a sequence number, including one that left no feedback text.
-    An unverified premise is shown for the next two sessions and is gone on the third.
-    Restating it does not move the session where it first appeared. A later measured
-    version of the same claim becomes an ordinary tip.
+    An unverified or downgraded premise is shown for the next two sessions and is gone on the third.
+    Restating it does not move the session where it first appeared. A digest that was verified
+    once stays verified; a later downgraded copy does not replace that text. Verified lines use
+    their own character budget and do not take a slot from the eight ordinary tips.
     """
     records = load_records(run_dir / "feedback.jsonl")
     if not records:
@@ -184,42 +207,60 @@ def peer_tips_for(run_dir: Path, *, now: int | None = None) -> str:
             digest = str(item.get("digest") or "")
             if not digest:
                 digest = f"undigested-{seq}-{index}"
-            current = grouped.get(digest)
             premise = item.get("premise") or ""
+            current = grouped.get(digest)
             if current is None:
-                grouped[digest] = {
+                current = {
                     "first_seq": seq,
                     "seq": seq,
                     "section": item.get("section"),
                     "premise": premise,
                     "text": text,
                     "row": row,
+                    "verified_seq": None,
+                    "verified_text": "",
+                    "verified_row": None,
                 }
-                continue
-            current["seq"] = seq
-            current["text"] = text
-            current["row"] = row
-            current["section"] = item.get("section")
-            current["premise"] = premise
-    unverified = []
+                grouped[digest] = current
+            else:
+                current["seq"] = seq
+                current["text"] = text
+                current["row"] = row
+                current["section"] = item.get("section")
+                current["premise"] = premise
+            if premise == "verified" and item.get("section") == "被否决的前提":
+                current["verified_seq"] = seq
+                current["verified_text"] = text
+                current["verified_row"] = row
+    verified = []
+    active = []
     ordinary = []
     for entry in grouped.values():
-        premise = entry["premise"]
-        if entry["section"] == "被否决的前提" and premise in ("unverified", "downgraded"):
+        if entry["verified_row"] is not None:
+            verified.append({
+                "seq": entry["verified_seq"],
+                "text": entry["verified_text"],
+                "row": entry["verified_row"],
+                "section": "被否决的前提",
+                "premise": "verified",
+                "first_seq": entry["first_seq"],
+            })
+            continue
+        if entry["section"] == "被否决的前提" and entry["premise"] in ("unverified", "downgraded"):
             # Shown on the next two sessions: ages 1 and 2. Age 3 is the third session and is dropped.
             if 0 < now - entry["first_seq"] <= UNVERIFIED_SPAN:
-                unverified.append(entry)
+                active.append(entry)
             continue
         ordinary.append(entry)
+    verified.sort(key=lambda entry: (entry["seq"], entry["text"]))
+    active.sort(key=lambda entry: (entry["seq"], entry["text"]))
     ordinary.sort(key=lambda entry: entry["seq"], reverse=True)
-    chosen = unverified + ordinary[:TIP_KEEP]
-    chosen.sort(key=lambda entry: (entry["seq"], entry["text"]))
-    lines = []
-    for entry in chosen:
-        lines.append(_tip_line(entry["row"], entry["text"]))
-    while lines and sum(len(line) + 1 for line in lines) > TIPS_CHARS:
-        lines.pop(0)
-    return "\n".join(lines)
+    if len(active) > TIP_KEEP:
+        active = active[-TIP_KEEP:]
+    rest = active + ordinary[: max(0, TIP_KEEP - len(active))]
+    verified_lines = _fit_lines(verified, VERIFIED_TIPS_CHARS, drop_oldest=True)
+    rest_lines = _fit_rest(rest, len(active))
+    return "\n".join(verified_lines + rest_lines)
 
 
 def round_of(label: str) -> int | None:
@@ -261,7 +302,7 @@ def _kinds(text: str) -> str:
     return ",".join(kept) if kept else "none"
 
 
-def _sections(text: str) -> tuple[dict[str, str], bool]:
+def _sections(text: str) -> tuple[dict[str, str], list[str]]:
     current = None
     chunks: dict[str, list[str]] = {name: [] for name in SECTIONS}
     for line in text.splitlines():
@@ -271,16 +312,16 @@ def _sections(text: str) -> tuple[dict[str, str], bool]:
             continue
         if current is not None:
             chunks[current].append(line)
-    cut = False
     out = {}
+    truncated = []
     for name, lines in chunks.items():
         body = "\n".join(lines).strip()
         cap = SECTION_CAPS[name]
         if len(body) > cap:
             body = body[:cap]
-            cut = True
+            truncated.append(name)
         out[name] = body
-    return out, cut
+    return out, truncated
 
 
 def _pieces(body: str) -> list[str]:
@@ -308,9 +349,10 @@ def _item(section: str, text: str, *, work: Path | None, repo: Path | None) -> d
     audience = "peer" if section in PEER_SECTIONS else "diagnostic" if section in DIAGNOSTIC_SECTIONS else "system"
     shown = text.strip()
     premise = ""
+    # Digest the sentence the agent wrote. Downgrade rewrites the label afterwards and must not change the digest.
+    digest = _digest(section, shown)
     if section == "被否决的前提":
         shown, premise = _premise(shown, work=work, repo=repo)
-    digest = _digest(section, shown)
     return {"section": section, "audience": audience, "text": shown, "digest": digest, "premise": premise}
 
 
@@ -320,24 +362,57 @@ def _premise(text: str, *, work: Path | None, repo: Path | None) -> tuple[str, s
         probe = measured.group(1).strip()
         if _probe_exists(probe, work=work, repo=repo):
             return text, "verified"
-        rewritten = _MEASURED.sub("[未验证: 探针文件不存在]", text, count=1)
-        return rewritten, "downgraded"
+        return _downgrade_measured(text), "downgraded"
     return text, "unverified"
 
 
+def _downgrade_measured(text: str) -> str:
+    """Replace the measured tag and keep the proposition and the number."""
+
+    def repl(match: re.Match) -> str:
+        prop = match.group(2).strip()
+        number = match.group(3).strip()
+        return f"[未验证: 探针文件不存在 | {prop} | {number}]"
+
+    return _MEASURED.sub(repl, text, count=1)
+
+
+def _probe_roots(work: Path | None, repo: Path | None) -> list[Path]:
+    roots = []
+    if work is not None:
+        roots.append(work)
+        if work.parent.name == "agent_work":
+            roots.append(work.parent)
+    if repo is not None:
+        roots.append(repo)
+    return roots
+
+
 def _probe_exists(token: str, *, work: Path | None, repo: Path | None) -> bool:
+    """True when any named probe file is readable under the work dir, the repo, or a sibling session."""
+    if not token or "\x00" in token:
+        return False
+    roots = _probe_roots(work, repo)
+    candidates = [token.strip()]
+    candidates.extend(_FILE_TOKEN.findall(token))
+    seen = set()
+    for name in candidates:
+        if name in seen:
+            continue
+        seen.add(name)
+        if _one_probe(name, roots):
+            return True
+    return False
+
+
+def _one_probe(token: str, roots: list[Path]) -> bool:
     if not token or "\x00" in token:
         return False
     raw = Path(token)
     if raw.is_absolute():
         candidates = [raw]
     else:
-        candidates = []
-        if work is not None:
-            candidates.append(work / raw)
-        if repo is not None:
-            candidates.append(repo / raw)
-    roots = [path for path in (work, repo) if path is not None]
+        candidates = [root / raw for root in roots]
     for candidate in candidates:
         try:
             resolved = candidate.resolve()
@@ -361,12 +436,132 @@ def _inside(path: Path, roots: list[Path]) -> bool:
 
 
 def _digest(section: str, text: str) -> str:
-    stripped = _UNVERIFIED.sub(" ", _MEASURED.sub(" ", text))
-    normalized = _normalize(stripped)
+    """Identity of one claim. Numbers and the probe filename do not change it.
+
+    Text outside the bracket is the claim when it is non-empty, so a measured line and the
+    same sentence tagged unverified stay one claim. When the bracket holds the whole sentence,
+    only the proposition slot is hashed. Two probes, or two reasons, for one proposition match.
+    """
+    normalized = _digest_text(text or "")
     if not normalized:
         return ""
     payload = f"{section}\n{normalized}"
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _digest_text(text: str) -> str:
+    match = _MARK.search(text)
+    if match is None:
+        return _normalize(text)
+    outside = _normalize(_MARK.sub(" ", text))
+    if outside:
+        return outside
+    parts = _mark_parts(match.group(2))
+    probe = parts[0] if parts else ""
+    prop = parts[1] if len(parts) >= 2 else ""
+    if len(parts) >= 2 and _normalize(prop):
+        return _normalize(prop)
+    if len(parts) >= 2:
+        return _normalize(f"{probe} {prop}")
+    return _normalize(prop or probe)
+
+
+def _mark_parts(body: str) -> list[str]:
+    body = body.strip()
+    if body.startswith(":"):
+        body = body[1:].strip()
+    return [part.strip() for part in body.split("|")] if body else []
+
+
+def _is_placeholder(text: str) -> bool:
+    """A section that is only a filler word. A longer sentence that starts with 没有 is kept."""
+    cleaned = _PUNCT.sub("", text or "")
+    cleaned = _SPACE.sub("", cleaned).strip().lower()
+    return cleaned in _PLACEHOLDERS
+
+
+def _fit_lines(entries: list[dict], limit: int, *, drop_oldest: bool) -> list[str]:
+    lines = [_tip_line(entry["row"], entry["text"]) for entry in entries]
+    while lines and sum(len(line) + 1 for line in lines) > limit:
+        lines.pop(0 if drop_oldest else -1)
+    return lines
+
+
+def _fit_rest(entries: list[dict], active_count: int) -> list[str]:
+    """Unverified lines stay in front. Extra characters drop ordinary tips first, then the oldest unverified line."""
+    lines = [_tip_line(entry["row"], entry["text"]) for entry in entries]
+    kept_active = min(active_count, len(lines))
+    while lines and sum(len(line) + 1 for line in lines) > TIPS_CHARS:
+        if len(lines) > kept_active:
+            lines.pop()
+        else:
+            lines.pop(0)
+            kept_active = max(0, kept_active - 1)
+    return lines
+
+
+def _repair_record(row: dict) -> dict:
+    """Fill fields that older parsers left empty. Does not write the file."""
+    sections = row.get("sections") if isinstance(row.get("sections"), dict) else {}
+    if row.get("truncated") and "truncated_sections" not in row:
+        row["truncated_sections"] = [
+            name for name in SECTIONS
+            if isinstance(sections.get(name), str) and len(sections[name]) >= SECTION_CAPS[name]
+        ]
+    items = [item for item in (row.get("items") or []) if isinstance(item, dict)]
+    pieces = _pieces(str(sections.get("被否决的前提") or ""))
+    premise_items = [item for item in items if item.get("section") == "被否决的前提"]
+    for item, piece in zip(premise_items, pieces):
+        text = str(item.get("text") or "")
+        if _WIPED.match(text.strip()) and _MEASURED.search(piece):
+            item["text"] = _downgrade_measured(piece).strip()
+        if not str(item.get("digest") or "").strip():
+            item["digest"] = _digest("被否决的前提", piece)
+    for item in items:
+        if str(item.get("digest") or "").strip():
+            continue
+        text = str(item.get("text") or "").strip()
+        if text:
+            item["digest"] = _digest(str(item.get("section") or ""), text)
+    row["items"] = [item for item in items if not _is_placeholder(str(item.get("text") or ""))]
+    return row
+
+
+def check_feedback(path: Path, work: Path, repo: Path) -> str:
+    """How the parser reads one FEEDBACK.md. Reads the file and writes nothing."""
+    text, file_over = read_feedback_text(path)
+    parsed = parse_feedback(text, work=work, repo=repo, file_over=file_over)
+    lines = []
+    cuts = parsed.get("truncated_sections") or []
+    skipped = parsed.get("placeholder_sections") or []
+    lines.append("truncated_sections: " + (", ".join(cuts) if cuts else "-"))
+    lines.append("placeholder_sections: " + (", ".join(skipped) if skipped else "-"))
+    for index, item in enumerate(parsed.get("items") or [], start=1):
+        reason = ""
+        if item.get("premise") == "downgraded":
+            reason = " reason=探针文件不存在"
+        digest = str(item.get("digest") or "")
+        lines.append(
+            f"[{index}] section={item.get('section') or '-'} premise={item.get('premise') or '-'}"
+            f"{reason} digest={digest or '-'} empty_digest={'yes' if not digest else 'no'}"
+        )
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """``python -m taic.agent_feedback check FEEDBACK.md --work DIR``."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="taic.agent_feedback")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    check = sub.add_parser("check")
+    check.add_argument("path")
+    check.add_argument("--work", required=True)
+    check.add_argument("--repo", default=None)
+    args = parser.parse_args(argv)
+    repo = Path(args.repo) if args.repo else Path(__file__).resolve().parents[1]
+    sys.stdout.write(check_feedback(Path(args.path), Path(args.work), repo))
+    return 0
 
 
 def _normalize(text: str) -> str:
@@ -402,3 +597,7 @@ def _load_line(line: str) -> dict | None:
     if not isinstance(row, dict):
         return None
     return row
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

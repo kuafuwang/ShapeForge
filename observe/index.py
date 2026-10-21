@@ -505,7 +505,10 @@ class Index:
         extra = "|".join(
             _fingerprint(directory / name) for name in ("budget_events.json", "ledger.json", "resume.lock", "feedback.jsonl", "feedback_review.json")
         )
+        from taic.agent_feedback import PARSER_VERSION
+
         extra += "|" + self._manifest_fingerprint(directory)
+        extra += "|" + PARSER_VERSION
         return (
             _fingerprint(directory / "state.json"),
             _fingerprint(directory / "result.json"),

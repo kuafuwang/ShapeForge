@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from taic.agent_feedback import _kinds, parse_feedback, peer_tips_for
+from taic.agent_feedback import VERIFIED_TIPS_CHARS, _kinds, load_records, main, parse_feedback, peer_tips_for
 
 
 def _write(path: Path, rows: list[dict], *, broken_at: int | None = None) -> None:
@@ -169,3 +169,238 @@ def test_a_file_with_only_sections_left_blank_is_not_a_record():
     """The parser already treats an empty file as nothing; the brief change keeps it from happening at all."""
     parsed = parse_feedback("", work=None, repo=None)
     assert parsed["raw"] == "" and parsed["items"] == []
+
+
+def test_a_bracket_only_claim_keeps_its_proposition_and_ignores_the_probe(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "probe.py").write_text("print(1)\n")
+    measured = parse_feedback(
+        "# 被否决的前提\n- [已实测: probe.py | 同一命题 | 15.09]\n",
+        work=work, repo=tmp_path,
+    )
+    other_probe = parse_feedback("# 被否决的前提\n- [已实测: other.py | 同一命题 | 99]\n", work=work, repo=tmp_path)
+    piped = parse_feedback("# 被否决的前提\n- [未验证 | 同一命题 | 这一轮没测]\n")
+    assert measured["items"][0]["digest"]
+    assert measured["items"][0]["premise"] == "verified"
+    assert measured["items"][0]["digest"] == other_probe["items"][0]["digest"] == piped["items"][0]["digest"]
+    assert other_probe["items"][0]["premise"] == "downgraded"
+    assert other_probe["items"][0]["text"].startswith("[未验证: 探针文件不存在 | 同一命题 | 99]")
+    assert "other.py" not in other_probe["items"][0]["text"]
+    analysed = parse_feedback("# 被否决的前提\n- [分析否决: 旧笔记 | 同一命题 | 没测过]\n")
+    reasoned = parse_feedback("# 被否决的前提\n- [推理否决: 上一场 | 同一命题 | 理由不同]\n")
+    assert analysed["items"][0]["digest"] == reasoned["items"][0]["digest"] == piped["items"][0]["digest"]
+
+
+def test_a_probe_with_arguments_or_a_sibling_session_still_counts(tmp_path):
+    agent = tmp_path / "agent_work"
+    here = agent / "r3.p0"
+    here.mkdir(parents=True)
+    (here / "sim_f16.py").write_text("print(1)\n")
+    sibling = agent / "r9.p0"
+    sibling.mkdir()
+    (sibling / "sim_w63.py").write_text("print(1)\n")
+    (here / "gen.py").write_text("print(1)\n")
+    args = parse_feedback(
+        "# 被否决的前提\n- [已实测: sim_f16.py --half | 操作数 | 1]\n",
+        work=here, repo=tmp_path,
+    )
+    sibling_claim = parse_feedback(
+        "# 被否决的前提\n- [已实测: r9.p0/sim_w63.py | 宽度 | 2]\n",
+        work=here, repo=tmp_path,
+    )
+    either = parse_feedback(
+        "# 被否决的前提\n- [已实测: bench3.py + gen.py 扫描 | 口径 | 3]\n",
+        work=here, repo=tmp_path,
+    )
+    assert args["items"][0]["premise"] == "verified"
+    assert sibling_claim["items"][0]["premise"] == "verified"
+    assert either["items"][0]["premise"] == "verified"
+
+
+def test_a_placeholder_section_is_not_an_item_and_a_sentence_is():
+    parsed = parse_feedback("# 需要帮助\n无。\n# 卡住的原因\n没有阻塞性的事\n# 对系统的建议\n（空）\n")
+    assert parsed["placeholder_sections"] == ["需要帮助", "对系统的建议"]
+    assert [item["section"] for item in parsed["items"]] == ["卡住的原因"]
+    assert "无" in parsed["raw"]
+
+
+def test_a_capped_section_names_itself():
+    parsed = parse_feedback("# 给下一棒的避坑提示\n" + ("坑" * 600) + "\n")
+    assert parsed["truncated"] is True
+    assert parsed["truncated_sections"] == ["给下一棒的避坑提示"]
+    assert len(parsed["sections"]["给下一棒的避坑提示"]) == 500
+
+
+def test_verified_tips_have_their_own_budget_and_a_downgrade_does_not_erase_them(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    rows = []
+    for seq in range(1, 10):
+        rows.append(_row(seq, [{
+            "section": "被否决的前提", "audience": "peer", "premise": "verified",
+            "text": f"命题 {seq}", "digest": f"v{seq}",
+        }], label=f"r{seq}.p0"))
+    _write(run / "feedback.jsonl", rows)
+    kept = peer_tips_for(run)
+    assert kept.count("\n") + 1 == 9
+    assert "r1.p0" in kept and "r9.p0" in kept
+    assert kept.index("r1.p0") < kept.index("r9.p0")
+    long_rows = []
+    for seq in range(1, 18):
+        long_rows.append(_row(seq, [{
+            "section": "被否决的前提", "audience": "peer", "premise": "verified",
+            "text": f"命题{seq} " + ("甲" * 200), "digest": f"long{seq}",
+        }], label=f"r{seq}.p0"))
+    _write(run / "feedback.jsonl", long_rows)
+    trimmed = peer_tips_for(run)
+    assert "r1.p0" not in trimmed and "r17.p0" in trimmed
+    assert sum(len(line) + 1 for line in trimmed.splitlines()) <= VERIFIED_TIPS_CHARS
+    downgraded = {
+        "section": "被否决的前提", "audience": "peer", "premise": "downgraded",
+        "text": "降级后的句子", "digest": "same",
+    }
+    verified = dict(downgraded, premise="verified", text="实测命题")
+    _write(run / "feedback.jsonl", [
+        _row(1, [verified], label="r1.p0"),
+        _row(2, [downgraded], label="r2.p0"),
+    ])
+    again = peer_tips_for(run)
+    assert "实测命题" in again and "降级后的句子" not in again and "r1.p0" in again
+    expired = {
+        "section": "被否决的前提", "audience": "peer", "premise": "downgraded",
+        "text": "探针没了", "digest": "gone",
+    }
+    _write(run / "feedback.jsonl", [_row(1, [expired], label="r1.p0"), _row(2, [], label="r2.p0"), _row(3, [], label="r3.p0")])
+    assert peer_tips_for(run) == ""
+
+
+def test_unverified_and_ordinary_tips_share_the_eight_lines(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    rows = []
+    for seq in range(1, 5):
+        rows.append(_row(seq, [{
+            "section": "给下一棒的避坑提示", "audience": "peer", "premise": "",
+            "text": f"普通坑 {seq}", "digest": f"o{seq}",
+        }], label=f"r{seq}.p0"))
+    rows.append(_row(9, [{
+        "section": "被否决的前提", "audience": "peer", "premise": "unverified",
+        "text": f"未验证 {index}", "digest": f"u{index}",
+    } for index in range(6)], label="r9.p0"))
+    _write(run / "feedback.jsonl", rows)
+    text = peer_tips_for(run)
+    assert text.count("\n") + 1 == 8
+    assert text.count("未验证") == 6
+    assert "r4.p0" in text and "r3.p0" in text
+    assert "r1.p0" not in text and "r2.p0" not in text
+
+
+def test_old_records_regain_a_digest_without_rewriting_the_file(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    piece = "[已实测: probe.py | 矩阵单元只能吃 fp16 | 15.09]"
+    record = {
+        "format": "agent_feedback", "v": 1, "seq": 4, "label": "r3.p0", "round": 3,
+        "committee": "first", "provider": "deepseek", "model": "deepseek-flash",
+        "outcome": "evaluated", "exit": "normal", "best_speedup": 1.1, "truncated": True,
+        "sections": {"被否决的前提": piece, "给下一棒的避坑提示": "坑" * 500},
+        "items": [
+            {"section": "被否决的前提", "audience": "peer", "premise": "downgraded", "text": "[未验证: 探针文件不存在]", "digest": ""},
+            {"section": "需要帮助", "audience": "system", "premise": "", "text": "无。", "digest": ""},
+        ],
+        "raw": piece,
+    }
+    path = run / "feedback.jsonl"
+    path.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+    before = path.read_bytes()
+    rows = load_records(path)
+    assert path.read_bytes() == before
+    item = rows[0]["items"][0]
+    assert item["text"].startswith("[未验证: 探针文件不存在 | 矩阵单元只能吃 fp16 | 15.09]")
+    assert item["digest"]
+    assert rows[0]["truncated_sections"] == ["给下一棒的避坑提示"]
+    assert all(saved["text"] != "无。" for saved in rows[0]["items"])
+    copy = dict(record, seq=5, label="r4.p0")
+    path.write_text(json.dumps(record, ensure_ascii=False) + "\n" + json.dumps(copy, ensure_ascii=False) + "\n", encoding="utf-8")
+    tips = peer_tips_for(run)
+    assert tips.count("矩阵单元只能吃 fp16") == 1
+    from observe.feedback import entries
+
+    shown = entries(run)
+    assert shown["records"][0]["truncated_sections"] == ["给下一棒的避坑提示"]
+    assert shown["records"][0]["claims"][0]["digest"] == item["digest"]
+
+
+def test_the_check_command_prints_the_parse_and_writes_nothing(tmp_path, capsys):
+    work = tmp_path / "agent_work" / "r1.p0"
+    work.mkdir(parents=True)
+    (work / "sim_f16.py").write_text("print(1)\n")
+    feedback = work / "FEEDBACK.md"
+    feedback.write_text(
+        "# 被否决的前提\n"
+        "- [已实测: sim_f16.py --half | 会不会算错 | 1]\n"
+        "- [未验证 | 误差多大 | 没测]\n"
+        "- [已实测: missing.py | 另一命题 | 2]\n"
+        "# 需要帮助\n无。\n"
+        "# 给下一棒的避坑提示\n" + ("坑" * 600) + "\n",
+        encoding="utf-8",
+    )
+    log = tmp_path / "feedback.jsonl"
+    log.write_text("", encoding="utf-8")
+    before = feedback.read_bytes()
+    assert main(["check", str(feedback), "--work", str(work), "--repo", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "premise=verified" in out
+    assert "premise=unverified" in out
+    assert "premise=downgraded reason=探针文件不存在" in out
+    assert "placeholder_sections: 需要帮助" in out
+    assert "truncated_sections: 给下一棒的避坑提示" in out
+    assert "empty_digest=yes" not in out
+    assert feedback.read_bytes() == before
+    assert log.read_bytes() == b""
+
+
+def test_the_fixed_contract_names_the_rules_and_stays_inside_the_budget():
+    from tasks import get_task
+
+    from taic.kernel_agent import SessionBrief, render_contract
+
+    task = get_task("conv2d", "fp16", "small")
+    contract = task.contract
+    brief = SessionBrief(
+        task_name="conv2d", dtype="fp16", size="small", repo=Path("/repo"), label="r1.p0",
+        kernel_name=contract.kernel_name, triton_source=task.triton_source, description=task.description,
+        contract_text=contract.describe(), abi_stub="", rtol=task.rtol, atol_rel=task.atol_rel,
+        min_improvement=1.005, noise_z=2.0, seedless=True, work_dir="/w",
+    )
+    text = render_contract(brief)
+    # 6040 characters was this seedless contract on 2026-10-21, before the absolute paths and the write-as-you-go lines.
+    assert len(text) <= 6040 + 800
+    assert "最后写" not in text
+    assert "当场追加" in text
+    assert "用 `cp` 复制" in text
+    assert "[已实测: 文件名 | 一句命题 | 数字和单位]" in text
+    assert "[未验证 | 一句命题 | 为什么没测]" in text
+    assert "「测量」节" in text
+    assert "python -m taic.agent_feedback check /w/FEEDBACK.md --work /w" in text
+    assert "是绝对路径" in text
+    # The flow module imports hmz, which the offline env does not install. Read the wrap text from the source.
+    source = (Path(__file__).resolve().parents[1] / "taic" / "flows" / "kernel_once" / "__init__.py").read_text(encoding="utf-8")
+    wrap = source.split("def _wrap", 1)[1].split("\n@", 1)[0]
+    assert "do not rewrite it" in wrap
+    assert "with cp" in wrap
+    assert "FEEDBACK.md" in wrap and "NOTES.md" in wrap
+
+
+def test_the_new_doc_links_resolve():
+    root = Path(__file__).resolve().parents[1]
+    readme = (root / "docs" / "README.md").read_text(encoding="utf-8")
+    for name in ("写核代理读什么.md", "代理反馈.md"):
+        assert f"({name})" in readme or f"]({name})" in readme
+        assert (root / "docs" / name).is_file()
+    charter = (root / "docs" / "代理反馈.md").read_text(encoding="utf-8")
+    guide = (root / "docs" / "写核代理读什么.md").read_text(encoding="utf-8")
+    assert "写核代理读什么.md" in charter
+    assert "代理反馈.md" in guide
+    assert "1.728" in guide and "1.690" in guide

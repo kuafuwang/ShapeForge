@@ -534,6 +534,7 @@ class Orchestrator:
                 "created_at": time.time(),
                 "launch_protocol": 1,
                 "loop_protocol": "flame_chase_1",
+                "agent_guidance": self._agent_guidance_record(),
         }
         # 两个委员会和各自唯一的成员。没有密钥，也没有端点。
         body["committees"] = committees_record(self.committees)
@@ -542,6 +543,26 @@ class Orchestrator:
             (self.run_dir / "system_prompt.txt").write_text(self.system)
         except OSError as e:
             raise RunStartError(f"cannot start: run_config.json was not written ({e})") from e
+
+    def _agent_guidance_record(self) -> dict:
+        """Freeze the two files copied into every session, and record the skill hash.
+
+        A resume reads this directory and does not copy the repository again. The skill file
+        stays where hmz loads it; only its hash is recorded.
+        """
+        from .kernel_agent import EXPERIENCE, FLOW, SKILL
+
+        dest = self.run_dir / "agent_guidance"
+        dest.mkdir(parents=True, exist_ok=True)
+        hashes = {}
+        for name, src in (("experience.md", EXPERIENCE), ("msl_reference.md", SKILL)):
+            data = src.read_bytes() if src.is_file() else b""
+            (dest / name).write_bytes(data)
+            hashes[name] = hashlib.sha256(data).hexdigest()
+        skill = FLOW / "skills" / "taic-tools" / "SKILL.md"
+        data = skill.read_bytes() if skill.is_file() else b""
+        hashes["SKILL.md"] = hashlib.sha256(data).hexdigest()
+        return hashes
 
     def _cache_this(self, source: str) -> bool:
         """A report saved before launch_protocol is not a verdict for a taic-launch kernel.
@@ -1266,10 +1287,10 @@ class Orchestrator:
         slice_usd = self.search.relay_budget_usd if remaining is None else min(remaining, self.search.relay_budget_usd)
         prices = Prices(member.cfg.price_in, member.cfg.price_out, member.cfg.price_cache_read, member.cfg.price_cache_write)
         tokens = output_tokens_for(slice_usd, prices.output)
-        brief = self._session_brief(seedless, tag)
+        work = (self.run_dir / "agent_work" / tag.replace("/", "_")).resolve()
+        brief = self._session_brief(seedless, tag, work)
         self._session_briefs.append(brief)
         self._publish_state("llm", inflight=tag)
-        work = self.run_dir / "agent_work" / tag.replace("/", "_")
         self._prepare_session_dir(work)
         started = time.time()
         seed_label = None if self.best is None else self.best.label
@@ -1455,6 +1476,7 @@ class Orchestrator:
             "best_speedup": None if self.best is None else self.best.speedup,
             "kinds": parsed.get("kinds") or "none",
             "truncated": bool(parsed.get("truncated")),
+            "truncated_sections": list(parsed.get("truncated_sections") or []),
             "work_dir": f"agent_work/{tag.replace('/', '_')}",
             "sections": parsed.get("sections") or {},
             "items": items,
@@ -1543,7 +1565,7 @@ class Orchestrator:
         replaced = "换了种子" if cand.is_best else "没换种子"
         return f"{us}，状态 {rep.status}，{replaced}"
 
-    def _session_brief(self, seedless: bool, label: str = "init"):
+    def _session_brief(self, seedless: bool, label: str = "init", work_dir: Path | None = None):
         from .kernel_agent import SessionBrief
 
         seed = self.best
@@ -1559,7 +1581,12 @@ class Orchestrator:
         if self.search.peer_tips:
             from .agent_feedback import peer_tips_for
 
-            tips = peer_tips_for(self.run_dir)
+            # A failed append still assigned a seq in this process. Disk max+1 would let an unverified premise live one extra session.
+            now = None if self._feedback_seq is None else self._feedback_seq + 1
+            tips = peer_tips_for(self.run_dir, now=now)
+        work = work_dir if work_dir is not None else (self.run_dir / "agent_work" / label.replace("/", "_"))
+        snap = self.run_dir / "agent_guidance"
+        guidance = str(snap.resolve()) if (snap / "experience.md").is_file() else ""
         return SessionBrief(
             repo=REPO_ROOT, task_name=self.task_name, dtype=self.dtype, size=self.size,
             kernel_name=self.task.contract.kernel_name, triton_source=self.task.triton_source,
@@ -1570,7 +1597,7 @@ class Orchestrator:
             bound_line=bound, evidence=self._evidence, reps=self.search.eval_reps,
             require_contract_launch=self.search.require_contract_launch,
             min_improvement=self.search.min_improvement, noise_z=self.search.noise_z, seedless=seedless,
-            peer_tips=tips, label=label,
+            peer_tips=tips, label=label, work_dir=str(Path(work).resolve()), guidance_dir=guidance,
         )
 
     async def _initial_generation(self) -> None:

@@ -1,8 +1,9 @@
 """One coding-agent session in the workspace it is given.
 
 The search starts this with ``hmz exec``. The flow does not plan, time, or decide which kernel stays.
-The main turn has its own token and time budget. When that budget is spent, one short turn in the
-same session writes the best kernel to ``submit_name``, then writes NOTES.md, then a short FEEDBACK.md.
+The main turn has its own token and time budget. The submission file, NOTES.md and FEEDBACK.md are
+updated during that turn. When the budget is spent, one short turn copies the best kernel with
+``cp`` if the submission file is still missing, then fills in any lines those two notes still lack.
 """
 
 from datetime import timedelta
@@ -42,11 +43,13 @@ class Params(FlowParams):
 def _wrap(name: str) -> str:
     return (
         "Stop changing the kernel and do not run another check. "
-        f"Write the best kernel you have to {name}. The search reads only that file. "
-        "The file does not exist until you write it. If you do not write it, the search records that this session returned no kernel. "
+        f"If {name} is already in this directory, do not rewrite it. "
+        f"If it is missing, copy your best version onto {name} with cp. "
+        "Do not use the write tool to retype the whole kernel. "
+        "The search reads only that file. If it is still missing, the search records that this session returned no kernel. "
         "kernel.metal is the seed when one was placed. Editing it does not submit. "
-        "Then write NOTES.md: each version, what changed, the self-check microseconds and cv, and whether you kept it. "
-        "Last, write a short FEEDBACK.md: pitfalls for the next session on this task, and anything the system should change. "
+        "Then fill in any missing lines in FEEDBACK.md and NOTES.md. "
+        "One line in NOTES.md per version you tried. One line in the matching FEEDBACK.md section per pitfall or rejected premise. "
         "Do not copy an older kernel into the submission file to hide a failure."
     )
 

@@ -216,6 +216,7 @@ def entries(directory: Path) -> dict:
             "kinds": record.get("kinds"),
             "work_dir": record.get("work_dir"),
             "truncated": record.get("truncated"),
+            "truncated_sections": list(record.get("truncated_sections") or []),
             "raw": record.get("raw") or "",
             "claims": _claim_rows(record, review),
             "report": _report_brief(report, source),

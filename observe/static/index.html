@@ -780,7 +780,9 @@ function feedbackMarkup(doc) {
       return `<article class="fb-claim fb-${esc(tone)}"><div class="fb-claim-head"><span class="fb-kind">${esc(claim.section)}</span> <span class="badge">${esc(claim.premise || claim.audience)}</span> <span class="badge${statusClass}">${esc(claim.status)}</span> ${handle}</div><pre class="excerpt">${esc(claim.text)}</pre></article>`;
     }).join("");
     const raw = record.raw ? `<details class="fb-raw"><summary>原文</summary><pre class="excerpt">${esc(record.raw)}</pre></details>` : "";
-    return `<section class="fb-session"><header class="fb-head"><strong>${esc(record.label || "一场")}</strong><span class="fb-meta">${esc(meta)}</span></header><div class="fb-claims">${claims}</div>${raw}</section>`;
+    const cuts = (record.truncated_sections || []).filter(Boolean);
+    const cut = cuts.length ? `<p class="fb-cut">已截断：${esc(cuts.join("、"))}</p>` : "";
+    return `<section class="fb-session"><header class="fb-head"><strong>${esc(record.label || "一场")}</strong><span class="fb-meta">${esc(meta)}</span></header>${cut}<div class="fb-claims">${claims}</div>${raw}</section>`;
   }).join("");
   return `<h3>代理反馈与队友交接</h3><div class="fb-list">${blocks}</div>`;
 }
