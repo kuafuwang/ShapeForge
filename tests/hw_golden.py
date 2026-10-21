@@ -283,7 +283,7 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
 
         each = []
         for index, brief in enumerate(orch._session_briefs):
-            each.append({"label": f"{index}", "sha": sha(render_contract(brief, Path("kernel.metal")))})
+            each.append({"label": f"{index}", "sha": sha(render_contract(brief))})
         joined = "\n".join(f"{row['label']} {row['sha']}" for row in each)
         out[_orch_key(task, plan_mix, knobs)] = {"requests": len(each), "sha": sha(joined), "each": each}
     return out

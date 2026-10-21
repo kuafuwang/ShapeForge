@@ -18,7 +18,7 @@ Apple's own PDFs are in the repository named by the eval command's `--directory`
 `TASK.md` gives two commands.
 
 - The validation command answers only whether the kernel compiles and matches the reference. It does not time the kernel.
-- The evaluation command answers correctness and timing. It prints microseconds, the speedup, cv, and whether this version would replace the seed under the outer rule. That line says the self-check does not count. The search times `kernel.metal` again after you exit.
+- The evaluation command answers correctness and timing. It prints microseconds, the speedup, cv, and whether this version would replace the seed under the outer rule. That line says the self-check does not count. The search reads the submission file named in `TASK.md` after you exit. It does not read `kernel.metal`.
 
 Run the commands from this directory. Do not change the GPU lock path. Do not delete the lock file.
 
@@ -52,4 +52,4 @@ Put the measured number and the probe file name in `NOTES.md`. An unmeasured lim
 
 Keep `NOTES.md` current: what each version changed, the self-check microseconds and cv, and whether you kept it. Hardware-limit claims need the probe file and the measured number, or the word unverified next to them. The next session reads this file and does not see this conversation.
 
-Leave the last version in `kernel.metal`, including a version that failed. Do not paste an older kernel back to make a command pass.
+Write the last version to the submission filename in `TASK.md`, including a version that failed. That file is absent until you write it. Leaving it absent means this session returned no kernel. `kernel.metal` is the seed when one was placed. Do not copy an older kernel into the submission file to make a command pass.

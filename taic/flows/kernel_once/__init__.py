@@ -2,7 +2,7 @@
 
 The search starts this with ``hmz exec``. The flow does not plan, time, or decide which kernel stays.
 The main turn has its own token and time budget. When that budget is spent, one short turn in the
-same session leaves the best kernel in kernel.metal, then writes NOTES.md, then a short FEEDBACK.md.
+same session writes the best kernel to ``submit_name``, then writes NOTES.md, then a short FEEDBACK.md.
 """
 
 from datetime import timedelta
@@ -24,7 +24,7 @@ class Agents(AgentCollection):
 
 
 class Envs(EnvCollection):
-    """The directory that holds ``kernel.metal`` and ``TASK.md``."""
+    """The directory that holds the seed, ``TASK.md``, and the submission file."""
 
     workspace: LocalEnv
 
@@ -36,15 +36,19 @@ class Params(FlowParams):
     turn_minutes: int = 25
     wrap_output_tokens: int = 4000
     wrap_minutes: int = 3
+    submit_name: str = "submit.metal"
 
 
-_WRAP = (
-    "Stop changing the kernel and do not run another check. "
-    "Leave the best kernel you have in kernel.metal. The kernel is the main result. "
-    "Then write NOTES.md: each version, what changed, the self-check microseconds and cv, and whether you kept it. "
-    "Last, write a short FEEDBACK.md: pitfalls for the next session on this task, and anything the system should change. "
-    "Do not paste an older kernel back to hide a failure."
-)
+def _wrap(name: str) -> str:
+    return (
+        "Stop changing the kernel and do not run another check. "
+        f"Write the best kernel you have to {name}. The search reads only that file. "
+        "The file does not exist until you write it. If you do not write it, the search records that this session returned no kernel. "
+        "kernel.metal is the seed when one was placed. Editing it does not submit. "
+        "Then write NOTES.md: each version, what changed, the self-check microseconds and cv, and whether you kept it. "
+        "Last, write a short FEEDBACK.md: pitfalls for the next session on this task, and anything the system should change. "
+        "Do not copy an older kernel into the submission file to hide a failure."
+    )
 
 
 @flow(agents=Agents, envs=Envs, params=Params)
@@ -67,4 +71,4 @@ async def kernel_once(task: str, *, agents: Agents, envs: Envs, params: Params, 
             duration=timedelta(minutes=params.wrap_minutes),
             graceful=False,
         )
-        await assistant.run(_WRAP, session=session, env=env, budget=wrap)
+        await assistant.run(_wrap(params.submit_name), session=session, env=env, budget=wrap)

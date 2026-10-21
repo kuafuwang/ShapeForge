@@ -9,6 +9,7 @@ import pytest
 from taic.kernel_agent import (
     AgentError, AgentResult, Prices, SessionBrief, agent_spec, dollars_for, kernel_text,
     output_tokens_for, parse_spent, render_contract, run_kernel_agent, spend_from_stream,
+    submission_name,
 )
 from taic.llm import SearchConfig
 
@@ -41,15 +42,23 @@ def test_a_file_that_declares_the_kernel_is_the_source_without_a_fence():
     assert kernel_text(staged, "conv2d_kernel").startswith("/* taic-launch")
 
 
+def test_the_submission_name_is_the_task_and_the_session():
+    assert submission_name("conv2d", "fp16", "paper", "r16.p0") == "conv2d-fp16-paper-r16.p0.metal"
+    assert submission_name("flash attention", "fp16", "64x32", "init") == "flash-attention-fp16-64x32-init.metal"
+    assert submission_name("conv2d", "fp16", "paper", "r1.p0") != submission_name("conv2d", "fp16", "paper", "r2.p0")
+
+
 def test_the_contract_names_both_commands_and_does_not_ask_for_a_fence(tmp_path):
-    text = render_contract(_brief(tmp_path), tmp_path / "kernel.metal")
+    text = render_contract(_brief(tmp_path))
     assert "--quick" in text and "--timed" in text
+    assert "conv2d-fp16-paper-init.metal" in text
     assert "self_checks.jsonl" in text
     assert "NOTES.md" in text
     assert "```metal block" not in text
     assert "does not time" not in text
-    assert "先写出一颗外层评测合格的核" in text
-    assert "本场的主产出始终是 `kernel.metal`" in text
+    assert "先把一颗核写进 `conv2d-fp16-paper-init.metal`" in text
+    assert "本场的主产出始终是 `conv2d-fp16-paper-init.metal`" in text
+    assert "外层不读它" in text
     assert "# 这个系统怎么工作" in text
     for title in ("# 需要帮助", "# 对系统的建议", "# 卡住的原因", "# 给下一棒的避坑提示", "# 被否决的前提"):
         assert title in text
@@ -61,18 +70,18 @@ def test_a_seeded_contract_leads_with_the_outer_measurement(tmp_path):
     brief.seed_source = "kernel void conv2d_kernel() {}\n"
     brief.notes_summary = "外层实测：100 µs，状态 ok，没换种子\n上一版自报 10 µs"
     brief.bound_line = "本算法运算量下界 932 µs，最强基线 torch-mps 790 µs。下界高于基线时，不减少运算量的写法不可能超过它。"
-    text = render_contract(brief, tmp_path / "kernel.metal")
+    text = render_contract(brief)
     assert text.index("外层实测") < text.index("上一版自报")
     assert "--seed-report report.json" in text
     assert "不减少运算量" in text
     brief.peer_tips = "- [r1 first/fake, evaluated 1.100x] float8 是保留字"
-    seeded = render_contract(brief, tmp_path / "kernel.metal")
+    seeded = render_contract(brief)
     assert seeded.index("上一轮 NOTES") < seeded.index("本任务前序避坑提示")
     assert "一律按未验证处理" in seeded
     assert "float8 是保留字" in seeded
     seedless = _brief(tmp_path, seedless=True)
     seedless.peer_tips = "- [init first/fake, agent_failed] simd_any 要在分支外"
-    assert "simd_any 要在分支外" in render_contract(seedless, tmp_path / "kernel.metal")
+    assert "simd_any 要在分支外" in render_contract(seedless)
 
 
 def test_spent_on_a_result_line_is_priced_by_kind_and_result_lines_add():
@@ -97,12 +106,17 @@ def test_a_dollar_slice_becomes_output_tokens():
     assert output_tokens_for(0.0000001, 1.2) == 1
 
 
-def _fake_hmz(path: Path, *, source: str, code: int = 0, spent: str = "Usage(output=1000)") -> None:
+def _fake_hmz(path: Path, *, source: str, code: int = 0, spent: str = "Usage(output=1000)", write_submit: bool = True) -> None:
     line = json.dumps({"kind": "result", "spent": spent})
+    write = f"pathlib.Path(name).write_text({source!r})\n" if write_submit else ""
     path.write_text(
         "#!/usr/bin/env python3\n"
         "import pathlib, sys\n"
-        f"pathlib.Path('kernel.metal').write_text({source!r})\n"
+        "name = 'missing.metal'\n"
+        "for arg in sys.argv:\n"
+        "    if arg.startswith('submit_name='):\n"
+        "        name = arg.split('=', 1)[1]\n"
+        f"{write}"
         "pathlib.Path('NOTES.md').write_text('kept this one\\n')\n"
         f"print({line!r})\n"
         f"sys.exit({code})\n"
@@ -137,8 +151,12 @@ def test_a_missing_hmz_is_an_error_and_a_timeout_still_returns_the_file(tmp_path
     hmz = tmp_path / "hmz"
     hmz.write_text(
         "#!/usr/bin/env python3\n"
-        "import pathlib, time\n"
-        "pathlib.Path('kernel.metal').write_text('kernel void conv2d_kernel() { /* new */ }\\n')\n"
+        "import pathlib, sys, time\n"
+        "name = 'missing.metal'\n"
+        "for arg in sys.argv:\n"
+        "    if arg.startswith('submit_name='):\n"
+        "        name = arg.split('=', 1)[1]\n"
+        "pathlib.Path(name).write_text('kernel void conv2d_kernel() { /* new */ }\\n')\n"
         "time.sleep(30)\n"
     )
     hmz.chmod(hmz.stat().st_mode | stat.S_IEXEC)
@@ -149,6 +167,23 @@ def test_a_missing_hmz_is_an_error_and_a_timeout_still_returns_the_file(tmp_path
     assert result.status == "timeout"
     assert result.cost_incomplete is True
     assert "new" in result.source
+
+
+def test_a_seed_left_in_kernel_metal_is_not_a_submission(tmp_path):
+    hmz = tmp_path / "hmz"
+    _fake_hmz(hmz, source="kernel void conv2d_kernel() { /* new */ }\n", write_submit=False)
+    brief = _brief(tmp_path, seedless=False)
+    brief.seed_source = "kernel void conv2d_kernel() { /* seed */ }\n"
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "conv2d-fp16-paper-init.metal").write_text("kernel void conv2d_kernel() { /* stale */ }\n")
+    result = run_kernel_agent(
+        brief, work=work, provider="deepseek", model="deepseek-flash",
+        effort=None, prices=PRICES, turn_output_tokens=10, turn_minutes=1, hmz=str(hmz),
+    )
+    assert result.source is None
+    assert (work / "kernel.metal").read_text().startswith("kernel void conv2d_kernel() { /* seed */ }")
+    assert not (work / "conv2d-fp16-paper-init.metal").exists()
 
 
 def test_a_nonzero_exit_with_no_kernel_is_a_failure(tmp_path):

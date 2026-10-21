@@ -1245,7 +1245,8 @@ class Orchestrator:
         """One hmz session. Returns ``agent_failed``, ``unchanged`` or ``evaluated``.
 
         A session that ends without a new kernel after a crash or a timeout is ``agent_failed``.
-        A clean exit that leaves the seed is ``unchanged`` and does not count as a failure.
+        A clean exit that does not write the submission file is ``agent_failed``.
+        A clean exit that writes the seed bytes into that file is ``unchanged`` and does not count as a failure.
         A changed file is evaluated whatever the process exit was.
         Feedback is parsed once and recorded once, including when the session stops early.
         """
@@ -1260,7 +1261,7 @@ class Orchestrator:
         slice_usd = self.search.relay_budget_usd if remaining is None else min(remaining, self.search.relay_budget_usd)
         prices = Prices(member.cfg.price_in, member.cfg.price_out, member.cfg.price_cache_read, member.cfg.price_cache_write)
         tokens = output_tokens_for(slice_usd, prices.output)
-        brief = self._session_brief(seedless)
+        brief = self._session_brief(seedless, tag)
         self._session_briefs.append(brief)
         self._publish_state("llm", inflight=tag)
         work = self.run_dir / "agent_work" / tag.replace("/", "_")
@@ -1310,15 +1311,21 @@ class Orchestrator:
                 self.ledger.charge(result.cost_usd, tag)
             self.hangs += int(result.self_check_timeouts or 0)
             seed_source = None if self.best is None else self.best.source
-            changed = result.source is not None and result.source != seed_source
-            if result.status in ("timeout", "failed") and not changed:
+            if result.source is None:
                 outcome = "agent_failed"
-            elif not changed:
+            elif result.status in ("timeout", "failed") and result.source == seed_source:
+                outcome = "agent_failed"
+            elif seed_source is not None and result.source == seed_source:
                 outcome = "unchanged"
             else:
                 outcome = "evaluated"
             self.llm.transcript.log(self._agent_event(tag, member, result, outcome, parsed))
-            self.log(f"  [{tag}] {self._committee_name} {member.provider}/{member.model} {outcome}" + (f" ({result.error[:120]})" if result.error else ""))
+            missing = ""
+            if result.source is None:
+                from .kernel_agent import submission_name
+
+                missing = " " + submission_name(self.task_name, self.dtype, self.size, tag) + " was not written"
+            self.log(f"  [{tag}] {self._committee_name} {member.provider}/{member.model} {outcome}{missing}" + (f" ({result.error[:120]})" if result.error else ""))
             if result.self_check_timeouts and self.hangs >= self.search.max_hangs:
                 self._publish_state("llm", inflight=None)
                 if outcome == "evaluated":
@@ -1531,7 +1538,7 @@ class Orchestrator:
         replaced = "换了种子" if cand.is_best else "没换种子"
         return f"{us}，状态 {rep.status}，{replaced}"
 
-    def _session_brief(self, seedless: bool):
+    def _session_brief(self, seedless: bool, label: str = "init"):
         from .kernel_agent import SessionBrief
 
         seed = self.best
@@ -1558,7 +1565,7 @@ class Orchestrator:
             bound_line=bound, evidence=self._evidence, reps=self.search.eval_reps,
             require_contract_launch=self.search.require_contract_launch,
             min_improvement=self.search.min_improvement, noise_z=self.search.noise_z, seedless=seedless,
-            peer_tips=tips,
+            peer_tips=tips, label=label,
         )
 
     async def _initial_generation(self) -> None:

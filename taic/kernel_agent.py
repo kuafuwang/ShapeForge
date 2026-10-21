@@ -1,9 +1,9 @@
 """Write one kernel by asking the pi coding agent, through hmz, to edit a file.
 
-The search does not call the chat API to write kernels. One hmz session reads ``TASK.md``,
-edits ``kernel.metal``, and may time itself with ``tcenv eval --timed``. The search times the
-file the agent leaves behind and decides whether it stays. A number the agent prints is not
-the search result.
+The search does not call the chat API to write kernels. One hmz session reads ``TASK.md``
+and writes one submission file whose name is ``submission_name``. ``kernel.metal`` is the
+seed, placed before the session, and the search does not read it. A missing submission
+means this session returned no kernel. A number the agent prints is not the search result.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ SKILL = Path(__file__).resolve().parent / "skills" / "msl_reference.md"
 EXPERIENCE = Path(__file__).resolve().parent / "skills" / "wiki" / "experience.md"
 _KERNEL = re.compile(r"\bkernel\s+void\s+(\w+)\b")
 _USAGE = re.compile(r"([A-Za-z_]+)=(-?\d+(?:\.\d+)?)")
+_NAME_PART = re.compile(r"[^A-Za-z0-9._-]+")
 # 一场会话的墙钟。hmz 的回合预算先到；这个秒数只在进程不退出时杀掉它。
 PROCESS_TIMEOUT_S = 25 * 60 + 3 * 60 + 2 * 60 + 60
 _PEER_HEADER = "本任务前序避坑提示（队友交接，仅限本运行参考；凡未附探针文件名与实测数字的硬件/算法上限断言，一律按未验证处理，鼓励你写探针翻案）："
@@ -77,6 +78,7 @@ class SessionBrief:
     noise_z: float = 2.0
     seedless: bool = False
     peer_tips: str = ""
+    label: str = "init"
 
 
 @dataclass
@@ -94,6 +96,20 @@ class AgentResult:
     self_checks: int = 0
     self_check_timeouts: int = 0
     self_check_gpu_s: float = 0.0
+
+
+def submission_name(task: str, dtype: str, size: str, label: str) -> str:
+    """The file this session must create. The search does not create it.
+
+    The name is ``{task}-{dtype}-{size}-{label}.metal``. ``label`` is the session
+    (``init``, ``r3.p0``), so two sessions in one run do not share a name. A character
+    outside letters, digits, ``.``, ``_`` and ``-`` becomes ``-``.
+    """
+    parts = []
+    for raw in (task, dtype, size, label):
+        piece = _NAME_PART.sub("-", str(raw).strip()).strip("-.")
+        parts.append(piece or "x")
+    return "-".join(parts) + ".metal"
 
 
 def kernel_text(text: str, kernel_name: str) -> str | None:
@@ -203,9 +219,10 @@ def spend_from_stream(text: str) -> tuple[dict[str, float], bool]:
     return totals, saw
 
 
-def _check_command(brief: SessionBrief, kernel_path: Path, mode: str) -> str:
+def _check_command(brief: SessionBrief, mode: str) -> str:
+    name = submission_name(brief.task_name, brief.dtype, brief.size, brief.label)
     parts = [
-        f"uv run --directory {brief.repo} python -m tcenv.cli eval {brief.task_name} {kernel_path.name}",
+        f"uv run --directory {brief.repo} python -m tcenv.cli eval {brief.task_name} {name}",
         f"--dtype {brief.dtype}",
         f"--size {brief.size}",
         "--quick" if mode == "quick" else "--timed",
@@ -223,10 +240,11 @@ def _check_command(brief: SessionBrief, kernel_path: Path, mode: str) -> str:
     return " ".join(parts)
 
 
-def render_contract(brief: SessionBrief, kernel_path: Path) -> str:
+def render_contract(brief: SessionBrief) -> str:
     """The KDA-shaped task contract written to ``TASK.md``."""
-    quick = _check_command(brief, kernel_path, "quick")
-    timed = _check_command(brief, kernel_path, "timed")
+    quick = _check_command(brief, "quick")
+    timed = _check_command(brief, "timed")
+    submit = submission_name(brief.task_name, brief.dtype, brief.size, brief.label)
     lines = [
         f"# 目标",
         f"把 Triton 算子 `{brief.task_name}` 写成 Metal，dtype `{brief.dtype}`，规模 `{brief.size}`。",
@@ -255,7 +273,10 @@ def render_contract(brief: SessionBrief, kernel_path: Path) -> str:
         "除法必须整除。不是契约常量的名字，编译前就会被拒绝。`math fast` 或 `math safe` 只能有一行。",
         "最多 32 段。不许纹理。不许把任何旧核原文贴回来。",
         "着色器校验在你退出之后由外层做。插桩会把线程组内存报大，边界写保守些。",
-        "最后一版不合格也留在 kernel.metal 里。不要为了过检查贴回旧核。",
+        f"本场要交的文件是 `{submit}`。外层只读这个文件。开场时它不存在。",
+        f"你写了它，外层就把里面的内容当作你交回的核。你不写它，外层记这场没有交回内核。",
+        "`kernel.metal` 在有种子时已经放在本目录，只供阅读。外层不读它。改它不算交卷。",
+        f"最后一版即使不合格，也写进 `{submit}`。不要把种子原文抄进这个文件来过检查。",
         "",
         "`experience.md` 是这个项目已经测过的东西：哪些启动契约与 tile 划算、哪些算子已经贴着带宽屋顶、"
         "哪个库换了算法。它是线索不是规则：你自己测出来的数比它高。",
@@ -287,22 +308,22 @@ def render_contract(brief: SessionBrief, kernel_path: Path) -> str:
     if brief.seedless:
         lines += [
             "",
-            "现在没有种子。先写出一颗外层评测合格的核。外层评测合格，它就成为种子。",
+            f"现在没有种子，也没有 `kernel.metal`。先把一颗核写进 `{submit}`。外层评测合格，它就成为种子。",
         ]
     lines += [
         "",
         "# 这个系统怎么工作",
-        "你在一场接力里：两个委员会轮流，一轮一场新会话，对话不带过去。往下传的有 `kernel.metal`、`NOTES.md`、外层成绩单，以及本运行内的「队友避坑提示」。",
+        "你在一场接力里：两个委员会轮流，一轮一场新会话，对话不带过去。下一场读到的种子在 `kernel.metal`，另有 `NOTES.md`、外层成绩单，以及本运行内的「队友避坑提示」。",
         "外层判卷是机械的：全量评测、三级贴核检查、确认计时绑源码指纹。你自报的数字不进种子，也不进发布加速比。",
         "固定的是合同签名、容差、围栏和预算。可质疑的是笔记、文档、提示词和队友留下的前提。",
         "你可以读整个仓库（`docs/`、评测源码），只能写本目录。",
-        "本场的主产出始终是 `kernel.metal`。`FEEDBACK.md` 写短、最后写。给系统的建议只给人看，有人在看板复核后改仓库。给下一棒的避坑提示只在本运行内往下传，不跨题目。放弃某个方向所依据的断言必须写进「被否决的前提」节，不要夹在避坑里。",
+        f"本场的主产出始终是 `{submit}`。`FEEDBACK.md` 写短、最后写。给系统的建议只给人看，有人在看板复核后改仓库。给下一棒的避坑提示只在本运行内往下传，不跨题目。放弃某个方向所依据的断言必须写进「被否决的前提」节，不要夹在避坑里。",
         "文件开头一行 `kind: prompt|skill|tool|rule|decision|none`，可以写多个，用逗号分开。只留避坑、没有系统建议时写 `none`。",
         "然后按这五个标题写，缺的可以留空：`# 需要帮助`、`# 对系统的建议`、`# 卡住的原因`、`# 给下一棒的避坑提示`、`# 被否决的前提`。",
         "被否决的前提里，每一条写成 `[已实测: 探针文件 | 测的命题 | 数字]` 或 `[未验证]`。",
     ]
     if not brief.seedless:
-        lines += ["", "# 当前现场", "种子 `kernel.metal` 已经放在本目录。"]
+        lines += ["", "# 当前现场", f"种子在 `kernel.metal`。交卷写 `{submit}`，不要改种子文件。"]
         if brief.scorecard:
             lines += ["", "外层成绩单：", brief.scorecard.strip()]
         if brief.bound_line:
@@ -319,7 +340,7 @@ def render_contract(brief: SessionBrief, kernel_path: Path) -> str:
             lines += ["", brief.evidence.strip()]
         lines += [
             "",
-            "合同里的外层成绩和你自己跑出来的数字对不上时，先对种子原样跑一次 `--timed`，再改。",
+            "合同里的外层成绩和你自己跑出来的数字对不上时，先把评测命令里的文件名换成 `kernel.metal` 跑一次 `--timed`，再改。交卷前的自测用上面的命令，文件名是交卷文件。",
         ]
     elif brief.peer_tips:
         lines += ["", _PEER_HEADER, brief.peer_tips.strip()]
@@ -330,7 +351,7 @@ def render_contract(brief: SessionBrief, kernel_path: Path) -> str:
         "涉及硬件上限的断言（速率、指令、容量）必须附探针文件名和实测数字；没有实测的写「未验证」。被否决的方向连同否决它的数字一起记，方便下一位复核。",
         "这是交给下一位的记录。下一位看不到这次对话。",
         "",
-        f"改完后把核留在 `{kernel_path.name}`。外层只读这个文件。",
+        f"改完后把核写进 `{submit}`。外层只读这个文件。",
     ]
     return "\n".join(lines) + "\n"
 
@@ -379,15 +400,21 @@ def run_kernel_agent(
     if not binary or not Path(binary).is_file():
         raise AgentError("hmz is not on PATH; install it with `uv tool install hmz`")
     work.mkdir(parents=True, exist_ok=True)
-    kernel_path = work / "kernel.metal"
-    kernel_path.write_text(brief.seed_source or "")
+    submit = submission_name(brief.task_name, brief.dtype, brief.size, brief.label)
+    submit_path = work / submit
+    submit_path.unlink(missing_ok=True)
+    seed_path = work / "kernel.metal"
+    if brief.seed_source and not brief.seedless:
+        seed_path.write_text(brief.seed_source)
+    else:
+        seed_path.unlink(missing_ok=True)
     if brief.seed_report_json and not brief.seedless:
         (work / "report.json").write_text(brief.seed_report_json)
     if SKILL.exists():
         shutil.copyfile(SKILL, work / "msl_reference.md")
     if EXPERIENCE.exists():
         shutil.copyfile(EXPERIENCE, work / "experience.md")
-    (work / "TASK.md").write_text(render_contract(brief, kernel_path))
+    (work / "TASK.md").write_text(render_contract(brief))
     flow_minutes = int(turn_minutes) + WRAP_MINUTES + FLOW_SLACK_MINUTES
     argv = [
         binary, "exec", "-f", str(FLOW),
@@ -396,9 +423,10 @@ def run_kernel_agent(
         "-p", f"turn_minutes={int(turn_minutes)}",
         "-p", f"wrap_output_tokens={WRAP_OUTPUT_TOKENS}",
         "-p", f"wrap_minutes={WRAP_MINUTES}",
+        "-p", f"submit_name={submit}",
         "-p", f"budget.duration={flow_minutes}m",
         "--json",
-        "--", "Read TASK.md in this directory and do it. Leave the finished kernel in kernel.metal.",
+        "--", f"Read TASK.md in this directory and do it. Write the finished kernel to {submit}. The search does not read kernel.metal.",
     ]
     status = "ok"
     error = ""
@@ -422,7 +450,7 @@ def run_kernel_agent(
     stream = (stdout or "") + "\n" + (stderr or "")
     spent, saw_result = spend_from_stream(stream)
     cost = dollars_for(spent, prices) if saw_result else None
-    written = kernel_path.read_text() if kernel_path.exists() else ""
+    written = submit_path.read_text() if submit_path.is_file() else ""
     source = kernel_text(written, brief.kernel_name)
     notes = ""
     notes_path = work / "NOTES.md"

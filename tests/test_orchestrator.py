@@ -172,6 +172,22 @@ def test_gives_up_on_a_branch_after_max_repair_tries_but_keeps_the_seed(tmp_path
     assert any("incorrect" in h for h in orch.history)
 
 
+def test_a_session_that_returns_no_source_is_not_an_unchanged_seed(tmp_path):
+    calls = []
+
+    def run_agent(brief, tag):
+        del brief, tag
+        from taic.kernel_agent import AgentResult
+
+        return AgentResult(source=None, cost_usd=0.01, cost_incomplete=False, status="ok")
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), calls, max_rounds=1)
+    orch.agent_runner = run_agent
+    res = run(orch)
+    assert res.stop_reason == "agent_failure"
+    assert [line for line in orch.history if "agent_failed" in line]
+
+
 def test_a_reply_without_a_code_block_gets_a_nudge(tmp_path):
     calls = []
     replies = [make_response("I think we should do something.")] + [None]

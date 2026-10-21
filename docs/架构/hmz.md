@@ -39,7 +39,7 @@ hmz exec -f taic/flows/kernel_once
 
 流程目录下的 `skills/<名字>/SKILL.md` 要由角色用 `_skills` 点名。`hmz` 才把它放进这场进程的虚拟家目录。不放进工作区。`pi --mode rpc` 不信任工作区里的 `.pi/skills`，也不加载工作区里的 `.pi/mcp.json`。
 
-本仓库的技能是 `taic/flows/kernel_once/skills/taic-tools/SKILL.md`。它让代理读 `msl_reference.md`，并按 `TASK.md` 里的命令做 `--quick` 和 `--timed`。计时用机器上那把 GPU 锁。主回合有输出 token 和时长上限；到了上限，同一会话再写一次 NOTES，把核留在 `kernel.metal`。
+本仓库的技能是 `taic/flows/kernel_once/skills/taic-tools/SKILL.md`。它让代理读 `msl_reference.md`，并按 `TASK.md` 里的命令做 `--quick` 和 `--timed`。计时用机器上那把 GPU 锁。主回合有输出 token 和时长上限；到了上限，同一会话再写一次 NOTES，把核写进 `TASK.md` 里的交卷文件。`kernel.metal` 是种子，外层不读。
 
 KDA 教 Nsight 是同一条路。`skills/ncu-report-skill/SKILL.md` 写明先测、再对症状、再写计划，并给出可照抄的 `ncu` 命令。`flame_chase` 自己不跑剖析。代理用终端执行技能里的命令。
 
