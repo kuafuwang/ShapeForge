@@ -175,7 +175,7 @@ def test_a_rejected_recheck_is_left_out_of_confirmation(tmp_path):
     res = asyncio.run(go())
     assert orch.best.source == good
     assert res.confirmed_status == "ok"
-    assert confirmed == [good]
+    assert confirmed and set(confirmed) == {good}  # 每次确认都只测 good；bad 一次都没进来
 
 
 def test_a_counterexample_nested_inside_the_report_is_still_refused():

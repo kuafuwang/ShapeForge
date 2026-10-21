@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import secrets
+import statistics
 import subprocess
 import time
 from dataclasses import asdict, dataclass, field
@@ -223,6 +224,10 @@ class RunResult:
     # 新种子、两倍重复次数下的加速比，用来压掉「多次噪声测量里挑最大值」。
     confirmed_speedup: float | None = None  # fresh seed, more repetitions
     confirmed_status: str | None = None
+    # 确认阶段每一批的值与最差那批：发布的是中位数，这两个字段让人看见区间。
+    confirmed_values: list = field(default_factory=list)
+    confirmed_worst: float | None = None
+    confirmed_best: float | None = None
     confirmations: list = field(default_factory=list)  # every re-measured candidate (the best and its ties within noise)
     baseline_us: dict = field(default_factory=dict)
     candidate_us: float | None = None
@@ -1731,56 +1736,88 @@ class Orchestrator:
             self.log(f"-- confirming {', '.join(c.label for c in pool)} with seeds derived for the confirm phase")
         self._confirmations = res.confirmations
         self._publish_state("confirm", inflight=", ".join(c.label for c in pool))
-        confirmed: list[tuple[Candidate, EvalReport]] = []
+        batches = max(1, int(getattr(self.search, "confirm_batches", 1) or 1))
+        # (候选, 中位数, 每一批的值, 与中位数一致的那份报告)
+        confirmed: list[tuple[Candidate, float, list[float], EvalReport]] = []
         for c in pool:
             entry: dict[str, Any] = {"label": c.label, "search_speedup": c.speedup}
             res.confirmations.append(entry)
             self._confirmations = res.confirmations
             self._publish_state("confirm", inflight=c.label)
-            try:
-                async with self.gpu_lock:
-                    # run_seed 为空的旧运行仍由评测器另抽。新运行用 confirm 阶段的派生种子，和搜索阶段不是同一个数。
-                    phase_seed = self._phase_seed("confirm", c.label, c.source)
-                    rep = await asyncio.to_thread(
-                        self.evaluate_fn, self.task_name, self.dtype, self.size, c.source, mode="full", seed=phase_seed, reps=self.search.eval_reps * 2,
-                        progress_path=self.run_dir / "eval_progress.json",
-                        **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
-                    )
-                entry["eval_seed"] = phase_seed if phase_seed is not None else rep.seed
-                entry["eval_seed_from"] = "confirm" if phase_seed is not None else "random"
-            except SchemaError:
-                raise
-            except Exception as e:  # noqa: BLE001 - a failed confirmation must not lose the run
-                entry["status"] = f"error: {type(e).__name__}: {e}"
-                self._confirmations = res.confirmations
-                self._publish_state("confirm", inflight=c.label)
-                continue
-            entry["status"], entry["confirmed_speedup"] = rep.status, rep.speedup if rep.status == "ok" else None
-            if rep.status != "ok":
+            values: list[float] = []
+            reports: list[EvalReport] = []
+            seeds: list[int | None] = []
+            stop = False
+            for batch in range(batches):
+                # 每一批换一套评测输入。相位名必须是 eval_seed 认识的那几个，所以第 0 批原样用 label，
+                # 后续批次在 label 后缀 #b2/#b3 —— 派生种子的配方不变，旧运行与单批配置的种子也不受影响。
+                seed_label = c.label if batch == 0 else f"{c.label}#b{batch + 1}"
+                try:
+                    async with self.gpu_lock:
+                        phase_seed = self._phase_seed("confirm", seed_label, c.source)
+                        rep = await asyncio.to_thread(
+                            self.evaluate_fn, self.task_name, self.dtype, self.size, c.source, mode="full", seed=phase_seed, reps=self.search.eval_reps * 2,
+                            progress_path=self.run_dir / "eval_progress.json",
+                            **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
+                        )
+                    seeds.append(phase_seed if phase_seed is not None else rep.seed)
+                    if batch == 0:
+                        # 向后兼容：第一条仍有 eval_seed / eval_seed_from。
+                        entry["eval_seed"] = seeds[-1]
+                        entry["eval_seed_from"] = "confirm" if phase_seed is not None else "random"
+                except SchemaError:
+                    raise
+                except Exception as e:  # noqa: BLE001 - a failed confirmation must not lose the run
+                    entry["status"] = f"error: {type(e).__name__}: {e}"
+                    self.log(f"   {c.label}: confirmation batch {batch + 1} failed: {type(e).__name__}: {str(e)[:160]}")
+                    self._confirmations = res.confirmations
+                    self._publish_state("confirm", inflight=c.label)
+                    stop = True
+                    break
+                if rep.status == "ok" and rep.speedup:
+                    values.append(float(rep.speedup))
+                    reports.append(rep)
+                    continue
                 failed = self._failure_record(c, rep, phase_seed, "confirm", rep.status not in ("timeout", "crash"))
                 folder = self.run_dir / "rechecks"
                 folder.mkdir(exist_ok=True)
-                (folder / f"confirm_{c.label}.json").write_text(json.dumps(failed, indent=1, default=str))
+                (folder / f"confirm_{c.label}{'' if batch == 0 else f'.b{batch + 1}'}.json").write_text(json.dumps(failed, indent=1, default=str))
+                if rep.status == "timeout":
+                    # 复测超时就不再测剩下的批次与并列者。搜索已经结束，这里只停止继续占 GPU。
+                    self.hangs += 1
+                    stop = True
+                    break
+                entry["status"] = rep.status
+                self.log(f"   {c.label}: confirmation {rep.status} {rep.message[:120]}")
+                stop = True
+                break
+            entry["eval_seeds"] = seeds
+            if values:
+                median = float(statistics.median(values))
+                entry["status"] = "ok"
+                entry["confirmed_speedup"] = median
+                entry["confirmed_values"] = values
+                entry["confirmed_worst"] = min(values)
+                # 与中位数最接近的那一批，作为 confirm_report.json 留证。
+                rep = min(reports, key=lambda r: abs(float(r.speedup) - median))
+                confirmed.append((c, median, values, rep))
+                self.log(f"   {c.label}: confirmed {median:.3f}x (median of {len(values)} batch(es): " + ", ".join(f"{v:.3f}" for v in values) + ")")
             self._confirmations = res.confirmations
             self._publish_state("confirm", inflight=c.label)
-            self.log(f"   {c.label}: confirmed {rep.speedup:.3f}x" if rep.status == "ok" and rep.speedup else f"   {c.label}: confirmation {rep.status} {rep.message[:120]}")
-            if rep.status == "ok" and rep.speedup:
-                confirmed.append((c, rep))
-            elif rep.status == "timeout":
-                # 复测超时就不再测剩下的并列者。搜索已经结束，这里只停止继续占 GPU。
-                self.hangs += 1
+            if stop:
                 break
         if not confirmed:
-            res.confirmed_status = res.confirmations[0]["status"]
+            res.confirmed_status = res.confirmations[0].get("status") or "error"
             return
-        # 重测最快的一颗才是对外结果。它若不是搜索时的 self.best 就换上头衔；best_speedup 仍是搜索过程中的测量，复测值记在 confirmed_speedup。
-        win, rep = max(confirmed, key=lambda cr: cr[1].speedup)
+        # 用中位数比较候选（不再拿某一批的最大值），选最高的那颗；best_speedup 仍是搜索过程中的测量。
+        win, median, values, rep = max(confirmed, key=lambda item: item[1])
         self._confirm_winner = win
         if win is not self.best:
             self.log(f"   {win.label} is faster than {self.best.label} when re-measured; it becomes the result")
             self.best.is_best, win.is_best = False, True
             self.best = win
-        res.confirmed_status, res.confirmed_speedup = rep.status, rep.speedup
+        res.confirmed_status, res.confirmed_speedup = "ok", median
+        res.confirmed_values, res.confirmed_worst, res.confirmed_best = list(values), min(values), max(values)
         res.candidate_us, res.baseline_us = rep.candidate_us, rep.baseline_us
         control.write_json_atomic(self.run_dir / "confirm_report.json", rep.to_json())
         if self.hangs >= self.search.max_hangs:

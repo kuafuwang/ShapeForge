@@ -243,7 +243,8 @@ def test_identical_sources_are_evaluated_once(tmp_path):
     script = llm_script(same, patches={"A": same, "B": same, "C": same})
     orch = make_orch(tmp_path, script, calls, max_rounds=1)
     res = run(orch)
-    assert len([1 for m, s in calls if "speed=1.2" in s and m == "full"]) == 2  # the seed, then the confirmation. Copies of the seed are not timed.
+    # the seed, then one confirmation per batch. Copies of the seed are not timed.
+    assert len([1 for m, s in calls if "speed=1.2" in s and m == "full"]) == 1 + orch.search.confirm_batches
     assert res.best_label == "init"
     copies = [c for c in res.candidates if str(c["label"]).startswith("r1.")]
     assert copies and all(c["status"] == "unchanged" for c in copies)
@@ -713,3 +714,31 @@ def test_a_saved_report_from_before_launch_protocol_is_not_cached(tmp_path):
     path.write_text('{"launch_protocol": 1}')
     assert orch._cache_this("/* taic-launch */\nkernel void k() {}\n") is True
 
+
+
+def test_confirmation_reports_the_median_of_independent_batches(tmp_path):
+    """The published number is the median over confirm_batches input batches, not one lucky batch.
+
+    runs/conv2d-feedback-20261021 showed why: one batch put the same kernel 1.8% slower than the search
+    measurement and 2.2% below it in speedup, which a single batch reports as if it were the kernel's level.
+    """
+    calls = []
+
+    def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
+        calls.append((mode, source))
+        seen = sum(1 for _m, s in calls if s == source)
+        sp = {1: 1.30, 2: 1.10, 3: 1.40, 4: 1.20}.get(seen, 1.20)
+        rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=1, stage="done", status="ok", message="ok")
+        rep.speedup, rep.speedups, rep.candidate_us, rep.baseline_us = sp, {"mlx": sp}, 100.0 / sp, {"mlx": 100.0}
+        rep.benchmark = {"candidate": {"median_us": 100.0 / sp, "cv": 0.01, "reps": reps}, "baselines": {"mlx": {"median_us": 100.0, "cv": 0.01, "reps": reps}}, "best_baseline": "mlx"}
+        return rep
+
+    script = llm_script(code("speed=1.30"), patches={"A": code("speed=0.7")})
+    orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=1, evaluate_fn=ev)
+    res = run(orch)
+    assert orch.search.confirm_batches == 3
+    assert res.confirmed_values == [pytest.approx(1.10), pytest.approx(1.40), pytest.approx(1.20)]
+    assert res.confirmed_speedup == pytest.approx(1.20)  # 中位，不是最大 1.40
+    assert res.confirmed_worst == pytest.approx(1.10)
+    assert res.confirmed_best == pytest.approx(1.40)  # 极差 27%，正是"不能当精确值看"的样例
+    assert res.confirmations[0]["confirmed_values"] == res.confirmed_values

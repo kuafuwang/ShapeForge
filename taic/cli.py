@@ -37,6 +37,8 @@ def cmd_run(a: argparse.Namespace) -> int:
         search.plan_mix = True
     if a.init_samples:
         search.init_samples = a.init_samples
+    if a.confirm_batches:
+        search.confirm_batches = a.confirm_batches
     if a.patience:
         search.patience = a.patience
     if getattr(a, "kernel_agent", None):
@@ -79,7 +81,7 @@ def cmd_run(a: argparse.Namespace) -> int:
 
 
 SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "max_quick_checks", "min_improvement", "noise_z", "confirm_top", "eval_reps", "max_hangs",
-                 "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
+                 "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "confirm_batches", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
                  "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck",
                  "plan_ledger", "diversity_archive", "fast_bench", "experience_index", "kernel_agent", "require_contract_launch",
                  "relay_budget_usd", "turn_minutes", "peer_tips")
@@ -431,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--hw-feedback", action="store_true", help="append a short static hardware-feature analysis of the seed to the planner and patch feedback and teach it as Skill 2c (off by default)")
     _add_search_switches(p)
     p.add_argument("--init-samples", type=int, default=None, help="sample this many initial kernels in parallel; the best eligible one seeds the search")
+    p.add_argument("--confirm-batches", type=int, default=None, help="independent confirm evaluations per candidate; the published speedup is their median (default 3, 1 = the old single batch)")
     p.add_argument("--patience", type=int, default=None, help="stop after this many rounds without a new best (default 4)")
     p.add_argument("--run-dir", default=None)
     p.add_argument("--seed", type=_u64, default=None, help="unsigned 64-bit run seed (default: a new random one). resume keeps the seed the run recorded")
