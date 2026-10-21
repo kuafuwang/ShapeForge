@@ -866,9 +866,9 @@ def evaluate(
         return _live(rep)
 
     if mode == "timed" and self_check_dir is not None:
-        from .selfcheck import earlier_hang
+        from .selfcheck import budget_reason, earlier_hang
 
-        blocked = earlier_hang(self_check_dir)
+        blocked = earlier_hang(self_check_dir) or budget_reason(self_check_dir)
         if blocked:
             rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=seed, status="rejected", stage="screen")
             rep.message = blocked
