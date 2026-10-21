@@ -22,6 +22,8 @@ from .parse import extract_metal
 
 FLOW = Path(__file__).resolve().parent / "flows" / "kernel_once"
 SKILL = Path(__file__).resolve().parent / "skills" / "msl_reference.md"
+# 实测过的经验条目（KernelWiki 的经验层）。和 msl_reference 一起放进工作区，只读。
+EXPERIENCE = Path(__file__).resolve().parent / "skills" / "wiki" / "experience.md"
 _KERNEL = re.compile(r"\bkernel\s+void\s+(\w+)\b")
 _USAGE = re.compile(r"([A-Za-z_]+)=(-?\d+(?:\.\d+)?)")
 # 一场会话的墙钟。hmz 的回合预算先到；这个秒数只在进程不退出时杀掉它。
@@ -252,6 +254,9 @@ def render_contract(brief: SessionBrief, kernel_path: Path) -> str:
         "着色器校验在你退出之后由外层做。插桩会把线程组内存报大，边界写保守些。",
         "最后一版不合格也留在 kernel.metal 里。不要为了过检查贴回旧核。",
         "",
+        "`experience.md` 是这个项目已经测过的东西：哪些启动契约与 tile 划算、哪些算子已经贴着带宽屋顶、"
+        "哪个库换了算法。它是线索不是规则：你自己测出来的数比它高。",
+        "",
         "# 前提要自己测",
         "成绩单、上一轮笔记和参考资料里关于这台机器的断言（某种操作数类型的矩阵乘加多快、某条指令存不存在、某个上限是多少）都是假设，不是事实。成绩单印了按操作数类型实测的矩阵峰值；再往细的速率没有人替你测过。若一句断言决定某个算法能不能做（例如「这种数据类型进矩阵单元就慢一倍」），先写一个几十行的小探针把它测出来，再决定放弃。只凭一句没测过的断言放弃的方向，不算试过；放弃时把这句断言原样写进 NOTES 并标「未验证」，下一轮可以重开。探针的写法在技能 `taic-tools` 里。",
         "",
@@ -361,6 +366,8 @@ def run_kernel_agent(
         (work / "report.json").write_text(brief.seed_report_json)
     if SKILL.exists():
         shutil.copyfile(SKILL, work / "msl_reference.md")
+    if EXPERIENCE.exists():
+        shutil.copyfile(EXPERIENCE, work / "experience.md")
     (work / "TASK.md").write_text(render_contract(brief, kernel_path))
     flow_minutes = int(turn_minutes) + WRAP_MINUTES + FLOW_SLACK_MINUTES
     argv = [

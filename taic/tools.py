@@ -28,19 +28,32 @@ class Section:
 
 
 # 技能文档按二级标题切段，供 lookup_msl 检索。文档读不出来时，组系统提示和查资料都会失败。
+def _sections(raw: str, doc_name: str) -> list["Section"]:
+    """Split one skill document on ``## `` headings, keeping a ``Keywords:`` line for retrieval."""
+    out: list[Section] = []
+    for chunk in raw.split("\n## ")[1:]:
+        title, _, body = chunk.partition("\n")
+        kw = re.search(r"^Keywords:\s*(.*)$", body, re.MULTILINE)
+        out.append(Section(doc_name, title.strip(), kw.group(1) if kw else "", body.strip()))
+    return out
+
+
 class SkillIndex:
     """Keyword retrieval over the sections of a skill document (the 'PTX ISA retrieval' analogue)."""
 
-    def __init__(self, doc_name: str = "msl_reference") -> None:
+    def __init__(self, doc_name: str = "msl_reference", extra: tuple[str, ...] = ()) -> None:
+        """``extra`` are further skill documents (paths under ``taic/skills``) whose sections join the index.
+
+        The wiki's experience entries ride along this way: they are recalled by the same keyword lookup as the
+        MSL reference, and a run that does not want them keeps the byte-identical prompt by passing no ``extra``.
+        """
         self.doc = doc_name
         raw = (SKILLS_DIR / f"{doc_name}.md").read_text()
         # 二级标题之前的前言不参与检索，只在无工具模式的全文里保留。
         self.preamble = raw.split("\n## ", 1)[0]
-        self.sections: list[Section] = []
-        for chunk in raw.split("\n## ")[1:]:
-            title, _, body = chunk.partition("\n")
-            kw = re.search(r"^Keywords:\s*(.*)$", body, re.MULTILINE)
-            self.sections.append(Section(doc_name, title.strip(), kw.group(1) if kw else "", body.strip()))
+        self.sections: list[Section] = _sections(raw, doc_name)
+        for name in extra:
+            self.sections.extend(_sections((SKILLS_DIR / f"{name}.md").read_text(), name))
 
     # 开工具时系统提示里只有这份目录，逼模型按主题来查，而不是凭记忆编 API。
     def outline(self) -> str:

@@ -389,7 +389,7 @@ class Orchestrator:
         self.llm = LLM(llm_cfg, self.ledger, Transcript(self.run_dir / "transcript.jsonl"), client=client, max_concurrency=self._llm_slots)
         self._llms = [self.llm]
         self.evaluate_fn = evaluate_fn or evaluate
-        self.index = SkillIndex("msl_reference")
+        self.index = SkillIndex("msl_reference", extra=prompts.WIKI_DOCS)
         # 同一时刻只允许一次 GPU 评测、quick_check 或 Instruments。两份内核抢同一块卡会把计时测脏，挂死时也不能再有内核在跑。
         self.gpu_lock = asyncio.Lock()
         # 升种子要等复查回来再写。锁盖住比较和写入，另一条分支不能对着旧种子同时通过。

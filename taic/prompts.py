@@ -64,6 +64,10 @@ def _skill(name: str) -> str:
 
 
 # 唯一的系统提示，初始生成、修补、诊断规划和补丁都用它，服务商才能做前缀缓存。contract.describe() 与 abi_stub() 把契约和签名骨架钉死，用户消息改不了函数签名。
+# 经验层：本仓库实测过的条目，按关键词和 MSL 参考一起检索。没有这一层，代理只能靠语言常识猜。
+WIKI_DOCS = ("wiki/experience",)
+
+
 def system_prompt(task: Task, *, use_tools: bool, profiler_evidence: bool = False, hw_feedback: bool = False) -> str:
     c = task.contract
     parts = [HARNESS_RULES, "# Target hardware and task\n"]
@@ -88,13 +92,13 @@ def system_prompt(task: Task, *, use_tools: bool, profiler_evidence: bool = Fals
     if hw_feedback:  # only when search.hw_feedback appends the hardware-feature analysis to the feedback; off = the byte-identical prompt
         parts.append("\n# Skill 2c: reading the hardware-feature analysis in the feedback\n" + _skill("hardware_feedback"))
     # 开工具时只给目录，细节靠 lookup_msl，避免模型不查就编；关工具时没有这个工具，MSL 参考必须全文在场。
+    idx = SkillIndex("msl_reference", extra=WIKI_DOCS)
     if use_tools:
-        idx = SkillIndex("msl_reference")
         parts.append(
             "\n# Skill 3: MSL reference (retrieval)\nCall the `lookup_msl` tool for details. Sections available:\n" + idx.outline()
         )
     else:
-        parts.append("\n# Skill 3: MSL reference\n" + SkillIndex("msl_reference").full_text())
+        parts.append("\n# Skill 3: MSL reference\n" + idx.full_text())
     return "\n".join(parts)
 
 
