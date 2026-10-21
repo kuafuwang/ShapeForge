@@ -38,6 +38,12 @@ def mk(runs: Path, name: str, kind: str, *, spent: float = 3.1, budget: float = 
     return d
 
 
+def _flame_chase(d):
+    """Mark a hand-built directory as one this code can continue (see taic/resume._refuse_old_protocol)."""
+    (d / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1"}))
+    return d
+
+
 def call(port: int, method: str, path: str, body=None, *, headers: dict | None = None, host: str | None = None, raw: bytes | None = None):
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     h = {"Content-Type": "application/json", **(headers or {})}
@@ -78,10 +84,10 @@ def test_control_for_every_situation(runs):
     port, root = runs
     mk(root, "live_new", "running", spent=2.5, control_supported=True)
     mk(root, "live_old", "running", spent=2.5)
-    mk(root, "exhausted", "exhausted")
+    _flame_chase(mk(root, "exhausted", "exhausted"))
     mk(root, "patience", "finished", stop="converged (4 rounds without improvement)", spent=1.0)
-    mk(root, "dead", "interrupted", spent=1.0)
-    held = mk(root, "held", "interrupted", spent=1.0)
+    _flame_chase(mk(root, "dead", "interrupted", spent=1.0))
+    held = _flame_chase(mk(root, "held", "interrupted", spent=1.0))
     other = subprocess.Popen(["sleep", "30"])
     try:
         (held / "resume.lock").write_text(json.dumps({"pid": other.pid, "started_at": time.time()}))
@@ -94,7 +100,8 @@ def test_control_for_every_situation(runs):
     assert got["exhausted"]["action"] == "resume" and got["exhausted"]["can_resume"] and got["exhausted"]["budget"]["needs_budget"] is True
     assert got["exhausted"]["suggested_amounts"] == [3.0, 5.0, 15.0] and got["exhausted"]["max_topup_usd"] == 25.0
     assert got["patience"]["can_add_budget"] is False and "not for budget" in got["patience"]["reason_if_not"]
-    assert got["dead"]["action"] == "resume" and got["dead"]["kind"] == "interrupted" and any("older version" in w for w in got["dead"]["warnings"])
+    # 没有 loop_protocol 的目录不可续（taic resume 会拒绝），所以「设置靠猜」的警告只在能续的运行上出现过；现在那条路为空。
+    assert got["dead"]["action"] == "resume" and got["dead"]["kind"] == "interrupted" and got["dead"]["warnings"] == []
     assert got["held"]["can_add_budget"] is False and "already being resumed" in got["held"]["reason_if_not"]
 
 
@@ -215,7 +222,7 @@ def test_runs_that_did_not_stop_for_budget_are_refused_with_the_reason(runs):
 
 def test_dry_run_records_the_command_and_starts_nothing(runs, monkeypatch):
     port, root = runs
-    d = mk(root, "exhausted", "exhausted")
+    d = _flame_chase(mk(root, "exhausted", "exhausted"))
     monkeypatch.setenv("OBSERVE_CONTROL_DRYRUN", "1")
 
     def boom(*a, **k):
@@ -238,7 +245,7 @@ def test_dry_run_records_the_command_and_starts_nothing(runs, monkeypatch):
 
 def test_resume_is_started_detached_with_a_log_and_a_second_click_is_refused(runs, monkeypatch):
     port, root = runs
-    d = mk(root, "exhausted", "exhausted")
+    d = _flame_chase(mk(root, "exhausted", "exhausted"))
     started = []
     other = subprocess.Popen(["sleep", "30"])
 
@@ -303,8 +310,8 @@ def test_reset_adds_15_dollars_lifts_count_limits_and_skips_a_hang(runs, monkeyp
     port, root = runs
     live = mk(root, "live", "running", spent=2.5, budget=3.0, control_supported=True)
     (live / "resume.lock").write_text(json.dumps({"pid": os.getpid(), "started_at": time.time()}))
-    stopped = mk(root, "patience", "finished", stop="converged (4 rounds without improvement)", spent=1.0, budget=3.0)
-    hang = mk(root, "hang", "finished", stop="gpu_hang_circuit_breaker", spent=1.0, budget=3.0)
+    stopped = _flame_chase(mk(root, "patience", "finished", stop="converged (4 rounds without improvement)", spent=1.0, budget=3.0))
+    hang = _flame_chase(mk(root, "hang", "finished", stop="gpu_hang_circuit_breaker", spent=1.0, budget=3.0))
     (root / "cap.json").write_text(json.dumps({"max_total_usd": 5.0}))
     started = []
 

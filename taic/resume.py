@@ -226,12 +226,16 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops
         if not has_best(state, result):
             info["reason"] = "no valid kernel was found before the process stopped: there is nothing to continue from, start a new run"
             return info
+        if _refuse_old_protocol(info, run_dir):
+            return info
         info["resumable"] = True
         return info
     if stop == STOP_BUDGET:
         info["kind"] = "budget_exhausted"
         if not has_best(state, result):
             info["reason"] = "stopped for budget without a valid kernel: start a new run"
+            return info
+        if _refuse_old_protocol(info, run_dir):
             return info
         info["resumable"] = True
         return info
@@ -240,6 +244,8 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops
         info["kind"] = "count_limited"
         if not has_best(state, result):
             info["reason"] = "stopped on a round limit without a valid kernel: start a new run"
+            return info
+        if _refuse_old_protocol(info, run_dir):
             return info
         info["resumable"] = True
         return info
@@ -436,6 +442,22 @@ def _replay(cands: list[dict], search) -> list[dict]:
         out.append({"idx": c["idx"], "label": c["label"], "status": rep.status, "speedup": rep.speedup, "best_speedup": best["sp"] if best else None, "improved": improved, "within_noise": within})
     return out
 
+
+
+def _refuse_old_protocol(info: dict, run_dir: Path) -> bool:
+    """True when this directory predates flame_chase_1, so ``load_snapshot`` would refuse it.
+
+    The directory stays readable (brief, dashboard, run details); only the resume button must not appear.
+    Without this, the dashboard reads ``resumable: true`` from a run that ``taic resume`` always rejects.
+    """
+    protocol = _loop_protocol(run_dir)
+    if protocol == "flame_chase_1":
+        return False
+    info.update(
+        kind="old_protocol",
+        reason=f"loop_protocol is {protocol!r}: this code continues only flame_chase_1 runs, so this one can be read but not resumed",
+    )
+    return True
 
 
 def _loop_protocol(run_dir: Path) -> str | None:

@@ -375,6 +375,23 @@ def test_runs_that_stopped_for_another_reason_are_refused(tmp_path, stop, why):
     assert e.value.code == 3
 
 
+def test_a_run_from_the_old_protocol_is_readable_but_never_resumable(tmp_path):
+    """``load_snapshot`` refuses anything that is not flame_chase_1; the dashboard must say the same.
+
+    A ``resumable: true`` here would render a resume button that always fails after the click.
+    """
+    (tmp_path / "state.json").write_text(json.dumps({"pid": 2**22 + 778, "phase": "llm", "task": "relu", "best_label": "init", "spent_usd": 3.0, "budget_usd": 3.0}))
+    (tmp_path / "result.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "stop_reason": "budget_exhausted", "spent_usd": 3.0, "budget_usd": 3.0, "best_label": "init"}))
+    (tmp_path / "run_config.json").write_text(json.dumps({"note": "a chat-protocol run, no loop_protocol key"}))
+    info = rs.inspect_run(tmp_path)
+    assert info["kind"] == "old_protocol" and info["resumable"] is False
+    assert "loop_protocol" in info["reason"]
+    info = rs.inspect_run(tmp_path, allow_count_stops=True)
+    assert info["resumable"] is False  # 看板的重置路径也不能把它变成可续
+    with pytest.raises(rs.ResumeError, match="loop_protocol"):
+        rs.load_snapshot(tmp_path, SearchConfig(), "k")
+
+
 def test_a_live_run_and_a_held_lock_cannot_be_resumed(tmp_path):
     (tmp_path / "state.json").write_text(json.dumps({"pid": os.getpid(), "phase": "llm", "task": "relu", "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0, "control_supported": True}))
     info = rs.inspect_run(tmp_path)
@@ -383,6 +400,8 @@ def test_a_live_run_and_a_held_lock_cannot_be_resumed(tmp_path):
     info = rs.inspect_run(tmp_path)
     assert info["can_topup_live"] is False and "older version" in info["live_reason"]
     (tmp_path / "state.json").write_text(json.dumps({"pid": 2**22 + 777, "phase": "llm", "task": "relu", "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0}))
+    # 只有 flame_chase_1 的目录可以续（见下面的 old_protocol 用例）。
+    (tmp_path / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1"}))
     assert rs.inspect_run(tmp_path)["kind"] == "interrupted" and rs.inspect_run(tmp_path)["resumable"]
     # 锁上是本进程或它的父进程：这是看板刚拉起的续跑，不是别人占着。
     (tmp_path / "resume.lock").write_text(json.dumps({"pid": os.getppid(), "starting": True}))
