@@ -47,3 +47,4 @@ uv run python -m taic.cli brief RUN_DIR
 - [实验批准单-搜索开关.md](实验批准单-搜索开关.md)：搜索开关这组对照，磁盘上有什么、名义费用是多少。它不是开工批准。
 - [pi编排与异常.md](pi编排与异常.md)、[opencode编排与异常.md](opencode编排与异常.md)、[deepseek-harness编排与异常.md](deepseek-harness编排与异常.md)、[deepseek-harness-web可观测.md](deepseek-harness-web可观测.md)：别人的编程代理怎样收失败、超长、截断和取消。主体对的是他们的源码。每篇末节才写本仓库采纳了哪几条。
 - [`2609.36800v1.pdf`](2609.36800v1.pdf) 与 [`2609.36800v1.zh.pdf`](2609.36800v1.zh.pdf)：论文原文和中文 PDF。他们在 NVIDIA 上做的是同一类循环，目标语言不同。
+- [`跑掉四五千万人民币等值 Token 之后，两位英伟达工程师重新理解了 Agent：代码不是护城河，时间才是.pdf`](跑掉四五千万人民币等值 Token 之后，两位英伟达工程师重新理解了 Agent：代码不是护城河，时间才是.pdf)：KDA / Humanize 的对谈整理。他们怎么把 harness 当 test-time scaling、三层结构（流程 / 知识库 / 性能反馈）、把钱花在验证与知识库上、以及新模型来了先拆 harness。本仓库对照它写的取舍在 [直调与hmz取舍.md](直调与hmz取舍.md) 与 [外部框架经验.md](外部框架经验.md)。
