@@ -34,9 +34,17 @@
   .badge.exhausted { background: var(--amber); color: #fff; }
   .badge.near { background: #fde047; color: #4a3b00; }
   #hist-tools { margin-bottom: 8px; }
-  #budget-modal, #settings-modal, #delete-modal, #feedback-modal, #stage-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
-  #budget-modal.open, #settings-modal.open, #delete-modal.open, #feedback-modal.open, #stage-modal.open { display: flex; }
-  #budget-modal .box, #settings-modal .box, #delete-modal .box, #feedback-modal .box, #stage-modal .box { background: var(--card); border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); }
+  #budget-modal, #settings-modal, #delete-modal, #feedback-modal, #stage-modal, #term-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
+  #budget-modal.open, #settings-modal.open, #delete-modal.open, #feedback-modal.open, #stage-modal.open, #term-modal.open { display: flex; }
+  #budget-modal .box, #settings-modal .box, #delete-modal .box, #feedback-modal .box, #stage-modal .box, #term-modal .box { background: var(--card); border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); }
+  #term-modal .box { width: min(640px, 94vw); max-height: 86vh; display: flex; flex-direction: column; }
+  #term-query { width: 100%; margin: 8px 0; flex: none; }
+  #term-results { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+  #term-modal .actions { flex: none; margin-top: 12px; }
+  .term-hit { border: 1px solid var(--line); border-left: 4px solid var(--blue); border-radius: 8px; padding: 8px 10px; background: #f7f8fa; }
+  .term-hit strong { display: block; margin-bottom: 4px; }
+  .term-hit p { margin: 0; }
+  .term-suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
   #stage-modal .box { width: min(760px, 94vw); max-height: 88vh; overflow: auto; }
   #stage-modal .excerpt { max-height: 42vh; }
   td.seq { cursor: pointer; }
@@ -149,6 +157,7 @@
 <header>
   <strong>观测</strong>
   <span id="feedback-badge" class="badge" hidden></span>
+  <button type="button" id="term-open">术语</button>
   <button type="button" id="tab-experiments">实验</button>
   <button type="button" id="tab-compare">对照</button>
   <button type="button" id="tab-runs">运行</button>
@@ -254,6 +263,18 @@
     <div class="actions">
       <button type="button" id="delete-save">确认删除</button>
       <button type="button" id="delete-close">关闭</button>
+    </div>
+  </div>
+</div>
+<div id="term-modal" role="dialog" aria-modal="true" aria-labelledby="term-modal-title">
+  <div class="box">
+    <h3 id="term-modal-title">术语</h3>
+    <p class="muted">输入页面上看到的词。解释只覆盖这块看板上的说法。</p>
+    <input id="term-query" type="search" placeholder="例如 falsified、计划结局、确认点" autocomplete="off">
+    <div class="term-suggest" id="term-suggest"></div>
+    <div id="term-results"></div>
+    <div class="actions">
+      <button type="button" id="term-close">关闭</button>
     </div>
   </div>
 </div>
@@ -423,6 +444,69 @@ async function loadRuns() {
     event.stopPropagation();
     openDelete("operator", button.dataset.deleteOperator);
   }));
+}
+
+const TERMS = [
+  {name: "计划结局", keys: ["计划结局", "plan outcome"], text: "每一轮打算怎么改内核，以及这个打算最后有没有被计时证明。它不是成绩单。下面四个英文词是这里会出现的结果。"},
+  {name: "validated_win", keys: ["validated_win", "计划结局", "赢"], text: "这个改法写对了，而且比当时的种子明显更快，搜索已经换成它。"},
+  {name: "validated_tie", keys: ["validated_tie", "计划结局", "并列"], text: "写对了，测起来略快，但快的幅度没超过测量误差，所以没有换成种子。"},
+  {name: "falsified", keys: ["falsified", "计划结局", "证伪"], text: "写对了，也计时了，但没有变得更快。这个方向被否掉。下一轮不应再走同一条路。"},
+  {name: "untested_impl_fail", keys: ["untested_impl_fail", "计划结局", "没测到"], text: "内核没编译过、签名不对、算错、不安全，或运行中出错，根本没计时。换种子后再算错也算这里。不能据此说这个方向慢。可以改了再试。"},
+  {name: "确认点", keys: ["确认点", "confirmed"], text: "搜索结束时，用另一批输入把优胜核再测一遍得到的加速比。搜索过程里看到的最高倍数不算对外成绩。还没走到这一步，就写还没有可以发布的确认测量。"},
+  {name: "候选", keys: ["候选", "candidate"], text: "每一轮交上来、被外层评过的一颗内核。序号越大越新。双击序号才看它卡在哪一步、以及代码开头。"},
+  {name: "加速比", keys: ["加速比", "speedup"], text: "这颗核相对于最强现成库有多快。1 是打平，大于 1 是更快，小于 1 是更慢。"},
+  {name: "委员会交接", keys: ["委员会交接", "委员会", "first", "second"], text: "两个委员会轮流写核，一轮换一场新会话。这里只列出每一轮是谁写的，不包含对话。"},
+  {name: "特征格子", keys: ["特征格子", "signature"], text: "按内核写法的静态特征归类。每一格只留搜索里见过的最快那颗，用来看不同写法有没有真的分开。"},
+  {name: "安检", keys: ["安检", "screen", "rejected"], text: "编译之前的检查。合同不允许的启动方式、禁用写法，会停在这里。"},
+  {name: "编译", keys: ["编译", "compile", "compile_error"], text: "Metal 编译器没能把这份源码编成着色器。这一步没过，后面的对答案和计时都没发生。"},
+  {name: "签名", keys: ["签名", "abi", "abi_error"], text: "函数名和参数布局必须和题目要求一致。对不上就是签名失败，结果不能拿来比快慢。"},
+  {name: "内存安全", keys: ["内存安全", "safety", "unsafe"], text: "检查越界和竞争。不安全的核不会进入计时。"},
+  {name: "对答案", keys: ["对答案", "correctness", "incorrect"], text: "和参考输出比数值。超出容差，或 NaN、Inf 对不上，就是算错。算错的核没有速度结论。"},
+  {name: "计时", keys: ["计时", "bench"], text: "在这台机器的 GPU 上量中位时间，再算加速比。搜索过程中的计时偏乐观，对外数字要等确认点。"},
+  {name: "ok", keys: ["ok", "状态 ok"], text: "这颗候选通过了安检、编译、签名、内存安全和对答案。表上的加速比来自这次计时。"},
+  {name: "unchanged", keys: ["unchanged"], text: "交上来的源码和当前种子逐字相同。外层不把它当成一次新尝试，也不再占用 GPU 重测。"},
+  {name: "duplicate", keys: ["duplicate", "external_duplicate"], text: "源码和本场更早的一颗候选相同，或和别的运行里已经交过的核相同。不重复评测。"},
+  {name: "timeout", keys: ["timeout"], text: "一次 GPU 启动超时。搜索会因此停下，避免一个不返回的核冻住显示器。"},
+  {name: "crash", keys: ["crash"], text: "评测进程崩溃。连续三次会停掉整次搜索。"},
+  {name: "in_progress", keys: ["in_progress", "进行中"], text: "这次搜索还在跑，或还没有一份可以发布的确认结果。旁边的加速比不是对外数字。"},
+  {name: "confirmed", keys: ["confirmed", "已确认"], text: "确认计时通过，并且结果和当时的源码指纹对得上。这个加速比可以对外说。"},
+  {name: "未确认", keys: ["未确认"], text: "搜索停了，但确认计时没通过。页面不拿搜索过程中的最好倍数来充数。"},
+  {name: "不确定", keys: ["不确定"], text: "确认计时的波动太大，或计时本身不可靠。这个数字不发布。"},
+  {name: "旧版未绑定源码", keys: ["旧版未绑定源码"], text: "更早的运行没有把确认结果和源码指纹绑在一起。不能把它当成现在这套规则下的确认成绩。"},
+  {name: "绑定", keys: ["绑定", "binding", "verified", "drift", "none"], text: "这次运行和实验清单是否还是同一组条件。verified 是对得上。drift 是条件变了，不能拿来和同组对照。none 是没有挂到清单上，多半是单独一次搜索。"},
+  {name: "running", keys: ["running"], text: "搜索进程还在。"},
+  {name: "done", keys: ["done"], text: "这次搜索已经结束。结束不等于成绩可以发布，还要看确认点。"},
+  {name: "interrupted", keys: ["interrupted"], text: "搜索被打断，没有正常跑完。可以用续跑接着做。"},
+  {name: "需要帮助", keys: ["需要帮助"], text: "写核的模型说自己缺工具、权限或信息。只给人看，不会自动改系统，也不会传给下一轮。"},
+  {name: "对系统的建议", keys: ["对系统的建议"], text: "模型认为某条提示词、技能或规则让它走了弯路。要先复核再决定改不改仓库。"},
+  {name: "卡住的原因", keys: ["卡住的原因", "diagnostic"], text: "这一轮没留下更好的核时，模型自己说卡在数值、速度、工具还是时间。只作记录，不单独算待审查。"},
+  {name: "给下一棒的避坑提示", keys: ["给下一棒的避坑提示", "peer", "避坑"], text: "这一轮在这道题上踩到的具体坑，只传给同一次搜索的下一场。不跨题目。"},
+  {name: "被否决的前提", keys: ["被否决的前提", "未验证", "unverified", "downgraded", "已实测"], text: "这一轮放弃某个方向时依据的那句话。标了未验证的，只再出现两场。自称测过但探针文件不在的，会降成未验证。"},
+  {name: "pending", keys: ["pending", "待审查"], text: "这条反馈还没有人复核。顶栏的待审查条数数的就是它。"},
+  {name: "adopted", keys: ["adopted", "采纳"], text: "人已经用探针、成绩或代码核对过，认为这条建议成立。还没改仓库。"},
+  {name: "rejected", keys: ["rejected", "驳回"], text: "这条建议不采纳。可能是核实后不成立，也可能成立但不值得改。"},
+  {name: "evaluated", keys: ["evaluated"], text: "这一场留下了和种子不同的核，外层已经评过。评过不等于更快。"},
+  {name: "agent_failed", keys: ["agent_failed"], text: "写核的程序没留下一颗新核：起不来、超时，或退出时文件还是种子。接连两场这样，搜索停下。"},
+];
+
+function termQuery(raw) {
+  return String(raw || "").trim().toLowerCase();
+}
+
+function termsFor(raw) {
+  const query = termQuery(raw);
+  if (!query) return TERMS.filter((item) => ["计划结局", "validated_win", "validated_tie", "falsified", "untested_impl_fail", "确认点", "候选", "加速比"].includes(item.name));
+  return TERMS.filter((item) => (item.name + " " + item.keys.join(" ") + " " + item.text).toLowerCase().includes(query));
+}
+
+function renderTerms(raw) {
+  const hits = termsFor(raw);
+  const host = document.getElementById("term-results");
+  if (!hits.length) {
+    host.innerHTML = `<p class="muted">没有这个词。它可能是模型随手写的句子，不是看板上的固定说法。</p>`;
+    return;
+  }
+  host.innerHTML = hits.map((item) => `<article class="term-hit"><strong>${esc(item.name)}</strong><p>${esc(item.text)}</p></article>`).join("");
 }
 
 function marksFor(doc, label) {
@@ -648,13 +732,13 @@ function renderDetail(doc) {
   return `<h2>${esc(doc.id)}</h2><p>${lamp}${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>` +
     `<div>` +
     `<h3>确认点</h3>${confirm}` +
+    `<h3>候选</h3>` + (candidates ? `<table><thead><tr><th>序号</th><th>标签</th><th>状态</th><th>阶段</th><th>加速比</th><th>标记</th><th>说明</th></tr></thead><tbody>${candidates}</tbody></table>` : `<p class="muted">没有候选。</p>`) +
     `<h3>委员会交接</h3>${handoffBlock}` +
     `<h3>预算事件</h3>` + (events ? `<table><thead><tr><th>时间</th><th>种类</th><th>谁</th><th>旧预算</th><th>新预算</th><th>备注</th></tr></thead><tbody>${events}</tbody></table>` : `<p class="muted">没有预算事件。</p>`) +
     `<h3>回合</h3>` + writerNote(doc) + `<div class="note-list" id="turns-live"></div>` +
     (writerMode(doc) === "pi"
       ? `<h3>hmz epic</h3>` + epicFeed(null) + `<h3>pi 输出</h3>` + piFeed(null)
       : "") +
-    `<h3>候选</h3>` + (candidates ? `<table><thead><tr><th>序号</th><th>标签</th><th>状态</th><th>阶段</th><th>加速比</th><th>标记</th><th>说明</th></tr></thead><tbody>${candidates}</tbody></table>` : `<p class="muted">没有候选。</p>`) +
     `<h3>特征格子</h3>` + (grid ? `<table><thead><tr><th>标签</th><th>签名</th><th>加速比</th><th></th></tr></thead><tbody>${grid}</tbody></table>` : `<p class="muted">空</p>`) +
     `<h3>计划结局</h3>` + (plans ? `<table><thead><tr><th>轮</th><th>标签</th><th>方案</th><th>结局</th><th>加速比</th></tr></thead><tbody>${plans}</tbody></table>` : `<p class="muted">空</p>`) +
     feedbackMarkup(doc) +
@@ -873,6 +957,24 @@ document.getElementById("budget-save").addEventListener("click", async () => {
 document.getElementById("budget-close").addEventListener("click", () => document.getElementById("budget-modal").classList.remove("open"));
 document.getElementById("feedback-close").addEventListener("click", () => document.getElementById("feedback-modal").classList.remove("open"));
 document.getElementById("stage-close").addEventListener("click", () => document.getElementById("stage-modal").classList.remove("open"));
+document.getElementById("term-open").addEventListener("click", () => {
+  const modal = document.getElementById("term-modal");
+  const box = document.getElementById("term-query");
+  box.value = "";
+  renderTerms("");
+  modal.classList.add("open");
+  box.focus();
+});
+document.getElementById("term-close").addEventListener("click", () => document.getElementById("term-modal").classList.remove("open"));
+document.getElementById("term-query").addEventListener("input", (event) => renderTerms(event.target.value));
+document.getElementById("term-suggest").innerHTML = ["计划结局", "falsified", "untested_impl_fail", "确认点", "加速比"].map((name) => `<button type="button" class="quiet" data-term="${esc(name)}">${esc(name)}</button>`).join("");
+document.getElementById("term-suggest").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-term]");
+  if (!button) return;
+  const box = document.getElementById("term-query");
+  box.value = button.dataset.term;
+  renderTerms(box.value);
+});
 document.getElementById("feedback-review-form").querySelector('[name="evidence_source"]').addEventListener("change", (event) => {
   const modal = document.getElementById("feedback-modal");
   const evidence = document.getElementById("feedback-review-form").querySelector('[name="evidence"]');

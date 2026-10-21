@@ -291,7 +291,7 @@ def test_a_named_run_without_its_own_model_does_not_require_a_null_model():
         "安检", "阶段", "代码", 'class="excerpt"', "--blue: #0a66c2", "@keyframes breathe", 'class="breathe"',
         'id="workspace"', 'id="side-toggle"', 'id="runs-toggle"', 'id="detail-toggle"', 'id="view-experiments"', 'id="view-compare"', 'id="view-detail"',
         "<th>目录</th><th>种类</th><th>操作</th>",
-        "runs-table-scroll", "detail-scroll", "position: sticky", 'id="budget-toggle"',
+        "runs-table-scroll", "detail-scroll", "position: sticky", 'id="budget-toggle"', 'id="term-open"', "validated_win", "untested_impl_fail",
         "delete-reason", "/api/records/delete", "删除记录只追加",
         'class="note-list"', ".note-list { max-height: 12rem; overflow: auto;",
         "正常工具调用，不是异常。", "草稿交给本机编译并对答案", "在本机查阅 MSL 资料",
