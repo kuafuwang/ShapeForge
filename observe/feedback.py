@@ -724,9 +724,11 @@ def _attach_claim_text(rows: list[dict]) -> dict | None:
 
 _CLAIM_LIST = """
     SELECT c.run_id, c.seq, c.digest, c.section, c.audience, c.premise, c.status, c.verification, c.topic,
-           c.change_ref, c.reviewed_at, c.rev, i.task, i.model, i.label, i.t, i.line_at
+           c.change_ref, c.reviewed_at, c.rev, i.task, i.dtype, i.size, i.model, i.label, i.t, i.line_at,
+           r.target_id
     FROM feedback_claims c
     JOIN feedback_items i ON i.run_id = c.run_id AND i.seq = c.seq
+    LEFT JOIN runs r ON r.run_id = c.run_id
 """
 
 

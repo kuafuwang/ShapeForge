@@ -160,7 +160,12 @@
   #reviews-list { overflow: auto; min-height: 0; }
   .review-card { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 10px 12px; margin: 0 0 10px; }
   .review-card .fb-meta { color: var(--muted); font-size: 12px; }
-  .review-card a { color: var(--blue); }
+  .review-card a, .review-run summary a { color: var(--blue); }
+  .review-hw, .review-task, .review-run { margin: 0 0 8px; }
+  .review-task, .review-run { margin-left: 14px; }
+  .review-hw > details > summary, .review-task > details > summary, .review-run > details > summary { cursor: pointer; padding: 4px 0; }
+  .review-hw > details > summary b { font-size: 16px; }
+  .review-count { font-weight: 400; }
   @media (max-width: 800px) {
     .detail-split { grid-template-columns: 1fr; }
   }
@@ -408,14 +413,21 @@ function compareReview(a, b) {
   return (Number(b.seq) || 0) - (Number(a.seq) || 0);
 }
 
+function reviewHardware(item) {
+  return item.target_id || "未标明硬件";
+}
+
+function reviewTaskName(item) {
+  return item.task || "未标明题目";
+}
+
 function reviewCard(item) {
   const key = reviewKey(item);
   const handle = item.status === "info" ? "" : `<button type="button" class="feedback-open" data-key="${esc(key)}">处理</button>`;
   const tone = item.audience === "system" || item.audience === "peer" || item.audience === "diagnostic" ? item.audience : "system";
   const statusClass = item.status === "pending" ? " fb-pending" : (item.status === "info" ? " fb-info" : "");
-  const meta = [item.task, item.label, item.model, item.committee, item.round != null ? "第 " + item.round + " 轮" : ""].filter((part) => part != null && part !== "").join(" · ");
-  const run = `/?run=${encodeURIComponent(item.run_id || "")}`;
-  return `<article class="review-card fb-claim fb-${esc(tone)}" data-key="${esc(key)}"><div class="fb-claim-head"><a href="${esc(run)}">${esc(item.run_id)}</a> <span class="fb-kind">${esc(item.section)}</span> <span class="badge">${esc(item.premise || item.audience)}</span> <span class="badge${statusClass}">${esc(item.status)}</span> ${handle}</div><p class="fb-meta">${esc(meta)}</p><pre class="excerpt">${esc(item.text || "")}</pre></article>`;
+  const meta = [item.label, item.model, item.committee, item.round != null ? "第 " + item.round + " 轮" : ""].filter((part) => part != null && part !== "").join(" · ");
+  return `<article class="review-card fb-claim fb-${esc(tone)}" data-key="${esc(key)}"><div class="fb-claim-head"><span class="fb-kind">${esc(item.section)}</span> <span class="badge">${esc(item.premise || item.audience)}</span> <span class="badge${statusClass}">${esc(item.status)}</span> ${handle}</div><p class="fb-meta">${esc(meta)}</p><pre class="excerpt">${esc(item.text || "")}</pre></article>`;
 }
 
 function bindReviewOpens(host) {
@@ -444,11 +456,144 @@ function paintReviewFilters() {
   filters.querySelectorAll("button").forEach((button) => button.classList.toggle("on", (button.dataset.reviewStatus || "") === reviewStatus));
 }
 
+function insertByName(parent, node, name) {
+  for (const child of parent.children) {
+    const current = child.dataset.hw || child.dataset.task || child.dataset.run || "";
+    if (current.localeCompare(name) > 0) {
+      parent.insertBefore(node, child);
+      return;
+    }
+  }
+  parent.append(node);
+}
+
+function countLabel(section, selector) {
+  const count = section.querySelector(selector);
+  if (count) count.textContent = section.querySelectorAll(".review-card").length + " 条";
+}
+
+function refreshGroupCounts(from) {
+  const run = from.closest(".review-run");
+  const task = from.closest(".review-task");
+  const hw = from.closest(".review-hw");
+  if (run) countLabel(run, ":scope > details > summary .review-count");
+  if (task) countLabel(task, ":scope > details > summary .review-count");
+  if (hw) countLabel(hw, ":scope > details > summary .review-count");
+}
+
+function pruneEmptyGroups(from) {
+  const run = from.closest(".review-run");
+  if (!run || run.querySelector(".review-card")) {
+    if (run) refreshGroupCounts(run);
+    return;
+  }
+  const task = run.closest(".review-task");
+  const hw = run.closest(".review-hw");
+  run.remove();
+  if (task && !task.querySelector(".review-run")) task.remove();
+  if (hw && !hw.querySelector(".review-task")) hw.remove();
+  else if (hw) countLabel(hw, ":scope > details > summary .review-count");
+  if (task && task.isConnected) countLabel(task, ":scope > details > summary .review-count");
+}
+
+function ensureCards(item) {
+  const host = document.getElementById("reviews-list");
+  const empty = host.querySelector(":scope > p.muted");
+  if (empty) empty.remove();
+  const hwName = reviewHardware(item);
+  const taskName = reviewTaskName(item);
+  const runName = item.run_id || "";
+  let hw = host.querySelector(`:scope > .review-hw[data-hw="${CSS.escape(hwName)}"]`);
+  if (!hw) {
+    hw = document.createElement("section");
+    hw.className = "review-hw";
+    hw.dataset.hw = hwName;
+    hw.innerHTML = `<details open><summary><b></b> <span class="muted review-count"></span></summary><div class="review-hw-body"></div></details>`;
+    hw.querySelector("b").textContent = hwName;
+    insertByName(host, hw, hwName);
+  }
+  const hwBody = hw.querySelector(".review-hw-body");
+  let task = hwBody.querySelector(`:scope > .review-task[data-task="${CSS.escape(taskName)}"]`);
+  if (!task) {
+    task = document.createElement("section");
+    task.className = "review-task";
+    task.dataset.task = taskName;
+    task.innerHTML = `<details open><summary><b></b> <span class="muted review-count"></span></summary><div class="review-task-body"></div></details>`;
+    task.querySelector("b").textContent = taskName;
+    insertByName(hwBody, task, taskName);
+  }
+  const taskBody = task.querySelector(".review-task-body");
+  let run = taskBody.querySelector(`:scope > .review-run[data-run="${CSS.escape(runName)}"]`);
+  if (!run) {
+    run = document.createElement("section");
+    run.className = "review-run";
+    run.dataset.run = runName;
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    const link = document.createElement("a");
+    link.href = "/?run=" + encodeURIComponent(runName);
+    link.textContent = runName;
+    const shape = [item.dtype, item.size].filter(Boolean).join(" · ");
+    const note = document.createElement("span");
+    note.className = "muted";
+    note.textContent = shape ? " " + shape + " " : " ";
+    const count = document.createElement("span");
+    count.className = "muted review-count";
+    summary.append(link, note, count);
+    const cards = document.createElement("div");
+    cards.className = "review-cards";
+    details.append(summary, cards);
+    run.append(details);
+    insertByName(taskBody, run, runName);
+  }
+  return run.querySelector(".review-cards");
+}
+
+function placeCard(item) {
+  const cards = ensureCards(item);
+  const next = claimNode(item);
+  let before = null;
+  for (const child of cards.children) {
+    const other = reviewItems.get(child.dataset.key);
+    if (other && other !== item && compareReview(item, other) < 0) {
+      before = child;
+      break;
+    }
+  }
+  cards.insertBefore(next, before);
+  refreshGroupCounts(next);
+  return next;
+}
+
 function paintReviewList() {
   const host = document.getElementById("reviews-list");
+  const opened = new Set();
+  host.querySelectorAll("details[open]").forEach((details) => {
+    const section = details.parentElement;
+    if (!section) return;
+    if (section.classList.contains("review-hw")) opened.add("hw\t" + section.dataset.hw);
+    if (section.classList.contains("review-task")) opened.add("task\t" + section.closest(".review-hw").dataset.hw + "\t" + section.dataset.task);
+    if (section.classList.contains("review-run")) opened.add("run\t" + section.dataset.run);
+  });
   const items = [...reviewItems.values()].filter(reviewVisible).sort(compareReview);
-  host.innerHTML = items.length ? items.map(reviewCard).join("") : `<p class="muted">这一档没有反馈。</p>`;
-  bindReviewOpens(host);
+  host.replaceChildren();
+  if (!items.length) {
+    host.innerHTML = `<p class="muted">这一档没有反馈。</p>`;
+    updateReviewCount();
+    return;
+  }
+  for (const item of items) placeCard(item);
+  const first = opened.size === 0;
+  host.querySelectorAll(".review-hw").forEach((section) => {
+    section.querySelector(":scope > details").open = first || opened.has("hw\t" + section.dataset.hw);
+  });
+  host.querySelectorAll(".review-task").forEach((section) => {
+    const key = "task\t" + section.closest(".review-hw").dataset.hw + "\t" + section.dataset.task;
+    section.querySelector(":scope > details").open = first || opened.has(key);
+  });
+  host.querySelectorAll(".review-run").forEach((section) => {
+    section.querySelector(":scope > details").open = opened.has("run\t" + section.dataset.run);
+  });
   updateReviewCount();
 }
 
@@ -467,31 +612,33 @@ function patchReviewDom(upserts, removed) {
   const host = document.getElementById("reviews-list");
   for (const item of removed) {
     const node = host.querySelector(`[data-key="${CSS.escape(reviewKey(item))}"]`);
-    if (node) node.remove();
+    if (!node) continue;
+    const run = node.closest(".review-run");
+    node.remove();
+    if (run) pruneEmptyGroups(run);
   }
   for (const item of upserts) {
     const key = reviewKey(item);
     const node = host.querySelector(`[data-key="${CSS.escape(key)}"]`);
     if (!reviewVisible(item)) {
-      if (node) node.remove();
+      if (!node) continue;
+      const run = node.closest(".review-run");
+      node.remove();
+      if (run) pruneEmptyGroups(run);
       continue;
     }
-    const next = claimNode(item);
-    if (node) {
+    if (node && node.closest(".review-run")?.dataset.run === (item.run_id || "")) {
+      const next = claimNode(item);
       node.replaceWith(next);
+      refreshGroupCounts(next);
       continue;
     }
-    const empty = host.querySelector("p.muted");
-    if (empty) empty.remove();
-    let before = null;
-    for (const child of host.querySelectorAll(".review-card")) {
-      const other = reviewItems.get(child.dataset.key);
-      if (other && compareReview(item, other) < 0) {
-        before = child;
-        break;
-      }
+    if (node) {
+      const run = node.closest(".review-run");
+      node.remove();
+      if (run) pruneEmptyGroups(run);
     }
-    host.insertBefore(next, before);
+    placeCard(item);
   }
   if (!host.querySelector(".review-card")) host.innerHTML = `<p class="muted">这一档没有反馈。</p>`;
   updateReviewCount();
