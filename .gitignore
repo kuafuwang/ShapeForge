@@ -35,3 +35,6 @@ build/
 cmake-build-*/
 .env.*
 *.pem
+
+# local pilot logs
+logs/harness-pilot-*.log
