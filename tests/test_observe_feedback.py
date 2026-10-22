@@ -305,3 +305,9 @@ def test_a_fbv3_placeholder_gets_a_tombstone_even_on_a_fresh_index(tmp_path, mon
     row = index.conn.execute("SELECT status, reason FROM feedback_claim_removed WHERE run_id = 'conv' AND digest = 'empty'").fetchone()
     assert row is not None
     assert row["status"] == "obsolete" and row["reason"] == "fbv3 empty placeholder"
+
+
+def test_the_harness_panel_distinguishes_reviewed_from_unreviewed():
+    page = Path("observe/static/index.html").read_text()
+    for needle in ("未 review", "review 有用", "review 不建议", "h-yes", "h-no", "reviewed_active", "reviewer", "P2 固化", "P2 候选", "change_ref"):
+        assert needle in page

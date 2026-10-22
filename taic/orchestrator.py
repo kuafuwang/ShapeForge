@@ -1441,10 +1441,63 @@ class Orchestrator:
                     protocol_version=PROTOCOL_VERSION, enabled=True,
                     shadow=bool(self.search.harness_shadow),
                 )
+                if self.search.harness_review:
+                    self._review_new_tips(proposals, PROTOCOL_VERSION)
                 harness.sync_trust_status(self.run_dir, target_id=self.target_id, task=self.task_name)
         except Exception as exc:  # noqa: BLE001 - a harness record must not stop a search
             self.log(f"  [{tag}] harness proposals skipped: {exc}")
         del work
+
+    def _review_new_tips(self, proposals: list, protocol_version: str) -> None:
+        """Review a single-source tip with the other committee before the next session.
+
+        The review is run-scoped, not a repository promotion. Its cost is charged to the
+        same ledger; the reviewer's budget is derived from its prices, not a fixed amount.
+        """
+        from . import harness
+        from . import review as review_mod
+        from .kernel_agent import Prices
+
+        pending = harness.pending_tip_reviews(self.run_dir, proposals)
+        if not pending:
+            return
+        other = next((committee for committee in self.committees if committee.name != self._committee_name), None)
+        if other is None or not other.members:
+            return
+        reviewer = other.members[0]
+        row = pending[0]
+        proposer = (str(row.get("provider") or ""), str(row.get("model") or ""))
+        if proposer == (reviewer.provider, reviewer.model):
+            self.log("  [review] skipped: the other committee uses the same provider/model")
+            return
+        prompt = review_mod.build_review_prompt(row.get("proposal") or {}, run_id=str(row.get("run_id") or self.run_dir.name))
+        prices = Prices(reviewer.cfg.price_in, reviewer.cfg.price_out, reviewer.cfg.price_cache_read, reviewer.cfg.price_cache_write)
+        plan = review_mod.estimate_review_budget(prices, prompt)
+        remaining = self.ledger.remaining
+        if remaining is not None and remaining < plan["budget_usd"]:
+            self.log(f"  [review] skipped: ${remaining:.4f} remains, review allowance is ${plan['budget_usd']:.4f}")
+            return
+        self.log(f"  [review] {reviewer.provider}/{reviewer.model} on {row.get('proposal_key')} (budget ${plan['budget_usd']:.4f}, expected ${plan['expected_usd']:.4f})")
+        try:
+            verdict = review_mod.run_review(
+                self.run_dir / "harness_reviews" / str(row.get("proposal_key")),
+                prompt=prompt, provider=reviewer.provider, model=reviewer.model,
+                effort=reviewer.cfg.reasoning_effort, prices=prices,
+            )
+            review_mod.append_review(self.run_dir, row, verdict)
+            if verdict.get("cost_usd") is not None:
+                self.ledger.charge(
+                    float(verdict["cost_usd"]), f"review:{row.get('proposal_key')}",
+                    tokens=verdict.get("tokens"), basis=prices.as_dict(),
+                )
+            harness.settle(
+                self.run_dir, target_id=self.target_id, task=self.task_name,
+                protocol_version=protocol_version, enabled=True,
+                shadow=bool(self.search.harness_shadow),
+            )
+            self.log(f"  [review] useful={verdict.get('useful')} confidence={verdict.get('confidence')} (${verdict.get('cost_usd')})")
+        except Exception as exc:  # noqa: BLE001 - a review failure must not stop the search
+            self.log(f"  [review] skipped: {exc}")
 
     def _restore_handoff(self) -> None:
         """A resumed run otherwise forgets the previous session's NOTES and failure text."""
@@ -1553,7 +1606,7 @@ class Orchestrator:
         snap = self.run_dir / "agent_guidance"
         guidance = str(snap.resolve()) if (snap / "experience.md").is_file() else ""
         harness_overlay = ""
-        if self.search.harness_auto and not self.search.harness_shadow:
+        if self.search.harness_auto:
             from . import harness
             from tcenv.schema import PROTOCOL_VERSION
 

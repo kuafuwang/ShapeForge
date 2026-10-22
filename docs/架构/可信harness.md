@@ -164,7 +164,19 @@ flowchart LR
 - 12KB 的 TASK 预算有限，overlay 必须和成绩单、失败反馈、NOTES 一起排队，不能无限膨胀。
 - 一个 run 的结论只在这个 run 的 target/task 上成立；跨 run 复制会绕过信任和证据检查。
 
-### 3.2 为什么 P2 只生成 patch
+### 3.2 active 不是永久固化
+
+这三个词不要混：
+
+| 状态 | 含义 | 生效范围 | 谁决定 |
+| --- | --- | --- | --- |
+| `shadow` | 只记录，不注入 TASK | 本 run 可见的审计文件 | 自动 |
+| `active` | 注入本 run 的**后续场次** TASK | 当前 run，运行结束失效 | 独立 review / 双来源 + 信任 |
+| P2/promotion | 写入 `targets/<id>/experience.md` 或共享 harness | 后续新 run，仓库级 | 人看 patch、测试、apply |
+
+所以“review 后可用”指 `active`，不是永久固化；永久固化仍然是 P2，必须人工判断。
+
+### 3.3 为什么 P2 只生成 patch
 
 P2 改的是仓库，影响所有后续运行。自动写文件等于让模型间接改合同、评测或共享提示。正确流程是：
 
@@ -256,13 +268,13 @@ sequenceDiagram
 ```mermaid
 flowchart LR
   P["一条 valid tip"] --> R["独立 review<br/>不同 provider/model"]
-  R -->|"useful + 证据可核"| S["reviewed_shadow<br/>仍不注入 TASK"]
+  R -->|"useful + 证据可核"| S["reviewed_active<br/>本 run 后续场次可用"]
   R -->|"not useful / 风险"| H["人工队列"]
   P -->|"第二个模型独立提出同一 action"| Q["quorum"]
   Q --> S2["shadow / 人审"]
 ```
 
-review 不是第二个独立提出，不能替代 quorum；它只把单来源 tip 推进到 **shadow**，让人看见，active 仍要人确认。review prompt 必须把建议标成 untrusted data，禁止改 kernel/TASK，只允许写 `HARNESS_REVIEW.json`。
+review 不是第二个独立提出，不能替代 quorum；它把单来源 tip 推进到**本 run 的 active**，运行结束就失效。永久固化仍是 P2，由人确认。review prompt 必须把建议标成 untrusted data，禁止改 kernel/TASK，只允许写 `HARNESS_REVIEW.json`。
 
 review 的预算不能写死 $0.2：按 reviewer 的实际 input/output 单价、prompt 长度和最大输出 token 算：
 

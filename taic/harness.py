@@ -447,6 +447,21 @@ def _trusted(row: dict, *, target_id: str, task: str, scope: str, root: Path | N
     )
 
 
+def pending_tip_reviews(run_dir: Path, proposals: list[dict]) -> list[dict]:
+    """Valid tips that have neither a decision nor an independent review yet."""
+    reviews = {str(row.get("proposal_key") or "") for row in _read_jsonl(Path(run_dir) / "harness_reviews.jsonl") if row.get("event") == "review"}
+    decisions = {str(row.get("proposal_key") or "") for row in _read_jsonl(Path(run_dir) / DECISION_FILE)}
+    out = []
+    for row in proposals:
+        key = str(row.get("proposal_key") or "")
+        if not key or key in reviews or key in decisions:
+            continue
+        proposal = row.get("proposal") if isinstance(row.get("proposal"), dict) else {}
+        if row.get("status") == "valid" and proposal.get("surface") == "tip":
+            out.append(row)
+    return out
+
+
 def settle(
     run_dir: Path,
     *,
@@ -550,16 +565,16 @@ def settle(
             "models": sorted(identity[0] + "/" + identity[1] for identity in distinct_models),
         })
         (shadowed if is_shadow else applied).append(event)
-    # A single-source tip may reach *shadow* through an independent review. It never
-    # reaches active this way; quorum or a person still owns that step.
+    # A single-source tip may reach *active for this run* through an independent review.
+    # This is run-scoped, not a repository promotion; P2 still needs a person.
     for review in reviews:
         if review.get("useful") is not True:
             continue
         key = str(review.get("proposal_key") or "")
         group = groups.get(key) or []
-        if not group or (key, "reviewed_shadow") in decided:
+        if not group:
             continue
-        if (key, "apply") in decided or (key, "shadow") in decided:
+        if (key, "apply") in decided or (key, "shadow") in decided or (key, "reviewed_active") in decided:
             continue
         reviewer = review.get("reviewer") if isinstance(review.get("reviewer"), dict) else {}
         proposer = group[0]
@@ -582,7 +597,7 @@ def settle(
             "target_id": target_id, "task": task, "protocol_version": str(protocol_version),
             "source_run": str(first.get("run_id") or run_dir.name), "source_seq": first.get("seq"),
             "proposal_key": key, "surface": "tip", "text": str(first.get("proposal", {}).get("action") or ""),
-            "evidence_sha256": str(first.get("probe_sha256") or ""), "shadow": True,
+            "evidence_sha256": str(first.get("probe_sha256") or ""), "shadow": False,
             "reviewed": True, "reviewer": reviewer,
             "active_from": first.get("seq"), "active_until": None,
         }
@@ -590,10 +605,10 @@ def settle(
         _append_jsonl(run_dir / DECISION_FILE, {
             "schema_version": SCHEMA_VERSION, "event": "decision", "t": event["t"],
             "target_id": target_id, "task": task, "proposal_key": key,
-            "decision": "reviewed_shadow", "source_seq": first.get("seq"),
+            "decision": "reviewed_active", "source_seq": first.get("seq"),
             "reviewer": reviewer,
         })
-        shadowed.append(event)
+        applied.append(event)
     return {"applied": applied, "shadow": shadowed}
 
 

@@ -70,7 +70,7 @@ deepseek 提出“评测报告里打印每个 stage 的编译器寄存器用量�
 - 实际：**$0.1063**，73 秒；
 - 结论：`useful=true`、`confidence=0.6`，并指出一个关键缺口：Metal 没有公开的 per-kernel register-count API，建议先用 `maxTotalThreadsPerThreadgroup` 或 Instruments 做代理指标验证。
 
-结果写入 `harness_reviews.jsonl`，`settle` 把它记为 **`reviewed_shadow`**，仍只写 shadow，不进入 active TASK。这验证了“一个模型提案 + 另一个模型评价”的路径，但评价不是 quorum，不能单独授权 active。
+结果写入 `harness_reviews.jsonl`。切换到新策略后重新 `settle`，同一条 review 变成 **`reviewed_active`**，只在本 run 的后续场次生效；这个 run 已经结束，所以没有后续场次可注入。永久 P2 仍要人确认。
 
 ### 总计
 

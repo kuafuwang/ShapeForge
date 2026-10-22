@@ -51,7 +51,7 @@ def summarize(run_dir: Path) -> dict:
     overlay_kind = Counter("shadow" if row.get("shadow") else "active" for row in overlay if row.get("event") == "overlay")
     valid = [row for row in proposals if row.get("status") == "valid"]
     keys = {str(row.get("proposal_key")) for row in valid}
-    quorum_keys = {str(row.get("proposal_key")) for row in decisions if row.get("decision") in ("shadow", "apply")}
+    quorum_keys = {str(row.get("proposal_key")) for row in decisions if row.get("decision") in ("shadow", "apply", "reviewed_active")}
     placeholders = sum(int(row.get("placeholder_items") or 0) for row in records)
     return {
         "run": str(run_dir),

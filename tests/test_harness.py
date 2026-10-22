@@ -265,7 +265,7 @@ def test_an_outer_candidate_report_can_be_the_trusted_record_without_a_selfcheck
     )[0]
 
 
-def test_a_useful_independent_review_moves_a_single_tip_to_shadow_only(tmp_path):
+def test_a_useful_independent_review_activates_a_single_tip_for_this_run(tmp_path):
     import json as _json
 
     run = tmp_path / "run"
@@ -279,6 +279,6 @@ def test_a_useful_independent_review_moves_a_single_tip_to_shadow_only(tmp_path)
         "reviewer": {"provider": "moonshot", "model": "kimi-k3", "effort": "high"},
     }) + "\n")
     result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=True, trust_root=tmp_path / "targets")
-    assert result["applied"] == [] and len(result["shadow"]) == 1
-    assert result["shadow"][0]["reviewed"] is True
-    assert harness.overlay_text(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version()) == ""
+    assert len(result["applied"]) == 1 and result["shadow"] == []
+    assert result["applied"][0]["reviewed"] is True
+    assert "先读 device.md" in harness.overlay_text(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version())

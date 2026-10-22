@@ -34,9 +34,21 @@
   .badge.exhausted { background: var(--amber); color: #fff; }
   .badge.near { background: #fde047; color: #4a3b00; }
   #hist-tools { margin-bottom: 8px; }
-  #budget-modal, #settings-modal, #delete-modal, #feedback-modal, #stage-modal, #term-modal, #query-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
-  #budget-modal.open, #settings-modal.open, #delete-modal.open, #feedback-modal.open, #stage-modal.open, #term-modal.open, #query-modal.open { display: flex; }
-  #budget-modal .box, #settings-modal .box, #delete-modal .box, #feedback-modal .box, #stage-modal .box, #term-modal .box, #query-modal .box { background: var(--card); border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); }
+  #budget-modal, #settings-modal, #delete-modal, #feedback-modal, #stage-modal, #term-modal, #query-modal, #harness-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
+  #budget-modal.open, #settings-modal.open, #delete-modal.open, #feedback-modal.open, #stage-modal.open, #term-modal.open, #query-modal.open, #harness-modal.open { display: flex; }
+  #budget-modal .box, #settings-modal .box, #delete-modal .box, #feedback-modal .box, #stage-modal .box, #term-modal .box, #query-modal .box, #harness-modal .box { background: var(--card); border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); }
+  #harness-modal .box { width: min(900px, 94vw); max-height: 88vh; display: flex; flex-direction: column; }
+  #harness-modal .harness-body { min-height: 0; overflow: auto; }
+  #harness-modal table td { vertical-align: top; }
+  #harness-modal .actions { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; }
+  #harness-modal .actions a { font-size: 12px; color: var(--muted); }
+  #harness-modal h4 { margin: 14px 0 6px; font-size: 13px; color: var(--muted); }
+  #harness-modal .h-badge { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; font-size: 11px; white-space: nowrap; }
+  #harness-modal .h-yes { color: #176b3a; background: #e9f7ef; border-color: #b7e1c8; }
+  #harness-modal .h-no { color: #8a1f1f; background: #fdecec; border-color: #f2c2c2; }
+  #harness-modal .h-none { color: var(--muted); background: #f4f5f7; }
+  #harness-modal .h-active { color: var(--blue); background: #eef5fc; border-color: #cfe0f3; }
+  #harness-modal .h-review { margin: 2px 0; }
   #term-modal .box { width: min(640px, 94vw); max-height: 86vh; display: flex; flex-direction: column; }
   #term-query { width: 100%; margin: 8px 0; flex: none; }
   #term-results { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
@@ -105,7 +117,11 @@
   .detail-panel { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
   .detail-panel.collapsed { flex: 0 0 auto; }
   .detail-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; padding: 8px 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px 12px 0 0; }
-  .detail-head strong { font-size: 13px; color: var(--muted); }
+  .detail-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+  .detail-head strong { flex: none; font-size: 13px; color: var(--muted); }
+  .detail-task { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; color: var(--ink); }
+  .detail-status { flex: none; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .detail-head .breathe { margin: 0; }
   .detail-panel.collapsed .detail-head { border-radius: 12px; }
   .detail-panel.collapsed #detail-body { display: none; }
   .detail-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--card); border: 1px solid var(--line); border-top: 0; border-radius: 0 0 12px 12px; padding: 14px; }
@@ -151,6 +167,8 @@
   #settings-committees select { flex: 1; }
   #feedback-badge { background: #fde047; color: #4a3b00; border-color: #e6c200; font-weight: 700; }
   #feedback-badge:hover { border-color: #4a3b00; color: #4a3b00; }
+  #harness-badge { border-color: #cfe0f3; color: var(--blue); font-weight: 600; }
+  #harness-badge:hover { background: #eef5fc; border-color: var(--blue); }
   #view-reviews { display: none; min-height: 0; }
   body.reviews-page #workspace { display: none; }
   body.reviews-page header button:not(#feedback-badge) { display: none; }
@@ -180,7 +198,7 @@
 <header>
   <strong>观测</strong>
   <button type="button" id="feedback-badge" hidden title="打开全部审查">待审查</button>
-  <button type="button" id="harness-badge" hidden title="查看本场的结构化提案与 overlay">Harness</button>
+  <button type="button" id="harness-badge" hidden title="查看本场的结构化提案与 overlay（只读）">结构化提案</button>
   <button type="button" id="term-open">术语</button>
   <button type="button" id="tab-experiments">实验</button>
   <button type="button" id="tab-compare">对照</button>
@@ -266,7 +284,11 @@
   </aside>
   <div id="detail-panel" class="detail-panel">
     <div class="detail-head">
-      <strong>详情</strong>
+      <div class="detail-title">
+        <strong id="detail-kicker">详情</strong>
+        <span id="detail-task" class="detail-task"></span>
+        <span id="detail-status" class="detail-status"></span>
+      </div>
       <button type="button" id="detail-toggle" aria-expanded="true" title="收起详情">收起</button>
     </div>
     <div id="detail-body" class="detail-scroll">
@@ -331,6 +353,17 @@
     </div>
   </div>
 </div>
+<div id="harness-modal" role="dialog" aria-modal="true" aria-labelledby="harness-modal-title">
+  <div class="box">
+    <h3 id="harness-modal-title">结构化提案</h3>
+    <p class="sub" id="harness-modal-run"></p>
+    <div class="harness-body" id="harness-modal-body"></div>
+    <div class="actions">
+      <a id="harness-raw" href="#" target="_blank" rel="noopener" class="muted">原始 JSON（只读）</a>
+      <button type="button" id="harness-close">关闭</button>
+    </div>
+  </div>
+</div>
 <div id="feedback-modal" role="dialog" aria-modal="true" aria-labelledby="feedback-modal-title">
   <div class="box">
     <h3 id="feedback-modal-title">处理反馈</h3>
@@ -366,6 +399,7 @@ const OBSERVE_TOKEN = document.querySelector('meta[name="observe-token"]')?.cont
 const LABELS = {over: "OVER BUDGET", exhausted: "BUDGET EXHAUSTED", near: "NEAR BUDGET"};
 const LABELS_CN = {over: "超预算", exhausted: "预算耗尽", near: "接近预算"};
 const FILTERS = [["all", "全部"], ["alert", "告警"], ["over", "超预算"], ["exhausted", "耗尽"], ["near", "接近"]];
+const HARNESS_LABEL = "结构化提案";
 const SORTS = [["time", "时间"], ["used", "预算占比"]];
 let selectedExperiment = "";
 let selectedRun = "";
@@ -421,7 +455,7 @@ async function refreshBanner() {
   slot.textContent = pending > 0 ? pending + " 条代理反馈待审查" : "";
   const harness = document.getElementById("harness-badge");
   harness.hidden = !selectedRun;
-  harness.textContent = selectedRun ? "Harness" : "";
+  harness.textContent = selectedRun ? HARNESS_LABEL : "";
 }
 
 const REVIEW_FILTERS = [["pending", "待审查"], ["", "全部"], ["adopted", "已采纳"], ["rejected", "已拒绝"], ["done", "已完成"], ["info", "未验证/开放"], ["obsolete", "已退役"]];
@@ -738,11 +772,56 @@ function openReview(runId, claim, record) {
   modal.classList.add("open");
 }
 
+const DETAIL_STATUS = {running: "进行中", done: "已结束", interrupted: "已中断", unknown: "未知"};
+
+function detailTaskName(doc) {
+  if (!doc) return "";
+  const bag = doc.result || doc.state || {};
+  return bag.task || doc.id || "";
+}
+
+function paintDetailHead(fallbackId) {
+  const kicker = document.getElementById("detail-kicker");
+  const task = document.getElementById("detail-task");
+  const status = document.getElementById("detail-status");
+  if (visible === "ledger") {
+    kicker.hidden = false;
+    kicker.textContent = "花费账本";
+    task.textContent = "";
+    task.title = "";
+    status.replaceChildren();
+    return;
+  }
+  const name = detailTaskName(detailDoc) || fallbackId || "";
+  const code = detailDoc && detailDoc.status || "";
+  if (!name) {
+    kicker.hidden = false;
+    kicker.textContent = "详情";
+    task.textContent = "";
+    task.title = "";
+    status.replaceChildren();
+    return;
+  }
+  kicker.hidden = true;
+  task.textContent = name;
+  task.title = name;
+  status.replaceChildren();
+  if (code === "running") {
+    const lamp = document.createElement("span");
+    lamp.className = "breathe";
+    lamp.title = "进行中";
+    status.appendChild(lamp);
+  }
+  const label = DETAIL_STATUS[code] || code;
+  if (label) status.appendChild(document.createTextNode(label));
+}
+
 function showRight(name) {
   if (document.getElementById("detail-panel").classList.contains("collapsed")) setDetailCollapsed(false);
   visible = name === "ledger" ? "ledger" : "detail";
   document.getElementById("view-detail").classList.toggle("on", visible === "detail");
   document.getElementById("view-ledger").classList.toggle("on", visible === "ledger");
+  paintDetailHead();
   if (visible === "ledger") loadLedger();
   else if (selectedRun) loadDetail(selectedRun);
 }
@@ -883,6 +962,7 @@ const TERMS = [
   {name: "interrupted", keys: ["interrupted"], text: "搜索被打断，没有正常跑完。可以用续跑接着做。"},
   {name: "需要帮助", keys: ["需要帮助"], text: "写核的模型说自己缺工具、权限或信息。只给人看，不会自动改系统，也不会传给下一轮。"},
   {name: "对系统的建议", keys: ["对系统的建议"], text: "模型认为某条提示词、技能或规则让它走了弯路。要先复核再决定改不改仓库。"},
+  {name: "结构化提案", keys: ["结构化提案", "harness", "harness-proposal", "overlay", "影子"], text: "写在「对系统的建议」里的 JSON 代码块。两个不同模型、两个委员会各拿出一条同一动作的线索，才可能进 overlay；影子只记账，生效条目才以「未验证」写进下一轮的 TASK.md。顶栏的「结构化提案」按钮看的就是这一场的提案、决策和 overlay。"},
   {name: "卡住的原因", keys: ["卡住的原因", "diagnostic"], text: "这一轮没留下更好的核时，模型自己说卡在数值、速度、工具还是时间。只作记录，不单独算待审查。"},
   {name: "给下一棒的避坑提示", keys: ["给下一棒的避坑提示", "peer", "避坑"], text: "这一轮在这道题上踩到的具体坑，只传给同一次搜索的下一场。不跨题目。"},
   {name: "被否决的前提", keys: ["被否决的前提", "未验证", "unverified", "downgraded", "已实测"], text: "这一轮放弃某个方向时依据的那句话。标了未验证的，只再出现两场。自称测过但探针文件不在的，会降成未验证。"},
@@ -1217,6 +1297,7 @@ async function loadDetail(id) {
     detailStamp = "";
     detailId = id;
     host.innerHTML = `<p>找不到 ${esc(id)}</p>`;
+    paintDetailHead(id);
     return;
   }
   if (doc.same) {
@@ -1240,6 +1321,7 @@ async function loadDetail(id) {
   detailDoc = doc;
   detailStamp = doc.detail_stamp || "";
   host.innerHTML = html;
+  paintDetailHead();
   bindCandidatePicks(host);
   bindFeedback(host, doc);
   if (document.getElementById("stage-modal").classList.contains("open") && selectedCandidate) openStage(selectedCandidate);
@@ -1622,9 +1704,129 @@ async function refreshLive() {
 }
 setInterval(() => { refreshTurns(false); refreshLive(); }, 2000);
 
-document.getElementById("harness-badge").addEventListener("click", () => {
-  if (selectedRun) window.open("/api/v2/harness/" + selectedRun.split("/").map(encodeURIComponent).join("/"), "_blank");
-});
+const HARNESS_SURFACE = {tip: "线索 tip", premise: "前提 premise", skill: "技能 skill（P2）", task_wording: "题面 task_wording（P2）"};
+
+function harnessWho(row) {
+  const model = [row.provider, row.model].filter(Boolean).join("/");
+  const committee = row.committee === "first" ? "第一委员会" : (row.committee === "second" ? "第二委员会" : row.committee);
+  return [model, committee].filter(Boolean).join(" · ");
+}
+
+function harnessStatus(row) {
+  if (row.status !== "valid") return `<span class="red">拒绝</span><div class="sub">${esc(row.reason || "")}</div>`;
+  const surface = (row.proposal || {}).surface;
+  if (surface === "premise" && !row.trusted_record) return `通过<div class="sub">没有匹配的自检行，只进影子</div>`;
+  return surface === "premise" ? "通过（自检匹配）" : "通过";
+}
+
+function harnessEvidence(row) {
+  const evidence = (row.proposal || {}).evidence || {};
+  return [evidence.probe, evidence.measurement].filter(Boolean).map(esc).join("<br>");
+}
+
+function harnessTable(head, rows) {
+  return `<table><thead><tr>${head.map((name) => `<th>${esc(name)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+const HARNESS_DECISION = {
+  apply: "生效",
+  shadow: "影子",
+  reviewed_active: "review 生效（本 run）",
+  reviewed_shadow: "review 影子（旧记录）",
+  promotion: "P2 patch",
+  suspend: "暂停",
+};
+
+function harnessReviewCell(row, review) {
+  if (!review) return `<span class="h-badge h-none">未 review</span><div class="sub h-review">只有影子；没有独立评价</div>`;
+  const reviewer = [review.reviewer && review.reviewer.provider, review.reviewer && review.reviewer.model].filter(Boolean).join("/");
+  const confidence = typeof review.confidence === "number" ? ` · confidence ${esc(String(review.confidence))}` : "";
+  if (review.useful === true) {
+    return `<span class="h-badge h-yes">review 有用</span><div class="sub h-review">${esc(reviewer)}${confidence}</div>`;
+  }
+  if (review.useful === false) {
+    return `<span class="h-badge h-no">review 不建议</span><div class="sub h-review">${esc(reviewer)}${confidence}</div>`;
+  }
+  return `<span class="h-badge h-none">review 未完成</span><div class="sub h-review">${esc(reviewer)}</div>`;
+}
+
+function harnessOverlayCell(row) {
+  if (row.shadow) return `<span class="h-badge h-none">影子 · 不注入</span>`;
+  if (row.reviewed) return `<span class="h-badge h-active">生效 · 独立 review（本 run）</span>`;
+  return `<span class="h-badge h-active">生效 · 双来源</span>`;
+}
+
+function harnessPromotionCell(row, promotion) {
+  if (promotion) {
+    const ref = promotion.change_ref || "";
+    return `<span class="h-badge h-active">已固化</span><div class="sub h-review">${esc(ref || "P2 patch")}</div>`;
+  }
+  const review = row.review || null;
+  if (review && review.useful === true) {
+    return `<span class="h-badge h-yes">P2 候选</span><div class="sub h-review">已 review，待人工固化</div>`;
+  }
+  if (review && review.useful === false) {
+    return `<span class="h-badge h-no">不建议固化</span><div class="sub h-review">review 已拒绝</div>`;
+  }
+  return `<span class="h-badge h-none">未固化</span><div class="sub h-review">没有 P2 patch</div>`;
+}
+
+function harnessMarkup(doc) {
+  const control = doc.control || {};
+  const proposals = doc.proposals || [];
+  const reviews = doc.reviews || [];
+  const decisions = doc.decisions || [];
+  const overlay = doc.overlay || [];
+  const state = control.disabled
+    ? `<b>overlay 已停用</b>（${esc(control.by || "人")}${control.reason ? "：" + esc(control.reason) : ""}）`
+    : "<b>overlay 启用</b>";
+  const head = `<p class="muted">${state}。review 过与未 review 过分开显示；只有 <b>review 有用</b> 或双来源一致的条目才可能进入本 run 的后续 TASK，且运行结束失效。P2 列再看“是否已固化”：review 有用只是 <b>P2 候选</b>，有 patch 的 change_ref 才是已固化，仍由人确认。</p>`;
+  if (!proposals.length && !reviews.length && !decisions.length && !overlay.length) {
+    return head + `<p>这场没有结构化提案。</p><p class="sub">只有模型在 FEEDBACK.md 的「对系统的建议」里写出 <code>harness-proposal</code> 代码块，这里才会出现条目；普通文字建议不会自动进 overlay。命令行 <code>taic harness status RUN_DIR</code> 看到的是同一份只读 JSON。</p>`;
+  }
+  const actions = new Map(proposals.map((row) => [row.proposal_key, (row.proposal || {}).action || ""]));
+  const reviewByKey = new Map(reviews.map((row) => [row.proposal_key, row]));
+  const promotionByKey = new Map(decisions.filter((row) => row.event === "promotion").map((row) => [row.proposal_key, row]));
+  const proposalRows = proposals.map((row) => {
+    const proposal = row.proposal || {};
+    const review = reviewByKey.get(row.proposal_key);
+    return `<tr><td>${esc(num(row.seq))}</td><td>${esc(harnessWho(row))}</td><td>${esc(HARNESS_SURFACE[proposal.surface] || proposal.surface || "")}</td><td>${esc(proposal.action || "")}</td><td>${harnessEvidence(row)}</td><td>${harnessStatus(row)}</td><td>${harnessReviewCell(row, review)}</td><td>${harnessPromotionCell({ review }, promotionByKey.get(row.proposal_key))}</td></tr>`;
+  }).join("");
+  const decisionRows = decisions.map((row) => `<tr><td>${esc(row.event === "promotion" ? "P2 固化" : (HARNESS_DECISION[row.decision] || row.decision || ""))}</td><td>${esc(actions.get(row.proposal_key) || row.proposal_key || "")}</td><td>${esc((row.models || []).join("、"))}${row.change_ref ? `<div class="sub">${esc(row.change_ref)}</div>` : ""}</td><td>${esc(num(row.source_seq))}</td></tr>`).join("");
+  const overlayRows = overlay.map((row) => `<tr><td>${harnessOverlayCell(row)}</td><td>${esc(row.surface || "")}</td><td>${esc(row.text || "")}</td><td>${esc(row.protocol_version || "")}</td><td>${esc(num(row.source_seq))}</td></tr>`).join("");
+  const reviewRows = reviews.map((row) => {
+    const reviewer = [row.reviewer && row.reviewer.provider, row.reviewer && row.reviewer.model].filter(Boolean).join("/");
+    const verdict = row.useful === true ? `<span class="h-badge h-yes">有用</span>` : (row.useful === false ? `<span class="h-badge h-no">不建议</span>` : `<span class="h-badge h-none">未完成</span>`);
+    return `<tr><td>${esc(reviewer)}</td><td>${verdict}</td><td>${esc(String(row.confidence ?? ""))}</td><td>${esc(row.evidence || "")}</td><td>${esc(row.risk || "")}</td><td>${esc(row.cost_usd == null ? "" : "$" + Number(row.cost_usd).toFixed(4))}</td></tr>`;
+  }).join("");
+  const blocks = [proposalRows
+    ? `<h4>提案</h4>` + harnessTable(["轮", "提出者", "种类", "动作", "证据", "校验", "review", "P2 固化"], proposalRows)
+    : `<h4>提案</h4><p class="muted">没有。</p>`];
+  if (reviewRows) blocks.push(`<h4>review</h4>` + harnessTable(["reviewer", "结论", "confidence", "证据", "风险", "成本"], reviewRows));
+  if (decisionRows) blocks.push(`<h4>决策</h4>` + harnessTable(["决策", "动作", "来源模型", "轮"], decisionRows));
+  if (overlayRows) blocks.push(`<h4>overlay</h4>` + harnessTable(["状态", "种类", "文本", "协议", "来源"], overlayRows));
+  return head + blocks.join("");
+}
+
+async function openHarness() {
+  if (!selectedRun) return;
+  const url = "/api/v2/harness/" + selectedRun.split("/").map(encodeURIComponent).join("/");
+  const host = document.getElementById("harness-modal-body");
+  document.getElementById("harness-modal-run").textContent = selectedRun;
+  document.getElementById("harness-raw").href = url;
+  host.innerHTML = `<p class="muted">读取中…</p>`;
+  document.getElementById("harness-modal").classList.add("open");
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error("读取失败：HTTP " + response.status);
+    host.innerHTML = harnessMarkup(await response.json());
+  } catch (error) {
+    host.innerHTML = `<p class="red">${esc(error.message)}</p>`;
+  }
+}
+
+document.getElementById("harness-badge").addEventListener("click", openHarness);
+document.getElementById("harness-close").addEventListener("click", () => document.getElementById("harness-modal").classList.remove("open"));
 document.getElementById("feedback-badge").addEventListener("click", () => {
   if (reviewsPage) return;
   window.open("/reviews", "observe-reviews");

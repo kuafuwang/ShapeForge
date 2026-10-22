@@ -289,7 +289,7 @@ def test_a_named_run_without_its_own_model_does_not_require_a_null_model():
         "budget-amount", "budget-save", 'method: "POST"', "X-Observe-Token", 'classList.add("open")',
         "function newestFirst", "newestFirst(doc.candidates)", "newestFirst(doc.budget_events)", "newestFirst(handoff.rounds)", "newestFirst(doc.plan_outcomes)", "newestFirst(doc.by_month)", "newestFirst(doc.feature_grid)",
         "安检", "阶段", "代码", 'class="excerpt"', "--blue: #0a66c2", "@keyframes breathe", 'class="breathe"',
-        'id="workspace"', 'id="side-toggle"', 'id="runs-toggle"', 'id="detail-toggle"', 'id="view-experiments"', 'id="view-compare"', 'id="view-detail"',
+        'id="workspace"', 'id="side-toggle"', 'id="runs-toggle"', 'id="detail-toggle"', 'id="detail-task"', 'id="detail-status"', "function paintDetailHead", 'id="view-experiments"', 'id="view-compare"', 'id="view-detail"',
         "<th>目录</th><th>种类</th><th>操作</th>",
         "runs-table-scroll", "detail-scroll", "position: sticky", 'id="budget-toggle"', 'id="term-open"', "validated_win", "untested_impl_fail",
         "已截断：",
@@ -300,8 +300,11 @@ def test_a_named_run_without_its_own_model_does_not_require_a_null_model():
         "function writerMode", "doc.kernel_writer", "这一场由搜索直接调用模型",
         'id="turns-live"', "/api/v2/turns/", "更早", "function openTurnKeys", "data-turn",
         'id="pi-live"', "/api/v2/pi/",
+        'id="harness-badge"', 'id="harness-modal"', "function harnessMarkup", 'id="harness-raw"', "taic harness status",
     ):
         assert needle in text, needle
+    # The header entry renders its own panel now; a browser tab of raw JSON was the old behaviour.
+    assert 'window.open("/api/v2/harness/' not in text
 
 
 def test_the_page_script_renders_badges_filters_and_sorting(dashboard):  # noqa: F811

@@ -112,7 +112,7 @@ SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "ma
                  "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "confirm_batches", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
                  "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck",
                  "plan_ledger", "diversity_archive", "fast_bench", "experience_index", "kernel_agent", "require_contract_launch",
-                 "relay_budget_usd", "turn_minutes", "peer_tips", "harness_auto", "harness_shadow")
+                 "relay_budget_usd", "turn_minutes", "peer_tips", "harness_auto", "harness_shadow", "harness_review")
 LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "keep_transcript_bodies", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry",
               "truncation_retry_effort", "plan_reasoning_effort", "patch_reasoning_effort")
 
@@ -436,12 +436,13 @@ def _apply_max_tokens(a: argparse.Namespace, cfg, prov: dict | None = None) -> N
 
 def _add_harness_switches(p: argparse.ArgumentParser) -> None:
     p.add_argument("--harness-auto", action=argparse.BooleanOptionalAction, default=None, help="allow structured harness proposals to settle into this run's overlay (default: off)")
-    p.add_argument("--harness-shadow", action=argparse.BooleanOptionalAction, default=None, help="record an eligible overlay without injecting it; use --no-harness-shadow only after the shadow pilot (default: on)")
+    p.add_argument("--harness-shadow", action=argparse.BooleanOptionalAction, default=None, help="hold unreviewed quorum entries without injecting them (default: on)")
+    p.add_argument("--harness-review", action=argparse.BooleanOptionalAction, default=None, help="let the other committee model review a single-source tip before the next session (default: on)")
 
 
 def _apply_search_switches(a: argparse.Namespace, cfg, search, prov: dict | None = None) -> None:
     """Apply an explicit ``--flag`` or ``--no-flag``. An omitted flag leaves the config default."""
-    for dest, key in (("harness_auto", "harness_auto"), ("harness_shadow", "harness_shadow")):
+    for dest, key in (("harness_auto", "harness_auto"), ("harness_shadow", "harness_shadow"), ("harness_review", "harness_review")):
         value = getattr(a, dest, None)
         if value is None:
             continue

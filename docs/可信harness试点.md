@@ -6,13 +6,13 @@
 
 1. 先完成 `experiments.apply_feedback_audit`，让存量 174 条有审查标签。
 2. 在目标硬件的 `targets/<target_id>/trust.toml` 里，由人给两个委员会的两个不同 provider/model 授予 `overlay:tip`。信任绑定 task、effort、prompt sha 和协议版本。
-3. 运行配置：`harness_auto = true`、`harness_shadow = true`。影子期只写 `harness_overlay.jsonl`，不注入 TASK。`premise` 只有在本场探针、active `overlay:premise` 信任和匹配的 harness 自检记录或外层候选报告同时存在时才可能 active；否则只写 shadow。
+3. 运行配置：`harness_auto = true`、`harness_shadow = true`。影子期只写 `harness_overlay.jsonl`，不注入 TASK；独立 review 判为 useful 的单来源 tip 例外，只在本 run 后续场次 active。`premise` 只有在本场探针、active `overlay:premise` 信任和匹配的 harness 自检记录或外层候选报告同时存在时才可能 active；否则只写 shadow。
 
 ## 试点范围
 
 - 2–3 道题：一道已经产生过反馈的题，一道 held-out（未参与规则设计）。每题约 5 个 run，两个委员会都出现。
 - 记录：空占位、结构化提案、双来源一致数、shadow/active 条目、人工否决数、unchanged 率、每 run 成本。
-- 人复核每一条 shadow 条目；只有确认没有把合同/命令/未验证事实带进 TASK 后，才用 `--no-harness-shadow` 跑 active。
+- 人复核每一条 shadow 条目；独立 review 判为 useful 的单来源 tip 可以 `reviewed_active` 进入本 run 后续场次，但仍不能永久固化。
 
 ## 离线汇总
 
@@ -43,4 +43,4 @@ uv run python -m taic.cli harness status runs/apple-m4-max/RUN
 - `tests/test_harness_workflow.py` 覆盖 tip 从双来源/信任到 active TASK，以及 disable 后消失；`premise` 无自检记录时保持 shadow。
 - 自检记录是本机记录，不是密码学签名；阶段 B 仍需人工复核，不能把 `premise` 当形式证明。
 
-阶段 B 才考虑 2–3 道题的 shadow/active 运行，并需要单独的预算与 GPU 批准。单来源 tip 可以走 `taic harness review`（另一个 provider/model、只读、按实际单价算预算），但 review 只产生 `reviewed_shadow`，不等于 quorum，也不能单独授权 active。
+阶段 B 才考虑 2–3 道题的 shadow/active 运行，并需要单独的预算与 GPU 批准。单来源 tip 可以走 `taic harness review`（另一个 provider/model、只读、按实际单价算预算），但 review 产生 `reviewed_active`，只在本 run 后续场次使用；它不等于永久 P2，P2 仍由人确认。
