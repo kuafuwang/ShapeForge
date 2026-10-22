@@ -244,3 +244,22 @@ def test_a_premise_needs_a_matching_harness_record_not_just_a_probe(tmp_path):
         work, target_id="apple-m4-max", protocol_version=trust.current_protocol_version(),
         kernel_sha256="abc", measurement="15.09 TFLOP/s",
     )[0]
+
+
+def test_an_outer_candidate_report_can_be_the_trusted_record_without_a_selfcheck(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    report = {
+        "status": "ok", "candidate_us": 12.5, "speedup": 1.04,
+        "target_id": "apple-m4-max", "protocol_version": trust.current_protocol_version(),
+        "kernel_sha256": "abc", "trusted_source": "outer candidate report",
+    }
+    ok, why = harness.trusted_premise_record(
+        work, target_id="apple-m4-max", protocol_version=trust.current_protocol_version(),
+        kernel_sha256="abc", measurement="12.5 us", trusted_report=report,
+    )
+    assert ok and why == "outer candidate report"
+    assert not harness.trusted_premise_record(
+        work, target_id="apple-m4-max", protocol_version=trust.current_protocol_version(),
+        kernel_sha256="abc", measurement="20.0 us", trusted_report=report,
+    )[0]

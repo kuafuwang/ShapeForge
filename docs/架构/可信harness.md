@@ -123,7 +123,7 @@ flowchart LR
 - 数字和单位能对上；探针测的命题就是被否决的命题，不是相邻问题。
 - 代理自写的探针只能当“带出处的线索”，不能自动标成已证实。
 
-**当前实现**：代码检查探针文件在提案者本场目录、mtime 晚于本场开始、SHA 存在，要求 active `overlay:premise` 信任，并读取本场 `self_checks.jsonl`，核对 target、协议、内核 SHA 和测量数字。匹配不上时 `premise` 只写 shadow。它仍不是密码学签名，恶意代理理论上可伪造本机记录；不要把 P1 当形式证明。详见 §7。
+**当前实现**：代码检查探针文件在提案者本场目录、mtime 晚于本场开始、SHA 存在，要求 active `overlay:premise` 信任，并读取本场 `self_checks.jsonl` 或外层候选报告，核对 target、协议、内核 SHA 和测量数字。匹配不上时 `premise` 只写 shadow。它仍不是密码学签名，恶意代理理论上可伪造本机记录；不要把 P1 当形式证明。详见 §7。
 
 ### 2.3 harness 流水线
 
@@ -301,7 +301,7 @@ proposal -> patch -> git apply --check -> 离线测试/golden -> 人确认 -> ap
 | 设计基线 | 当前实现 | 风险 |
 | --- | --- | --- |
 | 证据来自 harness 可信执行记录 | P1 `premise` 校验 self-checks 的 target/协议/内核 SHA/数字，但文件非签名 | 代理可伪造本机记录 |
-| `premise` 也需更强门槛 | `premise` 不需要双模型投票，但需要 active 信任 + 匹配的 self-checks 记录；否则只写 shadow | 单模型错误前提仍可能进 shadow；伪造本机记录仍可能绕过 |
+| `premise` 也需更强门槛 | `premise` 不需要双模型投票，但需要 active 信任 + 匹配的 self-checks/外层报告；否则只写 shadow | 单模型错误前提仍可能进 shadow；伪造本机记录仍可能绕过 |
 | 独立性靠“证据产自本场” | 只比较探针 SHA 不同 | 复制文字 + 各写不同探针仍可能通过 |
 | P1 关闭用只追加 disable 事件 | 当前是 `harness_control.json` 覆盖写 | 文件被重写时历史事件不在文件内；审计要看决策日志 |
 | 活动 claim 与历史审计分开 | 当前使用 `info`/`obsolete` 状态和墓碑；空占位重建时写入 `feedback_claim_removed` | 与计划第 7 节的“不新增状态”不同；审阅时按当前实现读 |

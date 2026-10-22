@@ -51,7 +51,7 @@ A free-text suggestion without this block is still reviewed by a person, but it 
 reaches the automatic overlay.
 
 For ``premise``, the harness must also have a ``status=ok`` line in
-``.selfcheck/self_checks.jsonl`` with the same target, protocol, and submitted kernel SHA,
+``.selfcheck/self_checks.jsonl`` (or the outer candidate report) with the same target, protocol, and submitted kernel SHA,
 and a number in ``evidence.measurement`` must match that row's ``candidate_us`` or
 ``speedup``. A probe file alone stays in shadow.
 """
@@ -312,6 +312,7 @@ def trusted_premise_record(
     protocol_version: str,
     kernel_sha256: str,
     measurement: str,
+    trusted_report: dict | None = None,
 ) -> tuple[bool, str]:
     """A premise is active only when a harness-written timed row agrees with it.
 
@@ -321,7 +322,10 @@ def trusted_premise_record(
     """
     if not kernel_sha256:
         return False, "no submitted kernel SHA"
-    for row in _self_check_rows(Path(work)):
+    rows = _self_check_rows(Path(work))
+    if isinstance(trusted_report, dict):
+        rows.insert(0, trusted_report)
+    for row in rows:
         if row.get("status") != "ok":
             continue
         if str(row.get("target_id") or "") != str(target_id):
@@ -331,9 +335,9 @@ def trusted_premise_record(
         if str(row.get("kernel_sha256") or "") != str(kernel_sha256):
             continue
         if _measurement_has(str(row.get("candidate_us") or ""), measurement):
-            return True, "self_checks.jsonl candidate_us"
+            return True, str(row.get("trusted_source") or "self_checks.jsonl candidate_us")
         if _measurement_has(str(row.get("speedup") or ""), measurement):
-            return True, "self_checks.jsonl speedup"
+            return True, str(row.get("trusted_source") or "self_checks.jsonl speedup")
     return False, "no matching harness self-check row"
 
 
@@ -350,6 +354,7 @@ def record_proposals(
     allow_premise: bool = True,
     kernel_sha256: str = "",
     protocol_version: str = "",
+    trusted_report: dict | None = None,
 ) -> list[dict]:
     """Append this session's valid/invalid proposals, idempotent by (seq, key, reason)."""
     run_dir = Path(run_dir)
@@ -401,6 +406,7 @@ def record_proposals(
                 trusted, why = trusted_premise_record(
                     work, target_id=target_id, protocol_version=protocol_version,
                     kernel_sha256=kernel_sha256, measurement=str(item["evidence"].get("measurement") or ""),
+                    trusted_report=trusted_report,
                 )
                 row["trusted_record"] = trusted
                 row["trusted_reason"] = why

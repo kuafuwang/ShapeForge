@@ -1417,11 +1417,23 @@ class Orchestrator:
             from tcenv.schema import PROTOCOL_VERSION
 
             kernel_sha = "" if cand is None else hashlib.sha256(cand.source.encode("utf-8")).hexdigest()
+            trusted_report = None
+            if cand is not None and cand.report is not None and cand.report.status == "ok":
+                trusted_report = {
+                    "status": "ok",
+                    "candidate_us": cand.report.candidate_us,
+                    "speedup": cand.report.speedup,
+                    "target_id": cand.report.target_id,
+                    "protocol_version": cand.report.protocol_version,
+                    "kernel_sha256": kernel_sha,
+                    "trusted_source": "outer candidate report",
+                }
             proposals = harness.record_proposals(
                 self.run_dir, record=record, parsed=parsed,
                 target_id=self.target_id, task=self.task_name, dtype=self.dtype,
                 work=work, started=started if started is not None else time.time() - 1.0,
                 kernel_sha256=kernel_sha, protocol_version=PROTOCOL_VERSION,
+                trusted_report=trusted_report,
             )
             if proposals and self.search.harness_auto:
                 harness.settle(
