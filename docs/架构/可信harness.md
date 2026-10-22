@@ -295,10 +295,12 @@ stateDiagram-v2
   proposed --> valid: 结构化字段完整
   valid --> waiting: 只有一个来源
   valid --> shadow: 双来源 + 信任通过
+  waiting --> reviewed_active: 独立 review useful
   shadow --> active: 人复核影子 / 打开生效
+  reviewed_active --> active: 下一场注入本 run
   shadow --> rejected: 人否决
-  active --> promoted: P2 patch 应用
-  active --> disabled: 本 run disable / 协议变化
+  active --> promoted: P2 patch 应用（永久，人）
+  active --> disabled: run 结束 / 本 run disable / 协议变化
   waiting --> invalid: 证据失效
 ```
 

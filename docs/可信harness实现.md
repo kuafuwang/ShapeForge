@@ -60,7 +60,7 @@
 
 ## 试点结果
 
-第一次 shadow 试点：`runs/apple-m4-max/harness-pilot-shadow-20261022`，4 场、$2.6658、确认 **1.1389x**，结构化提案 **0**，overlay **0**。详细报告见 [可信harness试点结果.md](可信harness试点结果.md)。
+试点报告见 [可信harness试点结果.md](可信harness试点结果.md)：第一次 4 场、$2.6658、0 提案；第二次 $0.7584、1 条 tip、kimi review $0.106，`reviewed_active` 仅本 run。
 
 ## 独立 review
 
