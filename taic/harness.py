@@ -41,7 +41,7 @@ A tip that should participate in this run's overlay goes in ``FEEDBACK.md`` unde
 
 Fields:
 
-- ``surface``: ``tip`` (needs two trusted models) or ``premise`` (needs a fresh local probe).
+- ``surface``: ``tip`` (needs two trusted models) or ``premise`` (needs a fresh local probe and active ``overlay:premise`` trust).
 - ``scope.target_id`` and ``scope.task``: must match this run.
 - ``action``: one sentence; no commands, code, paths that redirect writes, or contract changes.
 - ``evidence.probe``: relative to this session's work directory and created after the session started.
@@ -418,8 +418,16 @@ def settle(
             if len({str(row.get("probe_sha256") or "") for row in authors.values() if row.get("probe_sha256")}) < 2:
                 continue
         else:
-            # A measured premise has direct evidence and does not need a second model.
+            # A measured premise does not need a second model, but it still needs a person
+            # to delegate the model for this surface. This also keeps an empty trust table
+            # from silently letting agent-written probes into an active overlay.
             if not rows[0].get("probe_sha256"):
+                continue
+            ok, _why = _trusted(
+                rows[0], target_id=target_id, task=task, scope="overlay:premise",
+                root=trust_root, prompt_sha1=prompt_sha1,
+            )
+            if not ok:
                 continue
         decision = "shadow" if shadow else "apply"
         if (key, decision) in decided:

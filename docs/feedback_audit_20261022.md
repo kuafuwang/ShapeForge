@@ -151,8 +151,9 @@ uv run python -m experiments.feedback_audit
 ## 执行记录（2026-10-22）
 
 - 解析器升 `fbv3`：7 条空占位不再生成 claim；已有审查文件里的对应条目保留为 `obsolete`。
-- 用 `experiments.apply_feedback_audit --merge-topic` 写回 174 条：60 条实测 `adopted`、15 条已修 `done`、35 条未验证 `info`、空占位/同主题重复 `obsolete`，其余保留 `pending`。
+- 用 `experiments.apply_feedback_audit --merge-topic` 写回 174 条：60 条实测 `adopted`、15 条已修 `done`、35 条未验证 `info`、7 条空占位 `obsolete`，其余保留 `pending`。
 - 探针恢复后重建索引：多数降级前提升级为 `verified`（当前索引 31 条；仍保留原 digest 和审查键），8 条没有可恢复探针的保持 `downgraded`。
+- 复核指出按 topic 合并过宽后，`experiments.revert_topic_merges` 把 10 条 `duplicate of` 的 `obsolete` 改回 `pending`，备注改为「possible same topic」；当前 pending 为 57。7 条空占位仍保留 `obsolete`。
 - 写回后的待审计数包含 39 条采集时缺探针的前提；它们现在只在人工复核队列里，不会被当成实测证据。`--merge-topic` 是显式选择，topic 本身不是命题等价。
 
 ```bash
