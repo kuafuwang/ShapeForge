@@ -18,6 +18,7 @@
 | `a877c13` | Measure the index at 100k runs, index sessions and the eval protocol. |
 | `519b93c` | Complete the TASK omission note instead of cutting it at the byte cap. |
 | `7adf797` | Add read-only query and gc commands, and best/failure views. |
+| `6eb8f24` | Turn off the unread serial runner, cache identical evaluations, and set a 30-day deleted TTL. |
 | （本报告） | Execution report and final verification. |
 
 ## 按审核意见的落实
@@ -109,20 +110,25 @@
 | 10^5 压测 | **做了**。`experiments/scale_probe.py` 在 `/tmp` 造 100k 个最小 run；cold sync **157.6s**、hot tick **6ms**、history **0.83s**、first page **4ms**、second page **2ms**、best **0.5s**、DB **167MB**。结果在 `SCALE_PROBE.json`。请求路径已移出目录扫描；`best` 的 0.5s 仍是 100k 全表，留作下一步的聚合表。 |
 | sessions 表 | **做了**。schema 8 新增 `sessions`（committee/model/tokens/cost）；现有 **85 行**（kimi 35、deepseek 50，含旧 run 的空 committee）。`taic query sessions|models` 和 `/api/v2/{sessions,model-stats}` 可读。 |
 | eval 级 protocol | **做了**。`tcenv/schema.PROTOCOL_VERSION` 写入 `EvalReport.protocol_version`；`candidates.protocol_version` 一并索引。 |
-| data/deleted TTL | **做了工具**。`taic gc --older-than-days 30` 默认只报告；`--apply` 才删除并写 `gc_log.jsonl`。真实 266MB 没有删——这是保留政策，等你拍板。 |
+| data/deleted TTL | **做了工具和默认政策**。默认保留 **30 天**；`taic gc` 只报告，`--apply` 才删除并写 `gc_log.jsonl`。真实 266MB 没有删，等一次人工 dry-run；政策写入 `docs/维护决策.md`。 |
 | leaderboard/failure 页面 | **做了入口**。看板头部「最佳 / 失败」打开两个表，分别读 `/api/v2/best` 与 `/api/v2/failures`。 |
 | taic query/MCP | **做了 CLI**。`taic query runs|best|failures|sessions|models|capabilities`，支持 `--jsonl`。MCP 传输层没有做；CLI 是同一读模型的最小面。 |
 | feedback_claims.topic 写入 | **未做**。agent 输出没有 topic 字段，现有 `topic` 是人工 review 时填的；要自动填必须先定义分类法（谁产生、允许哪些值、是否 LLM 打标）。加一个空字符串之外的猜测会让 320 行变得不可审。 |
 | candidate_serial 移除 / eval 缓存 | **未做**。两者都改测量协议：移除 serial 会改变每颗候选的计时，eval 缓存要决定哪些 phase/seed 可以复用。需要一次 GPU A/B 和 `protocol_version` bump；没有你的预算批准不能跑。 |
 
-## 仍未做（需要你拍板或 GPU 预算）
+## 9. 用户批准后的 A/B 与政策决定 — `6eb8f24`
 
-1. **candidate_serial 默认移除**：会让候选的计时窗口变短，必须和旧数据分 epoch；需要在 GPU 上 A/B 后才能改默认值。
-2. **eval 缓存**：要决定缓存键（哪些 phase/seed/reps 可复用），以及缓存命中是否影响 `evaluations`/预算记录；本轮没有启用。
-3. **`feedback_claims.topic` 写入**：需要定义分类法/写入方；目前只有人工 review 会写。
-4. **`data/deleted` 实际删除**：`taic gc --apply` 已可用，但没有对 266MB 执行；TTL 和是否保留是政策决定。
-5. **MCP server**：`taic query` 已有同一读模型；MCP 的传输、鉴权和工具 schema 还没做。
-6. **10^5 的 `best` 全表 0.5s**：需要聚合表/物化视图，属于下一轮索引优化。
+| 决定 | 证据 | 落地 |
+|---|---|---|
+| `candidate_serial` 默认关闭 | 3 轮 × 3 个已确认内核（conv2d / flash_attention / relu，paper，seed 12345，15 reps）：关闭后墙钟 −5.3% / −8.3% / −4.0%；候选中位数 **−0.82% / +0.08% / +1.14%**，cv 2–4%，无系统偏差。`SERIAL_AB.json` | `SearchConfig.measure_serial=False`、`taic.toml` 同值；`tcenv eval --serial` 可重新打开；`PROTOCOL_VERSION="3"` |
+| `eval_cache` 默认开启 | 同一颗 relu、同一 seed/reps/mode/target/protocol：第一次 wall **4.41s**，第二次 **0.68s**，`cache_hit=true`，`candidate_us`/`speedup` 逐字段相同。`CACHE_AB.json` | 缓存键含 kernel/task fingerprint/seed/reps/mode/target/protocol/measure_serial；不同 seed 的确认批次仍上 GPU；`--eval-cache` 供 CLI，搜索默认 `eval_cache=true` |
+| `data/deleted` 30 天 | 当前 266MB，无 TTL；删除不可逆 | 默认 `older_than_days=30`；`taic gc` 只报告，`--apply` 才删并写 `gc_log.jsonl`；政策写入 `docs/维护决策.md` |
+| `feedback_claims.topic` 维持现状 | 320 条中 0 条非空；写入端只有人工 review | 决定与重启条件写入 `docs/维护决策.md`；不自动生成 |
+
+## 仍未做
+
+1. **MCP server**：`taic query` 已有同一读模型；MCP 的传输、鉴权、工具 schema 未定，等接入形态。
+2. **10^5 的 `best` 全表 0.5s**：需要聚合表/物化视图；列表页/历史已经 2–4ms/0.83s，不影响日常。
 
 ## 风险与回滚
 
