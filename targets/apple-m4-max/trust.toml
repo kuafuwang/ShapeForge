@@ -1,0 +1,5 @@
+# Model trust for this target. A person grants entries; the search never does.
+# The registry is versioned with the device data. Empty means no model may settle a P1 overlay.
+# Grants are keyed by target, task, provider, model and effort, and record the prompt/protocol
+# they were granted against. See taic/trust.py and docs/代理反馈.md.
+version = 1
