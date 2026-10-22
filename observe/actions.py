@@ -193,6 +193,33 @@ def _amount_and_total(body: dict, current: float | None, spent: float) -> tuple[
     return amount, total
 
 
+def promote_harness(run_id: str, proposal_key: str, *, root: Path | None = None) -> dict:
+    """Write one reviewed proposal into that hardware's experience file. Same step as ``taic harness apply --confirm``."""
+    from taic.harness import ProposalError, apply_patch, board
+
+    key = str(proposal_key or "").strip()
+    if not key:
+        raise Refused(400, "缺少提案")
+    run_dir = _run_dir(run_id)
+    doc = board(run_dir)
+    row = next((item for item in doc["proposals"] if item.get("proposal_key") == key and item.get("status") == "valid"), None)
+    if row is None:
+        raise Refused(404, "没有这条有效提案")
+    if not any(item.get("proposal_key") == key and item.get("useful") is True for item in doc["reviews"]):
+        raise Refused(400, "这条还没有被独立 review 为有用，不能固化")
+    if any(item.get("event") == "promotion" and item.get("proposal_key") == key for item in doc["decisions"]):
+        raise Refused(409, "这条已经固化到本地")
+    scope = (row.get("proposal") or {}).get("scope") if isinstance(row.get("proposal"), dict) else {}
+    target_id = str((scope or {}).get("target_id") or "").strip()
+    if not target_id:
+        raise Refused(400, "提案没有目标硬件")
+    with _lock_for(run_id):
+        try:
+            return apply_patch(run_dir, target_id=target_id, proposal_key=key, root=root, applied_by="dashboard")
+        except ProposalError as exc:
+            raise Refused(400, str(exc)) from exc
+
+
 def review_feedback(run_id: str, seq: int, digest: str, body: dict) -> dict:
     """Record one claim review and refresh the index before returning the updated claim."""
     from observe.feedback import apply_review

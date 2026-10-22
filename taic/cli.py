@@ -587,6 +587,12 @@ def cmd_harness(a: argparse.Namespace) -> int:
             print(json.dumps({key: len(value) for key, value in result.items() if isinstance(value, list)} | {"result": result}, ensure_ascii=False, indent=2, default=str))
         elif a.harness_action == "patch":
             print(json.dumps(harness.write_patch(run, target_id=a.target, proposal_key=a.key), ensure_ascii=False, indent=2))
+        elif a.harness_action == "commit":
+            try:
+                print(json.dumps(harness.commit_local_promotions(run, message=a.message, by=a.by), ensure_ascii=False, indent=2))
+            except harness.ProposalError as exc:
+                print(str(exc), file=sys.stderr)
+                return 5
         elif a.harness_action == "review":
             from . import review as review_mod
             from . import trust
@@ -784,6 +790,10 @@ def main(argv: list[str] | None = None) -> int:
     hse.add_argument("--task", required=True)
     hse.add_argument("--protocol-version", default=None)
     hse.add_argument("--active", action="store_true", help="write an active overlay; default is shadow only")
+    hk = hs.add_parser("commit")
+    hk.add_argument("run_dir")
+    hk.add_argument("--message", required=True)
+    hk.add_argument("--by", default="cli")
     hr = hs.add_parser("review")
     hr.add_argument("run_dir")
     hr.add_argument("--key", required=True)

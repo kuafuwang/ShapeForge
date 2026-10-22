@@ -795,10 +795,11 @@ def write_patch(
 
 
 def apply_patch(run_dir: Path, *, target_id: str, proposal_key: str, root: Path | None = None, check_only: bool = False, run_tests: bool = False, applied_by: str = "cli") -> dict:
-    """Apply a generated target-experience patch, after ``git apply --check``.
+    """Apply a generated target-experience patch **locally**, after ``git apply --check``.
 
-    This function does not commit. A person runs the offline tests and commits separately;
-    the returned ``change_ref`` is the patch hash to put on the reviewed claim.
+    This is local activation, not a git promotion: the running checkout changes now, while
+    ``change_ref`` stays empty until a person commits the touched file. That keeps the
+    traceable git reference separate from the fast local feedback loop.
     """
     run_dir = Path(run_dir)
     meta = write_patch(run_dir, target_id=target_id, proposal_key=proposal_key, root=root)
@@ -821,26 +822,69 @@ def apply_patch(run_dir: Path, *, target_id: str, proposal_key: str, root: Path 
     apply = subprocess.run(["git", "apply", str(patch)], cwd=repo, capture_output=True, text=True)
     if apply.returncode != 0:
         raise ProposalError((apply.stderr or apply.stdout or "git apply failed").strip())
-    change_ref = f"patch:{meta['sha256']}"
-    if meta.get("claim_digest"):
-        try:
-            from observe.feedback import apply_review
-
-            apply_review(run_dir, int(meta.get("source_seq") or 0), str(meta["claim_digest"]), {
-                "status": "done", "verification": "confirmed", "change_ref": change_ref,
-                "evidence_source": "code", "evidence": f"applied {meta['path']}", "note": "P2 promotion",
-            })
-        except (OSError, ValueError, ImportError):
-            # The patch is the authoritative change; a missing review row is reported by the caller.
-            pass
     _append_jsonl(run_dir / DECISION_FILE, {
-        "schema_version": SCHEMA_VERSION, "event": "promotion", "t": time.time(),
-        "target_id": target_id, "proposal_key": proposal_key, "change_ref": change_ref,
-        "path": meta["path"], "patch_sha256": meta["sha256"],
+        "schema_version": SCHEMA_VERSION, "event": "promotion", "status": "local", "t": time.time(),
+        "target_id": target_id, "proposal_key": proposal_key, "change_ref": "",
+        "path": meta["path"], "patch_sha256": meta["sha256"], "local_patch_sha256": meta["sha256"],
+        "claim_digest": meta.get("claim_digest") or "", "source_seq": meta.get("source_seq"),
         "applied_by": str(applied_by or "cli"),
         "tests_run": "feedback/contract/hw_off" if run_tests else "",
+        "note": "applied to the local checkout; change_ref is assigned when the touched file is committed",
     })
-    return {**meta, "applied": True, "change_ref": change_ref}
+    return {**meta, "applied": True, "change_ref": "", "local": True, "commit_pending": True}
+
+
+def commit_local_promotions(run_dir: Path, *, message: str, by: str = "cli", root: Path | None = None) -> dict:
+    """Commit only locally promoted paths and then attach ``commit:<sha>`` to each event.
+
+    The local checkout already contains the change; this is the later traceability step.
+    It deliberately uses ``git commit --only -- <paths>`` so unrelated staged changes do
+    not get swept into the promotion commit.
+    """
+    run_dir = Path(run_dir)
+    repo = Path(root) if root is not None else trust.REPO_ROOT
+    decisions = _read_jsonl(run_dir / DECISION_FILE)
+    pending = [
+        row for row in decisions
+        if row.get("event") == "promotion" and row.get("status") == "local" and row.get("path")
+        and not str(row.get("change_ref") or "").startswith("commit:")
+    ]
+    if not pending:
+        raise ProposalError("there is no locally applied promotion waiting for a git commit")
+    paths = sorted({str(row["path"]) for row in pending})
+    missing = [path for path in paths if not (repo / path).is_file()]
+    if missing:
+        raise ProposalError("promotion path is missing: " + ", ".join(missing))
+    staged = subprocess.run(["git", "add", "--", *paths], cwd=repo, capture_output=True, text=True)
+    if staged.returncode != 0:
+        raise ProposalError((staged.stderr or staged.stdout or "git add failed").strip())
+    commit = subprocess.run(
+        ["git", "commit", "--only", "-m", str(message), "--", *paths],
+        cwd=repo, capture_output=True, text=True,
+    )
+    if commit.returncode != 0:
+        raise ProposalError((commit.stderr or commit.stdout or "git commit failed").strip())
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True).stdout.strip()
+    change_ref = f"commit:{sha}"
+    for row in pending:
+        _append_jsonl(run_dir / DECISION_FILE, {
+            "schema_version": SCHEMA_VERSION, "event": "promotion_commit", "t": time.time(),
+            "target_id": row.get("target_id") or "", "proposal_key": row.get("proposal_key") or "",
+            "change_ref": change_ref, "path": row.get("path") or "",
+            "local_patch_sha256": row.get("local_patch_sha256") or row.get("patch_sha256") or "",
+            "applied_by": str(by or "cli"),
+        })
+        if row.get("claim_digest"):
+            try:
+                from observe.feedback import apply_review
+
+                apply_review(run_dir, int(row.get("source_seq") or 0), str(row["claim_digest"]), {
+                    "status": "done", "verification": "confirmed", "change_ref": change_ref,
+                    "evidence_source": "code", "evidence": f"applied {row['path']}", "note": "P2 promotion commit",
+                })
+            except (OSError, ValueError, ImportError):
+                pass
+    return {"committed": True, "change_ref": change_ref, "commit": sha, "paths": paths, "proposals": [row.get("proposal_key") for row in pending]}
 
 
 def board(run_dir: Path) -> dict:

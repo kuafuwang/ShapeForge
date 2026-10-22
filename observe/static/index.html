@@ -49,6 +49,8 @@
   #harness-modal .h-none { color: var(--muted); background: #f4f5f7; }
   #harness-modal .h-active { color: var(--blue); background: #eef5fc; border-color: #cfe0f3; }
   #harness-modal .h-review { margin: 2px 0; }
+  #harness-modal .h-promote { border: 1px solid var(--blue); color: var(--blue); background: #eef5fc; border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
+  #harness-modal .h-promote:disabled { opacity: .55; cursor: wait; }
   #term-modal .box { width: min(640px, 94vw); max-height: 86vh; display: flex; flex-direction: column; }
   #term-query { width: 100%; margin: 8px 0; flex: none; }
   #term-results { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
@@ -1735,6 +1737,7 @@ const HARNESS_DECISION = {
   reviewed_shadow: "review 影子（旧记录）",
   promotion: "P2 patch",
   promotion_approval: "P2 确认",
+  promotion_commit: "P2 git 提交",
   suspend: "暂停",
 };
 
@@ -1760,11 +1763,16 @@ function harnessOverlayCell(row) {
 function harnessPromotionCell(row, promotion) {
   if (promotion) {
     const ref = promotion.change_ref || "";
-    return `<span class="h-badge h-active">已固化</span><div class="sub h-review">${esc(ref || "P2 patch")}</div>`;
+    const local = promotion.local_patch_sha256 || (ref.startsWith("patch:") ? ref.slice(6) : "");
+    const sha = local ? `<div class="sub h-review">local ${esc(local.slice(0, 12))}</div>` : "";
+    if (ref.startsWith("commit:")) {
+      return `<span class="h-badge h-active">已固化</span><div class="sub h-review">${esc(ref)}</div>${sha}`;
+    }
+    return `<span class="h-badge h-active">本地已固化</span><div class="sub h-review">待 git 提交</div>${sha}`;
   }
   const review = row.review || null;
   if (review && review.useful === true) {
-    return `<span class="h-badge h-yes">P2 候选</span><div class="sub h-review">已 review，待人工固化</div>`;
+    return `<button type="button" class="h-promote" data-hpromote="${esc(row.key)}">固化到本地</button><div class="sub h-review">P2 候选 · review 有用 · 立即生效</div>`;
   }
   if (review && review.useful === false) {
     return `<span class="h-badge h-no">不建议固化</span><div class="sub h-review">review 已拒绝</div>`;
@@ -1781,7 +1789,7 @@ function harnessMarkup(doc) {
   const state = control.disabled
     ? `<b>overlay 已停用</b>（${esc(control.by || "人")}${control.reason ? "：" + esc(control.reason) : ""}）`
     : "<b>overlay 启用</b>";
-  const head = `<p class="muted">${state}。review 过与未 review 过分开显示；只有 <b>review 有用</b> 或双来源一致的条目才可能进入本 run 的后续 TASK，且运行结束失效。P2 列再看“是否已固化”：review 有用只是 <b>P2 候选</b>，有 patch 的 change_ref 才是已固化，仍由人确认。</p>`;
+  const head = `<p class="muted">${state}。review 过与未 review 过分开显示；只有 <b>review 有用</b> 或双来源一致的条目才可能进入本 run 的后续 TASK，且运行结束失效。P2 列：review 有用后点 <b>固化到本地</b> 会立刻改本地 checkout，不等 git；之后用 <code>taic harness commit</code> 提交，change_ref 到那时才是 <code>commit:…</code>。</p>`;
   if (!proposals.length && !reviews.length && !decisions.length && !overlay.length) {
     return head + `<p>这场没有结构化提案。</p><p class="sub">只有模型在 FEEDBACK.md 的「对系统的建议」里写出 <code>harness-proposal</code> 代码块，这里才会出现条目；普通文字建议不会自动进 overlay。命令行 <code>taic harness status RUN_DIR</code> 看到的是同一份只读 JSON。</p>`;
   }
@@ -1790,6 +1798,9 @@ function harnessMarkup(doc) {
   const promotionByKey = new Map();
   for (const row of decisions) {
     if (row.event === "promotion") promotionByKey.set(row.proposal_key, row);
+    if (row.event === "promotion_commit") {
+      promotionByKey.set(row.proposal_key, { ...(promotionByKey.get(row.proposal_key) || {}), ...row });
+    }
     if (row.event === "promotion_approval") {
       promotionByKey.set(row.proposal_key, { ...(promotionByKey.get(row.proposal_key) || {}), ...row });
     }
@@ -1797,9 +1808,9 @@ function harnessMarkup(doc) {
   const proposalRows = proposals.map((row) => {
     const proposal = row.proposal || {};
     const review = reviewByKey.get(row.proposal_key);
-    return `<tr><td>${esc(num(row.seq))}</td><td>${esc(harnessWho(row))}</td><td>${esc(HARNESS_SURFACE[proposal.surface] || proposal.surface || "")}</td><td>${esc(proposal.action || "")}</td><td>${harnessEvidence(row)}</td><td>${harnessStatus(row)}</td><td>${harnessReviewCell(row, review)}</td><td>${harnessPromotionCell({ review }, promotionByKey.get(row.proposal_key))}</td></tr>`;
+    return `<tr><td>${esc(num(row.seq))}</td><td>${esc(harnessWho(row))}</td><td>${esc(HARNESS_SURFACE[proposal.surface] || proposal.surface || "")}</td><td>${esc(proposal.action || "")}</td><td>${harnessEvidence(row)}</td><td>${harnessStatus(row)}</td><td>${harnessReviewCell(row, review)}</td><td>${harnessPromotionCell({ review, key: row.proposal_key }, promotionByKey.get(row.proposal_key))}</td></tr>`;
   }).join("");
-  const decisionRows = decisions.map((row) => `<tr><td>${esc(row.event === "promotion" ? "P2 固化" : (row.event === "promotion_approval" ? "P2 确认" : (HARNESS_DECISION[row.decision] || row.decision || "")))}</td><td>${esc(actions.get(row.proposal_key) || row.proposal_key || "")}</td><td>${esc((row.models || []).join("、"))}${row.change_ref ? `<div class="sub">${esc(row.change_ref)}</div>` : ""}${row.applied_by ? `<div class="sub">确认人 ${esc(row.applied_by)} · ${esc(row.tests_run || "未记录测试")}</div>` : ""}</td><td>${esc(num(row.source_seq))}</td></tr>`).join("");
+  const decisionRows = decisions.map((row) => `<tr><td>${esc(row.event === "promotion" ? (row.status === "local" ? "P2 本地固化" : "P2 固化") : (row.event === "promotion_approval" ? "P2 确认" : (row.event === "promotion_commit" ? "P2 git 提交" : (HARNESS_DECISION[row.decision] || row.decision || ""))))}</td><td>${esc(actions.get(row.proposal_key) || row.proposal_key || "")}</td><td>${esc((row.models || []).join("、"))}${row.change_ref ? `<div class="sub">${esc(row.change_ref)}</div>` : ""}${row.applied_by ? `<div class="sub">确认人 ${esc(row.applied_by)} · ${esc(row.tests_run || "未记录测试")}</div>` : ""}</td><td>${esc(num(row.source_seq))}</td></tr>`).join("");
   const overlayRows = overlay.map((row) => `<tr><td>${harnessOverlayCell(row)}</td><td>${esc(row.surface || "")}</td><td>${esc(row.text || "")}</td><td>${esc(row.protocol_version || "")}</td><td>${esc(num(row.source_seq))}</td></tr>`).join("");
   const reviewRows = reviews.map((row) => {
     const reviewer = [row.reviewer && row.reviewer.provider, row.reviewer && row.reviewer.model].filter(Boolean).join("/");
@@ -1827,6 +1838,21 @@ async function openHarness() {
     const response = await fetch(url);
     if (!response.ok) throw new Error("读取失败：HTTP " + response.status);
     host.innerHTML = harnessMarkup(await response.json());
+    host.onclick = async (event) => {
+      const button = event.target.closest("[data-hpromote]");
+      if (!button) return;
+      const key = button.dataset.hpromote;
+      button.disabled = true;
+      button.textContent = "固化中…";
+      try {
+        await postJson("/api/runs/" + selectedRun.split("/").map(encodeURIComponent).join("/") + "/harness/" + encodeURIComponent(key) + "/promote", {});
+        await openHarness();
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = "固化失败";
+        button.title = error.message;
+      }
+    };
   } catch (error) {
     host.innerHTML = `<p class="red">${esc(error.message)}</p>`;
   }

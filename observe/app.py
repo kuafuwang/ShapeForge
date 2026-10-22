@@ -254,6 +254,18 @@ async def api_control(request) -> JSONResponse:
         return _refused(exc)
 
 
+async def api_promote_harness(request) -> JSONResponse:
+    try:
+        actions.check_origin(request.headers)
+        actions.check_token(request.headers)
+        promoted = await asyncio.to_thread(
+            actions.promote_harness, request.path_params["run_id"], request.path_params["key"],
+        )
+        return _json(promoted)
+    except actions.Refused as exc:
+        return _refused(exc)
+
+
 async def api_review_feedback(request) -> JSONResponse:
     try:
         actions.check_origin(request.headers)
@@ -420,6 +432,7 @@ app = Starlette(
         Route("/api/records/delete", api_delete_records, methods=["POST"]),
         Route("/api/runs/{run_id:path}/control", api_control, methods=["GET"]),
         Route("/api/runs/{run_id:path}/budget", api_add_budget, methods=["POST"]),
+        Route("/api/runs/{run_id:path}/harness/{key}/promote", api_promote_harness, methods=["POST"]),
         Route("/api/runs/{run_id:path}/feedback/{seq}/claims/{digest}/review", api_review_feedback, methods=["POST"]),
         Route("/api/runs/{run_id:path}", api_v1_run),
         Route("/api/stream", api_stream),

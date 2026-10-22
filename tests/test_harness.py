@@ -192,10 +192,17 @@ def test_a_p2_patch_passes_git_apply_check_and_changes_only_the_target_file(tmp_
     assert checked["check"] is True and checked["applied"] is False
     assert "harness" not in (repo / "targets" / "apple-m4-max" / "experience.md").read_text()
     applied = harness.apply_patch(run, target_id="apple-m4-max", proposal_key=key, root=repo)
-    assert applied["applied"] is True and applied["change_ref"].startswith("patch:")
+    assert applied["applied"] is True and applied["change_ref"] == "" and applied["commit_pending"] is True
     text = (repo / "targets" / "apple-m4-max" / "experience.md").read_text()
     assert "先读 device.md" in text
-    assert (run / "harness_decisions.jsonl").read_text().count('"promotion"') == 1
+    decision = json.loads((run / "harness_decisions.jsonl").read_text().splitlines()[-1])
+    assert decision["event"] == "promotion" and decision["status"] == "local"
+    assert decision["change_ref"] == "" and decision["local_patch_sha256"] == applied["sha256"]
+    committed = harness.commit_local_promotions(run, message="promote local harness tip", by="alice", root=repo)
+    assert committed["change_ref"].startswith("commit:")
+    assert committed["paths"] == ["targets/apple-m4-max/experience.md"]
+    assert "先读 device.md" in (repo / "targets/apple-m4-max" / "experience.md").read_text()
+    assert harness._read_jsonl(run / "harness_decisions.jsonl")[-1]["event"] == "promotion_commit"
 
 
 def test_two_models_with_the_same_probe_bytes_are_one_source(tmp_path):
