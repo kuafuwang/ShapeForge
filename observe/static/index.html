@@ -180,6 +180,7 @@
 <header>
   <strong>观测</strong>
   <button type="button" id="feedback-badge" hidden title="打开全部审查">待审查</button>
+  <button type="button" id="harness-badge" hidden title="查看本场的结构化提案与 overlay">Harness</button>
   <button type="button" id="term-open">术语</button>
   <button type="button" id="tab-experiments">实验</button>
   <button type="button" id="tab-compare">对照</button>
@@ -418,6 +419,9 @@ async function refreshBanner() {
   const pending = Number(overview.feedback_pending || 0);
   slot.hidden = pending <= 0;
   slot.textContent = pending > 0 ? pending + " 条代理反馈待审查" : "";
+  const harness = document.getElementById("harness-badge");
+  harness.hidden = !selectedRun;
+  harness.textContent = selectedRun ? "Harness" : "";
 }
 
 const REVIEW_FILTERS = [["pending", "待审查"], ["", "全部"], ["adopted", "已采纳"], ["rejected", "已拒绝"], ["done", "已完成"], ["info", "未验证/开放"], ["obsolete", "已退役"]];
@@ -1198,6 +1202,8 @@ function bindFeedback(host, doc) {
 let detailToken = 0;
 
 async function loadDetail(id) {
+  const harnessBadge = document.getElementById("harness-badge");
+  if (harnessBadge) harnessBadge.hidden = !id;
   const token = ++detailToken;
   const reuse = detailDoc && detailId === id && detailStamp;
   const query = reuse ? "?stamp=" + encodeURIComponent(detailStamp) : "";
@@ -1616,6 +1622,9 @@ async function refreshLive() {
 }
 setInterval(() => { refreshTurns(false); refreshLive(); }, 2000);
 
+document.getElementById("harness-badge").addEventListener("click", () => {
+  if (selectedRun) window.open("/api/v2/harness/" + selectedRun.split("/").map(encodeURIComponent).join("/"), "_blank");
+});
 document.getElementById("feedback-badge").addEventListener("click", () => {
   if (reviewsPage) return;
   window.open("/reviews", "observe-reviews");
