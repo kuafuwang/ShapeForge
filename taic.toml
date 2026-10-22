@@ -16,7 +16,7 @@ extra_body = {}
 [search]
 budget_usd = 50.0                # debug ceiling per kernel while measuring kimi; paper preset stays 15. Override per task.
 kernel_agent = "pi"              # hmz + pi writes every kernel. One session a round.
-relay_budget_usd = 2.0           # dollar cap of one session, turned into output tokens at that model's price
+relay_budget_usd = 2.0           # output-token guide for one session. Input and cache can spend more; the run budget stops the next session
 turn_minutes = 25                # main turn inside kernel_once. The process is killed later, only if hmz does not exit.
 peer_tips = true                 # this run's recent pitfalls go into the next TASK.md. --no-peer-tips turns that off. Tips never cross runs.
 branches = 1                     # one session a round. Any other value is refused at start.
@@ -25,7 +25,7 @@ max_rounds = 12                  # hard cap on sessions after the initial draft
 min_improvement = 1.005          # a candidate must be this much faster than the current best to replace it
 noise_z = 2.0                    # ... and faster by this many standard errors (from the measured cv), so noise cannot crown a winner
 confirm_batches = 3              # 确认阶段每颗候选几批独立输入；发布的是它们的中位数（1 = 旧的单批）
-confirm_top = 2                  # final re-measurement of up to this many candidates that are tied within noise; the fastest wins
+confirm_top = 2                  # re-measure up to this many near-ties. The search seed stays unless another complete remeasure clears the noise gate
 eval_reps = 15
 max_hangs = 1                    # stop the whole run after this many timed-out evaluations (a runaway GPU kernel can freeze the display)
 profile_best = false           # Instruments (xctrace) trace of the winning kernel after the search (slow; reports spills, code size, thermal state)

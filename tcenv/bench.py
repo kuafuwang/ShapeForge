@@ -10,7 +10,7 @@
 """
 
 # 计时协议所在。候选与 MLX / PyTorch 放进同一次 interleaved，比的是同一把 perf_counter 墙钟。
-# 候选的窗口是 commit 到 waitUntilCompleted 的 wall_s（编码在窗口外）；MLX 的窗口是 mx.eval（构图在窗口外）；PyTorch 的窗口含启动循环和 mps.synchronize。
+# 候选的窗口含编码和 commit 到 waitUntilCompleted 的 wall_s。MLX 的窗口是 mx.eval（构图在窗口外）。PyTorch 的窗口含启动循环和 mps.synchronize。
 # 两边都是「这一批的墙钟 ÷ k」，再取重复的中位数。加速比在 evaluate 里用这份 median_s 计算：基线耗时 ÷ 候选耗时，大于 1 表示候选更快。
 # roofline 拿走同一份候选 median_s，对照标定过的峰值带宽和算力：最小字节、FLOP 各除以峰值得到两条时间下界，较大者是硬件下界，
 # 用来说明时间卡在访存还是计算、离下界有多远。本文件自己不加锁；评测、基线命令和 triton-msl 在独占锁里调用它。
@@ -215,6 +215,12 @@ def timing_is_uncertain(report) -> bool:
         base = bases.get(name) if isinstance(bases, dict) else None
         if isinstance(base, dict) and "cv" in base:
             cvs.append(float(base["cv"]))
+        reps = [candidate.get("reps")]
+        if isinstance(base, dict):
+            reps.append(base.get("reps"))
+        for count in reps:
+            if isinstance(count, int) and not isinstance(count, bool) and count < 2:
+                return True
     except (KeyError, TypeError, ValueError):
         return True
     return any(cv > QUIET_CV for cv in cvs)

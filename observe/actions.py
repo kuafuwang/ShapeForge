@@ -195,7 +195,7 @@ def _amount_and_total(body: dict, current: float | None, spent: float) -> tuple[
 
 def review_feedback(run_id: str, seq: int, digest: str, body: dict) -> dict:
     """Record one claim review and refresh the index before returning the updated claim."""
-    from observe.feedback import apply_review, entries
+    from observe.feedback import apply_review
     from observe.index import get_index
 
     if not isinstance(body, dict):
@@ -205,17 +205,18 @@ def review_feedback(run_id: str, seq: int, digest: str, body: dict) -> dict:
     run_dir = _run_dir(run_id)
     with _lock_for(run_id):
         try:
-            apply_review(run_dir, int(seq), digest, body)
+            stored = apply_review(run_dir, int(seq), digest, body)
         except ValueError as exc:
             raise Refused(400, str(exc)) from exc
-        get_index().refresh_feedback(run_id, run_dir)
-    for record in entries(run_dir)["records"]:
-        if record.get("seq") != int(seq):
-            continue
-        for claim in record["claims"]:
-            if claim.get("digest") == digest:
-                return claim
-    raise Refused(404, "no such feedback claim")
+        index = get_index()
+        index.refresh_feedback(run_id, run_dir)
+        found = index.conn.execute(
+            "SELECT 1 FROM feedback_claims WHERE run_id = ? AND seq = ? AND digest = ?",
+            (run_id, int(seq), digest),
+        ).fetchone()
+    if found is None:
+        raise Refused(404, "no such feedback claim")
+    return stored
 
 
 def _lock_for(run_id: str) -> threading.Lock:

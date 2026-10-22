@@ -53,7 +53,7 @@ Apple GPU 同时驱动显示器，**正在运行的 Metal 内核无法被抢占*
 * 本项目里的每一次计时（候选基准、基线、triton-msl、标定、xctrace 录制）都独占一把机器级锁；评测器的其他 GPU 工作则以共享方式持有同一把锁。这样不同实验可以同时跑，测量时段却不会重叠（`tcenv/gpulock.py`，对 `~/.cache/ai_lowerling/gpu.lock` 做 `flock`，可用 `TCENV_GPU_LOCK_FILE` 覆盖）。等锁的时间不计入评测超时。本项目之外的程序不受这把锁约束；
 * 候选或库基线的单次重复变异系数超过 5% 会重测（最多 3 次，保留最安静的一次，其余由 `benchmark.noisy` 标记）。`candidate_serial` 不触发重测；
 * 候选要替换当前最优，必须同时快过 `min_improvement`，并且快过两次加速比的 `noise_z` 个标准误；
-* 结束时，最优者以及在噪声范围内与它并列的最多 `confirm_top - 1` 个候选会被重新测量；最快的成为结果（`result.json` 的 `confirmations`）。
+* 结束时，最优者以及在噪声范围内与它并列的最多 `confirm_top - 1` 个候选会在同一套输入上重新测量。搜索种子留下，除非另一颗完整复测超过噪声门槛（`result.json` 的 `confirmations`）。
 
 ## 预算
 

@@ -42,7 +42,7 @@ def cmd_eval(a: argparse.Namespace) -> int:
     rep = evaluate(
         a.task, a.dtype, a.size, src, mode=mode, seed=a.seed, reps=a.reps, progress_path=_live_progress(),
         require_contract_launch=bool(a.require_contract_launch),
-        self_check_dir=Path(a.kernel).resolve().parent if a.timed else None,
+        self_check_dir=Path(a.self_check_dir) if a.self_check_dir else (Path(a.kernel).resolve().parent if a.timed else None),
         validate=bool(a.validate),
         target_id=a.target,
     )
@@ -110,7 +110,7 @@ def cmd_profile(a: argparse.Namespace) -> int:
         # quick 覆盖编译、ABI、安全和正确性；任一步失败，Instruments 录制不会开始。
         print(f"refusing to profile: the kernel does not pass the quick evaluation ({rep.status}: {rep.message[:200]})")
         return 1
-    summ = xctrace.profile_kernel(a.task, a.dtype, a.size, src)
+    summ = xctrace.profile_kernel(a.task, a.dtype, a.size, src, target_id=a.target)
     print(xctrace.format_summary(summ))
     if a.json:
         print(json.dumps(summ.to_json(), indent=2))
@@ -167,18 +167,32 @@ def cmd_tasks(a: argparse.Namespace) -> int:
 
 # 打印单个任务的说明、契约、ABI 桩和 Triton 源码，供人对照着写核。
 def cmd_show(a: argparse.Namespace) -> int:
+    from dataclasses import replace
+
     from tasks import get_task
 
-    t = get_task(a.task, a.dtype, a.size)
-    print(t.description, "\n")
-    print(t.contract.describe(), "\n")
-    print(t.contract.abi_stub(), "\n")
-    print(t.triton_source)
+    from .target import TargetError, require_active
+
+    try:
+        target = require_active(a.target)
+    except TargetError as exc:
+        print(str(exc), file=sys.stderr)
+        return 5
+    cached = get_task(a.task, a.dtype, a.size)
+    contract = replace(cached.contract, gpu=target.display_name)
+    print(cached.description, "\n")
+    print(contract.describe(), "\n")
+    print(contract.abi_stub(), "\n")
+    print(cached.triton_source)
     return 0
 
 
 # 子命令分发。eval 走外部核，naive 走任务自带参考核，profile 先 quick 再跟踪，tasks 只列契约。
 def main(argv: list[str] | None = None) -> int:
+    from tcenv.children import install_termination_handlers
+    from taic.llm import SearchConfig
+
+    install_termination_handlers()
     ap = argparse.ArgumentParser(prog="tcenv", description="Triton Compiler Environment for Apple GPUs (MSL)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -190,11 +204,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--timed", action="store_true", help="correctness plus the benchmark, without shader validation")
     p.add_argument("--validate", action="store_true", help="with --timed: run the instrumented shader-validation pass first (it costs a second subprocess)")
     p.add_argument("--seed-report", default=None, help="the seed report.json; --timed then says whether this version would replace it")
-    p.add_argument("--min-improvement", type=float, default=1.005)
-    p.add_argument("--noise-z", type=float, default=2.0)
+    p.add_argument("--min-improvement", type=float, default=SearchConfig.min_improvement)
+    p.add_argument("--noise-z", type=float, default=SearchConfig.noise_z)
     p.add_argument("--require-contract-launch", action="store_true")
+    p.add_argument("--self-check-dir", default=None, help="directory for self_checks.jsonl; default is the kernel file's directory")
     p.add_argument("--seed", type=int, default=None)
-    p.add_argument("--reps", type=int, default=15)
+    p.add_argument("--reps", type=int, default=SearchConfig.eval_reps)
     p.add_argument("--target", default="apple-m4-max")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_eval)

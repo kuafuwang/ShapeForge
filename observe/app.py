@@ -115,6 +115,17 @@ async def api_v2_experiment(request) -> JSONResponse:
     return _json(await asyncio.to_thread(query.compare, request.path_params["experiment_id"]))
 
 
+async def api_v2_feedback(request) -> JSONResponse:
+    raw = request.query_params.get("since")
+    since = None
+    if raw not in (None, ""):
+        try:
+            since = int(raw)
+        except ValueError:
+            return _json({"error": "since must be an integer"}, status=400)
+    return _json(await asyncio.to_thread(query.feedback_board, since=since))
+
+
 async def api_v2_budget(_request) -> JSONResponse:
     return _json(await asyncio.to_thread(query.budget_report))
 
@@ -285,7 +296,9 @@ async def api_stream(request) -> StreamingResponse:
 app = Starlette(
     routes=[
         Route("/", index),
+        Route("/reviews", index),
         Route("/api/v2/overview", api_v2_overview),
+        Route("/api/v2/feedback", api_v2_feedback),
         Route("/api/v2/runs", api_v2_runs),
         Route("/api/v2/experiments", api_v2_experiments),
         Route("/api/v2/experiments/{experiment_id:path}", api_v2_experiment),

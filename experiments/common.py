@@ -236,6 +236,11 @@ def conclusion_of_run(run_dir: Path, result: dict | None) -> dict:
 
         if timing_is_uncertain(doc):
             return {"speedup": None, "publication": "不确定"}
+        from taic.policy import batches_agree
+
+        # 同一颗核各批极差超过 2% 时，中位数仍留在 result.json，对外不把它当成精确值。
+        if not batches_agree(result.get("confirmed_values")):
+            return {"speedup": None, "publication": "不确定"}
     return got
 
 

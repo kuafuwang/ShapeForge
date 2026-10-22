@@ -18,6 +18,7 @@ import asyncio
 import contextvars
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -274,10 +275,16 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
         with tempfile.TemporaryDirectory() as td:
             client = FakeClient(script)
             llm_mod, original_chat = _bind_labels(client)
+            previous_catalog = os.environ.get("TAIC_CATALOG_ROOT")
+            os.environ["TAIC_CATALOG_ROOT"] = str(Path(td) / "catalog")
             try:
                 orch = Orchestrator(task, "fp16", "small", llm_cfg, search, run_dir=Path(td) / "run", evaluate_fn=_scripted_eval(rep_name), client=client, log=lambda s: None)
                 asyncio.run(orch.run())
             finally:
+                if previous_catalog is None:
+                    os.environ.pop("TAIC_CATALOG_ROOT", None)
+                else:
+                    os.environ["TAIC_CATALOG_ROOT"] = previous_catalog
                 llm_mod.LLM.chat = original_chat
         from taic.kernel_agent import render_contract
 
@@ -286,7 +293,10 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
             # The contract names this session's absolute paths. The golden tracks the wording, not the temp directory.
             text = render_contract(brief)
             if brief.work_dir:
-                text = text.replace(str(Path(brief.work_dir)), "<work>")
+                work = Path(brief.work_dir)
+                text = text.replace(str(work), "<work>")
+                # The self-check log lives next to agent_work, still inside this run.
+                text = text.replace(str(work.parent.parent), "<run>")
             text = text.replace(str(Path(brief.repo).resolve()), "<repo>")
             each.append({"label": f"{index}", "sha": sha(text)})
         joined = "\n".join(f"{row['label']} {row['sha']}" for row in each)

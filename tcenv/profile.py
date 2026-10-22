@@ -46,8 +46,11 @@ def get_calibration(force: bool = False, target_id: str | None = None) -> dict:
             "peak_tflops": {d: measure_peak_flops(d) for d in ("fp16", "bf16", "fp32")},
             "measured_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2))
+    from .target import calibration_cache_path
+
+    dest = Path(os.environ["TCENV_CALIBRATION"]) if os.environ.get("TCENV_CALIBRATION") else calibration_cache_path(target_id or DEFAULT_TARGET_ID)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(data, indent=2))
     return data
 
 _COPY_SRC = """

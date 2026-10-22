@@ -9,8 +9,16 @@ from pathlib import Path
 from tcenv.target import REPO
 
 
+def catalog_root() -> Path:
+    """Confirmed kernels. ``TAIC_CATALOG_ROOT`` redirects a test or a golden recording away from the repository."""
+    import os
+
+    override = os.environ.get("TAIC_CATALOG_ROOT")
+    return Path(override) if override else REPO / "kernels"
+
+
 def catalog_dir(target_id: str, task: str, dtype: str, size: str) -> Path:
-    return REPO / "kernels" / target_id / task / dtype / size
+    return catalog_root() / target_id / task / dtype / size
 
 
 def archive_confirmed(
@@ -70,14 +78,14 @@ def archive_confirmed(
     with (folder / "history.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     best = folder / f"best{file_ext}"
-    if not best.is_file() or speedup >= previous:
+    if not best.is_file() or speedup > previous:
         best.write_text(source)
         meta_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
     return best
 
 
 def list_kernels(target_id: str | None = None) -> list[dict]:
-    root = REPO / "kernels"
+    root = catalog_root()
     rows = []
     if not root.is_dir():
         return rows
@@ -91,6 +99,7 @@ def list_kernels(target_id: str | None = None) -> list[dict]:
             except (OSError, json.JSONDecodeError):
                 continue
             if isinstance(doc, dict):
-                doc["path"] = str(meta.parent / "best.metal")
+                found = sorted(meta.parent.glob("best.*"))
+                doc["path"] = str(found[0] if found else meta.parent / "best.metal")
                 rows.append(doc)
     return rows

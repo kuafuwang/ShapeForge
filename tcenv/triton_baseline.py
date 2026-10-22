@@ -133,13 +133,19 @@ def measure(task: str, dtype: str, size: str, *, reps: int = 15, timeout: float 
         env["PYTHONUNBUFFERED"] = "1"
         killed = ""
         with open(tdp / "stderr.txt", "w") as ef, open(tdp / "stdout.txt", "w") as of:
-            proc = subprocess.Popen([str(VENV_PY), "-m", "tcenv.triton_runner", str(tdp / "req.json")], stdout=of, stderr=ef, env=env, cwd=str(REPO_ROOT))
+            from .children import forget, kill_group, popen_group
+
+            proc = popen_group([str(VENV_PY), "-m", "tcenv.triton_runner", str(tdp / "req.json")], stdout=of, stderr=ef, env=env, cwd=str(REPO_ROOT))
             from .evaluate import supervise
 
             from .gpulock import released
 
-            with released():
-                reason = supervise(proc, tdp / "hb", launch_deadline_s=LAUNCH_DEADLINE_S, timeout=timeout, poll_s=0.2)
+            try:
+                with released():
+                    reason = supervise(proc, tdp / "hb", launch_deadline_s=LAUNCH_DEADLINE_S, timeout=timeout, poll_s=0.2)
+            finally:
+                kill_group(proc)
+                forget(proc)
             if reason:
                 killed = f"a timed batch of launches ran for more than {LAUNCH_DEADLINE_S:.0f}s" if reason == "launch" else f"exceeded {timeout:.0f}s"
                 time.sleep(COOLDOWN_S)

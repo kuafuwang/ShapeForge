@@ -58,12 +58,16 @@ _ROUND = re.compile(r"^r(\d+)\.p\d+$")
 
 
 def read_feedback_text(path: Path) -> tuple[str, bool]:
-    """The first 16384 characters, and whether the file was longer."""
+    """The last 16384 characters, and whether the file was longer.
+
+    Sessions append. A cut that kept the start would drop the newest lines.
+    """
     if not path.is_file():
         return "", False
-    with path.open(encoding="utf-8", errors="replace") as handle:
-        data = handle.read(FILE_CAP + 1)
-    return data[:FILE_CAP], len(data) > FILE_CAP
+    data = path.read_text(encoding="utf-8", errors="replace")
+    if len(data) > FILE_CAP:
+        return data[-FILE_CAP:], True
+    return data, False
 
 
 def empty_feedback() -> dict:
@@ -91,7 +95,8 @@ def parse_feedback(text: str, *, work: Path | None = None, repo: Path | None = N
     """
     body = text or ""
     over = bool(file_over) or len(body) > FILE_CAP
-    body = body[:FILE_CAP]
+    if len(body) > FILE_CAP:
+        body = body[-FILE_CAP:]
     version = _declared_version(body)
     if version is not None and version != VERSION:
         raw = body[:RAW_CAP]
@@ -176,6 +181,45 @@ def load_records(path: Path) -> list[dict]:
         if row is not None and row.get("format") == FORMAT:
             rows.append(_repair_record(row))
     return rows
+
+
+def read_appended_records(path: Path, offset: int) -> tuple[list[tuple[int, dict]], int]:
+    """Records in the complete lines at and after ``offset``, with each line's byte position.
+
+    The log is append-only. The returned offset stops after the last newline, so a trailing
+    partial line is read on a later call. ``offset`` past the end means the file was replaced.
+    """
+    if not path.is_file():
+        return [], 0
+    size = path.stat().st_size
+    if offset < 0 or offset > size:
+        offset = 0
+    if offset == size:
+        return [], size
+    with path.open("rb") as handle:
+        handle.seek(offset)
+        data = handle.read()
+    last_nl = data.rfind(b"\n")
+    if last_nl < 0:
+        return [], offset
+    rows = []
+    pos = 0
+    blob = data[: last_nl + 1]
+    while pos < len(blob):
+        nl = blob.find(b"\n", pos)
+        if nl < 0:
+            break
+        raw = blob[pos:nl]
+        line_at = offset + pos
+        pos = nl + 1
+        try:
+            line = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            line = raw.decode("utf-8", errors="replace")
+        row = _load_line(line)
+        if row is not None and row.get("format") == FORMAT:
+            rows.append((line_at, _repair_record(row)))
+    return rows, offset + pos
 
 
 def peer_tips_for(run_dir: Path, *, now: int | None = None) -> str:
@@ -318,7 +362,8 @@ def _sections(text: str) -> tuple[dict[str, str], list[str]]:
         body = "\n".join(lines).strip()
         cap = SECTION_CAPS[name]
         if len(body) > cap:
-            body = body[:cap]
+            # 小节是往下追加的，超长时留下末尾，最新的一条才进下一场。
+            body = body[-cap:]
             truncated.append(name)
         out[name] = body
     return out, truncated

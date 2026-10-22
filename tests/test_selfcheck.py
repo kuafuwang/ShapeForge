@@ -8,11 +8,18 @@ from __future__ import annotations
 
 import json
 
-from tcenv.selfcheck import LOG_NAME, MAX_CHECKS, MAX_GPU_S, budget_reason, earlier_hang
+from tcenv.selfcheck import LOG_NAME, MAX_CHECKS, MAX_GPU_S, append, budget_reason, earlier_hang
 
 
 def _log(directory, rows) -> None:
     (directory / LOG_NAME).write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def test_append_creates_a_missing_directory(tmp_path):
+    missing = tmp_path / "session_checks" / "r1.p0"
+    append(missing, {"status": "ok", "elapsed_s": 0.2})
+    assert (missing / LOG_NAME).is_file()
+    assert earlier_hang(missing) is None
 
 
 def test_a_fresh_workspace_may_time(tmp_path):

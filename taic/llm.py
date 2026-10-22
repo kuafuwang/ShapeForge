@@ -147,7 +147,7 @@ class SearchConfig:
     max_quick_checks: int = 0  # unused: the coding agent times itself with tcenv eval --timed
     min_improvement: float = 1.005
     noise_z: float = 2.0  # a replacement must also beat the best by this many standard errors of the speedup comparison
-    confirm_top: int = 2  # re-measure up to this many statistically tied top candidates at the end and keep the fastest
+    confirm_top: int = 2  # re-measure up to this many near-ties. The search seed stays unless another complete remeasure clears the noise gate
     # 确认阶段对每一颗候选跑几批独立输入，报中位数而不是某一批的最大值。
     # 一批的采样误差已经很小（30 次重复、cv≈2% → SE≈0.4%），但换一批输入会带来 1–2% 的数据相关差异；
     # 见 runs/apple-m4-max/conv2d-feedback-20261021：搜索值 1.7276（9 颗里挑最大，向上偏约 0.9%），单批确认 1.6896，
@@ -175,7 +175,7 @@ class SearchConfig:
     fast_bench: bool = False  # search-stage timing skips the serial dispatch and baselines other than the fastest one seen. Confirmation always times every baseline
     experience_index: str | None = None  # path of a read-only hint file from taic.experience. None adds nothing to the planner prompt
     kernel_agent: str = "pi"  # hmz + pi writes every kernel. Any other value is refused at start.
-    relay_budget_usd: float = 2.0  # dollar cap of one session, converted to output tokens at that committee's price
+    relay_budget_usd: float = 2.0  # output-token guide for one session. A higher actual cost is logged; the run budget stops the next session
     turn_minutes: int = 25  # wall clock of the main turn inside kernel_once; the process timeout is longer and only a backstop
     require_contract_launch: bool = False  # contract-menu and variant runs reject a taic-launch block so the launch stays the one the menu chose
     peer_tips: bool = True  # put this run's recent peer tips into the next TASK.md. Off leaves that block empty. Tips never cross runs.
@@ -235,7 +235,7 @@ def load_config(path: str | Path | None = None, *, model: str | None = None, pre
         base_url=base_url,
         api_key=api_key,
         model=model,
-        reasoning_effort=llm.get("reasoning_effort", "xhigh"),
+        reasoning_effort=llm.get("reasoning_effort", "high"),
         echo_reasoning_content=bool(llm.get("echo_reasoning_content", True)),
         use_tools=bool(llm.get("use_tools", True)),
         extra_body=dict(llm.get("extra_body", {})),

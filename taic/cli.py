@@ -35,6 +35,9 @@ def _recorded_target(run_dir: Path, requested: str | None) -> str:
 
 
 def cmd_run(a: argparse.Namespace) -> int:
+    from tcenv.children import install_termination_handlers
+
+    install_termination_handlers()
     from .committees import load_committees
     from .llm import LLMError, load_config, load_raw_config
     from .orchestrator import Orchestrator, RunStartError
@@ -96,7 +99,11 @@ def cmd_run(a: argparse.Namespace) -> int:
         # 尺寸或任务名不合法是启动失败，和配置写不进去一样，退出码 5。
         print(str(e), file=sys.stderr)
         return 5
-    res = asyncio.run(orch.run())
+    try:
+        res = asyncio.run(orch.run())
+    except RunStartError as e:
+        print(str(e), file=sys.stderr)
+        return 5
     print(json.dumps({k: getattr(res, k) for k in ("task", "dtype", "model", "best_speedup", "confirmed_speedup", "spent_usd", "stop_reason", "run_dir")}, indent=2))
     return 0 if res.best_speedup else 2
 
@@ -312,11 +319,24 @@ def run_prepared(a: argparse.Namespace, orch, snap, info: dict, new_budget: floa
 
     run_dir = Path(a.run_dir).resolve()
     first = snap.partial.rnd if snap.partial else snap.next_round
+    import os
+
+    from .orchestrator import RunStartError
+
     try:
         control.acquire_run_lock(run_dir, who=a.who)
     except control.RunLockError as e:
         raise ResumeRefused(f"cannot resume {run_dir}: {e}", 4) from e
+    moved: list[str] = []
     try:
+        try:
+            orch._guard_shape()
+            if orch.agent_runner is None and not orch._client_injected:
+                from .kernel_agent import AgentError, preflight
+
+                preflight(orch.committees, Path(os.path.expanduser("~/.pi/agent/models.json")))
+        except (RunStartError, AgentError) as exc:
+            raise RunStartError(str(exc)) from exc
         moved = rs.snapshot_results(run_dir)
         if moved:
             orch.log(f"kept the earlier results as {', '.join(moved)}")
@@ -325,12 +345,19 @@ def run_prepared(a: argparse.Namespace, orch, snap, info: dict, new_budget: floa
         if not event.get("persisted"):
             orch.log("budget event was not saved; budget_events.json is not a complete record")
         return asyncio.run(orch.run())
+    except RunStartError:
+        rs.restore_snapshot(run_dir, moved)
+        raise
     finally:
         control.release_run_lock(run_dir)
 
 
 # `taic resume` 的入口。dry_run 只打印将要续的状态就退出，不拿锁、也不跑搜索。不能续时退出码来自 ResumeRefused；真的跑起来之后，有 best_speedup 为 0，否则为 2。
 def cmd_resume(a: argparse.Namespace) -> int:
+    from .orchestrator import RunStartError
+    from tcenv.children import install_termination_handlers
+
+    install_termination_handlers()
     try:
         orch, snap, report, info, new_budget = prepare_resume(a)
         if a.dry_run:
@@ -341,6 +368,9 @@ def cmd_resume(a: argparse.Namespace) -> int:
     except ResumeRefused as e:
         print(str(e), file=sys.stderr)
         return e.code
+    except RunStartError as e:
+        print(str(e), file=sys.stderr)
+        return 5
     print(json.dumps({k: getattr(res, k) for k in ("task", "dtype", "model", "best_speedup", "confirmed_speedup", "spent_usd", "budget_usd", "stop_reason", "run_dir")}, indent=2))
     return 0 if res.best_speedup else 2
 
@@ -385,14 +415,14 @@ def _positive_int(text: str) -> int:
 
 def _add_role_efforts(p: argparse.ArgumentParser) -> None:
     """Role efforts, the new search switches, and the per-request token cap."""
-    p.add_argument("--plan-effort", default=None, choices=["off", "low", "high", "max"], help="reasoning effort for the planner only")
-    p.add_argument("--patch-effort", default=None, choices=["off", "low", "high", "max"], help="reasoning effort for patch and repair turns")
-    p.add_argument("--truncation-retry-effort", default=None, choices=["low", "off", "same"], help="reasoning effort of the one retry after a truncated empty reply (default: low)")
-    p.add_argument("--plan-ledger", action=argparse.BooleanOptionalAction, default=None, help="structured plan history (default: on)")
-    p.add_argument("--diversity-archive", action=argparse.BooleanOptionalAction, default=None, help="after two stagnant rounds, patch one feature-different kernel (default: off)")
+    p.add_argument("--plan-effort", default=None, choices=["off", "low", "high", "max"], help="recorded only; the hmz session uses reasoning_effort")
+    p.add_argument("--patch-effort", default=None, choices=["off", "low", "high", "max"], help="recorded only; the hmz session uses reasoning_effort")
+    p.add_argument("--truncation-retry-effort", default=None, choices=["low", "off", "same"], help="recorded only; the hmz session does not retry a cut-off reply")
+    p.add_argument("--plan-ledger", action=argparse.BooleanOptionalAction, default=None, help="recorded only; the hmz session does not read a plan ledger")
+    p.add_argument("--diversity-archive", action=argparse.BooleanOptionalAction, default=None, help="recorded only; the hmz session always edits the current seed")
     p.add_argument("--fast-bench", action=argparse.BooleanOptionalAction, default=None, help="search timing skips serial dispatch and slower baselines (default: off)")
-    p.add_argument("--experience-index", default=None, help="JSON file of measured hints for the planner")
-    p.add_argument("--max-tokens", type=_positive_int, default=None, help="cap on one model reply, reasoning included (default: 48000 in taic.toml)")
+    p.add_argument("--experience-index", default=None, help="JSON file of measured hints copied into the session")
+    p.add_argument("--max-tokens", type=_positive_int, default=None, help="recorded only; the hmz session cap is relay_budget_usd turned into output tokens")
 
 
 def _apply_max_tokens(a: argparse.Namespace, cfg, prov: dict | None = None) -> None:
@@ -461,16 +491,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-rounds", type=int, default=None)
     p.add_argument("--effort", default=None, choices=["off", "low", "high", "max"])
     _add_role_efforts(p)
-    p.add_argument("--no-tools", action="store_true")
+    p.add_argument("--no-tools", action="store_true", help="recorded only; the hmz session does not use the chat tool loop")
     p.add_argument("--kernel-agent", default=None, choices=["pi", "off"], help="kernel writing is hmz and pi; off refuses to start")
     p.add_argument("--profile-best", action="store_true", help="xctrace profile of the winning kernel after the search")
     p.add_argument("--profile-poor", action="store_true", help="trace a round's seed with Instruments when it is slower than the best baseline and give the findings to the model")
-    p.add_argument("--plan-mix", action="store_true", help="the last plan of every round is a local, low-risk change; the others are structural")
+    p.add_argument("--plan-mix", action="store_true", help="recorded only; the hmz session chooses its own direction")
     p.add_argument("--hw-feedback", action="store_true", help="append a short static hardware-feature analysis of the seed to the planner and patch feedback and teach it as Skill 2c (off by default)")
     _add_search_switches(p)
-    p.add_argument("--init-samples", type=int, default=None, help="sample this many initial kernels in parallel; the best eligible one seeds the search")
+    p.add_argument("--init-samples", type=int, default=None, help="must be 1; any other value is refused before a session starts")
     p.add_argument("--confirm-batches", type=int, default=None, help="independent confirm evaluations per candidate; the published speedup is their median (default 3, 1 = the old single batch)")
-    p.add_argument("--patience", type=int, default=None, help="stop after this many rounds without a new best (default 4)")
+    p.add_argument("--patience", type=int, default=None, help="stop after this many rounds without a new best (default 6)")
     p.add_argument("--run-dir", default=None)
     p.add_argument("--seed", type=_u64, default=None, help="unsigned 64-bit run seed (default: a new random one). resume keeps the seed the run recorded")
     p.add_argument("--from", dest="from_run", default=None, help="directory of a previous run: if its best.metal is still eligible for this task, skip writing a first draft and improve that kernel")
@@ -489,7 +519,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--max-rounds", type=int, default=None)
     r.add_argument("--effort", default=None, choices=["off", "low", "high", "max"])
     _add_role_efforts(r)
-    r.add_argument("--no-tools", action="store_true")
+    r.add_argument("--no-tools", action="store_true", help="recorded only; the hmz session does not use the chat tool loop")
     r.add_argument("--kernel-agent", default=None, choices=["pi", "off"], help="kernel writing is hmz and pi; off refuses to start")
     r.add_argument("--profile-best", action="store_true")
     r.add_argument("--profile-poor", action="store_true")

@@ -15,7 +15,6 @@ from tcenv.target import DEFAULT_TARGET_ID
 
 from .target import skill_text
 
-SKILLS_DIR = Path(__file__).resolve().parents[1] / "backends" / "metal" / "skills"
 _WORD = re.compile(r"[a-z0-9_]+")
 
 

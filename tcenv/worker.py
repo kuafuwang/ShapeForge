@@ -27,10 +27,15 @@ def _install_heartbeat(path: str | None) -> None:
     import time
 
     from .gpulock import set_wait_hooks
-    from .metal_runtime import set_launch_hooks
+    from .metal_runtime import set_compile_hooks, set_launch_hooks
 
     fd = os.open(path, os.O_WRONLY | os.O_CREAT, 0o600)
     # 定宽、从文件头原地覆盖。父进程按 22 字节来读，写一半也不会变成另一条更长的记录。
+
+    set_compile_hooks(
+        lambda: os.pwrite(fd, f"C{time.time():020.6f}\n".encode(), 0),
+        lambda: os.pwrite(fd, f"E{time.time():020.6f}\n".encode(), 0),
+    )
     set_launch_hooks(
         lambda: os.pwrite(fd, f"B{time.time():020.6f}\n".encode(), 0),
         lambda: os.pwrite(fd, f"E{time.time():020.6f}\n".encode(), 0),

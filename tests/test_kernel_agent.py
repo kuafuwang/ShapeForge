@@ -222,6 +222,7 @@ def test_feedback_is_read_with_the_notes_and_capped(tmp_path):
         _brief(tmp_path), work=tmp_path / "work", provider="deepseek", model="deepseek-flash",
         effort=None, prices=PRICES, turn_output_tokens=10, turn_minutes=1, hmz=str(hmz),
     )
-    assert result.feedback.startswith("kind: none")
+    assert result.feedback.endswith("坑")
+    assert not result.feedback.startswith("kind: none")
     assert len(result.feedback) == 16384
     assert result.notes.startswith("kept")

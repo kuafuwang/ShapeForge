@@ -148,6 +148,62 @@ def test_overlapping_branches_keep_the_faster_kernel(tmp_path):
     assert orch.best is not None and orch.best.source == fast and orch.best.speedup == pytest.approx(2.0)
 
 
+def test_a_later_failed_batch_does_not_publish_the_earlier_success(tmp_path):
+    seen = {"n": 0}
+
+    def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
+        seen["n"] += 1
+        if reps > 3 and seen["n"] >= 3:
+            return _report(task, dtype, size, mode=mode, seed=seed, status="incorrect", speed=None)
+        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=1.2)
+
+    orch = _orch(tmp_path, "partial", ev, on=False)
+
+    async def go():
+        from taic.orchestrator import RunResult
+
+        await orch._eval(SOURCE, "init")
+        res = RunResult(run_dir=str(orch.run_dir), task="relu", dtype="fp16", size="small", model="fake", budget_usd=5.0)
+        await orch._confirm(res)
+        return res
+
+    res = asyncio.run(go())
+    assert res.confirmed_status == "incorrect"
+    assert res.confirmed_speedup is None and res.confirmation_source_sha256 is None
+    assert not (orch.run_dir / "confirm_report.json").exists()
+    assert res.confirmations[0]["failed_batches"] == 1
+    assert res.confirmations[0]["status"] == "incorrect"
+    assert (orch.run_dir / "rechecks" / "confirm_init.b2.json").is_file()
+
+
+def test_tied_candidates_share_one_confirm_seed(tmp_path):
+    seeds = []
+
+    def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
+        if reps > 3:
+            seeds.append((source, seed))
+        speed = 1.20 if "slow" in source else 1.21
+        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=speed)
+
+    orch = _orch(tmp_path, "same-seed", ev, on=False)
+    slow = SOURCE + "// slow\n"
+    fast = SOURCE + "// fast\n"
+
+    async def go():
+        from taic.orchestrator import RunResult
+
+        await orch._eval(slow, "slow")
+        await orch._eval(fast, "fast")
+        res = RunResult(run_dir=str(orch.run_dir), task="relu", dtype="fp16", size="small", model="fake", budget_usd=5.0)
+        await orch._confirm(res)
+        return res
+
+    res = asyncio.run(go())
+    shared = eval_seed(1, "confirm", "b1", "")
+    assert [seed for _source, seed in seeds][0] == [seed for _source, seed in seeds][3] == shared
+    assert res.confirmed_status == "ok" and orch.best.source == slow
+
+
 def test_a_rejected_recheck_is_left_out_of_confirmation(tmp_path):
     good = SOURCE + "// good\n"
     bad = SOURCE + "// bad\n"

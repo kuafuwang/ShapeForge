@@ -6,7 +6,7 @@ import json
 import time
 from pathlib import Path
 
-from taic.agent_feedback import load_records
+from taic.agent_feedback import PARSER_VERSION, load_records, read_appended_records
 
 _REVIEWABLE = {"system"}
 _PREMISE = {"verified", "unverified", "downgraded"}
@@ -85,46 +85,326 @@ def _claim_rows(record: dict, review: dict) -> list[dict]:
     return rows
 
 
-def sync_run_index(conn, run_id: str, directory: Path) -> None:
-    """Replace this run's feedback rows from the files. Large text stays on disk."""
-    conn.execute("DELETE FROM feedback_claims WHERE run_id = ?", (run_id,))
-    conn.execute("DELETE FROM feedback_items WHERE run_id = ?", (run_id,))
-    review = _load_review(directory / "feedback_review.json")["claims"]
-    for record in load_records(directory / "feedback.jsonl"):
-        if not _has_text(record):
-            continue
-        seq = record.get("seq")
-        if not isinstance(seq, int):
-            continue
-        claims = _claim_rows(record, review)
-        pending = sum(1 for claim in claims if claim["status"] == "pending")
-        unverified = sum(1 for claim in claims if claim["status"] == "pending" and claim["premise"] in ("unverified", "downgraded"))
+def _feedback_revision(conn) -> int:
+    row = conn.execute("SELECT value FROM meta WHERE key = 'feedback_revision'").fetchone()
+    return int(row[0]) if row else 0
+
+
+def _take_feedback_rev(conn) -> int:
+    """One step for a batch of claim edits. Unchanged claims keep the revision they already have."""
+    nxt = _feedback_revision(conn) + 1
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('feedback_revision', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (str(nxt),),
+    )
+    return nxt
+
+
+def _reviewed_key(value) -> str | None:
+    if value is None or value == "":
+        return None
+    try:
+        return f"{float(value):.3f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _claim_signature(row) -> tuple:
+    return (
+        row["section"] or "",
+        row["audience"] or "",
+        row["premise"] or "",
+        row["status"] or "",
+        row["verification"] or "",
+        row["topic"] or "",
+        row["change_ref"] or "",
+        _reviewed_key(row["reviewed_at"]),
+    )
+
+
+def _item_signature(row) -> tuple:
+    return (
+        row["seq"],
+        _reviewed_key(row["t"]),
+        row["task"] or "",
+        row["dtype"] or "",
+        row["size"] or "",
+        row["label"] or "",
+        row["committee"] or "",
+        row["provider"] or "",
+        row["model"] or "",
+        row["outcome"] or "",
+        row["exit"] or "",
+        row["kinds"] or "",
+        int(row["has_system"] or 0),
+        int(row["pending_claims"] or 0),
+        int(row["unverified_premises"] or 0),
+    )
+
+
+def retire_run_claims(conn, run_id: str) -> bool:
+    """Forget one run's claims and leave a tombstone for each, so an open review page can drop those cards."""
+    rows = list(conn.execute(
+        "SELECT seq, digest FROM feedback_claims WHERE run_id = ?",
+        (run_id,),
+    ))
+    if not rows:
+        conn.execute("DELETE FROM feedback_items WHERE run_id = ?", (run_id,))
+        return False
+    rev = _take_feedback_rev(conn)
+    for row in rows:
         conn.execute(
             """
-            INSERT INTO feedback_items (
-                run_id, seq, t, task, dtype, size, label, committee, provider, model, outcome, exit, kinds,
-                has_system, pending_claims, unverified_premises
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO feedback_claim_removed (run_id, seq, digest, rev) VALUES (?, ?, ?, ?)
+            ON CONFLICT(run_id, seq, digest) DO UPDATE SET rev = excluded.rev
             """,
-            (
-                run_id, seq, record.get("t"), record.get("task") or "", record.get("dtype") or "", record.get("size") or "",
-                record.get("label") or "", record.get("committee") or "", record.get("provider") or "", record.get("model") or "",
-                record.get("outcome") or "", record.get("exit") or "", record.get("kinds") or "",
-                1 if _has_system(record) else 0, pending, unverified,
-            ),
+            (run_id, row["seq"], row["digest"], rev),
         )
-        for claim in claims:
-            conn.execute(
-                """
-                INSERT INTO feedback_claims (
-                    run_id, seq, digest, section, audience, premise, status, verification, topic, change_ref, reviewed_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    run_id, claim["seq"], claim["digest"], claim["section"], claim["audience"], claim["premise"],
-                    claim["status"], claim["verification"], claim["topic"], claim["change_ref"], claim["reviewed_at"],
-                ),
-            )
+    conn.execute("DELETE FROM feedback_claims WHERE run_id = ?", (run_id,))
+    conn.execute("DELETE FROM feedback_items WHERE run_id = ?", (run_id,))
+    return True
+
+
+def _file_fp(path: Path) -> str:
+    try:
+        stat = path.stat()
+    except OSError:
+        return ""
+    return f"{stat.st_mtime_ns}:{stat.st_size}"
+
+
+def _feedback_cursor(conn, run_id: str) -> tuple[int, str, str] | None:
+    row = conn.execute(
+        "SELECT feedback_bytes, feedback_review_fp, feedback_parser FROM runs WHERE run_id = ?",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return int(row["feedback_bytes"] or 0), str(row["feedback_review_fp"] or ""), str(row["feedback_parser"] or "")
+
+
+def _store_feedback_cursor(conn, run_id: str, offset: int, review_fp: str) -> None:
+    conn.execute(
+        "UPDATE runs SET feedback_bytes = ?, feedback_review_fp = ?, feedback_parser = ? WHERE run_id = ?",
+        (offset, review_fp, PARSER_VERSION, run_id),
+    )
+
+
+def _rows_for_record(record: dict, review: dict, line_at: int | None = None) -> tuple[dict, list[dict]] | None:
+    seq = record.get("seq")
+    if not isinstance(seq, int) or isinstance(seq, bool) or not _has_text(record):
+        return None
+    built = _claim_rows(record, review)
+    pending = sum(1 for claim in built if claim["status"] == "pending")
+    unverified = sum(1 for claim in built if claim["status"] == "pending" and claim["premise"] in ("unverified", "downgraded"))
+    item = {
+        "seq": seq,
+        "t": record.get("t"),
+        "task": record.get("task") or "",
+        "dtype": record.get("dtype") or "",
+        "size": record.get("size") or "",
+        "label": record.get("label") or "",
+        "committee": record.get("committee") or "",
+        "provider": record.get("provider") or "",
+        "model": record.get("model") or "",
+        "outcome": record.get("outcome") or "",
+        "exit": record.get("exit") or "",
+        "kinds": record.get("kinds") or "",
+        "line_at": line_at,
+        "has_system": 1 if _has_system(record) else 0,
+        "pending_claims": pending,
+        "unverified_premises": unverified,
+    }
+    return item, built
+
+
+def _write_claim(conn, run_id: str, claim: dict, rev: int) -> None:
+    conn.execute("DELETE FROM feedback_claim_removed WHERE run_id = ? AND seq = ? AND digest = ?", (run_id, claim["seq"], claim["digest"]))
+    conn.execute(
+        """
+        INSERT INTO feedback_claims (
+            run_id, seq, digest, section, audience, premise, status, verification, topic, change_ref, reviewed_at, rev
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(run_id, seq, digest) DO UPDATE SET
+            section = excluded.section, audience = excluded.audience, premise = excluded.premise,
+            status = excluded.status, verification = excluded.verification, topic = excluded.topic,
+            change_ref = excluded.change_ref, reviewed_at = excluded.reviewed_at, rev = excluded.rev
+        """,
+        (
+            run_id, claim["seq"], claim["digest"], claim["section"], claim["audience"], claim["premise"],
+            claim["status"], claim["verification"], claim["topic"], claim["change_ref"], claim["reviewed_at"], rev,
+        ),
+    )
+
+
+def _write_item(conn, run_id: str, row: dict) -> None:
+    conn.execute(
+        """
+        INSERT INTO feedback_items (
+            run_id, seq, t, task, dtype, size, label, committee, provider, model, outcome, exit, kinds,
+            line_at, has_system, pending_claims, unverified_premises
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            run_id, row["seq"], row["t"], row["task"], row["dtype"], row["size"], row["label"], row["committee"],
+            row["provider"], row["model"], row["outcome"], row["exit"], row["kinds"], row.get("line_at"),
+            row["has_system"], row["pending_claims"], row["unverified_premises"],
+        ),
+    )
+
+
+def _rebuild_feedback(conn, run_id: str, directory: Path) -> bool:
+    """The log was replaced or the parser changed. Read it once, then the cursor takes over."""
+    review = _load_review(directory / "feedback_review.json")["claims"]
+    items = []
+    claims = []
+    located, _end = read_appended_records(directory / "feedback.jsonl", 0)
+    for line_at, record in located:
+        built = _rows_for_record(record, review, line_at)
+        if built is None:
+            continue
+        item, claim_rows = built
+        items.append(item)
+        claims.extend(claim_rows)
+    previous = {
+        (int(row["seq"]), str(row["digest"])): row
+        for row in conn.execute("SELECT * FROM feedback_claims WHERE run_id = ?", (run_id,))
+    }
+    current = {(int(claim["seq"]), str(claim["digest"])): claim for claim in claims}
+    removed = [key for key in previous if key not in current]
+    changed = [claim for key, claim in current.items() if key not in previous or _claim_signature(previous[key]) != _claim_signature(claim)]
+    stored_items = {
+        _item_signature(row)
+        for row in conn.execute("SELECT * FROM feedback_items WHERE run_id = ?", (run_id,))
+    }
+    items_differ = stored_items != {_item_signature(row) for row in items}
+    if not removed and not changed and not items_differ:
+        return False
+    rev = _take_feedback_rev(conn) if (removed or changed) else None
+    if items_differ or removed or changed:
+        conn.execute("DELETE FROM feedback_items WHERE run_id = ?", (run_id,))
+        for row in items:
+            _write_item(conn, run_id, row)
+    for seq, digest in removed:
+        conn.execute("DELETE FROM feedback_claims WHERE run_id = ? AND seq = ? AND digest = ?", (run_id, seq, digest))
+        conn.execute(
+            """
+            INSERT INTO feedback_claim_removed (run_id, seq, digest, rev) VALUES (?, ?, ?, ?)
+            ON CONFLICT(run_id, seq, digest) DO UPDATE SET rev = excluded.rev
+            """,
+            (run_id, seq, digest, rev),
+        )
+    for claim in changed:
+        _write_claim(conn, run_id, claim, rev)
+    return True
+
+
+def _append_feedback(conn, run_id: str, records: list[tuple[int, dict]], directory: Path) -> bool:
+    """Insert sessions that are not in the index yet. Existing sequence numbers stay untouched."""
+    have = {
+        int(row["seq"])
+        for row in conn.execute("SELECT seq FROM feedback_items WHERE run_id = ?", (run_id,))
+    }
+    review = _load_review(directory / "feedback_review.json")["claims"]
+    fresh_items = []
+    fresh_claims = []
+    for line_at, record in records:
+        built = _rows_for_record(record, review, line_at)
+        if built is None or built[0]["seq"] in have:
+            continue
+        item, claim_rows = built
+        fresh_items.append(item)
+        fresh_claims.extend(claim_rows)
+        have.add(item["seq"])
+    if not fresh_claims and not fresh_items:
+        return False
+    rev = _take_feedback_rev(conn)
+    for row in fresh_items:
+        _write_item(conn, run_id, row)
+    for claim in fresh_claims:
+        _write_claim(conn, run_id, claim, rev)
+    return True
+
+
+def _desired_review(row, saved: dict | None) -> dict:
+    base = {
+        "seq": int(row["seq"]),
+        "digest": str(row["digest"]),
+        "section": row["section"] or "",
+        "audience": row["audience"] or "",
+        "premise": row["premise"] or "",
+    }
+    if not saved:
+        base["status"] = _default_status(base)
+        base["verification"] = "unchecked"
+        base["topic"] = ""
+        base["change_ref"] = ""
+        base["reviewed_at"] = None
+        return base
+    status = saved.get("status") or _default_status(base)
+    if status not in _STATUSES and status != "info":
+        status = _default_status(base)
+    base["status"] = status
+    base["verification"] = saved.get("verification") or "unchecked"
+    base["topic"] = saved.get("topic") or ""
+    base["change_ref"] = saved.get("change_ref") or ""
+    base["reviewed_at"] = saved.get("t") or saved.get("reviewed_at")
+    return base
+
+
+def _apply_review_file(conn, run_id: str, directory: Path) -> bool:
+    """Update stored claims from ``feedback_review.json`` without reading the log."""
+    saved = _load_review(directory / "feedback_review.json")["claims"]
+    rows = list(conn.execute("SELECT * FROM feedback_claims WHERE run_id = ?", (run_id,)))
+    changed = []
+    for row in rows:
+        key = f"{int(row['seq'])}:{row['digest']}"
+        review = saved.get(key)
+        desired = _desired_review(row, review if isinstance(review, dict) else None)
+        if _claim_signature(row) != _claim_signature(desired):
+            changed.append(desired)
+    if not changed:
+        return False
+    rev = _take_feedback_rev(conn)
+    for claim in changed:
+        _write_claim(conn, run_id, claim, rev)
+    return True
+
+
+def sync_run_index(conn, run_id: str, directory: Path) -> bool:
+    """Catch up one run from the append-only log and the review file.
+
+    A log that only grew is read from the stored byte offset. The review file is applied on its own,
+    so a saved review does not parse the log again. A shorter log or a new parser reads the file once,
+    then the offset takes over. Unchanged claims keep their revision.
+    """
+    cursor = _feedback_cursor(conn, run_id)
+    if cursor is None:
+        return False
+    offset, stored_review, stored_parser = cursor
+    path = directory / "feedback.jsonl"
+    review_path = directory / "feedback_review.json"
+    try:
+        size = path.stat().st_size if path.is_file() else 0
+    except OSError:
+        size = 0
+    review_fp = _file_fp(review_path)
+    if stored_parser != PARSER_VERSION or size < offset:
+        changed = _rebuild_feedback(conn, run_id, directory)
+        _store_feedback_cursor(conn, run_id, size, review_fp)
+        return changed
+    changed = False
+    if size > offset:
+        records, new_offset = read_appended_records(path, offset)
+        if _append_feedback(conn, run_id, records, directory):
+            changed = True
+        offset = new_offset
+    if review_fp != stored_review:
+        if _apply_review_file(conn, run_id, directory):
+            changed = True
+    if changed or offset != cursor[0] or review_fp != stored_review:
+        _store_feedback_cursor(conn, run_id, offset, review_fp)
+    return changed
 
 
 def _candidate_report(directory: Path, label: str) -> tuple[dict | None, str]:
@@ -304,6 +584,186 @@ def summary_from_index(conn, *, task: str | None = None, model: str | None = Non
                 continue
             recurrence.append({"key": key, "run_id": other["run_id"], "after": finished["run_id"]})
     return {"pending_total": pending_total, "frequent": frequent, "recurrence": recurrence, "items": items}
+
+
+def review_board(conn, *, task: str | None = None, model: str | None = None, kind: str | None = None, status: str | None = None) -> dict:
+    """Every review claim across runs, with the text that lives in the run directory.
+
+    The index row names the claim. The sentence, the saved evidence and the candidate report are read from that run.
+    """
+    from observe.detail import resolve_run
+
+    summary = summary_from_index(conn, task=task, model=model, kind=kind, status=status)
+    grouped: dict[str, list[dict]] = {}
+    for item in summary["items"]:
+        grouped.setdefault(str(item["run_id"]), []).append(item)
+    calibration = None
+    for run_id, rows in grouped.items():
+        directory = resolve_run(run_id)
+        found: dict[tuple[int, str], tuple[dict, dict]] = {}
+        if directory is not None:
+            doc = entries(directory)
+            calibration = doc.get("calibration") or calibration
+            for record in doc["records"]:
+                for claim in record["claims"]:
+                    seq = claim.get("seq")
+                    digest = str(claim.get("digest") or "")
+                    if isinstance(seq, int) and digest:
+                        found[(seq, digest)] = (claim, record)
+        for row in rows:
+            try:
+                seq = int(row["seq"])
+            except (TypeError, ValueError):
+                seq = -1
+            pair = found.get((seq, str(row.get("digest") or "")))
+            claim, record = pair if pair is not None else ({}, {})
+            row["text"] = claim.get("text") or ""
+            row["verification"] = claim.get("verification") or row.get("verification") or "unchecked"
+            row["evidence_source"] = claim.get("evidence_source") or ""
+            row["evidence"] = claim.get("evidence") or ""
+            row["note"] = claim.get("note") or ""
+            row["topic"] = claim.get("topic") or row.get("topic") or ""
+            row["change_ref"] = claim.get("change_ref") or row.get("change_ref") or ""
+            row["status"] = claim.get("status") or row.get("status") or ""
+            row["round"] = record.get("round")
+            row["committee"] = record.get("committee") or ""
+            row["report"] = record.get("report")
+            row["report_path"] = record.get("report_path") or ""
+    return {"pending_total": summary["pending_total"], "calibration": calibration, "items": summary["items"]}
+
+
+def _record_at(path: Path, line_at: int) -> dict | None:
+    """One log line. The offset was stored when that line was appended."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(line_at)
+            raw = handle.readline()
+    except OSError:
+        return None
+    try:
+        line = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        line = raw.decode("utf-8", errors="replace")
+    from taic.agent_feedback import FORMAT, _load_line, _repair_record
+
+    row = _load_line(line)
+    if row is None or row.get("format") != FORMAT:
+        return None
+    return _repair_record(row)
+
+
+def _attach_claim_text(rows: list[dict]) -> dict | None:
+    """Fill claim text from the stored line offset. A row without one falls back to reading that run's log."""
+    from observe.detail import resolve_run
+
+    grouped: dict[str, list[dict]] = {}
+    for item in rows:
+        grouped.setdefault(str(item["run_id"]), []).append(item)
+    calibration = _calibration()
+    for run_id, group in grouped.items():
+        directory = resolve_run(run_id)
+        found: dict[tuple[int, str], tuple[dict, dict]] = {}
+        if directory is not None and any(row.get("line_at") is None for row in group):
+            for record in entries(directory)["records"]:
+                for claim in record["claims"]:
+                    seq = claim.get("seq")
+                    digest = str(claim.get("digest") or "")
+                    if isinstance(seq, int) and digest:
+                        found[(seq, digest)] = (claim, record)
+        elif directory is not None:
+            path = directory / "feedback.jsonl"
+            review = _load_review(directory / "feedback_review.json")["claims"]
+            by_seq: dict[int, dict] = {}
+            for row in group:
+                try:
+                    seq = int(row["seq"])
+                except (TypeError, ValueError):
+                    continue
+                line_at = row.get("line_at")
+                if not isinstance(line_at, int) or seq in by_seq:
+                    continue
+                record = _record_at(path, line_at)
+                if record is not None:
+                    by_seq[seq] = record
+            for record in by_seq.values():
+                for claim in _claim_rows(record, review):
+                    digest = str(claim.get("digest") or "")
+                    seq = claim.get("seq")
+                    if isinstance(seq, int) and digest:
+                        found[(seq, digest)] = (claim, record)
+        for row in group:
+            try:
+                seq = int(row["seq"])
+            except (TypeError, ValueError):
+                seq = -1
+            pair = found.get((seq, str(row.get("digest") or "")))
+            claim, record = pair if pair is not None else ({}, {})
+            row["text"] = claim.get("text") or ""
+            row["verification"] = claim.get("verification") or row.get("verification") or "unchecked"
+            row["evidence_source"] = claim.get("evidence_source") or ""
+            row["evidence"] = claim.get("evidence") or ""
+            row["note"] = claim.get("note") or ""
+            row["topic"] = claim.get("topic") or row.get("topic") or ""
+            row["change_ref"] = claim.get("change_ref") or row.get("change_ref") or ""
+            row["status"] = claim.get("status") or row.get("status") or ""
+            row["round"] = record.get("round") if record else row.get("round")
+            row["committee"] = (record.get("committee") if record else None) or row.get("committee") or ""
+            if record:
+                report, report_path = _candidate_report(directory, str(record.get("label") or "")) if directory is not None else (None, "")
+                source = "candidate"
+                if report is None and directory is not None:
+                    report, report_path = _candidate_report(directory, str(record.get("seed_label") or ""))
+                    source = "seed" if report is not None else ""
+                row["report"] = _report_brief(report, source)
+                row["report_path"] = report_path
+            else:
+                row["report"] = None
+                row["report_path"] = ""
+    return calibration
+
+
+_CLAIM_LIST = """
+    SELECT c.run_id, c.seq, c.digest, c.section, c.audience, c.premise, c.status, c.verification, c.topic,
+           c.change_ref, c.reviewed_at, c.rev, i.task, i.model, i.label, i.t, i.line_at
+    FROM feedback_claims c
+    JOIN feedback_items i ON i.run_id = c.run_id AND i.seq = c.seq
+"""
+
+
+def review_feed(conn, *, since: int | None = None) -> dict:
+    """A snapshot, or only the claims that changed after ``since``.
+
+    ``since`` equal to the current feedback revision returns no rows. Text is read only for runs
+    present in this answer.
+    """
+    rev = _feedback_revision(conn)
+    pending_total = int(conn.execute("SELECT COUNT(*) FROM feedback_claims WHERE status = 'pending'").fetchone()[0])
+    if since is not None and int(since) == rev:
+        return {"same": True, "snapshot": False, "rev": rev, "pending_total": pending_total, "upserts": [], "removed": []}
+    if since is None:
+        rows = [dict(row) for row in conn.execute(_CLAIM_LIST + " ORDER BY i.t DESC, c.seq DESC")]
+        removed: list[dict] = []
+        snapshot = True
+    else:
+        rows = [dict(row) for row in conn.execute(_CLAIM_LIST + " WHERE c.rev > ? ORDER BY i.t DESC, c.seq DESC", (int(since),))]
+        removed = [
+            {"run_id": row["run_id"], "seq": row["seq"], "digest": row["digest"]}
+            for row in conn.execute(
+                "SELECT run_id, seq, digest FROM feedback_claim_removed WHERE rev > ?",
+                (int(since),),
+            )
+        ]
+        snapshot = False
+    calibration = _attach_claim_text(rows)
+    return {
+        "same": False,
+        "snapshot": snapshot,
+        "rev": rev,
+        "pending_total": pending_total,
+        "upserts": rows,
+        "removed": removed,
+        "calibration": calibration,
+    }
 
 
 def rejection(body: dict) -> str | None:

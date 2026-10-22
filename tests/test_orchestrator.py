@@ -120,6 +120,18 @@ def run(orch):
 # ------------------------------------------------------------------------------------------------
 
 
+def test_a_raised_budget_after_exhaustion_is_taken_before_confirmation(tmp_path):
+    orch = make_orch(tmp_path, llm_script(code("speed=1")), [], max_rounds=1)
+    orch.ledger.total_usd = float(orch.ledger.budget_usd)
+    from taic.orchestrator import RunResult
+
+    res = RunResult(run_dir=str(orch.run_dir), task="relu", dtype="fp16", size="small", model="fake", stop_reason="budget_exhausted")
+    assert orch._control_extends(res) is False
+    (orch.run_dir / "control.json").write_text(json.dumps({"budget_usd": float(orch.ledger.budget_usd) + 2}))
+    assert orch._control_extends(res) is True
+    assert orch.ledger.remaining == pytest.approx(2)
+
+
 def test_happy_path_selects_the_fastest_eligible_candidate_and_confirms_it(tmp_path):
     calls = []
     script = llm_script(code("speed=0.9"), patches={"A": code("speed=1.3")})
@@ -308,11 +320,12 @@ def test_a_noisy_measurement_cannot_replace_the_best_and_ties_are_re_measured(tm
     res = run(orch)
     assert [t["improved"] for t in res.trace] == [True, False]
     assert any("1.009x (within measurement noise of the best)" in h for h in orch.history)
-    # both tied kernels are re-measured; the noisy one turns out faster on re-measurement and becomes the result
+    # 两颗都重测。吵的那颗复测中位数更高，但没有超过噪声门槛，结果仍是搜索种子。
     assert [c["label"] for c in res.confirmations] == ["init", "r1.p0"]
-    assert res.best_label == "r1.p0" and res.confirmed_speedup == pytest.approx(0.975)
-    assert "speed=1.009" in (tmp_path / "run" / "best.metal").read_text()
-    assert json.loads((tmp_path / "run" / "confirm_report.json").read_text())["speedup"] == pytest.approx(0.975)
+    # 复测里吵的那颗中位数略高，但没有盖过它自己的标准误和输入批次的 1% 下限，种子留在安静的那颗。
+    assert res.best_label == "init" and res.confirmed_speedup == pytest.approx(0.965)
+    assert "speed=0.968" in (tmp_path / "run" / "best.metal").read_text()
+    assert json.loads((tmp_path / "run" / "confirm_report.json").read_text())["speedup"] == pytest.approx(0.965)
 
 
 def test_clear_improvements_still_win_and_untied_candidates_are_not_re_measured(tmp_path):
@@ -742,6 +755,11 @@ def test_confirmation_reports_the_median_of_independent_batches(tmp_path):
     assert res.confirmed_worst == pytest.approx(1.10)
     assert res.confirmed_best == pytest.approx(1.40)  # 极差 27%，正是"不能当精确值看"的样例
     assert res.confirmations[0]["confirmed_values"] == res.confirmed_values
+    assert res.confirmations[0]["failed_batches"] == 0
+    from experiments.common import conclusion_of_run
+
+    stored = json.loads((orch.run_dir / "result.json").read_text())
+    assert conclusion_of_run(orch.run_dir, stored) == {"speedup": None, "publication": "不确定"}
 
 
 def test_a_new_run_freezes_guidance_and_an_old_run_still_copies_the_repo(tmp_path):

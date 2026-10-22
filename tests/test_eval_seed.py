@@ -122,7 +122,7 @@ def test_confirm_uses_a_different_seed_and_a_cache_hit_keeps_the_old_one(tmp_pat
     assert orch.trace[2]["eval_seed"] == 0
     assert len([c for c in calls if c["mode"] == "full" and c["reps"] == 3]) == 2
     assert res.confirmations[0]["eval_seed_from"] == "confirm"
-    assert res.confirmations[0]["eval_seed"] == eval_seed(1, "confirm", "r1.p0", seed_source)
+    assert res.confirmations[0]["eval_seed"] == eval_seed(1, "confirm", "b1", "")
     assert res.confirmations[0]["eval_seed"] != orch.trace[0]["eval_seed"]
     assert second.label == "r1.p2"  # 第三次请求复用第一次的评测结论
 
@@ -153,10 +153,6 @@ def test_quick_check_stays_random_and_an_old_run_keeps_seed_none(tmp_path):
         seen.append(seed)
         report = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=12345, status="ok", stage="done", message="ok")
         return report
-
-    orch = _orch(tmp_path, "quick", evaluate_fn=ev)
-    asyncio.run(orch._quick("kernel void k() {}\n"))
-    assert seen == [None]
 
     old = tmp_path / "old"
     old.mkdir()

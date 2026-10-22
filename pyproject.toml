@@ -25,7 +25,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["tcenv", "taic", "tasks", "observe"]
+packages = ["tcenv", "taic", "tasks", "observe", "experiments"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "observe/static/index.html" = "observe/static/index.html"

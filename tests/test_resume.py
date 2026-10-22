@@ -560,6 +560,23 @@ def test_a_stale_search_seed_does_not_hide_a_newer_kernel(tmp_path):
     assert any("older than r1.p0" in note for note in snap.notes)
 
 
+def test_a_slower_kernel_written_after_state_does_not_become_the_seed(tmp_path):
+    run = tmp_path / "run"
+    for idx, label, speed in ((0, "init", 1.8), (1, "r1.p0", 1.1)):
+        folder = run / "candidates" / f"{idx:03d}_{label}"
+        folder.mkdir(parents=True)
+        (folder / "kernel.metal").write_text(f"kernel void k_{label}() {{}}\n")
+        (folder / "report.json").write_text(json.dumps(_ok_report(speed).to_json()))
+    (run / "state.json").write_text(json.dumps({
+        "task": "relu", "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
+        "trace": [{"idx": 0, "label": "init", "improved": True, "speedup": 1.8, "cost_usd": 0.01, "t_s": 1.0}],
+    }))
+    (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1"}))
+    snap = rs.load_snapshot(run, SearchConfig(branches=1, min_improvement=1.005, noise_z=0), "k")
+    assert snap.best_label == "init"
+    assert snap.trace[-1]["improved"] is False
+
+
 def test_chat_with_tools_continues_a_conversation_at_the_given_turn(tmp_path):
     from taic.llm import LLM, Transcript
 

@@ -1,8 +1,8 @@
 {
 "_meta": {
-"git_commit": "7bfff61165735de3871d3ce2dae135a1c54cd4d1",
-"reason": "experience.md source paths now live under runs/apple-m4-max",
-"recorded_at": "2026-10-21T22:41:16+08:00"
+"git_commit": "b157481be368bf82cdc728a40581400391ef2c38",
+"reason": "timed self-check log is outside the agent work directory; the golden redacts that run path",
+"recorded_at": "2026-10-21T23:26:40+08:00"
 },
 "feedback": {
 "format_feedback_cut|compile_error": "STATUS: compile_error  (stage reached: compile)\nMetal compiler rejected the kernel\n\nMetal compiler errors (line numbers refer to your kernel source):\nkernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n",
@@ -23,57 +23,57 @@
 "each": [
 {
 "label": "0",
-"sha": "73f2b12003ca68923dfc25a4689b2ac4632926e7"
+"sha": "6666a22152c6b47f38c8ad60f23220ef0c3ab8a0"
 },
 {
 "label": "1",
-"sha": "8096716f0b33cc1dca6d9d4f478102100a59b902"
+"sha": "1fc9991332bf7ab2584137f0304a7c2cc66c548f"
 }
 ],
 "requests": 2,
-"sha": "460fad5cbb9e4e54aae466e87a2fbcc5c82332a7"
+"sha": "e25dcbdf344b8e9ae632ed54a95eb3ee76f1cab8"
 },
 "orchestrator|gemm|plan_mix=1": {
 "each": [
 {
 "label": "0",
-"sha": "3c0b76811265d98a9a8ed633ad8f94bc2d37a74d"
+"sha": "ee3e9b426ee6d62d03548da7d052953c817d9889"
 },
 {
 "label": "1",
-"sha": "07951edcea04caefcb31e6b1f9f6b005eabc7269"
+"sha": "e1c85559de200e528e78f61d83d3795aefd1b778"
 }
 ],
 "requests": 2,
-"sha": "5f8409836315eecd73e1d33d98b3a8cda38b84bf"
+"sha": "7543d1645cdaf04f9b1a8a3fe9c9a6eae1804659"
 },
 "orchestrator|relu|plan_mix=0": {
 "each": [
 {
 "label": "0",
-"sha": "cbae73d4185eef2fb05be6bcd164629730d47bcd"
+"sha": "2dec5ece3ea1c106959a98258b8c21faa6d215d1"
 },
 {
 "label": "1",
-"sha": "fc4ebe5528805b2422f352f6c983d6bfcf125fd1"
+"sha": "b9e792963d0df6dd14b0aeffcb608cff24598fb6"
 }
 ],
 "requests": 2,
-"sha": "9e8b7dc3e15c2b87ac1a17ea9f9f48d5fea9ad9d"
+"sha": "1dcf90383925d6189e4cc16b568b18deafff2600"
 },
 "orchestrator|relu|plan_mix=1": {
 "each": [
 {
 "label": "0",
-"sha": "cbae73d4185eef2fb05be6bcd164629730d47bcd"
+"sha": "2dec5ece3ea1c106959a98258b8c21faa6d215d1"
 },
 {
 "label": "1",
-"sha": "fc4ebe5528805b2422f352f6c983d6bfcf125fd1"
+"sha": "b9e792963d0df6dd14b0aeffcb608cff24598fb6"
 }
 ],
 "requests": 2,
-"sha": "9e8b7dc3e15c2b87ac1a17ea9f9f48d5fea9ad9d"
+"sha": "1dcf90383925d6189e4cc16b568b18deafff2600"
 }
 },
 "outbound": {

@@ -148,6 +148,19 @@
   .fb-raw summary { cursor: pointer; color: var(--muted); font-size: 12px; }
   #settings-committees label { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
   #settings-committees select { flex: 1; }
+  #feedback-badge { background: #fde047; color: #4a3b00; border-color: #e6c200; font-weight: 700; }
+  #feedback-badge:hover { border-color: #4a3b00; color: #4a3b00; }
+  #view-reviews { display: none; min-height: 0; }
+  body.reviews-page #workspace { display: none; }
+  body.reviews-page header button:not(#feedback-badge) { display: none; }
+  body.reviews-page #view-reviews { display: flex; flex: 1; flex-direction: column; gap: 10px; }
+  body.reviews-page main { overflow: hidden; }
+  .reviews-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .reviews-bar button.on { border-color: var(--blue); color: var(--blue); }
+  #reviews-list { overflow: auto; min-height: 0; }
+  .review-card { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 10px 12px; margin: 0 0 10px; }
+  .review-card .fb-meta { color: var(--muted); font-size: 12px; }
+  .review-card a { color: var(--blue); }
   @media (max-width: 800px) {
     .detail-split { grid-template-columns: 1fr; }
   }
@@ -156,7 +169,7 @@
 <body>
 <header>
   <strong>观测</strong>
-  <span id="feedback-badge" class="badge" hidden></span>
+  <button type="button" id="feedback-badge" hidden title="打开全部审查">待审查</button>
   <button type="button" id="term-open">术语</button>
   <button type="button" id="tab-experiments">实验</button>
   <button type="button" id="tab-compare">对照</button>
@@ -168,6 +181,15 @@
   <button type="button" class="btn-budget btn-stop" id="stop-all">停止全部搜索</button>
 </header>
 <main>
+  <section id="view-reviews">
+    <div class="reviews-bar">
+      <strong>全部审查</strong>
+      <a href="/">回到观测</a>
+      <span id="reviews-count" class="muted"></span>
+      <span id="reviews-filters"></span>
+    </div>
+    <div id="reviews-list"></div>
+  </section>
   <div class="workspace" id="workspace">
   <aside id="side">
     <div class="side-head">
@@ -360,6 +382,179 @@ async function refreshBanner() {
   const pending = Number(overview.feedback_pending || 0);
   slot.hidden = pending <= 0;
   slot.textContent = pending > 0 ? pending + " 条代理反馈待审查" : "";
+}
+
+const REVIEW_FILTERS = [["pending", "待审查"], ["", "全部"], ["adopted", "已采纳"], ["rejected", "已拒绝"], ["done", "已完成"]];
+let reviewStatus = "pending";
+let reviewsCalibration = null;
+let reviewRev = null;
+let reviewPending = 0;
+const reviewItems = new Map();
+let reviewSyncing = false;
+let reviewSyncAgain = false;
+const reviewsPage = location.pathname === "/reviews";
+
+function reviewKey(item) {
+  return `${item.run_id}\t${item.seq}\t${item.digest}`;
+}
+
+function reviewVisible(item) {
+  return !reviewStatus || item.status === reviewStatus;
+}
+
+function compareReview(a, b) {
+  const time = (Number(b.t) || 0) - (Number(a.t) || 0);
+  if (time) return time;
+  return (Number(b.seq) || 0) - (Number(a.seq) || 0);
+}
+
+function reviewCard(item) {
+  const key = reviewKey(item);
+  const handle = item.status === "info" ? "" : `<button type="button" class="feedback-open" data-key="${esc(key)}">处理</button>`;
+  const tone = item.audience === "system" || item.audience === "peer" || item.audience === "diagnostic" ? item.audience : "system";
+  const statusClass = item.status === "pending" ? " fb-pending" : (item.status === "info" ? " fb-info" : "");
+  const meta = [item.task, item.label, item.model, item.committee, item.round != null ? "第 " + item.round + " 轮" : ""].filter((part) => part != null && part !== "").join(" · ");
+  const run = `/?run=${encodeURIComponent(item.run_id || "")}`;
+  return `<article class="review-card fb-claim fb-${esc(tone)}" data-key="${esc(key)}"><div class="fb-claim-head"><a href="${esc(run)}">${esc(item.run_id)}</a> <span class="fb-kind">${esc(item.section)}</span> <span class="badge">${esc(item.premise || item.audience)}</span> <span class="badge${statusClass}">${esc(item.status)}</span> ${handle}</div><p class="fb-meta">${esc(meta)}</p><pre class="excerpt">${esc(item.text || "")}</pre></article>`;
+}
+
+function bindReviewOpens(host) {
+  host.querySelectorAll(".feedback-open").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = reviewItems.get(button.dataset.key);
+      if (!item) return;
+      openReview(item.run_id, item, {report: item.report, report_path: item.report_path});
+    });
+  });
+}
+
+function claimNode(item) {
+  const holder = document.createElement("div");
+  holder.innerHTML = reviewCard(item);
+  const node = holder.firstElementChild;
+  bindReviewOpens(node);
+  return node;
+}
+
+function paintReviewFilters() {
+  const filters = document.getElementById("reviews-filters");
+  if (!filters.childElementCount) {
+    filters.innerHTML = REVIEW_FILTERS.map(([id, name]) => `<button type="button" data-review-status="${esc(id)}">${esc(name)}</button>`).join("");
+  }
+  filters.querySelectorAll("button").forEach((button) => button.classList.toggle("on", (button.dataset.reviewStatus || "") === reviewStatus));
+}
+
+function paintReviewList() {
+  const host = document.getElementById("reviews-list");
+  const items = [...reviewItems.values()].filter(reviewVisible).sort(compareReview);
+  host.innerHTML = items.length ? items.map(reviewCard).join("") : `<p class="muted">这一档没有反馈。</p>`;
+  bindReviewOpens(host);
+  updateReviewCount();
+}
+
+function updateReviewCount() {
+  let shown = 0;
+  for (const item of reviewItems.values()) if (reviewVisible(item)) shown += 1;
+  document.getElementById("reviews-count").textContent = `这里 ${shown} 条 · 待审查共 ${reviewPending} 条`;
+  const slot = document.getElementById("feedback-badge");
+  if (reviewPending > 0) {
+    slot.hidden = false;
+    slot.textContent = reviewPending + " 条代理反馈待审查";
+  }
+}
+
+function patchReviewDom(upserts, removed) {
+  const host = document.getElementById("reviews-list");
+  for (const item of removed) {
+    const node = host.querySelector(`[data-key="${CSS.escape(reviewKey(item))}"]`);
+    if (node) node.remove();
+  }
+  for (const item of upserts) {
+    const key = reviewKey(item);
+    const node = host.querySelector(`[data-key="${CSS.escape(key)}"]`);
+    if (!reviewVisible(item)) {
+      if (node) node.remove();
+      continue;
+    }
+    const next = claimNode(item);
+    if (node) {
+      node.replaceWith(next);
+      continue;
+    }
+    const empty = host.querySelector("p.muted");
+    if (empty) empty.remove();
+    let before = null;
+    for (const child of host.querySelectorAll(".review-card")) {
+      const other = reviewItems.get(child.dataset.key);
+      if (other && compareReview(item, other) < 0) {
+        before = child;
+        break;
+      }
+    }
+    host.insertBefore(next, before);
+  }
+  if (!host.querySelector(".review-card")) host.innerHTML = `<p class="muted">这一档没有反馈。</p>`;
+  updateReviewCount();
+}
+
+function applyReviewFeed(doc) {
+  reviewPending = Number(doc.pending_total || 0);
+  if (doc.calibration) reviewsCalibration = doc.calibration;
+  if (doc.same) {
+    updateReviewCount();
+    return;
+  }
+  if (doc.snapshot) {
+    reviewItems.clear();
+    for (const item of doc.upserts || []) reviewItems.set(reviewKey(item), item);
+    paintReviewFilters();
+    paintReviewList();
+  } else {
+    for (const item of doc.removed || []) reviewItems.delete(reviewKey(item));
+    for (const item of doc.upserts || []) reviewItems.set(reviewKey(item), item);
+    patchReviewDom(doc.upserts || [], doc.removed || []);
+  }
+  reviewRev = doc.rev;
+}
+
+async function syncReviews() {
+  if (reviewSyncing) {
+    reviewSyncAgain = true;
+    return;
+  }
+  reviewSyncing = true;
+  try {
+    do {
+      reviewSyncAgain = false;
+      const params = new URLSearchParams();
+      if (reviewRev !== null) params.set("since", String(reviewRev));
+      const doc = await (await fetch("/api/v2/feedback?" + params)).json();
+      applyReviewFeed(doc);
+    } while (reviewSyncAgain);
+  } finally {
+    reviewSyncing = false;
+  }
+}
+
+function openReview(runId, claim, record) {
+  const modal = document.getElementById("feedback-modal");
+  const form = document.getElementById("feedback-review-form");
+  modal.dataset.run = runId || "";
+  modal.dataset.seq = claim.seq;
+  modal.dataset.digest = claim.digest;
+  modal._record = record || null;
+  document.getElementById("feedback-modal-title").textContent = claim.section || "处理反馈";
+  document.getElementById("feedback-modal-text").textContent = claim.text || "";
+  document.getElementById("feedback-modal-source").textContent = record && record.report_path ? `证据预填来源 ${record.report && record.report.source || ""} ${record.report_path}` : "";
+  form.querySelector('[name="status"]').value = claim.status || "pending";
+  form.querySelector('[name="verification"]').value = claim.verification || "unchecked";
+  form.querySelector('[name="evidence_source"]').value = claim.evidence_source || "";
+  form.querySelector('[name="evidence"]').value = claim.evidence || "";
+  form.querySelector('[name="note"]').value = claim.note || "";
+  form.querySelector('[name="topic"]').value = claim.topic || "";
+  form.querySelector('[name="change_ref"]').value = claim.change_ref || "";
+  document.getElementById("feedback-modal-error").textContent = "";
+  modal.classList.add("open");
 }
 
 function showRight(name) {
@@ -739,12 +934,12 @@ function renderDetail(doc) {
     ? `<table><thead><tr><th>轮次</th><th>委员会</th><th>模型</th></tr></thead><tbody>${rounds}</tbody></table>`
     : `<p class="muted">${esc(handoff.note || "没有委员会记录")}</p>`;
   const events = newestFirst(doc.budget_events).map((row) => `<tr><td>${esc(row.time || row.t)}</td><td>${esc(row.kind)}</td><td>${esc(row.who)}</td><td>${esc(num(row.old_budget_usd))}</td><td>${esc(num(row.new_budget_usd))}</td><td>${esc(row.note)}</td></tr>`).join("");
+  const seedKernel = (doc.state && doc.state.best_label) || (doc.result && doc.result.best_label) || "";
+  const confirmWinner = (doc.result && doc.result.confirm_winner_label) || "";
   const candidates = newestFirst(doc.candidates).map((row) => `<tr class="pick${row.label === selectedCandidate ? " on" : ""}" data-label="${esc(row.label)}"><td class="seq"><button type="button" class="quiet seq-open" title="双击查看阶段和代码">${esc(num(row.idx))}</button></td><td>${esc(row.label)}${row.label === seedKernel ? ' <span class="badge">种子核</span>' : ''}${row.label === confirmWinner ? ' <span class="badge">确认胜者</span>' : ''}</td><td>${esc(row.status)}</td><td>${esc(row.stage)}</td><td>${esc(num(row.speedup))}</td><td>${esc(marksFor(doc, row.label))}</td><td>${esc(row.message)}</td></tr>`).join("");
   const grid = newestFirst(doc.feature_grid).map((cell) => `<tr><td>${esc(cell.label)}</td><td>${esc((cell.signature || []).join(","))}</td><td>${esc(num(cell.speedup))}</td><td>${cell.published ? "发布" : ""}</td></tr>`).join("");
   const plans = newestFirst(doc.plan_outcomes).map((node) => `<tr><td>${esc(node.round)}</td><td>${esc(node.label)}</td><td>${esc(node.title)}</td><td>${esc(node.outcome)}</td><td>${esc(num(node.speedup))}</td></tr>`).join("");
   const lamp = doc.status === "running" ? `<span class="breathe" title="进行中"></span>` : "";
-  const seedKernel = (doc.state && doc.state.best_label) || (doc.result && doc.result.best_label) || "";
-  const confirmWinner = (doc.result && doc.result.confirm_winner_label) || "";
   const seedLine = seedKernel
     ? `<p class="muted">种子核（搜索期当前最好的一颗）：<b>${esc(seedKernel)}</b>` +
       (confirmWinner && confirmWinner !== seedKernel ? ` · 确认胜者（换一批输入重测后活下来的）：<b>${esc(confirmWinner)}</b>` : "") +
@@ -794,39 +989,36 @@ function bindFeedback(host, doc) {
       const record = ((doc.feedback || {}).records || []).find((item) => String(item.seq) === button.dataset.seq);
       const claim = record && (record.claims || []).find((item) => item.digest === button.dataset.digest);
       if (!record || !claim) return;
-      const modal = document.getElementById("feedback-modal");
-      const form = document.getElementById("feedback-review-form");
-      modal.dataset.seq = claim.seq;
-      modal.dataset.digest = claim.digest;
-      modal._record = record;
-      document.getElementById("feedback-modal-title").textContent = claim.section || "处理反馈";
-      document.getElementById("feedback-modal-text").textContent = claim.text || "";
-      document.getElementById("feedback-modal-source").textContent = record.report_path ? `证据预填来源 ${record.report.source || ""} ${record.report_path}` : "";
-      form.querySelector('[name="status"]').value = claim.status || "pending";
-      form.querySelector('[name="verification"]').value = claim.verification || "unchecked";
-      form.querySelector('[name="evidence_source"]').value = claim.evidence_source || "";
-      form.querySelector('[name="evidence"]').value = claim.evidence || "";
-      form.querySelector('[name="note"]').value = claim.note || "";
-      form.querySelector('[name="topic"]').value = claim.topic || "";
-      form.querySelector('[name="change_ref"]').value = claim.change_ref || "";
-      document.getElementById("feedback-modal-error").textContent = "";
-      modal.classList.add("open");
+      openReview(selectedRun, claim, record);
     });
   });
 }
 
+let detailToken = 0;
+
 async function loadDetail(id) {
-  const query = detailId === id && detailStamp ? "?stamp=" + encodeURIComponent(detailStamp) : "";
+  const token = ++detailToken;
+  const reuse = detailDoc && detailId === id && detailStamp;
+  const query = reuse ? "?stamp=" + encodeURIComponent(detailStamp) : "";
   const response = await fetch("/api/v2/runs/" + id.split("/").map(encodeURIComponent).join("/") + query);
+  if (token !== detailToken) return;
   const doc = await response.json();
+  if (token !== detailToken) return;
   const host = document.getElementById("view-detail");
   if (!response.ok) {
+    detailDoc = null;
+    detailStamp = "";
+    detailId = id;
     host.innerHTML = `<p>找不到 ${esc(id)}</p>`;
     return;
   }
   if (doc.same) {
-    refreshLive();
-    return;
+    if (detailDoc && detailId === id) {
+      refreshLive();
+      return;
+    }
+    detailStamp = "";
+    return loadDetail(id);
   }
   if (detailId !== id) {
     detailId = id;
@@ -837,9 +1029,10 @@ async function loadDetail(id) {
     turnsRows = [];
     turnsCursor = null;
   }
+  const html = renderDetail(doc);
   detailDoc = doc;
   detailStamp = doc.detail_stamp || "";
-  host.innerHTML = renderDetail(doc);
+  host.innerHTML = html;
   bindCandidatePicks(host);
   bindFeedback(host, doc);
   if (document.getElementById("stage-modal").classList.contains("open") && selectedCandidate) openStage(selectedCandidate);
@@ -1003,7 +1196,8 @@ document.getElementById("feedback-review-form").querySelector('[name="evidence_s
   const modal = document.getElementById("feedback-modal");
   const evidence = document.getElementById("feedback-review-form").querySelector('[name="evidence"]');
   const feedback = (detailDoc && detailDoc.feedback) || {};
-  if (event.target.value === "calibration" && feedback.calibration) evidence.value = JSON.stringify(feedback.calibration);
+  const calibration = feedback.calibration || reviewsCalibration;
+  if (event.target.value === "calibration" && calibration) evidence.value = JSON.stringify(calibration);
   if (event.target.value === "report") {
     const record = modal._record;
     evidence.value = record && record.report ? JSON.stringify(record.report) : "";
@@ -1022,9 +1216,11 @@ document.getElementById("feedback-save").addEventListener("click", async () => {
     change_ref: form.querySelector('[name="change_ref"]').value,
   };
   try {
-    await postJson("/api/runs/" + selectedRun.split("/").map(encodeURIComponent).join("/") + "/feedback/" + encodeURIComponent(modal.dataset.seq) + "/claims/" + encodeURIComponent(modal.dataset.digest) + "/review", body);
+    const runId = modal.dataset.run || selectedRun;
+    await postJson("/api/runs/" + runId.split("/").map(encodeURIComponent).join("/") + "/feedback/" + encodeURIComponent(modal.dataset.seq) + "/claims/" + encodeURIComponent(modal.dataset.digest) + "/review", body);
     modal.classList.remove("open");
-    loadDetail(selectedRun);
+    if (reviewsPage) syncReviews();
+    else if (selectedRun) loadDetail(selectedRun);
     refreshBanner();
   } catch (error) {
     document.getElementById("feedback-modal-error").textContent = error.message;
@@ -1212,8 +1408,25 @@ async function refreshLive() {
 }
 setInterval(() => { refreshTurns(false); refreshLive(); }, 2000);
 
-loadExperiments();
-loadRuns();
+document.getElementById("feedback-badge").addEventListener("click", () => {
+  if (reviewsPage) return;
+  window.open("/reviews", "observe-reviews");
+});
+document.getElementById("reviews-filters").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-review-status]");
+  if (!button) return;
+  reviewStatus = button.dataset.reviewStatus || "";
+  paintReviewFilters();
+  paintReviewList();
+});
+if (reviewsPage) {
+  document.body.classList.add("reviews-page");
+  document.title = "全部审查";
+  syncReviews();
+} else {
+  loadExperiments();
+  loadRuns();
+}
 const preset = new URLSearchParams(location.search).get("run");
 if (preset) {
   selectedRun = preset;
@@ -1224,14 +1437,18 @@ source.onmessage = (event) => {
   const frame = JSON.parse(event.data);
   const indexRev = frame.index_revision || frame.revision || 0;
   const turnsRev = frame.turns_revision || 0;
+  const feedbackRev = frame.feedback_revision;
+  if (reviewsPage && feedbackRev != null && Number(feedbackRev) !== reviewRev) syncReviews();
   if (indexRev && String(indexRev) !== seenIndex) {
     seenIndex = String(indexRev);
     refreshBanner();
-    loadExperiments();
-    if (selectedExperiment) loadCompare(selectedExperiment);
-    loadRuns();
-    if (visible === "ledger") loadLedger();
-    else if (selectedRun) loadDetail(selectedRun);
+    if (!reviewsPage) {
+      loadExperiments();
+      if (selectedExperiment) loadCompare(selectedExperiment);
+      loadRuns();
+      if (visible === "ledger") loadLedger();
+      else if (selectedRun) loadDetail(selectedRun);
+    }
   }
   if (turnsRev && String(turnsRev) !== seenTurns) {
     seenTurns = String(turnsRev);

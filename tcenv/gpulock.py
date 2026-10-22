@@ -184,9 +184,14 @@ def gpu_lock(what: str, *, exclusive: bool = True, max_wait_s: float = DEFAULT_M
         if exclusive and _writable:
             os.ftruncate(_fd, 0)
         if outer == "sh":
-            # 这段独占结束，回到外层的共享。先记下独占已经松开，否则日志里只有共享的重新获得。
+            # 这段独占结束，回到外层的共享。先放开独占，并把状态改成没握锁。
+            # 抢不回共享时不能仍标着独占，否则下一次 gpu_lock 会以为锁还在而直接放行。
             _gpu_note("release", want, what)
             fcntl.flock(_fd, fcntl.LOCK_UN)
+            # 锁已经放开。抢不回共享时 _mode 保持空、_fd 仍开着，外层共享锁的 finally 负责关掉它。
+            # 不能把 _mode 留在 "ex"，否则下一次 gpu_lock 会以为自己还握着独占锁。
+            _mode = None
+            _what = ""
             _acquire(_fd, fcntl.LOCK_SH, max_wait_s, log, outer_what)
             _mode = "sh"
             _what = outer_what

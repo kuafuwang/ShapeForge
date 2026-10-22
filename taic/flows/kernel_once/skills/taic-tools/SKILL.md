@@ -22,7 +22,7 @@ Apple's own PDFs are in the repository named by the eval command's `--directory`
 
 Run the commands from this directory. Do not change the GPU lock path. Do not delete the lock file.
 
-A `self_checks.jsonl` in this directory records every timed check. After a timeout or a crash, another timed check is refused. Leave the kernel as it is and stop.
+The timed command in `TASK.md` records `self_checks.jsonl` in the directory that command names. After a timeout or a crash, another timed check in that directory is refused. Leave the kernel as it is and stop.
 
 ## Probes
 

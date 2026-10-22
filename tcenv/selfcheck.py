@@ -58,7 +58,8 @@ def budget_reason(directory: Path) -> str | None:
 
 
 def append(directory: Path, row: dict) -> None:
-    """Append one result. The orchestrator reads the same file after the session."""
+    """Append one result. The directory is created when the first timed check arrives."""
+    directory.mkdir(parents=True, exist_ok=True)
     path = directory / LOG_NAME
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, default=str) + "\n")

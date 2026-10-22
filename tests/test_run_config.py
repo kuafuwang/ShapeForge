@@ -90,6 +90,14 @@ def test_resuming_does_not_rewrite_the_existing_config(tmp_path):
     assert not (run / "state.json").exists()
 
 
+def test_taic_run_exits_5_when_branches_is_not_one(tmp_path, monkeypatch):
+    cfg, search = _cfg()
+    search.branches = 2
+    monkeypatch.setattr("taic.llm.load_config", lambda *_a, **_k: (cfg, search))
+    code = cli.main(["run", "relu", "--size", "small", "--preset", "base", "--branches", "2", "--run-dir", str(tmp_path / "run")])
+    assert code == 5
+
+
 def test_taic_run_exits_5_when_the_directory_already_holds_a_run(tmp_path, monkeypatch):
     cfg, search = _cfg()
     monkeypatch.setattr("taic.llm.load_config", lambda *_a, **_k: (cfg, search))

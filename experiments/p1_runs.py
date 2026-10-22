@@ -7,8 +7,8 @@
   contract limited the search, one of these would beat ``fa_flash``;
 * ``fa_flash_prof``  ``fa_flash`` with ``search.profile_poor``: does feeding Instruments findings (register spills, code size, GPU idle) to the model help?
 * ``fa_flash_cnt``  ``fa_flash_prof`` recorded with a GPU-counter template (limiters, occupancy, ...) and with the profiler skill in the system prompt: do the counters add anything?
-* ``fa_paper`` / ``gemm_paper`` / ``conv2d_paper``  the paper's regime: 15 USD per run, patience 12, up to 40 rounds, with ``profile_poor``, ``plan_mix`` and
-  ``init_samples=3`` (Section 3.3); compare with the same kernels at the default search settings to see what the search aids buy (the budget is the same);
+* ``fa_paper`` / ``gemm_paper`` / ``conv2d_paper``  the paper's regime: 15 USD per run, patience 12, up to 40 rounds, with ``profile_poor``;
+  the live search is one session a round, so ``init_samples`` stays 1;
 * ``mamba2``    the phase-2 Mamba-2 chunk-scan kernel.
 
     uv run python -m experiments.p1_runs --runs fa_flash,fa_pro --out runs/apple-m4-max/p1
@@ -43,7 +43,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # PAPER_REGIME 只挂在 fa_paper / gemm_paper / conv2d_paper。fa_flash_prof 和 fa_flash_cnt 的 search 字典都只有 profile_poor。
 # fa_flash_cnt 多出来的 GPU 计数器不在这张表里，启动时要另设 TCENV_XCTRACE_TEMPLATE。
 # 没有 search 字典的条目沿用默认预设。max_rounds=40 会盖过预设里的轮数上限；套件不会逐题传入这组键。
-PAPER_REGIME = dict(profile_poor=True, plan_mix=True, init_samples=3, patience=12, max_rounds=40)
+# init_samples 必须是 1：当前搜索一场一轮，_guard_shape 会拒绝别的值。
+PAPER_REGIME = dict(profile_poor=True, patience=12, max_rounds=40)
 
 # 键是 --runs 的名字，也是目录名。task 才是交给搜索的算子；@ 后面是另一套启动契约。预算字段全是论文的 $15。
 # fa_pro 改的是模型名；mamba2_bf16 把小数定成 bf16，其余条目用调用时的 dtype（默认 fp16）。

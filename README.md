@@ -62,7 +62,7 @@ at cv 16% (quiet runs: 0.5-1.5%) displaced a better kernel. Therefore:
   (`experiments/dispatch_ab.py`, `runs/dispatch_ab/`); the serial time is still reported as `candidate_serial_us`;
 * a benchmark whose per-repetition cv exceeds 5% on the candidate or a library baseline is repeated (up to 3 attempts, the quietest is kept, `benchmark.noisy` flags the rest). `candidate_serial` does not trigger the repeat;
 * a candidate replaces the best only if it is faster by `min_improvement` *and* by `noise_z` standard errors of the two speedups;
-* at the end, the best and up to `confirm_top - 1` candidates tied with it within noise are re-measured; the fastest becomes the result
+* at the end, the best and up to `confirm_top - 1` candidates tied with it within noise are re-measured on the same inputs. The search seed stays the result unless another complete remeasure clears the noise gate
   (`result.json: confirmations`).
 
 ## What a candidate has to survive
@@ -105,7 +105,7 @@ Without a `/* taic-launch */` block, the grid and the threads per group are the 
 The paper caps every search at a fixed USD amount (arXiv 2609.36800v1, `docs/2609.36800v1.pdf`): Section 4.3 and Table 1, "a maximum API
 budget of $15 per run for convolution, matrix multiplication, and FlashAttention, and $1 for the simpler elementwise SwiGLU kernel"; Section 4.4
 and Figure 5, "under a $15 budget" for the ten published kernels. The search repeats until the budget is exhausted (Section 3.3); the gate is
-checked before each LLM request, so a request already in flight can finish a little above the cap. This repository does the same, and
+checked before each session, so a session already in flight can finish a little above the cap. `relay_budget_usd` only sizes that session's output-token guide; input and cache can spend more, and that extra is charged to the run budget instead of ending the search. This repository does the same for the run cap, and
 **the default budget is $15 per run** (`SearchConfig`, `taic.cli run`, `run_suite`, `repeatability`, `p1_runs`). The 12-kernel grid of Figure 4
 states no cap, so it uses $15 too; the repeatability experiment (Table 1) gives SwiGLU $1, as the paper does.
 

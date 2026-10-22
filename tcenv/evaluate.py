@@ -23,6 +23,7 @@ import json
 import os
 import re
 import secrets
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -156,13 +157,18 @@ def _fast_bench_path(task_name: str, dtype: str, size: str) -> Path:
     return root / f"{safe}.json"
 
 
-def _remembered_baseline(task_name: str, dtype: str, size: str) -> str | None:
+def _remembered_baseline(task_name: str, dtype: str, size: str, target_id: str | None = None) -> str | None:
     path = _fast_bench_path(task_name, dtype, size)
     try:
         doc = json.loads(path.read_text())
     except (OSError, ValueError):
         return None
-    name = doc.get("best_baseline") if isinstance(doc, dict) else None
+    if not isinstance(doc, dict):
+        return None
+    recorded = doc.get("target_id")
+    if target_id and isinstance(recorded, str) and recorded != target_id:
+        return None
+    name = doc.get("best_baseline")
     return name if isinstance(name, str) and name else None
 
 
@@ -178,10 +184,10 @@ def selected_bench_names(baseline_names: list[str], *, fast_bench: bool, remembe
     return names
 
 
-def _remember_baseline(task_name: str, dtype: str, size: str, name: str) -> None:
+def _remember_baseline(task_name: str, dtype: str, size: str, name: str, *, target_id: str) -> None:
     path = _fast_bench_path(task_name, dtype, size)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"best_baseline": name}))
+    path.write_text(json.dumps({"best_baseline": name, "target_id": target_id}))
 
 
 def _evaluate_in_process(
@@ -324,11 +330,11 @@ def _evaluate_in_process(
     rep.stage = "abi"
     _note_stage(stage="abi", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
     if spec is None:
-        problems = abi_mod.check_abi(contract, kernel, max_tg_memory=dev_info["max_threadgroup_memory_bytes"])
+        problems = abi_mod.check_abi(contract, kernel, max_tg_memory=dev_info["max_threadgroup_memory_bytes"], target_id=target_id)
     else:
         problems = abi_mod.check_pipeline(
             contract, {k.name: k for k in kernels}, spec, max_tg_memory=dev_info["max_threadgroup_memory_bytes"],
-            max_buffer_index=profile.limits.max_buffer_index,
+            max_buffer_index=profile.limits.max_buffer_index, target_id=target_id,
         )
     # 插桩会把静态线程组内存报成大约两倍。超过设备上限后再启动，Metal 在
     # validateComputeFunctionArguments 里断言并 SIGABRT，子进程变成 crash。
@@ -497,7 +503,7 @@ def _evaluate_in_process(
         calib = get_calibration(target_id=target_id)
         runners: dict[str, Any] = {}
         base_runners = build_runners(task, data0.rounded)
-        only = _remembered_baseline(task_name, dtype, size) if fast_bench else None
+        only = _remembered_baseline(task_name, dtype, size, target_id) if fast_bench else None
         for name in selected_bench_names(list(base_runners), fast_bench=fast_bench, remembered=only):
             if name == "candidate":
                 runners[name] = cand_run
@@ -545,7 +551,7 @@ def _evaluate_in_process(
     rep.candidate_us = cand.median_us
     rep.benchmark = {
         "candidate": cand.to_json(),
-        "candidate_gpu_us_median": (sorted(cand_gpu)[len(cand_gpu) // 2] * 1e6) if cand_gpu else None,
+        "candidate_gpu_us_median": (statistics.median(cand_gpu) * 1e6) if cand_gpu else None,
         "baselines": {n: stats[n].to_json() for n in stats if n not in OWN_RUNNERS},
         "candidate_serial_us": stats["candidate_serial"].median_us if "candidate_serial" in stats else None,
         "dispatch": dispatch_note,
@@ -563,7 +569,7 @@ def _evaluate_in_process(
         rep.speedup = rep.speedups[best]
         rep.benchmark["best_baseline"] = best
         if fast_bench:
-            _remember_baseline(task_name, dtype, size, best)
+            _remember_baseline(task_name, dtype, size, best, target_id=target_id)
     rep.roofline = roofline(task, cand.median_s, calib)
     try:  # compiler baseline (Triton -> Metal through triton-msl), when it was measured for this task
         from .triton_baseline import estimate, load_cached
@@ -587,6 +593,7 @@ def _evaluate_in_process(
 
 # 一次 command buffer 从提交到完成，心跳 B 最多停这么久。再长父进程就 SIGKILL。合法单核是毫秒级。
 LAUNCH_DEADLINE_S = 2.0  # a single GPU launch of a legitimate candidate takes milliseconds
+COMPILE_DEADLINE_S = 90.0  # a stuck Metal frontend must not hold the shared GPU lock for the whole worker timeout
 # 流水线仍是一条 command buffer，里面每一段各派发一次。每段给单核同样的 2 秒，总和封顶，避免 32 段把显示器占满一分钟。
 # 超过这个数仍然 SIGKILL，并且仍然计入 max_hangs：杀了之后分不出「还会自己结束」和「死循环」。
 PIPELINE_DEADLINE_CAP_S = 8.0
@@ -685,10 +692,11 @@ def supervise(
     poll_s: float = 0.1,
     stage_path: Path | None = None,
     progress_path: Path | None = None,
+    compile_deadline_s: float = COMPILE_DEADLINE_S,
 ) -> str:
-    """Wait for ``proc``; SIGKILL it when one GPU launch has been in flight (heartbeat "B") for longer than
-    ``launch_deadline_s`` ("launch") or the run took longer than ``timeout`` ("timeout"). Time spent waiting for the
-    GPU lock (heartbeat "W", see tcenv.gpulock) does not count toward ``timeout``. Returns "" if it exited by itself."""
+    """Wait for ``proc``; SIGKILL its process group when compile (heartbeat "C") exceeds ``compile_deadline_s``,
+    one GPU launch (heartbeat "B") exceeds ``launch_deadline_s``, or the run exceeds ``timeout``. Time spent waiting
+    for the GPU lock (heartbeat "W") does not count toward ``timeout``. Returns "" if it exited by itself."""
     t0 = last = time.perf_counter()
     paused = 0.0
     seen: list = [None]
@@ -703,14 +711,17 @@ def supervise(
             paused += now - last
         last = now
         reason = ""
-        # B 的期限对的是心跳里的墙上时间，并且先于整段 timeout。一次启动卡死要单独记成 launch。
-        if hb and hb[0] == "B" and time.time() - hb[1] > launch_deadline_s:
+        # C 是编译。B 是一次 command buffer。都按心跳里的墙上时间，并且先于整段 timeout。
+        if hb and hb[0] == "C" and time.time() - hb[1] > compile_deadline_s:
+            reason = "compile"
+        elif hb and hb[0] == "B" and time.time() - hb[1] > launch_deadline_s:
             reason = "launch"
         elif now - t0 - paused > timeout:
             reason = "timeout"
         if reason:
-            proc.kill()
-            proc.wait()
+            from .children import kill_group
+
+            kill_group(proc)
             if progress_path is not None and stage_path is not None:
                 _sync_progress(stage_path, hb_path, progress_path, [None])
             return reason
@@ -766,25 +777,33 @@ def _run_worker(
             req["require_contract_launch"] = True
         req_path = tdp / "request.json"
         write_json_atomic(req_path, req)
-        env = env_with_validation() if validation else dict(os.environ)
+        from .children import forget, kill_group, popen_group, scrubbed_env
+
+        env = env_with_validation(scrubbed_env()) if validation else scrubbed_env()
         env["PYTHONPATH"] = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
         env.setdefault("TORCHINDUCTOR_COMPILE_THREADS", "1")  # no compile-worker pool that could outlive a SIGKILLed worker
         base = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=seed)
         t0 = time.perf_counter()
         killed = ""
         with open(err_path, "w") as err_f, open(tdp / "stdout.txt", "w") as out_f:
-            proc = subprocess.Popen(
+            proc = popen_group(
                 [sys.executable, "-m", worker_module, str(req_path)], stdout=out_f, stderr=err_f, env=env, cwd=str(REPO_ROOT)
             )
             from .gpulock import released
 
-            # 父进程等待时先放下自己的 GPU 锁，否则子进程的独占 bench 永远拿不到。
-            with released():  # this process only waits; a worker needs the lock itself
-                reason = supervise(
-                    proc, hb_path, launch_deadline_s=launch_deadline_s, timeout=timeout,
-                    stage_path=stage_path, progress_path=progress_path,
-                )
-            if reason == "launch":
+            try:
+                # 父进程等待时先放下自己的 GPU 锁，否则子进程的独占 bench 永远拿不到。
+                with released():  # this process only waits; a worker needs the lock itself
+                    reason = supervise(
+                        proc, hb_path, launch_deadline_s=launch_deadline_s, timeout=timeout,
+                        stage_path=stage_path, progress_path=progress_path,
+                    )
+            finally:
+                kill_group(proc)
+                forget(proc)
+            if reason == "compile":
+                killed = f"Metal compilation ran for more than {COMPILE_DEADLINE_S:.0f}s; the worker was killed"
+            elif reason == "launch":
                 if launch_deadline_s > LAUNCH_DEADLINE_S:
                     killed = (
                         f"a pipeline command buffer ran for more than {launch_deadline_s:.0f}s "

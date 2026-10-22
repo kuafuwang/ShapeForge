@@ -30,11 +30,16 @@ _KERNEL = re.compile(r"\bkernel\s+void\s+(\w+)\b")
 _USAGE = re.compile(r"([A-Za-z_]+)=(-?\d+(?:\.\d+)?)")
 _NAME_PART = re.compile(r"[^A-Za-z0-9._-]+")
 # 一场会话的墙钟。hmz 的回合预算先到；这个秒数只在进程不退出时杀掉它。
-PROCESS_TIMEOUT_S = 25 * 60 + 3 * 60 + 2 * 60 + 60
+def process_timeout_s(turn_minutes: int) -> float:
+    """Kill hmz one minute after its own flow budget, so a longer turn still gets the wrap."""
+    return (int(turn_minutes) + WRAP_MINUTES + FLOW_SLACK_MINUTES + 1) * 60
+
+
 _PEER_HEADER = "本任务前序避坑提示（队友交接，仅限本运行参考；凡未附探针文件名与实测数字的硬件/算法上限断言，一律按未验证处理，鼓励你写探针翻案）："
 WRAP_OUTPUT_TOKENS = 4000
 WRAP_MINUTES = 3
 FLOW_SLACK_MINUTES = 2
+PROCESS_TIMEOUT_S = process_timeout_s(25)
 
 
 class AgentError(LLMError):
@@ -163,7 +168,7 @@ def load_prices(path: Path, provider: str, model: str) -> Prices:
         input=float(found.get("input", output)),
         output=output,
         cache_read=float(found.get("cacheRead", found.get("input", output))),
-        cache_write=float(found.get("cacheWrite", 0) or 0),
+        cache_write=float(found.get("cacheWrite", found.get("input", 0)) or 0),
     )
 
 
@@ -228,6 +233,12 @@ def _shell(value: str) -> str:
     return shlex.quote(str(value))
 
 
+def _self_check_dir(brief: SessionBrief) -> Path:
+    """Hang log outside the directory the agent is allowed to write, so deleting the work copy does not reset it."""
+    work = _work_path(brief)
+    return work.parent.parent / "session_checks" / work.name
+
+
 def _work_path(brief: SessionBrief) -> Path:
     if brief.work_dir:
         return Path(brief.work_dir).resolve()
@@ -248,6 +259,7 @@ def _check_command(brief: SessionBrief, mode: str) -> str:
         "--target", _shell(brief.target_id),
     ]
     if mode == "timed":
+        parts.extend(["--self-check-dir", _shell(str(_self_check_dir(brief)))])
         parts.append("--reps")
         parts.append(str(int(brief.reps)))
         parts.append("--min-improvement")
@@ -459,7 +471,7 @@ def run_kernel_agent(
     turn_output_tokens: int,
     turn_minutes: int,
     hmz: str | None = None,
-    timeout_s: float = PROCESS_TIMEOUT_S,
+    timeout_s: float | None = None,
 ) -> AgentResult:
     """Run one hmz session. A timeout still returns the kernel file; it does not raise.
 
@@ -482,6 +494,8 @@ def run_kernel_agent(
         (work / "report.json").write_text(brief.seed_report_json)
     stage_guidance(work, brief)
     (work / "TASK.md").write_text(render_contract(brief))
+    if timeout_s is None:
+        timeout_s = process_timeout_s(turn_minutes)
     flow_minutes = int(turn_minutes) + WRAP_MINUTES + FLOW_SLACK_MINUTES
     argv = [
         binary, "exec", "-f", str(FLOW),
@@ -498,22 +512,28 @@ def run_kernel_agent(
     status = "ok"
     error = ""
     try:
-        proc = subprocess.Popen(
+        from tcenv.children import forget, kill_group, popen_group
+
+        proc = popen_group(
             argv, cwd=work, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            start_new_session=True, env=os.environ.copy(),
         )
     except OSError as exc:
         raise AgentError(f"could not start hmz: {exc}") from exc
     try:
-        stdout, stderr = proc.communicate(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            proc.kill()
-        stdout, stderr = proc.communicate()
-        status = "timeout"
-        error = f"hmz did not finish within {timeout_s:.0f}s"
+            stdout, stderr = proc.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            kill_group(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                kill_group(proc)
+                stdout, stderr = "", ""
+            status = "timeout"
+            error = f"hmz did not finish within {timeout_s:.0f}s"
+    finally:
+        kill_group(proc)
+        forget(proc)
     stream = (stdout or "") + "\n" + (stderr or "")
     spent, saw_result = spend_from_stream(stream)
     cost = dollars_for(spent, prices) if saw_result else None
@@ -526,7 +546,9 @@ def run_kernel_agent(
     from .agent_feedback import read_feedback_text
 
     feedback, _over = read_feedback_text(work / "FEEDBACK.md")
-    checks, timeouts, gpu_s = _self_check_summary(work)
+    protected = _self_check_summary(_self_check_dir(brief))
+    beside = _self_check_summary(work)
+    checks, timeouts, gpu_s = protected[0] + beside[0], protected[1] + beside[1], protected[2] + beside[2]
     if status != "timeout" and proc.returncode not in (0, None):
         status = "failed"
         error = (stderr or stdout or "").strip()[-400:]

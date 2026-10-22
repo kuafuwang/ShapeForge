@@ -6,7 +6,7 @@ import asyncio
 
 from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator, speedup_se
-from taic.policy import candidate_eligible, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best
+from taic.policy import batches_agree, candidate_eligible, choose_confirmed, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best
 from taic.resume import _replay
 from tcenv.evaluate import EvalReport
 
@@ -151,3 +151,18 @@ def test_confirm_pool_includes_a_tie_and_patience_resets_only_on_a_new_seed():
     assert next_stagnant(True, 3) == 0
     assert patience_exhausted(3, 4) is False
     assert patience_exhausted(4, 4) is True
+
+
+def test_confirmation_keeps_the_search_best_inside_the_input_batch_floor():
+    quiet = {"median": 1.0, "se": 0.0, "search_best": True}
+    nudge = {"median": 1.01, "se": 0.0, "search_best": False}
+    clear = {"median": 1.20, "se": 0.0, "search_best": False}
+    assert choose_confirmed([quiet, nudge], min_improvement=1.005, noise_z=2.0) is quiet
+    assert choose_confirmed([quiet, clear], min_improvement=1.005, noise_z=2.0) is clear
+    assert choose_confirmed([nudge, clear], min_improvement=1.005, noise_z=2.0) is clear
+    assert choose_confirmed(
+        [{"median": 1.0, "se": 0.0, "search_best": False}, {"median": 1.01, "se": 0.0, "search_best": False}],
+        min_improvement=1.005, noise_z=2.0,
+    ) is None
+    assert batches_agree([1.10, 1.40, 1.20]) is False
+    assert batches_agree([1.20, 1.21, 1.19]) is True

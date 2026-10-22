@@ -34,6 +34,8 @@ def test_a_noisy_or_high_cv_measurement_is_labelled_uncertain():
     assert timing_is_uncertain({"benchmark": {"noisy": True, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"}}) is True
     loud = {"benchmark": {"noisy": False, "candidate": {"cv": QUIET_CV + 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"}}
     assert timing_is_uncertain(loud) is True
+    one = {"benchmark": {"noisy": False, "candidate": {"cv": 0.0, "reps": 1}, "baselines": {"mlx": {"cv": 0.0, "reps": 1}}, "best_baseline": "mlx"}}
+    assert timing_is_uncertain(one) is True
 
 
 def test_a_baseline_under_the_bound_is_not_called_a_physical_optimum_or_winograd():

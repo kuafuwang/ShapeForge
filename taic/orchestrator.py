@@ -42,11 +42,10 @@ from . import control, prompts
 from .artifacts import LEDGER_SCHEMA_VERSION, RESULT_SCHEMA_VERSION, STATE_SCHEMA_VERSION
 from .feedback_extra import abi_signature, at_roofline, failure_phrase, status_lines, target_note, threadgroup_limit_note
 from .llm import LLM, BudgetExhausted, CostLedger, LLMConfig, LLMError, SearchConfig, Transcript
-from .policy import candidate_eligible, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain
-from .committees import committees_record, default_committees, handoff_for, order_committees, prefix_handoff
-from .parse import extract_metal, parse_plans
+from .policy import candidate_eligible, choose_confirmed, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain
+from .committees import committees_record, default_committees, handoff_for, order_committees
+from .parse import parse_plans
 from .symptom import bound_of
-from .tools import LOOKUP_TOOL, QUICK_CHECK_TOOL, SkillIndex, make_handlers
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FEEDBACK_CHARS = 6000
@@ -142,14 +141,6 @@ def check_recheck_record(doc: dict) -> list[str]:
     if doc.get("human_permission_required") is False:
         problems.append("the retest command requires a person to allow it")
     return problems
-
-
-# 规划回复抽不出方案、或规划请求本身失败时，仍用这三套通用改法把这一轮补丁做完，搜索不因此停。
-FALLBACK_PLANS = [
-    {"title": "vectorized 16-byte memory access", "change": "Make every thread load/store 16 bytes at a time (uint4 / half4 pairs) over consecutive addresses and unroll so that several loads are in flight before use.", "expected_gain": ""},
-    {"title": "single pass over global memory with SIMD-group reductions", "change": "Keep data in registers between phases, reduce with simd_sum/simd_max first and exchange only one value per SIMD group through threadgroup memory.", "expected_gain": ""},
-    {"title": "use simdgroup_matrix for matrix products", "change": "If the kernel contains a matrix product, compute it with simdgroup_matrix 8x8 tiles (half inputs, float accumulators) with register blocking; otherwise restructure the main loop to reduce instruction count.", "expected_gain": ""},
-]
 
 
 # GPU 挂死或 worker 连续崩溃时立刻结束整次搜索。捕获之后不再开新的评测；默认一次 timeout 就够触发它。
@@ -297,10 +288,13 @@ def profiler_evidence_text(body: str) -> str:
 
 
 def _notes_for_next(outer: str, notes: str, limit: int = 4000) -> str:
-    """The next session's NOTES block. The outer measurement is the first line, written by the search, not by the agent."""
+    """The next session's NOTES block. The outer measurement is the first line, written by the search, not by the agent.
+
+    Notes are appended, so a truncated file keeps the newest lines.
+    """
     body = (notes or "").strip()
     if len(body) > limit:
-        body = body[:limit] + "\n…"
+        body = "…\n" + body[-limit:]
     return f"外层实测：{outer}\n{body}".strip()
 
 
@@ -354,7 +348,7 @@ class Orchestrator:
     ) -> None:
         """``resuming``: the directory already holds a run (see ``taic.resume``); nothing in it is rewritten until ``restore()`` has loaded it.
         ``committees``: exactly first and second. Omitted means two committees that copy ``llm_cfg``. There is no single-conversation mode."""
-        self.task = get_task(task_name, dtype, size)
+        cached = get_task(task_name, dtype, size)
         from dataclasses import replace
         from tcenv.target import TargetError, require_active
 
@@ -363,7 +357,8 @@ class Orchestrator:
         except TargetError as e:
             raise RunStartError(str(e)) from e
         self.target_id = self.target.id
-        self.task.contract = replace(self.task.contract, gpu=self.target.display_name)
+        # get_task 有缓存。replace 出一份新的 Task，不改缓存里那份的 contract。
+        self.task = replace(cached, contract=replace(cached.contract, gpu=self.target.display_name))
         self.task_name, self.dtype, self.size = task_name, dtype, size
         self.cfg, self.search = llm_cfg, search
         try:
@@ -408,8 +403,7 @@ class Orchestrator:
         self.llm = LLM(llm_cfg, self.ledger, Transcript(self.run_dir / "transcript.jsonl"), client=client, max_concurrency=self._llm_slots)
         self._llms = [self.llm]
         self.evaluate_fn = evaluate_fn or evaluate
-        self.index = SkillIndex("msl_reference", extra=prompts.WIKI_DOCS)
-        # 同一时刻只允许一次 GPU 评测、quick_check 或 Instruments。两份内核抢同一块卡会把计时测脏，挂死时也不能再有内核在跑。
+        # 同一时刻只允许一次 GPU 评测或 Instruments。两份内核抢同一块卡会把计时测脏，挂死时也不能再有内核在跑。
         self.gpu_lock = asyncio.Lock()
         # 升种子要等复查回来再写。锁盖住比较和写入，另一条分支不能对着旧种子同时通过。
         self._promote_lock = asyncio.Lock()
@@ -917,217 +911,6 @@ class Orchestrator:
         folder.mkdir(exist_ok=True)
         (folder / f"{cand.label}.json").write_text(text)
 
-    # quick_check 用的轻量评测：编译、ABI、安全、正确性，不跑基准，所以模型不能靠它在噪声里挑「看起来更快」的版本。与完整评测共用 gpu_lock 和 hangs；这里的 timeout 只记数，停搜发生在下一次 _eval 进锁时。
-    # 工具调用没有稳定的 call id，所以这里仍把 seed 留空，由评测器另抽，并记在它返回的报告里。不能说这次自查可以按 run_seed 重放。
-    async def _quick(self, source: str) -> str:
-        """quick_check tool: compile + ABI + safety + correctness, no benchmark. Serialized on the GPU like everything else."""
-        async with self.gpu_lock:
-            # 挂死熔断已经触发就拒绝再上 GPU，避免工具回合在搜索该停之后还启动内核。
-            if self.hangs >= self.search.max_hangs:
-                return "error: evaluation environment disabled after a GPU hang"
-            self._publish_state("evaluate", inflight="quick_check")
-            rep = await asyncio.to_thread(
-                self.evaluate_fn, self.task_name, self.dtype, self.size, source, mode="quick", seed=None, reps=3,
-                progress_path=self.run_dir / "eval_progress.json",
-                **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
-                target_id=self.target_id,
-            )
-            # 记入与 _eval 相同的 hangs。本函数不抛 StopRun，这段反馈仍会交回模型。
-            if rep.status == "timeout":
-                self.hangs += 1
-            elif rep.status == "crash":
-                self.crashes_in_a_row += 1
-            # 记数之后立刻落盘。进程若死在下一次完整评测之前，续跑仍能看见这次挂死。
-            self._publish_state("evaluate", inflight=None)
-        return format_feedback(rep)[:FEEDBACK_CHARS]
-
-    # ------------------------------------------------------------------ generation with repair
-    # 一个模型回合。美元检查在 LLM.chat 入口的 CostLedger.check：已花费达到预算就抛 BudgetExhausted，本回合发不出去。已经在飞的其它分支可能略超，闸门不预扣。
-    async def _ask(self, messages: list[dict], label: str, *, start_turn: int = 0, pending: list[dict] | None = None, quick_used: int = 0, reasoning_effort: str | None = None) -> tuple[str, list[dict], str | None]:
-        """One model turn (with tools when enabled). Returns (reply text, conversation including the reply, finish_reason).
-        ``start_turn`` / ``pending`` / ``quick_used`` continue a tool conversation interrupted by a restart (see ``chat_with_tools``)."""
-        self._publish_state("llm")
-        if self.cfg.use_tools:
-            # 续跑时 quick_used 是中断前已经用掉的次数，这里只把剩余额度交给这一段对话，避免熔断被绕过。
-            handlers = make_handlers(self.index, self._quick, max(0, self.search.max_quick_checks - quick_used))
-            reply, msgs = await self.llm.chat_with_tools(messages, [LOOKUP_TOOL, QUICK_CHECK_TOOL], handlers, label=label, start_turn=start_turn, pending=pending, reasoning_effort=reasoning_effort)
-            return reply.text(), msgs, reply.finish_reason
-        reply = await self.llm.chat(messages, label=label, reasoning_effort=reasoning_effort)
-        return reply.text(), messages + [reply.message], reply.finish_reason
-
-    async def _agent_turn(self, messages: list[dict], tag: str) -> tuple[str | None, str]:
-        """One pi turn through hmz. The file it leaves is the kernel. ``finish`` is ``stop`` so a length retry does not also run."""
-        from .kernel_agent import AgentError, run_kernel_agent
-        from .llm import REPO_ROOT
-
-        self.ledger.check()
-        member = next(c.members[0] for c in self.committees if c.name == self._committee_name)
-        remaining = self.ledger.remaining
-        share = getattr(self, "_pi_budget_cap", None)
-        if remaining is None:
-            budget_cap = 0.0 if share is None else share
-        elif share is None:
-            budget_cap = remaining
-        else:
-            budget_cap = min(remaining, share)
-        try:
-            source, cost, _tail = await asyncio.to_thread(
-                run_kernel_agent,
-                messages,
-                work=self.run_dir / "agent_work" / tag.replace("/", "_"),
-                repo=REPO_ROOT,
-                task_name=self.task_name,
-                dtype=self.dtype,
-                size=self.size,
-                kernel_name=self.task.contract.kernel_name,
-                provider=member.provider,
-                model=member.model,
-                budget_usd=budget_cap,
-            )
-        except AgentError as exc:
-            self.log(f"  [{tag}] pi via hmz failed: {exc}")
-            if "did not finish within" in str(exc):
-                # 超时只杀掉 hmz 自己时，它拉起的评测子进程还会占着显卡。进程组已经杀掉；这次也计入挂死，旁边的分支不再提交内核。
-                self.hangs += 1
-                self._publish_state("llm", inflight=None)
-            self.llm.transcript.log({
-                "event": "agent", "label": tag, "harness": "pi", "provider": member.provider, "model": member.model,
-                "cost_usd": None, "had_kernel": False, "error": str(exc)[:180],
-            })
-            raise
-        if cost:
-            self.ledger.charge(cost, tag)
-        self.log(f"  [{tag}] pi via hmz ({member.provider}/{member.model})" + ("" if source else "; kernel.metal has no kernel"))
-        self.llm.transcript.log({
-            "event": "agent", "label": tag, "harness": "pi", "provider": member.provider, "model": member.model,
-            "cost_usd": cost, "had_kernel": bool(source),
-        })
-        return source, "stop"
-
-    # 从一轮提示写出内核，并最多再修补 max_repair_tries 次。抽不出 Metal 只追问、不产生候选；评测不合格就把失败反馈塞回。完整评测一旦 timeout，_eval 会先停掉整次搜索；若 max_hangs 尚未触达，这颗内核不再继续修补。
-    async def _develop(self, messages: list[dict], label: str, *, plan: str | None = None, resume: Any = None) -> Candidate | None:
-        """Generate a kernel from ``messages`` and repair it for up to ``max_repair_tries`` turns.
-        Returns the first eligible candidate (or None). Failed attempts are still recorded as candidates.
-
-        ``resume`` (a ``taic.resume.BranchResume``) continues a conversation that a restart interrupted: ``resume.messages`` is the conversation as it stood,
-        ``resume.attempt`` the repair attempt it was in, and ``resume.reply_text`` / ``resume.pending`` say how far the current attempt had got."""
-        name = self.task.contract.kernel_name
-        last_abi = None
-        patch_effort = self.cfg.patch_reasoning_effort
-        for attempt in range(resume.attempt if resume is not None else 0, self.search.max_repair_tries + 1):
-            tag = label if attempt == 0 else f"{label}.fix{attempt}"
-            retried = False
-            ask_effort = patch_effort
-            while True:
-                if self.search.kernel_agent == "pi":
-                    # 续跑记下的工具调用不接着打。编程代理按这些消息重写 kernel.metal。
-                    resume = None
-                    text, finish = await self._agent_turn(messages, tag)
-                    source = text or None
-                    break
-                if resume is not None and attempt == resume.attempt and not retried:
-                    r, resume = resume, None
-                    # 模型已经答过、但答案还没评测：沿用记下的回复，避免再花一次请求得到另一颗内核。
-                    if r.reply_text is not None:  # the model had answered; the answer was not evaluated yet
-                        text, messages, finish = r.reply_text, r.messages, None
-                    else:
-                        text, messages, finish = await self._ask(r.messages, tag, start_turn=r.turn, pending=r.pending or None, quick_used=r.quick_used, reasoning_effort=ask_effort)
-                else:
-                    text, messages, finish = await self._ask(messages, tag, reasoning_effort=ask_effort)
-                source = extract_metal(text, name)
-                # 截断且没有内核：不占用这一次修补。丢掉回传的思考再问一次。重试的推理强度默认降到 low。
-                if source is None and finish == "length" and self.cfg.truncation_retry and not retried:
-                    messages = _retry_without_reasoning(messages)
-                    retried = True
-                    retry_effort = self.cfg.truncation_retry_effort
-                    ask_effort = patch_effort if retry_effort in (None, "same") else retry_effort
-                    self.log(f"  [{tag}] truncated with no kernel; retrying once without the echoed reasoning (effort {ask_effort or 'same'})")
-                    continue
-                break
-            # 没有声明 kernel void <kernel_name> 的代码块不算写出内核。只追问，不进入评测。
-            if source is None:
-                self._branch_fail[label] = "no code: truncated" if finish == "length" else "no code: no kernel block"
-                reminder = nudge_user(name) if self.search.kernel_agent != "pi" else f"`kernel.metal` did not contain `kernel void {name}`. Write the complete kernel into that file."
-                messages = messages + [{"role": "user", "content": reminder}]
-                self.log(f"  [{tag}] no kernel in the reply" if self.search.kernel_agent != "pi" else f"  [{tag}] kernel.metal did not declare {name}")
-                continue
-            cand = await self._eval(source, tag, plan=plan)
-            if cand.eligible:
-                return cand
-            # 交回和种子相同的文件：这一支不合格，不再修补。修补会逼模型再交一版来凑过检查。
-            if cand.report.status == "unchanged":
-                self._branch_fail[label] = "unchanged: identical to the current seed"
-                return None
-            # 超时不再修补：挂死的内核继续改只会再占 GPU。默认 max_hangs 下 _eval 已经抛出 StopRun，走不到这里。
-            if cand.report.status in ("timeout",):
-                return None
-            self._branch_fail[label] = failure_phrase(cand.report.status, cand.report.message)
-            # 同一句 ABI 错误连着出现两次就停掉这一支，不再把剩下的修补次数花在同一个超限上。
-            if self.search.abi_guard and cand.report.status == "abi_error":
-                sig = abi_signature(cand.report.message)
-                if last_abi is not None and sig == last_abi:
-                    self.log(f"  [{tag}] the same ABI failure repeated; this branch stops")
-                    return None
-                last_abi = sig
-            else:
-                last_abi = None
-            # 反馈被截到 FEEDBACK_CHARS。模型看不见后半段，修补可能漏掉排在后面的违规。
-            fb = format_feedback(cand.report)[:FEEDBACK_CHARS]
-            if self.search.abi_guard:
-                note = threadgroup_limit_note(cand.report.message)
-                if note:
-                    fb += "\n\n" + note
-            # 这一支的修补留在开出它的委员会上：同一条对话里的短反馈，不换委员会，也不另起交接句。
-            messages = messages + [{"role": "user", "content": prompts.repair_user(fb, attempt + 1, self.search.max_repair_tries)}]
-        return None
-
-    def _history_block(self) -> str | None:
-        """Structured ledger text when ``plan_ledger`` is on. ``None`` keeps the 24 plain history lines."""
-        if not self.search.plan_ledger:
-            return None
-        from .plan_ledger import format_ledger_for_planner, nodes_from_trace
-
-        nodes = nodes_from_trace(self.trace, self.history)
-        return format_ledger_for_planner(nodes)
-
-    def _diverse_parent(self):
-        """An eligible kernel whose static features differ from the seed, or None."""
-        if not self.search.diversity_archive or self.best is None:
-            return None
-        from .policy import select_diverse_parent
-
-        return select_diverse_parent(self.candidates, self.best, task_name=self.task_name)
-
-    # ------------------------------------------------------------------ planning
-    # 诊断当前种子的瓶颈并给出 K（search.branches）份互不相同的改法。规划请求失败或 JSON 抽不出方案时，用 FALLBACK_PLANS 顶上，这一轮搜索不因此结束。
-    async def _plan(self, seed: Candidate, rnd: int, evidence: str = "", status: str = "") -> list[dict]:
-        self._publish_state("plan")
-        k = self.search.branches
-        fb = format_feedback(seed.report)[:FEEDBACK_CHARS] + evidence
-        # 用报告里的 roofline.bound，不从反馈正文里猜。未知时这两次调用都不改原文。同一 bound 下各轮规划请求的系统提示相同。
-        bound = bound_of(seed.report)
-        plan = prompts.plan_user(self.task, seed.source, fb, self.history, k, mixed=self.search.plan_mix, status=status, bound=bound, history_block=self._history_block())
-        msgs = [
-            {"role": "system", "content": prompts.planning_system(self.system, bound)},
-            {"role": "user", "content": prefix_handoff(self._handoff(rnd), plan)},
-        ]
-        for attempt in range(2):
-            try:
-                reply = await self.llm.chat(msgs, label=f"r{rnd}.plan{'' if attempt == 0 else '.retry'}", reasoning_effort=self.cfg.plan_reasoning_effort)
-            except LLMError as e:
-                # 规划本身失败不杀搜索，退回通用方案，这一轮补丁仍会做。
-                self.log(f"  planner request failed ({str(e)[:160]}); using generic plans")
-                return FALLBACK_PLANS[:k]
-            analysis, plans = parse_plans(reply.text(), k)
-            # plans 为空即抽失败：再要一次纯 JSON。两次都不行就用 FALLBACK_PLANS。
-            if plans:
-                self.log(f"  plan r{rnd}: {analysis[:160]}")
-                for p in plans:
-                    self.log(f"    - {p['title']}")
-                return plans
-            msgs = msgs + [reply.message, {"role": "user", "content": 'Reply with the JSON object only, in a ```json block, with a non-empty "plans" list.'}]
-        self.log("  planner returned no parsable plan; using generic plans")
-        return FALLBACK_PLANS[:k]
 
     # ------------------------------------------------------------------ main loop
     # 整次运行的外壳。预算耗尽、GPU 挂死或模型错误在这里收成 stop_reason。挂死时 hangs 已达上限，_confirm 会跳过；预算耗尽仍会复测已有种子，因为复测不再发模型请求。
@@ -1162,11 +945,45 @@ class Orchestrator:
             res.stop_reason = f"llm_error: {e}"
             self.log(f"== stop: {e}")
         self._search_seed = self.best  # the kernel the search would mutate next; confirmation may publish a different one
+        while self._control_extends(res):
+            self.log("-- control file extended this run; continuing before confirmation")
+            try:
+                await self._rounds(res, (self._round or 0) + 1, self._stagnant, None)
+            except BudgetExhausted as e:
+                res.stop_reason = "budget_exhausted"
+                self.log(f"== stop: {e}")
+            except StopRun as e:
+                res.stop_reason = str(e)
+                self.log(f"== STOP: {e} (the run ends immediately; a runaway GPU kernel can freeze the display)")
+            except LLMError as e:
+                res.stop_reason = f"llm_error: {e}"
+                self.log(f"== stop: {e}")
+            self._search_seed = self.best
+        self.ledger.refresh_budget()
         await self._confirm(res)
         if self.search.profile_best:
             await self._profile_best()
         await self._close_clients()  # every HTTP client this run opened, on the loop that used it (asyncio.run closes the loop afterwards)
         return self._finish(res)
+
+    def _control_extends(self, res: RunResult) -> bool:
+        """True when a control-file change arrived after the search stopped and the new limits allow another round.
+
+        Confirmation used to be the last GPU work, so a top-up written during it was never read and a finished
+        non-budget stop could not be resumed. The file is read here, before that confirmation.
+        """
+        self.ledger.refresh_budget()
+        reason = res.stop_reason or ""
+        if reason.startswith(("gpu_hang", "repeated_worker", "agent_failure", "llm_error", "cost_incomplete", "session cost")):
+            return False
+        if reason == "budget_exhausted":
+            remaining = self.ledger.remaining
+            return remaining is not None and remaining >= 0.05
+        if reason == "max_rounds" or reason.startswith("converged"):
+            if patience_exhausted(self._stagnant, self.search.patience):
+                return False
+            return self._round < self.search.max_rounds
+        return False
 
     # --from 只在 best.metal 存在、且 result.json 里的题和这次一致时才把源码交回来。对不上或没有文件就返回 None，调用方从头写。
     def _prior_kernel_text(self) -> str | None:
@@ -1174,7 +991,14 @@ class Orchestrator:
         if self.from_catalog:
             from .kernel_catalog import catalog_dir
 
-            metal = catalog_dir(self.target_id, self.task_name, self.dtype, self.size) / "best.metal"
+            folder = catalog_dir(self.target_id, self.task_name, self.dtype, self.size)
+            ext = self.target.file_ext or ".metal"
+            if not str(ext).startswith("."):
+                ext = "." + str(ext)
+            found = sorted(folder.glob("best.*"))
+            metal = folder / f"best{ext}"
+            if not metal.is_file() and found:
+                metal = found[0]
             if not metal.is_file():
                 self.log(f"-- --from @catalog: no kernel for {self.target_id} {self.task_name} {self.dtype} {self.size}")
                 return None
@@ -1286,9 +1110,11 @@ class Orchestrator:
                     texts.add(path.read_text())
                 except OSError:
                     continue
-        catalog = REPO_ROOT / "kernels" / self.target_id
+        from .kernel_catalog import catalog_root
+
+        catalog = catalog_root() / self.target_id
         if self._external_roots is None and catalog.is_dir():
-            for path in catalog.glob("*/*/*/best.metal"):
+            for path in catalog.glob("*/*/*/best.*"):
                 try:
                     texts.add(path.read_text(encoding="utf-8"))
                 except OSError:
@@ -1386,18 +1212,25 @@ class Orchestrator:
                 exit_kind = "agent_exception"
                 return "agent_failed"
             parsed = self._parsed_feedback(work, result, started)
-            if result.cost_usd is None and result.status == "ok":
+            if result.cost_usd is None:
                 self.llm.transcript.log(self._agent_event(tag, member, result, "cost_incomplete", parsed))
                 outcome = None
                 exit_kind = "cost_incomplete"
                 raise StopRun("cost_incomplete: the session finished without a token count, so the ledger cannot continue")
-            if result.cost_usd:
-                self.ledger.charge(result.cost_usd, tag)
+            self.ledger.charge(result.cost_usd, tag)
+            if result.cost_usd > self.search.relay_budget_usd + 1e-6:
+                self.log(
+                    f"  [{tag}] session spent ${result.cost_usd:.2f}, above the ${self.search.relay_budget_usd:.2f} output-token guide. "
+                    "The run budget still stops the next session."
+                )
             self.hangs += int(result.self_check_timeouts or 0)
+            if result.status == "timeout" and result.source:
+                # 超时后交回来的核不再送上 GPU。没有内核的超时仍只算代理失败。
+                self.hangs += 1
             seed_source = None if self.best is None else self.best.source
-            if result.source is None:
+            if result.status == "timeout" or result.source is None:
                 outcome = "agent_failed"
-            elif result.status in ("timeout", "failed") and result.source == seed_source:
+            elif result.status == "failed" and result.source == seed_source:
                 outcome = "agent_failed"
             elif seed_source is not None and result.source == seed_source:
                 outcome = "unchanged"
@@ -1410,10 +1243,9 @@ class Orchestrator:
 
                 missing = " " + submission_name(self.task_name, self.dtype, self.size, tag) + " was not written"
             self.log(f"  [{tag}] {self._committee_name} {member.provider}/{member.model} {outcome}{missing}" + (f" ({result.error[:120]})" if result.error else ""))
-            if result.self_check_timeouts and self.hangs >= self.search.max_hangs:
+            if (result.self_check_timeouts or (result.status == "timeout" and result.source)) and self.hangs >= self.search.max_hangs:
                 self._publish_state("llm", inflight=None)
-                if outcome == "evaluated":
-                    outcome = None
+                outcome = None
                 exit_kind = "hang_circuit_breaker"
                 raise StopRun("gpu_hang_circuit_breaker")
             try:
@@ -1428,14 +1260,17 @@ class Orchestrator:
                         if note:
                             fb += "\n\n" + note
                         self._failure_feedback = fb
-                    elif cand.is_best:
+                    elif cand.eligible or cand.is_best:
+                        # 这一版已经算对。上一场失败反馈不再指向已经不是种子的核。
                         self._failure_feedback = ""
                 elif outcome == "unchanged" and result.source:
                     cand = await self._eval(result.source, tag)
                     self._file_session_notes(cand, result)
                     self._notes_summary = _notes_for_next(self._outer_line(cand), result.notes)
+                    self._failure_feedback = ""
                 elif outcome == "unchanged":
                     self._notes_summary = _notes_for_next("种子没换", result.notes)
+                    self._failure_feedback = ""
             except Exception as exc:
                 if isinstance(exc, StopRun) and "gpu_hang_circuit_breaker" in str(exc):
                     if outcome == "evaluated":
@@ -1462,11 +1297,16 @@ class Orchestrator:
     def _prepare_session_dir(self, work: Path) -> None:
         """Drop the previous session's notes and feedback before this one starts. The directory is reused on resume."""
         work.mkdir(parents=True, exist_ok=True)
-        for name in ("NOTES.md", "FEEDBACK.md"):
+        for name in ("NOTES.md", "FEEDBACK.md", "self_checks.jsonl"):
             try:
                 (work / name).unlink(missing_ok=True)
             except OSError:
                 pass
+        protected = work.parent.parent / "session_checks" / work.name / "self_checks.jsonl"
+        try:
+            protected.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _parsed_feedback(self, work: Path, result, started: float) -> dict:
         from .agent_feedback import FILE_CAP, parse_feedback, read_feedback_text
@@ -1605,13 +1445,18 @@ class Orchestrator:
             (folder / "NOTES.md").write_text(result.notes)
         work = self.run_dir / "agent_work" / cand.label.replace("/", "_")
         src = work / "self_checks.jsonl"
+        protected = work.parent.parent / "session_checks" / work.name / "self_checks.jsonl"
+        if protected.is_file():
+            src = protected
         if src.is_file():
             (folder / "self_checks.jsonl").write_text(src.read_text())
         feedback = getattr(result, "feedback", "") or ""
         copied = work / "FEEDBACK.md"
         if not feedback and copied.is_file():
             try:
-                feedback = copied.read_text(encoding="utf-8", errors="replace")[:16384]
+                feedback = copied.read_text(encoding="utf-8", errors="replace")
+                if len(feedback) > 16384:
+                    feedback = feedback[-16384:]
             except OSError:
                 feedback = ""
         if feedback:
@@ -1761,6 +1606,7 @@ class Orchestrator:
                     tag = outcome
                 self.history.append(f"round {rnd}: {self._committee_name} -> {tag}")
             stagnant = next_stagnant(self.best is not before, stagnant)
+            self._stagnant = stagnant
             if patience_exhausted(stagnant, self.search.patience):
                 res.stop_reason = f"converged ({self.search.patience} rounds without improvement)"
                 return
@@ -1784,7 +1630,7 @@ class Orchestrator:
                 pool.append(c)
         return pool
 
-    # 搜索结束后用新的随机种子（evaluate 在 seed=None 时另抽）和两倍 eval_reps 重测优胜者与并列者，取重测最快的一颗，避免「多次噪声测量里挑最大值」。correctness_only 或已经挂死则不做。重测中再遇 timeout 就停下剩余复测。
+    # 搜索结束后重测优胜者与并列者。每一批都要成功，同一批共用一套输入。搜索种子留下，除非另一颗完整复测超过噪声门槛。correctness_only 或已经挂死则不做。复测超时就停下剩余复测。
     async def _domain_sweep(self, win) -> None:
         """Correctness-only full-domain check of the confirmed winner. A failure leaves the published number unchanged."""
         if not (self.task.meta or {}).get("domain_case"):
@@ -1813,8 +1659,11 @@ class Orchestrator:
         self.log(f"   domain sweep: {doc.get('status')} ({kind})")
 
     async def _confirm(self, res: RunResult) -> None:
-        """Re-measure the winner and its statistical ties with a fresh seed and twice the repetitions; the fastest
-        re-measured kernel is the result (the search maximum alone is biased upward by noise)."""
+        """Re-measure the winner and its statistical ties. Every batch must succeed.
+
+        Candidates in one batch share one input seed. The published kernel is the search best unless
+        another complete remeasure clears the noise gate. A later failed batch does not turn the earlier
+        successes into a confirmation."""
         # 没有种子、已经熔断、或只做正确性实验时不复测。熔断后再上 GPU 可能再次冻住显示。
         if not self.best or self.hangs >= self.search.max_hangs or self.search.correctness_only:
             return
@@ -1822,14 +1671,14 @@ class Orchestrator:
         if self.run_seed is None:
             self.log(f"-- confirming {', '.join(c.label for c in pool)} with a fresh seed")
         else:
-            self.log(f"-- confirming {', '.join(c.label for c in pool)} with seeds derived for the confirm phase")
+            self.log(f"-- confirming {', '.join(c.label for c in pool)} with one seed per input batch")
         self._confirmations = res.confirmations
         self._publish_state("confirm", inflight=", ".join(c.label for c in pool))
         batches = max(1, int(getattr(self.search, "confirm_batches", 1) or 1))
         # (候选, 中位数, 每一批的值, 与中位数一致的那份报告)
         confirmed: list[tuple[Candidate, float, list[float], EvalReport]] = []
         for c in pool:
-            entry: dict[str, Any] = {"label": c.label, "search_speedup": c.speedup}
+            entry: dict[str, Any] = {"label": c.label, "search_speedup": c.speedup, "failed_batches": 0}
             res.confirmations.append(entry)
             self._confirmations = res.confirmations
             self._publish_state("confirm", inflight=c.label)
@@ -1838,12 +1687,12 @@ class Orchestrator:
             seeds: list[int | None] = []
             stop = False
             for batch in range(batches):
-                # 每一批换一套评测输入。相位名必须是 eval_seed 认识的那几个，所以第 0 批原样用 label，
-                # 后续批次在 label 后缀 #b2/#b3 —— 派生种子的配方不变，旧运行与单批配置的种子也不受影响。
-                seed_label = c.label if batch == 0 else f"{c.label}#b{batch + 1}"
+                # 同一批里的并列候选共用一个种子，比的是同一套输入。批次之间换种子。
+                # 种子不掺内核正文，所以换一颗核不会换掉这一批的输入。
+                seed_label = f"b{batch + 1}"
                 try:
                     async with self.gpu_lock:
-                        phase_seed = self._phase_seed("confirm", seed_label, c.source)
+                        phase_seed = self._phase_seed("confirm", seed_label, "")
                         rep = await asyncio.to_thread(
                             self.evaluate_fn, self.task_name, self.dtype, self.size, c.source, mode="full", seed=phase_seed, reps=self.search.eval_reps * 2,
                             progress_path=self.run_dir / "eval_progress.json",
@@ -1852,13 +1701,13 @@ class Orchestrator:
                         )
                     seeds.append(phase_seed if phase_seed is not None else rep.seed)
                     if batch == 0:
-                        # 向后兼容：第一条仍有 eval_seed / eval_seed_from。
                         entry["eval_seed"] = seeds[-1]
                         entry["eval_seed_from"] = "confirm" if phase_seed is not None else "random"
                 except SchemaError:
                     raise
                 except Exception as e:  # noqa: BLE001 - a failed confirmation must not lose the run
                     entry["status"] = f"error: {type(e).__name__}: {e}"
+                    entry["failed_batches"] = batches - batch
                     self.log(f"   {c.label}: confirmation batch {batch + 1} failed: {type(e).__name__}: {str(e)[:160]}")
                     self._confirmations = res.confirmations
                     self._publish_state("confirm", inflight=c.label)
@@ -1872,23 +1721,23 @@ class Orchestrator:
                 folder = self.run_dir / "rechecks"
                 folder.mkdir(exist_ok=True)
                 (folder / f"confirm_{c.label}{'' if batch == 0 else f'.b{batch + 1}'}.json").write_text(json.dumps(failed, indent=1, default=str))
+                entry["failed_batches"] = int(entry["failed_batches"]) + 1
+                entry["status"] = rep.status
+                self.log(f"   {c.label}: confirmation {rep.status} {rep.message[:120]}")
                 if rep.status == "timeout":
                     # 复测超时就不再测剩下的批次与并列者。搜索已经结束，这里只停止继续占 GPU。
                     self.hangs += 1
-                    stop = True
-                    break
-                entry["status"] = rep.status
-                self.log(f"   {c.label}: confirmation {rep.status} {rep.message[:120]}")
                 stop = True
                 break
             entry["eval_seeds"] = seeds
-            if values:
+            # 有一批失败就把失败状态留下。前面成功的批次不能把整颗核标成 ok。
+            if not stop and len(values) == batches and reports:
                 median = float(statistics.median(values))
                 entry["status"] = "ok"
                 entry["confirmed_speedup"] = median
                 entry["confirmed_values"] = values
                 entry["confirmed_worst"] = min(values)
-                # 与中位数最接近的那一批，作为 confirm_report.json 留证。
+                entry["confirmed_best"] = max(values)
                 rep = min(reports, key=lambda r: abs(float(r.speedup) - median))
                 confirmed.append((c, median, values, rep))
                 self.log(f"   {c.label}: confirmed {median:.3f}x (median of {len(values)} batch(es): " + ", ".join(f"{v:.3f}" for v in values) + ")")
@@ -1899,11 +1748,19 @@ class Orchestrator:
         if not confirmed:
             res.confirmed_status = res.confirmations[0].get("status") or "error"
             return
-        # 用中位数比较候选（不再拿某一批的最大值），选最高的那颗；best_speedup 仍是搜索过程中的测量。
-        win, median, values, rep = max(confirmed, key=lambda item: item[1])
+        measured = [
+            {"candidate": c, "median": median, "values": values, "report": rep, "se": speedup_se(rep), "search_best": c is self.best}
+            for c, median, values, rep in confirmed
+        ]
+        chosen = choose_confirmed(measured, min_improvement=self.search.min_improvement, noise_z=self.search.noise_z)
+        if chosen is None:
+            res.confirmed_status = "uncertain"
+            self.log("   confirmation did not separate a winner from the noise")
+            return
+        win, median, values, rep = chosen["candidate"], chosen["median"], chosen["values"], chosen["report"]
         self._confirm_winner = win
         if win is not self.best:
-            self.log(f"   {win.label} is faster than {self.best.label} when re-measured; it becomes the result")
+            self.log(f"   {win.label} clears the noise gate against {self.best.label}; it becomes the result")
             self.best.is_best, win.is_best = False, True
             self.best = win
         res.confirmed_status, res.confirmed_speedup = "ok", median
@@ -1939,7 +1796,9 @@ class Orchestrator:
         try:
             # 抓痕迹与评测、quick_check 共用同一把锁，避免和正在跑的内核抢 GPU。
             async with self.gpu_lock:
-                summ = await asyncio.to_thread(xctrace.profile_kernel, self.task_name, self.dtype, self.size, seed.source)
+                summ = await asyncio.to_thread(
+                    xctrace.profile_kernel, self.task_name, self.dtype, self.size, seed.source, target_id=self.target_id,
+                )
             body = xctrace.format_for_llm(summ)
             pdir = self.run_dir / "profiles"
             pdir.mkdir(exist_ok=True)
@@ -1966,7 +1825,9 @@ class Orchestrator:
         self.log("-- profiling the best kernel with xctrace")
         try:
             async with self.gpu_lock:
-                summ = await asyncio.to_thread(xctrace.profile_kernel, self.task_name, self.dtype, self.size, self.best.source)
+                summ = await asyncio.to_thread(
+                    xctrace.profile_kernel, self.task_name, self.dtype, self.size, self.best.source, target_id=self.target_id,
+                )
             (self.run_dir / "xctrace_profile.txt").write_text(xctrace.format_summary(summ))
             (self.run_dir / "xctrace_profile.json").write_text(json.dumps(summ.to_json(), indent=1))
         except Exception as e:  # noqa: BLE001 - profiling is a bonus, never a failure
@@ -2008,6 +1869,7 @@ class Orchestrator:
 
     # 把优胜者源码和账本写成 result.json。有 confirmed_speedup 时对外强调复测值，否则用搜索时的 best_speedup。中途加过的预算在 budget_events 里，结束时的上限可以高于开跑时的 initial_budget_usd。
     def _finish(self, res: RunResult) -> RunResult:
+        self.ledger.refresh_budget()
         res.spent_usd = self.ledger.total_usd
         res.budget_usd = self.ledger.budget_usd  # the budget the run ended with (it grows with every top-up)
         res.initial_budget_usd = self.ledger.initial_budget_usd

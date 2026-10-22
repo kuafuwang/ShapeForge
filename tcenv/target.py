@@ -135,13 +135,27 @@ def limit_notes(profile: TargetProfile, info: dict) -> list[str]:
     return notes
 
 
+def calibration_cache_path(target_id: str | None = None) -> Path:
+    """Where a new measurement is written. This is outside the source tree."""
+    profile = load_target(target_id)
+    return Path.home() / ".cache" / "ai_lowerling" / "calibration" / f"{profile.id}.json"
+
+
 def calibration_file(target_id: str | None = None) -> tuple[Path, str]:
-    """``(path, source)``. ``TCENV_CALIBRATION`` wins. Otherwise the target file. There is no runs/ fallback."""
+    """``(path, source)``. ``TCENV_CALIBRATION`` wins, then the cache, then a legacy file already in the target directory.
+
+    A measurement is not written back into the target directory. ``get_calibration`` writes the cache path.
+    """
     override = os.environ.get("TCENV_CALIBRATION")
     if override:
         return Path(override), "env"
-    profile = load_target(target_id)
-    return profile.root / "calibration.json", "target"
+    cache = calibration_cache_path(target_id)
+    if cache.is_file():
+        return cache, "cache"
+    legacy = load_target(target_id).root / "calibration.json"
+    if legacy.is_file():
+        return legacy, "target"
+    return cache, "cache"
 
 
 def read_calibration(target_id: str | None = None) -> tuple[dict, Path, str]:

@@ -511,10 +511,34 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
         report = cand.get("report")
         speed = getattr(report, "speedup", None)
         if getattr(report, "status", None) == "ok" and isinstance(speed, (int, float)):
-            notes.append(f"search_seed_label {best_label} is older than {cand['label']} evaluated after state.json: the resume continues from the newer kernel")
+            from .orchestrator import speedup_se
+
+            best_sp = None
+            best_report = None
+            for earlier in cands:
+                if earlier["label"] == best_label:
+                    best_report = earlier.get("report")
+                    break
+            for row in reversed(trace):
+                if row.get("label") == best_label and isinstance(row.get("speedup"), (int, float)):
+                    best_sp = float(row["speedup"])
+                    break
+            relation = relation_to_best(
+                True, float(speed), best_sp, speedup_se(report), speedup_se(best_report),
+                min_improvement=search.min_improvement, noise_z=search.noise_z,
+            )
+            improved = relation == "replace"
             notes.append(f"{cand['label']} was rebuilt by replaying the selection")
-            trace.append({"idx": cand["idx"], "label": cand["label"], "improved": True, "speedup": speed, "status": "ok", "cost_usd": total, "t_s": 0.0})
-            best_label = cand["label"]
+            if improved:
+                notes.append(
+                    f"search_seed_label {best_label} is older than {cand['label']} evaluated after state.json: "
+                    "the resume continues from the newer kernel"
+                )
+                best_label = cand["label"]
+            trace.append({
+                "idx": cand["idx"], "label": cand["label"], "improved": improved, "within_noise": relation == "tie",
+                "speedup": speed, "status": "ok", "cost_usd": total, "t_s": 0.0,
+            })
             seen.add(cand["label"])
     rnd = int(_first((state or {}).get("round"), (result or {}).get("rounds"), 0) or 0)
     finished = any(c["label"] == f"r{rnd}.p0" or c["label"].startswith(f"r{rnd}.p0.") for c in cands)
@@ -620,6 +644,21 @@ def snapshot_results(run_dir: Path) -> list[str]:
         except ValueError:
             pass
     return moved
+
+
+def restore_snapshot(run_dir: Path, moved: list[str]) -> None:
+    """Put ``result.json`` and ``confirm_report.json`` back when startup fails after ``snapshot_results`` moved them."""
+    run_dir = Path(run_dir)
+    for name in moved:
+        if name.startswith("state."):
+            continue
+        src = run_dir / name
+        stem, marker, _rest = name.partition(".before_topup_")
+        if not marker or not src.is_file():
+            continue
+        dest = run_dir / f"{stem}.json"
+        if not dest.exists():
+            src.replace(dest)
 
 
 def effective_budget(info: dict, *, add_usd: float | None, budget_usd: float | None, control_doc: dict | None = None) -> float:

@@ -15,6 +15,9 @@ models.json
 .env
 .venvs/
 
+# machine measurement; a fresh run writes ~/.cache/ai_lowerling/calibration instead
+targets/*/calibration.json
+
 # generated / local artifacts
 *.trace
 *.gputrace

@@ -182,6 +182,9 @@ class Index:
                 fp_confirm TEXT,
                 fp_extra TEXT,
                 turn_bytes INTEGER NOT NULL DEFAULT 0,
+                feedback_bytes INTEGER NOT NULL DEFAULT 0,
+                feedback_review_fp TEXT NOT NULL DEFAULT '',
+                feedback_parser TEXT NOT NULL DEFAULT '',
                 row_json TEXT
             );
             CREATE TABLE IF NOT EXISTS experiments (
@@ -251,6 +254,7 @@ class Index:
                 outcome TEXT,
                 exit TEXT,
                 kinds TEXT,
+                line_at INTEGER,
                 has_system INTEGER NOT NULL DEFAULT 0,
                 pending_claims INTEGER NOT NULL DEFAULT 0,
                 unverified_premises INTEGER NOT NULL DEFAULT 0,
@@ -270,11 +274,20 @@ class Index:
                 topic TEXT,
                 change_ref TEXT,
                 reviewed_at REAL,
+                rev INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (run_id, seq, digest)
             );
             CREATE INDEX IF NOT EXISTS feedback_digest ON feedback_claims(digest);
             CREATE INDEX IF NOT EXISTS feedback_topic ON feedback_claims(topic);
             CREATE INDEX IF NOT EXISTS feedback_status ON feedback_claims(status);
+            CREATE TABLE IF NOT EXISTS feedback_claim_removed (
+                run_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                digest TEXT NOT NULL,
+                rev INTEGER NOT NULL,
+                PRIMARY KEY (run_id, seq, digest)
+            );
+            CREATE INDEX IF NOT EXISTS feedback_removed_rev ON feedback_claim_removed(rev);
             """
         )
         self.conn.execute(
@@ -287,6 +300,23 @@ class Index:
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES ('turns_revision', '0') ON CONFLICT(key) DO NOTHING"
         )
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('feedback_revision', '0') ON CONFLICT(key) DO NOTHING"
+        )
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(feedback_claims)")}
+        if "rev" not in columns:
+            self.conn.execute("ALTER TABLE feedback_claims ADD COLUMN rev INTEGER NOT NULL DEFAULT 0")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS feedback_claim_rev ON feedback_claims(rev)")
+        run_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(runs)")}
+        if "feedback_bytes" not in run_columns:
+            self.conn.execute("ALTER TABLE runs ADD COLUMN feedback_bytes INTEGER NOT NULL DEFAULT 0")
+        if "feedback_review_fp" not in run_columns:
+            self.conn.execute("ALTER TABLE runs ADD COLUMN feedback_review_fp TEXT NOT NULL DEFAULT ''")
+        if "feedback_parser" not in run_columns:
+            self.conn.execute("ALTER TABLE runs ADD COLUMN feedback_parser TEXT NOT NULL DEFAULT ''")
+        item_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(feedback_items)")}
+        if "line_at" not in item_columns:
+            self.conn.execute("ALTER TABLE feedback_items ADD COLUMN line_at INTEGER")
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES ('built_at', ?) ON CONFLICT(key) DO NOTHING",
             (str(time.time()),),
@@ -369,6 +399,10 @@ class Index:
         self.conn.execute(
             "UPDATE meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'turns_revision'"
         )
+
+    def feedback_revision(self) -> int:
+        row = self.conn.execute("SELECT value FROM meta WHERE key = 'feedback_revision'").fetchone()
+        return int(row[0]) if row else 0
 
     def tick(self) -> tuple[int, list[str]]:
         """One incremental frame. Lists a directory only when its own mtime changed, and reads a finished run only when a fingerprint changed."""
@@ -1007,7 +1041,10 @@ class Index:
                 for row in self.conn.execute("SELECT run_id FROM runs"):
                     if str(row["run_id"]).startswith(prefix):
                         wanted.add(row["run_id"])
+            from observe.feedback import retire_run_claims
+
             for run_id in wanted:
+                retire_run_claims(self.conn, run_id)
                 self.conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
                 self.conn.execute("DELETE FROM turns WHERE run_id = ?", (run_id,))
                 self.conn.execute("DELETE FROM feedback_items WHERE run_id = ?", (run_id,))

@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 from observe.actions import Refused, review_feedback
-from observe.feedback import entries, rejection, summary_from_index
+from observe.feedback import entries, rejection, review_board, review_feed, summary_from_index
+from taic.agent_feedback import read_appended_records
 from taic.agent_feedback import parse_feedback
 
 _TEXT = """kind: tool
@@ -110,6 +111,77 @@ def test_pending_counts_system_and_premise_claims_and_review_changes_them(tmp_pa
     assert len(again["history"]) == 2
     index.drop_archived(["conv"], [])
     assert summary_from_index(index.conn)["pending_total"] == 0
+
+
+def test_review_board_lists_every_run_with_the_claim_text(tmp_path, monkeypatch):
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = _parsed()
+    _run(runs, "conv", _record(parsed, t=10), started_at=50)
+    _run(runs, "fa", _record(parsed, t=20, label="r2.p0"), started_at=80)
+    index.sync_known()
+    board = review_board(index.conn, status="pending")
+    assert board["pending_total"] == 4
+    assert {item["run_id"] for item in board["items"]} == {"conv", "fa"}
+    assert all(item["text"] for item in board["items"])
+    page = Path(__file__).resolve().parents[1] / "observe" / "static" / "index.html"
+    html = page.read_text(encoding="utf-8")
+    assert '<button type="button" id="feedback-badge"' in html
+    assert 'window.open("/reviews"' in html
+    assert 'params.set("since"' in html
+    assert "patchReviewDom" in html
+
+
+def test_a_grown_log_is_read_from_the_cursor_and_a_review_does_not_reread_it(tmp_path, monkeypatch):
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = _parsed()
+    directory = _run(runs, "conv", _record(parsed, t=10), started_at=50)
+    index.sync_known()
+    path = directory / "feedback.jsonl"
+    offset = index.conn.execute("SELECT feedback_bytes FROM runs WHERE run_id = 'conv'").fetchone()["feedback_bytes"]
+    assert offset == path.stat().st_size
+    rev = index.feedback_revision()
+    seen = []
+    real = read_appended_records
+
+    def wrapped(log, start):
+        seen.append(start)
+        return real(log, start)
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("the whole feedback log was parsed")
+
+    monkeypatch.setattr("observe.feedback.read_appended_records", wrapped)
+    monkeypatch.setattr("observe.feedback.load_records", boom)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(_record(parsed, seq=2, t=30, label="r2.p0"), ensure_ascii=False) + "\n")
+    index.refresh_feedback("conv", directory)
+    assert seen == [offset]
+    later = review_feed(index.conn, since=rev)
+    assert later["upserts"]
+    assert {item["seq"] for item in later["upserts"]} == {2}
+    seen.clear()
+    review_feedback("conv", 1, _digest("被否决的前提"), {"status": "rejected", "verification": "refuted", "note": "不是这回事"})
+    assert seen == []
+
+
+def test_an_unchanged_reread_does_not_move_the_feedback_revision_and_a_review_is_one_row(tmp_path, monkeypatch):
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = _parsed()
+    directory = _run(runs, "conv", _record(parsed), started_at=50)
+    index.sync_known()
+    opened = index.feedback_revision()
+    assert opened >= 1
+    index.refresh_feedback("conv", directory)
+    assert index.feedback_revision() == opened
+    premise = _digest("被否决的前提")
+    review_feedback("conv", 1, premise, {"status": "rejected", "verification": "refuted", "note": "不是这回事"})
+    delta = review_feed(index.conn, since=opened)
+    assert delta["same"] is False
+    assert [item["digest"] for item in delta["upserts"]] == [premise]
+    assert delta["upserts"][0]["status"] == "rejected"
+    assert delta["upserts"][0]["text"]
+    assert delta["removed"] == []
+    assert review_feed(index.conn, since=delta["rev"])["same"] is True
 
 
 def test_two_reviews_of_one_run_both_land(tmp_path, monkeypatch):

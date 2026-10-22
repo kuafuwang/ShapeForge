@@ -329,6 +329,15 @@ def _gain_per_usd(members: list[dict], spent: float) -> float | None:
     return sum(pieces) / spent
 
 
+def feedback_board(*, since: int | None = None) -> dict:
+    """Claims changed after ``since``. Omit ``since`` for the whole list. Text is read only for rows in the answer."""
+    from observe.feedback import review_feed
+
+    tick()
+    with borrow() as index:
+        return review_feed(index.conn, since=since)
+
+
 def overview() -> dict:
     from tasks import list_tasks
 
@@ -457,6 +466,7 @@ def poll_stream() -> dict:
     return {
         "index_revision": _SENT,
         "turns_revision": index.turns_revision(),
+        "feedback_revision": index.feedback_revision(),
         "revision": _SENT,
         "runs": changed,
     }

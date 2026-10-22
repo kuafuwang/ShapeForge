@@ -85,7 +85,7 @@ class ScalarArg:
 # wall_s 是和 MLX / PyTorch 对齐的墙钟。gpu_s 来自命令缓冲的 GPU 时间戳，加速比不用它。
 @dataclass
 class RunTiming:
-    wall_s: float  # commit -> waitUntilCompleted
+    wall_s: float  # encode + commit -> waitUntilCompleted, same window as mx.eval / torch launch
     gpu_s: float  # GPUEndTime - GPUStartTime for the whole command buffer
     iters: int
 
@@ -101,10 +101,20 @@ class RunTiming:
 # Optional (begin, end) callbacks around every GPU launch. The worker uses them to publish a heartbeat so that the
 # parent process can kill a runaway kernel after seconds instead of minutes (a stuck GPU also starves the display).
 _LAUNCH_HOOKS: tuple | None = None
+_COMPILE_HOOKS: tuple | None = None
 
 
 # worker 在每次启动前后写心跳 B / E。waitUntilCompleted 若因死循环一直不返回，父进程靠 B 的年龄 SIGKILL。
 # 等 GPU 锁用的是另一套 hook，写的是 W，排队不会被当成单次启动挂起。
+def set_compile_hooks(begin, end) -> None:
+    """Call ``begin`` before Metal compilation and ``end`` after it returns or raises.
+
+    The worker writes heartbeat ``C`` so the parent can kill a stuck frontend without waiting out the whole worker timeout.
+    """
+    global _COMPILE_HOOKS
+    _COMPILE_HOOKS = (begin, end)
+
+
 def set_launch_hooks(begin, end) -> None:
     global _LAUNCH_HOOKS
     _LAUNCH_HOOKS = (begin, end)
@@ -212,8 +222,14 @@ class MetalContext:
         elif math == "relaxed" and hasattr(opts, "setMathMode_"):
             opts.setMathMode_(Metal.MTLMathModeRelaxed)
 
+        if _COMPILE_HOOKS:
+            _COMPILE_HOOKS[0]()
         t0 = time.perf_counter()
-        lib, err = self.device.newLibraryWithSource_options_error_(source, opts, None)
+        try:
+            lib, err = self.device.newLibraryWithSource_options_error_(source, opts, None)
+        finally:
+            if _COMPILE_HOOKS:
+                _COMPILE_HOOKS[1]()
         if lib is None:
             raise MetalCompileError(str(err.localizedDescription()) if err is not None else "unknown compile error")
         t1 = time.perf_counter()
@@ -316,6 +332,8 @@ class MetalContext:
             raise ValueError("iters must be >= 1")
         if dispatch not in ("serial", "concurrent"):
             raise ValueError(f"dispatch must be 'serial' or 'concurrent', got {dispatch!r}")
+        # 墙钟含编码。MLX 的 mx.eval 和 PyTorch 的启动循环都含这一段。
+        t0 = time.perf_counter()
         cb = self.queue.commandBuffer()
         enc = cb.computeCommandEncoderWithDispatchType_(Metal.MTLDispatchTypeConcurrent) if dispatch == "concurrent" else cb.computeCommandEncoder()
         enc.setComputePipelineState_(kernel.pso)
@@ -336,7 +354,6 @@ class MetalContext:
         if _LAUNCH_HOOKS:
             # B 写在 commit 之前。父进程用 B 的时间戳判断这一次启动已经挂了多久。
             _LAUNCH_HOOKS[0]()
-        t0 = time.perf_counter()
         try:
             cb.commit()
             cb.waitUntilCompleted()
@@ -388,6 +405,7 @@ class MetalContext:
             raise ValueError(f"dispatch must be 'serial' or 'concurrent', got {dispatch!r}")
         if not stages:
             raise ValueError("run_pipeline needs at least one stage")
+        t0 = time.perf_counter()
         nsets = len(arg_sets)
         filled = [bool(one) for one in fills]
         fill = self._fill_kernel() if any(filled) else None
@@ -425,7 +443,6 @@ class MetalContext:
         enc.endEncoding()
         if _LAUNCH_HOOKS:
             _LAUNCH_HOOKS[0]()
-        t0 = time.perf_counter()
         try:
             cb.commit()
             cb.waitUntilCompleted()

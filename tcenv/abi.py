@@ -32,10 +32,12 @@ def _buffer_index_limit() -> int:
 
 # 反射对的是槽位、名字、读写、标量类型和这份 pipeline 的启动上限。缓冲指向的元素类型可以向量化，这里放行。
 # 返回人类可读的问题列表；空列表才算通过。
-def check_abi(contract: Contract, kernel: CompiledKernel, *, max_tg_memory: int | None = None) -> list[str]:
+def check_abi(contract: Contract, kernel: CompiledKernel, *, max_tg_memory: int | None = None, target_id: str | None = None) -> list[str]:
     """Return a list of human-readable violations (empty list means conformant)."""
     if max_tg_memory is None:
-        max_tg_memory = _threadgroup_limit()
+        from .target import DEFAULT_TARGET_ID, load_target
+
+        max_tg_memory = load_target(target_id or DEFAULT_TARGET_ID).limits.max_threadgroup_memory_bytes
     problems: list[str] = []
     by_index = {}
     for b in kernel.bindings:
@@ -90,12 +92,16 @@ def check_abi(contract: Contract, kernel: CompiledKernel, *, max_tg_memory: int 
     return problems
 
 
-def check_pipeline(contract: Contract, kernels: dict, spec, *, max_tg_memory: int | None = None, max_buffer_index: int | None = None) -> list[str]:
+def check_pipeline(contract: Contract, kernels: dict, spec, *, max_tg_memory: int | None = None, max_buffer_index: int | None = None, target_id: str | None = None) -> list[str]:
     """Per-stage ABI for a ``taic-launch`` spec. ``kernels`` maps a kernel name to its compiled pipeline."""
-    if max_tg_memory is None:
-        max_tg_memory = _threadgroup_limit()
-    if max_buffer_index is None:
-        max_buffer_index = _buffer_index_limit()
+    if max_tg_memory is None or max_buffer_index is None:
+        from .target import DEFAULT_TARGET_ID, load_target
+
+        limits = load_target(target_id or DEFAULT_TARGET_ID).limits
+        if max_tg_memory is None:
+            max_tg_memory = limits.max_threadgroup_memory_bytes
+        if max_buffer_index is None:
+            max_buffer_index = limits.max_buffer_index
     problems: list[str] = []
     contract_index = {a.name: a.index for a in contract.args}
     writable_outputs: set[str] = set()

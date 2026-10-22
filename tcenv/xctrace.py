@@ -78,25 +78,31 @@ def record(
     wait_s = deadline_for_source(task, dtype, size, kernel_source) if launch_deadline_s == LAUNCH_DEADLINE_S else launch_deadline_s
     t0 = time.perf_counter()
     with open(workdir / "xctrace.log", "w") as log:
-        proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=str(REPO_ROOT))
-        while proc.poll() is None:
-            time.sleep(0.2)
-            h = _read_heartbeat(hb)
-            if h and h[0] == "B" and time.time() - h[1] > wait_s:
-                _kill_tree(proc)
-                raise TraceError(f"a GPU launch ran for more than {wait_s}s while profiling; killed")
-            if time.perf_counter() - t0 > record_limit_s + 30:
-                _kill_tree(proc)
-                raise TraceError("xctrace did not finish in time")
+        from .children import forget, kill_group, popen_group
+
+        proc = popen_group(cmd, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=str(REPO_ROOT))
+        try:
+            while proc.poll() is None:
+                time.sleep(0.2)
+                h = _read_heartbeat(hb)
+                if h and h[0] == "B" and time.time() - h[1] > wait_s:
+                    _kill_tree(proc)
+                    raise TraceError(f"a GPU launch ran for more than {wait_s}s while profiling; killed")
+                if time.perf_counter() - t0 > record_limit_s + 30:
+                    _kill_tree(proc)
+                    raise TraceError("xctrace did not finish in time")
+        finally:
+            kill_group(proc)
+            forget(proc)
     if not trace.exists() or not out.exists():
         raise TraceError("no trace produced:\n" + (workdir / "xctrace.log").read_text()[-600:])
     return trace
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
-    subprocess.run(["pkill", "-9", "-f", "tcenv.xcworker"], check=False)
-    proc.kill()
-    proc.wait()
+    from .children import kill_group
+
+    kill_group(proc)
 
 
 # --------------------------------------------------------------------------------------------- export
@@ -170,6 +176,7 @@ class TraceSummary:
     shader_code_bytes: int | None = None
     thermal_states: list[str] = field(default_factory=list)
     counters: dict[str, CounterStat] = field(default_factory=dict)
+    target_id: str = "apple-m4-max"
 
     def to_json(self) -> dict:
         d = {k: v for k, v in self.__dict__.items() if k != "counters"}
@@ -421,7 +428,7 @@ def format_summary(summ: TraceSummary, top: int = 14) -> str:
     return "\n".join(L)
 
 
-def _counter_advice(counters: dict[str, CounterStat], dispatch_us: float | None = None) -> list[str]:
+def _counter_advice(counters: dict[str, CounterStat], dispatch_us: float | None = None, target_id: str | None = None) -> list[str]:
     """Findings from the GPU counters (Performance Limiters): which unit the kernel waits for, or that none is saturated."""
     lims = [(n, c) for n, c in counters.items() if n in LIMITER_MEANING]
     if not lims:
@@ -430,7 +437,7 @@ def _counter_advice(counters: dict[str, CounterStat], dispatch_us: float | None 
     occ = counters.get("Kernel Occupancy")
     from .target import DEFAULT_TARGET_ID, load_target
 
-    sample_us = load_target(DEFAULT_TARGET_ID).limits.counter_sample_us
+    sample_us = load_target(target_id or DEFAULT_TARGET_ID).limits.counter_sample_us
     out = []
     if sample_us and dispatch_us is not None and dispatch_us < 4 * sample_us:
         out.append(
@@ -484,7 +491,7 @@ def advice(summ: TraceSummary) -> list[str]:
         out.append(f"The compiled shader is large ({summ.shader_code_bytes} bytes): heavy unrolling or inlining; instruction fetch can become the limiter.")
     if any(t != "Nominal" for t in summ.thermal_states):
         out.append("The GPU was thermally throttled while tracing: do not read small timing differences into this run.")
-    out += _counter_advice(summ.counters, summ.dispatch_us_median)
+    out += _counter_advice(summ.counters, summ.dispatch_us_median, target_id=summ.target_id)
     if not out:
         out.append("No register spills, launch gaps, oversized code or throttling were found: the slowness is in the instruction mix, memory access pattern or synchronization of the kernel itself.")
     return out
@@ -501,7 +508,7 @@ def get_task_kernel_name(task: str, dtype: str, size: str) -> str:
     return get_task(task, dtype, size).contract.kernel_name
 
 
-def profile_kernel(task: str, dtype: str, size: str, kernel_source: str, workdir: Path | None = None, keep: bool = False) -> TraceSummary:
+def profile_kernel(task: str, dtype: str, size: str, kernel_source: str, workdir: Path | None = None, keep: bool = False, target_id: str = "apple-m4-max") -> TraceSummary:
     own = workdir is None
     wd = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="tcenv_xc_"))
     from .gpulock import gpu_lock
@@ -509,7 +516,9 @@ def profile_kernel(task: str, dtype: str, size: str, kernel_source: str, workdir
     try:
         with gpu_lock(f"xctrace recording of {task} {dtype} {size}"):
             trace = record(task, dtype, size, kernel_source, wd)
-        return analyze(trace, wd, kernel_name=get_task_kernel_name(task, dtype, size))
+        summ = analyze(trace, wd, kernel_name=get_task_kernel_name(task, dtype, size))
+        summ.target_id = target_id
+        return summ
     finally:
         if own and not keep:
             shutil.rmtree(wd, ignore_errors=True)
