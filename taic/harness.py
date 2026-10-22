@@ -116,7 +116,7 @@ def _clean_action(text: str) -> str:
 _NEVER_AUTO = (
     "tasks/", "task.md", "tcenv/", "control.json", "budget_usd", "patience",
     "max_rounds", "min_improvement", "noise_z", "confirm_batches", "eval_reps",
-    "tolerance", "abi", "credentials", "api key", "price", ".env",
+    "tolerance", "credentials", "api key", "price", ".env",
     "git push", "git commit", "rm -rf", "subprocess", "os.system", "eval(", "exec(",
 )
 
@@ -126,6 +126,8 @@ def _reject_never_auto(text: str) -> None:
     for token in _NEVER_AUTO:
         if token in lower:
             raise ProposalError(f"a P1 overlay may not contain {token!r}")
+    if re.search(r"\babi\b", lower):
+        raise ProposalError("a P1 overlay may not change the ABI")
 
 
 def proposal_key(*, target_id: str, task: str, surface: str, action: str, dtype: str = "") -> str:
