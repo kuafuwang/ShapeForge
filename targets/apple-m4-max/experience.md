@@ -75,3 +75,4 @@ Confidence: verified
 本机实测: `no_reasoning`（当时仍是 high）20 次里 14 次再截断、4 颗核；`low_effort` 10 次、6 颗核，均价 $0.0474 对 $0.0490。
 边界: deepseek-flash、48000 token 上限。换模型要重测。
 反例: 换到本来就少思考的模型时这条不适用。
+- [harness b4131be13c4750c8] Add a tcenv.cli ab subcommand that compiles several kernel files, times them interleaved in one process over rotating buffer sets, and prints per-file median wall time and cv.

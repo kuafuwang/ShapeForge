@@ -91,6 +91,6 @@ deepseek 提出“评测报告里打印每个 stage 的编译器寄存器用量�
 
 自动 review 在 r1 后运行：kimi 判 `useful=true`、confidence 0.8，实际 **$0.118**，生成 `reviewed_active`。但这个 run 启动时用的是 `_session_brief` 旧逻辑，且 `harness_shadow=true`；r2/r3 的 `TASK.md` 都没有 overlay。之后修复了 TASK 的 overlay 预留预算；新代码会在下一场保留 active overlay。
 
-另外，这个 run 的 P2 patch 被应用到了 `targets/apple-m4-max/experience.md`（未提交），内容是英文的一行 `- [harness ...]`。`harness_decisions.jsonl` 有 `promotion` 和 `change_ref`，但没有记录是谁确认、跑了什么测试；这一条应先人工复核，必要时回退。
+这个 run 的 P2 patch 已被用户认可，应用到 `targets/apple-m4-max/experience.md`；`harness_decisions.jsonl` 的 `promotion_approval` 记录 `applied_by=kuafu` 和离线测试结果（901 passed, 1 skipped）。这仍是 target 级建议，不是测量结论。
 
 三次运行累计约 **$6.00**（$3.53 + $2.466），仍低于 $15。
