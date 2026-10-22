@@ -119,7 +119,7 @@ def test_a_premise_needs_a_fresh_local_probe_and_does_not_need_a_vote(tmp_path):
     row = _record_proposal(run, work, _record(1, "deepseek", "deepseek-flash", "first"), premise, started, kernel_sha256="abc")
     assert row[0]["status"] == "valid" and row[0]["trusted_record"] is True
     # A premise still needs a person to delegate the premise surface.
-    assert harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=True)["shadow"] == []
+    assert harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=True, trust_root=tmp_path / "targets")["shadow"] == []
     trust.grant("apple-m4-max", "conv2d", "deepseek", "deepseek-flash", effort="high", scopes=["overlay:premise"], root=tmp_path / "targets")
     result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=True, trust_root=tmp_path / "targets")
     assert len(result["shadow"]) == 1
@@ -263,3 +263,22 @@ def test_an_outer_candidate_report_can_be_the_trusted_record_without_a_selfcheck
         work, target_id="apple-m4-max", protocol_version=trust.current_protocol_version(),
         kernel_sha256="abc", measurement="20.0 us", trusted_report=report,
     )[0]
+
+
+def test_a_useful_independent_review_moves_a_single_tip_to_shadow_only(tmp_path):
+    import json as _json
+
+    run = tmp_path / "run"
+    started = time.time() - 1
+    work = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(), started=started)
+    _record_proposal(run, work, _record(1, "deepseek", "deepseek-flash", "first"), _doc(), started)
+    trust.grant("apple-m4-max", "conv2d", "moonshot", "kimi-k3", effort="high", root=tmp_path / "targets")
+    (run / "harness_reviews.jsonl").write_text(_json.dumps({
+        "schema_version": 1, "event": "review", "proposal_key": _json.loads((run / "harness_proposals.jsonl").read_text().splitlines()[0])["proposal_key"],
+        "target_id": "apple-m4-max", "task": "conv2d", "useful": True, "confidence": 0.8,
+        "reviewer": {"provider": "moonshot", "model": "kimi-k3", "effort": "high"},
+    }) + "\n")
+    result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=True, trust_root=tmp_path / "targets")
+    assert result["applied"] == [] and len(result["shadow"]) == 1
+    assert result["shadow"][0]["reviewed"] is True
+    assert harness.overlay_text(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version()) == ""

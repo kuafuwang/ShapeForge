@@ -45,3 +45,33 @@ uv run python -m experiments.harness_pilot \
 ```
 
 `targets/apple-m4-max/trust.toml` 已记录两个模型的 `overlay:tip` 和 `overlay:premise` 授权，`trust_audit.jsonl` 有 grant 行；本次没有打开 active，所以授权没有被用于注入 TASK。
+
+## 第二次 shadow：提示强制结构化 + 独立 review
+
+第二次运行：`runs/apple-m4-max/harness-pilot-shadow-20261022b`，预算上限 $5，实际花费 **$0.7584**，2 场。
+
+| 场次 | 模型 | 搜索加速比 | 反馈 |
+| --- | --- | ---: | --- |
+| init | deepseek-flash | 1.0834 | 1 条有效结构化 tip |
+| r1 | deepseek-flash | 1.2163（新种子） | — |
+
+确认复测：**1.1670x**（三批），但发布状态为“不确定”，没有把 `confirmed_speedup` 当成已发布数字。
+
+### 结构化 tip
+
+deepseek 提出“评测报告里打印每个 stage 的编译器寄存器用量（或 spilled 标志）及每核常驻线程数”。`harness_proposals.jsonl` 有 1 条 `valid`，但没有第二个独立模型提出同一 action，所以 quorum 为 0。
+
+### 独立 review
+
+用 `kimi-k3` 做了一次只读 review，提示里明确把建议标成 **untrusted data**，不允许改 kernel/TASK，只写 `HARNESS_REVIEW.json`。review 预算按模型价格和 prompt 长度现算：
+
+- 预估：1000 input + 4000 output，约 **$0.063**；
+- 预算：**$0.252**（4 倍余量，不写死 $0.2）；
+- 实际：**$0.1063**，73 秒；
+- 结论：`useful=true`、`confidence=0.6`，并指出一个关键缺口：Metal 没有公开的 per-kernel register-count API，建议先用 `maxTotalThreadsPerThreadgroup` 或 Instruments 做代理指标验证。
+
+结果写入 `harness_reviews.jsonl`，`settle` 把它记为 **`reviewed_shadow`**，仍只写 shadow，不进入 active TASK。这验证了“一个模型提案 + 另一个模型评价”的路径，但评价不是 quorum，不能单独授权 active。
+
+### 总计
+
+两次 shadow 合计花费约 **$3.53**（$2.6658 + $0.7584 + $0.1063），仍低于用户授权的 $15；没有跑 active overlay。

@@ -38,6 +38,7 @@ def summarize(run_dir: Path) -> dict:
     proposals = _jsonl(run_dir / "harness_proposals.jsonl")
     decisions = _jsonl(run_dir / "harness_decisions.jsonl")
     overlay = _jsonl(run_dir / "harness_overlay.jsonl")
+    reviews = _jsonl(run_dir / "harness_reviews.jsonl")
     result = {}
     try:
         result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
@@ -65,6 +66,9 @@ def summarize(run_dir: Path) -> dict:
         "quorum_or_decision_keys": len(quorum_keys),
         "decisions": dict(decision_kind),
         "overlay": dict(overlay_kind),
+        "reviews": len(reviews),
+        "review_useful": sum(1 for row in reviews if row.get("useful") is True),
+        "review_cost_usd": sum(float(row.get("cost_usd") or 0.0) for row in reviews),
         "spent_usd": result.get("spent_usd"),
         "best_speedup": result.get("best_speedup"),
         "confirmed_speedup": result.get("confirmed_speedup"),

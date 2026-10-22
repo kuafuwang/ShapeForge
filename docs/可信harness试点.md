@@ -43,4 +43,4 @@ uv run python -m taic.cli harness status runs/apple-m4-max/RUN
 - `tests/test_harness_workflow.py` 覆盖 tip 从双来源/信任到 active TASK，以及 disable 后消失；`premise` 无自检记录时保持 shadow。
 - 自检记录是本机记录，不是密码学签名；阶段 B 仍需人工复核，不能把 `premise` 当形式证明。
 
-阶段 B 才考虑 2–3 道题的 shadow/active 运行，并需要单独的预算与 GPU 批准。
+阶段 B 才考虑 2–3 道题的 shadow/active 运行，并需要单独的预算与 GPU 批准。单来源 tip 可以走 `taic harness review`（另一个 provider/model、只读、按实际单价算预算），但 review 只产生 `reviewed_shadow`，不等于 quorum，也不能单独授权 active。

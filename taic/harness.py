@@ -472,6 +472,7 @@ def settle(
     run_dir = Path(run_dir)
     proposals = _read_jsonl(run_dir / PROPOSAL_FILE)
     decisions = _read_jsonl(run_dir / DECISION_FILE)
+    reviews = _read_jsonl(run_dir / "harness_reviews.jsonl")
     decided = {(row.get("proposal_key"), row.get("decision")) for row in decisions}
     groups: dict[str, list[dict]] = {}
     for row in proposals:
@@ -549,6 +550,50 @@ def settle(
             "models": sorted(identity[0] + "/" + identity[1] for identity in distinct_models),
         })
         (shadowed if is_shadow else applied).append(event)
+    # A single-source tip may reach *shadow* through an independent review. It never
+    # reaches active this way; quorum or a person still owns that step.
+    for review in reviews:
+        if review.get("useful") is not True:
+            continue
+        key = str(review.get("proposal_key") or "")
+        group = groups.get(key) or []
+        if not group or (key, "reviewed_shadow") in decided:
+            continue
+        if (key, "apply") in decided or (key, "shadow") in decided:
+            continue
+        reviewer = review.get("reviewer") if isinstance(review.get("reviewer"), dict) else {}
+        proposer = group[0]
+        if (str(reviewer.get("provider") or ""), str(reviewer.get("model") or "")) == (
+            str(proposer.get("provider") or ""), str(proposer.get("model") or ""),
+        ):
+            continue
+        ok, _why = _trusted(
+            {
+                "provider": reviewer.get("provider"), "model": reviewer.get("model"),
+                "effort": reviewer.get("effort") or "",
+            },
+            target_id=target_id, task=task, scope="overlay:tip", root=trust_root, prompt_sha1=prompt_sha1,
+        )
+        if not ok:
+            continue
+        first = group[0]
+        event = {
+            "schema_version": SCHEMA_VERSION, "event": "overlay", "t": time.time(),
+            "target_id": target_id, "task": task, "protocol_version": str(protocol_version),
+            "source_run": str(first.get("run_id") or run_dir.name), "source_seq": first.get("seq"),
+            "proposal_key": key, "surface": "tip", "text": str(first.get("proposal", {}).get("action") or ""),
+            "evidence_sha256": str(first.get("probe_sha256") or ""), "shadow": True,
+            "reviewed": True, "reviewer": reviewer,
+            "active_from": first.get("seq"), "active_until": None,
+        }
+        _append_jsonl(run_dir / OVERLAY_FILE, event)
+        _append_jsonl(run_dir / DECISION_FILE, {
+            "schema_version": SCHEMA_VERSION, "event": "decision", "t": event["t"],
+            "target_id": target_id, "task": task, "proposal_key": key,
+            "decision": "reviewed_shadow", "source_seq": first.get("seq"),
+            "reviewer": reviewer,
+        })
+        shadowed.append(event)
     return {"applied": applied, "shadow": shadowed}
 
 
@@ -778,11 +823,14 @@ def board(run_dir: Path) -> dict:
     run_dir = Path(run_dir)
     proposals = _read_jsonl(run_dir / PROPOSAL_FILE)
     decisions = _read_jsonl(run_dir / DECISION_FILE)
+    reviews = _read_jsonl(run_dir / "harness_reviews.jsonl")
     overlay = _read_jsonl(run_dir / OVERLAY_FILE)
+    reviews = _read_jsonl(run_dir / "harness_reviews.jsonl")
     return {
         "run_dir": str(run_dir),
         "control": overlay_control(run_dir),
         "proposals": proposals,
+        "reviews": reviews,
         "decisions": decisions,
         "overlay": overlay,
     }

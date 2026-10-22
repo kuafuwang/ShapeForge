@@ -586,6 +586,51 @@ def cmd_harness(a: argparse.Namespace) -> int:
             print(json.dumps({key: len(value) for key, value in result.items() if isinstance(value, list)} | {"result": result}, ensure_ascii=False, indent=2, default=str))
         elif a.harness_action == "patch":
             print(json.dumps(harness.write_patch(run, target_id=a.target, proposal_key=a.key), ensure_ascii=False, indent=2))
+        elif a.harness_action == "review":
+            from . import review as review_mod
+            from . import trust
+
+            proposals = [row for row in harness.board(run)["proposals"] if row.get("status") == "valid" and row.get("proposal_key") == a.key]
+            if not proposals:
+                print("no valid proposal with that key", file=sys.stderr)
+                return 5
+            proposal = proposals[0]
+            run_cfg = json.loads((run / "run_config.json").read_text(encoding="utf-8")) if (run / "run_config.json").is_file() else {}
+            recorded = run_cfg.get("committees") if isinstance(run_cfg, dict) else None
+            provider, model = a.provider, a.model
+            if not provider or not model:
+                peers = [c for c in (recorded or []) if isinstance(c, dict) and c.get("name") != proposal.get("committee")]
+                members = (peers[0].get("members") if peers else None) or []
+                if not members or not isinstance(members[0], dict):
+                    print("cannot choose a reviewer; pass --provider and --model", file=sys.stderr)
+                    return 5
+                provider, model = str(members[0].get("provider") or ""), str(members[0].get("model") or "")
+            from .llm import load_config, load_raw_config
+            from .committees import load_committees
+            from .kernel_agent import Prices
+
+            raw = load_raw_config(None, "base")
+            cfg, _ = load_config(None, preset="base")
+            committees = load_committees(raw, active=cfg)
+            member = next((m for c in committees for m in c.members if m.provider == provider and m.model == model), None)
+            if member is None:
+                print(f"reviewer {provider}/{model} is not in the configured committees", file=sys.stderr)
+                return 5
+            prices = Prices(member.cfg.price_in, member.cfg.price_out, member.cfg.price_cache_read, member.cfg.price_cache_write)
+            work = run / "harness_reviews" / str(a.key)
+            prompt = review_mod.build_review_prompt(proposal.get("proposal") or {}, run_id=str(proposal.get("run_id") or run.name))
+            plan = review_mod.estimate_review_budget(prices, prompt)
+            print(json.dumps({"reviewer": {"provider": provider, "model": model, "effort": member.cfg.reasoning_effort}, "plan": plan}, ensure_ascii=False), file=sys.stderr)
+            verdict = review_mod.run_review(
+                work, prompt=prompt, provider=provider, model=model,
+                effort=member.cfg.reasoning_effort, prices=prices,
+            )
+            review_mod.append_review(run, proposal, verdict)
+            print(json.dumps(verdict, ensure_ascii=False, indent=2, default=str))
+            print(json.dumps(harness.settle(
+                run, target_id=a.target, task=a.task, protocol_version=trust.current_protocol_version(),
+                enabled=True, shadow=True,
+            ), ensure_ascii=False, indent=2, default=str))
         elif a.harness_action == "apply":
             if not a.confirm and not a.check:
                 print("refusing to apply without --confirm (use --check first)", file=sys.stderr)
@@ -738,6 +783,13 @@ def main(argv: list[str] | None = None) -> int:
     hse.add_argument("--task", required=True)
     hse.add_argument("--protocol-version", default=None)
     hse.add_argument("--active", action="store_true", help="write an active overlay; default is shadow only")
+    hr = hs.add_parser("review")
+    hr.add_argument("run_dir")
+    hr.add_argument("--key", required=True)
+    hr.add_argument("--target", default="apple-m4-max")
+    hr.add_argument("--task", required=True)
+    hr.add_argument("--provider", default=None)
+    hr.add_argument("--model", default=None)
     hp = hs.add_parser("patch")
     hp.add_argument("run_dir")
     hp.add_argument("--target", default="apple-m4-max")

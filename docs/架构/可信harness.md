@@ -249,6 +249,31 @@ sequenceDiagram
 
 所以 P1 默认影子，P2 必须人审；自动只负责把候选缩小到值得人看的一小批。
 
+### 5.3 独立 review 与双来源的区别
+
+两个模型独立写出同一 action 的概率很低。另一种召回方式是：第一个模型提出 tip，另一个 provider/model 做一次**只读 review**，判断是否有用、风险是什么、下一步怎么验。
+
+```mermaid
+flowchart LR
+  P["一条 valid tip"] --> R["独立 review<br/>不同 provider/model"]
+  R -->|"useful + 证据可核"| S["reviewed_shadow<br/>仍不注入 TASK"]
+  R -->|"not useful / 风险"| H["人工队列"]
+  P -->|"第二个模型独立提出同一 action"| Q["quorum"]
+  Q --> S2["shadow / 人审"]
+```
+
+review 不是第二个独立提出，不能替代 quorum；它只把单来源 tip 推进到 **shadow**，让人看见，active 仍要人确认。review prompt 必须把建议标成 untrusted data，禁止改 kernel/TASK，只允许写 `HARNESS_REVIEW.json`。
+
+review 的预算不能写死 $0.2：按 reviewer 的实际 input/output 单价、prompt 长度和最大输出 token 算：
+
+```
+input_tokens  = max(1000, ceil(prompt_bytes / 3))
+expected_usd  = input_tokens/1e6 * price_in + output_tokens/1e6 * price_out
+budget_usd    = max(0.01, expected_usd * 4)
+```
+
+不同的模型价格不同，贵的 reviewer 得到更大的预算；实际成本另记到 `harness_reviews.jsonl`。
+
 ## 6. 影子、状态机与回滚
 
 ```mermaid
