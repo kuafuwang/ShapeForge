@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from taic.kernel_agent import (
-    AgentError, AgentResult, Prices, SessionBrief, agent_spec, dollars_for, kernel_text,
-    output_tokens_for, parse_spent, render_contract, run_kernel_agent, spend_from_stream,
+    TASK_MAX_BYTES, AgentError, AgentResult, Prices, SessionBrief, agent_spec, dollars_for, kernel_text,
+    output_tokens_for, parse_spent, prune_work, render_contract, run_kernel_agent, spend_from_stream,
     submission_name,
 )
 from taic.llm import SearchConfig
@@ -194,7 +194,7 @@ def test_a_seed_left_in_kernel_metal_is_not_a_submission(tmp_path):
         effort=None, prices=PRICES, turn_output_tokens=10, turn_minutes=1, hmz=str(hmz),
     )
     assert result.source is None
-    assert (work / "kernel.metal").read_text().startswith("kernel void conv2d_kernel() { /* seed */ }")
+    # The seed kernel is archived after the session (scratch/<label>.tar.gz); it is never read as the submission.
     assert not (work / "conv2d-fp16-paper-init.metal").exists()
 
 
@@ -226,3 +226,35 @@ def test_feedback_is_read_with_the_notes_and_capped(tmp_path):
     assert not result.feedback.startswith("kind: none")
     assert len(result.feedback) == 16384
     assert result.notes.startswith("kept")
+
+
+def test_task_md_keeps_its_dynamic_blocks_inside_the_budget(tmp_path):
+    brief = _brief(tmp_path, seedless=False)
+    brief.scorecard = "s" * 5000
+    brief.notes_summary = "n" * 9000
+    brief.peer_tips = "t" * 9000
+    brief.history = "h" * 5000
+    brief.failure = "f" * 5000
+    brief.evidence = "e" * 5000
+    text = render_contract(brief)
+    assert len(text.encode("utf-8")) <= TASK_MAX_BYTES + 400
+    assert "# 本轮省略（上下文预算）" in text
+    assert "NOTES.md" in text and "FEEDBACK.md" in text
+    # the required contract, signature and both commands survive the trim
+    assert "# 约束" in text and "kernel void conv2d_kernel()" in text
+    assert "--quick" in text and "--timed" in text
+
+
+def test_prune_archives_scratch_and_keeps_the_files_the_search_reads(tmp_path):
+    work = tmp_path / "run" / "agent_work" / "r1"
+    (work / "v").mkdir(parents=True)
+    (work / "v" / "ablation.metal").write_text("x" * 2000)
+    (work / "probe.py").write_text("print(1)\n")
+    (work / "NOTES.md").write_text("notes\n")
+    (work / "self_checks.jsonl").write_text("{}\n")
+    out = prune_work(work, label="r1")
+    assert not (work / "v").exists() and not (work / "probe.py").exists()
+    assert (work / "NOTES.md").is_file() and (work / "self_checks.jsonl").is_file()
+    archive = tmp_path / "run" / "scratch" / "r1.tar.gz"
+    assert archive.is_file() and archive.stat().st_size > 0
+    assert "v" in out["archived"] and "probe.py" in out["archived"]

@@ -287,7 +287,7 @@ def profiler_evidence_text(body: str) -> str:
     )
 
 
-def _notes_for_next(outer: str, notes: str, limit: int = 4000) -> str:
+def _notes_for_next(outer: str, notes: str, limit: int = 2500) -> str:
     """The next session's NOTES block. The outer measurement is the first line, written by the search, not by the agent.
 
     Notes are appended, so a truncated file keeps the newest lines.
@@ -1479,9 +1479,9 @@ class Orchestrator:
         bound = ""
         if seed is not None and seed.report is not None and not seedless:
             report_json = json.dumps(seed.report.to_json())
-            scorecard = format_feedback(seed.report)[:2000]
+            scorecard = format_feedback(seed.report)[:1000]
             bound = _operation_bound(seed.report)
-        history = "\n".join(self.history[-8:])
+        history = "\n".join(self.history[-5:])
         tips = ""
         if self.search.peer_tips:
             from .agent_feedback import peer_tips_for

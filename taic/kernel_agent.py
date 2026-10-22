@@ -15,6 +15,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -40,6 +41,8 @@ WRAP_OUTPUT_TOKENS = 4000
 WRAP_MINUTES = 3
 FLOW_SLACK_MINUTES = 2
 PROCESS_TIMEOUT_S = process_timeout_s(25)
+TASK_MAX_BYTES = 12_000
+SCRATCH_MAX_BYTES = 50_000_000
 
 
 class AgentError(LLMError):
@@ -105,6 +108,7 @@ class AgentResult:
     status: str  # ok, timeout, failed
     error: str = ""
     spent: dict = field(default_factory=dict)
+    pruned: dict = field(default_factory=dict)
     notes: str = ""
     feedback: str = ""
     self_checks: int = 0
@@ -289,8 +293,21 @@ def _feedback_check_command(brief: SessionBrief) -> str:
     ])
 
 
-def render_contract(brief: SessionBrief) -> str:
-    """The KDA-shaped task contract written to ``TASK.md``."""
+def _cap_task(text: str, limit: int) -> str:
+    """Trim one dynamic block. The full text stays on disk; the marker says so."""
+    body = (text or "").strip()
+    if len(body) <= limit:
+        return body
+    return body[:limit].rstrip() + "\n…（本段已截断；全文见本目录文件）"
+
+
+def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> str:
+    """The KDA-shaped task contract written to ``TASK.md``, with a hard dynamic-block budget.
+
+    The contract, signature, commands and evidence rules are required. Scorecard, failure,
+    NOTES, tips, history and extra evidence are added in priority order while they fit; an
+    omitted block names the file that still holds it.
+    """
     quick = _check_command(brief, "quick")
     timed = _check_command(brief, "timed")
     submit = submission_name(brief.task_name, brief.dtype, brief.size, brief.label)
@@ -381,30 +398,6 @@ def render_contract(brief: SessionBrief) -> str:
         "```",
         "比较两版快慢或做消融之前，先读技能 `taic-tools` 的「测量」节。动手前先读本目录的 `device.md` 和 `experience.md`。再查仓库 `docs/`、本运行 `agent_work/*/NOTES.md`。",
     ]
-    if not brief.seedless:
-        lines += ["", "# 当前现场", f"种子在 `kernel.metal`。交卷写 `{submit}`，不要改种子文件。"]
-        if brief.scorecard:
-            lines += ["", "外层成绩单：", brief.scorecard.strip()]
-        if brief.bound_line:
-            lines += ["", brief.bound_line.strip()]
-        if brief.failure:
-            lines += ["", "上一轮外层失败反馈：", brief.failure.strip()]
-        if brief.history:
-            lines += ["", "最近的历史：", brief.history.strip()]
-        if brief.notes_summary:
-            lines += ["", "上一轮 NOTES（硬件上限类断言未附实测数字的，按未验证处理）：", brief.notes_summary.strip()]
-        if brief.peer_tips:
-            lines += ["", _PEER_HEADER, brief.peer_tips.strip()]
-        if brief.evidence:
-            lines += ["", brief.evidence.strip()]
-        lines += [
-            "",
-            "合同里的外层成绩和你自己跑出来的数字对不上时，先把评测命令里的交卷文件换成 "
-            + _shell(str(_work_path(brief) / "kernel.metal"))
-            + " 跑一次 `--timed`，再改。交卷前的自测用上面的命令，文件名是交卷文件。",
-        ]
-    elif brief.peer_tips:
-        lines += ["", _PEER_HEADER, brief.peer_tips.strip()]
     lines += [
         "",
         "# 证据",
@@ -414,7 +407,51 @@ def render_contract(brief: SessionBrief) -> str:
         "",
         f"交卷文件 `{submit}` 里一直放目前最好的一版。外层只读这个文件。",
     ]
-    return "\n".join(lines) + "\n"
+    out = "\n".join(lines) + "\n"
+    blocks: list[tuple[str, str]] = []
+    if not brief.seedless:
+        context = ["", "# 当前现场", f"种子在 `kernel.metal`。交卷写 `{submit}`，不要改种子文件。"]
+        if brief.scorecard:
+            context += ["", "外层成绩单：", _cap_task(brief.scorecard, 1000)]
+        if brief.bound_line:
+            context += ["", _cap_task(brief.bound_line, 300)]
+        blocks.append(("当前现场", "\n".join(context) + "\n"))
+        if brief.failure:
+            blocks.append(("上一轮外层失败反馈", "\n\n上一轮外层失败反馈：\n" + _cap_task(brief.failure, 1000)))
+        if brief.notes_summary:
+            blocks.append((
+                "上一轮 NOTES",
+                "\n\n上一轮 NOTES（硬件上限类断言未附实测数字的，按未验证处理）：\n" + _cap_task(brief.notes_summary, 1800),
+            ))
+        if brief.peer_tips:
+            blocks.append(("本任务前序避坑提示", "\n\n" + _PEER_HEADER + "\n" + _cap_task(brief.peer_tips, 1500)))
+        if brief.history:
+            blocks.append(("最近的历史", "\n\n最近的历史：\n" + _cap_task(brief.history, 400)))
+        if brief.evidence:
+            blocks.append(("现场证据", "\n\n" + _cap_task(brief.evidence, 600)))
+        blocks.append((
+            "自测对照",
+            "\n\n" + _cap_task(
+                "合同里的外层成绩和你自己跑出来的数字对不上时，先把评测命令里的交卷文件换成 "
+                + _shell(str(_work_path(brief) / "kernel.metal"))
+                + " 跑一次 `--timed`，再改。交卷前的自测用上面的命令，文件名是交卷文件。",
+                400,
+            ),
+        ))
+    elif brief.peer_tips:
+        blocks.append(("本任务前序避坑提示", "\n\n" + _PEER_HEADER + "\n" + _cap_task(brief.peer_tips, 1500)))
+
+    omitted: list[str] = []
+    for name, text in blocks:
+        if len(out.encode("utf-8")) + len(text.encode("utf-8")) <= max_bytes:
+            out += text
+        else:
+            omitted.append(name)
+    if omitted:
+        out += "\n\n# 本轮省略（上下文预算）\n"
+        out += f"以下段落因 {max_bytes} 字节预算未附：" + "、".join(omitted) + "。\n"
+        out += "全文在本目录的 NOTES.md、FEEDBACK.md、feedback.jsonl 和 state.json；需要时读取，不要假设它们为空。\n"
+    return out
 
 
 def _self_check_summary(work: Path) -> tuple[int, int, float]:
@@ -462,6 +499,76 @@ def stage_guidance(work: Path, brief: SessionBrief) -> None:
         chosen = frozen if frozen is not None and frozen.is_file() else src
         if chosen.is_file():
             shutil.copyfile(chosen, work / name)
+
+
+
+_WORK_KEEP = frozenset({"NOTES.md", "FEEDBACK.md", "self_checks.jsonl", "TASK.md"})
+
+
+def prune_work(work: Path, *, label: str, keep: set[str] | None = None, max_bytes: int = SCRATCH_MAX_BYTES) -> dict:
+    """Archive the session's oversized scratch and remove it from ``agent_work``.
+
+    The files the search reads (NOTES, FEEDBACK, self_checks, TASK.md, kernel.metal, the
+    submission) are kept. Everything else -- probe variants, ``v/`` ablation sources, ad-hoc
+    scripts -- is tarred under ``<run>/scratch/<label>.tar.gz`` and deleted. If the archive
+    itself exceeds ``max_bytes``, it is dropped and a JSON manifest records what was removed:
+    the point is a hard cap, not an unbounded second copy.
+    """
+    work = Path(work)
+    if not work.is_dir():
+        return {"archived": [], "kept": [], "bytes": 0, "reason": "no work dir"}
+    keep = set(_WORK_KEEP) | {str(name) for name in (keep or ())}
+    entries = [path for path in work.iterdir() if path.name not in keep]
+    kept = sorted(path.name for path in work.iterdir() if path.name in keep)
+    if not entries:
+        return {"archived": [], "kept": kept, "bytes": 0}
+
+    def size_of(path: Path) -> int:
+        if path.is_file():
+            return path.stat().st_size
+        return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+
+    total = sum(size_of(path) for path in entries)
+    run_dir = work.parent.parent
+    scratch = run_dir / "scratch"
+    scratch.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", label or work.name).strip("-") or "session"
+    archive = scratch / f"{safe}.tar.gz"
+    index = 1
+    while archive.exists():
+        archive = scratch / f"{safe}.{index}.tar.gz"
+        index += 1
+    archived: list[str] = []
+    reason = ""
+    try:
+        with tarfile.open(archive, "w:gz") as tar:
+            for path in entries:
+                tar.add(path, arcname=path.name)
+                archived.append(path.name)
+    except (OSError, tarfile.TarError) as exc:
+        reason = f"archive failed: {type(exc).__name__}"
+        archived = []
+        archive.unlink(missing_ok=True)
+    if archive.is_file() and archive.stat().st_size > max_bytes:
+        reason = f"archive over {max_bytes} bytes"
+        archive.unlink(missing_ok=True)
+    if reason:
+        (scratch / f"{safe}.json").write_text(json.dumps({
+            "label": label, "reason": reason, "bytes": total,
+            "entries": [{"name": path.name, "bytes": size_of(path)} for path in entries],
+        }, indent=1), encoding="utf-8")
+    for path in entries:
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            path.unlink(missing_ok=True)
+    return {
+        "archived": archived,
+        "archive": str(archive) if archive.is_file() else None,
+        "kept": kept,
+        "bytes": total,
+        "reason": reason,
+    }
 
 
 def run_kernel_agent(
@@ -556,9 +663,14 @@ def run_kernel_agent(
     if status != "timeout" and proc.returncode not in (0, None):
         status = "failed"
         error = (stderr or stdout or "").strip()[-400:]
+    pruned = prune_work(
+        work, label=brief.label,
+        keep={submission_name(brief.task_name, brief.dtype, brief.size, brief.label)},
+    )
     return AgentResult(
         source=source, cost_usd=cost, cost_incomplete=not saw_result, status=status, error=error,
         spent=spent, notes=notes, feedback=feedback, self_checks=checks, self_check_timeouts=timeouts, self_check_gpu_s=gpu_s,
+        pruned=pruned,
     )
 
 

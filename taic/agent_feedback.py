@@ -20,9 +20,9 @@ PARSER_VERSION = "fbv2"
 FILE_CAP = 16384
 RAW_CAP = 4096
 TIP_CHARS = 250
-TIPS_CHARS = 2000
-VERIFIED_TIPS_CHARS = 4000
-TIP_KEEP = 8
+TIPS_CHARS = 1200
+VERIFIED_TIPS_CHARS = 1800
+TIP_KEEP = 5
 UNVERIFIED_SPAN = 2  # sessions after the one that first wrote an unverified premise; the third session no longer sees it
 _PLACEHOLDERS = frozenset({"无", "没有", "空", "none", "na"})
 
