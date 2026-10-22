@@ -15,6 +15,9 @@
 | `ac04199` | Keep prompt bodies out of the transcript, and give the dashboard ETag, gzip and cursor pages. |
 | `6f0528b` | Keep eight peer tips; the character budget is the stop, not a shorter list. |
 | `7389851` | Keep resumed token counts, a partial scorecard, and the flame-chase protocol epoch. |
+| `a877c13` | Measure the index at 100k runs, index sessions and the eval protocol. |
+| `519b93c` | Complete the TASK omission note instead of cutting it at the byte cap. |
+| `7adf797` | Add read-only query and gc commands, and best/failure views. |
 | （本报告） | Execution report and final verification. |
 
 ## 按审核意见的落实
@@ -75,12 +78,13 @@
 
 | 项 | 结果 |
 |---|---|
-| 离线门禁 | `uv run pytest -q -m "not gpu and not llm"` → **848 passed, 5 skipped, 133 deselected, 78.38s** |
+| 离线门禁 | `uv run pytest -q -m "not gpu and not llm"` → **853 passed, 5 skipped, 133 deselected, 75.40s** |
 | `repro.sh` | exit 0；`brief` **1,479B**（原 2,454B），无 GPU 事件，路径相对 |
 | `agent_work` | **2.6MB / 214 文件**（恢复 91 份 TASK.md 后；恢复前 0.5MB） |
 | `runs/` | **1,131.3MB / 4,233 文件**（原 1,234.4MB） |
-| 索引 | schema **6**；`protocol_version` = 4 `flame_chase_1` + 48 `legacy`；candidates 741；arms 13 |
+| 索引 | schema **8**；`protocol_version` = 4 `flame_chase_1` + 48 `legacy`；`protocol_epoch` 把前者归到 `2`；sessions **85**；candidates 741；arms 13 |
 | `turns` | 重建后 **0**：仍是懒投影，打开某个 run 才写入；54 个 transcript（759.7MB）没有删，`turn_bytes>0` 要等一次详情请求 |
+| 10^5 合成压测 | cold sync **157.6s**、hot tick **6ms**、history **0.83s**、first list **4ms**、second page **2ms**、best **0.5s**、DB **167MB**（`SCALE_PROBE.json`） |
 | index | runs 52 / candidates 741 / arms 13 |
 | 计费重算 | 三个 run 与 REVIEW.md 的数字逐分一致 |
 | 测试新增 | 计费、重算、TASK 预算、prune、candidates/keyset、resume、backfill、ETag/gzip、transcript 哈希 |
@@ -93,16 +97,32 @@
 2. **TASK 预算优先保留当前现场**：装不下时把「当前现场」裁到剩余字节（保留种子行和部分成绩单），不再整块丢掉；省略注记计入 12,000 字节上限。测试改为真实的 `conv2d` 和 `flash_attention` paper 任务，断言 `<= TASK_MAX_BYTES`、`外层成绩单` 仍在、`本段已截断` 和省略注记存在。golden 重录（只有 flash_attention plan_mix=0 一个键变化）。
 3. **protocol epoch 回填**：索引 schema 升到 6；`_upsert_run` 在没有显式 `protocol_version` 时读 `loop_protocol`，`flame_chase_1` 不再和 chat 一起标成 `legacy`。重建后的现有 52 行：**4 个 `flame_chase_1` + 48 个 `legacy`**；测试 `test_a_legacy_flame_chase_run_is_not_labelled_chat`。
 
-## 仍未做（明确留给下一轮）
+## 8. 补齐 §7 中不需要新政策的部分 — `a877c13` / `519b93c` / `7adf797`
 
-1. **10⁵ 合成压测**：F4 的 25s 仍是外推（U）；没有在 `/tmp` 造 10³/10⁴ 个 run。
-2. **F10 的 GPU 节省**：`candidate_serial` 默认移除、baseline 固定、eval 缓存都未做；unchanged_patience 仍等试点。
-3. **F12 保留策略**：`data/deleted` 266MB 的 TTL、manifest、`taic gc`、kernel blob/refcount 未做。
-4. **F14 的会话表**：只加了 `committees_json` 和 transcript 的 agent 行；`runs.model` 仍是第一委员会，没有独立 `sessions` 表。
-5. **F15 的 eval 级 epoch**：`protocol_version` 只落在 run 级，`EvalReport` 还没有。
-6. **`feedback_claims.topic`**：仍然 0/320；写入端未补。
-7. **Leaderboard / failure 页面 / 图表**：只加了 API，没有前端页面；主列表仍是整表 innerHTML（cursor 降低了页大小）。
-8. **`taic query` / MCP**：没有新增命令层；AI 目前用 `brief` + HTTP 读接口。
+`REVIEW_5375077.md` 的两条残留（省略注记被裁、`protocol_version` 两代分桶）也已处理：
+
+- 省略注记预留 420 字节，真实 conv2d / flash_attention 测试断言「需要时读取」在文末；golden 重录。
+- `runs_page` 增加 `protocol_epoch`：`flame_chase_1` 与 `2` 归为同一代，`legacy` 单独一桶。
+
+| 原「下一轮」项 | 现在的状态 |
+|---|---|
+| 10^5 压测 | **做了**。`experiments/scale_probe.py` 在 `/tmp` 造 100k 个最小 run；cold sync **157.6s**、hot tick **6ms**、history **0.83s**、first page **4ms**、second page **2ms**、best **0.5s**、DB **167MB**。结果在 `SCALE_PROBE.json`。请求路径已移出目录扫描；`best` 的 0.5s 仍是 100k 全表，留作下一步的聚合表。 |
+| sessions 表 | **做了**。schema 8 新增 `sessions`（committee/model/tokens/cost）；现有 **85 行**（kimi 35、deepseek 50，含旧 run 的空 committee）。`taic query sessions|models` 和 `/api/v2/{sessions,model-stats}` 可读。 |
+| eval 级 protocol | **做了**。`tcenv/schema.PROTOCOL_VERSION` 写入 `EvalReport.protocol_version`；`candidates.protocol_version` 一并索引。 |
+| data/deleted TTL | **做了工具**。`taic gc --older-than-days 30` 默认只报告；`--apply` 才删除并写 `gc_log.jsonl`。真实 266MB 没有删——这是保留政策，等你拍板。 |
+| leaderboard/failure 页面 | **做了入口**。看板头部「最佳 / 失败」打开两个表，分别读 `/api/v2/best` 与 `/api/v2/failures`。 |
+| taic query/MCP | **做了 CLI**。`taic query runs|best|failures|sessions|models|capabilities`，支持 `--jsonl`。MCP 传输层没有做；CLI 是同一读模型的最小面。 |
+| feedback_claims.topic 写入 | **未做**。agent 输出没有 topic 字段，现有 `topic` 是人工 review 时填的；要自动填必须先定义分类法（谁产生、允许哪些值、是否 LLM 打标）。加一个空字符串之外的猜测会让 320 行变得不可审。 |
+| candidate_serial 移除 / eval 缓存 | **未做**。两者都改测量协议：移除 serial 会改变每颗候选的计时，eval 缓存要决定哪些 phase/seed 可以复用。需要一次 GPU A/B 和 `protocol_version` bump；没有你的预算批准不能跑。 |
+
+## 仍未做（需要你拍板或 GPU 预算）
+
+1. **candidate_serial 默认移除**：会让候选的计时窗口变短，必须和旧数据分 epoch；需要在 GPU 上 A/B 后才能改默认值。
+2. **eval 缓存**：要决定缓存键（哪些 phase/seed/reps 可复用），以及缓存命中是否影响 `evaluations`/预算记录；本轮没有启用。
+3. **`feedback_claims.topic` 写入**：需要定义分类法/写入方；目前只有人工 review 会写。
+4. **`data/deleted` 实际删除**：`taic gc --apply` 已可用，但没有对 266MB 执行；TTL 和是否保留是政策决定。
+5. **MCP server**：`taic query` 已有同一读模型；MCP 的传输、鉴权和工具 schema 还没做。
+6. **10^5 的 `best` 全表 0.5s**：需要聚合表/物化视图，属于下一轮索引优化。
 
 ## 风险与回滚
 
