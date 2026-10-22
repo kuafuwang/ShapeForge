@@ -173,8 +173,46 @@ def run_one(
         # 单次回复上限，思考也算。不传就用 taic.toml 的 48000。
         cfg.max_tokens = max_tokens
     # 显式 model 让两个委员会都用它。否则用配置里的两名成员。RunStartError（目录已有文件，或 run_config.json 写失败）从这里原样抛给调用方，不进入 run()。
+    if _looks_resumable(Path(run_dir)):
+        log(f"(resume interrupted cell {run_dir})")
+        return _resume_one(task, dtype, size, Path(run_dir), cfg, search, raw, model, client, evaluate_fn, agent_runner, log)
     committees = load_committees(raw, active=cfg, model_override=model)
     orch = Orchestrator(task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log, committees=committees, agent_runner=agent_runner)
+    return asyncio.run(orch.run())
+
+
+def _looks_resumable(run_dir: Path) -> bool:
+    """A non-empty cell with the three files a flame-chase snapshot needs; a stray file dir is still refused."""
+    return (run_dir / "run_config.json").is_file() and (run_dir / "state.json").is_file() and (run_dir / "transcript.jsonl").is_file()
+
+
+def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, evaluate_fn, agent_runner, log) -> RunResult:
+    """Continue an interrupted batch cell instead of refusing the non-empty directory."""
+    from tasks import get_task
+
+    from taic import resume as rs
+    from taic.orchestrator import RunStartError
+
+    task_obj = get_task(task, dtype, size)
+    try:
+        snap = rs.load_snapshot(run_dir, search, task_obj.contract.kernel_name)
+    except rs.ResumeError as exc:
+        raise RunStartError(f"{run_dir} is not resumable: {exc}") from exc
+    recorded = {}
+    try:
+        recorded = json.loads((run_dir / "run_config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        recorded = {}
+    recorded_committees = recorded.get("committees") if isinstance(recorded, dict) else None
+    if isinstance(recorded_committees, list) and recorded_committees and not model:
+        committees = load_committees({"llm": raw.get("llm") or {}, "committees": recorded_committees}, active=cfg)
+    else:
+        committees = load_committees(raw, active=cfg, model_override=model)
+    orch = Orchestrator(
+        task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn,
+        log=log, committees=committees, agent_runner=agent_runner, resuming=True,
+    )
+    orch.restore(snap, dry_run=False)
     return asyncio.run(orch.run())
 
 

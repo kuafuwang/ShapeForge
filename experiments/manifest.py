@@ -206,3 +206,71 @@ def extend_budget(root: Path, *, run: str, new_cap: float, at: float | None = No
         })
         write_json_atomic(root / FILENAME, doc)
         return doc
+
+
+def backfill(root: Path, *, kind: str, driver: str, frozen: dict | None = None) -> dict:
+    """Create a manifest for an experiment directory that predates manifests.
+
+    Every child directory that holds a ``run_config.json`` (or a ``state.json``) becomes an
+    arm and is attached under its relative path. Budget is deliberately not part of the arm
+    delta: it changed between reruns, and a delta that embeds it makes a later ``ensure``
+    refuse the directory. The frozen block is marked ``backfilled`` so a reader knows the
+    conditions were reconstructed, not recorded at launch.
+    """
+    root = Path(root)
+    existing = load(root)
+    if existing is not None:
+        return existing
+    seen: set[str] = set()
+    arms: list[dict] = []
+    for name in ("run_config.json", "state.json"):
+        for path in sorted(root.rglob(name)):
+            child = path.parent
+            if child == root:
+                continue
+            relative = child.relative_to(root).as_posix()
+            if relative in seen:
+                continue
+            seen.add(relative)
+            config = _read_json(child / "run_config.json")
+            state = _read_json(child / "state.json")
+            task = config.get("task") or state.get("task")
+            if not task:
+                continue
+            delta = {"task": task}
+            for key in ("dtype", "size", "model"):
+                value = config.get(key) or state.get(key)
+                if value:
+                    delta[key] = value
+            arms.append({"arm_id": relative, "delta": delta, "planned_n": 1})
+    if not arms:
+        raise ManifestError(f"{root} has no child run directories to backfill")
+    doc = ensure(root, kind=kind, driver=driver, frozen=frozen or {"backfilled": True}, arms=arms)
+    for arm in arms:
+        attach(root, arm["arm_id"], arm["arm_id"])
+    return load(root) or doc
+
+
+def _read_json(path: Path) -> dict:
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="python -m experiments.manifest")
+    parser.add_argument("--backfill", metavar="ROOT", required=True)
+    parser.add_argument("--kind", default="suite", choices=sorted(KINDS))
+    parser.add_argument("--driver", required=True)
+    args = parser.parse_args(argv)
+    doc = backfill(Path(args.backfill), kind=args.kind, driver=args.driver)
+    print(json.dumps({"experiment_id": doc.get("experiment_id"), "arms": len(doc.get("arms") or []), "root": args.backfill}, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
