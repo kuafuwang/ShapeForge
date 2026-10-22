@@ -17,6 +17,8 @@
 | `158db49` | 拒绝带 shell/代码语法的 `action` |
 | `caf16f1` | 收紧 never-auto：合同、容差、ABI、预算、价格、阈值的词不进 P1 |
 | `e05f662` | 把 ABI 改为词边界匹配，避免 `capability` 被误伤 |
+| `4738a94` | P2 patch 前校验 target id |
+| `4cade5f` | 看板顶栏 Harness 按钮，打开当前 run 的只读 JSON |
 
 基础是 `c9f7862`（数据层文档 + 反馈审计）。
 
@@ -27,7 +29,7 @@
 - `taic/trust.py`：`targets/<id>/trust.toml`，键含 target/task/provider/model/effort、prompt sha、协议、scope、过期；`trust_audit.jsonl` 追加 grant/suspend/revoke。
 - `taic/harness.py`：解析 ` ```harness-proposal ` JSON；`tip` 需要两个不同 provider/model、两个委员会、两份不同 SHA 的本场探针和 active 信任；`premise` 只需本场探针。默认只写影子 overlay；`TASK.md` 才注入 active 条目，且带未验证标题、受 12KB 预算裁剪。
 - `taic/cli.py`：`trust grant|revoke|suspend|status|audit|metrics`，`harness status|disable|settle|patch|apply`。`apply` 默认拒绝；`--check` 只检查，`--run-tests` 跑反馈/合同离线测试，`--confirm` 才改 `targets/<id>/experience.md`，不自动 commit。
-- `observe/query.py` / `observe/app.py`：`GET /api/v2/harness/{run_id}` 返回提案、决策和 overlay；没有 UI 面板。
+- `observe/query.py` / `observe/app.py`：`GET /api/v2/harness/{run_id}` 返回提案、决策和 overlay；顶栏 Harness 按钮打开当前 run 的只读 JSON，没有编辑面板。
 - `experiments/apply_feedback_audit.py`：dry-run 默认；`--apply` 写 `feedback_review.json`；`--merge-topic` 显式合并同 topic 的系统建议（默认不做）。
 - `experiments/harness_pilot.py`：只读汇总影子/生效、空占位、提案和 unchanged 率。
 
@@ -52,7 +54,7 @@
 ## 审阅清单
 
 ```bash
-git show --stat 90b7517 7ae00d5 397d806 9c79d61 4b433ff 887c80f bb7c51f 1c1eac6 158db49 caf16f1 e05f662
+git show --stat 90b7517 7ae00d5 397d806 9c79d61 4b433ff 887c80f bb7c51f 1c1eac6 158db49 caf16f1 e05f662 4738a94 4cade5f
 uv run pytest -q -m 'not gpu and not llm'
 uv run python -m taic.cli trust status apple-m4-max
 uv run python -m taic.cli harness status RUN_DIR
