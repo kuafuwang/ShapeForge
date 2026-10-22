@@ -123,7 +123,7 @@ flowchart LR
 - 数字和单位能对上；探针测的命题就是被否决的命题，不是相邻问题。
 - 代理自写的探针只能当“带出处的线索”，不能自动标成已证实。
 
-**当前实现差距**：代码目前只检查探针文件在提案者本场目录、mtime 晚于本场开始、SHA 存在且两份不同，并要求该模型有 active `overlay:premise` 信任；它还没有接入“评测器签发的可信执行记录”。因此当前 P1 `premise` 的理论门槛高于实现，审阅时应把它当“带出处线索”，不要当已证明事实。详见 §7。
+**当前实现差距**：代码目前只检查探针文件在提案者本场目录、mtime 晚于本场开始、SHA 存在，并要求该模型有 active `overlay:premise` 信任；`premise` 在本阶段**只写 shadow，不进入 active TASK**。它还没有接入“评测器签发的可信执行记录”。因此当前 P1 `premise` 的理论门槛高于实现，审阅时应把它当“带出处线索”，不要当已证明事实。详见 §7。
 
 ### 2.3 harness 流水线
 
@@ -301,10 +301,10 @@ proposal -> patch -> git apply --check -> 离线测试/golden -> 人确认 -> ap
 | 设计基线 | 当前实现 | 风险 |
 | --- | --- | --- |
 | 证据来自 harness 可信执行记录 | P1 `premise` 只校验本场探针存在、mtime、SHA | 代理可伪造探针；不能把 P1 premise 当已证明事实 |
-| `premise` 也需更强门槛 | `premise` 不需要双模型投票，但需要 active `overlay:premise` 信任 | 单模型错误前提仍可能进入本 run overlay；信任表为空时不会 |
+| `premise` 也需更强门槛 | `premise` 不需要双模型投票，但需要 active `overlay:premise` 信任；本阶段只写 shadow | 单模型错误前提仍可能进 shadow；不会自动进 active TASK |
 | 独立性靠“证据产自本场” | 只比较探针 SHA 不同 | 复制文字 + 各写不同探针仍可能通过 |
 | P1 关闭用只追加 disable 事件 | 当前是 `harness_control.json` 覆盖写 | 文件被重写时历史事件不在文件内；审计要看决策日志 |
-| 活动 claim 与历史审计分开 | 当前使用 `info`/`obsolete` 状态和墓碑 | 与计划第 7 节的“不新增状态”不同；审阅时按当前实现读 |
+| 活动 claim 与历史审计分开 | 当前使用 `info`/`obsolete` 状态和墓碑；空占位重建时写入 `feedback_claim_removed` | 与计划第 7 节的“不新增状态”不同；审阅时按当前实现读 |
 | 重复按同一 action+scope 确认 | 曾显式执行 `--merge-topic`，复核后由 `experiments.revert_topic_merges` 把 10 条改回 pending | topic 不是等价关系；不要按 topic 批量关 |
 | 付费试点后再扩大 | 只准备离线工具，没有跑 `taic run/resume` | 没有真实的质量/成本结论 |
 
@@ -321,7 +321,7 @@ proposal -> patch -> git apply --check -> 离线测试/golden -> 人确认 -> ap
 | 分布漂移 | 换模型/硬件/任务后旧 tip 变坏 | target/task/protocol/prompt 绑定、过期 | 同 target 内的任务相似性仍可能误导 |
 | 单模型偏见 | 同一模型两次提出同一建议 | 两个 provider+model、两个委员会 | 两个模型可能共享训练数据/笔记 |
 | 跨硬件污染 | 把一个 target 的经验复制到另一个 | 所有 key 带 target；overlay/P2 过滤 | 人工复制仍可能绕过 |
-| 审计丢失 | 删 run、重建索引、覆盖文件 | append-only 日志、墓碑、review history | 7 条空占位的墓碑当前不在表里（见实现交接） |
+| 审计丢失 | 删 run、重建索引、覆盖文件 | append-only 日志、墓碑、review history | 18 条空占位墓碑已补齐，但墓碑只有 status/reason，不保存正文 |
 | 预算挤占 | overlay 挤掉成绩单/失败反馈 | 固定优先级、12KB 预算、被裁记录 | 仍需看实际 TASK 字节 |
 
 ## 9. 和计划第 3–6 节的对应

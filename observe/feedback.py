@@ -6,7 +6,7 @@ import json
 import time
 from pathlib import Path
 
-from taic.agent_feedback import PARSER_VERSION, load_records, read_appended_records
+from taic.agent_feedback import PARSER_VERSION, _is_placeholder, load_records, read_appended_records
 
 _REVIEWABLE = {"system"}
 _PREMISE = {"verified", "unverified", "downgraded"}
@@ -337,6 +337,44 @@ def _reparsed_record(record: dict, directory: Path) -> dict:
     return record
 
 
+def _dropped_placeholders(directory: Path) -> list[dict]:
+    """Empty placeholder items that the current parser intentionally removed from a session.
+
+    The raw ``feedback.jsonl`` still contains them because it is append-only. A rebuild reads
+    that raw log before repair, so the seven audited placeholders get an audit tombstone even
+    when the fresh index has never held them as active claims.
+    """
+    path = directory / "feedback.jsonl"
+    if not path.is_file():
+        return []
+    rows = []
+    seen = set()
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict) or record.get("format") != "agent_feedback":
+            continue
+        seq = record.get("seq")
+        if not isinstance(seq, int) or isinstance(seq, bool):
+            continue
+        for item in record.get("items") or []:
+            if not isinstance(item, dict) or not _is_placeholder(str(item.get("text") or "")):
+                continue
+            digest = str(item.get("digest") or "")
+            if not digest or (seq, digest) in seen:
+                continue
+            seen.add((seq, digest))
+            rows.append({
+                "seq": seq, "digest": digest,
+                "section": item.get("section") or "",
+                "audience": item.get("audience") or "",
+                "premise": item.get("premise") or "",
+            })
+    return rows
+
+
 def _rebuild_feedback(conn, run_id: str, directory: Path, *, reason: str = "feedback log changed") -> bool:
     """The log was replaced or the parser changed. Read it once, then the cursor takes over."""
     review = _load_review(directory / "feedback_review.json")["claims"]
@@ -363,9 +401,13 @@ def _rebuild_feedback(conn, run_id: str, directory: Path, *, reason: str = "feed
         for row in conn.execute("SELECT * FROM feedback_items WHERE run_id = ?", (run_id,))
     }
     items_differ = stored_items != {_item_signature(row) for row in items}
-    if not removed and not changed and not items_differ:
+    dropped = [
+        row for row in _dropped_placeholders(directory)
+        if (row["seq"], row["digest"]) not in current
+    ]
+    if not removed and not changed and not items_differ and not dropped:
         return False
-    rev = _take_feedback_rev(conn) if (removed or changed) else None
+    rev = _take_feedback_rev(conn) if (removed or changed or dropped) else None
     if items_differ or removed or changed:
         conn.execute("DELETE FROM feedback_items WHERE run_id = ?", (run_id,))
         for row in items:
@@ -387,6 +429,19 @@ def _rebuild_feedback(conn, run_id: str, directory: Path, *, reason: str = "feed
         )
     for claim in changed:
         _write_claim(conn, run_id, claim, rev)
+    for row in dropped:
+        saved = review.get(_review_key(row["seq"], row["digest"]))
+        status = saved.get("status") if isinstance(saved, dict) else "obsolete"
+        conn.execute(
+            """
+            INSERT INTO feedback_claim_removed (run_id, seq, digest, rev, section, audience, premise, status, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, seq, digest) DO UPDATE SET
+                rev = excluded.rev, section = excluded.section, audience = excluded.audience,
+                premise = excluded.premise, status = excluded.status, reason = excluded.reason
+            """,
+            (run_id, row["seq"], row["digest"], rev, row["section"], row["audience"], row["premise"], status or "obsolete", "fbv3 empty placeholder"),
+        )
     return True
 
 

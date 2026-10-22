@@ -110,6 +110,10 @@ def test_a_premise_needs_a_fresh_local_probe_and_does_not_need_a_vote(tmp_path):
     trust.grant("apple-m4-max", "conv2d", "deepseek", "deepseek-flash", effort="high", scopes=["overlay:premise"], root=tmp_path / "targets")
     result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=True, trust_root=tmp_path / "targets")
     assert len(result["shadow"]) == 1
+    # Even with the switch active, a premise stays out of the injected overlay until a
+    # trusted execution record gate exists.
+    active = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=tmp_path / "targets")
+    assert active["applied"] == [] and harness.overlay_text(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version()) == ""
 
 
 def test_probe_escape_stale_probe_and_wrong_scope_are_invalid(tmp_path):
@@ -136,7 +140,7 @@ def test_a_control_disable_hides_an_active_overlay_and_a_p2_patch_is_generated(t
     work = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(surface="premise"), started=started)
     _record_proposal(run, work, _record(1, "deepseek", "deepseek-flash", "first"), _doc(surface="premise"), started)
     trust.grant("apple-m4-max", "conv2d", "deepseek", "deepseek-flash", effort="high", scopes=["overlay:premise"], root=tmp_path / "targets")
-    result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=tmp_path / "targets")
+    result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=tmp_path / "targets", premise_active=True)
     assert result["applied"]
     assert "先读 device.md" in harness.overlay_text(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version())
     harness.set_overlay_control(run, disabled=True, by="alice", reason="pilot pause")
@@ -158,7 +162,7 @@ def test_a_p2_patch_passes_git_apply_check_and_changes_only_the_target_file(tmp_
     work = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(surface="premise"), started=started)
     _record_proposal(run, work, _record(1, "deepseek", "deepseek-flash", "first"), _doc(surface="premise"), started)
     trust.grant("apple-m4-max", "conv2d", "deepseek", "deepseek-flash", effort="high", scopes=["overlay:premise"], root=tmp_path / "targets")
-    result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=tmp_path / "targets")
+    result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=tmp_path / "targets", premise_active=True)
     key = result["applied"][0]["proposal_key"]
     repo = tmp_path / "repo"
     (repo / "targets" / "apple-m4-max").mkdir(parents=True)

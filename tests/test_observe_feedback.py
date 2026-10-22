@@ -289,3 +289,19 @@ def test_fbv3_rebuild_rechecks_a_restored_probe_and_keeps_the_review_key(tmp_pat
     row = index.conn.execute("SELECT premise, digest FROM feedback_claims WHERE run_id = 'conv'").fetchone()
     assert row["premise"] == "verified"
     assert row["digest"] == _digest("被否决的前提")
+
+
+def test_a_fbv3_placeholder_gets_a_tombstone_even_on_a_fresh_index(tmp_path, monkeypatch):
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = _parsed()
+    directory = _run(runs, "conv", _record(parsed), started_at=50)
+    record = _record(parsed)
+    record["items"] = [
+        {"section": "需要帮助", "audience": "system", "premise": "", "text": "无。", "digest": "empty"},
+        {"section": "对系统的建议", "audience": "system", "premise": "", "text": "请加一个配对报告。", "digest": "keep"},
+    ]
+    (directory / "feedback.jsonl").write_text(json.dumps(record, ensure_ascii=False) + "\n")
+    index.sync_known()
+    row = index.conn.execute("SELECT status, reason FROM feedback_claim_removed WHERE run_id = 'conv' AND digest = 'empty'").fetchone()
+    assert row is not None
+    assert row["status"] == "obsolete" and row["reason"] == "fbv3 empty placeholder"

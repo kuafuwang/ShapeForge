@@ -6,7 +6,7 @@
 
 1. 先完成 `experiments.apply_feedback_audit`，让存量 174 条有审查标签。
 2. 在目标硬件的 `targets/<target_id>/trust.toml` 里，由人给两个委员会的两个不同 provider/model 授予 `overlay:tip`。信任绑定 task、effort、prompt sha 和协议版本。
-3. 运行配置：`harness_auto = true`、`harness_shadow = true`。影子期只写 `harness_overlay.jsonl`，不注入 TASK。
+3. 运行配置：`harness_auto = true`、`harness_shadow = true`。影子期只写 `harness_overlay.jsonl`，不注入 TASK。`premise` 在本阶段固定只写 shadow；active 试点只适用于已由人确认的 `tip`。
 
 ## 试点范围
 
@@ -33,3 +33,14 @@ uv run python -m taic.cli harness status runs/apple-m4-max/RUN
 - 任一条 active 条目被人判为错误或有害：`uv run python -m taic.cli harness disable RUN --by 人名 --reason ...`。
 - 同一模型在该 target/task 上出现确认推翻率越线，`sync_trust_status` 会暂停它的投票权；人仍可随时 revoke。
 - 不要把试点结论复制到另一个硬件；信任、overlay 和 P2 补丁都按 target 分开。
+
+## 阶段 A 的当前门槛
+
+阶段 A 只做离线加固，不跑付费搜索：
+
+- `premise` 默认只写 shadow，不进入 active TASK；即使模型有 `overlay:premise` 信任也一样。
+- 空占位已有索引墓碑；7 条审计项均已核对，当前所有空占位小节共 18 条墓碑。
+- `tests/test_harness_workflow.py` 覆盖 tip 从双来源/信任到 active TASK，以及 disable 后消失。
+- 仍缺“评测器签发的可信执行记录”；它接上之前，`premise` 不进入 active。
+
+阶段 B 才考虑 2–3 道题的 shadow/active 运行，并需要单独的预算与 GPU 批准。

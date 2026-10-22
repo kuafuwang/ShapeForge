@@ -41,7 +41,7 @@ A tip that should participate in this run's overlay goes in ``FEEDBACK.md`` unde
 
 Fields:
 
-- ``surface``: ``tip`` (needs two trusted models) or ``premise`` (needs a fresh local probe and active ``overlay:premise`` trust).
+- ``surface``: ``tip`` (needs two trusted models) or ``premise`` (needs a fresh local probe and active ``overlay:premise`` trust; in this stage it is shadow-only).
 - ``scope.target_id`` and ``scope.task``: must match this run.
 - ``action``: one sentence; no commands, code, paths that redirect writes, or contract changes.
 - ``evidence.probe``: relative to this session's work directory and created after the session started.
@@ -372,11 +372,16 @@ def settle(
     shadow: bool = True,
     trust_root: Path | None = None,
     prompt_sha1: str | None = None,
+    premise_active: bool = False,
 ) -> dict:
     """Find two-source agreement and append a shadow/active overlay event once per key.
 
     ``enabled`` is the run's harness switch. When false nothing is written. ``shadow`` records
     what would be injected but ``active_overlay`` ignores it until the switch is active.
+
+    A measured premise is shadow-only by default: an agent-written probe is not a trusted
+    execution record. ``premise_active`` is reserved for a future gate that verifies the
+    harness-written record; no production caller sets it.
     """
     if not enabled:
         return {"applied": [], "shadow": [], "reason": "harness_auto is off"}
@@ -429,7 +434,9 @@ def settle(
             )
             if not ok:
                 continue
-        decision = "shadow" if shadow else "apply"
+        force_shadow = surface == "premise" and not premise_active
+        is_shadow = bool(shadow or force_shadow)
+        decision = "shadow" if is_shadow else "apply"
         if (key, decision) in decided:
             continue
         first = rows[0]
@@ -446,7 +453,7 @@ def settle(
             "surface": surface,
             "text": str(first.get("proposal", {}).get("action") or ""),
             "evidence_sha256": str(first.get("probe_sha256") or ""),
-            "shadow": bool(shadow),
+            "shadow": is_shadow,
             "active_from": first.get("seq"),
             "active_until": None,
         }
@@ -457,7 +464,7 @@ def settle(
             "decision": decision, "source_seq": first.get("seq"),
             "models": sorted(identity[0] + "/" + identity[1] for identity in distinct_models),
         })
-        (shadowed if shadow else applied).append(event)
+        (shadowed if is_shadow else applied).append(event)
     return {"applied": applied, "shadow": shadowed}
 
 
