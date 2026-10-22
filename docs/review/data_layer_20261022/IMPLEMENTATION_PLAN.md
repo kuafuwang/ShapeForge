@@ -1,5 +1,7 @@
 # 数据层修改计划（依据 REVIEW.md）
 
+> **状态**：已完成。执行结果、commit ID、数据回填和未做项见 `IMPLEMENTATION.md`。
+
 **审核意见**：`docs/review/data_layer_20261022/REVIEW.md`（PASS-WITH-CHANGES）
 **执行版本**：`69bbe49`（审核包抬头 `ace4ac6` 的三个未提交文件已进入该提交）
 **约束**：不跑 `taic run`/`resume`、不启动 GPU、不调用 LLM；所有验证用离线测试和只读脚本。数据回填只写 `runs/`（gitignored）和 `data/` 的本地文件，不改历史 `spent_usd`。
