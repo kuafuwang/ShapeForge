@@ -368,3 +368,25 @@ def test_candidates_are_indexed_and_a_list_page_carries_the_next_cursor(tmp_path
     failed = scan.failures(status="abi_error")
     assert {row["run_id"] for row in failed["failures"]} == {"run0", "run1", "run2"}
     assert scan.best_confirmed(task="gemm")["best"] == []
+
+
+def test_a_legacy_flame_chase_run_is_not_labelled_chat(tmp_path, monkeypatch):
+    from observe import query as scan
+
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
+    for name, protocol in (("old_flame", "flame_chase_1"), ("old_chat", None)):
+        directory = runs / name
+        directory.mkdir(parents=True)
+        (directory / "state.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "phase": "done"}))
+        (directory / "result.json").write_text(json.dumps({"task": "relu", "dtype": "fp16"}))
+        config = {"committees": []}
+        if protocol:
+            config["loop_protocol"] = protocol
+        (directory / "run_config.json").write_text(json.dumps(config))
+    scan.refresh()
+    page = scan.runs_page(limit=10)
+    by_id = {row["run_id"]: row["protocol_version"] for row in page["runs"]}
+    assert by_id["old_flame"] == "flame_chase_1"
+    assert by_id["old_chat"] == "legacy"

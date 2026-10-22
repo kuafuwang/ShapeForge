@@ -659,3 +659,22 @@ def test_resume_restores_notes_and_the_feedback_sequence(tmp_path):
     assert "float8" in follow._session_brief(False).peer_tips
     assert follow._next_feedback_seq() == 2
 
+
+
+def test_agent_tokens_survive_a_resume_ledger_restore():
+    events = [{"event": "agent", "label": "init", "cost_usd": 1.0,
+               "tokens": {"input": 100, "output": 200, "cache_read": 300, "cache_write": 400}}]
+    reqs = rs._requests_from_transcript(events, [])
+    assert reqs[0]["hit"] == 300 and reqs[0]["miss"] == 100 and reqs[0]["write"] == 400 and reqs[0]["out"] == 200
+    ledger = CostLedger(CFG, 10.0)
+    ledger.restore(reqs)
+    assert ledger.in_tokens_hit == 300 and ledger.in_tokens_miss == 100
+    assert ledger.in_tokens_write == 400 and ledger.out_tokens == 200
+
+
+def test_chat_usage_write_tokens_survive_a_resume():
+    events = [{"event": "chat", "label": "init", "cost_usd": 0.1, "total_usd": 0.1,
+               "usage": {"prompt_tokens": 10, "completion_tokens": 2,
+                         "prompt_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 4}}}]
+    reqs = rs._requests_from_transcript(events, [])
+    assert reqs[0]["write"] == 4

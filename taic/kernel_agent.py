@@ -293,12 +293,20 @@ def _feedback_check_command(brief: SessionBrief) -> str:
     ])
 
 
+def _clip_bytes(text: str, limit: int) -> str:
+    """Cut UTF-8 text at a byte budget without splitting a character."""
+    raw = (text or "").encode("utf-8")
+    if len(raw) <= limit:
+        return text
+    return raw[: max(0, limit)].decode("utf-8", "ignore")
+
+
 def _cap_task(text: str, limit: int) -> str:
-    """Trim one dynamic block. The full text stays on disk; the marker says so."""
+    """Trim one dynamic block at a byte budget. The full text stays on disk; the marker says so."""
     body = (text or "").strip()
-    if len(body) <= limit:
+    if len(body.encode("utf-8")) <= limit:
         return body
-    return body[:limit].rstrip() + "\n…（本段已截断；全文见本目录文件）"
+    return _clip_bytes(body, max(0, limit)).rstrip() + "\n…（本段已截断；全文见本目录文件）"
 
 
 def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> str:
@@ -442,15 +450,33 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         blocks.append(("本任务前序避坑提示", "\n\n" + _PEER_HEADER + "\n" + _cap_task(brief.peer_tips, 1500)))
 
     omitted: list[str] = []
+    # Reserve room for the omission note. The note itself counts toward max_bytes.
+    limit = max(0, max_bytes - 260)
     for name, text in blocks:
-        if len(out.encode("utf-8")) + len(text.encode("utf-8")) <= max_bytes:
-            out += text
-        else:
+        room = limit - len(out.encode("utf-8"))
+        if room <= 0:
             omitted.append(name)
+            continue
+        if len(text.encode("utf-8")) <= room:
+            out += text
+            continue
+        if name == "当前现场":
+            # Keep the seed line and as much of the scorecard as the remaining room allows,
+            # instead of dropping the whole block and leaving the agent without its scorecard.
+            trimmed = _cap_task(text, max(0, room - 60))
+            if trimmed:
+                out += trimmed
+            continue
+        omitted.append(name)
     if omitted:
-        out += "\n\n# 本轮省略（上下文预算）\n"
-        out += f"以下段落因 {max_bytes} 字节预算未附：" + "、".join(omitted) + "。\n"
-        out += "全文在本目录的 NOTES.md、FEEDBACK.md、feedback.jsonl 和 state.json；需要时读取，不要假设它们为空。\n"
+        note = (
+            "\n\n# 本轮省略（上下文预算）\n"
+            f"以下段落因 {max_bytes} 字节预算未附：" + "、".join(omitted) + "。\n"
+            "全文在本目录的 NOTES.md、FEEDBACK.md、feedback.jsonl 和 state.json；需要时读取，不要假设它们为空。\n"
+        )
+        room = max_bytes - len(out.encode("utf-8"))
+        if room > 0:
+            out += _clip_bytes(note, room)
     return out
 
 

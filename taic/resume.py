@@ -335,7 +335,7 @@ def infer_settings(run_dir: Path, events: list[dict] | None = None) -> dict:
 
 
 def _requests_from_transcript(events: list[dict], notes: list[str]) -> list[dict]:
-    from .llm import split_usage
+    from .llm import split_usage, token_counts
 
     reqs: list[dict] = []
     running = 0.0
@@ -345,17 +345,21 @@ def _requests_from_transcript(events: list[dict], notes: list[str]) -> list[dict
             cost = e.get("cost_usd")
             if isinstance(cost, bool) or not isinstance(cost, (int, float)):
                 continue
+            hit, miss, write, out = token_counts(e.get("tokens"))
             running += float(cost)
-            reqs.append({"t": None, "label": e.get("label", ""), "hit": 0, "miss": 0, "out": 0, "cost_usd": float(cost), "total_usd": running})
+            reqs.append({
+                "t": None, "label": e.get("label", ""), "hit": hit, "miss": miss, "write": write, "out": out,
+                "cost_usd": float(cost), "total_usd": running,
+            })
             continue
         if e.get("event") != "chat":
             continue
-        hit, miss, _write, out = split_usage(e.get("usage") if isinstance(e.get("usage"), dict) else {})
+        hit, miss, write, out = split_usage(e.get("usage") if isinstance(e.get("usage"), dict) else {})
         cost = float(e.get("cost_usd") or 0.0)
         running += cost
         total = float(e.get("total_usd", running))
         drift = max(drift, abs(total - running))
-        reqs.append({"t": None, "label": e.get("label", ""), "hit": hit, "miss": miss, "out": out, "cost_usd": cost, "total_usd": total})
+        reqs.append({"t": None, "label": e.get("label", ""), "hit": hit, "miss": miss, "write": write, "out": out, "cost_usd": cost, "total_usd": total})
     if drift > 1e-6:
         notes.append(f"transcript totals differ from the sum of request costs by up to ${drift:.6f} (an earlier session's transcript is missing?): the recorded running totals are used")
     return reqs

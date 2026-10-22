@@ -237,7 +237,7 @@ def test_task_md_keeps_its_dynamic_blocks_inside_the_budget(tmp_path):
     brief.failure = "f" * 5000
     brief.evidence = "e" * 5000
     text = render_contract(brief)
-    assert len(text.encode("utf-8")) <= TASK_MAX_BYTES + 400
+    assert len(text.encode("utf-8")) <= TASK_MAX_BYTES
     assert "# 本轮省略（上下文预算）" in text
     assert "NOTES.md" in text and "FEEDBACK.md" in text
     # the required contract, signature and both commands survive the trim
@@ -258,3 +258,34 @@ def test_prune_archives_scratch_and_keeps_the_files_the_search_reads(tmp_path):
     archive = tmp_path / "run" / "scratch" / "r1.tar.gz"
     assert archive.is_file() and archive.stat().st_size > 0
     assert "v" in out["archived"] and "probe.py" in out["archived"]
+
+
+def _real_brief(tmp_path, task_name: str) -> SessionBrief:
+    from tasks import get_task
+
+    task = get_task(task_name, "fp16", "paper")
+    work = tmp_path / "agent_work" / "r1"
+    return SessionBrief(
+        repo=tmp_path, task_name=task_name, dtype="fp16", size="paper",
+        kernel_name=task.contract.kernel_name, triton_source=task.triton_source,
+        description=task.description, contract_text=task.contract.describe(),
+        abi_stub=task.contract.abi_stub(), rtol=task.rtol, atol_rel=task.atol_rel,
+        seedless=False, reps=15, min_improvement=1.005, noise_z=2.0, work_dir=str(work.resolve()),
+    )
+
+
+@pytest.mark.parametrize("task_name", ["conv2d", "flash_attention"])
+def test_a_real_task_keeps_a_partial_scorecard_instead_of_dropping_it(tmp_path, task_name):
+    brief = _real_brief(tmp_path, task_name)
+    brief.scorecard = "s" * 5000
+    brief.notes_summary = "n" * 9000
+    brief.peer_tips = "t" * 9000
+    brief.history = "h" * 5000
+    brief.failure = "f" * 5000
+    brief.evidence = "e" * 5000
+    text = render_contract(brief)
+    assert len(text.encode("utf-8")) <= TASK_MAX_BYTES
+    assert "# 约束" in text and "--quick" in text and "--timed" in text
+    assert "外层成绩单" in text  # the current-site block is trimmed, not dropped
+    assert "本段已截断" in text
+    assert "# 本轮省略（上下文预算）" in text

@@ -1,8 +1,8 @@
 {
 "_meta": {
-"git_commit": "e670aa1cc0b52dd62691c23e046cafae0060bd65",
-"reason": "TASK.md dynamic blocks now have a 12KB budget; omitted blocks name their files",
-"recorded_at": "2026-10-22T09:25:06+08:00"
+"git_commit": "3adb8d482a4703ced039bf74694745e30f1215e8",
+"reason": "TASK budget keeps a partial current-site block and counts the omission note",
+"recorded_at": "2026-10-22T10:16:12+08:00"
 },
 "feedback": {
 "format_feedback_cut|compile_error": "STATUS: compile_error  (stage reached: compile)\nMetal compiler rejected the kernel\n\nMetal compiler errors (line numbers refer to your kernel source):\nkernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n",
@@ -27,11 +27,11 @@
 },
 {
 "label": "1",
-"sha": "65034a050eed6b28fc2e7a4f6ae0603e577c3c13"
+"sha": "f4a742c3cce1771e5d0ca666808d7ad87f48f0ec"
 }
 ],
 "requests": 2,
-"sha": "eb9273dcd4d185917c86d16f3c0aded6b2f4d4a2"
+"sha": "98a443dd554ded4f6880a52af7f89e711afbe441"
 },
 "orchestrator|gemm|plan_mix=1": {
 "each": [

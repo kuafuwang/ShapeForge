@@ -20,7 +20,7 @@ from observe import detail, legacy
 from observe.budget import budget_status
 from observe.ledger import month_of, operator_name
 
-INDEX_SCHEMA_VERSION = 5
+INDEX_SCHEMA_VERSION = 6
 _SKIP_DIRS = {"candidates", "__pycache__"}
 _WRITE = threading.Lock()
 _SINGLE: "Index | None" = None
@@ -853,7 +853,11 @@ class Index:
         model = ((config or {}).get("llm") or {}).get("model") or (row.get("result") or {}).get("model") or (row.get("state") or {}).get("model")
         result_doc = row.get("result") if isinstance(row.get("result"), dict) else {}
         kernel_sha = str(result_doc.get("confirmation_source_sha256") or "") or (_sha256_file(directory / "best.metal") or "")
-        protocol = str((config or {}).get("protocol_version") or result_doc.get("protocol_version") or "legacy")
+        protocol = str((config or {}).get("protocol_version") or result_doc.get("protocol_version") or "")
+        if not protocol:
+            # Older runs do not carry an explicit epoch. Keep the four flame_chase_1 runs out of
+            # the legacy/chat bucket; the rest are the deprecated chat protocol.
+            protocol = "flame_chase_1" if str((config or {}).get("loop_protocol") or "") == "flame_chase_1" else "legacy"
         committees = json.dumps((config or {}).get("committees") or [], sort_keys=True, ensure_ascii=False)
         stored = {key: row.get(key) for key in row if key not in ("state", "result")}
         fingerprint = (config or {}).get("task_fingerprint")
