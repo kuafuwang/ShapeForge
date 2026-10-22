@@ -196,4 +196,6 @@ def _priced(active: LLMConfig, *, base_url: str, api_key: str, model: str, price
         price_in=float(price.get("input", 0.30)),
         price_out=float(price.get("output", 1.20)),
         price_cache_read=float(price.get("cacheRead", price.get("input", 0.30))),
+        # 和 llm.py 的 load_config 用同一个表达式。只为第二委员会换 provider 时不会丢掉 cache-write 单价。
+        price_cache_write=float(price.get("cacheWrite", price.get("input", 0.30)) or 0.0),
     )

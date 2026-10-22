@@ -55,6 +55,10 @@ class Prices:
     cache_read: float
     cache_write: float
 
+    def as_dict(self) -> dict:
+        """The rates recorded beside a session charge, so a later reader does not need today's price file."""
+        return {"input": self.input, "output": self.output, "cache_read": self.cache_read, "cache_write": self.cache_write}
+
 
 @dataclass
 class SessionBrief:

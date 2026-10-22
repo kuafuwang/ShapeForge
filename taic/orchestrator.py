@@ -1217,7 +1217,7 @@ class Orchestrator:
                 outcome = None
                 exit_kind = "cost_incomplete"
                 raise StopRun("cost_incomplete: the session finished without a token count, so the ledger cannot continue")
-            self.ledger.charge(result.cost_usd, tag)
+            self.ledger.charge(result.cost_usd, tag, tokens=result.spent, basis=prices.as_dict())
             if result.cost_usd > self.search.relay_budget_usd + 1e-6:
                 self.log(
                     f"  [{tag}] session spent ${result.cost_usd:.2f}, above the ${self.search.relay_budget_usd:.2f} output-token guide. "

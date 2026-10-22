@@ -296,6 +296,23 @@ def split_usage(usage: Any) -> tuple[int, int, int, int]:
     return int(hit), int(miss), write, out
 
 
+def token_counts(tokens: Any) -> tuple[int, int, int, int]:
+    """(cache-read, cache-miss input, cache-write, output) from the token dict hmz records.
+
+    The coding-agent stream uses ``input``/``output``/``cache_read``/``cache_write``; an empty or
+    unknown shape is all zero rather than an error, because a session that did not report tokens is
+    already stopped by ``cost_incomplete``.
+    """
+    if not isinstance(tokens, dict):
+        return 0, 0, 0, 0
+
+    def get(name: str) -> int:
+        value = tokens.get(name, 0)
+        return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+    return get("cache_read"), get("input"), get("cache_write"), get("output")
+
+
 # 一次运行共用的美元账。budget_usd 为 None 时不设门。费用在应答回来之后才加上，发请求前还不知道这一次要花多少。
 class CostLedger:
     def __init__(self, cfg: LLMConfig, budget_usd: float | None = None) -> None:
@@ -305,6 +322,7 @@ class CostLedger:
         self.total_usd = 0.0
         self.in_tokens_hit = 0
         self.in_tokens_miss = 0
+        self.in_tokens_write = 0
         self.out_tokens = 0
         self.requests: list[dict] = []
         self.t0 = time.time()
@@ -376,7 +394,18 @@ class CostLedger:
         self.total_usd = float(self.requests[-1]["total_usd"]) if self.requests else 0.0
         self.in_tokens_hit = sum(int(r.get("hit", 0)) for r in self.requests)
         self.in_tokens_miss = sum(int(r.get("miss", 0)) for r in self.requests)
+        self.in_tokens_write = sum(int(r.get("write", 0)) for r in self.requests)
         self.out_tokens = sum(int(r.get("out", 0)) for r in self.requests)
+
+    def price_basis(self) -> dict:
+        """The exact USD/M-token rates used for this ledger. Stored next to every charge."""
+        c = self.cfg
+        return {
+            "input": c.price_in,
+            "output": c.price_out,
+            "cache_read": c.price_cache_read,
+            "cache_write": c.price_cache_write,
+        }
 
     # 单价是美元 / 百万 token：命中 × price_cache_read，未命中 × price_in，输出 × price_out。
     def cost_of(self, usage: Any) -> float:
@@ -385,20 +414,36 @@ class CostLedger:
         return (hit * c.price_cache_read + write * c.price_cache_write + miss * c.price_in + out * c.price_out) / 1e6
 
     def add(self, usage: Any, label: str = "") -> float:
-        hit, miss, _write, out = split_usage(usage)
+        hit, miss, write, out = split_usage(usage)
         cost = self.cost_of(usage)
         self.total_usd += cost
         self.in_tokens_hit += hit
         self.in_tokens_miss += miss
+        self.in_tokens_write += write
         self.out_tokens += out
-        self.requests.append({"t": time.time() - self.t0, "label": label, "hit": hit, "miss": miss, "out": out, "cost_usd": cost, "total_usd": self.total_usd})
+        self.requests.append({
+            "t": time.time() - self.t0, "label": label, "hit": hit, "miss": miss, "write": write, "out": out,
+            "cost_usd": cost, "total_usd": self.total_usd, "basis": self.price_basis(),
+        })
         return cost
 
-    def charge(self, usd: float, label: str = "") -> float:
-        """Add a cost that did not come from this process's own chat completion, such as one coding-agent turn."""
+    def charge(self, usd: float, label: str = "", *, tokens: Any = None, basis: dict | None = None) -> float:
+        """Add a cost that did not come from this process's own chat completion, such as one coding-agent turn.
+
+        ``tokens`` is the hmz session's token dict (``input``/``output``/``cache_read``/``cache_write``).
+        Recording it keeps the ledger's token columns meaningful; an empty dict is allowed for older callers.
+        """
         cost = float(usd)
+        hit, miss, write, out = token_counts(tokens)
         self.total_usd += cost
-        self.requests.append({"t": time.time() - self.t0, "label": label, "hit": 0, "miss": 0, "out": 0, "cost_usd": cost, "total_usd": self.total_usd})
+        self.in_tokens_hit += hit
+        self.in_tokens_miss += miss
+        self.in_tokens_write += write
+        self.out_tokens += out
+        self.requests.append({
+            "t": time.time() - self.t0, "label": label, "hit": hit, "miss": miss, "write": write, "out": out,
+            "cost_usd": cost, "total_usd": self.total_usd, "basis": dict(basis) if isinstance(basis, dict) else self.price_basis(),
+        })
         return cost
 
     @property
@@ -420,7 +465,9 @@ class CostLedger:
             "requests": len(self.requests),
             "input_tokens_cache_hit": self.in_tokens_hit,
             "input_tokens_cache_miss": self.in_tokens_miss,
+            "input_tokens_cache_write": self.in_tokens_write,
             "output_tokens": self.out_tokens,
+            "cost_basis": self.price_basis(),
         }
 
 

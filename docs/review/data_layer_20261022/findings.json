@@ -1,0 +1,681 @@
+{
+  "schema_version": "1.0",
+  "kind": "data_layer_review",
+  "review": {
+    "repo": "/Users/kuafu/CLionProjects/ai_lowerling",
+    "revision": "ace4ac6",
+    "dirty_files": [
+      "docs/架构/可观测.md",
+      "observe/static/index.html",
+      "tests/test_observe_feedback.py"
+    ],
+    "untracked": [
+      "docs/target_profiles_6f03f75e.plan.md"
+    ],
+    "date": "2026-10-22",
+    "method": "5 read-only review agents + cross-measurement; no taic run/resume, no GPU, no LLM",
+    "offline_gate": "uv run pytest -q -m \"not gpu and not llm\" = 823 passed, 5 skipped, 133 deselected",
+    "evidence_levels": {
+      "verified": "directly measured/reproduced by the reviewer",
+      "agent": "measured by a review agent, spot-checked",
+      "unverified": "extrapolated or from a single run; must be reproduced"
+    }
+  },
+  "metrics": {
+    "runs_dir_bytes": 1234400000,
+    "runs_files": 5273,
+    "run_dirs": 54,
+    "indexed_runs": 52,
+    "transcript_bytes": 759700000,
+    "xctrace_export_bytes": 332400000,
+    "agent_work_bytes": 112000000,
+    "candidates_bytes": 20500000,
+    "other_bytes": 9800000,
+    "data_bytes": 269000000,
+    "deleted_bytes": 266000000,
+    "observe_sqlite_bytes": 2300000,
+    "largest_xml_bytes": 326067519,
+    "largest_xml_gzip_bytes": 21703293,
+    "index_rows": {
+      "runs": 52,
+      "turns": 719,
+      "feedback_items": 36,
+      "feedback_claims": 320,
+      "experiments": 2,
+      "arms": 0,
+      "runs_with_turns": 11
+    },
+    "protocols": {
+      "legacy_chat": 50,
+      "flame_chase_1": 4
+    },
+    "agent_sessions": {
+      "total": 85,
+      "runs": 12,
+      "top3_runs": 60
+    },
+    "confirmed": {
+      "total": 10,
+      "current_protocol": 3,
+      "legacy_unbound": 28
+    },
+    "model_column": {
+      "deepseek-flash": 49,
+      "kimi-k3": 2
+    },
+    "feedback_claims": {
+      "topic_nonempty": 0,
+      "premise_nonempty": 134,
+      "total": 320
+    },
+    "brief": {
+      "measured_bytes": 2454,
+      "gpu_events": 8,
+      "gpu_event_bytes": 1039,
+      "measured_seconds": 0.14,
+      "bytes": [
+        2693,
+        2454,
+        1416
+      ],
+      "gpu_share_pct": [
+        39,
+        42,
+        73
+      ],
+      "legacy_ms": [
+        305,
+        445
+      ],
+      "legacy_read_mb": 149
+    },
+    "run_detail": {
+      "kb": [
+        44.7,
+        259
+      ],
+      "committees_kb": 44.7,
+      "committees_ms": 363,
+      "feature_grid_s": 10.7,
+      "read_mb": 95.5,
+      "returned_kb": 187,
+      "amplification": 1360
+    },
+    "request_path": {
+      "history_ms": 14,
+      "history_kb": 54,
+      "sync_known_stats": 1093,
+      "sync_known_ms": 14.8,
+      "extrapolated_1e5_s": 25
+    },
+    "task_md": {
+      "copies": 91,
+      "median_bytes": 21664,
+      "max_bytes": 48612,
+      "init_bytes": 10946,
+      "r20_bytes": 26616,
+      "notes_bytes": 12751,
+      "tips_bytes": 8201,
+      "tokens_est": 7200,
+      "sessions_per_search": [
+        21,
+        64
+      ],
+      "review_sample_total_bytes": 26616,
+      "review_sample_tips_bytes": 8201,
+      "review_sample_notes_bytes": 4565
+    },
+    "files_per_run": {
+      "all_median": 40,
+      "agent_work_runs_median": 29,
+      "run_with_agent_work": 13,
+      "max_container": 1523,
+      "conv2d_feedback": 797,
+      "fa2": 558,
+      "conv2d_flame": 239,
+      "files_per_session": {
+        "conv2d_feedback": 31.9,
+        "fa2": 26.6,
+        "conv2d_flame": 17.1
+      },
+      "v_files": 296,
+      "v_bytes": 83746767
+    },
+    "billing": {
+      "fa2_recorded_usd": 13.33343406,
+      "fa2_true_usd": 18.2,
+      "fa2_unbilled_pct": 27,
+      "conv2d_recorded_usd": 15.22,
+      "conv2d_true_usd": 20.54,
+      "conv2d_unbilled_pct": 35,
+      "current_runs_zero_ledger_tokens": true,
+      "fa2_recomputed_usd": 18.20559006,
+      "conv2d_recomputed_usd": 20.539063128,
+      "flame_recorded_usd": 7.87428804,
+      "flame_recomputed_usd": 10.73508804
+    },
+    "production": {
+      "runs": 42,
+      "wall_hours": 55.6,
+      "spend_usd": 151.79,
+      "gpu_hours": 0.68,
+      "gpu_utilisation_pct": 1.2
+    },
+    "timing_split": {
+      "candidate_pct": 33,
+      "candidate_serial_pct": 34,
+      "baselines_pct": 33
+    },
+    "unchanged_anecdote": {
+      "run": "conv2d-feedback-20261021",
+      "sessions": 25,
+      "unchanged": 15,
+      "spend_usd": 10.46,
+      "total_usd": 15.22
+    }
+  },
+  "classification": {
+    "S0": "independent of data volume (fixed cost or logic error): fix now",
+    "S1": "worsens with scale (O(N) scans, files per run): fix now, validate synthetically",
+    "S2": "needs more data (rates, distributions, A/B, policy tuning): pilot first",
+    "C": "looks sparse because nothing writes it / wrong model (writer gap)",
+    "D": "legacy artifact from the deprecated chat path; cold-archive, do not infer hmz cost"
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "blocker",
+      "scale": "S0",
+      "confidence": "verified",
+      "title": "_priced omits price_cache_write; second committee inherits deepseek 0.0",
+      "where": [
+        "taic/committees.py:190",
+        "taic/llm.py:381-385"
+      ],
+      "evidence": [
+        "FA-2 recorded $13.33343406, recomputed $18.20559006 (1,624,052 cache-write x $3/M = $4.872, 27%)",
+        "conv2d-feedback recorded $15.219922128, recomputed $20.539063128 (35%)",
+        "conv2d-flame recorded $7.87428804, recomputed $10.73508804",
+        "current protocol runs (conv2d-feedback, FA-2, conv2d-flame) record hit=miss=out=0 in ledger.json; older hmz runs used add() and kept tokens"
+      ],
+      "fix": "Set price_cache_write from cacheWrite/input; re-price history by token counts; write cost_basis."
+    },
+    {
+      "id": "F2",
+      "severity": "blocker",
+      "scale": "S1/L",
+      "confidence": "verified",
+      "title": "transcript stores prompt/reply bodies, O(n^2)",
+      "where": [
+        "taic/llm.py:769-776"
+      ],
+      "evidence": [
+        "759.7MB of 1.23GB (61.5%), 54 files, max 92.82MB",
+        "zstd ~6% of original",
+        "system prompt repeated ~64x (~64MB) while system_prompt.txt holds it once",
+        "hmz transcripts are only 10-13KB (agent metadata)"
+      ],
+      "fix": "Default to metadata only; bodies behind --keep-agent-io + zstd; sys_sha reference."
+    },
+    {
+      "id": "F3",
+      "severity": "blocker",
+      "scale": "S0/S1",
+      "confidence": "verified",
+      "title": "agent_work is unbounded and copies 5 static files per session",
+      "where": [
+        "taic/orchestrator.py:1174",
+        "taic/orchestrator.py:1443",
+        "taic/kernel_agent.py:stage_guidance"
+      ],
+      "evidence": [
+        "112MB / 1409 files; all-run median 40; agent_work-run median 29; current large runs: 797/25 = 31.9 files/session (conv2d-feedback), 558/21 = 26.6 (FA-2), 239/14 = 17.1 (conv2d-flame)",
+        "msl_reference 16KB x21, TASK.md 23KB x21, experience 5.4KB x21, seed kernel/report x20 per run",
+        "v/ has 296 files and 83.7MB of ablation kernels with no reader"
+      ],
+      "fix": "Run hmz in $TMPDIR/taic/<run>/<label>; copy back NOTES/self_checks/submission; tar.zst scratch with 50MB cap."
+    },
+    {
+      "id": "F4",
+      "severity": "critical",
+      "scale": "S1",
+      "confidence": "agent",
+      "title": "every request path is O(all runs)",
+      "where": [
+        "observe/query.py:41-52",
+        "observe/index.py:407",
+        "observe/index.py:419"
+      ],
+      "evidence": [
+        "history() loads every row_json: 54KB/14ms at 52 runs",
+        "sync_known(): 1093 stat / 14.8ms at 52 runs",
+        "tick() on every runs_page and every SSE frame; SSE is per connection at 1Hz",
+        "25s/request at 1e5 runs is an extrapolation (U)"
+      ],
+      "fix": "Write-through journal; no scan on request path; aggregate tables; shared ticker; keyset paging."
+    },
+    {
+      "id": "F5",
+      "severity": "critical",
+      "scale": "S1",
+      "confidence": "agent",
+      "title": "candidate-level facts are not indexed",
+      "where": [
+        "observe/index.py:146-235",
+        "observe/query.py:175-197"
+      ],
+      "evidence": [
+        "741 candidates / 748 candidate reports; 133 abi_error, 84 incorrect, 29 compile_error",
+        "no kernel_sha256 column; no FTS5; task/operator/model/dtype/publication unindexed",
+        "runs_page is LIMIT/OFFSET only; the missing composite index does not exist yet (the earlier 'status != missing defeats it' wording was one step too far)"
+      ],
+      "fix": "candidates table + kernel_sha + partial indexes + FTS5 + keyset + stop_class enum."
+    },
+    {
+      "id": "F6",
+      "severity": "high",
+      "scale": "S0",
+      "confidence": "agent",
+      "title": "run_detail recomputes everything; feature_grid is 10.7s",
+      "where": [
+        "observe/query.py:93-140",
+        "observe/detail.py:1649",
+        "observe/detail.py:1247"
+      ],
+      "evidence": [
+        "payload 44.7-259KB; server read 95.5MB to return 187KB (U: not re-measured in review)",
+        "feature_grid re-hashes every candidate kernel; 25 kernels = 10.7s cold (U: not re-measured in review)",
+        "state/result share 23 keys; timeline/llm/confirmations are unused by the page"
+      ],
+      "fix": "Compute feature_grid/kernel_writer at ingest; split summary + lazy tab sub-resources."
+    },
+    {
+      "id": "F7",
+      "severity": "high",
+      "scale": "S0/L",
+      "confidence": "verified",
+      "title": "brief reads the transcript twice and injects global GPU events",
+      "where": [
+        "taic/brief.py:100",
+        "taic/brief.py:116",
+        "taic/brief.py:119"
+      ],
+      "evidence": [
+        "1039B of GPU lock events from unrelated runs: 39/42/73% of 2693/2454/1416B payloads",
+        "260-456B absolute paths; cands capped at 8 and drops cost_usd/improved/within_noise",
+        "legacy run: 305-445ms and 149MB read; hmz run is small"
+      ],
+      "fix": "Index-backed summary; --gpu opt-in; relative paths; schema_version/stamp; page cands."
+    },
+    {
+      "id": "F8",
+      "severity": "high",
+      "scale": "S0",
+      "confidence": "agent",
+      "title": "TASK.md re-sends ~7.2k tokens every session",
+      "where": [
+        "taic/kernel_agent.py:render_contract",
+        "taic/orchestrator.py:_notes_for_next"
+      ],
+      "evidence": [
+        "init 10,946B; review sample r20.p0 26,616B: peer tips 8,201B + previous NOTES 4,565B",
+        "the 12,766B span from the NOTES heading to '# 证据' includes the tips; NOTES alone is 4,565B",
+        "tips shrink sometimes (r15 8,068B -> r16 7,947B -> r20 8,201B), so budget them as a capped summary"
+      ],
+      "fix": "Constant contract once; NOTES as L1 summary + path; tips as digests; target <=12KB (-53%)."
+    },
+    {
+      "id": "F9",
+      "severity": "high",
+      "scale": "S0",
+      "confidence": "agent",
+      "title": "batch production is not re-entrant",
+      "where": [
+        "experiments/run_suite.py:66",
+        "experiments/p1_runs.py:149",
+        "taic/resume.py:snapshot_results"
+      ],
+      "evidence": [
+        "an interrupted cell is treated as never-run; Orchestrator refuses a non-empty dir; RunStartError kills the whole suite",
+        "resume moves result.json to result.before_topup_N.json, so a second crash looks never-run",
+        "_confirm re-measures all batches on every resume; FA-2 winner measured 5x"
+      ],
+      "fix": "queue.jsonl with needs_resume; run(cell) resumes; confirm/<sha>.json idempotent; evalkey cache."
+    },
+    {
+      "id": "F10",
+      "severity": "high",
+      "scale": "S0/S2",
+      "confidence": "agent",
+      "title": "GPU/LLM waste: candidate_serial, re-timed baselines, unchanged sessions",
+      "where": [
+        "tcenv/evaluate.py:497",
+        "tcenv/evaluate.py:180",
+        "taic/orchestrator.py:1236"
+      ],
+      "evidence": [
+        "candidate_serial is 34% of timed GPU and is read by nothing; baselines are 33% and re-timed per candidate (mlx cv 0.8%)",
+        "unchanged 15/25 sessions cost $10.46/$15.22 in ONE run (S2, do not generalise)"
+      ],
+      "fix": "Drop candidate_serial by default; pin baselines per (task,target,calibration); eval cache; pilot unchanged_patience."
+    },
+    {
+      "id": "F11",
+      "severity": "high",
+      "scale": "S0/S1",
+      "confidence": "agent",
+      "title": "dashboard is a 84KB inline page with full rebuilds and no URL state",
+      "where": [
+        "observe/static/index.html",
+        "observe/app.py",
+        "observe/query.py"
+      ],
+      "evidence": [
+        "84KB HTML, no gzip/ETag; initial 3 requests + SSE ~106KB; every revision re-sends 36KB+",
+        "main list rebuilds tbody innerHTML; filters not in URL; no sort/FTS/page size",
+        "stop_reason not displayed; 6 of 16 columns rendered; no charts; page carries the write token",
+        "review page is already incremental by feedback_revision and replaces one card (feedback.py:735-750, index.html:450)"
+      ],
+      "fix": "Asset split + gzip/ETag; URL state; keyset + virtual list; aggregates/charts; CSP + one escaper."
+    },
+    {
+      "id": "F12",
+      "severity": "medium",
+      "scale": "S0",
+      "confidence": "agent",
+      "title": "retention/deletion is a move, not a policy",
+      "where": [
+        "observe/deletions.py:145",
+        "taic/kernel_catalog.py:96"
+      ],
+      "evidence": [
+        "data/deleted = 266MB, no TTL/compression; deletion_log.jsonl is inside gitignored data/",
+        "kernel catalog overwrites best.metal; history keeps only source_sha256, so confirmed sources are lost",
+        "31/31 resume.lock files are stale pids"
+      ],
+      "fix": "deleted/ manifest + tar.zst + TTL; audit log outside data/; blobs + refcount for kernels."
+    },
+    {
+      "id": "F13",
+      "severity": "medium",
+      "scale": "S0",
+      "confidence": "agent",
+      "title": "experiment provenance is missing",
+      "where": [
+        "experiments/manifest.py:187",
+        "observe/index.py:713"
+      ],
+      "evidence": [
+        "p1 (12 arms, 418MB, $35.34) and repeat_20261007 (163MB) have no experiment.json",
+        "observe: experiments=2, arms=0",
+        "17/29 run_configs are git_dirty with no diff; no calibration sha or toolchain; only first committee price recorded"
+      ],
+      "fix": "Write manifest per experiment; arm deltas in data not code; record prices/calibration/toolchain; backfill."
+    },
+    {
+      "id": "F14",
+      "severity": "medium",
+      "scale": "S0",
+      "confidence": "verified",
+      "title": "identity and vocabulary are not canonical",
+      "where": [
+        "observe/index.py:794",
+        "taic/kernel_catalog.py:83",
+        "taic/brief.py"
+      ],
+      "evidence": [
+        "three run_id forms; publication has five values including CJK free text; brief has no schema_version",
+        "runs.model is [llm].model; in the 60 current sessions kimi is 28 sessions and ~80% of recorded spend ($28.98/$36.43)"
+      ],
+      "fix": "One RunSummary + schema_version; publication enum; per-session committee/model; one run_id."
+    },
+    {
+      "id": "F15",
+      "severity": "medium",
+      "scale": "S0",
+      "confidence": "verified",
+      "title": "protocol epochs are not recorded, so aggregates mix incompatible measurements",
+      "where": [
+        "taic/artifacts.py",
+        "tcenv/schema.py",
+        "taic/orchestrator.py:_confirm"
+      ],
+      "evidence": [
+        "run_config v1/v2; confirm batches 1->3; encode moved inside the timing window in d3bd2dc; target refactor changed contract/limits",
+        "no protocol_version/metric_protocol column"
+      ],
+      "fix": "Record protocol_version per run/eval; group aggregates by epoch; backfill legacy=epoch0."
+    }
+  ],
+  "recommendations": {
+    "P0": [
+      "Fix _priced cache_write and re-price history.",
+      "Record per-session committee/model/tokens/cost/cost_basis; split ledger tokens; index the columns.",
+      "Slim TASK.md (constant contract once, NOTES L1, tips digests).",
+      "Index v5: candidates + kernel_sha + partial indexes + FTS5 + keyset; move sync_known/history/tick off the request path; compute feature_grid/summary at ingest.",
+      "Summary-first brief/detail; drop GPU/absolute paths; add schema_version and lazy tabs.",
+      "Idempotent batch queue; resume must not move result.json; eval cache; backfill experiment manifests.",
+      "Storage hygiene: transcript bodies off by default; agent_work out/capped; blobs + manifest; retention/GC; cold-archive legacy."
+    ],
+    "pilot": {
+      "runs": "20-30 (2-3 tasks x 2 models x 5 runs)",
+      "estimated_cost_usd": "300-600",
+      "measures": [
+        "cost/session P50/P90",
+        "unchanged rate",
+        "failure taxonomy",
+        "cost per confirmed kernel",
+        "eval cache hit rate"
+      ],
+      "zero_cost": "copy/hardlink existing runs to /tmp to synthesise 1e3/1e4 entries and measure index/query latency"
+    },
+    "P1": [
+      "Leaderboard, failure, cost, catalog pages from aggregates.",
+      "FTS tuning, A/B attribution, charts, exports/snapshots.",
+      "patience / unchanged_patience / committee rotation only after the pilot."
+    ]
+  },
+  "acceptance_metrics": [
+    {
+      "metric": "brief",
+      "now": "2.4KB, 305-445ms legacy, reads 149MB",
+      "target": "<=500B, <10ms, no transcript"
+    },
+    {
+      "metric": "detail first paint",
+      "now": "45-259KB, 10.7s",
+      "target": "summary <=2KB, <20ms, tabs paged"
+    },
+    {
+      "metric": "list/tick at 1e5",
+      "now": "25s / ~570ms (U)",
+      "target": "<5ms / <2ms"
+    },
+    {
+      "metric": "files per session (current large runs)",
+      "now": "17-32",
+      "target": "<=5; run total <=150"
+    },
+    {
+      "metric": "existing corpus",
+      "now": "1.23GB",
+      "target": "40-110MB depending on legacy body policy"
+    },
+    {
+      "metric": "TASK.md per session",
+      "now": "26.6KB ~7.2k tokens",
+      "target": "<=12KB, -50% tokens"
+    },
+    {
+      "metric": "billing",
+      "now": "27-35% under-recorded",
+      "target": "<1%, per-committee visible"
+    },
+    {
+      "metric": "timed GPU",
+      "now": "100%",
+      "target": "-67% (drop serial, pin baselines)"
+    },
+    {
+      "metric": "evaluations",
+      "now": "100%",
+      "target": "-60% (eval cache; keep different-seed confirm batches)"
+    }
+  ],
+  "challenges": [
+    {
+      "id": "C1",
+      "finding": "F1",
+      "question": "Is price_cache_write really omitted from _priced, and is the $18.20 re-price correct?",
+      "command": "grep -n 'def _priced' -A 12 taic/committees.py; inspect the run's token counts and ~/.pi/agent/models.json"
+    },
+    {
+      "id": "C2",
+      "finding": "F2",
+      "question": "Is 759MB really 99% legacy chat, and are hmz transcripts 10-13KB?",
+      "command": "count kind=chat vs kind=agent per transcript and join run_config.loop_protocol"
+    },
+    {
+      "id": "C3",
+      "finding": "F3",
+      "question": "Files per run: all-run median 40, agent_work-run median 29, current large runs 17-32 per session. Is that population right, and does anything read agent_work/*/v (296 files / 83.7MB)?",
+      "command": "run repro.sh section 10; grep -rn 'agent_work' --include=*.py taic observe experiments"
+    },
+    {
+      "id": "C4",
+      "finding": "F4",
+      "question": "Is the 25s/1e5 extrapolation real?",
+      "command": "synthesise 1e3/1e4 copies under /tmp and time history()/sync_known()/runs_page()"
+    },
+    {
+      "id": "C5",
+      "finding": "F5",
+      "question": "Can abi_error be answered from the current index?",
+      "command": "EXPLAIN QUERY PLAN the task/status/publication filters; inspect feedback_items.kinds"
+    },
+    {
+      "id": "C6",
+      "finding": "F6",
+      "question": "Does feature_grid still take 10.7s, and is the cache key mtime-based?",
+      "command": "time query.run_detail('apple-m4-max/conv2d-feedback-20261021'); grep the _GRID_CACHE key"
+    },
+    {
+      "id": "C7",
+      "finding": "F7",
+      "question": "Are 39-73% of brief really unrelated GPU events, and is it slow on hmz runs?",
+      "command": "time `taic brief` on a legacy and a hmz run; inspect the gpu key"
+    },
+    {
+      "id": "C8",
+      "finding": "F8",
+      "question": "Is TASK.md 26.6KB = 12.7KB notes + 8.2KB tips?",
+      "command": "diff the sections of agent_work/r20.p0/TASK.md; compare with init"
+    },
+    {
+      "id": "C9",
+      "finding": "F10",
+      "question": "Is unchanged 69% a single-run anecdote, and what is the rate across 3 current runs?",
+      "command": "count agent outcomes per run; do not pool legacy"
+    },
+    {
+      "id": "C10",
+      "finding": "F10",
+      "question": "Does the 1.2% GPU utilisation survive a different definition of GPU work?",
+      "command": "sum benchmark wall windows vs command-buffer GPU time vs wall clock"
+    },
+    {
+      "id": "C11",
+      "finding": "F14",
+      "question": "Is runs.model really [llm].model, and how much of the spend is kimi?",
+      "command": "compare run_config.committees to runs.model; sum per-session cost from transcript"
+    },
+    {
+      "id": "C12",
+      "finding": "F12",
+      "question": "Is the 40-60MB vs 106MB target difference only the legacy-body policy?",
+      "command": "recompute both estimates with/without transcript bodies and with/without data/deleted"
+    }
+  ],
+  "known_disagreements": [
+    {
+      "topic": "content dedupe",
+      "values": [
+        "3.5% whole tree",
+        "32% metal files"
+      ],
+      "resolution": "different denominators; content addressing saves file count/scratch, not total bytes"
+    },
+    {
+      "topic": "storage target",
+      "values": [
+        "40-60MB drop legacy bodies",
+        "106MB zstd legacy bodies"
+      ],
+      "resolution": "policy decision; do not compare as if one number"
+    },
+    {
+      "topic": "brief cost",
+      "values": [
+        "305-445ms legacy",
+        "fast on hmz"
+      ],
+      "resolution": "legacy transcript size, not hmz design"
+    },
+    {
+      "topic": "history cost",
+      "values": [
+        "14ms at 52 runs",
+        "25s at 1e5 (U)"
+      ],
+      "resolution": "extrapolation; synthetic test required"
+    },
+    {
+      "topic": "turns 11/52",
+      "values": [
+        "lazy projection",
+        "missing data"
+      ],
+      "resolution": "lazy by design; first read still full"
+    },
+    {
+      "topic": "confirmed 10",
+      "values": [
+        "mixed protocols"
+      ],
+      "resolution": "do not pool chat and hmz epochs"
+    },
+    {
+      "topic": "files per run",
+      "values": [
+        "398 (early agent report)",
+        "40 all / 29 agent_work / 17-32 per session (repro)"
+      ],
+      "resolution": "398 is not reproducible; use files/session and name the run"
+    }
+  ],
+  "non_goals": [
+    "Do not run taic run/resume, GPU kernels, or LLM calls without explicit budget approval.",
+    "Do not tune patience/unchanged/committee policy on n=2-3 runs.",
+    "Do not content-address the whole legacy tree for a 3.5% byte gain.",
+    "Do not treat runs.model as the session model.",
+    "Do not aggregate speed/cost/confirmed across protocol epochs."
+  ],
+  "notes": [
+    {
+      "id": "N1",
+      "text": "committees._priced and llm.load_config use different price paths; the committee loses price_cache_write"
+    },
+    {
+      "id": "N2",
+      "text": "CostLedger.add drops the write token; charge writes hit=miss=out=0; hmz tokens live only in the transcript agent rows"
+    },
+    {
+      "id": "N3",
+      "text": "experiments.frozen_json is {} for both rows, arms=0, no experiment.json on disk"
+    },
+    {
+      "id": "N4",
+      "text": "tips shrink sometimes; budget them as a capped summary"
+    }
+  ]
+}
