@@ -78,16 +78,19 @@ deepseek 提出“评测报告里打印每个 stage 的编译器寄存器用量�
 
 ## 第三次：reviewed_active 端到端
 
-第三次运行：`runs/apple-m4-max/harness-pilot-active-20261022`，预算上限 $5，实际 **$0.7996**，因人工把预算降到已花费附近而停在 `budget_exhausted`。
+第三次运行：`runs/apple-m4-max/harness-pilot-active-20261022`，预算上限 $5，实际 **$2.4661**，4 个 session，因人工把预算降到已花费附近而停在 `budget_exhausted`。
 
-| 场次 | 模型 | 搜索加速比 | 说明 |
+| 场次 | 模型 | 搜索加速比 | 结果 |
 | --- | --- | ---: | --- |
-| init | deepseek-flash | 1.1154 | 无结构化提案 |
-| r1.p0 | deepseek-flash | 1.1378 | 产生 1 条 `tcenv.cli ab` tip |
-| r1 后 review | kimi-k3 | — | `useful=true`、confidence 0.8、实际 $0.118 |
+| init | deepseek-flash | 1.1154 | 正常评测 |
+| r1.p0 | deepseek-flash | 1.1378 | 新种子，产生 1 条 `tcenv.cli ab` tip |
+| r2.p0 | kimi-k3 | — | `agent_failed`，没有交核；费用 $1.268 |
+| r3.p0 | deepseek-flash | 1.1151 | 未超过 r1；没有新种子 |
 
-确认复测：**1.1448x**（三批；发布状态仍为“不确定”，没有把 confirmed 值当已发布）。
+确认复测：`r1.p0` 三批中位数 **1.1448x**，但 `confirmed_values` 是 1.1692 / 1.1448 / 1.1445，极差约 2.16% > 2%，所以 **publication = 不确定**，没有发布数字。搜索最好值 1.1378x 也不能拿来对外。
 
-自动 review 在 r1 后运行，写入 `reviewed_active` 和 active overlay。因为预算停在 r1 后，没有下一场；第一次 `resume` 的 `TASK.md` 还暴露了一个问题：12KB 预算把 overlay 裁掉了。随后给 `render_contract` 加了 overlay 预留预算，并补了测试；新的下一场会保留 overlay，优先裁当前现场而不是静默丢弃 review 条目。
+自动 review 在 r1 后运行：kimi 判 `useful=true`、confidence 0.8，实际 **$0.118**，生成 `reviewed_active`。但这个 run 启动时用的是 `_session_brief` 旧逻辑，且 `harness_shadow=true`；r2/r3 的 `TASK.md` 都没有 overlay。之后修复了 TASK 的 overlay 预留预算；新代码会在下一场保留 active overlay。
 
-第三次运行总花费约 **$0.80**（含 review），三次运行累计约 **$4.33**，仍低于 $15。
+另外，这个 run 的 P2 patch 被应用到了 `targets/apple-m4-max/experience.md`（未提交），内容是英文的一行 `- [harness ...]`。`harness_decisions.jsonl` 有 `promotion` 和 `change_ref`，但没有记录是谁确认、跑了什么测试；这一条应先人工复核，必要时回退。
+
+三次运行累计约 **$6.00**（$3.53 + $2.466），仍低于 $15。
