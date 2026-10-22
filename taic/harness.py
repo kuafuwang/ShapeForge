@@ -50,6 +50,13 @@ Fields:
 A free-text suggestion without this block is still reviewed by a person, but it never
 reaches the automatic overlay.
 
+`# 需要帮助` is not this block. Write it in plain text as soon as a step needs a person:
+a missing tool or permission, information only a person has, or a decision only a person
+can make, including a license agreement, sudo, or credentials. Say what is missing and
+what you will do once you have it. Do not put a command in `action`. If you can continue
+another way, still write the line, then continue. The board shows it to a person. It does
+not enter the overlay.
+
 For ``premise``, the harness must also have a ``status=ok`` line in
 ``.selfcheck/self_checks.jsonl`` (or the outer candidate report) with the same target, protocol, and submitted kernel SHA,
 and a number in ``evidence.measurement`` must match that row's ``candidate_us`` or
@@ -787,7 +794,7 @@ def write_patch(
     return meta
 
 
-def apply_patch(run_dir: Path, *, target_id: str, proposal_key: str, root: Path | None = None, check_only: bool = False, run_tests: bool = False) -> dict:
+def apply_patch(run_dir: Path, *, target_id: str, proposal_key: str, root: Path | None = None, check_only: bool = False, run_tests: bool = False, applied_by: str = "cli") -> dict:
     """Apply a generated target-experience patch, after ``git apply --check``.
 
     This function does not commit. A person runs the offline tests and commits separately;
@@ -830,6 +837,8 @@ def apply_patch(run_dir: Path, *, target_id: str, proposal_key: str, root: Path 
         "schema_version": SCHEMA_VERSION, "event": "promotion", "t": time.time(),
         "target_id": target_id, "proposal_key": proposal_key, "change_ref": change_ref,
         "path": meta["path"], "patch_sha256": meta["sha256"],
+        "applied_by": str(applied_by or "cli"),
+        "tests_run": "feedback/contract/hw_off" if run_tests else "",
     })
     return {**meta, "applied": True, "change_ref": change_ref}
 

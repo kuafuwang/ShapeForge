@@ -78,3 +78,24 @@ def test_a_premise_is_shadow_only_until_the_trusted_record_gate_exists(tmp_path)
     )
     assert result["applied"] == []
     assert harness.overlay_text(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version()) == ""
+
+
+def test_a_reviewed_active_overlay_is_in_the_next_session_brief_even_when_shadow_is_on(tmp_path):
+    from tests.test_orchestrator import code, llm_script, make_orch
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [])
+    run = orch.run_dir
+    run.mkdir(parents=True, exist_ok=True)
+    import json as _json
+
+    (run / "harness_overlay.jsonl").write_text(_json.dumps({
+        "schema_version": 1, "event": "overlay", "target_id": "apple-m4-max", "task": "relu",
+        "protocol_version": trust.current_protocol_version(), "source_run": "r", "source_seq": 1,
+        "proposal_key": "k", "surface": "tip", "text": "先读 device.md 再选 tile。",
+        "evidence_sha256": "", "shadow": False, "reviewed": True,
+        "reviewer": {"provider": "moonshot", "model": "kimi-k3"}, "active_from": 1, "active_until": None,
+    }) + "\n")
+    orch.search.harness_auto = True
+    orch.search.harness_shadow = True
+    brief = orch._session_brief(seedless=False)
+    assert "先读 device.md" in brief.harness_overlay

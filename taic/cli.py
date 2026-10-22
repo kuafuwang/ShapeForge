@@ -636,7 +636,7 @@ def cmd_harness(a: argparse.Namespace) -> int:
             if not a.confirm and not a.check:
                 print("refusing to apply without --confirm (use --check first)", file=sys.stderr)
                 return 5
-            print(json.dumps(harness.apply_patch(run, target_id=a.target, proposal_key=a.key, check_only=a.check, run_tests=a.run_tests), ensure_ascii=False, indent=2))
+            print(json.dumps(harness.apply_patch(run, target_id=a.target, proposal_key=a.key, check_only=a.check, run_tests=a.run_tests, applied_by=a.by), ensure_ascii=False, indent=2))
         else:
             print("unknown harness action", file=sys.stderr)
             return 5
@@ -801,6 +801,7 @@ def main(argv: list[str] | None = None) -> int:
     ha.add_argument("--key", required=True)
     ha.add_argument("--check", action="store_true")
     ha.add_argument("--run-tests", action="store_true", help="run the feedback/contract offline tests before applying")
+    ha.add_argument("--by", default="cli", help="person applying the patch; recorded in the decision log")
     ha.add_argument("--confirm", action="store_true")
     h.set_defaults(fn=cmd_harness)
     a = ap.parse_args(argv)

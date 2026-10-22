@@ -29,14 +29,14 @@
 - `taic/trust.py`：`targets/<id>/trust.toml`，键含 target/task/provider/model/effort、prompt sha、协议、scope、过期；`trust_audit.jsonl` 追加 grant/suspend/revoke。
 - `taic/harness.py`：解析 ` ```harness-proposal ` JSON；`tip` 需要两个不同 provider/model、两个委员会、两份不同 SHA 的本场探针和 active 信任；`premise` 需要本场探针、active `overlay:premise` 信任，以及匹配的 harness 自检记录或外层候选报告（同 target/协议/内核 SHA，测量数字一致）；否则只写影子。默认只写影子 overlay；`TASK.md` 才注入 active 条目，且带未验证标题、受 12KB 预算裁剪。
 - `taic/review.py` + `taic/flows/feedback_review`：独立只读 review；预算按模型单价和 prompt 长度算；写 `harness_reviews.jsonl`；useful review 产生 `reviewed_active`，只对本 run 后续场次生效，运行结束失效。
-- `taic/cli.py`：`trust grant|revoke|suspend|status|audit|metrics`，`harness status|review|disable|settle|patch|apply`。`apply` 默认拒绝；`--check` 只检查，`--run-tests` 跑反馈/合同离线测试，`--confirm` 才改 `targets/<id>/experience.md`，不自动 commit。
+- `taic/cli.py`：`trust grant|revoke|suspend|status|audit|metrics`，`harness status|review|disable|settle|patch|apply`。`apply` 默认拒绝；`--check` 只检查，`--run-tests` 跑反馈/合同离线测试，`--by` 记录确认人，`--confirm` 才改 `targets/<id>/experience.md`，不自动 commit。
 - `observe/query.py` / `observe/app.py`：`GET /api/v2/harness/{run_id}` 返回提案、决策和 overlay；顶栏「结构化提案」按钮在看板内直接列表显示这三样（只读），原始 JSON 在面板底部留了链接；没有编辑面板。
 - `experiments/apply_feedback_audit.py`：dry-run 默认；`--apply` 写 `feedback_review.json`；`--merge-topic` 显式合并同 topic 的系统建议（默认不做）。
 - `experiments/harness_pilot.py`：只读汇总影子/生效、空占位、提案和 unchanged 率。
 
 ## 验证
 
-- 最近全量离线测试：**900 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`）。
+- 最近全量离线测试：**901 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`）。
 - 新增测试覆盖：7 条占位原文、探针恢复后的 digest 保留、`info`/`obsolete`、空占位墓碑、信任 scope/prompt/协议/过期、单模型/同探针不达 quorum、跨 target/协议隔离、P2 `git apply --check`、审计写回、试点汇总、 review 预算随价格变化与 verdict 解析，以及合成的 feedback→proposal→trust→overlay→TASK 端到端流程。
 - 数据侧：174 条审计已写回；60 条实测 `adopted`、15 条已修 `done`、35 条未验证 `info`、7 条空占位 `obsolete`，其余 57 条 pending。10 条按 topic 合并的 `obsolete` 已由 `experiments.revert_topic_merges` 改回 pending；39 条采集时缺探针的 claim 中，31 条 premise 升为 `verified`、8 条仍 `downgraded`，等待人复核。7 条审计空占位现在都有 `feedback_claim_removed` 墓碑；重建会为所有空占位小节写墓碑，当前共 18 条。
 - `targets/apple-m4-max/trust.toml` 为空；没有 active 信任，因此即使 `harness_auto` 打开也不会自动通过任何 tip。

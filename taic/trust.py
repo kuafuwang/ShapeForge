@@ -51,9 +51,23 @@ def audit_path(target_id: str, root: Path | None = None) -> Path:
     return target_root(target_id, root) / "trust_audit.jsonl"
 
 
+_PROMPT_FILES = ("taic/prompts.py", "taic/kernel_agent.py", "taic/harness.py")
+
+
 def current_prompt_sha1() -> str:
-    """A stable fingerprint of the prompt source. A prompt edit makes old grants stale."""
-    return hashlib.sha256((REPO_ROOT / "taic" / "prompts.py").read_bytes()).hexdigest()
+    """A stable fingerprint of the prompt/TASK surface. Edits make old grants stale.
+
+    ``kernel_agent.py`` owns the TASK contract and ``harness.py`` owns HARNESS.md; they are
+    prompt surfaces even though they are not ``prompts.py``. A trust grant must not silently
+    survive a change to the text the model is asked to follow.
+    """
+    digest = hashlib.sha256()
+    for name in _PROMPT_FILES:
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update((REPO_ROOT / name).read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def current_protocol_version() -> str:
