@@ -44,6 +44,8 @@ def cmd_eval(a: argparse.Namespace) -> int:
         require_contract_launch=bool(a.require_contract_launch),
         self_check_dir=Path(a.self_check_dir) if a.self_check_dir else (Path(a.kernel).resolve().parent if a.timed else None),
         validate=bool(a.validate),
+        measure_serial=bool(getattr(a, "measure_serial", False)),
+        eval_cache=bool(getattr(a, "eval_cache", False)),
         target_id=a.target,
     )
     if a.json:
@@ -203,6 +205,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--quick", action="store_true", help="compile + ABI + safety + correctness only (no benchmark, no shader validation)")
     p.add_argument("--timed", action="store_true", help="correctness plus the benchmark, without shader validation")
     p.add_argument("--validate", action="store_true", help="with --timed: run the instrumented shader-validation pass first (it costs a second subprocess)")
+    p.add_argument("--eval-cache", dest="eval_cache", action="store_true", help="reuse an identical (kernel, task, seed, mode, protocol) report")
+    p.add_argument("--serial", dest="measure_serial", action="store_true", help="also time the extra strictly serial dispatch (candidate_serial); off by default after the 2026-10-22 A/B")
+    p.add_argument("--no-serial", dest="measure_serial", action="store_false", help="keep the default: do not time the extra strictly serial dispatch")
     p.add_argument("--seed-report", default=None, help="the seed report.json; --timed then says whether this version would replace it")
     p.add_argument("--min-improvement", type=float, default=SearchConfig.min_improvement)
     p.add_argument("--noise-z", type=float, default=SearchConfig.noise_z)

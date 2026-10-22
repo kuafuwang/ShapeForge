@@ -145,6 +145,7 @@ def test_repeatability_drops_an_experience_index(tmp_path: Path, monkeypatch):
     from tcenv.evaluate import selected_bench_names
 
     assert selected_bench_names(["mlx", "torch_mps"], fast_bench=False, remembered="mlx") == ["candidate", "candidate_serial", "mlx", "torch_mps"]
+    assert selected_bench_names(["mlx", "torch_mps"], fast_bench=False, remembered="mlx", measure_serial=False) == ["candidate", "mlx", "torch_mps"]
     assert selected_bench_names(["mlx", "torch_mps"], fast_bench=True, remembered="mlx") == ["candidate", "mlx"]
     assert selected_bench_names(["mlx", "torch_mps"], fast_bench=True, remembered=None) == ["candidate", "mlx", "torch_mps"]
     doc = matrix(n=3, budget=3, max_total_usd=20)

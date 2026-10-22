@@ -95,6 +95,7 @@ def main() -> int:
             cases=tuple(req["cases"]) if req.get("cases") else None,
             fast_bench=bool(req.get("fast_bench")),
             require_contract_launch=bool(req.get("require_contract_launch")),
+            measure_serial=bool(req.get("measure_serial", True)),
             target_id=str(req["target_id"]),
         )
         from .schema import write_json_atomic

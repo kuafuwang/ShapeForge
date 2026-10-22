@@ -175,6 +175,8 @@ class SearchConfig:
     plan_ledger: bool = True  # next plan sees a short record of each try. A compile or ABI failure is not marked as a direction that was timed and lost. Off keeps the 24 text lines
     diversity_archive: bool = False  # after two stagnant rounds, the last branch of a round patches a feature-different eligible kernel. Off keeps every branch on the seed
     fast_bench: bool = False  # search-stage timing skips the serial dispatch and baselines other than the fastest one seen. Confirmation always times every baseline
+    measure_serial: bool = False  # the extra strictly serial dispatch is unread by selection/publication; the 2026-10-22 A/B kept it off
+    eval_cache: bool = True  # reuse an identical (kernel, task, seed, mode, protocol) report; different seeds/deliberate remeasures still hit the GPU
     experience_index: str | None = None  # path of a read-only hint file from taic.experience. None adds nothing to the planner prompt
     kernel_agent: str = "pi"  # hmz + pi writes every kernel. Any other value is refused at start.
     relay_budget_usd: float = 2.0  # output-token guide for one session. A higher actual cost is logged; the run budget stops the next session

@@ -27,6 +27,8 @@ noise_z = 2.0                    # ... and faster by this many standard errors (
 confirm_batches = 3              # 确认阶段每颗候选几批独立输入；发布的是它们的中位数（1 = 旧的单批）
 confirm_top = 2                  # re-measure up to this many near-ties. The search seed stays unless another complete remeasure clears the noise gate
 eval_reps = 15
+measure_serial = false          # the extra strictly serial dispatch is unread by selection; the 2026-10-22 A/B kept it off
+eval_cache = true               # reuse an identical (kernel, task, seed, mode, protocol) report; different seeds still measure
 max_hangs = 1                    # stop the whole run after this many timed-out evaluations (a runaway GPU kernel can freeze the display)
 profile_best = false           # Instruments (xctrace) trace of the winning kernel after the search (slow; reports spills, code size, thermal state)
 patience = 6                   # stop after this many rounds without a new best. One session is one round, so each committee is called three times.

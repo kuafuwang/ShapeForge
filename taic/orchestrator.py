@@ -778,6 +778,8 @@ class Orchestrator:
                     progress_path=self.run_dir / "eval_progress.json",
                     **({"fast_bench": True} if self.search.fast_bench and not self.search.correctness_only else {}),
                     **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
+                    measure_serial=self.search.measure_serial,
+                    eval_cache=self.search.eval_cache,
                     target_id=self.target_id,
                 )
                 self.evaluations += 1
@@ -860,6 +862,8 @@ class Orchestrator:
                 self.evaluate_fn, self.task_name, self.dtype, self.size, cand.source, mode="quick", seed=phase_seed, reps=3,
                 progress_path=self.run_dir / "eval_progress.json",
                 **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
+                measure_serial=self.search.measure_serial,
+                eval_cache=self.search.eval_cache,
                 target_id=self.target_id,
             )
         self.evaluations += 1
@@ -1647,6 +1651,8 @@ class Orchestrator:
                     self.evaluate_fn, self.task_name, self.dtype, self.size, win.source, mode="quick", seed=phase_seed, reps=1,
                     cases=("domain",), progress_path=self.run_dir / "eval_progress.json",
                     **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
+                    measure_serial=self.search.measure_serial,
+                    eval_cache=self.search.eval_cache,
                     target_id=self.target_id,
                 )
             if rep.status == "timeout":
@@ -1699,6 +1705,8 @@ class Orchestrator:
                             self.evaluate_fn, self.task_name, self.dtype, self.size, c.source, mode="full", seed=phase_seed, reps=self.search.eval_reps * 2,
                             progress_path=self.run_dir / "eval_progress.json",
                             **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
+                            measure_serial=self.search.measure_serial,
+                            eval_cache=self.search.eval_cache,
                             target_id=self.target_id,
                         )
                     seeds.append(phase_seed if phase_seed is not None else rep.seed)

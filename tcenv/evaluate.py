@@ -19,6 +19,7 @@ orchestrator down. ``evaluate_in_process()`` is what the workers call.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -94,6 +95,7 @@ class EvalReport:
     device_name: str = ""
     gpu_family: str = ""
     device_warnings: list = field(default_factory=list)
+    cache_hit: bool = False
     elapsed_s: float = 0.0
 
     # 实现上就是 status 为 ok。形式验证恒为 unsupported，不参与这一条。
@@ -134,6 +136,7 @@ def evaluate_in_process(
     fast_bench: bool = False,
     require_contract_launch: bool = False,
     validate: bool = False,
+    measure_serial: bool = True,
     target_id: str = "apple-m4-max",
 ) -> EvalReport:
     """Untimed stages hold the machine-wide GPU lock shared, the benchmark holds it exclusively (tcenv.gpulock).
@@ -147,7 +150,7 @@ def evaluate_in_process(
         return _evaluate_in_process(
             task_name, dtype, size, kernel_source, mode=mode, seed=seed, reps=reps, cases=cases,
             fast_bench=fast_bench, require_contract_launch=require_contract_launch, validate=validate,
-            target_id=target_id,
+            measure_serial=measure_serial, target_id=target_id,
         )
 
 
@@ -173,10 +176,10 @@ def _remembered_baseline(task_name: str, dtype: str, size: str, target_id: str |
     return name if isinstance(name, str) and name else None
 
 
-def selected_bench_names(baseline_names: list[str], *, fast_bench: bool, remembered: str | None) -> list[str]:
+def selected_bench_names(baseline_names: list[str], *, fast_bench: bool, remembered: str | None, measure_serial: bool = True) -> list[str]:
     """Search-stage ``fast_bench`` drops the serial dispatch and every baseline except the remembered fastest one."""
     names = ["candidate"]
-    if not fast_bench:
+    if measure_serial and not fast_bench:
         names.append("candidate_serial")
     if fast_bench and remembered in baseline_names:
         names.append(remembered)
@@ -204,6 +207,7 @@ def _evaluate_in_process(
     fast_bench: bool = False,
     require_contract_launch: bool = False,
     validate: bool = False,
+    measure_serial: bool = False,
     target_id: str = "apple-m4-max",
 ) -> EvalReport:
     import torch  # noqa: F401  (imported early so failures are reported as crashes of the worker)
@@ -477,7 +481,7 @@ def _evaluate_in_process(
         def cand_serial_run(k: int) -> float:
             return ctx.run(kernel, arg_sets, contract.grid, contract.threads, iters=k, dispatch="serial").wall_s
 
-        dispatch_note = "concurrent (as MLX); candidate_serial_us is the strictly serial time of the same kernel"
+        dispatch_note = "concurrent (as MLX)" + ("; candidate_serial_us is the strictly serial time of the same kernel" if measure_serial else "")
         protocol = f"interleaved, {reps} reps, median per-iteration wall time of back-to-back launches over {R} rotating buffer sets, concurrent dispatch for the candidate as for MLX"
     else:
         by_name = {k.name: k for k in kernels}
@@ -497,7 +501,7 @@ def _evaluate_in_process(
         def cand_serial_run(k: int) -> float:
             return ctx.run_pipeline(ordered, grids, threadss, tg_bytes, stage_sets, fills, iters=k, dispatch="serial").wall_s
 
-        dispatch_note = "pipeline, concurrent encoder with a buffer barrier between stages; candidate_serial_us is the same stages in a serial encoder"
+        dispatch_note = "pipeline, concurrent encoder with a buffer barrier between stages" + ("; candidate_serial_us is the same stages in a serial encoder" if measure_serial else "")
         protocol = f"interleaved, {reps} reps, median per-iteration wall time of a {len(spec.stages)}-stage pipeline over {R} rotating buffer sets; workspace is zeroed inside the timed buffer"
 
     attempts: list[tuple[float, dict, list[float]]] = []  # (noise, stats, candidate GPU samples) per attempt
@@ -507,7 +511,7 @@ def _evaluate_in_process(
         runners: dict[str, Any] = {}
         base_runners = build_runners(task, data0.rounded)
         only = _remembered_baseline(task_name, dtype, size, target_id) if fast_bench else None
-        for name in selected_bench_names(list(base_runners), fast_bench=fast_bench, remembered=only):
+        for name in selected_bench_names(list(base_runners), fast_bench=fast_bench, remembered=only, measure_serial=measure_serial):
             if name == "candidate":
                 runners[name] = cand_run
             elif name == "candidate_serial":
@@ -521,7 +525,7 @@ def _evaluate_in_process(
                 _note_stage(stage="bench", status="running", attempt=attempt + 1, attempts_max=BENCH_ATTEMPTS, noisy=False)
                 first = len(gpu_samples)
                 st = interleaved(runners, reps=reps, seed=seed + attempt, kmin=R)
-                attempts.append((max(s.cv for n, s in st.items() if n != "candidate_serial"), st, gpu_samples[first:]))
+                attempts.append((max(s.cv for n, s in st.items() if n != "candidate_serial" or "candidate_serial" not in st), st, gpu_samples[first:]))
                 noisy = attempts[-1][0] > NOISY_CV
                 _note_stage(stage="bench", status="running", attempt=attempt + 1, attempts_max=BENCH_ATTEMPTS, noisy=noisy)
                 if not noisy:
@@ -557,6 +561,7 @@ def _evaluate_in_process(
         "candidate_gpu_us_median": (statistics.median(cand_gpu) * 1e6) if cand_gpu else None,
         "baselines": {n: stats[n].to_json() for n in stats if n not in OWN_RUNNERS},
         "candidate_serial_us": stats["candidate_serial"].median_us if "candidate_serial" in stats else None,
+        "measure_serial": measure_serial,
         "dispatch": dispatch_note,
         "rotation_sets": R,
         "noise_cv": noise,  # largest per-repetition CV among the runners of the kept attempt
@@ -752,6 +757,7 @@ def _run_worker(
     progress_path: Path | None = None,
     fast_bench: bool = False,
     require_contract_launch: bool = False,
+    measure_serial: bool = True,
     target_id: str = "apple-m4-max",
 ) -> EvalReport:
     """Run one worker under supervision.
@@ -772,7 +778,7 @@ def _run_worker(
             "schema_version": REQUEST_SCHEMA_VERSION,
             "task": task, "dtype": dtype, "size": size, "kernel_path": str(kernel_path), "mode": mode, "seed": seed,
             "reps": reps, "cases": cases, "out": str(out_path), "heartbeat": str(hb_path), "stage": str(stage_path),
-            "target_id": target_id,
+            "target_id": target_id, "measure_serial": measure_serial,
         }
         if fast_bench:
             req["fast_bench"] = True
@@ -859,6 +865,61 @@ def _run_worker(
         return rep
 
 
+
+EVAL_CACHE_SCHEMA = 1
+
+
+def _eval_cache_dir() -> Path:
+    return Path(os.environ.get("TCENV_EVAL_CACHE_DIR", Path.home() / ".cache" / "ai_lowerling" / "evals"))
+
+
+def _eval_cache_key(
+    *, task: str, dtype: str, size: str, mode: str, seed: int, reps: int,
+    cases: tuple[str, ...] | None, fast_bench: bool, require_contract_launch: bool,
+    validate: bool, measure_serial: bool, target_id: str, kernel_source: str,
+) -> str:
+    from .schema import PROTOCOL_VERSION
+    from .task import task_fingerprint
+    from tasks import get_task
+
+    body = {
+        "schema": EVAL_CACHE_SCHEMA,
+        "protocol": PROTOCOL_VERSION,
+        "task": task, "dtype": dtype, "size": size, "mode": mode,
+        "task_fingerprint": task_fingerprint(get_task(task, dtype, size)),
+        "kernel_sha256": hashlib.sha256(kernel_source.encode("utf-8")).hexdigest(),
+        "seed": int(seed), "reps": int(reps), "cases": sorted(cases or ()),
+        "fast_bench": bool(fast_bench), "require_contract_launch": bool(require_contract_launch),
+        "validate": bool(validate), "measure_serial": bool(measure_serial), "target_id": target_id,
+    }
+    return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _cache_read(key: str) -> "EvalReport | None":
+    path = _eval_cache_dir() / f"{key}.json"
+    if not path.is_file():
+        return None
+    try:
+        from .schema import SchemaError
+
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        return EvalReport.from_json(doc)
+    except (OSError, ValueError, SchemaError):
+        return None
+
+
+def _cache_write(key: str, report: "EvalReport") -> None:
+    if report.status != "ok":
+        return
+    path = _eval_cache_dir() / f"{key}.json"
+    try:
+        from .schema import write_json_atomic
+
+        write_json_atomic(path, report.to_json())
+    except OSError:
+        return
+
+
 # 搜索进程调用的入口。Metal 编译和启动发生在子进程里，图形芯片卡死不会拖垮还在搜下一批候选的进程。
 # 单次启动超时由 supervise 看见心跳 B 后 SIGKILL；整段时限另算，等锁的 W 不计。
 def evaluate(
@@ -878,6 +939,8 @@ def evaluate(
     require_contract_launch: bool = False,
     self_check_dir: Path | None = None,
     validate: bool = False,
+    measure_serial: bool = False,
+    eval_cache: bool = False,
     target_id: str = "apple-m4-max",
 ) -> EvalReport:
     """Evaluate ``kernel_source`` on ``task``. ``mode``: "quick" (compile+ABI+safety+correctness),
@@ -922,6 +985,27 @@ def evaluate(
             })
         return _live(rep)
 
+    cache_key = None
+    if eval_cache and not fast_bench and seed is not None:
+        cache_key = _eval_cache_key(
+            task=task, dtype=dtype, size=size, mode=mode, seed=seed, reps=reps, cases=cases,
+            fast_bench=fast_bench, require_contract_launch=require_contract_launch, validate=validate,
+            measure_serial=measure_serial, target_id=target_id, kernel_source=kernel_source,
+        )
+        cached = _cache_read(cache_key)
+        if cached is not None:
+            cached.cache_hit = True
+            if self_check_dir is not None and mode == "timed" and cached.status == "ok":
+                from .selfcheck import append
+
+                bench = cached.benchmark if isinstance(cached.benchmark, dict) else {}
+                cand = bench.get("candidate") if isinstance(bench.get("candidate"), dict) else {}
+                append(self_check_dir, {
+                    "status": "ok", "candidate_us": cached.candidate_us, "cv": cand.get("cv"),
+                    "speedup": cached.speedup, "elapsed_s": 0.0, "cached": True,
+                })
+            return _live(cached)
+
     if mode == "timed" and self_check_dir is not None:
         from .selfcheck import budget_reason, earlier_hang
 
@@ -939,6 +1023,8 @@ def evaluate(
         rep.message = "refused before compilation: " + refused[0]
         rep.abi = {"ok": False, "violations": refused}
         rep.elapsed_s = time.perf_counter() - t0
+        if cache_key is not None:
+            _cache_write(cache_key, rep)
         return _checked(rep)
     if progress_path is not None:
         try:
@@ -956,7 +1042,7 @@ def evaluate(
             """Run the instrumented pass. Returns (a failure to stop on, whether the only complaint was the static limit)."""
             # 校验子进程在 bench 之前：打开会插桩访存和 barrier 的 shader validation，期限是这次 command buffer 时限的两倍。
             # 单核仍是 4 秒。流水线是「每段 2 秒、封顶 8 秒」的两倍。这次不过关就带着它的状态码返回。
-            v = _run_worker(task, dtype, size, kp, "validate", seed, reps, timeout or 120.0, validation=True, cases=cases, launch_deadline_s=2 * deadline, progress_path=progress_path, require_contract_launch=require_contract_launch, target_id=target_id)
+            v = _run_worker(task, dtype, size, kp, "validate", seed, reps, timeout or 120.0, validation=True, cases=cases, launch_deadline_s=2 * deadline, progress_path=progress_path, require_contract_launch=require_contract_launch, measure_serial=measure_serial, target_id=target_id)
             # 校验插桩会把静态线程组内存报成大约两倍。只有这一条时，不拿它否决内核，改由下面不插桩的编译去比目标档案里的上限。
             from .abi import only_static_threadgroup_limit
 
@@ -974,7 +1060,7 @@ def evaluate(
                 failed.elapsed_s = time.perf_counter() - t0
                 return _checked(failed)
         if mode == "full":
-            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, target_id=target_id)
+            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, measure_serial=measure_serial, target_id=target_id)
             rep.safety = dict(rep.safety or {})
             rep.safety["validation"] = []
             rep.safety["shader_validation"] = (
@@ -983,7 +1069,7 @@ def evaluate(
             )
         elif mode == "timed":
             # 和 full 同一套计时。校验只在调用方要求时跑（--timed --validate）：它慢，而且插桩会把线程组内存报成大约两倍。
-            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, target_id=target_id)
+            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, measure_serial=measure_serial, target_id=target_id)
             rep.mode = "timed"
             if validate:
                 rep.safety = dict(rep.safety or {})
@@ -993,6 +1079,8 @@ def evaluate(
                     if size_only else "clean"
                 )
         else:
-            rep = _run_worker(task, dtype, size, kp, "quick", seed, reps, timeout or 240.0, validation=False, cases=cases, progress_path=progress_path, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, target_id=target_id)
+            rep = _run_worker(task, dtype, size, kp, "quick", seed, reps, timeout or 240.0, validation=False, cases=cases, progress_path=progress_path, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, measure_serial=measure_serial, target_id=target_id)
         rep.elapsed_s = time.perf_counter() - t0
+        if cache_key is not None:
+            _cache_write(cache_key, rep)
         return _checked(rep)

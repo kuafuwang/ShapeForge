@@ -13,14 +13,14 @@ from pathlib import Path
 REPORT_SCHEMA_VERSION = 2
 # Measurement protocol, separate from the file schema. Bump when the timing window,
 # confirmation batches or target limits change, so aggregates can group by epoch.
-PROTOCOL_VERSION = "2"
+PROTOCOL_VERSION = "3"
 REQUEST_SCHEMA_VERSION = 4  # 4 requires target_id.
 
 # ``eligible`` is computed from ``status`` and written for older readers. It is not a stored field.
 REPORT_DERIVED = frozenset({"eligible"})
 REQUEST_FIELDS = frozenset({
     "schema_version", "task", "dtype", "size", "kernel_path", "mode", "seed", "reps", "cases", "out", "heartbeat", "stage",
-    "fast_bench", "require_contract_launch", "target_id",
+    "fast_bench", "require_contract_launch", "measure_serial", "target_id",
 })
 REQUEST_REQUIRED = frozenset({"task", "dtype", "size", "kernel_path", "mode", "seed", "reps", "out", "target_id"})
 

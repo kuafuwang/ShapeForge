@@ -86,7 +86,7 @@ def test_the_benchmark_reports_both_dispatch_modes_and_selects_on_the_concurrent
     from tasks import get_task
     from tcenv.evaluate import evaluate
 
-    rep = evaluate("relu", "fp16", "small", get_task("relu", "fp16", "small").naive_msl, mode="full", seed=2, reps=5)
+    rep = evaluate("relu", "fp16", "small", get_task("relu", "fp16", "small").naive_msl, mode="full", seed=2, reps=5, measure_serial=True)
     assert rep.status == "ok", rep.message
     b = rep.benchmark
     assert b["candidate_serial_us"] > 0 and "concurrent" in b["dispatch"]
