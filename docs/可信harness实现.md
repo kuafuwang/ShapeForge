@@ -1,6 +1,6 @@
 # 可信 harness 反馈实现交接
 
-这份文件给下一个审阅 agent：列出提交、验证过的行为、已知边界和检查清单。实现没有调用外部 LLM，也没有跑 GPU 内核；试点只准备了离线工具。
+这份文件给下一个审阅 agent：列出提交、验证过的行为、已知边界和检查清单。理论、RSI 架构和流程图见 [架构/可信harness.md](架构/可信harness.md)。实现没有调用外部 LLM，也没有跑 GPU 内核；试点只准备了离线工具。
 
 ## 提交
 
@@ -47,7 +47,7 @@
 3. **“独立”只到探针 SHA 不同。** 两个模型若各自写一份相同内容的探针，SHA 相同会被拒绝；但复制文字后各写不同探针仍可能通过。没有做语义抄袭检测。
 4. **7 条空占位**已经从 claim 表消失；审查文件保留了 `obsolete`，但当前索引的 `feedback_claim_removed` 没有这 7 行（数据库在 fbv3 后重建，墓碑表只记录重建时仍存在的旧 claim）。审计 JSON 和 review 文件仍是证据。
 5. **同主题合并是显式选择。** 实际执行用了 `--merge-topic`，因此 10 条 active 系统建议被标为 duplicate；fixed 的重复仍保留 `done`。topic 不是命题等价，审阅时要看 note 的 `duplicate of`。
-6. **看板只有 API，没有按钮**；`taic harness status` 是当前的查看入口。
+6. **看板有只读入口，没有编辑面板**；顶栏 `Harness` 按钮打开当前 run 的 `GET /api/v2/harness/<run>` JSON，`taic harness status` 是命令行入口；信任授予、settle、P2 apply 仍需 CLI/人。
 7. **`sync_trust_status` 自动暂停**在 `harness_auto` 打开时每次 session 后调用，读取 observe 索引；若索引未追平，暂停判断会滞后。它只按 confirmed refuted 率，样本门槛 8 条 / 2 个 run。
 8. **`HARNESS.md` 代替了预建 FEEDBACK 空模板**：预建五节会制造新的空占位；合同仍要求只有有内容才写小节。
 
