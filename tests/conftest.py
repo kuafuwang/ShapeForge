@@ -15,6 +15,11 @@ def _isolate_observe_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("OBSERVE_CARRYOVER", str(tmp_path / "ledger_carryover.json"))
     monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "books.sqlite"))
     monkeypatch.setenv("OBSERVE_TICK_INTERVAL", "0")
+    import observe.query as query
+
+    query._FEATURE_CACHE.clear()
+    query._HISTORY["key"] = None
+    query._HISTORY["rows"] = []
 
 
 @pytest.fixture(autouse=True)

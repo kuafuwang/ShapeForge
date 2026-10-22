@@ -243,7 +243,8 @@ def test_feature_grid_signs_a_source_once_and_then_uses_the_cache(tmp_path, monk
     state["updated_at"] = 2
     (directory / "state.json").write_text(json.dumps(state))
     feature_grid(directory, {"confirm_winner_label": "fast"})
-    assert calls["n"] == 4
+    # The grid key changes with state.json, but the source signatures are cached by source sha.
+    assert calls["n"] == 2
 
 
 def test_fa_paper_signs_each_distinct_source_once(tmp_path, monkeypatch):

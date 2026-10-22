@@ -9,12 +9,14 @@ one compact JSON object built only from files on disk.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
 from pathlib import Path
 
 _SECRET = re.compile(r"sk-[A-Za-z0-9_\-]{12,}")
+_REPO = Path(__file__).resolve().parent.parent
 
 CAP = 8
 _TEXT = 80
@@ -77,7 +79,7 @@ Open next
 """
 
 
-def run_brief(run_dir: str | None) -> int:
+def run_brief(run_dir: str | None, *, include_gpu: bool = False) -> int:
     """Print the orientation, or one JSON object. ``2`` when ``run_dir`` is not a directory."""
     if not run_dir:
         print(ORIENTATION, end="")
@@ -86,19 +88,25 @@ def run_brief(run_dir: str | None) -> int:
     if not path.is_dir():
         print(f"not a directory: {run_dir}", file=sys.stderr)
         return 2
-    print(json.dumps(summarize_run(path), ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    print(json.dumps(summarize_run(path, include_gpu=include_gpu), ensure_ascii=False, sort_keys=True, separators=(",", ":")))
     return 0
 
 
-def summarize_run(run_dir: Path) -> dict:
-    """One JSON-ready object. Missing files are null. Message text and kernel source are left out."""
+def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
+    """One JSON-ready object. Missing files are null. Message text and kernel source are left out.
+
+    The transcript is read once; the machine-wide GPU lock tail is opt-in because it belongs to
+    other runs and changes with wall-clock time.
+    """
     run = Path(run_dir)
     state = _read_obj(run / "state.json")
     result, result_err = _load_result(run)
     docs = [d for d in (state, result) if isinstance(d, dict)]
     published, publication = _published(run, result, result_err)
-    chat, retry, transcript_stage = _transcript_counts(run / "transcript.jsonl")
+    chat, retry, truncation, transcript_stage = _transcript_stats(run / "transcript.jsonl")
     doc = {
+        "schema_version": "1",
+        "protocol_version": _first(docs, "protocol_version"),
         "task": _first(docs, "task"),
         "dtype": _first(docs, "dtype"),
         "size": _first(docs, "size"),
@@ -113,12 +121,14 @@ def summarize_run(run_dir: Path) -> dict:
         "publication": publication,
         "search_best": _first(docs, "best_speedup"),
         "cands": _cands(run, state, result),
-        "counts": {"chat": chat, "retry": retry, "truncation_retries": _truncation_retries(run / "transcript.jsonl"), "eval_stage": _eval_stage(run, transcript_stage)},
+        "counts": {"chat": chat, "retry": retry, "truncation_retries": truncation, "eval_stage": _eval_stage(run, transcript_stage)},
         "paths": _paths(run),
+        "stamp": _stamp(run),
     }
-    gpu = _gpu_events()
-    if gpu is not None:
-        doc["gpu"] = gpu
+    if include_gpu:
+        gpu = _gpu_events()
+        if gpu is not None:
+            doc["gpu"] = gpu
     return doc
 
 
@@ -223,10 +233,11 @@ def _cand_from_dir(path: Path) -> dict:
     }
 
 
-def _transcript_counts(path: Path) -> tuple[int | None, int | None, str | None]:
+def _transcript_stats(path: Path) -> tuple[int | None, int | None, int | None, str | None]:
+    """One pass: chat events, retries, length-truncated replies, and the last stage."""
     if not path.is_file():
-        return None, None, None
-    chat = retry = 0
+        return None, None, None, None
+    chat = retry = truncated = 0
     stage = None
     for ev in _jsonl(path):
         kind = ev.get("event")
@@ -234,23 +245,14 @@ def _transcript_counts(path: Path) -> tuple[int | None, int | None, str | None]:
             chat += 1
         elif kind == "retry":
             retry += 1
+        if ev.get("event") == "warning" and ev.get("message") == "reply truncated by max_tokens":
+            truncated += 1
+        elif ev.get("finish_reason") == "length":
+            truncated += 1
         found = ev.get("stage")
         if isinstance(found, str):
             stage = _text(found)
-    return chat, retry, stage
-
-
-def _truncation_retries(path: Path) -> int | None:
-    """Replies the transcript marked as cut off by max_tokens. Missing file is null."""
-    if not path.is_file():
-        return None
-    n = 0
-    for ev in _jsonl(path):
-        if ev.get("event") == "warning" and ev.get("message") == "reply truncated by max_tokens":
-            n += 1
-        elif ev.get("finish_reason") == "length":
-            n += 1
-    return n
+    return chat, retry, truncated, stage
 
 
 def _eval_stage(run: Path, transcript_stage: str | None):
@@ -289,7 +291,29 @@ def _paths(run: Path) -> dict:
         "metal": run / "best.metal",
         "transcript": run / "transcript.jsonl",
     }
-    return {key: (str(path.resolve()) if path.is_file() else None) for key, path in names.items()}
+    out = {}
+    for key, path in names.items():
+        if not path.is_file():
+            out[key] = None
+            continue
+        try:
+            out[key] = path.resolve().relative_to(_REPO).as_posix()
+        except ValueError:
+            out[key] = str(path.resolve())
+    return out
+
+
+def _stamp(run: Path) -> str:
+    """Cheap identity of the files a brief reader cares about. Changes when one of them changes."""
+    parts = []
+    for name in ("state.json", "result.json", "confirm_report.json", "transcript.jsonl"):
+        path = run / name
+        try:
+            stat = path.stat()
+            parts.append(f"{name}:{stat.st_mtime_ns}:{stat.st_size}")
+        except OSError:
+            parts.append(f"{name}:-")
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
 def _read_obj(path: Path) -> dict | None:

@@ -113,7 +113,7 @@ SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "ma
                  "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck",
                  "plan_ledger", "diversity_archive", "fast_bench", "experience_index", "kernel_agent", "require_contract_launch",
                  "relay_budget_usd", "turn_minutes", "peer_tips")
-LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry",
+LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "keep_transcript_bodies", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry",
               "truncation_retry_effort", "plan_reasoning_effort", "patch_reasoning_effort")
 
 
@@ -458,9 +458,9 @@ def cmd_brief(a: argparse.Namespace) -> int:
 
     if getattr(a, "kernels", False):
         rows = list_kernels(getattr(a, "target", None))
-        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        print(json.dumps(rows, ensure_ascii=False, separators=(",", ":")))
         return 0
-    return run_brief(a.run_dir)
+    return run_brief(a.run_dir, include_gpu=bool(getattr(a, "gpu", False)))
 
 
 def cmd_migrate_runs(a: argparse.Namespace) -> int:
@@ -534,6 +534,7 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("run_dir", nargs="?", default=None, help="run directory; omit for a repo orientation")
     b.add_argument("--kernels", action="store_true", help="list confirmed kernels; optional --target filters one profile")
     b.add_argument("--target", default=None)
+    b.add_argument("--gpu", action="store_true", help="include the machine-wide GPU lock tail (other runs, changes with wall clock; off by default)")
     b.set_defaults(fn=cmd_brief)
     m = sub.add_parser("migrate-runs", help="move flat run directories into runs/<target>/")
     m.add_argument("--target", default="apple-m4-max")

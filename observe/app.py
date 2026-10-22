@@ -7,15 +7,56 @@ not a fresh copy of every run. Restart the process after changing this file or t
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
 
 from starlette.applications import Starlette
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from observe import actions, budget, query
+
+
+
+class ETagMiddleware:
+    """Add an ETag to buffered responses and answer ``If-None-Match`` with 304. SSE is left alone."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or str(scope.get("path") or "").endswith("/stream"):
+            await self.app(scope, receive, send)
+            return
+        start = None
+        chunks: list[bytes] = []
+
+        async def capture(message):
+            nonlocal start
+            if message["type"] == "http.response.start":
+                start = message
+            elif message["type"] == "http.response.body":
+                chunks.append(message.get("body") or b"")
+
+        await self.app(scope, receive, capture)
+        if start is None:
+            return
+        body = b"".join(chunks)
+        etag = '"' + hashlib.sha1(body).hexdigest() + '"'
+        headers = [(key, value) for key, value in start.get("headers") or [] if key.lower() not in (b"etag", b"cache-control", b"content-length")]
+        headers.append((b"etag", etag.encode("ascii")))
+        headers.append((b"cache-control", b"no-cache"))
+        incoming = {key.lower(): value for key, value in scope.get("headers") or []}
+        if incoming.get(b"if-none-match", b"").decode("latin-1").strip() == etag:
+            await send({"type": "http.response.start", "status": 304, "headers": headers})
+            await send({"type": "http.response.body", "body": b""})
+            return
+        await send({"type": "http.response.start", "status": start["status"], "headers": headers})
+        await send({"type": "http.response.body", "body": body})
+
 
 _PAGE = (Path(__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
 _BANNER_SLOT = "<!--BUDGET_BANNER-->"
@@ -361,6 +402,8 @@ app = Starlette(
         Route("/api/stream", api_stream),
     ]
 )
+app.add_middleware(ETagMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
 def main() -> None:

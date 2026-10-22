@@ -11,6 +11,7 @@ SECRET = "sk-PLANTED-brief-secret-0123456789"
 MARKER = "MSG-BODY-ONLY-9f3a"
 
 _KEYS = {
+    "schema_version", "protocol_version", "stamp",
     "task", "dtype", "size", "committee", "model", "phase", "stop_reason", "round",
     "spent_usd", "budget_usd", "published", "publication", "search_best",
     "cands", "counts", "paths",
@@ -18,8 +19,8 @@ _KEYS = {
 _CAND = {"label", "status", "speedup", "within_noise", "differential_recheck"}
 
 
-def _brief(capsys, run_dir=None):
-    argv = ["brief"] if run_dir is None else ["brief", str(run_dir)]
+def _brief(capsys, run_dir=None, *extra):
+    argv = (["brief"] if run_dir is None else ["brief", str(run_dir)]) + list(extra)
     code = cli.main(argv)
     captured = capsys.readouterr()
     return code, captured.out, captured.err
@@ -187,7 +188,7 @@ def test_gpu_events_are_the_cache_tail_and_the_lane_is_omitted_when_absent(tmp_p
     path = gpu_events_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("")
-    code, out, _err = _brief(capsys, run)
+    code, out, _err = _brief(capsys, run, "--gpu")
     assert json.loads(out)["gpu"] == []
 
     lines = []
@@ -195,7 +196,7 @@ def test_gpu_events_are_the_cache_tail_and_the_lane_is_omitted_when_absent(tmp_p
         what = SECRET if i == 9 else ("k" * 200 if i == 8 else "benchmark")
         lines.append(json.dumps({"t": i, "pid": 10 + i, "kind": f"k{i}", "mode": "ex", "what": what, "note": SECRET}))
     path.write_text("\n".join(lines) + "\n")
-    code, out, _err = _brief(capsys, run)
+    code, out, _err = _brief(capsys, run, "--gpu")
     doc = json.loads(out)
     assert SECRET not in out and "note" not in out
     assert [row["kind"] for row in doc["gpu"]] == [f"k{i}" for i in range(2, 10)]

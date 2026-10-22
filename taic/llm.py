@@ -10,6 +10,7 @@ requests go through ``chat.completions.create`` because that is the interface ev
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import random
@@ -110,6 +111,7 @@ class LLMConfig:
     reasoning_effort: str | None = "high"
     echo_reasoning_content: bool = True
     use_tools: bool = True
+    keep_transcript_bodies: bool = True  # direct construction keeps the audit body; load_config turns it off for live runs
     extra_body: dict = field(default_factory=dict)
     max_tokens: int = DEFAULT_MAX_TOKENS
     request_timeout_s: float = 900.0  # idle gap between streamed chunks. A reply may run longer while chunks keep arriving
@@ -238,6 +240,7 @@ def load_config(path: str | Path | None = None, *, model: str | None = None, pre
         reasoning_effort=llm.get("reasoning_effort", "high"),
         echo_reasoning_content=bool(llm.get("echo_reasoning_content", True)),
         use_tools=bool(llm.get("use_tools", True)),
+        keep_transcript_bodies=bool(llm.get("keep_transcript_bodies", False)),
         extra_body=dict(llm.get("extra_body", {})),
         max_tokens=int(llm.get("max_tokens", DEFAULT_MAX_TOKENS)),
         request_timeout_s=float(llm.get("request_timeout_s", 900)),
@@ -474,6 +477,38 @@ class CostLedger:
 # ---------------------------------------------------------------------------------------------
 # transcript
 # ---------------------------------------------------------------------------------------------
+
+
+
+
+def chat_transcript_event(
+    *, label: str, model: str, seconds: float, messages: list, reply_message: dict,
+    finish_reason, usage, cost_usd: float, total_usd: float, keep_bodies: bool,
+) -> dict:
+    """One transcript line. Bodies are opt-in; the default keeps hashes and byte counts.
+
+    The live chat path is not used by the hmz search, but if it runs it should not recreate the
+    760 MB of duplicated prompts in the legacy runs. ``keep_transcript_bodies`` keeps the old shape
+    for a caller that explicitly wants the full audit trail.
+    """
+    event = {
+        "event": "chat", "label": label, "model": model, "seconds": seconds,
+        "finish_reason": finish_reason,
+        "usage": usage.model_dump() if hasattr(usage, "model_dump") else (None if usage is None else str(usage)),
+        "cost_usd": cost_usd, "total_usd": total_usd,
+    }
+    texts = (
+        ("messages", json.dumps(messages, ensure_ascii=False, sort_keys=True, default=str)),
+        ("reply", json.dumps(reply_message, ensure_ascii=False, sort_keys=True, default=str)),
+    )
+    if keep_bodies:
+        event["messages"] = messages
+        event["reply"] = reply_message
+    else:
+        for name, text in texts:
+            event[f"{name}_sha256"] = hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+            event[f"{name}_bytes"] = len(text.encode("utf-8", "replace"))
+    return event
 
 
 # 运行目录里的 transcript.jsonl。密钥不能落盘：已知秘密整段替换，再按 sk- 形态扫一遍。
@@ -813,20 +848,11 @@ class LLM:
             message=self._assistant_message(msg, echo=echo),
             echo_reasoning=echo,
         )
-        self.transcript.log(
-            {
-                "event": "chat",
-                "label": label,
-                "model": self.cfg.model,
-                "seconds": time.time() - t0,
-                "messages": messages,
-                "reply": reply.message,
-                "finish_reason": reply.finish_reason,
-                "usage": usage.model_dump() if hasattr(usage, "model_dump") else (None if usage is None else str(usage)),
-                "cost_usd": cost,
-                "total_usd": self.ledger.total_usd,
-            }
-        )
+        self.transcript.log(chat_transcript_event(
+            label=label, model=self.cfg.model, seconds=time.time() - t0, messages=messages,
+            reply_message=reply.message, finish_reason=reply.finish_reason, usage=usage,
+            cost_usd=cost, total_usd=self.ledger.total_usd, keep_bodies=self.cfg.keep_transcript_bodies,
+        ))
         if reply.finish_reason == "length":
             self.transcript.log({"event": "warning", "label": label, "message": "reply truncated by max_tokens"})
         await self._note_llm(label, "ok", cost_usd=cost)

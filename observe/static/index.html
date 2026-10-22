@@ -101,6 +101,7 @@
   #view-runs { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
   .runs-table-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
   #runs thead th { position: sticky; top: 0; background: #fff; z-index: 1; }
+  #runs tbody tr { content-visibility: auto; contain-intrinsic-size: 28px; }
   .detail-panel { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
   .detail-panel.collapsed { flex: 0 0 auto; }
   .detail-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; padding: 8px 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px 12px 0 0; }
@@ -241,13 +242,20 @@
           <option value="unknown">unknown</option>
         </select>
       </label>
+      <label>排序
+        <select id="filter-sort" name="sort">
+          <option value="started">开始时间</option>
+          <option value="speedup">发布加速比</option>
+          <option value="spent">花费</option>
+        </select>
+      </label>
       <button type="submit">筛选</button>
       <button type="button" id="runs-prev">上一页</button>
       <button type="button" id="runs-next">下一页</button>
       <span id="runs-page" class="muted"></span>
     </form>
     <div class="runs-table-scroll">
-    <table id="runs"><thead><tr><th>运行</th><th>题目</th><th>发布</th><th>加速比</th><th>绑定</th><th>状态</th></tr></thead><tbody></tbody></table>
+    <table id="runs"><thead><tr><th>运行</th><th>题目</th><th>发布</th><th>加速比</th><th>花费</th><th>模型</th><th>停止原因</th><th>绑定</th><th>状态</th></tr></thead><tbody></tbody></table>
     </div>
     </section>
     </div>
@@ -349,7 +357,10 @@ const FILTERS = [["all", "全部"], ["alert", "告警"], ["over", "超预算"], 
 const SORTS = [["time", "时间"], ["used", "预算占比"]];
 let selectedExperiment = "";
 let selectedRun = "";
-let runsOffset = 0;
+let runsCursor = null;
+let runsNext = null;
+const runsStack = [];
+let runsSort = "started";
 let runsToken = 0;
 let visible = "experiments";
 const RUNS_LIMIT = 50;
@@ -361,6 +372,10 @@ function esc(value) {
 
 function num(value) {
   return value == null || value === "" ? "—" : String(value);
+}
+
+function money(value) {
+  return value == null || value === "" ? "—" : "$" + Number(value).toFixed(3);
 }
 
 function renderBanner(report) {
@@ -733,7 +748,10 @@ async function loadExperiments() {
   host.querySelectorAll("[data-exp]").forEach((tr) => tr.addEventListener("click", () => {
     selectedExperiment = tr.dataset.exp;
     host.querySelectorAll("[data-exp]").forEach((row) => row.classList.toggle("on", row.dataset.exp === selectedExperiment));
-    runsOffset = 0;
+    runsCursor = null;
+    runsNext = null;
+    runsStack.length = 0;
+    syncRunUrl();
     loadCompare(selectedExperiment);
     loadRuns();
   }));
@@ -756,13 +774,35 @@ async function loadCompare(id) {
 }
 
 function runQuery() {
-  const params = new URLSearchParams({ limit: String(RUNS_LIMIT), offset: String(runsOffset) });
+  const params = new URLSearchParams({ limit: String(RUNS_LIMIT), sort: runsSort, order: runsSort === "started" ? "desc" : "desc" });
   for (const key of ["task", "dtype", "model", "status", "target"]) {
     const value = applied[key];
     if (value) params.set(key, value);
   }
+  if (runsCursor) params.set("cursor", runsCursor);
   if (selectedExperiment) params.set("experiment_id", selectedExperiment);
   return params;
+}
+
+function applyRunUrl() {
+  const params = new URLSearchParams(location.search);
+  for (const key of ["task", "dtype", "model", "status", "target"]) {
+    applied[key] = params.get(key) || "";
+    const input = document.getElementById("filter-" + key);
+    if (input) input.value = applied[key];
+  }
+  runsSort = ["started", "speedup", "spent"].includes(params.get("sort")) ? params.get("sort") : "started";
+  const sort = document.getElementById("filter-sort");
+  if (sort) sort.value = runsSort;
+  selectedExperiment = params.get("experiment_id") || selectedExperiment;
+}
+
+function syncRunUrl() {
+  const params = new URLSearchParams();
+  for (const key of ["task", "dtype", "model", "status", "target"]) if (applied[key]) params.set(key, applied[key]);
+  if (runsSort !== "started") params.set("sort", runsSort);
+  if (selectedExperiment) params.set("experiment_id", selectedExperiment);
+  history.replaceState(null, "", params.toString() ? "?" + params.toString() : location.pathname);
 }
 
 async function loadRuns() {
@@ -771,16 +811,15 @@ async function loadRuns() {
   if (token !== runsToken) return;
   const total = page.total || 0;
   const rows = page.runs || [];
-  const start = total ? runsOffset + 1 : 0;
-  const end = runsOffset + rows.length;
-  document.getElementById("runs-page").textContent = `${start}–${end} / ${total}`;
-  document.getElementById("runs-prev").disabled = runsOffset <= 0;
-  document.getElementById("runs-next").disabled = runsOffset + rows.length >= total;
+  runsNext = page.next || null;
+  document.getElementById("runs-page").textContent = `${rows.length} / ${total}`;
+  document.getElementById("runs-prev").disabled = runsStack.length === 0;
+  document.getElementById("runs-next").disabled = !runsNext;
   const body = document.querySelector("#runs tbody");
   body.innerHTML = rows.map((row) => {
     const live = row.status === "running" ? `<span class="breathe" title="进行中"></span>` : "";
     const task = String(row.task || "").split("@")[0];
-    return `<tr class="${row.run_id === selectedRun ? "on" : ""}" data-run="${esc(row.run_id)}"><td>${esc(row.run_id)}</td><td>${esc(row.task)} <button type="button" class="quiet" title="按题目名归档这个算子下已结束的搜索" data-delete-operator="${esc(task)}">删除</button></td><td>${row.publication === "in_progress" ? live : ""}${esc(row.publication)}</td><td>${esc(num(row.published_speedup))}</td><td>${esc(row.binding)}</td><td>${live}<span class="badge ${esc(row.status)}">${esc(row.status)}</span></td></tr>`;
+    return `<tr class="${row.run_id === selectedRun ? "on" : ""}" data-run="${esc(row.run_id)}"><td>${esc(row.run_id)}</td><td>${esc(row.task)} <button type="button" class="quiet" title="按题目名归档这个算子下已结束的搜索" data-delete-operator="${esc(task)}">删除</button></td><td>${row.publication === "in_progress" ? live : ""}${esc(row.publication)}</td><td>${esc(num(row.published_speedup))}</td><td>${esc(money(row.spent_usd))}</td><td>${esc(row.model)}</td><td>${esc(row.stop_reason)}</td><td>${esc(row.binding)}</td><td>${live}<span class="badge ${esc(row.status)}">${esc(row.status)}</span></td></tr>`;
   }).join("");
   body.querySelectorAll("[data-run]").forEach((tr) => tr.addEventListener("click", () => {
     selectedRun = tr.dataset.run;
@@ -1442,15 +1481,22 @@ document.getElementById("stop-all").addEventListener("click", async () => {
 document.getElementById("run-filters").addEventListener("submit", (event) => {
   event.preventDefault();
   for (const key of ["task", "dtype", "model", "status", "target"]) applied[key] = document.getElementById("filter-" + key).value.trim();
-  runsOffset = 0;
+  runsSort = document.getElementById("filter-sort").value || "started";
+  runsCursor = null;
+  runsNext = null;
+  runsStack.length = 0;
+  syncRunUrl();
   loadRuns();
 });
 document.getElementById("runs-prev").addEventListener("click", () => {
-  runsOffset = Math.max(0, runsOffset - RUNS_LIMIT);
+  if (!runsStack.length) return;
+  runsCursor = runsStack.pop();
   loadRuns();
 });
 document.getElementById("runs-next").addEventListener("click", () => {
-  runsOffset += RUNS_LIMIT;
+  if (!runsNext) return;
+  runsStack.push(runsCursor);
+  runsCursor = runsNext;
   loadRuns();
 });
 document.getElementById("budget-banner").addEventListener("click", (event) => {
@@ -1647,6 +1693,7 @@ if (reviewsPage) {
   document.title = "全部审查";
   syncReviews();
 } else {
+  applyRunUrl();
   loadExperiments();
   loadRuns();
 }
