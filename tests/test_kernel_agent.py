@@ -289,3 +289,4 @@ def test_a_real_task_keeps_a_partial_scorecard_instead_of_dropping_it(tmp_path, 
     assert "外层成绩单" in text  # the current-site block is trimmed, not dropped
     assert "本段已截断" in text
     assert "# 本轮省略（上下文预算）" in text
+    assert "需要时读取" in text

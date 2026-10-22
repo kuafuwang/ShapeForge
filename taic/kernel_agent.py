@@ -451,7 +451,7 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
 
     omitted: list[str] = []
     # Reserve room for the omission note. The note itself counts toward max_bytes.
-    limit = max(0, max_bytes - 260)
+    limit = max(0, max_bytes - 420)
     for name, text in blocks:
         room = limit - len(out.encode("utf-8"))
         if room <= 0:
