@@ -39,7 +39,7 @@ from tcenv.schema import SchemaError
 from tcenv.report import format_feedback
 
 from . import control, prompts
-from .artifacts import LEDGER_SCHEMA_VERSION, RESULT_SCHEMA_VERSION, STATE_SCHEMA_VERSION
+from .artifacts import LEDGER_SCHEMA_VERSION, PROTOCOL_VERSION, RESULT_SCHEMA_VERSION, STATE_SCHEMA_VERSION
 from .feedback_extra import abi_signature, at_roofline, failure_phrase, status_lines, target_note, threadgroup_limit_note
 from .llm import LLM, BudgetExhausted, CostLedger, LLMConfig, LLMError, SearchConfig, Transcript
 from .policy import candidate_eligible, choose_confirmed, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain
@@ -237,6 +237,7 @@ class RunResult:
     confirmation_source_sha256: str | None = None  # sha256 of the confirmed winner's kernel text; None when confirmation did not bind a source
     target_id: str = ""
     backend: str = ""
+    protocol_version: str = ""
 
 
 # 源码的内容身份：评测缓存、复测去重、profiler 缓存都用它。同一份文本不会被当成两个内核。
@@ -527,6 +528,7 @@ class Orchestrator:
         commit, dirty = _git_identity(REPO_ROOT)
         body = {
                 "schema_version": 2,
+                "protocol_version": PROTOCOL_VERSION,
                 "target": {
                     "id": self.target_id,
                     "backend": self.target.backend,
@@ -1892,6 +1894,7 @@ class Orchestrator:
             (self.run_dir / "best.metal").write_text(self.best.source)
         res.target_id = self.target_id
         res.backend = self.target.backend
+        res.protocol_version = PROTOCOL_VERSION
         result_doc = asdict(res)
         result_doc["schema_version"] = RESULT_SCHEMA_VERSION
         control.write_json_atomic(self.run_dir / "result.json", result_doc)

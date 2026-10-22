@@ -323,3 +323,48 @@ def _populate(root: Path, count: int) -> None:
         candidates.mkdir()
         for cand in range(50):
             (candidates / f"{cand}.json").write_text("{}")
+
+
+def test_candidates_are_indexed_and_a_list_page_carries_the_next_cursor(tmp_path, monkeypatch):
+    from observe import query as scan
+
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
+    trace = [{"label": "init", "status": "ok", "speedup": 1.0, "within_noise": True},
+             {"label": "r1.p0", "status": "abi_error", "speedup": None, "within_noise": False}]
+    for index, (name, task) in enumerate((("run0", "gemm"), ("run1", "relu"), ("run2", "gemm"))):
+        directory = runs / name
+        directory.mkdir(parents=True)
+        (directory / "state.json").write_text(json.dumps({
+            "task": task, "dtype": "fp16", "phase": "done", "started_at": 10 + index, "updated_at": 10 + index,
+            "model": "model-a", "trace": trace,
+        }))
+        (directory / "result.json").write_text(json.dumps({
+            "task": task, "dtype": "fp16", "started_at": 10 + index, "spent_usd": 1.0,
+            "protocol_version": "2", "trace": trace,
+        }))
+        (directory / "run_config.json").write_text(json.dumps({
+            "protocol_version": "2",
+            "committees": [{"name": "first", "members": [{"provider": "a", "model": "model-a"}]}],
+        }))
+        for idx, label in enumerate(("init", "r1.p0")):
+            folder = directory / "candidates" / f"{idx:03d}_{label}"
+            folder.mkdir(parents=True)
+            (folder / "kernel.metal").write_text(f"kernel void {task}_{idx}() {{}}\n")
+            status = "ok" if label == "init" else "abi_error"
+            (folder / "report.json").write_text(json.dumps({
+                "status": status, "stage": "bench" if status == "ok" else "abi",
+                "speedup": 1.0 if status == "ok" else None, "eligible": status == "ok",
+            }))
+    scan.refresh()
+    page = scan.runs_page(limit=2)
+    assert len(page["runs"]) == 2 and page["next"]
+    assert page["runs"][0]["protocol_version"] == "2"
+    assert page["runs"][0]["committees_json"]
+    page2 = scan.runs_page(limit=2, cursor=page["next"])
+    assert set(row["run_id"] for row in page["runs"]).isdisjoint(row["run_id"] for row in page2["runs"])
+    assert len(scan.candidates_page("run0")["candidates"]) == 2
+    failed = scan.failures(status="abi_error")
+    assert {row["run_id"] for row in failed["failures"]} == {"run0", "run1", "run2"}
+    assert scan.best_confirmed(task="gemm")["best"] == []

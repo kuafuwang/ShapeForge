@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 
@@ -18,6 +20,10 @@ from taic.policy import feature_signature
 PAGE_LIMIT = 100
 _LIVE = {"last": None, "n": 0}
 _SENT = 0
+_TICK = {"at": 0.0}
+_HISTORY = {"key": None, "rows": []}
+_FEATURE_CACHE: dict[str, tuple] = {}
+_SORTS = {"started": "started_at", "speedup": "published_speedup", "spent": "spent_usd", "updated": "updated_at"}
 _GRID_CACHE: dict[tuple, list[dict]] = {}
 
 
@@ -33,21 +39,41 @@ def refresh() -> None:
     get_index().sync_known()
 
 
+def _tick_interval() -> float:
+    try:
+        return max(0.0, float(os.environ.get("OBSERVE_TICK_INTERVAL", "0.5")))
+    except ValueError:
+        return 0.5
+
+
 def tick() -> None:
-    """Idle frame: do not re-read finished runs."""
+    """Idle frame. At most one directory sweep per interval, shared by every request and SSE client.
+
+    Tests set ``OBSERVE_TICK_INTERVAL=0`` so a run written inside a test is visible immediately.
+    """
+    now = time.monotonic()
+    if now - _TICK["at"] < _tick_interval():
+        return
+    _TICK["at"] = now
     get_index().tick()
 
 
 def history() -> list[dict]:
-    refresh()
+    """Every run as the detail row, cached by index revision. Not re-scanned per request."""
+    tick()
     rows = []
     with borrow() as index:
+        key = (str(index.path), index.revision())
+        if key == _HISTORY["key"]:
+            return list(_HISTORY["rows"])
         fetched = [item["row_json"] for item in index.conn.execute("SELECT row_json FROM runs WHERE status != 'missing'")]
     for text in fetched:
         if not text:
             continue
         rows.append(json.loads(text))
     rows.sort(key=lambda row: float(row.get("started_at") or 0), reverse=True)
+    _HISTORY["key"] = key
+    _HISTORY["rows"] = list(rows)
     return rows
 
 
@@ -129,7 +155,10 @@ def feature_grid(directory: Path, result: dict | None) -> list[dict]:
         digest = hashlib.sha1(source.encode("utf-8")).hexdigest()
         signature = signed.get(digest)
         if signature is None:
-            signature = feature_signature(source)
+            signature = _FEATURE_CACHE.get(digest)
+            if signature is None:
+                signature = feature_signature(source)
+                _FEATURE_CACHE[digest] = signature
             signed[digest] = signature
         label = path.name.split("_", 1)[1] if "_" in path.name else path.name
         current = best.get(signature)
@@ -172,27 +201,155 @@ def plan_outcomes(directory: Path, config: dict | None, state: dict | None, resu
     ]
 
 
-def runs_page(*, experiment_id: str | None = None, task: str | None = None, dtype: str | None = None, model: str | None = None, status: str | None = None, target: str | None = None, limit: int = 50, offset: int = 0) -> dict:
+def _encode_cursor(value, run_id: str) -> str:
+    raw = json.dumps([value, run_id], separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(cursor: str | None) -> tuple[object, str] | None:
+    if not cursor:
+        return None
+    try:
+        padded = cursor + "=" * ((4 - len(cursor) % 4) % 4)
+        value, run_id = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+        return value, str(run_id)
+    except (ValueError, TypeError, UnicodeError):
+        return None
+
+
+def runs_page(
+    *,
+    experiment_id: str | None = None,
+    task: str | None = None,
+    dtype: str | None = None,
+    model: str | None = None,
+    status: str | None = None,
+    target: str | None = None,
+    publication: str | None = None,
+    min_speedup: float | None = None,
+    since: float | None = None,
+    sort: str = "started",
+    order: str = "desc",
+    cursor: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """One page of runs. A cursor is keyset on ``(sort column, run_id)``; ``offset`` is the old fallback."""
     tick()
     limit = max(1, min(int(limit or 50), PAGE_LIMIT))
     offset = max(0, int(offset or 0))
+    column = _SORTS.get(str(sort or "started"), "started_at")
+    direction = "ASC" if str(order or "desc").lower() == "asc" else "DESC"
     clauses = ["status != 'missing'"]
     args: list = []
-    for column, value in (("experiment_id", experiment_id), ("task", task), ("dtype", dtype), ("model", model), ("status", status), ("target_id", target)):
+    for name, value in (("experiment_id", experiment_id), ("task", task), ("dtype", dtype), ("model", model), ("status", status), ("target_id", target)):
         if value:
-            clauses.append(f"{column} = ?")
+            clauses.append(f"{name} = ?")
             args.append(value)
+    if publication:
+        clauses.append("publication = ?")
+        args.append(publication)
+    if min_speedup is not None:
+        try:
+            clauses.append("COALESCE(published_speedup, -1) >= ?")
+            args.append(float(min_speedup))
+        except (TypeError, ValueError):
+            pass
+    if since is not None:
+        try:
+            clauses.append("COALESCE(started_at, 0) >= ?")
+            args.append(float(since))
+        except (TypeError, ValueError):
+            pass
     where = " AND ".join(clauses)
+    page_args = list(args)
+    page_offset = offset
+    decoded = _decode_cursor(cursor)
+    if decoded is not None:
+        value, run_id = decoded
+        op = "<" if direction == "DESC" else ">"
+        where += f" AND (COALESCE({column}, -1) {op} ? OR (COALESCE({column}, -1) = ? AND run_id {op} ?))"
+        page_args.extend([value, value, run_id])
+        page_offset = 0
     with borrow() as index:
-        total = index.conn.execute(f"SELECT COUNT(*) FROM runs WHERE {where}", args).fetchone()[0]
+        total = index.conn.execute(f"SELECT COUNT(*) FROM runs WHERE {' AND '.join(clauses)}", args).fetchone()[0]
         rows = [
             dict(row)
             for row in index.conn.execute(
-                f"SELECT run_id, experiment_id, arm_id, trial, task, dtype, model, target_id, status, publication, published_speedup, spent_usd, budget_usd, source, binding, started_at FROM runs WHERE {where} ORDER BY started_at DESC, run_id LIMIT ? OFFSET ?",
-                [*args, limit, offset],
+                "SELECT run_id, experiment_id, arm_id, trial, task, dtype, model, target_id, status, stop_reason, "
+                "publication, published_speedup, spent_usd, budget_usd, source, binding, kernel_sha256, protocol_version, "
+                "committees_json, started_at, updated_at "
+                f"FROM runs WHERE {where} ORDER BY COALESCE({column}, -1) {direction}, run_id {direction} LIMIT ? OFFSET ?",
+                [*page_args, limit, page_offset],
             )
         ]
-    return {"total": total, "limit": limit, "offset": offset, "runs": rows}
+    following = None
+    if len(rows) == limit:
+        last = rows[-1]
+        following = _encode_cursor(last.get(column) if last.get(column) is not None else -1, str(last["run_id"]))
+    return {"total": total, "limit": limit, "offset": offset, "next": following, "sort": sort, "order": direction.lower(), "runs": rows}
+
+
+def candidates_page(run_id: str, *, status: str | None = None, limit: int = 200) -> dict:
+    """Candidate-level facts from the index. No report files are opened."""
+    tick()
+    limit = max(1, min(int(limit or 200), 1000))
+    clauses = ["run_id = ?"]
+    args: list = [run_id]
+    if status:
+        clauses.append("status = ?")
+        args.append(status)
+    with borrow() as index:
+        rows = [dict(row) for row in index.conn.execute(
+            "SELECT run_id, idx, label, status, stage, speedup, within_noise, eligible, kernel_sha256, updated_at "
+            f"FROM candidates WHERE {' AND '.join(clauses)} ORDER BY idx LIMIT ?",
+            [*args, limit],
+        )]
+    return {"run_id": run_id, "limit": limit, "candidates": rows}
+
+
+def failures(*, status: str | None = None, task: str | None = None, limit: int = 50) -> dict:
+    """Candidate failures across runs. ``status`` is exact (``abi_error``, ``incorrect``, ``timeout``, ...)."""
+    tick()
+    limit = max(1, min(int(limit or 50), PAGE_LIMIT))
+    clauses = ["c.status != ''", "c.status != 'ok'"]
+    args: list = []
+    if status:
+        clauses.append("c.status = ?")
+        args.append(status)
+    if task:
+        clauses.append("r.task = ?")
+        args.append(task)
+    with borrow() as index:
+        rows = [dict(row) for row in index.conn.execute(
+            "SELECT c.run_id, c.idx, c.label, c.status, c.stage, c.speedup, c.within_noise, c.kernel_sha256, "
+            "r.task, r.dtype, r.target_id, r.started_at "
+            f"FROM candidates c JOIN runs r ON r.run_id = c.run_id WHERE {' AND '.join(clauses)} "
+            "ORDER BY COALESCE(r.started_at, 0) DESC, c.run_id, c.idx LIMIT ?",
+            [*args, limit],
+        )]
+    return {"limit": limit, "failures": rows}
+
+
+def best_confirmed(*, task: str | None = None, target: str | None = None, limit: int = 20) -> dict:
+    """Confirmed kernels, fastest first. The publication gate already excluded unbound numbers."""
+    tick()
+    limit = max(1, min(int(limit or 20), PAGE_LIMIT))
+    clauses = ["publication = 'confirmed'", "published_speedup IS NOT NULL"]
+    args: list = []
+    if task:
+        clauses.append("task = ?")
+        args.append(task)
+    if target:
+        clauses.append("target_id = ?")
+        args.append(target)
+    with borrow() as index:
+        rows = [dict(row) for row in index.conn.execute(
+            "SELECT run_id, task, dtype, size, target_id, model, published_speedup, started_at, kernel_sha256 "
+            f"FROM runs WHERE {' AND '.join(clauses)} ORDER BY published_speedup DESC, COALESCE(started_at, 0) DESC LIMIT ?",
+            [*args, limit],
+        )]
+    return {"limit": limit, "best": rows}
 
 
 def experiments() -> list[dict]:

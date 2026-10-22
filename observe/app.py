@@ -62,10 +62,45 @@ async def api_v2_runs(request) -> JSONResponse:
         model=params.get("model") or None,
         status=params.get("status") or None,
         target=params.get("target") or None,
+        publication=params.get("publication") or None,
+        min_speedup=params.get("min_speedup") or None,
+        since=params.get("since") or None,
+        sort=params.get("sort") or "started",
+        order=params.get("order") or "desc",
+        cursor=params.get("cursor") or None,
         limit=limit,
         offset=offset,
     )
     return _json(page)
+
+
+async def api_v2_candidates(request) -> JSONResponse:
+    return _json(await asyncio.to_thread(
+        query.candidates_page,
+        request.path_params["run_id"],
+        status=request.query_params.get("status") or None,
+        limit=int(request.query_params.get("limit", "200") or 200),
+    ))
+
+
+async def api_v2_failures(request) -> JSONResponse:
+    params = request.query_params
+    return _json(await asyncio.to_thread(
+        query.failures,
+        status=params.get("status") or None,
+        task=params.get("task") or None,
+        limit=int(params.get("limit", "50") or 50),
+    ))
+
+
+async def api_v2_best(request) -> JSONResponse:
+    params = request.query_params
+    return _json(await asyncio.to_thread(
+        query.best_confirmed,
+        task=params.get("task") or None,
+        target=params.get("target") or None,
+        limit=int(params.get("limit", "20") or 20),
+    ))
 
 
 async def api_v2_run(request) -> JSONResponse:
@@ -306,6 +341,9 @@ app = Starlette(
         Route("/api/v2/ledger", api_v2_ledger),
         Route("/api/v2/stream", api_stream),
         Route("/api/v2/turns/{run_id:path}", api_v2_turns),
+        Route("/api/v2/failures", api_v2_failures),
+        Route("/api/v2/best", api_v2_best),
+        Route("/api/v2/runs/{run_id:path}/candidates", api_v2_candidates),
         Route("/api/v2/pi/{run_id:path}", api_v2_pi),
         Route("/api/v2/runs/{run_id:path}", api_v2_run),
         Route("/api/history", api_v1_history),

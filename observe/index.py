@@ -20,7 +20,7 @@ from observe import detail, legacy
 from observe.budget import budget_status
 from observe.ledger import month_of, operator_name
 
-INDEX_SCHEMA_VERSION = 4
+INDEX_SCHEMA_VERSION = 5
 _SKIP_DIRS = {"candidates", "__pycache__"}
 _WRITE = threading.Lock()
 _SINGLE: "Index | None" = None
@@ -154,6 +154,9 @@ class Index:
                 dtype TEXT,
                 size TEXT,
                 target_id TEXT,
+                kernel_sha256 TEXT,
+                protocol_version TEXT,
+                committees_json TEXT,
                 model TEXT,
                 preset TEXT,
                 switch_delta_json TEXT,
@@ -231,6 +234,22 @@ class Index:
             CREATE INDEX IF NOT EXISTS runs_status ON runs(status);
             CREATE INDEX IF NOT EXISTS runs_started ON runs(started_at);
             CREATE INDEX IF NOT EXISTS runs_binding ON runs(binding);
+            CREATE TABLE IF NOT EXISTS candidates (
+                run_id TEXT NOT NULL,
+                idx INTEGER NOT NULL,
+                label TEXT NOT NULL,
+                status TEXT,
+                stage TEXT,
+                speedup REAL,
+                within_noise INTEGER NOT NULL DEFAULT 0,
+                eligible INTEGER NOT NULL DEFAULT 0,
+                kernel_sha256 TEXT,
+                updated_at REAL,
+                PRIMARY KEY (run_id, idx)
+            );
+            CREATE INDEX IF NOT EXISTS candidates_run ON candidates(run_id);
+            CREATE INDEX IF NOT EXISTS candidates_status ON candidates(status);
+            CREATE INDEX IF NOT EXISTS candidates_sha ON candidates(kernel_sha256);
             CREATE TABLE IF NOT EXISTS turns (
                 run_id TEXT NOT NULL,
                 seq INTEGER NOT NULL,
@@ -445,7 +464,7 @@ class Index:
         row = self.conn.execute("SELECT value FROM meta WHERE key = 'runs_root'").fetchone()
         if row is not None and row[0] != root:
             self.conn.executescript(
-                "DELETE FROM runs; DELETE FROM experiments; DELETE FROM arms; DELETE FROM ledger; DELETE FROM watched; DELETE FROM feedback_items; DELETE FROM feedback_claims;"
+                "DELETE FROM runs; DELETE FROM candidates; DELETE FROM experiments; DELETE FROM arms; DELETE FROM ledger; DELETE FROM watched; DELETE FROM feedback_items; DELETE FROM feedback_claims;"
             )
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES ('runs_root', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -549,6 +568,7 @@ class Index:
         )
         from taic.agent_feedback import PARSER_VERSION
 
+        extra += "|" + _fingerprint(directory / "candidates")
         extra += "|" + self._manifest_fingerprint(directory)
         extra += "|" + PARSER_VERSION
         return (
@@ -687,6 +707,7 @@ class Index:
             row["status"] = "missing"
         config = self._read_json(directory / "run_config.json")
         self._upsert_run(directory, row, config, fingerprints, manifest)
+        self._upsert_candidates(directory, self._rel(directory), row, result, state)
         self._project_turns(directory)
         from observe.feedback import sync_run_index
 
@@ -762,8 +783,46 @@ class Index:
                 ),
             )
 
+    def _upsert_candidates(self, directory: Path, run_id: str, row: dict, result: dict | None, state: dict | None) -> None:
+        """One row per candidate directory. The report supplies status/stage/speedup; the trace supplies the noise mark."""
+        self.conn.execute("DELETE FROM candidates WHERE run_id = ?", (run_id,))
+        root = directory / "candidates"
+        if not root.is_dir():
+            return
+        trace = []
+        for doc in (result, state):
+            if isinstance(doc, dict) and isinstance(doc.get("trace"), list):
+                trace = doc["trace"]
+                break
+        flags = {str(item.get("label")): bool(item.get("within_noise")) for item in trace if isinstance(item, dict)}
+        for path in sorted(item for item in root.iterdir() if item.is_dir()):
+            name = path.name
+            idx = int(name[:3]) if len(name) >= 3 and name[:3].isdigit() else -1
+            label = name[4:] if len(name) > 4 and name[3] == "_" else name
+            report = self._read_json(path / "report.json")
+            if not isinstance(report, dict) and not (path / "kernel.metal").is_file():
+                continue
+            status = str(report.get("status") or "") if isinstance(report, dict) else ""
+            stage = str(report.get("stage") or "") if isinstance(report, dict) else ""
+            speedup = _num(report.get("speedup")) if isinstance(report, dict) else None
+            eligible = 1 if isinstance(report, dict) and report.get("eligible") is True else 0
+            sha = _sha256_file(path / "kernel.metal")
+            try:
+                updated = path.stat().st_mtime
+            except OSError:
+                updated = None
+            self.conn.execute(
+                """
+                INSERT OR REPLACE INTO candidates (
+                    run_id, idx, label, status, stage, speedup, within_noise, eligible, kernel_sha256, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                """,
+                (run_id, idx, label, status, stage, speedup, 1 if flags.get(label) else 0, eligible, sha, updated),
+            )
+
     def _upsert_missing(self, directory: Path, fingerprints: tuple[str, str, str, str, str]) -> None:
         run_id = self._rel(directory)
+        self.conn.execute("DELETE FROM candidates WHERE run_id = ?", (run_id,))
         self.conn.execute(
             """
             INSERT INTO runs (run_id, status, source, binding, fp_state, fp_result, fp_config, fp_confirm, fp_extra, row_json)
@@ -792,6 +851,10 @@ class Index:
             spent_max = max(previous_max, spent)
         search = (config or {}).get("search") or {}
         model = ((config or {}).get("llm") or {}).get("model") or (row.get("result") or {}).get("model") or (row.get("state") or {}).get("model")
+        result_doc = row.get("result") if isinstance(row.get("result"), dict) else {}
+        kernel_sha = str(result_doc.get("confirmation_source_sha256") or "") or (_sha256_file(directory / "best.metal") or "")
+        protocol = str((config or {}).get("protocol_version") or result_doc.get("protocol_version") or "legacy")
+        committees = json.dumps((config or {}).get("committees") or [], sort_keys=True, ensure_ascii=False)
         stored = {key: row.get(key) for key in row if key not in ("state", "result")}
         fingerprint = (config or {}).get("task_fingerprint")
         stored.update({
@@ -808,16 +871,19 @@ class Index:
         self.conn.execute(
             """
             INSERT INTO runs (
-                run_id, experiment_id, arm_id, trial, kind, task, operator, dtype, size, target_id, model, preset,
+                run_id, experiment_id, arm_id, trial, kind, task, operator, dtype, size, target_id,
+                kernel_sha256, protocol_version, committees_json, model, preset,
                 switch_delta_json, contract, status, phase, stop_reason, started_at, updated_at,
                 spent_usd, spent_max_usd, budget_usd, granted_budget_usd, publication, published_speedup,
                 naive_speedup, rounds, evaluations, inflight_label, pid, source, binding,
                 fp_state, fp_result, fp_config, fp_confirm, fp_extra, row_json
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(run_id) DO UPDATE SET
                 experiment_id = excluded.experiment_id, arm_id = excluded.arm_id, trial = excluded.trial,
                 kind = excluded.kind, task = excluded.task, operator = excluded.operator, dtype = excluded.dtype,
-                size = excluded.size, target_id = excluded.target_id, model = excluded.model, preset = excluded.preset,
+                size = excluded.size, target_id = excluded.target_id, kernel_sha256 = excluded.kernel_sha256,
+                protocol_version = excluded.protocol_version, committees_json = excluded.committees_json,
+                model = excluded.model, preset = excluded.preset,
                 switch_delta_json = excluded.switch_delta_json, contract = excluded.contract,
                 status = excluded.status, phase = excluded.phase, stop_reason = excluded.stop_reason,
                 started_at = excluded.started_at, updated_at = excluded.updated_at,
@@ -832,7 +898,8 @@ class Index:
             """,
             (
                 run_id, experiment_id, arm_id, trial, kind, row.get("task") or "", operator_name(row.get("task")),
-                row.get("dtype") or "", (config or {}).get("size") or "", _target_id(config), model or "", (config or {}).get("preset") or "",
+                row.get("dtype") or "", (config or {}).get("size") or "", _target_id(config),
+                kernel_sha, protocol, committees, model or "", (config or {}).get("preset") or "",
                 json.dumps(delta, sort_keys=True), "", row.get("status"), row.get("phase") or "", row.get("stop_reason") or "",
                 row.get("started_at"), _num((row.get("state") or {}).get("updated_at")),
                 spent, spent_max, _num(row.get("disk_budget_usd")), _num(row.get("budget_usd")),
@@ -1087,6 +1154,13 @@ def _trial_of(relative: str) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def _sha256_file(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def _confirm_target(fp_confirm: str) -> tuple[str, str]:

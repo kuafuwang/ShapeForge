@@ -14,6 +14,7 @@ def _isolate_observe_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
     monkeypatch.setenv("OBSERVE_CARRYOVER", str(tmp_path / "ledger_carryover.json"))
     monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "books.sqlite"))
+    monkeypatch.setenv("OBSERVE_TICK_INTERVAL", "0")
 
 
 @pytest.fixture(autouse=True)
