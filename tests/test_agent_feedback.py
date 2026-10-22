@@ -220,9 +220,34 @@ def test_a_probe_with_arguments_or_a_sibling_session_still_counts(tmp_path):
 
 def test_a_placeholder_section_is_not_an_item_and_a_sentence_is():
     parsed = parse_feedback("# 需要帮助\n无。\n# 卡住的原因\n没有阻塞性的事\n# 对系统的建议\n（空）\n")
-    assert parsed["placeholder_sections"] == ["需要帮助", "对系统的建议"]
-    assert [item["section"] for item in parsed["items"]] == ["卡住的原因"]
+    assert parsed["placeholder_sections"] == ["需要帮助", "对系统的建议", "卡住的原因"]
+    assert parsed["placeholder_items"] == 3
+    assert parsed["items"] == []
     assert "无" in parsed["raw"]
+
+
+def test_the_seven_audited_absence_notes_are_placeholders_and_a_request_is_kept():
+    """These are the exact shapes from docs/feedback_audit_20261022.json (drop_empty)."""
+    notes = [
+        "无（预算 $14.79/$15.00 已尽，后续各棒基本只能复测种子）。",
+        "无。本轮不需要外部改动就能推进，卡点是硬件预算是死的（见 NOTES §3）。",
+        "没有阻塞性的事。这一轮不需要人介入；下面两条只是想让人看一眼。",
+        "没有。本轮不需要人介入，交回的核已验证（correct / safe / validated）。",
+        "无。核已合格、比种子快（交错 A/B 一致约 1.05×），`--timed --validate` 三次里有两次印「够换种子」。",
+        "无。本目录的核已经能编译、过六用例、`--timed --validate` 三次都印「够换种子」。",
+        "无（这轮能拿到的东西都拿到了；真正值得系统层面改的是下面「被否决的前提」里那条\n"
+        "——`experience.md` 里「32 个累加器片段就溢出」的说法在这一题上被过度推广了，见下）。",
+    ]
+    for note in notes:
+        parsed = parse_feedback("# 需要帮助\n" + note + "\n")
+        assert parsed["items"] == [], note
+        assert parsed["placeholder_sections"] == ["需要帮助"], note
+    request = parse_feedback("# 需要帮助\n无。请修一下 `taic.agent_feedback check` 的退出码。\n")
+    assert len(request["items"]) == 1
+    assert request["placeholder_sections"] == []
+    mixed = parse_feedback("# 对系统的建议\n- 无。\n- 请加一个配对 A/B 报告。\n")
+    assert [item["text"] for item in mixed["items"]] == ["请加一个配对 A/B 报告。"]
+    assert mixed["placeholder_items"] == 1
 
 
 def test_a_capped_section_names_itself():

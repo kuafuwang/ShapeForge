@@ -16,7 +16,7 @@ FORMAT = "agent_feedback"
 VERSION = 1
 # Bumped when in-memory repair of old feedback.jsonl lines changes what the board shows.
 # observe/index.py appends this to the run fingerprint so a finished run is read again.
-PARSER_VERSION = "fbv2"
+PARSER_VERSION = "fbv3"
 FILE_CAP = 16384
 RAW_CAP = 4096
 TIP_CHARS = 250
@@ -24,7 +24,18 @@ TIPS_CHARS = 1200
 VERIFIED_TIPS_CHARS = 1800
 TIP_KEEP = 8
 UNVERIFIED_SPAN = 2  # sessions after the one that first wrote an unverified premise; the third session no longer sees it
-_PLACEHOLDERS = frozenset({"无", "没有", "空", "none", "na"})
+_PLACEHOLDERS = frozenset({"无", "没有", "空", "none", "na", "n/a"})
+# 「无（预算已尽）」「没有阻塞性的事。本轮不需要人介入」这类条目不是请求，也不该进待审。
+# 只有缺席句后面还带着明确动作请求时才保留；文件路径和数字不算请求，审计的 7 条都带解释。
+_ABSENT = re.compile(
+    r"^(?:无|没有|暂无|无阻塞|没有阻塞(?:性)?(?:的)?(?:事情|事|问题)?|不需要|无需)(?:[，,。；;：:\s（(]|$)",
+    re.IGNORECASE,
+)
+_REQUEST = re.compile(
+    r"(?:请|建议|希望|应当|应该|能否|能不能|要不要|请加|请改|改成|改一下|修改|修复|增加|去掉|删除|补上|支持)",
+    re.IGNORECASE,
+)
+_SENTENCE = re.compile(r"[。；;.!！?？\n]")
 
 SECTIONS = (
     "需要帮助",
@@ -78,6 +89,7 @@ def empty_feedback() -> dict:
         "truncated": False,
         "truncated_sections": [],
         "placeholder_sections": [],
+        "placeholder_items": 0,
         "unrecognized_version": False,
         "sections": {},
         "section_names": [],
@@ -107,6 +119,7 @@ def parse_feedback(text: str, *, work: Path | None = None, repo: Path | None = N
             "truncated": over or len(body) > RAW_CAP,
             "truncated_sections": [],
             "placeholder_sections": [],
+            "placeholder_items": 0,
             "unrecognized_version": True,
             "sections": {},
             "section_names": [],
@@ -120,14 +133,20 @@ def parse_feedback(text: str, *, work: Path | None = None, repo: Path | None = N
     items = []
     unverified = 0
     placeholder_sections = []
+    placeholder_items = 0
     for name in SECTIONS:
         chunk = sections.get(name, "")
         if not chunk.strip():
             continue
         if _is_placeholder(chunk):
             placeholder_sections.append(name)
+            placeholder_items += 1
             continue
         for piece in _pieces(chunk):
+            if _is_placeholder(piece):
+                placeholder_sections.append(name)
+                placeholder_items += 1
+                continue
             item = _item(name, piece, work=work, repo=repo)
             if item["premise"] in ("unverified", "downgraded"):
                 unverified += 1
@@ -141,7 +160,8 @@ def parse_feedback(text: str, *, work: Path | None = None, repo: Path | None = N
         "kinds": kinds,
         "truncated": truncated,
         "truncated_sections": truncated_sections,
-        "placeholder_sections": placeholder_sections,
+        "placeholder_sections": sorted(set(placeholder_sections), key=SECTIONS.index),
+        "placeholder_items": placeholder_items,
         "unrecognized_version": False,
         "sections": {name: sections[name] for name in names},
         "section_names": names,
@@ -519,10 +539,23 @@ def _mark_parts(body: str) -> list[str]:
 
 
 def _is_placeholder(text: str) -> bool:
-    """A section that is only a filler word. A longer sentence that starts with 没有 is kept."""
-    cleaned = _PUNCT.sub("", text or "")
+    """A section or bullet that only says there is nothing to report.
+
+    The exact filler words stay placeholders. A leading absence sentence is also one when the rest
+    does not ask for an action: ``无（预算已尽）`` is a status note, while ``无。请修一下 check`` is
+    a request and stays. File names and numbers alone do not make an absence a request; the audit's
+    seven rows all explain *why* they are empty and still belong in the parser's placeholder bucket.
+    """
+    raw = (text or "").strip()
+    cleaned = _PUNCT.sub("", raw)
     cleaned = _SPACE.sub("", cleaned).strip().lower()
-    return cleaned in _PLACEHOLDERS
+    if cleaned in _PLACEHOLDERS:
+        return True
+    if not _ABSENT.match(raw):
+        return False
+    match = _SENTENCE.search(raw)
+    rest = raw[match.end():] if match else ""
+    return not bool(_REQUEST.search(rest))
 
 
 def _fit_lines(entries: list[dict], limit: int, *, drop_oldest: bool) -> list[str]:
@@ -581,6 +614,7 @@ def check_feedback(path: Path, work: Path, repo: Path) -> str:
     skipped = parsed.get("placeholder_sections") or []
     lines.append("truncated_sections: " + (", ".join(cuts) if cuts else "-"))
     lines.append("placeholder_sections: " + (", ".join(skipped) if skipped else "-"))
+    lines.append(f"placeholder_items: {int(parsed.get('placeholder_items') or 0)}")
     for index, item in enumerate(parsed.get("items") or [], start=1):
         reason = ""
         if item.get("premise") == "downgraded":
