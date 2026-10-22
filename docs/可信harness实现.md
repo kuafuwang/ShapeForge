@@ -12,6 +12,8 @@
 | `4b433ff` | 系统建议率与前提实测率分开；P2 apply 可选跑离线测试 |
 | `887c80f` | 空占位率；两个模型必须使用不同 SHA 的探针 |
 | `bb7c51f` | 索引记录 `placeholder_items`，旧记录在 repair 时补计数 |
+| `1c1eac6` | 本交接文件 |
+| `158db49` | 拒绝带 shell/代码语法的 `action` |
 
 基础是 `c9f7862`（数据层文档 + 反馈审计）。
 
@@ -28,7 +30,7 @@
 
 ## 验证
 
-- 最近全量离线测试：**883 passed, 5 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`）。
+- 最近全量离线测试：**884 passed, 5 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`）。
 - 新增测试覆盖：7 条占位原文、探针恢复后的 digest 保留、`info`/`obsolete`、信任 scope/prompt/协议/过期、单模型/同探针不达 quorum、跨 target/协议隔离、P2 `git apply --check`、审计写回、试点汇总。
 - 数据侧：174 条审计已写回；60 条实测 `adopted`、15 条已修 `done`、35 条未验证 `info`、空占位/同主题重复 `obsolete`，其余 pending。39 条采集时缺探针的 claim 中，当前索引有 31 条 premise 升为 `verified`、8 条仍 `downgraded`，但审查状态仍为 pending，等待人复核。
 - `targets/apple-m4-max/trust.toml` 为空；没有 active 信任，因此即使 `harness_auto` 打开也不会自动通过任何 tip。
@@ -47,7 +49,7 @@
 ## 审阅清单
 
 ```bash
-git show --stat 7ae00d5 397d806 9c79d61 4b433ff 887c80f bb7c51f
+git show --stat 7ae00d5 397d806 9c79d61 4b433ff 887c80f bb7c51f 1c1eac6 158db49
 uv run pytest -q -m 'not gpu and not llm'
 uv run python -m taic.cli trust status apple-m4-max
 uv run python -m taic.cli harness status RUN_DIR
