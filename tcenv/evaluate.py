@@ -33,7 +33,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from .schema import REPORT_SCHEMA_VERSION, REQUEST_SCHEMA_VERSION, SchemaError, migrate_report, write_json_atomic
+from .schema import PROTOCOL_VERSION, REPORT_SCHEMA_VERSION, REQUEST_SCHEMA_VERSION, SchemaError, migrate_report, write_json_atomic
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -982,6 +982,10 @@ def evaluate(
                 "cv": cand.get("cv"),
                 "speedup": rep.speedup,
                 "elapsed_s": rep.elapsed_s,
+                # A later trust check must know which harness/device produced this row.
+                "task": task_name, "dtype": dtype, "size": size,
+                "target_id": target_id, "protocol_version": PROTOCOL_VERSION,
+                "kernel_sha256": hashlib.sha256(kernel_source.encode("utf-8")).hexdigest(),
             })
         return _live(rep)
 
@@ -1003,6 +1007,9 @@ def evaluate(
                 append(self_check_dir, {
                     "status": "ok", "candidate_us": cached.candidate_us, "cv": cand.get("cv"),
                     "speedup": cached.speedup, "elapsed_s": 0.0, "cached": True,
+                    "task": task_name, "dtype": dtype, "size": size,
+                    "target_id": target_id, "protocol_version": PROTOCOL_VERSION,
+                    "kernel_sha256": hashlib.sha256(kernel_source.encode("utf-8")).hexdigest(),
                 })
             return _live(cached)
 

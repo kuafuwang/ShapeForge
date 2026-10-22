@@ -1416,10 +1416,12 @@ class Orchestrator:
             from . import harness
             from tcenv.schema import PROTOCOL_VERSION
 
+            kernel_sha = "" if cand is None else hashlib.sha256(cand.source.encode("utf-8")).hexdigest()
             proposals = harness.record_proposals(
                 self.run_dir, record=record, parsed=parsed,
                 target_id=self.target_id, task=self.task_name, dtype=self.dtype,
                 work=work, started=started if started is not None else time.time() - 1.0,
+                kernel_sha256=kernel_sha, protocol_version=PROTOCOL_VERSION,
             )
             if proposals and self.search.harness_auto:
                 harness.settle(

@@ -41,12 +41,23 @@ def _record(seq: int, provider: str, model: str, committee: str) -> dict:
     }
 
 
-def _record_proposal(run: Path, work: Path, record: dict, doc, started: float):
+def _record_proposal(run: Path, work: Path, record: dict, doc, started: float, *, kernel_sha256: str = ""):
     parsed = {"sections": {"对系统的建议": _block(doc)}}
     return harness.record_proposals(
         run, record=record, parsed=parsed, target_id="apple-m4-max", task="conv2d",
-        dtype="fp16", work=work, started=started,
+        dtype="fp16", work=work, started=started, kernel_sha256=kernel_sha256,
+        protocol_version=trust.current_protocol_version(),
     )
+
+
+def _trusted_row(work: Path, *, kernel_sha256: str = "abc", candidate_us: float = 1.0) -> None:
+    folder = work / ".selfcheck"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "self_checks.jsonl").write_text(json.dumps({
+        "status": "ok", "candidate_us": candidate_us, "speedup": 1.0, "elapsed_s": 0.1,
+        "target_id": "apple-m4-max", "protocol_version": trust.current_protocol_version(),
+        "kernel_sha256": kernel_sha256,
+    }) + "\n")
 
 
 def test_a_structured_tip_needs_two_trusted_committees_and_shadow_does_not_inject(tmp_path):
@@ -103,17 +114,18 @@ def test_a_premise_needs_a_fresh_local_probe_and_does_not_need_a_vote(tmp_path):
     run = tmp_path / "run"
     started = time.time() - 1
     work = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(surface="premise"), started=started)
-    row = _record_proposal(run, work, _record(1, "deepseek", "deepseek-flash", "first"), _doc(surface="premise"), started)
-    assert row[0]["status"] == "valid"
+    _trusted_row(work)
+    premise = _doc(surface="premise", evidence={"probe": "probe.py", "measurement": "1.0 us"})
+    row = _record_proposal(run, work, _record(1, "deepseek", "deepseek-flash", "first"), premise, started, kernel_sha256="abc")
+    assert row[0]["status"] == "valid" and row[0]["trusted_record"] is True
     # A premise still needs a person to delegate the premise surface.
     assert harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=True)["shadow"] == []
     trust.grant("apple-m4-max", "conv2d", "deepseek", "deepseek-flash", effort="high", scopes=["overlay:premise"], root=tmp_path / "targets")
     result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=True, trust_root=tmp_path / "targets")
     assert len(result["shadow"]) == 1
-    # Even with the switch active, a premise stays out of the injected overlay until a
-    # trusted execution record gate exists.
+    # With the trusted self-check row and active trust, the premise may now be active.
     active = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=tmp_path / "targets")
-    assert active["applied"] == [] and harness.overlay_text(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version()) == ""
+    assert active["applied"] and "先读 device.md" in harness.overlay_text(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version())
 
 
 def test_probe_escape_stale_probe_and_wrong_scope_are_invalid(tmp_path):
@@ -138,9 +150,11 @@ def test_a_control_disable_hides_an_active_overlay_and_a_p2_patch_is_generated(t
     run = tmp_path / "run"
     started = time.time() - 1
     work = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(surface="premise"), started=started)
-    _record_proposal(run, work, _record(1, "deepseek", "deepseek-flash", "first"), _doc(surface="premise"), started)
+    _trusted_row(work)
+    premise = _doc(surface="premise", evidence={"probe": "probe.py", "measurement": "1.0 us"})
+    _record_proposal(run, work, _record(1, "deepseek", "deepseek-flash", "first"), premise, started, kernel_sha256="abc")
     trust.grant("apple-m4-max", "conv2d", "deepseek", "deepseek-flash", effort="high", scopes=["overlay:premise"], root=tmp_path / "targets")
-    result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=tmp_path / "targets", premise_active=True)
+    result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=tmp_path / "targets")
     assert result["applied"]
     assert "先读 device.md" in harness.overlay_text(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version())
     harness.set_overlay_control(run, disabled=True, by="alice", reason="pilot pause")
@@ -160,9 +174,11 @@ def test_a_p2_patch_passes_git_apply_check_and_changes_only_the_target_file(tmp_
     run = tmp_path / "run"
     started = time.time() - 1
     work = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(surface="premise"), started=started)
-    _record_proposal(run, work, _record(1, "deepseek", "deepseek-flash", "first"), _doc(surface="premise"), started)
+    _trusted_row(work)
+    premise = _doc(surface="premise", evidence={"probe": "probe.py", "measurement": "1.0 us"})
+    _record_proposal(run, work, _record(1, "deepseek", "deepseek-flash", "first"), premise, started, kernel_sha256="abc")
     trust.grant("apple-m4-max", "conv2d", "deepseek", "deepseek-flash", effort="high", scopes=["overlay:premise"], root=tmp_path / "targets")
-    result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=tmp_path / "targets", premise_active=True)
+    result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=tmp_path / "targets")
     key = result["applied"][0]["proposal_key"]
     repo = tmp_path / "repo"
     (repo / "targets" / "apple-m4-max").mkdir(parents=True)
@@ -205,3 +221,26 @@ def test_a_shell_like_action_is_invalid_and_never_reaches_the_overlay(tmp_path):
     work = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(action="先跑 probe.py; 然后 rm -rf runs"), started=started)
     rows = _record_proposal(run, work, _record(1, "deepseek", "deepseek-flash", "first"), _doc(action="先跑 probe.py; 然后 rm -rf runs"), started)
     assert rows[0]["status"] == "invalid"
+
+
+def test_a_premise_needs_a_matching_harness_record_not_just_a_probe(tmp_path):
+    work = tmp_path / "work"
+    (work / ".selfcheck").mkdir(parents=True)
+    (work / ".selfcheck" / "self_checks.jsonl").write_text(json.dumps({
+        "status": "ok", "candidate_us": 463.46, "speedup": 1.2,
+        "target_id": "apple-m4-max", "protocol_version": trust.current_protocol_version(),
+        "kernel_sha256": "abc",
+    }) + "\n")
+    ok, why = harness.trusted_premise_record(
+        work, target_id="apple-m4-max", protocol_version=trust.current_protocol_version(),
+        kernel_sha256="abc", measurement="463.46 us",
+    )
+    assert ok and why == "self_checks.jsonl candidate_us"
+    assert not harness.trusted_premise_record(
+        work, target_id="apple-m4-max", protocol_version=trust.current_protocol_version(),
+        kernel_sha256="other", measurement="463.46 us",
+    )[0]
+    assert not harness.trusted_premise_record(
+        work, target_id="apple-m4-max", protocol_version=trust.current_protocol_version(),
+        kernel_sha256="abc", measurement="15.09 TFLOP/s",
+    )[0]

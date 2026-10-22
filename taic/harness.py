@@ -41,7 +41,7 @@ A tip that should participate in this run's overlay goes in ``FEEDBACK.md`` unde
 
 Fields:
 
-- ``surface``: ``tip`` (needs two trusted models) or ``premise`` (needs a fresh local probe and active ``overlay:premise`` trust; in this stage it is shadow-only).
+- ``surface``: ``tip`` (needs two trusted models) or ``premise`` (needs a fresh local probe, active ``overlay:premise`` trust, and a matching harness-written self-check row).
 - ``scope.target_id`` and ``scope.task``: must match this run.
 - ``action``: one sentence; no commands, code, paths that redirect writes, or contract changes.
 - ``evidence.probe``: relative to this session's work directory and created after the session started.
@@ -49,6 +49,11 @@ Fields:
 
 A free-text suggestion without this block is still reviewed by a person, but it never
 reaches the automatic overlay.
+
+For ``premise``, the harness must also have a ``status=ok`` line in
+``.selfcheck/self_checks.jsonl`` with the same target, protocol, and submitted kernel SHA,
+and a number in ``evidence.measurement`` must match that row's ``candidate_us`` or
+``speedup``. A probe file alone stays in shadow.
 """
 SURFACES = ("tip", "premise", "skill", "task_wording")
 P1_SURFACES = frozenset({"tip", "premise"})
@@ -269,6 +274,69 @@ def parse_proposals(
     return found
 
 
+def _self_check_rows(work: Path) -> list[dict]:
+    rows = []
+    for path in (Path(work) / ".selfcheck" / "self_checks.jsonl", Path(work) / "self_checks.jsonl"):
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def _measurement_has(value: str, measurement: str) -> bool:
+    """Whether one of the numbers in the proposal's measurement matches a harness row."""
+    numbers = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", measurement or "")]
+    for number in numbers:
+        if number == 0:
+            continue
+        for candidate in re.findall(r"\d+(?:\.\d+)?", str(value or "")):
+            try:
+                other = float(candidate)
+            except ValueError:
+                continue
+            if abs(number - other) <= max(0.01, abs(number) * 0.01):
+                return True
+    return False
+
+
+def trusted_premise_record(
+    work: Path,
+    *,
+    target_id: str,
+    protocol_version: str,
+    kernel_sha256: str,
+    measurement: str,
+) -> tuple[bool, str]:
+    """A premise is active only when a harness-written timed row agrees with it.
+
+    The row must be ``status=ok``, from the same target and protocol, and bind the submitted
+    kernel's SHA. At least one numeric value in ``measurement`` must match that row's
+    candidate microseconds or speedup. A probe that only exists on disk does not qualify.
+    """
+    if not kernel_sha256:
+        return False, "no submitted kernel SHA"
+    for row in _self_check_rows(Path(work)):
+        if row.get("status") != "ok":
+            continue
+        if str(row.get("target_id") or "") != str(target_id):
+            continue
+        if str(row.get("protocol_version") or "") != str(protocol_version):
+            continue
+        if str(row.get("kernel_sha256") or "") != str(kernel_sha256):
+            continue
+        if _measurement_has(str(row.get("candidate_us") or ""), measurement):
+            return True, "self_checks.jsonl candidate_us"
+        if _measurement_has(str(row.get("speedup") or ""), measurement):
+            return True, "self_checks.jsonl speedup"
+    return False, "no matching harness self-check row"
+
+
 def record_proposals(
     run_dir: Path,
     *,
@@ -280,6 +348,8 @@ def record_proposals(
     work: Path,
     started: float,
     allow_premise: bool = True,
+    kernel_sha256: str = "",
+    protocol_version: str = "",
 ) -> list[dict]:
     """Append this session's valid/invalid proposals, idempotent by (seq, key, reason)."""
     run_dir = Path(run_dir)
@@ -324,7 +394,16 @@ def record_proposals(
                 "probe_sha256": item["probe_sha256"],
                 "probe_mtime": item["probe_mtime"],
                 "claim_digest": next((str(si.get("digest")) for si in system_items if "harness-proposal" in str(si.get("text") or "")), str(system_items[0].get("digest")) if system_items else ""),
+                "trusted_record": False,
+                "trusted_reason": "",
             }
+            if item["surface"] == "premise":
+                trusted, why = trusted_premise_record(
+                    work, target_id=target_id, protocol_version=protocol_version,
+                    kernel_sha256=kernel_sha256, measurement=str(item["evidence"].get("measurement") or ""),
+                )
+                row["trusted_record"] = trusted
+                row["trusted_reason"] = why
         else:
             key = hashlib.sha1(f"{seq}\0{item.get('index')}\0{item.get('reason')}".encode()).hexdigest()[:16]
             row = {
@@ -372,16 +451,15 @@ def settle(
     shadow: bool = True,
     trust_root: Path | None = None,
     prompt_sha1: str | None = None,
-    premise_active: bool = False,
 ) -> dict:
     """Find two-source agreement and append a shadow/active overlay event once per key.
 
     ``enabled`` is the run's harness switch. When false nothing is written. ``shadow`` records
     what would be injected but ``active_overlay`` ignores it until the switch is active.
 
-    A measured premise is shadow-only by default: an agent-written probe is not a trusted
-    execution record. ``premise_active`` is reserved for a future gate that verifies the
-    harness-written record; no production caller sets it.
+    A measured premise can become active only when the proposal carries a matching
+    harness-written self-check row: same target/protocol/kernel SHA and a measurement that
+    agrees with the row. A probe that only exists on disk stays in shadow.
     """
     if not enabled:
         return {"applied": [], "shadow": [], "reason": "harness_auto is off"}
@@ -426,7 +504,7 @@ def settle(
             # A measured premise does not need a second model, but it still needs a person
             # to delegate the model for this surface. This also keeps an empty trust table
             # from silently letting agent-written probes into an active overlay.
-            if not rows[0].get("probe_sha256"):
+            if not rows[0].get("probe_sha256") or not rows[0].get("trusted_record"):
                 continue
             ok, _why = _trusted(
                 rows[0], target_id=target_id, task=task, scope="overlay:premise",
@@ -434,7 +512,7 @@ def settle(
             )
             if not ok:
                 continue
-        force_shadow = surface == "premise" and not premise_active
+        force_shadow = surface == "premise" and not rows[0].get("trusted_record")
         is_shadow = bool(shadow or force_shadow)
         decision = "shadow" if is_shadow else "apply"
         if (key, decision) in decided:

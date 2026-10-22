@@ -123,7 +123,7 @@ flowchart LR
 - 数字和单位能对上；探针测的命题就是被否决的命题，不是相邻问题。
 - 代理自写的探针只能当“带出处的线索”，不能自动标成已证实。
 
-**当前实现差距**：代码目前只检查探针文件在提案者本场目录、mtime 晚于本场开始、SHA 存在，并要求该模型有 active `overlay:premise` 信任；`premise` 在本阶段**只写 shadow，不进入 active TASK**。它还没有接入“评测器签发的可信执行记录”。因此当前 P1 `premise` 的理论门槛高于实现，审阅时应把它当“带出处线索”，不要当已证明事实。详见 §7。
+**当前实现**：代码检查探针文件在提案者本场目录、mtime 晚于本场开始、SHA 存在，要求 active `overlay:premise` 信任，并读取本场 `self_checks.jsonl`，核对 target、协议、内核 SHA 和测量数字。匹配不上时 `premise` 只写 shadow。它仍不是密码学签名，恶意代理理论上可伪造本机记录；不要把 P1 当形式证明。详见 §7。
 
 ### 2.3 harness 流水线
 
@@ -300,15 +300,15 @@ proposal -> patch -> git apply --check -> 离线测试/golden -> 人确认 -> ap
 
 | 设计基线 | 当前实现 | 风险 |
 | --- | --- | --- |
-| 证据来自 harness 可信执行记录 | P1 `premise` 只校验本场探针存在、mtime、SHA | 代理可伪造探针；不能把 P1 premise 当已证明事实 |
-| `premise` 也需更强门槛 | `premise` 不需要双模型投票，但需要 active `overlay:premise` 信任；本阶段只写 shadow | 单模型错误前提仍可能进 shadow；不会自动进 active TASK |
+| 证据来自 harness 可信执行记录 | P1 `premise` 校验 self-checks 的 target/协议/内核 SHA/数字，但文件非签名 | 代理可伪造本机记录 |
+| `premise` 也需更强门槛 | `premise` 不需要双模型投票，但需要 active 信任 + 匹配的 self-checks 记录；否则只写 shadow | 单模型错误前提仍可能进 shadow；伪造本机记录仍可能绕过 |
 | 独立性靠“证据产自本场” | 只比较探针 SHA 不同 | 复制文字 + 各写不同探针仍可能通过 |
 | P1 关闭用只追加 disable 事件 | 当前是 `harness_control.json` 覆盖写 | 文件被重写时历史事件不在文件内；审计要看决策日志 |
 | 活动 claim 与历史审计分开 | 当前使用 `info`/`obsolete` 状态和墓碑；空占位重建时写入 `feedback_claim_removed` | 与计划第 7 节的“不新增状态”不同；审阅时按当前实现读 |
 | 重复按同一 action+scope 确认 | 曾显式执行 `--merge-topic`，复核后由 `experiments.revert_topic_merges` 把 10 条改回 pending | topic 不是等价关系；不要按 topic 批量关 |
 | 付费试点后再扩大 | 只准备离线工具，没有跑 `taic run/resume` | 没有真实的质量/成本结论 |
 
-这些不是“文档没写”，而是**文档必须写清楚**：理论上的安全边界比当前代码更严格。下一轮如果要打开 active，优先补“可信执行记录”和“premise 的独立证据门槛”。
+这些不是“文档没写”，而是**文档必须写清楚**：当前 self-checks 只是本机记录，不是密码学签名；付费试点仍要靠人工复核。若要把 `premise` 当强证据，下一步应引入评测器签名/外层 report 绑定。
 
 ## 8. 失败模式与防线
 
@@ -316,7 +316,7 @@ proposal -> patch -> git apply --check -> 离线测试/golden -> 人确认 -> ap
 | --- | --- | --- | --- |
 | 自证循环 | 模型提出提示，下一场按提示做，再“证明”提示好 | 影子期、双来源、人审、P2 测试 | 影子期也可能被模型看到？当前影子不注入 TASK |
 | 提示注入 | 建议里藏命令/路径/“忽略合同” | 纯文本、拒绝 shell/never-auto、固定标题、预算裁剪 | 语义注入仍可能影响模型判断 |
-| 证据伪造 | 自写探针、改 mtime、复制探针 | 本场目录、mtime、SHA 不同 | 不能证明数字真实；需可信执行记录 |
+| 证据伪造 | 自写探针、改 mtime、复制探针 | 本场目录、mtime、SHA 不同；self-checks 的 target/协议/内核 SHA/数字匹配 | 本机 self-checks 不是签名，恶意代理仍可伪造 |
 | Goodhart | 只优化“容易通过的提案” | 分离指标、Wilson 下界、人工审查、P2 | 指标本身可被选择偏差影响 |
 | 分布漂移 | 换模型/硬件/任务后旧 tip 变坏 | target/task/protocol/prompt 绑定、过期 | 同 target 内的任务相似性仍可能误导 |
 | 单模型偏见 | 同一模型两次提出同一建议 | 两个 provider+model、两个委员会 | 两个模型可能共享训练数据/笔记 |
