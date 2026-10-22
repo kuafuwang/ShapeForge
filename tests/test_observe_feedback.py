@@ -129,6 +129,7 @@ def test_review_board_lists_every_run_with_the_claim_text(tmp_path, monkeypatch)
     page = Path(__file__).resolve().parents[1] / "observe" / "static" / "index.html"
     html = page.read_text(encoding="utf-8")
     assert "reviewHardware" in html
+    assert "展开当前层" in html and "折叠当前层" in html and "reviewMenuActions" in html
     assert '<button type="button" id="feedback-badge"' in html
     assert 'window.open("/reviews"' in html
     assert 'params.set("since"' in html

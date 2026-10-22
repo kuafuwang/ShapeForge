@@ -166,6 +166,10 @@
   .review-hw > details > summary, .review-task > details > summary, .review-run > details > summary { cursor: pointer; padding: 4px 0; }
   .review-hw > details > summary b { font-size: 16px; }
   .review-count { font-weight: 400; }
+  #review-menu { position: fixed; z-index: 40; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(20, 22, 28, .12); }
+  #review-menu[hidden] { display: none; }
+  #review-menu button { text-align: left; border: 0; background: transparent; border-radius: 6px; }
+  #review-menu button:hover { background: #eef5fc; color: var(--blue); }
   @media (max-width: 800px) {
     .detail-split { grid-template-columns: 1fr; }
   }
@@ -194,6 +198,7 @@
       <span id="reviews-filters"></span>
     </div>
     <div id="reviews-list"></div>
+    <div id="review-menu" hidden role="menu"></div>
   </section>
   <div class="workspace" id="workspace">
   <aside id="side">
@@ -508,7 +513,7 @@ function ensureCards(item) {
     hw = document.createElement("section");
     hw.className = "review-hw";
     hw.dataset.hw = hwName;
-    hw.innerHTML = `<details open><summary><b></b> <span class="muted review-count"></span></summary><div class="review-hw-body"></div></details>`;
+    hw.innerHTML = `<details><summary><b></b> <span class="muted review-count"></span></summary><div class="review-hw-body"></div></details>`;
     hw.querySelector("b").textContent = hwName;
     insertByName(host, hw, hwName);
   }
@@ -518,7 +523,7 @@ function ensureCards(item) {
     task = document.createElement("section");
     task.className = "review-task";
     task.dataset.task = taskName;
-    task.innerHTML = `<details open><summary><b></b> <span class="muted review-count"></span></summary><div class="review-task-body"></div></details>`;
+    task.innerHTML = `<details><summary><b></b> <span class="muted review-count"></span></summary><div class="review-task-body"></div></details>`;
     task.querySelector("b").textContent = taskName;
     insertByName(hwBody, task, taskName);
   }
@@ -583,13 +588,12 @@ function paintReviewList() {
     return;
   }
   for (const item of items) placeCard(item);
-  const first = opened.size === 0;
   host.querySelectorAll(".review-hw").forEach((section) => {
-    section.querySelector(":scope > details").open = first || opened.has("hw\t" + section.dataset.hw);
+    section.querySelector(":scope > details").open = opened.has("hw\t" + section.dataset.hw);
   });
   host.querySelectorAll(".review-task").forEach((section) => {
     const key = "task\t" + section.closest(".review-hw").dataset.hw + "\t" + section.dataset.task;
-    section.querySelector(":scope > details").open = first || opened.has(key);
+    section.querySelector(":scope > details").open = opened.has(key);
   });
   host.querySelectorAll(".review-run").forEach((section) => {
     section.querySelector(":scope > details").open = opened.has("run\t" + section.dataset.run);
@@ -1559,6 +1563,78 @@ document.getElementById("feedback-badge").addEventListener("click", () => {
   if (reviewsPage) return;
   window.open("/reviews", "observe-reviews");
 });
+function closeReviewMenu() {
+  document.getElementById("review-menu").hidden = true;
+}
+
+function expandReviewSection(section, all) {
+  const details = section.querySelector(":scope > details");
+  if (details) details.open = true;
+  if (all) section.querySelectorAll("details").forEach((node) => { node.open = true; });
+}
+
+function collapseReviewSection(section, all) {
+  if (all) section.querySelectorAll("details").forEach((node) => { node.open = false; });
+  else {
+    const details = section.querySelector(":scope > details");
+    if (details) details.open = false;
+  }
+}
+
+function reviewMenuActions(section) {
+  const own = section.querySelector(":scope > details");
+  const nested = [...section.querySelectorAll(":scope > details details")];
+  const open = !!(own && own.open);
+  const actions = [];
+  if (open) actions.push(["collapse-level", "折叠当前层"]);
+  else actions.push(["expand-level", "展开当前层"]);
+  if (nested.length && (!open || nested.some((node) => !node.open))) actions.push(["expand-all", "展开所有"]);
+  if (open && nested.some((node) => node.open)) actions.push(["collapse-all", "折叠所有"]);
+  return actions;
+}
+
+document.getElementById("reviews-list").addEventListener("contextmenu", (event) => {
+  const summary = event.target.closest("summary");
+  const section = summary && summary.parentElement && summary.parentElement.parentElement;
+  if (!section || !section.matches(".review-hw, .review-task, .review-run")) return;
+  event.preventDefault();
+  const menu = document.getElementById("review-menu");
+  const hardware = section.closest(".review-hw");
+  const task = section.closest(".review-task");
+  menu.innerHTML = reviewMenuActions(section).map(([action, label]) => `<button type="button" data-review-expand="${esc(action)}">${esc(label)}</button>`).join("");
+  menu.hidden = false;
+  menu.dataset.sectionHw = hardware ? hardware.dataset.hw : "";
+  menu.dataset.sectionTask = task ? task.dataset.task : "";
+  menu.dataset.sectionRun = section.classList.contains("review-run") ? section.dataset.run : "";
+  menu.dataset.sectionKind = section.classList.contains("review-hw") ? "hw" : (section.classList.contains("review-task") ? "task" : "run");
+  const box = menu.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(event.clientX, window.innerWidth - box.width - 8)) + "px";
+  menu.style.top = Math.max(8, Math.min(event.clientY, window.innerHeight - box.height - 8)) + "px";
+});
+document.getElementById("review-menu").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-review-expand]");
+  if (!button) return;
+  const menu = document.getElementById("review-menu");
+  const kind = menu.dataset.sectionKind;
+  const list = document.getElementById("reviews-list");
+  const hardware = list.querySelector(`:scope > .review-hw[data-hw="${CSS.escape(menu.dataset.sectionHw || "")}"]`);
+  let section = null;
+  if (kind === "hw") section = hardware;
+  if (kind === "task" && hardware) section = hardware.querySelector(`:scope .review-task[data-task="${CSS.escape(menu.dataset.sectionTask || "")}"]`);
+  if (kind === "run") section = list.querySelector(`.review-run[data-run="${CSS.escape(menu.dataset.sectionRun || "")}"]`);
+  if (section && button.dataset.reviewExpand === "expand-level") expandReviewSection(section, false);
+  if (section && button.dataset.reviewExpand === "expand-all") expandReviewSection(section, true);
+  if (section && button.dataset.reviewExpand === "collapse-level") collapseReviewSection(section, false);
+  if (section && button.dataset.reviewExpand === "collapse-all") collapseReviewSection(section, true);
+  closeReviewMenu();
+});
+document.addEventListener("click", (event) => {
+  if (!event.target.closest("#review-menu")) closeReviewMenu();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeReviewMenu();
+});
+document.getElementById("reviews-list").addEventListener("scroll", closeReviewMenu);
 document.getElementById("reviews-filters").addEventListener("click", (event) => {
   const button = event.target.closest("[data-review-status]");
   if (!button) return;
