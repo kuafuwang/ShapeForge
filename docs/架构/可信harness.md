@@ -177,7 +177,39 @@ flowchart LR
 
 所以“review 后可用”指 `active`，不是永久固化；永久固化仍然是 P2，必须人工判断。
 
-### 3.3 为什么 P2 只生成 patch
+### 3.3 code agent 是 P2 的执行者，不是信任来源
+
+未来修改 `tcenv`、`observe` 或提示词的代码，也可以交给一个 code agent（hmz/pi）实现。它应该是 P2 的**执行者**，不是新的自动信任来源：
+
+| 角色 | 谁 | 权限 |
+| --- | --- | --- |
+| 提案者 | 搜索中的模型 | 写 FEEDBACK / 结构化提案 |
+| 评审者 | 另一个 provider/model | 只读 review，给 useful/risk |
+| 实现者 | code agent（独立 worktree） | 读已批准提案，生成 patch、补测试；不能 merge |
+| 批准者 | 人 | 看 diff/测试，确认后 apply/commit，记录 `approved_by` |
+
+流程：
+
+```text
+approved proposal
+  -> code agent in a worktree
+  -> tests + prompt golden
+  -> diff for a person
+  -> human apply/commit
+  -> change_ref (commit/patch sha) + implemented_by + approved_by
+```
+
+约束：
+
+- code agent 不继承模型对 overlay 的信任；它的工作对象是**已批准的变更**，不是自由改 harness。
+- 不允许自己批准、自己 commit、自己改 `trust.toml`/`budget`/`control`。
+- 必须用独立 worktree/工作区，不能直接改正在跑的搜索目录。
+- 任何“改审查代码、改 change_ref 校验、改 P2 审批”的元变更，也走同一条 P2；不能用一个自动循环绕开人。
+- 它生成的 `change_ref` 应该是 patch/commit 的哈希，不是模型自由文本。
+
+当前实现只覆盖 P2 的 `targets/<id>/experience.md` 追加；**还没有 code-agent 代码补丁 worker**。`apply_patch` 的 `applied_by`/`tests_run` 是给人记录审计的，不是让 code agent 自动通过的授权。
+
+### 3.4 为什么 P2 只生成 patch
 
 P2 改的是仓库，影响所有后续运行。自动写文件等于让模型间接改合同、评测或共享提示。正确流程是：
 
