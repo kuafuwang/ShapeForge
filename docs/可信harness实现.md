@@ -6,7 +6,8 @@
 
 | commit | 内容 |
 | --- | --- |
-| `7ae00d5` | fbv3 空占位、`info`/`obsolete` 审查状态、`feedback_claim_removed` 墓碑、174 条审计写回工具 |
+| `90b7517` | fbv3 空占位：所有小节的缺席句不再生成 claim，7 条审计原文做夹具 |
+| `7ae00d5` | `info`/`obsolete` 审查状态、`feedback_claim_removed` 墓碑、174 条审计写回工具 |
 | `397d806` | 按 target/task 的信任登记、prompt/协议绑定、审计行、Wilson 指标 |
 | `9c79d61` | 结构化提案、双来源 quorum、影子优先 overlay、`HARNESS.md`、P2 patch、CLI/API、文档 |
 | `4b433ff` | 系统建议率与前提实测率分开；P2 apply 可选跑离线测试 |
@@ -15,6 +16,7 @@
 | `1c1eac6` | 本交接文件 |
 | `158db49` | 拒绝带 shell/代码语法的 `action` |
 | `caf16f1` | 收紧 never-auto：合同、容差、ABI、预算、价格、阈值的词不进 P1 |
+| `e05f662` | 把 ABI 改为词边界匹配，避免 `capability` 被误伤 |
 
 基础是 `c9f7862`（数据层文档 + 反馈审计）。
 
@@ -50,7 +52,7 @@
 ## 审阅清单
 
 ```bash
-git show --stat 7ae00d5 397d806 9c79d61 4b433ff 887c80f bb7c51f 1c1eac6 158db49 caf16f1
+git show --stat 90b7517 7ae00d5 397d806 9c79d61 4b433ff 887c80f bb7c51f 1c1eac6 158db49 caf16f1 e05f662
 uv run pytest -q -m 'not gpu and not llm'
 uv run python -m taic.cli trust status apple-m4-max
 uv run python -m taic.cli harness status RUN_DIR
