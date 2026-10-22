@@ -80,6 +80,7 @@
 | `agent_work` | **2.6MB / 214 文件**（恢复 91 份 TASK.md 后；恢复前 0.5MB） |
 | `runs/` | **1,131.3MB / 4,233 文件**（原 1,234.4MB） |
 | 索引 | schema **6**；`protocol_version` = 4 `flame_chase_1` + 48 `legacy`；candidates 741；arms 13 |
+| `turns` | 重建后 **0**：仍是懒投影，打开某个 run 才写入；54 个 transcript（759.7MB）没有删，`turn_bytes>0` 要等一次详情请求 |
 | index | runs 52 / candidates 741 / arms 13 |
 | 计费重算 | 三个 run 与 REVIEW.md 的数字逐分一致 |
 | 测试新增 | 计费、重算、TASK 预算、prune、candidates/keyset、resume、backfill、ETag/gzip、transcript 哈希 |
