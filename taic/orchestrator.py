@@ -1308,9 +1308,16 @@ class Orchestrator:
                 (work / name).unlink(missing_ok=True)
             except OSError:
                 pass
-        protected = work.parent.parent / "session_checks" / work.name / "self_checks.jsonl"
+        for protected in (
+            work / ".selfcheck" / "self_checks.jsonl",
+            work.parent.parent / "session_checks" / work.name / "self_checks.jsonl",
+        ):
+            try:
+                protected.unlink(missing_ok=True)
+            except OSError:
+                pass
         try:
-            protected.unlink(missing_ok=True)
+            (work / ".selfcheck").mkdir(parents=True, exist_ok=True)
         except OSError:
             pass
 
@@ -1450,7 +1457,9 @@ class Orchestrator:
         if result.notes:
             (folder / "NOTES.md").write_text(result.notes)
         work = self.run_dir / "agent_work" / cand.label.replace("/", "_")
-        src = work / "self_checks.jsonl"
+        src = work / ".selfcheck" / "self_checks.jsonl"
+        if not src.is_file():
+            src = work / "self_checks.jsonl"
         protected = work.parent.parent / "session_checks" / work.name / "self_checks.jsonl"
         if protected.is_file():
             src = protected

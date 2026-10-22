@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from taic.kernel_agent import (
-    TASK_MAX_BYTES, AgentError, AgentResult, Prices, SessionBrief, agent_spec, dollars_for, kernel_text,
+    TASK_MAX_BYTES, AgentError, AgentResult, Prices, SessionBrief, _self_check_dir, agent_spec, dollars_for, kernel_text,
     output_tokens_for, parse_spent, prune_work, render_contract, run_kernel_agent, spend_from_stream,
     submission_name,
 )
@@ -290,3 +290,22 @@ def test_a_real_task_keeps_a_partial_scorecard_instead_of_dropping_it(tmp_path, 
     assert "本段已截断" in text
     assert "# 本轮省略（上下文预算）" in text
     assert "需要时读取" in text
+
+
+def test_the_self_check_log_is_inside_the_writable_work_directory(tmp_path):
+    brief = _brief(tmp_path)
+    log = _self_check_dir(brief)
+    work = Path(brief.work_dir)
+    assert log == work / ".selfcheck"
+    assert work in log.parents
+
+
+def test_prune_keeps_a_probe_named_by_the_feedback(tmp_path):
+    work = tmp_path / "run" / "agent_work" / "r1"
+    work.mkdir(parents=True)
+    (work / "FEEDBACK.md").write_text("[已实测: probe.py | x | 1.0 us]\n")
+    (work / "probe.py").write_text("print(1)\n")
+    (work / "other.py").write_text("print(2)\n")
+    out = prune_work(work, label="r1")
+    assert (work / "probe.py").is_file() and "probe.py" in out["kept"]
+    assert not (work / "other.py").exists()

@@ -242,9 +242,15 @@ def _shell(value: str) -> str:
 
 
 def _self_check_dir(brief: SessionBrief) -> Path:
-    """Hang log outside the directory the agent is allowed to write, so deleting the work copy does not reset it."""
+    """Hang log inside the session work directory, which the coding agent's sandbox can write.
+
+    An earlier version put it in ``<run>/session_checks`` so deleting the work copy would not reset
+    the hang count. The sandbox denied ``mkdir`` there and every timed self-check crashed after
+    paying for the benchmark (17 agent reports). The work directory is already the agent's trust
+    boundary; keep the log writable and archive it with the session instead.
+    """
     work = _work_path(brief)
-    return work.parent.parent / "session_checks" / work.name
+    return work / ".selfcheck"
 
 
 def _work_path(brief: SessionBrief) -> Path:
@@ -528,7 +534,42 @@ def stage_guidance(work: Path, brief: SessionBrief) -> None:
 
 
 
-_WORK_KEEP = frozenset({"NOTES.md", "FEEDBACK.md", "self_checks.jsonl", "TASK.md"})
+_WORK_KEEP = frozenset({"NOTES.md", "FEEDBACK.md", "self_checks.jsonl", "TASK.md", ".selfcheck"})
+
+
+_EVIDENCE_TOKEN = re.compile(r"[A-Za-z0-9_./-]+\.(?:py|metal|md|json|sh|txt)")
+
+
+def _evidence_paths(work: Path) -> set[str]:
+    """Top-level entries named by the session's own feedback or notes.
+
+    A measured premise points at a probe file. Archiving that file would turn ``verified`` into
+    ``downgraded`` on the next parse; keep the file (or its whole small directory) in place.
+    """
+    text = ""
+    for name in ("FEEDBACK.md", "NOTES.md"):
+        path = work / name
+        try:
+            text += path.read_text(encoding="utf-8", errors="replace") + "\n"
+        except OSError:
+            continue
+    keep: set[str] = set()
+    for token in _EVIDENCE_TOKEN.findall(text):
+        clean = token.strip()
+        if clean.startswith("PWD/"):
+            clean = clean[4:]
+        if clean.startswith("runs/"):
+            continue
+        parts = Path(clean).parts
+        if not parts:
+            continue
+        # A token such as r11.p0/bench2.py belongs to a sibling work directory.
+        if len(parts) > 1 and re.fullmatch(r"r\d+\.p\d+", parts[0]):
+            continue
+        top = work / parts[0]
+        if top.exists():
+            keep.add(parts[0])
+    return keep
 
 
 def prune_work(work: Path, *, label: str, keep: set[str] | None = None, max_bytes: int = SCRATCH_MAX_BYTES) -> dict:
@@ -544,6 +585,7 @@ def prune_work(work: Path, *, label: str, keep: set[str] | None = None, max_byte
     if not work.is_dir():
         return {"archived": [], "kept": [], "bytes": 0, "reason": "no work dir"}
     keep = set(_WORK_KEEP) | {str(name) for name in (keep or ())}
+    keep |= _evidence_paths(work)
     entries = [path for path in work.iterdir() if path.name not in keep]
     kept = sorted(path.name for path in work.iterdir() if path.name in keep)
     if not entries:
