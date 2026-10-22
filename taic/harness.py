@@ -200,8 +200,8 @@ def validate_proposal(
         probe_path, probe_sha, probe_mtime = _fresh_probe(probe, work=work, started=started)
     elif surface == "premise":
         raise ProposalError("a premise needs evidence.probe from this session")
-    if surface == "tip" and not probe and not measurement:
-        raise ProposalError("a tip needs evidence.probe or evidence.measurement")
+    if surface == "tip" and not probe:
+        raise ProposalError("a tip needs evidence.probe from this session")
     rationale = _CONTROL.sub(" ", str(doc.get("rationale") or ""))[:1000]
     return {
         "surface": surface,
@@ -407,6 +407,9 @@ def settle(
                 if ok:
                     trusted.append(identity)
             if len(trusted) < 2:
+                continue
+            # A copied probe is not a second source. Two paths with identical bytes are still one measurement.
+            if len({str(row.get("probe_sha256") or "") for row in authors.values() if row.get("probe_sha256")}) < 2:
                 continue
         else:
             # A measured premise has direct evidence and does not need a second model.

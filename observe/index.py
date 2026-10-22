@@ -302,6 +302,7 @@ class Index:
                 has_system INTEGER NOT NULL DEFAULT 0,
                 pending_claims INTEGER NOT NULL DEFAULT 0,
                 unverified_premises INTEGER NOT NULL DEFAULT 0,
+                placeholder_items INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (run_id, seq)
             );
             CREATE INDEX IF NOT EXISTS feedback_task ON feedback_items(task);
@@ -366,6 +367,8 @@ class Index:
         item_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(feedback_items)")}
         if "line_at" not in item_columns:
             self.conn.execute("ALTER TABLE feedback_items ADD COLUMN line_at INTEGER")
+        if "placeholder_items" not in item_columns:
+            self.conn.execute("ALTER TABLE feedback_items ADD COLUMN placeholder_items INTEGER NOT NULL DEFAULT 0")
         removed_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(feedback_claim_removed)")}
         for name in ("section", "audience", "premise", "status", "reason"):
             if name not in removed_columns:

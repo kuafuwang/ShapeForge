@@ -14,7 +14,7 @@ def _db():
         """
         CREATE TABLE runs (run_id TEXT PRIMARY KEY, target_id TEXT);
         CREATE TABLE sessions (run_id TEXT, seq INTEGER, provider TEXT, model TEXT);
-        CREATE TABLE feedback_items (run_id TEXT, seq INTEGER, task TEXT);
+        CREATE TABLE feedback_items (run_id TEXT, seq INTEGER, task TEXT, placeholder_items INTEGER);
         CREATE TABLE feedback_claims (run_id TEXT, seq INTEGER, digest TEXT, premise TEXT, status TEXT, verification TEXT, audience TEXT);
         """
     )
@@ -22,8 +22,8 @@ def _db():
     conn.execute("INSERT INTO runs VALUES ('r2', 'apple-m4-max')")
     conn.execute("INSERT INTO sessions VALUES ('r1', 1, 'deepseek', 'deepseek-flash')")
     conn.execute("INSERT INTO sessions VALUES ('r2', 1, 'deepseek', 'deepseek-flash')")
-    conn.execute("INSERT INTO feedback_items VALUES ('r1', 1, 'conv2d')")
-    conn.execute("INSERT INTO feedback_items VALUES ('r2', 1, 'conv2d')")
+    conn.execute("INSERT INTO feedback_items VALUES ('r1', 1, 'conv2d', 1)")
+    conn.execute("INSERT INTO feedback_items VALUES ('r2', 1, 'conv2d', 0)")
     rows = [
         ("r1", 1, "a", "verified", "done", "confirmed", "peer"),
         ("r1", 1, "b", "unverified", "rejected", "refuted", "peer"),
@@ -46,6 +46,7 @@ def test_metrics_count_reviews_and_measured_premises():
     assert row["reasonable_rate"] == 2 / 3
     assert row["wilson_lower"] is not None and 0 < row["wilson_lower"] < row["reasonable_rate"]
     assert row["system_reviewed"] == 0 and row["system_wilson_lower"] is None
+    assert row["placeholder_items"] == 1 and row["placeholder_rate"] == 0.5
 
 
 def test_an_empty_cell_does_not_claim_a_rate():

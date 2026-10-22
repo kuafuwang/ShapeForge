@@ -139,6 +139,7 @@ def _item_signature(row) -> tuple:
         int(row["has_system"] or 0),
         int(row["pending_claims"] or 0),
         int(row["unverified_premises"] or 0),
+        int(row["placeholder_items"] or 0),
     )
 
 
@@ -217,6 +218,7 @@ def _rows_for_record(record: dict, review: dict, line_at: int | None = None) -> 
         "has_system": 1 if _has_system(record) else 0,
         "pending_claims": pending,
         "unverified_premises": unverified,
+        "placeholder_items": int(record.get("placeholder_items") or 0),
     }
     return item, built
 
@@ -245,13 +247,13 @@ def _write_item(conn, run_id: str, row: dict) -> None:
         """
         INSERT INTO feedback_items (
             run_id, seq, t, task, dtype, size, label, committee, provider, model, outcome, exit, kinds,
-            line_at, has_system, pending_claims, unverified_premises
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            line_at, has_system, pending_claims, unverified_premises, placeholder_items
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             run_id, row["seq"], row["t"], row["task"], row["dtype"], row["size"], row["label"], row["committee"],
             row["provider"], row["model"], row["outcome"], row["exit"], row["kinds"], row.get("line_at"),
-            row["has_system"], row["pending_claims"], row["unverified_premises"],
+            row["has_system"], row["pending_claims"], row["unverified_premises"], row["placeholder_items"],
         ),
     )
 

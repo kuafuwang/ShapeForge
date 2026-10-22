@@ -58,9 +58,24 @@ def metrics(conn, *, target_id: str | None = None, task: str | None = None) -> l
         """,
         args,
     )
+    placeholder_rows = conn.execute(
+        f"""
+        SELECT r.target_id AS target_id, i.task AS task, s.provider AS provider, s.model AS model,
+               SUM(i.placeholder_items) AS n
+        FROM sessions s
+        JOIN runs r ON r.run_id = s.run_id
+        JOIN feedback_items i ON i.run_id = s.run_id AND i.seq = s.seq
+        WHERE {' AND '.join(where)}
+        GROUP BY r.target_id, i.task, s.provider, s.model
+        """,
+        args,
+    )
+    placeholders = {(row["target_id"], row["task"], row["provider"], row["model"]): int(row["n"] or 0) for row in placeholder_rows}
     out = []
     for row in rows:
         item = dict(row)
+        key = (item["target_id"], item["task"], item["provider"], item["model"])
+        item["placeholder_items"] = placeholders.get(key, 0)
         reviewed = int(item.get("reviewed") or 0)
         reasonable = int(item.get("reasonable") or 0)
         item["reasonable_rate"] = (reasonable / reviewed) if reviewed else None
@@ -71,5 +86,7 @@ def metrics(conn, *, target_id: str | None = None, task: str | None = None) -> l
         item["system_wilson_lower"] = wilson_lower(system_reasonable, system_reviewed)
         premise = int(item.get("premise") or 0)
         item["measured_rate"] = (int(item.get("verified_premise") or 0) / premise) if premise else None
+        sessions = int(item.get("sessions") or 0)
+        item["placeholder_rate"] = (int(item.get("placeholder_items") or 0) / sessions) if sessions else None
         out.append(item)
     return out
