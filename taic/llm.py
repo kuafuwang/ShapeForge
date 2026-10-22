@@ -183,6 +183,8 @@ class SearchConfig:
     turn_minutes: int = 25  # wall clock of the main turn inside kernel_once; the process timeout is longer and only a backstop
     require_contract_launch: bool = False  # contract-menu and variant runs reject a taic-launch block so the launch stays the one the menu chose
     peer_tips: bool = True  # put this run's recent peer tips into the next TASK.md. Off leaves that block empty. Tips never cross runs.
+    harness_auto: bool = False  # structured harness proposals may settle into this run's overlay; off by default
+    harness_shadow: bool = True  # record an eligible overlay but do not inject it until the pilot is reviewed
 
 
 def _read_toml(path: Path) -> dict:

@@ -112,7 +112,7 @@ SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "ma
                  "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "confirm_batches", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
                  "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck",
                  "plan_ledger", "diversity_archive", "fast_bench", "experience_index", "kernel_agent", "require_contract_launch",
-                 "relay_budget_usd", "turn_minutes", "peer_tips")
+                 "relay_budget_usd", "turn_minutes", "peer_tips", "harness_auto", "harness_shadow")
 LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "keep_transcript_bodies", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry",
               "truncation_retry_effort", "plan_reasoning_effort", "patch_reasoning_effort")
 
@@ -434,8 +434,20 @@ def _apply_max_tokens(a: argparse.Namespace, cfg, prov: dict | None = None) -> N
         prov["llm.max_tokens"] = "command line"
 
 
+def _add_harness_switches(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--harness-auto", action=argparse.BooleanOptionalAction, default=None, help="allow structured harness proposals to settle into this run's overlay (default: off)")
+    p.add_argument("--harness-shadow", action=argparse.BooleanOptionalAction, default=None, help="record an eligible overlay without injecting it; use --no-harness-shadow only after the shadow pilot (default: on)")
+
+
 def _apply_search_switches(a: argparse.Namespace, cfg, search, prov: dict | None = None) -> None:
     """Apply an explicit ``--flag`` or ``--no-flag``. An omitted flag leaves the config default."""
+    for dest, key in (("harness_auto", "harness_auto"), ("harness_shadow", "harness_shadow")):
+        value = getattr(a, dest, None)
+        if value is None:
+            continue
+        setattr(search, key, value)
+        if prov is not None:
+            prov[f"search.{key}"] = "command line"
     for dest, _help in _SEARCH_SWITCHES:
         value = getattr(a, dest, None)
         if value is None:
@@ -516,6 +528,78 @@ def cmd_gc(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_trust(a: argparse.Namespace) -> int:
+    from . import trust
+
+    action = a.trust_action
+    root = Path(a.root) if getattr(a, "root", None) else None
+    try:
+        if action == "grant":
+            entry = trust.grant(
+                a.target, a.task, a.provider, a.model, effort=a.effort or "",
+                scopes=a.scope or ["overlay:tip"], granted_by=a.by, reason=a.reason,
+                evidence_run=a.evidence_run or "", expires_at=a.expires_at,
+                prompt_sha1=a.prompt_sha1, protocol_version=a.protocol_version, root=root,
+            )
+            print(json.dumps(entry, ensure_ascii=False, indent=2))
+        elif action in ("revoke", "suspend"):
+            entry = trust.set_status(
+                a.target, task=a.task, provider=a.provider, model=a.model, effort=a.effort or "",
+                status="revoked" if action == "revoke" else "suspended", by=a.by, reason=a.reason, root=root,
+            )
+            print(json.dumps(entry, ensure_ascii=False, indent=2))
+        elif action == "audit":
+            print(json.dumps(trust.read_audit(a.target, root), ensure_ascii=False, indent=2))
+        elif action == "metrics":
+            from observe.index import get_index
+            from observe.trust import metrics
+
+            index = get_index()
+            index.sync_known()
+            rows = metrics(index.conn, target_id=a.target, task=a.task)
+            print(json.dumps(rows, ensure_ascii=False, indent=2, default=str))
+        else:
+            print(json.dumps(trust.load_grants(a.target, root), ensure_ascii=False, indent=2))
+    except (trust.TrustError, OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 5
+    return 0
+
+
+def cmd_harness(a: argparse.Namespace) -> int:
+    from . import harness
+
+    run = Path(a.run_dir)
+    try:
+        if a.harness_action == "status":
+            print(json.dumps(harness.board(run), ensure_ascii=False, indent=2, default=str))
+        elif a.harness_action == "disable":
+            print(json.dumps(harness.set_overlay_control(run, disabled=True, by=a.by, reason=a.reason), ensure_ascii=False))
+        elif a.harness_action == "settle":
+            from . import trust
+
+            result = harness.settle(
+                run, target_id=a.target, task=a.task,
+                protocol_version=a.protocol_version or trust.current_protocol_version(),
+                enabled=True, shadow=not a.active,
+            )
+            print(json.dumps({key: len(value) for key, value in result.items() if isinstance(value, list)} | {"result": result}, ensure_ascii=False, indent=2, default=str))
+        elif a.harness_action == "patch":
+            print(json.dumps(harness.write_patch(run, target_id=a.target, proposal_key=a.key), ensure_ascii=False, indent=2))
+        elif a.harness_action == "apply":
+            if not a.confirm and not a.check:
+                print("refusing to apply without --confirm (use --check first)", file=sys.stderr)
+                return 5
+            print(json.dumps(harness.apply_patch(run, target_id=a.target, proposal_key=a.key, check_only=a.check), ensure_ascii=False, indent=2))
+        else:
+            print("unknown harness action", file=sys.stderr)
+            return 5
+    except (harness.ProposalError, OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 5
+    return 0
+
+
 def cmd_migrate_runs(a: argparse.Namespace) -> int:
     from .migrate import migrate_runs
 
@@ -551,6 +635,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--plan-mix", action="store_true", help="recorded only; the hmz session chooses its own direction")
     p.add_argument("--hw-feedback", action="store_true", help="append a short static hardware-feature analysis of the seed to the planner and patch feedback and teach it as Skill 2c (off by default)")
     _add_search_switches(p)
+    _add_harness_switches(p)
     p.add_argument("--init-samples", type=int, default=None, help="must be 1; any other value is refused before a session starts")
     p.add_argument("--confirm-batches", type=int, default=None, help="independent confirm evaluations per candidate; the published speedup is their median (default 3, 1 = the old single batch)")
     p.add_argument("--patience", type=int, default=None, help="stop after this many rounds without a new best (default 6)")
@@ -579,6 +664,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--plan-mix", action="store_true")
     r.add_argument("--hw-feedback", action="store_true")
     _add_search_switches(r)
+    _add_harness_switches(r)
     r.add_argument("--init-samples", type=int, default=None)
     r.add_argument("--patience", type=int, default=None, help="not recorded by runs older than run_config.json: give the value the run was started with")
     r.add_argument("--lift-count-limits", action="store_true", help="also continue a run that stopped because it used its round limit or its patience")
@@ -610,6 +696,59 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--target", default="apple-m4-max")
     m.add_argument("--root", default=None)
     m.set_defaults(fn=cmd_migrate_runs)
+    t = sub.add_parser("trust", help="per-target model trust grants and metrics (no model call, no GPU)")
+    ts = t.add_subparsers(dest="trust_action", required=True)
+    for name in ("grant", "revoke", "suspend"):
+        g = ts.add_parser(name)
+        g.add_argument("target")
+        g.add_argument("task")
+        g.add_argument("provider")
+        g.add_argument("model")
+        g.add_argument("--effort", default="")
+        g.add_argument("--scope", action="append", default=None, help="overlay:tip, overlay:premise, propose:skill, propose:task_wording")
+        g.add_argument("--by", default="cli")
+        g.add_argument("--reason", default="")
+        g.add_argument("--root", default=None, help="alternate targets root (offline tests)")
+    g = ts.choices["grant"]
+    g.add_argument("--evidence-run", default="")
+    g.add_argument("--expires-at", type=float, default=None)
+    g.add_argument("--prompt-sha1", default=None)
+    g.add_argument("--protocol-version", default=None)
+    st = ts.add_parser("status")
+    st.add_argument("target")
+    st.add_argument("--root", default=None)
+    au = ts.add_parser("audit")
+    au.add_argument("target")
+    au.add_argument("--root", default=None)
+    me = ts.add_parser("metrics")
+    me.add_argument("--target", default=None)
+    me.add_argument("--task", default=None)
+    t.set_defaults(fn=cmd_trust)
+    h = sub.add_parser("harness", help="inspect or settle structured harness proposals (no model call)")
+    hs = h.add_subparsers(dest="harness_action", required=True)
+    hst = hs.add_parser("status")
+    hst.add_argument("run_dir")
+    hd = hs.add_parser("disable")
+    hd.add_argument("run_dir")
+    hd.add_argument("--by", default="cli")
+    hd.add_argument("--reason", default="")
+    hse = hs.add_parser("settle")
+    hse.add_argument("run_dir")
+    hse.add_argument("--target", default="apple-m4-max")
+    hse.add_argument("--task", required=True)
+    hse.add_argument("--protocol-version", default=None)
+    hse.add_argument("--active", action="store_true", help="write an active overlay; default is shadow only")
+    hp = hs.add_parser("patch")
+    hp.add_argument("run_dir")
+    hp.add_argument("--target", default="apple-m4-max")
+    hp.add_argument("--key", required=True)
+    ha = hs.add_parser("apply")
+    ha.add_argument("run_dir")
+    ha.add_argument("--target", default="apple-m4-max")
+    ha.add_argument("--key", required=True)
+    ha.add_argument("--check", action="store_true")
+    ha.add_argument("--confirm", action="store_true")
+    h.set_defaults(fn=cmd_harness)
     a = ap.parse_args(argv)
     return a.fn(a)
 

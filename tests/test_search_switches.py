@@ -24,6 +24,8 @@ def test_switches_default_off_and_do_not_change_the_prompt_text():
     assert SearchConfig().rich_history is True
     assert SearchConfig().plan_ledger is True
     assert SearchConfig().status_lines is True
+    assert SearchConfig().harness_auto is False
+    assert SearchConfig().harness_shadow is True
     assert LLMConfig(base_url="http://x", api_key="k", model="m").truncation_retry is True
     task = _task()
     plain = plan_user(task, "kernel void relu_kernel() {}", "feedback", ["round 1: A -> 1.100x (new best)"], 3)

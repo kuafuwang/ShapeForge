@@ -215,6 +215,13 @@ async def api_v2_feedback(request) -> JSONResponse:
     return _json(await asyncio.to_thread(query.feedback_board, since=since))
 
 
+async def api_v2_harness(request) -> JSONResponse:
+    doc = await asyncio.to_thread(query.harness_board, request.path_params["run_id"])
+    if doc is None:
+        return _json({"error": "not found"}, status=404)
+    return _json(doc)
+
+
 async def api_v2_budget(_request) -> JSONResponse:
     return _json(await asyncio.to_thread(query.budget_report))
 
@@ -388,6 +395,7 @@ app = Starlette(
         Route("/reviews", index),
         Route("/api/v2/overview", api_v2_overview),
         Route("/api/v2/feedback", api_v2_feedback),
+        Route("/api/v2/harness/{run_id:path}", api_v2_harness),
         Route("/api/v2/runs", api_v2_runs),
         Route("/api/v2/experiments", api_v2_experiments),
         Route("/api/v2/experiments/{experiment_id:path}", api_v2_experiment),

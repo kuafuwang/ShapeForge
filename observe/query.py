@@ -521,6 +521,17 @@ def _gain_per_usd(members: list[dict], spent: float) -> float | None:
     return sum(pieces) / spent
 
 
+def harness_board(run_id: str) -> dict | None:
+    """Structured proposals and overlay decisions for one run. The files are the source."""
+    from observe.detail import resolve_run
+    from taic.harness import board
+
+    directory = resolve_run(run_id)
+    if directory is None:
+        return None
+    return board(directory)
+
+
 def feedback_board(*, since: int | None = None) -> dict:
     """Claims changed after ``since``. Omit ``since`` for the whole list. Text is read only for rows in the answer."""
     from observe.feedback import review_feed

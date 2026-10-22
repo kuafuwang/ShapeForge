@@ -152,6 +152,7 @@ def test_a_fake_hmz_leaves_the_kernel_and_a_computed_cost(tmp_path):
     assert "assistant=" not in task
     assert "--timed" in task
     assert "turn_output_tokens" not in task
+    assert "harness-proposal" in (tmp_path / "work" / "HARNESS.md").read_text()
 
 
 def test_a_missing_hmz_is_an_error_and_a_timeout_still_returns_the_file(tmp_path):
@@ -309,3 +310,12 @@ def test_prune_keeps_a_probe_named_by_the_feedback(tmp_path):
     out = prune_work(work, label="r1")
     assert (work / "probe.py").is_file() and "probe.py" in out["kept"]
     assert not (work / "other.py").exists()
+
+
+def test_an_active_harness_overlay_is_a_budgeted_task_block(tmp_path):
+    brief = _real_brief(tmp_path, "conv2d")
+    brief.harness_overlay = "\n# 未验证的模型建议（不是合同，不是事实）\n- [run #1] 先读 device.md。\n"
+    text = render_contract(brief)
+    assert "未验证的模型建议" in text
+    assert "先读 device.md" in text
+    assert len(text.encode("utf-8")) <= 12_000

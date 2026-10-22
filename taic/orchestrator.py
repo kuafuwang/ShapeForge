@@ -1296,7 +1296,7 @@ class Orchestrator:
             return outcome
         finally:
             try:
-                self._record_feedback(tag, member, work, parsed, outcome, cand, exit_kind, seed_label)
+                self._record_feedback(tag, member, work, parsed, outcome, cand, exit_kind, seed_label, started=started)
             except OSError:
                 pass
 
@@ -1345,11 +1345,16 @@ class Orchestrator:
 
     def _feedback_slim(self, parsed: dict | None) -> dict:
         parsed = parsed or {}
-        return {
+        slim = {
             "feedback_kinds": parsed.get("kinds") or "",
             "feedback_sections": list(parsed.get("section_names") or []),
             "feedback_chars": int(parsed.get("chars") or 0),
         }
+        # Keep the old transcript byte-identical when there is nothing empty to report.
+        placeholders = int(parsed.get("placeholder_items") or 0)
+        if placeholders:
+            slim["feedback_placeholder_items"] = placeholders
+        return slim
 
     def _next_feedback_seq(self) -> int:
         from .agent_feedback import max_seq
@@ -1359,16 +1364,21 @@ class Orchestrator:
         self._feedback_seq += 1
         return self._feedback_seq
 
-    def _record_feedback(self, tag: str, member, work: Path, parsed: dict, outcome: str | None, cand, exit_kind: str, seed_label: str | None) -> None:
+    def _record_feedback(self, tag: str, member, work: Path, parsed: dict, outcome: str | None, cand, exit_kind: str, seed_label: str | None, *, started: float | None = None) -> None:
         from .agent_feedback import round_of
 
         raw = str((parsed or {}).get("raw") or "")
         items = (parsed or {}).get("items") or []
         report = None if cand is None else cand.report
+        try:
+            run_id = self.run_dir.resolve().relative_to((REPO_ROOT / "runs").resolve()).as_posix()
+        except ValueError:
+            run_id = self.run_dir.name
         record = {
             "format": "agent_feedback",
             "v": 1,
             "seq": self._next_feedback_seq(),
+            "run_id": run_id,
             "t": time.time(),
             "task": self.task_name,
             "dtype": self.dtype,
@@ -1394,11 +1404,32 @@ class Orchestrator:
             "sections": parsed.get("sections") or {},
             "items": items,
             "unverified_premises": int(parsed.get("unverified_premises") or 0),
+            "placeholder_items": int(parsed.get("placeholder_items") or 0),
             "raw": parsed.get("raw") or "",
         }
         path = self.run_dir / "feedback.jsonl"
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        # Structured proposals are observations, not money or GPU work. They are recorded even
+        # when harness_auto is off so a person can review them; settle only runs when enabled.
+        try:
+            from . import harness
+            from tcenv.schema import PROTOCOL_VERSION
+
+            proposals = harness.record_proposals(
+                self.run_dir, record=record, parsed=parsed,
+                target_id=self.target_id, task=self.task_name, dtype=self.dtype,
+                work=work, started=started if started is not None else time.time() - 1.0,
+            )
+            if proposals and self.search.harness_auto:
+                harness.settle(
+                    self.run_dir, target_id=self.target_id, task=self.task_name,
+                    protocol_version=PROTOCOL_VERSION, enabled=True,
+                    shadow=bool(self.search.harness_shadow),
+                )
+                harness.sync_trust_status(self.run_dir, target_id=self.target_id, task=self.task_name)
+        except Exception as exc:  # noqa: BLE001 - a harness record must not stop a search
+            self.log(f"  [{tag}] harness proposals skipped: {exc}")
         del work
 
     def _restore_handoff(self) -> None:
@@ -1507,6 +1538,15 @@ class Orchestrator:
         work = work_dir if work_dir is not None else (self.run_dir / "agent_work" / label.replace("/", "_"))
         snap = self.run_dir / "agent_guidance"
         guidance = str(snap.resolve()) if (snap / "experience.md").is_file() else ""
+        harness_overlay = ""
+        if self.search.harness_auto and not self.search.harness_shadow:
+            from . import harness
+            from tcenv.schema import PROTOCOL_VERSION
+
+            harness_overlay = harness.overlay_text(
+                self.run_dir, target_id=self.target_id, task=self.task_name,
+                protocol_version=PROTOCOL_VERSION,
+            )
         return SessionBrief(
             repo=REPO_ROOT, task_name=self.task_name, dtype=self.dtype, size=self.size,
             kernel_name=self.task.contract.kernel_name, triton_source=self.task.triton_source,
@@ -1518,7 +1558,7 @@ class Orchestrator:
             require_contract_launch=self.search.require_contract_launch,
             min_improvement=self.search.min_improvement, noise_z=self.search.noise_z, seedless=seedless,
             peer_tips=tips, label=label, work_dir=str(Path(work).resolve()), guidance_dir=guidance,
-            target_id=self.target_id,
+            target_id=self.target_id, harness_overlay=harness_overlay,
         )
 
     async def _initial_generation(self) -> None:

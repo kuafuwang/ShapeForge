@@ -96,6 +96,7 @@ class SessionBrief:
     work_dir: str = ""
     guidance_dir: str = ""
     target_id: str = "apple-m4-max"
+    harness_overlay: str = ""
 
 
 @dataclass
@@ -400,7 +401,8 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         "给系统的建议只给人看，有人在看板复核后改仓库。给下一棒的避坑提示只在本运行内往下传，不跨题目。放弃某个方向所依据的断言必须写进「被否决的前提」节，不要夹在避坑里。",
         "**没有内容就不要写。** 你的输出按 token 计费：某一节没话说就整节省略，不要写「无」「（空）」「none」这类占位符——它们是纯成本，看板还要逐条清理。整份 `FEEDBACK.md` 都没有内容时，不要创建这个文件。",
         "文件开头一行 `kind: prompt|skill|tool|rule|decision`，可以写多个，用逗号分开；没有系统层面的建议或求助时，这一行也不要写。",
-        "有内容时按这五个标题写，只写有话的那几节：`# 需要帮助`、`# 对系统的建议`、`# 卡住的原因`、`# 给下一棒的避坑提示`、`# 被否决的前提`。",
+        "有内容时按这五个标题写，只写有话的那几节：`# 需要帮助`、`# 对系统的建议`、`# 卡住的原因`、`# 给下一棒的避坑提示`、`# 被否决的前提`。"
+        "系统建议可附 ```harness-proposal JSON 块（字段见本目录 HARNESS.md）；没有块只进人工审查。",
         "被否决的前提只写这两种：",
         "`[已实测: 文件名 | 一句命题 | 数字和单位]`",
         "`[未验证 | 一句命题 | 为什么没测]`",
@@ -432,6 +434,8 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         blocks.append(("当前现场", "\n".join(context) + "\n"))
         if brief.failure:
             blocks.append(("上一轮外层失败反馈", "\n\n上一轮外层失败反馈：\n" + _cap_task(brief.failure, 1000)))
+        if brief.harness_overlay:
+            blocks.append(("本运行 harness overlay", "\n" + _cap_task(brief.harness_overlay, 1800)))
         if brief.notes_summary:
             blocks.append((
                 "上一轮 NOTES",
@@ -534,7 +538,7 @@ def stage_guidance(work: Path, brief: SessionBrief) -> None:
 
 
 
-_WORK_KEEP = frozenset({"NOTES.md", "FEEDBACK.md", "self_checks.jsonl", "TASK.md", ".selfcheck"})
+_WORK_KEEP = frozenset({"NOTES.md", "FEEDBACK.md", "self_checks.jsonl", "TASK.md", "HARNESS.md", ".selfcheck"})
 
 
 _EVIDENCE_TOKEN = re.compile(r"[A-Za-z0-9_./-]+\.(?:py|metal|md|json|sh|txt)")
@@ -672,6 +676,8 @@ def run_kernel_agent(
     if brief.seed_report_json and not brief.seedless:
         (work / "report.json").write_text(brief.seed_report_json)
     stage_guidance(work, brief)
+    from .harness import write_template
+    write_template(work)
     (work / "TASK.md").write_text(render_contract(brief))
     if timeout_s is None:
         timeout_s = process_timeout_s(turn_minutes)
