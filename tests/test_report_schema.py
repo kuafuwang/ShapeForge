@@ -164,3 +164,13 @@ def test_a_damaged_worker_report_is_not_treated_as_a_missing_report(monkeypatch)
     assert rep.status == "crash"
     assert "needs human inspection" in rep.message
     assert "without a report" not in rep.message
+
+
+def test_a_report_records_the_measurement_protocol():
+    from tcenv.schema import PROTOCOL_VERSION
+
+    report = EvalReport(task="relu", dtype="fp16", size="small", mode="full")
+    report.protocol_version = PROTOCOL_VERSION
+    doc = report.to_json()
+    assert doc["protocol_version"] == PROTOCOL_VERSION
+    assert EvalReport.from_json(doc).protocol_version == PROTOCOL_VERSION

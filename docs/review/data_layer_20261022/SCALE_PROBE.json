@@ -1,0 +1,22 @@
+[
+ {
+  "count": 100000,
+  "indexed": 100000,
+  "create_s": 51.331,
+  "sync_s": 157.581,
+  "history_s": 0.828,
+  "tick_s": 0.006,
+  "page_s": 0.004,
+  "page2_s": 0.002,
+  "speed_page_s": 0.002,
+  "best_s": 0.506,
+  "brief_s": 0.001,
+  "history_rows": 100000,
+  "page_rows": 50,
+  "page2_rows": 50,
+  "speed_page_rows": 50,
+  "best_rows": 0,
+  "brief_bytes": 619,
+  "db_bytes": 167374848
+ }
+]

@@ -390,3 +390,31 @@ def test_a_legacy_flame_chase_run_is_not_labelled_chat(tmp_path, monkeypatch):
     by_id = {row["run_id"]: row["protocol_version"] for row in page["runs"]}
     assert by_id["old_flame"] == "flame_chase_1"
     assert by_id["old_chat"] == "legacy"
+    epochs = {row["run_id"]: row["protocol_epoch"] for row in page["runs"]}
+    assert epochs["old_flame"] == "2" and epochs["old_chat"] == "legacy"
+
+
+def test_sessions_and_model_totals_come_from_agent_rows(tmp_path, monkeypatch):
+    from observe import query as scan
+
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
+    directory = runs / "hmz"
+    directory.mkdir(parents=True)
+    (directory / "state.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "phase": "done"}))
+    (directory / "result.json").write_text(json.dumps({"task": "relu", "dtype": "fp16"}))
+    (directory / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1"}))
+    (directory / "transcript.jsonl").write_text("\n".join(json.dumps(row) for row in [
+        {"event": "agent", "label": "init", "committee": "first", "provider": "deepseek", "model": "deepseek-flash",
+         "outcome": "evaluated", "cost_usd": 1.0, "tokens": {"input": 10, "output": 20, "cache_read": 30, "cache_write": 40}},
+        {"event": "agent", "label": "r1.p0", "committee": "second", "provider": "moonshot", "model": "kimi-k3",
+         "outcome": "unchanged", "cost_usd": 2.0, "tokens": {"input": 10, "output": 20, "cache_read": 30, "cache_write": 40}},
+        {"event": "chat", "messages": [{"role": "user", "content": "not a session"}]},
+    ]) + "\n")
+    scan.refresh()
+    sessions = scan.sessions_page("hmz")["sessions"]
+    assert [row["model"] for row in sessions] == ["deepseek-flash", "kimi-k3"]
+    assert sessions[0]["tokens_cache_write"] == 40
+    totals = scan.model_stats()["models"]
+    assert {row["model"]: row["sessions"] for row in totals} == {"deepseek-flash": 1, "kimi-k3": 1}

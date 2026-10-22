@@ -88,6 +88,7 @@ class EvalReport:
     baseline_us: dict = field(default_factory=dict)
     compiler_baseline: dict = field(default_factory=dict)  # optional triton-msl comparison (see tcenv.triton_baseline)
     verification: dict = field(default_factory=dict)  # formal equivalence check (tcenv.verify); always 'unsupported' for now
+    protocol_version: str = ""
     target_id: str = ""
     backend: str = ""
     device_name: str = ""
@@ -221,7 +222,9 @@ def _evaluate_in_process(
     t_start = time.perf_counter()
     task = get_task(task_name, dtype, size)
     seed = int(seed if seed is not None else secrets.randbits(48))
-    rep = EvalReport(task=task_name, dtype=dtype, size=size, mode=mode, seed=seed, target_id=target_id)
+    from .schema import PROTOCOL_VERSION
+
+    rep = EvalReport(task=task_name, dtype=dtype, size=size, mode=mode, seed=seed, target_id=target_id, protocol_version=PROTOCOL_VERSION)
     from .verify import verify
 
     rep.verification = verify(task, kernel_source).to_json()  # formal equivalence: unsupported for MSL (tcenv.verify)

@@ -11,6 +11,9 @@ import time
 from pathlib import Path
 
 REPORT_SCHEMA_VERSION = 2
+# Measurement protocol, separate from the file schema. Bump when the timing window,
+# confirmation batches or target limits change, so aggregates can group by epoch.
+PROTOCOL_VERSION = "2"
 REQUEST_SCHEMA_VERSION = 4  # 4 requires target_id.
 
 # ``eligible`` is computed from ``status`` and written for older readers. It is not a stored field.

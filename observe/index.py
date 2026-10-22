@@ -20,7 +20,7 @@ from observe import detail, legacy
 from observe.budget import budget_status
 from observe.ledger import month_of, operator_name
 
-INDEX_SCHEMA_VERSION = 6
+INDEX_SCHEMA_VERSION = 8
 _SKIP_DIRS = {"candidates", "__pycache__"}
 _WRITE = threading.Lock()
 _SINGLE: "Index | None" = None
@@ -104,6 +104,7 @@ class Index:
         self.stats = {"json_reads": 0, "dir_lists": 0, "turn_parses": 0}
         self.changed: list[str] = []
         self._in_reanchor = False
+        self._last_full = 0.0
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._open()
 
@@ -244,12 +245,36 @@ class Index:
                 within_noise INTEGER NOT NULL DEFAULT 0,
                 eligible INTEGER NOT NULL DEFAULT 0,
                 kernel_sha256 TEXT,
+                protocol_version TEXT,
                 updated_at REAL,
                 PRIMARY KEY (run_id, idx)
             );
             CREATE INDEX IF NOT EXISTS candidates_run ON candidates(run_id);
             CREATE INDEX IF NOT EXISTS candidates_status ON candidates(status);
             CREATE INDEX IF NOT EXISTS candidates_sha ON candidates(kernel_sha256);
+            CREATE TABLE IF NOT EXISTS sessions (
+                run_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                label TEXT,
+                committee TEXT,
+                provider TEXT,
+                model TEXT,
+                outcome TEXT,
+                cost_usd REAL,
+                tokens_input INTEGER NOT NULL DEFAULT 0,
+                tokens_output INTEGER NOT NULL DEFAULT 0,
+                tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+                tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+                t REAL,
+                PRIMARY KEY (run_id, seq)
+            );
+            CREATE INDEX IF NOT EXISTS sessions_run ON sessions(run_id);
+            CREATE INDEX IF NOT EXISTS sessions_model ON sessions(model);
+            CREATE INDEX IF NOT EXISTS sessions_committee ON sessions(committee);
+            CREATE INDEX IF NOT EXISTS runs_live_started ON runs(COALESCE(started_at, -1) DESC, run_id DESC) WHERE status <> 'missing';
+            CREATE INDEX IF NOT EXISTS runs_live_speedup ON runs(COALESCE(published_speedup, -1) DESC, run_id DESC) WHERE status <> 'missing';
+            CREATE INDEX IF NOT EXISTS runs_live_spent ON runs(COALESCE(spent_usd, -1) DESC, run_id DESC) WHERE status <> 'missing';
+            CREATE INDEX IF NOT EXISTS runs_confirmed ON runs(published_speedup DESC, run_id) WHERE publication = 'confirmed';
             CREATE TABLE IF NOT EXISTS turns (
                 run_id TEXT NOT NULL,
                 seq INTEGER NOT NULL,
@@ -423,14 +448,23 @@ class Index:
         row = self.conn.execute("SELECT value FROM meta WHERE key = 'feedback_revision'").fetchone()
         return int(row[0]) if row else 0
 
+    def _full_interval(self) -> float:
+        try:
+            return max(0.0, float(os.environ.get("OBSERVE_FULL_TICK_INTERVAL", "10")))
+        except ValueError:
+            return 10.0
+
     def tick(self) -> tuple[int, list[str]]:
-        """One incremental frame. Lists a directory only when its own mtime changed, and reads a finished run only when a fingerprint changed."""
+        """One incremental frame. Root mtime detects new runs; a full watched scan runs every 10s."""
         with _WRITE:
             self._prepare_frame()
             root = detail.runs_root()
             if root.is_dir():
                 self._note_dir(root, force=False)
-            self._refresh_watched()
+            now = time.monotonic()
+            if now - self._last_full >= self._full_interval():
+                self._refresh_watched()
+                self._last_full = now
             self._refresh_running()
             self.conn.commit()
             return self.revision(), list(self.changed)
@@ -455,6 +489,7 @@ class Index:
                 path = detail.resolve_run(row["run_id"])
                 if path is not None:
                     self._ingest(path)
+            self._last_full = time.monotonic()
             self.conn.commit()
 
     def _prepare_frame(self) -> None:
@@ -464,7 +499,7 @@ class Index:
         row = self.conn.execute("SELECT value FROM meta WHERE key = 'runs_root'").fetchone()
         if row is not None and row[0] != root:
             self.conn.executescript(
-                "DELETE FROM runs; DELETE FROM candidates; DELETE FROM experiments; DELETE FROM arms; DELETE FROM ledger; DELETE FROM watched; DELETE FROM feedback_items; DELETE FROM feedback_claims;"
+                "DELETE FROM runs; DELETE FROM candidates; DELETE FROM sessions; DELETE FROM experiments; DELETE FROM arms; DELETE FROM ledger; DELETE FROM watched; DELETE FROM feedback_items; DELETE FROM feedback_claims;"
             )
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES ('runs_root', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -708,6 +743,7 @@ class Index:
         config = self._read_json(directory / "run_config.json")
         self._upsert_run(directory, row, config, fingerprints, manifest)
         self._upsert_candidates(directory, self._rel(directory), row, result, state)
+        self._upsert_sessions(directory, self._rel(directory), config)
         self._project_turns(directory)
         from observe.feedback import sync_run_index
 
@@ -814,15 +850,67 @@ class Index:
             self.conn.execute(
                 """
                 INSERT OR REPLACE INTO candidates (
-                    run_id, idx, label, status, stage, speedup, within_noise, eligible, kernel_sha256, updated_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                    run_id, idx, label, status, stage, speedup, within_noise, eligible, kernel_sha256, protocol_version, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
                 """,
-                (run_id, idx, label, status, stage, speedup, 1 if flags.get(label) else 0, eligible, sha, updated),
+                (run_id, idx, label, status, stage, speedup, 1 if flags.get(label) else 0, eligible, sha,
+                 str(report.get("protocol_version") or "") if isinstance(report, dict) else "", updated),
             )
+
+    def _upsert_sessions(self, directory: Path, run_id: str, config: dict | None) -> None:
+        """Index one row per hmz session. Legacy chat transcripts are skipped when they are large."""
+        self.conn.execute("DELETE FROM sessions WHERE run_id = ?", (run_id,))
+        path = directory / "transcript.jsonl"
+        if not path.is_file():
+            return
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return
+        loop = str((config or {}).get("loop_protocol") or "")
+        if size > 1_000_000 and loop != "flame_chase_1":
+            return
+        seq = 0
+        try:
+            handle = path.open(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        with handle:
+            for line in handle:
+                if '"agent"' not in line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict) or event.get("event") != "agent":
+                    continue
+                seq += 1
+                tokens = event.get("tokens") if isinstance(event.get("tokens"), dict) else {}
+
+                def token(name: str) -> int:
+                    value = tokens.get(name, 0)
+                    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+                self.conn.execute(
+                    """
+                    INSERT INTO sessions (
+                        run_id, seq, label, committee, provider, model, outcome, cost_usd,
+                        tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, t
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        run_id, seq, str(event.get("label") or ""), str(event.get("committee") or ""),
+                        str(event.get("provider") or ""), str(event.get("model") or ""), str(event.get("outcome") or ""),
+                        _num(event.get("cost_usd")), token("input"), token("output"), token("cache_read"), token("cache_write"),
+                        None,
+                    ),
+                )
 
     def _upsert_missing(self, directory: Path, fingerprints: tuple[str, str, str, str, str]) -> None:
         run_id = self._rel(directory)
         self.conn.execute("DELETE FROM candidates WHERE run_id = ?", (run_id,))
+        self.conn.execute("DELETE FROM sessions WHERE run_id = ?", (run_id,))
         self.conn.execute(
             """
             INSERT INTO runs (run_id, status, source, binding, fp_state, fp_result, fp_config, fp_confirm, fp_extra, row_json)

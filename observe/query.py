@@ -46,10 +46,15 @@ def _tick_interval() -> float:
         return 0.5
 
 
+def _refresh_on_read() -> bool:
+    return os.environ.get("OBSERVE_REFRESH_ON_READ") == "1"
+
+
 def tick() -> None:
     """Idle frame. At most one directory sweep per interval, shared by every request and SSE client.
 
-    Tests set ``OBSERVE_TICK_INTERVAL=0`` so a run written inside a test is visible immediately.
+    Tests set ``OBSERVE_TICK_INTERVAL=0`` and ``OBSERVE_REFRESH_ON_READ=1`` so a run written
+    inside a test is visible immediately. The production request path does not scan.
     """
     now = time.monotonic()
     if now - _TICK["at"] < _tick_interval():
@@ -60,7 +65,8 @@ def tick() -> None:
 
 def history() -> list[dict]:
     """Every run as the detail row, cached by index revision. Not re-scanned per request."""
-    tick()
+    if _refresh_on_read():
+        tick()
     rows = []
     with borrow() as index:
         key = (str(index.path), index.revision())
@@ -235,7 +241,8 @@ def runs_page(
     offset: int = 0,
 ) -> dict:
     """One page of runs. A cursor is keyset on ``(sort column, run_id)``; ``offset`` is the old fallback."""
-    tick()
+    if _refresh_on_read():
+        tick()
     limit = max(1, min(int(limit or 50), PAGE_LIMIT))
     offset = max(0, int(offset or 0))
     column = _SORTS.get(str(sort or "started"), "started_at")
@@ -278,6 +285,7 @@ def runs_page(
             for row in index.conn.execute(
                 "SELECT run_id, experiment_id, arm_id, trial, task, dtype, model, target_id, status, stop_reason, "
                 "publication, published_speedup, spent_usd, budget_usd, source, binding, kernel_sha256, protocol_version, "
+                "CASE WHEN protocol_version = 'flame_chase_1' THEN '2' ELSE protocol_version END AS protocol_epoch, "
                 "committees_json, started_at, updated_at "
                 f"FROM runs WHERE {where} ORDER BY COALESCE({column}, -1) {direction}, run_id {direction} LIMIT ? OFFSET ?",
                 [*page_args, limit, page_offset],
@@ -306,6 +314,33 @@ def candidates_page(run_id: str, *, status: str | None = None, limit: int = 200)
             [*args, limit],
         )]
     return {"run_id": run_id, "limit": limit, "candidates": rows}
+
+
+def sessions_page(run_id: str, *, limit: int = 500) -> dict:
+    """One row per hmz session: committee, model, tokens and cost."""
+    tick()
+    limit = max(1, min(int(limit or 500), 2000))
+    with borrow() as index:
+        rows = [dict(row) for row in index.conn.execute(
+            "SELECT run_id, seq, label, committee, provider, model, outcome, cost_usd, "
+            "tokens_input, tokens_output, tokens_cache_read, tokens_cache_write "
+            "FROM sessions WHERE run_id = ? ORDER BY seq LIMIT ?",
+            (run_id, limit),
+        )]
+    return {"run_id": run_id, "limit": limit, "sessions": rows}
+
+
+def model_stats() -> dict:
+    """Per-session model totals, so the first-committee ``runs.model`` is not the only view."""
+    tick()
+    with borrow() as index:
+        rows = [dict(row) for row in index.conn.execute(
+            "SELECT committee, model, COUNT(*) AS sessions, ROUND(SUM(COALESCE(cost_usd, 0)), 6) AS cost_usd, "
+            "SUM(tokens_input) AS input_tokens, SUM(tokens_output) AS output_tokens, "
+            "SUM(tokens_cache_read) AS cache_read_tokens, SUM(tokens_cache_write) AS cache_write_tokens "
+            "FROM sessions GROUP BY committee, model ORDER BY cost_usd DESC, sessions DESC"
+        )]
+    return {"models": rows}
 
 
 def failures(*, status: str | None = None, task: str | None = None, limit: int = 50) -> dict:
@@ -617,8 +652,10 @@ def stream_revision() -> int:
 def poll_stream() -> dict:
     """One idle frame. The detail revision and the turn revision move independently."""
     global _SENT
+    tick()
     index = get_index()
-    rev, changed = index.tick()
+    rev = index.revision()
+    changed = list(index.changed)
     _SENT = max(_SENT, rev, live_revision())
     return {
         "index_revision": _SENT,

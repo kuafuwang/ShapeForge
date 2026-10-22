@@ -15,6 +15,8 @@ def _isolate_observe_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("OBSERVE_CARRYOVER", str(tmp_path / "ledger_carryover.json"))
     monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "books.sqlite"))
     monkeypatch.setenv("OBSERVE_TICK_INTERVAL", "0")
+    monkeypatch.setenv("OBSERVE_REFRESH_ON_READ", "1")
+    monkeypatch.setenv("OBSERVE_FULL_TICK_INTERVAL", "0")
     import observe.query as query
 
     query._FEATURE_CACHE.clear()

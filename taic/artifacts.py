@@ -8,12 +8,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tcenv.schema import SchemaError, document_version
+from tcenv.schema import PROTOCOL_VERSION, SchemaError, document_version
 
 RESULT_SCHEMA_VERSION = 1
-# The measurement protocol, separate from the file schema. Bump when the timing window,
-# confirmation batches or target limits change, so aggregates can group by epoch.
-PROTOCOL_VERSION = "2"
 STATE_SCHEMA_VERSION = 1
 LEDGER_SCHEMA_VERSION = 1
 

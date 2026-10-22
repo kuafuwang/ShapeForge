@@ -76,6 +76,7 @@ def _poll_seconds() -> float:
 
 async def index(request) -> HTMLResponse:
     try:
+        await asyncio.to_thread(query.tick)
         banner = budget.render_banner_html(await asyncio.to_thread(query.budget_report))
     except Exception:  # noqa: BLE001  a damaged run directory must never take the page down
         banner = ""
@@ -122,6 +123,18 @@ async def api_v2_candidates(request) -> JSONResponse:
         status=request.query_params.get("status") or None,
         limit=int(request.query_params.get("limit", "200") or 200),
     ))
+
+
+async def api_v2_sessions(request) -> JSONResponse:
+    return _json(await asyncio.to_thread(
+        query.sessions_page,
+        request.path_params["run_id"],
+        limit=int(request.query_params.get("limit", "500") or 500),
+    ))
+
+
+async def api_v2_model_stats(_request) -> JSONResponse:
+    return _json(await asyncio.to_thread(query.model_stats))
 
 
 async def api_v2_failures(request) -> JSONResponse:
@@ -385,6 +398,8 @@ app = Starlette(
         Route("/api/v2/failures", api_v2_failures),
         Route("/api/v2/best", api_v2_best),
         Route("/api/v2/runs/{run_id:path}/candidates", api_v2_candidates),
+        Route("/api/v2/runs/{run_id:path}/sessions", api_v2_sessions),
+        Route("/api/v2/model-stats", api_v2_model_stats),
         Route("/api/v2/pi/{run_id:path}", api_v2_pi),
         Route("/api/v2/runs/{run_id:path}", api_v2_run),
         Route("/api/history", api_v1_history),
