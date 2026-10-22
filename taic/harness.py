@@ -584,6 +584,8 @@ def candidate_patch(
     """
     if str(proposal.get("surface") or "") not in ("tip", "premise"):
         raise ProposalError("only tip and premise have a target experience default")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", str(target_id or "")):
+        raise ProposalError("invalid target id")
     base = Path(root) if root is not None else trust.REPO_ROOT
     rel = _target_rel(target_id)
     path = base / rel
