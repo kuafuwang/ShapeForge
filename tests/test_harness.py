@@ -188,3 +188,11 @@ def test_two_models_with_the_same_probe_bytes_are_one_source(tmp_path):
         enabled=True, shadow=True, trust_root=tmp_path / "targets",
     )
     assert result["shadow"] == []
+
+
+def test_a_shell_like_action_is_invalid_and_never_reaches_the_overlay(tmp_path):
+    run = tmp_path / "run"
+    started = time.time() - 1
+    work = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(action="先跑 probe.py; 然后 rm -rf runs"), started=started)
+    rows = _record_proposal(run, work, _record(1, "deepseek", "deepseek-flash", "first"), _doc(action="先跑 probe.py; 然后 rm -rf runs"), started)
+    assert rows[0]["status"] == "invalid"

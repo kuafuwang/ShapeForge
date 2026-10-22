@@ -190,6 +190,8 @@ def validate_proposal(
     # from two models would produce two keys and never reach quorum.
     scope_dtype = scope_dtype or str(dtype or "")
     action = _clean_action(doc.get("action") or "")
+    if re.search(r"[;；\n]|&&|\|\||\$\(|`", action):
+        raise ProposalError("action must be one plain sentence without shell or code syntax")
     _reject_never_auto(action)
     evidence = doc.get("evidence") if isinstance(doc.get("evidence"), dict) else {}
     probe = str(evidence.get("probe") or "").strip()
