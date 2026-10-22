@@ -26,7 +26,8 @@ flowchart TB
   Q --> O
   O -->|"active 且预算允许"| S
   Q --> P2["P2 仓库候选<br/>只生成 patch"]
-  P2 --> H["人：diff / 测试 / apply / commit"]
+  P2 --> H["人：点固化到本地<br/>改本地 checkout"]
+  H --> C["稍后 git commit<br/>回填 change_ref"]
   H --> R["仓库 harness<br/>新 run 才读到"]
   R --> S
   T["人工信任 + 审查"] --> Q
@@ -37,7 +38,7 @@ flowchart TB
 
 1. **运行中不换仓库文件。** 开跑时 `agent_guidance` 已经冻结并记了 sha256；P1 只能走独立的 overlay，否则同一 run 前后条件不一致。
 2. **P1 只在本运行内。** 它默认在运行结束失效，不自动跨 run、跨 target 传播。
-3. **P2 不是自动写入。** 它把模型建议变成可审的 patch；人确认后才进入仓库，且下一次新 run 才生效。
+3. **P2 不是自动合并。** 人点“固化到本地”后，改动先进入本地 checkout，下一场搜索/新 run 立刻能读到；git 提交和 `change_ref` 是后置的追溯步骤，不阻塞本地使用。
 
 ## 1. RSI 是什么，不是什么
 
@@ -173,7 +174,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | `shadow` | 只记录，不注入 TASK | 本 run 可见的审计文件 | 自动 |
 | `active` | 注入本 run 的**后续场次** TASK | 当前 run，运行结束失效 | 独立 review / 双来源 + 信任 |
-| P2/promotion | 写入 `targets/<id>/experience.md` 或共享 harness | 后续新 run，仓库级 | 人看 patch、测试、apply |
+| P2/promotion | 先写本地 `targets/<id>/experience.md` 或共享 harness | 本地立即生效，后续新 run 读到 | 人在看板点固化 + `taic harness commit` |
 
 所以“review 后可用”指 `active`，不是永久固化；永久固化仍然是 P2，必须人工判断。
 
@@ -195,8 +196,8 @@ approved proposal
   -> code agent in a worktree
   -> tests + prompt golden
   -> diff for a person
-  -> human apply/commit
-  -> change_ref (commit/patch sha) + implemented_by + approved_by
+  -> human applies locally
+  -> later git commit -> change_ref=commit:<sha> + implemented_by + approved_by
 ```
 
 约束：
@@ -206,21 +207,23 @@ approved proposal
 - 同一变更的 `implemented_by` 和 `approved_by` 必须是不同角色；AI 默认是前者。
 - 必须用独立 worktree/工作区，不能直接改正在跑的搜索目录。
 - 任何“改审查代码、改 change_ref 校验、改 P2 审批”的元变更，也走同一条 P2；不能用一个自动循环绕开人。
-- 它生成的 `change_ref` 应该是 patch/commit 的哈希，不是模型自由文本。
+- 它生成的 `change_ref` 应该是 commit 哈希，不是模型自由文本；本地阶段的追迹用 `local_patch_sha256`。
+- 人点“固化到本地”后，变更立刻写本地 checkout；之后 `taic harness commit` 只提交这些路径，并把 `change_ref` 回填为 `commit:<sha>`。
 
-当前实现只覆盖 P2 的 `targets/<id>/experience.md` 追加；**还没有 code-agent 代码补丁 worker**。`apply_patch` 的 `applied_by`/`tests_run` 是给人记录审计的，不是让 code agent 自动通过的授权。
+当前已提供 `taic/code_agent.py` 和 `taic harness implement/apply-code`：code agent 在独立 worktree 生成 patch，人确认后才 apply 到主 checkout；它不会自动 commit/merge。target experience 也走同一条“先本地、后提交”路径。
 
-### 3.4 为什么 P2 只生成 patch
+### 3.4 为什么 P2 先本地固化、后提交
 
 P2 改的是仓库，影响所有后续运行。自动写文件等于让模型间接改合同、评测或共享提示。正确流程是：
 
 1. 生成 unified diff。
 2. 展示 diff，`git apply --check`。
 3. 跑离线测试和 prompt golden。
-4. 人确认后 apply，写 `change_ref` 或提交号。
-5. 共享表面（TASK 合同、`taic-tools`、系统提示）额外确认跨硬件适用。
+4. 人确认后先 apply 到本地 checkout；此时记录 `status=local` 和 `local_patch_sha256`，不写最终 `change_ref`。
+5. 人稍后运行 `taic harness commit`，只提交这些路径；提交成功后才写 `change_ref=commit:<sha>`。
+6. 共享表面（TASK 合同、`taic-tools`、系统提示）额外确认跨硬件适用。
 
-`change_ref` 由这次 apply 自动写下，形如 `patch:` 加哈希。审查页把一条标成 `done` 时不必填写。
+`change_ref` 由提交步骤写下，形如 `commit:` 加提交号；`patch:` 只代表旧的本地 patch，不应再作为最终追溯号。审查页把一条标成 `done` 时，应在提交后回填 `commit:`。
 
 ## 4. 信任：委托的权限，不是模型声望
 
@@ -326,7 +329,7 @@ budget_usd = max(0.01, expected_usd * 4)
 
 不同的模型价格不同，贵的 reviewer 得到更大的预算；缓存读/写也计入，不能只看 REVIEW.md 的字数。实际成本另记到 `harness_reviews.jsonl`。实测 Kimi 一次 review：旧预算 $0.252、实际 $0.118；加入缓存 allowance 后同一输入估算 $0.147、预算 $0.588。
 
-下面是这次审核在看板上的样子。运行 `apple-m4-max/harness-pilot-active-20261022`，第 2 轮 first 委员会的 deepseek-flash 提出一条 `tip`：给 `tcenv.cli` 加交替计时的 `ab` 子命令。second 的 kimi-k3 做只读 review，结论是有用，confidence 0.8，成本 $0.118。校验已通过，所以它是 **P2 候选**，徽标写着待人工固化。决策表是空的：还没有人 apply，也没有 `change_ref`。
+下面是这次审核在看板上的样子。运行 `apple-m4-max/harness-pilot-active-20261022`，第 2 轮 first 委员会的 deepseek-flash 提出一条 `tip`：给 `tcenv.cli` 加交替计时的 `ab` 子命令。second 的 kimi-k3 做只读 review，结论是有用，confidence 0.8，成本 $0.118。校验已通过，所以它是 **P2 候选**，截图时徽标还写着待人工固化；该 run 后来已本地固化并提交，决策表因此会有 `promotion`/`promotion_commit`，历史截图不等于当前状态。
 
 ![kimi 对 deepseek 的 tip 做只读 review，结论有用，P2 仍待人工固化](fig/harness-review-pilot-active-20261022.png)
 
@@ -343,7 +346,8 @@ stateDiagram-v2
   shadow --> active: 人复核影子 / 打开生效
   reviewed_active --> active: 下一场注入本 run
   shadow --> rejected: 人否决
-  active --> promoted: P2 patch 应用（永久，人）
+  active --> promoted: 人点固化到本地
+  promoted --> committed: git commit 后 change_ref
   active --> disabled: run 结束 / 本 run disable / 协议变化
   waiting --> invalid: 证据失效
 ```
@@ -371,8 +375,9 @@ stateDiagram-v2
 P2 成功不是“模型说可以”，而是：
 
 ```
-proposal -> patch -> git apply --check -> 离线测试/golden -> 人确认 -> apply
-        -> change_ref -> 仓库提交 -> 新 run 才读到
+proposal -> patch -> git apply --check -> 人点固化到本地
+        -> 本地 run 立即读到 -> 离线测试/golden
+        -> taic harness commit -> change_ref=commit:<sha>
 ```
 
 失败可以丢弃 patch；已经应用的可以 revert。共享 prompt/skill 不默认写入，必须单独确认跨硬件影响。

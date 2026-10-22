@@ -29,7 +29,7 @@
 - `taic/trust.py`：`targets/<id>/trust.toml`，键含 target/task/provider/model/effort、prompt sha、协议、scope、过期；`trust_audit.jsonl` 追加 grant/suspend/revoke。
 - `taic/harness.py`：解析 ` ```harness-proposal ` JSON；`tip` 需要两个不同 provider/model、两个委员会、两份不同 SHA 的本场探针和 active 信任；`premise` 需要本场探针、active `overlay:premise` 信任，以及匹配的 harness 自检记录或外层候选报告（同 target/协议/内核 SHA，测量数字一致）；否则只写影子。默认只写影子 overlay；`TASK.md` 才注入 active 条目，且带未验证标题、受 12KB 预算裁剪。
 - `taic/review.py` + `taic/flows/feedback_review`：独立只读 review；预算按模型单价和 prompt 长度算；写 `harness_reviews.jsonl`；useful review 产生 `reviewed_active`，只对本 run 后续场次生效，运行结束失效。
-- `taic/cli.py`：`trust grant|revoke|suspend|status|audit|metrics`，`harness status|review|disable|settle|patch|apply`。`apply` 默认拒绝；`--check` 只检查，`--run-tests` 跑反馈/合同离线测试，`--by` 记录确认人，`--confirm` 才改 `targets/<id>/experience.md`，不自动 commit。
+- `taic/cli.py`：`trust grant|revoke|suspend|status|audit|metrics`，`harness status|review|disable|settle|patch|apply|commit|implement|apply-code`。`apply` 默认拒绝；`--check` 只检查，`--run-tests` 跑离线测试，`--by` 记录确认人；`apply` 只改本地 checkout（`status=local`，不写最终 `change_ref`），`commit --message` 才提交这些路径并回填 `commit:<sha>`。`implement` 让 code agent 在 worktree 生成代码 patch，`apply-code` 人工确认后 apply，不自动 commit。
 - `observe/query.py` / `observe/app.py`：`GET /api/v2/harness/{run_id}` 返回提案、决策和 overlay；顶栏「结构化提案」按钮在看板内直接列表显示这三样（只读），原始 JSON 在面板底部留了链接；没有编辑面板。
 - `experiments/apply_feedback_audit.py`：dry-run 默认；`--apply` 写 `feedback_review.json`；`--merge-topic` 显式合并同 topic 的系统建议（默认不做）。
 - `experiments/harness_pilot.py`：只读汇总影子/生效、空占位、提案和 unchanged 率。
@@ -71,14 +71,15 @@
 
 ## 已知边界（请重点审）
 
-- **没有 code-agent P2 代码补丁 worker。** 当前 `apply_patch` 只追加 target experience；未来 AI 或人改 `tcenv`/`observe`/提示词，都必须独立 worktree、测试、diff、人工 apply，并记录 `implemented_by`/`approved_by`。AI 是默认实现者，但不能继承 overlay 信任或自动 merge。
+- **code-agent P2 已提供 worktree worker，但仍不是自动合并。** `taic/code_agent.py` 在 detached worktree 里运行 code agent、收集 patch；`taic harness implement` 生成 patch，`taic harness apply-code` 由人确认后 apply。AI 是默认实现者，但不能继承 overlay 信任或自动 commit/merge。
+- **本地固化与 git 提交分离。** 看板固化改本地 checkout（`local_patch_sha256`，无最终 `change_ref`）；`taic harness commit` 只提交被 promote 的路径，成功后才写 `commit:<sha>`。
 
 1. **没有跑付费试点。** `harness_pilot.py` 和文档已就绪，但 `taic run`/`resume` 未执行；不要把它们当成已验证的质量结论。
 2. **P1 `premise` 不要求双模型**，但要求本场探针、active `overlay:premise` 信任和匹配的 harness 自检记录或外层候选报告；否则只写 shadow。
 3. **“独立”只到探针 SHA 不同。** 两个模型若各自写一份相同内容的探针，SHA 相同会被拒绝；但复制文字后各写不同探针仍可能通过。没有做语义抄袭检测。
 4. **空占位墓碑**：7 条审计里的空占位已经从 claim 表消失，审查文件保留 `obsolete`，索引现在也有对应墓碑。重建时会把所有空占位小节写入 `feedback_claim_removed`，当前共 18 条（7 条审计项 + 11 条其他空小节），reason 为 `fbv3 empty placeholder`。
 5. **同主题合并没有保留。** 曾用 `--merge-topic` 把 10 条 active 系统建议标为 duplicate；复核后用 `experiments.revert_topic_merges` 改回 pending，只保留「possible same topic」备注。topic 不是命题等价。
-6. **看板有只读入口，没有编辑面板**；顶栏「结构化提案」按钮打开当前 run 的面板，节点来自 `GET /api/v2/harness/<run>`（原始 JSON 也留了链接），`taic harness status` 是命令行入口；信任授予、settle、P2 apply 仍需 CLI/人。
+6. **看板已有本地固化按钮，不是 git 提交器**；顶栏「结构化提案」按钮打开当前 run 的面板，节点来自 `GET /api/v2/harness/<run>`。review 有用后点「固化到本地」立即改本地 checkout；`taic harness commit` 才写 git 和 `change_ref`。信任授予、settle、代码 patch 仍走 CLI/人。
 7. **`sync_trust_status` 自动暂停**在 `harness_auto` 打开时每次 session 后调用，读取 observe 索引；若索引未追平，暂停判断会滞后。它只按 confirmed refuted 率，样本门槛 8 条 / 2 个 run。
 8. **`HARNESS.md` 代替了预建 FEEDBACK 空模板**：预建五节会制造新的空占位；合同仍要求只有有内容才写小节。
 

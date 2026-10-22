@@ -587,6 +587,60 @@ def cmd_harness(a: argparse.Namespace) -> int:
             print(json.dumps({key: len(value) for key, value in result.items() if isinstance(value, list)} | {"result": result}, ensure_ascii=False, indent=2, default=str))
         elif a.harness_action == "patch":
             print(json.dumps(harness.write_patch(run, target_id=a.target, proposal_key=a.key), ensure_ascii=False, indent=2))
+        elif a.harness_action == "implement":
+            from . import code_agent
+            from .llm import load_config, load_raw_config
+            from .committees import load_committees
+            from .kernel_agent import Prices
+
+            proposals = [row for row in harness.board(run)["proposals"] if row.get("status") == "valid" and row.get("proposal_key") == a.key]
+            if not proposals:
+                print("no valid proposal with that key", file=sys.stderr)
+                return 5
+            proposal = proposals[0]
+            reviews = [row for row in harness.board(run)["reviews"] if row.get("proposal_key") == a.key and row.get("useful") is True]
+            if not reviews:
+                print("refusing to implement an unreviewed proposal; run `harness review` first", file=sys.stderr)
+                return 5
+            run_cfg = json.loads((run / "run_config.json").read_text(encoding="utf-8")) if (run / "run_config.json").is_file() else {}
+            recorded = run_cfg.get("committees") if isinstance(run_cfg, dict) else None
+            provider, model = a.provider, a.model
+            if not provider or not model:
+                peers = [c for c in (recorded or []) if isinstance(c, dict) and c.get("name") != proposal.get("committee")]
+                members = (peers[0].get("members") if peers else None) or []
+                if not members or not isinstance(members[0], dict):
+                    print("cannot choose an implementer; pass --provider and --model", file=sys.stderr)
+                    return 5
+                provider, model = str(members[0].get("provider") or ""), str(members[0].get("model") or "")
+            raw = load_raw_config(None, "base")
+            cfg, _ = load_config(None, preset="base")
+            committees = load_committees(raw, active=cfg)
+            member = next((m for c in committees for m in c.members if m.provider == provider and m.model == model), None)
+            if member is None:
+                print(f"implementer {provider}/{model} is not in the configured committees", file=sys.stderr)
+                return 5
+            prices = Prices(member.cfg.price_in, member.cfg.price_out, member.cfg.price_cache_read, member.cfg.price_cache_write)
+            target_id = str((proposal.get("proposal") or {}).get("scope", {}).get("target_id") or a.target)
+            prompt = code_agent.build_prompt(proposal.get("proposal") or {}, run_id=str(proposal.get("run_id") or run.name))
+            plan = code_agent.estimate_code_budget(prices, prompt)
+            budget = float(a.budget_usd) if a.budget_usd is not None else plan["budget_usd"]
+            print(json.dumps({"implementer": {"provider": provider, "model": model, "effort": member.cfg.reasoning_effort}, "plan": plan, "budget_usd": budget}, ensure_ascii=False), file=sys.stderr)
+            worktree = code_agent.prepare_worktree(Path(__file__).resolve().parents[1], run, str(a.key))
+            result = code_agent.run_code_agent(
+                worktree, prompt=prompt, provider=provider, model=model,
+                effort=member.cfg.reasoning_effort, prices=prices, budget_usd=budget,
+            )
+            meta = code_agent.write_patch(run, str(a.key), result, target_id=target_id)
+            print(json.dumps(meta, ensure_ascii=False, indent=2, default=str))
+        elif a.harness_action == "apply-code":
+            from . import code_agent
+
+            if not a.confirm and not a.check:
+                print("refusing to apply a code patch without --confirm (use --check first)", file=sys.stderr)
+                return 5
+            print(json.dumps(code_agent.apply_code_patch(
+                run, proposal_key=a.key, check_only=a.check, run_tests=a.run_tests, approved_by=a.by,
+            ), ensure_ascii=False, indent=2, default=str))
         elif a.harness_action == "commit":
             try:
                 print(json.dumps(harness.commit_local_promotions(run, message=a.message, by=a.by), ensure_ascii=False, indent=2))
@@ -794,6 +848,21 @@ def main(argv: list[str] | None = None) -> int:
     hk.add_argument("run_dir")
     hk.add_argument("--message", required=True)
     hk.add_argument("--by", default="cli")
+    hi = hs.add_parser("implement")
+    hi.add_argument("run_dir")
+    hi.add_argument("--key", required=True)
+    hi.add_argument("--target", default="apple-m4-max")
+    hi.add_argument("--provider", default=None)
+    hi.add_argument("--model", default=None)
+    hi.add_argument("--budget-usd", type=float, default=None, help="optional cap; otherwise derived from model prices")
+    hi.add_argument("--by", default="cli")
+    hc = hs.add_parser("apply-code")
+    hc.add_argument("run_dir")
+    hc.add_argument("--key", required=True)
+    hc.add_argument("--check", action="store_true")
+    hc.add_argument("--run-tests", action="store_true")
+    hc.add_argument("--by", default="cli")
+    hc.add_argument("--confirm", action="store_true")
     hr = hs.add_parser("review")
     hr.add_argument("run_dir")
     hr.add_argument("--key", required=True)
