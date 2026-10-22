@@ -1054,7 +1054,7 @@ def _summarize_sites(sites: list[dict]) -> dict:
 # ======================================================================================================================================
 
 _TOOLCHAIN: dict[str, Any] = {}
-PARSER_VERSION = 7  # bump when parse_air changes: it is part of the compile-cache key
+PARSER_VERSION = 8  # bump when parse_air changes: it is part of the compile-cache key
 
 
 def metal_toolchain() -> str | None:
@@ -1140,7 +1140,11 @@ def parse_air(text: str) -> dict:
         tg_globals.append({"name": m.group(1).split("E", 1)[-1][-24:], "bytes": nbytes})
     inner_of = dict(re.findall(r'^(%"struct\.metal::simdgroup_matrix(?:\.\d+)?") = type \{ (%"struct\.metal::_simdgroup_matrix(?:\.\d+)?") \}', text, re.M))
     elem_of = dict(re.findall(r'^(%"struct\.metal::_simdgroup_matrix(?:\.\d+)?") = type \{ <64 x (\w+)> \}', text, re.M))
+    # Xcode 27 emits the element type directly on simdgroup_matrix; older Xcode used an
+    # inner _simdgroup_matrix type. Accept both so fragment-tile evidence survives a toolchain.
+    elem_of.update(dict(re.findall(r'^(%"struct\.metal::simdgroup_matrix(?:\.\d+)?") = type \{ <64 x (\w+)> \}', text, re.M)))
     tys = {o: elem_of.get(i) for o, i in inner_of.items()}
+    tys.update({o: v for o, v in elem_of.items() if o.startswith('%"struct.metal::simdgroup_matrix')})
     frag_arrays: list[dict] = []
     for m in re.finditer(r"alloca ((?:\[\d+ x )+)(%\"struct\.metal::simdgroup_matrix(?:\.\d+)?\")((?:\])+)", text):
         dims = [int(x) for x in re.findall(r"\[(\d+) x", m.group(1))]

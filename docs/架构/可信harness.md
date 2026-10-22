@@ -293,6 +293,10 @@ budget_usd = max(0.01, expected_usd * 4)
 
 不同的模型价格不同，贵的 reviewer 得到更大的预算；缓存读/写也计入，不能只看 REVIEW.md 的字数。实际成本另记到 `harness_reviews.jsonl`。实测 Kimi 一次 review：旧预算 $0.252、实际 $0.118；加入缓存 allowance 后同一输入估算 $0.147、预算 $0.588。
 
+下面是这次审核在看板上的样子。运行 `apple-m4-max/harness-pilot-active-20261022`，第 2 轮 first 委员会的 deepseek-flash 提出一条 `tip`：给 `tcenv.cli` 加交替计时的 `ab` 子命令。second 的 kimi-k3 做只读 review，结论是有用，confidence 0.8，成本 $0.118。校验已通过，所以它是 **P2 候选**，徽标写着待人工固化。决策表是空的：还没有人 apply，也没有 `change_ref`。
+
+![kimi 对 deepseek 的 tip 做只读 review，结论有用，P2 仍待人工固化](fig/harness-review-pilot-active-20261022.png)
+
 ## 6. 影子、状态机与回滚
 
 ```mermaid
