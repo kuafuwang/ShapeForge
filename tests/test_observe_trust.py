@@ -46,7 +46,7 @@ def test_metrics_count_reviews_and_measured_premises():
     assert row["reasonable_rate"] == 2 / 3
     assert row["wilson_lower"] is not None and 0 < row["wilson_lower"] < row["reasonable_rate"]
     assert row["system_reviewed"] == 0 and row["system_wilson_lower"] is None
-    assert row["placeholder_items"] == 1 and row["placeholder_rate"] == 0.5
+    assert row["placeholder_items"] == 1 and row["placeholder_rate"] == 0.1 and row["placeholder_per_session"] == 0.5
 
 
 def test_an_empty_cell_does_not_claim_a_rate():

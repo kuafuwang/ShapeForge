@@ -87,6 +87,9 @@ def metrics(conn, *, target_id: str | None = None, task: str | None = None) -> l
         premise = int(item.get("premise") or 0)
         item["measured_rate"] = (int(item.get("verified_premise") or 0) / premise) if premise else None
         sessions = int(item.get("sessions") or 0)
-        item["placeholder_rate"] = (int(item.get("placeholder_items") or 0) / sessions) if sessions else None
+        placeholders = int(item.get("placeholder_items") or 0)
+        item["placeholder_per_session"] = (placeholders / sessions) if sessions else None
+        # Five named sections per session; a placeholder can only occur in one of them.
+        item["placeholder_rate"] = (placeholders / (sessions * 5)) if sessions else None
         out.append(item)
     return out

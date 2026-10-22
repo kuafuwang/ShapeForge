@@ -602,6 +602,19 @@ def _repair_record(row: dict) -> dict:
         if text:
             item["digest"] = _digest(str(item.get("section") or ""), text)
     row["items"] = [item for item in items if not _is_placeholder(str(item.get("text") or ""))]
+    if "placeholder_items" not in row:
+        count = 0
+        for name in SECTIONS:
+            chunk = str(sections.get(name) or "")
+            if not chunk.strip():
+                continue
+            if _is_placeholder(chunk):
+                count += 1
+            else:
+                count += sum(1 for piece in _pieces(chunk) if _is_placeholder(piece))
+        row["placeholder_items"] = count
+    else:
+        row["placeholder_items"] = int(row.get("placeholder_items") or 0)
     return row
 
 
