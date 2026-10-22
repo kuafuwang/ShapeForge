@@ -14,6 +14,7 @@
 | `004027c` | Resume an interrupted batch cell, and backfill experiment manifests. |
 | `ac04199` | Keep prompt bodies out of the transcript, and give the dashboard ETag, gzip and cursor pages. |
 | `6f0528b` | Keep eight peer tips; the character budget is the stop, not a shorter list. |
+| `7389851` | Keep resumed token counts, a partial scorecard, and the flame-chase protocol epoch. |
 | （本报告） | Execution report and final verification. |
 
 ## 按审核意见的落实
@@ -60,8 +61,8 @@
 
 - `prune_work` 把会话里非权威文件（`v/`、探针脚本、seed kernel、report、guidance 副本）打进 `<run>/scratch/<label>.tar.gz` 并删除；`NOTES.md`、`FEEDBACK.md`、`self_checks.jsonl`、`TASK.md`、交卷文件保留。
 - 超过 50MB 的归档直接丢弃并写 JSON manifest（硬上限）。
-- `experiments/prune_agent_work.py` 对已有 run 应用同一规则。回填：**57 + 91 个会话，共约 111.5MB**；`agent_work` 从 **112.0MB** 降到 **0.5MB**；`runs/` 从 1,234.4MB 降到 **1,129.2MB**（大头仍是 legacy chat transcript 759.7MB 和 XML 332.4MB）。
-- 旧 TASK.md 从 scratch 归档恢复到 `agent_work/<label>/TASK.md`，`repro.sh` 的 91 个样本仍可测。
+- `experiments/prune_agent_work.py` 对已有 run 应用同一规则。回填：**57 + 91 个会话，共约 111.5MB**；`agent_work` 先从 **112.0MB** 降到 **0.5MB**。
+- 为了保留审核样本，旧 TASK.md 又从 scratch 归档恢复到 `agent_work/<label>/TASK.md`（91 份）。恢复后现场为 `agent_work` **2.6MB / 214 文件**、`runs/` **1,131.3MB / 4,233 文件**；报告此前的 0.5MB / 1,129.2MB 是恢复前的数字。新的会话保留 TASK.md，未来的增长不会再出现这种恢复差异。
 
 ### 6. P1（F7/F11/F2）— `ac04199`
 
@@ -74,13 +75,22 @@
 
 | 项 | 结果 |
 |---|---|
-| 离线门禁 | `uv run pytest -q -m "not gpu and not llm"` → **843 passed, 5 skipped, 133 deselected, 72.61s** |
+| 离线门禁 | `uv run pytest -q -m "not gpu and not llm"` → **848 passed, 5 skipped, 133 deselected, 78.38s** |
 | `repro.sh` | exit 0；`brief` **1,479B**（原 2,454B），无 GPU 事件，路径相对 |
-| `agent_work` | **0.5MB**（原 112.0MB） |
-| `runs/` | **1,129.2MB**（原 1,234.4MB） |
+| `agent_work` | **2.6MB / 214 文件**（恢复 91 份 TASK.md 后；恢复前 0.5MB） |
+| `runs/` | **1,131.3MB / 4,233 文件**（原 1,234.4MB） |
+| 索引 | schema **6**；`protocol_version` = 4 `flame_chase_1` + 48 `legacy`；candidates 741；arms 13 |
 | index | runs 52 / candidates 741 / arms 13 |
 | 计费重算 | 三个 run 与 REVIEW.md 的数字逐分一致 |
 | 测试新增 | 计费、重算、TASK 预算、prune、candidates/keyset、resume、backfill、ETag/gzip、transcript 哈希 |
+
+## 7. 二次实现审核（REVIEW_3adb8d4）修复 — `7389851`
+
+`REVIEW_3adb8d4.md` 的 PASS-WITH-CHANGES 三条收尾已落地：
+
+1. **resume 保留 token**：`taic/resume.py:_requests_from_transcript` 的 `agent` 行读取 `event.tokens` 的 input/output/cache_read/cache_write，chat 行也保留 cache-write；`CostLedger.restore` 因此能把 write 列加回去。测试 `test_agent_tokens_survive_a_resume_ledger_restore` 和 `test_chat_usage_write_tokens_survive_a_resume`。
+2. **TASK 预算优先保留当前现场**：装不下时把「当前现场」裁到剩余字节（保留种子行和部分成绩单），不再整块丢掉；省略注记计入 12,000 字节上限。测试改为真实的 `conv2d` 和 `flash_attention` paper 任务，断言 `<= TASK_MAX_BYTES`、`外层成绩单` 仍在、`本段已截断` 和省略注记存在。golden 重录（只有 flash_attention plan_mix=0 一个键变化）。
+3. **protocol epoch 回填**：索引 schema 升到 6；`_upsert_run` 在没有显式 `protocol_version` 时读 `loop_protocol`，`flame_chase_1` 不再和 chat 一起标成 `legacy`。重建后的现有 52 行：**4 个 `flame_chase_1` + 48 个 `legacy`**；测试 `test_a_legacy_flame_chase_run_is_not_labelled_chat`。
 
 ## 仍未做（明确留给下一轮）
 
