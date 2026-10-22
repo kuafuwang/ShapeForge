@@ -34,9 +34,9 @@
   .badge.exhausted { background: var(--amber); color: #fff; }
   .badge.near { background: #fde047; color: #4a3b00; }
   #hist-tools { margin-bottom: 8px; }
-  #budget-modal, #settings-modal, #delete-modal, #feedback-modal, #stage-modal, #term-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
-  #budget-modal.open, #settings-modal.open, #delete-modal.open, #feedback-modal.open, #stage-modal.open, #term-modal.open { display: flex; }
-  #budget-modal .box, #settings-modal .box, #delete-modal .box, #feedback-modal .box, #stage-modal .box, #term-modal .box { background: var(--card); border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); }
+  #budget-modal, #settings-modal, #delete-modal, #feedback-modal, #stage-modal, #term-modal, #query-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
+  #budget-modal.open, #settings-modal.open, #delete-modal.open, #feedback-modal.open, #stage-modal.open, #term-modal.open, #query-modal.open { display: flex; }
+  #budget-modal .box, #settings-modal .box, #delete-modal .box, #feedback-modal .box, #stage-modal .box, #term-modal .box, #query-modal .box { background: var(--card); border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); }
   #term-modal .box { width: min(640px, 94vw); max-height: 86vh; display: flex; flex-direction: column; }
   #term-query { width: 100%; margin: 8px 0; flex: none; }
   #term-results { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
@@ -184,6 +184,8 @@
   <button type="button" id="tab-experiments">实验</button>
   <button type="button" id="tab-compare">对照</button>
   <button type="button" id="tab-runs">运行</button>
+  <button type="button" id="tab-best">最佳</button>
+  <button type="button" id="tab-failures">失败</button>
   <button type="button" id="tab-ledger">花费账本</button>
   <button type="button" class="btn-budget" id="add-budget">加预算</button>
   <button type="button" class="btn-budget" id="settings-open">设置</button>
@@ -347,6 +349,15 @@
         <button type="button" id="feedback-close">关闭</button>
       </div>
     </form>
+  </div>
+</div>
+<div id="query-modal" role="dialog" aria-modal="true" aria-labelledby="query-title">
+  <div class="box">
+    <h3 id="query-title">检索</h3>
+    <div id="query-body"></div>
+    <div class="actions">
+      <button type="button" id="query-close">关闭</button>
+    </div>
   </div>
 </div>
 <script>
@@ -1693,6 +1704,38 @@ if (reviewsPage) {
   document.title = "全部审查";
   syncReviews();
 } else {
+
+function queryRows(kind, rows) {
+  if (kind === "best") {
+    return `<table><thead><tr><th>题目</th><th>dtype</th><th>发布</th><th>模型</th><th>运行</th></tr></thead><tbody>` +
+      rows.map((row) => `<tr data-query-run="${esc(row.run_id)}"><td>${esc(row.task)}</td><td>${esc(row.dtype)}</td><td>${esc(num(row.published_speedup))}</td><td>${esc(row.model)}</td><td>${esc(row.run_id)}</td></tr>`).join("") +
+      `</tbody></table>`;
+  }
+  return `<table><thead><tr><th>运行</th><th>候选</th><th>状态</th><th>阶段</th><th>加速比</th></tr></thead><tbody>` +
+    rows.map((row) => `<tr data-query-run="${esc(row.run_id)}"><td>${esc(row.run_id)}</td><td>${esc(row.label)}</td><td>${esc(row.status)}</td><td>${esc(row.stage)}</td><td>${esc(num(row.speedup))}</td></tr>`).join("") +
+    `</tbody></table>`;
+}
+
+async function openQuery(kind) {
+  const url = kind === "best" ? "/api/v2/best?limit=20" : "/api/v2/failures?limit=80";
+  const data = await (await fetch(url)).json();
+  const rows = kind === "best" ? (data.best || []) : (data.failures || []);
+  document.getElementById("query-title").textContent = kind === "best" ? "已确认内核（按发布加速比）" : "最近的失败候选";
+  document.getElementById("query-body").innerHTML = rows.length ? queryRows(kind, rows) : `<p class="muted">没有记录。</p>`;
+  document.getElementById("query-modal").classList.add("open");
+}
+
+document.getElementById("tab-best").addEventListener("click", () => openQuery("best").catch((error) => window.alert(error.message)));
+document.getElementById("tab-failures").addEventListener("click", () => openQuery("failures").catch((error) => window.alert(error.message)));
+document.getElementById("query-close").addEventListener("click", () => document.getElementById("query-modal").classList.remove("open"));
+document.getElementById("query-body").addEventListener("click", (event) => {
+  const row = event.target.closest("[data-query-run]");
+  if (!row) return;
+  selectedRun = row.dataset.queryRun;
+  document.getElementById("query-modal").classList.remove("open");
+  showRight("detail");
+});
+
   applyRunUrl();
   loadExperiments();
   loadRuns();

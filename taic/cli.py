@@ -463,6 +463,59 @@ def cmd_brief(a: argparse.Namespace) -> int:
     return run_brief(a.run_dir, include_gpu=bool(getattr(a, "gpu", False)))
 
 
+def cmd_query(a: argparse.Namespace) -> int:
+    from . import retrieval
+
+    what = a.what
+    if what == "capabilities":
+        data = retrieval.capabilities()
+    elif what == "runs":
+        data = retrieval.runs(
+            task=a.task, publication=a.publication, status=a.status,
+            min_speedup=a.min_speedup, sort=a.sort, cursor=a.cursor, limit=a.limit,
+        )
+    elif what == "best":
+        data = retrieval.best(task=a.task, limit=a.limit)
+    elif what == "failures":
+        data = retrieval.failures(status=a.status, task=a.task, limit=a.limit)
+    elif what == "sessions":
+        if not a.run:
+            print("query sessions needs --run RUN_ID", file=sys.stderr)
+            return 5
+        data = retrieval.sessions(a.run, limit=a.limit)
+    else:
+        data = retrieval.models()
+    if a.jsonl and isinstance(data, dict):
+        rows = data.get("runs") or data.get("best") or data.get("failures") or data.get("sessions") or data.get("models")
+        if isinstance(rows, list):
+            for row in rows:
+                print(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
+            return 0
+    print(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
+def cmd_gc(a: argparse.Namespace) -> int:
+    from . import gc
+
+    root = Path(a.root)
+    rows = gc.scan(root, older_than_days=a.older_than_days)
+    if not rows:
+        print(json.dumps({"root": str(root), "rows": [], "mode": "apply" if a.apply else "dry-run"}, ensure_ascii=False))
+        return 0
+    if a.apply:
+        result = gc.apply(rows, log_path=root / "gc_log.jsonl")
+        print(json.dumps({"root": str(root), "mode": "apply", **result, "rows": len(rows)}, ensure_ascii=False))
+    else:
+        print(json.dumps({
+            "root": str(root), "mode": "dry-run", "older_than_days": a.older_than_days,
+            "eligible": sum(1 for row in rows if row["eligible"]),
+            "eligible_bytes": sum(row["bytes"] for row in rows if row["eligible"]),
+            "rows": rows,
+        }, ensure_ascii=False))
+    return 0
+
+
 def cmd_migrate_runs(a: argparse.Namespace) -> int:
     from .migrate import migrate_runs
 
@@ -530,6 +583,23 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--patience", type=int, default=None, help="not recorded by runs older than run_config.json: give the value the run was started with")
     r.add_argument("--lift-count-limits", action="store_true", help="also continue a run that stopped because it used its round limit or its patience")
     r.set_defaults(fn=cmd_resume)
+    q = sub.add_parser("query", help="read-only queries over the observe index (no model call, no GPU)")
+    q.add_argument("what", choices=["runs", "best", "failures", "sessions", "models", "capabilities"])
+    q.add_argument("--task", default=None)
+    q.add_argument("--publication", default=None)
+    q.add_argument("--status", default=None)
+    q.add_argument("--run", default=None)
+    q.add_argument("--min-speedup", type=float, default=None)
+    q.add_argument("--sort", default="started", choices=["started", "speedup", "spent"])
+    q.add_argument("--cursor", default=None)
+    q.add_argument("--limit", type=int, default=50)
+    q.add_argument("--jsonl", action="store_true", help="one JSON object per row")
+    q.set_defaults(fn=cmd_query)
+    g = sub.add_parser("gc", help="report or remove old data/deleted directories (default dry-run)")
+    g.add_argument("--root", default="data/deleted")
+    g.add_argument("--older-than-days", type=float, default=30.0)
+    g.add_argument("--apply", action="store_true", help="delete eligible directories; without it only report")
+    g.set_defaults(fn=cmd_gc)
     b = sub.add_parser("brief", help="read-only orientation, or JSON facts for one run directory (no model call, no GPU)")
     b.add_argument("run_dir", nargs="?", default=None, help="run directory; omit for a repo orientation")
     b.add_argument("--kernels", action="store_true", help="list confirmed kernels; optional --target filters one profile")
