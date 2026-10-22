@@ -983,7 +983,7 @@ def evaluate(
                 "speedup": rep.speedup,
                 "elapsed_s": rep.elapsed_s,
                 # A later trust check must know which harness/device produced this row.
-                "task": task_name, "dtype": dtype, "size": size,
+                "task": task, "dtype": dtype, "size": size,
                 "target_id": target_id, "protocol_version": PROTOCOL_VERSION,
                 "kernel_sha256": hashlib.sha256(kernel_source.encode("utf-8")).hexdigest(),
             })
@@ -1007,7 +1007,7 @@ def evaluate(
                 append(self_check_dir, {
                     "status": "ok", "candidate_us": cached.candidate_us, "cv": cand.get("cv"),
                     "speedup": cached.speedup, "elapsed_s": 0.0, "cached": True,
-                    "task": task_name, "dtype": dtype, "size": size,
+                    "task": task, "dtype": dtype, "size": size,
                     "target_id": target_id, "protocol_version": PROTOCOL_VERSION,
                     "kernel_sha256": hashlib.sha256(kernel_source.encode("utf-8")).hexdigest(),
                 })
