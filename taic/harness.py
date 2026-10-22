@@ -114,7 +114,9 @@ def _clean_action(text: str) -> str:
 
 
 _NEVER_AUTO = (
-    "tasks/", "tcenv/", "control.json", "budget_usd", "credentials", ".env",
+    "tasks/", "task.md", "tcenv/", "control.json", "budget_usd", "patience",
+    "max_rounds", "min_improvement", "noise_z", "confirm_batches", "eval_reps",
+    "tolerance", "abi", "credentials", "api key", "price", ".env",
     "git push", "git commit", "rm -rf", "subprocess", "os.system", "eval(", "exec(",
 )
 
