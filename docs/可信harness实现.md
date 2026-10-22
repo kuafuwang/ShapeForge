@@ -14,6 +14,7 @@
 | `bb7c51f` | 索引记录 `placeholder_items`，旧记录在 repair 时补计数 |
 | `1c1eac6` | 本交接文件 |
 | `158db49` | 拒绝带 shell/代码语法的 `action` |
+| `caf16f1` | 收紧 never-auto：合同、容差、ABI、预算、价格、阈值的词不进 P1 |
 
 基础是 `c9f7862`（数据层文档 + 反馈审计）。
 
@@ -49,7 +50,7 @@
 ## 审阅清单
 
 ```bash
-git show --stat 7ae00d5 397d806 9c79d61 4b433ff 887c80f bb7c51f 1c1eac6 158db49
+git show --stat 7ae00d5 397d806 9c79d61 4b433ff 887c80f bb7c51f 1c1eac6 158db49 caf16f1
 uv run pytest -q -m 'not gpu and not llm'
 uv run python -m taic.cli trust status apple-m4-max
 uv run python -m taic.cli harness status RUN_DIR
