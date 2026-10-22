@@ -238,3 +238,54 @@ def test_the_dashboard_escapes_feedback_text():
     rendered = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout
     assert rendered == "&lt;img onerror=&quot;alert(1)&quot;&gt;"
     assert rejection({"status": "adopted", "verification": "confirmed", "evidence_source": "probe", "evidence": "15.09"}) is None
+
+
+def test_info_and_obsolete_are_legal_review_states_with_a_reason():
+    assert rejection({"status": "info", "verification": "unchecked"}) is None
+    assert rejection({"status": "info", "verification": "confirmed"}) is not None
+    assert rejection({"status": "obsolete", "verification": "unchecked", "note": "duplicate of a"}) is None
+    assert rejection({"status": "obsolete", "verification": "unchecked"}) is not None
+
+
+def test_a_parser_upgrade_retires_a_removed_claim_with_its_review_status(tmp_path, monkeypatch):
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = _parsed()
+    directory = _run(runs, "conv", _record(parsed), started_at=50)
+    index.sync_known()
+    index.conn.execute(
+        "INSERT INTO feedback_claims (run_id, seq, digest, section, audience, premise, status, verification, topic, change_ref, reviewed_at, rev) "
+        "VALUES ('conv', 1, 'gone', '需要帮助', 'system', '', 'obsolete', 'unchecked', '', '', NULL, 0)"
+    )
+    index.conn.execute("UPDATE runs SET feedback_parser = 'fbv2' WHERE run_id = 'conv'")
+    index.conn.commit()
+    index.refresh_feedback("conv", directory)
+    row = index.conn.execute("SELECT status, reason FROM feedback_claim_removed WHERE run_id = 'conv' AND digest = 'gone'").fetchone()
+    assert row is not None
+    assert row["status"] == "obsolete" and row["reason"] == "parser changed"
+
+
+def test_fbv3_rebuild_rechecks_a_restored_probe_and_keeps_the_review_key(tmp_path, monkeypatch):
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = _parsed()
+    directory = _run(runs, "conv", _record(parsed), started_at=50)
+    work = directory / "agent_work" / "r1.p0"
+    work.mkdir(parents=True)
+    (work / "probe.py").write_text("print(1)\n")
+    (work / "FEEDBACK.md").write_text(
+        "# 被否决的前提\n- [已实测: probe.py | 矩阵单元只能吃 fp16 | 15.09]\n", encoding="utf-8"
+    )
+    log = directory / "feedback.jsonl"
+    record = _record(parsed)
+    record["work_dir"] = "agent_work/r1.p0"
+    record["items"] = [
+        {"section": "被否决的前提", "audience": "peer", "premise": "downgraded",
+         "text": "[未验证: 探针文件不存在 | 矩阵单元只能吃 fp16 | 15.09]", "digest": _digest("被否决的前提")},
+    ]
+    log.write_text(json.dumps(record, ensure_ascii=False) + "\n")
+    index.sync_known()
+    index.conn.execute("UPDATE runs SET feedback_parser = 'fbv2' WHERE run_id = 'conv'")
+    index.conn.commit()
+    index.refresh_feedback("conv", directory)
+    row = index.conn.execute("SELECT premise, digest FROM feedback_claims WHERE run_id = 'conv'").fetchone()
+    assert row["premise"] == "verified"
+    assert row["digest"] == _digest("被否决的前提")

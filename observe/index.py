@@ -20,7 +20,7 @@ from observe import detail, legacy
 from observe.budget import budget_status
 from observe.ledger import month_of, operator_name
 
-INDEX_SCHEMA_VERSION = 8
+INDEX_SCHEMA_VERSION = 9
 _SKIP_DIRS = {"candidates", "__pycache__"}
 _WRITE = threading.Lock()
 _SINGLE: "Index | None" = None
@@ -329,6 +329,11 @@ class Index:
                 seq INTEGER NOT NULL,
                 digest TEXT NOT NULL,
                 rev INTEGER NOT NULL,
+                section TEXT,
+                audience TEXT,
+                premise TEXT,
+                status TEXT,
+                reason TEXT,
                 PRIMARY KEY (run_id, seq, digest)
             );
             CREATE INDEX IF NOT EXISTS feedback_removed_rev ON feedback_claim_removed(rev);
@@ -361,6 +366,10 @@ class Index:
         item_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(feedback_items)")}
         if "line_at" not in item_columns:
             self.conn.execute("ALTER TABLE feedback_items ADD COLUMN line_at INTEGER")
+        removed_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(feedback_claim_removed)")}
+        for name in ("section", "audience", "premise", "status", "reason"):
+            if name not in removed_columns:
+                self.conn.execute(f"ALTER TABLE feedback_claim_removed ADD COLUMN {name} TEXT")
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES ('built_at', ?) ON CONFLICT(key) DO NOTHING",
             (str(time.time()),),

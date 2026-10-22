@@ -136,7 +136,7 @@
 
 1. **删除 7 条空占位**，并让 `taic/agent_feedback.py` 把“无/没有/不需要”这类整段识别为空，不再进入 pending。
 2. **把 39 条探针缺失行降为 info**（或保留但不在“待审证据”里计数）；它们的探针已从 `scratch` 恢复 538 个文件，重新解析后可能有一部分能升级为 verified。
-3. **合并 30 条系统建议的重复主题**：self-check 7、relative path 7、roofline 5、budget 5、bench2 2、DCE 2，其余各 1。每个主题只保留一条开放问题。
+3. **合并 23 条系统建议的重复主题**：self-check 7、relative path 7、roofline 5、budget 5、bench2 2、DCE 2，其余各 1。每个主题只保留一条开放问题。
 4. **关闭已修的 15 条**（self-check/relative/seed-report），并在看板上标注“已修”。
 5. **保留未验证前提**，但打上“未验证”标签，不做实测证据。
 
@@ -147,3 +147,15 @@ uv run python -m experiments.feedback_audit
 ```
 
 机器可读：`docs/feedback_audit_20261022.json`；逐条 `verdict`、`measured_lines`、`text` 都在 `rows`。
+
+## 执行记录（2026-10-22）
+
+- 解析器升 `fbv3`：7 条空占位不再生成 claim；已有审查文件里的对应条目保留为 `obsolete`。
+- 用 `experiments.apply_feedback_audit --merge-topic` 写回 174 条：60 条实测 `adopted`、15 条已修 `done`、35 条未验证 `info`、空占位/同主题重复 `obsolete`，其余保留 `pending`。
+- 探针恢复后重建索引：36 条降级前提升级为 `verified`（仍保留原 digest 和审查键），3 条没有可恢复探针的保持 `downgraded`。
+- 写回后的待审计数包含 39 条采集时缺探针的前提；它们现在只在人工复核队列里，不会被当成实测证据。`--merge-topic` 是显式选择，topic 本身不是命题等价。
+
+```bash
+uv run python -m experiments.apply_feedback_audit --dry-run
+uv run python -m experiments.apply_feedback_audit --apply --merge-topic
+```

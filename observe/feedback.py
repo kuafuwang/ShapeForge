@@ -10,7 +10,7 @@ from taic.agent_feedback import PARSER_VERSION, load_records, read_appended_reco
 
 _REVIEWABLE = {"system"}
 _PREMISE = {"verified", "unverified", "downgraded"}
-_STATUSES = {"pending", "adopted", "rejected", "done"}
+_STATUSES = {"pending", "adopted", "rejected", "done", "info", "obsolete"}
 _VERIFICATIONS = {"unchecked", "confirmed", "refuted"}
 _SOURCES = {"report", "calibration", "probe", "code", "other"}
 
@@ -63,7 +63,7 @@ def _claim_rows(record: dict, review: dict) -> list[dict]:
         if not isinstance(saved, dict):
             saved = {}
         status = saved.get("status") or _default_status(item)
-        if status not in _STATUSES and status != "info":
+        if status not in _STATUSES:
             status = _default_status(item)
         rows.append({
             "seq": seq,
@@ -145,7 +145,7 @@ def _item_signature(row) -> tuple:
 def retire_run_claims(conn, run_id: str) -> bool:
     """Forget one run's claims and leave a tombstone for each, so an open review page can drop those cards."""
     rows = list(conn.execute(
-        "SELECT seq, digest FROM feedback_claims WHERE run_id = ?",
+        "SELECT seq, digest, section, audience, premise, status FROM feedback_claims WHERE run_id = ?",
         (run_id,),
     ))
     if not rows:
@@ -155,10 +155,13 @@ def retire_run_claims(conn, run_id: str) -> bool:
     for row in rows:
         conn.execute(
             """
-            INSERT INTO feedback_claim_removed (run_id, seq, digest, rev) VALUES (?, ?, ?, ?)
-            ON CONFLICT(run_id, seq, digest) DO UPDATE SET rev = excluded.rev
+            INSERT INTO feedback_claim_removed (run_id, seq, digest, rev, section, audience, premise, status, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, seq, digest) DO UPDATE SET
+                rev = excluded.rev, section = excluded.section, audience = excluded.audience,
+                premise = excluded.premise, status = excluded.status, reason = excluded.reason
             """,
-            (run_id, row["seq"], row["digest"], rev),
+            (run_id, row["seq"], row["digest"], rev, row["section"], row["audience"], row["premise"], row["status"], "run retired"),
         )
     conn.execute("DELETE FROM feedback_claims WHERE run_id = ?", (run_id,))
     conn.execute("DELETE FROM feedback_items WHERE run_id = ?", (run_id,))
@@ -253,13 +256,93 @@ def _write_item(conn, run_id: str, row: dict) -> None:
     )
 
 
-def _rebuild_feedback(conn, run_id: str, directory: Path) -> bool:
+def _proposition(text: str) -> str:
+    """The proposition slot of a bracket, normalized for a source/old-item match."""
+    import re
+
+    match = re.search(r"\[[^\]]*\|\s*([^|\]]+?)\s*\|", str(text or ""))
+    return re.sub(r"\s+", " ", match.group(1).strip().lower()) if match else ""
+
+
+def _reparsed_record(record: dict, directory: Path) -> dict:
+    """Upgrade a restored measured premise without changing any old claim digest.
+
+    ``feedback.jsonl`` is append-only and stores items. A parser bump alone cannot know that a
+    probe was restored after the session, and replacing every item with a fresh split would
+    change digests and orphan ``feedback_review.json``. On a rebuild, read the session's
+    ``FEEDBACK.md`` only to find a verified copy of an old downgraded/unverified proposition;
+    copy its text and premise but keep the old digest. The log itself is not rewritten.
+    """
+    from taic.agent_feedback import FILE_CAP, parse_feedback, read_feedback_text
+
+    items = [dict(item) for item in (record.get("items") or []) if isinstance(item, dict)]
+    work_rel = str(record.get("work_dir") or "")
+    work = (directory / work_rel).resolve()
+    try:
+        work.relative_to(directory.resolve())
+    except ValueError:
+        return record
+    path = work / "FEEDBACK.md"
+    text = str(record.get("raw") or "")
+    file_over = False
+    if path.is_file():
+        try:
+            text, file_over = read_feedback_text(path)
+        except OSError:
+            text = ""
+    if not text.strip():
+        return record
+    source = parse_feedback(text, work=work, repo=Path(__file__).resolve().parents[1], file_over=file_over or len(text) > FILE_CAP)
+    if source.get("unrecognized_version"):
+        return record
+    verified = [
+        item for item in source.get("items") or []
+        if isinstance(item, dict) and item.get("premise") == "verified"
+    ]
+    old_premises = [item for item in items if item.get("premise") in ("downgraded", "unverified")]
+    positions = {id(item): index for index, item in enumerate(items)}
+    changed = False
+    for item in old_premises:
+        position = positions[id(item)]
+        section_position = sum(
+            1 for earlier in items[:position]
+            if earlier.get("section") == item.get("section")
+        )
+        if item.get("premise") not in ("downgraded", "unverified"):
+            continue
+        prop = _proposition(str(item.get("text") or ""))
+        same_section = [candidate for candidate in verified if candidate.get("section") == item.get("section")]
+        match = None
+        if prop:
+            match = next((
+                candidate for candidate in same_section
+                if prop in _proposition(str(candidate.get("text") or ""))
+            ), None)
+        if match is None and not prop and section_position < len(same_section):
+            # Older lines sometimes stored the wiped tag without the proposition, but kept the
+            # explanation. The source's verified lines are in the same section order.
+            match = same_section[section_position]
+        if match is None:
+            continue
+        item["text"] = str(match.get("text") or item.get("text") or "")
+        item["premise"] = "verified"
+        changed = True
+    if not changed:
+        return record
+    record = dict(record)
+    record["items"] = items
+    record["unverified_premises"] = sum(1 for item in items if item.get("premise") in ("unverified", "downgraded"))
+    return record
+
+
+def _rebuild_feedback(conn, run_id: str, directory: Path, *, reason: str = "feedback log changed") -> bool:
     """The log was replaced or the parser changed. Read it once, then the cursor takes over."""
     review = _load_review(directory / "feedback_review.json")["claims"]
     items = []
     claims = []
     located, _end = read_appended_records(directory / "feedback.jsonl", 0)
     for line_at, record in located:
+        record = _reparsed_record(record, directory)
         built = _rows_for_record(record, review, line_at)
         if built is None:
             continue
@@ -267,7 +350,7 @@ def _rebuild_feedback(conn, run_id: str, directory: Path) -> bool:
         items.append(item)
         claims.extend(claim_rows)
     previous = {
-        (int(row["seq"]), str(row["digest"])): row
+        (int(row["seq"]), str(row["digest"])): dict(row)
         for row in conn.execute("SELECT * FROM feedback_claims WHERE run_id = ?", (run_id,))
     }
     current = {(int(claim["seq"]), str(claim["digest"])): claim for claim in claims}
@@ -286,13 +369,19 @@ def _rebuild_feedback(conn, run_id: str, directory: Path) -> bool:
         for row in items:
             _write_item(conn, run_id, row)
     for seq, digest in removed:
+        old = previous.get((seq, digest), {})
+        saved = review.get(_review_key(seq, digest)) if isinstance(review.get(_review_key(seq, digest)), dict) else {}
+        status = saved.get("status") or old.get("status") or "removed"
         conn.execute("DELETE FROM feedback_claims WHERE run_id = ? AND seq = ? AND digest = ?", (run_id, seq, digest))
         conn.execute(
             """
-            INSERT INTO feedback_claim_removed (run_id, seq, digest, rev) VALUES (?, ?, ?, ?)
-            ON CONFLICT(run_id, seq, digest) DO UPDATE SET rev = excluded.rev
+            INSERT INTO feedback_claim_removed (run_id, seq, digest, rev, section, audience, premise, status, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, seq, digest) DO UPDATE SET
+                rev = excluded.rev, section = excluded.section, audience = excluded.audience,
+                premise = excluded.premise, status = excluded.status, reason = excluded.reason
             """,
-            (run_id, seq, digest, rev),
+            (run_id, seq, digest, rev, old.get("section"), old.get("audience"), old.get("premise"), status, reason),
         )
     for claim in changed:
         _write_claim(conn, run_id, claim, rev)
@@ -342,7 +431,7 @@ def _desired_review(row, saved: dict | None) -> dict:
         base["reviewed_at"] = None
         return base
     status = saved.get("status") or _default_status(base)
-    if status not in _STATUSES and status != "info":
+    if status not in _STATUSES:
         status = _default_status(base)
     base["status"] = status
     base["verification"] = saved.get("verification") or "unchecked"
@@ -390,7 +479,8 @@ def sync_run_index(conn, run_id: str, directory: Path) -> bool:
         size = 0
     review_fp = _file_fp(review_path)
     if stored_parser != PARSER_VERSION or size < offset:
-        changed = _rebuild_feedback(conn, run_id, directory)
+        reason = "parser changed" if stored_parser != PARSER_VERSION else "feedback log shortened"
+        changed = _rebuild_feedback(conn, run_id, directory, reason=reason)
         _store_feedback_cursor(conn, run_id, size, review_fp)
         return changed
     changed = False
@@ -749,9 +839,9 @@ def review_feed(conn, *, since: int | None = None) -> dict:
     else:
         rows = [dict(row) for row in conn.execute(_CLAIM_LIST + " WHERE c.rev > ? ORDER BY i.t DESC, c.seq DESC", (int(since),))]
         removed = [
-            {"run_id": row["run_id"], "seq": row["seq"], "digest": row["digest"]}
+            {"run_id": row["run_id"], "seq": row["seq"], "digest": row["digest"], "status": row["status"], "reason": row["reason"]}
             for row in conn.execute(
-                "SELECT run_id, seq, digest FROM feedback_claim_removed WHERE rev > ?",
+                "SELECT run_id, seq, digest, status, reason FROM feedback_claim_removed WHERE rev > ?",
                 (int(since),),
             )
         ]
@@ -783,6 +873,14 @@ def rejection(body: dict) -> str | None:
     if status == "pending":
         if verification != "unchecked":
             return "pending requires verification unchecked"
+        return None
+    if status == "info":
+        if verification != "unchecked":
+            return "info requires verification unchecked"
+        return None
+    if status == "obsolete":
+        if not note:
+            return "obsolete requires a note"
         return None
     if status == "adopted":
         if verification != "confirmed" or not evidence_source or not evidence:

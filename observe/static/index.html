@@ -336,7 +336,7 @@
     <pre class="excerpt" id="feedback-modal-text"></pre>
     <p class="muted" id="feedback-modal-source"></p>
     <form id="feedback-review-form">
-      <label>状态 <select name="status"><option>pending</option><option>adopted</option><option>rejected</option><option>done</option></select></label>
+      <label>状态 <select name="status"><option>pending</option><option>adopted</option><option>rejected</option><option>done</option><option>info</option><option>obsolete</option></select></label>
       <label>复核 <select name="verification"><option>unchecked</option><option>confirmed</option><option>refuted</option></select></label>
       <label>证据来源 <select name="evidence_source"><option value=""></option><option>report</option><option>calibration</option><option>probe</option><option>code</option><option>other</option></select></label>
       <textarea name="evidence" placeholder="证据"></textarea>
@@ -420,7 +420,7 @@ async function refreshBanner() {
   slot.textContent = pending > 0 ? pending + " 条代理反馈待审查" : "";
 }
 
-const REVIEW_FILTERS = [["pending", "待审查"], ["", "全部"], ["adopted", "已采纳"], ["rejected", "已拒绝"], ["done", "已完成"]];
+const REVIEW_FILTERS = [["pending", "待审查"], ["", "全部"], ["adopted", "已采纳"], ["rejected", "已拒绝"], ["done", "已完成"], ["info", "未验证/开放"], ["obsolete", "已退役"]];
 let reviewStatus = "pending";
 let reviewsCalibration = null;
 let reviewRev = null;
