@@ -326,6 +326,7 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
     quick = _check_command(brief, "quick")
     timed = _check_command(brief, "timed")
     submit = submission_name(brief.task_name, brief.dtype, brief.size, brief.label)
+    overlay_text = ("\n" + _cap_task(brief.harness_overlay, 1800)) if brief.harness_overlay else ""
     lines = [
         f"# 目标",
         f"把 Triton 算子 `{brief.task_name}` 写成 Metal，dtype `{brief.dtype}`，规模 `{brief.size}`。",
@@ -402,7 +403,7 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         "**没有内容就不要写。** 你的输出按 token 计费：某一节没话说就整节省略，不要写「无」「（空）」「none」这类占位符——它们是纯成本，看板还要逐条清理。整份 `FEEDBACK.md` 都没有内容时，不要创建这个文件。",
         "文件开头一行 `kind: prompt|skill|tool|rule|decision`，可以写多个，用逗号分开；没有系统层面的建议或求助时，这一行也不要写。",
         "有内容时按这五个标题写，只写有话的那几节：`# 需要帮助`、`# 对系统的建议`、`# 卡住的原因`、`# 给下一棒的避坑提示`、`# 被否决的前提`。"
-        "写系统建议/求助时，必须附 ```harness-proposal JSON 块（见 HARNESS.md）；否则只进人工审查。",
+        "缺权限、sudo、许可证、凭据：当场写 `# 需要帮助`，能绕开也写。建议附 ```harness-proposal 块（见 HARNESS.md）。",
         "被否决的前提只写这两种：",
         "`[已实测: 文件名 | 一句命题 | 数字和单位]`",
         "`[未验证 | 一句命题 | 为什么没测]`",
@@ -434,8 +435,8 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         blocks.append(("当前现场", "\n".join(context) + "\n"))
         if brief.failure:
             blocks.append(("上一轮外层失败反馈", "\n\n上一轮外层失败反馈：\n" + _cap_task(brief.failure, 1000)))
-        if brief.harness_overlay:
-            blocks.append(("本运行 harness overlay", "\n" + _cap_task(brief.harness_overlay, 1800)))
+        if overlay_text:
+            blocks.append(("本运行 harness overlay", overlay_text))
         if brief.notes_summary:
             blocks.append((
                 "上一轮 NOTES",
@@ -460,22 +461,31 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         blocks.append(("本任务前序避坑提示", "\n\n" + _PEER_HEADER + "\n" + _cap_task(brief.peer_tips, 1500)))
 
     omitted: list[str] = []
-    # Reserve room for the omission note. The note itself counts toward max_bytes.
-    limit = max(0, max_bytes - 420)
+    # Reserve room for the omission note and for an active harness overlay. Without the
+    # overlay reserve, a full scorecard can silently consume the whole budget and the
+    # reviewed tip never reaches the next session.
+    limit = max(0, max_bytes - 420 - len(overlay_text.encode("utf-8")))
     for name, text in blocks:
         room = limit - len(out.encode("utf-8"))
         if room <= 0:
             omitted.append(name)
             continue
-        if len(text.encode("utf-8")) <= room:
-            out += text
-            continue
         if name == "当前现场":
             # Keep the seed line and as much of the scorecard as the remaining room allows,
             # instead of dropping the whole block and leaving the agent without its scorecard.
-            trimmed = _cap_task(text, max(0, room - 60))
-            if trimmed:
-                out += trimmed
+            # Also leave the active overlay its reserved bytes even when the current-site
+            # block would otherwise fit exactly.
+            reserve = len(overlay_text.encode("utf-8")) if overlay_text else 0
+            cap = max(0, room - reserve - 60)
+            if cap >= 80:
+                trimmed = _cap_task(text, cap)
+                if trimmed:
+                    out += trimmed
+                    continue
+            omitted.append(name)
+            continue
+        if len(text.encode("utf-8")) <= room:
+            out += text
             continue
         omitted.append(name)
     if omitted:

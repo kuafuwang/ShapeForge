@@ -66,7 +66,7 @@ deepseek 提出“评测报告里打印每个 stage 的编译器寄存器用量�
 用 `kimi-k3` 做了一次只读 review，提示里明确把建议标成 **untrusted data**，不允许改 kernel/TASK，只写 `HARNESS_REVIEW.json`。review 预算按模型价格和 prompt 长度现算：
 
 - 预估：1000 input + 4000 output，约 **$0.063**；
-- 预算：**$0.252**（4 倍余量，不写死 $0.2）；
+- 预算：**$0.252**（旧公式；加入 cache read/write allowance 后同一输入约 **$0.588**，仍不写死 $0.2）；
 - 实际：**$0.1063**，73 秒；
 - 结论：`useful=true`、`confidence=0.6`，并指出一个关键缺口：Metal 没有公开的 per-kernel register-count API，建议先用 `maxTotalThreadsPerThreadgroup` 或 Instruments 做代理指标验证。
 
@@ -75,3 +75,19 @@ deepseek 提出“评测报告里打印每个 stage 的编译器寄存器用量�
 ### 总计
 
 两次 shadow 合计花费约 **$3.53**（$2.6658 + $0.7584 + $0.1063），仍低于用户授权的 $15。第二次 run 结束后重新 `settle` 生成了 `reviewed_active` 事件，但 run 已结束，没有后续场次可注入；没有做永久 P2 固化。
+
+## 第三次：reviewed_active 端到端
+
+第三次运行：`runs/apple-m4-max/harness-pilot-active-20261022`，预算上限 $5，实际 **$0.7996**，因人工把预算降到已花费附近而停在 `budget_exhausted`。
+
+| 场次 | 模型 | 搜索加速比 | 说明 |
+| --- | --- | ---: | --- |
+| init | deepseek-flash | 1.1154 | 无结构化提案 |
+| r1.p0 | deepseek-flash | 1.1378 | 产生 1 条 `tcenv.cli ab` tip |
+| r1 后 review | kimi-k3 | — | `useful=true`、confidence 0.8、实际 $0.118 |
+
+确认复测：**1.1448x**（三批；发布状态仍为“不确定”，没有把 confirmed 值当已发布）。
+
+自动 review 在 r1 后运行，写入 `reviewed_active` 和 active overlay。因为预算停在 r1 后，没有下一场；第一次 `resume` 的 `TASK.md` 还暴露了一个问题：12KB 预算把 overlay 裁掉了。随后给 `render_contract` 加了 overlay 预留预算，并补了测试；新的下一场会保留 overlay，优先裁当前现场而不是静默丢弃 review 条目。
+
+第三次运行总花费约 **$0.80**（含 review），三次运行累计约 **$4.33**，仍低于 $15。

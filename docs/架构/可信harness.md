@@ -19,7 +19,8 @@ flowchart TB
   P["fbv3 解析<br/>claims + premise 状态"]
   F --> P
   P --> EV["证据流水线<br/>前提/硬件事实"]
-  P --> HP["harness 流水线<br/>系统建议/求助"]
+  P --> HP["harness 流水线<br/>对系统的建议"]
+  P --> ASK["需要帮助<br/>当场写，看板给人"]
   EV --> O["P1 运行内 overlay<br/>本 run 的后续场次"]
   HP --> Q["结构化提案<br/>双来源 + 信任"]
   Q --> O
@@ -92,7 +93,7 @@ flowchart LR
     EC --> EX["P2 experience 候选<br/>人审"]
   end
   subgraph harness["harness 流水线"]
-    HP["系统建议 / 需要帮助"] --> HS["结构化提案<br/>surface + scope + action + evidence"]
+    HP["对系统的建议"] --> HS["结构化提案<br/>surface + scope + action + evidence"]
     HS --> HQ["双来源 + active 信任 + 机器校验"]
     HQ --> HO["P1 tip overlay"]
     HQ --> HX["P2 patch<br/>人审 + git apply"]
@@ -186,7 +187,7 @@ P2 改的是仓库，影响所有后续运行。自动写文件等于让模型�
 4. 人确认后 apply，写 `change_ref` 或提交号。
 5. 共享表面（TASK 合同、`taic-tools`、系统提示）额外确认跨硬件适用。
 
-`change_ref` 是追溯链的闭合点：没有它，`done` 不成立。
+`change_ref` 由这次 apply 自动写下，形如 `patch:` 加哈希。审查页把一条标成 `done` 时不必填写。
 
 ## 4. 信任：委托的权限，不是模型声望
 
@@ -279,12 +280,18 @@ review 不是第二个独立提出，不能替代 quorum；它把单来源 tip �
 review 的预算不能写死 $0.2：按 reviewer 的实际 input/output 单价、prompt 长度和最大输出 token 算：
 
 ```
-input_tokens  = max(1000, ceil(prompt_bytes / 3))
-expected_usd  = input_tokens/1e6 * price_in + output_tokens/1e6 * price_out
-budget_usd    = max(0.01, expected_usd * 4)
+input_tokens       = max(1000, ceil(prompt_bytes / 3))
+output_tokens      = min(4000, requested)
+cache_read_tokens  = 120000   # pi/skill context read allowance
+cache_write_tokens = 16000    # first-call cache write allowance
+expected_usd = input_tokens/1e6 * price_in
+             + output_tokens/1e6 * price_out
+             + cache_read_tokens/1e6 * price_cache_read
+             + cache_write_tokens/1e6 * price_cache_write
+budget_usd = max(0.01, expected_usd * 4)
 ```
 
-不同的模型价格不同，贵的 reviewer 得到更大的预算；实际成本另记到 `harness_reviews.jsonl`。
+不同的模型价格不同，贵的 reviewer 得到更大的预算；缓存读/写也计入，不能只看 REVIEW.md 的字数。实际成本另记到 `harness_reviews.jsonl`。实测 Kimi 一次 review：旧预算 $0.252、实际 $0.118；加入缓存 allowance 后同一输入估算 $0.147、预算 $0.588。
 
 ## 6. 影子、状态机与回滚
 

@@ -162,6 +162,8 @@ def test_the_contract_tells_the_agent_to_write_nothing_rather_than_a_placeholder
     assert "整份 `FEEDBACK.md` 都没有内容时，不要创建这个文件" in text
     # 没有系统建议时连 kind 行都不写；解析侧仍然把缺失视为 none。
     assert "没有系统层面的建议或求助时，这一行也不要写" in text
+    assert "缺权限、sudo、许可证、凭据：当场写 `# 需要帮助`" in text
+    assert "能绕开也写" in text
     assert _kinds("## 给下一棒的避坑提示\n- x\n") == "none"
 
 

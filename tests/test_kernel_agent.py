@@ -69,6 +69,8 @@ def test_the_contract_names_both_commands_and_does_not_ask_for_a_fence(tmp_path)
     for title in ("# 需要帮助", "# 对系统的建议", "# 卡住的原因", "# 给下一棒的避坑提示", "# 被否决的前提"):
         assert title in text
     assert "必须写进「被否决的前提」节" in text
+    assert "缺权限、sudo、许可证、凭据：当场写 `# 需要帮助`" in text
+    assert "能绕开也写" in text
 
 
 def test_a_seeded_contract_leads_with_the_outer_measurement(tmp_path):
@@ -152,7 +154,9 @@ def test_a_fake_hmz_leaves_the_kernel_and_a_computed_cost(tmp_path):
     assert "assistant=" not in task
     assert "--timed" in task
     assert "turn_output_tokens" not in task
-    assert "harness-proposal" in (tmp_path / "work" / "HARNESS.md").read_text()
+    harness = (tmp_path / "work" / "HARNESS.md").read_text()
+    assert "harness-proposal" in harness
+    assert "`# 需要帮助` is not this block" in harness
 
 
 def test_a_missing_hmz_is_an_error_and_a_timeout_still_returns_the_file(tmp_path):

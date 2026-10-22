@@ -23,6 +23,9 @@ REVIEW_LOG = "harness_reviews.jsonl"
 MAX_OUTPUT_TOKENS = 4000
 MARGIN = 4.0
 MIN_BUDGET_USD = 0.01
+# pi's system/skill context is billed as cache traffic even when REVIEW.md is short.
+CACHE_READ_ALLOWANCE = 120_000
+CACHE_WRITE_ALLOWANCE = 16_000
 
 
 class ReviewError(LLMError):
@@ -33,18 +36,28 @@ def estimate_review_budget(prices: Prices, prompt: str, *, output_tokens: int = 
     """A price-derived allowance, not a constant.
 
     Input is estimated conservatively at three bytes per token (Chinese is roughly one token
-    per character); output is the requested JSON/verdict allowance. The allowance is twice
-    the estimated token bill so a provider's tokenizer or short thinking block cannot make
-    the call fail solely because the estimate was one token shy.
+    per character); output is the requested JSON/verdict allowance. Cache read/write
+    allowances cover the hidden pi/skill context. The allowance is four times the estimated
+    token bill so a provider's tokenizer, cache traffic or thinking block cannot make the
+    call fail solely because the estimate was one token shy.
     """
     text = str(prompt or "")
     input_tokens = max(1000, int(math.ceil(len(text.encode("utf-8")) / 3.0)))
     output_tokens = max(128, min(int(output_tokens), MAX_OUTPUT_TOKENS))
-    expected = input_tokens / 1_000_000 * float(prices.input) + output_tokens / 1_000_000 * float(prices.output)
+    cache_read_tokens = CACHE_READ_ALLOWANCE
+    cache_write_tokens = CACHE_WRITE_ALLOWANCE
+    expected = (
+        input_tokens / 1_000_000 * float(prices.input)
+        + output_tokens / 1_000_000 * float(prices.output)
+        + cache_read_tokens / 1_000_000 * float(prices.cache_read)
+        + cache_write_tokens / 1_000_000 * float(prices.cache_write)
+    )
     budget = max(MIN_BUDGET_USD, expected * MARGIN)
     return {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "cache_write_tokens": cache_write_tokens,
         "expected_usd": round(expected, 6),
         "budget_usd": round(budget, 6),
     }

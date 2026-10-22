@@ -60,13 +60,13 @@
 
 ## 试点结果
 
-试点报告见 [可信harness试点结果.md](可信harness试点结果.md)：第一次 4 场、$2.6658、0 提案；第二次 $0.7584、1 条 tip、kimi review $0.106，`reviewed_active` 仅本 run。
+试点报告见 [可信harness试点结果.md](可信harness试点结果.md)：第一次 4 场、$2.6658、0 提案；第二次 $0.7584、1 条 tip、kimi review $0.106；第三次 $0.7996、自动 review useful、`reviewed_active` 生成，但 run 在下一场前停掉。\n\nTASK 的 12KB 预算现在为 active overlay 预留空间；没有这个预留，满成绩单会把 overlay 静默裁掉。
 
 ## 独立 review
 
 - **不是 quorum**：review 把单来源 tip 推到 `reviewed_active`，只对**本 run 的后续场次**生效；运行结束失效，不是永久固化。
 - **只读**：review 不写 kernel/TASK，只写 `HARNESS_REVIEW.json`；prompt 把建议标成 untrusted data。
-- **动态预算**：按 reviewer 的 input/output 单价、prompt 长度、最大输出 token 计算；不写死 $0.2。实测 kimi review：预算 $0.252，实际 $0.106；旧运行在切换前记录为 `reviewed_shadow`，新代码是 `reviewed_active`。
+- **动态预算**：按 reviewer 的 input/output 单价、prompt 长度、最大输出 token，以及 pi/skill 上下文的 cache read/write allowance 计算；不写死 $0.2。实测 kimi review：旧预算 $0.252、实际 $0.106；加入缓存 allowance 后同一输入预算约 $0.588，实际仍只按用量计费。
 - **实测**：deepseek 寄存器报告 tip → kimi review `useful=true, confidence=0.6`；当时的代码记录为旧名 `reviewed_shadow`，新代码会对同一 review 产生 `reviewed_active`（仅本 run）。
 
 ## 已知边界（请重点审）
