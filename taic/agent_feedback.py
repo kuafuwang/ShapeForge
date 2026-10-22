@@ -22,7 +22,7 @@ RAW_CAP = 4096
 TIP_CHARS = 250
 TIPS_CHARS = 1200
 VERIFIED_TIPS_CHARS = 1800
-TIP_KEEP = 5
+TIP_KEEP = 8
 UNVERIFIED_SPAN = 2  # sessions after the one that first wrote an unverified premise; the third session no longer sees it
 _PLACEHOLDERS = frozenset({"无", "没有", "空", "none", "na"})
 
