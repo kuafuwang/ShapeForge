@@ -617,7 +617,7 @@ def write_patch(
     return meta
 
 
-def apply_patch(run_dir: Path, *, target_id: str, proposal_key: str, root: Path | None = None, check_only: bool = False) -> dict:
+def apply_patch(run_dir: Path, *, target_id: str, proposal_key: str, root: Path | None = None, check_only: bool = False, run_tests: bool = False) -> dict:
     """Apply a generated target-experience patch, after ``git apply --check``.
 
     This function does not commit. A person runs the offline tests and commits separately;
@@ -632,6 +632,15 @@ def apply_patch(run_dir: Path, *, target_id: str, proposal_key: str, root: Path 
         raise ProposalError((check.stderr or check.stdout or "git apply --check failed").strip())
     if check_only:
         return {**meta, "applied": False, "check": True}
+    if run_tests:
+        import sys
+
+        tests = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "tests/test_agent_feedback.py", "tests/test_kernel_agent.py", "tests/test_hw_feedback.py"],
+            cwd=repo, capture_output=True, text=True,
+        )
+        if tests.returncode != 0:
+            raise ProposalError((tests.stdout + tests.stderr)[-2000:].strip() or "offline tests failed")
     apply = subprocess.run(["git", "apply", str(patch)], cwd=repo, capture_output=True, text=True)
     if apply.returncode != 0:
         raise ProposalError((apply.stderr or apply.stdout or "git apply failed").strip())

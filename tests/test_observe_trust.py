@@ -15,7 +15,7 @@ def _db():
         CREATE TABLE runs (run_id TEXT PRIMARY KEY, target_id TEXT);
         CREATE TABLE sessions (run_id TEXT, seq INTEGER, provider TEXT, model TEXT);
         CREATE TABLE feedback_items (run_id TEXT, seq INTEGER, task TEXT);
-        CREATE TABLE feedback_claims (run_id TEXT, seq INTEGER, digest TEXT, premise TEXT, status TEXT, verification TEXT);
+        CREATE TABLE feedback_claims (run_id TEXT, seq INTEGER, digest TEXT, premise TEXT, status TEXT, verification TEXT, audience TEXT);
         """
     )
     conn.execute("INSERT INTO runs VALUES ('r1', 'apple-m4-max')")
@@ -25,12 +25,12 @@ def _db():
     conn.execute("INSERT INTO feedback_items VALUES ('r1', 1, 'conv2d')")
     conn.execute("INSERT INTO feedback_items VALUES ('r2', 1, 'conv2d')")
     rows = [
-        ("r1", 1, "a", "verified", "done", "confirmed"),
-        ("r1", 1, "b", "unverified", "rejected", "refuted"),
-        ("r2", 1, "c", "verified", "adopted", "confirmed"),
-        ("r2", 1, "d", "downgraded", "pending", "unchecked"),
+        ("r1", 1, "a", "verified", "done", "confirmed", "peer"),
+        ("r1", 1, "b", "unverified", "rejected", "refuted", "peer"),
+        ("r2", 1, "c", "verified", "adopted", "confirmed", "peer"),
+        ("r2", 1, "d", "downgraded", "pending", "unchecked", "peer"),
     ]
-    conn.executemany("INSERT INTO feedback_claims VALUES (?,?,?,?,?,?)", rows)
+    conn.executemany("INSERT INTO feedback_claims VALUES (?,?,?,?,?,?,?)", rows)
     return conn
 
 
@@ -45,6 +45,7 @@ def test_metrics_count_reviews_and_measured_premises():
     assert row["measured_rate"] == 0.5
     assert row["reasonable_rate"] == 2 / 3
     assert row["wilson_lower"] is not None and 0 < row["wilson_lower"] < row["reasonable_rate"]
+    assert row["system_reviewed"] == 0 and row["system_wilson_lower"] is None
 
 
 def test_an_empty_cell_does_not_claim_a_rate():

@@ -42,6 +42,10 @@ def metrics(conn, *, target_id: str | None = None, task: str | None = None) -> l
                SUM(CASE WHEN c.status = 'rejected' AND c.verification = 'refuted' THEN 1 ELSE 0 END) AS refuted,
                SUM(CASE WHEN c.status IN ('adopted','rejected','done') THEN 1 ELSE 0 END) AS reviewed,
                SUM(CASE WHEN c.status = 'pending' THEN 1 ELSE 0 END) AS pending,
+               SUM(CASE WHEN c.audience = 'system' AND c.status IN ('adopted','rejected','done') THEN 1 ELSE 0 END) AS system_reviewed,
+               SUM(CASE WHEN c.audience = 'system' AND c.status IN ('adopted','done') THEN 1 ELSE 0 END) AS system_reasonable,
+               SUM(CASE WHEN c.audience = 'system' AND c.status = 'rejected' AND c.verification = 'refuted' THEN 1 ELSE 0 END) AS system_refuted,
+               SUM(CASE WHEN c.audience = 'system' AND c.status = 'pending' THEN 1 ELSE 0 END) AS system_pending,
                SUM(CASE WHEN c.premise = 'verified' THEN 1 ELSE 0 END) AS verified_premise,
                SUM(CASE WHEN c.premise IN ('verified','unverified','downgraded') THEN 1 ELSE 0 END) AS premise
         FROM sessions s
@@ -61,6 +65,10 @@ def metrics(conn, *, target_id: str | None = None, task: str | None = None) -> l
         reasonable = int(item.get("reasonable") or 0)
         item["reasonable_rate"] = (reasonable / reviewed) if reviewed else None
         item["wilson_lower"] = wilson_lower(reasonable, reviewed)
+        system_reviewed = int(item.get("system_reviewed") or 0)
+        system_reasonable = int(item.get("system_reasonable") or 0)
+        item["system_reasonable_rate"] = (system_reasonable / system_reviewed) if system_reviewed else None
+        item["system_wilson_lower"] = wilson_lower(system_reasonable, system_reviewed)
         premise = int(item.get("premise") or 0)
         item["measured_rate"] = (int(item.get("verified_premise") or 0) / premise) if premise else None
         out.append(item)
