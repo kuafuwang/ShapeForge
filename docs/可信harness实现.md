@@ -71,7 +71,7 @@
 
 ## 已知边界（请重点审）
 
-- **没有 code-agent P2 实现器。** 当前 `apply_patch` 只追加 target experience；未来若让 code agent 改 `tcenv`/`observe`/提示词，必须独立 worktree、测试、diff、人工 apply，并记录 `implemented_by`/`approved_by`，不能继承模型 overlay 信任或自动 merge。
+- **没有 code-agent P2 代码补丁 worker。** 当前 `apply_patch` 只追加 target experience；未来 AI 或人改 `tcenv`/`observe`/提示词，都必须独立 worktree、测试、diff、人工 apply，并记录 `implemented_by`/`approved_by`。AI 是默认实现者，但不能继承 overlay 信任或自动 merge。
 
 1. **没有跑付费试点。** `harness_pilot.py` 和文档已就绪，但 `taic run`/`resume` 未执行；不要把它们当成已验证的质量结论。
 2. **P1 `premise` 不要求双模型**，但要求本场探针、active `overlay:premise` 信任和匹配的 harness 自检记录或外层候选报告；否则只写 shadow。

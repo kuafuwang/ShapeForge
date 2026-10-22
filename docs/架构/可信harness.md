@@ -177,16 +177,16 @@ flowchart LR
 
 所以“review 后可用”指 `active`，不是永久固化；永久固化仍然是 P2，必须人工判断。
 
-### 3.3 code agent 是 P2 的执行者，不是信任来源
+### 3.3 code agent 是 P2 的默认实现者，不是信任来源
 
-未来修改 `tcenv`、`observe` 或提示词的代码，也可以交给一个 code agent（hmz/pi）实现。它应该是 P2 的**执行者**，不是新的自动信任来源：
+未来修改 `tcenv`、`observe` 或提示词的代码，默认交给 code agent（hmz/pi）实现；人也可以直接实现。实现者是谁不改变审批权：它应该是 P2 的**实现者**，不是新的自动信任来源。现在大多数改动事实上由 AI 完成，所以更要把“实现”和“批准”拆开：
 
 | 角色 | 谁 | 权限 |
 | --- | --- | --- |
 | 提案者 | 搜索中的模型 | 写 FEEDBACK / 结构化提案 |
 | 评审者 | 另一个 provider/model | 只读 review，给 useful/risk |
-| 实现者 | code agent（独立 worktree） | 读已批准提案，生成 patch、补测试；不能 merge |
-| 批准者 | 人 | 看 diff/测试，确认后 apply/commit，记录 `approved_by` |
+| 实现者 | **code agent（默认）或人** | 读已批准提案，生成 patch、补测试；不能 merge/自批 |
+| 批准者 | 人（或独立的低风险审批者） | 看 diff/测试，确认后 apply/commit，记录 `approved_by` |
 
 流程：
 
@@ -201,8 +201,9 @@ approved proposal
 
 约束：
 
-- code agent 不继承模型对 overlay 的信任；它的工作对象是**已批准的变更**，不是自由改 harness。
-- 不允许自己批准、自己 commit、自己改 `trust.toml`/`budget`/`control`。
+- 实现者（AI 或人）不继承模型对 overlay 的信任；工作对象是**已批准的变更**，不是自由改 harness。
+- AI 实现者不允许自己批准、自己 commit、自己改 `trust.toml`/`budget`/`control`；人实现时也不能自己批准自己的 P2。
+- 同一变更的 `implemented_by` 和 `approved_by` 必须是不同角色；AI 默认是前者。
 - 必须用独立 worktree/工作区，不能直接改正在跑的搜索目录。
 - 任何“改审查代码、改 change_ref 校验、改 P2 审批”的元变更，也走同一条 P2；不能用一个自动循环绕开人。
 - 它生成的 `change_ref` 应该是 patch/commit 的哈希，不是模型自由文本。
