@@ -164,8 +164,10 @@ class ArgSet:
             else:
                 gb.poison()
 
-    def stage_args(self, kernel) -> list[tuple[int, BufferArg | ScalarArg]]:
+    def stage_args(self, kernel) -> list[tuple[int, "BufferArg | ScalarArg"]]:
         """Bindings for one compiled stage. Names select contract arguments or this set's workspaces."""
+        from .metal_runtime import BufferArg, ScalarArg
+
         out: list[tuple[int, BufferArg | ScalarArg]] = []
         for b in kernel.bindings:
             if b.kind != "buffer":

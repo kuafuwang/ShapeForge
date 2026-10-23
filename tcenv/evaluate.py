@@ -266,6 +266,7 @@ def _evaluate_in_process(
             f"({profile.match_name_contains}, {profile.match_family})"
         )
         rep.elapsed_s = time.perf_counter() - t_start
+        rep.timeline = [{"stage": "device_check", "status": "rejected", "duration_s": rep.elapsed_s}]
         return rep
     rep.device_warnings = limit_notes(profile, dev_info)
 
