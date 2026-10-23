@@ -4,7 +4,7 @@
 
 能对外说的倍数，要等搜索结束，换一批输入再测，源码对得上，计时也不吵。搜索过程里看起来最快的那次，是另一个数。权威记录在 `runs/` 里该次搜索的 `result.json`，还要过 `experiments/common.py` 的 `conclusion_of_run`。下面各篇里的对照表是写作时的快照。
 
-默认一次新搜索大约 15 美元（预设名叫 `paper`）。两个模型轮流写：DeepSeek 的 `deepseek-flash`，然后是月之暗面的 `kimi-k3`。只配一家的密钥不够。`--preset base` 才读 `taic.toml` 自己的上限，那是 50 美元。`taic run` 和 `taic resume` 会花钱，也会把程序交给这台同时画屏幕的显卡。只看摘要用：
+默认一次新搜索大约 15 美元（预设名叫 `paper`）。初始稿和第 1 轮由 DeepSeek 的 `deepseek-flash` 写，第 2 轮起轮到月之暗面的 `kimi-k3`，之后按 `(r - 1) % 2` 轮流。只配一家的密钥不够。`--preset base` 才读 `taic.toml` 自己的上限，那是 50 美元。`taic run` 和 `taic resume` 会花钱，也会把程序交给这台同时画屏幕的显卡。只看摘要用：
 
 ```
 uv run python -m taic.cli brief
@@ -35,7 +35,9 @@ uv run python -m taic.cli brief RUN_DIR
 - [架构/题目.md](架构/题目.md)：一道题目带着什么编译约定，缓冲区两头的保护带是什么。
 - [架构/评测.md](架构/评测.md)：一次评测怎样判决。
 - [架构/搜索.md](架构/搜索.md)：一次搜索怎样循环，什么数字可以发布，怎样续跑。
+- [架构/数据层.md](架构/数据层.md)：一次搜索留下什么、SQLite 索引怎样建、`taic query` 怎样查、协议版本/成本/保留期。
 - [架构/可信harness.md](架构/可信harness.md)：RSI 外层循环、证据/harness 两条流水线、权限梯度、信任、双来源、影子与 P2 提升的理论和流程图。
+- [可信harness实现.md](可信harness实现.md)：可信 harness 的实现交接：提交、已验证行为、已知边界和审阅清单。
 - [可信harness试点结果.md](可信harness试点结果.md)：2026-10-22 的三次 conv2d 试点：第一次 4 场/0 提案；第二次 1 条 tip + kimi review；第三次自动 review 生成 `reviewed_active`，但 4 场中 r2 未交核、确认值因批次差异未发布。
 - [架构/可观测.md](架构/可观测.md)：实验怎样分组，看板怎样读。
 - [写核代理读什么.md](写核代理读什么.md)：写核代理要守的每条规则写在哪个文件里，对应哪一次真实反馈。
@@ -49,6 +51,7 @@ uv run python -m taic.cli brief RUN_DIR
 - [hardware_features.md](hardware_features.md)：论文归功的硬件特性，在这颗苹果芯片上怎么认。检测器只判断「在不在」，不判断「快了多少是因为它」。
 - [架构改进评估.md](架构改进评估.md)：相对公开框架还缺什么，以及已经写进代码的开关。计划账本默认开着。
 - [实验批准单-搜索开关.md](实验批准单-搜索开关.md)：搜索开关这组对照，磁盘上有什么、名义费用是多少。它不是开工批准。
+- [维护决策.md](维护决策.md)：影响数据/协议、但不需要每次改代码的决定，新条目在最上面。
 - [pi编排与异常.md](pi编排与异常.md)、[opencode编排与异常.md](opencode编排与异常.md)、[deepseek-harness编排与异常.md](deepseek-harness编排与异常.md)、[deepseek-harness-web可观测.md](deepseek-harness-web可观测.md)：别人的编程代理怎样收失败、超长、截断和取消。主体对的是他们的源码。每篇末节才写本仓库采纳了哪几条。
 - [`2609.36800v1.pdf`](2609.36800v1.pdf) 与 [`2609.36800v1.zh.pdf`](2609.36800v1.zh.pdf)：论文原文和中文 PDF。他们在 NVIDIA 上做的是同一类循环，目标语言不同。
 - [`跑掉四五千万人民币等值 Token 之后，两位英伟达工程师重新理解了 Agent：代码不是护城河，时间才是.pdf`](跑掉四五千万人民币等值 Token 之后，两位英伟达工程师重新理解了 Agent：代码不是护城河，时间才是.pdf)：KDA / Humanize 的对谈整理。他们怎么把 harness 当 test-time scaling、三层结构（流程 / 知识库 / 性能反馈）、把钱花在验证与知识库上、以及新模型来了先拆 harness。本仓库对照它写的取舍在 [直调与hmz取舍.md](直调与hmz取舍.md) 与 [外部框架经验.md](外部框架经验.md)。

@@ -6,7 +6,7 @@
 
 1. 先完成 `experiments.apply_feedback_audit`，让存量 174 条有审查标签。
 2. 在目标硬件的 `targets/<target_id>/trust.toml` 里，由人给两个委员会的两个不同 provider/model 授予 `overlay:tip`。信任绑定 task、effort、prompt sha 和协议版本。
-3. 运行配置：`harness_auto = true`、`harness_shadow = true`。影子期只写 `harness_overlay.jsonl`，不注入 TASK；独立 review 判为 useful 的单来源 tip 例外，只在本 run 后续场次 active。`premise` 只有在本场探针、active `overlay:premise` 信任和匹配的 harness 自检记录或外层候选报告同时存在时才可能 active；否则只写 shadow。
+3. 运行配置：`harness_auto = true`、`harness_shadow = true`。影子期只写 `harness_overlay.jsonl`，不注入 TASK；独立 review 判为 useful 的单来源 tip 例外，只在本 run 后续场次 active。`premise` 只有在本场探针、active `overlay:premise` 信任和匹配的 harness 自检记录或外层候选报告同时存在时才可能 active；没有匹配记录时不写 overlay，只保留 `trusted_record=false` 的提案。
 
 ## 试点范围
 

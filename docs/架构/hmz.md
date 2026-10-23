@@ -17,8 +17,12 @@ hmz exec -f taic/flows/kernel_once
     -p turn_minutes=<主回合分钟>
     -p wrap_output_tokens=<收尾回合的输出 token>
     -p wrap_minutes=<收尾回合分钟>
+    -p submit_name=<交卷文件名>
     -p budget.duration=<整场分钟>m
+    -- "Read TASK.md in this directory and do it. Write the finished kernel to <交卷文件名>. The search does not read kernel.metal."
 ```
+
+`submit_name` 是 `{题目}-{dtype}-{规模}-{场次}.metal`。少了它，`kernel_once` 会回落到 `submit.metal`，而搜索只读 `TASK.md` 里写的那份交卷文件。
 
 单场美元上限是剩余预算和 `relay_budget_usd`（默认 2 美元）里较小的那个，再按该委员会的输出单价换成 `turn_output_tokens`。不是把剩余美元原样交给 `budget.cost`。
 
