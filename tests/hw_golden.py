@@ -113,10 +113,10 @@ def user_messages() -> dict[str, str]:
         except Exception:  # noqa: BLE001
             continue
         out[f"initial|{name}"] = sha(prompts.initial_user(task))
-        out[f"repair|{name}"] = sha(prompts.repair_user("FEEDBACK TEXT", 1, 3))
+        out[f"repair|{name}"] = sha(prompts.repair_user("FEEDBACK TEXT", 1, 3, source_fence="metal"))
         for mixed in (False, True):
-            out[f"plan|{name}|mixed={int(mixed)}"] = sha(prompts.plan_user(task, "KERNEL SOURCE\n", "FEEDBACK TEXT", ["h1", "h2"], 3, mixed=mixed))
-        out[f"patch|{name}"] = sha(prompts.patch_user(task, "KERNEL SOURCE\n", "FEEDBACK TEXT", {"title": "T", "change": "C"}))
+            out[f"plan|{name}|mixed={int(mixed)}"] = sha(prompts.plan_user(task, "KERNEL SOURCE\n", "FEEDBACK TEXT", ["h1", "h2"], 3, mixed=mixed, source_fence="metal"))
+        out[f"patch|{name}"] = sha(prompts.patch_user(task, "KERNEL SOURCE\n", "FEEDBACK TEXT", {"title": "T", "change": "C"}, source_fence="metal"))
     return out
 
 

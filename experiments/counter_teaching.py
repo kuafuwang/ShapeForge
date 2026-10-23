@@ -65,7 +65,7 @@ def conditions(summ: xctrace.TraceSummary) -> dict[str, tuple[bool, str]]:
 
 # 只发规划那一次请求。标记是对回复文本的正则，用来统计它说出了哪些词，内核不会被编译或再测。
 async def ask(llm: LLM, system: str, task, source: str, feedback: str, k: int, label: str) -> dict:
-    msgs = [{"role": "system", "content": system}, {"role": "user", "content": prompts.plan_user(task, source, feedback, [], k)}]
+    msgs = [{"role": "system", "content": system}, {"role": "user", "content": prompts.plan_user(task, source, feedback, [], k, source_fence="metal")}]
     reply = await llm.chat(msgs, label=label)
     analysis, plans = parse_plans(reply.text(), k)
     text = reply.text()

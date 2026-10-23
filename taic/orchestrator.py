@@ -250,7 +250,7 @@ def _sha(source: str) -> str:
 
 
 # 回复里抽不出带约定内核名的 Metal 块时追问的那一句。抽失败只消耗这一问，不会产生候选，也不会上 GPU。
-def nudge_user(kernel_name: str, *, source_fence: str = "metal") -> str:
+def nudge_user(kernel_name: str, *, source_fence: str) -> str:
     """The reminder sent when a reply holds no fenced block defining the kernel."""
     return (
         f"Your reply did not contain a ```{source_fence} code block defining `kernel void {kernel_name}`, "
@@ -1748,7 +1748,7 @@ class Orchestrator:
             if self.search.hw_feedback and self.backend.capabilities.supports_hw_features:
                 from .hwfeedback import hw_feedback
 
-                block = await asyncio.to_thread(hw_feedback, self.task, seed.source, seed.report, log=self.log)
+                block = await asyncio.to_thread(hw_feedback, self.task, seed.source, seed.report, log=self.log, backend_id=self.target.backend)
                 if block:
                     evidence += "\n\n" + block
             if self.search.experience_index:

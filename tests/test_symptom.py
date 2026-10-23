@@ -52,7 +52,7 @@ def _task():
 
 
 def _plan(bound):
-    return prompts.plan_user(_task(), "kernel void relu_kernel() {}", "feedback text", ["h1"], 3, bound=bound)
+    return prompts.plan_user(_task(), "kernel void relu_kernel() {}", "feedback text", ["h1"], 3, bound=bound, source_fence="metal")
 
 
 def test_the_index_is_deterministic_and_slices_the_existing_file():
@@ -96,12 +96,12 @@ def test_bound_of_reads_the_structured_roofline_field():
     report.roofline = dict(_RELU_ROOFLINE)
     assert bound_of(report) == "memory"
     # A feedback sentence that names the other class does not override the field.
-    msg = prompts.plan_user(_task(), "k", "bound: compute; achieved 10 GB/s", [], 3, bound=bound_of(report))
+    msg = prompts.plan_user(_task(), "k", "bound: compute; achieved 10 GB/s", [], 3, bound=bound_of(report), source_fence="metal")
     assert MEMORY_HEADING in msg and COMPUTE_HEADING not in msg
 
 
 def test_a_missing_or_unknown_bound_does_not_crash_or_invent_one():
-    plain = prompts.plan_user(_task(), "k", "bound: compute; achieved 10 GB/s", ["h"], 3)
+    plain = prompts.plan_user(_task(), "k", "bound: compute; achieved 10 GB/s", ["h"], 3, source_fence="metal")
     for report in (
         None,
         {},
@@ -118,9 +118,9 @@ def test_a_missing_or_unknown_bound_does_not_crash_or_invent_one():
         assert bound_of(report) is None
     for bound in (None, "", "latency", "Memory", "unknown"):
         assert section_for(bound) is None
-        assert _plan(bound) == prompts.plan_user(_task(), "kernel void relu_kernel() {}", "feedback text", ["h1"], 3)
+        assert _plan(bound) == prompts.plan_user(_task(), "kernel void relu_kernel() {}", "feedback text", ["h1"], 3, source_fence="metal")
         assert MEMORY_HEADING not in _plan(bound) and COMPUTE_HEADING not in _plan(bound)
-    assert plain == prompts.plan_user(_task(), "k", "bound: compute; achieved 10 GB/s", ["h"], 3, bound=None)
+    assert plain == prompts.plan_user(_task(), "k", "bound: compute; achieved 10 GB/s", ["h"], 3, bound=None, source_fence="metal")
     assert COMPUTE_HEADING not in plain and MEMORY_HEADING not in plain
     system = prompts.system_prompt(_task(), use_tools=False)
     assert prompts.planning_system(system, None) is system
@@ -144,7 +144,7 @@ def test_a_known_bound_puts_only_the_matching_chapter_in_the_planning_request():
             assert keep not in sent and drop not in sent
             assert "## Machine model" in sent and "## Divergence, barriers and scheduling" in sent
             assert "## A suggested optimization order" in sent and "## Roofline section" in sent
-            user = prompts.plan_user(_task(), "k", "fb", [], 3, status=status, bound=bound)
+            user = prompts.plan_user(_task(), "k", "fb", [], 3, status=status, bound=bound, source_fence="metal")
             assert keep in user and drop not in user and phrase in user and other not in user
             assert user.index("noise floor") < user.index(keep) < user.index("Diagnose the dominant bottleneck")
             request = sent + "\n" + user

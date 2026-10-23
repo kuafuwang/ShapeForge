@@ -215,18 +215,22 @@ def _compute(task: Any, source: str, report: Any) -> str | None:
     return format_block(hr, measured or {}, roof, bound_beaten=bound_beaten_line(rep))
 
 
-def hw_feedback(task: Any, source: str, report: Any, *, log: Callable[[str], None] | None = None) -> str | None:
+def hw_feedback(task: Any, source: str, report: Any, *, log: Callable[[str], None] | None = None, backend_id: str = "metal") -> str | None:
     """The hardware-feature block for a correct candidate, or None.
 
     ``task`` is a ``tcenv.task.Task`` (or a task name), ``source`` the candidate's kernel text, ``report`` its ``EvalReport`` (or the dict of ``report.json``).
     Returns None for candidates that are not correct (their feedback stays as it is), for tasks without expectations and on ANY failure or timeout
     (logged as a warning): the feedback must never break or slow the search loop."""
     try:
+        from tcenv.backends.registry import load_backend
+
+        if not load_backend(backend_id).capabilities.supports_hw_features:
+            return None
         status = getattr(report, "status", None) if not isinstance(report, dict) else report.get("status")
         if status != "ok":
             return None
         sp = getattr(report, "speedup", None) if not isinstance(report, dict) else report.get("speedup")
-        key = (getattr(task, "name", str(task)), hashlib.sha1(source.encode()).hexdigest(), round(sp, 4) if isinstance(sp, (int, float)) else None)
+        key = (backend_id, getattr(task, "name", str(task)), hashlib.sha1(source.encode()).hexdigest(), round(sp, 4) if isinstance(sp, (int, float)) else None)
         if key in _CACHE:
             return _CACHE[key]
         text = _run_with_timeout(lambda: _compute(task, source, report), TIME_LIMIT_S)

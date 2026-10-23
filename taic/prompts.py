@@ -127,7 +127,7 @@ def initial_user(task: Task, *, language_label: str = "MSL") -> str:
 
 
 # 修补轮。评测在编译、ABI、安全或正确性上失败后，把反馈塞回，并要求整颗内核放进一个 metal 块。次数用尽仍不合格，这颗候选作废，当前种子不动。
-def repair_user(feedback: str, attempt: int, max_tries: int, *, source_fence: str = "metal") -> str:
+def repair_user(feedback: str, attempt: int, max_tries: int, *, source_fence: str) -> str:
     return (
         f"The evaluation of your kernel failed (repair attempt {attempt}/{max_tries}).\n\n{feedback}\n\n"
         f"Fix the problem and reply with the complete corrected kernel in one ```{source_fence} block."
@@ -164,7 +164,7 @@ def _roofline_notes(bound: str | None) -> str:
 
 # 一轮的诊断加规划：从 roofline、流水线统计和源码指出主导瓶颈，再要 K 份互不相同的方案（JSON）。抽不出 JSON 时不在这里收场，编排器会重试或改用 FALLBACK_PLANS。
 # bound 为 memory 或 compute 时，只在这条用户消息里附上对应的那一节。其它值不附，也不改原句。
-def plan_user(task: Task, best_source: str, best_feedback: str, history: list[str], k: int, mixed: bool = False, status: str = "", bound: str | None = None, history_block: str | None = None, *, source_fence: str = "metal") -> str:
+def plan_user(task: Task, best_source: str, best_feedback: str, history: list[str], k: int, mixed: bool = False, status: str = "", bound: str | None = None, history_block: str | None = None, *, source_fence: str) -> str:
     # 只带最近 24 条尝试。history_block 非空时用它替换这一段；为空时字节与原来一致。
     hist = history_block if history_block is not None else ("\n".join(f"- {h}" for h in history[-24:]) or "- (none yet)")
     # 混合规划时最后一份是低风险局部改动；否则 K 份都要求是结构性的，避免分支挤在同一种微调上。
@@ -195,7 +195,7 @@ def plan_user(task: Task, best_source: str, best_feedback: str, history: list[st
 
 
 # 一路分支的补丁。只落实这一份 plan。上一颗种子已经保存；这一支交回的文件和种子相同，搜索记为 unchanged，不算合格。回复仍是完整内核的一个 metal 块。
-def patch_user(task: Task, best_source: str, best_feedback: str, plan: dict, status: str = "", *, source_fence: str = "metal") -> str:
+def patch_user(task: Task, best_source: str, best_feedback: str, plan: dict, status: str = "", *, source_fence: str) -> str:
     text = (
         f"Current best kernel for `{task.name}` ({task.dtype}):\n```{source_fence}\n{best_source.rstrip()}\n```\n\n"
         f"Evaluation feedback of this kernel:\n{best_feedback}\n\n"

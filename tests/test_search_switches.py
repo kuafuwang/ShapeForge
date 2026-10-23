@@ -28,12 +28,12 @@ def test_switches_default_off_and_do_not_change_the_prompt_text():
     assert SearchConfig().harness_shadow is True
     assert LLMConfig(base_url="http://x", api_key="k", model="m").truncation_retry is True
     task = _task()
-    plain = plan_user(task, "kernel void relu_kernel() {}", "feedback", ["round 1: A -> 1.100x (new best)"], 3)
-    assert plan_user(task, "kernel void relu_kernel() {}", "feedback", ["round 1: A -> 1.100x (new best)"], 3, status="") == plain
+    plain = plan_user(task, "kernel void relu_kernel() {}", "feedback", ["round 1: A -> 1.100x (new best)"], 3, source_fence="metal")
+    assert plan_user(task, "kernel void relu_kernel() {}", "feedback", ["round 1: A -> 1.100x (new best)"], 3, status="", source_fence="metal") == plain
     assert "noise floor" not in plain
     plan = {"title": "A", "change": "do A"}
-    assert "noise floor" not in patch_user(task, "kernel void relu_kernel() {}", "feedback", plan)
-    told = plan_user(task, "kernel void relu_kernel() {}", "feedback", [], 3, status=status_lines(rnd=2, max_rounds=12, patience_left=3, spent=1.5, budget=3, required_gain=1.014))
+    assert "noise floor" not in patch_user(task, "kernel void relu_kernel() {}", "feedback", plan, source_fence="metal")
+    told = plan_user(task, "kernel void relu_kernel() {}", "feedback", [], 3, status=status_lines(rnd=2, max_rounds=12, patience_left=3, spent=1.5, budget=3, required_gain=1.014), source_fence="metal")
     assert "at least 1.4% faster" in told and "Round 2/12" in told and "spent $1.50 of $3.00" in told
     assert told.index("noise floor") < told.index("Diagnose the dominant bottleneck")
 
