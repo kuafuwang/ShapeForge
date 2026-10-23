@@ -39,7 +39,13 @@ def block(name: str, mutate=None, source: str | None = None, task: str | None = 
     if mutate:
         mutate(rep)
     t = get_task(task or idx["task"], idx["dtype"], idx["size"])
-    return hf.hw_feedback(t, src if source is None else source, EvalReport.from_json(rep))
+    return hf.hw_feedback(t, src if source is None else source, EvalReport.from_json(rep), backend_id="metal")
+
+
+def test_a_non_metal_backend_does_not_run_the_metal_analysis():
+    idx, src, rep = G.fixture("fa_flash_best")
+    t = get_task(idx["task"], idx["dtype"], idx["size"])
+    assert hf.hw_feedback(t, src, EvalReport.from_json(rep), backend_id="other") is None
 
 
 def lines_of(text: str) -> list[str]:
@@ -211,9 +217,9 @@ def test_too_many_fragments_and_the_register_pressure_limit_are_warned_about():
 def test_failed_candidates_and_unknown_tasks_get_no_block():
     assert block("compile_error") is None
     idx, src, rep = G.fixture("relu_best")
-    assert hf.hw_feedback(get_task("sem_gemm_neg", "fp16", "paper"), src, EvalReport.from_json(rep)) is None  # no expectations for the semantic tests
+    assert hf.hw_feedback(get_task("sem_gemm_neg", "fp16", "paper"), src, EvalReport.from_json(rep), backend_id="metal") is None  # no expectations for the semantic tests
     bad = dict(rep, status="incorrect")
-    assert hf.hw_feedback(get_task("relu", "fp16", "paper"), src, EvalReport.from_json(bad)) is None
+    assert hf.hw_feedback(get_task("relu", "fp16", "paper"), src, EvalReport.from_json(bad), backend_id="metal") is None
 
 
 def test_any_failure_returns_none_logs_a_warning_and_never_raises(monkeypatch, caplog):
@@ -226,7 +232,7 @@ def test_any_failure_returns_none_logs_a_warning_and_never_raises(monkeypatch, c
     idx, src, rep = G.fixture("fa_pro_best")
     t = get_task("flash_attention", "fp16", "paper")
     with caplog.at_level("WARNING", logger="taic.hwfeedback"):
-        assert hf.hw_feedback(t, src, EvalReport.from_json(rep), log=seen.append) is None
+        assert hf.hw_feedback(t, src, EvalReport.from_json(rep), log=seen.append, backend_id="metal") is None
     assert any("hw_feedback skipped: RuntimeError: detector exploded" in m for m in seen) and "hw_feedback skipped" in caplog.text
 
 
@@ -235,7 +241,7 @@ def test_a_slow_analysis_is_abandoned_after_the_time_limit(monkeypatch):
     monkeypatch.setattr(hf, "_compute", lambda *a: time.sleep(5))
     idx, src, rep = G.fixture("fa_pro_best")
     t0 = time.time()
-    assert hf.hw_feedback(get_task("flash_attention", "fp16", "paper"), src, EvalReport.from_json(rep)) is None
+    assert hf.hw_feedback(get_task("flash_attention", "fp16", "paper"), src, EvalReport.from_json(rep), backend_id="metal") is None
     assert time.time() - t0 < 2.0
 
 

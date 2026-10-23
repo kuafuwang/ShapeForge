@@ -62,7 +62,7 @@ def test_diverse_parent_is_none_until_features_differ():
     other = "kernel void k() { simdgroup_matrix<float, 8, 8> acc[4]; simdgroup_multiply_accumulate(acc[0], acc[0], acc[0], acc[0]); }\n"
     best = _Cand(same, 1.0, "seed")
     close = _Cand(same + "\n", 0.99, "near")
-    assert feature_signature(same)[0] is False
+    assert feature_signature(same, backend_id="metal")[0] is False
     parent = select_diverse_parent([best, close, _Cand(other, 0.9, "alt")], best)
     assert parent is not None and parent.label == "alt"
 

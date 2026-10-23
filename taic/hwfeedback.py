@@ -1,6 +1,6 @@
 """Hardware-feature hints for the planner and the patch authors (``search.hw_feedback``, off by default).
 
-``hw_feedback(task, source, report)`` turns the static hardware-feature analysis of ``taic.hwfeatures`` (source, compiled AIR, the candidate's measured
+``hw_feedback(task, source, report, backend_id="metal")`` turns the static hardware-feature analysis of ``taic.hwfeatures`` (source, compiled AIR, the candidate's measured
 roofline) into a SHORT text block that the orchestrator appends to the evaluation feedback of a correct seed, in the place where the profiler evidence
 goes. The block states which Apple-GPU features the kernel uses, which features that are expected for the task class are missing (one concrete hint
 each) and says plainly that the missing items are hints, not requirements. Kernels that already sit at about 90 % of the roofline get no list of
@@ -215,7 +215,7 @@ def _compute(task: Any, source: str, report: Any) -> str | None:
     return format_block(hr, measured or {}, roof, bound_beaten=bound_beaten_line(rep))
 
 
-def hw_feedback(task: Any, source: str, report: Any, *, log: Callable[[str], None] | None = None, backend_id: str = "metal") -> str | None:
+def hw_feedback(task: Any, source: str, report: Any, *, log: Callable[[str], None] | None = None, backend_id: str) -> str | None:
     """The hardware-feature block for a correct candidate, or None.
 
     ``task`` is a ``tcenv.task.Task`` (or a task name), ``source`` the candidate's kernel text, ``report`` its ``EvalReport`` (or the dict of ``report.json``).
@@ -263,9 +263,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--size", default="paper")
     ap.add_argument("--source", required=True, help="candidate kernel source (.metal, without the contract header)")
     ap.add_argument("--report", required=True, help="the candidate's report.json from a run directory")
+    ap.add_argument("--backend", default="metal", help="target backend for the capability gate")
     a = ap.parse_args(argv)
     task = hw._get_task(a.task, a.dtype, a.size)
-    text = hw_feedback(task, Path(a.source).read_text(), EvalReport.from_json(json.loads(Path(a.report).read_text())))
+    text = hw_feedback(task, Path(a.source).read_text(), EvalReport.from_json(json.loads(Path(a.report).read_text())), backend_id=a.backend)
     print(text if text is not None else "(no block: the candidate is not correct, the task has no expectations, or the analysis failed; see the warning above)")
     return 0
 

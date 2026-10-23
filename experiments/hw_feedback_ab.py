@@ -100,6 +100,7 @@ def analyze(run_dir: Path, *, would_be: bool | None = None) -> dict:
     run_dir = Path(run_dir)
     doc = _read(run_dir / "result.json") or _read(run_dir / "state.json") or {}
     task_name, dtype, size = doc.get("task"), doc.get("dtype") or "fp16", doc.get("size") or "paper"
+    backend_id = doc.get("backend") or "metal"
     task = hw._get_task(task_name, dtype, size)
     chats = _chats(run_dir)
     by_sha: dict[str, tuple[str, dict | None]] = {}
@@ -125,7 +126,7 @@ def analyze(run_dir: Path, *, would_be: bool | None = None) -> dict:
         bm = re.search(re.escape(HEADER) + r".*?decides\.", user, re.S)
         block, source_of_list = (bm.group(0), "recorded in the planner request") if bm else (None, "")
         if (block is None) and (would_be is not False) and seed_src and seed_rep and seed_rep.get("status") == "ok":
-            block = hf.hw_feedback(task, seed_src, EvalReport.from_json(seed_rep))
+            block = hf.hw_feedback(task, seed_src, EvalReport.from_json(seed_rep), backend_id=backend_id)
             source_of_list = "computed from the seed (not shown to the model)"
         listed = listed_features(block) if block else []
         plans = _plans_of(chats, rnd)

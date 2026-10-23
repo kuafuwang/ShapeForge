@@ -158,7 +158,7 @@ def patience_exhausted(stagnant: int, patience: int) -> bool:
     return stagnant >= patience
 
 
-def feature_signature(source: str, *, backend_id: str = "metal") -> tuple:
+def feature_signature(source: str, *, backend_id: str) -> tuple:
     """Seven static source features. No compiler and no GPU; only Metal implements them."""
     try:
         from tcenv.backends.registry import load_backend

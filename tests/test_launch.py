@@ -171,7 +171,7 @@ kernel void unused() { simdgroup_multiply_accumulate(a, b, c, d); }
 kernel void used(uint i [[thread_position_in_grid]]) {}
 """
     assert analyze_source(source, kernel_name="unused")["matrix"]["present"] is True
-    assert feature_signature(source)[0] is False
+    assert feature_signature(source, backend_id="metal")[0] is False
 
 
 def test_a_later_bench_iteration_fills_the_same_workspace_again():
