@@ -679,9 +679,10 @@ def summary_from_index(conn, *, task: str | None = None, model: str | None = Non
         for row in conn.execute(
             f"""
             SELECT c.run_id, c.seq, c.digest, c.section, c.audience, c.premise, c.status, c.verification, c.topic,
-                   c.change_ref, c.reviewed_at, i.task, i.model, i.label, i.kinds, i.t
+                   c.change_ref, c.reviewed_at, i.task, i.model, i.label, i.kinds, i.t, r.target_id
             FROM feedback_claims c
             JOIN feedback_items i ON i.run_id = c.run_id AND i.seq = c.seq
+            LEFT JOIN runs r ON r.run_id = c.run_id
             WHERE {' AND '.join(where)}
             ORDER BY i.t DESC, c.seq DESC
             """,
@@ -739,6 +740,92 @@ def summary_from_index(conn, *, task: str | None = None, model: str | None = Non
     return {"pending_total": pending_total, "frequent": frequent, "recurrence": recurrence, "items": items}
 
 
+def prior_claims(conn, *, digest: str, task: str, target_id: str, before_t: float | None = None, exclude_run: str = "", exclude_seq: int | None = None, limit: int = 5) -> list[dict]:
+    """Earlier claims with the same digest in the same task and target.
+
+    This is an exact-text lookup, not semantic similarity. It is deliberately scoped:
+    a different task or backend is not evidence for this one, and a rephrased claim
+    gets a new digest. The returned note/evidence comes from the earlier review file;
+    the index remains the cheap source for status and change_ref.
+    """
+    if not digest or not task or not target_id:
+        return []
+    query = """
+        SELECT c.run_id, c.seq, c.digest, c.status, c.verification, c.topic,
+               c.change_ref, c.reviewed_at, i.task, i.model, i.t, r.target_id
+        FROM feedback_claims c
+        JOIN feedback_items i ON i.run_id = c.run_id AND i.seq = c.seq
+        LEFT JOIN runs r ON r.run_id = c.run_id
+        WHERE c.digest = ? AND i.task = ? AND r.target_id = ?
+    """
+    params: list[object] = [digest, task, target_id]
+    if before_t is not None:
+        query += " AND i.t < ?"
+        params.append(float(before_t))
+    query += " ORDER BY COALESCE(c.reviewed_at, i.t) DESC, i.t DESC"
+    rows = []
+    for row in conn.execute(query, params):
+        item = dict(row)
+        if item["run_id"] == exclude_run and item["seq"] == exclude_seq:
+            continue
+        rows.append(item)
+        if len(rows) >= max(1, int(limit)):
+            break
+    if not rows:
+        return []
+    from .detail import resolve_run
+
+    cache: dict[str, dict] = {}
+    for item in rows:
+        run_id = str(item["run_id"])
+        if run_id not in cache:
+            directory = resolve_run(run_id)
+            cache[run_id] = _load_review(directory / "feedback_review.json")["claims"] if directory is not None else {}
+        saved = cache[run_id].get(f"{item['seq']}:{item['digest']}") or {}
+        item["note"] = str(saved.get("note") or "")
+        item["evidence"] = str(saved.get("evidence") or "")
+        item["evidence_source"] = str(saved.get("evidence_source") or "")
+        item["subclaims"] = list(saved.get("subclaims") or [])
+    return rows
+
+
+def _prior_summary(rows: list[dict]) -> str:
+    if not rows:
+        return ""
+    counts: dict[str, int] = {}
+    for row in rows:
+        status = str(row.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    parts = [f"{name}×{count}" if count > 1 else name for name, count in sorted(counts.items())]
+    return "此前 " + "、".join(parts)
+
+
+def attach_prior_claims(conn, rows: list[dict]) -> None:
+    """Attach exact-digest earlier verdicts to review rows. Mutates the rows in place."""
+    cache: dict[tuple[str, str, str, float | None], list[dict]] = {}
+    for row in rows:
+        digest = str(row.get("digest") or "")
+        task = str(row.get("task") or "")
+        target_id = str(row.get("target_id") or "")
+        if not digest or not task or not target_id:
+            row["prior"] = []
+            row["prior_summary"] = ""
+            continue
+        current_t = row.get("t")
+        key = (digest, task, target_id, current_t)
+        if key not in cache:
+            cache[key] = prior_claims(
+                conn, digest=digest, task=task, target_id=target_id,
+                before_t=current_t, limit=6,
+            )
+        prior = [
+            item for item in cache[key]
+            if not (item.get("run_id") == row.get("run_id") and item.get("seq") == row.get("seq"))
+        ]
+        row["prior"] = prior
+        row["prior_summary"] = _prior_summary(prior)
+
+
 def review_board(conn, *, task: str | None = None, model: str | None = None, kind: str | None = None, status: str | None = None) -> dict:
     """Every review claim across runs, with the text that lives in the run directory.
 
@@ -785,6 +872,7 @@ def review_board(conn, *, task: str | None = None, model: str | None = None, kin
             row["committee"] = record.get("committee") or ""
             row["report"] = record.get("report")
             row["report_path"] = record.get("report_path") or ""
+    attach_prior_claims(conn, summary["items"])
     return {"pending_total": summary["pending_total"], "calibration": calibration, "items": summary["items"]}
 
 
@@ -916,6 +1004,7 @@ def review_feed(conn, *, since: int | None = None) -> dict:
         ]
         snapshot = False
     calibration = _attach_claim_text(rows)
+    attach_prior_claims(conn, rows)
     return {
         "same": False,
         "snapshot": snapshot,

@@ -247,10 +247,12 @@ def detail(run_id: str, seq: int, digest: str) -> dict:
         raise FileNotFoundError(run_id)
     records = feedback.entries(directory).get("records", [])
     source = None
+    source_record = None
     for record in records:
         for item in record.get("claims", []):
             if int(item.get("seq") or 0) == int(seq) and str(item.get("digest") or "") == str(digest):
                 source = item
+                source_record = record
                 break
         if source:
             break
@@ -282,6 +284,32 @@ def detail(run_id: str, seq: int, digest: str) -> dict:
     ), None)
     if started is None:
         started = source.get("session_started")
+    task = str((source_record or {}).get("task") or "")
+    target_id = str((source_record or {}).get("target_id") or "")
+    item_t = (source_record or {}).get("t")
+    prior: list[dict] = []
+    if not task or not target_id:
+        with borrow() as index:
+            indexed = index.conn.execute(
+                """
+                SELECT i.task, i.t, r.target_id
+                FROM feedback_claims c
+                JOIN feedback_items i ON i.run_id = c.run_id AND i.seq = c.seq
+                LEFT JOIN runs r ON r.run_id = c.run_id
+                WHERE c.run_id = ? AND c.seq = ? AND c.digest = ?
+                """,
+                (run_id, int(seq), str(digest)),
+            ).fetchone()
+        if indexed is not None:
+            task = task or str(indexed["task"] or "")
+            target_id = target_id or str(indexed["target_id"] or "")
+            item_t = item_t if item_t is not None else indexed["t"]
+    if task and target_id:
+        with borrow() as index:
+            prior = feedback.prior_claims(
+                index.conn, digest=str(digest), task=task, target_id=target_id,
+                before_t=item_t, exclude_run=run_id, exclude_seq=int(seq),
+            )
     return {
         "run_id": run_id,
         "seq": int(seq),
@@ -294,4 +322,5 @@ def detail(run_id: str, seq: int, digest: str) -> dict:
         "converted_key": proposal.get("proposal_key") if proposal else "",
         "proposal": proposal,
         "reviews": reviews,
+        "prior": prior,
     }

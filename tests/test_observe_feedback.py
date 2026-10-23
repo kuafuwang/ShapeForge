@@ -134,6 +134,34 @@ def test_review_board_lists_every_run_with_the_claim_text(tmp_path, monkeypatch)
     assert 'window.open("/reviews"' in html
     assert 'params.set("since"' in html
     assert "patchReviewDom" in html
+    assert "priorMarkup" in html and "此前结论" in html
+
+
+def test_a_review_shows_prior_exact_digest_verdicts_scoped_to_task_and_target(tmp_path, monkeypatch):
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = _parsed()
+    first = _run(runs, "conv", _record(parsed, t=10), started_at=50)
+    second = _run(runs, "conv2", _record(parsed, t=20), started_at=80)
+    index.sync_known()
+    premise = _digest("被否决的前提")
+    review_feedback("conv", 1, premise, {
+        "status": "rejected", "verification": "refuted", "note": "same probe measured the other question",
+    })
+    index.refresh_feedback("conv", first)
+    board = review_board(index.conn, status="pending")
+    row = next(item for item in board["items"] if item["run_id"] == "conv2" and item["digest"] == premise)
+    assert row["prior_summary"] == "此前 rejected"
+    assert row["prior"][0]["run_id"] == "conv" and row["prior"][0]["status"] == "rejected"
+    assert "other question" in row["prior"][0]["note"]
+    feed = review_feed(index.conn, since=None)
+    fed = next(item for item in feed["upserts"] if item["run_id"] == "conv2" and item["digest"] == premise)
+    assert fed["prior"][0]["run_id"] == "conv"
+    from observe.suggestions import detail
+    full = detail("conv2", 1, premise)
+    assert full["prior"][0]["run_id"] == "conv" and full["prior"][0]["status"] == "rejected"
+    # The current row is not its own prior.
+    current = next(item for item in feed["upserts"] if item["run_id"] == "conv" and item["digest"] == premise)
+    assert current["prior"] == []
 
 
 def test_a_grown_log_is_read_from_the_cursor_and_a_review_does_not_reread_it(tmp_path, monkeypatch):

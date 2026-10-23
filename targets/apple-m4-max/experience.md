@@ -17,6 +17,16 @@ Confidence: verified
 边界: 只覆盖 fp16 与本机（M4 Max）的寄存器文件；换成半分块或更小的 BLOCK 时片段数会变。惩罚幅度随核和契约变化，同核 conv2d 对照是 1.55x，不等于上一条的 12–26x。
 反例: 把 K 维切得更细、用 threadgroup 做中间累加，可以既保留大 tile 又不让片段数越界。
 
+## 矩阵单元与 SIMT ALU 的 fp32 吞吐相近，工作相加
+
+Keywords: matrix simdgroup fp32 fma simt throughput additive operand reuse
+Confidence: verified
+观察: 本机 fp32 8x8x8 simdgroup MMA 的吞吐与 fp32 SIMT FMA 相近；两种工作混跑时时间相加，不重叠。矩阵单元对 fp32 不是额外的一份算力，真正的红利是操作数复用。
+来源: `runs/apple-m4-max/conv2d-feedback-20261021/agent_work/r11.p0/probe_mix.py`、同目录 `NOTES.md`
+本机实测: 8 warp 全 MMA 12.62 TFLOP/s，4 warp 全 MMA 14.34，8 warp 全 FMA 13.7；4 MMA + 4 FMA warp 混跑 `t_mix/(t_mma+t_fma)=1.01`，另两组配比也相加。
+边界: 只覆盖 M4 Max 的 fp32 8x8x8 路径与这组 warp 配比；不能据此推断 fp16、其他矩阵形状或所有 ALU 指令的比例。
+反例: 若核的瓶颈是 DRAM、threadgroup 带宽或指令发射而不是 fp32 乘加吞吐，换矩阵单元/ALU 的配比不会改变总时间。
+
 ## 启动契约能把同一颗核拉开 1.6 倍
 
 Keywords: launch contract grid threads flash attention tile choose variant

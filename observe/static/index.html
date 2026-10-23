@@ -173,6 +173,9 @@
   .fb-group.fb-measured h4 { color: #176b3a; }
   .fb-group.fb-unverified h4 { color: #8a6d1f; }
   .fb-subclaims { margin-top: 6px; border-top: 1px dashed var(--line); padding-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+  .fb-prior { margin-top: 6px; border-top: 1px dashed var(--line); padding-top: 6px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+  .fb-prior-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+  .fb-prior-row .sub { flex-basis: 100%; color: var(--muted); }
   .fb-subclaim { display: flex; flex-wrap: wrap; gap: 4px; font-size: 12px; }
   .fb-subclaim .sub { width: 100%; color: var(--muted); }
   .badge.fb-pending { background: #fde047; color: #4a3b00; }
@@ -542,6 +545,17 @@ function subclaimsMarkup(claim) {
   return `<div class="fb-subclaims">${subs.map((sub) => `<div class="fb-subclaim"><span class="badge${reviewStatusClass(sub.status)}">${esc(sub.status || "")}</span><span class="badge">${esc([sub.backend, sub.target_id].filter(Boolean).join(" / ") || "scope unknown")}</span><span>${esc(sub.text || "")}</span>${sub.note ? `<div class="sub">${esc(sub.note)}</div>` : ""}</div>`).join("")}</div>`;
 }
 
+function priorMarkup(item) {
+  const priors = item.prior || [];
+  if (!priors.length) return "";
+  const rows = priors.map((prior) => {
+    const note = prior.note || prior.evidence || "";
+    const ref = prior.change_ref ? `<span class="badge">${esc(prior.change_ref)}</span>` : "";
+    return `<div class="fb-prior-row"><span class="badge${reviewStatusClass(prior.status)}">${esc(prior.status || "")}</span><span>${esc(prior.run_id || "")}#${esc(prior.seq)}</span>${ref}${note ? `<div class="sub">${esc(note)}</div>` : ""}</div>`;
+  }).join("");
+  return `<div class="fb-prior"><strong>${esc(item.prior_summary || "此前结论")}</strong>${rows}</div>`;
+}
+
 function reviewCard(item) {
   const key = reviewKey(item);
   const handle = item.status === "info" ? "" : `<button type="button" class="feedback-open" data-key="${esc(key)}">处理</button>`;
@@ -549,7 +563,7 @@ function reviewCard(item) {
   const statusClass = item.status === "pending" ? " fb-pending" : (item.status === "info" ? " fb-info" : "");
   const scope = [item.backend, item.target_id].filter(Boolean).join(" / ");
   const meta = [scope, item.label, item.model, item.committee, item.round != null ? "第 " + item.round + " 轮" : ""].filter((part) => part != null && part !== "").join(" · ");
-  return `<article class="review-card fb-claim fb-${esc(tone)}" data-key="${esc(key)}"><div class="fb-claim-head"><span class="fb-kind">${esc(item.section)}</span> <span class="badge">${esc(item.premise || item.audience)}</span> <span class="badge${statusClass}">${esc(item.status)}</span> ${handle}</div><p class="fb-meta">${esc(meta)}</p><pre class="excerpt">${esc(item.text || "")}</pre>${subclaimsMarkup(item)}</article>`;
+  return `<article class="review-card fb-claim fb-${esc(tone)}" data-key="${esc(key)}"><div class="fb-claim-head"><span class="fb-kind">${esc(item.section)}</span> <span class="badge">${esc(item.premise || item.audience)}</span> <span class="badge${statusClass}">${esc(item.status)}</span> ${handle}</div><p class="fb-meta">${esc(meta)}</p><pre class="excerpt">${esc(item.text || "")}</pre>${subclaimsMarkup(item)}${priorMarkup(item)}</article>`;
 }
 
 function bindReviewOpens(host) {
@@ -1311,7 +1325,7 @@ function feedbackMarkup(doc) {
       const handle = claim.status === "info" ? "" : `<button type="button" class="feedback-open" data-seq="${esc(claim.seq)}" data-digest="${esc(claim.digest)}">处理</button>`;
       const tone = claim.audience === "system" || claim.audience === "peer" || claim.audience === "diagnostic" ? claim.audience : "system";
       const statusClass = claim.status === "pending" ? " fb-pending" : (claim.status === "info" ? " fb-info" : "");
-      return `<article class="fb-claim fb-${esc(tone)}"><div class="fb-claim-head"><span class="fb-kind">${esc(claim.section)}</span> <span class="badge">${esc([claim.backend, claim.target_id].filter(Boolean).join(" / ") || "scope unknown")}</span> <span class="badge">${esc(claim.premise || claim.audience)}</span> <span class="badge${statusClass}">${esc(claim.status)}</span> ${handle}</div><pre class="excerpt">${esc(claim.text)}</pre>${subclaimsMarkup(claim)}</article>`;
+      return `<article class="fb-claim fb-${esc(tone)}"><div class="fb-claim-head"><span class="fb-kind">${esc(claim.section)}</span> <span class="badge">${esc([claim.backend, claim.target_id].filter(Boolean).join(" / ") || "scope unknown")}</span> <span class="badge">${esc(claim.premise || claim.audience)}</span> <span class="badge${statusClass}">${esc(claim.status)}</span> ${handle}</div><pre class="excerpt">${esc(claim.text)}</pre>${subclaimsMarkup(claim)}${priorMarkup(claim)}</article>`;
     };
     const buckets = { measured: [], unverified: [], other: [] };
     for (const claim of record.claims || []) {
