@@ -276,6 +276,9 @@ def test_a_subclaim_text_can_match_an_earlier_subclaim(tmp_path, monkeypatch):
     index.sync_known()
     row = next(item for item in review_board(index.conn)["items"] if item["run_id"] == "conv2" and item["digest"] == second_digest)
     assert any(prior["run_id"] == "conv" and prior["text"] == "shared open subclaim" for prior in row["prior"])
+    from observe.suggestions import detail
+    full = detail("conv2", 1, second_digest)
+    assert any(prior["run_id"] == "conv" and prior["text"] == "shared open subclaim" for prior in full["prior"])
 
 
 def test_a_review_shows_prior_exact_digest_verdicts_scoped_to_task_and_target(tmp_path, monkeypatch):

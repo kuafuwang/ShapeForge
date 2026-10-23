@@ -305,13 +305,25 @@ def detail(run_id: str, seq: int, digest: str) -> dict:
             target_id = target_id or str(indexed["target_id"] or "")
             item_t = item_t if item_t is not None else indexed["t"]
     similar: list[dict] = []
+    prior: list[dict] = []
     if task and target_id:
+        texts = [str(source.get("text") or "")]
+        texts.extend(str(sub.get("text") or "") for sub in source.get("subclaims") or [] if isinstance(sub, dict))
         with borrow() as index:
-            prior = feedback.prior_claims(
-                index.conn, digest=str(digest), task=task, target_id=target_id,
-                text=str(source.get("text") or ""), before_t=item_t,
-                exclude_run=run_id, exclude_seq=int(seq),
-            )
+            merged: dict[tuple, dict] = {}
+            for text in dict.fromkeys(texts):
+                for item in feedback.prior_claims(
+                    index.conn, digest=str(digest), task=task, target_id=target_id,
+                    text=text, before_t=item_t,
+                    exclude_run=run_id, exclude_seq=int(seq),
+                ):
+                    identity = (item.get("run_id"), item.get("seq"), item.get("digest"), item.get("sub_index"))
+                    merged.setdefault(identity, item)
+            prior = sorted(
+                merged.values(),
+                key=lambda item: (float(item.get("reviewed_at") or item.get("t") or 0), str(item.get("run_id") or "")),
+                reverse=True,
+            )[:5]
             similar = feedback.similar_claims(
                 index.conn, digest=str(digest), task=task, target_id=target_id,
                 text=str(source.get("text") or ""), before_t=item_t,
