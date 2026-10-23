@@ -756,7 +756,7 @@ class Orchestrator:
     def _save(self, c: Candidate) -> None:
         d = self.run_dir / "candidates" / f"{c.idx:03d}_{c.label}"
         d.mkdir(parents=True, exist_ok=True)
-        (d / "kernel.metal").write_text(c.source)
+        (d / self.kernel_name).write_text(c.source)
         if c.report:
             if self.best is not None and self.best.report is not None and self.best is not c:
                 seed_gpu = self.best.report.benchmark.get("candidate_gpu_us_median")
@@ -910,7 +910,7 @@ class Orchestrator:
                 case = item.get("case")
                 break
         tolerance = (rep.correctness or {}).get("tolerance") or {"rtol": self.task.rtol, "atol_rel": self.task.atol_rel, "exact": self.task.exact}
-        kernel_path = f"candidates/{cand.idx:03d}_{cand.label}/kernel.metal"
+        kernel_path = f"candidates/{cand.idx:03d}_{cand.label}/{self.kernel_name}"
         command = f"uv run python -m tcenv.cli eval {self.task_name} {kernel_path} --dtype {self.dtype} --size {self.size} --quick --seed {recheck_seed}"
         kind = rep.status if rep.status in ("incorrect", "unsafe", "timeout", "crash") else "other"
         return {
@@ -1018,6 +1018,15 @@ class Orchestrator:
             return self._round < self.search.max_rounds
         return False
 
+    @property
+    def kernel_name(self) -> str:
+        ext = self.target.file_ext or ".metal"
+        return f"kernel{ext if str(ext).startswith('.') else '.' + str(ext)}"
+
+    @property
+    def best_name(self) -> str:
+        return "best" + self.kernel_name[len("kernel"):]
+
     # --from 只在 best.metal 存在、且 result.json 里的题和这次一致时才把源码交回来。对不上或没有文件就返回 None，调用方从头写。
     def _prior_kernel_text(self) -> str | None:
         """The previous run's ``best.metal`` when it belongs to this task, else None. The caller re-evaluates it."""
@@ -1026,10 +1035,8 @@ class Orchestrator:
 
             folder = catalog_dir(self.target_id, self.task_name, self.dtype, self.size)
             ext = self.target.file_ext or ".metal"
-            if not str(ext).startswith("."):
-                ext = "." + str(ext)
             found = sorted(folder.glob("best.*"))
-            metal = folder / f"best{ext}"
+            metal = folder / self.best_name
             if not metal.is_file() and found:
                 metal = found[0]
             if not metal.is_file():
@@ -1042,9 +1049,9 @@ class Orchestrator:
         if not self._same_target(root):
             self.log(f"-- --from {root} is not target {self.target_id}; writing the first version from scratch")
             return None
-        metal = root / "best.metal"
+        metal = root / self.best_name
         if not metal.is_file():
-            self.log(f"-- --from {root}: no best.metal; writing the first version from scratch")
+            self.log(f"-- --from {root}: no {self.best_name}; writing the first version from scratch")
             return None
         recorded = root / "result.json"
         if recorded.is_file():
@@ -1060,7 +1067,7 @@ class Orchestrator:
                 self.log(f"-- --from {root}: not this task ({'; '.join(mismatch)}); writing the first version from scratch")
                 return None
         else:
-            self.log(f"-- --from {root}: no result.json; re-evaluating best.metal on {self.task_name} {self.dtype} {self.size}")
+            self.log(f"-- --from {root}: no result.json; re-evaluating {self.best_name} on {self.task_name} {self.dtype} {self.size}")
         return metal.read_text()
 
     # 初始生成，然后进入逐轮「诊断 → 规划 → K 路补丁」。只有 _eval 认定安全、算对且快过噪声的候选才会变成下一轮种子。
@@ -1071,12 +1078,12 @@ class Orchestrator:
         if self.from_run is not None:
             source = self._prior_kernel_text()
             if source is not None:
-                self.log(f"-- re-evaluating {self.from_run / 'best.metal'} on {self.task_name} {self.dtype} {self.size}")
+                self.log(f"-- re-evaluating {self.from_run / self.best_name} on {self.task_name} {self.dtype} {self.size}")
                 await self._eval(source, "prior")
                 if self.best:
                     self.log(f"-- seed is that kernel at {self.best.speedup:.3f}x (measured now); skipping the first draft")
                 else:
-                    self.log(f"-- {self.from_run / 'best.metal'} is no longer eligible; writing the first version from scratch")
+                    self.log(f"-- {self.from_run / self.best_name} is no longer eligible; writing the first version from scratch")
         # 初始生成最多重开 INITIAL_RESTARTS 次。一次都没有合格种子就停，原因是 no_valid_initial_kernel，后面的轮次不会开始。
         if not self.best:
             await self._initial_generation()
@@ -1121,20 +1128,20 @@ class Orchestrator:
             runs = REPO_ROOT / "runs"
             roots = [runs] if runs.is_dir() else []
         texts: set[str] = set()
-        from_path = (self.from_run / "best.metal") if self.from_run is not None else None
+        from_path = (self.from_run / self.best_name) if self.from_run is not None else None
         if from_path is not None and from_path.is_file():
             self._from_text = from_path.read_text()
         for root in roots:
             if not root.is_dir():
                 continue
-            for path in list(root.glob("*/candidates/*/kernel.metal")) + list(root.glob("*/*/candidates/*/kernel.metal")):
+            for path in list(root.glob(f"*/candidates/*/{self.kernel_name}")) + list(root.glob(f"*/*/candidates/*/{self.kernel_name}")):
                 if self.run_dir in path.parents or not self._same_target(path.parents[2]):
                     continue
                 try:
                     texts.add(path.read_text())
                 except OSError:
                     continue
-            for path in list(root.glob("*/best.metal")) + list(root.glob("*/*/best.metal")):
+            for path in list(root.glob(f"*/{self.best_name}")) + list(root.glob(f"*/*/{self.best_name}")):
                 if self.run_dir in path.parents or not self._same_target(path.parent):
                     continue
                 if from_path is not None and path.resolve() == from_path.resolve():
@@ -1656,6 +1663,9 @@ class Orchestrator:
                 self.run_dir, target_id=self.target_id, task=self.task_name,
                 protocol_version=PROTOCOL_VERSION,
             )
+        from tcenv.backends.registry import load_backend
+
+        backend = load_backend(self.target.backend)
         return SessionBrief(
             repo=REPO_ROOT, task_name=self.task_name, dtype=self.dtype, size=self.size,
             kernel_name=self.task.contract.kernel_name, triton_source=self.task.triton_source,
@@ -1668,6 +1678,8 @@ class Orchestrator:
             min_improvement=self.search.min_improvement, noise_z=self.search.noise_z, seedless=seedless,
             peer_tips=tips, label=label, work_dir=str(Path(work).resolve()), guidance_dir=guidance,
             target_id=self.target_id, harness_overlay=harness_overlay,
+            file_ext=self.target.file_ext, language_label=backend.display_name,
+            source_fence=backend.source_fence, reference_skill=backend.reference_skill,
         )
 
     async def _initial_generation(self) -> None:
@@ -2057,7 +2069,7 @@ class Orchestrator:
                 res.confirmation_source_sha256 = hashlib.sha256(self._confirm_winner.source.encode("utf-8")).hexdigest()
         if self.best:
             res.best_label, res.best_speedup = self.best.label, self.best.speedup
-            (self.run_dir / "best.metal").write_text(self.best.source)
+            (self.run_dir / self.best_name).write_text(self.best.source)
         res.target_id = self.target_id
         res.backend = self.target.backend
         res.backend_version = self.target.backend_version

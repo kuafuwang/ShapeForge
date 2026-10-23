@@ -60,3 +60,12 @@ def test_the_hand_written_simdgroup_gemm_is_correct_and_fits_every_listed_contra
         bm, bn, _, th = parse(v)
         wm, wn = simdgroup_layout(bm, bn, th)
         assert wm * wn == th // 32 and (bm // wm) % 8 == 0 and (bn // wn) % 8 == 0
+
+
+def test_task_reference_sources_keep_the_metal_alias():
+    from tasks import get_task
+
+    task = get_task("relu", "fp16", "small")
+    assert task.reference_for("metal") == task.naive_msl
+    assert task.reference_sources["metal"] == task.naive_msl
+    assert task.reference_for("other") == ""

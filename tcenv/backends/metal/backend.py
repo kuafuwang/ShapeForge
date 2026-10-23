@@ -17,6 +17,10 @@ class MetalBackend:
     version = "1"
     language = "msl"
     file_ext = ".metal"
+    display_name = "Metal"
+    source_fence = "metal"
+    reference_skill = "msl_reference"
+    skill_names = ("apple_gpu_optimization", "metal_profiling", "msl_reference", "profiler_evidence", "hardware_feedback")
     capabilities = Capabilities(
         supports_launch_spec=True,
         supports_validation=True,

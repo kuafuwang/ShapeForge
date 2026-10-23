@@ -65,3 +65,18 @@ def test_rotation_sets_are_delegated():
 
     task = get_task("flash_attention", "fp16", "paper")
     assert backend.rotation_sets(task) == rotation_count(task)
+
+
+def test_metal_metadata_drives_task_rendering_names():
+    backend = load_backend("metal")
+    assert backend.display_name == "Metal"
+    assert backend.source_fence == "metal"
+    assert backend.reference_skill == "msl_reference"
+    assert backend.skill_names[2] == "msl_reference"
+
+
+def test_submission_name_accepts_a_backend_extension():
+    from taic.kernel_agent import submission_name
+
+    assert submission_name("relu", "fp16", "small", "init", ".metal") == "relu-fp16-small-init.metal"
+    assert submission_name("relu", "fp16", "small", "init", ".x") == "relu-fp16-small-init.x"

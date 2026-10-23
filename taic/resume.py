@@ -375,17 +375,32 @@ def _label_info(label: str) -> dict | None:
     return {"base": m["base"], "round": int(m["round"]), "plan": int(m["plan"]), "attempt": int(m["fix"] or 0), "turn": int(m["turn"]) if m["turn"] is not None else None}
 
 
+def _kernel_name(run_dir: Path) -> str:
+    """The candidate filename for this run's target, with the legacy fallback."""
+    try:
+        from tcenv.backends.registry import load_backend
+        from tcenv.target import load_target
+
+        doc = control.read_json(Path(run_dir) / "run_config.json") or {}
+        target_id = str((doc.get("target") or {}).get("id") or doc.get("target_id") or "apple-m4-max")
+        ext = load_backend(load_target(target_id).backend).file_ext or ".metal"
+    except Exception:
+        ext = ".metal"
+    return "kernel" + (ext if str(ext).startswith(".") else "." + str(ext))
+
+
 def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
     from tcenv.evaluate import EvalReport
     from tcenv.schema import SchemaError
 
     out = []
     root = Path(run_dir) / "candidates"
+    kernel_name = _kernel_name(run_dir)
     if not root.is_dir():
         return out
     for d in sorted(root.iterdir()):
         m = CAND_DIR_RE.match(d.name)
-        if not m or not (d / "kernel.metal").exists():
+        if not m or not (d / kernel_name).exists():
             continue
         report_path = d / "report.json"
         if not report_path.exists():
@@ -407,7 +422,7 @@ def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
                 rejected = bool(isinstance(rec, dict) and rec.get("counts_as_kernel_error"))
             except (OSError, ValueError):
                 rejected = False
-        out.append({"idx": int(m["idx"]), "label": m["label"], "source": (d / "kernel.metal").read_text(), "report": report, "plan": None, "recheck_rejected": rejected})
+        out.append({"idx": int(m["idx"]), "label": m["label"], "source": (d / kernel_name).read_text(), "report": report, "plan": None, "recheck_rejected": rejected})
     out.sort(key=lambda c: c["idx"])
     return out
 

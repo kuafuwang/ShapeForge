@@ -64,11 +64,15 @@ then EXACTLY ONE fenced code block tagged ```metal containing the complete kerne
 
 
 def system_prompt(task: Task, *, use_tools: bool, profiler_evidence: bool = False, hw_feedback: bool = False, target_id: str | None = None) -> str:
+    from tcenv.backends.registry import load_backend
+    from tcenv.target import load_target
+
+    backend = load_backend(load_target(target_id).backend)
     c = task.contract
     parts = [HARNESS_RULES, "# Target hardware and task\n", skill_text("device", target_id)]
     parts.append(task.description)
     parts.append("\nCompilation contract:\n" + c.describe())
-    parts.append("\nRequired signature skeleton:\n```metal\n" + c.abi_stub() + "\n```")
+    parts.append(f"\nRequired signature skeleton:\n```{backend.source_fence}\n" + c.abi_stub() + "\n```")
     parts.append(
         f"\nElement type: {task.dtype} (storage `{c.args[0].dtype}` buffers). Tolerance: |out - ref| <= {task.rtol} * |ref| + {task.atol_rel} * scale "
         "(scale = RMS of the reference or a task-specific condition number), relaxed to at most 2x the vendor baseline's own error."
@@ -79,14 +83,14 @@ def system_prompt(task: Task, *, use_tools: bool, profiler_evidence: bool = Fals
             "reference exactly there: NaN exactly where the reference is NaN, infinities of the same sign where it is infinite. So NaN must propagate "
             "(a comparison such as `v > 0 ? v : 0` or `max()` that silently drops a NaN is wrong), and reductions must not skip or mask non-finite values."
         )
-    parts.append("\n# Skill 1: Apple GPU optimization principles\n" + _skill("apple_gpu_optimization", target_id))
-    parts.append("\n# Skill 2: interpreting the evaluation feedback (profiling)\n" + _skill("metal_profiling", target_id))
+    parts.append("\n# Skill 1: Apple GPU optimization principles\n" + _skill(backend.skill_names[0], target_id))
+    parts.append("\n# Skill 2: interpreting the evaluation feedback (profiling)\n" + _skill(backend.skill_names[1], target_id))
     # 只有反馈可能带上 Instruments 痕迹时才多这一段。其它运行必须保持提示字节不变，否则前缀缓存会失效。
     if profiler_evidence:  # only when the feedback can carry an Instruments trace; every other run keeps the byte-identical prompt
-        parts.append("\n# Skill 2b: reading the profiler evidence (Instruments trace and GPU counters)\n" + _skill("profiler_evidence", target_id))
+        parts.append("\n# Skill 2b: reading the profiler evidence (Instruments trace and GPU counters)\n" + _skill(backend.skill_names[3], target_id))
     if hw_feedback:  # only when search.hw_feedback appends the hardware-feature analysis to the feedback; off = the byte-identical prompt
-        parts.append("\n# Skill 2c: reading the hardware-feature analysis in the feedback\n" + _skill("hardware_feedback", target_id))
-    idx = SkillIndex("msl_reference", extra=WIKI_DOCS, target_id=target_id)
+        parts.append("\n# Skill 2c: reading the hardware-feature analysis in the feedback\n" + _skill(backend.skill_names[4], target_id))
+    idx = SkillIndex(backend.reference_skill, extra=WIKI_DOCS, target_id=target_id)
     if use_tools:
         parts.append(
             "\n# Skill 3: MSL reference (retrieval)\nCall the `lookup_msl` tool for details. Sections available:\n" + idx.outline()

@@ -42,9 +42,24 @@ class Task:
     # Optional per-output error scale (e.g. sum |x| for cancellation-sensitive reductions).
     error_scale: Callable[[dict[str, torch.Tensor], dict[str, torch.Tensor]], dict[str, torch.Tensor]] | None = None
     # A known-good kernel (not necessarily fast) that validates the harness itself.
+    # ``reference_sources`` is keyed by backend id; ``naive_msl`` remains the Metal
+    # compatibility spelling until Phase 3 callers migrate.
     naive_msl: str = ""
+    reference_sources: dict[str, str] = field(default_factory=dict)
     exact: bool = False  # integer tasks compare bit-exactly
     meta: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.naive_msl and "metal" not in self.reference_sources:
+            self.reference_sources["metal"] = self.naive_msl
+        elif "metal" in self.reference_sources and not self.naive_msl:
+            self.naive_msl = self.reference_sources["metal"]
+
+    def reference_for(self, backend_id: str) -> str:
+        """The task's known-good source for one backend; empty when it has none."""
+        if backend_id == "metal" and self.naive_msl:
+            return self.naive_msl
+        return self.reference_sources.get(backend_id) or ""
 
     @property
     def key(self) -> str:
@@ -84,7 +99,7 @@ def task_fingerprint(task: Task) -> str:
     parts = (
         task.contract.describe(),
         task.triton_source,
-        task.naive_msl,
+        task.reference_for("metal"),
         repr(task.cases),
         repr((task.rtol, task.atol_rel, task.exact)),
         repr((task.flops, task.min_bytes)),

@@ -1016,7 +1016,7 @@ def evaluate(
         except Exception:
             pass
     with tempfile.TemporaryDirectory(prefix="tcenv_src_") as td:
-        kp = Path(workdir or td) / "kernel.metal"
+        kp = Path(workdir or td) / f"kernel{backend.file_ext if backend is not None else '.metal'}"
         kp.parent.mkdir(parents=True, exist_ok=True)
         kp.write_text(kernel_source)
         deadline = deadline_for_source(task, dtype, size, kernel_source)

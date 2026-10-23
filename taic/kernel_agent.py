@@ -97,6 +97,14 @@ class SessionBrief:
     guidance_dir: str = ""
     target_id: str = "apple-m4-max"
     harness_overlay: str = ""
+    file_ext: str = ".metal"
+    language_label: str = "Metal"
+    source_fence: str = "metal"
+    reference_skill: str = "msl_reference"
+
+    @property
+    def seed_name(self) -> str:
+        return f"kernel{self.file_ext}"
 
 
 @dataclass
@@ -117,10 +125,10 @@ class AgentResult:
     self_check_gpu_s: float = 0.0
 
 
-def submission_name(task: str, dtype: str, size: str, label: str) -> str:
+def submission_name(task: str, dtype: str, size: str, label: str, file_ext: str = ".metal") -> str:
     """The file this session must create. The search does not create it.
 
-    The name is ``{task}-{dtype}-{size}-{label}.metal``. ``label`` is the session
+    The name is ``{task}-{dtype}-{size}-{label}{file_ext}``. ``label`` is the session
     (``init``, ``r3.p0``), so two sessions in one run do not share a name. A character
     outside letters, digits, ``.``, ``_`` and ``-`` becomes ``-``.
     """
@@ -128,7 +136,7 @@ def submission_name(task: str, dtype: str, size: str, label: str) -> str:
     for raw in (task, dtype, size, label):
         piece = _NAME_PART.sub("-", str(raw).strip()).strip("-.")
         parts.append(piece or "x")
-    return "-".join(parts) + ".metal"
+    return "-".join(parts) + (file_ext if str(file_ext).startswith(".") else "." + str(file_ext))
 
 
 def kernel_text(text: str, kernel_name: str) -> str | None:
@@ -262,7 +270,7 @@ def _work_path(brief: SessionBrief) -> Path:
 
 def _check_command(brief: SessionBrief, mode: str) -> str:
     """Eval command with absolute paths. ``uv run --directory`` changes the working directory."""
-    name = submission_name(brief.task_name, brief.dtype, brief.size, brief.label)
+    name = submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext)
     work = _work_path(brief)
     repo = Path(brief.repo).resolve()
     parts = [
@@ -325,11 +333,11 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
     """
     quick = _check_command(brief, "quick")
     timed = _check_command(brief, "timed")
-    submit = submission_name(brief.task_name, brief.dtype, brief.size, brief.label)
+    submit = submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext)
     overlay_text = ("\n" + _cap_task(brief.harness_overlay, 1800)) if brief.harness_overlay else ""
     lines = [
         f"# 目标",
-        f"把 Triton 算子 `{brief.task_name}` 写成 Metal，dtype `{brief.dtype}`，规模 `{brief.size}`。",
+        f"把 Triton 算子 `{brief.task_name}` 写成 {brief.language_label}，dtype `{brief.dtype}`，规模 `{brief.size}`。",
         brief.description.strip(),
         "",
         "Triton 源码是规格，按它的语义写，不按名字或注释：",
@@ -346,7 +354,7 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         brief.contract_text.strip(),
         "",
         "签名骨架：",
-        "```metal",
+        f"```{brief.source_fence}",
         brief.abi_stub.rstrip(),
         "```",
         "",
@@ -357,7 +365,7 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         "着色器校验在你退出之后由外层做。插桩会把线程组内存报大，边界写保守些。",
         f"本场要交的文件是 `{submit}`。外层只读这个文件。开场时它不存在。",
         f"你写了它，外层就把里面的内容当作你交回的核。你不写它，外层记这场没有交回内核。",
-        "`kernel.metal` 在有种子时已经放在本目录，只供阅读。外层不读它。改它不算交卷。",
+        f"`{brief.seed_name}` 在有种子时已经放在本目录，只供阅读。外层不读它。改它不算交卷。",
         f"交卷文件始终放目前最好的一版。自测合格且更快，就用 `cp` 复制成 `{submit}`。还没有合格版时放最近一版，不抄种子。",
         "",
         "`experience.md` 是这个项目已经测过的东西：哪些启动契约与 tile 划算、哪些算子已经贴着带宽屋顶、"
@@ -391,7 +399,7 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
     if brief.seedless:
         lines += [
             "",
-            f"现在没有种子，也没有 `kernel.metal`。先把一颗核写进 `{submit}`。外层评测合格，它就成为种子。",
+            f"现在没有种子，也没有 `{brief.seed_name}`。先把一颗核写进 `{submit}`。外层评测合格，它就成为种子。",
         ]
     lines += [
         "",
@@ -431,7 +439,7 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         # optional current-site block so a nearly full contract cannot squeeze it out.
         if overlay_text:
             blocks.append(("本运行 harness overlay", overlay_text))
-        context = ["", "# 当前现场", f"种子在 `kernel.metal`。交卷写 `{submit}`，不要改种子文件。"]
+        context = ["", "# 当前现场", f"种子在 `{brief.seed_name}`。交卷写 `{submit}`，不要改种子文件。"]
         if brief.scorecard:
             context += ["", "外层成绩单：", _cap_task(brief.scorecard, 1000)]
         if brief.bound_line:
@@ -454,7 +462,7 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
             "自测对照",
             "\n\n" + _cap_task(
                 "合同里的外层成绩和你自己跑出来的数字对不上时，先把评测命令里的交卷文件换成 "
-                + _shell(str(_work_path(brief) / "kernel.metal"))
+                + _shell(str(_work_path(brief) / brief.seed_name))
                 + " 跑一次 `--timed`，再改。交卷前的自测用上面的命令，文件名是交卷文件。",
                 400,
             ),
@@ -542,7 +550,7 @@ def stage_guidance(work: Path, brief: SessionBrief) -> None:
     work.mkdir(parents=True, exist_ok=True)
     mapping = (
         ("device.md", skill_path("device", brief.target_id)),
-        ("msl_reference.md", skill_path("msl_reference", brief.target_id)),
+        (f"{brief.reference_skill}.md", skill_path(brief.reference_skill, brief.target_id)),
         ("experience.md", skill_path("experience", brief.target_id)),
     )
     snap = Path(brief.guidance_dir) if brief.guidance_dir else None
@@ -681,10 +689,10 @@ def run_kernel_agent(
     if not binary or not Path(binary).is_file():
         raise AgentError("hmz is not on PATH; install it with `uv tool install hmz`")
     work.mkdir(parents=True, exist_ok=True)
-    submit = submission_name(brief.task_name, brief.dtype, brief.size, brief.label)
+    submit = submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext)
     submit_path = work / submit
     submit_path.unlink(missing_ok=True)
-    seed_path = work / "kernel.metal"
+    seed_path = work / brief.seed_name
     if brief.seed_source and not brief.seedless:
         seed_path.write_text(brief.seed_source)
     else:
@@ -708,7 +716,7 @@ def run_kernel_agent(
         "-p", f"submit_name={submit}",
         "-p", f"budget.duration={flow_minutes}m",
         "--json",
-        "--", f"Read TASK.md in this directory and do it. Write the finished kernel to {submit}. The search does not read kernel.metal.",
+        "--", f"Read TASK.md in this directory and do it. Write the finished kernel to {submit}. The search does not read {brief.seed_name}.",
     ]
     status = "ok"
     error = ""
@@ -755,7 +763,7 @@ def run_kernel_agent(
         error = (stderr or stdout or "").strip()[-400:]
     pruned = prune_work(
         work, label=brief.label,
-        keep={submission_name(brief.task_name, brief.dtype, brief.size, brief.label)},
+        keep={submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext), brief.seed_name},
     )
     return AgentResult(
         source=source, cost_usd=cost, cost_incomplete=not saw_result, status=status, error=error,

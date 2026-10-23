@@ -45,6 +45,10 @@ class Backend(Protocol):
     version: str
     language: str
     file_ext: str
+    display_name: str
+    source_fence: str
+    reference_skill: str
+    skill_names: tuple[str, ...]
     capabilities: Capabilities
 
     # Parent-process methods must be CPU/text only.  They may import the
