@@ -11,7 +11,7 @@ from taic.kernel_agent import AgentResult
 from tcenv.selfcheck import append, earlier_hang
 from tcenv.verdict import gpu_timestamp_line, replacement_line
 
-from .test_orchestrator import code, llm_script, make_orch, run
+from ..support.orchestrator import code, llm_script, make_orch, run
 
 
 def _text(fenced: str) -> str:
@@ -353,7 +353,7 @@ def test_peer_tips_has_a_command_line_switch_and_resume_keeps_the_recorded_value
     assert got["resume"]["peer_tips"] is True
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-0123456789abcdef")
     monkeypatch.setenv("OPENAI_BASE_URL", "http://x")
-    from .test_resume import ns
+    from ..support.resume import ns
 
     settings = {"search": {"peer_tips": False}, "llm": {"model": "fake"}, "provenance": {"search.peer_tips": "run_config.json"}}
     _cfg, search, prov = cli._resume_config(ns(Path("somewhere"), dry_run=True), settings, {"model": None})

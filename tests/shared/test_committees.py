@@ -12,7 +12,7 @@ from taic.llm import LLM, LLMConfig, LLMError, SearchConfig
 from taic.orchestrator import Orchestrator, RunStartError
 
 from ..support.fakes import FakeClient
-from .test_orchestrator import agent_from_script, code, fake_eval, llm_script, run
+from ..support.orchestrator import agent_from_script, code, fake_eval, llm_script, run
 
 SECRET = "sk-committee-secret-0123456789"
 ENDPOINT = "http://committee-endpoint.invalid"

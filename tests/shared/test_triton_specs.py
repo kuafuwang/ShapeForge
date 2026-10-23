@@ -9,12 +9,8 @@ import pytest
 
 from tasks import get_task, list_tasks
 from tcenv.triton_runner import parse_launch_header
+from ..support.triton_specs import jit_params
 
-def jit_params(src: str, name: str) -> list[str]:
-    for node in ast.walk(ast.parse(src)):
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            return [a.arg for a in node.args.args]
-    raise AssertionError(f"{name} not found")
 
 @pytest.mark.parametrize("name", list(list_tasks()) + ["mamba2_chunk_scan"])
 def test_every_kernel_parameter_is_bound_by_the_launch_header(name):

@@ -17,6 +17,7 @@ from taic.parse import extract_json, extract_metal, parse_plans
 from taic.tools import SkillIndex, make_handlers
 
 from ..support.fakes import FakeClient, make_response, make_usage
+from ..support.llm import status_error
 
 SECRET = "sk-test-SECRET-0123456789abcdef"
 
@@ -31,9 +32,6 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def status_error(cls, code, headers=None, message="boom"):
-    req = httpx.Request("POST", "http://x/v1/chat/completions")
-    return cls(message, response=httpx.Response(code, request=req, headers=headers or {}), body=None)
 
 
 # ----------------------------------------------------------------------------- cost

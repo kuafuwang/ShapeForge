@@ -43,7 +43,8 @@ tests/
 
 后端特有测试不得放进 `tests/shared/`，不得在 `shared` 里 import
 `tcenv.backends.metal.*`。需要跨层复用的内容先抽到 `tests/support/` 或业务模块，
-不要在测试之间互相 import `tests.test_*`。
+不要在测试之间互相 import `tests.test_*`；backend 测试应只依赖
+`tests.support.*`。
 
 ## 新测试的放置步骤
 

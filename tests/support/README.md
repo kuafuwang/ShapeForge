@@ -6,6 +6,10 @@
 - `handoff.py`：失败 AI handoff 插件；
 - `run_logs.py`：xdist worker 日志插件；
 - `fake_worker_*.py`：子进程 worker 替身；
+- `orchestrator.py`：脚本化 LLM/evaluator 和 orchestrator 测试 helper；
+- `resume.py`：resume/CLI 测试 helper；
+- `triton_specs.py`：Triton spec 测试 helper；
+- `llm.py`：脚本化 LLM 错误 helper；
 - `hw_golden.py`：golden 读取/重录；
 - `golden/<backend_id>/`：按 backend 分目录的 golden 数据。
 

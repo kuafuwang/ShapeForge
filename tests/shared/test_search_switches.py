@@ -10,7 +10,7 @@ from tasks import get_task
 from tcenv.evaluate import EvalReport
 
 from ..support.fakes import make_response
-from .test_orchestrator import PLAN, code, llm_script, make_orch, run
+from ..support.orchestrator import PLAN, code, llm_script, make_orch, run
 
 
 def _task():

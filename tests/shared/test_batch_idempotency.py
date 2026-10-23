@@ -9,7 +9,7 @@ from experiments.common import run_one
 from experiments.manifest import backfill, load
 
 from ..support.fakes import FakeClient
-from .test_orchestrator import agent_from_script, code, fake_eval, llm_script
+from ..support.orchestrator import agent_from_script, code, fake_eval, llm_script
 
 SECRET = "sk-test-0123456789abcdef"
 ENDPOINT = "http://127.0.0.1:1"

@@ -8,7 +8,7 @@ import pytest
 
 from tcenv.backends.metal.xctrace import TraceSummary, advice, format_for_llm
 from ...support.fakes import make_response, make_usage
-from ...shared.test_orchestrator import _user_prompts, code, llm_script, make_orch, run
+from ...support.orchestrator import _user_prompts, code, llm_script, make_orch, run
 
 
 def _trace(spilled=4096, events=3, code_bytes=6000, active=0.95):
