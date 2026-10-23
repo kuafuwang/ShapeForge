@@ -552,7 +552,8 @@ function priorMarkup(item) {
     const note = prior.note || prior.evidence || "";
     const ref = prior.change_ref ? `<span class="badge">${esc(prior.change_ref)}</span>` : "";
     const who = prior.reviewer ? `<span class="sub">审查 ${esc(prior.reviewer)}</span>` : "";
-    return `<div class="fb-prior-row"><span class="badge${reviewStatusClass(prior.status)}">${esc(prior.status || "")}</span><span>${esc(prior.run_id || "")}#${esc(prior.seq)}</span>${ref}${who}${note ? `<div class="sub">${esc(note)}</div>` : ""}</div>`;
+    const text = prior.text ? `<div class="sub">${esc(prior.text)}</div>` : "";
+    return `<div class="fb-prior-row"><span class="badge${reviewStatusClass(prior.status)}">${esc(prior.status || "")}</span><span>${esc(prior.run_id || "")}#${esc(prior.seq)}</span>${ref}${who}${text}${note ? `<div class="sub">${esc(note)}</div>` : ""}</div>`;
   }).join("");
   return `<div class="fb-prior"><strong>${esc(item.prior_summary || "此前结论")}</strong>${rows}</div>`;
 }

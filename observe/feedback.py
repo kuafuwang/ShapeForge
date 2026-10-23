@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -87,6 +88,7 @@ def _claim_rows(record: dict, review: dict) -> list[dict]:
             "git_commit": saved.get("git_commit") or "",
             "git_dirty": saved.get("git_dirty"),
             "subclaims": list(saved.get("subclaims") or []),
+            "subclaims_sha256": _subclaims_sha256(saved.get("subclaims") or []),
             "open_subclaims": [sub for sub in (saved.get("subclaims") or []) if str(sub.get("status") or "") in ("pending", "info")],
             "backend": saved.get("backend") or record.get("backend") or "",
             "target_id": saved.get("target_id") or record.get("target_id") or "",
@@ -119,7 +121,14 @@ def _reviewed_key(value) -> str | None:
         return str(value)
 
 
+def _subclaims_sha256(subclaims) -> str:
+    return hashlib.sha256(
+        json.dumps(subclaims or [], sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    ).hexdigest()
+
+
 def _claim_signature(row) -> tuple:
+    subclaims_sha256 = row["subclaims_sha256"] if "subclaims_sha256" in row.keys() else ""
     return (
         row["section"] or "",
         row["audience"] or "",
@@ -129,6 +138,7 @@ def _claim_signature(row) -> tuple:
         row["topic"] or "",
         row["change_ref"] or "",
         _reviewed_key(row["reviewed_at"]),
+        subclaims_sha256 or "",
     )
 
 
@@ -175,6 +185,7 @@ def retire_run_claims(conn, run_id: str) -> bool:
             (run_id, row["seq"], row["digest"], rev, row["section"], row["audience"], row["premise"], row["status"], "run retired"),
         )
     conn.execute("DELETE FROM feedback_claims WHERE run_id = ?", (run_id,))
+    conn.execute("DELETE FROM feedback_subclaims WHERE run_id = ?", (run_id,))
     conn.execute("DELETE FROM feedback_items WHERE run_id = ?", (run_id,))
     return True
 
@@ -233,23 +244,55 @@ def _rows_for_record(record: dict, review: dict, line_at: int | None = None) -> 
     return item, built
 
 
+def _write_subclaims(conn, run_id: str, claim: dict, rev: int) -> None:
+    conn.execute(
+        "DELETE FROM feedback_subclaims WHERE run_id = ? AND seq = ? AND parent_digest = ?",
+        (run_id, claim["seq"], claim["digest"]),
+    )
+    for index, sub in enumerate(claim.get("subclaims") or []):
+        if not isinstance(sub, dict):
+            continue
+        text = str(sub.get("text") or "")
+        conn.execute(
+            """
+            INSERT INTO feedback_subclaims (
+                run_id, seq, parent_digest, sub_index, text, text_sha256, digest,
+                status, verification, evidence_source, evidence, note, change_ref,
+                backend, target_id, derived_from, rev
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                run_id, claim["seq"], claim["digest"], index, text,
+                hashlib.sha256(text.encode("utf-8")).hexdigest(), str(sub.get("digest") or ""),
+                str(sub.get("status") or ""), str(sub.get("verification") or ""),
+                str(sub.get("evidence_source") or ""), str(sub.get("evidence") or ""),
+                str(sub.get("note") or ""), str(sub.get("change_ref") or ""),
+                str(sub.get("backend") or ""), str(sub.get("target_id") or ""),
+                str(sub.get("derived_from") or ""), rev,
+            ),
+        )
+
+
 def _write_claim(conn, run_id: str, claim: dict, rev: int) -> None:
     conn.execute("DELETE FROM feedback_claim_removed WHERE run_id = ? AND seq = ? AND digest = ?", (run_id, claim["seq"], claim["digest"]))
     conn.execute(
         """
         INSERT INTO feedback_claims (
-            run_id, seq, digest, section, audience, premise, status, verification, topic, change_ref, reviewed_at, rev
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            run_id, seq, digest, section, audience, premise, status, verification, topic, change_ref, reviewed_at, rev, subclaims_sha256
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(run_id, seq, digest) DO UPDATE SET
             section = excluded.section, audience = excluded.audience, premise = excluded.premise,
             status = excluded.status, verification = excluded.verification, topic = excluded.topic,
-            change_ref = excluded.change_ref, reviewed_at = excluded.reviewed_at, rev = excluded.rev
+            change_ref = excluded.change_ref, reviewed_at = excluded.reviewed_at, rev = excluded.rev,
+            subclaims_sha256 = excluded.subclaims_sha256
         """,
         (
             run_id, claim["seq"], claim["digest"], claim["section"], claim["audience"], claim["premise"],
             claim["status"], claim["verification"], claim["topic"], claim["change_ref"], claim["reviewed_at"], rev,
+            _subclaims_sha256(claim.get("subclaims") or []),
         ),
     )
+    _write_subclaims(conn, run_id, claim, rev)
 
 
 def _write_item(conn, run_id: str, row: dict) -> None:
@@ -497,6 +540,8 @@ def _desired_review(row, saved: dict | None) -> dict:
         base["topic"] = ""
         base["change_ref"] = ""
         base["reviewed_at"] = None
+        base["subclaims"] = []
+        base["subclaims_sha256"] = _subclaims_sha256([])
         return base
     status = saved.get("status") or _default_status(base)
     if status not in _STATUSES:
@@ -506,6 +551,8 @@ def _desired_review(row, saved: dict | None) -> dict:
     base["topic"] = saved.get("topic") or ""
     base["change_ref"] = saved.get("change_ref") or ""
     base["reviewed_at"] = saved.get("t") or saved.get("reviewed_at")
+    base["subclaims"] = list(saved.get("subclaims") or [])
+    base["subclaims_sha256"] = _subclaims_sha256(base["subclaims"])
     return base
 
 
@@ -744,10 +791,20 @@ def summary_from_index(conn, *, task: str | None = None, model: str | None = Non
             if other["t"] is None or float(other["t"]) <= float(finished["reviewed_at"]):
                 continue
             recurrence.append({"key": key, "run_id": other["run_id"], "after": finished["run_id"]})
-    return {"pending_total": pending_total, "frequent": frequent, "recurrence": recurrence, "items": items}
+    open_subclaims_total = int(conn.execute(
+        "SELECT COUNT(*) FROM feedback_subclaims WHERE status IN ('pending', 'info')"
+    ).fetchone()[0])
+    return {
+        "pending_total": pending_total,
+        "open_subclaims_total": open_subclaims_total,
+        "open_work_total": pending_total + open_subclaims_total,
+        "frequent": frequent,
+        "recurrence": recurrence,
+        "items": items,
+    }
 
 
-def prior_claims(conn, *, digest: str, task: str, target_id: str, before_t: float | None = None, exclude_run: str = "", exclude_seq: int | None = None, limit: int = 5) -> list[dict]:
+def prior_claims(conn, *, digest: str, task: str, target_id: str, text: str = "", before_t: float | None = None, exclude_run: str = "", exclude_seq: int | None = None, limit: int = 5) -> list[dict]:
     """Earlier claims with the same digest in the same task and target.
 
     This is an exact-text lookup, not semantic similarity. It is deliberately scoped:
@@ -759,7 +816,8 @@ def prior_claims(conn, *, digest: str, task: str, target_id: str, before_t: floa
         return []
     query = """
         SELECT c.run_id, c.seq, c.digest, c.status, c.verification, c.topic,
-               c.change_ref, c.reviewed_at, i.task, i.model, i.t, r.target_id
+               c.change_ref, c.reviewed_at, i.task, i.model, i.t, r.target_id,
+               NULL AS sub_index, c.digest AS parent_digest
         FROM feedback_claims c
         JOIN feedback_items i ON i.run_id = c.run_id AND i.seq = c.seq
         LEFT JOIN runs r ON r.run_id = c.run_id
@@ -778,6 +836,30 @@ def prior_claims(conn, *, digest: str, task: str, target_id: str, before_t: floa
         rows.append(item)
         if len(rows) >= max(1, int(limit)):
             break
+    if text:
+        text_sha = hashlib.sha256(str(text).encode("utf-8")).hexdigest()
+        subquery = """
+            SELECT s.run_id, s.seq, s.parent_digest AS digest, s.status, s.verification, NULL AS topic,
+                   s.change_ref, NULL AS reviewed_at, i.task, i.model, i.t, r.target_id,
+                   s.sub_index, s.parent_digest
+            FROM feedback_subclaims s
+            JOIN feedback_claims c ON c.run_id = s.run_id AND c.seq = s.seq AND c.digest = s.parent_digest
+            JOIN feedback_items i ON i.run_id = s.run_id AND i.seq = s.seq
+            LEFT JOIN runs r ON r.run_id = s.run_id
+            WHERE s.text_sha256 = ? AND i.task = ? AND r.target_id = ?
+        """
+        subparams: list[object] = [text_sha, task, target_id]
+        if before_t is not None:
+            subquery += " AND i.t < ?"
+            subparams.append(float(before_t))
+        subquery += " ORDER BY i.t DESC"
+        for row in conn.execute(subquery, subparams):
+            item = dict(row)
+            if item["run_id"] == exclude_run and item["seq"] == exclude_seq:
+                continue
+            rows.append(item)
+            if len(rows) >= max(1, int(limit)):
+                break
     if not rows:
         return []
     from .detail import resolve_run
@@ -789,9 +871,15 @@ def prior_claims(conn, *, digest: str, task: str, target_id: str, before_t: floa
             directory = resolve_run(run_id)
             cache[run_id] = _load_review(directory / "feedback_review.json")["claims"] if directory is not None else {}
         saved = cache[run_id].get(f"{item['seq']}:{item['digest']}") or {}
-        item["note"] = str(saved.get("note") or "")
-        item["evidence"] = str(saved.get("evidence") or "")
-        item["evidence_source"] = str(saved.get("evidence_source") or "")
+        sub_index = item.get("sub_index")
+        sub = None
+        if isinstance(sub_index, int) and 0 <= sub_index < len(saved.get("subclaims") or []):
+            sub = (saved.get("subclaims") or [])[sub_index]
+        source = sub if isinstance(sub, dict) else saved
+        item["text"] = str(source.get("text") or item.get("text") or "")
+        item["note"] = str(source.get("note") or "")
+        item["evidence"] = str(source.get("evidence") or "")
+        item["evidence_source"] = str(source.get("evidence_source") or "")
         item["reviewer"] = str(saved.get("reviewer") or "")
         item["method"] = str(saved.get("method") or "")
         item["subclaims"] = list(saved.get("subclaims") or [])
@@ -811,7 +899,7 @@ def _prior_summary(rows: list[dict]) -> str:
 
 def attach_prior_claims(conn, rows: list[dict]) -> None:
     """Attach exact-digest earlier verdicts to review rows. Mutates the rows in place."""
-    cache: dict[tuple[str, str, str, float | None], list[dict]] = {}
+    cache: dict[tuple[str, str, str, str, float | None], list[dict]] = {}
     for row in rows:
         digest = str(row.get("digest") or "")
         task = str(row.get("task") or "")
@@ -821,16 +909,26 @@ def attach_prior_claims(conn, rows: list[dict]) -> None:
             row["prior_summary"] = ""
             continue
         current_t = row.get("t")
-        key = (digest, task, target_id, current_t)
-        if key not in cache:
-            cache[key] = prior_claims(
-                conn, digest=digest, task=task, target_id=target_id,
-                before_t=current_t, limit=6,
-            )
-        prior = [
-            item for item in cache[key]
-            if not (item.get("run_id") == row.get("run_id") and item.get("seq") == row.get("seq"))
-        ]
+        texts = [str(row.get("text") or "")]
+        texts.extend(str(sub.get("text") or "") for sub in row.get("subclaims") or [] if isinstance(sub, dict))
+        merged: dict[tuple, dict] = {}
+        for text in dict.fromkeys(texts):
+            key = (digest, task, target_id, text, current_t)
+            if key not in cache:
+                cache[key] = prior_claims(
+                    conn, digest=digest, task=task, target_id=target_id, text=text,
+                    before_t=current_t, limit=6,
+                )
+            for item in cache[key]:
+                if item.get("run_id") == row.get("run_id") and item.get("seq") == row.get("seq"):
+                    continue
+                identity = (item.get("run_id"), item.get("seq"), item.get("digest"), item.get("sub_index"))
+                merged.setdefault(identity, item)
+        prior = sorted(
+            merged.values(),
+            key=lambda item: (float(item.get("reviewed_at") or item.get("t") or 0), str(item.get("run_id") or "")),
+            reverse=True,
+        )[:5]
         row["prior"] = prior
         row["prior_summary"] = _prior_summary(prior)
 
@@ -861,12 +959,31 @@ def _candidate_texts(conn, *, task: str, target_id: str, before_t: float | None,
     query += " ORDER BY i.t DESC LIMIT ?"
     params.append(max(1, int(limit)))
     rows = [dict(row) for row in conn.execute(query, params)]
+    subquery = """
+        SELECT s.run_id, s.seq, s.parent_digest AS digest, s.status, s.verification,
+               s.change_ref, NULL AS reviewed_at, i.task, i.model, i.t, r.target_id,
+               s.sub_index, s.text
+        FROM feedback_subclaims s
+        JOIN feedback_claims c ON c.run_id = s.run_id AND c.seq = s.seq AND c.digest = s.parent_digest
+        JOIN feedback_items i ON i.run_id = s.run_id AND i.seq = s.seq
+        LEFT JOIN runs r ON r.run_id = s.run_id
+        WHERE i.task = ? AND r.target_id = ? AND s.text <> ''
+    """
+    subparams: list[object] = [task, target_id]
+    if before_t is not None:
+        subquery += " AND i.t < ?"
+        subparams.append(float(before_t))
+    subquery += " ORDER BY i.t DESC LIMIT ?"
+    subparams.append(max(1, int(limit)))
+    rows.extend(dict(row) for row in conn.execute(subquery, subparams))
     if not rows:
         return []
     from .detail import resolve_run
 
     lines: dict[tuple[str, int], dict] = {}
     for row in rows:
+        if row.get("text"):
+            continue
         run_id = str(row["run_id"])
         seq = int(row["seq"])
         key = (run_id, seq)
@@ -913,9 +1030,15 @@ def similar_claims(conn, *, digest: str, task: str, target_id: str, text: str, b
     cache: dict[str, dict] = {}
     for row in scored:
         saved = _review_file_cache(str(row["run_id"]), cache).get(f"{row['seq']}:{row['digest']}") or {}
-        row["note"] = str(saved.get("note") or "")
-        row["evidence"] = str(saved.get("evidence") or "")
-        row["evidence_source"] = str(saved.get("evidence_source") or "")
+        sub_index = row.get("sub_index")
+        sub = None
+        if isinstance(sub_index, int) and 0 <= sub_index < len(saved.get("subclaims") or []):
+            sub = (saved.get("subclaims") or [])[sub_index]
+        source = sub if isinstance(sub, dict) else saved
+        row["text"] = str(source.get("text") or row.get("text") or "")
+        row["note"] = str(source.get("note") or "")
+        row["evidence"] = str(source.get("evidence") or "")
+        row["evidence_source"] = str(source.get("evidence_source") or "")
         row["subclaims"] = list(saved.get("subclaims") or [])
     return scored
 
@@ -998,7 +1121,8 @@ def review_board(conn, *, task: str | None = None, model: str | None = None, kin
     attach_similar_claims(conn, summary["items"])
     return {
         "pending_total": summary["pending_total"],
-        "open_subclaims_total": sum(len(row.get("open_subclaims") or []) for row in summary["items"]),
+        "open_subclaims_total": summary["open_subclaims_total"],
+        "open_work_total": summary["open_work_total"],
         "calibration": calibration,
         "items": summary["items"],
     }
@@ -1122,8 +1246,15 @@ def review_feed(conn, *, since: int | None = None) -> dict:
     """
     rev = _feedback_revision(conn)
     pending_total = int(conn.execute("SELECT COUNT(*) FROM feedback_claims WHERE status = 'pending'").fetchone()[0])
+    open_subclaims_total = int(conn.execute(
+        "SELECT COUNT(*) FROM feedback_subclaims WHERE status IN ('pending', 'info')"
+    ).fetchone()[0])
     if since is not None and int(since) == rev:
-        return {"same": True, "snapshot": False, "rev": rev, "pending_total": pending_total, "upserts": [], "removed": []}
+        return {
+            "same": True, "snapshot": False, "rev": rev, "pending_total": pending_total,
+            "open_subclaims_total": open_subclaims_total,
+            "open_work_total": pending_total + open_subclaims_total, "upserts": [], "removed": [],
+        }
     if since is None:
         rows = [dict(row) for row in conn.execute(_CLAIM_LIST + " ORDER BY i.t DESC, c.seq DESC")]
         removed: list[dict] = []
@@ -1146,7 +1277,8 @@ def review_feed(conn, *, since: int | None = None) -> dict:
         "snapshot": snapshot,
         "rev": rev,
         "pending_total": pending_total,
-        "open_subclaims_total": sum(len(row.get("open_subclaims") or []) for row in rows),
+        "open_subclaims_total": open_subclaims_total,
+        "open_work_total": pending_total + open_subclaims_total,
         "upserts": rows,
         "removed": removed,
         "calibration": calibration,

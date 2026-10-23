@@ -246,8 +246,36 @@ def test_open_subclaims_are_counted_without_changing_the_parent_pending_status(t
     row = next(item for item in review_board(index.conn)["items"] if item["digest"] == digest)
     assert row["status"] == "info"
     assert row["open_subclaims"] and row["open_subclaims"][0]["text"] == "still open"
+    subs = index.conn.execute(
+        "SELECT status, text FROM feedback_subclaims WHERE run_id = 'conv' AND parent_digest = ? ORDER BY sub_index",
+        (digest,),
+    ).fetchall()
+    assert [(row["status"], row["text"]) for row in subs] == [("adopted", "measured"), ("info", "still open")]
+    assert summary_from_index(index.conn)["open_subclaims_total"] == 1
+    assert summary_from_index(index.conn)["open_work_total"] == 1
     assert review_board(index.conn)["open_subclaims_total"] == 1
     assert review_feed(index.conn)["open_subclaims_total"] == 1
+
+
+def test_a_subclaim_text_can_match_an_earlier_subclaim(tmp_path, monkeypatch):
+    runs, index = _open(tmp_path, monkeypatch)
+    first_text = parse_feedback("# 对系统的建议\n- first parent\n")
+    second_text = parse_feedback("# 对系统的建议\n- second parent\n")
+    _run(runs, "conv", _record(first_text, t=10), started_at=50)
+    _run(runs, "conv2", _record(second_text, t=20), started_at=80)
+    first_digest = first_text["items"][0]["digest"]
+    second_digest = second_text["items"][0]["digest"]
+    apply_review(runs / "conv", 1, first_digest, {
+        "status": "info", "verification": "unchecked", "note": "split",
+        "subclaims": [{"text": "shared open subclaim", "status": "info", "verification": "unchecked", "note": "first"}],
+    })
+    apply_review(runs / "conv2", 1, second_digest, {
+        "status": "info", "verification": "unchecked", "note": "split",
+        "subclaims": [{"text": "shared open subclaim", "status": "info", "verification": "unchecked", "note": "second"}],
+    })
+    index.sync_known()
+    row = next(item for item in review_board(index.conn)["items"] if item["run_id"] == "conv2" and item["digest"] == second_digest)
+    assert any(prior["run_id"] == "conv" and prior["text"] == "shared open subclaim" for prior in row["prior"])
 
 
 def test_a_review_shows_prior_exact_digest_verdicts_scoped_to_task_and_target(tmp_path, monkeypatch):

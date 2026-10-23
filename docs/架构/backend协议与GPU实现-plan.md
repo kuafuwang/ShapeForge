@@ -89,7 +89,7 @@
 
 1. `EvalReport` 的顶层是封闭 schema：`REPORT_SCHEMA_VERSION = 2`（`tcenv/schema.py`），不认识的顶层字段一律拒读。给它加任何顶层字段都必须先升 schema 版本，不是“加个可选字段”就行。**嵌套字典不受这条校验**：`pipeline`、`benchmark` 等字典新增键不会触发 schema 失败；`pipeline.source_pressure` 就是这样进入报告的。Phase 0 必须快照嵌套 payload，Phase 1 必须原样保留，不能把嵌套键变化当作“没有报告变化”。
 2. `prompt_sha1` 是历史字段名；`taic/trust.py::current_prompt_sha1()` 实际对提示源文件逐字节算 SHA-256，不是对输出算的。它覆盖 `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py` 三个文件。改这三个文件里任何一行，哪怕生成的提示词一字不变，旧 grant 也会失效。
-3. SQLite 索引没有在线迁移：`INDEX_SCHEMA_VERSION = 9`（`observe/index.py`），版本对不上就整库丢弃重建。10 万 run 冷建约 157.6 秒（`docs/架构/数据层.md`）。给索引加列等于安排一次全量重建，不是顺手的事。
+3. SQLite 索引没有在线迁移：`INDEX_SCHEMA_VERSION = 10`（`observe/index.py`），版本对不上就整库丢弃重建。10 万 run 冷建约 157.6 秒（`docs/架构/数据层.md`）。给索引加列等于安排一次全量重建，不是顺手的事。
 
 ## 4. 设计原则
 
@@ -427,7 +427,7 @@ Phase 3 的提示面清单按这四层列，不按文件列。通用层从 `back
 因此本计划不设计“编译重试”这类现有流程里不存在的东西，阶段名只用现有枚举（`bench`，不是 `benchmark`）。真正要补的只有两件，且都在 Phase 2 及以后：
 
 1. **阶段时间线**：在 `stage/status/message` 之外补一份每阶段的起止与耗时，作为审计视图，不替代状态。打点在阶段边界，不进 benchmark 的计时窗口，不额外同步 GPU。字段集在动手前先定一版最小集（`stage/status/duration_s` 起步），`attempt`、`error_kind` 等后续再加，不在第一版里全塞。
-2. **backend 维度**：`EvalReport` 加 `backend_version` 与 timeline 时同步升 `REPORT_SCHEMA_VERSION` 到 3（见 §9.2）；SQLite 补 `backend` / `backend_version` 两列时同步把 `INDEX_SCHEMA_VERSION` 从 9 升到 10，并把“触发一次全量重建、10 万 run 约 157.6 秒”写进该 Phase 的验收与回滚。历史 run 没有这些字段时显示“未知版本”，不回写、不推断。
+2. **backend 维度**：`EvalReport` 加 `backend_version` 与 timeline 时同步升 `REPORT_SCHEMA_VERSION` 到 3（见 §9.2）；SQLite 补 `backend` / `backend_version` 两列时同步把 `INDEX_SCHEMA_VERSION` 从 10 升到 11，并把“触发一次全量重建、10 万 run 约 157.6 秒”写进该 Phase 的验收与回滚。历史 run 没有这些字段时显示“未知版本”，不回写、不推断。
 
 以下三项本计划只记名，不排期，不写进任何 Phase 的任务与完成定义，等真正动手时各自立项再定名字与归属：只读的 backend 能力清单接口、设备/工具链健康检查命令、dashboard 的 backend 徽标与筛选。安全约束先写在这里备查：报告与索引不写 API key、token、完整环境变量；供应商 profiler 大输出只存摘要和路径；错误文本截断后入索引。
 
@@ -439,7 +439,7 @@ Phase 3 的提示面清单按这四层列，不按文件列。通用层从 `back
 |---|---|---|---|---|---|
 | 0 | — | 冻结基线：记录现有离线测试结果、golden 清单、三个提示源文件的 `prompt_sha1`（实际 SHA-256）与一版 `system_prompt` 输出快照、`EvalReport.to_json()` 顶层字段和嵌套 payload（含 `pipeline.source_pressure` / `hints`）、`Contract.describe()` 与 `task_fingerprint` 快照；另采一版 GPU 基线（比对字段、样本量、允许偏差写明） | 一份基线记录文件，路径在本阶段第一个 PR 里定死并写回本表 | 不改任何代码 | 验收：基线文件落盘且可复跑比对。回滚：无代码变更，无需回滚 |
 | 1 | WP-A（仅 adapter 与注册表）、WP-B | 新增 `base.py`/`registry.py`/`metal/backend.py`；`target.py` 注册表化并移除 `_BACKENDS`；`evaluate()` 与 `worker.py` 经 adapter 调到现有函数；`backend.toml` 补 `version`/`entrypoint`/`skills` | `load_backend("metal")` 可用且父进程导入不触发 Metal/PyObjC 初始化；未知名字明确拒绝；既有报告字段、状态与计时数字与基线一致 | 不搬文件；不升 `REPORT_SCHEMA_VERSION`；不加 timeline、不动 SQLite、不改 prompt 与 `TASK.md`；`probe` 仍在子进程内 | 验收：未知 backend 抛 `TargetError`；父进程 `load_backend("metal")` 后 `sys.modules` 无 `Metal`；同一候选的 `status/stage/candidate_us/speedup` 与基线一致。回滚：adapter 一个提交可整体摘除，`evaluate` 回到直调路径，不动任何已有 run 数据 |
-| 2 | WP-A（迁移）、WP-B（Limits）、WP-D | 先落 §8.3 的 Contract 决议，再把 screen/compile/ABI/正确性/计时的 Metal 实现迁入 backend，旧模块留薄包装；`evaluate.py` 只依赖协议；给 `EvalReport` 加 `backend_version` 与最小 timeline 并升报告 schema 到 3；SQLite 补两列并升索引版本到 10 | 通用 `evaluate` 不再 import `MetalContext`；阶段名仍是现有枚举；dashboard 能看到阶段耗时 | 不改 `Task.naive_msl` 与提示面；不删旧 import 的薄包装 | 验收：全量测试与 golden 通过；`contract.describe()`、`task_fingerprint` 与基线逐字节一致；索引重建后旧 run 可读且历史行显示“未知版本”。回滚：薄包装保留期间可切回旧路径；索引回滚等于再触发一次重建，要在发布说明里预警，不与 Phase 1 的回滚混讲 |
+| 2 | WP-A（迁移）、WP-B（Limits）、WP-D | 先落 §8.3 的 Contract 决议，再把 screen/compile/ABI/正确性/计时的 Metal 实现迁入 backend，旧模块留薄包装；`evaluate.py` 只依赖协议；给 `EvalReport` 加 `backend_version` 与最小 timeline 并升报告 schema 到 3；SQLite 补两列并升索引版本到 11 | 通用 `evaluate` 不再 import `MetalContext`；阶段名仍是现有枚举；dashboard 能看到阶段耗时 | 不改 `Task.naive_msl` 与提示面；不删旧 import 的薄包装 | 验收：全量测试与 golden 通过；`contract.describe()`、`task_fingerprint` 与基线逐字节一致；索引重建后旧 run 可读且历史行显示“未知版本”。回滚：薄包装保留期间可切回旧路径；索引回滚等于再触发一次重建，要在发布说明里预警，不与 Phase 1 的回滚混讲 |
 | 3 | WP-C | `reference_sources` 按 backend id 落地并打通按 target 选源；提示面四层参数化；`extract` 与 `hwfeatures` 按 §8.6 的归属处理 | Metal 的 `TASK.md` 与系统提示输出与基线逐字节一致；或不一致时已有重录与重新授权的记录 | 不删旧模块；不改委员会与 `agent_failed` 语义 | 验收：输出字节不变，或变化时同时满足“golden 已重录、`prompt_sha1` 新旧对照表已留、trust 已显式重新 grant”三件，缺一不可。回滚：保留旧提示生成路径一个 Phase，双路径期内可切回 |
 | 4 | — | 删临时 shim；更新架构文档、`docs/代理反馈.md`、backend README、target template | 通用协议签名里没有 Metal 术语；没有未注册 backend 可运行 | 不在此阶段新增任何 backend | 验收：旧模块薄包装删除后全量测试仍过。回滚：shim 删除单独成提交，可单独 revert；删除前双路径至少保留一个 Phase |
 
@@ -498,7 +498,7 @@ Phase 2 及以后（各自在对应 Phase 的 PR 里再确认）：
 - `tcenv/backends/metal/{contract,screen,abi,profile,pressure,baselines,xctrace}.py`
 - `tcenv/{contract,screen,abi,profile,pressure,baselines,sanitize,testing,launch,metal_runtime,gpulock,triton_baseline,report,domain,verify,xctrace,cli}.py`（迁移或留薄包装）
 - `tcenv/schema.py`（报告 schema 升到 3）
-- `observe/index.py`（索引版本升到 10，补两列）、`observe/query.py`、`observe/app.py`
+- `observe/index.py`（索引版本升到 11，补两列）、`observe/query.py`、`observe/app.py`
 - `tasks/__init__.py`、`tcenv/task.py`、`tasks/*/task.py`（Phase 3）
 - `taic/{prompts,kernel_agent,parse,hwfeatures,policy,feedback_extra,kernel_catalog,orchestrator,resume}.py`（Phase 3，清单见 §8）
 - `docs/架构/数据层.md`、`docs/架构/可观测.md`（对应 Phase 落地时更新）
@@ -525,7 +525,7 @@ Phase 2 及以后（各自在对应 Phase 的 PR 里再确认）：
 - 通用 `evaluate` 只通过协议调用 backend；Metal 行为、已有报告字段、CLI 输出与 Phase 0 基线一致（新增字段以各 Phase 清单为限）。
 - 现有全量测试与 golden 通过；prompt 与 `TASK.md` 输出与基线逐字节一致，或按 Phase 3 的三件套（重录、对照表、重新 grant）留有完整记录。
 - 新增 registry/adapter 测试；未知 backend 明确拒绝；reserved（无入口）的 backend 不可运行。
-- `run_config`/`result`/`EvalReport`/SQLite 都记录 backend 与 version（SQLite 一项以 Phase 2 的索引版本 10 为准）；旧 run 可读，历史缺失显示“未知版本”。
+- `run_config`/`result`/`EvalReport`/SQLite 都记录 backend 与 version（SQLite 一项以 Phase 2 的索引版本 11 为准）；旧 run 可读，历史缺失显示“未知版本”。
 - 设计约束层面无跨 backend 聚合代码路径（§9.4）；该条在本计划期内是代码评审项，不是数据验收项。
 - `backends/_template` 文档说明未来 kernel 级 backend 需要实现哪些接口。
 - `source_pressure` 的 `simdgroup_float8x8` 解析归 Metal backend；通用协议和 `TASK.md` 不出现 fragment 术语，报告中的现有提示保持可用。

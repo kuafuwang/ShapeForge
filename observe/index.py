@@ -20,7 +20,7 @@ from observe import detail, legacy
 from observe.budget import budget_status
 from observe.ledger import month_of, operator_name
 
-INDEX_SCHEMA_VERSION = 9
+INDEX_SCHEMA_VERSION = 10
 _SKIP_DIRS = {"candidates", "__pycache__"}
 _WRITE = threading.Lock()
 _SINGLE: "Index | None" = None
@@ -320,11 +320,35 @@ class Index:
                 change_ref TEXT,
                 reviewed_at REAL,
                 rev INTEGER NOT NULL DEFAULT 0,
+                subclaims_sha256 TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY (run_id, seq, digest)
             );
             CREATE INDEX IF NOT EXISTS feedback_digest ON feedback_claims(digest);
             CREATE INDEX IF NOT EXISTS feedback_topic ON feedback_claims(topic);
             CREATE INDEX IF NOT EXISTS feedback_status ON feedback_claims(status);
+            CREATE TABLE IF NOT EXISTS feedback_subclaims (
+                run_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                parent_digest TEXT NOT NULL,
+                sub_index INTEGER NOT NULL,
+                text TEXT,
+                text_sha256 TEXT,
+                digest TEXT,
+                status TEXT,
+                verification TEXT,
+                evidence_source TEXT,
+                evidence TEXT,
+                note TEXT,
+                change_ref TEXT,
+                backend TEXT,
+                target_id TEXT,
+                derived_from TEXT,
+                rev INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (run_id, seq, parent_digest, sub_index)
+            );
+            CREATE INDEX IF NOT EXISTS feedback_sub_status ON feedback_subclaims(status);
+            CREATE INDEX IF NOT EXISTS feedback_sub_digest ON feedback_subclaims(digest);
+            CREATE INDEX IF NOT EXISTS feedback_sub_sha ON feedback_subclaims(text_sha256);
             CREATE TABLE IF NOT EXISTS feedback_claim_removed (
                 run_id TEXT NOT NULL,
                 seq INTEGER NOT NULL,
@@ -356,6 +380,8 @@ class Index:
         columns = {row[1] for row in self.conn.execute("PRAGMA table_info(feedback_claims)")}
         if "rev" not in columns:
             self.conn.execute("ALTER TABLE feedback_claims ADD COLUMN rev INTEGER NOT NULL DEFAULT 0")
+        if "subclaims_sha256" not in columns:
+            self.conn.execute("ALTER TABLE feedback_claims ADD COLUMN subclaims_sha256 TEXT NOT NULL DEFAULT ''")
         self.conn.execute("CREATE INDEX IF NOT EXISTS feedback_claim_rev ON feedback_claims(rev)")
         run_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(runs)")}
         if "feedback_bytes" not in run_columns:
@@ -511,7 +537,7 @@ class Index:
         row = self.conn.execute("SELECT value FROM meta WHERE key = 'runs_root'").fetchone()
         if row is not None and row[0] != root:
             self.conn.executescript(
-                "DELETE FROM runs; DELETE FROM candidates; DELETE FROM sessions; DELETE FROM experiments; DELETE FROM arms; DELETE FROM ledger; DELETE FROM watched; DELETE FROM feedback_items; DELETE FROM feedback_claims;"
+                "DELETE FROM runs; DELETE FROM candidates; DELETE FROM sessions; DELETE FROM experiments; DELETE FROM arms; DELETE FROM ledger; DELETE FROM watched; DELETE FROM feedback_items; DELETE FROM feedback_claims; DELETE FROM feedback_subclaims;"
             )
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES ('runs_root', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -1220,6 +1246,7 @@ class Index:
                 self.conn.execute("DELETE FROM turns WHERE run_id = ?", (run_id,))
                 self.conn.execute("DELETE FROM feedback_items WHERE run_id = ?", (run_id,))
                 self.conn.execute("DELETE FROM feedback_claims WHERE run_id = ?", (run_id,))
+                self.conn.execute("DELETE FROM feedback_subclaims WHERE run_id = ?", (run_id,))
             watched = [row["path"] for row in self.conn.execute("SELECT path FROM watched")]
             for experiment_id in experiment_ids:
                 self.conn.execute("DELETE FROM experiments WHERE experiment_id = ?", (experiment_id,))
