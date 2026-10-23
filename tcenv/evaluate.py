@@ -216,13 +216,9 @@ def _evaluate_in_process(
 
     from tasks import get_task
 
-    from . import abi as abi_mod
-    from .baselines import BaselineRunner, build_runners, rotation_count
+    from .baselines import BaselineRunner
     from .bench import interleaved
     from .gpulock import gpu_lock
-    from .metal_runtime import BufferArg, MetalCompileError, MetalRuntimeError, get_context
-    from .profile import get_calibration, pipeline_stats, pipeline_stats_many, roofline
-    from .testing import prepare_case
 
     t_start = time.perf_counter()
     timeline: list[dict] = []
@@ -251,7 +247,7 @@ def _evaluate_in_process(
     from .backends.registry import load_backend
 
     backend = load_backend(profile.backend)
-    ctx = get_context()
+    ctx = backend.context()
     dev_info = backend.probe(ctx, profile).raw
     rep.backend = profile.backend
     rep.backend_version = profile.backend_version
@@ -336,7 +332,7 @@ def _evaluate_in_process(
         else:
             names = list(dict.fromkeys(stage.kernel for stage in spec.stages))
             kernels = backend.compile_all(ctx, full_src, contract, names=names, math=spec.math)
-    except MetalCompileError as e:
+    except backend.compile_error() as e:
         # 编译器诊断的是「契约头 + 候选正文」。行号减掉文件头，模型才对得上自己写的那几行。
         msg = backend.rewrite_compiler_lines(contract, str(e), header_lines)
         rep.compile = {"ok": False, "errors": msg}
@@ -366,7 +362,7 @@ def _evaluate_in_process(
     # validateComputeFunctionArguments 里断言并 SIGABRT，子进程变成 crash。
     # 这种只回报那一条、不启动。父进程改用不插桩的完整评测去比目标档案里的线程组内存上限。
     if mode == "validate":
-        problems = abi_mod.validation_problems(
+        problems = backend.validation_problems(
             problems, [k.static_tg_bytes for k in kernels], dev_info["max_threadgroup_memory_bytes"],
         )
     rep.abi = {"ok": not problems, "violations": problems}
@@ -436,7 +432,7 @@ def _evaluate_in_process(
             ctx, kernel, task, argset, seed, cases=use_cases, baseline_fns=baseline_fn,
             determinism=(mode != "validate"), launcher=launcher,
         )
-    except MetalRuntimeError as e:
+    except backend.runtime_error() as e:
         rep.safety = {"ok": False, "violations": [f"GPU execution error: {e}"], "nondeterminism": [], "validation": []}
         return finish("runtime_error", f"the GPU reported an error while running the kernel: {str(e)[:300]}")
 
@@ -477,8 +473,8 @@ def _evaluate_in_process(
     rep.stage = "bench"
     _enter("bench")
     _note_stage(stage="bench", status="running", task=task_name, dtype=dtype, size=size, mode=mode, attempt=1, attempts_max=BENCH_ATTEMPTS)
-    data0 = prepare_case(task, task.cases[0], seed + 1)
-    base_runners = build_runners(task, data0.rounded)
+    data0 = backend.prepare_case(task, seed + 1)
+    base_runners = backend.baseline_runners(task, data0)
     only = _remembered_baseline(task_name, dtype, size, target_id) if fast_bench else None
     selected = selected_bench_names(list(base_runners), fast_bench=fast_bench, remembered=only, measure_serial=measure_serial)
     try:
@@ -498,7 +494,7 @@ def _evaluate_in_process(
     attempts: list[tuple[float, dict, list[float]]] = []  # (noise, stats, candidate GPU samples) per attempt
     # 测速升级成独占锁。共享锁下可以并行做正确性检查；两份墙钟叠在一起会把 CV 抬过 NOISY_CV。
     with gpu_lock(f"benchmark of {task_name} {dtype} {size}") as lock_wait_s:
-        calib = get_calibration(target_id=target_id)
+        calib = backend.calibration(target_id)
         try:
             # 噪声是本轮除 candidate_serial 以外各计时器 CV 的最大值。serial 只作对照，不参与要不要重测。
             # 超过 NOISY_CV 就再测，因为这次墙钟里混进了别人的负载，不能用来比快慢。
@@ -511,7 +507,7 @@ def _evaluate_in_process(
                 _note_stage(stage="bench", status="running", attempt=attempt + 1, attempts_max=BENCH_ATTEMPTS, noisy=noisy)
                 if not noisy:
                     break
-        except MetalRuntimeError as e:
+        except backend.runtime_error() as e:
             return finish("runtime_error", f"GPU error during benchmarking: {str(e)[:300]}")
     # 留下 CV 最小的一次。三次都超过阈值也留最安静的那次，并在报告里标 noisy；吵本身不判死。
     noise, stats, cand_gpu = min(attempts, key=lambda a: a[0])
@@ -547,7 +543,7 @@ def _evaluate_in_process(
         rep.benchmark["best_baseline"] = best
         if fast_bench:
             _remember_baseline(task_name, dtype, size, best, target_id=target_id)
-    rep.roofline = roofline(task, cand.median_s, calib)
+    rep.roofline = backend.roofline(task, cand.median_s, calib)
     try:  # compiler baseline (Triton -> Metal through triton-msl), when it was measured for this task
         from .triton_baseline import estimate, load_cached
 

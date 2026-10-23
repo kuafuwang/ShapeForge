@@ -54,6 +54,11 @@ class MetalBackend:
 
         return only_static_threadgroup_limit(violations)
 
+    def validation_problems(self, violations: list[str], static_bytes: list[int], max_tg_memory: int) -> list[str]:
+        from ...abi import validation_problems
+
+        return validation_problems(violations, static_bytes, max_tg_memory)
+
     def set_heartbeat_hooks(self, *, on_compile=None, on_launch=None) -> None:
         from ...metal_runtime import set_compile_hooks, set_launch_hooks
 
@@ -61,6 +66,41 @@ class MetalBackend:
             set_compile_hooks(*on_compile)
         if on_launch is not None:
             set_launch_hooks(*on_launch)
+
+    def context(self):
+        from ...metal_runtime import get_context
+
+        return get_context()
+
+    def compile_error(self):
+        from ...metal_runtime import MetalCompileError
+
+        return MetalCompileError
+
+    def runtime_error(self):
+        from ...metal_runtime import MetalRuntimeError
+
+        return MetalRuntimeError
+
+    def prepare_case(self, task: Any, seed: int):
+        from ...testing import prepare_case
+
+        return prepare_case(task, task.cases[0], seed)
+
+    def baseline_runners(self, task: Any, data0: Any) -> Mapping[str, Any]:
+        from ...baselines import build_runners
+
+        return build_runners(task, data0.rounded)
+
+    def calibration(self, target_id: str) -> dict:
+        from ...profile import get_calibration
+
+        return get_calibration(target_id=target_id)
+
+    def roofline(self, task: Any, time_s: float, calibration: dict) -> dict:
+        from ...profile import roofline
+
+        return roofline(task, time_s, calibration)
 
     def assemble(self, contract: Any, source: str) -> tuple[str, int]:
         return contract.assemble(source)
