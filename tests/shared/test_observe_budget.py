@@ -13,7 +13,6 @@ import pytest
 from observe import query as scan
 from observe.budget import NEAR_FRACTION, budget_status, render_banner_html, summarize
 
-from .test_observe import dashboard  # noqa: F401  (pytest fixture: the dashboard served on a free port)
 
 # ------------------------------------------------------------------------------------------------ the classification
 

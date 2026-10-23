@@ -10,6 +10,7 @@
 - `resume.py`：resume/CLI 测试 helper；
 - `triton_specs.py`：Triton spec 测试 helper；
 - `llm.py`：脚本化 LLM 错误 helper；
+- `dashboard.py`：共享的 dashboard fixture/pytest 插件；
 - `hw_golden.py`：golden 读取/重录；
 - `golden/<backend_id>/`：按 backend 分目录的 golden 数据。
 

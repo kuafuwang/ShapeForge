@@ -153,6 +153,8 @@ AI/人应先读 `triage_summary.md`，再读对应 Markdown 的 JSON 块，最�
   `test_abi.py`、`test_triton_baseline.py`、`test_orchestrator_profiling.py`。
   根目录剩下的是通用搜索/审查/observe/预算/锁/target/schema 测试，不再直接
   import `tcenv.backends.metal.*`。
-- 阶段 4：把剩余 backend 无关测试移入 `tests/shared/`；不要一次移动全部
-  根目录文件。
+- 阶段 4：已完成，根目录不再有 `test_*.py`；所有 backend 无关测试在
+  `tests/shared/`，所有 Metal 测试在 `tests/backends/metal/`。
+  测试模块之间不再互相 import fixture/helper；共享 dashboard fixture 由
+  `tests/support/dashboard.py` 提供。
 - 迁移时一次只移动一组，先跑目标测试，再跑全量；不要把目录移动和业务改动混在一起。

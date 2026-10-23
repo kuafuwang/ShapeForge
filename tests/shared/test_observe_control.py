@@ -16,7 +16,6 @@ import pytest
 from observe import actions, query as scan
 from taic import control
 
-from .test_observe import dashboard  # noqa: F401  (pytest fixture: the dashboard served on a free port)
 
 DEAD_PID = 2**22 + 31337
 

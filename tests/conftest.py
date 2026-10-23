@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-pytest_plugins = ["tests.support.run_logs", "tests.support.handoff"]
+pytest_plugins = ["tests.support.run_logs", "tests.support.handoff", "tests.support.dashboard"]
 
 
 @pytest.fixture(autouse=True)
