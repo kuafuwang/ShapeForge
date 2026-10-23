@@ -66,6 +66,16 @@ Confidence: verified
 边界: 换机型要重新读设备属性，不要把这个数写死在核里。
 反例: 动态 `threadgroup` 参数在 `taic-launch` 里声明后可用，但它和静态数组共享同一个上限。
 
+## 静态 threadgroup 占用降低常驻线程组数
+
+Keywords: threadgroup memory occupancy resident threadgroups flash attention pad
+Confidence: verified
+观察: 同一颗 flash-attention 核只增加 8 KB 静态 pad，把静态占用从 9216 B 提到 17408 B，每核常驻线程组从 3 降到 1；同输出配对对照 wall 321.48→360.17 µs（+12.0%），GPU 时间戳 300.03→342.94 µs（+14.3%）。
+来源: `runs/apple-m4-max/flash-attention-pilot-20261022/agent_work/r1.p0/repro_tgmem_base.metal`、`repro_tgmem_pad17k.metal`；proposal `8bd186122ecde37e`。
+本机实测: M4 Max，fp16，paper，seed 12345，15 reps；base 9216 B → 3 resident，pad 17408 B → 1 resident；两个版本都通过 correctness。
+边界: 同一颗核、同一 launch、只改静态 pad；12–14% 是这道 flash-attention shape 的配对结果，不推广成所有核的固定比例。
+反例: 核已经受寄存器或线程数限制，或静态占用没有跨过 32768/2 的驻留阈值时，增加 pad 不一定降低 resident，也不一定同幅变慢。
+
 ## 被长度截断后把重试的思考降下来
 
 Keywords: truncation retry reasoning effort low max tokens empty reply
