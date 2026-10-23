@@ -135,6 +135,7 @@ def test_review_board_lists_every_run_with_the_claim_text(tmp_path, monkeypatch)
     assert 'params.set("since"' in html
     assert "patchReviewDom" in html
     assert "priorMarkup" in html and "此前结论" in html
+    assert "similarMarkup" in html and "相似结论" in html
 
 
 def test_a_review_shows_prior_exact_digest_verdicts_scoped_to_task_and_target(tmp_path, monkeypatch):
@@ -162,6 +163,28 @@ def test_a_review_shows_prior_exact_digest_verdicts_scoped_to_task_and_target(tm
     # The current row is not its own prior.
     current = next(item for item in feed["upserts"] if item["run_id"] == "conv" and item["digest"] == premise)
     assert current["prior"] == []
+
+
+def test_semantic_similarity_finds_a_rephrased_claim_in_the_same_task_and_target(tmp_path, monkeypatch):
+    from observe.similarity import available
+
+    if not available():
+        pytest.skip("Apple NaturalLanguage sentence embeddings are unavailable")
+    runs, index = _open(tmp_path, monkeypatch)
+    first_text = "矩阵单元和 SIMT ALU 吞吐相近，而且工作相加。"
+    second_text = "矩阵单元和 SIMT ALU 吞吐差不多，而且两者工作相加。"
+    first = parse_feedback("# 对系统的建议\n- " + first_text + "\n")
+    second = parse_feedback("# 对系统的建议\n- " + second_text + "\n")
+    _run(runs, "conv", _record(first, t=10), started_at=50)
+    _run(runs, "conv2", _record(second, t=20), started_at=80)
+    index.sync_known()
+    board = review_board(index.conn, status="pending")
+    row = next(item for item in board["items"] if item["run_id"] == "conv2")
+    assert row["similar"][0]["run_id"] == "conv"
+    assert row["similar"][0]["score"] >= 0.975
+    from observe.suggestions import detail
+    full = detail("conv2", 1, second["items"][0]["digest"])
+    assert full["similar"][0]["run_id"] == "conv"
 
 
 def test_a_grown_log_is_read_from_the_cursor_and_a_review_does_not_reread_it(tmp_path, monkeypatch):

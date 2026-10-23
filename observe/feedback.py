@@ -826,6 +826,112 @@ def attach_prior_claims(conn, rows: list[dict]) -> None:
         row["prior_summary"] = _prior_summary(prior)
 
 
+def _review_file_cache(run_id: str, cache: dict[str, dict]) -> dict:
+    if run_id not in cache:
+        from .detail import resolve_run
+
+        directory = resolve_run(run_id)
+        cache[run_id] = _load_review(directory / "feedback_review.json")["claims"] if directory is not None else {}
+    return cache[run_id]
+
+
+def _candidate_texts(conn, *, task: str, target_id: str, before_t: float | None, limit: int = 500) -> list[dict]:
+    """Candidate claims for semantic comparison, with text read from their feedback lines."""
+    query = """
+        SELECT c.run_id, c.seq, c.digest, c.status, c.verification, c.change_ref,
+               c.reviewed_at, i.task, i.model, i.t, r.target_id, i.line_at
+        FROM feedback_claims c
+        JOIN feedback_items i ON i.run_id = c.run_id AND i.seq = c.seq
+        LEFT JOIN runs r ON r.run_id = c.run_id
+        WHERE i.task = ? AND r.target_id = ? AND c.digest <> ''
+    """
+    params: list[object] = [task, target_id]
+    if before_t is not None:
+        query += " AND i.t < ?"
+        params.append(float(before_t))
+    query += " ORDER BY i.t DESC LIMIT ?"
+    params.append(max(1, int(limit)))
+    rows = [dict(row) for row in conn.execute(query, params)]
+    if not rows:
+        return []
+    from .detail import resolve_run
+
+    lines: dict[tuple[str, int], dict] = {}
+    for row in rows:
+        run_id = str(row["run_id"])
+        seq = int(row["seq"])
+        key = (run_id, seq)
+        if key not in lines:
+            directory = resolve_run(run_id)
+            record = None
+            if directory is not None and row.get("line_at") is not None:
+                record = _record_at(directory / "feedback.jsonl", int(row["line_at"]))
+            if record is None and directory is not None:
+                for candidate in load_records(directory / "feedback.jsonl"):
+                    if int(candidate.get("seq") or -1) == seq:
+                        record = candidate
+                        break
+            lines[key] = record or {}
+        record = lines[key]
+        text = ""
+        for item in record.get("items") or []:
+            if str(item.get("digest") or "") == str(row["digest"]):
+                text = str(item.get("text") or "")
+                break
+        if text:
+            row["text"] = text
+    return [row for row in rows if row.get("text")]
+
+
+def similar_claims(conn, *, digest: str, task: str, target_id: str, text: str, before_t: float | None = None, exclude_run: str = "", exclude_seq: int | None = None, limit: int = 3) -> list[dict]:
+    """Earlier same-task/target claims whose local sentence embedding is close.
+
+    This is a retrieval hint, not a verdict. It uses Apple's local sentence embeddings;
+    when unavailable it returns ``[]`` rather than silently substituting a lexical score.
+    """
+    from . import similarity
+
+    if not text or not similarity.available():
+        return []
+    candidates = _candidate_texts(conn, task=task, target_id=target_id, before_t=before_t)
+    candidates = [
+        row for row in candidates
+        if not (row.get("run_id") == exclude_run and row.get("seq") == exclude_seq)
+    ]
+    scored = similarity.find_similar(text, candidates, limit=limit)
+    if not scored:
+        return []
+    cache: dict[str, dict] = {}
+    for row in scored:
+        saved = _review_file_cache(str(row["run_id"]), cache).get(f"{row['seq']}:{row['digest']}") or {}
+        row["note"] = str(saved.get("note") or "")
+        row["evidence"] = str(saved.get("evidence") or "")
+        row["evidence_source"] = str(saved.get("evidence_source") or "")
+        row["subclaims"] = list(saved.get("subclaims") or [])
+    return scored
+
+
+def attach_similar_claims(conn, rows: list[dict], *, limit: int = 3) -> None:
+    """Attach semantic neighbours to pending review rows. Exact prior stays the cheap layer."""
+    for row in rows:
+        if str(row.get("status") or "") != "pending" or not str(row.get("text") or ""):
+            row["similar"] = []
+            continue
+        similar = similar_claims(
+            conn,
+            digest=str(row.get("digest") or ""),
+            task=str(row.get("task") or ""),
+            target_id=str(row.get("target_id") or ""),
+            text=str(row.get("text") or ""),
+            before_t=row.get("t"),
+            exclude_run=str(row.get("run_id") or ""),
+            exclude_seq=row.get("seq"),
+            limit=limit,
+        )
+        prior_keys = {(p.get("run_id"), p.get("seq"), p.get("digest")) for p in row.get("prior", [])}
+        row["similar"] = [item for item in similar if (item.get("run_id"), item.get("seq"), item.get("digest")) not in prior_keys]
+
+
 def review_board(conn, *, task: str | None = None, model: str | None = None, kind: str | None = None, status: str | None = None) -> dict:
     """Every review claim across runs, with the text that lives in the run directory.
 
@@ -873,6 +979,7 @@ def review_board(conn, *, task: str | None = None, model: str | None = None, kin
             row["report"] = record.get("report")
             row["report_path"] = record.get("report_path") or ""
     attach_prior_claims(conn, summary["items"])
+    attach_similar_claims(conn, summary["items"])
     return {"pending_total": summary["pending_total"], "calibration": calibration, "items": summary["items"]}
 
 
@@ -1005,6 +1112,7 @@ def review_feed(conn, *, since: int | None = None) -> dict:
         snapshot = False
     calibration = _attach_claim_text(rows)
     attach_prior_claims(conn, rows)
+    attach_similar_claims(conn, rows)
     return {
         "same": False,
         "snapshot": snapshot,

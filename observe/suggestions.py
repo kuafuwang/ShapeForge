@@ -304,12 +304,20 @@ def detail(run_id: str, seq: int, digest: str) -> dict:
             task = task or str(indexed["task"] or "")
             target_id = target_id or str(indexed["target_id"] or "")
             item_t = item_t if item_t is not None else indexed["t"]
+    similar: list[dict] = []
     if task and target_id:
         with borrow() as index:
             prior = feedback.prior_claims(
                 index.conn, digest=str(digest), task=task, target_id=target_id,
                 before_t=item_t, exclude_run=run_id, exclude_seq=int(seq),
             )
+            similar = feedback.similar_claims(
+                index.conn, digest=str(digest), task=task, target_id=target_id,
+                text=str(source.get("text") or ""), before_t=item_t,
+                exclude_run=run_id, exclude_seq=int(seq),
+            )
+    prior_keys = {(p.get("run_id"), p.get("seq"), p.get("digest")) for p in prior}
+    similar = [item for item in similar if (item.get("run_id"), item.get("seq"), item.get("digest")) not in prior_keys]
     return {
         "run_id": run_id,
         "seq": int(seq),
@@ -323,4 +331,5 @@ def detail(run_id: str, seq: int, digest: str) -> dict:
         "proposal": proposal,
         "reviews": reviews,
         "prior": prior,
+        "similar": similar,
     }
