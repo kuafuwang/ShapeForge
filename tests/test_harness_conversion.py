@@ -119,6 +119,220 @@ def test_a_converted_proposal_can_be_sent_to_one_explicit_review(tmp_path, monke
         }
 
     monkeypatch.setattr(review_mod, "run_review", fake_review)
-    result = actions.review_harness("run", json.loads((run / "harness_proposals.jsonl").read_text())["proposal_key"], {})
+    proposal_key = json.loads((run / "harness_proposals.jsonl").read_text())["proposal_key"]
+    with pytest.raises(actions.Refused, match="author"):
+        actions.review_harness("run", proposal_key, {"provider": "deepseek", "model": "deepseek-flash"})
+    result = actions.review_harness("run", proposal_key, {})
     assert result["review"]["useful"] is True and calls
     assert (run / "harness_reviews.jsonl").is_file()
+
+
+def _rewrite_record(run: Path, **fields) -> dict:
+    path = run / "feedback.jsonl"
+    record = json.loads(path.read_text().splitlines()[0])
+    record.update(fields)
+    path.write_text(json.dumps(record, ensure_ascii=False) + "\n")
+    return record
+
+
+def _probe(run: Path, mtime: float, name: str = "probe.py") -> Path:
+    import os
+
+    path = run / "agent_work" / "init" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("print(1)\n", encoding="utf-8")
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def test_conversion_uses_the_recorded_session_start_not_the_feedback_time(tmp_path):
+    import time as _time
+
+    run, digest = _run(tmp_path)
+    now = _time.time()
+    _rewrite_record(run, t=now, session_started=now - 600)
+    _probe(run, now - 300)
+    row = harness.convert_feedback(
+        run, seq=1, digest=digest, target_id="apple-m4-max", task="flash_attention",
+        dtype="fp16", surface="tip", action="先试这个 tile", probe="probe.py",
+        measurement="1.2x", by="alice", confirm=True,
+    )
+    assert row["probe_time_verified"] is True
+    assert row["conversion"]["source_session_started"] == now - 600
+
+
+def test_an_old_record_marks_probe_time_unverifiable_instead_of_using_feedback_time(tmp_path):
+    import time as _time
+
+    run, digest = _run(tmp_path)
+    now = _time.time()
+    _rewrite_record(run, t=now)
+    record = json.loads((run / "feedback.jsonl").read_text().splitlines()[0])
+    record.pop("session_started", None)
+    (run / "feedback.jsonl").write_text(json.dumps(record, ensure_ascii=False) + "\n")
+    _probe(run, now - 300)
+    row = harness.convert_feedback(
+        run, seq=1, digest=digest, target_id="apple-m4-max", task="flash_attention",
+        dtype="fp16", surface="tip", action="先试这个 tile", probe="probe.py",
+        measurement="1.2x", by="alice", confirm=True,
+    )
+    assert row["probe_time_verified"] is False
+    assert "session_started" in row["probe_time_reason"]
+
+
+def test_a_probe_before_the_recorded_session_start_is_still_rejected(tmp_path):
+    import time as _time
+
+    run, digest = _run(tmp_path)
+    now = _time.time()
+    _rewrite_record(run, t=now, session_started=now - 100)
+    _probe(run, now - 400)
+    with pytest.raises(harness.ProposalError, match="predates this session"):
+        harness.convert_feedback(
+            run, seq=1, digest=digest, target_id="apple-m4-max", task="flash_attention",
+            dtype="fp16", surface="tip", action="先试这个 tile", probe="probe.py",
+            measurement="1.2x", by="alice", confirm=True,
+        )
+
+
+def test_a_conversion_is_not_model_authored_and_its_source_model_cannot_review_it(tmp_path):
+    import time as _time
+
+    from taic import trust
+
+    run, digest = _run(tmp_path)
+    now = _time.time()
+    _rewrite_record(run, t=now, session_started=now - 600)
+    _probe(run, now - 300)
+    row = harness.convert_feedback(
+        run, seq=1, digest=digest, target_id="apple-m4-max", task="flash_attention",
+        dtype="fp16", surface="tip", action="先试这个 tile", probe="probe.py",
+        measurement="1.2x", by="alice", confirm=True,
+    )
+    assert row["provider"] == "" and row["model"] == ""
+    assert row["source_author"]["provider"] == "deepseek"
+    assert row["structured_by"]["confirmed_by"] == "alice"
+    assert harness.reviewer_conflict(row, "deepseek", "deepseek-flash") is True
+    assert harness.reviewer_conflict(row, "moonshot", "kimi-k3") is False
+
+    root = tmp_path / "targets"
+    trust.grant("apple-m4-max", "flash_attention", "deepseek", "deepseek-flash", scopes=["overlay:tip"], root=root)
+    first = harness.settle(
+        run, target_id="apple-m4-max", task="flash_attention",
+        protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=root,
+    )
+    assert first["applied"] == []
+
+    reviews = run / "harness_reviews.jsonl"
+    reviews.write_text(json.dumps({
+        "event": "review", "proposal_key": row["proposal_key"], "source_seq": 1, "useful": True,
+        "reviewer": {"provider": "deepseek", "model": "deepseek-flash", "effort": ""},
+    }) + "\n")
+    same = harness.settle(
+        run, target_id="apple-m4-max", task="flash_attention",
+        protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=root,
+    )
+    assert same["applied"] == []
+
+    trust.grant("apple-m4-max", "flash_attention", "moonshot", "kimi-k3", scopes=["overlay:tip"], root=root)
+    reviews.write_text(json.dumps({
+        "event": "review", "proposal_key": row["proposal_key"], "source_seq": 1, "useful": True,
+        "reviewer": {"provider": "moonshot", "model": "kimi-k3", "effort": ""},
+    }) + "\n")
+    independent = harness.settle(
+        run, target_id="apple-m4-max", task="flash_attention",
+        protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=root,
+    )
+    assert [event["proposal_key"] for event in independent["applied"]] == [row["proposal_key"]]
+
+
+def test_conversion_refuses_a_work_dir_outside_the_run(tmp_path):
+    run, digest = _run(tmp_path)
+    _rewrite_record(run, work_dir="../outside")
+    with pytest.raises(harness.ProposalError, match="escapes"):
+        harness.convert_feedback(
+            run, seq=1, digest=digest, target_id="apple-m4-max", task="flash_attention",
+            dtype="fp16", surface="skill", action="在成绩单加印 GPU 时间戳加速比",
+            by="alice", confirm=True,
+        )
+
+
+def test_an_unverified_old_tip_cannot_become_reviewed_active(tmp_path):
+    from taic import trust
+
+    run, digest = _run(tmp_path)
+    _probe(run, time.time() - 300)
+    proposal = harness.convert_feedback(
+        run, seq=1, digest=digest, target_id="apple-m4-max", task="flash_attention",
+        dtype="fp16", surface="tip", action="先试这个 tile", probe="probe.py",
+        by="alice", confirm=True,
+    )
+    assert proposal["probe_time_verified"] is False
+    (run / "harness_reviews.jsonl").write_text(json.dumps({
+        "event": "review", "proposal_key": proposal["proposal_key"], "source_seq": 1,
+        "useful": True, "reviewer": {"provider": "moonshot", "model": "kimi-k3", "effort": ""},
+    }) + "\n")
+    root = tmp_path / "targets"
+    trust.grant("apple-m4-max", "flash_attention", "moonshot", "kimi-k3", scopes=["overlay:tip"], root=root)
+    result = harness.settle(
+        run, target_id="apple-m4-max", task="flash_attention",
+        protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=root,
+    )
+    assert result["applied"] == []
+
+
+def test_a_reviewed_p2_proposal_never_becomes_a_tip_overlay(tmp_path):
+    from taic import trust
+
+    run, digest = _run(tmp_path)
+    proposal = harness.convert_feedback(
+        run, seq=1, digest=digest, target_id="apple-m4-max", task="flash_attention",
+        dtype="fp16", surface="skill", action="在成绩单加印 GPU 时间戳加速比",
+        by="alice", confirm=True,
+    )
+    (run / "harness_reviews.jsonl").write_text(json.dumps({
+        "event": "review", "proposal_key": proposal["proposal_key"], "source_seq": 1,
+        "useful": True, "reviewer": {"provider": "moonshot", "model": "kimi-k3", "effort": ""},
+    }) + "\n")
+    root = tmp_path / "targets"
+    trust.grant("apple-m4-max", "flash_attention", "moonshot", "kimi-k3", scopes=["overlay:tip"], root=root)
+    result = harness.settle(
+        run, target_id="apple-m4-max", task="flash_attention",
+        protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=root,
+    )
+    assert result["applied"] == []
+    assert not (run / "harness_overlay.jsonl").exists()
+
+
+def test_an_old_style_conversion_row_never_counts_toward_tip_quorum(tmp_path):
+    from taic import trust
+
+    run = tmp_path / "run"
+    run.mkdir()
+    action = "先读 device.md 再选 tile"
+    base = {
+        "schema_version": 1, "event": "proposal", "status": "valid", "proposal_key": "same-key",
+        "target_id": "apple-m4-max", "task": "flash_attention", "dtype": "fp16",
+        "proposal": {
+            "surface": "tip", "scope": {"target_id": "apple-m4-max", "task": "flash_attention", "dtype": "fp16"},
+            "action": action, "evidence": {"probe": "probe.py", "measurement": "1.2x"}, "rationale": "test",
+        },
+        "probe_time_verified": True, "trusted_record": False,
+    }
+    rows = [
+        {**base, "seq": 1, "origin": "conversion", "provider": "deepseek", "model": "deepseek-flash",
+         "committee": "first", "probe_sha256": "a" * 64},
+        {**base, "seq": 2, "origin": "model", "provider": "moonshot", "model": "kimi-k3",
+         "committee": "second", "probe_sha256": "b" * 64},
+    ]
+    (run / "harness_proposals.jsonl").write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n"
+    )
+    root = tmp_path / "targets"
+    trust.grant("apple-m4-max", "flash_attention", "deepseek", "deepseek-flash", scopes=["overlay:tip"], root=root)
+    trust.grant("apple-m4-max", "flash_attention", "moonshot", "kimi-k3", scopes=["overlay:tip"], root=root)
+    result = harness.settle(
+        run, target_id="apple-m4-max", task="flash_attention",
+        protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=root,
+    )
+    assert result["applied"] == []

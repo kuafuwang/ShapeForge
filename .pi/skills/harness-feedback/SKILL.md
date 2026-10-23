@@ -35,6 +35,7 @@ Start with the compact, index-backed query. It returns one preview per digest, n
 
 ```bash
 uv run python -m taic.cli query suggestions --status pending --limit 20 --preview 80
+uv run python -m taic.cli query suggestions --status pending --limit 20 --offset 20 --preview 80
 uv run python -m taic.cli query suggestions --task flash_attention --limit 20 --preview 80
 ```
 
@@ -47,11 +48,11 @@ uv run python -m taic.cli query suggestion --run RUN_ID --seq 4 --digest DIGEST
 The equivalent HTTP endpoints are:
 
 ```text
-GET /api/v2/suggestions?task=&target=&model=&status=&limit=&preview=
+GET /api/v2/suggestions?task=&target=&model=&status=&limit=&offset=&preview=
 GET /api/v2/suggestion?run=&seq=&digest=
 ```
 
-The compact query uses `feedback_claims` / `feedback_items`, groups by digest, and reads only one representative `feedback.jsonl` line per group. Do not call the detail endpoint for every row; that defeats the token saving.
+The compact query uses `feedback_claims` / `feedback_items`, computes `total_claims` / `total_groups` over the whole filtered set, groups by digest, and reads only one representative `feedback.jsonl` line per returned group. `limit` is a page size, not a scan cap: `truncated=true` means more groups exist, and `next_offset` is the next page. Do not call the detail endpoint for every row; that defeats the token saving. `converted_key` and `reviewed` describe only the representative `first` claim (`link_scope` says so). They match by `run_id#seq#digest`; an empty representative link does not prove no other claim in the digest group was converted.
 
 If you need a full cross-run export for offline analysis, the optional collector is still available:
 
@@ -79,7 +80,7 @@ Read the actual source text and the surrounding record (task, dtype, model, roun
 
 Separate at least these cases:
 
-- **Runtime hint** (“try this tile/ordering”): candidate `tip`. It needs a probe from the proposing session, an `overlay:tip`-trusted author, and usually two independent sources. A single-source tip can still be reviewed for this run.
+- **Runtime hint** (“try this tile/ordering”): candidate `tip`. It needs a probe from the proposing session, an `overlay:tip`-trusted author, and usually two independent sources. A single-source tip with a verified session-time probe can still be reviewed for this run.
 - **Measured hardware fact** (“this occupancy limit costs 17–41%”): candidate `premise`. It needs a fresh probe and a matching harness self-check row; conversion alone does not make it active.
 - **Reporting/contract/wording** (“print GPU-time speedup”, “change the promotion threshold”): candidate `skill` or `task_wording` (P2). It can be converted without a probe, but review does not auto-change the repository.
 - **Tool/code bug** (“`--self-check-dir` is not writable”): do not force it into a harness surface. Record a code work item; verify the bug, then use the code-agent P2 path.
@@ -127,11 +128,13 @@ uv run python -m taic.cli harness convert RUN_DIR \
 
 - `--confirm` is the human gate; only add it after the user approved that row.
 - `--mode ai` records that an AI filled the structured fields; it does not change the gate. A human doing it uses `--mode manual`.
-- `tip`/`premise` need a probe path relative to that session's `agent_work/<label>` directory. The probe must exist in that session and be created after the session started. If there is no valid probe, do not call it a tip/premise; use `skill`/`task_wording` or leave it `info`.
+- `tip`/`premise` need a probe path relative to that session's `agent_work/<label>` directory. New feedback records carry `session_started`; the probe must exist and be created after that time. Older records lack it: conversion still checks the path and hash but marks `probe_time_verified=false`, and review shows the time as unverifiable. Never substitute the feedback write time `t` for the session start, and do not present an unverified probe as fresh.
+- The conversion keeps the original model in `source_author` and the filling/confirmation path in `structured_by`; the row's top-level `provider`/`model` are empty. A conversion is therefore not a model-authored tip and cannot satisfy quorum or review itself. The source model must not review it.
+- `tip`/`premise` without a valid probe should be rejected or left `info`; use `skill`/`task_wording` only when the suggestion really is a P2 harness change.
 - `scope.target_id` and `scope.task` must match the run. Cross-target ideas need separate proposals for each target, not one broad action.
 - Keep the action a single imperative sentence, at most 500 characters. Do not put shell commands, code fences, or path redirections in it.
 
-The conversion writes only `harness_proposals.jsonl` in that run, with `origin=conversion`, the original claim digest, source text, `confirmed_by`, and the chosen surface. It does not call a model and does not create a review.
+The conversion writes only `harness_proposals.jsonl` in that run, with `origin=conversion`, the original claim digest, source text, `confirmed_by`, `source_author`, `structured_by`, and the chosen surface. It does not call a model and does not create a review.
 
 After writing, verify:
 
@@ -147,7 +150,7 @@ Only after the human asks for the review (it spends money):
 uv run python -m taic.cli harness review RUN_DIR --key PROPOSAL_KEY --task TASK
 ```
 
-or use the dashboard’s **送 LLM review** button. The reviewer is a read-only independent turn. It must not edit TASK, kernels, or trust. Review output goes to `harness_reviews.jsonl`; `reviewed_active` only affects this run’s later sessions. It is not a permanent promotion.
+or use the dashboard’s **送 LLM review** button. The reviewer is a read-only independent turn. It must not edit TASK, kernels, or trust. Its prompt includes a bounded evidence bundle: the original free text, `surface`/`scope`, probe path/hash/excerpt, matching self-check rows, candidate-report summary, and the outer checks’ verified/missing list. The proposal text and probe excerpt stay inside the untrusted markers; the outer checks are facts computed from files. `harness_reviews.jsonl` records the verdict, actual cost, and `prompt_sha256`; `reviewed_active` is limited to verified-time tips and only affects this run’s later sessions. An unverified old tip or a P2 review stays recorded without activation. It is not a permanent promotion. The reviewer must differ from every author, including `source_author`; the default choice avoids the source claim’s committee.
 
 Before starting, report the estimated reviewer/model and the fact that it will cost money. If the user only asked to “review” one free-text item, do not silently convert and review it in one step; the conversion is a separate human-confirmed action.
 
@@ -163,13 +166,23 @@ uv run python -m taic.cli harness apply RUN_DIR --key PROPOSAL_KEY --check
 uv run python -m taic.cli harness apply RUN_DIR --key PROPOSAL_KEY --run-tests --confirm
 ```
 
+For a code patch, prefer the P2 code path; it generates a patch in a detached worktree and never commits:
+
+```bash
+uv run python -m taic.cli harness implement RUN_DIR --key PROPOSAL_KEY
+uv run python -m taic.cli harness apply-code RUN_DIR --key PROPOSAL_KEY --check
+uv run python -m taic.cli harness apply-code RUN_DIR --key PROPOSAL_KEY --confirm --by HUMAN
+```
+
+`apply-code` runs the offline suite against the patched tree in a separate worktree by default (verifying imports resolve there) (`--no-run-tests` skips it), applies to the live checkout only after that passes, and refuses `tasks/`, `tcenv/gpulock.py`, `taic/trust.py`, `targets/*/trust.toml`, `control.json`, and credential files. It records `code_promotion` with `paths` and `patch_sha256`.
+
 `apply` changes the **local checkout** and records `status=local` and `local_patch_sha256`; it does not create a final `change_ref`. A person later commits the promoted paths:
 
 ```bash
 uv run python -m taic.cli harness commit RUN_DIR --message "..." --by HUMAN
 ```
 
-That step writes `change_ref=commit:<sha>` and marks the source claim done. Do not call it automatically.
+That step writes `change_ref=commit:<sha>` and marks the source claim done. It handles both target-experience `promotion` rows and `code_promotion` rows; it verifies recorded patch hashes and compares a private staged snapshot with patches replayed from HEAD; a drifted snapshot is refused without sweeping in other staged files. Do not call it automatically.
 
 ### Shared skill/TASK wording or code
 

@@ -1408,6 +1408,9 @@ class Orchestrator:
             "seq": self._next_feedback_seq(),
             "run_id": run_id,
             "t": time.time(),
+            # The session start is the only timestamp that can prove a probe was created
+            # during this session; ``t`` is written when the session ends.
+            "session_started": None if started is None else float(started),
             "task": self.task_name,
             "dtype": self.dtype,
             "size": self.size,
@@ -1489,16 +1492,21 @@ class Orchestrator:
         pending = harness.pending_tip_reviews(self.run_dir, proposals)
         if not pending:
             return
-        other = next((committee for committee in self.committees if committee.name != self._committee_name), None)
+        row = pending[0]
+        # A converted claim must not be reviewed by the model that wrote its source text.
+        # Choose a committee other than the source claim's committee first.
+        proposal_committee = harness.proposal_committee(row)
+        other = next((committee for committee in self.committees if committee.name != proposal_committee), None)
+        if other is None or not other.members:
+            other = next((committee for committee in self.committees if committee.name != self._committee_name), None)
         if other is None or not other.members:
             return
         reviewer = other.members[0]
-        row = pending[0]
-        proposer = (str(row.get("provider") or ""), str(row.get("model") or ""))
-        if proposer == (reviewer.provider, reviewer.model):
-            self.log("  [review] skipped: the other committee uses the same provider/model")
+        if harness.reviewer_conflict(row, reviewer.provider, reviewer.model):
+            self.log("  [review] skipped: the reviewer is also an author of the source claim")
             return
-        prompt = review_mod.build_review_prompt(row.get("proposal") or {}, run_id=str(row.get("run_id") or self.run_dir.name))
+        bundle = review_mod.evidence_bundle(self.run_dir, row)
+        prompt = review_mod.build_review_prompt(row.get("proposal") or {}, run_id=str(row.get("run_id") or self.run_dir.name), bundle=bundle)
         prices = Prices(reviewer.cfg.price_in, reviewer.cfg.price_out, reviewer.cfg.price_cache_read, reviewer.cfg.price_cache_write)
         plan = review_mod.estimate_review_budget(prices, prompt)
         remaining = self.ledger.remaining

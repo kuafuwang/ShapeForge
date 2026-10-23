@@ -210,7 +210,7 @@ approved proposal
 - 它生成的 `change_ref` 应该是 commit 哈希，不是模型自由文本；本地阶段的追迹用 `local_patch_sha256`。
 - 人点“固化到本地”后，变更立刻写本地 checkout；之后 `taic harness commit` 只提交这些路径，并把 `change_ref` 回填为 `commit:<sha>`。
 
-当前已提供 `taic/code_agent.py` 和 `taic harness implement/apply-code`：code agent 在独立 worktree 生成 patch，人确认后才 apply 到主 checkout；它不会自动 commit/merge。target experience 也走同一条“先本地、后提交”路径。
+当前已提供 `taic/code_agent.py` 和 `taic harness implement/apply-code`：code agent 在独立 worktree 生成 patch；`apply-code` 默认先在另一个隔离 worktree 跑离线套件，人确认后才 apply 到主 checkout；它不会自动 commit/merge。target experience 也走同一条“先本地、后提交”路径。
 
 ### 3.4 为什么 P2 先本地固化、后提交
 
@@ -311,7 +311,9 @@ flowchart LR
   Q --> S2["shadow / 人审"]
 ```
 
-review 不是第二个独立提出，不能替代 quorum；它把单来源 tip 推进到**本 run 的 active**，运行结束就失效。reviewer 自己还必须在该 `(target, task)` 上有 active `overlay:tip` 信任；否则 review 只存档，不生成 `reviewed_active`。永久固化仍是 P2，由人确认。review prompt 必须把建议标成 untrusted data，禁止改 kernel/TASK，只允许写 `HARNESS_REVIEW.json`。
+review 不是第二个独立提出，不能替代 quorum；它只把探针本场时间已核验的单来源 tip 推进到**本 run 的 active**，运行结束就失效。reviewer 自己还必须在该 `(target, task)` 上有 active `overlay:tip` 信任，且独立于同 key 的所有作者；否则 review 只存档，不生成 `reviewed_active`。P2 review 不能生成 tip overlay，永久固化仍由人确认。review prompt 必须把建议标成 untrusted data，禁止改 kernel/TASK，只允许写 `HARNESS_REVIEW.json`。
+
+review 的输入不是一句改写后的 action，而是一个有界证据包：原始自由文本、`surface/scope`、探针路径/哈希/节选、匹配的 self-check 行、候选报告摘要，以及外层程序算出的“已验证/缺失”。外层检查与提案正文分开标注；模型不能把文字声称当成已验证事实。外层检查只放程序算出的布尔值和数字，`self_checks.jsonl` 里的自由文本不进入这一节，避免把代理可写内容冒充为外层事实。旧反馈行没有 `session_started`、或旧 proposal 行没有 `probe_time_verified` 字段时，探针时间明确标成“无法验证”，而不是拿反馈写入时间替代。转换提案的 reviewer 默认避开原 claim 的委员会，写原 claim 的模型也不能 review 它。实际审阅的提示词哈希写入 review 记录，事后可核对模型当时看到的材料。
 
 review 的预算不能写死 $0.2：按 reviewer 的实际 input/output 单价、prompt 长度和最大输出 token 算：
 
@@ -380,7 +382,7 @@ proposal -> patch -> git apply --check -> 人点固化到本地
         -> taic harness commit -> change_ref=commit:<sha>
 ```
 
-看板的「固化到本地」只做本地 apply，不跑离线测试或 prompt golden；要跑测试用 `taic harness apply --run-tests`。code agent 的 `apply-code` 写 `code_promotion`/`status=local`，`change_ref` 为空；`taic harness commit` 只提交 `event=promotion` 的 experience 路径，不会提交 `code_promotion`。
+看板的「固化到本地」只做本地 apply，不跑离线测试或 prompt golden；要跑测试用 `taic harness apply --run-tests`。code agent 的 `apply-code` 写 `code_promotion`/`status=local`，`change_ref` 为空；它默认先在另一个隔离 worktree 里应用 patch 并跑离线套件，通过后才改主 checkout，并拒绝 `tasks/`、trust、control、凭据等路径。`taic harness commit` 同时接收 `promotion` 与 `code_promotion`，只提交记录的路径，并在提交前校验待提交 patch 的哈希，在独立 Git index 中从 HEAD 顺序重放并比较暂存快照；成功后回填 `change_ref=commit:<sha>`。
 
 失败可以丢弃 patch；已经应用的可以 revert。共享 prompt/skill 不默认写入，必须单独确认跨硬件影响。
 

@@ -89,6 +89,28 @@ def test_a_structured_tip_needs_two_trusted_committees_and_shadow_does_not_injec
     assert harness.overlay_text(run, target_id="apple-m4-max", task="conv2d", protocol_version="2") == ""
 
 
+def test_quorum_uses_only_qualifying_model_rows_for_the_overlay_text(tmp_path):
+    run = tmp_path / "run"
+    started = time.time() - 1
+    a = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(), started=started)
+    b = _session(run, seq=2, provider="moonshot", model="kimi-k3", committee="second", doc=_doc(), started=started)
+    (b / "probe.py").write_text("print(2)\n")
+    first = _record_proposal(run, a, _record(1, "deepseek", "deepseek-flash", "first"), _doc(), started)[0]
+    _record_proposal(run, b, _record(2, "moonshot", "kimi-k3", "second"), _doc(), started)
+    proposals = run / "harness_proposals.jsonl"
+    original = proposals.read_text()
+    converted = {**first, "seq": 0, "origin": "conversion", "provider": "", "model": "", "committee": "",
+                 "proposal": {**first["proposal"], "action": "CONVERSION WORDING"}}
+    proposals.write_text(json.dumps(converted, ensure_ascii=False) + "\n" + original)
+    root = tmp_path / "targets"
+    trust.grant("apple-m4-max", "conv2d", "deepseek", "deepseek-flash", effort="high", root=root)
+    trust.grant("apple-m4-max", "conv2d", "moonshot", "kimi-k3", effort="high", root=root)
+    result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(),
+                            enabled=True, shadow=False, trust_root=root)
+    assert result["applied"][0]["text"] == first["proposal"]["action"]
+    assert result["applied"][0]["source_seq"] == first["seq"]
+
+
 def test_one_model_or_an_untrusted_second_model_does_not_reach_quorum(tmp_path):
     run = tmp_path / "run"
     started = time.time() - 1

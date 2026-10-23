@@ -499,7 +499,7 @@ def cmd_query(a: argparse.Namespace) -> int:
     elif what == "suggestions":
         data = retrieval.suggestions(
             task=a.task, target=a.target, model=a.model, status=a.status,
-            limit=a.limit, preview=a.preview,
+            limit=a.limit, preview=a.preview, offset=a.offset,
         )
     elif what == "suggestion":
         if not a.run or a.seq is None or not a.digest:
@@ -583,6 +583,7 @@ def cmd_trust(a: argparse.Namespace) -> int:
 
 def cmd_harness(a: argparse.Namespace) -> int:
     from . import harness
+    from .llm import LLMError
 
     run = Path(a.run_dir)
     try:
@@ -620,7 +621,8 @@ def cmd_harness(a: argparse.Namespace) -> int:
             recorded = run_cfg.get("committees") if isinstance(run_cfg, dict) else None
             provider, model = a.provider, a.model
             if not provider or not model:
-                peers = [c for c in (recorded or []) if isinstance(c, dict) and c.get("name") != proposal.get("committee")]
+                proposal_committee = harness.proposal_committee(proposal)
+                peers = [c for c in (recorded or []) if isinstance(c, dict) and c.get("name") != proposal_committee]
                 members = (peers[0].get("members") if peers else None) or []
                 if not members or not isinstance(members[0], dict):
                     print("cannot choose an implementer; pass --provider and --model", file=sys.stderr)
@@ -691,8 +693,25 @@ def cmd_harness(a: argparse.Namespace) -> int:
             recorded = run_cfg.get("committees") if isinstance(run_cfg, dict) else None
             provider, model = a.provider, a.model
             if not provider or not model:
-                peers = [c for c in (recorded or []) if isinstance(c, dict) and c.get("name") != proposal.get("committee")]
+                proposal_committee = harness.proposal_committee(proposal)
+                peers = [c for c in (recorded or []) if isinstance(c, dict) and c.get("name") != proposal_committee]
                 members = (peers[0].get("members") if peers else None) or []
+                if not members or not isinstance(members[0], dict):
+                    from .llm import load_config as _load_config, load_raw_config as _load_raw
+                    from .committees import load_committees as _load_committees
+
+                    raw = _load_raw(None, "base")
+                    cfg, _ = _load_config(None, preset="base")
+                    configured = _load_committees(raw, active=cfg)
+                    peers = [c for c in configured if c.name != proposal_committee] or configured
+                    members = [{"provider": m.provider, "model": m.model} for c in peers for m in c.members]
+                if members and isinstance(members[0], dict):
+                    independent = [
+                        member for member in members
+                        if isinstance(member, dict)
+                        and not harness.reviewer_conflicts_with_group(proposals, str(member.get("provider") or ""), str(member.get("model") or ""))
+                    ]
+                    members = independent or members
                 if not members or not isinstance(members[0], dict):
                     print("cannot choose a reviewer; pass --provider and --model", file=sys.stderr)
                     return 5
@@ -708,9 +727,13 @@ def cmd_harness(a: argparse.Namespace) -> int:
             if member is None:
                 print(f"reviewer {provider}/{model} is not in the configured committees", file=sys.stderr)
                 return 5
+            if harness.reviewer_conflicts_with_group(proposals, provider, model):
+                print(f"reviewer {provider}/{model} is an author of this claim; choose an independent model", file=sys.stderr)
+                return 5
             prices = Prices(member.cfg.price_in, member.cfg.price_out, member.cfg.price_cache_read, member.cfg.price_cache_write)
             work = run / "harness_reviews" / str(a.key)
-            prompt = review_mod.build_review_prompt(proposal.get("proposal") or {}, run_id=str(proposal.get("run_id") or run.name))
+            bundle = review_mod.evidence_bundle(run, proposal)
+            prompt = review_mod.build_review_prompt(proposal.get("proposal") or {}, run_id=str(proposal.get("run_id") or run.name), bundle=bundle)
             plan = review_mod.estimate_review_budget(prices, prompt)
             print(json.dumps({"reviewer": {"provider": provider, "model": model, "effort": member.cfg.reasoning_effort}, "plan": plan}, ensure_ascii=False), file=sys.stderr)
             verdict = review_mod.run_review(
@@ -731,7 +754,7 @@ def cmd_harness(a: argparse.Namespace) -> int:
         else:
             print("unknown harness action", file=sys.stderr)
             return 5
-    except (harness.ProposalError, OSError, ValueError) as exc:
+    except (harness.ProposalError, OSError, ValueError, LLMError) as exc:
         print(str(exc), file=sys.stderr)
         return 5
     return 0
@@ -817,6 +840,7 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--seq", type=int, default=None)
     q.add_argument("--digest", default=None)
     q.add_argument("--preview", type=int, default=120, help="suggestions: preview characters per digest")
+    q.add_argument("--offset", type=int, default=0, help="suggestions: group offset for paging")
     q.add_argument("--min-speedup", type=float, default=None)
     q.add_argument("--sort", default="started", choices=["started", "speedup", "spent"])
     q.add_argument("--cursor", default=None)
@@ -911,7 +935,7 @@ def main(argv: list[str] | None = None) -> int:
     hc.add_argument("run_dir")
     hc.add_argument("--key", required=True)
     hc.add_argument("--check", action="store_true")
-    hc.add_argument("--run-tests", action="store_true")
+    hc.add_argument("--run-tests", action=argparse.BooleanOptionalAction, default=True, help="run the offline suite against the patched tree in an isolated worktree (default: on)")
     hc.add_argument("--by", default="cli")
     hc.add_argument("--confirm", action="store_true")
     hr = hs.add_parser("review")

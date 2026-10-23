@@ -220,8 +220,9 @@ async def api_v2_suggestions(request) -> JSONResponse:
     try:
         limit = int(params.get("limit", "20"))
         preview = int(params.get("preview", "120"))
+        offset = int(params.get("offset", "0"))
     except ValueError:
-        return _json({"error": "limit and preview must be integers"}, status=400)
+        return _json({"error": "limit, preview and offset must be integers"}, status=400)
     return _json(await asyncio.to_thread(
         query.suggestions,
         task=params.get("task") or None,
@@ -230,6 +231,7 @@ async def api_v2_suggestions(request) -> JSONResponse:
         status=params.get("status") or None,
         limit=limit,
         preview=preview,
+        offset=offset,
     ))
 
 

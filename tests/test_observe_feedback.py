@@ -349,3 +349,69 @@ def test_the_suggestions_http_endpoints_are_compact_and_detailed(tmp_path, monke
         assert len(doc["groups"][0]["preview"]) <= 9
         full = client.get("/api/v2/suggestion", params={"run": "conv", "seq": 1, "digest": digest})
         assert full.status_code == 200 and full.json()["text"] == "请加一个配对报告。"
+
+
+def test_compact_suggestions_page_over_the_whole_filtered_set(tmp_path, monkeypatch):
+    from observe.suggestions import compact
+
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = parse_feedback("# 对系统的建议\n- 第一条建议。\n- 第二条建议。\n- 第三条建议。\n")
+    _run(runs, "conv", _record(parsed), started_at=50)
+    index.sync_known()
+    first = compact(task="conv2d", limit=2, preview=20)
+    assert first["total_claims"] == 3 and first["total_groups"] == 3
+    assert len(first["groups"]) == 2 and first["truncated"] is True
+    assert first["next_offset"] == 2
+    second = compact(task="conv2d", limit=2, offset=first["next_offset"], preview=20)
+    assert len(second["groups"]) == 1 and second["truncated"] is False
+    assert second["next_offset"] is None
+    assert {row["digest"] for row in first["groups"] + second["groups"]} == {
+        item["digest"] for item in parsed["items"] if item["section"] == "对系统的建议"
+    }
+
+
+def test_compact_does_not_attribute_an_older_conversion_to_the_newest_claim(tmp_path, monkeypatch):
+    from observe.suggestions import compact, detail
+
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = parse_feedback("# 对系统的建议\n- 请加一个配对报告。\n")
+    _run(runs, "conv", _record(parsed), started_at=50)
+    with (runs / "conv" / "feedback.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(_record(parsed, seq=2, t=11), ensure_ascii=False) + "\n")
+    digest = parsed["items"][0]["digest"]
+    (runs / "conv" / "harness_proposals.jsonl").write_text(json.dumps({
+        "event": "proposal", "status": "valid", "seq": 1,
+        "proposal_key": "older-key", "claim_digest": digest, "proposal": {"surface": "skill"},
+    }) + "\n")
+    index.sync_known()
+    group = compact(task="conv2d", limit=5)["groups"][0]
+    assert group["first"]["seq"] == 2
+    assert group["link_scope"] == "first (representative claim only)"
+    assert group["converted_key"] == ""
+    assert detail("conv", 1, digest)["converted_key"] == "older-key"
+
+
+def test_compact_links_the_exact_seq_not_only_the_first_digest_match(tmp_path, monkeypatch):
+    from observe.suggestions import compact, detail
+
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = parse_feedback("# 对系统的建议\n- 请加一个配对报告。\n")
+    _run(runs, "conv", _record(parsed), started_at=50)
+    with (runs / "conv" / "feedback.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(_record(parsed, seq=2, t=11), ensure_ascii=False) + "\n")
+    digest = parsed["items"][0]["digest"]
+    rows = [
+        {"schema_version": 1, "event": "proposal", "status": "valid", "seq": 1,
+         "proposal_key": "first-key", "claim_digest": digest, "proposal": {"surface": "skill", "action": "a"}},
+        {"schema_version": 1, "event": "proposal", "status": "valid", "seq": 2,
+         "proposal_key": "second-key", "claim_digest": digest, "proposal": {"surface": "skill", "action": "b"}},
+    ]
+    (runs / "conv" / "harness_proposals.jsonl").write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n"
+    )
+    index.sync_known()
+    group = compact(task="conv2d", limit=5)["groups"][0]
+    assert group["converted_key"] == "second-key"
+    assert group["first"]["seq"] == 2
+    assert detail("conv", 1, digest)["converted_key"] == "first-key"
+    assert detail("conv", 2, digest)["converted_key"] == "second-key"

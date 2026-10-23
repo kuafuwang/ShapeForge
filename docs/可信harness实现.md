@@ -27,19 +27,19 @@
 - `taic/agent_feedback.py`：`fbv3` 在所有小节和逐条两处识别缺席句；带动作请求的条目保留。`_repair_record` 为旧记录补 `placeholder_items`。
 - `observe/feedback.py`：状态加入 `info` 和 `obsolete`；重建时读 `FEEDBACK.md` 只用于把探针已恢复的降级前提升为 `verified`，保留旧 digest 和审查键；删除的 claim 墓碑保留 `status`/`reason`。
 - `taic/trust.py`：`targets/<id>/trust.toml`，键含 target/task/provider/model/effort、`taic/prompts.py`/`taic/kernel_agent.py`/`taic/harness.py` 三个文件的整体 sha256、协议、scope、过期；`trust_audit.jsonl` 追加 `grant`/`suspended`/`revoked`。
-- `taic/harness.py`：解析 ` ```harness-proposal ` JSON；新增 `free_text_suggestions` / `convert_feedback`，把人工确认的自由文本写成带 `origin=conversion`、`claim_digest`、`confirmed_by` 的提案；`tip` 需要两个不同 provider/model、两个委员会、两份不同 SHA 的本场探针和 active 信任；`premise` 需要本场探针、active `overlay:premise` 信任，以及匹配的 harness 自检记录或外层候选报告（同 target/协议/内核 SHA，测量数字一致）；没有匹配记录时不写 overlay，只保留 `trusted_record=false` 的提案。默认只写影子 overlay；`TASK.md` 才注入 active 条目，且带未验证标题；overlay 自身最多 1800 字符。
-- `taic/review.py` + `taic/flows/feedback_review`：独立只读 review；预算按模型单价和 prompt 长度算；写 `harness_reviews.jsonl`；useful review 在 reviewer 也有该 `(target, task)` 的 active `overlay:tip` 信任时产生 `reviewed_active`，只对本 run 后续场次生效，运行结束失效。
-- `taic/cli.py`：`trust grant|revoke|suspend|status|audit|metrics`，`harness status|review|disable|settle|patch|apply|commit|implement|apply-code`。`apply` 默认拒绝；`--check` 只检查，`--run-tests` 跑离线测试，`--by` 记录确认人；`apply` 只改本地 checkout（`status=local`，不写最终 `change_ref`），`commit --message` 才提交这些路径并回填 `commit:<sha>`。`implement` 让 code agent 在 worktree 生成代码 patch，`apply-code` 人工确认后 apply，不自动 commit。
+- `taic/harness.py`：解析 ` ```harness-proposal ` JSON；新增 `free_text_suggestions` / `convert_feedback`，把人工确认的自由文本写成带 `origin=conversion`、`claim_digest`、`confirmed_by`、`source_author`、`structured_by` 的提案；转换使用记录里的 `session_started` 判断探针时间，旧记录缺该字段时只核对路径/哈希并标记时间无法验证；转换行顶层 provider/model 为空，不冒充模型作者；`tip` 需要两个不同 provider/model、两个委员会、两份不同 SHA 的本场探针和 active 信任；`premise` 需要本场探针、active `overlay:premise` 信任，以及匹配的 harness 自检记录或外层候选报告（同 target/协议/内核 SHA，测量数字一致）；没有匹配记录时不写 overlay，只保留 `trusted_record=false` 的提案。默认只写影子 overlay；`TASK.md` 才注入 active 条目，且带未验证标题；overlay 自身最多 1800 字符。
+- `taic/review.py` + `taic/flows/feedback_review`：独立只读 review；输入是有界证据包（原始自由文本、scope、探针节选、self-check、候选报告、已验证/缺失），外层检查与提案正文分开标注；预算按最终 prompt 和模型单价算；写 `harness_reviews.jsonl` 与 `prompt_sha256`；useful review 仅在提案为 tip、探针本场时间已核验、reviewer 有该 `(target, task)` 的 active `overlay:tip` 信任且独立于同 key 的所有作者时产生 `reviewed_active`，只对本 run 后续场次生效，运行结束失效。
+- `taic/cli.py`：`trust grant|revoke|suspend|status|audit|metrics`，`harness status|review|disable|settle|patch|apply|commit|implement|apply-code`。`apply` 默认拒绝；`--check` 只检查，`--run-tests` 跑离线测试，`--by` 记录确认人；`apply` 只改本地 checkout（`status=local`，不写最终 `change_ref`），`commit --message` 才提交这些路径并回填 `commit:<sha>`。`implement` 让 code agent 在 worktree 生成代码 patch；`apply-code` 默认先在另一个隔离 worktree 应用 patch 并跑离线套件，再改主 checkout，且拒绝 tasks/trust/control/凭据路径；它记录 `code_promotion` 与 `paths`，`commit` 会同时提交 `promotion` 和 `code_promotion`，提交前校验补丁哈希，在独立 Git index 中从 HEAD 顺序重放并比较暂存快照。
 - `observe/query.py` / `observe/app.py`：`GET /api/v2/harness/{run_id}` 返回提案、自由文本建议、决策和 overlay；顶栏「结构化提案」按钮在看板内列出这三样，并对 review 有用的提案给出「固化到本地」按钮（走 `POST /api/runs/{id}/harness/{key}/promote`）；没有内容编辑框。看板这条路径直接本地 apply，不跑离线测试或 prompt golden；要跑测试用 CLI `harness apply --run-tests`。
 - `experiments/apply_feedback_audit.py`：dry-run 默认；`--apply` 写 `feedback_review.json`；`--merge-topic` 显式合并同 topic 的系统建议（默认不做）。
 - `experiments/harness_pilot.py`：只读汇总影子/生效、空占位、提案和 unchanged 率。
 
 ## 验证
 
-- 最近全量离线测试：**914 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`，2026-10-22）。
+- 最近全量离线测试：**940 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`，本轮修改后）。
 - 新增测试覆盖：7 条占位原文、探针恢复后的 digest 保留、`info`/`obsolete`、空占位墓碑、信任 scope/prompt/协议/过期、单模型/同探针不达 quorum、跨 target/协议隔离、P2 `git apply --check`、审计写回、试点汇总、 review 预算随价格变化与 verdict 解析，以及合成的 feedback→proposal→trust→overlay→TASK 端到端流程。
 - 数据侧：174 条审计已写回；60 条实测 `adopted`、15 条已修 `done`、35 条未验证 `info`、7 条空占位 `obsolete`，其余 57 条 pending。10 条按 topic 合并的 `obsolete` 已由 `experiments.revert_topic_merges` 改回 pending；39 条采集时缺探针的 claim 中，31 条 premise 升为 `verified`、8 条仍 `downgraded`，等待人复核。7 条审计空占位现在都有 `feedback_claim_removed` 墓碑；重建会为所有空占位小节写墓碑，当前共 18 条。
-- `targets/apple-m4-max/trust.toml` 有两个 conv2d grant（deepseek-flash、kimi-k3），status 仍是 `active`；但它们的 `prompt_sha1` 是 `e5db87…`，当前三个提示/代码文件算出的指纹是 `e28574…`。`trust.check` 对两者都报 `trust was granted for another prompt`，所以重新 grant 之前，`harness_auto` 打开也不会自动通过任何 tip 或 premise。
+- `targets/apple-m4-max/trust.toml` 的两个 conv2d grant（deepseek-flash、kimi-k3）status 仍是 `active`，但记录的 `prompt_sha1` 为 `c270d5d3750e…`；本次修改后当前指纹为 `3236e0adce76…`。离线 `trust.check` 对两者均返回 `trust was granted for another prompt`。再次启用 active overlay 前须复核并重新授予信任；本轮不修改信任文件。
 
 ## 审阅响应
 
@@ -66,15 +66,15 @@ TASK 的 12KB 预算为 active overlay 预留空间；overlay 自身最多 1800 
 
 ## 独立 review
 
-- **不是 quorum**：review 把单来源 tip 推到 `reviewed_active`，只对**本 run 的后续场次**生效；运行结束失效，不是永久固化。reviewer 自己还必须在该 `(target, task)` 上有 active `overlay:tip` 信任，否则 review 只存档。
-- **只读**：review 不写 kernel/TASK，只写 `HARNESS_REVIEW.json`；prompt 把建议标成 untrusted data。
+- **不是 quorum**：review 仅把探针本场时间已核验的单来源 tip 推到 `reviewed_active`，只对**本 run 的后续场次**生效；运行结束失效，不是永久固化。reviewer 自己还必须在该 `(target, task)` 上有 active `overlay:tip` 信任，且独立于同 key 所有作者；否则 review 只存档。
+- **只读且可核**：review 不写 kernel/TASK，只写 `HARNESS_REVIEW.json`；prompt 把建议标成 untrusted data，并附外层计算的有界证据（探针存在/哈希/时间、self-check、候选报告、缺失项）。旧反馈记录缺 `session_started`、或旧 proposal 行缺 `probe_time_verified` 时，明确显示“无法验证”。
 - **动态预算**：按 reviewer 的 input/output 单价、prompt 长度、最大输出 token，以及 pi/skill 上下文的 cache read/write allowance 计算；不写死 $0.2。实测 kimi review：旧预算 $0.252、实际 $0.106；加入缓存 allowance 后同一输入预算约 $0.588，实际仍只按用量计费。
 - **实测**：deepseek 寄存器报告 tip → kimi review `useful=true, confidence=0.6`；当时的代码记录为旧名 `reviewed_shadow`，新代码会对同一 review 产生 `reviewed_active`（仅本 run）。
 
 ## 已知边界（请重点审）
 
-- **code-agent P2 已提供 worktree worker，但仍不是自动合并。** `taic/code_agent.py` 在 detached worktree 里运行 code agent、收集 patch；`taic harness implement` 生成 patch，`taic harness apply-code` 由人确认后 apply。AI 是默认实现者，但不能继承 overlay 信任或自动 commit/merge。
-- **本地固化与 git 提交分离。** 看板固化改本地 checkout（`local_patch_sha256`，无最终 `change_ref`）；`taic harness commit` 只提交被 promote 的路径，成功后才写 `commit:<sha>`。
+- **code-agent P2 已提供 worktree worker，但仍不是自动合并。** `taic/code_agent.py` 在 detached worktree 里运行 code agent、收集 patch；`taic harness implement` 生成 patch，`taic harness apply-code` 由人确认后 apply，默认在隔离 worktree 里确认导入该 worktree 的代码并跑离线套件。AI 是默认实现者，但不能继承 overlay 信任或自动 commit/merge。
+- **本地固化与 git 提交分离。** 看板固化改本地 checkout（`local_patch_sha256`，无最终 `change_ref`）；`taic harness commit` 只提交被 promote 的路径，覆盖 `promotion` 与 `code_promotion`，提交前校验补丁哈希，在独立 Git index 中从 HEAD 顺序重放并比较暂存快照，拒绝漂移，成功后才写 `commit:<sha>`。
 
 1. **没有跑付费试点。** `harness_pilot.py` 和文档已就绪，但 `taic run`/`resume` 未执行；不要把它们当成已验证的质量结论。
 2. **P1 `premise` 不要求双模型**，但要求本场探针、active `overlay:premise` 信任和匹配的 harness 自检记录或外层候选报告；没有匹配记录时不写 overlay，只保留提案。

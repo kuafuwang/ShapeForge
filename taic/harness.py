@@ -16,6 +16,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -150,8 +151,13 @@ def proposal_key(*, target_id: str, task: str, surface: str, action: str, dtype:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
-def _fresh_probe(token: str, *, work: Path, started: float) -> tuple[str, str, float]:
-    """(absolute path, sha256, mtime) for a file under this session's work directory."""
+def _fresh_probe(token: str, *, work: Path, started: float | None) -> tuple[str, str, float, bool]:
+    """(absolute path, sha256, mtime, time_verified) for a file under this session's work directory.
+
+    ``started`` is the session start. Older feedback records do not carry it; in that case
+    the file is still identified by path and hash, but its mtime is not compared with a
+    substitute time and the result is marked unverified.
+    """
     if not token or "\x00" in token:
         raise ProposalError("evidence.probe is empty")
     raw = Path(str(token))
@@ -165,9 +171,13 @@ def _fresh_probe(token: str, *, work: Path, started: float) -> tuple[str, str, f
     if not candidate.is_file():
         raise ProposalError("evidence.probe is not a readable file")
     mtime = candidate.stat().st_mtime
-    if mtime < float(started) - 1.0:
-        raise ProposalError("evidence.probe predates this session")
-    return str(candidate), _sha256(candidate), mtime
+    verified = True
+    if started is not None:
+        if mtime < float(started) - 1.0:
+            raise ProposalError("evidence.probe predates this session")
+    else:
+        verified = False
+    return str(candidate), _sha256(candidate), mtime, verified
 
 
 def validate_proposal(
@@ -177,7 +187,7 @@ def validate_proposal(
     task: str,
     dtype: str = "",
     work: Path,
-    started: float,
+    started: float | None,
     allow_premise: bool = True,
     allow_p2: bool = False,
 ) -> dict:
@@ -218,8 +228,9 @@ def validate_proposal(
     measurement = str(evidence.get("measurement") or "").strip()
     probe_path = probe_sha = ""
     probe_mtime = 0.0
+    probe_time_verified = True
     if probe:
-        probe_path, probe_sha, probe_mtime = _fresh_probe(probe, work=work, started=started)
+        probe_path, probe_sha, probe_mtime, probe_time_verified = _fresh_probe(probe, work=work, started=started)
     elif surface == "premise":
         raise ProposalError("a premise needs evidence.probe from this session")
     if surface == "tip" and not probe:
@@ -235,6 +246,7 @@ def validate_proposal(
         "probe_path": probe_path,
         "probe_sha256": probe_sha,
         "probe_mtime": probe_mtime,
+        "probe_time_verified": probe_time_verified,
     }
 
 
@@ -258,7 +270,7 @@ def parse_proposals(
     task: str,
     dtype: str = "",
     work: Path,
-    started: float,
+    started: float | None,
     allow_premise: bool = True,
 ) -> list[dict]:
     """Normalized proposals and errors from this session's structured blocks."""
@@ -409,6 +421,10 @@ def record_proposals(
                 "probe_path": item["probe_path"],
                 "probe_sha256": item["probe_sha256"],
                 "probe_mtime": item["probe_mtime"],
+                "probe_time_verified": item["probe_time_verified"],
+                "work_dir": str(work),
+                "kernel_sha256": str(kernel_sha256 or ""),
+                "protocol_version": str(protocol_version or ""),
                 "claim_digest": next((str(si.get("digest")) for si in system_items if "harness-proposal" in str(si.get("text") or "")), str(system_items[0].get("digest")) if system_items else ""),
                 "trusted_record": False,
                 "trusted_reason": "",
@@ -458,6 +474,46 @@ def _trusted(row: dict, *, target_id: str, task: str, scope: str, root: Path | N
     )
 
 
+def source_author(row: dict) -> dict:
+    """The model that wrote the original claim, separate from who structured a conversion."""
+    src = row.get("source_author")
+    if isinstance(src, dict) and (src.get("provider") or src.get("model") or src.get("committee")):
+        return {
+            "provider": str(src.get("provider") or ""), "model": str(src.get("model") or ""),
+            "committee": str(src.get("committee") or ""), "effort": str(src.get("effort") or ""),
+        }
+    return {
+        "provider": str(row.get("provider") or ""), "model": str(row.get("model") or ""),
+        "committee": str(row.get("committee") or ""), "effort": str(row.get("effort") or ""),
+    }
+
+
+def proposal_committee(row: dict) -> str:
+    """The committee a reviewer must not belong to. Converted rows have no structured committee."""
+    return str(source_author(row).get("committee") or row.get("committee") or "")
+
+
+def _author_pairs(row: dict) -> set[tuple[str, str]]:
+    """Every model identity that authored this proposal, including a converted source claim."""
+    pairs: set[tuple[str, str]] = set()
+    for candidate in (row, row.get("source_author") if isinstance(row.get("source_author"), dict) else {}):
+        pair = (str(candidate.get("provider") or ""), str(candidate.get("model") or ""))
+        if all(pair):
+            pairs.add(pair)
+    return pairs
+
+
+def reviewer_conflict(row: dict, provider: str, model: str) -> bool:
+    """Whether this model authored the proposal or the free text it was converted from."""
+    pair = (str(provider or ""), str(model or ""))
+    return bool(all(pair) and pair in _author_pairs(row))
+
+
+def reviewer_conflicts_with_group(rows: list[dict], provider: str, model: str) -> bool:
+    """A shared proposal key may have multiple authors; a reviewer must differ from all."""
+    return any(reviewer_conflict(row, provider, model) for row in rows)
+
+
 def pending_tip_reviews(run_dir: Path, proposals: list[dict]) -> list[dict]:
     """Valid tips that have neither a decision nor an independent review yet."""
     reviews = {str(row.get("proposal_key") or "") for row in _read_jsonl(Path(run_dir) / "harness_reviews.jsonl") if row.get("event") == "review"}
@@ -468,7 +524,8 @@ def pending_tip_reviews(run_dir: Path, proposals: list[dict]) -> list[dict]:
         if not key or key in reviews or key in decisions:
             continue
         proposal = row.get("proposal") if isinstance(row.get("proposal"), dict) else {}
-        if row.get("status") == "valid" and proposal.get("surface") == "tip":
+        if (row.get("status") == "valid" and proposal.get("surface") == "tip"
+                and row.get("probe_time_verified") is True and row.get("probe_sha256")):
             out.append(row)
     return out
 
@@ -511,46 +568,57 @@ def settle(
         surface = str(rows[0].get("proposal", {}).get("surface") or "")
         if surface not in P1_SURFACES:
             continue
+        rows = [row for row in rows if (row.get("proposal") or {}).get("surface") == surface]
+        if not rows:
+            continue
         # One author may appear several times; only distinct provider/model/committee count.
         authors = {}
         for row in rows:
+            # A conversion is not an independent model proposal, even when an older row
+            # still carries the source model in the top-level provider/model fields.
+            if row.get("origin") == "conversion" or row.get("probe_time_verified") is not True:
+                continue
             identity = (str(row.get("provider") or ""), str(row.get("model") or ""))
             authors.setdefault(identity, row)
         distinct_models = {identity for identity in authors if all(identity)}
         if surface == "tip":
             if len(distinct_models) < 2:
                 continue
-            committees = {str(row.get("committee") or "") for row in authors.values()}
-            if not {"first", "second"}.issubset(committees):
-                continue
             trusted = []
             for identity, row in authors.items():
                 ok, _why = _trusted(row, target_id=target_id, task=task, scope="overlay:tip", root=trust_root, prompt_sha1=prompt_sha1)
-                if ok:
-                    trusted.append(identity)
+                if ok and row.get("probe_sha256"):
+                    trusted.append((identity, row))
             if len(trusted) < 2:
                 continue
-            # A copied probe is not a second source. Two paths with identical bytes are still one measurement.
-            if len({str(row.get("probe_sha256") or "") for row in authors.values() if row.get("probe_sha256")}) < 2:
+            if not {"first", "second"}.issubset({str(row.get("committee") or "") for _, row in trusted}):
+                continue
+            # A copied probe is not a second source. Only trusted rows count.
+            if len({str(row.get("probe_sha256")) for _, row in trusted}) < 2:
                 continue
         else:
             # A measured premise does not need a second model, but it still needs a person
             # to delegate the model for this surface. This also keeps an empty trust table
             # from silently letting agent-written probes into an active overlay.
-            if not rows[0].get("probe_sha256") or not rows[0].get("trusted_record"):
+            eligible = []
+            for row in rows:
+                if row.get("origin") == "conversion" or row.get("probe_time_verified") is not True:
+                    continue
+                if not row.get("probe_sha256") or not row.get("trusted_record"):
+                    continue
+                ok, _why = _trusted(
+                    row, target_id=target_id, task=task, scope="overlay:premise",
+                    root=trust_root, prompt_sha1=prompt_sha1,
+                )
+                if ok:
+                    eligible.append(row)
+            if not eligible:
                 continue
-            ok, _why = _trusted(
-                rows[0], target_id=target_id, task=task, scope="overlay:premise",
-                root=trust_root, prompt_sha1=prompt_sha1,
-            )
-            if not ok:
-                continue
-        force_shadow = surface == "premise" and not rows[0].get("trusted_record")
-        is_shadow = bool(shadow or force_shadow)
+        is_shadow = bool(shadow)
         decision = "shadow" if is_shadow else "apply"
         if (key, decision) in decided:
             continue
-        first = rows[0]
+        first = trusted[0][1] if surface == "tip" else eligible[0]
         event = {
             "schema_version": SCHEMA_VERSION,
             "event": "overlay",
@@ -582,16 +650,15 @@ def settle(
         if review.get("useful") is not True:
             continue
         key = str(review.get("proposal_key") or "")
-        group = groups.get(key) or []
+        group = [row for row in (groups.get(key) or []) if (row.get("proposal") or {}).get("surface") == "tip"]
         if not group:
             continue
         if (key, "apply") in decided or (key, "shadow") in decided or (key, "reviewed_active") in decided:
             continue
         reviewer = review.get("reviewer") if isinstance(review.get("reviewer"), dict) else {}
-        proposer = group[0]
-        if (str(reviewer.get("provider") or ""), str(reviewer.get("model") or "")) == (
-            str(proposer.get("provider") or ""), str(proposer.get("model") or ""),
-        ):
+        reviewer_pair = (str(reviewer.get("provider") or ""), str(reviewer.get("model") or ""))
+        authors = set().union(*(_author_pairs(row) for row in group))
+        if reviewer_pair in authors:
             continue
         ok, _why = _trusted(
             {
@@ -602,13 +669,23 @@ def settle(
         )
         if not ok:
             continue
-        first = group[0]
+        source_seq = review.get("source_seq")
+        if source_seq is None:
+            # Historical review rows omit the source sequence. They are ambiguous when
+            # several claims share one action key, so do not activate them in that case.
+            first = group[0] if len(group) == 1 else None
+        else:
+            first = next((row for row in group if row.get("seq") == source_seq), None)
+        if first is None or first.get("probe_time_verified") is not True or not first.get("probe_sha256"):
+            continue
         event = {
             "schema_version": SCHEMA_VERSION, "event": "overlay", "t": time.time(),
             "target_id": target_id, "task": task, "protocol_version": str(protocol_version),
             "source_run": str(first.get("run_id") or run_dir.name), "source_seq": first.get("seq"),
             "proposal_key": key, "surface": "tip", "text": str(first.get("proposal", {}).get("action") or ""),
             "evidence_sha256": str(first.get("probe_sha256") or ""), "shadow": False,
+            "origin": first.get("origin") or "model",
+            "source_author": first.get("source_author") if isinstance(first.get("source_author"), dict) else {},
             "reviewed": True, "reviewer": reviewer,
             "active_from": first.get("seq"), "active_until": None,
         }
@@ -617,6 +694,8 @@ def settle(
             "schema_version": SCHEMA_VERSION, "event": "decision", "t": event["t"],
             "target_id": target_id, "task": task, "proposal_key": key,
             "decision": "reviewed_active", "source_seq": first.get("seq"),
+            "origin": first.get("origin") or "model",
+            "source_author": first.get("source_author") if isinstance(first.get("source_author"), dict) else {},
             "reviewer": reviewer,
         })
         applied.append(event)
@@ -829,7 +908,8 @@ def apply_patch(run_dir: Path, *, target_id: str, proposal_key: str, root: Path 
     _append_jsonl(run_dir / DECISION_FILE, {
         "schema_version": SCHEMA_VERSION, "event": "promotion", "status": "local", "t": time.time(),
         "target_id": target_id, "proposal_key": proposal_key, "change_ref": "",
-        "path": meta["path"], "patch_sha256": meta["sha256"], "local_patch_sha256": meta["sha256"],
+        "path": meta["path"], "paths": [meta["path"]], "patch": str(patch),
+        "patch_sha256": meta["sha256"], "local_patch_sha256": meta["sha256"],
         "claim_digest": meta.get("claim_digest") or "", "source_seq": meta.get("source_seq"),
         "applied_by": str(applied_by or "cli"),
         "tests_run": "feedback/contract/hw_off" if run_tests else "",
@@ -839,42 +919,104 @@ def apply_patch(run_dir: Path, *, target_id: str, proposal_key: str, root: Path 
 
 
 def commit_local_promotions(run_dir: Path, *, message: str, by: str = "cli", root: Path | None = None) -> dict:
-    """Commit only locally promoted paths and then attach ``commit:<sha>`` to each event.
+    """Commit locally promoted target/code paths and attach ``commit:<sha>`` to each event.
 
     The local checkout already contains the change; this is the later traceability step.
     It deliberately uses ``git commit --only -- <paths>`` so unrelated staged changes do
-    not get swept into the promotion commit.
+    not get swept into the promotion commit, and it checks that each recorded patch still
+    matches the working tree exactly.
     """
     run_dir = Path(run_dir)
     repo = Path(root) if root is not None else trust.REPO_ROOT
     decisions = _read_jsonl(run_dir / DECISION_FILE)
-    pending = [
-        row for row in decisions
-        if row.get("event") == "promotion" and row.get("status") == "local" and row.get("path")
-        and not str(row.get("change_ref") or "").startswith("commit:")
-    ]
+    committed = {
+        (str(row.get("proposal_key") or ""), str(row.get("patch_sha256") or row.get("local_patch_sha256") or ""))
+        for row in decisions if row.get("event") == "promotion_commit"
+    }
+    pending: list[tuple[dict, list[str], Path | None]] = []
+    for row in decisions:
+        if row.get("status") != "local" or str(row.get("change_ref") or "").startswith("commit:"):
+            continue
+        signature = (str(row.get("proposal_key") or ""), str(row.get("patch_sha256") or row.get("local_patch_sha256") or ""))
+        if signature in committed:
+            continue
+        if row.get("event") == "promotion" and row.get("path"):
+            patch = Path(str(row["patch"])) if row.get("patch") else None
+            pending.append((row, [str(row["path"])], patch))
+        elif row.get("event") == "code_promotion" and row.get("paths"):
+            patch = Path(str(row["patch"])) if row.get("patch") else None
+            pending.append((row, [str(path) for path in row["paths"]], patch))
     if not pending:
         raise ProposalError("there is no locally applied promotion waiting for a git commit")
-    paths = sorted({str(row["path"]) for row in pending})
-    missing = [path for path in paths if not (repo / path).is_file()]
+    paths = sorted({path for _, item_paths, _ in pending for path in item_paths})
+    target_paths = {path for row, item_paths, _ in pending if row.get("event") == "promotion" for path in item_paths}
+    missing = [path for path in target_paths if not (repo / path).is_file()]
     if missing:
         raise ProposalError("promotion path is missing: " + ", ".join(missing))
-    staged = subprocess.run(["git", "add", "--", *paths], cwd=repo, capture_output=True, text=True)
-    if staged.returncode != 0:
-        raise ProposalError((staged.stderr or staged.stdout or "git add failed").strip())
-    commit = subprocess.run(
-        ["git", "commit", "--only", "-m", str(message), "--", *paths],
-        cwd=repo, capture_output=True, text=True,
-    )
-    if commit.returncode != 0:
-        raise ProposalError((commit.stderr or commit.stdout or "git commit failed").strip())
-    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True).stdout.strip()
+    # A promotion patch can add or delete files. Before committing, require the live
+    # checkout to contain exactly HEAD plus every pending patch, in application order, so
+    # unrelated edits in the same files are not swept into the promotion commit.
+    patches = []
+    for row, item_paths, patch in pending:
+        if patch is None or not patch.is_file():
+            raise ProposalError(f"promotion patch is missing: {patch or row.get('proposal_key')}")
+        expected_sha = str(row.get("patch_sha256") or row.get("local_patch_sha256") or "")
+        if not expected_sha or _sha256(patch) != expected_sha:
+            raise ProposalError(f"promotion patch hash does not match its application record: {patch}")
+        if row.get("event") == "code_promotion":
+            from . import code_agent
+
+            if code_agent._validate_patch(patch.read_text(encoding="utf-8", errors="replace")) != item_paths:
+                raise ProposalError(f"promotion patch paths changed since application: {patch}")
+        patches.append(patch)
+    # A private index makes the validated snapshot the exact commit input. The caller's
+    # index (including unrelated staged paths) remains untouched.
+    from . import code_agent
+
+    with tempfile.TemporaryDirectory(prefix="taic-promotion-index-") as tmp:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        def git(*args: str) -> subprocess.CompletedProcess:
+            return subprocess.run(["git", *args], cwd=repo, env=env, capture_output=True, text=True)
+
+        base = git("read-tree", "HEAD")
+        if base.returncode != 0:
+            raise ProposalError((base.stderr or base.stdout or "cannot create promotion index").strip())
+        staged = git("add", "--", *paths)
+        if staged.returncode != 0:
+            raise ProposalError((staged.stderr or staged.stdout or "git add failed").strip())
+        if patches:
+            patch_paths = sorted({path for _row, item_paths, patch in pending if patch is not None for path in item_paths})
+            exact, where = code_agent.worktree_matches_patches(repo, patches, patch_paths, staged_env=env)
+            if not exact:
+                raise ProposalError(f"the applied promotion patches no longer match the staged snapshot at {where}")
+        tree = git("write-tree")
+        if tree.returncode != 0:
+            raise ProposalError((tree.stderr or tree.stdout or "cannot write promotion tree").strip())
+        parent = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True).stdout.strip()
+        created = subprocess.run(
+            ["git", "commit-tree", tree.stdout.strip(), "-p", parent], input=str(message) + "\n",
+            cwd=repo, capture_output=True, text=True,
+        )
+        if created.returncode != 0:
+            raise ProposalError((created.stderr or created.stdout or "git commit-tree failed").strip())
+        sha = created.stdout.strip()
+        updated = subprocess.run(["git", "update-ref", "HEAD", sha, parent], cwd=repo, capture_output=True, text=True)
+        if updated.returncode != 0:
+            raise ProposalError((updated.stderr or updated.stdout or "HEAD changed before promotion commit").strip())
+        # Reset only committed paths in the caller's index to the new HEAD. A concurrent
+        # working-tree edit must remain unstaged and must never alter the committed tree.
+        synced = subprocess.run(["git", "reset", "--quiet", "HEAD", "--", *paths], cwd=repo, capture_output=True, text=True)
+        sync_warning = (synced.stderr or synced.stdout or "index sync failed").strip() if synced.returncode else ""
     change_ref = f"commit:{sha}"
-    for row in pending:
+    committed_rows = []
+    for row, item_paths, _patch in pending:
+        committed_rows.append(row.get("proposal_key"))
         _append_jsonl(run_dir / DECISION_FILE, {
             "schema_version": SCHEMA_VERSION, "event": "promotion_commit", "t": time.time(),
             "target_id": row.get("target_id") or "", "proposal_key": row.get("proposal_key") or "",
-            "change_ref": change_ref, "path": row.get("path") or "",
+            "change_ref": change_ref, "path": item_paths[0] if len(item_paths) == 1 else "",
+            "paths": item_paths,
+            "patch_sha256": row.get("patch_sha256") or row.get("local_patch_sha256") or "",
             "local_patch_sha256": row.get("local_patch_sha256") or row.get("patch_sha256") or "",
             "applied_by": str(by or "cli"),
         })
@@ -884,11 +1026,14 @@ def commit_local_promotions(run_dir: Path, *, message: str, by: str = "cli", roo
 
                 apply_review(run_dir, int(row.get("source_seq") or 0), str(row["claim_digest"]), {
                     "status": "done", "verification": "confirmed", "change_ref": change_ref,
-                    "evidence_source": "code", "evidence": f"applied {row['path']}", "note": "P2 promotion commit",
+                    "evidence_source": "code", "evidence": f"applied {', '.join(item_paths)}", "note": "P2 promotion commit",
                 })
             except (OSError, ValueError, ImportError):
                 pass
-    return {"committed": True, "change_ref": change_ref, "commit": sha, "paths": paths, "proposals": [row.get("proposal_key") for row in pending]}
+    result = {"committed": True, "change_ref": change_ref, "commit": sha, "paths": paths, "proposals": committed_rows}
+    if sync_warning:
+        result["index_sync_warning"] = sync_warning
+    return result
 
 
 def free_text_suggestions(run_dir: Path) -> list[dict]:
@@ -934,6 +1079,7 @@ def free_text_suggestions(run_dir: Path) -> list[dict]:
                 "model": record.get("model") or "",
                 "committee": record.get("committee") or "",
                 "t": record.get("t"),
+                "session_started": record.get("session_started"),
                 "work_dir": record.get("work_dir") or "",
                 "converted_key": converted.get(key, ""),
             })
@@ -964,6 +1110,8 @@ def convert_feedback(
     """
     if not confirm:
         raise ProposalError("converting free text requires explicit human confirmation")
+    if str(mode or "manual") not in ("manual", "ai"):
+        raise ProposalError("mode must be manual or ai")
     run_dir = Path(run_dir)
     source = next((
         row for row in free_text_suggestions(run_dir)
@@ -975,9 +1123,20 @@ def convert_feedback(
         raise ProposalError("this suggestion has already been converted")
     records = [row for row in _read_jsonl(run_dir / "feedback.jsonl") if row.get("seq") == int(seq)]
     record = records[0] if records else {}
-    work_rel = str(record.get("work_dir") or source.get("work_dir") or f"agent_work/{source.get('label') or 'unknown'}")
+    fallback_work = "agent_work/" + str(source.get("label") or "unknown").replace("/", "_")
+    work_rel = str(record.get("work_dir") or source.get("work_dir") or fallback_work)
     work = (run_dir / work_rel).resolve()
-    started = float(record.get("t") or 0.0)
+    try:
+        work.relative_to(run_dir.resolve())
+    except ValueError as exc:
+        raise ProposalError("the feedback record's work_dir escapes the run directory") from exc
+    # The feedback row is written when the session ends, so its own timestamp cannot prove
+    # when a probe was created. Only the recorded session start can. Old rows lack it.
+    raw_started = record.get("session_started")
+    try:
+        started = float(raw_started) if raw_started is not None else None
+    except (TypeError, ValueError):
+        started = None
     doc = {
         "surface": str(surface or "").strip(),
         "scope": {"target_id": target_id, "task": task, "dtype": dtype},
@@ -996,10 +1155,6 @@ def convert_feedback(
         "run_id": str(record.get("run_id") or run_dir.name),
         "seq": int(seq),
         "label": record.get("label") or source.get("label") or "",
-        "committee": record.get("committee") or source.get("committee") or "",
-        "provider": record.get("provider") or source.get("provider") or "",
-        "model": record.get("model") or source.get("model") or "",
-        "effort": record.get("effort") or "",
         "target_id": target_id,
         "task": task,
         "dtype": dtype,
@@ -1016,15 +1171,40 @@ def convert_feedback(
         "probe_path": normalized["probe_path"],
         "probe_sha256": normalized["probe_sha256"],
         "probe_mtime": normalized["probe_mtime"],
+        "probe_time_verified": normalized["probe_time_verified"],
+        "probe_time_reason": "" if normalized["probe_time_verified"] else "source feedback record has no session_started",
+        "work_dir": str(work),
         "claim_digest": str(digest),
         "trusted_record": False,
         "trusted_reason": "converted free text; no harness self-check gate",
         "origin": "conversion",
+        # The model that wrote the original claim is not the author of the structured
+        # action. Keeping it under source_author prevents a conversion from counting as
+        # a model-authored tip, or from reviewing its own source claim.
+        "provider": "",
+        "model": "",
+        "committee": "",
+        "effort": "",
+        "source_author": {
+            "provider": record.get("provider") or source.get("provider") or "",
+            "model": record.get("model") or source.get("model") or "",
+            "committee": record.get("committee") or source.get("committee") or "",
+            "effort": record.get("effort") or "",
+        },
+        "structured_by": {
+            "filled_by": "ai" if str(mode or "manual") == "ai" else "human",
+            "confirmed_by": str(by or "cli"),
+            "mode": str(mode or "manual"),
+        },
         "conversion": {
             "source_seq": int(seq),
             "source_digest": str(digest),
             "source_text": str(source.get("text") or ""),
             "source_section": "对系统的建议",
+            "source_provider": record.get("provider") or source.get("provider") or "",
+            "source_model": record.get("model") or source.get("model") or "",
+            "source_committee": record.get("committee") or source.get("committee") or "",
+            "source_session_started": started,
             "confirmed_by": str(by or "cli"),
             "mode": str(mode or "manual"),
             "confirmed_at": time.time(),

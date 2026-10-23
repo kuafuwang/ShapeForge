@@ -282,14 +282,22 @@ def review_harness(run_id: str, proposal_key: str, body: dict) -> dict:
     recorded = run_cfg.get("committees") if isinstance(run_cfg.get("committees"), list) else []
     provider, model = str(body.get("provider") or ""), str(body.get("model") or "")
     if not provider or not model:
-        peers = [c for c in recorded if isinstance(c, dict) and c.get("name") != proposal.get("committee")]
+        proposal_committee = harness.proposal_committee(proposal)
+        peers = [c for c in recorded if isinstance(c, dict) and c.get("name") != proposal_committee]
         members = (peers[0].get("members") if peers else None) or []
         if not members or not isinstance(members[0], dict):
             raw = load_raw_config(None, "base")
             cfg, _ = load_config(None, preset="base")
             configured = load_committees(raw, active=cfg)
-            peers = [c for c in configured if c.name != proposal.get("committee")] or configured
+            peers = [c for c in configured if c.name != proposal_committee] or configured
             members = [{"provider": m.provider, "model": m.model} for c in peers for m in c.members]
+        if members and isinstance(members[0], dict):
+            independent = [
+                member for member in members
+                if isinstance(member, dict)
+                and not harness.reviewer_conflicts_with_group(proposals, str(member.get("provider") or ""), str(member.get("model") or ""))
+            ]
+            members = independent or members
         if not members or not isinstance(members[0], dict):
             raise Refused(400, "cannot choose a reviewer; pass provider and model")
         provider, model = str(members[0].get("provider") or ""), str(members[0].get("model") or "")
@@ -299,9 +307,12 @@ def review_harness(run_id: str, proposal_key: str, body: dict) -> dict:
     member = next((m for c in committees for m in c.members if m.provider == provider and m.model == model), None)
     if member is None:
         raise Refused(400, f"reviewer {provider}/{model} is not in the configured committees")
+    if harness.reviewer_conflicts_with_group(proposals, provider, model):
+        raise Refused(400, f"reviewer {provider}/{model} is an author of this claim; choose an independent model")
     prices = Prices(member.cfg.price_in, member.cfg.price_out, member.cfg.price_cache_read, member.cfg.price_cache_write)
     work = run_dir / "harness_reviews" / proposal_key
-    prompt = review_mod.build_review_prompt(proposal.get("proposal") or {}, run_id=str(proposal.get("run_id") or run_dir.name))
+    bundle = review_mod.evidence_bundle(run_dir, proposal)
+    prompt = review_mod.build_review_prompt(proposal.get("proposal") or {}, run_id=str(proposal.get("run_id") or run_dir.name), bundle=bundle)
     plan = review_mod.estimate_review_budget(prices, prompt)
     try:
         verdict = review_mod.run_review(

@@ -8,6 +8,7 @@ short preview. The full sentence is fetched only for the selected (run, seq, dig
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from observe import detail as detail_mod
@@ -15,6 +16,7 @@ from observe import feedback
 from observe.index import borrow, get_index
 
 DEFAULT_PREVIEW = 120
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 MAX_PREVIEW = 500
 MAX_GROUPS = 200
 
@@ -42,7 +44,7 @@ def _item_text(record: dict, digest: str) -> str:
 
 
 def _preview(text: str, chars: int) -> str:
-    text = " ".join(str(text or "").split())
+    text = " ".join(_CONTROL.sub(" ", str(text or "")).split())
     if len(text) <= chars:
         return text
     return text[: max(0, chars - 1)].rstrip() + "…"
@@ -65,10 +67,15 @@ def _read_jsonl(path: Path) -> list[dict]:
     return rows
 
 
-def _linked(directory: Path, digest: str) -> tuple[str, list[str]]:
+def _linked(directory: Path, *, seq: int, digest: str) -> tuple[str, list[str]]:
+    """The exact proposal for this claim, not merely the first proposal with the same text."""
     key = ""
     for row in _read_jsonl(directory / "harness_proposals.jsonl"):
-        if str(row.get("claim_digest") or "") == str(digest) and row.get("status") == "valid":
+        if (
+            str(row.get("claim_digest") or "") == str(digest)
+            and int(row.get("seq") or 0) == int(seq)
+            and row.get("status") == "valid"
+        ):
             key = str(row.get("proposal_key") or "")
             break
     reviews = []
@@ -89,19 +96,23 @@ def compact(
     status: str | None = None,
     limit: int = 20,
     preview: int = DEFAULT_PREVIEW,
+    offset: int = 0,
 ) -> dict:
     """Group system suggestions by digest and return only a short preview per group.
 
     This is the AI-facing first stage. It does not return full text and does not call a model.
-    One representative feedback line is read per digest; the rest stay on disk until detail().
+    Totals and the page are computed by SQL over the whole filtered set, so ``truncated``
+    describes the returned page rather than a silent scan cap. One representative feedback
+    line is read per returned digest; the rest stay on disk until detail().
     """
     try:
         get_index().tick()
     except OSError:
         pass
     limit = max(1, min(int(limit or 20), MAX_GROUPS))
+    offset = max(0, int(offset or 0))
     preview = max(0, min(int(preview if preview is not None else DEFAULT_PREVIEW), MAX_PREVIEW))
-    clauses = ["c.section = '对系统的建议'"]
+    clauses = ["c.section = '对系统的建议'", "c.digest <> ''"]
     args: list[object] = []
     if task:
         clauses.append("i.task = ?")
@@ -115,79 +126,117 @@ def compact(
     if status:
         clauses.append("c.status = ?")
         args.append(status)
-    sql = f"""
-        SELECT c.run_id, c.seq, c.digest, c.status, c.verification,
-               i.task, i.dtype, i.size, i.model, i.label, i.t, i.line_at,
-               r.target_id
+    base = f"""
         FROM feedback_claims c
         JOIN feedback_items i ON i.run_id = c.run_id AND i.seq = c.seq
         LEFT JOIN runs r ON r.run_id = c.run_id
         WHERE {' AND '.join(clauses)}
-        ORDER BY i.t DESC, c.seq DESC
-        LIMIT 5000
     """
     groups: dict[str, dict] = {}
     with borrow() as index:
-        rows = [dict(row) for row in index.conn.execute(sql, args)]
-    total_claims = len(rows)
-    for row in rows:
-        digest = str(row.get("digest") or "")
-        if not digest:
+        total_claims = int(index.conn.execute(f"SELECT COUNT(*) {base}", args).fetchone()[0])
+        total_groups = int(index.conn.execute(f"SELECT COUNT(DISTINCT c.digest) {base}", args).fetchone()[0])
+        page = [dict(row) for row in index.conn.execute(
+            f"""
+            SELECT c.digest AS digest, COUNT(*) AS claims, COUNT(DISTINCT c.run_id) AS runs,
+                   COALESCE(MAX(i.t), 0) AS latest_t
+            {base}
+            GROUP BY c.digest
+            ORDER BY runs DESC, latest_t DESC, c.digest
+            LIMIT ? OFFSET ?
+            """,
+            [*args, limit, offset],
+        )]
+        digests = [str(row["digest"]) for row in page]
+        representative: dict[str, dict] = {}
+        dims: dict[str, dict[str, set[str]]] = {}
+        if digests:
+            marks = ",".join("?" for _ in digests)
+            rows = index.conn.execute(
+                f"""
+                WITH filtered AS (
+                    SELECT c.run_id, c.seq, c.digest, c.status,
+                           i.task, i.dtype, i.size, i.model, i.label, i.t, i.line_at,
+                           r.target_id
+                    {base} AND c.digest IN ({marks})
+                ), ranked AS (
+                    SELECT *, ROW_NUMBER() OVER (PARTITION BY digest ORDER BY t DESC, seq DESC) AS rn
+                    FROM filtered
+                )
+                SELECT * FROM ranked WHERE rn = 1
+                """,
+                [*args, *digests],
+            )
+            representative = {str(row["digest"]): dict(row) for row in rows}
+            for row in index.conn.execute(
+                f"""
+                SELECT DISTINCT c.digest, i.task, i.model, r.target_id, c.status
+                {base} AND c.digest IN ({marks})
+                """,
+                [*args, *digests],
+            ):
+                bucket = dims.setdefault(str(row["digest"]), {"tasks": set(), "models": set(), "targets": set(), "statuses": set()})
+                if row["task"]:
+                    bucket["tasks"].add(str(row["task"]))
+                if row["model"]:
+                    bucket["models"].add(str(row["model"]))
+                if row["target_id"]:
+                    bucket["targets"].add(str(row["target_id"]))
+                if row["status"]:
+                    bucket["statuses"].add(str(row["status"]))
+    for page_row in page:
+        digest = str(page_row["digest"])
+        row = representative.get(digest)
+        if row is None:
             continue
-        group = groups.get(digest)
-        if group is None:
-            directory = detail_mod.resolve_run(str(row.get("run_id") or ""))
-            text = ""
-            converted_key = ""
-            reviews: list[str] = []
-            if directory is not None:
-                record = _record(directory, row.get("line_at"))
-                if record is not None:
-                    text = _item_text(record, digest)
-                converted_key, reviews = _linked(directory, digest)
-            group = groups[digest] = {
-                "digest": digest,
-                "claims": 0,
-                "runs": set(),
-                "tasks": set(),
-                "models": set(),
-                "targets": set(),
-                "statuses": set(),
-                "first": {
-                    "run_id": str(row.get("run_id") or ""),
-                    "seq": row.get("seq"),
-                    "label": row.get("label") or "",
-                    "t": row.get("t"),
-                },
-                "preview": _preview(text, preview),
-                "converted_key": converted_key,
-                "reviews": reviews,
-            }
-        group["claims"] += 1
-        group["runs"].add(str(row.get("run_id") or ""))
-        if row.get("task"):
-            group["tasks"].add(str(row["task"]))
-        if row.get("model"):
-            group["models"].add(str(row["model"]))
-        if row.get("target_id"):
-            group["targets"].add(str(row["target_id"]))
-        if row.get("status"):
-            group["statuses"].add(str(row["status"]))
-    ordered = sorted(groups.values(), key=lambda item: (-len(item["runs"]), -float(item["first"].get("t") or 0), item["digest"]))[:limit]
+        directory = detail_mod.resolve_run(str(row.get("run_id") or ""))
+        text = ""
+        converted_key = ""
+        reviews: list[str] = []
+        if directory is not None:
+            record = _record(directory, row.get("line_at"))
+            if record is not None:
+                text = _item_text(record, digest)
+            converted_key, reviews = _linked(directory, seq=int(row.get("seq") or 0), digest=digest)
+        bucket = dims.get(digest) or {}
+        groups[digest] = {
+            "digest": digest,
+            "claims": int(page_row["claims"]),
+            "runs": int(page_row["runs"]),
+            "tasks": sorted(bucket.get("tasks") or []),
+            "models": sorted(bucket.get("models") or []),
+            "targets": sorted(bucket.get("targets") or []),
+            "statuses": sorted(bucket.get("statuses") or []),
+            "first": {
+                "run_id": str(row.get("run_id") or ""),
+                "seq": row.get("seq"),
+                "label": row.get("label") or "",
+                "t": row.get("t"),
+            },
+            "preview": _preview(text, preview),
+            "converted_key": converted_key,
+            "link_scope": "first (representative claim only)",
+            "reviews": reviews,
+        }
+    ordered = list(groups.values())
     for group in ordered:
-        group["runs"] = len(group["runs"])
-        group["tasks"] = sorted(group["tasks"])
-        group["models"] = sorted(group["models"])
-        group["targets"] = sorted(group["targets"])
-        group["statuses"] = sorted(group["statuses"])
         group["reviewed"] = sorted(set(group.pop("reviews", [])))
+    returned = len(ordered)
+    # Advance by the page the SQL returned, even if a representative row could not be read,
+    # so a damaged run cannot make the caller fetch the same page forever.
+    next_offset = offset + len(page)
+    truncated = next_offset < total_groups
     return {
         "total_claims": total_claims,
-        "total_groups": len(groups),
+        "total_groups": total_groups,
+        "returned_groups": returned,
+        "offset": offset,
+        "next_offset": next_offset if truncated else None,
+        "truncated": truncated,
         "limit": limit,
         "preview_chars": preview,
         "groups": ordered,
-        "hint": "Use `taic query suggestion --run RUN --seq N --digest D` only for selected groups; the full text is not included here.",
+        "hint": "Links describe the representative claim only; another claim with the same digest may have a different conversion. Fetch selected run/seq/digest details and follow next_offset for more groups.",
     }
 
 
@@ -218,10 +267,21 @@ def detail(run_id: str, seq: int, digest: str) -> dict:
     from taic import harness
 
     board = harness.board(directory)
-    proposal = next((row for row in board["proposals"] if str(row.get("claim_digest") or "") == str(digest)), None)
+    proposal = next((
+        row for row in board["proposals"]
+        if str(row.get("claim_digest") or "") == str(digest)
+        and int(row.get("seq") or 0) == int(seq)
+        and row.get("status") == "valid"
+    ), None)
     reviews = []
     if proposal:
         reviews = [row for row in board["reviews"] if row.get("proposal_key") == proposal.get("proposal_key")]
+    started = next((
+        row.get("session_started") for row in board.get("suggestions") or []
+        if int(row.get("seq") or 0) == int(seq) and str(row.get("digest") or "") == str(digest)
+    ), None)
+    if started is None:
+        started = source.get("session_started")
     return {
         "run_id": run_id,
         "seq": int(seq),
@@ -229,6 +289,8 @@ def detail(run_id: str, seq: int, digest: str) -> dict:
         "text": str(source.get("text") or ""),
         "section": source.get("section") or "对系统的建议",
         "status": source.get("status") or "",
+        "session_started": started,
+        "probe_time_verified": proposal.get("probe_time_verified") if proposal else None,
         "converted_key": proposal.get("proposal_key") if proposal else "",
         "proposal": proposal,
         "reviews": reviews,

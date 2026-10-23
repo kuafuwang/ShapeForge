@@ -1741,6 +1741,11 @@ setInterval(() => { refreshTurns(false); refreshLive(); }, 2000);
 const HARNESS_SURFACE = {tip: "线索 tip", premise: "前提 premise", skill: "技能 skill（P2）", task_wording: "题面 task_wording（P2）"};
 
 function harnessWho(row) {
+  if (row.origin === "conversion") {
+    const sourceRow = row.source_author || row;
+    const source = [sourceRow.provider, sourceRow.model].filter(Boolean).join("/");
+    return ["人工确认转换", source ? "源 " + source : ""].filter(Boolean).join(" · ");
+  }
   const model = [row.provider, row.model].filter(Boolean).join("/");
   const committee = row.committee === "first" ? "第一委员会" : (row.committee === "second" ? "第二委员会" : row.committee);
   return [model, committee].filter(Boolean).join(" · ");
