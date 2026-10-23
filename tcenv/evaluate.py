@@ -222,8 +222,7 @@ def _evaluate_in_process(
     from .gpulock import gpu_lock
     from .metal_runtime import BufferArg, MetalCompileError, MetalRuntimeError, get_context
     from .profile import get_calibration, pipeline_stats, pipeline_stats_many, roofline
-    from .sanitize import ArgSet
-    from .testing import prepare_case, check_case, run_correctness
+    from .testing import prepare_case
 
     t_start = time.perf_counter()
     timeline: list[dict] = []
@@ -330,7 +329,7 @@ def _evaluate_in_process(
     rep.stage = "compile"
     _enter("compile")
     _note_stage(stage="compile", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
-    full_src, header_lines = contract.assemble(kernel_source)
+    full_src, header_lines = backend.assemble(contract, kernel_source)
     try:
         if spec is None:
             kernels = [backend.compile(ctx, full_src, contract)]
@@ -339,7 +338,7 @@ def _evaluate_in_process(
             kernels = backend.compile_all(ctx, full_src, contract, names=names, math=spec.math)
     except MetalCompileError as e:
         # 编译器诊断的是「契约头 + 候选正文」。行号减掉文件头，模型才对得上自己写的那几行。
-        msg = contract.rewrite_compiler_lines(str(e), header_lines)
+        msg = backend.rewrite_compiler_lines(contract, str(e), header_lines)
         rep.compile = {"ok": False, "errors": msg}
         return finish("compile_error", "Metal compiler rejected the kernel")
     kernel = kernels[0]
@@ -386,7 +385,7 @@ def _evaluate_in_process(
     # validate 用紧分配：缓冲两侧没有护栏，越界才会被 Metal shader validation 看见。quick / full 靠护栏图案抓越界。
     tight = mode == "validate"
     try:
-        argset = ArgSet(ctx, contract, tight=tight, workspaces=() if spec is None else spec.workspaces)
+        argset = backend.prepare_correctness(ctx, contract, tight=tight, spec=spec)
     except MemoryError as e:
         return finish("rejected", f"refused before launch: could not allocate the workspace ({e})")
 
@@ -433,9 +432,9 @@ def _evaluate_in_process(
             return one.read_outputs()
 
     try:
-        results, safety, nondet = run_correctness(
-            ctx, kernel, task, argset, seed, cases=use_cases, baseline_fns=baseline_fn, determinism=(mode != "validate"),
-            launcher=launcher,
+        results, safety, nondet = backend.run_correctness(
+            ctx, kernel, task, argset, seed, cases=use_cases, baseline_fns=baseline_fn,
+            determinism=(mode != "validate"), launcher=launcher,
         )
     except MetalRuntimeError as e:
         rep.safety = {"ok": False, "violations": [f"GPU execution error: {e}"], "nondeterminism": [], "validation": []}
@@ -479,67 +478,27 @@ def _evaluate_in_process(
     _enter("bench")
     _note_stage(stage="bench", status="running", task=task_name, dtype=dtype, size=size, mode=mode, attempt=1, attempts_max=BENCH_ATTEMPTS)
     data0 = prepare_case(task, task.cases[0], seed + 1)
-    R = rotation_count(task)
-    sets = []
-    for _ in range(R):
-        try:
-            s = ArgSet(ctx, contract, workspaces=() if spec is None else spec.workspaces)
-        except MemoryError as e:
-            return finish("rejected", f"refused before launch: could not allocate the workspace ({e})")
-        s.load_inputs(data0.raw)
-        s.poison_outputs()
-        sets.append(s)
-    gpu_samples: list[float] = []
-    launched: set[int] = set()
-    if spec is None:
-        arg_sets = [s.args() for s in sets]
-
-        def cand_run(k: int) -> float:
-            tm = ctx.run(kernel, arg_sets, contract.grid, contract.threads, iters=k, dispatch="concurrent")
-            gpu_samples.append(tm.gpu_per_iter_s)
-            launched.update(range(min(k, len(arg_sets))))
-            return tm.wall_s
-
-        def cand_serial_run(k: int) -> float:
-            return ctx.run(kernel, arg_sets, contract.grid, contract.threads, iters=k, dispatch="serial").wall_s
-
-        dispatch_note = "concurrent (as MLX)" + ("; candidate_serial_us is the strictly serial time of the same kernel" if measure_serial else "")
-        protocol = f"interleaved, {reps} reps, median per-iteration wall time of back-to-back launches over {R} rotating buffer sets, concurrent dispatch for the candidate as for MLX"
-    else:
-        by_name = {k.name: k for k in kernels}
-        ordered = [by_name[stage.kernel] for stage in spec.stages]
-        grids = [stage.grid for stage in spec.stages]
-        threadss = [stage.threads for stage in spec.stages]
-        tg_bytes = [stage.threadgroup_bytes for stage in spec.stages]
-        stage_sets = [[one.stage_args(k) for k in ordered] for one in sets]
-        fills = [one.workspace_fills() for one in sets]
-
-        def cand_run(k: int) -> float:
-            tm = ctx.run_pipeline(ordered, grids, threadss, tg_bytes, stage_sets, fills, iters=k, dispatch="concurrent")
-            gpu_samples.append(tm.gpu_per_iter_s)
-            launched.update(range(min(k, len(stage_sets))))
-            return tm.wall_s
-
-        def cand_serial_run(k: int) -> float:
-            return ctx.run_pipeline(ordered, grids, threadss, tg_bytes, stage_sets, fills, iters=k, dispatch="serial").wall_s
-
-        dispatch_note = "pipeline, concurrent encoder with a buffer barrier between stages" + ("; candidate_serial_us is the same stages in a serial encoder" if measure_serial else "")
-        protocol = f"interleaved, {reps} reps, median per-iteration wall time of a {len(spec.stages)}-stage pipeline over {R} rotating buffer sets; workspace is zeroed inside the timed buffer"
+    base_runners = build_runners(task, data0.rounded)
+    only = _remembered_baseline(task_name, dtype, size, target_id) if fast_bench else None
+    selected = selected_bench_names(list(base_runners), fast_bench=fast_bench, remembered=only, measure_serial=measure_serial)
+    try:
+        harness = backend.prepare_bench(
+            ctx, kernels, contract, task,
+            spec=spec, data0=data0, reps=reps, measure_serial=measure_serial,
+            base_runners=base_runners, selected=selected,
+        )
+    except MemoryError as e:
+        return finish("rejected", f"refused before launch: could not allocate the workspace ({e})")
+    R = harness.rotation_sets
+    gpu_samples = harness.gpu_samples
+    runners = {"candidate": harness.cand_run, **dict(harness.baseline_runners)}
+    if harness.cand_serial_run is not None:
+        runners["candidate_serial"] = harness.cand_serial_run
 
     attempts: list[tuple[float, dict, list[float]]] = []  # (noise, stats, candidate GPU samples) per attempt
     # 测速升级成独占锁。共享锁下可以并行做正确性检查；两份墙钟叠在一起会把 CV 抬过 NOISY_CV。
     with gpu_lock(f"benchmark of {task_name} {dtype} {size}") as lock_wait_s:
         calib = get_calibration(target_id=target_id)
-        runners: dict[str, Any] = {}
-        base_runners = build_runners(task, data0.rounded)
-        only = _remembered_baseline(task_name, dtype, size, target_id) if fast_bench else None
-        for name in selected_bench_names(list(base_runners), fast_bench=fast_bench, remembered=only, measure_serial=measure_serial):
-            if name == "candidate":
-                runners[name] = cand_run
-            elif name == "candidate_serial":
-                runners[name] = cand_serial_run
-            elif name in base_runners:
-                runners[name] = base_runners[name].run_k
         try:
             # 噪声是本轮除 candidate_serial 以外各计时器 CV 的最大值。serial 只作对照，不参与要不要重测。
             # 超过 NOISY_CV 就再测，因为这次墙钟里混进了别人的负载，不能用来比快慢。
@@ -557,21 +516,9 @@ def _evaluate_in_process(
     # 留下 CV 最小的一次。三次都超过阈值也留最安静的那次，并在报告里标 noisy；吵本身不判死。
     noise, stats, cand_gpu = min(attempts, key=lambda a: a[0])
 
-    # 正确性关是单套 buffer、单次启动。测速换成多套轮转和 concurrent 派发，所以计时产出还要再查。
-    # 每个真正发射过的集合都查护栏和输入；和参考对数值只抽最先、最后两套。
-    # spot-check the outputs that were produced *during* the timed runs
-    bad_after: list[str] = []
-    checked = sorted(launched)
-    for i, s in enumerate(sets):
-        if i not in launched:
-            continue
-        viol = s.safety_violations()
-        if viol:
-            bad_after.extend(f"[benchmark set {i}] {v}" for v in viol)
-        if i in (checked[0], checked[-1]):
-            res = check_case(task, data0, s.read_outputs(), None)
-            if not res.ok:
-                bad_after.append(f"[benchmark set {i}] output wrong during timed runs: {res.message}")
+    # Correctness used one buffer set. The benchmark rotates and dispatches concurrently,
+    # so ask the backend to re-check the sets that actually ran during the timed attempts.
+    bad_after = harness.spot_check()
     if bad_after:
         rep.safety = {"ok": False, "violations": bad_after, "nondeterminism": [], "validation": []}
         return finish("unsafe", bad_after[0])
@@ -584,13 +531,13 @@ def _evaluate_in_process(
         "baselines": {n: stats[n].to_json() for n in stats if n not in OWN_RUNNERS},
         "candidate_serial_us": stats["candidate_serial"].median_us if "candidate_serial" in stats else None,
         "measure_serial": measure_serial,
-        "dispatch": dispatch_note,
+        "dispatch": harness.dispatch_note,
         "rotation_sets": R,
         "noise_cv": noise,  # largest per-repetition CV among the runners of the kept attempt
         "attempts": len(attempts),
         "noisy": noise > NOISY_CV,
         "gpu_lock_wait_s": lock_wait_s,
-        "protocol": protocol,
+        "protocol": harness.protocol_note,
     }
     rep.baseline_us = {n: stats[n].median_us for n in stats if n not in OWN_RUNNERS}
     rep.speedups = {n: stats[n].median_s / cand.median_s for n in stats if n not in OWN_RUNNERS}

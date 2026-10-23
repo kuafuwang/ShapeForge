@@ -35,3 +35,14 @@ def test_check_abi_pipeline_receives_every_kernel_and_buffer_limit(monkeypatch):
         max_tg_memory=32768, max_buffer_index=7, target_id="apple-m4-max", spec=spec,
     ) == []
     assert seen == {"names": ["a", "b"], "limit": 7, "spec": spec}
+
+
+def test_contract_rendering_is_delegated_without_changing_text():
+    backend = load_backend("metal")
+    contract = get_task("relu", "fp16", "paper").contract
+    source = "kernel void relu_kernel() {}\n"
+    full, header = backend.assemble(contract, source)
+    assert full == contract.assemble(source)[0]
+    assert header == contract.assemble(source)[1]
+    assert backend.describe(contract) == contract.describe()
+    assert backend.abi_stub(contract) == contract.abi_stub()

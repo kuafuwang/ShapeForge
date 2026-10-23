@@ -8,7 +8,7 @@ migrate behind without changing the orchestrator.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,18 @@ class Capabilities:
     supports_validation: bool = False
     supports_device_timestamps: bool = False
     supports_profiler: bool = False
+
+
+@dataclass
+class BenchHarness:
+    rotation_sets: int
+    dispatch_note: str
+    protocol_note: str
+    cand_run: Callable[[int], float]
+    cand_serial_run: Callable[[int], float] | None
+    baseline_runners: Mapping[str, Callable[[int], float]]
+    gpu_samples: list[float]
+    spot_check: Callable[[], list[str]]
 
 
 class Backend(Protocol):
@@ -46,6 +58,10 @@ class Backend(Protocol):
     # Child-process methods.  The caller supplies the runtime context.
     def set_heartbeat_hooks(self, *, on_compile=None, on_launch=None) -> None: ...
     def probe(self, ctx: Any, target: Any = None) -> DeviceInfo: ...
+    def assemble(self, contract: Any, source: str) -> tuple[str, int]: ...
+    def rewrite_compiler_lines(self, contract: Any, message: str, header_lines: int) -> str: ...
+    def describe(self, contract: Any) -> str: ...
+    def abi_stub(self, contract: Any) -> str: ...
     def compile(self, ctx: Any, source: str, contract: Any, *, math: str = "fast"): ...
     def compile_all(self, ctx: Any, source: str, contract: Any, *, names: list[str] | None = None, math: str = "fast"): ...
     def check_abi(
@@ -60,3 +76,19 @@ class Backend(Protocol):
     ) -> list[str]: ...
     def pipeline_stats(self, kernel: Any, contract: Any, device_info: Mapping[str, Any], *, kernel_source: str | None = None) -> dict: ...
     def pipeline_stats_many(self, pairs: list, device_info: Mapping[str, Any], *, kernel_source: str | None = None) -> dict: ...
+    def prepare_correctness(self, ctx: Any, contract: Any, *, tight: bool, spec: Any = None): ...
+    def run_correctness(self, ctx: Any, kernel: Any, task: Any, argset: Any, seed: int, *, cases=None, baseline_fns=None, determinism: bool, launcher=None): ...
+    def prepare_bench(
+        self,
+        ctx: Any,
+        kernels: list[Any],
+        contract: Any,
+        task: Any,
+        *,
+        spec: Any,
+        data0: Any,
+        reps: int,
+        measure_serial: bool,
+        base_runners: Mapping[str, Any],
+        selected: list[str],
+    ) -> BenchHarness: ...

@@ -2,9 +2,9 @@
 
 先抽协议，Metal GPU 行为不变；本轮只做 Metal 一个实现，NPU 只留注册位。
 
-状态：Phase 1 已实现（协议/注册表/Metal adapter）；Phase 2–4 未实施（2026-10-23 审核修订）
+状态：Phase 1 已实现；Phase 2 协议路由/版本/时间线/索引已实现，Contract 决议已落，Phase 3–4 未实施（2026-10-23 审核修订）
 审核：对照当前代码补入 `source_pressure` 的 Metal 归属、嵌套报告 payload、`measure_serial` 默认值、`prompt_sha1` 的实际 SHA-256 和完整 skills 列表。
-Phase 1 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/backend.py`；`tcenv/target.py` 走注册表；`evaluate`/`worker` 经 adapter 调 screen/compile/pipeline/heartbeat。Phase 2 的 backend_version、timeline、报告 schema 3、索引 v11 和 `runs.backend` 已落地；Contract 迁移、Phase 3 提示/文件扩展和 Phase 4 清理仍未完成。GPU 基线尚未采。
+Phase 1 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/backend.py`；`tcenv/target.py` 走注册表；`evaluate`/`worker` 经 adapter 调 screen/compile/ABI/correctness/bench/pipeline/heartbeat。Phase 2 的 backend_version、timeline、报告 schema 3、索引 v11 和 `runs.backend` 已落地；Phase 3 提示/文件扩展和 Phase 4 清理仍未完成。GPU 基线尚未采。
 目标读者：维护 `taic` / `tcenv` 的工程师
 范围：先抽协议，Metal GPU 作为第一个实现；NPU 不实现，只预留注册位和接口。
 阶段编号全文只有一套，见 §11。§6–§10 是工作包（WP-A 至 WP-D），不自带 Phase 编号，所属阶段在 §11 的表里对齐。
@@ -348,11 +348,7 @@ def load_backend(name: str) -> Backend:
 
 `Contract` 不是“把 `render_header/assemble` 拆出去”就能通用化的：它本身就是 MSL 启动契约，`grid/threads`、`(name, msl_type, value)` 常量、`[[buffer(n)]]` 都在通用类里，每个 `Task` 还直接持有它（`tcenv/task.py`），各题把 grid/threads/constants 钉死在构造里。
 
-因此这里有一个阻塞 Phase 2 的决议，必须在动拆分代码之前定下来并写回本节：
-
-> 决议问题：`grid/threads`、buffer 下标、`msl_type` 是留在通用契约，还是下沉为 backend 的 `launch_spec` 子对象？通用侧倾向只留 kernel 名、参数的 dtype/shape/读写、题目常量，启动几何和 MSL 头归 Metal 契约。
-
-在决议落字之前，§5 架构图里的 `contract.py` 拆分只算设想，不算既定方案。还有一条容易漏的稳定性约束：`Contract.describe()` 的文本被哈希进 `run_config.json`（`contract_description_sha256`），拆分类或改渲染顺序若动了描述文本，Phase 2 的“报告不变”验收测不出来。Phase 2 的验收必须加一条：`contract.describe()` 与 `task_fingerprint` 逐字节快照对比。
+决议（Phase 2 已落）：`grid/threads`、buffer 下标和 `msl_type` 继续留在通用 `Contract`，因为它们同时描述启动几何和 ABI；MSL 文本渲染（`assemble`/`describe`/`abi_stub`/`rewrite_compiler_lines`）由 `MetalBackend` 提供，Phase 2 仍委托现有 `tcenv/contract.py` 实现，保证描述文本和指纹逐字节不变。文件迁移/删除留到 Phase 4，不在协议迁移中改变 `contract.describe()`。还有一条容易漏的稳定性约束：`Contract.describe()` 的文本被哈希进 `run_config.json`（`contract_description_sha256`），拆分类或改渲染顺序若动了描述文本，Phase 2 的“报告不变”验收测不出来。Phase 2 的验收必须加一条：`contract.describe()` 与 `task_fingerprint` 逐字节快照对比。
 
 ### 8.4 提示面是 `TASK.md`，不是系统提示
 

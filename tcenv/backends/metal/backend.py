@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from ..base import Capabilities, DeviceInfo
+from ..base import BenchHarness, Capabilities, DeviceInfo
 
 
 class MetalBackend:
@@ -62,6 +62,18 @@ class MetalBackend:
         if on_launch is not None:
             set_launch_hooks(*on_launch)
 
+    def assemble(self, contract: Any, source: str) -> tuple[str, int]:
+        return contract.assemble(source)
+
+    def rewrite_compiler_lines(self, contract: Any, message: str, header_lines: int) -> str:
+        return contract.rewrite_compiler_lines(message, header_lines)
+
+    def describe(self, contract: Any) -> str:
+        return contract.describe()
+
+    def abi_stub(self, contract: Any) -> str:
+        return contract.abi_stub()
+
     def probe(self, ctx: Any, target: Any = None) -> DeviceInfo:
         info = ctx.info()
         return DeviceInfo(
@@ -107,3 +119,112 @@ class MetalBackend:
         from ...profile import pipeline_stats_many
 
         return pipeline_stats_many(pairs, dict(device_info), kernel_source=kernel_source)
+
+    def prepare_correctness(self, ctx: Any, contract: Any, *, tight: bool, spec: Any = None):
+        from ...sanitize import ArgSet
+
+        return ArgSet(ctx, contract, tight=tight, workspaces=() if spec is None else spec.workspaces)
+
+    def run_correctness(self, ctx: Any, kernel: Any, task: Any, argset: Any, seed: int, *, cases=None, baseline_fns=None, determinism: bool, launcher=None):
+        from ...testing import run_correctness
+
+        return run_correctness(
+            ctx, kernel, task, argset, seed, cases=cases,
+            baseline_fns=baseline_fns, determinism=determinism, launcher=launcher,
+        )
+
+    def prepare_bench(
+        self,
+        ctx: Any,
+        kernels: list[Any],
+        contract: Any,
+        task: Any,
+        *,
+        spec: Any,
+        data0: Any,
+        reps: int,
+        measure_serial: bool,
+        base_runners: Mapping[str, Any],
+        selected: list[str],
+    ) -> BenchHarness:
+        from ...baselines import rotation_count
+        from ...sanitize import ArgSet
+        from ...testing import check_case
+
+        rotation_sets = rotation_count(task)
+        sets = []
+        for _ in range(rotation_sets):
+            one = ArgSet(ctx, contract, workspaces=() if spec is None else spec.workspaces)
+            one.load_inputs(data0.raw)
+            one.poison_outputs()
+            sets.append(one)
+        gpu_samples: list[float] = []
+        launched: set[int] = set()
+        kernel = kernels[0]
+        if spec is None:
+            arg_sets = [one.args() for one in sets]
+
+            def cand_run(k: int) -> float:
+                tm = ctx.run(kernel, arg_sets, contract.grid, contract.threads, iters=k, dispatch="concurrent")
+                gpu_samples.append(tm.gpu_per_iter_s)
+                launched.update(range(min(k, len(arg_sets))))
+                return tm.wall_s
+
+            def cand_serial_run(k: int) -> float:
+                return ctx.run(kernel, arg_sets, contract.grid, contract.threads, iters=k, dispatch="serial").wall_s
+
+            dispatch_note = "concurrent (as MLX)" + ("; candidate_serial_us is the strictly serial time of the same kernel" if measure_serial else "")
+            protocol = f"interleaved, {reps} reps, median per-iteration wall time of back-to-back launches over {rotation_sets} rotating buffer sets, concurrent dispatch for the candidate as for MLX"
+        else:
+            by_name = {item.name: item for item in kernels}
+            ordered = [by_name[stage.kernel] for stage in spec.stages]
+            grids = [stage.grid for stage in spec.stages]
+            threadss = [stage.threads for stage in spec.stages]
+            tg_bytes = [stage.threadgroup_bytes for stage in spec.stages]
+            stage_sets = [[one.stage_args(k) for k in ordered] for one in sets]
+            fills = [one.workspace_fills() for one in sets]
+
+            def cand_run(k: int) -> float:
+                tm = ctx.run_pipeline(ordered, grids, threadss, tg_bytes, stage_sets, fills, iters=k, dispatch="concurrent")
+                gpu_samples.append(tm.gpu_per_iter_s)
+                launched.update(range(min(k, len(stage_sets))))
+                return tm.wall_s
+
+            def cand_serial_run(k: int) -> float:
+                return ctx.run_pipeline(ordered, grids, threadss, tg_bytes, stage_sets, fills, iters=k, dispatch="serial").wall_s
+
+            dispatch_note = "pipeline, concurrent encoder with a buffer barrier between stages" + ("; candidate_serial_us is the same stages in a serial encoder" if measure_serial else "")
+            protocol = f"interleaved, {reps} reps, median per-iteration wall time of a {len(spec.stages)}-stage pipeline over {rotation_sets} rotating buffer sets; workspace is zeroed inside the timed buffer"
+
+        runners = {}
+        for name in selected:
+            if name == "candidate":
+                runners[name] = cand_run
+            elif name == "candidate_serial":
+                runners[name] = cand_serial_run
+            elif name in base_runners:
+                runners[name] = base_runners[name].run_k
+
+        def spot_check() -> list[str]:
+            bad: list[str] = []
+            checked = sorted(launched)
+            for index, one in enumerate(sets):
+                if index not in launched:
+                    continue
+                bad.extend(f"[benchmark set {index}] {item}" for item in one.safety_violations())
+                if index in (checked[0], checked[-1]):
+                    result = check_case(task, data0, one.read_outputs(), None)
+                    if not result.ok:
+                        bad.append(f"[benchmark set {index}] output wrong during timed runs: {result.message}")
+            return bad
+
+        return BenchHarness(
+            rotation_sets=rotation_sets,
+            dispatch_note=dispatch_note,
+            protocol_note=protocol,
+            cand_run=cand_run,
+            cand_serial_run=cand_serial_run if measure_serial else None,
+            baseline_runners={name: runner for name, runner in runners.items() if name not in ("candidate", "candidate_serial")},
+            gpu_samples=gpu_samples,
+            spot_check=spot_check,
+        )
