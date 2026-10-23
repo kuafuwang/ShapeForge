@@ -1,0 +1,154 @@
+{
+  "format": "backend_phase0_baseline",
+  "v": 1,
+  "recorded_at": "2026-10-23T17:55:23+08:00",
+  "git_commit": "ef2a048",
+  "offline_tests": {
+    "command": "uv run pytest -q -m 'not gpu and not llm'",
+    "passed": 972,
+    "skipped": 1,
+    "deselected": 133
+  },
+  "report_schema_version": 3,
+  "protocol_version": "3",
+  "index_schema_version": 11,
+  "top_level_fields": [
+    "task",
+    "dtype",
+    "size",
+    "mode",
+    "status",
+    "stage",
+    "message",
+    "seed",
+    "compile",
+    "abi",
+    "pipeline",
+    "safety",
+    "correctness",
+    "benchmark",
+    "roofline",
+    "speedup",
+    "speedups",
+    "candidate_us",
+    "baseline_us",
+    "compiler_baseline",
+    "verification",
+    "protocol_version",
+    "target_id",
+    "backend",
+    "backend_version",
+    "device_name",
+    "gpu_family",
+    "device_warnings",
+    "timeline",
+    "cache_hit",
+    "elapsed_s"
+  ],
+  "nested_payload_keys": {
+    "pipeline": [
+      "hints",
+      "launch_threadgroups",
+      "launch_threads_per_threadgroup",
+      "max_threadgroup_memory_bytes",
+      "max_total_threads_per_threadgroup",
+      "source_pressure",
+      "stages",
+      "static_threadgroup_bytes",
+      "thread_execution_width"
+    ],
+    "benchmark": [
+      "attempts",
+      "baselines",
+      "best_baseline",
+      "candidate",
+      "candidate_gpu_us_median",
+      "candidate_serial_us",
+      "dispatch",
+      "gpu_lock_wait_s",
+      "measure_serial",
+      "noise_cv",
+      "noisy",
+      "protocol",
+      "rotation_sets"
+    ],
+    "timeline_item": [
+      "stage",
+      "status",
+      "duration_s"
+    ]
+  },
+  "target_id": "apple-m4-max",
+  "backend": "metal",
+  "backend_version": "1",
+  "task": "flash_attention",
+  "dtype": "fp16",
+  "size": "paper",
+  "source": {
+    "path": "runs/apple-m4-max/flash-attention-pilot-20261022/candidates/000_init/kernel.metal",
+    "sha256": "dd9c31df8c49ba6093b130fe7aac638710af7df266c66d9cd1e58d0a902e4005"
+  },
+  "prompt_sha1": "08b2511a343b9556eaf01ad482cbc16b42b5c994356a644813951743ffc983ed",
+  "system_prompt_sha256": "62a9ea284f7df9eac56d6e75997f29de3e5f3b3c9699d58a49b2829716d1a4ec",
+  "contract_description_sha256": "4768725646ef2c3249bf3095be28ced0164ca1530f4831167d3c75ed9a0f818b",
+  "task_fingerprint": "34ef25170eeaeca4d8b763c8e7cada6c95858e4126112680fda402bf1690bc20",
+  "gpu": {
+    "mode": "full",
+    "seed": 105886635628786,
+    "reps": 15,
+    "old_implementation_commit": "f52fcb3",
+    "old": {
+      "candidate_us": 322.43751047644764,
+      "candidate_gpu_us_median": 299.6367184096016,
+      "mlx_us": 331.43588091031864,
+      "speedup": 1.027907331316926,
+      "cv": 0.015713108809581513
+    },
+    "current_runs": [
+      {
+        "candidate_us": 320.3020605724305,
+        "candidate_gpu_us_median": 298.37109468644485,
+        "mlx_us": 331.0750052332878,
+        "speedup": 1.0336337038906473,
+        "cv": 0.016399568492888556,
+        "attempts": 1
+      },
+      {
+        "candidate_us": 320.31249429564923,
+        "candidate_gpu_us_median": 296.3177103083581,
+        "mlx_us": 325.7226076369223,
+        "speedup": 1.0168901102442776,
+        "cv": 0.013525027544442944,
+        "attempts": 1
+      },
+      {
+        "candidate_us": 323.3333845855668,
+        "candidate_gpu_us_median": 299.1015571751632,
+        "mlx_us": 337.1494685244911,
+        "speedup": 1.0427301497388928,
+        "cv": 0.017066529310578407,
+        "attempts": 1
+      }
+    ],
+    "current_median": {
+      "candidate_us": 320.31249429564923,
+      "candidate_gpu_us_median": 298.37109468644485,
+      "mlx_us": 331.0750052332878,
+      "speedup": 1.0336337038906473
+    },
+    "delta_percent": {
+      "candidate_us": -0.659,
+      "candidate_gpu_us_median": -0.422,
+      "mlx_us": -0.109,
+      "speedup": 0.0057
+    },
+    "acceptance": {
+      "candidate_abs_pct": 2.0,
+      "gpu_abs_pct": 2.0,
+      "mlx_abs_pct": 2.0,
+      "speedup_abs": 0.03,
+      "note": "Old and current runs used the same source/seed/reps/contract; runs were sequential, so thresholds cover cross-process GPU load."
+    },
+    "passes": true
+  }
+}
