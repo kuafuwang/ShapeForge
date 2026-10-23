@@ -32,7 +32,14 @@ _USAGE = re.compile(r"([A-Za-z_]+)=(-?\d+(?:\.\d+)?)")
 _NAME_PART = re.compile(r"[^A-Za-z0-9._-]+")
 # 一场会话的墙钟。hmz 的回合预算先到；这个秒数只在进程不退出时杀掉它。
 def process_timeout_s(turn_minutes: int) -> float:
-    """Kill hmz one minute after its own flow budget, so a longer turn still gets the wrap."""
+    """@brief 算出杀掉 hmz 进程的墙钟秒数。
+
+    hmz 自己的流程预算（回合分钟 + 收尾分钟 + 流程余量）通常先到；这个秒数只用在进程
+    不肯退出时，再多留一分钟，让更长的回合仍然能拿到收尾。
+
+    @param turn_minutes 一场会话的回合预算，单位为分钟。
+    @return 进程超时的秒数。
+    """
     return (int(turn_minutes) + WRAP_MINUTES + FLOW_SLACK_MINUTES + 1) * 60
 
 
@@ -46,12 +53,15 @@ SCRATCH_MAX_BYTES = 50_000_000
 
 
 class AgentError(LLMError):
-    """hmz or pi could not take this turn."""
+    """@brief hmz 或 pi 无法完成这一回合。"""
 
 
 @dataclass
 class Prices:
-    """USD per million tokens. Read from the credentials file. Never logged."""
+    """@brief 每百万 token 的美元单价。
+
+    价格从凭据文件读取。日志里永远不打印这些费率。
+    """
 
     input: float
     output: float
@@ -59,13 +69,21 @@ class Prices:
     cache_write: float
 
     def as_dict(self) -> dict:
-        """The rates recorded beside a session charge, so a later reader does not need today's price file."""
+        """@brief 取记在一场会话花费旁边的费率。
+
+        记下来的是当时的单价，后来的读者因此不必依赖今天的价格文件。
+
+        @return 四个费率的字典：``input``、``output``、``cache_read``、``cache_write``。
+        """
         return {"input": self.input, "output": self.output, "cache_read": self.cache_read, "cache_write": self.cache_write}
 
 
 @dataclass
 class SessionBrief:
-    """The contract for one coding-agent session. The orchestrator fills it; this module only renders it."""
+    """@brief 一场编码 agent 会话的契约。
+
+    字段由编排器填；本模块只负责把它渲染成 `TASK.md` 的文本。
+    """
 
     repo: Path
     task_name: str
@@ -104,12 +122,20 @@ class SessionBrief:
 
     @property
     def seed_name(self) -> str:
+        """@brief 种子文件名。
+
+        @return ``kernel`` 加本语言的文件后缀，默认 ``kernel.metal``。
+        """
         return f"kernel{self.file_ext}"
 
 
 @dataclass
 class AgentResult:
-    """What one hmz session left on disk, plus the dollars we computed from its token counts."""
+    """@brief 一场 hmz 会话留在磁盘上的东西，以及按它的 token 数算出的美元。
+
+    ``status`` 取 ``ok``、``timeout``、``failed`` 三者之一：只有超时算 GPU 不应答，
+    worker 崩溃是 harness 侧失败，单独计数，不触发挂死熔断。
+    """
 
     source: str | None
     cost_usd: float | None
@@ -129,11 +155,18 @@ class AgentResult:
 
 
 def submission_name(task: str, dtype: str, size: str, label: str, file_ext: str = ".metal") -> str:
-    """The file this session must create. The search does not create it.
+    """@brief 算出本场会话必须创建的交卷文件名。
 
-    The name is ``{task}-{dtype}-{size}-{label}{file_ext}``. ``label`` is the session
-    (``init``, ``r3.p0``), so two sessions in one run do not share a name. A character
-    outside letters, digits, ``.``, ``_`` and ``-`` becomes ``-``.
+    名称是 ``{task}-{dtype}-{size}-{label}{file_ext}``。``label`` 是会话标识
+    （``init``、``r3.p0``），所以同一次运行里的两场会话不会撞名。字母、数字、``.``、
+    ``_`` 和 ``-`` 之外的字符一律变成 ``-``。外层不负责创建这个文件。
+
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param size 规模。
+    @param label 会话标签，如 ``init``、``r3.p0``。
+    @param file_ext 文件后缀，缺省 ``.metal``；没有点时自动补一个点。
+    @return 交卷文件名。
     """
     parts = []
     for raw in (task, dtype, size, label):
@@ -143,7 +176,16 @@ def submission_name(task: str, dtype: str, size: str, label: str, file_ext: str 
 
 
 def kernel_text(text: str, kernel_name: str, *, source_fence: str = "metal") -> str | None:
-    """The source in ``text``: a fenced block, or the whole file when it declares the kernel."""
+    """@brief 取出 ``text`` 里的内核源码。
+
+    优先用围栏块；没有围栏时，整份文件只要声明了内核就算数。``source_fence`` 不是
+    ``metal`` 时只认那个语言的围栏标签。
+
+    @param text agent 写出的原始文本。
+    @param kernel_name 期望的内核函数名。
+    @param source_fence 围栏语言标签，缺省 ``metal``。
+    @return 源码文本；取不到时为 ``None``。
+    """
     tags = None if source_fence == "metal" else {source_fence}
     fenced = extract_source(text, kernel_name, tags=tags)
     if fenced:
@@ -157,7 +199,15 @@ def kernel_text(text: str, kernel_name: str, *, source_fence: str = "metal") -> 
 
 
 def agent_spec(provider: str, model: str, effort: str | None = None) -> str:
-    """The ``-a assistant=`` value. pi names models as ``provider/id``, and an effort as ``:effort``."""
+    """@brief 拼出 ``-a assistant=`` 的值。
+
+    pi 的模型名写成 ``provider/id``，推理强度写成 ``:effort`` 后缀。
+
+    @param provider provider 名。
+    @param model 模型名。
+    @param effort 推理强度；为空时只写 ``provider/id``。
+    @return 传给 hmz 的 assistant 规格字符串。
+    """
     spec = f"pi/{provider}/{model}"
     if effort:
         spec = f"{spec}:{effort}"
@@ -165,9 +215,16 @@ def agent_spec(provider: str, model: str, effort: str | None = None) -> str:
 
 
 def load_prices(path: Path, provider: str, model: str) -> Prices:
-    """The model's prices. Raises ``AgentError`` when the provider, the model, or an output price is missing.
+    """@brief 读某个模型的单价。
 
-    The file also holds API keys. This function does not return them and callers must not log the document.
+    同一份文件里还存着 API key：本函数不返回它们，调用方也不得把整份文档写进日志。
+
+    @param path 凭据与价格文件的路径。
+    @param provider provider 名。
+    @param model 模型名。
+    @return 该模型的四项费率。
+    @raises AgentError 文件读不出或不是合法 JSON、provider 没有凭据、模型缺失，
+        或输出价格不是正数时。
     """
     try:
         doc = json.loads(Path(path).read_text())
@@ -194,14 +251,27 @@ def load_prices(path: Path, provider: str, model: str) -> Prices:
 
 
 def output_tokens_for(usd: float, price_out_per_million: float) -> int:
-    """How many output tokens ``usd`` buys at ``price_out_per_million``. At least 1."""
+    """@brief 算 ``usd`` 在 ``price_out_per_million`` 下能买多少输出 token。
+
+    @param usd 预算的美元数。
+    @param price_out_per_million 每百万输出 token 的美元单价。
+    @return token 数，至少 1。
+    @raises AgentError 输出单价不是正数时。
+    """
     if price_out_per_million <= 0:
         raise AgentError("output price must be positive")
     return max(1, int(float(usd) / float(price_out_per_million) * 1_000_000))
 
 
 def dollars_for(spent: dict, prices: Prices) -> float:
-    """USD for one session's token counts. ``reasoning`` is not priced: pi already counts it inside output."""
+    """@brief 按 token 数算一场会话的美元花费。
+
+    ``reasoning`` 不计价：pi 已经把它算进 output 里。费率表里没有的计数类型直接跳过。
+
+    @param spent token 计数，键为 ``input``、``output``、``cache_read``、``cache_write``。
+    @param prices 这场会话用的费率。
+    @return 美元花费。
+    """
     rates = {
         "input": prices.input,
         "output": prices.output,
@@ -218,10 +288,13 @@ def dollars_for(spent: dict, prices: Prices) -> float:
 
 
 def parse_spent(value) -> dict[str, float]:
-    """Token counts from one hmz ``result`` line.
+    """@brief 从 hmz 的一行 ``result`` 里取 token 计数。
 
-    ``hmz exec --json`` writes ``spent`` with ``default=str``. ``Usage`` is not a dict, so the
-    field is the string ``Usage(input=1, output=2)``. A dict is accepted too.
+    ``hmz exec --json`` 用 ``default=str`` 写 ``spent``，而 ``Usage`` 不是 dict，所以这个字段是
+    字符串 ``Usage(input=1, output=2)``；传进来是 dict 也接受。
+
+    @param value ``spent`` 字段的原始值。
+    @return 计数类型的 token 数；认不出来时为空字典。
     """
     if isinstance(value, dict):
         return {str(k): float(v) for k, v in value.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
@@ -237,11 +310,14 @@ _SPENT_EVENTS = frozenset({"result", "failed"})
 
 
 def spend_from_stream(text: str) -> tuple[dict[str, float], bool]:
-    """Sum ``spent`` on every turn-closing line, ``kind=result`` or ``kind=failed``.
+    """@brief 把每个关回合的行上的 ``spent`` 累加起来。
 
-    Each such line is one turn, not a running total, so the lines are added. The bool is whether
-    any line carried a token count: it decides ``cost_incomplete``, which is about having a bill,
-    not about the turn having succeeded.
+    hmz 不管成败都关掉一回合，``kind=result`` 与 ``kind=failed`` 都带同样的 ``spent`` 记录，
+    所以两种行都算。每行是一个回合而不是累计值，因此逐行相加。
+
+    @param text hmz 的 stdout 与 stderr 拼起来的流。
+    @return ``(各计数类型的总和, 是否见过至少一个 token 计数)``。后者决定 ``cost_incomplete``：
+        它说的是有没有账单，不是这一回合有没有成功。
     """
     totals: dict[str, float] = {}
     saw = False
@@ -262,29 +338,50 @@ def spend_from_stream(text: str) -> tuple[dict[str, float], bool]:
 
 
 def _shell(value: str) -> str:
+    """@brief 给要拼进 shell 命令的一段文本加引号。
+
+    @param value 原始值。
+    @return 可安全拼进 shell 命令的单引号形式。
+    """
     return shlex.quote(str(value))
 
 
 def _self_check_dir(brief: SessionBrief) -> Path:
-    """Hang log inside the session work directory, which the coding agent's sandbox can write.
+    """@brief 取本场会话的自测挂死日志目录，放在 agent 沙箱写得进的会话工作目录里。
 
-    An earlier version put it in ``<run>/session_checks`` so deleting the work copy would not reset
-    the hang count. The sandbox denied ``mkdir`` there and every timed self-check crashed after
-    paying for the benchmark (17 agent reports). The work directory is already the agent's trust
-    boundary; keep the log writable and archive it with the session instead.
+    早先的版本把这个目录放在 ``<run>/session_checks``，以免删掉工作副本会把挂死计数清零。
+    结果沙箱拒绝在那里 ``mkdir``，每次计时的自测在付过基准费用之后都崩掉（17 份 agent
+    报告）。工作目录本来就是 agent 的信任边界，所以让日志保持可写，并把它随会话一起归档。
+
+    @param brief 本场会话的契约。
+    @return ``<工作目录>/.selfcheck`` 路径。
     """
     work = _work_path(brief)
     return work / ".selfcheck"
 
 
 def _work_path(brief: SessionBrief) -> Path:
+    """@brief 取本场会话的工作目录。
+
+    契约里给了 ``work_dir`` 就用它（解析成绝对路径），否则用当前目录。
+
+    @param brief 本场会话的契约。
+    @return 工作目录的绝对路径。
+    """
     if brief.work_dir:
         return Path(brief.work_dir).resolve()
     return Path.cwd()
 
 
 def _check_command(brief: SessionBrief, mode: str) -> str:
-    """Eval command with absolute paths. ``uv run --directory`` changes the working directory."""
+    """@brief 拼自测/评测命令，路径一律写成绝对路径。
+
+    ``uv run --directory`` 会把工作目录换掉，所以 repo 与交卷文件都用绝对路径。
+
+    @param brief 本场会话的契约。
+    @param mode ``quick`` 只对答案，``timed`` 对答案并计时。
+    @return 一条可直接粘进 shell 的命令字符串。
+    """
     name = submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext)
     work = _work_path(brief)
     repo = Path(brief.repo).resolve()
@@ -314,6 +411,11 @@ def _check_command(brief: SessionBrief, mode: str) -> str:
 
 
 def _feedback_check_command(brief: SessionBrief) -> str:
+    """@brief 拼出检查 ``FEEDBACK.md`` 格式的命令。
+
+    @param brief 本场会话的契约。
+    @return 在会话工作目录里跑 ``taic.agent_feedback check`` 的命令字符串。
+    """
     work = _work_path(brief)
     repo = Path(brief.repo).resolve()
     return " ".join([
@@ -324,7 +426,12 @@ def _feedback_check_command(brief: SessionBrief) -> str:
 
 
 def _clip_bytes(text: str, limit: int) -> str:
-    """Cut UTF-8 text at a byte budget without splitting a character."""
+    """@brief 按字节预算截断 UTF-8 文本，且不切碎字符。
+
+    @param text 待截断的文本。
+    @param limit 字节上限。
+    @return 不超预算时为原文，否则为截断后的文本；边界上的多字节字符被丢掉而不是切一半。
+    """
     raw = (text or "").encode("utf-8")
     if len(raw) <= limit:
         return text
@@ -332,7 +439,14 @@ def _clip_bytes(text: str, limit: int) -> str:
 
 
 def _cap_task(text: str, limit: int) -> str:
-    """Trim one dynamic block at a byte budget. The full text stays on disk; the marker says so."""
+    """@brief 按字节预算裁掉一个动态段落。
+
+    全文仍然留在磁盘上，裁剪处会写一行标记说明这件事。
+
+    @param text 段落文本。
+    @param limit 字节上限。
+    @return 首尾去空白的段落；超预算时截断并追加一行截断标记。
+    """
     body = (text or "").strip()
     if len(body.encode("utf-8")) <= limit:
         return body
@@ -340,11 +454,14 @@ def _cap_task(text: str, limit: int) -> str:
 
 
 def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> str:
-    """The KDA-shaped task contract written to ``TASK.md``, with a hard dynamic-block budget.
+    """@brief 渲染写进 ``TASK.md`` 的 KDA 形状任务契约，动态段有硬字节预算。
 
-    The contract, signature, commands and evidence rules are required. Scorecard, failure,
-    NOTES, tips, history and extra evidence are added in priority order while they fit; an
-    omitted block names the file that still holds it.
+    契约、签名、命令与证据规则是必需段。成绩单、失败反馈、NOTES、队友提示、历史与额外证据
+    按优先级在预算内依次加入；被省掉的段落会点名仍然保存它的文件名。
+
+    @param brief 本场会话的契约。
+    @param max_bytes 整份 TASK.md 的字节预算，缺省 ``TASK_MAX_BYTES``。
+    @return TASK.md 的完整文本（末尾一个换行）。
     """
     quick = _check_command(brief, "quick")
     timed = _check_command(brief, "timed")
@@ -530,8 +647,15 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
 
 
 def _self_check_summary(work: Path) -> tuple[int, int, float, int]:
-    """``(checks, timeouts, gpu_s, crashes)``. A timeout means the GPU stopped answering; a crash
-    is a worker-side error (SchemaError, OOM, a killed child) and must not trip the hang breaker."""
+    """@brief 汇总自测日志。
+
+    超时说明 GPU 不再应答；崩溃是 worker 侧的错误（SchemaError、OOM、被杀掉的子进程），
+    不能触发挂死熔断。
+
+    @param work 会话工作目录。
+    @return ``(checks, timeouts, gpu_s, crashes)``，即自测次数、超时数、GPU 秒数与崩溃数；
+        日志不存在时为全 0。
+    """
     path = work / "self_checks.jsonl"
     if not path.is_file():
         return 0, 0, 0.0, 0
@@ -556,7 +680,13 @@ def _self_check_summary(work: Path) -> tuple[int, int, float, int]:
 
 
 def _guidance_source(brief: SessionBrief, name: str, fallback: Path) -> Path:
-    """The frozen copy for this run when it exists, otherwise the file in the repository."""
+    """@brief 取一份指导文件：本运行有冻结快照就用快照，否则用仓库里的文件。
+
+    @param brief 本场会话的契约。
+    @param name 文件名，如 ``device.md``。
+    @param fallback 仓库里的原始路径。
+    @return 实际要用的文件路径。
+    """
     if brief.guidance_dir:
         snap = Path(brief.guidance_dir) / name
         if snap.is_file():
@@ -565,7 +695,13 @@ def _guidance_source(brief: SessionBrief, name: str, fallback: Path) -> Path:
 
 
 def stage_guidance(work: Path, brief: SessionBrief) -> None:
-    """Copy the device note, experience, and the language reference. A frozen snapshot wins when the run has one."""
+    """@brief 把设备说明、经验文件和语言参考拷进会话工作目录。
+
+    运行里有冻结快照时优先用快照。
+
+    @param work 会话工作目录，不存在时创建。
+    @param brief 本场会话的契约。
+    """
     work.mkdir(parents=True, exist_ok=True)
     mapping = (
         ("device.md", skill_path("device", brief.target_id)),
@@ -588,10 +724,13 @@ _EVIDENCE_TOKEN = re.compile(r"[A-Za-z0-9_./-]+\.(?:py|metal|md|json|sh|txt)")
 
 
 def _evidence_paths(work: Path) -> set[str]:
-    """Top-level entries named by the session's own feedback or notes.
+    """@brief 取会话自己的反馈或笔记里点名的顶层条目。
 
-    A measured premise points at a probe file. Archiving that file would turn ``verified`` into
-    ``downgraded`` on the next parse; keep the file (or its whole small directory) in place.
+    一条已实测的前提会指向探针文件。把这些文件归档掉，会让下一次解析把 ``verified`` 降级成
+    ``downgraded``；所以那个文件（或它所在的整个小目录）留在原地。
+
+    @param work 会话工作目录。
+    @return 需要保留的顶层条目名集合。
     """
     text = ""
     for name in ("FEEDBACK.md", "NOTES.md"):
@@ -620,13 +759,18 @@ def _evidence_paths(work: Path) -> set[str]:
 
 
 def prune_work(work: Path, *, label: str, keep: set[str] | None = None, max_bytes: int = SCRATCH_MAX_BYTES) -> dict:
-    """Archive the session's oversized scratch and remove it from ``agent_work``.
+    """@brief 把会话的超额草稿归档，并从 ``agent_work`` 里删掉。
 
-    The files the search reads (NOTES, FEEDBACK, self_checks, TASK.md, kernel.metal, the
-    submission) are kept. Everything else -- probe variants, ``v/`` ablation sources, ad-hoc
-    scripts -- is tarred under ``<run>/scratch/<label>.tar.gz`` and deleted. If the archive
-    itself exceeds ``max_bytes``, it is dropped and a JSON manifest records what was removed:
-    the point is a hard cap, not an unbounded second copy.
+    外层要读的文件（NOTES、FEEDBACK、self_checks、TASK.md、kernel.metal、交卷文件）保留。
+    其余东西——探针变体、``v/`` 消融源码、随手写的脚本——打成
+    ``<run>/scratch/<label>.tar.gz`` 后删除。若压缩包本身超过 ``max_bytes``，就丢掉压缩包，
+    改由一份 JSON 清单记录删了什么：这里要的是硬上限，不是无界的第二份拷贝。
+
+    @param work 会话工作目录。
+    @param label 会话标签，用作归档文件名。
+    @param keep 额外要保留的顶层条目名。
+    @param max_bytes 压缩包的字节上限，缺省 ``SCRATCH_MAX_BYTES``。
+    @return 归档结果字典：``archived``、``archive``、``kept``、``bytes``、``reason`` 等。
     """
     work = Path(work)
     if not work.is_dir():
@@ -699,10 +843,22 @@ def run_kernel_agent(
     hmz: str | None = None,
     timeout_s: float | None = None,
 ) -> AgentResult:
-    """Run one hmz session. A timeout still returns the kernel file; it does not raise.
+    """@brief 跑一场 hmz 会话。
 
-    Raises:
-      AgentError: hmz is not on PATH, or the process cannot be started.
+    超时也照样返回内核文件，不抛异常：会话已经计费，成本必须带回给调用方。
+
+    @param brief 本场会话的契约。
+    @param work 会话工作目录，不存在时创建。
+    @param provider provider 名。
+    @param model 模型名。
+    @param effort 推理强度；为空时不带后缀。
+    @param prices 该模型的费率。
+    @param turn_output_tokens 这一回合的输出 token 上限。
+    @param turn_minutes 这一回合的分钟预算。
+    @param hmz hmz 可执行文件路径；``None`` 时从 PATH 上找。
+    @param timeout_s 进程墙钟超时秒数；``None`` 时按回合预算推算。
+    @return 本场会话的结果。
+    @raises AgentError hmz 不在 PATH 上，或进程起不来时。
     """
     binary = hmz or shutil.which("hmz")
     if not binary or not Path(binary).is_file():
@@ -801,10 +957,14 @@ def run_kernel_agent(
 
 
 def agent_for_script(script, kernel_name: str):
-    """A stand-in used by tests whose fake chat client is the only model. One call is one session.
+    """@brief 给「假 chat 客户端就是唯一模型」的那些测试用的替身。
 
-    The first seedless call is the draft. Later calls ask for plan A, then B, then C, which is how the
-    old scripted tests tell their answers apart. A real search does not use this.
+    一次调用是一场会话。第一次无种子的调用是草稿；之后的调用依次要 plan A、B、C，
+    老的分脚本测试就是靠这个区分答案的。真实搜索不走这条路。
+
+    @param script 假的 chat 脚本，接收消息列表并返回响应。
+    @param kernel_name 期望的内核函数名。
+    @return 一个 ``run(brief, tag)`` 可调用对象，返回 ``AgentResult``。
     """
     step = {"n": 0}
 
@@ -843,7 +1003,14 @@ def agent_for_script(script, kernel_name: str):
 
 
 def preflight(committees, credentials: Path, hmz: str | None = None) -> None:
-    """Fail before any session when hmz, the flow, a credential, or an output price is missing."""
+    """@brief 在任何会话开始之前，先查 hmz、流程目录、凭据和输出价格。
+
+    @param committees 本次搜索的委员会列表，每个只看第一成员。
+    @param credentials 凭据与价格文件的路径。
+    @param hmz hmz 可执行文件路径；``None`` 时从 PATH 上找。
+    @raises AgentError hmz 不在 PATH 上、kernel 流程目录缺失、assistant 规格 hmz 不接受，
+        或某个成员的凭据与输出价格读不出来时。
+    """
     binary = hmz or shutil.which("hmz")
     if not binary:
         raise AgentError("hmz is not on PATH; install it with `uv tool install hmz`")

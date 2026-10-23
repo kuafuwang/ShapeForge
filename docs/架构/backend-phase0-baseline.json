@@ -88,7 +88,7 @@
     "path": "tests/support/golden/metal/backend_phase0_kernel.metal",
     "sha256": "dd9c31df8c49ba6093b130fe7aac638710af7df266c66d9cd1e58d0a902e4005"
   },
-  "prompt_sha1": "ad270a8a76f854da1af664b91dc3b31b75d276b4445fb914fc417c4edf940554",
+  "prompt_sha1": "ac3eca2a4576985addf045cbbf35d054af5f94ab1a9d7d0e68298215896620f5",
   "system_prompt_sha256": "c4f73be525fe645e6abefaf0ca3d895ab60c8abe1017232e32767bb6c6ceb8a5",
   "contract_description_sha256": "4768725646ef2c3249bf3095be28ced0164ca1530f4831167d3c75ed9a0f818b",
   "task_fingerprint": "34ef25170eeaeca4d8b763c8e7cada6c95858e4126112680fda402bf1690bc20",

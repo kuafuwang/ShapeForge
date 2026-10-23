@@ -85,10 +85,23 @@ _MARK = re.compile(r"[`*_>#]")
 
 
 class ProposalError(ValueError):
-    """A structured proposal that cannot be used as written."""
+    """@brief 结构化提案无法按原样使用时的错误。
+
+    A structured proposal that cannot be used as written.
+
+    继承 ``ValueError``，调用方既可精确捕获 ``ProposalError``，也可按普通取值错误兜底。
+    """
 
 
 def _read_jsonl(path: Path) -> list[dict]:
+    """@brief 读取 JSONL 文件，返回其中的 JSON 对象行。
+
+    文件不存在时返回空列表；无法解析的行与非对象行会被静默跳过，因此一次损坏的追加写入
+    不会让整个文件不可读。
+
+    @param path JSONL 文件路径。
+    @return 按文件顺序排列的字典行；没有可读内容时为空列表。
+    """
     if not path.is_file():
         return []
     rows = []
@@ -103,6 +116,13 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 def _append_jsonl(path: Path, row: dict) -> None:
+    """@brief 以追加方式写入一行 JSON，并在写完后 fsync 落盘。
+
+    父目录不存在时先创建；行内键按字母排序，非 ASCII 字符原样保留。
+
+    @param path 目标 JSONL 文件路径。
+    @param row 要写入的字典行。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
     with path.open("a", encoding="utf-8") as handle:
@@ -112,10 +132,23 @@ def _append_jsonl(path: Path, row: dict) -> None:
 
 
 def _sha256(path: Path) -> str:
+    """@brief 计算文件内容的 SHA-256 摘要。
+
+    @param path 待读取的文件路径。
+    @return 十六进制摘要字符串。
+    """
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _normal_action(text: str) -> str:
+    """@brief 把 action 文本归一化，仅用于计算 proposal_key。
+
+    依次去掉控制字符与 Markdown 标记、压缩空白并转成小写，使同一句话的排版差异不会
+    产生不同的 key。
+
+    @param text 原始 action 文本，``None`` 视为空串。
+    @return 归一化后的文本，可能为空串。
+    """
     text = _CONTROL.sub(" ", str(text or ""))
     text = _MARK.sub(" ", text)
     text = re.sub(r"\s+", " ", text).strip().lower()
@@ -123,6 +156,14 @@ def _normal_action(text: str) -> str:
 
 
 def _clean_action(text: str) -> str:
+    """@brief 清理 action 文本并保留可读形式。
+
+    去掉控制字符与 Markdown 标记、压缩空白；超过 ``MAX_ACTION`` 时截断并去掉尾部空白。
+
+    @param text 原始 action 文本，``None`` 视为空串。
+    @return 清理后的 action 文本。
+    @raises ProposalError 清理后为空时抛出。
+    """
     text = _CONTROL.sub(" ", str(text or ""))
     text = _MARK.sub("", text)
     text = re.sub(r"\s+", " ", text).strip()
@@ -142,6 +183,14 @@ _NEVER_AUTO = (
 
 
 def _reject_never_auto(text: str) -> None:
+    """@brief 拒绝 P1 overlay 中绝不允许出现的动作。
+
+    文本命中 ``_NEVER_AUTO`` 任一关键词（任务、合同、凭据、价格、破坏性命令等）或出现
+    ``ABI`` 字样时直接失败。
+
+    @param text 已经过 ``_clean_action`` 处理的动作文本。
+    @raises ProposalError 命中禁用关键词或试图改动 ABI 时抛出。
+    """
     lower = text.lower()
     for token in _NEVER_AUTO:
         if token in lower:
@@ -151,6 +200,15 @@ def _reject_never_auto(text: str) -> None:
 
 
 def proposal_key(*, target_id: str, task: str, surface: str, action: str, dtype: str = "") -> str:
+    """@brief 由 target、task、surface、归一化 action 与 dtype 计算提案 key。
+
+    @param target_id 目标硬件标识。
+    @param task 任务名。
+    @param surface 提案表面，取值见 ``SURFACES``。
+    @param action 动作文本，内部会先经 ``_normal_action`` 归一化。
+    @param dtype 数据类型，可为空串。
+    @return 16 位十六进制字符串，用作同一提案跨会话的稳定标识。
+    """
     payload = json.dumps(
         [str(target_id), str(task), str(surface), _normal_action(action), str(dtype or "")],
         ensure_ascii=False, separators=(",", ":"),
@@ -159,11 +217,19 @@ def proposal_key(*, target_id: str, task: str, surface: str, action: str, dtype:
 
 
 def _fresh_probe(token: str, *, work: Path, started: float | None) -> tuple[str, str, float, bool]:
-    """(absolute path, sha256, mtime, time_verified) for a file under this session's work directory.
+    """@brief 校验并描述本次会话工作目录下的 probe 文件。
+
+    (absolute path, sha256, mtime, time_verified) for a file under this session's work directory.
 
     ``started`` is the session start. Older feedback records do not carry it; in that case
     the file is still identified by path and hash, but its mtime is not compared with a
     substitute time and the result is marked unverified.
+
+    @param token 相对本次会话工作目录的 probe 路径；空串或含 NUL 字节时无效。
+    @param work 本次会话的工作目录，probe 必须落在其中。
+    @param started 会话开始时间戳；``None`` 表示反馈记录里没有该字段。
+    @return 四元组：绝对路径、SHA-256、mtime、时间是否已验证。
+    @raises ProposalError token 为空、为绝对路径、逃出工作目录、不是文件或早于会话开始时抛出。
     """
     if not token or "\x00" in token:
         raise ProposalError("evidence.probe is empty")
@@ -198,7 +264,21 @@ def validate_proposal(
     allow_premise: bool = True,
     allow_p2: bool = False,
 ) -> dict:
-    """Return a normalized proposal or raise ProposalError. This does not call a model or GPU."""
+    """@brief 校验并规范化一条结构化提案；不调用模型，也不使用 GPU。
+
+    Return a normalized proposal or raise ProposalError. This does not call a model or GPU.
+
+    @param doc 已解析的提案 JSON 对象。
+    @param target_id 本次 run 的目标硬件标识，必须与 ``scope.target_id`` 一致。
+    @param task 本次 run 的任务名，必须与 ``scope.task`` 一致。
+    @param dtype 本次 run 的数据类型；提案省略 dtype 时用该值补齐。
+    @param work 本次会话的工作目录，用于定位 ``evidence.probe``。
+    @param started 会话开始时间戳，用于判断 probe 是否早于会话；``None`` 表示无法核对。
+    @param allow_premise 是否允许 ``premise`` 表面生效。
+    @param allow_p2 是否允许 ``skill`` 与 ``task_wording`` 这类需要 P2 的表面。
+    @return 规范化后的提案字典，含 ``proposal_key`` 与 probe 的路径、哈希、mtime。
+    @raises ProposalError 结构、scope、action 或 evidence 任一项不合规时抛出。
+    """
     if not isinstance(doc, dict):
         raise ProposalError("the block is not a JSON object")
     surface = str(doc.get("surface") or "").strip()
@@ -258,7 +338,13 @@ def validate_proposal(
 
 
 def extract_blocks(text: str) -> list[dict]:
-    """Parse every fenced ``harness-proposal`` block. A malformed JSON block is reported, not raised."""
+    """@brief 解析文本中所有围栏 ``harness-proposal`` 代码块。
+
+    Parse every fenced ``harness-proposal`` block. A malformed JSON block is reported, not raised.
+
+    @param text 待扫描的文本，``None`` 视为空串。
+    @return 每个块一个字典：成功为 ``{"doc", "raw"}``，JSON 无法解析为 ``{"error", "raw"}``。
+    """
     out = []
     for raw in _BLOCK.findall(text or ""):
         try:
@@ -280,7 +366,21 @@ def parse_proposals(
     started: float | None,
     allow_premise: bool = True,
 ) -> list[dict]:
-    """Normalized proposals and errors from this session's structured blocks."""
+    """@brief 把本次会话的结构化块解析成规范化提案与错误列表。
+
+    Normalized proposals and errors from this session's structured blocks.
+
+    只读取 ``需要帮助`` 与 ``对系统的建议`` 两个系统小节；诊断与同伴建议里的代码块不会被采纳。
+
+    @param parsed 本会话解析后的反馈字典，需含 ``sections``。
+    @param target_id 本次 run 的目标硬件标识。
+    @param task 本次 run 的任务名。
+    @param dtype 本次 run 的数据类型。
+    @param work 本次会话的工作目录，用于定位 probe。
+    @param started 会话开始时间戳，``None`` 表示无法核对 probe 时间。
+    @param allow_premise 是否允许 ``premise`` 表面生效。
+    @return 逐块结果列表：成功项带 ``ok/index/raw`` 与规范化字段，失败项带 ``ok=False``、``reason``、``index``。
+    """
     sections = parsed.get("sections") if isinstance(parsed.get("sections"), dict) else {}
     # Both system sections can carry a structured block; diagnostics and peer tips cannot.
     text = "\n".join(str(sections.get(name) or "") for name in ("需要帮助", "对系统的建议"))
@@ -305,6 +405,13 @@ def parse_proposals(
 
 
 def _self_check_rows(work: Path) -> list[dict]:
+    """@brief 读取工作目录下两份 ``self_checks.jsonl`` 中的对象行。
+
+    先读 ``.selfcheck/self_checks.jsonl``，再读工作目录根下的同名文件；缺失或损坏的行被跳过。
+
+    @param work 本次会话的工作目录。
+    @return 所有可解析的字典行，按读取顺序排列。
+    """
     rows = []
     for path in (Path(work) / ".selfcheck" / "self_checks.jsonl", Path(work) / "self_checks.jsonl"):
         if not path.is_file():
@@ -320,7 +427,16 @@ def _self_check_rows(work: Path) -> list[dict]:
 
 
 def _measurement_has(value: str, measurement: str) -> bool:
-    """Whether one of the numbers in the proposal's measurement matches a harness row."""
+    """@brief 判断提案里 measurement 的某个数字是否与 harness 记录行吻合。
+
+    Whether one of the numbers in the proposal's measurement matches a harness row.
+
+    按 ``max(0.01, |number| * 1%)`` 的容差比较，0 不参与匹配，避免把占位数字当成证据。
+
+    @param value 记录行中的数字字符串，例如 candidate_us 或 speedup。
+    @param measurement 提案里的测量描述文本。
+    @return 存在至少一对在容差内相等的数字时为 ``True``，否则为 ``False``。
+    """
     numbers = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", measurement or "")]
     for number in numbers:
         if number == 0:
@@ -344,11 +460,21 @@ def trusted_premise_record(
     measurement: str,
     trusted_report: dict | None = None,
 ) -> tuple[bool, str]:
-    """A premise is active only when a harness-written timed row agrees with it.
+    """@brief 判断一条 measured premise 是否有 harness 自己写下的计时行支持。
+
+    A premise is active only when a harness-written timed row agrees with it.
 
     The row must be ``status=ok``, from the same target and protocol, and bind the submitted
     kernel's SHA. At least one numeric value in ``measurement`` must match that row's
     candidate microseconds or speedup. A probe that only exists on disk does not qualify.
+
+    @param work 本次会话的工作目录，self-check 行从这里读取。
+    @param target_id 目标硬件标识，必须与记录行一致。
+    @param protocol_version 协议代次，必须与记录行一致。
+    @param kernel_sha256 本次提交内核的 SHA-256，为空时直接判定不可信。
+    @param measurement 提案里的测量描述，需与记录行的 candidate_us 或 speedup 吻合。
+    @param trusted_report 外层候选报告；给出时优先于磁盘上的 self-check 行。
+    @return ``(是否可信, 可信来源或不可信原因)``。
     """
     if not kernel_sha256:
         return False, "no submitted kernel SHA"
@@ -386,7 +512,24 @@ def record_proposals(
     protocol_version: str = "",
     trusted_report: dict | None = None,
 ) -> list[dict]:
-    """Append this session's valid/invalid proposals, idempotent by (seq, key, reason)."""
+    """@brief 追加本次会话的合法与非法提案行，按 (seq, key, reason) 幂等。
+
+    Append this session's valid/invalid proposals, idempotent by (seq, key, reason).
+
+    @param run_dir run 目录，提案写入其中的 ``harness_proposals.jsonl``。
+    @param record 本次会话的反馈记录，需含整数 ``seq``。
+    @param parsed 解析后的反馈内容，含 ``items`` 与 ``sections``。
+    @param target_id 目标硬件标识。
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param work 本次会话的工作目录，用于定位 probe。
+    @param started 会话开始时间戳。
+    @param allow_premise 是否允许 ``premise`` 表面生效。
+    @param kernel_sha256 本次提交内核的 SHA-256，用于核对 premise 的 trusted 记录。
+    @param protocol_version 协议代次，用于核对 premise 的 trusted 记录。
+    @param trusted_report 外层候选报告，作为额外的 self-check 行来源。
+    @return 本次实际新写入的提案行列表；``seq`` 非法或全部重复时为空列表。
+    """
     run_dir = Path(run_dir)
     seq = record.get("seq")
     if not isinstance(seq, int):
@@ -475,6 +618,18 @@ def record_proposals(
 
 
 def _trusted(row: dict, *, target_id: str, task: str, scope: str, root: Path | None, prompt_sha1: str | None) -> tuple[bool, str]:
+    """@brief 判定提案作者的 provider/model/effort 是否在指定 scope 获得信任。
+
+    委托 ``trust.is_trusted``，把行里的作者字段拆出来作为查询条件。
+
+    @param row 提案行或评审者行，需含 ``provider``、``model``、``effort``。
+    @param target_id 目标硬件标识。
+    @param task 任务名。
+    @param scope 信任作用域，例如 ``overlay:tip`` 或 ``overlay:premise``。
+    @param root 信任表所在仓库根目录，``None`` 表示使用默认根。
+    @param prompt_sha1 提示词 SHA-1，用于按提示词代次限定信任，``None`` 表示不限定。
+    @return ``(是否信任, 原因)``。
+    """
     return trust.is_trusted(
         target_id, task=task, provider=str(row.get("provider") or ""), model=str(row.get("model") or ""),
         effort=str(row.get("effort") or ""), scope=scope, root=root, prompt_sha1=prompt_sha1,
@@ -482,7 +637,13 @@ def _trusted(row: dict, *, target_id: str, task: str, scope: str, root: Path | N
 
 
 def source_author(row: dict) -> dict:
-    """The model that wrote the original claim, separate from who structured a conversion."""
+    """@brief 返回写下原始主张的模型身份，与把它结构化的人区分开。
+
+    The model that wrote the original claim, separate from who structured a conversion.
+
+    @param row 提案行；带 ``source_author`` 字段时以该字段为准。
+    @return 含 ``provider``、``model``、``committee``、``effort`` 的字典，缺失字段为空串。
+    """
     src = row.get("source_author")
     if isinstance(src, dict) and (src.get("provider") or src.get("model") or src.get("committee")):
         return {
@@ -496,12 +657,24 @@ def source_author(row: dict) -> dict:
 
 
 def proposal_committee(row: dict) -> str:
-    """The committee a reviewer must not belong to. Converted rows have no structured committee."""
+    """@brief 返回评审者不得所属的委员会。
+
+    The committee a reviewer must not belong to. Converted rows have no structured committee.
+
+    @param row 提案行。
+    @return 委员会名；转换而来的行没有结构化委员会时按行内 ``committee`` 或空串返回。
+    """
     return str(source_author(row).get("committee") or row.get("committee") or "")
 
 
 def _author_pairs(row: dict) -> set[tuple[str, str]]:
-    """Every model identity that authored this proposal, including a converted source claim."""
+    """@brief 收集提案的所有作者身份，包含被转换的原始主张作者。
+
+    Every model identity that authored this proposal, including a converted source claim.
+
+    @param row 提案行，可能带 ``source_author``。
+    @return 非空 ``(provider, model)`` 对的集合；provider 或 model 缺一即不收录。
+    """
     pairs: set[tuple[str, str]] = set()
     for candidate in (row, row.get("source_author") if isinstance(row.get("source_author"), dict) else {}):
         pair = (str(candidate.get("provider") or ""), str(candidate.get("model") or ""))
@@ -511,18 +684,43 @@ def _author_pairs(row: dict) -> set[tuple[str, str]]:
 
 
 def reviewer_conflict(row: dict, provider: str, model: str) -> bool:
-    """Whether this model authored the proposal or the free text it was converted from."""
+    """@brief 判断某个模型是否就是该提案（或其被转换自由文本）的作者。
+
+    Whether this model authored the proposal or the free text it was converted from.
+
+    @param row 提案行。
+    @param provider 评审者的 provider。
+    @param model 评审者的 model。
+    @return provider 与 model 都给出且命中作者集合时为 ``True``。
+    """
     pair = (str(provider or ""), str(model or ""))
     return bool(all(pair) and pair in _author_pairs(row))
 
 
 def reviewer_conflicts_with_group(rows: list[dict], provider: str, model: str) -> bool:
-    """A shared proposal key may have multiple authors; a reviewer must differ from all."""
+    """@brief 判断评审者是否与同一 proposal key 的任一作者重合。
+
+    A shared proposal key may have multiple authors; a reviewer must differ from all.
+
+    @param rows 共享同一 ``proposal_key`` 的提案行。
+    @param provider 评审者的 provider。
+    @param model 评审者的 model。
+    @return 与任一作者冲突时为 ``True``。
+    """
     return any(reviewer_conflict(row, provider, model) for row in rows)
 
 
 def pending_tip_reviews(run_dir: Path, proposals: list[dict]) -> list[dict]:
-    """Valid tips that have neither a decision nor an independent review yet."""
+    """@brief 列出既无决策也无独立评审的合法 tip。
+
+    Valid tips that have neither a decision nor an independent review yet.
+
+    只保留 probe 时间已验证且带 probe 哈希的行，避免把无法核对的证据送去评审。
+
+    @param run_dir run 目录，读取 ``harness_reviews.jsonl`` 与决策文件。
+    @param proposals 已记录的提案行。
+    @return 待评审的提案行列表。
+    """
     reviews = {str(row.get("proposal_key") or "") for row in _read_jsonl(Path(run_dir) / "harness_reviews.jsonl") if row.get("event") == "review"}
     decisions = {str(row.get("proposal_key") or "") for row in _read_jsonl(Path(run_dir) / DECISION_FILE)}
     out = []
@@ -548,7 +746,9 @@ def settle(
     trust_root: Path | None = None,
     prompt_sha1: str | None = None,
 ) -> dict:
-    """Find two-source agreement and append a shadow/active overlay event once per key.
+    """@brief 找出双来源共识，并按 key 幂等地追加一条 shadow/active overlay 事件。
+
+    Find two-source agreement and append a shadow/active overlay event once per key.
 
     ``enabled`` is the run's harness switch. When false nothing is written. ``shadow`` records
     what would be injected but ``active_overlay`` ignores it until the switch is active.
@@ -556,6 +756,19 @@ def settle(
     A measured premise can become active only when the proposal carries a matching
     harness-written self-check row: same target/protocol/kernel SHA and a measurement that
     agrees with the row. A probe that only exists on disk stays in shadow.
+
+    除双来源外，单来源 tip 也可经独立评审在本 run 内生效（``reviewed_active``）；那仍是
+    run 级作用域，P2 依然要人工。
+
+    @param run_dir run 目录，读取提案、决策与评审行。
+    @param target_id 目标硬件标识。
+    @param task 任务名。
+    @param protocol_version 协议代次；overlay 按代次隔离。
+    @param enabled run 的 harness 总开关，为假时不写入任何行。
+    @param shadow 为真时只登记 shadow 事件，为假时登记 apply 事件。
+    @param trust_root 信任表所在仓库根目录，``None`` 表示使用默认根。
+    @param prompt_sha1 提示词 SHA-1，用于按提示词代次限定信任。
+    @return ``{"applied": [...], "shadow": [...]}``；总开关关闭时改为带 ``reason`` 的空结果。
     """
     if not enabled:
         return {"applied": [], "shadow": [], "reason": "harness_auto is off"}
@@ -714,12 +927,27 @@ def settle(
 
 
 def _overlay_disabled(run_dir: Path) -> bool:
+    """@brief 判断该 run 的 overlay 是否已被人工禁用。
+
+    @param run_dir run 目录，控制文件为 ``harness_control.json``。
+    @return 控制文件存在且 ``disabled`` 为真时返回 ``True``。
+    """
     doc = control.read_json(Path(run_dir) / CONTROL_FILE)
     return isinstance(doc, dict) and bool(doc.get("disabled"))
 
 
 def set_overlay_control(run_dir: Path, *, disabled: bool, by: str = "cli", reason: str = "") -> dict:
-    """Only a person disables the overlay. This file never grants a new scope."""
+    """@brief 写入只能禁用、不能放权的 overlay 控制文件。
+
+    Only a person disables the overlay. This file never grants a new scope.
+
+    @param run_dir run 目录。
+    @param disabled 必须为真；该文件只能禁用 overlay。
+    @param by 操作者标记，默认 ``cli``。
+    @param reason 禁用原因，写入控制文件备查。
+    @return 写入的控制文档。
+    @raises ProposalError ``disabled`` 为假时抛出：重新启用只能靠新开一次 run。
+    """
     if not disabled:
         raise ProposalError("the run control file can only disable an overlay; re-enable by starting a new run")
     doc = {
@@ -733,10 +961,19 @@ def set_overlay_control(run_dir: Path, *, disabled: bool, by: str = "cli", reaso
 
 
 def sync_trust_status(run_dir: Path, *, target_id: str, task: str, root: Path | None = None, prompt_sha1: str | None = None) -> list[dict]:
-    """Suspend a model on this target/task after repeated confirmed overturns.
+    """@brief 对同一 target/task 上反复被证伪的模型执行自动挂起。
+
+    Suspend a model on this target/task after repeated confirmed overturns.
 
     The observation is intentionally conservative: at least eight reviewed claims, from at
     least two runs, and a refuted rate of at least 25%. A person can always revoke earlier.
+
+    @param run_dir run 目录，挂起事件追加到决策文件。
+    @param target_id 目标硬件标识。
+    @param task 任务名。
+    @param root 信任表所在仓库根目录，``None`` 表示使用默认根。
+    @param prompt_sha1 预留的提示词 SHA-1 参数，当前实现未参与判定。
+    @return 本次被挂起的信任条目列表；索引不可用或无模型达标时为空列表。
     """
     try:
         from observe.index import get_index
@@ -784,6 +1021,18 @@ def sync_trust_status(run_dir: Path, *, target_id: str, task: str, root: Path | 
 
 
 def overlay_rows(run_dir: Path, *, target_id: str, task: str, protocol_version: str, shadow: bool | None = None) -> list[dict]:
+    """@brief 取出当前生效的 overlay 事件。
+
+    以 ``proposal_key`` 去重并保留最后一条；``disable`` 事件清空已收集结果。只保留 target、
+    task 与协议代次都匹配的行，``shadow`` 非 ``None`` 时再按 shadow 标志过滤。
+
+    @param run_dir run 目录，读取 ``harness_overlay.jsonl``。
+    @param target_id 目标硬件标识。
+    @param task 任务名。
+    @param protocol_version 协议代次。
+    @param shadow ``None`` 表示不过滤；``True`` 只取 shadow 行，``False`` 只取生效行。
+    @return 生效的 overlay 行列表；overlay 被禁用时为空列表。
+    """
     rows = _read_jsonl(Path(run_dir) / OVERLAY_FILE)
     disabled = _overlay_disabled(run_dir)
     active: dict[str, dict] = {}
@@ -806,6 +1055,17 @@ def overlay_rows(run_dir: Path, *, target_id: str, task: str, protocol_version: 
 
 
 def overlay_text(run_dir: Path, *, target_id: str, task: str, protocol_version: str, limit: int = MAX_OVERLAY) -> str:
+    """@brief 把生效的 overlay 行拼成注入提示的 Markdown 文本。
+
+    文本带“未验证的模型建议”标题与说明，超过 ``limit`` 字符时按整行截断。
+
+    @param run_dir run 目录。
+    @param target_id 目标硬件标识。
+    @param task 任务名。
+    @param protocol_version 协议代次。
+    @param limit 文本长度上限，默认为 ``MAX_OVERLAY``。
+    @return 以换行结尾的文本；没有生效行时为空串。
+    """
     rows = overlay_rows(run_dir, target_id=target_id, task=task, protocol_version=protocol_version, shadow=False)
     if not rows:
         return ""
@@ -822,11 +1082,21 @@ def overlay_text(run_dir: Path, *, target_id: str, task: str, protocol_version: 
 
 
 def overlay_control(run_dir: Path) -> dict:
+    """@brief 读取该 run 的 overlay 控制文档。
+
+    @param run_dir run 目录。
+    @return 控制文档；文件缺失或不是 JSON 对象时返回 ``{"disabled": False}``。
+    """
     doc = control.read_json(Path(run_dir) / CONTROL_FILE)
     return doc if isinstance(doc, dict) else {"disabled": False}
 
 
 def _target_rel(target_id: str) -> str:
+    """@brief 返回目标经验文件的仓库相对路径。
+
+    @param target_id 目标硬件标识。
+    @return 形如 ``targets/<target_id>/experience.md`` 的相对路径。
+    """
     return f"targets/{target_id}/experience.md"
 
 
@@ -837,10 +1107,19 @@ def candidate_patch(
     proposal_key: str = "",
     root: Path | None = None,
 ) -> tuple[str, str]:
-    """(patch, relative target file) that appends one experience bullet.
+    """@brief 生成只追加一条经验条目的补丁及其目标文件相对路径。
+
+    (patch, relative target file) that appends one experience bullet.
 
     Only the target's experience file is a P2 default. Shared prompt/skill files are never
     patched here; a person has to handle that surface separately.
+
+    @param proposal 已规范化的提案，需带 ``surface`` 与 ``action``。
+    @param target_id 目标硬件标识，必须匹配 ``[A-Za-z0-9][A-Za-z0-9._-]*``。
+    @param proposal_key 提案 key，仅用于生成条目里的标注。
+    @param root 仓库根目录，``None`` 表示使用 ``trust.REPO_ROOT``。
+    @return ``(unified diff 文本, 目标文件的仓库相对路径)``。
+    @raises ProposalError surface 不是 tip/premise 或 target id 非法时抛出。
     """
     if str(proposal.get("surface") or "") not in ("tip", "premise"):
         raise ProposalError("only tip and premise have a target experience default")
@@ -868,6 +1147,17 @@ def write_patch(
     proposal_key: str,
     root: Path | None = None,
 ) -> dict:
+    """@brief 为该提案生成补丁文件，并写入配套元数据。
+
+    补丁写到 ``harness_promotions/<key>.patch``，元数据以原子方式写到同名 ``.json``。
+
+    @param run_dir run 目录，读取其中的提案行。
+    @param target_id 目标硬件标识。
+    @param proposal_key 目标提案 key。
+    @param root 仓库根目录，``None`` 表示使用 ``trust.REPO_ROOT``。
+    @return 含目标路径、补丁位置、SHA-256 与来源信息的元数据字典。
+    @raises ProposalError 没有该 key 的合法提案时抛出。
+    """
     run_dir = Path(run_dir)
     proposals = [row for row in _read_jsonl(run_dir / PROPOSAL_FILE) if row.get("proposal_key") == proposal_key and row.get("status") == "valid"]
     if not proposals:
@@ -889,11 +1179,23 @@ def write_patch(
 
 
 def apply_patch(run_dir: Path, *, target_id: str, proposal_key: str, root: Path | None = None, check_only: bool = False, run_tests: bool = False, applied_by: str = "cli") -> dict:
-    """Apply a generated target-experience patch **locally**, after ``git apply --check``.
+    """@brief 在 ``git apply --check`` 通过后把目标经验补丁应用到本地检出。
+
+    Apply a generated target-experience patch **locally**, after ``git apply --check``.
 
     This is local activation, not a git promotion: the running checkout changes now, while
     ``change_ref`` stays empty until a person commits the touched file. That keeps the
     traceable git reference separate from the fast local feedback loop.
+
+    @param run_dir run 目录，用于生成补丁并记录决策。
+    @param target_id 目标硬件标识。
+    @param proposal_key 要应用的提案 key。
+    @param root 仓库根目录，``None`` 表示使用 ``trust.REPO_ROOT``。
+    @param check_only 为真时只做 ``git apply --check`` 预检，不改动工作区。
+    @param run_tests 为真时先跑离线测试（``OFFLINE_TESTS``），失败则不应用。
+    @param applied_by 操作者标记，默认 ``cli``，写入决策记录。
+    @return 补丁元数据加上 ``applied``、``change_ref``、``local``、``commit_pending`` 等字段。
+    @raises ProposalError 预检失败、离线测试失败或 ``git apply`` 失败时抛出。
     """
     run_dir = Path(run_dir)
     meta = write_patch(run_dir, target_id=target_id, proposal_key=proposal_key, root=root)
@@ -930,12 +1232,24 @@ def apply_patch(run_dir: Path, *, target_id: str, proposal_key: str, root: Path 
 
 
 def commit_local_promotions(run_dir: Path, *, message: str, by: str = "cli", root: Path | None = None) -> dict:
-    """Commit locally promoted target/code paths and attach ``commit:<sha>`` to each event.
+    """@brief 提交本地已应用的提升路径，并把 ``commit:<sha>`` 回填到每条事件。
+
+    Commit locally promoted target/code paths and attach ``commit:<sha>`` to each event.
 
     The local checkout already contains the change; this is the later traceability step.
     It deliberately uses ``git commit --only -- <paths>`` so unrelated staged changes do
     not get swept into the promotion commit, and it checks that each recorded patch still
     matches the working tree exactly.
+
+    实现上先核对补丁哈希与路径，再用私有 ``GIT_INDEX_FILE`` 构造只含提升内容的树并
+    ``commit-tree``，最后只把已提交路径在调用方索引里同步到新 HEAD。
+
+    @param run_dir run 目录，读取决策文件并追加 ``promotion_commit`` 事件。
+    @param message 提交信息正文。
+    @param by 操作者标记，默认 ``cli``。
+    @param root 仓库根目录，``None`` 表示使用 ``trust.REPO_ROOT``。
+    @return ``{"committed", "change_ref", "commit", "paths", "proposals"}``，索引同步失败时另带 ``index_sync_warning``。
+    @raises ProposalError 没有待提交的提升、路径缺失、补丁哈希不符、补丁路径变动或 git 操作失败时抛出。
     """
     run_dir = Path(run_dir)
     repo = Path(root) if root is not None else trust.REPO_ROOT
@@ -1048,11 +1362,16 @@ def commit_local_promotions(run_dir: Path, *, message: str, by: str = "cli", roo
 
 
 def free_text_suggestions(run_dir: Path) -> list[dict]:
-    """System suggestions that never became a fenced ``harness-proposal`` block.
+    """@brief 列出从未变成围栏 ``harness-proposal`` 代码块的系统建议。
+
+    System suggestions that never became a fenced ``harness-proposal`` block.
 
     A human may confirm one of these and then convert it manually or with an AI into a
     structured row. The conversion is explicit: this function only reads; it never writes
     a proposal or sends anything to a model.
+
+    @param run_dir run 目录，读取 ``feedback.jsonl`` 与 ``harness_proposals.jsonl``。
+    @return 每项含 ``seq``、``digest``、``text``、来源模型信息与 ``converted_key`` 的建议列表。
     """
     run_dir = Path(run_dir)
     proposals = _read_jsonl(run_dir / PROPOSAL_FILE)
@@ -1116,10 +1435,34 @@ def convert_feedback(
     mode: str = "manual",
     supersede: str = "",
 ) -> dict:
-    """Turn one human-confirmed free-text suggestion into a structured proposal row.
+    """@brief 把一条经人工确认的自由文本建议转换成结构化提案行。
+
+    Turn one human-confirmed free-text suggestion into a structured proposal row.
 
     The source text remains attached as provenance. This writes only the local run's
     ``harness_proposals.jsonl``; it does not run a reviewer. ``confirm`` is the human gate.
+
+    转换行标记 ``origin="conversion"``：原始模型记在 ``source_author``，不计作模型作者的 tip，
+    也不能评审自己的原始主张。
+
+    @param run_dir run 目录，读取反馈并写入提案文件。
+    @param seq 源反馈记录的会话序号。
+    @param digest 源建议条目的摘要，与 ``seq`` 一起定位源文本。
+    @param target_id 目标硬件标识。
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param surface 提案表面，取值见 ``SURFACES``。
+    @param action 结构化后的动作文本。
+    @param probe 相对工作目录的 evidence probe 路径。
+    @param measurement 证据中的数值与单位。
+    @param rationale 结构化者补充的理由。
+    @param by 确认人标记，默认 ``cli``。
+    @param confirm 人工确认开关，为假时直接失败。
+    @param mode 结构化方式，``manual`` 或 ``ai``。
+    @param supersede 覆盖已有转换时需传入当前 proposal key。
+    @return 写入的提案行。
+    @raises ProposalError 未确认、mode 非法、源建议不存在、已转换而未给匹配的 supersede、
+        work_dir 逃出 run 目录，或修订后 proposal key 未变化时抛出。
     """
     if not confirm:
         raise ProposalError("converting free text requires explicit human confirmation")
@@ -1237,6 +1580,12 @@ def convert_feedback(
 
 
 def board(run_dir: Path) -> dict:
+    """@brief 汇总该 run 的提案、评审、决策、overlay 与自由文本建议。
+
+    @param run_dir run 目录。
+    @return 看板字典，含 ``run_dir``、``control``、``proposals``、``reviews``、``decisions``、
+        ``overlay`` 与 ``suggestions``。
+    """
     run_dir = Path(run_dir)
     proposals = _read_jsonl(run_dir / PROPOSAL_FILE)
     decisions = _read_jsonl(run_dir / DECISION_FILE)
@@ -1255,7 +1604,13 @@ def board(run_dir: Path) -> dict:
 
 
 def write_template(work: Path) -> Path:
-    """Put the structured-proposal schema in the session work directory (not TASK.md)."""
+    """@brief 把结构化提案模板写到会话工作目录（不改动 TASK.md）。
+
+    Put the structured-proposal schema in the session work directory (not TASK.md).
+
+    @param work 本次会话的工作目录。
+    @return 写入的 ``HARNESS.md`` 路径。
+    """
     path = Path(work) / "HARNESS.md"
     path.write_text(TEMPLATE, encoding="utf-8")
     return path
