@@ -216,7 +216,6 @@ def _evaluate_in_process(
 
     from tasks import get_task
 
-    from .baselines import BaselineRunner
     from .bench import interleaved
     from .gpulock import gpu_lock
 
@@ -398,7 +397,7 @@ def _evaluate_in_process(
         outs: dict[str, dict] = {}
         for impl in task.baselines:
             try:
-                r = BaselineRunner(impl, task, data.rounded, rotate=1)
+                r = backend.baseline_runner(impl, task, data)
                 outs[impl.name] = r.outputs()
             except Exception as e:  # noqa: BLE001
                 baseline_cache.setdefault("errors", []).append(f"{impl.name}: {type(e).__name__}: {e}")
@@ -444,10 +443,8 @@ def _evaluate_in_process(
     }
     import platform
 
-    from .domain import coverage_for_report
-
     # 评测入口编译时不传 math，metal_runtime.compile 的默认是 fast。证据范围把这一点写明，换工具链后旧记录作废。
-    rep.correctness["coverage"] = coverage_for_report(task, results, kernel_source, {
+    rep.correctness["coverage"] = backend.coverage(task, results, kernel_source, {
         "device": dev_info.get("name"),
         "macos": platform.mac_ver()[0],
         "msl": dev_info.get("language_version"),

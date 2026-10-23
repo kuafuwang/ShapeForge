@@ -68,7 +68,7 @@ def test_specs_load_as_real_triton_and_bind_all_arguments(name, tmp_path):
 
 
 def test_measure_explains_a_missing_toolchain(monkeypatch):
-    from tcenv import triton_baseline as tb
+    from tcenv.backends.metal import triton_baseline as tb
 
     monkeypatch.setattr(tb, "available", lambda: True)
     monkeypatch.setattr(tb, "metal_toolchain_ok", lambda: False)
@@ -80,7 +80,7 @@ def test_only_trustworthy_cached_measurements_are_used(tmp_path, monkeypatch):
     """A measurement taken on a busy machine (inconsistent with its own sweep) or a launch-bound one must never feed a report."""
     import json
 
-    from tcenv import triton_baseline as tb
+    from tcenv.backends.metal import triton_baseline as tb
 
     monkeypatch.setattr(tb, "CACHE_DIR", tmp_path)
     from tcenv.triton_runner import spec_fingerprint
@@ -115,7 +115,7 @@ def test_the_fingerprint_changes_with_spec_size_contract_and_cases():
 
 
 def test_estimate_scales_the_ratio_with_the_live_vendor_time():
-    from tcenv import triton_baseline as tb
+    from tcenv.backends.metal import triton_baseline as tb
 
     est = tb.estimate({"ratio_to": {"mlx": 1.3, "torch_mps": 1.4}}, {"mlx": 100.0, "torch_mps": 90.0})
     assert est["estimated_us"] == pytest.approx(130.0) and "mlx" in est["basis"]
@@ -123,7 +123,7 @@ def test_estimate_scales_the_ratio_with_the_live_vendor_time():
 
 
 def test_busy_process_check_ignores_stopped_and_unrelated_processes():
-    from tcenv import triton_baseline as tb
+    from tcenv.backends.metal import triton_baseline as tb
 
     assert isinstance(tb.busy_processes(), list)
 
@@ -193,7 +193,7 @@ def test_single_kernel_baseline_variants_bind_every_parameter(name):
 
 
 def test_wait_quiet_returns_at_once_on_a_quiet_machine_and_gives_up_after_the_limit(monkeypatch):
-    from tcenv import triton_baseline as tb
+    from tcenv.backends.metal import triton_baseline as tb
 
     monkeypatch.setattr(tb.os, "getloadavg", lambda: (0.5, 0.5, 0.5))
     monkeypatch.setattr(tb, "busy_processes", lambda: [])

@@ -2,9 +2,9 @@
 
 先抽协议，Metal GPU 行为不变；本轮只做 Metal 一个实现，NPU 只留注册位。
 
-状态：Phase 1 已实现；Phase 2 协议路由/版本/时间线/索引已实现，Contract 决议已落，Phase 3–4 未实施（2026-10-23 审核修订）
+状态：Phase 1、Phase 2 已实现；Phase 2 的 Metal 模块已迁入 `tcenv/backends/metal/`，旧路径保留兼容 shim；Phase 3–4 未实施（2026-10-23 审核修订）
 审核：对照当前代码补入 `source_pressure` 的 Metal 归属、嵌套报告 payload、`measure_serial` 默认值、`prompt_sha1` 的实际 SHA-256 和完整 skills 列表。
-Phase 1 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/backend.py`；`tcenv/target.py` 走注册表；`evaluate`/`worker` 经 adapter 调 screen/compile/ABI/correctness/bench/pipeline/heartbeat。Phase 2 的 backend_version、timeline、报告 schema 3、索引 v11 和 `runs.backend` 已落地；Phase 3 提示/文件扩展和 Phase 4 清理仍未完成。GPU 基线尚未采。
+Phase 1/2 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/{backend,contract,screen,launch,abi,sanitize,testing,baselines,profile,pressure,runtime,domain,verify,xctrace,triton_baseline}.py`；`tcenv/*.py` 旧路径是兼容 shim。`evaluate`/`worker` 经 adapter，报告 schema 3、backend_version/timeline、索引 v11 和 `runs.backend` 已落地；Phase 3 提示/文件扩展和 Phase 4 shim 清理仍未完成。GPU 基线尚未采。
 目标读者：维护 `taic` / `tcenv` 的工程师
 范围：先抽协议，Metal GPU 作为第一个实现；NPU 不实现，只预留注册位和接口。
 阶段编号全文只有一套，见 §11。§6–§10 是工作包（WP-A 至 WP-D），不自带 Phase 编号，所属阶段在 §11 的表里对齐。

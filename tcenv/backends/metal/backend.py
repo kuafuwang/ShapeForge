@@ -25,12 +25,12 @@ class MetalBackend:
     )
 
     def screen(self, source: str, task: Any = None) -> list[str]:
-        from ...screen import screen_source
+        from .screen import screen_source
 
         return screen_source(source)
 
     def parse_launch(self, source: str, contract: Any):
-        from ...launch import parse_launch_spec
+        from .launch import parse_launch_spec
 
         constants = {
             name: int(value)
@@ -40,27 +40,27 @@ class MetalBackend:
         return parse_launch_spec(source, constants)
 
     def validation_env(self, base_env: Mapping[str, str]) -> dict[str, str]:
-        from ...sanitize import env_with_validation
+        from .sanitize import env_with_validation
 
         return env_with_validation(dict(base_env))
 
     def parse_validation_stderr(self, stderr: str) -> list[str]:
-        from ...sanitize import validation_problems
+        from .sanitize import validation_problems
 
         return validation_problems(str(stderr or ""))
 
     def is_instrumented_size_only(self, violations: list[str]) -> bool:
-        from ...abi import only_static_threadgroup_limit
+        from .abi import only_static_threadgroup_limit
 
         return only_static_threadgroup_limit(violations)
 
     def validation_problems(self, violations: list[str], static_bytes: list[int], max_tg_memory: int) -> list[str]:
-        from ...abi import validation_problems
+        from .abi import validation_problems
 
         return validation_problems(violations, static_bytes, max_tg_memory)
 
     def set_heartbeat_hooks(self, *, on_compile=None, on_launch=None) -> None:
-        from ...metal_runtime import set_compile_hooks, set_launch_hooks
+        from .runtime import set_compile_hooks, set_launch_hooks
 
         if on_compile is not None:
             set_compile_hooks(*on_compile)
@@ -68,37 +68,47 @@ class MetalBackend:
             set_launch_hooks(*on_launch)
 
     def context(self):
-        from ...metal_runtime import get_context
+        from .runtime import get_context
 
         return get_context()
 
     def compile_error(self):
-        from ...metal_runtime import MetalCompileError
+        from .runtime import MetalCompileError
 
         return MetalCompileError
 
     def runtime_error(self):
-        from ...metal_runtime import MetalRuntimeError
+        from .runtime import MetalRuntimeError
 
         return MetalRuntimeError
 
     def prepare_case(self, task: Any, seed: int):
-        from ...testing import prepare_case
+        from .testing import prepare_case
 
         return prepare_case(task, task.cases[0], seed)
 
     def baseline_runners(self, task: Any, data0: Any) -> Mapping[str, Any]:
-        from ...baselines import build_runners
+        from .baselines import build_runners
 
         return build_runners(task, data0.rounded)
 
+    def baseline_runner(self, impl: Any, task: Any, data: Any):
+        from .baselines import BaselineRunner
+
+        return BaselineRunner(impl, task, data.rounded, rotate=1)
+
+    def coverage(self, task: Any, results: list, source: str, toolchain: dict) -> dict:
+        from .domain import coverage_for_report
+
+        return coverage_for_report(task, results, source, toolchain)
+
     def calibration(self, target_id: str) -> dict:
-        from ...profile import get_calibration
+        from .profile import get_calibration
 
         return get_calibration(target_id=target_id)
 
     def roofline(self, task: Any, time_s: float, calibration: dict) -> dict:
-        from ...profile import roofline
+        from .profile import roofline
 
         return roofline(task, time_s, calibration)
 
@@ -140,7 +150,7 @@ class MetalBackend:
         target_id: str,
         spec: Any = None,
     ) -> list[str]:
-        from ... import abi as abi_mod
+        from . import abi as abi_mod
 
         if spec is None:
             return abi_mod.check_abi(contract, kernels[0], max_tg_memory=max_tg_memory, target_id=target_id)
@@ -151,22 +161,22 @@ class MetalBackend:
         )
 
     def pipeline_stats(self, kernel: Any, contract: Any, device_info: Mapping[str, Any], *, kernel_source: str | None = None) -> dict:
-        from ...profile import pipeline_stats
+        from .profile import pipeline_stats
 
         return pipeline_stats(kernel, contract, dict(device_info), kernel_source=kernel_source)
 
     def pipeline_stats_many(self, pairs: list, device_info: Mapping[str, Any], *, kernel_source: str | None = None) -> dict:
-        from ...profile import pipeline_stats_many
+        from .profile import pipeline_stats_many
 
         return pipeline_stats_many(pairs, dict(device_info), kernel_source=kernel_source)
 
     def prepare_correctness(self, ctx: Any, contract: Any, *, tight: bool, spec: Any = None):
-        from ...sanitize import ArgSet
+        from .sanitize import ArgSet
 
         return ArgSet(ctx, contract, tight=tight, workspaces=() if spec is None else spec.workspaces)
 
     def run_correctness(self, ctx: Any, kernel: Any, task: Any, argset: Any, seed: int, *, cases=None, baseline_fns=None, determinism: bool, launcher=None):
-        from ...testing import run_correctness
+        from .testing import run_correctness
 
         return run_correctness(
             ctx, kernel, task, argset, seed, cases=cases,
@@ -174,8 +184,8 @@ class MetalBackend:
         )
 
     def prepare_bench_sets(self, ctx: Any, contract: Any, task: Any, *, spec: Any, data0: Any) -> list[Any]:
-        from ...baselines import rotation_count
-        from ...sanitize import ArgSet
+        from .baselines import rotation_count
+        from .sanitize import ArgSet
 
         sets = []
         for _ in range(rotation_count(task)):
@@ -200,7 +210,7 @@ class MetalBackend:
         base_runners: Mapping[str, Any],
         selected: list[str],
     ) -> BenchHarness:
-        from ...testing import check_case
+        from .testing import check_case
 
         rotation_sets = len(sets)
         gpu_samples: list[float] = []
