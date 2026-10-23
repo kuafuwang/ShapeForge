@@ -248,7 +248,7 @@ def _count_stop(stop: str) -> bool:
     return stop == "max_rounds" or stop.startswith("converged (")
 
 
-def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops: bool = False) -> dict:
+def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops: bool = False, allow_cost_incomplete: bool = False) -> dict:
     """@brief 只看小文件，判定 ``run_dir`` 能不能续跑、以哪种方式续跑。
 
     仪表盘每次点击都会调一次，所以这里不读 transcript、不导入 tcenv。``kind`` 取值：
@@ -260,6 +260,7 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops
     @param run_dir 运行目录
     @param pid_check pid 存活判定函数，便于测试注入
     @param allow_count_stops 是否把轮数/耐心耗尽也视为可续（仪表盘“重置”才打开）
+    @param allow_cost_incomplete 是否允许续跑 ``cost_incomplete`` 的运行；只在人确认过 epic 对账后由 CLI 打开
     @return 描述该目录的字典：``kind``、``resumable``、``reason``、``needs_budget``、花费与预算、轮次、best 加速比等
     """
     run_dir = Path(run_dir)
@@ -338,6 +339,17 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops
         info["kind"] = "count_limited"
         if not has_best(state, result):
             info["reason"] = "stopped on a round limit without a valid kernel: start a new run"
+            return info
+        if _refuse_old_protocol(info, run_dir):
+            return info
+        info["resumable"] = True
+        return info
+    if allow_cost_incomplete and stop.startswith("cost_incomplete"):
+        # A session ended without a token bill. The CLI flag is the human acknowledgement that the
+        # epic reconciliation ran; the resume itself adds the unbilled hmz spend as 'unaccounted'.
+        info["kind"] = "cost_incomplete"
+        if not has_best(state, result):
+            info["reason"] = "stopped on an incomplete cost record without a valid kernel: start a new run"
             return info
         if _refuse_old_protocol(info, run_dir):
             return info
@@ -715,11 +727,29 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
         )
         if isinstance(value, (int, float)) and not isinstance(value, bool)
     ]
-    from_state = max(recorded_spends) if recorded_spends else None
     total = float(requests[-1]["total_usd"]) if requests else 0.0
+    # hmz epic 记录可能包含被杀的父进程留下的会话；它们没有 transcript 事件，只有 workspace 标签。
+    # 按标签取「epic 合计 - 该标签已记账」的正差，避免把已入账的会话再加一次，也避免只取 max 时
+    # 因为某些 epic 的 usage 为 0 而漏掉整段孤儿花费。
+    from .kernel_agent import epic_spend_by_label
+
+    label_costs: dict[str, float] = {}
+    for row in requests:
+        label = str(row.get("label") or "")
+        cost = row.get("cost_usd")
+        if not label or label == "unaccounted" or isinstance(cost, bool) or not isinstance(cost, (int, float)):
+            continue
+        label_costs[label] = label_costs.get(label, 0.0) + float(cost)
+    epic_gap = 0.0
+    for label, cost in (epic_spend_by_label(run_dir) or {}).items():
+        epic_gap += max(0.0, float(cost) - label_costs.get(label, 0.0))
+    if epic_gap > 1e-9:
+        notes.append(f"hmz epics report ${epic_gap:.4f} of spend that transcript.jsonl has no agent event for (a session outlived its parent); it is carried as one 'unaccounted' entry")
+        recorded_spends.append(total + epic_gap)
+    from_state = max(recorded_spends) if recorded_spends else None
     if isinstance(from_state, (int, float)) and not isinstance(from_state, bool) and float(from_state) > total + 1e-6:
         gap = float(from_state) - total
-        notes.append(f"state.json reports ${float(from_state):.4f} but the transcript only accounts for ${total:.4f}: the ${gap:.4f} difference is carried as one 'unaccounted' entry so the spend is never under-counted")
+        notes.append(f"a stored checkpoint or hmz epic reports ${float(from_state):.4f} but the transcript only accounts for ${total:.4f}: the ${gap:.4f} difference is carried as one 'unaccounted' entry so the spend is never under-counted")
         requests.append({"t": None, "label": "unaccounted", "hit": 0, "miss": 0, "out": 0, "cost_usd": gap, "total_usd": float(from_state)})
     cands = _read_candidates(run_dir, notes)
     cand_root = run_dir / "candidates"

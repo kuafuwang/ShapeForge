@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import time
+from pathlib import Path
 
-from tcenv.children import forget, kill_group, popen_group
+from tcenv.children import forget, kill_group, install_termination_handlers, popen_group
 
 
 def _alive(pid: int) -> bool:
@@ -64,4 +66,45 @@ def test_scrubbed_env_drops_every_key_shaped_variable():
         "MY_SECRET": "k", "DB_PASSWORD": "k", "KEY": "k",
     })
     assert env == {"PATH": "/bin", "NORMAL_VAR": "v", "KEYBOARD_LAYOUT": "us", "TOKENIZERS_PARALLELISM": "1"}
+
+
+def test_sighup_kills_a_registered_child(tmp_path):
+    """Closing an IDE/terminal sends SIGHUP; the hmz session must not outlive the search."""
+    import sys
+
+    marker = tmp_path / "child.pid"
+    script = tmp_path / "parent.py"
+    script.write_text(
+        "import sys, time\n"
+        "from tcenv.children import install_termination_handlers, popen_group\n"
+        "install_termination_handlers()\n"
+        "child = popen_group([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        f"open({str(marker)!r}, 'w').write(str(child.pid))\n"
+        "time.sleep(60)\n"
+    )
+    import os
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[2]
+    parent = subprocess.Popen([sys.executable, str(script)], cwd=repo, env={**os.environ, "PYTHONPATH": str(repo)})
+    try:
+        deadline = time.time() + 15
+        child = 0
+        while time.time() < deadline:
+            if marker.is_file() and marker.read_text().strip():
+                child = int(marker.read_text().strip())
+                break
+            time.sleep(0.02)
+        assert child > 0 and _alive(child)
+        parent.send_signal(signal.SIGHUP)
+        parent.wait(timeout=10)
+        deadline = time.time() + 10
+        while time.time() < deadline and _alive(child):
+            time.sleep(0.02)
+        assert not _alive(child), "the registered child survived SIGHUP"
+    finally:
+        try:
+            parent.kill()
+        except OSError:
+            pass
 

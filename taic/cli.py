@@ -352,7 +352,11 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
     from .orchestrator import Orchestrator
 
     run_dir = Path(a.run_dir).resolve()
-    info = rs.inspect_run(run_dir, allow_count_stops=bool(getattr(a, "lift_count_limits", False)))
+    info = rs.inspect_run(
+        run_dir,
+        allow_count_stops=bool(getattr(a, "lift_count_limits", False)),
+        allow_cost_incomplete=bool(getattr(a, "accept_cost_gap", False)),
+    )
     if not info["resumable"]:
         code = 4 if info.get("kind") == "resuming" else 3
         raise ResumeRefused(f"cannot resume {run_dir}: {info['reason'] or info['kind']}", code)
@@ -1119,6 +1123,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--init-samples", type=int, default=None)
     r.add_argument("--patience", type=int, default=None, help="not recorded by runs older than run_config.json: give the value the run was started with")
     r.add_argument("--lift-count-limits", action="store_true", help="also continue a run that stopped because it used its round limit or its patience")
+    r.add_argument("--accept-cost-gap", action="store_true", help="continue a run stopped by cost_incomplete after its hmz epics were reconciled into an unaccounted entry (human decision)")
     r.set_defaults(fn=cmd_resume)
     q = sub.add_parser("query", help="read-only queries over the observe index (no model call, no GPU)")
     q.add_argument("what", choices=["runs", "best", "failures", "sessions", "models", "capabilities", "suggestions", "suggestion"])

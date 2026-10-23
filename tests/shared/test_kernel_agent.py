@@ -8,7 +8,7 @@ import pytest
 
 from taic.kernel_agent import (
     TASK_MAX_BYTES, AgentError, AgentResult, Prices, SessionBrief, _self_check_dir, agent_spec, dollars_for, kernel_text,
-    output_tokens_for, parse_spent, prune_work, render_contract, run_kernel_agent, spend_from_stream,
+    epic_spend, epic_spend_by_label, output_tokens_for, parse_spent, prune_work, render_contract, run_kernel_agent, spend_from_stream,
     submission_name,
 )
 from taic.llm import SearchConfig
@@ -370,3 +370,25 @@ def test_kernel_text_uses_the_backend_source_fence():
     text = "```xlang\nkernel void conv2d_kernel() {}\n```"
     assert kernel_text(text, "conv2d_kernel", source_fence="xlang").startswith("kernel void conv2d_kernel")
     assert not kernel_text(text, "conv2d_kernel").startswith("kernel void conv2d_kernel")
+
+
+def test_epic_spend_is_grouped_by_session_label_and_stays_inside_the_run(tmp_path):
+    run = tmp_path / "run"
+    (run / "agent_work" / "r2.p0").mkdir(parents=True)
+    epics = tmp_path / "epics"
+
+    def epic(name, workspace, costs):
+        folder = epics / name / "stamp"
+        folder.mkdir(parents=True)
+        lines = [json.dumps({"event": "began", "workspace": str(workspace)})]
+        lines += [json.dumps({"event": "usage", "cost": cost}) for cost in costs]
+        lines.append('{"event": "usage", "cost": ')  # a torn last line is skipped
+        (folder / "epic.jsonl").write_text("\n".join(lines))
+
+    epic("a", run / "agent_work" / "r2.p0", [2.0, 0.5])
+    epic("b", run / "agent_work" / "r1.p0", [0.25])
+    epic("other", tmp_path / "elsewhere" / "agent_work" / "r2.p0", [9.0])
+    assert epic_spend_by_label(run, root=epics) == {"r2.p0": 2.5, "r1.p0": 0.25}
+    assert epic_spend(run, root=epics) == pytest.approx(2.75)
+    assert epic_spend_by_label(tmp_path / "missing", root=epics) is None
+

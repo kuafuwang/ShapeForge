@@ -466,3 +466,11 @@ def test_p1_runs_cap_budget_override_and_the_note_about_results_at_another_budge
     seen.clear()
     p1_runs.run_named(["mamba2"], out, log=logs.append, budget=2.0)
     assert seen == [("mamba2_chunk_scan", 2.0)]
+
+
+def test_remaining_is_the_current_budget_minus_the_spend():
+    assert budget_status(1.5, 3.0)["remaining_usd"] == pytest.approx(1.5)
+    assert budget_status(3.123, 3.0, "budget_exhausted", False)["remaining_usd"] == pytest.approx(-0.123)
+    assert budget_status(None, 3.0)["remaining_usd"] is None
+    assert budget_status(1.0, None)["remaining_usd"] is None
+

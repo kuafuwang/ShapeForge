@@ -101,6 +101,7 @@ def budget_status(spent: Any, budget: Any, stop_reason: Any = None, running: boo
         "label_cn": LABELS_CN.get(level, ""),
         "spent": s,
         "budget": b,
+        "remaining_usd": (b - s) if known else None,
         "used_pct": used_pct,
         "over_usd": over_usd,
         "over_pct": over_pct,

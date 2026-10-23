@@ -154,6 +154,63 @@ class AgentResult:
     self_check_gpu_s: float = 0.0
 
 
+def epic_spend_by_label(run_dir: Path, *, root: Path | None = None) -> dict[str, float] | None:
+    """@brief 一场运行的 hmz epic 花费，按会话标签汇总。
+
+    A killed parent can leave its hmz session running: the session keeps calling the provider and
+    writes its ``usage`` to ``~/.hmz/epics/.../epic.jsonl``, but the transcript never gets an agent
+    event. The workspace basename is the session label (``init``, ``r2.p0``), so the caller can
+    compare these totals with the labels the transcript did record and carry only the difference.
+
+    @param run_dir 运行目录。
+    @param root epic 根目录，缺省 ``~/.hmz/epics``（测试可注入）。
+    @return ``{label: cost}``；没有可匹配的 epic 时为 ``None``。
+    """
+    base = Path(root) if root is not None else Path.home() / ".hmz" / "epics"
+    if not base.is_dir():
+        return None
+    work = (Path(run_dir) / "agent_work").resolve()
+    totals: dict[str, float] = {}
+    for path in base.rglob("epic.jsonl"):
+        workspace = ""
+        cost = 0.0
+        seen_usage = False
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("event") == "began" and isinstance(event.get("workspace"), str):
+                workspace = event["workspace"]
+            elif event.get("event") == "usage":
+                number = event.get("cost")
+                if isinstance(number, (int, float)) and not isinstance(number, bool):
+                    cost += float(number)
+                    seen_usage = True
+        if not workspace or not seen_usage:
+            continue
+        try:
+            if not Path(workspace).resolve().is_relative_to(work):
+                continue
+        except (OSError, ValueError):
+            continue
+        label = Path(workspace).name
+        totals[label] = totals.get(label, 0.0) + cost
+    return totals or None
+
+
+def epic_spend(run_dir: Path, *, root: Path | None = None) -> float | None:
+    """@brief ``epic_spend_by_label`` 的合计；没有可匹配的 epic 时为 ``None``。"""
+    totals = epic_spend_by_label(run_dir, root=root)
+    return sum(totals.values()) if totals else None
+
+
 def submission_name(task: str, dtype: str, size: str, label: str, file_ext: str = ".metal") -> str:
     """@brief 算出本场会话必须创建的交卷文件名。
 

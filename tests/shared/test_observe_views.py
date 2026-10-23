@@ -358,5 +358,22 @@ def test_a_running_run_shows_start_and_elapsed_but_no_end(tmp_path, monkeypatch)
 
 def test_the_detail_page_has_the_run_clock():
     html = Path("observe/static/index.html").read_text()
-    for token in ("detail-run-clock", "开始时间", "已运行", "结束时间", "formatDuration"):
+    for token in ("detail-run-clock", "开始时间", "已运行", "结束时间", "formatDuration",
+                  "detail-budget", "总预算", "已花", "剩余", "money2", "remaining_usd"):
         assert token in html
+
+
+def test_the_detail_payload_carries_the_current_budget_spent_and_remaining(tmp_path, monkeypatch):
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    directory = runs / "live"
+    directory.mkdir(parents=True)
+    (directory / "state.json").write_text(json.dumps({
+        "pid": os.getpid(), "started_at": time.time() - 10, "updated_at": time.time(),
+        "phase": "plan", "task": "gemm", "dtype": "fp16", "spent_usd": 1.0, "budget_usd": 5.0,
+    }))
+    detail = scan.run_detail("live")
+    assert detail["budget"]["spent"] == pytest.approx(1.0)
+    assert detail["budget"]["budget"] == pytest.approx(5.0)
+    assert detail["budget"]["remaining_usd"] == pytest.approx(4.0)
+

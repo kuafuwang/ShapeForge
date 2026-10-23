@@ -99,9 +99,11 @@ def kill_registered() -> None:
 
 
 def install_termination_handlers() -> None:
-    """@brief 安装 SIGTERM/SIGINT 处理器，先杀掉子进程再按默认动作退出。
+    """@brief 安装 SIGTERM/SIGINT/SIGHUP/SIGQUIT 处理器，先杀掉子进程再按默认动作退出。
 
-    Kill registered children, then re-raise SIGTERM or SIGINT with the default action.
+    Kill registered children, then re-raise the signal with its default action. SIGHUP is the one
+    an IDE or terminal sends when its window closes; without it the hmz session outlives the search
+    and keeps calling the provider with no ledger row.
     """
     global _INSTALLED
     if _INSTALLED:
@@ -113,8 +115,8 @@ def install_termination_handlers() -> None:
         signal.signal(signum, signal.SIG_DFL)
         os.kill(os.getpid(), signum)
 
-    signal.signal(signal.SIGTERM, handle)
-    signal.signal(signal.SIGINT, handle)
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT):
+        signal.signal(signum, handle)
 
 
 def popen_group(argv: list[str], **kwargs) -> subprocess.Popen:

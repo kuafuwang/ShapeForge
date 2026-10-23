@@ -788,3 +788,36 @@ def test_resume_dry_run_leaves_the_run_directory_byte_identical(tmp_path):
     assert cli.main(["resume", str(run_dir), "--dry-run", "--add-budget", "5"]) == 0
     assert snapshot() == before
 
+
+def test_a_cost_incomplete_run_continues_only_with_the_explicit_flag(tmp_path):
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1)
+    run(orch)
+    run_dir = tmp_path / "run"
+    for name in ("result.json", "state.json"):
+        doc = json.loads((run_dir / name).read_text())
+        doc["stop_reason"] = "cost_incomplete: the session finished without a token count"
+        (run_dir / name).write_text(json.dumps(doc))
+    assert rs.inspect_run(run_dir)["resumable"] is False
+    flagged = rs.inspect_run(run_dir, allow_cost_incomplete=True)
+    assert flagged["resumable"] is True and flagged["kind"] == "cost_incomplete"
+    with pytest.raises(cli.ResumeRefused):
+        cli.prepare_resume(ns(run_dir), client=FakeClient([]), evaluate_fn=fake_eval([]), log=lambda s: None)
+    prepared = cli.prepare_resume(
+        ns(run_dir, accept_cost_gap=True), client=FakeClient(llm_script(code("speed=1.2"))), evaluate_fn=fake_eval([]), log=lambda s: None,
+    )
+    assert prepared[2]["dry_run"] is False
+
+
+def test_a_resume_carries_unbilled_hmz_sessions_as_unaccounted(tmp_path, monkeypatch):
+    import taic.kernel_agent as kernel_agent
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0)
+    run(orch)
+    run_dir = tmp_path / "run"
+    monkeypatch.setattr(kernel_agent, "epic_spend_by_label", lambda run_dir, root=None: {"init": 5.0})
+    snap = rs.load_snapshot(run_dir, orch.search, KERNEL)
+    assert snap.spent_usd == pytest.approx(5.0)
+    assert any("hmz epics" in note for note in snap.notes)
+    rows = [row for row in snap.requests if row.get("label") == "unaccounted"]
+    assert rows and rows[-1]["total_usd"] == pytest.approx(5.0)
+
