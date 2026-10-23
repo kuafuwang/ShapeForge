@@ -109,3 +109,26 @@ def test_contract_and_verify_have_one_canonical_class():
     assert MetalVerifyResult is VerifyResult
     contract = get_task("relu", "fp16", "paper").contract
     assert pickle.loads(pickle.dumps(contract)) == contract
+
+
+def test_profile_command_uses_the_moved_xctrace_module(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from tcenv import cli, evaluate
+
+    kernel = tmp_path / "kernel.metal"
+    kernel.write_text("kernel void relu_kernel() {}\n")
+    monkeypatch.setattr(evaluate, "evaluate", lambda *a, **k: SimpleNamespace(status="rejected", message="not profiled"))
+    args = SimpleNamespace(kernel=str(kernel), task="relu", dtype="fp16", size="paper", target="apple-m4-max", json=False)
+    assert cli.cmd_profile(args) == 1
+
+
+def test_triton_baseline_command_uses_the_moved_module(monkeypatch):
+    from types import SimpleNamespace
+
+    from tcenv import cli
+    from tcenv.backends.metal import triton_baseline
+
+    monkeypatch.setattr(triton_baseline, "available", lambda: False)
+    args = SimpleNamespace(task="gemm", dtype="fp16", size="paper", reps=1, wait_quiet=1.0)
+    assert cli.cmd_triton_baseline(args) == 1

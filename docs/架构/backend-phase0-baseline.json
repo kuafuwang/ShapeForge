@@ -5,7 +5,7 @@
   "git_commit": "ef2a048",
   "offline_tests": {
     "command": "uv run pytest -q -m 'not gpu and not llm'",
-    "passed": 981,
+    "passed": 983,
     "skipped": 1,
     "deselected": 133
   },

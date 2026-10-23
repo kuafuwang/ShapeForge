@@ -113,7 +113,7 @@ def cmd_baseline(a: argparse.Namespace) -> int:
 # 跟踪建立在 quick 已经通过的前提下，录制本身在 xctrace 里独占 GPU 锁。
 def cmd_profile(a: argparse.Namespace) -> int:
     """Instruments trace of an *already validated* kernel (the full evaluation must pass first)."""
-    from . import xctrace
+    from .backends.metal import xctrace
     from .evaluate import evaluate
 
     src = Path(a.kernel).read_text()
@@ -133,7 +133,7 @@ def cmd_profile(a: argparse.Namespace) -> int:
 def cmd_triton_baseline(a: argparse.Namespace) -> int:
     from tasks import list_tasks
 
-    from . import triton_baseline as tb
+    from .backends.metal import triton_baseline as tb
 
     if not tb.available():
         print("no triton-msl environment found at .venvs/triton-msl (create it with scripts/install_triton_msl.sh)")
