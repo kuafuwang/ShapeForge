@@ -134,7 +134,7 @@ uv run python -m taic.cli harness convert RUN_DIR \
 - `scope.target_id` and `scope.task` must match the run. Cross-target ideas need separate proposals for each target, not one broad action.
 - Keep the action a single imperative sentence, at most 500 characters. Do not put shell commands, code fences, or path redirections in it.
 
-The conversion writes only `harness_proposals.jsonl` in that run, with `origin=conversion`, the original claim digest, source text, `confirmed_by`, `source_author`, `structured_by`, and the chosen surface. It does not call a model and does not create a review.
+The conversion writes only `harness_proposals.jsonl` in that run, with `origin=conversion`, the original claim digest, source text, `confirmed_by`, `source_author`, `structured_by`, and the chosen surface. It does not call a model and does not create a review. To correct an already-converted claim, pass `--supersede OLD_KEY`; the old row stays for audit and the new row records `conversion.replaces=OLD_KEY`.
 
 After writing, verify:
 

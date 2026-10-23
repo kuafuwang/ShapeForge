@@ -1050,7 +1050,8 @@ def free_text_suggestions(run_dir: Path) -> list[dict]:
         digest = str(row.get("claim_digest") or "")
         seq = row.get("seq")
         if digest and isinstance(seq, int):
-            converted[(seq, digest)] = str(row.get("proposal_key") or "")
+            if row.get("status") == "valid":
+                converted[(seq, digest)] = str(row.get("proposal_key") or "")
     out, seen = [], set()
     for record in _read_jsonl(run_dir / "feedback.jsonl"):
         seq = record.get("seq")
@@ -1102,6 +1103,7 @@ def convert_feedback(
     by: str = "cli",
     confirm: bool = False,
     mode: str = "manual",
+    supersede: str = "",
 ) -> dict:
     """Turn one human-confirmed free-text suggestion into a structured proposal row.
 
@@ -1119,8 +1121,14 @@ def convert_feedback(
     ), None)
     if source is None:
         raise ProposalError("no unconverted free-text suggestion with that seq/digest")
-    if source.get("converted_key"):
-        raise ProposalError("this suggestion has already been converted")
+    existing_key = str(source.get("converted_key") or "")
+    if existing_key:
+        if not supersede:
+            raise ProposalError("this suggestion has already been converted; pass supersede with the current proposal key")
+        if str(supersede) != existing_key:
+            raise ProposalError("supersede does not match the current proposal key")
+    elif supersede:
+        raise ProposalError("supersede was given but this suggestion has no conversion")
     records = [row for row in _read_jsonl(run_dir / "feedback.jsonl") if row.get("seq") == int(seq)]
     record = records[0] if records else {}
     fallback_work = "agent_work/" + str(source.get("label") or "unknown").replace("/", "_")
@@ -1148,6 +1156,8 @@ def convert_feedback(
         doc, target_id=target_id, task=task, dtype=dtype, work=work, started=started,
         allow_premise=True, allow_p2=True,
     )
+    if str(normalized["proposal_key"]) == existing_key:
+        raise ProposalError("the revised action has the same proposal key; change the action")
     row = {
         "schema_version": SCHEMA_VERSION,
         "event": "proposal",
@@ -1207,6 +1217,7 @@ def convert_feedback(
             "source_session_started": started,
             "confirmed_by": str(by or "cli"),
             "mode": str(mode or "manual"),
+            "replaces": existing_key,
             "confirmed_at": time.time(),
         },
     }

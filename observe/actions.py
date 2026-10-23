@@ -252,7 +252,7 @@ def convert_harness(run_id: str, seq: int, digest: str, body: dict) -> dict:
             surface=str(body.get("surface") or ""), action=str(body.get("action") or ""),
             probe=str(body.get("probe") or ""), measurement=str(body.get("measurement") or ""),
             rationale=str(body.get("rationale") or ""), by=str(body.get("by") or "dashboard"),
-            confirm=True, mode=mode,
+            confirm=True, mode=mode, supersede=str(body.get("supersede") or ""),
         )
     except ProposalError as exc:
         raise Refused(400, str(exc)) from exc

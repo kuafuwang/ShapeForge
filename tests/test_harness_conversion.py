@@ -336,3 +336,30 @@ def test_an_old_style_conversion_row_never_counts_toward_tip_quorum(tmp_path):
         protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=root,
     )
     assert result["applied"] == []
+
+
+def test_a_converted_suggestion_can_be_superseded_with_provenance(tmp_path):
+    run, digest = _run(tmp_path)
+    first = harness.convert_feedback(
+        run, seq=1, digest=digest, target_id="apple-m4-max", task="flash_attention",
+        dtype="fp16", surface="skill", action="先记录旧的建议", by="alice", confirm=True,
+    )
+    with pytest.raises(harness.ProposalError, match="already been converted"):
+        harness.convert_feedback(
+            run, seq=1, digest=digest, target_id="apple-m4-max", task="flash_attention",
+            dtype="fp16", surface="skill", action="先记录新的建议", by="alice", confirm=True,
+        )
+    with pytest.raises(harness.ProposalError, match="does not match"):
+        harness.convert_feedback(
+            run, seq=1, digest=digest, target_id="apple-m4-max", task="flash_attention",
+            dtype="fp16", surface="skill", action="先记录新的建议", by="alice", confirm=True,
+            supersede="wrong-key",
+        )
+    second = harness.convert_feedback(
+        run, seq=1, digest=digest, target_id="apple-m4-max", task="flash_attention",
+        dtype="fp16", surface="skill", action="先记录新的建议", by="alice", confirm=True,
+        supersede=first["proposal_key"],
+    )
+    assert second["proposal_key"] != first["proposal_key"]
+    assert second["conversion"]["replaces"] == first["proposal_key"]
+    assert harness.free_text_suggestions(run)[0]["converted_key"] == second["proposal_key"]

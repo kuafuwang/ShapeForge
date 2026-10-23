@@ -672,6 +672,7 @@ def cmd_harness(a: argparse.Namespace) -> int:
                 run, seq=a.seq, digest=a.digest, target_id=target_id, task=task, dtype=dtype,
                 surface=a.surface, action=a.action, probe=a.probe, measurement=a.measurement,
                 rationale=a.rationale, by=a.by, confirm=True, mode=a.mode,
+                supersede=a.supersede,
             )
             print(json.dumps(row, ensure_ascii=False, indent=2, default=str))
         elif a.harness_action == "commit":
@@ -918,6 +919,7 @@ def main(argv: list[str] | None = None) -> int:
     hv.add_argument("--dtype", default=None)
     hv.add_argument("--by", default="cli", help="person confirming the conversion")
     hv.add_argument("--mode", default="manual", choices=["manual", "ai"], help="who filled the structured fields")
+    hv.add_argument("--supersede", default="", help="existing proposal key to revise; the old row stays")
     hv.add_argument("--confirm", action="store_true", help="human confirmation gate")
     hk = hs.add_parser("commit")
     hk.add_argument("run_dir")
