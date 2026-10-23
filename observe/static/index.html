@@ -576,8 +576,10 @@ function reviewCard(item) {
   const statusClass = item.status === "pending" ? " fb-pending" : (item.status === "info" ? " fb-info" : "");
   const scope = [item.backend, item.target_id].filter(Boolean).join(" / ");
   const reviewer = item.reviewer ? "审查 " + item.reviewer : "";
+  const openSubs = (item.open_subclaims || []).length;
+  const subBadge = openSubs ? `<span class="badge fb-pending">开放子命题 ${openSubs}</span>` : "";
   const meta = [scope, reviewer, item.label, item.model, item.committee, item.round != null ? "第 " + item.round + " 轮" : ""].filter((part) => part != null && part !== "").join(" · ");
-  return `<article class="review-card fb-claim fb-${esc(tone)}" data-key="${esc(key)}"><div class="fb-claim-head"><span class="fb-kind">${esc(item.section)}</span> <span class="badge">${esc(item.premise || item.audience)}</span> <span class="badge${statusClass}">${esc(item.status)}</span> ${handle}</div><p class="fb-meta">${esc(meta)}</p><pre class="excerpt">${esc(item.text || "")}</pre>${subclaimsMarkup(item)}${priorMarkup(item)}${similarMarkup(item)}</article>`;
+  return `<article class="review-card fb-claim fb-${esc(tone)}" data-key="${esc(key)}"><div class="fb-claim-head"><span class="fb-kind">${esc(item.section)}</span> <span class="badge">${esc(item.premise || item.audience)}</span> <span class="badge${statusClass}">${esc(item.status)}</span> ${subBadge} ${handle}</div><p class="fb-meta">${esc(meta)}</p><pre class="excerpt">${esc(item.text || "")}</pre>${subclaimsMarkup(item)}${priorMarkup(item)}${similarMarkup(item)}</article>`;
 }
 
 function bindReviewOpens(host) {
@@ -749,11 +751,16 @@ function paintReviewList() {
 function updateReviewCount() {
   let shown = 0;
   for (const item of reviewItems.values()) if (reviewVisible(item)) shown += 1;
-  document.getElementById("reviews-count").textContent = `这里 ${shown} 条 · 待审查共 ${reviewPending} 条`;
+  const openSubs = [...reviewItems.values()].reduce((total, item) => total + ((item.open_subclaims || []).length), 0);
+  const openText = openSubs > 0 ? ` · ${openSubs} 个开放子命题` : "";
+  document.getElementById("reviews-count").textContent = `这里 ${shown} 条 · 待审查共 ${reviewPending} 条${openText}`;
   const slot = document.getElementById("feedback-badge");
-  if (reviewPending > 0) {
+  if (reviewPending > 0 || openSubs > 0) {
     slot.hidden = false;
-    slot.textContent = reviewPending + " 条代理反馈待审查";
+    slot.textContent = `${reviewPending} 条代理反馈待审查${openText}`;
+  } else {
+    slot.hidden = true;
+    slot.textContent = "";
   }
 }
 
@@ -1341,7 +1348,9 @@ function feedbackMarkup(doc) {
       const tone = claim.audience === "system" || claim.audience === "peer" || claim.audience === "diagnostic" ? claim.audience : "system";
       const statusClass = claim.status === "pending" ? " fb-pending" : (claim.status === "info" ? " fb-info" : "");
       const reviewer = claim.reviewer ? `<span class="badge">${esc(claim.reviewer)}</span>` : "";
-      return `<article class="fb-claim fb-${esc(tone)}"><div class="fb-claim-head"><span class="fb-kind">${esc(claim.section)}</span> <span class="badge">${esc([claim.backend, claim.target_id].filter(Boolean).join(" / ") || "scope unknown")}</span> ${reviewer} <span class="badge">${esc(claim.premise || claim.audience)}</span> <span class="badge${statusClass}">${esc(claim.status)}</span> ${handle}</div><pre class="excerpt">${esc(claim.text)}</pre>${subclaimsMarkup(claim)}${priorMarkup(claim)}${similarMarkup(claim)}</article>`;
+      const openSubs = (claim.open_subclaims || []).length;
+      const subBadge = openSubs ? `<span class="badge fb-pending">开放子命题 ${openSubs}</span>` : "";
+      return `<article class="fb-claim fb-${esc(tone)}"><div class="fb-claim-head"><span class="fb-kind">${esc(claim.section)}</span> <span class="badge">${esc([claim.backend, claim.target_id].filter(Boolean).join(" / ") || "scope unknown")}</span> ${reviewer} <span class="badge">${esc(claim.premise || claim.audience)}</span> <span class="badge${statusClass}">${esc(claim.status)}</span> ${subBadge} ${handle}</div><pre class="excerpt">${esc(claim.text)}</pre>${subclaimsMarkup(claim)}${priorMarkup(claim)}${similarMarkup(claim)}</article>`;
     };
     const buckets = { measured: [], unverified: [], other: [] };
     for (const claim of record.claims || []) {

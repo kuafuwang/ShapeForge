@@ -761,6 +761,31 @@ def cmd_harness(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_feedback(a: argparse.Namespace) -> int:
+    """Preview or atomically apply a JSON array of claim reviews."""
+    from observe.actions import Refused, review_feedback_batch
+
+    if not a.dry_run and not a.confirm:
+        print("refusing to write reviews without --confirm (use --dry-run first)", file=sys.stderr)
+        return 5
+    if a.dry_run and a.confirm:
+        print("pass either --dry-run or --confirm, not both", file=sys.stderr)
+        return 5
+    try:
+        text = sys.stdin.read() if a.file == "-" else Path(a.file).read_text(encoding="utf-8")
+        rows = json.loads(text)
+        if not isinstance(rows, list):
+            raise ValueError("the file must contain a JSON array")
+        result = review_feedback_batch(
+            a.run_dir, rows, dry_run=bool(a.dry_run), method=a.method, batch_id=a.batch_id,
+        )
+    except (OSError, json.JSONDecodeError, ValueError, Refused) as exc:
+        print(str(exc), file=sys.stderr)
+        return 5
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
 def cmd_migrate_runs(a: argparse.Namespace) -> int:
     from .migrate import migrate_runs
 
@@ -960,6 +985,14 @@ def main(argv: list[str] | None = None) -> int:
     ha.add_argument("--by", default="cli", help="person applying the patch; recorded in the decision log")
     ha.add_argument("--confirm", action="store_true")
     h.set_defaults(fn=cmd_harness)
+    fb = sub.add_parser("feedback", help="preview or atomically review agent-feedback claims (no model call, no GPU)")
+    fb.add_argument("run_dir", help="run id or run directory")
+    fb.add_argument("--file", required=True, help="JSON array of {seq, digest, status, ...}; '-' reads stdin")
+    fb.add_argument("--dry-run", action="store_true", help="validate and show the planned transitions only")
+    fb.add_argument("--confirm", action="store_true", help="write the batch after all items validate")
+    fb.add_argument("--method", default="human", choices=["human", "agent", "script", "api"])
+    fb.add_argument("--batch-id", default="", help="optional audit batch id")
+    fb.set_defaults(fn=cmd_feedback)
     a = ap.parse_args(argv)
     return a.fn(a)
 

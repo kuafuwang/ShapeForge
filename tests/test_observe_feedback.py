@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from observe.actions import Refused, review_feedback
-from observe.feedback import apply_review, entries, rejection, review_board, review_feed, summary_from_index
+from observe.feedback import apply_review, apply_reviews, entries, preview_reviews, rejection, review_board, review_feed, summary_from_index
 from taic.agent_feedback import read_appended_records
 from taic.agent_feedback import parse_feedback
 
@@ -67,6 +67,7 @@ def _open(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
     monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
     monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
+    monkeypatch.setenv("TAIC_REVIEW_EVENTS", str(tmp_path / "review_events.jsonl"))
     import observe.index as index_mod
 
     index_mod._SINGLE = None
@@ -174,6 +175,79 @@ def test_a_review_records_the_git_style_actor_and_rejects_a_stale_expected_statu
     assert automatic["reviewer"] == "Auto Reviewer <auto@example.test>"
     assert automatic["reviewer_source"] == "git"
     assert automatic["method"] == "script"
+
+
+def test_a_review_batch_is_previewed_and_written_atomically(tmp_path, monkeypatch):
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = _parsed()
+    directory = _run(runs, "conv", _record(parsed), started_at=50)
+    index.sync_known()
+    help_digest = _digest("需要帮助")
+    premise = _digest("被否决的前提")
+    review_path = directory / "feedback_review.json"
+    before = review_path.read_text() if review_path.exists() else ""
+    rows = [
+        {"seq": 1, "digest": help_digest, "status": "info", "verification": "unchecked", "expected_status": "pending"},
+        {"seq": 1, "digest": premise, "status": "rejected", "verification": "refuted", "note": "wrong probe", "expected_status": "pending"},
+    ]
+    preview = preview_reviews(directory, rows)
+    assert [row["to_status"] for row in preview] == ["info", "rejected"]
+    assert (review_path.read_text() if review_path.exists() else "") == before
+    with pytest.raises(ValueError, match="item 1"):
+        apply_reviews(directory, rows[:1] + [{**rows[1], "expected_status": "adopted"}], reviewer="Batch <b@example.test>")
+    assert (review_path.read_text() if review_path.exists() else "") == before
+    stored = apply_reviews(directory, rows, reviewer="Batch <b@example.test>", batch_id="batch-test")
+    assert [row["status"] for row in stored] == ["info", "rejected"]
+    assert all(row["batch_id"] == "batch-test" and row["reviewer"] == "Batch <b@example.test>" for row in stored)
+    doc = json.loads(review_path.read_text())["claims"]
+    assert doc[f"1:{help_digest}"]["status"] == "info"
+    assert doc[f"1:{premise}"]["status"] == "rejected"
+    from taic.review_ledger import verify
+    ledger = verify(tmp_path / "review_events.jsonl")
+    assert ledger["ok"] and ledger["events"] == 2
+
+
+def test_the_feedback_cli_previews_then_writes_a_batch(tmp_path, monkeypatch, capsys):
+    from taic.cli import main
+
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = _parsed()
+    _run(runs, "conv", _record(parsed), started_at=50)
+    index.sync_known()
+    batch = tmp_path / "batch.json"
+    batch.write_text(json.dumps([{
+        "seq": 1, "digest": _digest("需要帮助"), "status": "info",
+        "verification": "unchecked", "expected_status": "pending",
+    }]), encoding="utf-8")
+    assert main(["feedback", "conv", "--file", str(batch), "--dry-run"]) == 0
+    assert "expected_status" not in (runs / "conv" / "feedback_review.json").read_text() if (runs / "conv" / "feedback_review.json").exists() else True
+    assert main(["feedback", "conv", "--file", str(batch), "--confirm", "--batch-id", "cli-batch"]) == 0
+    doc = json.loads((runs / "conv" / "feedback_review.json").read_text())
+    assert doc["claims"][f"1:{_digest('需要帮助')}"]["status"] == "info"
+    assert doc["claims"][f"1:{_digest('需要帮助')}"]["batch_id"] == "cli-batch"
+    output = capsys.readouterr().out
+    assert "reviewer" in output
+
+
+def test_open_subclaims_are_counted_without_changing_the_parent_pending_status(tmp_path, monkeypatch):
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = parse_feedback("# 对系统的建议\n- 请加一个配对报告。\n")
+    _run(runs, "conv", _record(parsed), started_at=50)
+    digest = parsed["items"][0]["digest"]
+    apply_review(runs / "conv", 1, digest, {
+        "status": "info", "verification": "unchecked", "note": "split",
+        "subclaims": [
+            {"text": "measured", "status": "adopted", "verification": "confirmed",
+             "evidence_source": "probe", "evidence": "probe.py 1.0"},
+            {"text": "still open", "status": "info", "verification": "unchecked", "note": "needs a report"},
+        ],
+    })
+    index.sync_known()
+    row = next(item for item in review_board(index.conn)["items"] if item["digest"] == digest)
+    assert row["status"] == "info"
+    assert row["open_subclaims"] and row["open_subclaims"][0]["text"] == "still open"
+    assert review_board(index.conn)["open_subclaims_total"] == 1
+    assert review_feed(index.conn)["open_subclaims_total"] == 1
 
 
 def test_a_review_shows_prior_exact_digest_verdicts_scoped_to_task_and_target(tmp_path, monkeypatch):

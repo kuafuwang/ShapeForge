@@ -356,6 +356,40 @@ def review_feedback(run_id: str, seq: int, digest: str, body: dict) -> dict:
     return stored
 
 
+def review_feedback_batch(run_id: str, rows: list[dict], *, dry_run: bool = False, method: str | None = None, batch_id: str = "") -> dict:
+    """Preview or atomically write a batch of claim reviews.
+
+    Every item is validated and its ``expected_status`` is checked before the
+    review file changes. A dry run reads and validates only.
+    """
+    from observe.feedback import apply_reviews, preview_reviews
+    from observe.index import get_index
+
+    if not isinstance(rows, list) or not rows:
+        raise Refused(400, "the batch must be a non-empty JSON array")
+    if method and method not in ("human", "agent", "script", "api"):
+        raise Refused(400, "method must be human, agent, script or api")
+    run_dir = _run_dir(run_id)
+    with _lock_for(run_id):
+        planned = preview_reviews(run_dir, rows)
+        index = get_index()
+        for item in planned:
+            found = index.conn.execute(
+                "SELECT 1 FROM feedback_claims WHERE run_id = ? AND seq = ? AND digest = ?",
+                (run_id, int(item["seq"]), str(item["digest"])),
+            ).fetchone()
+            if found is None:
+                raise Refused(404, f"no such feedback claim: {run_id}#{item['seq']}#{item['digest']}")
+        if dry_run:
+            return {"dry_run": True, "items": planned}
+        try:
+            stored = apply_reviews(run_dir, rows, method=method, batch_id=batch_id)
+        except ValueError as exc:
+            raise Refused(400, str(exc)) from exc
+        index.refresh_feedback(run_id, run_dir)
+    return {"dry_run": False, "items": stored, "batch_id": str(batch_id or (stored[0].get("batch_id") if stored else ""))}
+
+
 def _lock_for(run_id: str) -> threading.Lock:
     with _guard:
         return _locks.setdefault(run_id, threading.Lock())
