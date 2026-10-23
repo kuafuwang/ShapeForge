@@ -4,7 +4,7 @@
 
 状态：Phase 0 基线已记录（`docs/架构/backend-phase0-baseline.json`）；Phase 1、Phase 2、Phase 3、Phase 4 已实现。Metal 实现在 `tcenv/backends/metal/`，Phase 3 的 reference_sources、提示词 fence、技能角色、文件扩展名、extract_source、hwfeatures/policy gate 和 source-fence 调用方已落地；Phase 4 已删除 12 个旧薄包装，`Contract`/`Verify` 作为顶层通用模块保留。GPU 全任务回归仍未完成（2026-10-23 审核修订）
 审核：对照当前代码补入 `source_pressure` 的 Metal 归属、嵌套报告 payload、`measure_serial` 默认值、`prompt_sha1` 的实际 SHA-256 和完整 skills 列表。
-Phase 1/2 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/{backend,screen,launch,abi,sanitize,testing,baselines,profile,pressure,runtime,domain,xctrace,triton_baseline}.py`；`tcenv/contract.py` 与 `tcenv/verify.py` 是顶层通用模块，Metal 侧的 `contract.py`/`verify.py` 只做兼容导入。`evaluate`/`worker` 经 adapter，报告 schema 3、backend_version/timeline、索引 v11 和 `runs.backend` 已落地；Phase 3 提示/文件扩展和 Phase 4 shim 清理已完成。Phase 0 的单个 `flash_attention` GPU 基线已采；GPU 全任务回归尚未采。
+Phase 1/2 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/{backend,screen,launch,abi,sanitize,testing,baselines,profile,pressure,runtime,domain,xctrace,triton_baseline}.py`；`tcenv/contract.py` 与 `tcenv/verify.py` 是顶层通用模块，Metal 侧的 `contract.py`/`verify.py` 只做兼容导入。`evaluate`/`worker` 经 adapter，报告 schema 3、backend_version/timeline、索引 v11 和 `runs.backend` 已落地；Phase 3 提示/文件扩展和 Phase 4 shim 清理已完成。Phase 0 的单个 `flash_attention` GPU 基线已采；2026-10-23 的 16 任务 GPU smoke 全部通过，P0 对比见 `docs/架构/backend-gpu-regression-20261023.md`（GPU-timestamp 临界超门 0.028 pp，未重录基线）。
 目标读者：维护 `taic` / `tcenv` 的工程师
 范围：先抽协议，Metal GPU 作为第一个实现；NPU 不实现，只预留注册位和接口。
 阶段编号全文只有一套，见 §11。§6–§10 是工作包（WP-A 至 WP-D），不自带 Phase 编号，所属阶段在 §11 的表里对齐。
