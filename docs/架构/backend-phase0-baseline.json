@@ -106,41 +106,41 @@
     },
     "current_runs": [
       {
-        "candidate_us": 320.3020605724305,
-        "candidate_gpu_us_median": 298.37109468644485,
-        "mlx_us": 331.0750052332878,
-        "speedup": 1.0336337038906473,
-        "cv": 0.016399568492888556,
+        "candidate_us": 314.1091493446202,
+        "candidate_gpu_us_median": 295.5962360526124,
+        "mlx_us": 322.7168956819253,
+        "speedup": 1.0274036791200283,
+        "cv": 0.004584185172050827,
         "attempts": 1
       },
       {
-        "candidate_us": 320.31249429564923,
-        "candidate_gpu_us_median": 296.3177103083581,
-        "mlx_us": 325.7226076369223,
-        "speedup": 1.0168901102442776,
-        "cv": 0.013525027544442944,
+        "candidate_us": 316.8203111272305,
+        "candidate_gpu_us_median": 294.57030905177817,
+        "mlx_us": 326.54763864619395,
+        "speedup": 1.0307029795039153,
+        "cv": 0.015436358523347949,
         "attempts": 1
       },
       {
-        "candidate_us": 323.3333845855668,
-        "candidate_gpu_us_median": 299.1015571751632,
-        "mlx_us": 337.1494685244911,
-        "speedup": 1.0427301497388928,
-        "cv": 0.017066529310578407,
+        "candidate_us": 317.9062478011474,
+        "candidate_gpu_us_median": 294.5299420389347,
+        "mlx_us": 327.564002613404,
+        "speedup": 1.0303792545099573,
+        "cv": 0.02286686302723824,
         "attempts": 1
       }
     ],
     "current_median": {
-      "candidate_us": 320.31249429564923,
-      "candidate_gpu_us_median": 298.37109468644485,
-      "mlx_us": 331.0750052332878,
-      "speedup": 1.0336337038906473
+      "candidate_us": 316.8203111272305,
+      "candidate_gpu_us_median": 294.57030905177817,
+      "mlx_us": 326.54763864619395,
+      "speedup": 1.0303792545099573
     },
     "delta_percent": {
-      "candidate_us": -0.659,
-      "candidate_gpu_us_median": -0.422,
-      "mlx_us": -0.109,
-      "speedup": 0.0057
+      "candidate_us": -1.742,
+      "candidate_gpu_us_median": -1.691,
+      "mlx_us": -1.475,
+      "speedup": 0.0025
     },
     "acceptance": {
       "candidate_abs_pct": 2.0,

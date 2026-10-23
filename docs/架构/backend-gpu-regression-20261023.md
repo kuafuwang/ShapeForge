@@ -60,3 +60,32 @@ source  tests/support/golden/metal/backend_phase0_kernel.metal
   wall time 中最慢一次为 340.4 µs，其余为 319.1–323.3 µs。
 - 因此本次**不更新 P0 基线、不把该差异写成确认回归，也不提交任何 kernel catalog 改动**。
   若要做正式发布门，应在机器更安静、GPU 温度稳定时重跑同一 seed/reps，并重新记录一份独立样本。
+
+## 2026-10-24 正式复跑
+
+用户要求把 P0 作为正式发布门复跑。条件与上文相同；当时机器负载为
+`2.95 / 4.61 / 6.31`，仍高于理想安静线，但三次结果稳定，且全部通过固定门：
+
+原始 JSON：`logs/gpu-p0-formal-20261024-004120/`（本地，未提交）。
+
+| 指标 | P0 old | 本次 3 次中位 | 相对 old | 2% / 0.03 门 |
+|---|---:|---:|---:|---|
+| candidate wall µs | 322.4375 | 316.8203 | -1.742% | pass |
+| candidate GPU µs | 299.6367 | 294.5703 | -1.691% | pass |
+| MLX µs | 331.4359 | 326.5476 | -1.475% | pass |
+| speedup vs MLX | 1.027907 | 1.030379 | +0.002472 | pass |
+
+单次结果为：
+
+```text
+run 1: wall 314.1091, GPU 295.5962, MLX 322.7169, speedup 1.027404
+run 2: wall 316.8203, GPU 294.5703, MLX 326.5476, speedup 1.030703
+run 3: wall 317.9062, GPU 294.5299, MLX 327.5640, speedup 1.030379
+```
+
+`docs/架构/backend-phase0-baseline.json` 的 `current_runs`、`current_median`、
+`delta_percent` 和 `passes` 已更新为这组结果；`old` 保持不变。
+
+注意：这组复跑不是理想安静条件下的样本，但所有门均通过，因此按用户要求作为
+正式 P0 发布记录。若之后机器状态或代码改变，应重新跑独立样本，不能拿本记录
+替代新的确认。
