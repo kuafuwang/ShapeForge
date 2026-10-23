@@ -237,6 +237,7 @@ class RunResult:
     confirmation_source_sha256: str | None = None  # sha256 of the confirmed winner's kernel text; None when confirmation did not bind a source
     target_id: str = ""
     backend: str = ""
+    backend_version: str = ""
     protocol_version: str = ""
     # The run stopped because the remaining budget could not cover another recent-sized
     # session; this is a budget stop, but a control-file top-up should not silently continue it.
@@ -536,6 +537,7 @@ class Orchestrator:
                 "target": {
                     "id": self.target_id,
                     "backend": self.target.backend,
+                    "backend_version": self.target.backend_version,
                     "display_name": self.target.display_name,
                 },
                 "task": self.task_name, "dtype": self.dtype, "size": self.size, "seed": self.seed, "run_seed": self.run_seed,
@@ -2058,6 +2060,7 @@ class Orchestrator:
             (self.run_dir / "best.metal").write_text(self.best.source)
         res.target_id = self.target_id
         res.backend = self.target.backend
+        res.backend_version = self.target.backend_version
         res.protocol_version = PROTOCOL_VERSION
         result_doc = asdict(res)
         result_doc["schema_version"] = RESULT_SCHEMA_VERSION

@@ -29,8 +29,22 @@ def test_a_legacy_report_loads_and_a_round_trip_records_the_version():
     rep = EvalReport.from_json(_legacy_report(speedup=1.2))
     assert rep.status == "ok" and rep.eligible and rep.speedup == pytest.approx(1.2)
     again = EvalReport.from_json(rep.to_json())
-    assert again.to_json()["schema_version"] == REPORT_SCHEMA_VERSION == 2
+    assert again.to_json()["schema_version"] == REPORT_SCHEMA_VERSION == 3
     assert again.status == "ok" and again.speedup == pytest.approx(1.2)
+
+
+def test_a_new_report_carries_backend_version_and_a_stage_timeline():
+    report = EvalReport(
+        task="relu", dtype="fp16", size="small", mode="full", status="ok",
+        backend="metal", backend_version="1",
+        timeline=[{"stage": "compile", "duration_s": 0.1}, {"stage": "done", "status": "ok", "duration_s": 0.2}],
+    )
+    doc = report.to_json()
+    assert doc["schema_version"] == 3
+    assert doc["backend_version"] == "1"
+    assert doc["timeline"][0]["stage"] == "compile"
+    again = EvalReport.from_json(doc)
+    assert again.backend_version == "1" and again.timeline == report.timeline
 
 
 def test_eligible_true_without_a_status_loads_as_ok():
@@ -42,7 +56,7 @@ def test_a_report_with_an_unknown_field_or_a_newer_version_needs_inspection():
     with pytest.raises(SchemaError, match="needs human inspection"):
         EvalReport.from_json(_legacy_report(future_field=1))
     with pytest.raises(SchemaError, match="needs human inspection"):
-        EvalReport.from_json(_legacy_report(schema_version=3))
+        EvalReport.from_json(_legacy_report(schema_version=4))
     with pytest.raises(SchemaError, match="needs human inspection"):
         EvalReport.from_json(_legacy_report(schema_version=True))
 

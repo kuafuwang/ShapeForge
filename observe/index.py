@@ -20,7 +20,7 @@ from observe import detail, legacy
 from observe.budget import budget_status
 from observe.ledger import month_of, operator_name
 
-INDEX_SCHEMA_VERSION = 10
+INDEX_SCHEMA_VERSION = 11
 _SKIP_DIRS = {"candidates", "__pycache__"}
 _WRITE = threading.Lock()
 _SINGLE: "Index | None" = None
@@ -155,6 +155,8 @@ class Index:
                 dtype TEXT,
                 size TEXT,
                 target_id TEXT,
+                backend TEXT,
+                backend_version TEXT,
                 kernel_sha256 TEXT,
                 protocol_version TEXT,
                 committees_json TEXT,
@@ -390,6 +392,10 @@ class Index:
             self.conn.execute("ALTER TABLE runs ADD COLUMN feedback_review_fp TEXT NOT NULL DEFAULT ''")
         if "feedback_parser" not in run_columns:
             self.conn.execute("ALTER TABLE runs ADD COLUMN feedback_parser TEXT NOT NULL DEFAULT ''")
+        if "backend" not in run_columns:
+            self.conn.execute("ALTER TABLE runs ADD COLUMN backend TEXT")
+        if "backend_version" not in run_columns:
+            self.conn.execute("ALTER TABLE runs ADD COLUMN backend_version TEXT")
         item_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(feedback_items)")}
         if "line_at" not in item_columns:
             self.conn.execute("ALTER TABLE feedback_items ADD COLUMN line_at INTEGER")
@@ -979,6 +985,9 @@ class Index:
         model = ((config or {}).get("llm") or {}).get("model") or (row.get("result") or {}).get("model") or (row.get("state") or {}).get("model")
         result_doc = row.get("result") if isinstance(row.get("result"), dict) else {}
         kernel_sha = str(result_doc.get("confirmation_source_sha256") or "") or (_sha256_file(directory / "best.metal") or "")
+        config_target = (config or {}).get("target") if isinstance((config or {}).get("target"), dict) else {}
+        backend = str(row.get("backend") or config_target.get("backend") or "")
+        backend_version = str(row.get("backend_version") or config_target.get("backend_version") or "")
         protocol = str((config or {}).get("protocol_version") or result_doc.get("protocol_version") or "")
         if not protocol:
             # Older runs do not carry an explicit epoch. Keep the four flame_chase_1 runs out of
@@ -1002,16 +1011,17 @@ class Index:
             """
             INSERT INTO runs (
                 run_id, experiment_id, arm_id, trial, kind, task, operator, dtype, size, target_id,
-                kernel_sha256, protocol_version, committees_json, model, preset,
+                backend, backend_version, kernel_sha256, protocol_version, committees_json, model, preset,
                 switch_delta_json, contract, status, phase, stop_reason, started_at, updated_at,
                 spent_usd, spent_max_usd, budget_usd, granted_budget_usd, publication, published_speedup,
                 naive_speedup, rounds, evaluations, inflight_label, pid, source, binding,
                 fp_state, fp_result, fp_config, fp_confirm, fp_extra, row_json
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(run_id) DO UPDATE SET
                 experiment_id = excluded.experiment_id, arm_id = excluded.arm_id, trial = excluded.trial,
                 kind = excluded.kind, task = excluded.task, operator = excluded.operator, dtype = excluded.dtype,
-                size = excluded.size, target_id = excluded.target_id, kernel_sha256 = excluded.kernel_sha256,
+                size = excluded.size, target_id = excluded.target_id, backend = excluded.backend,
+                backend_version = excluded.backend_version, kernel_sha256 = excluded.kernel_sha256,
                 protocol_version = excluded.protocol_version, committees_json = excluded.committees_json,
                 model = excluded.model, preset = excluded.preset,
                 switch_delta_json = excluded.switch_delta_json, contract = excluded.contract,
@@ -1029,7 +1039,7 @@ class Index:
             (
                 run_id, experiment_id, arm_id, trial, kind, row.get("task") or "", operator_name(row.get("task")),
                 row.get("dtype") or "", (config or {}).get("size") or "", _target_id(config),
-                kernel_sha, protocol, committees, model or "", (config or {}).get("preset") or "",
+                backend, backend_version, kernel_sha, protocol, committees, model or "", (config or {}).get("preset") or "",
                 json.dumps(delta, sort_keys=True), "", row.get("status"), row.get("phase") or "", row.get("stop_reason") or "",
                 row.get("started_at"), _num((row.get("state") or {}).get("updated_at")),
                 spent, spent_max, _num(row.get("disk_budget_usd")), _num(row.get("budget_usd")),

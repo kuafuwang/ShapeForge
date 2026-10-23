@@ -40,6 +40,7 @@ class TargetProfile:
     root: Path
     language: str
     file_ext: str
+    backend_version: str = ""
 
     @property
     def device_doc(self) -> Path:
@@ -98,6 +99,7 @@ def load_target(target_id: str | None = None) -> TargetProfile:
         root=root,
         language=str(backend_doc.get("language") or ""),
         file_ext=str(backend_doc.get("file_ext") or ""),
+        backend_version=str(backend_obj.version or ""),
     )
 
 

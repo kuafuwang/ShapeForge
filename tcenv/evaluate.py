@@ -92,9 +92,11 @@ class EvalReport:
     protocol_version: str = ""
     target_id: str = ""
     backend: str = ""
+    backend_version: str = ""
     device_name: str = ""
     gpu_family: str = ""
     device_warnings: list = field(default_factory=list)
+    timeline: list = field(default_factory=list)
     cache_hit: bool = False
     elapsed_s: float = 0.0
 
@@ -224,6 +226,9 @@ def _evaluate_in_process(
     from .testing import prepare_case, check_case, run_correctness
 
     t_start = time.perf_counter()
+    timeline: list[dict] = []
+    stage_name = "device_check"
+    stage_started = t_start
     task = get_task(task_name, dtype, size)
     seed = int(seed if seed is not None else secrets.randbits(48))
     from .schema import PROTOCOL_VERSION
@@ -249,6 +254,7 @@ def _evaluate_in_process(
     ctx = get_context()
     dev_info = backend.probe(ctx, profile).raw
     rep.backend = profile.backend
+    rep.backend_version = profile.backend_version
     rep.device_name = str(dev_info.get("name") or "")
     rep.gpu_family = str(dev_info.get("gpu_family") or "")
     if not device_matches(profile, dev_info):
@@ -262,12 +268,23 @@ def _evaluate_in_process(
         return rep
     rep.device_warnings = limit_notes(profile, dev_info)
 
+    def _enter(stage: str) -> None:
+        nonlocal stage_name, stage_started
+        now = time.perf_counter()
+        if stage != stage_name:
+            timeline.append({"stage": stage_name, "duration_s": now - stage_started})
+            stage_name = stage
+            stage_started = now
+
     # 写上这一关的 status 后返回。失败时 stage 停在调用前设好的那一关，后面的关不再跑。
     def finish(status: str, message: str = "") -> EvalReport:
+        now = time.perf_counter()
         rep.status = status
         if message:
             rep.message = message
-        rep.elapsed_s = time.perf_counter() - t_start
+        rep.elapsed_s = now - t_start
+        timeline.append({"stage": stage_name, "status": status, "duration_s": now - stage_started})
+        rep.timeline = list(timeline)
         _note_stage(stage=rep.stage, status=status, task=task_name, dtype=dtype, size=size, mode=mode)
         return rep
 
@@ -275,6 +292,7 @@ def _evaluate_in_process(
     from .screen import screen_source
 
     rep.stage = "screen"
+    _enter("screen")
     _note_stage(stage="screen", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
     # 子进程里再过一遍同一条筛，拒绝理由放进 abi.violations，反馈才会印出原因。父进程那一次是为了连子进程都不起。
     refused = backend.screen(kernel_source, task)
@@ -308,6 +326,7 @@ def _evaluate_in_process(
 
     # -- compile -------------------------------------------------------------
     rep.stage = "compile"
+    _enter("compile")
     _note_stage(stage="compile", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
     full_src, header_lines = contract.assemble(kernel_source)
     try:
@@ -333,6 +352,7 @@ def _evaluate_in_process(
 
     # -- abi -------------------------------------------------------------------
     rep.stage = "abi"
+    _enter("abi")
     _note_stage(stage="abi", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
     if spec is None:
         problems = abi_mod.check_abi(contract, kernel, max_tg_memory=dev_info["max_threadgroup_memory_bytes"], target_id=target_id)
@@ -359,6 +379,7 @@ def _evaluate_in_process(
 
     # -- safety + correctness ------------------------------------------------------
     rep.stage = "correctness"
+    _enter("correctness")
     _note_stage(stage="correctness", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
     # validate 用紧分配：缓冲两侧没有护栏，越界才会被 Metal shader validation 看见。quick / full 靠护栏图案抓越界。
     tight = mode == "validate"
@@ -453,6 +474,7 @@ def _evaluate_in_process(
 
     # -- benchmark ---------------------------------------------------------------
     rep.stage = "bench"
+    _enter("bench")
     _note_stage(stage="bench", status="running", task=task_name, dtype=dtype, size=size, mode=mode, attempt=1, attempts_max=BENCH_ATTEMPTS)
     data0 = prepare_case(task, task.cases[0], seed + 1)
     R = rotation_count(task)
@@ -589,6 +611,7 @@ def _evaluate_in_process(
         # 拿不到 Triton→Metal 的对照就跳过。它是附加信息，失败不能把已经通过的候选改判。
         pass
     rep.stage = "done"
+    _enter("done")
     return finish(STATUS_OK, "compiled, ABI ok, safe, correct and benchmarked")
 
 

@@ -151,7 +151,7 @@ def test_happy_path_selects_the_fastest_eligible_candidate_and_confirms_it(tmp_p
     assert json.loads((tmp_path / "run" / "run_config.json").read_text())["loop_protocol"] == "flame_chase_1"
     transcript = (tmp_path / "run" / "transcript.jsonl").read_text()
     assert transcript and json.loads((tmp_path / "run" / "ledger.json").read_text())["schema_version"] == 1
-    assert json.loads((tmp_path / "run" / "candidates" / "000_init" / "report.json").read_text())["schema_version"] == 2
+    assert json.loads((tmp_path / "run" / "candidates" / "000_init" / "report.json").read_text())["schema_version"] == 3
     assert json.loads((tmp_path / "run" / "state.json").read_text())["schema_version"] == 1
     assert (tmp_path / "run" / "candidates" / "000_init" / "kernel.metal").exists()
 

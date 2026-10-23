@@ -10,7 +10,7 @@ import os
 import time
 from pathlib import Path
 
-REPORT_SCHEMA_VERSION = 2
+REPORT_SCHEMA_VERSION = 3
 # Measurement protocol, separate from the file schema. Bump when the timing window,
 # confirmation batches or target limits change, so aggregates can group by epoch.
 PROTOCOL_VERSION = "3"

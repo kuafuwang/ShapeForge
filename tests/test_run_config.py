@@ -36,6 +36,7 @@ def test_v1_config_records_two_hashes_and_no_credentials(tmp_path):
     task = get_task("relu", "fp16", "small")
     assert doc["schema_version"] == 2
     assert doc["target"]["id"] == "apple-m4-max"
+    assert doc["target"]["backend_version"] == "1"
     assert doc["contract_description_sha256"] == hashlib.sha256(task.contract.describe().encode("utf-8")).hexdigest()
     assert doc["triton_source_sha256"] == hashlib.sha256(task.triton_source.encode("utf-8")).hexdigest()
     from tcenv.task import task_fingerprint
