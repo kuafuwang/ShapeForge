@@ -13,7 +13,7 @@ from tcenv.evaluate import EvalReport
 SKILL = Path(__file__).resolve().parent.parent / "backends" / "metal" / "skills" / "apple_gpu_optimization.md"
 MEMORY_HEADING = "## Memory-bound kernels"
 COMPUTE_HEADING = "## Compute-bound kernels"
-# Copied from tests/support/golden/fixtures/relu_best.report.json and gemm_paper_best.report.json.
+# Copied from tests/support/golden/metal/fixtures/relu_best.report.json and gemm_paper_best.report.json.
 # These are the roofline objects tcenv.backends.metal.profile.roofline writes; bound is the structured field.
 _RELU_ROOFLINE = {
     "bound": "memory",

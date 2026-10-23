@@ -1,7 +1,7 @@
 """Hashes of everything the LLM is sent, computed with the *current* code, for the byte-identity regression of ``search.hw_feedback = false``.
 
 ``compute()`` calls the prompt and feedback functions with ``hw_feedback`` off (the arguments from before that switch, or ``hw_feedback=False``).
-``tests/support/golden/hw_off.json`` is that output. Regenerate it on purpose when a prompt change other than the switch should become the new off baseline.
+``tests/support/golden/metal/hw_off.json`` is that output. Regenerate it on purpose when a prompt change other than the switch should become the new off baseline.
 A request hash covers the body ``chat.completions.create`` is given, not only ``messages``: model, max_tokens, reasoning_effort, extra_body, and tools.
 Two extra searches record the call sites the parameter sample does not: a length-capped draft retried once at the truncation effort, and a search whose planner and patch requests use different efforts.
 ``REQUEST_KEYS`` is the whitelist of keys ``LLM._params`` may produce; the test fails when the two sets diverge.
@@ -24,7 +24,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
+GOLDEN_DIR = Path(__file__).resolve().parent / "golden" / "metal"
 GOLDEN = GOLDEN_DIR / "hw_off.json"
 FIXTURES = GOLDEN_DIR / "fixtures"
 # Keys ``LLM._params`` is allowed to put on the wire. ``messages`` is added by ``chat`` and is hashed with them.
@@ -333,7 +333,7 @@ def changed_keys(got: dict, want: dict) -> list[str]:
 
 def _git_commit() -> str:
     try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=GOLDEN_DIR.parents[2], text=True).strip()
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=GOLDEN_DIR.parents[3], text=True).strip()
     except (OSError, subprocess.CalledProcessError):
         return ""
 
