@@ -2,6 +2,8 @@
 
 The model writes kernel text. This repository compiles, checks, times, and decides what to keep. A number you can quote is the remeasured one after search, with the source hash bound and the timing quiet. The fastest candidate seen during search is a different number. A default run spends about $15 and alternates two models, `deepseek-flash` then `kimi-k3`. `taic run` and `taic resume` spend money and use the GPU that also drives the display. `uv run python -m taic.cli brief` only reads.
 
+Kernel writing goes through the local `hmz` launcher (`uv tool install hmz`) and its `pi` agent; `taic run` refuses to start without `hmz` (`docs/架构/hmz.md`).
+
 A re-implementation, for an Apple M4 Max, of the setup of *"AI as a compiler: compiling Triton kernels without the Triton compiler"*.
 An LLM translates a Triton kernel directly into a Metal (MSL) kernel; an evaluation environment compiles, safety-checks,
 differentially tests, benchmarks and profiles every candidate, and the search keeps only candidates that are safe, correct and faster.
@@ -82,7 +84,7 @@ Each evaluation runs these stages in order; the first failing one ends it with f
 `tcenv.verify` stays a stub so a backend can be added without touching the evaluator.
 
 **What the model is told about a slow kernel.** Every evaluation report carries a roofline (bound, achieved GB/s and TFLOP/s as a fraction of the peaks measured
-on this machine, the lower bound) and pipeline statistics (`maxTotalThreadsPerThreadgroup` as a register-pressure hint, static threadgroup memory). With
+on this machine, the lower bound) and pipeline statistics (the pipeline's `maxTotalThreadsPerThreadgroup` launch limit, static threadgroup memory; the field alone does not prove register pressure). With
 `search.profile_poor = true` (`taic run ... --profile-poor`), the seed of a round whose speedup is below `profile_poor_below` is traced with Instruments
 (`xctrace`, Metal System Trace) and the findings go into that round's `TASK.md`: compiler register spills (events, bytes), compiled shader size, GPU idle fraction,
 thermal state, each with what to do about it. Each source is traced once, at most `profile_max` times per run, and a failed trace never stops the search. The
@@ -150,9 +152,9 @@ profiler evidence goes. The whole evidence block is capped at 600 bytes in `TASK
   the roofline shows 3.0x the lower bound"), always with the caveat that these are hints from static analysis, not requirements, and that the measured time decides;
 * nothing as missing for a kernel that is already at about 90% of its roofline (hardware features cannot help beyond it; the elementwise tasks are in that state, and scalar loads already
   reach most of the bandwidth there: `docs/hardware_features.md` section 6), and a warning when a kernel has 32 or more accumulator fragments (the reference GEMMs were 12 to 26 times slower)
-  or sits at the register-pressure limit.
+  or when the pipeline's threadgroup cap equals its launch size (the text says this alone does not prove register pressure).
 
-Why off by default: it is an experiment and nothing yet shows that it helps. With the switch off, `tests/backends/metal/test_hw_feedback.py` checks prompts and feedback against `tests/support/golden/metal/hw_off.json` (176 system prompts, 110 user messages, 12 feedback texts). That file was recorded again on 2026-10-20, so it is not a snapshot from before the feature existed, and it covers more than four scripted searches. `taic.toml` and `taic.paper.toml` do not mention the switch. It is recorded in `run_config.json` and kept by `taic resume`. The analysis never breaks or slows a search: a timeout
+Why off by default: it is an experiment and nothing yet shows that it helps. With the switch off, `tests/backends/metal/test_hw_feedback.py` checks prompts and feedback against `tests/support/golden/metal/hw_off.json` (176 system prompts, 110 user messages, 12 feedback texts). That file was recorded again on 2026-10-23 (after the prompt-bound paths were updated to `tcenv.backends.metal.runtime`), so it is not a snapshot from before the feature existed; it covers four scripted searches and records the hmz task contracts they produce, not chat requests. `taic.toml` and `taic.paper.toml` do not mention the switch. It is recorded in `run_config.json` and kept by `taic resume`. The analysis never breaks or slows a search: a timeout
 (20 s), a failure or a missing Metal toolchain drops the block and logs a warning. A/B experiment: `experiments.p1_runs` run `fa_flash_hw` is `fa_flash` with only this switch changed
 (n=1 on a stochastic search: an anecdote); the run was started on 2026-10-07 06:08, stopped once and continued with `taic resume` after a detector fix (round 1 saw the earlier block; see `docs/hardware_features.md` section 9). The result is on disk: `runs/apple-m4-max/p1/fa_flash_hw` confirmed about 0.622x, spent about $2.89, and stopped after 8 rounds because four rounds brought no new seed. The comparison `fa_flash` confirmed about 0.735x, spent $3.12, 8 rounds, stopped by its $3 budget. Neither file has the source hash the publication gate now requires, so neither number is a published conclusion about the switch.
 
@@ -188,7 +190,7 @@ In the next table, only the plan ledger is on by default. The live task file sti
 ## Dashboard and budget alerts
 
 `uv run python -m observe` serves a local dashboard (default `http://127.0.0.1:8765`; restart it after updating the code, the page is
-read at start-up). Views: experiments, arm comparison (published speedup, `fast_p`, dollars per unit of gain), a paged run list, one run, and a spend ledger. The page can add budget, reset budgets, stop runs, change the models used by the next search, and delete a record.
+read at start-up). Views: experiments, arm comparison (published speedup, `fast_p`, dollars per unit of gain), a paged run list, best/failure retrieval, one run, a spend ledger, and a cross-run review queue. The page can add budget, reset budgets, stop runs, change the two committees used by the next search, delete a record, review feedback claims, and convert or promote structured harness proposals.
 Runs grouped from an old directory name are marked inferred and are not given a winner. The read API is `/api/v2`. It shows every run's budget next to what it spent, and raises an alert for runs that crossed it. The rule is one pure
 function, `observe.budget.budget_status(spent, budget, stop_reason, running)`:
 
@@ -295,7 +297,10 @@ through triton-msl is 10x slower than MLX's fused attention and is refused for b
 ## Layout
 
 `tcenv/` environment (contract, evaluator, worker) with Metal implementations under `tcenv/backends/metal/` (runtime, ABI check, sanitizers, testing, benchmark, profile, xctrace) -
-`taic/` agent (LLM client + ledger, tools, prompts, orchestrator, skills) - `tasks/` kernels (Triton spec, contract, reference, baselines, naive MSL) -
-`experiments/` - `observe/` (local dashboard; it can spend money and stop runs) - `tests/` - `runs/` (artifacts, git-ignored).
+`taic/` search (committees, ledger, orchestrator, hmz task files; `taic/llm.py` remains for experiment scripts) - `tasks/` kernels (Triton spec, contract, reference, baselines, naive MSL) -
+`backends/` per-language metadata, skills and wiki - `targets/` chip profiles, measurements and trust - `kernels/` confirmed kernels - `data/` observe index and deleted records -
+`experiments/` - `observe/` (local dashboard; it can spend money and stop runs) - `tests/` (layered `shared/` + `backends/<id>/`; rules in `tests/README.md`) - `runs/` (artifacts, git-ignored).
+
+Directory conventions: `backends/README.md`, `targets/README.md`, `kernels/README.md`, and `tests/README.md`.
 
 `docs/` (Chinese notes): `docs/架构说明.md` how the parts divide the work - `docs/架构/可观测.md` how experiments are grouped and how the dashboard reads them - `docs/诚实说明.md` what the pipeline does **not** prove, and how to check every claim - `docs/算子工程师边界.md` what this route replaces and does not replace in human roles (with the evidence paths). Index of the directory: `docs/README.md`.

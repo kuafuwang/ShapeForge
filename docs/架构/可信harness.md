@@ -156,8 +156,8 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | P0 观察 | 所有模型 | 本场反馈 | 随 run 归档 | 只影响审查队列 |
 | P1 shadow | 自动，但只记录 | 本 run | 运行结束失效 | 人看影子记录 |
-| P1 active | 双来源 + 信任（`harness_shadow=false` 时直接 apply） | 本 run 后续场次 | 运行结束/disable 失效 | 可整批停用，不改仓库 |
-| P2 patch | 人确认 | 来源 target/task | 仓库提交，新 run 生效 | diff/测试/回滚 |
+| P1 active | 双来源 + 信任（`harness_shadow=false` 时直接 apply），或独立 review 判 useful 的单来源 tip | 本 run 后续场次 | 运行结束/disable 失效 | 可整批停用，不改仓库 |
+| P2 patch | 人确认 | 来源 target/task | 先写本地 checkout，稍后 git commit；新 run 重新冻结 guidance 后读到 | diff/测试/回滚 |
 | never auto | 无人授权也不做 | — | — | 直接拒绝 |
 
 ### 3.1 为什么 P1 要按 run 隔离
@@ -194,7 +194,7 @@ flowchart LR
 ```text
 approved proposal
   -> code agent in a worktree
-  -> tests + prompt golden
+  -> offline tests（当前没有 prompt golden 门）
   -> diff for a person
   -> human applies locally
   -> later git commit -> change_ref=commit:<sha> + implemented_by + approved_by
@@ -218,7 +218,7 @@ P2 改的是仓库，影响所有后续运行。自动写文件等于让模型�
 
 1. 生成 unified diff。
 2. 展示 diff，`git apply --check`。
-3. 跑离线测试和 prompt golden。
+3. 跑离线测试；CLI 的 `--run-tests` 当前只跑 `tests/shared/test_agent_feedback.py`、`tests/shared/test_kernel_agent.py`、`tests/backends/metal/test_hw_feedback.py`，没有 prompt golden 门。
 4. 人确认后先 apply 到本地 checkout；此时记录 `status=local` 和 `local_patch_sha256`，不写最终 `change_ref`。
 5. 人稍后运行 `taic harness commit`，只提交这些路径；提交成功后才写 `change_ref=commit:<sha>`。
 6. 共享表面（TASK 合同、`taic-tools`、系统提示）额外确认跨硬件适用。
@@ -244,14 +244,14 @@ stateDiagram-v2
 
 - `target_id`、`task`、`provider`、`model`、`effort`；
 - `prompt_sha1`、`protocol_version`；
-- `scopes`（如 `overlay:tip`）、`expires_at`、`granted_by`、`reason`、`evidence_run`。
+- `scopes`（如 `overlay:tip`）、`expires_at`、`granted_by`、`reason`、`evidence_run`。当前自动判定只查 `overlay:tip`/`overlay:premise`；`propose:skill`/`propose:task_wording` 可以登记，但没有自动放行路径。
 
 设计要点：
 
-1. **信任不等于模型分数。** 指标（已审数、合理率、Wilson 下界、confirmed 推翻率、占位率、已实测率）只帮人决定是否授予；授予动作本身是人做的。
+1. **信任不等于模型分数。** 指标（已审数、合理率、Wilson 下界、confirmed 推翻计数、占位率、已实测率）只帮人决定是否授予；授予动作本身是人做的。
 2. **按硬件和任务切开。** 在 M4 Max/conv2d 上可信，不代表在另一个 GPU 或 flash_attention 上可信。
-3. **会过期。** `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py`、`targets/apple-m4-max/experience.md`、`taic/flows/kernel_once/skills/taic-tools/SKILL.md` 五个文件的整体 sha256 或评测协议变了，旧信任失效；模型换了版本、effort 变了，也不能沿用。任一文件任一字节变化都算，包括代码逻辑。
-4. **可撤销、可暂停。** 人可随时按 target 撤销；confirmed 推翻率越线时自动暂停，但恢复仍由人做。
+3. **会过期。** 提示函数源码、模板常量与技能文档（`taic/prompts.py` 的提示函数与 `HARNESS_RULES`/`MIXED_PLANS`/`WIKI_DOCS`、`taic/kernel_agent.py::render_contract`/`_cap_task`、`taic/harness.py::TEMPLATE`/`write_template`、目标档的 `experience.md`/`device.md`（按 `target_id` 解析）、`taic/flows/kernel_once/skills/taic-tools/SKILL.md`、目标 backend 自动收集的 `backends/<id>/skills/*.md`（跳过 `_template`））的 sha256（字段名仍叫 `prompt_sha1`）或评测协议变了，旧信任失效；同一文件里的非提示代码改动不影响。模型换了版本、effort 变了，也不能沿用。目标文档按 `target_id` 解析，不同 target 的指纹不同。
+4. **可撤销、可暂停。** 人可随时按 target 撤销；`sync_trust_status` 在同一 target/task 有至少 8 条已审 claim、来自至少 2 个 run、confirmed refuted 率 ≥25% 时自动暂停，恢复仍由人做。没有 `prompt_sha1` 的旧条目不会被当成对所有提示面有效；`check` 直接判为 stale。
 5. **追加式审计。** `trust_audit.jsonl` 记录每一次 `grant`/`suspended`/`revoked`，不覆盖历史。
 
 ## 5. 双来源：两个独立模型，不是两次复述
@@ -319,7 +319,7 @@ review 的预算不能写死 $0.2：按 reviewer 的实际 input/output 单价�
 
 ```
 input_tokens       = max(1000, ceil(prompt_bytes / 3))
-output_tokens      = min(4000, requested)
+output_tokens      = max(128, min(4000, requested))
 cache_read_tokens  = 120000   # pi/skill context read allowance
 cache_write_tokens = 16000    # first-call cache write allowance
 expected_usd = input_tokens/1e6 * price_in
@@ -329,7 +329,7 @@ expected_usd = input_tokens/1e6 * price_in
 budget_usd = max(0.01, expected_usd * 4)
 ```
 
-不同的模型价格不同，贵的 reviewer 得到更大的预算；缓存读/写也计入，不能只看 REVIEW.md 的字数。实际成本另记到 `harness_reviews.jsonl`。实测 Kimi 一次 review：旧预算 $0.252、实际 $0.118；加入缓存 allowance 后同一输入估算 $0.147、预算 $0.588。
+不同的模型价格不同，贵的 reviewer 得到更大的预算；缓存读/写也计入，不能只看 REVIEW.md 的字数。实际成本另记到 `harness_reviews.jsonl`。实测 Kimi review：`harness-pilot-active-20261022` 的第一个提案旧预算 $0.252、实际 $0.118；同一 run 的第二个提案用缓存 allowance 公式估算 $0.147、预算 $0.588，实际 $0.1677。第二次 shadow（`...b`）的 review 实际 $0.1063。
 
 下面是这次审核在看板上的样子。运行 `apple-m4-max/harness-pilot-active-20261022`，第 2 轮 first 委员会的 deepseek-flash 提出一条 `tip`：给 `tcenv.cli` 加交替计时的 `ab` 子命令。second 的 kimi-k3 做只读 review，结论是有用，confidence 0.8，成本 $0.118。校验已通过，所以它是 **P2 候选**，截图时徽标还写着待人工固化；该 run 后来已本地固化并提交，决策表因此会有 `promotion`/`promotion_commit`，历史截图不等于当前状态。
 
@@ -362,7 +362,7 @@ stateDiagram-v2
 - 人可以比较影子条目和未启用场次的 unchanged 率、成本、失败类型；
 - 确认没有把合同/命令/未验证事实带进 TASK 后，才打开 active。
 
-这是部署里的 canary/shadow 思路，不是额外模型调用：影子条目的生成仍然只来自已有会话反馈。代码不检查“人已复核影子”这条记录；打开 active 的实际操作是把 `harness_shadow` 设为 false，或在 settle 时传 `shadow=false`。
+这是部署里的 canary/shadow 思路，不是额外模型调用：影子条目的生成仍然只来自已有会话反馈。代码不检查“人已复核影子”这条记录；打开 active 的实际操作是把 `harness_shadow` 设为 false（CLI 对应 `--no-harness-shadow`），或在调用 `harness.settle` 时传 `shadow=False`；CLI `harness settle --active` 也写 active。
 
 ### 6.2 生效时的保护
 
@@ -377,12 +377,14 @@ stateDiagram-v2
 P2 成功不是“模型说可以”，而是：
 
 ```
-proposal -> patch -> git apply --check -> 人点固化到本地
-        -> 新 run 重新冻结 guidance 后读到 -> 离线测试/golden（CLI --run-tests）
+proposal -> patch -> git apply --check
+        -> (可选) taic harness apply --run-tests 跑 3 个离线测试文件
+        -> 人点固化到本地（写本地 checkout）
+        -> 新 run 重新冻结 guidance 后读到
         -> taic harness commit -> change_ref=commit:<sha>
 ```
 
-看板的「固化到本地」只做本地 apply，不跑离线测试或 prompt golden；要跑测试用 `taic harness apply --run-tests`。code agent 的 `apply-code` 写 `code_promotion`/`status=local`，`change_ref` 为空；它默认先在另一个隔离 worktree 里应用 patch 并跑离线套件，通过后才改主 checkout，并拒绝 `tasks/`、trust、control、凭据等路径。`taic harness commit` 同时接收 `promotion` 与 `code_promotion`，只提交记录的路径，并在提交前校验待提交 patch 的哈希，在独立 Git index 中从 HEAD 顺序重放并比较暂存快照；成功后回填 `change_ref=commit:<sha>`。
+看板的「固化到本地」只做本地 apply，不跑离线测试或 prompt golden；要跑测试用 `taic harness apply --run-tests`（当前只跑 3 个反馈/契约测试文件）。code agent 的 `apply-code` 写 `code_promotion`/`status=local`，`change_ref` 为空；它默认先在另一个隔离 worktree 里应用 patch 并跑离线套件，通过后才改主 checkout，并拒绝 `tasks/`、trust、control、凭据等路径。`taic harness commit` 同时接收 `promotion` 与 `code_promotion`，只提交记录的路径，并在提交前校验待提交 patch 的哈希，在独立 Git index 中从 HEAD 顺序重放并比较暂存快照；成功后回填 `change_ref=commit:<sha>`。
 
 失败可以丢弃 patch；已经应用的可以 revert。共享 prompt/skill 不默认写入，必须单独确认跨硬件影响。
 
@@ -395,10 +397,10 @@ proposal -> patch -> git apply --check -> 人点固化到本地
 | 证据来自 harness 可信执行记录 | P1 `premise` 校验 self-checks 的 target/协议/内核 SHA/数字，但文件非签名 | 代理可伪造本机记录 |
 | `premise` 也需更强门槛 | `premise` 不需要双模型投票，但需要 active 信任 + 匹配的 self-checks/外层报告；否则不写 overlay，只留一条 `trusted_record=false` 提案 | 单模型错误前提仍可能进 shadow；伪造本机记录仍可能绕过 |
 | 独立性靠“证据产自本场” | 只比较探针 SHA 不同 | 复制文字 + 各写不同探针仍可能通过 |
-| P1 关闭用只追加 disable 事件 | 当前是 `harness_control.json` 覆盖写 | 文件被重写时历史事件不在文件内；审计要看决策日志 |
+| P1 关闭用只追加 disable 事件 | 当前是 `harness_control.json` 覆盖写，不写决策日志 | 历史理由只保留最后一次；审计只能看控制文件当前值和 mtime |
 | 活动 claim 与历史审计分开 | 当前使用 `info`/`obsolete` 状态和墓碑；空占位重建时写入 `feedback_claim_removed` | 与计划第 7 节的“不新增状态”不同；审阅时按当前实现读 |
 | 重复按同一 action+scope 确认 | 曾显式执行 `--merge-topic`，复核后由 `experiments.revert_topic_merges` 把 10 条改回 pending | topic 不是等价关系；不要按 topic 批量关 |
-| 付费试点后再扩大 | 只准备离线工具，没有跑 `taic run/resume` | 没有真实的质量/成本结论 |
+| 付费试点后再扩大 | 2026-10-22 已跑三次 shadow/active 试点（当时约 $6；第三次目录后来续跑，当前约 $7.10，见 [可信harness试点结果.md](../可信harness试点结果.md)），但样本小，且 active overlay 没有真正进入 TASK | 仍没有质量结论；active 对搜索的影响未验证 |
 
 这些不是“文档没写”，而是**文档必须写清楚**：当前 self-checks 只是本机记录，不是密码学签名；付费试点仍要靠人工复核。若要把 `premise` 当强证据，下一步应引入评测器签名/外层 report 绑定。
 
@@ -413,7 +415,7 @@ proposal -> patch -> git apply --check -> 人点固化到本地
 | 分布漂移 | 换模型/硬件/任务后旧 tip 变坏 | target/task/protocol/prompt 绑定、过期 | 同 target 内的任务相似性仍可能误导 |
 | 单模型偏见 | 同一模型两次提出同一建议 | 两个 provider+model、两个委员会 | 两个模型可能共享训练数据/笔记 |
 | 跨硬件污染 | 把一个 target 的经验复制到另一个 | 所有 key 带 target；overlay/P2 过滤 | 人工复制仍可能绕过 |
-| 审计丢失 | 删 run、重建索引、覆盖文件 | append-only 日志、墓碑、review history | 18 条空占位墓碑已补齐，但墓碑只有 status/reason，不保存正文 |
+| 审计丢失 | 删 run、重建索引、覆盖文件 | append-only 日志、墓碑、review history | 2026-10-22 时 18 条空占位墓碑已补齐；墓碑只有 status/reason，不保存正文 |
 | 预算挤占 | overlay 挤掉成绩单/失败反馈 | 固定优先级、12KB 预算、被裁记录 | 仍需看实际 TASK 字节 |
 
 ## 9. 和计划第 3–6 节的对应

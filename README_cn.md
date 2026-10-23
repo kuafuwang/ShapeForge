@@ -6,6 +6,8 @@
 
 默认一次搜索大约 15 美元。初始稿和第 1 轮由 DeepSeek 的 `deepseek-flash` 写，第 2 轮起轮到月之暗面的 `kimi-k3`，之后按 `(r - 1) % 2` 轮流。只设一家的密钥不够。`--preset base` 读的是 `taic.toml`，单次上限是 50 美元。`taic run` 和 `taic resume` 会花钱，也会占用这台同时画屏幕的显卡。只看摘要用 `uv run python -m taic.cli brief`，不花钱、不占显卡。
 
+写内核走本机的 `hmz` 启动器（`uv tool install hmz`），由它调用 `pi`；缺 `hmz` 时 `taic run` 在启动前拒绝（`docs/架构/hmz.md`）。
+
 测试目录与 golden 放置规则见 `tests/README.md`。
 
 本文其余部分与 [README.md](README.md) 对齐。命令、路径和配置名保持英文。下面这张表是和论文的对照，不是上手步骤。
@@ -86,9 +88,9 @@ profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词�
 * 内核已经用了哪些 Apple GPU 特性（矩阵单元及其累加器类型和 fragment 个数、threadgroup 暂存与 padding、双缓冲或寄存器预取、device 读写的宽度、SIMD 归约与 shuffle、online softmax 等），以及离 roofline 多远；
 * 这一类任务本应有、却没找到的特性，至多三条，每条一句具体提示（例如「没有 simdgroup_matrix：矩阵乘在标量 FMA 上跑；roofline 显示是下界的 3.0 倍」），并且总带一句说明：这些是静态分析给的提示，不是要求，以实测时间为准；
 * 已经在 roofline 的约 90% 以上的内核不列任何缺失项（超过 roofline 的部分硬件特性帮不上忙；逐元素任务就处于这种状态，标量读写已经接近带宽：`docs/hardware_features.md` 第 6 节）；
-  内核有 32 个以上累加器 fragment 时给出警告（参考 GEMM 慢了 12 到 26 倍），处于寄存器压力上限时也一样。
+  内核有 32 个以上累加器 fragment 时给出警告（参考 GEMM 慢了 12 到 26 倍）；管线报告的 `maxTotalThreadsPerThreadgroup` 等于启动线程数时也给警告，但同一句会说明单凭这个字段不能证明寄存器压力。
 
-为什么默认关闭：这是实验，目前没有证据表明它有用。关闭时，系统提示、用户消息和反馈与打开之前的形状对照；`tests/backends/metal/test_hw_feedback.py` 用 `tests/support/golden/metal/hw_off.json` 核对 176 份系统提示、110 条用户消息、12 段反馈。这份黄金文件在 2026-10-20 重录过，里面的脚本化搜索不止早先写的四次。`taic.toml` 和 `taic.paper.toml` 没有提到它。它记在 `run_config.json` 里，`taic resume` 会保留。
+为什么默认关闭：这是实验，目前没有证据表明它有用。关闭时，系统提示、用户消息和反馈与打开之前的形状对照；`tests/backends/metal/test_hw_feedback.py` 用 `tests/support/golden/metal/hw_off.json` 核对 176 份系统提示、110 条用户消息、12 段反馈。这份黄金文件在 2026-10-23 因提示文档路径改到 `tcenv.backends.metal.runtime` 后重录过，里面是四场脚本化搜索交给 hmz 的任务书，不是聊天请求。`taic.toml` 和 `taic.paper.toml` 没有提到它。它记在 `run_config.json` 里，`taic resume` 会保留。
 这段分析不会弄坏或拖慢搜索：超时（20 秒）、失败或没有 Metal 工具链时，直接去掉这一段并记一条警告。A/B 实验：`experiments.p1_runs` 的 `fa_flash_hw` 就是只改了这个开关的 `fa_flash`（n=1，随机搜索，只能算轶事）；这次运行于 2026-10-07 06:08 启动，因检测器修正中途停过一次并用 `taic resume` 接着跑（第 1 轮看到的是修正前的提示块，见 `docs/hardware_features.md` 第 9 节）。结果已经落盘：`runs/apple-m4-max/p1/fa_flash_hw` 的 `confirmed_speedup` 约 0.622，花了约 $2.89，8 轮后因连续 4 轮没有新种子而停。对照 `fa_flash` 的确认倍数约 0.735、$3.12、8 轮、预算耗尽。两次都是 $3 预算下的单次搜索，而且都没有绑上今天发布闸门要的源码指纹，不能当成「硬件提示有没有用」的结论。
 
 硬件特性反馈打开时，如果某个基线已经比 roofline 下界快 5% 以上，这段话不会再说「已经到顶」。下界按直接算法的运算量来算，基线比它还快，说明基线用了更少的运算（测到的例子是 conv2d：torch-mps 777 微秒，直接卷积的下界 932 微秒，大约是实测矩阵峰值的 1.2 倍）。可达目标是那个基线的时间。
@@ -115,7 +117,7 @@ profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词�
 
 ## 看板与预算告警
 
-`uv run python -m observe` 启动本机看板（默认 `http://127.0.0.1:8765`；改了代码要重启，页面在启动时读入）。页面有实验、臂对照（发布加速比、`fast_p`、每美元增益）、分页的运行列表、单次运行，以及花费账本。看板会写磁盘：加预算、重置预算、停止进程、改下次搜索的默认模型、删除记录。从旧目录名归到一组的运行标成推断，不下胜负。读接口是 `/api/v2`。它把每次运行的预算和已花费并排显示，并对越过预算的运行告警。规则是一个纯函数 `observe.budget.budget_status(spent, budget, stop_reason, running)`：
+`uv run python -m observe` 启动本机看板（默认 `http://127.0.0.1:8765`；改了代码要重启，页面在启动时读入）。页面有实验、臂对照（发布加速比、`fast_p`、每美元增益）、分页的运行列表、最佳/失败检索、单次运行、花费账本，以及跨运行的待审队列。看板会写磁盘：加预算、重置预算、停止进程、改下次两个委员会的模型、删除记录、审查反馈主张，以及把结构化提案转成可固化项。从旧目录名归到一组的运行标成推断，不下胜负。读接口是 `/api/v2`。它把每次运行的预算和已花费并排显示，并对越过预算的运行告警。规则是一个纯函数 `observe.budget.budget_status(spent, budget, stop_reason, running)`：
 
 | 级别 | 颜色 | 条件 |
 |---|---|---|
@@ -171,5 +173,8 @@ uv run python -m tcenv.cli triton-baseline gemm        # 或：all
 ## 目录
 
 `tcenv/` 环境（契约、评测入口、工作进程），Metal 实现位于 `tcenv/backends/metal/`（运行时、ABI 检查、sanitizer、测试、基准、剖析、xctrace）—
-`taic/` 智能体（LLM 客户端 + 账本、工具、提示词、编排器、技能）— `tasks/` 内核（Triton 规格、契约、参考实现、基线、朴素 MSL）—
-`experiments/` — `tests/` — `runs/`（产物，已被 git 忽略）。
+`taic/` 搜索（委员会、账本、编排器、hmz 任务书；`taic/llm.py` 只留给实验脚本）— `tasks/` 内核（Triton 规格、契约、参考实现、基线、朴素 MSL）—
+`backends/` 后端元数据、技能与 wiki — `targets/` 芯片档案、测量与信任 — `kernels/` 已确认内核 — `data/` 看板索引与删除记录 —
+`experiments/` — `observe/`（本机看板；会花钱、会停进程）— `tests/`（`shared/` 与 `backends/<id>/` 分层；规则见 `tests/README.md`）— `runs/`（产物，已被 git 忽略）。
+
+各目录的约定见 `backends/README.md`、`targets/README.md`、`kernels/README.md`、`tests/README.md`。

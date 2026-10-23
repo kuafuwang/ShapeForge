@@ -1,11 +1,11 @@
 # 可信 harness 试点
 
-这份文档是试点协议，不是自动执行器。它不发模型请求、不启动 GPU；`taic run`/`resume` 会产生费用，只有明确批准后才跑。
+这份文档是试点协议，不是自动执行器。它不发模型请求、不启动 GPU；`taic run`/`resume` 会产生费用，只有明确批准后才跑。**历史说明**：本文是 2026-10-22 阶段 A 的协议快照；阶段 B 的付费试点后来已经执行过三次，结果见 [可信harness试点结果.md](可信harness试点结果.md)。下面“阶段 B 才考虑”保留为当时计划，不是当前状态。
 
 ## 前置
 
-1. 先完成 `experiments.apply_feedback_audit`，让存量 174 条有审查标签。
-2. 在目标硬件的 `targets/<target_id>/trust.toml` 里，由人给两个委员会的两个不同 provider/model 授予 `overlay:tip`。信任绑定 task、effort、prompt sha 和协议版本。
+1. 先完成 `experiments.apply_feedback_audit`，让当时存量的 174 条有审查标签。
+2. 在目标硬件的 `targets/<target_id>/trust.toml` 里，由人给两个委员会的两个不同 provider/model 授予 `overlay:tip`。信任绑定 task、effort、`prompt_sha1`（提示函数、模板常量、目标档的 experience/device 与技能文档的 sha256）和协议版本。
 3. 运行配置：`harness_auto = true`、`harness_shadow = true`。影子期只写 `harness_overlay.jsonl`，不注入 TASK；独立 review 判为 useful 的单来源 tip 例外，只在本 run 后续场次 active。`premise` 只有在本场探针、active `overlay:premise` 信任和匹配的 harness 自检记录或外层候选报告同时存在时才可能 active；没有匹配记录时不写 overlay，只保留 `trusted_record=false` 的提案。
 
 ## 试点范围
@@ -31,16 +31,16 @@ uv run python -m taic.cli harness status runs/apple-m4-max/RUN
 ## 停止条件
 
 - 任一条 active 条目被人判为错误或有害：`uv run python -m taic.cli harness disable RUN --by 人名 --reason ...`。
-- 同一模型在该 target/task 上出现确认推翻率越线，`sync_trust_status` 会暂停它的投票权；人仍可随时 revoke。
+- 同一模型在该 target/task 上出现确认推翻率越线（至少 8 条已审 claim、来自至少 2 个 run、refuted 率 ≥25%），`sync_trust_status` 会暂停它的投票权；人仍可随时 revoke。
 - 不要把试点结论复制到另一个硬件；信任、overlay 和 P2 补丁都按 target 分开。
 
 ## 阶段 A 的当前门槛
 
-阶段 A 只做离线加固，不跑付费搜索：
+阶段 A 原计划只做离线加固，不跑付费搜索；阶段 B 的付费搜索后来已在 2026-10-22 执行三次，结果见 [可信harness试点结果.md](可信harness试点结果.md)。以下是阶段 A 的门槛：
 
 - `premise` 需要本场探针、active `overlay:premise` 信任和匹配的 harness 自检记录或外层候选报告；没有记录时只写 shadow。
-- 空占位已有索引墓碑；7 条审计项均已核对，当前所有空占位小节共 18 条墓碑。
+- 空占位已有索引墓碑；7 条审计项均已核对，当时（2026-10-22）所有空占位小节共 18 条墓碑。
 - `tests/shared/test_harness_workflow.py` 覆盖 tip 从双来源/信任到 active TASK，以及 disable 后消失；`premise` 无自检记录时保持 shadow。
 - 自检记录是本机记录，不是密码学签名；阶段 B 仍需人工复核，不能把 `premise` 当形式证明。
 
-阶段 B 才考虑 2–3 道题的 shadow/active 运行，并需要单独的预算与 GPU 批准。单来源 tip 可以走 `taic harness review`（另一个 provider/model、只读、按实际单价算预算），但 review 产生 `reviewed_active`，只在本 run 后续场次使用；它不等于永久 P2，P2 仍由人确认。
+阶段 B 原计划才考虑 2–3 道题的 shadow/active 运行，并需要单独的预算与 GPU 批准；该计划后来已执行，结果见 [可信harness试点结果.md](可信harness试点结果.md)。单来源 tip 可以走 `taic harness review`（另一个 provider/model、只读、按实际单价算预算），但 review 产生 `reviewed_active`，只在本 run 后续场次使用；它不等于永久 P2，P2 仍由人确认。

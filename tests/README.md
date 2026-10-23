@@ -144,7 +144,7 @@ uv run pytest -q -m gpu -n 0                             # GPU 套件串行
 - 不依赖测试执行顺序，不修改其他测试的全局状态；
 - 文件写 `tmp_path`，环境变量用 `monkeypatch`；
 - GPU 测试必须带 `@pytest.mark.gpu`；全局 GPU lock 会串行化真实测量；
-- LLM 测试必须带 `@pytest.mark.llm`，默认套件不运行；
+- LLM 测试必须带 `@pytest.mark.llm`；默认命令没有排除它，会照常收集，所以会花钱的用例只在明确许可下运行，AI 默认用上面的安全命令；
 - 需要独占资源时用锁或 `xdist_group`，不要假设“只有一个 worker”；
 - 少数测试只读仓库里的 `runs/`（例如 `shared/test_observe_turns.py`），
   目录不在时 skip；全新 checkout 的 skip 不是失败。

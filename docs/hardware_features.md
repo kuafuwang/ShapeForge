@@ -6,6 +6,8 @@ Short answer: the detector can say a feature is present in the source or in the 
 
 The rest of this note keeps the paper's feature names, because those names are what the detector matches. A new reader can stop after this paragraph and section 9.
 
+Historical note: the measured peaks quoted in sections 2-3 and the numbers in sections 5-6, plus the A/B status in section 9, are snapshots from the dates printed there or from the 2026-10 calibration. `runs/hw_features/REPORT.md` is regenerated and may differ; these are not current benchmark results. The detector and test counts in section 4 are current as of the 2026-10-23 audit.
+
 Contents: 1 the paper's features (table 1) - 2 their Apple/Metal analogues (table 2) - 3 what an optimal kernel of each task is expected to use (table 3) - 4 the detector - 5 validation - 6 findings - 7 limits - 8 optional ablation - 9 integration.
 
 Page numbers are the page of the PDF (1-15, the number printed at the bottom). "Quoted" text is verbatim from the paper; everything else is a paraphrase. The paper reports speedups of whole kernels; the "because of" attributions below are the authors' explanations, not controlled experiments.
@@ -161,7 +163,7 @@ uv run python -m experiments.hw_features                       # default roots (
 uv run python -m experiments.hw_features runs/apple-m4-max/p1 runs/apple-m4-max/suite_full --out runs/hw_features --jobs 2
 uv run python -m experiments.hw_features --source my_kernel.metal --task gemm [--json] [--no-compile]
 uv run python -m experiments.hw_features --ablate              # prints the optional ablation plan (section 8)
-nice -n 15 uv run pytest tests/backends/metal/test_hw_features.py -q          # 35 tests, no GPU
+nice -n 15 uv run pytest tests/backends/metal/test_hw_features.py -q          # 36 tests, no GPU
 ```
 
 Outputs: `REPORT.md` (tables below), `data.json` (aggregates), `kernels.jsonl` (one report per kernel), `.cache/` (compile cache).
@@ -174,7 +176,7 @@ Outputs: `REPORT.md` (tables below), `data.json` (aggregates), `kernels.jsonl` (
 * **Naive kernels**: none of the 16 `tasks/*/naive.metal` is reported as using a matrix unit or wide accesses (bitdelta's 4-byte `uint` loads aside).
 * **Negative cases**: a feature named only in a comment, only in a string literal, or a plain scalar kernel claim nothing.
 * **Source vs compiler**: over all kernels that compile (428 at the snapshot of section 6), the source-level matrix-unit flag, float-accumulator flag, widest device load, widest device store and the presence of SIMD reductions / shuffles agree with the AIR in 100 % of the cases; threadgroup bytes agree in all but one.
-* **Tests**: `tests/backends/metal/test_hw_features.py`, 35 tests (synthetic matrix / scalar / comment-only / string-only / vector-width / double-buffer / online-softmax / register-prefetch / bit-packing kernels, macros and helper inlining, the generated reference GEMM, all 16 naive kernels, compiled evidence, verdict logic, run loading, the CLI on a fake runs directory, table 3 vs code); compile tests skip when the Metal toolchain is missing.
+* **Tests**: `tests/backends/metal/test_hw_features.py`, 36 tests (synthetic matrix / scalar / comment-only / string-only / vector-width / double-buffer / online-softmax / register-prefetch / bit-packing kernels, macros and helper inlining, the generated reference GEMM, all 16 naive kernels, compiled evidence, verdict logic, run loading, the CLI on a fake runs directory, table 3 vs code); compile tests skip when the Metal toolchain is missing.
 
 ---
 
@@ -211,7 +213,7 @@ To attribute a speedup to one feature, build a variant of the best kernel with o
 
 ## 9. Integration
 
-**Done: feedback to the search loop (opt-in).** The core of the detector now lives in `taic/hwfeatures.py` (importable without `experiments`; `experiments/hw_features.py` is the report CLI on top of it, with its 35 tests; the feedback has its own in `tests/backends/metal/test_hw_feedback.py`). `taic/hwfeedback.py` wraps it: `hw_feedback(task, source, report) -> str | None` returns a block of at most 12 lines / about 150 words for a *correct* candidate, built from the source, the cached AIR compile (about 40 ms, 10 s limit) and the candidate's own roofline; it returns `None` and logs a warning on any failure, on a 20 s overrun, for failed candidates and for tasks without expectations (the semantic tests).
+**Done: feedback to the search loop (opt-in).** The core of the detector now lives in `taic/hwfeatures.py` (importable without `experiments`; `experiments/hw_features.py` is the report CLI on top of it, with its 36 tests; the feedback has its own in `tests/backends/metal/test_hw_feedback.py`). `taic/hwfeedback.py` wraps it: `hw_feedback(task, source, report, *, backend_id=...) -> str | None` returns a block of at most 12 lines / about 150 words for a *correct* candidate, built from the source, the cached AIR compile (about 40 ms, 10 s limit) and the candidate's own roofline; it returns `None` and logs a warning on any failure, on a 20 s overrun, for failed candidates, for tasks without expectations (the semantic tests), and when the backend's `supports_hw_features` capability is false.
 
 * **Switch**: `search.hw_feedback` (`SearchConfig`, default `false`; not in `taic.toml` / `taic.paper.toml`). Turned on by `taic run ... --hw-feedback`, `taic resume ... --hw-feedback`, or `hw_feedback=True` in the search options of a driver (`experiments.p1_runs` run `fa_flash_hw`). Recorded in `run_config.json`; `taic resume` keeps it (`SEARCH_FIELDS`), and for runs without `run_config.json` it is read from the recorded system prompt (Skill 2c present).
 * **Where the block goes**: `Orchestrator._rounds` appends it to the evidence string that already carries the profiler evidence. That string is written into this round's `TASK.md`; `render_contract` caps the whole evidence block at 600 bytes, so a long hardware block can lose its tail in the task file. There is no separate planner request. Skill 2c is still appended to the stored `system_prompt.txt`; the `pi` session is not given that file.
@@ -223,6 +225,6 @@ To attribute a speedup to one feature, build a variant of the best kernel with o
 
 **Not done** (other agents own these files):
 
-* **Dashboard**: opening the run detail computes the feature grid from that run's candidates (`taic/policy.py` `feature_signature`). It does not score the grid with a model.
+* **Dashboard**: opening the run detail computes the feature grid from that run's candidates (`taic/policy.py` `feature_signature(source, backend_id=...)`). It does not score the grid with a model.
 * **Run results**: `taic.orchestrator` could store the summary in `result.json` (`best_features`) at the end of a run, so older and newer runs are comparable without re-analysis.
 * **Turning it on by default** is not recommended before more than one A/B pair says it helps.

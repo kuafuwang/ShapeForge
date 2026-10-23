@@ -1,6 +1,6 @@
 # DeepSeek Harness 的 Web 可观测
 
-这篇记的是别人的网页怎样看见一场会话，不是本仓库的看板。本仓库的看板仍由 `observe` 读 `runs/` 里的目录，实时靠轮询，没有他们那条 WebSocket。
+这篇记的是别人的网页怎样看见一场会话，不是本仓库的看板。本仓库的看板仍由 `observe` 读 `runs/` 里的目录；实时更新走自己的 SSE（`/api/v2/stream`）加回合轮询，没有他们那条复用的 WebSocket。
 
 这篇对过 `/Users/kuafu/workspace/deepseek-harness` 本地检出 `687f282e86`（2026-10-17，`dsh` 0.2.1-rc.2）。那个检出不在本仓库里。浏览器入口是 `apps/web`。`packages/web/web` 是搜索和抓取，没有页面事件通道。
 
@@ -123,4 +123,4 @@ Web 默认是「详细」，并且「回答结束后收起」。
 
 ## 这篇不改本仓库的看板
 
-本仓库的看板仍由 `observe` 读运行目录。上面是 DeepSeek Harness 在 `687f282e86` 上的 Web 做法。
+本仓库的看板仍由 `observe` 读运行目录，实时更新是单向 SSE 加回合轮询，不是他们的多路复用 WebSocket。上面是 DeepSeek Harness 在 `687f282e86` 上的 Web 做法。

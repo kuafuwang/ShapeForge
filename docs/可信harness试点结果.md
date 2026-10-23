@@ -1,5 +1,7 @@
 # 可信 harness 试点结果（2026-10-22）
 
+> **历史快照**：下面的数字和结论是 2026-10-22 写作时从当时运行目录读到的。第三次 run 目录之后被续跑/加过预算，当前 `result.json` 可能与本文不同；凡涉及“当前发布状态”的地方，以运行目录里的 `result.json` / `confirm_report.json` 和 `experiments.common.conclusion_of_run` 为准。
+
 ## 运行
 
 - run：`runs/apple-m4-max/harness-pilot-shadow-20261022`
@@ -9,20 +11,20 @@
 
 ## 结果
 
-| 场次 | 委员会 | 模型 | 搜索加速比 | 费用 | 反馈 |
+| 场次 | 委员会 | 模型 | 搜索加速比 | 累计费用（当时记录） | 反馈 |
 | --- | --- | --- | ---: | ---: | --- |
 | init | first | deepseek-flash | 1.1389 | $0.2548 | 7 条，`kinds=none` |
 | r1.p0 | first | deepseek-flash | 0.9791 | $0.7030 | 6 条，`kinds=none` |
 | r2.p0 | second | kimi-k3 | 1.0479 | $2.1803 | 3 条，`kinds=none` |
 | r3.p0 | first | deepseek-flash | 1.1605（新种子） | $2.6658 | 8 条，`kinds=none` |
 
-确认复测：`r3.p0` 三批中位数 **1.1389x**，确认状态 `ok`，发布状态 `confirmed`。搜索最好值仍是 `1.1605x`，两者不能混写。
+确认复测：`r3.p0` 三批中位数 **1.1389x**，确认状态 `ok`，发布状态 `confirmed`。搜索最好值仍是 `1.1605x`，两者不能混写。表中“累计费用”是截至该场的花费，不是单场费用；单场费用可从 `transcript.jsonl` 的 `agent` 行重算。
 
 ## 这次试点发现了什么
 
 - **0 条结构化提案、0 条 overlay、0 条决策**。四场反馈都只有「给下一棒的避坑提示」和「被否决的前提」，没有「对系统的建议」或「需要帮助」，所以模型没有机会写 `harness-proposal` 块。
 - 因此这次只验证了**反馈收集、信任登记、shadow 路径未误触发**；没有验证模型真的会使用结构化提案，也没有验证 active overlay 对搜索的影响。
-- 空占位为 0；说明 fbv3 的占位过滤在这几场正常。
+- 空占位为 0；说明当时的 fbv3 占位过滤在这几场正常（当前解析器是 fbv4）。
 - 确认复测与搜索值的差距（1.1605 → 1.1389）符合已有测量门槛：搜索期看快，确认期用独立批次。
 
 ## 结论
@@ -78,7 +80,7 @@ deepseek 提出“评测报告里打印每个 stage 的编译器寄存器用量�
 
 ## 第三次：reviewed_active 端到端
 
-第三次运行：`runs/apple-m4-max/harness-pilot-active-20261022`，预算上限 $5，实际 **$2.4661**，4 个 session，因人工把预算降到已花费附近而停在 `budget_exhausted`。
+第三次运行：`runs/apple-m4-max/harness-pilot-active-20261022`，预算上限 $5，当时实际 **$2.4661**，4 个 session，因人工把预算降到已花费附近而停在 `budget_exhausted`。这是 `result.before_topup_2.json` 的快照；该目录后来继续加预算并续跑，当前 `result.json` 是 7 个 session、$7.1035、胜者 `r4.p0`、确认 1.1811x、发布 `confirmed`。
 
 | 场次 | 模型 | 搜索加速比 | 结果 |
 | --- | --- | ---: | --- |
@@ -87,10 +89,10 @@ deepseek 提出“评测报告里打印每个 stage 的编译器寄存器用量�
 | r2.p0 | kimi-k3 | — | `agent_failed`，没有交核；费用 $1.268 |
 | r3.p0 | deepseek-flash | 1.1151 | 未超过 r1；没有新种子 |
 
-确认复测：`r1.p0` 三批中位数 **1.1448x**，但 `confirmed_values` 是 1.1692 / 1.1448 / 1.1445，极差约 2.16% > 2%，所以 **publication = 不确定**，没有发布数字。搜索最好值 1.1378x 也不能拿来对外。
+确认复测：`r1.p0` 三批中位数 **1.1448x**，但 `confirmed_values` 是 1.1692 / 1.1448 / 1.1445，极差约 2.16% > 2%，所以当时 **publication = 不确定**，没有发布数字。搜索最好值 1.1378x 也不能拿来对外。这是历史快照；续跑后当前胜者和确认值已经变化（见上）。
 
-自动 review 在 r1 后运行：kimi 判 `useful=true`、confidence 0.8，实际 **$0.118**，生成 `reviewed_active`。但这个 run 启动时用的是 `_session_brief` 旧逻辑，且 `harness_shadow=true`；r2/r3 的 `TASK.md` 都没有 overlay。之后修复了 TASK 的 overlay 预留预算；新代码会在下一场保留 active overlay。
+自动 review 在 r1 后运行：kimi 判 `useful=true`、confidence 0.8，实际 **$0.118**，生成 `reviewed_active`。但这个 run 启动时用的是 `_session_brief` 旧逻辑，且 `harness_shadow=true`；r2/r3 的 `TASK.md` 都没有 overlay。之后修复了 TASK 的 overlay 预留预算；修复后的组 TASK 代码会先把 active overlay 放进块列表，但本次 run 在修复前已经跑完，无法用它的场次验证。
 
 这个 run 的 P2 patch 已被用户认可，应用到 `targets/apple-m4-max/experience.md`；`harness_decisions.jsonl` 的 `promotion_approval` 记录 `applied_by=kuafu` 和离线测试结果（901 passed, 1 skipped）。这仍是 target 级建议，不是测量结论。
 
-三次运行累计约 **$6.00**（$3.53 + $2.466），仍低于 $15。
+三次运行累计约 **$6.00**（$3.53 + $2.466），仍低于 $15。这个合计也是历史快照；续跑后的实际花费以 `result.json` 的 `spent_usd` 为准（当前约 $7.1035）。

@@ -18,11 +18,13 @@ hmz exec -f taic/flows/kernel_once
     -p wrap_output_tokens=<收尾回合的输出 token>
     -p wrap_minutes=<收尾回合分钟>
     -p submit_name=<交卷文件名>
+    -p seed_name=kernel.metal
     -p budget.duration=<整场分钟>m
+    --json
     -- "Read TASK.md in this directory and do it. Write the finished kernel to <交卷文件名>. The search does not read kernel.metal."
 ```
 
-`submit_name` 是 `{题目}-{dtype}-{规模}-{场次}.metal`。少了它，`kernel_once` 会回落到 `submit.metal`，而搜索只读 `TASK.md` 里写的那份交卷文件。
+`submit_name` 是 `{题目}-{dtype}-{规模}-{场次}.metal`。少了它，`kernel_once` 会回落到 `submit.metal`，而搜索只读 `TASK.md` 里写的那份交卷文件。`seed_name` 默认也是 `kernel.metal`；它只用于收尾提示里点名种子文件，实际写入的种子文件由搜索按本场契约放置，交卷文件仍由 `submit_name` 决定。`--json` 让 `hmz` 把 `spent` 等记录写成一行行 JSON，搜索据此记账。
 
 单场美元上限是剩余预算和 `relay_budget_usd`（默认 2 美元）里较小的那个，再按该委员会的输出单价换成 `turn_output_tokens`。不是把剩余美元原样交给 `budget.cost`。
 
