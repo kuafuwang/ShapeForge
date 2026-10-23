@@ -1,6 +1,7 @@
 """Write a short failure handoff an agent can read without the full traceback.
 
-On a call-phase failure the plugin writes ``logs/pytest/triage/<nodeid>.md`` with a
+On a call-phase failure the plugin writes ``logs/pytest/triage/<worker>/<nodeid>.md``
+in an xdist run (the controller also writes a root ``triage_summary.md``) with a
 JSON block (schema ``ai_lowerling_failure_handoff/v1``) between
 ``---BEGIN_AI_FAILURE_HANDOFF---`` and ``---END_AI_FAILURE_HANDOFF---``.
 That block is the ground truth: node id, error kind, a capped
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from . import run_logs
 
 SCHEMA = "ai_lowerling_failure_handoff/v1"
 BEGIN = "---BEGIN_AI_FAILURE_HANDOFF---"
@@ -54,9 +57,10 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     config.stash[_RECORDS] = []
     if _disabled(config):
         return
-    triage = _triage_dir(config)
-    if triage.exists():
-        shutil.rmtree(triage)
+    if _worker_id(config) == "master":
+        triage = _triage_dir(config)
+        if triage.exists():
+            shutil.rmtree(triage)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -76,6 +80,8 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if _disabled(config):
         return
     records = list(config.stash.get(_RECORDS, []))
+    if _worker_id(config) == "master":
+        records = _read_manifest_records(_triage_root(config)) or records
     if records:
         _write_summary(config, records)
 
@@ -85,6 +91,8 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pyte
     if _disabled(config):
         return
     records = list(config.stash.get(_RECORDS, []))
+    if _worker_id(config) == "master" and not records:
+        records = _read_manifest_records(_triage_root(config))
     if not records:
         return
     terminalreporter.write_sep("=", "AI failure handoff")
@@ -100,8 +108,36 @@ def _disabled(config: pytest.Config) -> bool:
     return bool(config.getoption("--no-failure-handoff", default=False))
 
 
-def _triage_dir(config: pytest.Config) -> Path:
+def _worker_id(config: pytest.Config) -> str:
+    return run_logs.worker_id(config)
+
+
+def _triage_root(config: pytest.Config) -> Path:
     return Path(config.rootpath) / "logs" / "pytest" / "triage"
+
+
+def _triage_dir(config: pytest.Config) -> Path:
+    root = _triage_root(config)
+    worker = _worker_id(config)
+    return root if worker == "master" else root / worker
+
+
+def _read_manifest_records(root: Path) -> list[dict[str, Any]]:
+    """Read worker manifests for the controller's aggregate summary."""
+    records: list[dict[str, Any]] = []
+    for path in sorted(root.glob("*/manifest.jsonl")):
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                records.append(row)
+    return records
 
 
 def _git_short(root: Path) -> str:
@@ -128,6 +164,7 @@ def _record_failure(item: pytest.Item, call: pytest.CallInfo[None], report: pyte
         md_path = triage / f"{_sanitize_nodeid(item.nodeid)}.md"
         md_path.write_text(_render(item.nodeid, payload), encoding="utf-8")
         record = {
+            "worker": payload["worker"],
             "nodeid": item.nodeid,
             "error_kind": payload["error_kind"],
             "exc_type": payload["exception"]["type"],
@@ -157,9 +194,16 @@ def _payload(item: pytest.Item, excinfo: pytest.ExceptionInfo[BaseException] | N
     message = "" if excinfo is None else str(excinfo.value)
     lines = message.splitlines()
     rel, lineno = _source(item, excinfo)
+    log_path = run_logs.current_test_log(item)
+    log_text = run_logs.log_tail(log_path)
+    try:
+        log_rel = str(log_path.resolve().relative_to(Path(item.config.rootpath).resolve())) if log_path else ""
+    except (OSError, ValueError):
+        log_rel = str(log_path) if log_path else ""
     return {
         "schema": SCHEMA,
         "git_short": item.config.stash.get(_GIT, "unknown"),
+        "worker": _worker_id(item.config),
         "nodeid": item.nodeid,
         "source": {"file": rel, "lineno": lineno},
         "markers": _markers(item),
@@ -172,6 +216,7 @@ def _payload(item: pytest.Item, excinfo: pytest.ExceptionInfo[BaseException] | N
         "params": _params(item),
         "feedback": _feedback(eval_report),
         "minimal_repro_cmd": _repro(item),
+        "per_test_log": {"path": log_rel, "tail": log_text},
         "environment": {key: os.environ.get(key, "") for key in ENV_KEYS},
     }
 

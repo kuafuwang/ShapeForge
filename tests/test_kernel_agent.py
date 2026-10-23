@@ -287,9 +287,13 @@ def _real_brief(tmp_path, task_name: str) -> SessionBrief:
     from tasks import get_task
 
     task = get_task(task_name, "fp16", "paper")
-    work = tmp_path / "agent_work" / "r1"
+    # The contract budget includes the absolute work path. Keep this rendering-only
+    # fixture short so xdist's longer ``popen-gwN`` temp paths do not test the path
+    # length instead of the block priority under test.
+    root = Path("/tmp/taic-kernel-test")
+    work = root / "agent_work" / "r1"
     return SessionBrief(
-        repo=tmp_path, task_name=task_name, dtype="fp16", size="paper",
+        repo=root, task_name=task_name, dtype="fp16", size="paper",
         kernel_name=task.contract.kernel_name, triton_source=task.triton_source,
         description=task.description, contract_text=task.contract.describe(),
         abi_stub=task.contract.abi_stub(), rtol=task.rtol, atol_rel=task.atol_rel,

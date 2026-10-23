@@ -26,10 +26,10 @@ uv run python -m tcenv.cli tasks                       # the 12 kernels (+ phase
 uv run python -m tcenv.cli naive gemm                  # harness self-check: a hand-written kernel through the whole pipeline
 uv run python -m tcenv.cli eval softmax my_kernel.metal
 uv run python -m taic.cli run softmax --budget 1.0     # let the LLM lower one kernel with a $1 smoke budget (default: the paper's $15, see Budget)
-uv run pytest -q                                       # environment, orchestrator (scripted LLM), experiment scripts
+uv run pytest -q                                       # parallel by default (`-n auto --dist worksteal`)
 ```
 
-When a test fails, read `logs/pytest/triage/triage_summary.md`, then the markdown file it points at. The JSON block between `---BEGIN_AI_FAILURE_HANDOFF---` and `---END_AI_FAILURE_HANDOFF---` is the ground truth for that failure (status, feedback, and a single-process reproduce command). Re-run with the command at the top of that file. Leave it single-process: the GPU also drives the display, so the suite does not use `-n`.
+When a test fails, read `logs/pytest/triage/triage_summary.md`, then the markdown file it points at. The JSON block between `---BEGIN_AI_FAILURE_HANDOFF---` and `---END_AI_FAILURE_HANDOFF---` is the ground truth for that failure (status, feedback, per-test log tail, and a single-process reproduce command). Re-run with the command at the top of that file with `-n 0` when debugging; the default suite uses `-n auto --dist worksteal` and GPU tests still serialize on the machine-wide GPU lock. Per-worker logs and triage paths are described in `tests/README.md`.
 
 Configuration is in `taic.toml`, with the paper's search budget layered on top by the `paper` preset `taic.paper.toml` (see Budget); credentials
 are never stored in the repository (they are read from the file named there, or from `OPENAI_API_KEY` / `OPENAI_BASE_URL`) and are redacted in

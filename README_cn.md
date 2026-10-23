@@ -31,7 +31,7 @@ uv run python -m tcenv.cli tasks                       # 12 个内核（+ 第二
 uv run python -m tcenv.cli naive gemm                  # 测试框架自检：一个手写内核走完整条流水线
 uv run python -m tcenv.cli eval softmax my_kernel.metal
 uv run python -m taic.cli run softmax --budget 1.0     # 让大模型 lowering 一个内核，这里只给 $1 冒烟预算（默认是论文的 $15，见「预算」）
-uv run pytest -q                                       # 环境、编排器（脚本化的大模型）、实验脚本
+uv run pytest -q                                       # 默认并行（`-n auto --dist worksteal`）
 ```
 
 配置在 `taic.toml` 里，论文的搜索预算由 `paper` 预设 `taic.paper.toml` 叠加在其上（见「预算」）；凭据从不写入仓库（从该文件所指的路径读取，或从 `OPENAI_API_KEY` / `OPENAI_BASE_URL` 读取），并会在每一份记录里被打码。
