@@ -53,7 +53,10 @@ Put the measured number and the probe file name in `NOTES.md`. An unmeasured lim
 Read this section before comparing two versions or deleting a piece to see what it costs.
 
 - Time two versions in one process, alternating, and read the median. One `--timed` number drifts by a few percent. Do not rank two versions by two separate runs.
-- After you delete a piece, check that the compiler did not delete the work upstream of it. A sink that lives only in a branch that never runs takes the whole region with it.
+- After you delete a piece, check that the compiler did not delete or sink the work upstream of it. A sink that lives only in a branch that never runs can take the whole region with it.
+- A delete can also change register allocation: dropping output components may free accumulator registers and change unrolling. The measured delta then overstates the deleted logic. Use a **same-instruction-count control that only varies register pressure**, and check the compiler's register/spill evidence when available.
+- A never-executed branch is not automatically a safe ablation control. The compiler may still sink the region into it. Make the sink observable in a stored output, or use a same-instruction-count variant instead.
+- Treat an ablation delta as untrusted until the control agrees. If the controlled delta is much smaller, report that; do not put the naive delta in `NOTES.md` as the feature's cost.
 - If you split the time into parts, the parts have to add up to the total. When they do not, check the measurement before you explain the kernel.
 
 ## Notes
