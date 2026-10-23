@@ -323,3 +323,20 @@ def test_an_active_harness_overlay_is_a_budgeted_task_block(tmp_path):
     assert "未验证的模型建议" in text
     assert "先读 device.md" in text
     assert len(text.encode("utf-8")) <= 12_000
+
+
+def test_a_full_overlay_survives_a_contract_that_already_used_the_budget(tmp_path):
+    brief = _real_brief(tmp_path, "conv2d")
+    brief.harness_overlay = (
+        "\n# 未验证的模型建议（不是合同，不是事实）\n"
+        "以下条目由两个模型在本硬件上各自提出并经人授予的信任放行；它们仍是线索，合同和实测数字优先。\n"
+        "- [apple-m4-max/harness-pilot-active-20261022 #2] "
+        "Add a tcenv.cli ab subcommand that compiles several kernel files, times them interleaved "
+        "in one process over rotating buffer sets, and prints per-file median wall time and cv.\n"
+    )
+    brief.scorecard = "scorecard " * 1000
+    brief.notes_summary = "notes " * 1000
+    text = render_contract(brief)
+    assert "Add a tcenv.cli ab subcommand" in text
+    assert "需要时读取" in text
+    assert len(text.encode("utf-8")) <= 12_000

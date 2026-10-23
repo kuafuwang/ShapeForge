@@ -34,9 +34,13 @@
   .badge.exhausted { background: var(--amber); color: #fff; }
   .badge.near { background: #fde047; color: #4a3b00; }
   #hist-tools { margin-bottom: 8px; }
-  #budget-modal, #settings-modal, #delete-modal, #feedback-modal, #stage-modal, #term-modal, #query-modal, #harness-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
-  #budget-modal.open, #settings-modal.open, #delete-modal.open, #feedback-modal.open, #stage-modal.open, #term-modal.open, #query-modal.open, #harness-modal.open { display: flex; }
-  #budget-modal .box, #settings-modal .box, #delete-modal .box, #feedback-modal .box, #stage-modal .box, #term-modal .box, #query-modal .box, #harness-modal .box { background: var(--card); border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); }
+  #budget-modal, #settings-modal, #delete-modal, #feedback-modal, #stage-modal, #term-modal, #query-modal, #harness-modal, #convert-modal { position: fixed; inset: 0; background: rgba(20, 22, 28, .45); display: none; align-items: center; justify-content: center; z-index: 50; }
+  #budget-modal.open, #settings-modal.open, #delete-modal.open, #feedback-modal.open, #stage-modal.open, #term-modal.open, #query-modal.open, #harness-modal.open, #convert-modal.open { display: flex; }
+  #budget-modal .box, #settings-modal .box, #delete-modal .box, #feedback-modal .box, #stage-modal .box, #term-modal .box, #query-modal .box, #harness-modal .box, #convert-modal .box { background: var(--card); border-radius: 14px; padding: 18px 20px; width: min(520px, 94vw); }
+  #convert-modal .box { width: min(680px, 94vw); max-height: 88vh; overflow: auto; }
+  #convert-modal form label { display: block; margin: 8px 0; }
+  #convert-modal input, #convert-modal select, #convert-modal textarea { width: 100%; box-sizing: border-box; }
+  #convert-modal textarea { min-height: 72px; }
   #harness-modal .box { width: min(900px, 94vw); max-height: 88vh; display: flex; flex-direction: column; }
   #harness-modal .harness-body { min-height: 0; overflow: auto; }
   #harness-modal table td { vertical-align: top; }
@@ -51,6 +55,8 @@
   #harness-modal .h-review { margin: 2px 0; }
   #harness-modal .h-promote { border: 1px solid var(--blue); color: var(--blue); background: #eef5fc; border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
   #harness-modal .h-promote:disabled { opacity: .55; cursor: wait; }
+  #harness-modal .h-convert, #harness-modal .h-review-run { border: 1px solid var(--line); color: var(--text); background: #f4f5f7; border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
+  #harness-modal .h-convert:disabled, #harness-modal .h-review-run:disabled { opacity: .55; cursor: wait; }
   #term-modal .box { width: min(640px, 94vw); max-height: 86vh; display: flex; flex-direction: column; }
   #term-query { width: 100%; margin: 8px 0; flex: none; }
   #term-results { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
@@ -364,6 +370,32 @@
       <a id="harness-raw" href="#" target="_blank" rel="noopener" class="muted">原始 JSON（只读）</a>
       <button type="button" id="harness-close">关闭</button>
     </div>
+  </div>
+</div>
+<div id="convert-modal" role="dialog" aria-modal="true" aria-labelledby="convert-modal-title">
+  <div class="box">
+    <h3 id="convert-modal-title">自由文本 → 结构化提案</h3>
+    <p class="muted" id="convert-source"></p>
+    <form id="convert-form">
+      <label>surface
+        <select name="surface">
+          <option value="skill">skill（P2，需人审）</option>
+          <option value="task_wording">task_wording（P2，需人审）</option>
+          <option value="tip">tip（P1，需要本场探针）</option>
+          <option value="premise">premise（P1，需要本场探针和自检记录）</option>
+        </select>
+      </label>
+      <label>action（一句祈使句）<textarea name="action" maxlength="500"></textarea></label>
+      <label>evidence.probe（相对本场工作目录；tip/premise 必填）<input name="probe" placeholder="probe.py"></label>
+      <label>evidence.measurement（可选）<input name="measurement" placeholder="123.4 us"></label>
+      <label>rationale（可选）<textarea name="rationale" maxlength="1000"></textarea></label>
+      <p class="muted">这一步只写本 run 的结构化提案，不调用模型。确认后才会出现在下面的提案表；要送 LLM review，再点那条提案的「送 LLM review」。</p>
+      <p class="feedback-error" id="convert-error"></p>
+      <div class="actions">
+        <button type="submit" id="convert-save">确认转结构化</button>
+        <button type="button" id="convert-close">关闭</button>
+      </div>
+    </form>
   </div>
 </div>
 <div id="feedback-modal" role="dialog" aria-modal="true" aria-labelledby="feedback-modal-title">
@@ -1717,6 +1749,7 @@ function harnessWho(row) {
 function harnessStatus(row) {
   if (row.status !== "valid") return `<span class="red">拒绝</span><div class="sub">${esc(row.reason || "")}</div>`;
   const surface = (row.proposal || {}).surface;
+  if (surface === "skill" || surface === "task_wording") return "P2 候选";
   if (surface === "premise" && !row.trusted_record) return `通过<div class="sub">没有匹配的自检行，只进影子</div>`;
   return surface === "premise" ? "通过（自检匹配）" : "通过";
 }
@@ -1772,6 +1805,9 @@ function harnessPromotionCell(row, promotion) {
   }
   const review = row.review || null;
   if (review && review.useful === true) {
+    if (row.surface === "skill" || row.surface === "task_wording") {
+      return `<span class="h-badge h-yes">P2 候选</span><div class="sub h-review">review 有用 · 共享表面需人审改代码</div>`;
+    }
     return `<button type="button" class="h-promote" data-hpromote="${esc(row.key)}">固化到本地</button><div class="sub h-review">P2 候选 · review 有用 · 立即生效</div>`;
   }
   if (review && review.useful === false) {
@@ -1786,14 +1822,16 @@ function harnessMarkup(doc) {
   const reviews = doc.reviews || [];
   const decisions = doc.decisions || [];
   const overlay = doc.overlay || [];
+  const suggestions = doc.suggestions || [];
   const state = control.disabled
     ? `<b>overlay 已停用</b>（${esc(control.by || "人")}${control.reason ? "：" + esc(control.reason) : ""}）`
     : "<b>overlay 启用</b>";
-  const head = `<p class="muted">${state}。review 过与未 review 过分开显示；只有 <b>review 有用</b> 或双来源一致的条目才可能进入本 run 的后续 TASK，且运行结束失效。P2 列：review 有用后点 <b>固化到本地</b> 会立刻改本地 checkout，不等 git；之后用 <code>taic harness commit</code> 提交，change_ref 到那时才是 <code>commit:…</code>。</p>`;
-  if (!proposals.length && !reviews.length && !decisions.length && !overlay.length) {
+  const head = `<p class="muted">${state}。review 过与未 review 过分开显示；只有 <b>review 有用</b> 或双来源一致的条目才可能进入本 run 的后续 TASK，且运行结束失效。P2 列：review 有用后点 <b>固化到本地</b> 会立刻改本地 checkout，不等 git；之后用 <code>taic harness commit</code> 提交，change_ref 到那时才是 <code>commit:…</code>。自由文本建议先由人确认转结构化，再点「送 LLM review」；转换本身不调用模型。</p>`;
+  if (!proposals.length && !reviews.length && !decisions.length && !overlay.length && !suggestions.length) {
     return head + `<p>这场没有结构化提案。</p><p class="sub">只有模型在 FEEDBACK.md 的「对系统的建议」里写出 <code>harness-proposal</code> 代码块，这里才会出现条目；普通文字建议不会自动进 overlay。命令行 <code>taic harness status RUN_DIR</code> 看到的是同一份只读 JSON。</p>`;
   }
   const actions = new Map(proposals.map((row) => [row.proposal_key, (row.proposal || {}).action || ""]));
+  const proposalsByKey = new Map(proposals.map((row) => [row.proposal_key, row]));
   const reviewByKey = new Map(reviews.map((row) => [row.proposal_key, row]));
   const promotionByKey = new Map();
   for (const row of decisions) {
@@ -1805,10 +1843,24 @@ function harnessMarkup(doc) {
       promotionByKey.set(row.proposal_key, { ...(promotionByKey.get(row.proposal_key) || {}), ...row });
     }
   }
+  const suggestionRows = suggestions.map((row) => {
+    const proposal = proposalsByKey.get(row.converted_key);
+    const review = proposal ? reviewByKey.get(row.converted_key) : null;
+    const source = `<div>${esc(row.text || "")}</div><div class="sub">${esc(row.label || "")} · ${esc(row.provider || "")}/${esc(row.model || "")}</div>`;
+    let action;
+    if (!row.converted_key) {
+      action = `<button type="button" class="h-convert" data-convert-seq="${esc(num(row.seq))}" data-convert-digest="${esc(row.digest)}" data-convert-text="${esc(row.text || "")}">人确认后转结构化</button>`;
+    } else if (review) {
+      action = review.useful === true ? `<span class="h-badge h-yes">review 有用</span>` : `<span class="h-badge h-no">review 不建议</span>`;
+    } else {
+      action = `<button type="button" class="h-review-run" data-review-key="${esc(row.converted_key)}">送 LLM review</button>`;
+    }
+    return `<tr><td>${esc(num(row.seq))} · ${esc(row.label || "")}</td><td>${source}</td><td>${action}</td></tr>`;
+  }).join("");
   const proposalRows = proposals.map((row) => {
     const proposal = row.proposal || {};
     const review = reviewByKey.get(row.proposal_key);
-    return `<tr><td>${esc(num(row.seq))}</td><td>${esc(harnessWho(row))}</td><td>${esc(HARNESS_SURFACE[proposal.surface] || proposal.surface || "")}</td><td>${esc(proposal.action || "")}</td><td>${harnessEvidence(row)}</td><td>${harnessStatus(row)}</td><td>${harnessReviewCell(row, review)}</td><td>${harnessPromotionCell({ review, key: row.proposal_key }, promotionByKey.get(row.proposal_key))}</td></tr>`;
+    return `<tr><td>${esc(num(row.seq))}</td><td>${esc(harnessWho(row))}</td><td>${esc(HARNESS_SURFACE[proposal.surface] || proposal.surface || "")}</td><td>${esc(proposal.action || "")}</td><td>${harnessEvidence(row)}</td><td>${harnessStatus(row)}</td><td>${harnessReviewCell(row, review)}</td><td>${harnessPromotionCell({ review, key: row.proposal_key, surface: proposal.surface }, promotionByKey.get(row.proposal_key))}</td></tr>`;
   }).join("");
   const decisionRows = decisions.map((row) => `<tr><td>${esc(row.event === "promotion" ? (row.status === "local" ? "P2 本地固化" : "P2 固化") : (row.event === "promotion_approval" ? "P2 确认" : (row.event === "promotion_commit" ? "P2 git 提交" : (HARNESS_DECISION[row.decision] || row.decision || ""))))}</td><td>${esc(actions.get(row.proposal_key) || row.proposal_key || "")}</td><td>${esc((row.models || []).join("、"))}${row.change_ref ? `<div class="sub">${esc(row.change_ref)}</div>` : ""}${row.applied_by ? `<div class="sub">确认人 ${esc(row.applied_by)} · ${esc(row.tests_run || "未记录测试")}</div>` : ""}</td><td>${esc(num(row.source_seq))}</td></tr>`).join("");
   const overlayRows = overlay.map((row) => `<tr><td>${harnessOverlayCell(row)}</td><td>${esc(row.surface || "")}</td><td>${esc(row.text || "")}</td><td>${esc(row.protocol_version || "")}</td><td>${esc(num(row.source_seq))}</td></tr>`).join("");
@@ -1817,13 +1869,34 @@ function harnessMarkup(doc) {
     const verdict = row.useful === true ? `<span class="h-badge h-yes">有用</span>` : (row.useful === false ? `<span class="h-badge h-no">不建议</span>` : `<span class="h-badge h-none">未完成</span>`);
     return `<tr><td>${esc(reviewer)}</td><td>${verdict}</td><td>${esc(String(row.confidence ?? ""))}</td><td>${esc(row.evidence || "")}</td><td>${esc(row.risk || "")}</td><td>${esc(row.cost_usd == null ? "" : "$" + Number(row.cost_usd).toFixed(4))}</td></tr>`;
   }).join("");
-  const blocks = [proposalRows
+  const blocks = [];
+  if (suggestionRows) {
+    blocks.push(`<h4>自由文本系统建议（未结构化，LLM 不会自动 review）</h4>` + harnessTable(["来源", "建议", "转换 / review"], suggestionRows));
+  }
+  blocks.push(proposalRows
     ? `<h4>提案</h4>` + harnessTable(["轮", "提出者", "种类", "动作", "证据", "校验", "review", "P2 固化"], proposalRows)
-    : `<h4>提案</h4><p class="muted">没有。</p>`];
+    : `<h4>提案</h4><p class="muted">没有。</p>`);
   if (reviewRows) blocks.push(`<h4>review</h4>` + harnessTable(["reviewer", "结论", "confidence", "证据", "风险", "成本"], reviewRows));
   if (decisionRows) blocks.push(`<h4>决策</h4>` + harnessTable(["决策", "动作", "来源模型", "轮"], decisionRows));
   if (overlayRows) blocks.push(`<h4>overlay</h4>` + harnessTable(["状态", "种类", "文本", "协议", "来源"], overlayRows));
   return head + blocks.join("");
+}
+
+function openConvert(button) {
+  const modal = document.getElementById("convert-modal");
+  const form = document.getElementById("convert-form");
+  const source = button.dataset.convertText || "";
+  modal.dataset.seq = button.dataset.convertSeq;
+  modal.dataset.digest = button.dataset.convertDigest;
+  modal.dataset.source = source;
+  document.getElementById("convert-source").textContent = source;
+  document.getElementById("convert-error").textContent = "";
+  form.querySelector('[name="surface"]').value = "skill";
+  form.querySelector('[name="action"]').value = source.replace(/^[-*]\s*/, "").slice(0, 500);
+  form.querySelector('[name="probe"]').value = "";
+  form.querySelector('[name="measurement"]').value = "";
+  form.querySelector('[name="rationale"]').value = "";
+  modal.classList.add("open");
 }
 
 async function openHarness() {
@@ -1839,6 +1912,27 @@ async function openHarness() {
     if (!response.ok) throw new Error("读取失败：HTTP " + response.status);
     host.innerHTML = harnessMarkup(await response.json());
     host.onclick = async (event) => {
+      const convertButton = event.target.closest("[data-convert-seq]");
+      if (convertButton) {
+        openConvert(convertButton);
+        return;
+      }
+      const reviewButton = event.target.closest("[data-review-key]");
+      if (reviewButton) {
+        if (!window.confirm("送 LLM review 会调用一个模型并产生费用；继续？")) return;
+        const key = reviewButton.dataset.reviewKey;
+        reviewButton.disabled = true;
+        reviewButton.textContent = "review 中…";
+        try {
+          await postJson("/api/runs/" + selectedRun.split("/").map(encodeURIComponent).join("/") + "/harness/" + encodeURIComponent(key) + "/review", {});
+          await openHarness();
+        } catch (error) {
+          reviewButton.disabled = false;
+          reviewButton.textContent = "review 失败";
+          reviewButton.title = error.message;
+        }
+        return;
+      }
       const button = event.target.closest("[data-hpromote]");
       if (!button) return;
       const key = button.dataset.hpromote;
@@ -1858,6 +1952,36 @@ async function openHarness() {
   }
 }
 
+document.getElementById("convert-close").addEventListener("click", () => document.getElementById("convert-modal").classList.remove("open"));
+document.getElementById("convert-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const modal = document.getElementById("convert-modal");
+  const form = document.getElementById("convert-form");
+  const error = document.getElementById("convert-error");
+  const button = document.getElementById("convert-save");
+  button.disabled = true;
+  error.textContent = "";
+  try {
+    await postJson("/api/runs/" + selectedRun.split("/").map(encodeURIComponent).join("/") + "/harness/convert", {
+      seq: Number(modal.dataset.seq),
+      digest: modal.dataset.digest,
+      surface: form.querySelector('[name="surface"]').value,
+      action: form.querySelector('[name="action"]').value,
+      probe: form.querySelector('[name="probe"]').value,
+      measurement: form.querySelector('[name="measurement"]').value,
+      rationale: form.querySelector('[name="rationale"]').value,
+      by: "dashboard",
+      mode: "manual",
+      confirm: true,
+    });
+    modal.classList.remove("open");
+    await openHarness();
+  } catch (exc) {
+    error.textContent = exc.message;
+  } finally {
+    button.disabled = false;
+  }
+});
 document.getElementById("harness-badge").addEventListener("click", openHarness);
 document.getElementById("harness-close").addEventListener("click", () => document.getElementById("harness-modal").classList.remove("open"));
 document.getElementById("feedback-badge").addEventListener("click", () => {

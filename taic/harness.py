@@ -179,6 +179,7 @@ def validate_proposal(
     work: Path,
     started: float,
     allow_premise: bool = True,
+    allow_p2: bool = False,
 ) -> dict:
     """Return a normalized proposal or raise ProposalError. This does not call a model or GPU."""
     if not isinstance(doc, dict):
@@ -186,7 +187,7 @@ def validate_proposal(
     surface = str(doc.get("surface") or "").strip()
     if surface not in SURFACES:
         raise ProposalError(f"surface must be one of {list(SURFACES)}")
-    if surface not in P1_SURFACES:
+    if surface not in P1_SURFACES and not allow_p2:
         raise ProposalError("only tip and premise may take effect in a run; skill and task_wording need P2")
     if surface == "premise" and not allow_premise:
         raise ProposalError("premise overlays are disabled")
@@ -208,7 +209,10 @@ def validate_proposal(
     action = _clean_action(doc.get("action") or "")
     if re.search(r"[;；\n]|&&|\|\||\$\(|`", action):
         raise ProposalError("action must be one plain sentence without shell or code syntax")
-    _reject_never_auto(action)
+    if surface in P1_SURFACES:
+        _reject_never_auto(action)
+    elif re.search(r"[;；]|&&|\|\||\$\(|`", action):
+        raise ProposalError("action must be one plain sentence without shell or code syntax")
     evidence = doc.get("evidence") if isinstance(doc.get("evidence"), dict) else {}
     probe = str(evidence.get("probe") or "").strip()
     measurement = str(evidence.get("measurement") or "").strip()
@@ -887,6 +891,149 @@ def commit_local_promotions(run_dir: Path, *, message: str, by: str = "cli", roo
     return {"committed": True, "change_ref": change_ref, "commit": sha, "paths": paths, "proposals": [row.get("proposal_key") for row in pending]}
 
 
+def free_text_suggestions(run_dir: Path) -> list[dict]:
+    """System suggestions that never became a fenced ``harness-proposal`` block.
+
+    A human may confirm one of these and then convert it manually or with an AI into a
+    structured row. The conversion is explicit: this function only reads; it never writes
+    a proposal or sends anything to a model.
+    """
+    run_dir = Path(run_dir)
+    proposals = _read_jsonl(run_dir / PROPOSAL_FILE)
+    converted: dict[tuple[int, str], str] = {}
+    for row in proposals:
+        digest = str(row.get("claim_digest") or "")
+        seq = row.get("seq")
+        if digest and isinstance(seq, int):
+            converted[(seq, digest)] = str(row.get("proposal_key") or "")
+    out, seen = [], set()
+    for record in _read_jsonl(run_dir / "feedback.jsonl"):
+        seq = record.get("seq")
+        if not isinstance(seq, int):
+            continue
+        for item in record.get("items") or []:
+            if not isinstance(item, dict) or item.get("section") != "对系统的建议":
+                continue
+            text = str(item.get("text") or "").strip()
+            digest = str(item.get("digest") or "")
+            if not text or not digest or "harness-proposal" in text:
+                continue
+            key = (seq, digest)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({
+                "seq": seq,
+                "digest": digest,
+                "text": text,
+                "label": record.get("label") or "",
+                "run_id": record.get("run_id") or run_dir.name,
+                "task": record.get("task") or "",
+                "dtype": record.get("dtype") or "",
+                "provider": record.get("provider") or "",
+                "model": record.get("model") or "",
+                "committee": record.get("committee") or "",
+                "t": record.get("t"),
+                "work_dir": record.get("work_dir") or "",
+                "converted_key": converted.get(key, ""),
+            })
+    return out
+
+
+def convert_feedback(
+    run_dir: Path,
+    *,
+    seq: int,
+    digest: str,
+    target_id: str,
+    task: str,
+    dtype: str = "",
+    surface: str,
+    action: str,
+    probe: str = "",
+    measurement: str = "",
+    rationale: str = "",
+    by: str = "cli",
+    confirm: bool = False,
+    mode: str = "manual",
+) -> dict:
+    """Turn one human-confirmed free-text suggestion into a structured proposal row.
+
+    The source text remains attached as provenance. This writes only the local run's
+    ``harness_proposals.jsonl``; it does not run a reviewer. ``confirm`` is the human gate.
+    """
+    if not confirm:
+        raise ProposalError("converting free text requires explicit human confirmation")
+    run_dir = Path(run_dir)
+    source = next((
+        row for row in free_text_suggestions(run_dir)
+        if int(row.get("seq") or 0) == int(seq) and str(row.get("digest") or "") == str(digest)
+    ), None)
+    if source is None:
+        raise ProposalError("no unconverted free-text suggestion with that seq/digest")
+    if source.get("converted_key"):
+        raise ProposalError("this suggestion has already been converted")
+    records = [row for row in _read_jsonl(run_dir / "feedback.jsonl") if row.get("seq") == int(seq)]
+    record = records[0] if records else {}
+    work_rel = str(record.get("work_dir") or source.get("work_dir") or f"agent_work/{source.get('label') or 'unknown'}")
+    work = (run_dir / work_rel).resolve()
+    started = float(record.get("t") or 0.0)
+    doc = {
+        "surface": str(surface or "").strip(),
+        "scope": {"target_id": target_id, "task": task, "dtype": dtype},
+        "action": action,
+        "evidence": {"probe": probe, "measurement": measurement},
+        "rationale": rationale,
+    }
+    normalized = validate_proposal(
+        doc, target_id=target_id, task=task, dtype=dtype, work=work, started=started,
+        allow_premise=True, allow_p2=True,
+    )
+    row = {
+        "schema_version": SCHEMA_VERSION,
+        "event": "proposal",
+        "t": time.time(),
+        "run_id": str(record.get("run_id") or run_dir.name),
+        "seq": int(seq),
+        "label": record.get("label") or source.get("label") or "",
+        "committee": record.get("committee") or source.get("committee") or "",
+        "provider": record.get("provider") or source.get("provider") or "",
+        "model": record.get("model") or source.get("model") or "",
+        "effort": record.get("effort") or "",
+        "target_id": target_id,
+        "task": task,
+        "dtype": dtype,
+        "status": "valid",
+        "reason": "",
+        "proposal_key": normalized["proposal_key"],
+        "proposal": {
+            "surface": normalized["surface"],
+            "scope": normalized["scope"],
+            "action": normalized["action"],
+            "evidence": normalized["evidence"],
+            "rationale": normalized["rationale"],
+        },
+        "probe_path": normalized["probe_path"],
+        "probe_sha256": normalized["probe_sha256"],
+        "probe_mtime": normalized["probe_mtime"],
+        "claim_digest": str(digest),
+        "trusted_record": False,
+        "trusted_reason": "converted free text; no harness self-check gate",
+        "origin": "conversion",
+        "conversion": {
+            "source_seq": int(seq),
+            "source_digest": str(digest),
+            "source_text": str(source.get("text") or ""),
+            "source_section": "对系统的建议",
+            "confirmed_by": str(by or "cli"),
+            "mode": str(mode or "manual"),
+            "confirmed_at": time.time(),
+        },
+    }
+    _append_jsonl(run_dir / PROPOSAL_FILE, row)
+    return row
+
+
 def board(run_dir: Path) -> dict:
     run_dir = Path(run_dir)
     proposals = _read_jsonl(run_dir / PROPOSAL_FILE)
@@ -901,6 +1048,7 @@ def board(run_dir: Path) -> dict:
         "reviews": reviews,
         "decisions": decisions,
         "overlay": overlay,
+        "suggestions": free_text_suggestions(run_dir),
     }
 
 

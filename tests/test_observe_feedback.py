@@ -309,5 +309,43 @@ def test_a_fbv3_placeholder_gets_a_tombstone_even_on_a_fresh_index(tmp_path, mon
 
 def test_the_harness_panel_distinguishes_reviewed_from_unreviewed():
     page = Path("observe/static/index.html").read_text()
-    for needle in ("未 review", "review 有用", "review 不建议", "h-yes", "h-no", "reviewed_active", "reviewer", "P2 固化", "P2 候选", "change_ref", "固化到本地", "本地已固化", "promotion_commit"):
+    for needle in ("未 review", "review 有用", "review 不建议", "h-yes", "h-no", "reviewed_active", "reviewer", "P2 固化", "P2 候选", "change_ref", "固化到本地", "本地已固化", "promotion_commit", "自由文本系统建议", "人确认后转结构化", "送 LLM review", "convert-modal"):
         assert needle in page
+
+
+def test_compact_suggestions_group_by_digest_and_fetch_one_full_text(tmp_path, monkeypatch):
+    from observe.suggestions import compact, detail
+
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = parse_feedback("# 对系统的建议\n- 请加一个配对报告。\n")
+    _run(runs, "conv", _record(parsed), started_at=50)
+    index.sync_known()
+    digest = parsed["items"][0]["digest"]
+    compact_doc = compact(task="conv2d", status="pending", limit=10, preview=5)
+    assert compact_doc["total_claims"] == 1
+    group = compact_doc["groups"][0]
+    assert group["digest"] == digest and group["runs"] == 1
+    assert group["preview"].endswith("…") and len(group["preview"]) <= 6
+    full = detail("conv", 1, digest)
+    assert full["text"] == "请加一个配对报告。"
+    assert full["converted_key"] == "" and full["reviews"] == []
+
+
+def test_the_suggestions_http_endpoints_are_compact_and_detailed(tmp_path, monkeypatch):
+    from starlette.testclient import TestClient
+
+    from observe.app import app
+
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = parse_feedback("# 对系统的建议\n- 请加一个配对报告。\n")
+    _run(runs, "conv", _record(parsed), started_at=50)
+    index.sync_known()
+    digest = parsed["items"][0]["digest"]
+    with TestClient(app) as client:
+        compact_response = client.get("/api/v2/suggestions", params={"task": "conv2d", "preview": 8, "limit": 5})
+        assert compact_response.status_code == 200
+        doc = compact_response.json()
+        assert doc["groups"][0]["digest"] == digest
+        assert len(doc["groups"][0]["preview"]) <= 9
+        full = client.get("/api/v2/suggestion", params={"run": "conv", "seq": 1, "digest": digest})
+        assert full.status_code == 200 and full.json()["text"] == "请加一个配对报告。"

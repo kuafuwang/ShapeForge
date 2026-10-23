@@ -532,6 +532,19 @@ def harness_board(run_id: str) -> dict | None:
     return board(directory)
 
 
+def suggestions(**kwargs) -> dict:
+    """Compact free-text suggestions for AI; full text is a separate detail call."""
+    from observe.suggestions import compact
+
+    return compact(**kwargs)
+
+
+def suggestion(run_id: str, seq: int, digest: str) -> dict:
+    from observe.suggestions import detail
+
+    return detail(run_id, seq, digest)
+
+
 def feedback_board(*, since: int | None = None) -> dict:
     """Claims changed after ``since``. Omit ``since`` for the whole list. Text is read only for rows in the answer."""
     from observe.feedback import review_feed

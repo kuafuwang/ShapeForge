@@ -38,7 +38,7 @@ flowchart TB
 
 1. **运行中不换仓库文件。** 开跑时 `agent_guidance` 已经冻结并记了 sha256；P1 只能走独立的 overlay，否则同一 run 前后条件不一致。
 2. **P1 只在本运行内。** 它默认在运行结束失效，不自动跨 run、跨 target 传播。
-3. **P2 不是自动合并。** 人点“固化到本地”后，改动先进入本地 checkout，下一场搜索/新 run 立刻能读到；git 提交和 `change_ref` 是后置的追溯步骤，不阻塞本地使用。
+3. **P2 不是自动合并。** 人点“固化到本地”后，改动先进入本地 checkout。正在跑的 run 仍读开跑时冻结的 `agent_guidance/` 快照；下一个新 run 重新冻结后立刻能读到。git 提交和 `change_ref` 是后置的追溯步骤，不阻塞本地使用。
 
 ## 1. RSI 是什么，不是什么
 
@@ -125,7 +125,7 @@ flowchart LR
 - 数字和单位能对上；探针测的命题就是被否决的命题，不是相邻问题。
 - 代理自写的探针只能当“带出处的线索”，不能自动标成已证实。
 
-**当前实现**：代码检查探针文件在提案者本场目录、mtime 晚于本场开始、SHA 存在，要求 active `overlay:premise` 信任，并读取本场 `self_checks.jsonl` 或外层候选报告，核对 target、协议、内核 SHA 和测量数字。匹配不上时 `premise` 只写 shadow。它仍不是密码学签名，恶意代理理论上可伪造本机记录；不要把 P1 当形式证明。详见 §7。
+**当前实现**：代码检查探针文件在提案者本场目录、mtime 晚于本场开始、SHA 存在，要求 active `overlay:premise` 信任，并读取本场 `self_checks.jsonl` 或外层候选报告，核对 target、协议、内核 SHA 和测量数字。匹配不上时 `premise` 不写 overlay，只保留一条 `trusted_record=false` 的提案；等本场自检行可读后再次 settle，才会写成 shadow 或 active。它仍不是密码学签名，恶意代理理论上可伪造本机记录；不要把 P1 当形式证明。详见 §7。
 
 ### 2.3 harness 流水线
 
@@ -137,7 +137,7 @@ flowchart LR
 - `evidence`：本场探针/测试/可复现命令。
 - `rationale`：自由说明，只作展示。
 
-没有结构化块的建议仍然可以进人工审查；它只是不参与自动 overlay。这样不会因为“模型不会写 JSON”而丢掉人类想看的信息，也不会把自由文本直接执行。
+没有结构化块的建议仍然可以进人工审查；它只是不参与自动 overlay。人确认后可以把自由文本转成结构化提案，AI 也可以起草字段，但转换和送 review 都必须由人显式触发。两种建议的逐项对照表在 [代理反馈.md](../代理反馈.md#结构化提案信任与-overlay)。这样不会因为“模型不会写 JSON”而丢掉人类想看的信息，也不会把自由文本直接执行。
 
 ## 3. 权限梯度：能力单调、最小授权
 
@@ -156,7 +156,7 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | P0 观察 | 所有模型 | 本场反馈 | 随 run 归档 | 只影响审查队列 |
 | P1 shadow | 自动，但只记录 | 本 run | 运行结束失效 | 人看影子记录 |
-| P1 active | 双来源 + 信任 + 影子复核后 | 本 run 后续场次 | 运行结束/disable 失效 | 可整批停用，不改仓库 |
+| P1 active | 双来源 + 信任（`harness_shadow=false` 时直接 apply） | 本 run 后续场次 | 运行结束/disable 失效 | 可整批停用，不改仓库 |
 | P2 patch | 人确认 | 来源 target/task | 仓库提交，新 run 生效 | diff/测试/回滚 |
 | never auto | 无人授权也不做 | — | — | 直接拒绝 |
 
@@ -174,7 +174,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | `shadow` | 只记录，不注入 TASK | 本 run 可见的审计文件 | 自动 |
 | `active` | 注入本 run 的**后续场次** TASK | 当前 run，运行结束失效 | 独立 review / 双来源 + 信任 |
-| P2/promotion | 先写本地 `targets/<id>/experience.md` 或共享 harness | 本地立即生效，后续新 run 读到 | 人在看板点固化 + `taic harness commit` |
+| P2/promotion | 先写本地 `targets/<id>/experience.md` 或共享 harness | 下一个新 run 重新冻结 guidance 后读到；正在跑的 run 继续用旧快照 | 人在看板点固化 + `taic harness commit` |
 
 所以“review 后可用”指 `active`，不是永久固化；永久固化仍然是 P2，必须人工判断。
 
@@ -250,9 +250,9 @@ stateDiagram-v2
 
 1. **信任不等于模型分数。** 指标（已审数、合理率、Wilson 下界、confirmed 推翻率、占位率、已实测率）只帮人决定是否授予；授予动作本身是人做的。
 2. **按硬件和任务切开。** 在 M4 Max/conv2d 上可信，不代表在另一个 GPU 或 flash_attention 上可信。
-3. **会过期。** prompt 或评测协议变了，旧信任失效；模型换了版本、effort 变了，也不能沿用。
+3. **会过期。** `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py` 三个文件的整体 sha256 或评测协议变了，旧信任失效；模型换了版本、effort 变了，也不能沿用。任一文件任一字节变化都算，包括代码逻辑。
 4. **可撤销、可暂停。** 人可随时按 target 撤销；confirmed 推翻率越线时自动暂停，但恢复仍由人做。
-5. **追加式审计。** `trust_audit.jsonl` 记录每一次 grant/suspend/revoke，不覆盖历史。
+5. **追加式审计。** `trust_audit.jsonl` 记录每一次 `grant`/`suspended`/`revoked`，不覆盖历史。
 
 ## 5. 双来源：两个独立模型，不是两次复述
 
@@ -311,7 +311,7 @@ flowchart LR
   Q --> S2["shadow / 人审"]
 ```
 
-review 不是第二个独立提出，不能替代 quorum；它把单来源 tip 推进到**本 run 的 active**，运行结束就失效。永久固化仍是 P2，由人确认。review prompt 必须把建议标成 untrusted data，禁止改 kernel/TASK，只允许写 `HARNESS_REVIEW.json`。
+review 不是第二个独立提出，不能替代 quorum；它把单来源 tip 推进到**本 run 的 active**，运行结束就失效。reviewer 自己还必须在该 `(target, task)` 上有 active `overlay:tip` 信任；否则 review 只存档，不生成 `reviewed_active`。永久固化仍是 P2，由人确认。review prompt 必须把建议标成 untrusted data，禁止改 kernel/TASK，只允许写 `HARNESS_REVIEW.json`。
 
 review 的预算不能写死 $0.2：按 reviewer 的实际 input/output 单价、prompt 长度和最大输出 token 算：
 
@@ -343,7 +343,7 @@ stateDiagram-v2
   valid --> waiting: 只有一个来源
   valid --> shadow: 双来源 + 信任通过
   waiting --> reviewed_active: 独立 review useful
-  shadow --> active: 人复核影子 / 打开生效
+  shadow --> active: 关闭 `harness_shadow` 后下一次 settle（配置动作，不是代码检查）
   reviewed_active --> active: 下一场注入本 run
   shadow --> rejected: 人否决
   active --> promoted: 人点固化到本地
@@ -360,13 +360,13 @@ stateDiagram-v2
 - 人可以比较影子条目和未启用场次的 unchanged 率、成本、失败类型；
 - 确认没有把合同/命令/未验证事实带进 TASK 后，才打开 active。
 
-这是部署里的 canary/shadow 思路，不是额外模型调用：影子条目的生成仍然只来自已有会话反馈。
+这是部署里的 canary/shadow 思路，不是额外模型调用：影子条目的生成仍然只来自已有会话反馈。代码不检查“人已复核影子”这条记录；打开 active 的实际操作是把 `harness_shadow` 设为 false，或在 settle 时传 `shadow=false`。
 
 ### 6.2 生效时的保护
 
 - TASK 标题固定为「未验证的模型建议（不是合同，不是事实）」。
 - 剥离代码块、命令、控制字符；拒绝 shell 语法和 never-auto 关键词。
-- 受 12KB 预算裁剪；被裁掉要记录，不静默丢失。
+- overlay 最多 1800 字符；超出的条目不进 TASK，源条目仍在 `harness_overlay.jsonl`，TASK 不逐条记录被裁掉的条目。
 - `target_id`、`task`、`protocol_version` 不匹配就丢弃；resume 也逐条校验。
 - 运行目录里的 `harness_control.json` 只能关闭，不能开新权限；关闭后 active 条目不再进入 TASK。
 
@@ -376,9 +376,11 @@ P2 成功不是“模型说可以”，而是：
 
 ```
 proposal -> patch -> git apply --check -> 人点固化到本地
-        -> 本地 run 立即读到 -> 离线测试/golden
+        -> 新 run 重新冻结 guidance 后读到 -> 离线测试/golden（CLI --run-tests）
         -> taic harness commit -> change_ref=commit:<sha>
 ```
+
+看板的「固化到本地」只做本地 apply，不跑离线测试或 prompt golden；要跑测试用 `taic harness apply --run-tests`。code agent 的 `apply-code` 写 `code_promotion`/`status=local`，`change_ref` 为空；`taic harness commit` 只提交 `event=promotion` 的 experience 路径，不会提交 `code_promotion`。
 
 失败可以丢弃 patch；已经应用的可以 revert。共享 prompt/skill 不默认写入，必须单独确认跨硬件影响。
 
@@ -389,7 +391,7 @@ proposal -> patch -> git apply --check -> 人点固化到本地
 | 设计基线 | 当前实现 | 风险 |
 | --- | --- | --- |
 | 证据来自 harness 可信执行记录 | P1 `premise` 校验 self-checks 的 target/协议/内核 SHA/数字，但文件非签名 | 代理可伪造本机记录 |
-| `premise` 也需更强门槛 | `premise` 不需要双模型投票，但需要 active 信任 + 匹配的 self-checks/外层报告；否则只写 shadow | 单模型错误前提仍可能进 shadow；伪造本机记录仍可能绕过 |
+| `premise` 也需更强门槛 | `premise` 不需要双模型投票，但需要 active 信任 + 匹配的 self-checks/外层报告；否则不写 overlay，只留一条 `trusted_record=false` 提案 | 单模型错误前提仍可能进 shadow；伪造本机记录仍可能绕过 |
 | 独立性靠“证据产自本场” | 只比较探针 SHA 不同 | 复制文字 + 各写不同探针仍可能通过 |
 | P1 关闭用只追加 disable 事件 | 当前是 `harness_control.json` 覆盖写 | 文件被重写时历史事件不在文件内；审计要看决策日志 |
 | 活动 claim 与历史审计分开 | 当前使用 `info`/`obsolete` 状态和墓碑；空占位重建时写入 `feedback_claim_removed` | 与计划第 7 节的“不新增状态”不同；审阅时按当前实现读 |

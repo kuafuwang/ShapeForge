@@ -1,8 +1,8 @@
 {
 "_meta": {
-"git_commit": "c572e754d0b91ab3e0ac6ef341e86a4f85203175",
-"reason": "TASK asks for an early submission and preserves the active overlay budget",
-"recorded_at": "2026-10-22T21:55:33+08:00"
+"git_commit": "d5f1a00aaca18dbf238d49576e84ba951c185b09",
+"reason": "TASK fixes an active reviewed harness overlay by placing it before the current-site block and fitting the omission note into the remaining bytes",
+"recorded_at": "2026-10-23T08:24:00+08:00"
 },
 "feedback": {
 "format_feedback_cut|compile_error": "STATUS: compile_error  (stage reached: compile)\nMetal compiler rejected the kernel\n\nMetal compiler errors (line numbers refer to your kernel source):\nkernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n",
@@ -27,11 +27,11 @@
 },
 {
 "label": "1",
-"sha": "97fd0f2610f02c2ed09e64247b932d3846d573c1"
+"sha": "14f33baa010229f8ce9b49a5b8770afa941d8199"
 }
 ],
 "requests": 2,
-"sha": "80fbd67b716143260c89d6644e161aec4286e9cc"
+"sha": "13edd1dc537f8bbc81504c96c8af9fee5232e401"
 },
 "orchestrator|gemm|plan_mix=1": {
 "each": [

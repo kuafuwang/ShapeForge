@@ -427,6 +427,10 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
     out = "\n".join(lines) + "\n"
     blocks: list[tuple[str, str]] = []
     if not brief.seedless:
+        # An active reviewed tip is more important than the scorecard. Put it before the
+        # optional current-site block so a nearly full contract cannot squeeze it out.
+        if overlay_text:
+            blocks.append(("本运行 harness overlay", overlay_text))
         context = ["", "# 当前现场", f"种子在 `kernel.metal`。交卷写 `{submit}`，不要改种子文件。"]
         if brief.scorecard:
             context += ["", "外层成绩单：", _cap_task(brief.scorecard, 1000)]
@@ -435,8 +439,6 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         blocks.append(("当前现场", "\n".join(context) + "\n"))
         if brief.failure:
             blocks.append(("上一轮外层失败反馈", "\n\n上一轮外层失败反馈：\n" + _cap_task(brief.failure, 1000)))
-        if overlay_text:
-            blocks.append(("本运行 harness overlay", overlay_text))
         if brief.notes_summary:
             blocks.append((
                 "上一轮 NOTES",
@@ -461,10 +463,10 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         blocks.append(("本任务前序避坑提示", "\n\n" + _PEER_HEADER + "\n" + _cap_task(brief.peer_tips, 1500)))
 
     omitted: list[str] = []
-    # Reserve room for the omission note and for an active harness overlay. Without the
-    # overlay reserve, a full scorecard can silently consume the whole budget and the
-    # reviewed tip never reaches the next session.
-    limit = max(0, max_bytes - 420 - len(overlay_text.encode("utf-8")))
+    # The active overlay is already first in ``blocks``. Reserve only a small note when
+    # the overlay is present; reserving the full note as well would leave no room for a
+    # nearly full contract plus the reviewed tip.
+    limit = max(0, max_bytes - (200 if overlay_text else 420))
     for name, text in blocks:
         room = limit - len(out.encode("utf-8"))
         if room <= 0:
@@ -475,8 +477,7 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
             # instead of dropping the whole block and leaving the agent without its scorecard.
             # Also leave the active overlay its reserved bytes even when the current-site
             # block would otherwise fit exactly.
-            reserve = len(overlay_text.encode("utf-8")) if overlay_text else 0
-            cap = max(0, room - reserve - 60)
+            cap = max(0, room - 120)
             if cap >= 80:
                 trimmed = _cap_task(text, cap)
                 if trimmed:
@@ -489,11 +490,16 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
             continue
         omitted.append(name)
     if omitted:
-        note = (
+        full_note = (
             "\n\n# 本轮省略（上下文预算）\n"
             f"以下段落因 {max_bytes} 字节预算未附：" + "、".join(omitted) + "。\n"
             "全文在本目录的 NOTES.md、FEEDBACK.md、feedback.jsonl 和 state.json；需要时读取，不要假设它们为空。\n"
         )
+        compact_note = (
+            "\n\n# 本轮省略（上下文预算）\n"
+            "全文在本目录的 NOTES.md、FEEDBACK.md、feedback.jsonl 和 state.json；需要时读取，不要假设它们为空。\n"
+        )
+        note = compact_note if overlay_text else full_note
         room = max_bytes - len(out.encode("utf-8"))
         if room > 0:
             out += _clip_bytes(note, room)

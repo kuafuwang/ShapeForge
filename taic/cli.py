@@ -496,10 +496,24 @@ def cmd_query(a: argparse.Namespace) -> int:
             print("query sessions needs --run RUN_ID", file=sys.stderr)
             return 5
         data = retrieval.sessions(a.run, limit=a.limit)
+    elif what == "suggestions":
+        data = retrieval.suggestions(
+            task=a.task, target=a.target, model=a.model, status=a.status,
+            limit=a.limit, preview=a.preview,
+        )
+    elif what == "suggestion":
+        if not a.run or a.seq is None or not a.digest:
+            print("query suggestion needs --run RUN_ID --seq N --digest DIGEST", file=sys.stderr)
+            return 5
+        try:
+            data = retrieval.suggestion(a.run, a.seq, a.digest)
+        except (FileNotFoundError, KeyError) as exc:
+            print(f"suggestion not found: {exc}", file=sys.stderr)
+            return 5
     else:
         data = retrieval.models()
     if a.jsonl and isinstance(data, dict):
-        rows = data.get("runs") or data.get("best") or data.get("failures") or data.get("sessions") or data.get("models")
+        rows = data.get("runs") or data.get("best") or data.get("failures") or data.get("sessions") or data.get("models") or data.get("groups")
         if isinstance(rows, list):
             for row in rows:
                 print(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
@@ -641,6 +655,23 @@ def cmd_harness(a: argparse.Namespace) -> int:
             print(json.dumps(code_agent.apply_code_patch(
                 run, proposal_key=a.key, check_only=a.check, run_tests=a.run_tests, approved_by=a.by,
             ), ensure_ascii=False, indent=2, default=str))
+        elif a.harness_action == "convert":
+            if not a.confirm:
+                print("converting free text requires --confirm (the human gate)", file=sys.stderr)
+                return 5
+            run_cfg = json.loads((run / "run_config.json").read_text(encoding="utf-8")) if (run / "run_config.json").is_file() else {}
+            target_id = str(a.target or (run_cfg.get("target") or {}).get("id") or "apple-m4-max")
+            task = str(a.task or run_cfg.get("task") or "")
+            dtype = str(a.dtype or run_cfg.get("dtype") or "")
+            if not task:
+                print("cannot infer task; pass --task", file=sys.stderr)
+                return 5
+            row = harness.convert_feedback(
+                run, seq=a.seq, digest=a.digest, target_id=target_id, task=task, dtype=dtype,
+                surface=a.surface, action=a.action, probe=a.probe, measurement=a.measurement,
+                rationale=a.rationale, by=a.by, confirm=True, mode=a.mode,
+            )
+            print(json.dumps(row, ensure_ascii=False, indent=2, default=str))
         elif a.harness_action == "commit":
             try:
                 print(json.dumps(harness.commit_local_promotions(run, message=a.message, by=a.by), ensure_ascii=False, indent=2))
@@ -776,11 +807,16 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--lift-count-limits", action="store_true", help="also continue a run that stopped because it used its round limit or its patience")
     r.set_defaults(fn=cmd_resume)
     q = sub.add_parser("query", help="read-only queries over the observe index (no model call, no GPU)")
-    q.add_argument("what", choices=["runs", "best", "failures", "sessions", "models", "capabilities"])
+    q.add_argument("what", choices=["runs", "best", "failures", "sessions", "models", "capabilities", "suggestions", "suggestion"])
     q.add_argument("--task", default=None)
+    q.add_argument("--target", default=None)
+    q.add_argument("--model", default=None)
     q.add_argument("--publication", default=None)
     q.add_argument("--status", default=None)
     q.add_argument("--run", default=None)
+    q.add_argument("--seq", type=int, default=None)
+    q.add_argument("--digest", default=None)
+    q.add_argument("--preview", type=int, default=120, help="suggestions: preview characters per digest")
     q.add_argument("--min-speedup", type=float, default=None)
     q.add_argument("--sort", default="started", choices=["started", "speedup", "spent"])
     q.add_argument("--cursor", default=None)
@@ -844,6 +880,21 @@ def main(argv: list[str] | None = None) -> int:
     hse.add_argument("--task", required=True)
     hse.add_argument("--protocol-version", default=None)
     hse.add_argument("--active", action="store_true", help="write an active overlay; default is shadow only")
+    hv = hs.add_parser("convert")
+    hv.add_argument("run_dir")
+    hv.add_argument("--seq", type=int, required=True)
+    hv.add_argument("--digest", required=True)
+    hv.add_argument("--surface", required=True, choices=["tip", "premise", "skill", "task_wording"])
+    hv.add_argument("--action", required=True)
+    hv.add_argument("--probe", default="")
+    hv.add_argument("--measurement", default="")
+    hv.add_argument("--rationale", default="")
+    hv.add_argument("--target", default=None)
+    hv.add_argument("--task", default=None)
+    hv.add_argument("--dtype", default=None)
+    hv.add_argument("--by", default="cli", help="person confirming the conversion")
+    hv.add_argument("--mode", default="manual", choices=["manual", "ai"], help="who filled the structured fields")
+    hv.add_argument("--confirm", action="store_true", help="human confirmation gate")
     hk = hs.add_parser("commit")
     hk.add_argument("run_dir")
     hk.add_argument("--message", required=True)

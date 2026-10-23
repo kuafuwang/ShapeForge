@@ -220,6 +220,105 @@ def promote_harness(run_id: str, proposal_key: str, *, root: Path | None = None)
             raise Refused(400, str(exc)) from exc
 
 
+def convert_harness(run_id: str, seq: int, digest: str, body: dict) -> dict:
+    """Human-confirmed conversion of one free-text suggestion into a structured proposal.
+
+    The human click is the gate. The conversion itself is local and deterministic; it does
+    not call an LLM. ``mode=ai`` only records that an AI filled the fields; the person still
+    confirms the write.
+    """
+    from taic.harness import ProposalError, convert_feedback, free_text_suggestions
+
+    run_dir = _run_dir(run_id)
+    if body.get("confirm") is not True:
+        raise Refused(400, "conversion needs explicit human confirmation")
+    suggestions = free_text_suggestions(run_dir)
+    source = next((row for row in suggestions if int(row.get("seq") or 0) == int(seq) and str(row.get("digest") or "") == str(digest)), None)
+    if source is None:
+        raise Refused(404, "no unconverted free-text suggestion with that seq/digest")
+    run_cfg = json.loads((run_dir / "run_config.json").read_text(encoding="utf-8")) if (run_dir / "run_config.json").is_file() else {}
+    scope = run_cfg.get("target") if isinstance(run_cfg.get("target"), dict) else {}
+    target_id = str(body.get("target_id") or scope.get("id") or "apple-m4-max")
+    task = str(body.get("task") or run_cfg.get("task") or "")
+    dtype = str(body.get("dtype") or run_cfg.get("dtype") or "")
+    if not task:
+        raise Refused(400, "run has no task; cannot convert")
+    mode = str(body.get("mode") or "manual")
+    if mode not in ("manual", "ai"):
+        raise Refused(400, "mode must be manual or ai")
+    try:
+        return convert_feedback(
+            run_dir, seq=seq, digest=digest, target_id=target_id, task=task, dtype=dtype,
+            surface=str(body.get("surface") or ""), action=str(body.get("action") or ""),
+            probe=str(body.get("probe") or ""), measurement=str(body.get("measurement") or ""),
+            rationale=str(body.get("rationale") or ""), by=str(body.get("by") or "dashboard"),
+            confirm=True, mode=mode,
+        )
+    except ProposalError as exc:
+        raise Refused(400, str(exc)) from exc
+
+
+def review_harness(run_id: str, proposal_key: str, body: dict) -> dict:
+    """Run one explicit independent review for a structured (usually converted) proposal.
+
+    This spends a model call only after a person clicks the button; it never reviews free
+    text implicitly. The existing review budget and trust semantics are unchanged.
+    """
+    from taic import trust as trust_mod
+    from taic.committees import load_committees
+    from taic.kernel_agent import Prices
+    from taic.llm import load_config, load_raw_config
+    from taic import review as review_mod
+    from taic import harness
+
+    run_dir = _run_dir(run_id)
+    proposals = [row for row in harness.board(run_dir)["proposals"] if row.get("status") == "valid" and row.get("proposal_key") == proposal_key]
+    if not proposals:
+        raise Refused(404, "no valid proposal with that key")
+    proposal = proposals[0]
+    if any(row.get("event") == "review" and row.get("proposal_key") == proposal_key for row in harness.board(run_dir)["reviews"]):
+        raise Refused(409, "this proposal already has a review")
+    run_cfg = json.loads((run_dir / "run_config.json").read_text(encoding="utf-8")) if (run_dir / "run_config.json").is_file() else {}
+    recorded = run_cfg.get("committees") if isinstance(run_cfg.get("committees"), list) else []
+    provider, model = str(body.get("provider") or ""), str(body.get("model") or "")
+    if not provider or not model:
+        peers = [c for c in recorded if isinstance(c, dict) and c.get("name") != proposal.get("committee")]
+        members = (peers[0].get("members") if peers else None) or []
+        if not members or not isinstance(members[0], dict):
+            raw = load_raw_config(None, "base")
+            cfg, _ = load_config(None, preset="base")
+            configured = load_committees(raw, active=cfg)
+            peers = [c for c in configured if c.name != proposal.get("committee")] or configured
+            members = [{"provider": m.provider, "model": m.model} for c in peers for m in c.members]
+        if not members or not isinstance(members[0], dict):
+            raise Refused(400, "cannot choose a reviewer; pass provider and model")
+        provider, model = str(members[0].get("provider") or ""), str(members[0].get("model") or "")
+    raw = load_raw_config(None, "base")
+    cfg, _ = load_config(None, preset="base")
+    committees = load_committees(raw, active=cfg)
+    member = next((m for c in committees for m in c.members if m.provider == provider and m.model == model), None)
+    if member is None:
+        raise Refused(400, f"reviewer {provider}/{model} is not in the configured committees")
+    prices = Prices(member.cfg.price_in, member.cfg.price_out, member.cfg.price_cache_read, member.cfg.price_cache_write)
+    work = run_dir / "harness_reviews" / proposal_key
+    prompt = review_mod.build_review_prompt(proposal.get("proposal") or {}, run_id=str(proposal.get("run_id") or run_dir.name))
+    plan = review_mod.estimate_review_budget(prices, prompt)
+    try:
+        verdict = review_mod.run_review(
+            work, prompt=prompt, provider=provider, model=model,
+            effort=member.cfg.reasoning_effort, prices=prices,
+        )
+    except review_mod.ReviewError as exc:
+        raise Refused(502, str(exc)) from exc
+    review_mod.append_review(run_dir, proposal, verdict)
+    settled = harness.settle(
+        run_dir, target_id=str(proposal.get("target_id") or ""), task=str(proposal.get("task") or ""),
+        protocol_version=str(run_cfg.get("protocol_version") or trust_mod.current_protocol_version()),
+        enabled=True, shadow=True,
+    )
+    return {"review": verdict, "plan": plan, "settle": settled}
+
+
 def review_feedback(run_id: str, seq: int, digest: str, body: dict) -> dict:
     """Record one claim review and refresh the index before returning the updated claim."""
     from observe.feedback import apply_review

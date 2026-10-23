@@ -17,6 +17,8 @@ CAPABILITIES = {
         "failures": "candidates with a non-ok status, optionally by status/task",
         "sessions": "one run's hmz sessions: committee, model, tokens, cost",
         "models": "per-session model totals; unlike runs.model this is not the first committee",
+        "suggestions": "compact free-text system suggestions grouped by digest; previews only, no full text",
+        "suggestion": "one exact free-text suggestion by run/seq/digest",
     },
 }
 
@@ -45,6 +47,14 @@ def sessions(run_id: str, **kwargs: Any) -> dict:
 
 def models() -> dict:
     return _query().model_stats()
+
+
+def suggestions(**kwargs: Any) -> dict:
+    return _query().suggestions(**kwargs)
+
+
+def suggestion(run_id: str, seq: int, digest: str) -> dict:
+    return _query().suggestion(run_id, seq, digest)
 
 
 def capabilities() -> dict:

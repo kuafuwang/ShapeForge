@@ -26,20 +26,20 @@
 
 - `taic/agent_feedback.py`：`fbv3` 在所有小节和逐条两处识别缺席句；带动作请求的条目保留。`_repair_record` 为旧记录补 `placeholder_items`。
 - `observe/feedback.py`：状态加入 `info` 和 `obsolete`；重建时读 `FEEDBACK.md` 只用于把探针已恢复的降级前提升为 `verified`，保留旧 digest 和审查键；删除的 claim 墓碑保留 `status`/`reason`。
-- `taic/trust.py`：`targets/<id>/trust.toml`，键含 target/task/provider/model/effort、prompt sha、协议、scope、过期；`trust_audit.jsonl` 追加 grant/suspend/revoke。
-- `taic/harness.py`：解析 ` ```harness-proposal ` JSON；`tip` 需要两个不同 provider/model、两个委员会、两份不同 SHA 的本场探针和 active 信任；`premise` 需要本场探针、active `overlay:premise` 信任，以及匹配的 harness 自检记录或外层候选报告（同 target/协议/内核 SHA，测量数字一致）；否则只写影子。默认只写影子 overlay；`TASK.md` 才注入 active 条目，且带未验证标题、受 12KB 预算裁剪。
-- `taic/review.py` + `taic/flows/feedback_review`：独立只读 review；预算按模型单价和 prompt 长度算；写 `harness_reviews.jsonl`；useful review 产生 `reviewed_active`，只对本 run 后续场次生效，运行结束失效。
+- `taic/trust.py`：`targets/<id>/trust.toml`，键含 target/task/provider/model/effort、`taic/prompts.py`/`taic/kernel_agent.py`/`taic/harness.py` 三个文件的整体 sha256、协议、scope、过期；`trust_audit.jsonl` 追加 `grant`/`suspended`/`revoked`。
+- `taic/harness.py`：解析 ` ```harness-proposal ` JSON；新增 `free_text_suggestions` / `convert_feedback`，把人工确认的自由文本写成带 `origin=conversion`、`claim_digest`、`confirmed_by` 的提案；`tip` 需要两个不同 provider/model、两个委员会、两份不同 SHA 的本场探针和 active 信任；`premise` 需要本场探针、active `overlay:premise` 信任，以及匹配的 harness 自检记录或外层候选报告（同 target/协议/内核 SHA，测量数字一致）；没有匹配记录时不写 overlay，只保留 `trusted_record=false` 的提案。默认只写影子 overlay；`TASK.md` 才注入 active 条目，且带未验证标题；overlay 自身最多 1800 字符。
+- `taic/review.py` + `taic/flows/feedback_review`：独立只读 review；预算按模型单价和 prompt 长度算；写 `harness_reviews.jsonl`；useful review 在 reviewer 也有该 `(target, task)` 的 active `overlay:tip` 信任时产生 `reviewed_active`，只对本 run 后续场次生效，运行结束失效。
 - `taic/cli.py`：`trust grant|revoke|suspend|status|audit|metrics`，`harness status|review|disable|settle|patch|apply|commit|implement|apply-code`。`apply` 默认拒绝；`--check` 只检查，`--run-tests` 跑离线测试，`--by` 记录确认人；`apply` 只改本地 checkout（`status=local`，不写最终 `change_ref`），`commit --message` 才提交这些路径并回填 `commit:<sha>`。`implement` 让 code agent 在 worktree 生成代码 patch，`apply-code` 人工确认后 apply，不自动 commit。
-- `observe/query.py` / `observe/app.py`：`GET /api/v2/harness/{run_id}` 返回提案、决策和 overlay；顶栏「结构化提案」按钮在看板内直接列表显示这三样（只读），原始 JSON 在面板底部留了链接；没有编辑面板。
+- `observe/query.py` / `observe/app.py`：`GET /api/v2/harness/{run_id}` 返回提案、自由文本建议、决策和 overlay；顶栏「结构化提案」按钮在看板内列出这三样，并对 review 有用的提案给出「固化到本地」按钮（走 `POST /api/runs/{id}/harness/{key}/promote`）；没有内容编辑框。看板这条路径直接本地 apply，不跑离线测试或 prompt golden；要跑测试用 CLI `harness apply --run-tests`。
 - `experiments/apply_feedback_audit.py`：dry-run 默认；`--apply` 写 `feedback_review.json`；`--merge-topic` 显式合并同 topic 的系统建议（默认不做）。
 - `experiments/harness_pilot.py`：只读汇总影子/生效、空占位、提案和 unchanged 率。
 
 ## 验证
 
-- 最近全量离线测试：**901 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`）。
+- 最近全量离线测试：**912 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`，2026-10-22）。
 - 新增测试覆盖：7 条占位原文、探针恢复后的 digest 保留、`info`/`obsolete`、空占位墓碑、信任 scope/prompt/协议/过期、单模型/同探针不达 quorum、跨 target/协议隔离、P2 `git apply --check`、审计写回、试点汇总、 review 预算随价格变化与 verdict 解析，以及合成的 feedback→proposal→trust→overlay→TASK 端到端流程。
 - 数据侧：174 条审计已写回；60 条实测 `adopted`、15 条已修 `done`、35 条未验证 `info`、7 条空占位 `obsolete`，其余 57 条 pending。10 条按 topic 合并的 `obsolete` 已由 `experiments.revert_topic_merges` 改回 pending；39 条采集时缺探针的 claim 中，31 条 premise 升为 `verified`、8 条仍 `downgraded`，等待人复核。7 条审计空占位现在都有 `feedback_claim_removed` 墓碑；重建会为所有空占位小节写墓碑，当前共 18 条。
-- `targets/apple-m4-max/trust.toml` 为空；没有 active 信任，因此即使 `harness_auto` 打开也不会自动通过任何 tip。
+- `targets/apple-m4-max/trust.toml` 有两个 conv2d grant（deepseek-flash、kimi-k3），status 仍是 `active`；但它们的 `prompt_sha1` 是 `e5db87…`，当前三个提示/代码文件算出的指纹是 `e28574…`。`trust.check` 对两者都报 `trust was granted for another prompt`，所以重新 grant 之前，`harness_auto` 打开也不会自动通过任何 tip 或 premise。
 
 ## 审阅响应
 
@@ -53,18 +53,20 @@
 ## 阶段 A 的收紧与可信记录
 
 - `self_checks.jsonl` 现在记录 `target_id`、`protocol_version`、内核 SHA、任务信息；这些行由评测命令追加，不是提案者自报。
-- `premise` 只有同时满足三件事才可能 active：本场探针、active `overlay:premise` 信任、匹配的 `status=ok` 自检行或外层候选报告（同 target/协议/内核 SHA，且 `evidence.measurement` 的数字与 `candidate_us` 或 `speedup` 一致）。否则只写 shadow。
+- `premise` 只有同时满足三件事才可能 active：本场探针、active `overlay:premise` 信任、匹配的 `status=ok` 自检行或外层候选报告（同 target/协议/内核 SHA，且 `evidence.measurement` 的数字与 `candidate_us` 或 `speedup` 一致）。没有匹配记录时不写 overlay，只保留 `trusted_record=false` 的提案。
 - 7 条审计空占位现在都有 `feedback_claim_removed` 墓碑；重建会为所有空占位小节写墓碑，当前 18 条。
 - 新增 `tests/test_harness_workflow.py`，验证 tip 从两个模型/信任/active overlay 进入 TASK，以及 disable 后消失；`premise` 在无自检记录时即使有信任也不进入 active。
 - 仍不等同于密码学签名：自检文件在本机磁盘上，恶意代理理论上仍可伪造。阶段 B 的付费试点仍应保持人工复核。
 
 ## 试点结果
 
-试点报告见 [可信harness试点结果.md](可信harness试点结果.md)：第一次 4 场、$2.6658、0 提案；第二次 $0.7584、1 条 tip、kimi review $0.106；第三次 $0.7996、自动 review useful、`reviewed_active` 生成，但 run 在下一场前停掉。\n\nTASK 的 12KB 预算现在为 active overlay 预留空间；没有这个预留，满成绩单会把 overlay 静默裁掉。
+试点报告见 [可信harness试点结果.md](可信harness试点结果.md)：第一次 4 场、$2.6658、0 提案；第二次 $0.7584、1 条 tip、kimi review $0.106；第三次 $0.7996、自动 review useful、`reviewed_active` 生成，但 run 在下一场前停掉。
+
+TASK 的 12KB 预算为 active overlay 预留空间；overlay 自身最多 1800 字符，超出的条目不进 TASK，TASK 不逐条记录被裁掉的条目。没有预留时，满成绩单会把 overlay 静默裁掉。
 
 ## 独立 review
 
-- **不是 quorum**：review 把单来源 tip 推到 `reviewed_active`，只对**本 run 的后续场次**生效；运行结束失效，不是永久固化。
+- **不是 quorum**：review 把单来源 tip 推到 `reviewed_active`，只对**本 run 的后续场次**生效；运行结束失效，不是永久固化。reviewer 自己还必须在该 `(target, task)` 上有 active `overlay:tip` 信任，否则 review 只存档。
 - **只读**：review 不写 kernel/TASK，只写 `HARNESS_REVIEW.json`；prompt 把建议标成 untrusted data。
 - **动态预算**：按 reviewer 的 input/output 单价、prompt 长度、最大输出 token，以及 pi/skill 上下文的 cache read/write allowance 计算；不写死 $0.2。实测 kimi review：旧预算 $0.252、实际 $0.106；加入缓存 allowance 后同一输入预算约 $0.588，实际仍只按用量计费。
 - **实测**：deepseek 寄存器报告 tip → kimi review `useful=true, confidence=0.6`；当时的代码记录为旧名 `reviewed_shadow`，新代码会对同一 review 产生 `reviewed_active`（仅本 run）。
@@ -75,7 +77,7 @@
 - **本地固化与 git 提交分离。** 看板固化改本地 checkout（`local_patch_sha256`，无最终 `change_ref`）；`taic harness commit` 只提交被 promote 的路径，成功后才写 `commit:<sha>`。
 
 1. **没有跑付费试点。** `harness_pilot.py` 和文档已就绪，但 `taic run`/`resume` 未执行；不要把它们当成已验证的质量结论。
-2. **P1 `premise` 不要求双模型**，但要求本场探针、active `overlay:premise` 信任和匹配的 harness 自检记录或外层候选报告；否则只写 shadow。
+2. **P1 `premise` 不要求双模型**，但要求本场探针、active `overlay:premise` 信任和匹配的 harness 自检记录或外层候选报告；没有匹配记录时不写 overlay，只保留提案。
 3. **“独立”只到探针 SHA 不同。** 两个模型若各自写一份相同内容的探针，SHA 相同会被拒绝；但复制文字后各写不同探针仍可能通过。没有做语义抄袭检测。
 4. **空占位墓碑**：7 条审计里的空占位已经从 claim 表消失，审查文件保留 `obsolete`，索引现在也有对应墓碑。重建时会把所有空占位小节写入 `feedback_claim_removed`，当前共 18 条（7 条审计项 + 11 条其他空小节），reason 为 `fbv3 empty placeholder`。
 5. **同主题合并没有保留。** 曾用 `--merge-topic` 把 10 条 active 系统建议标为 duplicate；复核后用 `experiments.revert_topic_merges` 改回 pending，只保留「possible same topic」备注。topic 不是命题等价。

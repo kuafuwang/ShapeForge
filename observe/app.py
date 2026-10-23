@@ -215,6 +215,40 @@ async def api_v2_feedback(request) -> JSONResponse:
     return _json(await asyncio.to_thread(query.feedback_board, since=since))
 
 
+async def api_v2_suggestions(request) -> JSONResponse:
+    params = request.query_params
+    try:
+        limit = int(params.get("limit", "20"))
+        preview = int(params.get("preview", "120"))
+    except ValueError:
+        return _json({"error": "limit and preview must be integers"}, status=400)
+    return _json(await asyncio.to_thread(
+        query.suggestions,
+        task=params.get("task") or None,
+        target=params.get("target") or None,
+        model=params.get("model") or None,
+        status=params.get("status") or None,
+        limit=limit,
+        preview=preview,
+    ))
+
+
+async def api_v2_suggestion(request) -> JSONResponse:
+    run_id = request.query_params.get("run") or ""
+    digest = request.query_params.get("digest") or ""
+    try:
+        seq = int(request.query_params.get("seq") or "")
+    except ValueError:
+        return _json({"error": "seq must be an integer"}, status=400)
+    if not run_id or not digest:
+        return _json({"error": "run and digest are required"}, status=400)
+    try:
+        doc = await asyncio.to_thread(query.suggestion, run_id, seq, digest)
+    except (FileNotFoundError, KeyError):
+        return _json({"error": "suggestion not found"}, status=404)
+    return _json(doc)
+
+
 async def api_v2_harness(request) -> JSONResponse:
     doc = await asyncio.to_thread(query.harness_board, request.path_params["run_id"])
     if doc is None:
@@ -262,6 +296,42 @@ async def api_promote_harness(request) -> JSONResponse:
             actions.promote_harness, request.path_params["run_id"], request.path_params["key"],
         )
         return _json(promoted)
+    except actions.Refused as exc:
+        return _refused(exc)
+
+
+async def api_convert_harness(request) -> JSONResponse:
+    try:
+        actions.check_origin(request.headers)
+        actions.check_token(request.headers)
+        raw = await request.body()
+        if len(raw) > 16384:
+            raise actions.Refused(413, "the body is too large")
+        body = actions.parse_body(raw)
+        try:
+            seq = int(body.get("seq"))
+        except (TypeError, ValueError) as exc:
+            raise actions.Refused(400, "seq must be an integer") from exc
+        converted = await asyncio.to_thread(
+            actions.convert_harness, request.path_params["run_id"], seq, str(body.get("digest") or ""), body,
+        )
+        return _json(converted)
+    except actions.Refused as exc:
+        return _refused(exc)
+
+
+async def api_review_harness(request) -> JSONResponse:
+    try:
+        actions.check_origin(request.headers)
+        actions.check_token(request.headers)
+        raw = await request.body()
+        if len(raw) > 8192:
+            raise actions.Refused(413, "the body is too large")
+        body = actions.parse_body(raw)
+        reviewed = await asyncio.to_thread(
+            actions.review_harness, request.path_params["run_id"], request.path_params["key"], body,
+        )
+        return _json(reviewed)
     except actions.Refused as exc:
         return _refused(exc)
 
@@ -407,6 +477,8 @@ app = Starlette(
         Route("/reviews", index),
         Route("/api/v2/overview", api_v2_overview),
         Route("/api/v2/feedback", api_v2_feedback),
+        Route("/api/v2/suggestions", api_v2_suggestions),
+        Route("/api/v2/suggestion", api_v2_suggestion),
         Route("/api/v2/harness/{run_id:path}", api_v2_harness),
         Route("/api/v2/runs", api_v2_runs),
         Route("/api/v2/experiments", api_v2_experiments),
@@ -432,6 +504,8 @@ app = Starlette(
         Route("/api/records/delete", api_delete_records, methods=["POST"]),
         Route("/api/runs/{run_id:path}/control", api_control, methods=["GET"]),
         Route("/api/runs/{run_id:path}/budget", api_add_budget, methods=["POST"]),
+        Route("/api/runs/{run_id:path}/harness/convert", api_convert_harness, methods=["POST"]),
+        Route("/api/runs/{run_id:path}/harness/{key}/review", api_review_harness, methods=["POST"]),
         Route("/api/runs/{run_id:path}/harness/{key}/promote", api_promote_harness, methods=["POST"]),
         Route("/api/runs/{run_id:path}/feedback/{seq}/claims/{digest}/review", api_review_feedback, methods=["POST"]),
         Route("/api/runs/{run_id:path}", api_v1_run),
