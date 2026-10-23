@@ -85,7 +85,7 @@
   "dtype": "fp16",
   "size": "paper",
   "source": {
-    "path": "tests/golden/backend_phase0_kernel.metal",
+    "path": "tests/support/golden/backend_phase0_kernel.metal",
     "sha256": "dd9c31df8c49ba6093b130fe7aac638710af7df266c66d9cd1e58d0a902e4005"
   },
   "prompt_sha1": "7ef80ddce59370a2bc9138a90a0804e58c5d39cd99ee9ed873cf39be967e4f9b",

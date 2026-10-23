@@ -265,7 +265,7 @@ def test_supervisor_kills_a_stuck_launch_within_the_deadline(monkeypatch):
 
     monkeypatch.setattr(ev_mod, "POST_KILL_COOLDOWN_S", 0.0)
     t0 = time.perf_counter()
-    rep = _fake_worker_report("tests.fake_worker_stuck_launch", timeout=60.0, launch_deadline_s=1.0)
+    rep = _fake_worker_report("tests.support.fake_worker_stuck_launch", timeout=60.0, launch_deadline_s=1.0)
     assert rep.status == "timeout" and "single GPU launch" in rep.message
     assert time.perf_counter() - t0 < 10  # nowhere near the 60 s overall timeout
 
@@ -274,7 +274,7 @@ def test_supervisor_enforces_the_overall_timeout(monkeypatch):
     from tcenv import evaluate as ev_mod
 
     monkeypatch.setattr(ev_mod, "POST_KILL_COOLDOWN_S", 0.0)
-    rep = _fake_worker_report("tests.fake_worker_idle", timeout=2.0, launch_deadline_s=1.0)
+    rep = _fake_worker_report("tests.support.fake_worker_idle", timeout=2.0, launch_deadline_s=1.0)
     assert rep.status == "timeout" and "exceeded" in rep.message
 
 
@@ -282,7 +282,7 @@ def test_supervisor_does_not_kill_launches_that_finish(monkeypatch):
     from tcenv import evaluate as ev_mod
 
     monkeypatch.setattr(ev_mod, "POST_KILL_COOLDOWN_S", 0.0)
-    rep = _fake_worker_report("tests.fake_worker_ok", timeout=30.0, launch_deadline_s=1.0)
+    rep = _fake_worker_report("tests.support.fake_worker_ok", timeout=30.0, launch_deadline_s=1.0)
     assert rep.status == "ok", rep.message
 
 

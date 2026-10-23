@@ -9,7 +9,7 @@ from taic.prompts import patch_user, plan_user
 from tasks import get_task
 from tcenv.evaluate import EvalReport
 
-from .fakes import make_response
+from .support.fakes import make_response
 from .test_orchestrator import PLAN, code, llm_script, make_orch, run
 
 

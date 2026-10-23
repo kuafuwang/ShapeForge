@@ -173,7 +173,7 @@ def test_a_damaged_worker_report_is_not_treated_as_a_missing_report(monkeypatch)
     monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
     rep = ev._run_worker(
         "relu", "fp16", "small", Path("/dev/null"), "quick", 1, 3, 30.0,
-        validation=False, cases=None, worker_module="tests.fake_worker_bad_report",
+        validation=False, cases=None, worker_module="tests.support.fake_worker_bad_report",
     )
     assert rep.status == "crash"
     assert "needs human inspection" in rep.message

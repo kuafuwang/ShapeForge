@@ -18,7 +18,7 @@ from taic.llm import BudgetExhausted, CostLedger, LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator
 from tcenv.evaluate import EvalReport
 
-from .fakes import FakeClient, make_response, make_usage
+from .support.fakes import FakeClient, make_response, make_usage
 from .test_orchestrator import KERNEL, code, fake_eval, llm_script, make_orch, run
 
 CFG = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)

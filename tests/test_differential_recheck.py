@@ -11,7 +11,7 @@ from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator, StopRun, check_recheck_record, eval_seed
 from tcenv.evaluate import EvalReport
 
-from .fakes import FakeClient
+from .support.fakes import FakeClient
 
 SOURCE = "kernel void relu_kernel() { /* candidate */ }\n"
 

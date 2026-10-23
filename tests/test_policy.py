@@ -10,7 +10,7 @@ from taic.policy import batches_agree, candidate_eligible, choose_confirmed, com
 from taic.resume import _replay
 from tcenv.evaluate import EvalReport
 
-from .fakes import FakeClient
+from .support.fakes import FakeClient
 
 # Frozen under min_improvement 1.005 and noise_z 2.
 # No timing stats: the floor is 1.005, so 1.004 ties 1.0 and 1.006 replaces it.

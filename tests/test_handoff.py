@@ -55,7 +55,7 @@ def _prepare(pytester: pytest.Pytester) -> None:
     pytester.makeconftest(
         "import sys\n"
         f"sys.path.insert(0, {str(REPO)!r})\n"
-        "pytest_plugins = ['tests.handoff']\n"
+        "pytest_plugins = ['tests.support.handoff']\n"
     )
 
 

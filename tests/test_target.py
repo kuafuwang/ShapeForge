@@ -100,7 +100,7 @@ def test_catalog_seed_is_read_back_and_a_foreign_run_is_refused(tmp_path, monkey
     from taic.llm import LLMConfig, SearchConfig
     from taic.orchestrator import Orchestrator
 
-    from .fakes import FakeClient
+    from .support.fakes import FakeClient
 
     monkeypatch.setattr(catalog, "REPO", tmp_path)
     folder = catalog.catalog_dir("apple-m4-max", "relu", "fp16", "small")

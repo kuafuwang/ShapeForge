@@ -10,7 +10,7 @@ import pytest
 from tasks import get_task
 from tcenv.evaluate import evaluate
 
-from .fakes import FakeClient, make_response
+from .support.fakes import FakeClient, make_response
 from .test_orchestrator import PLAN, make_orch
 
 pytestmark = pytest.mark.gpu

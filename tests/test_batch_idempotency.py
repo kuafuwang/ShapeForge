@@ -8,7 +8,7 @@ from pathlib import Path
 from experiments.common import run_one
 from experiments.manifest import backfill, load
 
-from .fakes import FakeClient
+from .support.fakes import FakeClient
 from .test_orchestrator import agent_from_script, code, fake_eval, llm_script
 
 SECRET = "sk-test-0123456789abcdef"

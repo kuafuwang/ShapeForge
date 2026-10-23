@@ -17,8 +17,8 @@ from taic.llm import SearchConfig, load_config
 from tasks import get_task
 from tcenv.evaluate import EvalReport
 
-from . import hw_golden as G
-from .fakes import FakeClient, make_response
+from .support import hw_golden as G
+from .support.fakes import FakeClient, make_response
 from .test_orchestrator import code, fake_eval, llm_script, make_orch, run
 from .test_resume import mark_dead, ns, script_for
 

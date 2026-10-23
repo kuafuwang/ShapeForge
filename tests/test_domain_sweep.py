@@ -17,7 +17,7 @@ from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator
 from tasks.relu.task import build as build_relu
 
-from .fakes import FakeClient
+from .support.fakes import FakeClient
 
 
 def test_every_pattern_appears_and_the_same_seed_repeats():

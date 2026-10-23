@@ -9,7 +9,7 @@ import pytest
 
 from experiments import plots, repeatability, run_suite, semantic_tests
 
-from .fakes import FakeClient, make_response
+from .support.fakes import FakeClient, make_response
 from tasks import get_task
 
 from .test_orchestrator import PLAN, code, fake_eval, llm_script

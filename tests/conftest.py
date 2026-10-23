@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-pytest_plugins = ["tests.handoff"]
+pytest_plugins = ["tests.support.handoff"]
 
 
 @pytest.fixture(autouse=True)

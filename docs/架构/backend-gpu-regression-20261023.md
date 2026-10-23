@@ -36,7 +36,7 @@ size    paper
 seed    105886635628786
 mode    full
 reps    15
-source  tests/golden/backend_phase0_kernel.metal
+source  tests/support/golden/backend_phase0_kernel.metal
 ```
 
 本地共跑 6 次，取全部 6 次的中位数；原始 JSON 在
