@@ -172,6 +172,9 @@
   .fb-group h4 { margin: 0 0 2px; font-size: 12px; color: var(--muted); }
   .fb-group.fb-measured h4 { color: #176b3a; }
   .fb-group.fb-unverified h4 { color: #8a6d1f; }
+  .fb-subclaims { margin-top: 6px; border-top: 1px dashed var(--line); padding-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+  .fb-subclaim { display: flex; flex-wrap: wrap; gap: 4px; font-size: 12px; }
+  .fb-subclaim .sub { width: 100%; color: var(--muted); }
   .badge.fb-pending { background: #fde047; color: #4a3b00; }
   .badge.fb-info { background: #eef2f6; color: var(--muted); }
   .fb-raw { margin: 0 10px 10px; }
@@ -529,13 +532,24 @@ function reviewTaskName(item) {
   return item.task || "未标明题目";
 }
 
+function reviewStatusClass(status) {
+  return status === "pending" ? " fb-pending" : (status === "info" ? " fb-info" : "");
+}
+
+function subclaimsMarkup(claim) {
+  const subs = claim.subclaims || [];
+  if (!subs.length) return "";
+  return `<div class="fb-subclaims">${subs.map((sub) => `<div class="fb-subclaim"><span class="badge${reviewStatusClass(sub.status)}">${esc(sub.status || "")}</span><span class="badge">${esc([sub.backend, sub.target_id].filter(Boolean).join(" / ") || "scope unknown")}</span><span>${esc(sub.text || "")}</span>${sub.note ? `<div class="sub">${esc(sub.note)}</div>` : ""}</div>`).join("")}</div>`;
+}
+
 function reviewCard(item) {
   const key = reviewKey(item);
   const handle = item.status === "info" ? "" : `<button type="button" class="feedback-open" data-key="${esc(key)}">处理</button>`;
   const tone = item.audience === "system" || item.audience === "peer" || item.audience === "diagnostic" ? item.audience : "system";
   const statusClass = item.status === "pending" ? " fb-pending" : (item.status === "info" ? " fb-info" : "");
-  const meta = [item.label, item.model, item.committee, item.round != null ? "第 " + item.round + " 轮" : ""].filter((part) => part != null && part !== "").join(" · ");
-  return `<article class="review-card fb-claim fb-${esc(tone)}" data-key="${esc(key)}"><div class="fb-claim-head"><span class="fb-kind">${esc(item.section)}</span> <span class="badge">${esc(item.premise || item.audience)}</span> <span class="badge${statusClass}">${esc(item.status)}</span> ${handle}</div><p class="fb-meta">${esc(meta)}</p><pre class="excerpt">${esc(item.text || "")}</pre></article>`;
+  const scope = [item.backend, item.target_id].filter(Boolean).join(" / ");
+  const meta = [scope, item.label, item.model, item.committee, item.round != null ? "第 " + item.round + " 轮" : ""].filter((part) => part != null && part !== "").join(" · ");
+  return `<article class="review-card fb-claim fb-${esc(tone)}" data-key="${esc(key)}"><div class="fb-claim-head"><span class="fb-kind">${esc(item.section)}</span> <span class="badge">${esc(item.premise || item.audience)}</span> <span class="badge${statusClass}">${esc(item.status)}</span> ${handle}</div><p class="fb-meta">${esc(meta)}</p><pre class="excerpt">${esc(item.text || "")}</pre>${subclaimsMarkup(item)}</article>`;
 }
 
 function bindReviewOpens(host) {
@@ -1297,7 +1311,7 @@ function feedbackMarkup(doc) {
       const handle = claim.status === "info" ? "" : `<button type="button" class="feedback-open" data-seq="${esc(claim.seq)}" data-digest="${esc(claim.digest)}">处理</button>`;
       const tone = claim.audience === "system" || claim.audience === "peer" || claim.audience === "diagnostic" ? claim.audience : "system";
       const statusClass = claim.status === "pending" ? " fb-pending" : (claim.status === "info" ? " fb-info" : "");
-      return `<article class="fb-claim fb-${esc(tone)}"><div class="fb-claim-head"><span class="fb-kind">${esc(claim.section)}</span> <span class="badge">${esc(claim.premise || claim.audience)}</span> <span class="badge${statusClass}">${esc(claim.status)}</span> ${handle}</div><pre class="excerpt">${esc(claim.text)}</pre></article>`;
+      return `<article class="fb-claim fb-${esc(tone)}"><div class="fb-claim-head"><span class="fb-kind">${esc(claim.section)}</span> <span class="badge">${esc([claim.backend, claim.target_id].filter(Boolean).join(" / ") || "scope unknown")}</span> <span class="badge">${esc(claim.premise || claim.audience)}</span> <span class="badge${statusClass}">${esc(claim.status)}</span> ${handle}</div><pre class="excerpt">${esc(claim.text)}</pre>${subclaimsMarkup(claim)}</article>`;
     };
     const buckets = { measured: [], unverified: [], other: [] };
     for (const claim of record.claims || []) {

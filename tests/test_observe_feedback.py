@@ -309,7 +309,7 @@ def test_a_fbv4_placeholder_gets_a_tombstone_even_on_a_fresh_index(tmp_path, mon
 
 def test_the_harness_panel_distinguishes_reviewed_from_unreviewed():
     page = Path("observe/static/index.html").read_text()
-    for needle in ("未 review", "review 有用", "review 不建议", "h-yes", "h-no", "reviewed_active", "reviewer", "P2 固化", "P2 候选", "change_ref", "固化到本地", "本地已固化", "promotion_commit", "自由文本系统建议", "人确认后转结构化", "送 LLM review", "convert-modal", "已实测 / 探针可读", "未验证 / 探针不可读"):
+    for needle in ("未 review", "review 有用", "review 不建议", "h-yes", "h-no", "reviewed_active", "reviewer", "P2 固化", "P2 候选", "change_ref", "固化到本地", "本地已固化", "promotion_commit", "自由文本系统建议", "人确认后转结构化", "送 LLM review", "convert-modal", "已实测 / 探针可读", "未验证 / 探针不可读", "fb-subclaim"):
         assert needle in page
 
 
@@ -415,3 +415,36 @@ def test_compact_links_the_exact_seq_not_only_the_first_digest_match(tmp_path, m
     assert group["first"]["seq"] == 2
     assert detail("conv", 1, digest)["converted_key"] == "first-key"
     assert detail("conv", 2, digest)["converted_key"] == "second-key"
+
+
+def test_a_split_claim_keeps_subclaim_statuses_and_a_parked_parent(tmp_path, monkeypatch):
+    from observe.feedback import apply_review
+
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = parse_feedback("# 对系统的建议\n- 请加一个配对报告。\n")
+    _run(runs, "conv", _record(parsed), started_at=50)
+    (runs / "conv" / "run_config.json").write_text(json.dumps({
+        "target": {"id": "apple-m4-max", "backend": "metal"},
+    }))
+    digest = parsed["items"][0]["digest"]
+    body = {
+        "status": "info", "verification": "unchecked", "note": "split into subclaims",
+        "subclaims": [
+            {"text": "measured fact", "status": "adopted", "verification": "confirmed",
+             "evidence_source": "probe", "evidence": "probe.py 1.0"},
+            {"text": "refuted claim", "status": "rejected", "verification": "refuted",
+             "note": "measurement says the opposite"},
+        ],
+    }
+    assert rejection(body) is None
+    stored = apply_review(runs / "conv", 1, digest, body)
+    assert stored["status"] == "info" and len(stored["subclaims"]) == 2
+    assert stored["backend"] == "metal" and stored["target_id"] == "apple-m4-max"
+    assert all(s["backend"] == "metal" and s["target_id"] == "apple-m4-max" for s in stored["subclaims"])
+    index.sync_known()
+    claim = next(c for c in entries(runs / "conv")["records"][0]["claims"] if c["digest"] == digest)
+    assert [s["status"] for s in claim["subclaims"]] == ["adopted", "rejected"]
+    assert claim["status"] == "info"
+
+    assert rejection({**body, "status": "adopted", "verification": "confirmed"}) is not None
+    assert rejection({**body, "subclaims": [{"text": "x", "status": "bogus", "verification": "unchecked"}]}) is not None

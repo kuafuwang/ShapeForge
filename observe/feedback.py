@@ -80,6 +80,9 @@ def _claim_rows(record: dict, review: dict) -> list[dict]:
             "evidence_source": saved.get("evidence_source") or "",
             "evidence": saved.get("evidence") or "",
             "note": saved.get("note") or "",
+            "subclaims": list(saved.get("subclaims") or []),
+            "backend": saved.get("backend") or record.get("backend") or "",
+            "target_id": saved.get("target_id") or record.get("target_id") or "",
             "history": list(saved.get("history") or []),
         })
     return rows
@@ -642,6 +645,8 @@ def entries(directory: Path) -> dict:
             "seed_label": record.get("seed_label"),
             "kinds": record.get("kinds"),
             "work_dir": record.get("work_dir"),
+            "backend": record.get("backend") or "",
+            "target_id": record.get("target_id") or "",
             "truncated": record.get("truncated"),
             "truncated_sections": list(record.get("truncated_sections") or []),
             "raw": record.get("raw") or "",
@@ -770,6 +775,9 @@ def review_board(conn, *, task: str | None = None, model: str | None = None, kin
             row["evidence_source"] = claim.get("evidence_source") or ""
             row["evidence"] = claim.get("evidence") or ""
             row["note"] = claim.get("note") or ""
+            row["subclaims"] = list(claim.get("subclaims") or [])
+            row["backend"] = claim.get("backend") or record.get("backend") or row.get("backend") or ""
+            row["target_id"] = claim.get("target_id") or record.get("target_id") or row.get("target_id") or ""
             row["topic"] = claim.get("topic") or row.get("topic") or ""
             row["change_ref"] = claim.get("change_ref") or row.get("change_ref") or ""
             row["status"] = claim.get("status") or row.get("status") or ""
@@ -851,6 +859,9 @@ def _attach_claim_text(rows: list[dict]) -> dict | None:
             row["evidence_source"] = claim.get("evidence_source") or ""
             row["evidence"] = claim.get("evidence") or ""
             row["note"] = claim.get("note") or ""
+            row["subclaims"] = list(claim.get("subclaims") or [])
+            row["backend"] = claim.get("backend") or record.get("backend") or row.get("backend") or ""
+            row["target_id"] = claim.get("target_id") or record.get("target_id") or row.get("target_id") or ""
             row["topic"] = claim.get("topic") or row.get("topic") or ""
             row["change_ref"] = claim.get("change_ref") or row.get("change_ref") or ""
             row["status"] = claim.get("status") or row.get("status") or ""
@@ -916,12 +927,59 @@ def review_feed(conn, *, since: int | None = None) -> dict:
     }
 
 
+def _subclaims(body: dict) -> list[dict] | None:
+    """The optional subclaim list. Each item is one independently judged proposition."""
+    value = body.get("subclaims")
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) > 128:
+        raise ValueError("subclaims must be a list of at most 128 objects")
+    out = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ValueError(f"subclaim {index} must be an object")
+        text = str(item.get("text") or "").strip()
+        if not text:
+            raise ValueError(f"subclaim {index} has empty text")
+        out.append({
+            "text": text,
+            "digest": str(item.get("digest") or ""),
+            "status": item.get("status"),
+            "verification": item.get("verification"),
+            "evidence_source": str(item.get("evidence_source") or ""),
+            "evidence": str(item.get("evidence") or ""),
+            "note": str(item.get("note") or ""),
+            "change_ref": str(item.get("change_ref") or ""),
+            "derived_from": str(item.get("derived_from") or ""),
+            "backend": str(item.get("backend") or ""),
+            "target_id": str(item.get("target_id") or ""),
+        })
+    return out
+
+
 def rejection(body: dict) -> str | None:
     """None when the review body is a legal status combination."""
     status = body.get("status")
     verification = body.get("verification")
     if status not in _STATUSES or verification not in _VERIFICATIONS:
         return "status or verification is not recognized"
+    subclaims = body.get("subclaims")
+    if subclaims is not None:
+        if not isinstance(subclaims, list) or len(subclaims) > 128:
+            return "subclaims must be a list of at most 128 objects"
+        for index, item in enumerate(subclaims):
+            if not isinstance(item, dict):
+                return f"subclaim {index} must be an object"
+            if not str(item.get("text") or "").strip():
+                return f"subclaim {index} has empty text"
+            sub_reason = rejection({
+                key: item.get(key) for key in
+                ("status", "verification", "evidence_source", "evidence", "note", "change_ref")
+            })
+            if sub_reason:
+                return f"subclaim {index}: {sub_reason}"
+        if status not in ("info", "pending"):
+            return "a split claim must keep status info or pending"
     evidence_source = str(body.get("evidence_source") or "")
     evidence = str(body.get("evidence") or "").strip()
     note = str(body.get("note") or "").strip()
@@ -964,6 +1022,14 @@ def apply_review(run_dir: Path, seq: int, digest: str, body: dict) -> dict:
         raise ValueError(reason)
     path = run_dir / "feedback_review.json"
     doc = _load_review(path)
+    run_cfg = {}
+    try:
+        run_cfg = json.loads((run_dir / "run_config.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
+    target = run_cfg.get("target") if isinstance(run_cfg.get("target"), dict) else {}
+    backend = str(body.get("backend") or target.get("backend") or "")
+    target_id = str(body.get("target_id") or target.get("id") or "")
     key = _review_key(seq, digest)
     previous = doc["claims"].get(key)
     history = list(previous.get("history") or []) if isinstance(previous, dict) else []
@@ -976,7 +1042,15 @@ def apply_review(run_dir: Path, seq: int, digest: str, body: dict) -> dict:
         "note": str(body.get("note") or ""),
         "topic": str(body.get("topic") or ""),
         "change_ref": str(body.get("change_ref") or ""),
+        "backend": backend,
+        "target_id": target_id,
     }
+    subclaims = _subclaims(body)
+    if subclaims is not None:
+        for sub in subclaims:
+            sub["backend"] = sub.get("backend") or backend
+            sub["target_id"] = sub.get("target_id") or target_id
+        event["subclaims"] = subclaims
     history.append(event)
     stored = dict(event)
     stored["history"] = history
