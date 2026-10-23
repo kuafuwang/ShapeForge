@@ -11,7 +11,7 @@ from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator, RunResult
 from tcenv.evaluate import EvalReport
 
-from .support.fakes import FakeClient
+from ..support.fakes import FakeClient
 
 QUIET_BENCH = {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"}
 

@@ -43,7 +43,7 @@ def test_header_parser_handles_eps_floats_and_multiline_headers():
 
 from pathlib import Path  # noqa: E402
 
-VENV_PY = Path(__file__).resolve().parent.parent / ".venvs" / "triton-msl" / "bin" / "python"
+VENV_PY = Path(__file__).resolve().parents[2] / ".venvs" / "triton-msl" / "bin" / "python"
 
 @pytest.mark.skipif(not VENV_PY.exists(), reason="isolated triton-msl environment not installed (scripts/install_triton_msl.sh)")
 @pytest.mark.parametrize("name", ["gemm", "gemm_silu", "conv2d", "bitdelta_gemm", "rmsnorm", "flash_attention", "mamba2_chunk_scan"])

@@ -9,7 +9,7 @@ import pytest
 
 pytest_plugins = ["pytester"]
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 BEGIN = "---BEGIN_AI_FAILURE_HANDOFF---"
 END = "---END_AI_FAILURE_HANDOFF---"
 

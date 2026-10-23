@@ -13,7 +13,7 @@ from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator, RunStartError
 from tasks import get_task
 
-from .support.fakes import FakeClient
+from ..support.fakes import FakeClient
 
 
 def _cfg() -> tuple[LLMConfig, SearchConfig]:

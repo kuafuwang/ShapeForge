@@ -81,7 +81,7 @@ def test_a_premise_is_shadow_only_until_the_trusted_record_gate_exists(tmp_path)
 
 
 def test_a_reviewed_active_overlay_is_in_the_next_session_brief_even_when_shadow_is_on(tmp_path):
-    from tests.test_orchestrator import code, llm_script, make_orch
+    from .test_orchestrator import code, llm_script, make_orch
 
     orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [])
     run = orch.run_dir

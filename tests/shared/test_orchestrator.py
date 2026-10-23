@@ -15,7 +15,7 @@ from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator, RunStartError
 from tcenv.evaluate import EvalReport
 
-from .support.fakes import FakeClient, make_response, make_usage
+from ..support.fakes import FakeClient, make_response, make_usage
 
 KERNEL = "relu_kernel"
 

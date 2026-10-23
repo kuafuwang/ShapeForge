@@ -11,7 +11,7 @@ from tasks import get_task
 from tcenv.evaluate import evaluate
 
 from ...support.fakes import FakeClient, make_response
-from ...test_orchestrator import PLAN, make_orch
+from ...shared.test_orchestrator import PLAN, make_orch
 
 pytestmark = pytest.mark.gpu
 

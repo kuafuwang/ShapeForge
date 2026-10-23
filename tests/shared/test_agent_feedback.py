@@ -413,7 +413,7 @@ def test_the_fixed_contract_names_the_rules_and_stays_inside_the_budget():
     assert "python -m taic.agent_feedback check /w/FEEDBACK.md --work /w" in text
     assert "是绝对路径" in text
     # The flow module imports hmz, which the offline env does not install. Read the wrap text from the source.
-    source = (Path(__file__).resolve().parents[1] / "taic" / "flows" / "kernel_once" / "__init__.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[2] / "taic" / "flows" / "kernel_once" / "__init__.py").read_text(encoding="utf-8")
     wrap = source.split("def _wrap", 1)[1].split("\n@", 1)[0]
     assert "do not rewrite it" in wrap
     assert "with cp" in wrap
@@ -421,7 +421,7 @@ def test_the_fixed_contract_names_the_rules_and_stays_inside_the_budget():
 
 
 def test_the_new_doc_links_resolve():
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     readme = (root / "docs" / "README.md").read_text(encoding="utf-8")
     for name in ("写核代理读什么.md", "代理反馈.md"):
         assert f"({name})" in readme or f"]({name})" in readme

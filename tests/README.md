@@ -25,7 +25,7 @@ tests/
 │   └── metal/                  # Metal 特有测试
 │       ├── test_*.py
 │       └── __init__.py
-└── test_*.py                   # 历史扁平测试，逐步迁移
+└── __init__.py
 ```
 
 每个 Python 目录都要有 `__init__.py`；pytest 会递归收集。

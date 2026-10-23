@@ -19,8 +19,8 @@ from tcenv.evaluate import EvalReport
 
 from ...support import hw_golden as G
 from ...support.fakes import FakeClient, make_response
-from ...test_orchestrator import code, fake_eval, llm_script, make_orch, run
-from ...test_resume import mark_dead, ns, script_for
+from ...shared.test_orchestrator import code, fake_eval, llm_script, make_orch, run
+from ...shared.test_resume import mark_dead, ns, script_for
 
 REPO = Path(__file__).resolve().parents[3]
 HEADER = "Hardware-feature analysis of this kernel"

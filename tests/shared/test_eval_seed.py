@@ -13,7 +13,7 @@ from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator, RunResult, RunStartError, eval_seed
 from tcenv.evaluate import EvalReport
 
-from .support.fakes import FakeClient
+from ..support.fakes import FakeClient
 
 
 SOURCE = "kernel void k() {}\n"

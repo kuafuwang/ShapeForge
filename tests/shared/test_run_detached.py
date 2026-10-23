@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "run_detached.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "run_detached.py"
 
 
 def _ps(pid: int, field: str) -> str:

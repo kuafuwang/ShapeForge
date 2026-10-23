@@ -48,7 +48,7 @@ def test_a_gpu_lock_note_is_written(tmp_path, monkeypatch):
 
 def test_core_imports_do_not_load_the_dashboard_stack(tmp_path):
     """A fresh interpreter blocks starlette and uvicorn, then imports judging, policy and config."""
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     code = r"""
 import os, sys
 os.environ["AI_LOWERLING_OBSERVE_DIR"] = sys.argv[1]

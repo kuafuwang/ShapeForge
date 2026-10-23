@@ -280,7 +280,7 @@ def test_a_named_run_without_its_own_model_does_not_require_a_null_model():
 
     assert "model" not in _arm_delta("fa_flash", "fp16", None)
     assert _arm_delta("fa_pro", "fp16", None)["model"] == "deepseek-v4-pro"
-    text = (Path(__file__).resolve().parents[1] / "observe" / "static" / "index.html").read_text(encoding="utf-8")
+    text = (Path(__file__).resolve().parents[2] / "observe" / "static" / "index.html").read_text(encoding="utf-8")
     for needle in (
         "confirmed_point", "handoff", "budget_events", "candidates",
         "feature_grid", "plan_outcomes",

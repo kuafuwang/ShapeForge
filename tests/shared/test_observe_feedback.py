@@ -127,7 +127,7 @@ def test_review_board_lists_every_run_with_the_claim_text(tmp_path, monkeypatch)
     feed = review_feed(index.conn, since=None)
     assert {item["target_id"] for item in feed["upserts"]} == {"apple-m4-max"}
     assert {item["task"] for item in feed["upserts"]} == {"conv2d"}
-    page = Path(__file__).resolve().parents[1] / "observe" / "static" / "index.html"
+    page = Path(__file__).resolve().parents[2] / "observe" / "static" / "index.html"
     html = page.read_text(encoding="utf-8")
     assert "reviewHardware" in html
     assert "展开当前层" in html and "折叠当前层" in html and "reviewMenuActions" in html

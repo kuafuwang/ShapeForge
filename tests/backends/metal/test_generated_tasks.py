@@ -17,7 +17,7 @@ from tasks.swiglu.task import build as build_swiglu
 from tcenv.backends.metal.testing import prepare_case
 from tcenv.triton_runner import parse_launch_header
 
-from ...test_triton_specs import jit_params
+from ...shared.test_triton_specs import jit_params
 
 PAIRS = (
     ("relu", build_relu, "gen_relu"),

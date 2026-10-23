@@ -250,7 +250,7 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
     from taic.orchestrator import Orchestrator
 
     from .fakes import FakeClient
-    from ..test_orchestrator import KERNEL, code, llm_script
+    from ..shared.test_orchestrator import KERNEL, code, llm_script
 
     out: dict[str, object] = {}
     import tempfile
