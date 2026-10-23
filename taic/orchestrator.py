@@ -1543,9 +1543,13 @@ class Orchestrator:
                     status="duplicate", stage="screen",
                     message=f"identical to earlier candidate {cand.label}. It does not count as an improvement.",
                 )
+        # Load the external set first: it also records the --from kernel in ``_from_text``.
+        # Checking ``_from_text`` before this call made the first --from evaluation look like an
+        # external duplicate (its copy under candidates/ is in the set).
+        external = self._external_kernel_texts()
         if self._from_text and source == self._from_text:
             return None
-        if source in self._external_kernel_texts():
+        if source in external:
             return EvalReport(
                 task=self.task_name, dtype=self.dtype, size=self.size, mode="full",
                 status="external_duplicate", stage="screen",

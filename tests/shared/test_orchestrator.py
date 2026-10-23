@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from pathlib import Path
@@ -646,3 +647,25 @@ def test_an_empty_best_file_is_not_a_previous_kernel(tmp_path):
     orch = make_orch(tmp_path / "new", llm_script(code("speed=1.0")), [], from_run=prev)
     assert orch._prior_kernel_text() is None
 
+
+def test_from_run_is_not_an_external_duplicate_on_its_first_evaluation(tmp_path):
+    """The --from kernel is also a candidates/ copy of its old run. The exception must be applied
+    before the external set is consulted, or the new run silently starts a fresh draft."""
+    from taic.llm import LLMConfig, SearchConfig
+    from taic.orchestrator import Orchestrator
+
+    prior = _prior(tmp_path / "prior", "speed=1.4")
+    source = (prior / "best.metal").read_text()
+    copied = prior / "candidates" / "000_r1.p0"
+    copied.mkdir(parents=True)
+    (copied / "kernel.metal").write_text(source)
+    calls = []
+    cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
+    search = SearchConfig(budget_usd=1.0, branches=1, max_rounds=1, eval_reps=3, stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
+    orch = Orchestrator(
+        "relu", "fp16", "small", cfg, search, run_dir=tmp_path / "new", client=None,
+        evaluate_fn=fake_eval(calls), log=lambda _s: None, from_run=prior, external_roots=[tmp_path],
+    )
+    evaluated = asyncio.run(orch._eval(source, "prior"))
+    assert evaluated.report is not None and evaluated.report.status == "ok" and evaluated.eligible
+    assert calls
