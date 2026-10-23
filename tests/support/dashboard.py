@@ -81,4 +81,3 @@ def dashboard(tmp_path, monkeypatch):
     yield port, runs
     server.should_exit = True
     thread.join(timeout=2)
-
