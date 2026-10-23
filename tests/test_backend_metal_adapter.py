@@ -61,5 +61,7 @@ def test_moved_tooling_keeps_the_repository_root():
 
 def test_rotation_sets_are_delegated():
     backend = load_backend("metal")
+    from tcenv.backends.metal.baselines import rotation_count
+
     task = get_task("flash_attention", "fp16", "paper")
-    assert backend.rotation_sets(task) >= 1
+    assert backend.rotation_sets(task) == rotation_count(task)

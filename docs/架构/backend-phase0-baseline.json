@@ -85,7 +85,7 @@
   "dtype": "fp16",
   "size": "paper",
   "source": {
-    "path": "runs/apple-m4-max/flash-attention-pilot-20261022/candidates/000_init/kernel.metal",
+    "path": "tests/golden/backend_phase0_kernel.metal",
     "sha256": "dd9c31df8c49ba6093b130fe7aac638710af7df266c66d9cd1e58d0a902e4005"
   },
   "prompt_sha1": "08b2511a343b9556eaf01ad482cbc16b42b5c994356a644813951743ffc983ed",
