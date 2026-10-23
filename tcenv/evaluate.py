@@ -474,27 +474,31 @@ def _evaluate_in_process(
     _enter("bench")
     _note_stage(stage="bench", status="running", task=task_name, dtype=dtype, size=size, mode=mode, attempt=1, attempts_max=BENCH_ATTEMPTS)
     data0 = backend.prepare_case(task, seed + 1)
-    base_runners = backend.baseline_runners(task, data0)
-    only = _remembered_baseline(task_name, dtype, size, target_id) if fast_bench else None
-    selected = selected_bench_names(list(base_runners), fast_bench=fast_bench, remembered=only, measure_serial=measure_serial)
     try:
-        harness = backend.prepare_bench(
-            ctx, kernels, contract, task,
-            spec=spec, data0=data0, reps=reps, measure_serial=measure_serial,
-            base_runners=base_runners, selected=selected,
-        )
+        sets = backend.prepare_bench_sets(ctx, contract, task, spec=spec, data0=data0)
     except MemoryError as e:
         return finish("rejected", f"refused before launch: could not allocate the workspace ({e})")
-    R = harness.rotation_sets
-    gpu_samples = harness.gpu_samples
-    runners = {"candidate": harness.cand_run, **dict(harness.baseline_runners)}
-    if harness.cand_serial_run is not None:
-        runners["candidate_serial"] = harness.cand_serial_run
 
     attempts: list[tuple[float, dict, list[float]]] = []  # (noise, stats, candidate GPU samples) per attempt
     # 测速升级成独占锁。共享锁下可以并行做正确性检查；两份墙钟叠在一起会把 CV 抬过 NOISY_CV。
     with gpu_lock(f"benchmark of {task_name} {dtype} {size}") as lock_wait_s:
         calib = backend.calibration(target_id)
+        base_runners = backend.baseline_runners(task, data0)
+        only = _remembered_baseline(task_name, dtype, size, target_id) if fast_bench else None
+        selected = selected_bench_names(list(base_runners), fast_bench=fast_bench, remembered=only, measure_serial=measure_serial)
+        try:
+            harness = backend.prepare_bench(
+                ctx, kernels, contract, task,
+                spec=spec, data0=data0, reps=reps, measure_serial=measure_serial,
+                sets=sets, base_runners=base_runners, selected=selected,
+            )
+        except MemoryError as e:
+            return finish("rejected", f"refused before launch: could not allocate the workspace ({e})")
+        R = harness.rotation_sets
+        gpu_samples = harness.gpu_samples
+        runners = {"candidate": harness.cand_run, **dict(harness.baseline_runners)}
+        if harness.cand_serial_run is not None:
+            runners["candidate_serial"] = harness.cand_serial_run
         try:
             # 噪声是本轮除 candidate_serial 以外各计时器 CV 的最大值。serial 只作对照，不参与要不要重测。
             # 超过 NOISY_CV 就再测，因为这次墙钟里混进了别人的负载，不能用来比快慢。

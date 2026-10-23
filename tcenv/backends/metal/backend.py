@@ -173,6 +173,18 @@ class MetalBackend:
             baseline_fns=baseline_fns, determinism=determinism, launcher=launcher,
         )
 
+    def prepare_bench_sets(self, ctx: Any, contract: Any, task: Any, *, spec: Any, data0: Any) -> list[Any]:
+        from ...baselines import rotation_count
+        from ...sanitize import ArgSet
+
+        sets = []
+        for _ in range(rotation_count(task)):
+            one = ArgSet(ctx, contract, workspaces=() if spec is None else spec.workspaces)
+            one.load_inputs(data0.raw)
+            one.poison_outputs()
+            sets.append(one)
+        return sets
+
     def prepare_bench(
         self,
         ctx: Any,
@@ -184,20 +196,13 @@ class MetalBackend:
         data0: Any,
         reps: int,
         measure_serial: bool,
+        sets: list[Any],
         base_runners: Mapping[str, Any],
         selected: list[str],
     ) -> BenchHarness:
-        from ...baselines import rotation_count
-        from ...sanitize import ArgSet
         from ...testing import check_case
 
-        rotation_sets = rotation_count(task)
-        sets = []
-        for _ in range(rotation_sets):
-            one = ArgSet(ctx, contract, workspaces=() if spec is None else spec.workspaces)
-            one.load_inputs(data0.raw)
-            one.poison_outputs()
-            sets.append(one)
+        rotation_sets = len(sets)
         gpu_samples: list[float] = []
         launched: set[int] = set()
         kernel = kernels[0]
