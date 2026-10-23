@@ -13,6 +13,6 @@ uv run python -m taic.cli brief RUN_DIR
 
 A speedup is published only when the confirmation gate binds the remeasured kernel; the search best is a separate number.
 
-The data layer (run layout, SQLite index, retrieval, protocol epochs, cost and retention) is documented in `docs/架构/数据层.md`. `taic query` is the read-only CLI for it.
+The data layer (run layout, SQLite index, retrieval, protocol epochs, cost and retention) is documented in `docs/架构/数据层.md`. `taic query` is the CLI for it: no model call and no GPU, but `best`/`failures`/`sessions`/`models` first refresh the derived index, so it is not a strictly read-only process.
 
 Credentials are never committed.

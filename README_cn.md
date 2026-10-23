@@ -4,7 +4,7 @@
 
 能对外说的倍数，是搜索结束后换一批输入再测过、源码对得上、计时也不吵的那一个。搜索过程里看起来最快的那次，是另一个数。规则在 `experiments/common.py` 的 `conclusion_of_run`。
 
-默认一次搜索大约 15 美元。两个模型轮流写：DeepSeek 的 `deepseek-flash`，然后是月之暗面的 `kimi-k3`。只设一家的密钥不够。`--preset base` 读的是 `taic.toml`，单次上限是 50 美元。`taic run` 和 `taic resume` 会花钱，也会占用这台同时画屏幕的显卡。只看摘要用 `uv run python -m taic.cli brief`，不花钱、不占显卡。
+默认一次搜索大约 15 美元。初始稿和第 1 轮由 DeepSeek 的 `deepseek-flash` 写，第 2 轮起轮到月之暗面的 `kimi-k3`，之后按 `(r - 1) % 2` 轮流。只设一家的密钥不够。`--preset base` 读的是 `taic.toml`，单次上限是 50 美元。`taic run` 和 `taic resume` 会花钱，也会占用这台同时画屏幕的显卡。只看摘要用 `uv run python -m taic.cli brief`，不花钱、不占显卡。
 
 本文其余部分与 [README.md](README.md) 对齐。命令、路径和配置名保持英文。下面这张表是和论文的对照，不是上手步骤。
 
@@ -27,7 +27,7 @@
 
 ```bash
 uv sync
-uv run python -m tcenv.cli tasks                       # 12 个内核（+ 第二阶段：flash_attention、lion、bitdelta_gemm）
+uv run python -m tcenv.cli tasks                       # 12 个内核（+ 第二阶段：flash_attention、lion、bitdelta_gemm、mamba2_chunk_scan）
 uv run python -m tcenv.cli naive gemm                  # 测试框架自检：一个手写内核走完整条流水线
 uv run python -m tcenv.cli eval softmax my_kernel.metal
 uv run python -m taic.cli run softmax --budget 1.0     # 让大模型 lowering 一个内核，这里只给 $1 冒烟预算（默认是论文的 $15，见「预算」）
@@ -57,7 +57,7 @@ Apple GPU 同时驱动显示器，**正在运行的 Metal 内核无法被抢占*
 
 ## 预算
 
-论文给每次搜索设了固定的美元上限（arXiv 2609.36800v1，`docs/2609.36800v1.pdf`）：第 4.3 节和表 1，「卷积、矩阵乘、FlashAttention 每次运行最多 $15，较简单的逐元素 SwiGLU 内核 $1」；第 4.4 节和图 5，十个已发表内核「在 $15 预算下」。搜索一直重复到预算耗尽（第 3.3 节）；预算在每次 LLM 请求之前检查，所以已经发出的请求可以略微超出上限。本仓库照此办理，**默认预算是每次运行 $15**（`SearchConfig`、`taic.cli run`、`run_suite`、`repeatability`、`p1_runs`）。图 4 的 12 内核网格没有写明上限，同样用 $15；重复性实验（表 1）像论文一样给 SwiGLU $1。
+论文给每次搜索设了固定的美元上限（arXiv 2609.36800v1，`docs/2609.36800v1.pdf`）：第 4.3 节和表 1，「卷积、矩阵乘、FlashAttention 每次运行最多 $15，较简单的逐元素 SwiGLU 内核 $1」；第 4.4 节和图 5，十个已发表内核「在 $15 预算下」。搜索一直重复到预算耗尽（第 3.3 节）；预算在每次 `hmz` 会话之前检查，所以已经开始的会话可以略微超出上限。本仓库照此办理，**默认预算是每次运行 $15**（`SearchConfig`、`taic.cli run`、`run_suite`、`repeatability`、`p1_runs`）。图 4 的 12 内核网格没有写明上限，同样用 $15；重复性实验（表 1）像论文一样给 SwiGLU $1。
 
 * **配置在哪。** `taic.paper.toml` 是叠加在 `taic.toml` 之上的预设（设了 `budget_usd = 15` 和 `max_rounds = 100`：$15 时结束运行的是预算而不是轮数，原来的 12 轮上限会在花掉约三分之一的钱时就停下）。`--preset base` 或 `TAIC_PRESET=base` 只读 `taic.toml`；`--config FILE` 原样使用。预设把 `patience`（连续 N 轮没有新最优就停）从 6 提到 12。`taic.toml` 自己是 6，不是 4。短暂的平台期不会截断 $15 的运行，真正收敛的运行仍会提前结束，所以不再进步的内核花不到 $15。
 * **覆盖。** 到处都有 `--budget USD`，`run_suite` 和 `repeatability` 还有 `--budget-scale F`（例如 `0.2` 做冒烟）。语义测试（每次 $0.15）、`counter_teaching`（$1）和单元测试特意保留小预算。
@@ -78,7 +78,7 @@ uv run python -m tcenv.cli profile gemm best.metal                        # xctr
 ## 硬件特性反馈（可选，默认关闭）
 
 `search.hw_feedback = true`（`taic run ... --hw-feedback`、`taic resume ... --hw-feedback`，或驱动脚本的搜索选项里写 `hw_feedback=True`，和 `profile_poor` 一样）会在这一场 `TASK.md` 的证据段里，
-profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词），并把 `backends/metal/skills/hardware_feedback.md` 作为 Skill 2c 写进存盘的系统提示。`pi` 读的是任务书，不是那份提示。这一段由 `taic/hwfeedback.py` 根据 `docs/hardware_features.md` 的静态检测器
+profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词）。整个证据段写进 `TASK.md` 时按 600 字节裁剪，太长的块会丢尾巴。它还会把 `backends/metal/skills/hardware_feedback.md` 作为 Skill 2c 写进存盘的系统提示。`pi` 读的是任务书，不是那份提示。这一段由 `taic/hwfeedback.py` 根据 `docs/hardware_features.md` 的静态检测器
 （`taic/hwfeatures.py`：源码、编译出的 AIR、以及这颗候选自己测得的 roofline）生成，内容是：
 
 * 内核已经用了哪些 Apple GPU 特性（矩阵单元及其累加器类型和 fragment 个数、threadgroup 暂存与 padding、双缓冲或寄存器预取、device 读写的宽度、SIMD 归约与 shuffle、online softmax 等），以及离 roofline 多远；
@@ -93,20 +93,21 @@ profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词�
 
 ## 搜索开关（默认打开）
 
-每一个默认都开着。关掉用 `--no-<旗标>`，例如 `--no-stop-at-roofline`，其余同名。`truncation_retry` 在模型配置上，其余在搜索配置上。它们写进 `run_config.json`。`taic resume` 保留已经记下的值；这次开关出现之前启动、目录里没有记下的运行，续跑时按默认处理，也就是打开。下面这六个 `--no-*` 只关掉这张表。计划账本是另一只开关，默认开着，要 `--no-plan-ledger` 才关。
+每一个默认都开着。关掉用 `--no-<旗标>`，例如 `--no-stop-at-roofline`，其余同名。`truncation_retry` 在模型配置上，其余在搜索配置上。它们写进 `run_config.json`。`taic resume` 保留已经记下的值；这次开关出现之前启动、目录里没有记下的运行，续跑时按默认处理，也就是打开。下面这七个 `--no-*` 只关掉这张表。计划账本是另一只开关，默认开着，要 `--no-plan-ledger` 才关。
 
 | 开关 | 改变什么（默认开，`--no-` 关掉） |
 | --- | --- |
-| `--truncation-retry` | 字段仍默认开，强度默认仍是 `low`。当前一场不会再问。再问一次的代码在不再调用的 `_develop` 里 |
+| `--truncation-retry` | 字段仍默认开，强度默认仍是 `low`。当前一场不会再问；仓库里也没有实现再问一次的代码 |
 | `--stop-at-roofline` | 种子已经落在自己 roofline 的噪声门限以内，且没有基线比这个下界更快时，停止搜索（`stop_reason=at_roofline`） |
-| `--abi-guard` | 字段仍默认开。当前一场不会因为重复的接口错误停掉一支。停分支的代码在不再调用的 `_develop` 里 |
+| `--abi-guard` | 字段仍默认开。当前一场不会因为重复的接口错误停掉一支；仓库里也没有实现这个停止的代码 |
 | `--target-note` | 某个基线比 roofline 下界快 5% 以上时，任务书写明这个下界不成立，目标是该基线的时间 |
-| `--rich-history` | 失败那一轮的历史行写明失败种类（`abi:`、`incorrect:`、`no code:`），不再只有一句笼统的话 |
+| `--rich-history` | 失败那一轮的历史行写明失败种类（`abi:`、`incorrect:`、`compile:`、`unsafe:`），不再只有一句笼统的话 |
 | `--status-lines` | 任务书写明这次至少要快百分之几才算赢，以及还剩几轮、多少耐心和多少预算 |
+| `--peer-tips` | 本运行最近的避坑提示写进下一场 `TASK.md`；提示不跨运行 |
 
 `result.json` 和 `state.json` 另外记下 `search_seed_label`（搜索正在改的那颗内核）和 `confirm_winner_label`（换种子重测后留下的那颗）。续跑从搜索种子接着改。
 
-另外三只默认关着的开关：`--diversity-archive`（选择函数还在，当前循环不调用，`parent_label` 保持空）、`--fast-bench`（搜索阶段少测几条基线；确认测量仍测全）、`--experience-index`（指向一份现成 JSON 才在任务书里附最多 3 行旧提示，默认空）。计划账本默认开：看板可按它重算计划结局。当前任务书只附最近 8 行普通历史。
+另外三只默认关着的开关：`--diversity-archive`（选择函数还在，当前循环不调用，`parent_label` 保持空）、`--fast-bench`（搜索阶段少测几条基线；确认测量仍测全）、`--experience-index`（指向一份现成 JSON 才在任务书里附最多 3 行旧提示，默认空）。计划账本默认开：看板可按它重算计划结局。当前任务书只附最近 5 行普通历史，写进 `TASK.md` 前再按 400 字节裁剪。
 
 套件、重复性实验和 `p1_runs` 的 `--max-total-usd` 按磁盘上预留的钱来算：还在跑的运行算它的当前预算（看板上加过的、旁边单独续跑的都算进去），已经结束的只算实际花掉的。上限写在实验目录的 `cap.json` 里，看板拒绝一笔会冲破这个上限的加预算。
 
@@ -123,7 +124,7 @@ profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词�
 一次运行可以既超预算又耗尽，这时两个徽章都带。预算或花费未知的运行（旧结果）显示为「预算 —」，从不告警。界面上：
 
 * 顶部固定横幅：各级别计数、总花费对预算合计、超出合计，以及每个被标记运行的可点击标签（首个 HTML 响应里就已渲染，没有 JavaScript 也能看到）；
-* 运行名单的列是运行、题目、发布、加速比、绑定、状态。筛选是题目、dtype、模型和状态。以前的筛选胶囊和排序胶囊没有画出来；
+* 运行名单的列是运行、题目、发布、加速比、花费、模型、停止原因、绑定、状态。筛选是题目、目标、dtype、模型和状态，另有排序下拉（开始时间 / 发布加速比 / 花费）。以前的筛选胶囊和排序胶囊没有画出来；
 * 选中某次运行后，状态卡片和搜索面板重复显示徽章和精确金额。
 
 `/api/budget` 以 JSON 返回同样的汇总，`/?run=p1%2Ffa_pro` 直接打开指定运行。数字取自每次运行自己的 `state.json` / `result.json` / `ledger.json`，所以这次改动之前启动的运行按它当时实际拥有的预算判断。
@@ -133,13 +134,13 @@ profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词�
 预算用完（`stop_reason == "budget_exhausted"`）或进程死掉（崩溃、编辑器窗口被关）的搜索，可以从它自己的目录继续；已经花掉的钱不会再花一次。两条路，同一个思路：
 
 * **在线加预算**（搜索还在跑）：往 `<run_dir>/control.json` 原子写 `{"budget_usd": <新的总预算>}`。搜索在每次预算闸门前读它（一次 `stat`），把预算抬到这个数，永远不低于已经花掉的钱，并记录 `budget $a -> $b`。每次变化追加到 `<run_dir>/budget_events.json`（`requested` 是提出的人写的，`applied` 是搜索读到后写的，`resume` 是重新启动；每条有时间、旧新预算、金额、来源 `dashboard` / `cli`）。只有这次改动之后启动的进程才读这个文件，它的 `state.json` 里有 `"control_supported": true`；更早启动的进程不能在线加，等它停了再续跑。
-* **续跑**已经停下的搜索：`uv run python -m taic.cli resume <run_dir> [--add-budget 美元 | --budget 新总额] [--dry-run]`。只有 `run_config.json` 里 `loop_protocol` 为 `flame_chase_1` 的目录能续，其它退出码 5。它从目录重建搜索状态，接着做没做完的轮次，再照常确认、收尾。已经有候选的轮次不重做。没有候选的轮次新开一场。覆盖任何文件之前，`result.json` / `confirm_report.json` 先留成 `*.before_topup_<n>.json`（旧 `state.json` 留成 `state.before_resume_<n>.json`），先前的结果不会丢。`--dry-run` 只在内存里重建、打印会从哪里继续（含各来源之间的核对），不写任何文件、不问模型、不用 GPU。因为收敛或轮数用完而停下、并且已经有合格稿的，可以加 `--lift-count-limits` 再续。图形芯片挂死和模型接口出错仍然不能续。还活着的、或有活进程持着 `<run_dir>/resume.lock`（正在续跑）的目录会被拒绝。看板「重置预算」会给每个还能继续的搜索加 15 美元，并把轮数和耐心抬到 10 万，续跑命令里带这个开关。
+* **续跑**已经停下的搜索：`uv run python -m taic.cli resume <run_dir> [--add-budget 美元 | --budget 新总额] [--dry-run]`。只有 `run_config.json` 里 `loop_protocol` 为 `flame_chase_1` 的目录能续，其它退出码 3。它从目录重建搜索状态，接着做没做完的轮次，再照常确认、收尾。已经有候选的轮次不重做。没有候选的轮次新开一场。覆盖任何文件之前，`result.json` / `confirm_report.json` 先留成 `*.before_topup_<n>.json`（旧 `state.json` 留成 `state.before_resume_<n>.json`），先前的结果不会丢。`--dry-run` 只在内存里重建、打印会从哪里继续（含各来源之间的核对），不写任何文件、不问模型、不用 GPU。因为收敛或轮数用完而停下、并且已经有合格稿的，可以加 `--lift-count-limits` 再续。图形芯片挂死和模型接口出错仍然不能续。还活着的、或有活进程持着 `<run_dir>/resume.lock`（正在续跑）的目录会被拒绝。看板「重置预算」会给每个还能继续的搜索加 15 美元，并把轮数和耐心抬到 10 万，续跑命令里带这个开关。
 
 续跑从哪里重建什么（细节见 `taic/resume.py`）：
 
 | 状态 | 来源 | 是否精确 |
 |---|---|---|
-| 已花美元 | 转录里 `agent` 事件的 `cost_usd` 累加。还原出的缓存命中、未命中和输出 token 是 0 | 美元是；token 拆分不是 |
+| 已花美元 | 转录里 `agent` 事件的 `cost_usd` 累加。还原出的缓存命中、未命中和输出 token 来自该事件的 `tokens` 字段；没有该字段的旧事件为 0 | 美元是；旧事件没有 token 拆分 |
 | 候选、成绩单、最好的内核、评测缓存 | `candidates/*/{kernel.metal,report.json}`；重放选择过程并与 `state.json` 的轨迹对照 | 是 |
 | 试过的假设（`history`）、停滞轮数 | `state.json` | 当时存下的那些行 |
 | 被打断的那一轮 | 已经有候选的轮次算做完。没有候选的轮次新开一场并再计费。`partial` 固定为空 | 只对 `flame_chase_1` |
@@ -149,7 +150,7 @@ profiler 证据所在的位置，附上一小段（至多 12 行、约 150 词�
 
 不能恢复的：进程死掉时还在途的模型请求（服务商可能已计费，账本从没见过；续跑会列出它们），以及早先会话里每个请求的墙钟时间（那里 `t` 为 `null`）。试跑会把这两点列出来。
 
-**看板。** 在预算耗尽 / 超预算 / 已中断的运行上（以及在跑且到了「接近预算」的运行上），运行的状态卡、顶部横幅的标签和搜索面板都有一个**加预算 Add budget**按钮。小窗是一个金额框，默认 1。同一页还能重置、停止全部搜索、改下次两个委员会的模型，以及带理由删除已结束的记录。确认之后页面照旧实时显示这次运行和预算历史。不能继续的运行显示原因，不显示按钮。加预算的接口是 `POST /api/runs/<run>/budget`，请求体 `{"amount_usd": 5}` 或 `{"new_budget_usd": 8}`；`GET /api/runs/<run>/control` 说明现在能做什么。这个接口会花钱、会启动 GPU 工作，所以：服务只回应回环地址的 `Host`，只有请求带了 `Origin` 才核同源，每个 POST 都要带页面里的每进程随机令牌（`X-Observe-Token`），金额必须为正且不超过 `OBSERVE_MAX_TOPUP_USD`（默认 25），运行目录必须落在 `runs/` 内（不许 `..`，不许符号链接逃出），每个运行同一时刻只处理一个请求。在线运行写 `control.json`；已停的运行启动一个独立会话的 `uv run python -m taic.cli resume ...`（日志在 `<run_dir>/resume_<n>.log`）。`OBSERVE_CONTROL_DRYRUN=1` 做完所有检查，把「会执行的命令」记进 `budget_events.json`（类型 `dryrun`），什么都不启动。
+**看板。** 在预算耗尽 / 超预算 / 已中断的运行上（以及在跑且到了「接近预算」的运行上），顶栏只有一个**加预算 Add budget**按钮；它打开当前选中运行的小窗，没有选中时提示先在运行列表里选一次搜索。小窗是一个金额框，默认 1。同一页还能重置、停止全部搜索、改下次两个委员会的模型，以及带理由删除已结束的记录。确认之后页面照旧实时显示这次运行和预算历史。服务器拒绝时，原因显示在那个小窗里。加预算的接口是 `POST /api/runs/<run>/budget`，请求体 `{"amount_usd": 5}` 或 `{"new_budget_usd": 8}`；`GET /api/runs/<run>/control` 说明现在能做什么。这个接口会花钱、会启动 GPU 工作，所以：服务只回应回环地址的 `Host`，只有请求带了 `Origin` 才核同源，每个 POST 都要带页面里的每进程随机令牌（`X-Observe-Token`），金额必须为正且不超过 `OBSERVE_MAX_TOPUP_USD`（默认 25），运行目录必须落在 `runs/` 内（不许 `..`，不许符号链接逃出），每个运行同一时刻只处理一个请求。在线运行写 `control.json`；已停的运行启动一个独立会话的 `uv run python -m taic.cli resume ...`（日志在 `<run_dir>/resume_<n>.log`）。`OBSERVE_CONTROL_DRYRUN=1` 做完所有检查，把「会执行的命令」记进 `budget_events.json`（类型 `dryrun`），什么都不启动。
 
 ## 编译器基线（可选）：用 triton-msl 把 Triton 编译成 Metal
 

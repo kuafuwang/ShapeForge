@@ -59,7 +59,7 @@ at cv 16% (quiet runs: 0.5-1.5%) displaced a better kernel. Therefore:
   Time spent waiting for the lock does not count toward the evaluation timeout. Programs outside this project are not covered;
 * the candidate is dispatched the way MLX dispatches the independent calls of a graph (concurrent encoder, buffer barrier between passes over the
   rotating buffer sets). A strictly serial dispatch penalizes the same kernel by 0.5% (sigmoid) to 38% (gemv), median 5.8%, over the 15 tasks
-  (`experiments/dispatch_ab.py`, `runs/dispatch_ab/`); the serial time is still reported as `candidate_serial_us`;
+  (`experiments/dispatch_ab.py`, `runs/dispatch_ab/`); the serial time is reported as `candidate_serial_us` only when `measure_serial` is on (default off, otherwise the field is `null`);
 * a benchmark whose per-repetition cv exceeds 5% on the candidate or a library baseline is repeated (up to 3 attempts, the quietest is kept, `benchmark.noisy` flags the rest). `candidate_serial` does not trigger the repeat;
 * a candidate replaces the best only if it is faster by `min_improvement` *and* by `noise_z` standard errors of the two speedups;
 * at the end, the best and up to `confirm_top - 1` candidates tied with it within noise are re-measured on the same inputs. The search seed stays the result unless another complete remeasure clears the noise gate
@@ -141,7 +141,7 @@ the baseline means part of any gain is baseline weakness.
 
 `search.hw_feedback = true` (`taic run ... --hw-feedback`, `taic resume ... --hw-feedback`, or `hw_feedback=True` in the search options of a driver, as for `profile_poor`)
 appends a short block (at most 12 lines, about 150 words) to the evidence written into that round's `TASK.md`, in the place where the
-profiler evidence goes, and adds `backends/metal/skills/hardware_feedback.md` to the stored system prompt as Skill 2c. The `pi` session reads the task file, not that prompt. The block is computed by `taic/hwfeedback.py` from the static detector of
+profiler evidence goes. The whole evidence block is capped at 600 bytes in `TASK.md`, so a long block can lose its tail there. It adds `backends/metal/skills/hardware_feedback.md` to the stored system prompt as Skill 2c. The `pi` session reads the task file, not that prompt. The block is computed by `taic/hwfeedback.py` from the static detector of
 `docs/hardware_features.md` (`taic/hwfeatures.py`: the source, the compiled AIR, and the roofline measured for this candidate) and says:
 
 * which Apple-GPU features the kernel uses (matrix unit with its accumulator type and fragment count, threadgroup staging and padding, double buffering or register prefetch, width of the
@@ -160,24 +160,25 @@ When the hardware-feature block is on and a baseline is already more than 5% fas
 
 ## Search switches (on by default)
 
-Each one is on unless a run passes `--no-<flag>` (`--no-stop-at-roofline`, and the same for the others) or sets the field to false. `truncation_retry` is on the LLM config; the others are on the search config. They are recorded in `run_config.json`. `taic resume` keeps a recorded value; a run that never recorded the switch (started before it existed) is continued with the default, which is on. The six `--no-*` flags turn off the first table. The plan ledger is a separate switch and stays on unless `--no-plan-ledger` is also passed.
+Each one is on unless a run passes `--no-<flag>` (`--no-stop-at-roofline`, and the same for the others) or sets the field to false. `truncation_retry` is on the LLM config; the others are on the search config. They are recorded in `run_config.json`. `taic resume` keeps a recorded value; a run that never recorded the switch (started before it existed) is continued with the default, which is on. These seven `--no-*` flags turn off the first table. The plan ledger is a separate switch and stays on unless `--no-plan-ledger` is also passed.
 
 | switch | what it changes (on unless `--no-<flag>`) |
 | --- | --- |
-| `--truncation-retry` | the field stays on and `truncation_retry_effort` still defaults to `low`. The live session does not ask again. The retry lives in the unused `_develop` path |
+| `--truncation-retry` | the field stays on and `truncation_retry_effort` still defaults to `low`. The live session does not ask again, and the repository has no code that implements the retry |
 | `--stop-at-roofline` | stop when the seed is already inside the noise gate of its roofline and no baseline beats that bound (`stop_reason=at_roofline`) |
-| `--abi-guard` | the field stays on. The live session does not stop a branch after a repeated ABI error. That stop lives in the unused `_develop` path |
+| `--abi-guard` | the field stays on. The live session does not stop a branch after a repeated ABI error, and the repository has no code that implements that stop |
 | `--target-note` | when a baseline is more than 5% faster than the roofline bound, the task file says the bound does not hold and the target is that baseline's time |
-| `--rich-history` | a failed round's history line names the failure (`abi: ...`, `incorrect: ...`, `no code: ...`) instead of one generic sentence |
+| `--rich-history` | a failed round's history line names the failure (`abi: ...`, `incorrect: ...`, `compile: ...`, `unsafe: ...`) instead of one generic sentence |
 | `--status-lines` | the task file is told the noise floor ("at least X% faster") and the round, patience and budget that remain |
+| `--peer-tips` | this run's recent pitfalls go into the next `TASK.md`; tips never cross runs |
 
-In the next table, only the plan ledger is on by default. The live task file still gets the last 8 plain history lines, not the ledger. The other three stay off until a run turns them on. With them off, a search-stage benchmark still times the serial dispatch and every baseline.
+In the next table, only the plan ledger is on by default. The live task file still gets the last 5 plain history lines, not the ledger, and that block is capped at 400 bytes. The other three stay off until a run turns them on. With them off, a search-stage benchmark still times every baseline; the serial dispatch is timed only when `measure_serial` is on.
 
 | switch | default | what it changes when on |
 | --- | --- | --- |
 | `--plan-ledger` / `--no-plan-ledger` | on | the dashboard can recompute whether a direction was timed and lost. The live task file does not include that ledger |
 | `--diversity-archive` | off | the selection function remains. The live loop does not call it, and `parent_label` stays empty |
-| `--fast-bench` | off | search-stage timing skips the serial dispatch and, once this task's fastest baseline name is remembered, times only that baseline. Confirmation still times every baseline and the serial dispatch |
+| `--fast-bench` | off | search-stage timing skips the serial dispatch and, once this task's fastest baseline name is remembered, times only that baseline. Confirmation still times every baseline; serial dispatch is timed only when `measure_serial` is on |
 | `--experience-index PATH` | empty | up to three hint lines from measured pairs go into the task file, excluding pairs from the same task. The repeatability experiment forces this empty |
 
 `result.json` and `state.json` also record `search_seed_label` (the kernel the search was mutating) and `confirm_winner_label` (the kernel the fresh-seed remeasure kept). A resume continues from the search seed.
@@ -202,7 +203,7 @@ A run can be both over budget and exhausted; it then carries both badges. A run 
 
 * a sticky banner at the top with the counts per level, the total spend against the summed budgets, the summed overrun and one clickable chip
   per flagged run (it is also rendered into the first HTML response, so it is there without JavaScript);
-* in the run list: columns are run, task, publication, speedup, binding, and status. Filters are task, dtype, model, and status. The old filter and sort pills are not drawn;
+* in the run list: columns are run, task, publication, speedup, spend, model, stop reason, binding, and status. Filters are task, target, dtype, model, and status, plus a sort select (started / speedup / spent). The old filter and sort pills are not drawn;
 * on the selected run, the status card and the search panel repeat the badge with the exact amounts.
 
 `/api/budget` returns the same summary as JSON, and `/?run=p1%2Ffa_pro` opens a given run directly. Note that the figures come from each run's
@@ -218,7 +219,7 @@ from its own directory; nothing already spent is spent again. Two ways, one idea
   appended to `<run_dir>/budget_events.json` (`requested` by whoever asked, `applied` by the run, `resume` for a restart; each with time, old and
   new budget, amount and who: `dashboard` / `cli`). Only processes started after this feature read the file: `state.json` of such a process says
   `"control_supported": true`; a run started by an older version cannot be topped up live (wait for it to stop, then resume it).
-* **Resume** of a stopped run: `uv run python -m taic.cli resume <run_dir> [--add-budget USD | --budget TOTAL] [--dry-run]`. Only a directory whose `run_config.json` says `loop_protocol: flame_chase_1` continues; anything else exits 5. It rebuilds the state
+* **Resume** of a stopped run: `uv run python -m taic.cli resume <run_dir> [--add-budget USD | --budget TOTAL] [--dry-run]`. Only a directory whose `run_config.json` says `loop_protocol: flame_chase_1` continues; anything else exits 3. It rebuilds the state
   from the directory and goes on with the rounds that were not finished, then confirms and finishes as usual. A round that already has a candidate is not redone. A round with no candidate starts a new session. Before it overwrites anything,
   `result.json` / `confirm_report.json` are kept as `*.before_topup_<n>.json` (and `state.json` as `state.before_resume_<n>.json`), so the earlier
   result is never lost. `--dry-run` rebuilds everything in memory, prints what would be continued (including the checks between the sources) and writes
@@ -228,7 +229,7 @@ What a resume rebuilds, and from where (`taic/resume.py` has the details):
 
 | state | source | exact? |
 |---|---|---|
-| money spent | `transcript.jsonl` `agent` events: `cost_usd` is summed. The rebuilt hit, miss, and output token counts are 0 | dollars yes; token split no |
+| money spent | `transcript.jsonl` `agent` events: `cost_usd` is summed. The rebuilt hit, miss, and output token counts come from that event's `tokens` field; events without one rebuild as 0 | dollars yes; old events have no token split |
 | candidates, reports, best kernel, evaluation cache | `candidates/*/{kernel.metal,report.json}`; selection replayed and compared with the trace in `state.json` | yes |
 | hypotheses tried (`history`), stagnation counter | `state.json` | the lines that were saved |
 | the interrupted round | a round that already has a candidate is finished. A round with no candidate starts again as a new session and is billed again. `partial` is always empty | yes, for `flame_chase_1` only |
@@ -239,9 +240,8 @@ What a resume rebuilds, and from where (`taic/resume.py` has the details):
 Not recoverable: model requests that were in flight when the process died (the provider may have billed them, the ledger never saw them: the
 resume notes list them), and the per-request wall-clock times of earlier sessions (`t` is `null` there). The dry run lists both.
 
-**Dashboard.** On a budget-exhausted / over-budget / interrupted run (and on a running run that reached NEAR BUDGET) the run's card, its banner chip
-and the search panel carry an **Add budget** button. The dialog asks for a dollar amount (the field starts at 1). The same page can reset budgets, stop every search, change the two committees used by the next search, and delete a finished record with a reason. After Confirm the page keeps showing
-the live state of the run and its budget history. A run that cannot be continued shows the reason instead of the button. The write path (`POST /api/runs/<run>/budget` with `{"amount_usd": 5}` or `{"new_budget_usd": 8}`; `GET /api/runs/<run>/control`
+**Dashboard.** On a budget-exhausted / over-budget / interrupted run (and on a running run that reached NEAR BUDGET) the top bar has one **Add budget** button; it opens the dialog for the currently selected run, and without a selection it says to pick a run first. The dialog asks for a dollar amount (the field starts at 1). The same page can reset budgets, stop every search, change the two committees used by the next search, and delete a finished record with a reason. After Confirm the page keeps showing
+the live state of the run and its budget history. A refusal from the server is shown in that dialog. The write path (`POST /api/runs/<run>/budget` with `{"amount_usd": 5}` or `{"new_budget_usd": 8}`; `GET /api/runs/<run>/control`
 says what is possible) spends money and starts GPU work, so: the server only answers on a loopback `Host`, an `Origin` header is checked only when the request sends one,
 every POST needs the per-process random token the served page carries (`X-Observe-Token`), the amount must be positive and at most
 `OBSERVE_MAX_TOPUP_USD` (default 25), the run must resolve inside `runs/` (no `..`, no symlink out), and one request per run is in flight at a time.
