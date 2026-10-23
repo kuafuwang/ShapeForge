@@ -309,7 +309,7 @@ def test_a_fbv4_placeholder_gets_a_tombstone_even_on_a_fresh_index(tmp_path, mon
 
 def test_the_harness_panel_distinguishes_reviewed_from_unreviewed():
     page = Path("observe/static/index.html").read_text()
-    for needle in ("未 review", "review 有用", "review 不建议", "h-yes", "h-no", "reviewed_active", "reviewer", "P2 固化", "P2 候选", "change_ref", "固化到本地", "本地已固化", "promotion_commit", "自由文本系统建议", "人确认后转结构化", "送 LLM review", "convert-modal"):
+    for needle in ("未 review", "review 有用", "review 不建议", "h-yes", "h-no", "reviewed_active", "reviewer", "P2 固化", "P2 候选", "change_ref", "固化到本地", "本地已固化", "promotion_commit", "自由文本系统建议", "人确认后转结构化", "送 LLM review", "convert-modal", "已实测 / 探针可读", "未验证 / 探针不可读"):
         assert needle in page
 
 

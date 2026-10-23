@@ -73,3 +73,16 @@ def test_a_missing_gap_omits_the_times_line_and_a_missing_roofline_omits_the_hea
     assert "the lower bound" not in no_gap
     bare = format_feedback(_report(roofline={}, pipeline={}, benchmark={}))
     assert "Measured:" not in bare
+
+
+def test_the_performance_block_prints_a_gpu_timestamp_speedup_against_the_seed():
+    rep = _report(
+        benchmark={
+            "candidate": {"median_us": 360.17, "cv": 0.02},
+            "candidate_gpu_us_median": 342.94,
+            "seed_gpu_us_median": 300.03,
+        },
+    )
+    text = format_feedback(rep)
+    assert "GPU-timestamp speedup vs seed: 0.875x" in text
+    assert "seed 300.03 us" in text

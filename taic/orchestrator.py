@@ -756,6 +756,10 @@ class Orchestrator:
         d.mkdir(parents=True, exist_ok=True)
         (d / "kernel.metal").write_text(c.source)
         if c.report:
+            if self.best is not None and self.best.report is not None and self.best is not c:
+                seed_gpu = self.best.report.benchmark.get("candidate_gpu_us_median")
+                if isinstance(seed_gpu, (int, float)) and not isinstance(seed_gpu, bool) and seed_gpu > 0:
+                    c.report.benchmark["seed_gpu_us_median"] = float(seed_gpu)
             control.write_json_atomic(d / "report.json", c.report.to_json())
             (d / "feedback.txt").write_text(format_feedback(c.report))
 

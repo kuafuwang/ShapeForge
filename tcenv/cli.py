@@ -53,13 +53,16 @@ def cmd_eval(a: argparse.Namespace) -> int:
     else:
         print(format_feedback(rep))
     if a.timed and a.seed_report:
-        from .verdict import replacement_line
+        from .verdict import gpu_timestamp_line, replacement_line
 
         try:
             seed_doc = json.loads(Path(a.seed_report).read_text())
         except (OSError, json.JSONDecodeError) as exc:
             print(f"seed report was not read: {exc}", file=sys.stderr)
             return 1
+        gpu_line = gpu_timestamp_line(rep, seed_doc)
+        if gpu_line:
+            print(gpu_line)
         print(replacement_line(rep, seed_doc, min_improvement=a.min_improvement, noise_z=a.noise_z))
     return 0 if rep.status == "ok" else 1
 

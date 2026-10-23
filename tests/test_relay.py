@@ -9,7 +9,7 @@ import pytest
 
 from taic.kernel_agent import AgentResult
 from tcenv.selfcheck import append, earlier_hang
-from tcenv.verdict import replacement_line
+from tcenv.verdict import gpu_timestamp_line, replacement_line
 
 from .test_orchestrator import code, llm_script, make_orch, run
 
@@ -374,3 +374,11 @@ def test_feedback_seq_continues_after_a_broken_line(tmp_path):
     run(orch)
     rows = _records(orch.run_dir)
     assert [row["seq"] for row in rows] == [4, 5]
+
+
+def test_gpu_timestamp_line_compares_seed_and_candidate():
+    seed = {"benchmark": {"candidate_gpu_us_median": 300.03}}
+    candidate = {"benchmark": {"candidate_gpu_us_median": 342.94}}
+    line = gpu_timestamp_line(candidate, seed)
+    assert "0.875x" in line and "seed 300.03 us" in line and "candidate 342.94 us" in line
+    assert gpu_timestamp_line({}, seed) == ""

@@ -167,6 +167,11 @@
   .fb-claim-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
   .fb-kind { font-weight: 650; }
   .fb-claim .excerpt { background: #f7f8fa; }
+  .fb-group { display: flex; flex-direction: column; gap: 6px; }
+  .fb-group + .fb-group { margin-top: 10px; }
+  .fb-group h4 { margin: 0 0 2px; font-size: 12px; color: var(--muted); }
+  .fb-group.fb-measured h4 { color: #176b3a; }
+  .fb-group.fb-unverified h4 { color: #8a6d1f; }
   .badge.fb-pending { background: #fde047; color: #4a3b00; }
   .badge.fb-info { background: #eef2f6; color: var(--muted); }
   .fb-raw { margin: 0 10px 10px; }
@@ -1288,12 +1293,24 @@ function feedbackMarkup(doc) {
     const who = [[record.provider, record.model].filter(Boolean).join("/"), record.effort].filter(Boolean).join(":");
     const meta = [record.round != null ? "第 " + record.round + " 轮" : "", record.committee, who, record.outcome || record.exit,
       record.seed_label ? "当时的种子核 " + record.seed_label : "", record.best_speedup != null ? "种子成绩 " + num(record.best_speedup) : "", record.work_dir].filter((part) => part != null && part !== "").join(" · ");
-    const claims = (record.claims || []).map((claim) => {
+    const claimCard = (claim) => {
       const handle = claim.status === "info" ? "" : `<button type="button" class="feedback-open" data-seq="${esc(claim.seq)}" data-digest="${esc(claim.digest)}">处理</button>`;
       const tone = claim.audience === "system" || claim.audience === "peer" || claim.audience === "diagnostic" ? claim.audience : "system";
       const statusClass = claim.status === "pending" ? " fb-pending" : (claim.status === "info" ? " fb-info" : "");
       return `<article class="fb-claim fb-${esc(tone)}"><div class="fb-claim-head"><span class="fb-kind">${esc(claim.section)}</span> <span class="badge">${esc(claim.premise || claim.audience)}</span> <span class="badge${statusClass}">${esc(claim.status)}</span> ${handle}</div><pre class="excerpt">${esc(claim.text)}</pre></article>`;
-    }).join("");
+    };
+    const buckets = { measured: [], unverified: [], other: [] };
+    for (const claim of record.claims || []) {
+      const text = String(claim.text || "");
+      if (claim.premise === "verified" || text.includes("[已实测")) buckets.measured.push(claim);
+      else if (claim.premise === "downgraded" || claim.premise === "unverified" || text.includes("[未验证")) buckets.unverified.push(claim);
+      else buckets.other.push(claim);
+    }
+    const bucketTitles = { measured: "已实测 / 探针可读", unverified: "未验证 / 探针不可读", other: "系统建议与其他" };
+    const claims = ["measured", "unverified", "other"]
+      .filter((key) => buckets[key].length)
+      .map((key) => `<div class="fb-group fb-${key}"><h4>${bucketTitles[key]} · ${buckets[key].length}</h4>${buckets[key].map(claimCard).join("")}</div>`)
+      .join("");
     const raw = record.raw ? `<details class="fb-raw"><summary>原文</summary><pre class="excerpt">${esc(record.raw)}</pre></details>` : "";
     const cuts = (record.truncated_sections || []).filter(Boolean);
     const cut = cuts.length ? `<p class="fb-cut">已截断：${esc(cuts.join("、"))}</p>` : "";

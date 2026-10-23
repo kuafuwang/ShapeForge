@@ -29,3 +29,21 @@ def replacement_line(candidate, seed: dict, *, min_improvement: float, noise_z: 
     if cand > old * gain:
         return "这一版按外层规则够换种子。自测不算数。"
     return "这一版按外层规则不够换种子。自测不算数。"
+
+def _bench_gpu_us(value) -> float | None:
+    bench = value.get("benchmark") if isinstance(value, dict) else getattr(value, "benchmark", None)
+    if not isinstance(bench, dict):
+        return None
+    gpu = bench.get("candidate_gpu_us_median")
+    if isinstance(gpu, (int, float)) and not isinstance(gpu, bool) and gpu > 0:
+        return float(gpu)
+    return None
+
+
+def gpu_timestamp_line(candidate, seed) -> str:
+    """Compare candidate and seed GPU-timestamp medians when both reports have them."""
+    cand = _bench_gpu_us(candidate)
+    old = _bench_gpu_us(seed)
+    if cand is None or old is None:
+        return ""
+    return f"GPU-timestamp speedup vs seed: {old / cand:.3f}x (seed {old:.2f} us, candidate {cand:.2f} us)"

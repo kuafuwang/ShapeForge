@@ -132,6 +132,9 @@ def format_feedback(rep: EvalReport, *, max_errors_chars: int = 2500) -> str:
         cand = b["candidate"]
         gpu = b.get("candidate_gpu_us_median")
         L.append(f"  candidate : {cand['median_us']:.2f} us   (cv {cand['cv']:.1%}{', GPU-timestamp %.2f us' % gpu if gpu else ''})")
+        seed_gpu = b.get("seed_gpu_us_median")
+        if isinstance(gpu, (int, float)) and not isinstance(gpu, bool) and gpu > 0 and isinstance(seed_gpu, (int, float)) and not isinstance(seed_gpu, bool) and seed_gpu > 0:
+            L.append(f"  GPU-timestamp speedup vs seed: {seed_gpu / gpu:.3f}x (seed {seed_gpu:.2f} us)")
         # 重测后最安静的一次仍超过阈值。候选可以是 ok，但这句告诉模型百分之几的差距没有意义。
         if b.get("noisy"):
             L.append(f"  note: the machine was busy during this measurement (cv up to {b['noise_cv']:.0%} after {b['attempts']} attempts); differences of a few percent are not meaningful")
