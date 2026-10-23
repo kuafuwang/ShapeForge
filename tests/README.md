@@ -1,7 +1,7 @@
 # Tests 目录约定
 
-这份文档说明测试应该放在哪一层。新测试按这里的规则放；根目录现有的
-`test_*.py` 是迁移中的历史文件，不是新测试的默认位置。
+这份文档说明测试应该放在哪一层。根目录已经没有 `test_*.py`；新测试按这里
+的规则放到 `shared/` 或 `backends/<id>/`。
 
 ## 目录结构
 
@@ -13,6 +13,11 @@ tests/
 │   ├── fakes.py                # 脚本化 LLM/响应
 │   ├── handoff.py              # 失败 AI handoff 插件
 │   ├── run_logs.py             # xdist-safe 日志插件
+│   ├── orchestrator.py         # 脚本化 LLM/evaluator helper
+│   ├── resume.py               # resume/CLI helper
+│   ├── triton_specs.py         # Triton spec helper
+│   ├── dashboard.py            # dashboard fixture 插件
+│   ├── llm.py                  # LLM 错误 helper
 │   ├── hw_golden.py            # golden 读取/重录工具
 │   ├── fake_worker_*.py        # 子进程 worker 替身
 │   └── golden/

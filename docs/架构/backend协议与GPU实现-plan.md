@@ -479,8 +479,8 @@ Phase 1 新增：
 - `tcenv/backends/base.py`
 - `tcenv/backends/registry.py`
 - `tcenv/backends/metal/backend.py`
-- `tests/test_backend_registry.py`
-- `tests/test_backend_metal_adapter.py`
+- `tests/backends/metal/test_backend_registry.py`
+- `tests/backends/metal/test_backend_metal_adapter.py`
 
 Phase 1 修改：
 

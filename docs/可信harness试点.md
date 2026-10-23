@@ -40,7 +40,7 @@ uv run python -m taic.cli harness status runs/apple-m4-max/RUN
 
 - `premise` 需要本场探针、active `overlay:premise` 信任和匹配的 harness 自检记录或外层候选报告；没有记录时只写 shadow。
 - 空占位已有索引墓碑；7 条审计项均已核对，当前所有空占位小节共 18 条墓碑。
-- `tests/test_harness_workflow.py` 覆盖 tip 从双来源/信任到 active TASK，以及 disable 后消失；`premise` 无自检记录时保持 shadow。
+- `tests/shared/test_harness_workflow.py` 覆盖 tip 从双来源/信任到 active TASK，以及 disable 后消失；`premise` 无自检记录时保持 shadow。
 - 自检记录是本机记录，不是密码学签名；阶段 B 仍需人工复核，不能把 `premise` 当形式证明。
 
 阶段 B 才考虑 2–3 道题的 shadow/active 运行，并需要单独的预算与 GPU 批准。单来源 tip 可以走 `taic harness review`（另一个 provider/model、只读、按实际单价算预算），但 review 产生 `reviewed_active`，只在本 run 后续场次使用；它不等于永久 P2，P2 仍由人确认。

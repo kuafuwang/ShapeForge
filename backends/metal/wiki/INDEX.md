@@ -28,7 +28,7 @@ Order when two sentences disagree:
 - `verified`：本机复现过，`来源` 里必须有 `runs/`、`docs/`、`tcenv/` 或 `taic/` 的路径。**只有这一级进提示词。**
 - `reported`：只有上游出处（别人的 PR、博客、WWDC），还没在本机复现。留在库里，正文里写明「未验证」。
 
-`tests/test_wiki_experience.py` 会检查这两条：缺 `Confidence`、`verified` 却没有来源或实测、`reported` 没有标未验证，都会让套件红。
+`tests/shared/test_wiki_experience.py` 会检查这两条：缺 `Confidence`、`verified` 却没有来源或实测、`reported` 没有标未验证，都会让套件红。
 
 ### 怎么加一条 `reported`
 

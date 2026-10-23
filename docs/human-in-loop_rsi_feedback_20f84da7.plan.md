@@ -211,16 +211,16 @@ flowchart LR
 - [docs/架构/可观测.md](docs/架构/可观测.md)：补两张表（`INDEX_SCHEMA_VERSION = 3`）、待审计数（按条）、按条 review 接口与状态组合，文件表加 `observe/feedback.py`。
 
 自动化测试（1a 过闸后才做 1b）：
-- [tests/test_kernel_agent.py](tests/test_kernel_agent.py)：`FEEDBACK.md` 读入 `AgentResult.feedback` 且限长；合同含系统说明、"核是主产出"、五个小节名与"断言写进被否决的前提节"；传入 `peer_tips` 时带警示抬头；无 `FEEDBACK.md` 时完全兼容。
-- `tests/test_agent_feedback.py`（新）：纯避坑条目不产生空指纹、不互相顶掉；中文数字（"约790µs"）被剥离、`fp16`/`fp32` 保留；升级标记不改指纹；不同节同文不撞指纹；`kind` 多值规范化与非法值兜底；探针文件不存在或路径逃逸时降级；超长文件里系统节被封顶后避坑与前提两节仍完整；未知版本 `v: 99` 只展示原文不报错。
-- [tests/test_orchestrator.py](tests/test_orchestrator.py) 与 [tests/test_relay.py](tests/test_relay.py)：
+- [tests/shared/test_kernel_agent.py](tests/shared/test_kernel_agent.py)：`FEEDBACK.md` 读入 `AgentResult.feedback` 且限长；合同含系统说明、"核是主产出"、五个小节名与"断言写进被否决的前提节"；传入 `peer_tips` 时带警示抬头；无 `FEEDBACK.md` 时完全兼容。
+- `tests/shared/test_agent_feedback.py`（新）：纯避坑条目不产生空指纹、不互相顶掉；中文数字（"约790µs"）被剥离、`fp16`/`fp32` 保留；升级标记不改指纹；不同节同文不撞指纹；`kind` 多值规范化与非法值兜底；探针文件不存在或路径逃逸时降级；超长文件里系统节被封顶后避坑与前提两节仍完整；未知版本 `v: 99` 只展示原文不报错。
+- [tests/shared/test_orchestrator.py](tests/shared/test_orchestrator.py) 与 [tests/shared/test_relay.py](tests/shared/test_relay.py)：
   - 分发前陈旧 `NOTES.md` / `FEEDBACK.md` 被删，启动失败读到的不是上一场文件；
   - 留下 `FEEDBACK.md` 后，`feedback.jsonl` 字段齐全、候选目录有副本、转录带瘦字段；
   - **五条退出路径都只记一次且字段正确**：正常、`cost_incomplete`（`outcome` 留空、候选为空）、`gpu_hang_circuit_breaker`、`agent_exception`、`_eval` 抛异常（`exit = eval_error`）；
   - 坏行容忍：`feedback.jsonl` 中间有一行截断 JSON 时，后续记录仍能解析、`seq` 继续自增；
   - **现算与隔离**：`init` 失败留下的避坑出现在 `init2` 的 `peer_tips` 里；第 1 场避坑出现在第 3 场；同指纹新替旧但未验证按首次出现计龄（r1 写、r2/r3 复述、r4 消失，升级为已实测后留下）；超过 8 条淘汰最旧；另一个 `run_dir` 时为空；`search.peer_tips = false` 时为空。
-- [tests/test_resume.py](tests/test_resume.py)：续跑后的 `peer_tips` 与不中断时一致；`_notes_summary` / `_failure_feedback` 被补回；`seq` 接着已有最大值。
-- `tests/test_observe*.py`：
+- [tests/shared/test_resume.py](tests/shared/test_resume.py)：续跑后的 `peer_tips` 与不中断时一致；`_notes_summary` / `_failure_feedback` 被补回；`seq` 接着已有最大值。
+- `tests/shared/test_observe*.py`：
   - 两张表入库且重同步不留重复行；`feedback_pending` 只计 `system` 与前提条目中 `pending` 的条数，`diagnostic` 不计；按条标审后计数立即下降、纯交接的未验证前提也能被关掉；热帧 `tick()` 不扫目录；
   - `drop_archived` 与切换 `runs_root` 后两张表对应行清空、计数归零；
   - 对已结束运行 `POST .../claims/<digest>/review` 后计数变化、返回更新后的条目；并发审同一运行的两个条目都落盘；连审两次 `history` 有两条；
@@ -228,7 +228,7 @@ flowchart LR
   - 修后新提出：标 `done` 后另一个更晚启动的运行提出同一 `topic` 时被标记，同运行内不算；
   - 证据预填取候选目录报告并带来源，缺失时退种子报告且标注；
   - 含 `<img onerror=...>` 的反馈在页面渲染时被转义。
-- 按 [tests/hw_golden.py](tests/hw_golden.py) 运行 `--record` 更新 golden；跑通除 `test_orchestrator_gpu.py` 外的全套离线测试。
+- 按 [tests/support/hw_golden.py](tests/support/hw_golden.py) 运行 `--record` 更新 golden；跑通除 `test_orchestrator_gpu.py` 外的全套离线测试。
 
 ## 第八步：第二批（积累真实条目后执行）——代理教程与管理章程合册
 

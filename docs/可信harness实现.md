@@ -56,7 +56,7 @@ uv run python -m taic.cli trust grant apple-m4-max conv2d moonshot kimi-k3 --eff
 
 外部审阅的总评是 **PASS-WITH-CHANGES**（审阅文件已按用户要求删除，结论保留在此）。已处理：
 
-- `premise` 现在除本场探针外，还要求 active `overlay:premise` 信任；空信任表不会自动放行（`taic/harness.py` + `tests/test_harness.py`）。
+- `premise` 现在除本场探针外，还要求 active `overlay:premise` 信任；空信任表不会自动放行（`taic/harness.py` + `tests/shared/test_harness.py`）。
 - 交接第 6 条已改成“顶栏有只读的面板，没有编辑面板”。
 - 10 条按 topic 标为 `obsolete` 的系统建议已用 `experiments.revert_topic_merges` 改回 `pending`，备注改为“possible same topic”；7 条空占位仍保留 `obsolete`。
 - 仍保留的已知差距：`self_checks.jsonl` 是本机记录，不是密码学签名；还没有外层 `report.json` 的签名链。
@@ -66,7 +66,7 @@ uv run python -m taic.cli trust grant apple-m4-max conv2d moonshot kimi-k3 --eff
 - `self_checks.jsonl` 现在记录 `target_id`、`protocol_version`、内核 SHA、任务信息；这些行由评测命令追加，不是提案者自报。
 - `premise` 只有同时满足三件事才可能 active：本场探针、active `overlay:premise` 信任、匹配的 `status=ok` 自检行或外层候选报告（同 target/协议/内核 SHA，且 `evidence.measurement` 的数字与 `candidate_us` 或 `speedup` 一致）。没有匹配记录时不写 overlay，只保留 `trusted_record=false` 的提案。
 - 7 条审计空占位现在都有 `feedback_claim_removed` 墓碑；重建会为所有空占位小节写墓碑，当前 18 条。
-- 新增 `tests/test_harness_workflow.py`，验证 tip 从两个模型/信任/active overlay 进入 TASK，以及 disable 后消失；`premise` 在无自检记录时即使有信任也不进入 active。
+- 新增 `tests/shared/test_harness_workflow.py`，验证 tip 从两个模型/信任/active overlay 进入 TASK，以及 disable 后消失；`premise` 在无自检记录时即使有信任也不进入 active。
 - 仍不等同于密码学签名：自检文件在本机磁盘上，恶意代理理论上仍可伪造。阶段 B 的付费试点仍应保持人工复核。
 
 ## 试点结果
