@@ -288,7 +288,7 @@ def _paths(run: Path) -> dict:
     names = {
         "result": run / "result.json",
         "confirm": run / "confirm_report.json",
-        "metal": run / "best.metal",
+        "metal": next(iter(sorted(run.glob("best.*"))), run / "best.metal"),
         "transcript": run / "transcript.jsonl",
     }
     out = {}

@@ -149,7 +149,7 @@ def feature_grid(directory: Path, result: dict | None) -> list[dict]:
     signed: dict[str, tuple] = {}
     order: list[tuple] = []
     for path in sorted(item for item in root.iterdir() if item.is_dir()):
-        source_path = path / "kernel.metal"
+        source_path = path / detail.target_file_names(directory)[0]
         try:
             source = source_path.read_text(encoding="utf-8")
         except OSError:

@@ -43,7 +43,7 @@ def build_experience_index(roots: list[Path], *, exclude_runs: set[str] | None =
             folders = sorted((run / "candidates").iterdir()) if (run / "candidates").is_dir() else []
             for folder in folders:
                 report_path = folder / "report.json"
-                kernel_path = folder / "kernel.metal"
+                kernel_path = next(iter(sorted(folder.glob("kernel.*"))), folder / "kernel.metal")
                 if not report_path.is_file() or not kernel_path.is_file():
                     continue
                 try:

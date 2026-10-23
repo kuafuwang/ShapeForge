@@ -31,6 +31,8 @@ class MetalBackend:
         supports_validation=True,
         supports_device_timestamps=True,
         supports_profiler=True,
+        supports_hw_features=True,
+        supports_feature_signature=True,
     )
 
     def screen(self, source: str, task: Any = None) -> list[str]:

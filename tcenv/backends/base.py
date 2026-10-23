@@ -26,6 +26,8 @@ class Capabilities:
     supports_validation: bool = False
     supports_device_timestamps: bool = False
     supports_profiler: bool = False
+    supports_hw_features: bool = False
+    supports_feature_signature: bool = False
 
 
 @dataclass

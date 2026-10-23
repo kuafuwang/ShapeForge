@@ -366,6 +366,9 @@ class Orchestrator:
         self.task = replace(cached, contract=replace(cached.contract, gpu=self.target.display_name))
         self.task_name, self.dtype, self.size = task_name, dtype, size
         self.cfg, self.search = llm_cfg, search
+        from tcenv.backends.registry import load_backend
+
+        self.backend = load_backend(self.target.backend)
         try:
             self.committees = default_committees(llm_cfg) if committees is None else order_committees(list(committees))
         except LLMError as e:
@@ -374,7 +377,8 @@ class Orchestrator:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         self.run_dir = Path(run_dir) if run_dir else REPO_ROOT / "runs" / self.target_id / f"{stamp}_{task_name}_{dtype}_{llm_cfg.model}"
         self.log = log
-        self.system = prompts.system_prompt(self.task, use_tools=llm_cfg.use_tools, profiler_evidence=search.profile_poor, hw_feedback=search.hw_feedback, target_id=self.target_id)
+        hw_feedback = bool(search.hw_feedback and self.backend.capabilities.supports_hw_features)
+        self.system = prompts.system_prompt(self.task, use_tools=llm_cfg.use_tools, profiler_evidence=search.profile_poor, hw_feedback=hw_feedback, target_id=self.target_id)
         self.from_run = Path(from_run) if from_run else None
         self.from_catalog = from_catalog
         # 新运行不接管已经有文件的目录。续跑（resuming=True）才读既有目录，并且不改写 run_config.json、不重新抽 run_seed。
@@ -1741,7 +1745,7 @@ class Orchestrator:
                 self.log(f"-- heuristic stop: {seed.label} is {gap:.3f}x its estimated lower bound, inside the noise gate. This is not a physical optimum.")
                 return
             evidence = await self._profile_seed(seed, rnd)
-            if self.search.hw_feedback:
+            if self.search.hw_feedback and self.backend.capabilities.supports_hw_features:
                 from .hwfeedback import hw_feedback
 
                 block = await asyncio.to_thread(hw_feedback, self.task, seed.source, seed.report, log=self.log)

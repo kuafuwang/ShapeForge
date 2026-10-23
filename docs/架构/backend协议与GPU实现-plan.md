@@ -2,7 +2,7 @@
 
 先抽协议，Metal GPU 行为不变；本轮只做 Metal 一个实现，NPU 只留注册位。
 
-状态：Phase 0 基线已记录（`docs/架构/backend-phase0-baseline.json`）；Phase 1、Phase 2 已实现；Phase 2 的 Metal 模块已迁入 `tcenv/backends/metal/`，旧路径保留兼容 shim；Phase 3 的 reference_sources、TASK 标识/种子文件名/扩展名入口和 backend 技能元数据已开始落地，提示词全文/hwfeatures/policy 与 Phase 4 未完成（2026-10-23 审核修订）
+状态：Phase 0 基线已记录（`docs/架构/backend-phase0-baseline.json`）；Phase 1、Phase 2 已实现；Phase 2 的 Metal 模块已迁入 `tcenv/backends/metal/`，旧路径保留兼容 shim；Phase 3 的 reference_sources、TASK/提示词 fence、技能角色、搜索/observe 文件扩展名和 hwfeatures/policy backend gate 已落地，剩余 parse/flow/UI 文案与 Phase 4 未完成（2026-10-23 审核修订）
 审核：对照当前代码补入 `source_pressure` 的 Metal 归属、嵌套报告 payload、`measure_serial` 默认值、`prompt_sha1` 的实际 SHA-256 和完整 skills 列表。
 Phase 1/2 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/{backend,contract,screen,launch,abi,sanitize,testing,baselines,profile,pressure,runtime,domain,verify,xctrace,triton_baseline}.py`；`tcenv/*.py` 旧路径是兼容 shim。`evaluate`/`worker` 经 adapter，报告 schema 3、backend_version/timeline、索引 v11 和 `runs.backend` 已落地；Phase 3 提示/文件扩展和 Phase 4 shim 清理仍未完成。GPU 基线尚未采。
 目标读者：维护 `taic` / `tcenv` 的工程师

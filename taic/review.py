@@ -399,7 +399,7 @@ Write exactly one JSON object to `{REVIEW_FILE}`:
   "recommended_test": "one small check a person could run"
 }}
 
-Do not modify `TASK.md`, `kernel.metal`, `FEEDBACK.md`, or any kernel file. Write only
+Do not modify `TASK.md`, the candidate kernel file, `FEEDBACK.md`, or any kernel file. Write only
 `{REVIEW_FILE}`. If the suggestion is not useful, say so; do not invent a positive verdict.
 """
 

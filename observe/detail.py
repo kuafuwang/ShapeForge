@@ -101,6 +101,24 @@ def resolve_run(run_id: str) -> Path | None:
 
 
 # 页面上的运行 id 是 runs/ 下的相对路径，详情接口再用 resolve_run 认回来。
+def target_file_names(directory: Path) -> tuple[str, str]:
+    """``(kernel file, best file)`` for the run's target; legacy Metal fallback."""
+    config = _load(Path(directory) / "run_config.json") or {}
+    target = config.get("target") if isinstance(config.get("target"), dict) else {}
+    target_id = str(target.get("id") or config.get("target_id") or Path(directory).parent.name or "")
+    ext = ".metal"
+    try:
+        from tcenv.backends.registry import load_backend
+        from tcenv.target import load_target
+
+        ext = load_backend(load_target(target_id or None).backend).file_ext or ".metal"
+    except Exception:
+        pass
+    if not str(ext).startswith("."):
+        ext = "." + str(ext)
+    return f"kernel{ext}", f"best{ext}"
+
+
 def _rel(path: Path) -> str:
     return path.resolve().relative_to(runs_root().resolve()).as_posix()
 
@@ -417,6 +435,7 @@ def _candidates(directory: Path) -> list[dict]:
     if not root.is_dir():
         return []
     rows = []
+    kernel_name, _best_name = target_file_names(directory)
     for path in sorted(item for item in root.iterdir() if item.is_dir()):
         report = _load(path / "report.json") or {}
         prefix, _, label = path.name.partition("_")
@@ -440,7 +459,7 @@ def _candidates(directory: Path) -> list[dict]:
             "cases": _cases(report),
             "roofline": {key: roof.get(key) for key in ("achieved_tflops", "achieved_gbps", "compute_fraction", "bandwidth_fraction", "bound")},
             "benchmark": {key: bench.get(key) for key in ("noisy", "attempts", "noise_cv")},
-            "excerpt": _excerpt(path / "kernel.metal"),
+            "excerpt": _excerpt(path / kernel_name),
         })
     return rows
 

@@ -154,3 +154,9 @@ def test_repeatability_drops_an_experience_index(tmp_path: Path, monkeypatch):
     assert doc["fits"] is False
     assert LLMConfig(base_url="http://x", api_key="k", model="m").truncation_retry_effort == "low"
     assert LLMConfig(base_url="http://x", api_key="k", model="m").plan_reasoning_effort is None
+
+
+def test_feature_signature_is_empty_for_a_non_metal_backend():
+    from taic.policy import feature_signature
+
+    assert feature_signature("kernel void relu_kernel() {}", backend_id="other") == ()

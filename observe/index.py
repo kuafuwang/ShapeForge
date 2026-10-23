@@ -637,7 +637,7 @@ class Index:
     def _fingerprints(self, directory: Path, winner_label: str = "", winner_rel: str = "") -> tuple[str, str, str, str, str]:
         confirm = "\x1f".join((
             _fingerprint(directory / "confirm_report.json"),
-            _fingerprint(directory / "best.metal"),
+            _fingerprint(directory / detail.target_file_names(directory)[1]),
             winner_label,
             winner_rel,
             _fingerprint(directory / winner_rel) if winner_rel else "",
@@ -755,7 +755,7 @@ class Index:
         fingerprints = self._fingerprints(directory, winner_label, winner_rel)
         known = self.conn.execute("SELECT 1 FROM runs WHERE run_id = ?", (self._rel(directory),)).fetchone()
         tracked = "\x1f" in (stored[3] or "")
-        if not force and fingerprints == stored and known and (tracked or not (directory / "best.metal").exists()):
+        if not force and fingerprints == stored and known and (tracked or not (directory / detail.target_file_names(directory)[1]).exists()):
             self._project_turns(directory)
             return
         state = self._read_json(directory / "state.json")
@@ -880,13 +880,14 @@ class Index:
             idx = int(name[:3]) if len(name) >= 3 and name[:3].isdigit() else -1
             label = name[4:] if len(name) > 4 and name[3] == "_" else name
             report = self._read_json(path / "report.json")
-            if not isinstance(report, dict) and not (path / "kernel.metal").is_file():
+            kernel_name = detail.target_file_names(directory)[0]
+            if not isinstance(report, dict) and not (path / kernel_name).is_file():
                 continue
             status = str(report.get("status") or "") if isinstance(report, dict) else ""
             stage = str(report.get("stage") or "") if isinstance(report, dict) else ""
             speedup = _num(report.get("speedup")) if isinstance(report, dict) else None
             eligible = 1 if isinstance(report, dict) and report.get("eligible") is True else 0
-            sha = _sha256_file(path / "kernel.metal")
+            sha = _sha256_file(path / kernel_name)
             try:
                 updated = path.stat().st_mtime
             except OSError:
@@ -984,7 +985,7 @@ class Index:
         search = (config or {}).get("search") or {}
         model = ((config or {}).get("llm") or {}).get("model") or (row.get("result") or {}).get("model") or (row.get("state") or {}).get("model")
         result_doc = row.get("result") if isinstance(row.get("result"), dict) else {}
-        kernel_sha = str(result_doc.get("confirmation_source_sha256") or "") or (_sha256_file(directory / "best.metal") or "")
+        kernel_sha = str(result_doc.get("confirmation_source_sha256") or "") or (_sha256_file(directory / detail.target_file_names(directory)[1]) or "")
         config_target = (config or {}).get("target") if isinstance((config or {}).get("target"), dict) else {}
         backend = str(row.get("backend") or config_target.get("backend") or "")
         backend_version = str(row.get("backend_version") or config_target.get("backend_version") or "")
@@ -1320,7 +1321,7 @@ def _winner_rel(directory: Path, label: str) -> str:
     found = [path for path in root.iterdir() if path.is_dir() and len(path.name) > 4 and path.name[3] == "_" and path.name[4:] == label]
     if len(found) != 1:
         return ""
-    return found[0].relative_to(directory).as_posix() + "/kernel.metal"
+    return found[0].relative_to(directory).as_posix() + "/" + detail.target_file_names(directory)[0]
 
 
 def _lookup(config: dict, search: dict, key: str):

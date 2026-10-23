@@ -158,8 +158,10 @@ def patience_exhausted(stagnant: int, patience: int) -> bool:
     return stagnant >= patience
 
 
-def feature_signature(source: str) -> tuple:
-    """Seven static source features. No compiler and no GPU."""
+def feature_signature(source: str, *, backend_id: str = "metal") -> tuple:
+    """Seven static source features. No compiler and no GPU; only Metal implements them."""
+    if backend_id != "metal":
+        return ()
     from .hwfeatures import analyze_source
 
     from tcenv.launch import declared_stage_kernels
@@ -199,7 +201,7 @@ def _hamming(left: tuple, right: tuple) -> int:
     return sum(a != b for a, b in zip(left, right))
 
 
-def select_diverse_parent(candidates: list, best, *, task_name: str = "", max_archive: int = 4):
+def select_diverse_parent(candidates: list, best, *, task_name: str = "", max_archive: int = 4, backend_id: str = "metal"):
     """The eligible kernel in the archive farthest in feature space from ``best``, or None.
 
     ``task_name`` is recorded by callers and is not used in the comparison. The archive keeps at most
@@ -217,12 +219,12 @@ def select_diverse_parent(candidates: list, best, *, task_name: str = "", max_ar
             continue
         if cand.speedup < 0.85 * best.speedup:
             continue
-        sig = feature_signature(cand.source)
+        sig = feature_signature(cand.source, backend_id=backend_id)
         kept = grouped.get(sig)
         if kept is None or cand.speedup > kept.speedup:
             grouped[sig] = cand
     archive = sorted(grouped.values(), key=lambda cand: cand.speedup, reverse=True)[:max_archive]
     if not archive:
         return None
-    seed_sig = feature_signature(best.source)
-    return max(archive, key=lambda cand: (_hamming(feature_signature(cand.source), seed_sig), cand.speedup, cand.label))
+    seed_sig = feature_signature(best.source, backend_id=backend_id)
+    return max(archive, key=lambda cand: (_hamming(feature_signature(cand.source, backend_id=backend_id), seed_sig), cand.speedup, cand.label))
