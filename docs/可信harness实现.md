@@ -42,7 +42,7 @@
 - 当时（2026-10-22）全量离线测试：**1013 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`）。2026-10-24 只做收集：`-m 'not gpu and not llm'` 1075 个用例、133 deselected；快速安全套件 `-m 'not gpu and not llm and not slow'` 1074 个用例（测试会随并发改动变化，以实际收集为准）。
 - 新增测试覆盖：7 条占位原文、探针恢复后的 digest 保留、`info`/`obsolete`、空占位墓碑、信任 scope/prompt/协议/过期、单模型/同探针不达 quorum、跨 target/协议隔离、P2 `git apply --check`、审计写回、试点汇总、 review 预算随价格变化与 verdict 解析，以及合成的 feedback→proposal→trust→overlay→TASK 端到端流程。
 - 数据侧（截至 2026-10-22）：174 条审计已写回；60 条实测 `adopted`、15 条已修 `done`、35 条未验证 `info`、7 条空占位 `obsolete`，其余 57 条 pending。10 条按 topic 合并的 `obsolete` 已由 `experiments.revert_topic_merges` 改回 pending；39 条采集时缺探针的 claim 中，31 条 premise 升为 `verified`、8 条仍 `downgraded`，等待人复核。7 条审计空占位都有 `feedback_claim_removed` 墓碑；重建会为所有空占位小节写墓碑，当时共 18 条。
-- `targets/apple-m4-max/trust.toml` 的两个 conv2d grant（deepseek-flash、kimi-k3）是旧整文件指纹时代按 `prompt_sha1 = ac3eca2a4576…` 授予的，status 为 `active`，`evidence_run` 为空；在 2026-10-24 的提示面哈希下已失效，见下段。
+- `targets/apple-m4-max/trust.toml` 的两个 conv2d grant（deepseek-flash、kimi-k3）是旧整文件指纹时代按 `prompt_sha1 = 8bb2ba7d8ced…` 授予的，status 为 `active`，`evidence_run` 为空；在 2026-10-24 的提示面哈希下已失效，见下段。
 
 2026-10-23 的缺陷修复批次又改了 `taic/kernel_agent.py` 与 `taic/harness.py`（failed 回合计费、进程组清理、review 旧文件复用、协议代次校验），交接文档当时记录 `current_prompt_sha1()` 变为 `7ef80ddc…`，这两份 grant 因此失效。`trust_audit.jsonl` 里没有以 `7ef80ddc` 授权的行；之后在旧整文件指纹下按 `ac3eca2a4576…` 重新授予。2026-10-24 提示面哈希生效后，这两条授权再次失效；下面的命令保留为重签步骤：
 
