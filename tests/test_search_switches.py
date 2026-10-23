@@ -215,5 +215,3 @@ def _user_messages(orch):
             if m.get("role") == "user":
                 rows.append(m)
     return rows
-
-

@@ -123,4 +123,3 @@ def test_the_profiler_skill_is_only_in_the_system_prompt_of_runs_that_can_attach
     plain = make_orch(tmp_path / "a", llm_script(code("speed=0.9")), calls, max_rounds=1)
     prof = make_orch(tmp_path / "b", llm_script(code("speed=0.9")), calls, max_rounds=1, profile_poor=True)
     assert "Skill 2b" not in plain.system and "Skill 2b" in prof.system
-

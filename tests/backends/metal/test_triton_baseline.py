@@ -74,4 +74,3 @@ def test_wait_quiet_returns_at_once_on_a_quiet_machine_and_gives_up_after_the_li
     monkeypatch.setattr(tb.os, "getloadavg", lambda: (0.5, 0.5, 0.5))
     monkeypatch.setattr(tb, "busy_processes", lambda: ["123 pytest"])
     assert not tb.wait_quiet(0.05, poll_s=0.01, log=lambda s: None)["quiet"]
-
