@@ -11,7 +11,7 @@ from tasks.relu.task import build as build_relu
 from tasks.sigmoid.task import build as build_sigmoid
 from tasks.silu.task import build as build_silu
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def _specials() -> torch.Tensor:
