@@ -57,3 +57,9 @@ def test_moved_tooling_keeps_the_repository_root():
     assert triton_baseline.REPO_ROOT == repo
     assert xctrace.REPO_ROOT == repo
     assert triton_baseline.CACHE_DIR == repo / "runs" / "triton_baselines"
+
+
+def test_rotation_sets_are_delegated():
+    backend = load_backend("metal")
+    task = get_task("flash_attention", "fp16", "paper")
+    assert backend.rotation_sets(task) >= 1

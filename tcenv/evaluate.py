@@ -312,7 +312,7 @@ def _evaluate_in_process(
                 max_threadgroup_memory_bytes=int(dev_info["max_threadgroup_memory_bytes"]),
                 recommended_working_set_bytes=int(dev_info.get("recommended_working_set_bytes") or 0),
                 max_buffer_length=int(dev_info.get("max_buffer_length") or 2**31),
-                rotation_sets=rotation_count(task),
+                rotation_sets=backend.rotation_sets(task),
             )
     except LaunchRejected as e:
         rep.abi = {"ok": False, "violations": [str(e)]}

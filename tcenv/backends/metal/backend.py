@@ -97,6 +97,11 @@ class MetalBackend:
 
         return BaselineRunner(impl, task, data.rounded, rotate=1)
 
+    def rotation_sets(self, task: Any) -> int:
+        from .baselines import rotation_count
+
+        return rotation_count(task)
+
     def coverage(self, task: Any, results: list, source: str, toolchain: dict) -> dict:
         from .domain import coverage_for_report
 
