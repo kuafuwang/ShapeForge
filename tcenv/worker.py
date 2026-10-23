@@ -85,10 +85,12 @@ def main() -> int:
         backend = None
         try:
             from .backends.registry import load_backend
-            from .target import load_target
+            from .target import TargetError, load_target
 
             backend = load_backend(load_target(str(req["target_id"])).backend)
-        except Exception:
+        except TargetError:
+            # A bad target/backend is reported by evaluate_in_process as a device_check
+            # rejection. Do not swallow unrelated errors: the outer handler must write a crash.
             backend = None
         _install_heartbeat(req.get("heartbeat"), backend)
         if req.get("stage"):
