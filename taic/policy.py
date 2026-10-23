@@ -6,6 +6,7 @@ The live search and a resume replay both call these, so a stored report is judge
 from __future__ import annotations
 
 import math
+import statistics
 
 
 def candidate_eligible(report_ok: bool, speedup: float | None, *, correctness_only: bool) -> bool:
@@ -26,6 +27,24 @@ def comparison_speedup(eligible: bool, speedup: float | None) -> float:
     if not eligible:
         return 0.0
     return 1.0 if speedup is None else float(speedup)
+
+
+def session_budget_floor(costs: list[float] | tuple[float, ...]) -> float | None:
+    """The recent cost of one agent session, or None when there is no history.
+
+    The median of the last three completed sessions is deliberately conservative: a search
+    that has only enough money for a fraction of its normal session should stop before
+    spending another request, rather than starting a session that cannot finish.
+    """
+    values = []
+    for value in costs[-3:]:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            values.append(number)
+    return statistics.median(values) if values else None
 
 
 def required_gain(min_improvement: float, noise_z: float, se_a: float, se_b: float) -> float:

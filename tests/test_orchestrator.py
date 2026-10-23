@@ -222,7 +222,7 @@ def test_a_reply_without_a_code_block_gets_a_nudge(tmp_path):
 
 def test_budget_gate_stops_before_the_next_request_and_still_confirms(tmp_path):
     calls = []
-    orch = make_orch(tmp_path, llm_script(code("speed=1.1"), patches={"A": code("speed=1.5")}), calls, budget=1.0, max_rounds=3)
+    orch = make_orch(tmp_path, llm_script(code("speed=1.1"), patches={"A": code("speed=1.5")}), calls, budget=1.2, max_rounds=3)
 
     def expensive(brief, tag):
         result = agent_from_script(llm_script(code("speed=1.1"), patches={"A": code("speed=1.5")}))(brief, tag)
@@ -817,3 +817,19 @@ def test_a_failed_feedback_append_still_ages_an_unverified_premise(tmp_path):
     assert "fp16" in orch._session_brief(True, "r3.p0").peer_tips
     orch._feedback_seq = 3
     assert "fp16" not in orch._session_brief(True, "r4.p0").peer_tips
+
+
+def test_a_remaining_balance_below_a_recent_session_does_not_start_another_session(tmp_path):
+    calls = []
+    orch = make_orch(tmp_path, llm_script(code("speed=1.1")), calls, budget=1.0, max_rounds=3)
+
+    def expensive(brief, tag):
+        result = agent_from_script(llm_script(code("speed=1.1")))(brief, tag)
+        result.cost_usd = 0.6
+        return result
+
+    orch.agent_runner = expensive
+    res = run(orch)
+    assert res.stop_reason == "budget_exhausted" and res.session_budget_stop is True
+    assert res.spent_usd == pytest.approx(0.6)
+    assert res.confirmed_status == "ok"

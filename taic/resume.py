@@ -204,7 +204,10 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops
         "task": (result or state or {}).get("task"), "dtype": (result or state or {}).get("dtype"),
     }
     try:
-        info["needs_budget"] = spent is not None and budget is not None and float(spent) >= float(budget) - 1e-9
+        info["needs_budget"] = (
+            bool((result or {}).get("session_budget_stop"))
+            or (spent is not None and budget is not None and float(spent) >= float(budget) - 1e-9)
+        )
     except (TypeError, ValueError):
         pass
     if holder and not _same_pid(holder.get("pid"), pid) and not _launching_us(holder):
@@ -668,6 +671,13 @@ def restore_snapshot(run_dir: Path, moved: list[str]) -> None:
 def effective_budget(info: dict, *, add_usd: float | None, budget_usd: float | None, control_doc: dict | None = None) -> float:
     """The total budget of the continued run: ``--budget``, else recorded + ``--add-budget``, else the larger of the recorded budget and a request still
     waiting in control.json. Must exceed what is spent."""
+    if info.get("needs_budget") and add_usd is None and budget_usd is None:
+        pending = control.parse_control(control_doc)[0] if control_doc else None
+        if pending is None:
+            raise ResumeError(
+                "the run stopped with too little budget for another normal session: "
+                "add budget with --add-budget USD or --budget TOTAL"
+            )
     spent = float(info.get("spent_usd") or 0.0)
     recorded = info.get("budget_usd")
     recorded = float(recorded) if recorded is not None else None

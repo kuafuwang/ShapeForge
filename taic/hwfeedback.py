@@ -125,12 +125,13 @@ def _warnings(hr: "hw.HardwareFeatureReport", measured: dict) -> list[str]:
             if mt and lt and mt <= lt and mt < 1024:
                 out.append(
                     f"Warning: stage {stage.get('kernel')} reports maxTotalThreadsPerThreadgroup={mt}, "
-                    f"equal to that stage's launch size {lt}: the kernel is at the register-pressure limit, so more live state may spill."
+                    f"equal to that stage's launch size {lt}: the pipeline is capped at its launch size. "
+                    "This alone does not prove register pressure; verify register/spill data before changing live state."
                 )
     else:
         mt, lt = measured.get("max_total_threads"), measured.get("launch_threads")
         if mt and lt and mt <= lt and mt < 1024:
-            out.append(f"Warning: the pipeline reports maxTotalThreadsPerThreadgroup={mt}, equal to the launch size {lt}: the kernel is at the register-pressure limit, so more live state may spill.")
+            out.append(f"Warning: the pipeline reports maxTotalThreadsPerThreadgroup={mt}, equal to the launch size {lt}: the pipeline is capped at its launch size. This alone does not prove register pressure; verify register/spill data before changing live state.")
     return out
 
 

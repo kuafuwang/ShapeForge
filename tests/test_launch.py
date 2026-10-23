@@ -206,6 +206,7 @@ def test_a_pipeline_warning_names_the_stage_that_is_at_the_register_limit():
     notes = _warnings(type("H", (), {"source": {"matrix": {"acc_tiles": 0}}})(), measured)
     assert any("stage gemm" in note for note in notes)
     assert not any("launch size 32" in note for note in notes)
+    assert any("does not prove register pressure" in note for note in notes)  # the cap alone is not a spill diagnosis
 
 
 def test_instrumented_threadgroup_over_the_device_max_is_reported_and_not_a_signature_failure():

@@ -36,7 +36,7 @@
 
 ## 验证
 
-- 最近全量离线测试：**912 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`，2026-10-22）。
+- 最近全量离线测试：**914 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`，2026-10-22）。
 - 新增测试覆盖：7 条占位原文、探针恢复后的 digest 保留、`info`/`obsolete`、空占位墓碑、信任 scope/prompt/协议/过期、单模型/同探针不达 quorum、跨 target/协议隔离、P2 `git apply --check`、审计写回、试点汇总、 review 预算随价格变化与 verdict 解析，以及合成的 feedback→proposal→trust→overlay→TASK 端到端流程。
 - 数据侧：174 条审计已写回；60 条实测 `adopted`、15 条已修 `done`、35 条未验证 `info`、7 条空占位 `obsolete`，其余 57 条 pending。10 条按 topic 合并的 `obsolete` 已由 `experiments.revert_topic_merges` 改回 pending；39 条采集时缺探针的 claim 中，31 条 premise 升为 `verified`、8 条仍 `downgraded`，等待人复核。7 条审计空占位现在都有 `feedback_claim_removed` 墓碑；重建会为所有空占位小节写墓碑，当前共 18 条。
 - `targets/apple-m4-max/trust.toml` 有两个 conv2d grant（deepseek-flash、kimi-k3），status 仍是 `active`；但它们的 `prompt_sha1` 是 `e5db87…`，当前三个提示/代码文件算出的指纹是 `e28574…`。`trust.check` 对两者都报 `trust was granted for another prompt`，所以重新 grant 之前，`harness_auto` 打开也不会自动通过任何 tip 或 premise。

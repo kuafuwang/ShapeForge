@@ -54,7 +54,7 @@ The roofline uses peaks measured on this chip (a read-only kernel and a copy ker
 ## Pipeline statistics
 Keywords: maxTotalThreadsPerThreadgroup register pressure static threadgroup memory occupancy
 
-`maxTotalThreadsPerThreadgroup` is a proxy for registers per thread: 1024 means the compiler could fit the maximum; smaller values (512, 256, 128) mean heavier register use
+`maxTotalThreadsPerThreadgroup` is the pipeline's threadgroup launch limit. It is not a reliable register-pressure measurement on its own: without an explicit attribute it commonly reports the device cap, and a lower value can come from threadgroup memory or an explicit limit. Use it with a real spill/register signal and the measured time.
 and fewer resident threads, which hurts latency hiding. `static threadgroup memory` is what the kernel declares; more than half of the 32 KiB limits residency.
 Hints are printed when either looks problematic.
 

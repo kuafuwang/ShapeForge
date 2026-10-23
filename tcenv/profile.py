@@ -3,7 +3,7 @@
 Metal exposes far fewer hardware counters to user code than NCU, so feedback is assembled
 from what is reliably available:
 
-  * pipeline statistics: ``maxTotalThreadsPerThreadgroup`` (a register-pressure proxy: Metal
+  * pipeline statistics: ``maxTotalThreadsPerThreadgroup`` (the pipeline's threadgroup launch limit;
     lowers it when a kernel uses many registers), SIMD width, static threadgroup memory;
   * GPU timestamps of the command buffer;
   * an empirical roofline: measured peak memory bandwidth (copy kernel) and measured peak
@@ -109,8 +109,9 @@ def pipeline_stats(kernel: CompiledKernel, contract, device_info: dict) -> dict:
     hints = []
     if cap and max_threads < cap:
         hints.append(
-            f"maxTotalThreadsPerThreadgroup={max_threads} < {cap}: the compiler reports high per-thread register usage; "
-            "fewer simultaneously resident threads per core will hurt latency hiding"
+            f"maxTotalThreadsPerThreadgroup={max_threads} < {cap}: this pipeline is limited to {max_threads} threads per threadgroup. "
+            "The field alone does not distinguish register pressure, threadgroup memory, or an explicit limit; "
+            "do not raise the launch size solely from this hint."
         )
     tg_frac = kernel.static_tg_bytes / max(device_info["max_threadgroup_memory_bytes"], 1)
     if tg_frac > 0.5:

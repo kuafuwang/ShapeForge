@@ -42,7 +42,7 @@ from . import control, prompts
 from .artifacts import LEDGER_SCHEMA_VERSION, PROTOCOL_VERSION, RESULT_SCHEMA_VERSION, STATE_SCHEMA_VERSION
 from .feedback_extra import abi_signature, at_roofline, failure_phrase, status_lines, target_note, threadgroup_limit_note
 from .llm import LLM, BudgetExhausted, CostLedger, LLMConfig, LLMError, SearchConfig, Transcript
-from .policy import candidate_eligible, choose_confirmed, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain
+from .policy import candidate_eligible, choose_confirmed, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain, session_budget_floor
 from .committees import committees_record, default_committees, handoff_for, order_committees
 from .parse import parse_plans
 from .symptom import bound_of
@@ -238,6 +238,9 @@ class RunResult:
     target_id: str = ""
     backend: str = ""
     protocol_version: str = ""
+    # The run stopped because the remaining budget could not cover another recent-sized
+    # session; this is a budget stop, but a control-file top-up should not silently continue it.
+    session_budget_stop: bool = False
 
 
 # 源码的内容身份：评测缓存、复测去重、profiler 缓存都用它。同一份文本不会被当成两个内核。
@@ -452,6 +455,7 @@ class Orchestrator:
         self._evidence = ""
         self._feedback_seq: int | None = None
         self._session_briefs: list = []
+        self._session_costs: list[float] = []
         # 续跑时目录里已有上一会话的 state.json。先空写会把看板抹掉，所以等到 restore 把账本和候选装回来再发布。
         # 新运行的初始稿用角色 0。续跑要等知道轮次后再绑，不能在这里先绑成角色 0。
         if not resuming:
@@ -700,6 +704,18 @@ class Orchestrator:
         if self.best:
             self.best.is_best = True
         self.trace = [dict(t) for t in snap.trace]
+        self._session_costs = []
+        previous = 0.0
+        for item in sorted(self.trace, key=lambda row: int(row.get("idx") or 0)):
+            try:
+                total = float(item.get("cost_usd") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            delta = total - previous
+            if delta > 0:
+                self._session_costs.append(delta)
+            previous = max(previous, total)
+        self._session_costs = self._session_costs[-8:]
         self.history = list(snap.history)
         self.hangs, self.evaluations, self.crashes_in_a_row = snap.hangs, snap.evaluations, snap.crashes_in_a_row
         self.profiles = [dict(p) for p in snap.profiles]
@@ -942,6 +958,7 @@ class Orchestrator:
         except BudgetExhausted as e:
             # CostLedger.check 在下一次请求前拒绝了调用。已在飞的请求可能已经略超 budget_usd。
             res.stop_reason = "budget_exhausted"
+            res.session_budget_stop = str(e).startswith("session cost")
             self.log(f"== stop: {e}")
         except StopRun as e:
             # 一次完整评测超时（或连续崩溃）触发的熔断：不再开新回合。
@@ -979,6 +996,10 @@ class Orchestrator:
         non-budget stop could not be resumed. The file is read here, before that confirmation.
         """
         self.ledger.refresh_budget()
+        if res.session_budget_stop:
+            remaining = self.ledger.remaining
+            recent = session_budget_floor(self._session_costs)
+            return remaining is not None and recent is not None and remaining >= recent
         reason = res.stop_reason or ""
         if reason.startswith(("gpu_hang", "repeated_worker", "agent_failure", "llm_error", "cost_incomplete", "session cost")):
             return False
@@ -1173,6 +1194,12 @@ class Orchestrator:
         remaining = self.ledger.remaining
         if remaining is not None and remaining < 0.05:
             raise BudgetExhausted(f"budget ${self.ledger.budget_usd:.2f} exhausted (spent ${self.ledger.total_usd:.4f})")
+        recent_session = session_budget_floor(self._session_costs)
+        if remaining is not None and recent_session is not None and remaining < recent_session:
+            raise BudgetExhausted(
+                f"session cost floor: ${remaining:.4f} remains, below the recent "
+                f"session cost ${recent_session:.4f}; not starting another session"
+            )
         member = next(c.members[0] for c in self.committees if c.name == self._committee_name)
         slice_usd = self.search.relay_budget_usd if remaining is None else min(remaining, self.search.relay_budget_usd)
         prices = Prices(member.cfg.price_in, member.cfg.price_out, member.cfg.price_cache_read, member.cfg.price_cache_write)
@@ -1224,6 +1251,7 @@ class Orchestrator:
                 exit_kind = "cost_incomplete"
                 raise StopRun("cost_incomplete: the session finished without a token count, so the ledger cannot continue")
             self.ledger.charge(result.cost_usd, tag, tokens=result.spent, basis=prices.as_dict())
+            self._session_costs.append(float(result.cost_usd))
             if result.cost_usd > self.search.relay_budget_usd + 1e-6:
                 self.log(
                     f"  [{tag}] session spent ${result.cost_usd:.2f}, above the ${self.search.relay_budget_usd:.2f} output-token guide. "

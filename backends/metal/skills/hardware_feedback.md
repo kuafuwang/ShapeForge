@@ -12,6 +12,6 @@ When the feedback of the current best kernel ends with this block, read it as fo
 - "Measured" shows how far the kernel is from the roofline. A kernel at about 90% of its roofline or above is done as far as hardware features
   go: nothing can be gained beyond the roofline, the list of missing features is empty on purpose, and adding features to it for their own sake
   only adds risk. Memory-bound elementwise kernels are usually in this state: scalar loads already reach most of the bandwidth.
-- A warning about accumulator fragments or maxTotalThreadsPerThreadgroup means register pressure. More live state (more fragments, more
+- A warning about accumulator fragments is evidence of register pressure. A low `maxTotalThreadsPerThreadgroup` is only a launch limit; it does not prove register pressure. More live state (more fragments, more
   unrolling, deeper prefetch) can make a kernel many times slower through spills, so shrink before you grow.
 - Only the measured time decides. A change that adds a listed feature but is not faster is discarded like any other change.

@@ -204,6 +204,7 @@ def test_too_many_fragments_and_the_register_pressure_limit_are_warned_about():
     b = block("gemm_paper_best", mutate=slow, source=gemm_source("128x128x32t128", "fp16"), task="gemm@128x128x32t128")
     assert "Warning: 64 accumulator fragments per SIMD group; reference GEMMs with 32 or more fragments ran 12 to 26 times slower" in b
     assert "Do not add fragments" in b and "maxTotalThreadsPerThreadgroup=128" in b
+    assert "does not prove register pressure" in b
     assert len(lines_of(b)) <= 12
 
 

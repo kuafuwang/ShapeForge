@@ -166,3 +166,12 @@ def test_confirmation_keeps_the_search_best_inside_the_input_batch_floor():
     ) is None
     assert batches_agree([1.10, 1.40, 1.20]) is False
     assert batches_agree([1.20, 1.21, 1.19]) is True
+
+
+def test_recent_session_cost_uses_the_median_and_ignores_empty_history():
+    from taic.policy import session_budget_floor
+
+    assert session_budget_floor([]) is None
+    assert session_budget_floor([0.0, -1.0, None, 1.0]) == 1.0
+    assert session_budget_floor([0.2, 0.4, 1.0]) == 0.4
+    assert session_budget_floor([0.2, 0.4, 1.0, 3.0]) == 1.0

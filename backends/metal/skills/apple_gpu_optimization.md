@@ -8,8 +8,8 @@ Keywords: simd width threadgroup size registers occupancy unified memory slc cac
 - 32-wide SIMD groups (warps). A threadgroup (TG) has at most **1024 threads** and **32 KiB** of threadgroup (shared) memory.
   Without a `/* taic-launch */` block the contract fixes grid and TG size, so occupancy is controlled by register use and threadgroup memory. With that block, each stage chooses its own grid and TG size.
 - Many TGs are resident per GPU core at once when registers and threadgroup memory allow it; latency is hidden by switching between resident SIMD groups.
-  `maxTotalThreadsPerThreadgroup` of the compiled pipeline (reported in the feedback) drops below 1024 when the kernel uses many registers; if it falls below
-  the launch's threads per TG the contract is infeasible and the harness reports an ABI error.
+  `maxTotalThreadsPerThreadgroup` is the pipeline's launch limit. A value below the launch's threads per TG makes the contract infeasible and the harness reports
+  an ABI error. A lower value by itself is **not** proof of register pressure; it can also come from threadgroup memory or an explicit attribute.
 - Unified memory with a large system-level cache: small working sets run out of cache, so the harness rotates over several buffer sets and
   reports bandwidth against the *DRAM* roofline.
 - Peaks (read bandwidth, copy bandwidth, vendor GEMM by dtype, scalar FMA) are measured per chip. Read `device.md` and the scorecard. `simdgroup_matrix` is what gets close to the matrix peak; a scalar-FMA GEMM does not.
@@ -79,7 +79,7 @@ Keywords: divergence barrier uniform control flow occupancy register pressure sp
 
 - A barrier must be executed by every thread of the TG; compute the loop trip count from compile-time constants so it is uniform.
 - Divergent branches inside a SIMD group serialize both paths; prefer `select` for short conditionals.
-- Heavy unrolling raises register use and lowers `maxTotalThreadsPerThreadgroup`; check the pipeline statistics in the feedback after every structural change.
+- Heavy unrolling can raise register use and spill; check wall/GPU time and, when available, compiler spill/register data after every structural change. Do not raise `maxTotalThreadsPerThreadgroup` just to satisfy a guess.
 - Integer division and modulo by non-constants are expensive; use contract constants (powers of two become shifts) or precompute indices outside inner loops.
 - 64-bit address arithmetic is costlier than 32-bit; use `uint` indices where the element offset fits and widen only for the base pointer.
 
@@ -99,5 +99,5 @@ Keywords: workflow plan hypothesis strategy
 1. Read the feedback's roofline: is the kernel memory- or compute-bound, and how far above the lower bound (`time_over_lower_bound`) is it?
 2. Memory-bound and > 1.15x above the bound: vectorize loads, add loads in flight, remove second passes over global memory, remove masks.
 3. Compute-bound: move to `simdgroup_matrix` with float accumulators, then register blocking, then threadgroup staging and double buffering, then the fused epilogue.
-4. Check `maxTotalThreadsPerThreadgroup`: if it dropped, reduce live registers before adding more unrolling.
+4. If the pipeline reports a launch-size cap, look for real spill/register evidence before changing live state; the field alone is not a diagnosis.
 5. Change one thing at a time; the harness only keeps a candidate that is correct, safe and faster than the current best.
