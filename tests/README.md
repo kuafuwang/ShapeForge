@@ -3,6 +3,27 @@
 这份文档说明测试应该放在哪一层。根目录已经没有 `test_*.py`；新测试按这里
 的规则放到 `shared/` 或 `backends/<id>/`。
 
+## 给 AI 的阅读顺序
+
+1. **本文件**：目录分层、放置规则、导入、golden、并行、失败日志。子目录
+   README 只补充该层特有规则，不重复这里。
+2. `tests/shared/README.md`、`tests/backends/README.md`、
+   `tests/backends/metal/README.md`：这一层放什么、不放什么。
+3. `tests/support/README.md`、`tests/support/golden/README.md`：有哪些
+   helper、pytest 插件和 golden，新增时放哪。
+4. `tests/shared/test_structure.py`：上面规则的**可执行版本**（根目录无测试、
+   每个 Python 目录是包、`shared/` 不 import backend、`support/` 无业务测试、
+   GPU 用例在 xdist 同一组）。
+5. 要理解断言本身：`docs/架构/评测.md`（编译、安检、容差、计时协议）和
+   `docs/架构/搜索.md`（选择、确认、发布门禁）；observe/index 的测试对应
+   `docs/架构/数据层.md`。
+6. 失败时：先读 `logs/pytest/triage/triage_summary.md`，再读它指向的
+   Markdown；不要先翻完整 stdout/transcript（见本文「日志与 AI handoff」）。
+
+安全命令是 `uv run pytest -q -m 'not gpu and not llm and not slow'`：不占 GPU、
+不花钱，也不跑长时间的 `slow` 检查。`uv run pytest -q` 会跑 `gpu` 用例（GPU
+也是显示器），只在明确允许时运行；`-m gpu` / `-m llm` 同样要显式许可。
+
 ## 目录结构
 
 ```text
@@ -108,8 +129,9 @@ tests/support/golden/
 uv run pytest -q                         # -n auto --dist loadgroup
 uv run pytest -q -n 0                    # 串行复现
 uv run pytest -q --no-test-file-log      # 不写 per-test 日志
-uv run pytest -q -m 'not gpu and not llm'   # 不含 GPU/LLM 的并行套件
-uv run pytest -q -m gpu -n 0             # GPU 套件串行
+uv run pytest -q -m 'not gpu and not llm and not slow'   # 快速 CPU 套件（AI 默认）
+uv run pytest -q -m 'not gpu and not llm'                # 完整 CPU 套件（含 slow）
+uv run pytest -q -m gpu -n 0                             # GPU 套件串行
 ```
 
 `tests/conftest.py` 给所有 `gpu` 用例加 `xdist_group("gpu")`，配合
@@ -150,6 +172,9 @@ logs/pytest/triage/triage_summary.md        # controller 汇总
 
 AI/人应先读 `triage_summary.md`，再读对应 Markdown 的 JSON 块，最后用块里的
 单进程命令复现；不要先翻完整 stdout/transcript。
+
+不想要 failure handoff 时加 `--no-failure-handoff`；不想要 per-test 日志时加
+`--no-test-file-log`（两者都只影响日志，不改变测试结果）。
 
 ## 迁移状态
 

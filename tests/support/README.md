@@ -16,3 +16,7 @@
 
 新增 backend 专属 fixture 时放 `golden/<backend_id>/`；新增跨 backend
 helper 才放本目录根下。
+
+本目录不放业务测试（`tests/shared/test_structure.py` 会检查）。`hw_golden.py`
+目前读取 `golden/metal/`，是 Metal-only 的 golden 工具；新增第二个 backend 时
+再参数化或拆分。放置规则和并行说明见 `tests/README.md`。

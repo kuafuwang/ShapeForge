@@ -61,7 +61,7 @@ class BenchStats:
 # 从 1 次启动探起：evaluate 对单次 launch 有数秒级看门狗，一上来就跑满 kmax 会把病态核放大成挂起。
 # 一批 k 次 launch 共用一个心跳 B；父进程在 tcenv.evaluate.LAUNCH_DEADLINE_S 之后 SIGKILL。
 # 慢核的批量因此必须有上限，否则一条合法但慢的候选会被判成挂死（max_hangs=1 还会终止整次搜索）。
-# 0.8 × LAUNCH_DEADLINE_S：留 20% 余量给编码、提交和心跳写入的延迟。一致性由 tests/test_bench_limit.py 盯着。
+# 0.8 × LAUNCH_DEADLINE_S：留 20% 余量给编码、提交和心跳写入的延迟。一致性由 tests/backends/metal/test_bench_limit.py 盯着。
 BATCH_WALL_BUDGET_S = 1.6
 
 
