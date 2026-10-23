@@ -33,7 +33,13 @@ DEFAULT_TASKS = ("conv2d", "gemm", "swiglu")
 
 
 def repeatability_overrides(overrides: dict) -> dict:
-    """A trial must not read an experience index. Hints mined from the same task would leak into the holdout."""
+    """@brief 强制关掉经验索引，避免同一道题的提示泄漏进 holdout。
+
+    A trial must not read an experience index. Hints mined from the same task would leak into the holdout.
+
+    @param overrides 调用方传来的覆盖项。
+    @return 去掉了 ``experience_index`` 并把它置空的副本。
+    """
     out = {key: value for key, value in overrides.items() if key != "experience_index"}
     out["experience_index"] = ""
     return out
@@ -42,6 +48,26 @@ def repeatability_overrides(overrides: dict) -> dict:
 # 目录是 `任务/trial_N`。接着上次的最优核会把多次试验收成一条更长的搜索，均值和标准差就不再是运行之间的波动。
 # --resume 只认这一次 trial 自己的 result.json；上一格的结果不会被拷进来当起点。
 def run_repeatability(tasks, dtype, size, out_dir: Path, *, trials=5, budget_scale=1.0, budget=None, max_total_usd=None, max_rounds=None, branches=None, model=None, resume=True, client_factory=None, evaluate_fn=None, log=print, **overrides) -> dict:
+    """@brief 每道题重复跑多次独立搜索，收集每次的确认加速比与花费。
+
+    @param tasks 任务名列表。
+    @param dtype 数据类型。
+    @param size 规模档位。
+    @param out_dir 本次实验的输出目录。
+    @param trials 每道题重复几次。
+    @param budget_scale 预算倍数，乘以 Table 1 的预算。
+    @param budget 统一预算；为 ``None`` 时按 Table 1 逐题取。
+    @param max_total_usd 整个实验的花费上限；为 ``None`` 时不限。
+    @param max_rounds 轮数上限；为 ``None`` 时用默认。
+    @param branches 分支数；为 ``None`` 时用默认。
+    @param model 模型名；为 ``None`` 时用默认。
+    @param resume 为真时复用每个 trial 自己的 ``result.json``。
+    @param client_factory 造 LLM 客户端的可调用对象；每个新 trial 调一次。
+    @param evaluate_fn 评测函数；为 ``None`` 时用默认实现。
+    @param log 进度输出函数。
+    @param overrides 其余透传给 ``run_one`` 的覆盖项。
+    @return ``{任务: {budget_usd, trials, mean, sd, best, spent_usd}}``。
+    """
     install_file_log()
     out_dir.mkdir(parents=True, exist_ok=True)
     write_cap(out_dir, max_total_usd)
@@ -108,6 +134,11 @@ def run_repeatability(tasks, dtype, size, out_dir: Path, *, trials=5, budget_sca
 
 # 不同题实际留下的 trial 数可能不一样。表头按最多的那一行开列，较短的一行用横杠补齐。
 def markdown(table: dict) -> str:
+    """@brief 把重复性结果拍成 markdown 表，较短的一行用横杠补齐。
+
+    @param table ``run_repeatability`` 返回的结果字典。
+    @return 表格文本。
+    """
     n = max((len(v["trials"]) for v in table.values()), default=0)
     head = "| kernel | budget | " + " | ".join(f"trial {i + 1}" for i in range(n)) + " | mean +- SD | best |"
     L = [head, "| --- | ---: | " + " | ".join("---:" for _ in range(n)) + " | ---: | ---: |"]
@@ -120,6 +151,11 @@ def markdown(table: dict) -> str:
 
 # 默认三道题是 Table 1 里预算不同的那一组：conv2d、gemm 为 $15，swiglu 为 $1。flash_attention 要在 --tasks 里点名才跑。
 def main(argv=None) -> int:
+    """@brief ``python -m experiments.repeatability`` 的入口，跑完写 ``repeatability.json`` 与 ``repeatability.md``。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--tasks", default=",".join(DEFAULT_TASKS))
     ap.add_argument("--dtype", default="fp16")

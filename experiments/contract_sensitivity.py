@@ -31,6 +31,12 @@ VARIANTS = (
 
 
 def parse(variant: str) -> tuple[int, int, int, int]:
+    """@brief 把 ``BMxBNxBKtTHREADS`` 形式的契约字符串拆成四个整数。
+
+    @param variant 契约名，例如 ``64x64x32t128``。
+    @return ``(BM, BN, BK, 线程数)``。
+    @raises ValueError 字符串不符合该格式时。
+    """
     import re
 
     m = re.fullmatch(r"(\d+)x(\d+)x(\d+)t(\d+)", variant)
@@ -40,7 +46,16 @@ def parse(variant: str) -> tuple[int, int, int, int]:
 
 
 def simdgroup_layout(bm: int, bn: int, threads: int) -> tuple[int, int]:
-    """(WM, WN): how the ``threads/32`` simdgroups tile the output; the most square per-simdgroup sub-tile whose sides are multiples of 8."""
+    """@brief 算 ``threads/32`` 个 simdgroup 怎么切输出块。
+
+    (WM, WN): how the ``threads/32`` simdgroups tile the output; the most square per-simdgroup sub-tile whose sides are multiples of 8.
+
+    @param bm 输出块的行数。
+    @param bn 输出块的列数。
+    @param threads 线程数。
+    @return ``(WM, WN)``：两个方向的 simdgroup 个数。
+    @raises ValueError threads 不是 32 的倍数、或找不到整分块方式时。
+    """
     w = threads // 32
     best = None
     for wm in range(1, w + 1):
@@ -117,6 +132,13 @@ kernel void gemm_kernel(device const {T}* A [[buffer(0)]],
 
 
 def gemm_source(variant: str, dtype: str = "fp16") -> str:
+    """@brief 按一套启动契约生成手写 simdgroup_matrix GEMM 的 MSL 源码。
+
+    @param variant 契约名，交给 ``parse``。
+    @param dtype ``fp16`` 或 ``bf16``。
+    @return 完整的内核源码；填充宽度按 32 KB 限制自动选。
+    @raises KeyError dtype 不是支持的那两种时。
+    """
     bm, bn, bk, th = parse(variant)
     wm, wn = simdgroup_layout(bm, bn, th)
     t = {"fp16": "half", "bf16": "bfloat"}[dtype]
@@ -125,7 +147,15 @@ def gemm_source(variant: str, dtype: str = "fp16") -> str:
 
 
 def fa_source(variant: str, dtype: str = "fp16", size: str = "paper") -> str:
-    """A source-level stand-in used by the static screen. It is not a correct attention kernel."""
+    """@brief 生成供静态筛查用的 FlashAttention 源码替身。
+
+    A source-level stand-in used by the static screen. It is not a correct attention kernel.
+
+    @param variant 契约名，交给任务自己的 ``build_variant``。
+    @param dtype ``fp16`` 或 ``bf16``。
+    @param size 规模档位。
+    @return 只用于数出编译期特征的 MSL 文本。
+    """
     import importlib
 
     mod = importlib.import_module("tasks.flash_attention.task")
@@ -148,9 +178,17 @@ def fa_source(variant: str, dtype: str = "fp16", size: str = "paper") -> str:
 
 
 def static_screen_contracts(op: str, variants: list[str], dtype: str = "fp16", size: str = "paper") -> list[dict]:
-    """Drop contracts that do not build, that declare 32 KiB or more of threadgroup memory, or that keep 32 or more accumulator fragments.
+    """@brief 不跑 GPU，先刷掉建不起来、超线程组内存或累加器太多的契约。
+
+    Drop contracts that do not build, that declare 32 KiB or more of threadgroup memory, or that keep 32 or more accumulator fragments.
 
     No GPU. The fragment count is the source-level count from ``taic.hwfeatures.analyze_source``.
+
+    @param op ``gemm`` 或 ``flash_attention``。
+    @param variants 要筛的契约名列表。
+    @param dtype 数据类型。
+    @param size 规模档位。
+    @return 每个契约一行，``kept`` 标明是否保留，``reason`` 写明原因。
     """
     from taic.hwfeatures import analyze_source
 
@@ -191,6 +229,15 @@ def static_screen_contracts(op: str, variants: list[str], dtype: str = "fp16", s
 
 
 def run_gemm(variants: list[str], dtype: str, size: str, out: Path, reps: int) -> list[dict]:
+    """@brief 逐套契约跑完整评测协议，并把结果累加写进 JSON。
+
+    @param variants 契约名列表。
+    @param dtype 数据类型。
+    @param size 规模档位。
+    @param out 输出目录。
+    @param reps 计时的重复次数。
+    @return 每个契约的结果行，含状态、耗时、加速比与编译期特征。
+    """
     from tcenv.evaluate import evaluate
     from tcenv.events import install_file_log, job_state
 
@@ -228,6 +275,11 @@ def run_gemm(variants: list[str], dtype: str, size: str, out: Path, reps: int) -
 
 
 def summarize(rows: list[dict]) -> dict:
+    """@brief 比较各契约的实测耗时，判断默认契约是不是限制项。
+
+    @param rows ``run_gemm`` 返回的结果行。
+    @return 最快与默认契约的耗时、相对基线的加速比，以及一句结论。
+    """
     ok = [r for r in rows if r.get("status") == "ok" and r.get("candidate_us")]
     if not ok:
         return {"verdict": "no valid variant"}
@@ -252,6 +304,11 @@ def summarize(rows: list[dict]) -> dict:
 
 
 def main(argv=None) -> int:
+    """@brief ``python -m experiments.contract_sensitivity`` 的入口，分预筛/实跑/出报告三种模式。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("op", choices=["gemm", "report", "prescreen"])
     ap.add_argument("--dtype", default="fp16")
@@ -289,7 +346,16 @@ if __name__ == "__main__":
 
 
 def triton_rows(task_prefix: str, dtype: str = "fp16", size: str = "paper", cache: Path | None = None) -> list[dict]:
-    """What triton-msl did with every contract variant of an operator that has a cached measurement."""
+    """@brief 读 triton-msl 的缓存结果，整理出每套该算子契约的表现。
+
+    What triton-msl did with every contract variant of an operator that has a cached measurement.
+
+    @param task_prefix 任务名前缀，例如 ``gemm``。
+    @param dtype 数据类型。
+    @param size 规模档位。
+    @param cache 缓存目录；为 ``None`` 时用仓库里的 ``runs/triton_baselines``。
+    @return 每套契约一行：相对 MLX 的比值、最佳 ``num_warps``、扫描极差与失败原因。
+    """
     cache = cache or Path(__file__).resolve().parent.parent / "runs" / "triton_baselines"
     rows = []
     for p in sorted(cache.glob(f"{task_prefix}*_{dtype}_{size}.json")):
@@ -309,6 +375,14 @@ def triton_rows(task_prefix: str, dtype: str = "fp16", size: str = "paper", cach
 
 
 def report(out: Path, dtype: str = "fp16", size: str = "paper", p1: Path | None = None) -> str:
+    """@brief 把契约、triton-msl 扫描与 LLM 搜索的实测拼成一份报告。
+
+    @param out 本实验的输出目录。
+    @param dtype 数据类型。
+    @param size 规模档位。
+    @param p1 ``experiments.p1_runs`` 的结果目录；为 ``None`` 时不出这一节。
+    @return markdown 报告文本。
+    """
     L = ["# Does the hand-picked launch contract limit GEMM / FlashAttention?", ""]
     gp = out / f"gemm_{dtype}_{size}.json"
     if gp.exists():

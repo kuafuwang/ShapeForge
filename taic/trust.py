@@ -33,11 +33,17 @@ _TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class TrustError(ValueError):
-    """A grant or lookup that cannot be honoured."""
+    """@brief 无法满足的信任授权或查询。"""
 
 
 def target_root(target_id: str, root: Path | None = None) -> Path:
-    """The target's directory. ``root`` is for tests and alternate repositories."""
+    """@brief 取目标目录。
+
+    @param target_id 目标标识，必须是合法的目录名。
+    @param root 存放 ``targets/`` 的根；测试与备份仓库可指定。
+    @return 该目标的目录路径。
+    @raises TrustError ``target_id`` 不是合法的目标名时。
+    """
     if not _TARGET.fullmatch(str(target_id or "")):
         raise TrustError(f"invalid target id {target_id!r}")
     base = Path(root) if root is not None else REPO_ROOT / "targets"
@@ -45,10 +51,22 @@ def target_root(target_id: str, root: Path | None = None) -> Path:
 
 
 def trust_path(target_id: str, root: Path | None = None) -> Path:
+    """@brief 取一个目标的 ``trust.toml`` 路径。
+
+    @param target_id 目标标识。
+    @param root 存放 ``targets/`` 的根。
+    @return 信任登记表路径。
+    """
     return target_root(target_id, root) / "trust.toml"
 
 
 def audit_path(target_id: str, root: Path | None = None) -> Path:
+    """@brief 取一个目标的 ``trust_audit.jsonl`` 路径。
+
+    @param target_id 目标标识。
+    @param root 存放 ``targets/`` 的根。
+    @return 信任审计日志路径。
+    """
     return target_root(target_id, root) / "trust_audit.jsonl"
 
 
@@ -62,11 +80,12 @@ _PROMPT_FILES = (
 
 
 def current_prompt_sha1() -> str:
-    """A stable fingerprint of the prompt/TASK surface. Edits make old grants stale.
+    """@brief 提示/TASK 面的指纹，改动它会让旧授权变旧。
 
-    ``kernel_agent.py`` owns the TASK contract and ``harness.py`` owns HARNESS.md; the
-    target experience file and the agent skill are injected as prompt text too. A trust grant
-    must not silently survive a change to the text the model is asked to follow.
+    ``kernel_agent.py`` 拥有 TASK 契约，``harness.py`` 拥有 HARNESS.md；目标经验文件与 agent 技能也是被注入的
+    提示文本。授权不能默默延续到模型被告知遵循的文本已经变了之后。
+
+    @return 各提示面文件内容拼接后的 sha256。
     """
     digest = hashlib.sha256()
     for name in _PROMPT_FILES:
@@ -78,10 +97,19 @@ def current_prompt_sha1() -> str:
 
 
 def current_protocol_version() -> str:
+    """@brief 当前测量协议版本号，写入授权并在校验时比对。
+
+    @return ``tcenv.schema.PROTOCOL_VERSION`` 的字符串形式。
+    """
     return str(PROTOCOL_VERSION)
 
 
 def _toml_value(value) -> str:
+    """@brief 把一个 Python 值渲染成 TOML 字面量。
+
+    @param value 布尔、数值、列表或字符串。
+    @return TOML 字面量文本。
+    """
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -93,6 +121,13 @@ def _toml_value(value) -> str:
 
 
 def _dump(grants: list[dict]) -> str:
+    """@brief 把授权列表序列化成 ``trust.toml`` 的文本。
+
+    每个授权写成一个 ``[[grants]]``，字段顺序固定，便于人读和 diff。
+
+    @param grants 授权字典列表。
+    @return 完整的 TOML 文本（末尾一个换行）。
+    """
     lines = ["version = 1", ""]
     for grant in grants:
         lines.append("[[grants]]")
@@ -109,6 +144,11 @@ def _dump(grants: list[dict]) -> str:
 
 
 def _finite(value) -> float | None:
+    """@brief 把输入转成有限浮点数。
+
+    @param value 待转换的值；bool 不算数值。
+    @return 有限浮点数；不合法时（含 NaN/Inf）为 ``None``。
+    """
     if value is None or isinstance(value, bool):
         return None
     try:
@@ -119,11 +159,29 @@ def _finite(value) -> float | None:
 
 
 def _grant_id(target_id: str, task: str, provider: str, model: str, effort: str) -> str:
+    """@brief 算出一次授权的稳定标识。
+
+    同一 (target, task, provider, model, effort) 组合总是得到同一个 id，所以重新授权会替换旧条目。
+
+    @param target_id 目标标识。
+    @param task 任务名。
+    @param provider provider 名。
+    @param model 模型名。
+    @param effort 推理强度。
+    @return 16 字符的十六进制摘要。
+    """
     payload = "\0".join((str(target_id), str(task), str(provider), str(model), str(effort)))
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def load_grants(target_id: str, root: Path | None = None) -> list[dict]:
+    """@brief 读一个目标的信任登记表。
+
+    @param target_id 目标标识。
+    @param root 存放 ``targets/`` 的根。
+    @return 授权字典列表；文件缺失或没有 ``grants`` 时为空列表。
+    @raises TrustError 文件读不出来或 TOML 不合法时。
+    """
     path = trust_path(target_id, root)
     if not path.is_file():
         return []
@@ -138,6 +196,12 @@ def load_grants(target_id: str, root: Path | None = None) -> list[dict]:
 
 
 def _write(target_id: str, grants: list[dict], root: Path | None) -> None:
+    """@brief 原子地重写 ``trust.toml``。
+
+    @param target_id 目标标识。
+    @param grants 要写入的授权列表。
+    @param root 存放 ``targets/`` 的根。
+    """
     path = trust_path(target_id, root)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
@@ -152,6 +216,14 @@ def _write(target_id: str, grants: list[dict], root: Path | None) -> None:
 
 
 def _audit(target_id: str, event: dict, root: Path | None) -> None:
+    """@brief 追加一条审计记录，并在独占 flock 下 fsync。
+
+    审计日志有自己的锁；全局顺序总是先登记表、后审计。
+
+    @param target_id 目标标识。
+    @param event 要记录的事件。
+    @param root 存放 ``targets/`` 的根。
+    """
     path = audit_path(target_id, root)
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n"
@@ -168,6 +240,14 @@ def _audit(target_id: str, event: dict, root: Path | None) -> None:
 
 
 def read_audit(target_id: str, root: Path | None = None) -> list[dict]:
+    """@brief 读一个目标的信任审计日志。
+
+    损坏的行直接跳过，不让一行坏数据挡住整份审计。
+
+    @param target_id 目标标识。
+    @param root 存放 ``targets/`` 的根。
+    @return 审计事件列表；文件不存在时为空列表。
+    """
     path = audit_path(target_id, root)
     if not path.is_file():
         return []
@@ -184,11 +264,13 @@ def read_audit(target_id: str, root: Path | None = None) -> list[dict]:
 
 @contextmanager
 def _registry_lock(target_id: str, root: Path | None):
-    """Serialise one target's load-modify-write of ``trust.toml`` across processes.
+    """@brief 跨进程串行化一个目标的 ``trust.toml`` 读-改-写。
 
-    Without it, a run auto-suspending a model while a person runs ``taic trust grant/revoke`` loses
-    one side: the audit then records a suspension the registry no longer holds, which fails open on
-    demotion. The audit log has its own lock; the order is always registry then audit.
+    没有它，搜索进程自动暂停某个模型、同时有人在跑 ``taic trust grant/revoke`` 时，会丢掉一边：
+    审计里记下了一次登记表已经不再持有的暂停，于是降级时会失效开放。
+
+    @param target_id 目标标识。
+    @param root 存放 ``targets/`` 的根。
     """
     path = trust_path(target_id, root)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -217,7 +299,26 @@ def grant(
     protocol_version: str | None = None,
     root: Path | None = None,
 ) -> dict:
-    """Grant or replace one (target, task, model) trust entry. A revoked entry can be re-granted."""
+    """@brief 授予或替换一条 (target, task, model) 信任条目。
+
+    已销的条目可以重新授予。写入后追加一条 ``grant`` 审计，并返回新条目。
+
+    @param target_id 目标标识。
+    @param task 任务名。
+    @param provider provider 名。
+    @param model 模型名。
+    @param effort 推理强度。
+    @param scopes 授予的作用域集合。
+    @param granted_by 授予人。
+    @param reason 授予理由。
+    @param evidence_run 依据的运行标识。
+    @param expires_at 过期时间戳；``None`` 表示不过期。
+    @param prompt_sha1 授权时的提示指纹；``None`` 时取当前指纹。
+    @param protocol_version 授权时的协议版本；``None`` 时取当前版本。
+    @param root 存放 ``targets/`` 的根。
+    @return 新写入的授权条目。
+    @raises TrustError 必填字段缺失、作用域不合法，或 ``expires_at`` 不是未来的有限时间时。
+    """
     target_id, task = str(target_id).strip(), str(task).strip()
     provider, model, effort = str(provider).strip(), str(model).strip(), str(effort or "").strip()
     if not target_id or not task or not provider or not model:
@@ -274,7 +375,20 @@ def set_status(
     reason: str = "",
     root: Path | None = None,
 ) -> dict:
-    """Suspend or revoke one entry. Returns the updated entry; raises when it does not exist."""
+    """@brief 暂停或销一条授权。
+
+    @param target_id 目标标识。
+    @param task 任务名。
+    @param provider provider 名。
+    @param model 模型名。
+    @param effort 推理强度。
+    @param status 新状态，只能是 ``suspended`` 或 ``revoked``。
+    @param by 操作人。
+    @param reason 操作理由。
+    @param root 存放 ``targets/`` 的根。
+    @return 更新后的授权条目。
+    @raises TrustError 状态不是暂停/销，或没有对应的授权条目时。
+    """
     if status not in ("suspended", "revoked"):
         raise TrustError("set_status only suspends or revokes; grant creates an active entry")
     ident = _grant_id(target_id, task, provider, model, effort)
@@ -296,11 +410,25 @@ def set_status(
 
 
 def revoke(target_id: str, **kwargs) -> dict:
+    """@brief 销一条授权（``set_status`` 的薄封装）。
+
+    @param target_id 目标标识。
+    @param kwargs 其余参数原样传给 ``set_status``（需含 task/provider/model）。
+    @return 更新后的授权条目。
+    @raises TrustError 没有对应的授权条目时。
+    """
     kwargs["status"] = "revoked"
     return set_status(target_id, **kwargs)
 
 
 def suspend(target_id: str, **kwargs) -> dict:
+    """@brief 暂停一条授权（``set_status`` 的薄封装）。
+
+    @param target_id 目标标识。
+    @param kwargs 其余参数原样传给 ``set_status``（需含 task/provider/model）。
+    @return 更新后的授权条目。
+    @raises TrustError 没有对应的授权条目时。
+    """
     kwargs["status"] = "suspended"
     return set_status(target_id, **kwargs)
 
@@ -318,7 +446,22 @@ def check(
     prompt_sha1: str | None = None,
     now: float | None = None,
 ) -> tuple[bool, str]:
-    """Whether one grant authorises this proposal author and scope right now."""
+    """@brief 判断一条授权此刻是否允许该提案者在该作用域下动手。
+
+    逐项检查状态、目标、任务、provider/model/effort、作用域、过期时间、协议版本与提示指纹。
+
+    @param entry 授权条目。
+    @param target_id 当前目标标识。
+    @param task 当前任务名。
+    @param provider 提案者的 provider。
+    @param model 提案者的模型。
+    @param effort 提案者的推理强度。
+    @param scope 本次要用的作用域。
+    @param protocol_version 当前协议版本；``None`` 时取当前值。
+    @param prompt_sha1 当前提示指纹；``None`` 时取当前值。
+    @param now 当前时间戳；``None`` 时取 ``time.time()``。
+    @return ``(是否允许, 不允许的原因)``；允许时原因为空字符串。
+    """
     if not isinstance(entry, dict):
         return False, "missing trust entry"
     if entry.get("status") != "active":
@@ -353,6 +496,18 @@ def is_trusted(
     root: Path | None = None,
     **kwargs,
 ) -> tuple[bool, str]:
+    """@brief 在某个目标的所有授权里找一条当前可用的。
+
+    @param target_id 目标标识。
+    @param task 当前任务名。
+    @param provider 提案者的 provider。
+    @param model 提案者的模型。
+    @param effort 提案者的推理强度。
+    @param scope 本次要用的作用域。
+    @param root 存放 ``targets/`` 的根。
+    @param kwargs 其余参数原样传给 ``check``（如 ``protocol_version``/``prompt_sha1``/``now``）。
+    @return ``(是否受信任, 原因)``；没有可用授权时原因为 ``no active grant``。
+    """
     for entry in load_grants(target_id, root):
         ok, why = check(
             entry, target_id=target_id, task=task, provider=provider, model=model,

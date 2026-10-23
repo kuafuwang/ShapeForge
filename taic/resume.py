@@ -40,7 +40,11 @@ PROFILE_RE = re.compile(r"^r(?P<round>\d+)_(?P<label>.+)\.(?P<ext>json|txt)$")
 
 
 class ResumeError(RuntimeError):
-    """The run directory cannot be continued (the message says why and what to do)."""
+    """@brief 运行目录无法续跑。
+
+    异常消息本身说明原因与下一步动作（补预算、换目录、重开一轮等），调用方（CLI、仪表盘）把它当作可展示的
+    拒绝理由，而不是内部错误。
+    """
 
 
 # ---------------------------------------------------------------------------------------------
@@ -50,7 +54,13 @@ class ResumeError(RuntimeError):
 
 @dataclass
 class BranchResume:
-    """Where a part-way branch (one plan of a round) stood when the process stopped."""
+    """@brief 一个中途分支（某轮某支计划）在进程停下时所处的位置。
+
+    字段就是持久化的分支进度：``attempt`` 是进行中的修复次数（0 = 第一次回答），``messages`` 是继续用的对话，
+    ``turn`` 是最后一条 assistant 消息（带 ``pending`` 时）或下一次请求（不带时）的工具循环轮号，``pending`` 是
+    还没有结果的 tool call，``reply_text`` 是已收到但尚未评测的最终答案，``quick_used`` 是本次请求已用掉的
+    quick_check 次数，``note`` 说明恢复依据。
+    """
 
     attempt: int  # repair attempt in progress (0 = the first answer)
     messages: list  # the conversation to go on from
@@ -63,7 +73,11 @@ class BranchResume:
 
 @dataclass
 class RoundPartial:
-    """The last round that was entered; it may be finished, part-way or not yet started."""
+    """@brief 已经进入的最后一轮；它可能已结束、只走了一半，或尚未开始。
+
+    ``plans`` 为 None 表示还得再问一次 planner；``done`` 记录每支分支返回的候选标签（None 表示该支没交出合法
+    kernel），``resume`` 记录仍需继续的分支及其 ``BranchResume``，``plan_source`` 说明计划是从哪里找回来的。
+    """
 
     rnd: int
     seed_label: str
@@ -75,6 +89,14 @@ class RoundPartial:
 
 @dataclass
 class Snapshot:
+    """@brief 从运行目录重建出的完整搜索状态，供 ``Orchestrator.restore()`` 消费。
+
+    ``requests`` 是逐次请求的账目（花费与 token 拆分），``candidates`` 是候选字典（idx、label、source、report、plan），
+    ``trace`` / ``history`` 是重算后的选择痕迹与历史行。``best_label`` 是重算出的种子标签，``partial`` 只在旧协议里
+    才有值。``search_finished`` 为真表示搜索阶段已经结束，本次续跑只差一次确认；``notes`` 记录重建过程中的近似与
+    取舍，``checks`` 记录各来源之间的一致性核对结果。
+    """
+
     run_dir: str
     task: str
     dtype: str
@@ -111,6 +133,10 @@ class Snapshot:
 
     @property
     def spent_usd(self) -> float:
+        """@brief 已花费的美元总额，取最后一条请求的累计值。
+
+        @return 累计花费；尚未发生过请求时为 0.0
+        """
         return float(self.requests[-1]["total_usd"]) if self.requests else 0.0
 
 
@@ -120,16 +146,33 @@ class Snapshot:
 
 
 def _first(*values):
+    """@brief 按优先级取第一个不为 None 的值。
+
+    @param values 候选值，从左到右优先级递减
+    @return 第一个非 None 值；全为 None 时返回 None
+    """
     return next((v for v in values if v is not None), None)
 
 
 def _doc(path: Path) -> dict | None:
+    """@brief 读一个 JSON 文件，不是对象（或读不到）就当不存在。
+
+    @param path JSON 文件路径
+    @return 字典内容；文件缺失、损坏或根不是对象时为 None
+    """
     d = control.read_json(path)
     return d if isinstance(d, dict) else None
 
 
 def read_transcript(run_dir: Path) -> tuple[list[dict], int]:
-    """(events, number of damaged lines). A damaged last line is what a kill in the middle of a write leaves behind."""
+    """@brief 读 ``transcript.jsonl``，并容忍写到一半的残行。
+
+    进程在写入中途被杀时，最后一行往往不完整；这类行计数后跳过，不影响已完整的请求记录。
+    （非 JSON 行计入损坏数，非 dict 的 JSON 行静默丢弃。）
+
+    @param run_dir 运行目录
+    @return ``(事件列表, 损坏行数)``；文件不存在时返回 ``([], 0)``
+    """
     path = Path(run_dir) / "transcript.jsonl"
     events: list[dict] = []
     bad = 0
@@ -151,6 +194,15 @@ def read_transcript(run_dir: Path) -> tuple[list[dict], int]:
 
 
 def has_best(state: dict | None, result: dict | None) -> bool:
+    """@brief 判断运行是否已经找到过有效 kernel。
+
+    先看 ``best_label``，再看 ``trace`` 里是否出现过 ``improved`` 的条目；没找到任何有效 kernel 的运行没有可继续的
+    基础，续跑会直接建议重开。
+
+    @param state ``state.json`` 的内容，可为 None
+    @param result ``result.json`` 的内容，可为 None
+    @return 两个文档任一证明有 best 时为 True
+    """
     for doc in (state, result):
         if doc and (doc.get("best_label") or any(t.get("improved") for t in doc.get("trace") or [] if isinstance(t, dict))):
             return True
@@ -158,6 +210,12 @@ def has_best(state: dict | None, result: dict | None) -> bool:
 
 
 def _same_pid(a, b) -> bool:
+    """@brief 严格比较两个 pid（都必须是正整数且相等）。
+
+    @param a 第一个 pid，可能是字符串或 None
+    @param b 第二个 pid
+    @return 可解析为相同的正整数时为 True
+    """
     try:
         return int(a) > 0 and int(a) == int(b)
     except (TypeError, ValueError):
@@ -165,23 +223,45 @@ def _same_pid(a, b) -> bool:
 
 
 def _launching_us(holder: dict) -> bool:
-    """The lock was written by the process that spawned this resume (the dashboard's ``uv run``), or it names this process.
-    That is our own start, not another resume."""
+    """@brief 判断锁文件是不是本次续跑自己写下的。
+
+    锁的 ``pid`` 等于本进程或父进程时，说明它是拉起本次续跑的进程（仪表盘的 ``uv run``）留下的，属于我们自己的启动，
+    而不是另一个正在跑的续跑；此时不应报“已经在续跑中”。
+
+    @param holder ``control.lock_holder`` 读到的锁内容
+    @return 是本次启动留下的锁时返回 True；``holder`` 不是 dict 时返回 False
+    """
     if not isinstance(holder, dict):
         return False
     return _same_pid(holder.get("pid"), os.getpid()) or _same_pid(holder.get("pid"), os.getppid())
 
 
 def _count_stop(stop: str) -> bool:
-    """A stop that is a count of rounds: the hard round cap, or patience (rounds without a new best)."""
+    """@brief 判断停止原因是不是“轮次计数”一类，而不是故障。
+
+    只认两种：硬性轮数上限（``max_rounds``），或耐心用完（``converged (...)``）。只有这两类允许在仪表盘“重置”
+    后被继续；显卡挂死、模型报错等停止原因不在其中。
+
+    @param stop ``result.json`` / ``state.json`` 里的停止原因
+    @return 属于轮次计数一类时为 True
+    """
     return stop == "max_rounds" or stop.startswith("converged (")
 
 
 def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops: bool = False) -> dict:
-    """Whether and how ``run_dir`` can be continued, from its small files only (the dashboard calls this for every click).
+    """@brief 只看小文件，判定 ``run_dir`` 能不能续跑、以哪种方式续跑。
 
-    ``kind``: ``running`` (a live process owns it; ``can_topup_live`` says whether it polls the control file), ``resuming`` (a resume holds the lock),
-    ``interrupted`` (no result, no live process), ``budget_exhausted`` (finished, stopped for money), ``finished`` (any other stop), ``unknown``."""
+    仪表盘每次点击都会调一次，所以这里不读 transcript、不导入 tcenv。``kind`` 取值：
+    ``running``（有活进程持有；``can_topup_live`` 说明它是否会轮询控制文件）、``resuming``（已有续跑持有锁）、
+    ``interrupted``（无 result、无活进程）、``budget_exhausted``（已结束，因预算停止）、``finished``（其它停止原因）、
+    ``count_limited``（轮数或耐心用完，仅在 ``allow_count_stops`` 下）、``old_protocol``（协议过期，只能读）、
+    ``unknown``。
+
+    @param run_dir 运行目录
+    @param pid_check pid 存活判定函数，便于测试注入
+    @param allow_count_stops 是否把轮数/耐心耗尽也视为可续（仪表盘“重置”才打开）
+    @return 描述该目录的字典：``kind``、``resumable``、``reason``、``needs_budget``、花费与预算、轮次、best 加速比等
+    """
     run_dir = Path(run_dir)
     try:
         state, result = read_versioned(run_dir / "state.json", STATE_SCHEMA_VERSION), read_versioned(run_dir / "result.json", RESULT_SCHEMA_VERSION)
@@ -270,8 +350,16 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops
 
 
 def infer_settings(run_dir: Path, events: list[dict] | None = None) -> dict:
-    """The settings of the run: ``{"search": {...}, "llm": {...}, "provenance": {key: how}, "system": str | None}``.
-    ``run_config.json`` is exact; for older runs the values are read from ``state.json`` and the recorded prompts."""
+    """@brief 复原这次运行的设置。
+
+    返回 ``{"search": {...}, "llm": {...}, "provenance": {key: 来源}, "system": str | None}``。
+    ``run_config.json`` 存在时它是权威来源；老运行则从 ``state.json`` 与记录下来的提示词反推（例如 Skill 2b/2c 的
+    是否存在、planner 要求的计划数、修复次数上限、并行初样本数），每个推导出的键都在 ``provenance`` 里标明依据。
+
+    @param run_dir 运行目录
+    @param events 已读出的 transcript 事件；None 时自行读取
+    @return 设置字典，含 search / llm / provenance / system 四个键
+    """
     run_dir = Path(run_dir)
     prov: dict[str, str] = {}
     cfg = _doc(run_dir / control.CONFIG_FILE)
@@ -344,6 +432,16 @@ def infer_settings(run_dir: Path, events: list[dict] | None = None) -> dict:
 
 
 def _requests_from_transcript(events: list[dict], notes: list[str]) -> list[dict]:
+    """@brief 从 transcript 重建逐次请求的账目（token 与花费）。
+
+    ``chat`` 事件按 ``split_usage`` 拆分 token，``agent`` 事件按 ``token_counts``；累计总额取事件里记录的
+    ``total_usd``，与逐条相加不符时取较大偏差并记一条 note（早前会话的 transcript 可能缺失）。
+    老会话没有墙钟时间，``t`` 统一为 None。
+
+    @param events ``read_transcript`` 读出的事件列表
+    @param notes 收集重建说明与异常情况的列表，会被就地追加
+    @return 请求记录列表，每项含 t / label / hit / miss / write / out / cost_usd / total_usd
+    """
     from .llm import split_usage, token_counts
 
     reqs: list[dict] = []
@@ -375,6 +473,11 @@ def _requests_from_transcript(events: list[dict], notes: list[str]) -> list[dict
 
 
 def _label_info(label: str) -> dict | None:
+    """@brief 把候选标签拆成结构化字段。
+
+    @param label 形如 ``r3.p1.fix2#t5`` 的标签
+    @return 含 base / round / plan / attempt / turn 的字典；标签不合 ``LABEL_RE`` 时返回 None
+    """
     m = LABEL_RE.match(label or "")
     if not m:
         return None
@@ -382,7 +485,14 @@ def _label_info(label: str) -> dict | None:
 
 
 def _kernel_name(run_dir: Path) -> str:
-    """The candidate filename for this run's target, with the legacy fallback."""
+    """@brief 这颗运行的候选源文件名（含后端扩展名，如 ``kernel.metal``）。
+
+    从 ``run_config.json`` 的 target 解析后端扩展名；目标缺失或解析失败时回退到 ``.metal``，
+    以便老目录（没有 target 字段）仍然能读到 kernel 文本。
+
+    @param run_dir 运行目录
+    @return 候选文件名，形如 ``kernel`` + 扩展名
+    """
     try:
         from tcenv.backends.registry import load_backend
         from tcenv.target import load_target
@@ -396,6 +506,18 @@ def _kernel_name(run_dir: Path) -> str:
 
 
 def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
+    """@brief 读出 ``candidates/*`` 里的全部候选及其报告。
+
+    目录名须匹配 ``<idx>_<label>`` 且含候选源文件；缺 ``report.json`` 的候选记 note 后跳过。
+    测量协议与当前 ``PROTOCOL_VERSION`` 不一致时拒绝续跑：加速比只在同一协议内可比。
+    ``differential_recheck.json`` 存在且标记 ``counts_as_kernel_error``（或已损坏）时，该候选视为已被判错，
+    不会在续跑时回到种子位。
+
+    @param run_dir 运行目录
+    @param notes 收集重建说明的列表，会被就地追加
+    @return 按 idx 升序的候选字典列表（idx、label、source、report、plan、recheck_rejected）
+    @raises NeedsInspection 报告损坏、schema 不符或测量协议与当前版本不一致时
+    """
     from tcenv.evaluate import EvalReport
     from tcenv.schema import SchemaError
 
@@ -447,18 +569,38 @@ def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
 
 
 def _eligible(report, correctness_only: bool) -> bool:
+    """@brief 判断一份报告是否算作合格候选（委托给 policy）。
+
+    @param report ``EvalReport``，可为 None
+    @param correctness_only 只看正确性、忽略加速比门槛时为 True
+    @return 合格时为 True；``report`` 为 None 时返回 False
+    """
     if report is None:
         return False
     return candidate_eligible(bool(report.eligible), report.speedup, correctness_only=correctness_only)
 
 
 def _speedup(report, correctness_only: bool) -> float:
+    """@brief 取用于比较的加速比（不合格候选按 policy 折算）。
+
+    @param report ``EvalReport``，可为 None
+    @param correctness_only 只看正确性时为 True
+    @return 参与比较的加速比数值
+    """
     recorded = None if report is None else report.speedup
     return comparison_speedup(_eligible(report, correctness_only), recorded)
 
 
 def _replay(cands: list[dict], search) -> list[dict]:
-    """The selection the orchestrator makes (``Orchestrator._eval``), replayed over the stored reports."""
+    """@brief 在已存报告上重放编排器的选择逻辑（对应 ``Orchestrator._eval``）。
+
+    逐个候选按 ``relation_to_best`` 判定与当前 best 的关系（replace / tie / keep）；被复查判错的候选强制为 keep，
+    即使它的加速比更高。
+
+    @param cands ``_read_candidates`` 读出的候选列表
+    @param search 搜索配置（用到 ``correctness_only``、``min_improvement``、``noise_z``）
+    @return 每项含 idx / label / status / speedup / best_speedup / improved / within_noise 的痕迹列表
+    """
     from .orchestrator import speedup_se
 
     best = None
@@ -486,10 +628,14 @@ def _replay(cands: list[dict], search) -> list[dict]:
 
 
 def _refuse_old_protocol(info: dict, run_dir: Path) -> bool:
-    """True when this directory predates flame_chase_1, so ``load_snapshot`` would refuse it.
+    """@brief 判断目录是否早于 ``flame_chase_1``（那样 ``load_snapshot`` 会拒绝续跑）。
 
-    The directory stays readable (brief, dashboard, run details); only the resume button must not appear.
-    Without this, the dashboard reads ``resumable: true`` from a run that ``taic resume`` always rejects.
+    目录本身仍然可读（brief、仪表盘、运行详情），只是不能显示续跑按钮。没有这一步，仪表盘会从一个
+    ``taic resume`` 必然拒绝的运行里读出 ``resumable: true``。
+
+    @param info ``inspect_run`` 正在构造的结果字典，过期时被就地改写
+    @param run_dir 运行目录
+    @return 协议过期时为 True（并已把 ``kind`` 改成 ``old_protocol`` 并填写 ``reason``）
     """
     protocol = _loop_protocol(run_dir)
     if protocol == "flame_chase_1":
@@ -502,15 +648,32 @@ def _refuse_old_protocol(info: dict, run_dir: Path) -> bool:
 
 
 def _loop_protocol(run_dir: Path) -> str | None:
+    """@brief 读 ``run_config.json`` 里记录的搜索协议名。
+
+    @param run_dir 运行目录
+    @return 协议名字符串；文件缺失、字段缺失或类型不对时返回 None
+    """
     doc = control.read_json(Path(run_dir) / "run_config.json") or {}
     value = doc.get("loop_protocol") if isinstance(doc, dict) else None
     return value if isinstance(value, str) else None
 
 
 def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
-    """Resume a ``flame_chase_1`` run. A round that already has a candidate is finished; an open round starts a new session.
+    """@brief 重建一场 ``flame_chase_1`` 运行的状态。
 
-    There is no partial conversation to continue. ``kernel_name`` is unused: the kernel text is whatever the candidate file holds.
+    已有候选的那一轮算完成，没候选的开放轮次以一个全新会话重开；不存在需要接着用的半截对话，
+    kernel 文本完全以候选文件为准（``kernel_name`` 参数未使用，只为兼容旧签名）。
+
+    重建时以 ``transcript.jsonl`` 为计费唯一依据：``ledger.json`` 若带请求列表而与 transcript 不符会被拒绝；
+    ``state.json`` 报出的花费高于 transcript 时，差额作为一条 ``unaccounted`` 记录补上，绝不低估花费。
+    搜索阶段已结束的运行（phase 为 confirm，或下一轮已越过上限）会把 ``search_finished`` 置真并留在确认环节。
+
+    @param run_dir 运行目录
+    @param search 搜索配置（用到 ``max_rounds``、``min_improvement``、``noise_z``）
+    @param kernel_name 候选源文件名，已弃用
+    @return 重建出的 ``Snapshot``
+    @raises ResumeError 目录既无 ``state.json`` 也无 ``result.json``，或 ``candidates/`` 里有目录却没有一个可读候选
+    @raises NeedsInspection ``ledger.json`` 有请求列表而 transcript 没有时（需人看）
     """
     del kernel_name
     notes: list[str] = []
@@ -633,9 +796,17 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
 
 
 def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | None = None) -> Snapshot:
-    """Rebuild the search state of ``run_dir`` (read-only).
+    """@brief 重建 ``run_dir`` 的搜索状态（只读，不花钱、不碰 GPU）。
 
-    A directory without ``loop_protocol: flame_chase_1`` is refused. The chat-and-branches protocol is not continued.
+    只继续 ``flame_chase_1``：没有这个标记的目录一律拒绝；旧的 chat-and-branches 协议不再续跑。
+    真正花时间与 GPU 的只有调用方在 ``Orchestrator.restore()`` 之后的 ``run()``。
+
+    @param run_dir 运行目录
+    @param search 搜索配置
+    @param kernel_name 候选源文件名（透传，当前未使用）
+    @param settings 旧签名的设置字典，当前未使用
+    @return 重建出的 ``Snapshot``
+    @raises ResumeError ``loop_protocol`` 不是 ``flame_chase_1`` 时
     """
     del settings
     run_dir = Path(run_dir)
@@ -649,7 +820,11 @@ def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | N
 
 
 def describe(snap: Snapshot) -> dict:
-    """What was rebuilt, as a small JSON-able report (the dry run prints it)."""
+    """@brief 把重建结果压成一份可 JSON 序列化的小报告（``--dry-run`` 打印它）。
+
+    @param snap ``load_snapshot`` 得到的快照
+    @return 含花费、请求数、候选数、best 标签与加速比、完成轮数、待续分支等字段的字典
+    """
     p = snap.partial
     return {
         "run_dir": snap.run_dir, "task": snap.task, "dtype": snap.dtype, "model": snap.model,
@@ -675,6 +850,14 @@ def describe(snap: Snapshot) -> dict:
 
 
 def _next_index(run_dir: Path, stem: str) -> int:
+    """@brief 找一个还没被占用的备份序号。
+
+    同时检查 ``<stem>.before_topup_<n>.json`` 与 ``<stem>.before_resume_<n>.json`` 两类备份名。
+
+    @param run_dir 运行目录
+    @param stem 备份文件名前缀（``result`` 或 ``confirm_report``）
+    @return 最小的未占用序号，从 1 开始
+    """
     n = 1
     while any(run_dir.glob(f"{stem}.before_topup_{n}.json")) or (run_dir / f"{stem}.before_resume_{n}.json").exists():
         n += 1
@@ -682,12 +865,17 @@ def _next_index(run_dir: Path, stem: str) -> int:
 
 
 def snapshot_results(run_dir: Path) -> list[str]:
-    """Before a continued run can overwrite them: keep ``result.json`` and ``confirm_report.json`` as ``<name>.before_topup_<n>.json`` (and the old
-    ``state.json`` as ``state.before_resume_<n>.json``). The files are *moved*, so a directory without ``result.json`` is a run in progress.
+    """@brief 续跑开始前把旧结果文件改成备份名，免得被覆盖。
 
-    Both documents are parsed before anything is moved. A damaged ``confirm_report.json`` used to be discovered only
-    after ``result.json`` had already been moved, and the caller restored nothing because the error was not a
-    ``RunStartError``: the run was left with no ``result.json`` at all.
+    ``result.json`` 与 ``confirm_report.json`` 改名为 ``<name>.before_topup_<n>.json``，旧的 ``state.json`` 改名为
+    ``state.before_resume_<n>.json``。文件是“移动”而不是复制，所以没有 ``result.json`` 的目录就是一场进行中的运行。
+
+    两个文档都在移动任何东西之前先解析完。以前若 ``confirm_report.json`` 已损坏，要到 ``result.json`` 已经被移走后
+    才发现，而调用方因为异常不是 ``RunStartError`` 而什么都没恢复：运行就被扫成了完全没有 ``result.json`` 的样子。
+
+    @param run_dir 运行目录
+    @return 已被移动的备份文件名列表；``state.json`` 损坏时只是不做它的备份
+    @raises ResumeError ``result.json`` 或 ``confirm_report.json`` 损坏：此时一个文件都没动
     """
     run_dir = Path(run_dir)
     pending = []
@@ -718,7 +906,14 @@ def snapshot_results(run_dir: Path) -> list[str]:
 
 
 def restore_snapshot(run_dir: Path, moved: list[str]) -> None:
-    """Put ``result.json`` and ``confirm_report.json`` back when startup fails after ``snapshot_results`` moved them."""
+    """@brief 启动失败时把 ``result.json`` 与 ``confirm_report.json`` 放回原位。
+
+    只处理 ``result.*`` / ``confirm_report.*`` 备份（``state.`` 开头的跳过）；目标已存在则不覆盖，
+    以免把新一次运行的结果抹掉。
+
+    @param run_dir 运行目录
+    @param moved ``snapshot_results`` 返回的备份文件名列表
+    """
     run_dir = Path(run_dir)
     for name in moved:
         if name.startswith("state."):
@@ -733,8 +928,18 @@ def restore_snapshot(run_dir: Path, moved: list[str]) -> None:
 
 
 def effective_budget(info: dict, *, add_usd: float | None, budget_usd: float | None, control_doc: dict | None = None) -> float:
-    """The total budget of the continued run: ``--budget``, else recorded + ``--add-budget``, else the larger of the recorded budget and a request still
-    waiting in control.json. Must exceed what is spent."""
+    """@brief 算出续跑后的总预算，并确认它的确高于已花费。
+
+    优先级：``--budget`` 给出的总数 > 已记录预算 + ``--add-budget`` > 已记录预算与 control.json 里待处理请求中较大者。
+    因预算停下的运行既没给 ``--add-budget`` 也没给 ``--budget``，且没有待处理请求时直接拒绝：一次正常会话的钱不够。
+
+    @param info ``inspect_run`` 的结果（用到 ``needs_budget``、``spent_usd``、``budget_usd``）
+    @param add_usd 追加的预算美元数
+    @param budget_usd 新的预算总数
+    @param control_doc 控制文件内容，可为 None
+    @return 新的总预算（正数）
+    @raises ResumeError 无法确定预算、预算非正非有限、或不超过已花费时
+    """
     if info.get("needs_budget") and add_usd is None and budget_usd is None:
         pending = control.parse_control(control_doc)[0] if control_doc else None
         if pending is None:

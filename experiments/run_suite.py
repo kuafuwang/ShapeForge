@@ -35,6 +35,26 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # 网格是「每种小数 × 每道题」各一个目录 `{task}_{dtype}`，换小数不会接着上一格的最优核。
 # --resume 为真时，该目录已经有 result.json 就不再启动搜索。文件不存在才整格重跑。
 def run_suite(tasks, dtypes, size, suite_dir: Path, *, budget_scale=1.0, budget=None, max_total_usd=None, branches=None, max_rounds=None, model=None, resume=True, client=None, evaluate_fn=None, log=print, with_naive=True, **overrides) -> list[dict]:
+    """@brief 在「小数 × 任务」网格上逐格跑搜索，每格单独记账并随时写汇总。
+
+    @param tasks 任务名列表。
+    @param dtypes 数据类型列表。
+    @param size 规模档位。
+    @param suite_dir 套件输出目录。
+    @param budget_scale 论文 $15 的倍数。
+    @param budget 统一预算；为 ``None`` 时用论文预算乘 ``budget_scale``。
+    @param max_total_usd 整套套件的花费上限；为 ``None`` 时不限。
+    @param branches 分支数；为 ``None`` 时用配置预设。
+    @param max_rounds 轮数上限；为 ``None`` 时用配置预设。
+    @param model 模型名；为 ``None`` 时用默认。
+    @param resume 为真时跳过已有 ``result.json`` 的格子。
+    @param client LLM 客户端；为 ``None`` 时由 ``run_one`` 自建。
+    @param evaluate_fn 评测函数；为 ``None`` 时用默认实现。
+    @param log 进度输出函数。
+    @param with_naive 为真时额外测 naive 参考内核。
+    @param overrides 其余透传给 ``run_one`` 的覆盖项。
+    @return 每格一行的汇总结果；遇到 GPU 挂死时提前返回已完成部分。
+    """
     install_file_log()
     suite_dir.mkdir(parents=True, exist_ok=True)
     write_cap(suite_dir, max_total_usd)
@@ -94,6 +114,11 @@ def run_suite(tasks, dtypes, size, suite_dir: Path, *, budget_scale=1.0, budget=
 
 # 写进 summary.md 的那张表。缺测印成横杠，读表的人不会把「没跑」看成 0 倍。
 def _published_cell(row: dict) -> str:
+    """@brief 把发布加速比格式化成表格里的一格，缺测印成横杠。
+
+    @param row 一行汇总结果。
+    @return 形如 ``1.234x`` 的文本，或发布状态名，或 ``-``。
+    """
     value = shown_speedup(row)
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return f"{value:.3f}x"
@@ -101,6 +126,11 @@ def _published_cell(row: dict) -> str:
 
 
 def markdown_table(rows: list[dict]) -> str:
+    """@brief 把套件汇总拍成 markdown 表。
+
+    @param rows 套件的结果行。
+    @return 表格文本。
+    """
     L = ["| task | dtype | published speedup vs best baseline | naive kernel (reference) | vs triton-msl | candidate us | best baseline | baselines (us) | budget USD | spent USD | evals | stop |", "| --- | --- | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: | ---: | --- |"]
     f = lambda v, p=3: "-" if v is None else f"{v:.{p}f}"
     for r in rows:
@@ -114,6 +144,11 @@ def markdown_table(rows: list[dict]) -> str:
 # 命令行只负责拆题单和小数。--tasks all 用任务表里的名字铺网格，不是 p1 那种具名变体。
 # 没写 --preset 时不往下传，搜索协议留在默认的论文预设上；scale 只影响美元上限。
 def main(argv=None) -> int:
+    """@brief ``python -m experiments.run_suite`` 的入口，跑完写 ``summary.md`` 并尝试画图。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--tasks", default="all")
     ap.add_argument("--dtypes", default="fp16")

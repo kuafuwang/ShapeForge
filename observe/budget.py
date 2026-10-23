@@ -32,7 +32,13 @@ SEVERITY = {"over": 0, "exhausted": 1, "near": 2, "ok": 3, "unknown": 4}
 
 # 旧结果缺字段，或写成布尔、NaN 时不能拿去比大小。布尔是 int 的子类，不先排除的话 True 会变成 1 美元。
 def _num(value: Any) -> float | None:
-    """A finite number, or ``None`` for a missing, non-numeric, boolean or NaN/inf value (older runs lack fields)."""
+    """@brief 把值转成有限浮点数；缺失、非数值、布尔或 NaN/inf 返回 ``None``（旧运行缺字段）。
+
+    原始英文说明：A finite number, or ``None`` for a missing, non-numeric, boolean or NaN/inf value (older runs lack fields).
+
+    @param value 待转换的值，可能来自旧版 ``result.json``。
+    @return 有限浮点数，或 ``None``。
+    """
     if value is None or isinstance(value, bool):
         return None
     try:
@@ -45,13 +51,20 @@ def _num(value: Any) -> float | None:
 # 三档可以同时成立，level 取 flags 里最重的一档。缺预算或缺花费不会抛错。
 # 刚好花到预算不算超（要多出 1e-9 以上）。耗尽只认停止原因，哪怕花费仍略低于上限。接近预算要求仍在跑，已结束的高花费不挂这一档。
 def budget_status(spent: Any, budget: Any, stop_reason: Any = None, running: bool = False) -> dict:
-    """Classify one run. ``spent`` / ``budget`` are USD (``None`` when unknown), ``stop_reason`` as in ``result.json``,
-    ``running`` is true while the search is still going.
+    """@brief 对一个运行做预算分级。
 
-    Returns ``level`` (``over`` / ``exhausted`` / ``near`` / ``ok`` / ``unknown``), ``flags`` (every alert that applies, worst first),
-    ``flagged``, ``label`` (English text of the level, ``""`` when not flagged), ``spent`` / ``budget`` (floats or ``None``),
-    ``used_pct``, ``over_usd`` / ``over_pct`` (the overrun; ``0.0`` when not over, ``None`` when it cannot be computed) and ``text``.
-    A missing or non-positive budget, or a missing spend, never raises: the run is ``unknown`` unless ``stop_reason`` alone flags it."""
+    ``spent`` / ``budget`` 为美元（未知时为 ``None``），``stop_reason`` 取自 ``result.json``，
+    ``running`` 表示搜索仍在进行。缺预算或缺花费不会抛错：除了停止原因单独构成“耗尽”的情况外，
+    该运行记为 ``unknown``。刚好花到预算不算超（需多出 1e-9 以上）；“接近预算”只发给仍在跑且已用 80% 的运行。
+
+    @param spent 已花费美元数，可为 None。
+    @param budget 预算美元数，可为 None；非正值视为未知。
+    @param stop_reason 停止原因，等于 ``budget_exhausted`` 时计入“耗尽”。
+    @param running 搜索是否仍在运行。
+    @return 字典，含 ``level``（over/exhausted/near/ok/unknown）、``flags``（所有适用的告警，最重的在前）、
+        ``flagged``、``label``（未告警时为空串）、``spent`` / ``budget``（浮点或 None）、``used_pct``、
+        ``over_usd`` / ``over_pct``（未超时为 0.0，无法计算时为 None）以及 ``text``。
+    """
     s = _num(spent)
     b = _num(budget)
     if b is not None and b <= 0:
@@ -97,7 +110,13 @@ def budget_status(spent: Any, budget: Any, stop_reason: Any = None, running: boo
 
 # 历史行可能已经带好 budget 字典。有 level 就沿用，避免横幅和表格各算一次、边界上档位不一致。
 def status_of(row: dict) -> dict:
-    """The ``budget`` status of a history row (computed from its fields when the row carries none)."""
+    """@brief 取历史行的 ``budget`` 状态；行内未带上时按字段现算。
+
+    原始英文说明：The ``budget`` status of a history row (computed from its fields when the row carries none).
+
+    @param row 历史行字典。
+    @return 已有的 budget 状态字典，或按 ``spent_usd`` / ``budget_usd`` / ``stop_reason`` / ``status`` 现算的结果。
+    """
     existing = row.get("budget")
     if isinstance(existing, dict) and "level" in existing:
         return existing
@@ -106,7 +125,16 @@ def status_of(row: dict) -> dict:
 
 # 横幅上的个数按 flags 累加，所以一条又超又耗尽的运行会同时计入 OVER 和 EXHAUSTED。排序只为了把最严重的放在最前。
 def summarize(rows: list[dict]) -> dict:
-    """The banner: how many runs are over budget / exhausted / near, which ones (worst first), and the total spend of ``rows``."""
+    """@brief 汇总横幅数据：超预算/耗尽/接近预算的运行数与名单（最重的在前），以及 ``rows`` 的总花费。
+
+    原始英文说明：The banner: how many runs are over budget / exhausted / near, which ones (worst first), and the total spend of ``rows``.
+
+    一条运行可同时计入多档（按 flags 累加）。
+
+    @param rows 历史行字典列表。
+    @return 含 ``n_runs``、``n_flagged``、``n_over``、``n_exhausted``、``n_near``、``level``、
+        总花费/总预算/总超出额与 ``flagged`` 名单的报告字典。
+    """
     flagged = []
     spent_total = budget_total = over_total = 0.0
     counts = {"over": 0, "exhausted": 0, "near": 0}
@@ -156,7 +184,13 @@ def summarize(rows: list[dict]) -> dict:
 
 # 首屏在服务端把告警画进 HTML，没开 JavaScript 也能看见。页面脚本随后用同一份报告重画。
 def render_banner_html(report: dict) -> str:
-    """The banner as HTML, for the first paint and for readers without JavaScript. The page script redraws it from the same report on every frame."""
+    """@brief 把预算报告渲染成 HTML 横幅，供首屏与无 JavaScript 的读者使用。
+
+    原始英文说明：The banner as HTML, for the first paint and for readers without JavaScript. The page script redraws it from the same report on every frame.
+
+    @param report ``summarize`` 返回的报告字典。
+    @return 横幅 HTML 字符串；无告警时返回正常状态的横幅。
+    """
     esc = html.escape
     n_runs = report.get("n_runs", 0)
     total = f"{n_runs} 个运行 · 总花费 ${report.get('total_spent_usd', 0.0):.2f} / 预算合计 ${report.get('total_budget_usd', 0.0):.2f}"

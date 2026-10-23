@@ -42,11 +42,11 @@ WHO = ("dashboard", "cli", "api")
 
 
 class ControlError(ValueError):
-    """A budget request that cannot be honoured (bad number, unknown run, ...)."""
+    """@brief 无法满足的预算请求（数字不对、运行目录不存在等）。"""
 
 
 class RunLockError(RuntimeError):
-    """Another live process already holds the run directory."""
+    """@brief 这个运行目录已被另一个活进程占着。"""
 
 
 # ---------------------------------------------------------------------------------------------
@@ -56,16 +56,25 @@ class RunLockError(RuntimeError):
 
 # 读者可能正在打开同一个文件。先写到旁边的临时文件，再用 replace 换成正式名字：要么看到旧的完整 JSON，要么看到新的，不会看到写了一半的。
 def write_json_atomic(path: Path, doc) -> None:
-    """Write ``doc`` next to ``path`` and ``os.replace`` it into place: a reader sees the old or the new file, never half of one. Raises on failure."""
+    """@brief 把 ``doc`` 序列化后写到 ``path`` 旁边，再用 ``os.replace`` 换到正式名字。
+
+    读者要么看到旧的完整 JSON，要么看到新的，不会看到写了一半的。
+
+    @param path 目标文件路径。
+    @param doc 要写出的 JSON 可序列化对象。
+    """
     write_text_atomic(path, json.dumps(doc, ensure_ascii=False, indent=1, default=str))
 
 
 def write_text_atomic(path: Path, text: str, *, encoding: str = "utf-8") -> None:
-    """Write ``text`` next to ``path`` and ``os.replace`` it into place.
+    """@brief 把 ``text`` 写到 ``path`` 旁边，再用 ``os.replace`` 换到正式名字。
 
-    The kernel, its report and its recheck record must land as a matched pair: a kill between two
-    plain ``write_text`` calls leaves a truncated kernel beside a complete report, and a resume
-    would pair them by directory name and cache the truncated source under the full report's verdict.
+    内核、它的报告与复测记录必须成对落地：在两次普通 ``write_text`` 之间被杀死，会留下半截内核配一份完整报告，
+    续跑时按目录名配对，就会把半截源码缓存到完整报告的结论下面。
+
+    @param path 目标文件路径。
+    @param text 要写入的文本。
+    @param encoding 文本编码。
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -83,7 +92,13 @@ def write_text_atomic(path: Path, text: str, *, encoding: str = "utf-8") -> None
 
 # 文件缺失或不是完整 JSON 都当成没有。原子替换就是为了让读者少碰到「写到一半所以被当成没有」。
 def read_json(path: Path):
-    """The parsed JSON of ``path``, or ``None`` when it is missing or damaged."""
+    """@brief 读 ``path`` 的 JSON；缺失或损坏都当成没有。
+
+    原子替换就是为了让读者少碰到「写到一半所以被当成没有」。
+
+    @param path 要读的 JSON 文件路径。
+    @return 解析后的对象；文件缺失或不是完整 JSON 时为 ``None``。
+    """
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -91,12 +106,14 @@ def read_json(path: Path):
 
 
 def append_jsonl(path: Path, row, *, sort_keys: bool = False) -> None:
-    """Append one JSON record and fsync it, starting a new line if the previous writer was killed.
+    """@brief 追加一条 JSON 记录并 fsync；上一位写入者被杀掉时先补一个换行。
 
-    ``feedback.jsonl`` is read by sequence number and ``(run_id, seq)`` is the primary key of the
-    derived index. A torn last line followed by an append fuses two records into one unparsable
-    line; ``max_seq`` then skips it, the sequence number is reused, and one session's history is
-    overwritten in the index.
+    ``feedback.jsonl`` 按序号读，而且 ``(run_id, seq)`` 是派生索引的主键。撕裂的末行再接一次追加，会把两条记录
+    抹成一行不可解析的文本；``max_seq`` 跳过它，序号被重复使用，一场会话的历史就在索引里被覆盖。
+
+    @param path 要追加的 JSONL 文件路径。
+    @param row 要写出的记录。
+    @param sort_keys 是否按键名排序后写出。
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -119,6 +136,13 @@ def append_jsonl(path: Path, row, *, sort_keys: bool = False) -> None:
 
 # 信号 0 不杀进程，只问这个 pid 还在不在。锁文件会比进程活得长，所以过期看 pid，不看文件时间。
 def pid_alive(pid) -> bool:
+    """@brief 判断一个 pid 对应的进程是否还在。
+
+    信号 0 不杀进程，只问这个 pid 还在不在。锁文件会比进程活得长，所以「过期」看 pid，不看文件时间。
+
+    @param pid 进程号，可以是字符串或数字。
+    @return 进程还在（或无权发信号）时为 ``True``。
+    """
     try:
         n = int(pid)
     except (TypeError, ValueError):
@@ -140,6 +164,13 @@ def pid_alive(pid) -> bool:
 
 # 预算必须是有限正数。bool 是 int 的子类，不先排除的话 True 会变成 1.0。
 def _finite_positive(value) -> float | None:
+    """@brief 把输入转成正的有限浮点数。
+
+    预算必须是有限正数。bool 是 int 的子类，不先排除的话 ``True`` 会变成 1.0。
+
+    @param value 待校验的值。
+    @return 正的有限浮点数；不合法时为 ``None``。
+    """
     if value is None or isinstance(value, bool):
         return None
     try:
@@ -150,6 +181,11 @@ def _finite_positive(value) -> float | None:
 
 
 def iso(t: float | None = None) -> str:
+    """@brief 把时间戳格式化成 ISO 风格字符串。
+
+    @param t 时间戳；``None`` 时取当前时间。
+    @return 本地时区的 ``YYYY-MM-DDTHH:MM:SS+ZZZZ`` 字符串。
+    """
     return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() if t is None else t))
 
 
@@ -159,11 +195,20 @@ def iso(t: float | None = None) -> str:
 
 
 def control_path(run_dir: Path) -> Path:
+    """@brief 运行目录里 ``control.json`` 的路径。
+
+    @param run_dir 运行目录。
+    @return 控制文件路径。
+    """
     return Path(run_dir) / CONTROL_FILE
 
 
 def parse_control(doc) -> tuple[float | None, str]:
-    """(requested total budget, problem). ``problem`` is empty when the document is usable."""
+    """@brief 解析控制文件内容。
+
+    @param doc 控制文件解析后的对象。
+    @return ``(请求的总预算, 问题说明)``；文档可用时问题说明为空字符串。
+    """
     if not isinstance(doc, dict):
         return None, "not a JSON object"
     b = _finite_positive(doc.get("budget_usd"))
@@ -174,16 +219,35 @@ def parse_control(doc) -> tuple[float | None, str]:
 
 # 缺失、损坏，或 budget_usd 不是正数，都当成没有加钱请求，避免一份坏文件改掉预算。
 def read_control(run_dir: Path) -> dict | None:
-    """The control document of ``run_dir`` if it exists and is usable (otherwise ``None``)."""
+    """@brief 读 ``run_dir`` 的控制文件，只在存在且可用时返回。
+
+    缺失、损坏，或 ``budget_usd`` 不是正数，都当成没有加钱请求，避免一份坏文件改掉预算。
+
+    @param run_dir 运行目录。
+    @return 控制文档；不可用时为 ``None``。
+    """
     doc = read_json(control_path(run_dir))
     return doc if parse_control(doc)[0] is not None else None
 
 
 # 向活搜索提出新的总预算，并记一条 requested。这里只校验「是正数」，不和已花费比较；下界在读文件的账本里。
 def write_control(run_dir: Path, budget_usd: float, *, who: str, amount_usd: float | None = None, old_budget_usd: float | None = None, note: str = "", max_rounds: int | None = None, patience: int | None = None) -> dict:
-    """Ask the running search of ``run_dir`` to raise its total budget to ``budget_usd``. Atomic; records a ``requested`` event.
+    """@brief 向 ``run_dir`` 的活搜索请求把总预算抬到 ``budget_usd``。
 
-    ``max_rounds`` and ``patience``, when given, are raised the same way (a live search only takes a value higher than the one it already has)."""
+    原子写入，并记一条 ``requested`` 事件。这里只校验「是正数」，不和已花费比较；下界在读文件的账本里。
+    ``max_rounds`` 与 ``patience`` 给出时按同样方式抬高（活搜索只接受比现有值更高的值）。
+
+    @param run_dir 运行目录。
+    @param budget_usd 新的总预算，不是这次追加的金额。
+    @param who 提出请求的一方（``dashboard``/``cli``/``api``）。
+    @param amount_usd 本次请求追加的金额，仅作记录。
+    @param old_budget_usd 变更前的总预算，写入审计事件。
+    @param note 备注，写入审计事件。
+    @param max_rounds 一并抬高的最大轮数。
+    @param patience 一并抬高的耐心轮数。
+    @return 刚写下的控制文档。
+    @raises ControlError 新预算不是正的有限数时。
+    """
     b = _finite_positive(budget_usd)
     if b is None:
         raise ControlError(f"the new budget must be a positive number, got {budget_usd!r}")
@@ -206,10 +270,20 @@ def write_control(run_dir: Path, budget_usd: float, *, who: str, amount_usd: flo
 
 
 def events_path(run_dir: Path) -> Path:
+    """@brief 运行目录里 ``budget_events.json`` 的路径。
+
+    @param run_dir 运行目录。
+    @return 预算事件文件路径。
+    """
     return Path(run_dir) / EVENTS_FILE
 
 
 def read_events(run_dir: Path) -> list[dict]:
+    """@brief 读预算变更历史，丢掉不是对象的那几项。
+
+    @param run_dir 运行目录。
+    @return 事件字典列表；文件缺失、损坏或不是列表时为空列表。
+    """
     doc = read_json(events_path(run_dir))
     return [e for e in doc if isinstance(e, dict)] if isinstance(doc, list) else []
 
@@ -217,9 +291,20 @@ def read_events(run_dir: Path) -> list[dict]:
 # 预算变更的审计。丢一行也不能让搜索停，所以任何异常都吞掉。
 # 仪表盘和搜索会同时追加。原子替换挡不住「两边都读到旧列表、后写的覆盖先写的」，所以先拿独占锁再读-改-写。
 def record_event(run_dir: Path, kind: str, old_budget_usd: float | None, new_budget_usd: float | None, *, who: str = "cli", note: str = "", **extra) -> dict:
-    """Append one entry to ``budget_events.json`` (read-modify-write under an exclusive file lock, so the dashboard and the search process can both write).
-    Never raises: losing one line must not stop a search. The returned dict has ``persisted`` False when the line did not land;
-    that file is then not a complete bill."""
+    """@brief 往 ``budget_events.json`` 追加一条记录，从不抛错。
+
+    预算变更的审计。丢一行也不能让搜索停，所以任何异常都吞掉。仪表盘和搜索会同时追加，原子替换挡不住
+    「两边都读到旧列表、后写的覆盖先写的」，所以先拿独占锁再读-改-写。
+
+    @param run_dir 运行目录。
+    @param kind 事件类型：``requested``/``applied``/``resume``。
+    @param old_budget_usd 变更前的总预算；未知时为 ``None``。
+    @param new_budget_usd 变更后的总预算；未知时为 ``None``。
+    @param who 事件发起方。
+    @param note 备注。
+    @param extra 额外写入事件的字段。
+    @return 事件字典；落盘失败时额外带 ``persisted=False``，此时该文件不是完整账单。
+    """
     now = time.time()
     event = {
         "t": now, "time": iso(now), "kind": kind, "who": who,
@@ -246,8 +331,15 @@ def record_event(run_dir: Path, kind: str, old_budget_usd: float | None, new_bud
 
 # 仪表盘用。requested 若还没有同金额的 applied 或 resume，算搜索还没采纳；只把最后一条这种挂起显示出来。
 def budget_history(run_dir: Path, current_budget: float | None = None) -> dict:
-    """What the dashboard shows: the budget the run started with, the budget now and every change that took effect.
-    ``requested`` entries that were never applied are listed as ``pending`` (the search has not read them yet)."""
+    """@brief 给仪表盘看的预算历史。
+
+    返回运行起始预算、当前预算和每一次生效的变更。还没被搜索采纳的 ``requested`` 条目列在 ``pending`` 里，
+    只把最后一条这种挂起显示出来。
+
+    @param run_dir 运行目录。
+    @param current_budget 当前预算；没有起始记录时用它充当 ``initial_budget_usd``。
+    @return 含 ``initial_budget_usd``/``budget_usd``/``topped_up``/``events``/``applied``/``pending`` 的字典。
+    """
     events = read_events(run_dir)
     effective = [e for e in events if e.get("kind") in ("applied", "resume")]
     initial = None
@@ -292,12 +384,21 @@ def budget_history(run_dir: Path, current_budget: float | None = None) -> dict:
 
 
 def lock_path(run_dir: Path) -> Path:
+    """@brief 运行目录里 ``resume.lock`` 的路径。
+
+    @param run_dir 运行目录。
+    @return 锁文件路径。
+    """
     return Path(run_dir) / LOCK_FILE
 
 
 # 给外面看谁占着这个目录。锁文件还在但 pid 已死，视为没人占。
 def lock_holder(run_dir: Path) -> dict | None:
-    """The live holder of the run's lock (``None`` when there is no lock or its pid is dead)."""
+    """@brief 给外面看谁占着这个目录。
+
+    @param run_dir 运行目录。
+    @return 持有者文档；没有锁或锁里的 pid 已死时为 ``None``。
+    """
     doc = read_json(lock_path(run_dir))
     if isinstance(doc, dict) and pid_alive(doc.get("pid")):
         return doc
@@ -305,7 +406,13 @@ def lock_holder(run_dir: Path) -> dict | None:
 
 
 def _lock_is_ours(doc) -> bool:
-    """The file names this process, or the dashboard's ``uv`` parent marked ``starting``."""
+    """@brief 判断锁文件是否本进程自己写下的。
+
+    包含仪表盘那种 ``uv`` 父进程标了 ``starting`` 的情况。
+
+    @param doc 锁文件内容。
+    @return 是本进程（或本进程父进程的启动占位）时为 ``True``。
+    """
     return isinstance(doc, dict) and (doc.get("pid") == os.getpid() or (doc.get("starting") and doc.get("pid") == os.getppid()))
 
 
@@ -313,7 +420,17 @@ def _lock_is_ours(doc) -> bool:
 # 独占 flock 盖住「读旧内容」和「写上自己的 pid」。写完并 fsync 之后才放开，对方读到的不会是空文件。
 # 对方 pid 还活着就拒绝。pid 已死、文件是空的，或就是自己上次留下的，在这把 flock 里改写成自己的 pid。
 def acquire_run_lock(run_dir: Path, who: str = "resume") -> Path:
-    """Claim ``run_dir`` for this process. Raises ``RunLockError`` if a live process holds it; a lock whose pid is dead is stale and replaced."""
+    """@brief 把 ``run_dir`` 占给本进程。
+
+    一个运行目录只许一个活进程继续：两个进程一起写候选内核和状态，会把同一次运行拆成两份互相覆盖的账。
+    独占 flock 盖住「读旧内容」和「写上自己的 pid」，写完并 fsync 之后才放开，对方读到的不会是空文件。
+    对方 pid 还活着就拒绝；pid 已死、文件是空的，或就是自己上次留下的，在这把 flock 里改写成自己的 pid。
+
+    @param run_dir 运行目录。
+    @param who 占用者身份，写入锁文件（缺省 ``resume``）。
+    @return 锁文件路径。
+    @raises RunLockError 另一个活进程（不是本进程）已持有该锁时。
+    """
     path = lock_path(run_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
@@ -335,6 +452,12 @@ def acquire_run_lock(run_dir: Path, who: str = "resume") -> Path:
 
 # 只删除本进程写下的锁。别的 pid 的锁不动，避免把刚接手的进程清掉。
 def release_run_lock(run_dir: Path) -> None:
+    """@brief 释放本进程写下的运行锁。
+
+    只删除本进程写下的锁，别的 pid 的锁不动，避免把刚接手的进程清掉。
+
+    @param run_dir 运行目录。
+    """
     doc = read_json(lock_path(run_dir))
     if isinstance(doc, dict) and doc.get("pid") == os.getpid():
         try:

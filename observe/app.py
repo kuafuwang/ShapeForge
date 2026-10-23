@@ -22,12 +22,25 @@ from observe import actions, budget, query
 
 
 class ETagMiddleware:
-    """Add an ETag to buffered responses and answer ``If-None-Match`` with 304. SSE is left alone."""
+    """@brief 给缓冲式响应加 ETag，并用 304 回应 ``If-None-Match``；SSE 流不处理。
+
+    原始英文说明：Add an ETag to buffered responses and answer ``If-None-Match`` with 304. SSE is left alone.
+    """
 
     def __init__(self, app) -> None:
+        """@brief 记下被包装的 ASGI 应用。
+
+        @param app 内层 ASGI 应用。
+        """
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        """@brief 执行一次 ASGI 调用：缓冲响应体、计算 ETag，命中时返回 304。
+
+        @param scope ASGI 连接作用域。
+        @param receive ASGI 接收通道。
+        @param send ASGI 发送通道。
+        """
         if scope.get("type") != "http" or str(scope.get("path") or "").endswith("/stream"):
             await self.app(scope, receive, send)
             return
@@ -64,10 +77,20 @@ _TOKEN_SLOT = "<!--OBSERVE_TOKEN-->"
 
 
 def _json(data: dict | list, status: int = 200) -> JSONResponse:
+    """@brief 把数据包成指定状态码的 JSON 响应。
+
+    @param data 响应数据。
+    @param status HTTP 状态码，默认为 200。
+    @return JSON 响应对象。
+    """
     return JSONResponse(data, status_code=status)
 
 
 def _poll_seconds() -> float:
+    """@brief 取空闲流的轮询间隔，来自 ``OBSERVE_POLL_S``，下限 0.05 秒。
+
+    @return 轮询间隔秒数；环境变量非法时返回 1.0。
+    """
     try:
         return max(0.05, float(os.environ.get("OBSERVE_POLL_S", "1")))
     except ValueError:
@@ -75,6 +98,13 @@ def _poll_seconds() -> float:
 
 
 async def index(request) -> HTMLResponse:
+    """@brief 渲染首屏 HTML，把预算横幅与观察 token 填进页面模板。
+
+    索引或运行目录损坏时只丢掉横幅，页面仍可打开。
+
+    @param request Starlette 请求对象。
+    @return 首页 HTML 响应（禁用缓存）。
+    """
     try:
         await asyncio.to_thread(query.tick)
         banner = budget.render_banner_html(await asyncio.to_thread(query.budget_report))
@@ -86,10 +116,20 @@ async def index(request) -> HTMLResponse:
 
 
 async def api_v2_overview(_request) -> JSONResponse:
+    """@brief 返回总览统计。
+
+    @param _request 未使用的请求对象。
+    @return 总览 JSON 响应。
+    """
     return _json(await asyncio.to_thread(query.overview))
 
 
 async def api_v2_runs(request) -> JSONResponse:
+    """@brief 按查询参数分页列出运行；非法 limit/offset 退回 50/0。
+
+    @param request Starlette 请求对象，查询参数含筛选、排序与游标字段。
+    @return 运行分页 JSON 响应。
+    """
     params = request.query_params
     try:
         limit = int(params.get("limit", "50"))
@@ -117,6 +157,11 @@ async def api_v2_runs(request) -> JSONResponse:
 
 
 async def api_v2_candidates(request) -> JSONResponse:
+    """@brief 列出一个运行的候选 kernel。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``status`` / ``limit``。
+    @return 候选列表 JSON 响应。
+    """
     return _json(await asyncio.to_thread(
         query.candidates_page,
         request.path_params["run_id"],
@@ -126,6 +171,11 @@ async def api_v2_candidates(request) -> JSONResponse:
 
 
 async def api_v2_sessions(request) -> JSONResponse:
+    """@brief 列出一个运行的模型会话。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``limit``。
+    @return 会话列表 JSON 响应。
+    """
     return _json(await asyncio.to_thread(
         query.sessions_page,
         request.path_params["run_id"],
@@ -134,10 +184,20 @@ async def api_v2_sessions(request) -> JSONResponse:
 
 
 async def api_v2_model_stats(_request) -> JSONResponse:
+    """@brief 返回按模型聚合的统计。
+
+    @param _request 未使用的请求对象。
+    @return 模型统计 JSON 响应。
+    """
     return _json(await asyncio.to_thread(query.model_stats))
 
 
 async def api_v2_failures(request) -> JSONResponse:
+    """@brief 列出失败的候选。
+
+    @param request Starlette 请求对象，查询参数可含 ``status`` / ``task`` / ``limit``。
+    @return 失败列表 JSON 响应。
+    """
     params = request.query_params
     return _json(await asyncio.to_thread(
         query.failures,
@@ -148,6 +208,11 @@ async def api_v2_failures(request) -> JSONResponse:
 
 
 async def api_v2_best(request) -> JSONResponse:
+    """@brief 列出已通过确认门的最优结果。
+
+    @param request Starlette 请求对象，查询参数可含 ``task`` / ``target`` / ``limit``。
+    @return 最优结果 JSON 响应。
+    """
     params = request.query_params
     return _json(await asyncio.to_thread(
         query.best_confirmed,
@@ -158,6 +223,11 @@ async def api_v2_best(request) -> JSONResponse:
 
 
 async def api_v2_run(request) -> JSONResponse:
+    """@brief 返回单个运行的详情；找不到时返回 404。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``stamp``。
+    @return 运行详情 JSON 响应。
+    """
     doc = await asyncio.to_thread(query.run_detail, request.path_params["run_id"], stamp=request.query_params.get("stamp") or "")
     if doc is None:
         return _json({"error": "not found"}, status=404)
@@ -165,7 +235,13 @@ async def api_v2_run(request) -> JSONResponse:
 
 
 async def api_v2_turns(request) -> JSONResponse:
-    """One window of model turns. A matching stamp returns no rows and does not read the turns table."""
+    """@brief 返回一段模型轮次窗口；``stamp`` 匹配时返回空行且不查轮次表。
+
+    原始英文说明：One window of model turns. A matching stamp returns no rows and does not read the turns table.
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``before`` / ``limit`` / ``stamp``。
+    @return 轮次窗口 JSON 响应；运行不存在时返回 404。
+    """
     from observe.detail import turns_feed
 
     params = request.query_params
@@ -186,7 +262,13 @@ async def api_v2_turns(request) -> JSONResponse:
 
 
 async def api_v2_pi(request) -> JSONResponse:
-    """The live pi transcript for one run. Polled on its own so the rest of the page is not redrawn."""
+    """@brief 返回一个运行的实时 pi 对话；独立轮询，避免重绘整页。
+
+    原始英文说明：The live pi transcript for one run. Polled on its own so the rest of the page is not redrawn.
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``stamp``。
+    @return 对话 feed JSON 响应；运行不存在时返回 404。
+    """
     from observe.detail import pi_feed
 
     stamp = request.query_params.get("stamp") or ""
@@ -197,14 +279,29 @@ async def api_v2_pi(request) -> JSONResponse:
 
 
 async def api_v2_experiments(_request) -> JSONResponse:
+    """@brief 列出实验。
+
+    @param _request 未使用的请求对象。
+    @return 实验列表 JSON 响应。
+    """
     return _json(await asyncio.to_thread(query.experiments))
 
 
 async def api_v2_experiment(request) -> JSONResponse:
+    """@brief 返回一个实验内各 arm 的对比。
+
+    @param request Starlette 请求对象，路径含 ``experiment_id``。
+    @return 实验对比 JSON 响应。
+    """
     return _json(await asyncio.to_thread(query.compare, request.path_params["experiment_id"]))
 
 
 async def api_v2_feedback(request) -> JSONResponse:
+    """@brief 返回反馈看板；``since`` 不是整数时返回 400。
+
+    @param request Starlette 请求对象，查询参数可含 ``since``。
+    @return 反馈看板 JSON 响应。
+    """
     raw = request.query_params.get("since")
     since = None
     if raw not in (None, ""):
@@ -216,6 +313,11 @@ async def api_v2_feedback(request) -> JSONResponse:
 
 
 async def api_v2_suggestions(request) -> JSONResponse:
+    """@brief 返回按 digest 聚合的系统建议预览；分页参数非整数时返回 400。
+
+    @param request Starlette 请求对象，查询参数可含筛选与 ``limit`` / ``preview`` / ``offset``。
+    @return 建议分组 JSON 响应。
+    """
     params = request.query_params
     try:
         limit = int(params.get("limit", "20"))
@@ -236,6 +338,11 @@ async def api_v2_suggestions(request) -> JSONResponse:
 
 
 async def api_v2_suggestion(request) -> JSONResponse:
+    """@brief 返回一条建议及其转换/评审详情；参数缺失返回 400，找不到返回 404。
+
+    @param request Starlette 请求对象，查询参数需含 ``run`` / ``seq`` / ``digest``。
+    @return 建议详情 JSON 响应。
+    """
     run_id = request.query_params.get("run") or ""
     digest = request.query_params.get("digest") or ""
     try:
@@ -252,6 +359,11 @@ async def api_v2_suggestion(request) -> JSONResponse:
 
 
 async def api_v2_harness(request) -> JSONResponse:
+    """@brief 返回一个运行的 harness 提案与评审看板；找不到时返回 404。
+
+    @param request Starlette 请求对象，路径含 ``run_id``。
+    @return harness 看板 JSON 响应。
+    """
     doc = await asyncio.to_thread(query.harness_board, request.path_params["run_id"])
     if doc is None:
         return _json({"error": "not found"}, status=404)
@@ -259,18 +371,38 @@ async def api_v2_harness(request) -> JSONResponse:
 
 
 async def api_v2_budget(_request) -> JSONResponse:
+    """@brief 返回预算报告。
+
+    @param _request 未使用的请求对象。
+    @return 预算报告 JSON 响应。
+    """
     return _json(await asyncio.to_thread(query.budget_report))
 
 
 async def api_v2_ledger(_request) -> JSONResponse:
+    """@brief 返回花费账本报告。
+
+    @param _request 未使用的请求对象。
+    @return 账本报告 JSON 响应。
+    """
     return _json(await asyncio.to_thread(query.ledger_report))
 
 
 async def api_v1_history(_request) -> JSONResponse:
+    """@brief 返回 v1 历史行列表。
+
+    @param _request 未使用的请求对象。
+    @return 历史行 JSON 响应。
+    """
     return _json(await asyncio.to_thread(query.history))
 
 
 async def api_v1_run(request) -> JSONResponse:
+    """@brief 返回 v1 运行详情；找不到时返回 404。
+
+    @param request Starlette 请求对象，路径含 ``run_id``。
+    @return 运行详情 JSON 响应。
+    """
     doc = await asyncio.to_thread(query.run_detail, request.path_params["run_id"])
     if doc is None:
         return _json({"error": "not found"}, status=404)
@@ -278,10 +410,20 @@ async def api_v1_run(request) -> JSONResponse:
 
 
 def _refused(exc: actions.Refused) -> JSONResponse:
+    """@brief 把拒绝异常转成带状态码的错误响应。
+
+    @param exc 动作层抛出的拒绝异常。
+    @return 含 ``ok=False`` 与错误信息的 JSON 响应。
+    """
     return _json({"ok": False, "error": exc.message}, status=exc.status)
 
 
 async def api_control(request) -> JSONResponse:
+    """@brief 返回一个运行可用的控制提示；非 loopback 请求返回 403。
+
+    @param request Starlette 请求对象，路径含 ``run_id``。
+    @return 控制提示 JSON 响应。
+    """
     try:
         if not actions.host_is_loopback(request.headers):
             raise actions.Refused(403, "refused: this server only answers on 127.0.0.1 / localhost (Host header check)")
@@ -291,6 +433,13 @@ async def api_control(request) -> JSONResponse:
 
 
 async def api_promote_harness(request) -> JSONResponse:
+    """@brief 将一个 harness 提案提升为正式 skill 或任务文本。
+
+    先校验来源与 token，再交给动作层执行。
+
+    @param request Starlette 请求对象，路径含 ``run_id`` 与提案 ``key``。
+    @return 提升结果 JSON 响应。
+    """
     try:
         actions.check_origin(request.headers)
         actions.check_token(request.headers)
@@ -303,6 +452,11 @@ async def api_promote_harness(request) -> JSONResponse:
 
 
 async def api_convert_harness(request) -> JSONResponse:
+    """@brief 把一条系统建议转换成 harness 提案；请求体上限 16384 字节。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，请求体为 JSON。
+    @return 转换结果 JSON 响应。
+    """
     try:
         actions.check_origin(request.headers)
         actions.check_token(request.headers)
@@ -323,6 +477,11 @@ async def api_convert_harness(request) -> JSONResponse:
 
 
 async def api_review_harness(request) -> JSONResponse:
+    """@brief 评审一个 harness 提案；请求体上限 8192 字节。
+
+    @param request Starlette 请求对象，路径含 ``run_id`` 与提案 ``key``，请求体为 JSON。
+    @return 评审结果 JSON 响应。
+    """
     try:
         actions.check_origin(request.headers)
         actions.check_token(request.headers)
@@ -339,6 +498,11 @@ async def api_review_harness(request) -> JSONResponse:
 
 
 async def api_review_feedback(request) -> JSONResponse:
+    """@brief 评审一条反馈 claim；请求体上限 16384 字节。
+
+    @param request Starlette 请求对象，路径含 ``run_id`` / ``seq`` / ``digest``，请求体为 JSON。
+    @return 评审结果 JSON 响应。
+    """
     try:
         actions.check_origin(request.headers)
         actions.check_token(request.headers)
@@ -359,6 +523,11 @@ async def api_review_feedback(request) -> JSONResponse:
 
 
 async def api_add_budget(request) -> JSONResponse:
+    """@brief 给一个运行追加预算；请求体上限 4096 字节。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，请求体为 JSON。
+    @return 追加预算后的结果 JSON 响应。
+    """
     try:
         actions.check_origin(request.headers)
         actions.check_token(request.headers)
@@ -372,6 +541,11 @@ async def api_add_budget(request) -> JSONResponse:
 
 
 async def api_reset(request) -> JSONResponse:
+    """@brief GET 返回重置预览，POST 执行预算重置。
+
+    @param request Starlette 请求对象。
+    @return 重置预览或执行结果 JSON 响应。
+    """
     try:
         if request.method == "GET":
             if not actions.host_is_loopback(request.headers):
@@ -385,6 +559,11 @@ async def api_reset(request) -> JSONResponse:
 
 
 async def api_stop(request) -> JSONResponse:
+    """@brief GET 返回待停进程预览，POST 停止正在跑的搜索。
+
+    @param request Starlette 请求对象。
+    @return 停止预览或执行结果 JSON 响应。
+    """
     try:
         if request.method == "GET":
             if not actions.host_is_loopback(request.headers):
@@ -398,6 +577,11 @@ async def api_stop(request) -> JSONResponse:
 
 
 async def api_model(request) -> JSONResponse:
+    """@brief GET 返回可选模型与委员会，POST 写入所选模型（默认模型或两个委员会）。
+
+    @param request Starlette 请求对象，POST 时请求体上限 4096 字节。
+    @return 模型选项或写入结果 JSON 响应。
+    """
     from observe import settings
 
     try:
@@ -421,6 +605,11 @@ async def api_model(request) -> JSONResponse:
 
 
 async def api_deletions(request) -> JSONResponse:
+    """@brief 返回删除日志；非 loopback 请求返回 403。
+
+    @param request Starlette 请求对象。
+    @return 删除日志 JSON 响应。
+    """
     from observe.deletions import list_deletions
 
     try:
@@ -432,6 +621,11 @@ async def api_deletions(request) -> JSONResponse:
 
 
 async def api_delete_records(request) -> JSONResponse:
+    """@brief 归档删除实验、operator 或单个搜索；请求体上限 8192 字节。
+
+    @param request Starlette 请求对象，请求体需含 ``kind`` / ``name`` / ``reason``。
+    @return 删除结果 JSON 响应。
+    """
     from observe.deletions import delete_records
 
     try:
@@ -450,10 +644,20 @@ async def api_delete_records(request) -> JSONResponse:
 
 
 async def api_budget(_request) -> JSONResponse:
+    """@brief v1 兼容接口：返回预算报告。
+
+    @param _request 未使用的请求对象。
+    @return 预算报告 JSON 响应。
+    """
     return _json(await asyncio.to_thread(query.budget_report))
 
 
 async def api_stream(request) -> StreamingResponse:
+    """@brief 以 SSE 推送流帧；内容未变时不重发。
+
+    @param request Starlette 请求对象，用于检测客户端断开。
+    @return ``text/event-stream`` 流式响应。
+    """
     async def generate():
         previous = None
         while True:
@@ -519,6 +723,8 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
 def main() -> None:
+    """@brief 在 127.0.0.1 上启动看板服务，端口取 ``OBSERVE_PORT``（默认 8765）。
+    """
     import uvicorn
 
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("OBSERVE_PORT", "8765")), log_level="info")

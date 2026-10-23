@@ -22,8 +22,17 @@ DEFAULT_VARIANT = f"{BLOCK_M}x{BLOCK_N}t{THREADS}"
 
 # 解析 "<BLOCK_M>x<BLOCK_N>t<threads>"。threads/BLOCK_M 必须是不超过 32 的 2 的幂，并且整除 head 维 D。
 def parse_variant(variant: str, seq: int, head_dim: int) -> tuple[int, int, int]:
-    """``"<BLOCK_M>x<BLOCK_N>t<threads>"`` -> (BLOCK_M, BLOCK_N, threads). The naive kernel lets ``threads / BLOCK_M`` threads (a power of two, at most one SIMD group)
-    share a query row, so the thread count is tied to the query tile."""
+    """@brief 把 ``"<BLOCK_M>x<BLOCK_N>t<threads>"`` 拆成 tile 和线程数。
+
+    ``"<BLOCK_M>x<BLOCK_N>t<threads>"`` -> (BLOCK_M, BLOCK_N, threads). The naive kernel lets ``threads / BLOCK_M`` threads (a power of two, at most one SIMD group)
+    share a query row, so the thread count is tied to the query tile.
+
+    @param variant 启动契约变体文本。
+    @param seq 序列长度 S。
+    @param head_dim head 维 D。
+    @return ``(BLOCK_M, BLOCK_N, threads)``。
+    @raises ValueError 文本格式不对，或 tile / 线程数与 S、D 不匹配时抛出。
+    """
     m = re.fullmatch(r"(\d+)x(\d+)t(\d+)", variant)
     if not m:
         raise ValueError(f"bad FlashAttention contract variant {variant!r}; expected <BLOCK_M>x<BLOCK_N>t<threads>, e.g. {DEFAULT_VARIANT}")
@@ -39,6 +48,11 @@ MAGS = {"normal": 1.0, "wide_range": 0.1}
 
 
 def _mlx_factory(scale):
+    """@brief 造一个固定 scale 的 mlx 注意力基线。
+
+    @param scale 传给 ``mx.fast.scaled_dot_product_attention`` 的标度。
+    @return 签名如 ``f(q, k, v)`` 的基线函数。
+    """
     def f(q, k, v):
         import mlx.core as mx
 
@@ -48,6 +62,11 @@ def _mlx_factory(scale):
 
 
 def _torch_factory(scale):
+    """@brief 造一个固定 scale 的 torch 注意力基线。
+
+    @param scale 传给 ``F.scaled_dot_product_attention`` 的标度。
+    @return 签名如 ``f(q, k, v)`` 的基线函数。
+    """
     def f(q, k, v):
         return F.scaled_dot_product_attention(q, k, v, scale=scale)
 
@@ -56,7 +75,18 @@ def _torch_factory(scale):
 
 # odd_scale 改的是题面里的 QK_SCALE_EXPR 和 reference 用的 eff_scale。契约常量 SM_SCALE 写入的是 1/sqrt(D)。
 def build_attention(name: str, dtype: str, size: str, *, odd_scale: bool = False, description: str | None = None, variant: str = "") -> Task:
-    """``odd_scale``: the paper's misleading-cue variant, ``qk_scale = SM_SCALE + log2(e)`` (a *sum*, not a product)."""
+    """@brief 装配 FlashAttention 题，含误导性标度的变体。
+
+    ``odd_scale``: the paper's misleading-cue variant, ``qk_scale = SM_SCALE + log2(e)`` (a *sum*, not a product).
+
+    @param name 题目名，用来拼核名和题面目录。
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @param odd_scale 是否把题面里的 qk 标度写成和而不是积。
+    @param description 覆盖默认题面描述；为 None 时用默认文字。
+    @param variant 启动契约变体，空串表示默认。
+    @return 装配好的 ``Task``。
+    """
     check_dtype(dtype)
     B, H, S, D = SHAPES[size]
     BLOCK_M, BLOCK_N, THREADS = parse_variant(variant or DEFAULT_VARIANT, S, D)
@@ -112,10 +142,24 @@ def build_attention(name: str, dtype: str, size: str, *, odd_scale: bool = False
 
 
 def build(dtype: str, size: str) -> Task:
+    """@brief 装配非因果 FlashAttention 题。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
     return build_attention("flash_attention", dtype, size)
 
 
 # 同一注意力、同一 eff_scale，只换 query tile、key tile 和线程数。
 def build_variant(dtype: str, size: str, variant: str) -> Task:
-    """The same operator under another launch contract (query tile, key tile, threads); used by the contract-sensitivity study."""
+    """@brief 同一注意力、同一 eff_scale，只换 query tile、key tile 和线程数。
+
+    The same operator under another launch contract (query tile, key tile, threads); used by the contract-sensitivity study.
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @param variant 启动契约变体文本，交给 ``parse_variant``。
+    @return 装配好的 ``Task``，名字带 ``@<variant>`` 后缀。
+    """
     return build_attention("flash_attention", dtype, size, variant=variant)

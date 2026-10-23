@@ -21,6 +21,11 @@ _TG = re.compile(r"(\d+)\s*B exceeds the device limit of (\d+)\s*B")
 
 
 def _report(report: Any) -> dict:
+    """@brief 把报告统一成字典。
+
+    @param report 报告对象；可以是字典、带 ``to_json`` 方法的数据类，或 ``None``。
+    @return 报告字典；无法转换时为空字典。
+    """
     if report is None:
         return {}
     if isinstance(report, dict):
@@ -29,6 +34,11 @@ def _report(report: Any) -> dict:
 
 
 def _roof_and_baselines(report: Any) -> tuple[dict, dict]:
+    """@brief 取出报告里的 roofline 与基线时间两部分。
+
+    @param report 报告对象。
+    @return ``(roofline, baseline_us)``；缺失或类型不对的那部分为空字典。
+    """
     rep = _report(report)
     roof = rep.get("roofline") or {}
     bases = rep.get("baseline_us") or {}
@@ -36,7 +46,11 @@ def _roof_and_baselines(report: Any) -> tuple[dict, dict]:
 
 
 def baseline_faster_than_bound(report: Any) -> tuple[str, float, float] | None:
-    """(baseline name, its microseconds, the lower bound) when the fastest baseline beats the roofline bound, else None."""
+    """@brief 判断最快的基线是否已经比 roofline 下界快。
+
+    @param report 评测报告。
+    @return 基线比下界快时为 ``(基线名, 其微秒数, 下界)``；否则为 ``None``。
+    """
     roof, bases = _roof_and_baselines(report)
     lb = roof.get("lower_bound_us")
     usable = {k: float(v) for k, v in bases.items() if isinstance(v, (int, float)) and v > 0}
@@ -47,7 +61,13 @@ def baseline_faster_than_bound(report: Any) -> tuple[str, float, float] | None:
 
 
 def bound_beaten_line(report: Any) -> str | None:
-    """One sentence for the hardware-feature block. ``target_note`` is the longer version that goes to the planner."""
+    """@brief 硬件特性块里的一句话：下界在这里不成立。
+
+    比 ``target_note`` 短，后者给规划器看。
+
+    @param report 评测报告。
+    @return 一句话说明；下界仍成立时为 ``None``。
+    """
     beat = baseline_faster_than_bound(report)
     if beat is None:
         return None
@@ -59,7 +79,11 @@ def bound_beaten_line(report: Any) -> str | None:
 
 
 def target_note(report: Any) -> str | None:
-    """The correction for a bound the baseline has already beaten, or None when the bound still holds."""
+    """@brief 基线已经打过下界时，给规划器的纠正说明。
+
+    @param report 评测报告。
+    @return 纠正文本；下界仍成立时为 ``None``。
+    """
     beat = baseline_faster_than_bound(report)
     if beat is None:
         return None
@@ -74,10 +98,14 @@ def target_note(report: Any) -> str | None:
 
 
 def at_roofline(report: Any, required_gain: float) -> bool:
-    """Heuristic: the seed is inside the noise gate of its estimated lower bound, the timing is quiet, and calibration is present.
+    """@brief 启发式判断：种子是否已经贴近估算下界。
 
-    A baseline that beats the bound, a noisy measurement, or a missing measured peak means this does not fire.
-    Firing is not a claim that the kernel has reached a physical optimum.
+    条件是：没有基线打过下界、计时安静（``noisy`` 为 False）、标定存在，且余量在 ``required_gain`` 之内。
+    基线已快于下界、测量有噪声、或缺实测峰值时都不触发。触发也不代表内核已达物理最优。
+
+    @param report 评测报告。
+    @param required_gain 本轮要求的加速比门槛。
+    @return 可以早停时为 ``True``。
     """
     if baseline_faster_than_bound(report) is not None:
         return False
@@ -102,12 +130,22 @@ def at_roofline(report: Any, required_gain: float) -> bool:
 
 
 def abi_signature(message: str) -> str:
-    """The ABI failure with the numbers blanked, so the same limit violation compares equal across repair attempts."""
+    """@brief 把失败信息里的数字擦掉，得到 ABI 失败的签名。
+
+    这样同一个限额违规在多次修复尝试之间可以比较相等。
+
+    @param message 失败信息。
+    @return 数字被替换为 ``#``、空白被折叠后的字符串。
+    """
     return _NUM.sub("#", _WS.sub(" ", message or "").strip())
 
 
 def threadgroup_limit_note(message: str) -> str | None:
-    """The sentence added to a repair prompt when the kernel declared more static threadgroup memory than the device allows."""
+    """@brief 内核声明的静态 threadgroup 内存超过设备上限时，加进修复提示的一句话。
+
+    @param message 失败信息。
+    @return 提示句；信息里没有这类限额违规时为 ``None``。
+    """
     m = _TG.search(message or "")
     if not m:
         return None
@@ -119,7 +157,14 @@ def threadgroup_limit_note(message: str) -> str | None:
 
 
 def failure_phrase(status: str, message: str) -> str:
-    """One history line for a branch that produced no eligible kernel. Kept to a single short sentence."""
+    """@brief 为「这一支没交出合格内核」生成一行历史记录。
+
+    只保留一句短话，信息截到 160 字符。
+
+    @param status 报告状态，如 ``abi_error``/``incorrect``/``compile_error``/``unsafe``。
+    @param message 失败信息。
+    @return 形如 ``kind: message`` 的一行；信息为空时只有 ``kind``。
+    """
     msg = _WS.sub(" ", message or "").strip()
     msg = msg[:160]
     kind = {"abi_error": "abi", "incorrect": "incorrect", "compile_error": "compile", "unsafe": "unsafe"}.get(status, status or "failed")
@@ -127,7 +172,16 @@ def failure_phrase(status: str, message: str) -> str:
 
 
 def status_lines(*, rnd: int, max_rounds: int, patience_left: int, spent: float, budget: float | None, required_gain: float) -> str:
-    """The two lines that tell the model what counts as a win and how much search is left."""
+    """@brief 告诉模型什么才算赢、还剩多少搜索空间的两行文本。
+
+    @param rnd 当前轮次。
+    @param max_rounds 本轮运行允许的最大轮数。
+    @param patience_left 还剩几轮耐心。
+    @param spent 已花美元。
+    @param budget 总预算；``None`` 或 0 时不显示上限。
+    @param required_gain 本轮要求的加速比门槛。
+    @return 两行状态文本。
+    """
     pct = max(0.0, (float(required_gain) - 1.0) * 100.0)
     money = f"spent ${spent:.2f}" + (f" of ${budget:.2f}" if budget else "")
     return (

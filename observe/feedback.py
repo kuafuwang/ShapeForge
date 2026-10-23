@@ -17,10 +17,21 @@ _SOURCES = {"report", "calibration", "probe", "code", "other"}
 
 
 def _review_key(seq: int, digest: str) -> str:
+    """@brief 拼出评审文件里 claim 的键。
+
+    @param seq 反馈条目序号。
+    @param digest 条目摘要。
+    @return ``"<seq>:<digest>"`` 形式的键。
+    """
     return f"{seq}:{digest}"
 
 
 def _load_review(path: Path) -> dict:
+    """@brief 读取评审文件；缺失、损坏或结构不对时返回空骨架。
+
+    @param path ``feedback_review.json`` 路径。
+    @return 含 ``v`` 与 ``claims`` 的字典。
+    """
     if not path.is_file():
         return {"v": 1, "claims": {}}
     try:
@@ -36,12 +47,22 @@ def _load_review(path: Path) -> dict:
 
 
 def _has_system(record: dict) -> bool:
+    """@brief 判断一条反馈是否带有面向系统的内容（kinds、求助段或系统建议段）。
+
+    @param record 一条反馈记录。
+    @return 含系统内容时为 True。
+    """
     kinds = [part for part in str(record.get("kinds") or "").split(",") if part and part != "none"]
     sections = record.get("sections") if isinstance(record.get("sections"), dict) else {}
     return bool(kinds) or bool(str(sections.get("需要帮助") or "").strip()) or bool(str(sections.get("对系统的建议") or "").strip())
 
 
 def _default_status(item: dict) -> str:
+    """@brief 给出条目在未评审时的默认状态。
+
+    @param item 反馈条目。
+    @return 需要评审的条目为 ``pending``，否则为 ``info``。
+    """
     audience = item.get("audience") or ""
     premise = item.get("premise") or ""
     if audience in _REVIEWABLE or premise in _PREMISE:
@@ -50,6 +71,12 @@ def _default_status(item: dict) -> str:
 
 
 def _claim_rows(record: dict, review: dict) -> list[dict]:
+    """@brief 把一条记录的条目与已存评审合并成 claim 行。
+
+    @param record 一条反馈记录。
+    @param review 评审文件的 ``claims`` 映射。
+    @return claim 行字典列表；序号不是整数时为空。
+    """
     seq = record.get("seq")
     if not isinstance(seq, int):
         return []
@@ -98,12 +125,23 @@ def _claim_rows(record: dict, review: dict) -> list[dict]:
 
 
 def _feedback_revision(conn) -> int:
+    """@brief 取当前的反馈 revision。
+
+    @param conn 索引数据库连接。
+    @return revision 整数；表里没有时返回 0。
+    """
     row = conn.execute("SELECT value FROM meta WHERE key = 'feedback_revision'").fetchone()
     return int(row[0]) if row else 0
 
 
 def _take_feedback_rev(conn) -> int:
-    """One step for a batch of claim edits. Unchanged claims keep the revision they already have."""
+    """@brief 为一批 claim 编辑取一个新 revision；未变化的 claim 保留原有 revision。
+
+    原始英文说明：One step for a batch of claim edits. Unchanged claims keep the revision they already have.
+
+    @param conn 索引数据库连接。
+    @return 新的反馈 revision。
+    """
     nxt = _feedback_revision(conn) + 1
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('feedback_revision', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -113,6 +151,11 @@ def _take_feedback_rev(conn) -> int:
 
 
 def _reviewed_key(value) -> str | None:
+    """@brief 把评审时间归一成用于比对的键。
+
+    @param value 评审时间或任意值。
+    @return 三位小数的字符串；None 或空串时返回 None。
+    """
     if value is None or value == "":
         return None
     try:
@@ -122,12 +165,22 @@ def _reviewed_key(value) -> str | None:
 
 
 def _subclaims_sha256(subclaims) -> str:
+    """@brief 计算子 claim 列表的稳定摘要。
+
+    @param subclaims 子 claim 列表，可为 None。
+    @return 十六进制 sha256 文本。
+    """
     return hashlib.sha256(
         json.dumps(subclaims or [], sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
     ).hexdigest()
 
 
 def _claim_signature(row) -> tuple:
+    """@brief 取 claim 行的比对签名，用于判断内容是否变化。
+
+    @param row 数据库行或同构字典。
+    @return 签名元组。
+    """
     subclaims_sha256 = row["subclaims_sha256"] if "subclaims_sha256" in row.keys() else ""
     return (
         row["section"] or "",
@@ -143,6 +196,11 @@ def _claim_signature(row) -> tuple:
 
 
 def _item_signature(row) -> tuple:
+    """@brief 取反馈条目行的比对签名，用于判断整条记录是否变化。
+
+    @param row 数据库行或同构字典。
+    @return 签名元组。
+    """
     return (
         row["seq"],
         _reviewed_key(row["t"]),
@@ -164,7 +222,14 @@ def _item_signature(row) -> tuple:
 
 
 def retire_run_claims(conn, run_id: str) -> bool:
-    """Forget one run's claims and leave a tombstone for each, so an open review page can drop those cards."""
+    """@brief 删除一个运行的全部 claim，并逐条留墓石，让已打开的评审页能撤掉卡片。
+
+    原始英文说明：Forget one run's claims and leave a tombstone for each, so an open review page can drop those cards.
+
+    @param conn 索引数据库连接。
+    @param run_id 运行 id。
+    @return 确实删除过 claim 时为 True；本来就没有 claim 时返回 False。
+    """
     rows = list(conn.execute(
         "SELECT seq, digest, section, audience, premise, status FROM feedback_claims WHERE run_id = ?",
         (run_id,),
@@ -191,6 +256,11 @@ def retire_run_claims(conn, run_id: str) -> bool:
 
 
 def _file_fp(path: Path) -> str:
+    """@brief 取文件的指纹（mtime 与大小）。
+
+    @param path 文件路径。
+    @return 指纹字符串；读不到时为空串。
+    """
     try:
         stat = path.stat()
     except OSError:
@@ -199,6 +269,12 @@ def _file_fp(path: Path) -> str:
 
 
 def _feedback_cursor(conn, run_id: str) -> tuple[int, str, str] | None:
+    """@brief 取一个运行已读到的反馈字节偏移、评审文件指纹与解析器版本。
+
+    @param conn 索引数据库连接。
+    @param run_id 运行 id。
+    @return 三元组（偏移, 评审指纹, 解析器版本）；索引里没有该运行时返回 None。
+    """
     row = conn.execute(
         "SELECT feedback_bytes, feedback_review_fp, feedback_parser FROM runs WHERE run_id = ?",
         (run_id,),
@@ -209,6 +285,13 @@ def _feedback_cursor(conn, run_id: str) -> tuple[int, str, str] | None:
 
 
 def _store_feedback_cursor(conn, run_id: str, offset: int, review_fp: str) -> None:
+    """@brief 记录已读到的反馈字节偏移、评审文件指纹与当前解析器版本。
+
+    @param conn 索引数据库连接。
+    @param run_id 运行 id。
+    @param offset 已读字节数。
+    @param review_fp 评审文件指纹。
+    """
     conn.execute(
         "UPDATE runs SET feedback_bytes = ?, feedback_review_fp = ?, feedback_parser = ? WHERE run_id = ?",
         (offset, review_fp, PARSER_VERSION, run_id),
@@ -216,6 +299,13 @@ def _store_feedback_cursor(conn, run_id: str, offset: int, review_fp: str) -> No
 
 
 def _rows_for_record(record: dict, review: dict, line_at: int | None = None) -> tuple[dict, list[dict]] | None:
+    """@brief 把一条反馈记录转成条目行与 claim 行。
+
+    @param record 反馈记录。
+    @param review 评审文件的 ``claims`` 映射。
+    @param line_at 该记录在 ``feedback.jsonl`` 中的字节偏移，可为 None。
+    @return 二元组（条目行, claim 行列表）；序号非法或记录无内容时返回 None。
+    """
     seq = record.get("seq")
     if not isinstance(seq, int) or isinstance(seq, bool) or not _has_text(record):
         return None
@@ -245,6 +335,13 @@ def _rows_for_record(record: dict, review: dict, line_at: int | None = None) -> 
 
 
 def _write_subclaims(conn, run_id: str, claim: dict, rev: int) -> None:
+    """@brief 重写一个 claim 的子 claim 行。
+
+    @param conn 索引数据库连接。
+    @param run_id 运行 id。
+    @param claim claim 字典，含 ``seq``、``digest`` 与 ``subclaims``。
+    @param rev 写入的反馈 revision。
+    """
     conn.execute(
         "DELETE FROM feedback_subclaims WHERE run_id = ? AND seq = ? AND parent_digest = ?",
         (run_id, claim["seq"], claim["digest"]),
@@ -274,6 +371,13 @@ def _write_subclaims(conn, run_id: str, claim: dict, rev: int) -> None:
 
 
 def _write_claim(conn, run_id: str, claim: dict, rev: int) -> None:
+    """@brief 插入或更新一条 claim，并同步其子 claim。
+
+    @param conn 索引数据库连接。
+    @param run_id 运行 id。
+    @param claim claim 字典。
+    @param rev 写入的反馈 revision。
+    """
     conn.execute("DELETE FROM feedback_claim_removed WHERE run_id = ? AND seq = ? AND digest = ?", (run_id, claim["seq"], claim["digest"]))
     conn.execute(
         """
@@ -296,6 +400,12 @@ def _write_claim(conn, run_id: str, claim: dict, rev: int) -> None:
 
 
 def _write_item(conn, run_id: str, row: dict) -> None:
+    """@brief 插入一条反馈条目行。
+
+    @param conn 索引数据库连接。
+    @param run_id 运行 id。
+    @param row 条目行字典。
+    """
     conn.execute(
         """
         INSERT INTO feedback_items (
@@ -312,7 +422,13 @@ def _write_item(conn, run_id: str, row: dict) -> None:
 
 
 def _proposition(text: str) -> str:
-    """The proposition slot of a bracket, normalized for a source/old-item match."""
+    """@brief 取方括号里的命题槽，并归一化以便与旧条目匹配。
+
+    原始英文说明：The proposition slot of a bracket, normalized for a source/old-item match.
+
+    @param text 条目文本。
+    @return 归一化后的命题；没有命题槽时为空串。
+    """
     import re
 
     match = re.search(r"\[[^\]]*\|\s*([^|\]]+?)\s*\|", str(text or ""))
@@ -320,13 +436,17 @@ def _proposition(text: str) -> str:
 
 
 def _reparsed_record(record: dict, directory: Path) -> dict:
-    """Upgrade a restored measured premise without changing any old claim digest.
+    """@brief 在不改变旧 claim 摘要的前提下，升级被恢复的实测前提。
 
-    ``feedback.jsonl`` is append-only and stores items. A parser bump alone cannot know that a
-    probe was restored after the session, and replacing every item with a fresh split would
-    change digests and orphan ``feedback_review.json``. On a rebuild, read the session's
-    ``FEEDBACK.md`` only to find a verified copy of an old downgraded/unverified proposition;
-    copy its text and premise but keep the old digest. The log itself is not rewritten.
+    ``feedback.jsonl`` 只追加且存的是条目；仅提升解析器版本无法知道会话之后探测已恢复，
+    而用新拆分替换所有条目会改变摘要并孤立 ``feedback_review.json``。重建时只读该会话的
+    ``FEEDBACK.md``，寻找旧“降级/未验证”命题的已验证版本，复制其文本与前提但保留旧摘要；
+    日志本身不被重写。
+    原始英文说明：Upgrade a restored measured premise without changing any old claim digest.
+
+    @param record 待修复的反馈记录。
+    @param directory 运行目录。
+    @return 修复后的记录（可能是新对象）。
     """
     from taic.agent_feedback import FILE_CAP, parse_feedback, read_feedback_text
 
@@ -392,11 +512,14 @@ def _reparsed_record(record: dict, directory: Path) -> dict:
 
 
 def _dropped_placeholders(directory: Path) -> list[dict]:
-    """Empty placeholder items that the current parser intentionally removed from a session.
+    """@brief 找出当前解析器刻意从会话中删除的空占位条目（仍在只追加的原始日志里）。
 
-    The raw ``feedback.jsonl`` still contains them because it is append-only. A rebuild reads
-    that raw log before repair, so the seven audited placeholders get an audit tombstone even
-    when the fresh index has never held them as active claims.
+    重建会在修复之前读原始日志，因此这些被审计的占位符即使从未作为活跃 claim 进入新索引，
+    也能得到审计墓石。
+    原始英文说明：Empty placeholder items that the current parser intentionally removed from a session.
+
+    @param directory 运行目录。
+    @return 每项含 ``seq``、``digest``、``section``、``audience`` 与 ``premise`` 的列表。
     """
     path = directory / "feedback.jsonl"
     if not path.is_file():
@@ -430,7 +553,16 @@ def _dropped_placeholders(directory: Path) -> list[dict]:
 
 
 def _rebuild_feedback(conn, run_id: str, directory: Path, *, reason: str = "feedback log changed") -> bool:
-    """The log was replaced or the parser changed. Read it once, then the cursor takes over."""
+    """@brief 日志被替换或解析器变化时重建一个运行的反馈索引，之后交给游标增量。
+
+    原始英文说明：The log was replaced or the parser changed. Read it once, then the cursor takes over.
+
+    @param conn 索引数据库连接。
+    @param run_id 运行 id。
+    @param directory 运行目录。
+    @param reason 写入墓石的变更原因。
+    @return 索引发生变化时为 True。
+    """
     review = _load_review(directory / "feedback_review.json")["claims"]
     items = []
     claims = []
@@ -500,7 +632,16 @@ def _rebuild_feedback(conn, run_id: str, directory: Path, *, reason: str = "feed
 
 
 def _append_feedback(conn, run_id: str, records: list[tuple[int, dict]], directory: Path) -> bool:
-    """Insert sessions that are not in the index yet. Existing sequence numbers stay untouched."""
+    """@brief 插入索引里还没有的会话；已有的序号保持不变。
+
+    原始英文说明：Insert sessions that are not in the index yet. Existing sequence numbers stay untouched.
+
+    @param conn 索引数据库连接。
+    @param run_id 运行 id。
+    @param records 新增的（字节偏移, 记录）列表。
+    @param directory 运行目录。
+    @return 写入过内容时为 True。
+    """
     have = {
         int(row["seq"])
         for row in conn.execute("SELECT seq FROM feedback_items WHERE run_id = ?", (run_id,))
@@ -527,6 +668,12 @@ def _append_feedback(conn, run_id: str, records: list[tuple[int, dict]], directo
 
 
 def _desired_review(row, saved: dict | None) -> dict:
+    """@brief 由索引行与已存评审合成期望的 claim 状态。
+
+    @param row 现有 claim 行。
+    @param saved 评审文件中保存的条目，可为 None。
+    @return 期望写回的 claim 字典。
+    """
     base = {
         "seq": int(row["seq"]),
         "digest": str(row["digest"]),
@@ -557,7 +704,15 @@ def _desired_review(row, saved: dict | None) -> dict:
 
 
 def _apply_review_file(conn, run_id: str, directory: Path) -> bool:
-    """Update stored claims from ``feedback_review.json`` without reading the log."""
+    """@brief 只根据 ``feedback_review.json`` 更新已存 claim，不重读日志。
+
+    原始英文说明：Update stored claims from ``feedback_review.json`` without reading the log.
+
+    @param conn 索引数据库连接。
+    @param run_id 运行 id。
+    @param directory 运行目录。
+    @return 有 claim 被更新时为 True。
+    """
     saved = _load_review(directory / "feedback_review.json")["claims"]
     rows = list(conn.execute("SELECT * FROM feedback_claims WHERE run_id = ?", (run_id,)))
     changed = []
@@ -576,11 +731,16 @@ def _apply_review_file(conn, run_id: str, directory: Path) -> bool:
 
 
 def sync_run_index(conn, run_id: str, directory: Path) -> bool:
-    """Catch up one run from the append-only log and the review file.
+    """@brief 用一个运行的追加日志与评审文件把索引补齐。
 
-    A log that only grew is read from the stored byte offset. The review file is applied on its own,
-    so a saved review does not parse the log again. A shorter log or a new parser reads the file once,
-    then the offset takes over. Unchanged claims keep their revision.
+    只增长的日志从已存字节偏移继续读；评审文件单独应用，因此保存评审不会重新解析日志。日志变短或解析器
+    换了则整份读一次，之后仍回到偏移。未变化的 claim 保留原 revision。
+    原始英文说明：Catch up one run from the append-only log and the review file.
+
+    @param conn 索引数据库连接。
+    @param run_id 运行 id。
+    @param directory 运行目录。
+    @return 索引发生变化时为 True；索引里没有该运行时返回 False。
     """
     cursor = _feedback_cursor(conn, run_id)
     if cursor is None:
@@ -613,6 +773,12 @@ def sync_run_index(conn, run_id: str, directory: Path) -> bool:
 
 
 def _candidate_report(directory: Path, label: str) -> tuple[dict | None, str]:
+    """@brief 找到某个标签对应的候选报告。
+
+    @param directory 运行目录。
+    @param label 候选标签。
+    @return 二元组（报告字典或 None, 报告路径文本）。
+    """
     root = directory / "candidates"
     if not label or not root.is_dir():
         return None, ""
@@ -632,6 +798,12 @@ def _candidate_report(directory: Path, label: str) -> tuple[dict | None, str]:
 
 
 def _report_brief(doc: dict | None, source: str) -> dict | None:
+    """@brief 从报告里抽出评审能直接引用的几个数（耗时、离散度与 roofline）。
+
+    @param doc 报告字典，可为 None。
+    @param source 报告来源（candidate 或 seed）。
+    @return 摘要字典；没有报告时返回 None。
+    """
     if not doc:
         return None
     benchmark = doc.get("benchmark") if isinstance(doc.get("benchmark"), dict) else {}
@@ -647,6 +819,10 @@ def _report_brief(doc: dict | None, source: str) -> dict | None:
 
 
 def _calibration() -> dict | None:
+    """@brief 读取本机标定的峰值算力与带宽。
+
+    @return 含各精度峰值与带宽的字典；标定读不到时返回 None。
+    """
     from tcenv.target import TargetError, read_calibration
 
     try:
@@ -666,14 +842,26 @@ def _calibration() -> dict | None:
 
 
 def _has_text(record: dict) -> bool:
-    """A session with no feedback still occupies a sequence number. That row is a clock tick, not a review item."""
+    """@brief 判断会话是否真有反馈；没有反馈的会话只占一个序号，是时钟刻度而不是评审项。
+
+    原始英文说明：A session with no feedback still occupies a sequence number. That row is a clock tick, not a review item.
+
+    @param record 反馈记录。
+    @return 有原文或有条目时为 True。
+    """
     if str(record.get("raw") or "").strip():
         return True
     return bool(record.get("items"))
 
 
 def entries(directory: Path) -> dict:
-    """One run's feedback, with the review state and the numbers a reviewer can paste."""
+    """@brief 返回一个运行的完整反馈，带评审状态和评审者可粘贴的数字。
+
+    原始英文说明：One run's feedback, with the review state and the numbers a reviewer can paste.
+
+    @param directory 运行目录。
+    @return 含 ``records`` 与 ``calibration`` 的字典。
+    """
     review = _load_review(directory / "feedback_review.json")["claims"]
     records = []
     for record in load_records(directory / "feedback.jsonl"):
@@ -712,7 +900,17 @@ def entries(directory: Path) -> dict:
 
 
 def summary_from_index(conn, *, task: str | None = None, model: str | None = None, kind: str | None = None, status: str | None = None) -> dict:
-    """Counts and the filtered claim index. ``pending_total`` is every pending claim, not the filtered slice."""
+    """@brief 返回计数与被筛选的 claim 列表；``pending_total`` 是全部待评 claim，不是筛选后的切片。
+
+    原始英文说明：Counts and the filtered claim index.
+
+    @param conn 索引数据库连接。
+    @param task 只看该任务，None 表示不限。
+    @param model 只看该模型，None 表示不限。
+    @param kind 只看该 kinds 标签，None 表示不限。
+    @param status 只看该状态，None 表示不限。
+    @return 含待评总数、子 claim 数、高频项、复现项与 ``items`` 的字典。
+    """
     pending_total = int(conn.execute("SELECT COUNT(*) FROM feedback_claims WHERE status = 'pending'").fetchone()[0])
     where = ["1 = 1"]
     args: list[object] = []
@@ -805,12 +1003,22 @@ def summary_from_index(conn, *, task: str | None = None, model: str | None = Non
 
 
 def prior_claims(conn, *, digest: str, task: str, target_id: str, text: str = "", before_t: float | None = None, exclude_run: str = "", exclude_seq: int | None = None, limit: int = 5) -> list[dict]:
-    """Earlier claims with the same digest in the same task and target.
+    """@brief 找出同一任务、同一 target 下同摘要的更早 claim。
 
-    This is an exact-text lookup, not semantic similarity. It is deliberately scoped:
-    a different task or backend is not evidence for this one, and a rephrased claim
-    gets a new digest. The returned note/evidence comes from the earlier review file;
-    the index remains the cheap source for status and change_ref.
+    这是精确文本查找，不是语义相似度。范围刻意收窄：不同任务或后端不构成证据，改写过的 claim 会得到新摘要。
+    返回的 note/evidence 来自更早的评审文件；状态与 change_ref 仍以索引为准。
+    原始英文说明：Earlier claims with the same digest in the same task and target.
+
+    @param conn 索引数据库连接。
+    @param digest 目标摘要。
+    @param task 任务名。
+    @param target_id 目标硬件 id。
+    @param text 条目全文，给出时也会匹配摘录相同的子 claim。
+    @param before_t 只要更早的记录，可为 None。
+    @param exclude_run 排除的运行 id。
+    @param exclude_seq 排除的序号。
+    @param limit 最多返回条数。
+    @return 带文本、note、evidence 等补齐字段的 claim 行列表。
     """
     if not digest or not task or not target_id:
         return []
@@ -887,6 +1095,11 @@ def prior_claims(conn, *, digest: str, task: str, target_id: str, text: str = ""
 
 
 def _prior_summary(rows: list[dict]) -> str:
+    """@brief 把更早 claim 的状态汇总成一句中文摘要。
+
+    @param rows 更早 claim 行列表。
+    @return 形如“此前 adopted×2、rejected”的文本；没有行时为空串。
+    """
     if not rows:
         return ""
     counts: dict[str, int] = {}
@@ -898,7 +1111,13 @@ def _prior_summary(rows: list[dict]) -> str:
 
 
 def attach_prior_claims(conn, rows: list[dict]) -> None:
-    """Attach exact-digest earlier verdicts to review rows. Mutates the rows in place."""
+    """@brief 给评审行挂上同摘要的更早结论；就地修改这些行。
+
+    原始英文说明：Attach exact-digest earlier verdicts to review rows. Mutates the rows in place.
+
+    @param conn 索引数据库连接。
+    @param rows 评审行列表（就地修改）。
+    """
     cache: dict[tuple[str, str, str, str, float | None], list[dict]] = {}
     for row in rows:
         digest = str(row.get("digest") or "")
@@ -934,6 +1153,12 @@ def attach_prior_claims(conn, rows: list[dict]) -> None:
 
 
 def _review_file_cache(run_id: str, cache: dict[str, dict]) -> dict:
+    """@brief 按运行缓存其评审文件的 ``claims`` 映射。
+
+    @param run_id 运行 id。
+    @param cache 跨调用复用的缓存字典。
+    @return 该运行的 ``claims`` 映射；运行解析不到时为空字典。
+    """
     if run_id not in cache:
         from .detail import resolve_run
 
@@ -943,7 +1168,17 @@ def _review_file_cache(run_id: str, cache: dict[str, dict]) -> dict:
 
 
 def _candidate_texts(conn, *, task: str, target_id: str, before_t: float | None, limit: int = 500) -> list[dict]:
-    """Candidate claims for semantic comparison, with text read from their feedback lines."""
+    """@brief 取出可用于语义比较的候选 claim，并从其反馈行补齐文本。
+
+    原始英文说明：Candidate claims for semantic comparison, with text read from their feedback lines.
+
+    @param conn 索引数据库连接。
+    @param task 任务名。
+    @param target_id 目标硬件 id。
+    @param before_t 只要更早的记录，可为 None。
+    @param limit 最大条数。
+    @return 带 ``text`` 的 claim 行列表。
+    """
     query = """
         SELECT c.run_id, c.seq, c.digest, c.status, c.verification, c.change_ref,
                c.reviewed_at, i.task, i.model, i.t, r.target_id, i.line_at
@@ -1010,10 +1245,21 @@ def _candidate_texts(conn, *, task: str, target_id: str, before_t: float | None,
 
 
 def similar_claims(conn, *, digest: str, task: str, target_id: str, text: str, before_t: float | None = None, exclude_run: str = "", exclude_seq: int | None = None, limit: int = 3) -> list[dict]:
-    """Earlier same-task/target claims whose local sentence embedding is close.
+    """@brief 找出同一任务、同一 target 下句向量相近的更早 claim。
 
-    This is a retrieval hint, not a verdict. It uses Apple's local sentence embeddings;
-    when unavailable it returns ``[]`` rather than silently substituting a lexical score.
+    这是检索提示，不是结论。使用 Apple 本地句向量；不可用时返回 ``[]``，不会静默换成词面分数。
+    原始英文说明：Earlier same-task/target claims whose local sentence embedding is close.
+
+    @param conn 索引数据库连接。
+    @param digest 目标摘要。
+    @param task 任务名。
+    @param target_id 目标硬件 id。
+    @param text 查询文本。
+    @param before_t 只要更早的记录，可为 None。
+    @param exclude_run 排除的运行 id。
+    @param exclude_seq 排除的序号。
+    @param limit 最多返回条数。
+    @return 带 ``score`` 与补齐文本的 claim 行列表。
     """
     from . import similarity
 
@@ -1044,7 +1290,14 @@ def similar_claims(conn, *, digest: str, task: str, target_id: str, text: str, b
 
 
 def attach_similar_claims(conn, rows: list[dict], *, limit: int = 3) -> None:
-    """Attach semantic neighbours to pending review rows. Exact prior stays the cheap layer."""
+    """@brief 给待评行挂上语义近邻；同摘要的精确历史仍是更廉价的一层。
+
+    原始英文说明：Attach semantic neighbours to pending review rows. Exact prior stays the cheap layer.
+
+    @param conn 索引数据库连接。
+    @param rows 评审行列表（就地修改）。
+    @param limit 每个行最多挂几条近邻。
+    """
     for row in rows:
         if str(row.get("status") or "") != "pending" or not str(row.get("text") or ""):
             row["similar"] = []
@@ -1065,9 +1318,17 @@ def attach_similar_claims(conn, rows: list[dict], *, limit: int = 3) -> None:
 
 
 def review_board(conn, *, task: str | None = None, model: str | None = None, kind: str | None = None, status: str | None = None) -> dict:
-    """Every review claim across runs, with the text that lives in the run directory.
+    """@brief 返回跨运行的全部评审 claim，并补齐只存在于运行目录里的文本。
 
-    The index row names the claim. The sentence, the saved evidence and the candidate report are read from that run.
+    索引行只给出 claim 的名字；句子、保存的证据与候选报告都从该运行目录读取。
+    原始英文说明：Every review claim across runs, with the text that lives in the run directory.
+
+    @param conn 索引数据库连接。
+    @param task 只看该任务，None 表示不限。
+    @param model 只看该模型，None 表示不限。
+    @param kind 只看该 kinds 标签，None 表示不限。
+    @param status 只看该状态，None 表示不限。
+    @return 含待评计数、标定与 ``items`` 的看板字典。
     """
     from observe.detail import resolve_run
 
@@ -1129,7 +1390,14 @@ def review_board(conn, *, task: str | None = None, model: str | None = None, kin
 
 
 def _record_at(path: Path, line_at: int) -> dict | None:
-    """One log line. The offset was stored when that line was appended."""
+    """@brief 按字节偏移读一行日志并修复成记录；偏移是该行追加时记下的。
+
+    原始英文说明：One log line. The offset was stored when that line was appended.
+
+    @param path ``feedback.jsonl`` 路径。
+    @param line_at 该行的字节偏移。
+    @return 修复后的记录；读不到或格式不对时返回 None。
+    """
     try:
         with path.open("rb") as handle:
             handle.seek(line_at)
@@ -1149,7 +1417,13 @@ def _record_at(path: Path, line_at: int) -> dict | None:
 
 
 def _attach_claim_text(rows: list[dict]) -> dict | None:
-    """Fill claim text from the stored line offset. A row without one falls back to reading that run's log."""
+    """@brief 按已存行偏移补齐 claim 文本；没有偏移的行退回读取该运行的日志。
+
+    原始英文说明：Fill claim text from the stored line offset. A row without one falls back to reading that run's log.
+
+    @param rows claim 行列表（就地修改）。
+    @return 本机标定字典，没有时为 None。
+    """
     from observe.detail import resolve_run
 
     grouped: dict[str, list[dict]] = {}
@@ -1239,10 +1513,14 @@ _CLAIM_LIST = """
 
 
 def review_feed(conn, *, since: int | None = None) -> dict:
-    """A snapshot, or only the claims that changed after ``since``.
+    """@brief 返回一份快照，或只返回 ``since`` 之后变化的 claim。
 
-    ``since`` equal to the current feedback revision returns no rows. Text is read only for runs
-    present in this answer.
+    ``since`` 等于当前反馈 revision 时不返回任何行；只为出现在本次答案里的运行读取文本。
+    原始英文说明：A snapshot, or only the claims that changed after ``since``.
+
+    @param conn 索引数据库连接。
+    @param since 客户端已持有的反馈 revision，None 表示要全量快照。
+    @return 含 ``same``、``snapshot``、``rev``、计数、``upserts`` 与 ``removed`` 的字典。
     """
     rev = _feedback_revision(conn)
     pending_total = int(conn.execute("SELECT COUNT(*) FROM feedback_claims WHERE status = 'pending'").fetchone()[0])
@@ -1286,7 +1564,14 @@ def review_feed(conn, *, since: int | None = None) -> dict:
 
 
 def _subclaims(body: dict) -> list[dict] | None:
-    """The optional subclaim list. Each item is one independently judged proposition."""
+    """@brief 解析可选的子 claim 列表；每项是一个独立判定的命题。
+
+    原始英文说明：The optional subclaim list. Each item is one independently judged proposition.
+
+    @param body 评审请求体。
+    @return 归一化后的子 claim 列表；请求体未给出时返回 None。
+    @raises ValueError 列表过长、项不是对象或文本为空时抛出。
+    """
     value = body.get("subclaims")
     if value is None:
         return None
@@ -1316,7 +1601,13 @@ def _subclaims(body: dict) -> list[dict] | None:
 
 
 def rejection(body: dict) -> str | None:
-    """None when the review body is a legal status combination."""
+    """@brief 校验评审请求体的状态组合是否合法。
+
+    原始英文说明：None when the review body is a legal status combination.
+
+    @param body 评审请求体。
+    @return 拒绝原因文本；合法时返回 None。
+    """
     status = body.get("status")
     verification = body.get("verification")
     if status not in _STATUSES or verification not in _VERIFICATIONS:
@@ -1372,7 +1663,15 @@ def rejection(body: dict) -> str | None:
 
 
 def preview_reviews(run_dir: Path, rows: list[dict]) -> list[dict]:
-    """Validate a batch without writing. Raises ``ValueError`` on the first bad item."""
+    """@brief 不写入地校验一批评审；第一项非法即抛 ``ValueError``。
+
+    原始英文说明：Validate a batch without writing. Raises ``ValueError`` on the first bad item.
+
+    @param run_dir 运行目录。
+    @param rows 待评审项列表。
+    @return 每项含新旧状态与备注的计划列表。
+    @raises ValueError 批次为空、项非法或 ``expected_status`` 与当前状态不符时抛出。
+    """
     if not isinstance(rows, list) or not rows:
         raise ValueError("a review batch needs at least one item")
     doc = _load_review(run_dir / "feedback_review.json")
@@ -1419,11 +1718,19 @@ def apply_reviews(
     method: str | None = None,
     batch_id: str | None = None,
 ) -> list[dict]:
-    """Validate every item, then write the review file once.
+    """@brief 先逐项校验，再一次性写入评审文件。
 
-    This is the atomic path behind both a single review and a batch. A stale
-    ``expected_status`` anywhere aborts the whole batch before the file changes.
-    The caller holds the run lock; the lock is what makes the read-check-write safe.
+    单项评审与批量评审都走这条原子路径；任一项的 ``expected_status`` 过期，整批在改文件前中止。
+    调用方持有运行锁，读-校验-写的安全由该锁保证。
+    原始英文说明：Validate every item, then write the review file once.
+
+    @param run_dir 运行目录。
+    @param rows 待写入的评审项列表。
+    @param reviewer 评审者名称，None 表示用 Git 身份。
+    @param method 评审来源，取 ``human`` / ``agent`` / ``script`` / ``api``。
+    @param batch_id 批次 id，None 时按需生成。
+    @return 已写入的 claim 行列表。
+    @raises ValueError 任一项非法或状态已变时抛出。
     """
     from taic import control
     from taic.git_identity import state as git_state
@@ -1516,11 +1823,19 @@ def apply_reviews(
 
 
 def apply_review(run_dir: Path, seq: int, digest: str, body: dict, *, reviewer: str | None = None, method: str | None = None) -> dict:
-    """Append one review and return the stored claim. The caller holds the run lock.
+    """@brief 追加一条评审并返回落盘的 claim；调用方持有运行锁。
 
-    The reviewer identity defaults to Git's commit author (``git var
-    GIT_AUTHOR_IDENT``); a form does not ask for a name. An explicit ``reviewer``
-    keyword is for backfills/tests and is recorded as ``explicit``.
+    评审者身份默认取 Git 提交作者（``git var GIT_AUTHOR_IDENT``），表单不会问名字；
+    显式传入的 ``reviewer`` 供回填与测试使用，并记为 ``explicit``。
+    原始英文说明：Append one review and return the stored claim. The caller holds the run lock.
+
+    @param run_dir 运行目录。
+    @param seq 反馈条目序号。
+    @param digest 条目摘要。
+    @param body 评审内容。
+    @param reviewer 评审者名称，None 表示用 Git 身份。
+    @param method 评审来源，None 表示按请求体或 ``human``。
+    @return 已写入的 claim 字典。
     """
     return apply_reviews(
         run_dir,

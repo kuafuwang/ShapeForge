@@ -32,6 +32,22 @@ MISLEADING = ("sem_gemm_neg", "sem_relu_gelu_comment", "sem_gelu_named_relu", "s
 # 判的是正确性。max_rounds=0 时改进轮的循环是空的，只留第一次生成和随后最多 --repairs 次编译反馈。
 # correctness_only 走快速评测、不做基准，所以「第一次就对」只看首个候选的 status 是不是 ok。
 def run_semantic(names: list[str], out_dir: Path, *, dtype="fp16", size="small", repairs=3, budget=0.15, model=None, resume=True, client_factory=None, evaluate_fn=None, log=print, **overrides) -> list[dict]:
+    """@brief 逐道跑语义题，只判对错、不测速，返回每题的结果行。
+
+    @param names 任务名列表，含随机整数核与误导核。
+    @param out_dir 本次实验的输出目录。
+    @param dtype 数据类型，默认 ``fp16``。
+    @param size 规模档位，默认 ``small``。
+    @param repairs 允许的编译/测错反馈次数上限。
+    @param budget 每道题的花费上限，单位美元。
+    @param model 模型名；为 ``None`` 时用默认。
+    @param resume 为真时复用已有 ``result.json``，不重跑。
+    @param client_factory 造 LLM 客户端的可调用对象；为 ``None`` 时不显式传入。
+    @param evaluate_fn 评测函数；为 ``None`` 时用默认实现。
+    @param log 进度输出函数。
+    @param overrides 其余透传给 ``run_one`` 的覆盖项。
+    @return 每道题的``首次就对``、``修复预算内就对``、各候选状态与花费。
+    """
     install_file_log()
     out_dir.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -63,6 +79,11 @@ def run_semantic(names: list[str], out_dir: Path, *, dtype="fp16", size="small",
 
 # 两列「第一次」和「修复预算内」分开，是为了看出模型是一次读对了算式，还是靠编译报错才改回来。
 def markdown(rows: list[dict]) -> str:
+    """@brief 把语义题结果拍成 markdown 表，并附两列汇总。
+
+    @param rows ``run_semantic`` 返回的结果行。
+    @return 表格文本。
+    """
     L = ["| test | first try | within repairs | attempts | statuses | USD |", "| --- | :---: | :---: | ---: | --- | ---: |"]
     for r in rows:
         L.append(f"| {r['name']} | {'yes' if r['first_try_ok'] else 'no'} | {'yes' if r['ok_within_repairs'] else 'no'} | {r['attempts_until_ok'] or '-'} | {', '.join(r['statuses'])} | {r['spent_usd']:.3f} |")
@@ -73,6 +94,11 @@ def markdown(rows: list[dict]) -> str:
 
 # 随机核的名字是 sem_int_加种子，每颗种子一份没有可认算法的整数程序。--no-misleading 时不跑那四道名字和注释骗人的题。
 def main(argv=None) -> int:
+    """@brief ``python -m experiments.semantic_tests`` 的入口，跑完写 ``semantic.json`` 与 ``semantic.md``。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-random", type=int, default=10)
     ap.add_argument("--seed0", type=int, default=1)

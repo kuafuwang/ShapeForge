@@ -27,7 +27,15 @@ TABLE1_BUDGETS: dict[str, float] = {"swiglu": 1.0}
 # 这里只回答「这一次最多花多少美元」。scale 乘的是这笔钱，不改轮数、分支、耐心。
 # table1=True 时 SwiGLU 是 $1、其余是论文的 $15；名字里 @ 后面的启动契约跟基算子共用同一笔预算。
 def budget_for(task: str, scale: float = 1.0, *, table1: bool = False) -> float:
-    """Budget of one run of ``task`` times ``scale``: the paper's $15 (``table1=True``: Table 1's per-kernel budgets, used by the repeatability experiment)."""
+    """@brief 算一次运行最多能花多少美元。
+
+    Budget of one run of ``task`` times ``scale``: the paper's $15 (``table1=True``: Table 1's per-kernel budgets, used by the repeatability experiment).
+
+    @param task 任务名；带 ``@启动契约`` 的变体按基算子的预算算。
+    @param scale 预算倍数，只乘这笔钱。
+    @param table1 为真时用 Table 1 的逐题预算（SwiGLU $1，其余 $15）。
+    @return 这次运行的美元上限。
+    """
     base = task.split("@", 1)[0]  # a contract variant such as gemm@128x64x32t256 has the budget of gemm
     return (TABLE1_BUDGETS.get(base, PAPER_BUDGET_USD) if table1 else PAPER_BUDGET_USD) * scale
 
@@ -35,7 +43,15 @@ def budget_for(task: str, scale: float = 1.0, *, table1: bool = False) -> float:
 # 套件上限看的是「已经花掉的 + 这一次的整份预算」，提前停下来省下的钱不预支。
 # max_total_usd 为空就是不设上限；加上 1e-9 只为了刚好卡在上限上时仍放行。
 def fits_cap(spent_usd: float, budget_usd: float, max_total_usd: float | None) -> bool:
-    """``--max-total-usd``: a run may start only if its whole budget still fits under the experiment-wide cap (``None``: no cap)."""
+    """@brief 判断在实验总额上限下还能不能再开一次运行。
+
+    ``--max-total-usd``: a run may start only if its whole budget still fits under the experiment-wide cap (``None``: no cap).
+
+    @param spent_usd 实验已经花掉的钱。
+    @param budget_usd 这次运行的整份预算。
+    @param max_total_usd 实验总额上限；为 ``None`` 时不设上限。
+    @return 放得下时为 ``True``。
+    """
     return max_total_usd is None or spent_usd + budget_usd <= max_total_usd + 1e-9
 
 
@@ -43,6 +59,11 @@ CAP_FILE = "cap.json"
 
 
 def _num(value) -> float | None:
+    """@brief 把值转成开销账上可用的浮点数。
+
+    @param value 任意数值或字符串。
+    @return 转出来的浮点数；布尔、空值、不能转和 NaN 都返回 ``None``。
+    """
     if isinstance(value, bool) or value is None:
         return None
     try:
@@ -53,6 +74,11 @@ def _num(value) -> float | None:
 
 
 def _read(path: Path) -> Any:
+    """@brief 读一个 JSON 文件，读不出来时返回 ``None``。
+
+    @param path JSON 文件路径。
+    @return 解析结果；文件缺失或不是合法 JSON 时为 ``None``。
+    """
     try:
         return json.loads(path.read_text())
     except (OSError, ValueError):
@@ -62,7 +88,15 @@ def _read(path: Path) -> Any:
 # 一次搜索占多少钱：活着的进程按「当前预算和已花费里更大的那个」预留（看板加过预算、单独续跑的都算），
 # 已经结束的只算实际花掉的。实验脚本自己的 state.json 没有 spent_usd，不算进这笔账。
 def run_commitment(run_dir: Path) -> float:
-    """Dollars reserved by one search directory: its live budget while a process holds it, otherwise what it spent."""
+    """@brief 算一次搜索当前占用的美元数。
+
+    活着时按「当前预算与已花费里更大的那个」预留，已结束时只算实际花掉的钱。
+
+    Dollars reserved by one search directory: its live budget while a process holds it, otherwise what it spent.
+
+    @param run_dir 单个搜索目录。
+    @return 这本账上预留的美元数。
+    """
     from taic.control import pid_alive
 
     run_dir = Path(run_dir)
@@ -91,10 +125,15 @@ def run_commitment(run_dir: Path) -> float:
 
 
 def experiment_commitment(exp_dir: Path) -> float:
-    """Reserved dollars of every search under ``exp_dir`` (finished runs count what they spent; live ones count their budget).
+    """@brief 算整个实验目录下所有搜索占用的美元数。
+
+    Reserved dollars of every search under ``exp_dir`` (finished runs count what they spent; live ones count their budget).
 
     A directory is a search when it holds ``state.json`` or ``result.json``. The experiment's own ``state.json`` (it has ``script`` and no
     ``spent_usd``) contributes nothing, and a directory is counted once even when it has both files.
+
+    @param exp_dir 实验根目录。
+    @return 预留金额合计；目录不存在时为 0。
     """
     exp_dir = Path(exp_dir)
     if not exp_dir.is_dir():
@@ -104,7 +143,13 @@ def experiment_commitment(exp_dir: Path) -> float:
 
 
 def write_cap(exp_dir: Path, max_total_usd: float | None) -> None:
-    """Record the experiment cap so the dashboard can refuse a top-up that would break it. ``None`` writes nothing."""
+    """@brief 把实验的总额上限写进 ``cap.json``，供看板拒绝超额的追加预算。
+
+    Record the experiment cap so the dashboard can refuse a top-up that would break it. ``None`` writes nothing.
+
+    @param exp_dir 实验根目录。
+    @param max_total_usd 总额上限；为 ``None`` 时不写文件。
+    """
     if max_total_usd is None:
         return
     from taic.control import write_json_atomic
@@ -113,12 +158,23 @@ def write_cap(exp_dir: Path, max_total_usd: float | None) -> None:
 
 
 def read_cap(exp_dir: Path) -> float | None:
+    """@brief 读回实验的总额上限。
+
+    @param exp_dir 实验根目录。
+    @return 上限美元数；没有 ``cap.json`` 或读不出数值时返回 ``None``。
+    """
     doc = _read(Path(exp_dir) / CAP_FILE)
     return _num(doc.get("max_total_usd")) if isinstance(doc, dict) else None
 
 
 def find_cap(run_dir: Path) -> tuple[Path, float] | None:
-    """The nearest ancestor of ``run_dir`` that has a ``cap.json``, and the cap it records."""
+    """@brief 往上找最近的带 ``cap.json`` 的祖先目录。
+
+    The nearest ancestor of ``run_dir`` that has a ``cap.json``, and the cap it records.
+
+    @param run_dir 搜索目录。
+    @return ``(带 cap.json 的目录, 上限美元数)``；一直找到根都没有时返回 ``None``。
+    """
     p = Path(run_dir).resolve().parent
     while True:
         cap = read_cap(p)
@@ -130,7 +186,14 @@ def find_cap(run_dir: Path) -> tuple[Path, float] | None:
 
 
 def cap_allows(run_dir: Path, new_total: float) -> tuple[bool, str]:
-    """Whether raising ``run_dir`` to ``new_total`` still fits the experiment cap. No cap file means it is allowed."""
+    """@brief 判断把这次运行的预算提到 ``new_total`` 会不会超实验总额。
+
+    Whether raising ``run_dir`` to ``new_total`` still fits the experiment cap. No cap file means it is allowed.
+
+    @param run_dir 搜索目录。
+    @param new_total 提议的新预算总额。
+    @return ``(是否放行, 拒绝原因)``；放行时原因为空串。
+    """
     found = find_cap(run_dir)
     if found is None:
         return True, ""
@@ -164,6 +227,30 @@ def run_one(
     use_tools: bool | None = None,
     **search_overrides,
 ) -> RunResult:
+    """@brief 启动一次搜索的唯一入口，把预算与覆盖项交给编排器并跑完。
+
+    新的 ``run_dir`` 会启动一次空搜索，不读上一次的最优核；目录里已有可续跑的快照时改为续跑。
+
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param size 规模档位。
+    @param run_dir 本次运行的输出目录。
+    @param budget 本次的美元上限；为 ``None`` 时用预设里的值。
+    @param branches 分支数；为 ``None`` 时用预设。
+    @param max_rounds 轮数上限；为 ``None`` 时用预设。
+    @param model 模型名；显式给出时两个委员会都用它。
+    @param max_tokens 单次回复上限；为 ``None`` 时用配置里的值。
+    @param config_path 配置文件路径；为 ``None`` 时用默认。
+    @param preset 配置预设名；为 ``None`` 时用默认。
+    @param client LLM 客户端；为 ``None`` 时由编排器自建。
+    @param evaluate_fn 评测函数；为 ``None`` 时用默认实现。
+    @param agent_runner 自定义的写内核进程；为 ``None`` 时用默认。
+    @param log 进度输出函数。
+    @param use_tools 是否开工具；为 ``None`` 时不覆盖预设。
+    @param search_overrides 其余透传给 ``load_config`` 的搜索开关。
+    @return 这次搜索的结果对象。
+    @raises taic.orchestrator.RunStartError 目录已占用而不可续跑，或 ``run_config.json`` 写不下去时。
+    """
     raw = load_raw_config(config_path, preset)
     cfg, search = load_config(config_path, model=model, preset=preset, budget_usd=budget, branches=branches, max_rounds=max_rounds, **search_overrides)
     if use_tools is not None:
@@ -182,12 +269,36 @@ def run_one(
 
 
 def _looks_resumable(run_dir: Path) -> bool:
-    """A non-empty cell with the three files a flame-chase snapshot needs; a stray file dir is still refused."""
+    """@brief 判断目录里是否已经有续跑所需的三份文件。
+
+    A non-empty cell with the three files a flame-chase snapshot needs; a stray file dir is still refused.
+
+    @param run_dir 搜索目录。
+    @return 三份文件都在时为 ``True``。
+    """
     return (run_dir / "run_config.json").is_file() and (run_dir / "state.json").is_file() and (run_dir / "transcript.jsonl").is_file()
 
 
 def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, evaluate_fn, agent_runner, log) -> RunResult:
-    """Continue an interrupted batch cell instead of refusing the non-empty directory."""
+    """@brief 接着一份已中断的快照继续跑，而不是拒绝非空目录。
+
+    Continue an interrupted batch cell instead of refusing the non-empty directory.
+
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param size 规模档位。
+    @param run_dir 被续跑的目录。
+    @param cfg 已解析的配置。
+    @param search 搜索开关。
+    @param raw 原始配置字典，用于重建委员会。
+    @param model 模型名；为 ``None`` 时沿用配置里记录的委员会。
+    @param client LLM 客户端。
+    @param evaluate_fn 评测函数。
+    @param agent_runner 自定义的写内核进程。
+    @param log 进度输出函数。
+    @return 续跑后的结果对象。
+    @raises taic.orchestrator.RunStartError 快照读不出来时。
+    """
     from tasks import get_task
 
     from taic import resume as rs
@@ -218,6 +329,12 @@ def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, eva
 
 # 各脚本的 --resume 只在 result.json 不存在时才开新的一次搜索。文件在，但损坏或版本更新，要人来看，不能当成还没跑过。
 def read_result(run_dir: Path) -> dict | None:
+    """@brief 读一次运行的 ``result.json``，并按版本校验。
+
+    @param run_dir 搜索目录。
+    @return 结果字典；还没跑完时返回 ``None``。
+    @raises taic.artifacts.NeedsInspection 文件存在但损坏、版本对不上或新版化时，要人来看。
+    """
     from taic.artifacts import RESULT_SCHEMA_VERSION, read_versioned
 
     return read_versioned(Path(run_dir) / "result.json", RESULT_SCHEMA_VERSION)
@@ -225,6 +342,12 @@ def read_result(run_dir: Path) -> dict | None:
 
 # 换种子复测写在另一份文件。没有它时「相对 triton-msl」一列为空，搜索本身仍算跑完。文件损坏则不能当成没测过。
 def read_confirm(run_dir: Path) -> dict | None:
+    """@brief 读换种子复测的 ``confirm_report.json``。
+
+    @param run_dir 搜索目录。
+    @return 复测报告字典；没测过时返回 ``None``。
+    @raises taic.artifacts.NeedsInspection 报告损坏或版本对不上时，不能当成没测过。
+    """
     from taic.artifacts import read_versioned
     from tcenv.schema import REPORT_SCHEMA_VERSION
 
@@ -233,6 +356,11 @@ def read_confirm(run_dir: Path) -> dict | None:
 
 # 一行里同时留下搜索期加速比、换种子确认后的加速比，以及手写朴素核，后面才能把「基线弱」和「搜索强」分开。
 def _sha256_file(path: Path) -> str | None:
+    """@brief 算文件的 sha256。
+
+    @param path 文件路径。
+    @return 十六进制摘要；文件读不到时返回 ``None``。
+    """
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
@@ -240,7 +368,14 @@ def _sha256_file(path: Path) -> str | None:
 
 
 def _confirmation_files(run_dir: Path, winner_label: str | None) -> tuple[str | None, str | None, str | None]:
-    """(best.metal sha256, winner candidate kernel.metal sha256, confirm_report status)."""
+    """@brief 取出确认门需要比对的三份证据。
+
+    (best.metal sha256, winner candidate kernel.metal sha256, confirm_report status).
+
+    @param run_dir 搜索目录。
+    @param winner_label 结果里记录的胜者标签。
+    @return ``(best.metal 摘要, 胜者候选摘要, 复测报告状态)``，缺的那项为 ``None``。
+    """
     best = _sha256_file(run_dir / "best.metal")
     report = None
     try:
@@ -260,7 +395,14 @@ def _confirmation_files(run_dir: Path, winner_label: str | None) -> tuple[str | 
 
 
 def conclusion_of_run(run_dir: Path, result: dict | None) -> dict:
-    """The publication verdict for one run directory. A bare ``result.json`` is not enough to call a number confirmed."""
+    """@brief 给一个运行目录出发布结论：只有确认门绑住重测内核时才给数字。
+
+    The publication verdict for one run directory. A bare ``result.json`` is not enough to call a number confirmed.
+
+    @param run_dir 搜索目录。
+    @param result 该目录的结果字典；可以为 ``None``。
+    @return ``{"speedup": ..., "publication": ...}``；缓存命中、计时不稳或各批不一致时标为 ``不确定``。
+    """
     if not result:
         return published_conclusion(None)
     best, winner, status = _confirmation_files(Path(run_dir), result.get("confirm_winner_label"))
@@ -287,12 +429,20 @@ def conclusion_of_run(run_dir: Path, result: dict | None) -> dict:
 
 
 def published_conclusion(result: dict | None, *, best_metal_sha256: str | None = None, confirm_status: str | None = None, winner_metal_sha256: str | None = None) -> dict:
-    """What a finished run may show as its confirmed speedup.
+    """@brief 只凭已有字段判断这份结果能不能报一个确认加速比。
+
+    What a finished run may show as its confirmed speedup.
 
     A number is returned only when ``confirmed_status`` is ok, the confirm report is ok, ``best.metal`` and the
     winner candidate's ``kernel.metal`` both hash to ``confirmation_source_sha256``, and ``confirm_winner_label``
     named that candidate. A result that has no ``confirmation_source_sha256`` key is an older file: ``旧版未绑定源码``.
     Anything else that is finished is ``未确认`` and does not fall back to ``best_speedup``.
+
+    @param result 结果字典；可以为 ``None``。
+    @param best_metal_sha256 ``best.metal`` 的摘要。
+    @param confirm_status 复测报告的状态。
+    @param winner_metal_sha256 胜者候选内核的摘要。
+    @return ``{"speedup": ..., "publication": ...}``。
     """
     if not result:
         return {"speedup": None, "publication": "in_progress"}
@@ -321,10 +471,20 @@ def publication_role(
     recorded_fingerprint: str | None,
     min_improvement: float | None = None,
 ) -> str | None:
-    """``primary`` when a confirmed speedup clears the noise gate and a passing domain sweep is bound to that same source and task.
+    """@brief 为一个运行定角色：过了噪声门且域扫通过时是 ``primary``，否则是 ``fallback``。
+
+    ``primary`` when a confirmed speedup clears the noise gate and a passing domain sweep is bound to that same source and task.
 
     ``None`` while the run is still in progress. Anything else, including a correct kernel that is slower than the baselines, is ``fallback``.
     The value is derived. It is not written into ``result.json``.
+
+    @param conclusion ``conclusion_of_run`` 给出的结论。
+    @param domain 域扫报告。
+    @param source_sha256 当前内核源码摘要。
+    @param task_fingerprint 当前任务指纹。
+    @param recorded_fingerprint 域扫报告里记录的指纹。
+    @param min_improvement 噪声门；为 ``None`` 时用配置里的值。
+    @return ``primary`` / ``fallback``；运行还进行中时返回 ``None``。
     """
     if conclusion is None or conclusion.get("publication") == "in_progress":
         return None
@@ -350,10 +510,15 @@ def publication_role(
 
 
 def shown_speedup(row: dict):
-    """The number a summary table may print. ``None`` when the publication gate did not accept one.
+    """@brief 取汇总表可以印的那一个加速比。
+
+    The number a summary table may print. ``None`` when the publication gate did not accept one.
 
     A row that never went through the gate has no ``published_speedup`` key and prints nothing, rather than
     ``confirmed_speedup`` or ``best_speedup``.
+
+    @param row 一行汇总结果。
+    @return ``published_speedup``；没有这个键时返回 ``None``，不回退到搜索期数字。
     """
     if "published_speedup" not in row:
         return None
@@ -361,7 +526,16 @@ def shown_speedup(row: dict):
 
 
 def summarize(res: dict, confirm: dict | None, naive: dict | None = None, *, run_dir: Path | None = None) -> dict:
-    """One row of the suite table. ``published_speedup`` is set only for a bound, quiet confirmation."""
+    """@brief 把一次运行压成套件表里的一行。
+
+    One row of the suite table. ``published_speedup`` is set only for a bound, quiet confirmation.
+
+    @param res 运行的 ``result.json`` 内容。
+    @param confirm 换种子复测报告；可以为 ``None``。
+    @param naive 手写朴素核的参照结果；为 ``None`` 时不填相关列。
+    @param run_dir 运行目录；给出时用它跑完整的发布判定。
+    @return 含任务、轮数、花费、各种加速比与相对朴素核增益的一行。
+    """
     if run_dir is not None:
         conclusion = conclusion_of_run(Path(run_dir), res)
     else:
@@ -396,7 +570,14 @@ def summarize(res: dict, confirm: dict | None, naive: dict | None = None, *, run
 
 
 def suite_metrics(rows: list[dict], thresholds: tuple[float, ...] = (0.95, 1.0, 1.005)) -> dict:
-    """fast_p counts rows whose published speedup is at least p. Search-only speedups are not counted."""
+    """@brief 统计套件里达到各档发布加速比的格数与占比。
+
+    fast_p counts rows whose published speedup is at least p. Search-only speedups are not counted.
+
+    @param rows 套件的结果行。
+    @param thresholds 要统计的加速比门槛。
+    @return 行数、总花费、发布条数、中位数与各门槛下的命中数。
+    """
     finished = [row for row in rows if isinstance(row, dict)]
     out: dict[str, Any] = {"n": len(finished), "spent_usd": 0.0, "fast": {}}
     spent = 0.0
@@ -424,9 +605,19 @@ def suite_metrics(rows: list[dict], thresholds: tuple[float, ...] = (0.95, 1.0, 
 # 手写朴素核不是搜索的起点，只是同一套评测协议下的参照，用来看出加速比里有多少来自基线太弱。
 # 按题和小数缓存在套件目录，同一格重跑或 --resume 时不再占 GPU。
 def naive_reference(task: str, dtype: str, size: str, cache_dir: Path, *, evaluate_fn: Callable | None = None) -> dict:
-    """Evaluate the task's hand-written *naive* kernel under the same protocol. Its speedup over the baselines is the reference
+    """@brief 用同一套评测协议量手写朴素核，作为看得出基线太弱的参照。
+
+    Evaluate the task's hand-written *naive* kernel under the same protocol. Its speedup over the baselines is the reference
     point that makes weak baselines visible: if a naive kernel already beats MLX/MPS (as for unfused ops such as Lion), part of
-    any AI-lowering speedup is baseline weakness, not compiler skill."""
+    any AI-lowering speedup is baseline weakness, not compiler skill.
+
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param size 规模档位。
+    @param cache_dir 套件目录，参照结果缓存在这里。
+    @param evaluate_fn 评测函数；为 ``None`` 时用 ``tcenv.evaluate``。
+    @return 含状态、加速比与两侧耗时的字典。
+    """
     from tasks import get_task
     from tcenv.evaluate import evaluate
 

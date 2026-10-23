@@ -23,12 +23,20 @@ if TYPE_CHECKING:
 
 
 def _threadgroup_limit() -> int:
+    """@brief 读取默认目标档案里的 threadgroup 内存上限。
+
+    @return 设备允许的 threadgroup 内存字节数。
+    """
     from ...target import DEFAULT_TARGET_ID, load_target
 
     return load_target(DEFAULT_TARGET_ID).limits.max_threadgroup_memory_bytes
 
 
 def _buffer_index_limit() -> int:
+    """@brief 读取默认目标档案里的最大 buffer 槽位号。
+
+    @return 允许使用的最大 [[buffer(n)]] 索引。
+    """
     from ...target import DEFAULT_TARGET_ID, load_target
 
     return load_target(DEFAULT_TARGET_ID).limits.max_buffer_index
@@ -37,7 +45,16 @@ def _buffer_index_limit() -> int:
 # 反射对的是槽位、名字、读写、标量类型和这份 pipeline 的启动上限。缓冲指向的元素类型可以向量化，这里放行。
 # 返回人类可读的问题列表；空列表才算通过。
 def check_abi(contract: Contract, kernel: "CompiledKernel", *, max_tg_memory: int | None = None, target_id: str | None = None) -> list[str]:
-    """Return a list of human-readable violations (empty list means conformant)."""
+    """@brief 按任务契约核对编译核的参数反射，返回不匹配项。
+
+    @param contract 任务契约，给出参数名、槽位、角色、标量类型与启动配置。
+    @param kernel 编译后的候选核，带有 Metal 反射出的绑定列表。
+    @param max_tg_memory threadgroup 内存上限；省略时读目标档案。
+    @param target_id 目标机型标识；省略时用默认目标。
+    @return 人类可读的问题列表，空列表表示通过。
+
+    Return a list of human-readable violations (empty list means conformant).
+    """
     if max_tg_memory is None:
         from ...target import DEFAULT_TARGET_ID, load_target
 
@@ -97,7 +114,18 @@ def check_abi(contract: Contract, kernel: "CompiledKernel", *, max_tg_memory: in
 
 
 def check_pipeline(contract: Contract, kernels: dict, spec, *, max_tg_memory: int | None = None, max_buffer_index: int | None = None, target_id: str | None = None) -> list[str]:
-    """Per-stage ABI for a ``taic-launch`` spec. ``kernels`` maps a kernel name to its compiled pipeline."""
+    """@brief 逐段核对 ``taic-launch`` 流水线的 ABI 与设备上限。
+
+    @param contract 任务契约，给出契约参数的名字与槽位。
+    @param kernels 核名到已编译 pipeline 的映射。
+    @param spec 解析出的启动规格，含各段 grid、线程和 workspace。
+    @param max_tg_memory threadgroup 内存上限；省略时读目标档案。
+    @param max_buffer_index buffer 槽位上限；省略时读目标档案。
+    @param target_id 目标机型标识；省略时用默认目标。
+    @return 人类可读的问题列表，空列表表示通过。
+
+    Per-stage ABI for a ``taic-launch`` spec. ``kernels`` maps a kernel name to its compiled pipeline.
+    """
     if max_tg_memory is None or max_buffer_index is None:
         from ...target import DEFAULT_TARGET_ID, load_target
 
@@ -184,11 +212,23 @@ _STATIC_TG_LIMIT = re.compile(r"^static threadgroup memory \d+ B exceeds the dev
 
 
 def _is_threadgroup_limit_line(item: str) -> bool:
+    """@brief 判断一条问题文本是否是 threadgroup 内存超限那一行。
+
+    @param item 单条问题文本。
+    @return 命中超限措辞时为 True。
+    """
     return "threadgroup memory" in item and "exceeds the device limit" in item
 
 
 def validation_problems(problems: list[str], static_bytes: list[int], max_tg_memory: int) -> list[str]:
-    """What a shader-validation pass should report before it decides to launch.
+    """@brief 决定着色器校验在启动前应报告哪些问题。
+
+    @param problems 校验子进程报出的问题列表。
+    @param static_bytes 各 pipeline 报告的静态 threadgroup 内存字节数。
+    @param max_tg_memory 设备允许的 threadgroup 内存字节数。
+    @return 过滤后的问题列表；仅剩超限项时收成一条标准文案。
+
+    What a shader-validation pass should report before it decides to launch.
 
     Instrumentation reports about twice the static threadgroup memory. When that figure
     is already over the device max, launching makes Metal abort the process inside
@@ -208,7 +248,12 @@ def validation_problems(problems: list[str], static_bytes: list[int], max_tg_mem
 
 
 def only_static_threadgroup_limit(violations: list[str]) -> bool:
-    """True when every violation is the static threadgroup-size line.
+    """@brief 判断问题列表是否只剩静态 threadgroup 内存超限这一种。
+
+    @param violations 问题列表。
+    @return 非空且每一条都匹配静态上限文案时为 True。
+
+    True when every violation is the static threadgroup-size line.
 
     Shader validation compiles with threadgroup instrumentation, and that pipeline reports
     about twice the memory the kernel declared. The uninstrumented pipeline is the check

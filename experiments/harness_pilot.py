@@ -17,6 +17,11 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def _jsonl(path: Path) -> list[dict]:
+    """@brief 逐行读 JSONL，坏行和空行跳过。
+
+    @param path JSONL 文件路径。
+    @return 能解析成字典的行列表；文件不存在时为空列表。
+    """
     if not path.is_file():
         return []
     rows = []
@@ -31,6 +36,11 @@ def _jsonl(path: Path) -> list[dict]:
 
 
 def summarize(run_dir: Path) -> dict:
+    """@brief 汇总一次 pilot 运行：会话、提议、决策、覆盖与花费。
+
+    @param run_dir 被检查的运行目录。
+    @return 一节报告所需的计数字段字典。
+    """
     from taic.agent_feedback import load_records
 
     run_dir = Path(run_dir)
@@ -77,6 +87,11 @@ def summarize(run_dir: Path) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """@brief ``python -m experiments.harness_pilot`` 的入口，打印并可选写出 JSON/Markdown 报告。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码；一个运行目录都没给时返回 2。
+    """
     parser = argparse.ArgumentParser(prog="experiments.harness_pilot")
     parser.add_argument("runs", nargs="+", help="run directories; no model call and no GPU")
     parser.add_argument("--out", default=None, help="write the JSON report here")

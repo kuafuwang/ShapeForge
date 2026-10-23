@@ -28,7 +28,13 @@ NUM_WARPS_SWEEP = (1, 2, 4, 8)
 
 
 def parse_launch_header(src: str) -> tuple[dict[str, float | int], int | None]:
-    """``key = value`` pairs of the leading comment block ('# Launch: ...'); returns (constexprs, num_warps)."""
+    """@brief 解析 Triton 规格开头注释块里的启动参数。
+
+    ``key = value`` pairs of the leading comment block ('# Launch: ...'); returns (constexprs, num_warps).
+
+    @param src Triton 源码。
+    @return ``(constexpr 字典, num_warps 或 None)``。
+    """
     consts: dict[str, float | int] = {}
     num_warps = None
     for line in src.splitlines():
@@ -49,15 +55,27 @@ def parse_launch_header(src: str) -> tuple[dict[str, float | int], int | None]:
 
 
 def spec_source(task) -> tuple[str, str]:
-    """(source, note). A task may carry a *baseline variant* of its specification: the same function with the same inputs and
-    outputs, written in a form the backend accepts (what a Triton user would do to get a kernel through that compiler)."""
+    """@brief 取任务用于编译的 Triton 源码及变体说明。
+
+    (source, note). A task may carry a *baseline variant* of its specification: the same function with the same inputs and
+    outputs, written in a form the backend accepts (what a Triton user would do to get a kernel through that compiler).
+
+    @param task 目标任务。
+    @return ``(源码, 变体说明)``；没有变体时说明为空串。
+    """
     v = (task.meta or {}).get("triton_baseline_variant")
     return (v["source"], v.get("note", "variant")) if v else (task.triton_source, "")
 
 
 def spec_fingerprint(task) -> str:
-    """Identifies what a measurement was taken on: the spec that was compiled, the problem size and launch contract it was checked against,
-    and the correctness cases. A cached measurement whose fingerprint differs from the live task's is stale and is not used."""
+    """@brief 计算一次测量的规格指纹。
+
+    Identifies what a measurement was taken on: the spec that was compiled, the problem size and launch contract it was checked against,
+    and the correctness cases. A cached measurement whose fingerprint differs from the live task's is stale and is not used.
+
+    @param task 目标任务。
+    @return 16 位十六进制指纹。
+    """
     import hashlib
 
     h = hashlib.sha256()
@@ -69,7 +87,14 @@ def spec_fingerprint(task) -> str:
 
 
 def parse_grid(src: str, header: dict) -> tuple[int, ...] | None:
-    """The ``grid = (...)`` expression of the launch header, evaluated with the header's values; None when absent."""
+    """@brief 解析启动头里的 ``grid = (...)`` 表达式。
+
+    The ``grid = (...)`` expression of the launch header, evaluated with the header's values; None when absent.
+
+    @param src Triton 源码。
+    @param header 启动头常量字典。
+    @return grid 三元组；没有该表达式时为 None。
+    """
     m = re.search(r"grid\s*=\s*\(([^)]*)\)", "\n".join(ln for ln in src.splitlines() if ln.startswith("#")))
     if not m:
         return None
@@ -78,6 +103,12 @@ def parse_grid(src: str, header: dict) -> tuple[int, ...] | None:
 
 
 def load_spec_module(task, workdir: Path):
+    """@brief 把任务规格写成临时模块并导入。
+
+    @param task 目标任务。
+    @param workdir 写入规格文件的目录。
+    @return 已执行的 Python 模块对象。
+    """
     path = workdir / f"spec_{task.name}_{task.dtype}_{task.size}.py"
     path.write_text(spec_source(task)[0])
     spec = importlib.util.spec_from_file_location(path.stem, path)
@@ -88,7 +119,14 @@ def load_spec_module(task, workdir: Path):
 
 
 def bind_constexprs(jit_fn, header: dict) -> dict:
-    """Match the jitted function's parameter names to header values, case-insensitively."""
+    """@brief 把 jit 函数的参数名与启动头常量按名匹配。
+
+    Match the jitted function's parameter names to header values, case-insensitively.
+
+    @param jit_fn Triton jit 函数。
+    @param header 启动头常量字典。
+    @return 参数名到常量值的字典。
+    """
     lower = {k.lower(): v for k, v in header.items()}
     names = list(getattr(jit_fn, "arg_names", None) or jit_fn.fn.__code__.co_varnames[: jit_fn.fn.__code__.co_argcount])
     out = {}
@@ -103,10 +141,17 @@ def bind_constexprs(jit_fn, header: dict) -> dict:
 
 
 def build_launcher(task, workdir: Path):
-    """Load the spec with Triton and return (jit_fn, constexpr kwargs, make_impl(num_warps), header num_warps, header).
+    """@brief 加载规格并构造 Triton 启动器。
+
+    Load the spec with Triton and return (jit_fn, constexpr kwargs, make_impl(num_warps), header num_warps, header).
 
     Every kernel argument is passed *by name*: ``<x>_ptr`` binds to the contract buffer ``x`` (case-insensitive), constexprs come from
     the launch header, and runtime scalars (e.g. BitDelta's ``scale``) from the contract's scalar arguments.
+
+    @param task 目标任务。
+    @param workdir 存放规格文件的目录。
+    @return ``(jit_fn, constexpr 字典, make_impl, 头部 num_warps, 头部常量)``。
+    @raises RuntimeError 内核参数无法绑定到契约 buffer、常量或标量时抛出。
     """
     import torch
 
@@ -171,6 +216,10 @@ def build_launcher(task, workdir: Path):
 
 
 def main() -> int:
+    """@brief 隔离环境里的 triton-msl 计时入口：读请求、持锁测量并写出结果。
+
+    @return 恒为 0；错误写进结果文件的 ``status`` 字段。
+    """
     req = json.loads(Path(sys.argv[1]).read_text())
     out_path = Path(req["out"])
     result: dict = {"status": "error", "task": req["task"], "dtype": req["dtype"], "size": req["size"]}
@@ -196,6 +245,15 @@ def main() -> int:
 
 
 def _run(req: dict, result: dict) -> None:
+    """@brief 执行一次完整的 triton-msl 基线测量。
+
+    先逐个 num_warps 配置做正确性筛选，再交错计时取最快的正确配置，与 MLX / torch_mps 基线对比，
+    并把所有尝试与结果写进 ``result``。
+
+    @param req 已解析的请求字典。
+    @param result 输出字典，函数会就地填充。
+    @raises RuntimeError triton_msl 无法导入或 MPS 不可用时抛出。
+    """
     import torch
 
     import triton

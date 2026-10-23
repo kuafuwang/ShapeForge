@@ -6,9 +6,14 @@ import math
 
 
 def wilson_lower(successes: int, total: int, z: float = 1.96) -> float | None:
-    """Lower bound of a binomial proportion. ``None`` for an empty sample.
+    """@brief 计算二项比例置信区间的下界；样本为空时返回 ``None``。
 
-    A raw 80% over five reviews is not evidence; this makes small samples visibly weak.
+    五次评审里 80% 认可并不构成证据；这个下界让小样本看起来明显偏弱。
+
+    @param successes 成功（认可）次数。
+    @param total 评审样本总数。
+    @param z 正态分位数，默认为 1.96（约 95% 置信）。
+    @return 区间下界，取值范围 [0, 1]；``total`` 不为正时返回 ``None``。
     """
     if total <= 0:
         return None
@@ -20,10 +25,15 @@ def wilson_lower(successes: int, total: int, z: float = 1.96) -> float | None:
 
 
 def metrics(conn, *, target_id: str | None = None, task: str | None = None) -> list[dict]:
-    """Per (target, task, provider, model) review and evidence counts.
+    """@brief 按（target、task、provider、model）统计评审与证据数量。
 
-    ``reasonable`` is adopted/done; ``refuted`` is rejected with a refuted verification.
-    ``reviewed`` is those three decisions, not pending or informational rows.
+    ``reasonable`` 是 adopted/done；``refuted`` 是 rejected 且验证结论为 refuted。
+    ``reviewed`` 只含这三种决定，不含 pending 或仅告知的行。
+
+    @param conn 只读的索引数据库连接。
+    @param target_id 只统计该 target 的会话，None 表示不限。
+    @param task 只统计该任务名，None 表示不限。
+    @return 每个分组一项的字典列表，含计数、比例，以及 Wilson 下界与占位符统计等派生字段。
     """
     where = ["1 = 1"]
     args: list[object] = []

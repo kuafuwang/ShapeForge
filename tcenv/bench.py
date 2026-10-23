@@ -27,6 +27,8 @@ from typing import Callable
 # 对外认 median_s。加速比和 roofline 都用它；cv 留给调用方判断这次测量是否安静。
 @dataclass
 class BenchStats:
+    """@brief 一次批量计时的统计结果：中位数、均值、最小值、变异系数与原始样本。"""
+
     median_s: float
     mean_s: float
     min_s: float
@@ -37,9 +39,17 @@ class BenchStats:
 
     @property
     def median_us(self) -> float:
+        """@brief 以微秒表示的中位数耗时。
+
+        @return ``median_s`` 乘以 1e6。
+        """
         return self.median_s * 1e6
 
     def to_json(self) -> dict:
+        """@brief 转成可写入报告的字典。
+
+        @return 字段字典；没有原始样本时去掉 ``samples_s``，并补上 ``median_us``。
+        """
         d = asdict(self)
         d["median_us"] = self.median_us
         if not d["samples_s"]:
@@ -56,10 +66,18 @@ BATCH_WALL_BUDGET_S = 1.6
 
 
 def choose_iters(run_k: Callable[[int], float], target_s: float = 0.015, kmin: int = 4, kmax: int = 4000) -> int:
-    """Pick the batch size ``k`` so that one timed batch lasts about ``target_s``.
+    """@brief 选出一个计时批量的大小，使一批约持续 ``target_s``。
+
+    Pick the batch size ``k`` so that one timed batch lasts about ``target_s``.
 
     The probe starts with a single launch so that a pathologically slow candidate is never asked to run a long
     batch (every GPU launch is bounded by an external watchdog; see tcenv.evaluate).
+
+    @param run_k 执行 ``k`` 次启动并返回批次墙钟秒数的可调用对象。
+    @param target_s 期望的单批持续秒数。
+    @param kmin 批量下限。
+    @param kmax 批量上限。
+    @return 选定的批量大小，已被看门狗预算封顶。
     """
     run_k(1)  # warm-up, discarded: pays one-time costs (pipeline creation, JIT compilation of a compiled baseline)
     per = max(run_k(1), 1e-8)
@@ -88,7 +106,18 @@ def interleaved(
     seed: int = 0,
     kmin: int = 4,
 ) -> dict[str, BenchStats]:
-    """``kmin``: smallest batch size. Callers that rotate over R buffer sets pass ``kmin=R`` so that every batch touches all of them."""
+    """@brief 交错测量多个 runner 并汇总各自的统计量。
+
+    ``kmin``: smallest batch size. Callers that rotate over R buffer sets pass ``kmin=R`` so that every batch touches all of them.
+
+    @param runners 名称到 ``run_k`` 的映射。
+    @param reps 计入统计的重复次数。
+    @param target_s 每批期望持续秒数。
+    @param warmup_reps 不计入样本的预热轮数。
+    @param seed 每轮打乱顺序的随机种子。
+    @param kmin 批量下限。
+    @return 名称到 ``BenchStats`` 的字典。
+    """
     rng = random.Random(seed)
     ks = {n: choose_iters(r, target_s, kmin) for n, r in runners.items()}
     samples: dict[str, list[float]] = {n: [] for n in runners}
@@ -124,10 +153,18 @@ QUIET_CV = 0.05
 
 
 def approximate_speedup_se(candidate_cv, candidate_reps, baseline_cv, baseline_reps) -> float:
-    """Approximate relative standard error of a ratio of two medians.
+    """@brief 估计两个中位数之比的近似相对标准误。
+
+    Approximate relative standard error of a ratio of two medians.
 
     SE of a median is about sqrt(pi/2) * sigma / sqrt(n). The candidate and baseline errors are combined as if independent.
     The inputs are the cvs and repetition counts already on the report. This is not a confidence interval, and it is not a 95% interval.
+
+    @param candidate_cv 候选的变异系数。
+    @param candidate_reps 候选的重复次数。
+    @param baseline_cv 基线的变异系数。
+    @param baseline_reps 基线的重复次数。
+    @return 相对标准误；输入无法转换时为 0.0。
     """
     try:
         n = max(1, min(int(candidate_reps), int(baseline_reps)))
@@ -137,6 +174,11 @@ def approximate_speedup_se(candidate_cv, candidate_reps, baseline_cv, baseline_r
 
 
 def _benchmark(report) -> dict:
+    """@brief 从报告对象或字典中取出 benchmark 段。
+
+    @param report 评测报告；可为 None。
+    @return benchmark 字典；缺失或类型不对时为空字典。
+    """
     if report is None:
         return {}
     if isinstance(report, dict):
@@ -147,7 +189,13 @@ def _benchmark(report) -> dict:
 
 
 def speedup_se_of_report(report) -> float:
-    """The approximate relative standard error stored by a report, or 0 when the report has no timing statistics."""
+    """@brief 取报告里保存的加速比近似相对标准误。
+
+    The approximate relative standard error stored by a report, or 0 when the report has no timing statistics.
+
+    @param report 评测报告对象或字典。
+    @return 相对标准误；缺少计时统计时为 0.0。
+    """
     bench = _benchmark(report)
     try:
         candidate = bench["candidate"]
@@ -160,10 +208,18 @@ def speedup_se_of_report(report) -> float:
 
 
 def paired_bootstrap_speedup_ci(cand_samples, base_samples, *, n_boot: int = 1000, seed: int = 0) -> tuple[float, float] | None:
-    """2.5 and 97.5 percentiles of (baseline sample / candidate sample) over paired draws.
+    """@brief 用成对重采样估计加速比的 2.5% 与 97.5% 分位数。
+
+    2.5 and 97.5 percentiles of (baseline sample / candidate sample) over paired draws.
 
     The two sequences are the interleaved repetitions already stored on a report. This is a resampling interval, not a proof.
     Returns None when either side has fewer than two samples.
+
+    @param cand_samples 候选每次重复的耗时样本。
+    @param base_samples 基线每次重复的耗时样本。
+    @param n_boot 重采样次数。
+    @param seed 随机种子。
+    @return ``(下界, 上界)``；样本不足时为 None。
     """
     import random
 
@@ -189,7 +245,13 @@ def paired_bootstrap_speedup_ci(cand_samples, base_samples, *, n_boot: int = 100
 
 
 def speedup_ci_of_report(report) -> tuple[float, float] | None:
-    """Paired bootstrap interval when the report stored per-repetition samples for the candidate and the best baseline."""
+    """@brief 从报告里的原始样本计算成对 bootstrap 加速比区间。
+
+    Paired bootstrap interval when the report stored per-repetition samples for the candidate and the best baseline.
+
+    @param report 评测报告对象或字典。
+    @return ``(下界, 上界)``；缺少样本时为 None。
+    """
     bench = _benchmark(report)
     try:
         candidate = bench["candidate"]
@@ -200,7 +262,13 @@ def speedup_ci_of_report(report) -> tuple[float, float] | None:
 
 
 def timing_is_uncertain(report) -> bool:
-    """True when the kept measurement is marked noisy or a reported cv is above the quiet cutoff."""
+    """@brief 判断保留的这次测量是否不够安静、可信。
+
+    True when the kept measurement is marked noisy or a reported cv is above the quiet cutoff.
+
+    @param report 评测报告对象或字典。
+    @return 缺少计时块、cv 缺失、重复次数不足或 cv 超过 ``QUIET_CV`` 时为 True。
+    """
     bench = _benchmark(report)
     if not bench:
         # 没有计时块就无法说明这次测量安静。确认报告缺了这一块时，不能把加速比当成已经复核过。

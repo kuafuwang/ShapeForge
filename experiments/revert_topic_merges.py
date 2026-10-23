@@ -26,10 +26,20 @@ DEFAULT_RUNS = REPO / "runs"
 
 
 def _review_files(root: Path) -> list[Path]:
+    """@brief 找出根目录下所有的 review 文件。
+
+    @param root 存放运行的根目录。
+    @return 排好序的 ``feedback_review.json`` 路径列表。
+    """
     return sorted(Path(root).rglob("feedback_review.json"))
 
 
 def _load(path: Path) -> dict:
+    """@brief 读一份 review 文件，读不出来时返回空壳。
+
+    @param path ``feedback_review.json`` 路径。
+    @return 文档字典；文件缺失或不是字典时返回 ``{"v": 1, "claims": {}}``。
+    """
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -38,6 +48,13 @@ def _load(path: Path) -> dict:
 
 
 def find(root: Path) -> list[dict]:
+    """@brief 找出所有被标成``主题重复``而置为 obsolete 的条目。
+
+    空占位等其他 obsolete 条目不列入。
+
+    @param root 存放运行的根目录。
+    @return 每项的所属运行目录、``seq``、``digest``、``topic`` 与旧备注。
+    """
     out = []
     for path in _review_files(root):
         doc = _load(path)
@@ -65,6 +82,13 @@ def find(root: Path) -> list[dict]:
 
 
 def revert(rows: list[dict], *, apply: bool, backup_dir: Path | None = None) -> dict:
+    """@brief 把主题合并改回 pending，可选先备份 review 文件。
+
+    @param rows ``find`` 返回的待回退条目。
+    @param apply 为真时真的写文件；为假时只列计划。
+    @param backup_dir 备份目录；为 ``None`` 时不备份。
+    @return 统计字典：行数、写入数、错误数与逐条明细。
+    """
     result = {"mode": "apply" if apply else "dry-run", "rows": len(rows), "written": 0, "errors": 0, "backups": [], "details": []}
     if apply and backup_dir is not None:
         backup_dir.mkdir(parents=True, exist_ok=True)
@@ -106,6 +130,11 @@ def revert(rows: list[dict], *, apply: bool, backup_dir: Path | None = None) -> 
 
 
 def main(argv: list[str] | None = None) -> int:
+    """@brief ``python -m experiments.revert_topic_merges`` 的入口，默认干跑。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码；有错时返回 2。
+    """
     parser = argparse.ArgumentParser(prog="experiments.revert_topic_merges")
     parser.add_argument("--runs", default=str(DEFAULT_RUNS))
     parser.add_argument("--apply", action="store_true")

@@ -25,6 +25,12 @@ from .pressure import pressure_hint, source_pressure
 from ...target import DEFAULT_TARGET_ID, calibration_file
 
 def get_calibration(force: bool = False, target_id: str | None = None) -> dict:
+    """@brief 读取标定缓存，缺失或过期时在本机重测并写回。
+
+    @param force 是否忽略已有缓存强制重测。
+    @param target_id 目标机型标识；省略时用默认目标。
+    @return 标定数据字典（带宽、算力、设备名与时间）。
+    """
     ctx = get_context()
     info = ctx.info()
     path, _source = calibration_file(target_id or DEFAULT_TARGET_ID)
@@ -65,6 +71,13 @@ kernel void read4(device const float4* x [[buffer(0)]], device float4* y [[buffe
 
 
 def measure_peak_bandwidth(ctx: MetalContext | None = None, nbytes: int = 512 * 2**20, iters: int = 20) -> dict:
+    """@brief 用 copy/read 核测本机可达的显存带宽。
+
+    @param ctx Metal 上下文；省略时取进程单例。
+    @param nbytes 每个缓冲区的大小。
+    @param iters 每轮计时的迭代次数。
+    @return 含 ``copy4_gbps`` 与 ``read4_gbps`` 的字典（GB/s）。
+    """
     ctx = ctx or get_context()
     n4 = nbytes // 16
     bx, by = ctx.new_buffer(nbytes), ctx.new_buffer(nbytes)
@@ -85,7 +98,14 @@ def measure_peak_bandwidth(ctx: MetalContext | None = None, nbytes: int = 512 * 
 
 
 def measure_peak_flops(dtype: str = "fp16", n: int = 4096) -> float:
-    """Achievable TFLOP/s of the vendor GEMM (MLX) on this chip."""
+    """@brief 用厂商 GEMM（MLX）测本芯片可达的算力。
+
+    @param dtype 数据类型，``fp16``、``bf16`` 或 ``fp32``。
+    @param n 方阵边长。
+    @return 实测 TFLOP/s。
+
+    Achievable TFLOP/s of the vendor GEMM (MLX) on this chip.
+    """
     import mlx.core as mx
 
     dt = {"fp16": mx.float16, "bf16": mx.bfloat16, "fp32": mx.float32}[dtype]
@@ -105,6 +125,14 @@ def measure_peak_flops(dtype: str = "fp16", n: int = 4096) -> float:
 
 
 def pipeline_stats(kernel: CompiledKernel, contract, device_info: dict, *, kernel_source: str | None = None) -> dict:
+    """@brief 汇总单个 pipeline 的线程组上限、SIMD 宽度与源码级压力。
+
+    @param kernel 已编译的核。
+    @param contract 任务契约，提供启动线程数。
+    @param device_info 设备信息映射。
+    @param kernel_source 候选源码，用于统计 fragment 声明。
+    @return 统计字典，压力可见时带 ``source_pressure``。
+    """
     max_threads = kernel.max_total_threads
     cap = int(device_info.get("max_threads_per_threadgroup") or 0)
     pressure = source_pressure(kernel_source)
@@ -136,7 +164,15 @@ def pipeline_stats(kernel: CompiledKernel, contract, device_info: dict, *, kerne
 
 
 def pipeline_stats_many(pairs, device_info: dict, *, kernel_source: str | None = None) -> dict:
-    """``pairs`` is ``(compiled kernel, stage)``. Top-level keys stay the old shape; ``stages`` is the per-stage list."""
+    """@brief 汇总多段流水线的统计，顶层字段沿用单核形状。
+
+    @param pairs ``(compiled kernel, stage)`` 的序列。
+    @param device_info 设备信息映射。
+    @param kernel_source 候选源码，用于统计 fragment 声明。
+    @return 统计字典，``stages`` 为逐段结果列表。
+
+    ``pairs`` is ``(compiled kernel, stage)``. Top-level keys stay the old shape; ``stages`` is the per-stage list.
+    """
     class _View:
         def __init__(self, stage):
             self.threads_per_tg = stage.threads[0] * stage.threads[1] * stage.threads[2]
@@ -172,8 +208,15 @@ def pipeline_stats_many(pairs, device_info: dict, *, kernel_source: str | None =
 
 
 def effective_peak_gbps(task, calib: dict) -> float:
-    """Achievable bandwidth depends on the read/write mix: pure reads reach ``read_gbps``, an even read/write
-    stream (copy) only ``copy_gbps``. Interpolate on the write fraction of the task's minimal traffic."""
+    """@brief 按任务的读写比例插值出可达带宽。
+
+    @param task 任务对象，用契约输入输出的字节数算写比例。
+    @param calib 标定数据。
+    @return 可达带宽（GB/s）。
+
+    Achievable bandwidth depends on the read/write mix: pure reads reach ``read_gbps``, an even read/write
+    stream (copy) only ``copy_gbps``. Interpolate on the write fraction of the task's minimal traffic.
+    """
     c = task.contract
     rd = sum(a.nbytes for a in c.inputs)
     wr = sum(a.nbytes for a in c.outputs)
@@ -183,6 +226,13 @@ def effective_peak_gbps(task, calib: dict) -> float:
 
 
 def roofline(task, time_s: float, calib: dict) -> dict:
+    """@brief 给出该任务这次测量的 roofline 位置与上下界。
+
+    @param task 任务对象。
+    @param time_s 实测耗时（秒）。
+    @param calib 标定数据。
+    @return roofline 指标字典。
+    """
     peak_gbps = effective_peak_gbps(task, calib)
     peak_bw = peak_gbps * 1e9
     peak_fl = calib["peak_tflops"].get(task.dtype, calib["peak_tflops"]["fp16"]) * 1e12

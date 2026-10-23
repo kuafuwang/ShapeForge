@@ -40,6 +40,11 @@ POLICY = {"budget", "roofline"}
 
 
 def topic(text: str) -> str:
+    """@brief 按关键词把一条建议归到固定 topic，认不出时归 ``other``。
+
+    @param text 条目正文。
+    @return ``TOPICS`` 里的主题名，或 ``other``。
+    """
     low = text.lower()
     for name, words in TOPICS:
         if any(word in low for word in words):
@@ -48,10 +53,20 @@ def topic(text: str) -> str:
 
 
 def clean_id(item: dict) -> str:
+    """@brief 把一条看板条目拼成 ``run#seq:digest`` 形式的 ID。
+
+    @param item 看板条目，需含 ``run_id``/``seq``/``digest``。
+    @return 审计报告里用的条目 ID。
+    """
     return f"{item['run_id']}#{item['seq']}:{item['digest']}"
 
 
 def main(argv: list[str] | None = None) -> int:
+    """@brief ``python -m experiments.feedback_audit`` 的入口，逐条给待审反馈下判定并写出 MD/JSON。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     parser = argparse.ArgumentParser(prog="python -m experiments.feedback_audit")
     parser.add_argument("--out-md", default="docs/feedback_audit_20261022.md")
     parser.add_argument("--out-json", default="docs/feedback_audit_20261022.json")

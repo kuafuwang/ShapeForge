@@ -15,6 +15,13 @@ SIZES = {"paper": 1 << 23, "small": 1 << 16}
 
 
 def _mlx(p, g, m):
+    """@brief mlx 侧的 Lion 一步，整个 step 走一次 ``mx.compile``。
+
+    @param p 参数，mlx 数组。
+    @param g 梯度，mlx 数组。
+    @param m 动量，mlx 数组。
+    @return ``(p_out, m_out)``。
+    """
     def build(mx):
         def step(p, g, m):
             u = mx.sign(BETA1 * m + (1 - BETA1) * g)
@@ -26,15 +33,38 @@ def _mlx(p, g, m):
 
 
 def _torch(p, g, m):  # unfused eager ops: there is no fused Lion kernel on MPS
+    """@brief torch 侧未融合的 Lion 一步，逐算子 eager 执行。
+
+    @param p 参数。
+    @param g 梯度。
+    @param m 动量。
+    @return ``(p_out, m_out)``。
+    """
     u = torch.sign(BETA1 * m + (1 - BETA1) * g)
     return p * (1 - LR * WD) - LR * u, BETA2 * m + (1 - BETA2) * g
 
 
 def _torch_compile(p, g, m):  # Inductor (Metal backend) fuses the whole step into one kernel
+    """@brief torch 侧的 Lion 一步，由 ``torch.compile`` 把整步收成一个 Metal 核。
+
+    @param p 参数。
+    @param g 梯度。
+    @param m 动量。
+    @return ``(p_out, m_out)``。
+    """
     return torch_compiled("lion", _torch)(p, g, m)
 
 
 def build(dtype: str, size: str) -> Task:
+    """@brief 装配 Lion 优化器一步题。
+
+    核名 ``lion_kernel``，``grid=(n/BLOCK_SIZE, 1, 1)``，``threads=(128, 1, 1)``，
+    缓冲 p/g/m/p_out/m_out，常量 N/BLOCK_SIZE/LR/WD/BETA1/BETA2。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
     check_dtype(dtype)
     n = SIZES[size]
     args = (

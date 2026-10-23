@@ -23,48 +23,96 @@ _BIN = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/"}
 
 
 def _relu(x):
+    """@brief torch 侧的 ReLU 基线。
+
+    @param x 输入张量。
+    @return ``torch.relu(x)``。
+    """
     return torch.relu(x)
 
 
 def _sigmoid(x):
+    """@brief torch 侧的 sigmoid 基线。
+
+    @param x 输入张量。
+    @return ``torch.sigmoid(x)``。
+    """
     return torch.sigmoid(x)
 
 
 def _silu(x):
+    """@brief torch 侧的 SiLU 基线。
+
+    @param x 输入张量。
+    @return ``x * sigmoid(x)``。
+    """
     return x * torch.sigmoid(x)
 
 
 def _mlx_relu(x):
+    """@brief mlx 侧的 ReLU 基线。
+
+    @param x mlx 数组。
+    @return 把小于 0 的项截成 0 的结果。
+    """
     import mlx.core as mx
 
     return mx.maximum(x, 0)
 
 
 def _mlx_sigmoid(x):
+    """@brief mlx 侧的 sigmoid 基线。
+
+    @param x mlx 数组。
+    @return ``mx.sigmoid(x)``。
+    """
     import mlx.core as mx
 
     return mx.sigmoid(x)
 
 
 def _mlx_silu(x):
+    """@brief mlx 侧的 SiLU 基线。
+
+    @param x mlx 数组。
+    @return ``x * mx.sigmoid(x)``。
+    """
     import mlx.core as mx
 
     return x * mx.sigmoid(x)
 
 
 def _mlx_exp(x):
+    """@brief mlx 侧的 exp 基线。
+
+    @param x mlx 数组。
+    @return ``mx.exp(x)``。
+    """
     import mlx.core as mx
 
     return mx.exp(x)
 
 
 def _mlx_maximum(a, b):
+    """@brief mlx 侧的逐元素最大值基线。
+
+    @param a 第一个 mlx 数组。
+    @param b 第二个 mlx 数组。
+    @return ``mx.maximum(a, b)``。
+    """
     import mlx.core as mx
 
     return mx.maximum(a, b)
 
 
 def _mlx_where(cond, a, b):
+    """@brief mlx 侧的选择基线。
+
+    @param cond 条件数组。
+    @param a 条件为真时取的值。
+    @param b 条件为假时取的值。
+    @return ``mx.where(cond, a, b)``。
+    """
     import mlx.core as mx
 
     return mx.where(cond, a, b)
@@ -124,7 +172,15 @@ _ALLOWED = (
 
 
 def parse_expr(expr: str, inputs: list[str]) -> ast.Expression:
-    """The expression, or ``ValueError`` when it uses anything outside the operator table."""
+    """@brief 校验并解析清单里的表达式。
+
+    The expression, or ``ValueError`` when it uses anything outside the operator table.
+
+    @param expr 清单里的表达式文本。
+    @param inputs 允许作为名字出现的输入名。
+    @return 解析后的 ``ast.Expression``。
+    @raises ValueError 表达式解析失败、用到运算符表以外的节点，或名字不合法时抛出。
+    """
     try:
         tree = ast.parse(expr, mode="eval")
     except SyntaxError as e:
@@ -146,7 +202,14 @@ def parse_expr(expr: str, inputs: list[str]) -> ast.Expression:
 
 
 def _check_names(tree: ast.AST, inputs: list[str]) -> None:
-    """A name is either an input or the callee of an operator. Anything else is rejected."""
+    """@brief 检查每个名字要么是输入，要么是运算符被调用者。
+
+    A name is either an input or the callee of an operator. Anything else is rejected.
+
+    @param tree 已解析的语法树。
+    @param inputs 允许作为名字出现的输入名。
+    @raises ValueError 出现未知名字时抛出。
+    """
     callees = {id(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and id(node) not in callees and node.id not in inputs:
@@ -154,11 +217,27 @@ def _check_names(tree: ast.AST, inputs: list[str]) -> None:
 
 
 def evaluate(tree: ast.Expression, env: dict, backend: str):
-    """Run the expression. ``backend`` is ``torch`` or ``mlx``."""
+    """@brief 在一个后端上把表达式算出来。
+
+    Run the expression. ``backend`` is ``torch`` or ``mlx``.
+
+    @param tree 已解析的语法树。
+    @param env 变量名到取值的映射。
+    @param backend ``torch`` 或 ``mlx``。
+    @return 计算结果。
+    """
     return _eval(tree.body, env, backend)
 
 
 def _eval(node, env, backend):
+    """@brief 递归求值一个语法树节点。
+
+    @param node 语法树节点。
+    @param env 变量名到取值的映射。
+    @param backend ``torch`` 或 ``mlx``。
+    @return 该节点的结果。
+    @raises ValueError 名字未知或节点类型不支持时抛出。
+    """
     if isinstance(node, ast.Name):
         if node.id not in env:
             raise ValueError(f"unknown name {node.id!r}")
@@ -182,13 +261,29 @@ def _eval(node, env, backend):
 
 
 def render(tree: ast.Expression, lang: str, inputs: list[str]) -> str:
-    """``lang`` is ``tl`` or ``msl``. Input names are the loaded locals."""
+    """@brief 把表达式渲染成 Triton 或 MSL 源文本。
+
+    ``lang`` is ``tl`` or ``msl``. Input names are the loaded locals.
+
+    @param tree 已解析的语法树。
+    @param lang ``tl`` 或 ``msl``。
+    @param inputs 输入名，按局部变量名渲染。
+    @return 渲染出的表达式文本。
+    """
     _check_names(tree, inputs)
     prefix = "v_" if lang == "msl" else ""
     return _render(tree.body, lang, prefix)
 
 
 def _render(node, lang: str, prefix: str) -> str:
+    """@brief 递归渲染一个语法树节点。
+
+    @param node 语法树节点。
+    @param lang ``tl`` 或 ``msl``。
+    @param prefix 局部变量名前缀，MSL 下是 ``v_``。
+    @return 该节点的源文本。
+    @raises ValueError 节点类型不支持时抛出。
+    """
     if isinstance(node, ast.Name):
         return prefix + node.id
     if isinstance(node, ast.Constant):
@@ -208,6 +303,11 @@ def _render(node, lang: str, prefix: str) -> str:
 
 
 def _validate(entry: dict) -> None:
+    """@brief 检查清单的一条 ``[[kernel]]`` 条目。
+
+    @param entry 清单里的一项。
+    @raises ValueError 输入名非法、一元题以外的题声明了 ``domain_case``，或表达式不合法时抛出。
+    """
     inputs = list(entry["inputs"])
     if not inputs or any(not str(n).isidentifier() for n in inputs):
         raise ValueError(f"bad inputs on {entry.get('task')!r}")
@@ -217,6 +317,12 @@ def _validate(entry: dict) -> None:
 
 
 def load_manifest(path: Path | None = None) -> tuple[list[dict], str]:
+    """@brief 读并校验生成式任务的清单文件。
+
+    @param path 清单路径；为 None 时用 ``MANIFEST``。
+    @return ``(条目列表, 带内容摘要的来源标记)``。
+    @raises ValueError 清单里没有 ``[[kernel]]`` 条目、题目名重复或条目校验不通过时抛出。
+    """
     path = Path(path or MANIFEST)
     text = path.read_text(encoding="utf-8")
     doc = tomllib.loads(text)
@@ -234,10 +340,24 @@ def load_manifest(path: Path | None = None) -> tuple[list[dict], str]:
 
 
 def _source_tag(path: Path, digest12: str) -> str:
+    """@brief 拼出清单来源标记。
+
+    @param path 清单路径。
+    @param digest12 清单文本的 sha256 前 12 位。
+    @return 写进 ``meta['source']`` 的标记文本。
+    """
     return f"tasks/generated/elementwise.toml#{digest12}"
 
 
 def _triton(kernel: str, inputs: list[str], expr: str, n: int) -> str:
+    """@brief 生成该条目的 Triton 题面正文。
+
+    @param kernel 算子名，用来拼核名。
+    @param inputs 输入名，按契约槽位顺序。
+    @param expr 清单里的表达式。
+    @param n 元素总数，写进头注释。
+    @return 完整的 Triton 源码文本。
+    """
     ptrs = ", ".join(f"{name}_ptr" for name in inputs)
     loads = "\n    ".join(f"{name} = tl.load({name}_ptr + offsets, mask=mask)" for name in inputs)
     body = render(parse_expr(expr, inputs), "tl", inputs)
@@ -265,6 +385,14 @@ _SIGMOID_MSL = """inline float sigmoid_f(float v) {
 
 
 def _metal(kernel: str, inputs: list[str], expr: str, dtype_msl: str) -> str:
+    """@brief 生成该条目的朴素 Metal 正文。
+
+    @param kernel 算子名，用来拼核名。
+    @param inputs 输入名，按契约槽位顺序。
+    @param expr 清单里的表达式。
+    @param dtype_msl Metal 元素类型名，例如 ``half``。
+    @return 完整的 Metal 源码文本。
+    """
     tree = parse_expr(expr, inputs)
     body = render(tree, "msl", inputs)
     prelude = _SIGMOID_MSL if "sigmoid_f(" in body else ""
@@ -283,6 +411,12 @@ def _metal(kernel: str, inputs: list[str], expr: str, dtype_msl: str) -> str:
 
 
 def _baselines(tree: ast.Expression, inputs: list[str]) -> tuple[BaselineImpl, ...]:
+    """@brief 造出该条目的 mlx 与 torch 两条基线。
+
+    @param tree 已解析的语法树。
+    @param inputs 输入名，按位置绑定到参数。
+    @return 基线实现元组。
+    """
     def torch_fn(*args):
         return evaluate(tree, dict(zip(inputs, args)), "torch")
 
@@ -293,6 +427,15 @@ def _baselines(tree: ast.Expression, inputs: list[str]) -> tuple[BaselineImpl, .
 
 
 def build(task_name: str, dtype: str, size: str, *, manifest: Path | None = None):
+    """@brief 按清单里的一条条目装配出一个 ``gen_`` 任务。
+
+    @param task_name 题目名，对应清单的 ``task`` 字段。
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @param manifest 清单路径；为 None 时用 ``MANIFEST``。
+    @return 装配好的 ``Task``。
+    @raises KeyError 清单里没有该题目名时抛出。
+    """
     path = Path(manifest or MANIFEST)
     text = path.read_text(encoding="utf-8")
     entries, _tag = load_manifest(path)
@@ -337,7 +480,14 @@ def build(task_name: str, dtype: str, size: str, *, manifest: Path | None = None
 
 
 def mismatches(hand, generated) -> list[str]:
-    """Fields that must agree. The manifest path in ``meta['source']`` is allowed to differ."""
+    """@brief 比较生成式任务与手写任务的字段，列出不一致项。
+
+    Fields that must agree. The manifest path in ``meta['source']`` is allowed to differ.
+
+    @param hand 手写题目的 ``Task``。
+    @param generated 生成式题目的 ``Task``。
+    @return 不一致的字段名列表，完全一致时为空列表。
+    """
     bad = []
     hc, gc = hand.contract, generated.contract
     for field in ("kernel_name", "grid", "threads", "constants"):

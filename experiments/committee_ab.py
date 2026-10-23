@@ -20,11 +20,26 @@ ARMS = (
 
 
 def nominal_usd(n: int, budget: float) -> float:
+    """@brief 算全部实验组的名义花费上限。
+
+    @param n 每组重复次数。
+    @param budget 每次运行的花费上限，单位美元。
+    @return ``n × 组数 × budget``。
+    """
     return n * len(ARMS) * budget
 
 
 def declare(out: Path, *, n: int, budget: float, max_total_usd: float | None) -> dict:
-    """Write the manifest for a committee comparison. This does not start a search."""
+    """@brief 为委员会对比写实验清单。
+
+    Write the manifest for a committee comparison. This does not start a search.
+
+    @param out 实验目录，``experiment.json`` 写在这里。
+    @param n 每组重复次数。
+    @param budget 每次运行的花费上限，单位美元。
+    @param max_total_usd 总预算上限；为 ``None`` 时表示不设限。
+    @return 写好的实验清单。
+    """
     return ensure(
         Path(out),
         kind="committee_ab",
@@ -56,6 +71,13 @@ def declare(out: Path, *, n: int, budget: float, max_total_usd: float | None) ->
 
 
 def matrix(*, n: int, budget: float, max_total_usd: float | None) -> dict:
+    """@brief 生成实验组矩阵和名义花费，只描述、不启动。
+
+    @param n 每组重复次数。
+    @param budget 每次运行的花费上限，单位美元。
+    @param max_total_usd 总预算上限；为 ``None`` 时视为放得下。
+    @return 含 ``arms``、``nominal_usd``、``fits`` 等字段的字典。
+    """
     total = nominal_usd(n, budget)
     return {
         "dry_run": True,
@@ -69,6 +91,11 @@ def matrix(*, n: int, budget: float, max_total_usd: float | None) -> dict:
 
 
 def main(argv=None) -> int:
+    """@brief ``python -m experiments.committee_ab`` 的入口，默认干跑并打印矩阵。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码；要求 ``--execute`` 时返回 2 并拒绝执行。
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", default=True)
     ap.add_argument("--execute", action="store_true", help="refused: a paid committee comparison needs a separate approval")

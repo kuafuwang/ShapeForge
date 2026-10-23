@@ -35,6 +35,11 @@ PHASE2_TASK_NAMES: tuple[str, ...] = ("flash_attention", "lion", "bitdelta_gemm"
 
 
 def list_tasks(include_phase2: bool = False) -> tuple[str, ...]:
+    """@brief 列出实验要枚举的题目名。
+
+    @param include_phase2 是否把第二阶段算子接在后面。
+    @return 题目名元组，顺序与 ``TASK_NAMES`` 一致。
+    """
     # 给实验枚举题目名。include_phase2 为真时把 PHASE2_TASK_NAMES 接在 TASK_NAMES 后面。
     return TASK_NAMES + (PHASE2_TASK_NAMES if include_phase2 else ())
 
@@ -45,6 +50,18 @@ SEMANTIC_NAMES = ("sem_gemm_neg", "sem_relu_gelu_comment", "sem_gelu_named_relu"
 
 @lru_cache(maxsize=64)
 def get_task(name: str, dtype: str = "fp16", size: str = "paper"):
+    """@brief 按名字、dtype 与档位装配一个完整的 ``tcenv.task.Task``。
+
+    搜索（taic.orchestrator）和验证（tcenv.evaluate）都只调用本函数，拿到同一份 Task。
+    名字以 ``sem_`` 开头交给 ``semantic.build``，以 ``gen_`` 开头从逐元素清单生成，``@`` 之后是启动契约变体。
+
+    @param name 题目名，可带 ``sem_`` / ``gen_`` 前缀或 ``@<变体>`` 后缀。
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper``、``small``，个别题多一档 ``plan``。
+    @return 装配好的 ``Task``；同一 ``(name, dtype, size)`` 命中缓存。
+    @raises ValueError 档位与题型不匹配、档位非法，或该题没有 ``plan`` 档、没有启动契约变体时抛出。
+    @raises KeyError 题目名不在 ``TASK_NAMES`` 与 ``PHASE2_TASK_NAMES`` 里时抛出。
+    """
     # 同一 (name, dtype, size) 命中缓存。size="plan" 时，该题的 SHAPES 里必须真有 "plan" 这一档。
     if name.startswith("sem_"):  # semantic-recovery tasks (paper Section 4.1)
         if size not in ("paper", "small"):

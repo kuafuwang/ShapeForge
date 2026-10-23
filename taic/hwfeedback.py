@@ -61,10 +61,23 @@ _CACHE_MAX = 256
 
 
 def _kib(n: int) -> str:
+    """@brief 把字节数格式化成一位小数的 KiB 文本。
+
+    @param n 字节数
+    @return 形如 ``12.5 KiB`` 的字符串
+    """
     return f"{n / 1024:.1f} KiB"
 
 
 def _uses(hr: "hw.HardwareFeatureReport") -> str:
+    """@brief 汇总这颗 kernel 已经用到的 Apple GPU 硬件特征，拼成一行短文本。
+
+    依次覆盖 simdgroup_matrix（操作数/累加器类型、每个 SIMD group 的 fragment 数）、threadgroup 暂存与 padding、
+    多级缓冲、寄存器预取、device 侧的装载/存储宽度、simd 运算，以及 online softmax / bit packing / unroll 等布尔特征。
+
+    @param hr 单颗 kernel 的硬件特征报告
+    @return 以 ``; `` 分隔的特征短语；一条特征都没有时为空串
+    """
     s, f = hr.source, hr.features
     m, mem, tg = s["matrix"], s["memory"], s["threadgroup"]
     bits: list[str] = []
@@ -93,7 +106,17 @@ def _uses(hr: "hw.HardwareFeatureReport") -> str:
 
 
 def _performance(hr: "hw.HardwareFeatureReport", measured: dict, roof: dict) -> tuple[str, float | None]:
-    """(the measured-performance sentence, fraction of the roofline or None when the report has no roofline)."""
+    """@brief 生成“实测性能 vs roofline”的说明句，并给出相对 roofline 的达成比例。
+
+    计算受限时比较达到的 TFLOP/s 与矩阵峰值，并对照标量 FMA 的天花板（``hw.SCALAR_OVER_MATRIX``）；否则比较
+    GB/s 与带宽峰值。有 ``time_over_lower_bound`` 时再追加一句“是 roofline 下界的多少倍”。
+
+    @param hr 硬件特征报告，用 matrix_unit 是否在场决定要不要提示矩阵单元不是瓶颈
+    @param measured 实测数据（``measured_from_report`` 的输出），本函数不使用，保留以统一签名
+    @param roof roofline 字典，可含 ``bound``、``time_over_lower_bound``、``achieved_tflops``、``compute_fraction``、
+        ``peak_tflops_measured``、``achieved_gbps``、``bandwidth_fraction``
+    @return ``(说明句, 相对 roofline 的比例或 None)``；报告里没有 roofline 时返回 ``("", None)``
+    """
     gap = roof.get("time_over_lower_bound")
     frac = (1.0 / gap) if gap else None
     bound = roof.get("bound") or "?"
@@ -114,6 +137,16 @@ def _performance(hr: "hw.HardwareFeatureReport", measured: dict, roof: dict) -> 
 
 
 def _warnings(hr: "hw.HardwareFeatureReport", measured: dict) -> list[str]:
+    """@brief 列出静态与反射证据里的风险警告行。
+
+    规则一：每个 SIMD group 的累加器 fragment 数达到 ``SPILL_FRAGMENTS``（32）时警告，参考 GEMM 慢 12 到 26 倍，
+    原因是寄存器溢出。规则二：pipeline（或其中某个 stage）报出的 ``maxTotalThreadsPerThreadgroup`` 等于甚至小于
+    launch 尺寸且小于 1024 时警告被 launch 尺寸卡住，但明确说明这本身不证明寄存器压力。
+
+    @param hr 硬件特征报告，用 ``source["matrix"]["acc_tiles"]`` 判断 fragment 数
+    @param measured 实测数据，可含 ``stages`` 列表或顶层 ``max_total_threads`` / ``launch_threads``
+    @return 警告文本列表；没有风险时为空列表
+    """
     out = []
     tiles = hr.source["matrix"]["acc_tiles"] or 0
     if tiles >= SPILL_FRAGMENTS:
@@ -136,6 +169,17 @@ def _warnings(hr: "hw.HardwareFeatureReport", measured: dict) -> list[str]:
 
 
 def _hints(hr: "hw.HardwareFeatureReport", measured: dict, roof: dict) -> list[str]:
+    """@brief 为“该类 kernel 预期存在但缺失”的特征生成最多 ``MAX_MISSING`` 条具体提示。
+
+    缺少 matrix_unit 时，只在矩阵单元附近才有意义的条目（float_accumulate、register_blocking、simd_shuffle 等
+    ``NEEDS_MATRIX_UNIT``）被过滤掉，避免在纯标量 kernel 上给出噪声提示；``NOT_HINTED`` 里的 ``fast_math`` 永不提示
+    （kernel 常有意避开快 exp 以保住 softmax 精度）。超出的条目折成一行计数。
+
+    @param hr 硬件特征报告，``hr.missing`` 是缺失特征的 id 列表
+    @param measured 实测数据，本函数不使用，保留以统一签名
+    @param roof roofline 字典，用于填 ``HINTS`` 模板里的 ``{gap}``
+    @return 以 ``- `` 开头的提示行列表；没有缺失特征时为空列表
+    """
     s = hr.source
     gap = roof.get("time_over_lower_bound")
     fmt = {"gap": f"the roofline shows {gap:.1f}x the lower bound" if gap else "no roofline in the report", "frag": s["matrix"]["acc_tiles"] or 0, "barriers": s["sync"]["main_loop_barrier_sites"] or s["sync"]["threadgroup_barrier_sites"]}
@@ -153,10 +197,17 @@ def _hints(hr: "hw.HardwareFeatureReport", measured: dict, roof: dict) -> list[s
 
 
 def format_block(hr: "hw.HardwareFeatureReport", measured: dict, roof: dict, *, bound_beaten: str | None = None) -> str:
-    """The text block for one analysed kernel (see the module docstring); at most 12 lines.
+    """@brief 拼出单颗 kernel 的硬件特征文本块（见模块 docstring），最多 12 行。
 
-    ``bound_beaten`` replaces the saturated/missing section when a baseline is already faster than the roofline bound:
-    the kernel is not at a ceiling the hardware cannot pass, the bound is the wrong target.
+    段落顺序固定：标题行、``Uses:`` 行、实测性能句、饱和/缺失特征段（二选一）、警告段、收尾声明
+    “缺失项只是提示而非要求，最终以实测时间为准”。已达到 roofline 90 % 以上的 kernel 不列缺失特征：
+    越过 roofline 之后硬件特征无能为力。
+
+    @param hr 硬件特征报告
+    @param measured 实测数据，供警告段使用
+    @param roof roofline 字典
+    @param bound_beaten 非空时用它替换饱和/缺失特征段：基线已经快过 roofline 边界，说明这个边界本身就是错的目标
+    @return 用 ``\\n`` 连接的多行文本块
     """
     perf, frac = _performance(hr, measured, roof)
     lines = ["Hardware-feature analysis of this kernel (static analysis of the source and the compiled AIR, not a measurement):", "Uses: " + _uses(hr) + "."]
@@ -180,7 +231,16 @@ def format_block(hr: "hw.HardwareFeatureReport", measured: dict, roof: dict, *, 
 
 
 def _run_with_timeout(fn: Callable[[], Any], seconds: float) -> Any:
-    """Run ``fn`` in a daemon thread; raise TimeoutError when it does not finish in time (the thread is abandoned, it cannot block the process exit)."""
+    """@brief 在守护线程里跑 ``fn``，超时即抛 TimeoutError。
+
+    超时后被放弃的线程无法阻塞进程退出（daemon 线程）；``fn`` 抛出的任何异常（含 BaseException）都会回到调用方
+    线程重新抛出，因此调用者只需处理一种失败形态。
+
+    @param fn 待执行的无参可调用对象
+    @param seconds 等待秒数
+    @return ``fn`` 的返回值
+    @raises TimeoutError 超过 ``seconds`` 仍未结束时
+    """
     box: dict[str, Any] = {}
 
     def target() -> None:
@@ -200,6 +260,13 @@ def _run_with_timeout(fn: Callable[[], Any], seconds: float) -> Any:
 
 
 def _compute(task: Any, source: str, report: Any) -> str | None:
+    """@brief 完整分析流程：解析任务 → 源码层 + 编译层 + 实测 roofline 证据 → 文本块。
+
+    @param task ``tcenv.task.Task`` 或任务名；没有 ``contract`` 属性时按名字与 (dtype, size) 加载任务
+    @param source 候选 kernel 源码（不含 contract 头）
+    @param report ``EvalReport`` 或 ``report.json`` 的字典
+    @return 特征文本块；任务族没有预期特征（语义测试、未知任务名）时返回 None
+    """
     task_obj = task if hasattr(task, "contract") else hw._get_task(str(task), getattr(report, "dtype", "fp16") or "fp16", getattr(report, "size", "paper") or "paper")
     name = task_obj.name
     if hw.base_task(name) not in hw.EXPECTED:
@@ -216,11 +283,20 @@ def _compute(task: Any, source: str, report: Any) -> str | None:
 
 
 def hw_feedback(task: Any, source: str, report: Any, *, log: Callable[[str], None] | None = None, backend_id: str) -> str | None:
-    """The hardware-feature block for a correct candidate, or None.
+    """@brief 为正确候选生成硬件特征块，不应生成时返回 None。
 
-    ``task`` is a ``tcenv.task.Task`` (or a task name), ``source`` the candidate's kernel text, ``report`` its ``EvalReport`` (or the dict of ``report.json``).
-    Returns None for candidates that are not correct (their feedback stays as it is), for tasks without expectations and on ANY failure or timeout
-    (logged as a warning): the feedback must never break or slow the search loop."""
+    ``task`` 是 ``tcenv.task.Task``（或任务名），``source`` 是候选 kernel 文本，``report`` 是其 ``EvalReport``
+    （或 ``report.json`` 的字典）。以下情形返回 None：后端不支持硬件特征（能力门）、候选不正确（反馈保持原样、
+    不留占位）、任务没有预期特征、以及任何失败或超时（记为 warning）。反馈绝不允许打断或拖慢搜索循环。
+    结果按 (后端, 任务名, 源码 sha1, speedup) 缓存，容量 ``_CACHE_MAX``，满了按插入顺序淘汰最旧一项。
+
+    @param task 任务对象或任务名
+    @param source 候选 kernel 源码
+    @param report 评测报告对象，或其 JSON 字典
+    @param log 可选的日志回调，用于报告被跳过的原因（回调本身抛异常也会被吞掉）
+    @param backend_id 目标后端 id，用于 ``supports_hw_features`` 能力门
+    @return 特征文本块；不应生成时返回 None
+    """
     try:
         from tcenv.backends.registry import load_backend
 
@@ -250,6 +326,15 @@ def hw_feedback(task: Any, source: str, report: Any, *, log: Callable[[str], Non
 
 
 def main(argv: list[str] | None = None) -> int:
+    """@brief 命令行入口：打印单颗候选的硬件特征块。
+
+    必需 ``--task``、``--source``、``--report``；``--dtype`` 默认 ``fp16``，``--size`` 默认 ``paper``，
+    ``--backend`` 默认 ``metal``。``--source`` 是不含 contract 头的 .metal 文本，``--report`` 是运行目录里的
+    ``report.json``。分析失败、候选不正确或任务无预期特征时打印占位说明而不是报错。
+
+    @param argv 命令行参数列表；默认取 ``sys.argv[1:]``
+    @return 进程退出码，恒为 0
+    """
     import argparse
     import json
     import sys

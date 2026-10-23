@@ -14,16 +14,34 @@ MAGS = {"normal": 1.0, "wide_range": 0.1}
 
 
 def _mlx(x):
+    """@brief mlx 侧的按行求和基线。
+
+    @param x 输入，mlx 数组。
+    @return ``mx.sum(x, axis=-1)``。
+    """
     import mlx.core as mx
 
     return mx.sum(x, axis=-1)
 
 
 def _torch(x):
+    """@brief torch 侧的按行求和基线。
+
+    @param x 输入。
+    @return ``torch.sum(x, dim=-1)``。
+    """
     return torch.sum(x, dim=-1)
 
 
 def build(dtype: str, size: str) -> Task:
+    """@brief 装配按行求和题。
+
+    核名 ``reduction_sum_kernel``，``grid=(M, 1, 1)``，``threads=(128, 1, 1)``，缓冲 x 和 y，常量 M、N。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper``、``small`` 或 ``plan``。
+    @return 装配好的 ``Task``。
+    """
     check_dtype(dtype)
     M, N = SHAPES[size]
     contract = Contract(

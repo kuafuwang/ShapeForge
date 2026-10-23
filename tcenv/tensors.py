@@ -14,11 +14,23 @@ from .dtypes import DType, get_dtype
 
 
 def _dt(dtype: str | DType) -> DType:
+    """@brief 把 dtype 名称或对象统一成 ``DType``。
+
+    @param dtype 类型名或 ``DType`` 实例。
+    @return 对应的 ``DType``。
+    """
     return dtype if isinstance(dtype, DType) else get_dtype(dtype)
 
 
 def round_to(t: torch.Tensor, dtype: str | DType) -> torch.Tensor:
-    """Round ``t`` to ``dtype`` and return it widened to float32 (or int32 for ints)."""
+    """@brief 把张量按目标类型舍入后再加宽回逻辑类型。
+
+    Round ``t`` to ``dtype`` and return it widened to float32 (or int32 for ints).
+
+    @param t 输入张量。
+    @param dtype 目标存储类型名或 ``DType``。
+    @return 浮点加宽为 float32，整数保持其 torch 宽度。
+    """
     d = _dt(dtype)
     if d.is_float:
         return t.to(d.torch).to(torch.float32)
@@ -26,7 +38,14 @@ def round_to(t: torch.Tensor, dtype: str | DType) -> torch.Tensor:
 
 
 def to_raw(t: torch.Tensor, dtype: str | DType) -> bytes:
-    """Serialize ``t`` as little-endian bytes in ``dtype`` storage format."""
+    """@brief 把张量序列化成 ``dtype`` 存储格式的小端字节。
+
+    Serialize ``t`` as little-endian bytes in ``dtype`` storage format.
+
+    @param t 输入张量，会先转成 CPU 连续布局。
+    @param dtype 目标存储类型名或 ``DType``。
+    @return 原始字节串。
+    """
     d = _dt(dtype)
     t = t.detach().to("cpu").contiguous()
     if d.name == "u32":
@@ -39,7 +58,16 @@ def to_raw(t: torch.Tensor, dtype: str | DType) -> bytes:
 
 
 def from_raw(raw: bytes | bytearray | memoryview | np.ndarray, dtype: str | DType, shape) -> torch.Tensor:
-    """Inverse of ``to_raw``. Floats come back as float32; ints keep their width (u32 -> int64)."""
+    """@brief ``to_raw`` 的逆操作：把原始字节还原成逻辑张量。
+
+    Inverse of ``to_raw``. Floats come back as float32; ints keep their width (u32 -> int64).
+
+    @param raw 原始字节、bytearray、memoryview 或 numpy 数组。
+    @param dtype 存储类型名或 ``DType``。
+    @param shape 目标张量形状。
+    @return 指定形状的张量；浮点数为 float32，u32 为 int64。
+    @raises ValueError 字节数与形状和类型不匹配时抛出。
+    """
     d = _dt(dtype)
     buf = bytearray(bytes(raw)) if not isinstance(raw, bytearray) else raw
     n = int(np.prod(shape)) if len(shape) else 1
@@ -57,6 +85,12 @@ def from_raw(raw: bytes | bytearray | memoryview | np.ndarray, dtype: str | DTyp
 
 
 def nbytes_of(shape, dtype: str | DType) -> int:
+    """@brief 计算指定形状与元素类型占用的字节数。
+
+    @param shape 形状序列。
+    @param dtype 元素类型名或 ``DType``。
+    @return 元素个数乘以单元素字节数。
+    """
     d = _dt(dtype)
     n = 1
     for s in shape:

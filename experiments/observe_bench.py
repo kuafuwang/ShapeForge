@@ -17,6 +17,13 @@ from pathlib import Path
 
 
 def _write_runs(root: Path, count: int) -> None:
+    """@brief 造出 ``count`` 个已结束的合成运行目录，供计时用。
+
+    每个运行带 ``state.json``、``result.json`` 与 50 个候选文件。
+
+    @param root 放置运行目录的根。
+    @param count 要造的运行个数。
+    """
     root.mkdir(parents=True)
     state = {"task": "relu", "dtype": "fp16", "phase": "done", "pid": 1, "model": "bench"}
     result = {"task": "relu", "dtype": "fp16", "stop_reason": "max_rounds", "spent_usd": 0.01, "budget_usd": 1}
@@ -34,6 +41,10 @@ def _write_runs(root: Path, count: int) -> None:
 
 
 def _write_wide(root: Path) -> None:
+    """@brief 造一个带 400 个候选、带完工锁定标记的宽运行，用来量详情页。
+
+    @param root 放置该运行目录的根。
+    """
     directory = root / "wide"
     directory.mkdir()
     (directory / "state.json").write_text(json.dumps({
@@ -60,6 +71,10 @@ def _write_wide(root: Path) -> None:
 
 
 def _purge() -> str:
+    """@brief 尝试清掉系统文件缓存，供冷缓存计时用。
+
+    @return 成功时为 ``purge``；不可用时为带原因的 ``unavailable (...)``。
+    """
     try:
         result = subprocess.run(["purge"], capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -71,6 +86,12 @@ def _purge() -> str:
 
 
 def _line(name: str, seconds: float, limit: float | None) -> None:
+    """@brief 打出一行耗时，并标出是否超出计划上限。
+
+    @param name 这一项的说明。
+    @param seconds 实测秒数。
+    @param limit 计划上限；为 ``None`` 时不标注。
+    """
     mark = ""
     if limit is not None:
         mark = "  within the plan" if seconds < limit else "  over the plan"
@@ -78,6 +99,10 @@ def _line(name: str, seconds: float, limit: float | None) -> None:
 
 
 def main() -> None:
+    """@brief 在临时目录里造数据并打出 observe 各项合成计时。
+
+    这不是测试也不是门禁，无论是否超限都会打印。
+    """
     root = Path(tempfile.mkdtemp(prefix="observe-bench-"))
     runs = root / "runs"
     os.environ["AI_LOWERLING_RUNS_DIR"] = str(runs)

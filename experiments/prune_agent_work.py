@@ -16,10 +16,20 @@ from taic.kernel_agent import _WORK_KEEP, prune_work
 
 
 def _entries(work: Path) -> list[Path]:
+    """@brief 列出工作目录里不在保留名单中的文件。
+
+    @param work 单个会话的 ``agent_work`` 目录。
+    @return 可以被归档并删除的路径列表。
+    """
     return [path for path in work.iterdir() if path.name not in _WORK_KEEP]
 
 
 def main(argv: list[str] | None = None) -> int:
+    """@brief 扫描所有运行的 ``agent_work``，默认只报告，``--apply`` 时才归档并删除。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     parser = argparse.ArgumentParser(prog="python -m experiments.prune_agent_work")
     parser.add_argument("--runs", default="runs", help="root that contains run directories")
     parser.add_argument("--apply", action="store_true", help="archive and delete; without it, only report")

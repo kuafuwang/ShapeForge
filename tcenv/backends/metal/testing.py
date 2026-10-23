@@ -46,7 +46,14 @@ IEEE_SPECIALS = (float("nan"), float("inf"), float("-inf"), -0.0)
 
 
 def inject_specials(t: torch.Tensor, seed: int, max_n: int | None = None) -> torch.Tensor:
-    """Copy of ``t`` with NaN, +Inf, -Inf and -0.0 planted at random positions (always including the first and the last element).
+    """@brief 复制张量并在随机位置植入 NaN、±Inf 与 -0.0。
+
+    @param t 源张量。
+    @param seed 随机种子。
+    @param max_n 植入个数的上限；省略时按张量规模推导。
+    @return 植入特殊值后的新张量。
+
+    Copy of ``t`` with NaN, +Inf, -Inf and -0.0 planted at random positions (always including the first and the last element).
 
     About one row in ten is affected (at least 8 and at most 256 positions per tensor), so that most of a row-wise or
     matrix output stays finite and checks the values that must *not* be disturbed by a special elsewhere. ``max_n`` caps the
@@ -69,10 +76,23 @@ def inject_specials(t: torch.Tensor, seed: int, max_n: int | None = None) -> tor
 
 
 def _finite(t: torch.Tensor) -> torch.Tensor:
+    """@brief 把非有限元素换成 0。
+
+    @param t 输入张量。
+    @return 替换后的张量；整数张量原样返回。
+    """
     return torch.where(torch.isfinite(t), t, torch.zeros_like(t)) if t.is_floating_point() else t
 
 
 def prepare_case(task: Task, case: str, seed: int) -> CaseData:
+    """@brief 生成一个算例的输入、参考输出与误差尺度。
+
+    @param task 任务对象。
+    @param case 算例名（分布名、``ieee`` 或 ``domain``）。
+    @param seed 随机种子。
+    @return CaseData 实例。
+    @raises ValueError 当全域扫描用例的输入不符合要求，或参考输出超出数据类型量程。
+    """
     from .domain import DOMAIN_CASE, domain_input, tensor_sha256
 
     # 全域扫描不走采样分布，也不走 RMS 缩放和量程守卫。65504 的 relu 参考值就是该类型的最大值，守卫会把它误判成 harness bug。
@@ -117,7 +137,18 @@ def prepare_case(task: Task, case: str, seed: int) -> CaseData:
 
 
 def scaled_error(out: torch.Tensor, ref: torch.Tensor, scale, rtol: float, atol_rel: float, exact: bool, floor: float = 0.0) -> torch.Tensor:
-    """``floor`` is an absolute slack for the output format itself (half the spacing of the smallest
+    """@brief 计算按容差归一化后的逐元素误差。
+
+    @param out 候选输出。
+    @param ref 参考输出。
+    @param scale 误差尺度。
+    @param rtol 相对容差。
+    @param atol_rel 相对尺度的绝对容差。
+    @param exact 是否要求逐位一致。
+    @param floor 输出格式本身的最小间隔（亚正规数半间距）。
+    @return 归一化误差张量，容差内不超过 1。
+
+    ``floor`` is an absolute slack for the output format itself (half the spacing of the smallest
     subnormals): the unrounded reference is not representable below that granularity.
 
     Special values must agree exactly: NaN where the reference is NaN (and only there), and an infinity of the same sign
@@ -137,6 +168,11 @@ def scaled_error(out: torch.Tensor, ref: torch.Tensor, scale, rtol: float, atol_
 
 
 def _floor(dtype: str) -> float:
+    """@brief 返回该数据类型在亚正规区的最小间隔余量。
+
+    @param dtype 数据类型名。
+    @return 绝对余量；未知类型为 0。
+    """
     return 0.51 * FLOAT_TINY_SUBNORMAL.get(dtype, 0.0)
 
 
@@ -158,6 +194,10 @@ class CaseResult:
     message: str = ""
 
     def to_json(self) -> dict:
+        """@brief 转成可写入报告的字典。
+
+        @return 字段字典，无穷大误差写成 ``"inf"``。
+        """
         d = asdict(self)
         for k in ("scaled_err", "allow"):
             if d[k] == float("inf"):
@@ -166,6 +206,12 @@ class CaseResult:
 
 
 def _unwritten_count(raw: bytes, nbytes_per_elem: int) -> int:
+    """@brief 统计仍保持毒化图案、从未被写过的输出元素个数。
+
+    @param raw 输出原始字节。
+    @param nbytes_per_elem 单元素字节数。
+    @return 未被写入的元素个数。
+    """
     a = np.frombuffer(raw, dtype=np.uint8).reshape(-1, nbytes_per_elem)
     return int((a == POISON_PATTERN).all(axis=1).sum())
 
@@ -176,6 +222,14 @@ def check_case(
     out_raw: dict[str, bytes],
     baseline_outs: dict[str, dict[str, torch.Tensor]] | None,
 ) -> CaseResult:
+    """@brief 把候选输出与参考输出比较，给出单个算例的结论。
+
+    @param task 任务对象，提供容差与精确比较开关。
+    @param data 算例数据。
+    @param out_raw 输出名到原始字节的映射。
+    @param baseline_outs 基线名到输出字典的映射；可为 None。
+    @return CaseResult 结论。
+    """
     from ...dtypes import get_dtype
 
     worst_all = 0.0
@@ -256,6 +310,16 @@ def check_case(
 
 
 def launch_once(ctx: MetalContext, kernel: CompiledKernel, task: Task, argset: ArgSet, *, poison: bool = True, fill_zero: bool = False) -> dict[str, bytes]:
+    """@brief 执行一次候选核，并按需毒化或清零输出。
+
+    @param ctx Metal 上下文。
+    @param kernel 已编译的候选核。
+    @param task 任务对象。
+    @param argset 绑定参数集合。
+    @param poison 是否用毒化图案填充输出。
+    @param fill_zero 是否改用全零初值（确定性对照）。
+    @return 输出名到字节串的映射。
+    """
     if fill_zero:
         for a in task.contract.outputs:
             argset.buffers[a.name].mem[argset.buffers[a.name].guard : argset.buffers[a.name].guard + a.nbytes] = bytes(a.nbytes)
@@ -278,7 +342,22 @@ def run_correctness(
     fail_fast: bool = True,
     launcher=None,
 ) -> tuple[list[CaseResult], list[str], list[str]]:
-    """Returns (case results, safety problems, determinism problems)."""
+    """@brief 跑完一个算例列表，汇总正确性、安全与确定性结论。
+
+    @param ctx Metal 上下文。
+    @param kernel 已编译的候选核。
+    @param task 任务对象。
+    @param argset 绑定参数集合。
+    @param seed 随机种子。
+    @param cases 要跑的算例名；省略时用任务自带的算例。
+    @param baseline_fns 生成基线输出的回调。
+    @param determinism 是否做多次启动的一致性对照。
+    @param fail_fast 首个失败算例后是否立即停止。
+    @param launcher 自定义单次启动函数；省略时用 launch_once。
+    @return (算例结果, 安全问题, 非确定性问题) 三元组。
+
+    Returns (case results, safety problems, determinism problems).
+    """
     results: list[CaseResult] = []
     safety: list[str] = []
     nondet: list[str] = []

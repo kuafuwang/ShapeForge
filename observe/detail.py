@@ -30,6 +30,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # 结果目录可以指到别处拷来的 runs/。默认仍是仓库下的 runs，看板不创建它。
 def runs_root() -> Path:
+    """@brief 返回 ``runs/`` 根目录；可用 ``AI_LOWERLING_RUNS_DIR`` 指向别处拷贝的目录。看板不创建它。
+
+    @return 运行根目录。
+    """
     env = os.environ.get("AI_LOWERLING_RUNS_DIR")
     if env:
         return Path(env)
@@ -38,6 +42,11 @@ def runs_root() -> Path:
 
 # state.json 里的 pid 可能已经过期。信号 0 只问进程还在不在：权限不够说明进程在，查找失败说明已经退出。
 def pid_alive(pid: object) -> bool:
+    """@brief 用信号 0 判断一个 pid 是否还活着；权限不够也算活着。
+
+    @param pid 进程 id，可为任意类型。
+    @return 进程仍在时为 True；pid 非法或已退出时返回 False。
+    """
     try:
         number = int(pid)  # type: ignore[arg-type]
     except (TypeError, ValueError):
@@ -58,6 +67,11 @@ def pid_alive(pid: object) -> bool:
 
 # 半截 JSON、空文件、或根节点不是对象，都返回 None。调用方分不清「还没写」和「写坏了」，只能按缺失处理。
 def _load(path: Path) -> dict | None:
+    """@brief 宽容地读取 JSON 对象；半截 JSON、空文件或根节点不是对象时返回 None。
+
+    @param path JSON 文件路径。
+    @return 解析后的字典；读不了或格式不对时返回 None。
+    """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -68,6 +82,11 @@ def _load(path: Path) -> dict | None:
 
 # 心跳年龄在读的这一刻才算。文件里只存绝对时间，隔很久打开看板时不会把旧年龄当成现在。
 def _age(doc: dict | None) -> dict | None:
+    """@brief 在读取的这一刻补上 ``heartbeat_age_s``，避免旧年龄被当成现在。
+
+    @param doc 心跳快照，可为 None。
+    @return 补了心跳年龄的新字典；``doc`` 为空时返回 None。
+    """
     if not doc:
         return None
     out = dict(doc)
@@ -79,7 +98,13 @@ def _age(doc: dict | None) -> dict | None:
 
 # 只接受 runs/ 里面的相对目录，避免查询串用 .. 读到仓库外。两份快照都不存在，就不是一次搜索。
 def resolve_run(run_id: str) -> Path | None:
-    """A directory under ``runs/`` that holds a search snapshot. Rejects anything that climbs out."""
+    """@brief 把 run id 解析为 ``runs/`` 下确实含有搜索快照的目录，拒绝任何越界路径。
+
+    原始英文说明：A directory under ``runs/`` that holds a search snapshot. Rejects anything that climbs out.
+
+    @param run_id 相对 ``runs/`` 的运行 id。
+    @return 解析后的目录；越界、不存在或两份快照都没有时返回 None。
+    """
     if not run_id or "\x00" in run_id:
         return None
     rel = Path(run_id)
@@ -102,7 +127,13 @@ def resolve_run(run_id: str) -> Path | None:
 
 # 页面上的运行 id 是 runs/ 下的相对路径，详情接口再用 resolve_run 认回来。
 def target_identity(directory: Path) -> tuple[str, str, str]:
-    """``(target_id, backend_id, file_ext)`` for a run; legacy Metal fallback."""
+    """@brief 取一个运行的 ``(target_id, backend_id, file_ext)``，旧运行回退到 Metal。
+
+    原始英文说明：``(target_id, backend_id, file_ext)`` for a run; legacy Metal fallback.
+
+    @param directory 运行目录。
+    @return 三元组：目标 id、后端 id 与内核文件扩展名（带点）。
+    """
     config = _load(Path(directory) / "run_config.json") or {}
     target = config.get("target") if isinstance(config.get("target"), dict) else {}
     target_id = str(target.get("id") or config.get("target_id") or Path(directory).parent.name or "")
@@ -123,17 +154,38 @@ def target_identity(directory: Path) -> tuple[str, str, str]:
 
 
 def target_file_names(directory: Path) -> tuple[str, str]:
-    """``(kernel file, best file)`` for the run's target; legacy Metal fallback."""
+    """@brief 取该运行目标对应的 ``(内核文件名, 最优文件名)``，旧运行回退到 Metal。
+
+    原始英文说明：``(kernel file, best file)`` for the run's target; legacy Metal fallback.
+
+    @param directory 运行目录。
+    @return 二元组：``kernel<ext>`` 与 ``best<ext>``。
+    """
     _target_id, _backend_id, ext = target_identity(directory)
     return f"kernel{ext}", f"best{ext}"
 
 
 def _rel(path: Path) -> str:
+    """@brief 取运行目录相对 ``runs/`` 根目录的 POSIX 路径。
+
+    @param path 运行目录。
+    @return 相对路径文本，用作页面上的运行 id。
+    """
     return path.resolve().relative_to(runs_root().resolve()).as_posix()
 
 
 # 完成先看 result 能否读成对象，或 state 的 phase 已经是 done。结果缺失时：15 秒内有心跳或 pid 还在，当作仍在跑；心跳过期且进程不在是中断；连 state 都没有是未知。
 def liveness(state: dict | None, result: dict | None, directory: Path | None = None) -> str:
+    """@brief 判定一个运行是在跑、已完成、已中断还是未知。
+
+    完成看 result 能否读成对象，或 state 的 phase 已是 done。结果缺失时：15 秒内有心跳或 pid 还在算仍在跑；
+    心跳过期且进程不在是中断；连 state 也没有是未知。
+
+    @param state 解析后的 ``state.json``，可为 None。
+    @param result 解析后的 ``result.json``，可为 None。
+    @param directory 运行目录，用于检查续跑锁，可为 None。
+    @return ``running`` / ``done`` / ``interrupted`` / ``unknown``。
+    """
     if directory is not None:
         from taic import control as run_control
 
@@ -156,8 +208,16 @@ def liveness(state: dict | None, result: dict | None, directory: Path | None = N
 
 # 跑完优先用换种子确认的加速比；确认值缺失才退回搜索期的最优。还在跑时 result 还没有，只能看 state 里的当前最优。
 def _speedup(directory: Path, state: dict | None, result: dict | None) -> float | None:
-    """Headline speedup. A finished run contributes a number only when its confirmation is bound to the source on disk.
-    A run that is still in progress shows the search's current best."""
+    """@brief 取头条加速比；已完成的运行只给绑定到磁盘源码的确认值，进行中则给搜索当前最优。
+
+    原始英文说明：Headline speedup. A finished run contributes a number only when its confirmation is bound to the source on disk.
+    A run that is still in progress shows the search's current best.
+
+    @param directory 运行目录。
+    @param state 解析后的 ``state.json``，可为 None。
+    @param result 解析后的 ``result.json``，可为 None。
+    @return 加速比；无数据时返回 None。
+    """
     if result:
         return conclusion_of_run(directory, result)["speedup"]
     if state:
@@ -167,6 +227,12 @@ def _speedup(directory: Path, state: dict | None, result: dict | None) -> float 
 
 # 排序用的开始时间。state 里没有 started_at 时退回文件修改时间，旧运行仍能按先后出现。
 def _when(directory: Path, state: dict | None) -> float:
+    """@brief 取排序用的开始时间；没有 ``started_at`` 时退回文件修改时间。
+
+    @param directory 运行目录。
+    @param state 解析后的 ``state.json``，可为 None。
+    @return unix 时间戳；读不到时返回 0.0。
+    """
     if state and isinstance(state.get("started_at"), (int, float)):
         return float(state["started_at"])
     try:
@@ -177,13 +243,26 @@ def _when(directory: Path, state: dict | None) -> float:
 
 # 后面的空值不能盖掉前面已经写上的数。旧运行往往只有其中一份快照带花费。
 def _first(*values):
+    """@brief 返回第一个非 None 的值；后面的空值不会盖掉前面已有的数。
+
+    @param values 按优先级排列的候选值。
+    @return 第一个非 None 的值；全为 None 时返回 None。
+    """
     return next((value for value in values if value is not None), None)
 
 
 # 花费和预算按 result、state、state 里的账本、ledger.json 这个顺序补。缺的留空，横幅才能走 unknown 而不是当成 0。
 def money_fields(directory: Path, state: dict | None, result: dict | None) -> tuple[object, object]:
-    """(spent USD, budget USD) of a run, from the best source that has them: result.json, state.json, the ledger inside state.json,
-    ledger.json. Older runs lack some of these; a missing value stays ``None``."""
+    """@brief 按 result、state、state 内账本、``ledger.json`` 的顺序取（已花费, 预算），缺失留空。
+
+    原始英文说明：(spent USD, budget USD) of a run, from the best source that has them: result.json, state.json, the ledger inside state.json,
+    ledger.json. Older runs lack some of these; a missing value stays ``None``.
+
+    @param directory 运行目录。
+    @param state 解析后的 ``state.json``，可为 None。
+    @param result 解析后的 ``result.json``，可为 None。
+    @return 二元组：已花费美元与预算美元，未知为 None。
+    """
     ledger = (state or {}).get("ledger") or {}
     spent = _first((result or {}).get("spent_usd"), (state or {}).get("spent_usd"), ledger.get("total_usd"))
     budget = _first((result or {}).get("budget_usd"), (state or {}).get("budget_usd"), ledger.get("budget_usd"))
@@ -198,6 +277,11 @@ def money_fields(directory: Path, state: dict | None, result: dict | None) -> tu
 
 # 重置或加预算先写在 budget_events.json，新进程接手后才会改 result.json。告警用已经答应的较高预算，不等那次接手。
 def _as_float(value):
+    """@brief 把数字转成有限浮点数；布尔、非数字、NaN 与无穷返回 None。
+
+    @param value 待转换的值。
+    @return 有限浮点数或 None。
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     try:
@@ -210,10 +294,14 @@ def _as_float(value):
 
 
 def _granted_budget(directory: Path) -> float | None:
-    """The allowance a reset or top-up recorded, including a later cut.
+    """@brief 取重置或加预算已答应的额度，包括之后的削减。
 
-    A trailing ``requested`` event counts only while a resume is still starting or has not left a dead lock.
-    A failed resume (lock file, dead pid) does not keep the promised budget.
+    末尾的 ``requested`` 事件只在续跑仍处于启动中、或尚未留下死锁时计数；失败的续跑（有锁文件但 pid 已死）
+    不再保留承诺的预算。
+    原始英文说明：The allowance a reset or top-up recorded, including a later cut.
+
+    @param directory 运行目录。
+    @return 已答应或待生效的预算额度；没有记录时返回 None。
     """
     from taic import control
 
@@ -238,12 +326,17 @@ def _granted_budget(directory: Path) -> float | None:
 
 
 def _budget_for_alert(directory: Path, spent, budget, stop: str) -> tuple[object, str]:
-    """Budget and stop reason used only for the alert.
+    """@brief 只给告警用的预算与停止原因。
 
-    A grant that is still above the budget written on the result retires an old
-    budget_exhausted flag: the reset was recorded and the run has not adopted it.
-    A finished run whose own budget already equals that grant keeps the flag,
-    even when it stopped a little under the cap.
+    仍高于 result 上预算的授予会撤销旧的 ``budget_exhausted`` 标记（重置已记录但运行尚未采纳）；
+    已结束的运行若自己的预算就等于该授予，则保留标记，即使它略低于上限就停了。
+    原始英文说明：Budget and stop reason used only for the alert.
+
+    @param directory 运行目录。
+    @param spent 已花费金额。
+    @param budget 磁盘上的预算。
+    @param stop 磁盘上的停止原因。
+    @return 二元组：用于告警的预算（可能为授予值）与要展示的停止原因（撤销时为空串）。
     """
     granted = _granted_budget(directory)
     on_disk = _as_float(budget)
@@ -266,6 +359,16 @@ def _budget_for_alert(directory: Path, spent, budget, stop: str) -> tuple[object
 # 「加预算」按钮要不要出现，只看已经读进内存的 state / result：不再多读文件。
 # 运行中且进程读控制文件 → 在线加；跑完因预算停下、或进程已死且有可续的内核 → 续跑；其余给出原因。
 def control_hint(directory: Path, state: dict | None, result: dict | None, status: str) -> dict:
+    """@brief 判断一个运行能不能加预算，以及如何加。
+
+    运行中且进程读控制文件 → 在线加；因预算停下、或进程已死但留有可续的内核 → 续跑；其余给出原因。
+
+    @param directory 运行目录。
+    @param state 解析后的 ``state.json``，可为 None。
+    @param result 解析后的 ``result.json``，可为 None。
+    @param status ``liveness`` 给出的状态。
+    @return 含 ``action``（``topup_live`` / ``resume`` / None）与 ``reason`` 的字典。
+    """
     from taic import control
     from taic.resume import STOP_BUDGET, has_best
 
@@ -291,6 +394,11 @@ def control_hint(directory: Path, state: dict | None, result: dict | None, statu
 
 # 加过预算的运行不能和固定预算的运行直接比。首次预算取第一条生效事件里的旧值。
 def topup_fields(directory: Path) -> dict:
+    """@brief 取“是否已加过预算”与首次预算，供页面区分固定预算的运行。
+
+    @param directory 运行目录。
+    @return 含 ``topped_up`` 与 ``initial_budget_usd`` 的字典。
+    """
     if not (directory / "budget_events.json").exists():
         return {"topped_up": False, "initial_budget_usd": None}
     from taic import control
@@ -300,6 +408,11 @@ def topup_fields(directory: Path) -> dict:
 
 
 def _budget_events(directory: Path) -> list[dict]:
+    """@brief 读取 ``budget_events.json`` 里的事件；文件不存在时为空列表。
+
+    @param directory 运行目录。
+    @return 预算事件字典列表。
+    """
     if not (directory / "budget_events.json").exists():
         return []
     from taic import control
@@ -308,7 +421,15 @@ def _budget_events(directory: Path) -> list[dict]:
 
 
 def row_from_files(directory: Path, state: dict | None, result: dict | None) -> dict:
-    """One history row from files already loaded. Does not walk ``runs/``."""
+    """@brief 用已加载的文件拼出一行历史行，不遍历 ``runs/``。
+
+    原始英文说明：One history row from files already loaded. Does not walk ``runs/``.
+
+    @param directory 运行目录。
+    @param state 解析后的 ``state.json``，可为 None。
+    @param result 解析后的 ``result.json``，可为 None。
+    @return 含状态、花费、预算、发布结果与控制提示的历史行。
+    """
     status = liveness(state, result, directory)
     stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
     spent, budget = money_fields(directory, state, result)
@@ -341,6 +462,10 @@ def row_from_files(directory: Path, state: dict | None, result: dict | None) -> 
 
 # 事件日志是追加写的，进程被杀掉时最后一行可能只写了一半。解析失败的那一行丢掉，前面完整的事件仍然留下。
 def _tail_events() -> list[dict]:
+    """@brief 读 GPU 事件日志末尾若干行，跳过被杀时写了一半的行。
+
+    @return 事件字典列表，最多 ``EVENT_TAIL`` 条。
+    """
     path = gpu_events_path()
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -360,6 +485,10 @@ def _tail_events() -> list[dict]:
 
 # 只展示 pid 还活着的持有者和等待者。进程退出后留下的 json 不再占着「正在用 GPU」。
 def gpu_snapshot() -> dict:
+    """@brief 列出仍在运行的 GPU 持有者与等待者，以及最近的事件。
+
+    @return 含 ``holders``、``waiters`` 与 ``events`` 的字典。
+    """
     holders: list[dict] = []
     waiters: list[dict] = []
     directory = gpu_dir()
@@ -377,6 +506,10 @@ def gpu_snapshot() -> dict:
 
 # 评测心跳在进程退出后还会留在缓存目录。finished 或 pid 已死的不再算作正在评测。
 def live_evals() -> list[dict]:
+    """@brief 列出仍在进行的评测心跳；已 finished 或 pid 已死的忽略。
+
+    @return 心跳字典列表（补了 pid 与心跳年龄）。
+    """
     directory = observe_dir()
     if not directory.is_dir():
         return []
@@ -397,7 +530,13 @@ def live_evals() -> list[dict]:
 
 
 def experiment_job(directory: Path) -> dict | None:
-    """One experiment queue, when this directory's ``state.json`` is a driver script rather than a search."""
+    """@brief 当该目录的 ``state.json`` 是驱动脚本而不是搜索时，返回一个实验队列条目。
+
+    原始英文说明：One experiment queue, when this directory's ``state.json`` is a driver script rather than a search.
+
+    @param directory 实验目录。
+    @return 队列字典；不是驱动脚本时返回 None。
+    """
     state = _load(directory / "state.json")
     if not state or not state.get("script"):
         return None
@@ -421,6 +560,11 @@ def experiment_job(directory: Path) -> dict | None:
 
 # 详情页只留每个用例的对错和截短的消息。整份正确性报告太大，不进每一帧。
 def _cases(report: dict) -> list[dict]:
+    """@brief 只保留每个正确性用例的对错与截短的消息。
+
+    @param report 解析后的 ``report.json``。
+    @return 每项含 ``case``、``ok`` 与 ``message`` 的列表。
+    """
     cases = (report.get("correctness") or {}).get("cases") or []
     out = []
     for case in cases:
@@ -432,6 +576,11 @@ def _cases(report: dict) -> list[dict]:
 
 # 核源码只带开头一小段，页面用来认出是哪份核。文件读不到时留空，不让详情整页失败。
 def _excerpt(path: Path) -> str:
+    """@brief 取内核源码开头一小段用于辨认；文件读不到时留空。
+
+    @param path 内核文件路径。
+    @return 前 400 个字符，或空串。
+    """
     try:
         return path.read_text(encoding="utf-8")[:400]
     except OSError:
@@ -440,6 +589,11 @@ def _excerpt(path: Path) -> str:
 
 # 详情要列出每次候选的评测结论。report.json 截断时这一格仍在，只是状态字段为空。
 def _candidates(directory: Path) -> list[dict]:
+    """@brief 列出每次候选的评测结论；报告截断时状态字段为空，但这一格仍保留。
+
+    @param directory 运行目录。
+    @return 候选行字典列表。
+    """
     root = directory / "candidates"
     if not root.is_dir():
         return []
@@ -475,6 +629,11 @@ def _candidates(directory: Path) -> list[dict]:
 
 # 没有心跳字母就不当作还活着。评测进度和 tcenv 文件的形状不同，这里只抽出页面要的三个字段。
 def _heartbeat(progress: dict | None) -> dict | None:
+    """@brief 从评测进度里抽出心跳字母、年龄与阶段；没有心跳字母时返回 None。
+
+    @param progress 解析后的 ``eval_progress.json``，可为 None。
+    @return 含 ``letter``、``age_s`` 与 ``stage`` 的字典，或 None。
+    """
     if not progress or not progress.get("heartbeat"):
         return None
     return {"letter": progress.get("heartbeat"), "age_s": progress.get("heartbeat_age_s"), "stage": progress.get("stage")}
@@ -482,6 +641,11 @@ def _heartbeat(progress: dict | None) -> dict | None:
 
 # 聊天行里只留标签和时刻。messages、reply、usage 不进这一帧，提示词和密钥不会出现在时间线上。
 def _retry_kind(error: str) -> str:
+    """@brief 按错误文本归类重试原因。
+
+    @param error 错误文本。
+    @return ``timeout`` / ``connection`` / ``rate_limit`` / ``server`` / ``retry``。
+    """
     text = error.lower()
     if "timeout" in text or "timed out" in text:
         return "timeout"
@@ -502,7 +666,14 @@ _PI_TAIL_BYTES = 256 * 1024
 
 
 def _clip(text: str, limit: int) -> str:
-    """One short line. A key-shaped token is not shown."""
+    """@brief 压成一行短文本；形似密钥的 token 不展示。
+
+    原始英文说明：One short line. A key-shaped token is not shown.
+
+    @param text 原始文本。
+    @param limit 字符上限。
+    @return 折叠空白并截断后的文本，超长时以省略号结尾。
+    """
     cleaned = _SECRET.sub(r"\1…", text or "")
     cleaned = " ".join(cleaned.split())
     if len(cleaned) <= limit:
@@ -511,7 +682,13 @@ def _clip(text: str, limit: int) -> str:
 
 
 def _pi_hint(arguments) -> str:
-    """A path or a command from a tool call, never the whole kernel."""
+    """@brief 从工具调用里取一个路径或命令，而不是整份内核。
+
+    原始英文说明：A path or a command from a tool call, never the whole kernel.
+
+    @param arguments 工具参数，可为 JSON 文本或字典。
+    @return 截短后的提示文本；没有可用字段时为空串。
+    """
     if isinstance(arguments, str):
         try:
             arguments = json.loads(arguments)
@@ -527,7 +704,13 @@ def _pi_hint(arguments) -> str:
 
 
 def _tail_text(path: Path) -> str:
-    """The end of a session file. A partial first line is dropped so it is not parsed as JSON."""
+    """@brief 读取会话文件末尾一段；丢掉不完整的第一行，避免被当成 JSON 解析。
+
+    原始英文说明：The end of a session file. A partial first line is dropped so it is not parsed as JSON.
+
+    @param path 会话文件路径。
+    @return 末尾文本；读不了时为空串。
+    """
     try:
         size = path.stat().st_size
         with path.open("rb") as handle:
@@ -541,7 +724,13 @@ def _tail_text(path: Path) -> str:
 
 
 def _pi_lines_in(path: Path) -> list[dict]:
-    """Readable lines from the tail of one pi session. Thinking signatures and the task prompt stay out."""
+    """@brief 从一个 pi 会话末尾取出可展示的行；思考签名与任务提示词不出现。
+
+    原始英文说明：Readable lines from the tail of one pi session. Thinking signatures and the task prompt stay out.
+
+    @param path 会话文件路径。
+    @return 每项含 ``who`` 与 ``text`` 的行列表（最多 40 条）。
+    """
     lines = []
     for raw_line in _tail_text(path).splitlines():
         try:
@@ -576,7 +765,14 @@ def _pi_lines_in(path: Path) -> list[dict]:
 
 
 def _pi_session_files(directory: Path, root: Path) -> list[Path]:
-    """Pi sessions whose folder name contains this run's directory name."""
+    """@brief 找出目录名包含该运行目录名的 pi 会话文件。
+
+    原始英文说明：Pi sessions whose folder name contains this run's directory name.
+
+    @param directory 运行目录。
+    @param root pi 会话根目录。
+    @return 按修改时间升序的会话文件列表。
+    """
     token = directory.name
     if not token or not root.is_dir():
         return []
@@ -589,6 +785,11 @@ def _pi_session_files(directory: Path, root: Path) -> list[Path]:
 
 
 def _pi_stamp(paths: list[Path]) -> str:
+    """@brief 用文件名、mtime 与大小拼出文件集合的变更戳。
+
+    @param paths 文件路径列表。
+    @return 变更戳字符串；全部读不到时为空串。
+    """
     parts = []
     for path in paths:
         try:
@@ -603,7 +804,14 @@ _EPIC_HOW = {"done": "完成", "failed": "失败", "stopped": "停下"}
 
 
 def _epic_files(directory: Path, root: Path) -> list[Path]:
-    """epic.jsonl files whose directory name contains this run."""
+    """@brief 找出目录名包含该运行的 ``epic.jsonl``，只留最近 8 个。
+
+    原始英文说明：epic.jsonl files whose directory name contains this run.
+
+    @param directory 运行目录。
+    @param root epic 根目录。
+    @return 按修改时间升序的文件列表。
+    """
     token = directory.name
     if not token or not root.is_dir():
         return []
@@ -613,7 +821,13 @@ def _epic_files(directory: Path, root: Path) -> list[Path]:
 
 
 def _epic_lines_in(path: Path) -> list[dict]:
-    """One epic the way hmz reads it: start, session, spend, end. Not the task text."""
+    """@brief 按 hmz 的读法还原一次 epic：开始、会话、花费、结束；不含任务文本。
+
+    原始英文说明：One epic the way hmz reads it: start, session, spend, end. Not the task text.
+
+    @param path ``epic.jsonl`` 路径。
+    @return 每项含 ``who`` 与 ``text`` 的展示行列表。
+    """
     lines = []
     try:
         raw = path.read_text(encoding="utf-8").splitlines()
@@ -662,6 +876,12 @@ def _epic_lines_in(path: Path) -> list[dict]:
 
 
 def _epic_feed(directory: Path, root: Path) -> list[dict]:
+    """@brief 汇总该运行全部 epic 的展示行。
+
+    @param directory 运行目录。
+    @param root epic 根目录。
+    @return 最后 40 条展示行。
+    """
     lines = []
     for path in _epic_files(directory, root):
         lines.extend(_epic_lines_in(path))
@@ -669,7 +889,13 @@ def _epic_feed(directory: Path, root: Path) -> list[dict]:
 
 
 def _chat_rows(item: dict) -> list[dict]:
-    """Sent and received text for one transcript event. The system prompt and kernel drafts stay out."""
+    """@brief 把一个转录事件的发出与收到文本转成展示行；系统提示词与内核草稿不出现。
+
+    原始英文说明：Sent and received text for one transcript event. The system prompt and kernel drafts stay out.
+
+    @param item 一条 ``transcript.jsonl`` 事件。
+    @return 每项含 ``who`` 与 ``text`` 的行列表。
+    """
     event = item.get("event")
     label = str(item.get("label") or "")
     if event == "retry":
@@ -718,7 +944,13 @@ def _chat_rows(item: dict) -> list[dict]:
 
 
 def _chat_lines(path: Path) -> list[dict]:
-    """Display lines from the tail of ``transcript.jsonl``. The file itself is not loaded whole."""
+    """@brief 从 ``transcript.jsonl`` 末尾取展示行，不整份加载文件。
+
+    原始英文说明：Display lines from the tail of ``transcript.jsonl``. The file itself is not loaded whole.
+
+    @param path 转录文件路径。
+    @return 最后 40 条展示行。
+    """
     rows = []
     for raw_line in _tail_text(path).splitlines():
         try:
@@ -731,7 +963,13 @@ def _chat_lines(path: Path) -> list[dict]:
 
 
 def _chat_inflight(path: Path) -> list[dict]:
-    """One line for a request that has not been written to the transcript yet."""
+    """@brief 为尚未写入转录的请求生成一行提示。
+
+    原始英文说明：One line for a request that has not been written to the transcript yet.
+
+    @param path ``llm.json`` 路径。
+    @return 每项含 ``who``（正在接收/正在等待）与 ``text`` 的行列表。
+    """
     doc = _load(path) or {}
     inflight = doc.get("inflight") if isinstance(doc.get("inflight"), dict) else {}
     rows = []
@@ -743,9 +981,14 @@ def _chat_inflight(path: Path) -> list[dict]:
 
 
 def chat_feed(run_id: str, *, stamp: str = "") -> dict | None:
-    """The tail of the direct chat transcript. ``None`` when the run does not exist.
+    """@brief 返回直调模型对话记录的末尾；运行不存在时返回 ``None``。
 
-    ``same`` is true when ``stamp`` still matches, so the page can skip drawing.
+    ``stamp`` 仍然匹配时 ``same`` 为真，页面可跳过重绘。
+    原始英文说明：``same`` is true when ``stamp`` still matches, so the page can skip drawing.
+
+    @param run_id 运行 id。
+    @param stamp 客户端持有的变更戳，空串表示不复用。
+    @return 含 ``same``、``stamp`` 与 ``lines`` 的字典；运行不存在时为 None。
     """
     directory = resolve_run(run_id)
     if directory is None:
@@ -760,9 +1003,13 @@ def chat_feed(run_id: str, *, stamp: str = "") -> dict | None:
 
 
 def kernel_writer(directory: Path) -> str:
-    """``pi`` when this run writes kernels through hmz. ``chat`` when the search calls the model itself.
+    """@brief 判断该运行是通过 hmz 写核（``pi``）还是自己调模型（``chat``）。
 
-    ``run_config.json`` wins. A run recorded before that field existed is ``pi`` only when it already has an hmz workspace or an agent event.
+    ``run_config.json`` 优先。该字段出现之前的旧运行，只有已存在 hmz 工作区或 agent 事件时才算 ``pi``。
+    原始英文说明：``pi`` when this run writes kernels through hmz. ``chat`` when the search calls the model itself.
+
+    @param directory 运行目录。
+    @return ``"pi"`` 或 ``"chat"``。
     """
     cfg = _load(directory / "run_config.json") or {}
     search = cfg.get("search") if isinstance(cfg.get("search"), dict) else {}
@@ -786,9 +1033,15 @@ def kernel_writer(directory: Path) -> str:
 
 
 def pi_feed(run_id: str, *, sessions_root: Path | None = None, stamp: str = "") -> dict | None:
-    """The newest session's tail. ``None`` when the run does not exist.
+    """@brief 返回最新 pi 会话的末尾；运行不存在时返回 ``None``。
 
-    ``same`` is true when ``stamp`` still matches the file, so the page can skip drawing.
+    ``stamp`` 仍与文件匹配时 ``same`` 为真，页面可跳过重绘。
+    原始英文说明：The newest session's tail. ``same`` is true when ``stamp`` still matches the file.
+
+    @param run_id 运行 id。
+    @param sessions_root pi 会话根目录，None 表示 ``~/.pi/agent/sessions``。
+    @param stamp 客户端持有的变更戳，空串表示不复用。
+    @return 含 ``same``、``stamp``、``lines``、``epics`` 与 ``kernel_writer`` 的字典。
     """
     directory = resolve_run(run_id)
     if directory is None:
@@ -816,19 +1069,35 @@ def pi_feed(run_id: str, *, sessions_root: Path | None = None, stamp: str = "") 
 
 
 def _number(value) -> float | None:
+    """@brief 把数字转成浮点；布尔与非数字返回 None。
+
+    @param value 待转换的值。
+    @return 浮点数或 None。
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
 
 
 def _whole(value) -> int | None:
+    """@brief 取整数；布尔与非整数返回 None。
+
+    @param value 待检查的值。
+    @return 整数或 None。
+    """
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value
 
 
 def project_turn(item: dict) -> dict | None:
-    """One slim row for the turns table. The system prompt, kernel source and secrets stay out."""
+    """@brief 为轮次表生成一行精简记录；系统提示词、内核源码与密钥都不出现。
+
+    原始英文说明：One slim row for the turns table. The system prompt, kernel source and secrets stay out.
+
+    @param item 一条转录事件。
+    @return 精简后的轮次行；事件类型不相关时返回 None。
+    """
     event = item.get("event")
     if event not in ("chat", "retry", "error", "warning", "agent"):
         return None
@@ -914,7 +1183,13 @@ def project_turn(item: dict) -> dict | None:
 
 
 def _present_turn(group: dict) -> dict:
-    """One page row. Events that share a label and sit next to each other are already one group."""
+    """@brief 把一个事件组转成页面行；同标签且相邻的事件已合并为一组。
+
+    原始英文说明：One page row. Events that share a label and sit next to each other are already one group.
+
+    @param group ``_turn_groups`` 生成的组。
+    @return 含标签、区间、类型、指标与文本的页面行。
+    """
     events = group["events"]
     def last(kind: str) -> dict | None:
         found = [event for event in events if event.get("kind") == kind]
@@ -1013,7 +1288,13 @@ def _present_turn(group: dict) -> dict:
 
 
 def _turn_groups(events: list[dict]) -> list[dict]:
-    """Consecutive events with the same label are one group. A later repeat of that label is another group."""
+    """@brief 把相邻同标签的事件合成一组；同名标签之后再出现算另一组。
+
+    原始英文说明：Consecutive events with the same label are one group. A later repeat of that label is another group.
+
+    @param events 已带 ``seq`` 的事件列表。
+    @return 每组含 ``label``、``min_seq``、``max_seq`` 与 ``events`` 的列表。
+    """
     groups: list[dict] = []
     for event in events:
         label = str(event.get("label") or "")
@@ -1026,6 +1307,11 @@ def _turn_groups(events: list[dict]) -> list[dict]:
 
 
 def _before_seq(before) -> int | None:
+    """@brief 把 ``before`` 参数解析成整数 seq；缺失或非法时返回 None。
+
+    @param before 客户端传入的 seq 边界。
+    @return 整数 seq 或 None。
+    """
     if before is None or before == "":
         return None
     try:
@@ -1035,6 +1321,12 @@ def _before_seq(before) -> int | None:
 
 
 def _turns_stamp(turn_bytes: int, directory: Path) -> str:
+    """@brief 拼出轮次数据的变更戳：转录与 ``llm.json`` 的大小与 mtime，加上已存轮次字节数。
+
+    @param turn_bytes 索引中已存的轮次字节数。
+    @param directory 运行目录。
+    @return 变更戳字符串。
+    """
     def part(path: Path) -> tuple[int, int]:
         try:
             stat = path.stat()
@@ -1048,7 +1340,13 @@ def _turns_stamp(turn_bytes: int, directory: Path) -> str:
 
 
 def _stopped_turns(directory: Path) -> list[dict]:
-    """A branch the search aborted. These lines live in history, not in the transcript."""
+    """@brief 把搜索中止的分支转成展示行；这些行在 history 里，不在转录里。
+
+    原始英文说明：A branch the search aborted. These lines live in history, not in the transcript.
+
+    @param directory 运行目录。
+    @return ``kind=stopped`` 的页面行列表。
+    """
     rows = []
     for doc in (_load(directory / "state.json"), _load(directory / "result.json")):
         history = (doc or {}).get("history") if isinstance(doc, dict) else None
@@ -1083,7 +1381,15 @@ def _stopped_turns(directory: Path) -> list[dict]:
 
 
 def _attach_preview(rows: list[dict], directory: Path, *, running: bool, tail: bool) -> None:
-    """The in-flight text sits on the row with that label. A label with no row yet is a new line at the end of the tail."""
+    """@brief 把在飞文本挂到同标签的行上；还没有行的标签在尾部新增一行。
+
+    原始英文说明：The in-flight text sits on the row with that label. A label with no row yet is a new line at the end of the tail.
+
+    @param rows 页面行列表（就地修改）。
+    @param directory 运行目录，用于读取 ``llm.json``。
+    @param running 运行是否仍在跑，决定 ``stale`` 标记。
+    @param tail 是否在尾部新增行。
+    """
     doc = _load(directory / "llm.json") or {}
     inflight = doc.get("inflight") if isinstance(doc.get("inflight"), dict) else {}
     for label, entry in inflight.items():
@@ -1126,9 +1432,16 @@ def _attach_preview(rows: list[dict], directory: Path, *, running: bool, tail: b
 
 
 def turns_feed(run_id: str, *, before=None, limit: int = 40, stamp: str = "") -> dict | None:
-    """A window of merged turns. ``before`` is the smallest seq of the oldest group already on the page.
+    """@brief 返回一段合并后的轮次窗口；``before`` 是页面上最旧那一组的最小 seq。
 
-    ``same`` is true when ``stamp`` still matches, and then the turns table is not read.
+    ``stamp`` 仍匹配时 ``same`` 为真，此时不读轮次表。
+    原始英文说明：A window of merged turns. ``same`` is true when ``stamp`` still matches, and then the turns table is not read.
+
+    @param run_id 运行 id。
+    @param before 向更早翻页时的 seq 边界，可为 None。
+    @param limit 最大行数，会被夹到 1..200。
+    @param stamp 客户端持有的变更戳，空串表示不复用。
+    @return 含 ``same``、``stamp``、``cursor`` 与 ``rows`` 的字典；运行不存在时为 None。
     """
     directory = resolve_run(run_id)
     if directory is None:
@@ -1183,7 +1496,14 @@ def turns_feed(run_id: str, *, before=None, limit: int = 40, stamp: str = "") ->
 
 
 def _agent_note(item: dict, label: str) -> dict:
-    """One hmz turn. The coding agent wrote a file; this is not a chat-tool call and not an exception by itself."""
+    """@brief 生成一条 hmz 轮次说明；编码 agent 写了文件，这不是聊天工具调用，本身也不是异常。
+
+    原始英文说明：One hmz turn. The coding agent wrote a file; this is not a chat-tool call and not an exception by itself.
+
+    @param item 一条 ``event=agent`` 的转录事件。
+    @param label 该轮次的标签。
+    @return 含 ``label``、``model``、``kind``、``detail`` 与 ``seconds`` 的说明字典。
+    """
     parts = [item.get("harness") or "pi", item.get("provider") or "", item.get("model") or ""]
     shown = "/".join(str(part) for part in parts if part)
     error = str(item.get("error") or "")
@@ -1201,11 +1521,14 @@ def _agent_note(item: dict, label: str) -> dict:
 
 
 def _model_notes(directory: Path) -> list[dict]:
-    """Model turns that did not become a candidate.
+    """@brief 列出没有变成候选的模型轮次。
 
-    A timeout while thinking, a connection or rate-limit retry, an HTTP error, a reply cut off by length,
-    a body that only called a tool, an empty final reply, and a branch the search aborted. Prompts,
-    reasoning text and kernel source stay out of this list.
+    包括思考时超时、连接或限流重试、HTTP 错误、被长度截断的回复、只调了工具的回复、空的最终回复，
+    以及被搜索中止的分支。提示词、推理文本与内核源码都不进这个列表。
+    原始英文说明：Model turns that did not become a candidate.
+
+    @param directory 运行目录。
+    @return 每项含 ``label``、``model``、``kind``、``detail`` 与 ``seconds`` 的列表。
     """
     notes = []
     path = directory / "transcript.jsonl"
@@ -1270,6 +1593,11 @@ def _model_notes(directory: Path) -> list[dict]:
 
 
 def _chat_events(directory: Path) -> list[dict]:
+    """@brief 从转录中抽出每个 chat 事件的时间字段与标签。
+
+    @param directory 运行目录。
+    @return 每项含 ``label`` 及 ``seconds`` / ``t`` / ``started_at`` / ``ended_at`` / ``at`` 中可用的数值。
+    """
     path = directory / "transcript.jsonl"
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -1298,6 +1626,11 @@ def _chat_events(directory: Path) -> list[dict]:
 
 # ledger.json 里的 t 是请求结束时距账本起点的秒。转录只有耗时 seconds，没有墙上时刻时用它把条放到同一条钟上。
 def _ledger_elapsed(directory: Path) -> list[dict]:
+    """@brief 取账本里每个请求结束时刻（距账本起点的秒数）；转录只有耗时，用它对齐同一条钟。
+
+    @param directory 运行目录。
+    @return 每项含 ``label`` 与 ``t`` 的列表。
+    """
     doc = _load(directory / "ledger.json") or {}
     reqs = doc.get("requests")
     if not isinstance(reqs, list):
@@ -1315,6 +1648,12 @@ def _ledger_elapsed(directory: Path) -> list[dict]:
 
 
 def _as_unix(value, origin: float | None) -> float | None:
+    """@brief 把可能是墙钟秒数也可能是相对秒数的值统一成 unix 时间。
+
+    @param value 待转换的值。
+    @param origin 相对秒的起点（运行开始时间），可为 None。
+    @return unix 时间戳；无法判定时返回 None。
+    """
     number = _as_float(value)
     if number is None:
         return None
@@ -1327,6 +1666,12 @@ def _as_unix(value, origin: float | None) -> float | None:
 
 # 一条聊天的起止。seconds 是这一次请求花了多久，不是钟上的位置。t / ended_at / at 才是时刻。
 def _chat_window(chat: dict, origin: float | None) -> tuple[float, float] | None:
+    """@brief 算出一条聊天请求的起止时刻；``seconds`` 是耗时，不是钟上位置。
+
+    @param chat ``_chat_events`` 给出的一条事件。
+    @param origin 运行开始时间，用于把相对秒换成墙钟时间。
+    @return 二元组（开始, 结束）；信息不足时返回 None。
+    """
     duration = _as_float(chat.get("seconds"))
     if duration is not None and duration < 0:
         duration = None
@@ -1350,6 +1695,13 @@ def _chat_window(chat: dict, origin: float | None) -> tuple[float, float] | None
 
 
 def _take_ledger(reqs: list[dict], label: str | None, cursor: int) -> tuple[float | None, int]:
+    """@brief 按标签（无标签时按顺序）从账本里取下一个请求的结束时刻。
+
+    @param reqs 账本请求列表。
+    @param label 目标标签，可为 None。
+    @param cursor 当前搜索位置。
+    @return 二元组：结束秒数（找不到为 None）与新的游标。
+    """
     if not label:
         if cursor >= len(reqs):
             return None, cursor
@@ -1361,6 +1713,12 @@ def _take_ledger(reqs: list[dict], label: str | None, cursor: int) -> tuple[floa
 
 
 def _model_spans(directory: Path, origin: float | None) -> list[dict]:
+    """@brief 把落盘的聊天请求转成时间线上的区间。
+
+    @param directory 运行目录。
+    @param origin 运行开始时间，用于把相对秒换成墙钟时间。
+    @return 每项含 ``start``、``end`` 与可选 ``label`` 的区间列表。
+    """
     chats = _chat_events(directory)
     if not chats:
         return []
@@ -1387,6 +1745,10 @@ def _model_spans(directory: Path, origin: float | None) -> list[dict]:
 
 
 def _gpu_events_all() -> list[dict]:
+    """@brief 读取全部带时间戳的 GPU 事件，按文件签名缓存。
+
+    @return 事件字典列表；文件不存在时为空。
+    """
     path = gpu_events_path()
     try:
         stat = path.stat()
@@ -1413,12 +1775,24 @@ def _gpu_events_all() -> list[dict]:
 
 
 def _token(text: str, word: str) -> bool:
+    """@brief 判断 ``word`` 是否以完整 token 形式出现在 ``text`` 中（不匹配子串）。
+
+    @param text 待搜索文本。
+    @param word 目标词。
+    @return 命中时为 True；任一为空时返回 False。
+    """
     if not text or not word:
         return False
     return re.search(rf"(?<![A-Za-z0-9_]){re.escape(word)}(?![A-Za-z0-9_])", text) is not None
 
 
 def _same_pid(event: dict, pid) -> bool:
+    """@brief 判断事件里的 pid 是否等于给定 pid。
+
+    @param event GPU 事件字典。
+    @param pid 目标 pid。
+    @return 相同时为 True；任一不可解析时返回 False。
+    """
     try:
         return int(event.get("pid")) == int(pid)
     except (TypeError, ValueError):
@@ -1427,6 +1801,16 @@ def _same_pid(event: dict, pid) -> bool:
 
 # 等锁条只收这一次搜索的等待：时间落在这次运行里，并且用途写着这个算子，或者 pid 就是这次搜索自己。
 def _wait_belongs(event: dict, task: str, dtype: str, pid) -> bool:
+    """@brief 判断一条等锁事件是否属于本次搜索。
+
+    pid 是自己的，或 ``what`` 里写着这个算子（有 dtype 时也要写着 dtype）。
+
+    @param event GPU 事件字典。
+    @param task 运行的任务名。
+    @param dtype 运行的 dtype。
+    @param pid 本次运行的 pid。
+    @return 属于本次搜索时为 True。
+    """
     if _same_pid(event, pid):
         return True
     what = event.get("what") if isinstance(event.get("what"), str) else ""
@@ -1438,6 +1822,16 @@ def _wait_belongs(event: dict, task: str, dtype: str, pid) -> bool:
 
 
 def _run_bounds(state: dict | None, result: dict | None, progress: dict | None, status: str) -> tuple[float | None, float | None]:
+    """@brief 算出一个运行的（开始, 结束）时间边界。
+
+    仍在跑时结束取到当前时刻；已结束但没有结束时间时退回开始时间。
+
+    @param state 解析后的 ``state.json``，可为 None。
+    @param result 解析后的 ``result.json``，可为 None。
+    @param progress 解析后的 ``eval_progress.json``，可为 None。
+    @param status ``liveness`` 给出的状态。
+    @return 二元组（开始, 结束），未知部分为 None。
+    """
     start = _as_float((state or {}).get("started_at"))
     if start is None:
         start = _as_float((result or {}).get("started_at"))
@@ -1460,11 +1854,18 @@ def _run_bounds(state: dict | None, result: dict | None, progress: dict | None, 
 
 
 def _run_timing(directory: Path, state: dict | None, result: dict | None, progress: dict | None, status: str) -> dict:
-    """Start, elapsed and end for the detail header.
+    """@brief 生成详情头部的开始、时长与结束时间。
 
-    A running run has no end yet; its elapsed time is measured at this request. Finished
-    runs use the last persisted timestamp as the end; an interrupted run labels that as
-    an estimate because the process may have died before writing its final state.
+    运行中的运行没有结束时间，时长按本次请求时刻现算；已结束的运行用最后落盘的时间戳作结束，
+    中断的运行把它标为估计值（进程可能在写下最终状态前就死了）。
+    原始英文说明：Start, elapsed and end for the detail header.
+
+    @param directory 运行目录。
+    @param state 解析后的 ``state.json``，可为 None。
+    @param result 解析后的 ``result.json``，可为 None。
+    @param progress 解析后的 ``eval_progress.json``，可为 None。
+    @param status ``liveness`` 给出的状态。
+    @return 含 ``started_at``、``ended_at``、``elapsed_s``、``running`` 与 ``ended_at_estimated`` 的字典。
     """
     start, end = _run_bounds(state, result, progress, status)
     if start is None:
@@ -1486,6 +1887,16 @@ def _run_timing(directory: Path, state: dict | None, result: dict | None, progre
 
 
 def _lock_spans(state: dict | None, result: dict | None, progress: dict | None, status: str) -> list[dict]:
+    """@brief 把本次运行的等锁事件转成时间区间。
+
+    只收时间落在本次运行内、且归属本次搜索的等待；同号 pid 被复用时，区间收到本次运行结束为止。
+
+    @param state 解析后的 ``state.json``，可为 None。
+    @param result 解析后的 ``result.json``，可为 None。
+    @param progress 解析后的 ``eval_progress.json``，可为 None。
+    @param status ``liveness`` 给出的状态。
+    @return 每项含 ``start`` 与 ``end`` 的区间列表。
+    """
     task = str((result or state or {}).get("task") or "")
     dtype = str((result or state or {}).get("dtype") or "")
     pid = (state or {}).get("pid")
@@ -1527,6 +1938,11 @@ def _lock_spans(state: dict | None, result: dict | None, progress: dict | None, 
 
 # 评测进度文件每次覆盖，盘上只有最近这一段。没有这份文件时这一道是空的。
 def _eval_spans(progress: dict | None) -> list[dict]:
+    """@brief 用评测进度文件生成一个评测区间；没有这份文件时为空。
+
+    @param progress 解析后的 ``eval_progress.json``，可为 None。
+    @return 最多一项的区间列表。
+    """
     if not progress:
         return []
     entered = _as_float(progress.get("entered_at"))
@@ -1543,6 +1959,15 @@ def _eval_spans(progress: dict | None) -> list[dict]:
 
 
 def _timeline(directory: Path, state: dict | None, result: dict | None, progress: dict | None, status: str) -> dict:
+    """@brief 组装详情页的三条时间线：问模型、等锁、评测。
+
+    @param directory 运行目录。
+    @param state 解析后的 ``state.json``，可为 None。
+    @param result 解析后的 ``result.json``，可为 None。
+    @param progress 解析后的 ``eval_progress.json``，可为 None。
+    @param status ``liveness`` 给出的状态。
+    @return 含 ``lanes`` 的字典。
+    """
     origin = _as_float((state or {}).get("started_at"))
     if origin is None:
         origin = _as_float((result or {}).get("started_at"))
@@ -1559,6 +1984,11 @@ _RECHECK_PASSED = {"ok", "passed", "pass"}
 
 
 def _recheck_failed(value) -> bool:
+    """@brief 判断正确性复查字段是否表示失败。
+
+    @param value 复查字段值，可能是布尔、字符串或含 ``class`` / ``status`` 的字典。
+    @return 失败时为 True；None、False 或通过的取值返回 False。
+    """
     if value is None or value is False:
         return False
     if value is True:
@@ -1574,6 +2004,11 @@ def _recheck_failed(value) -> bool:
 
 # 轨迹上已经写着 within_noise 和 differential_recheck。这两句放到状态旁边，不用打开评测面板。
 def _candidate_marks(trace) -> list[dict]:
+    """@brief 从轨迹里取出“噪声内没换种子”“正确性复查没过”两个标记，放在状态旁。
+
+    @param trace 轨迹列表。
+    @return 每项含 ``label`` 与 ``marks`` 的列表；轨迹不是列表时为空。
+    """
     rows = []
     if not isinstance(trace, list):
         return rows
@@ -1592,6 +2027,15 @@ def _candidate_marks(trace) -> list[dict]:
 
 # 确认点只用发布闸门放行的那个数。闸门没放行时这里是 None，不用搜索期的 best_speedup 顶上。
 def _confirmed_point(result: dict | None, trace, conclusion: dict) -> dict | None:
+    """@brief 取发布门放行的确认点；门没放行时为 None，不用搜索期 ``best_speedup`` 顶替。
+
+    原始英文说明：If the gate did not pass, this is None rather than the search's best_speedup.
+
+    @param result 解析后的 ``result.json``，可为 None。
+    @param trace 轨迹列表，用于在缺花费时回退。
+    @param conclusion ``conclusion_of_run`` 的结论。
+    @return 含花费、加速比、批次与最坏/最好值的确认点；无确认时返回 None。
+    """
     if not result or "confirmation_source_sha256" not in result:
         return None
     recorded = result.get("confirmation_source_sha256")
@@ -1622,6 +2066,11 @@ def _confirmed_point(result: dict | None, trace, conclusion: dict) -> dict | Non
 
 
 def _committee_models(directory: Path) -> dict[str, str]:
+    """@brief 从 ``run_config.json`` 里取 first / second 两个委员会各自主成员的模型名。
+
+    @param directory 运行目录。
+    @return 委员会名到模型名的映射（缺的省略）。
+    """
     doc = _load(directory / "run_config.json") or {}
     listed = doc.get("committees")
     models: dict[str, str] = {}
@@ -1641,6 +2090,11 @@ def _committee_models(directory: Path) -> dict[str, str]:
 
 
 def _round_number(value) -> int | None:
+    """@brief 把轮次值转成非负整数；非法时返回 None。
+
+    @param value 轮次字段值。
+    @return 非负整数或 None。
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     number = int(value)
@@ -1648,6 +2102,11 @@ def _round_number(value) -> int | None:
 
 
 def _highest_trace_round(trace) -> int:
+    """@brief 从轨迹标签（形如 ``r3``）里取出最大轮次。
+
+    @param trace 轨迹列表。
+    @return 最大轮次；没有可用标签时返回 0。
+    """
     highest = 0
     if not isinstance(trace, list):
         return highest
@@ -1665,6 +2124,16 @@ def _highest_trace_round(trace) -> int:
 
 # 初稿和第 1 轮是 first，之后第 r 轮是 (r - 1) % 2。没有 committee 这一键的旧运行不编交接。
 def _handoff(directory: Path, state: dict | None, result: dict | None, trace) -> dict:
+    """@brief 推算每个轮次由哪个委员会接手：初稿与第 1 轮是 first，之后第 r 轮是 (r - 1) % 2。
+
+    没有 ``committee`` 这一键的旧运行不编造交接记录。
+
+    @param directory 运行目录。
+    @param state 解析后的 ``state.json``，可为 None。
+    @param result 解析后的 ``result.json``，可为 None。
+    @param trace 轨迹列表。
+    @return 含 ``recorded``、``note`` 与 ``rounds`` 的字典。
+    """
     source = None
     if isinstance(state, dict) and "committee" in state:
         source = state
@@ -1701,6 +2170,11 @@ def _handoff(directory: Path, state: dict | None, result: dict | None, trace) ->
 
 # 详情把 state 和 result 叠在一起。截断的那一份是 None，另一份仍能提供轨迹、花费和停止原因。
 def run_detail(run_id: str) -> dict | None:
+    """@brief 把一个运行的 state 与 result 叠成详情负载；截断的那份为 None，另一份仍提供轨迹、花费与停止原因。
+
+    @param run_id 运行 id。
+    @return 详情字典；运行不存在时返回 None。
+    """
     directory = resolve_run(run_id)
     if directory is None:
         return None

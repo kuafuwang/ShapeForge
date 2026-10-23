@@ -16,10 +16,15 @@ _METAL_TAGS = {"metal", "msl", "cpp", "c++", "c", "cuda", "objc", ""}
 
 # 认定回复里要评测的那份源码。多块代码时，最后一块「标签像 MSL，且声明了 kernel void <kernel_name>」才算，前面的示例片段忽略。没有这样的块就是抽失败，编排器只追问，不把其它文本送去编译。
 def extract_source(text: str, kernel_name: str, *, tags: set[str] | None = None) -> str | None:
-    """Return the source in ``text`` for one source-fence tag set.
+    """@brief 从回复里抽出要评测的那份源码。
 
-    The default tags remain the historical Metal set. The last block that declares
-    ``kernel void <kernel_name>`` wins; a ``taic-launch`` block wins over it.
+    默认标签集仍是历史上的 Metal 集合。最后一块声明了 ``kernel void <kernel_name>`` 的块胜出；
+    带 ``taic-launch`` 标记的块又优先于它。
+
+    @param text 模型回复全文。
+    @param kernel_name 契约要求的核函数名。
+    @param tags 调用方认可的围栏标签集；缺省为 Metal 常用标签集（含空标签）。
+    @return 抽到的源码（末尾带一个换行）；没有合格代码块时为 ``None``。
     """
     accepted = _METAL_TAGS if tags is None else {str(tag).lower() for tag in tags}
     blocks = [(tag.lower(), body) for tag, body in _FENCE.findall(text or "")]
@@ -38,13 +43,22 @@ def extract_source(text: str, kernel_name: str, *, tags: set[str] | None = None)
 
 
 def extract_metal(text: str, kernel_name: str) -> str | None:
-    """Compatibility alias for the Metal source-fence set."""
+    """@brief Metal 源码围栏集的兼容别名。
+
+    @param text 模型回复全文。
+    @param kernel_name 契约要求的核函数名。
+    @return 抽到的源码；没有合格代码块时为 ``None``。
+    """
     return extract_source(text, kernel_name)
 
 
 # 规划回复里的第一个 JSON 对象，围栏（json 或空标签）或裸文本都行。没有任何 dict 就是抽失败，方案列表会是空的。
 def extract_json(text: str) -> dict | None:
-    """Parse the first JSON object in ``text`` (fenced or bare)."""
+    """@brief 取 ``text`` 里第一个 JSON 对象，围栏或裸文本都行。
+
+    @param text 模型回复全文。
+    @return 第一个可解析的 JSON 对象；没有任何对象时为 ``None``。
+    """
     candidates = [b for tag, b in _FENCE.findall(text or "") if tag.lower() in ("json", "")]
     candidates.append(text or "")
     for c in candidates:
@@ -83,7 +97,15 @@ def extract_json(text: str) -> dict | None:
 
 # 规划文本变成（瓶颈分析, 最多 k 份方案）。没有 JSON、plans 缺失、或每条的 title 与 change 都空，方案列表为空，编排器视为抽失败：先重试，两次都不行就用 FALLBACK_PLANS。
 def parse_plans(text: str, k: int) -> tuple[str, list[dict]]:
-    """Return (analysis, up to ``k`` plans) from the planner's JSON reply; plans are dicts with ``title`` and ``change``."""
+    """@brief 把规划器的 JSON 回复变成（瓶颈分析, 最多 ``k`` 份方案）。
+
+    没有 JSON、``plans`` 缺失、或每条的 ``title`` 与 ``change`` 都空时，方案列表为空，
+    编排器视为抽失败：先重试，两次都不行就用 FALLBACK_PLANS。
+
+    @param text 规划器的回复全文。
+    @param k 本轮分支数上限，超出的方案被截掉。
+    @return ``(analysis, plans)``；每份方案是带 ``title``/``change``/``expected_gain`` 的字典。
+    """
     obj = extract_json(text)
     if not obj:
         # 连对象都没有：分析和方案都空。

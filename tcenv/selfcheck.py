@@ -18,7 +18,13 @@ MAX_GPU_S = 120.0
 
 
 def earlier_hang(directory: Path) -> str | None:
-    """The reason a later timed check must be refused, or None when this directory may still time a kernel."""
+    """@brief 本目录是否已记下一次超时或崩溃，从而禁止再次计时。
+
+    The reason a later timed check must be refused, or None when this directory may still time a kernel.
+
+    @param directory 自测记录所在目录。
+    @return 拒绝原因字符串；目录尚可计时时为 None。
+    """
     path = directory / LOG_NAME
     if not path.is_file():
         return None
@@ -33,7 +39,13 @@ def earlier_hang(directory: Path) -> str | None:
 
 
 def budget_reason(directory: Path) -> str | None:
-    """The reason a timed check must be refused for running out of self-check budget, or None."""
+    """@brief 本目录是否已用完计时自测的次数或 GPU 时间预算。
+
+    The reason a timed check must be refused for running out of self-check budget, or None.
+
+    @param directory 自测记录所在目录。
+    @return 拒绝原因字符串；预算尚足时为 None。
+    """
     path = directory / LOG_NAME
     if not path.is_file():
         return None
@@ -58,7 +70,13 @@ def budget_reason(directory: Path) -> str | None:
 
 
 def append(directory: Path, row: dict) -> None:
-    """Append one result. The directory is created when the first timed check arrives."""
+    """@brief 向自测记录文件追加一条结果。
+
+    Append one result. The directory is created when the first timed check arrives.
+
+    @param directory 自测记录所在目录，不存在时会创建。
+    @param row 要写入的一行结果字典。
+    """
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / LOG_NAME
     with path.open("a", encoding="utf-8") as handle:

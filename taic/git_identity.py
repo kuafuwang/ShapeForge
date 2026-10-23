@@ -19,18 +19,35 @@ _IDENT = re.compile(r"^(?P<name>.*?)\s*<(?P<email>[^>]*)>\s+\d+\s+[+-]\d{4}$")
 
 @dataclass(frozen=True)
 class GitAuthor:
+    """@brief 提交风格的作者身份，供复核、审计记录使用。
+
+    ``source`` 记录身份来自哪里：``git``（仓库配置或 Git 环境变量）、``env``（退化到环境变量）或 ``unknown``。
+    """
+
     name: str
     email: str
     source: str  # git | env | unknown
 
     @property
     def display(self) -> str:
+        """@brief 供记录展示的身份字符串。
+
+        @return 有名字也有邮箱时为 ``名字 <邮箱>``，否则退化为名字、邮箱，最后是 ``unknown``。
+        """
         if self.name and self.email:
             return f"{self.name} <{self.email}>"
         return self.name or self.email or "unknown"
 
 
 def _run(args: list[str], root: Path) -> str:
+    """@brief 在 ``root`` 下跑一条 Git 命令，只取标准输出。
+
+    任何失败（进程起不来、超时、非零退出）都返回空字符串，让调用方退化到下一层来源。
+
+    @param args 命令与参数，第一个元素应为 ``git``。
+    @param root 命令的工作目录。
+    @return 去掉首尾空白的标准输出；失败时为空字符串。
+    """
     try:
         result = subprocess.run(
             args,
@@ -46,7 +63,14 @@ def _run(args: list[str], root: Path) -> str:
 
 
 def author(root: Path | None = None) -> GitAuthor:
-    """The commit-style author, without mutating Git config or using the network."""
+    """@brief 取提交风格的作者身份；不改动 Git 配置，也不访问网络。
+
+    顺序是 ``git var GIT_AUTHOR_IDENT``（尊重仓库配置与 Git 作者环境变量），
+    其次 ``git config user.name`` / ``user.email``，再次环境变量，最后是 ``unknown``。
+
+    @param root 仓库目录；缺省为本仓库根目录。
+    @return 解析出的 ``GitAuthor``；全都取不到时返回名字与邮箱为空、来源为 ``unknown`` 的对象。
+    """
     base = Path(root or REPO_ROOT)
     ident = _run(["git", "var", "GIT_AUTHOR_IDENT"], base)
     match = _IDENT.match(ident)
@@ -64,7 +88,11 @@ def author(root: Path | None = None) -> GitAuthor:
 
 
 def state(root: Path | None = None) -> tuple[str, bool | None]:
-    """``(HEAD, dirty)`` at review time; ``("unknown", None)`` when Git is unavailable."""
+    """@brief 复核当时的仓库状态。
+
+    @param root 仓库目录；缺省为本仓库根目录。
+    @return ``(HEAD, dirty)``；Git 不可用时返回 ``("unknown", None)``。
+    """
     base = Path(root or REPO_ROOT)
     commit = _run(["git", "rev-parse", "HEAD"], base)
     if not commit:

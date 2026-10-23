@@ -26,11 +26,20 @@ COOLDOWN_S = 3.0
 
 
 def available() -> bool:
+    """@brief 判断隔离的 triton-msl 虚拟环境是否存在。
+
+    @return 解释器存在时为 True。
+    """
     return VENV_PY.exists()
 
 
 def metal_toolchain_ok() -> bool:
-    """triton-msl compiles through Apple's Metal toolchain (``xcrun metallib``), an optional Xcode component."""
+    """@brief 检查 Apple Metal 工具链（metallib）是否可用。
+
+    @return ``xcrun`` 能找到 metallib 时为 True。
+
+    triton-msl compiles through Apple's Metal toolchain (``xcrun metallib``), an optional Xcode component.
+    """
     r = subprocess.run(["xcrun", "-sdk", "macosx", "--find", "metallib"], capture_output=True, text=True)
     return r.returncode == 0
 
@@ -39,11 +48,26 @@ METAL_TOOLCHAIN_HINT = "the Metal toolchain is not installed (xcrun cannot find 
 
 
 def cache_path(task: str, dtype: str, size: str) -> Path:
+    """@brief 给出该任务、类型与规模的测量缓存路径。
+
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param size 规模名。
+    @return 缓存文件路径。
+    """
     return CACHE_DIR / f"{task}_{dtype}_{size}.json"
 
 
 def load_cached(task: str, dtype: str, size: str) -> dict | None:
-    """Only trustworthy measurements are used: status ok, internally consistent, not launch-bound."""
+    """@brief 读取可信的缓存测量结果。
+
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param size 规模名。
+    @return 缓存字典；缺失、损坏、不一致或规格已变时为 None。
+
+    Only trustworthy measurements are used: status ok, internally consistent, not launch-bound.
+    """
     p = cache_path(task, dtype, size)
     if not p.exists():
         return None
@@ -66,7 +90,14 @@ def load_cached(task: str, dtype: str, size: str) -> dict | None:
 
 
 def estimate(cached: dict, live_us: dict[str, float]) -> dict | None:
-    """Scale the measured ratio with the live vendor time of *this* evaluation."""
+    """@brief 用本次评测实测的厂商耗时缩放缓存里的比值。
+
+    @param cached 缓存测量结果。
+    @param live_us 本次评测中各厂商实现的实测微秒数。
+    @return triton_msl 的估算字典；没有可参照的基线时为 None。
+
+    Scale the measured ratio with the live vendor time of *this* evaluation.
+    """
     for ref in ("mlx", "torch_mps"):
         if ref in cached.get("ratio_to", {}) and ref in live_us:
             return {
@@ -80,7 +111,12 @@ def estimate(cached: dict, live_us: dict[str, float]) -> dict | None:
 
 
 def busy_processes() -> list[str]:
-    """Other running jobs (not stopped ones) that use GPU/CPU heavily; this backend's Python dispatch is sensitive to CPU contention."""
+    """@brief 列出正在大量占用 GPU/CPU 的其他作业。
+
+    @return 形如 ``"pid command"`` 的条目列表。
+
+    Other running jobs (not stopped ones) that use GPU/CPU heavily; this backend's Python dispatch is sensitive to CPU contention.
+    """
     import re
 
     r = subprocess.run(["ps", "-axo", "pid=,stat=,command="], capture_output=True, text=True)
@@ -95,7 +131,15 @@ def busy_processes() -> list[str]:
 
 
 def wait_quiet(max_wait_s: float, *, max_load: float = 6.0, poll_s: float = 10.0, log=print) -> dict:
-    """Block until the machine is quiet (1-minute load average <= ``max_load`` and no job from ``busy_processes``), at most ``max_wait_s``.
+    """@brief 等到机器安静或超时。
+
+    @param max_wait_s 最长等待秒数。
+    @param max_load 允许的 1 分钟平均负载上限。
+    @param poll_s 轮询间隔秒数。
+    @param log 进度输出函数。
+    @return 观测结果字典（等待时长、是否安静、负载、忙碌进程）。
+
+    Block until the machine is quiet (1-minute load average <= ``max_load`` and no job from ``busy_processes``), at most ``max_wait_s``.
 
     This backend dispatches through Python, so competing CPU work inflates its time much more than MLX's or torch's. Returns what was
     observed so that the measurement can record it."""
@@ -114,7 +158,20 @@ def wait_quiet(max_wait_s: float, *, max_load: float = 6.0, poll_s: float = 10.0
 
 
 def measure(task: str, dtype: str, size: str, *, reps: int = 15, timeout: float = 900.0, log=print, wait_quiet_s: float = 0.0) -> dict:
-    """Run the Triton spec of ``task`` through triton-msl (supervised) and cache the result. ``wait_quiet_s`` > 0: wait that long for a quiet machine first."""
+    """@brief 在隔离子进程里跑 Triton 规格并把结果写入缓存。
+
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param size 规模名。
+    @param reps 计时重复次数。
+    @param timeout 子进程总超时秒数。
+    @param log 进度输出函数。
+    @param wait_quiet_s 先等待机器安静的秒数；0 表示不等。
+    @return 测量结果字典（状态、比值、版本与观测信息）。
+    @raises RuntimeError 当隔离环境或 Metal 工具链缺失。
+
+    Run the Triton spec of ``task`` through triton-msl (supervised) and cache the result. ``wait_quiet_s`` > 0: wait that long for a quiet machine first.
+    """
     if not available():
         raise RuntimeError("no triton-msl environment: expected .venvs/triton-msl (create it with scripts/install_triton_msl.sh)")
     if not metal_toolchain_ok():

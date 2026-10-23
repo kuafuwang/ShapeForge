@@ -19,6 +19,11 @@ SKIP_TOP = {"tcenv", "taic", "tasks", "observe", "experiments", "docs", "targets
 
 
 def _tokens(work: Path) -> list[str]:
+    """@brief 从 FEEDBACK.md / NOTES.md 里抽出被引用的探针文件路径。
+
+    @param work 单个会话的 ``agent_work`` 目录。
+    @return 可以尝试从归档里恢复的相对路径列表。
+    """
     text = ""
     for name in ("FEEDBACK.md", "NOTES.md"):
         try:
@@ -39,6 +44,14 @@ def _tokens(work: Path) -> list[str]:
 
 
 def _restore(run: Path, work: Path, token: str, apply: bool) -> dict | None:
+    """@brief 在 ``scratch`` 归档里找到被引用的文件并放回工作目录。
+
+    @param run 运行目录。
+    @param work 该会话的 ``agent_work`` 目录。
+    @param token 反馈里提到的相对路径。
+    @param apply 为真时真的写文件；为假时只报告将要恢复什么。
+    @return 恢复记录字典；文件已在、或归档里找不到时返回 ``None``。
+    """
     # r11.p0/bench2.py belongs to a sibling session.
     parts = Path(token).parts
     target_work = work
@@ -69,6 +82,11 @@ def _restore(run: Path, work: Path, token: str, apply: bool) -> dict | None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """@brief ``python -m experiments.restore_feedback_evidence`` 的入口，默认干跑。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     parser = argparse.ArgumentParser(prog="python -m experiments.restore_feedback_evidence")
     parser.add_argument("--runs", default="runs")
     parser.add_argument("--apply", action="store_true")

@@ -17,19 +17,36 @@ GENERIC_CASES = ("normal", "wide_range", "large", "tiny", "outlier", "cancel", "
 
 
 def generator(seed: int) -> torch.Generator:
+    """@brief 用给定种子构造 CPU torch 随机数生成器。
+
+    @param seed 随机种子，会被截断到非负 63 位范围。
+    @return 已设好种子的 ``torch.Generator``。
+    """
     g = torch.Generator(device="cpu")
     g.manual_seed(int(seed) & 0x7FFFFFFFFFFFFFFF)
     return g
 
 
 def sample(case: str, shape, seed: int, dtype: str = "fp16", *, mag: float = 1.0, large: float | None = None, spike: float = 100.0) -> torch.Tensor:
-    """Draw a float32 tensor following one of the adversarial cases.
+    """@brief 按一种对抗用例生成 float32 张量。
+
+    Draw a float32 tensor following one of the adversarial cases.
 
     ``mag``   scales the 'normal' distributions (tasks pick it so reference outputs stay representable).
     ``spike`` is the multiplier of the rare (1e-3) outliers; matmul-like tasks use a small one so that
               the reference output stays representable.
     ``large`` is the magnitude used for the 'large' case; defaults to a quarter of the dtype range
               (the largest value for which x*x of a few terms is still representable in fp32 but not in fp16).
+
+    @param case 用例名，如 ``"normal"``、``"tiny"``、``"cancel"``。
+    @param shape 输出张量形状。
+    @param seed 随机种子，保证失败用例可复现。
+    @param dtype 任务元素类型短名，用于选择量级范围。
+    @param mag 一般分布的量级缩放。
+    @param large ``large`` 用例的幅度上限；为 None 时按 dtype 范围取默认值。
+    @param spike 稀有离群值的放大倍数。
+    @return 生成的 float32 张量。
+    @raises ValueError 用例名未知时抛出。
     """
     g = generator(seed)
     shape = tuple(int(s) for s in shape)

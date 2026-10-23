@@ -17,7 +17,13 @@ EDGE_WORDS = [0, -1, 0x55555555, -0x55555556, 1, -(1 << 31), 0x0F0F0F0F, -0x0F0F
 
 # 第 kb 个字的第 j 位是行 kb*32+j 的符号：1 映成 +1，0 映成 -1。reference 用这份展开当 W。
 def unpack_pm1(words: torch.Tensor) -> torch.Tensor:
-    """[K//32, N] int32 words -> [K, N] float32 of +-1 (bit j of word kb is row kb*32 + j)."""
+    """@brief 把打包的符号字展开成 ±1 的 float32 矩阵。
+
+    [K//32, N] int32 words -> [K, N] float32 of +-1 (bit j of word kb is row kb*32 + j).
+
+    @param words 打包的符号字，形状 ``[K//32, N]``。
+    @return ``[K, N]`` 的 ±1 矩阵。
+    """
     w = words.to(torch.int64)
     j = torch.arange(32, dtype=torch.int64).reshape(1, 32, 1)
     bit = (w[:, None, :] >> j) & 1
@@ -25,6 +31,15 @@ def unpack_pm1(words: torch.Tensor) -> torch.Tensor:
 
 
 def build(dtype: str, size: str) -> Task:
+    """@brief 装配 BitDelta 矩阵乘题。
+
+    核名 ``bitdelta_gemm_kernel``，``grid=(N/BLOCK_N, M/BLOCK_M, 1)``，``threads=(128, 1, 1)``，
+    缓冲 x、u32 的 bits、标量 scale、y，常量 M/N/K/BLOCK_*。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
     check_dtype(dtype)
     M, N, K = SHAPES[size]
     contract = Contract(
@@ -76,6 +91,12 @@ def build(dtype: str, size: str) -> Task:
 
 
 def _mlx_factory(K, N):
+    """@brief 造一个 mlx 侧的“先解包再稠密乘”基线。
+
+    @param K 矩阵乘的缩减维长度。
+    @param N 输出列数。
+    @return 签名如 ``f(x, bits)`` 的基线函数。
+    """
     def f(x, bits):
         import mlx.core as mx
 
@@ -88,6 +109,12 @@ def _mlx_factory(K, N):
 
 
 def _mlx_compiled_factory(K, N):  # the decode of the bits is fused into one kernel; the matmul stays a separate primitive
+    """@brief 造一个 mlx 基线，解包收进一次编译，矩阵乘仍是单独一次调用。
+
+    @param K 矩阵乘的缩减维长度。
+    @param N 输出列数。
+    @return 签名如 ``f(x, bits)`` 的基线函数。
+    """
     def f(x, bits):
         return mlx_compiled(f"bitdelta_{K}_{N}", lambda mx: _mlx_factory(K, N))(x, bits)
 
@@ -95,6 +122,12 @@ def _mlx_compiled_factory(K, N):  # the decode of the bits is fused into one ker
 
 
 def _torch_compiled_factory(K, N):
+    """@brief 造一个 torch 基线，解包由 Inductor 融进一个核，矩阵乘仍是单独一次调用。
+
+    @param K 矩阵乘的缩减维长度。
+    @param N 输出列数。
+    @return 签名如 ``f(x, bits)`` 的基线函数。
+    """
     def f(x, bits):
         return torch_compiled(f"bitdelta_{K}_{N}", _torch_factory(K, N))(x, bits)
 
@@ -102,6 +135,12 @@ def _torch_compiled_factory(K, N):
 
 
 def _torch_factory(K, N):
+    """@brief 造一个 torch 侧的“先解包再稠密乘”基线。
+
+    @param K 矩阵乘的缩减维长度。
+    @param N 输出列数。
+    @return 签名如 ``f(x, bits)`` 的基线函数。
+    """
     def f(x, bits):
         j = torch.arange(32, dtype=torch.int32, device=x.device).reshape(1, 32, 1)
         b = (bits.reshape(K // 32, 1, N) >> j) & 1

@@ -24,19 +24,37 @@ KINDS = ("suite", "repeatability", "search_ab", "contract_menu", "committee_ab",
 
 
 class ManifestError(ValueError):
-    """The directory already belongs to a different experiment."""
+    """@brief 目录已属于另一个实验、或清单与本次调用对不上时抛出的错误。
+
+    The directory already belongs to a different experiment.
+    """
 
 
 def canonical(doc: dict) -> str:
+    """@brief 把字典序列化成可比较的规范 JSON。
+
+    @param doc 要序列化的字典。
+    @return 键已排序、分隔符紧凑的 JSON 文本。
+    """
     return json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def config_hash(frozen: dict) -> str:
-    """SHA-256 of the canonical frozen conditions. Arms are not part of the hash."""
+    """@brief 算冻结条件的哈希，实验组不参与。
+
+    SHA-256 of the canonical frozen conditions. Arms are not part of the hash.
+
+    @param frozen 冻结条件字典。
+    @return 十六进制哈希串。
+    """
     return hashlib.sha256(canonical(frozen).encode("utf-8")).hexdigest()
 
 
 def _git_commit() -> str:
+    """@brief 取当前仓库的 HEAD 提交号。
+
+    @return 提交号；仓库不可用或 git 失败时返回空串。
+    """
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "HEAD"],
@@ -49,7 +67,14 @@ def _git_commit() -> str:
 
 
 def experiment_id_for(root: Path) -> str:
-    """Path of ``root`` relative to the runs directory, or the directory name when it lives elsewhere."""
+    """@brief 算出实验目录的 ID：相对 runs 目录的路径，或目录名。
+
+    Path of ``root`` relative to the runs directory, or the directory name when it lives elsewhere.
+
+    @param root 实验目录。
+    @return 用斜线分隔的相对路径；在任一基目录之外时用目录名。
+    """
+
     root = Path(root).resolve()
     bases = []
     env = os.environ.get("AI_LOWERLING_RUNS_DIR")
@@ -66,7 +91,13 @@ def experiment_id_for(root: Path) -> str:
 
 @contextmanager
 def _exclusive(root: Path):
-    """One writer for ``experiment.json``. A top-up and an attach must not replace each other's document."""
+    """@brief 拿住清单文件的排他锁，保证同时只有一个写者。
+
+    One writer for ``experiment.json``. A top-up and an attach must not replace each other's document.
+
+    @param root 实验目录。
+    """
+
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     with open(root / ".experiment.lock", "a+") as lock:
@@ -78,6 +109,12 @@ def _exclusive(root: Path):
 
 
 def load(root: Path) -> dict | None:
+    """@brief 读实验目录下的 ``experiment.json``。
+
+    @param root 实验目录。
+    @return 清单字典；文件不存在时返回 ``None``。
+    @raises ManifestError 文件存在但不是本版本的清单。
+    """
     path = Path(root) / FILENAME
     if not path.is_file():
         return None
@@ -88,6 +125,13 @@ def load(root: Path) -> dict | None:
 
 
 def _arm(arm_id: str, delta: dict, planned_n: int) -> dict:
+    """@brief 造清单里的一个实验组条目。
+
+    @param arm_id 实验组名。
+    @param delta 这一组相对冻结条件的覆盖项。
+    @param planned_n 计划跑几次。
+    @return 含 ``arm_id``/``delta``/``planned_n``/``runs`` 的字典。
+    """
     return {
         "arm_id": str(arm_id),
         "delta": delta if isinstance(delta, dict) else {},
@@ -97,6 +141,12 @@ def _arm(arm_id: str, delta: dict, planned_n: int) -> dict:
 
 
 def _same_delta(left: dict, right: dict) -> bool:
+    """@brief 比较两份覆盖项在规范形式下是否一致。
+
+    @param left 已登记的覆盖项。
+    @param right 本次调用传入的覆盖项。
+    @return 规范 JSON 相同时为 ``True``。
+    """
     return canonical(left or {}) == canonical(right or {})
 
 
@@ -108,11 +158,21 @@ def ensure(
     frozen: dict,
     arms: list[dict],
 ) -> dict:
-    """Create the manifest, or accept this call when the frozen conditions and existing deltas match.
+    """@brief 新建清单，或在校验冻结条件与实验组后接受本次调用。
+
+    Create the manifest, or accept this call when the frozen conditions and existing deltas match.
 
     ``arms`` items are ``{"arm_id", "delta", "planned_n"}``. A new arm may be added. An existing arm's
     delta may not change. ``planned_n`` may rise. The file is written before this function returns,
     so a caller can start a child search only after ``ensure`` succeeds.
+
+    @param root 实验目录。
+    @param kind 实验类型，取 ``KINDS`` 里的值。
+    @param driver 写清单的驱动脚本名。
+    @param frozen 冻结条件字典。
+    @param arms 要声明的实验组列表。
+    @return 实验清单（新建的或已存在的）。
+    @raises ManifestError 类型未知、已属于另一个实验或条件不一致时。
     """
     if kind not in KINDS:
         raise ManifestError(f"unknown experiment kind {kind!r}")
@@ -122,6 +182,16 @@ def ensure(
 
 
 def _ensure_locked(root: Path, *, kind: str, driver: str, frozen: dict, arms: list[dict]) -> dict:
+    """@brief 在已持锁的前提下比对并更新清单。
+
+    @param root 实验目录。
+    @param kind 实验类型。
+    @param driver 驱动脚本名。
+    @param frozen 冻结条件。
+    @param arms 本次要声明的实验组。
+    @return 写好的实验清单。
+    @raises ManifestError 类型/驱动不符、冻结条件不同或已有实验组的覆盖项被改动时。
+    """
     existing = load(root) if (root / FILENAME).is_file() else None
     if existing is None:
         doc = {
@@ -166,7 +236,16 @@ def _ensure_locked(root: Path, *, kind: str, driver: str, frozen: dict, arms: li
 
 
 def attach(root: Path, arm_id: str, relative: str) -> dict:
-    """Record one child directory on an existing arm. Does not change frozen conditions or the arm delta."""
+    """@brief 把一个子运行目录登记到已有实验组。
+
+    Record one child directory on an existing arm. Does not change frozen conditions or the arm delta.
+
+    @param root 实验目录。
+    @param arm_id 实验组名。
+    @param relative 子目录相对实验目录的路径。
+    @return 更新后的实验清单。
+    @raises ManifestError 路径跳到实验目录外、没有清单或实验组不存在时。
+    """
     root = Path(root)
     rel = Path(relative).as_posix()
     if rel.startswith("/") or ".." in Path(rel).parts:
@@ -193,7 +272,17 @@ def attach(root: Path, arm_id: str, relative: str) -> dict:
 
 
 def extend_budget(root: Path, *, run: str, new_cap: float, at: float | None = None) -> dict:
-    """Append a budget extension. The frozen conditions and the arm deltas stay as they were."""
+    """@brief 追记一次预算追加，冻结条件与实验组不变。
+
+    Append a budget extension. The frozen conditions and the arm deltas stay as they were.
+
+    @param root 实验目录。
+    @param run 追加预算的子运行。
+    @param new_cap 新的上限，单位美元。
+    @param at 追加时间；为 ``None`` 时取当前时间。
+    @return 更新后的实验清单。
+    @raises ManifestError 目录里没有实验清单时。
+    """
     root = Path(root)
     with _exclusive(root):
         doc = load(root)
@@ -209,13 +298,22 @@ def extend_budget(root: Path, *, run: str, new_cap: float, at: float | None = No
 
 
 def backfill(root: Path, *, kind: str, driver: str, frozen: dict | None = None) -> dict:
-    """Create a manifest for an experiment directory that predates manifests.
+    """@brief 为早于清单机制的实验目录补一份清单。
+
+    Create a manifest for an experiment directory that predates manifests.
 
     Every child directory that holds a ``run_config.json`` (or a ``state.json``) becomes an
     arm and is attached under its relative path. Budget is deliberately not part of the arm
     delta: it changed between reruns, and a delta that embeds it makes a later ``ensure``
     refuse the directory. The frozen block is marked ``backfilled`` so a reader knows the
     conditions were reconstructed, not recorded at launch.
+
+    @param root 实验目录。
+    @param kind 实验类型。
+    @param driver 驱动脚本名。
+    @param frozen 冻结条件；为 ``None`` 时写成 ``{"backfilled": True}``。
+    @return 补好（或已存在）的实验清单。
+    @raises ManifestError 目录里没有任何可补的子运行目录时。
     """
     root = Path(root)
     existing = load(root)
@@ -252,6 +350,11 @@ def backfill(root: Path, *, kind: str, driver: str, frozen: dict | None = None) 
 
 
 def _read_json(path: Path) -> dict:
+    """@brief 读一个 JSON 文件，读不出来时返回空字典。
+
+    @param path JSON 文件路径。
+    @return 字典内容；文件缺失、损坏或不是字典时为空字典。
+    """
     try:
         doc = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -260,6 +363,11 @@ def _read_json(path: Path) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """@brief ``python -m experiments.manifest --backfill`` 的入口，给旧目录补清单。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(prog="python -m experiments.manifest")

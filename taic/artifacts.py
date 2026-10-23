@@ -16,13 +16,19 @@ LEDGER_SCHEMA_VERSION = 1
 
 
 class NeedsInspection(RuntimeError):
-    """A stored report or checkpoint is present but cannot be trusted."""
+    """@brief 存储的报告或检查点虽在，但其内容不可信，需要人来看。"""
 
 
 def read_versioned(path: Path, max_version: int) -> dict | None:
-    """The JSON object at ``path``, or ``None`` when the file is absent.
+    """@brief 返回 ``path`` 处的 JSON 对象；文件不存在时返回 ``None``。
 
-    A present file that is not a readable object of a known version raises ``NeedsInspection``.
+    文件存在但不是可读对象，或版本号不被认识时，抛出 ``NeedsInspection``。也就是说，
+    「文件在但读不懂」不等于「这件事没做过」。
+
+    @param path 版本化 JSON 文件的路径。
+    @param max_version 调用方认识的最大文档版本号。
+    @return 解析后的 JSON 对象；文件不存在时为 ``None``。
+    @raises NeedsInspection 文件损坏、不可读，或文档版本超出 ``max_version`` 时。
     """
     path = Path(path)
     if not path.exists():

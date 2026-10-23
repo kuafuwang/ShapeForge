@@ -16,7 +16,15 @@ from pathlib import Path
 
 # 一次新搜索从这里进入。load_config 把预设和命令行里非空的预算、分支数、轮数上限合成 LLMConfig 与 SearchConfig，再交给 Orchestrator.run。有 best_speedup 则进程成功，一颗合格内核都没有则失败。
 def _recorded_target(run_dir: Path, requested: str | None) -> str:
-    """The target stored on the run. A different --target is refused before any model call."""
+    """@brief 读出这次运行记录下的目标档，并在任何模型调用之前拒绝不一致的 ``--target``。
+
+    先看 ``run_config.json`` 里的 ``target.id``；文件不存在、读不动或结构不合法时退回 ``apple-m4-max``。
+
+    @param run_dir 运行目录。
+    @param requested 命令行给的 ``--target``；为 ``None`` 或与记录一致时不报错。
+    @return 记录下来的目标 id，交给续跑时的 Orchestrator。
+    @raises ResumeRefused 当 ``requested`` 与记录不一致时，退出码 5。
+    """
     import json
 
     recorded = "apple-m4-max"
@@ -35,11 +43,13 @@ def _recorded_target(run_dir: Path, requested: str | None) -> str:
 
 
 def _result_code(res) -> int:
-    """The process exit code of a finished run.
+    """@brief 已结束的一次搜索对应的进程退出码。
 
-    0: a valid kernel, confirmation bound or not applicable. 6: the search produced a valid kernel
-    but the confirmation phase failed, so no number may be published; a script that only looks at
-    the status must not read that as a full success. 2: the search ran and found no valid kernel.
+    0：拿到合格内核，确认阶段绑定成功或不适用。6：搜索产出了合格内核，但确认阶段（confirmation）失败，
+    所以任何数字都不得发布；只看状态的脚本不能把这种情况读成完全成功。2：搜索跑完了但没有一颗合格内核。
+
+    @param res 编排器返回的结果对象，需带 ``stop_reason`` 与 ``best_speedup``。
+    @return ``0`` / ``6`` / ``2`` 之一。
     """
     if str(getattr(res, "stop_reason", "") or "").startswith("confirm_error"):
         return 6
@@ -47,6 +57,21 @@ def _result_code(res) -> int:
 
 
 def cmd_run(a: argparse.Namespace) -> int:
+    """@brief 开一次新搜索：把命令行、预设与 ``taic.toml`` 合成配置，装好两个委员会，再交给 ``Orchestrator.run``。
+
+    新搜索从这里进入。``load_raw_config``/``load_config`` 把预设和命令行里显式给出的预算、分支数、轮数上限
+    合成 ``LLMConfig`` 与 ``SearchConfig``。预设与预算在这里汇合：``--config`` 有值时整份文件原样使用，不再叠
+    预设；``--budget`` 为 ``None`` 时保留预设里的 ``budget_usd``（paper 即 ``PAPER_BUDGET_USD``）。命令行开关
+    写在配置之后，所以这些开关优先于 ``taic.toml`` 和预设；没写的可选整数保持配置值，``0`` 也当成没写。
+    显式 ``--model`` 让两个委员会都用这个模型，没写时用配置里的两名成员（可以不同）。新 run 同样要拿目录锁：
+    「目录是空的」是 check-then-write，两个 ``taic run --run-dir X`` 会同时写 run_config/transcript/candidates；
+    锁靠 pid 判断过期，进程退出后自然可接管。有 ``best_speedup`` 则进程成功，一颗合格内核都没有则失败。
+
+    @param a argparse 命名空间，含 ``task``/``dtype``/``size``/``run_dir``/``seed``/``target``/``from_run``
+        以及预算、轮数、effort 与各搜索开关。
+    @return 进程退出码：跑完为 ``_result_code`` 的 0/6/2；``--kernel-agent off``、尺寸或任务名不合法、配置写不
+        进去为 5；另一个进程占着运行目录锁为 4。
+    """
     from tcenv.children import install_termination_handlers
 
     install_termination_handlers()
@@ -146,7 +171,20 @@ LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools"
 
 # 续跑的配置以这次运行自己记下的设置为准，命令行只覆盖显式给出的项。没有 run_config.json 的老运行用 base，避免被后来的 paper 预设改掉当时的预算和轮数。dry_run 即使没有 API 凭证也要能组出配置，否则「先看看」会因为没钥匙而做不成。
 def _resume_config(a: argparse.Namespace, settings: dict, info: dict):
-    """(LLMConfig, SearchConfig, provenance) of the continued run: the run's own settings, then what the command line says."""
+    """@brief 组出续跑用的 ``(LLMConfig, SearchConfig, provenance)``：先取运行自己记下的设置，再叠命令行显式给出的项。
+
+    续跑的配置以这次运行自己记下的设置为准，命令行只覆盖显式给出的项。目录里记下的键盖过预设，命令行再盖过
+    目录，每次覆盖都记进 provenance。这里 ``0`` 也算显式给出、会盖过目录里的值（新搜索的 ``cmd_run`` 把 ``0``
+    当成没写，两边不一样）。没有 ``run_config.json`` 的老运行用 base 预设，只读 ``taic.toml``，不把后来的 paper
+    预设里的 ``$15`` 和轮数盖到一次已经跑过的搜索上。``dry_run`` 即使没有 API 凭证也要能组出配置，否则「先看看」
+    会因为没钥匙而做不成；真续跑时凭证错误直接失败。目录里没记的键，provenance 一律标成来自预设/默认。
+
+    @param a argparse 命名空间：``config``/``preset``/``model``/``dry_run`` 与各配置开关。
+    @param settings ``resume.infer_settings`` 推出来的本次运行设置，含 ``llm``/``search``/``provenance`` 三段。
+    @param info ``resume.inspect_run`` 的检查结果，只用来读 ``model``。
+    @return ``(cfg, search, prov)``：LLM 配置、搜索配置，以及每个键来源的 provenance 字典。
+    @raises LLMError 凭证或配置不合法且不是 ``--dry-run``；续跑时给 ``--kernel-agent off`` 也走这条。
+    """
     from .llm import LLMConfig, LLMError, SearchConfig, load_config, load_raw_config
 
     prov = dict(settings["provenance"])
@@ -223,9 +261,16 @@ def _resume_config(a: argparse.Namespace, settings: dict, info: dict):
 
 
 def _committees_for_resume(a: argparse.Namespace, cfg, run_dir: Path):
-    """The two committees of a continued run. Recorded members win, unless ``--model`` names one model for both.
+    """@brief 续跑用的两个委员会：目录里记下的成员优先，除非 ``--model`` 让两个委员会都用同一个模型。
 
-    A run started before committees existed gets two committees that copy its model. The round number still picks who is next.
+    委员会机制出现之前开始的运行会拿到两个照抄它模型的委员会；轮次号仍然决定下一个由谁出场。
+    ``--dry-run`` 下即使凭证不合法，也要能根据记录装出委员会。
+
+    @param a argparse 命名空间，读 ``config``/``preset``/``model``/``dry_run``。
+    @param cfg 已经组好的 ``LLMConfig``，用于给成员派生配置与取默认模型。
+    @param run_dir 运行目录，从中读 ``run_config.json`` 里记下的 ``committees``。
+    @return 已按轮次排序的 ``Committee`` 列表；没有记录时是 ``default_committees`` 的结果。
+    @raises LLMError 记录里的成员无法解析，且不是 ``--dry-run``。
     """
     from dataclasses import replace
 
@@ -262,17 +307,44 @@ def _committees_for_resume(a: argparse.Namespace, cfg, run_dir: Path):
 
 # 续跑在发请求之前就该停时用它。code 是进程退出码：目录不能续是 3，锁被占用是 4，设置或预算不合法是 5。
 class ResumeRefused(Exception):
-    """The run cannot be continued; ``code`` is the exit status of the command."""
+    """@brief 续跑在发出第一个请求之前就该停下时的拒绝信号；``code`` 是这条命令的进程退出码。
+
+    退出码约定：目录不能续是 3，锁被占用是 4，设置或预算不合法是 5。``cmd_resume`` 捕获它之后把
+    ``code`` 原样当作进程退出码返回。
+
+    字段：``code`` 是进程退出码，构造后不再改变；异常消息是给 stderr 看的失败原因。
+    """
 
     def __init__(self, message: str, code: int) -> None:
+        """@brief 记下失败原因与进程退出码。
+
+        @param message 打印到 stderr 的失败原因。
+        @param code 这条命令的进程退出码（3/4/5）。
+        """
         super().__init__(message)
         self.code = code
 
 
 # 真正续跑之前的全部检查和装载。失败也不写运行目录，中断时的样子还在。预算由 effective_budget 决定：--budget 是新总上限，--add-budget 加在记下的上限上，都没有则沿用记下的值或 control.json 里尚未生效的请求；新上限不高于已花费就拒绝。
 def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=print):
-    """Everything ``resume`` does before the first model request: check that the run can be continued, rebuild its state, build the orchestrator and load the
-    state into it. Writes nothing in the run directory. Returns ``(orchestrator, snapshot, report, info, new_budget)``; raises ``ResumeRefused``."""
+    """@brief 续跑在第一个模型请求之前的全部检查与装载：确认目录能续、重建状态、组出编排器并把它装进去。
+
+    失败也不写运行目录，中断时的样子还在。预算由 ``resume.effective_budget`` 决定：``--budget`` 是新总上限，
+    ``--add-budget`` 加在记下的上限上，都没有则沿用记下的值或 ``control.json`` 里尚未生效的请求。``inspect_run``
+    用的是 result/state 里的花费，转录可以更高，所以新上限必须盖过重建后的花费；不高于已花费就拒绝。系统提示
+    若已和现在的 ``prompts.py`` 不同，仍用转录里的原文（换提示会让同一次实验的前后轮次对着不同契约说话）。
+    ``--dry-run`` 只装内存，``restore`` 在这个开关下不写转录、不改 ``state.json``。
+
+    @param a argparse 命名空间：``run_dir``/``budget``/``add_budget``/``target``/``dry_run``/
+        ``lift_count_limits`` 与各配置开关。
+    @param client 注入的 LLM 客户端；``None`` 时由编排器自建。
+    @param evaluate_fn 注入的评测函数；``None`` 时由编排器自建。
+    @param log 进度输出函数，默认 ``print``。
+    @return ``(orchestrator, snapshot, report, info, new_budget)``：装好状态的编排器、重建出的快照、
+        dry-run 要打印的报告（含预算前后、系统提示来源、settings、provenance、未记录项）、``inspect_run``
+        的检查结果，以及这次续跑生效的新预算。
+    @raises ResumeRefused 目录不能续（退出码 3）、重建或预算不合法（退出码 5）。
+    """
     from tasks import get_task
 
     from . import control, prompts, resume as rs
@@ -324,12 +396,20 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
 
 
 def unrecorded_settings(prov: dict) -> list[dict]:
-    """Keys filled from a preset or a default because this run did not record them. Each item is ``{"key", "source"}``."""
+    """@brief 列出这次运行没有记录、只能由预设或默认值补上的键。
+
+    @param prov 配置来源表：键到来源说明（预设/默认/命令行）的字典。
+    @return 每项为 ``{"key", "source"}`` 的列表，按 key 排序；只有来源里带 “not recorded by this run” 的才算。
+    """
     return [{"key": key, "source": source} for key, source in sorted(prov.items()) if isinstance(source, str) and "not recorded by this run" in source]
 
 
 def _announce_unrecorded(report: dict, log) -> None:
-    """Say which settings were filled in. A resume that can continue still continues."""
+    """@brief 把被补上的设置逐条说清楚；能续跑的续跑不会被这些补值拦住。
+
+    @param report ``prepare_resume`` 出的报告，读其中的 ``unrecorded_settings``。
+    @param log 输出函数，通常是 ``orchestrator.log``。
+    """
     rows = report.get("unrecorded_settings") or []
     if not rows:
         return
@@ -340,8 +420,21 @@ def _announce_unrecorded(report: dict, log) -> None:
 
 # 检查通过之后才占目录锁、把旧结果留档、记下 resume 预算事件，然后进入原来的搜索循环。别的进程占着锁就拒绝，避免两套搜索同时改同一个 run。
 def run_prepared(a: argparse.Namespace, orch, snap, info: dict, new_budget: float):
-    """Continue the run prepared by ``prepare_resume``: take the run directory's lock, keep the earlier results as ``*.before_topup_<n>.json``, note the
-    budget change in ``budget_events.json`` and run the search. Raises ``ResumeRefused`` when another process holds the run."""
+    """@brief 接着跑 ``prepare_resume`` 准备好的那次运行：占锁、留档叠结果、记预算事件，再进入搜索循环。
+
+    检查通过之后才占目录锁，把旧结果留档成 ``*.before_topup_<n>.json``，在 ``budget_events.json`` 里记下
+    resume 的预算事件，然后进入原来的搜索循环。别的进程占着锁就拒绝，避免两套搜索同时改同一个 run。
+    损坏的 result/confirm_report 在移动任何文件之前就被拒绝；启动失败时把已经搬走的旧结果还原回去。
+
+    @param a argparse 命名空间，读 ``run_dir`` 与 ``who``。
+    @param orch ``prepare_resume`` 建好的编排器，状态已装在内存里但还没落盘。
+    @param snap 重建出的快照，提供已花费金额与起始轮次。
+    @param info ``inspect_run`` 的检查结果，写进预算事件。
+    @param new_budget 这次续跑生效的新总上限。
+    @return ``orch.run()`` 的结果对象。
+    @raises ResumeRefused 另一个进程占着目录锁（退出码 4），或旧结果/预算事件不合法（退出码 5）。
+    @raises RunStartError 形状校验或内核代理 preflight 失败（此时旧结果已还原）。
+    """
     from . import control, resume as rs
 
     run_dir = Path(a.run_dir).resolve()
@@ -385,6 +478,15 @@ def run_prepared(a: argparse.Namespace, orch, snap, info: dict, new_budget: floa
 
 # `taic resume` 的入口。dry_run 只打印将要续的状态就退出，不拿锁、也不跑搜索。不能续时退出码来自 ResumeRefused；真的跑起来之后，_result_code 决定 0 / 6 / 2。
 def cmd_resume(a: argparse.Namespace) -> int:
+    """@brief ``taic resume`` 的入口：续跑一个中断或为预算停下的运行目录。
+
+    ``--dry-run`` 只打印将要续的状态就退出，不拿锁、也不跑搜索。不能续时退出码来自 ``ResumeRefused``；
+    真的跑起来之后，``_result_code`` 决定 0 / 6 / 2。
+
+    @param a argparse 命名空间：``run_dir``/``dry_run``/``who``/``budget``/``add_budget`` 与各配置开关。
+    @return 进程退出码：``--dry-run`` 为 0；被拒时是 ``ResumeRefused.code``（3/4/5）；启动失败为 5；
+        跑完为 ``_result_code`` 的 0/6/2。
+    """
     from .orchestrator import RunStartError
     from tcenv.children import install_termination_handlers
 
@@ -417,14 +519,25 @@ _SEARCH_SWITCHES = (
 
 
 def _add_search_switches(p: argparse.ArgumentParser) -> None:
-    """``--flag`` / ``--no-flag``. Omitted means the config default, which is on."""
+    """@brief 注册 ``_SEARCH_SWITCHES`` 里的 ``--flag`` / ``--no-flag``，外加 ``--truncation-retry``。
+
+    不写就是配置里的默认值，这些开关的默认都是开。``--truncation-retry`` 只被记录：现在的 hmz 会话在回复被
+    截断后不会再问一次（默认开）。
+
+    @param p 要挂参数的子命令 parser。
+    """
     for dest, help_text in _SEARCH_SWITCHES:
         p.add_argument("--" + dest.replace("_", "-"), action=argparse.BooleanOptionalAction, default=None, help=help_text + " (default: on)")
     p.add_argument("--truncation-retry", action=argparse.BooleanOptionalAction, default=None, help="recorded switch; the live hmz session does not ask again after a cut-off reply (default: on)")
 
 
 def _u64(text: str) -> int:
-    """An unsigned 64-bit seed written in decimal."""
+    """@brief 把十进制文本解析成无符号 64 位种子。
+
+    @param text 命令行给的十进制文本。
+    @return 满足 ``0 <= n < 2**64`` 的整数。
+    @raises argparse.ArgumentTypeError 不是十进制整数，或超出 ``0 <= seed < 2**64``。
+    """
     try:
         n = int(text, 10)
     except ValueError:
@@ -435,6 +548,12 @@ def _u64(text: str) -> int:
 
 
 def _positive_int(text: str) -> int:
+    """@brief 解析至少为 1 的整数，给 argparse 的 ``type=`` 用。
+
+    @param text 命令行给的文本。
+    @return 大于等于 1 的整数。
+    @raises argparse.ArgumentTypeError 不是整数，或小于 1。
+    """
     try:
         n = int(text)
     except ValueError:
@@ -445,7 +564,16 @@ def _positive_int(text: str) -> int:
 
 
 def _add_role_efforts(p: argparse.ArgumentParser) -> None:
-    """Role efforts, the new search switches, and the per-request token cap."""
+    """@brief 注册按角色的 effort、新的搜索开关与单请求 token 上限。
+
+    只被记下、现在的 hmz 会话不读的项：``--plan-effort`` 与 ``--patch-effort``（会话用 ``reasoning_effort``）、
+    ``--truncation-retry-effort``（会话不重问被截断的回复）、``--plan-ledger``（会话不读 plan ledger）、
+    ``--diversity-archive``（会话总是改当前种子）、``--max-tokens``（会话的上限由 ``relay_budget_usd`` 折算成输出
+    token）。真正影响搜索的：``--fast-bench`` 让搜索计时跳过串行 dispatch 与更慢的基线（默认关）；
+    ``--experience-index`` 指定把实测提示拷进会话的 JSON 文件。
+
+    @param p 要挂参数的子命令 parser。
+    """
     p.add_argument("--plan-effort", default=None, choices=["off", "low", "high", "max"], help="recorded only; the hmz session uses reasoning_effort")
     p.add_argument("--patch-effort", default=None, choices=["off", "low", "high", "max"], help="recorded only; the hmz session uses reasoning_effort")
     p.add_argument("--truncation-retry-effort", default=None, choices=["low", "off", "same"], help="recorded only; the hmz session does not retry a cut-off reply")
@@ -457,6 +585,12 @@ def _add_role_efforts(p: argparse.ArgumentParser) -> None:
 
 
 def _apply_max_tokens(a: argparse.Namespace, cfg, prov: dict | None = None) -> None:
+    """@brief 把 ``--max-tokens`` 写进 ``cfg.max_tokens``；没给就不动。
+
+    @param a argparse 命名空间，读 ``max_tokens``。
+    @param cfg 被改写的 ``LLMConfig``。
+    @param prov 配置来源表；给了就记一条 ``llm.max_tokens`` 来自命令行。
+    """
     n = getattr(a, "max_tokens", None)
     if n is None:
         return
@@ -466,13 +600,27 @@ def _apply_max_tokens(a: argparse.Namespace, cfg, prov: dict | None = None) -> N
 
 
 def _add_harness_switches(p: argparse.ArgumentParser) -> None:
+    """@brief 注册 harness 的三个开关。
+
+    ``--harness-auto`` 允许结构化 harness 提案落进本次运行的 overlay（默认关）、``--harness-shadow`` 把没复核的
+    quorum 条目搁置而不注入（默认开）、``--harness-review`` 让另一个委员会模型在下一个会话之前复核单一来源的
+    tip（默认开）。
+
+    @param p 要挂参数的子命令 parser。
+    """
     p.add_argument("--harness-auto", action=argparse.BooleanOptionalAction, default=None, help="allow structured harness proposals to settle into this run's overlay (default: off)")
     p.add_argument("--harness-shadow", action=argparse.BooleanOptionalAction, default=None, help="hold unreviewed quorum entries without injecting them (default: on)")
     p.add_argument("--harness-review", action=argparse.BooleanOptionalAction, default=None, help="let the other committee model review a single-source tip before the next session (default: on)")
 
 
 def _apply_search_switches(a: argparse.Namespace, cfg, search, prov: dict | None = None) -> None:
-    """Apply an explicit ``--flag`` or ``--no-flag``. An omitted flag leaves the config default."""
+    """@brief 应用显式给出的 ``--flag`` / ``--no-flag``；没给的开关保持配置默认。
+
+    @param a argparse 命名空间，读 harness 三开关、``_SEARCH_SWITCHES`` 与 ``truncation_retry``。
+    @param cfg 被改写的 ``LLMConfig``，只改其中的 ``truncation_retry``。
+    @param search 被改写的 ``SearchConfig``。
+    @param prov 配置来源表；给了就为每个被覆盖的键记一条 “command line”。
+    """
     for dest, key in (("harness_auto", "harness_auto"), ("harness_shadow", "harness_shadow"), ("harness_review", "harness_review")):
         value = getattr(a, dest, None)
         if value is None:
@@ -496,7 +644,14 @@ def _apply_search_switches(a: argparse.Namespace, cfg, search, prov: dict | None
 
 
 def cmd_brief(a: argparse.Namespace) -> int:
-    """Repo orientation, or one compact JSON object for a run directory. Reads files and starts nothing."""
+    """@brief ``taic brief``：没有目录时打印仓库方位，有目录时打印一份短 JSON。
+
+    只读：只读文件，不发模型请求、不上 GPU、不启动任何东西。``--kernels`` 时改为列出已确认的内核（``--target``
+    可选筛一个档）；只有 ``--gpu`` 才额外带上机器级 GPU 锁的尾巴（会随墙上时钟变化，默认关）。
+
+    @param a argparse 命名空间，含 ``run_dir``/``kernels``/``target``/``gpu``。
+    @return ``run_brief`` 的退出码；``--kernels`` 分支恒为 0。
+    """
     from .brief import run_brief
     from .kernel_catalog import list_kernels
 
@@ -508,6 +663,16 @@ def cmd_brief(a: argparse.Namespace) -> int:
 
 
 def cmd_query(a: argparse.Namespace) -> int:
+    """@brief ``taic query``：对 observe 索引做查询，不发模型请求、不上 GPU。
+
+    但 ``best``/``failures``/``sessions``/``models`` 会先刷新派生索引，所以它不是严格的只读进程（``capabilities``、
+    ``suggestions``、``suggestion`` 则直接读）。``sessions`` 需要 ``--run``，``suggestion`` 需要 ``--run`` +
+    ``--seq`` + ``--digest``，缺了只报错。``--jsonl`` 且结果里有行列表时，逐行一个 JSON 对象输出。
+
+    @param a argparse 命名空间：``what`` 选用哪个查询，其余是 ``task``/``target``/``model``/``status``/
+        ``limit``/``sort``/``cursor`` 等筛选项。
+    @return 成功为 0；``sessions``/``suggestion`` 缺必需参数或查不到那条建议为 5。
+    """
     from . import retrieval
 
     what = a.what
@@ -554,6 +719,15 @@ def cmd_query(a: argparse.Namespace) -> int:
 
 
 def cmd_gc(a: argparse.Namespace) -> int:
+    """@brief ``taic gc``：报告或删除已归档的旧运行目录，默认只报告（dry-run）。
+
+    只收拾归档目录，两道闸缺一不可：``--root`` 的目录名必须是 ``deleted``，``--older-than-days`` 至少为 1。
+    没有这两道闸时 ``--root . --older-than-days 0 --apply`` 会把仓库的 runs/ kernels/ docs/ 一起 rmtree。
+    ``--apply`` 还要求显式 ``--confirm``，免得手滑；真删除时把审计行写进 ``<root>/gc_log.jsonl``。
+
+    @param a argparse 命名空间：``root``/``older_than_days``/``apply``/``confirm``。
+    @return 成功（含 dry-run 与没有可清目录）为 0；三道闸任一道不满足为 5。
+    """
     from . import gc
 
     root = Path(a.root).resolve()
@@ -586,6 +760,16 @@ def cmd_gc(a: argparse.Namespace) -> int:
 
 
 def cmd_trust(a: argparse.Namespace) -> int:
+    """@brief ``taic trust``：按目标管理模型信任授权，并查看审计与指标。
+
+    支持的表面：``grant`` 写一条授权，``revoke``/``suspend`` 把状态改成 revoked/suspended（操作人与原因一并记下），
+    ``audit`` 打印审计记录，``metrics`` 先刷新 observe 索引再统计该目标/任务的信任指标，其余动作（含 ``status``）
+    打印现有授权。不发模型请求、不上 GPU；``--root`` 可指向别的 targets 根（离线测试用）。
+
+    @param a argparse 命名空间：``trust_action`` 与对应的 ``target``/``task``/``provider``/``model``/
+        ``effort``/``scope``/``by``/``reason``/``root``/``evidence_run``/``expires_at`` 等。
+    @return 成功为 0；``trust.TrustError``、``OSError``、``ValueError`` 为 5。
+    """
     from . import trust
 
     action = a.trust_action
@@ -624,6 +808,19 @@ def cmd_trust(a: argparse.Namespace) -> int:
 
 
 def cmd_harness(a: argparse.Namespace) -> int:
+    """@brief ``taic harness``：查看、复核或落地结构化 harness 提案。
+
+    动作：``status``/``disable``/``settle``/``convert``/``patch``/``commit``/``apply``（只动运行目录里的 harness
+    数据），以及会真的调模型的 ``implement``（写代码补丁）与 ``review``（复核提案），和 ``apply-code``。人工闸：
+    ``convert`` 要 ``--confirm``；``apply``/``apply-code`` 要 ``--confirm`` 或先 ``--check``；``implement`` 要求提案
+    已被复核为有用；``review`` 拒绝提案作者本人来复核，并优先挑没有冲突的模型。没指定 provider/model 时从
+    ``run_config.json`` 里提案委员会以外的同伴挑，推不出来就要求显式给。
+
+    @param a argparse 命名空间：``harness_action``、``run_dir``、``key``、``target``/``task``/``dtype``、
+        ``provider``/``model``、``by``/``reason``、``budget_usd``、``confirm``/``check``/``run-tests`` 等。
+    @return 成功为 0；找不到有效提案、缺人工确认、实现者/复核者不在配置的委员会里，或
+        ``harness.ProposalError``/``OSError``/``ValueError``/``LLMError`` 为 5。
+    """
     from . import harness
     from .llm import LLMError
 
@@ -804,7 +1001,15 @@ def cmd_harness(a: argparse.Namespace) -> int:
 
 
 def cmd_feedback(a: argparse.Namespace) -> int:
-    """Preview or atomically apply a JSON array of claim reviews."""
+    """@brief 预览或原子地写入一批 JSON 数组形式的 claim 复核。
+
+    ``--dry-run`` 只校验并显示将要做的状态迁移，``--confirm`` 才真的写；两者必须给且只能给一个。
+
+    @param a argparse 命名空间：``run_dir``/``file``（``-`` 读 stdin）/``dry_run``/``confirm``/``method``/
+        ``batch_id``。
+    @return 成功为 0；缺 ``--dry-run``/``--confirm``、两个都给、文件不是 JSON 数组（含读失败），或
+        ``observe.actions.Refused`` 为 5。
+    """
     from observe.actions import Refused, review_feedback_batch
 
     if not a.dry_run and not a.confirm:
@@ -829,6 +1034,11 @@ def cmd_feedback(a: argparse.Namespace) -> int:
 
 
 def cmd_migrate_runs(a: argparse.Namespace) -> int:
+    """@brief ``taic migrate-runs``：把平铺的运行目录搬进 ``runs/<target>/``。
+
+    @param a argparse 命名空间：``target``（默认 ``apple-m4-max``）与 ``root``（缺省为仓库下的 ``runs``）。
+    @return 恒为 0，结果以一行 JSON 打印 ``{"target", "moved"}``。
+    """
     from .migrate import migrate_runs
 
     root = Path(a.root) if a.root else None
@@ -840,6 +1050,19 @@ def cmd_migrate_runs(a: argparse.Namespace) -> int:
 # `run` 开新搜索，`resume` 续旧目录。两边的 --budget 含义不同：run 是这一次内核的总上限，resume 是续跑后的新总上限，必须高于已经花掉的金额。
 # `brief` 不接预算：没有 RUN_DIR 时是仓库方位，有目录时是一份短 JSON。
 def main(argv: list[str] | None = None) -> int:
+    """@brief 组出全部 argparse 子命令（run/resume/query/gc/brief/migrate-runs/trust/harness/feedback）并分发到它的 ``fn``。
+
+    ``run`` 开新搜索，``resume`` 续旧目录。两边的 ``--budget`` 含义不同：run 是这一次内核的总上限，resume 是续跑后的
+    新总上限，必须高于已经花掉的金额。``brief`` 不接预算：没有 RUN_DIR 时是仓库方位，有目录时是一份短 JSON。新搜索
+    的预算与预设不在这里写死：未指定 ``--config`` 时 ``load_config`` 读 ``taic.toml``，再按预设名叠
+    ``taic.<preset>.toml``；预设名是 ``--preset``，否则环境变量 ``TAIC_PRESET``，否则 ``DEFAULT_PRESET``（paper，
+    论文的 ``$15``，即 ``PAPER_BUDGET_USD``）。``--budget`` 只在显式给出时覆盖 ``search.budget_usd``。续跑的预算另算：
+    目录里记下的花费和上限先恢复，``--budget`` 改总上限，``--add-budget`` 加在记下的上限上，两者都没有就沿用记下的上限
+    或 ``control.json`` 里还没生效的请求，但新上限必须高于已花费；没记下的键才回到预设，默认 base（只有 ``taic.toml``）。
+
+    @param argv 命令行参数列表；``None`` 时由 argparse 取 ``sys.argv[1:]``。
+    @return 所选子命令 ``fn`` 的进程退出码。
+    """
     ap = argparse.ArgumentParser(prog="taic", description="Triton AI Compiler for Apple GPUs (Triton -> MSL)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("run", help="lower one task with the LLM agent")

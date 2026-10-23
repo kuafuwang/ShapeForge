@@ -11,10 +11,21 @@ from tasks._elementwise import build_elementwise
 
 
 def _mlx(x):
+    """@brief mlx 侧的 SiLU 基线，整个式子走一次 ``mx.compile``。
+
+    @param x mlx 数组。
+    @return ``x * sigmoid(x)``。
+    """
     return mlx_compiled("silu", lambda mx: (lambda a: a * mx.sigmoid(a)))(x)
 
 
 def build(dtype: str, size: str):
+    """@brief 装配逐元素 SiLU 题。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
     return build_elementwise(
         "silu",
         dtype,

@@ -38,17 +38,20 @@ _END_MARKER = "--- END UNTRUSTED SUGGESTION ---"
 
 
 class ReviewError(LLMError):
-    """The reviewer did not leave a usable verdict."""
+    """@brief 复核方没有留下可用的结论。"""
 
 
 def estimate_review_budget(prices: Prices, prompt: str, *, output_tokens: int = 4000) -> dict:
-    """A price-derived allowance, not a constant.
+    """@brief 按价格推出的复核预算，不是一个常数。
 
-    Input is estimated conservatively at three bytes per token (Chinese is roughly one token
-    per character); output is the requested JSON/verdict allowance. Cache read/write
-    allowances cover the hidden pi/skill context. The allowance is four times the estimated
-    token bill so a provider's tokenizer, cache traffic or thinking block cannot make the
-    call fail solely because the estimate was one token shy.
+    输入按三个字节一个 token 保守估算（中文粗略一字一 token）；输出是请求的 JSON/结论额度。
+    缓存读写额度覆盖 pi/技能那些看不见的上下文。预算是估算账单的四倍，使对方的 tokenizer、缓存流量
+    或 thinking 块不能仅因为估算少了一个 token 就让这次调用失败。
+
+    @param prices 输入/输出/缓存读写单价。
+    @param prompt 将要发出去的提示文本。
+    @param output_tokens 期望的输出 token 数（会被夹到 128..``MAX_OUTPUT_TOKENS``）。
+    @return 含各项 token 数、``expected_usd`` 与 ``budget_usd`` 的字典。
     """
     text = str(prompt or "")
     input_tokens = max(1000, int(math.ceil(len(text.encode("utf-8")) / 3.0)))
@@ -73,6 +76,14 @@ def estimate_review_budget(prices: Prices, prompt: str, *, output_tokens: int = 
 
 
 def _clip(text: str, limit: int) -> tuple[str, bool]:
+    """@brief 把文本截到 ``limit`` 字符以内。
+
+    截断时末尾用省略号，并去掉多余空白。
+
+    @param text 原始文本。
+    @param limit 字符上限。
+    @return ``(截断后的文本, 是否截断过)``。
+    """
     text = str(text or "")
     if len(text) <= limit:
         return text, False
@@ -84,16 +95,36 @@ def _safe_text(text: str) -> str:
 
 
 def _untrusted(text: str, limit: int | None = None) -> str:
+    """@brief 把一段不可信文本安全地嵌进提示。
+
+    先去控制字符，再把伪造的 ``--- BEGIN/END UNTRUSTED SUGGESTION ---`` 标记换掉，避免它提前结束数据区。
+
+    @param text 不可信文本。
+    @param limit 可选的字符上限。
+    @return 处理后的文本。
+    """
     value = _safe_text(text)
     value = re.sub(r"---\s*(?:begin|end)\s+untrusted suggestion\s*---", "[marker removed]", value, flags=re.IGNORECASE)
     return _clip(value, limit)[0] if limit else value
 
 
 def _one_line(text: str, limit: int) -> str:
+    """@brief 把不可信文本压成一行并截断。
+
+    @param text 不可信文本。
+    @param limit 字符上限。
+    @return 单行文本。
+    """
     return _clip(re.sub(r"\s+", " ", _untrusted(text)).strip(), limit)[0]
 
 
 def _within(base: Path, path: Path) -> bool:
+    """@brief 判断一个路径解析后是否落在另一个目录之内。
+
+    @param base 允许的根目录。
+    @param path 待检查的路径。
+    @return 在根目录内（或就是根目录）时为 ``True``。
+    """
     try:
         Path(path).resolve().relative_to(Path(base).resolve())
         return True
@@ -102,6 +133,14 @@ def _within(base: Path, path: Path) -> bool:
 
 
 def _work_dir(run_dir: Path, row: dict) -> Path:
+    """@brief 定位一条提案对应的工作目录。
+
+    优先用记录里的 ``work_dir``，其次用探针文件的父目录；跑出运行目录时退回 ``agent_work/<label>``。
+
+    @param run_dir 运行目录。
+    @param row 提案行。
+    @return 工作目录路径。
+    """
     label = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(row.get("label") or "")).replace("..", "_")
     fallback = Path(run_dir) / "agent_work" / label
     raw = str(row.get("work_dir") or "")
@@ -117,6 +156,14 @@ def _work_dir(run_dir: Path, row: dict) -> Path:
 
 
 def _probe_view(run_dir: Path, row: dict) -> dict:
+    """@brief 取提案所指探针文件的可核验视图。
+
+    只读运行目录内的文件；太大或二进制的只标记类型，不抽正文。
+
+    @param run_dir 运行目录。
+    @param row 提案行。
+    @return 含存在性、哈希、mtime、大小、摘录与时间可信度的字典。
+    """
     proposal = row.get("proposal") if isinstance(row.get("proposal"), dict) else {}
     evidence = proposal.get("evidence") if isinstance(proposal.get("evidence"), dict) else {}
     rel = str(evidence.get("probe") or "")
@@ -174,6 +221,15 @@ def _probe_view(run_dir: Path, row: dict) -> dict:
 
 
 def _self_check_view(work: Path, row: dict) -> dict:
+    """@brief 取 agent 目录里自检记录的摘要。
+
+    只先取同一内核、同目标、同协议、且测量值对得上的行；对不上时退回最近几行。
+    只保留数字与内核哈希，自检文件里的自由文本不得进「外部检查」小节。
+
+    @param work agent 工作目录。
+    @param row 提案行。
+    @return 含 ``kernel_sha256``/``rows``/``matching_measurement``/``recent`` 的字典。
+    """
     rows = []
     for path in (Path(work) / ".selfcheck" / "self_checks.jsonl", Path(work) / "self_checks.jsonl"):
         try:
@@ -217,6 +273,14 @@ def _self_check_view(work: Path, row: dict) -> dict:
 
 
 def _report_view(run_dir: Path, label: str) -> dict:
+    """@brief 取候选报告里可核验的少量数字。
+
+    只读运行目录下匹配该标签的最后一个候选，不把整份报告送进提示。
+
+    @param run_dir 运行目录。
+    @param label 候选标签。
+    @return 含 ``found``/``status``/``candidate_us``/``speedup``/``cv``/``roofline`` 的字典；找不到时为空字典。
+    """
     if not label:
         return {}
     root = Path(run_dir) / "candidates"
@@ -253,10 +317,14 @@ def _report_view(run_dir: Path, label: str) -> dict:
 
 
 def evidence_bundle(run_dir: Path, row: dict) -> dict:
-    """Bounded facts the outer harness can verify for one review.
+    """@brief 为一次复核收集外部可核验的有界事实。
 
-    The bundle separates filesystem/check facts from proposal text. It never invents a
-    verification: an old feedback row without ``session_started`` is marked unverifiable.
+    把文件系统/检查事实与提案正文分开。它从不凭空造出一个「已验证」：缺少 ``session_started`` 的
+    旧反馈行会被标为不可核验。
+
+    @param run_dir 运行目录。
+    @param row 提案行。
+    @return 含提案字段、探针视图、自检摘要、候选报告与 ``missing`` 清单的字典。
     """
     run_dir = Path(run_dir)
     proposal = row.get("proposal") if isinstance(row.get("proposal"), dict) else {}
@@ -308,6 +376,16 @@ def _yaml_like(value) -> str:
 
 
 def build_review_prompt(proposal: dict, *, run_id: str, bundle: dict | None = None) -> str:
+    """@brief 拼出复核提示：不可信建议区加上外部检查事实。
+
+    所有来自提案的文本都过一遍 ``_untrusted`` 并截断；``bundle`` 为空时只要求评审有用性、可执行性与
+    安全性，不给外部事实。
+
+    @param proposal 待复核的提案字典。
+    @param run_id 提案所属运行标识。
+    @param bundle ``evidence_bundle`` 的结果；``None`` 时生成不含外部检查的短提示。
+    @return 提示文本。
+    """
     facts = bundle if isinstance(bundle, dict) else {}
     action = _untrusted(str(proposal.get("action") or facts.get("action") or ""), 600)
     evidence = proposal.get("evidence") if isinstance(proposal.get("evidence"), dict) else {}
@@ -405,6 +483,14 @@ Do not modify `TASK.md`, the candidate kernel file, `FEEDBACK.md`, or any kernel
 
 
 def parse_review(path: Path) -> dict:
+    """@brief 读复核方写下的 JSON 并归一字段。
+
+    ``confidence`` 夹到 0..1，各文本字段截到 1000 字符。
+
+    @param path 复核文件路径。
+    @return 含 ``useful``/``confidence``/``reason``/``evidence``/``risk``/``recommended_test`` 的字典。
+    @raises ReviewError 文件不是合法 JSON，或缺少布尔型的 ``useful`` 时。
+    """
     try:
         doc = json.loads(path.read_text(encoding="utf-8", errors="replace"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -435,7 +521,22 @@ def run_review(
     hmz: str | None = None,
     timeout_s: float = 360.0,
 ) -> dict:
-    """Run one hmz reviewer turn. It does not write a kernel or touch the GPU."""
+    """@brief 跑一次 hmz 复核回合；不写内核，也不碰 GPU。
+
+    工作目录会被重试、续跑和第二次 CLI 复核复用，所以先删掉旧结论：否则一次没写文件就退出的 hmz
+    会被当成这次复核的结果，并记在当前复核者名下。
+
+    @param work 复核工作目录。
+    @param prompt 复核提示（会写成 REVIEW.md）。
+    @param provider provider 名。
+    @param model 模型名。
+    @param effort 推理强度；空值表示不指定。
+    @param prices 计费单价。
+    @param hmz hmz 可执行文件路径；``None`` 时从 PATH 找。
+    @param timeout_s 子进程超时秒数。
+    @return 含结论、成本、耗时与各类哈希的字典。
+    @raises ReviewError 找不到 hmz、启动失败、超时、没写出新结论，或结论 JSON 不合法时。
+    """
     binary = hmz or shutil.which("hmz")
     if not binary or not Path(binary).is_file():
         raise ReviewError("hmz is not on PATH; install it with `uv tool install hmz`")
@@ -519,6 +620,13 @@ def run_review(
 
 
 def append_review(run_dir: Path, proposal: dict, review: dict) -> dict:
+    """@brief 把一次复核结论追加到运行目录的 ``harness_reviews.jsonl``。
+
+    @param run_dir 运行目录。
+    @param proposal 被复核的提案。
+    @param review ``run_review`` 的返回结果。
+    @return 刚写下的记录。
+    """
     row = {
         "schema_version": 1,
         "event": "review",

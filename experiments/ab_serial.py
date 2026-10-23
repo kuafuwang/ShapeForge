@@ -25,6 +25,17 @@ KERNELS = (
 
 
 def _run(task: str, dtype: str, size: str, kernel: Path, *, serial: bool, seed: int, reps: int) -> dict:
+    """@brief 对已有内核跑一次 ``tcenv eval --timed``，只切换串行模式。
+
+    @param task 任务名，交给 ``tcenv.cli eval``。
+    @param dtype 数据类型，例如 ``fp16``。
+    @param size 规模档位，例如 ``paper``。
+    @param kernel 要评测的金属内核文件路径。
+    @param serial 是否启用严格串行 runner；为假时追加 ``--no-serial``。
+    @param seed 计时用的随机种子。
+    @param reps 计时重复次数。
+    @return 报告里的状态、候选耗时、加速比等字段组成的字典；输出不是 JSON 时为 ``parse_error``。
+    """
     with tempfile.TemporaryDirectory(prefix="tcenv_ab_check_") as check:
         argv = [
             "uv", "run", "python", "-m", "tcenv.cli", "eval", task, str(kernel),
@@ -49,6 +60,11 @@ def _run(task: str, dtype: str, size: str, kernel: Path, *, serial: bool, seed: 
 
 
 def main(argv: list[str] | None = None) -> int:
+    """@brief 交替跑串行与非串行两种模式，并写出逐次报告与中位数汇总。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     parser = argparse.ArgumentParser(prog="python -m experiments.ab_serial")
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--reps", type=int, default=15)

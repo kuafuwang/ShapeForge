@@ -46,6 +46,11 @@ KEYWORDS: dict[str, str] = {
 
 
 def _read(p: Path):
+    """@brief 读一个 JSON 文件，读不出来时返回 ``None``。
+
+    @param p JSON 文件路径。
+    @return 解析结果；文件缺失或不是合法 JSON 时为 ``None``。
+    """
     try:
         return json.loads(p.read_text())
     except (OSError, ValueError):
@@ -53,11 +58,22 @@ def _read(p: Path):
 
 
 def listed_features(block: str) -> list[str]:
-    """Feature ids named in the 'not found' list of a block (``- matrix unit: ...`` lines)."""
+    """@brief 从反馈块的``缺失列表``里取出特征 id。
+
+    Feature ids named in the 'not found' list of a block (``- matrix unit: ...`` lines).
+
+    @param block 硬件特征反馈正文。
+    @return 归一成下划线形式的特征 id 列表。
+    """
     return [m.group(1).replace(" ", "_") for m in re.finditer(r"^- ([a-z][a-z ]+?): ", block, re.M)]
 
 
 def _chats(run_dir: Path) -> list[dict]:
+    """@brief 读出 transcript 里所有 ``event=chat`` 的行。
+
+    @param run_dir 运行目录。
+    @return chat 事件列表；文件读不到时为空列表。
+    """
     out = []
     try:
         for line in (run_dir / "transcript.jsonl").read_text().splitlines():
@@ -73,7 +89,14 @@ def _chats(run_dir: Path) -> list[dict]:
 
 
 def _plans_of(chats: list[dict], rnd: int) -> list[dict]:
-    """The plans the planner returned in round ``rnd`` (last parsable JSON reply of its chat turns)."""
+    """@brief 取某一轮规划器最终返回的计划列表。
+
+    The plans the planner returned in round ``rnd`` (last parsable JSON reply of its chat turns).
+
+    @param chats ``_chats`` 读出的 chat 事件。
+    @param rnd 轮次号。
+    @return 计划字典列表；没解析出来时为空列表。
+    """
     plans: list[dict] = []
     for e in chats:
         if not re.match(rf"^r{rnd}\.plan(?:\.retry)?(?:#t\d+)?$", str(e.get("label", ""))):
@@ -92,7 +115,14 @@ def _plans_of(chats: list[dict], rnd: int) -> list[dict]:
 
 
 def analyze(run_dir: Path, *, would_be: bool | None = None) -> dict:
-    """Per-round and total counts for one run directory. ``would_be``: compute the block from the seed instead of reading it (default: when the run has none)."""
+    """@brief 逐轮统计硬件特征反馈有没有影响计划与补丁。
+
+    Per-round and total counts for one run directory. ``would_be``: compute the block from the seed instead of reading it (default: when the run has none).
+
+    @param run_dir 运行目录。
+    @param would_be 为真时用同一个种子现算反馈块；为 ``None`` 时只在运行里没有该块时现算。
+    @return 含 ``feedback_in_run``、``total`` 与逐轮明细的字典。
+    """
     sys.path.insert(0, str(REPO))
     from taic import hwfeatures as hw, hwfeedback as hf
     from tcenv.evaluate import EvalReport
@@ -159,6 +189,11 @@ def analyze(run_dir: Path, *, would_be: bool | None = None) -> dict:
 
 
 def markdown(results: list[dict]) -> str:
+    """@brief 把多个运行的影响统计拼成一张 markdown 表加逐轮明细。
+
+    @param results ``analyze`` 返回的字典列表。
+    @return 报告文本。
+    """
     L = ["| run | hw block in the run | rounds with a missing list | plans | plans mentioning a listed feature | branches | branches gaining a listed feature | correct branches gaining one |", "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for r in results:
         t = r["total"]
@@ -174,6 +209,11 @@ def markdown(results: list[dict]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """@brief ``python -m experiments.hw_feedback_ab`` 的入口，只读分析、不调模型不跑 GPU。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("runs", nargs="+")
     ap.add_argument("--json", default=None)

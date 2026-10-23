@@ -46,14 +46,26 @@ _guard = threading.Lock()
 
 
 class Refused(Exception):
-    """A request that is not carried out; ``status`` is the HTTP status and ``message`` is shown to the user."""
+    """@brief 表示一个未执行的请求；``status`` 是 HTTP 状态码，``message`` 直接展示给用户。
+
+    原始英文说明：A request that is not carried out; ``status`` is the HTTP status and ``message`` is shown to the user.
+    """
 
     def __init__(self, status: int, message: str) -> None:
+        """@brief 记录拒绝原因与对应的 HTTP 状态。
+
+        @param status HTTP 状态码。
+        @param message 给人看的拒绝原因。
+        """
         super().__init__(message)
         self.status, self.message = status, message
 
 
 def max_topup_usd() -> float:
+    """@brief 取单次加预算上限，来自 ``OBSERVE_MAX_TOPUP_USD``。
+
+    @return 上限美元数；环境变量非法或非正时返回默认 25。
+    """
     try:
         v = float(os.environ.get("OBSERVE_MAX_TOPUP_USD", DEFAULT_MAX_TOPUP_USD))
     except ValueError:
@@ -62,6 +74,10 @@ def max_topup_usd() -> float:
 
 
 def dry_run() -> bool:
+    """@brief 报告是否处于干跑模式（``OBSERVE_CONTROL_DRYRUN``）。
+
+    @return 干跑时为 True，此时只记录将要执行的动作。
+    """
     return os.environ.get("OBSERVE_CONTROL_DRYRUN", "").strip().lower() in ("1", "true", "yes", "on")
 
 
@@ -71,6 +87,11 @@ def dry_run() -> bool:
 
 
 def _host_name(netloc: str) -> str:
+    """@brief 从 ``Host`` 的 netloc 中取主机名，正确处理 IPv6 方括号。
+
+    @param netloc ``Host`` 头里的主机与端口部分。
+    @return 小写主机名。
+    """
     netloc = (netloc or "").strip().lower()
     if netloc.startswith("["):
         return netloc.split("]")[0] + "]"
@@ -78,11 +99,22 @@ def _host_name(netloc: str) -> str:
 
 
 def host_is_loopback(headers) -> bool:
+    """@brief 判断请求的 ``Host`` 是否为 loopback（127.0.0.1 / localhost / ::1）。
+
+    @param headers 请求头。
+    @return 是 loopback 时为 True。
+    """
     return _host_name(headers.get("host", "")) in LOOPBACK
 
 
 def check_origin(headers) -> None:
-    """DNS rebinding and cross-site requests: the Host must be loopback and an Origin, when there is one, must be the page's own origin."""
+    """@brief 防 DNS rebinding 与跨站请求：Host 必须是 loopback，有 Origin 时必须与页面同源。
+
+    原始英文说明：DNS rebinding and cross-site requests: the Host must be loopback and an Origin, when there is one, must be the page's own origin.
+
+    @param headers 请求头。
+    @raises Refused Host 非 loopback 或跨源时抛出（HTTP 403）。
+    """
     if not host_is_loopback(headers):
         raise Refused(403, "refused: this server only answers on 127.0.0.1 / localhost (Host header check)")
     origin = headers.get("origin")
@@ -93,13 +125,24 @@ def check_origin(headers) -> None:
 
 
 def check_token(headers) -> None:
+    """@brief 校验 ``X-Observe-Token`` 是否为本进程下发的随机 token。
+
+    @param headers 请求头。
+    @raises Refused token 缺失或不匹配时抛出（HTTP 403）。
+    """
     given = headers.get(TOKEN_HEADER, "")
     if not given or not hmac.compare_digest(given.encode(), TOKEN.encode()):
         raise Refused(403, "refused: missing or wrong X-Observe-Token (reload the page)")
 
 
 def page_token(headers) -> str:
-    """The token to embed in the served page: only for a loopback Host (a rebound hostname never gets it)."""
+    """@brief 取要埋进页面的 token；只有 loopback Host 才拿得到（被重绑的域名拿不到）。
+
+    原始英文说明：The token to embed in the served page: only for a loopback Host (a rebound hostname never gets it).
+
+    @param headers 请求头。
+    @return token 字符串；Host 非 loopback 时为空串。
+    """
     return TOKEN if host_is_loopback(headers) else ""
 
 
@@ -109,6 +152,12 @@ def page_token(headers) -> str:
 
 
 def _run_dir(run_id: str) -> Path:
+    """@brief 把 run id 解析为运行目录，不存在则拒绝。
+
+    @param run_id 运行 id。
+    @return 运行目录。
+    @raises Refused 索引里没有该运行时抛出（HTTP 404）。
+    """
     path = query.resolve_run(run_id)
     if path is None:
         raise Refused(404, "no such run")
@@ -116,6 +165,12 @@ def _run_dir(run_id: str) -> Path:
 
 
 def _warnings(run_dir: Path, info: dict) -> list[str]:
+    """@brief 列出继续运行前需要提醒用户的信息（旧版本没有记录 patience 等）。
+
+    @param run_dir 运行目录。
+    @param info ``resume.inspect_run`` 返回的检查结果。
+    @return 警告文本列表，没有时为空列表。
+    """
     out: list[str] = []
     if info.get("resumable") and not (run_dir / control.CONFIG_FILE).exists():
         out.append("this run was started by an older version: its settings are inferred from its prompts; 'patience' is not recorded, the continued run uses taic.toml's value")
@@ -123,7 +178,13 @@ def _warnings(run_dir: Path, info: dict) -> list[str]:
 
 
 def describe(run_id: str) -> dict:
-    """``GET /api/runs/<run>/control``: what a click on 'add budget' would do, and why not when it cannot."""
+    """@brief ``GET /api/runs/<run>/control``：点“加预算”会做什么，以及做不到时的原因。
+
+    原始英文说明：what a click on 'add budget' would do, and why not when it cannot.
+
+    @param run_id 运行 id。
+    @return 描述可用动作、预算、历史、建议金额与警告的字典。
+    """
     run_dir = _run_dir(run_id)
     info = resume.inspect_run(run_dir)
     live = bool(info["can_topup_live"])
@@ -157,6 +218,13 @@ def describe(run_id: str) -> dict:
 
 
 def _number(value, name: str) -> float:
+    """@brief 把请求体里的值校验为正的有限数。
+
+    @param value 待校验的值。
+    @param name 字段名，用于错误信息。
+    @return 浮点数值。
+    @raises Refused 不是数字或不是正数时抛出（HTTP 400）。
+    """
     if value is None or isinstance(value, bool):
         raise Refused(400, f"{name} must be a number")
     try:
@@ -169,7 +237,17 @@ def _number(value, name: str) -> float:
 
 
 def _amount_and_total(body: dict, current: float | None, spent: float) -> tuple[float, float]:
-    """(amount to add, new total budget) from ``amount_usd`` or ``new_budget_usd``; the increase is capped, the total must exceed what is spent."""
+    """@brief 从 ``amount_usd`` 或 ``new_budget_usd`` 算出（追加金额，新总额）。
+
+    增加额受单次上限约束，新总额必须高于已花费。
+    原始英文说明：(amount to add, new total budget) from ``amount_usd`` or ``new_budget_usd``; the increase is capped, the total must exceed what is spent.
+
+    @param body 请求体。
+    @param current 当前预算，未知时为 None。
+    @param spent 已花费美元数。
+    @return 二元组：追加金额与新的预算总额。
+    @raises Refused 字段缺失/冲突、超过上限或新总额不够时抛出（HTTP 400 或 409）。
+    """
     if not isinstance(body, dict):
         raise Refused(400, "the body must be a JSON object")
     has_amount, has_total = body.get("amount_usd") is not None, body.get("new_budget_usd") is not None
@@ -194,7 +272,16 @@ def _amount_and_total(body: dict, current: float | None, spent: float) -> tuple[
 
 
 def promote_harness(run_id: str, proposal_key: str, *, root: Path | None = None) -> dict:
-    """Write one reviewed proposal into that hardware's experience file. Same step as ``taic harness apply --confirm``."""
+    """@brief 把一条已评审的提案写进该硬件的经验文件；与 ``taic harness apply --confirm`` 同一步。
+
+    原始英文说明：Write one reviewed proposal into that hardware's experience file. Same step as ``taic harness apply --confirm``.
+
+    @param run_id 运行 id。
+    @param proposal_key 提案键。
+    @param root 经验文件根目录，None 表示用默认位置。
+    @return ``apply_patch`` 的结果字典。
+    @raises Refused 提案为空/未评审为有用/已固化/无目标硬件时抛出（400 或 409）。
+    """
     from taic.harness import ProposalError, apply_patch, board
 
     key = str(proposal_key or "").strip()
@@ -221,11 +308,18 @@ def promote_harness(run_id: str, proposal_key: str, *, root: Path | None = None)
 
 
 def convert_harness(run_id: str, seq: int, digest: str, body: dict) -> dict:
-    """Human-confirmed conversion of one free-text suggestion into a structured proposal.
+    """@brief 把人确认过的一条自由文本建议转换成结构化提案。
 
-    The human click is the gate. The conversion itself is local and deterministic; it does
-    not call an LLM. ``mode=ai`` only records that an AI filled the fields; the person still
-    confirms the write.
+    人的点击就是门禁。转换本身在本地确定性完成，不调 LLM；``mode=ai`` 只记录由 AI 填了字段，
+    写入仍需人工确认。
+    原始英文说明：Human-confirmed conversion of one free-text suggestion into a structured proposal.
+
+    @param run_id 运行 id。
+    @param seq 反馈条目序号。
+    @param digest 条目摘要。
+    @param body 请求体，需含 ``confirm=True`` 及可选的转换字段。
+    @return ``convert_feedback`` 的结果字典。
+    @raises Refused 未确认、找不到该建议、任务缺失或 mode 非法时抛出（400/404）。
     """
     from taic.harness import ProposalError, convert_feedback, free_text_suggestions
 
@@ -259,10 +353,16 @@ def convert_harness(run_id: str, seq: int, digest: str, body: dict) -> dict:
 
 
 def review_harness(run_id: str, proposal_key: str, body: dict) -> dict:
-    """Run one explicit independent review for a structured (usually converted) proposal.
+    """@brief 对一条结构化（通常是已转换的）提案执行一次显式独立评审。
 
-    This spends a model call only after a person clicks the button; it never reviews free
-    text implicitly. The existing review budget and trust semantics are unchanged.
+    只有人点了按钮才会花一次模型调用，从不隐式评审自由文本；既有的评审预算与信任语义不变。
+    原始英文说明：Run one explicit independent review for a structured (usually converted) proposal.
+
+    @param run_id 运行 id。
+    @param proposal_key 提案键。
+    @param body 请求体，可含 ``provider`` / ``model`` 指定评审者。
+    @return 含 ``review``、``plan`` 与 ``settle`` 的字典。
+    @raises Refused 找不到提案、已评过、评审者不可用或冲突时抛出；评审失败时抛 502。
     """
     from taic import trust as trust_mod
     from taic.committees import load_committees
@@ -331,7 +431,17 @@ def review_harness(run_id: str, proposal_key: str, body: dict) -> dict:
 
 
 def review_feedback(run_id: str, seq: int, digest: str, body: dict) -> dict:
-    """Record one claim review and refresh the index before returning the updated claim."""
+    """@brief 记录一条 claim 评审，返回更新后的 claim 前先刷新索引。
+
+    原始英文说明：Record one claim review and refresh the index before returning the updated claim.
+
+    @param run_id 运行 id。
+    @param seq 反馈条目序号。
+    @param digest 条目摘要。
+    @param body 评审内容。
+    @return 落盘的评审结果。
+    @raises Refused 请求体或摘要非法时抛 400；claim 不存在时抛 404。
+    """
     from observe.feedback import apply_review
     from observe.index import get_index
 
@@ -357,10 +467,18 @@ def review_feedback(run_id: str, seq: int, digest: str, body: dict) -> dict:
 
 
 def review_feedback_batch(run_id: str, rows: list[dict], *, dry_run: bool = False, method: str | None = None, batch_id: str = "") -> dict:
-    """Preview or atomically write a batch of claim reviews.
+    """@brief 预览或原子地写入一批 claim 评审。
 
-    Every item is validated and its ``expected_status`` is checked before the
-    review file changes. A dry run reads and validates only.
+    改文件前先逐项校验，并检查每项的 ``expected_status``；干跑只读只校验。
+    原始英文说明：Preview or atomically write a batch of claim reviews.
+
+    @param run_id 运行 id。
+    @param rows 评审项列表。
+    @param dry_run 为 True 时只校验不写。
+    @param method 评审来源，取 ``human`` / ``agent`` / ``script`` / ``api``。
+    @param batch_id 批次 id，空串表示未指定。
+    @return 含 ``dry_run``、``items`` 与 ``batch_id`` 的字典。
+    @raises Refused 批次为空、method 非法时抛 400；claim 不存在时抛 404。
     """
     from observe.feedback import apply_reviews, preview_reviews
     from observe.index import get_index
@@ -391,12 +509,23 @@ def review_feedback_batch(run_id: str, rows: list[dict], *, dry_run: bool = Fals
 
 
 def _lock_for(run_id: str) -> threading.Lock:
+    """@brief 取（必要时新建）某个运行的进程内互斥锁。
+
+    @param run_id 运行 id。
+    @return 该运行对应的锁对象。
+    """
     with _guard:
         return _locks.setdefault(run_id, threading.Lock())
 
 
 def _note_manifest_budget(run_dir: Path, total: float) -> None:
-    """A raised budget is an extension on the experiment manifest. Frozen conditions stay put."""
+    """@brief 把抬高的预算记为实验清单上的一次延期；冻结的实验条件不变。
+
+    原始英文说明：A raised budget is an extension on the experiment manifest. Frozen conditions stay put.
+
+    @param run_dir 运行目录。
+    @param total 新的预算总额。
+    """
     from experiments.manifest import ManifestError, extend_budget
 
     current = run_dir.resolve()
@@ -414,12 +543,23 @@ def _note_manifest_budget(run_dir: Path, total: float) -> None:
 
 
 def _resume_command(run_dir: Path, total: float) -> list[str]:
+    """@brief 拼出续跑命令 ``taic.cli resume``（优先用 ``uv run python``）。
+
+    @param run_dir 运行目录。
+    @param total 续跑使用的新预算总额。
+    @return 命令参数列表。
+    """
     uv = shutil.which("uv")
     base = [uv, "run", "python"] if uv else [sys.executable]
     return [*base, "-m", "taic.cli", "resume", str(run_dir), "--budget", f"{total:.6f}", "--who", "dashboard"]
 
 
 def _next_log(run_dir: Path) -> Path:
+    """@brief 取下一个可用的 ``resume_<n>.log`` 路径。
+
+    @param run_dir 运行目录。
+    @return 尚不存在的日志路径。
+    """
     n = 1
     while (run_dir / f"resume_{n}.log").exists():
         n += 1
@@ -427,7 +567,14 @@ def _next_log(run_dir: Path) -> Path:
 
 
 def _enforce_experiment_cap(run_dir: Path, total: float) -> None:
-    """Refuse a top-up that would reserve more than the experiment's cap.json allows. No cap file means no extra limit."""
+    """@brief 拒绝会超出实验 ``cap.json`` 的加预算；没有 cap 文件就没有额外限制。
+
+    原始英文说明：Refuse a top-up that would reserve more than the experiment's cap.json allows. No cap file means no extra limit.
+
+    @param run_dir 运行目录。
+    @param total 新的预算总额。
+    @raises Refused 超出实验上限时抛出（HTTP 400）。
+    """
     from experiments.common import cap_allows
 
     ok, why = cap_allows(run_dir, total)
@@ -436,7 +583,15 @@ def _enforce_experiment_cap(run_dir: Path, total: float) -> None:
 
 
 def add_budget(run_id: str, body: dict) -> dict:
-    """``POST /api/runs/<run>/budget`` after the origin and token checks. Returns what was done (or, in dry-run mode, what would be)."""
+    """@brief ``POST /api/runs/<run>/budget``（已完成 origin 与 token 校验），返回实际做了或干跑将要做的事。
+
+    原始英文说明：Returns what was done (or, in dry-run mode, what would be).
+
+    @param run_id 运行 id。
+    @param body 请求体，需含 ``amount_usd`` 或 ``new_budget_usd``。
+    @return 含 ``ok``、``dry_run``、``action``、旧/新预算与追加金额的结果字典。
+    @raises Refused 运行状态不允许、预算金额非法或超出实验 cap 时抛出（400/409）。
+    """
     run_dir = _run_dir(run_id)
     with _lock_for(run_id):
         info = resume.inspect_run(run_dir)
@@ -487,7 +642,13 @@ RESET_PATIENCE = 100_000
 
 
 def _reset_plan_for(run_id: str) -> dict:
-    """What a reset would do for one search. Does not write."""
+    """@brief 计算对单个搜索做重置会怎样；不写任何文件。
+
+    原始英文说明：What a reset would do for one search. Does not write.
+
+    @param run_id 运行 id。
+    @return 含 ``id``、``kind``、``action``、``reason`` 与新旧预算的计划项。
+    """
     run_dir = _run_dir(run_id)
     info = resume.inspect_run(run_dir, allow_count_stops=True)
     current = float(info["budget_usd"]) if info["budget_usd"] is not None else None
@@ -519,7 +680,12 @@ def _reset_plan_for(run_id: str) -> dict:
 
 
 def reset_preview() -> dict:
-    """``GET /api/budget/reset``: which searches would be reset, and which would be skipped. Writes nothing."""
+    """@brief ``GET /api/budget/reset``：哪些搜索会被重置、哪些会被跳过；不写任何东西。
+
+    原始英文说明：which searches would be reset, and which would be skipped.
+
+    @return 含追加金额、轮数/耐心上限、``dry_run`` 以及 ``runs`` / ``skipped`` 的字典。
+    """
     rows = [_reset_plan_for(row["id"]) for row in query.history()]
     return {
         "add_usd": RESET_ADD_USD,
@@ -532,9 +698,14 @@ def reset_preview() -> dict:
 
 
 def _raise_experiment_caps(rows: list[dict]) -> list[dict]:
-    """Raise each experiment cap by the extra dollars this reset will reserve, so the add is not refused.
+    """@brief 按本次重置将预留的额外美元抬高各实验的 cap，使加预算不被拒。
 
-    A finished run is reserved at what it spent, while the reset reserves its new budget. The difference can be more than $15."""
+    已结束的运行按实际花费计入占据，而重置要按新预算计入，差额可能超过 15 美元。
+    原始英文说明：Raise each experiment cap by the extra dollars this reset will reserve, so the add is not refused.
+
+    @param rows ``reset_preview`` 里将要执行的行。
+    @return 每项含实验目录、旧/新 cap、运行数与增加额的列表。
+    """
     from experiments.common import find_cap, run_commitment, write_cap
 
     grouped: dict[Path, dict] = {}
@@ -559,11 +730,22 @@ def _raise_experiment_caps(rows: list[dict]) -> list[dict]:
 
 
 def _reset_resume_command(run_dir: Path, total: float) -> list[str]:
+    """@brief 在续跑命令上加上抬高轮数上限与耐心的参数。
+
+    @param run_dir 运行目录。
+    @param total 新预算总额。
+    @return 重置用的命令参数列表。
+    """
     cmd = _resume_command(run_dir, total)
     return [*cmd[:-2], "--max-rounds", str(RESET_MAX_ROUNDS), "--patience", str(RESET_PATIENCE), "--lift-count-limits", *cmd[-2:]]
 
 
 def _apply_reset(item: dict) -> dict:
+    """@brief 执行一个重置计划项，把拒绝转成带原因的跳过项。
+
+    @param item ``reset_preview`` 给出的计划项。
+    @return 执行结果字典。
+    """
     try:
         return _apply_reset_unchecked(item)
     except Refused as e:
@@ -571,6 +753,12 @@ def _apply_reset(item: dict) -> dict:
 
 
 def _apply_reset_unchecked(item: dict) -> dict:
+    """@brief 真正执行一个重置计划项（可写控制文件或启动续跑进程）。
+
+    @param item 计划项，含 ``id``、``action`` 与新旧预算。
+    @return 含实际动作、事件与（必要时）pid、日志名和命令的字典。
+    @raises Refused 运行不存在或超出实验 cap 时抛出。
+    """
     run_dir = _run_dir(item["id"])
     current, total = item["old_budget_usd"], item["new_budget_usd"]
     note = "reset: add $15 and lift the round limit and patience"
@@ -606,7 +794,12 @@ def _apply_reset_unchecked(item: dict) -> dict:
 
 
 def reset_budgets() -> dict:
-    """``POST /api/budget/reset``. Adds $15 to every search that can continue and lifts its round limit and patience."""
+    """@brief ``POST /api/budget/reset``：给每个能继续的搜索加 15 美元，并抬高轮数上限与耐心。
+
+    原始英文说明：Adds $15 to every search that can continue and lifts its round limit and patience.
+
+    @return 含 ``ok``、金额、上限、``caps``、``runs`` 与 ``skipped`` 的结果字典。
+    """
     plan = reset_preview()
     caps = _raise_experiment_caps(plan["runs"])
     results = [_apply_reset(row) if row["action"] != "skip" else row for row in plan["runs"] + plan["skipped"]]
@@ -617,7 +810,13 @@ def reset_budgets() -> dict:
 
 
 def _parse_ps(text: str) -> list[tuple[int, str]]:
-    """``(pid, command)`` lines from ``ps -ax -o pid=,command=`` that are a search or an experiment script of this repo."""
+    """@brief 从 ``ps -ax -o pid=,command=`` 输出中挑出本仓库的搜索或实验进程。
+
+    原始英文说明：``(pid, command)`` lines from ``ps -ax -o pid=,command=`` that are a search or an experiment script of this repo.
+
+    @param text ``ps`` 的原始输出。
+    @return (pid, command) 元组列表。
+    """
     found = []
     for line in text.splitlines():
         line = line.strip()
@@ -634,13 +833,23 @@ def _parse_ps(text: str) -> list[tuple[int, str]]:
 
 
 def _is_search_command(cmd: str) -> bool:
-    """A process this button may stop. The dashboard itself is not one of them."""
+    """@brief 判断这条命令是否属于本按钮可以停止的进程；看板自己不算。
+
+    原始英文说明：A process this button may stop. The dashboard itself is not one of them.
+
+    @param cmd 进程命令行。
+    @return 属于搜索或实验时为 True。
+    """
     if "-m observe" in cmd or cmd.rstrip().endswith("observe"):
         return False
     return "-m taic.cli" in cmd or "-m experiments." in cmd
 
 
 def _ps_commands() -> list[tuple[int, str]]:
+    """@brief 读取并解析当前可停止的进程命令；``ps`` 不可用时返回空列表。
+
+    @return (pid, command) 元组列表。
+    """
     try:
         text = subprocess.check_output(["ps", "-ax", "-o", "pid=,command="], text=True, stderr=subprocess.DEVNULL)
     except (OSError, subprocess.CalledProcessError):
@@ -649,7 +858,13 @@ def _ps_commands() -> list[tuple[int, str]]:
 
 
 def _stop_groups() -> tuple[list[dict], list[dict]]:
-    """Process groups to signal, and commands that were seen but refused. One group is signaled once even if several searches share it."""
+    """@brief 算出要发信号的进程组，以及看到但被拒绝的进程。
+
+    多个搜索共用一个组时只发一次信号。
+    原始英文说明：Process groups to signal, and commands that were seen but refused. One group is signaled once even if several searches share it.
+
+    @return 二元组：待发信号的组列表与被拒列表。
+    """
     labels: dict[int, list[str]] = {}
     commands: dict[int, str] = {}
     for row in query.history():
@@ -708,7 +923,13 @@ def _stop_groups() -> tuple[list[dict], list[dict]]:
 
 
 def _root_of(name: str) -> str:
-    """Absolute run directory for a history id. Experiment rows append ``（脚本）`` after the id."""
+    """@brief 把历史行 id 解析为运行的绝对目录；实验行会在 id 后接 ``（脚本）``。
+
+    原始英文说明：Absolute run directory for a history id. Experiment rows append ``（脚本）`` after the id.
+
+    @param name 历史行 id。
+    @return 绝对目录文本；解析不到时为空串。
+    """
     run_id = name.split("（", 1)[0]
     directory = query.resolve_run(run_id)
     if directory is None:
@@ -722,7 +943,12 @@ def _root_of(name: str) -> str:
 
 
 def _process_table() -> list[dict]:
-    """Every process: pid, parent, process group, command. Empty when ``ps`` cannot be read."""
+    """@brief 列出全部进程的 pid、父 pid、进程组与命令；``ps`` 读不了时为空。
+
+    原始英文说明：Every process: pid, parent, process group, command. Empty when ``ps`` cannot be read.
+
+    @return 进程行字典列表。
+    """
     try:
         text = subprocess.check_output(["ps", "-ax", "-o", "pid=,ppid=,pgid=,command="], text=True, stderr=subprocess.DEVNULL)
     except (OSError, subprocess.CalledProcessError):
@@ -741,6 +967,12 @@ def _process_table() -> list[dict]:
 
 
 def _descendants(root: int, by_parent: dict[int, list[int]]) -> set[int]:
+    """@brief 广度收集某个 pid 的全部后代。
+
+    @param root 起始 pid。
+    @param by_parent 父 pid 到子 pid 列表的映射。
+    @return 后代 pid 集合（不含 ``root`` 自己）。
+    """
     found: set[int] = set()
     stack = [root]
     while stack:
@@ -754,10 +986,14 @@ def _descendants(root: int, by_parent: dict[int, list[int]]) -> set[int]:
 
 
 def _attach_related(groups: list[dict], own_pgid: int) -> None:
-    """Add the process groups of children and of processes that name this run.
+    """@brief 把子进程以及命令里提到该运行目录的进程所在进程组补进 ``related_pgids``。
 
-    ``hmz exec`` is started with a new session, so it is not in the search's group. A child that has
-    already been reparented still names ``agent_work`` under the run directory in its command.
+    ``hmz exec`` 在新会话里启动，不在搜索的进程组里；已被重新托管的子进程，命令行里仍带运行目录下的
+    ``agent_work``。
+    原始英文说明：Add the process groups of children and of processes that name this run.
+
+    @param groups ``_stop_groups`` 累计的待停组列表（就地修改）。
+    @param own_pgid 看板自身的进程组，需排除。
     """
     table = _process_table()
     by_parent: dict[int, list[int]] = {}
@@ -792,6 +1028,11 @@ def _attach_related(groups: list[dict], own_pgid: int) -> None:
 
 
 def _command_of(pid: int) -> str:
+    """@brief 取单个进程的命令行；读不到时返回空串。
+
+    @param pid 进程 id。
+    @return 命令行文本。
+    """
     try:
         text = subprocess.check_output(["ps", "-o", "command=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL)
     except (OSError, subprocess.CalledProcessError):
@@ -800,13 +1041,24 @@ def _command_of(pid: int) -> str:
 
 
 def stop_preview() -> dict:
-    """``GET /api/stop``: which live searches would be stopped. Writes nothing and signals nothing."""
+    """@brief ``GET /api/stop``：会停哪些存活搜索；不写文件也不发信号。
+
+    原始英文说明：which live searches would be stopped. Writes nothing and signals nothing.
+
+    @return 含 ``groups``、``refused`` 与 ``dry_run`` 的字典。
+    """
     groups, refused = _stop_groups()
     return {"groups": groups, "refused": refused, "dry_run": dry_run()}
 
 
 def _signal_group(pgid: int) -> str | None:
-    """SIGTERM one process group. ``None`` when the signal was delivered."""
+    """@brief 向一个进程组发 SIGTERM；送达时返回 ``None``。
+
+    原始英文说明：SIGTERM one process group. ``None`` when the signal was delivered.
+
+    @param pgid 进程组 id。
+    @return 错误文本；成功或进程已不存在时返回 None。
+    """
     try:
         os.kill(-int(pgid), signal.SIGTERM)
     except ProcessLookupError:
@@ -817,9 +1069,12 @@ def _signal_group(pgid: int) -> str | None:
 
 
 def stop_runs() -> dict:
-    """``POST /api/stop``. SIGTERM each live search, its process group, and the groups of processes it started.
+    """@brief ``POST /api/stop``：给每个存活搜索、其进程组及其启动的进程所在组发 SIGTERM。
 
-    ``hmz`` and ``pi`` run in their own session. Signaling only the search group leaves them calling the model.
+    ``hmz`` 与 ``pi`` 在自己的会话里，只给搜索组发信号会让它们继续调模型。
+    原始英文说明：SIGTERM each live search, its process group, and the groups of processes it started.
+
+    @return 含 ``ok``、``dry_run``、``stopped`` 与 ``refused`` 的字典。
     """
     groups, refused = _stop_groups()
     stopped = []
@@ -845,6 +1100,12 @@ def stop_runs() -> dict:
 
 
 def parse_body(raw: bytes):
+    """@brief 解析请求体为 JSON 值。
+
+    @param raw 原始请求体字节。
+    @return 解析后的 JSON 值（空体为 None）。
+    @raises Refused 不是合法 UTF-8 JSON 时抛出（HTTP 400）。
+    """
     try:
         return json.loads(raw.decode("utf-8") or "null")
     except (UnicodeDecodeError, ValueError):

@@ -20,10 +20,29 @@ A_LO, A_HI = 1.0, 8.0  # |A| per head (A is negative): the decay of a chunk, exp
 
 # 库基线和标准答案共用这一式。half=False 时乘加操作数升到 fp32；half=True 时乘加保持输入 dtype。
 def ssd_chunk_scan(x, dt, cs, bm, cm, d, st, *, ops, batch, seq, heads, headdim, dstate, half=False):
-    """The operator in framework ops (the formulation of the Mamba-2 paper, listing 1, for one group): this is what the vendor baselines run.
+    """@brief 用框架算子写出 Mamba-2 的 chunk scan，库基线与标准答案共用这一式。
+
+    The operator in framework ops (the formulation of the Mamba-2 paper, listing 1, for one group): this is what the vendor baselines run.
     ``ops`` supplies einsum / exp / where / tril so that the same code runs on MLX and torch. The decay factors and the sums are fp32.
     ``half=False`` upcasts every matmul operand to fp32; ``half=True`` keeps the matmul operands in the input dtype (what the production Triton
-    kernels do: half-precision matmuls with fp32 accumulation inside the library, results rounded to the element type per product)."""
+    kernels do: half-precision matmuls with fp32 accumulation inside the library, results rounded to the element type per product).
+
+    @param x 输入，形状 ``[BATCH, SEQLEN, NHEADS, HEADDIM]``。
+    @param dt 步长，``> 0``。
+    @param cs 块内 dt*A 的含前缀和，``[BATCH, NHEADS, NCHUNKS, CHUNK]``。
+    @param bm B 矩阵，``[BATCH, SEQLEN, DSTATE]``。
+    @param cm C 矩阵，``[BATCH, SEQLEN, DSTATE]``。
+    @param d 每 head 的 skip 连接，``[NHEADS]``。
+    @param st 每个块开始时的 state，``[BATCH, NCHUNKS, NHEADS, HEADDIM, DSTATE]``。
+    @param ops 算子集，提供 f32 / permute / like / einsum / exp / where / causal。
+    @param batch 批大小。
+    @param seq 序列长度。
+    @param heads head 数。
+    @param headdim head 维。
+    @param dstate state 维。
+    @param half 矩阵乘操作数是否保持输入 dtype。
+    @return 输出，形状 ``[BATCH, SEQLEN, NHEADS, HEADDIM]``。
+    """
     nc = seq // CHUNK
     f = ops.f32
     mm = (lambda a: a) if half else f  # operand of a matmul
@@ -43,56 +62,117 @@ def ssd_chunk_scan(x, dt, cs, bm, cm, d, st, *, ops, batch, seq, heads, headdim,
 
 
 class _MlxOps:
+    """@brief ``ssd_chunk_scan`` 在 mlx 上的算子集。"""
+
     @staticmethod
     def f32(a):
+        """@brief 转成 float32。
+
+        @param a mlx 数组。
+        @return float32 数组。
+        """
         import mlx.core as mx
 
         return a.astype(mx.float32)
 
     @staticmethod
     def permute(a, axes):
+        """@brief 按给定轴顺序重排。
+
+        @param a mlx 数组。
+        @param axes 新的轴顺序。
+        @return 重排后的数组。
+        """
         return a.transpose(*axes)
 
     @staticmethod
     def like(a, ref):
+        """@brief 把 a 转成 ref 的 dtype。
+
+        @param a mlx 数组。
+        @param ref 提供目标 dtype 的数组。
+        @return 转好的数组。
+        """
         return a.astype(ref.dtype)
 
     @staticmethod
     def einsum(spec, *a):
+        """@brief 按爱因斯坦求和约定做张量缩并。
+
+        @param spec 缩并描述字符串。
+        @param a 参与缩并的数组，按 spec 顺序。
+        @return 缩并结果。
+        """
         import mlx.core as mx
 
         return mx.einsum(spec, *a)
 
     @staticmethod
     def exp(a):
+        """@brief 逐元素指数。
+
+        @param a mlx 数组。
+        @return ``mx.exp(a)``。
+        """
         import mlx.core as mx
 
         return mx.exp(a)
 
     @staticmethod
     def where(m, a, b):
+        """@brief 按掩码二选一。
+
+        @param m 布尔掩码，mlx 数组。
+        @param a 掩码为真时取的值。
+        @param b 掩码为假时取的值。
+        @return 选择结果。
+        """
         import mlx.core as mx
 
         return mx.where(m, a, b)
 
     @staticmethod
     def causal(n):
+        """@brief 造 ``n x n`` 的下三角因果掩码。
+
+        @param n 方阵边长。
+        @return 布尔掩码数组。
+        """
         import mlx.core as mx
 
         return mx.tril(mx.ones((n, n))) > 0
 
 
 class _TorchOps:
+    """@brief ``ssd_chunk_scan`` 在 torch 上的算子集。"""
+
     @staticmethod
     def f32(a):
+        """@brief 转成 float32。
+
+        @param a 输入张量。
+        @return float32 张量。
+        """
         return a.float()
 
     @staticmethod
     def permute(a, axes):
+        """@brief 按给定轴顺序重排。
+
+        @param a 输入张量。
+        @param axes 新的轴顺序。
+        @return 重排后的张量。
+        """
         return a.permute(*axes)
 
     @staticmethod
     def like(a, ref):
+        """@brief 把 a 转成 ref 的 dtype。
+
+        @param a 输入张量。
+        @param ref 提供目标 dtype 的张量。
+        @return 转好的张量。
+        """
         return a.to(ref.dtype)
 
     einsum = staticmethod(torch.einsum)
@@ -100,14 +180,35 @@ class _TorchOps:
 
     @staticmethod
     def where(m, a, b):
+        """@brief 按掩码二选一，假分支按 a 的 dtype 造零。
+
+        @param m 布尔掩码张量。
+        @param a 掩码为真时取的值。
+        @param b 掩码为假时用到的标量值。
+        @return 选择结果。
+        """
         return torch.where(m, a, torch.as_tensor(b, dtype=a.dtype, device=a.device))
 
     @staticmethod
     def causal(n):
+        """@brief 在 MPS 上造 ``n x n`` 的下三角因果掩码。
+
+        @param n 方阵边长。
+        @return 布尔掩码张量。
+        """
         return torch.tril(torch.ones((n, n), dtype=torch.bool, device="mps"))
 
 
 def build(dtype: str, size: str) -> Task:
+    """@brief 装配 Mamba-2 chunk scan 题。
+
+    核名 ``mamba2_chunk_scan_kernel``，``grid=(NC, B*H, 1)``，``threads=(128, 1, 1)``，从 x 到 y 八个参数，
+    常量 BATCH/SEQLEN/NHEADS/HEADDIM/DSTATE/CHUNK/NCHUNKS。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
     check_dtype(dtype)
     B, S, H, P, N = SHAPES[size]
     assert S % CHUNK == 0

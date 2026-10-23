@@ -18,12 +18,23 @@ ORDER = ["conv2d", "gemm_silu", "gemm", "gemv", "sigmoid", "relu", "silu", "swig
 
 
 def frontier(res: dict) -> list[tuple[float, float]]:
-    """(cumulative USD, best speedup so far) at every candidate that improved the best, as in the paper's figure."""
+    """@brief 取每次改进时的累积花费与当时最佳加速比，画出阶梯前沿。
+
+    (cumulative USD, best speedup so far) at every candidate that improved the best, as in the paper's figure.
+
+    @param res 一份运行的 ``result.json`` 内容。
+    @return ``(累积花费, 当时最佳加速比)`` 列表；轨迹缺失时为空列表。
+    """
     pts = [(t["cost_usd"], t["best_speedup"]) for t in res.get("trace", []) if t.get("improved") and t.get("best_speedup")]
     return pts
 
 
 def _collect(suite_dir: Path) -> dict[str, dict[str, dict]]:
+    """@brief 把套件目录下每个运行的 result 按任务和数据类型归档，并补上发布加速比。
+
+    @param suite_dir 套件输出目录。
+    @return ``{任务: {dtype: result}}`` 的嵌套字典。
+    """
     out: dict[str, dict[str, dict]] = {}
     for d in sorted(Path(suite_dir).iterdir()):
         if d.is_dir() and (d / "result.json").exists():
@@ -34,6 +45,12 @@ def _collect(suite_dir: Path) -> dict[str, dict[str, dict]]:
 
 
 def plot_frontiers(suite_dir: Path, dest: Path | None = None) -> Path:
+    """@brief 画每个任务的前沿子图：加速比对累积 API 花费。
+
+    @param suite_dir 套件输出目录。
+    @param dest 图片路径；为 ``None`` 时写到套件目录下的 ``frontiers.png``。
+    @return 实际写出的图片路径。
+    """
     data = _collect(suite_dir)
     tasks = [t for t in ORDER if t in data] + [t for t in data if t not in ORDER]
     cols = 3
@@ -67,6 +84,12 @@ def plot_frontiers(suite_dir: Path, dest: Path | None = None) -> Path:
 
 
 def plot_summary(suite_dir: Path, dest: Path | None = None) -> Path:
+    """@brief 画按任务分组的发布加速比柱状图。
+
+    @param suite_dir 套件输出目录。
+    @param dest 图片路径；为 ``None`` 时写到套件目录下的 ``summary.png``。
+    @return 实际写出的图片路径。
+    """
     data = _collect(suite_dir)
     tasks = [t for t in ORDER if t in data] + [t for t in data if t not in ORDER]
     dtypes = sorted({dt for t in data.values() for dt in t})
@@ -93,6 +116,11 @@ def plot_summary(suite_dir: Path, dest: Path | None = None) -> Path:
 
 
 def plot_suite(suite_dir: Path) -> list[Path]:
+    """@brief 一次画出前沿图和汇总柱状图。
+
+    @param suite_dir 套件输出目录。
+    @return 两张图片的路径列表。
+    """
     return [plot_frontiers(suite_dir), plot_summary(suite_dir)]
 
 

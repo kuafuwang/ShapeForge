@@ -41,6 +41,30 @@ def build_elementwise(
     task_name: str | None = None,
     domain_case: bool = False,
 ) -> Task:
+    """@brief 按各题传入的 ref_fn、baselines、flops 和描述装配一个逐元素 ``Task``。
+
+    契约在这里钉死：``kernel_name`` 默认 ``<名字>_kernel``，``grid=(n/BLOCK_SIZE, 1, 1)``，``threads=(NUM_WARPS*32, 1, 1)``；
+    ``args`` 按 ``input_names`` 排输入缓冲再追加输出 y，``constants`` 是 N 和 BLOCK_SIZE。
+    标准答案先把每个输入转成 float64，再调用该题自己的 ref_fn。
+
+    @param name 题目名，同时用作读取题面 / 朴素 Metal 的目录名。
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @param input_names 输入缓冲名，按契约槽位顺序。
+    @param ref_fn 标准答案函数，接收 float64 输入。
+    @param baselines 基线实现序列。
+    @param flops_per_elem 每个元素的浮点运算量，用来算 flops。
+    @param description 题面描述。
+    @param large ``large`` 用例的幅值。
+    @param normal_mag ``normal`` 用例的幅值。
+    @param kernel_name 覆盖默认核名。
+    @param triton_source 覆盖默认题面正文。
+    @param naive_msl 覆盖默认的朴素 Metal。
+    @param task_name 覆盖默认题目名。
+    @param domain_case 是否开启全域扫描用例。
+    @return 装配好的 ``Task``。
+    @raises ValueError ``domain_case`` 用在非一元 fp16 题上时抛出。
+    """
     check_dtype(dtype)
     n = SIZES[size]
     args = [AbiArg(nm, i, "input", dtype, (n,)) for i, nm in enumerate(input_names)]

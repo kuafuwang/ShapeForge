@@ -80,7 +80,12 @@ Open next
 
 
 def run_brief(run_dir: str | None, *, include_gpu: bool = False) -> int:
-    """Print the orientation, or one JSON object. ``2`` when ``run_dir`` is not a directory."""
+    """@brief 打印导览文字，或一个 JSON 对象。
+
+    @param run_dir 运行目录；为空时打印导览。
+    @param include_gpu 是否追加上机全局 GPU 锁事件尾巴。
+    @return 退出码：成功为 0，``run_dir`` 不是目录时为 2。
+    """
     if not run_dir:
         print(ORIENTATION, end="")
         return 0
@@ -93,10 +98,14 @@ def run_brief(run_dir: str | None, *, include_gpu: bool = False) -> int:
 
 
 def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
-    """One JSON-ready object. Missing files are null. Message text and kernel source are left out.
+    """@brief 生成一个可直接序列化成 JSON 的摘要对象。
 
-    The transcript is read once; the machine-wide GPU lock tail is opt-in because it belongs to
-    other runs and changes with wall-clock time.
+    缺文件就是 null。消息正文与内核源码不进入输出。transcript 只读一遍；机全局的 GPU 锁尾巴是 opt-in，
+    因为它属于别的运行，且随墙钟时间变化。
+
+    @param run_dir 运行目录。
+    @param include_gpu 是否把机全局 GPU 锁事件带上（最多最后 8 条）。
+    @return 摘要字典。
     """
     run = Path(run_dir)
     state = _read_obj(run / "state.json")
@@ -133,6 +142,12 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
 
 
 def _first(docs: list[dict], key: str):
+    """@brief 按顺序取第一个带该字段的文档里的值。
+
+    @param docs 待查文档列表，前面的优先。
+    @param key 要取的字段名。
+    @return 字段值；都没这个字段时为 ``None``。
+    """
     for doc in docs:
         if key in doc:
             return doc[key]
@@ -140,6 +155,12 @@ def _first(docs: list[dict], key: str):
 
 
 def _round_of(state: dict | None, result: dict | None):
+    """@brief 取当前轮次，兼容 ``round`` 与旧的 ``rounds`` 字段。
+
+    @param state ``state.json`` 内容。
+    @param result ``result.json`` 内容。
+    @return 轮次值；两个文件都没有时为 ``None``。
+    """
     if isinstance(state, dict) and "round" in state:
         return state["round"]
     if isinstance(result, dict) and "round" in result:
@@ -152,6 +173,11 @@ def _round_of(state: dict | None, result: dict | None):
 
 
 def _load_result(run: Path) -> tuple[dict | None, str | None]:
+    """@brief 读 ``result.json``，并把「不可读」与「不存在」区分开。
+
+    @param run 运行目录。
+    @return ``(报告, 错误标记)``；文件不存在时为 ``(None, None)``，读不懂时为 ``(None, "unreadable")``。
+    """
     path = run / "result.json"
     if not path.is_file():
         return None, None
@@ -168,6 +194,15 @@ def _load_result(run: Path) -> tuple[dict | None, str | None]:
 
 
 def _published(run: Path, result: dict | None, result_err: str | None):
+    """@brief 取公布层数字。
+
+    数字来自确认门绑定的复测；门为空时公布值为 ``None``，搜索最优另算。
+
+    @param run 运行目录。
+    @param result ``result.json`` 内容。
+    @param result_err ``_load_result`` 给出的错误标记。
+    @return ``(公布加速比, publication 说明)``。
+    """
     if result_err:
         return None, result_err
     if result is None:
@@ -184,6 +219,15 @@ def _published(run: Path, result: dict | None, result_err: str | None):
 
 
 def _cands(run: Path, state: dict | None, result: dict | None) -> list[dict]:
+    """@brief 列出最近的候选。
+
+    优先用状态/结果里的 trace；没有 trace 时回退到扫描 ``candidates/`` 目录。
+
+    @param run 运行目录。
+    @param state ``state.json`` 内容。
+    @param result ``result.json`` 内容。
+    @return 最多 ``CAP`` 条候选摘要。
+    """
     trace = _trace(state, result)
     if trace is not None:
         rows = [_cand_from_trace(item) for item in trace if isinstance(item, dict)]
@@ -197,6 +241,12 @@ def _cands(run: Path, state: dict | None, result: dict | None) -> list[dict]:
 
 
 def _trace(state: dict | None, result: dict | None) -> list | None:
+    """@brief 取文档里记录的运行轨迹。
+
+    @param state ``state.json`` 内容。
+    @param result ``result.json`` 内容。
+    @return ``trace`` 列表；两个文档都没有时为 ``None``。
+    """
     for doc in (state, result):
         if isinstance(doc, dict) and isinstance(doc.get("trace"), list):
             return doc["trace"]
@@ -204,11 +254,21 @@ def _trace(state: dict | None, result: dict | None) -> list | None:
 
 
 def _cand_dir(path: Path) -> bool:
+    """@brief 判断目录名是否符合 ``NNN_label`` 的候选目录命名。
+
+    @param path 候选目录。
+    @return 符合命名时为 ``True``。
+    """
     name = path.name
     return path.is_dir() and len(name) > 4 and name[:3].isdigit() and name[3] == "_"
 
 
 def _cand_from_trace(item: dict) -> dict:
+    """@brief 把轨迹里的一条记录改写成候选摘要。
+
+    @param item 轨迹条目。
+    @return 含 ``label``/``status``/``speedup``/``within_noise``/``differential_recheck`` 的摘要。
+    """
     recheck = item.get("differential_recheck")
     if isinstance(recheck, dict):
         recheck = recheck.get("class")
@@ -222,6 +282,11 @@ def _cand_from_trace(item: dict) -> dict:
 
 
 def _cand_from_dir(path: Path) -> dict:
+    """@brief 从候选目录里的 ``report.json`` 与 ``differential_recheck.json`` 生成摘要。
+
+    @param path 候选目录。
+    @return 含 ``label``/``status``/``speedup``/``within_noise``/``differential_recheck`` 的摘要。
+    """
     report = _read_obj(path / "report.json") or {}
     recheck = _read_obj(path / "differential_recheck.json") or {}
     return {
@@ -234,7 +299,11 @@ def _cand_from_dir(path: Path) -> dict:
 
 
 def _transcript_stats(path: Path) -> tuple[int | None, int | None, int | None, str | None]:
-    """One pass: chat events, retries, length-truncated replies, and the last stage."""
+    """@brief 一次遍历统计对话、重试、被长度截断的回复与最后一个阶段。
+
+    @param path ``transcript.jsonl`` 的路径。
+    @return ``(chat 数, retry 数, 截断数, 最后阶段)``；文件不存在时四项全为 ``None``。
+    """
     if not path.is_file():
         return None, None, None, None
     chat = retry = truncated = 0
@@ -256,6 +325,14 @@ def _transcript_stats(path: Path) -> tuple[int | None, int | None, int | None, s
 
 
 def _eval_stage(run: Path, transcript_stage: str | None):
+    """@brief 取当前评测阶段。
+
+    有 ``eval_progress.json`` 就以它为准，否则退回 transcript 里的阶段。
+
+    @param run 运行目录。
+    @param transcript_stage 从 transcript 里读到的最后阶段。
+    @return 阶段名；两边都没有时为 ``None``。
+    """
     path = run / "eval_progress.json"
     if path.is_file():
         doc = _read_obj(path)
@@ -266,6 +343,12 @@ def _eval_stage(run: Path, transcript_stage: str | None):
 
 
 def _gpu_events() -> list[dict] | None:
+    """@brief 取机全局 GPU 锁事件的最后几条。
+
+    只读文件尾部一段，不把整份事件日志读进内存。
+
+    @return 最多 ``CAP`` 条事件；事件文件不存在时为 ``None``。
+    """
     from tcenv.events import gpu_events_path
 
     path = gpu_events_path()
@@ -285,7 +368,13 @@ def _gpu_events() -> list[dict] | None:
 
 
 def _best_file(run: Path) -> Path:
-    """The target's best file; wildcard is the compatibility fallback."""
+    """@brief 定位本次运行目标的最优内核文件。
+
+    先按后端扩展名找 ``best<ext>``，找不到时退回通配匹配作为兼容。
+
+    @param run 运行目录。
+    @return ``best`` 文件路径（不保证存在）。
+    """
     try:
         import json
 
@@ -304,6 +393,11 @@ def _best_file(run: Path) -> Path:
 
 
 def _paths(run: Path) -> dict:
+    """@brief 列出四个关键文件的路径（仓库内路径用相对形式）。
+
+    @param run 运行目录。
+    @return 键为 ``result``/``confirm``/``metal``/``transcript`` 的路径字典；文件不存在时该键为 ``None``。
+    """
     names = {
         "result": run / "result.json",
         "confirm": run / "confirm_report.json",
@@ -323,7 +417,13 @@ def _paths(run: Path) -> dict:
 
 
 def _stamp(run: Path) -> str:
-    """Cheap identity of the files a brief reader cares about. Changes when one of them changes."""
+    """@brief 对本次阅读最在意的几个文件算一个便宜的身份串。
+
+    四个文件任一发生改变，戳记就变。
+
+    @param run 运行目录。
+    @return 16 字符十六进制摘要。
+    """
     parts = []
     for name in ("state.json", "result.json", "confirm_report.json", "transcript.jsonl"):
         path = run / name
@@ -336,6 +436,13 @@ def _stamp(run: Path) -> str:
 
 
 def _read_obj(path: Path) -> dict | None:
+    """@brief 读一个 JSON 对象文件。
+
+    缺失、不可读或不是对象时都返回 ``None``。
+
+    @param path 文件路径。
+    @return 解析后的字典；不可用时为 ``None``。
+    """
     if not path.is_file():
         return None
     try:
@@ -346,6 +453,12 @@ def _read_obj(path: Path) -> dict | None:
 
 
 def _jsonl(path: Path, *, tail: bool = False) -> list[dict]:
+    """@brief 读一份 JSONL，坏行跳过。
+
+    @param path 文件路径。
+    @param tail 是否只读末尾一段（用于很大的 GPU 事件日志）。
+    @return 解析成功的字典列表；文件不可读时为空列表。
+    """
     try:
         if tail:
             text = _tail_text(path)
@@ -368,6 +481,11 @@ def _jsonl(path: Path, *, tail: bool = False) -> list[dict]:
 
 
 def _tail_text(path: Path) -> str:
+    """@brief 读文件末尾至多 ``_GPU_TAIL`` 字节，并丢掉第一个半行。
+
+    @param path 文件路径。
+    @return 文本内容；文件不可读时为空字符串。
+    """
     try:
         size = path.stat().st_size
     except OSError:
@@ -383,12 +501,24 @@ def _tail_text(path: Path) -> str:
 
 
 def _text(value) -> str | None:
+    """@brief 把短字符串过一遍密钥脱敏后输出。
+
+    带换行或超长的不收，避免把正文带进摘要。
+
+    @param value 待处理的值。
+    @return 脱敏后的短字符串；不是短字符串时为 ``None``。
+    """
     if not isinstance(value, str) or "\n" in value or len(value) > _TEXT:
         return None
     return _SECRET.sub("<redacted>", value)
 
 
 def _number(value):
+    """@brief 只接受真正的数值，bool 不算。
+
+    @param value 待检查的值。
+    @return 原值；不是数值（或为 bool）时为 ``None``。
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return value

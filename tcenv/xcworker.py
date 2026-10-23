@@ -13,6 +13,13 @@ from pathlib import Path
 
 
 def main() -> int:
+    """@brief 在 ``xctrace record`` 下反复启动一个已通过完整评测的内核。
+
+    从请求文件读取任务、内核与时长，按单核或 taic-launch 流水线两种方式循环启动，
+    并把启动次数与 dispatch group 写回请求指定的输出文件。
+
+    @return 成功时为 0；启动规格被拒绝时为 1。
+    """
     req = json.loads(Path(sys.argv[1]).read_text())
     from tasks import get_task
 

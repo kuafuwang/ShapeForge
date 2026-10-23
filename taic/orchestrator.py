@@ -53,7 +53,13 @@ INITIAL_RESTARTS = 2
 
 
 def _git_identity(root: Path) -> tuple[str, bool | None]:
-    """(commit hash, dirty). ``("unknown", None)`` when git cannot be read. This does not touch the GPU."""
+    """@brief 读取仓库的当前提交号与工作区是否脏。
+
+    git 读不到时返回 ``("unknown", None)``。本函数不接触 GPU。
+
+    @param root 仓库根目录（``git`` 命令的 ``cwd``）。
+    @return ``(commit hash, dirty)``；git 读不到时为 ``("unknown", None)``。
+    """
     try:
         commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, timeout=5, check=True).stdout.strip()
         if not commit:
@@ -68,12 +74,19 @@ _EVAL_PHASES = ("search", "confirm", "recheck", "domain")
 
 
 def eval_seed(run_seed: int, phase: str, label: str, source: str) -> int:
-    """48-bit seed for one evaluation, derived from the run seed and the candidate's identity.
+    """@brief 由运行种子和候选身份派生一次评测用的 48 位种子。
 
-    ``source`` is the kernel text before the contract header is prepended. ``phase`` is ``search``, ``confirm``, ``recheck`` or ``domain``.
-    Adding ``domain`` does not change the payload of the other phases.
-    The label is the one that exists before evaluation (``r2.p1.fix1``, ``init.s2``, ``prior``), not ``Candidate.idx``.
-    The same inputs always return the same seed. This does not control the model provider's sampling or the GPU's temperature."""
+    ``source`` 是拼接 contract 头之前的内核正文。``phase`` 取 ``search``、``confirm``、``recheck`` 或 ``domain``；
+    加入 ``domain`` 不改变其它三个 phase 的 payload。``label`` 用评测之前就存在的那个（``r2.p1.fix1``、``init.s2``、``prior``），
+    不是 ``Candidate.idx``。相同输入永远返回同一个种子。它不管模型服务端的采样，也不管 GPU 温度。
+
+    @param run_seed 整次运行的种子（``run_seed``）。
+    @param phase 评测阶段：``search``、``confirm``、``recheck`` 或 ``domain``。
+    @param label 评测之前就已确定的候选标签。
+    @param source 拼接 contract 头之前的内核正文。
+    @return 48 位整数种子。
+    @raises ValueError 当 ``phase`` 不在 ``_EVAL_PHASES`` 里时。
+    """
     if phase not in _EVAL_PHASES:
         raise ValueError(f"phase must be one of {_EVAL_PHASES}")
     source_sha256 = hashlib.sha256(source.encode("utf-8")).hexdigest()
@@ -82,6 +95,13 @@ def eval_seed(run_seed: int, phase: str, label: str, source: str) -> int:
 
 
 def _valid_run_seed(value) -> int | None:
+    """@brief 校验一个候选 ``run_seed`` 是否可用。
+
+    bool 不算整数；只接受 ``0 <= value < 2**64``。
+
+    @param value 从配置或命令行读进来、看起来像种子的值。
+    @return 合法时原样返回该整数；否则返回 None。
+    """
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     if 0 <= value < 2**64:
@@ -90,7 +110,13 @@ def _valid_run_seed(value) -> int | None:
 
 
 def _load_run_seed(run_dir: Path) -> int | None:
-    """The seed recorded for this run, or None for a run that predates ``run_seed`` (those evaluations stay random)."""
+    """@brief 读出这次运行记录的 ``run_seed``。
+
+    早于 ``run_seed`` 字段的运行返回 None，这些运行的评测保持随机。先读 ``run_seed``，没有就回退到旧的 ``seed``。
+
+    @param run_dir 运行目录（读其中的 ``run_config.json``）。
+    @return 合法种子；目录没记录或值不合法时为 None。
+    """
     doc = control.read_json(Path(run_dir) / control.CONFIG_FILE) or {}
     recorded = doc.get("run_seed")
     if recorded is None:
@@ -102,7 +128,13 @@ _RECHECK_KEYS = ("class", "task", "dtype", "size", "label", "source_sha256", "se
 
 
 def _strip_counterexample(doc):
-    """Drop VerifyResult.counterexample anywhere in a stored report. A recheck file must not carry that field."""
+    """@brief 递归删掉已存报告里任何位置的 ``VerifyResult.counterexample``。
+
+    复查文件不允许带这个字段。
+
+    @param doc 已序列化的报告（dict/list/标量）。
+    @return 去掉 ``counterexample`` 后的同构结构。
+    """
     if isinstance(doc, dict):
         return {key: _strip_counterexample(value) for key, value in doc.items() if key != "counterexample"}
     if isinstance(doc, list):
@@ -111,12 +143,22 @@ def _strip_counterexample(doc):
 
 
 def _report_without_counterexample(report: EvalReport | None):
+    """@brief 把一份 ``EvalReport`` 转成不带 counterexample 的 JSON 文档。
+
+    @param report 评测报告，可为 None。
+    @return 清洗后的 JSON 文档；``report`` 为 None 时也返回 None。
+    """
     if report is None:
         return None
     return _strip_counterexample(report.to_json())
 
 
 def _contains_counterexample(doc) -> bool:
+    """@brief 判断已序列化的文档里是否还残留 ``counterexample``。
+
+    @param doc 任意已序列化的结构（dict/list/标量）。
+    @return 任一层级（含嵌套 dict 与 list）出现该键时为 True。
+    """
     if isinstance(doc, dict):
         if "counterexample" in doc:
             return True
@@ -127,8 +169,13 @@ def _contains_counterexample(doc) -> bool:
 
 
 def check_recheck_record(doc: dict) -> list[str]:
-    """What's missing from a differential-recheck record. Empty means the record is complete enough to read offline.
-    This does not run the kernel."""
+    """@brief 检查一份差分复查记录缺了什么。
+
+    返回空列表表示这份记录完整到可以离线阅读。本函数不跑内核。
+
+    @param doc 待检查的复查记录。
+    @return 问题描述列表；空列表表示完整。
+    """
     if not isinstance(doc, dict):
         return ["the record is not an object"]
     missing = [key for key in _RECHECK_KEYS if key not in doc]
@@ -145,16 +192,40 @@ def check_recheck_record(doc: dict) -> list[str]:
 
 # GPU 挂死或 worker 连续崩溃时立刻结束整次搜索。捕获之后不再开新的评测；默认一次 timeout 就够触发它。
 class StopRun(Exception):
-    """Raised when the run must end immediately (GPU hang circuit breaker)."""
+    """@brief 整次搜索必须立刻结束时抛出的异常（GPU 挂死熔断）。
+
+    抛出之后不再开新的评测；默认 ``max_hangs`` 为 1，一次完整评测 timeout 就够触发它。
+    """
 
 
 class RunStartError(Exception):
-    """A new run was refused before any model request: the directory already holds a run, or ``run_config.json`` could not be written."""
+    """@brief 新运行在任何模型请求之前被拒绝时抛出。
+
+    拒绝发生在这两种情形：目录里已经有一次运行（拒绝覆盖既有文件），或 ``run_config.json`` 写不出去。
+    """
 
 
 # 一颗被评过（或即将评）的内核。能否成为下一轮种子不看标签，只看 eligible 加上是否快过测量噪声。
 @dataclass
 class Candidate:
+    """@brief 一颗被评过（或即将评）的内核及其评测结果。
+
+    能否成为下一轮种子不看标签，只看 ``eligible`` 加上是否快过测量噪声（``_eval`` 里的 ``_required_gain``）。
+    字段：
+
+    - ``idx``：在本场运行中的评测序号，同时是 candidates 目录名的前缀。
+    - ``label``：评测前就确定的候选标签（``r2.p1.fix1``、``init.s2``、``prior``）。
+    - ``source``：交给评测的内核正文。
+    - ``report``：``EvalReport``；还没评过时为 None。
+    - ``plan``：写这颗内核时用的规划文本，可为 None。
+    - ``cost_usd``：评到这颗时的累计花费（美元）。
+    - ``t_s``：评到这颗时的整场搜索耗时（秒）。
+    - ``is_best``：是否已成为当前种子。
+    - ``within_noise``：比当时的种子快，但优势没有超过测量噪声，不能成为下一轮种子；结束时仍可能和优胜者一起进入复测。
+    - ``recheck_rejected``：第二种子复查判了核错。搜索报告仍可能是 ok，但不能进确认池，也不能当发布胜者。
+    - ``correctness_only``：只做正确性恢复时为真：合格不看加速比，结束时也不做 ``_confirm``。
+    """
+
     idx: int
     label: str
     source: str
@@ -174,6 +245,13 @@ class Candidate:
     # 安全且数值正确（EvalReport.status 为 ok）才算合格。正式搜索还要求报告里真有 speedup；缺计时的候选不能换种子。规则在 policy.candidate_eligible。
     @property
     def eligible(self) -> bool:
+        """@brief 这颗内核是否合格。
+
+        安全且数值正确（``EvalReport.status`` 为 ok）才算合格。正式搜索还要求报告里真有 speedup；
+        缺计时的候选不能换种子。规则在 ``policy.candidate_eligible``，``correctness_only`` 时跳过加速比要求。
+
+        @return 可参与种子比较时为 True。
+        """
         report = self.report
         return candidate_eligible(
             report is not None and bool(report.eligible),
@@ -184,10 +262,22 @@ class Candidate:
     # 不合格时加速比按 0，缺失的计时不可能把当前种子挤掉。和续跑回放共用 policy.comparison_speedup。
     @property
     def speedup(self) -> float:
+        """@brief 用于比较的加速比。
+
+        不合格时按 0 算，缺失的计时不可能把当前种子挤掉；合格但缺时间的按 1 算。
+        和续跑回放共用 ``policy.comparison_speedup``。
+
+        @return 合格的加速比（缺时间为 1.0），不合格为 0.0。
+        """
         report = self.report
         return comparison_speedup(self.eligible, None if report is None else report.speedup)
 
     def brief(self) -> dict:
+        """@brief 汇总成 ``RunResult.candidates`` 里的一行。
+
+        @return 含 idx、label、plan、status、speedup、candidate_us、cost_usd、t_s、is_best 与截断到 300 字的 message 的字典；
+            没评过时 status 为 ``unevaluated``。
+        """
         r = self.report
         return {
             "idx": self.idx, "label": self.label, "plan": self.plan, "status": r.status if r else "unevaluated",
@@ -200,6 +290,42 @@ class Candidate:
 # 整次搜索的收尾记录。best_speedup 是被选中时的测量；confirmed_speedup 是结束时新种子、更多重复测出来的。budget_usd 是结束时的上限，中途加过预算后会高于 initial_budget_usd。
 @dataclass
 class RunResult:
+    """@brief 整次搜索的收尾记录。
+
+    ``best_speedup`` 是被选中时的测量；``confirmed_speedup`` 是结束时新种子、更多重复测出来的。
+    ``budget_usd`` 是结束时的上限，中途加过预算后会高于 ``initial_budget_usd``。
+    字段：
+
+    - ``run_dir``/``task``/``dtype``/``size``/``model``：运行目录与题目、模型。
+    - ``stop_reason``：停止原因（``budget_exhausted``、``max_rounds``、``converged (...)``、``gpu_hang_circuit_breaker`` 等）。
+    - ``rounds``：跑到第几轮。
+    - ``spent_usd``：结束时已花费的美元。
+    - ``budget_usd``：结束时的上限（每次加预算都会抬高）。
+    - ``best_label``：作为结果的那颗内核的标签。
+    - ``best_speedup``：选中那一刻的加速比，不是复测值；复测若改了优胜者，这里仍是该内核在搜索过程中的测量。
+    - ``confirmed_speedup``：新种子、两倍重复次数下的加速比，用来压掉「多次噪声测量里挑最大值」。
+    - ``confirmed_status``：确认阶段的状态（``ok``、``uncertain`` 或失败状态）。
+    - ``confirmed_values``：确认阶段每一批的值。
+    - ``confirmed_worst``/``confirmed_best``：确认阶段最差与最好的那一批；发布的是中位数，这两个字段让人看见区间。
+    - ``confirmations``：每一颗被重测的候选（优胜者与噪声范围内的并列者）。
+    - ``baseline_us``/``candidate_us``：确认那份报告的基线与候选微秒数。
+    - ``evaluations``：上过 GPU 的评测次数。
+    - ``hangs``：挂死次数。
+    - ``trace``：每个评过的候选一行，按顺序。
+    - ``candidates``：每个候选的 ``Candidate.brief()``。
+    - ``ledger``：账本摘要。
+    - ``profiles``：搜索期间对慢种子抓的 Instruments 痕迹（``search.profile_poor``）。
+    - ``initial_budget_usd``：开跑时的预算（与结束时的 ``budget_usd`` 在上调后不同）。
+    - ``budget_events``：每一次生效的预算变动（实时加预算与续跑），从旧到新。
+    - ``resumes``：中断或预算停止之后续跑了几次。
+    - ``search_seed_label``：搜索停下时正在被改动的那颗内核；确认可能发布另一颗。
+    - ``search_seed_speedup``：那颗内核在搜索过程中的加速比。
+    - ``confirm_winner_label``：新种子复测留下来的内核；确认没跑时为 None。
+    - ``confirmation_source_sha256``：被确认优胜者的内核正文 sha256；确认没绑定源码时为 None。
+    - ``target_id``/``backend``/``backend_version``/``protocol_version``：目标与协议标识。
+    - ``session_budget_stop``：停止是因为剩余预算不足以再跑一场最近规模的会话；这是预算停止，但 control 文件里加预算不应默默继续它。
+    """
+
     run_dir: str
     task: str
     dtype: str
@@ -246,12 +372,26 @@ class RunResult:
 
 # 源码的内容身份：评测缓存、复测去重、profiler 缓存都用它。同一份文本不会被当成两个内核。
 def _sha(source: str) -> str:
+    """@brief 源码的内容身份。
+
+    评测缓存、复测去重、profiler 缓存都用它。同一份文本不会被当成两个内核。
+
+    @param source 内核正文。
+    @return sha1 十六进制串。
+    """
     return hashlib.sha1(source.encode()).hexdigest()
 
 
 # 回复里抽不出带约定内核名的 Metal 块时追问的那一句。抽失败只消耗这一问，不会产生候选，也不会上 GPU。
 def nudge_user(kernel_name: str, *, source_fence: str) -> str:
-    """The reminder sent when a reply holds no fenced block defining the kernel."""
+    """@brief 回复里抽不出带约定内核名的 fenced 块时送去追问的那一句话。
+
+    抽失败只消耗这一问，不会产生候选，也不会上 GPU。
+
+    @param kernel_name 契约要求的内核名（``kernel void {kernel_name}``）。
+    @param source_fence 后端要求的代码块语言标记（例如 ``metal``）。
+    @return 追问文本。
+    """
     return (
         f"Your reply did not contain a ```{source_fence} code block defining `kernel void {kernel_name}`, "
         f"or a ```{source_fence} block with a /* taic-launch */ section and at least one `kernel void`. "
@@ -260,7 +400,13 @@ def nudge_user(kernel_name: str, *, source_fence: str) -> str:
 
 
 def _strip_reasoning(messages: list[dict]) -> list[dict]:
-    """A copy of ``messages`` without ``reasoning_content``. A truncated thinking trace is tens of thousands of tokens and buys nothing on the retry."""
+    """@brief 返回一份去掉了 ``reasoning_content`` 的 ``messages`` 副本。
+
+    截断的思考链可达数万 token，重试时毫无收益。
+
+    @param messages 对话消息列表。
+    @return 新的消息列表；assistant 消息里的 ``reasoning_content`` 被删掉。
+    """
     out = []
     for m in messages:
         if m.get("role") == "assistant" and "reasoning_content" in m:
@@ -270,11 +416,14 @@ def _strip_reasoning(messages: list[dict]) -> list[dict]:
 
 
 def _retry_without_reasoning(messages: list[dict]) -> list[dict]:
-    """The follow-up after a length-capped reply that contained no kernel.
+    """@brief 长度被截断、且回复里没有内核时的追问消息。
 
-    The echoed reasoning is dropped. An assistant turn with no visible text is dropped too, so the same question is asked again
-    instead of being continued from an empty reply. ``experiments/truncation_replay.py`` compares this with the other arms; change
-    this function if that replay picks a different winner.
+    回显的 reasoning 被删掉。只剩空白可见文本的 assistant 轮也一并删掉，这样同一个问题会被重新问一遍，
+    而不是从一条空回复继续往下。``experiments/truncation_replay.py`` 拿它和其它尝试对比；
+    如果那次回放选出别的赢家，要改的就是这个函数。
+
+    @param messages 上一轮的消息列表。
+    @return 删掉 reasoning 与空 assistant 轮之后的新消息列表。
     """
     messages = _strip_reasoning(messages)
     if messages and messages[-1].get("role") == "assistant" and not (messages[-1].get("content") or "").strip():
@@ -284,7 +433,14 @@ def _retry_without_reasoning(messages: list[dict]) -> list[dict]:
 
 # 种子慢于最强基线时，附在规划与每一路补丁反馈后面的 Instruments 文字。抓取失败或没开 profile_poor 时根本不会用到它，搜索照常进行。
 def profiler_evidence_text(body: str) -> str:
-    """The text appended to the feedback of the planner and of every patch author when a seed was traced; ``body`` is what ``profiles/r*_<seed>.txt`` holds."""
+    """@brief 种子被 Instruments 抓过痕迹后，附在规划与每一路补丁反馈后面的文字。
+
+    种子慢于最强基线时才用得上；抓取失败或没开 ``profile_poor`` 时根本不会调用它，搜索照常进行。
+    ``body`` 就是 ``profiles/r*_<seed>.txt`` 的内容。
+
+    @param body Instruments 痕迹的文本形式。
+    @return 追加到反馈末尾的提示文字（含读法说明与 ``body``）。
+    """
     return (
         "\n\nProfiler evidence for this kernel (Instruments Metal System Trace; taken because the kernel is slower than the strongest baseline). "
         "Read it with the \"Instruments trace\" section of Skill 2. Name the finding or counter that your diagnosis rests on (spills, the saturated limiter, low occupancy, ...) "
@@ -293,9 +449,14 @@ def profiler_evidence_text(body: str) -> str:
 
 
 def _notes_for_next(outer: str, notes: str, limit: int = 2500) -> str:
-    """The next session's NOTES block. The outer measurement is the first line, written by the search, not by the agent.
+    """@brief 下一场会话 NOTES 块的内容。
 
-    Notes are appended, so a truncated file keeps the newest lines.
+    外层实测那一行由搜索写、不由 agent 写，固定在第一行。notes 是追加的，所以文件被截断时留下的是最新几行。
+
+    @param outer 外层实测的一行摘要。
+    @param notes 本场会话写下的 notes。
+    @param limit notes 最多保留的字符数，超出时从头部截断。
+    @return 以 ``外层实测：<outer>`` 开头的文本。
     """
     body = (notes or "").strip()
     if len(body) > limit:
@@ -304,7 +465,13 @@ def _notes_for_next(outer: str, notes: str, limit: int = 2500) -> str:
 
 
 def _operation_bound(report) -> str:
-    """One line from the report's roofline and baselines. Empty when either number is missing."""
+    """@brief 从报告的 roofline 与基线里取出一行说明。
+
+    两个数缺一个就返回空串。下界高于基线时追加一句：不减少运算量的写法不可能超过它。
+
+    @param report 评测报告。
+    @return 一行中文说明，或空串。
+    """
     from .feedback_extra import _roof_and_baselines
 
     roof, bases = _roof_and_baselines(report)
@@ -321,14 +488,26 @@ def _operation_bound(report) -> str:
 
 # 加速比是两次中位数之比。标准误的公式在 tcenv.bench，这里只按报告取出 cv 和 reps。没有逐次样本，也不把它叫成置信区间。
 def speedup_se(rep: EvalReport | None) -> float:
-    """Approximate relative standard error of a measured speedup. 0 when the report has no timing statistics.
-    Not a confidence interval."""
+    """@brief 一次测得加速比的近似相对标准误。
+
+    加速比是两次中位数之比，公式在 ``tcenv.bench``，这里只按报告取出 cv 和 reps。报告里没有计时统计时返回 0。
+    没有逐次样本，也不把它叫成置信区间。
+
+    @param rep 评测报告，可为 None。
+    @return 相对标准误；无统计数据时为 0。
+    """
     from tcenv.bench import speedup_se_of_report
 
     return speedup_se_of_report(rep)
 
 
 class Orchestrator:
+    """@brief 一次搜索的全部状态与主循环。
+
+    美元上限放进 ``CostLedger``；补丁的模型请求可以重叠，GPU 评测则共用一把 ``gpu_lock``，不能同时量。
+    每次搜索有两个委员会（``first`` 与 ``second``），一轮一场 hmz 会话，共用同一本账和同一份会话记录。
+    """
+
     # 一次搜索的全部状态。美元上限放进 CostLedger；K 路补丁的模型请求可以重叠，GPU 评测则共用一把 gpu_lock，不能同时量。
     def __init__(
         self,
@@ -351,8 +530,32 @@ class Orchestrator:
         target_id: str = "apple-m4-max",
         from_catalog: bool = False,
     ) -> None:
-        """``resuming``: the directory already holds a run (see ``taic.resume``); nothing in it is rewritten until ``restore()`` has loaded it.
-        ``committees``: exactly first and second. Omitted means two committees that copy ``llm_cfg``. There is no single-conversation mode."""
+        """@brief 装配一次搜索的全部状态，并写出 ``run_config.json`` 与首份 ``state.json``。
+
+        ``resuming``：目录里已经有一次运行（见 ``taic.resume``）；在 ``restore()`` 把它装回来之前，不写其中任何东西。
+        ``committees``：恰好两个，first 与 second；省略表示两个都复制 ``llm_cfg``。没有单会话模式。
+        新运行不接管已经有文件的目录（目录锁不算文件）；续跑才读既有目录，且不改写 ``run_config.json``、不重新抽 ``run_seed``。
+        配置写失败就停在这里：还没有账本、会话记录和 ``state.json``，也不会进入 ``run()``。
+
+        @param task_name 任务名（``tasks.get_task``）。
+        @param dtype 数据类型。
+        @param size 尺寸。
+        @param llm_cfg 模型配置（模型、端点、密钥、价格等）。
+        @param search 搜索配置（轮数、预算、噪声门槛、确认批次等）。
+        @param run_dir 运行目录；None 时在 ``runs/<target_id>/<时间戳>_<task>_<dtype>_<model>`` 下新建。
+        @param evaluate_fn 评测函数；None 时用 ``tcenv.evaluate.evaluate``。
+        @param client 注入的 HTTP 客户端或脚本客户端（测试用）。
+        @param log 日志输出函数，默认 ``print``。
+        @param seed 显式指定的 ``run_seed``；None 时随机抽 64 位。
+        @param resuming 目录里已有一次运行，按续跑处理。
+        @param from_run ``--from`` 指向的既有运行目录。
+        @param committees 委员会列表；None 时由 ``llm_cfg`` 生成 first 与 second。
+        @param agent_runner 写核函数（测试注入）；None 时走 hmz。
+        @param external_roots 扫「别的运行里的核」的根目录；None 表示默认扫仓库 ``runs/``。
+        @param target_id 目标设备 id。
+        @param from_catalog 从 kernel catalog 取上一版内核。
+        @raises RunStartError 目标不可用、委员会配置非法、``--seed`` 越界、目录已有文件，或 ``run_config.json`` 写失败时。
+        """
         cached = get_task(task_name, dtype, size)
         from dataclasses import replace
         from tcenv.target import TargetError, require_active
@@ -472,16 +675,23 @@ class Orchestrator:
 
     # 续跑要把上一会话已经花掉的墙钟算进去，否则轨迹上的时间从 0 重新开始，和账本对不上。
     def _elapsed(self) -> float:
-        """Search time of the whole run, including earlier sessions of a resumed one."""
+        """@brief 整场搜索的耗时，含续跑前各会话已经花掉的墙钟。
+
+        @return 秒数。
+        """
         return self._t_offset + (time.time() - self.t0)
 
     # 第 1 轮和初始稿是 first；之后按轮号在两个委员会之间换。续跑只看轮号，不看上一轮的对话。
     def _activate_round(self, rnd: int) -> None:
-        """Bind the committee for round ``rnd``. The name changes even when the model id does not.
+        """@brief 绑定第 ``rnd`` 轮使用的委员会。
 
-        The same base URL, key and model keep the HTTP client. A changed model id updates the ledger's prices.
-        A different endpoint or key opens another client on the same ledger and transcript. A client passed
-        in by a test is reused for both committees, so one scripted queue serves the whole run."""
+        第 1 轮和初始稿用 first；之后按轮号在两个委员会之间换，模型 id 没变时名字也照样换。
+        端点、密钥、模型都相同时沿用现有 HTTP 客户端；模型 id 变了就同步账本里的价格。
+        端点或密钥不同则在同一个账本、同一份会话记录上另开一个客户端。测试注入的客户端被两个委员会共用，
+        所以一条脚本队列能服务整场运行。续跑只看轮号，不看上一轮的对话。
+
+        @param rnd 轮号（0 或 1 都落到 first）。
+        """
         committee = self.committees[(max(int(rnd), 1) - 1) % 2]
         self._committee_name = committee.name
         nxt = committee.members[0].cfg
@@ -497,14 +707,25 @@ class Orchestrator:
         self._open_llm(nxt, update_prices=not same_model)
 
     def _use_cfg(self, cfg: LLMConfig) -> None:
-        """Keep the current HTTP client and follow ``cfg``. The model id changed, so the ledger prices follow it too."""
+        """@brief 沿用当前 HTTP 客户端，只把配置换成 ``cfg``。
+
+        这是模型 id 变了的情形，所以账本的价格也跟着换；``cfg.api_key`` 会被登记进会话记录的脱敏列表。
+
+        @param cfg 新的模型配置。
+        """
         if cfg.api_key:
             self.llm.transcript._secrets = list({*self.llm.transcript._secrets, cfg.api_key})
         self.llm.cfg = cfg
         self.ledger.cfg = cfg
 
     def _open_llm(self, cfg: LLMConfig, *, update_prices: bool) -> None:
-        """A different endpoint or key: a new client, the same ledger and the same transcript. Closed with the others at the end of ``run``."""
+        """@brief 端点或密钥不同时另开一个客户端，账本与会话记录不变。
+
+        新客户端和其它客户端一样在 ``run`` 结束时关闭。
+
+        @param cfg 新的模型配置。
+        @param update_prices 是否同步账本里的价格（模型 id 变过时为 True）。
+        """
         fresh = LLM(cfg, self.ledger, self.llm.transcript, client=None, max_concurrency=self._llm_slots)
         fresh.progress_path = self.llm.progress_path
         self._llms.append(fresh)
@@ -513,13 +734,22 @@ class Orchestrator:
             self.ledger.cfg = cfg
 
     def _handoff(self, rnd: int) -> str:
-        """Empty on the initial draft and on round 1. Every later round names its committee, including when the model id is unchanged."""
+        """@brief 轮次边界上的交接提示。
+
+        初始稿与第 1 轮返回空串。之后每一轮都点名它所属的委员会，模型 id 没变时也点名。
+
+        @param rnd 轮号。
+        @return 交接文本；第 1 轮及以前为空串。
+        """
         if rnd <= 1:
             return ""
         return handoff_for(self.committees[(rnd - 1) % 2].name)
 
     async def _close_clients(self) -> None:
-        """Close every HTTP client this run opened. A scripted client has nothing to close."""
+        """@brief 关闭本次运行开过的所有 HTTP 客户端。
+
+        同一个客户端只关一次；脚本客户端没有东西要关。
+        """
         seen: set[int] = set()
         for llm in self._llms:
             ident = id(llm.client)
@@ -530,10 +760,14 @@ class Orchestrator:
 
     # 给 `taic resume` 留的设置。故意不写 API key 和端点。写失败向上抛，调用方不得进入 run()。
     def _write_run_config(self) -> None:
-        """The settings of this run, for ``taic.cli resume`` (no credentials: the API key and the endpoint stay out of it).
+        """@brief 写下这次运行的设置，供 ``taic.cli resume`` 使用。
 
-        Raises ``RunStartError`` when the file cannot be written. The directory created for this attempt may stay empty;
-        an older run directory is never deleted or overwritten (that case is refused before this method)."""
+        故意不写凭据：API key 与端点都不进这个文件。文件写不出去时抛 ``RunStartError``，调用方不得进入 ``run()``。
+        这次尝试新建的目录可能留空；既有的旧运行目录永不删除或覆盖（那种情况在本方法之前就被拒绝）。
+        内容含运行种子、委员会、系统提示与契约的哈希、git 身份，以及「成本可能不完整」的说明。
+
+        @raises RunStartError 当 ``run_config.json`` 或 ``system_prompt.txt`` 写失败时。
+        """
         llm = {k: v for k, v in asdict(self.cfg).items() if k not in ("api_key", "base_url")}
         contract_text = self.task.contract.describe()
         triton_text = self.task.triton_source
@@ -573,10 +807,12 @@ class Orchestrator:
             raise RunStartError(f"cannot start: run_config.json was not written ({e})") from e
 
     def _agent_guidance_record(self) -> dict:
-        """Freeze the two files copied into every session, and record the skill hash.
+        """@brief 冻结每场会话都会用到的指引文件，并记下 skill 的哈希。
 
-        A resume reads this directory and does not copy the repository again. The skill file
-        stays where hmz loads it; only its hash is recorded.
+        ``device.md``、``experience.md`` 与后端的 reference skill 被抄进 ``agent_guidance/``；续跑读这份目录，
+        不再从仓库抄一次。skill 文件留在 hmz 加载它的位置，只记哈希。
+
+        @return 文件名到 sha256 的映射（含 ``SKILL.md``）。
         """
         from .kernel_agent import FLOW
         from .target import skill_path
@@ -598,11 +834,13 @@ class Orchestrator:
         return hashes
 
     def _cache_this(self, source: str) -> bool:
-        """A report saved before launch_protocol is not a verdict for a taic-launch kernel.
+        """@brief 这份源码的报告能不能进评测缓存。
 
-        Runs started by this code write ``launch_protocol: 1``. A resumed directory that lacks the key
-        was evaluated by the single-kernel path, so a source that contains the marker is evaluated again
-        the next time the search asks for it.
+        ``launch_protocol`` 之前存下的报告不是 taic-launch 内核的判决。本代码启动的运行会写 ``launch_protocol: 1``；
+        缺这个键的续跑目录是单内核路径评出来的，所以带 marker 的源码下次被搜索要它时会重新评一遍。
+
+        @param source 内核正文。
+        @return 可以缓存为 True；带 ``taic-launch`` 标记且目录协议不符时为 False。
         """
         if "taic-launch" not in source:
             return True
@@ -615,7 +853,15 @@ class Orchestrator:
 
     # control.json 在下一次预算闸门被接受之后通知这里。上限只升不降到已花费之下（这是 refresh_budget 的不变量）；本函数把新上限同步到 search.budget_usd，搜索继续，而不是停掉。
     def _budget_changed(self, old: float, new: float, doc: dict) -> None:
-        """The ledger took a new total budget from the run's control file."""
+        """@brief 账本从运行目录的 control 文件拿到了一份新的总预算。
+
+        ``control.json`` 在下一次预算闸门被接受之后才通知这里。上限只升不降到已花费之下（这是 ``refresh_budget``
+        的不变量）；本函数把新上限同步到 ``search.budget_usd``，搜索继续而不是停掉，并记一条 budget event、刷新 ``state.json``。
+
+        @param old 旧上限（美元）。
+        @param new 新上限（美元）。
+        @param doc control 文件内容（读其中的 ``who``）。
+        """
         self.search.budget_usd = new
         who = str(doc.get("who") or "dashboard")
         self.log(f"  budget ${old:.2f} -> ${new:.2f} (requested by {who}; spent ${self.ledger.total_usd:.3f})")
@@ -626,7 +872,13 @@ class Orchestrator:
 
     # 控制文件里的 max_rounds / patience 只升不降。仪表盘的「重置」用它去掉次数上限；搜索仍会在新预算花完时停下。
     def _control_limits(self, doc: dict) -> None:
-        """Raise ``max_rounds`` and ``patience`` when the control file asks for a higher value."""
+        """@brief control 文件要求更大值时抬高 ``max_rounds`` 与 ``patience``。
+
+        这两个上限只升不降。仪表盘的「重置」用它去掉次数上限；搜索仍会在新预算花完时停下。
+        生效后打一行日志并刷新 ``state.json``。
+
+        @param doc control 文件内容。
+        """
         notes = []
         for key in ("max_rounds", "patience"):
             raw = doc.get(key)
@@ -643,7 +895,14 @@ class Orchestrator:
 
     # 给外部看板写 state.json。写失败被吞掉，搜索不能因为看板上的一次 IO 错误停下来。
     def _publish_state(self, phase: str | None = None, *, inflight: str | None = None, stop_reason: str = "") -> None:
-        """Rewrite ``state.json``. A failure here must not stop the search."""
+        """@brief 重写 ``state.json`` 给外部看板。
+
+        写失败被吞掉：搜索不能因为看板上的一次 IO 错误停下来。
+
+        @param phase 阶段名；None 时沿用当前阶段。
+        @param inflight 正在飞的会话标签，可为 None。
+        @param stop_reason 停止原因，运行中为空串。
+        """
         if phase is not None:
             self._phase = phase
         try:
@@ -695,9 +954,19 @@ class Orchestrator:
     # ------------------------------------------------------------------ resume
     # 把上一会话装回来再继续，而不是从头生成。已评过的稳定结论进缓存；timeout 与 crash 不进。上一会话的 hangs 一并恢复，已经触达 max_hangs 的运行，续跑后第一次完整评测仍会停掉整次搜索。
     def restore(self, snap: Any, *, dry_run: bool = False) -> None:
-        """Load an earlier session of this run (``snap`` is a ``taic.resume.Snapshot``) so that ``run()`` continues it: the cost ledger, every candidate with its
-        report, the best kernel, the evaluation cache, the trace, the hypotheses already tried, the counters and the profiler evidence.
-        ``dry_run`` loads everything but writes nothing (no transcript marker, no state.json)."""
+        """@brief 把上一场会话装回来，让 ``run()`` 接着跑而不是从头生成。
+
+        ``snap`` 是 ``taic.resume.Snapshot``。装回账本、每个候选及其报告、最优内核、评测缓存、轨迹、
+        已经试过的假设、计数器和 profiler 证据。已评过的稳定结论进缓存；``timeout`` 与 ``crash`` 不进（那是环境故障，
+        不是这颗内核的永久判决）。上一会话的 hangs 一并恢复，已经触达 ``max_hangs`` 的运行，续跑后第一次完整评测仍会停掉整次搜索。
+        系统提示沿用开跑时那份（前缀缓存与实验条件不变），提示文件后来改了也不换。
+        续跑的委员会由将要进入的轮号决定，不把上一轮的对话带进来。
+
+        ``dry_run`` 只把状态装进内存，什么都不写（不写会话记录 marker，也不写 ``state.json``）。
+
+        @param snap 续跑快照。
+        @param dry_run 只装载不落盘（跳过快照会话记录与 ``state.json``）。
+        """
         self.ledger.restore(snap.requests)
         self.ledger.initial_budget_usd = snap.initial_budget_usd
         self.ledger.t0 = time.time() - (snap.requests[-1].get("t") or 0.0 if snap.requests else 0.0)
@@ -764,6 +1033,14 @@ class Orchestrator:
     # ------------------------------------------------------------------ evaluation
     # 每个评过的候选都留在 run 目录里。搜索中途停下，或稍后 restore，仍能对照当时的反馈。
     def _save(self, c: Candidate) -> None:
+        """@brief 把一颗候选的源码、报告与反馈写进它自己的目录。
+
+        每个评过的候选都留在 run 目录里，搜索中途停下或稍后 restore，仍能对照当时的反馈。
+        写入用原子替换：写到一半被杀掉时，留下的是整份旧的或整份新的，不会出现「截断的源码配完整报告」。
+        写报告前会把当时种子的实测微秒数记进 ``benchmark['seed_gpu_us_median']``。
+
+        @param c 要写盘的候选。
+        """
         d = self.run_dir / "candidates" / f"{c.idx:03d}_{c.label}"
         d.mkdir(parents=True, exist_ok=True)
         # 原子替换：写到一半被杀掉时，留下的是整份旧的或整份新的，不会出现「截断的源码配完整报告」。
@@ -778,12 +1055,35 @@ class Orchestrator:
 
     # a 必须比 b 快出这么多倍才算真正变快：至少 min_improvement，并且要盖过两者加速比标准误合成后再乘 noise_z。差一点只记 within_noise，不能当下一轮种子。
     def _required_gain(self, a: Candidate, b: Candidate) -> float:
-        """Factor by which ``a`` must be measured faster than ``b`` before it counts as faster."""
+        """@brief ``a`` 要比 ``b`` 快多少倍才算真正变快。
+
+        至少是 ``min_improvement``，并且要盖过两者加速比标准误合成后再乘 ``noise_z``。差一点只记 ``within_noise``，
+        不能当下一轮种子。
+
+        @param a 待比较的候选。
+        @param b 参照的候选（通常是当前种子）。
+        @return 需要的加速比倍数。
+        """
         return required_gain(self.search.min_improvement, self.search.noise_z, speedup_se(a.report), speedup_se(b.report))
 
     # 一颗候选的完整评测，也是唯一更新当前种子的地方。不安全、算错、或快不过测量噪声，都留在记录里但种子不变。默认 max_hangs 为 1，所以一次 timeout 就抛 StopRun，整次搜索停；连续 3 次 crash 同样停。
     async def _eval(self, source: str, label: str, *, plan: str | None = None) -> Candidate:
-        """Full evaluation of a candidate (serialized on the GPU). Updates best/trace and enforces the hang breaker."""
+        """@brief 一颗候选的完整评测（在 GPU 上串行），也是唯一更新当前种子的地方。
+
+        不安全、算错、或快不过测量噪声的候选都留在记录里，但种子不变。默认 ``max_hangs`` 为 1，所以一次 timeout
+        就抛 ``StopRun`` 停掉整次搜索；连续 3 次 crash 同样停。贴回来的内核（与当前种子、本场更早的候选、
+        别的运行里的核逐字相同）不送 GPU，直接记 ``unchanged`` / ``duplicate`` / ``external_duplicate``。同一源码的稳定
+        结论可复用缓存里的报告，但要沿用当时那份报告的 seed，不能把它说成一次新种子上的测量；``timeout`` 与 ``crash`` 不进缓存。
+        ``search.differential_recheck`` 打开时，将要升种子或落入噪声内并列的候选先用另一颗种子做不计时的正确性复查，
+        复查不过就不升种子；复查在这把 ``_promote_lock`` 里等待，另一条分支不能同时对着旧种子通过比较。
+        评测结束后写盘、追加 ``trace``、刷新 ``state.json`` 并打一行日志。
+
+        @param source 内核正文。
+        @param label 候选标签。
+        @param plan 写这颗内核时用的规划文本，可为 None。
+        @return 评测完（或复用结论）的候选。
+        @raises StopRun 当 hangs 已达 ``max_hangs``（排队的评测不再上 GPU），或连续三次 worker 崩溃时。
+        """
         cand = Candidate(idx=len(self.candidates), label=label, source=source, plan=plan, correctness_only=self.search.correctness_only)
         copied = self._copied_report(source)
         self.candidates.append(cand)
@@ -870,23 +1170,45 @@ class Orchestrator:
         return cand
 
     def _parent_of(self, label: str) -> str | None:
+        """@brief 找出一个标签所属分支的父标签。
+
+        在 ``_branch_parent`` 里查找：键既匹配标签本身，也匹配以 ``键 + "."`` 开头的标签（例如 ``r2.p1`` 的
+        ``r2.p1.fix1``）。结果写进 trace 的 ``parent_label``。
+
+        @param label 候选标签。
+        @return 父标签；没有记录时为 None。
+        """
         for key, parent in self._branch_parent.items():
             if label == key or label.startswith(key + "."):
                 return parent
         return None
 
     def _phase_seed(self, phase: str, label: str, source: str) -> int | None:
-        """Derived seed for a recorded run. None keeps the evaluator's own random draw (runs with no ``run_seed``)."""
+        """@brief 记录过种子的运行里，某个阶段该用的派生种子。
+
+        没有 ``run_seed`` 的运行返回 None，让评测器自己随机抽。
+
+        @param phase 评测阶段（``search``/``confirm``/``recheck``/``domain``）。
+        @param label 评测前就确定的标签。
+        @param source 内核正文。
+        @return 派生种子；运行没有 ``run_seed`` 时为 None。
+        """
         if self.run_seed is None:
             return None
         return eval_seed(self.run_seed, phase, label, source)
 
     async def _differential_recheck(self, cand: Candidate, speed_relation: str) -> dict | None:
-        """Correctness-only recheck on the ``recheck`` seed. Returns None when it passes.
+        """@brief 用 ``recheck`` 种子做一次不计时的正确性复查。
 
-        A returned document means the candidate is not promoted. ``timeout`` and ``crash`` set the existing hang
-        counters and are marked ``counts_as_kernel_error`` false, so they are not cached as a wrong kernel.
-        The document is not a ``VerifyResult`` and has no ``counterexample``."""
+        通过时返回 None。返回文档就表示这颗候选不升种子。``timeout`` 与 ``crash`` 只推进既有的挂死/崩溃计数，
+        并把 ``counts_as_kernel_error`` 记为 false，所以它们不会被当成「内核算错」缓存下来。
+        返回的文档不是 ``VerifyResult``，也不带 ``counterexample``。
+
+        @param cand 待复查的候选。
+        @param speed_relation 与当前种子的关系（``new_best`` 或 ``within_noise``），写进记录。
+        @return 失败记录；复查通过时为 None。
+        @raises StopRun 当 hangs 已达 ``max_hangs`` 时（不再上 GPU）。
+        """
         phase_seed = self._phase_seed("recheck", cand.label, cand.source)
         async with self.gpu_lock:
             if self.hangs >= self.search.max_hangs:
@@ -912,7 +1234,18 @@ class Orchestrator:
         return self._failure_record(cand, rep, phase_seed, speed_relation, kernel_error)
 
     def _failure_record(self, cand: Candidate, rep: EvalReport, phase_seed: int | None, speed_relation: str, kernel_error: bool) -> dict:
-        """Metadata for a failed remeasure. The retest command is for a person to run; this method does not run it."""
+        """@brief 为一次失败的重测整理一份记录。
+
+        重测命令是给人跑的，本方法不运行它（``human_permission_required`` 恒为 True）。记录里不含 ``counterexample``，
+        两份报告按 ``_report_without_counterexample`` 清洗，``check_recheck_record`` 要求的键都会写齐。
+
+        @param cand 被判失败的候选。
+        @param rep 这次重测的报告。
+        @param phase_seed 使用的派生种子，可为 None。
+        @param speed_relation 与当前种子的关系（``new_best``/``within_noise``/``confirm``）。
+        @param kernel_error 是否算作内核错误（``timeout``/``crash`` 为 False）。
+        @return 复查记录字典。
+        """
         search_seed = cand.report.seed if cand.report is not None else None
         recheck_seed = phase_seed if phase_seed is not None else rep.seed
         case = None
@@ -944,6 +1277,11 @@ class Orchestrator:
         }
 
     def _store_recheck(self, cand: Candidate, doc: dict) -> None:
+        """@brief 把复查记录写进候选目录，并另存一份到 ``rechecks/<label>.json``。
+
+        @param cand 被复查的候选。
+        @param doc ``_failure_record`` 产出的记录。
+        """
         text = json.dumps(doc, indent=1, default=str)
         control.write_text_atomic(self.run_dir / "candidates" / f"{cand.idx:03d}_{cand.label}" / "differential_recheck.json", text)
         folder = self.run_dir / "rechecks"
@@ -954,6 +1292,16 @@ class Orchestrator:
     # ------------------------------------------------------------------ main loop
     # 整次运行的外壳。预算耗尽、GPU 挂死或模型错误在这里收成 stop_reason。挂死时 hangs 已达上限，_confirm 会跳过；预算耗尽仍会复测已有种子，因为复测不再发模型请求。
     async def run(self) -> RunResult:
+        """@brief 整次运行的外壳：搜索、control 文件续轮、确认、可选 profiling、收尾。
+
+        预算耗尽、GPU 挂死或模型错误在这里收成 ``stop_reason``。挂死时 ``hangs`` 已达上限，``_confirm`` 会跳过；
+        预算耗尽仍会复测已有种子，因为复测不再发模型请求。搜索停下后 ``_control_extends`` 会再读一次 control 文件，
+        允许时先补跑轮次再进确认。确认、profiling 和关闭 client 都在收尾面上：任何一处抛异常，仍然必须写出
+        ``result.json`` / ``best.metal`` / ``ledger.json``，而不是让一场已付费的搜索只剩 ``state.json``。
+
+        @return 收尾记录 ``RunResult``。
+        @raises RunStartError 当写核方式不是 hmz、``branches``/``init_samples`` 不是 1，或 hmz 预检失败时。
+        """
         res = RunResult(run_dir=str(self.run_dir), task=self.task_name, dtype=self.dtype, size=self.size, model=self.cfg.model, budget_usd=self.ledger.budget_usd)
         resumed = self._resume is not None
         self._guard_shape()
@@ -1028,10 +1376,14 @@ class Orchestrator:
         return self._finish(res)
 
     def _control_extends(self, res: RunResult) -> bool:
-        """True when a control-file change arrived after the search stopped and the new limits allow another round.
+        """@brief 搜索停下后 control 文件带来的改动是否允许再跑一轮。
 
-        Confirmation used to be the last GPU work, so a top-up written during it was never read and a finished
-        non-budget stop could not be resumed. The file is read here, before that confirmation.
+        确认曾经是最后一段 GPU 工作，所以在它期间写下的加预算永远不会被读到，一次已经结束的非预算停止也无法续上。
+        文件就在这里读，在确认之前。``session_budget_stop`` 只在余额还够一次最近规模的会话时才继续；
+        熔断类原因（挂死、连续崩溃、agent 失败、LLM 错误、成本不完整、会话成本下限）一律不再继续。
+
+        @param res 收尾记录（读它的 ``stop_reason`` 与 ``session_budget_stop``）。
+        @return 可以再跑一轮为 True。
         """
         self.ledger.refresh_budget()
         if res.session_budget_stop:
@@ -1052,16 +1404,37 @@ class Orchestrator:
 
     @property
     def kernel_name(self) -> str:
+        """@brief 运行目录里内核文件的文件名。
+
+        由目标的 ``file_ext`` 决定（缺省 ``.metal``），名字一律以 ``kernel`` 开头。
+
+        @return 例如 ``kernel.metal``。
+        """
         ext = self.target.file_ext or ".metal"
         return f"kernel{ext if str(ext).startswith('.') else '.' + str(ext)}"
 
     @property
     def best_name(self) -> str:
+        """@brief 运行目录里优胜者文件的文件名。
+
+        把 ``kernel_name`` 的 ``kernel`` 前缀换成 ``best``。
+
+        @return 例如 ``best.metal``。
+        """
         return "best" + self.kernel_name[len("kernel"):]
 
     # --from 只在 best.metal 存在、且 result.json 里的题和这次一致时才把源码交回来。对不上或没有文件就返回 None，调用方从头写。
     def _prior_kernel_text(self) -> str | None:
-        """The previous run's ``best.metal`` when it belongs to this task, else None. The caller re-evaluates it."""
+        """@brief ``--from`` 指向上一次运行时的 ``best.metal`` 正文。
+
+        只在 ``best.metal`` 存在、且 ``result.json`` 里的题（task/dtype/size）与这次一致时才把源码交回来；
+        对不上或没有文件就返回 None，调用方从头写。``from_catalog`` 时改从 kernel catalog 取。
+        文件在但读不了、或版本比这份代码新时抛 ``RunStartError``，不能当成「没有成绩」再从头写一版。
+        调用方会重新评测这份源码。
+
+        @return 上一版内核正文；拿不到时为 None。
+        @raises RunStartError 当 ``result.json`` 需要人工检查（``NeedsInspection``）时。
+        """
         if self.from_catalog:
             from .kernel_catalog import catalog_dir
 
@@ -1104,6 +1477,14 @@ class Orchestrator:
 
     # 初始生成，然后进入逐轮「诊断 → 规划 → K 路补丁」。只有 _eval 认定安全、算对且快过噪声的候选才会变成下一轮种子。
     async def _search(self, res: RunResult) -> None:
+        """@brief 全新搜索：先初始生成，再进入逐轮「诊断 → 规划 → 补丁」。
+
+        只有 ``_eval`` 认定安全、算对且快过噪声的候选才会变成下一轮种子。``--from`` 给了上一版内核且它仍然合格时，
+        先评测它并跳过初始生成。初始生成最多重开 ``INITIAL_RESTARTS`` 次；一次都没有合格种子就把 ``stop_reason``
+        写成 ``no_valid_initial_kernel`` 并返回，后面的轮次不会开始。
+
+        @param res 收尾记录（写 ``stop_reason`` 与 ``rounds``）。
+        """
         # 1. initial implementation, unless the user pointed at a previous kernel that is still eligible
         self._round = 0
         self._publish_state("llm")
@@ -1126,7 +1507,14 @@ class Orchestrator:
         await self._rounds(res, 1, 0)
 
     def _copied_report(self, source: str) -> EvalReport | None:
-        """A mechanical refusal for a kernel that was pasted back, or None when the source has to be measured."""
+        """@brief 贴回来的内核给出机械拒绝，需要实测时返回 None。
+
+        三条逐字比较：当前种子（``unchanged``）、本场更早的候选（``duplicate``，但那条候选若超时/崩溃则不算）、
+        别的运行里的核（``external_duplicate``）。命中任意一条都不上 GPU。``--from`` 带来的那份源码例外，照常实测。
+
+        @param source 待评的内核正文。
+        @return 拒绝用的预置报告；需要实测时为 None。
+        """
         if self.best is not None and source == self.best.source:
             return EvalReport(
                 task=self.task_name, dtype=self.dtype, size=self.size, mode="full",
@@ -1152,7 +1540,13 @@ class Orchestrator:
         return None
 
     def _external_kernel_texts(self) -> set[str]:
-        """Kernel texts from other runs, read once. An empty root list (tests) reads nothing."""
+        """@brief 别的运行里的内核正文集合，只读一次。
+
+        空的根目录列表（测试）什么都读不到。跳过本运行自己，也跳过不同目标的运行；没显式指定根目录时，
+        目录里的 kernel catalog 也会被扫进来。顺手把 ``--from`` 那份源码记到 ``_from_text``。
+
+        @return 内核正文集合（懒加载后缓存）。
+        """
         if self._external_texts is not None:
             return self._external_texts
         roots = self._external_roots
@@ -1195,6 +1589,14 @@ class Orchestrator:
         return texts
 
     def _same_target(self, run_dir: Path) -> bool:
+        """@brief 一个既有运行目录是不是同一个目标设备的。
+
+        ``run_config.json`` 里记录过 ``target.id`` 就按它比；老目录没有这一段时，退回到「默认就是 apple-m4-max」
+        或者「目录名的上一级就是目标 id」。文件读不了时返回 False。
+
+        @param run_dir 既有运行目录。
+        @return 同一目标为 True。
+        """
         cfg = run_dir / "run_config.json"
         if cfg.is_file():
             try:
@@ -1209,14 +1611,22 @@ class Orchestrator:
         return self.target_id == "apple-m4-max" or run_dir.parent.name == self.target_id
 
     def _guard_shape(self) -> None:
-        """Flame chase is one session a round. The old parallel shape is refused before any session starts."""
+        """@brief 在任何会话开始之前拒绝旧的并行形状。
+
+        这条搜索是一轮一场 hmz 会话：``kernel_agent`` 必须是 ``pi``，``branches`` 与 ``init_samples`` 必须是 1。
+
+        @raises RunStartError 当写核方式或并行形状不符时。
+        """
         if self.search.kernel_agent != "pi":
             raise RunStartError("kernel writing goes through hmz; kernel_agent must be pi")
         if self.search.branches != 1 or self.search.init_samples != 1:
             raise RunStartError("this search is one session a round: branches and init_samples must be 1")
 
     def _ensure_gpu_lock_file(self) -> None:
-        """Create the machine lock so a read-only session can flock it. The session is not granted write access."""
+        """@brief 建好整机的 GPU 锁文件，让只读的会话也能 flock 它。
+
+        会话不会被授予写权限。
+        """
         from tcenv.gpulock import lock_file
 
         path = lock_file()
@@ -1224,13 +1634,23 @@ class Orchestrator:
         path.touch(exist_ok=True)
 
     async def _one_session(self, tag: str, *, seedless: bool) -> str:
-        """One hmz session. Returns ``agent_failed``, ``unchanged`` or ``evaluated``.
+        """@brief 跑一场 hmz 会话，返回 ``agent_failed``、``unchanged`` 或 ``evaluated``。
 
-        A session that ends without a new kernel after a crash or a timeout is ``agent_failed``.
-        A clean exit that does not write the submission file is ``agent_failed``.
-        A clean exit that writes the seed bytes into that file is ``unchanged`` and does not count as a failure.
-        A changed file is evaluated whatever the process exit was.
-        Feedback is parsed once and recorded once, including when the session stops early.
+        崩溃或超时之后没有交出内核的会话算 ``agent_failed``。干净退出但没写 submission 文件也算 ``agent_failed``。
+        干净退出但把种子的字节写回该文件算 ``unchanged``，不计一次失败。文件变了就评测，不管进程怎么退出。
+        反馈只解析一次、只记录一次，会话提前停下时同样记录。
+
+        开跑前先过预算闸门：余额不足 $0.05、或余额低于最近一场会话的成本（session cost floor）时抛 ``BudgetExhausted``，
+        不再开新会话。本场会话的模型请求发给本轮委员会的唯一成员，输出 token 上限由 ``relay_budget_usd`` 折算。
+        自检超时计进 ``hangs``，达 ``max_hangs`` 时抛 ``StopRun`` 熔断；会话结束却没有 token 计数时也抛 ``StopRun``，
+        因为账本无法继续。
+
+        @param tag 会话标签（同时是 ``agent_work/`` 下的目录名，``/`` 会换成 ``_``）。
+        @param seedless 是否为初始生成（不把当前种子交给会话）。
+        @return ``agent_failed`` / ``unchanged`` / ``evaluated``。
+        @raises BudgetExhausted 余额不足以再开一场会话时。
+        @raises StopRun 自检超时把 hangs 推到上限、或会话没有 token 计数时。
+        @raises RunStartError 脚本运行时没有注入 ``agent_runner``（不得起 hmz）时。
         """
         from .agent_feedback import parse_feedback
         from .kernel_agent import AgentError, Prices, run_kernel_agent, output_tokens_for
@@ -1374,7 +1794,12 @@ class Orchestrator:
                 pass
 
     def _prepare_session_dir(self, work: Path) -> None:
-        """Drop the previous session's notes and feedback before this one starts. The directory is reused on resume."""
+        """@brief 会话开始前清掉上一场留下的 notes 与反馈。
+
+        续跑时这个目录是复用的。顺带删掉受保护的自检结果并重建 ``.selfcheck`` 目录。
+
+        @param work 本场会话的工作目录。
+        """
         work.mkdir(parents=True, exist_ok=True)
         for name in ("NOTES.md", "FEEDBACK.md", "self_checks.jsonl"):
             try:
@@ -1395,6 +1820,17 @@ class Orchestrator:
             pass
 
     def _parsed_feedback(self, work: Path, result, started: float) -> dict:
+        """@brief 解析本场会话交上来的反馈。
+
+        agent 结果里带了反馈文本就直接用它（这时「文件超长」按文件大小判断）；没有文本时才读工作目录里
+        本场新写（mtime 不早于 ``started - 1.0``）的 ``FEEDBACK.md``。之后交给 ``agent_feedback.parse_feedback``
+        统一解析，仓库根用于定位被引用的文件。
+
+        @param work 本场会话的工作目录。
+        @param result 会话结果，可为 None（hmz 抛异常时）。
+        @param started 本场会话的开始时间（秒）。
+        @return ``parse_feedback`` 的解析结果。
+        """
         from .agent_feedback import FILE_CAP, parse_feedback, read_feedback_text
 
         text = ""
@@ -1417,6 +1853,13 @@ class Orchestrator:
         return parse_feedback(text, work=work, repo=REPO_ROOT, file_over=file_over)
 
     def _feedback_slim(self, parsed: dict | None) -> dict:
+        """@brief 反馈的简短摘要，附进会话记录事件。
+
+        没有任何占位条目时保持旧会话记录的字节完全一致：``feedback_placeholder_items`` 只在非零时才出现。
+
+        @param parsed 解析结果，可为 None。
+        @return 含 ``feedback_kinds``、``feedback_sections``、``feedback_chars`` 的字典，有占位条目时多个键。
+        """
         parsed = parsed or {}
         slim = {
             "feedback_kinds": parsed.get("kinds") or "",
@@ -1430,6 +1873,12 @@ class Orchestrator:
         return slim
 
     def _next_feedback_seq(self) -> int:
+        """@brief 下一条反馈记录的序号。
+
+        第一次调用时从 ``feedback.jsonl`` 里现有最大序号起步，之后在进程内自增。
+
+        @return 递增后的序号。
+        """
         from .agent_feedback import max_seq
 
         if self._feedback_seq is None:
@@ -1438,6 +1887,23 @@ class Orchestrator:
         return self._feedback_seq
 
     def _record_feedback(self, tag: str, member, work: Path, parsed: dict, outcome: str | None, cand, exit_kind: str, seed_label: str | None, *, started: float | None = None) -> None:
+        """@brief 把一场会话的反馈追加进 ``feedback.jsonl``，并按需处理结构化提案。
+
+        记录里有 run id、序号、会话开始时间（唯一能证明探针是在本场创建的时戳，``t`` 是会话结束时写的）、
+        委员会/模型、outcome、退出类型、候选状态与微秒数、种子标签与加速比，以及解析出的分节与条目。
+        结构化提案属于观察，不是钱也不是 GPU 工作：即使 ``harness_auto`` 关着也会记下来供人复查；
+        打开时才 ``settle``，``harness_review`` 打开时再走 ``_review_new_tips``。harness 记录失败不能停下搜索。
+
+        @param tag 会话标签。
+        @param member 本轮的委员会成员。
+        @param work 本场会话的工作目录。
+        @param parsed ``_parsed_feedback`` 的解析结果。
+        @param outcome ``evaluated`` / ``unchanged`` / ``agent_failed``；提前熔断时为 None。
+        @param cand 本场评出的候选，可为 None。
+        @param exit_kind 退出类型（``normal``/``agent_exception``/``eval_error``/``hang_circuit_breaker``/``cost_incomplete``）。
+        @param seed_label 开跑时的种子标签。
+        @param started 会话开始时间（秒）；None 时写 null。
+        """
         from .agent_feedback import round_of
 
         raw = str((parsed or {}).get("raw") or "")
@@ -1524,10 +1990,15 @@ class Orchestrator:
         del work
 
     def _review_new_tips(self, proposals: list, protocol_version: str) -> None:
-        """Review a single-source tip with the other committee before the next session.
+        """@brief 在下一场会话之前，用另一个委员会评审一条单源 tip。
 
-        The review is run-scoped, not a repository promotion. Its cost is charged to the
-        same ledger; the reviewer's budget is derived from its prices, not a fixed amount.
+        评审是本运行范围内的，不做仓库级晋升。评审费用记在同一本账上；评审者的预算由它的价格推导，不是固定额度。
+        被转正的 claim 不能由写下其源文本的模型来评审：先挑不是该 claim 所属委员会的另一个，再退回不是当前委员会的另一个。
+        没有其它委员会、评审者与原作者冲突、或余额低于评审额度时直接跳过。失败或超时的评审者照样花了钱，
+        ``run_review`` 抛出的异常上挂着已知花费，这里会把它记进账本。评审失败不能停下搜索。
+
+        @param proposals ``harness.record_proposals`` 产出的提案列表。
+        @param protocol_version 当前协议版本。
         """
         from . import harness
         from . import review as review_mod
@@ -1588,7 +2059,11 @@ class Orchestrator:
             self.log(f"  [review] skipped: {exc}")
 
     def _restore_handoff(self) -> None:
-        """A resumed run otherwise forgets the previous session's NOTES and failure text."""
+        """@brief 续跑时捡回上一场会话的 NOTES 与失败反馈。
+
+        不这么做，续跑后的会话就看不到上一场写了什么。取 ``agent_work/*/NOTES.md`` 里 mtime 最新的那份；
+        找不到对应候选时按「种子没换」处理。顺手把反馈序号重置，让下次重新从盘上取最大序号。
+        """
         self._feedback_seq = None
         root = self.run_dir / "agent_work"
         chosen = None
@@ -1624,6 +2099,18 @@ class Orchestrator:
             self._failure_feedback = ""
 
     def _agent_event(self, tag: str, member, result, outcome: str, parsed: dict | None = None) -> dict:
+        """@brief 组装一条 ``event: agent`` 的会话记录事件。
+
+        含委员会/模型、花费及其是否不完整、是否有内核、outcome、错误前 180 字、自检次数与耗时、token 分项，
+        并附 ``_feedback_slim`` 的反馈摘要。
+
+        @param tag 会话标签。
+        @param member 本轮委员会成员。
+        @param result hmz 的会话结果。
+        @param outcome ``evaluated`` / ``unchanged`` / ``agent_failed`` / ``cost_incomplete``。
+        @param parsed 反馈解析结果，可为 None。
+        @return 可直接写进会话记录的字典。
+        """
         spent = result.spent or {}
         event = {
             "event": "agent", "label": tag, "harness": "pi", "provider": member.provider, "model": member.model,
@@ -1638,6 +2125,15 @@ class Orchestrator:
         return event
 
     def _file_session_notes(self, cand: Candidate, result) -> None:
+        """@brief 把会话的 NOTES、自检结果与反馈抄进候选目录。
+
+        NOTES 来自会话结果；自检先看 ``.selfcheck/self_checks.jsonl``，再看工作目录里的副本，最后看受保护的
+        ``session_checks/`` 副本。反馈优先用结果里的文本，没有就读工作目录里的 ``FEEDBACK.md``（超过 16 KiB 时
+        只留尾部）。候选目录不存在时直接返回。
+
+        @param cand 本场评出的候选。
+        @param result hmz 的会话结果。
+        """
         folder = self.run_dir / "candidates" / f"{cand.idx:03d}_{cand.label}"
         if not folder.is_dir():
             return
@@ -1665,6 +2161,11 @@ class Orchestrator:
             (folder / "FEEDBACK.md").write_text(feedback)
 
     def _outer_line(self, cand: Candidate) -> str:
+        """@brief 外层实测的一行摘要，写在下一场会话 NOTES 的第一行。
+
+        @param cand 本场评出的候选。
+        @return 形如「820 µs，状态 ok，换了种子」的中文句子。
+        """
         rep = cand.report
         if rep is None:
             return "没有报告"
@@ -1673,6 +2174,18 @@ class Orchestrator:
         return f"{us}，状态 {rep.status}，{replaced}"
 
     def _session_brief(self, seedless: bool, label: str = "init", work_dir: Path | None = None):
+        """@brief 组装交给一场 hmz 会话的 ``SessionBrief``。
+
+        把任务、契约、Triton 源码、当前种子的报告与记分卡、最近 5 条历史、失败反馈、notes 摘要、运算量下界、
+        证据（profiler / hw feedback / 经验提示）、噪声门槛与会话标签一并带上；``guidance_dir`` 指向开跑时冻结的
+        ``agent_guidance/``。``harness_auto`` 打开时附上 harness overlay，``peer_tips`` 打开时附上同伴提示
+        （序号用进程内下一条，避免一次失败的追加让未经核实的前提多活一场）。
+
+        @param seedless 是否为初始生成（不把当前种子交给会话）。
+        @param label 会话标签。
+        @param work_dir 本场会话的工作目录；None 时按标签在 ``agent_work/`` 下推。
+        @return ``kernel_agent.SessionBrief``。
+        """
         from .kernel_agent import SessionBrief
 
         seed = self.best
@@ -1723,6 +2236,13 @@ class Orchestrator:
         )
 
     async def _initial_generation(self) -> None:
+        """@brief 初始生成：最多 ``INITIAL_RESTARTS`` 次，两个委员会轮流接手。
+
+        第一次是 first，失败换 second。一场 ``agent_failed`` 让 ``_agent_failures`` 加一并写一条历史；
+        两场都失败就抛 ``StopRun("agent_failure")`` 停下整次搜索，否则计数归零、拿到种子就退出。
+
+        @raises StopRun 连续两场会话都没有交出内核时。
+        """
         for restart in range(INITIAL_RESTARTS):
             # 第一次是 first。失败换 second。两场都失败由 _one_session 的计数在下面停下。
             self._activate_round(1 if restart == 0 else 2)
@@ -1741,7 +2261,15 @@ class Orchestrator:
 
     # 续跑不重做已经有合格种子的初始生成，只把没做完的轮次交给 _rounds。上一会话没有种子，则和全新搜索一样停在 no_valid_initial_kernel。
     async def _search_resumed(self, res: RunResult) -> None:
-        """Continue a run that was restored from its directory (``restore``): the rounds that were not finished, then the usual ending."""
+        """@brief 续跑已从目录恢复的运行（``restore``）。
+
+        续跑不重做已经有合格种子的初始生成，只把没做完的轮次交给 ``_rounds``，之后走和全新搜索一样的收尾。
+        上一场会话没有种子时，和全新搜索一样停在 ``no_valid_initial_kernel``。搜索阶段已经结束、只差一次确认时
+        直接返回：再开一场会话会白花钱，也会把轮号推过上限；轮次真用完时沿用 ``max_rounds``，否则写
+        ``resumed_for_confirmation``。
+
+        @param res 收尾记录（写 ``rounds`` 与 ``stop_reason``）。
+        """
         snap = self._resume
         res.rounds = snap.rounds_done
         if not self.best:
@@ -1759,6 +2287,13 @@ class Orchestrator:
 
     # 续跑后的候选是新建对象。按标签从后往前找回同一颗内核，身份比较才会和中断前对得上。
     def _by_label(self, label: str | None) -> Candidate | None:
+        """@brief 按标签找回候选。
+
+        续跑后的候选是新建对象，按标签从后往前找，身份比较才会和中断前对得上。
+
+        @param label 候选标签，可为 None。
+        @return 最后一个同标签的候选；找不到时为 None。
+        """
         for c in reversed(self.candidates):
             if c.label == label:
                 return c
@@ -1766,9 +2301,21 @@ class Orchestrator:
 
     # 每一轮：可选的 Instruments 证据、诊断规划、再 K 路补丁。分支同时启动，所以模型请求重叠；每路进入 _eval 时在 gpu_lock 上排队，GPU 评测串行。只有换过种子才不算停滞。
     async def _rounds(self, res: RunResult, first_round: int, stagnant: int, partial: Any = None) -> None:
-        """One new hmz session per round, alternating committees. ``partial`` is ignored: a resumed round starts a fresh session.
+        """@brief 每轮一场新的 hmz 会话，两个委员会轮流接手。
 
-        The limit is read again every round: a control file can raise it while a round is in flight."""
+        每一轮：可选的 Instruments 证据（profiler、hw feedback、经验提示、目标提示、状态行）、诊断规划，然后交出一版；
+        进入 ``_eval`` 时在 ``gpu_lock`` 上排队，GPU 评测串行。只有换过种子才不算停滞（``next_stagnant``），
+        停滞到 ``patience`` 就以 ``converged`` 停下。轮数上限每轮重新读：一轮在飞时 control 文件可以把它抬高。
+        ``search.stop_at_roofline`` 打开且种子已贴着下界时以 ``at_roofline`` 停下（这是启发式，不是物理最优）。
+        一场 ``agent_failed`` 让 ``_agent_failures`` 加一并写历史，连续两场就以 ``agent_failure`` 停下。
+        ``partial`` 被忽略：续跑的那一轮重新开一场会话。会话内触发熔断（``StopRun``）或预算不够（``BudgetExhausted``）时
+        异常直接向上传，由 ``run`` 收进 ``stop_reason``。
+
+        @param res 收尾记录（写 ``rounds`` 与 ``stop_reason``）。
+        @param first_round 本轮起始轮号。
+        @param stagnant 进入本轮时的连续停滞轮数。
+        @param partial 续跑快照里的未完成轮次信息，忽略。
+        """
         del partial
         rnd = first_round
         while rnd <= self.search.max_rounds:
@@ -1839,7 +2386,13 @@ class Orchestrator:
 
     # 复测池：当前优胜者，再加上最多 confirm_top-1 颗合格内核。优胜者相对它们的优势没有超过 _required_gain 时，它们算噪声范围内的并列，必须一起重测，不能只信搜索过程中的最大值。
     def _confirm_pool(self) -> list[Candidate]:
-        """The best, plus up to ``confirm_top - 1`` other eligible kernels that it does not beat by more than the noise."""
+        """@brief 复测池：当前优胜者，加上最多 ``confirm_top - 1`` 颗它没有显著快过的合格内核。
+
+        优胜者相对它们的优势没有超过 ``_required_gain`` 时，它们算噪声范围内的并列，必须一起重测，
+        不能只信搜索过程中的最大值。不合格、被复查否决、或源码与已在池中的候选相同的都跳过。
+
+        @return 复测池，第一项恒为当前优胜者。
+        """
         pool, seen = [self.best], {_sha(self.best.source)}
         for c in sorted(self.candidates, key=lambda c: c.speedup, reverse=True):
             if len(pool) >= self.search.confirm_top:
@@ -1854,7 +2407,13 @@ class Orchestrator:
 
     # 搜索结束后重测优胜者与并列者。每一批都要成功，同一批共用一套输入。搜索种子留下，除非另一颗完整复测超过噪声门槛。correctness_only 或已经挂死则不做。复测超时就停下剩余复测。
     async def _domain_sweep(self, win) -> None:
-        """Correctness-only full-domain check of the confirmed winner. A failure leaves the published number unchanged."""
+        """@brief 对确认后的优胜者做一次只查正确性的全域检查（``domain`` 用例）。
+
+        任务没有 ``domain_case`` 时直接返回。已经挂死则不再上 GPU。结果写成 ``domain_report.json``，
+        失败也不改已经发布的数字：这份 sweep 是证据，不是第二次丢掉确认的机会。
+
+        @param win 确认后的优胜者。
+        """
         if not (self.task.meta or {}).get("domain_case"):
             return
         phase_seed = self._phase_seed("domain", win.label, win.source)
@@ -1883,11 +2442,19 @@ class Orchestrator:
         self.log(f"   domain sweep: {doc.get('status')} ({kind})")
 
     async def _confirm(self, res: RunResult) -> None:
-        """Re-measure the winner and its statistical ties. Every batch must succeed.
+        """@brief 用新种子、更多重复次数重测优胜者与它的统计并列者。
 
-        Candidates in one batch share one input seed. The published kernel is the search best unless
-        another complete remeasure clears the noise gate. A later failed batch does not turn the earlier
-        successes into a confirmation."""
+        每一批都必须成功。同一批里的并列候选共用一个输入种子，比的是同一套输入；批次之间换种子，
+        种子不掺内核正文，所以换一颗核不会换掉这一批的输入。发布的内核是搜索最优，除非另一颗完整复测
+        越过了噪声门槛（``choose_confirmed``）。后面某一批失败不会把前面成功的批次变成一次确认。
+        没有种子、已经熔断、或 ``correctness_only`` 时不做复测：熔断后再上 GPU 可能再次冻住显示。
+        复测超时就停下剩余的批次与并列者，搜索已经结束，这里只停止继续占 GPU。确认是「再测一次」
+        而不是取回上一次的结果，所以 ``eval_cache=False``。确认成功后调用 ``_domain_sweep``。
+        评测本身抛 ``SchemaError`` 时直接上抛，不把它当成一次可忽略的批次失败。
+
+        @param res 收尾记录（写 ``confirmations``、``confirmed_*``、``candidate_us`` 与 ``baseline_us``）。
+        @raises SchemaError 当评测报告不符合 schema 时（直接上抛）。
+        """
         # 没有种子、已经熔断、或只做正确性实验时不复测。熔断后再上 GPU 可能再次冻住显示。
         if not self.best or self.hangs >= self.search.max_hangs or self.search.correctness_only:
             return
@@ -2002,10 +2569,16 @@ class Orchestrator:
 
     # 种子慢于最强基线（speedup < profile_poor_below）时才抓 Instruments，附给规划和每一路补丁。失败、超过 profile_max 或已经挂死都不影响搜索；同一源码只抓一次。痕迹在 gpu_lock 里跑，和评测一样独占 GPU。
     async def _profile_seed(self, seed: Candidate, rnd: int) -> str:
-        """Instruments trace of the round's seed when it is slower than the strongest baseline (``search.profile_poor``).
+        """@brief 种子慢于最强基线时为它抓一份 Instruments 痕迹。
 
-        Returns the text appended to the feedback of the planner and of every patch author, or "" (disabled, fast enough, over the trace budget, or the trace
-        failed: profiling is a bonus and never stops the search). The same source is traced once. Traces run under the exclusive GPU lock."""
+        只在 ``search.profile_poor`` 打开、种子加速比低于 ``profile_poor_below``、没有挂死、且没超过
+        ``profile_max`` 份时才抓，同一源码只抓一次。抓痕迹与评测、quick_check 共用 ``gpu_lock``，独占 GPU。
+        痕迹文本与 json 写进 ``profiles/r<轮号>_<种子标签>.txt|json``，同一份文本会附给规划与每一路补丁作者。
+
+        @param seed 本轮的种子。
+        @param rnd 轮号。
+        @return 附给规划与每一路补丁作者的文本；关闭、已够快、超预算或抓取失败时为空串。
+        """
         s = self.search
         # 没开、已经够快、或搜索已熔断：不占 GPU。规划照常进行，只是没有这份证据。
         if not s.profile_poor or seed.speedup >= s.profile_poor_below or self.hangs >= s.max_hangs:
@@ -2044,7 +2617,11 @@ class Orchestrator:
 
     # 搜索循环之外给最终优胜者补一份 Instruments。失败只留下说明，不改变已经选出的内核；已经挂死则不再上 GPU。
     async def _profile_best(self) -> None:
-        """Optional (search.profile_best): Instruments trace of the winner, stored next to the result. Never inside the search loop."""
+        """@brief 搜索循环之外给最终优胜者补一份 Instruments 痕迹（``search.profile_best``）。
+
+        痕迹写在结果旁边（``xctrace_profile.txt`` 与 ``xctrace_profile.json``）。失败只在文件里留一句说明，
+        不改变已经选出的内核；已经挂死则不再上 GPU。
+        """
         if not self.best or self.hangs >= self.search.max_hangs:
             return
         from tcenv.backends.metal import xctrace
@@ -2062,7 +2639,13 @@ class Orchestrator:
             (self.run_dir / "xctrace_profile.txt").write_text(f"profiling failed: {type(e).__name__}: {e}")
 
     def _archive_if_confirmed(self, result_doc: dict) -> None:
-        """Copy a kernel into the catalog only after the publication gate binds it."""
+        """@brief 只有发布门确认之后才把内核收进 catalog。
+
+        ``experiments.common.conclusion_of_run`` 判定 ``publication`` 不是 ``confirmed``、或没有优胜者源码时直接返回。
+        收录的字段包含目标、后端、任务、加速比、确认阶段各批的值与候选/基线微秒数。
+
+        @param result_doc 即将写进 ``result.json`` 的文档。
+        """
         from experiments.common import conclusion_of_run
 
         verdict = conclusion_of_run(self.run_dir, result_doc)
@@ -2097,6 +2680,16 @@ class Orchestrator:
 
     # 把优胜者源码和账本写成 result.json。有 confirmed_speedup 时对外强调复测值，否则用搜索时的 best_speedup。中途加过的预算在 budget_events 里，结束时的上限可以高于开跑时的 initial_budget_usd。
     def _finish(self, res: RunResult) -> RunResult:
+        """@brief 把优胜者源码、``result.json``、``ledger.json`` 与 ``state.json`` 收尾写好。
+
+        有 ``confirmed_speedup`` 时对外强调复测值，否则用搜索时的 ``best_speedup``。中途加过的预算在
+        ``budget_events`` 里，结束时的上限可以高于开跑时的 ``initial_budget_usd``。``confirmation_source_sha256``
+        只在确认状态为 ok 时写，用来把发布门绑到那颗内核。最后调 ``_archive_if_confirmed`` 与
+        ``_publish_state("done")``。
+
+        @param res 收尾记录。
+        @return 补全后的同一个 ``RunResult``。
+        """
         self.ledger.refresh_budget()
         res.spent_usd = self.ledger.total_usd
         res.budget_usd = self.ledger.budget_usd  # the budget the run ended with (it grows with every top-up)

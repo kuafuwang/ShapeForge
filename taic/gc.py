@@ -14,6 +14,13 @@ from pathlib import Path
 
 
 def _size(path: Path) -> tuple[int, int]:
+    """@brief 统计一个目录下的文件数与总字节数。
+
+    单个文件取不到大小（例如已被删除）时按 0 计，不影响其余统计。
+
+    @param path 要统计的目录。
+    @return ``(文件数, 总字节数)``。
+    """
     files = 0
     total = 0
     for item in path.rglob("*"):
@@ -27,7 +34,15 @@ def _size(path: Path) -> tuple[int, int]:
 
 
 def scan(root: Path, *, older_than_days: float, now: float | None = None) -> list[dict]:
-    """One row per child directory. ``eligible`` is age >= the cutoff."""
+    """@brief 为每个子目录生成一行记录，``eligible`` 表示年龄已达到截止线。
+
+    只读扫描：不删除任何东西。
+
+    @param root ``data/deleted`` 这类待清理目录的根。
+    @param older_than_days 保留天数阈值；目录 mtime 的年龄 >= 该值才算可清理。
+    @param now 当前时间戳；缺省取 ``time.time()``，测试可注入。
+    @return 每行含 ``path``/``age_days``/``files``/``bytes``/``eligible`` 的列表；根目录不存在时为空列表。
+    """
     root = Path(root)
     if not root.is_dir():
         return []
@@ -50,7 +65,15 @@ def scan(root: Path, *, older_than_days: float, now: float | None = None) -> lis
 
 
 def apply(rows: list[dict], *, log_path: Path | None = None, now: float | None = None) -> dict:
-    """Delete the eligible rows and append one audit line before each removal."""
+    """@brief 删除 ``eligible`` 为真的行，并在每次删除前追加一条审计记录。
+
+    删除失败不抛错（``shutil.rmtree(..., ignore_errors=True)``）；日志中记录的是扫描时的文件数与字节数。
+
+    @param rows ``scan`` 返回的行列表；只处理 ``eligible`` 为真的行。
+    @param log_path 审计日志路径；为 ``None`` 时不写日志。
+    @param now 当前时间戳，写入审计行；缺省取 ``time.time()``。
+    @return 含 ``removed``（已删除路径）与 ``bytes``（这些行合计字节数）的字典。
+    """
     moment = time.time() if now is None else now
     removed = []
     log = Path(log_path) if log_path else None

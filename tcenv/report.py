@@ -13,13 +13,24 @@ _CLEAR_OF_BOUND = 0.95
 
 
 def _num(value) -> float | None:
+    """@brief 把报告里的数值转成 float，排除布尔与非数字。
+
+    @param value 任意值。
+    @return 浮点值；不是有效数字时为 None。
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
 
 
 def _baseline_beats_bound(rep: EvalReport) -> tuple[str, float, float] | None:
-    """(name, microseconds, lower bound) when the fastest baseline is clearly under the roofline bound."""
+    """@brief 找出明显快过 roofline 下界的基线。
+
+    (name, microseconds, lower bound) when the fastest baseline is clearly under the roofline bound.
+
+    @param rep 评测报告。
+    @return ``(基线名, 微秒, 下界)``；没有基线跨过 5% 线时为 None。
+    """
     roof = rep.roofline if isinstance(rep.roofline, dict) else {}
     bases = rep.baseline_us if isinstance(rep.baseline_us, dict) else {}
     lb = _num(roof.get("lower_bound_us"))
@@ -31,10 +42,15 @@ def _baseline_beats_bound(rep: EvalReport) -> tuple[str, float, float] | None:
 
 
 def _measured_head(rep: EvalReport) -> list[str]:
-    """Short measured lines placed before the long sections, so a later 6000-character cut cannot drop them.
+    """@brief 生成长段之前的位置固定短行，避免被后续截断丢掉。
+
+    Short measured lines placed before the long sections, so a later 6000-character cut cannot drop them.
 
     A missing field is omitted. A baseline that beats the bound replaces the "times the lower bound" line
     and adds that a faster baseline is not a reason to switch algorithm.
+
+    @param rep 评测报告。
+    @return 以 ``Measured:`` 开头的行列表；无可用字段时为空列表。
     """
     lines: list[str] = []
     roof = rep.roofline if isinstance(rep.roofline, dict) else {}
@@ -90,6 +106,15 @@ def _measured_head(rep: EvalReport) -> list[str]:
 # 性能和形式验证只在 status 为 ok 时附上：已经判死的候选不再带着速度结论回去。
 # 数字头紧跟 STATUS。搜索再把全文截到固定字数时，砍的是后面的正确性散文，不是这几行。
 def format_feedback(rep: EvalReport, *, max_errors_chars: int = 2500) -> str:
+    """@brief 把一次评测的判决渲染成给模型看的反馈短文。
+
+    编译错误按字符截断；安全、非确定与 shader validation 按条数截断；ABI 违例逐条保留。
+    性能与形式验证只在 ``status`` 为 ok 时附上。
+
+    @param rep 评测报告。
+    @param max_errors_chars 编译错误文本保留的最大字符数。
+    @return 多行反馈文本，供下一轮提示使用。
+    """
     L: list[str] = []
     L.append(f"STATUS: {rep.status}  (stage reached: {rep.stage})")
     L.extend(_measured_head(rep))

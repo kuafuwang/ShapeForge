@@ -19,7 +19,15 @@ DEFAULT_VARIANT = f"{BLOCK_M}x{BLOCK_N}x{BLOCK_K}t{THREADS}"
 
 # 把 "<BM>x<BN>x<BK>t<threads>" 拆成 tile 和线程数。tile 必须整除 M、N、K，线程数必须是 32 的倍数。
 def parse_variant(variant: str, shape: tuple[int, int, int]) -> tuple[int, int, int, int]:
-    """``"<BM>x<BN>x<BK>t<threads>"`` -> (BM, BN, BK, threads); the tile must divide the problem and the threads must be whole SIMD groups."""
+    """@brief 把 ``"<BM>x<BN>x<BK>t<threads>"`` 拆成 tile 和线程数。
+
+    ``"<BM>x<BN>x<BK>t<threads>"`` -> (BM, BN, BK, threads); the tile must divide the problem and the threads must be whole SIMD groups.
+
+    @param variant 启动契约变体文本。
+    @param shape 问题的 ``(M, N, K)``。
+    @return ``(BM, BN, BK, threads)``。
+    @raises ValueError 文本格式不对、tile 不整除问题形状，或线程数不合规时抛出。
+    """
     m = re.fullmatch(r"(\d+)x(\d+)x(\d+)t(\d+)", variant)
     if not m:
         raise ValueError(f"bad GEMM contract variant {variant!r}; expected <BM>x<BN>x<BK>t<threads>, e.g. {DEFAULT_VARIANT}")
@@ -35,15 +43,43 @@ MAGS = {"normal": 1.0, "wide_range": 0.1}
 
 
 def _mlx(a, b):
+    """@brief mlx 侧的矩阵乘基线。
+
+    @param a 左矩阵，mlx 数组。
+    @param b 右矩阵，mlx 数组。
+    @return ``a @ b``。
+    """
     return a @ b
 
 
 def _torch(a, b):
+    """@brief torch 侧的矩阵乘基线。
+
+    @param a 左矩阵。
+    @param b 右矩阵。
+    @return ``torch.matmul(a, b)``。
+    """
     return torch.matmul(a, b)
 
 
 # gemm 与 gemm_silu 共用。epilogue_ref 接在 fp32 乘积之后；epilogue_msl 和 epilogue_def 写进朴素 Metal。
 def build_gemm(name: str, dtype: str, size: str, *, epilogue_ref, epilogue_msl: str, epilogue_def: str, baselines, description: str, extra_flops: float, variant: str = "") -> Task:
+    """@brief 装配 GEMM 类题，gemm 与 gemm_silu 共用。
+
+    ``epilogue_ref`` 接在 fp32 乘积之后；``epilogue_msl`` 和 ``epilogue_def`` 写进朴素 Metal。
+
+    @param name 算子名，用来拼核名和题面目录。
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @param epilogue_ref 接在 fp32 乘积之后的收尾函数。
+    @param epilogue_msl 写进朴素 Metal 的收尾调用名。
+    @param epilogue_def 写进朴素 Metal 的收尾函数定义。
+    @param baselines 基线实现序列。
+    @param description 题面描述。
+    @param extra_flops 收尾步骤额外的每输出元素浮点运算量。
+    @param variant 启动契约变体，空串表示默认。
+    @return 装配好的 ``Task``。
+    """
     check_dtype(dtype)
     M, N, K = SHAPES[size]
     BLOCK_M, BLOCK_N, BLOCK_K, THREADS = parse_variant(variant or DEFAULT_VARIANT, (M, N, K))
@@ -96,6 +132,12 @@ def build_gemm(name: str, dtype: str, size: str, *, epilogue_ref, epilogue_msl: 
 
 
 def build(dtype: str, size: str) -> Task:
+    """@brief 装配矩阵乘题，收尾是恒等。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
     return build_gemm(
         "gemm", dtype, size,
         epilogue_ref=lambda c: c,
@@ -108,7 +150,15 @@ def build(dtype: str, size: str) -> Task:
 
 # 同一算子、同一 reference 和 baselines，只把 variant 交给 parse_variant，换掉 grid 用的 tile 和 threads。
 def build_variant(dtype: str, size: str, variant: str) -> Task:
-    """The same operator under another launch contract (tile and threads); used by the contract-sensitivity study."""
+    """@brief 同一算子、同一 reference 与 baselines，只换掉 grid 用的 tile 和 threads。
+
+    The same operator under another launch contract (tile and threads); used by the contract-sensitivity study.
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @param variant 启动契约变体文本，交给 ``parse_variant``。
+    @return 装配好的 ``Task``，名字带 ``@<variant>`` 后缀。
+    """
     return build_gemm(
         "gemm", dtype, size,
         epilogue_ref=lambda c: c,

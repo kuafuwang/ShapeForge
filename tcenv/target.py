@@ -16,11 +16,16 @@ DEFAULT_TARGET_ID = "apple-m4-max"
 
 
 class TargetError(RuntimeError):
-    """The requested target cannot be used."""
+    """@brief 请求的目标档案不可用或无法加载。
+
+    The requested target cannot be used.
+    """
 
 
 @dataclass(frozen=True)
 class Limits:
+    """@brief 目标设备在执行层面强制的一组硬上限。"""
+
     max_buffer_index: int
     max_threads_per_threadgroup: int
     max_threadgroup_memory_bytes: int
@@ -29,6 +34,8 @@ class Limits:
 
 @dataclass(frozen=True)
 class TargetProfile:
+    """@brief 一个目标设备档案：后端身份、匹配规则、限制与配套文档路径。"""
+
     id: str
     backend: str
     status: str
@@ -44,23 +51,46 @@ class TargetProfile:
 
     @property
     def device_doc(self) -> Path:
+        """@brief 目标目录下的设备文档路径。
+
+        @return ``device.md`` 的路径。
+        """
         return self.root / "device.md"
 
     @property
     def experience(self) -> Path:
+        """@brief 目标目录下的经验文档路径。
+
+        @return ``experience.md`` 的路径。
+        """
         return self.root / "experience.md"
 
     @property
     def skills(self) -> Path:
+        """@brief 该后端技能目录的路径。
+
+        @return ``backends/<backend>/skills`` 的路径。
+        """
         return BACKENDS / self.backend / "skills"
 
     @property
     def wiki(self) -> Path:
+        """@brief 该后端 wiki 目录的路径。
+
+        @return ``backends/<backend>/wiki`` 的路径。
+        """
         return BACKENDS / self.backend / "wiki"
 
 
 def load_target(target_id: str | None = None) -> TargetProfile:
-    """Load one profile. ``reserved`` profiles load, but :func:`require_active` refuses to run them."""
+    """@brief 加载一个目标档案。
+
+    Load one profile. ``reserved`` profiles load, but :func:`require_active` refuses to run them.
+
+    @param target_id 目标 id；为 None 时用默认目标。
+    @return 解析后的 ``TargetProfile``。
+    @raises TargetError 档案缺失、id 不匹配或缺少配套文档时抛出。
+    """
     name = target_id or DEFAULT_TARGET_ID
     path = TARGETS / name / "target.toml"
     if not path.is_file():
@@ -104,6 +134,12 @@ def load_target(target_id: str | None = None) -> TargetProfile:
 
 
 def require_active(target_id: str | None = None) -> TargetProfile:
+    """@brief 加载目标并确认它处于 ``active`` 状态。
+
+    @param target_id 目标 id；为 None 时用默认目标。
+    @return 可运行的目标档案。
+    @raises TargetError 目标不可加载或其状态不是 active 时抛出。
+    """
     profile = load_target(target_id)
     if profile.status != "active":
         raise TargetError(f"target {profile.id} is {profile.status}; it cannot run")
@@ -111,15 +147,27 @@ def require_active(target_id: str | None = None) -> TargetProfile:
 
 
 def device_matches(profile: TargetProfile, info: dict) -> bool:
+    """@brief 判断实际设备信息是否匹配目标档案。
+
+    @param profile 目标档案。
+    @param info 设备探测返回的字典。
+    @return 名称包含匹配串且 GPU family 一致时为 True。
+    """
     name = str(info.get("name") or "")
     family = str(info.get("gpu_family") or "")
     return profile.match_name_contains in name and family == profile.match_family
 
 
 def limit_notes(profile: TargetProfile, info: dict) -> list[str]:
-    """Warn when the device reports a thread or threadgroup-memory cap the profile does not record.
+    """@brief 设备上报的上限与档案不一致时给出提醒。
+
+    Warn when the device reports a thread or threadgroup-memory cap the profile does not record.
 
     Buffer index and the counter sample interval are not in ``info()``. The profile limit stays in force.
+
+    @param profile 目标档案。
+    @param info 设备探测返回的字典。
+    @return 提醒字符串列表；一致时为空列表。
     """
     notes = []
     live_threads = info.get("max_threads_per_threadgroup")
@@ -138,15 +186,26 @@ def limit_notes(profile: TargetProfile, info: dict) -> list[str]:
 
 
 def calibration_cache_path(target_id: str | None = None) -> Path:
-    """Where a new measurement is written. This is outside the source tree."""
+    """@brief 新标定结果的写入路径（在源码树之外）。
+
+    Where a new measurement is written. This is outside the source tree.
+
+    @param target_id 目标 id；为 None 时用默认目标。
+    @return 用户缓存目录下的标定文件路径。
+    """
     profile = load_target(target_id)
     return Path.home() / ".cache" / "ai_lowerling" / "calibration" / f"{profile.id}.json"
 
 
 def calibration_file(target_id: str | None = None) -> tuple[Path, str]:
-    """``(path, source)``. ``TCENV_CALIBRATION`` wins, then the cache, then a legacy file already in the target directory.
+    """@brief 选定标定文件及其来源。
+
+    ``(path, source)``. ``TCENV_CALIBRATION`` wins, then the cache, then a legacy file already in the target directory.
 
     A measurement is not written back into the target directory. ``get_calibration`` writes the cache path.
+
+    @param target_id 目标 id；为 None 时用默认目标。
+    @return ``(路径, 来源)``，来源为 ``"env"``、``"cache"`` 或 ``"target"``。
     """
     override = os.environ.get("TCENV_CALIBRATION")
     if override:
@@ -161,6 +220,12 @@ def calibration_file(target_id: str | None = None) -> tuple[Path, str]:
 
 
 def read_calibration(target_id: str | None = None) -> tuple[dict, Path, str]:
+    """@brief 读入标定数据。
+
+    @param target_id 目标 id；为 None 时用默认目标。
+    @return ``(标定字典, 文件路径, 来源)``。
+    @raises TargetError 文件内容不是 JSON 对象时抛出。
+    """
     path, source = calibration_file(target_id)
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -169,4 +234,9 @@ def read_calibration(target_id: str | None = None) -> tuple[dict, Path, str]:
 
 
 def sha256_file(path: Path) -> str:
+    """@brief 计算文件的 sha256 摘要。
+
+    @param path 文件路径。
+    @return 十六进制摘要字符串。
+    """
     return hashlib.sha256(path.read_bytes()).hexdigest()

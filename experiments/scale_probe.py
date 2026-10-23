@@ -31,6 +31,11 @@ _RESULT = json.dumps({
 
 
 def _make_root(root: Path, count: int) -> None:
+    """@brief 在临时根目录下硬链接出 ``count`` 个最小运行目录。
+
+    @param root 放置运行目录的根。
+    @param count 要造的运行个数。
+    """
     root.mkdir(parents=True, exist_ok=True)
     state = root / ".state.template"
     result = root / ".result.template"
@@ -47,6 +52,8 @@ def _make_root(root: Path, count: int) -> None:
 
 
 def _reset_singletons() -> None:
+    """@brief 清掉 observe 的进程级单例和缓存，让下一次计时从冷开始。
+    """
     import observe.index as index
     import observe.query as query
 
@@ -58,6 +65,11 @@ def _reset_singletons() -> None:
 
 
 def measure(count: int) -> dict:
+    """@brief 造 ``count`` 个运行，索引后测量各读取路径的耗时。
+
+    @param count 合成运行的个数。
+    @return 各项耗时、返回行数、库体积等字段组成的字典。
+    """
     from observe.index import Index
     from observe import query
     from taic.brief import summarize_run
@@ -122,6 +134,11 @@ def measure(count: int) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """@brief ``python -m experiments.scale_probe`` 的入口，按给定规模逐个测。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     parser = argparse.ArgumentParser(prog="python -m experiments.scale_probe")
     parser.add_argument("--counts", default="1000,10000,100000")
     parser.add_argument("--out", default=None)

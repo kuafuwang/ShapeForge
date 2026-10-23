@@ -11,6 +11,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class DType:
+    """@brief 一种元素类型的全部映射：task/contract 名称、MSL 类型与 torch 对应。"""
+
     name: str  # short name used in task/contract definitions, e.g. "fp16"
     msl: str  # Metal Shading Language type, e.g. "half"
     nbytes: int
@@ -21,22 +23,38 @@ class DType:
 
     @property
     def is_float(self) -> bool:
+        """@brief 是否为浮点类型。
+
+        @return 类型种类为 float 时为 True。
+        """
         return self.kind == "float"
 
     @property
     def torch(self):
+        """@brief 对应的 torch dtype。
+
+        @return torch 模块上的 dtype 对象，惰性导入 torch。
+        """
         import torch
 
         return getattr(torch, self.torch_name)
 
     @property
     def raw_torch(self):
+        """@brief 同宽度的整数 torch dtype，用于按位重解释。
+
+        @return torch 模块上的整数 dtype 对象，惰性导入 torch。
+        """
         import torch
 
         return getattr(torch, self.raw_torch_name)
 
     @property
     def mtl_code(self) -> int:
+        """@brief 对应的 Metal ``MTLDataType`` 枚举值。
+
+        @return Metal 模块上该数据类型属性的整数值，惰性导入 Metal。
+        """
         import Metal
 
         return getattr(Metal, self.mtl_datatype)
@@ -65,6 +83,12 @@ FLOAT_EPS = {"fp16": 2.0**-10, "bf16": 2.0**-7, "fp32": 2.0**-23}
 
 
 def get_dtype(name: str) -> DType:
+    """@brief 按短名称查找元素类型。
+
+    @param name 类型短名，如 ``"fp16"``。
+    @return 对应的 ``DType``。
+    @raises KeyError 名称未注册时抛出，并列出已知类型。
+    """
     try:
         return DTYPES[name]
     except KeyError as e:

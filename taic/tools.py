@@ -20,6 +20,11 @@ _WORD = re.compile(r"[a-z0-9_]+")
 
 @dataclass
 class Section:
+    """@brief 技能文档里按二级标题切出的一段。
+
+    ``keywords`` 是段内的 ``Keywords:`` 行，用于关键词检索；``body`` 是不含标题的正文。
+    """
+
     doc: str
     title: str
     keywords: str
@@ -27,12 +32,23 @@ class Section:
 
     @property
     def text(self) -> str:
+        """@brief 带二级标题的完整段落文本。
+
+        @return ``## <title>`` 与正文拼接后的字符串。
+        """
         return f"## {self.title}\n{self.body}".strip()
 
 
 # 技能文档按二级标题切段，供 lookup_msl 检索。文档读不出来时，组系统提示和查资料都会失败。
 def _sections(raw: str, doc_name: str) -> list["Section"]:
-    """Split one skill document on ``## `` headings, keeping a ``Keywords:`` line for retrieval."""
+    """@brief 按 ``## `` 二级标题把一份技能文档切段，并保留 ``Keywords:`` 行供检索。
+
+    切不出任何二级标题（例如文档缺失或被改写）时返回空列表。
+
+    @param raw 文档全文。
+    @param doc_name 文档名，记录在每段上，用于标识来源。
+    @return ``Section`` 列表，顺序与文档一致。
+    """
     out: list[Section] = []
     for chunk in raw.split("\n## ")[1:]:
         title, _, body = chunk.partition("\n")
@@ -42,10 +58,17 @@ def _sections(raw: str, doc_name: str) -> list["Section"]:
 
 
 class SkillIndex:
-    """Keyword retrieval over the sections of a skill document (the 'PTX ISA retrieval' analogue)."""
+    """@brief 对技能文档各段做关键词检索（对应论文里 PTX ISA 检索这一项技能）。"""
 
     def __init__(self, doc_name: str = "msl_reference", extra: tuple[str, ...] = (), target_id: str | None = None) -> None:
-        """``extra`` are further documents (``experience`` lives on the target; other names are backend skills)."""
+        """@brief 载入主文档与额外文档，并切好检索段。
+
+        ``extra`` 里的名字再取文档：``experience`` 挂在目标档上，其余按后端技能解析。
+
+        @param doc_name 主文档名，缺省为 ``msl_reference``。
+        @param extra 额外要并入索引的文档名。
+        @param target_id 目标标识；``None`` 时用默认目标。
+        """
         self.doc = doc_name
         self.target_id = target_id or DEFAULT_TARGET_ID
         raw = skill_text(doc_name, self.target_id)
@@ -56,14 +79,34 @@ class SkillIndex:
 
     # 开工具时系统提示里只有这份目录，逼模型按主题来查，而不是凭记忆编 API。
     def outline(self) -> str:
+        """@brief 只列目录（标题与关键词），开工具时放进系统提示。
+
+        @return 每行一段的目录文本。
+        """
         return "\n".join(f"- {s.title}  (keywords: {s.keywords})" for s in self.sections)
 
     # 关工具时没有 lookup_msl，参考必须事先全部可见。
     def full_text(self) -> str:
+        """@brief 全文（前言加所有段），关工具时使用。
+
+        没开 ``lookup_msl`` 时参考必须事先全部可见。
+
+        @return 整份文档文本。
+        """
         return self.preamble + "\n\n" + "\n\n".join(s.text for s in self.sections)
 
     # 用词重叠挑最相关的几段，挡住模型编造地址空间、屏障和 simdgroup_matrix。问空或没有命中时只给目录，不编一段假文档。
     def lookup(self, topic: str, k: int = 2, max_chars: int = 7000) -> str:
+        """@brief 用词重叠挑最相关的几段原文。
+
+        目的是挡住模型编造地址空间、屏障和 simdgroup_matrix。标题权重大于关键词，关键词大于正文；
+        主题原串出现在整段里时额外加分。主题为空或没有命中时只给目录，不编一段假文档。
+
+        @param topic 检索词，例如 ``simdgroup_matrix thread_elements``。
+        @param k 最多返回多少段。
+        @param max_chars 返回文本的字符上限。
+        @return 命中的段落原文拼接；主题为空或没有命中时为带目录的提示文本。
+        """
         q = set(_WORD.findall(topic.lower()))
         if not q:
             return "error: empty topic. Section titles:\n" + self.outline()
@@ -124,7 +167,16 @@ def make_handlers(
     quick_eval: Callable[[str], Awaitable[str]] | None,
     max_quick_checks: int,
 ) -> dict:
-    """Handlers for one conversation. ``quick_eval`` is expected to serialize GPU access itself."""
+    """@brief 为一次对话绑定工具处理器。
+
+    ``quick_eval`` 为空就不注册 ``quick_check``。次数用尽或源码为空只回错误文本，模型仍可交出最终内核，
+    整次搜索不因此停下。GPU 串行由 ``quick_eval`` 自己保证：编排器的 ``_quick`` 与完整评测共用同一把 gpu_lock。
+
+    @param index 本节对话使用的技能检索索引。
+    @param quick_eval 快速检查回调，需自行串行化 GPU 访问；``None`` 表示不提供该工具。
+    @param max_quick_checks 这一次模型请求内 ``quick_check`` 的调用次数上限。
+    @return 工具名到处理器的映射。
+    """
     state = {"quick": 0}
 
     def lookup(args: dict) -> str:

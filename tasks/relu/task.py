@@ -9,12 +9,23 @@ from tasks._elementwise import build_elementwise
 
 
 def _mlx(x):
+    """@brief mlx 侧的 ReLU 基线。
+
+    @param x mlx 数组。
+    @return 把小于 0 的项截成 0 的结果。
+    """
     import mlx.core as mx
 
     return mx.maximum(x, 0)
 
 
 def build(dtype: str, size: str):
+    """@brief 装配逐元素 ReLU 题。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
     return build_elementwise(
         "relu",
         dtype,

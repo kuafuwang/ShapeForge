@@ -37,7 +37,15 @@ _LOCKED = ("task", "contracts", "trials", "budget_usd", "preset", "dtype", "size
 
 
 def resolve_menu(base: str, tokens: list[str]) -> list[tuple[str, str]]:
-    """``(directory slug, task name)`` in menu order. ``default`` is the bare task name. A missing default is an error."""
+    """@brief 把命令行里的契约列表解成菜单项。
+
+    ``(directory slug, task name)`` in menu order. ``default`` is the bare task name. A missing default is an error.
+
+    @param base 基任务名，不带 ``@变体``。
+    @param tokens 契约名列表，可带或不带基任务前缀。
+    @return 按菜单顺序的 ``(目录名, 任务名)`` 列表。
+    @raises ValueError 菜单为空、契约重复或不是该任务的变体、或缺少 ``default`` 时。
+    """
     if not tokens:
         raise ValueError("contract menu is empty")
     seen: list[str] = []
@@ -65,14 +73,31 @@ def resolve_menu(base: str, tokens: list[str]) -> list[tuple[str, str]]:
 
 
 def schedule(items: list[tuple[str, str]], trials: int) -> list[tuple[str, str, int]]:
-    """Interleave trials: round 1 of every contract, then round 2, and so on."""
+    """@brief 把菜单交错排成执行顺序：先每套契约各一轮，再下一轮。
+
+    Interleave trials: round 1 of every contract, then round 2, and so on.
+
+    @param items ``resolve_menu`` 返回的菜单项。
+    @param trials 每套契约重复几轮。
+    @return ``(目录名, 任务名, 轮次)`` 序列。
+    @raises ValueError 轮数小于 1 时。
+    """
     if trials < 1:
         raise ValueError(f"trials must be >= 1, got {trials}")
     return [(slug, task, trial) for trial in range(1, trials + 1) for slug, task in items]
 
 
 def _require_buildable(base: str, items: list[tuple[str, str]], dtype: str, size: str) -> None:
-    """Refuse before any model call when the task has no variants or a variant string does not build."""
+    """@brief 在叫模型之前先确认任务存在、有变体且每个变体都能构建。
+
+    Refuse before any model call when the task has no variants or a variant string does not build.
+
+    @param base 基任务名。
+    @param items 菜单项。
+    @param dtype 数据类型。
+    @param size 规模档位。
+    @raises ValueError 任务是未知名字、没有 ``build_variant``，或某个变体取不到时。
+    """
     if base not in TASK_NAMES + PHASE2_TASK_NAMES:
         raise ValueError(f"unknown task {base!r}")
     mod = importlib.import_module(f"tasks.{base}.task")
@@ -83,15 +108,26 @@ def _require_buildable(base: str, items: list[tuple[str, str]], dtype: str, size
 
 
 def _num(value) -> float | None:
+    """@brief 取一个可用于统计的浮点数。
+
+    @param value 任意值。
+    @return 浮点数；布尔、非数值和 NaN 都返回 ``None``。
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value) if value == value else None
 
 
 def judge(rows: list[dict], slugs: list[str]) -> dict:
-    """Name a winner only when every contract has at least two published speedups and one range sits strictly above the others.
+    """@brief 判定哪套契约胜出，证据不足时返回无结论。
+
+    Name a winner only when every contract has at least two published speedups and one range sits strictly above the others.
 
     ``best_speedup`` is not read. A contract with a single published number is an anecdote (``个例``) and blocks a winner.
+
+    @param rows 已完成的试验行。
+    @param slugs 菜单里的目录名列表。
+    @return 含 ``verdict``/``winner``/``reason`` 与逐契约统计的字典。
     """
     by: dict[str, list[dict]] = {slug: [] for slug in slugs}
     for row in rows:
@@ -136,6 +172,15 @@ def judge(rows: list[dict], slugs: list[str]) -> dict:
 
 
 def _row_from_result(slug: str, task: str, trial: int, run_dir: Path, res: dict) -> dict:
+    """@brief 把一次已完成试验压成报告里的一行。
+
+    @param slug 契约的目录名。
+    @param task 任务名。
+    @param trial 轮次。
+    @param run_dir 该试验的输出目录。
+    @param res 该试验的 ``result.json`` 内容。
+    @return 含发布结论与花费的一行。
+    """
     conclusion = conclusion_of_run(run_dir, res)
     return {
         "slug": slug, "task": task, "trial": trial, "skipped": None,
@@ -145,6 +190,12 @@ def _row_from_result(slug: str, task: str, trial: int, run_dir: Path, res: dict)
 
 
 def _same(saved: dict, fresh: dict) -> bool:
+    """@brief 比对已保存的菜单与本次参数在锁定键上是否一致。
+
+    @param saved 磁盘上的 ``menu.json`` 内容。
+    @param fresh 本次调用要写的菜单内容。
+    @return 所有锁定键都相同时为 ``True``；浮点按 1e-9 比较。
+    """
     for key in _LOCKED:
         old, new = saved.get(key), fresh.get(key)
         if isinstance(old, float) or isinstance(new, float):
@@ -156,7 +207,15 @@ def _same(saved: dict, fresh: dict) -> bool:
 
 
 def collect(out: Path, items: list[tuple[str, str]], trials: int) -> tuple[list[dict], list[dict]]:
-    """Rows already on disk, and the schedule entries that have no ``result.json`` yet."""
+    """@brief 分开磁盘上已完成的行和还没跑的排程项。
+
+    Rows already on disk, and the schedule entries that have no ``result.json`` yet.
+
+    @param out 实验输出目录。
+    @param items 菜单项。
+    @param trials 每套契约的轮数。
+    @return ``(已完成的行, 待跑的排程项)``。
+    """
     rows: list[dict] = []
     pending: list[tuple[str, str, int]] = []
     for slug, task, trial in schedule(items, trials):
@@ -169,6 +228,15 @@ def collect(out: Path, items: list[tuple[str, str]], trials: int) -> tuple[list[
 
 
 def _write_report(out: Path, items: list[tuple[str, str]], rows: list[dict], skipped: list[dict], aborted: str | None) -> dict:
+    """@brief 写 ``summary.json`` 与 ``summary.md`` 并返回报告。
+
+    @param out 实验输出目录。
+    @param items 菜单项。
+    @param rows 已完成的行。
+    @param skipped 被跳过的排程项。
+    @param aborted 中止原因；没有中止时为 ``None``。
+    @return 写出的报告字典。
+    """
     judged = judge(rows, [slug for slug, _task in items])
     report = {**judged, "skipped": skipped, "aborted": aborted, "rows": rows}
     write_json_atomic(out / "summary.json", report)
@@ -177,6 +245,11 @@ def _write_report(out: Path, items: list[tuple[str, str]], rows: list[dict], ski
 
 
 def markdown(report: dict) -> str:
+    """@brief 把契约对比报告拍成 markdown 表。
+
+    @param report ``_write_report`` 产出的报告字典。
+    @return 表格文本，附判定、胜者与跳过原因。
+    """
     lines = [
         "| contract | published n | median | min | max |",
         "| --- | ---: | ---: | ---: | ---: |",
@@ -212,7 +285,24 @@ def run_menu(
     run_fn=None,
     log=print,
 ) -> dict:
-    """Validate the menu, then run every missing child whose budget still fits. ``run_fn`` defaults to :func:`experiments.common.run_one`."""
+    """@brief 校验菜单后，把还没跑且预算放得下的子搜索逐个跑完。
+
+    Validate the menu, then run every missing child whose budget still fits. ``run_fn`` defaults to :func:`experiments.common.run_one`.
+
+    @param base 基任务名。
+    @param tokens 契约名列表。
+    @param out 实验输出目录。
+    @param trials 每套契约的轮数。
+    @param budget 每个子搜索的美元上限。
+    @param preset 配置预设名。
+    @param max_total_usd 整个实验的总额上限；为 ``None`` 时不限。
+    @param dtype 数据类型。
+    @param size 规模档位。
+    @param run_fn 实际跑一次搜索的可调用对象；为 ``None`` 时用 ``run_one``。
+    @param log 进度输出函数。
+    @return 写出的报告字典。
+    @raises ValueError 预算非正、菜单无效、``menu.json`` 记录的是另一套菜单，或子搜索没写出结果时。
+    """
     install_file_log()
     if budget <= 0:
         raise ValueError(f"budget must be positive, got {budget}")
@@ -283,10 +373,20 @@ def run_menu(
 
 
 def json_loads(path: Path):
+    """@brief 读一个 JSON 文件。
+
+    @param path JSON 文件路径。
+    @return 解析结果。
+    """
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def main(argv=None) -> int:
+    """@brief ``python -m experiments.contract_menu`` 的入口，可选先做静态筛选。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码；参数被拒时返回 2。
+    """
     ap = argparse.ArgumentParser(description="Search one operator under several launch contracts.")
     ap.add_argument("task", help="base task name, without @variant")
     ap.add_argument("--contracts", required=True, help="comma-separated: default and variant names (32x16t128 or task@32x16t128)")

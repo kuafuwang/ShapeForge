@@ -18,6 +18,12 @@ OUTLIER = re.compile(r"case '(\w+)':\s*(\d+)/(\d+) elements out of tolerance \(w
 
 
 def main() -> int:
+    """@brief 从已有候选报告里统计 FlashAttention 的``incorrect``/``unsafe``失败形态，并写出 REPORT.md。
+
+    不调宽容差，也不重新跑内核。
+
+    @return 进程退出码，正常结束时为 0。
+    """
     rows = []
     for report in REPO.glob("runs/**/candidates/*/report.json"):
         try:

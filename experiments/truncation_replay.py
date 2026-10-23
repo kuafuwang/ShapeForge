@@ -40,6 +40,11 @@ WRITE_NOW = (
 
 
 def _samples(n: int) -> list[dict]:
+    """@brief 从已完成的 transcript 里抽出没写出内核就被截断的请求。
+
+    @param n 最多取多少个样本。
+    @return 打乱后的样本列表，每项带原消息与要抽的 kernel 名。
+    """
     found = []
     for name, kernel in KERNELS.items():
         path = REPO / "runs" / "p1" / name / "transcript.jsonl"
@@ -64,6 +69,12 @@ def _samples(n: int) -> list[dict]:
 
 
 def _messages(arm: str, messages: list[dict]) -> list[dict]:
+    """@brief 按实验组改造原消息：删推理、降 effort 或加一句催写法。
+
+    @param arm 实验组名，取 ``ARMS`` 里的值。
+    @param messages 原始请求消息。
+    @return 重新拼好的消息列表。
+    """
     if arm == "as_sent":
         return [dict(m) for m in messages]
     out = _retry_without_reasoning(messages)
@@ -73,6 +84,13 @@ def _messages(arm: str, messages: list[dict]) -> list[dict]:
 
 
 async def _one(llm: LLM, arm: str, sample: dict) -> dict:
+    """@brief 重发一次请求，并记下是否抽到了内核、是否又被截断。
+
+    @param llm 要用的 LLM 客户端。
+    @param arm 实验组名。
+    @param sample ``_samples`` 返回的样本。
+    @return 一行结果：结束原因、花费、字数与是否含内核；调用出错时 ``finish_reason`` 为 ``error``。
+    """
     try:
         reply = await llm.chat(_messages(arm, sample["messages"]), label=f"{sample['run']}:{sample['label']}:{arm}")
     except LLMError as e:
@@ -85,6 +103,12 @@ async def _one(llm: LLM, arm: str, sample: dict) -> dict:
 
 
 def _report(rows: list[dict], spent: float) -> str:
+    """@brief 按实验组统计请求数、成功数、再次截断数与平均花费。
+
+    @param rows 每次重发的结果行。
+    @param spent 本次总共花了多少美元。
+    @return markdown 报告文本。
+    """
     lines = ["# Truncation replay", "", f"Spent ${spent:.3f} on {len(rows)} requests.", ""]
     lines += ["| arm | requests | kernels | truncated again | mean cost |", "| --- | ---: | ---: | ---: | ---: |"]
     for arm in ARMS:
@@ -104,6 +128,16 @@ def _report(rows: list[dict], spent: float) -> str:
 
 
 async def replay(*, n: int, max_usd: float, out: Path, concurrency: int) -> int:
+    """@brief 并发重发截断请求，写出 ``data.json`` 与 ``REPORT.md``。
+
+    花费达到 ``max_usd`` 后不再发新请求，已经开始的那几个可以超出。
+
+    @param n 最多重发多少个样本。
+    @param max_usd 本次的花费上限，单位美元。
+    @param out 输出目录。
+    @param concurrency 并发请求数。
+    @return 进程退出码；没有找到被截断的回复时返回 1。
+    """
     cfg, _ = load_config(None, preset="base")
     out.mkdir(parents=True, exist_ok=True)
     from dataclasses import replace
@@ -139,6 +173,11 @@ async def replay(*, n: int, max_usd: float, out: Path, concurrency: int) -> int:
 
 
 def main(argv=None) -> int:
+    """@brief ``python -m experiments.truncation_replay`` 的入口。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码。
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--max-usd", type=float, default=5.0)
     ap.add_argument("--n", type=int, default=20)

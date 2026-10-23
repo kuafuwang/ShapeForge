@@ -12,18 +12,33 @@ _FEATURES = ("matrix_unit", "acc_bucket", "tg_staging", "double_buffer", "regist
 
 
 def _present(source: str, backend_id: str = "metal") -> set[str]:
+    """@brief 取源码里出现的静态特征名集合。
+
+    @param source 内核源码。
+    @param backend_id 后端标识，决定特征签名是否可用。
+    @return 出现的特征名集合；后端不支持时为空集。
+    """
     sig = feature_signature(source, backend_id=backend_id)
     return {name for name, bit in zip(_FEATURES, sig) if bit and bit != "0"}
 
 
 def _bound(report: dict) -> str | None:
+    """@brief 读报告里的 roofline 瓶颈类别。
+
+    @param report 评测报告字典。
+    @return ``memory`` 或 ``compute``；字段缺失或不认识时返回 ``None``。
+    """
     roof = report.get("roofline") if isinstance(report, dict) else None
     bound = roof.get("bound") if isinstance(roof, dict) else None
     return bound if bound in ("memory", "compute") else None
 
 
 def _target_info(run: Path) -> tuple[str, str]:
-    """The run's backend and kernel extension, legacy Metal fallback."""
+    """@brief 读一次运行的后端标识与内核扩展名，读不到时退回 Metal。
+
+    @param run 运行目录。
+    @return ``(backend_id, file_ext)``；``run_config.json`` 缺失或损坏时返回 ``("metal", ".metal")``。
+    """
     try:
         doc = json.loads((run / "run_config.json").read_text())
         target = doc.get("target") if isinstance(doc.get("target"), dict) else {}
@@ -42,9 +57,11 @@ def _target_info(run: Path) -> tuple[str, str]:
 
 
 def build_experience_index(roots: list[Path], *, exclude_runs: set[str] | None = None) -> dict:
-    """Pairs where a later ok kernel beat the previous best, and which static features it added.
+    """@brief 挖出「后一颗 ok 内核比前一颗快」的成对样本，以及它新增的静态特征。
 
-    ``exclude_runs`` drops a run whose directory name is in the set, so a repeatability trial can leave itself out.
+    @param roots 需要扫描的根目录；每个根可以是单个运行目录，也可以是包含多个运行的上级目录。
+    @param exclude_runs 要排除的运行目录名集合，使重复性试验可以把自己排除在外。
+    @return 含 ``entries``（按瓶颈类别与特征聚合）、``wins``（成对样本数）与 ``pairs``（原始成对记录）的字典。
     """
     blocked = exclude_runs or set()
     wins: list[dict] = []
@@ -87,6 +104,11 @@ def build_experience_index(roots: list[Path], *, exclude_runs: set[str] | None =
 
 
 def load_index(path: Path) -> dict:
+    """@brief 读一份经验索引文件。
+
+    @param path 索引 JSON 的路径。
+    @return 解析后的字典；文件缺失、损坏或不是对象时返回 ``{"entries": []}``。
+    """
     try:
         doc = json.loads(Path(path).read_text())
     except (OSError, ValueError):
@@ -95,12 +117,24 @@ def load_index(path: Path) -> dict:
 
 
 def _task_base(name: object) -> str:
+    """@brief 去掉 ``@variant`` 后缀，得到任务基名。
+
+    @param name 任务名。
+    @return 基名；``name`` 不是非空字符串时为空字符串。
+    """
     if not isinstance(name, str) or not name:
         return ""
     return name.split("@", 1)[0]
 
 
 def _aggregate(wins: list[dict]) -> list[dict]:
+    """@brief 把成对样本按（瓶颈类别, 特性）聚合。
+
+    条目按样本数降序排列；``median_ratio`` 取各样本加速比的中位数。
+
+    @param wins 成对样本列表，每项含 ``added``/``bound``/``ratio``。
+    @return 聚合后的条目列表。
+    """
     grouped: dict[tuple, list[float]] = {}
     for row in wins:
         for feature in row.get("added") or []:
@@ -113,10 +147,18 @@ def _aggregate(wins: list[dict]) -> list[dict]:
 
 
 def retrieve_experience_hints(index: dict, task_name: str, bound: str | None, *, exclude_task: bool = False, k: int = 3) -> str:
-    """Up to ``k`` lines. ``exclude_task`` drops every pair whose task (ignoring ``@variant``) is ``task_name``.
+    """@brief 生成至多 ``k`` 行经验提示。
 
-    An index that has no ``pairs`` list cannot prove a hint came from another task, so the call returns no hints
-    instead of the mixed ``entries``. Repeatability passes an empty index path and never reaches this function.
+    ``exclude_task`` 会丢掉任务基名（忽略 ``@variant``）等于 ``task_name`` 的所有样本。
+    没有 ``pairs`` 列表的索引无法证明提示来自别的任务，因此直接不给提示，而不是改用混合过的 ``entries``。
+    重复性试验传入空索引路径，根本不会走到这里。
+
+    @param index 经验索引字典。
+    @param task_name 当前任务名。
+    @param bound 当前瓶颈类别；``memory``/``compute`` 时优先取同类样本。
+    @param exclude_task 是否排除同任务基名的样本。
+    @param k 最多几行提示。
+    @return 提示文本；没有可用样本时为空字符串。
     """
     if exclude_task:
         pairs = index.get("pairs")
@@ -140,6 +182,11 @@ def retrieve_experience_hints(index: dict, task_name: str, bound: str | None, *,
 
 
 def write_index(path: Path, index: dict) -> None:
+    """@brief 把经验索引写到磁盘，必要目录一并创建。
+
+    @param path 目标 JSON 路径。
+    @param index 要写出的索引字典。
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(index, indent=1))

@@ -11,14 +11,32 @@ from tasks._elementwise import build_elementwise
 
 
 def _mlx(g, u):
+    """@brief mlx 侧的 SwiGLU 基线，整个式子走一次 ``mx.compile``。
+
+    @param g gate 输入（mlx 数组）。
+    @param u up 输入（mlx 数组）。
+    @return ``silu(g) * u``。
+    """
     return mlx_compiled("swiglu", lambda mx: (lambda a, b: (a * mx.sigmoid(a)) * b))(g, u)
 
 
 def _torch(g, u):
+    """@brief torch 侧的 SwiGLU 基线。
+
+    @param g gate 输入。
+    @param u up 输入。
+    @return ``F.silu(g) * u``。
+    """
     return F.silu(g) * u
 
 
 def build(dtype: str, size: str):
+    """@brief 装配逐元素 SwiGLU 题。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
     return build_elementwise(
         "swiglu",
         dtype,

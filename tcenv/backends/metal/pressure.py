@@ -19,6 +19,11 @@ _DECLARATOR = re.compile(r"^([A-Za-z_]\w*)\s*(?:\[\s*([^\]]+?)\s*\])?")
 
 
 def _literal_size(value: str | None) -> int | None:
+    """@brief 解析数组维度里的十进制字面量。
+
+    @param value 维度文本，可为 None。
+    @return 整数值；缺失或不是字面量时为 None。
+    """
     if value is None:
         return None
     text = value.strip()
@@ -28,7 +33,12 @@ def _literal_size(value: str | None) -> int | None:
 
 
 def source_pressure(source: str | None) -> dict:
-    """Return declared fragment slots and arrays, or ``{}`` when none are visible.
+    """@brief 从源码统计声明的 simdgroup_float8x8 槽位与数组。
+
+    @param source MSL 源码；空值返回空字典。
+    @return 压力字典，没有可见声明时为 ``{}``。
+
+    Return declared fragment slots and arrays, or ``{}`` when none are visible.
 
     Array extents must be integer literals.  A symbolic extent is counted as one
     slot and omitted from ``arrays`` so the caller does not pretend to know it.
@@ -59,7 +69,13 @@ def source_pressure(source: str | None) -> dict:
 
 
 def pressure_hint(pressure: dict) -> str:
-    """Advisory hint only when the largest declared array exceeds the observed fast point."""
+    """@brief 当最大声明数组超过已知快速点时给出参考提示。
+
+    @param pressure source_pressure 的返回值。
+    @return 提示文本；不需要提示时为空字符串。
+
+    Advisory hint only when the largest declared array exceeds the observed fast point.
+    """
     largest = int(pressure.get("largest_array") or 0)
     if largest <= 16:
         return ""

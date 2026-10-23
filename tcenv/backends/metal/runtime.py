@@ -91,10 +91,18 @@ class RunTiming:
 
     @property
     def wall_per_iter_s(self) -> float:
+        """@brief 每次迭代的平均墙钟秒数。
+
+        @return 墙钟时间除以迭代次数。
+        """
         return self.wall_s / self.iters
 
     @property
     def gpu_per_iter_s(self) -> float:
+        """@brief 每次迭代的平均 GPU 时间。
+
+        @return 设备时间戳差值除以迭代次数。
+        """
         return self.gpu_s / self.iters
 
 
@@ -107,7 +115,12 @@ _COMPILE_HOOKS: tuple | None = None
 # worker 在每次启动前后写心跳 B / E。waitUntilCompleted 若因死循环一直不返回，父进程靠 B 的年龄 SIGKILL。
 # 等 GPU 锁用的是另一套 hook，写的是 W，排队不会被当成单次启动挂起。
 def set_compile_hooks(begin, end) -> None:
-    """Call ``begin`` before Metal compilation and ``end`` after it returns or raises.
+    """@brief 设置编译前后的回调，供 worker 写编译心跳。
+
+    @param begin 编译开始前调用的函数。
+    @param end 编译返回或抛错后调用的函数。
+
+    Call ``begin`` before Metal compilation and ``end`` after it returns or raises.
 
     The worker writes heartbeat ``C`` so the parent can kill a stuck frontend without waiting out the whole worker timeout.
     """
@@ -116,6 +129,11 @@ def set_compile_hooks(begin, end) -> None:
 
 
 def set_launch_hooks(begin, end) -> None:
+    """@brief 设置 GPU 启动前后的回调，供 worker 写启动心跳。
+
+    @param begin commit 之前调用的函数。
+    @param end waitUntilCompleted 之后调用的函数。
+    """
     global _LAUNCH_HOOKS
     _LAUNCH_HOOKS = (begin, end)
 
@@ -128,6 +146,11 @@ _ACCESS = {
 
 
 def _bindings_of(refl) -> list[Binding]:
+    """@brief 把 Metal 反射对象转成绑定列表。
+
+    @param refl pipeline 反射对象，可为 None。
+    @return Binding 列表，描述名字、槽位、种类、读写与元素大小。
+    """
     bindings: list[Binding] = []
     if refl is None:
         return bindings
@@ -145,6 +168,11 @@ def _bindings_of(refl) -> list[Binding]:
 
 # 把 "3.2" 这种名字对上 MTLLanguageVersion3_2。绑定里没有这个常量时由调用方换下一个版本。
 def _language_version(name: str):
+    """@brief 把 ``"3.2"`` 这样的版本名映射到 MTLLanguageVersion 常量。
+
+    @param name 点分版本名。
+    @return 对应的 Metal 常量。
+    """
     attr = "MTLLanguageVersion" + name.replace(".", "_")
     return getattr(Metal, attr)
 
@@ -152,6 +180,10 @@ def _language_version(name: str):
 class MetalContext:
     # 默认设备和命令队列。没有设备，后面的编译和启动都无从开始。
     def __init__(self) -> None:
+        """@brief 取得系统默认 Metal 设备并创建命令队列。
+
+        @raises RuntimeError 当机器上没有可用的 Metal 设备。
+        """
         self.device = Metal.MTLCreateSystemDefaultDevice()
         if self.device is None:
             raise RuntimeError("no Metal device available")
@@ -161,6 +193,10 @@ class MetalContext:
     # -- device info ---------------------------------------------------------
     # 设备名、GPU 家族、每组线程上限和 threadgroup 内存上限。ABI 和标定读的是这里。
     def info(self) -> dict:
+        """@brief 读取设备名、GPU 家族与各项上限。
+
+        @return 设备信息字典，供 ABI 检查与标定使用。
+        """
         d = self.device
         fam = "unknown"
         for name in ("Apple9", "Apple8", "Apple7", "Apple6"):
@@ -186,7 +222,12 @@ class MetalContext:
 
     # 从高到低试编译一小段核，选这台机器实际能编过的最高 MSL。
     def language_version(self) -> str:
-        """Highest MSL version that actually compiles on this machine."""
+        """@brief 探测这台机器实际能编译的最高 MSL 版本。
+
+        @return 版本名字符串，全部失败时为 ``"2.4"``。
+
+        Highest MSL version that actually compiles on this machine.
+        """
         if self._lang_cache is None:
             probe = "#include <metal_stdlib>\nkernel void k(device float* x [[buffer(0)]], uint i [[thread_position_in_grid]]) { x[i] = 1.0f; }\n"
             for v in ("4.0", "3.2", "3.1", "3.0"):
@@ -209,6 +250,15 @@ class MetalContext:
     # 源码到可启动对象的路径。库编不过、找不到 kernel 名字、pipeline 建不起来，都是 MetalCompileError。
     # 反射（名字、槽位、读写、数据类型）跟着 pipeline 留下，契约判断在 check_abi。
     def compile(self, source: str, kernel_name: str, *, math: str = "fast", language: str | None = None) -> CompiledKernel:
+        """@brief 把源码编成 library 与可启动的 compute pipeline，并保留反射。
+
+        @param source 完整 MSL 源码。
+        @param kernel_name 要取出的核函数名。
+        @param math 数学模式，``fast``、``safe`` 或 ``relaxed``。
+        @param language MSL 版本名；省略时用探测到的最新版本。
+        @return 含 pipeline、反射绑定与构建耗时的 CompiledKernel。
+        @raises MetalCompileError 当源码编不过、找不到核名或 pipeline 建不起来。
+        """
         lang = language or self.language_version()
         opts = Metal.MTLCompileOptions.alloc().init()
         opts.setLanguageVersion_(_language_version(lang))
@@ -265,7 +315,17 @@ class MetalContext:
         )
 
     def compile_all(self, source: str, kernel_names: Sequence[str], *, math: str = "fast", language: str | None = None) -> list[CompiledKernel]:
-        """One library, one pipeline per name, in order. ``compile_s`` is on the first kernel only."""
+        """@brief 一次编出一个 library 里的多个核，按给定顺序返回 pipeline。
+
+        @param source 完整 MSL 源码。
+        @param kernel_names 需要的核函数名序列。
+        @param math 数学模式。
+        @param language MSL 版本名；省略时用探测到的最新版本。
+        @return 与 ``kernel_names`` 同序的 CompiledKernel 列表。
+        @raises MetalCompileError 当源码编不过、找不到某个核名或 pipeline 建不起来。
+
+        One library, one pipeline per name, in order. ``compile_s`` is on the first kernel only.
+        """
         if not kernel_names:
             raise MetalCompileError("compile_all needs at least one kernel name")
         first = self.compile(source, kernel_names[0], math=math, language=language)
@@ -296,6 +356,12 @@ class MetalContext:
     # -- buffers -------------------------------------------------------------
     # 共享存储让 CPU 用 memoryview 填保护带、GPU 读同一块地址。分配长度有 16 字节下限。
     def new_buffer(self, nbytes: int):
+        """@brief 分配一块共享存储的 MTLBuffer。
+
+        @param nbytes 字节数，不足 16 时按 16 分配。
+        @return 新的 MTLBuffer。
+        @raises MemoryError 当设备分配失败。
+        """
         buf = self.device.newBufferWithLength_options_(max(int(nbytes), 16), Metal.MTLResourceStorageModeShared)
         if buf is None:
             raise MemoryError(f"could not allocate a {nbytes}-byte Metal buffer")
@@ -303,7 +369,13 @@ class MetalContext:
 
     @staticmethod
     def view(buf) -> memoryview:
-        """Writable byte view of the whole buffer (shared storage)."""
+        """@brief 返回整块缓冲的可写字节视图。
+
+        @param buf MTLBuffer。
+        @return 覆盖整块缓冲的 memoryview。
+
+        Writable byte view of the whole buffer (shared storage).
+        """
         return memoryview(buf.contents().as_buffer(int(buf.length())))
 
     # -- dispatch ------------------------------------------------------------
@@ -318,7 +390,17 @@ class MetalContext:
         iters: int = 1,
         dispatch: str = "serial",
     ) -> RunTiming:
-        """Encode ``iters`` dispatches into one command buffer and wait for it.
+        """@brief 把 ``iters`` 次 dispatch 编进一个命令缓冲并等待完成。
+
+        @param kernel 已编译的核。
+        @param arg_sets 每次迭代使用的绑定组序列，按 ``i % len`` 轮转。
+        @param grid 线程组数量 (x, y, z)。
+        @param threads 每组线程数 (x, y, z)。
+        @param iters dispatch 次数。
+        @param dispatch ``serial`` 或 ``concurrent``。
+        @return 墙钟与 GPU 时间的 RunTiming。
+        @raises ValueError 当 ``iters`` 小于 1 或 ``dispatch`` 非法。
+        @raises MetalRuntimeError 当命令缓冲没有正常完成。
 
         Iteration ``i`` uses ``arg_sets[i % len(arg_sets)]`` so callers can rotate
         through several buffer sets to defeat caches.
@@ -369,6 +451,10 @@ class MetalContext:
         return RunTiming(wall_s=wall, gpu_s=float(cb.GPUEndTime() - cb.GPUStartTime()), iters=iters)
 
     def _fill_kernel(self) -> CompiledKernel:
+        """@brief 返回（并缓存）把 workspace 清零用的内部核。
+
+        @return 清零核的 CompiledKernel。
+        """
         cached = getattr(self, "_fill", None)
         if cached is None:
             src = (
@@ -390,7 +476,19 @@ class MetalContext:
         iters: int = 1,
         dispatch: str = "serial",
     ) -> RunTiming:
-        """Encode ``iters`` passes of ``stages`` into one command buffer.
+        """@brief 把 ``iters`` 轮多段流水线编进一个命令缓冲并等待完成。
+
+        @param stages 按顺序执行的已编译核。
+        @param grids 各段的线程组数量。
+        @param threads 各段的每组线程数。
+        @param threadgroup_bytes 各段动态 threadgroup 内存字节数。
+        @param arg_sets ``arg_sets[组][段]`` 给出该段的绑定。
+        @param fills ``fills[组]`` 为计时窗内要清零的 (buf, offset, nbytes)。
+        @param iters 流水线轮数。
+        @param dispatch ``serial`` 或 ``concurrent``。
+        @return 墙钟与 GPU 时间的 RunTiming。
+        @raises ValueError 当迭代数、dispatch 模式或段列表非法。
+        @raises MetalRuntimeError 当命令缓冲没有正常完成。
 
         ``arg_sets[set][stage]`` is that stage's bindings. ``fills[set]`` is ``(buf, offset, nbytes)``
         zeroed, inside the timed buffer, before the stages of that iteration. A buffer barrier sits
@@ -457,7 +555,16 @@ class MetalContext:
 
 
 def pipeline_ops(iters: int, nsets: int, nstages: int, *, concurrent: bool, filled: Sequence[bool]) -> list[tuple]:
-    """Encode order for one command buffer.
+    """@brief 排出一个命令缓冲里各段的编码顺序。
+
+    @param iters 流水线轮数。
+    @param nsets 轮转缓冲组数。
+    @param nstages 每轮的段数。
+    @param concurrent 是否使用并发 encoder（需要轮转 barrier）。
+    @param filled 每组是否有需要清零的 workspace。
+    @return 操作元组列表：fill / barrier / rotate_barrier / dispatch。
+
+    Encode order for one command buffer.
 
     Every iteration fills that rotation set before its stages, including iterations past the
     first pass. A kernel that cached a transformed tile in workspace on iteration 0 cannot
@@ -483,6 +590,10 @@ _CTX: MetalContext | None = None
 
 # 一个进程一份设备和队列。着色器校验在另一个进程里，它的环境变量和这份上下文互不影响。
 def get_context() -> MetalContext:
+    """@brief 返回进程内共享的 Metal 上下文。
+
+    @return MetalContext 单例。
+    """
     global _CTX
     if _CTX is None:
         _CTX = MetalContext()
@@ -495,4 +606,9 @@ _LOC_RE = re.compile(r"program_source:(\d+):(\d+)")
 
 # 去掉诊断文本里的 ANSI 颜色码。本文件没有调用点。
 def strip_ansi(s: str) -> str:
+    """@brief 去掉诊断文本里的 ANSI 颜色码。
+
+    @param s 原始文本。
+    @return 去掉颜色码的文本。
+    """
     return re.sub(r"\x1b\[[0-9;]*m", "", s)

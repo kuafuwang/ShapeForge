@@ -28,6 +28,10 @@ _GRID_CACHE: dict[tuple, list[dict]] = {}
 
 
 def gpu_snapshot() -> dict:
+    """@brief 取当前 GPU 快照（转发给 ``detail.gpu_snapshot``）。
+
+    @return GPU 快照字典。
+    """
     return detail.gpu_snapshot()
 
 
@@ -35,11 +39,18 @@ pid_alive = detail.pid_alive
 
 
 def refresh() -> None:
-    """Pick up new directories and edits to runs the index already knows. Used by reads that must match the disk."""
+    """@brief 发现新目录并重读索引已知运行的改动；供必须与磁盘一致的读路径使用。
+
+    原始英文说明：Pick up new directories and edits to runs the index already knows. Used by reads that must match the disk.
+    """
     get_index().sync_known()
 
 
 def _tick_interval() -> float:
+    """@brief 取空闲扫描的最小间隔，来自 ``OBSERVE_TICK_INTERVAL``。
+
+    @return 间隔秒数，不小于 0；环境变量非法时返回 0.5。
+    """
     try:
         return max(0.0, float(os.environ.get("OBSERVE_TICK_INTERVAL", "0.5")))
     except ValueError:
@@ -47,14 +58,18 @@ def _tick_interval() -> float:
 
 
 def _refresh_on_read() -> bool:
+    """@brief 报告是否开启了读时刷新（``OBSERVE_REFRESH_ON_READ=1``）。
+
+    @return 开启时为 True。
+    """
     return os.environ.get("OBSERVE_REFRESH_ON_READ") == "1"
 
 
 def tick() -> None:
-    """Idle frame. At most one directory sweep per interval, shared by every request and SSE client.
+    """@brief 空闲帧：每个间隔最多扫一次目录，所有请求与 SSE 客户端共享。
 
-    Tests set ``OBSERVE_TICK_INTERVAL=0`` and ``OBSERVE_REFRESH_ON_READ=1`` so a run written
-    inside a test is visible immediately. The production request path does not scan.
+    测试设置 ``OBSERVE_TICK_INTERVAL=0`` 与 ``OBSERVE_REFRESH_ON_READ=1``，让测试内写入的运行立即可见；
+    生产请求路径不扫描。
     """
     now = time.monotonic()
     if now - _TICK["at"] < _tick_interval():
@@ -64,7 +79,12 @@ def tick() -> None:
 
 
 def history() -> list[dict]:
-    """Every run as the detail row, cached by index revision. Not re-scanned per request."""
+    """@brief 返回所有运行的 detail 行，按索引 revision 缓存，不逐请求重扫。
+
+    原始英文说明：Every run as the detail row, cached by index revision. Not re-scanned per request.
+
+    @return 按开始时间降序排列的行字典列表（副本）。
+    """
     if _refresh_on_read():
         tick()
     rows = []
@@ -84,14 +104,32 @@ def history() -> list[dict]:
 
 
 def budget_report(rows: list[dict] | None = None) -> dict:
+    """@brief 对给定行（默认取 ``history()``）求预算汇总。
+
+    @param rows 历史行列表，None 时现取 ``history()``。
+    @return ``summarize`` 生成的预算报告。
+    """
     return summarize(history() if rows is None else rows)
 
 
 def resolve_run(run_id: str) -> Path | None:
+    """@brief 把 run id 解析成运行目录。
+
+    @param run_id 运行 id。
+    @return 运行目录；索引里没有该 run 时返回 None。
+    """
     return get_index().resolve(run_id)
 
 
 def run_detail(run_id: str, *, stamp: str = "") -> dict | None:
+    """@brief 组装一个运行的详情负载（含特征网格、计划结果与反馈）。
+
+    ``stamp`` 与当前 detail 戳一致时只回 ``{"same": True, ...}``，不做完整渲染。
+
+    @param run_id 运行 id。
+    @param stamp 客户端已持有的 detail 戳，空串表示不复用。
+    @return 详情字典；运行不存在时返回 None；戳匹配时返回标记字典。
+    """
     directory = resolve_run(run_id)
     if directory is None:
         return None
@@ -112,7 +150,13 @@ def run_detail(run_id: str, *, stamp: str = "") -> dict | None:
 
 
 def _detail_stamp(run_id: str) -> str:
-    """Identity of the detail payload. A transcript append does not change it."""
+    """@brief 生成 detail 负载的身份戳；追加对话不会改变它。
+
+    原始英文说明：Identity of the detail payload. A transcript append does not change it.
+
+    @param run_id 运行 id。
+    @return 由五个指纹字段拼接的字符串；无该运行时为空串。
+    """
     row = get_index().conn.execute(
         "SELECT fp_state, fp_result, fp_config, fp_confirm, fp_extra FROM runs WHERE run_id = ?",
         (run_id,),
@@ -123,9 +167,14 @@ def _detail_stamp(run_id: str) -> str:
 
 
 def feature_grid(directory: Path, result: dict | None) -> list[dict]:
-    """One cell per source signature. The cell keeps the fastest candidate seen during the search.
+    """@brief 按源码签名给出每个格子；格子保留搜索中见过的最快候选。
 
-    Identical source is signed once. The grid is cached until ``state.json`` or ``result.json`` changes.
+    相同源码只签一次。结果缓存到 ``state.json`` 或 ``result.json`` 变化为止。
+    原始英文说明：One cell per source signature. The cell keeps the fastest candidate seen during the search.
+
+    @param directory 运行目录。
+    @param result 解析后的 ``result.json``，可为 None。
+    @return 每项含 ``signature``、``label``、``speedup`` 与 ``published`` 的列表。
     """
     winner = (result or {}).get("confirm_winner_label")
     from experiments.common import conclusion_of_run
@@ -186,7 +235,16 @@ def feature_grid(directory: Path, result: dict | None) -> list[dict]:
 
 
 def plan_outcomes(directory: Path, config: dict | None, state: dict | None, result: dict | None) -> list[dict]:
-    """Empty unless this run turned ``plan_ledger`` on. No priority and no confidence."""
+    """@brief 列出计划节点的结果；未开启 ``plan_ledger`` 时返回空列表，不含优先级与置信度。
+
+    原始英文说明：Empty unless this run turned ``plan_ledger`` on. No priority and no confidence.
+
+    @param directory 运行目录。
+    @param config 解析后的 ``run_config.json``，可为 None。
+    @param state 解析后的 ``state.json``，可为 None。
+    @param result 解析后的 ``result.json``，可为 None。
+    @return 每项含 ``round``、``label``、``title``、``outcome`` 与 ``speedup`` 的列表。
+    """
     search = (config or {}).get("search") or {}
     if search.get("plan_ledger") is not True:
         return []
@@ -209,11 +267,22 @@ def plan_outcomes(directory: Path, config: dict | None, state: dict | None, resu
 
 
 def _encode_cursor(value, run_id: str) -> str:
+    """@brief 把（排序键值, run_id）编成 URL 安全的游标字符串。
+
+    @param value 排序列的取值。
+    @param run_id 运行 id，用于唯一化。
+    @return 去掉 ``=`` 填充的 base64url 文本。
+    """
     raw = json.dumps([value, run_id], separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
 def _decode_cursor(cursor: str | None) -> tuple[object, str] | None:
+    """@brief 解析 keyset 游标；非法或缺失时返回 None。
+
+    @param cursor 客户端回传的游标，可为 None。
+    @return 二元组（排序键值, run_id），无法解析时返回 None。
+    """
     if not cursor:
         return None
     try:
@@ -241,7 +310,26 @@ def runs_page(
     limit: int = 50,
     offset: int = 0,
 ) -> dict:
-    """One page of runs. A cursor is keyset on ``(sort column, run_id)``; ``offset`` is the old fallback."""
+    """@brief 返回一页运行；游标在 ``(排序列, run_id)`` 上做 keyset，``offset`` 是旧的退化方式。
+
+    原始英文说明：One page of runs. A cursor is keyset on ``(sort column, run_id)``; ``offset`` is the old fallback.
+
+    @param experiment_id 只取该实验的运行。
+    @param task 只取该任务名的运行。
+    @param dtype 只取该 dtype 的运行。
+    @param model 只取该模型的运行。
+    @param status 只取该状态的运行。
+    @param target 只取该 target 的运行。
+    @param publication 只取该发布状态的运行。
+    @param min_speedup 已发布加速比下限。
+    @param since 开始时间下限。
+    @param sort 排序列名，取 ``started`` / ``speedup`` / ``spent`` / ``updated``。
+    @param order 排序方向，``asc`` 或 ``desc``。
+    @param cursor 上一页返回的 keyset 游标。
+    @param limit 本页最大行数，上限 100。
+    @param offset 未用游标时的偏移。
+    @return 含 ``total``、``limit``、``offset``、``next``、``sort``、``order`` 与 ``runs`` 的字典。
+    """
     if _refresh_on_read():
         tick()
     limit = max(1, min(int(limit or 50), PAGE_LIMIT))
@@ -300,7 +388,15 @@ def runs_page(
 
 
 def candidates_page(run_id: str, *, status: str | None = None, limit: int = 200) -> dict:
-    """Candidate-level facts from the index. No report files are opened."""
+    """@brief 从索引返回候选级事实，不打开任何报告文件。
+
+    原始英文说明：Candidate-level facts from the index. No report files are opened.
+
+    @param run_id 运行 id。
+    @param status 只看该状态的候选，None 表示不限。
+    @param limit 最大行数，上限 1000。
+    @return 含 ``run_id``、``limit`` 与 ``candidates`` 的字典。
+    """
     tick()
     limit = max(1, min(int(limit or 200), 1000))
     clauses = ["run_id = ?"]
@@ -318,7 +414,14 @@ def candidates_page(run_id: str, *, status: str | None = None, limit: int = 200)
 
 
 def sessions_page(run_id: str, *, limit: int = 500) -> dict:
-    """One row per hmz session: committee, model, tokens and cost."""
+    """@brief 每个 hmz 会话一行：委员会、模型、token 与花费。
+
+    原始英文说明：One row per hmz session: committee, model, tokens and cost.
+
+    @param run_id 运行 id。
+    @param limit 最大行数，上限 2000。
+    @return 含 ``run_id``、``limit`` 与 ``sessions`` 的字典。
+    """
     tick()
     limit = max(1, min(int(limit or 500), 2000))
     with borrow() as index:
@@ -332,7 +435,12 @@ def sessions_page(run_id: str, *, limit: int = 500) -> dict:
 
 
 def model_stats() -> dict:
-    """Per-session model totals, so the first-committee ``runs.model`` is not the only view."""
+    """@brief 按会话聚合模型用量，避免只看第一委员会写入的 ``runs.model``。
+
+    原始英文说明：Per-session model totals, so the first-committee ``runs.model`` is not the only view.
+
+    @return 含 ``models`` 列表的字典（按花费与会话数降序）。
+    """
     tick()
     with borrow() as index:
         rows = [dict(row) for row in index.conn.execute(
@@ -345,7 +453,15 @@ def model_stats() -> dict:
 
 
 def failures(*, status: str | None = None, task: str | None = None, limit: int = 50) -> dict:
-    """Candidate failures across runs. ``status`` is exact (``abi_error``, ``incorrect``, ``timeout``, ...)."""
+    """@brief 跨运行列出候选失败；``status`` 为精确匹配（``abi_error``、``incorrect``、``timeout`` 等）。
+
+    原始英文说明：Candidate failures across runs. ``status`` is exact (``abi_error``, ``incorrect``, ``timeout``, ...).
+
+    @param status 只看该失败状态。
+    @param task 只看该任务。
+    @param limit 最大行数，上限 100。
+    @return 含 ``limit`` 与 ``failures`` 的字典。
+    """
     tick()
     limit = max(1, min(int(limit or 50), PAGE_LIMIT))
     clauses = ["c.status != ''", "c.status != 'ok'"]
@@ -368,7 +484,15 @@ def failures(*, status: str | None = None, task: str | None = None, limit: int =
 
 
 def best_confirmed(*, task: str | None = None, target: str | None = None, limit: int = 20) -> dict:
-    """Confirmed kernels, fastest first. The publication gate already excluded unbound numbers."""
+    """@brief 列出已确认的 kernel，最快在前；发布门已排除未绑定的数字。
+
+    原始英文说明：Confirmed kernels, fastest first. The publication gate already excluded unbound numbers.
+
+    @param task 只看该任务。
+    @param target 只看该 target。
+    @param limit 最大行数，上限 100。
+    @return 含 ``limit`` 与 ``best`` 的字典。
+    """
     tick()
     limit = max(1, min(int(limit or 20), PAGE_LIMIT))
     clauses = ["publication = 'confirmed'", "published_speedup IS NOT NULL"]
@@ -389,6 +513,10 @@ def best_confirmed(*, task: str | None = None, target: str | None = None, limit:
 
 
 def experiments() -> list[dict]:
+    """@brief 列出实验及其 arm（按创建时间降序）。
+
+    @return 每项为实验字典，``arms`` 键下含各臂的 ``arm_id`` 与 ``planned_n``。
+    """
     tick()
     rows = []
     with borrow() as index:
@@ -406,7 +534,12 @@ def experiments() -> list[dict]:
 
 
 def experiment_jobs() -> list[dict]:
-    """Queues the stop button can see. Reads the state file of each known experiment, not the whole tree."""
+    """@brief 列出停止按钮能看到的队列作业；只读已知实验的状态文件，不扫全树。
+
+    原始英文说明：Queues the stop button can see. Reads the state file of each known experiment, not the whole tree.
+
+    @return 作业字典列表，按 ``updated_at`` 降序。
+    """
     refresh()
     with borrow() as index:
         ids = [item["experiment_id"] for item in index.conn.execute("SELECT experiment_id FROM experiments")]
@@ -422,6 +555,13 @@ def experiment_jobs() -> list[dict]:
 
 
 def compare(experiment_id: str) -> dict:
+    """@brief 对比一个实验内各 arm 的指标，并给出可否下判定。
+
+    漂移（``binding=drift``）与推断（``source=inferred``）的运行不参与比较；样本不足时不下结论。
+
+    @param experiment_id 实验 id。
+    @return 含 ``found``、``verdict``、``reason``、``winner``、``arms``、``drift`` 与 ``inferred`` 的字典。
+    """
     refresh()
     with borrow() as index:
         exp = index.conn.execute("SELECT * FROM experiments WHERE experiment_id = ?", (experiment_id,)).fetchone()
@@ -498,10 +638,21 @@ def compare(experiment_id: str) -> dict:
 
 
 def row_hash(row: dict, fallback: str) -> str:
+    """@brief 返回用于分组的运行配置哈希，目前直接返回调用方给的 fallback。
+
+    @param row 运行行字典。
+    @param fallback 实验配置哈希，作为结果返回。
+    @return 配置哈希字符串。
+    """
     return fallback
 
 
 def _median(values: list[float]) -> float | None:
+    """@brief 取列表的中位数（偶数个时取中间偏上的那个）。
+
+    @param values 数值列表。
+    @return 中位数；列表为空时返回 None。
+    """
     if not values:
         return None
     ordered = sorted(values)
@@ -509,6 +660,12 @@ def _median(values: list[float]) -> float | None:
 
 
 def _gain_per_usd(members: list[dict], spent: float) -> float | None:
+    """@brief 计算每美元换来的“发布加速比 - 朴素加速比”均值。
+
+    @param members 该 arm 的运行行列表。
+    @param spent 该 arm 的总花费（美元）。
+    @return 每美元增益；花费不为正或没有可用样本时返回 None。
+    """
     if spent <= 0:
         return None
     pieces = []
@@ -523,7 +680,13 @@ def _gain_per_usd(members: list[dict], spent: float) -> float | None:
 
 
 def harness_board(run_id: str) -> dict | None:
-    """Structured proposals and overlay decisions for one run. The files are the source."""
+    """@brief 返回一个运行的结构化提案与覆盖决策；文件是唯一事实源。
+
+    原始英文说明：Structured proposals and overlay decisions for one run. The files are the source.
+
+    @param run_id 运行 id。
+    @return harness 看板字典；运行不存在时返回 None。
+    """
     from observe.detail import resolve_run
     from taic.harness import board
 
@@ -534,20 +697,39 @@ def harness_board(run_id: str) -> dict | None:
 
 
 def suggestions(**kwargs) -> dict:
-    """Compact free-text suggestions for AI; full text is a separate detail call."""
+    """@brief 给 AI 的紧凑系统建议列表；全文另走详情调用。
+
+    原始英文说明：Compact free-text suggestions for AI; full text is a separate detail call.
+
+    @param kwargs 透传给 ``suggestions.compact`` 的筛选与分页参数。
+    @return 建议分组字典。
+    """
     from observe.suggestions import compact
 
     return compact(**kwargs)
 
 
 def suggestion(run_id: str, seq: int, digest: str) -> dict:
+    """@brief 返回一条系统建议的确切详情。
+
+    @param run_id 运行 id。
+    @param seq 反馈条目序号。
+    @param digest 条目摘要。
+    @return 建议详情字典。
+    """
     from observe.suggestions import detail
 
     return detail(run_id, seq, digest)
 
 
 def feedback_board(*, since: int | None = None) -> dict:
-    """Claims changed after ``since``. Omit ``since`` for the whole list. Text is read only for rows in the answer."""
+    """@brief 返回 ``since`` 之后变更的 claim；省略 ``since`` 则给全量，只为答案内的行读文本。
+
+    原始英文说明：Claims changed after ``since``. Omit ``since`` for the whole list. Text is read only for rows in the answer.
+
+    @param since 反馈 revision 起点，None 表示全量。
+    @return 反馈 feed 字典。
+    """
     from observe.feedback import review_feed
 
     tick()
@@ -556,6 +738,10 @@ def feedback_board(*, since: int | None = None) -> dict:
 
 
 def overview() -> dict:
+    """@brief 汇总首屏总览：GPU、存活运行与评估、心跳、任务、实验与反馈计数。
+
+    @return 总览字典。
+    """
     from tasks import list_tasks
 
     rows = history()
@@ -586,6 +772,13 @@ def overview() -> dict:
 
 
 def frame(run_id: str | None) -> dict:
+    """@brief 组装一帧页面数据：总览、历史、预算与选中运行的详情。
+
+    选中的运行不存在时退回最后一个存活运行，再退回最新一行。
+
+    @param run_id 期望选中的运行 id，可为 None 或空串。
+    @return 含 ``overview``、``history``、``budget``、``selected`` 与 ``run`` 的字典。
+    """
     hist = history()
     chosen = run_id or ""
     if chosen and resolve_run(chosen) is None:
@@ -603,6 +796,10 @@ def frame(run_id: str | None) -> dict:
 
 
 def ledger_report() -> dict:
+    """@brief 按 operator 与月份汇总花费账本，并带上结转总额。
+
+    @return 含 ``runs``、``spent_usd``、``budget_usd``、``by_operator``、``by_month`` 与 ``carryover_usd`` 的字典。
+    """
     refresh()
     with borrow() as index:
         by_operator = [
@@ -637,11 +834,20 @@ def ledger_report() -> dict:
 
 
 def _carry_total(index) -> float:
+    """@brief 取账本结转表中的总额。
+
+    @param index 已借用的索引对象。
+    @return 结转美元数；表为空时返回 0.0。
+    """
     row = index.conn.execute("SELECT total_usd FROM ledger_carryover LIMIT 1").fetchone()
     return 0.0 if row is None else float(row["total_usd"] or 0)
 
 
 def live_files() -> list[Path]:
+    """@brief 列出实时状态相关文件：GPU 目录、观察目录与最近几个 ``tcenv-*.json``。
+
+    @return 路径列表，用于计算实时 revision。
+    """
     from observe.publish import gpu_dir, observe_dir
 
     paths = [gpu_dir(), observe_dir()]
@@ -652,6 +858,10 @@ def live_files() -> list[Path]:
 
 
 def live_revision() -> int:
+    """@brief 当实时文件签名变化时递增的计数器。
+
+    @return 单调递增的版本号。
+    """
     signature = tuple(_file_signature(path) for path in live_files())
     if signature != _LIVE["last"]:
         _LIVE["last"] = signature
@@ -660,6 +870,11 @@ def live_revision() -> int:
 
 
 def _file_signature(path: Path) -> tuple:
+    """@brief 取文件或目录的轻量签名（路径、mtime、大小或条目数）。
+
+    @param path 文件或目录路径。
+    @return 签名元组；路径不存在或读不了时 mtime/大小记为 0。
+    """
     try:
         if path.is_dir():
             stat = path.stat()
@@ -671,11 +886,20 @@ def _file_signature(path: Path) -> tuple:
 
 
 def stream_revision() -> int:
+    """@brief 返回帧数据里的 ``revision`` 字段。
+
+    @return 当前流版本号。
+    """
     return poll_stream()["revision"]
 
 
 def poll_stream() -> dict:
-    """One idle frame. The detail revision and the turn revision move independently."""
+    """@brief 生成一个空闲帧；详情 revision 与轮次 revision 各自独立变化。
+
+    原始英文说明：One idle frame. The detail revision and the turn revision move independently.
+
+    @return 含 ``index_revision``、``turns_revision``、``feedback_revision``、``revision`` 与 ``runs`` 的字典。
+    """
     global _SENT
     tick()
     index = get_index()
@@ -692,4 +916,8 @@ def poll_stream() -> dict:
 
 
 def changed_runs() -> list[str]:
+    """@brief 返回索引自上次 tick 以来标记为有变化的 run id。
+
+    @return run id 列表。
+    """
     return list(get_index().changed)

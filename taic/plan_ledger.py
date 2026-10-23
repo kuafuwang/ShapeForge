@@ -12,6 +12,12 @@ from dataclasses import dataclass
 
 @dataclass
 class PlanNode:
+    """@brief 计划账本里的一条记录：某轮某分支真正确立了什么。
+
+    ``outcome_kind`` 是 ``validated_win``/``validated_tie``/``falsified``/``untested_impl_fail`` 之一；
+    ``stage`` 是原始状态或 ``history``；``constraint_hint`` 是重试该方向时的约束提示。
+    """
+
     round_id: int
     label: str
     title: str
@@ -23,7 +29,18 @@ class PlanNode:
 
 
 def classify_outcome(status: str, message: str, *, improved: bool, within_noise: bool, speedup: float | None, parent_speedup: float | None) -> tuple[str, str]:
-    """``(outcome_kind, constraint_hint)``. ``untested_impl_fail`` means the direction was not timed."""
+    """@brief 把一次评测结果归类为计划账本的结果类型。
+
+    ABI 错误、编译错误或没有交出内核，不能说明方向慢；只有安全、正确且没变快的内核才算否证。
+
+    @param status 报告的 ``status``。
+    @param message 失败信息或历史行标签，用于识别「没有内核」这类情况。
+    @param improved 轨迹里记录的当时是否换掉了种子。
+    @param within_noise 候选是否落在噪声带内。
+    @param speedup 本候选的加速比；未计时时为 ``None``。
+    @param parent_speedup 评测时的种子加速比；没有种子时为 ``None``。
+    @return ``(outcome_kind, constraint_hint)``；``untested_impl_fail`` 表示这个方向没被计时。
+    """
     text = message or ""
     if status in ("abi_error", "compile_error", "rejected", "no_code") or "no code" in text or "no valid kernel" in text:
         hint = ""
@@ -54,7 +71,15 @@ def classify_outcome(status: str, message: str, *, improved: bool, within_noise:
 
 
 def nodes_from_trace(trace: list[dict], history: list[str]) -> list[PlanNode]:
-    """Rebuild nodes from the history lines and the last report of each ``rN.pI`` branch."""
+    """@brief 从历史行与每个 ``rN.pI`` 分支的最后一份报告重建账本节点。
+
+    同一轮里后一个分支可能换掉种子，历史行会写成 ``not better``，但轨迹里 ``improved`` 仍是当时的结果；
+    赢过的方向不会再被标成已证伪。第二次种子上算错的分支仍报 ``ok``，那是正确性没过，不是「写对了但没变快」。
+
+    @param trace 运行轨迹列表，每项含 ``label``/``status``/``speedup`` 等字段。
+    @param history 规划器可读的历史行，形如 ``round N: title -> tag``。
+    @return 按历史行顺序排列的 ``PlanNode`` 列表。
+    """
     by_branch: dict[tuple[int, int], dict] = {}
     for row in trace:
         match = re.match(r"r(\d+)\.p(\d+)", str(row.get("label") or ""))
@@ -93,7 +118,12 @@ def nodes_from_trace(trace: list[dict], history: list[str]) -> list[PlanNode]:
 
 
 def format_ledger_for_planner(nodes: list[PlanNode], limit: int = 24) -> str:
-    """Planner text. An untested failure is not listed as a direction to avoid."""
+    """@brief 生成给规划器看的账本文本，未计时的失败不被列为要避开的方向。
+
+    @param nodes 账本节点列表。
+    @param limit 只列出最后多少个节点。
+    @return 多行文本，末尾附上「已证伪不要重复、未计时可带提示重试」的说明。
+    """
     lines = []
     for node in nodes[-limit:]:
         extra = f" {node.speedup:.3f}x" if isinstance(node.speedup, float) else ""

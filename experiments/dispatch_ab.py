@@ -16,6 +16,15 @@ from pathlib import Path
 
 
 def measure(task_name: str, dtype: str, size: str, source: str, reps: int = 15) -> dict:
+    """@brief 同一内核在串行与并发两种下发模式下与厂商基线交错计时。
+
+    @param task_name 任务名。
+    @param dtype 数据类型。
+    @param size 规模档位。
+    @param source 要评测的 MSL 源码。
+    @param reps 每种 runner 的交错计时重复次数。
+    @return 中位耗时、变异系数、两种模式对最佳基线的加速比，以及计时后的输出是否正确。
+    """
     from tasks import get_task
     from tcenv.backends.metal.baselines import build_runners, rotation_count
     from tcenv.bench import interleaved
@@ -60,6 +69,11 @@ def measure(task_name: str, dtype: str, size: str, source: str, reps: int = 15) 
 
 
 def main(argv=None) -> int:
+    """@brief ``python -m experiments.dispatch_ab`` 的入口，逐任务下发模式 A/B 并写 JSON。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--tasks", default="all")
     ap.add_argument("--dtype", default="fp16")

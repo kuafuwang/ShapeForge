@@ -19,14 +19,32 @@ inline float silu_f(float v) { return v * sigmoid_f(v); }
 
 
 def _mlx(a, b):
+    """@brief mlx 侧的 GEMM + SiLU 基线，乘积送进一次 ``mx.compile`` 的 SiLU。
+
+    @param a 左矩阵，mlx 数组。
+    @param b 右矩阵，mlx 数组。
+    @return ``silu(a @ b)``。
+    """
     return mlx_compiled("silu", lambda mx: (lambda t: t * mx.sigmoid(t)))(a @ b)
 
 
 def _torch(a, b):
+    """@brief torch 侧的 GEMM + SiLU 基线。
+
+    @param a 左矩阵。
+    @param b 右矩阵。
+    @return ``F.silu(torch.matmul(a, b))``。
+    """
     return F.silu(torch.matmul(a, b))
 
 
 def build(dtype: str, size: str):
+    """@brief 装配 GEMM + SiLU 题，启动契约沿用 ``build_gemm``。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
     return build_gemm(
         "gemm_silu", dtype, size,
         epilogue_ref=lambda c: c * torch.sigmoid(c),

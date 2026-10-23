@@ -16,12 +16,25 @@ MAGS = {"normal": 1.0, "wide_range": 1.0}
 
 
 def _mlx(x):
+    """@brief mlx 侧的旋转位置编码基线，走 ``mx.fast.rope``。
+
+    @param x 输入，mlx 数组。
+    @return 旋转后的数组。
+    """
     import mlx.core as mx
 
     return mx.fast.rope(x, x.shape[-1], traditional=False, base=BASE, scale=1.0, offset=0)
 
 
 def build(dtype: str, size: str) -> Task:
+    """@brief 装配旋转位置编码题。
+
+    核名 ``rope_kernel``，``grid=(S/BLOCK_S, B*H, 1)``，``threads=(128, 1, 1)``，缓冲 x/y，常量 B/H/S/D/BASE/BLOCK_S。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
     check_dtype(dtype)
     B, H, S, D = SHAPES[size]
     contract = Contract(

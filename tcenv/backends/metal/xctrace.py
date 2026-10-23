@@ -47,7 +47,20 @@ class TraceError(RuntimeError):
 def record(
     task: str, dtype: str, size: str, kernel_source: str, workdir: Path, *, duration_s: float | None = None, record_limit_s: float = 40.0, launch_deadline_s: float = 2.0
 ) -> Path:
-    """Record a Metal System Trace of ``kernel_source`` launching repeatedly. Returns the .trace bundle path.
+    """@brief 录一段候选核反复启动的 Metal System Trace。
+
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param size 规模名。
+    @param kernel_source 候选核源码。
+    @param workdir 存放请求、心跳与 trace 的目录。
+    @param duration_s 录制时长；省略时按模板选择。
+    @param record_limit_s xctrace 的 time-limit 秒数。
+    @param launch_deadline_s 单次启动的超时秒数。
+    @return .trace 包路径。
+    @raises TraceError 当源码被预筛拒绝、缺少工具、超时或没有产出 trace。
+
+    Record a Metal System Trace of ``kernel_source`` launching repeatedly. Returns the .trace bundle path.
 
     With a counter template the trace holds ~12 000 samples of 85 counters per second (hundreds of MB of XML to export), so it is recorded for 0.4 s instead of 1 s."""
     if duration_s is None:
@@ -100,6 +113,10 @@ def record(
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
+    """@brief 结束子进程及其整棵进程树。
+
+    @param proc 子进程对象。
+    """
     from ...children import kill_group
 
     kill_group(proc)
@@ -109,6 +126,15 @@ def _kill_tree(proc: subprocess.Popen) -> None:
 
 
 def export_table(trace: Path, schema: str, dest: Path, timeout: float = 300.0) -> Path:
+    """@brief 用 xctrace 把一张表导出成 XML 文件。
+
+    @param trace .trace 包路径。
+    @param schema Instruments 表名。
+    @param dest 输出文件路径。
+    @param timeout 导出超时秒数。
+    @return 输出文件路径。
+    @raises TraceError 当导出命令失败。
+    """
     xp = f'/trace-toc/run[@number="1"]/data/table[@schema="{schema}"]'
     with open(dest, "w") as f:
         r = subprocess.run(["xcrun", "xctrace", "export", "--input", str(trace), "--xpath", xp], stdout=f, stderr=subprocess.PIPE, text=True, timeout=timeout)
@@ -121,6 +147,11 @@ def export_table(trace: Path, schema: str, dest: Path, timeout: float = 300.0) -
 
 
 def _columns(path: Path) -> list[str]:
+    """@brief 从导出 XML 的表头读出列名。
+
+    @param path XML 文件路径。
+    @return 列 mnemonic 列表。
+    """
     with open(path, "r", errors="replace") as f:
         head = f.read(20000)
     sch = head[head.find("<schema") : head.find("</schema>")]
@@ -128,7 +159,13 @@ def _columns(path: Path) -> list[str]:
 
 
 def iter_rows(path: Path):
-    """Yield dicts {column mnemonic: (text, fmt)} resolving Instruments' id/ref value sharing."""
+    """@brief 逐行产出 ``{列名: (文本, 格式)}`` 的字典。
+
+    @param path 导出 XML 文件路径。
+    @return 行字典的生成器，已解析 Instruments 的 id/ref 复用。
+
+    Yield dicts {column mnemonic: (text, fmt)} resolving Instruments' id/ref value sharing.
+    """
     cols = _columns(path)
     table: dict[str, tuple[str, str]] = {}
     for _ev, el in ET.iterparse(str(path), events=("end",)):
@@ -158,6 +195,7 @@ class CounterStat:
     p50: float | None = None  # the typical value while the kernel runs; defaults to the mean
 
     def __post_init__(self) -> None:
+        """@brief 未给中位数时用均值补齐。"""
         if self.p50 is None:
             self.p50 = self.mean
 
@@ -186,14 +224,25 @@ class TraceSummary:
     window_processes: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict:
+        """@brief 转成可写入报告的字典。
+
+        @return 字段字典，counters 展开为统计子字典。
+        """
         d = {k: v for k, v in self.__dict__.items() if k != "counters"}
         d["counters"] = {k: {"p50": v.p50, "mean": v.mean, "max": v.max, "p90": v.p90, "samples": v.samples, "unit": v.unit} for k, v in sorted(self.counters.items())}
         return d
 
 
 def compute_window(intervals_xml: Path) -> tuple[float, float, list[float]]:
-    """(start_ns, end_ns, per-dispatch durations_ns) of the compute channel in metal-gpu-intervals.
-    The render channels belong to the window server; the profiled process is the only one doing compute work."""
+    """@brief 求计算通道的时间窗与每次 dispatch 的时长。
+
+    @param intervals_xml metal-gpu-intervals 导出文件。
+    @return (起始 ns, 结束 ns, 每次 dispatch 的时长 ns 列表)。
+    @raises TraceError 当 trace 里没有计算区间。
+
+    (start_ns, end_ns, per-dispatch durations_ns) of the compute channel in metal-gpu-intervals.
+    The render channels belong to the window server; the profiled process is the only one doing compute work.
+    """
     starts, ends, durs = [], [], []
     for row in iter_rows(intervals_xml):
         chan = row.get("channel-name", ("", ""))[1]
@@ -209,7 +258,13 @@ def compute_window(intervals_xml: Path) -> tuple[float, float, list[float]]:
 
 
 def compute_processes(intervals_xml: Path) -> set[str]:
-    """Process names on the compute channel, as exported. Empty when Instruments did not fill the column."""
+    """@brief 读出计算通道上被导出的进程名。
+
+    @param intervals_xml metal-gpu-intervals 导出文件。
+    @return 进程名集合；Instruments 没有填该列时为空。
+
+    Process names on the compute channel, as exported. Empty when Instruments did not fill the column.
+    """
     out: set[str] = set()
     for row in iter_rows(intervals_xml):
         if "compute" not in row.get("channel-name", ("", ""))[1].lower():
@@ -222,6 +277,12 @@ def compute_processes(intervals_xml: Path) -> set[str]:
 
 
 def summarize_counters(counters_xml: Path, window: tuple[float, float]) -> dict[str, CounterStat]:
+    """@brief 统计时间窗内的百分比计数器。
+
+    @param counters_xml metal-gpu-counter-intervals 导出文件。
+    @param window (起始 ns, 结束 ns)。
+    @return 计数器名到 CounterStat 的映射。
+    """
     lo, hi = window
     vals: dict[str, list[tuple[float, float]]] = {}
     for row in iter_rows(counters_xml):
@@ -241,7 +302,13 @@ def summarize_counters(counters_xml: Path, window: tuple[float, float]) -> dict[
 
 
 def dispatch_spans(intervals_xml: Path) -> list[tuple[float, float]]:
-    """(start_ns, end_ns) of every compute dispatch, sorted and merged: the GPU counters are only meaningful while our kernel runs."""
+    """@brief 求每次计算 dispatch 的起止时间，排序并合并重叠区间。
+
+    @param intervals_xml metal-gpu-intervals 导出文件。
+    @return 合并后的区间列表（ns）。
+
+    (start_ns, end_ns) of every compute dispatch, sorted and merged: the GPU counters are only meaningful while our kernel runs.
+    """
     spans = []
     for row in iter_rows(intervals_xml):
         if "compute" not in row.get("channel-name", ("", ""))[1].lower():
@@ -262,6 +329,13 @@ _CELL = re.compile(r'<(\w[\w-]*) (?:id="(\d+)"(?: fmt="[^"]*")?>([^<]*)</\1>|ref
 
 
 def _counter_unit(name: str, type_: str, description: str) -> str:
+    """@brief 从计数器类型与 Apple 的描述推断单位。
+
+    @param name 计数器名。
+    @param type_ 计数器类型。
+    @param description Apple 的计数器说明。
+    @return 单位字符串，无法判断时为空。
+    """
     if type_ == "Percentage":
         return "%"
     d = description.lower()
@@ -275,7 +349,13 @@ def _counter_unit(name: str, type_: str, description: str) -> str:
 
 
 def counter_defs(info_xml: Path) -> dict[int, tuple[str, str]]:
-    """counter id -> (name, unit), from the ``gpu-counter-info`` table (the unit comes from Apple's description of the counter)."""
+    """@brief 读出计数器 id 到 (名字, 单位) 的映射。
+
+    @param info_xml gpu-counter-info 导出文件。
+    @return 计数器定义字典。
+
+    counter id -> (name, unit), from the ``gpu-counter-info`` table (the unit comes from Apple's description of the counter).
+    """
     out = {}
     for row in iter_rows(info_xml):
         name = row["name"][0]
@@ -284,7 +364,14 @@ def counter_defs(info_xml: Path) -> dict[int, tuple[str, str]]:
 
 
 def summarize_counter_values(values_xml: Path, defs: dict[int, tuple[str, str]], spans: list[tuple[float, float]]) -> dict[str, CounterStat]:
-    """Statistics of every counter over the samples that fall inside a dispatch of our kernel.
+    """@brief 统计落在本次核 dispatch 区间内的计数器采样。
+
+    @param values_xml gpu-counter-value 导出文件。
+    @param defs 计数器定义。
+    @param spans 本次核的 dispatch 区间列表。
+    @return 计数器名到 CounterStat 的映射。
+
+    Statistics of every counter over the samples that fall inside a dispatch of our kernel.
 
     The ``gpu-counter-value`` table of a trace recorded with a counter profile holds one row per (sample time, counter), hundreds of thousands in a
     second of tracing, so it is read with a regex per row instead of building an XML tree. Instruments shares repeated values through ``id`` / ``ref``."""
@@ -330,11 +417,26 @@ def summarize_counter_values(values_xml: Path, defs: dict[int, tuple[str, str]],
 
 
 def _pct(xs: list[float], q: float) -> float:
+    """@brief 取列表的分位数。
+
+    @param xs 数值列表。
+    @param q 分位，0 到 1。
+    @return 对应分位值。
+    """
     s = sorted(xs)
     return s[int(q * (len(s) - 1))]
 
 
 def analyze(trace: Path, workdir: Path, *, kernel_name: str | None = None, kernel_names: list[str] | None = None) -> TraceSummary:
+    """@brief 导出并汇总 trace 里的区间、状态、溢出、代码大小、温度与计数器。
+
+    @param trace .trace 包路径。
+    @param workdir 导出文件与元数据所在目录。
+    @param kernel_name 候选核名，用于筛 shader 列表。
+    @param kernel_names 多个候选核名；优先用工作目录里记录的名字。
+    @return TraceSummary 汇总。
+    @raises TraceError 当关键表导出失败或 trace 里没有计算区间。
+    """
     iv = export_table(trace, "metal-gpu-intervals", workdir / "gpu_intervals.xml")
     lo, hi, durs = compute_window(iv)
     group, recorded_names = 1, None
@@ -411,6 +513,12 @@ SUB_PIPE_LIMITERS = ("F32 Limiter", "F16 Limiter", "Integer and Conditional Limi
 
 
 def _counter_line(n: str, c: CounterStat) -> str:
+    """@brief 把一条计数器统计格式成报告行。
+
+    @param n 计数器名。
+    @param c 计数器统计。
+    @return 单行文本。
+    """
     u = c.unit
     return f"    {n:<40s} typical {c.p50:7.1f}{u:<4s} p90 {c.p90:7.1f}{u:<4s} max {c.max:7.1f}{u}"
 
@@ -431,6 +539,12 @@ LIMITER_MEANING = {
 
 
 def format_summary(summ: TraceSummary, top: int = 14) -> str:
+    """@brief 把 trace 汇总排成人类可读的报告。
+
+    @param summ trace 汇总。
+    @param top 保留的顶层计数器条数。
+    @return 多行文本。
+    """
     L = [f"Instruments Metal System Trace ({summ.n_dispatches} dispatches over {summ.window_s * 1e3:.0f} ms of back-to-back launches):"]
     if summ.tables.get("spills", True):
         L.append(f"  register spills: {summ.spill_events} events, {summ.spilled_bytes} bytes" + ("  <-- the compiler spilled registers to memory: reduce live values / unrolling" if summ.spilled_bytes else ""))
@@ -478,7 +592,15 @@ def format_summary(summ: TraceSummary, top: int = 14) -> str:
 
 
 def _counter_advice(counters: dict[str, CounterStat], dispatch_us: float | None = None, target_id: str | None = None) -> list[str]:
-    """Findings from the GPU counters (Performance Limiters): which unit the kernel waits for, or that none is saturated."""
+    """@brief 从 GPU 计数器给出该核受限于哪个单元的结论。
+
+    @param counters 计数器统计。
+    @param dispatch_us 单次 dispatch 的中位微秒数。
+    @param target_id 目标机型标识。
+    @return 结论文本列表。
+
+    Findings from the GPU counters (Performance Limiters): which unit the kernel waits for, or that none is saturated.
+    """
     lims = [(n, c) for n, c in counters.items() if n in LIMITER_MEANING]
     if not lims:
         return []
@@ -523,7 +645,13 @@ def _counter_advice(counters: dict[str, CounterStat], dispatch_us: float | None 
 
 
 def advice(summ: TraceSummary) -> list[str]:
-    """What the trace says that a kernel author can act on. Only findings that the trace actually supports are listed."""
+    """@brief 列出 trace 实际支持、作者可以动手的结论。
+
+    @param summ trace 汇总。
+    @return 结论文本列表。
+
+    What the trace says that a kernel author can act on. Only findings that the trace actually supports are listed.
+    """
     out = []
     if summ.spilled_bytes:
         out.append(
@@ -553,17 +681,42 @@ def advice(summ: TraceSummary) -> list[str]:
 
 
 def format_for_llm(summ: TraceSummary) -> str:
-    """The trace summary followed by what it implies, as it is given to the model."""
+    """@brief 生成给模型看的 trace 摘要加结论。
+
+    @param summ trace 汇总。
+    @return 摘要与逐条结论拼成的文本。
+
+    The trace summary followed by what it implies, as it is given to the model.
+    """
     return format_summary(summ) + "\n  findings:\n" + "\n".join(f"    - {a}" for a in advice(summ))
 
 
 def get_task_kernel_name(task: str, dtype: str, size: str) -> str:
+    """@brief 取任务契约里的核函数名。
+
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param size 规模名。
+    @return 契约声明的 kernel 名。
+    """
     from tasks import get_task
 
     return get_task(task, dtype, size).contract.kernel_name
 
 
 def profile_kernel(task: str, dtype: str, size: str, kernel_source: str, workdir: Path | None = None, keep: bool = False, target_id: str = "apple-m4-max") -> TraceSummary:
+    """@brief 对候选核做一次 xctrace 录制并汇总。
+
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param size 规模名。
+    @param kernel_source 候选核源码。
+    @param workdir 工作目录；省略时用临时目录。
+    @param keep 是否保留临时工作目录。
+    @param target_id 目标机型标识。
+    @return TraceSummary 汇总。
+    @raises TraceError 录制阶段失败时向上抛出。
+    """
     own = workdir is None
     wd = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="tcenv_xc_"))
     from ...gpulock import gpu_lock

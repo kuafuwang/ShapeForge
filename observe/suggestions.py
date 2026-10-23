@@ -22,6 +22,12 @@ MAX_GROUPS = 200
 
 
 def _record(directory: Path, line_at: int | None) -> dict | None:
+    """@brief 取包含系统建议的反馈记录：优先按行号直读，否则扫描全部记录。
+
+    @param directory 运行目录。
+    @param line_at ``feedback.jsonl`` 中的行号，可为 None。
+    @return 反馈记录字典；找不到时返回 None。
+    """
     if line_at is not None:
         row = feedback._record_at(directory / "feedback.jsonl", int(line_at))
         if isinstance(row, dict):
@@ -34,6 +40,12 @@ def _record(directory: Path, line_at: int | None) -> dict | None:
 
 
 def _item_text(record: dict, digest: str) -> str:
+    """@brief 在记录的项目或 claim 中按 digest 找对应文本。
+
+    @param record 反馈记录字典。
+    @param digest 条目摘要。
+    @return 对应文本；没有匹配时返回空字符串。
+    """
     for item in record.get("items") or []:
         if isinstance(item, dict) and str(item.get("digest") or "") == str(digest):
             return str(item.get("text") or "")
@@ -44,6 +56,12 @@ def _item_text(record: dict, digest: str) -> str:
 
 
 def _preview(text: str, chars: int) -> str:
+    """@brief 压缩空白并截断成不超过 ``chars`` 字符的预览，超长时以省略号结尾。
+
+    @param text 原始文本。
+    @param chars 预览字符上限。
+    @return 单行预览文本。
+    """
     text = " ".join(_CONTROL.sub(" ", str(text or "")).split())
     if len(text) <= chars:
         return text
@@ -51,6 +69,11 @@ def _preview(text: str, chars: int) -> str:
 
 
 def _read_jsonl(path: Path) -> list[dict]:
+    """@brief 宽容地读取 JSONL：文件不存在或某行无法解析时跳过而不报错。
+
+    @param path JSONL 文件路径。
+    @return 字典行列表。
+    """
     rows = []
     try:
         handle = path.open(encoding="utf-8", errors="replace")
@@ -68,7 +91,15 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 def _linked(directory: Path, *, seq: int, digest: str) -> tuple[str, list[str]]:
-    """The exact proposal for this claim, not merely the first proposal with the same text."""
+    """@brief 找出该 claim 对应的确切提案（而非仅文本相同的首个提案）及其评审结论。
+
+    原始英文说明：The exact proposal for this claim, not merely the first proposal with the same text.
+
+    @param directory 运行目录。
+    @param seq 反馈条目序号。
+    @param digest 条目摘要。
+    @return 二元组：有效提案的 ``proposal_key``（没有时为空串），以及该提案的评审列表（useful/not-useful）。
+    """
     key = ""
     for row in _read_jsonl(directory / "harness_proposals.jsonl"):
         if (
@@ -98,12 +129,20 @@ def compact(
     preview: int = DEFAULT_PREVIEW,
     offset: int = 0,
 ) -> dict:
-    """Group system suggestions by digest and return only a short preview per group.
+    """@brief 按 digest 聚合系统建议，每组只返回短预览。
 
-    This is the AI-facing first stage. It does not return full text and does not call a model.
-    Totals and the page are computed by SQL over the whole filtered set, so ``truncated``
-    describes the returned page rather than a silent scan cap. One representative feedback
-    line is read per returned digest; the rest stay on disk until detail().
+    这是面向 AI 的第一阶段：不返回全文，也不调用模型。总数与分页由 SQL 对整个筛选集计算，
+    因此 ``truncated`` 描述的是返回的这一页，而不是隐形的扫描上限。每个返回的 digest 只读一行代表性
+    反馈，其余留在磁盘上直到 ``detail()``。
+
+    @param task 只看该任务名，None 表示不限。
+    @param target 只看该 target，None 表示不限。
+    @param model 只看该模型的建议，None 表示不限。
+    @param status 只看该评审状态，None 表示不限。
+    @param limit 本页最大组数，会被夹到 1..200。
+    @param preview 每组预览字符数，会被夹到 0..500。
+    @param offset 本页在组列表中的偏移。
+    @return 含总数、本页组、``next_offset`` / ``truncated`` 分页字段与 ``hint`` 的字典。
     """
     try:
         get_index().tick()
@@ -241,7 +280,17 @@ def compact(
 
 
 def detail(run_id: str, seq: int, digest: str) -> dict:
-    """Fetch one exact suggestion and its conversion/review links, without reading every run."""
+    """@brief 取出一条确切的系统建议及其转换/评审关联，而不必读取所有运行。
+
+    原始英文说明：Fetch one exact suggestion and its conversion/review links, without reading every run.
+
+    @param run_id 运行 id。
+    @param seq 反馈条目序号。
+    @param digest 条目摘要。
+    @return 含建议文本、状态、提案、评审、同前出现（``prior``）与语义相似（``similar``）的字典。
+    @raises FileNotFoundError 运行目录无法解析时抛出。
+    @raises KeyError 该 (run_id, seq, digest) 找不到建议时抛出。
+    """
     directory = detail_mod.resolve_run(run_id)
     if directory is None:
         raise FileNotFoundError(run_id)

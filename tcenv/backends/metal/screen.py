@@ -34,17 +34,35 @@ _ALLOWED_INCLUDE = re.compile(r"^<metal_[a-z_0-9]+>\s*$")
 
 # 规则搜的是会执行的文本。注释里写出的 while(true) 不会跑。块注释换成同等数量的换行，避免把上下两行粘成一行。
 def strip_comments(src: str) -> str:
+    """@brief 去掉源码里的行注释与块注释。
+
+    @param src 原始源码。
+    @return 去掉注释的文本，块注释换成等量换行以保留行号。
+    """
     return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub(lambda m: "\n" * m.group(0).count("\n"), src))
 
 
 def strip_strings(src: str) -> str:
-    """Remove string literals before the loop scan. Strings first, then comments: a `//` inside a
-    string is not a comment, and a quote inside a comment is not a string."""
+    """@brief 把字符串字面量换成空串，避免把数据当代码扫描。
+
+    @param src 原始源码。
+    @return 替换后的源码。
+
+    Remove string literals before the loop scan. Strings first, then comments: a `//` inside a
+    string is not a comment, and a quote inside a comment is not a string.
+    """
     return _STRING.sub('""', src)
 
 
 def _matching_paren(code: str, open_at: int) -> int | None:
-    """Index of the ``)`` that closes the ``(`` at ``open_at``, or ``None`` when the header is cut off."""
+    """@brief 找到与 ``open_at`` 处左括号配对的右括号。
+
+    @param code 待扫描文本。
+    @param open_at 左括号下标。
+    @return 右括号下标；括号未闭合时为 None。
+
+    Index of the ``)`` that closes the ``(`` at ``open_at``, or ``None`` when the header is cut off.
+    """
     depth = 0
     for i in range(open_at, len(code)):
         if code[i] == "(":
@@ -57,13 +75,24 @@ def _matching_paren(code: str, open_at: int) -> int | None:
 
 
 def _outer_parens(text: str) -> bool:
+    """@brief 判断整段文本是否被一对最外层括号完整包住。
+
+    @param text 待判断文本。
+    @return 是则 True。
+    """
     if len(text) < 2 or text[0] != "(" or text[-1] != ")":
         return False
     return _matching_paren(text, 0) == len(text) - 1
 
 
 def _unconditional(cond: str) -> bool:
-    """True when ``cond`` cannot become false: empty, ``true`` / ``1``, or the same constant compared with itself."""
+    """@brief 判断循环条件是否恒为真。
+
+    @param cond 括号内的条件文本。
+    @return 恒真（空、``true``、``1`` 或同一常量自比）时为 True。
+
+    True when ``cond`` cannot become false: empty, ``true`` / ``1``, or the same constant compared with itself.
+    """
     text = cond.strip()
     while _outer_parens(text):
         text = text[1:-1].strip()
@@ -74,6 +103,11 @@ def _unconditional(cond: str) -> bool:
 
 
 def _split_semicolons(text: str) -> list[str]:
+    """@brief 按顶层分号切分文本，忽略括号内的分号。
+
+    @param text 待切分文本。
+    @return 各段文本列表（保留空段）。
+    """
     parts, depth, start = [], 0, 0
     for i, ch in enumerate(text):
         if ch == "(":
@@ -88,6 +122,11 @@ def _split_semicolons(text: str) -> list[str]:
 
 
 def _unbounded(code: str) -> list[str]:
+    """@brief 扫出条件恒真的 while/for 构造。
+
+    @param code 已去注释与字符串的源码。
+    @return 拒绝理由列表。
+    """
     reasons = []
     for match in _WHILE.finditer(code):
         end = _matching_paren(code, match.end() - 1)
@@ -105,7 +144,13 @@ def _unbounded(code: str) -> list[str]:
 
 # 返回拒绝理由；空列表表示可以交给编译器。能在这里看出来的就不要编译，更不要提交到 GPU。
 def screen_source(src: str) -> list[str]:
-    """Return reasons to refuse the source (empty list: fine to compile and run)."""
+    """@brief 静态预筛源码，列出拒绝上 GPU 的理由。
+
+    @param src 原始 MSL 源码。
+    @return 拒绝理由列表，空列表表示可以编译。
+
+    Return reasons to refuse the source (empty list: fine to compile and run).
+    """
     code = strip_comments(strip_strings(src))
     problems = []
     if _GOTO.search(code):

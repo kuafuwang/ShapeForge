@@ -15,14 +15,34 @@ MAGS = {"normal": 1.0, "wide_range": 0.1}
 
 
 def _mlx(a, x):
+    """@brief mlx 侧的矩阵乘向量基线。
+
+    @param a 矩阵，mlx 数组。
+    @param x 向量，mlx 数组。
+    @return ``a @ x``。
+    """
     return a @ x
 
 
 def _torch(a, x):
+    """@brief torch 侧的矩阵乘向量基线。
+
+    @param a 矩阵。
+    @param x 向量。
+    @return ``torch.mv(a, x)``。
+    """
     return torch.mv(a, x)
 
 
 def build(dtype: str, size: str) -> Task:
+    """@brief 装配矩阵乘向量题。
+
+    核名 ``gemv_kernel``，``grid=(M/BLOCK_M, 1, 1)``，``threads=(128, 1, 1)``，缓冲 A/x/y，常量 M、K、BLOCK_M。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
     check_dtype(dtype)
     M, K = SHAPES[size]
     contract = Contract(

@@ -19,8 +19,14 @@ from pathlib import Path
 # B/E 包住每一次 command buffer 的提交和完成，父进程用 B 的墙上时间判断单次启动是否该杀。
 # W/E 包住等 GPU 锁。W 期间核没有在跑，父进程不计这段时间。
 def _install_heartbeat(path: str | None, backend=None) -> None:
-    """Publish "B<time>" before and "E<time>" after every GPU launch, and "W<time>" while waiting for the GPU lock
-    (fixed width, overwritten in place)."""
+    """@brief 安装 worker 心跳：编译、启动与等 GPU 锁都会原地写一个状态字母。
+
+    Publish "B<time>" before and "E<time>" after every GPU launch, and "W<time>" while waiting for the GPU lock
+    (fixed width, overwritten in place).
+
+    @param path 心跳文件路径；为空时直接返回。
+    @param backend 可选的后端对象，提供 ``set_heartbeat_hooks``；为 None 时使用 Metal 运行时钩子。
+    """
     if not path:
         return
     import os
@@ -54,7 +60,13 @@ def _install_heartbeat(path: str | None, backend=None) -> None:
 
 # 无论评测正常返回还是框架自己抛异常，都要留下 JSON。父进程把「没有报告」单独当成 crash。
 def _refuse(raw: object, err: BaseException) -> None:
-    """Leave an explicit refusal when the request itself cannot be read. Do not start an evaluation."""
+    """@brief 请求本身读不懂时留下一个显式的 crash 报告。
+
+    Leave an explicit refusal when the request itself cannot be read. Do not start an evaluation.
+
+    @param raw 原始请求对象，可能不是字典。
+    @param err 导致拒绝的异常。
+    """
     from .evaluate import EvalReport
     from .schema import write_json_atomic
 
@@ -72,6 +84,10 @@ def _refuse(raw: object, err: BaseException) -> None:
 
 
 def main() -> int:
+    """@brief worker 子进程入口：读请求、跑一次评测并把 JSON 报告写到请求路径。
+
+    @return 成功为 0；请求无法读取为 2；评测抛异常为 1。
+    """
     raw = json.loads(Path(sys.argv[1]).read_text())
     from .schema import SchemaError, read_request
 

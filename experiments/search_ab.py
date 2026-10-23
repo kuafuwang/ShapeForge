@@ -28,7 +28,15 @@ OFF = {k: False for k in SWITCHES}
 
 
 def jobs_for(which: str, arm: str, n: int) -> list[tuple[str, str, bool]]:
-    """``(directory name, task, switches on)``."""
+    """@brief 列出要跑的实验组：目录名、任务名与开关是否打开。
+
+    ``(directory name, task, switches on)``.
+
+    @param which ``conv2d`` 或 ``fa``，决定任务与目录命名。
+    @param arm ``on`` / ``off`` / ``both``。
+    @param n ``fa`` 时每组的重复次数。
+    @return 三个元组的列表：目录名、任务名、开关是否打开。
+    """
     if which == "conv2d":
         arms = ("on", "off") if arm == "both" else (arm,)
         return [(f"conv2d_{name}", "conv2d", name == "on") for name in arms]
@@ -37,11 +45,26 @@ def jobs_for(which: str, arm: str, n: int) -> list[tuple[str, str, bool]]:
 
 
 def _occupied(path: Path) -> bool:
+    """@brief 判断目录是否已存在且非空。
+
+    @param path 待检查的目录。
+    @return 目录存在且里面有文件时为 ``True``。
+    """
     return path.exists() and any(path.iterdir())
 
 
 def run_selected(out: Path, jobs: list[tuple[str, str, bool]], *, budget: float, max_total_usd: float | None, runner=None) -> list[dict]:
-    """Skip occupied directories and runs that do not fit the cap. ``runner`` defaults to ``run_one``."""
+    """@brief 逐个跑选中的实验组，跳过已有文件的目录和放不下预算的运行。
+
+    Skip occupied directories and runs that do not fit the cap. ``runner`` defaults to ``run_one``.
+
+    @param out 实验输出根目录。
+    @param jobs ``jobs_for`` 返回的实验组列表。
+    @param budget 每次运行的花费上限，单位美元。
+    @param max_total_usd 总预算上限；为 ``None`` 时不限。
+    @param runner 实际跑一次的可调用对象；为 ``None`` 时用 ``run_one``。
+    @return 每个实验组一项的备注列表，``skipped`` 标明是否被跳过及原因。
+    """
     out.mkdir(parents=True, exist_ok=True)
     write_cap(out, max_total_usd)
     counts: dict[str, int] = {}
@@ -89,6 +112,11 @@ def run_selected(out: Path, jobs: list[tuple[str, str, bool]], *, budget: float,
 
 
 def main(argv=None) -> int:
+    """@brief ``python -m experiments.search_ab`` 的入口，按开关 A/B 跑搜索。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--which", choices=("conv2d", "fa"), required=True)
     ap.add_argument("--arm", choices=("on", "off", "both"), default="both")

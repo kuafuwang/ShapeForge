@@ -50,6 +50,10 @@ class LaunchSpec:
     stages: tuple[StageDecl, ...]
 
     def digest(self) -> str:
+        """@brief 生成描述整份启动规格的稳定文本。
+
+        @return 逐行展开的规格摘要，可用于哈希。
+        """
         parts = [f"math={self.math}"]
         for w in self.workspaces:
             parts.append(f"workspace {w.name} {w.nbytes}{' zero' if w.zero else ''}")
@@ -64,7 +68,14 @@ class LaunchSpec:
 
 
 def parse_launch_spec(source: str, constants: dict[str, int]) -> LaunchSpec | None:
-    """The one launch block in ``source``, or ``None`` when the source has none.
+    """@brief 解析源码里唯一的 ``taic-launch`` 块。
+
+    @param source MSL 源码。
+    @param constants 表达式里可用的整数常量。
+    @return 启动规格；源码没有启动块时为 None。
+    @raises LaunchRejected 当标记出现在块注释之外、出现多次或块内容非法。
+
+    The one launch block in ``source``, or ``None`` when the source has none.
 
     Raises ``LaunchRejected`` when the marker appears anywhere except exactly one block comment
     whose first token is ``taic-launch``, or when that block does not parse.
@@ -82,7 +93,12 @@ def parse_launch_spec(source: str, constants: dict[str, int]) -> LaunchSpec | No
 
 
 def declared_stage_kernels(source: str) -> list[str] | None:
-    """Kernel names on ``launch`` lines, without evaluating sizes.
+    """@brief 只取 ``launch`` 行上的核名，不求值尺寸。
+
+    @param source MSL 源码。
+    @return 核名列表；源码不是唯一启动块时为 None。
+
+    Kernel names on ``launch`` lines, without evaluating sizes.
 
     ``None`` when the source is not exactly one launch block. Feature analysis uses this so an
     unused kernel in the same file is not credited.
@@ -103,7 +119,12 @@ def declared_stage_kernels(source: str) -> list[str] | None:
 
 
 def launch_math(source: str) -> str | None:
-    """``fast`` or ``safe`` when the source has one launch block, else ``None``.
+    """@brief 从源码判断该用 ``fast`` 还是 ``safe`` 数学模式。
+
+    @param source MSL 源码。
+    @return ``fast`` 或 ``safe``；没有启动块时为 None。
+
+    ``fast`` or ``safe`` when the source has one launch block, else ``None``.
 
     A block that fails later (unknown constants, bad sizes) still reports the math line, so a
     ``math safe`` candidate is not compiled as fast-math.
@@ -135,7 +156,20 @@ def check_launch_limits(
     max_buffer_length: int,
     rotation_sets: int,
 ) -> None:
-    """Device and size limits. Raises ``LaunchRejected`` before any allocation."""
+    """@brief 核对启动规格是否越过设备与预算上限。
+
+    @param spec 启动规格。
+    @param contract_names 契约参数名集合，用于查重名。
+    @param max_threads_xyz 设备每组线程数三维上限。
+    @param max_threads_product 设备每组线程总数上限。
+    @param max_threadgroup_memory_bytes 设备 threadgroup 内存上限。
+    @param recommended_working_set_bytes 推荐工作集大小，用于 workspace 预算。
+    @param max_buffer_length 单块缓冲长度上限。
+    @param rotation_sets 计时轮转组数，用于放大 workspace 预算。
+    @raises LaunchRejected 当段数、重名、尺寸或 workspace 预算越界。
+
+    Device and size limits. Raises ``LaunchRejected`` before any allocation.
+    """
     if len(spec.stages) > MAX_STAGES:
         raise LaunchRejected(f"taic-launch has {len(spec.stages)} stages; the limit is {MAX_STAGES}")
     names = {w.name for w in spec.workspaces}
@@ -180,7 +214,14 @@ def check_launch_limits(
 
 
 def _scan(source: str) -> tuple[list[str], bool]:
-    """Block-comment bodies, and whether ``taic-launch`` appears outside a block comment."""
+    """@brief 扫出块注释正文，并检测标记是否出现在块注释之外。
+
+    @param source MSL 源码。
+    @return (块注释正文列表, 是否在块注释之外出现标记)。
+    @raises LaunchRejected 当块注释没有闭合。
+
+    Block-comment bodies, and whether ``taic-launch`` appears outside a block comment.
+    """
     blocks: list[str] = []
     stray = False
     i, n = 0, len(source)
@@ -235,6 +276,13 @@ def _scan(source: str) -> tuple[list[str], bool]:
 
 
 def _parse_body(body: str, constants: dict[str, int]) -> LaunchSpec:
+    """@brief 解析启动块正文，生成启动规格。
+
+    @param body 块注释正文。
+    @param constants 表达式里可用的整数常量。
+    @return 解析出的启动规格。
+    @raises LaunchRejected 当某一行或某个尺寸不合法。
+    """
     text = body.strip()
     if not text.startswith(MARKER):
         raise LaunchRejected("launch block does not start with taic-launch")
@@ -287,6 +335,14 @@ _NEXT_FIELD = re.compile(r"\s+(grid|threads|threadgroup|workspace)\s*=")
 
 
 def _parse_launch_line(line: str, constants: dict[str, int], workspaces: set[str]) -> StageDecl:
+    """@brief 解析一行 ``launch`` 声明。
+
+    @param line 该行原文。
+    @param constants 表达式里可用的整数常量。
+    @param workspaces 已声明的 workspace 名集合。
+    @return 该段的声明。
+    @raises LaunchRejected 当字段缺失、重复或取值非法。
+    """
     rest = line[len("launch") :].strip()
     name = re.match(r"[A-Za-z_][A-Za-z0-9_]*", rest)
     if not name:
@@ -327,7 +383,12 @@ def _parse_launch_line(line: str, constants: dict[str, int], workspaces: set[str
 
 
 def _read_field_value(text: str) -> tuple[str, str]:
-    """The text after ``key=``. Spaces and a wrapping ``( ... )`` stay part of the value.
+    """@brief 读出 ``key=`` 之后的字段值。
+
+    @param text 等号之后的文本。
+    @return (字段值, 剩余文本)。
+
+    The text after ``key=``. Spaces and a wrapping ``( ... )`` stay part of the value.
 
     ``grid=(16, 1, 1)`` and ``grid=16,1,1`` are the same three numbers. The next
     ``threads=`` / ``grid=`` / ``threadgroup=`` / ``workspace=`` ends the value.
@@ -343,6 +404,11 @@ def _read_field_value(text: str) -> tuple[str, str]:
 
 
 def _closing_paren(text: str) -> int | None:
+    """@brief 找到与第一个字符处左括号配对的右括号。
+
+    @param text 以左括号开头的文本。
+    @return 右括号下标；未闭合时为 None。
+    """
     depth = 0
     for i, ch in enumerate(text):
         if ch == "(":
@@ -355,10 +421,23 @@ def _closing_paren(text: str) -> int | None:
 
 
 def _paren_depth(text: str) -> int:
+    """@brief 返回文本的括号净值。
+
+    @param text 待统计文本。
+    @return 左括号数减右括号数。
+    """
     return text.count("(") - text.count(")")
 
 
 def _triple(text: str, constants: dict[str, int], what: str) -> tuple[int, int, int]:
+    """@brief 解析逗号分隔的三元组整数。
+
+    @param text 字段值文本。
+    @param constants 表达式里可用的整数常量。
+    @param what 出错信息里的字段名。
+    @return 三个分量。
+    @raises LaunchRejected 当分量不足三个或含有小于 1 的值。
+    """
     bits = text.split(",")
     if len(bits) != 3:
         raise LaunchRejected(f"{what} needs three comma-separated integers")
@@ -369,6 +448,13 @@ def _triple(text: str, constants: dict[str, int], what: str) -> tuple[int, int, 
 
 
 def _eval_expr(text: str, constants: dict[str, int]) -> int:
+    """@brief 求值启动块里的整数表达式。
+
+    @param text 表达式文本。
+    @param constants 可用的整数常量。
+    @return 求值结果。
+    @raises LaunchRejected 当表达式为空、有未知名字、非法字符、除不尽或有多余输入。
+    """
     tokens = _tokenize(text.strip())
     if not tokens:
         raise LaunchRejected("empty integer expression")
@@ -434,6 +520,12 @@ def _eval_expr(text: str, constants: dict[str, int]) -> int:
 
 
 def _tokenize(text: str) -> list[str]:
+    """@brief 把整数表达式切成数字、名字与运算符。
+
+    @param text 表达式文本。
+    @return 记号列表。
+    @raises LaunchRejected 当出现非法字符。
+    """
     out: list[str] = []
     i, n = 0, len(text)
     while i < n:

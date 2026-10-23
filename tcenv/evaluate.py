@@ -48,6 +48,10 @@ OWN_RUNNERS = ("candidate", "candidate_serial")
 
 # 进度写不出去也不能改判卷结果，所以上报失败就当没这回事。
 def _note_stage(**fields) -> None:
+    """@brief 上报进度阶段，失败时静默忽略。
+
+    @param fields 要上报的进度字段。
+    """
     try:
         from tcenv.events import update_progress
 
@@ -68,6 +72,13 @@ def _note_stage(**fields) -> None:
 # crash：子进程没留下报告，或评测框架自己抛了异常。
 @dataclass
 class EvalReport:
+    """@brief 一份候选的判决书：生死状态、停在哪一关以及各关证据。
+
+    ``status`` 为 ok 时，本模式该过的关都过了：quick / validate 停在 correct，full 还包含 bench。
+    其余状态包括 rejected（编译前被筛掉）、compile_error、abi_error、unsafe、incorrect、
+    runtime_error、timeout 与 crash，细节留在 ``message`` 与对应关卡的字典里。
+    """
+
     task: str
     dtype: str
     size: str
@@ -103,10 +114,19 @@ class EvalReport:
     # 实现上就是 status 为 ok。形式验证恒为 unsupported，不参与这一条。
     @property
     def eligible(self) -> bool:
-        """Safe and numerically correct (the first two eligibility conditions of the paper)."""
+        """@brief 候选是否安全且数值正确。
+
+        Safe and numerically correct (the first two eligibility conditions of the paper).
+
+        @return 状态为 ok 时为 True；形式验证恒为 unsupported，不参与这一条。
+        """
         return self.status == STATUS_OK
 
     def to_json(self) -> dict:
+        """@brief 把报告转换成可写入文件的字典。
+
+        @return 字段字典，并补上派生的 ``eligible`` 与 ``schema_version``。
+        """
         d = asdict(self)
         d["eligible"] = self.eligible  # derived; older readers still look for it
         d["schema_version"] = REPORT_SCHEMA_VERSION
@@ -115,6 +135,12 @@ class EvalReport:
     # 读回子进程写的 JSON。没有 schema_version 的旧文件按版本 0 迁移。更新的版本或本版本不认识的字段直接拒绝，不再丢掉后照常构造。
     @staticmethod
     def from_json(d: dict) -> "EvalReport":
+        """@brief 从 JSON 字典构造报告，必要时做版本迁移。
+
+        @param d 已反序列化的报告字典。
+        @return 构造出的 ``EvalReport``。
+        @raises SchemaError 版本过新、含未知字段或缺少必要字段时抛出。
+        """
         known = {f.name for f in fields(EvalReport)}
         return EvalReport(**migrate_report(d, known))
 
@@ -141,10 +167,27 @@ def evaluate_in_process(
     measure_serial: bool = True,
     target_id: str = "apple-m4-max",
 ) -> EvalReport:
-    """Untimed stages hold the machine-wide GPU lock shared, the benchmark holds it exclusively (tcenv.gpulock).
+    """@brief 子进程内开始评测的入口：共享锁下跑完整流水线。
+
+    Untimed stages hold the machine-wide GPU lock shared, the benchmark holds it exclusively (tcenv.gpulock).
 
     ``validate`` asks for the instrumented shader-validation pass before the timed one. ``mode="full"`` always
     runs it; ``mode="timed"`` runs it only when asked, so a self-check can pay for it once on the final version.
+
+    @param task_name 任务名。
+    @param dtype 元素类型短名。
+    @param size 问题规模名。
+    @param kernel_source 候选 MSL 源码。
+    @param mode "validate" | "quick" | "full" | "timed"。
+    @param seed 随机种子；为 None 时随机生成。
+    @param reps 计时重复次数。
+    @param cases 要跑的正确性用例；为 None 时用任务默认用例。
+    @param fast_bench 是否走搜索阶段的快速计时（只比记住的最快基线）。
+    @param require_contract_launch 是否禁止候选自带的 taic-launch 块。
+    @param validate 是否先跑着色器校验子进程。
+    @param measure_serial 是否额外测严格串行 dispatch。
+    @param target_id 目标设备 id。
+    @return 本次评测的报告。
     """
     from .gpulock import gpu_lock
 
@@ -158,12 +201,27 @@ def evaluate_in_process(
 
 # 关卡都在这个函数里。开头的 verify 只记账，失败与否都不看它。
 def _fast_bench_path(task_name: str, dtype: str, size: str) -> Path:
+    """@brief 快速计时记住比基线所用的缓存文件路径。
+
+    @param task_name 任务名。
+    @param dtype 元素类型短名。
+    @param size 问题规模名。
+    @return 缓存 JSON 文件路径，目录可由 ``TCENV_FAST_BENCH_DIR`` 改写。
+    """
     root = Path(os.environ.get("TCENV_FAST_BENCH_DIR", Path.home() / ".cache" / "ai_lowerling" / "fast_bench"))
     safe = re.sub(r"[^A-Za-z0-9_.@-]+", "_", f"{task_name}_{dtype}_{size}")
     return root / f"{safe}.json"
 
 
 def _remembered_baseline(task_name: str, dtype: str, size: str, target_id: str | None = None) -> str | None:
+    """@brief 读取上次记住的最快基线名。
+
+    @param task_name 任务名。
+    @param dtype 元素类型短名。
+    @param size 问题规模名。
+    @param target_id 目标 id；与缓存记录不一致时不采用。
+    @return 基线名；无可用记录时为 None。
+    """
     path = _fast_bench_path(task_name, dtype, size)
     try:
         doc = json.loads(path.read_text())
@@ -179,7 +237,16 @@ def _remembered_baseline(task_name: str, dtype: str, size: str, target_id: str |
 
 
 def selected_bench_names(baseline_names: list[str], *, fast_bench: bool, remembered: str | None, measure_serial: bool = True) -> list[str]:
-    """Search-stage ``fast_bench`` drops the serial dispatch and every baseline except the remembered fastest one."""
+    """@brief 选出本次计时实际要测的 runner 名称。
+
+    Search-stage ``fast_bench`` drops the serial dispatch and every baseline except the remembered fastest one.
+
+    @param baseline_names 全部可用基线名。
+    @param fast_bench 是否为搜索阶段快速计时。
+    @param remembered 上次记住的最快基线名。
+    @param measure_serial 是否保留严格串行 dispatch。
+    @return 选中的 runner 名列表，第一项恒为 candidate。
+    """
     names = ["candidate"]
     if measure_serial and not fast_bench:
         names.append("candidate_serial")
@@ -191,6 +258,14 @@ def selected_bench_names(baseline_names: list[str], *, fast_bench: bool, remembe
 
 
 def _remember_baseline(task_name: str, dtype: str, size: str, name: str, *, target_id: str) -> None:
+    """@brief 记住本次最快基线，供之后的快速计时复用。
+
+    @param task_name 任务名。
+    @param dtype 元素类型短名。
+    @param size 问题规模名。
+    @param name 基线名。
+    @param target_id 目标 id，一并写入缓存。
+    """
     path = _fast_bench_path(task_name, dtype, size)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"best_baseline": name, "target_id": target_id}))
@@ -212,6 +287,26 @@ def _evaluate_in_process(
     measure_serial: bool = False,
     target_id: str = "apple-m4-max",
 ) -> EvalReport:
+    """@brief 在子进程内部依次跑过 device_check、screen、compile、abi、correct 与 bench。
+
+    只由 ``tcenv.worker`` 调用。quick / validate 在正确性后返回，full 继续测速；
+    任一类失败都会停在对应关卡并用 ``finish`` 记录状态与耗时。
+
+    @param task_name 任务名。
+    @param dtype 元素类型短名。
+    @param size 问题规模名。
+    @param kernel_source 候选 MSL 源码。
+    @param mode 评测模式，决定跑到哪一关。
+    @param seed 随机种子。
+    @param reps 计时重复次数。
+    @param cases 要跑的正确性用例。
+    @param fast_bench 是否只测记住的最快基线。
+    @param require_contract_launch 是否禁止 taic-launch 块。
+    @param validate 是否为着色器校验那一趟。
+    @param measure_serial 是否额外测串行 dispatch。
+    @param target_id 目标设备 id。
+    @return 本次评测的报告。
+    """
     import torch  # noqa: F401  (imported early so failures are reported as crashes of the worker)
 
     from tasks import get_task
@@ -579,11 +674,16 @@ PIPELINE_DEADLINE_CAP_S = 8.0
 
 
 def command_buffer_deadline_s(n_stages: int) -> float:
-    """How long the parent waits for one in-flight command buffer.
+    """@brief 给出一次在飞 command buffer 的父进程等待时长。
+
+    How long the parent waits for one in-flight command buffer.
 
     One kernel stays at 2 seconds. A pipeline is one buffer with one dispatch per stage,
     so the wait is 2 seconds times the stage count, and never more than
     ``PIPELINE_DEADLINE_CAP_S``.
+
+    @param n_stages 流水线阶段数。
+    @return 等待秒数。
     """
     stages = max(1, int(n_stages))
     if stages == 1:
@@ -592,9 +692,17 @@ def command_buffer_deadline_s(n_stages: int) -> float:
 
 
 def deadline_for_source(task: str, dtype: str, size: str, source: str) -> float:
-    """The command-buffer wait for this source. An unreadable launch block stays at 2 seconds.
+    """@brief 按候选源码决定本次 command buffer 的等待时限。
+
+    The command-buffer wait for this source. An unreadable launch block stays at 2 seconds.
 
     The worker rejects that block before the GPU. A parsed pipeline uses one wait for every stage.
+
+    @param task 任务名。
+    @param dtype 元素类型短名。
+    @param size 问题规模名。
+    @param source 候选 MSL 源码。
+    @return 等待秒数。
     """
     from tasks import get_task
 
@@ -622,6 +730,11 @@ POST_KILL_COOLDOWN_S = 3.0  # give the GPU time to recover after a runaway kerne
 
 # 心跳是固定 22 字节：一个字母加 20 位墙上时间。还没写好或写了一半就当这一拍没有心跳，避免误杀。
 def _read_heartbeat(path: Path) -> tuple[str, float] | None:
+    """@brief 读取定宽心跳：字母加 20 位墙上时间。
+
+    @param path 心跳文件路径。
+    @return ``(状态字母, 墙上时间)``；文件缺失或未写完时为 None。
+    """
     try:
         raw = path.read_bytes()[:22].decode()
         return raw[0], float(raw[1:21])
@@ -631,10 +744,17 @@ def _read_heartbeat(path: Path) -> tuple[str, float] | None:
 
 # 看板要看到阶段和心跳字母。只有阶段文件或心跳变了才发布，避免每 0.1 秒重写一份快照。
 def _sync_progress(stage_path: Path, hb_path: Path, dest: Path, seen: list) -> None:
-    """Copy the worker's stage file and the heartbeat letter into ``dest`` when either changes.
+    """@brief 把 worker 的阶段文件与心跳字母同步到看板快照。
+
+    Copy the worker's stage file and the heartbeat letter into ``dest`` when either changes.
 
     The heartbeat file itself stays a fixed-width ``B`` / ``E`` / ``W`` plus a timestamp. Age is computed by the
     dashboard from ``heartbeat_at``, so this does not rewrite the snapshot on every poll.
+
+    @param stage_path worker 写的阶段文件。
+    @param hb_path 心跳文件。
+    @param dest 看板要读的快照路径。
+    @param seen 单元素列表，保存上次见过的签名以避免重复发布。
     """
     try:
         hb = _read_heartbeat(hb_path)
@@ -673,9 +793,22 @@ def supervise(
     progress_path: Path | None = None,
     compile_deadline_s: float = COMPILE_DEADLINE_S,
 ) -> str:
-    """Wait for ``proc``; SIGKILL its process group when compile (heartbeat "C") exceeds ``compile_deadline_s``,
+    """@brief 监督一个 worker 子进程，必要时 SIGKILL 它的进程组。
+
+    Wait for ``proc``; SIGKILL its process group when compile (heartbeat "C") exceeds ``compile_deadline_s``,
     one GPU launch (heartbeat "B") exceeds ``launch_deadline_s``, or the run exceeds ``timeout``. Time spent waiting
-    for the GPU lock (heartbeat "W") does not count toward ``timeout``. Returns "" if it exited by itself."""
+    for the GPU lock (heartbeat "W") does not count toward ``timeout``. Returns "" if it exited by itself.
+
+    @param proc worker 子进程。
+    @param hb_path 心跳文件路径。
+    @param launch_deadline_s 单次 command buffer 的最长秒数。
+    @param timeout 整段评测的最长秒数，等锁时间不计入。
+    @param poll_s 轮询间隔秒数。
+    @param stage_path worker 的阶段文件，用于同步看板。
+    @param progress_path 看板快照路径。
+    @param compile_deadline_s 编译阶段的最长秒数。
+    @return 空串表示子进程自行退出；否则返回 "compile" / "launch" / "timeout"。
+    """
     t0 = last = time.perf_counter()
     paused = 0.0
     seen: list = [None]
@@ -731,12 +864,33 @@ def _run_worker(
     measure_serial: bool = True,
     target_id: str = "apple-m4-max",
 ) -> EvalReport:
-    """Run one worker under supervision.
+    """@brief 在一份新临时目录里拉起一个 worker 并回收它的报告。
+
+    Run one worker under supervision.
 
     The parent kills the worker (SIGKILL) as soon as a single GPU launch has been in flight for longer than
     ``launch_deadline_s`` (heartbeat file written by the worker around every launch) or the overall
     ``timeout`` elapsed. Nothing can preempt a running Metal kernel from inside, so this bounds the damage of a
     runaway kernel, which would otherwise starve the display of the GPU.
+
+    @param task 任务名。
+    @param dtype 元素类型短名。
+    @param size 问题规模名。
+    @param kernel_path 已写盘的候选源码路径。
+    @param mode worker 要跑的模式。
+    @param seed 随机种子。
+    @param reps 计时重复次数。
+    @param timeout 整段评测的最长秒数。
+    @param validation 是否在着色器校验环境下运行。
+    @param cases 要跑的正确性用例。
+    @param launch_deadline_s 单次 command buffer 的最长秒数。
+    @param worker_module 要拉起的 Python 模块名。
+    @param progress_path 看板快照路径。
+    @param fast_bench 是否只测记住的最快基线。
+    @param require_contract_launch 是否禁止 taic-launch 块。
+    @param measure_serial 是否额外测串行 dispatch。
+    @param target_id 目标设备 id。
+    @return worker 报告；被杀或崩溃时返回对应的 timeout / crash 报告。
     """
     from .backends.metal.sanitize import VALIDATION_ENV, env_with_validation, validation_problems
 
@@ -849,6 +1003,10 @@ EVAL_CACHE_SCHEMA = 1
 
 
 def _eval_cache_dir() -> Path:
+    """@brief 评测缓存目录。
+
+    @return ``TCENV_EVAL_CACHE_DIR`` 指定的目录，默认为用户缓存下的 ``evals``。
+    """
     return Path(os.environ.get("TCENV_EVAL_CACHE_DIR", Path.home() / ".cache" / "ai_lowerling" / "evals"))
 
 
@@ -857,6 +1015,25 @@ def _eval_cache_key(
     cases: tuple[str, ...] | None, fast_bench: bool, require_contract_launch: bool,
     validate: bool, measure_serial: bool, target_id: str, kernel_source: str,
 ) -> str:
+    """@brief 计算一次评测的缓存键。
+
+    键覆盖文件 schema、测量协议、任务指纹、内核哈希与全部影响结果的评测参数。
+
+    @param task 任务名。
+    @param dtype 元素类型短名。
+    @param size 问题规模名。
+    @param mode 评测模式。
+    @param seed 随机种子。
+    @param reps 计时重复次数。
+    @param cases 正确性用例。
+    @param fast_bench 是否快速计时。
+    @param require_contract_launch 是否禁止 taic-launch 块。
+    @param validate 是否含着色器校验。
+    @param measure_serial 是否测串行 dispatch。
+    @param target_id 目标设备 id。
+    @param kernel_source 候选源码。
+    @return 十六进制 sha256 缓存键。
+    """
     from .schema import PROTOCOL_VERSION
     from .task import task_fingerprint
     from tasks import get_task
@@ -875,6 +1052,11 @@ def _eval_cache_key(
 
 
 def _cache_read(key: str) -> "EvalReport | None":
+    """@brief 按缓存键读取一份报告。
+
+    @param key 缓存键。
+    @return 报告；未命中或文件损坏时为 None。
+    """
     path = _eval_cache_dir() / f"{key}.json"
     if not path.is_file():
         return None
@@ -888,6 +1070,11 @@ def _cache_read(key: str) -> "EvalReport | None":
 
 
 def _cache_write(key: str, report: "EvalReport") -> None:
+    """@brief 缓存一份状态为 ok 的报告。
+
+    @param key 缓存键。
+    @param report 要缓存的报告；非 ok 状态不会写入。
+    """
     if report.status != "ok":
         return
     path = _eval_cache_dir() / f"{key}.json"
@@ -922,7 +1109,9 @@ def evaluate(
     eval_cache: bool = False,
     target_id: str = "apple-m4-max",
 ) -> EvalReport:
-    """Evaluate ``kernel_source`` on ``task``. ``mode``: "quick" (compile+ABI+safety+correctness),
+    """@brief 在受监督的子进程里评测一份候选内核。
+
+    Evaluate ``kernel_source`` on ``task``. ``mode``: "quick" (compile+ABI+safety+correctness),
     "timed" (those, plus the benchmark, without shader validation), or "full" (validation and the benchmark).
 
     ``self_check_dir`` is set for a coding agent's ``--timed`` run. A previous timeout or crash in that
@@ -930,6 +1119,26 @@ def evaluate(
 
     ``validate`` asks a ``timed`` run for the instrumented shader-validation pass first, so a self-check can pay
     for it once on the version it intends to hand back. ``full`` always validates; ``quick`` never does.
+
+    @param task 任务名。
+    @param dtype 元素类型短名。
+    @param size 问题规模名。
+    @param kernel_source 候选 MSL 源码。
+    @param mode 评测模式。
+    @param seed 随机种子；为 None 时随机生成。
+    @param reps 计时重复次数。
+    @param timeout 整段评测的最长秒数；为 None 时按模式取默认值。
+    @param cases 要跑的正确性用例。
+    @param workdir 候选源码的写盘目录。
+    @param progress_path 看板快照路径。
+    @param fast_bench 是否只测记住的最快基线。
+    @param require_contract_launch 是否禁止 taic-launch 块。
+    @param self_check_dir 自测记录目录；只在 timed 模式使用。
+    @param validate timed 模式下是否先跑着色器校验。
+    @param measure_serial 是否额外测串行 dispatch。
+    @param eval_cache 是否复用相同参数的缓存报告。
+    @param target_id 目标设备 id。
+    @return 本次评测的报告。
     """
     seed = int(seed if seed is not None else secrets.randbits(48))
     t0 = time.perf_counter()

@@ -25,7 +25,13 @@ _KEYS = ("input", "output", "cache_read", "cache_write")
 
 
 def load_prices(path: Path | None = None) -> dict[str, dict]:
-    """model id -> USD per million tokens, from the same file the session used."""
+    """@brief 从 ``models.json`` 读出每个模型的百万 token 单价。
+
+    model id -> USD per million tokens, from the same file the session used.
+
+    @param path ``models.json`` 路径；为 ``None`` 时用 ``~/.pi/agent/models.json``。
+    @return ``{模型 id: {input, output, cache_read, cache_write}}``。
+    """
     source = Path(path) if path else Path.home() / ".pi" / "agent" / "models.json"
     doc = json.loads(source.read_text(encoding="utf-8"))
     table: dict[str, dict] = {}
@@ -47,7 +53,14 @@ def load_prices(path: Path | None = None) -> dict[str, dict]:
 
 
 def cost_of(tokens: dict, prices: dict) -> float:
-    """USD for one session's token dict (``input``/``output``/``cache_read``/``cache_write``)."""
+    """@brief 按单价把一个会话的 token 数换算成美元。
+
+    USD for one session's token dict (``input``/``output``/``cache_read``/``cache_write``).
+
+    @param tokens 含 ``input``/``output``/``cache_read``/``cache_write`` 的 token 计数。
+    @param prices 四项对应的百万 token 单价。
+    @return 该会话的花费，单位美元。
+    """
     total = 0.0
     for key in _KEYS:
         value = tokens.get(key, 0)
@@ -57,7 +70,15 @@ def cost_of(tokens: dict, prices: dict) -> float:
 
 
 def recompute_run(run_dir: Path, table: dict[str, dict], *, write: bool = True) -> dict:
-    """The per-session and total recomputation for one run. Writes ``cost_recomputed.json`` when ``write``."""
+    """@brief 从 transcript 重算一次运行的花费，可选写出 ``cost_recomputed.json``。
+
+    The per-session and total recomputation for one run. Writes ``cost_recomputed.json`` when ``write``.
+
+    @param run_dir 运行目录。
+    @param table ``load_prices`` 返回的单价表。
+    @param write 为真时写文件；为假时只返回结果。
+    @return 逐会话明细、重算总额与差额，以及价格表里缺失的模型。
+    """
     run = Path(run_dir)
     result_path = run / "result.json"
     result = json.loads(result_path.read_text(encoding="utf-8")) if result_path.is_file() else {}
@@ -105,6 +126,11 @@ def recompute_run(run_dir: Path, table: dict[str, dict], *, write: bool = True) 
 
 
 def main(argv: list[str] | None = None) -> int:
+    """@brief ``python -m experiments.reprice_runs`` 的入口，逐个重算并打印差额。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     parser = argparse.ArgumentParser(prog="python -m experiments.reprice_runs")
     parser.add_argument("--runs", nargs="*", default=list(DEFAULT_RUNS))
     parser.add_argument("--models", default=None, help="models.json path (default: ~/.pi/agent/models.json)")

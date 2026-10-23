@@ -113,10 +113,18 @@ _DECLARED = re.compile(_DECLARED_LOCAL_RX, re.I)
 
 
 def classify_plan(title: str, change: str, fallback: bool = False) -> dict:
-    """Keyword classification of a plan: ``{kind, scope, scores, local_score, declared_local}``. A hit in the title counts double and the
+    """@brief 用关键词给一个计划定类型与范围。
+
+    Keyword classification of a plan: ``{kind, scope, scores, local_score, declared_local}``. A hit in the title counts double and the
     description counts at most 3 hits per lexicon, so that a long description does not outvote the headline. ``kind`` is ``local`` when
     the plan declares itself local ('Local, structure-preserving ...') or its local score beats every global axis, else the best global axis
-    (ties: thread_mapping > data_movement > synchronization > algorithm); ``generic`` = one of the orchestrator's fallback plans."""
+    (ties: thread_mapping > data_movement > synchronization > algorithm); ``generic`` = one of the orchestrator's fallback plans.
+
+    @param title 计划标题。
+    @param change 计划正文。
+    @param fallback 为真时直接归为 ``generic``。
+    @return ``{kind, scope, scores, local_score, declared_local}``。
+    """
     t, c = (title or "").lower(), (change or "").lower()
     scores = {a: 2 * len(rx.findall(t)) + min(3, len(rx.findall(c))) for a, rx in _RX.items()}
     local = 2 * len(_LOCAL.findall(t)) + min(3, len(_LOCAL.findall(c)))
@@ -142,6 +150,11 @@ TASK_GROUPS = {
 
 
 def task_group(task: str) -> str:
+    """@brief 把任务名归到报告里的三个任务组之一。
+
+    @param task 任务名，可带 ``@变体``。
+    @return 任务组名：``flash_attention``、``matrix (...)`` 或 ``memory-bound (...)``。
+    """
     return TASK_GROUPS.get(task.split("@")[0], "memory-bound (elementwise/reduction/gemv/...)")
 
 
@@ -162,6 +175,13 @@ MIXED_MARK = "LOCAL, low-risk change"
 # small statistics helpers
 # ----------------------------------------------------------------------------------------------------------------------
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float | None, float | None]:
+    """@brief 算比例的 Wilson 置信区间。
+
+    @param k 成功次数。
+    @param n 总数。
+    @param z 正态分位数，默认 1.96 对应 95%。
+    @return ``(下限, 上限)``；``n`` 不大于 0 时两项都是 ``None``。
+    """
     if n <= 0:
         return None, None
     p = k / n
@@ -172,7 +192,16 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float | None, float | None]
 
 
 def fisher_exact(a: int, b: int, c: int, d: int) -> float:
-    """Two-sided Fisher exact p-value of the 2x2 table [[a, b], [c, d]]."""
+    """@brief 算 2x2 列联表的双侧 Fisher 精确检验 p 值。
+
+    Two-sided Fisher exact p-value of the 2x2 table [[a, b], [c, d]].
+
+    @param a 第一组成功数。
+    @param b 第一组失败数。
+    @param c 第二组成功数。
+    @param d 第二组失败数。
+    @return p 值；表为空时返回 1.0。
+    """
     n, r1, c1 = a + b + c + d, a + b, a + c
     if n == 0:
         return 1.0
@@ -186,7 +215,16 @@ def fisher_exact(a: int, b: int, c: int, d: int) -> float:
 
 
 def n_per_arm(p1: float, p2: float, alpha_z: float = 1.96, power_z: float = 0.8416) -> int | None:
-    """Sample size per arm of a two-sided two-proportion z test (alpha 0.05, power 0.8)."""
+    """@brief 算两个比例的 z 检验每组需要多少个样本。
+
+    Sample size per arm of a two-sided two-proportion z test (alpha 0.05, power 0.8).
+
+    @param p1 第一组比例。
+    @param p2 第二组比例。
+    @param alpha_z 显著性水平对应的正态分位数。
+    @param power_z 检验功效对应的正态分位数。
+    @return 每组样本数；两个比例相同时返回 ``None``。
+    """
     if abs(p1 - p2) < 1e-9:
         return None
     pb = (p1 + p2) / 2
@@ -195,7 +233,14 @@ def n_per_arm(p1: float, p2: float, alpha_z: float = 1.96, power_z: float = 0.84
 
 
 def mann_whitney_p(x: list[float], y: list[float]) -> float | None:
-    """Two-sided Mann-Whitney U test (normal approximation with tie and continuity correction)."""
+    """@brief 算两组数值的双侧 Mann-Whitney U 检验 p 值。
+
+    Two-sided Mann-Whitney U test (normal approximation with tie and continuity correction).
+
+    @param x 第一组数值。
+    @param y 第二组数值。
+    @return p 值；任一组为空时返回 ``None``。
+    """
     n1, n2 = len(x), len(y)
     if n1 == 0 or n2 == 0:
         return None
@@ -220,8 +265,14 @@ def mann_whitney_p(x: list[float], y: list[float]) -> float | None:
 
 
 def cmh(strata: list[tuple[int, int, int, int]]) -> dict:
-    """Cochran-Mantel-Haenszel test over 2x2 tables (a, b, c, d) = (A ok, A fail, B ok, B fail), one per stratum (run): common odds ratio
-    of A vs B and the continuity-corrected chi-square p-value (1 df). Strata without both groups carry no information and are skipped."""
+    """@brief 对一组 2x2 表做 Cochran-Mantel-Haenszel 检验。
+
+    Cochran-Mantel-Haenszel test over 2x2 tables (a, b, c, d) = (A ok, A fail, B ok, B fail), one per stratum (run): common odds ratio
+    of A vs B and the continuity-corrected chi-square p-value (1 df). Strata without both groups carry no information and are skipped.
+
+    @param strata 每项为 ``(A 成功, A 失败, B 成功, B 失败)``。
+    @return 含 ``strata``（有效层数）、``odds_ratio`` 与 ``p`` 的字典。
+    """
     num = den = sa = se = sv = 0.0
     used = 0
     for a, b, c, d in strata:
@@ -241,15 +292,35 @@ def cmh(strata: list[tuple[int, int, int, int]]) -> dict:
 
 
 def median(xs: list[float]) -> float | None:
+    """@brief 取中位数。
+
+    @param xs 数值列表。
+    @return 中位数；列表为空时返回 ``None``。
+    """
     return statistics.median(xs) if xs else None
 
 
 def pct(k: int, n: int) -> str:
+    """@brief 把比例格式化成百分比文本。
+
+    @param k 分子。
+    @param n 分母。
+    @return 形如 ``42%`` 的文本；``n`` 为 0 时返回 ``-``。
+    """
     return "-" if n == 0 else f"{100 * k / n:.0f}%"
 
 
 def rate_cell(k: int, n: int, small_n: int = SMALL_N, ci: bool = False) -> str:
-    """``k/n (p%)`` plus ``†`` when n < small_n (anecdotal), optionally with the 95% Wilson interval."""
+    """@brief 把比率格式化成表格单元。
+
+    ``k/n (p%)`` plus ``†`` when n < small_n (anecdotal), optionally with the 95% Wilson interval.
+
+    @param k 成功次数。
+    @param n 总数。
+    @param small_n 样本量阈值，低于它标 ``†``。
+    @param ci 为真时附上 95% Wilson 区间。
+    @return 表格单元文本；``n`` 为 0 时返回 ``0/0``。
+    """
     if n == 0:
         return "0/0"
     s = f"{k}/{n} ({pct(k, n)})"
@@ -260,10 +331,24 @@ def rate_cell(k: int, n: int, small_n: int = SMALL_N, ci: bool = False) -> str:
 
 
 def fnum(v, d: int = 3, suffix: str = "") -> str:
+    """@brief 按固定小数位格式化数值，可加后缀。
+
+    @param v 数值；可以是 ``None``。
+    @param d 小数位。
+    @param suffix 拼在数字后面的后缀。
+    @return 格式化文本；``None`` 写成 ``-``。
+    """
     return "-" if v is None else f"{v:.{d}f}{suffix}"
 
 
 def md_table(headers: list[str], rows: list[list], align: str | None = None) -> str:
+    """@brief 拼一张 markdown 表格。
+
+    @param headers 表头文本。
+    @param rows 每行单元格内容。
+    @param align 每列对齐，``l`` 或 ``r``；为 ``None`` 时首列左对齐、其余右对齐。
+    @return 表格文本（带末尾换行）；没有数据行时返回 ``_(no data)_``。
+    """
     if not rows:
         return "_(no data)_\n"
     align = align or ("l" + "r" * (len(headers) - 1))
@@ -277,6 +362,11 @@ def md_table(headers: list[str], rows: list[list], align: str | None = None) -> 
 # reading run directories (tolerant: files may be missing, empty or half written)
 # ----------------------------------------------------------------------------------------------------------------------
 def load_json(path: Path):
+    """@brief 宽容地读一个 JSON 文件。
+
+    @param path 文件路径。
+    @return 解析结果；文件读不到、为空或不是合法 JSON 时返回 ``None``。
+    """
     try:
         text = path.read_text()
         return json.loads(text) if text.strip() else None
@@ -285,6 +375,11 @@ def load_json(path: Path):
 
 
 def parse_label(label: str) -> dict | None:
+    """@brief 把候选标签拆成轮次、计划、修复次数与分支。
+
+    @param label 形如 ``init1`` 或 ``r3.p2.fix1`` 的标签。
+    @return ``{kind, round, plan, attempt, branch}``；标签不合格式时返回 ``None``。
+    """
     m = LABEL_RE.match(label)
     if not m:
         return None
@@ -295,8 +390,14 @@ def parse_label(label: str) -> dict | None:
 
 
 def roofline_fraction(roof: dict | None) -> float | None:
-    """Fraction of the roofline lower bound a kernel reaches = lower_bound_us / candidate_us = bandwidth_fraction (memory-bound)
-    or compute_fraction (compute-bound). May exceed 1: the roofline peaks are measured once and are not a hard ceiling."""
+    """@brief 算内核达到 roofline 下界的比例。
+
+    Fraction of the roofline lower bound a kernel reaches = lower_bound_us / candidate_us = bandwidth_fraction (memory-bound)
+    or compute_fraction (compute-bound). May exceed 1: the roofline peaks are measured once and are not a hard ceiling.
+
+    @param roof 报告里的 ``roofline`` 字典；可以为 ``None``。
+    @return 达到比例；字段缺失时返回 ``None``。
+    """
     if not roof:
         return None
     t = roof.get("time_over_lower_bound")
@@ -307,7 +408,13 @@ def roofline_fraction(roof: dict | None) -> float | None:
 
 
 def speedup_se(rep: dict | None) -> float:
-    """Relative standard error of a measured speedup (same formula as ``taic.orchestrator.speedup_se``); 0 without statistics."""
+    """@brief 算一次测量加速比的相对标准误。
+
+    Relative standard error of a measured speedup (same formula as ``taic.orchestrator.speedup_se``); 0 without statistics.
+
+    @param rep 候选的 ``report.json`` 内容；可以为 ``None``。
+    @return 相对标准误；没有统计量时返回 0.0。
+    """
     b = (rep or {}).get("benchmark") or {}
     try:
         c, base = b["candidate"], b["baselines"][b["best_baseline"]]
@@ -318,7 +425,15 @@ def speedup_se(rep: dict | None) -> float:
 
 
 def find_key(obj, key: str, depth: int = 3):
-    """First value stored under ``key`` in a nested dict (trace/candidates/ledger are not searched)."""
+    """@brief 在嵌套字典里找第一个 ``key`` 对应的值。
+
+    First value stored under ``key`` in a nested dict (trace/candidates/ledger are not searched).
+
+    @param obj 待搜的字典；不是字典时直接放弃。
+    @param key 要找的键。
+    @param depth 最多下钻几层。
+    @return 找到的值；找不到时返回 ``None``。
+    """
     if not isinstance(obj, dict) or depth < 0:
         return None
     if key in obj:
@@ -362,25 +477,48 @@ class Cand:
 
     @property
     def eligible(self) -> bool:
+        """@brief 判断这个候选是否可用于统计（状态 ok 且有加速比）。
+
+        @return 可用时为 ``True``。
+        """
         return self.status == "ok" and self.speedup is not None
 
     @property
     def roof_frac(self) -> float | None:
+        """@brief 取这个候选达到 roofline 下界的比例。
+
+        @return 比例；候选不是 ok 或没有 roofline 信息时返回 ``None``。
+        """
         return roofline_fraction(self.roofline) if self.status == "ok" else None
 
     @property
     def ratio(self) -> float | None:
-        """Speedup relative to the seed it patched (both measured against the baseline of their own evaluation)."""
+        """@brief 算相对它补的那个种子的加速比。
+
+        Speedup relative to the seed it patched (both measured against the baseline of their own evaluation).
+
+        @return 比值；候选不可用或种子没有加速比时返回 ``None``。
+        """
         if self.eligible and self.seed_speedup:
             return self.speedup / self.seed_speedup
         return None
 
 
 def _normalise_violation(text: str) -> str:
+    """@brief 把报错文本里的数字抹平并截断，便于归并同类失败。
+
+    @param text 原始报错。
+    @return 数字换成 ``N`` 且不超过 110 字的文本。
+    """
     return re.sub(r"\d+", "N", str(text))[:110]
 
 
 def _candidate_from_dir(d: Path) -> Cand | None:
+    """@brief 从一个候选目录读出 ``Cand``。
+
+    @param d 形如 ``<idx>_<label>`` 的候选目录。
+    @return 候选对象；目录名不合格式、报告缺失或标签解析不出时返回 ``None``。
+    """
     m = re.match(r"^(\d+)_(.+)$", d.name)
     if not m:
         return None
@@ -428,7 +566,14 @@ class Transcript:
 
 
 def _tok(usage, key: str) -> int | None:
-    """A token count from a logged usage dict (``usage`` may be a plain string on endpoints without model_dump)."""
+    """@brief 从日志里的 usage 字典取一项 token 数。
+
+    A token count from a logged usage dict (``usage`` may be a plain string on endpoints without model_dump).
+
+    @param usage 日志里的 ``usage`` 字段。
+    @param key 字段名，``reasoning`` 走 ``completion_tokens_details``。
+    @return token 数；取不到时返回 ``None``。
+    """
     if not isinstance(usage, dict):
         return None
     if key == "reasoning":
@@ -439,7 +584,14 @@ def _tok(usage, key: str) -> int | None:
 
 
 def turn_row(e: dict, tag: str) -> dict:
-    """What one logged chat turn says about *how the reply ended* (no prompt or reply text is kept)."""
+    """@brief 把一轮对话日志压成一行“回复怎么结束的”记录。
+
+    What one logged chat turn says about *how the reply ended* (no prompt or reply text is kept).
+
+    @param e 一条 ``event=chat`` 日志。
+    @param tag 该对话的标签。
+    @return 含结束原因、token 计数、字数与花费的一行。
+    """
     reply = e.get("reply") if isinstance(e.get("reply"), dict) else {}
     usage = e.get("usage")
     content = reply.get("content") or ""
@@ -454,6 +606,11 @@ def turn_row(e: dict, tag: str) -> dict:
 
 
 def read_transcript(path: Path) -> Transcript:
+    """@brief 读一次运行的 transcript，汇总每轮对话与计划文本。
+
+    @param path ``transcript.jsonl`` 的路径。
+    @return 汇总好的 ``Transcript``；文件不存在或打不开时是空对象。
+    """
     tr = Transcript()
     if not path.exists():
         return tr
@@ -517,7 +674,13 @@ def read_transcript(path: Path) -> Transcript:
 # diff size
 # ----------------------------------------------------------------------------------------------------------------------
 def norm_lines(src: str) -> list[str]:
-    """Source lines with comments, blank lines and whitespace differences removed."""
+    """@brief 去掉注释、空行和空白差异后的源码行。
+
+    Source lines with comments, blank lines and whitespace differences removed.
+
+    @param src 原始源码文本。
+    @return 归一后的非空行列表。
+    """
     src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
     out = []
     for ln in src.splitlines():
@@ -529,8 +692,15 @@ def norm_lines(src: str) -> list[str]:
 
 
 def diff_stats(seed_src: str, cand_src: str) -> tuple[float, int]:
-    """(fraction of changed lines, lines changed). Fraction = (lines removed from the seed + lines added) / (lines of both):
-    0 = identical, ~0.3 = about a third of the lines differ, 1 = nothing in common. Line-level Ratcliff/Obershelp matching."""
+    """@brief 算候选相对种子的改动规模。
+
+    (fraction of changed lines, lines changed). Fraction = (lines removed from the seed + lines added) / (lines of both):
+    0 = identical, ~0.3 = about a third of the lines differ, 1 = nothing in common. Line-level Ratcliff/Obershelp matching.
+
+    @param seed_src 种子内核源码。
+    @param cand_src 候选内核源码。
+    @return ``(改动行占比, 改动行数)``。
+    """
     a, b = norm_lines(seed_src), norm_lines(cand_src)
     if not a and not b:
         return 0.0, 0
@@ -540,6 +710,12 @@ def diff_stats(seed_src: str, cand_src: str) -> tuple[float, int]:
 
 
 def bucket_of(frac: float | None, edges: tuple[float, float]) -> str | None:
+    """@brief 把改动占比归到小/中/大三个桶。
+
+    @param frac 改动行占比。
+    @param edges 两个分界值。
+    @return ``BUCKETS`` 里的桶名；占比为 ``None`` 时返回 ``None``。
+    """
     if frac is None:
         return None
     return BUCKETS[0] if frac < edges[0] else BUCKETS[1] if frac < edges[1] else BUCKETS[2]
@@ -578,14 +754,26 @@ class Run:
 
     @property
     def base_task(self) -> str:
+        """@brief 去掉 ``@变体`` 之后的任务名。
+
+        @return 基任务名。
+        """
         return self.task.split("@", 1)[0]
 
     @property
     def by_idx(self) -> dict[int, Cand]:
+        """@brief 按候选序号索引本次运行的候选。
+
+        @return ``{序号: Cand}``。
+        """
         return {c.idx: c for c in self.cands}
 
     @property
     def stop_kind(self) -> str:
+        """@brief 把停止原因归成简短类别。
+
+        @return ``partial``/``patience``/``max_rounds``/``budget`` 等类别名。
+        """
         if not self.finished:
             return "partial"
         r = self.stop_reason or ""
@@ -599,11 +787,22 @@ class Run:
 
 
 def is_run_dir(p: Path) -> bool:
+    """@brief 判断目录是不是一个运行目录。
+
+    @param p 待检查的目录。
+    @return 有 ``candidates/``，或同时有 ``result.json`` 与 ``transcript.jsonl`` 时为 ``True``。
+    """
     return (p / "candidates").is_dir() or ((p / "result.json").exists() and (p / "transcript.jsonl").exists())
 
 
 def discover(roots: list[str]) -> list[tuple[Path, str, str]]:
-    """(run dir, label, source root name) for every run dir below the roots (a root may itself be a run dir; globs are expanded)."""
+    """@brief 在给定根下找出所有运行目录。
+
+    (run dir, label, source root name) for every run dir below the roots (a root may itself be a run dir; globs are expanded).
+
+    @param roots 目录或 glob 字符串列表。
+    @return ``(运行目录, 标签, 来源根名)`` 列表。
+    """
     found, seen = [], set()
     expanded: list[Path] = []
     for r in roots:
@@ -635,6 +834,14 @@ def discover(roots: list[str]) -> list[tuple[Path, str, str]]:
 
 
 def load_run(path: Path, label: str, source: str, now: float | None = None) -> Run:
+    """@brief 读一个运行目录，填好候选、轨迹、transcript 与种子。
+
+    @param path 运行目录。
+    @param label 报告里用的标签。
+    @param source 它是在哪个命令行根下找到的。
+    @param now 当前时间戳；为 ``None`` 时取系统时间，用于判断运行是否还活着。
+    @return 填好的 ``Run``。
+    """
     now = time.time() if now is None else now
     run = Run(path=str(path), label=label, source=source)
     run.result, run.state, run.confirm = load_json(path / "result.json"), load_json(path / "state.json"), load_json(path / "confirm_report.json")
@@ -707,8 +914,13 @@ def load_run(path: Path, label: str, source: str, now: float | None = None) -> R
 
 
 def assign_seeds(run: Run) -> None:
-    """The seed of round r is the best kernel just before the first candidate of round r was evaluated (``Orchestrator._search``
-    patches ``self.best`` as it stood at the start of the round). Compute the diff of every patch attempt against it."""
+    """@brief 给每个补丁候选配上它当时的种子，并算出改动规模。
+
+    The seed of round r is the best kernel just before the first candidate of round r was evaluated (``Orchestrator._search``
+    patches ``self.best`` as it stood at the start of the round). Compute the diff of every patch attempt against it.
+
+    @param run 要就地填写的运行对象。
+    """
     by_idx = run.by_idx
     best: Cand | None = None
     seed: dict[int, Cand | None] = {}
@@ -744,11 +956,18 @@ REASONING_SHARE = 0.9  # a truncated reply whose reasoning tokens are >= this sh
 
 
 def nocode_cause(tr: Transcript, tag: str) -> str:
-    """Why the model turn(s) of ``tag`` produced no kernel, read from how the last logged turn ended:
+    """@brief 判定一轮对话为什么没写出内核。
+
+    Why the model turn(s) of ``tag`` produced no kernel, read from how the last logged turn ended:
     ``reasoning_cap`` = finish_reason=length and >= 90% of the completion tokens were reasoning (the cap was spent thinking, nothing was written);
     ``output_cap`` = finish_reason=length with a long visible reply (the code itself did not fit); ``run_ended`` = the last turn asked for a tool and
     the run stopped before answering it (budget); ``no_block`` = a normal reply without a ```metal block; ``block_without_kernel`` = a code block
-    that does not define the kernel; ``unknown`` = no transcript."""
+    that does not define the kernel; ``unknown`` = no transcript.
+
+    @param tr 该运行的 transcript 汇总。
+    @param tag 对话标签。
+    @return 原因名。
+    """
     row = (tr.tags.get(tag) or {}).get("last_turn")
     if not row:
         return "unknown"
@@ -766,7 +985,14 @@ def nocode_cause(tr: Transcript, tag: str) -> str:
 
 
 def build_branches(run: Run, edges: tuple[float, float]) -> tuple[list[dict], list[dict]]:
-    """(branch records, attempt records) of one run, for init and patch branches alike."""
+    """@brief 把一次运行拆成逐个补丁请求的分支记录与逐次尝试记录。
+
+    (branch records, attempt records) of one run, for init and patch branches alike.
+
+    @param run 已填好的运行对象。
+    @param edges 改动占比的小/中/大分界。
+    @return ``(分支记录列表, 尝试记录列表)``。
+    """
     tr = run.transcript
     cands_by_label = {c.label: c for c in run.cands}
     keys: dict[str, dict] = {}
@@ -881,10 +1107,22 @@ def build_branches(run: Run, edges: tuple[float, float]) -> tuple[list[dict], li
 # Question 1 tables
 # ----------------------------------------------------------------------------------------------------------------------
 def status_counts(recs: list[dict], key: str) -> Counter:
+    """@brief 按某个键计数。
+
+    @param recs 记录列表。
+    @param key 要计数的键。
+    @return 计数器。
+    """
     return Counter(r[key] for r in recs)
 
 
 def group_by(recs: list[dict], key) -> dict:
+    """@brief 按 ``key(rec)`` 分组，并按组名排序。
+
+    @param recs 记录列表。
+    @param key 取分组名的可调用对象。
+    @return ``{组名: 记录列表}``，组名已排序。
+    """
     out: dict = defaultdict(list)
     for r in recs:
         out[key(r)].append(r)
@@ -892,16 +1130,35 @@ def group_by(recs: list[dict], key) -> dict:
 
 
 def task_order(tasks) -> list[str]:
+    """@brief 按论文里的顺序排任务名。
+
+    @param tasks 任务名集合。
+    @return 排序后的任务名列表。
+    """
     pri = {"flash_attention": 0, "gemm": 1, "conv2d": 2}
     return sorted(tasks, key=lambda t: (pri.get(t, 3), t))
 
 
 def present_statuses(recs: list[dict], key: str) -> list[str]:
+    """@brief 列出记录里实际出现过的状态（不含 pending）。
+
+    @param recs 记录列表。
+    @param key 取状态的键。
+    @return 先按 ``STATUS_ORDER``、后按字典序的状态列表。
+    """
     present = {r[key] for r in recs} - {"pending"}
     return [s for s in STATUS_ORDER if s in present] + sorted(present - set(STATUS_ORDER))
 
 
 def outcome_table(branches: list[dict], key: str, label_fn=lambda x: x, order=None) -> tuple[list[str], list[list]]:
+    """@brief 按分组拼一张状态计数表。
+
+    @param branches 分支记录。
+    @param key 要统计的状态键。
+    @param label_fn 取分组名的可调用对象。
+    @param order 分组排序用的 ``{组名: 序号}``；为 ``None`` 时不重排。
+    @return ``(表头, 行)``。
+    """
     cols = present_statuses(branches, key)
     rows = []
     for g, recs in group_by(branches, label_fn).items():
@@ -914,6 +1171,11 @@ def outcome_table(branches: list[dict], key: str, label_fn=lambda x: x, order=No
 
 
 def gain_stats(recs: list[dict]) -> dict:
+    """@brief 汇总一组分支的成功、提升与花费。
+
+    @param recs 分支记录。
+    @return 计数、加速比中位数、平均增益与 LLM 花费。
+    """
     n = len(recs)
     ratios = [r["ratio"] for r in recs if r["ratio"] is not None]
     diffs = [r["diff_first"] for r in recs if r["diff_first"] is not None]
@@ -930,6 +1192,12 @@ def gain_stats(recs: list[dict]) -> dict:
 
 
 def compare_cell(g: dict, small_n: int) -> list:
+    """@brief 把一组增益统计排成对比表的单元格。
+
+    @param g ``gain_stats`` 的结果。
+    @param small_n 样本量阈值，低于它标 ``†``。
+    @return 与 ``COMPARE_HDR`` 列数对应的单元格列表。
+    """
     return [
         g["n"], rate_cell(g["ok_first"], g["n"], small_n), rate_cell(g["ok_final"], g["n"], small_n), rate_cell(g["accepted"], g["n"], small_n),
         rate_cell(g["faster_than_seed"], g["n"], small_n), fnum(g["median_ratio_ok"], 3), fnum(g["max_ratio"], 3),
@@ -941,7 +1209,14 @@ COMPARE_HDR = ["group", "n branches", "first attempt ok", "ok after repair", "ne
 
 
 def size_block(recs: list[dict], edges) -> dict:
-    """Per bucket counts of attempt records that have a diff: n, ok, new best, faster than the seed (ratio > min_improvement), medians."""
+    """@brief 按改动规模分桶统计尝试结果。
+
+    Per bucket counts of attempt records that have a diff: n, ok, new best, faster than the seed (ratio > min_improvement), medians.
+
+    @param recs 尝试记录。
+    @param edges 小/中/大分界。
+    @return ``{桶名: {n, ok, new_best, faster, median_diff, median_ratio}}``。
+    """
     out = {}
     for b in BUCKETS:
         rs = [a for a in recs if bucket_of(a["diff_frac"], edges) == b]
@@ -954,6 +1229,12 @@ def size_block(recs: list[dict], edges) -> dict:
 
 
 def size_rows(blk: dict, small_n: int) -> list[list]:
+    """@brief 把分桶统计排成表格行。
+
+    @param blk ``size_block`` 的结果。
+    @param small_n 样本量阈值，低于它标 ``†``。
+    @return 与 ``SIZE_HDR`` 对应的行列表。
+    """
     return [[b, d["n"], fnum(d["median_diff"], 2), rate_cell(d["ok"], d["n"], small_n, True), rate_cell(d["new_best"], d["n"], small_n, True), rate_cell(d["faster"], d["n"], small_n), fnum(d["median_ratio"], 3)] for b, d in blk.items()]
 
 
@@ -961,7 +1242,13 @@ SIZE_HDR = ["bucket", "n", "median diff", "ok", "new best", "faster than seed", 
 
 
 def sensitivity(first: list[dict]) -> list[dict]:
-    """The small-vs-large comparison of first attempts under several bucket schemes (the answer must not hinge on one choice of edges)."""
+    """@brief 换几套分桶方案看小改动与大改动的对比是否稳定。
+
+    The small-vs-large comparison of first attempts under several bucket schemes (the answer must not hinge on one choice of edges).
+
+    @param first 首次尝试的记录列表。
+    @return 每套方案一项：分界、分桶统计与两个 Fisher p 值。
+    """
     xs = sorted(a["diff_frac"] for a in first)
     schemes = [(f"fixed {e[0]:.2f} / {e[1]:.2f}", e) for e in SENSITIVITY_EDGES]
     if len(xs) >= 6:
@@ -979,6 +1266,11 @@ def sensitivity(first: list[dict]) -> list[dict]:
 
 
 def diff_by_status(first: list[dict]) -> dict:
+    """@brief 按状态看改动规模，并做 ok 与失败组的 Mann-Whitney 检验。
+
+    @param first 首次尝试的记录列表。
+    @return 逐状态的中位改动与两组检验结果。
+    """
     ok = [a["diff_frac"] for a in first if a["status"] == "ok"]
     bad = [a["diff_frac"] for a in first if a["status"] != "ok"]
     by = {s: {"n": sum(a["status"] == s for a in first), "median_diff": median([a["diff_frac"] for a in first if a["status"] == s])} for s in present_statuses(first, "status")}
@@ -986,8 +1278,14 @@ def diff_by_status(first: list[dict]) -> dict:
 
 
 def round_streaks(patch_b: list[dict]) -> dict:
-    """Over completed rounds of each run: P(new best in a round) overall, after one and after two rounds without a new best;
-    rounds in which no first attempt was ok."""
+    """@brief 统计每一轮是否出了新最优，以及连续无进展后的下一轮。
+
+    Over completed rounds of each run: P(new best in a round) overall, after one and after two rounds without a new best;
+    rounds in which no first attempt was ok.
+
+    @param patch_b 补丁分支记录。
+    @return 轮数、出新最优的轮数，以及连续无进展后的计数。
+    """
     tot = won = a1 = a1w = a2 = a2w = no_ok = 0
     for _, recs in group_by(patch_b, lambda b: b["run"]).items():
         seq = []
@@ -1010,6 +1308,15 @@ def round_streaks(patch_b: list[dict]) -> dict:
 
 
 def q1_tables(patch_b: list[dict], init_b: list[dict], patch_a: list[dict], edges, small_n: int) -> dict:
+    """@brief 算出问题一的全部表：成功率、改动规模、失败原因与计划角色对比。
+
+    @param patch_b 补丁分支记录。
+    @param init_b 初始生成分支记录。
+    @param patch_a 补丁尝试记录。
+    @param edges 改动占比的小/中/大分界。
+    @param small_n 样本量阈值。
+    @return 含增益、逐任务、尺寸、失败原因、截断、plan_mix 与连击各节的字典。
+    """
     is_fa = lambda r: r["task"] == "flash_attention"
     out: dict = {"edges": list(edges)}
     out["gain_all"], out["gain_FA"], out["gain_nonFA"] = gain_stats(patch_b), gain_stats([b for b in patch_b if is_fa(b)]), gain_stats([b for b in patch_b if not is_fa(b)])
@@ -1075,6 +1382,11 @@ def q1_tables(patch_b: list[dict], init_b: list[dict], patch_a: list[dict], edge
 
 
 def deciles(xs: list[float]) -> list[float]:
+    """@brief 取一组数的分位点。
+
+    @param xs 数值列表。
+    @return ``[min, p10, p25, median, p75, p90, max]``；列表为空时为空列表。
+    """
     if not xs:
         return []
     xs = sorted(xs)
@@ -1088,7 +1400,14 @@ CORE_STATUSES = ("ok", "abi_error", "incorrect", "no_code")
 
 
 def status_split(recs: list[dict], key: str = "first_status") -> dict:
-    """Counts of ok / abi_error / incorrect / no_code (everything else is ``other``) of the ``key`` status of ``recs``."""
+    """@brief 把记录拆成 ok / abi_error / incorrect / no_code / other 五类计数。
+
+    Counts of ok / abi_error / incorrect / no_code (everything else is ``other``) of the ``key`` status of ``recs``.
+
+    @param recs 记录列表。
+    @param key 取状态的键。
+    @return 各类计数与总数 ``n``。
+    """
     c = Counter(r[key] for r in recs)
     out = {s: c.get(s, 0) for s in CORE_STATUSES}
     out["other"] = sum(v for k, v in c.items() if k not in CORE_STATUSES)
@@ -1097,13 +1416,26 @@ def status_split(recs: list[dict], key: str = "first_status") -> dict:
 
 
 def kind_block(recs: list[dict]) -> dict:
+    """@brief 一组记录的状态分类与增益统计。
+
+    @param recs 分支记录。
+    @return ``status_split`` 的字段外加固后的 ok、新最优与增益中位数。
+    """
     g = gain_stats(recs)
     return {**status_split(recs), "ok_final": g["ok_final"], "accepted": g["accepted"], "faster_than_seed": g["faster_than_seed"],
             "mean_gain_pct": g["mean_gain_pct"], "median_ratio_ok": g["median_ratio_ok"], "llm_usd": g["llm_usd"]}
 
 
 def local_vs_structural(recs: list[dict], pred, restrict=None) -> dict:
-    """2x2 comparison (Fisher exact) of ``pred`` between the local and the structural plans of ``recs`` (``restrict`` filters first)."""
+    """@brief 对一组计划做 local 与 structural 的 2x2 对比。
+
+    2x2 comparison (Fisher exact) of ``pred`` between the local and the structural plans of ``recs`` (``restrict`` filters first).
+
+    @param recs 分支记录。
+    @param pred 判定单条记录是否命中的可调用对象。
+    @param restrict 先过滤记录的可调用对象；为 ``None`` 时不过滤。
+    @return ``{local: [命中, 总数], structural: [命中, 总数], p}``。
+    """
     rs = [b for b in recs if restrict is None or restrict(b)]
     lo = [b for b in rs if b["plan_scope"] == "local"]
     st = [b for b in rs if b["plan_scope"] == "structural"]
@@ -1112,6 +1444,12 @@ def local_vs_structural(recs: list[dict], pred, restrict=None) -> dict:
 
 
 def kind_tables(patch_b: list[dict], patch_a: list[dict]) -> dict:
+    """@brief 算出问题“计划类型有没有用”的全部表。
+
+    @param patch_b 补丁分支记录。
+    @param patch_a 补丁尝试记录。
+    @return 含分类标签校验、失败率分类、分层检验与 ABI 失败分布的字典。
+    """
     out: dict = {}
     known = [b for b in patch_b if b["plan_kind"] != "unknown"]
     # (a) does the keyword classifier recover the plans the prompt itself designated as local? (plan_mix runs, rounds with all K plans, no fallback)
@@ -1152,7 +1490,13 @@ def kind_tables(patch_b: list[dict], patch_a: list[dict]) -> dict:
 
 
 def turn_group(tag: str) -> str:
-    """plan / init / repair / patch: what a logged chat turn belongs to."""
+    """@brief 判断一轮对话属于规划、初始生成、修复还是补丁。
+
+    plan / init / repair / patch: what a logged chat turn belongs to.
+
+    @param tag 对话标签。
+    @return 类别名。
+    """
     if PLAN_TAG_RE.match(tag):
         return "plan"
     if ".fix" in tag:
@@ -1161,6 +1505,11 @@ def turn_group(tag: str) -> str:
 
 
 def turn_round(tag: str) -> int | None:
+    """@brief 从对话标签取出它属于哪一轮。
+
+    @param tag 对话标签。
+    @return 轮次；取不到时返回 ``None``。
+    """
     m = PLAN_TAG_RE.match(tag)
     if m:
         return int(m.group(1))
@@ -1169,6 +1518,11 @@ def turn_round(tag: str) -> int | None:
 
 
 def dist(xs: list[float]) -> dict:
+    """@brief 取一组数的分位数摘要。
+
+    @param xs 数值列表，可含 ``None``。
+    @return ``{n, p50, p90, max}``；没有有效数值时各项为 ``None``。
+    """
     xs = sorted(x for x in xs if x is not None)
     if not xs:
         return {"n": 0, "p50": None, "p90": None, "max": None}
@@ -1176,8 +1530,15 @@ def dist(xs: list[float]) -> dict:
 
 
 def within_run_ranks(recs: list[dict], key: str) -> dict[int, float]:
-    """id(rec) -> percentile rank (0..1, ties averaged) of ``rec[key]`` among the records of its own run: removes what differs between runs
-    (task, model, protocol), so that pooled comparisons ask 'within a run, are truncated requests the ones with the longer plan / bigger seed?'."""
+    """@brief 算每条记录在自己那次运行内的百分位排名。
+
+    id(rec) -> percentile rank (0..1, ties averaged) of ``rec[key]`` among the records of its own run: removes what differs between runs
+    (task, model, protocol), so that pooled comparisons ask 'within a run, are truncated requests the ones with the longer plan / bigger seed?'.
+
+    @param recs 分支记录。
+    @param key 要排名的字段。
+    @return ``{id(记录): 百分位}``。
+    """
     out: dict[int, float] = {}
     for _, rs in group_by([r for r in recs if r.get(key) is not None], lambda r: r["run"]).items():
         vals = sorted(r[key] for r in rs)
@@ -1189,6 +1550,13 @@ def within_run_ranks(recs: list[dict], key: str) -> dict[int, float]:
 
 
 def nocode_tables(runs: list[Run], branches: list[dict], small_n: int) -> dict:
+    """@brief 算出问题“回复为何没代码”的全部表。
+
+    @param runs 已加载的运行列表。
+    @param branches 分支记录。
+    @param small_n 样本量阈值。
+    @return 含截断代价、机制、逐模型思考量、预测因素与恢复率的字典。
+    """
     out: dict = {}
     rows = []
     for r in runs:
@@ -1297,6 +1665,11 @@ def nocode_tables(runs: list[Run], branches: list[dict], small_n: int) -> dict:
 # Question 2
 # ----------------------------------------------------------------------------------------------------------------------
 def _file_sha256(path: Path) -> str | None:
+    """@brief 算文件的 sha256。
+
+    @param path 文件路径。
+    @return 十六进制摘要；文件读不到时返回 ``None``。
+    """
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
@@ -1304,7 +1677,13 @@ def _file_sha256(path: Path) -> str | None:
 
 
 def _timing_uncertain(report: dict | None) -> bool:
-    """Same cutoff as ``tcenv.bench.QUIET_CV``. This module does not import the evaluator."""
+    """@brief 判断一次复测的计时是不是不够安静。
+
+    Same cutoff as ``tcenv.bench.QUIET_CV``. This module does not import the evaluator.
+
+    @param report 复测报告；可以为 ``None``。
+    @return 噪声大或统计量缺失时为 ``True``。
+    """
     bench = (report or {}).get("benchmark") if isinstance(report, dict) else None
     if not isinstance(bench, dict) or not bench:
         return False
@@ -1325,7 +1704,13 @@ def _timing_uncertain(report: dict | None) -> bool:
 
 
 def _published_speed(run: Run) -> float | None:
-    """The confirmation this run may print. Missing, unbound, failed or noisy confirmations print nothing."""
+    """@brief 取这次运行可以对外报的确认加速比。
+
+    The confirmation this run may print. Missing, unbound, failed or noisy confirmations print nothing.
+
+    @param run 已加载的运行。
+    @return 确认过的加速比；没通过确认门槛时返回 ``None``。
+    """
     res = run.result or {}
     if "confirmation_source_sha256" not in res or res.get("confirmed_status") != "ok":
         return None
@@ -1351,6 +1736,12 @@ def _published_speed(run: Run) -> float | None:
 
 
 def q2_row(run: Run, sat: float) -> dict:
+    """@brief 算一次运行在“是否已到屋顶线”一节里的一行。
+
+    @param run 已加载的运行。
+    @param sat 视为饱和的 roofline 比例阈值。
+    @return 包含确认加速比、roofline 比例、最后提升后的花费与饱和信息的字典。
+    """
     by_idx = run.by_idx
     order = [by_idx[i] for i in run.order]
     res = run.result or {}
@@ -1400,6 +1791,11 @@ def q2_row(run: Run, sat: float) -> dict:
 
 
 def q2_aggregate(rows: list[dict]) -> dict:
+    """@brief 把问题二的逐运行行汇总成总数。
+
+    @param rows ``q2_row`` 返回的行。
+    @return 总花费、饱和运行的占比，以及首次饱和后花掉的钱。
+    """
     fin = [r for r in rows if r["finished"] and r["spent_usd"] is not None]
     total = sum(r["spent_usd"] for r in fin)
     sat = [r for r in fin if r["saturated"]]
@@ -1424,6 +1820,11 @@ def q2_aggregate(rows: list[dict]) -> dict:
 # analysis driver
 # ----------------------------------------------------------------------------------------------------------------------
 def run_summary(run: Run) -> dict:
+    """@brief 把一次运行压成报告第 0 节里的一行。
+
+    @param run 已加载的运行。
+    @return 包含任务、预算、轮数、plan_mix 来源与备注的字典。
+    """
     return {
         "run": run.label, "source": run.source, "path": run.path, "task": run.task, "dtype": run.dtype, "model": run.model, "budget_usd": run.budget_usd,
         "spent_usd": run.spent_usd, "rounds": run.rounds, "finished": run.finished, "live": run.live, "stop_reason": run.stop_reason, "stop_kind": run.stop_kind,
@@ -1433,6 +1834,14 @@ def run_summary(run: Run) -> dict:
 
 
 def analyse(runs: list[Run], *, edges: tuple[float, float] = DEFAULT_SIZE_EDGES, sat: float = SAT_FRACTION, small_n: int = SMALL_N) -> dict:
+    """@brief 把一批运行算成报告所需的全部数据。
+
+    @param runs 已加载的运行列表。
+    @param edges 改动占比的小/中/大分界。
+    @param sat 视为饱和的 roofline 比例阈值。
+    @param small_n 样本量阈值。
+    @return 含 ``meta``/``runs``/``branches``/``attempts``/``q1``/``q2``/``kinds``/``nocode``/``facts`` 的字典。
+    """
     branches, attempts = [], []
     for r in runs:
         b, a = build_branches(r, edges)
@@ -1461,7 +1870,14 @@ def analyse(runs: list[Run], *, edges: tuple[float, float] = DEFAULT_SIZE_EDGES,
 
 
 def facts(data: dict, small_n: int) -> dict:
-    """The numbers the conclusion rests on (kept in data.json so that the text can be checked against them)."""
+    """@brief 抽出结论所依赖的关键数字。
+
+    The numbers the conclusion rests on (kept in data.json so that the text can be checked against them).
+
+    @param data ``analyse`` 产出的数据。
+    @param small_n 样本量阈值。
+    @return 含 FA 表现、尺寸效应、计划角色与饱和汇总的字典。
+    """
     q1, q2 = data["q1"], data["q2"]
     sat = data["meta"]["sat_fraction"]
     f: dict = {}
@@ -1512,7 +1928,13 @@ LOG_NOCODE_RE = re.compile(r"^\s*\[(?P<tag>[^\]]+)\]\s+no code block in reply")
 
 
 def read_log(path: Path) -> list[tuple[str | None, str]]:
-    """(run name, tag) of every ``[tag] no code block in reply`` line of an orchestrator log (the run name comes from the preceding ``== ... | run NAME`` header)."""
+    """@brief 从编排器日志里找出所有“回复里没有代码块”的行。
+
+    (run name, tag) of every ``[tag] no code block in reply`` line of an orchestrator log (the run name comes from the preceding ``== ... | run NAME`` header).
+
+    @param path 日志文件路径。
+    @return ``(运行名, 标签)`` 列表；文件读不到时为空列表。
+    """
     run, out = None, []
     try:
         lines = path.read_text(errors="replace").splitlines()
@@ -1530,8 +1952,15 @@ def read_log(path: Path) -> list[tuple[str | None, str]]:
 
 
 def log_check(log_paths: list[str], attempts: list[dict]) -> list[dict]:
-    """Compare the orchestrator's own 'no code block in reply' lines with the no-code attempts derived from the transcripts, per log file and run name
-    (a run name is matched to the last path component of a run label; ambiguous names are skipped)."""
+    """@brief 用编排器日志校对从 transcript 推出来的无代码尝试。
+
+    Compare the orchestrator's own 'no code block in reply' lines with the no-code attempts derived from the transcripts, per log file and run name
+    (a run name is matched to the last path component of a run label; ambiguous names are skipped).
+
+    @param log_paths 日志文件或其 glob 列表。
+    @param attempts 尝试记录。
+    @return 每个日志、每个运行一项的比对结果。
+    """
     out = []
     for lp in sorted({str(x) for pat in log_paths for x in (glob.glob(pat) or [pat])}):
         by_run: dict[str, list[str]] = defaultdict(list)
@@ -1552,6 +1981,16 @@ def log_check(log_paths: list[str], attempts: list[dict]) -> list[dict]:
 
 
 def analyse_paths(paths: list[str], *, edges=DEFAULT_SIZE_EDGES, sat=SAT_FRACTION, small_n=SMALL_N, now: float | None = None, logs: list[str] | None = None) -> dict:
+    """@brief 从命令行给的路径出发，加载运行并算出全部数据。
+
+    @param paths 运行目录或其上层目录，支持 glob。
+    @param edges 改动占比的小/中/大分界。
+    @param sat 视为饱和的 roofline 比例阈值。
+    @param small_n 样本量阈值。
+    @param now 当前时间戳；为 ``None`` 时取系统时间。
+    @param logs 要交叉核对的编排器日志。
+    @return ``analyse`` 的数据，额外附上输入路径与日志校对结果。
+    """
     runs = [load_run(p, label, source, now) for p, label, source in discover(paths)]
     data = analyse(runs, edges=edges, sat=sat, small_n=small_n)
     data["meta"]["inputs"] = paths
@@ -1563,18 +2002,39 @@ def analyse_paths(paths: list[str], *, edges=DEFAULT_SIZE_EDGES, sat=SAT_FRACTIO
 # report
 # ----------------------------------------------------------------------------------------------------------------------
 def fmt_p(p: float | None) -> str:
+    """@brief 格式化 p 值。
+
+    @param p p 值；可以为 ``None``。
+    @return ``p = 0.123``、``p < 0.001`` 或 ``n/a``。
+    """
     return "n/a" if p is None else ("p < 0.001" if p < 0.001 else f"p = {p:.3f}")
 
 
 def usd(v: float | None, d: int = 2) -> str:
+    """@brief 格式化美元金额。
+
+    @param v 金额；可以为 ``None``。
+    @param d 小数位。
+    @return 形如 ``$1.23`` 的文本；``None`` 写成 ``-``。
+    """
     return "-" if v is None else f"${v:.{d}f}"
 
 
 def share(v: float | None) -> str:
+    """@brief 把比例格式化成百分比文本。
+
+    @param v 比例；可以为 ``None``。
+    @return 形如 ``12.3%`` 的文本；``None`` 写成 ``-``。
+    """
     return "-" if v is None else f"{100 * v:.1f}%"
 
 
 def section_runs(data: dict) -> str:
+    """@brief 生成报告第 0 节：本次分析了哪些运行。
+
+    @param data ``analyse`` 产出的数据。
+    @return markdown 表格文本。
+    """
     rows = []
     for r in data["runs"]:
         pm = {True: "on", False: "off", None: "?"}[r["plan_mix"]] + (f" ({r['plan_mix_source']})" if r["plan_mix"] is not None else "")
@@ -1585,6 +2045,12 @@ def section_runs(data: dict) -> str:
 
 
 def section_q1(data: dict, small_n: int) -> str:
+    """@brief 生成报告第 3 节：改动规模与结果的关系。
+
+    @param data ``analyse`` 产出的数据。
+    @param small_n 样本量阈值。
+    @return markdown 文本。
+    """
     q1, md = data["q1"], []
     edges = q1["edges"]
     patch_b = [b for b in data["branches"] if b["kind"] == "patch" and b["first_status"] != "pending"]
@@ -1690,6 +2156,13 @@ def section_q1(data: dict, small_n: int) -> str:
 
 
 def section_q2(data: dict, sat: float, small_n: int) -> str:
+    """@brief 生成报告第 4 节：饱和算子还有多少空间。
+
+    @param data ``analyse`` 产出的数据。
+    @param sat 视为饱和的 roofline 比例阈值。
+    @param small_n 样本量阈值。
+    @return markdown 文本。
+    """
     rows_all = data["q2"]["rows"]
     fin = [r for r in rows_all if r["finished"]]
     md = []
@@ -1743,12 +2216,24 @@ OUTCOME_HDR = ["n", "ok", "abi_error", "incorrect", "no_code", "other", "ok give
 
 
 def status_cells(d: dict, small_n: int) -> list:
+    """@brief 把一组状态统计排成与 ``OUTCOME_HDR`` 对应的单元格。
+
+    @param d ``kind_block`` 的结果。
+    @param small_n 样本量阈值，低于它标 ``†``。
+    @return 单元格列表。
+    """
     n = d["n"]
     return [n, rate_cell(d["ok"], n, small_n), rate_cell(d["abi_error"], n, small_n), rate_cell(d["incorrect"], n, small_n), rate_cell(d["no_code"], n, small_n), d["other"],
             rate_cell(d["ok"], n - d["no_code"], small_n), rate_cell(d["ok_final"], n, small_n), rate_cell(d["accepted"], n, small_n)]
 
 
 def section_kinds(data: dict, small_n: int) -> str:
+    """@brief 生成报告第 1 节：计划类型与首次尝试结果。
+
+    @param data ``analyse`` 产出的数据。
+    @param small_n 样本量阈值。
+    @return markdown 文本。
+    """
     k, md = data["kinds"], []
     tasks = task_order(k["by_task_scope"])
     md.append("### 1.1 How plans were labelled, and how far the label can be trusted\n")
@@ -1808,10 +2293,21 @@ def section_kinds(data: dict, small_n: int) -> str:
 
 
 def _fmt_int(v) -> str:
+    """@brief 格式化带千位分隔的整数。
+
+    @param v 数值；可以为 ``None``。
+    @return 形如 ``48,000`` 的文本；``None`` 写成 ``-``。
+    """
     return "-" if v is None else f"{int(round(v)):,}"
 
 
 def section_nocode(data: dict, small_n: int) -> str:
+    """@brief 生成报告第 2 节：回复为何没有代码、代价多少。
+
+    @param data ``analyse`` 产出的数据。
+    @param small_n 样本量阈值。
+    @return markdown 文本。
+    """
     n, md = data["nocode"], []
     cap = n["cap_tokens"]
     md.append("### 2.1 How often, and what it costs\n")
@@ -1887,7 +2383,15 @@ def section_nocode(data: dict, small_n: int) -> str:
 
 
 def answer(data: dict, sat: float, small_n: int) -> str:
-    """The short answer to the question, assembled from the computed tables (every number is read from ``data``)."""
+    """@brief 用算好的表直接回答那个问题。
+
+    The short answer to the question, assembled from the computed tables (every number is read from ``data``).
+
+    @param data ``analyse`` 产出的数据。
+    @param sat 视为饱和的 roofline 比例阈值。
+    @param small_n 样本量阈值。
+    @return markdown 文本。
+    """
     k, n, q1, f = data["kinds"], data["nocode"], data["q1"], data["facts"]
     md = []
     md.append(
@@ -1964,6 +2468,13 @@ def answer(data: dict, sat: float, small_n: int) -> str:
 
 
 def conclusions(data: dict, sat: float, small_n: int) -> str:
+    """@brief 生成报告第 5 节：约束条件与建议的实验。
+
+    @param data ``analyse`` 产出的数据。
+    @param sat 视为饱和的 roofline 比例阈值。
+    @param small_n 样本量阈值。
+    @return markdown 文本。
+    """
     f, q1 = data["facts"], data["q1"]
     fa, md = f["fa"], []
     # ---- (a)
@@ -2103,6 +2614,11 @@ def conclusions(data: dict, sat: float, small_n: int) -> str:
 
 
 def render_report(data: dict) -> str:
+    """@brief 拼出完整的分析报告。
+
+    @param data ``analyse`` 产出的数据（可额外带 ``meta['note']``）。
+    @return markdown 报告文本。
+    """
     meta = data["meta"]
     small_n, sat = meta["small_n"], meta["sat_fraction"]
     md = [
@@ -2133,6 +2649,11 @@ def render_report(data: dict) -> str:
 
 
 def main(argv=None) -> int:
+    """@brief ``python -m experiments.plan_type_analysis`` 的入口，写 ``REPORT.md`` 与 ``data.json``。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("paths", nargs="+", help="run directories or directories containing run directories (globs are expanded)")
     ap.add_argument("--out", default="runs/plan_type_analysis", help="output directory for REPORT.md and data.json")

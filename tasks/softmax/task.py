@@ -14,16 +14,34 @@ MAGS = {"normal": 2.0}
 
 
 def _mlx(x):
+    """@brief mlx 侧的 softmax 基线，用 ``precise=True``。
+
+    @param x logits，mlx 数组。
+    @return ``mx.softmax(x, axis=-1, precise=True)``。
+    """
     import mlx.core as mx
 
     return mx.softmax(x, axis=-1, precise=True)
 
 
 def _torch(x):
+    """@brief torch 侧的 softmax 基线。
+
+    @param x logits。
+    @return ``torch.softmax(x, dim=-1)``。
+    """
     return torch.softmax(x, dim=-1)
 
 
 def build(dtype: str, size: str) -> Task:
+    """@brief 装配按行 softmax 题。
+
+    核名 ``softmax_kernel``，``grid=(M, 1, 1)``，``threads=(256, 1, 1)``，缓冲 x/y，常量 M、N。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
     check_dtype(dtype)
     M, N = SHAPES[size]
     contract = Contract(

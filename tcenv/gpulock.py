@@ -37,25 +37,42 @@ _wait_hooks: tuple[Callable[[], None], Callable[[], None]] | None = None
 
 # 等到调用方给的上限仍拿不到锁。这是锁自己的放弃时限，和评测总超时分开计。
 class GpuLockTimeout(RuntimeError):
+    """@brief 在调用方给定的等待上限内仍未拿到 GPU 锁。"""
+
     pass
 
 
 # 读 TCENV_GPU_LOCK_FILE；变量未设置时用上面的默认文件。空字符串同样回落到默认路径。
 def lock_file() -> Path:
+    """@brief 取当前生效的锁文件路径。
+
+    @return ``TCENV_GPU_LOCK_FILE`` 指定的路径；未设置或为空时用默认缓存路径。
+    """
     return Path(os.environ.get("TCENV_GPU_LOCK_FILE") or DEFAULT_LOCK_FILE)
 
 
 # 等锁开始时调用 on_wait，真的等到之后调用 on_acquired。worker 用它们写心跳 W 和 E。
 # supervise 看到 W 就把这段时间从评测总超时里扣掉；单次启动超时看的是心跳 B，等锁写的是 W。
 def set_wait_hooks(on_wait: Callable[[], None], on_acquired: Callable[[], None]) -> None:
-    """``on_wait`` runs when the lock is found busy, ``on_acquired`` once it was obtained after waiting."""
+    """@brief 安装等锁前后的回调。
+
+    ``on_wait`` runs when the lock is found busy, ``on_acquired`` once it was obtained after waiting.
+
+    @param on_wait 发现锁忙时调用的回调。
+    @param on_acquired 等待后真正拿到锁时调用的回调。
+    """
     global _wait_hooks
     _wait_hooks = (on_wait, on_acquired)
 
 
 # 读锁文件里的说明。独占持有者才写它；只有共享持有者时文件是空的，等待日志会落到 untimed GPU work 那句。
 def holder() -> str:
-    """Description written by the current exclusive holder (empty while only shared holders exist)."""
+    """@brief 读取当前独占持有者写入的说明。
+
+    Description written by the current exclusive holder (empty while only shared holders exist).
+
+    @return 持有者说明文本；读不到时为空串。
+    """
     try:
         return lock_file().read_text().strip()
     except OSError:
@@ -64,6 +81,12 @@ def holder() -> str:
 
 # 把加锁事件送到观察页。观察写失败时直接返回，加锁本身继续。
 def _gpu_note(kind: str, mode: str, what: str) -> None:
+    """@brief 把一次加锁事件送到观察页，失败不影响加锁。
+
+    @param kind 事件类型，如 wait / acquire / release / give_up。
+    @param mode 锁模式，``"ex"`` 或 ``"sh"``。
+    @param what 本次加锁用途的说明。
+    """
     try:
         from tcenv.events import note_gpu
 
@@ -74,6 +97,16 @@ def _gpu_note(kind: str, mode: str, what: str) -> None:
 
 # 非阻塞轮询，才能在等待中打日志、触发 on_wait，并执行锁自己的放弃时限。返回值是排队秒数。
 def _acquire(fd: int, flag: int, max_wait_s: float, log: Callable[[str], None] | None, what: str = "") -> float:
+    """@brief 非阻塞轮询地等待 flock，直到拿到锁或超时。
+
+    @param fd 锁文件描述符。
+    @param flag ``fcntl.LOCK_EX`` 或 ``fcntl.LOCK_SH``。
+    @param max_wait_s 本次排队的最长秒数。
+    @param log 可选的日志函数，首次发现锁忙时调用一次。
+    @param what 本次加锁用途的说明。
+    @return 排队花费的秒数。
+    @raises GpuLockTimeout 超过 ``max_wait_s`` 仍未拿到锁时抛出。
+    """
     t0 = time.monotonic()
     waiting = False
     while True:
@@ -102,10 +135,15 @@ def _acquire(fd: int, flag: int, max_wait_s: float, log: Callable[[str], None] |
 # 父进程干等子进程时调用。继续握着锁会死锁：共享挡住子进程的独占计时，独占挡住子进程的任何芯片工作。
 @contextmanager
 def released() -> Iterator[None]:
-    """Give up this process's hold (shared or exclusive) for the block and take the same kind again afterwards.
+    """@brief 在代码块期间放开本进程的锁，结束后按原模式重新取回。
+
+    Give up this process's hold (shared or exclusive) for the block and take the same kind again afterwards.
 
     A process that waits for a worker subprocess does not use the GPU; holding the lock meanwhile would deadlock with a worker
-    that needs it (a shared holder blocks the worker's exclusive benchmark, an exclusive holder blocks any worker)."""
+    that needs it (a shared holder blocks the worker's exclusive benchmark, an exclusive holder blocks any worker).
+
+    @return 上下文管理器，无产出值。
+    """
     global _fd, _mode
     mode, fd = _mode, _fd
     if mode is None or fd is None:
@@ -130,7 +168,17 @@ def released() -> Iterator[None]:
 # 产出值是这次排队的秒数。计时在拿到锁之后才开始，排队不进核的耗时。评测把它记进 benchmark 的 gpu_lock_wait_s。
 @contextmanager
 def gpu_lock(what: str, *, exclusive: bool = True, max_wait_s: float = DEFAULT_MAX_WAIT_S, log: Callable[[str], None] | None = None) -> Iterator[float]:
-    """Hold the GPU lock for the block; yields the seconds spent waiting for it."""
+    """@brief 在代码块期间持有机器级 GPU 锁。
+
+    Hold the GPU lock for the block; yields the seconds spent waiting for it.
+
+    @param what 本次加锁用途的说明，会写进锁文件与观察事件。
+    @param exclusive True 取独占锁（计时），False 取共享锁（不计时工作）。
+    @param max_wait_s 排队的最长秒数。
+    @param log 可选的日志函数。
+    @return 上下文管理器，产出本次排队秒数。
+    @raises GpuLockTimeout 超时仍未拿到锁时抛出。
+    """
     global _fd, _mode, _what, _writable
     want = "ex" if exclusive else "sh"
     outer = _mode

@@ -61,6 +61,11 @@ class KernelRef:
 
 
 def _infer_task(run_dir: Path) -> tuple[str | None, str | None]:
+    """@brief 从目录名猜出任务名与数据类型。
+
+    @param run_dir 运行目录。
+    @return ``(任务名, dtype)``；猜不出时对应项为 ``None``。
+    """
     names = [run_dir.name, run_dir.parent.name]
     for n in names:
         m = re.match(r"^(?:\d{8}-\d{6}_)?(.+?)_(fp16|bf16|fp32)(?:_.*)?$", n)
@@ -73,7 +78,13 @@ def _infer_task(run_dir: Path) -> tuple[str | None, str | None]:
 
 
 def discover_runs(roots: Iterable[Path]) -> list[Path]:
-    """Directories holding a ``candidates/`` folder (a run), skipping ``_interrupted*`` backups."""
+    """@brief 找出所有含 ``candidates/`` 的运行目录。
+
+    Directories holding a ``candidates/`` folder (a run), skipping ``_interrupted*`` backups.
+
+    @param roots 起始目录或目录列表。
+    @return 去重后的运行目录列表，目录不存在时跳过。
+    """
     found: list[Path] = []
     seen: set[Path] = set()
     for root in roots:
@@ -90,7 +101,14 @@ def discover_runs(roots: Iterable[Path]) -> list[Path]:
 
 
 def load_run(run_dir: Path, runs_root: Path) -> tuple[dict, list[KernelRef]]:
-    """(run info, kernels) of one run directory. ``partial`` is True when the run has no ``result.json`` (still running or interrupted)."""
+    """@brief 读一次运行的概况与每个候选内核的引用。
+
+    (run info, kernels) of one run directory. ``partial`` is True when the run has no ``result.json`` (still running or interrupted).
+
+    @param run_dir 运行目录。
+    @param runs_root 运行根目录，用来算相对名字。
+    @return ``(运行概况字典, KernelRef 列表)``。
+    """
     res = _read_json(run_dir / "result.json")
     state = _read_json(run_dir / "state.json")
     info = res or state or {}
@@ -137,7 +155,13 @@ def load_run(run_dir: Path, runs_root: Path) -> tuple[dict, list[KernelRef]]:
 
 
 def load_naive_measurements(runs_root: Path) -> dict[tuple[str, str], dict]:
-    """task, dtype -> the stored summary of the naive kernel (``naive_<task>_<dtype>.json``) from any suite directory."""
+    """@brief 从各套件目录收集手写朴素核的缓存测量。
+
+    task, dtype -> the stored summary of the naive kernel (``naive_<task>_<dtype>.json``) from any suite directory.
+
+    @param runs_root 运行根目录。
+    @return ``{(任务, dtype): 朴素核测量字典}``。
+    """
     out: dict[tuple[str, str], dict] = {}
     for p in sorted(runs_root.rglob("naive_*_*.json")):
         if any(part.startswith("_interrupted") for part in p.parts):
@@ -150,6 +174,16 @@ def load_naive_measurements(runs_root: Path) -> dict[tuple[str, str], dict]:
 
 
 def ceilings_for(task: str | None, dtype: str, size: str, naive: dict, calib: dict | None, runs_root: Path) -> Ceilings:
+    """@brief 算一个任务的``天花板``：峰值与朴素核达到的水平。
+
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param size 规模档位。
+    @param naive 朴素核测量表。
+    @param calib 硬件标定；为 ``None`` 时只用朴素核推。
+    @param runs_root 运行根目录。
+    @return 填好峰值与朴素核吞吐的 ``Ceilings``；任务不存在时是空的天花板。
+    """
     c = Ceilings(source="")
     if not task:
         return c
@@ -185,7 +219,13 @@ NEGATIVES = {
 
 
 def validation_sets(runs_root: Path) -> list[KernelRef]:
-    """Reference GEMMs of ``experiments.contract_sensitivity`` (sources are generated, never run) and the 16 naive kernels."""
+    """@brief 造出验证集：参考 GEMM、朴素核与负例。
+
+    Reference GEMMs of ``experiments.contract_sensitivity`` (sources are generated, never run) and the 16 naive kernels.
+
+    @param runs_root 运行根目录，用其中的契约实测结果补上计时。
+    @return 用于检验检测器本身的 ``KernelRef`` 列表。
+    """
     refs: list[KernelRef] = []
     sys.path.insert(0, str(REPO))
     try:
@@ -230,6 +270,18 @@ def validation_sets(runs_root: Path) -> list[KernelRef]:
 
 
 def analyze_refs(refs: list[KernelRef], *, naive: dict, calib: dict | None, runs_root: Path, compile_evidence: bool, cache_dir: Path | None, jobs: int = 2, progress: bool = True) -> list[tuple[KernelRef, HardwareFeatureReport]]:
+    """@brief 并行给每个内核生成硬件特征报告。
+
+    @param refs 要分析的内核引用。
+    @param naive 朴素核测量表。
+    @param calib 硬件标定；可以为 ``None``。
+    @param runs_root 运行根目录。
+    @param compile_evidence 为真时额外收编译期证据。
+    @param cache_dir 编译缓存目录；可以为 ``None``。
+    @param jobs 并行编译数。
+    @param progress 为真时每 25 个打一行进度。
+    @return ``(内核引用, 报告)`` 列表，顺序与入参一致。
+    """
     # tasks must be built in the main thread (imports); compile evidence is the slow part and runs in a small pool
     for r in refs:
         if r.task:
@@ -268,11 +320,23 @@ def analyze_refs(refs: list[KernelRef], *, naive: dict, calib: dict | None, runs
 
 
 def _med(xs: list[float]) -> float | None:
+    """@brief 取中位数。
+
+    @param xs 数值列表。
+    @return 中位数；列表为空时返回 ``None``。
+    """
     return statistics.median(xs) if xs else None
 
 
 def winrate_table(items: list[tuple[KernelRef, HardwareFeatureReport]], feature_ids: Iterable[str]) -> dict:
-    """Per feature: accepted-win rate and correctness rate of candidates with vs without the feature (pooled over runs that have a trace)."""
+    """@brief 按特征统计``带它``与``不带它``的胜率与正确率。
+
+    Per feature: accepted-win rate and correctness rate of candidates with vs without the feature (pooled over runs that have a trace).
+
+    @param items ``analyze_refs`` 返回的条目。
+    @param feature_ids 要统计的特征 id。
+    @return ``{特征: {"with": ..., "without": ...}}``。
+    """
     cands = [(r, h) for r, h in items if r.kind in ("candidate", "best") and r.trace and r.run != "negative" and not (r.task or "").startswith("sem_")]
     tab = {}
     for fid in feature_ids:
@@ -288,6 +352,12 @@ def winrate_table(items: list[tuple[KernelRef, HardwareFeatureReport]], feature_
 
 
 def best_kernel_rows(items: list[tuple[KernelRef, HardwareFeatureReport]], runs: dict[str, dict]) -> list[dict]:
+    """@brief 把每次运行的最优内核整理成报告行。
+
+    @param items ``analyze_refs`` 返回的条目。
+    @param runs 运行概况表。
+    @return 每个最优内核一行：摘要、缺失特征、实测值与特征判定。
+    """
     rows = []
     for r, h in items:
         if r.kind != "best":
@@ -300,7 +370,16 @@ def best_kernel_rows(items: list[tuple[KernelRef, HardwareFeatureReport]], runs:
 
 
 def discovery_table(items: list[tuple[KernelRef, HardwareFeatureReport]], runs: dict[str, dict], feature_ids: Iterable[str], tasks: set[str]) -> dict:
-    """Per feature over runs of ``tasks``: how many runs had it in their first correct candidate, in their best, and gained / lost it during the search."""
+    """@brief 统计特征在``首个正确候选``与``最优候选``里出现的次数。
+
+    Per feature over runs of ``tasks``: how many runs had it in their first correct candidate, in their best, and gained / lost it during the search.
+
+    @param items ``analyze_refs`` 返回的条目。
+    @param runs 运行概况表。
+    @param feature_ids 要统计的特征 id。
+    @param tasks 限定在哪些任务上统计。
+    @return ``{特征: {runs, first, best, gained, lost}}``。
+    """
     by_run: dict[str, list[tuple[KernelRef, HardwareFeatureReport]]] = {}
     for r, h in items:
         if r.kind in ("candidate", "best") and base_task(r.task) in tasks and r.idx is not None:
@@ -325,14 +404,30 @@ def discovery_table(items: list[tuple[KernelRef, HardwareFeatureReport]], runs: 
 
 
 def width_txt(n: int | None) -> str:
+    """@brief 把字节宽度写成表格里的文字。
+
+    @param n 宽度字节数。
+    @return 形如 ``16 B`` 的文本；不足 4 字节或为空时写 ``scalar``。
+    """
     return f"{n} B" if n and n >= 4 else "scalar"
 
 
 def cell(x: Any) -> str:
+    """@brief 把值转成不会撑破 markdown 表格的单元文本。
+
+    @param x 任意值。
+    @return 转义过竖线、去掉换行的文本。
+    """
     return str(x).replace("|", "\\|").replace("\n", " ")
 
 
 def fmt(x: Any, nd: int = 2) -> str:
+    """@brief 按固定小数位格式化数值。
+
+    @param x 任意值。
+    @param nd 浮点数保留的小数位。
+    @return 格式化后的文本；``None`` 写成 ``-``。
+    """
     if x is None:
         return "-"
     if isinstance(x, float):
@@ -341,7 +436,13 @@ def fmt(x: Any, nd: int = 2) -> str:
 
 
 def agreement_table(items: list[tuple[KernelRef, HardwareFeatureReport]]) -> list[dict]:
-    """Source evidence vs compiled (AIR) evidence over every kernel that compiled: the detector's own consistency check."""
+    """@brief 比较源码证据与编译期（AIR）证据，自检检测器是否一致。
+
+    Source evidence vs compiled (AIR) evidence over every kernel that compiled: the detector's own consistency check.
+
+    @param items ``analyze_refs`` 返回的条目。
+    @return 每一项检查一行：参与数、一致数与前几条不一致明细。
+    """
     checks: dict[str, dict] = {k: {"n": 0, "agree": 0, "disagree": []} for k in ("matrix unit present", "float accumulators", "device load width (max bytes)", "device store width (max bytes)",
                                                                                    "SIMD reductions present", "SIMD shuffles present", "threadgroup bytes (declared == AIR globals)", "accumulator fragment count (informational)")}
 
@@ -373,6 +474,15 @@ def agreement_table(items: list[tuple[KernelRef, HardwareFeatureReport]]) -> lis
 
 
 def render_report(items: list[tuple[KernelRef, HardwareFeatureReport]], runs: dict[str, dict], out: Path, *, compiled: bool, generated: str) -> str:
+    """@brief 拼出完整的 markdown 报告。
+
+    @param items ``analyze_refs`` 返回的条目。
+    @param runs 运行概况表。
+    @param out 输出目录。
+    @param compiled 为真时报告里标明含编译期证据。
+    @param generated 生成时间戳文本。
+    @return 报告文本。
+    """
     L: list[str] = []
     best = best_kernel_rows(items, runs)
     by_kind = lambda k: [(r, h) for r, h in items if r.kind == k]  # noqa: E731
@@ -524,6 +634,13 @@ def render_report(items: list[tuple[KernelRef, HardwareFeatureReport]], runs: di
 
 
 def _headline(best: list[dict], hmap: dict, items) -> list[str]:
+    """@brief 按任务族生成报告里的主要发现一段。
+
+    @param best ``best_kernel_rows`` 返回的行。
+    @param hmap ``{kid: 报告}`` 的索引。
+    @param items ``analyze_refs`` 返回的条目。
+    @return markdown 行列表。
+    """
     L = []
 
     def rows(prefixes: tuple[str, ...]):
@@ -562,6 +679,11 @@ def _headline(best: list[dict], hmap: dict, items) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """@brief ``python -m experiments.hw_features`` 的入口，写 ``REPORT.md``、``data.json`` 与 ``kernels.jsonl``。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("paths", nargs="*", help="run directories or roots that contain runs (e.g. runs/apple-m4-max/p1 runs/apple-m4-max/suite_full)")
     ap.add_argument("--out", default="runs/hw_features", help="output directory (REPORT.md, data.json, kernels.jsonl, compile cache)")

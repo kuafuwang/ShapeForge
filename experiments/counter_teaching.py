@@ -51,7 +51,13 @@ MARKERS = {
 # 返回的是（系统提示是否带 Skill 2b，贴在反馈后的证据）。none 两样都空。
 # trace_only 去掉计数器；untaught 保留读数但用旧导语；taught 才换上点名 limiter / occupancy 的导语，并打开技能。
 def conditions(summ: xctrace.TraceSummary) -> dict[str, tuple[bool, str]]:
-    """name -> (system prompt carries Skill 2b, evidence text appended to the feedback)"""
+    """@brief 把同一份轨迹拆成四种提示条件：是否带计数器、是否带技能。
+
+    name -> (system prompt carries Skill 2b, evidence text appended to the feedback)
+
+    @param summ 一份已分好的 Instruments 轨迹总结。
+    @return ``{条件名: (系统提示是否带 Skill 2b, 贴在反馈后的证据正文)}``。
+    """
     # 拷一份再把计数器清空，这样格式化出来的正文里没有那些读数。
     no_counters = xctrace.TraceSummary(**{**summ.__dict__, "counters": {}})
     return {
@@ -65,6 +71,17 @@ def conditions(summ: xctrace.TraceSummary) -> dict[str, tuple[bool, str]]:
 
 # 只发规划那一次请求。标记是对回复文本的正则，用来统计它说出了哪些词，内核不会被编译或再测。
 async def ask(llm: LLM, system: str, task, source: str, feedback: str, k: int, label: str) -> dict:
+    """@brief 发一次规划请求，并数回复里出现了哪些关键词。
+
+    @param llm 已建好的 LLM 客户端。
+    @param system 系统提示。
+    @param task 任务定义。
+    @param source 内核源码（MSL）。
+    @param feedback 附在回复后的评测反馈与证据。
+    @param k 要求规划器给出几个计划。
+    @param label 本次请求在 transcript 里的标签。
+    @return 含 ``analysis``/``plans``/``markers``/``raw`` 的结果字典。
+    """
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": prompts.plan_user(task, source, feedback, [], k, source_fence="metal")}]
     reply = await llm.chat(msgs, label=label)
     analysis, plans = parse_plans(reply.text(), k)
@@ -74,6 +91,10 @@ async def ask(llm: LLM, system: str, task, source: str, feedback: str, k: int, l
 
 # 四种条件各采样多次，看的是出现频率。内核源码每次相同，变的只有证据正文和要不要把读计数器的技能放进系统提示。
 async def main_async(a) -> None:
+    """@brief 四种条件各采样若干次，写出 results.json 与 REPORT.md。
+
+    @param a 已解析的命令行参数。
+    """
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "export").mkdir(exist_ok=True)
@@ -113,6 +134,10 @@ async def main_async(a) -> None:
 
 # 必须给一条用计数器模板录的 .trace。默认 $1 只够这些规划请求，不会按论文的 $15 去搜内核。
 def main() -> None:
+    """@brief ``python -m experiments.counter_teaching`` 的入口，解析参数并跑异步流程。
+
+    必须给一条用计数器模板录的 ``.trace``；只发规划请求，不编译也不重测内核。
+    """
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--trace", required=True, help="a .trace bundle recorded with a counter template")
     ap.add_argument("--task", default="gemm")

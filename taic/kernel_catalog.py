@@ -10,7 +10,12 @@ from tcenv.target import REPO
 
 
 def catalog_root() -> Path:
-    """Confirmed kernels. ``TAIC_CATALOG_ROOT`` redirects a test or a golden recording away from the repository."""
+    """@brief 已确认内核的根目录。
+
+    ``TAIC_CATALOG_ROOT`` 可以把测试或金样录制重定向到仓库之外。
+
+    @return 存放已确认内核的根目录。
+    """
     import os
 
     override = os.environ.get("TAIC_CATALOG_ROOT")
@@ -18,6 +23,14 @@ def catalog_root() -> Path:
 
 
 def catalog_dir(target_id: str, task: str, dtype: str, size: str) -> Path:
+    """@brief 已确认内核的存放目录：目标/任务/数据类型/尺寸。
+
+    @param target_id 目标标识。
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param size 尺寸标签。
+    @return 该组合对应的目录路径（不保证存在）。
+    """
     return catalog_root() / target_id / task / dtype / size
 
 
@@ -39,7 +52,27 @@ def archive_confirmed(
     candidate_us: float | None = None,
     baseline_us: dict | None = None,
 ) -> Path:
-    """Write the confirmed kernel. A higher speedup replaces ``best``. Every confirmation is appended to history."""
+    """@brief 写入已确认的内核。
+
+    加速比更高时会替掉 ``best``；每一条确认都会追加到 ``history.jsonl``。
+
+    @param target_id 目标标识。
+    @param backend 后端标识，如 ``metal``。
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param size 尺寸标签。
+    @param source 确认过的内核源码。
+    @param speedup 确认后的加速比。
+    @param run_id 来源运行标识。
+    @param label 胜出候选的标签。
+    @param device_name 设备名。
+    @param gpu_family GPU 家族。
+    @param file_ext 内核文件扩展名。
+    @param confirmed_values 本次确认得到的测量值列表。
+    @param candidate_us 候选内核的耗时（微秒）。
+    @param baseline_us 各基线耗时（微秒）。
+    @return ``best`` 内核文件的路径。
+    """
     import hashlib
 
     from tcenv.target import calibration_file, sha256_file
@@ -90,6 +123,11 @@ def archive_confirmed(
 
 
 def list_kernels(target_id: str | None = None) -> list[dict]:
+    """@brief 列出已确认内核的 ``meta.json`` 内容，并补上内核文件路径。
+
+    @param target_id 只看这个目标；``None`` 时扫描所有目标。
+    @return 元数据字典列表；每个多一个 ``path`` 键指向 ``best.*``。
+    """
     root = catalog_root()
     rows = []
     if not root.is_dir():

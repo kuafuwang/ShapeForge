@@ -18,16 +18,37 @@ MAGS = {"normal": 1.0, "wide_range": 0.1}
 
 
 def _mlx(x, w):
+    """@brief mlx 侧的卷积基线。
+
+    @param x NHWC 激活，mlx 数组。
+    @param w ``[OC, KH, KW, C]`` 权重，mlx 数组。
+    @return ``mx.conv2d(x, w)``。
+    """
     import mlx.core as mx
 
     return mx.conv2d(x, w)
 
 
 def _torch(x, w):
+    """@brief torch 侧的卷积基线，两边各自换一次布局再换回来。
+
+    @param x NHWC 激活。
+    @param w ``[OC, KH, KW, C]`` 权重。
+    @return NHWC 结果。
+    """
     return F.conv2d(x.permute(0, 3, 1, 2), w.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
 
 
 def build(dtype: str, size: str) -> Task:
+    """@brief 装配 3x3 卷积题。
+
+    核名 ``conv2d_kernel``，``grid=(OC/BLOCK_N, M_TOTAL/BLOCK_M, 1)``，``threads=(128, 1, 1)``，
+    缓冲 x/w/y，常量 N/H/W/C/OC/KH/KW/OH/OW/M_TOTAL/K_TOTAL/BLOCK_*。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
     check_dtype(dtype)
     N, H, W, C, OC = SHAPES[size]
     OH, OW = H - KH + 1, W - KW + 1

@@ -16,16 +16,36 @@ MAGS = {"normal": 1.0, "wide_range": 1.0, "outlier": 1.0}
 
 
 def _mlx(x, w):
+    """@brief mlx 侧的 RMSNorm 基线，走厂商融合实现。
+
+    @param x 激活，mlx 数组。
+    @param w 每通道权重，mlx 数组。
+    @return ``mx.fast.rms_norm(x, w, EPS)``。
+    """
     import mlx.core as mx
 
     return mx.fast.rms_norm(x, w, EPS)
 
 
 def _torch(x, w):
+    """@brief torch 侧的 RMSNorm 基线。
+
+    @param x 激活。
+    @param w 每通道权重。
+    @return ``F.rms_norm(x, (H,), w, EPS)``。
+    """
     return F.rms_norm(x, (x.shape[-1],), w, EPS)
 
 
 def build(dtype: str, size: str) -> Task:
+    """@brief 装配按行 RMSNorm 题。
+
+    核名 ``rmsnorm_kernel``，``grid=(M, 1, 1)``，``threads=(256, 1, 1)``，缓冲 x/w/y，常量 M、H、EPS。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
     check_dtype(dtype)
     M, H = SHAPES[size]
     contract = Contract(

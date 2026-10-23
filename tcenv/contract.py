@@ -30,7 +30,10 @@ HEADER_END = "// ---- END contract header ----"
 
 @dataclass(frozen=True)
 class AbiArg:
-    """One kernel argument bound to a Metal buffer slot."""
+    """@brief 一个绑定到 Metal buffer 槽位的内核参数。
+
+    One kernel argument bound to a Metal buffer slot.
+    """
 
     name: str
     index: int
@@ -41,6 +44,10 @@ class AbiArg:
     doc: str = ""
 
     def __post_init__(self) -> None:
+        """@brief 校验角色、标量值与类型名。
+
+        @raises ValueError 角色非法、标量缺少值或 dtype 未知时抛出。
+        """
         if self.role not in ("input", "output", "scalar"):
             raise ValueError(f"bad role {self.role!r}")
         if self.role == "scalar" and self.value is None:
@@ -49,6 +56,10 @@ class AbiArg:
 
     @property
     def numel(self) -> int:
+        """@brief 参数的元素个数。
+
+        @return 形状各维乘积；标量按形状为空计算为 1。
+        """
         n = 1
         for s in self.shape:
             n *= int(s)
@@ -56,12 +67,20 @@ class AbiArg:
 
     @property
     def nbytes(self) -> int:
+        """@brief 参数占用的字节数。
+
+        @return 标量为单个元素的字节数，其余为元素个数乘单元素字节数。
+        """
         d = get_dtype(self.dtype)
         return d.nbytes if self.role == "scalar" else self.numel * d.nbytes
 
     # 模型必须照这个签名写参数：输入只读、输出可写、标量是 constant。abi 关对的就是槽位、名字和这三种读写。
     @property
     def msl_declaration(self) -> str:
+        """@brief 该参数在 MSL 内核签名中的声明文本。
+
+        @return 带 ``[[buffer(index)]]`` 属性的参数声明。
+        """
         msl = get_dtype(self.dtype).msl
         if self.role == "input":
             return f"device const {msl}* {self.name} [[buffer({self.index})]]"
@@ -72,6 +91,11 @@ class AbiArg:
 
 @dataclass(frozen=True)
 class Contract:
+    """@brief 编译契约：内核名、并发度、buffer/标量参数与编译期常量。
+
+    模型不能修改这份对象；提示词里展示 ``describe()`` 与 ``abi_stub()``，编译器看到的头来自 ``render_header()``。
+    """
+
     kernel_name: str
     grid: tuple[int, int, int]  # threadgroups per grid
     threads: tuple[int, int, int]  # threads per threadgroup
@@ -84,33 +108,67 @@ class Contract:
     # 并发度由框架指定：grid 是线程组个数，threads 是每组线程数。模型不能在源码里另选一套启动配置。
     @property
     def threads_per_tg(self) -> int:
+        """@brief 每个线程组的总线程数。
+
+        @return ``threads`` 三维乘积。
+        """
         return self.threads[0] * self.threads[1] * self.threads[2]
 
     @property
     def num_warps(self) -> int:
+        """@brief 以 32 宽 SIMD 组计的线程组数。
+
+        @return 每线程组线程数除以 ``SIMD_WIDTH``。
+        """
         return self.threads_per_tg // SIMD_WIDTH
 
     @property
     def num_threadgroups(self) -> int:
+        """@brief grid 上的线程组总数。
+
+        @return ``grid`` 三维乘积。
+        """
         return self.grid[0] * self.grid[1] * self.grid[2]
 
     @property
     def buffers(self) -> tuple[AbiArg, ...]:
+        """@brief 所有 buffer 参数。
+
+        @return 非标量参数组成的元组。
+        """
         return tuple(a for a in self.args if a.role != "scalar")
 
     @property
     def inputs(self) -> tuple[AbiArg, ...]:
+        """@brief 所有只读输入参数。
+
+        @return 角色为 input 的参数元组。
+        """
         return tuple(a for a in self.args if a.role == "input")
 
     @property
     def outputs(self) -> tuple[AbiArg, ...]:
+        """@brief 所有可写输出参数。
+
+        @return 角色为 output 的参数元组。
+        """
         return tuple(a for a in self.args if a.role == "output")
 
     @property
     def scalars(self) -> tuple[AbiArg, ...]:
+        """@brief 所有标量参数。
+
+        @return 角色为 scalar 的参数元组。
+        """
         return tuple(a for a in self.args if a.role == "scalar")
 
     def arg(self, name: str) -> AbiArg:
+        """@brief 按名字查找一个参数。
+
+        @param name 参数名。
+        @return 对应的 ``AbiArg``。
+        @raises KeyError 没有该名字的参数时抛出。
+        """
         for a in self.args:
             if a.name == name:
                 return a
@@ -120,6 +178,12 @@ class Contract:
     # 头里的 constexpr 要写成 Metal 字面量：float 加 f，half / bfloat 不加；uint 加 u，ulong 加 ul。describe() 给模型看的是原来的值。
     @staticmethod
     def _fmt_const(msl_type: str, value: Any) -> str:
+        """@brief 把编译期常量格式化成 MSL 字面量。
+
+        @param msl_type Metal 类型名，如 ``"float"``、``"uint"``。
+        @param value 常量值。
+        @return 带正确后缀的字面量文本。
+        """
         if msl_type in ("float", "half", "bfloat"):
             return repr(float(value)) + ("f" if msl_type == "float" else "")
         if msl_type in ("uint", "ulong"):
@@ -128,6 +192,10 @@ class Contract:
 
     # 编译单元最前面的文件头：Metal 标准头、using，以及契约里每一条 constant constexpr。这一段不是模型写的。
     def render_header(self) -> str:
+        """@brief 渲染编译器看到的契约文件头。
+
+        @return Metal 标准头、``using`` 与全部 ``constant constexpr`` 声明。
+        """
         lines = [HEADER_BEGIN, "#include <metal_stdlib>", "#include <metal_simdgroup>", "#include <metal_simdgroup_matrix>", "using namespace metal;"]
         for name, msl_type, value in self.constants:
             lines.append(f"constant constexpr {msl_type} {name} = {self._fmt_const(msl_type, value)};")
@@ -136,14 +204,25 @@ class Contract:
 
     # 把头和候选正文接成编译器真正看到的那一份，并返回头占了多少行，供诊断行号映回模型自己的源码。
     def assemble(self, kernel_code: str) -> tuple[str, int]:
-        """Return (full MSL source, number of header lines preceding the candidate's code)."""
+        """@brief 把契约头和候选正文拼成编译单元。
+
+        Return (full MSL source, number of header lines preceding the candidate's code).
+
+        @param kernel_code 候选内核正文。
+        @return ``(完整 MSL 源码, 头占用的行数)``。
+        """
         header = self.render_header()
         offset = header.count("\n")
         return header + kernel_code, offset
 
     # 给模型看的签名骨架。送去编译的是 assemble 接出来的全文。
     def abi_stub(self) -> str:
-        """Kernel signature skeleton shown to the model."""
+        """@brief 渲染给模型看的单内核签名骨架。
+
+        Kernel signature skeleton shown to the model.
+
+        @return 带各参数 ``[[buffer(i)]]`` 声明的内核签名。
+        """
         decls = ",\n    ".join(a.msl_declaration for a in self.args)
         return (
             f"kernel void {self.kernel_name}(\n    {decls},\n"
@@ -153,7 +232,12 @@ class Contract:
 
     # 写进提示词的契约正文。判卷用的仍是 tasks 里这份对象：函数名、并发度、编译期常量、每个 buffer 的槽位和读写。
     def describe(self) -> str:
-        """Human/LLM readable summary of the whole contract."""
+        """@brief 渲染人或模型可读的整份契约摘要。
+
+        Human/LLM readable summary of the whole contract.
+
+        @return 多行文本，含目标 GPU、内核名、并发度、常量与参数表。
+        """
         out = [f"target gpu       : {self.gpu}", f"kernel name      : {self.kernel_name}"]
         out.append(f"threadgroups     : grid = {self.grid}  ({self.num_threadgroups} threadgroups; used when the source has no taic-launch block)")
         out.append(f"threads / group  : {self.threads}  ({self.threads_per_tg} threads = {self.num_warps} SIMD groups of {SIMD_WIDTH}; used when the source has no taic-launch block)")
@@ -169,7 +253,14 @@ class Contract:
 
     # 编译器的行号属于「头 + 正文」这一份。减掉头的行数，反馈才能指向模型写的 kernel.metal。
     def rewrite_compiler_lines(self, message: str, header_lines: int) -> str:
-        """Map ``program_source:L:C`` locations back to the candidate's own line numbers."""
+        """@brief 把编译器行号映回候选自己的源码行号。
+
+        Map ``program_source:L:C`` locations back to the candidate's own line numbers.
+
+        @param message 编译器原始诊断文本。
+        @param header_lines ``assemble`` 返回的文件头行数。
+        @return 行号已重写的诊断文本；落在头里的标为 ``<contract header>``。
+        """
 
         def sub(m: re.Match) -> str:
             line = int(m.group(1)) - header_lines
@@ -181,7 +272,10 @@ class Contract:
 
 @dataclass
 class TaskMeta:
-    """Light-weight, serialisable task identity (what workers need to reconstruct a task)."""
+    """@brief 轻量可序列化的任务身份，供 worker 重建任务。
+
+    Light-weight, serialisable task identity (what workers need to reconstruct a task).
+    """
 
     name: str
     dtype: str

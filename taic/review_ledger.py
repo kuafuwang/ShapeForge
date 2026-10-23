@@ -22,6 +22,13 @@ _VERSION = 1
 
 
 def ledger_path(path: Path | str | None = None) -> Path:
+    """@brief 定位复核事件账本文件。
+
+    优先用调用方给的路由，其次 ``TAIC_REVIEW_EVENTS`` 环境变量，最后是仓库内的 ``data/review_events.jsonl``。
+
+    @param path 显式指定的账本路径；``None`` 时按环境变量与默认值解析。
+    @return 账本文件路径。
+    """
     if path is not None:
         return Path(path)
     override = os.environ.get("TAIC_REVIEW_EVENTS")
@@ -29,14 +36,36 @@ def ledger_path(path: Path | str | None = None) -> Path:
 
 
 def _digest(text: object) -> str:
+    """@brief 算出文本的 sha256，用于代替存原句。
+
+    @param text 任意对象，先转成字符串。
+    @return 十六进制摘要。
+    """
     return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
 
 
 def _canonical(payload: dict) -> str:
+    """@brief 把字典序列化成稳定的 JSON，作为哈希与写盘的形式。
+
+    键名排序、分隔符固定，所以同一内容总得到同样的字节串。
+
+    @param payload 要序列化的字典。
+    @return 紧凑、排序后的 JSON 文本。
+    """
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def _project(event: dict, *, run_id: str, seq: int, digest: str) -> dict:
+    """@brief 把一次复核事件投影成账本行。
+
+    自由文本只存哈希；子断言丢下状态、核验方式、正文哈希与改动引用。
+
+    @param event 待投影的复核事件。
+    @param run_id 所属运行标识。
+    @param seq 该建议在该运行里的会话序号。
+    @param digest 建议正文摘要。
+    @return 去掉 ``event_hash``/``prev_hash`` 的账本行字段字典。
+    """
     subclaims = event.get("subclaims") if isinstance(event.get("subclaims"), list) else []
     return {
         "version": _VERSION,
@@ -73,7 +102,16 @@ def _project(event: dict, *, run_id: str, seq: int, digest: str) -> dict:
 
 
 def append_events(events: list[dict], *, run_id: str, path: Path | str | None = None) -> list[str]:
-    """Append one hash-chained row per event. Returns the new event hashes."""
+    """@brief 为每个事件追加一行哈希链记录。
+
+    链头取文件中最后一行的 ``event_hash``，所以中途被删或被改都会在 ``verify`` 里暴露。新行在独占 flock 下写入。
+
+    @param events 待追加的事件列表，每项需带 ``seq`` 与 ``digest``。
+    @param run_id 这些事件所属的运行标识。
+    @param path 账本路径；``None`` 时用 ``ledger_path`` 的默认值。
+    @return 新写入的各行 ``event_hash``，顺序与事件一致；``events`` 为空时为空列表。
+    @raises ValueError 账本里已有损坏的行，无法接续哈希链时。
+    """
     if not events:
         return []
     target = ledger_path(path)
@@ -112,7 +150,11 @@ def append_events(events: list[dict], *, run_id: str, path: Path | str | None = 
 
 
 def verify(path: Path | str | None = None) -> dict:
-    """Check the chain and return counts plus the first broken row, if any."""
+    """@brief 校验哈希链，返回计数与第一条断链的位置。
+
+    @param path 账本路径；``None`` 时用 ``ledger_path`` 的默认值。
+    @return 含 ``ok``/``events``/``broken_at``/``last_hash`` 的字典；账本不存在时视为空链且通过。
+    """
     target = ledger_path(path)
     if not target.is_file():
         return {"ok": True, "events": 0, "broken_at": None, "last_hash": ""}

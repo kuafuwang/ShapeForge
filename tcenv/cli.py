@@ -15,12 +15,20 @@ from pathlib import Path
 
 # eval、naive、baseline、profile、show 共用 dtype 和 size，比的是同一道题、同一种宽度。
 def _common(p: argparse.ArgumentParser) -> None:
+    """@brief 为子命令加上共用的 dtype 与 size 选项。
+
+    @param p 目标参数解析器。
+    """
     p.add_argument("--dtype", default="fp16", choices=["fp16", "bf16"])
     p.add_argument("--size", default="paper", choices=["paper", "small", "plan"])
 
 
 # 进行中的阶段写到按 pid 区分的观察文件，长评测在命令行外面也能看到走到哪一步。
 def _live_progress():
+    """@brief 返回当前进程的实时进度文件路径。
+
+    @return ``tcenv.events.tcenv_live_path`` 给出的路径。
+    """
     from tcenv.events import tcenv_live_path
 
     return tcenv_live_path()
@@ -28,6 +36,14 @@ def _live_progress():
 
 # 外部 kernel 文件这条路。quick 停在编译、ABI、安全和正确性；默认 full 会再跑着色器校验子进程和计时。
 def cmd_eval(a: argparse.Namespace) -> int:
+    """@brief 评测一个外部 kernel 文件并打印反馈或 JSON 报告。
+
+    quick 停在编译、ABI、安全与正确性；默认 full 还包含着色器校验子进程与计时；
+    timed 只做计时。带 ``--seed-report`` 时额外给出一行换种子判断。
+
+    @param a 已解析的命令行参数。
+    @return 成功为 0；参数冲突或种子报告读取失败为 1/2；报告 status 非 ok 为 1。
+    """
     from .evaluate import evaluate
     from .report import format_feedback
 
@@ -70,6 +86,13 @@ def cmd_eval(a: argparse.Namespace) -> int:
 # 自检评测架。源码是任务里写好的 naive_msl，本函数只调用 evaluate()，和 eval 同一条编译、检查、计时路径。
 # 调用链上没有模型请求，接口费用为零。
 def cmd_naive(a: argparse.Namespace) -> int:
+    """@brief 用任务自带的 naive 参考内核自检评测架。
+
+    调用链上没有模型请求，接口费用为零，与 ``eval`` 共用同一条编译、检查、计时路径。
+
+    @param a 已解析的命令行参数。
+    @return 成功为 0；缺少后端参考源码为 5；报告 status 非 ok 为 1。
+    """
     from tasks import get_task
 
     from .evaluate import evaluate
@@ -90,6 +113,11 @@ def cmd_naive(a: argparse.Namespace) -> int:
 
 # 只测 MLX / PyTorch 基线。计时段独占 GPU 锁，测完用同一批中位数算 roofline，看基线离带宽和算力下界有多远。
 def cmd_baseline(a: argparse.Namespace) -> int:
+    """@brief 只测 MLX / PyTorch 基线并打印每个基线的 roofline 位置。
+
+    @param a 已解析的命令行参数。
+    @return 恒为 0。
+    """
     from tasks import get_task
 
     from .backends.metal.baselines import build_runners
@@ -112,7 +140,13 @@ def cmd_baseline(a: argparse.Namespace) -> int:
 
 # 跟踪建立在 quick 已经通过的前提下，录制本身在 xctrace 里独占 GPU 锁。
 def cmd_profile(a: argparse.Namespace) -> int:
-    """Instruments trace of an *already validated* kernel (the full evaluation must pass first)."""
+    """@brief 对已通过 quick 评测的内核做 Instruments 跟踪。
+
+    Instruments trace of an *already validated* kernel (the full evaluation must pass first).
+
+    @param a 已解析的命令行参数。
+    @return 成功为 0；内核未通过 quick 评测为 1。
+    """
     from .backends.metal import xctrace
     from .evaluate import evaluate
 
@@ -131,6 +165,11 @@ def cmd_profile(a: argparse.Namespace) -> int:
 
 # 另一条基线：在隔离虚拟环境里用 triton-msl 把任务的 Triton 规格编成 Metal 再计时。缺环境就停。
 def cmd_triton_baseline(a: argparse.Namespace) -> int:
+    """@brief 在隔离环境里用 triton-msl 编译并计时任务的 Triton 规格。
+
+    @param a 已解析的命令行参数。
+    @return 环境缺失或全部任务失败时为 1，否则为 0。
+    """
     from tasks import list_tasks
 
     from .backends.metal import triton_baseline as tb
@@ -152,6 +191,11 @@ def cmd_triton_baseline(a: argparse.Namespace) -> int:
 
 # 测这台机器的峰值带宽和算力，给 roofline 当天花板。
 def cmd_calibrate(a: argparse.Namespace) -> int:
+    """@brief 测量本机峰值带宽与算力，供 roofline 使用。
+
+    @param a 已解析的命令行参数。
+    @return 成功为 0；目标不可用时为 5。
+    """
     from .backends.metal.runtime import get_context
     from .backends.metal.profile import get_calibration
     from .target import TargetError, require_active
@@ -168,6 +212,11 @@ def cmd_calibrate(a: argparse.Namespace) -> int:
 
 # 进验证前先看任务表。dtype 固定 fp16，只为把契约（网格、线程、参数名、最小字节、FLOP）打印出来。
 def cmd_tasks(a: argparse.Namespace) -> int:
+    """@brief 列出任务表及其契约摘要。
+
+    @param a 已解析的命令行参数。
+    @return 恒为 0。
+    """
     from tasks import get_task, list_tasks
 
     for n in list_tasks(include_phase2=True):
@@ -179,6 +228,11 @@ def cmd_tasks(a: argparse.Namespace) -> int:
 
 # 打印单个任务的说明、契约、ABI 桩和 Triton 源码，供人对照着写核。
 def cmd_show(a: argparse.Namespace) -> int:
+    """@brief 打印单个任务的说明、契约、ABI 骨架与 Triton 源码。
+
+    @param a 已解析的命令行参数。
+    @return 成功为 0；目标不可用时为 5。
+    """
     from dataclasses import replace
 
     from tasks import get_task
@@ -201,6 +255,11 @@ def cmd_show(a: argparse.Namespace) -> int:
 
 # 子命令分发。eval 走外部核，naive 走任务自带参考核，profile 先 quick 再跟踪，tasks 只列契约。
 def main(argv: list[str] | None = None) -> int:
+    """@brief ``tcenv`` 命令行入口：解析子命令并分发到对应处理函数。
+
+    @param argv 参数列表；为 None 时使用 ``sys.argv``。
+    @return 子命令处理函数的返回码。
+    """
     from tcenv.children import install_termination_handlers
     from taic.llm import SearchConfig
 

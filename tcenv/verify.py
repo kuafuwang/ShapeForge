@@ -25,6 +25,8 @@ STATUSES = (UNSUPPORTED, VERIFIED, REFUTED, UNKNOWN)
 
 @dataclass(frozen=True)
 class VerifyResult:
+    """@brief 形式等价检查的结果：状态、说明与可选反例。"""
+
     status: str
     message: str
     counterexample: dict | None = None
@@ -32,19 +34,34 @@ class VerifyResult:
     # 只有 verified 才算证明了和规格等价。unsupported 和 unknown 都不算。
     @property
     def proven(self) -> bool:
+        """@brief 是否已被证明与规格等价。
+
+        @return 仅当状态为 verified 时为 True；unsupported 与 unknown 都不算。
+        """
         return self.status == VERIFIED
 
     def to_json(self) -> dict:
+        """@brief 把结果转换成可写入报告的字典。
+
+        @return 各字段的字典表示。
+        """
         return asdict(self)
 
 
 # 签名留给将来的证明器。现在固定答 unsupported：没有面向 Metal / AIR 的形式工具时，不能把「没证明」写成 refuted。
 # 和标准答案比数值、用来抓住算错实现的，是 correct 关的随机差分测试，不在本函数里。
 def verify(task, kernel_source: str, *, timeout_s: float = 60.0) -> VerifyResult:
-    """Check that ``kernel_source`` computes the same function as the task's specification for all inputs.
+    """@brief 检查候选内核是否在所有输入上都与任务规格等价。
+
+    Check that ``kernel_source`` computes the same function as the task's specification for all inputs.
 
     ``task`` is a ``tcenv.task.Task``; ``kernel_source`` the candidate's MSL. Returns a ``VerifyResult``; this version never proves
     or refutes anything.
+
+    @param task 目标任务的 ``tcenv.task.Task`` 对象。
+    @param kernel_source 候选的 Metal 源码。
+    @param timeout_s 证明器可用的超时秒数，当前实现不使用。
+    @return 恒为 unsupported 的检查结果。
     """
     return VerifyResult(
         UNSUPPORTED,

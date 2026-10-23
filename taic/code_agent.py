@@ -32,10 +32,17 @@ CACHE_WRITE_ALLOWANCE = 20_000
 
 
 class CodeAgentError(LLMError):
-    """The code agent or worktree could not produce a usable patch."""
+    """@brief 代码 agent 或工作树没能交出一个可用的补丁。"""
 
 
 def _normalize_patch_path(value: str) -> str:
+    """@brief 把补丁里的路径归一成仓库相对形式。
+
+    反斜杠当正斜杠，去掉开头的 ``./`` 与多余的 ``..``/``.`` 片段。
+
+    @param value 补丁里的原始路径。
+    @return 归一后的路径；空输入返回空字符串。
+    """
     raw = str(value or "").replace("\\", "/").strip()
     if not raw:
         return ""
@@ -46,7 +53,14 @@ def _normalize_patch_path(value: str) -> str:
 
 
 def patch_paths(patch: str) -> list[str]:
-    """Ask Git to decode paths, including its quoted octal escape sequences."""
+    """@brief 让 Git 自己解码补丁里的路径，包括它的八进制转义引用。
+
+    改名/复制的补丁只报告目的路径，所以这两类特性在源路径与目的路径都被显式检查之前一律拒绝。
+
+    @param patch 补丁文本。
+    @return 去重后的路径列表，顺序与补丁一致。
+    @raises CodeAgentError 补丁无法解析、路径认不全，或含未审查的改名/复制路径时。
+    """
     proc = subprocess.run(
         ["git", "apply", "--numstat", "-z"], input=str(patch or "").encode("utf-8"), capture_output=True,
     )
@@ -74,7 +88,14 @@ def patch_paths(patch: str) -> list[str]:
 
 
 def forbidden_path(path: str) -> bool:
-    """Paths the P2 code path may never change, even if the proposal asks for them."""
+    """@brief 判断一条路径是否属于 P2 代码路径永远不得修改的范围。
+
+    包括仓库外路径、``tasks/``、``tcenv/gpulock.py``、``taic/trust.py``、``control.json``、
+    目标的 ``trust.toml``，以及各类凭据文件。
+
+    @param path 待检查的路径。
+    @return 被禁止时为 ``True``。
+    """
     value = _normalize_patch_path(path)
     if not value:
         return False
@@ -100,6 +121,12 @@ def forbidden_paths(paths: list[str]) -> list[str]:
 
 
 def _validate_patch(patch: str) -> list[str]:
+    """@brief 校验补丁里的路径都能被这条代码路径接受。
+
+    @param patch 补丁文本。
+    @return 补丁涉及的路径列表。
+    @raises CodeAgentError 补丁没点名任何文件，或触及被禁止的路径时。
+    """
     paths = patch_paths(patch)
     if not paths:
         raise CodeAgentError("the patch does not name any files")
@@ -114,7 +141,15 @@ def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
 
 
 def prepare_worktree(repo: Path, run_dir: Path, proposal_key: str) -> Path:
-    """Create a detached worktree from HEAD under the run directory."""
+    """@brief 在运行目录下从 HEAD 建一个游离工作树。
+
+    同名目录已存在时先删掉再建，使重试不会叠加旧改动。
+
+    @param repo 主仓库目录。
+    @param run_dir 运行目录，工作树放在它的 ``code_worktrees/`` 下。
+    @param proposal_key 提案键，同时用作工作树目录名。
+    @return 新建工作树的路径。
+    """
     path = Path(run_dir) / "code_worktrees" / proposal_key
     if path.exists():
         remove_worktree(repo, path)
@@ -124,12 +159,25 @@ def prepare_worktree(repo: Path, run_dir: Path, proposal_key: str) -> Path:
 
 
 def remove_worktree(repo: Path, path: Path) -> None:
+    """@brief 强制删掉一个工作树，并兜底清掉残留目录。
+
+    @param repo 主仓库目录。
+    @param path 要删除的工作树路径。
+    """
     _git(repo, "worktree", "remove", "--force", str(path), check=False)
     shutil.rmtree(path, ignore_errors=True)
 
 
 def estimate_code_budget(prices: Prices, prompt: str, *, output_tokens: int = 8000) -> dict:
-    """A price-derived allowance for one code-agent turn, including context/cache traffic."""
+    """@brief 估算一次代码 agent 回合的预算，含上下文/缓存流量。
+
+    预算由价格和提示长度推出，不是固定金额。
+
+    @param prices 输入/输出/缓存读写单价。
+    @param prompt 将要发出去的提示文本。
+    @param output_tokens 期望的输出 token 数（会被夹到 512..32000）。
+    @return 含 ``input_tokens``/``output_tokens``/``expected_usd``/``budget_usd`` 的字典。
+    """
     text = str(prompt or "")
     input_tokens = max(2000, int(math.ceil(len(text.encode("utf-8")) / 3.0)))
     output_tokens = max(512, min(int(output_tokens), 32000))
@@ -148,6 +196,14 @@ def estimate_code_budget(prices: Prices, prompt: str, *, output_tokens: int = 80
 
 
 def build_prompt(proposal: dict, *, run_id: str) -> str:
+    """@brief 拼出一次实现回合的 IMPLEMENT.md 提示。
+
+    提示把提案当数据嵌入，并要求 agent 只在游离工作树里改文件、写完 IMPLEMENT_REPORT.json。
+
+    @param proposal 待实现的提案字典。
+    @param run_id 提案所属运行标识。
+    @return 提示文本。
+    """
     return f"""# Implement one approved harness proposal
 
 You are implementing a proposal that has already been reviewed. Work only in this
@@ -192,7 +248,23 @@ def run_code_agent(
     timeout_s: float = 3600.0,
     turn_minutes: int = 40,
 ) -> dict:
-    """Run one hmz code-agent turn and collect its diff. It never commits or applies."""
+    """@brief 跑一次 hmz 代码 agent 回合并收集它的 diff；自己从不 commit 也不 apply。
+
+    超时时整组子进程被杀，已经花掉的费用挂在抛出的错误上，供调用方计账。
+
+    @param worktree 游离工作树目录，agent 只能在这里动手。
+    @param prompt 实现提示（会写成 IMPLEMENT.md）。
+    @param provider provider 名。
+    @param model 模型名。
+    @param effort 推理强度；空值表示不指定。
+    @param prices 计费单价。
+    @param budget_usd 这一回合的费用上限。
+    @param hmz hmz 可执行文件路径；``None`` 时从 PATH 找。
+    @param timeout_s 子进程超时秒数。
+    @param turn_minutes 回合时长上限（分钟）。
+    @return 含 ``provider``/``model``/``cost_usd``/``tokens``/``patch``/``report`` 等字段的字典。
+    @raises CodeAgentError 找不到 hmz、启动失败、超时，或 agent 没留下 diff 时。
+    """
     binary = hmz or shutil.which("hmz")
     if not binary or not Path(binary).is_file():
         raise CodeAgentError("hmz is not on PATH; install it with `uv tool install hmz`")
@@ -264,7 +336,13 @@ def run_code_agent(
 
 
 def collect_patch(worktree: Path) -> str:
-    """A binary-safe patch including new files, without committing or leaving the index staged."""
+    """@brief 收集一份二进制安全的补丁，含新文件，且不在索引里留下暂存。
+
+    先 ``git add -A`` 再取 ``git diff --cached --binary``，最后用 ``git reset`` 把索引恢复。
+
+    @param worktree 工作树目录。
+    @return 补丁文本。
+    """
     _git(worktree, "add", "-A")
     diff = _git(worktree, "diff", "--cached", "--binary", "HEAD")
     _git(worktree, "reset", "--quiet")
@@ -272,6 +350,17 @@ def collect_patch(worktree: Path) -> str:
 
 
 def write_patch(run_dir: Path, proposal_key: str, result: dict, *, target_id: str = "") -> dict:
+    """@brief 把生成的补丁与其元数据写到运行目录的 ``code_promotions/`` 下。
+
+    写之前先做路径校验，使被禁止的补丁不会被记录下来。
+
+    @param run_dir 运行目录。
+    @param proposal_key 提案键，同时用作文件名。
+    @param result ``run_code_agent`` 的返回值。
+    @param target_id 目标标识。
+    @return 写下的元数据（含补丁 sha256 与路径列表）。
+    @raises CodeAgentError 补丁没有点名文件，或触及被禁止的路径时。
+    """
     paths = _validate_patch(str(result.get("patch") or ""))
     folder = Path(run_dir) / PATCH_DIR
     folder.mkdir(parents=True, exist_ok=True)
@@ -292,6 +381,12 @@ def write_patch(run_dir: Path, proposal_key: str, result: dict, *, target_id: st
 
 
 def _proposal_row(run_dir: Path, proposal_key: str) -> dict:
+    """@brief 取某个提案键对应的最后一条有效提案行。
+
+    @param run_dir 运行目录。
+    @param proposal_key 提案键。
+    @return 提案行；找不到时为 ``{}``。
+    """
     path = Path(run_dir) / "harness_proposals.jsonl"
     if not path.is_file():
         return {}
@@ -307,10 +402,16 @@ def _proposal_row(run_dir: Path, proposal_key: str) -> dict:
 
 
 def worktree_matches_patches(repo: Path, patches: list[Path], paths: list[str], *, staged_env: dict | None = None) -> tuple[bool, str]:
-    """Whether the live checkout contains exactly HEAD plus every patch, in order.
+    """@brief 判断活工作树是否恰好等于 HEAD 加上全部补丁（按顺序）。
 
-    A reverse apply only proves one patch can be undone; it does not catch unrelated edits
-    elsewhere in the same file. Compare the final files against a fresh worktree instead.
+    反向 apply 只能证明一个补丁能被撤销，抓不到同一文件里别处的无关改动；所以要用一份全新的工作树
+    比最终文件，而不是只看补丁能不能撤。
+
+    @param repo 主仓库目录。
+    @param patches 要依次应用的补丁路径。
+    @param paths 需要比较的路径。
+    @param staged_env 给出时改用 ``git ls-files --stage`` 比较暂存内容与文件模式。
+    @return ``(是否一致, 原因或差异路径)``；一致时原因为空字符串。
     """
     parent = Path(tempfile.mkdtemp(prefix="taic-exact-"))
     temp = parent / "tree"
@@ -359,7 +460,15 @@ def worktree_matches_patches(repo: Path, patches: list[Path], paths: list[str], 
 
 
 def _test_patch_in_worktree(repo: Path, patch: Path, proposal_key: str) -> None:
-    """Apply and test the generated patch in a detached worktree, never in the live checkout."""
+    """@brief 在游离工作树里应用并测试生成的补丁，绝不在活工作树里做。
+
+    先确认 `import taic` 真的来自打好补丁的工作树，再跑离线测试。
+
+    @param repo 主仓库目录。
+    @param patch 补丁路径。
+    @param proposal_key 提案键，用于临时目录名。
+    @raises CodeAgentError 建不出工作树、打不上补丁、导入的不是打好补丁的树，或离线测试未过时。
+    """
     parent = Path(tempfile.mkdtemp(prefix=f"taic-{proposal_key}-test-"))
     temp = parent / "tree"
     added = False
@@ -400,10 +509,18 @@ def apply_code_patch(
     run_tests: bool = False,
     approved_by: str = "cli",
 ) -> dict:
-    """Apply a generated code patch to the main repo after checks, never commit.
+    """@brief 检查通过后把生成的代码补丁应用到主仓库，从不 commit。
 
-    Tests run against the patched tree in an isolated worktree. The live checkout is only
-    touched after that check passes, and the applied bytes must still match the patch.
+    测试在隔离工作树里对打好补丁的树跑。只有这一步通过后才会碰活工作树，而且应用后的字节必须仍与补丁一致。
+
+    @param run_dir 运行目录，补丁与元数据放在它的 ``code_promotions/`` 下。
+    @param proposal_key 提案键。
+    @param root 主仓库目录；``None`` 时用本文件所在仓库。
+    @param check_only 只做检查，不写入。
+    @param run_tests 应用前先在隔离工作树里跑离线测试。
+    @param approved_by 批准人，写入决策记录。
+    @return 元数据加应用结果（含 ``applied``/``commit_pending`` 等）。
+    @raises CodeAgentError 没有补丁、补丁被改过、路径被禁、无法 apply、目标文件有未提交改动，或测试未过时。
     """
     run_dir = Path(run_dir)
     repo = Path(root) if root is not None else Path(__file__).resolve().parent.parent

@@ -10,7 +10,14 @@ _MARKERS = ("state.json", "result.json", "run_config.json", "candidates", "trans
 
 
 def migrate_runs(root: Path | None = None, target_id: str = "apple-m4-max") -> list[str]:
-    """Return the directories that moved. A directory that is already nested, not a run, or still being written stays put."""
+    """@brief 把平铺的运行目录搬进 ``runs/<target_id>/``。
+
+    已经是嵌套结构、看起来不是运行目录、或仍在写入的目录都留在原处。
+
+    @param root 待整理目录的根；缺省为仓库下的 ``runs``。
+    @param target_id 目标档名，同时是目标子目录名。
+    @return 实际搬动的目录名列表；没有任何目录可搬时为空列表。
+    """
     base = Path(root) if root is not None else REPO / "runs"
     dest_root = base / target_id
     dest_root.mkdir(parents=True, exist_ok=True)
@@ -35,7 +42,13 @@ def migrate_runs(root: Path | None = None, target_id: str = "apple-m4-max") -> l
 
 
 def _live(run_dir: Path) -> bool:
-    """A run whose process still holds it: no result yet and a live pid in ``state.json``."""
+    """@brief 判断一次运行是否还有活进程占着。
+
+    判据是：还没有 ``result.json``，且 ``state.json`` 里的 pid 仍然活着。
+
+    @param run_dir 运行目录。
+    @return 仍在跑时为 ``True``；已有结果或 pid 已死时为 ``False``。
+    """
     from . import control
 
     if (run_dir / "result.json").is_file():
@@ -45,7 +58,13 @@ def _live(run_dir: Path) -> bool:
 
 
 def _stamp(run_dir: Path, target_id: str) -> None:
-    """Write the target onto files that were recorded before profiles existed."""
+    """@brief 把 ``target_id``/``backend`` 补写进建档于 profile 机制之前的文件。
+
+    已带 ``target_id`` 的文件不动；三个文件各自原子替换。
+
+    @param run_dir 运行目录。
+    @param target_id 要写入的目标档名。
+    """
     import json
 
     from . import control

@@ -20,6 +20,11 @@ _PREFIX = "tcenv.backends."
 
 
 def _error(message: str) -> Exception:
+    """@brief 构造一个后端加载失败异常，延迟导入以避免循环依赖。
+
+    @param message 面向调用方的错误说明。
+    @return 一个 ``TargetError`` 实例。
+    """
     from tcenv.target import TargetError
 
     return TargetError(message)
@@ -27,7 +32,14 @@ def _error(message: str) -> Exception:
 
 @lru_cache(maxsize=16)
 def load_backend(name: str):
-    """Load and validate one backend.  Raises ``TargetError`` for unknown names."""
+    """@brief 按名称加载并校验一个后端。
+
+    Load and validate one backend.  Raises ``TargetError`` for unknown names.
+
+    @param name 后端 id，对应 ``backends/<id>/backend.toml``。
+    @return 后端实例，其 id 与版本和 toml 一致。
+    @raises TargetError 名称非法、配置缺失或损坏、入口不在 ``tcenv.backends.`` 下时抛出。
+    """
     name = str(name or "").strip()
     if not name or not _NAME.fullmatch(name):
         raise _error(f"invalid backend name {name!r}")

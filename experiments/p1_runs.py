@@ -73,7 +73,13 @@ RUNS: dict[str, dict] = {
 
 # 汇总扫的是 RUNS 里每一个名字，不限于本次命令点名的那些。多个进程分头写同一个 --out 时，别人已经写完的运行也要出现在表上。
 def finished_rows(out: Path) -> list[dict]:
-    """One row per finished run found in ``out``, whichever process ran it (several processes may share one output directory)."""
+    """@brief 汇总 ``out`` 下所有已完成的具名运行，不限于本次命令点名的那些。
+
+    One row per finished run found in ``out``, whichever process ran it (several processes may share one output directory).
+
+    @param out 运行的输出目录。
+    @return 每个已完成运行一行：选项与 ``summarize`` 的字段。
+    """
     rows = []
     for n, spec in RUNS.items():
         res = read_result(out / n)
@@ -86,7 +92,15 @@ def finished_rows(out: Path) -> list[dict]:
 
 # 同目录里已完成的运行如果用的是另一笔预算（例如改预算之前的 $3），只提示不能横比加速比，不会把它们重跑。
 def budget_notes(out: Path, names: list[str], budget: float | None) -> list[str]:
-    """One line per finished run in ``out`` whose recorded budget differs from the budget the requested runs are about to get (results at different budgets are not comparable)."""
+    """@brief 提示同目录下预算不同的已完成运行，不能直接横比加速比。
+
+    One line per finished run in ``out`` whose recorded budget differs from the budget the requested runs are about to get (results at different budgets are not comparable).
+
+    @param out 运行的输出目录。
+    @param names 本次点名的运行名。
+    @param budget 本次的预算；为 ``None`` 时按各运行自己登记的预算算。
+    @return 每个预算不一致的运行一条提示。
+    """
     wanted = {budget if budget is not None else RUNS[n]["budget"] for n in names}
     notes = []
     for n in RUNS:
@@ -97,7 +111,15 @@ def budget_notes(out: Path, names: list[str], budget: float | None) -> list[str]
 
 
 def _arm_delta(name: str, dtype: str, budget: float | None) -> dict:
-    """Switches that define this named run. A missing model means the preset's model, not a model of null."""
+    """@brief 取出一个具名运行相对预设的覆盖项。
+
+    Switches that define this named run. A missing model means the preset's model, not a model of null.
+
+    @param name ``RUNS`` 里的运行名。
+    @param dtype 本次调用的数据类型，运行条目没写 dtype 时用它。
+    @param budget 本次的预算；为 ``None`` 时用条目自己登记的预算。
+    @return 要写进清单的覆盖字典。
+    """
     spec = RUNS[name]
     delta = {
         "task": spec["task"],
@@ -112,6 +134,18 @@ def _arm_delta(name: str, dtype: str, budget: float | None) -> dict:
 
 # 按名字顺序跑。result.json 已在就跳过，哪怕当时的预算和这次要给的不一样；要按新预算重跑得换一个 --out。
 def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = "fp16", log=print, budget: float | None = None, max_total_usd: float | None = None, **overrides) -> list[dict]:
+    """@brief 按名字逐个跑搜索；已有 result.json 的跳过，并按总预算上限逐个判断。
+
+    @param names ``RUNS`` 里的运行名列表。
+    @param out 输出目录。
+    @param size 规模档位。
+    @param dtype 数据类型。
+    @param log 进度输出函数。
+    @param budget 本次统一预算；为 ``None`` 时用各条目登记的预算。
+    @param max_total_usd 总花费上限；为 ``None`` 时不限。
+    @param overrides 其余透传给 ``run_one`` 的覆盖项。
+    @return 本次跑过或跳过的运行的结果行。
+    """
     install_file_log()
     out.mkdir(parents=True, exist_ok=True)
     write_cap(out, max_total_usd)
@@ -175,6 +209,11 @@ def run_named(names: list[str], out: Path, *, size: str = "paper", dtype: str = 
 
 # 表的第一列是具名跑法。fa_pro 和 fa_flash 的 task 都是 flash_attention，模型和搜索选项才是这两行的差别。
 def markdown(rows: list[dict]) -> str:
+    """@brief 把具名运行的结果拍成 markdown 表，末行附总花费。
+
+    @param rows ``run_named`` 或 ``finished_rows`` 返回的结果行。
+    @return 表格文本。
+    """
     f = lambda v, d=3: "-" if v is None else f"{v:.{d}f}"
     L = ["| run | task | model | published speedup | best (search) | candidate us | best baseline | naive kernel | vs triton-msl | rounds | evals | budget USD | spent USD | stop |", "| --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
     for r in rows:
@@ -187,6 +226,11 @@ def markdown(rows: list[dict]) -> str:
 
 # --report 只读已有结果打表，不启动搜索。开跑之后打表用的仍是磁盘上全部已完成名字，不限于本次 --runs。
 def main(argv=None) -> int:
+    """@brief ``python -m experiments.p1_runs`` 的入口；``--report`` 只读已有结果打表。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码，正常结束时为 0。
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", default="fa_flash")
     ap.add_argument("--out", default="runs/apple-m4-max/p1")

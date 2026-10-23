@@ -11,7 +11,13 @@ from pathlib import Path
 
 
 def collect(dirs: list[Path]) -> tuple[list[dict], list[str]]:
-    """Spend rows, and paths that are present but unreadable. A damaged result is not omitted as if the run never happened."""
+    """@brief 递归读每个目录下的 ``result.json``，收成花费行。
+
+    Spend rows, and paths that are present but unreadable. A damaged result is not omitted as if the run never happened.
+
+    @param dirs 要汇总的实验目录列表。
+    @return ``(花费行列表, 读不出来的路径描述列表)``。
+    """
     from taic.artifacts import RESULT_SCHEMA_VERSION, NeedsInspection, read_versioned
 
     rows: list[dict] = []
@@ -31,6 +37,11 @@ def collect(dirs: list[Path]) -> tuple[list[dict], list[str]]:
 
 
 def markdown(rows: list[dict]) -> str:
+    """@brief 按「实验目录 + 模型」聚合花费，拍成一张 markdown 表。
+
+    @param rows ``collect`` 返回的花费行。
+    @return 表格文本，末行是总计。
+    """
     by = defaultdict(lambda: [0, 0.0, 0])
     for r in rows:
         k = (r["group"], r["model"])
@@ -45,6 +56,11 @@ def markdown(rows: list[dict]) -> str:
 
 
 def main(argv=None) -> int:
+    """@brief ``python -m experiments.cost_report`` 的入口，打印花费表。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码；有读不出来的 result 时返回 2。
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("dirs", nargs="+")
     a = ap.parse_args(argv)

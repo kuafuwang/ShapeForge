@@ -65,6 +65,13 @@ _MEASURED = re.compile(r"\[已实测:\s*([^|\]]+?)\s*\|\s*([^|\]]+?)\s*\|\s*([^\
 _MARK = re.compile(r"\[(已实测|未验证|分析否决|推理否决)([^\]]*)\]")
 _FILE_TOKEN = re.compile(r"[A-Za-z0-9_./-]+\.(?:py|metal|md|json|sh|txt)")
 def _wiped_premise(text: str) -> bool:
+    """@brief 判断一条前提的正文是否已被降级擦掉。
+
+    被擦掉的前提正文以哨兵 ``[未验证: 探针文件不存在]`` 开头，可从存档小节里恢复。
+
+    @param text 条目正文。
+    @return 正文以擦除哨兵开头时为 ``True``。
+    """
     return str(text or "").strip().strip("`").strip().startswith("[未验证: 探针文件不存在]")
 
 
@@ -72,9 +79,12 @@ _ROUND = re.compile(r"^r(\d+)\.p\d+$")
 
 
 def read_feedback_text(path: Path) -> tuple[str, bool]:
-    """The last 16384 characters, and whether the file was longer.
+    """@brief 读 FEEDBACK.md 的末尾 16384 个字符，并告知文件是否更长。
 
-    Sessions append. A cut that kept the start would drop the newest lines.
+    会话是往下追加的。如果切掉末尾保留开头，最新的几行就丢了。
+
+    @param path FEEDBACK.md 的路径。
+    @return ``(文本, 是否截断)``；文件不存在时是 ``("", False)``。
     """
     if not path.is_file():
         return "", False
@@ -85,6 +95,10 @@ def read_feedback_text(path: Path) -> tuple[str, bool]:
 
 
 def empty_feedback() -> dict:
+    """@brief 一份空的解析结果，字段与 ``parse_feedback`` 完全一致。
+
+    @return 空反馈字典：没有小节、没有条目、没有截断。
+    """
     return {
         "format": FORMAT,
         "v": VERSION,
@@ -104,9 +118,16 @@ def empty_feedback() -> dict:
 
 
 def parse_feedback(text: str, *, work: Path | None = None, repo: Path | None = None, file_over: bool = False) -> dict:
-    """Split one FEEDBACK.md. Unknown versions keep the raw text and no items.
+    """@brief 切分一份 FEEDBACK.md。
 
-    Section caps apply after the split, so a long system section cannot erase the peer sections.
+    版本号不认识的文档保留原文、不给任何条目。小节上限在切分之后才生效，于是一个很长的系统小节无法把
+    给下一棒的避坑提示小节挤没。
+
+    @param text FEEDBACK.md 的文本（通常由 ``read_feedback_text`` 读出）。
+    @param work 本次会话的工作目录，用于验证前提里的探针文件。
+    @param repo 仓库根目录，作为探针路径的另一个解析根。
+    @param file_over 调用方已知原文件超过上限（例如已经被截断过）。
+    @return 解析结果字典：``sections``/``items``/``truncated_sections``/``unverified_premises`` 等。
     """
     body = text or ""
     over = bool(file_over) or len(body) > FILE_CAP
@@ -176,7 +197,13 @@ def parse_feedback(text: str, *, work: Path | None = None, repo: Path | None = N
 
 
 def max_seq(path: Path) -> int:
-    """The largest seq in a feedback log. A broken line, including one left in the middle, is skipped."""
+    """@brief 取反馈日志里最大的 seq。
+
+    坏行（包括留在文件中间的那种）直接跳过。
+
+    @param path ``feedback.jsonl`` 的路径。
+    @return 最大的 seq；文件不存在或一行都读不懂时为 0。
+    """
     if not path.is_file():
         return 0
     highest = 0
@@ -191,10 +218,12 @@ def max_seq(path: Path) -> int:
 
 
 def load_records(path: Path) -> list[dict]:
-    """Every complete record. Broken lines are skipped.
+    """@brief 读出所有完整记录，坏行跳过。
 
-    The file is not rewritten. Empty digests, premise text that a downgrade wiped, and
-    missing ``truncated_sections`` are filled in on the copy this function returns.
+    文件不会被重写。空 digest、被降级擦掉的前提正文、缺失的 ``truncated_sections`` 都在返回的副本上补齐。
+
+    @param path ``feedback.jsonl`` 的路径。
+    @return 修复后的记录列表；文件不存在时为空列表。
     """
     if not path.is_file():
         return []
@@ -207,10 +236,14 @@ def load_records(path: Path) -> list[dict]:
 
 
 def read_appended_records(path: Path, offset: int) -> tuple[list[tuple[int, dict]], int]:
-    """Records in the complete lines at and after ``offset``, with each line's byte position.
+    """@brief 读出 ``offset`` 之后完整行里的记录，并带上每行的字节位置。
 
-    The log is append-only. The returned offset stops after the last newline, so a trailing
-    partial line is read on a later call. ``offset`` past the end means the file was replaced.
+    日志是只追不改的。返回的 offset 停在最后一个换行之后，所以尾巴上的半行会留给下一次调用。
+    ``offset`` 超过文件大小意味着文件被替换过，从 0 重新读。
+
+    @param path ``feedback.jsonl`` 的路径。
+    @param offset 起始字节位置。
+    @return ``(记录列表, 新 offset)``；每项为 ``(行字节位置, 记录)``。
     """
     if not path.is_file():
         return [], 0
@@ -246,13 +279,15 @@ def read_appended_records(path: Path, offset: int) -> tuple[list[tuple[int, dict
 
 
 def peer_tips_for(run_dir: Path, *, now: int | None = None) -> str:
-    """Tips for the session about to start. ``now`` is that session's number.
+    """@brief 为即将开始的会话生成提示。
 
-    Every finished session has a sequence number, including one that left no feedback text.
-    An unverified or downgraded premise is shown for the next two sessions and is gone on the third.
-    Restating it does not move the session where it first appeared. A digest that was verified
-    once stays verified; a later downgraded copy does not replace that text. Verified lines use
-    their own character budget and do not take a slot from the eight ordinary tips.
+    ``now`` 就是那一场的序号。每一场结束的会话都有序号，包括一句反馈都没留的那种。未验证或已降级的前提
+    只给接下来两场看，第三场就不再见它；重述不会改写它首次出现的那一场。一旦某条被验证过，它就一直是验证
+    状态，后来降级的副本不会顶掉那段正文。验证过的行用自己的字符预算，不占普通八条的位置。
+
+    @param run_dir 运行目录。
+    @param now 即将开始的会话序号；缺省取已记录最大序号加一。
+    @return 多行提示文本；没有任何记录时为空字符串。
     """
     records = load_records(run_dir / "feedback.jsonl")
     if not records:
@@ -331,6 +366,11 @@ def peer_tips_for(run_dir: Path, *, now: int | None = None) -> str:
 
 
 def round_of(label: str) -> int | None:
+    """@brief 从 ``rN.pM`` 形式的标签里取出轮次 N。
+
+    @param label 候选标签。
+    @return 轮次；标签不是 ``rN.pM`` 形式时为 ``None``。
+    """
     match = _ROUND.fullmatch(label or "")
     if not match:
         return None
@@ -338,6 +378,13 @@ def round_of(label: str) -> int | None:
 
 
 def _declared_version(text: str) -> int | None:
+    """@brief 取文档首个非空行声明的版本号。
+
+    首行不是版本行，或版本号不是整数时，都当作「没有声明」处理。
+
+    @param text FEEDBACK.md 文本。
+    @return 声明的版本号；没声明或读不懂时为 ``None``。
+    """
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
@@ -353,6 +400,13 @@ def _declared_version(text: str) -> int | None:
 
 
 def _kinds(text: str) -> str:
+    """@brief 读 ``kind:`` 行并归一成逗号分隔的合法类别名。
+
+    不认识的取值和 ``none`` 都被丢掉；一个都不剩时返回 ``none``。
+
+    @param text FEEDBACK.md 文本。
+    @return 形如 ``prompt,skill`` 的类别串，或 ``none``。
+    """
     found = None
     for line in text.splitlines():
         match = _KIND.match(line.strip())
@@ -370,6 +424,13 @@ def _kinds(text: str) -> str:
 
 
 def _sections(text: str) -> tuple[dict[str, str], list[str]]:
+    """@brief 按二级标题把文本切成已知的五个小节。
+
+    每个小节各自有字符上限，超长时留下末尾（小节是往下追加的，最新的一条才该进下一场）。
+
+    @param text FEEDBACK.md 文本。
+    @return ``(小节正文, 被截断的小节名列表)``。
+    """
     current = None
     chunks: dict[str, list[str]] = {name: [] for name in SECTIONS}
     for line in text.splitlines():
@@ -393,6 +454,13 @@ def _sections(text: str) -> tuple[dict[str, str], list[str]]:
 
 
 def _pieces(body: str) -> list[str]:
+    """@brief 把一个小节拆成条目。
+
+    有 ``- `` 项目符号时按项目拆（续行归到上一条）；否则整段算一条。
+
+    @param body 小节正文。
+    @return 条目文本列表；正文为空时为空列表。
+    """
     blocks: list[str] = []
     current: list[str] | None = None
     saw_bullet = False
@@ -414,6 +482,16 @@ def _pieces(body: str) -> list[str]:
 
 
 def _item(section: str, text: str, *, work: Path | None, repo: Path | None) -> dict:
+    """@brief 把一段条目正文变成结构化条目。
+
+    digest 取的是 agent 写下那句话本身；降级只改后面的标签，不得改 digest。
+
+    @param section 所属小节名。
+    @param text 条目正文。
+    @param work 会话工作目录，用于验证探针文件。
+    @param repo 仓库根目录，作为另一个解析根。
+    @return 含 ``section``/``audience``/``text``/``digest``/``premise`` 的条目。
+    """
     audience = "peer" if section in PEER_SECTIONS else "diagnostic" if section in DIAGNOSTIC_SECTIONS else "system"
     shown = text.strip()
     premise = ""
@@ -425,6 +503,16 @@ def _item(section: str, text: str, *, work: Path | None, repo: Path | None) -> d
 
 
 def _premise(text: str, *, work: Path | None, repo: Path | None) -> tuple[str, str]:
+    """@brief 判定一条前提的验证状态。
+
+    带 ``[已实测: ...]`` 标记时，探针文件存在为 ``verified``，不存在则降级为 ``downgraded``；没有标记就是
+    ``unverified``。
+
+    @param text 条目正文。
+    @param work 会话工作目录，用于验证探针文件。
+    @param repo 仓库根目录，作为另一个解析根。
+    @return ``(正文, 状态)``，状态为 ``verified``/``downgraded``/``unverified``。
+    """
     measured = _MEASURED.search(text)
     if measured:
         probe = measured.group(1).strip()
@@ -435,7 +523,13 @@ def _premise(text: str, *, work: Path | None, repo: Path | None) -> tuple[str, s
 
 
 def _downgrade_measured(text: str) -> str:
-    """Replace the measured tag and keep the proposition and the number."""
+    """@brief 把 ``[已实测: ...]`` 标记改成 ``[未验证: 探针文件不存在 | ...]``。
+
+    命题与数字保留，只换掉标记。
+
+    @param text 条目正文。
+    @return 降级后的正文（只替换第一处标记）。
+    """
 
     def repl(match: re.Match) -> str:
         prop = match.group(2).strip()
@@ -446,6 +540,14 @@ def _downgrade_measured(text: str) -> str:
 
 
 def _probe_roots(work: Path | None, repo: Path | None) -> list[Path]:
+    """@brief 列出探针文件允许被解析到的根目录。
+
+    工作目录在 ``agent_work`` 下时，把 ``agent_work`` 也加进去，使兄弟会话留下的探针也能匹配。
+
+    @param work 会话工作目录。
+    @param repo 仓库根目录。
+    @return 根目录列表，顺序即优先级。
+    """
     roots = []
     if work is not None:
         roots.append(work)
@@ -457,7 +559,15 @@ def _probe_roots(work: Path | None, repo: Path | None) -> list[Path]:
 
 
 def _probe_exists(token: str, *, work: Path | None, repo: Path | None) -> bool:
-    """True when any named probe file is readable under the work dir, the repo, or a sibling session."""
+    """@brief 判断提到的某个探针文件是否真的可读。
+
+    在工作目录、仓库或兄弟会话目录下任一根里能找到就算。
+
+    @param token 正文里提到的探针片段，可以是一句带路径的话。
+    @param work 会话工作目录。
+    @param repo 仓库根目录。
+    @return 至少一个候选路径存在时为 ``True``。
+    """
     if not token or "\x00" in token:
         return False
     roots = _probe_roots(work, repo)
@@ -474,6 +584,14 @@ def _probe_exists(token: str, *, work: Path | None, repo: Path | None) -> bool:
 
 
 def _one_probe(token: str, roots: list[Path]) -> bool:
+    """@brief 在给定根下找单个探针文件。
+
+    解析后的路径必须仍在某个根之内，防止 ``../`` 之类跑到外面。
+
+    @param token 候选路径（绝对或相对）。
+    @param roots 允许的根目录。
+    @return 在某个根内找到这个文件时为 ``True``。
+    """
     if not token or "\x00" in token:
         return False
     raw = Path(token)
@@ -494,6 +612,12 @@ def _one_probe(token: str, roots: list[Path]) -> bool:
 
 
 def _inside(path: Path, roots: list[Path]) -> bool:
+    """@brief 判断路径是否落在某个根目录之内。
+
+    @param path 待检查的路径（应已 resolve）。
+    @param roots 允许的根目录。
+    @return 在任一根内时为 ``True``。
+    """
     for root in roots:
         try:
             path.relative_to(root.resolve())
@@ -504,11 +628,14 @@ def _inside(path: Path, roots: list[Path]) -> bool:
 
 
 def _digest(section: str, text: str) -> str:
-    """Identity of one claim. Numbers and the probe filename do not change it.
+    """@brief 算一条主张的身份 digest。
 
-    Text outside the bracket is the claim when it is non-empty, so a measured line and the
-    same sentence tagged unverified stay one claim. When the bracket holds the whole sentence,
-    only the proposition slot is hashed. Two probes, or two reasons, for one proposition match.
+    数字与探针文件名不影响它：括号外的正文非空时，那才是主张，所以一条实测行与同一句被判为未验证的
+    句子仍是同一条主张；括号包住整句时只哈希命题位。同一命题配两个探针或两个理由也算同一条。
+
+    @param section 所属小节名。
+    @param text 条目正文。
+    @return 16 字符十六进制 digest；正文归一后为空时返回空字符串。
     """
     normalized = _digest_text(text or "")
     if not normalized:
@@ -518,6 +645,13 @@ def _digest(section: str, text: str) -> str:
 
 
 def _digest_text(text: str) -> str:
+    """@brief 把正文归一成可哈希的形式。
+
+    括号外有正文时只取括号外；否则从标记里挑命题位，没命题位时退回探针位。
+
+    @param text 条目正文。
+    @return 去数字、去标点、压空白的文本；空内容时为空字符串。
+    """
     match = _MARK.search(text)
     if match is None:
         return _normalize(text)
@@ -535,6 +669,11 @@ def _digest_text(text: str) -> str:
 
 
 def _mark_parts(body: str) -> list[str]:
+    """@brief 把 ``[...]`` 标记的内容按 ``|`` 拆成若干槽。
+
+    @param body 标记内文本（含或不含前导冒号）。
+    @return 去空白的槽列表；内容为空时为空列表。
+    """
     body = body.strip()
     if body.startswith(":"):
         body = body[1:].strip()
@@ -542,12 +681,14 @@ def _mark_parts(body: str) -> list[str]:
 
 
 def _is_placeholder(text: str) -> bool:
-    """A section or bullet that only says there is nothing to report.
+    """@brief 判断一个小节或条目是否只是在说「没什么可报」。
 
-    The exact filler words stay placeholders. A leading absence sentence is also one when the rest
-    does not ask for an action: ``无（预算已尽）`` is a status note, while ``无。请修一下 check`` is
-    a request and stays. File names and numbers alone do not make an absence a request; the audit's
-    seven rows all explain *why* they are empty and still belong in the parser's placeholder bucket.
+    完全等同于固定填充词的是占位。以缺席句开头、且后面没有动作请求的也算：``无（预算已尽）`` 是状态说明，
+    而 ``无。请修一下 check`` 是请求，保留。光有文件名和数字不构成请求；审计里那七行都解释了为什么是空的，
+    仍然归到解析器的占位档。
+
+    @param text 小节或条目正文。
+    @return 是占位时为 ``True``。
     """
     raw = (text or "").strip()
     cleaned = _PUNCT.sub("", raw)
@@ -562,6 +703,13 @@ def _is_placeholder(text: str) -> bool:
 
 
 def _fit_lines(entries: list[dict], limit: int, *, drop_oldest: bool) -> list[str]:
+    """@brief 把若干条提示排成行，直到总字符数落进预算。
+
+    @param entries 条目列表，每项带 ``row`` 与 ``text``。
+    @param limit 总字符预算。
+    @param drop_oldest 超出预算时先丢最旧的，还是先丢最新的。
+    @return 提示行列表，顺序与保留的条目一致。
+    """
     lines = [_tip_line(entry["row"], entry["text"]) for entry in entries]
     while lines and sum(len(line) + 1 for line in lines) > limit:
         lines.pop(0 if drop_oldest else -1)
@@ -569,7 +717,14 @@ def _fit_lines(entries: list[dict], limit: int, *, drop_oldest: bool) -> list[st
 
 
 def _fit_rest(entries: list[dict], active_count: int) -> list[str]:
-    """Unverified lines stay in front. Extra characters drop ordinary tips first, then the oldest unverified line."""
+    """@brief 排普通提示行：未验证的行留在前面。
+
+    超出 ``TIPS_CHARS`` 时先丢普通提示，丢完再丢最旧的那条未验证行。
+
+    @param entries 条目列表，前面 ``active_count`` 条是未验证前提。
+    @param active_count 未验证前提的条数。
+    @return 提示行列表。
+    """
     lines = [_tip_line(entry["row"], entry["text"]) for entry in entries]
     kept_active = min(active_count, len(lines))
     while lines and sum(len(line) + 1 for line in lines) > TIPS_CHARS:
@@ -582,12 +737,14 @@ def _fit_rest(entries: list[dict], active_count: int) -> list[str]:
 
 
 def _repair_record(row: dict, directory: Path | None = None) -> dict:
-    """Fill fields that older parsers left empty. Does not write the file.
+    """@brief 补齐旧解析器留下的空字段；不写文件。
 
-    A wiped measured premise keeps its old digest, but its text can be recovered from the
-    stored section. Use the section order only to fill an empty digest, then choose the
-    sentence by digest; older records dropped placeholder items, so a positional match
-    after that point can restore the wrong sentence.
+    被擦掉的实测前提保留旧 digest，但正文可以从存档的小节里恢复。小节顺序只用来填空 digest，
+    然后用 digest 挑回句子；旧记录丢过占位条目，从那时起按位置匹配会恢复错句子。
+
+    @param row 一条反馈记录。
+    @param directory 记录所属的运行目录，用于解析探针路径。
+    @return 同一个记录对象（已就地补齐）。
     """
     sections = row.get("sections") if isinstance(row.get("sections"), dict) else {}
     if row.get("truncated") and "truncated_sections" not in row:
@@ -655,7 +812,15 @@ def _repair_record(row: dict, directory: Path | None = None) -> dict:
 
 
 def check_feedback(path: Path, work: Path, repo: Path) -> str:
-    """How the parser reads one FEEDBACK.md. Reads the file and writes nothing."""
+    """@brief 打印解析器如何读一份 FEEDBACK.md。
+
+    只读文件，不写任何东西。
+
+    @param path FEEDBACK.md 的路径。
+    @param work 会话工作目录，用于验证探针文件。
+    @param repo 仓库根目录。
+    @return 逐条列出的文字报告（小节截断、占位跳过、每条条目的状态与 digest）。
+    """
     text, file_over = read_feedback_text(path)
     parsed = parse_feedback(text, work=work, repo=repo, file_over=file_over)
     lines = []
@@ -677,7 +842,11 @@ def check_feedback(path: Path, work: Path, repo: Path) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """``python -m taic.agent_feedback check FEEDBACK.md --work DIR``."""
+    """@brief ``python -m taic.agent_feedback check FEEDBACK.md --work DIR`` 的入口。
+
+    @param argv 命令行参数；缺省从 ``sys.argv`` 取。
+    @return 进程退出码，成功为 0。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(prog="taic.agent_feedback")
@@ -693,6 +862,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _normalize(text: str) -> str:
+    """@brief 比较用的归一化：小写、去数字、去标点、压空白。
+
+    @param text 原始文本。
+    @return 归一化后的文本。
+    """
     lowered = text.lower()
     without_numbers = _NUMBER.sub(" ", lowered)
     without_punct = _PUNCT.sub(" ", without_numbers)
@@ -700,6 +874,14 @@ def _normalize(text: str) -> str:
 
 
 def _tip_line(row: dict, text: str) -> str:
+    """@brief 把一条提示渲染成一行。
+
+    前缀带标签、委员会/模型、结果与加速比，整行不超过 ``TIP_CHARS``。
+
+    @param row 反馈记录，提供 ``label``/``committee``/``model``/``outcome``/``best_speedup``。
+    @param text 提示正文。
+    @return 单行提示；正文先压成一行再截断，避免把标题塞进提示面。
+    """
     label = row.get("label") or "?"
     committee = row.get("committee") or "?"
     model = row.get("model") or "?"
@@ -719,6 +901,13 @@ def _tip_line(row: dict, text: str) -> str:
 
 
 def _load_line(line: str) -> dict | None:
+    """@brief 把一行 JSONL 解成字典。
+
+    空行、坏 JSON、以及不是对象的行都返回 ``None``。
+
+    @param line 单行文本。
+    @return 解析后的字典；不可用时为 ``None``。
+    """
     if not line.strip():
         return None
     try:

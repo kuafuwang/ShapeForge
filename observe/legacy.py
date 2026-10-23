@@ -14,13 +14,24 @@ _TRIAL = re.compile(r"^trial_(?P<trial>\d+)$")
 
 
 def _has(path: Path, name: str) -> bool:
+    """@brief 判断目录下是否存在指定名字的文件。
+
+    @param path 目录路径。
+    @param name 文件名。
+    @return 是普通文件时为 True。
+    """
     return (path / name).is_file()
 
 
 def infer(run_dir: Path, runs_root: Path) -> dict | None:
-    """Return ``experiment_id``, ``arm_id``, ``trial`` and ``kind``, or ``None`` when nothing about the path is recognizable.
+    """@brief 为一个没有 ``experiment.json`` 的运行目录推测所属实验、arm 与 trial。
 
-    ``None`` means the caller should record the directory as a single search, not as a guessed arm.
+    返回 ``experiment_id``、``arm_id``、``trial`` 与 ``kind``；路径完全无法识别时返回 ``None``，
+    此时调用方应把该目录记为单次搜索，而不是一个推测出来的 arm。
+
+    @param run_dir 待推测的运行目录。
+    @param runs_root ``runs/`` 根目录，用于计算相对的 experiment id。
+    @return 推测结果字典；目录不在 ``runs_root`` 下或命名不匹配任何模式时返回 ``None``。
     """
     try:
         rel = run_dir.resolve().relative_to(runs_root.resolve())
@@ -62,6 +73,12 @@ def infer(run_dir: Path, runs_root: Path) -> dict | None:
 
 
 def _rel(path: Path, root: Path) -> str:
+    """@brief 取 ``path`` 相对 ``root`` 的 POSIX 路径；无法相对化时退回目录名。
+
+    @param path 目标路径。
+    @param root 基准根目录。
+    @return 相对路径文本，根目录自身返回 ``"."``；不在根目录下时返回 ``path.name``。
+    """
     try:
         text = path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:

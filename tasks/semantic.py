@@ -44,8 +44,14 @@ M32 = 1 << 32
 
 
 def wrap(t: torch.Tensor) -> torch.Tensor:
+    """@brief 折回 int32 补码，结果仍放在 int64 里。
+
+    Wrap an int64 tensor to int32 two's complement (kept in int64).
+
+    @param t int64 张量。
+    @return 回绕后的 int64 张量。
+    """
     # 折回 int32 补码，结果仍放在 int64 里。整数题多数运算做完都会过它。
-    """Wrap an int64 tensor to int32 two's complement (kept in int64)."""
     return ((t + (1 << 31)) % M32) - (1 << 31)
 
 
@@ -56,6 +62,8 @@ def wrap(t: torch.Tensor) -> torch.Tensor:
 
 @dataclass
 class Stmt:
+    """@brief 整数 DSL 的一条语句，字段按 kind 取用。"""
+
     kind: str  # bin | shl | shr | mod | where | neg | hash | loop | sum | max | min | sbin
     dst: str  # temp name (block) or scalar name (reductions)
     a: str = ""
@@ -69,6 +77,8 @@ class Stmt:
 
 @dataclass
 class IntProgram:
+    """@brief 一份整数程序，能分别吐出 Triton 题面、标准答案和朴素 MSL 三个视图。"""
+
     # 一份程序三份视图：triton_source 是题面，evaluate 是标准答案，msl 是用来核对评测环境的朴素 Metal。
     seed: int
     stmts: list[Stmt] = field(default_factory=list)
@@ -77,6 +87,14 @@ class IntProgram:
     # -- generation ---------------------------------------------------------------------------------
     @staticmethod
     def generate(seed: int, n_stmts: int = 105) -> "IntProgram":
+        """@brief 按种子抽出一份约 n_stmts 条语句的整数程序。
+
+        sum、max、min 至少各一条。生成器避开负取模、除法，以及移位量大于等于 32 的语句。
+
+        @param seed 生成用的种子，同时决定题目名里的数字。
+        @param n_stmts 抽取的语句条数。
+        @return 新的 ``IntProgram``。
+        """
         # 按种子抽约 n_stmts 条语句。sum、max、min 至少各一条。生成器避开负取模、除法，以及移位量大于等于 32 的语句。
         rng = random.Random(seed)
         prog = IntProgram(seed)
@@ -154,6 +172,13 @@ class IntProgram:
 
     # -- views ---------------------------------------------------------------------------------------
     def triton_source(self, n: int) -> str:
+        """@brief 渲染视图一：发给模型的 Triton 题面。
+
+        结果是最后四个块变量相异或，再加上 ``idx & 7``。
+
+        @param n 元素总数，写进头注释。
+        @return 完整的 Triton 源码文本。
+        """
         # 视图一，发给模型的 Triton 正文。结果是最后四个块变量相异或，再加上 idx & 7。
         L = [
             "# Triton specification: a synthetic integer kernel (no recognizable algorithm). All arithmetic is int32 with wraparound.",
@@ -179,9 +204,19 @@ class IntProgram:
 
     @staticmethod
     def _c(v: int) -> str:
+        """@brief 把整数常量渲染成十六进制字面量。
+
+        @param v 常量值。
+        @return 带 ``0x`` 前缀的文本。
+        """
         return f"{v:#x}"
 
     def _triton_stmt(self, s: Stmt) -> list[str]:
+        """@brief 把一条语句渲染成 Triton 源码的若干行。
+
+        @param s 待渲染的语句。
+        @return 该语句的源码行列表。
+        """
         d = s.dst
         if s.kind == "bin":
             rhs = s.b if s.b else self._c(s.const)
@@ -206,8 +241,18 @@ class IntProgram:
         return [f"{d} = {red}({s.a}, axis=0)"]
 
     def evaluate(self, x: torch.Tensor, y: torch.Tensor, k: int = SCALAR_K) -> torch.Tensor:
+        """@brief 渲染视图二：与 Triton 语句逐步对应的标准答案。
+
+        Exact reference: int64 arithmetic wrapped to int32 after every operation. x, y: [P*BLOCK] int.
+
+        右移沿用已折回的值做算术右移；bin、sbin、左移、取负、hash、循环和 sum 的结果再经 wrap。
+
+        @param x 输入 x，展平成 P*BLOCK 个元素。
+        @param y 输入 y，形状同 x。
+        @param k 运行时标量参数 K。
+        @return int32 结果，形状同 x。
+        """
         # 视图二，标准答案，和 Triton 语句逐步对应。右移沿用已折回的值做算术右移；bin、sbin、左移、取负、hash、循环和 sum 的结果再经 wrap。
-        """Exact reference: int64 arithmetic wrapped to int32 after every operation. x, y: [P*BLOCK] int."""
         P = x.numel() // BLOCK
         env: dict[str, torch.Tensor] = {
             "xv": x.reshape(P, BLOCK).to(torch.int64),
@@ -266,8 +311,15 @@ class IntProgram:
         return res.reshape(-1).to(torch.int32)
 
     def msl(self) -> str:
+        """@brief 渲染视图三：用 uint 做回绕的朴素 MSL，评测拿它检查环境。
+
+        Naive MSL translation (uint arithmetic for guaranteed wraparound).
+
+        归约先在 simdgroup 内做，再合并 NUM_WARPS 个槽。
+
+        @return 完整的 Metal 源码文本。
+        """
         # 视图三，朴素 MSL，用 uint 做回绕。归约先在 simdgroup 内做，再合并 NUM_WARPS 个槽。评测拿它检查环境。
-        """Naive MSL translation (uint arithmetic for guaranteed wraparound)."""
         names_b = {"xv", "yv", "idx"} | {s.dst for s in self.stmts if s.kind not in ("sum", "max", "min")}
         L = ["inline uint sh(int v, uint k) { return uint(v >> k); }", ""]
         L += [
@@ -341,6 +393,15 @@ INT_N = {"paper": 1 << 16, "small": 1 << 12}
 
 
 def _build_int(name: str, size: str) -> Task:
+    """@brief 按名字里的种子搭出一道整数题。
+
+    核名 ``sem_int_kernel``，``grid=(n/BLOCK, 1, 1)``，``threads=(THREADS, 1, 1)``，
+    缓冲 x、y、标量 K、输出 out，模型不能改这些。
+
+    @param name 题目名，形如 ``sem_int_<种子>``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的整数题 ``Task``。
+    """
     # 整数题的契约：核名 sem_int_kernel，grid=(n/BLOCK, 1, 1)，threads=(THREADS, 1, 1)，缓冲 x、y、标量 K、输出 out。模型不能改这些。
     seed = int(name[len(INT_PREFIX) :])
     prog = IntProgram.generate(seed)
@@ -383,11 +444,24 @@ def _build_int(name: str, size: str) -> Task:
 
 
 def _relu_as_written(x: torch.Tensor) -> torch.Tensor:
-    """``x > 0 ? x : 0``. NaN and negative zero become +0. ``torch.relu`` keeps both, so it is not this specification."""
+    """@brief 按题面写的那样算 ``x > 0 ? x : 0``。
+
+    ``x > 0 ? x : 0``. NaN and negative zero become +0. ``torch.relu`` keeps both, so it is not this specification.
+
+    @param x 输入张量。
+    @return 比较写法的结果。
+    """
     return torch.where(x > 0, x, torch.zeros_like(x))
 
 
 def _gelu_ref(x: torch.Tensor) -> torch.Tensor:
+    """@brief ``sem_gelu_named_relu`` 的标准答案：tanh 近似 GELU。
+
+    系数 0.7978845608028654 和 0.044715 与题面正文里的常数相同。
+
+    @param x 输入张量，已转成 float64。
+    @return GELU 结果。
+    """
     # sem_gelu_named_relu 的标准答案。系数 0.7978845608028654 和 0.044715 与下面题面正文里的常数相同。
     return 0.5 * x * (1.0 + torch.tanh(0.7978845608028654 * (x + 0.044715 * x**3)))
 
@@ -471,6 +545,17 @@ GELU_NAIVE = """kernel void relu_kernel(device const {{T}}* x [[buffer(0)]],
 
 
 def build(name: str, dtype: str, size: str) -> Task:
+    """@brief 语义恢复题的总装：按名字选整数题、名字错位题、注意力错位题或 gemm 负累加题。
+
+    整数题走 ``_build_int``；两个名字错位题只换掉题面字符串；注意力走 ``odd_scale``；
+    gemm 只改题面和朴素 Metal 的累加，contract 用 gemm 的那一份。
+
+    @param name 题目名，``sem_`` 前缀。
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    @raises KeyError 名字不在本模块认识的范围内时抛出。
+    """
     # sem_ 的总装。整数题走 _build_int；两个名字错位题换掉题面字符串；注意力走 odd_scale；gemm 只改题面和朴素 Metal 的累加，contract 用 gemm 的那一份。
     from ._common import check_dtype, load_text
     from ._elementwise import BLOCK_SIZE, NUM_WARPS, SIZES, build_elementwise

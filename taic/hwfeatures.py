@@ -56,7 +56,14 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def strip_comments_and_strings(src: str) -> str:
-    """Blank ``//`` and ``/* */`` comments and the inside of string / char literals (length and newlines are preserved)."""
+    """@brief 清空 ``//``、``/* */`` 注释以及字符串 / 字符字面量的内部（长度与换行位置保持不变）。
+
+    清空而非删除：偏移量与行号在后续正则扫描里仍然对得上，注释里的 ``simdgroup_matrix`` 之类不会被当成证据。
+    数字分隔符（如 ``1'000``）不是字符字面量，原样保留。
+
+    @param src 原始 MSL 源码
+    @return 与输入等长的文本，注释与字面量内部已替换为空格
+    """
     out: list[str] = []
     i, n = 0, len(src)
     while i < n:
@@ -95,12 +102,25 @@ def strip_comments_and_strings(src: str) -> str:
 
 
 def normalize(code: str) -> str:
-    """Drop the ``metal::`` qualifier (same length, so offsets still match) so ``metal::threadgroup_barrier`` is seen as ``threadgroup_barrier``."""
+    """@brief 抹掉 ``metal::`` 限定符，让 ``metal::threadgroup_barrier`` 以 ``threadgroup_barrier`` 的形式被看到。
+
+    用等长空格替换，偏移量不变。
+
+    @param code 源码文本
+    @return 与输入等长、``metal::`` 已换成空格的文本
+    """
     return re.sub(r"\bmetal\s*::", lambda m: " " * len(m.group(0)), code)
 
 
 def match_close(s: str, i: int, open_ch: str, close_ch: str) -> int:
-    """Index of the bracket closing the one at ``s[i]`` (-1 if unbalanced)."""
+    """@brief 找与 ``s[i]`` 处括号配对的闭括号下标。
+
+    @param s 待扫描文本
+    @param i 开括号所在下标
+    @param open_ch 开括号字符（``(`` / ``[`` / ``{``）
+    @param close_ch 闭括号字符
+    @return 配对闭括号的下标；括号不配对时返回 -1
+    """
     depth = 0
     for j in range(i, len(s)):
         ch = s[j]
@@ -114,7 +134,12 @@ def match_close(s: str, i: int, open_ch: str, close_ch: str) -> int:
 
 
 def split_top(s: str, sep: str = ",") -> list[str]:
-    """Split ``s`` at ``sep`` outside (), [], {} and simple template brackets ``<type, 8, 8>``."""
+    """@brief 只在括号外切分 ``s``：(), []、{} 以及简单模板括号 ``<type, 8, 8>`` 内的分隔符不切。
+
+    @param s 待切分文本（形参列表、MMA 实参列表等）
+    @param sep 分隔符，默认逗号
+    @return 去空白后的片段列表（至少一项）
+    """
     parts: list[str] = []
     depth = 0
     cur: list[str] = []
@@ -142,6 +167,12 @@ def split_top(s: str, sep: str = ",") -> list[str]:
 
 
 def line_of(text: str, pos: int) -> int:
+    """@brief 把字符偏移换算成从 1 开始的行号。
+
+    @param text 文本
+    @param pos 从 0 开始的字符偏移（负数按 0 处理）
+    @return 1 起的行号
+    """
     return text.count("\n", 0, max(pos, 0)) + 1
 
 
@@ -149,6 +180,13 @@ _ROOT_RX = re.compile(r"^[\s(&*]*(?:thread|device|threadgroup|constant|const|aut
 
 
 def root_name(expr: str) -> str | None:
+    """@brief 取表达式的根标识符：跳过前导空白与 ``(&*`` 之后的第一个标识符。
+
+    用来把 ``(&acc)[i]``、``*op`` 之类的实参还原成 ``acc`` / ``op``，好回查 fragment 的声明。
+
+    @param expr 表达式文本
+    @return 根标识符；表达式不以标识符开头时返回 None
+    """
     m = re.match(r"^[\s(&*]*([A-Za-z_]\w*)", expr)
     return m.group(1) if m else None
 
@@ -164,7 +202,14 @@ CAST_WORDS = r"(?:u?int|ulong|long|ushort|short|size_t|uchar|char|float|half|boo
 
 
 def type_bytes(t: str) -> tuple[int, int, int] | None:
-    """(bytes of one element, lanes, bytes of the whole type) for MSL scalar / vector types; None if unknown."""
+    """@brief 给出 MSL 标量 / 向量类型的字节布局。
+
+    认得标量表、``half4`` / ``packed_float3`` 这类向量写法、``simdgroup_*8x8`` fragment 与 ``vec<T, N>`` 模板；
+    非 packed 的 3 元素向量按 4 lane 对齐（``float3`` 占 16 B），packed 的按实际 lane 数算。
+
+    @param t 类型文本，可带 ``const`` / ``constant`` / ``device`` / ``threadgroup`` / ``thread`` 修饰
+    @return ``(单个元素字节数, lane 数, 整个类型字节数)``；未知类型返回 None
+    """
     t = t.strip()
     t = re.sub(r"^(?:const|constant|device|threadgroup|thread)\s+", "", t)
     if t in SCALAR_BYTES:
@@ -184,23 +229,56 @@ def type_bytes(t: str) -> tuple[int, int, int] | None:
 
 
 class _Eval(ast.NodeVisitor):
+    """@brief 在已知常量表上对 Python AST 做数值求值的访问器。
+
+    只接受 C 常量表达式里会出现的节点：字面量、名字、一元 / 二元运算，以及 ``min`` / ``max`` / 类型转换调用；
+    其余节点交给 ``generic_visit`` 直接拒绝，于是 ``eval_expr`` 遇到复杂表达式时能稳妥地返回 None。
+    """
+
     def __init__(self, names: dict[str, float]):
+        """@brief 记下求值时可以引用的名字表。
+
+        @param names 名字到数值的映射（契约常量与源码里已求值的常量定义）
+        """
         self.names = names
 
     def visit_Expression(self, node):  # noqa: N802
+        """@brief 从 ``mode="eval"`` 的根节点进入，求值其表达式体。
+
+        @param node ``ast.Expression`` 节点
+        @return 表达式体的数值
+        """
         return self.visit(node.body)
 
     def visit_Constant(self, node):  # noqa: N802
+        """@brief 取整型 / 浮点字面量的值。
+
+        @param node ``ast.Constant`` 节点
+        @return 字面量的数值
+        @raises ValueError 字面量不是 int / float（例如字符串）时抛出
+        """
         if isinstance(node.value, (int, float)):
             return node.value
         raise ValueError("const")
 
     def visit_Name(self, node):  # noqa: N802
+        """@brief 从名字表里取变量的值。
+
+        @param node ``ast.Name`` 节点
+        @return 该名字对应的数值
+        @raises KeyError 名字不在常量表里时抛出（未知符号即放弃整条求值）
+        """
         if node.id in self.names:
             return self.names[node.id]
         raise KeyError(node.id)
 
     def visit_UnaryOp(self, node):  # noqa: N802
+        """@brief 求值一元运算：取负、取正与按位取反。
+
+        @param node ``ast.UnaryOp`` 节点
+        @return 结果的数值
+        @raises ValueError 运算符不是 ``-x`` / ``+x`` / ``~x`` 时抛出
+        """
         v = self.visit(node.operand)
         if isinstance(node.op, ast.USub):
             return -v
@@ -211,6 +289,14 @@ class _Eval(ast.NodeVisitor):
         raise ValueError("unary")
 
     def visit_BinOp(self, node):  # noqa: N802
+        """@brief 求值二元算术 / 位运算。
+
+        支持 ``+ - * / // % << >> & | ^``；整数相除向零截断且除数为 0 时得 0，``%`` 走 ``math.fmod`` 再取整。
+
+        @param node ``ast.BinOp`` 节点
+        @return 结果的数值
+        @raises ValueError 运算符不在支持列表里时抛出
+        """
         a, b = self.visit(node.left), self.visit(node.right)
         op = node.op
         if isinstance(op, ast.Add):
@@ -240,6 +326,12 @@ class _Eval(ast.NodeVisitor):
         raise ValueError("binop")
 
     def visit_Call(self, node):  # noqa: N802
+        """@brief 求值 ``min`` / ``max`` 与整型、浮点强制转换调用。
+
+        @param node ``ast.Call`` 节点
+        @return 结果的数值（``min`` / ``max`` 取全体实参的极值，转换调用只取第一个实参）
+        @raises ValueError 被调函数不在白名单里时抛出
+        """
         fn = node.func.id if isinstance(node.func, ast.Name) else ""
         args = [self.visit(a) for a in node.args]
         if fn in ("min", "fmin"):
@@ -253,11 +345,24 @@ class _Eval(ast.NodeVisitor):
         raise ValueError("call")
 
     def generic_visit(self, node):
+        """@brief 兜底访问器：遇到不支持的节点即抛 ValueError，用于拒绝复杂表达式。
+
+        @param node 任意不被支持的 AST 节点
+        @raises ValueError 总是抛出，异常信息是节点类型名
+        """
         raise ValueError(type(node).__name__)
 
 
 def eval_expr(expr: str, consts: dict[str, float]) -> float | int | None:
-    """Evaluate a C-like constant expression (+ - * / % << >> & | ^ ~, min/max, casts, sizeof, literals); None if any name is unknown."""
+    """@brief 求值一条 C 风格常量表达式。
+
+    先把 ``sizeof(T)``、C 强转、十六进制与整型 / 浮点后缀换成 Python 能解析的形式，再交给 ``_Eval``；
+    支持 ``+ - * / % << >> & | ^ ~``、``min`` / ``max``、转换调用与字面量。
+
+    @param expr 表达式文本（可带结尾分号）
+    @param consts 已知常量（契约常量与源码常量）
+    @return 数值；式子为空、含 ``?`` 三元运算、出现未知名字或解析失败时返回 None
+    """
     e = expr.strip().rstrip(";")
     if not e or "?" in e:
         return None
@@ -285,7 +390,15 @@ _CONST_DECL_RX = re.compile(
 
 
 def collect_constants(code: str, base: dict[str, float] | None = None) -> dict[str, float]:
-    """Fixed point over every ``constexpr`` / ``constant`` / ``#define`` integer or float definition that evaluates with the known names."""
+    """@brief 对 ``constexpr`` / ``constant`` / ``#define`` 整型或浮点定义做不动点求值。
+
+    反复扫到没有新进展为止（最多 8 轮），只保留能靠已知名字求出值的定义；``base`` 作起点
+    （源码里同名定义若可求值则覆盖它）。
+
+    @param code 源码文本
+    @param base 外来的已知常量（契约常量），可为 None
+    @return 常量名到数值的字典（含 ``base`` 里的项）
+    """
     consts: dict[str, float] = dict(base or {})
     pending: list[tuple[str, str]] = []
     for m in _CONST_DECL_RX.finditer(code):
@@ -316,6 +429,16 @@ def collect_constants(code: str, base: dict[str, float] | None = None) -> dict[s
 
 @dataclass
 class Func:
+    """@brief 源码里解析出的一个函数定义（``kernel`` 或普通 helper）。
+
+    字段：
+    - ``name`` 函数名。
+    - ``header`` 函数名之前的那段文本（返回类型与 ``kernel`` / ``static`` 等修饰符）。
+    - ``params`` 括号内的形参文本，尚未切分。
+    - ``body`` 花括号内的函数体文本。
+    - ``is_kernel`` ``header`` 里是否出现 ``kernel`` 关键字。
+    """
+
     name: str
     header: str
     params: str
@@ -327,6 +450,14 @@ _KEYWORDS = {"if", "for", "while", "switch", "return", "sizeof", "else", "do", "
 
 
 def parse_functions(code: str) -> list[Func]:
+    """@brief 扫出源码里的全部函数定义（只看最外层，嵌在花括号里的调用不算）。
+
+    对每个 ``name(`` 检查：括号要配对，后面允许 ``const`` 与 ``[[attribute]]``，再跟 ``{``；
+    ``if`` / ``for`` / ``while`` / ``switch`` / ``return`` / ``sizeof`` 等关键字直接跳过。
+
+    @param code 已抹掉注释、``metal::`` 并展开宏的源码
+    @return 按出现顺序排列的 ``Func`` 列表
+    """
     depth = [0] * (len(code) + 1)
     d = 0
     for i, ch in enumerate(code):
@@ -367,7 +498,15 @@ def parse_functions(code: str) -> list[Func]:
 
 
 def _stmt_end(code: str, i: int) -> int:
-    """End (exclusive) of the statement starting at ``i`` (a braced block, a control statement or an expression statement)."""
+    """@brief 给出从 ``i`` 开始的语句的结束位置（开区间）。
+
+    形态：花括号块取配对括号之后；``for`` / ``while`` / ``if`` / ``switch`` 递归到其体（``if`` 会把 ``else`` 分支也算进来）；
+    ``#pragma`` 行连同其后一条语句一起算；其余按括号深度找到第一个 ``;``。
+
+    @param code 已抹掉注释与字符串的源码
+    @param i 语句起始下标（前导空白会被跳过）
+    @return 语句结束下标（开区间）；扫不到结尾或括号不配对时返回 ``len(code)``
+    """
     n = len(code)
     while i < n and code[i].isspace():
         i += 1
@@ -405,7 +544,11 @@ def _stmt_end(code: str, i: int) -> int:
 
 
 def find_loops(code: str) -> list[tuple[int, int, int]]:
-    """(start, body_start, end) of every ``for`` / ``while`` loop in ``code``."""
+    """@brief 找出 ``code`` 里每一个 ``for`` / ``while`` 循环。
+
+    @param code 已抹掉注释与字符串的源码
+    @return 每个循环的 ``(start, body_start, end)``（起始下标、循环体起始下标、结束下标）；括号不配对的循环直接跳过
+    """
     loops = []
     for m in re.finditer(r"\b(for|while)\s*\(", code):
         po = m.end() - 1
@@ -417,6 +560,14 @@ def find_loops(code: str) -> list[tuple[int, int, int]]:
 
 
 def iter_statements(code: str) -> Iterator[tuple[int, str]]:
+    """@brief 逐个产出语句：``(起始偏移, 语句文本)``。
+
+    跳过空白、空语句（``;``）、花括号、``#`` 预处理行，以及控制流头部（``for (…)`` / ``while (…)`` /
+    ``if (…)`` / ``switch (…)`` / ``else`` / ``do``），因此循环体内的语句照样产出，头部本身不产出。
+
+    @param code 已内联 helper、展开宏的源码
+    @return ``(pos, 语句文本)`` 迭代器
+    """
     i, n = 0, len(code)
     while i < n:
         while i < n and (code[i].isspace() or code[i] in "{};"):
@@ -450,7 +601,14 @@ def iter_statements(code: str) -> Iterator[tuple[int, str]]:
 
 
 def _assign_split(st: str) -> tuple[str, str] | None:
-    """(lhs, rhs) of the first top-level assignment (``=`` or a compound ``op=``) of a statement; None for non-assignments."""
+    """@brief 取一条语句里第一个顶层赋值（``=`` 或复合 ``op=``）的左右两边。
+
+    跳过 ``==`` / ``!=`` / ``<=`` / ``>=`` / ``<<`` / ``>>`` 这类比较与移位，并从左边去掉尾部的运算符，
+    使 ``a[i] += x`` 给出 ``("a[i]", "x")``。
+
+    @param st 单条语句文本
+    @return ``(lhs, rhs)``；语句里没有顶层赋值时返回 None
+    """
     depth = 0
     for i, ch in enumerate(st):
         if ch in "([":
@@ -472,6 +630,13 @@ def _assign_split(st: str) -> tuple[str, str] | None:
 
 
 def _param_names(params: str) -> list[str]:
+    """@brief 取形参名列表。
+
+    先去掉 ``[[…]]`` 属性，再在每段末尾找标识符（跳过数组维度），解析不出名字的位置给空串。
+
+    @param params 括号内的形参文本
+    @return 与形参顺序一一对应的形参名；无法解析的形参是空字符串
+    """
     names = []
     for p in split_top(params):
         p = re.sub(r"\[\[.*?\]\]", "", p).strip()
@@ -481,9 +646,16 @@ def _param_names(params: str) -> list[str]:
 
 
 def expand_calls(body: str, helpers: dict[str, Func], depth: int = 4) -> str:
-    """Inline statement-level calls of helper functions (formal parameters replaced by the actual argument text).
+    """@brief 内联语句级的 helper 调用：形参换成实参文本。
 
-    Only the *order* of events (load, MMA, store, barrier) matters for the analyses that use the result, so no renaming of locals is done."""
+    仅当调用自成一条语句（后面紧跟 ``;``、前面是语句边界）时才内联；出现在表达式里的有返回值调用不内联。
+    用到结果的各分析只关心事件顺序（load、MMA、store、barrier），所以不对局部变量重命名。
+
+    @param body 待内联的函数体文本
+    @param helpers helper 名到 ``Func`` 的映射
+    @param depth 递归内联的剩余层数，用完即停
+    @return 内联后的函数体文本
+    """
     if depth <= 0 or not helpers:
         return body
     pat = re.compile(r"\b(" + "|".join(map(re.escape, helpers)) + r")\s*\(")
@@ -526,7 +698,14 @@ _DEF_RX = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)\(([^)\n]*)\)[ \t
 
 
 def expand_macros(code: str, depth: int = 3) -> str:
-    """Expand function-like ``#define`` macros (kernels written with macros keep their MMA / loads inside the macro body)."""
+    """@brief 展开函数式 ``#define`` 宏（用宏写的 kernel，MMA 与 load 都在宏体里，不展开就看不到）。
+
+    宏的定义本身会被抹成等长空格保留偏移；带续行符的宏体会先接成一行。实参个数不足时只展开宏体、不做形参替换。
+
+    @param code 已抹掉注释与字符串的源码
+    @param depth 最多展开几轮，防止宏套宏时死循环
+    @return 展开后的源码；源码里没有函数式宏时原样返回
+    """
     macros: dict[str, tuple[list[str], str]] = {}
 
     def grab(m: re.Match) -> str:
@@ -563,10 +742,24 @@ def expand_macros(code: str, depth: int = 3) -> str:
 
 
 def _num(v: Any) -> int | None:
+    """@brief 把恰好取整数值的数字收成 int。
+
+    @param v 任意值
+    @return ``int(v)``；非数值或带小数部分时返回 None
+    """
     return int(v) if isinstance(v, (int, float)) and v == int(v) else None
 
 
 def _space_of(expr: str, tg_names: set[str], dev_names: set[str]) -> str:
+    """@brief 按表达式里出现的标识符判断它指向哪个地址空间。
+
+    threadgroup 侧优先：同一个式子同时命中两侧时判为 ``threadgroup``。
+
+    @param expr 表达式文本（如 ``simdgroup_load`` 的第二个实参）
+    @param tg_names threadgroup 侧的名字集合（数组与 ``threadgroup`` 指针）
+    @param dev_names device / constant 侧的名字集合
+    @return ``threadgroup`` / ``device`` / ``unknown``
+    """
     ids = set(re.findall(r"[A-Za-z_]\w*", expr))
     if ids & tg_names:
         return "threadgroup"
@@ -576,10 +769,26 @@ def _space_of(expr: str, tg_names: set[str], dev_names: set[str]) -> str:
 
 
 def analyze_source(source: str, *, consts: dict[str, float] | None = None, kernel_name: str | None = None, kernel_names: list[str] | None = None) -> dict:
-    """Source-level evidence (everything the text proves). ``consts`` are the contract constants (BLOCK_M, N, ...).
+    """@brief 收集 SOURCE 级证据：只凭文本能证明的一切。
 
-    ``kernel_names`` limits the scan to those kernels and the helpers they reach. An unused kernel in the
-    same file does not count. Without it, the named kernel, or else the first kernel, is the scan.
+    三级证据里只有这一级不需要工具链：注释与字符串先被清空（注释里的 ``simdgroup_matrix`` 不算数），
+    函数式宏展开、kernel 调到的 helper 内联（形参换成实参）、常量（契约头与 ``constant constexpr`` 定义）求值，
+    于是 tile 数与 threadgroup 字节数是真实数字。COMPILED 级证据由 ``compile_air`` 给，MEASURED 级实测数字
+    由 ``measured_from_report`` 给，三级从不混用。
+
+    ``kernel_names`` 把扫描限制在指定 kernel 及其可达的 helper 上，同文件里没被启动的 kernel 不计入；
+    不给它时用 ``kernel_name``，再退回第一个 ``kernel``。
+
+    @param source 候选 kernel 的 MSL 源码
+    @param consts 契约常量（``BLOCK_M``、``N`` 等），参与常量求值
+    @param kernel_name 只扫这个 kernel（源码里没有同名 kernel 时退回第一个）
+    @param kernel_names 只扫这些 kernel 及其可达 helper，优先于 ``kernel_name``
+    @return 证据字典：``kernel`` / ``n_kernels`` / ``lines`` / ``launched_kernels``（给了 ``kernel_names`` 时）/ ``error``
+        （找不到 kernel 时）/ ``helpers_used`` / ``helpers_unused`` / ``n_constants_evaluated``，以及 ``matrix``（MMA 站点、
+        累加器 fragment 与类型、load / store 落在哪个空间、tensor API）、``sync``（barrier 站点与 flag、主循环）、
+        ``memory``（``_summarize_sites`` 的访存宽度）、``global_read_passes``、``threadgroup``（数组、声明字节数、padding、
+        双缓冲与 register prefetch 证据）、``simd``、``math``、``unroll``、``atomics``、``async_copy``、``launch``、
+        ``online_softmax``、``epilogue``、``bit_packing``、``registers``、``buffers``（输入 / 输出缓冲名）
     """
     raw_code = strip_comments_and_strings(source)
     code = expand_macros(normalize(raw_code))
@@ -1042,6 +1251,12 @@ def analyze_source(source: str, *, consts: dict[str, float] | None = None, kerne
 
 
 def _summarize_sites(sites: list[dict]) -> dict:
+    """@brief 把逐点收集的访存证据汇总成四类宽度直方图。
+
+    @param sites 每个元素含 ``space`` / ``kind`` / ``bytes``（另有 ``type`` / ``via`` / ``pos``）的访问点列表
+    @return ``device_load`` / ``device_store`` / ``threadgroup_load`` / ``threadgroup_store`` 四项，每项是
+        ``{"sites": 访问点数, "max_bytes": 最宽访问字节数, "widths": {字节数: 次数}}``（无访问点时为 0 与空表）
+    """
     def agg(space: str, kind: str):
         bs = [s["bytes"] for s in sites if s["space"] == space and s["kind"] == kind]
         return {"sites": len(bs), "max_bytes": max(bs) if bs else 0, "widths": {str(b): bs.count(b) for b in sorted(set(bs))}}
@@ -1058,7 +1273,12 @@ PARSER_VERSION = 8  # bump when parse_air changes: it is part of the compile-cac
 
 
 def metal_toolchain() -> str | None:
-    """Path of the Metal compiler driver (None if the toolchain component is not installed)."""
+    """@brief 找本机 Metal 编译器驱动的路径（走 ``xcrun -sdk macosx --find metal``）。
+
+    结果缓存在模块级 ``_TOOLCHAIN`` 里，一个进程只查一次；命令失败或 20 s 超时都当作没有工具链。
+
+    @return 编译器驱动路径；工具链组件未安装时为 None
+    """
     if "metal" not in _TOOLCHAIN:
         try:
             r = subprocess.run(["xcrun", "-sdk", "macosx", "--find", "metal"], capture_output=True, text=True, timeout=20)
@@ -1069,12 +1289,13 @@ def metal_toolchain() -> str | None:
 
 
 def toolchain_fingerprint() -> str:
-    """A short identity of the Metal compiler actually installed on this machine.
+    """@brief 本机实际装着的 Metal 编译器的一份短标识。
 
-    The AIR cache key must move with the toolchain: the same source produces different intrinsics,
-    fragment layout and even a different resolved ``-std`` after an Xcode update, so evidence stored
-    by the old compiler must not be served as if the current one had produced it. Path + size +
-    mtime is cheap and changes on an upgrade; a missing tool is its own value.
+    AIR 缓存键必须跟着工具链走：同一份源码在 Xcode 升级后可能产出不同的 intrinsic、不同的 fragment 布局，
+    连 ``-std`` 的解析结果都会变，旧编译器留下的证据不能被当成当前编译器的产物发出去。路径 + 大小 + mtime
+    足够便宜，升级时必然变化；工具缺失时用单独的值表示。
+
+    @return ``驱动器名:字节数:mtime``；工具缺失时为 ``no-toolchain``，``stat`` 失败时为 ``驱动器名:unknown``
     """
     if "fingerprint" not in _TOOLCHAIN:
         tool = metal_toolchain()
@@ -1093,6 +1314,11 @@ _LL_BYTES = {"i1": 1, "i8": 1, "i16": 2, "i32": 4, "i64": 8, "half": 2, "bfloat"
 
 
 def _ll_type_bytes(ty: str) -> int:
+    """@brief 算 LLVM 标量或向量类型 ``<N x T>`` 的字节数。
+
+    @param ty LLVM 类型文本，如 ``<4 x i32>``、``i64``
+    @return 字节数；未知类型返回 0
+    """
     m = re.fullmatch(r"<(\d+) x (\w+)>", ty.strip())
     if m:
         return int(m.group(1)) * _LL_BYTES.get(m.group(2), 0)
@@ -1100,7 +1326,11 @@ def _ll_type_bytes(ty: str) -> int:
 
 
 def _ll_size(ty: str) -> int:
-    """Byte size of an LLVM type such as ``[64 x [80 x half]]``, ``<4 x i32>`` or ``float``."""
+    """@brief 算 LLVM 类型（可嵌套数组）的字节大小。
+
+    @param ty LLVM 类型文本，如 ``[64 x [80 x half]]``、``<4 x i32>`` 或 ``float``
+    @return 字节数（数组按维数相乘后落到 ``_ll_type_bytes``）；未知类型返回 0
+    """
     ty = ty.strip()
     m = re.match(r"\[(\d+) x (.+)\]$", ty)
     if m:
@@ -1109,7 +1339,19 @@ def _ll_size(ty: str) -> int:
 
 
 def parse_air(text: str) -> dict:
-    """Facts from the AIR (LLVM IR) text of one compiled kernel."""
+    """@brief 从一份 kernel 的 AIR（LLVM IR）文本里取事实。
+
+    本函数的解析结果属于编译缓存键的一部分：改动时得同步抬 ``PARSER_VERSION``。fragment 的元素类型两种写法都认
+    （Xcode 27 直接写在 ``simdgroup_matrix`` 上，老 Xcode 用内层 ``_simdgroup_matrix`` 类型），换工具链时 tile 证据不会丢。
+
+    @param text AIR 文本（``metal -S -emit-llvm`` 的输出）
+    @return 证据字典：``intrinsics``（``air.*`` 调用计数）、``matrix``（multiply_accumulate / multiply / load / store /
+        init 计数、累加器与操作数类型、load / store 落在哪个空间）、``simd``、``math``、``barriers``
+        （workgroup / simdgroup 计数与 flag）、``device_load_bytes`` / ``device_store_bytes`` /
+        ``threadgroup_load_bytes`` / ``threadgroup_store_bytes``（宽度直方图）、``tg_globals`` 与 ``tg_global_bytes``
+        （threadgroup 全局量）、``fragment_arrays`` 与 ``fragment_tiles_f32``、``fast_flags`` / ``nonfast_fp_ops``、
+        ``atomics``、``ir_lines``
+    """
     calls = re.findall(r"\bcall\b[^\n@]*@(air\.[\w.]+)\(", text)
     intr: dict[str, int] = {}
     for c in calls:
@@ -1185,12 +1427,33 @@ def parse_air(text: str) -> dict:
 
 
 def air_cache_key(full_source: str, *, std: str = "metal4.0", fast_math: bool = True) -> str:
-    """Cache key of one AIR compile: parser, requested std, fast-math, the resolved toolchain and the source."""
+    """@brief 算一次 AIR 编译的缓存键。
+
+    @param full_source 完整源码（契约头 + 候选）
+    @param std 请求的 ``-std``，默认 ``metal4.0``
+    @param fast_math 是否开 fast-math
+    @return sha1 十六进制摘要，键里含 parser 版本、std、fast-math、工具链指纹与源码
+    """
     return hashlib.sha1((f"v{PARSER_VERSION}|{std}|{fast_math}|{toolchain_fingerprint()}|" + full_source).encode()).hexdigest()
 
 
 def compile_air(full_source: str, *, std: str = "metal4.0", fast_math: bool = True, timeout: float = 90.0, cache_dir: Path | None = None) -> dict:
-    """Compile ``full_source`` (contract header + candidate) to AIR text and parse it. Never touches the GPU."""
+    """@brief 把 ``full_source``（契约头 + 候选）编译成 AIR 文本并解析。全程不碰 GPU。
+
+    缓存：给了 ``cache_dir`` 就以 ``air_cache_key`` 为名读写 ``<key>.json``，命中即返回，写盘失败被忽略。
+    超时：单次编译受 ``timeout`` 约束，超时直接返回错误（不写缓存）。std 回退：被工具链以 ``invalid value``
+    拒绝的首选 std 会依次退到 ``metal3.2``、``metal3.1``。
+    限制：AIR 是 GPU 后端的输入而非最终机器码，调用点计数是静态的（循环体只算一次）。
+
+    @param full_source 完整源码（契约头 + 候选 kernel）
+    @param std 首选 ``-std``，默认 ``metal4.0``
+    @param fast_math 是否带 ``-ffast-math``（``False`` 时带 ``-fno-fast-math``）
+    @param timeout 单次编译超时秒数，默认 90
+    @param cache_dir 缓存目录；None 表示不缓存
+    @return 证据字典：``ok`` 表示是否成功；失败时带 ``error``（工具链缺失时另有 ``skipped``，超时会报出秒数），
+        编译器报错时只留第一行 ``error:`` 并把路径前缀裁成 ``k.metal:``；成功时含 ``std``（实际用上的版本）、
+        ``seconds`` 与 ``parse_air`` 的全部字段
+    """
     key = air_cache_key(full_source, std=std, fast_math=fast_math)
     cf = cache_dir / f"{key}.json" if cache_dir else None
     if cf and cf.exists():
@@ -1315,11 +1578,25 @@ VERDICTS = ("used and effective", "present but not effective", "expected but mis
 
 
 def base_task(task: str | None) -> str | None:
+    """@brief 去掉任务名里的 ``@`` 后缀，得到基础任务名。
+
+    @param task 任务名，如 ``gemm@aot``，可为 None
+    @return 基础任务名；``task`` 为空时返回 None
+    """
     return task.split("@")[0] if task else None
 
 
 def detect_features(src: dict, comp: dict | None, pipeline: dict | None = None) -> dict[str, dict]:
-    """Per feature: present (source), compiled confirmation, detail."""
+    """@brief 逐个特性给出“源码里有没有、AIR 有没有确认、细节是什么”。
+
+    编译证据缺失（``comp`` 为 None 或 ``ok`` 为假）时 ``compiled`` 一律是 None，表示未确认而不是否认。
+
+    @param src ``analyze_source`` 的返回值（SOURCE 级证据）
+    @param comp ``compile_air`` 的返回值（COMPILED 级证据），可为 None
+    @param pipeline 预留的 pipeline 反射数据，当前函数体未使用
+    @return 特性 ID 到 ``{"present": 源码判定, "source": 同上, "compiled": AIR 是否确认或 None, "detail": 人类可读依据}``
+        的字典
+    """
     mat, mem, tg, simd = src["matrix"], src["memory"], src["threadgroup"], src["simd"]
     cm = (comp or {}).get("matrix", {}) if comp and comp.get("ok") else None
     ok = bool(comp and comp.get("ok"))
@@ -1374,7 +1651,15 @@ def detect_features(src: dict, comp: dict | None, pipeline: dict | None = None) 
 
 @dataclass
 class Ceilings:
-    """The no-feature performance ceilings a candidate of a task is compared against."""
+    """@brief 一个任务的候选要被对比的“无特性”性能天花板。
+
+    字段：
+    - ``naive_tflops`` 任务自带 naive 标量 kernel 的实测算力（TFLOP/s），优先使用。
+    - ``naive_gbps`` 任务自带 naive 标量 kernel 的实测带宽（GB/s），优先使用。
+    - ``peak_tflops`` 实测矩阵峰值（TFLOP/s），没有 naive 数值时按比例折算。
+    - ``peak_gbps`` 实测带宽峰值（GB/s），没有 naive 数值时按比例折算。
+    - ``source`` 这些数字的出处说明。
+    """
 
     naive_tflops: float | None = None
     naive_gbps: float | None = None
@@ -1383,6 +1668,13 @@ class Ceilings:
     source: str = ""
 
     def scalar_tflops(self) -> tuple[float | None, str]:
+        """@brief 给出标量 FMA 算力天花板。
+
+        优先用任务自己的 naive 标量 kernel 实测值；没有就按 ``SCALAR_OVER_MATRIX``（5.5 / 14.8 ≈ 0.37，来自
+        apple-m4-max 的 device.md：标量 FMA GEMM 约 5.5、厂商矩阵峰值约 14.8 TFLOP/s）折算实测矩阵峰值。
+
+        @return ``(TFLOP/s, 依据说明)``；两者都没有时返回 ``(None, "")``
+        """
         if self.naive_tflops:
             return self.naive_tflops, "task's naive scalar kernel"
         if self.peak_tflops:
@@ -1390,6 +1682,13 @@ class Ceilings:
         return None, ""
 
     def memory_gbps(self) -> tuple[float | None, str]:
+        """@brief 给出内存带宽天花板。
+
+        优先用任务自己的 naive 标量 kernel 实测值；没有就按 ``NAIVE_FRACTION_OF_PEAK_BW``（0.87，同一份 device.md
+        说 naive 标量版本已达到实测峰值的 80-87 %）折算实测带宽峰值。
+
+        @return ``(GB/s, 依据说明)``；两者都没有时返回 ``(None, "")``
+        """
         if self.naive_gbps:
             return self.naive_gbps, "task's naive scalar kernel"
         if self.peak_gbps:
@@ -1398,7 +1697,17 @@ class Ceilings:
 
 
 def perf_test(task: str | None, measured: dict | None, ceil: Ceilings | None) -> dict:
-    """Is the measured performance clearly above what the kernel reaches without the task family's primary feature?"""
+    """@brief 判断实测性能是否明显高于“没有任务族主特性”时该 kernel 能达到的水平。
+
+    阈值按任务族分：compute 用 ``achieved_tflops`` 对算力天花板，要求 ≥ ``EFFECT_MARGIN["compute"]``（1.10）；
+    elementwise / rowwise 用 ``achieved_gbps`` 对带宽天花板，要求 ≥ ``EFFECT_MARGIN["memory"]``（1.02）。
+
+    @param task 任务名（可带 ``@`` 后缀，按 ``TASK_FAMILY`` 定族）
+    @param measured ``measured_from_report`` 的返回值，可为 None
+    @param ceil 无特性天花板，可为 None（此时没有对照值）
+    @return 判定字典：``result`` 为 ``unmeasured``（没有 benchmark）/ ``unknown``（缺 roofline 数字或任务族未知）/
+        ``above`` / ``at``；后两者另含 ``kind``、``achieved``、``ceiling``、``ratio``、``ceiling_basis``、``unit``
+    """
     fam = TASK_FAMILY.get(base_task(task) or "", None)
     if not measured or measured.get("status") != "ok" or not measured.get("candidate_us"):
         return {"result": "unmeasured", "why": f"no benchmark (status {measured.get('status') if measured else 'n/a'})"}
@@ -1420,7 +1729,19 @@ def perf_test(task: str | None, measured: dict | None, ceil: Ceilings | None) ->
 
 
 def judge(task: str | None, feats: dict[str, dict], pt: dict) -> tuple[dict[str, dict], list[str]]:
-    """Attach expectation, verdict and attribution to every feature; return (features, 'expected but missing' ids, required first)."""
+    """@brief 给每个特性补上期望、判定与归因；返回 (features, ``expected but missing`` 的 ID，required 在前)。
+
+    判定词表：``used and effective``（实测高于天花板）/ ``present but not effective``（只有持平）/
+    ``present, not measured``（没有 benchmark）/ ``present, effect unknown``（任务族未知）/ ``present, not expected``
+    （有，但任务并不期望）/ ``expected but missing`` / ``not applicable``。
+    只有性能验证过的“有”才算有效：单项特性的加速比需要 ablation，所以除任务族主特性（``PRIMARY``）外
+    一律记 ``attribution: joint``。源码里有、AIR 里却没有的特性额外带 ``note``。
+
+    @param task 任务名（可带 ``@`` 后缀，用来查 ``EXPECTED`` 与 ``TASK_FAMILY``）
+    @param feats ``detect_features`` 的返回值，原地写入 ``expectation`` / ``attribution`` / ``verdict``
+    @param pt ``perf_test`` 的判定结果
+    @return ``(features, missing)``；``missing`` 里的 ID required 在前、recommended 在后
+    """
     exp = EXPECTED.get(base_task(task) or "", {})
     fam = TASK_FAMILY.get(base_task(task) or "", "")
     prim = PRIMARY.get(fam, set())
@@ -1452,6 +1773,17 @@ def judge(task: str | None, feats: dict[str, dict], pt: dict) -> tuple[dict[str,
 
 
 def summary_line(src: dict, comp: dict | None, feats: dict[str, dict], missing: list[str]) -> str:
+    """@brief 拼一行人类可读的摘要。
+
+    依次给矩阵单元、threadgroup staging（字节数 / padded / 双缓冲 / register prefetch）、向量访存宽度、SIMD 操作，
+    再补 online softmax、operand fragment、epilogue、bit packing、unroll 等附加项，最后列前 5 个缺失特性。
+
+    @param src SOURCE 级证据
+    @param comp COMPILED 级证据（参数保留，当前摘要文本不读它）
+    @param feats 已判定的特性表
+    @param missing 缺失特性 ID 列表（只取前 5 个）
+    @return 用 `` | `` 分隔的单行摘要
+    """
     mat, mem, tg = src["matrix"], src["memory"], src["threadgroup"]
     parts = []
     if mat["present"]:
@@ -1493,6 +1825,22 @@ def summary_line(src: dict, comp: dict | None, feats: dict[str, dict], missing: 
 
 @dataclass
 class HardwareFeatureReport:
+    """@brief 一个 kernel 的完整硬件特性报告：三级证据加判定。
+
+    字段：
+    - ``label`` 报告标签（run 名 / 用例名）。
+    - ``task`` 任务名，可为 None。
+    - ``dtype`` dtype 名，可为 None。
+    - ``source`` SOURCE 级证据（``analyze_source`` 的返回值）。
+    - ``compiled`` COMPILED 级证据（``compile_air`` 的返回值，可为 None）。
+    - ``measured`` MEASURED 级实测数字（``measured_from_report`` 的返回值，可为 None）。
+    - ``performance_test`` ``perf_test`` 的判定。
+    - ``features`` 特性 ID 到判定条目的映射。
+    - ``missing`` ``expected but missing`` 的特性 ID，required 在前。
+    - ``summary`` 单行摘要。
+    - ``partial`` 调用方标记的“报告不完整”。
+    - ``extra`` 调用方附加字段（如任务解析失败时的 ``task_error``）。
+    """
     label: str
     task: str | None
     dtype: str | None
@@ -1507,17 +1855,45 @@ class HardwareFeatureReport:
     extra: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
+        """@brief 展开成普通字典（``dataclasses.asdict``）。
+
+        @return 递归展开的 dict / list；里面的 ``set`` 仍是 ``set``，序列化交给 ``to_json``
+        """
         return dataclasses.asdict(self)
 
     def to_json(self, indent: int | None = None) -> str:
+        """@brief 序列化成 JSON 文本。
+
+        @param indent 传给 ``json.dumps`` 的缩进；None 表示单行
+        @return JSON 字符串（``set`` 会排成列表，其它不可序列化对象退化成 ``str``）
+        """
         return json.dumps(self.to_dict(), indent=indent, default=lambda o: sorted(o) if isinstance(o, set) else str(o))
 
 
 def build_report(source: str, *, label: str, task: str | None = None, dtype: str | None = None, size: str = "paper", measured: dict | None = None, ceilings: Ceilings | None = None,
                  compile_evidence: bool = True, cache_dir: Path | None = None, partial: bool = False, extra: dict | None = None, task_obj: Any = None,
                  compile_timeout: float = 90.0) -> HardwareFeatureReport:
-    """The whole pipeline for one kernel source: source evidence -> compiled evidence -> measured evidence -> verdicts.
-    ``task_obj`` (a ``tcenv.task.Task``) replaces the lookup of ``task`` by name when the caller already holds it."""
+    """@brief 一份 kernel 源码的整条流水线：源码证据 -> 编译证据 -> 实测证据 -> 判定。
+
+    任务能解析时，用契约常量参与常量求值，并把契约头和源码拼起来编译；launch 块解不开（有 ``taic-launch``
+    但 ``launch_math`` 返回 None）或没有契约头时，AIR 证据被抑制（``comp`` 标 ``skipped``），其余证据照旧。
+    任务解析失败只把原因记进 ``extra["task_error"]``，不会整个报错。
+
+    @param source 候选 kernel 的 MSL 源码
+    @param label 报告标签（run 名 / 用例名）
+    @param task 任务名；None 时不做契约头相关的证据
+    @param dtype dtype 名（默认在取任务时用 ``fp16``）
+    @param size 规模名，默认 ``paper``
+    @param measured 已存下的实测数据（``measured_from_report`` 的返回值）
+    @param ceilings 无特性性能天花板
+    @param compile_evidence 是否编译到 AIR（需要 Metal 工具链）
+    @param cache_dir AIR 缓存目录
+    @param partial 调用方标记该报告不完整
+    @param extra 附加字段（任务解析失败时追加 ``task_error``）
+    @param task_obj 已持有的 ``tcenv.task.Task``，替代按名查找
+    @param compile_timeout 单次 AIR 编译超时秒数
+    @return 填好的 ``HardwareFeatureReport``
+    """
     consts, header, kname = {}, "", None
     if task:
         try:
@@ -1552,6 +1928,16 @@ _TASK_CACHE: dict[tuple, Any] = {}
 
 
 def _get_task(name: str, dtype: str, size: str):
+    """@brief 按名取任务对象（带进程内缓存）。
+
+    ``tasks`` 是惰性 import 的（重，依赖 torch，纯源码分析并不需要），查到的结果按 ``(name, dtype, size)``
+    缓存在 ``_TASK_CACHE`` 里。
+
+    @param name 任务名
+    @param dtype dtype 名
+    @param size 规模名
+    @return ``tasks.get_task`` 返回的任务对象
+    """
     key = (name, dtype, size)
     if key not in _TASK_CACHE:
         sys.path.insert(0, str(REPO))
@@ -1576,6 +1962,11 @@ The ratio variant / original is the feature's contribution *in that kernel*; fea
 
 
 def _read_json(p: Path) -> Any:
+    """@brief 读一个 JSON 文件，读不到或解析失败时安静地返回 None。
+
+    @param p 文件路径
+    @return 解析后的对象；文件缺失、不可读或内容非法时为 None
+    """
     try:
         return json.loads(p.read_text())
     except (OSError, ValueError):
@@ -1583,7 +1974,20 @@ def _read_json(p: Path) -> Any:
 
 
 def measured_from_report(rep: dict | None, task_obj: Any = None, calib: dict | None = None) -> dict | None:
-    """Flatten a harness ``report.json`` (or a naive-kernel summary) into the numbers the verdicts need."""
+    """@brief 把 harness 的 ``report.json``（或 naive kernel 的摘要）拉平成判定需要的数字。
+
+    roofline 块存在时直接用它的字段；没有但给了 ``task_obj`` 且有 ``candidate_us`` 时，用任务的
+    ``flops`` / ``min_bytes`` 现算，并在有 ``calib`` 时补上峰值与占比（``derived_from`` 会注明这一来源）。
+
+    @param rep ``report.json`` 的内容（或 naive kernel 的摘要），可为 None
+    @param task_obj 任务对象，用来在没有 roofline 时现算
+    @param calib 标定数据（``peak_gbps`` 与按 dtype 的 ``peak_tflops``）
+    @return 扁平化的实测字典：``status`` / ``speedup`` / ``candidate_us`` / ``baseline_us``、roofline 系列
+        （``bound``、``achieved_tflops``、``compute_fraction``、``achieved_gbps``、``bandwidth_fraction``、
+        ``time_over_lower_bound``、``peak_tflops_measured``、``peak_gbps_measured``）、``derived_from``、pipeline 系列
+        （``max_total_threads``、``static_threadgroup_bytes``、``launch_threads`` 或 ``stages``）与 benchmark 系列
+        （``cv``、``noisy``）；``rep`` 为空时返回 None
+    """
     if not rep:
         return None
     m: dict[str, Any] = {"status": rep.get("status"), "speedup": rep.get("speedup"), "candidate_us": rep.get("candidate_us"), "baseline_us": rep.get("baseline_us")}

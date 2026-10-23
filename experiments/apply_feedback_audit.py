@@ -34,6 +34,12 @@ FIXED_REFS = {
 
 
 def _body(row: dict, *, duplicate_of: str = "") -> dict:
+    """@brief 把审计行的一条判定译成 review 文件里的条目字段。
+
+    @param row 审计 JSON 里的一行，含 ``verdict``/``topic`` 等字段。
+    @param duplicate_of 非空时直接按重复条目标成 ``obsolete``。
+    @return 要写进 review 文件的字段字典（``status``/``verification``/``note`` 等）。
+    """
     verdict = row.get("verdict") or ""
     topic = row.get("topic") or ""
     evidence = f"{int(row.get('measured_valid') or 0)} measured lines"
@@ -63,6 +69,13 @@ def _body(row: dict, *, duplicate_of: str = "") -> dict:
 
 
 def actions(audit: dict, *, merge_topic: bool = False) -> list[dict]:
+    """@brief 把审计 JSON 展开成逐个主张的待写动作。
+
+    @param audit 审计 JSON 的内容。
+    @param merge_topic 为真时，同题的非首行活条目标为重复；默认不合并。
+    @return 每项含 ``run_id``/``seq``/``digest``/``body`` 的动作列表。
+    @raises ValueError 审计 JSON 没有 ``rows`` 列表时。
+    """
     rows = audit.get("rows") if isinstance(audit, dict) else None
     if not isinstance(rows, list):
         raise ValueError("audit JSON has no rows list")
@@ -102,10 +115,23 @@ def actions(audit: dict, *, merge_topic: bool = False) -> list[dict]:
 
 
 def _run_dir(root: Path, run_id: str) -> Path:
+    """@brief 拼出一个运行目录的路径。
+
+    @param root 存放运行的根目录。
+    @param run_id 运行目录名。
+    @return 运行的完整路径。
+    """
     return Path(root) / run_id
 
 
 def apply_actions(root: Path, rows: list[dict], *, apply: bool) -> dict:
+    """@brief 把动作写进各运行的 review 文件，不写时只列计划。
+
+    @param root 存放运行的根目录。
+    @param rows ``actions`` 返回的动作列表。
+    @param apply 为真时真的写文件；为假时只收集将要写的条目。
+    @return 统计字典：行数、写入数、错误数与错因明细。
+    """
     written = errors = 0
     touched_runs: set[str] = set()
     details = []
@@ -134,6 +160,11 @@ def apply_actions(root: Path, rows: list[dict], *, apply: bool) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """@brief ``python -m experiments.apply_feedback_audit`` 的入口，默认干跑。
+
+    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
+    @return 进程退出码；有错时返回 2。
+    """
     parser = argparse.ArgumentParser(prog="experiments.apply_feedback_audit")
     parser.add_argument("--audit", default=str(DEFAULT_AUDIT))
     parser.add_argument("--runs", default=str(DEFAULT_RUNS))

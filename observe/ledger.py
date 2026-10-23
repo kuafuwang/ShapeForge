@@ -6,7 +6,11 @@ import time
 
 
 def operator_name(task: str | None) -> str:
-    """The operator a search belongs to. A tile variant stays with its operator."""
+    """@brief 取一次搜索所属的 operator；tile 变体沿用其 operator。
+
+    @param task 任务名，形如 ``name@variant``，可为 None。
+    @return operator 名；任务为空时返回 ``"unknown"``。
+    """
     name = (task or "").strip()
     if not name:
         return "unknown"
@@ -14,7 +18,11 @@ def operator_name(task: str | None) -> str:
 
 
 def month_of(started_at: float | None) -> str:
-    """``YYYY-MM`` in local time. A missing start is ``unknown``."""
+    """@brief 把起始时间格式化为本地时区的 ``YYYY-MM``；缺失或非法时返回 ``unknown``。
+
+    @param started_at 起始 unix 时间戳，可为 None。
+    @return 本地时区月份字符串 ``YYYY-MM``，无法解析时为 ``"unknown"``。
+    """
     if started_at is None:
         return "unknown"
     try:
