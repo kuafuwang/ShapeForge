@@ -352,10 +352,10 @@ def _evaluate_in_process(
         )
     rep.abi = {"ok": not problems, "violations": problems}
     if spec is None:
-        rep.pipeline = pipeline_stats(kernel, contract, dev_info)
+        rep.pipeline = pipeline_stats(kernel, contract, dev_info, kernel_source=kernel_source)
     else:
         by_name = {k.name: k for k in kernels}
-        rep.pipeline = pipeline_stats_many([(by_name[s.kernel], s) for s in spec.stages], dev_info)
+        rep.pipeline = pipeline_stats_many([(by_name[s.kernel], s) for s in spec.stages], dev_info, kernel_source=kernel_source)
     if problems:
         return finish("abi_error", "kernel does not match the required ABI / launch contract")
 

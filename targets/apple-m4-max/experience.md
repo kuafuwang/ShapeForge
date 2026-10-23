@@ -11,9 +11,10 @@
 Keywords: gemm accumulator register spill simdgroup fragment tile occupancy
 Confidence: verified
 观察: 每组 SIMD 的累加器片段达到 32 个及以上时，寄存器溢出，同一题的耗时是一千多微秒变到一万七到三万五微秒。
-来源: `runs/hw_features/REPORT.md`（同一批契约的实测对照）
+来源: `runs/hw_features/REPORT.md`（同一批契约的实测对照）；`runs/apple-m4-max/harness-pilot-shadow-20261022b/agent_work/init/v3b.metal`、`v2_pad.metal`、`FEEDBACK.md`；proposal `43c462b0b4f70803`。
 本机实测: fp16 paper，32 片段以上 17880–35006 µs，16 片段及以下 1361–1942 µs，约 12–26 倍。
-边界: 只覆盖 fp16 与本机（M4 Max）的寄存器文件；换成半分块或更小的 BLOCK 时片段数会变。
+补充（conv2d shadow-b 同核对照）: 16 槽 690 µs，32 槽 1069–1079 µs（1.55x）；两版报告都是 `maxTotalThreadsPerThreadgroup=1024`，静态 threadgroup 内存也正常，所以这个字段区分不了。`tcenv` 现在打印源码声明的 `simdgroup_float8x8` 槽数和最大数组，作为源码级启发式，不冒充编译器寄存器数或 spill 数据；要确认 spill 用 `tcenv profile` 的 spill events。
+边界: 只覆盖 fp16 与本机（M4 Max）的寄存器文件；换成半分块或更小的 BLOCK 时片段数会变。惩罚幅度随核和契约变化，同核 conv2d 对照是 1.55x，不等于上一条的 12–26x。
 反例: 把 K 维切得更细、用 threadgroup 做中间累加，可以既保留大 tile 又不让片段数越界。
 
 ## 启动契约能把同一颗核拉开 1.6 倍

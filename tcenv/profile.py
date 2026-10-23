@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from .metal_runtime import BufferArg, CompiledKernel, MetalContext, get_context
+from .pressure import pressure_hint, source_pressure
 
 from .target import DEFAULT_TARGET_ID, calibration_file
 
@@ -103,9 +104,10 @@ def measure_peak_flops(dtype: str = "fp16", n: int = 4096) -> float:
     return best
 
 
-def pipeline_stats(kernel: CompiledKernel, contract, device_info: dict) -> dict:
+def pipeline_stats(kernel: CompiledKernel, contract, device_info: dict, *, kernel_source: str | None = None) -> dict:
     max_threads = kernel.max_total_threads
     cap = int(device_info.get("max_threads_per_threadgroup") or 0)
+    pressure = source_pressure(kernel_source)
     hints = []
     if cap and max_threads < cap:
         hints.append(
@@ -116,7 +118,10 @@ def pipeline_stats(kernel: CompiledKernel, contract, device_info: dict) -> dict:
     tg_frac = kernel.static_tg_bytes / max(device_info["max_threadgroup_memory_bytes"], 1)
     if tg_frac > 0.5:
         hints.append(f"static threadgroup memory is {kernel.static_tg_bytes} B ({tg_frac:.0%} of the {device_info['max_threadgroup_memory_bytes']} B limit); occupancy limited")
-    return {
+    hint = pressure_hint(pressure)
+    if hint:
+        hints.append(hint)
+    out = {
         "max_total_threads_per_threadgroup": max_threads,
         "thread_execution_width": kernel.execution_width,
         "static_threadgroup_bytes": kernel.static_tg_bytes,
@@ -125,9 +130,12 @@ def pipeline_stats(kernel: CompiledKernel, contract, device_info: dict) -> dict:
         "launch_threadgroups": contract.num_threadgroups,
         "hints": hints,
     }
+    if pressure:
+        out["source_pressure"] = pressure
+    return out
 
 
-def pipeline_stats_many(pairs, device_info: dict) -> dict:
+def pipeline_stats_many(pairs, device_info: dict, *, kernel_source: str | None = None) -> dict:
     """``pairs`` is ``(compiled kernel, stage)``. Top-level keys stay the old shape; ``stages`` is the per-stage list."""
     class _View:
         def __init__(self, stage):
@@ -144,7 +152,11 @@ def pipeline_stats_many(pairs, device_info: dict) -> dict:
         one["workspace"] = list(stage.workspaces)
         parts.append(one)
     hints = [h for part in parts for h in part["hints"]]
-    return {
+    pressure = source_pressure(kernel_source)
+    hint = pressure_hint(pressure)
+    if hint:
+        hints.append(hint)
+    out = {
         "max_total_threads_per_threadgroup": min(p["max_total_threads_per_threadgroup"] for p in parts),
         "thread_execution_width": parts[0]["thread_execution_width"],
         "static_threadgroup_bytes": max(p["static_threadgroup_bytes"] for p in parts),
@@ -154,6 +166,9 @@ def pipeline_stats_many(pairs, device_info: dict) -> dict:
         "hints": hints,
         "stages": parts,
     }
+    if pressure:
+        out["source_pressure"] = pressure
+    return out
 
 
 def effective_peak_gbps(task, calib: dict) -> float:

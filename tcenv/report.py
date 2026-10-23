@@ -186,6 +186,14 @@ def format_feedback(rep: EvalReport, *, max_errors_chars: int = 2500) -> str:
                 f"\nPipeline: maxTotalThreadsPerThreadgroup={p['max_total_threads_per_threadgroup']} (launching {p['launch_threads_per_threadgroup']}), "
                 f"SIMD width {p['thread_execution_width']}, static threadgroup memory {p['static_threadgroup_bytes']} B"
             )
+        pressure = p.get("source_pressure") if isinstance(p.get("source_pressure"), dict) else {}
+        if pressure.get("fragment_slots"):
+            largest = int(pressure.get("largest_array") or 0)
+            detail = f", largest array {largest} slots" if largest else ""
+            L.append(
+                f"  source pressure: {pressure['fragment_slots']} declared simdgroup_float8x8 slots{detail} "
+                "(source-level heuristic; Metal exposes no compiler register count)"
+            )
         for h in p.get("hints", []):
             L.append(f"  hint: {h}")
     return "\n".join(L)
