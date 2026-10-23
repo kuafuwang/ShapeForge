@@ -21,6 +21,10 @@ test_mamba2.py
 test_domain_sweep.py
 test_elementwise_semantics.py
 test_distributions.py
+test_dispatch.py
+test_ieee.py
+test_hw_features.py
+test_hw_feedback.py
 ```
 
 通用搜索、审查、observe、预算和任务接口测试不要放这里。Metal golden 数据在

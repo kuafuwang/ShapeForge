@@ -516,7 +516,7 @@ def test_judge_assigns_the_four_verdicts():
 
 
 def test_docs_table3_matches_the_expectations_in_code():
-    doc = (Path(__file__).resolve().parent.parent / "docs" / "hardware_features.md").read_text().splitlines()
+    doc = (Path(__file__).resolve().parents[3] / "docs" / "hardware_features.md").read_text().splitlines()
     start = next(i for i, ln in enumerate(doc) if ln.startswith("| task | matrix unit |"))
     header = [c.strip().replace(" ", "_") for c in doc[start].strip("|").split("|")][1:]
     sym = {"R": "required", "r": "recommended", "": None}

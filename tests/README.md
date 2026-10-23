@@ -147,6 +147,9 @@ AI/人应先读 `triage_summary.md`，再读对应 Markdown 的 JSON 块，最�
 - 阶段 3 第二批：任务/契约层的 Metal 测试（contracts、generated tasks、mamba2、
   domain sweep、elementwise semantics、distributions）也已移入
   `tests/backends/metal/`。
-- 阶段 4：继续把剩余 backend 无关测试移入 `tests/shared/`；不要一次移动全部
+- 阶段 3 收尾：dispatch、IEEE 特殊值、硬件特征检测和 hwfeedback 也已移入
+  `tests/backends/metal/`。根目录剩下的是通用搜索/审查/observe/预算/锁/
+  target/schema 测试，不再是 backend 专属测试。
+- 阶段 4：把剩余 backend 无关测试移入 `tests/shared/`；不要一次移动全部
   根目录文件。
 - 迁移时一次只移动一组，先跑目标测试，再跑全量；不要把目录移动和业务改动混在一起。
