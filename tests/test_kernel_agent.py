@@ -340,3 +340,11 @@ def test_a_full_overlay_survives_a_contract_that_already_used_the_budget(tmp_pat
     assert "Add a tcenv.cli ab subcommand" in text
     assert "需要时读取" in text
     assert len(text.encode("utf-8")) <= 12_000
+
+
+def test_kernel_text_uses_the_backend_source_fence():
+    from taic.kernel_agent import kernel_text
+
+    text = "```xlang\nkernel void conv2d_kernel() {}\n```"
+    assert kernel_text(text, "conv2d_kernel", source_fence="xlang").startswith("kernel void conv2d_kernel")
+    assert not kernel_text(text, "conv2d_kernel").startswith("kernel void conv2d_kernel")

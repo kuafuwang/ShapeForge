@@ -139,9 +139,10 @@ def submission_name(task: str, dtype: str, size: str, label: str, file_ext: str 
     return "-".join(parts) + (file_ext if str(file_ext).startswith(".") else "." + str(file_ext))
 
 
-def kernel_text(text: str, kernel_name: str) -> str | None:
-    """The Metal source in ``text``: a fenced block, or the whole file when it declares the kernel."""
-    fenced = extract_source(text, kernel_name)
+def kernel_text(text: str, kernel_name: str, *, source_fence: str = "metal") -> str | None:
+    """The source in ``text``: a fenced block, or the whole file when it declares the kernel."""
+    tags = None if source_fence == "metal" else {source_fence}
+    fenced = extract_source(text, kernel_name, tags=tags)
     if fenced:
         return fenced
     body = (text or "").strip("\n")
@@ -748,7 +749,7 @@ def run_kernel_agent(
     spent, saw_result = spend_from_stream(stream)
     cost = dollars_for(spent, prices) if saw_result else None
     written = submit_path.read_text() if submit_path.is_file() else ""
-    source = kernel_text(written, brief.kernel_name)
+    source = kernel_text(written, brief.kernel_name, source_fence=brief.source_fence)
     notes = ""
     notes_path = work / "NOTES.md"
     if notes_path.is_file():
@@ -798,7 +799,7 @@ def agent_for_script(script, kernel_name: str):
             text = choices[0].message.content or ""
         elif isinstance(resp, str):
             text = resp
-        source = kernel_text(text, kernel_name)
+        source = kernel_text(text, kernel_name, source_fence=brief.source_fence)
         usage = getattr(resp, "usage", None)
         if usage is None:
             cost = 0.01
