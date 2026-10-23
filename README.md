@@ -41,7 +41,7 @@ The Apple GPU also drives the display and **nothing can preempt a running Metal 
 badly enough to need a hard reset. Therefore:
 
 * never run a kernel with an unbounded loop by hand, and never add a test that does;
-* the harness refuses `while (true)` / `for (;;)` / non-Metal `#include` before anything reaches the GPU (`tcenv/screen.py`);
+* the harness refuses `while (true)` / `for (;;)` / non-Metal `#include` before anything reaches the GPU (`tcenv/backends/metal/screen.py`);
 * every evaluation runs in a worker process that publishes a heartbeat around each GPU launch; the parent `SIGKILL`s the worker after one
   command buffer has been in flight too long: 2 s for one kernel (4 s under shader validation), or 2 s times the stage count and at most 8 s
   for a pipeline (validation doubles that, at most 16 s), and enforces an overall timeout;
@@ -294,7 +294,7 @@ through triton-msl is 10x slower than MLX's fused attention and is refused for b
 
 ## Layout
 
-`tcenv/` environment (contract, Metal runtime, ABI check, sanitizers, testing, benchmark, profile, worker, xctrace) -
+`tcenv/` environment (contract, evaluator, worker) with Metal implementations under `tcenv/backends/metal/` (runtime, ABI check, sanitizers, testing, benchmark, profile, xctrace) -
 `taic/` agent (LLM client + ledger, tools, prompts, orchestrator, skills) - `tasks/` kernels (Triton spec, contract, reference, baselines, naive MSL) -
 `experiments/` - `observe/` (local dashboard; it can spend money and stop runs) - `tests/` - `runs/` (artifacts, git-ignored).
 

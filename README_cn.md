@@ -41,7 +41,7 @@ uv run pytest -q                                       # 环境、编排器（�
 Apple GPU 同时驱动显示器，**正在运行的 Metal 内核无法被抢占**。一个不终止的内核曾把这台机器卡死到必须硬重启。因此：
 
 * 不要手动运行带无界循环的内核，也不要添加会这样做的测试；
-* 任何代码到达 GPU 之前，测试框架会拒绝 `while (true)` / `for (;;)` / 非 Metal 的 `#include`（`tcenv/screen.py`）；
+* 任何代码到达 GPU 之前，测试框架会拒绝 `while (true)` / `for (;;)` / 非 Metal 的 `#include`（`tcenv/backends/metal/screen.py`）；
 * 每次评测都在工作进程里运行，该进程在每次 GPU 启动前后打心跳；一条 command buffer 在途过久，父进程就 `SIGKILL`：单核 2 秒（着色器校验 4 秒）；流水线按段数乘 2 秒、封顶 8 秒，校验再乘 2、最多 16 秒；并强制执行总超时；
 * 第一次评测超时后，编排器会停止**整次运行**（`max_hangs = 1`）；
 * 真正的挂起测试默认跳过，除非设置 `TCENV_ALLOW_GPU_HANG_TESTS=1`；监督逻辑改由假工作进程覆盖。
@@ -168,6 +168,6 @@ uv run python -m tcenv.cli triton-baseline gemm        # 或：all
 
 ## 目录
 
-`tcenv/` 环境（契约、Metal 运行时、ABI 检查、sanitizer、测试、基准、剖析、工作进程、xctrace）—
+`tcenv/` 环境（契约、评测入口、工作进程），Metal 实现位于 `tcenv/backends/metal/`（运行时、ABI 检查、sanitizer、测试、基准、剖析、xctrace）—
 `taic/` 智能体（LLM 客户端 + 账本、工具、提示词、编排器、技能）— `tasks/` 内核（Triton 规格、契约、参考实现、基线、朴素 MSL）—
 `experiments/` — `tests/` — `runs/`（产物，已被 git 忽略）。

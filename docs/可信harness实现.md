@@ -27,7 +27,7 @@
 - `taic/agent_feedback.py`：`fbv4` 在所有小节和逐条两处识别缺席句；带动作请求的条目保留。`_repair_record` 为旧记录补 `placeholder_items`，并先按旧 digest 从 `sections` 恢复被擦除的实测正文；不能按 item 位置与 section 片段直接 zip。
 - `taic/git_identity.py` + `observe/feedback.py`：审查人自动取 `git var GIT_AUTHOR_IDENT`（回退 `user.name/user.email`），记录 reviewer/method/batch_id/HEAD/dirty；`expected_status` 不匹配时拒绝写入。审查表单不再要求填姓名。`taic feedback` 支持批量 `--dry-run` 和全量校验后一次写入；`review_board`/`review_feed` 返回只读的 `open_subclaims_total`。`taic/review_ledger.py` 追加哈希链审查台账，只存证据/note 哈希和身份。
 - `observe/feedback.py` + `observe/suggestions.py`：审查页和 `taic query suggestion` 返回 `prior`，按同 `digest` + `task` + `target_id` 找更早 claim，带旧 status/note/change_ref；这是精确文本查询。pending 行另带 `similar`，用 macOS `NLEmbedding` 本地句向量在同一 task/target 内找近义 claim，并要求共享中文/代码 token 以压低中文向量高基线；阈值保守，不联网、不调用模型；平台不支持时为空。`review_board`/`review_feed` 批量附加，旧记录的时间晚于当前 claim 时不显示。
-- `tcenv/pressure.py` + `tcenv/profile.py` + `tcenv/report.py`：报告打印源码声明的 `simdgroup_float8x8` 槽数和最大数组，超过 16 槽给一条提示。Metal 没有公开的 per-kernel 寄存器数/spill API，`maxTotalThreadsPerThreadgroup` 在本机也不能区分 16 和 32 槽，所以这里明确标成源码级启发式；要确认 spill 用 `tcenv profile` 的 spill events。
+- `tcenv/backends/metal/pressure.py` + `tcenv/backends/metal/profile.py` + `tcenv/report.py`：报告打印源码声明的 `simdgroup_float8x8` 槽数和最大数组，超过 16 槽给一条提示。Metal 没有公开的 per-kernel 寄存器数/spill API，`maxTotalThreadsPerThreadgroup` 在本机也不能区分 16 和 32 槽，所以这里明确标成源码级启发式；要确认 spill 用 `tcenv profile` 的 spill events。
 - `observe/feedback.py`：状态加入 `info` 和 `obsolete`；重建时读 `FEEDBACK.md` 只用于把探针已恢复的降级前提升为 `verified`，保留旧 digest 和审查键；删除的 claim 墓碑保留 `status`/`reason`。多命题前提支持 `subclaims`：父 claim 保持 `info`/`pending`，子命题各自校验并显示状态；旧审查文件无需迁移。
 - `taic/trust.py`：`targets/<id>/trust.toml`，键含 target/task/provider/model/effort、`taic/prompts.py`/`taic/kernel_agent.py`/`taic/harness.py` 三个文件的整体 sha256、协议、scope、过期；`trust_audit.jsonl` 追加 `grant`/`suspended`/`revoked`。
 - `taic/harness.py`：解析 ` ```harness-proposal ` JSON；新增 `free_text_suggestions` / `convert_feedback`，把人工确认的自由文本写成带 `origin=conversion`、`claim_digest`、`confirmed_by`、`source_author`、`structured_by` 的提案；转换使用记录里的 `session_started` 判断探针时间，旧记录缺该字段时只核对路径/哈希并标记时间无法验证；转换行顶层 provider/model 为空，不冒充模型作者；`tip` 需要两个不同 provider/model、两个委员会、两份不同 SHA 的本场探针和 active 信任；`premise` 需要本场探针、active `overlay:premise` 信任，以及匹配的 harness 自检记录或外层候选报告（同 target/协议/内核 SHA，测量数字一致）；没有匹配记录时不写 overlay，只保留 `trusted_record=false` 的提案。默认只写影子 overlay；`TASK.md` 才注入 active 条目，且带未验证标题；overlay 自身最多 1800 字符。
@@ -39,7 +39,7 @@
 
 ## 验证
 
-- 最近全量离线测试：**979 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`，本轮修改后）。
+- 最近全量离线测试：**981 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`，本轮修改后）。
 - 新增测试覆盖：7 条占位原文、探针恢复后的 digest 保留、`info`/`obsolete`、空占位墓碑、信任 scope/prompt/协议/过期、单模型/同探针不达 quorum、跨 target/协议隔离、P2 `git apply --check`、审计写回、试点汇总、 review 预算随价格变化与 verdict 解析，以及合成的 feedback→proposal→trust→overlay→TASK 端到端流程。
 - 数据侧：174 条审计已写回；60 条实测 `adopted`、15 条已修 `done`、35 条未验证 `info`、7 条空占位 `obsolete`，其余 57 条 pending。10 条按 topic 合并的 `obsolete` 已由 `experiments.revert_topic_merges` 改回 pending；39 条采集时缺探针的 claim 中，31 条 premise 升为 `verified`、8 条仍 `downgraded`，等待人复核。7 条审计空占位现在都有 `feedback_claim_removed` 墓碑；重建会为所有空占位小节写墓碑，当前共 18 条。
 - `targets/apple-m4-max/trust.toml` 的两个 conv2d grant（deepseek-flash、kimi-k3）已按用户明确要求重新授予为当前 `prompt_sha1 = 476ca5841075…`，status 为 `active`，`overlay:tip` 与 `overlay:premise` 均通过 `trust.check`；`evidence_run` 为空，表示这次授权只绑定当前提示面，没有新的实测证据。若再改 `taic/prompts.py`、`taic/kernel_agent.py` 或 `taic/harness.py`，两份 grant 会再次失效。

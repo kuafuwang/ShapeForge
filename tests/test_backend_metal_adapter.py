@@ -80,3 +80,32 @@ def test_submission_name_accepts_a_backend_extension():
 
     assert submission_name("relu", "fp16", "small", "init", ".metal") == "relu-fp16-small-init.metal"
     assert submission_name("relu", "fp16", "small", "init", ".x") == "relu-fp16-small-init.x"
+
+
+def test_phase4_removed_the_top_level_metal_shims():
+    import importlib
+
+    for name in (
+        "screen", "launch", "abi", "sanitize", "testing", "baselines",
+        "profile", "pressure", "metal_runtime", "domain", "xctrace", "triton_baseline",
+    ):
+        try:
+            importlib.import_module(f"tcenv.{name}")
+        except ModuleNotFoundError:
+            pass
+        else:
+            raise AssertionError(f"tcenv.{name} is still importable")
+
+
+def test_contract_and_verify_have_one_canonical_class():
+    import pickle
+
+    from tcenv.backends.metal.contract import Contract as MetalContract
+    from tcenv.backends.metal.verify import VerifyResult as MetalVerifyResult
+    from tcenv.contract import Contract
+    from tcenv.verify import VerifyResult
+
+    assert MetalContract is Contract
+    assert MetalVerifyResult is VerifyResult
+    contract = get_task("relu", "fp16", "paper").contract
+    assert pickle.loads(pickle.dumps(contract)) == contract

@@ -2,9 +2,9 @@
 
 先抽协议，Metal GPU 行为不变；本轮只做 Metal 一个实现，NPU 只留注册位。
 
-状态：Phase 0 基线已记录（`docs/架构/backend-phase0-baseline.json`）；Phase 1、Phase 2、Phase 3 已实现；Metal 模块在 `tcenv/backends/metal/`，旧路径保留兼容 shim；Phase 3 的 reference_sources、提示词 fence、技能角色、文件扩展名、extract_source、hwfeatures/policy gate 和 source-fence 调用方已落地；Phase 4 shim 清理和 GPU 全任务回归未完成（2026-10-23 审核修订）
+状态：Phase 0 基线已记录（`docs/架构/backend-phase0-baseline.json`）；Phase 1、Phase 2、Phase 3、Phase 4 已实现。Metal 实现在 `tcenv/backends/metal/`，Phase 3 的 reference_sources、提示词 fence、技能角色、文件扩展名、extract_source、hwfeatures/policy gate 和 source-fence 调用方已落地；Phase 4 已删除 12 个旧薄包装，`Contract`/`Verify` 作为顶层通用模块保留。GPU 全任务回归仍未完成（2026-10-23 审核修订）
 审核：对照当前代码补入 `source_pressure` 的 Metal 归属、嵌套报告 payload、`measure_serial` 默认值、`prompt_sha1` 的实际 SHA-256 和完整 skills 列表。
-Phase 1/2 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/{backend,contract,screen,launch,abi,sanitize,testing,baselines,profile,pressure,runtime,domain,verify,xctrace,triton_baseline}.py`；`tcenv/*.py` 旧路径是兼容 shim。`evaluate`/`worker` 经 adapter，报告 schema 3、backend_version/timeline、索引 v11 和 `runs.backend` 已落地；Phase 3 提示/文件扩展和 Phase 4 shim 清理仍未完成。GPU 基线尚未采。
+Phase 1/2 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/{backend,screen,launch,abi,sanitize,testing,baselines,profile,pressure,runtime,domain,xctrace,triton_baseline}.py`；`tcenv/contract.py` 与 `tcenv/verify.py` 是顶层通用模块，Metal 侧的 `contract.py`/`verify.py` 只做兼容导入。`evaluate`/`worker` 经 adapter，报告 schema 3、backend_version/timeline、索引 v11 和 `runs.backend` 已落地；Phase 3 提示/文件扩展和 Phase 4 shim 清理已完成。GPU 全任务回归尚未采。
 目标读者：维护 `taic` / `tcenv` 的工程师
 范围：先抽协议，Metal GPU 作为第一个实现；NPU 不实现，只预留注册位和接口。
 阶段编号全文只有一套，见 §11。§6–§10 是工作包（WP-A 至 WP-D），不自带 Phase 编号，所属阶段在 §11 的表里对齐。
@@ -58,29 +58,29 @@ Phase 1/2 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/{
 | 位置 | 现状 |
 |---|---|
 | `tcenv/target.py` | `_BACKENDS = {"metal"}`；`Limits` 四个键为 `max_buffer_index`、`max_threads_per_threadgroup`、`max_threadgroup_memory_bytes`、`counter_sample_us`；`device_matches` 检查 `gpu_family` |
-| `tcenv/metal_runtime.py` | PyObjC/Metal 编译、pipeline、buffer、命令缓冲、GPU 时间戳 |
+| `tcenv/backends/metal/runtime.py` | PyObjC/Metal 编译、pipeline、buffer、命令缓冲、GPU 时间戳 |
 | `tcenv/evaluate.py` | 主流程直接使用 `get_context()`、`MetalCompileError`、MSL contract、`ArgSet`、Metal launcher；父/子进程、心跳期限、GPU 锁、临时 `kernel.metal` 都在这一层 |
 | `tcenv/worker.py` | 子进程入口直接 `from .metal_runtime import set_compile_hooks, set_launch_hooks` 绑定 `"C"`/`"B"`/`"E"` 心跳 |
 | `tcenv/contract.py` | `AbiArg.msl_declaration`、`Contract.render_header/assemble/abi_stub` 生成 MSL；`Contract` 本身带 `grid/threads` 与 buffer 下标，是 MSL 启动契约 |
-| `tcenv/screen.py` | MSL 源码规则；父进程和子进程各跑一次 |
-| `tcenv/launch.py` | `/* taic-launch */` MSL 启动规格：父进程用语法解析算看门狗期限，子进程再结合 `dev_info` 查硬件上限，失败记 `rejected` |
-| `tcenv/sanitize.py` | `ArgSet` 与护栏 buffer（旧稿误写在 `testing.py`，此处更正），以及 `env_with_validation`、`validation_problems` |
-| `tcenv/testing.py` | `prepare_case`、`check_case`、`launch_once`、`run_correctness`；安全与正确性同一次运行 |
+| `tcenv/backends/metal/screen.py` | MSL 源码规则；父进程和子进程各跑一次 |
+| `tcenv/backends/metal/launch.py` | `/* taic-launch */` MSL 启动规格：父进程用语法解析算看门狗期限，子进程再结合 `dev_info` 查硬件上限，失败记 `rejected` |
+| `tcenv/backends/metal/sanitize.py` | `ArgSet` 与护栏 buffer（旧稿误写在 `testing.py`，此处更正），以及 `env_with_validation`、`validation_problems` |
+| `tcenv/backends/metal/testing.py` | `prepare_case`、`check_case`、`launch_once`、`run_correctness`；安全与正确性同一次运行 |
 | `tcenv/gpulock.py` | 机器级 GPU 锁：不计时阶段共享，测速段独占；等锁时间已记在 `benchmark.gpu_lock_wait_s` |
-| `tcenv/abi.py` | `CompiledKernel`、Metal pipeline 反射、`max_total_threads`、threadgroup 上限、`only_static_threadgroup_limit`（插桩翻倍豁免） |
-| `tcenv/profile.py` | Metal pipeline 统计、Metal 峰值带宽/算力与标定；当前还会把 `source_pressure` 拼进 pipeline 统计 |
-| `tcenv/pressure.py` | 从 MSL 源码统计 `simdgroup_float8x8` 槽数/最大数组，作为 report 的源码级提示；不是通用 backend 指标 |
-| `tcenv/baselines.py` | MLX / PyTorch-MPS runner 与 `rotation_count(task)`，Metal 上执行 |
-| `tcenv/triton_baseline.py` | Triton→MSL 的编译器对照基线，挂在 bench 之后 |
+| `tcenv/backends/metal/abi.py` | `CompiledKernel`、Metal pipeline 反射、`max_total_threads`、threadgroup 上限、`only_static_threadgroup_limit`（插桩翻倍豁免） |
+| `tcenv/backends/metal/profile.py` | Metal pipeline 统计、Metal 峰值带宽/算力与标定；当前还会把 `source_pressure` 拼进 pipeline 统计 |
+| `tcenv/backends/metal/pressure.py` | 从 MSL 源码统计 `simdgroup_float8x8` 槽数/最大数组，作为 report 的源码级提示；不是通用 backend 指标 |
+| `tcenv/backends/metal/baselines.py` | MLX / PyTorch-MPS runner 与 `rotation_count(task)`，Metal 上执行 |
+| `tcenv/backends/metal/triton_baseline.py` | Triton→MSL 的编译器对照基线，挂在 bench 之后 |
 | `tcenv/report.py` | `format_feedback` 写死 `"Metal compiler errors"`、`threadgroup memory`、`maxTotalThreadsPerThreadgroup`、`SIMD width`、`source pressure`、`triton_msl` |
-| `tcenv/xctrace.py` | Instruments Metal System Trace 录制与计数器解析（供 `tcenv profile` 与 `orchestrator` 慢核证据使用） |
-| `tcenv/domain.py` & `tcenv/verify.py` | `domain` 覆盖范围文案拼入 `macos/MSL/math_mode`；`verify` 写死无 MSL/AIR 形式等价工具 |
+| `tcenv/backends/metal/xctrace.py` | Instruments Metal System Trace 录制与计数器解析（供 `tcenv profile` 与 `orchestrator` 慢核证据使用） |
+| `tcenv/backends/metal/domain.py` & `tcenv/verify.py` | `domain` 覆盖范围文案拼入 `macos/MSL/math_mode`；`verify` 写死无 MSL/AIR 形式等价工具 |
 | `tasks/*/task.py` | `naive_msl`、MSL `Contract`、`grid/threads` |
 | `taic/kernel_agent.py` | 模型真正读的 `TASK.md` 在这里生成：写死“写成 Metal”、```metal 骨架、`stage_guidance` 拷 `msl_reference.md`；种子与交卷文件名固定 `.metal` |
 | `taic/prompts.py` | 系统提示固定“Triton → MSL”；技能名写死，技能文件则已按 backend 目录选（`taic/target.py::skill_path`） |
 | `taic/parse.py` | `extract_metal`：taic-launch 块优先、同名多块取最后，另有整文件兜底 |
 | `taic/hwfeatures.py` | 解析 MSL/AIR、Apple GPU 特性；结果经 `hwfeedback` 回灌进反馈与 `TASK.md` 证据 |
-| `taic/policy.py` | `feature_signature(source)` 调 `hwfeatures.analyze_source` 与 `tcenv.launch.declared_stage_kernels` 为父代多样性归档打 7 维 MSL 特征 |
+| `taic/policy.py` | `feature_signature(source)` 调 `hwfeatures.analyze_source` 与 `tcenv.backends.metal.launch.declared_stage_kernels` 为父代多样性归档打 7 维 MSL 特征 |
 | `taic/feedback_extra.py` | `threadgroup_limit_note` 正则匹配静态 threadgroup 内存超限并注入修复提示 |
 | `taic/kernel_catalog.py` | `archive_confirmed` 记录 `gpu_family`，默认写 `best{file_ext}` 并回退查找 `best.metal` |
 | `tcenv/cli.py` | `eval/naive/profile` 的 MSL 语义；`triton-msl` baseline；xctrace |
@@ -376,9 +376,9 @@ Phase 3 的提示面清单按这四层列，不按文件列。通用层从 `back
 ### 8.6 `extract`、`hwfeatures`、`policy` 与反馈文案的归属
 
 - `taic/parse.py::extract_metal` 不是一个 `extract_source()` 签名能无损搬走的：它带“taic-launch 块优先、同名多块取最后”的语义，`kernel_agent` 另有整文件兜底。Phase 3 必须先把这两个方法（或其替代）正式补进 §6 的协议，或明确删掉 Phase 3 对它们的引用，禁止协议外调用。
-- `taic/hwfeatures.py` 与 `taic/policy.py::feature_signature` 不能被“通用流程只调 `backend.profile()`”一句带过：`hwfeatures` 是源码/AIR 静态分析加按题名查期望表，经 `hwfeedback` 回灌进反馈和 `TASK.md` 证据（`taic/orchestrator.py`）；同时 `taic/policy.py::select_diverse_parent` 直接调用 `hwfeatures.analyze_source` 和 `tcenv.launch.declared_stage_kernels` 计算 7 维特征来做父代多样性归档。归属二选一并在本节写死：随 Metal backend 迁走（非 Metal backend 下 `feature_signature` 返回空元组退化为按 speedup 选），或明确冻结在原地。无论哪种，关闭 `hw_feedback` 时 `TASK.md` 的字节必须不变，要有一条回归验收盯住。
-- `tcenv/report.py`、`taic/feedback_extra.py`、`tcenv/domain.py`、`tcenv/verify.py`、`tcenv/xctrace.py` 中的 Metal 专属文案与工具（如 `"Metal compiler errors"`、`threadgroup_limit_note`、`source pressure`、Instruments 采样）：Phase 1–2 保持现有文本以确保 golden 与反馈字节不变；Phase 3–4 将编译器标题、限额提示、源码压力提示和外部 profiler 入口收归 backend（无对应能力的 backend 返回空提示）。
-- `tcenv/pressure.py` 是 **Metal-specific** 的源码启发式：它只认 `simdgroup_float8x8`，不是通用协议指标。已决定随 `profile.py` 一起迁到 `backends/metal/`，由 `MetalBackend.pipeline_stats` 调用；通用 `Backend` 协议不出现 `fragment_slots` / `simdgroup`。Phase 1 先保持当前位置和输出，不改变报告。
+- `taic/hwfeatures.py` 与 `taic/policy.py::feature_signature` 不能被“通用流程只调 `backend.profile()`”一句带过：`hwfeatures` 是源码/AIR 静态分析加按题名查期望表，经 `hwfeedback` 回灌进反馈和 `TASK.md` 证据（`taic/orchestrator.py`）；同时 `taic/policy.py::select_diverse_parent` 直接调用 `hwfeatures.analyze_source` 和 `tcenv.backends.metal.launch.declared_stage_kernels` 计算 7 维特征来做父代多样性归档。归属二选一并在本节写死：随 Metal backend 迁走（非 Metal backend 下 `feature_signature` 返回空元组退化为按 speedup 选），或明确冻结在原地。无论哪种，关闭 `hw_feedback` 时 `TASK.md` 的字节必须不变，要有一条回归验收盯住。
+- `tcenv/report.py`、`taic/feedback_extra.py`、`tcenv/backends/metal/domain.py`、`tcenv/verify.py`、`tcenv/backends/metal/xctrace.py` 中的 Metal 专属文案与工具（如 `"Metal compiler errors"`、`threadgroup_limit_note`、`source pressure`、Instruments 采样）：Phase 1–2 保持现有文本以确保 golden 与反馈字节不变；Phase 3–4 将编译器标题、限额提示、源码压力提示和外部 profiler 入口收归 backend（无对应能力的 backend 返回空提示）。
+- `tcenv/backends/metal/pressure.py` 是 **Metal-specific** 的源码启发式：它只认 `simdgroup_float8x8`，不是通用协议指标。已决定随 `profile.py` 一起迁到 `backends/metal/`，由 `MetalBackend.pipeline_stats` 调用；通用 `Backend` 协议不出现 `fragment_slots` / `simdgroup`。Phase 1 先保持当前位置和输出，不改变报告。
 
 ## 9. 工作包 D：数据层、信任与可比性
 
@@ -468,7 +468,7 @@ Phase 3 的提示面清单按这四层列，不按文件列。通用层从 `back
 | 供应商日志泄露凭据 | 统一截断与脱敏；大 profiler 文件只存路径/摘要（§10） |
 | NPU 需求提前污染接口 | 通用接口不含 `simdgroup/threadgroup`；NPU 用自己的 limits/metadata；图级需求不进本协议（§12） |
 | 索引加列触发全量重建被误当成“顺手改动” | 明确写进 Phase 2 的验收与发布预警：10 万 run 约 157.6 秒（§10） |
-| 旧模块导入破坏 | 迁移期保留 `tcenv/screen.py` 等薄包装，Phase 4 再删（§11） |
+| 旧模块导入破坏 | 迁移期保留 `tcenv/backends/metal/screen.py` 等薄包装，Phase 4 再删（§11） |
 
 总体回滚原则：每个 Phase 独立提交；Phase 1 的 adapter 可整体摘除回到旧 `evaluate` 路径；不修改现有 run 数据。涉及 schema 与索引版本的 Phase 2，其回滚不是免费的，必须按 §11 该格的写法单独预警。
 
@@ -507,7 +507,7 @@ Phase 2 及以后（各自在对应 Phase 的 PR 里再确认）：
 1. 参考源码的 key 用 backend id，不用语言名（§8.1）。
 2. `entrypoint` 只允许仓库内 `tcenv.backends.*`，加载时校验前缀与 id 一致性（§7.1）。
 3. `protocol_version` 保持数字代次，另带 `backend` 字段，聚合按两者分组（§9.1）。不在版本号里塞 backend 前缀。
-4. `tcenv/pressure.py` 的 `simdgroup_float8x8` 源码压力提示归 Metal backend；Phase 2 随 `profile.py` 迁入 `backends/metal/`，通用协议不暴露该指标（§8.6）。
+4. `tcenv/backends/metal/pressure.py` 的 `simdgroup_float8x8` 源码压力提示归 Metal backend；Phase 2 随 `profile.py` 迁入 `backends/metal/`，通用协议不暴露该指标（§8.6）。
 
 开放问题（每条标注阻塞哪个 Phase）：
 
