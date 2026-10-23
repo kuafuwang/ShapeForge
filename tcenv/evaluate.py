@@ -246,6 +246,7 @@ def _evaluate_in_process(
         rep.status = "rejected"
         rep.message = str(exc)
         rep.elapsed_s = time.perf_counter() - t_start
+        rep.timeline = [{"stage": "device_check", "status": "rejected", "duration_s": rep.elapsed_s}]
         return rep
     contract = task.contract
     from .backends.registry import load_backend
@@ -272,7 +273,7 @@ def _evaluate_in_process(
         nonlocal stage_name, stage_started
         now = time.perf_counter()
         if stage != stage_name:
-            timeline.append({"stage": stage_name, "duration_s": now - stage_started})
+            timeline.append({"stage": stage_name, "status": "ok", "duration_s": now - stage_started})
             stage_name = stage
             stage_started = now
 
@@ -354,13 +355,13 @@ def _evaluate_in_process(
     rep.stage = "abi"
     _enter("abi")
     _note_stage(stage="abi", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
-    if spec is None:
-        problems = abi_mod.check_abi(contract, kernel, max_tg_memory=dev_info["max_threadgroup_memory_bytes"], target_id=target_id)
-    else:
-        problems = abi_mod.check_pipeline(
-            contract, {k.name: k for k in kernels}, spec, max_tg_memory=dev_info["max_threadgroup_memory_bytes"],
-            max_buffer_index=profile.limits.max_buffer_index, target_id=target_id,
-        )
+    problems = backend.check_abi(
+        contract, kernels,
+        max_tg_memory=dev_info["max_threadgroup_memory_bytes"],
+        max_buffer_index=profile.limits.max_buffer_index,
+        target_id=target_id,
+        spec=spec,
+    )
     # 插桩会把静态线程组内存报成大约两倍。超过设备上限后再启动，Metal 在
     # validateComputeFunctionArguments 里断言并 SIGABRT，子进程变成 crash。
     # 这种只回报那一条、不启动。父进程改用不插桩的完整评测去比目标档案里的线程组内存上限。
@@ -1058,6 +1059,7 @@ def evaluate(
         rep.message = "refused before compilation: " + refused[0]
         rep.abi = {"ok": False, "violations": refused}
         rep.elapsed_s = time.perf_counter() - t0
+        rep.timeline = [{"stage": "screen", "status": "rejected", "duration_s": rep.elapsed_s}]
         if cache_key is not None:
             _cache_write(cache_key, rep)
         return _checked(rep)

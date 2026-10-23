@@ -39,7 +39,7 @@
 
 ## 验证
 
-- 最近全量离线测试：**966 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`，本轮修改后）。
+- 最近全量离线测试：**967 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`，本轮修改后）。
 - 新增测试覆盖：7 条占位原文、探针恢复后的 digest 保留、`info`/`obsolete`、空占位墓碑、信任 scope/prompt/协议/过期、单模型/同探针不达 quorum、跨 target/协议隔离、P2 `git apply --check`、审计写回、试点汇总、 review 预算随价格变化与 verdict 解析，以及合成的 feedback→proposal→trust→overlay→TASK 端到端流程。
 - 数据侧：174 条审计已写回；60 条实测 `adopted`、15 条已修 `done`、35 条未验证 `info`、7 条空占位 `obsolete`，其余 57 条 pending。10 条按 topic 合并的 `obsolete` 已由 `experiments.revert_topic_merges` 改回 pending；39 条采集时缺探针的 claim 中，31 条 premise 升为 `verified`、8 条仍 `downgraded`，等待人复核。7 条审计空占位现在都有 `feedback_claim_removed` 墓碑；重建会为所有空占位小节写墓碑，当前共 18 条。
 - `targets/apple-m4-max/trust.toml` 的两个 conv2d grant（deepseek-flash、kimi-k3）status 仍是 `active`，但记录的 `prompt_sha1` 为 `c270d5d3750e…`；本次修改后当前指纹为 `3236e0adce76…`。离线 `trust.check` 对两者均返回 `trust was granted for another prompt`。再次启用 active overlay 前须复核并重新授予信任；本轮不修改信任文件。

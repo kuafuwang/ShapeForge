@@ -13,9 +13,13 @@ from __future__ import annotations
 
 import re
 
+from typing import TYPE_CHECKING
+
 from .contract import Contract
 from .dtypes import get_dtype
-from .metal_runtime import CompiledKernel
+
+if TYPE_CHECKING:
+    from .metal_runtime import CompiledKernel
 
 
 def _threadgroup_limit() -> int:
@@ -32,7 +36,7 @@ def _buffer_index_limit() -> int:
 
 # 反射对的是槽位、名字、读写、标量类型和这份 pipeline 的启动上限。缓冲指向的元素类型可以向量化，这里放行。
 # 返回人类可读的问题列表；空列表才算通过。
-def check_abi(contract: Contract, kernel: CompiledKernel, *, max_tg_memory: int | None = None, target_id: str | None = None) -> list[str]:
+def check_abi(contract: Contract, kernel: "CompiledKernel", *, max_tg_memory: int | None = None, target_id: str | None = None) -> list[str]:
     """Return a list of human-readable violations (empty list means conformant)."""
     if max_tg_memory is None:
         from .target import DEFAULT_TARGET_ID, load_target

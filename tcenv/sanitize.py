@@ -24,10 +24,13 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from .contract import AbiArg, Contract
-from .metal_runtime import BufferArg, MetalContext, ScalarArg
 from .dtypes import get_dtype
+
+if TYPE_CHECKING:
+    from .metal_runtime import BufferArg, MetalContext, ScalarArg
 
 GUARD_BYTES = 16384
 GUARD_PATTERN = 0xCD
@@ -89,7 +92,9 @@ class GuardedBuffer:
         self.reset_guards()
 
     @property
-    def arg(self) -> BufferArg:
+    def arg(self) -> "BufferArg":
+        from .metal_runtime import BufferArg
+
         return BufferArg(self.buf, self.guard)
 
     def reset_guards(self) -> None:
@@ -187,7 +192,9 @@ class ArgSet:
         for a in self.contract.outputs:
             self.buffers[a.name].poison()
 
-    def args(self) -> list[tuple[int, BufferArg | ScalarArg]]:
+    def args(self) -> list[tuple[int, "BufferArg | ScalarArg"]]:
+        from .metal_runtime import BufferArg, ScalarArg
+
         out: list[tuple[int, BufferArg | ScalarArg]] = []
         for a in self.contract.args:
             if a.role == "scalar":

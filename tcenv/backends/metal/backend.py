@@ -78,12 +78,25 @@ class MetalBackend:
     def compile_all(self, ctx: Any, source: str, contract: Any, *, names: list[str] | None = None, math: str = "fast"):
         return ctx.compile_all(source, names or [contract.kernel_name], math=math)
 
-    def check_abi(self, contract: Any, kernel: Any, *, max_tg_memory: int, target_id: str, spec: Any = None) -> list[str]:
+    def check_abi(
+        self,
+        contract: Any,
+        kernels: list[Any],
+        *,
+        max_tg_memory: int,
+        max_buffer_index: int,
+        target_id: str,
+        spec: Any = None,
+    ) -> list[str]:
         from ... import abi as abi_mod
 
         if spec is None:
-            return abi_mod.check_abi(contract, kernel, max_tg_memory=max_tg_memory, target_id=target_id)
-        return abi_mod.check_pipeline(contract, {kernel.name: kernel}, spec, max_tg_memory=max_tg_memory, target_id=target_id)
+            return abi_mod.check_abi(contract, kernels[0], max_tg_memory=max_tg_memory, target_id=target_id)
+        by_name = {kernel.name: kernel for kernel in kernels}
+        return abi_mod.check_pipeline(
+            contract, by_name, spec,
+            max_tg_memory=max_tg_memory, max_buffer_index=max_buffer_index, target_id=target_id,
+        )
 
     def pipeline_stats(self, kernel: Any, contract: Any, device_info: Mapping[str, Any], *, kernel_source: str | None = None) -> dict:
         from ...profile import pipeline_stats

@@ -30,7 +30,8 @@ def test_an_unknown_backend_is_refused():
 def test_parent_import_of_the_metal_adapter_does_not_import_metal():
     code = (
         "from tcenv.backends.registry import load_backend; "
-        "load_backend('metal'); "
+        "b = load_backend('metal'); "
+        "b.validation_env({}); b.is_instrumented_size_only([]); "
         "assert 'Metal' not in __import__('sys').modules, 'Metal imported in parent'"
     )
     result = subprocess.run(

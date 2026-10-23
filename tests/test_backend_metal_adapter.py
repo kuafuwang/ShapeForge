@@ -13,3 +13,25 @@ def test_parent_side_screen_and_launch_parse_delegate():
     assert backend.screen("kernel void k() {}", task) == []
     assert backend.screen("kernel void k() { for (;;) {} }", task)
     assert backend.parse_launch("kernel void k() {}", task.contract) is None
+
+
+def test_check_abi_pipeline_receives_every_kernel_and_buffer_limit(monkeypatch):
+    backend = load_backend("metal")
+
+    class Kernel:
+        def __init__(self, name):
+            self.name = name
+
+    seen = {}
+
+    def fake(contract, by_name, spec, **kwargs):
+        seen.update({"names": sorted(by_name), "limit": kwargs.get("max_buffer_index"), "spec": spec})
+        return []
+
+    monkeypatch.setattr("tcenv.abi.check_pipeline", fake)
+    spec = object()
+    assert backend.check_abi(
+        object(), [Kernel("a"), Kernel("b")],
+        max_tg_memory=32768, max_buffer_index=7, target_id="apple-m4-max", spec=spec,
+    ) == []
+    assert seen == {"names": ["a", "b"], "limit": 7, "spec": spec}
