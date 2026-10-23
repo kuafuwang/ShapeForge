@@ -72,7 +72,7 @@ Confidence: verified
 Keywords: threadgroup memory limit static allocation staging 32768 device
 Confidence: verified
 观察: 本机 `maxThreadgroupMemoryLength` 是 32768 B；静态占用 12288 B 的核合法。插桩的着色器校验会把静态占用报成大约两倍，别照那个数调参。
-来源: `tcenv/metal_runtime.py` 的设备信息、`tcenv/evaluate.py` 里只报静态上限时的例外分支
+来源: `tcenv/backends/metal/runtime.py` 的设备信息、`tcenv/evaluate.py` 里只报静态上限时的例外分支
 本机实测: M4 Max（Apple9）32768 B。
 边界: 换机型要重新读设备属性，不要把这个数写死在核里。
 反例: 动态 `threadgroup` 参数在 `taic-launch` 里声明后可用，但它和静态数组共享同一个上限。

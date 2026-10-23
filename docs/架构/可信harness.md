@@ -250,7 +250,7 @@ stateDiagram-v2
 
 1. **信任不等于模型分数。** 指标（已审数、合理率、Wilson 下界、confirmed 推翻率、占位率、已实测率）只帮人决定是否授予；授予动作本身是人做的。
 2. **按硬件和任务切开。** 在 M4 Max/conv2d 上可信，不代表在另一个 GPU 或 flash_attention 上可信。
-3. **会过期。** `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py` 三个文件的整体 sha256 或评测协议变了，旧信任失效；模型换了版本、effort 变了，也不能沿用。任一文件任一字节变化都算，包括代码逻辑。
+3. **会过期。** `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py`、`targets/apple-m4-max/experience.md`、`taic/flows/kernel_once/skills/taic-tools/SKILL.md` 五个文件的整体 sha256 或评测协议变了，旧信任失效；模型换了版本、effort 变了，也不能沿用。任一文件任一字节变化都算，包括代码逻辑。
 4. **可撤销、可暂停。** 人可随时按 target 撤销；confirmed 推翻率越线时自动暂停，但恢复仍由人做。
 5. **追加式审计。** `trust_audit.jsonl` 记录每一次 `grant`/`suspended`/`revoked`，不覆盖历史。
 

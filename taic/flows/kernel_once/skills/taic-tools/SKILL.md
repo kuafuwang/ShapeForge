@@ -31,7 +31,7 @@ A claim about this machine — an operand dtype runs at half rate in the matrix 
 ```python
 import sys
 sys.path.insert(0, "<repo>")  # the --directory of the eval command in TASK.md
-from tcenv.metal_runtime import BufferArg, get_context
+from tcenv.backends.metal.runtime import BufferArg, get_context
 from tcenv.gpulock import gpu_lock
 
 SRC = r"""#include <metal_stdlib>

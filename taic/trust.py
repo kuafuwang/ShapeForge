@@ -51,15 +51,21 @@ def audit_path(target_id: str, root: Path | None = None) -> Path:
     return target_root(target_id, root) / "trust_audit.jsonl"
 
 
-_PROMPT_FILES = ("taic/prompts.py", "taic/kernel_agent.py", "taic/harness.py")
+_PROMPT_FILES = (
+    "taic/prompts.py",
+    "taic/kernel_agent.py",
+    "taic/harness.py",
+    "targets/apple-m4-max/experience.md",
+    "taic/flows/kernel_once/skills/taic-tools/SKILL.md",
+)
 
 
 def current_prompt_sha1() -> str:
     """A stable fingerprint of the prompt/TASK surface. Edits make old grants stale.
 
-    ``kernel_agent.py`` owns the TASK contract and ``harness.py`` owns HARNESS.md; they are
-    prompt surfaces even though they are not ``prompts.py``. A trust grant must not silently
-    survive a change to the text the model is asked to follow.
+    ``kernel_agent.py`` owns the TASK contract and ``harness.py`` owns HARNESS.md; the
+    target experience file and the agent skill are injected as prompt text too. A trust grant
+    must not silently survive a change to the text the model is asked to follow.
     """
     digest = hashlib.sha256()
     for name in _PROMPT_FILES:

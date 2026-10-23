@@ -89,7 +89,7 @@ Phase 1/2 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/{
 ### 3.3 三处容易误读的事实（实施前先认清）
 
 1. `EvalReport` 的顶层是封闭 schema：`REPORT_SCHEMA_VERSION = 2`（`tcenv/schema.py`），不认识的顶层字段一律拒读。给它加任何顶层字段都必须先升 schema 版本，不是“加个可选字段”就行。**嵌套字典不受这条校验**：`pipeline`、`benchmark` 等字典新增键不会触发 schema 失败；`pipeline.source_pressure` 就是这样进入报告的。Phase 0 必须快照嵌套 payload，Phase 1 必须原样保留，不能把嵌套键变化当作“没有报告变化”。
-2. `prompt_sha1` 是历史字段名；`taic/trust.py::current_prompt_sha1()` 实际对提示源文件逐字节算 SHA-256，不是对输出算的。它覆盖 `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py` 三个文件。改这三个文件里任何一行，哪怕生成的提示词一字不变，旧 grant 也会失效。
+2. `prompt_sha1` 是历史字段名；`taic/trust.py::current_prompt_sha1()` 实际对提示源文件逐字节算 SHA-256，不是对输出算的。它覆盖 `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py`、`targets/apple-m4-max/experience.md`、`taic/flows/kernel_once/skills/taic-tools/SKILL.md` 五个文件。改这五个文件里任何一行，哪怕生成的提示词一字不变，旧 grant 也会失效。
 3. SQLite 索引没有在线迁移：`INDEX_SCHEMA_VERSION = 10`（`observe/index.py`），版本对不上就整库丢弃重建。10 万 run 冷建约 157.6 秒（`docs/架构/数据层.md`）。给索引加列等于安排一次全量重建，不是顺手的事。
 
 ## 4. 设计原则
@@ -434,7 +434,7 @@ Phase 3 的提示面清单按这四层列，不按文件列。通用层从 `back
 
 | Phase | 工作包 | 做什么 | 做完看到什么 | 本阶段不做 | 验收与回滚 |
 |---|---|---|---|---|---|
-| 0 | — | 冻结基线：记录现有离线测试结果、golden 清单、三个提示源文件的 `prompt_sha1`（实际 SHA-256）与一版 `system_prompt` 输出快照、`EvalReport.to_json()` 顶层字段和嵌套 payload（含 `pipeline.source_pressure` / `hints`）、`Contract.describe()` 与 `task_fingerprint` 快照；另采一版 GPU 基线（比对字段、样本量、允许偏差写明） | 一份基线记录文件，路径在本阶段第一个 PR 里定死并写回本表 | 不改任何代码 | 验收：基线文件落盘且可复跑比对。回滚：无代码变更，无需回滚 |
+| 0 | — | 冻结基线：记录现有离线测试结果、golden 清单、五个提示源文件的 `prompt_sha1`（实际 SHA-256）与一版 `system_prompt` 输出快照、`EvalReport.to_json()` 顶层字段和嵌套 payload（含 `pipeline.source_pressure` / `hints`）、`Contract.describe()` 与 `task_fingerprint` 快照；另采一版 GPU 基线（比对字段、样本量、允许偏差写明） | 一份基线记录文件，路径在本阶段第一个 PR 里定死并写回本表 | 不改任何代码 | 验收：基线文件落盘且可复跑比对。回滚：无代码变更，无需回滚 |
 | 1（已完成） | WP-A（仅 adapter 与注册表）、WP-B | 新增 `base.py`/`registry.py`/`metal/backend.py`；`target.py` 注册表化并移除 `_BACKENDS`；`evaluate()` 与 `worker.py` 经 adapter 调到现有函数；`backend.toml` 补 `version`/`entrypoint`/`skills` | `load_backend("metal")` 可用且父进程导入不触发 Metal/PyObjC 初始化；未知名字明确拒绝；既有报告字段、状态与计时数字与基线一致 | 不搬文件；不升 `REPORT_SCHEMA_VERSION`；不加 timeline、不动 SQLite、不改 prompt 与 `TASK.md`；`probe` 仍在子进程内 | 验收：未知 backend 抛 `TargetError`；父进程 `load_backend("metal")` 后 `sys.modules` 无 `Metal`；同一候选的 `status/stage/candidate_us/speedup` 与基线一致。回滚：adapter 一个提交可整体摘除，`evaluate` 回到直调路径，不动任何已有 run 数据 |
 | 2 | WP-A（迁移）、WP-B（Limits）、WP-D | 先落 §8.3 的 Contract 决议，再把 screen/compile/ABI/正确性/计时的 Metal 实现迁入 backend，旧模块留薄包装；`evaluate.py` 只依赖协议；给 `EvalReport` 加 `backend_version` 与最小 timeline 并升报告 schema 到 3；SQLite 补两列并升索引版本到 11 | 通用 `evaluate` 不再 import `MetalContext`；阶段名仍是现有枚举；dashboard 能看到阶段耗时 | 不改 `Task.naive_msl` 与提示面；不删旧 import 的薄包装 | 验收：全量测试与 golden 通过；`contract.describe()`、`task_fingerprint` 与基线逐字节一致；索引重建后旧 run 可读且历史行显示“未知版本”。回滚：薄包装保留期间可切回旧路径；索引回滚等于再触发一次重建，要在发布说明里预警，不与 Phase 1 的回滚混讲 |
 | 3 | WP-C | `reference_sources` 按 backend id 落地并打通按 target 选源；提示面四层参数化；`extract` 与 `hwfeatures` 按 §8.6 的归属处理 | Metal 的 `TASK.md` 与系统提示输出与基线逐字节一致；或不一致时已有重录与重新授权的记录 | 不删旧模块；不改委员会与 `agent_failed` 语义 | 验收：输出字节不变，或变化时同时满足“golden 已重录、`prompt_sha1` 新旧对照表已留、trust 已显式重新 grant”三件，缺一不可。回滚：保留旧提示生成路径一个 Phase，双路径期内可切回 |
