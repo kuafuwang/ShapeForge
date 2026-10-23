@@ -3,3 +3,7 @@ id = "example"
 language = ""
 file_ext = ""
 runtime = ""
+
+# version = "1"
+# entrypoint = "tcenv.backends.<id>.backend:<Class>"
+# skills = []

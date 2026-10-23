@@ -243,8 +243,11 @@ def _evaluate_in_process(
         rep.elapsed_s = time.perf_counter() - t_start
         return rep
     contract = task.contract
+    from .backends.registry import load_backend
+
+    backend = load_backend(profile.backend)
     ctx = get_context()
-    dev_info = ctx.info()
+    dev_info = backend.probe(ctx, profile).raw
     rep.backend = profile.backend
     rep.device_name = str(dev_info.get("name") or "")
     rep.gpu_family = str(dev_info.get("gpu_family") or "")
@@ -274,20 +277,15 @@ def _evaluate_in_process(
     rep.stage = "screen"
     _note_stage(stage="screen", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
     # 子进程里再过一遍同一条筛，拒绝理由放进 abi.violations，反馈才会印出原因。父进程那一次是为了连子进程都不起。
-    refused = screen_source(kernel_source)
+    refused = backend.screen(kernel_source, task)
     if refused:
         rep.abi = {"ok": False, "violations": refused}
         return finish("rejected", "refused before compilation: " + refused[0])
 
-    from .launch import LaunchRejected, check_launch_limits, parse_launch_spec
+    from .launch import LaunchRejected, check_launch_limits
 
-    constants = {}
-    for name, _typ, value in contract.constants:
-        if isinstance(value, bool) or not isinstance(value, int):
-            continue
-        constants[name] = int(value)
     try:
-        spec = parse_launch_spec(kernel_source, constants)
+        spec = backend.parse_launch(kernel_source, contract)
         if spec is not None and require_contract_launch:
             raise LaunchRejected("a contract experiment requires the task's own launch; taic-launch is not allowed here")
         if spec is not None:
@@ -314,10 +312,10 @@ def _evaluate_in_process(
     full_src, header_lines = contract.assemble(kernel_source)
     try:
         if spec is None:
-            kernels = [ctx.compile(full_src, contract.kernel_name)]
+            kernels = [backend.compile(ctx, full_src, contract)]
         else:
             names = list(dict.fromkeys(stage.kernel for stage in spec.stages))
-            kernels = ctx.compile_all(full_src, names, math=spec.math)
+            kernels = backend.compile_all(ctx, full_src, contract, names=names, math=spec.math)
     except MetalCompileError as e:
         # 编译器诊断的是「契约头 + 候选正文」。行号减掉文件头，模型才对得上自己写的那几行。
         msg = contract.rewrite_compiler_lines(str(e), header_lines)
@@ -352,10 +350,10 @@ def _evaluate_in_process(
         )
     rep.abi = {"ok": not problems, "violations": problems}
     if spec is None:
-        rep.pipeline = pipeline_stats(kernel, contract, dev_info, kernel_source=kernel_source)
+        rep.pipeline = backend.pipeline_stats(kernel, contract, dev_info, kernel_source=kernel_source)
     else:
         by_name = {k.name: k for k in kernels}
-        rep.pipeline = pipeline_stats_many([(by_name[s.kernel], s) for s in spec.stages], dev_info, kernel_source=kernel_source)
+        rep.pipeline = backend.pipeline_stats_many([(by_name[s.kernel], s) for s in spec.stages], dev_info, kernel_source=kernel_source)
     if problems:
         return finish("abi_error", "kernel does not match the required ABI / launch contract")
 
@@ -954,7 +952,14 @@ def evaluate(
     """
     seed = int(seed if seed is not None else secrets.randbits(48))
     t0 = time.perf_counter()
+    from .backends.registry import load_backend
     from .screen import screen_source
+    from .target import TargetError, load_target as _load_target
+
+    try:
+        backend = load_backend(_load_target(target_id).backend)
+    except TargetError:
+        backend = None
 
     def _live(rep: EvalReport) -> EvalReport:
         if progress_path is not None:
@@ -1024,7 +1029,7 @@ def evaluate(
             return _live(rep)
 
     # 明显的死循环和非法 include 在这里结束，不起子进程，也不把核提交到 GPU。
-    refused = screen_source(kernel_source)
+    refused = backend.screen(kernel_source) if backend is not None else screen_source(kernel_source)
     if refused:  # never reaches a worker, let alone the GPU
         rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=seed, status="rejected", stage="screen")
         rep.message = "refused before compilation: " + refused[0]

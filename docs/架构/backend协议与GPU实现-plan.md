@@ -2,8 +2,9 @@
 
 先抽协议，Metal GPU 行为不变；本轮只做 Metal 一个实现，NPU 只留注册位。
 
-状态：计划（未实施，2026-10-23 审核修订）
+状态：Phase 1 已实现（协议/注册表/Metal adapter）；Phase 2–4 未实施（2026-10-23 审核修订）
 审核：对照当前代码补入 `source_pressure` 的 Metal 归属、嵌套报告 payload、`measure_serial` 默认值、`prompt_sha1` 的实际 SHA-256 和完整 skills 列表。
+Phase 1 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/backend.py`；`tcenv/target.py` 走注册表；`evaluate`/`worker` 经 adapter 调 screen/compile/pipeline/heartbeat。GPU 基线与 Phase 2 的 Contract/timeline/index v11 尚未落地。
 目标读者：维护 `taic` / `tcenv` 的工程师
 范围：先抽协议，Metal GPU 作为第一个实现；NPU 不实现，只预留注册位和接口。
 阶段编号全文只有一套，见 §11。§6–§10 是工作包（WP-A 至 WP-D），不自带 Phase 编号，所属阶段在 §11 的表里对齐。
@@ -438,7 +439,7 @@ Phase 3 的提示面清单按这四层列，不按文件列。通用层从 `back
 | Phase | 工作包 | 做什么 | 做完看到什么 | 本阶段不做 | 验收与回滚 |
 |---|---|---|---|---|---|
 | 0 | — | 冻结基线：记录现有离线测试结果、golden 清单、三个提示源文件的 `prompt_sha1`（实际 SHA-256）与一版 `system_prompt` 输出快照、`EvalReport.to_json()` 顶层字段和嵌套 payload（含 `pipeline.source_pressure` / `hints`）、`Contract.describe()` 与 `task_fingerprint` 快照；另采一版 GPU 基线（比对字段、样本量、允许偏差写明） | 一份基线记录文件，路径在本阶段第一个 PR 里定死并写回本表 | 不改任何代码 | 验收：基线文件落盘且可复跑比对。回滚：无代码变更，无需回滚 |
-| 1 | WP-A（仅 adapter 与注册表）、WP-B | 新增 `base.py`/`registry.py`/`metal/backend.py`；`target.py` 注册表化并移除 `_BACKENDS`；`evaluate()` 与 `worker.py` 经 adapter 调到现有函数；`backend.toml` 补 `version`/`entrypoint`/`skills` | `load_backend("metal")` 可用且父进程导入不触发 Metal/PyObjC 初始化；未知名字明确拒绝；既有报告字段、状态与计时数字与基线一致 | 不搬文件；不升 `REPORT_SCHEMA_VERSION`；不加 timeline、不动 SQLite、不改 prompt 与 `TASK.md`；`probe` 仍在子进程内 | 验收：未知 backend 抛 `TargetError`；父进程 `load_backend("metal")` 后 `sys.modules` 无 `Metal`；同一候选的 `status/stage/candidate_us/speedup` 与基线一致。回滚：adapter 一个提交可整体摘除，`evaluate` 回到直调路径，不动任何已有 run 数据 |
+| 1（已完成） | WP-A（仅 adapter 与注册表）、WP-B | 新增 `base.py`/`registry.py`/`metal/backend.py`；`target.py` 注册表化并移除 `_BACKENDS`；`evaluate()` 与 `worker.py` 经 adapter 调到现有函数；`backend.toml` 补 `version`/`entrypoint`/`skills` | `load_backend("metal")` 可用且父进程导入不触发 Metal/PyObjC 初始化；未知名字明确拒绝；既有报告字段、状态与计时数字与基线一致 | 不搬文件；不升 `REPORT_SCHEMA_VERSION`；不加 timeline、不动 SQLite、不改 prompt 与 `TASK.md`；`probe` 仍在子进程内 | 验收：未知 backend 抛 `TargetError`；父进程 `load_backend("metal")` 后 `sys.modules` 无 `Metal`；同一候选的 `status/stage/candidate_us/speedup` 与基线一致。回滚：adapter 一个提交可整体摘除，`evaluate` 回到直调路径，不动任何已有 run 数据 |
 | 2 | WP-A（迁移）、WP-B（Limits）、WP-D | 先落 §8.3 的 Contract 决议，再把 screen/compile/ABI/正确性/计时的 Metal 实现迁入 backend，旧模块留薄包装；`evaluate.py` 只依赖协议；给 `EvalReport` 加 `backend_version` 与最小 timeline 并升报告 schema 到 3；SQLite 补两列并升索引版本到 11 | 通用 `evaluate` 不再 import `MetalContext`；阶段名仍是现有枚举；dashboard 能看到阶段耗时 | 不改 `Task.naive_msl` 与提示面；不删旧 import 的薄包装 | 验收：全量测试与 golden 通过；`contract.describe()`、`task_fingerprint` 与基线逐字节一致；索引重建后旧 run 可读且历史行显示“未知版本”。回滚：薄包装保留期间可切回旧路径；索引回滚等于再触发一次重建，要在发布说明里预警，不与 Phase 1 的回滚混讲 |
 | 3 | WP-C | `reference_sources` 按 backend id 落地并打通按 target 选源；提示面四层参数化；`extract` 与 `hwfeatures` 按 §8.6 的归属处理 | Metal 的 `TASK.md` 与系统提示输出与基线逐字节一致；或不一致时已有重录与重新授权的记录 | 不删旧模块；不改委员会与 `agent_failed` 语义 | 验收：输出字节不变，或变化时同时满足“golden 已重录、`prompt_sha1` 新旧对照表已留、trust 已显式重新 grant”三件，缺一不可。回滚：保留旧提示生成路径一个 Phase，双路径期内可切回 |
 | 4 | — | 删临时 shim；更新架构文档、`docs/代理反馈.md`、backend README、target template | 通用协议签名里没有 Metal 术语；没有未注册 backend 可运行 | 不在此阶段新增任何 backend | 验收：旧模块薄包装删除后全量测试仍过。回滚：shim 删除单独成提交，可单独 revert；删除前双路径至少保留一个 Phase |

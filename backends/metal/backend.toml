@@ -3,3 +3,7 @@ id = "metal"
 language = "msl"
 file_ext = ".metal"
 runtime = "metal"
+
+version = "1"
+entrypoint = "tcenv.backends.metal.backend:MetalBackend"
+skills = ["apple_gpu_optimization", "metal_profiling", "msl_reference", "profiler_evidence", "hardware_feedback"]

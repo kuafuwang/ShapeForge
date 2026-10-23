@@ -13,7 +13,6 @@ REPO = Path(__file__).resolve().parent.parent
 TARGETS = REPO / "targets"
 BACKENDS = REPO / "backends"
 DEFAULT_TARGET_ID = "apple-m4-max"
-_BACKENDS = {"metal"}
 
 
 class TargetError(RuntimeError):
@@ -69,12 +68,13 @@ def load_target(target_id: str | None = None) -> TargetProfile:
     if str(doc.get("id") or "") != name:
         raise TargetError(f"target.toml id {doc.get('id')!r} is not the directory {name}")
     backend = str(doc.get("backend") or "")
-    if backend not in _BACKENDS:
-        raise TargetError(f"target {name} names backend {backend}, which is not registered")
-    backend_toml = BACKENDS / backend / "backend.toml"
-    if not backend_toml.is_file():
-        raise TargetError(f"backend {backend} has no backend.toml")
-    backend_doc = tomllib.loads(backend_toml.read_text(encoding="utf-8"))
+    from .backends.registry import load_backend
+
+    backend_obj = load_backend(backend)
+    backend_doc = {
+        "language": backend_obj.language,
+        "file_ext": backend_obj.file_ext,
+    }
     device = doc.get("device") or {}
     limits = doc.get("limits") or {}
     root = path.parent
