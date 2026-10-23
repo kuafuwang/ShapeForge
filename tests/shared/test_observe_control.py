@@ -517,3 +517,46 @@ def test_deletion_archives_the_directory_and_keeps_the_reason(runs, tmp_path, mo
     logged = [json.loads(line) for line in log_path().read_text(encoding="utf-8").splitlines()]
     assert logged[0]["reason"] == "这组做完了，不再看"
     assert logged[1]["kind"] == "operator" and logged[1]["ip"] == "127.0.0.1" and logged[1]["reason"] == "这个算子的记录不要了"
+
+
+def test_delete_refuses_a_path_that_climbs_out_of_runs(tmp_path, monkeypatch):
+    from observe import deletions, detail
+    from observe.actions import Refused
+
+    runs = tmp_path / "runs"
+    (runs / "inner").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (runs / "link").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(detail, "runs_root", lambda: runs)
+    assert deletions._under_runs("inner") == (runs / "inner").resolve()
+    for bad in ("../outside", str(outside), "link"):
+        with pytest.raises(Refused):
+            deletions._under_runs(bad)
+    assert outside.is_dir()
+
+
+def test_a_deletion_that_cannot_be_logged_is_rolled_back(tmp_path, monkeypatch):
+    """An archived run with no audit line is indistinguishable from an untracked deletion."""
+    from observe import deletions, detail
+
+    runs = tmp_path / "runs"
+    run = runs / "box" / "done"
+    run.mkdir(parents=True)
+    (run / "state.json").write_text(json.dumps({"pid": 999999, "phase": "done", "task": "relu", "dtype": "fp16", "updated_at": 1}))
+    (run / "result.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "stop_reason": "max_rounds"}))
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "missing.sqlite"))
+    monkeypatch.setattr(detail, "runs_root", lambda: runs)
+    monkeypatch.setattr(deletions, "_live", lambda _path: False)
+
+    def no_log(_entry):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(deletions, "_append", no_log)
+    with pytest.raises(OSError):
+        deletions.delete_records("run", "box/done", "x")
+    assert (run / "state.json").is_file() and (run / "result.json").is_file()
+    assert not list((tmp_path / "deleted").rglob("state.json"))
+

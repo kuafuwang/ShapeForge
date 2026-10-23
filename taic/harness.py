@@ -1073,7 +1073,9 @@ def overlay_text(run_dir: Path, *, target_id: str, task: str, protocol_version: 
              "以下条目由两个模型在本硬件上各自提出并经人授予的信任放行；它们仍是线索，合同和实测数字优先。"]
     used = sum(len(line) + 1 for line in lines)
     for row in rows:
-        line = f"- [{row.get('source_run') or '?'} #{row.get('source_seq')}] {row.get('text') or ''}".strip()
+        # A hand-edited or old overlay row must not start a new heading or bullet in the prompt.
+        text = re.sub(r"\s+", " ", str(row.get("text") or "")).strip()
+        line = f"- [{row.get('source_run') or '?'} #{row.get('source_seq')}] {text}".strip()
         if used + len(line) + 1 > limit:
             break
         lines.append(line)

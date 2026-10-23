@@ -1668,6 +1668,25 @@ class Index:
             self._bump()
             self.conn.commit()
 
+    def forget_moved(self, run_id: str) -> None:
+        """@brief 目录被改名后，删掉旧 run_id 的索引行，包括账本行。
+
+        A move is not a deletion: the spend is carried by the new path, so keeping the old ledger
+        row would count it twice. ``drop_archived`` keeps the row because there the run really is
+        gone.
+
+        @param run_id 改名前的 run id（`runs/` 下的相对路径）。
+        """
+        with _WRITE:
+            from observe.feedback import retire_run_claims
+
+            retire_run_claims(self.conn, run_id)
+            for table in ("runs", "candidates", "sessions", "turns", "feedback_items", "feedback_claims", "feedback_subclaims", "ledger"):
+                self.conn.execute(f"DELETE FROM {table} WHERE run_id = ?", (run_id,))
+            self.conn.execute("DELETE FROM watched WHERE path = ?", (run_id,))
+            self._bump()
+            self.conn.commit()
+
     def refresh_feedback(self, run_id: str, directory: Path) -> None:
         """@brief 立即重读一个运行的反馈文件；已结束的运行不会再被空闲帧扫描。
 

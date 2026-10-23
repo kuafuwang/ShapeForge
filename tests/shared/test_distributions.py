@@ -209,3 +209,17 @@ def test_generator_is_a_cpu_generator_and_keeps_63_bits_of_seed():
 def test_ieee_is_not_a_distribution_case():
     with pytest.raises(ValueError, match="unknown case 'ieee'"):
         sample("ieee", (8,), 1)
+
+
+def test_tiny_rounds_to_the_smallest_subnormal_and_never_to_zero():
+    from tcenv.tensors import round_to
+
+    for seed in range(50):
+        values = round_to(sample("tiny", (64,), seed, "fp16"), "fp16")
+        magnitude = values.abs()
+        assert int((values == 0).sum()) == 0, seed  # rounding must not flush the tiny case to zero
+        assert float(magnitude.min()) >= 2.0**-24, seed  # the smallest representable subnormal is the floor
+        assert float(magnitude.max()) <= 4 * 2.0**-14 * 1.001, seed  # the tiny window, not the full range
+    for case in ("large", "wide_range", "outlier"):
+        assert torch.isfinite(round_to(sample(case, (256,), 1, "fp16"), "fp16")).all(), case
+

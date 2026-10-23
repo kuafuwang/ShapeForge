@@ -6,6 +6,7 @@ import hashlib
 import json
 
 from taic import cli
+from tcenv.schema import PROTOCOL_VERSION
 
 SECRET = "sk-PLANTED-brief-secret-0123456789"
 MARKER = "MSG-BODY-ONLY-9f3a"
@@ -117,6 +118,7 @@ def test_a_bound_confirmation_publishes_the_remeasure_not_the_search_best(tmp_pa
     (run / "confirm_report.json").write_text(json.dumps({
         "status": "ok", "speedup": 7.5,
         "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"},
+        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
     }))
     (run / "state.json").write_text(json.dumps({
         "task": "relu", "dtype": "fp16", "size": "small", "committee": "first", "model": "m",
@@ -127,6 +129,7 @@ def test_a_bound_confirmation_publishes_the_remeasure_not_the_search_best(tmp_pa
         "stop_reason": "max_rounds", "rounds": 2, "spent_usd": 0.25, "budget_usd": 2,
         "best_speedup": 8.5, "confirmed_speedup": 1.25, "confirmed_status": "ok",
         "confirm_winner_label": "win", "confirmation_source_sha256": digest,
+        "confirmed_values": [1.25], "target_id": "apple-m4-max",
     }))
 
     code, out, _err = _brief(capsys, run)

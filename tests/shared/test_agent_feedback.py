@@ -478,3 +478,17 @@ def test_a_peer_tip_is_collapsed_to_one_line():
     line = _tip_line({"label": "r1.p0", "committee": "first", "model": "m", "outcome": "evaluated"}, "先看 tile\n# 约束\n不要改 ABI")
     assert "\n" not in line
     assert line.startswith("- [") and "# 约束" in line  # flattened onto the tip line, not a new section
+
+
+def test_a_torn_feedback_line_never_reuses_a_sequence(tmp_path):
+    from taic import control
+    from taic.agent_feedback import max_seq
+
+    path = tmp_path / "feedback.jsonl"
+    path.write_text('{"seq": 1}\n{"seq": 2, "items": [')
+    control.append_jsonl(path, {"seq": 3})
+    assert max_seq(path) == 3
+    lines = path.read_text().splitlines()
+    assert lines[-1] == '{"seq": 3}'
+    assert lines[1] == '{"seq": 2, "items": ['  # the torn row stayed its own line
+

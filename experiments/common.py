@@ -8,6 +8,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
+import statistics
 from pathlib import Path
 from typing import Any, Callable
 
@@ -414,10 +416,19 @@ def conclusion_of_run(run_dir: Path, result: dict | None) -> dict:
             doc = None
         from tcenv.bench import timing_is_uncertain
 
+        from tcenv.schema import PROTOCOL_VERSION
+
         if isinstance(doc, dict) and doc.get("cache_hit") is True:
             # 确认报告若来自评测缓存，它只是复述了上一次的测量，不是这一次的复测。
             # 缓存键不含设备、macOS 与 MSL 版本，也不能证明是同一台机器上量的。
             return {"speedup": None, "publication": "不确定"}
+        if not isinstance(doc, dict):
+            return {"speedup": None, "publication": "未确认"}
+        # 数字只在同一个测量协议、同一台目标机上可比。缺字段按不可核对处理。
+        if str(doc.get("protocol_version") or "") != str(PROTOCOL_VERSION):
+            return {"speedup": None, "publication": "未确认"}
+        if str(doc.get("target_id") or "") != str(result.get("target_id") or ""):
+            return {"speedup": None, "publication": "未确认"}
         if timing_is_uncertain(doc):
             return {"speedup": None, "publication": "不确定"}
         from taic.policy import batches_agree
@@ -426,6 +437,10 @@ def conclusion_of_run(run_dir: Path, result: dict | None) -> dict:
         if not batches_agree(result.get("confirmed_values")):
             return {"speedup": None, "publication": "不确定"}
     return got
+
+
+def _finite_positive(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)) and float(value) > 0
 
 
 def published_conclusion(result: dict | None, *, best_metal_sha256: str | None = None, confirm_status: str | None = None, winner_metal_sha256: str | None = None) -> dict:
@@ -457,9 +472,22 @@ def published_conclusion(result: dict | None, *, best_metal_sha256: str | None =
         and recorded == best_metal_sha256 == winner_metal_sha256
         and isinstance(winner, str) and winner != ""
     )
-    if bound:
-        return {"speedup": result.get("confirmed_speedup"), "publication": "confirmed"}
-    return {"speedup": None, "publication": "未确认"}
+    if not bound:
+        return {"speedup": None, "publication": "未确认"}
+    value = result.get("confirmed_speedup")
+    if not _finite_positive(value):
+        return {"speedup": None, "publication": "未确认"}
+    values = result.get("confirmed_values")
+    if not isinstance(values, list) or not values:
+        return {"speedup": None, "publication": "未确认"}
+    numbers = [float(item) for item in values if isinstance(item, (int, float)) and not isinstance(item, bool)]
+    if len(numbers) != len(values) or not all(_finite_positive(item) for item in numbers):
+        return {"speedup": None, "publication": "未确认"}
+    # 公布的数字必须是各批的中位数本身，而不是与它们无关的另一个字段。
+    median = statistics.median(numbers)
+    if abs(float(value) - median) > 1e-9 * max(1.0, abs(median)):
+        return {"speedup": None, "publication": "未确认"}
+    return {"speedup": median, "publication": "confirmed"}
 
 
 def publication_role(
@@ -495,7 +523,7 @@ def publication_role(
     if isinstance(domain, dict):
         nested = domain.get("coverage")
         cov = nested if isinstance(nested, dict) else domain
-    speed_ok = isinstance(speed, (int, float)) and not isinstance(speed, bool) and speed >= min_improvement
+    speed_ok = _finite_positive(speed) and float(speed) >= min_improvement
     bound = (
         conclusion.get("publication") == "confirmed"
         and speed_ok

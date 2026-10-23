@@ -469,3 +469,13 @@ def test_extract_source_accepts_an_explicit_fence_set():
     text = "```xlang\nkernel void my_k() {}\n```"
     assert extract_source(text, "my_k", tags={"xlang"}).startswith("kernel void my_k")
     assert extract_source(text, "my_k") is None
+
+
+def test_the_preview_redacts_the_configured_key():
+    from taic.llm import _scrub_preview
+
+    key = "prox-0123456789abcdef"
+    out = _scrub_preview("x" * 3000 + key, [key])
+    assert key not in out and "pro…" in out
+    assert _scrub_preview("plain text") == "plain text"
+

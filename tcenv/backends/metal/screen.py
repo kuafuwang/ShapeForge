@@ -13,6 +13,7 @@ non-terminating constructs up front and to bound every launch with an external k
 
 from __future__ import annotations
 
+import ast
 import re
 
 _LINE_COMMENT = re.compile(r"//[^\n]*")
@@ -99,7 +100,57 @@ def _unconditional(cond: str) -> bool:
     compact = re.sub(r"\s+", "", text)
     if compact in {"", "true", "1", "1u", "1U"}:
         return True
-    return _TRUE.fullmatch(compact) is not None
+    if _TRUE.fullmatch(compact) is not None:
+        return True
+    return _constant_true(text)
+
+
+# Nodes a constant-folded loop condition may contain. Anything else (a call, an attribute, a name)
+# makes the condition non-constant and is left to the compiler and the launch watchdog.
+_CONST_NODES = (
+    ast.Expression, ast.Constant, ast.BoolOp, ast.UnaryOp, ast.BinOp, ast.Compare, ast.Load,
+    ast.And, ast.Or, ast.Not, ast.USub, ast.UAdd, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow,
+    ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
+)
+
+
+def _safe_pow(tree: ast.AST) -> bool:
+    """A constant ``**`` is only evaluated when the result cannot explode in time or memory."""
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow)):
+            continue
+        exponent, base = node.right, node.left
+        if not (isinstance(exponent, ast.Constant) and isinstance(exponent.value, int) and not isinstance(exponent.value, bool) and -4096 <= exponent.value <= 64):
+            return False
+        if not (isinstance(base, ast.Constant) and isinstance(base.value, (int, float)) and not isinstance(base.value, bool) and abs(float(base.value)) <= 1e6):
+            return False
+    return True
+
+
+def _constant_true(cond: str) -> bool:
+    """True when ``cond`` is a constant expression that evaluates truthy.
+
+    ``while (0 == 0)`` and ``while (2)`` never terminate, but the literal ``true``/``1`` patterns
+    did not see them. Evaluation is restricted to literals and arithmetic/comparison operators;
+    anything with a name or call is not constant here and is not rejected by this rule.
+    """
+    py = cond.replace("&&", " and ").replace("||", " or ")
+    py = re.sub(r"!(?!=)", " not ", py)
+    py = re.sub(r"\btrue\b", "True", py, flags=re.I)
+    py = re.sub(r"\bfalse\b", "False", py, flags=re.I)
+    py = re.sub(r"(\d)[uUlL]+\b", r"\1", py).strip()
+    try:
+        tree = ast.parse(py, mode="eval")
+    except SyntaxError:
+        return False
+    if any(not isinstance(node, _CONST_NODES) for node in ast.walk(tree)):
+        return False
+    if not _safe_pow(tree):
+        return False
+    try:
+        return bool(eval(compile(tree, "<loop-condition>", "eval"), {"__builtins__": {}}, {}))
+    except Exception:  # noqa: BLE001 - division by zero and the like mean "not a safe constant"
+        return False
 
 
 def _split_semicolons(text: str) -> list[str]:

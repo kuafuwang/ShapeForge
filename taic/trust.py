@@ -70,28 +70,131 @@ def audit_path(target_id: str, root: Path | None = None) -> Path:
     return target_root(target_id, root) / "trust_audit.jsonl"
 
 
-_PROMPT_FILES = (
-    "taic/prompts.py",
-    "taic/kernel_agent.py",
-    "taic/harness.py",
-    "targets/apple-m4-max/experience.md",
+# The model-facing prompt surface, by *text* rather than by whole file. A code edit in
+# ``kernel_agent.py``/``harness.py`` that never reaches the model (billing, subprocess handling,
+# a test path) must not invalidate a grant; a change to a prompt function, a template constant or a
+# skill document must.
+_PROMPT_FUNCTIONS = (
+    ("prompts.system_prompt", "taic.prompts", "system_prompt"),
+    ("prompts.initial_user", "taic.prompts", "initial_user"),
+    ("prompts.repair_user", "taic.prompts", "repair_user"),
+    ("prompts.planning_system", "taic.prompts", "planning_system"),
+    ("prompts.plan_user", "taic.prompts", "plan_user"),
+    ("prompts.patch_user", "taic.prompts", "patch_user"),
+    ("prompts._rules_for", "taic.prompts", "_rules_for"),
+    ("prompts._roofline_notes", "taic.prompts", "_roofline_notes"),
+    ("kernel_agent.render_contract", "taic.kernel_agent", "render_contract"),
+    ("kernel_agent._cap_task", "taic.kernel_agent", "_cap_task"),
+    ("harness.write_template", "taic.harness", "write_template"),
+)
+_PROMPT_CONSTANTS = (
+    ("prompts.HARNESS_RULES", "taic.prompts", "HARNESS_RULES"),
+    ("prompts.MIXED_PLANS", "taic.prompts", "MIXED_PLANS"),
+    ("prompts.WIKI_DOCS", "taic.prompts", "WIKI_DOCS"),
+    ("harness.TEMPLATE", "taic.harness", "TEMPLATE"),
+)
+_GLOBAL_TEXT_FILES = (
     "taic/flows/kernel_once/skills/taic-tools/SKILL.md",
 )
 
 
-def current_prompt_sha1() -> str:
+def _relative_or_absolute(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return path.resolve().as_posix()
+
+
+def _backend_skill_files(target_id: str | None = None) -> tuple[str, ...]:
+    """@brief 一个目标档的后端技能文档，按路径排序。
+
+    ``prompts.system_prompt`` 注入的 ``backend.skill_*`` 落在 ``backends/<backend>/skills/*.md``；
+    后端由目标档决定，所以第二个 backend 不需要改本模块。
+
+    @param target_id 目标标识；``None`` 用默认目标。
+    @return 相对仓库根（或目标不在仓库内时的绝对路径）的文件列表；目录不存在时为空。
+    """
+    from tcenv.target import load_target
+
+    try:
+        skills = load_target(target_id).skills
+    except Exception:  # noqa: BLE001 - a missing profile is reported by the caller that needs it
+        return ()
+    if not skills.is_dir():
+        return ()
+    return tuple(_relative_or_absolute(path) for path in sorted(skills.glob("*.md")))
+
+
+def _target_text_files(target_id: str | None) -> tuple[str, ...]:
+    """@brief 一个目标档注入的文本：experience.md、device.md 与该后端的技能文档。
+
+    Resolved from the target profile instead of a hardcoded ``apple-m4-max`` path, so a grant for
+    another target is bound to that target's documents.
+
+    @param target_id 目标标识；``None`` 用默认目标。
+    @return 文本文件列表。
+    """
+    from .target import skill_path
+
+    paths: list[Path] = []
+    for name in ("experience", "device"):
+        try:
+            path = skill_path(name, target_id)
+        except Exception:  # noqa: BLE001
+            continue
+        if path.is_file():
+            paths.append(path)
+    return tuple(_relative_or_absolute(path) for path in paths) + _backend_skill_files(target_id)
+
+
+def _prompt_text_files(target_id: str | None = None) -> tuple[str, ...]:
+    return _GLOBAL_TEXT_FILES + _target_text_files(target_id)
+
+
+def _symbol_bytes(module_name: str, symbol: str) -> bytes:
+    import importlib
+    import inspect
+
+    module = importlib.import_module(module_name)
+    value = getattr(module, symbol)
+    if callable(value):
+        try:
+            return inspect.getsource(value).encode("utf-8")
+        except (OSError, TypeError):
+            # A frozen or generated function: fall back to the module file, which is conservative.
+            try:
+                return Path(inspect.getfile(module)).read_bytes()
+            except (OSError, TypeError):
+                return symbol.encode("utf-8")
+    return repr(value).encode("utf-8")
+
+
+def prompt_fingerprint_parts(target_id: str | None = None) -> list[tuple[str, bytes]]:
+    """@brief 指纹覆盖的提示面：函数源码、模板常量、目标文档与技能文档。
+
+    @param target_id 目标标识；``None`` 用默认目标。
+    @return ``(标签, 字节)`` 列表；标签是 ``模块.符号`` 或文件路径。
+    """
+    parts = [(label, _symbol_bytes(module, symbol)) for label, module, symbol in _PROMPT_FUNCTIONS + _PROMPT_CONSTANTS]
+    for relative in _prompt_text_files(target_id):
+        parts.append((relative, (REPO_ROOT / relative).read_bytes()))
+    return parts
+
+
+def current_prompt_sha1(target_id: str | None = None) -> str:
     """@brief 提示/TASK 面的指纹，改动它会让旧授权变旧。
 
-    ``kernel_agent.py`` 拥有 TASK 契约，``harness.py`` 拥有 HARNESS.md；目标经验文件与 agent 技能也是被注入的
-    提示文本。授权不能默默延续到模型被告知遵循的文本已经变了之后。
+    Only the text the model is asked to follow is hashed: the prompt-rendering functions, the
+    template constants and the skill documents. Unrelated code in the same modules no longer
+    changes the fingerprint. A grant must not silently survive a change to that text.
 
-    @return 各提示面文件内容拼接后的 sha256。
+    @param target_id 目标标识；``None`` 用默认目标。两个 target 的文档不同，指纹也不同。
     """
     digest = hashlib.sha256()
-    for name in _PROMPT_FILES:
-        digest.update(name.encode("utf-8"))
+    for label, data in prompt_fingerprint_parts(target_id):
+        digest.update(label.encode("utf-8"))
         digest.update(b"\0")
-        digest.update((REPO_ROOT / name).read_bytes())
+        digest.update(data)
         digest.update(b"\0")
     return digest.hexdigest()
 
@@ -338,7 +441,7 @@ def grant(
         "provider": provider,
         "model": model,
         "effort": effort,
-        "prompt_sha1": str(prompt_sha1 if prompt_sha1 is not None else current_prompt_sha1()),
+        "prompt_sha1": str(prompt_sha1 if prompt_sha1 is not None else current_prompt_sha1(target_id)),
         "protocol_version": str(protocol_version if protocol_version is not None else current_protocol_version()),
         "status": "active",
         "granted_by": str(granted_by or "cli"),
@@ -480,7 +583,11 @@ def check(
     if str(entry.get("protocol_version") or "") != str(protocol_version if protocol_version is not None else current_protocol_version()):
         return False, "trust was granted for another measurement protocol"
     expected_prompt = str(entry.get("prompt_sha1") or "")
-    if expected_prompt and expected_prompt != str(prompt_sha1 if prompt_sha1 is not None else current_prompt_sha1()):
+    if not expected_prompt:
+        # A row without the fingerprint cannot be checked against the current prompt surface.
+        # Treat it as stale rather than as a grant for every prompt.
+        return False, "trust entry has no prompt fingerprint"
+    if expected_prompt != str(prompt_sha1 if prompt_sha1 is not None else current_prompt_sha1(target_id)):
         return False, "trust was granted for another prompt"
     return True, ""
 

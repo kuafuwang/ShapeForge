@@ -196,6 +196,31 @@ def _archive(paths: list[Path], stamp: str) -> str:
     return folder.name
 
 
+def _unarchive(folder_name: str, original: list[Path]) -> None:
+    """@brief 把刚归档的目录搬回 ``runs/``，用于日志写不出去时回滚。
+
+    An archived run with no audit line is indistinguishable from an untracked deletion, and
+    ``gc --apply`` could later remove the only copy.
+
+    @param folder_name ``_archive`` 返回的批次目录名。
+    @param original 归档前 ``runs/`` 下的目录。
+    """
+    root = detail.runs_root().resolve()
+    folder = archive_root() / folder_name
+    for path in sorted(original, key=lambda item: len(item.parts)):
+        try:
+            relative = path.resolve().relative_to(root).as_posix()
+        except ValueError:
+            continue
+        src = folder / relative
+        if not src.exists():
+            continue
+        dest = root / relative
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dest))
+    shutil.rmtree(folder, ignore_errors=True)
+
+
 def _runs_for_operator(name: str) -> list[str]:
     """@brief 在索引中找出属于某 operator 的全部 run id。
 
@@ -290,7 +315,11 @@ def delete_records(kind: object, name: object, reason: object, client_ip: object
         "who": "dashboard",
     }
     try:
-        get_index().drop_archived(run_ids, experiment_ids)
-    finally:
         _append(entry)
+    except BaseException:
+        # The move succeeded but the audit line did not: put the directories back so nothing is
+        # archived without provenance, then let the caller see the error.
+        _unarchive(folder, targets)
+        raise
+    get_index().drop_archived(run_ids, experiment_ids)
     return {"ok": True, "archive": folder, "kind": kind, "name": recorded, "runs": run_ids}

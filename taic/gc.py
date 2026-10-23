@@ -49,7 +49,8 @@ def scan(root: Path, *, older_than_days: float, now: float | None = None) -> lis
     moment = time.time() if now is None else now
     rows = []
     for child in sorted(root.iterdir()):
-        if not child.is_dir():
+        if not child.is_dir() or child.is_symlink():
+            # A symlink is not archive content; following it would delete the target.
             continue
         try:
             mtime = child.stat().st_mtime
@@ -64,7 +65,7 @@ def scan(root: Path, *, older_than_days: float, now: float | None = None) -> lis
     return rows
 
 
-def apply(rows: list[dict], *, log_path: Path | None = None, now: float | None = None) -> dict:
+def apply(rows: list[dict], *, log_path: Path | None = None, now: float | None = None, root: Path | None = None) -> dict:
     """@brief 删除 ``eligible`` 为真的行，并在每次删除前追加一条审计记录。
 
     删除失败不抛错（``shutil.rmtree(..., ignore_errors=True)``）；日志中记录的是扫描时的文件数与字节数。
@@ -76,13 +77,23 @@ def apply(rows: list[dict], *, log_path: Path | None = None, now: float | None =
     """
     moment = time.time() if now is None else now
     removed = []
+    removed_bytes = 0
     log = Path(log_path) if log_path else None
+    archive = Path(root).resolve() if root is not None else None
     if log is not None:
         log.parent.mkdir(parents=True, exist_ok=True)
     for row in rows:
         if not row.get("eligible"):
             continue
         path = Path(row["path"])
+        if path.is_symlink():
+            continue
+        if archive is not None:
+            try:
+                path.resolve().relative_to(archive)
+            except ValueError:
+                # A row outside the archive root is not ours to delete.
+                continue
         if log is not None:
             with log.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps({
@@ -90,5 +101,8 @@ def apply(rows: list[dict], *, log_path: Path | None = None, now: float | None =
                     "age_days": row.get("age_days"), "at": moment,
                 }, ensure_ascii=False) + "\n")
         shutil.rmtree(path, ignore_errors=True)
+        if path.exists():
+            continue
         removed.append(str(path))
-    return {"removed": removed, "bytes": sum(row.get("bytes", 0) for row in rows if row.get("eligible"))}
+        removed_bytes += int(row.get("bytes") or 0)
+    return {"removed": removed, "bytes": removed_bytes}

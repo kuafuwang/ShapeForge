@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import secrets
+import re
 import statistics
 import subprocess
 import time
@@ -39,7 +40,7 @@ from tcenv.schema import SchemaError
 from tcenv.report import format_feedback
 
 from . import control, prompts
-from .artifacts import LEDGER_SCHEMA_VERSION, PROTOCOL_VERSION, RESULT_SCHEMA_VERSION, STATE_SCHEMA_VERSION
+from .artifacts import LEDGER_SCHEMA_VERSION, PROTOCOL_VERSION, RESULT_SCHEMA_VERSION, RUN_CONFIG_SCHEMA_VERSION, STATE_SCHEMA_VERSION
 from .feedback_extra import abi_signature, at_roofline, failure_phrase, status_lines, target_note, threadgroup_limit_note
 from .llm import LLM, BudgetExhausted, CostLedger, LLMConfig, LLMError, SearchConfig, Transcript
 from .policy import candidate_eligible, choose_confirmed, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain, session_budget_floor
@@ -371,6 +372,9 @@ class RunResult:
 
 
 # 源码的内容身份：评测缓存、复测去重、profiler 缓存都用它。同一份文本不会被当成两个内核。
+_KERNEL_DECL = re.compile(r"\bkernel\s+void\b")
+
+
 def _sha(source: str) -> str:
     """@brief 源码的内容身份。
 
@@ -773,7 +777,7 @@ class Orchestrator:
         triton_text = self.task.triton_source
         commit, dirty = _git_identity(REPO_ROOT)
         body = {
-                "schema_version": 2,
+                "schema_version": RUN_CONFIG_SCHEMA_VERSION,
                 "protocol_version": PROTOCOL_VERSION,
                 "target": {
                     "id": self.target_id,
@@ -802,7 +806,7 @@ class Orchestrator:
         body["committees"] = committees_record(self.committees)
         try:
             control.write_json_atomic(self.run_dir / control.CONFIG_FILE, body)
-            (self.run_dir / "system_prompt.txt").write_text(self.system)
+            control.write_text_atomic(self.run_dir / "system_prompt.txt", self.system)
         except OSError as e:
             raise RunStartError(f"cannot start: run_config.json was not written ({e})") from e
 
@@ -1447,7 +1451,11 @@ class Orchestrator:
             if not metal.is_file():
                 self.log(f"-- --from @catalog: no kernel for {self.target_id} {self.task_name} {self.dtype} {self.size}")
                 return None
-            return metal.read_text(encoding="utf-8")
+            text = metal.read_text(encoding="utf-8", errors="replace")
+            if not _KERNEL_DECL.search(text):
+                self.log(f"-- --from @catalog: {metal.name} is empty or has no kernel declaration; writing the first version from scratch")
+                return None
+            return text
         root = self.from_run
         if root is None:
             return None
@@ -1473,7 +1481,13 @@ class Orchestrator:
                 return None
         else:
             self.log(f"-- --from {root}: no result.json; re-evaluating {self.best_name} on {self.task_name} {self.dtype} {self.size}")
-        return metal.read_text()
+        text = metal.read_text(encoding="utf-8", errors="replace")
+        if not _KERNEL_DECL.search(text):
+            # A kill between truncate and write leaves an empty/partial winner. Re-evaluating it
+            # would spend a GPU evaluation on text that cannot compile.
+            self.log(f"-- --from {root}: {metal.name} is empty or has no kernel declaration; writing the first version from scratch")
+            return None
+        return text
 
     # 初始生成，然后进入逐轮「诊断 → 规划 → K 路补丁」。只有 _eval 认定安全、算对且快过噪声的候选才会变成下一轮种子。
     async def _search(self, res: RunResult) -> None:
@@ -2035,6 +2049,11 @@ class Orchestrator:
                 prompt=prompt, provider=reviewer.provider, model=reviewer.model,
                 effort=reviewer.cfg.reasoning_effort, prices=prices,
             )
+            if verdict.get("cost_usd") is None:
+                # The kernel path stops on a session with no token bill. A review must not be
+                # activated and recorded as paid when its cost is unknown; leave the tip unreviewed.
+                self.log("  [review] skipped: the reviewer left no token bill; the tip stays unreviewed")
+                return
             review_mod.append_review(self.run_dir, row, verdict)
             if verdict.get("cost_usd") is not None:
                 self.ledger.charge(
@@ -2710,7 +2729,7 @@ class Orchestrator:
                 res.confirmation_source_sha256 = hashlib.sha256(self._confirm_winner.source.encode("utf-8")).hexdigest()
         if self.best:
             res.best_label, res.best_speedup = self.best.label, self.best.speedup
-            (self.run_dir / self.best_name).write_text(self.best.source)
+            control.write_text_atomic(self.run_dir / self.best_name, self.best.source)
         res.target_id = self.target_id
         res.backend = self.target.backend
         res.backend_version = self.target.backend_version

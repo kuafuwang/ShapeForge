@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from tcenv.target import REPO
 
 _MARKERS = ("state.json", "result.json", "run_config.json", "candidates", "transcript.jsonl")
+
+
+_TARGET_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _target_id(value: str) -> str:
+    target = str(value or "")
+    if not _TARGET_NAME.match(target) or ".." in target:
+        raise ValueError(f"target_id must be a plain directory name, got {value!r}")
+    return target
 
 
 def migrate_runs(root: Path | None = None, target_id: str = "apple-m4-max") -> list[str]:
@@ -18,6 +29,7 @@ def migrate_runs(root: Path | None = None, target_id: str = "apple-m4-max") -> l
     @param target_id 目标档名，同时是目标子目录名。
     @return 实际搬动的目录名列表；没有任何目录可搬时为空列表。
     """
+    target_id = _target_id(target_id)
     base = Path(root) if root is not None else REPO / "runs"
     dest_root = base / target_id
     dest_root.mkdir(parents=True, exist_ok=True)
@@ -36,9 +48,21 @@ def migrate_runs(root: Path | None = None, target_id: str = "apple-m4-max") -> l
         if dest.exists():
             continue
         child.rename(dest)
+        _forget_indexed_run(child.name)
         _stamp(dest, target_id)
         moved.append(child.name)
     return moved
+
+
+def _forget_indexed_run(run_id: str) -> None:
+    """Drop the old index rows after a rename. A move is not a deletion; the new path carries the spend."""
+    try:
+        from observe.index import db_path, get_index
+
+        if db_path().is_file():
+            get_index().forget_moved(run_id)
+    except Exception:  # noqa: BLE001 - a locked or corrupt index must not block the file move
+        return
 
 
 def _live(run_dir: Path) -> bool:

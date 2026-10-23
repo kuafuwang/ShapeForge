@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from experiments.reprice_runs import cost_of, recompute_run
 from taic.committees import _priced
 from taic.llm import CostLedger, LLMConfig
@@ -71,3 +73,15 @@ def test_recompute_marks_a_model_missing_from_the_price_table(tmp_path):
 def test_cost_of_uses_each_kind():
     prices = {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.0}
     assert cost_of({"input": 1_000_000, "output": 1_000_000, "cache_read": 1_000_000, "cache_write": 1_000_000}, prices) == 21.3
+
+
+def test_a_non_finite_or_negative_charge_is_refused():
+    """A NaN charge made total_usd NaN, and every budget comparison then returned false."""
+    ledger = CostLedger(_cfg(), 10.0)
+    for bad in (float("nan"), float("inf"), -1.0):
+        with pytest.raises(ValueError):
+            ledger.charge(bad)
+    assert ledger.total_usd == 0.0
+    ledger.charge(1.0)
+    assert ledger.total_usd == 1.0
+

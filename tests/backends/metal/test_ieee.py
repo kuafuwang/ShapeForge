@@ -8,7 +8,7 @@ import pytest
 import torch
 
 from tasks import get_task, list_tasks
-from tcenv.backends.metal.testing import IEEE_CASE, inject_specials, prepare_case, scaled_error
+from tcenv.backends.metal.testing import IEEE_CASE, CaseData, check_case, inject_specials, prepare_case, scaled_error
 
 ALL_TASKS = list(list_tasks(include_phase2=True))
 INF, NAN = float("inf"), float("nan")
@@ -202,3 +202,49 @@ def test_conv2d_ieee_reference_keeps_most_outputs_finite_and_matches_conv2d_on_f
         for kw in range(3):
             tap += x[:, kh:kh + OH, kw:kw + OW, :] @ w[:, kh, kw, :].T
     assert torch.allclose(tap.double(), ref, rtol=1e-4, atol=1e-3 * float(ref.abs().max()))
+
+
+def test_a_non_finite_error_scale_fails_instead_of_passing():
+    for scale in (float("nan"), float("inf")):
+        errors = scaled_error(torch.tensor([0.0]), torch.tensor([0.0]), scale, 1e-3, 1e-3, False)
+        assert torch.isinf(errors).all(), scale
+
+
+def test_the_absolute_floor_is_half_the_smallest_subnormal():
+    from tcenv.backends.metal.testing import _floor
+    from tcenv.dtypes import FLOAT_TINY_SUBNORMAL
+
+    for dtype, tiny in FLOAT_TINY_SUBNORMAL.items():
+        assert 0.5 <= _floor(dtype) / tiny < 1.0, dtype
+    assert _floor("i32") == 0.0
+
+
+def _tolerance_task(*, exact: bool = False):
+    from types import SimpleNamespace
+
+    arg = SimpleNamespace(name="y", dtype="fp16", shape=(1,))
+    return SimpleNamespace(contract=SimpleNamespace(outputs=[arg], inputs=[], arg=lambda _name: arg), rtol=1e-3, atol_rel=1e-3, exact=exact)
+
+
+def _tolerance_data(*, case: str = "normal"):
+    return CaseData(case=case, seed=1, rounded={}, raw={}, ref={"y": torch.tensor([1.0], dtype=torch.float64)}, scale={"y": torch.tensor(1.0, dtype=torch.float64)})
+
+
+def _tolerance_raw(value: float) -> dict[str, bytes]:
+    return {"y": torch.tensor([value], dtype=torch.float16).numpy().tobytes()}
+
+
+def test_the_baseline_can_widen_the_tolerance_but_never_past_the_cap():
+    task, data, candidate = _tolerance_task(), _tolerance_data(), _tolerance_raw(1.004)
+    alone = check_case(task, data, candidate, None)
+    assert alone.allow == 1.0 and not alone.ok
+    perfect = {"mlx": {"y": torch.tensor([1.0])}}
+    assert check_case(task, data, candidate, perfect).allow == 1.0
+    sloppy = {"mlx": {"y": torch.tensor([1.01])}}
+    allowed = check_case(task, data, candidate, sloppy)
+    assert allowed.allow == 8.0 and allowed.ok  # capped at ALLOW_CAP, not unbounded
+    broken = {"mlx": {"y": torch.tensor([1.1])}}
+    assert check_case(task, data, _tolerance_raw(1.05), broken).ok is False
+    assert check_case(task, _tolerance_data(case="domain"), candidate, sloppy).allow == 1.0
+    assert check_case(_tolerance_task(exact=True), data, candidate, sloppy).allow == 1.0
+

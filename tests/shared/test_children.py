@@ -52,3 +52,16 @@ def test_kill_group_reaches_a_child_that_outlived_its_leader(tmp_path):
             os.kill(child, 9)
         except OSError:
             pass
+
+
+def test_scrubbed_env_drops_every_key_shaped_variable():
+    """A child process inherits the environment; *_KEY and *_TOKEN names are secrets too."""
+    from tcenv.children import scrubbed_env
+
+    env = scrubbed_env({
+        "PATH": "/bin", "NORMAL_VAR": "v", "KEYBOARD_LAYOUT": "us", "TOKENIZERS_PARALLELISM": "1",
+        "GEMINI_KEY": "k", "AWS_ACCESS_KEY_ID": "k", "GH_KEY": "k", "OPENAI_API_KEY": "k",
+        "MY_SECRET": "k", "DB_PASSWORD": "k", "KEY": "k",
+    })
+    assert env == {"PATH": "/bin", "NORMAL_VAR": "v", "KEYBOARD_LAYOUT": "us", "TOKENIZERS_PARALLELISM": "1"}
+

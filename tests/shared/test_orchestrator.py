@@ -11,6 +11,7 @@ import pytest
 from taic.kernel_agent import agent_for_script
 from taic.orchestrator import Orchestrator, RunStartError
 from tcenv.evaluate import EvalReport
+from tcenv.schema import PROTOCOL_VERSION
 
 from ..support.fakes import FakeClient, make_response, make_usage
 from ..support.orchestrator import KERNEL, agent_from_script, code, fake_eval, llm_script, make_orch, run, _user_prompts
@@ -541,7 +542,8 @@ def test_confirmation_reports_the_median_of_independent_batches(tmp_path):
         calls.append((mode, source))
         seen = sum(1 for _m, s in calls if s == source)
         sp = {1: 1.30, 2: 1.10, 3: 1.40, 4: 1.20}.get(seen, 1.20)
-        rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=1, stage="done", status="ok", message="ok")
+        rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=1, stage="done", status="ok", message="ok",
+                         target_id="apple-m4-max", protocol_version=PROTOCOL_VERSION)
         rep.speedup, rep.speedups, rep.candidate_us, rep.baseline_us = sp, {"mlx": sp}, 100.0 / sp, {"mlx": 100.0}
         rep.benchmark = {"candidate": {"median_us": 100.0 / sp, "cv": 0.01, "reps": reps}, "baselines": {"mlx": {"median_us": 100.0, "cv": 0.01, "reps": reps}}, "best_baseline": "mlx"}
         return rep
@@ -633,3 +635,14 @@ def test_a_remaining_balance_below_a_recent_session_does_not_start_another_sessi
     assert res.stop_reason == "budget_exhausted" and res.session_budget_stop is True
     assert res.spent_usd == pytest.approx(0.6)
     assert res.confirmed_status == "ok"
+
+
+def test_an_empty_best_file_is_not_a_previous_kernel(tmp_path):
+    prev = tmp_path / "prev"
+    prev.mkdir()
+    (prev / "best.metal").write_text("")
+    (prev / "run_config.json").write_text(json.dumps({"schema_version": 2, "target": {"id": "apple-m4-max"}}))
+    (prev / "result.json").write_text(json.dumps({"schema_version": 1, "task": "relu", "dtype": "fp16", "size": "small", "target_id": "apple-m4-max"}))
+    orch = make_orch(tmp_path / "new", llm_script(code("speed=1.0")), [], from_run=prev)
+    assert orch._prior_kernel_text() is None
+

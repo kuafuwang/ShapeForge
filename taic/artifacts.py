@@ -13,6 +13,7 @@ from tcenv.schema import PROTOCOL_VERSION, SchemaError, document_version
 RESULT_SCHEMA_VERSION = 1
 STATE_SCHEMA_VERSION = 1
 LEDGER_SCHEMA_VERSION = 1
+RUN_CONFIG_SCHEMA_VERSION = 2
 
 
 class NeedsInspection(RuntimeError):

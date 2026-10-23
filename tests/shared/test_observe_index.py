@@ -12,6 +12,7 @@ from experiments.manifest import ManifestError, attach, config_hash, ensure, ext
 from observe.index import INDEX_SCHEMA_VERSION, Index
 from observe.legacy import infer
 from observe.query import compare, plan_outcomes, run_detail
+from tcenv.schema import PROTOCOL_VERSION
 
 
 def test_frozen_conditions_cannot_change_and_a_top_up_is_an_extension(tmp_path):
@@ -238,12 +239,13 @@ def test_editing_the_winner_kernel_drops_the_confirmed_speedup(tmp_path, monkeyp
     (directory / "confirm_report.json").write_text(json.dumps({
         "status": "ok", "speedup": 1.4,
         "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"},
+        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
     }))
     (directory / "state.json").write_text(json.dumps({"task": "gemm", "dtype": "fp16", "phase": "done", "started_at": 1, "updated_at": 1}))
     (directory / "result.json").write_text(json.dumps({
         "task": "gemm", "dtype": "fp16", "stop_reason": "max_rounds", "spent_usd": 0.1, "budget_usd": 1,
         "confirmed_status": "ok", "confirmed_speedup": 1.4, "confirm_winner_label": "r1.p0",
-        "confirmation_source_sha256": digest,
+        "confirmation_source_sha256": digest, "confirmed_values": [1.4], "target_id": "apple-m4-max",
     }))
     index = Index(tmp_path / "observe.sqlite")
     index.sync_known()
@@ -418,3 +420,34 @@ def test_sessions_and_model_totals_come_from_agent_rows(tmp_path, monkeypatch):
     assert sessions[0]["tokens_cache_write"] == 40
     totals = scan.model_stats()["models"]
     assert {row["model"]: row["sessions"] for row in totals} == {"deepseek-flash": 1, "kimi-k3": 1}
+
+
+def test_migrating_a_run_does_not_create_a_second_index_row(tmp_path, monkeypatch):
+    """A rename is not a second run. Keeping the old ledger row doubled the recorded spend."""
+    from taic.migrate import migrate_runs
+
+    runs = tmp_path / "runs"
+    db = tmp_path / "observe.sqlite"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    monkeypatch.setenv("OBSERVE_DB", str(db))
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "missing.sqlite"))
+    monkeypatch.delenv("OBSERVE_CARRYOVER", raising=False)
+    directory = runs / "one"
+    directory.mkdir(parents=True)
+    (directory / "result.json").write_text(json.dumps({
+        "schema_version": 1, "task": "relu", "dtype": "fp16", "size": "small",
+        "stop_reason": "max_rounds", "spent_usd": 1.0, "budget_usd": 2.0, "started_at": 100.0,
+    }))
+    (directory / "state.json").write_text(json.dumps({
+        "schema_version": 1, "task": "relu", "dtype": "fp16", "phase": "done",
+        "started_at": 100.0, "updated_at": 110.0, "pid": 0,
+    }))
+    index = Index(db)
+    index.sync_known()
+    assert index.total_usd() == pytest.approx(1.0)
+    assert migrate_runs(runs, "apple-m4-max") == ["one"]
+    index.sync_known()
+    rows = [row["run_id"] for row in index.conn.execute("SELECT run_id FROM runs")]
+    assert rows == ["apple-m4-max/one"]
+    assert index.total_usd() == pytest.approx(1.0)
+

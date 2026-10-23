@@ -19,7 +19,7 @@ _LIVE: list[subprocess.Popen] = []
 # pi session behind hmz). Membership is dropped by ``forget`` so a recycled pid is never signaled.
 _GROUP_LEADERS: set[int] = set()
 _INSTALLED = False
-_SECRET = re.compile(r"(API_KEY|APIKEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)", re.I)
+_SECRET = re.compile(r"(^|_)(API_?KEY|APIKEY|KEYS?|TOKENS?|SECRETS?|PASSWORDS?|PASSWD|CREDENTIALS?)($|_)", re.I)
 
 
 def scrubbed_env(base: dict | None = None) -> dict[str, str]:

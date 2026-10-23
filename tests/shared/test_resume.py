@@ -13,7 +13,7 @@ import pytest
 
 from taic import cli, control, resume as rs
 from taic.llm import BudgetExhausted, CostLedger, LLMConfig, SearchConfig
-from taic.orchestrator import Orchestrator
+from taic.orchestrator import Orchestrator, RunStartError
 from tcenv.evaluate import EvalReport
 
 from ..support.fakes import FakeClient, make_response, make_usage
@@ -712,3 +712,79 @@ def test_chat_usage_write_tokens_survive_a_resume():
                          "prompt_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 4}}}]
     reqs = rs._requests_from_transcript(events, [])
     assert reqs[0]["write"] == 4
+
+
+def test_a_resume_counts_the_spend_recorded_in_result_json(tmp_path):
+    """result.json is the last written conclusion; ignoring it under-counted spend by the gap."""
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1)
+    run(orch)
+    run_dir = tmp_path / "run"
+    result = json.loads((run_dir / "result.json").read_text())
+    spent = float(result["spent_usd"])
+    result["spent_usd"] = spent + 3.0
+    (run_dir / "result.json").write_text(json.dumps(result))
+    snap = rs.load_snapshot(run_dir, orch.search, KERNEL)
+    assert snap.spent_usd == pytest.approx(spent + 3.0)
+    assert any("unaccounted" in note for note in snap.notes)
+
+
+def test_a_second_topup_never_overwrites_an_earlier_audit_copy(tmp_path):
+    """snapshot_results reuses one generation number for result and confirm_report. A run killed
+    during confirmation can already have confirm_report.before_topup_1.json, which must survive."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "result.json").write_text('{"generation": 2}')
+    (run_dir / "confirm_report.json").write_text('{"generation": 2}')
+    (run_dir / "confirm_report.before_topup_1.json").write_text('{"generation": 1}')
+    moved = rs.snapshot_results(run_dir)
+    assert "confirm_report.before_topup_2.json" in moved
+    assert json.loads((run_dir / "confirm_report.before_topup_1.json").read_text()) == {"generation": 1}
+    assert json.loads((run_dir / "confirm_report.before_topup_2.json").read_text()) == {"generation": 2}
+
+
+def test_a_run_config_from_a_newer_code_version_is_refused(tmp_path):
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], max_rounds=1)
+    run(orch)
+    run_dir = tmp_path / "run"
+    doc = json.loads((run_dir / "run_config.json").read_text())
+    doc["schema_version"] = 99
+    (run_dir / "run_config.json").write_text(json.dumps(doc))
+    info = rs.inspect_run(run_dir)
+    assert info["resumable"] is False and "newer" in info["reason"]
+    with pytest.raises(rs.NeedsInspection):
+        rs.load_snapshot(run_dir, orch.search, KERNEL)
+
+
+def test_a_resume_that_cannot_start_puts_the_old_result_back(tmp_path):
+    orch = make_orch(tmp_path, script_for(usage=BIG), [], budget=0.15, max_rounds=3, max_repair=2, patience=20)
+    run(orch)
+    run_dir = tmp_path / "run"
+    before = {p.name: p.read_bytes() for p in run_dir.glob("*.json") if p.name in ("result.json", "confirm_report.json")}
+    assert "result.json" in before
+    o2, snap, report, info, nb = cli.prepare_resume(
+        ns(run_dir, add_budget=5.0, who="test"), client=FakeClient(script_for(usage=BIG)), evaluate_fn=fake_eval([]), log=lambda s: None,
+    )
+
+    async def boom():
+        raise RunStartError("startup failed after the snapshot")
+
+    o2.run = boom
+    with pytest.raises(RunStartError, match="startup failed"):
+        cli.run_prepared(ns(run_dir, add_budget=5.0, who="test"), o2, snap, info, nb)
+    for name, data in before.items():
+        assert (run_dir / name).read_bytes() == data, name
+    assert control.lock_holder(run_dir) is None
+
+
+def test_resume_dry_run_leaves_the_run_directory_byte_identical(tmp_path):
+    orch = make_orch(tmp_path, script_for(usage=BIG), [], budget=0.15, max_rounds=3, max_repair=2, patience=20)
+    run(orch)
+    run_dir = tmp_path / "run"
+
+    def snapshot():
+        return {str(p.relative_to(run_dir)): p.read_bytes() for p in run_dir.rglob("*") if p.is_file()}
+
+    before = snapshot()
+    assert cli.main(["resume", str(run_dir), "--dry-run", "--add-budget", "5"]) == 0
+    assert snapshot() == before
+

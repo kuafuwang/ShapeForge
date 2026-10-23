@@ -290,6 +290,11 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops
         "task": (result or state or {}).get("task"), "dtype": (result or state or {}).get("dtype"),
     }
     try:
+        _check_run_config_version(run_dir)
+    except NeedsInspection as e:
+        info.update(kind="unknown", reason=str(e), resumable=False)
+        return info
+    try:
         info["needs_budget"] = (
             bool((result or {}).get("session_budget_stop"))
             or (spent is not None and budget is not None and float(spent) >= float(budget) - 1e-9)
@@ -658,6 +663,13 @@ def _loop_protocol(run_dir: Path) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _check_run_config_version(run_dir: Path) -> None:
+    """A run_config.json newer than this code needs human inspection, like result/state/ledger."""
+    from .artifacts import RUN_CONFIG_SCHEMA_VERSION, read_versioned
+
+    read_versioned(Path(run_dir) / "run_config.json", RUN_CONFIG_SCHEMA_VERSION)
+
+
 def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
     """@brief 重建一场 ``flame_chase_1`` 运行的状态。
 
@@ -677,6 +689,7 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
     """
     del kernel_name
     notes: list[str] = []
+    _check_run_config_version(run_dir)
     state, result = read_versioned(run_dir / "state.json", STATE_SCHEMA_VERSION), read_versioned(run_dir / "result.json", RESULT_SCHEMA_VERSION)
     if state is None and result is None:
         raise ResumeError(f"{run_dir} has neither state.json nor result.json")
@@ -693,7 +706,16 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
 
             raise NeedsInspection(f"{run_dir / 'ledger.json'} has a request list but transcript.jsonl does not; a checkpoint cannot replace the billed transcript and needs human inspection")
         notes.append("ledger.json holds a request list; it was not applied. transcript.jsonl is the billed-request record")
-    from_state = _first((state or {}).get("spent_usd"), ((state or {}).get("ledger") or {}).get("total_usd"))
+    recorded_spends = [
+        value
+        for value in (
+            (state or {}).get("spent_usd"),
+            ((state or {}).get("ledger") or {}).get("total_usd"),
+            (result or {}).get("spent_usd"),
+        )
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    ]
+    from_state = max(recorded_spends) if recorded_spends else None
     total = float(requests[-1]["total_usd"]) if requests else 0.0
     if isinstance(from_state, (int, float)) and not isinstance(from_state, bool) and float(from_state) > total + 1e-6:
         gap = float(from_state) - total
@@ -888,7 +910,9 @@ def snapshot_results(run_dir: Path) -> list[str]:
         except (OSError, ValueError) as exc:
             raise ResumeError(f"{src} is damaged and was left in place; nothing was moved: {exc}") from exc
     moved = []
-    n = _next_index(run_dir, "result")
+    # One generation number for both files: the loop below writes result and confirm_report with
+    # the same n, so n must skip a generation that either stem already uses.
+    n = max(_next_index(run_dir, "result"), _next_index(run_dir, "confirm_report"))
     for name, src, doc in pending:
         dst = run_dir / f"{name}.before_topup_{n}.json"
         control.write_json_atomic(dst, doc)

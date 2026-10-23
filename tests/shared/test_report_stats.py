@@ -76,3 +76,11 @@ def test_a_corrupt_timing_block_does_not_raise_and_an_incomplete_benchmark_is_un
     assert row["published_speedup"] is None
     assert row["best_speedup"] == 1.8 and row["naive_speedup"] is None  # naive is a separate argument, not copied from the result
     assert row["publication"] == "旧版未绑定源码"
+
+
+def test_a_non_finite_or_negative_cv_is_uncertain():
+    """NaN compares false against every threshold, so it used to pass as a quiet measurement."""
+    for cv in (float("nan"), float("inf"), -0.01):
+        report = {"benchmark": {"noisy": False, "candidate": {"cv": cv, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"}}
+        assert timing_is_uncertain(report) is True, cv
+

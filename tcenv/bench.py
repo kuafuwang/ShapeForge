@@ -294,4 +294,7 @@ def timing_is_uncertain(report) -> bool:
                 return True
     except (KeyError, TypeError, ValueError):
         return True
+    if any(not math.isfinite(cv) or cv < 0 for cv in cvs):
+        # NaN compares false against every threshold, so it used to pass as quiet.
+        return True
     return any(cv > QUIET_CV for cv in cvs)

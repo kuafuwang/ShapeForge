@@ -10,6 +10,7 @@ from experiments.common import conclusion_of_run, published_conclusion, summariz
 from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator, RunResult
 from tcenv.evaluate import EvalReport
+from tcenv.schema import PROTOCOL_VERSION
 
 from ..support.fakes import FakeClient
 
@@ -27,6 +28,7 @@ def _result(**extra):
         "task": "relu", "dtype": "fp16", "model": "fake", "stop_reason": "max_rounds", "rounds": 1,
         "evaluations": 1, "spent_usd": 0.1, "budget_usd": 1.0, "best_speedup": 1.4, "confirmed_speedup": 0.9,
         "confirmed_status": "incorrect", "confirm_winner_label": "r1.p0", "confirmation_source_sha256": _digest(SOURCE),
+        "confirmed_values": [], "target_id": "apple-m4-max",
     }
     base.update(extra)
     return base
@@ -53,8 +55,11 @@ def test_a_bound_confirmation_shows_the_remeasured_number(tmp_path):
     (run / "candidates" / "000_r1.p0").mkdir(parents=True)
     (run / "best.metal").write_text(SOURCE)
     (run / "candidates" / "000_r1.p0" / "kernel.metal").write_text(SOURCE)
-    (run / "confirm_report.json").write_text(json.dumps({"status": "ok", "speedup": 1.25, "benchmark": QUIET_BENCH}))
-    result = _result(confirmed_status="ok", confirmed_speedup=1.25, confirmation_source_sha256=digest)
+    (run / "confirm_report.json").write_text(json.dumps({
+        "status": "ok", "speedup": 1.25, "benchmark": QUIET_BENCH,
+        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
+    }))
+    result = _result(confirmed_status="ok", confirmed_speedup=1.25, confirmation_source_sha256=digest, confirmed_values=[1.25])
     got = published_conclusion(result, best_metal_sha256=digest, confirm_status="ok", winner_metal_sha256=digest)
     assert got == {"speedup": 1.25, "publication": "confirmed"}
     row = summarize(result, None, run_dir=run)
@@ -99,6 +104,48 @@ def test_a_confirmation_served_from_the_evaluation_cache_is_not_published(tmp_pa
     (run / "candidates" / "000_r1.p0").mkdir(parents=True)
     (run / "best.metal").write_text(SOURCE)
     (run / "candidates" / "000_r1.p0" / "kernel.metal").write_text(SOURCE)
-    (run / "confirm_report.json").write_text(json.dumps({"status": "ok", "speedup": 1.25, "cache_hit": True, "benchmark": QUIET_BENCH}))
+    (run / "confirm_report.json").write_text(json.dumps({
+        "status": "ok", "speedup": 1.25, "cache_hit": True, "benchmark": QUIET_BENCH,
+        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
+    }))
     result = _result(confirmed_status="ok", confirmed_speedup=1.25, confirmation_source_sha256=digest, confirmed_values=[1.25, 1.25, 1.25])
     assert conclusion_of_run(run, result) == {"speedup": None, "publication": "不确定"}
+
+
+def _bound_run(tmp_path, **report_extra):
+    digest = _digest(SOURCE)
+    run = tmp_path / "run"
+    (run / "candidates" / "000_r1.p0").mkdir(parents=True, exist_ok=True)
+    (run / "best.metal").write_text(SOURCE)
+    (run / "candidates" / "000_r1.p0" / "kernel.metal").write_text(SOURCE)
+    report = {"status": "ok", "speedup": 1.25, "benchmark": QUIET_BENCH, "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max"}
+    report.update(report_extra)
+    (run / "confirm_report.json").write_text(json.dumps(report))
+    return run, digest
+
+
+def test_the_published_number_must_be_the_median_of_the_recorded_batches(tmp_path):
+    """A hand-edited or mis-merged result.json must not publish a number the batches do not support."""
+    run, digest = _bound_run(tmp_path)
+    result = _result(confirmed_status="ok", confirmed_speedup=1.9, confirmation_source_sha256=digest,
+                     confirmed_values=[1.0, 1.0, 1.0])
+    assert conclusion_of_run(run, result)["speedup"] is None
+    result["confirmed_speedup"] = 1.0
+    assert conclusion_of_run(run, result) == {"speedup": 1.0, "publication": "confirmed"}
+
+
+def test_a_non_finite_or_textual_confirmed_speedup_is_not_published(tmp_path):
+    run, digest = _bound_run(tmp_path)
+    for bad in (float("inf"), float("nan"), "1.25", True):
+        result = _result(confirmed_status="ok", confirmed_speedup=bad, confirmation_source_sha256=digest,
+                         confirmed_values=[1.0])
+        assert conclusion_of_run(run, result)["speedup"] is None, bad
+
+
+def test_a_confirm_report_from_another_epoch_or_target_is_not_published(tmp_path):
+    for extra in ({"protocol_version": "0"}, {"target_id": "another-mac"}):
+        run, digest = _bound_run(tmp_path / str(extra), **extra)
+        result = _result(confirmed_status="ok", confirmed_speedup=1.25, confirmation_source_sha256=digest,
+                         confirmed_values=[1.25])
+        assert conclusion_of_run(run, result) == {"speedup": None, "publication": "未确认"}, extra
+

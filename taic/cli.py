@@ -747,7 +747,7 @@ def cmd_gc(a: argparse.Namespace) -> int:
         print(json.dumps({"root": str(root), "rows": [], "mode": "apply" if a.apply else "dry-run"}, ensure_ascii=False))
         return 0
     if a.apply:
-        result = gc.apply(rows, log_path=root / "gc_log.jsonl")
+        result = gc.apply(rows, log_path=root / "gc_log.jsonl", root=root)
         print(json.dumps({"root": str(root), "mode": "apply", **result, "rows": len(rows)}, ensure_ascii=False))
     else:
         print(json.dumps({

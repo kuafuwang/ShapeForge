@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import random
 import re
@@ -31,7 +32,7 @@ _PREVIEW_SECRET = re.compile(r"(?i)(sk-)(\S{0,80})")
 MAX_TOOL_TURNS = 6
 
 
-def _scrub_preview(text: str) -> str:
+def _scrub_preview(text: str, secrets: list[str] | tuple[str, ...] = ()) -> str:
     """@brief 取流式回复的末尾一段，并抹掉形似密钥的片段。
 
     只看最后 ``_PREVIEW_CHARS`` 个字符；``sk-`` 开头的 token 替换成 ``sk-…``，
@@ -41,6 +42,9 @@ def _scrub_preview(text: str) -> str:
     @return 脱敏后的末尾切片，最多 ``_PREVIEW_CHARS`` 个字符
     """
     shown = text[-_PREVIEW_CHARS:]
+    for secret in secrets:
+        if isinstance(secret, str) and len(secret) >= 8:
+            shown = shown.replace(secret, secret[:3] + "…")
     return _PREVIEW_SECRET.sub(r"\1…", shown)
 
 
@@ -492,6 +496,14 @@ def token_counts(tokens: Any) -> tuple[int, int, int, int]:
 
 
 # 一次运行共用的美元账。budget_usd 为 None 时不设门。费用在应答回来之后才加上，发请求前还不知道这一次要花多少。
+def _finite_cost(value: float) -> float:
+    """A billed amount must be a finite, non-negative number. NaN silently disabled the budget gate."""
+    cost = float(value)
+    if not math.isfinite(cost) or cost < 0:
+        raise ValueError(f"a cost must be finite and non-negative, got {value!r}")
+    return cost
+
+
 class CostLedger:
     """@brief 一次运行共用的美元账，并充当发请求前的预算门。
 
@@ -653,7 +665,7 @@ class CostLedger:
         @return 本次花费的美元
         """
         hit, miss, write, out = split_usage(usage)
-        cost = self.cost_of(usage)
+        cost = _finite_cost(self.cost_of(usage))
         self.total_usd += cost
         self.in_tokens_hit += hit
         self.in_tokens_miss += miss
@@ -677,7 +689,7 @@ class CostLedger:
         @param basis 这笔花费依据的单价表；None 时用 ``price_basis()``
         @return 实际入账的美元（即 ``usd``）
         """
-        cost = float(usd)
+        cost = _finite_cost(usd)
         hit, miss, write, out = token_counts(tokens)
         self.total_usd += cost
         self.in_tokens_hit += hit
@@ -1079,7 +1091,7 @@ class LLM:
                 return
             last_preview_at = now
             last_preview_size = size
-            await self._note_llm(label, "streaming", preview=_scrub_preview(text), thinking=_scrub_preview(thought))
+            await self._note_llm(label, "streaming", preview=_scrub_preview(text, self.transcript._secrets), thinking=_scrub_preview(thought, self.transcript._secrets))
 
         async for chunk in resp:
             if getattr(chunk, "usage", None):

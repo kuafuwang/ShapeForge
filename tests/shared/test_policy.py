@@ -175,3 +175,12 @@ def test_recent_session_cost_uses_the_median_and_ignores_empty_history():
     assert session_budget_floor([0.0, -1.0, None, 1.0]) == 1.0
     assert session_budget_floor([0.2, 0.4, 1.0]) == 0.4
     assert session_budget_floor([0.2, 0.4, 1.0, 3.0]) == 1.0
+
+
+def test_a_degenerate_gain_floor_never_promotes_a_slower_kernel():
+    from taic.policy import compare_to_best, required_gain
+
+    gain = required_gain(0.5, -2.0, 0.0, 0.0)
+    assert gain >= 1.0
+    assert compare_to_best(True, 0.6, 1.0, gain) == "keep"
+

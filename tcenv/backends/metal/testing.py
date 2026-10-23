@@ -158,6 +158,9 @@ def scaled_error(out: torch.Tensor, ref: torch.Tensor, scale, rtol: float, atol_
     if exact:
         return torch.where(o != r, torch.tensor(float("inf"), dtype=torch.float64), torch.tensor(0.0, dtype=torch.float64))
     scale = torch.as_tensor(scale, dtype=torch.float64)
+    if not torch.isfinite(scale).all():
+        # A non-finite scale is a broken reference, not a license to divide by 1.0 and pass.
+        return torch.full_like(o, float("inf"))
     tol = rtol * r.abs() + atol_rel * scale + floor
     diff = (o - r).abs()
     same_inf = torch.isinf(o) & torch.isinf(r) & (torch.sign(o) == torch.sign(r))

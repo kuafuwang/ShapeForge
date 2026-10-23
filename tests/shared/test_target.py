@@ -105,21 +105,32 @@ def test_catalog_seed_is_read_back_and_a_foreign_run_is_refused(tmp_path, monkey
     monkeypatch.setattr(catalog, "REPO", tmp_path)
     folder = catalog.catalog_dir("apple-m4-max", "relu", "fp16", "small")
     folder.mkdir(parents=True)
-    (folder / "best.metal").write_text("ARCHIVED", encoding="utf-8")
+    (folder / "best.metal").write_text("kernel void relu_kernel() {}\n", encoding="utf-8")
     cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
     search = SearchConfig(budget_usd=1.0, branches=1, max_rounds=1, eval_reps=3, stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
     found = Orchestrator(
         "relu", "fp16", "small", cfg, search, run_dir=tmp_path / "run", client=FakeClient([]),
         log=lambda _line: None, from_catalog=True, evaluate_fn=lambda *args, **kwargs: None,
     )
-    assert found._prior_kernel_text() == "ARCHIVED"
+    assert found._prior_kernel_text() == "kernel void relu_kernel() {}\n"
     foreign = tmp_path / "foreign"
     foreign.mkdir()
-    (foreign / "best.metal").write_text("FOREIGN", encoding="utf-8")
+    (foreign / "best.metal").write_text("kernel void relu_kernel() {}\n", encoding="utf-8")
     (foreign / "run_config.json").write_text('{"target": {"id": "other-chip"}}', encoding="utf-8")
     refused = Orchestrator(
         "relu", "fp16", "small", cfg, search, run_dir=tmp_path / "other-run", client=FakeClient([]),
         log=lambda _line: None, from_run=foreign, evaluate_fn=lambda *args, **kwargs: None,
     )
     assert refused._prior_kernel_text() is None
+
+
+def test_a_traversing_target_id_is_refused(tmp_path):
+    from taic.migrate import migrate_runs
+
+    runs = tmp_path / "runs"
+    (runs / "one").mkdir(parents=True)
+    (runs / "one" / "result.json").write_text("{}")
+    with pytest.raises(ValueError):
+        migrate_runs(runs, "../../escape")
+    assert (runs / "one").is_dir() and not (tmp_path / "escape").exists()
 

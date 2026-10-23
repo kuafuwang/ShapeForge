@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tcenv.schema import PROTOCOL_VERSION
+
 from observe import query as scan
 from observe.detail import _chat_lines, _model_notes, _pi_lines_in, kernel_writer
 
@@ -36,6 +38,7 @@ def test_scan_reads_timeline_marks_confirmed_point_and_handoff(tmp_path, monkeyp
     (directory / "confirm_report.json").write_text(json.dumps({
         "status": "ok", "speedup": 1.25,
         "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"},
+        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
     }))
     trace = [
         {"label": "init", "status": "ok", "speedup": 1.0, "best_speedup": 1.0, "cost_usd": 0.1, "within_noise": True, "differential_recheck": None},
@@ -50,6 +53,7 @@ def test_scan_reads_timeline_marks_confirmed_point_and_handoff(tmp_path, monkeyp
         "task": "gemm", "dtype": "fp16", "stop_reason": "max_rounds", "spent_usd": 0.5,
         "best_speedup": 9.9, "confirmed_speedup": 1.25, "confirmed_status": "ok",
         "confirm_winner_label": "r1.p0", "confirmation_source_sha256": digest, "trace": trace,
+        "confirmed_values": [1.25], "confirmed_worst": 1.25, "confirmed_best": 1.25, "target_id": "apple-m4-max",
     }))
     (directory / "run_config.json").write_text(json.dumps({"committees": [
         {"name": "first", "members": [{"provider": "a", "model": "model-a"}]},
@@ -109,7 +113,7 @@ def test_scan_reads_timeline_marks_confirmed_point_and_handoff(tmp_path, monkeyp
     point = detail["confirmed_point"]
     assert point["cost_usd"] == 0.5 and point["speedup"] == 1.25 and point["label"] == "确认"
     assert point["search_speedup"] == detail["result"]["best_speedup"]
-    assert point["batches"] == [] and point["worst"] is None and point["best"] is None  # 这份夹具没有分批字段
+    assert point["batches"] == [1.25] and point["worst"] == 1.25 and point["best"] == 1.25
     assert detail["confirmed_point"]["speedup"] != detail["result"]["best_speedup"]
     assert detail["publication"] == "confirmed"
 
@@ -317,10 +321,14 @@ def test_the_confirmed_point_shows_the_search_number_apart_and_calls_it_not_publ
     run.mkdir()
     (run / "state.json").write_text(json.dumps({"task": "conv2d", "dtype": "fp16", "phase": "done", "pid": 1}))
     (run / "best.metal").write_text("kernel void conv2d_kernel() {}\n")
-    (run / "confirm_report.json").write_text(json.dumps({"status": "ok", "benchmark": {"candidate": {"median_us": 1.0, "cv": 0.01}}}))
+    (run / "confirm_report.json").write_text(json.dumps({
+        "status": "ok", "benchmark": {"candidate": {"median_us": 1.0, "cv": 0.01}},
+        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
+    }))
     (run / "result.json").write_text(json.dumps({
         "task": "conv2d", "dtype": "fp16", "size": "paper", "stop_reason": "budget_exhausted",
         "best_speedup": 1.7276, "confirmed_speedup": 1.6896, "confirmed_status": "ok",
+        "confirmed_values": [1.6896], "target_id": "apple-m4-max",
         "confirm_winner_label": "r19.p0", "spent_usd": 15.2,
         "confirmation_source_sha256": __import__("hashlib").sha256(b"kernel void conv2d_kernel() {}\n").hexdigest(),
     }))

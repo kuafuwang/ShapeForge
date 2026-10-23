@@ -85,3 +85,23 @@ def test_gc_refuses_a_root_outside_the_archive_and_apply_without_confirm(tmp_pat
     assert cli.main(["gc", "--root", str(tmp_path / "deleted"), "--older-than-days", "0"]) == 5
     assert cli.main(["gc", "--root", str(tmp_path / "deleted"), "--older-than-days", "30", "--apply"]) == 5
     assert (repo_like / "taic").is_dir()
+
+
+def test_gc_apply_refuses_paths_outside_the_archive_and_symlinks(tmp_path):
+    root = tmp_path / "deleted"
+    root.mkdir()
+    old = root / "old"
+    old.mkdir()
+    (old / "x").write_text("x")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("keep")
+    (root / "escape").symlink_to(outside, target_is_directory=True)
+    rows = gc.scan(root, older_than_days=0, now=time.time())
+    assert "escape" not in {Path(row["path"]).name for row in rows}
+    # a row that points outside the archive root is not deleted, even if it says eligible
+    escaped = gc.apply([{"path": str(outside), "eligible": True, "files": 1, "bytes": 1, "age_days": 40}], log_path=root / "gc_log.jsonl", root=root)
+    assert escaped["removed"] == [] and outside.is_dir()
+    result = gc.apply(rows, log_path=root / "gc_log.jsonl", root=root)
+    assert result["removed"] == [str(old)] and not old.exists() and outside.is_dir()
+

@@ -170,3 +170,22 @@ def test_a_budget_event_that_fails_to_land_is_not_a_complete_record(tmp_path, mo
     event = control.record_event(tmp_path, "applied", 1.0, 2.0)
     assert event["persisted"] is False
     assert not (tmp_path / "budget_events.json").exists()
+
+
+def test_taic_run_exits_4_when_another_process_holds_the_run_lock(tmp_path, monkeypatch):
+    import subprocess
+    import time
+
+    cfg, search = _cfg()
+    monkeypatch.setattr("taic.llm.load_config", lambda *_a, **_k: (cfg, search))
+    run = tmp_path / "run"
+    run.mkdir()
+    proc = subprocess.Popen(["sleep", "20"])
+    try:
+        (run / control.LOCK_FILE).write_text(json.dumps({"pid": proc.pid, "started_at": time.time(), "who": "run"}))
+        assert cli.main(["run", "relu", "--size", "small", "--preset", "base", "--no-tools", "--run-dir", str(run)]) == 4
+        assert [p.name for p in run.iterdir()] == [control.LOCK_FILE]
+    finally:
+        proc.kill()
+        proc.wait()
+

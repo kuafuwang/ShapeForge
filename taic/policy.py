@@ -71,7 +71,9 @@ def required_gain(min_improvement: float, noise_z: float, se_a: float, se_b: flo
     @param se_b 另一方测量的标准误。
     @return 需要的加速比门槛。
     """
-    return max(min_improvement, 1.0 + noise_z * math.hypot(se_a, se_b))
+    # A candidate is never faster by less than 1x, whatever the configured floor says. This also
+    # keeps a negative or sub-1 min_improvement from promoting a slower kernel.
+    return max(1.0, min_improvement, 1.0 + noise_z * math.hypot(se_a, se_b))
 
 
 def compare_to_best(eligible: bool, speedup: float, best_speedup: float | None, gain: float) -> str:

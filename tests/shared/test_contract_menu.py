@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tcenv.schema import PROTOCOL_VERSION
+
 from experiments.contract_menu import judge, resolve_menu, run_menu, schedule
 
 SOURCE = "kernel void k() {}\n"
@@ -25,11 +27,13 @@ def _published(run_dir: Path, task: str, speedup: float, *, best: float, spent: 
     (run_dir / "confirm_report.json").write_text(json.dumps({
         "status": "ok",
         "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"},
+        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
     }))
     (run_dir / "result.json").write_text(json.dumps({
         "task": task, "dtype": "fp16", "model": "fake", "stop_reason": "budget_exhausted", "rounds": 1, "evaluations": 1,
         "spent_usd": spent, "budget_usd": spent, "best_speedup": best, "confirmed_speedup": speedup,
         "confirmed_status": "ok", "confirm_winner_label": label, "confirmation_source_sha256": digest,
+        "confirmed_values": [speedup], "target_id": "apple-m4-max",
     }))
 
 

@@ -10,6 +10,7 @@ from taic.kernel_agent import agent_for_script
 from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator
 from tcenv.evaluate import EvalReport
+from tcenv.schema import PROTOCOL_VERSION
 
 from .fakes import FakeClient, make_response, make_usage
 
@@ -26,7 +27,8 @@ def fake_eval(calls: list):
         calls.append((mode, source))
         m = re.search(r"// (\w+)=([\w.]+)", source)
         key, val = m.group(1), m.group(2)
-        r = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=1, stage="done")
+        r = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=1, stage="done",
+                       target_id="apple-m4-max", protocol_version=PROTOCOL_VERSION)
         if key == "speed":
             sp = float(val)
             r.status, r.message, r.speedup, r.speedups, r.candidate_us, r.baseline_us = "ok", "ok", sp, {"mlx": sp}, 100.0 / sp, {"mlx": 100.0}
