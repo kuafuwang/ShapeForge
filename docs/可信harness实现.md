@@ -44,6 +44,14 @@
 - 数据侧：174 条审计已写回；60 条实测 `adopted`、15 条已修 `done`、35 条未验证 `info`、7 条空占位 `obsolete`，其余 57 条 pending。10 条按 topic 合并的 `obsolete` 已由 `experiments.revert_topic_merges` 改回 pending；39 条采集时缺探针的 claim 中，31 条 premise 升为 `verified`、8 条仍 `downgraded`，等待人复核。7 条审计空占位现在都有 `feedback_claim_removed` 墓碑；重建会为所有空占位小节写墓碑，当前共 18 条。
 - `targets/apple-m4-max/trust.toml` 的两个 conv2d grant（deepseek-flash、kimi-k3）已按用户明确要求重新授予为当前 `prompt_sha1 = 2b3931195dd4…`，status 为 `active`，`overlay:tip` 与 `overlay:premise` 均通过 `trust.check`；`evidence_run` 为空，表示这次授权只绑定当前提示面，没有新的实测证据。若再改 `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py`、`targets/apple-m4-max/experience.md` 或 `taic/flows/kernel_once/skills/taic-tools/SKILL.md`，两份 grant 会再次失效。
 
+2026-10-23 的缺陷修复批次又改了 `taic/kernel_agent.py` 与 `taic/harness.py`（failed 回合计费、进程组清理、review 旧文件复用、协议代次校验），`current_prompt_sha1()` 因此变为 `7ef80ddc…`。这两份 grant 需要在这批修复提交之后重签一次，否则 `trust.check` 会以 `trust was granted for another prompt` 拒绝；提示文本本身没有改，重签只是更新指纹。命令：
+
+```
+uv run python -m taic.cli trust grant apple-m4-max conv2d deepseek deepseek-flash --effort high --scope overlay:tip --scope overlay:premise --by <你> --reason "代码修复后重签，提示文本未变"
+uv run python -m taic.cli trust grant apple-m4-max conv2d moonshot kimi-k3 --effort high --scope overlay:tip --scope overlay:premise --by <你> --reason "代码修复后重签，提示文本未变"
+```
+
+
 ## 审阅响应
 
 外部审阅的总评是 **PASS-WITH-CHANGES**（审阅文件已按用户要求删除，结论保留在此）。已处理：

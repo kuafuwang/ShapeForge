@@ -212,11 +212,34 @@ def run_code_agent(
         "--json", "--", "Read IMPLEMENT.md and implement it in this worktree. Do not commit.",
     ]
     started = time.time()
+    from tcenv.children import forget, kill_group, popen_group
+
     try:
-        proc = subprocess.run(argv, cwd=worktree, capture_output=True, text=True, timeout=timeout_s)
-    except subprocess.TimeoutExpired as exc:
-        raise CodeAgentError(f"code agent timed out after {timeout_s:.0f}s") from exc
-    stream = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        # A group of its own: a timeout must reach the tools pi started, and the child must not
+        # inherit API keys. The cost of the turn is kept on the error so the caller can bill it.
+        proc = popen_group(argv, cwd=worktree, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except OSError as exc:
+        raise CodeAgentError(f"could not start hmz: {exc}") from exc
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            kill_group(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                kill_group(proc)
+                stdout, stderr = "", ""
+            stream = (stdout or "") + "\n" + (stderr or "")
+            spent, saw = spend_from_stream(stream)
+            err = CodeAgentError(f"code agent timed out after {timeout_s:.0f}s")
+            err.cost_usd = dollars_for(spent, prices) if saw else None
+            err.tokens = spent
+            raise err from None
+    finally:
+        kill_group(proc)
+        forget(proc)
+    stream = (stdout or "") + "\n" + (stderr or "")
     spent, saw = spend_from_stream(stream)
     cost = dollars_for(spent, prices) if saw else None
     report = {}
@@ -229,7 +252,10 @@ def run_code_agent(
     patch = collect_patch(worktree)
     if not patch.strip():
         tail = stream[-600:].strip()
-        raise CodeAgentError(f"code agent left no diff; hmz tail: {tail}")
+        err = CodeAgentError(f"code agent left no diff; hmz tail: {tail}")
+        err.cost_usd = cost
+        err.tokens = spent
+        raise err
     return {
         "provider": provider, "model": model, "effort": effort or "",
         "budget_usd": budget_usd, "cost_usd": cost, "elapsed_s": round(time.time() - started, 3),

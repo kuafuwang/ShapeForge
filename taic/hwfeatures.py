@@ -1068,6 +1068,27 @@ def metal_toolchain() -> str | None:
     return _TOOLCHAIN["metal"]
 
 
+def toolchain_fingerprint() -> str:
+    """A short identity of the Metal compiler actually installed on this machine.
+
+    The AIR cache key must move with the toolchain: the same source produces different intrinsics,
+    fragment layout and even a different resolved ``-std`` after an Xcode update, so evidence stored
+    by the old compiler must not be served as if the current one had produced it. Path + size +
+    mtime is cheap and changes on an upgrade; a missing tool is its own value.
+    """
+    if "fingerprint" not in _TOOLCHAIN:
+        tool = metal_toolchain()
+        if not tool:
+            _TOOLCHAIN["fingerprint"] = "no-toolchain"
+        else:
+            try:
+                st = Path(tool).stat()
+                _TOOLCHAIN["fingerprint"] = f"{Path(tool).name}:{st.st_size}:{int(st.st_mtime)}"
+            except OSError:
+                _TOOLCHAIN["fingerprint"] = f"{Path(tool).name}:unknown"
+    return _TOOLCHAIN["fingerprint"]
+
+
 _LL_BYTES = {"i1": 1, "i8": 1, "i16": 2, "i32": 4, "i64": 8, "half": 2, "bfloat": 2, "float": 4, "double": 8}
 
 
@@ -1163,9 +1184,14 @@ def parse_air(text: str) -> dict:
     }
 
 
+def air_cache_key(full_source: str, *, std: str = "metal4.0", fast_math: bool = True) -> str:
+    """Cache key of one AIR compile: parser, requested std, fast-math, the resolved toolchain and the source."""
+    return hashlib.sha1((f"v{PARSER_VERSION}|{std}|{fast_math}|{toolchain_fingerprint()}|" + full_source).encode()).hexdigest()
+
+
 def compile_air(full_source: str, *, std: str = "metal4.0", fast_math: bool = True, timeout: float = 90.0, cache_dir: Path | None = None) -> dict:
     """Compile ``full_source`` (contract header + candidate) to AIR text and parse it. Never touches the GPU."""
-    key = hashlib.sha1((f"v{PARSER_VERSION}|{std}|{fast_math}|" + full_source).encode()).hexdigest()
+    key = air_cache_key(full_source, std=std, fast_math=fast_math)
     cf = cache_dir / f"{key}.json" if cache_dir else None
     if cf and cf.exists():
         try:

@@ -382,8 +382,11 @@ class Orchestrator:
         self.from_run = Path(from_run) if from_run else None
         self.from_catalog = from_catalog
         # 新运行不接管已经有文件的目录。续跑（resuming=True）才读既有目录，并且不改写 run_config.json、不重新抽 run_seed。
-        if not resuming and self.run_dir.exists() and any(self.run_dir.iterdir()):
-            raise RunStartError(f"refused: {self.run_dir} already holds files; resume it with `taic resume` or choose a new directory")
+        # 目录锁不算「文件」：`taic run --run-dir X` 在构造之前就先占锁，否则每个显式指定的新目录都会被自己拒绝。
+        if not resuming and self.run_dir.exists():
+            lock_name = control.lock_path(self.run_dir).name
+            if any(item.name != lock_name for item in self.run_dir.iterdir()):
+                raise RunStartError(f"refused: {self.run_dir} already holds files; resume it with `taic resume` or choose a new directory")
         self.run_dir.mkdir(parents=True, exist_ok=True)
         if resuming:
             self.run_seed = _load_run_seed(self.run_dir)
@@ -763,14 +766,15 @@ class Orchestrator:
     def _save(self, c: Candidate) -> None:
         d = self.run_dir / "candidates" / f"{c.idx:03d}_{c.label}"
         d.mkdir(parents=True, exist_ok=True)
-        (d / self.kernel_name).write_text(c.source)
+        # 原子替换：写到一半被杀掉时，留下的是整份旧的或整份新的，不会出现「截断的源码配完整报告」。
+        control.write_text_atomic(d / self.kernel_name, c.source)
         if c.report:
             if self.best is not None and self.best.report is not None and self.best is not c:
                 seed_gpu = self.best.report.benchmark.get("candidate_gpu_us_median")
                 if isinstance(seed_gpu, (int, float)) and not isinstance(seed_gpu, bool) and seed_gpu > 0:
                     c.report.benchmark["seed_gpu_us_median"] = float(seed_gpu)
             control.write_json_atomic(d / "report.json", c.report.to_json())
-            (d / "feedback.txt").write_text(format_feedback(c.report))
+            control.write_text_atomic(d / "feedback.txt", format_feedback(c.report))
 
     # a 必须比 b 快出这么多倍才算真正变快：至少 min_improvement，并且要盖过两者加速比标准误合成后再乘 noise_z。差一点只记 within_noise，不能当下一轮种子。
     def _required_gain(self, a: Candidate, b: Candidate) -> float:
@@ -941,10 +945,10 @@ class Orchestrator:
 
     def _store_recheck(self, cand: Candidate, doc: dict) -> None:
         text = json.dumps(doc, indent=1, default=str)
-        (self.run_dir / "candidates" / f"{cand.idx:03d}_{cand.label}" / "differential_recheck.json").write_text(text)
+        control.write_text_atomic(self.run_dir / "candidates" / f"{cand.idx:03d}_{cand.label}" / "differential_recheck.json", text)
         folder = self.run_dir / "rechecks"
         folder.mkdir(exist_ok=True)
-        (folder / f"{cand.label}.json").write_text(text)
+        control.write_text_atomic(folder / f"{cand.label}.json", text)
 
 
     # ------------------------------------------------------------------ main loop
@@ -987,6 +991,9 @@ class Orchestrator:
                 await self._rounds(res, (self._round or 0) + 1, self._stagnant, None)
             except BudgetExhausted as e:
                 res.stop_reason = "budget_exhausted"
+                # 和上面外层同一个标志：session cost floor 的停止不是「轮数用完」，
+                # 缺了它 _control_extends 会把它当成还能继续，再跑一轮并烧掉一个轮号。
+                res.session_budget_stop = str(e).startswith("session cost")
                 self.log(f"== stop: {e}")
             except StopRun as e:
                 res.stop_reason = str(e)
@@ -995,11 +1002,29 @@ class Orchestrator:
                 res.stop_reason = f"llm_error: {e}"
                 self.log(f"== stop: {e}")
             self._search_seed = self.best
-        self.ledger.refresh_budget()
-        await self._confirm(res)
+        # 搜索已经把该花的钱花完了。确认、profiling 和关闭 client 都在收尾面：任何一处抛异常，
+        # 都必须仍然写出 result.json / best.metal / ledger.json，而不是让一场已付费的搜索只剩 state.json。
+        try:
+            self.ledger.refresh_budget()
+            await self._confirm(res)
+        except (StopRun, BudgetExhausted) as e:
+            res.stop_reason = res.stop_reason or str(e)
+            self.log(f"== stop: {e}")
+        except LLMError as e:
+            res.stop_reason = res.stop_reason or f"llm_error: {e}"
+            self.log(f"== stop: {e}")
+        except Exception as e:  # noqa: BLE001 - the run is over; its files still have to be written
+            res.stop_reason = res.stop_reason or f"confirm_error: {type(e).__name__}: {e}"
+            self.log(f"== stop: confirmation failed: {type(e).__name__}: {e}")
         if self.search.profile_best:
-            await self._profile_best()
-        await self._close_clients()  # every HTTP client this run opened, on the loop that used it (asyncio.run closes the loop afterwards)
+            try:
+                await self._profile_best()
+            except Exception as e:  # noqa: BLE001 - a missing trace is not a reason to lose the result
+                self.log(f"== warning: profile_best failed: {type(e).__name__}: {e}")
+        try:
+            await self._close_clients()  # every HTTP client this run opened, on the loop that used it (asyncio.run closes the loop afterwards)
+        except Exception as e:  # noqa: BLE001 - the result is already on disk; a close error must not hide it
+            self.log(f"== warning: closing the HTTP clients failed: {type(e).__name__}: {e}")
         return self._finish(res)
 
     def _control_extends(self, res: RunResult) -> bool:
@@ -1459,8 +1484,7 @@ class Orchestrator:
             "raw": parsed.get("raw") or "",
         }
         path = self.run_dir / "feedback.jsonl"
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        control.append_jsonl(path, record)
         # Structured proposals are observations, not money or GPU work. They are recorded even
         # when harness_auto is off so a person can review them; settle only runs when enabled.
         try:
@@ -1553,6 +1577,14 @@ class Orchestrator:
             )
             self.log(f"  [review] useful={verdict.get('useful')} confidence={verdict.get('confidence')} (${verdict.get('cost_usd')})")
         except Exception as exc:  # noqa: BLE001 - a review failure must not stop the search
+            # A failed or timed-out reviewer still spent money. ``run_review`` attaches what it
+            # knows so the ledger does not lose it with the exception.
+            bill = getattr(exc, "cost_usd", None)
+            if isinstance(bill, (int, float)) and not isinstance(bill, bool) and bill > 0:
+                self.ledger.charge(
+                    float(bill), f"review:{row.get('proposal_key')}",
+                    tokens=getattr(exc, "tokens", None), basis=prices.as_dict(),
+                )
             self.log(f"  [review] skipped: {exc}")
 
     def _restore_handoff(self) -> None:
@@ -1598,6 +1630,7 @@ class Orchestrator:
             "committee": self._committee_name, "cost_usd": result.cost_usd, "cost_incomplete": bool(result.cost_incomplete),
             "had_kernel": bool(result.source), "outcome": outcome, "error": (result.error or "")[:180],
             "self_checks": result.self_checks, "self_check_timeouts": result.self_check_timeouts,
+            "self_check_crashes": result.self_check_crashes,
             "self_check_gpu_s": result.self_check_gpu_s,
             "tokens": {k: int(v) for k, v in spent.items() if isinstance(v, (int, float))},
         }
@@ -1715,6 +1748,12 @@ class Orchestrator:
             await self._initial_generation()
         if not self.best:
             res.stop_reason = "no_valid_initial_kernel"
+            return
+        if snap.search_finished:
+            # 搜索阶段已经结束，只差一次确认；再开一场会话会白花钱，也会把轮号推过上限。
+            # 轮次真用完时沿用 max_rounds，这样 result.json 的 stop_reason 和中断前一致。
+            res.stop_reason = "max_rounds" if snap.next_round >= self.search.max_rounds else "resumed_for_confirmation"
+            self.log("-- the search phase was already over; continuing at the confirmation")
             return
         await self._rounds(res, snap.next_round if snap.partial is None else snap.partial.rnd, snap.stagnant, None)
 
@@ -1883,7 +1922,9 @@ class Orchestrator:
                             progress_path=self.run_dir / "eval_progress.json",
                             **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
                             measure_serial=self.search.measure_serial,
-                            eval_cache=self.search.eval_cache,
+                            # 确认是「再测一次」，不是取回上一次的结果。确定性种子加上缓存，会让 resume
+                            # 或同一个 --seed 的重跑在 2 ms 内复述旧报告，而发布门会把它当成复测。
+                            eval_cache=False,
                             target_id=self.target_id,
                         )
                     seeds.append(phase_seed if phase_seed is not None else rep.seed)

@@ -333,6 +333,86 @@ def test_the_interrupted_round_keeps_finished_branches_and_continues_the_rest(tm
     assert not (tmp_path / "run" / "resume.lock").exists() and len(list((tmp_path / "run").glob("state.before_resume_*"))) == 0
 
 
+def test_a_report_from_another_protocol_epoch_cannot_be_resumed(tmp_path):
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1)
+    run(orch)
+    run_dir = tmp_path / "run"
+    report_path = next((run_dir / "candidates").glob("*/report.json"))
+    doc = json.loads(report_path.read_text())
+    doc["protocol_version"] = "0"
+    report_path.write_text(json.dumps(doc))
+    (run_dir / "result.json").unlink()
+    with pytest.raises(rs.NeedsInspection):
+        rs.load_snapshot(run_dir, orch.search, KERNEL)
+
+
+def test_a_damaged_confirm_report_is_refused_before_any_file_moves(tmp_path):
+    """The old code moved result.json first and only then parsed confirm_report.json, so a damaged
+    report left the run with no result.json and a traceback instead of a clean refusal."""
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "result.json").write_text('{"task": "relu"}')
+    (run / "confirm_report.json").write_text("{not json")
+    with pytest.raises(rs.ResumeError):
+        rs.snapshot_results(run)
+    assert (run / "result.json").is_file()
+    assert not (run / "result.before_topup_1.json").exists()
+
+
+def test_resume_exits_6_when_the_confirmation_failed(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(cli, "prepare_resume", lambda a: (SimpleNamespace(log=lambda s: None), None, {"unrecorded_settings": []}, {}, 5.0))
+    monkeypatch.setattr(cli, "run_prepared", lambda a, orch, snap, info, nb: SimpleNamespace(
+        task="relu", dtype="fp16", model="fake", best_speedup=1.2, confirmed_speedup=None,
+        spent_usd=0.1, budget_usd=5.0, stop_reason="confirm_error: RuntimeError: boom", run_dir=str(tmp_path),
+    ))
+    assert cli.main(["resume", str(tmp_path)]) == 6
+
+
+def test_a_rejected_candidate_is_not_replayed_as_the_resumed_seed(tmp_path):
+    """A differential recheck that judged the kernel wrong must survive the rebuild: the resume path used
+    to force ``relation_to_best(True, ...)`` and could hand the seed back to a known-bad kernel."""
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1)
+    run(orch)
+    run_dir = tmp_path / "run"
+    label = json.loads((run_dir / "state.json").read_text())["search_seed_label"]
+    assert label
+    folder = next(p for p in (run_dir / "candidates").iterdir() if p.name.endswith("_" + label))
+    (folder / "differential_recheck.json").write_text(json.dumps({"counts_as_kernel_error": True}))
+    (run_dir / "result.json").unlink()
+    snap = rs.load_snapshot(run_dir, orch.search, KERNEL)
+    assert snap.candidates and snap.candidates[0]["recheck_rejected"] is True
+    assert snap.best_label is None
+    assert any("differential recheck" in note for note in snap.notes)
+
+
+def test_a_run_killed_during_confirmation_resumes_without_a_new_session(tmp_path):
+    """A search whose last round already ran only needs its confirmation; resuming it must not spend a session."""
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1)
+    run(orch)
+    run_dir = tmp_path / "run"
+    (run_dir / "result.json").unlink()
+    state = json.loads((run_dir / "state.json").read_text())
+    state["phase"] = "confirm"
+    (run_dir / "state.json").write_text(json.dumps(state))
+    mark_dead(run_dir)
+    snap = rs.load_snapshot(run_dir, orch.search, KERNEL)
+    assert snap.search_finished is True and snap.next_round <= orch.search.max_rounds
+    assert rs.inspect_run(run_dir)["resumable"] is True
+
+    def must_not_start(*_a, **_k):
+        raise AssertionError("a run killed during confirmation must not start a search session")
+
+    o2, snap2, report, info, nb = cli.prepare_resume(
+        ns(run_dir, add_budget=5.0), client=FakeClient([]), evaluate_fn=fake_eval([]), log=lambda s: None,
+    )
+    o2.agent_runner = must_not_start
+    res = cli.run_prepared(ns(run_dir, add_budget=5.0, who="test"), o2, snap2, info, nb)
+    assert (run_dir / "result.json").is_file()
+    assert res.stop_reason == "max_rounds"
+
+
 def test_resuming_a_run_that_stopped_for_budget_adds_budget_and_keeps_the_old_result(tmp_path):
     calls = []
     orch = make_orch(tmp_path, script_for(usage=BIG), calls, budget=0.15, max_rounds=3, max_repair=2, patience=20)

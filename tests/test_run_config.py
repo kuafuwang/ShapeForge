@@ -99,6 +99,43 @@ def test_taic_run_exits_5_when_branches_is_not_one(tmp_path, monkeypatch):
     assert code == 5
 
 
+def test_the_run_lock_alone_does_not_count_as_files_in_a_new_directory(tmp_path, monkeypatch):
+    """`taic run --run-dir X` claims the directory lock before constructing the orchestrator.
+    Counting that lock as run content made every explicit new directory refuse itself."""
+    cfg, search = _cfg()
+    monkeypatch.setattr("taic.llm.load_config", lambda *_a, **_k: (cfg, search))
+    run = tmp_path / "claimed"
+    control.acquire_run_lock(run, who="run")
+    try:
+        orch = Orchestrator("relu", "fp16", "small", cfg, search, run_dir=run, client=FakeClient([]), log=lambda _s: None)
+        assert orch.run_dir == run and (run / "run_config.json").is_file()
+    finally:
+        control.release_run_lock(run)
+
+
+def test_taic_run_exits_6_when_a_valid_kernel_was_found_but_the_confirmation_failed(tmp_path, monkeypatch):
+    """The files are written (correct), but the published number is null. A script that only reads
+    the exit status must not treat that as a full success."""
+    from types import SimpleNamespace
+
+    cfg, search = _cfg()
+    monkeypatch.setattr("taic.llm.load_config", lambda *_a, **_k: (cfg, search))
+
+    class Stub:
+        def __init__(self, *a, **k):
+            pass
+
+        async def run(self):
+            return SimpleNamespace(
+                task="relu", dtype="fp16", model="fake", best_speedup=1.2, confirmed_speedup=None,
+                spent_usd=0.1, stop_reason="confirm_error: SchemaError: boom", run_dir=str(tmp_path),
+            )
+
+    monkeypatch.setattr("taic.orchestrator.Orchestrator", Stub)
+    code = cli.main(["run", "relu", "--size", "small", "--preset", "base", "--no-tools", "--run-dir", str(tmp_path / "run")])
+    assert code == 6
+
+
 def test_taic_run_exits_5_when_the_directory_already_holds_a_run(tmp_path, monkeypatch):
     cfg, search = _cfg()
     monkeypatch.setattr("taic.llm.load_config", lambda *_a, **_k: (cfg, search))

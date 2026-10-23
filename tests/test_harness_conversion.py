@@ -237,6 +237,7 @@ def test_a_conversion_is_not_model_authored_and_its_source_model_cannot_review_i
     trust.grant("apple-m4-max", "flash_attention", "moonshot", "kimi-k3", scopes=["overlay:tip"], root=root)
     reviews.write_text(json.dumps({
         "event": "review", "proposal_key": row["proposal_key"], "source_seq": 1, "useful": True,
+        "protocol_version": trust.current_protocol_version(),
         "reviewer": {"provider": "moonshot", "model": "kimi-k3", "effort": ""},
     }) + "\n")
     independent = harness.settle(

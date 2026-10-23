@@ -46,6 +46,8 @@ def archive_confirmed(
     from tcenv.task import task_fingerprint
     from tasks import get_task
 
+    from . import control
+
     folder = catalog_dir(target_id, task, dtype, size)
     folder.mkdir(parents=True, exist_ok=True)
     meta_path = folder / "meta.json"
@@ -79,8 +81,11 @@ def archive_confirmed(
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     best = folder / f"best{file_ext}"
     if not best.is_file() or speedup > previous:
-        best.write_text(source)
-        meta_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+        # 源码和 meta 必须一起落地：先写 best 再写 meta 时崩在中间，会让下次确认读到
+        # previous=0，用一颗更慢的核覆盖掉最快的核。两个文件各自原子替换。
+        meta_text = json.dumps(record, indent=2)
+        control.write_text_atomic(best, source)
+        control.write_text_atomic(meta_path, meta_text)
     return best
 
 

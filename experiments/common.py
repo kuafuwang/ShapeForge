@@ -272,6 +272,10 @@ def conclusion_of_run(run_dir: Path, result: dict | None) -> dict:
             doc = None
         from tcenv.bench import timing_is_uncertain
 
+        if isinstance(doc, dict) and doc.get("cache_hit") is True:
+            # 确认报告若来自评测缓存，它只是复述了上一次的测量，不是这一次的复测。
+            # 缓存键不含设备、macOS 与 MSL 版本，也不能证明是同一台机器上量的。
+            return {"speedup": None, "publication": "不确定"}
         if timing_is_uncertain(doc):
             return {"speedup": None, "publication": "不确定"}
         from taic.policy import batches_agree

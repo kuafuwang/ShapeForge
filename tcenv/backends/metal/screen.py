@@ -17,6 +17,11 @@ import re
 
 _LINE_COMMENT = re.compile(r"//[^\n]*")
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+# A string literal is data, not code: `"for (;;)"` reaches a buffer, not the GPU's loop counter.
+_STRING = re.compile(r'"(?:\\.|[^"\\])*"')
+# `goto` can form a loop the condition scan cannot bound. Kernels that use it are rare enough that
+# refusing it up front is cheaper than a runaway launch.
+_GOTO = re.compile(r"\bgoto\b")
 
 # 条件外面再套一层括号、或写成 true == true，仍然是不会停的循环。空的 for 条件同样拒绝。
 _WHILE = re.compile(r"\bwhile\s*\(")
@@ -30,6 +35,12 @@ _ALLOWED_INCLUDE = re.compile(r"^<metal_[a-z_0-9]+>\s*$")
 # 规则搜的是会执行的文本。注释里写出的 while(true) 不会跑。块注释换成同等数量的换行，避免把上下两行粘成一行。
 def strip_comments(src: str) -> str:
     return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub(lambda m: "\n" * m.group(0).count("\n"), src))
+
+
+def strip_strings(src: str) -> str:
+    """Remove string literals before the loop scan. Strings first, then comments: a `//` inside a
+    string is not a comment, and a quote inside a comment is not a string."""
+    return _STRING.sub('""', src)
 
 
 def _matching_paren(code: str, open_at: int) -> int | None:
@@ -95,8 +106,13 @@ def _unbounded(code: str) -> list[str]:
 # 返回拒绝理由；空列表表示可以交给编译器。能在这里看出来的就不要编译，更不要提交到 GPU。
 def screen_source(src: str) -> list[str]:
     """Return reasons to refuse the source (empty list: fine to compile and run)."""
-    code = strip_comments(src)
+    code = strip_comments(strip_strings(src))
     problems = []
+    if _GOTO.search(code):
+        problems.append(
+            "`goto` is refused: a backward jump can form a loop the screen cannot bound, and a runaway GPU kernel "
+            "can freeze the machine's display. Use a bounded `for` loop instead."
+        )
     for why in _unbounded(code):
         problems.append(
             f"{why}. The harness refuses to launch kernels with unbounded loops (a runaway GPU kernel can freeze the "

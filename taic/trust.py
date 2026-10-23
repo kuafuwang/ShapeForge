@@ -21,6 +21,7 @@ import os
 import re
 import time
 import tomllib
+from contextlib import contextmanager
 from pathlib import Path
 
 from tcenv.schema import PROTOCOL_VERSION
@@ -181,6 +182,25 @@ def read_audit(target_id: str, root: Path | None = None) -> list[dict]:
     return rows
 
 
+@contextmanager
+def _registry_lock(target_id: str, root: Path | None):
+    """Serialise one target's load-modify-write of ``trust.toml`` across processes.
+
+    Without it, a run auto-suspending a model while a person runs ``taic trust grant/revoke`` loses
+    one side: the audit then records a suspension the registry no longer holds, which fails open on
+    demotion. The audit log has its own lock; the order is always registry then audit.
+    """
+    path = trust_path(target_id, root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock = path.with_name(".trust_registry.lock")
+    with lock.open("a+") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def grant(
     target_id: str,
     task: str,
@@ -227,17 +247,18 @@ def grant(
         "expires_at": expiry if expiry is not None else 0.0,
         "scopes": clean_scopes,
     }
-    grants = load_grants(target_id, root)
     replaced = None
-    for index, row in enumerate(grants):
-        if row.get("id") == ident:
-            replaced = row
-            grants[index] = entry
-            break
-    else:
-        grants.append(entry)
-    _write(target_id, grants, root)
-    _audit(target_id, {"t": now, "event": "grant", "grant": entry, "previous": replaced}, root)
+    with _registry_lock(target_id, root):
+        grants = load_grants(target_id, root)
+        for index, row in enumerate(grants):
+            if row.get("id") == ident:
+                replaced = row
+                grants[index] = entry
+                break
+        else:
+            grants.append(entry)
+        _write(target_id, grants, root)
+        _audit(target_id, {"t": now, "event": "grant", "grant": entry, "previous": replaced}, root)
     return entry
 
 
@@ -257,19 +278,20 @@ def set_status(
     if status not in ("suspended", "revoked"):
         raise TrustError("set_status only suspends or revokes; grant creates an active entry")
     ident = _grant_id(target_id, task, provider, model, effort)
-    grants = load_grants(target_id, root)
-    for row in grants:
-        if row.get("id") != ident:
-            continue
-        previous = dict(row)
-        row["status"] = status
-        _write(target_id, grants, root)
-        _audit(
-            target_id,
-            {"t": time.time(), "event": status, "by": by, "reason": reason, "previous": previous, "grant": row},
-            root,
-        )
-        return dict(row)
+    with _registry_lock(target_id, root):
+        grants = load_grants(target_id, root)
+        for row in grants:
+            if row.get("id") != ident:
+                continue
+            previous = dict(row)
+            row["status"] = status
+            _write(target_id, grants, root)
+            _audit(
+                target_id,
+                {"t": time.time(), "event": status, "by": by, "reason": reason, "previous": previous, "grant": row},
+                root,
+            )
+            return dict(row)
     raise TrustError(f"no trust entry for {target_id}/{task} {provider}/{model} effort={effort!r}")
 
 

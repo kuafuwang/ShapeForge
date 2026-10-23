@@ -51,6 +51,17 @@ def carryover_path() -> Path:
     return db_path().with_name("ledger_carryover.json")
 
 
+def preserved_ledger_path(db: Path | None = None) -> Path:
+    """Where the spend rows of a database that is about to be replaced are kept.
+
+    ``drop_archived`` keeps ``ledger`` rows on purpose, so a deletion cannot lower the recorded
+    spend. A schema rebuild used to throw them away with the file; they are copied here first and
+    replayed into the fresh database. ``db`` is the database in use (an ``Index`` can be built on
+    a path other than ``OBSERVE_DB``).
+    """
+    return (Path(db) if db is not None else db_path()).with_name("ledger_preserved.json")
+
+
 def get_index() -> "Index":
     """The process-wide writer. A new ``OBSERVE_DB`` opens a new database."""
     global _SINGLE
@@ -118,27 +129,114 @@ class Index:
         self.conn.execute("PRAGMA busy_timeout=5000")
         self._create()
         self._load_carryover()
+        self._load_preserved_ledger()
 
     def _version_ok(self) -> bool:
-        try:
-            conn = sqlite3.connect(self.path, timeout=5)
-        except sqlite3.Error:
-            return False
+        """Whether this file was built by this code.
+
+        A locked, busy or temporarily unreadable database is **not** a version mismatch:
+        discarding it would delete the spend ledger, including the rows ``drop_archived`` keeps on
+        purpose. Only a missing table (an older build) or a corrupt file may be rebuilt.
+        """
+        conn = sqlite3.connect(self.path, timeout=5)
         try:
             row = conn.execute("SELECT value FROM meta WHERE key = 'index_schema_version'").fetchone()
-        except sqlite3.Error:
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return False
+            raise
+        except sqlite3.DatabaseError:
             return False
         finally:
             conn.close()
         return row is not None and str(row[0]) == str(INDEX_SCHEMA_VERSION)
 
     def _discard(self) -> None:
+        self._preserve_ledger()
         for suffix in ("", "-wal", "-shm"):
             candidate = Path(str(self.path) + suffix) if suffix else self.path
             try:
                 candidate.unlink()
             except OSError:
                 pass
+
+    def _preserve_ledger(self) -> None:
+        """Copy the spend rows out before the file is unlinked. Best effort: a database that cannot
+        be read has no rows to save."""
+        try:
+            conn = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=5)
+            try:
+                rows = [list(row) for row in conn.execute(
+                    "SELECT run_id, operator, month, started_at, spent_max_usd, budget_usd FROM ledger"
+                ).fetchall()]
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return
+        if not rows:
+            # This database has no spend rows. Any sidecar still around describes an older state
+            # and must not be replayed into the next build: the ledger was deliberately emptied.
+            self._drop_preserved(preserved_ledger_path(self.path))
+            return
+        path = preserved_ledger_path(self.path)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
+            try:
+                tmp.write_text(json.dumps({"saved_at": time.time(), "rows": rows}, ensure_ascii=False), encoding="utf-8")
+                os.replace(tmp, path)
+            finally:
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+        except OSError:
+            return
+
+    def _load_preserved_ledger(self) -> None:
+        """Replay the rows saved by :meth:`_preserve_ledger`. The upsert never lowers a total."""
+        path = preserved_ledger_path(self.path)
+        if not path.is_file():
+            return
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # Unreadable: nothing can be restored, and keeping it would retry forever.
+            self._drop_preserved(path)
+            return
+        rows = doc.get("rows") if isinstance(doc, dict) else None
+        if not isinstance(rows, list):
+            self._drop_preserved(path)
+            return
+        try:
+            for row in rows:
+                if not isinstance(row, list) or len(row) != 6:
+                    continue
+                self.conn.execute(
+                    """
+                    INSERT INTO ledger (run_id, operator, month, started_at, spent_max_usd, budget_usd)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id) DO UPDATE SET
+                        operator = COALESCE(excluded.operator, ledger.operator),
+                        month = COALESCE(ledger.month, excluded.month),
+                        started_at = COALESCE(ledger.started_at, excluded.started_at),
+                        spent_max_usd = MAX(COALESCE(ledger.spent_max_usd, excluded.spent_max_usd), COALESCE(excluded.spent_max_usd, ledger.spent_max_usd)),
+                        budget_usd = COALESCE(excluded.budget_usd, ledger.budget_usd)
+                    """,
+                    tuple(row),
+                )
+            self.conn.commit()
+        except sqlite3.Error:
+            # A locked or busy database is transient: keep the file for the next open to retry.
+            return
+        self._drop_preserved(path)
+
+    @staticmethod
+    def _drop_preserved(path: Path) -> None:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _create(self) -> None:
         self.conn.executescript(
@@ -533,6 +631,16 @@ class Index:
                 path = detail.resolve_run(row["run_id"])
                 if path is not None:
                     self._ingest(path)
+                    continue
+                # 目录已经不在了。留着一行 status='done' 会让它的花费和公布成绩永远被
+                # runs_page / best_confirmed / 预算统计算进去；migrate 之后还会出现同名两行。
+                cur = self.conn.execute(
+                    "UPDATE runs SET status = 'missing', publication = NULL, published_speedup = NULL "
+                    "WHERE run_id = ? AND status != 'missing'",
+                    (row["run_id"],),
+                )
+                if cur.rowcount:
+                    self._bump()
             self._last_full = time.monotonic()
             self.conn.commit()
 

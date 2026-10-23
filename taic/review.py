@@ -441,6 +441,10 @@ def run_review(
         raise ReviewError("hmz is not on PATH; install it with `uv tool install hmz`")
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
+    # The work directory is reused by a retry, a resume and a second CLI review. An earlier
+    # verdict must not stand in for this turn: an hmz run that exits without writing would
+    # otherwise be parsed and recorded under the current reviewer's identity.
+    (work / REVIEW_FILE).unlink(missing_ok=True)
     (work / "REVIEW.md").write_text(prompt, encoding="utf-8")
     plan = estimate_review_budget(prices, prompt)
     argv = [
@@ -454,18 +458,56 @@ def run_review(
         "--json", "--", f"Read REVIEW.md and write {REVIEW_FILE}. Do not modify any kernel or TASK file.",
     ]
     started = time.time()
+    from tcenv.children import forget, kill_group, popen_group
+
     try:
-        proc = subprocess.run(argv, cwd=work, capture_output=True, text=True, timeout=timeout_s)
-    except subprocess.TimeoutExpired as exc:
-        raise ReviewError(f"reviewer timed out after {timeout_s:.0f}s") from exc
-    stream = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        # A group of its own: a timeout must reach pi and the tools it started, and the child must
+        # not inherit API keys. ``subprocess.run(timeout=)`` did neither and also dropped the
+        # turn's cost on the way out.
+        proc = popen_group(argv, cwd=work, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except OSError as exc:
+        raise ReviewError(f"could not start hmz: {exc}") from exc
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            kill_group(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                kill_group(proc)
+                stdout, stderr = "", ""
+            stream = (stdout or "") + "\n" + (stderr or "")
+            spent, saw = spend_from_stream(stream)
+            err = ReviewError(f"reviewer timed out after {timeout_s:.0f}s")
+            err.cost_usd = dollars_for(spent, prices) if saw else None
+            err.tokens = spent
+            raise err from None
+    finally:
+        kill_group(proc)
+        forget(proc)
+    stream = (stdout or "") + "\n" + (stderr or "")
     spent, saw = spend_from_stream(stream)
     cost = dollars_for(spent, prices) if saw else None
+    review_path = work / REVIEW_FILE
     try:
-        review = parse_review(work / REVIEW_FILE)
+        fresh = review_path.stat().st_mtime >= started - 1.0
+    except OSError:
+        fresh = False
+    if not fresh:
+        err = ReviewError(f"the reviewer did not write a new {REVIEW_FILE}")
+        err.cost_usd = cost
+        err.tokens = spent
+        raise err
+    try:
+        review = parse_review(review_path)
     except ReviewError as exc:
         tail = stream[-800:].strip()
-        raise ReviewError(f"{exc}; hmz tail: {tail}") from exc
+        err = ReviewError(f"{exc}; hmz tail: {tail}")
+        err.cost_usd = cost
+        err.tokens = spent
+        raise err from exc
+    review["review_sha256"] = hashlib.sha256(review_path.read_bytes()).hexdigest()
     review.update({
         "provider": provider, "model": model, "effort": effort or "",
         "budget_usd": plan["budget_usd"], "expected_usd": plan["expected_usd"],
@@ -488,6 +530,7 @@ def append_review(run_dir: Path, proposal: dict, review: dict) -> dict:
         "target_id": proposal.get("target_id") or "",
         "task": proposal.get("task") or "",
         "origin": proposal.get("origin") or "model",
+        "protocol_version": str(proposal.get("protocol_version") or ""),
         "proposer": {
             "provider": proposal.get("provider") or "",
             "model": proposal.get("model") or "",
@@ -503,7 +546,7 @@ def append_review(run_dir: Path, proposal: dict, review: dict) -> dict:
             "model": review.get("model") or "",
             "effort": review.get("effort") or "",
         },
-        **{key: review.get(key) for key in ("useful", "confidence", "reason", "evidence", "risk", "recommended_test", "budget_usd", "expected_usd", "cost_usd", "elapsed_s", "tokens", "prompt_sha256")},
+        **{key: review.get(key) for key in ("useful", "confidence", "reason", "evidence", "risk", "recommended_test", "budget_usd", "expected_usd", "cost_usd", "elapsed_s", "tokens", "prompt_sha256", "review_sha256")},
     }
     path = Path(run_dir) / REVIEW_LOG
     with path.open("a", encoding="utf-8") as handle:

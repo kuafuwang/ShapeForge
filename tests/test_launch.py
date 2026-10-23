@@ -160,6 +160,43 @@ def test_pipeline_abi_accepts_12kib_dynamic_and_rejects_index_31_and_a_combined_
     assert any("does not declare threadgroup" in item for item in check_pipeline(_Contract(), {"k": bare}, undeclared))
 
 
+def test_a_pipeline_stage_checks_the_scalar_abi_like_the_single_kernel_path():
+    """A vector-typed or writable scalar on a 4-byte setBytes payload used to pass check_pipeline.
+
+    The single-kernel path rejects it; the pipeline path now applies the same rule, so a stage
+    cannot read 16 bytes out of a 2-byte scalar and return a silent wrong answer.
+    """
+    from tcenv.dtypes import get_dtype
+
+    class _ScalarArg:
+        name, index, role, dtype = "scale", 2, "scalar", "fp16"
+
+    class _ScalarBind(_Bind):
+        def __init__(self, name, index, *, dtype_code, elem_size, access="read"):
+            super().__init__(name, index, access=access)
+            self.dtype_code, self.elem_size = dtype_code, elem_size
+
+    contract = _Contract()
+    contract.args = [*contract.args, _ScalarArg()]
+    spec = parse_launch_spec("/* taic-launch\nlaunch k grid=1,1,1 threads=32,1,1\n*/\n", {})
+    half = get_dtype("fp16")
+    good = _Kern([
+        _Bind("x", 0, access="read"), _Bind("y", 1, access="write"),
+        _ScalarBind("scale", 2, dtype_code=half.mtl_code, elem_size=half.nbytes),
+    ])
+    assert check_pipeline(contract, {"k": good}, spec, max_tg_memory=32768) == []
+    wide = _Kern([
+        _Bind("x", 0, access="read"), _Bind("y", 1, access="write"),
+        _ScalarBind("scale", 2, dtype_code=get_dtype("fp32").mtl_code, elem_size=16),
+    ])
+    assert any("scalar `scale`" in item for item in check_pipeline(contract, {"k": wide}, spec, max_tg_memory=32768))
+    writable = _Kern([
+        _Bind("x", 0, access="read"), _Bind("y", 1, access="write"),
+        _ScalarBind("scale", 2, dtype_code=half.mtl_code, elem_size=half.nbytes, access="write"),
+    ])
+    assert any("must be read-only" in item for item in check_pipeline(contract, {"k": writable}, spec, max_tg_memory=32768))
+
+
 def test_an_unused_kernel_does_not_count_as_a_launched_feature():
     from taic.hwfeatures import analyze_source
 

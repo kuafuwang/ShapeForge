@@ -30,6 +30,9 @@ def test_an_abi_failure_is_not_a_falsified_direction():
     assert "32768" in hint
     kind, _hint = classify_outcome("ok", "not better", improved=False, within_noise=False, speedup=0.9, parent_speedup=1.0)
     assert kind == "falsified"
+    # correct but untimed (a --correctness-only round) is not evidence that the direction is slow
+    kind, _hint = classify_outcome("ok", "correct", improved=False, within_noise=False, speedup=None, parent_speedup=1.0)
+    assert kind == "untested_impl_fail"
     kind, _hint = classify_outcome("ok", "new best", improved=True, within_noise=False, speedup=1.2, parent_speedup=1.0)
     assert kind == "validated_win"
     nodes = nodes_from_trace(

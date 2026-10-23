@@ -476,10 +476,10 @@ def test_xctrace_advice_only_reports_what_the_trace_supports():
     from tcenv.backends.metal.xctrace import advice, format_for_llm
 
     clean = advice(_trace(spilled=0, events=0))
-    assert len(clean) == 1 and "No register spills" in clean[0]
+    assert len(clean) == 1 and "Nothing was found in the recorded tables" in clean[0]
     sick = advice(_trace(spilled=100, events=2, code_bytes=100_000, active=0.5))
     text = " ".join(sick)
-    assert "spilled 100 bytes" in text and "active only 50%" in text and "compiled shader is large" in text and "No register spills" not in text
+    assert "spilled 100 bytes" in text and "active only 50%" in text and "compiled shader is large" in text and "Nothing was found" not in text
     t = _trace()
     t.thermal_states = ["Nominal", "Fair"]
     assert any("throttled" in a for a in advice(t))
@@ -727,6 +727,26 @@ def test_a_saved_report_from_before_launch_protocol_is_not_cached(tmp_path):
     path.write_text('{"launch_protocol": 1}')
     assert orch._cache_this("/* taic-launch */\nkernel void k() {}\n") is True
 
+
+
+def test_the_confirmation_does_not_read_the_evaluation_cache(tmp_path):
+    """The confirm seed is deterministic. With eval_cache on, a resume (or a rerun with the same seed)
+    would replay the stored report in milliseconds and still be published as a remeasure."""
+    seen = []
+
+    def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
+        seen.append({"mode": mode, "reps": reps, "cache": kw.get("eval_cache")})
+        rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=1, stage="done", status="ok", message="ok")
+        rep.speedup, rep.speedups, rep.candidate_us, rep.baseline_us = 1.2, {"mlx": 1.2}, 100.0, {"mlx": 120.0}
+        rep.benchmark = {"candidate": {"median_us": 100.0, "cv": 0.01, "reps": reps}, "baselines": {"mlx": {"median_us": 120.0, "cv": 0.01, "reps": reps}}, "best_baseline": "mlx"}
+        return rep
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1, evaluate_fn=ev)
+    run(orch)
+    confirm_reps = orch.search.eval_reps * 2
+    confirm = [row for row in seen if row["reps"] == confirm_reps]
+    assert confirm, seen
+    assert all(row["cache"] is False for row in confirm)
 
 
 def test_confirmation_reports_the_median_of_independent_batches(tmp_path):

@@ -386,9 +386,11 @@ def _evaluate_in_process(
 
     baseline_cache: dict[str, Any] = {}
     correctness_key = (task_name, dtype, size, seed)
-    remembered = _CORRECTNESS_CACHE.get(correctness_key)
 
     def baseline_fn(data):
+        # 每个用例单独缓存：同一份 (task,dtype,size,seed) 的不同 case 参考输出不同，用 case i 的基线
+        # 去定 case j 的误差容限，会把 allow 推到 ALLOW_CAP。
+        remembered = _CORRECTNESS_CACHE.get((*correctness_key, data.case))
         # validate 只对 CPU 参考使用名义容差，不用 MLX / PyTorch 基线自身的误差来放宽门槛。
         if mode == "validate":
             return None
@@ -402,7 +404,7 @@ def _evaluate_in_process(
             except Exception as e:  # noqa: BLE001
                 baseline_cache.setdefault("errors", []).append(f"{impl.name}: {type(e).__name__}: {e}")
         if outs and fast_bench:
-            _CORRECTNESS_CACHE[correctness_key] = outs
+            _CORRECTNESS_CACHE[(*correctness_key, data.case)] = outs
         return outs or None
 
     # validate 只跑一个用例，并跳过「换输出初值再跑」的确定性检查。这一次要尽快让 shader validation 看见访存；全用例和确定性留在 quick / full。
@@ -510,8 +512,10 @@ def _evaluate_in_process(
                     break
         except backend.runtime_error() as e:
             return finish("runtime_error", f"GPU error during benchmarking: {str(e)[:300]}")
-    # 留下 CV 最小的一次。三次都超过阈值也留最安静的那次，并在报告里标 noisy；吵本身不判死。
-    noise, stats, cand_gpu = min(attempts, key=lambda a: a[0])
+    # 留下第一次安静的尝试。在最多三次里挑 CV 最小的一次，是对估计量按它自己的离散度做选择，
+    # 中位数会系统性偏向更安静的那一次；三次都吵时才退回到最安静的一次并标 noisy。
+    quiet = [a for a in attempts if a[0] <= NOISY_CV]
+    noise, stats, cand_gpu = quiet[0] if quiet else min(attempts, key=lambda a: a[0])
 
     # Correctness used one buffer set. The benchmark rotates and dispatches concurrently,
     # so ask the backend to re-check the sets that actually ran during the timed attempts.
@@ -734,7 +738,7 @@ def _run_worker(
     ``timeout`` elapsed. Nothing can preempt a running Metal kernel from inside, so this bounds the damage of a
     runaway kernel, which would otherwise starve the display of the GPU.
     """
-    from .backends.metal.sanitize import env_with_validation, validation_problems
+    from .backends.metal.sanitize import VALIDATION_ENV, env_with_validation, validation_problems
 
     with tempfile.TemporaryDirectory(prefix="tcenv_") as td:
         tdp = Path(td)
@@ -755,7 +759,15 @@ def _run_worker(
         write_json_atomic(req_path, req)
         from .children import forget, kill_group, popen_group, scrubbed_env
 
-        env = env_with_validation(scrubbed_env()) if validation else scrubbed_env()
+        env = scrubbed_env()
+        if validation:
+            env = env_with_validation(env)
+        else:
+            # A shell that exported MTL_SHADER_VALIDATION would instrument the timed build as well:
+            # the candidate pays for validation while the MLX/torch baselines do not, and no field
+            # in the report would show it. The timed worker gets an uninstrumented environment.
+            for key in VALIDATION_ENV:
+                env.pop(key, None)
         env["PYTHONPATH"] = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
         env.setdefault("TORCHINDUCTOR_COMPILE_THREADS", "1")  # no compile-worker pool that could outlive a SIGKILLed worker
         base = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=seed)

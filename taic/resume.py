@@ -100,6 +100,12 @@ class Snapshot:
     initial_budget_usd: float | None = None
     resumes: int = 0
     agent_failures: int = 0
+    # The phase recorded in ``state.json`` when the process stopped. ``confirm`` means the search
+    # phase had ended and the resume exists to finish the remeasure, not to start another session.
+    phase: str = ""
+    # True when no search session is left: the run was killed during confirmation, or its last
+    # round was already written and the round cap is reached. The resume then only has to confirm.
+    search_finished: bool = False
     notes: list = field(default_factory=list)  # what was rebuilt, what is approximate
     checks: dict = field(default_factory=dict)  # consistency checks between the sources
 
@@ -414,6 +420,16 @@ def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
             report = EvalReport.from_json(rep)
         except SchemaError as e:
             raise NeedsInspection(f"{report_path} needs human inspection: {e}") from e
+        from tcenv.schema import PROTOCOL_VERSION
+
+        recorded_protocol = str(getattr(report, "protocol_version", "") or "")
+        if recorded_protocol and recorded_protocol != PROTOCOL_VERSION:
+            # 加速比只在同一个测量协议里可比。跨代续跑会把两个 epoch 的数放进同一条比较链，
+            # 所以宁可拒绝，也不让旧报告参与种子选择或确认池。
+            raise NeedsInspection(
+                f"{report_path} was measured under protocol {recorded_protocol}, not {PROTOCOL_VERSION}: "
+                "the run cannot be continued across a protocol change"
+            )
         rejected = False
         recheck_path = d / "differential_recheck.json"
         if recheck_path.is_file():
@@ -421,7 +437,10 @@ def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
                 rec = json.loads(recheck_path.read_text(encoding="utf-8"))
                 rejected = bool(isinstance(rec, dict) and rec.get("counts_as_kernel_error"))
             except (OSError, ValueError):
-                rejected = False
+                # A recheck record nobody can read is not a passed recheck: fail closed, or a
+                # kernel already judged wrong would come back as a seed after the next resume.
+                rejected = True
+                notes.append(f"candidate {d.name}: differential_recheck.json is damaged; it is treated as rejected")
         out.append({"idx": int(m["idx"]), "label": m["label"], "source": (d / kernel_name).read_text(), "report": report, "plan": None, "recheck_rejected": rejected})
     out.sort(key=lambda c: c["idx"])
     return out
@@ -524,8 +543,17 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
     recorded = max([d.get("trace") for d in (state, result) if d and isinstance(d.get("trace"), list)] or [[]], key=len)
     trace = [dict(t) for t in recorded if isinstance(t, dict)]
     best_label = (state or {}).get("search_seed_label") or (state or {}).get("best_label") or (result or {}).get("search_seed_label")
+    rejected_labels = {c["label"] for c in cands if c.get("recheck_rejected")}
+
+    def last_improved() -> str | None:
+        # 被复查判错的候选不能回种子位，即使它在 trace 里带着 improved。
+        return next((t["label"] for t in reversed(trace) if t.get("improved") and t.get("label") not in rejected_labels), None)
+
     if best_label and not any(c["label"] == best_label for c in cands):
-        best_label = next((t["label"] for t in reversed(trace) if t.get("improved")), None)
+        best_label = last_improved()
+    if best_label is not None and best_label in rejected_labels:
+        notes.append(f"search_seed_label {best_label} was rejected by its differential recheck; it is not the resumed seed")
+        best_label = last_improved()
     seen = {t.get("label") for t in trace}
     for cand in cands:
         if cand["label"] in seen:
@@ -546,7 +574,7 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
                     best_sp = float(row["speedup"])
                     break
             relation = relation_to_best(
-                True, float(speed), best_sp, speedup_se(report), speedup_se(best_report),
+                not bool(cand.get("recheck_rejected")), float(speed), best_sp, speedup_se(report), speedup_se(best_report),
                 min_improvement=search.min_improvement, noise_z=search.noise_z,
             )
             improved = relation == "replace"
@@ -571,6 +599,15 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
     else:
         next_round = rnd
         notes.append(f"round {rnd} has no candidate; it starts again as a new session")
+    # 搜索阶段已经结束的两种形状：state.json 里写着 confirm，或下一轮号已经越过上限而最后一轮有候选。
+    # 这两种续跑只差一次确认，不该被「轮次用完」拒绝，也不该再开一场会话。
+    phase = str((state or {}).get("phase") or "")
+    search_finished = phase == "confirm" or (rnd > 0 and next_round > search.max_rounds)
+    if search_finished:
+        # 只差一次确认。轮号留在上限以内，`taic resume` 才不会被「轮次用完」拒绝；
+        # _search_resumed 看到这个标志会跳过会话，直接进 _confirm。
+        next_round = min(max(rnd, 0), search.max_rounds)
+        notes.append("the search phase had already ended; this resume continues at the confirmation")
     history = list((state or {}).get("history") or [])
     stagnant = int((state or {}).get("stagnant") or 0)
     agent_failures = int((state or {}).get("agent_failures") or 0)
@@ -588,9 +625,9 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
     initial = _first(hist["initial_budget_usd"], (state or {}).get("initial_budget_usd"), (state or {}).get("budget_usd"))
     return Snapshot(
         run_dir=str(run_dir), task=task, dtype=dtype, size=size, model=model, requests=requests, candidates=cands, trace=trace,
-        history=history, best_label=best_label, rounds_done=max(0, next_round - 1), next_round=next_round, stagnant=stagnant,
+        history=history, best_label=best_label, rounds_done=max(0, rnd if search_finished else next_round - 1), next_round=next_round, stagnant=stagnant,
         partial=None, hangs=hangs, evaluations=evaluations, crashes_in_a_row=crashes, system=system, elapsed_s=elapsed,
-        started_at=started, initial_budget_usd=initial, resumes=resumes, agent_failures=agent_failures, notes=notes,
+        started_at=started, initial_budget_usd=initial, resumes=resumes, agent_failures=agent_failures, phase=phase, search_finished=search_finished, notes=notes,
         checks={"loop_protocol": "flame_chase_1"},
     )
 
@@ -646,17 +683,29 @@ def _next_index(run_dir: Path, stem: str) -> int:
 
 def snapshot_results(run_dir: Path) -> list[str]:
     """Before a continued run can overwrite them: keep ``result.json`` and ``confirm_report.json`` as ``<name>.before_topup_<n>.json`` (and the old
-    ``state.json`` as ``state.before_resume_<n>.json``). The files are *moved*, so a directory without ``result.json`` is a run in progress."""
+    ``state.json`` as ``state.before_resume_<n>.json``). The files are *moved*, so a directory without ``result.json`` is a run in progress.
+
+    Both documents are parsed before anything is moved. A damaged ``confirm_report.json`` used to be discovered only
+    after ``result.json`` had already been moved, and the caller restored nothing because the error was not a
+    ``RunStartError``: the run was left with no ``result.json`` at all.
+    """
     run_dir = Path(run_dir)
-    moved = []
-    n = _next_index(run_dir, "result")
+    pending = []
     for name in ("result", "confirm_report"):
         src = run_dir / f"{name}.json"
-        if src.exists():
-            dst = run_dir / f"{name}.before_topup_{n}.json"
-            control.write_json_atomic(dst, json.loads(src.read_text()))
-            src.unlink()
-            moved.append(dst.name)
+        if not src.exists():
+            continue
+        try:
+            pending.append((name, src, json.loads(src.read_text(encoding="utf-8"))))
+        except (OSError, ValueError) as exc:
+            raise ResumeError(f"{src} is damaged and was left in place; nothing was moved: {exc}") from exc
+    moved = []
+    n = _next_index(run_dir, "result")
+    for name, src, doc in pending:
+        dst = run_dir / f"{name}.before_topup_{n}.json"
+        control.write_json_atomic(dst, doc)
+        src.unlink()
+        moved.append(dst.name)
     st = run_dir / "state.json"
     if st.exists():
         dst = run_dir / f"state.before_resume_{n}.json"

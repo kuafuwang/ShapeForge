@@ -34,6 +34,18 @@ def _recorded_target(run_dir: Path, requested: str | None) -> str:
     return recorded
 
 
+def _result_code(res) -> int:
+    """The process exit code of a finished run.
+
+    0: a valid kernel, confirmation bound or not applicable. 6: the search produced a valid kernel
+    but the confirmation phase failed, so no number may be published; a script that only looks at
+    the status must not read that as a full success. 2: the search ran and found no valid kernel.
+    """
+    if str(getattr(res, "stop_reason", "") or "").startswith("confirm_error"):
+        return 6
+    return 0 if res.best_speedup else 2
+
+
 def cmd_run(a: argparse.Namespace) -> int:
     from tcenv.children import install_termination_handlers
 
@@ -83,29 +95,44 @@ def cmd_run(a: argparse.Namespace) -> int:
     if getattr(a, "experience_index", None):
         search.experience_index = a.experience_index
     _apply_max_tokens(a, cfg)
+    from . import control
+
+    # 新 run 也要拿目录锁："目录是空的" 是 check-then-write，两个 `taic run --run-dir X`
+    # 会同时写 run_config/transcript/candidates。lock 靠 pid 判断过期，进程退出后自然可接管。
+    lock_dir = Path(a.run_dir).resolve() if a.run_dir else None
+    if lock_dir is not None:
+        try:
+            control.acquire_run_lock(lock_dir, who="run")
+        except control.RunLockError as e:
+            print(f"cannot start {lock_dir}: {e}", file=sys.stderr)
+            return 4
     try:
-        # 显式 --model 让两个委员会都用这个模型。没写时用配置里的两名成员，可以不同。
-        committees = load_committees(raw, active=cfg, model_override=a.model)
-        orch = Orchestrator(
-            a.task, a.dtype, a.size, cfg, search,
-            run_dir=Path(a.run_dir) if a.run_dir else None,
-            from_run=None if a.from_run in (None, "@catalog") else Path(a.from_run),
-            seed=getattr(a, "seed", None),
-            committees=committees,
-            target_id=getattr(a, "target", "apple-m4-max"),
-            from_catalog=a.from_run == "@catalog",
-        )
-    except (RunStartError, ValueError, LLMError) as e:
-        # 尺寸或任务名不合法是启动失败，和配置写不进去一样，退出码 5。
-        print(str(e), file=sys.stderr)
-        return 5
-    try:
-        res = asyncio.run(orch.run())
-    except RunStartError as e:
-        print(str(e), file=sys.stderr)
-        return 5
-    print(json.dumps({k: getattr(res, k) for k in ("task", "dtype", "model", "best_speedup", "confirmed_speedup", "spent_usd", "stop_reason", "run_dir")}, indent=2))
-    return 0 if res.best_speedup else 2
+        try:
+            # 显式 --model 让两个委员会都用这个模型。没写时用配置里的两名成员，可以不同。
+            committees = load_committees(raw, active=cfg, model_override=a.model)
+            orch = Orchestrator(
+                a.task, a.dtype, a.size, cfg, search,
+                run_dir=Path(a.run_dir) if a.run_dir else None,
+                from_run=None if a.from_run in (None, "@catalog") else Path(a.from_run),
+                seed=getattr(a, "seed", None),
+                committees=committees,
+                target_id=getattr(a, "target", "apple-m4-max"),
+                from_catalog=a.from_run == "@catalog",
+            )
+        except (RunStartError, ValueError, LLMError) as e:
+            # 尺寸或任务名不合法是启动失败，和配置写不进去一样，退出码 5。
+            print(str(e), file=sys.stderr)
+            return 5
+        try:
+            res = asyncio.run(orch.run())
+        except RunStartError as e:
+            print(str(e), file=sys.stderr)
+            return 5
+        print(json.dumps({k: getattr(res, k) for k in ("task", "dtype", "model", "best_speedup", "confirmed_speedup", "spent_usd", "stop_reason", "run_dir")}, indent=2))
+        return _result_code(res)
+    finally:
+        if lock_dir is not None:
+            control.release_run_lock(lock_dir)
 
 
 SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "max_quick_checks", "min_improvement", "noise_z", "confirm_top", "eval_reps", "max_hangs",
@@ -273,7 +300,7 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
                 f"budget ${new_budget:.2f} does not exceed what the transcript has already spent (${snap.spent_usd:.4f}): add budget with --add-budget USD or --budget TOTAL"
             )
         first = snap.partial.rnd if snap.partial else snap.next_round
-        if first > search.max_rounds:
+        if first > search.max_rounds and not snap.search_finished:
             raise rs.ResumeError(f"all {search.max_rounds} rounds were used (the run is past round {first - 1}): raise the limit with --max-rounds")
         committees = _committees_for_resume(a, cfg, run_dir)
     except (rs.ResumeError, rs.NeedsInspection, LLMError, control.ControlError, KeyError, ValueError) as e:
@@ -337,7 +364,11 @@ def run_prepared(a: argparse.Namespace, orch, snap, info: dict, new_budget: floa
                 preflight(orch.committees, Path(os.path.expanduser("~/.pi/agent/models.json")))
         except (RunStartError, AgentError) as exc:
             raise RunStartError(str(exc)) from exc
-        moved = rs.snapshot_results(run_dir)
+        try:
+            moved = rs.snapshot_results(run_dir)
+        except rs.ResumeError as exc:
+            # 损坏的 result/confirm_report 在移动任何文件之前就被拒绝；给调用方一个干净的错误。
+            raise ResumeRefused(f"cannot resume {run_dir}: {exc}", 5) from exc
         if moved:
             orch.log(f"kept the earlier results as {', '.join(moved)}")
         orch.restore(snap, dry_run=False)
@@ -352,7 +383,7 @@ def run_prepared(a: argparse.Namespace, orch, snap, info: dict, new_budget: floa
         control.release_run_lock(run_dir)
 
 
-# `taic resume` 的入口。dry_run 只打印将要续的状态就退出，不拿锁、也不跑搜索。不能续时退出码来自 ResumeRefused；真的跑起来之后，有 best_speedup 为 0，否则为 2。
+# `taic resume` 的入口。dry_run 只打印将要续的状态就退出，不拿锁、也不跑搜索。不能续时退出码来自 ResumeRefused；真的跑起来之后，_result_code 决定 0 / 6 / 2。
 def cmd_resume(a: argparse.Namespace) -> int:
     from .orchestrator import RunStartError
     from tcenv.children import install_termination_handlers
@@ -372,7 +403,7 @@ def cmd_resume(a: argparse.Namespace) -> int:
         print(str(e), file=sys.stderr)
         return 5
     print(json.dumps({k: getattr(res, k) for k in ("task", "dtype", "model", "best_speedup", "confirmed_speedup", "spent_usd", "budget_usd", "stop_reason", "run_dir")}, indent=2))
-    return 0 if res.best_speedup else 2
+    return _result_code(res)
 
 
 _SEARCH_SWITCHES = (
@@ -525,7 +556,18 @@ def cmd_query(a: argparse.Namespace) -> int:
 def cmd_gc(a: argparse.Namespace) -> int:
     from . import gc
 
-    root = Path(a.root)
+    root = Path(a.root).resolve()
+    # 只收拾归档目录。没有这两道闸时 `--root . --older-than-days 0 --apply` 会把仓库的
+    # runs/ kernels/ docs/ 一起 rmtree；--apply 再要求显式 --confirm，免得手滑。
+    if root.name != "deleted":
+        print(f"refusing gc: --root must be an archive 'deleted' directory, got {root}", file=sys.stderr)
+        return 5
+    if float(a.older_than_days) < 1.0:
+        print("refusing gc: --older-than-days must be at least 1 (0 would delete every archived run)", file=sys.stderr)
+        return 5
+    if a.apply and not getattr(a, "confirm", False):
+        print("refusing gc --apply without --confirm (run it without --apply to see the list first)", file=sys.stderr)
+        return 5
     rows = gc.scan(root, older_than_days=a.older_than_days)
     if not rows:
         print(json.dumps({"root": str(root), "rows": [], "mode": "apply" if a.apply else "dry-run"}, ensure_ascii=False))
@@ -877,6 +919,7 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--root", default="data/deleted")
     g.add_argument("--older-than-days", type=float, default=30.0)
     g.add_argument("--apply", action="store_true", help="delete eligible directories; without it only report")
+    g.add_argument("--confirm", action="store_true", help="required with --apply: deletes are irreversible")
     g.set_defaults(fn=cmd_gc)
     b = sub.add_parser("brief", help="read-only orientation, or JSON facts for one run directory (no model call, no GPU)")
     b.add_argument("run_dir", nargs="?", default=None, help="run directory; omit for a repo orientation")

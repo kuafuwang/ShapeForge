@@ -1,11 +1,17 @@
-"""Price-derived review budget and JSON verdict parsing. No model request."""
+"""Price-derived review budget, JSON verdict parsing, and one fake hmz review turn. No model request."""
 
 from __future__ import annotations
 
 import json
+import os
+import stat
+
+import pytest
 
 from taic.kernel_agent import Prices
-from taic.review import build_review_prompt, estimate_review_budget, parse_review
+from taic.review import ReviewError, build_review_prompt, estimate_review_budget, parse_review, run_review
+
+PRICES = Prices(input=0.3, output=1.2, cache_read=0.006, cache_write=0.0)
 
 
 def test_review_budget_scales_with_model_prices_not_a_constant(tmp_path):
@@ -164,3 +170,29 @@ def test_untrusted_text_cannot_close_the_marker_block(tmp_path):
     prompt = build_review_prompt(row["proposal"], run_id=row["run_id"], bundle=bundle)
     assert prompt.count("--- END UNTRUSTED SUGGESTION ---") == 1
     assert prompt.count("--- BEGIN UNTRUSTED SUGGESTION ---") == 1
+
+
+def _fake_hmz(path) -> str:
+    """A stand-in hmz: writes a verdict only when WRITE_REVIEW is set, and always reports one turn."""
+    path.write_text(
+        "#!/bin/sh\n"
+        'if [ -n "$WRITE_REVIEW" ]; then printf \'{\"useful\": true, \"confidence\": 0.7}\' > HARNESS_REVIEW.json; fi\n'
+        'echo \'{"kind":"result","spent":"Usage(input=1000, output=100)"}\'\n'
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return str(path)
+
+
+def test_a_stale_review_file_is_not_reused_as_this_turns_verdict(tmp_path, monkeypatch):
+    """The reused work directory must not let an earlier HARNESS_REVIEW.json stand in for a turn that
+    wrote nothing: it would be recorded under the current reviewer's identity and could activate a tip."""
+    binary = _fake_hmz(tmp_path / "hmz")
+    work = tmp_path / "harness_reviews" / "key"
+
+    monkeypatch.setenv("WRITE_REVIEW", "1")
+    first = run_review(work, prompt="review this", provider="moonshot", model="kimi-k3", effort="high", prices=PRICES, hmz=binary, timeout_s=10)
+    assert first["useful"] is True and first["cost_usd"] == pytest.approx(1000 * 0.3 / 1e6 + 100 * 1.2 / 1e6)
+
+    monkeypatch.delenv("WRITE_REVIEW", raising=False)
+    with pytest.raises(ReviewError, match="did not write a new"):
+        run_review(work, prompt="review this", provider="moonshot", model="kimi-k3", effort="high", prices=PRICES, hmz=binary, timeout_s=10)

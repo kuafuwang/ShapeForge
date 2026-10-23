@@ -649,6 +649,10 @@ def settle(
     for review in reviews:
         if review.get("useful") is not True:
             continue
+        if str(review.get("protocol_version") or "") != str(protocol_version):
+            # 一条 review 只对一个协议代次成立。没有代次字段的旧行无法核对，保持不可用，
+            # 而不是在代次升级后被盖上新代次的戳当成当前证据。
+            continue
         key = str(review.get("proposal_key") or "")
         group = [row for row in (groups.get(key) or []) if (row.get("proposal") or {}).get("surface") == "tip"]
         if not group:
@@ -747,9 +751,9 @@ def sync_trust_status(run_dir: Path, *, target_id: str, task: str, root: Path | 
             FROM feedback_claims c
             JOIN feedback_items i ON i.run_id = c.run_id AND i.seq = c.seq
             JOIN runs r ON r.run_id = c.run_id
-            WHERE r.target_id = ? AND i.task = ? AND i.model = ? AND c.status IN ('adopted','rejected','done')
+            WHERE r.target_id = ? AND i.task = ? AND i.provider = ? AND i.model = ? AND c.status IN ('adopted','rejected','done')
             """,
-            (target_id, task, model),
+            (target_id, task, provider, model),
         ).fetchone()
         if not stats or int(stats["n"] or 0) < 8 or int(stats["runs"] or 0) < 2:
             continue

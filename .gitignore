@@ -2,7 +2,8 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-logs/pytest/
+# local logs (pytest triage, observe.log, smoke runs): never committed
+logs/
 runs/
 # spend book (data/books.sqlite). Local record, not a cache.
 data/
@@ -14,6 +15,9 @@ models.json
 *.key
 .env
 .venvs/
+
+# trust registry / audit locks, created next to each target's trust.toml
+targets/*/.trust_*.lock
 
 # machine measurement; a fresh run writes ~/.cache/ai_lowerling/calibration instead
 targets/*/calibration.json

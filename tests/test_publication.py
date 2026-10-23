@@ -6,7 +6,7 @@ import hashlib
 import json
 from types import SimpleNamespace
 
-from experiments.common import published_conclusion, summarize
+from experiments.common import conclusion_of_run, published_conclusion, summarize
 from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator, RunResult
 from tcenv.evaluate import EvalReport
@@ -90,3 +90,15 @@ def test_finish_writes_the_winner_hash_and_leaves_it_null_when_confirmation_fail
     doc2 = json.loads((orch.run_dir / "result.json").read_text())
     assert "confirmation_source_sha256" in doc2 and doc2["confirmation_source_sha256"] is None
     assert doc2["best_speedup"] == 1.4 and doc2["confirmed_speedup"] is None
+
+
+def test_a_confirmation_served_from_the_evaluation_cache_is_not_published(tmp_path):
+    """cache_hit means the report was replayed, not remeasured; the gate must not call that confirmed."""
+    digest = _digest(SOURCE)
+    run = tmp_path / "run"
+    (run / "candidates" / "000_r1.p0").mkdir(parents=True)
+    (run / "best.metal").write_text(SOURCE)
+    (run / "candidates" / "000_r1.p0" / "kernel.metal").write_text(SOURCE)
+    (run / "confirm_report.json").write_text(json.dumps({"status": "ok", "speedup": 1.25, "cache_hit": True, "benchmark": QUIET_BENCH}))
+    result = _result(confirmed_status="ok", confirmed_speedup=1.25, confirmation_source_sha256=digest, confirmed_values=[1.25, 1.25, 1.25])
+    assert conclusion_of_run(run, result) == {"speedup": None, "publication": "不确定"}

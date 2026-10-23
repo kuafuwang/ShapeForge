@@ -60,6 +60,54 @@ def test_format_summary_flags_spills_and_throttling():
     assert "spilled registers" in out and "1234 bytes" in out and "throttling" in out and "indicative only" in out
 
 
+def test_compute_processes_reads_the_exported_column_and_is_empty_when_missing(tmp_path):
+    rows = (
+        '<row><start-time id="1" fmt="x">1</start-time><duration id="2" fmt="d">10</duration>'
+        '<gpu-channel-name id="3" fmt="Compute">Compute</gpu-channel-name><process-name id="4" fmt="p">python</process-name></row>'
+        '<row><start-time id="5" fmt="x">20</start-time><duration id="6" fmt="d">10</duration>'
+        '<gpu-channel-name ref="3"/><process-name id="7" fmt="p">Cursor Helper</process-name></row>'
+    )
+    p = tmp_path / "iv.xml"
+    p.write_text(table(["start", "duration", "channel-name", "process"], rows))
+    assert xt.compute_processes(p) == {"python", "Cursor Helper"}
+    # no process column at all: unknown, not "ours"
+    p2 = tmp_path / "iv2.xml"
+    p2.write_text(table(
+        ["start", "duration", "channel-name"],
+        '<row><start-time id="1" fmt="x">1</start-time><duration id="2" fmt="d">10</duration>'
+        '<gpu-channel-name id="3" fmt="Compute">Compute</gpu-channel-name></row>',
+    ))
+    assert xt.compute_processes(p2) == set()
+
+
+def test_an_absent_table_is_unknown_rather_than_a_negative():
+    """The default template may not record spills, code size or thermal state. An absent table must
+    not become "no spills / not throttled" in the text the model reads."""
+    s = xt.TraceSummary(
+        window_s=1.0, n_dispatches=10, dispatch_us_median=5.0, gpu_active_fraction=None,
+        spilled_bytes=0, spill_events=0, shader_code_bytes=None, thermal_states=[],
+        tables={"spills": False, "gpu_state": False, "shaders": False, "thermal": False}, window_processes=[],
+    )
+    out = xt.format_summary(s)
+    assert "not recorded by this trace template" in out
+    assert "machine-wide" in out
+    text = "\n".join(xt.advice(s)).lower()
+    assert "no register spills" not in text and "not throttled" not in text
+    assert "unknown rather than cleared" in text
+
+
+def test_a_recorded_empty_table_means_none_happened():
+    s = xt.TraceSummary(
+        window_s=1.0, n_dispatches=10, dispatch_us_median=5.0, gpu_active_fraction=0.9,
+        spilled_bytes=0, spill_events=0, shader_code_bytes=4096, thermal_states=["Nominal"],
+        tables={"spills": True, "gpu_state": True, "shaders": True, "thermal": True}, window_processes=["python"],
+    )
+    out = xt.format_summary(s)
+    assert "register spills: 0 events, 0 bytes" in out
+    assert "not recorded" not in out
+    assert "scope:" not in out
+
+
 def test_record_refuses_unbounded_loops_without_starting_anything(tmp_path):
     with pytest.raises(xt.TraceError, match="refused"):
         xt.record("relu", "fp16", "small", "kernel void relu_kernel() { while (true) {} }", tmp_path)

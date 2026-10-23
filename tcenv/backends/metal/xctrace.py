@@ -177,6 +177,13 @@ class TraceSummary:
     thermal_states: list[str] = field(default_factory=list)
     counters: dict[str, CounterStat] = field(default_factory=dict)
     target_id: str = "apple-m4-max"
+    # Which tables the trace actually recorded. An empty *recorded* table means "none happened";
+    # an absent table means "not measured", and neither the summary nor the advice may turn that
+    # into a negative ("no spills", "not throttled").
+    tables: dict[str, bool] = field(default_factory=dict)
+    # Process names exported on the compute channel. Empty means Instruments did not attribute the
+    # dispatches, so the window and the dispatch counts are machine-wide, not just our kernel.
+    window_processes: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict:
         d = {k: v for k, v in self.__dict__.items() if k != "counters"}
@@ -199,6 +206,19 @@ def compute_window(intervals_xml: Path) -> tuple[float, float, list[float]]:
     if not starts:
         raise TraceError("no compute intervals in the trace")
     return min(starts), max(ends), durs
+
+
+def compute_processes(intervals_xml: Path) -> set[str]:
+    """Process names on the compute channel, as exported. Empty when Instruments did not fill the column."""
+    out: set[str] = set()
+    for row in iter_rows(intervals_xml):
+        if "compute" not in row.get("channel-name", ("", ""))[1].lower():
+            continue
+        # Instruments names this mnemonic "process" in some exports and "process-name" in others.
+        name = (row.get("process") or row.get("process-name") or ("", ""))[0].strip()
+        if name:
+            out.add(name)
+    return out
 
 
 def summarize_counters(counters_xml: Path, window: tuple[float, float]) -> dict[str, CounterStat]:
@@ -335,21 +355,27 @@ def analyze(trace: Path, workdir: Path, *, kernel_name: str | None = None, kerne
     summ.dispatch_us_median, summ.dispatch_us_p10, summ.dispatch_us_p90 = (_pct(durs, q) / 1e3 for q in (0.5, 0.1, 0.9))
     kernel_names = recorded_names or kernel_names
 
-    # GPU busy fraction inside the window
+    summ.window_processes = sorted(compute_processes(iv))
+    # GPU busy fraction inside the window. An absent state table must not read as "0% active":
+    # that is a finding about launch gaps, not a measurement of them.
     st = export_table(trace, "metal-gpu-state-intervals", workdir / "gpu_state.xml")
-    busy = 0.0
-    for row in iter_rows(st):
-        s0, d = float(row["start"][0]), float(row["duration"][0])
-        if row["state"][1] == "Active" and lo <= s0 <= hi:
-            busy += min(d, hi - s0)
-    summ.gpu_active_fraction = min(busy / max(hi - lo, 1.0), 1.0)
+    summ.tables["gpu_state"] = bool(_columns(st))
+    if summ.tables["gpu_state"]:
+        busy = 0.0
+        for row in iter_rows(st):
+            s0, d = float(row["start"][0]), float(row["duration"][0])
+            if row["state"][1] == "Active" and lo <= s0 <= hi:
+                busy += min(d, hi - s0)
+        summ.gpu_active_fraction = min(busy / max(hi - lo, 1.0), 1.0)
 
     sp = export_table(trace, "graphics-compiler-spill-events", workdir / "spills.xml")
+    summ.tables["spills"] = bool(_columns(sp))
     for row in iter_rows(sp):
         summ.spill_events += 1
         summ.spilled_bytes += int(float(row["spilled-bytes"][0] or 0))
 
     sh = export_table(trace, "metal-shader-profiler-shader-list", workdir / "shaders.xml")
+    summ.tables["shaders"] = bool(_columns(sh))
     names = kernel_names or ([kernel_name] if kernel_name else None)
     sizes = [
         int(float(r["pc-end"][0])) - int(float(r["pc-start"][0]))
@@ -359,6 +385,7 @@ def analyze(trace: Path, workdir: Path, *, kernel_name: str | None = None, kerne
     summ.shader_code_bytes = max(sizes) if sizes else None
 
     th = export_table(trace, "device-thermal-state-intervals", workdir / "thermal.xml")
+    summ.tables["thermal"] = bool(_columns(th))
     summ.thermal_states = sorted({r["thermal-state"][1] for r in iter_rows(th)})
 
     info = export_table(trace, "gpu-counter-info", workdir / "counter_info.xml")
@@ -405,10 +432,23 @@ LIMITER_MEANING = {
 
 def format_summary(summ: TraceSummary, top: int = 14) -> str:
     L = [f"Instruments Metal System Trace ({summ.n_dispatches} dispatches over {summ.window_s * 1e3:.0f} ms of back-to-back launches):"]
-    L.append(f"  register spills: {summ.spill_events} events, {summ.spilled_bytes} bytes" + ("  <-- the compiler spilled registers to memory: reduce live values / unrolling" if summ.spilled_bytes else ""))
-    if summ.shader_code_bytes is not None:
-        L.append(f"  compiled shader size: {summ.shader_code_bytes} bytes of GPU code")
-    L.append(f"  thermal state: {', '.join(summ.thermal_states) or 'unknown'}" + ("  (throttling: timings are unreliable)" if any(t not in ("Nominal",) for t in summ.thermal_states) else ""))
+    if summ.tables.get("spills", True):
+        L.append(f"  register spills: {summ.spill_events} events, {summ.spilled_bytes} bytes" + ("  <-- the compiler spilled registers to memory: reduce live values / unrolling" if summ.spilled_bytes else ""))
+    else:
+        L.append("  register spills: not recorded by this trace template (unknown, not zero)")
+    if summ.tables.get("shaders", True):
+        if summ.shader_code_bytes is not None:
+            L.append(f"  compiled shader size: {summ.shader_code_bytes} bytes of GPU code")
+    else:
+        L.append("  compiled shader size: not recorded by this trace template")
+    if summ.tables.get("thermal", True):
+        L.append(f"  thermal state: {', '.join(summ.thermal_states) or 'unknown'}" + ("  (throttling: timings are unreliable)" if any(t not in ("Nominal",) for t in summ.thermal_states) else ""))
+    else:
+        L.append("  thermal state: not recorded by this trace template")
+    if len(summ.window_processes) > 1:
+        L.append(f"  scope: the window includes compute from {', '.join(summ.window_processes)} (machine-wide; dispatch counts and medians are not ours alone)")
+    elif not summ.window_processes:
+        L.append("  scope: Instruments did not export a process column, so the window is machine-wide; dispatch counts and medians include any other compute work")
     if summ.dispatch_group > 1:
         interval = (
             f"GPU interval is the sum of {summ.dispatch_group} dispatches in one iteration "
@@ -416,9 +456,18 @@ def format_summary(summ: TraceSummary, top: int = 14) -> str:
         )
     else:
         interval = "GPU interval per dispatch"
+    active = f"GPU active {summ.gpu_active_fraction:.0%} of the window" if summ.gpu_active_fraction is not None else "GPU active fraction not recorded"
+    stats = []
+    if summ.dispatch_us_median is not None:
+        stats.append(f"median {summ.dispatch_us_median:.1f} us")
+    if summ.dispatch_us_p10 is not None:
+        stats.append(f"p10 {summ.dispatch_us_p10:.1f}")
+    if summ.dispatch_us_p90 is not None:
+        stats.append(f"p90 {summ.dispatch_us_p90:.1f}")
     L.append(
-        f"  indicative only (tracing perturbs timing): {interval} median {summ.dispatch_us_median:.1f} us "
-        f"(p10 {summ.dispatch_us_p10:.1f}, p90 {summ.dispatch_us_p90:.1f}); GPU active {summ.gpu_active_fraction:.0%} of the window"
+        f"  indicative only (tracing perturbs timing): {interval} "
+        + (", ".join(stats) or "no dispatch durations")
+        + f"; {active}"
     )
     if summ.counters:
         L.append("  hardware counters (GPU-wide, sampled every ~41 us while our kernel runs; 'typical' is the median sample; the highest limiter is what the kernel waits for):")
@@ -482,18 +531,24 @@ def advice(summ: TraceSummary) -> list[str]:
             "Spilled values are written and re-read through memory on every use, which usually costs more than anything else here. "
             "Cut live state per thread: smaller register tiles or fewer accumulators, no full unrolling of long loops, keep large arrays in threadgroup memory, recompute cheap values instead of keeping them."
         )
-    if summ.gpu_active_fraction is not None and summ.gpu_active_fraction < 0.8:
+    if summ.tables.get("gpu_state", True) and summ.gpu_active_fraction is not None and summ.gpu_active_fraction < 0.8:
         out.append(
             f"The GPU was active only {summ.gpu_active_fraction:.0%} of the window: gaps between launches (launch/dispatch overhead) matter at this problem size; "
             "this is a property of the launch contract and the dispatch pattern, not of the kernel body."
         )
-    if summ.shader_code_bytes and summ.shader_code_bytes > 48 * 1024:
+    if summ.tables.get("shaders", True) and summ.shader_code_bytes and summ.shader_code_bytes > 48 * 1024:
         out.append(f"The compiled shader is large ({summ.shader_code_bytes} bytes): heavy unrolling or inlining; instruction fetch can become the limiter.")
-    if any(t != "Nominal" for t in summ.thermal_states):
+    if summ.tables.get("thermal", True) and any(t != "Nominal" for t in summ.thermal_states):
         out.append("The GPU was thermally throttled while tracing: do not read small timing differences into this run.")
     out += _counter_advice(summ.counters, summ.dispatch_us_median, target_id=summ.target_id)
     if not out:
-        out.append("No register spills, launch gaps, oversized code or throttling were found: the slowness is in the instruction mix, memory access pattern or synchronization of the kernel itself.")
+        checked = [label for key, label in (("spills", "register spills"), ("gpu_state", "launch gaps"), ("shaders", "code size"), ("thermal", "throttling")) if summ.tables.get(key, True)]
+        missing = [label for key, label in (("spills", "register spills"), ("gpu_state", "launch gaps"), ("shaders", "code size"), ("thermal", "throttling")) if not summ.tables.get(key, True)]
+        out.append(
+            ("Nothing was found in the recorded tables (" + ", ".join(checked) + ")" if checked else "This trace recorded none of the usual tables")
+            + (". Not recorded, so unknown rather than cleared: " + ", ".join(missing) if missing else "")
+            + ": the slowness is in the instruction mix, memory access pattern or synchronization of the kernel itself."
+        )
     return out
 
 

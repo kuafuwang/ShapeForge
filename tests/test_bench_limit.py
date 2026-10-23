@@ -34,3 +34,12 @@ def test_a_slow_kernel_still_rotates_through_the_buffer_sets_when_it_can():
     assert choose_iters(lambda n: 0.2 * n, kmin=6) == 6
     # 0.5 s 一次、6 组：一批 6 次要 3 秒，越界；1.6 秒的预算只放得下 3 次（1.5 秒）。
     assert choose_iters(lambda n: 0.5 * n, kmin=6) == 3
+
+
+def test_a_single_repetition_is_marked_noisy_not_infinitely_precise():
+    """cv=0.0 for n=1 collapsed the noise gate to min_improvement; one sample must not promote a seed."""
+    from tcenv.bench import interleaved
+
+    stats = interleaved({"candidate": lambda k: 0.01 * k}, reps=1, warmup_reps=0, target_s=0.001, kmin=1)
+    assert stats["candidate"].reps == 1
+    assert stats["candidate"].cv >= 1.0

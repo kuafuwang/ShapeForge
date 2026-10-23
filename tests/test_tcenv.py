@@ -225,6 +225,9 @@ def test_parentheses_do_not_hide_an_unconditional_loop():
         assert screen_source(src), src
     assert screen_source("for (uint i = 0; i < 4; ++i) {}") == []
     assert screen_source("while (i < n) {}") == []
+    # a string literal is data, not a loop; a backward goto is refused
+    assert screen_source('kernel void k() { const char *s = "for (;;)"; }') == []
+    assert screen_source("kernel void k() { again: ; goto again; }")
 
 
 def test_a_stack_trace_is_not_a_shader_validation_failure():

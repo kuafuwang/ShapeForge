@@ -42,6 +42,10 @@ def classify_outcome(status: str, message: str, *, improved: bool, within_noise:
         return "validated_win", ""
     if status == "ok" and within_noise:
         return "validated_tie", ""
+    if status == "ok" and speedup is None:
+        # 核对了、安全了，但没有计时（--correctness-only）。这不是「这个方向慢」，
+        # 不能让规划器读到「不要重试这个方向」。
+        return "untested_impl_fail", "the kernel was correct but was not timed, so the direction was not judged"
     if status == "ok" and parent_speedup is not None and speedup is not None and speedup <= parent_speedup:
         return "falsified", ""
     if status == "ok":

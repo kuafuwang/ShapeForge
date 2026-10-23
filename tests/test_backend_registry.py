@@ -42,3 +42,17 @@ def test_parent_import_of_the_metal_adapter_does_not_import_metal():
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_the_profile_and_baseline_commands_use_the_backend_modules():
+    """These handlers used to import top-level modules that the backend migration deleted, and the
+    offline suite never invoked them. Import the backend modules the commands use; do not run them
+    (profile evaluates on the GPU, triton-baseline may measure)."""
+    import inspect
+
+    import tcenv.cli as c
+    from tcenv.backends.metal import triton_baseline, xctrace
+
+    src = inspect.getsource(c)
+    assert "tcenv.xctrace" not in src and "tcenv.triton_baseline" not in src
+    assert callable(xctrace.profile_kernel) and callable(triton_baseline.available)

@@ -104,11 +104,14 @@ def interleaved(
     out: dict[str, BenchStats] = {}
     for n, xs in samples.items():
         mean = statistics.fmean(xs)
+        # 一次重复没有可测的离散度。叫它 0.0 会让噪声门把这次测量当成无限精确；
+        # 1.0 把它标成最吵，于是 --eval-reps 1 不能只凭一次采样换种子。
+        cv = (statistics.pstdev(xs) / mean) if (mean > 0 and len(xs) > 1) else 1.0
         out[n] = BenchStats(
             median_s=statistics.median(xs),
             mean_s=mean,
             min_s=min(xs),
-            cv=(statistics.pstdev(xs) / mean) if mean > 0 else 0.0,
+            cv=cv,
             reps=len(xs),
             iters=ks[n],
             samples_s=tuple(xs),

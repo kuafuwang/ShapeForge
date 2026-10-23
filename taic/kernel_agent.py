@@ -122,6 +122,9 @@ class AgentResult:
     feedback: str = ""
     self_checks: int = 0
     self_check_timeouts: int = 0
+    # A worker crash is not a GPU hang: it is a harness-side failure, and only timeouts trip the
+    # hang breaker. The two are counted apart so ``max_hangs=1`` cannot end a run on a SchemaError.
+    self_check_crashes: int = 0
     self_check_gpu_s: float = 0.0
 
 
@@ -227,10 +230,18 @@ def parse_spent(value) -> dict[str, float]:
     return {}
 
 
-def spend_from_stream(text: str) -> tuple[dict[str, float], bool]:
-    """Sum ``spent`` on every ``kind=result`` line. The bool is whether any result line was present.
+# hmz closes a turn either way. ``kind=failed`` carries the same ``spent`` record as ``result``
+# (hmz/coganchor/agents/pi.py: _answered), so billing only the result lines under-counts whatever
+# a failed turn already cost. The two kinds are exclusive per turn, so they cannot double count.
+_SPENT_EVENTS = frozenset({"result", "failed"})
 
-    Each result line is one turn, not a running total, so the lines are added.
+
+def spend_from_stream(text: str) -> tuple[dict[str, float], bool]:
+    """Sum ``spent`` on every turn-closing line, ``kind=result`` or ``kind=failed``.
+
+    Each such line is one turn, not a running total, so the lines are added. The bool is whether
+    any line carried a token count: it decides ``cost_incomplete``, which is about having a bill,
+    not about the turn having succeeded.
     """
     totals: dict[str, float] = {}
     saw = False
@@ -239,10 +250,13 @@ def spend_from_stream(text: str) -> tuple[dict[str, float], bool]:
             obj = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if not isinstance(obj, dict) or obj.get("kind") != "result":
+        if not isinstance(obj, dict) or obj.get("kind") not in _SPENT_EVENTS:
+            continue
+        parsed = parse_spent(obj.get("spent"))
+        if not parsed:
             continue
         saw = True
-        for kind, tokens in parse_spent(obj.get("spent")).items():
+        for kind, tokens in parsed.items():
             totals[kind] = totals.get(kind, 0.0) + tokens
     return totals, saw
 
@@ -515,13 +529,15 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
     return out
 
 
-def _self_check_summary(work: Path) -> tuple[int, int, float]:
+def _self_check_summary(work: Path) -> tuple[int, int, float, int]:
+    """``(checks, timeouts, gpu_s, crashes)``. A timeout means the GPU stopped answering; a crash
+    is a worker-side error (SchemaError, OOM, a killed child) and must not trip the hang breaker."""
     path = work / "self_checks.jsonl"
     if not path.is_file():
-        return 0, 0, 0.0
-    count = timeouts = 0
+        return 0, 0, 0.0, 0
+    count = timeouts = crashes = 0
     gpu_s = 0.0
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             row = json.loads(line)
         except json.JSONDecodeError:
@@ -529,12 +545,14 @@ def _self_check_summary(work: Path) -> tuple[int, int, float]:
         if not isinstance(row, dict):
             continue
         count += 1
-        if row.get("status") in ("timeout", "crash"):
+        if row.get("status") == "timeout":
             timeouts += 1
+        elif row.get("status") == "crash":
+            crashes += 1
         elapsed = row.get("elapsed_s")
         if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool):
             gpu_s += float(elapsed)
-    return count, timeouts, gpu_s
+    return count, timeouts, gpu_s, crashes
 
 
 def _guidance_source(brief: SessionBrief, name: str, fallback: Path) -> Path:
@@ -748,29 +766,37 @@ def run_kernel_agent(
     stream = (stdout or "") + "\n" + (stderr or "")
     spent, saw_result = spend_from_stream(stream)
     cost = dollars_for(spent, prices) if saw_result else None
-    written = submit_path.read_text() if submit_path.is_file() else ""
+    # The session is already billed at this point. A non-UTF-8 byte in a comment must degrade to a
+    # replacement character, not raise away the AgentResult that carries the cost.
+    written = submit_path.read_text(encoding="utf-8", errors="replace") if submit_path.is_file() else ""
     source = kernel_text(written, brief.kernel_name, source_fence=brief.source_fence)
     notes = ""
     notes_path = work / "NOTES.md"
     if notes_path.is_file():
-        notes = notes_path.read_text()
+        notes = notes_path.read_text(encoding="utf-8", errors="replace")
     from .agent_feedback import read_feedback_text
 
     feedback, _over = read_feedback_text(work / "FEEDBACK.md")
     protected = _self_check_summary(_self_check_dir(brief))
     beside = _self_check_summary(work)
-    checks, timeouts, gpu_s = protected[0] + beside[0], protected[1] + beside[1], protected[2] + beside[2]
+    checks = protected[0] + beside[0]
+    timeouts = protected[1] + beside[1]
+    gpu_s = protected[2] + beside[2]
+    crashes = protected[3] + beside[3]
     if status != "timeout" and proc.returncode not in (0, None):
         status = "failed"
         error = (stderr or stdout or "").strip()[-400:]
-    pruned = prune_work(
-        work, label=brief.label,
-        keep={submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext), brief.seed_name},
-    )
+    try:
+        pruned = prune_work(
+            work, label=brief.label,
+            keep={submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext), brief.seed_name},
+        )
+    except OSError as exc:  # pruning is housekeeping; it must not discard the billed session
+        pruned = {"error": f"{type(exc).__name__}: {exc}"}
     return AgentResult(
         source=source, cost_usd=cost, cost_incomplete=not saw_result, status=status, error=error,
-        spent=spent, notes=notes, feedback=feedback, self_checks=checks, self_check_timeouts=timeouts, self_check_gpu_s=gpu_s,
-        pruned=pruned,
+        spent=spent, notes=notes, feedback=feedback, self_checks=checks, self_check_timeouts=timeouts,
+        self_check_crashes=crashes, self_check_gpu_s=gpu_s, pruned=pruned,
     )
 
 

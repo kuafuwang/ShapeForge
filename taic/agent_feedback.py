@@ -710,7 +710,10 @@ def _tip_line(row: dict, text: str) -> str:
         suffix = f" {float(speed):.3f}x"
     prefix = f"- [{label} {committee}/{model}, {outcome}{suffix}] "
     room = TIP_CHARS - len(prefix)
-    body = text if room >= len(text) else (text[: max(room, 0)] + ("…" if room > 0 else ""))
+    # 一条 tip 会原样进下一份 TASK.md。正文里的换行能另起一段，把 `# 约束` 之类的标题
+    # 塞进契约面，所以先压成一行再截断。
+    body = _SPACE.sub(" ", str(text or "")).strip()
+    body = body if room >= len(body) else (body[: max(room, 0)] + ("…" if room > 0 else ""))
     line = prefix + body
     return line[:TIP_CHARS]
 

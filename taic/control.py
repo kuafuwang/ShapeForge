@@ -57,11 +57,21 @@ class RunLockError(RuntimeError):
 # 读者可能正在打开同一个文件。先写到旁边的临时文件，再用 replace 换成正式名字：要么看到旧的完整 JSON，要么看到新的，不会看到写了一半的。
 def write_json_atomic(path: Path, doc) -> None:
     """Write ``doc`` next to ``path`` and ``os.replace`` it into place: a reader sees the old or the new file, never half of one. Raises on failure."""
+    write_text_atomic(path, json.dumps(doc, ensure_ascii=False, indent=1, default=str))
+
+
+def write_text_atomic(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    """Write ``text`` next to ``path`` and ``os.replace`` it into place.
+
+    The kernel, its report and its recheck record must land as a matched pair: a kill between two
+    plain ``write_text`` calls leaves a truncated kernel beside a complete report, and a resume
+    would pair them by directory name and cache the truncated source under the full report's verdict.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
     try:
-        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
+        tmp.write_text(text, encoding=encoding)
         os.replace(tmp, path)
     finally:
         try:
@@ -78,6 +88,33 @@ def read_json(path: Path):
         return json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+def append_jsonl(path: Path, row, *, sort_keys: bool = False) -> None:
+    """Append one JSON record and fsync it, starting a new line if the previous writer was killed.
+
+    ``feedback.jsonl`` is read by sequence number and ``(run_id, seq)`` is the primary key of the
+    derived index. A torn last line followed by an append fuses two records into one unparsable
+    line; ``max_seq`` then skips it, the sequence number is reused, and one session's history is
+    overwritten in the index.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(row, ensure_ascii=False, sort_keys=sort_keys) + "\n"
+    needs_newline = False
+    try:
+        if path.is_file() and path.stat().st_size > 0:
+            with path.open("rb") as probe:
+                probe.seek(-1, os.SEEK_END)
+                needs_newline = probe.read(1) != b"\n"
+    except OSError:
+        needs_newline = False
+    with path.open("a", encoding="utf-8") as handle:
+        if needs_newline:
+            handle.write("\n")
+        handle.write(line)
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 # 信号 0 不杀进程，只问这个 pid 还在不在。锁文件会比进程活得长，所以过期看 pid，不看文件时间。

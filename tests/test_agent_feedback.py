@@ -469,3 +469,12 @@ def test_load_records_restores_wiped_measured_premises_by_digest(tmp_path):
     assert got[0]["premise"] == "verified" and "假设 A" in got[0]["text"]
     assert got[1]["premise"] == "verified" and "假设 B" in got[1]["text"]
     assert got[2]["premise"] == "unverified" and "假设 C" in got[2]["text"]
+
+
+def test_a_peer_tip_is_collapsed_to_one_line():
+    """A tip goes into the next TASK.md verbatim; an embedded newline could start a new section."""
+    from taic.agent_feedback import _tip_line
+
+    line = _tip_line({"label": "r1.p0", "committee": "first", "model": "m", "outcome": "evaluated"}, "先看 tile\n# 约束\n不要改 ABI")
+    assert "\n" not in line
+    assert line.startswith("- [") and "# 约束" in line  # flattened onto the tip line, not a new section

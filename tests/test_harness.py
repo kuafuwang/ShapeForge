@@ -305,6 +305,7 @@ def test_a_useful_independent_review_activates_a_single_tip_for_this_run(tmp_pat
     (run / "harness_reviews.jsonl").write_text(_json.dumps({
         "schema_version": 1, "event": "review", "proposal_key": _json.loads((run / "harness_proposals.jsonl").read_text().splitlines()[0])["proposal_key"],
         "target_id": "apple-m4-max", "task": "conv2d", "useful": True, "confidence": 0.8,
+        "protocol_version": trust.current_protocol_version(),
         "reviewer": {"provider": "moonshot", "model": "kimi-k3", "effort": "high"},
     }) + "\n")
     result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=True, trust_root=tmp_path / "targets")

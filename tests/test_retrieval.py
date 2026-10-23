@@ -76,3 +76,12 @@ def test_gc_cli_defaults_to_a_report(tmp_path, capsys):
     report = json.loads(capsys.readouterr().out)
     assert report["mode"] == "dry-run" and report["eligible"] == 1
     assert (root / "old").exists()
+
+
+def test_gc_refuses_a_root_outside_the_archive_and_apply_without_confirm(tmp_path, capsys):
+    repo_like = tmp_path / "repo"
+    (repo_like / "taic").mkdir(parents=True)
+    assert cli.main(["gc", "--root", str(repo_like), "--older-than-days", "30", "--apply", "--confirm"]) == 5
+    assert cli.main(["gc", "--root", str(tmp_path / "deleted"), "--older-than-days", "0"]) == 5
+    assert cli.main(["gc", "--root", str(tmp_path / "deleted"), "--older-than-days", "30", "--apply"]) == 5
+    assert (repo_like / "taic").is_dir()

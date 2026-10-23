@@ -405,6 +405,27 @@ def test_naive_kernels_do_not_claim_a_matrix_unit():
 needs_metal = pytest.mark.skipif(H.metal_toolchain() is None, reason="Metal toolchain (xcrun metal) not available")
 
 
+def test_the_air_cache_key_moves_with_the_toolchain(monkeypatch, tmp_path):
+    """An Xcode upgrade changes the AIR for the same source; evidence compiled by the old front end
+    must not be served under the new toolchain's key."""
+    import taic.hwfeatures as HF
+
+    tool = tmp_path / "metal"
+    tool.write_text("x")
+    monkeypatch.setattr(HF, "metal_toolchain", lambda: str(tool))
+    HF._TOOLCHAIN.pop("fingerprint", None)
+    first = HF.air_cache_key("kernel void k() {}", std="metal4.0", fast_math=True)
+    assert first == HF.air_cache_key("kernel void k() {}", std="metal4.0", fast_math=True)
+    assert first != HF.air_cache_key("kernel void k() {}", std="metal3.2", fast_math=True)
+    assert first != HF.air_cache_key("kernel void k() { }", std="metal4.0", fast_math=True)
+    import os
+
+    os.utime(tool, (1_600_000_000, 1_600_000_000))
+    HF._TOOLCHAIN.pop("fingerprint", None)
+    moved = HF.air_cache_key("kernel void k() {}", std="metal4.0", fast_math=True)
+    assert moved != first
+
+
 @needs_metal
 def test_compiled_evidence_confirms_matrix_intrinsics_and_widths(tmp_path):
     from experiments.contract_sensitivity import gemm_source

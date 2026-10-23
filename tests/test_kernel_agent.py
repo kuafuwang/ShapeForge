@@ -114,6 +114,24 @@ def test_spent_on_a_result_line_is_priced_by_kind_and_result_lines_add():
     assert spend_from_stream("not json") == ({}, False)
     assert parse_spent("Usage(input=3)") == {"input": 3.0}
 
+def test_a_failed_turn_is_billed_too():
+    """hmz closes a turn with kind=failed when its last request errored, and carries the same spent record.
+
+    Billing only ``result`` lines under-counts every failed turn: the budget gate then under-counts
+    and the run keeps spending money the ledger never saw.
+    """
+    stream = "\n".join([
+        json.dumps({"kind": "result", "spent": "Usage(input=1000, output=100)"}),
+        json.dumps({"kind": "failed", "spent": "Usage(input=900000, output=90000)"}),
+    ])
+    spent, saw = spend_from_stream(stream)
+    assert saw
+    assert spent["input"] == pytest.approx(901_000)
+    assert spent["output"] == pytest.approx(90_100)
+    # a failed-only session still has a bill, so it is not cost_incomplete
+    only_failed, saw_failed = spend_from_stream(json.dumps({"kind": "failed", "spent": "Usage(output=5)"}))
+    assert saw_failed and only_failed == {"output": 5.0}
+
 
 def test_a_dollar_slice_becomes_output_tokens():
     assert output_tokens_for(1.2, 1.2) == 1_000_000

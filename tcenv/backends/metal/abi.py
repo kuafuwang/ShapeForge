@@ -155,6 +155,15 @@ def check_pipeline(contract: Contract, kernels: dict, spec, *, max_tg_memory: in
                     problems.append(f"input `{b.name}` must stay `device const` in stage `{stage.kernel}`")
                 if arg.role == "output" and b.access != "read":
                     writable_outputs.add(b.name)
+                if arg.role == "scalar":
+                    # The single-kernel path already rejects a vector or wider scalar; a pipeline stage
+                    # must follow the same rule or a `device float4*` on a 4-byte setBytes payload reads
+                    # past the copy and produces a silent wrong answer.
+                    d = get_dtype(arg.dtype)
+                    if b.dtype_code != d.mtl_code or b.elem_size != d.nbytes:
+                        problems.append(f"scalar `{b.name}` in stage `{stage.kernel}` must be `constant {d.msl}& {b.name} [[buffer({b.index})]]`")
+                    if b.access != "read":
+                        problems.append(f"scalar `{b.name}` must be read-only (`constant`) in stage `{stage.kernel}`")
             elif b.name in listed:
                 pass
             else:
