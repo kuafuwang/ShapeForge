@@ -32,7 +32,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATE = os.environ.get("TCENV_XCTRACE_TEMPLATE", "Metal System Trace")
 BATCH = 10  # launches per encoder in tcenv.xcworker; GPU intervals are per encoder
 

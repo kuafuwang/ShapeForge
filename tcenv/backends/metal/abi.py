@@ -15,7 +15,7 @@ import re
 
 from typing import TYPE_CHECKING
 
-from ...contract import Contract
+from .contract import Contract
 from ...dtypes import get_dtype
 
 if TYPE_CHECKING:

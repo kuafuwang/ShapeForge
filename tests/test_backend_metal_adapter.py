@@ -46,3 +46,14 @@ def test_contract_rendering_is_delegated_without_changing_text():
     assert header == contract.assemble(source)[1]
     assert backend.describe(contract) == contract.describe()
     assert backend.abi_stub(contract) == contract.abi_stub()
+
+
+def test_moved_tooling_keeps_the_repository_root():
+    from pathlib import Path
+
+    from tcenv.backends.metal import triton_baseline, xctrace
+
+    repo = Path(__file__).resolve().parents[1]
+    assert triton_baseline.REPO_ROOT == repo
+    assert xctrace.REPO_ROOT == repo
+    assert triton_baseline.CACHE_DIR == repo / "runs" / "triton_baselines"

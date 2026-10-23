@@ -26,7 +26,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ...contract import AbiArg, Contract
+from .contract import AbiArg, Contract
 from ...dtypes import get_dtype
 
 if TYPE_CHECKING:

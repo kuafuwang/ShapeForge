@@ -18,7 +18,7 @@ import tempfile
 import time
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[3]
 VENV_PY = REPO_ROOT / ".venvs" / "triton-msl" / "bin" / "python"
 CACHE_DIR = REPO_ROOT / "runs" / "triton_baselines"
 LAUNCH_DEADLINE_S = 5.0  # one timed batch; a normal one takes milliseconds
