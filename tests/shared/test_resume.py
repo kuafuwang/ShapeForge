@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -24,8 +22,6 @@ from ..support.resume import mark_dead, ns, script_for
 
 CFG = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
 BIG = make_usage(miss=100_000, out=50_000)  # $0.09 per request with the default prices
-
-
 
 
 # ------------------------------------------------------------------------------------------------ control file / ledger
@@ -231,10 +227,6 @@ def test_run_config_holds_the_settings_and_no_credentials(tmp_path):
 
 
 # ------------------------------------------------------------------------------------------------ continuing runs
-
-
-
-
 
 
 def snapshot_of(res, orch):
@@ -701,7 +693,6 @@ def test_resume_restores_notes_and_the_feedback_sequence(tmp_path):
     assert "tile 32 overflowed" in follow._notes_summary
     assert "float8" in follow._session_brief(False).peer_tips
     assert follow._next_feedback_seq() == 2
-
 
 
 def test_agent_tokens_survive_a_resume_ledger_restore():

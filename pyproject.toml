@@ -33,9 +33,9 @@ packages = ["tcenv", "taic", "tasks", "observe", "experiments"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# 默认按逻辑核并行；worksteal 把尾部慢文件拆给空闲 worker。
-# 串行调试用 `uv run pytest -n 0 ...`，GPU/LLM 测试仍由 marker 和 GPU lock 控制。
-addopts = ["-ra", "--strict-markers", "--durations=15", "-n", "auto", "--dist", "worksteal"]
+# 默认按逻辑核并行。loadgroup 让 conftest 打上 xdist_group("gpu") 的用例固定在一个 worker，
+# 其余按负载分散；串行调试用 `uv run pytest -n 0 ...`，GPU/LLM 测试仍由 marker 和 GPU lock 控制。
+addopts = ["-ra", "--strict-markers", "--durations=15", "-n", "auto", "--dist", "loadgroup"]
 markers = [
     "slow: long-running (hang containment, exhaustive paper-size checks)",
     "gpu: needs a Metal device",

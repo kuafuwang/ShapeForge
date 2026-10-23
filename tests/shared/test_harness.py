@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -225,6 +226,40 @@ def test_a_p2_patch_passes_git_apply_check_and_changes_only_the_target_file(tmp_
     assert committed["paths"] == ["targets/apple-m4-max/experience.md"]
     assert "先读 device.md" in (repo / "targets/apple-m4-max" / "experience.md").read_text()
     assert harness._read_jsonl(run / "harness_decisions.jsonl")[-1]["event"] == "promotion_commit"
+
+
+def test_the_run_tests_gate_points_at_the_migrated_paths_and_refuses_a_failure(tmp_path, monkeypatch):
+    """The promotion gate used the pre-migration flat paths: pytest exited before running a test,
+    so every ``apply_patch(run_tests=True)`` failed. These assertions are the regression guard."""
+    from taic import trust
+
+    assert harness.OFFLINE_TESTS
+    for relative in harness.OFFLINE_TESTS:
+        assert (trust.REPO_ROOT / relative).is_file(), relative
+
+    class Done:
+        def __init__(self, code: int) -> None:
+            self.returncode, self.stdout, self.stderr = code, "", ""
+
+    seen: list[list[str]] = []
+
+    def run_ok(argv, **kw):
+        if "-m" in argv and "pytest" in argv:
+            seen.append(list(argv))
+        return Done(0)
+
+    monkeypatch.setattr(harness, "write_patch", lambda *a, **k: {"path": "targets/apple-m4-max/experience.md", "patch": "/tmp/p.patch", "sha256": "s"})
+    monkeypatch.setattr(harness.subprocess, "run", run_ok)
+    out = harness.apply_patch(tmp_path / "run", target_id="apple-m4-max", proposal_key="k", root=tmp_path, run_tests=True)
+    assert out["applied"] is True
+    assert seen and seen[0][:3] == [sys.executable, "-m", "pytest"] and seen[0][4:] == list(harness.OFFLINE_TESTS)
+
+    def run_fail(argv, **kw):
+        return Done(1 if ("-m" in argv and "pytest" in argv) else 0)
+
+    monkeypatch.setattr(harness.subprocess, "run", run_fail)
+    with pytest.raises(harness.ProposalError, match="offline tests failed"):
+        harness.apply_patch(tmp_path / "run2", target_id="apple-m4-max", proposal_key="k", root=tmp_path, run_tests=True)
 
 
 def test_two_models_with_the_same_probe_bytes_are_one_source(tmp_path):

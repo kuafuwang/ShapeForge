@@ -1,6 +1,6 @@
 """Tests of the evaluation environment itself: it must accept good kernels and reject every kind of bad one.
 
-Run with:  uv run pytest -q tests/test_tcenv.py
+Run with:  uv run pytest -q tests/backends/metal/test_tcenv.py
 """
 
 from __future__ import annotations

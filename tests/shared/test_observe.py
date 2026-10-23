@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-import queue
-import socket
 import subprocess
-import threading
 import time
 import urllib.error
 import urllib.parse
@@ -86,14 +83,6 @@ def test_run_ids_cannot_climb_out_of_runs(tmp_path, monkeypatch):
     assert scan.resolve_run("..") is None
     assert scan.resolve_run("a/../../etc") is None
     assert scan.resolve_run("/etc") is None
-
-
-
-
-
-
-
-
 
 
 def test_stream_reports_a_phase_change(dashboard):

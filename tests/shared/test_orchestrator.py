@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import argparse
 import json
 import re
 from pathlib import Path
@@ -11,27 +9,11 @@ from pathlib import Path
 import pytest
 
 from taic.kernel_agent import agent_for_script
-from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator, RunStartError
 from tcenv.evaluate import EvalReport
 
 from ..support.fakes import FakeClient, make_response, make_usage
-from ..support.orchestrator import KERNEL, PLAN, agent_from_script, code, fake_eval, llm_script, make_orch, run, _user_prompts
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+from ..support.orchestrator import KERNEL, agent_from_script, code, fake_eval, llm_script, make_orch, run, _user_prompts
 
 
 # ------------------------------------------------------------------------------------------------
@@ -301,20 +283,6 @@ def test_a_failed_planner_request_falls_back_to_generic_plans(tmp_path):
 # ------------------------------------------------------------------------------------------------ adaptive profiling
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ------------------------------------------------------------------------------------------------ plan mix, initial samples, patience
 
 
@@ -383,8 +351,6 @@ def test_patience_controls_how_many_rounds_without_improvement_end_the_run(tmp_p
     assert res.rounds == 2 and "2 rounds without improvement" in res.stop_reason
     res = run(make_orch(tmp_path / "b", llm_script(code("speed=1.0"), patches={"A": code("speed=0.5")}), calls, max_rounds=10))
     assert res.rounds == 6 and "6 rounds without improvement" in res.stop_reason
-
-
 
 
 def _prompts(orch) -> list[str]:
@@ -541,7 +507,6 @@ def test_a_saved_report_from_before_launch_protocol_is_not_cached(tmp_path):
     assert orch._cache_this("/* taic-launch */\nkernel void k() {}\n") is False
     path.write_text('{"launch_protocol": 1}')
     assert orch._cache_this("/* taic-launch */\nkernel void k() {}\n") is True
-
 
 
 def test_the_confirmation_does_not_read_the_evaluation_cache(tmp_path):

@@ -44,7 +44,6 @@ tests/
 | 未来其他 backend 的同类测试 | `tests/backends/<backend_id>/` |
 | 测试专用 helper、fake、pytest 插件 | `tests/support/` |
 | backend 专属 golden/fixture | `tests/support/golden/<backend_id>/` |
-| 不依赖 backend 的共享 golden | `tests/support/golden/shared/` |
 
 后端特有测试不得放进 `tests/shared/`，不得在 `shared` 里 import
 `tcenv.backends.metal.*`。需要跨层复用的内容先抽到 `tests/support/` 或业务模块，
@@ -60,20 +59,20 @@ tests/
    `tests/support/golden/<backend_id>/`。
 5. 根 `conftest.py` 只放真正全局的 fixture。某个 backend 的 fixture 放
    `tests/backends/<id>/conftest.py`，不要污染全局。
-6. 新测试不要再放到 `tests/` 根目录；根目录只保留迁移中的旧文件。
+6. 新测试不要再放到 `tests/` 根目录；根目录只有 `conftest.py`、`README.md`
+   和 `__init__.py`。
 
 ## Import 规则
 
-优先使用绝对导入，读写路径都从仓库根解析：
+`tests/` 是一个包（每个目录都有 `__init__.py`）。实际约定是**包内相对导入**：
 
 ```python
-from tests.support.fakes import FakeClient
-from tests.support import hw_golden
-from tests.support.golden import metal
+from ..support.fakes import FakeClient       # tests/shared/... and tests/backends/metal/...
+from .fakes import FakeClient                # inside tests/support/
 ```
 
-不要写 `from .fakes import ...` 这类只适用于根目录的导入。嵌套测试如果需要
-相对导入，目录层级必须和包层级一致。
+绝对导入（`from tests.support.fakes import ...`）也能工作，但同一个目标只
+选一种写法，不要混用。不要 `import tests.test_*`。
 
 测试数据路径从 helper 或 `Path(__file__)` 推导，不要写死当前工作目录；需要
 golden 时通过 `tests.support.hw_golden.GOLDEN` / `FIXTURES`，不要自己拼
@@ -106,11 +105,17 @@ tests/support/golden/
 默认命令就是并行：
 
 ```bash
-uv run pytest -q                         # -n auto --dist worksteal
+uv run pytest -q                         # -n auto --dist loadgroup
 uv run pytest -q -n 0                    # 串行复现
 uv run pytest -q --no-test-file-log      # 不写 per-test 日志
-uv run pytest -q -m 'not gpu and not llm'
+uv run pytest -q -m 'not gpu and not llm'   # 不含 GPU/LLM 的并行套件
+uv run pytest -q -m gpu -n 0             # GPU 套件串行
 ```
+
+`tests/conftest.py` 给所有 `gpu` 用例加 `xdist_group("gpu")`，配合
+`--dist loadgroup` 把它们固定在同一个 worker 上：GPU 测量本来就要独占锁，
+并行只会让 worker 互等（最长 `DEFAULT_MAX_WAIT_S`，30 分钟）。CPU 用例仍按
+负载分到其他 worker。
 
 并行工作者的规则：
 
@@ -118,7 +123,9 @@ uv run pytest -q -m 'not gpu and not llm'
 - 文件写 `tmp_path`，环境变量用 `monkeypatch`；
 - GPU 测试必须带 `@pytest.mark.gpu`；全局 GPU lock 会串行化真实测量；
 - LLM 测试必须带 `@pytest.mark.llm`，默认套件不运行；
-- 需要独占资源时用锁或 `xdist_group`，不要假设“只有一个 worker”。
+- 需要独占资源时用锁或 `xdist_group`，不要假设“只有一个 worker”；
+- 少数测试只读仓库里的 `runs/`（例如 `shared/test_observe_turns.py`），
+  目录不在时 skip；全新 checkout 的 skip 不是失败。
 
 ## 日志与 AI handoff
 
@@ -151,8 +158,7 @@ AI/人应先读 `triage_summary.md`，再读对应 Markdown 的 JSON 块，最�
   （backend adapter/registry/phase 0、launch/ABI、tcenv、baselines、bench limit、
   pressure、skills/symptom、xctrace、orchestrator GPU）。
 - 阶段 3 第二批：任务/契约层的 Metal 测试（contracts、generated tasks、mamba2、
-  domain sweep、elementwise semantics、distributions）也已移入
-  `tests/backends/metal/`。
+  domain sweep、elementwise semantics）也已移入 `tests/backends/metal/`。
 - 阶段 3 收尾：dispatch、IEEE 特殊值、硬件特征检测和 hwfeedback 也已移入
   `tests/backends/metal/`；通用文件里混着的 Metal 测试也已拆出到
   `test_abi.py`、`test_triton_baseline.py`、`test_orchestrator_profiling.py`。
@@ -163,3 +169,9 @@ AI/人应先读 `triage_summary.md`，再读对应 Markdown 的 JSON 块，最�
   测试模块之间不再互相 import fixture/helper；共享 dashboard fixture 由
   `tests/support/dashboard.py` 提供。
 - 迁移时一次只移动一组，先跑目标测试，再跑全量；不要把目录移动和业务改动混在一起。
+- 迁移后校正：`test_distributions.py` 没有 Metal import，已移回 `tests/shared/`；
+  `test_dispatch.py` 的 CPU 半（batch probe / interleaved）并入
+  `tests/shared/test_bench.py`，`tests/backends/metal/test_dispatch.py` 只留 GPU 用例；
+  `test_abi.py` 的单个用例并入 `test_launch.py`；两个自指的 `test_layout.py`
+  换成 `tests/shared/test_structure.py`（根目录无测试、每个目录是包、
+  `shared/` 不 import backend、`support/` 无业务测试）。

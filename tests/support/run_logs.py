@@ -77,7 +77,7 @@ def _safe_nodeid(nodeid: str) -> str:
     return value[:220]
 
 
-def test_log_path(item: pytest.Item) -> Path:
+def per_test_log_path(item: pytest.Item) -> Path:
     """The per-test log path for this worker, whether or not the file exists yet."""
     root = _log_root(item.config) / "tests" / worker_id(item.config)
     if item.config.getoption("--log-by-dir"):
@@ -99,7 +99,7 @@ def current_test_log(item: pytest.Item) -> Path | None:
             return None
     except ValueError:
         return None
-    return test_log_path(item)
+    return per_test_log_path(item)
 
 
 def log_tail(path: Path | None, limit: int = _MAX_TAIL) -> str:
@@ -139,7 +139,7 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 def pytest_runtest_setup(item: pytest.Item) -> None:
     if item.config.getoption("--no-test-file-log"):
         return
-    path = test_log_path(item)
+    path = per_test_log_path(item)
     handler = _handler(path)
     _BASE.addHandler(handler)
     _TEST_HANDLERS[item.nodeid] = handler

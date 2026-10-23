@@ -41,3 +41,21 @@ def _gpu_tests_share_the_gpu_lock(request):
 
     with gpu_lock(f"pytest {request.node.nodeid}", exclusive=False):
         yield
+
+
+def pytest_collection_modifyitems(config, items):
+    """Keep every ``gpu`` item on one xdist worker with ``--dist loadgroup``.
+
+    A gpu test holds the machine lock shared and upgrades it to exclusive for a measurement. The
+    upgrade releases shared first, so parallel gpu tests do not deadlock, but without grouping they
+    can queue on each other for up to the lock timeout. Grouping them makes the GPU part serial
+    while the CPU tests still spread over the workers.
+    """
+    try:
+        import xdist  # noqa: F401
+    except ImportError:  # pytest-xdist is a dependency, but collection must not fail without it
+        return
+    group = pytest.mark.xdist_group("gpu")
+    for item in items:
+        if item.get_closest_marker("gpu") is not None:
+            item.add_marker(group)

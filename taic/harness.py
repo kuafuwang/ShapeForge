@@ -72,6 +72,13 @@ DECISION_FILE = "harness_decisions.jsonl"
 OVERLAY_FILE = "harness_overlay.jsonl"
 CONTROL_FILE = "harness_control.json"
 PROMOTION_DIR = "harness_promotions"
+# The offline gate of ``apply_patch(run_tests=True)``. These paths move with the tests tree; a stale
+# entry makes pytest exit before running anything and every promotion fails. A test asserts they exist.
+OFFLINE_TESTS = (
+    "tests/shared/test_agent_feedback.py",
+    "tests/shared/test_kernel_agent.py",
+    "tests/backends/metal/test_hw_feedback.py",
+)
 _BLOCK = re.compile(r"```(?:json[ \t]+)?harness-proposal[ \t]*\r?\n(.*?)```", re.IGNORECASE | re.DOTALL)
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _MARK = re.compile(r"[`*_>#]")
@@ -901,7 +908,7 @@ def apply_patch(run_dir: Path, *, target_id: str, proposal_key: str, root: Path 
         import sys
 
         tests = subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", "tests/test_agent_feedback.py", "tests/test_kernel_agent.py", "tests/test_hw_feedback.py"],
+            [sys.executable, "-m", "pytest", "-q", *OFFLINE_TESTS],
             cwd=repo, capture_output=True, text=True,
         )
         if tests.returncode != 0:

@@ -3,9 +3,8 @@
 ``compute()`` calls the prompt and feedback functions with ``hw_feedback`` off (the arguments from before that switch, or ``hw_feedback=False``).
 ``tests/support/golden/metal/hw_off.json`` is that output. Regenerate it on purpose when a prompt change other than the switch should become the new off baseline.
 A request hash covers the body ``chat.completions.create`` is given, not only ``messages``: model, max_tokens, reasoning_effort, extra_body, and tools.
-Two extra searches record the call sites the parameter sample does not: a length-capped draft retried once at the truncation effort, and a search whose planner and patch requests use different efforts.
 ``REQUEST_KEYS`` is the whitelist of keys ``LLM._params`` may produce; the test fails when the two sets diverge.
-Feedback entries store the text. System prompts stay hashes. Orchestrator entries are ordered by the request label, so round 1 and round 2 cannot trade places unnoticed.
+Feedback entries store the text. System prompts stay hashes. Orchestrator entries are keyed by task and ``plan_mix``, and each entry lists its session contracts in order, so round 1 and round 2 cannot trade places unnoticed.
 ``_meta`` (when, which commit, why) is written by ``--record`` and is not part of ``compute()``.
 
     uv run python -m tests.support.hw_golden --record --reason "why the off baseline should change"
@@ -15,7 +14,6 @@ Feedback entries store the text. System prompts stay hashes. Orchestrator entrie
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import hashlib
 import json
 import os
@@ -29,9 +27,7 @@ GOLDEN = GOLDEN_DIR / "hw_off.json"
 FIXTURES = GOLDEN_DIR / "fixtures"
 # Keys ``LLM._params`` is allowed to put on the wire. ``messages`` is added by ``chat`` and is hashed with them.
 REQUEST_KEYS = frozenset({"model", "max_tokens", "reasoning_effort", "extra_body", "tools"})
-_NOT_SENT = frozenset({"stream", "_label"})
 FORCE_AFTER = 40
-_LABEL = contextvars.ContextVar("hw_golden_label", default="")
 
 
 def sha(text: str) -> str:
@@ -71,10 +67,6 @@ def param_keys() -> set[str]:
                 for limit in (None, 1024):
                     keys |= set(llm._params(tool_arg, limit, effort))
     return keys
-
-
-def _request_body(call: dict) -> dict:
-    return {key: value for key, value in call.items() if key not in _NOT_SENT}
 
 
 def task_grid() -> list[tuple[str, str, str]]:
@@ -175,70 +167,8 @@ def _scripted_eval(report_name: str):
     return ev
 
 
-def _bind_labels(client):
-    """Remember ``chat``'s label on the recorded call without putting it on the wire."""
-    from taic import llm as llm_mod
-
-    original_create = client.chat.completions.create
-    original_chat = llm_mod.LLM.chat
-
-    async def create(**kw):
-        result = await original_create(**kw)
-        client.calls[-1]["_label"] = _LABEL.get()
-        return result
-
-    async def chat(self, messages, *, tools=None, label="", max_tokens=None, reasoning_effort=None):
-        token = _LABEL.set(label)
-        try:
-            return await original_chat(self, messages, tools=tools, label=label, max_tokens=max_tokens, reasoning_effort=reasoning_effort)
-        finally:
-            _LABEL.reset(token)
-
-    client.chat.completions.create = create
-    llm_mod.LLM.chat = chat
-    return llm_mod, original_chat
-
-
-def _length_then_kernel(script):
-    """First draft hits the length cap with no kernel. The retry asks the same question again."""
-    from .fakes import make_response
-
-    state = {"truncated": False}
-
-    def route(messages, **kw):
-        last = messages[-1]["content"] if messages else ""
-        if not state["truncated"] and "Translate this Triton kernel" in last:
-            state["truncated"] = True
-            return make_response("", finish="length")
-        return script(messages, **kw)
-
-    return route
-
-
-def _orch_key(task: str, plan_mix: bool, knobs: dict) -> str:
-    parts = [f"orchestrator|{task}|plan_mix={int(plan_mix)}"]
-    if knobs.get("truncation_retry"):
-        parts.append("truncation_retry=1")
-    if knobs.get("plan_reasoning_effort"):
-        parts.append(f"plan_effort={knobs['plan_reasoning_effort']}")
-        parts.append(f"patch_effort={knobs['patch_reasoning_effort']}")
-    return "|".join(parts)
-
-
-def _check_knobs(knobs: dict, calls: list[dict]) -> None:
-    """The recorded calls are the ones the search actually sent, not a standalone ``_params`` sample."""
-    if knobs.get("truncation_retry"):
-        inits = [call for call in calls if call.get("_label") == "init"]
-        if len(inits) != 2 or "reasoning_effort" in inits[0] or inits[1].get("reasoning_effort") != "low":
-            raise RuntimeError("the length-capped draft was not retried once at effort low")
-    plan_effort = knobs.get("plan_reasoning_effort")
-    patch_effort = knobs.get("patch_reasoning_effort")
-    if plan_effort or patch_effort:
-        for call in calls:
-            label = str(call.get("_label") or "")
-            want = plan_effort if label.endswith(".plan") or ".plan." in label else patch_effort
-            if call.get("reasoning_effort") != want:
-                raise RuntimeError(f"{label} was sent with effort {call.get('reasoning_effort')}, not {want}")
+def _orch_key(task: str, plan_mix: bool) -> str:
+    return f"orchestrator|{task}|plan_mix={int(plan_mix)}"
 
 
 def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]:
@@ -256,25 +186,21 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
     import tempfile
 
     cases = (
-        ("relu", KERNEL, "relu_best", False, {}),
-        ("relu", KERNEL, "relu_best", True, {}),
-        ("flash_attention", "flash_attention_kernel", "fa_flash_best", False, {}),
-        ("gemm", "gemm_kernel", "gemm_paper_best", True, {}),
+        ("relu", KERNEL, "relu_best", False),
+        ("relu", KERNEL, "relu_best", True),
+        ("flash_attention", "flash_attention_kernel", "fa_flash_best", False),
+        ("gemm", "gemm_kernel", "gemm_paper_best", True),
     )
-    for task, kernel, rep_name, plan_mix, knobs in cases:
+    for task, kernel, rep_name, plan_mix in cases:
         script = llm_script(code("speed=0.9", kernel), patches={"A": code("speed=1.0", kernel)})
         llm_cfg = LLMConfig(
             base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False,
-            truncation_retry=bool(knobs.get("truncation_retry")),
-            plan_reasoning_effort=knobs.get("plan_reasoning_effort"),
-            patch_reasoning_effort=knobs.get("patch_reasoning_effort"),
         )
         # This hash is the switches-off prompt. The production default is on; the off path is what the golden file records.
         off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False, plan_ledger=False)
         search = SearchConfig(budget_usd=5.0, branches=1, max_rounds=1, max_repair_tries=0, eval_reps=3, plan_mix=plan_mix, kernel_agent="pi", **{**off, **(extra_search or {})})
         with tempfile.TemporaryDirectory() as td:
             client = FakeClient(script)
-            llm_mod, original_chat = _bind_labels(client)
             previous_catalog = os.environ.get("TAIC_CATALOG_ROOT")
             os.environ["TAIC_CATALOG_ROOT"] = str(Path(td) / "catalog")
             try:
@@ -285,7 +211,6 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
                     os.environ.pop("TAIC_CATALOG_ROOT", None)
                 else:
                     os.environ["TAIC_CATALOG_ROOT"] = previous_catalog
-                llm_mod.LLM.chat = original_chat
         from taic.kernel_agent import render_contract
 
         each = []
@@ -300,7 +225,7 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
             text = text.replace(str(Path(brief.repo).resolve()), "<repo>")
             each.append({"label": f"{index}", "sha": sha(text)})
         joined = "\n".join(f"{row['label']} {row['sha']}" for row in each)
-        out[_orch_key(task, plan_mix, knobs)] = {"requests": len(each), "sha": sha(joined), "each": each}
+        out[_orch_key(task, plan_mix)] = {"requests": len(each), "sha": sha(joined), "each": each}
     return out
 
 
@@ -339,12 +264,13 @@ def _git_commit() -> str:
 
 
 def _reason(argv: list[str]) -> str:
-    if "--reason" not in argv:
-        return ""
-    index = argv.index("--reason")
-    if index + 1 >= len(argv):
-        return ""
-    return argv[index + 1]
+    """``--reason "x"`` and ``--reason=x`` are both accepted; a missing value is an empty reason."""
+    for index, item in enumerate(argv):
+        if item == "--reason":
+            return argv[index + 1] if index + 1 < len(argv) else ""
+        if item.startswith("--reason="):
+            return item.split("=", 1)[1]
+    return ""
 
 
 if __name__ == "__main__":

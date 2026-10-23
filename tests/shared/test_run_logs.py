@@ -21,7 +21,7 @@ def test_worker_log_paths_and_triage_are_separated(tmp_path):
     assert run_logs.worker_id(config) == "gw3"
     assert handoff._triage_dir(config) == tmp_path / "logs" / "pytest" / "triage" / "gw3"
     item = SimpleNamespace(config=config, nodeid="tests/test_x.py::test_y")
-    assert run_logs.test_log_path(item) == tmp_path / "logs" / "pytest" / "tests" / "gw3" / "tests_test_x.py__test_y.log"
+    assert run_logs.per_test_log_path(item) == tmp_path / "logs" / "pytest" / "tests" / "gw3" / "tests_test_x.py__test_y.log"
 
 
 def test_serial_triage_stays_at_the_summary_root(tmp_path):
