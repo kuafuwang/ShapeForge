@@ -431,3 +431,41 @@ def test_the_new_doc_links_resolve():
     assert "写核代理读什么.md" in charter
     assert "代理反馈.md" in guide
     assert "1.728" in guide and "1.690" in guide
+
+
+def test_load_records_restores_wiped_measured_premises_by_digest(tmp_path):
+    run = tmp_path / "run"
+    work = run / "agent_work" / "r1.p0"
+    work.mkdir(parents=True)
+    (work / "probe.py").write_text("print(1)\n")
+    source = (
+        "# 被否决的前提\n"
+        "- [已实测: probe.py | 假设 A | 1.0]\n"
+        "- [已实测: probe.py | 假设 B | 2.0]\n"
+        "- [未验证] 假设 C\n"
+    )
+    parsed = parse_feedback(source, work=work, repo=tmp_path)
+    items = [
+        {
+            **item,
+            "text": "`[未验证: 探针文件不存在]`",
+            "digest": "",
+            "premise": "downgraded",
+        }
+        for item in parsed["items"]
+        if item["section"] == "被否决的前提"
+    ]
+    record = {
+        "format": "agent_feedback", "v": 1, "seq": 1, "label": "r1.p0",
+        "work_dir": "agent_work/r1.p0", "sections": parsed["sections"], "items": items,
+    }
+    path = run / "feedback.jsonl"
+    path.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+    rows = load_records(path)
+    got = [item for item in rows[0]["items"] if item["section"] == "被否决的前提"]
+    assert [item["digest"] for item in got] == [
+        item["digest"] for item in parsed["items"] if item["section"] == "被否决的前提"
+    ]
+    assert got[0]["premise"] == "verified" and "假设 A" in got[0]["text"]
+    assert got[1]["premise"] == "verified" and "假设 B" in got[1]["text"]
+    assert got[2]["premise"] == "unverified" and "假设 C" in got[2]["text"]

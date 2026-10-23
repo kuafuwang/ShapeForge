@@ -6,7 +6,7 @@ import json
 import time
 from pathlib import Path
 
-from taic.agent_feedback import PARSER_VERSION, _is_placeholder, load_records, read_appended_records
+from taic.agent_feedback import PARSER_VERSION, _is_placeholder, _repair_record, load_records, read_appended_records
 
 _REVIEWABLE = {"system"}
 _PREMISE = {"verified", "unverified", "downgraded"}
@@ -277,6 +277,7 @@ def _reparsed_record(record: dict, directory: Path) -> dict:
     """
     from taic.agent_feedback import FILE_CAP, parse_feedback, read_feedback_text
 
+    record = _repair_record(record, directory)
     items = [dict(item) for item in (record.get("items") or []) if isinstance(item, dict)]
     work_rel = str(record.get("work_dir") or "")
     work = (directory / work_rel).resolve()
@@ -440,7 +441,7 @@ def _rebuild_feedback(conn, run_id: str, directory: Path, *, reason: str = "feed
                 rev = excluded.rev, section = excluded.section, audience = excluded.audience,
                 premise = excluded.premise, status = excluded.status, reason = excluded.reason
             """,
-            (run_id, row["seq"], row["digest"], rev, row["section"], row["audience"], row["premise"], status or "obsolete", "fbv3 empty placeholder"),
+            (run_id, row["seq"], row["digest"], rev, row["section"], row["audience"], row["premise"], status or "obsolete", f"{PARSER_VERSION} empty placeholder"),
         )
     return True
 
@@ -796,7 +797,7 @@ def _record_at(path: Path, line_at: int) -> dict | None:
     row = _load_line(line)
     if row is None or row.get("format") != FORMAT:
         return None
-    return _repair_record(row)
+    return _repair_record(row, path.parent)
 
 
 def _attach_claim_text(rows: list[dict]) -> dict | None:

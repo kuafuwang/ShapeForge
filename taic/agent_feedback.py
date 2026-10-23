@@ -16,7 +16,7 @@ FORMAT = "agent_feedback"
 VERSION = 1
 # Bumped when in-memory repair of old feedback.jsonl lines changes what the board shows.
 # observe/index.py appends this to the run fingerprint so a finished run is read again.
-PARSER_VERSION = "fbv3"
+PARSER_VERSION = "fbv4"
 FILE_CAP = 16384
 RAW_CAP = 4096
 TIP_CHARS = 250
@@ -64,7 +64,10 @@ _SPACE = re.compile(r"\s+")
 _MEASURED = re.compile(r"\[已实测:\s*([^|\]]+?)\s*\|\s*([^|\]]+?)\s*\|\s*([^\]]+?)\s*\]")
 _MARK = re.compile(r"\[(已实测|未验证|分析否决|推理否决)([^\]]*)\]")
 _FILE_TOKEN = re.compile(r"[A-Za-z0-9_./-]+\.(?:py|metal|md|json|sh|txt)")
-_WIPED = re.compile(r"^\[未验证:\s*探针文件不存在\]\s*$")
+def _wiped_premise(text: str) -> bool:
+    return str(text or "").strip().strip("`").strip().startswith("[未验证: 探针文件不存在]")
+
+
 _ROUND = re.compile(r"^r(\d+)\.p\d+$")
 
 
@@ -199,7 +202,7 @@ def load_records(path: Path) -> list[dict]:
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         row = _load_line(line)
         if row is not None and row.get("format") == FORMAT:
-            rows.append(_repair_record(row))
+            rows.append(_repair_record(row, path.parent))
     return rows
 
 
@@ -238,7 +241,7 @@ def read_appended_records(path: Path, offset: int) -> tuple[list[tuple[int, dict
             line = raw.decode("utf-8", errors="replace")
         row = _load_line(line)
         if row is not None and row.get("format") == FORMAT:
-            rows.append((line_at, _repair_record(row)))
+            rows.append((line_at, _repair_record(row, path.parent)))
     return rows, offset + pos
 
 
@@ -578,8 +581,14 @@ def _fit_rest(entries: list[dict], active_count: int) -> list[str]:
     return lines
 
 
-def _repair_record(row: dict) -> dict:
-    """Fill fields that older parsers left empty. Does not write the file."""
+def _repair_record(row: dict, directory: Path | None = None) -> dict:
+    """Fill fields that older parsers left empty. Does not write the file.
+
+    A wiped measured premise keeps its old digest, but its text can be recovered from the
+    stored section. Use the section order only to fill an empty digest, then choose the
+    sentence by digest; older records dropped placeholder items, so a positional match
+    after that point can restore the wrong sentence.
+    """
     sections = row.get("sections") if isinstance(row.get("sections"), dict) else {}
     if row.get("truncated") and "truncated_sections" not in row:
         row["truncated_sections"] = [
@@ -588,12 +597,36 @@ def _repair_record(row: dict) -> dict:
         ]
     items = [item for item in (row.get("items") or []) if isinstance(item, dict)]
     pieces = _pieces(str(sections.get("被否决的前提") or ""))
+    work = repo = None
+    if directory is not None:
+        work_rel = str(row.get("work_dir") or "")
+        candidate = (Path(directory) / work_rel).resolve() if work_rel else None
+        if candidate is not None:
+            try:
+                candidate.relative_to(Path(directory).resolve())
+                work = candidate
+            except ValueError:
+                work = None
+        repo = Path(__file__).resolve().parents[1]
     premise_items = [item for item in items if item.get("section") == "被否决的前提"]
+    # Older records stored an empty digest. The section pieces are still in order, so fill
+    # the empty slots first; never overwrite a digest that a previous rebuild preserved.
     for item, piece in zip(premise_items, pieces):
-        text = str(item.get("text") or "")
-        if _WIPED.match(text.strip()) and _MEASURED.search(piece):
-            item["text"] = _downgrade_measured(piece).strip()
         if not str(item.get("digest") or "").strip():
+            item["digest"] = _digest("被否决的前提", piece)
+    source = {
+        _digest("被否决的前提", piece): piece
+        for piece in pieces
+        if _digest("被否决的前提", piece)
+    }
+    for item in premise_items:
+        text = str(item.get("text") or "").strip()
+        piece = source.get(str(item.get("digest") or ""))
+        if piece is not None and _wiped_premise(text):
+            shown, premise = _premise(piece, work=work, repo=repo)
+            item["text"] = shown
+            item["premise"] = premise
+        if not str(item.get("digest") or "").strip() and piece is not None:
             item["digest"] = _digest("被否决的前提", piece)
     for item in items:
         if str(item.get("digest") or "").strip():
@@ -602,6 +635,9 @@ def _repair_record(row: dict) -> dict:
         if text:
             item["digest"] = _digest(str(item.get("section") or ""), text)
     row["items"] = [item for item in items if not _is_placeholder(str(item.get("text") or ""))]
+    row["unverified_premises"] = sum(
+        1 for item in row["items"] if item.get("premise") in ("unverified", "downgraded")
+    )
     if "placeholder_items" not in row:
         count = 0
         for name in SECTIONS:

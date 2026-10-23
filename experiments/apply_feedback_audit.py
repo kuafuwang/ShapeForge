@@ -1,7 +1,7 @@
 """Apply the 2026-10-22 feedback audit to run-local review files, or show what would change.
 
 The audit JSON is the source of verdicts. This script never deletes a claim row and never
-runs a model or a GPU. ``drop_empty`` becomes ``obsolete`` with a note; the parser's fbv3
+runs a model or a GPU. ``drop_empty`` becomes ``obsolete`` with a note; the parser's fbv4
 rebuild may later retire the row and leave a tombstone. The 23 same-topic rows are *not*
 merged by default because a topic is not an equivalence relation (budget contains five
 different actions); pass ``--merge-topic`` only after a person has checked the canonical
@@ -53,7 +53,7 @@ def _body(row: dict, *, duplicate_of: str = "") -> dict:
     if verdict == "open_unverified":
         return {**common, "status": "info", "verification": "unchecked", "note": "audit 2026-10-22: explicitly unverified; open question, not evidence"}
     if verdict == "missing_probe_at_capture":
-        # Keep these pending: fbv3 + the restored probes may upgrade some to verified.
+        # Keep these pending: fbv4 + the restored probes may upgrade some to verified.
         return {**common, "status": "pending", "verification": "unchecked", "note": "audit 2026-10-22: probe missing at capture; reparse after restore"}
     if verdict == "policy_decision":
         return {**common, "status": "pending", "verification": "unchecked", "note": "audit 2026-10-22: policy decision for a person; not for model voting"}

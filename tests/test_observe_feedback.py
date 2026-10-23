@@ -264,7 +264,7 @@ def test_a_parser_upgrade_retires_a_removed_claim_with_its_review_status(tmp_pat
     assert row["status"] == "obsolete" and row["reason"] == "parser changed"
 
 
-def test_fbv3_rebuild_rechecks_a_restored_probe_and_keeps_the_review_key(tmp_path, monkeypatch):
+def test_fbv4_rebuild_rechecks_a_restored_probe_and_keeps_the_review_key(tmp_path, monkeypatch):
     runs, index = _open(tmp_path, monkeypatch)
     parsed = _parsed()
     directory = _run(runs, "conv", _record(parsed), started_at=50)
@@ -291,7 +291,7 @@ def test_fbv3_rebuild_rechecks_a_restored_probe_and_keeps_the_review_key(tmp_pat
     assert row["digest"] == _digest("被否决的前提")
 
 
-def test_a_fbv3_placeholder_gets_a_tombstone_even_on_a_fresh_index(tmp_path, monkeypatch):
+def test_a_fbv4_placeholder_gets_a_tombstone_even_on_a_fresh_index(tmp_path, monkeypatch):
     runs, index = _open(tmp_path, monkeypatch)
     parsed = _parsed()
     directory = _run(runs, "conv", _record(parsed), started_at=50)
@@ -304,7 +304,7 @@ def test_a_fbv3_placeholder_gets_a_tombstone_even_on_a_fresh_index(tmp_path, mon
     index.sync_known()
     row = index.conn.execute("SELECT status, reason FROM feedback_claim_removed WHERE run_id = 'conv' AND digest = 'empty'").fetchone()
     assert row is not None
-    assert row["status"] == "obsolete" and row["reason"] == "fbv3 empty placeholder"
+    assert row["status"] == "obsolete" and row["reason"] == "fbv4 empty placeholder"
 
 
 def test_the_harness_panel_distinguishes_reviewed_from_unreviewed():

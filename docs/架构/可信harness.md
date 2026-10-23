@@ -16,7 +16,7 @@ flowchart TB
   end
   F["feedback.jsonl<br/>append-only"]
   S --> F
-  P["fbv3 解析<br/>claims + premise 状态"]
+  P["fbv4 解析<br/>claims + premise 状态"]
   F --> P
   P --> EV["证据流水线<br/>前提/硬件事实"]
   P --> HP["harness 流水线<br/>对系统的建议"]
