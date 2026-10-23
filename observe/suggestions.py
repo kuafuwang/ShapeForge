@@ -309,7 +309,8 @@ def detail(run_id: str, seq: int, digest: str) -> dict:
         with borrow() as index:
             prior = feedback.prior_claims(
                 index.conn, digest=str(digest), task=task, target_id=target_id,
-                before_t=item_t, exclude_run=run_id, exclude_seq=int(seq),
+                text=str(source.get("text") or ""), before_t=item_t,
+                exclude_run=run_id, exclude_seq=int(seq),
             )
             similar = feedback.similar_claims(
                 index.conn, digest=str(digest), task=task, target_id=target_id,
