@@ -79,7 +79,11 @@ def cmd_naive(a: argparse.Namespace) -> int:
 
     target = require_active(a.target)
     task = get_task(a.task, a.dtype, a.size)
-    rep = evaluate(a.task, a.dtype, a.size, task.reference_for(target.backend), mode="quick" if a.quick else "full", seed=a.seed, reps=a.reps, progress_path=_live_progress(), target_id=a.target)
+    source = task.reference_for(target.backend)
+    if not source.strip():
+        print(f"task {a.task} has no reference source for backend {target.backend}", file=sys.stderr)
+        return 5
+    rep = evaluate(a.task, a.dtype, a.size, source, mode="quick" if a.quick else "full", seed=a.seed, reps=a.reps, progress_path=_live_progress(), target_id=a.target)
     print(format_feedback(rep))
     return 0 if rep.status == "ok" else 1
 

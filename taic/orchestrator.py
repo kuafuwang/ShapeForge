@@ -250,12 +250,12 @@ def _sha(source: str) -> str:
 
 
 # 回复里抽不出带约定内核名的 Metal 块时追问的那一句。抽失败只消耗这一问，不会产生候选，也不会上 GPU。
-def nudge_user(kernel_name: str) -> str:
-    """The reminder sent when a reply holds no ```metal block defining the kernel."""
+def nudge_user(kernel_name: str, *, source_fence: str = "metal") -> str:
+    """The reminder sent when a reply holds no fenced block defining the kernel."""
     return (
-        f"Your reply did not contain a ```metal code block defining `kernel void {kernel_name}`, "
-        "or a ```metal block with a /* taic-launch */ section and at least one `kernel void`. "
-        "Reply again with the complete kernel in exactly one ```metal block."
+        f"Your reply did not contain a ```{source_fence} code block defining `kernel void {kernel_name}`, "
+        f"or a ```{source_fence} block with a /* taic-launch */ section and at least one `kernel void`. "
+        f"Reply again with the complete kernel in exactly one ```{source_fence} block."
     )
 
 
@@ -573,11 +573,14 @@ class Orchestrator:
         """
         from .kernel_agent import FLOW
         from .target import skill_path
+        from tcenv.backends.registry import load_backend
 
+        backend = load_backend(self.target.backend)
         dest = self.run_dir / "agent_guidance"
         dest.mkdir(parents=True, exist_ok=True)
         hashes = {}
-        for name, key in (("device.md", "device"), ("experience.md", "experience"), ("msl_reference.md", "msl_reference")):
+        reference_name = f"{backend.reference_skill}.md"
+        for name, key in (("device.md", "device"), ("experience.md", "experience"), (reference_name, backend.reference_skill)):
             src = skill_path(key, self.target_id)
             data = src.read_bytes() if src.is_file() else b""
             (dest / name).write_bytes(data)

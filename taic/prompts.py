@@ -19,6 +19,21 @@ WIKI_DOCS = ("experience",)
 
 def _skill(name: str, target_id: str | None = None) -> str:
     return skill_text(name, target_id)
+
+
+def _rules_for(backend) -> str:
+    """The Metal text is byte-identical; other backends get the same rules with their labels."""
+    if backend.id == "metal":
+        return HARNESS_RULES
+    return (
+        HARNESS_RULES
+        .replace("Metal Shading\nLanguage (MSL)", backend.display_name)
+        .replace("metal_stdlib, metal_simdgroup and metal_simdgroup_matrix", backend.runtime_headers)
+        .replace("```metal", f"```{backend.source_fence}")
+        .replace("MSL reference", f"{backend.display_name} reference")
+    )
+
+
 HARNESS_RULES = """\
 You are the code-generation backend of a compiler. You translate ONE Triton kernel directly into ONE Metal Shading
 Language (MSL) kernel for the target device named in the contract. There is no intermediate IR and no existing compiler in the loop:
@@ -69,7 +84,7 @@ def system_prompt(task: Task, *, use_tools: bool, profiler_evidence: bool = Fals
 
     backend = load_backend(load_target(target_id).backend)
     c = task.contract
-    parts = [HARNESS_RULES, "# Target hardware and task\n", skill_text("device", target_id)]
+    parts = [_rules_for(backend), "# Target hardware and task\n", skill_text("device", target_id)]
     parts.append(task.description)
     parts.append("\nCompilation contract:\n" + c.describe())
     parts.append(f"\nRequired signature skeleton:\n```{backend.source_fence}\n" + c.abi_stub() + "\n```")
@@ -83,13 +98,13 @@ def system_prompt(task: Task, *, use_tools: bool, profiler_evidence: bool = Fals
             "reference exactly there: NaN exactly where the reference is NaN, infinities of the same sign where it is infinite. So NaN must propagate "
             "(a comparison such as `v > 0 ? v : 0` or `max()` that silently drops a NaN is wrong), and reductions must not skip or mask non-finite values."
         )
-    parts.append("\n# Skill 1: Apple GPU optimization principles\n" + _skill(backend.skill_names[0], target_id))
-    parts.append("\n# Skill 2: interpreting the evaluation feedback (profiling)\n" + _skill(backend.skill_names[1], target_id))
+    parts.append("\n# Skill 1: Apple GPU optimization principles\n" + _skill(backend.skill_optimization, target_id))
+    parts.append("\n# Skill 2: interpreting the evaluation feedback (profiling)\n" + _skill(backend.skill_profiling, target_id))
     # 只有反馈可能带上 Instruments 痕迹时才多这一段。其它运行必须保持提示字节不变，否则前缀缓存会失效。
     if profiler_evidence:  # only when the feedback can carry an Instruments trace; every other run keeps the byte-identical prompt
-        parts.append("\n# Skill 2b: reading the profiler evidence (Instruments trace and GPU counters)\n" + _skill(backend.skill_names[3], target_id))
+        parts.append("\n# Skill 2b: reading the profiler evidence (Instruments trace and GPU counters)\n" + _skill(backend.skill_profiler, target_id))
     if hw_feedback:  # only when search.hw_feedback appends the hardware-feature analysis to the feedback; off = the byte-identical prompt
-        parts.append("\n# Skill 2c: reading the hardware-feature analysis in the feedback\n" + _skill(backend.skill_names[4], target_id))
+        parts.append("\n# Skill 2c: reading the hardware-feature analysis in the feedback\n" + _skill(backend.skill_hardware, target_id))
     idx = SkillIndex(backend.reference_skill, extra=WIKI_DOCS, target_id=target_id)
     if use_tools:
         parts.append(
@@ -101,21 +116,21 @@ def system_prompt(task: Task, *, use_tools: bool, profiler_evidence: bool = Fals
 
 
 # 初始生成。Triton 源码是语义规格，不是名字或注释；program 到 threadgroup 的启动映射保持不变。这一步只求正确且速度合理，结构级的性能改动留给后面的 patch_user。
-def initial_user(task: Task) -> str:
+def initial_user(task: Task, *, source_fence: str = "metal", language_label: str = "MSL") -> str:
     return (
-        "Translate this Triton kernel into MSL for the contract above. It is the *specification*: follow its actual semantics, not its name or comments. "
+        f"Translate this Triton kernel into {language_label} for the contract above. It is the *specification*: follow its actual semantics, not its name or comments. "
         "Without a taic-launch block, keep the contract's launch mapping of programs to threadgroups. "
         "A taic-launch block may split the work into stages and choose each stage's grid and threads.\n\n```python\n"
         + task.triton_source.rstrip()
-        + "\n```\n\nWrite a first correct, reasonably fast implementation."
+        + f"\n```\n\nWrite a first correct, reasonably fast implementation."
     )
 
 
 # 修补轮。评测在编译、ABI、安全或正确性上失败后，把反馈塞回，并要求整颗内核放进一个 metal 块。次数用尽仍不合格，这颗候选作废，当前种子不动。
-def repair_user(feedback: str, attempt: int, max_tries: int) -> str:
+def repair_user(feedback: str, attempt: int, max_tries: int, *, source_fence: str = "metal") -> str:
     return (
         f"The evaluation of your kernel failed (repair attempt {attempt}/{max_tries}).\n\n{feedback}\n\n"
-        "Fix the problem and reply with the complete corrected kernel in one ```metal block."
+        f"Fix the problem and reply with the complete corrected kernel in one ```{source_fence} block."
     )
 
 
@@ -149,7 +164,7 @@ def _roofline_notes(bound: str | None) -> str:
 
 # 一轮的诊断加规划：从 roofline、流水线统计和源码指出主导瓶颈，再要 K 份互不相同的方案（JSON）。抽不出 JSON 时不在这里收场，编排器会重试或改用 FALLBACK_PLANS。
 # bound 为 memory 或 compute 时，只在这条用户消息里附上对应的那一节。其它值不附，也不改原句。
-def plan_user(task: Task, best_source: str, best_feedback: str, history: list[str], k: int, mixed: bool = False, status: str = "", bound: str | None = None, history_block: str | None = None) -> str:
+def plan_user(task: Task, best_source: str, best_feedback: str, history: list[str], k: int, mixed: bool = False, status: str = "", bound: str | None = None, history_block: str | None = None, *, source_fence: str = "metal") -> str:
     # 只带最近 24 条尝试。history_block 非空时用它替换这一段；为空时字节与原来一致。
     hist = history_block if history_block is not None else ("\n".join(f"- {h}" for h in history[-24:]) or "- (none yet)")
     # 混合规划时最后一份是低风险局部改动；否则 K 份都要求是结构性的，避免分支挤在同一种微调上。
@@ -161,7 +176,7 @@ def plan_user(task: Task, best_source: str, best_feedback: str, history: list[st
             "(not a micro-tweak) that could be implemented independently of the others, ordered from most to least promising.\n"
         )
     text = (
-        f"Current best kernel for `{task.name}` ({task.dtype}):\n```metal\n{best_source.rstrip()}\n```\n\n"
+        f"Current best kernel for `{task.name}` ({task.dtype}):\n```{source_fence}\n{best_source.rstrip()}\n```\n\n"
         f"Evaluation feedback of this kernel:\n{best_feedback}\n\n"
         f"Hypotheses already tried and their outcomes (do not repeat failed ones):\n{hist}\n\n"
         f"Diagnose the dominant bottleneck from the roofline, pipeline statistics and the code, then {kinds}"
@@ -180,15 +195,15 @@ def plan_user(task: Task, best_source: str, best_feedback: str, history: list[st
 
 
 # 一路分支的补丁。只落实这一份 plan。上一颗种子已经保存；这一支交回的文件和种子相同，搜索记为 unchanged，不算合格。回复仍是完整内核的一个 metal 块。
-def patch_user(task: Task, best_source: str, best_feedback: str, plan: dict, status: str = "") -> str:
+def patch_user(task: Task, best_source: str, best_feedback: str, plan: dict, status: str = "", *, source_fence: str = "metal") -> str:
     text = (
-        f"Current best kernel for `{task.name}` ({task.dtype}):\n```metal\n{best_source.rstrip()}\n```\n\n"
+        f"Current best kernel for `{task.name}` ({task.dtype}):\n```{source_fence}\n{best_source.rstrip()}\n```\n\n"
         f"Evaluation feedback of this kernel:\n{best_feedback}\n\n"
         f"Implement exactly this optimization plan and nothing else:\n**{plan['title']}**\n{plan['change']}\n\n"
         "The current kernel is already saved as the search seed. This branch is scored only on the kernel you hand in.\n"
         "If this plan fails a check, leave that failing kernel in the file. Do not paste the current kernel back to make the check pass.\n"
         "A file identical to the current kernel is recorded as unchanged and does not count.\n"
-        "Reply with the complete new kernel in one ```metal block."
+        f"Reply with the complete new kernel in one ```{source_fence} block."
     )
     if not status:
         return text

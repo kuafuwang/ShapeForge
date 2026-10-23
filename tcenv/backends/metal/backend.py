@@ -21,6 +21,11 @@ class MetalBackend:
     source_fence = "metal"
     reference_skill = "msl_reference"
     skill_names = ("apple_gpu_optimization", "metal_profiling", "msl_reference", "profiler_evidence", "hardware_feedback")
+    skill_optimization = "apple_gpu_optimization"
+    skill_profiling = "metal_profiling"
+    skill_profiler = "profiler_evidence"
+    skill_hardware = "hardware_feedback"
+    runtime_headers = "metal_stdlib, metal_simdgroup and metal_simdgroup_matrix"
     capabilities = Capabilities(
         supports_launch_spec=True,
         supports_validation=True,
