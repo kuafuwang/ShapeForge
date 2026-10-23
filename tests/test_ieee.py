@@ -8,7 +8,7 @@ import pytest
 import torch
 
 from tasks import get_task, list_tasks
-from tcenv.testing import IEEE_CASE, inject_specials, prepare_case, scaled_error
+from tcenv.backends.metal.testing import IEEE_CASE, inject_specials, prepare_case, scaled_error
 
 ALL_TASKS = list(list_tasks(include_phase2=True))
 INF, NAN = float("inf"), float("nan")
@@ -140,8 +140,8 @@ def test_naive_kernels_of_all_tasks_pass_the_full_case_list_including_ieee(dtype
 @pytest.mark.parametrize("name", ALL_TASKS)
 def test_at_least_one_vendor_baseline_reproduces_the_reference_on_special_values(name):
     """The case is only a fair requirement where IEEE semantics are achievable with a library implementation."""
-    from tcenv.baselines import BaselineRunner
-    from tcenv.testing import _floor
+    from tcenv.backends.metal.baselines import BaselineRunner
+    from tcenv.backends.metal.testing import _floor
 
     task = get_task(name, "fp16", "small")
     d = prepare_case(task, IEEE_CASE, 1234)
@@ -170,7 +170,7 @@ def test_building_a_task_for_one_dtype_does_not_change_another_dtypes_tolerances
 def test_inject_specials_respects_a_cap_but_keeps_first_and_last():
     import torch
 
-    from tcenv.testing import inject_specials
+    from tcenv.backends.metal.testing import inject_specials
 
     t = torch.ones(128, 3, 3, 64)
     out = inject_specials(t, 5, max_n=4)
@@ -185,7 +185,7 @@ def test_conv2d_ieee_reference_keeps_most_outputs_finite_and_matches_conv2d_on_f
     import torch.nn.functional as F
 
     from tasks import get_task
-    from tcenv.testing import prepare_case
+    from tcenv.backends.metal.testing import prepare_case
 
     t = get_task("conv2d", "fp16", "small")
     d = prepare_case(t, "ieee", 11)

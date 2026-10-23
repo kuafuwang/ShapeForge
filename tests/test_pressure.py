@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from tcenv.evaluate import EvalReport
-from tcenv.metal_runtime import CompiledKernel
-from tcenv.pressure import pressure_hint, source_pressure
-from tcenv.profile import pipeline_stats
+from tcenv.backends.metal.runtime import CompiledKernel
+from tcenv.backends.metal.pressure import pressure_hint, source_pressure
+from tcenv.backends.metal.profile import pipeline_stats
 from tcenv.report import format_feedback
 
 

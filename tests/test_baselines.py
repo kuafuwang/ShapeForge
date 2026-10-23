@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from tasks import get_task, list_tasks
-from tcenv.baselines import BaselineRunner
-from tcenv.testing import _floor, prepare_case, scaled_error
+from tcenv.backends.metal.baselines import BaselineRunner
+from tcenv.backends.metal.testing import _floor, prepare_case, scaled_error
 
 pytestmark = pytest.mark.gpu
 

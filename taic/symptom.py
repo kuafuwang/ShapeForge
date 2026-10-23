@@ -51,7 +51,7 @@ def section_for(bound: str | None) -> str | None:
 
 
 def bound_of(report: Any) -> str | None:
-    """读 tcenv.profile.roofline 写进报告的 roofline['bound']。没有这个字段，或值不是 memory/compute，就返回 None。"""
+    """读 tcenv.backends.metal.profile.roofline 写进报告的 roofline['bound']。没有这个字段，或值不是 memory/compute，就返回 None。"""
     if report is None:
         return None
     if isinstance(report, dict):

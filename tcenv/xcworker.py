@@ -16,9 +16,9 @@ def main() -> int:
     req = json.loads(Path(sys.argv[1]).read_text())
     from tasks import get_task
 
-    from .metal_runtime import get_context
-    from .sanitize import ArgSet
-    from .testing import prepare_case
+    from .backends.metal.runtime import get_context
+    from .backends.metal.sanitize import ArgSet
+    from .backends.metal.testing import prepare_case
     from .worker import _install_heartbeat
 
     _install_heartbeat(req.get("heartbeat"))
@@ -26,7 +26,7 @@ def main() -> int:
     ctx = get_context()
     candidate = Path(req["kernel_path"]).read_text()
     src, _ = task.contract.assemble(candidate)
-    from .launch import LaunchRejected, parse_launch_spec
+    from .backends.metal.launch import LaunchRejected, parse_launch_spec
 
     constants = {name: int(value) for name, _typ, value in task.contract.constants if isinstance(value, int) and not isinstance(value, bool)}
     try:

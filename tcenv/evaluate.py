@@ -87,7 +87,7 @@ class EvalReport:
     speedups: dict = field(default_factory=dict)
     candidate_us: float | None = None
     baseline_us: dict = field(default_factory=dict)
-    compiler_baseline: dict = field(default_factory=dict)  # optional triton-msl comparison (see tcenv.triton_baseline)
+    compiler_baseline: dict = field(default_factory=dict)  # optional triton-msl comparison (see tcenv.backends.metal.triton_baseline)
     verification: dict = field(default_factory=dict)  # formal equivalence check (tcenv.verify); always 'unsupported' for now
     protocol_version: str = ""
     target_id: str = ""
@@ -285,7 +285,7 @@ def _evaluate_in_process(
         return rep
 
     # -- static screen (before anything touches the GPU) ---------------------------
-    from .screen import screen_source
+    from .backends.metal.screen import screen_source
 
     rep.stage = "screen"
     _enter("screen")
@@ -296,7 +296,7 @@ def _evaluate_in_process(
         rep.abi = {"ok": False, "violations": refused}
         return finish("rejected", "refused before compilation: " + refused[0])
 
-    from .launch import LaunchRejected, check_launch_limits
+    from .backends.metal.launch import LaunchRejected, check_launch_limits
 
     try:
         spec = backend.parse_launch(kernel_source, contract)
@@ -546,7 +546,7 @@ def _evaluate_in_process(
             _remember_baseline(task_name, dtype, size, best, target_id=target_id)
     rep.roofline = backend.roofline(task, cand.median_s, calib)
     try:  # compiler baseline (Triton -> Metal through triton-msl), when it was measured for this task
-        from .triton_baseline import estimate, load_cached
+        from .backends.metal.triton_baseline import estimate, load_cached
 
         cached = load_cached(task_name, dtype, size)
         est = estimate(cached, rep.baseline_us) if cached else None
@@ -594,7 +594,7 @@ def deadline_for_source(task: str, dtype: str, size: str, source: str) -> float:
     """
     from tasks import get_task
 
-    from .launch import LaunchRejected, parse_launch_spec
+    from .backends.metal.launch import LaunchRejected, parse_launch_spec
 
     try:
         contract = get_task(task, dtype, size).contract
@@ -734,7 +734,7 @@ def _run_worker(
     ``timeout`` elapsed. Nothing can preempt a running Metal kernel from inside, so this bounds the damage of a
     runaway kernel, which would otherwise starve the display of the GPU.
     """
-    from .sanitize import env_with_validation, validation_problems
+    from .backends.metal.sanitize import env_with_validation, validation_problems
 
     with tempfile.TemporaryDirectory(prefix="tcenv_") as td:
         tdp = Path(td)
@@ -922,7 +922,7 @@ def evaluate(
     seed = int(seed if seed is not None else secrets.randbits(48))
     t0 = time.perf_counter()
     from .backends.registry import load_backend
-    from .screen import screen_source
+    from .backends.metal.screen import screen_source
     from .target import TargetError, load_target as _load_target
 
     try:
@@ -1026,7 +1026,7 @@ def evaluate(
             # 单核仍是 4 秒。流水线是「每段 2 秒、封顶 8 秒」的两倍。这次不过关就带着它的状态码返回。
             v = _run_worker(task, dtype, size, kp, "validate", seed, reps, timeout or 120.0, validation=True, cases=cases, launch_deadline_s=2 * deadline, progress_path=progress_path, require_contract_launch=require_contract_launch, measure_serial=measure_serial, target_id=target_id)
             # 校验插桩会把静态线程组内存报成大约两倍。只有这一条时，不拿它否决内核，改由下面不插桩的编译去比目标档案里的上限。
-            from .abi import only_static_threadgroup_limit
+            from .backends.metal.abi import only_static_threadgroup_limit
 
             size_only = v.status == "abi_error" and only_static_threadgroup_limit((v.abi or {}).get("violations") or [])
             return (None if (v.status == STATUS_OK or size_only) else v), size_only

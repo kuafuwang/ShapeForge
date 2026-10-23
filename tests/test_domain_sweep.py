@@ -9,10 +9,10 @@ from types import SimpleNamespace
 import torch
 
 from experiments.common import publication_role
-from tcenv.domain import PATTERN_COUNT, coverage_for_report, domain_input, pattern_counts
+from tcenv.backends.metal.domain import PATTERN_COUNT, coverage_for_report, domain_input, pattern_counts
 from tcenv.evaluate import EvalReport
 from tcenv.task import task_fingerprint
-from tcenv.testing import _floor, prepare_case, scaled_error
+from tcenv.backends.metal.testing import _floor, prepare_case, scaled_error
 from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator
 from tasks.relu.task import build as build_relu

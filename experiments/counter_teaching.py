@@ -27,7 +27,7 @@ from taic import prompts
 from taic.llm import LLM, CostLedger, Transcript, load_config
 from taic.orchestrator import parse_plans
 from tasks import get_task
-from tcenv import xctrace
+from tcenv.backends.metal import xctrace
 
 INTRO = (
     "\n\nProfiler evidence for this kernel (Instruments Metal System Trace; taken because the kernel is slower than the strongest baseline). "

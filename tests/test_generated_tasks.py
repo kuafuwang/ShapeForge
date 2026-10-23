@@ -14,7 +14,7 @@ from tasks.relu.task import build as build_relu
 from tasks.sigmoid.task import build as build_sigmoid
 from tasks.silu.task import build as build_silu
 from tasks.swiglu.task import build as build_swiglu
-from tcenv.testing import prepare_case
+from tcenv.backends.metal.testing import prepare_case
 from tcenv.triton_runner import parse_launch_header
 
 from .test_triton_specs import jit_params

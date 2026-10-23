@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tcenv.metal_runtime import MetalCompileError, get_context
+from tcenv.backends.metal.runtime import MetalCompileError, get_context
 
 SKILLS = Path(__file__).resolve().parent.parent / "backends" / "metal" / "skills"
 HDR = "#include <metal_stdlib>\n#include <metal_simdgroup>\n#include <metal_simdgroup_matrix>\nusing namespace metal;\n"

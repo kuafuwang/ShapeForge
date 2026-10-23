@@ -9,7 +9,7 @@ from what is reliably available:
   * an empirical roofline: measured peak memory bandwidth (copy kernel) and measured peak
     fp16 matmul throughput (large MLX GEMM) on *this* machine.
 
-``tcenv.xctrace`` can add Instruments GPU counters on top of that (see that module).
+``tcenv.backends.metal.xctrace`` can add Instruments GPU counters on top of that (see that module).
 """
 
 from __future__ import annotations

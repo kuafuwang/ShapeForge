@@ -6,7 +6,7 @@ from pathlib import Path
 
 import torch
 
-from tcenv.testing import _floor, scaled_error
+from tcenv.backends.metal.testing import _floor, scaled_error
 from tasks.relu.task import build as build_relu
 from tasks.sigmoid.task import build as build_sigmoid
 from tasks.silu.task import build as build_silu

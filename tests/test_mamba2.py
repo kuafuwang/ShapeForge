@@ -8,7 +8,7 @@ import torch
 from tasks import get_task
 from tasks.mamba2_chunk_scan.task import A_HI, CHUNK, DT_HI, DT_LO
 from tcenv.evaluate import evaluate
-from tcenv.testing import prepare_case
+from tcenv.backends.metal.testing import prepare_case
 
 
 def sequential_scan(inp, B, S, H, P, N):

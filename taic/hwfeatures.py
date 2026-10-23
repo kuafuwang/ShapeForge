@@ -1501,7 +1501,7 @@ def build_report(source: str, *, label: str, task: str | None = None, dtype: str
             header = t.contract.render_header()
         except Exception as e:  # noqa: BLE001 - an unresolvable task only disables header-dependent evidence
             extra = {**(extra or {}), "task_error": str(e)[:200]}
-    from tcenv.launch import declared_stage_kernels, launch_math
+    from tcenv.backends.metal.launch import declared_stage_kernels, launch_math
 
     launched = declared_stage_kernels(source)
     src = analyze_source(source, consts=consts, kernel_name=None if launched else kname, kernel_names=launched)

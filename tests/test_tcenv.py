@@ -11,11 +11,11 @@ import pytest
 import torch
 
 from tasks import get_task, list_tasks
-from tcenv.abi import check_abi
+from tcenv.backends.metal.abi import check_abi
 from tcenv.dtypes import get_dtype
 from tcenv.evaluate import evaluate
-from tcenv.metal_runtime import BufferArg, MetalCompileError, get_context
-from tcenv.sanitize import ArgSet
+from tcenv.backends.metal.runtime import BufferArg, MetalCompileError, get_context
+from tcenv.backends.metal.sanitize import ArgSet
 from tcenv.tensors import from_raw, round_to, to_raw
 
 pytestmark = pytest.mark.gpu
@@ -213,13 +213,13 @@ def test_unbounded_loops_are_refused_before_any_worker_starts(body):
 
 
 def test_loops_inside_comments_do_not_trigger_the_screen():
-    from tcenv.screen import screen_source
+    from tcenv.backends.metal.screen import screen_source
 
     assert screen_source("// while (true) {}\n/* for (;;) */ kernel void k() { for (uint i = 0; i < 4; ++i) {} }") == []
 
 
 def test_parentheses_do_not_hide_an_unconditional_loop():
-    from tcenv.screen import screen_source
+    from tcenv.backends.metal.screen import screen_source
 
     for src in ("while((true)) {}", "while(true == true) {}", "for(int i = (0); ; i++) {}", "for(; (true); ) {}"):
         assert screen_source(src), src
@@ -228,7 +228,7 @@ def test_parentheses_do_not_hide_an_unconditional_loop():
 
 
 def test_a_stack_trace_is_not_a_shader_validation_failure():
-    from tcenv.sanitize import validation_problems
+    from tcenv.backends.metal.sanitize import validation_problems
 
     assert validation_problems("stack trace follows\ntraceback (most recent call last)\ngraceful shutdown\n") == []
     assert validation_problems("validation error: race condition on device memory")
@@ -243,7 +243,7 @@ def test_sem_relu_gelu_comment_reference_follows_the_written_comparison():
 
 
 def test_non_metal_includes_are_refused():
-    from tcenv.screen import screen_source
+    from tcenv.backends.metal.screen import screen_source
 
     assert screen_source('#include <metal_stdlib>\n#include "/etc/hosts"\n')
     assert not screen_source("#include <metal_stdlib>\n#include <metal_simdgroup_matrix>\n")
@@ -302,7 +302,7 @@ def test_real_gpu_hang_is_killed():
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
 def test_reference_outputs_are_representable_at_paper_size(dtype):
     """prepare_case raises if any reference output would overflow the output dtype (a harness bug, not a candidate bug)."""
-    from tcenv.testing import prepare_case
+    from tcenv.backends.metal.testing import prepare_case
 
     for name in list_tasks():
         task = get_task(name, dtype, "paper")

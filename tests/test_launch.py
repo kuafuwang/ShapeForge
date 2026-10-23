@@ -2,9 +2,9 @@
 
 import pytest
 
-from tcenv.abi import check_pipeline, only_static_threadgroup_limit, validation_problems
-from tcenv.metal_runtime import pipeline_ops
-from tcenv.launch import LaunchRejected, check_launch_limits, parse_launch_spec
+from tcenv.backends.metal.abi import check_pipeline, only_static_threadgroup_limit, validation_problems
+from tcenv.backends.metal.runtime import pipeline_ops
+from tcenv.backends.metal.launch import LaunchRejected, check_launch_limits, parse_launch_spec
 from taic.policy import feature_signature
 
 CONST = {"M_TOTAL": 93312, "BLOCK_M": 64}

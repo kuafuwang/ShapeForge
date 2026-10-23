@@ -45,7 +45,7 @@ gpu = pytest.mark.gpu
 @gpu
 def test_unknown_dispatch_mode_is_rejected():
     from tasks import get_task
-    from tcenv.metal_runtime import get_context
+    from tcenv.backends.metal.runtime import get_context
 
     c = get_task("relu", "fp16", "small").contract
     ctx = get_context()
@@ -59,10 +59,10 @@ def test_unknown_dispatch_mode_is_rejected():
 @pytest.mark.parametrize("task_name", ["relu", "gemv", "softmax"])
 def test_concurrent_dispatch_over_rotating_sets_gives_the_right_outputs(task_name):
     from tasks import get_task
-    from tcenv.baselines import rotation_count
-    from tcenv.metal_runtime import get_context
-    from tcenv.sanitize import ArgSet
-    from tcenv.testing import check_case, prepare_case
+    from tcenv.backends.metal.baselines import rotation_count
+    from tcenv.backends.metal.runtime import get_context
+    from tcenv.backends.metal.sanitize import ArgSet
+    from tcenv.backends.metal.testing import check_case, prepare_case
 
     task = get_task(task_name, "fp16", "small")
     c = task.contract

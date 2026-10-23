@@ -385,7 +385,7 @@ def test_a_failed_planner_request_falls_back_to_generic_plans(tmp_path):
 
 
 def _trace(spilled=4096, events=3, code_bytes=6000, active=0.95):
-    from tcenv.xctrace import TraceSummary
+    from tcenv.backends.metal.xctrace import TraceSummary
 
     return TraceSummary(window_s=1.0, n_dispatches=40, dispatch_us_median=50.0, dispatch_us_p10=40.0, dispatch_us_p90=60.0, gpu_active_fraction=active,
                         spilled_bytes=spilled, spill_events=events, shader_code_bytes=code_bytes, thermal_states=["Nominal"])
@@ -396,7 +396,7 @@ def _user_prompts(orch, marker):
 
 
 def test_a_slow_seed_is_profiled_and_the_findings_reach_the_planner_and_every_patch_author(tmp_path, monkeypatch):
-    from tcenv import xctrace
+    from tcenv.backends.metal import xctrace
 
     traced = []
     monkeypatch.setattr(xctrace, "profile_kernel", lambda task, dtype, size, source, **kw: traced.append(source) or _trace())
@@ -415,7 +415,7 @@ def test_a_slow_seed_is_profiled_and_the_findings_reach_the_planner_and_every_pa
 
 
 def test_profiling_is_off_by_default_and_skipped_for_a_seed_that_beats_the_baseline(tmp_path, monkeypatch):
-    from tcenv import xctrace
+    from tcenv.backends.metal import xctrace
 
     monkeypatch.setattr(xctrace, "profile_kernel", lambda *a, **kw: pytest.fail("must not be traced"))
     calls = []
@@ -427,7 +427,7 @@ def test_profiling_is_off_by_default_and_skipped_for_a_seed_that_beats_the_basel
 
 
 def test_each_source_is_traced_once_and_the_number_of_traces_is_capped(tmp_path, monkeypatch):
-    from tcenv import xctrace
+    from tcenv.backends.metal import xctrace
 
     traced = []
     monkeypatch.setattr(xctrace, "profile_kernel", lambda task, dtype, size, source, **kw: traced.append(source) or _trace())
@@ -455,7 +455,7 @@ def test_each_source_is_traced_once_and_the_number_of_traces_is_capped(tmp_path,
 
 
 def test_a_failing_trace_never_stops_the_search_and_is_not_retried(tmp_path, monkeypatch):
-    from tcenv import xctrace
+    from tcenv.backends.metal import xctrace
 
     n = {"calls": 0}
 
@@ -473,7 +473,7 @@ def test_a_failing_trace_never_stops_the_search_and_is_not_retried(tmp_path, mon
 
 
 def test_xctrace_advice_only_reports_what_the_trace_supports():
-    from tcenv.xctrace import advice, format_for_llm
+    from tcenv.backends.metal.xctrace import advice, format_for_llm
 
     clean = advice(_trace(spilled=0, events=0))
     assert len(clean) == 1 and "No register spills" in clean[0]

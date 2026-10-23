@@ -1974,7 +1974,7 @@ class Orchestrator:
             return self._profile_text[key]
         if len(self.profiles) >= s.profile_max:
             return ""
-        from tcenv import xctrace
+        from tcenv.backends.metal import xctrace
 
         self._publish_state("profile")
         self.log(f"-- profiling the seed {seed.label} ({seed.speedup:.3f}x of the best baseline) with xctrace")
@@ -2006,7 +2006,7 @@ class Orchestrator:
         """Optional (search.profile_best): Instruments trace of the winner, stored next to the result. Never inside the search loop."""
         if not self.best or self.hangs >= self.search.max_hangs:
             return
-        from tcenv import xctrace
+        from tcenv.backends.metal import xctrace
 
         self._publish_state("profile")
         self.log("-- profiling the best kernel with xctrace")

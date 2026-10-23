@@ -169,7 +169,7 @@ def feature_signature(source: str, *, backend_id: str) -> tuple:
         return ()
     from .hwfeatures import analyze_source
 
-    from tcenv.launch import declared_stage_kernels
+    from tcenv.backends.metal.launch import declared_stage_kernels
 
     launched = declared_stage_kernels(source)
     ev = analyze_source(source, kernel_names=launched)

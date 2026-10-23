@@ -17,12 +17,12 @@ from pathlib import Path
 
 def measure(task_name: str, dtype: str, size: str, source: str, reps: int = 15) -> dict:
     from tasks import get_task
-    from tcenv.baselines import build_runners, rotation_count
+    from tcenv.backends.metal.baselines import build_runners, rotation_count
     from tcenv.bench import interleaved
     from tcenv.gpulock import gpu_lock
-    from tcenv.metal_runtime import get_context
-    from tcenv.sanitize import ArgSet
-    from tcenv.testing import check_case, prepare_case
+    from tcenv.backends.metal.runtime import get_context
+    from tcenv.backends.metal.sanitize import ArgSet
+    from tcenv.backends.metal.testing import check_case, prepare_case
 
     task = get_task(task_name, dtype, size)
     c = task.contract

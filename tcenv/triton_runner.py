@@ -201,10 +201,10 @@ def _run(req: dict, result: dict) -> None:
     import triton
 
     from tasks import get_task
-    from tcenv.baselines import BaselineRunner
+    from tcenv.backends.metal.baselines import BaselineRunner
     from tcenv.bench import interleaved
     from tcenv.task import BaselineImpl
-    from tcenv.testing import _floor, prepare_case, scaled_error
+    from tcenv.backends.metal.testing import _floor, prepare_case, scaled_error
 
     task = get_task(req["task"], req["dtype"], req["size"])
     c = task.contract

@@ -92,11 +92,11 @@ def cmd_naive(a: argparse.Namespace) -> int:
 def cmd_baseline(a: argparse.Namespace) -> int:
     from tasks import get_task
 
-    from .baselines import build_runners
+    from .backends.metal.baselines import build_runners
     from .bench import interleaved
     from .gpulock import gpu_lock
-    from .profile import get_calibration, roofline
-    from .testing import prepare_case
+    from .backends.metal.profile import get_calibration, roofline
+    from .backends.metal.testing import prepare_case
 
     task = get_task(a.task, a.dtype, a.size)
     data = prepare_case(task, task.cases[0], 12345)
@@ -152,8 +152,8 @@ def cmd_triton_baseline(a: argparse.Namespace) -> int:
 
 # 测这台机器的峰值带宽和算力，给 roofline 当天花板。
 def cmd_calibrate(a: argparse.Namespace) -> int:
-    from .metal_runtime import get_context
-    from .profile import get_calibration
+    from .backends.metal.runtime import get_context
+    from .backends.metal.profile import get_calibration
     from .target import TargetError, require_active
 
     try:

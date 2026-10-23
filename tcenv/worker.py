@@ -42,7 +42,7 @@ def _install_heartbeat(path: str | None, backend=None) -> None:
     if backend is not None:
         backend.set_heartbeat_hooks(on_compile=compile_hooks, on_launch=launch_hooks)
     else:
-        from .metal_runtime import set_compile_hooks, set_launch_hooks
+        from .backends.metal.runtime import set_compile_hooks, set_launch_hooks
 
         set_compile_hooks(*compile_hooks)
         set_launch_hooks(*launch_hooks)

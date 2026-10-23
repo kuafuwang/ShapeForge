@@ -7,7 +7,7 @@ heartbeat is older than ``tcenv.evaluate.LAUNCH_DEADLINE_S``. ``choose_iters`` t
 
 from __future__ import annotations
 
-from tcenv.baselines import RING_MAX
+from tcenv.backends.metal.baselines import RING_MAX
 from tcenv.bench import BATCH_WALL_BUDGET_S, choose_iters
 from tcenv.evaluate import LAUNCH_DEADLINE_S
 

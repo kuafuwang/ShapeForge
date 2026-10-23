@@ -4,7 +4,7 @@
 limits (the default ``large`` cap, and the ``tiny`` window). Callers round to the
 storage type later.
 
-IEEE-754 specials are not produced here. ``tcenv.testing.inject_specials`` plants
+IEEE-754 specials are not produced here. ``tcenv.backends.metal.testing.inject_specials`` plants
 +Inf, -Inf, NaN and -0.0 when a task runs the ``ieee`` case. ``sample("ieee")``
 is rejected.
 """

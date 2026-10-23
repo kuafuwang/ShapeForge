@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tcenv import xctrace as xt
+from tcenv.backends.metal import xctrace as xt
 
 SCHEMA = "<schema name='t'>{cols}</schema>"
 

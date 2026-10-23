@@ -218,7 +218,7 @@ def _user_messages(orch):
 
 
 def test_shader_validation_threadgroup_size_is_not_treated_as_the_device_limit():
-    from tcenv.abi import only_static_threadgroup_limit
+    from tcenv.backends.metal.abi import only_static_threadgroup_limit
 
     inflated = "static threadgroup memory 40960 B exceeds the device limit of 32768 B"
     assert only_static_threadgroup_limit([inflated])

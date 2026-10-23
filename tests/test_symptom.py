@@ -14,7 +14,7 @@ SKILL = Path(__file__).resolve().parent.parent / "backends" / "metal" / "skills"
 MEMORY_HEADING = "## Memory-bound kernels"
 COMPUTE_HEADING = "## Compute-bound kernels"
 # Copied from tests/golden/fixtures/relu_best.report.json and gemm_paper_best.report.json.
-# These are the roofline objects tcenv.profile.roofline writes; bound is the structured field.
+# These are the roofline objects tcenv.backends.metal.profile.roofline writes; bound is the structured field.
 _RELU_ROOFLINE = {
     "bound": "memory",
     "min_bytes": 67108864.0,
