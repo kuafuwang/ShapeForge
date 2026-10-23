@@ -80,6 +80,12 @@ def _claim_rows(record: dict, review: dict) -> list[dict]:
             "evidence_source": saved.get("evidence_source") or "",
             "evidence": saved.get("evidence") or "",
             "note": saved.get("note") or "",
+            "reviewer": saved.get("reviewer") or "",
+            "reviewer_source": saved.get("reviewer_source") or "",
+            "method": saved.get("method") or "",
+            "batch_id": saved.get("batch_id") or "",
+            "git_commit": saved.get("git_commit") or "",
+            "git_dirty": saved.get("git_dirty"),
             "subclaims": list(saved.get("subclaims") or []),
             "backend": saved.get("backend") or record.get("backend") or "",
             "target_id": saved.get("target_id") or record.get("target_id") or "",
@@ -785,6 +791,8 @@ def prior_claims(conn, *, digest: str, task: str, target_id: str, before_t: floa
         item["note"] = str(saved.get("note") or "")
         item["evidence"] = str(saved.get("evidence") or "")
         item["evidence_source"] = str(saved.get("evidence_source") or "")
+        item["reviewer"] = str(saved.get("reviewer") or "")
+        item["method"] = str(saved.get("method") or "")
         item["subclaims"] = list(saved.get("subclaims") or [])
     return rows
 
@@ -968,6 +976,12 @@ def review_board(conn, *, task: str | None = None, model: str | None = None, kin
             row["evidence_source"] = claim.get("evidence_source") or ""
             row["evidence"] = claim.get("evidence") or ""
             row["note"] = claim.get("note") or ""
+            row["reviewer"] = claim.get("reviewer") or ""
+            row["reviewer_source"] = claim.get("reviewer_source") or ""
+            row["method"] = claim.get("method") or ""
+            row["batch_id"] = claim.get("batch_id") or ""
+            row["git_commit"] = claim.get("git_commit") or ""
+            row["git_dirty"] = claim.get("git_dirty")
             row["subclaims"] = list(claim.get("subclaims") or [])
             row["backend"] = claim.get("backend") or record.get("backend") or row.get("backend") or ""
             row["target_id"] = claim.get("target_id") or record.get("target_id") or row.get("target_id") or ""
@@ -1054,6 +1068,12 @@ def _attach_claim_text(rows: list[dict]) -> dict | None:
             row["evidence_source"] = claim.get("evidence_source") or ""
             row["evidence"] = claim.get("evidence") or ""
             row["note"] = claim.get("note") or ""
+            row["reviewer"] = claim.get("reviewer") or ""
+            row["reviewer_source"] = claim.get("reviewer_source") or ""
+            row["method"] = claim.get("method") or ""
+            row["batch_id"] = claim.get("batch_id") or ""
+            row["git_commit"] = claim.get("git_commit") or ""
+            row["git_dirty"] = claim.get("git_dirty")
             row["subclaims"] = list(claim.get("subclaims") or [])
             row["backend"] = claim.get("backend") or record.get("backend") or row.get("backend") or ""
             row["target_id"] = claim.get("target_id") or record.get("target_id") or row.get("target_id") or ""
@@ -1210,8 +1230,13 @@ def rejection(body: dict) -> str | None:
     return None
 
 
-def apply_review(run_dir: Path, seq: int, digest: str, body: dict) -> dict:
-    """Append one review and return the stored claim. The caller holds the run lock."""
+def apply_review(run_dir: Path, seq: int, digest: str, body: dict, *, reviewer: str | None = None, method: str | None = None) -> dict:
+    """Append one review and return the stored claim. The caller holds the run lock.
+
+    The reviewer identity defaults to Git's commit author (``git var
+    GIT_AUTHOR_IDENT``); a form does not ask for a name. An explicit ``reviewer``
+    keyword is for backfills/tests and is recorded as ``explicit``.
+    """
     from taic import control
 
     reason = rejection(body)
@@ -1229,6 +1254,25 @@ def apply_review(run_dir: Path, seq: int, digest: str, body: dict) -> dict:
     target_id = str(body.get("target_id") or target.get("id") or "")
     key = _review_key(seq, digest)
     previous = doc["claims"].get(key)
+    previous_status = str(previous.get("status") or "pending") if isinstance(previous, dict) else "pending"
+    expected_status = str(body.get("expected_status") or "")
+    if expected_status and expected_status != previous_status:
+        raise ValueError(f"claim status is {previous_status}, expected {expected_status}; re-read the claim before reviewing it")
+    if reviewer:
+        chosen_reviewer = str(reviewer)
+        reviewer_source = "explicit"
+    else:
+        from taic.git_identity import author as git_author
+
+        identity = git_author(run_dir)
+        chosen_reviewer = identity.display
+        reviewer_source = identity.source
+    chosen_method = str(method or body.get("method") or "human")
+    if chosen_method not in ("human", "agent", "script", "api"):
+        raise ValueError("method must be human, agent, script or api")
+    from taic.git_identity import state as git_state
+
+    git_commit, git_dirty = git_state(run_dir)
     history = list(previous.get("history") or []) if isinstance(previous, dict) else []
     event = {
         "t": time.time(),
@@ -1241,6 +1285,13 @@ def apply_review(run_dir: Path, seq: int, digest: str, body: dict) -> dict:
         "change_ref": str(body.get("change_ref") or ""),
         "backend": backend,
         "target_id": target_id,
+        "reviewer": chosen_reviewer,
+        "reviewer_source": reviewer_source,
+        "method": chosen_method,
+        "batch_id": str(body.get("batch_id") or ""),
+        "expected_status": expected_status,
+        "git_commit": git_commit,
+        "git_dirty": git_dirty,
     }
     subclaims = _subclaims(body)
     if subclaims is not None:

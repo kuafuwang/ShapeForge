@@ -551,7 +551,8 @@ function priorMarkup(item) {
   const rows = priors.map((prior) => {
     const note = prior.note || prior.evidence || "";
     const ref = prior.change_ref ? `<span class="badge">${esc(prior.change_ref)}</span>` : "";
-    return `<div class="fb-prior-row"><span class="badge${reviewStatusClass(prior.status)}">${esc(prior.status || "")}</span><span>${esc(prior.run_id || "")}#${esc(prior.seq)}</span>${ref}${note ? `<div class="sub">${esc(note)}</div>` : ""}</div>`;
+    const who = prior.reviewer ? `<span class="sub">审查 ${esc(prior.reviewer)}</span>` : "";
+    return `<div class="fb-prior-row"><span class="badge${reviewStatusClass(prior.status)}">${esc(prior.status || "")}</span><span>${esc(prior.run_id || "")}#${esc(prior.seq)}</span>${ref}${who}${note ? `<div class="sub">${esc(note)}</div>` : ""}</div>`;
   }).join("");
   return `<div class="fb-prior"><strong>${esc(item.prior_summary || "此前结论")}</strong>${rows}</div>`;
 }
@@ -574,7 +575,8 @@ function reviewCard(item) {
   const tone = item.audience === "system" || item.audience === "peer" || item.audience === "diagnostic" ? item.audience : "system";
   const statusClass = item.status === "pending" ? " fb-pending" : (item.status === "info" ? " fb-info" : "");
   const scope = [item.backend, item.target_id].filter(Boolean).join(" / ");
-  const meta = [scope, item.label, item.model, item.committee, item.round != null ? "第 " + item.round + " 轮" : ""].filter((part) => part != null && part !== "").join(" · ");
+  const reviewer = item.reviewer ? "审查 " + item.reviewer : "";
+  const meta = [scope, reviewer, item.label, item.model, item.committee, item.round != null ? "第 " + item.round + " 轮" : ""].filter((part) => part != null && part !== "").join(" · ");
   return `<article class="review-card fb-claim fb-${esc(tone)}" data-key="${esc(key)}"><div class="fb-claim-head"><span class="fb-kind">${esc(item.section)}</span> <span class="badge">${esc(item.premise || item.audience)}</span> <span class="badge${statusClass}">${esc(item.status)}</span> ${handle}</div><p class="fb-meta">${esc(meta)}</p><pre class="excerpt">${esc(item.text || "")}</pre>${subclaimsMarkup(item)}${priorMarkup(item)}${similarMarkup(item)}</article>`;
 }
 
@@ -836,6 +838,7 @@ function openReview(runId, claim, record) {
   modal.dataset.run = runId || "";
   modal.dataset.seq = claim.seq;
   modal.dataset.digest = claim.digest;
+  modal.dataset.expectedStatus = claim.status || "pending";
   modal._record = record || null;
   document.getElementById("feedback-modal-title").textContent = claim.section || "处理反馈";
   document.getElementById("feedback-modal-text").textContent = claim.text || "";
@@ -1337,7 +1340,8 @@ function feedbackMarkup(doc) {
       const handle = claim.status === "info" ? "" : `<button type="button" class="feedback-open" data-seq="${esc(claim.seq)}" data-digest="${esc(claim.digest)}">处理</button>`;
       const tone = claim.audience === "system" || claim.audience === "peer" || claim.audience === "diagnostic" ? claim.audience : "system";
       const statusClass = claim.status === "pending" ? " fb-pending" : (claim.status === "info" ? " fb-info" : "");
-      return `<article class="fb-claim fb-${esc(tone)}"><div class="fb-claim-head"><span class="fb-kind">${esc(claim.section)}</span> <span class="badge">${esc([claim.backend, claim.target_id].filter(Boolean).join(" / ") || "scope unknown")}</span> <span class="badge">${esc(claim.premise || claim.audience)}</span> <span class="badge${statusClass}">${esc(claim.status)}</span> ${handle}</div><pre class="excerpt">${esc(claim.text)}</pre>${subclaimsMarkup(claim)}${priorMarkup(claim)}${similarMarkup(claim)}</article>`;
+      const reviewer = claim.reviewer ? `<span class="badge">${esc(claim.reviewer)}</span>` : "";
+      return `<article class="fb-claim fb-${esc(tone)}"><div class="fb-claim-head"><span class="fb-kind">${esc(claim.section)}</span> <span class="badge">${esc([claim.backend, claim.target_id].filter(Boolean).join(" / ") || "scope unknown")}</span> ${reviewer} <span class="badge">${esc(claim.premise || claim.audience)}</span> <span class="badge${statusClass}">${esc(claim.status)}</span> ${handle}</div><pre class="excerpt">${esc(claim.text)}</pre>${subclaimsMarkup(claim)}${priorMarkup(claim)}${similarMarkup(claim)}</article>`;
     };
     const buckets = { measured: [], unverified: [], other: [] };
     for (const claim of record.claims || []) {
@@ -1594,6 +1598,7 @@ document.getElementById("feedback-save").addEventListener("click", async () => {
     note: form.querySelector('[name="note"]').value,
     topic: form.querySelector('[name="topic"]').value,
     change_ref: form.querySelector('[name="change_ref"]').value,
+    expected_status: modal.dataset.expectedStatus || "pending",
   };
   try {
     const runId = modal.dataset.run || selectedRun;

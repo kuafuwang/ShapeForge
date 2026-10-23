@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from observe.actions import Refused, review_feedback
-from observe.feedback import entries, rejection, review_board, review_feed, summary_from_index
+from observe.feedback import apply_review, entries, rejection, review_board, review_feed, summary_from_index
 from taic.agent_feedback import read_appended_records
 from taic.agent_feedback import parse_feedback
 
@@ -136,6 +136,44 @@ def test_review_board_lists_every_run_with_the_claim_text(tmp_path, monkeypatch)
     assert "patchReviewDom" in html
     assert "priorMarkup" in html and "此前结论" in html
     assert "similarMarkup" in html and "相似结论" in html
+
+
+def test_a_review_records_the_git_style_actor_and_rejects_a_stale_expected_status(tmp_path, monkeypatch):
+    runs, index = _open(tmp_path, monkeypatch)
+    parsed = _parsed()
+    directory = _run(runs, "conv", _record(parsed), started_at=50)
+    index.sync_known()
+    digest = _digest("需要帮助")
+    with pytest.raises(ValueError, match="expected"):
+        apply_review(directory, 1, digest, {
+            "status": "info", "verification": "unchecked", "expected_status": "adopted",
+        })
+    stored = apply_review(
+        directory, 1, digest,
+        {
+            "status": "info", "verification": "unchecked", "expected_status": "pending",
+            "batch_id": "batch-1",
+        },
+        reviewer="Reviewer <reviewer@example.test>", method="agent",
+    )
+    assert stored["reviewer"] == "Reviewer <reviewer@example.test>"
+    assert stored["reviewer_source"] == "explicit"
+    assert stored["method"] == "agent"
+    assert stored["batch_id"] == "batch-1"
+    assert stored["git_commit"]
+    assert stored["history"][0]["reviewer"] == "Reviewer <reviewer@example.test>"
+    row = next(c for c in entries(directory)["records"][0]["claims"] if c["digest"] == digest)
+    assert row["reviewer"] == "Reviewer <reviewer@example.test>"
+    from taic.git_identity import GitAuthor
+    monkeypatch.setattr("taic.git_identity.author", lambda root=None: GitAuthor("Auto Reviewer", "auto@example.test", "git"))
+    automatic = apply_review(
+        directory, 1, digest,
+        {"status": "info", "verification": "unchecked", "expected_status": "info"},
+        method="script",
+    )
+    assert automatic["reviewer"] == "Auto Reviewer <auto@example.test>"
+    assert automatic["reviewer_source"] == "git"
+    assert automatic["method"] == "script"
 
 
 def test_a_review_shows_prior_exact_digest_verdicts_scoped_to_task_and_target(tmp_path, monkeypatch):
