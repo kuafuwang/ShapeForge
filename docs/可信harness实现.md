@@ -42,7 +42,7 @@
 - 最近全量离线测试：**1013 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`，本轮修改后）。
 - 新增测试覆盖：7 条占位原文、探针恢复后的 digest 保留、`info`/`obsolete`、空占位墓碑、信任 scope/prompt/协议/过期、单模型/同探针不达 quorum、跨 target/协议隔离、P2 `git apply --check`、审计写回、试点汇总、 review 预算随价格变化与 verdict 解析，以及合成的 feedback→proposal→trust→overlay→TASK 端到端流程。
 - 数据侧：174 条审计已写回；60 条实测 `adopted`、15 条已修 `done`、35 条未验证 `info`、7 条空占位 `obsolete`，其余 57 条 pending。10 条按 topic 合并的 `obsolete` 已由 `experiments.revert_topic_merges` 改回 pending；39 条采集时缺探针的 claim 中，31 条 premise 升为 `verified`、8 条仍 `downgraded`，等待人复核。7 条审计空占位现在都有 `feedback_claim_removed` 墓碑；重建会为所有空占位小节写墓碑，当前共 18 条。
-- `targets/apple-m4-max/trust.toml` 的两个 conv2d grant（deepseek-flash、kimi-k3）已按用户明确要求重新授予为当前 `prompt_sha1 = 2b3931195dd4…`，status 为 `active`，`overlay:tip` 与 `overlay:premise` 均通过 `trust.check`；`evidence_run` 为空，表示这次授权只绑定当前提示面，没有新的实测证据。若再改 `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py`、`targets/apple-m4-max/experience.md` 或 `taic/flows/kernel_once/skills/taic-tools/SKILL.md`，两份 grant 会再次失效。
+- `targets/apple-m4-max/trust.toml` 的两个 conv2d grant（deepseek-flash、kimi-k3）已按用户明确要求重新授予为当前 `prompt_sha1 = ac3eca2a4576…`，status 为 `active`，`overlay:tip` 与 `overlay:premise` 均通过 `trust.check`；`evidence_run` 为空，表示这次授权只绑定当前提示面，没有新的实测证据。若再改 `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py`、`targets/apple-m4-max/experience.md` 或 `taic/flows/kernel_once/skills/taic-tools/SKILL.md`，两份 grant 会再次失效。
 
 2026-10-23 的缺陷修复批次又改了 `taic/kernel_agent.py` 与 `taic/harness.py`（failed 回合计费、进程组清理、review 旧文件复用、协议代次校验），`current_prompt_sha1()` 因此变为 `7ef80ddc…`。这两份 grant 需要在这批修复提交之后重签一次，否则 `trust.check` 会以 `trust was granted for another prompt` 拒绝；提示文本本身没有改，重签只是更新指纹。命令：
 
