@@ -53,7 +53,7 @@ def test_moved_tooling_keeps_the_repository_root():
 
     from tcenv.backends.metal import triton_baseline, xctrace
 
-    repo = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
     assert triton_baseline.REPO_ROOT == repo
     assert xctrace.REPO_ROOT == repo
     assert triton_baseline.CACHE_DIR == repo / "runs" / "triton_baselines"

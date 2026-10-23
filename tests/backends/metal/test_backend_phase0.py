@@ -19,7 +19,7 @@ from tcenv.schema import PROTOCOL_VERSION, REPORT_SCHEMA_VERSION
 from tcenv.task import task_fingerprint
 
 BASELINE = Path("docs/架构/backend-phase0-baseline.json")
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[3]
 MAX_CANDIDATE_PCT = 2.0
 MAX_GPU_PCT = 2.0
 MAX_MLX_PCT = 2.0

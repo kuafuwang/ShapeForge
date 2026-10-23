@@ -36,7 +36,7 @@ def test_parent_import_of_the_metal_adapter_does_not_import_metal():
     )
     result = subprocess.run(
         [sys.executable, "-c", code],
-        cwd=Path(__file__).resolve().parents[1],
+        cwd=Path(__file__).resolve().parents[3],
         capture_output=True,
         text=True,
         timeout=30,

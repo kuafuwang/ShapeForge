@@ -141,6 +141,9 @@ AI/人应先读 `triage_summary.md`，再读对应 Markdown 的 JSON 块，最�
 ## 迁移状态
 
 - 阶段 1/2：`shared/`、`backends/`、`support/` 目录和 helper/golden 已建立。
-- 阶段 3：把明确的 Metal 测试移入 `tests/backends/metal/`。
-- 阶段 4：把 backend 无关测试移入 `tests/shared/`。
+- 阶段 3：已把第一批明确的 Metal 测试移入 `tests/backends/metal/`
+  （backend adapter/registry/phase 0、launch/ABI、tcenv、baselines、bench limit、
+  pressure、skills/symptom、xctrace、orchestrator GPU）。
+- 阶段 4：继续把剩余 backend 无关测试移入 `tests/shared/`，并逐批移动剩余的
+  任务级 Metal 测试；不要一次移动全部根目录文件。
 - 迁移时一次只移动一组，先跑目标测试，再跑全量；不要把目录移动和业务改动混在一起。

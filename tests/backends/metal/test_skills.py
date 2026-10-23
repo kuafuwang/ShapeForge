@@ -9,7 +9,7 @@ import pytest
 
 from tcenv.backends.metal.runtime import MetalCompileError, get_context
 
-SKILLS = Path(__file__).resolve().parent.parent / "backends" / "metal" / "skills"
+SKILLS = Path(__file__).resolve().parents[3] / "backends" / "metal" / "skills"
 HDR = "#include <metal_stdlib>\n#include <metal_simdgroup>\n#include <metal_simdgroup_matrix>\nusing namespace metal;\n"
 BLOCK = re.compile(r"```metal\n(.*?)```", re.DOTALL)
 

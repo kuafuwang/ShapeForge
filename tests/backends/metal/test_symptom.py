@@ -10,7 +10,7 @@ from taic.symptom import SymptomIndex, bound_of, section_for
 from tasks import get_task
 from tcenv.evaluate import EvalReport
 
-SKILL = Path(__file__).resolve().parent.parent / "backends" / "metal" / "skills" / "apple_gpu_optimization.md"
+SKILL = Path(__file__).resolve().parents[3] / "backends" / "metal" / "skills" / "apple_gpu_optimization.md"
 MEMORY_HEADING = "## Memory-bound kernels"
 COMPUTE_HEADING = "## Compute-bound kernels"
 # Copied from tests/support/golden/metal/fixtures/relu_best.report.json and gemm_paper_best.report.json.
