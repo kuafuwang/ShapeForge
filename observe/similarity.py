@@ -13,6 +13,8 @@ import re
 from functools import lru_cache
 
 _CJK = re.compile(r"[\u3400-\u9fff]")
+_CJK_FULL = re.compile(r"^[\u3400-\u9fff]+$")
+_TOKEN = re.compile(r"[\u3400-\u9fff]+|[a-z0-9_]+(?:[._][a-z0-9_]+)*")
 _BUNDLE = None
 _CLASS = None
 _MODELS: dict[str, object] = {}
@@ -79,6 +81,29 @@ def clear_cache() -> None:
     _MODELS.clear()
 
 
+def _tokens(text: str) -> set[str]:
+    """CJK character bigrams plus code-like Latin/number tokens."""
+    out: set[str] = set()
+    for match in _TOKEN.finditer(str(text or "").lower()):
+        token = match.group(0)
+        if _CJK_FULL.fullmatch(token):
+            if len(token) == 1:
+                out.add(token)
+            else:
+                out.update(token[index:index + 2] for index in range(len(token) - 1))
+        else:
+            out.add(token)
+    return out
+
+
+def lexical_overlap(a: str, b: str) -> float:
+    """Shared-token containment. A cheap guard against generic-sounding neighbours."""
+    left, right = _tokens(a), _tokens(b)
+    if not left or not right:
+        return 0.0
+    return len(left & right) / min(len(left), len(right))
+
+
 def cosine(a: tuple[float, ...] | None, b: tuple[float, ...] | None) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0
@@ -103,9 +128,13 @@ def find_similar(text: str, candidates: list[dict], *, threshold: float | None =
         # Chinese sentence vectors have a high baseline; English vectors are much
         # more spread out. These are deliberately conservative, not a classifier.
         threshold = 0.975 if _language(text) == "zh-Hans" else 0.65
+    min_overlap = 0.20 if _language(text) == "zh-Hans" else 0.15
     scored = []
     for candidate in candidates:
-        vector = embedding(str(candidate.get("text") or ""))
+        candidate_text = str(candidate.get("text") or "")
+        if lexical_overlap(text, candidate_text) < min_overlap:
+            continue
+        vector = embedding(candidate_text)
         if vector is None:
             continue
         score = cosine(source, vector)

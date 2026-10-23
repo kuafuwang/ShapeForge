@@ -25,7 +25,7 @@
 ## 已实现的行为
 
 - `taic/agent_feedback.py`：`fbv4` 在所有小节和逐条两处识别缺席句；带动作请求的条目保留。`_repair_record` 为旧记录补 `placeholder_items`，并先按旧 digest 从 `sections` 恢复被擦除的实测正文；不能按 item 位置与 section 片段直接 zip。
-- `observe/feedback.py` + `observe/suggestions.py`：审查页和 `taic query suggestion` 返回 `prior`，按同 `digest` + `task` + `target_id` 找更早 claim，带旧 status/note/change_ref；这是精确文本查询。pending 行另带 `similar`，用 macOS `NLEmbedding` 本地句向量在同一 task/target 内找近义 claim，阈值保守，不联网、不调用模型；平台不支持时为空。`review_board`/`review_feed` 批量附加，旧记录的时间晚于当前 claim 时不显示。
+- `observe/feedback.py` + `observe/suggestions.py`：审查页和 `taic query suggestion` 返回 `prior`，按同 `digest` + `task` + `target_id` 找更早 claim，带旧 status/note/change_ref；这是精确文本查询。pending 行另带 `similar`，用 macOS `NLEmbedding` 本地句向量在同一 task/target 内找近义 claim，并要求共享中文/代码 token 以压低中文向量高基线；阈值保守，不联网、不调用模型；平台不支持时为空。`review_board`/`review_feed` 批量附加，旧记录的时间晚于当前 claim 时不显示。
 - `tcenv/pressure.py` + `tcenv/profile.py` + `tcenv/report.py`：报告打印源码声明的 `simdgroup_float8x8` 槽数和最大数组，超过 16 槽给一条提示。Metal 没有公开的 per-kernel 寄存器数/spill API，`maxTotalThreadsPerThreadgroup` 在本机也不能区分 16 和 32 槽，所以这里明确标成源码级启发式；要确认 spill 用 `tcenv profile` 的 spill events。
 - `observe/feedback.py`：状态加入 `info` 和 `obsolete`；重建时读 `FEEDBACK.md` 只用于把探针已恢复的降级前提升为 `verified`，保留旧 digest 和审查键；删除的 claim 墓碑保留 `status`/`reason`。多命题前提支持 `subclaims`：父 claim 保持 `info`/`pending`，子命题各自校验并显示状态；旧审查文件无需迁移。
 - `taic/trust.py`：`targets/<id>/trust.toml`，键含 target/task/provider/model/effort、`taic/prompts.py`/`taic/kernel_agent.py`/`taic/harness.py` 三个文件的整体 sha256、协议、scope、过期；`trust_audit.jsonl` 追加 `grant`/`suspended`/`revoked`。
