@@ -116,7 +116,7 @@ def system_prompt(task: Task, *, use_tools: bool, profiler_evidence: bool = Fals
 
 
 # 初始生成。Triton 源码是语义规格，不是名字或注释；program 到 threadgroup 的启动映射保持不变。这一步只求正确且速度合理，结构级的性能改动留给后面的 patch_user。
-def initial_user(task: Task, *, source_fence: str = "metal", language_label: str = "MSL") -> str:
+def initial_user(task: Task, *, language_label: str = "MSL") -> str:
     return (
         f"Translate this Triton kernel into {language_label} for the contract above. It is the *specification*: follow its actual semantics, not its name or comments. "
         "Without a taic-launch block, keep the contract's launch mapping of programs to threadgroups. "

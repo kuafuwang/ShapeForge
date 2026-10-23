@@ -11,8 +11,8 @@ from .policy import feature_signature
 _FEATURES = ("matrix_unit", "acc_bucket", "tg_staging", "double_buffer", "register_prefetch", "vector_load", "online_softmax")
 
 
-def _present(source: str) -> set[str]:
-    sig = feature_signature(source)
+def _present(source: str, backend_id: str = "metal") -> set[str]:
+    sig = feature_signature(source, backend_id=backend_id)
     return {name for name, bit in zip(_FEATURES, sig) if bit and bit != "0"}
 
 
@@ -20,6 +20,25 @@ def _bound(report: dict) -> str | None:
     roof = report.get("roofline") if isinstance(report, dict) else None
     bound = roof.get("bound") if isinstance(roof, dict) else None
     return bound if bound in ("memory", "compute") else None
+
+
+def _target_info(run: Path) -> tuple[str, str]:
+    """The run's backend and kernel extension, legacy Metal fallback."""
+    try:
+        doc = json.loads((run / "run_config.json").read_text())
+        target = doc.get("target") if isinstance(doc.get("target"), dict) else {}
+        target_id = str(target.get("id") or doc.get("target_id") or "")
+        from tcenv.backends.registry import load_backend
+        from tcenv.target import load_target
+
+        profile = load_target(target_id or None)
+        backend = load_backend(profile.backend)
+        ext = backend.file_ext or ".metal"
+        if not str(ext).startswith("."):
+            ext = "." + str(ext)
+        return backend.id, ext
+    except Exception:
+        return "metal", ".metal"
 
 
 def build_experience_index(roots: list[Path], *, exclude_runs: set[str] | None = None) -> dict:
@@ -38,12 +57,15 @@ def build_experience_index(roots: list[Path], *, exclude_runs: set[str] | None =
         for run in sorted(seen_dirs):
             if run.name in blocked or any(part in blocked for part in run.parts):
                 continue
+            backend_id, ext = _target_info(run)
             best_source = None
             best_speed = None
             folders = sorted((run / "candidates").iterdir()) if (run / "candidates").is_dir() else []
             for folder in folders:
                 report_path = folder / "report.json"
-                kernel_path = next(iter(sorted(folder.glob("kernel.*"))), folder / "kernel.metal")
+                kernel_path = folder / f"kernel{ext}"
+                if not kernel_path.is_file():
+                    kernel_path = next(iter(sorted(folder.glob("kernel.*"))), folder / "kernel.metal")
                 if not report_path.is_file() or not kernel_path.is_file():
                     continue
                 try:
@@ -57,7 +79,7 @@ def build_experience_index(roots: list[Path], *, exclude_runs: set[str] | None =
                     continue
                 source = kernel_path.read_text()
                 if best_source is not None and best_speed is not None and speed > best_speed * 1.005:
-                    added = sorted(_present(source) - _present(best_source))
+                    added = sorted(_present(source, backend_id) - _present(best_source, backend_id))
                     wins.append({"task": report.get("task"), "bound": _bound(report), "added": added, "ratio": speed / best_speed})
                 if best_speed is None or speed > best_speed:
                     best_source, best_speed = source, float(speed)

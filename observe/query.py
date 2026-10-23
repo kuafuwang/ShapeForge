@@ -141,6 +141,7 @@ def feature_grid(directory: Path, result: dict | None) -> list[dict]:
     cached = _GRID_CACHE.get(key)
     if cached is not None:
         return cached
+    _target_id, backend_id, _ext = detail.target_identity(directory)
     root = directory / "candidates"
     if not root.is_dir():
         _GRID_CACHE[key] = []
@@ -163,7 +164,7 @@ def feature_grid(directory: Path, result: dict | None) -> list[dict]:
         if signature is None:
             signature = _FEATURE_CACHE.get(digest)
             if signature is None:
-                signature = feature_signature(source)
+                signature = feature_signature(source, backend_id=backend_id)
                 _FEATURE_CACHE[digest] = signature
             signed[digest] = signature
         label = path.name.split("_", 1)[1] if "_" in path.name else path.name

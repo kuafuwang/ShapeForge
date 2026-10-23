@@ -228,7 +228,7 @@ def test_feature_grid_signs_a_source_once_and_then_uses_the_cache(tmp_path, monk
     calls = {"n": 0}
     real = query.feature_signature
 
-    def wrapped(source):
+    def wrapped(source, *, backend_id="metal"):
         calls["n"] += 1
         return real(source)
 
@@ -266,7 +266,7 @@ def test_fa_paper_signs_each_distinct_source_once(tmp_path, monkeypatch):
     calls = {"n": 0}
     real = query.feature_signature
 
-    def wrapped(source):
+    def wrapped(source, *, backend_id="metal"):
         calls["n"] += 1
         return real(source)
 

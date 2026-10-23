@@ -284,11 +284,30 @@ def _gpu_events() -> list[dict] | None:
     return rows[-CAP:]
 
 
+def _best_file(run: Path) -> Path:
+    """The target's best file; wildcard is the compatibility fallback."""
+    try:
+        import json
+
+        from tcenv.backends.registry import load_backend
+        from tcenv.target import load_target
+
+        doc = json.loads((run / "run_config.json").read_text())
+        target_id = str((doc.get("target") or {}).get("id") or doc.get("target_id") or "")
+        ext = load_backend(load_target(target_id or None).backend).file_ext or ".metal"
+        found = run / f"best{ext}"
+        if found.is_file():
+            return found
+    except Exception:
+        pass
+    return next(iter(sorted(run.glob("best.*"))), run / "best.metal")
+
+
 def _paths(run: Path) -> dict:
     names = {
         "result": run / "result.json",
         "confirm": run / "confirm_report.json",
-        "metal": next(iter(sorted(run.glob("best.*"))), run / "best.metal"),
+        "metal": _best_file(run),
         "transcript": run / "transcript.jsonl",
     }
     out = {}

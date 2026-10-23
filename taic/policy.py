@@ -160,7 +160,12 @@ def patience_exhausted(stagnant: int, patience: int) -> bool:
 
 def feature_signature(source: str, *, backend_id: str = "metal") -> tuple:
     """Seven static source features. No compiler and no GPU; only Metal implements them."""
-    if backend_id != "metal":
+    try:
+        from tcenv.backends.registry import load_backend
+
+        if not load_backend(backend_id).capabilities.supports_feature_signature:
+            return ()
+    except Exception:
         return ()
     from .hwfeatures import analyze_source
 

@@ -101,21 +101,30 @@ def resolve_run(run_id: str) -> Path | None:
 
 
 # 页面上的运行 id 是 runs/ 下的相对路径，详情接口再用 resolve_run 认回来。
-def target_file_names(directory: Path) -> tuple[str, str]:
-    """``(kernel file, best file)`` for the run's target; legacy Metal fallback."""
+def target_identity(directory: Path) -> tuple[str, str, str]:
+    """``(target_id, backend_id, file_ext)`` for a run; legacy Metal fallback."""
     config = _load(Path(directory) / "run_config.json") or {}
     target = config.get("target") if isinstance(config.get("target"), dict) else {}
     target_id = str(target.get("id") or config.get("target_id") or Path(directory).parent.name or "")
+    backend_id = str(target.get("backend") or "")
     ext = ".metal"
     try:
         from tcenv.backends.registry import load_backend
         from tcenv.target import load_target
 
-        ext = load_backend(load_target(target_id or None).backend).file_ext or ".metal"
+        profile = load_target(target_id or None)
+        backend_id = backend_id or profile.backend
+        ext = load_backend(profile.backend).file_ext or ".metal"
     except Exception:
         pass
     if not str(ext).startswith("."):
         ext = "." + str(ext)
+    return target_id, backend_id, ext
+
+
+def target_file_names(directory: Path) -> tuple[str, str]:
+    """``(kernel file, best file)`` for the run's target; legacy Metal fallback."""
+    _target_id, _backend_id, ext = target_identity(directory)
     return f"kernel{ext}", f"best{ext}"
 
 
@@ -1182,9 +1191,9 @@ def _agent_note(item: dict, label: str) -> dict:
     if error:
         kind, detail = "agent_error", error[:180]
     elif had:
-        kind, detail = "agent", "kernel.metal 里有约定的内核"
+        kind, detail = "agent", "候选内核文件里有约定的内核"
     else:
-        kind, detail = "agent_empty", "kernel.metal 里没有约定的内核"
+        kind, detail = "agent_empty", "候选内核文件里没有约定的内核"
     cost = item.get("cost_usd")
     if isinstance(cost, (int, float)) and not isinstance(cost, bool):
         detail = f"{detail}。这场 ${float(cost):.3f}"
