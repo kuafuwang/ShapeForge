@@ -148,8 +148,10 @@ AI/人应先读 `triage_summary.md`，再读对应 Markdown 的 JSON 块，最�
   domain sweep、elementwise semantics、distributions）也已移入
   `tests/backends/metal/`。
 - 阶段 3 收尾：dispatch、IEEE 特殊值、硬件特征检测和 hwfeedback 也已移入
-  `tests/backends/metal/`。根目录剩下的是通用搜索/审查/observe/预算/锁/
-  target/schema 测试，不再是 backend 专属测试。
+  `tests/backends/metal/`；通用文件里混着的 Metal 测试也已拆出到
+  `test_abi.py`、`test_triton_baseline.py`、`test_orchestrator_profiling.py`。
+  根目录剩下的是通用搜索/审查/observe/预算/锁/target/schema 测试，不再直接
+  import `tcenv.backends.metal.*`。
 - 阶段 4：把剩余 backend 无关测试移入 `tests/shared/`；不要一次移动全部
   根目录文件。
 - 迁移时一次只移动一组，先跑目标测试，再跑全量；不要把目录移动和业务改动混在一起。

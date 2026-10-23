@@ -10,13 +10,11 @@ import pytest
 from tasks import get_task, list_tasks
 from tcenv.triton_runner import parse_launch_header
 
-
 def jit_params(src: str, name: str) -> list[str]:
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.FunctionDef) and node.name == name:
             return [a.arg for a in node.args.args]
     raise AssertionError(f"{name} not found")
-
 
 @pytest.mark.parametrize("name", list(list_tasks()) + ["mamba2_chunk_scan"])
 def test_every_kernel_parameter_is_bound_by_the_launch_header(name):
@@ -31,7 +29,6 @@ def test_every_kernel_parameter_is_bound_by_the_launch_header(name):
     assert not missing, f"{name}: parameters without a value in the header: {missing}; header = {header}"
     assert nw == t.contract.num_warps, (name, nw, t.contract.num_warps)
 
-
 @pytest.mark.parametrize("name", list(list_tasks()) + ["mamba2_chunk_scan"])
 def test_header_values_agree_with_the_contract_constants(name):
     t = get_task(name, "fp16", "paper")
@@ -40,16 +37,13 @@ def test_header_values_agree_with_the_contract_constants(name):
         if cname in header:
             assert float(header[cname]) == pytest.approx(float(val)), (name, cname)
 
-
 def test_header_parser_handles_eps_floats_and_multiline_headers():
     h, nw = parse_launch_header("# Launch: grid = (M,), num_warps = 8, M = 4096, eps = 1e-6\n#   BASE = 10000.0\nimport triton\n# N = 5\n")
     assert nw == 8 and h == {"M": 4096, "eps": 1e-6, "BASE": 10000.0}
 
-
 from pathlib import Path  # noqa: E402
 
 VENV_PY = Path(__file__).resolve().parent.parent / ".venvs" / "triton-msl" / "bin" / "python"
-
 
 @pytest.mark.skipif(not VENV_PY.exists(), reason="isolated triton-msl environment not installed (scripts/install_triton_msl.sh)")
 @pytest.mark.parametrize("name", ["gemm", "gemm_silu", "conv2d", "bitdelta_gemm", "rmsnorm", "flash_attention", "mamba2_chunk_scan"])
@@ -66,43 +60,6 @@ def test_specs_load_as_real_triton_and_bind_all_arguments(name, tmp_path):
     r = json.loads((tmp_path / "o.json").read_text())
     assert r["status"] == "dry_ok", (r, p.stderr[-300:])
 
-
-def test_measure_explains_a_missing_toolchain(monkeypatch):
-    from tcenv.backends.metal import triton_baseline as tb
-
-    monkeypatch.setattr(tb, "available", lambda: True)
-    monkeypatch.setattr(tb, "metal_toolchain_ok", lambda: False)
-    with pytest.raises(RuntimeError, match="xcodebuild -downloadComponent MetalToolchain"):
-        tb.measure("relu", "fp16", "small")
-
-
-def test_only_trustworthy_cached_measurements_are_used(tmp_path, monkeypatch):
-    """A measurement taken on a busy machine (inconsistent with its own sweep) or a launch-bound one must never feed a report."""
-    import json
-
-    from tcenv.backends.metal import triton_baseline as tb
-
-    monkeypatch.setattr(tb, "CACHE_DIR", tmp_path)
-    from tcenv.triton_runner import spec_fingerprint
-
-    fp = {t: spec_fingerprint(get_task(t, "fp16", "paper")) for t in ("relu", "sigmoid", "silu", "swiglu", "softmax", "rope", "rmsnorm")}
-    good = {"status": "ok", "consistent": True, "ratio_to": {"mlx": 1.3}, "median_us": {"triton_msl": 190.0, "mlx": 146.0}}
-    cases = {
-        "relu": {**good, "spec_fingerprint": fp["relu"]},
-        "sigmoid": {**good, "consistent": False, "spec_fingerprint": fp["sigmoid"]},
-        "silu": {**good, "warning": "launch-bound", "spec_fingerprint": fp["silu"]},
-        "swiglu": {k: v for k, v in good.items() if k != "consistent"} | {"spec_fingerprint": fp["swiglu"]},
-        "softmax": {"status": "unsupported", "spec_fingerprint": fp["softmax"]},
-        "rope": {**good, "spec_fingerprint": "0123456789abcdef"},  # measured on another spec / size / contract
-        "rmsnorm": dict(good),  # measured before fingerprints existed
-    }
-    for name, d in cases.items():
-        (tmp_path / f"{name}_fp16_paper.json").write_text(json.dumps(d))
-    assert tb.load_cached("relu", "fp16", "paper") is not None
-    for name in ("sigmoid", "silu", "swiglu", "softmax", "rope", "rmsnorm"):
-        assert tb.load_cached(name, "fp16", "paper") is None, name
-
-
 def test_the_fingerprint_changes_with_spec_size_contract_and_cases():
     from tcenv.triton_runner import spec_fingerprint
 
@@ -112,21 +69,6 @@ def test_the_fingerprint_changes_with_spec_size_contract_and_cases():
     assert a != spec_fingerprint(get_task("gemm", "bf16", "paper"))
     assert a != spec_fingerprint(get_task("gemm@128x64x32t256", "fp16", "paper"))
     assert a != spec_fingerprint(get_task("gemm_silu", "fp16", "paper"))
-
-
-def test_estimate_scales_the_ratio_with_the_live_vendor_time():
-    from tcenv.backends.metal import triton_baseline as tb
-
-    est = tb.estimate({"ratio_to": {"mlx": 1.3, "torch_mps": 1.4}}, {"mlx": 100.0, "torch_mps": 90.0})
-    assert est["estimated_us"] == pytest.approx(130.0) and "mlx" in est["basis"]
-    assert tb.estimate({"ratio_to": {"mlx": 1.3}}, {"torch_mps": 90.0}) is None
-
-
-def test_busy_process_check_ignores_stopped_and_unrelated_processes():
-    from tcenv.backends.metal import triton_baseline as tb
-
-    assert isinstance(tb.busy_processes(), list)
-
 
 @pytest.mark.parametrize("name", list(list_tasks()) + ["flash_attention", "lion", "bitdelta_gemm", "mamba2_chunk_scan"])
 def test_header_grid_matches_the_contract_grid(name):
@@ -141,7 +83,6 @@ def test_header_grid_matches_the_contract_grid(name):
     if not note:  # a baseline variant may legitimately launch a different (equivalent) grid
         assert parse_grid(src, header) == tuple(g), (name, parse_grid(src, header), g)
 
-
 def test_baseline_variants_declare_a_grid_and_keep_the_kernel_name():
     from tcenv.triton_runner import parse_grid, spec_source
 
@@ -151,7 +92,6 @@ def test_baseline_variants_declare_a_grid_and_keep_the_kernel_name():
         assert note and f"def {t.contract.kernel_name}(" in src
         header, nw = parse_launch_header(src)
         assert parse_grid(src, header) and nw
-
 
 @pytest.mark.parametrize("name", ["gemm", "gemm_silu", "conv2d"])
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
@@ -174,8 +114,6 @@ def test_variants_are_valid_python_with_every_placeholder_substituted(name, dtyp
     for a in t.contract.inputs:  # the pipeline reads inputs by their contract names
         assert f'inp["{a.name}"]' in src, (name, a.name)
 
-
-
 @pytest.mark.parametrize("name", ["gemm", "gemv", "flash_attention"])
 def test_single_kernel_baseline_variants_bind_every_parameter(name):
     """The variant is what the compiler baseline runs: its kernel parameters must all be bound by its own header (or a contract scalar)."""
@@ -190,22 +128,6 @@ def test_single_kernel_baseline_variants_bind_every_parameter(name):
     assert len([p for p in params if p.endswith("_ptr")]) == len(t.contract.buffers)
     assert not [p for p in params if not p.endswith("_ptr") and p.lower() not in lower], (name, params, header)
     assert nw == t.contract.num_warps
-
-
-def test_wait_quiet_returns_at_once_on_a_quiet_machine_and_gives_up_after_the_limit(monkeypatch):
-    from tcenv.backends.metal import triton_baseline as tb
-
-    monkeypatch.setattr(tb.os, "getloadavg", lambda: (0.5, 0.5, 0.5))
-    monkeypatch.setattr(tb, "busy_processes", lambda: [])
-    r = tb.wait_quiet(5.0, poll_s=0.01, log=lambda s: None)
-    assert r["quiet"] and r["waited_s"] < 1.0
-    monkeypatch.setattr(tb.os, "getloadavg", lambda: (9.0, 5.0, 3.0))
-    r = tb.wait_quiet(0.05, poll_s=0.01, log=lambda s: None)
-    assert not r["quiet"] and r["load_avg_1m"] == 9.0
-    monkeypatch.setattr(tb.os, "getloadavg", lambda: (0.5, 0.5, 0.5))
-    monkeypatch.setattr(tb, "busy_processes", lambda: ["123 pytest"])
-    assert not tb.wait_quiet(0.05, poll_s=0.01, log=lambda s: None)["quiet"]
-
 
 def test_relu_spec_propagates_nan():
     assert "tl.where(x < 0, 0.0, x)" in get_task("relu", "fp16", "paper").triton_source

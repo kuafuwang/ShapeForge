@@ -25,6 +25,9 @@ test_dispatch.py
 test_ieee.py
 test_hw_features.py
 test_hw_feedback.py
+test_abi.py
+test_triton_baseline.py
+test_orchestrator_profiling.py
 ```
 
 通用搜索、审查、observe、预算和任务接口测试不要放这里。Metal golden 数据在
