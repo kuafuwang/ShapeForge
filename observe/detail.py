@@ -1459,6 +1459,32 @@ def _run_bounds(state: dict | None, result: dict | None, progress: dict | None, 
     return start, end
 
 
+def _run_timing(directory: Path, state: dict | None, result: dict | None, progress: dict | None, status: str) -> dict:
+    """Start, elapsed and end for the detail header.
+
+    A running run has no end yet; its elapsed time is measured at this request. Finished
+    runs use the last persisted timestamp as the end; an interrupted run labels that as
+    an estimate because the process may have died before writing its final state.
+    """
+    start, end = _run_bounds(state, result, progress, status)
+    if start is None:
+        start = _when(directory, state)
+    now = time.time()
+    if status == "running":
+        ended = None
+        elapsed = max(0.0, now - start) if start is not None else None
+    else:
+        ended = end if status in ("done", "interrupted") else None
+        elapsed = max(0.0, ended - start) if ended is not None and start is not None else None
+    return {
+        "started_at": start,
+        "ended_at": ended,
+        "elapsed_s": elapsed,
+        "running": status == "running",
+        "ended_at_estimated": status == "interrupted",
+    }
+
+
 def _lock_spans(state: dict | None, result: dict | None, progress: dict | None, status: str) -> list[dict]:
     task = str((result or state or {}).get("task") or "")
     dtype = str((result or state or {}).get("dtype") or "")
@@ -1714,6 +1740,7 @@ def run_detail(run_id: str) -> dict | None:
         "published_speedup": conclusion["speedup"],
         "eval_progress": progress,
         "llm": _load(directory / "llm.json"),
+        "timing": _run_timing(directory, state, result, progress, status),
         "timeline": _timeline(directory, state, result, progress, status),
         "candidate_marks": _candidate_marks(trace),
         "confirmed_point": _confirmed_point(result, trace, conclusion),

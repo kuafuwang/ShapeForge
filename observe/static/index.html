@@ -469,6 +469,36 @@ function money(value) {
   return value == null || value === "" ? "—" : "$" + Number(value).toFixed(3);
 }
 
+function formatTime(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "—";
+  return new Date(seconds * 1000).toLocaleString("zh-CN", {
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  });
+}
+
+function formatDuration(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) return "—";
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+  if (hours) return `${hours} 小时 ${minutes} 分 ${rest} 秒`;
+  if (minutes) return `${minutes} 分 ${rest} 秒`;
+  return `${rest} 秒`;
+}
+
+function refreshDetailClock() {
+  const line = document.getElementById("detail-run-clock");
+  const out = document.getElementById("detail-run-elapsed");
+  if (!line || !out || line.dataset.running !== "1") return;
+  const started = Number(line.dataset.started);
+  if (!Number.isFinite(started)) return;
+  out.textContent = formatDuration(Date.now() / 1000 - started);
+}
+
 function renderBanner(report) {
   const slot = document.getElementById("budget-banner");
   if (!slot || !report) return;
@@ -1314,13 +1344,22 @@ function renderDetail(doc) {
   const candidates = newestFirst(doc.candidates).map((row) => `<tr class="pick${row.label === selectedCandidate ? " on" : ""}" data-label="${esc(row.label)}"><td class="seq"><button type="button" class="quiet seq-open" title="双击查看阶段和代码">${esc(num(row.idx))}</button></td><td>${esc(row.label)}${row.label === seedKernel ? ' <span class="badge">种子核</span>' : ''}${row.label === confirmWinner ? ' <span class="badge">确认胜者</span>' : ''}</td><td>${esc(row.status)}</td><td>${esc(row.stage)}</td><td>${esc(num(row.speedup))}</td><td>${esc(marksFor(doc, row.label))}</td><td>${esc(row.message)}</td></tr>`).join("");
   const grid = newestFirst(doc.feature_grid).map((cell) => `<tr><td>${esc(cell.label)}</td><td>${esc((cell.signature || []).join(","))}</td><td>${esc(num(cell.speedup))}</td><td>${cell.published ? "发布" : ""}</td></tr>`).join("");
   const plans = newestFirst(doc.plan_outcomes).map((node) => `<tr><td>${esc(node.round)}</td><td>${esc(node.label)}</td><td>${esc(node.title)}</td><td>${esc(node.outcome)}</td><td>${esc(num(node.speedup))}</td></tr>`).join("");
+  const timing = doc.timing || {};
+  const started = timing.started_at;
+  const ended = timing.ended_at;
+  const running = doc.status === "running" && started != null;
+  const clockAttrs = running ? ` id="detail-run-clock" data-started="${esc(started)}" data-running="1"` : ` id="detail-run-clock" data-running="0"`;
+  const endLine = ended != null && !running
+    ? ` · ${timing.ended_at_estimated ? "结束时间（最后记录）" : "结束时间"} ${formatTime(ended)}`
+    : "";
+  const timingLine = `<p class="muted"${clockAttrs}>开始时间 ${formatTime(started)} · 已运行 <b id="detail-run-elapsed">${formatDuration(timing.elapsed_s)}</b>${endLine}</p>`;
   const lamp = doc.status === "running" ? `<span class="breathe" title="进行中"></span>` : "";
   const seedLine = seedKernel
     ? `<p class="muted">种子核（搜索期当前最好的一颗）：<b>${esc(seedKernel)}</b>` +
       (confirmWinner && confirmWinner !== seedKernel ? ` · 确认胜者（换一批输入重测后活下来的）：<b>${esc(confirmWinner)}</b>` : "") +
       `</p>`
     : "";
-  return `<h2>${esc(doc.id)}</h2><p>${lamp}${esc(doc.target_line || "")} ${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>${seedLine}` +
+  return `<h2>${esc(doc.id)}</h2><p>${lamp}${esc(doc.target_line || "")} ${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>${timingLine}${seedLine}` +
     `<div>` +
     `<h3>确认点</h3>${confirm}` +
     `<h3>候选</h3>` + (candidates ? `<table><thead><tr><th>序号</th><th>标签</th><th>状态</th><th>阶段</th><th>加速比</th><th>标记</th><th>说明</th></tr></thead><tbody>${candidates}</tbody></table>` : `<p class="muted">没有候选。</p>`) +
@@ -2190,6 +2229,7 @@ if (preset) {
   selectedRun = preset;
   showRight("detail");
 }
+setInterval(refreshDetailClock, 1000);
 const source = new EventSource("/api/v2/stream");
 source.onmessage = (event) => {
   const frame = JSON.parse(event.data);

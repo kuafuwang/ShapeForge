@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import time
+from pathlib import Path
 
 import pytest
 
@@ -75,6 +78,13 @@ def test_scan_reads_timeline_marks_confirmed_point_and_handoff(tmp_path, monkeyp
     )
 
     detail = scan.run_detail("gemm_fp16")
+    assert detail["timing"] == {
+        "started_at": T0,
+        "ended_at": T0 + 30,
+        "elapsed_s": 30,
+        "running": False,
+        "ended_at_estimated": False,
+    }
     lanes = detail["timeline"]["lanes"]
     assert [lane["label"] for lane in lanes] == ["问模型", "等锁", "评测"]
     by_label = {lane["label"]: lane["spans"] for lane in lanes}
@@ -318,3 +328,27 @@ def test_the_confirmed_point_shows_the_search_number_apart_and_calls_it_not_publ
         json.loads((run / "result.json").read_text()), [], {"speedup": 1.6896, "publication": "confirmed"},
     )
     assert got["speedup"] == 1.6896 and got["search_speedup"] == 1.7276
+
+
+def test_a_running_run_shows_start_and_elapsed_but_no_end(tmp_path, monkeypatch):
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    directory = runs / "live"
+    directory.mkdir(parents=True)
+    started = time.time() - 125
+    (directory / "state.json").write_text(json.dumps({
+        "pid": os.getpid(), "started_at": started, "updated_at": time.time(),
+        "phase": "plan", "task": "gemm", "dtype": "fp16",
+    }))
+    detail = scan.run_detail("live")
+    assert detail["status"] == "running"
+    assert detail["timing"]["started_at"] == pytest.approx(started)
+    assert detail["timing"]["ended_at"] is None
+    assert detail["timing"]["elapsed_s"] >= 125
+    assert detail["timing"]["running"] is True
+
+
+def test_the_detail_page_has_the_run_clock():
+    html = Path("observe/static/index.html").read_text()
+    for token in ("detail-run-clock", "开始时间", "已运行", "结束时间", "formatDuration"):
+        assert token in html
