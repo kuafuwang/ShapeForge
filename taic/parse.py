@@ -1,6 +1,6 @@
 """Extract the kernel source or the optimization plan from a model reply."""
 
-# 模型回复是自由文本。本文件做两件抽取：extract_metal 找要评测的 Metal 源码，parse_plans 找一轮里的多份方案。
+# 模型回复是自由文本。本文件做两件抽取：extract_source 找要评测的源码，parse_plans 找一轮里的多份方案。
 # 抽失败的判定很窄：没有带约定内核名的 Metal 块，结果是 None；规划 JSON 缺失，或每条方案的 title 与 change 都空，方案列表就是空的。编排器据此追问或改用 FALLBACK_PLANS，不会把残缺文本送去编译。
 
 from __future__ import annotations
@@ -15,15 +15,16 @@ _METAL_TAGS = {"metal", "msl", "cpp", "c++", "c", "cuda", "objc", ""}
 
 
 # 认定回复里要评测的那份源码。多块代码时，最后一块「标签像 MSL，且声明了 kernel void <kernel_name>」才算，前面的示例片段忽略。没有这样的块就是抽失败，编排器只追问，不把其它文本送去编译。
-def extract_metal(text: str, kernel_name: str) -> str | None:
-    """Return the Metal source in ``text``.
+def extract_source(text: str, kernel_name: str, *, tags: set[str] | None = None) -> str | None:
+    """Return the source in ``text`` for one source-fence tag set.
 
-    The request asks for exactly one ```metal block. Models sometimes add illustrative snippets first, so when
-    several blocks are present the *last* one that declares ``kernel void <kernel_name>`` wins.
+    The default tags remain the historical Metal set. The last block that declares
+    ``kernel void <kernel_name>`` wins; a ``taic-launch`` block wins over it.
     """
+    accepted = _METAL_TAGS if tags is None else {str(tag).lower() for tag in tags}
     blocks = [(tag.lower(), body) for tag, body in _FENCE.findall(text or "")]
     # 说明文字和 ```json 规划块不在候选里。
-    code = [b for tag, b in blocks if tag in _METAL_TAGS]
+    code = [b for tag, b in blocks if tag in accepted]
     # 带启动说明的块优先。说明不合法时也把这块送去评测，由评测拒绝，不退回旁边那颗契约核。
     marked = [b for b in code if "taic-launch" in b]
     if marked:
@@ -34,6 +35,11 @@ def extract_metal(text: str, kernel_name: str) -> str | None:
         return named[-1].strip("\n") + "\n"
     # 有围栏但没有约定的 kernel void 名字，与完全没有围栏相同，都是抽失败。
     return None
+
+
+def extract_metal(text: str, kernel_name: str) -> str | None:
+    """Compatibility alias for the Metal source-fence set."""
+    return extract_source(text, kernel_name)
 
 
 # 规划回复里的第一个 JSON 对象，围栏（json 或空标签）或裸文本都行。没有任何 dict 就是抽失败，方案列表会是空的。

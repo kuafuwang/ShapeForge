@@ -465,3 +465,11 @@ def test_streaming_preview_is_throttled_and_cleared_when_the_request_ends(tmp_pa
     assert json.loads(path.read_text(encoding="utf-8"))["inflight"] == {}
     run(llm._note_llm("lab", "error", error="boom"))
     assert json.loads(path.read_text(encoding="utf-8"))["inflight"] == {}
+
+
+def test_extract_source_accepts_an_explicit_fence_set():
+    from taic.parse import extract_source
+
+    text = "```xlang\nkernel void my_k() {}\n```"
+    assert extract_source(text, "my_k", tags={"xlang"}).startswith("kernel void my_k")
+    assert extract_source(text, "my_k") is None

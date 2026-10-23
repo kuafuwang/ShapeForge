@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .llm import LLMError
-from .parse import extract_metal
+from .parse import extract_source
 
 from .target import skill_path
 
@@ -141,7 +141,7 @@ def submission_name(task: str, dtype: str, size: str, label: str, file_ext: str 
 
 def kernel_text(text: str, kernel_name: str) -> str | None:
     """The Metal source in ``text``: a fenced block, or the whole file when it declares the kernel."""
-    fenced = extract_metal(text, kernel_name)
+    fenced = extract_source(text, kernel_name)
     if fenced:
         return fenced
     body = (text or "").strip("\n")
@@ -714,6 +714,7 @@ def run_kernel_agent(
         "-p", f"wrap_output_tokens={WRAP_OUTPUT_TOKENS}",
         "-p", f"wrap_minutes={WRAP_MINUTES}",
         "-p", f"submit_name={submit}",
+        "-p", f"seed_name={brief.seed_name}",
         "-p", f"budget.duration={flow_minutes}m",
         "--json",
         "--", f"Read TASK.md in this directory and do it. Write the finished kernel to {submit}. The search does not read {brief.seed_name}.",

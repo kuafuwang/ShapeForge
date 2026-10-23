@@ -5,7 +5,7 @@
   "git_commit": "ef2a048",
   "offline_tests": {
     "command": "uv run pytest -q -m 'not gpu and not llm'",
-    "passed": 976,
+    "passed": 977,
     "skipped": 1,
     "deselected": 133
   },
@@ -88,7 +88,7 @@
     "path": "tests/golden/backend_phase0_kernel.metal",
     "sha256": "dd9c31df8c49ba6093b130fe7aac638710af7df266c66d9cd1e58d0a902e4005"
   },
-  "prompt_sha1": "16f50152a005ae455e30966c00605cf935d0e1ded6ed8a8b983148f54cd6e169",
+  "prompt_sha1": "aae78242342f08ff7bfc76d204432a68a5ca0adf0dd211583a1150b9741980e8",
   "system_prompt_sha256": "62a9ea284f7df9eac56d6e75997f29de3e5f3b3c9699d58a49b2829716d1a4ec",
   "contract_description_sha256": "4768725646ef2c3249bf3095be28ced0164ca1530f4831167d3c75ed9a0f818b",
   "task_fingerprint": "34ef25170eeaeca4d8b763c8e7cada6c95858e4126112680fda402bf1690bc20",

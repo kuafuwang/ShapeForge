@@ -38,16 +38,17 @@ class Params(FlowParams):
     wrap_output_tokens: int = 4000
     wrap_minutes: int = 3
     submit_name: str = "submit.metal"
+    seed_name: str = "kernel.metal"
 
 
-def _wrap(name: str) -> str:
+def _wrap(name: str, seed_name: str = "kernel.metal") -> str:
     return (
         "Stop changing the kernel and do not run another check. "
         f"If {name} is already in this directory, do not rewrite it. "
         f"If it is missing, copy your best version onto {name} with cp. "
         "Do not use the write tool to retype the whole kernel. "
         "The search reads only that file. If it is still missing, the search records that this session returned no kernel. "
-        "kernel.metal is the seed when one was placed. Editing it does not submit. "
+        f"{seed_name} is the seed when one was placed. Editing it does not submit. "
         "Then fill in any missing lines in FEEDBACK.md and NOTES.md. "
         "One line in NOTES.md per version you tried. One line in the matching FEEDBACK.md section per pitfall or rejected premise. "
         "Do not copy an older kernel into the submission file to hide a failure."
@@ -74,4 +75,4 @@ async def kernel_once(task: str, *, agents: Agents, envs: Envs, params: Params, 
             duration=timedelta(minutes=params.wrap_minutes),
             graceful=False,
         )
-        await assistant.run(_wrap(params.submit_name), session=session, env=env, budget=wrap)
+        await assistant.run(_wrap(params.submit_name, params.seed_name), session=session, env=env, budget=wrap)
