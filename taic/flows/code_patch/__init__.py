@@ -6,12 +6,18 @@ command collects a patch for a person; it is never applied automatically.
 
 from datetime import timedelta
 
-from hmz.flows import Agent, AgentCollection, Budget, EnvCollection, FlowContext, FlowParams, LocalEnv, flow
+from hmz.flows import Agent, AgentCollection, Budget, EnvCollection, FlowContext, FlowParams, LocalEnv, Permission, PermissionKind, flow
 
 
 class Coder(Agent):
     """A pi session with terminal access; no kernel-only skill is imposed."""
 
+    _permission = Permission(
+        local=PermissionKind.ALL,
+        user=PermissionKind.READ,
+        system=PermissionKind.READ,
+        online=PermissionKind.NONE,
+    )
 
 class Agents(AgentCollection):
     assistant: Coder

@@ -7,12 +7,18 @@ from the reviewer's actual token prices; this flow only enforces it.
 
 from datetime import timedelta
 
-from hmz.flows import Agent, AgentCollection, Budget, EnvCollection, FlowContext, FlowParams, LocalEnv, flow
+from hmz.flows import Agent, AgentCollection, Budget, EnvCollection, FlowContext, FlowParams, LocalEnv, Permission, PermissionKind, flow
 
 
 class Reviewer(Agent):
     """A plain pi session with no kernel-writing skill."""
 
+    _permission = Permission(
+        local=PermissionKind.ALL,
+        user=PermissionKind.READ,
+        system=PermissionKind.READ,
+        online=PermissionKind.NONE,
+    )
 
 class Agents(AgentCollection):
     assistant: Reviewer

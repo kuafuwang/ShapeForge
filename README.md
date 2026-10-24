@@ -303,4 +303,4 @@ through triton-msl is 10x slower than MLX's fused attention and is refused for b
 
 Directory conventions: `backends/README.md`, `targets/README.md`, `kernels/README.md`, and `tests/README.md`.
 
-Agent skills and multi-tool entry points: `docs/agent-skills.md`. `docs/` (Chinese notes): `docs/架构说明.md` how the parts divide the work - `docs/架构/可观测.md` how experiments are grouped and how the dashboard reads them - `docs/诚实说明.md` what the pipeline does **not** prove, and how to check every claim - `docs/算子工程师边界.md` what this route replaces and does not replace in human roles (with the evidence paths). Index of the directory: `docs/README.md`.
+Model/P2 security boundaries: `docs/security.md`. Agent skills and multi-tool entry points: `docs/agent-skills.md`. `docs/` (Chinese notes): `docs/架构说明.md` how the parts divide the work - `docs/架构/可观测.md` how experiments are grouped and how the dashboard reads them - `docs/诚实说明.md` what the pipeline does **not** prove, and how to check every claim - `docs/算子工程师边界.md` what this route replaces and does not replace in human roles (with the evidence paths). Index of the directory: `docs/README.md`.

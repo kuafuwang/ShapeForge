@@ -8,15 +8,21 @@ updated during that turn. When the budget is spent, one short turn copies the be
 
 from datetime import timedelta
 
-from hmz.flows import Agent, AgentCollection, Budget, EnvCollection, FlowContext, FlowParams, LocalEnv, flow
+from hmz.flows import Agent, AgentCollection, Budget, EnvCollection, FlowContext, FlowParams, LocalEnv, Permission, PermissionKind, flow
 from hmz.flows.errors import BudgetExceeded
 
 
 class Assistant(Agent):
     """pi for one kernel. ``taic-tools`` is the skill in this flow's ``skills/``."""
 
-    _skills = ("taic-tools",)
+    _permission = Permission(
+        local=PermissionKind.ALL,
+        user=PermissionKind.READ,
+        system=PermissionKind.READ,
+        online=PermissionKind.NONE,
+    )
 
+    _skills = ("taic-tools",)
 
 class Agents(AgentCollection):
     """The one coding agent that writes the kernel."""

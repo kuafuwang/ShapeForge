@@ -30,6 +30,34 @@ MIN_BUDGET_USD = 0.05
 CACHE_READ_ALLOWANCE = 200_000
 CACHE_WRITE_ALLOWANCE = 20_000
 
+# Paths the P2 code agent may never touch. These are not normal feature areas:
+# changing them can make a later check pass without making the kernel or harness
+# better. They get a separate human security review, not an auto-applied patch.
+SECURITY_CRITICAL = (
+    "tests/",
+    "tcenv/evaluate.py",
+    "tcenv/schema.py",
+    "tcenv/bench.py",
+    "tcenv/backends/",
+    "tcenv/gpulock.py",
+    "taic/prompts.py",
+    "taic/kernel_agent.py",
+    "taic/harness.py",
+    "taic/review.py",
+    "taic/trust.py",
+    "taic/code_agent.py",
+    "taic/acceptance.py",
+    "taic/cli.py",
+    "taic/flows/",
+    "experiments/common.py",
+    "targets/",
+    "backends/",
+    ".pi/",
+    "control.json",
+    "taic.toml",
+    "taic.paper.toml",
+)
+
 
 class CodeAgentError(LLMError):
     """@brief 代码 agent 或工作树没能交出一个可用的补丁。"""
@@ -104,7 +132,7 @@ def forbidden_path(path: str) -> bool:
     value = value.lstrip("/")
     if value == "tasks" or value.startswith("tasks/"):
         return True
-    if value in {"tcenv/gpulock.py", "taic/trust.py", "control.json"}:
+    if any(value == prefix.rstrip("/") or value.startswith(prefix) for prefix in SECURITY_CRITICAL):
         return True
     if value.startswith("targets/") and value.endswith("/trust.toml"):
         return True

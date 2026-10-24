@@ -31,3 +31,5 @@ Credentials are never committed.
 ## Agent skills
 
 Canonical sources: `.pi/skills/harness-feedback/` and `taic/flows/kernel_once/skills/taic-tools/`. Claude/Codex/Cursor/Pi aliases and entry points are documented in `docs/agent-skills.md`. Do not duplicate skill text; edit the canonical source.
+
+Security boundaries for model-written kernels and the P2 code agent: `docs/security.md`.
