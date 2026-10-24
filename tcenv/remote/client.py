@@ -14,6 +14,7 @@ import queue
 import secrets
 import subprocess
 import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import BinaryIO, Callable, Protocol
@@ -558,6 +559,8 @@ class RemoteEvaluatorPool:
         task_fingerprint: str = "",
         timeout_s: float | None = 480.0,
         signature_key: bytes | None = None,
+        idle_timeout_s: float | None = 300.0,
+        max_clients: int | None = 32,
     ) -> None:
         if not isinstance(run_id, str) or not run_id:
             raise ValueError("remote pool run_id is required")
@@ -569,6 +572,12 @@ class RemoteEvaluatorPool:
             raise ValueError("remote pool token or token provider is required")
         if not isinstance(token, str) and not callable(token):
             raise ValueError("remote pool token must be text or a provider")
+        if idle_timeout_s is not None and (isinstance(idle_timeout_s, bool) or not isinstance(idle_timeout_s, (int, float)) or not idle_timeout_s > 0):
+            raise ValueError("remote pool idle_timeout_s must be positive or None")
+        if max_clients is not None and (isinstance(max_clients, bool) or not isinstance(max_clients, int) or max_clients < 1):
+            raise ValueError("remote pool max_clients must be positive or None")
+        self.idle_timeout_s = None if idle_timeout_s is None else float(idle_timeout_s)
+        self.max_clients = max_clients
         self.transport_factory = transport_factory
         self.token = token
         self.run_id = run_id
@@ -584,7 +593,51 @@ class RemoteEvaluatorPool:
         self._request_clients: dict[str, RemoteEvaluator] = {}
         self._receipts: dict[str, str] = {}
         self._last: RemoteEvaluator | None = None
+        self._last_used: dict[tuple[str, str, str], float] = {}
         self._closed = False
+
+    def _touch(self, client: RemoteEvaluator) -> None:
+        self._last = client
+        for key, held in self._clients.items():
+            if held is client:
+                self._last_used[key] = time.monotonic()
+                return
+
+    def _close_key(self, key: tuple[str, str, str], client: RemoteEvaluator) -> None:
+        if client._active_request_id or client in self._request_clients.values():
+            return
+        try:
+            client.close()
+        finally:
+            self._clients.pop(key, None)
+            self._last_used.pop(key, None)
+            if self._last is client:
+                self._last = None
+
+    def reap_idle(self) -> None:
+        """Close only inactive clients past the idle timeout or LRU limit."""
+        now = time.monotonic()
+        if self.idle_timeout_s is not None:
+            for key, last_used in list(self._last_used.items()):
+                client = self._clients.get(key)
+                if client is None:
+                    self._last_used.pop(key, None)
+                elif now - last_used >= self.idle_timeout_s:
+                    self._close_key(key, client)
+        if self.max_clients is None:
+            return
+        while len(self._clients) > self.max_clients:
+            candidates = [
+                (last_used, key, client)
+                for key, last_used in self._last_used.items()
+                if (client := self._clients.get(key)) is not None
+                and not client._active_request_id
+                and client not in self._request_clients.values()
+            ]
+            if not candidates:
+                return
+            _last_used, key, client = min(candidates)
+            self._close_key(key, client)
 
     @property
     def provenance(self) -> EvaluatorProvenance | None:
@@ -601,6 +654,7 @@ class RemoteEvaluatorPool:
     def _client_for(self, request: EvaluationRequest) -> RemoteEvaluator:
         if self._closed:
             raise RemoteError("transport_closed", "remote evaluator pool is closed")
+        self.reap_idle()
         run_id = request.run_id or self.run_id
         if request.run_id and request.run_id != self.run_id:
             raise RemoteError("session_mismatch", "request run_id differs from this evaluator pool")
@@ -613,7 +667,7 @@ class RemoteEvaluatorPool:
         key = (run_id, session_id, target_id)
         client = self._clients.get(key)
         if client is not None:
-            self._last = client
+            self._touch(client)
             return client
         token = self.token(run_id, session_id) if callable(self.token) else self.token
         if not isinstance(token, str) or not token:
@@ -637,7 +691,8 @@ class RemoteEvaluatorPool:
             client.close()
             raise
         self._clients[key] = client
-        self._last = client
+        self._touch(client)
+        self.reap_idle()
         return client
 
     def formal(self, request: EvaluationRequest) -> EvaluationResult:
@@ -658,6 +713,7 @@ class RemoteEvaluatorPool:
             return result
         finally:
             self._request_clients.pop(request.request_id, None)
+            self._touch(client)
 
     def selfcheck(self, request: EvaluationRequest) -> EvaluationResult:
         if request.kind != "selfcheck":
@@ -677,6 +733,7 @@ class RemoteEvaluatorPool:
             return result
         finally:
             self._request_clients.pop(request.request_id, None)
+            self._touch(client)
 
     def cancel(self, request_id: str) -> None:
         """Cancel only the session that owns request_id, if it is still active."""
@@ -696,6 +753,8 @@ class RemoteEvaluatorPool:
         self._clients.clear()
         self._request_clients.clear()
         self._receipts.clear()
+        self._last_used.clear()
+        self._last = None
 
     def __enter__(self) -> "RemoteEvaluatorPool":
         return self
@@ -719,6 +778,8 @@ def remote_evaluator_pool_from_command(
     env: dict[str, str] | None = None,
     timeout_s: float | None = 480.0,
     signature_key: bytes | None = None,
+    idle_timeout_s: float | None = 300.0,
+    max_clients: int | None = 32,
 ) -> RemoteEvaluatorPool:
     """Build a per-session pool for SSH/forced-command transports."""
     def factory(key: tuple[str, str, str]) -> CommandTransport:
@@ -737,4 +798,6 @@ def remote_evaluator_pool_from_command(
         task_fingerprint=task_fingerprint,
         timeout_s=timeout_s,
         signature_key=signature_key,
+        idle_timeout_s=idle_timeout_s,
+        max_clients=max_clients,
     )

@@ -146,6 +146,10 @@ def cmd_run(a: argparse.Namespace) -> int:
                     raise ValueError(f"remote evaluator target {remote.target_id!r} differs from --target")
                 if not remote.publishable_site_ids:
                     raise ValueError("remote evaluator config has no publishable_site_ids; refusing to start a search")
+                if not remote.publishable_epochs:
+                    raise ValueError("remote evaluator config has no publishable_epochs; refusing to start a search")
+                if remote.selfcheck_token_file is None:
+                    raise ValueError("remote evaluator config requires selfcheck_token_file for selfcheck")
             orch = Orchestrator(
                 a.task, a.dtype, a.size, cfg, search,
                 run_dir=Path(a.run_dir) if a.run_dir else None,
@@ -417,6 +421,10 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
             raise ResumeRefused(f"remote evaluator target {remote.target_id!r} differs from the run target {resume_target!r}", 5)
         if not remote.publishable_site_ids:
             raise ResumeRefused("remote evaluator config has no publishable_site_ids", 5)
+        if not remote.publishable_epochs:
+            raise ResumeRefused("remote evaluator config has no publishable_epochs", 5)
+        if remote.selfcheck_token_file is None:
+            raise ResumeRefused("remote evaluator config requires selfcheck_token_file for selfcheck", 5)
     execution_path = run_dir / "execution.json"
     try:
         execution = json.loads(execution_path.read_text(encoding="utf-8")) if execution_path.is_file() else None
@@ -430,6 +438,8 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
             raise ResumeRefused("cannot resume a remote evaluation without --remote-evaluator-config", 5)
         if mode == "local" and remote is not None:
             raise ResumeRefused("cannot switch a local run to remote evaluation during resume", 5)
+        if mode == "remote" and not execution.get("publishable_epochs"):
+            raise ResumeRefused("cannot resume a remote run without an explicit publication epoch allowlist", 5)
         if remote is not None:
             if set(execution.get("publishable_site_ids") or []) != set(remote.publishable_site_ids):
                 raise ResumeRefused("remote publication site allowlist differs from the original run", 5)

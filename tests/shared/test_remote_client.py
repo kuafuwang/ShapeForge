@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -149,6 +150,61 @@ def test_progress_frames_update_the_host_progress_file(tmp_path):
     assert document["stage"] == "done"
     assert document["finished"] is True
     assert "TCENV_REMOTE_PROGRESS_PATH" not in document
+
+
+def _pool_for_lifecycle(tmp_path: Path, **options) -> RemoteEvaluatorPool:
+    env = {**os.environ, "PYTHONPATH": str(ROOT) + os.pathsep + os.environ.get("PYTHONPATH", "")}
+
+    def factory(key):
+        run_id, session_id, _target = key
+        command = [
+            sys.executable, "-m", "tests.support.npu_sim.service_entry",
+            "--state-dir", str(tmp_path / session_id),
+            "--run-id", run_id, "--session-id", session_id, "--token", TOKEN,
+        ]
+        return CommandTransport(command, env=env)
+
+    return RemoteEvaluatorPool(
+        factory, token=TOKEN, run_id="run-1", target_id="sim-npu-test",
+        expected_site_id="sim-site", expected_worker_build="sim-build-1",
+        expected_task_pack_digest=TASK_PACK_DIGEST, task_fingerprint=TASK_FINGERPRINT,
+        timeout_s=2, **options,
+    )
+
+
+def test_pool_retires_only_idle_connections(tmp_path):
+    """@brief idle 连接会回收重建，活跃请求在 idle/LRU 边界也不会被关闭。"""
+    pool = _pool_for_lifecycle(tmp_path, idle_timeout_s=0.02, max_clients=1)
+    try:
+        assert pool.formal(_request(request_id="idle-1", session_id="session-1")).report["status"] == "ok"
+        first = next(iter(pool._clients.values()))
+        first._active_request_id = "active"
+        pool._request_clients["active"] = first
+        time.sleep(0.04)
+        pool.reap_idle()
+        assert first._closed is False
+        first._active_request_id = ""
+        pool._request_clients.clear()
+        pool.reap_idle()
+        assert first._closed is True
+        assert pool.formal(_request(request_id="idle-2", session_id="session-2")).report["status"] == "ok"
+        assert len(pool._clients) == 1
+        assert first not in pool._clients.values()
+    finally:
+        pool.close()
+
+
+def test_pool_lru_limit_closes_the_oldest_idle_connection(tmp_path):
+    """@brief 连接数超过上限时关闭最老的空闲连接，不无限积累 SSH 子进程。"""
+    pool = _pool_for_lifecycle(tmp_path, idle_timeout_s=None, max_clients=1)
+    try:
+        assert pool.formal(_request(request_id="lru-1", session_id="session-1")).report["status"] == "ok"
+        first = next(iter(pool._clients.values()))
+        assert pool.formal(_request(request_id="lru-2", session_id="session-2")).report["status"] == "ok"
+        assert first._closed is True
+        assert len(pool._clients) == 1
+    finally:
+        pool.close()
 
 
 def test_transport_timeout_closes_the_request(tmp_path):

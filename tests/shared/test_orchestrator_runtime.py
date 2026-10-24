@@ -29,6 +29,12 @@ class RecordingEvaluator:
         raise AssertionError("search must use formal evaluation")
 
 
+def _test_epoch() -> str:
+    from tcenv.evaluation import EvaluationRequest
+
+    return local_provenance(EvaluationRequest(task="relu", dtype="fp16", size="small", source="kernel void demo() {}", target_id="apple-m4-max")).epoch
+
+
 class RecordingRunner:
     def __init__(self) -> None:
         self.calls = []
@@ -43,7 +49,7 @@ class RecordingRunner:
 def test_search_uses_the_injected_evaluator_with_a_unified_request(tmp_path):
     """@brief `_eval` 的搜索评测通过统一 executor，并带上 run/task fingerprint。"""
     evaluator = RecordingEvaluator()
-    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0, evaluator=evaluator, publishable_site_ids={"local"})
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0, evaluator=evaluator, publishable_site_ids={"local"}, publishable_epochs={_test_epoch()})
     res = run(orch)
     assert res.best_speedup == 1.2
     assert evaluator.requests
@@ -102,7 +108,7 @@ class UnpublishedEvaluator(RecordingEvaluator):
 
 def test_remote_failure_finishes_with_evaluation_unavailable_and_outbox(tmp_path):
     """@brief 远程断连不写假报告，保留 result 和 unavailable outbox，且不计 GPU 故障。"""
-    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0, evaluator=FailingEvaluator())
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0, evaluator=FailingEvaluator(), publishable_epochs={_test_epoch()})
     res = run(orch)
     assert res.stop_reason == "evaluation_unavailable"
     assert (orch.run_dir / "result.json").is_file()
@@ -117,7 +123,7 @@ def test_remote_failure_finishes_with_evaluation_unavailable_and_outbox(tmp_path
 
 def test_publication_false_is_rejected_before_confirmation(tmp_path):
     """@brief publication_allowed=False 的报告不能进入 best 或 confirmed。"""
-    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0, evaluator=UnpublishedEvaluator(), publishable_site_ids={"local"})
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0, evaluator=UnpublishedEvaluator(), publishable_site_ids={"local"}, publishable_epochs={_test_epoch()})
     res = run(orch)
     assert res.stop_reason == "evaluation_unavailable"
     assert res.best_speedup is None and res.confirmed_speedup is None
@@ -165,6 +171,17 @@ def test_selfcheck_bridge_factory_is_scoped_to_one_session(tmp_path):
     assert (brief.selfcheck_max_timed, brief.selfcheck_max_gpu_s, brief.selfcheck_allow_validate) == (1, 2.5, False)
 
 
+def test_remote_orchestrator_requires_an_explicit_epoch_allowlist(tmp_path):
+    """@brief remote 不得用 publishable_epochs=None 兼容行为绕过精确发布绑定。"""
+    from taic.orchestrator import RunStartError
+
+    with pytest.raises(RunStartError, match="evaluator epoch allowlist"):
+        make_orch(
+            tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0,
+            evaluator=RecordingEvaluator(), publishable_site_ids={"local"},
+        )
+
+
 def test_resume_rejects_removing_epoch_allowlist_even_through_direct_orchestrator(tmp_path):
     """@brief 库入口也必须拒绝 remote resume 时把 epoch 白名单改成不限制。"""
     from taic.orchestrator import RunStartError
@@ -187,7 +204,7 @@ def test_resume_rejects_removing_epoch_allowlist_even_through_direct_orchestrato
 def test_execution_manifest_records_observed_evaluator_identity(tmp_path):
     """@brief execution.json 必须保留实际 evaluator 身份，而不只保存用户配置。"""
     evaluator = RecordingEvaluator()
-    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0, evaluator=evaluator, publishable_site_ids={"local"})
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0, evaluator=evaluator, publishable_site_ids={"local"}, publishable_epochs={_test_epoch()})
     run(orch)
     document = json.loads((orch.run_dir / "execution.json").read_text())
     observed = document["observed"]

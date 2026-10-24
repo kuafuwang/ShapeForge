@@ -595,7 +595,7 @@ class Orchestrator:
         @param selfcheck_token_file 与 socket 配套的 0600 token 文件；固定 bridge 模式必填。
         @param selfcheck_bridge_factory 可选的每场 bridge 工厂，参数为 (session_id, work, evaluator)，返回 (server, token_file)。
         @param publishable_site_ids 允许发布的 host 站点白名单；local 默认只有 local，远程默认空。
-        @param publishable_epochs 可选的精确 evaluator epoch 白名单；None 表示只按站点限制。
+        @param publishable_epochs 精确 evaluator epoch 白名单；remote 必须显式给出，None/空列表都拒绝发布。local 可为 None。
         @param external_roots 扫「别的运行里的核」的根目录；None 表示默认扫仓库 ``runs/``。
         @param target_id 目标设备 id。
         @param from_catalog 从 kernel catalog 取上一版内核。
@@ -684,6 +684,8 @@ class Orchestrator:
         self.publishable_epochs = frozenset(publishable_epochs) if publishable_epochs is not None else None
         if any(not isinstance(site, str) or not site for site in self.publishable_site_ids):
             raise RunStartError("publishable_site_ids must contain non-empty site ids")
+        if not self._local_evaluator and not self.publishable_epochs:
+            raise RunStartError("remote evaluator requires an explicit evaluator epoch allowlist")
         if self.publishable_epochs is not None and any(not isinstance(epoch, str) or not epoch for epoch in self.publishable_epochs):
             raise RunStartError("publishable_epochs must contain non-empty epochs")
         self._outbox = None if self._local_evaluator else EvaluationOutbox(self.run_dir, signature_key=getattr(self.evaluator, "signature_key", None))
@@ -713,6 +715,8 @@ class Orchestrator:
                 raise RunStartError("cannot resume with a different publication site allowlist")
             previous_epochs = previous_execution.get("publishable_epochs")
             current_epochs = execution_document["publishable_epochs"]
+            if previous_execution["evaluation"] == "remote" and not previous_epochs:
+                raise RunStartError("cannot resume a remote run without an explicit publication epoch allowlist")
             if previous_epochs is not None and (current_epochs is None or set(previous_epochs) != set(current_epochs)):
                 raise RunStartError("cannot resume with a different publication epoch allowlist")
         self._session_runner_injected = session_runner is not None

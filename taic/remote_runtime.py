@@ -49,7 +49,7 @@ class RemoteEvaluationConfig:
     expected_task_pack_digest: str = ""
     task_fingerprint: str = ""
     publishable_site_ids: frozenset[str] = frozenset()
-    publishable_epochs: frozenset[str] | None = None
+    publishable_epochs: frozenset[str] = frozenset()
     socket_root: Path = _default_socket_root()
     selfcheck_reps: int = 15
     selfcheck_max_timed: int = 20
@@ -57,6 +57,8 @@ class RemoteEvaluationConfig:
     selfcheck_allow_validate: bool = True
     selfcheck_min_improvement: float = 1.005
     selfcheck_noise_z: float = 2.0
+    idle_timeout_s: float | None = 300.0
+    max_clients: int | None = 32
     timeout_s: float = 480.0
 
     @classmethod
@@ -72,7 +74,8 @@ class RemoteEvaluationConfig:
             "command", "token_file", "selfcheck_token_file", "signature_key_file", "target_id", "expected_site_id", "expected_worker_build",
             "expected_task_pack_digest", "task_fingerprint", "publishable_site_ids", "publishable_epochs",
             "socket_root", "selfcheck_reps", "selfcheck_max_timed", "selfcheck_max_gpu_s",
-            "selfcheck_allow_validate", "selfcheck_min_improvement", "selfcheck_noise_z", "timeout_s",
+            "selfcheck_allow_validate", "selfcheck_min_improvement", "selfcheck_noise_z",
+            "idle_timeout_s", "max_clients", "timeout_s",
         }
         unknown = set(document) - allowed
         if unknown:
@@ -90,11 +93,11 @@ class RemoteEvaluationConfig:
             candidate = Path(value)
             return candidate if candidate.is_absolute() else path.parent / candidate
         sites = document.get("publishable_site_ids", [])
-        epochs = document.get("publishable_epochs")
+        epochs = [] if document.get("publishable_epochs") is None else document.get("publishable_epochs")
         if not isinstance(sites, list) or any(not isinstance(site, str) or not site for site in sites):
             raise ValueError("publishable_site_ids must be a list of non-empty strings")
-        if epochs is not None and (not isinstance(epochs, list) or any(not isinstance(epoch, str) or not epoch for epoch in epochs)):
-            raise ValueError("publishable_epochs must be null or a list of non-empty strings")
+        if not isinstance(epochs, list) or any(not isinstance(epoch, str) or not epoch for epoch in epochs):
+            raise ValueError("publishable_epochs must be a list of non-empty strings")
         socket_root = document.get("socket_root", str(_default_socket_root()))
         if not isinstance(socket_root, str) or not socket_root:
             raise ValueError("socket_root must be a path")
@@ -108,6 +111,12 @@ class RemoteEvaluationConfig:
                 raise ValueError(f"{name} must be positive")
         if not isinstance(document.get("selfcheck_allow_validate", True), bool):
             raise ValueError("selfcheck_allow_validate must be boolean")
+        idle = document.get("idle_timeout_s", 300.0)
+        if idle is not None and (isinstance(idle, bool) or not isinstance(idle, (int, float)) or not math.isfinite(idle) or idle <= 0):
+            raise ValueError("idle_timeout_s must be positive or null")
+        max_clients = document.get("max_clients", 32)
+        if max_clients is not None and (isinstance(max_clients, bool) or not isinstance(max_clients, int) or max_clients < 1):
+            raise ValueError("max_clients must be positive or null")
         for name, default, lower in (("selfcheck_min_improvement", 1.005, 1.0), ("selfcheck_noise_z", 2.0, 0.0)):
             value = document.get(name, default)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < lower:
@@ -123,7 +132,7 @@ class RemoteEvaluationConfig:
             expected_task_pack_digest=str(document.get("expected_task_pack_digest") or ""),
             task_fingerprint=str(document.get("task_fingerprint") or ""),
             publishable_site_ids=frozenset(sites),
-            publishable_epochs=None if epochs is None else frozenset(epochs),
+            publishable_epochs=frozenset(epochs),
             socket_root=resolve(socket_root),
             selfcheck_reps=document.get("selfcheck_reps", 15),
             selfcheck_max_timed=document.get("selfcheck_max_timed", 20),
@@ -131,6 +140,8 @@ class RemoteEvaluationConfig:
             selfcheck_allow_validate=document.get("selfcheck_allow_validate", True),
             selfcheck_min_improvement=float(document.get("selfcheck_min_improvement", 1.005)),
             selfcheck_noise_z=float(document.get("selfcheck_noise_z", 2.0)),
+            idle_timeout_s=idle,
+            max_clients=max_clients,
             timeout_s=float(document.get("timeout_s", 480.0)),
         )
 
@@ -152,8 +163,9 @@ class RemoteEvaluationConfig:
         return token
 
     def selfcheck_token_for_session(self, run_id: str, session_id: str) -> str:
-        path = self.selfcheck_token_file or self.token_file
-        path = Path(self._format(str(path), run_id, session_id))
+        if self.selfcheck_token_file is None:
+            raise RemoteError("selfcheck_grant_required", "remote selfcheck requires a separate selfcheck_token_file")
+        path = Path(self._format(str(self.selfcheck_token_file), run_id, session_id))
         try:
             token = path.read_text(encoding="utf-8").strip()
         except OSError as exc:
@@ -163,7 +175,9 @@ class RemoteEvaluationConfig:
         return token
 
     def make_selfcheck_evaluator(self, run_id: str) -> RemoteEvaluatorPool:
-        """Create the pool for selfcheck requests, optionally with a separate grant."""
+        """Create a selfcheck-only pool; never silently reuse the formal grant."""
+        if self.selfcheck_token_file is None:
+            raise ValueError("remote selfcheck requires selfcheck_token_file")
         return remote_evaluator_pool_from_command(
             self.command_for_session,
             token=self.selfcheck_token_for_session,
@@ -175,6 +189,8 @@ class RemoteEvaluationConfig:
             task_fingerprint=self.task_fingerprint,
             timeout_s=self.timeout_s,
             signature_key=self._signature_key(),
+            idle_timeout_s=self.idle_timeout_s,
+            max_clients=self.max_clients,
         )
 
     def _signature_key(self) -> bytes | None:
@@ -201,6 +217,8 @@ class RemoteEvaluationConfig:
             task_fingerprint=self.task_fingerprint,
             timeout_s=self.timeout_s,
             signature_key=self._signature_key(),
+            idle_timeout_s=self.idle_timeout_s,
+            max_clients=self.max_clients,
         )
 
     def make_bridge_factory(
@@ -216,6 +234,8 @@ class RemoteEvaluationConfig:
         noise_z: float | None = None,
     ) -> Callable[[str, Path, Any], tuple[SelfCheckServer, str]]:
         """Return the per-session bridge factory consumed by Orchestrator."""
+        if self.selfcheck_token_file is None:
+            raise ValueError("remote selfcheck requires selfcheck_token_file; formal fallback is disabled")
         def factory(session_id: str, work: Path, evaluator: Any) -> tuple[SelfCheckServer, str]:
             token = secrets.token_hex(32)
             self.socket_root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -240,7 +260,7 @@ class RemoteEvaluationConfig:
             else:
                 seed_report_path.parent.mkdir(parents=True, exist_ok=True)
                 seed_report_path.write_text(seed_report, encoding="utf-8")
-            selfcheck_evaluator = self.make_selfcheck_evaluator(run_id) if self.selfcheck_token_file is not None else evaluator
+            selfcheck_evaluator = self.make_selfcheck_evaluator(run_id)
             config = SelfCheckConfig(
                 task=task,
                 dtype=dtype,
@@ -262,7 +282,7 @@ class RemoteEvaluationConfig:
                 usage_path=usage_path,
                 max_timed=self.selfcheck_max_timed,
                 max_gpu_s=self.selfcheck_max_gpu_s,
-                close_evaluator_on_stop=self.selfcheck_token_file is not None,
+                close_evaluator_on_stop=True,
             )
             server = SelfCheckServer(config, selfcheck_evaluator, self.socket_root / socket_name)
             try:

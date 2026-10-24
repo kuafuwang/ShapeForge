@@ -20,15 +20,19 @@ ROOT = Path(__file__).resolve().parents[2]
 def _config(tmp_path: Path) -> RemoteEvaluationConfig:
     token_file = tmp_path / "grant.token"
     token_file.write_text(TOKEN)
+    selfcheck_file = tmp_path / "selfcheck-grant.token"
+    selfcheck_file.write_text("selfcheck-token")
     command = [
         sys.executable, "-m", "tests.support.npu_sim.service_entry",
         "--state-dir", str(tmp_path / "state" / "{session_id}"),
         "--run-id", "{run_id}", "--session-id", "{session_id}", "--token", TOKEN,
+        "--selfcheck-token", "selfcheck-token",
     ]
     path = tmp_path / "remote.json"
     path.write_text(json.dumps({
         "command": command,
         "token_file": str(token_file),
+        "selfcheck_token_file": str(selfcheck_file),
         "target_id": "sim-npu-test",
         "expected_site_id": "sim-site",
         "expected_worker_build": "sim-build-1",
@@ -142,6 +146,21 @@ def test_remote_config_can_use_separate_formal_and_selfcheck_grants(tmp_path):
     finally:
         selfcheck_pool.close()
         evaluator.close()
+
+
+def test_remote_selfcheck_never_falls_back_to_the_formal_grant(tmp_path):
+    """@brief 缺少独立 selfcheck grant 时必须拒绝，而不是复用 formal evaluator。"""
+    from dataclasses import replace
+    import pytest
+
+    config = replace(_config(tmp_path), selfcheck_token_file=None)
+    with pytest.raises(ValueError, match="selfcheck_token_file"):
+        config.make_bridge_factory(
+            task="relu", dtype="fp16", size="small",
+            task_fingerprint=TASK_FINGERPRINT, run_id="run-1",
+        )
+    with pytest.raises(ValueError, match="selfcheck_token_file"):
+        config.make_selfcheck_evaluator("run-1")
 
 
 def test_remote_config_rejects_unknown_fields(tmp_path):
