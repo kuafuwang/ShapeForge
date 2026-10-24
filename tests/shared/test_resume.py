@@ -901,6 +901,33 @@ def test_a_reply_that_only_asks_for_a_tool_does_not_become_a_kernel(tmp_path):
     assert res.best_label is None
 
 
+def test_mixed_chat_and_agent_costs_stay_monotonic():
+    """@brief chat 的已记录总账必须成为后续 agent 费用的累计基线。"""
+    events = [
+        {"event": "chat", "cost_usd": 0.5, "total_usd": 1.0, "usage": {}},
+        {"event": "agent", "cost_usd": 0.2, "tokens": {}},
+    ]
+    requests = rs._requests_from_transcript(events, [])
+    assert requests[-1]["total_usd"] == 1.2
+
+
+def test_resume_preserves_member_effort_from_run_config(tmp_path):
+    """@brief 续跑按 run_config 恢复各成员自己的 effort，而不是继承活动配置。"""
+    from argparse import Namespace
+
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "run_config.json").write_text(json.dumps({
+        "committees": [
+            {"name": "first", "members": [{"provider": "deepseek", "model": "fake", "reasoning_effort": "high"}]},
+            {"name": "second", "members": [{"provider": "deepseek", "model": "fake", "reasoning_effort": "low"}]},
+        ]
+    }))
+    args = Namespace(config=None, preset="base", model=None, dry_run=True)
+    committees = cli._committees_for_resume(args, CFG, run)
+    assert committees[1].members[0].cfg.reasoning_effort == "low"
+
+
 def test_resume_restores_notes_and_the_feedback_sequence(tmp_path):
     """@brief 验证续跑能恢复上一轮的 NOTES.md 摘要与对方给的提示（feedback），并把反馈序号接到 2。
 

@@ -147,6 +147,22 @@ def test_a_recheck_timeout_stops_the_search_and_is_not_stored_as_a_wrong_kernel(
     assert next(iter(orch.cache.values())).status == "ok"
 
 
+def test_an_unresolved_recheck_is_pending_on_resume(tmp_path):
+    """@brief timeout/crash 不当核错，但也不能在 resume 时冒充复查通过。"""
+    from taic import resume as rs
+
+    def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
+        status = "timeout" if mode == "quick" else "ok"
+        return _report(task, dtype, size, mode=mode, seed=seed, status=status, speed=1.2 if status == "ok" else None)
+
+    orch = _orch(tmp_path, "pending", ev, on=True, hangs=1)
+    with pytest.raises(StopRun):
+        asyncio.run(orch._eval(SOURCE, "init"))
+    candidates = rs._read_candidates(orch.run_dir, [])
+    assert candidates[0]["recheck_pending"] is True
+    assert candidates[0]["recheck_rejected"] is False
+
+
 def test_a_failed_confirmation_keeps_a_retest_record_and_does_not_run_it(tmp_path):
     """@brief 验证确认失败时保留待重测记录但不自动执行，并记下失败状态与速度关系。
 

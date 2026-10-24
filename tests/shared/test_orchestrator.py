@@ -70,6 +70,38 @@ def test_happy_path_selects_the_fastest_eligible_candidate_and_confirms_it(tmp_p
     assert (tmp_path / "run" / "candidates" / "000_init" / "kernel.metal").exists()
 
 
+def test_confirmation_error_overrides_the_search_stop_reason(tmp_path, monkeypatch):
+    """@brief 搜索已 max_rounds 时确认异常也必须显式记录 confirm_error。"""
+    from tcenv.schema import SchemaError
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1)
+
+    async def fail_confirmation(_res):
+        raise SchemaError("broken confirmation")
+
+    monkeypatch.setattr(orch, "_confirm", fail_confirmation)
+    res = run(orch)
+    assert res.stop_reason.startswith("confirm_error: SchemaError")
+    assert res.best_speedup
+
+
+def test_auto_run_directories_are_unique_even_with_a_frozen_timestamp(tmp_path, monkeypatch):
+    """@brief 自动目录不能只靠秒级时间戳，两个同秒实例不能共享产物。"""
+    from taic.llm import LLMConfig, SearchConfig
+    import taic.orchestrator as module
+
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(module.time, "strftime", lambda _fmt: "20261024-000000")
+    cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
+    search = SearchConfig(budget_usd=0.0, max_rounds=0, kernel_agent="pi")
+
+    def make():
+        return module.Orchestrator("relu", "fp16", "small", cfg, search, evaluate_fn=fake_eval([]), client=FakeClient([]), log=lambda _s: None)
+
+    first, second = make(), make()
+    assert first.run_dir != second.run_dir
+
+
 def test_a_failed_outer_evaluation_is_handed_to_the_next_session(tmp_path):
     """@brief 验证首稿评测失败后，失败信息会交给下一次会话，由它产出可用的内核。
 

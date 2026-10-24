@@ -78,10 +78,16 @@ def committees_record(committees: list[Committee]) -> list[dict]:
     @param committees 两个委员会。
     @return 可直接写入 JSON 的列表。
     """
-    return [
-        {"name": c.name, "members": [{"provider": m.provider, "model": m.model} for m in c.members]}
-        for c in committees
-    ]
+    rows = []
+    for committee in committees:
+        members = []
+        for member in committee.members:
+            row = {"provider": member.provider, "model": member.model}
+            if member.cfg.reasoning_effort is not None:
+                row["reasoning_effort"] = member.cfg.reasoning_effort
+            members.append(row)
+        rows.append({"name": committee.name, "members": members})
+    return rows
 
 
 def default_committees(active: LLMConfig, provider: str = "deepseek") -> list[Committee]:

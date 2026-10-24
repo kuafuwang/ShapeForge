@@ -29,6 +29,7 @@ import secrets
 import re
 import statistics
 import subprocess
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -241,6 +242,8 @@ class Candidate:
     within_noise: bool = False  # measured faster than the best at the time, but not by more than the measurement noise
     # 第二种子复查判了核错。搜索报告仍可能是 ok，但不能进确认池，也不能当发布胜者。
     recheck_rejected: bool = False
+    # 有复查记录但没有通过（例如 timeout/crash），恢复时不能把它当成已通过。
+    recheck_pending: bool = False
 
     # 只做正确性恢复时为真：合格不看加速比，结束时也不做 _confirm。
     correctness_only: bool = False
@@ -601,7 +604,15 @@ class Orchestrator:
             raise RunStartError(str(e)) from e
         self._committee_name = self.committees[0].name
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        self.run_dir = Path(run_dir) if run_dir else REPO_ROOT / "runs" / self.target_id / f"{stamp}_{task_name}_{dtype}_{llm_cfg.model}"
+        if run_dir:
+            self.run_dir = Path(run_dir)
+        elif not resuming:
+            parent = REPO_ROOT / "runs" / self.target_id
+            parent.mkdir(parents=True, exist_ok=True)
+            model_dir = re.sub(r"[^A-Za-z0-9_.-]+", "_", llm_cfg.model)
+            self.run_dir = Path(tempfile.mkdtemp(prefix=f"{stamp}_{task_name}_{dtype}_{model_dir}_", dir=parent))
+        else:
+            self.run_dir = REPO_ROOT / "runs" / self.target_id / f"{stamp}_{task_name}_{dtype}_{llm_cfg.model}"
         self.log = log
         hw_feedback = bool(search.hw_feedback and self.backend.capabilities.supports_hw_features)
         self.system = prompts.system_prompt(self.task, use_tools=llm_cfg.use_tools, profiler_evidence=search.profile_poor, hw_feedback=hw_feedback, target_id=self.target_id)
@@ -1009,7 +1020,7 @@ class Orchestrator:
             t = by_idx.get(c["idx"], {})
             cand = Candidate(idx=c["idx"], label=c["label"], source=c["source"], report=c["report"], plan=c.get("plan"), cost_usd=t.get("cost_usd", 0.0), t_s=t.get("t_s", 0.0),
                              is_best=False, within_noise=bool(t.get("within_noise")), correctness_only=self.search.correctness_only,
-                             recheck_rejected=bool(c.get("recheck_rejected")), origin=dict(self._candidate_origins.get(c["label"]) or {}))
+                             recheck_rejected=bool(c.get("recheck_rejected")), recheck_pending=bool(c.get("recheck_pending")), origin=dict(self._candidate_origins.get(c["label"]) or {}))
             self.candidates.append(cand)
             # 与 _eval 相同：超时和 worker 崩溃是环境故障，不能当成这颗内核的永久判决。
             if cand.report is not None and cand.report.status not in ("timeout", "crash") and self._cache_this(cand.source):
@@ -1187,6 +1198,8 @@ class Orchestrator:
                     would_tie = False
                     if recheck_doc.get("counts_as_kernel_error"):
                         cand.recheck_rejected = True
+                    else:
+                        cand.recheck_pending = True
             if would_replace:
                 if self.best:
                     self.best.is_best = False
@@ -1194,9 +1207,10 @@ class Orchestrator:
                 self.best = cand
             elif would_tie:
                 cand.within_noise = True
-        self._save(cand)
+        # 复查失败记录先于候选报告落盘；崩溃恢复不能把未决复查当成通过。
         if recheck_doc is not None:
             self._store_recheck(cand, recheck_doc)
+        self._save(cand)
         r = cand.report
         self.trace.append(
             {"idx": cand.idx, "label": label, "status": r.status, "speedup": r.speedup, "cost_usd": cand.cost_usd, "t_s": cand.t_s, "best_speedup": self.best.speedup if self.best else None, "improved": cand.is_best, "within_noise": cand.within_noise, "eval_seed": used_seed, "eval_seed_from": seed_from, "differential_recheck": None if recheck_doc is None else recheck_doc["class"], "parent_label": self._parent_of(label), "origin": dict(cand.origin)}
@@ -1403,8 +1417,9 @@ class Orchestrator:
             res.stop_reason = res.stop_reason or f"llm_error: {e}"
             self.log(f"== stop: {e}")
         except Exception as e:  # noqa: BLE001 - the run is over; its files still have to be written
-            res.stop_reason = res.stop_reason or f"confirm_error: {type(e).__name__}: {e}"
-            self.log(f"== stop: confirmation failed: {type(e).__name__}: {e}")
+            previous_stop = res.stop_reason
+            res.stop_reason = f"confirm_error: {type(e).__name__}: {e}"
+            self.log(f"== stop: confirmation failed after {previous_stop or 'search'}: {type(e).__name__}: {e}")
         if self.search.profile_best:
             try:
                 await self._profile_best()
@@ -2466,6 +2481,7 @@ class Orchestrator:
                 self.history.append(f"round {rnd}: {self._committee_name} -> {outcome}")
                 if self._agent_failures >= 2:
                     res.stop_reason = "agent_failure"
+                    self._publish_state(stop_reason=res.stop_reason)
                     return
             else:
                 self._agent_failures = 0
@@ -2481,8 +2497,11 @@ class Orchestrator:
                 self.history.append(f"round {rnd}: {self._committee_name} -> {tag}")
             stagnant = next_stagnant(self.best is not before, stagnant)
             self._stagnant = stagnant
+            # outcome、历史和计数器先落盘，再判停或进入下一轮，避免崩溃恢复放大失败/停滞计数。
+            self._publish_state()
             if patience_exhausted(stagnant, self.search.patience):
                 res.stop_reason = f"converged ({self.search.patience} rounds without improvement)"
+                self._publish_state(stop_reason=res.stop_reason)
                 return
             # 这一轮里看板可能加了预算或轮数。下一轮的 while 比的是已经读进来的上限。
             self.ledger.check()
@@ -2502,7 +2521,7 @@ class Orchestrator:
         for c in sorted(self.candidates, key=lambda c: c.speedup, reverse=True):
             if len(pool) >= self.search.confirm_top:
                 break
-            if not c.eligible or c.recheck_rejected or _sha(c.source) in seen:
+            if not c.eligible or c.recheck_rejected or c.recheck_pending or _sha(c.source) in seen:
                 continue
             seen.add(_sha(c.source))
             # 优胜者并没有显著快过 c，c 就留在并列里。源码相同的候选只进池一次。
@@ -2666,7 +2685,17 @@ class Orchestrator:
         res.confirmed_status, res.confirmed_speedup = "ok", median
         res.confirmed_values, res.confirmed_worst, res.confirmed_best = list(values), min(values), max(values)
         res.candidate_us, res.baseline_us = rep.candidate_us, rep.baseline_us
-        control.write_json_atomic(self.run_dir / "confirm_report.json", rep.to_json())
+        report_doc = rep.to_json()
+        benchmark = dict(report_doc.get("benchmark") or {})
+        benchmark["confirmation"] = {
+            "kernel_sha256": hashlib.sha256(win.source.encode("utf-8")).hexdigest(),
+            "winner_label": win.label,
+            "confirmed_values": list(values),
+            "speedup": median,
+            "candidate_us": rep.candidate_us,
+        }
+        report_doc["benchmark"] = benchmark
+        control.write_json_atomic(self.run_dir / "confirm_report.json", report_doc)
         if self.hangs >= self.search.max_hangs:
             self.log("   domain sweep skipped: confirmation already hit the hang limit")
             return

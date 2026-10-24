@@ -483,8 +483,10 @@ def _requests_from_transcript(events: list[dict], notes: list[str]) -> list[dict
         hit, miss, write, out = split_usage(e.get("usage") if isinstance(e.get("usage"), dict) else {})
         cost = float(e.get("cost_usd") or 0.0)
         running += cost
-        total = float(e.get("total_usd", running))
-        drift = max(drift, abs(total - running))
+        recorded_total = float(e.get("total_usd", running))
+        total = max(running, recorded_total)
+        drift = max(drift, abs(recorded_total - running))
+        running = total
         reqs.append({"t": None, "label": e.get("label", ""), "hit": hit, "miss": miss, "write": write, "out": out, "cost_usd": cost, "total_usd": total})
     if drift > 1e-6:
         notes.append(f"transcript totals differ from the sum of request costs by up to ${drift:.6f} (an earlier session's transcript is missing?): the recorded running totals are used")
@@ -572,17 +574,22 @@ def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
                 "the run cannot be continued across a protocol change"
             )
         rejected = False
+        pending = False
         recheck_path = d / "differential_recheck.json"
         if recheck_path.is_file():
             try:
                 rec = json.loads(recheck_path.read_text(encoding="utf-8"))
                 rejected = bool(isinstance(rec, dict) and rec.get("counts_as_kernel_error"))
+                # 任何存在的复查记录都不是通过记录；false 只表示不把环境故障
+                # 当成核错，恢复时仍必须保持未决，不能提升这颗候选。
+                pending = not rejected
             except (OSError, ValueError):
                 # A recheck record nobody can read is not a passed recheck: fail closed, or a
                 # kernel already judged wrong would come back as a seed after the next resume.
                 rejected = True
+                pending = True
                 notes.append(f"candidate {d.name}: differential_recheck.json is damaged; it is treated as rejected")
-        out.append({"idx": int(m["idx"]), "label": m["label"], "source": (d / kernel_name).read_text(), "report": report, "plan": None, "recheck_rejected": rejected})
+        out.append({"idx": int(m["idx"]), "label": m["label"], "source": (d / kernel_name).read_text(), "report": report, "plan": None, "recheck_rejected": rejected, "recheck_pending": pending})
     out.sort(key=lambda c: c["idx"])
     return out
 
@@ -784,7 +791,7 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
     recorded = max([d.get("trace") for d in (state, result) if d and isinstance(d.get("trace"), list)] or [[]], key=len)
     trace = [dict(t) for t in recorded if isinstance(t, dict)]
     best_label = (state or {}).get("search_seed_label") or (state or {}).get("best_label") or (result or {}).get("search_seed_label")
-    rejected_labels = {c["label"] for c in cands if c.get("recheck_rejected")}
+    rejected_labels = {c["label"] for c in cands if c.get("recheck_rejected") or c.get("recheck_pending")}
 
     def last_improved() -> str | None:
         # 被复查判错的候选不能回种子位，即使它在 trace 里带着 improved。
@@ -815,7 +822,7 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
                     best_sp = float(row["speedup"])
                     break
             relation = relation_to_best(
-                not bool(cand.get("recheck_rejected")), float(speed), best_sp, speedup_se(report), speedup_se(best_report),
+                not bool(cand.get("recheck_rejected") or cand.get("recheck_pending")), float(speed), best_sp, speedup_se(report), speedup_se(best_report),
                 min_improvement=search.min_improvement, noise_z=search.noise_z,
             )
             improved = relation == "replace"

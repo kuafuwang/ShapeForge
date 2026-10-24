@@ -185,8 +185,8 @@ def test_run_config_lists_both_committees_without_secrets(tmp_path):
     assert SECRET not in text and ENDPOINT not in text and "api_key" not in text and "base_url" not in text
     doc = json.loads(text)
     assert doc["committees"] == [
-        {"name": "first", "members": [{"provider": "deepseek", "model": "model-a"}]},
-        {"name": "second", "members": [{"provider": "deepseek", "model": "model-b"}]},
+        {"name": "first", "members": [{"provider": "deepseek", "model": "model-a", "reasoning_effort": "off"}]},
+        {"name": "second", "members": [{"provider": "deepseek", "model": "model-b", "reasoning_effort": "off"}]},
     ]
     state = json.loads((orch.run_dir / "state.json").read_text())
     assert state["committee"] == "first" and state["model"] == "model-a"
@@ -338,6 +338,17 @@ def test_cmd_run_and_run_one_load_the_two_members(tmp_path, monkeypatch):
     captured.clear()
     code_bad = cli.main(["run", "relu", "--size", "small", "--config", str(bad), "--run-dir", str(tmp_path / "bad-run")])
     assert code_bad == 5 and captured == {}
+
+
+def test_committees_record_keeps_member_effort_for_resume():
+    """@brief run_config 记录每个成员自己的 effort，续跑不靠当前配置猜测。"""
+    from taic.committees import committees_record
+
+    cfg = _cfg(reasoning_effort="high")
+    pair = _pair(cfg, "same-model", "same-model", second_cfg=replace(cfg, reasoning_effort="low"))
+    rows = committees_record(pair)
+    assert rows[0]["members"][0]["reasoning_effort"] == "high"
+    assert rows[1]["members"][0]["reasoning_effort"] == "low"
 
 
 def test_a_member_can_carry_its_own_reasoning_effort():
