@@ -427,6 +427,7 @@ def sessions_page(run_id: str, *, limit: int = 500) -> dict:
     with borrow() as index:
         rows = [dict(row) for row in index.conn.execute(
             "SELECT run_id, seq, label, committee, provider, model, outcome, cost_usd, "
+            "session_id, failed_turns, last_kind, failure_class, error, tool_calls, diagnostics_path, "
             "tokens_input, tokens_output, tokens_cache_read, tokens_cache_write "
             "FROM sessions WHERE run_id = ? ORDER BY seq LIMIT ?",
             (run_id, limit),
@@ -434,20 +435,24 @@ def sessions_page(run_id: str, *, limit: int = 500) -> dict:
     return {"run_id": run_id, "limit": limit, "sessions": rows}
 
 
-def model_stats() -> dict:
-    """@brief 按会话聚合模型用量，避免只看第一委员会写入的 ``runs.model``。
+def model_stats(run_id: str | None = None) -> dict:
+    """@brief 按会话聚合 provider/模型用量，可只看一个运行。
 
     原始英文说明：Per-session model totals, so the first-committee ``runs.model`` is not the only view.
 
+    @param run_id 可选的运行 id；缺省聚合全部运行。
     @return 含 ``models`` 列表的字典（按花费与会话数降序）。
     """
     tick()
+    where = " WHERE run_id = ?" if run_id else ""
+    args = (run_id,) if run_id else ()
     with borrow() as index:
         rows = [dict(row) for row in index.conn.execute(
-            "SELECT committee, model, COUNT(*) AS sessions, ROUND(SUM(COALESCE(cost_usd, 0)), 6) AS cost_usd, "
+            "SELECT committee, provider, model, COUNT(*) AS sessions, ROUND(SUM(COALESCE(cost_usd, 0)), 6) AS cost_usd, "
             "SUM(tokens_input) AS input_tokens, SUM(tokens_output) AS output_tokens, "
             "SUM(tokens_cache_read) AS cache_read_tokens, SUM(tokens_cache_write) AS cache_write_tokens "
-            "FROM sessions GROUP BY committee, model ORDER BY cost_usd DESC, sessions DESC"
+            f"FROM sessions{where} GROUP BY committee, provider, model ORDER BY cost_usd DESC, sessions DESC",
+            args,
         )]
     return {"models": rows}
 

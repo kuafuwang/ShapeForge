@@ -194,6 +194,23 @@ def test_model_notes_show_an_hmz_turn_that_wrote_a_kernel_and_one_that_failed(tm
     assert notes[1]["detail"] == "hmz exited 1"
 
 
+def test_agent_diagnostics_reach_model_notes_and_turn_rows(tmp_path):
+    from observe.detail import _present_turn
+
+    event = {"kind": "agent", "event": "agent", "label": "r4.p0", "harness": "pi", "provider": "moonshot",
+             "model": "kimi-k3.1-pro", "had_kernel": False, "error": "Connection error.", "outcome": "agent_failed",
+             "runtime": {"failure_class": "no_submission_after_result", "failed_turns": 1, "last_terminal_kind": "result"},
+             "diagnostics_path": "agent_diagnostics/r4.json"}
+    (tmp_path / "transcript.jsonl").write_text(json.dumps(event) + "\n")
+    notes = _model_notes(tmp_path)
+    assert notes[0]["kind"] == "agent_error"
+    assert "正常回答但没有交卷" in notes[0]["detail"] and "1 个 hmz 失败回合" in notes[0]["detail"]
+    assert notes[0]["diagnostics_path"] == "agent_diagnostics/r4.json"
+    row = _present_turn({"label": "r4.p0", "min_seq": 1, "max_seq": 1, "events": [event]})
+    assert row["kind"] == "agent_error" and row["error"] == "Connection error."
+    assert "诊断 no_submission_after_result" in row["sent"] and "诊断文件 agent_diagnostics/r4.json" in row["sent"]
+
+
 def test_pi_lines_keep_the_tool_name_and_drop_a_key(tmp_path):
     session = tmp_path / "session.jsonl"
     session.write_text("\n".join([

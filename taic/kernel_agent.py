@@ -8,6 +8,7 @@ means this session returned no kernel. A number the agent prints is not the sear
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -16,6 +17,7 @@ import shutil
 import signal
 import subprocess
 import tarfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,6 +32,8 @@ EXPERIENCE = skill_path("experience")
 _KERNEL = re.compile(r"\bkernel\s+void\s+(\w+)\b")
 _USAGE = re.compile(r"([A-Za-z_]+)=(-?\d+(?:\.\d+)?)")
 _NAME_PART = re.compile(r"[^A-Za-z0-9._-]+")
+_DIAG_SECRET = re.compile(r"sk-[A-Za-z0-9_\-]{12,}")
+_DIAG_PREVIEW_CHARS = 240
 # 一场会话的墙钟。hmz 的回合预算先到；这个秒数只在进程不退出时杀掉它。
 def process_timeout_s(turn_minutes: int) -> float:
     """@brief 算出杀掉 hmz 进程的墙钟秒数。
@@ -152,6 +156,9 @@ class AgentResult:
     # hang breaker. The two are counted apart so ``max_hangs=1`` cannot end a run on a SchemaError.
     self_check_crashes: int = 0
     self_check_gpu_s: float = 0.0
+    # Structured hmz/pi diagnostics. These explain an agent_failed without changing its meaning.
+    diagnostics: dict = field(default_factory=dict)
+    diagnostics_path: str = ""
 
 
 def epic_spend_by_label(run_dir: Path, *, root: Path | None = None) -> dict[str, float] | None:
@@ -392,6 +399,61 @@ def spend_from_stream(text: str) -> tuple[dict[str, float], bool]:
         for kind, tokens in parsed.items():
             totals[kind] = totals.get(kind, 0.0) + tokens
     return totals, saw
+
+
+def _diagnostic_text(value, limit: int) -> str:
+    """Return a bounded diagnostic string with common API-key forms redacted."""
+    return _DIAG_SECRET.sub("<redacted>", str(value or "").strip())[:limit]
+
+
+def diagnostics_from_stream(text: str) -> dict:
+    """Read the structured health of an ``hmz exec --json`` stream.
+
+    hmz already exposes the backend session id and maps pi's final ``errorMessage`` to a
+    ``kind=failed`` event. Keep those facts beside the token accounting instead of requiring a
+    forensic search through the global pi session directory. The final response text is private to
+    this function: ``run_kernel_agent`` may save a short preview only when no kernel was submitted.
+    """
+    sessions: list[str] = []
+    result_turns = failed_turns = tool_calls = 0
+    last_kind = ""
+    last_error = ""
+    response = ""
+    for line in text.splitlines():
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        session = obj.get("session")
+        if isinstance(session, str) and session and session not in sessions:
+            sessions.append(session)
+        kind = obj.get("kind")
+        if kind == "tool":
+            tool_calls += 1
+        if kind not in _SPENT_EVENTS:
+            continue
+        last_kind = str(kind)
+        if kind == "failed":
+            failed_turns += 1
+            last_error = _diagnostic_text(obj.get("text") or "the turn failed", 400)
+            response = ""
+        else:
+            result_turns += 1
+            response = str(obj.get("text") or "")
+    return {
+        "schema_version": 1,
+        "session_ids": sessions,
+        "result_turns": result_turns,
+        "failed_turns": failed_turns,
+        "tool_calls": tool_calls,
+        "last_terminal_kind": last_kind or None,
+        "last_error": last_error,
+        "response_chars": len(response),
+        "response_sha256": hashlib.sha256(response.encode("utf-8", errors="replace")).hexdigest() if response else None,
+        "_response_text": response,
+    }
 
 
 def _shell(value: str) -> str:
@@ -999,6 +1061,42 @@ def run_kernel_agent(
     if status != "timeout" and proc.returncode not in (0, None):
         status = "failed"
         error = (stderr or stdout or "").strip()[-400:]
+    diagnostics = diagnostics_from_stream(stdout or "")
+    response = str(diagnostics.pop("_response_text", "") or "")
+    diagnostics["hmz_returncode"] = proc.returncode
+    if status == "timeout":
+        diagnostics["failure_class"] = "timeout"
+    elif status == "failed":
+        diagnostics["failure_class"] = "process_failed"
+    elif source is not None:
+        diagnostics["failure_class"] = ""
+    elif diagnostics["last_terminal_kind"] == "failed":
+        diagnostics["failure_class"] = "turn_failed"
+    elif diagnostics["last_terminal_kind"] == "result":
+        diagnostics["failure_class"] = "no_submission_after_result"
+    else:
+        diagnostics["failure_class"] = "no_submission"
+    if not error and source is None and diagnostics["last_error"]:
+        error = diagnostics["last_error"]
+    diagnostics_path = ""
+    if source is None and response:
+        # A normal answer with no submission is the one case where a short response preview is
+        # needed to diagnose an irrelevant/model-confused turn. Never persist the whole stream.
+        run_root = work.parent.parent if work.parent.name == "agent_work" else work.parent
+        folder = run_root / "agent_diagnostics"
+        name = (_NAME_PART.sub("_", brief.label).strip("._") or "session") + f"-{time.time_ns()}.json"
+        path = folder / name
+        detail = dict(diagnostics)
+        detail["label"] = brief.label
+        detail["response_preview"] = _diagnostic_text(response, _DIAG_PREVIEW_CHARS)
+        try:
+            from .control import write_json_atomic
+
+            folder.mkdir(parents=True, exist_ok=True)
+            write_json_atomic(path, detail)
+            diagnostics_path = path.relative_to(run_root).as_posix()
+        except OSError as exc:
+            diagnostics["diagnostics_write_error"] = f"{type(exc).__name__}: {exc}"[:180]
     try:
         pruned = prune_work(
             work, label=brief.label,
@@ -1010,6 +1108,7 @@ def run_kernel_agent(
         source=source, cost_usd=cost, cost_incomplete=not saw_result, status=status, error=error,
         spent=spent, notes=notes, feedback=feedback, self_checks=checks, self_check_timeouts=timeouts,
         self_check_crashes=crashes, self_check_gpu_s=gpu_s, pruned=pruned,
+        diagnostics=diagnostics, diagnostics_path=diagnostics_path,
     )
 
 

@@ -2143,6 +2143,8 @@ class Orchestrator:
             "self_check_crashes": result.self_check_crashes,
             "self_check_gpu_s": result.self_check_gpu_s,
             "tokens": {k: int(v) for k, v in spent.items() if isinstance(v, (int, float))},
+            "runtime": dict(getattr(result, "diagnostics", {}) or {}),
+            "diagnostics_path": getattr(result, "diagnostics_path", "") or None,
         }
         event.update(self._feedback_slim(parsed))
         return event

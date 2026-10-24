@@ -1368,12 +1368,16 @@ function renderDetail(doc) {
   const topped = doc.topped_up && doc.initial_budget_usd != null ? `（初始 ${money2(doc.initial_budget_usd)}）` : "";
   const budgetLine = `<p class="muted" id="detail-budget">总预算 <b>${money2(budget.budget)}</b>${topped} · 已花 <b>${money2(budget.spent)}</b> · 剩余 <b>${remainingText}</b>${budgetAlert}</p>`;
   const lamp = doc.status === "running" ? `<span class="breathe" title="进行中"></span>` : "";
+  const stopReason = (doc.result && doc.result.stop_reason) || (doc.state && doc.state.stop_reason) || "";
+  const stopLine = stopReason
+    ? `<p class="muted">搜索停止原因：<b>${esc(stopReason)}</b>。确认发布状态单独判定；agent_failure 不表示已有最佳内核未通过评测。</p>`
+    : "";
   const seedLine = seedKernel
     ? `<p class="muted">种子核（搜索期当前最好的一颗）：<b>${esc(seedKernel)}</b>` +
       (confirmWinner && confirmWinner !== seedKernel ? ` · 确认胜者（换一批输入重测后活下来的）：<b>${esc(confirmWinner)}</b>` : "") +
       `</p>`
     : "";
-  return `<h2>${esc(doc.id)}</h2><p>${lamp}${esc(doc.target_line || "")} ${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>${timingLine}${budgetLine}${seedLine}` +
+  return `<h2>${esc(doc.id)}</h2><p>${lamp}${esc(doc.target_line || "")} ${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>${timingLine}${budgetLine}${stopLine}${seedLine}` +
     `<div>` +
     `<h3>确认点</h3>${confirm}` +
     `<h3>候选</h3>` + (candidates ? `<table><thead><tr><th>序号</th><th>标签</th><th>状态</th><th>阶段</th><th>加速比</th><th>标记</th><th>说明</th></tr></thead><tbody>${candidates}</tbody></table>` : `<p class="muted">没有候选。</p>`) +

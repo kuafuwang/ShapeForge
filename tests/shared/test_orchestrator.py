@@ -92,13 +92,21 @@ def test_a_session_that_returns_no_source_is_not_an_unchanged_seed(tmp_path):
         del brief, tag
         from taic.kernel_agent import AgentResult
 
-        return AgentResult(source=None, cost_usd=0.01, cost_incomplete=False, status="ok")
+        return AgentResult(
+            source=None, cost_usd=0.01, cost_incomplete=False, status="ok", error="Connection error.",
+            diagnostics={"failure_class": "turn_failed", "failed_turns": 4, "last_terminal_kind": "failed", "session_ids": ["s1"]},
+        )
 
     orch = make_orch(tmp_path, llm_script(code("speed=1.0")), calls, max_rounds=1)
     orch.agent_runner = run_agent
     res = run(orch)
     assert res.stop_reason == "agent_failure"
     assert [line for line in orch.history if "agent_failed" in line]
+    events = [json.loads(line) for line in (orch.run_dir / "transcript.jsonl").read_text().splitlines()]
+    agents = [event for event in events if event.get("event") == "agent"]
+    assert len(agents) == 2
+    assert all(event["outcome"] == "agent_failed" and event["error"] == "Connection error." for event in agents)
+    assert all(event["runtime"]["failure_class"] == "turn_failed" and event["runtime"]["failed_turns"] == 4 for event in agents)
 
 
 def test_a_reply_without_a_code_block_gets_a_nudge(tmp_path):

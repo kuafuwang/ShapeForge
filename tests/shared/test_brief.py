@@ -15,7 +15,7 @@ _KEYS = {
     "schema_version", "protocol_version", "stamp",
     "task", "dtype", "size", "committee", "model", "phase", "stop_reason", "round",
     "spent_usd", "budget_usd", "published", "publication", "search_best",
-    "cands", "counts", "paths",
+    "cands", "agent_failures", "counts", "paths",
 }
 _CAND = {"label", "status", "speedup", "within_noise", "differential_recheck"}
 
@@ -175,8 +175,35 @@ def test_an_empty_directory_is_nulls(tmp_path, capsys):
     doc = json.loads(out)
     assert set(doc) == _KEYS
     assert doc["task"] is None and doc["published"] is None and doc["publication"] is None and doc["search_best"] is None
-    assert doc["cands"] == [] and doc["counts"] == {"chat": None, "retry": None, "truncation_retries": None, "eval_stage": None}
+    assert doc["cands"] == [] and doc["agent_failures"] == []
+    assert doc["counts"] == {"chat": None, "retry": None, "truncation_retries": None, "eval_stage": None}
     assert all(v is None for v in doc["paths"].values())
+
+
+def test_agent_failures_expose_structured_causes_but_not_response_bodies(tmp_path, capsys):
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "state.json").write_text(json.dumps({"task": "conv2d", "phase": "done", "stop_reason": "agent_failure"}))
+    rows = [
+        {"event": "agent", "label": "r3.p0", "provider": "deepseek", "model": "deepseek-flash", "committee": "first",
+         "outcome": "agent_failed", "error": "Connection error.", "had_kernel": False, "cost_usd": 0.1,
+         "runtime": {"failure_class": "turn_failed", "failed_turns": 4, "last_terminal_kind": "failed"}},
+        {"event": "agent", "label": "r4.p0", "provider": "moonshot", "model": "kimi-k3.1-pro", "committee": "second",
+         "outcome": "agent_failed", "error": SECRET, "had_kernel": False, "cost_usd": 0.2,
+         "runtime": {"failure_class": "no_submission_after_result", "failed_turns": 1,
+                     "last_terminal_kind": "result", "response_preview": MARKER},
+         "diagnostics_path": "agent_diagnostics/r4.json"},
+    ]
+    (run / "transcript.jsonl").write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    code, out, _err = _brief(capsys, run)
+    assert code == 0 and MARKER not in out and SECRET not in out
+    failures = json.loads(out)["agent_failures"]
+    assert len(failures) == 2
+    assert failures[0]["failure_class"] == "turn_failed" and failures[0]["failed_turns"] == 4
+    assert failures[0]["error"] == "Connection error." and failures[0]["had_kernel"] is False
+    assert failures[1]["failure_class"] == "no_submission_after_result"
+    assert failures[1]["last_terminal_kind"] == "result" and failures[1]["error"] == "<redacted>"
+    assert failures[1]["diagnostics_path"] == "agent_diagnostics/r4.json"
 
 
 def test_gpu_events_are_the_cache_tail_and_the_lane_is_omitted_when_absent(tmp_path, capsys):

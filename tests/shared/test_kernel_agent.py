@@ -197,7 +197,9 @@ def test_a_missing_hmz_is_an_error_and_a_timeout_still_returns_the_file(tmp_path
     hmz.chmod(hmz.stat().st_mode | stat.S_IEXEC)
     result = run_kernel_agent(
         _brief(tmp_path), work=tmp_path / "slow", provider="deepseek", model="deepseek-flash",
-        effort="high", prices=PRICES, turn_output_tokens=10, turn_minutes=1, hmz=str(hmz), timeout_s=2,
+        # Under the fully parallel CPU suite, starting the fake Python process can itself take
+        # more than two seconds. Keep the timeout behavior, but let it write the submission first.
+        effort="high", prices=PRICES, turn_output_tokens=10, turn_minutes=1, hmz=str(hmz), timeout_s=5,
     )
     assert result.status == "timeout"
     assert result.cost_incomplete is True
@@ -391,4 +393,92 @@ def test_epic_spend_is_grouped_by_session_label_and_stays_inside_the_run(tmp_pat
     assert epic_spend_by_label(run, root=epics) == {"r2.p0": 2.5, "r1.p0": 0.25}
     assert epic_spend(run, root=epics) == pytest.approx(2.75)
     assert epic_spend_by_label(tmp_path / "missing", root=epics) is None
+
+
+def _fake_hmz_events(path: Path, events: list[dict], *, source: str | None = None) -> None:
+    """A fake hmz that emits the same NDJSON fields as ``hmz exec --json``."""
+    write = f"pathlib.Path(name).write_text({source!r})\n" if source is not None else ""
+    lines = [
+        "#!/usr/bin/env python3",
+        "import pathlib, sys",
+        "name = 'missing.metal'",
+        "for arg in sys.argv:",
+        "    if arg.startswith('submit_name='):",
+        "        name = arg.split('=', 1)[1]",
+        write.rstrip("\n"),
+    ]
+    lines += [f"print({json.dumps(event)!r})" for event in events]
+    path.write_text("\n".join(lines) + "\n")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+
+
+def _run_fake_events(tmp_path: Path, events: list[dict], *, source: str | None = None) -> AgentResult:
+    hmz = tmp_path / "hmz-events"
+    _fake_hmz_events(hmz, events, source=source)
+    return run_kernel_agent(
+        _brief(tmp_path), work=tmp_path / "work-events", provider="deepseek", model="deepseek-flash",
+        effort="high", prices=PRICES, turn_output_tokens=1000, turn_minutes=25, hmz=str(hmz),
+    )
+
+
+def test_connection_failures_are_diagnosed_without_changing_billing_or_submission_rules(tmp_path):
+    events = [
+        {"kind": "tool", "session": "session-r3", "text": "bash"},
+        {"kind": "result", "session": "session-r3", "text": "working", "spent": "Usage(output=10)"},
+        {"kind": "failed", "session": "session-r3", "text": "Connection error.", "spent": "Usage(output=5)"},
+        {"kind": "failed", "session": "session-r3", "text": "Connection error.", "spent": "Usage(output=5)"},
+    ]
+    result = _run_fake_events(tmp_path, events)
+    assert result.source is None and result.status == "ok"
+    assert result.cost_usd == pytest.approx(20 * PRICES.output / 1_000_000)
+    assert result.cost_incomplete is False
+    assert result.error == "Connection error."
+    json.dumps(result.diagnostics)  # the transcript can serialize it directly
+    assert result.diagnostics["session_ids"] == ["session-r3"]
+    assert result.diagnostics["result_turns"] == 1
+    assert result.diagnostics["failed_turns"] == 2
+    assert result.diagnostics["tool_calls"] == 1
+    assert result.diagnostics["last_terminal_kind"] == "failed"
+    assert result.diagnostics["failure_class"] == "turn_failed"
+    assert result.diagnostics["response_chars"] == 0
+    assert result.diagnostics_path == ""
+    assert "_response_text" not in result.diagnostics
+
+
+def test_a_normal_but_unsubmitted_answer_leaves_only_a_bounded_redacted_preview(tmp_path):
+    secret = "sk-PLANTED-diagnostic-0123456789"
+    response = "an unrelated answer " + secret + " " + ("x" * 400)
+    events = [
+        {"kind": "failed", "session": "session-r4", "text": "Connection error.", "spent": "Usage(output=1)"},
+        {"kind": "result", "session": "session-r4", "text": response, "spent": "Usage(output=2)"},
+    ]
+    result = _run_fake_events(tmp_path, events)
+    assert result.source is None and result.status == "ok"
+    assert result.diagnostics["failed_turns"] == 1
+    assert result.diagnostics["last_terminal_kind"] == "result"
+    assert result.diagnostics["failure_class"] == "no_submission_after_result"
+    assert result.diagnostics["response_chars"] == len(response)
+    assert result.diagnostics["response_sha256"]
+    assert result.diagnostics_path.startswith("agent_diagnostics/")
+    saved = tmp_path / result.diagnostics_path
+    doc = json.loads(saved.read_text())
+    assert doc["label"] == "init"
+    assert len(doc["response_preview"]) <= 240
+    assert secret not in doc["response_preview"] and "<redacted>" in doc["response_preview"]
+    assert response not in saved.read_text() and "_response_text" not in doc
+
+
+def test_a_failed_turn_does_not_poison_a_later_valid_submission(tmp_path):
+    source = "kernel void conv2d_kernel() {}\n"
+    events = [
+        {"kind": "failed", "session": "session-ok", "text": "Connection error.", "spent": "Usage(output=1)"},
+        {"kind": "result", "session": "session-ok", "text": "done", "spent": "Usage(output=2)"},
+    ]
+    result = _run_fake_events(tmp_path, events, source=source)
+    assert result.source == source
+    assert result.cost_usd == pytest.approx(3 * PRICES.output / 1_000_000)
+    assert result.diagnostics["failed_turns"] == 1
+    assert result.diagnostics["failure_class"] == ""
+    assert result.diagnostics_path == ""
+    assert not (tmp_path / "agent_diagnostics").exists()
 

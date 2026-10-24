@@ -112,7 +112,7 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
     result, result_err = _load_result(run)
     docs = [d for d in (state, result) if isinstance(d, dict)]
     published, publication = _published(run, result, result_err)
-    chat, retry, truncation, transcript_stage = _transcript_stats(run / "transcript.jsonl")
+    chat, retry, truncation, transcript_stage, agent_failures = _transcript_stats(run / "transcript.jsonl")
     doc = {
         "schema_version": "1",
         "protocol_version": _first(docs, "protocol_version"),
@@ -130,6 +130,7 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
         "publication": publication,
         "search_best": _first(docs, "best_speedup"),
         "cands": _cands(run, state, result),
+        "agent_failures": agent_failures,
         "counts": {"chat": chat, "retry": retry, "truncation_retries": truncation, "eval_stage": _eval_stage(run, transcript_stage)},
         "paths": _paths(run),
         "stamp": _stamp(run),
@@ -298,22 +299,41 @@ def _cand_from_dir(path: Path) -> dict:
     }
 
 
-def _transcript_stats(path: Path) -> tuple[int | None, int | None, int | None, str | None]:
-    """@brief 一次遍历统计对话、重试、被长度截断的回复与最后一个阶段。
+def _transcript_stats(path: Path) -> tuple[int | None, int | None, int | None, str | None, list[dict]]:
+    """@brief 一次遍历统计对话、重试、截断、阶段与最近几场 agent 失败。
 
     @param path ``transcript.jsonl`` 的路径。
-    @return ``(chat 数, retry 数, 截断数, 最后阶段)``；文件不存在时四项全为 ``None``。
+    @return ``(chat 数, retry 数, 截断数, 最后阶段, agent 失败摘要)``。
+        文件不存在时前四项为 ``None``，失败列表为空。响应正文不进入摘要。
     """
     if not path.is_file():
-        return None, None, None, None
+        return None, None, None, None, []
     chat = retry = truncated = 0
     stage = None
+    failures: list[dict] = []
     for ev in _jsonl(path):
         kind = ev.get("event")
         if kind == "chat":
             chat += 1
         elif kind == "retry":
             retry += 1
+        elif kind == "agent" and ev.get("outcome") == "agent_failed":
+            runtime = ev.get("runtime") if isinstance(ev.get("runtime"), dict) else {}
+            failed_turns = runtime.get("failed_turns")
+            failures.append({
+                "label": _text(ev.get("label")),
+                "provider": _text(ev.get("provider")),
+                "model": _text(ev.get("model")),
+                "committee": _text(ev.get("committee")),
+                "outcome": _text(ev.get("outcome")),
+                "failure_class": _text(runtime.get("failure_class")),
+                "failed_turns": failed_turns if isinstance(failed_turns, int) and not isinstance(failed_turns, bool) and failed_turns >= 0 else None,
+                "last_terminal_kind": _text(runtime.get("last_terminal_kind")),
+                "error": _text(ev.get("error") or runtime.get("last_error")),
+                "had_kernel": ev.get("had_kernel") if isinstance(ev.get("had_kernel"), bool) else None,
+                "cost_usd": _number(ev.get("cost_usd")),
+                "diagnostics_path": _text(ev.get("diagnostics_path")),
+            })
         if ev.get("event") == "warning" and ev.get("message") == "reply truncated by max_tokens":
             truncated += 1
         elif ev.get("finish_reason") == "length":
@@ -321,7 +341,7 @@ def _transcript_stats(path: Path) -> tuple[int | None, int | None, int | None, s
         found = ev.get("stage")
         if isinstance(found, str):
             stage = _text(found)
-    return chat, retry, truncated, stage
+    return chat, retry, truncated, stage, failures[-4:]
 
 
 def _eval_stage(run: Path, transcript_stage: str | None):

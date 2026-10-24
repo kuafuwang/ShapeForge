@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -21,6 +22,14 @@ from observe.budget import budget_status
 from observe.ledger import month_of, operator_name
 
 INDEX_SCHEMA_VERSION = 11
+_DIAG_SECRET = re.compile(r"sk-[A-Za-z0-9_\-]{12,}")
+
+
+def _diagnostic(value, limit: int = 400) -> str:
+    """One bounded, single-line diagnostic; response bodies are not indexed."""
+    if not isinstance(value, str):
+        return ""
+    return _DIAG_SECRET.sub("<redacted>", " ".join(value.split()))[:limit]
 _SKIP_DIRS = {"candidates", "__pycache__"}
 _WRITE = threading.Lock()
 _SINGLE: "Index | None" = None
@@ -436,6 +445,13 @@ class Index:
                 model TEXT,
                 outcome TEXT,
                 cost_usd REAL,
+                session_id TEXT,
+                failed_turns INTEGER NOT NULL DEFAULT 0,
+                last_kind TEXT,
+                failure_class TEXT,
+                error TEXT,
+                tool_calls INTEGER NOT NULL DEFAULT 0,
+                diagnostics_path TEXT,
                 tokens_input INTEGER NOT NULL DEFAULT 0,
                 tokens_output INTEGER NOT NULL DEFAULT 0,
                 tokens_cache_read INTEGER NOT NULL DEFAULT 0,
@@ -569,6 +585,18 @@ class Index:
             self.conn.execute("ALTER TABLE runs ADD COLUMN backend TEXT")
         if "backend_version" not in run_columns:
             self.conn.execute("ALTER TABLE runs ADD COLUMN backend_version TEXT")
+        session_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(sessions)")}
+        for name, declaration in (
+            ("session_id", "TEXT"),
+            ("failed_turns", "INTEGER NOT NULL DEFAULT 0"),
+            ("last_kind", "TEXT"),
+            ("failure_class", "TEXT"),
+            ("error", "TEXT"),
+            ("tool_calls", "INTEGER NOT NULL DEFAULT 0"),
+            ("diagnostics_path", "TEXT"),
+        ):
+            if name not in session_columns:
+                self.conn.execute(f"ALTER TABLE sessions ADD COLUMN {name} {declaration}")
         item_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(feedback_items)")}
         if "line_at" not in item_columns:
             self.conn.execute("ALTER TABLE feedback_items ADD COLUMN line_at INTEGER")
@@ -1253,6 +1281,13 @@ class Index:
                     continue
                 seq += 1
                 tokens = event.get("tokens") if isinstance(event.get("tokens"), dict) else {}
+                runtime = event.get("runtime") if isinstance(event.get("runtime"), dict) else {}
+                session_ids = runtime.get("session_ids") if isinstance(runtime.get("session_ids"), list) else []
+                session_id = _diagnostic(session_ids[-1], 120) if session_ids and isinstance(session_ids[-1], str) else ""
+
+                def count(name: str) -> int:
+                    value = runtime.get(name, 0)
+                    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
                 def token(name: str) -> int:
                     value = tokens.get(name, 0)
@@ -1262,14 +1297,19 @@ class Index:
                     """
                     INSERT INTO sessions (
                         run_id, seq, label, committee, provider, model, outcome, cost_usd,
+                        session_id, failed_turns, last_kind, failure_class, error, tool_calls, diagnostics_path,
                         tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, t
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         run_id, seq, str(event.get("label") or ""), str(event.get("committee") or ""),
                         str(event.get("provider") or ""), str(event.get("model") or ""), str(event.get("outcome") or ""),
-                        _num(event.get("cost_usd")), token("input"), token("output"), token("cache_read"), token("cache_write"),
-                        None,
+                        _num(event.get("cost_usd")),
+                        session_id, count("failed_turns"), _diagnostic(runtime.get("last_terminal_kind"), 40),
+                        _diagnostic(runtime.get("failure_class"), 60),
+                        _diagnostic(event.get("error") or runtime.get("last_error")),
+                        count("tool_calls"), _diagnostic(event.get("diagnostics_path"), 300),
+                        token("input"), token("output"), token("cache_read"), token("cache_write"), None,
                     ),
                 )
 

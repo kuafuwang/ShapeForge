@@ -1236,13 +1236,16 @@ def _present_turn(group: dict) -> dict:
         if error is not None:
             err = str(error.get("error") or "")
     elif agent is not None:
-        if agent.get("error"):
+        runtime = agent.get("runtime") if isinstance(agent.get("runtime"), dict) else {}
+        failure_class = str(runtime.get("failure_class") or "")
+        failed_turns = runtime.get("failed_turns")
+        if agent.get("error") or failure_class == "no_submission_after_result":
             kind = "agent_error"
         elif agent.get("had_kernel"):
             kind = "agent"
         else:
             kind = "agent_empty"
-        err = str(agent.get("error") or "")
+        err = _clip(str(agent.get("error") or runtime.get("last_error") or ""), 180)
         cost = agent.get("cost_usd")
         seconds = agent.get("seconds")
         prompt = agent.get("prompt_tokens")
@@ -1256,6 +1259,9 @@ def _present_turn(group: dict) -> dict:
             f"自测 {checks} 次" if isinstance(checks, int) else "",
             f"超时 {timeouts} 次" if isinstance(timeouts, int) and timeouts else "",
             str(outcome),
+            f"诊断 {failure_class}" if failure_class else "",
+            f"hmz 失败回合 {failed_turns} 次" if isinstance(failed_turns, int) and not isinstance(failed_turns, bool) and failed_turns else "",
+            f"诊断文件 {agent.get('diagnostics_path')}" if agent.get("diagnostics_path") else "",
         ) if part)
     elif error is not None:
         kind = "http"
@@ -1506,18 +1512,26 @@ def _agent_note(item: dict, label: str) -> dict:
     """
     parts = [item.get("harness") or "pi", item.get("provider") or "", item.get("model") or ""]
     shown = "/".join(str(part) for part in parts if part)
-    error = str(item.get("error") or "")
+    runtime = item.get("runtime") if isinstance(item.get("runtime"), dict) else {}
+    failure_class = str(runtime.get("failure_class") or "")
+    failed_turns = runtime.get("failed_turns")
+    error = _clip(str(item.get("error") or runtime.get("last_error") or ""), 180)
     had = bool(item.get("had_kernel"))
-    if error:
-        kind, detail = "agent_error", error[:180]
+    if error or failure_class == "no_submission_after_result":
+        kind, detail = "agent_error", error or "正常回答但没有交卷"
     elif had:
         kind, detail = "agent", "候选内核文件里有约定的内核"
     else:
         kind, detail = "agent_empty", "候选内核文件里没有约定的内核"
+    if failure_class == "no_submission_after_result":
+        detail += "；正常回答但没有交卷"
+    if isinstance(failed_turns, int) and not isinstance(failed_turns, bool) and failed_turns > 0:
+        detail += f"；{failed_turns} 个 hmz 失败回合"
     cost = item.get("cost_usd")
     if isinstance(cost, (int, float)) and not isinstance(cost, bool):
         detail = f"{detail}。这场 ${float(cost):.3f}"
-    return {"label": label, "model": shown, "kind": kind, "detail": detail, "seconds": None}
+    return {"label": label, "model": shown, "kind": kind, "detail": detail, "seconds": None,
+            "diagnostics_path": item.get("diagnostics_path") or None}
 
 
 def _model_notes(directory: Path) -> list[dict]:

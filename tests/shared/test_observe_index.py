@@ -92,6 +92,25 @@ def test_schema_mismatch_rebuilds(tmp_path, monkeypatch):
     assert version == str(INDEX_SCHEMA_VERSION)
 
 
+def test_session_diagnostic_columns_are_added_without_changing_the_index_epoch(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
+    monkeypatch.setenv("OBSERVE_CARRYOVER", str(tmp_path / "carry.json"))
+    path = tmp_path / "observe.sqlite"
+    import sqlite3
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO meta VALUES ('index_schema_version', ?)", (str(INDEX_SCHEMA_VERSION),))
+        conn.execute("""CREATE TABLE sessions (
+            run_id TEXT, seq INTEGER, label TEXT, committee TEXT, provider TEXT, model TEXT,
+            outcome TEXT, cost_usd REAL, tokens_input INTEGER, tokens_output INTEGER,
+            tokens_cache_read INTEGER, tokens_cache_write INTEGER, t REAL
+        )""")
+    index = Index(path)
+    columns = {row[1] for row in index.conn.execute("PRAGMA table_info(sessions)")}
+    assert {"session_id", "failed_turns", "last_kind", "failure_class", "error", "tool_calls", "diagnostics_path"} <= columns
+    assert index.conn.execute("SELECT value FROM meta WHERE key = 'index_schema_version'").fetchone()[0] == str(INDEX_SCHEMA_VERSION)
+
+
 def test_binding_drift_is_left_out_of_the_arm(tmp_path, monkeypatch):
     runs = tmp_path / "runs" / "exp"
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(tmp_path / "runs"))
@@ -411,15 +430,26 @@ def test_sessions_and_model_totals_come_from_agent_rows(tmp_path, monkeypatch):
         {"event": "agent", "label": "init", "committee": "first", "provider": "deepseek", "model": "deepseek-flash",
          "outcome": "evaluated", "cost_usd": 1.0, "tokens": {"input": 10, "output": 20, "cache_read": 30, "cache_write": 40}},
         {"event": "agent", "label": "r1.p0", "committee": "second", "provider": "moonshot", "model": "kimi-k3",
-         "outcome": "unchanged", "cost_usd": 2.0, "tokens": {"input": 10, "output": 20, "cache_read": 30, "cache_write": 40}},
+         "outcome": "agent_failed", "error": "Connection error.", "cost_usd": 2.0,
+         "runtime": {"session_ids": ["session-r1"], "failed_turns": 4, "last_terminal_kind": "failed",
+                     "failure_class": "turn_failed", "tool_calls": 7},
+         "diagnostics_path": "agent_diagnostics/r1.json",
+         "tokens": {"input": 10, "output": 20, "cache_read": 30, "cache_write": 40}},
         {"event": "chat", "messages": [{"role": "user", "content": "not a session"}]},
     ]) + "\n")
     scan.refresh()
     sessions = scan.sessions_page("hmz")["sessions"]
     assert [row["model"] for row in sessions] == ["deepseek-flash", "kimi-k3"]
     assert sessions[0]["tokens_cache_write"] == 40
+    assert sessions[1]["session_id"] == "session-r1" and sessions[1]["failed_turns"] == 4
+    assert sessions[1]["last_kind"] == "failed" and sessions[1]["failure_class"] == "turn_failed"
+    assert sessions[1]["error"] == "Connection error." and sessions[1]["tool_calls"] == 7
+    assert sessions[1]["diagnostics_path"] == "agent_diagnostics/r1.json"
     totals = scan.model_stats()["models"]
     assert {row["model"]: row["sessions"] for row in totals} == {"deepseek-flash": 1, "kimi-k3": 1}
+    assert {row["model"]: row["provider"] for row in totals} == {"deepseek-flash": "deepseek", "kimi-k3": "moonshot"}
+    assert scan.model_stats(run_id="hmz")["models"] == totals
+    assert scan.model_stats(run_id="missing")["models"] == []
 
 
 def test_migrating_a_run_does_not_create_a_second_index_row(tmp_path, monkeypatch):
