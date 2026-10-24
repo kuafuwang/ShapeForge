@@ -40,6 +40,14 @@ class FakeNpuBackend:
             time.sleep(0.4)
         elif "REMOTE_SLEEP" in request.source:
             time.sleep(5.0)
+        if "REMOTE_PROGRESS" in request.source and progress_path:
+            # No delay after the terminal write: the service must drain this
+            # snapshot during worker cleanup rather than dropping it.
+            Path(progress_path).write_text(json.dumps({
+                "task": request.task, "dtype": request.dtype, "size": request.size,
+                "mode": request.mode, "stage": "done", "status": "ok",
+                "message": "fake progress complete", "finished": True, "updated_at": time.time(),
+            }), encoding="utf-8")
         order_path = os.environ.get("NPU_SIM_ORDER")
         if order_path:
             with Path(order_path).open("a", encoding="utf-8") as handle:

@@ -58,6 +58,7 @@ class SelfCheckConfig:
     session_id: str
     token: str
     token_file: Path | None = None
+    workspace: Path | None = None
     reps: int = 15
     cases: tuple[str, ...] | None = None
     self_check_dir: Path | None = None
@@ -68,6 +69,7 @@ class SelfCheckConfig:
     max_gpu_s: float = 120.0
     allowed_modes: frozenset[str] = frozenset({"quick", "timed"})
     allow_validate: bool = True
+    require_contract_launch: bool = False
     seed_report_path: Path | None = None
     min_improvement: float = 1.005
     noise_z: float = 2.0
@@ -75,6 +77,9 @@ class SelfCheckConfig:
     close_evaluator_on_stop: bool = False
 
     def __post_init__(self) -> None:
+        if self.workspace is None and self.self_check_dir is not None:
+            # Backward-compatible host-owned default for work/.selfcheck.
+            object.__setattr__(self, "workspace", self.self_check_dir.parent)
         for name in ("task", "dtype", "size", "target_id", "run_id", "session_id", "token"):
             if not isinstance(getattr(self, name), str) or not getattr(self, name):
                 raise ValueError(f"selfcheck config {name} must be non-empty")
@@ -96,6 +101,12 @@ class SelfCheckConfig:
             raise ValueError("selfcheck cases must be a tuple of non-empty strings")
         if not isinstance(self.max_source_bytes, int) or isinstance(self.max_source_bytes, bool) or self.max_source_bytes <= 0:
             raise ValueError("selfcheck max_source_bytes must be positive")
+        if not isinstance(self.allow_validate, bool) or not isinstance(self.require_contract_launch, bool):
+            raise ValueError("selfcheck validation and contract-launch policies must be boolean")
+        if isinstance(self.min_improvement, bool) or not isinstance(self.min_improvement, (int, float)) or not math.isfinite(self.min_improvement) or self.min_improvement < 1.0:
+            raise ValueError("selfcheck min_improvement must be finite and at least one")
+        if isinstance(self.noise_z, bool) or not isinstance(self.noise_z, (int, float)) or not math.isfinite(self.noise_z) or self.noise_z < 0:
+            raise ValueError("selfcheck noise_z must be finite and non-negative")
 
     def request(self, source: str, mode: str, *, validate: bool = False) -> EvaluationRequest:
         if mode not in self.allowed_modes:
@@ -127,6 +138,7 @@ class SelfCheckConfig:
             cache_policy="disabled",
             eval_cache=False,
             validate=validate,
+            require_contract_launch=self.require_contract_launch,
         )
 
 
@@ -259,6 +271,7 @@ class SelfCheckServer:
 
             bench = report.get("benchmark") if isinstance(report.get("benchmark"), dict) else {}
             candidate = bench.get("candidate") if isinstance(bench.get("candidate"), dict) else {}
+            receipt = result.receipt if isinstance(result.receipt, dict) else {}
             append(Path(self.config.self_check_dir), {
                 "status": report.get("status"),
                 "candidate_us": report.get("candidate_us"),
@@ -271,6 +284,11 @@ class SelfCheckServer:
                 "target_id": request.target_id,
                 "protocol_version": PROTOCOL_VERSION,
                 "kernel_sha256": hashlib.sha256(request.source.encode("utf-8")).hexdigest(),
+                "request_id": request.request_id,
+                "request_digest": request.request_digest,
+                "receipt_id": receipt.get("receipt_id"),
+                "measurement_kind": result.provenance.measurement_kind,
+                "simulated": result.provenance.measurement_kind == "simulated" or report.get("simulated") is True,
             })
 
     def _presentation(self, request: EvaluationRequest, result: EvaluationResult) -> dict[str, str]:
@@ -330,12 +348,24 @@ class SelfCheckServer:
         try:
             raw = _read_line(conn, MAX_MESSAGE_BYTES, stop_event=self._stop)
             document = json.loads(raw.decode("utf-8"))
-            if not isinstance(document, dict) or not {"mode", "source", "token"} <= set(document) or set(document) - {"mode", "source", "token", "validate"}:
-                raise SelfCheckBridgeError("invalid_request", "request fields must be mode, source, token and optional validate")
+            if not isinstance(document, dict) or not {"mode", "token"} <= set(document) or set(document) - {"mode", "source", "kernel", "workspace", "token", "validate"}:
+                raise SelfCheckBridgeError("invalid_request", "request fields must be mode, token, source or kernel, and optional validate")
+            if ("source" in document) == ("kernel" in document):
+                raise SelfCheckBridgeError("invalid_request", "exactly one of source and kernel is required")
             token = document.get("token")
             if not isinstance(token, str) or not hmac.compare_digest(token, self.config.token):
                 raise SelfCheckBridgeError("unauthorized", "selfcheck session token was refused")
-            request = self.config.request(document["source"], document["mode"], validate=document.get("validate", False))
+            if "kernel" in document:
+                if self.config.workspace is None or not isinstance(document["kernel"], str):
+                    raise SelfCheckBridgeError("invalid_request", "a host workspace and relative kernel path are required")
+                if "workspace" in document:
+                    supplied_workspace = document["workspace"]
+                    if not isinstance(supplied_workspace, str) or Path(supplied_workspace).resolve() != self.config.workspace.resolve():
+                        raise SelfCheckBridgeError("invalid_request", "workspace does not match the host session")
+                source = _read_workspace_kernel(document["kernel"], self.config.workspace, self.config.max_source_bytes)
+            else:
+                source = document["source"]
+            request = self.config.request(source, document["mode"], validate=document.get("validate", False))
             quota_error = self._quota_error(request.mode)
             if quota_error is not None:
                 raise quota_error
@@ -437,13 +467,23 @@ class SelfCheckClient:
         raise SelfCheckBridgeError("unauthorized", "a selfcheck session token is required")
 
     def check(self, source: str, mode: str, *, validate: bool = False) -> EvaluationResult:
+        if not isinstance(source, str):
+            raise TypeError("source must be text")
+        return self._check({"source": source}, mode, validate=validate)
+
+    def check_path(self, kernel: str, mode: str, *, validate: bool = False, workspace: str = "") -> EvaluationResult:
+        """Ask the host to read a candidate from its configured workspace."""
+        if not isinstance(kernel, str):
+            raise TypeError("kernel path must be text")
+        candidate = {"kernel": kernel, "workspace": workspace} if workspace else {"kernel": kernel}
+        return self._check(candidate, mode, validate=validate)
+
+    def _check(self, candidate: dict[str, str], mode: str, *, validate: bool) -> EvaluationResult:
         if mode not in {"quick", "timed"}:
             raise ValueError("mode must be quick or timed")
         if validate and mode != "timed":
             raise ValueError("validation requires a timed selfcheck")
-        if not isinstance(source, str):
-            raise TypeError("source must be text")
-        payload = json.dumps({"mode": mode, "source": source, "token": self._token(), "validate": bool(validate)}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        payload = json.dumps({"mode": mode, **candidate, "token": self._token(), "validate": bool(validate)}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         if len(payload) > MAX_MESSAGE_BYTES:
             raise SelfCheckBridgeError("source_too_large", "source exceeds the selfcheck limit")
         try:
@@ -476,7 +516,9 @@ def _read_line(stream: socket.socket, limit: int, *, stop_event: threading.Event
         try:
             chunk = stream.recv(min(65_536, limit + 1 - len(chunks)))
         except socket.timeout:
-            if stop_event is not None and stop_event.is_set():
+            if stop_event is None:
+                raise SelfCheckBridgeError("evaluation_unavailable", "selfcheck bridge response timed out", retryable=True)
+            if stop_event.is_set():
                 raise SelfCheckBridgeError("connection_closed", "selfcheck bridge is stopping")
             continue
         if not chunk:
@@ -498,10 +540,57 @@ def _workspace_kernel(value: str, workspace: str = "") -> Path:
     if path.is_absolute():
         raise ValueError("kernel path must be relative to the session workspace")
     root = Path(workspace or Path.cwd()).resolve()
-    resolved = (root / path).resolve()
+    candidate = root / path
+    current = root
+    for part in path.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("kernel path must not contain symbolic links")
+    resolved = candidate.resolve()
     if not resolved.is_relative_to(root):
         raise ValueError("kernel path escapes the session workspace")
     return resolved
+
+
+def _read_workspace_kernel(value: str, workspace: Path, limit: int) -> str:
+    """Read one bounded regular file without following agent-raced symlinks."""
+    path = Path(value)
+    if not path.parts:
+        raise ValueError("kernel path must name a file")
+    _workspace_kernel(value, str(workspace))  # legacy validation and diagnostics
+    if any(part == ".." for part in path.parts):
+        raise ValueError("kernel path must not contain '..'")
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    root_fd = os.open(workspace, os.O_RDONLY | directory | nofollow)
+    current_fd = root_fd
+    try:
+        for part in path.parts[:-1]:
+            next_fd = os.open(part, os.O_RDONLY | directory | nofollow, dir_fd=current_fd)
+            if current_fd != root_fd:
+                os.close(current_fd)
+            current_fd = next_fd
+        flags = os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0)
+        file_fd = os.open(path.parts[-1], flags, dir_fd=current_fd)
+        try:
+            info = os.fstat(file_fd)
+            if not stat.S_ISREG(info.st_mode):
+                raise ValueError("kernel path must name a regular file")
+            if info.st_size > limit:
+                raise SelfCheckBridgeError("source_too_large", "source exceeds the selfcheck limit")
+            with os.fdopen(file_fd, "rb") as handle:
+                file_fd = -1
+                data = handle.read(limit + 1)
+        finally:
+            if file_fd >= 0:
+                os.close(file_fd)
+    finally:
+        if current_fd != root_fd:
+            os.close(current_fd)
+        os.close(root_fd)
+    if len(data) > limit:
+        raise SelfCheckBridgeError("source_too_large", "source exceeds the selfcheck limit")
+    return data.decode("utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -524,13 +613,14 @@ def main(argv: list[str] | None = None) -> int:
         print("TAIC_SELFCHECK_SOCKET or --socket is required", file=sys.stderr)
         return 2
     try:
-        source = _workspace_kernel(args.kernel, args.workspace).read_text(encoding="utf-8")
         client = SelfCheckClient(
             args.socket,
             token=os.environ.get("TAIC_SELFCHECK_TOKEN", ""),
             token_file=args.token_file,
         )
-        result = client.check(source, args.mode, validate=args.validate)
+        # The host checks --workspace against its session binding and reads the
+        # candidate itself; this process never chooses the authoritative root.
+        result = client.check_path(args.kernel, args.mode, validate=args.validate, workspace=args.workspace)
         report = result.report if isinstance(result.report, EvalReport) else result.report
         if isinstance(report, dict) and report.get("simulated") is True:
             if args.json:

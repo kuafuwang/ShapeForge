@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tcenv.selfcheck import LOG_NAME, MAX_CHECKS, MAX_GPU_S, append, authority_log, budget_reason, earlier_hang
 
 
@@ -81,6 +83,36 @@ def test_damaged_lines_do_not_unlock_the_budget(tmp_path):
     assert budget_reason(tmp_path) is not None
 
 
+def test_mirror_failure_cannot_erase_the_host_record(tmp_path):
+    """@brief agent-writable mirror 打开失败时，已发生的 timeout 仍先写入 host。"""
+    tmp_path.mkdir(exist_ok=True)
+    (tmp_path / LOG_NAME).mkdir()
+    append(tmp_path, {"status": "timeout", "elapsed_s": 1.0})
+    assert "timeout" in (earlier_hang(tmp_path) or "")
+    rows = [json.loads(line) for line in authority_log(tmp_path).read_text().splitlines()]
+    assert rows == [{"status": "timeout", "elapsed_s": 1.0}]
+
+
+def test_symlinked_or_nondirectory_mirror_cannot_redirect_authority(tmp_path):
+    """@brief .selfcheck 被换成 symlink 或普通文件后，host key 与 timeout 证据仍不变。"""
+    checks = tmp_path / ".selfcheck"
+    append(checks, {"status": "timeout", "elapsed_s": 1.0})
+    authority = authority_log(checks)
+    mirror_target = tmp_path / "elsewhere"
+    mirror_target.mkdir()
+    checks.rename(mirror_target / "old")
+    checks.symlink_to(mirror_target, target_is_directory=True)
+    assert authority_log(checks) == authority
+    assert "timeout" in (earlier_hang(checks) or "")
+    append(checks, {"status": "ok", "elapsed_s": 2.0})
+    assert not (mirror_target / LOG_NAME).exists()
+
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory")
+    append(blocked, {"status": "timeout", "elapsed_s": 2.0})
+    assert "timeout" in (earlier_hang(blocked) or "")
+
+
 def test_host_record_survives_workspace_log_tampering(tmp_path):
     """@brief agent 清空 workspace 日志也不能重置 host 侧自测配额或 hang 锁。"""
     for _ in range(MAX_CHECKS):
@@ -106,6 +138,8 @@ def test_invalid_gpu_time_fails_closed(tmp_path):
 def test_environment_cannot_redirect_host_quota_into_workspace(tmp_path, monkeypatch):
     """@brief 被测进程设置 TCENV_SELFCHECK_HOME 也不能把权威记录重定向到工作区。"""
     monkeypatch.setenv("TCENV_SELFCHECK_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
     for _ in range(MAX_CHECKS):
         append(tmp_path, {"status": "ok", "elapsed_s": 1.0})
     authority = authority_log(tmp_path)

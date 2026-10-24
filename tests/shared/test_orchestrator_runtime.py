@@ -69,6 +69,23 @@ def test_search_can_use_an_injected_session_runner(tmp_path):
     assert model
 
 
+def test_fixed_selfcheck_socket_is_bound_as_host_bridge(tmp_path):
+    """@brief 固定 bridge 没有 factory 时，execution 元数据也必须匹配实际自测路径。"""
+    runner = RecordingRunner()
+    orch = make_orch(
+        tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0,
+        session_runner=runner,
+    )
+    orch.selfcheck_socket = str(tmp_path / "fixed.sock")
+    orch.selfcheck_token_file = str(tmp_path / "fixed.token")
+    orch.agent_runner = None
+    run(orch)
+    execution = runner.calls[0][1]
+    assert execution.selfcheck.mode == "host_bridge"
+    assert execution.selfcheck.endpoint_id == str(tmp_path / "fixed.sock")
+    assert execution.selfcheck.token_ref == str(tmp_path / "fixed.token")
+
+
 class FailingEvaluator:
     def formal(self, request):
         raise RemoteError("transport_closed", "simulated disconnect")
@@ -123,7 +140,9 @@ def test_selfcheck_bridge_factory_is_scoped_to_one_session(tmp_path):
     """@brief 每场会话使用独立 bridge，并在反馈归档后停止它。"""
     class Bridge:
         def __init__(self):
+            from types import SimpleNamespace
             self.socket_path = tmp_path / "selfcheck.sock"
+            self.config = SimpleNamespace(reps=7, min_improvement=1.2, noise_z=3.0, max_timed=1, max_gpu_s=2.5, allow_validate=False)
             self.stopped = False
         def stop(self):
             self.stopped = True
@@ -140,7 +159,10 @@ def test_selfcheck_bridge_factory_is_scoped_to_one_session(tmp_path):
     assert res.best_speedup == 1.2
     assert len(bridges) == 1 and bridges[0][0] == "init"
     assert bridges[0][1].stopped is True
-    assert orch._session_briefs[0].selfcheck_token_file.endswith("selfcheck.token")
+    brief = orch._session_briefs[0]
+    assert brief.selfcheck_token_file.endswith("selfcheck.token")
+    assert (brief.reps, brief.min_improvement, brief.noise_z) == (7, 1.2, 3.0)
+    assert (brief.selfcheck_max_timed, brief.selfcheck_max_gpu_s, brief.selfcheck_allow_validate) == (1, 2.5, False)
 
 
 def test_resume_rejects_removing_epoch_allowlist_even_through_direct_orchestrator(tmp_path):

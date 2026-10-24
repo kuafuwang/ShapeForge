@@ -211,6 +211,9 @@ class RemoteEvaluationConfig:
         size: str,
         task_fingerprint: str,
         run_id: str,
+        require_contract_launch: bool = False,
+        min_improvement: float | None = None,
+        noise_z: float | None = None,
     ) -> Callable[[str, Path, Any], tuple[SelfCheckServer, str]]:
         """Return the per-session bridge factory consumed by Orchestrator."""
         def factory(session_id: str, work: Path, evaluator: Any) -> tuple[SelfCheckServer, str]:
@@ -225,6 +228,18 @@ class RemoteEvaluationConfig:
             # bridge writes it 0600 and removes it on stop; the agent receives
             # the value through its session environment.
             token_file = self.socket_root / (socket_name + ".token")
+            usage_path = work.parent.parent / "selfcheck_usage" / f"{hashlib.sha256(session_id.encode('utf-8')).hexdigest()[:20]}.json"
+            # Orchestrator stages report.json from the trusted SessionBrief
+            # before invoking this factory. Snapshot it outside the workspace;
+            # reading it lazily would let the agent rewrite the host verdict.
+            seed_report_path = usage_path.with_suffix(".seed.json")
+            try:
+                seed_report = (work / "report.json").read_text(encoding="utf-8")
+            except OSError:
+                seed_report_path = None
+            else:
+                seed_report_path.parent.mkdir(parents=True, exist_ok=True)
+                seed_report_path.write_text(seed_report, encoding="utf-8")
             selfcheck_evaluator = self.make_selfcheck_evaluator(run_id) if self.selfcheck_token_file is not None else evaluator
             config = SelfCheckConfig(
                 task=task,
@@ -236,13 +251,15 @@ class RemoteEvaluationConfig:
                 session_id=session_id,
                 token=token,
                 token_file=token_file,
+                workspace=work,
                 reps=self.selfcheck_reps,
                 self_check_dir=work / ".selfcheck",
-                seed_report_path=work / "report.json",
+                seed_report_path=seed_report_path,
                 allow_validate=self.selfcheck_allow_validate,
-                min_improvement=self.selfcheck_min_improvement,
-                noise_z=self.selfcheck_noise_z,
-                usage_path=work.parent.parent / "selfcheck_usage" / f"{hashlib.sha256(session_id.encode('utf-8')).hexdigest()[:20]}.json",
+                require_contract_launch=require_contract_launch,
+                min_improvement=self.selfcheck_min_improvement if min_improvement is None else min_improvement,
+                noise_z=self.selfcheck_noise_z if noise_z is None else noise_z,
+                usage_path=usage_path,
                 max_timed=self.selfcheck_max_timed,
                 max_gpu_s=self.selfcheck_max_gpu_s,
                 close_evaluator_on_stop=self.selfcheck_token_file is not None,

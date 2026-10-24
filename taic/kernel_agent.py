@@ -110,6 +110,9 @@ class SessionBrief:
     evidence: str = ""
     reps: int = 15
     require_contract_launch: bool = False
+    selfcheck_max_timed: int = 20
+    selfcheck_max_gpu_s: float = 120.0
+    selfcheck_allow_validate: bool = True
     min_improvement: float = 1.005
     noise_z: float = 2.0
     seedless: bool = False
@@ -657,8 +660,8 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         "```",
         "上面两条命令里的交卷文件和 report.json 是绝对路径。不要改成相对路径。",
         "命令会把一行结果追加到本目录的 `self_checks.jsonl`。出现过 timeout 或 crash 之后，再跑 `--timed` 会被拒绝。",
-        "交卷前请在 `--timed` 后面加 `--validate` 跑最后一次：那一遍会开插桩校验（抓越界和竞争），外层也会做同一件事，早发现能省一场会话。",
-        "这个目录最多记 20 次 `--timed`，累计 120 秒。超过之后 `--timed` 会拒绝，你仍可交卷，外层照常测。",
+        *(["交卷前请在 `--timed` 后面加 `--validate` 跑最后一次：那一遍会开插桩校验（抓越界和竞争），外层也会做同一件事，早发现能省一场会话。"] if brief.selfcheck_allow_validate else []),
+        f"这个目录最多记 {brief.selfcheck_max_timed} 次 `--timed`，累计 {brief.selfcheck_max_gpu_s:g} 秒。超过之后 `--timed` 会拒绝，你仍可交卷，外层照常测。",
         "在本目录运行。GPU 锁是机器上那一把，不要改锁路径，也不要自己另写一把。",
         "一个不返回的核会冻住显示器。",
         "",
@@ -794,7 +797,14 @@ def _self_check_summary(work: Path) -> tuple[int, int, float, int]:
     @return ``(checks, timeouts, gpu_s, crashes)``，即自测次数、超时数、GPU 秒数与崩溃数；
         日志不存在时为全 0。
     """
-    path = work / "self_checks.jsonl"
+    from tcenv.selfcheck import authority_log
+
+    # Prefer the host record: the agent can edit or delete either workspace
+    # mirror, but must not be able to hide a timed-out self-check from the
+    # outer hang breaker.
+    path = authority_log(work)
+    if not path.is_file():
+        path = work / "self_checks.jsonl"
     if not path.is_file():
         return 0, 0, 0.0, 0
     count = timeouts = crashes = 0

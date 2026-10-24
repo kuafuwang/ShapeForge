@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import tcenv.events as events
@@ -33,6 +34,30 @@ def test_emit_writes_nothing_until_the_file_log_is_subscribed(tmp_path):
         for listener in saved:
             events.subscribe(listener)
         events.install_file_log()
+
+
+def test_atomic_snapshot_writers_do_not_share_a_thread_local_temp_name(tmp_path):
+    """@brief 并发 progress writer 不得互相替换临时文件或丢失更新。"""
+    target = tmp_path / "eval_progress.json"
+    start = threading.Barrier(8)
+    errors = []
+
+    def write_many(worker: int) -> None:
+        try:
+            start.wait()
+            for index in range(100):
+                events._write_json(target, {"worker": worker, "index": index})
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write_many, args=(worker,)) for worker in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert not errors
+    assert all(not thread.is_alive() for thread in threads)
+    assert set(json.loads(target.read_text())) == {"worker", "index"}
 
 
 def test_a_gpu_lock_note_is_written(tmp_path, monkeypatch):

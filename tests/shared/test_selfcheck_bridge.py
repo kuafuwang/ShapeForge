@@ -44,7 +44,7 @@ def _config(tmp_path: Path, **overrides) -> SelfCheckConfig:
     values = dict(
         task="relu", dtype="fp16", size="small", target_id="apple-m4-max",
         task_fingerprint="a" * 64, run_id="run-1", session_id="session-1", token="test-token",
-        reps=7, self_check_dir=tmp_path / "checks",
+        reps=7, self_check_dir=tmp_path / "checks", workspace=tmp_path,
     )
     values.update(overrides)
     return SelfCheckConfig(**values)
@@ -119,6 +119,40 @@ def test_selfcheck_client_rejects_non_object_response(tmp_path):
         with pytest.raises(SelfCheckBridgeError, match="must be an object"):
             SelfCheckClient(path, token="test-token").check("kernel void demo() {}", "quick")
     finally:
+        path.unlink(missing_ok=True)
+        thread.join(timeout=2)
+
+
+def test_selfcheck_client_response_timeout_is_enforced(tmp_path):
+    """@brief bridge 收下请求但不回应时，client 必须在自己的 timeout 后退出。"""
+    import time
+
+    path = _short_socket()
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(path))
+    listener.listen(1)
+    accepted = threading.Event()
+    release = threading.Event()
+
+    def serve():
+        conn, _ = listener.accept()
+        conn.recv(4096)
+        accepted.set()
+        release.wait(2)
+        conn.close()
+        listener.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(SelfCheckBridgeError, match="timed out") as exc_info:
+            SelfCheckClient(path, token="test-token", timeout_s=0.05).check("kernel void demo() {}", "quick")
+        assert exc_info.value.retryable is True
+        assert accepted.is_set()
+        assert time.monotonic() - started < 1.0
+    finally:
+        release.set()
         path.unlink(missing_ok=True)
         thread.join(timeout=2)
 
@@ -219,6 +253,15 @@ def test_bridge_validate_is_host_controlled_and_reaches_the_evaluator(tmp_path):
         SelfCheckClient(blocked.socket_path, token="test-token").check("kernel void demo() {}", "quick", validate=True)
 
 
+def test_bridge_carries_the_host_contract_launch_policy(tmp_path):
+    """@brief remote selfcheck 与 formal 使用同一条 host-owned launch contract 门禁。"""
+    executor = FakeExecutor()
+    server = SelfCheckServer(_config(tmp_path, require_contract_launch=True), executor, _short_socket())
+    with server:
+        SelfCheckClient(server.socket_path, token="test-token").check("kernel void demo() {}", "quick")
+    assert executor.requests[0].require_contract_launch is True
+
+
 def test_bridge_host_writes_authoritative_selfcheck_row_and_verdict(tmp_path):
     """@brief timed selfcheck 由 host 写权威行，并用宿主种子报告生成换种子结论。"""
     seed_path = tmp_path / "seed-report.json"
@@ -232,7 +275,8 @@ def test_bridge_host_writes_authoritative_selfcheck_row_and_verdict(tmp_path):
             return result
 
     config = _config(tmp_path, seed_report_path=seed_path)
-    server = SelfCheckServer(config, FasterExecutor(), _short_socket())
+    executor = FasterExecutor()
+    server = SelfCheckServer(config, executor, _short_socket())
     with server:
         client = SelfCheckClient(server.socket_path, token="test-token")
         client.check("kernel void demo() {}", "timed")
@@ -241,6 +285,9 @@ def test_bridge_host_writes_authoritative_selfcheck_row_and_verdict(tmp_path):
     assert len(rows) == 1
     row = json.loads(rows[0])
     assert row["status"] == "ok" and row["kernel_sha256"]
+    assert row["request_id"] == executor.requests[0].request_id
+    assert row["request_digest"] == executor.requests[0].request_digest
+    assert row["measurement_kind"] == "measured" and row["simulated"] is False
 
 
 def test_bridge_cli_reads_token_file_and_workspace_relative_kernel(tmp_path, monkeypatch, capsys):
@@ -258,6 +305,31 @@ def test_bridge_cli_reads_token_file_and_workspace_relative_kernel(tmp_path, mon
     assert status == 0
     assert len(executor.requests) == 1
     assert "ok" in capsys.readouterr().out
+
+
+def test_bridge_cli_rejects_symlinked_and_oversized_candidates(tmp_path, capsys):
+    """@brief host 候选解析拒绝符号链接，并在读入内存前拒绝超大文件。"""
+    from taic.selfcheck_bridge import MAX_SOURCE_BYTES, main
+
+    actual = tmp_path / "actual.metal"
+    actual.write_text("kernel void demo() {}")
+    linked = tmp_path / "linked.metal"
+    linked.symlink_to(actual)
+    token_file = tmp_path / "token"
+    token_file.write_text("test-token")
+    server = SelfCheckServer(_config(tmp_path), FakeExecutor(), _short_socket())
+    with server:
+        assert main(["--socket", str(server.socket_path), "--token-file", str(token_file), "--kernel", "linked.metal", "--workspace", str(tmp_path), "--quick"]) == 2
+        assert "symbolic links" in capsys.readouterr().err
+
+        large = tmp_path / "large.metal"
+        large.write_bytes(b" " * (MAX_SOURCE_BYTES + 1))
+        assert main(["--socket", str(server.socket_path), "--token-file", str(token_file), "--kernel", "large.metal", "--workspace", str(tmp_path), "--quick"]) == 2
+        assert "source exceeds" in capsys.readouterr().err
+
+        # A caller-selected root cannot redirect the host's session workspace.
+        assert main(["--socket", str(server.socket_path), "--token-file", str(token_file), "--kernel", "actual.metal", "--workspace", "/", "--quick"]) == 2
+        assert "workspace does not match" in capsys.readouterr().err
 
 
 def test_bridge_cli_reads_the_session_token_from_the_environment(tmp_path, monkeypatch, capsys):

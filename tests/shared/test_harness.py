@@ -97,13 +97,13 @@ def _trusted_row(work: Path, *, kernel_sha256: str = "abc", candidate_us: float 
     @param kernel_sha256 该行对应的内核摘要。
     @param candidate_us 测得的内核耗时。
     """
-    folder = work / ".selfcheck"
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / "self_checks.jsonl").write_text(json.dumps({
+    from tcenv.selfcheck import append
+
+    append(work / ".selfcheck", {
         "status": "ok", "candidate_us": candidate_us, "speedup": 1.0, "elapsed_s": 0.1,
         "target_id": "apple-m4-max", "protocol_version": trust.current_protocol_version(),
         "kernel_sha256": kernel_sha256,
-    }) + "\n")
+    })
 
 
 def test_a_structured_tip_needs_two_trusted_committees_and_shadow_does_not_inject(tmp_path):
@@ -380,12 +380,12 @@ def test_a_premise_needs_a_matching_harness_record_not_just_a_probe(tmp_path):
     @param tmp_path pytest 提供的临时目录。
     """
     work = tmp_path / "work"
-    (work / ".selfcheck").mkdir(parents=True)
-    (work / ".selfcheck" / "self_checks.jsonl").write_text(json.dumps({
+    from tcenv.selfcheck import append
+    append(work / ".selfcheck", {
         "status": "ok", "candidate_us": 463.46, "speedup": 1.2,
         "target_id": "apple-m4-max", "protocol_version": trust.current_protocol_version(),
         "kernel_sha256": "abc",
-    }) + "\n")
+    })
     ok, why = harness.trusted_premise_record(
         work, target_id="apple-m4-max", protocol_version=trust.current_protocol_version(),
         kernel_sha256="abc", measurement="463.46 us",
@@ -398,6 +398,32 @@ def test_a_premise_needs_a_matching_harness_record_not_just_a_probe(tmp_path):
     assert not harness.trusted_premise_record(
         work, target_id="apple-m4-max", protocol_version=trust.current_protocol_version(),
         kernel_sha256="abc", measurement="15.09 TFLOP/s",
+    )[0]
+
+
+def test_a_forged_workspace_selfcheck_row_cannot_activate_a_premise(tmp_path):
+    """@brief 没有 host 权威行时，agent 自己写的 mirror 不是 measured 证据。"""
+    work = tmp_path / "work"
+    (work / ".selfcheck").mkdir(parents=True)
+    (work / ".selfcheck" / "self_checks.jsonl").write_text(json.dumps({
+        "status": "ok", "candidate_us": 1.0, "speedup": 2.0,
+        "target_id": "apple-m4-max", "protocol_version": trust.current_protocol_version(),
+        "kernel_sha256": "forged",
+    }) + "\n")
+    assert not harness.trusted_premise_record(
+        work, target_id="apple-m4-max", protocol_version=trust.current_protocol_version(),
+        kernel_sha256="forged", measurement="2.0x",
+    )[0]
+
+    from tcenv.selfcheck import append
+    append(work / ".selfcheck", {
+        "status": "ok", "candidate_us": 1.0, "speedup": 3.0,
+        "target_id": "apple-m4-max", "protocol_version": trust.current_protocol_version(),
+        "kernel_sha256": "simulated", "measurement_kind": "simulated", "simulated": True,
+    })
+    assert not harness.trusted_premise_record(
+        work, target_id="apple-m4-max", protocol_version=trust.current_protocol_version(),
+        kernel_sha256="simulated", measurement="3.0x",
     )[0]
 
 

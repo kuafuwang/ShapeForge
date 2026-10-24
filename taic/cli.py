@@ -164,6 +164,8 @@ def cmd_run(a: argparse.Namespace) -> int:
                 orch.selfcheck_bridge_factory = remote.make_bridge_factory(
                     task=orch.task_name, dtype=orch.dtype, size=orch.size,
                     task_fingerprint=orch.task_fingerprint, run_id=orch.run_dir.name,
+                    require_contract_launch=bool(orch.search.require_contract_launch),
+                    min_improvement=float(orch.search.min_improvement), noise_z=float(orch.search.noise_z),
                 )
         except (RunStartError, ValueError, LLMError) as e:
             # 尺寸或任务名不合法是启动失败，和配置写不进去一样，退出码 5。
@@ -456,6 +458,8 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
         orch.selfcheck_bridge_factory = remote.make_bridge_factory(
             task=orch.task_name, dtype=orch.dtype, size=orch.size,
             task_fingerprint=orch.task_fingerprint, run_id=orch.run_dir.name,
+            require_contract_launch=bool(orch.search.require_contract_launch),
+            min_improvement=float(orch.search.min_improvement), noise_z=float(orch.search.noise_z),
         )
     variants = {prompts.system_prompt(orch.task, use_tools=cfg.use_tools, profiler_evidence=pe, hw_feedback=hw) for pe in (False, True) for hw in (False, True)}
     # 系统提示若已和现在的 prompts.py 不同，仍用转录里的原文。换提示会让同一次实验的前后轮次对着不同契约说话。

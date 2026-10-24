@@ -141,6 +141,17 @@ class LocalHmzKernelSessionRunner:
             brief.work_dir = str(host)
         elif Path(brief.work_dir).resolve() != host:
             raise ValueError("brief.work_dir must equal SessionPaths.host_work")
+        binding = execution.selfcheck
+        if binding.mode == "local_cli":
+            if brief.selfcheck_socket or brief.selfcheck_token_file:
+                raise ValueError("local_cli selfcheck binding conflicts with the brief bridge fields")
+        elif binding.mode == "host_bridge":
+            if not binding.endpoint_id or not binding.token_ref:
+                raise ValueError("host_bridge selfcheck binding needs endpoint_id and token_ref")
+            if brief.selfcheck_socket != binding.endpoint_id or brief.selfcheck_token_file != binding.token_ref:
+                raise ValueError("host_bridge selfcheck binding must match the brief bridge fields")
+        else:
+            raise ValueError(f"LocalHmzKernelSessionRunner does not support selfcheck mode {binding.mode!r}")
         return self._run_fn(
             brief,
             work=host,

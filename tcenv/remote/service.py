@@ -202,6 +202,7 @@ class RemoteService:
         self._stop = threading.Event()
         self._handler: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._usage_lock = threading.Lock()
 
     def _load_selfcheck_usage(self) -> None:
         if not self._selfcheck_usage_path.is_file():
@@ -241,8 +242,20 @@ class RemoteService:
     def _mark_selfcheck_hang(self, request: EvaluationRequest) -> None:
         if request.kind == "selfcheck" and request.mode == "timed":
             key = (request.run_id, request.session_id)
-            self._selfcheck_hangs.add(key)
-            self._save_selfcheck_usage()
+            with self._usage_lock:
+                self._selfcheck_hangs.add(key)
+                self._save_selfcheck_usage()
+
+    def _refund_selfcheck(self, request: EvaluationRequest) -> None:
+        """Release a reserved timed slot when no candidate verdict was obtained."""
+        if request.kind != "selfcheck" or request.mode != "timed":
+            return
+        key = (request.run_id, request.session_id)
+        with self._usage_lock:
+            count = self._selfcheck_counts.get(key, 0)
+            if count:
+                self._selfcheck_counts[key] = count - 1
+                self._save_selfcheck_usage()
 
     # -- public entry point -------------------------------------------------
     def serve(self, reader: BinaryIO, writer: BinaryIO) -> None:
@@ -428,18 +441,19 @@ class RemoteService:
                 return
         if request.kind == "selfcheck" and request.mode == "timed":
             key = (request.run_id, request.session_id)
-            if key in self._selfcheck_hangs:
-                self._send_error(request.request_id, "selfcheck_hang", "a previous self-check timed out or crashed")
-                return
-            count = self._selfcheck_counts.get(key, 0)
-            if count >= min(self.selfcheck_max_timed, grant.max_timed):
-                self._send_error(request.request_id, "selfcheck_quota", "self-check count quota is exhausted")
-                return
-            if self._selfcheck_gpu_s.get(key, 0.0) >= min(self.selfcheck_max_gpu_s, grant.max_gpu_s):
-                self._send_error(request.request_id, "selfcheck_quota", "self-check GPU-time quota is exhausted")
-                return
-            self._selfcheck_counts[key] = count + 1
-            self._save_selfcheck_usage()
+            with self._usage_lock:
+                if key in self._selfcheck_hangs:
+                    self._send_error(request.request_id, "selfcheck_hang", "a previous self-check timed out or crashed")
+                    return
+                count = self._selfcheck_counts.get(key, 0)
+                if count >= min(self.selfcheck_max_timed, grant.max_timed):
+                    self._send_error(request.request_id, "selfcheck_quota", "self-check count quota is exhausted")
+                    return
+                if self._selfcheck_gpu_s.get(key, 0.0) >= min(self.selfcheck_max_gpu_s, grant.max_gpu_s):
+                    self._send_error(request.request_id, "selfcheck_quota", "self-check GPU-time quota is exhausted")
+                    return
+                self._selfcheck_counts[key] = count + 1
+                self._save_selfcheck_usage()
         self._remember_state(request.request_id, {
             "schema_version": SCHEMA_VERSION,
             "request_id": request.request_id,
@@ -482,12 +496,14 @@ class RemoteService:
                 time.sleep(0.1)
                 continue
             if job.cancel.is_set():
+                self._refund_selfcheck(job.request)
                 self._finish_job(job, "cancelled", "request cancelled before it started")
                 with self._jobs_lock():
                     self._jobs.pop(job.request.request_id, None)
                 continue
             if time.perf_counter() - job.submitted > job.request.queue_timeout_s:
-                self._finish_job(job, "queue_timeout", "request exceeded the queue timeout")
+                self._refund_selfcheck(job.request)
+                self._finish_job(job, "queue_timeout", "request exceeded the queue timeout", retryable=True)
                 with self._jobs_lock():
                     self._jobs.pop(job.request.request_id, None)
                 continue
@@ -496,17 +512,19 @@ class RemoteService:
                 if job.cancel.is_set():
                     raise _JobFailed("cancelled", "request cancelled")
                 response = self._run_worker(job)
+                # _run_worker linearizes cancellation before returning a valid
+                # result. Once it has returned, commit and deliver that result
+                # fully instead of recording usage and then reporting cancelled.
                 if job.request.kind == "selfcheck" and job.request.mode == "timed":
                     report = response.get("report") or {}
                     elapsed = report.get("elapsed_s", 0.0)
                     if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) and elapsed >= 0 and math.isfinite(elapsed):
                         key = (job.request.run_id, job.request.session_id)
-                        self._selfcheck_gpu_s[key] = self._selfcheck_gpu_s.get(key, 0.0) + float(elapsed)
-                        if report.get("status") in {"timeout", "crash"}:
-                            self._mark_selfcheck_hang(job.request)
-                        self._save_selfcheck_usage()
-                if job.cancel.is_set():
-                    raise _JobFailed("cancelled", "request cancelled")
+                        with self._usage_lock:
+                            self._selfcheck_gpu_s[key] = self._selfcheck_gpu_s.get(key, 0.0) + float(elapsed)
+                            if report.get("status") in {"timeout", "crash"}:
+                                self._selfcheck_hangs.add(key)
+                            self._save_selfcheck_usage()
                 self._remember_state(job.request.request_id, {
                     "schema_version": SCHEMA_VERSION,
                     "request_id": job.request.request_id,
@@ -517,11 +535,15 @@ class RemoteService:
                 })
                 self._send("result", job.request.request_id, response)
             except _JobFailed as exc:
-                if exc.code in {"candidate_timeout", "worker_failed", "worker_protocol_error"}:
+                if exc.code == "candidate_timeout":
                     self._mark_selfcheck_hang(job.request)
+                else:
+                    # Transport, cancellation, worker and protocol failures are
+                    # infrastructure outcomes, not candidate crash/hang evidence.
+                    self._refund_selfcheck(job.request)
                 self._finish_job(job, exc.code, str(exc), retryable=exc.retryable)
             except Exception as exc:  # noqa: BLE001 - a broken worker is a protocol error, not a host crash
-                self._mark_selfcheck_hang(job.request)
+                self._refund_selfcheck(job.request)
                 self._finish_job(job, "worker_failed", f"{type(exc).__name__}: {exc}"[:MAX_WORKER_STDERR])
             finally:
                 self._active = None
@@ -569,16 +591,18 @@ class RemoteService:
         """Forward bounded progress snapshots without exposing worker paths."""
         last: dict[str, Any] | None = None
         allowed = ("task", "dtype", "size", "mode", "stage", "status", "message", "finished", "updated_at")
-        while not stop.wait(0.05):
+
+        def relay_one() -> None:
+            nonlocal last
             try:
                 document = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
-                continue
+                return
             if not isinstance(document, dict):
-                continue
+                return
             payload = {key: document[key] for key in allowed if key in document}
             if payload == last:
-                continue
+                return
             if isinstance(payload.get("message"), str):
                 payload["message"] = payload["message"][:300]
             if "finished" in payload and not isinstance(payload["finished"], bool):
@@ -588,6 +612,13 @@ class RemoteService:
             last = payload
             self._send("progress", request_id, payload)
 
+        while not stop.is_set():
+            relay_one()
+            stop.wait(0.05)
+        # A worker commonly writes its terminal snapshot immediately before
+        # exiting. Drain it before _run_worker unlinks the progress file.
+        relay_one()
+
     def _run_worker(self, job: _Job) -> dict[str, Any]:
         request = job.request
         env = scrubbed_env()
@@ -596,6 +627,12 @@ class RemoteService:
         progress_dir = self.state_dir / "progress"
         progress_dir.mkdir(parents=True, exist_ok=True)
         progress_path = progress_dir / (sha256_hex(request.request_id.encode("utf-8")) + ".json")
+        # A retry may reuse the same request id after an interrupted service.
+        # Never relay the previous attempt's snapshot as this job's progress.
+        try:
+            progress_path.unlink()
+        except OSError:
+            pass
         env["TCENV_REMOTE_PROGRESS_PATH"] = str(progress_path)
         progress_stop = threading.Event()
         progress_thread = threading.Thread(
@@ -617,7 +654,11 @@ class RemoteService:
         except OSError as exc:
             progress_stop.set()
             progress_thread.join(timeout=1)
-            raise _JobFailed("worker_unavailable", f"could not start worker: {exc}") from exc
+            try:
+                progress_path.unlink()
+            except OSError:
+                pass
+            raise _JobFailed("worker_unavailable", f"could not start worker: {exc}", retryable=True) from exc
         job.process = proc
         try:
             out, err = proc.communicate(

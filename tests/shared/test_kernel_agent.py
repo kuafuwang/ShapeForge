@@ -400,6 +400,28 @@ def test_a_real_task_keeps_a_partial_scorecard_instead_of_dropping_it(tmp_path, 
     assert "需要时读取" in text
 
 
+def test_contract_renders_the_resolved_selfcheck_policy(tmp_path):
+    """@brief TASK 的 quota 与 validate 文案必须跟 host resolved policy 一致。"""
+    brief = _brief(tmp_path)
+    brief.selfcheck_max_timed = 1
+    brief.selfcheck_max_gpu_s = 2.5
+    brief.selfcheck_allow_validate = False
+    text = render_contract(brief)
+    assert "最多记 1 次" in text and "累计 2.5 秒" in text
+    assert "--validate" not in text
+
+
+def test_self_check_summary_uses_host_rows_after_mirror_tampering(tmp_path):
+    """@brief agent 删除 workspace mirror 也不能把 selfcheck timeout 从外层记账中抹掉。"""
+    from taic.kernel_agent import _self_check_summary
+    from tcenv.selfcheck import append
+
+    checks = tmp_path / ".selfcheck"
+    append(checks, {"status": "timeout", "elapsed_s": 2.5})
+    (checks / "self_checks.jsonl").unlink()
+    assert _self_check_summary(checks) == (1, 1, 2.5, 0)
+
+
 def test_the_self_check_log_is_inside_the_writable_work_directory(tmp_path):
     """@brief 验证自检日志目录落在可写的工作目录下，而不是仓库其他位置。
 

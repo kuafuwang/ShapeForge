@@ -63,8 +63,14 @@ def test_explicit_remote_config_builds_pool_and_per_session_bridge(tmp_path):
         factory = config.make_bridge_factory(task="relu", dtype="fp16", size="small", task_fingerprint=TASK_FINGERPRINT, run_id="run-1")
         work = tmp_path / "work"
         work.mkdir()
+        seed_json = json.dumps({"speedup": 1.0, "benchmark": {"candidate": {"cv": 0.01}}})
+        (work / "report.json").write_text(seed_json)
         server, token_file = factory("session-1", work, evaluator)
         assert not server._usage_path.is_relative_to(work)
+        assert server.config.seed_report_path is not None
+        assert not server.config.seed_report_path.is_relative_to(work)
+        (work / "report.json").write_text(json.dumps({"speedup": 1000.0}))
+        assert server.config.seed_report_path.read_text() == seed_json
         try:
             checked = SelfCheckClient(server.socket_path, token_file=token_file).check("kernel void demo() {}", "quick")
             assert checked.report["simulated"] is True

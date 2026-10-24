@@ -2065,6 +2065,16 @@ class Orchestrator:
         self._session_briefs.append(brief)
         self._publish_state("llm", inflight=tag)
         self._prepare_session_dir(work)
+        # Stage the seed report before a bridge factory snapshots it into
+        # host-owned storage. The agent still receives the same file later,
+        # but cannot change the host-side replacement verdict by editing it.
+        try:
+            report_path = work / "report.json"
+            report_path.unlink(missing_ok=True)
+            if brief.seed_report_json and not brief.seedless:
+                report_path.write_text(brief.seed_report_json)
+        except OSError as exc:
+            raise RunStartError(f"cannot stage the session seed report: {exc}") from exc
         started = time.time()
         seed_label = None if self.best is None else self.best.label
         parsed = parse_feedback("")
@@ -2078,6 +2088,16 @@ class Orchestrator:
                     bridge_server, bridge_token_file = self.selfcheck_bridge_factory(tag, work, self.evaluator)
                     brief.selfcheck_socket = str(bridge_server.socket_path)
                     brief.selfcheck_token_file = str(bridge_token_file)
+                    bridge_config = getattr(bridge_server, "config", None)
+                    if bridge_config is not None:
+                        # Render the resolved host policy, not contradictory
+                        # local defaults, into the session instructions.
+                        brief.reps = bridge_config.reps
+                        brief.min_improvement = bridge_config.min_improvement
+                        brief.noise_z = bridge_config.noise_z
+                        brief.selfcheck_max_timed = bridge_config.max_timed
+                        brief.selfcheck_max_gpu_s = bridge_config.max_gpu_s
+                        brief.selfcheck_allow_validate = bridge_config.allow_validate
                 if self.agent_runner is None and self._client_injected and not self._session_runner_injected:
                     raise RunStartError("a scripted run needs an agent_runner; it must not start hmz")
                 if self.agent_runner is not None:
@@ -2093,7 +2113,7 @@ class Orchestrator:
                         turn_minutes=int(self.search.turn_minutes),
                         session_cost_cap_usd=session_cap,
                         selfcheck=SelfCheckBinding(
-                            mode="host_bridge" if bridge_server is not None else "local_cli",
+                            mode="host_bridge" if bridge_server is not None or brief.selfcheck_socket else "local_cli",
                             endpoint_id=str(brief.selfcheck_socket),
                             token_ref=str(brief.selfcheck_token_file),
                         ),
@@ -2563,7 +2583,13 @@ class Orchestrator:
         if result.notes:
             (folder / "NOTES.md").write_text(result.notes)
         work = self.run_dir / "agent_work" / (work_label or cand.label).replace("/", "_")
-        src = work / ".selfcheck" / "self_checks.jsonl"
+        from tcenv.selfcheck import authority_log
+
+        src = authority_log(work / ".selfcheck")
+        if not src.is_file():
+            src = authority_log(work)
+        if not src.is_file():
+            src = work / ".selfcheck" / "self_checks.jsonl"
         if not src.is_file():
             src = work / "self_checks.jsonl"
         protected = work.parent.parent / "session_checks" / work.name / "self_checks.jsonl"

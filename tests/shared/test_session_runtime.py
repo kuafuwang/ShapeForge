@@ -99,6 +99,22 @@ def test_local_runner_fills_an_empty_brief_workdir(tmp_path):
     assert brief.work_dir == str(work.resolve())
 
 
+def test_local_runner_validates_the_host_bridge_binding(tmp_path):
+    """@brief execution 与 brief 的 bridge 必须一致，不能一边声明一边实际走另一条路径。"""
+    work = tmp_path / "agent_work" / "r1.p0"
+    brief = replace(_brief(work), selfcheck_socket="/host/session.sock", selfcheck_token_file="/host/session.token")
+    execution = replace(
+        _execution(work),
+        selfcheck=SelfCheckBinding(mode="host_bridge", endpoint_id="/host/session.sock", token_ref="/host/session.token"),
+    )
+    runner = LocalHmzKernelSessionRunner(run_fn=lambda *args, **kwargs: AgentResult(source=None, cost_usd=0.0, cost_incomplete=False, status="ok"))
+    runner.execute(brief, execution=execution, provider="p", model="m", effort=None)
+
+    mismatched = replace(execution, selfcheck=SelfCheckBinding(mode="local_cli"))
+    with pytest.raises(ValueError, match="conflicts"):
+        runner.execute(brief, execution=mismatched, provider="p", model="m", effort=None)
+
+
 def test_local_runner_refuses_a_nonlocal_placement(tmp_path):
     """@brief 本地 runner 不能把远程 placement 悄悄当成本地执行。"""
     work = tmp_path / "agent_work" / "r1.p0"

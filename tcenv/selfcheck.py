@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import os
+import pwd
 from pathlib import Path
 
 LOG_NAME = "self_checks.jsonl"
@@ -29,13 +30,19 @@ def _authority_root() -> Path:
     # Do not use /tmp: the hmz fence grants temp writes to an agent, so that
     # would let it delete the very record that is supposed to outrank its
     # workspace log. The user cache is host-owned and outside the fence.
-    cache = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+    # The local CLI runs inside the agent process, so HOME/XDG_CACHE_HOME are
+    # agent-controlled too. Resolve the account home from the OS database.
+    cache = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".cache"
     return cache / "taic-selfcheck-state"
 
 
 def authority_log(directory: Path) -> Path:
     """Return the host-side log for a canonical self-check directory."""
-    key = hashlib.sha256(str(Path(directory).resolve()).encode("utf-8")).hexdigest()
+    path = Path(directory)
+    # Resolve only the host-controlled parent. Resolving the final component
+    # would let an agent retarget .selfcheck with a symlink and change the key.
+    canonical = path.parent.resolve() / path.name
+    key = hashlib.sha256(str(canonical).encode("utf-8")).hexdigest()
     return _authority_root() / key / LOG_NAME
 
 
@@ -119,6 +126,30 @@ def _append(path: Path, row: dict, *, private: bool) -> None:
             pass
 
 
+def _append_mirror(directory: Path, row: dict) -> None:
+    """Best-effort workspace mirror; never follow an agent-created symlink."""
+    try:
+        if directory.is_symlink():
+            return
+        directory.mkdir(parents=True, exist_ok=True)
+        if directory.is_symlink() or not directory.is_dir():
+            return
+        target = directory / LOG_NAME
+        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(target, flags, 0o600)
+        try:
+            with os.fdopen(fd, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(row, default=str) + "\n")
+            fd = -1
+        finally:
+            if fd >= 0:
+                os.close(fd)
+    except OSError:
+        # The mirror is diagnostic only; the host record above is authoritative.
+        return
+
+
 def append(directory: Path, row: dict) -> None:
     """@brief 向自测记录文件追加一条结果，并同步 host 权威记录。
 
@@ -128,6 +159,7 @@ def append(directory: Path, row: dict) -> None:
     @param directory 自测记录目录，不存在时会创建。
     @param row 要写入的一行结果字典。
     """
-    directory.mkdir(parents=True, exist_ok=True)
-    _append(directory / LOG_NAME, row, private=False)
+    # Persist the host record before touching the mirror. Even a non-directory
+    # .selfcheck path must not erase evidence for an evaluation that already ran.
     _append(authority_log(directory), row, private=True)
+    _append_mirror(directory, row)

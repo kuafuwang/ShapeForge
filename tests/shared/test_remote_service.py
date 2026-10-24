@@ -20,7 +20,7 @@ from tcenv.remote.protocol import (
 )
 from tcenv.remote.production import ProductionBackend
 from tcenv.evaluate import EvalReport
-from tcenv.remote.service import RemoteService, ServiceIdentity, SessionGrant, _JobFailed
+from tcenv.remote.service import RemoteService, ServiceIdentity, SessionGrant, _Job, _JobFailed
 from tcenv.evaluation import EvaluationError
 from tests.support.npu_sim.service_entry import TASK_FINGERPRINT, TASK_PACK_DIGEST, TOKEN
 
@@ -253,6 +253,34 @@ def test_cancel_kills_the_worker_and_returns_cancelled(tmp_path):
         proc.close()
 
 
+def test_cancellation_after_a_worker_result_does_not_corrupt_usage(tmp_path):
+    """@brief 已有有效 worker 结果时完整提交，不能先记 GPU/hang 再返回 cancelled 并退次数。"""
+    import time
+    identity = ServiceIdentity(site_id="sim-site", device_id="sim-device", backend="sim-npu", backend_version="1", target_id="sim-npu-test", worker_build="sim-build-1", task_pack_digest=TASK_PACK_DIGEST, calibration_digest="c" * 64, task_fingerprints=frozenset({TASK_FINGERPRINT}), measurement_kind="simulated", publication_allowed=False)
+    grant = SessionGrant(token=TOKEN, run_id="run-1", session_id="session-1", target_id="sim-npu-test")
+    service = RemoteService(identity=identity, grants=[grant], worker_command=["/bin/true"], state_dir=tmp_path / "svc")
+    request = _request(kind="selfcheck", mode="timed")
+    job = _Job(request=request, submitted=time.perf_counter())
+    service._queue.append(job)
+    service._selfcheck_counts[(request.run_id, request.session_id)] = 1
+
+    def completed_with_late_cancel(_job):
+        job.cancel.set()
+        return {"report": {"status": "ok", "elapsed_s": 0.5}}
+
+    sent = []
+    service._run_worker = completed_with_late_cancel
+    def send(frame_type, request_id, payload):
+        sent.append((frame_type, request_id, payload))
+        service._stop.set()
+    service._send = send
+    service._worker_loop()
+    assert sent[0][0] == "result"
+    key = (request.run_id, request.session_id)
+    assert service._selfcheck_counts[key] == 1
+    assert service._selfcheck_gpu_s[key] == 0.5
+
+
 def test_worker_timeout_is_an_infrastructure_error_not_a_candidate_crash(tmp_path):
     proc = ServiceProcess(tmp_path)
     assert proc.hello().frame_type == "hello"
@@ -325,12 +353,15 @@ def test_queue_timeout_is_enforced(tmp_path):
     try:
         first = _request(source="REMOTE_SLEEP", timeout=30.0)
         _send_request(proc, first)
-        second = _request(request_id="queued", timeout=30.0, queue_timeout=0.05)
+        second = _request(request_id="queued", timeout=30.0, queue_timeout=0.2)
         _send_request(proc, second)
         assert proc.recv().frame_type == "result"
         error = proc.recv()
         assert error.frame_type == "error"
         assert error.payload["code"] == "queue_timeout"
+        assert error.payload["retryable"] is True
+        _send_request(proc, second)
+        assert proc.recv().frame_type == "result"
     finally:
         proc.close()
 
@@ -451,6 +482,29 @@ def test_missing_evidence_is_rejected(tmp_path):
         service._validate_worker_result(request, {"report": report})
     assert exc_info.value.code == "provenance_mismatch"
     assert "evidence" in str(exc_info.value)
+
+
+def test_worker_infrastructure_failure_does_not_consume_quota_or_lock_timed(tmp_path):
+    """@brief worker 进程故障不是候选 crash，必须退还 timed 配额且不能触发 hang。"""
+    proc = ServiceProcess(tmp_path, selfcheck_max=1, extra_env={"NPU_SIM_WORKER_EXIT": "7"})
+    assert proc.hello().frame_type == "hello"
+    try:
+        first = _request(request_id="worker-infra-1", kind="selfcheck", mode="timed")
+        _send_request(proc, first)
+        failure = proc.recv()
+        assert failure.frame_type == "error"
+        assert failure.payload["code"] == "worker_failed"
+    finally:
+        proc.close()
+
+    proc = ServiceProcess(tmp_path, selfcheck_max=1)
+    assert proc.hello().frame_type == "hello"
+    try:
+        second = _request(request_id="worker-infra-2", kind="selfcheck", mode="timed")
+        _send_request(proc, second)
+        assert proc.recv().frame_type == "result"
+    finally:
+        proc.close()
 
 
 def test_selfcheck_timeout_locks_future_timed_requests(tmp_path):

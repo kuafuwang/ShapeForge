@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Callable
@@ -242,7 +243,9 @@ def _write_json(path: Path, doc: dict) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = json.dumps(doc, ensure_ascii=False, default=str)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    # Evaluator progress can be published concurrently by worker threads.
+    # A PID-only temporary name lets those writers replace each other's file.
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(data, encoding="utf-8")
     os.replace(tmp, path)
 

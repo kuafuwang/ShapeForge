@@ -467,15 +467,17 @@ def parse_proposals(
 
 
 def _self_check_rows(work: Path) -> list[dict]:
-    """@brief 读取工作目录下两份 ``self_checks.jsonl`` 中的对象行。
+    """Read only host-authoritative self-check rows for premise evidence.
 
-    先读 ``.selfcheck/self_checks.jsonl``，再读工作目录根下的同名文件；缺失或损坏的行被跳过。
-
-    @param work 本次会话的工作目录。
-    @return 所有可解析的字典行，按读取顺序排列。
+    Workspace files are agent-writable mirrors and cannot activate a measured
+    premise. Older runs without an authority row can still use the separately
+    supplied outer candidate report.
     """
+    from tcenv.selfcheck import authority_log
+
     rows = []
-    for path in (Path(work) / ".selfcheck" / "self_checks.jsonl", Path(work) / "self_checks.jsonl"):
+    for directory in (Path(work) / ".selfcheck", Path(work)):
+        path = authority_log(directory)
         if not path.is_file():
             continue
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -545,6 +547,8 @@ def trusted_premise_record(
         rows.insert(0, trusted_report)
     for row in rows:
         if row.get("status") != "ok":
+            continue
+        if row.get("simulated") is True or row.get("measurement_kind") == "simulated":
             continue
         if str(row.get("target_id") or "") != str(target_id):
             continue

@@ -153,6 +153,7 @@ def test_real_hmz_online_none_can_use_only_its_own_selfcheck_bridge(tmp_path, mo
             session_id="session-1",
             token=token,
             token_file=token_file,
+            workspace=tmp_path / "agent_work" / "init",
             usage_path=bridge_root / "usage.json",
         ),
         executor,
