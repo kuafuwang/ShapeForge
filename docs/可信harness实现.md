@@ -39,6 +39,46 @@
 
 ## 验证
 
+2026-10-24 增加了三层实现：`taic/acceptance.py` 的版本化验收合同，
+`taic/harness_experiment.py` 的 dry-run 对照计划、运行采集与人工效果复核，以及
+`tcenv/tools/` 的静态 manifest、typed request、broker 和 `metal.time_msl`。
+`harness verify-code` 在隔离 worktree 验证实现；`plan-experiment` 不执行实验；
+`collect-experiment` 只读两个带相同 experiment id 的 run；`apply-code` 对新合同要求
+同一 patch 的效果复核。旧 patch 的 `--legacy-unvalidated` 仅保留人工兼容路径。
+`harness status` 的 `acceptance_specs[].milestones` 分开报告 review、实现、效果、
+local 与 commit。具体协议与限制见 [架构/可信harness.md](架构/可信harness.md) 第 11 节。
+
+这些改动尚未执行付费 A/B 或真实 Metal 探针；因此没有新的 harness 效果结论。
+`taic-tools/SKILL.md` 与 `HARNESS.md` 模板进入了提示面，`current_prompt_sha1()` 已变；
+`docs/架构/backend-phase0-baseline.json` 的 `prompt_sha1` 已同步，渲染后的
+`system_prompt_sha256` 没变。现有 conv2d trust grant 需要在提示面定稿后重签，命令不要带
+`--prompt-sha1`。
+当前运行记录也不自动成为对照组：必须在 run_config/result 绑定实验 id 与 change
+摘要，才能由 `collect-experiment` 接收。
+
+## 2026-10-24 第二批：分级验收与 dry-run 执行器
+
+- `taic/acceptance_checks.py` 登记 `check_id`，`verify-code` 在 patch 所在隔离 worktree
+  真实执行检查。`verify-legacy` 以 `--by`、原验收文本和 `check_id` 绑定人工升级。
+  `classify_change` 按 patch 重新决定 `offline_only`、`paired_required` 或
+  `human_gated`，低风险声明不能覆盖敏感路径或执行/GPU/提示相关改动。
+- 工具 request 不再接受模型自报 `role`，宿主以 `session_role` 注入；handler 源文件
+  与摘要写入 `tool_impl.toml` 并在父/子进程核对。`scaffold-proposal` 只生成草稿。
+- 实验 v2 冻结 base commit、委员会、预算、seed、阈值、方向和护栏。
+  `experiments/harness_runner.py` 按 AB/BA 顺序物化两臂，使用各自 worktree；
+  `execute-experiment` 默认 dry-run，`--execute` 与显式资源授权才进入真实执行。
+  `experiments/harness_cell.py` 将结构化结果写到 `cell_result.json`。
+- `RunResult.run_seed` 已补齐。多 cell 的结果按整臂 seed 集合、总账单与护栏汇总；
+  小样本、缺账单、配置/源码漂移、护栏回归均为 inconclusive 或拒绝。
+- `taic/adoption.py` 汇总提案阶段与 review/实现/实验成本。2026-10-24 的离线历史
+  复盘选出 6 条建议，均缺新格式的复现/预期证据，未生成可执行草稿，未验证收益。
+  记录位于 `runs/harness-adoption-20261024/shortlist.json`，不进入 git。
+
+本轮执行 `uv run pytest -q -m 'not gpu and not llm and not slow'`：
+**1151 passed, 1 skipped**（缺少 `hmz`）。没有真实付费 A/B 或 GPU 探针结果。
+
+## 验证
+
 - 当时（2026-10-22）全量离线测试：**1013 passed, 1 skipped, 133 deselected**（`uv run pytest -q -m 'not gpu and not llm'`）。2026-10-24 只做收集：`-m 'not gpu and not llm'` 1075 个用例、133 deselected；快速安全套件 `-m 'not gpu and not llm and not slow'` 1074 个用例（测试会随并发改动变化，以实际收集为准）。
 - 新增测试覆盖：7 条占位原文、探针恢复后的 digest 保留、`info`/`obsolete`、空占位墓碑、信任 scope/prompt/协议/过期、单模型/同探针不达 quorum、跨 target/协议隔离、P2 `git apply --check`、审计写回、试点汇总、 review 预算随价格变化与 verdict 解析，以及合成的 feedback→proposal→trust→overlay→TASK 端到端流程。
 - 数据侧（截至 2026-10-22）：174 条审计已写回；60 条实测 `adopted`、15 条已修 `done`、35 条未验证 `info`、7 条空占位 `obsolete`，其余 57 条 pending。10 条按 topic 合并的 `obsolete` 已由 `experiments.revert_topic_merges` 改回 pending；39 条采集时缺探针的 claim 中，31 条 premise 升为 `verified`、8 条仍 `downgraded`，等待人复核。7 条审计空占位都有 `feedback_claim_removed` 墓碑；重建会为所有空占位小节写墓碑，当时共 18 条。

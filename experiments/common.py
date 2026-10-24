@@ -227,6 +227,8 @@ def run_one(
     agent_runner: Callable | None = None,
     log: Callable[[str], None] = print,
     use_tools: bool | None = None,
+    target_id: str | None = None,
+    seed: int | None = None,
     **search_overrides,
 ) -> RunResult:
     """@brief 启动一次搜索的唯一入口，把预算与覆盖项交给编排器并跑完。
@@ -266,7 +268,7 @@ def run_one(
         log(f"(resume interrupted cell {run_dir})")
         return _resume_one(task, dtype, size, Path(run_dir), cfg, search, raw, model, client, evaluate_fn, agent_runner, log)
     committees = load_committees(raw, active=cfg, model_override=model)
-    orch = Orchestrator(task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log, committees=committees, agent_runner=agent_runner)
+    orch = Orchestrator(task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log, committees=committees, agent_runner=agent_runner, target_id=target_id or "apple-m4-max", seed=seed)
     return asyncio.run(orch.run())
 
 

@@ -439,6 +439,106 @@ proposal -> patch -> git apply --check
 
 相关文件：
 
+## 11. 建议验收、效果实验与受限工具（2026-10-24）
+
+这几项把「模型说有用」和「 harness 确实变好」分开。实现见 `taic/acceptance.py`、
+`taic/harness_experiment.py`、`taic/code_agent.py` 与 `tcenv/tools/`。
+
+1. **分类证据。** `hardware_premise` 保留探针和测量绑定。新的无探针 `tool` /
+   `reporting` / `wording` 建议必须给 `evidence.reproduction` 与 `evidence.expected`；
+   不需要为了符合格式而编造 GPU 数字。带探针的旧 tip 与旧自由文本转换仍可读取、
+   走人工 P2。P1 的 tool/reporting 建议不能修改判分、容差、预算、信任或协议。
+2. **验收合同。** `AcceptanceSpec` 绑定 proposal、一次有用 review、scope、允许路径、
+   预期行为、验收检查、效果指标、对照与回滚条件。`harness implement` 把合同交给
+   code agent；`verify-code` 只在隔离 worktree 跑实现验收，不 apply 主 checkout。
+   模型报告的验收项只是声明，`host_verified` 才表示宿主检查通过。
+3. **效果实验。** `plan-experiment` 要求已验收的 patch，绑定契约摘要、patch 摘要、
+   配置模板、protocol、配对 seeds 和每臂预算，默认只写 dry-run 计划，不调用模型或
+   GPU。两个显式标志 `--allow-spend --allow-gpu` 加具名 `--by` 才能把计划标为
+   authorized；这个命令仍不执行实验。`collect-experiment` 只读两个已完成 run 的
+   run_config、result、trace、feedback 与工具证据。`validate-effect` 由具名人员记录
+   效果判断，测量程序不会自行批准晋升。硬件 premise 不走这类 A/B 计划。
+4. **分层状态。** `reviewed`、`implemented`、`experiment_validated`、`local`、
+   `committed` 是五个独立事实。带新合同的 `apply-code` 需要同一份 patch 的效果复核；
+   老 patch 可以显式 `--legacy-unvalidated` 走人工路径，但不能冒充已验证效果。
+   `harness status` / observe 的 `harness_board` 返回 `acceptance_specs` 与里程碑。
+5. **工具不是插件市场。** `metal.time_msl` 由仓库静态注册。manifest 固定
+   `tool_id/version/handler/request_schema/result_schema/capabilities/limits`，
+   请求不能指定 import 路径或 handler。broker 复用清敏环境、进程组清理、GPU 锁和
+   `evaluate.supervise` 心跳超时；工具结果绑定请求与 manifest，由宿主写入
+   `tool_evidence/`。一次 Python 探针仍属于本 run；跨 run 复用必须走工具 P2。
+   `kernel_once` 只有 `probe:execute` 与 `tool:invoke`；`code_patch` 只有
+   `tool:propose` 与 `harness:implement`。这些能力不授予晋升权。
+6. **边界。** manifest 摘要证明登记文件没变，不是 Python 源码的密码学签名；
+   `git_commit/git_dirty` 与效果实验的 patch 绑定补充 provenance。角色限制与 hmz
+   fence 不是对恶意本机代码的完整安全沙箱。`metal.time_msl` 只测一个
+   `[[buffer(0)]]` 核的墙钟耗时，不证明数值正确性。已有显式实验执行器；
+   计划、执行、采集和效果复核是分开的命令，真实执行仍需人另行授权。
+   本轮只有 dry-run/mock 验证，没有真实付费 A/B 结果。
+
+## 12. 采纳效率与可复现验证（2026-10-24 第二批）
+
+1. **按 patch 风险分级。** `classify_change` 对规格与实际 patch 重算风险：
+   `offline_only` 只给有宿主检查的只读增量路径，仍要隔离验收与具名人工批准；
+   `paired_required` 需要搜索对照；`human_gated` 覆盖任务语义、判分、GPU/预算/信任/
+   审批逻辑及验收规则本身。`tcenv/report.py` 的模型反馈变化和执行/GPU 相关改动不能
+   借“只读报告”降级。模型自报 tier 不是放行依据。
+2. **宿主验收。** `taic/acceptance_checks.py` 登记 `check_id` 与固定离线检查，模型
+   只能引用 ID。`verify-code` 在已打 patch 的隔离 worktree 逐项执行，保留真实退出码、
+   证据摘要和 spec/patch 摘要。旧文本用 `verify-legacy --by ... --check-id ...`
+   具名升级，绑定原文、确认人和真实检查；未登记的检查不能冒充宿主已验证。
+3. **工具身份。** 模型请求里不再接受 `role`；宿主调用方把 `session_role` 放入
+   broker 生成的子进程信封。`tool_impl.toml` 另绑 `handler_source` 和源码摘要，
+   broker 与 worker 导入前都核对。摘要是漂移检测，不是密码学签名。
+   `scaffold-proposal` 只生成不可执行草稿，不注册、不授权、不运行。
+4. **实验判定。** v2 计划冻结 `base_commit`、完整委员会与 effort、输入/运行配置、
+   配对 seed、总预算、最小效应、方向、样本数和护栏。成本/时间用 log ratio，比例
+   用差值；少于 3 对只能报方向。至少 3 对时按固定 seed 的 paired bootstrap 区间
+   判断，区间越过冻结阈值且安全/正确性没有相对回归才支持效果。执行授权人不能成为
+   唯一效果复核人。
+5. **真实执行路径。** `execute-experiment` 默认 dry-run：按 seed 交错 AB/BA，从同一
+   commit 分别创建 control/treatment worktree，并校验导入来源。`--execute` 还需要
+   authorized plan、`--allow-spend --allow-gpu --by` 和每 cell/总额预算检查。
+   cell 使用自己的 Python import path，不共用主 checkout。已完成 cell 不重复收费；
+   失败保留，不伪造结果。原始 TOML 与运行记录分开，control 的空 change 统一为空串。
+6. **采纳成本。** `harness adoption` 追加每条提案的评审、实现、实验成本和阶段；
+   未发生的阶段为 0，已发生但缺账单为未知。`harness shortlist` 对历史建议去重并
+   给出至多 10 条候选与证据缺口，不自动实现或晋升。历史短名单不是效果证据。
+
+补充命令：
+
+```bash
+uv run python -m taic.cli harness verify-legacy RUN_DIR --key KEY \
+  --by NAME --check-id reporting.offline_contract --legacy-text "原验收文本"
+uv run python -m taic.cli harness execute-experiment RUN_DIR --plan PLAN.json
+uv run python -m taic.cli harness adoption RUN_DIR
+uv run python -m taic.cli harness shortlist RUN_DIR [OTHER_RUN ...]
+uv run python -m tcenv.tools.cli scaffold-proposal PROPOSAL.json --out NEW_DIR
+```
+
+`execute-experiment` 不加 `--execute` 不启动模型/GPU。`scaffold-proposal` 不产生
+执行权限。实验 dry-run 会创建隔离 worktree 和配置，不等同于只读查询。
+
+常用只读/离线命令：
+
+```bash
+uv run python -m taic.cli harness status RUN_DIR
+uv run python -m taic.cli harness verify-code RUN_DIR --key KEY
+uv run python -m taic.cli harness plan-experiment RUN_DIR --key KEY \
+  --seed 7 --seed 11 --budget-usd 1.25
+uv run python -m taic.cli harness collect-experiment RUN_DIR \
+  --plan PLAN.json --control CONTROL_RUN --treatment TREATMENT_RUN
+uv run python -m taic.cli harness validate-effect RUN_DIR \
+  --result RESULT.json --valid --by NAME --reason "paired evidence reviewed"
+uv run python -m tcenv.tools.cli list
+uv run python -m tcenv.tools.cli check REQUEST.json
+```
+
+`verify-code` 会跑离线 pytest；`plan-experiment` 与 `collect-experiment` 不发模型
+请求、不占 GPU。`tcenv.tools.cli invoke` 必须另加 `--allow-gpu` 才会执行 Metal 探针。
+
+相关文件：
+
 | 文件 | 职责 |
 | --- | --- |
 | `taic/agent_feedback.py` | 解析 FEEDBACK、占位、digest、premise 状态 |

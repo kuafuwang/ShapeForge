@@ -384,6 +384,7 @@ class RunResult:
     backend: str = ""
     backend_version: str = ""
     protocol_version: str = ""
+    run_seed: int | None = None
     # The run stopped because the remaining budget could not cover another recent-sized
     # session; this is a budget stop, but a control-file top-up should not silently continue it.
     session_budget_stop: bool = False
@@ -816,6 +817,9 @@ class Orchestrator:
                 "hash_scope": "task_fingerprint hashes the contract, the triton source, the naive kernel, cases, tolerances, flops, min_bytes and the ieee/domain meta. The two hashes above are contract.describe() and task.triton_source. reference and baseline implementations are not included",
                 "git_commit": commit,
                 "git_dirty": dirty,
+                "price_snapshot": {member.model: {"input": member.cfg.price_in, "output": member.cfg.price_out, "cacheRead": member.cfg.price_cache_read, "cacheWrite": member.cfg.price_cache_write} for committee in self.committees for member in committee.members},
+                "base_commit": self.search.harness_base_commit or None,
+                "harness_change_sha256": self.search.harness_change_sha256 or None if self.search.harness_experiment_id else None,
                 "settings_source": "llm and search values passed into Orchestrator at start (config file, preset and command-line overrides already applied)",
                 "cost_may_be_incomplete": True,
                 "cost_note": "A process can die after the provider bills a request and before transcript.jsonl records it, so a resumed ledger can under-count the real bill. A budget_events.json line that fails to land is dropped; that file is not a complete bill. This is not a hard dollar cap. Reconciling with the provider bill needs separate authorization.",
@@ -2831,6 +2835,7 @@ class Orchestrator:
         res.backend = self.target.backend
         res.backend_version = self.target.backend_version
         res.protocol_version = PROTOCOL_VERSION
+        res.run_seed = self.run_seed
         result_doc = asdict(res)
         result_doc["schema_version"] = RESULT_SCHEMA_VERSION
         if self.search.harness_experiment_id:

@@ -168,7 +168,7 @@ SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "ma
                  "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "confirm_batches", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
                  "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck",
                  "plan_ledger", "diversity_archive", "fast_bench", "experience_index", "kernel_agent", "require_contract_launch",
-                 "relay_budget_usd", "turn_minutes", "provider_retries", "session_cost_cap_usd", "peer_tips", "harness_auto", "harness_shadow", "harness_review")
+                 "relay_budget_usd", "turn_minutes", "provider_retries", "session_cost_cap_usd", "peer_tips", "harness_auto", "harness_shadow", "harness_review", "harness_experiment_id", "harness_experiment_arm", "harness_change_sha256", "harness_change_path", "harness_base_commit")
 LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "keep_transcript_bodies", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry",
               "truncation_retry_effort", "plan_reasoning_effort", "patch_reasoning_effort")
 
@@ -836,7 +836,94 @@ def cmd_harness(a: argparse.Namespace) -> int:
 
     run = Path(a.run_dir)
     try:
-        if a.harness_action == "status":
+        if a.harness_action == "adoption":
+            from .adoption import append_adoption_record
+            print(json.dumps(append_adoption_record(run), ensure_ascii=False, indent=2, default=str))
+        elif a.harness_action == "shortlist":
+            from .adoption import shortlist
+            print(json.dumps(shortlist([Path(path) for path in a.runs], limit=a.limit), ensure_ascii=False, indent=2, default=str))
+        elif a.harness_action == "execute-experiment":
+            from experiments.harness_runner import dry_run, execute_plan
+            from .harness_experiment import read_plan
+            plan = read_plan(json.loads(Path(a.plan).read_text(encoding="utf-8")))
+            out = Path(a.out) if a.out else Path(a.plan).resolve().parent / plan["experiment_id"]
+            if not a.execute and not out.is_absolute():
+                out = Path(__file__).resolve().parents[1] / out
+            if a.execute:
+                result = execute_plan(plan, out_dir=out, repo=Path(__file__).resolve().parents[1], allow_spend=a.allow_spend, allow_gpu=a.allow_gpu, approved_by=a.by)
+            else:
+                result = dry_run(plan, out_dir=out, repo=Path(__file__).resolve().parents[1])
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        elif a.harness_action == "plan-experiment":
+            from .acceptance import make_spec
+            from .code_agent import PATCH_DIR as CODE_PATCH_DIR
+            from .harness_experiment import ExperimentError, make_plan
+
+            proposals = [row for row in harness.board(run)["proposals"] if row.get("status") == "valid" and row.get("proposal_key") == a.key]
+            if not proposals:
+                raise ExperimentError("no valid proposal with that key")
+            proposal = proposals[-1]
+            reviews = [row for row in harness.board(run)["reviews"] if row.get("proposal_key") == a.key and row.get("event") == "review"]
+            spec = make_spec(proposal, reviews[-1] if reviews else None)
+            patch = run / CODE_PATCH_DIR / f"{a.key}.patch"
+            if not patch.is_file():
+                raise ExperimentError("an experiment needs a recorded code patch")
+            meta_path = run / CODE_PATCH_DIR / f"{a.key}.json"
+            meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+            if not meta.get("implementation", {}).get("accepted") or meta["implementation"].get("spec_sha256") != spec["spec_sha256"] or not meta["implementation"].get("host_verified"):
+                raise ExperimentError("an experiment needs host-verified implementation acceptance for the same spec")
+            import hashlib
+            run_cfg = json.loads((run / "run_config.json").read_text(encoding="utf-8")) if (run / "run_config.json").is_file() else {}
+            from .harness_experiment import config_template, digest as experiment_digest
+            base_commit = a.base_commit or str(meta.get("base_commit") or "")
+            if not base_commit:
+                raise ExperimentError("experiment planning needs --base-commit or a recorded implementation base")
+            if not run_cfg.get("price_snapshot"):
+                raw_cfg = __import__("taic.llm", fromlist=["load_raw_config"]).load_raw_config(None, "base")
+                committees = __import__("taic.committees", fromlist=["load_committees"]).load_committees(raw_cfg, active=__import__("taic.llm", fromlist=["load_config"]).load_config(None, preset="base")[0])
+                run_cfg["price_snapshot"] = {member.model: {"input": member.cfg.price_in, "output": member.cfg.price_out, "cacheRead": member.cfg.price_cache_read, "cacheWrite": member.cfg.price_cache_write} for committee in committees for member in committee.members}
+            canonical_config = experiment_digest(config_template(run_cfg, budget_usd=a.budget_usd, base_commit=base_commit))
+            from tcenv.schema import PROTOCOL_VERSION
+            if not run_cfg:
+                raise ExperimentError("an experiment needs the original run_config.json")
+            if spec["kind"] == "hardware_premise":
+                raise ExperimentError("hardware premise evidence stays in the probe/premise path; A/B plans are for harness changes")
+            from .harness_experiment import config_template
+            plan = make_plan(spec, change_sha256=hashlib.sha256(patch.read_bytes()).hexdigest(), protocol_version=PROTOCOL_VERSION, config_sha256=canonical_config, seeds=a.seed, budget_usd=a.budget_usd, repetitions=a.repetitions, config_template_document=config_template(run_cfg, budget_usd=a.budget_usd, base_commit=base_commit), rules=__import__("taic.harness_experiment", fromlist=["evaluation_rules"]).evaluation_rules(min_pairs=a.min_pairs, min_effect=a.min_effect, direction=a.direction), base_commit=base_commit)
+            from shutil import copyfile
+            out = Path(a.out) if a.out else run / "harness_experiments" / f"{plan['experiment_id']}.json"
+            if not out.parent.exists():
+                out.parent.mkdir(parents=True)
+            if plan["change_sha256"]:
+                copyfile(patch, out.parent / "treatment.patch")
+            if a.allow_spend or a.allow_gpu:
+                from .harness_experiment import authorize_plan
+                plan = authorize_plan(plan, allow_model_spend=a.allow_spend, allow_gpu=a.allow_gpu, approved_by=a.by)
+            out = Path(a.out) if a.out else run / "harness_experiments" / f"{plan['experiment_id']}.json"
+            from tcenv.schema import write_json_atomic
+            write_json_atomic(out, plan)
+            print(json.dumps({"plan": str(out), "experiment": plan, "executed": False}, ensure_ascii=False, indent=2, default=str))
+        elif a.harness_action == "collect-experiment":
+            from .harness_experiment import collect_arm, read_plan, summarize_result
+            from tcenv.schema import write_json_atomic
+            plan = read_plan(json.loads(Path(a.plan).read_text(encoding="utf-8")))
+            result = {"schema_version": 1, "plan": plan, "control": collect_arm(plan, Path(a.control), "control"), "treatment": collect_arm(plan, Path(a.treatment), "treatment")}
+            summary = summarize_result(result)
+            out = Path(a.out) if a.out else run / "harness_experiments" / f"{summary['experiment_id']}.result.json"
+            write_json_atomic(out, result)
+            print(json.dumps({"result": str(out), "summary": summary, "effect_validated": False}, ensure_ascii=False, indent=2))
+        elif a.harness_action == "validate-effect":
+            from .harness_experiment import record_effect_validation, summarize_result
+            from tcenv.schema import write_json_atomic
+            result = json.loads(Path(a.result).read_text(encoding="utf-8"))
+            summary = summarize_result(result)
+            evidence_path = run / "harness_experiments" / f"{summary['experiment_id']}.result.json"
+            if evidence_path.exists() and json.loads(evidence_path.read_text(encoding="utf-8")) != result:
+                raise ValueError("this experiment id already has different result evidence")
+            write_json_atomic(evidence_path, result)
+            verdict = record_effect_validation(run, result, validated=a.valid, approved_by=a.by, reason=a.reason, evidence_path=evidence_path)
+            print(json.dumps(verdict, ensure_ascii=False, indent=2))
+        elif a.harness_action == "status":
             print(json.dumps(harness.board(run), ensure_ascii=False, indent=2, default=str))
         elif a.harness_action == "disable":
             print(json.dumps(harness.set_overlay_control(run, disabled=True, by=a.by, reason=a.reason), ensure_ascii=False))
@@ -866,6 +953,8 @@ def cmd_harness(a: argparse.Namespace) -> int:
             if not reviews:
                 print("refusing to implement an unreviewed proposal; run `harness review` first", file=sys.stderr)
                 return 5
+            from .acceptance import make_spec
+            spec = make_spec(proposal, reviews[-1])
             run_cfg = json.loads((run / "run_config.json").read_text(encoding="utf-8")) if (run / "run_config.json").is_file() else {}
             recorded = run_cfg.get("committees") if isinstance(run_cfg, dict) else None
             provider, model = a.provider, a.model
@@ -886,7 +975,7 @@ def cmd_harness(a: argparse.Namespace) -> int:
                 return 5
             prices = Prices(member.cfg.price_in, member.cfg.price_out, member.cfg.price_cache_read, member.cfg.price_cache_write)
             target_id = str((proposal.get("proposal") or {}).get("scope", {}).get("target_id") or a.target)
-            prompt = code_agent.build_prompt(proposal.get("proposal") or {}, run_id=str(proposal.get("run_id") or run.name))
+            prompt = code_agent.build_prompt(proposal.get("proposal") or {}, run_id=str(proposal.get("run_id") or run.name), acceptance_spec=spec)
             plan = code_agent.estimate_code_budget(prices, prompt)
             budget = float(a.budget_usd) if a.budget_usd is not None else plan["budget_usd"]
             print(json.dumps({"implementer": {"provider": provider, "model": model, "effort": member.cfg.reasoning_effort}, "plan": plan, "budget_usd": budget}, ensure_ascii=False), file=sys.stderr)
@@ -895,8 +984,13 @@ def cmd_harness(a: argparse.Namespace) -> int:
                 worktree, prompt=prompt, provider=provider, model=model,
                 effort=member.cfg.reasoning_effort, prices=prices, budget_usd=budget,
             )
-            meta = code_agent.write_patch(run, str(a.key), result, target_id=target_id)
+            meta = code_agent.write_patch(run, str(a.key), result, target_id=target_id, acceptance_spec=spec)
             print(json.dumps(meta, ensure_ascii=False, indent=2, default=str))
+        elif a.harness_action in {"verify-code", "verify-legacy"}:
+            from .code_agent import verify_code_patch
+            if a.harness_action == "verify-legacy" and not a.legacy_text:
+                raise ValueError("verify-legacy needs --legacy-text")
+            print(json.dumps(verify_code_patch(run, a.key, approved_by=a.by, legacy_text=a.legacy_text, check_ids=a.check_id), ensure_ascii=False, indent=2))
         elif a.harness_action == "apply-code":
             from . import code_agent
 
@@ -905,6 +999,7 @@ def cmd_harness(a: argparse.Namespace) -> int:
                 return 5
             print(json.dumps(code_agent.apply_code_patch(
                 run, proposal_key=a.key, check_only=a.check, run_tests=a.run_tests, approved_by=a.by,
+                require_effect_validation=not a.legacy_unvalidated,
             ), ensure_ascii=False, indent=2, default=str))
         elif a.harness_action == "convert":
             if not a.confirm:
@@ -920,6 +1015,7 @@ def cmd_harness(a: argparse.Namespace) -> int:
             row = harness.convert_feedback(
                 run, seq=a.seq, digest=a.digest, target_id=target_id, task=task, dtype=dtype,
                 surface=a.surface, action=a.action, probe=a.probe, measurement=a.measurement,
+                reproduction=a.reproduction, expected=a.expected,
                 rationale=a.rationale, by=a.by, confirm=True, mode=a.mode,
                 supersede=a.supersede,
             )
@@ -1004,7 +1100,7 @@ def cmd_harness(a: argparse.Namespace) -> int:
         else:
             print("unknown harness action", file=sys.stderr)
             return 5
-    except (harness.ProposalError, OSError, ValueError, LLMError) as exc:
+    except (harness.ProposalError, OSError, ValueError, LLMError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 5
     return 0
@@ -1201,6 +1297,45 @@ def main(argv: list[str] | None = None) -> int:
     hs = h.add_subparsers(dest="harness_action", required=True)
     hst = hs.add_parser("status")
     hst.add_argument("run_dir")
+    ha = hs.add_parser("adoption", help="append an adoption cost/stage review; no model or GPU")
+    ha.add_argument("run_dir")
+    hlist = hs.add_parser("shortlist", help="select at most N evidence-complete historical tool suggestions; no implementation")
+    hlist.add_argument("runs", nargs="+")
+    hlist.add_argument("--limit", type=int, default=10)
+    hp = hs.add_parser("plan-experiment", help="write a dry-run controlled experiment plan; never executes a model or GPU")
+    hp.add_argument("run_dir")
+    hp.add_argument("--key", required=True)
+    hp.add_argument("--seed", type=int, action="append", required=True, help="paired run seed; repeat for multiple seeds")
+    hp.add_argument("--repetitions", type=int, default=1)
+    hp.add_argument("--budget-usd", type=float, required=True, help="maximum spend per arm and repetition")
+    hp.add_argument("--out", default=None)
+    hp.add_argument("--allow-spend", action="store_true", help="record explicit model-spend authorization; still does not execute")
+    hp.add_argument("--allow-gpu", action="store_true", help="record explicit GPU authorization; still does not execute")
+    hp.add_argument("--by", default="cli")
+    hp.add_argument("--base-commit", default=None, help="common source commit for both arms; defaults to the recorded implementation base")
+    hp.add_argument("--min-pairs", type=int, default=3)
+    hp.add_argument("--min-effect", type=float, default=0.0, help="minimum beneficial log-ratio or metric difference")
+    hp.add_argument("--direction", choices=["lower", "higher"], default="lower")
+    hx = hs.add_parser("execute-experiment", help="default dry-run; --execute additionally requires explicit resource authorization")
+    hx.add_argument("run_dir")
+    hx.add_argument("--plan", required=True)
+    hx.add_argument("--out", default=None)
+    hx.add_argument("--execute", action="store_true", help="actually run cells; default only materializes and prints them")
+    hx.add_argument("--allow-spend", action="store_true")
+    hx.add_argument("--allow-gpu", action="store_true")
+    hx.add_argument("--by", default="cli")
+    hc = hs.add_parser("collect-experiment", help="collect paired host measurements only; no model call or GPU")
+    hc.add_argument("run_dir")
+    hc.add_argument("--plan", required=True)
+    hc.add_argument("--control", required=True)
+    hc.add_argument("--treatment", required=True)
+    hc.add_argument("--out", default=None)
+    hv = hs.add_parser("validate-effect", help="record a person's effect verdict for a measured authorized experiment")
+    hv.add_argument("run_dir")
+    hv.add_argument("--result", required=True)
+    hv.add_argument("--valid", action=argparse.BooleanOptionalAction, default=False)
+    hv.add_argument("--by", required=True)
+    hv.add_argument("--reason", required=True)
     hd = hs.add_parser("disable")
     hd.add_argument("run_dir")
     hd.add_argument("--by", default="cli")
@@ -1219,6 +1354,8 @@ def main(argv: list[str] | None = None) -> int:
     hv.add_argument("--action", required=True)
     hv.add_argument("--probe", default="")
     hv.add_argument("--measurement", default="")
+    hv.add_argument("--reproduction", default="", help="minimal reproduction for a tool/reporting/wording proposal")
+    hv.add_argument("--expected", default="", help="observable expected result after the change")
     hv.add_argument("--rationale", default="")
     hv.add_argument("--target", default=None)
     hv.add_argument("--task", default=None)
@@ -1239,6 +1376,13 @@ def main(argv: list[str] | None = None) -> int:
     hi.add_argument("--model", default=None)
     hi.add_argument("--budget-usd", type=float, default=None, help="optional cap; otherwise derived from model prices")
     hi.add_argument("--by", default="cli")
+    for action in ("verify-code", "verify-legacy"):
+        hc = hs.add_parser(action, help="run registered host checks in an isolated worktree; no local apply")
+        hc.add_argument("run_dir")
+        hc.add_argument("--key", required=True)
+        hc.add_argument("--by", default="cli", help="named person upgrading a legacy acceptance")
+        hc.add_argument("--check-id", action="append", default=None, help="registered host check id; repeat for multiple checks")
+        hc.add_argument("--legacy-text", default="", help="original text acceptance to upgrade explicitly")
     hc = hs.add_parser("apply-code")
     hc.add_argument("run_dir")
     hc.add_argument("--key", required=True)
@@ -1246,6 +1390,7 @@ def main(argv: list[str] | None = None) -> int:
     hc.add_argument("--run-tests", action=argparse.BooleanOptionalAction, default=True, help="run the offline suite against the patched tree in an isolated worktree (default: on)")
     hc.add_argument("--by", default="cli")
     hc.add_argument("--confirm", action="store_true")
+    hc.add_argument("--legacy-unvalidated", action="store_true", help="explicitly apply an older patch with no acceptance/effect evidence; never marks it experiment_validated")
     hr = hs.add_parser("review")
     hr.add_argument("run_dir")
     hr.add_argument("--key", required=True)

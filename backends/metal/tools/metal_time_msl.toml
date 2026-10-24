@@ -1,0 +1,61 @@
+schema_version = 1
+tool_id = "metal.time_msl"
+version = "1"
+handler = "tcenv.backends.metal.probes:time_msl"
+capabilities = ["probe:execute", "tool:invoke"]
+
+[limits]
+max_source_bytes = 128000
+max_iters = 20
+max_buffer_bytes = 1048576
+max_grid_dim = 4096
+max_threads_dim = 1024
+max_threadgroups = 65536
+
+[request_schema]
+schema_version = 1
+fields = ["schema_version", "tool_id", "version", "manifest_sha256", "target_id", "kernel_name", "source", "grid", "threads", "buffer_bytes", "iters"]
+required = ["schema_version", "tool_id", "version", "manifest_sha256", "target_id", "kernel_name", "source", "grid", "threads", "buffer_bytes", "iters"]
+
+[request_schema.types]
+schema_version = "integer"
+tool_id = "string"
+version = "string"
+manifest_sha256 = "string"
+target_id = "string"
+kernel_name = "string"
+source = "string"
+grid = "array"
+threads = "array"
+buffer_bytes = "integer"
+iters = "integer"
+
+[request_schema.limits]
+source = 128000
+kernel_name = 128
+target_id = 128
+
+[result_schema]
+schema_version = 1
+fields = ["schema_version", "tool_id", "version", "request_digest", "tool_manifest_sha256", "handler_source_sha256", "status", "metrics", "units", "target_id", "protocol_version", "stdout_excerpt", "error", "elapsed_s"]
+required = ["schema_version", "tool_id", "version", "request_digest", "tool_manifest_sha256", "status", "metrics", "units", "target_id", "protocol_version", "stdout_excerpt", "error"]
+
+[result_schema.types]
+schema_version = "integer"
+tool_id = "string"
+version = "string"
+request_digest = "string"
+tool_manifest_sha256 = "string"
+handler_source_sha256 = "string"
+status = "string"
+metrics = "object"
+units = "object"
+target_id = "string"
+protocol_version = "string"
+stdout_excerpt = "string"
+error = "string"
+elapsed_s = "number"
+
+[result_schema.limits]
+stdout_excerpt = 4000
+error = 4000

@@ -47,6 +47,23 @@ Fields:
 - ``action``: one sentence; no commands, code, paths that redirect writes, or contract changes.
 - ``evidence.probe``: relative to this session's work directory and created after the session started.
 - ``evidence.measurement``: the number and unit, when there is one.
+- ``evidence.reproduction`` and ``evidence.expected``: a minimal reproduction and the
+  observable result expected after a tool, reporting or wording change.
+- ``evidence.host_checks``: optional list of ``{"check_id": "registered.id"}`` objects.
+  The host, not the model, decides whether these checks pass. ``risk_tier`` is only a
+  proposal: the host derives it again from the actual patch. ``allowed_paths`` is required
+  before a code patch can be applied. ``acceptance_checks`` is the human-readable legacy
+  description; it needs a named legacy upgrade to become a host check.
+- ``effect_metric_id`` is one of ``first_eligible_cost_usd``,
+  ``first_eligible_elapsed_s``, ``tool_success_rate``, ``invalid_feedback_rate`` or
+  ``confirmed_speedup``. It chooses a measurement, never a verdict.
+  ``allowed_paths`` optionally limits its patch; ``effect_metric``, ``guardrail_metrics``,
+  ``control`` and ``rollback`` define the later experiment. These fields are data, not
+  permission to execute commands or alter the evaluator.
+
+A hardware premise still needs a fresh probe and a bound measurement. A tool, reporting
+or wording tip instead needs reproduction and expected result; it must not invent a GPU
+measurement merely to satisfy the proposal format.
 
 A free-text suggestion without this block is still reviewed by a person, but it never
 reaches the automatic overlay.
@@ -318,16 +335,61 @@ def validate_proposal(
     probe_time_verified = True
     if probe:
         probe_path, probe_sha, probe_mtime, probe_time_verified = _fresh_probe(probe, work=work, started=started)
-    elif surface == "premise":
+    from . import acceptance
+
+    kind = acceptance.kind_of({"surface": surface, "action": action, "rationale": doc.get("rationale") or ""})
+    measurement = _CONTROL.sub(" ", measurement)[:500]
+    reproduction = _CONTROL.sub(" ", str(evidence.get("reproduction") or "")).strip()[:2000]
+    expected = _CONTROL.sub(" ", str(evidence.get("expected") or "")).strip()[:2000]
+    if kind == "hardware_premise" and surface != "premise":
+        _reject_never_auto(f"tcenv/ {reproduction} {expected} {action}")
+    if kind in {"tool", "reporting"}:
+        if re.search(r"\b(?:tolerance|rtol|atol|correctness|screen|score|budget|trust|protocol|abi)\b|容差|阈值|判分|预算|授权|协议", f"{action} {expected}", re.I):
+            raise ProposalError("an automatic tool/reporting tip may not change evaluation, budgets, trust or the protocol")
+    if kind == "wording" and surface == "tip":
+        _reject_never_auto(f"tasks/ task.md tcenv/ {action}")
+    if surface == "premise" and not probe:
         raise ProposalError("a premise needs evidence.probe from this session")
-    if surface == "tip" and not probe:
-        raise ProposalError("a tip needs evidence.probe from this session")
+    if kind == "hardware_premise" and surface != "premise" and not probe:
+        raise ProposalError("a hardware premise tip needs evidence.probe from this session")
+    if kind != "hardware_premise" and surface in P1_SURFACES and not probe and (not reproduction or not expected):
+        raise ProposalError(f"a {kind} proposal needs evidence.reproduction and evidence.expected, not an invented probe")
+    if surface == "premise" and not measurement:
+        raise ProposalError("a premise needs evidence.measurement matching a harness record")
+    optional_lists = {}
+    host_checks = evidence.get("host_checks")
+    if host_checks is not None:
+        from .acceptance_checks import CheckError, validate_items
+        try:
+            host_checks = validate_items(host_checks)
+        except CheckError as exc:
+            raise ProposalError(str(exc)) from exc
+    for name in ("acceptance_checks", "guardrail_metrics", "allowed_paths"):
+        value = evidence.get(name)
+        if value is not None and (not isinstance(value, list) or len(value) > 16 or any(not isinstance(item, str) for item in value)):
+            raise ProposalError(f"evidence.{name} must be a list of at most 16 strings")
+        optional_lists[name] = [str(item)[:500] for item in value or []]
     rationale = _CONTROL.sub(" ", str(doc.get("rationale") or ""))[:1000]
+    normalized_evidence = {
+        "probe": probe, "measurement": measurement,
+        "reproduction": reproduction, "expected": expected,
+        **optional_lists,
+        "host_checks": host_checks,
+        "risk_tier": str(evidence.get("risk_tier") or "")[:32],
+        "effect_metric": _CONTROL.sub(" ", str(evidence.get("effect_metric") or ""))[:2000],
+        "effect_metric_id": str(evidence.get("effect_metric_id") or "")[:100],
+        "control": _CONTROL.sub(" ", str(evidence.get("control") or ""))[:2000],
+        "rollback": _CONTROL.sub(" ", str(evidence.get("rollback") or ""))[:2000],
+    }
+    # Validate the same canonical evidence that will be persisted, not a looser draft.
+    acceptance.make_spec({"proposal_key": "0" * 16, "proposal": {"surface": surface, "action": action, "scope": {"target_id": scope_target, "task": scope_task, "dtype": scope_dtype}, "evidence": normalized_evidence, "rationale": rationale}})
     return {
+        "kind": kind,
         "surface": surface,
         "scope": {"target_id": scope_target, "task": scope_task, "dtype": scope_dtype},
         "action": action,
-        "evidence": {"probe": probe, "measurement": _CONTROL.sub(" ", measurement)[:500]},
+        "evidence": normalized_evidence,
+        "risk_tier": normalized_evidence["risk_tier"],
         "rationale": rationale,
         "proposal_key": proposal_key(target_id=target_id, task=task, surface=surface, action=action, dtype=scope_dtype),
         "probe_path": probe_path,
@@ -563,6 +625,7 @@ def record_proposals(
                 "proposal_key": key,
                 "proposal": {
                     "surface": item["surface"],
+                    "kind": item["kind"],
                     "scope": item["scope"],
                     "action": item["action"],
                     "evidence": item["evidence"],
@@ -1431,6 +1494,8 @@ def convert_feedback(
     action: str,
     probe: str = "",
     measurement: str = "",
+    reproduction: str = "",
+    expected: str = "",
     rationale: str = "",
     by: str = "cli",
     confirm: bool = False,
@@ -1505,7 +1570,7 @@ def convert_feedback(
         "surface": str(surface or "").strip(),
         "scope": {"target_id": target_id, "task": task, "dtype": dtype},
         "action": action,
-        "evidence": {"probe": probe, "measurement": measurement},
+        "evidence": {"probe": probe, "measurement": measurement, "reproduction": reproduction, "expected": expected},
         "rationale": rationale,
     }
     normalized = validate_proposal(
@@ -1529,6 +1594,7 @@ def convert_feedback(
         "proposal_key": normalized["proposal_key"],
         "proposal": {
             "surface": normalized["surface"],
+            "kind": normalized["kind"],
             "scope": normalized["scope"],
             "action": normalized["action"],
             "evidence": normalized["evidence"],
@@ -1593,7 +1659,21 @@ def board(run_dir: Path) -> dict:
     decisions = _read_jsonl(run_dir / DECISION_FILE)
     reviews = _read_jsonl(run_dir / "harness_reviews.jsonl")
     overlay = _read_jsonl(run_dir / OVERLAY_FILE)
-    reviews = _read_jsonl(run_dir / "harness_reviews.jsonl")
+    from .acceptance import make_spec
+    from .adoption import adoption_summary
+    from .harness_experiment import milestones
+
+    latest_reviews = {str(row.get("proposal_key") or ""): row for row in reviews if row.get("event") == "review"}
+    specs = []
+    for row in proposals:
+        if row.get("status") != "valid":
+            continue
+        try:
+            spec = make_spec(row, latest_reviews.get(str(row.get("proposal_key") or "")))
+        except ValueError as exc:
+            specs.append({"proposal_key": str(row.get("proposal_key") or ""), "kind": "legacy_incomplete", "spec": None, "error": str(exc), "milestones": milestones(decisions + reviews, str(row.get("proposal_key") or ""))})
+            continue
+        specs.append({"proposal_key": spec["proposal_key"], "kind": spec["kind"], "spec_sha256": spec["spec_sha256"], "spec": spec, "milestones": milestones(decisions + reviews, spec["proposal_key"])})
     return {
         "run_dir": str(run_dir),
         "control": overlay_control(run_dir),
@@ -1601,6 +1681,8 @@ def board(run_dir: Path) -> dict:
         "reviews": reviews,
         "decisions": decisions,
         "overlay": overlay,
+        "acceptance_specs": specs,
+        "adoption": adoption_summary(run_dir),
         "suggestions": free_text_suggestions(run_dir),
     }
 

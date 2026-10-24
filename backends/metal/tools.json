@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "tools": {
+    "metal.time_msl": {
+      "tool_id": "metal.time_msl",
+      "version": "1",
+      "manifest": "backends/metal/tools/metal_time_msl.toml",
+      "manifest_sha256": "5904e1fbc84ad5934dbda712c129079125ac36be6c396efa01a38e6402ccb7c8"
+    }
+  }
+}

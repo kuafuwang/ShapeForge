@@ -47,6 +47,7 @@ SECURITY_CRITICAL = (
     "taic/trust.py",
     "taic/code_agent.py",
     "taic/acceptance.py",
+    "taic/acceptance_checks.py",
     "taic/orchestrator.py",
     "taic/policy.py",
     "taic/control.py",
@@ -181,8 +182,8 @@ def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
     return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=check)
 
 
-def prepare_worktree(repo: Path, run_dir: Path, proposal_key: str) -> Path:
-    """@brief 在运行目录下从 HEAD 建一个游离工作树。
+def prepare_worktree(repo: Path, run_dir: Path, proposal_key: str, *, base_commit: str | None = None) -> Path:
+    """@brief 在运行目录下从指定基线建一个游离工作树。
 
     同名目录已存在时先删掉再建，使重试不会叠加旧改动。
 
@@ -195,7 +196,8 @@ def prepare_worktree(repo: Path, run_dir: Path, proposal_key: str) -> Path:
     if path.exists():
         remove_worktree(repo, path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    _git(repo, "worktree", "add", "--detach", str(path), "HEAD")
+    base = base_commit or _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "worktree", "add", "--detach", str(path), base)
     return path
 
 
@@ -236,7 +238,7 @@ def estimate_code_budget(prices: Prices, prompt: str, *, output_tokens: int = 80
     }
 
 
-def build_prompt(proposal: dict, *, run_id: str) -> str:
+def build_prompt(proposal: dict, *, run_id: str, acceptance_spec: dict | None = None) -> str:
     """@brief 拼出一次实现回合的 IMPLEMENT.md 提示。
 
     提示把提案当数据嵌入，并要求 agent 只在游离工作树里改文件、写完 IMPLEMENT_REPORT.json。
@@ -260,17 +262,27 @@ evidence: {json.dumps(proposal.get('evidence') or {}, ensure_ascii=False)}
 rationale: {proposal.get('rationale', '')}
 --- END PROPOSAL ---
 
+--- BEGIN ACCEPTANCE CONTRACT (untrusted specification data) ---
+{json.dumps(acceptance_spec or {}, ensure_ascii=False, indent=2)}
+--- END ACCEPTANCE CONTRACT ---
+
 Implement the smallest coherent change, add or update tests, and run the relevant offline
-tests. Do not modify `tasks/`, `tcenv/gpulock.py`, `taic/trust.py`, `targets/*/trust.toml`,
-`control.json`, or credentials. Do not commit. At the end write `IMPLEMENT_REPORT.json`:
+tests. The acceptance contract carries the independent review's recommended test. Respect
+its allowed_paths when non-empty, including tests. Never change evaluator semantics, correctness, tolerance,
+budget, trust or approval code to make a check pass. Do not modify `tasks/`,
+`tcenv/gpulock.py`, `taic/trust.py`, `targets/*/trust.toml`, `control.json`, or credentials.
+Do not commit. At the end write `IMPLEMENT_REPORT.json`:
 
 {{
   "summary": "what changed",
   "tests": ["commands and results"],
+  "acceptance": [{{"check": "exact acceptance_checks entry", "passed": true, "evidence": "test or host-checkable output"}}],
+  "unmet": ["acceptance items not demonstrated"],
   "risks": "remaining risks",
   "files": ["paths changed"]
 }}
 
+These are implementation claims for a person to verify, not proof of search improvement.
 The outer harness will collect `git diff` and a person will review it. If you cannot
 implement it safely, stop and write the report explaining why; do not make unrelated edits.
 """
@@ -373,6 +385,7 @@ def run_code_agent(
         "provider": provider, "model": model, "effort": effort or "",
         "budget_usd": budget_usd, "cost_usd": cost, "elapsed_s": round(time.time() - started, 3),
         "tokens": spent, "patch": patch, "report": report,
+        "worktree": str(worktree), "base_commit": _git(worktree, "rev-parse", "HEAD").stdout.strip(),
     }
 
 
@@ -390,7 +403,7 @@ def collect_patch(worktree: Path) -> str:
     return diff.stdout
 
 
-def write_patch(run_dir: Path, proposal_key: str, result: dict, *, target_id: str = "") -> dict:
+def write_patch(run_dir: Path, proposal_key: str, result: dict, *, target_id: str = "", acceptance_spec: dict | None = None) -> dict:
     """@brief 把生成的补丁与其元数据写到运行目录的 ``code_promotions/`` 下。
 
     写之前先做路径校验，使被禁止的补丁不会被记录下来。
@@ -415,8 +428,14 @@ def write_patch(run_dir: Path, proposal_key: str, result: dict, *, target_id: st
         "cost_usd": result.get("cost_usd"), "elapsed_s": result.get("elapsed_s"),
         "patch": str(patch), "sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
         "paths": paths,
+        "base_commit": result.get("base_commit") or _git(Path(result.get("worktree") or Path(__file__).resolve().parent.parent), "rev-parse", "HEAD").stdout.strip(),
         "report": result.get("report") or {},
+        "acceptance_spec": acceptance_spec or {},
     }
+    if acceptance_spec:
+        from .acceptance import implementation_report
+        meta["implementation"] = implementation_report(result.get("report") or {}, acceptance_spec, paths, meta["sha256"])
+        (folder / f"{proposal_key}.implementation.json").write_text(json.dumps(meta["implementation"], ensure_ascii=False, indent=2), encoding="utf-8")
     (folder / f"{proposal_key}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return meta
 
@@ -500,7 +519,7 @@ def worktree_matches_patches(repo: Path, patches: list[Path], paths: list[str], 
         shutil.rmtree(parent, ignore_errors=True)
 
 
-def _test_patch_in_worktree(repo: Path, patch: Path, proposal_key: str) -> None:
+def _test_patch_in_worktree(repo: Path, patch: Path, proposal_key: str, *, check_items: list[dict] | None = None, base_commit: str | None = None) -> list[dict]:
     """@brief 在游离工作树里应用并测试生成的补丁，绝不在活工作树里做。
 
     先确认 `import taic` 真的来自打好补丁的工作树，再跑离线测试。
@@ -515,7 +534,7 @@ def _test_patch_in_worktree(repo: Path, patch: Path, proposal_key: str) -> None:
     added = False
     try:
         try:
-            _git(repo, "worktree", "add", "--detach", str(temp), "HEAD")
+            _git(repo, "worktree", "add", "--detach", str(temp), base_commit or _git(repo, "rev-parse", "HEAD").stdout.strip())
         except subprocess.CalledProcessError as exc:
             raise CodeAgentError((exc.stderr or exc.stdout or "cannot create a test worktree").strip()) from exc
         added = True
@@ -535,10 +554,82 @@ def _test_patch_in_worktree(repo: Path, patch: Path, proposal_key: str) -> None:
         )
         if tests.returncode != 0:
             raise CodeAgentError((tests.stdout + tests.stderr)[-2000:].strip() or "offline tests failed in the test worktree")
+        if check_items is not None:
+            from .acceptance_checks import run_checks
+            return run_checks(check_items, worktree=temp, project=repo)
+        return []
     finally:
         if added:
             _git(repo, "worktree", "remove", "--force", str(temp), check=False)
         shutil.rmtree(parent, ignore_errors=True)
+
+
+def verify_code_patch(run_dir: Path, proposal_key: str, *, root: Path | None = None, approved_by: str = "", legacy_text: str = "", check_ids: list[str] | None = None) -> dict:
+    """Run implementation acceptance in isolation, before an effect experiment or local apply."""
+    run_dir = Path(run_dir)
+    repo = Path(root) if root is not None else Path(__file__).resolve().parent.parent
+    folder = run_dir / PATCH_DIR
+    patch = folder / f"{proposal_key}.patch"
+    meta_path = folder / f"{proposal_key}.json"
+    if not patch.is_file() or not meta_path.is_file():
+        raise CodeAgentError("no generated patch and acceptance metadata")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if not meta.get("acceptance_spec") and not legacy_text:
+        raise CodeAgentError("an old patch needs a new reviewed implementation or an explicit legacy acceptance upgrade")
+    digest = hashlib.sha256(patch.read_bytes()).hexdigest()
+    if meta.get("sha256") != digest:
+        raise CodeAgentError("the patch file changed after it was recorded")
+    from .acceptance import AcceptanceError, check_paths, read_spec
+    from .harness_experiment import _review_for_spec
+    if legacy_text:
+        if not approved_by.strip() or not check_ids:
+            raise CodeAgentError("legacy acceptance needs --by and at least one registered --check-id")
+        from .acceptance import make_spec
+        from .acceptance_checks import validate_items
+        proposal = _proposal_row(run_dir, proposal_key)
+        if not proposal:
+            raise CodeAgentError("legacy acceptance needs its source proposal")
+        checks = validate_items([{"check_id": check_id} for check_id in check_ids])
+        evidence = dict((proposal.get("proposal") or {}).get("evidence") or {})
+        # Old proposals do not get to choose the low-risk lane merely because a human
+        # supplied legacy text; the normal risk classifier still decides.
+        evidence.update({"host_checks": checks, "acceptance_checks": [legacy_text]})
+        spec = make_spec({**proposal, "proposal": {**(proposal.get("proposal") or {}), "evidence": evidence}})
+    else:
+        spec = read_spec(meta["acceptance_spec"])
+    if not spec["allowed_paths"]:
+        raise CodeAgentError("acceptance contract needs non-empty allowed_paths")
+    paths = _validate_patch(patch.read_text(encoding="utf-8", errors="replace"))
+    _require_allowed_paths(run_dir, proposal_key, meta, paths)
+    outside = check_paths(paths, spec["allowed_paths"])
+    if outside:
+        raise CodeAgentError("patch exceeds the acceptance contract: " + ", ".join(outside))
+    from .acceptance import classify_change
+    from .acceptance_checks import applicable_paths
+    risk = classify_change(spec, patch.read_text(encoding="utf-8", errors="replace"))
+    items = spec.get("host_checks")
+    if not items:
+        raise CodeAgentError("acceptance requires registered host check_ids; use verify-legacy to map old text explicitly")
+    if check_ids is not None and sorted(check_ids) != sorted({item["check_id"] for item in items}):
+        raise CodeAgentError("named check_ids differ from the acceptance contract")
+    results = _test_patch_in_worktree(repo, patch, proposal_key, check_items=items, base_commit=meta.get("base_commit"))
+    if not all(result["passed"] for result in results):
+        raise CodeAgentError("one or more host acceptance checks failed")
+    if risk["risk_tier"] == "offline_only" and not set(paths) <= set(applicable_paths([item["check_id"] for item in items])):
+        raise CodeAgentError("the patch is not covered by its offline acceptance checks")
+    record = {
+        "schema_version": 1, "event": "implementation", "proposal_key": proposal_key,
+        "spec_sha256": spec["spec_sha256"], "patch_sha256": digest, "risk_tier": risk["risk_tier"], "risk_reason": risk["reason"],
+        "accepted": True, "host_verified": True, "host_checks": results,
+        "tests_run": "registered checks and offline pytest in an isolated worktree", "t": time.time(),
+    }
+    if legacy_text:
+        record.update({"legacy_upgrade": {"approved_by": approved_by.strip(), "original_text": legacy_text, "check_ids": sorted(check_ids or [])}, "accepted_by_human": approved_by.strip()})
+    meta["acceptance_spec"] = spec
+    meta["implementation"] = record
+    (folder / f"{proposal_key}.implementation.json").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    return record
 
 
 def _require_allowed_paths(run_dir: Path, proposal_key: str, meta: dict, paths: list[str]) -> list[str]:
@@ -587,6 +678,7 @@ def apply_code_patch(
     check_only: bool = False,
     run_tests: bool = False,
     approved_by: str = "cli",
+    require_effect_validation: bool = False,
 ) -> dict:
     """@brief 检查通过后把生成的代码补丁应用到主仓库，从不 commit。
 
@@ -614,6 +706,55 @@ def apply_code_patch(
         raise CodeAgentError("the patch file changed after it was recorded")
     paths = _validate_patch(patch.read_text(encoding="utf-8", errors="replace"))
     _require_allowed_paths(run_dir, proposal_key, meta, paths)
+    spec = meta.get("acceptance_spec")
+    if spec:
+        from .acceptance import AcceptanceError, check_paths, classify_change, read_spec
+        try:
+            spec = read_spec(spec)
+            outside = check_paths(paths, spec["allowed_paths"])
+        except AcceptanceError as exc:
+            raise CodeAgentError(str(exc)) from exc
+        if outside:
+            raise CodeAgentError("patch exceeds the acceptance contract's allowed paths: " + ", ".join(outside))
+        if not (meta.get("implementation") or {}).get("accepted"):
+            raise CodeAgentError("implementation has unmet acceptance checks; inspect the report before applying")
+        implementation = meta["implementation"]
+        if implementation.get("spec_sha256") != spec["spec_sha256"] or implementation.get("patch_sha256") != digest or implementation.get("host_verified") is not True or not implementation.get("host_checks"):
+            raise CodeAgentError("implementation has no host-verified checks bound to this patch")
+        risk = classify_change(spec, patch.read_text(encoding="utf-8", errors="replace"))
+        if risk["risk_tier"] == "human_gated" and not approved_by.strip():
+            raise CodeAgentError("a security- or evaluator-critical patch needs a named human approver")
+        if require_effect_validation and risk["risk_tier"] != "offline_only":
+            from .harness_experiment import read_plan, summarize_result
+            validated = False
+            decisions_path = run_dir / "harness_decisions.jsonl"
+            if decisions_path.is_file():
+                for line in decisions_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if event.get("event") != "effect_validation" or event.get("validated") is not True or not event.get("approved_by"):
+                        continue
+                    if event.get("proposal_key") != proposal_key or event.get("spec_sha256") != spec["spec_sha256"] or event.get("change_sha256") != digest:
+                        continue
+                    # Read the host-stored result rather than trusting a copied verdict.
+                    evidence_path = Path(str(event.get("evidence_path") or run_dir / "harness_experiments" / f"{event.get('experiment_id')}.result.json"))
+                    try:
+                        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                        if evidence_path.resolve() != (run_dir / "harness_experiments" / f"{event.get('experiment_id')}.result.json").resolve() and evidence_path.resolve().parent.name != event.get("experiment_id"):
+                            continue
+                    except (OSError, json.JSONDecodeError):
+                        continue
+                    try:
+                        summary = summarize_result(evidence)
+                    except ValueError:
+                        continue
+                    if summary["experiment_id"] == event["experiment_id"]:
+                        validated = True
+                        break
+            if not validated:
+                raise CodeAgentError("no effect validation binds this acceptance spec and patch")
     check = subprocess.run(["git", "apply", "--check", str(patch)], cwd=repo, capture_output=True, text=True)
     if check.returncode != 0:
         raise CodeAgentError((check.stderr or check.stdout or "git apply --check failed").strip())
@@ -642,7 +783,16 @@ def apply_code_patch(
         "implemented_by": f"{meta.get('provider')}/{meta.get('model')}" if meta.get("model") else "unknown",
         "approved_by": str(approved_by or "cli"),
         "tests_run": "offline pytest -m 'not gpu and not llm' in an isolated worktree" if run_tests else "",
+        "spec_sha256": str((meta.get("acceptance_spec") or {}).get("spec_sha256") or ""),
+        "implementation_accepted": bool((meta.get("implementation") or {}).get("accepted")),
+        "implementation_missing": (meta.get("implementation") or {}).get("missing") or [],
+        "risk_tier": (meta.get("implementation") or {}).get("risk_tier") or "",
+        "host_checks": (meta.get("implementation") or {}).get("host_checks") or [],
+        "legacy_upgrade": (meta.get("implementation") or {}).get("legacy_upgrade"),
     }
     with (run_dir / "harness_decisions.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        if meta.get("implementation"):
+            implementation = {**meta["implementation"], "event": "implementation", "t": time.time(), "host_verified": bool(run_tests and meta["implementation"]["accepted"] and meta["implementation"].get("host_verified")), "tests_run": row["tests_run"], "approved_by": str(approved_by or "cli")}
+            handle.write(json.dumps(implementation, ensure_ascii=False, sort_keys=True) + "\n")
     return {**meta, "applied": True, "local": True, "commit_pending": True, **row}

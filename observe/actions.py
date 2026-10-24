@@ -345,6 +345,7 @@ def convert_harness(run_id: str, seq: int, digest: str, body: dict) -> dict:
             run_dir, seq=seq, digest=digest, target_id=target_id, task=task, dtype=dtype,
             surface=str(body.get("surface") or ""), action=str(body.get("action") or ""),
             probe=str(body.get("probe") or ""), measurement=str(body.get("measurement") or ""),
+            reproduction=str(body.get("reproduction") or ""), expected=str(body.get("expected") or ""),
             rationale=str(body.get("rationale") or ""), by=str(body.get("by") or "dashboard"),
             confirm=True, mode=mode, supersede=str(body.get("supersede") or ""),
         )

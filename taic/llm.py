@@ -329,6 +329,7 @@ class SearchConfig:
     harness_auto: bool = False  # structured harness proposals may settle into this run's overlay; off by default
     harness_shadow: bool = True  # hold unreviewed quorum entries in shadow; a reviewed tip may activate for this run
     harness_review: bool = True  # let the other committee model review a single-source tip before the next session
+    harness_base_commit: str = ""  # shared source commit used to create this experiment cell
     harness_experiment_id: str = ""  # explicit A/B binding; ordinary searches have no experiment identity
     harness_experiment_arm: str = ""  # control or treatment, from an authorized experiment plan
     harness_change_sha256: str = ""  # digest of the treatment patch, empty for control
