@@ -12,6 +12,13 @@ import tcenv.events as events
 
 
 def test_emit_writes_nothing_until_the_file_log_is_subscribed(tmp_path):
+    """@brief 验证未安装文件日志监听器时 ``emit`` 不落盘，安装后同一事件才写出 JSON。
+
+    用例先清空监听器、发出快照确认无文件，再 ``install_file_log`` 后重发并就文件内容校验。
+    结束时无论成败都重置监听器并恢复原有订阅（函数显式调用 ``events.reset``，但本身不抛异常）。
+
+    @param tmp_path pytest 提供的临时目录，用作事件写入目标 ``state.json`` 的位置。
+    """
     saved = list(events._listeners)
     events.reset()
     try:
@@ -29,6 +36,11 @@ def test_emit_writes_nothing_until_the_file_log_is_subscribed(tmp_path):
 
 
 def test_a_gpu_lock_note_is_written(tmp_path, monkeypatch):
+    """@brief 验证 GPU 锁事件会写出 holder 文件，并在 ``gpu_events.jsonl`` 末尾追加对应记录。
+
+    @param tmp_path pytest 提供的临时目录，充当 observe 目录的根。
+    @param monkeypatch pytest 的环境变量夹具，用于把 ``AI_LOWERLING_OBSERVE_DIR`` 指到临时目录。
+    """
     monkeypatch.setenv("AI_LOWERLING_OBSERVE_DIR", str(tmp_path))
     saved = list(events._listeners)
     events.reset()
@@ -47,7 +59,15 @@ def test_a_gpu_lock_note_is_written(tmp_path, monkeypatch):
 
 
 def test_core_imports_do_not_load_the_dashboard_stack(tmp_path):
-    """A fresh interpreter blocks starlette and uvicorn, then imports judging, policy and config."""
+    """@brief 在拦掉 starlette／uvicorn 的子进程里导入判分、策略与配置模块，确认核心不依赖 dashboard 技术栈。
+
+    新解释器先插一个 meta_path 钩子，令 ``starlette``／``uvicorn`` 导入即抛 ImportError，
+    再导入 ``tcenv.evaluate``／``tcenv.verify``／``tcenv.schema``／``taic.policy``／``taic.llm``／
+    ``tcenv.gpulock`` 并触发一次事件与 GPU 记录；随后断言 ``sys.modules`` 里没有 ``observe``
+    与这两个 UI 包，且关键符号可用。这样保证 dashboard 只是订阅者，不是判分链路的依赖。
+
+    @param tmp_path pytest 提供的临时目录，作为子进程的 observe 目录并接收其事件文件。
+    """
     root = Path(__file__).resolve().parents[2]
     code = r"""
 import os, sys

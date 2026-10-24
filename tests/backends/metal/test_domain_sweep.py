@@ -21,6 +21,10 @@ from ...support.fakes import FakeClient
 
 
 def test_every_pattern_appears_and_the_same_seed_repeats():
+    """@brief 验证全域扫描输入包含每一种特殊值模式，同种子可逐位复现，不同种子则不同。
+
+    NaN 自身不相等，因此复现性比较放在整数位模式上。
+    """
     small = domain_input(PATTERN_COUNT, 7)
     again = domain_input(PATTERN_COUNT, 7)
     # NaN compares unequal, so the repeat check is on the bit patterns.
@@ -32,6 +36,7 @@ def test_every_pattern_appears_and_the_same_seed_repeats():
 
 
 def test_domain_preparation_accepts_the_fp16_maximum_and_rejects_an_all_zero_relu():
+    """@brief 验证 domain 用例准备能产出 fp16 最大值，且全零 relu 输出与单个最大值处错误都被判失败。"""
     task = build_relu("fp16", "small")
     data = prepare_case(task, "domain", 1)
     finite = data.ref["y"][torch.isfinite(data.ref["y"])]
@@ -47,6 +52,7 @@ def test_domain_preparation_accepts_the_fp16_maximum_and_rejects_an_all_zero_rel
 
 
 def test_a_failing_domain_result_is_not_a_domain_sweep():
+    """@brief 验证只有全部通过的 domain 用例才记为 domain_sweep 覆盖，失败时降级为 sampling。"""
     task = build_relu("fp16", "small")
     bad = [SimpleNamespace(case="domain", ok=False, seed=1, input_sha256="abc")]
     assert coverage_for_report(task, bad, "kernel", {})["kind"] == "sampling"
@@ -60,6 +66,7 @@ def test_a_failing_domain_result_is_not_a_domain_sweep():
 
 
 def test_changing_the_tolerance_changes_the_task_fingerprint():
+    """@brief 验证相同任务指纹稳定，而修改 rtol 后任务指纹随之改变。"""
     first = build_relu("fp16", "small")
     second = build_relu("fp16", "small")
     assert task_fingerprint(first) == task_fingerprint(second)
@@ -68,6 +75,10 @@ def test_changing_the_tolerance_changes_the_task_fingerprint():
 
 
 def test_a_failed_domain_sweep_writes_a_report_and_no_result(tmp_path):
+    """@brief 验证前置 domain 扫描失败时只写出 domain_report.json，不产出 result.json。
+
+    @param tmp_path pytest 提供的临时目录，用作 run_dir 的父目录。
+    """
     seen = {}
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
@@ -87,6 +98,7 @@ def test_a_failed_domain_sweep_writes_a_report_and_no_result(tmp_path):
 
 
 def test_primary_needs_the_gain_and_a_bound_sweep():
+    """@brief 验证只有提速达标且绑定源码的完整 domain_sweep 才被定为 primary，否则降为 fallback。"""
     cov = {"kind": "domain_sweep", "passed": True, "source_sha256": "abc", "task_fingerprint": "fp"}
     confirmed = {"publication": "confirmed", "speedup": 1.2}
     assert publication_role(confirmed, {"coverage": cov}, source_sha256="abc", task_fingerprint="fp", recorded_fingerprint="fp") == "primary"

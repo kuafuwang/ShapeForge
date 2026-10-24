@@ -20,10 +20,20 @@ SOURCE = "kernel void relu_kernel() {}\n"
 
 
 def _digest(text: str) -> str:
+    """@brief 算出给定内核源码的 sha256，用于把确认结果绑定到被重测的那份源码。
+
+    @param text 内核源码。
+    @return sha256 十六进制摘要。
+    """
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _result(**extra):
+    """@brief 造一份 result.json 的内容：搜索最好 1.4、一次状态为 incorrect 的确认 0.9，可用关键字覆盖任意字段。
+
+    @param extra 要覆盖的字段。
+    @return 结果字典。
+    """
     base = {
         "task": "relu", "dtype": "fp16", "model": "fake", "stop_reason": "max_rounds", "rounds": 1,
         "evaluations": 1, "spent_usd": 0.1, "budget_usd": 1.0, "best_speedup": 1.4, "confirmed_speedup": 0.9,
@@ -35,6 +45,8 @@ def _result(**extra):
 
 
 def test_an_incorrect_confirmation_is_not_published_as_the_search_best():
+    """@brief 验证确认状态为 incorrect 时不给发布数字（publication 为未确认），但搜索最好值仍在汇总里单独出现。
+    """
     got = published_conclusion(_result(), best_metal_sha256=_digest(SOURCE), confirm_status="incorrect", winner_metal_sha256=_digest(SOURCE))
     assert got == {"speedup": None, "publication": "未确认"}
     row = summarize(_result(), {"status": "incorrect"})
@@ -43,6 +55,10 @@ def test_an_incorrect_confirmation_is_not_published_as_the_search_best():
 
 
 def test_a_result_without_the_hash_field_is_an_old_file(tmp_path):
+    """@brief 验证没有源码摘要字段的 result.json 被当作旧文件，发布状态是旧版未绑定源码且不给速度。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     old = {"task": "relu", "dtype": "fp16", "model": "fake", "stop_reason": "max_rounds", "rounds": 1, "evaluations": 1,
            "spent_usd": 0.1, "budget_usd": 1.0, "best_speedup": 1.4, "confirmed_speedup": 1.1, "confirmed_status": "ok"}
     assert published_conclusion(old)["publication"] == "旧版未绑定源码"
@@ -50,6 +66,10 @@ def test_a_result_without_the_hash_field_is_an_old_file(tmp_path):
 
 
 def test_a_bound_confirmation_shows_the_remeasured_number(tmp_path):
+    """@brief 验证摘要绑定成功时用重测值发布，而 best.metal 一变就不再继承搜索数字。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     digest = _digest(SOURCE)
     run = tmp_path / "run"
     (run / "candidates" / "000_r1.p0").mkdir(parents=True)
@@ -71,6 +91,10 @@ def test_a_bound_confirmation_shows_the_remeasured_number(tmp_path):
 
 
 def test_finish_writes_the_winner_hash_and_leaves_it_null_when_confirmation_failed(tmp_path):
+    """@brief 验证 _finish 在有确认胜者时把源码摘要写进 result.json，确认失败时该字段仍存在但为 null，搜索值与确认值分开记录。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
     search = SearchConfig(budget_usd=1.0, branches=1, max_rounds=0, eval_reps=3, stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
 
@@ -98,7 +122,12 @@ def test_finish_writes_the_winner_hash_and_leaves_it_null_when_confirmation_fail
 
 
 def test_a_confirmation_served_from_the_evaluation_cache_is_not_published(tmp_path):
-    """cache_hit means the report was replayed, not remeasured; the gate must not call that confirmed."""
+    """@brief 验证来自评测缓存的确认报告（cache_hit）不发布数字，发布状态记为不确定。
+
+    cache_hit 表示报告是回放而不是重测，闸门不能把它当成已确认。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     digest = _digest(SOURCE)
     run = tmp_path / "run"
     (run / "candidates" / "000_r1.p0").mkdir(parents=True)
@@ -113,6 +142,12 @@ def test_a_confirmation_served_from_the_evaluation_cache_is_not_published(tmp_pa
 
 
 def _bound_run(tmp_path, **report_extra):
+    """@brief 造一个源码摘要与确认报告互相绑定的运行目录，供发布闸门的用例复用。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param report_extra 追加或覆盖到 confirm_report.json 的字段。
+    @return (运行目录, 源码摘要) 二元组。
+    """
     digest = _digest(SOURCE)
     run = tmp_path / "run"
     (run / "candidates" / "000_r1.p0").mkdir(parents=True, exist_ok=True)
@@ -125,7 +160,12 @@ def _bound_run(tmp_path, **report_extra):
 
 
 def test_the_published_number_must_be_the_median_of_the_recorded_batches(tmp_path):
-    """A hand-edited or mis-merged result.json must not publish a number the batches do not support."""
+    """@brief 验证发布数字必须是已记录批次的结论：result.json 里与批次对不上的加速比不会被发布。
+
+    手改过或合并错的 result.json 不能发布一个批次支撑不起的数字。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run, digest = _bound_run(tmp_path)
     result = _result(confirmed_status="ok", confirmed_speedup=1.9, confirmation_source_sha256=digest,
                      confirmed_values=[1.0, 1.0, 1.0])
@@ -135,6 +175,10 @@ def test_the_published_number_must_be_the_median_of_the_recorded_batches(tmp_pat
 
 
 def test_a_non_finite_or_textual_confirmed_speedup_is_not_published(tmp_path):
+    """@brief 验证确认加速比是 Inf、NaN、字符串或布尔值时都不发布。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run, digest = _bound_run(tmp_path)
     for bad in (float("inf"), float("nan"), "1.25", True):
         result = _result(confirmed_status="ok", confirmed_speedup=bad, confirmation_source_sha256=digest,
@@ -143,6 +187,10 @@ def test_a_non_finite_or_textual_confirmed_speedup_is_not_published(tmp_path):
 
 
 def test_a_confirm_report_from_another_epoch_or_target_is_not_published(tmp_path):
+    """@brief 验证协议版本或目标芯片对不上的 confirm_report 不发布，状态记为未确认。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     for extra in ({"protocol_version": "0"}, {"target_id": "another-mac"}):
         run, digest = _bound_run(tmp_path / str(extra), **extra)
         result = _result(confirmed_status="ok", confirmed_speedup=1.25, confirmation_source_sha256=digest,

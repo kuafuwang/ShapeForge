@@ -15,6 +15,8 @@ gpu = pytest.mark.gpu
 
 @gpu
 def test_unknown_dispatch_mode_is_rejected():
+    """@brief 验证真实 Metal 设备上未知的 dispatch 模式被拒绝，异常信息提到 dispatch。
+    """
     from tasks import get_task
     from tcenv.backends.metal.runtime import get_context
 
@@ -29,6 +31,10 @@ def test_unknown_dispatch_mode_is_rejected():
 @gpu
 @pytest.mark.parametrize("task_name", ["relu", "gemv", "softmax"])
 def test_concurrent_dispatch_over_rotating_sets_gives_the_right_outputs(task_name):
+    """@brief 验证并发派发跨多组轮转缓冲区、跑过不止一遍时输出仍然正确，且各组没有安全违规。
+
+    @param task_name 参数化的任务名（relu、gemv、softmax）。
+    """
     from tasks import get_task
     from tcenv.backends.metal.baselines import rotation_count
     from tcenv.backends.metal.runtime import get_context
@@ -54,6 +60,8 @@ def test_concurrent_dispatch_over_rotating_sets_gives_the_right_outputs(task_nam
 
 @gpu
 def test_the_benchmark_reports_both_dispatch_modes_and_selects_on_the_concurrent_one():
+    """@brief 验证基准同时报告串行与并发两种派发，并以并发结果作为候选耗时，基线里不含串行候选。
+    """
     from tasks import get_task
     from tcenv.evaluate import evaluate
 

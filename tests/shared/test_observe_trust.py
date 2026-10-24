@@ -8,6 +8,10 @@ from observe.trust import metrics, wilson_lower
 
 
 def _db():
+    """@brief 造一个只含 runs、sessions、feedback_items、feedback_claims 四张表并填好样例数据的内存 SQLite 库。
+
+    @return 已建表并插入样例行的连接对象。
+    """
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.executescript(
@@ -35,6 +39,8 @@ def _db():
 
 
 def test_metrics_count_reviews_and_measured_premises():
+    """@brief 验证信任指标按目标与任务统计会话、建议数、已评审、被推翻、待定、实测前提，以及各项比率与 Wilson 下限。
+    """
     conn = _db()
     rows = metrics(conn, target_id="apple-m4-max", task="conv2d")
     assert len(rows) == 1
@@ -50,5 +56,7 @@ def test_metrics_count_reviews_and_measured_premises():
 
 
 def test_an_empty_cell_does_not_claim_a_rate():
+    """@brief 验证没有样本时不给出比率（wilson_lower(0, 0) 为 None），没有匹配目标的指标是空列表。
+    """
     assert wilson_lower(0, 0) is None
     assert metrics(_db(), target_id="another") == []

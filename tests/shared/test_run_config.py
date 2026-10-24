@@ -17,17 +17,32 @@ from ..support.fakes import FakeClient
 
 
 def _cfg() -> tuple[LLMConfig, SearchConfig]:
+    """@brief 构造离线测试用的 LLMConfig 和最小 SearchConfig。
+
+    @return (LLMConfig, SearchConfig) 元组。
+    """
     cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
     search = SearchConfig(budget_usd=1.0, branches=1, max_rounds=1, eval_reps=3, stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
     return cfg, search
 
 
 def _start(tmp_path, client, **kw):
+    """@brief 在 tmp_path/run 下用 fake client 构造一个 Orchestrator。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param client fake LLM 客户端。
+    @param kw 透传给 Orchestrator 的额外参数（例如 resuming）。
+    @return 构造好的 Orchestrator。
+    """
     cfg, search = _cfg()
     return Orchestrator("relu", "fp16", "small", cfg, search, run_dir=tmp_path / "run", client=client, log=lambda _s: None, **kw)
 
 
 def test_v1_config_records_two_hashes_and_no_credentials(tmp_path):
+    """@brief run_config.json（schema 2）记录契约和 Triton 两个哈希与任务指纹，不含密钥，也不发请求。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     client = FakeClient([])
     orch = _start(tmp_path, client)
     text = (orch.run_dir / "run_config.json").read_text()
@@ -52,6 +67,11 @@ def test_v1_config_records_two_hashes_and_no_credentials(tmp_path):
 
 
 def test_a_failed_config_write_sends_no_request_and_leaves_no_result(tmp_path, monkeypatch):
+    """@brief run_config 写盘失败时抛 RunStartError，不留下任何 run 文件也不发请求。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用于让原子写入失败。
+    """
     def boom(_path, _doc):
         raise OSError("disk full")
 
@@ -69,6 +89,10 @@ def test_a_failed_config_write_sends_no_request_and_leaves_no_result(tmp_path, m
 
 
 def test_a_nonempty_directory_is_refused_without_touching_it(tmp_path):
+    """@brief 非空目录被拒绝（提示 resume），原有文件不被修改。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     run.mkdir()
     (run / "run_config.json").write_text('{"keep": true, "schema_version": 0}')
@@ -83,6 +107,10 @@ def test_a_nonempty_directory_is_refused_without_touching_it(tmp_path):
 
 
 def test_resuming_does_not_rewrite_the_existing_config(tmp_path):
+    """@brief resuming=True 时不重写已有的 run_config.json。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     run.mkdir()
     (run / "run_config.json").write_text(json.dumps({"schema_version": 1, "note": "old"}))
@@ -92,6 +120,11 @@ def test_resuming_does_not_rewrite_the_existing_config(tmp_path):
 
 
 def test_taic_run_exits_5_when_branches_is_not_one(tmp_path, monkeypatch):
+    """@brief branches 不为 1 时 taic run 返回退出码 5。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用于注入固定配置。
+    """
     cfg, search = _cfg()
     search.branches = 2
     monkeypatch.setattr("taic.llm.load_config", lambda *_a, **_k: (cfg, search))
@@ -100,8 +133,14 @@ def test_taic_run_exits_5_when_branches_is_not_one(tmp_path, monkeypatch):
 
 
 def test_the_run_lock_alone_does_not_count_as_files_in_a_new_directory(tmp_path, monkeypatch):
-    """`taic run --run-dir X` claims the directory lock before constructing the orchestrator.
-    Counting that lock as run content made every explicit new directory refuse itself."""
+    """@brief 目录里只有 run 锁文件时仍算新目录，orchestrator 可以启动。
+
+    `taic run --run-dir X` 会在构造 orchestrator 之前先占住目录锁；
+    把锁文件当成 run 内容会让每个显式指定的新目录拒绝自己。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用于注入固定配置。
+    """
     cfg, search = _cfg()
     monkeypatch.setattr("taic.llm.load_config", lambda *_a, **_k: (cfg, search))
     run = tmp_path / "claimed"
@@ -114,8 +153,13 @@ def test_the_run_lock_alone_does_not_count_as_files_in_a_new_directory(tmp_path,
 
 
 def test_taic_run_exits_6_when_a_valid_kernel_was_found_but_the_confirmation_failed(tmp_path, monkeypatch):
-    """The files are written (correct), but the published number is null. A script that only reads
-    the exit status must not treat that as a full success."""
+    """@brief 找到有效 kernel 但确认失败时退出码为 6，而不是被视为完全成功。
+
+    文件会正确写入，但发布数字是 null；只读退出码的脚本不能把它当作成功。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用于替换配置和 Orchestrator。
+    """
     from types import SimpleNamespace
 
     cfg, search = _cfg()
@@ -137,6 +181,11 @@ def test_taic_run_exits_6_when_a_valid_kernel_was_found_but_the_confirmation_fai
 
 
 def test_taic_run_exits_5_when_the_directory_already_holds_a_run(tmp_path, monkeypatch):
+    """@brief 目录已包含 run 内容时退出码 5，原有文件保持不变。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用于注入固定配置。
+    """
     cfg, search = _cfg()
     monkeypatch.setattr("taic.llm.load_config", lambda *_a, **_k: (cfg, search))
     run = tmp_path / "taken"
@@ -149,6 +198,11 @@ def test_taic_run_exits_5_when_the_directory_already_holds_a_run(tmp_path, monke
 
 
 def test_run_one_propagates_a_refused_directory_and_does_not_start(tmp_path, monkeypatch):
+    """@brief run_one 把拒绝目录的 RunStartError 透传出去，不启动也不发请求。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用于注入固定配置。
+    """
     cfg, search = _cfg()
     monkeypatch.setattr("experiments.common.load_config", lambda *_a, **_k: (cfg, search))
     run = tmp_path / "run"
@@ -163,6 +217,11 @@ def test_run_one_propagates_a_refused_directory_and_does_not_start(tmp_path, mon
 
 
 def test_a_budget_event_that_fails_to_land_is_not_a_complete_record(tmp_path, monkeypatch):
+    """@brief 预算事件写盘失败时标记 persisted=False，且不留下事件文件。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用于让写入失败。
+    """
     def boom(_path, _doc):
         raise OSError("nope")
 
@@ -173,6 +232,11 @@ def test_a_budget_event_that_fails_to_land_is_not_a_complete_record(tmp_path, mo
 
 
 def test_taic_run_exits_4_when_another_process_holds_the_run_lock(tmp_path, monkeypatch):
+    """@brief 其他进程持有 run 锁时退出码 4，目录里始终只有锁文件。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用于注入固定配置。
+    """
     import subprocess
     import time
 

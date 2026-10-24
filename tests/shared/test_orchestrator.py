@@ -22,6 +22,12 @@ from ..support.orchestrator import KERNEL, agent_from_script, code, fake_eval, l
 
 
 def test_a_raised_budget_after_exhaustion_is_taken_before_confirmation(tmp_path):
+    """@brief 验证预算耗尽后通过 control.json 追加的预算会在确认之前生效。
+
+    未追加时控制检查返回 False；追加后返回 True，剩余额度等于新增的 2 美元。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     orch = make_orch(tmp_path, llm_script(code("speed=1")), [], max_rounds=1)
     orch.ledger.total_usd = float(orch.ledger.budget_usd)
     from taic.orchestrator import RunResult
@@ -34,6 +40,13 @@ def test_a_raised_budget_after_exhaustion_is_taken_before_confirmation(tmp_path)
 
 
 def test_happy_path_selects_the_fastest_eligible_candidate_and_confirms_it(tmp_path):
+    """@brief 验证顺利路径会选出最快的合格候选并完成确认，并写出全套归档文件。
+
+    同时检查轨迹的 improved/速度/花费单调性，以及 best.metal、result.json、
+    run_config.json、transcript、ledger、candidates 目录下的报告与内核。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     script = llm_script(code("speed=0.9"), patches={"A": code("speed=1.3")})
     orch = make_orch(tmp_path, script, calls, max_rounds=1)
@@ -58,6 +71,10 @@ def test_happy_path_selects_the_fastest_eligible_candidate_and_confirms_it(tmp_p
 
 
 def test_a_failed_outer_evaluation_is_handed_to_the_next_session(tmp_path):
+    """@brief 验证首稿评测失败后，失败信息会交给下一次会话，由它产出可用的内核。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     seen = []
 
@@ -76,6 +93,10 @@ def test_a_failed_outer_evaluation_is_handed_to_the_next_session(tmp_path):
 
 
 def test_gives_up_on_a_branch_after_max_repair_tries_but_keeps_the_seed(tmp_path):
+    """@brief 验证分支在修复次数用尽后放弃，不再追加失败候选，并保留原种子作为最优。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     script = llm_script(code("speed=1.0"), patches={"A": code("status=incorrect"), "B": code("status=incorrect"), "C": code("status=incorrect")}, fixes=[code("status=incorrect")] * 20)
     orch = make_orch(tmp_path, script, calls, max_rounds=1, max_repair=1)
@@ -86,6 +107,12 @@ def test_gives_up_on_a_branch_after_max_repair_tries_but_keeps_the_seed(tmp_path
 
 
 def test_a_session_that_returns_no_source_is_not_an_unchanged_seed(tmp_path):
+    """@brief 验证会话没交出源码时记为 agent_failure，而不是“内核未变”，也不触发 provider 重试。
+
+    检查 transcript 中两条 agent 事件均为 provider_failed，并带上了失败分类与会话 id。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
 
     def run_agent(brief, tag):
@@ -113,6 +140,10 @@ def test_a_session_that_returns_no_source_is_not_an_unchanged_seed(tmp_path):
 
 
 def test_a_reply_without_a_code_block_gets_a_nudge(tmp_path):
+    """@brief 验证模型首次回复没带代码块时会被提醒重试，最终仍能拿到内核。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     replies = [make_response("I think we should do something.")] + [None]
 
@@ -133,6 +164,10 @@ def test_a_reply_without_a_code_block_gets_a_nudge(tmp_path):
 
 
 def test_budget_gate_stops_before_the_next_request_and_still_confirms(tmp_path):
+    """@brief 验证预算闸门在发起下一次请求前停下搜索，但已找到的结果仍会被确认。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     orch = make_orch(tmp_path, llm_script(code("speed=1.1"), patches={"A": code("speed=1.5")}), calls, budget=1.2, max_rounds=3)
 
@@ -149,6 +184,10 @@ def test_budget_gate_stops_before_the_next_request_and_still_confirms(tmp_path):
 
 
 def test_gpu_hang_triggers_the_circuit_breaker_and_no_further_gpu_work(tmp_path):
+    """@brief 验证 GPU 挂起会触发断路器：不再做任何 GPU 评测，也不启动确认。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     script = llm_script(code("speed=1.0"), patches={"A": code("status=timeout"), "B": code("speed=2.0"), "C": code("speed=2.0")})
     orch = make_orch(tmp_path, script, calls, max_rounds=3)
@@ -162,6 +201,10 @@ def test_gpu_hang_triggers_the_circuit_breaker_and_no_further_gpu_work(tmp_path)
 
 
 def test_identical_sources_are_evaluated_once(tmp_path):
+    """@brief 验证与种子完全相同的副本只评测一次，副本全部记为 unchanged 且不产生修复标签。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     same = code("speed=1.2")
     script = llm_script(same, patches={"A": same, "B": same, "C": same})
@@ -176,6 +219,10 @@ def test_identical_sources_are_evaluated_once(tmp_path):
 
 
 def test_unparsable_plan_falls_back_to_generic_plans(tmp_path):
+    """@brief 验证计划文本无法解析时回退到通用计划，本轮仍能产出候选。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     script = llm_script(code("speed=1.0"), plan="no json here", patches={})
     orch = make_orch(tmp_path, script, calls, max_rounds=1)
@@ -184,6 +231,10 @@ def test_unparsable_plan_falls_back_to_generic_plans(tmp_path):
 
 
 def test_no_valid_initial_kernel_is_reported(tmp_path):
+    """@brief 验证首稿反复修复仍不可用时以 no_valid_initial_kernel 停下，且没有最优候选。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     script = llm_script(code("status=compile_error"), fixes=[code("status=compile_error")] * 20)
     orch = make_orch(tmp_path, script, calls, max_rounds=2, max_repair=1)
@@ -192,6 +243,10 @@ def test_no_valid_initial_kernel_is_reported(tmp_path):
 
 
 def test_convergence_stops_early(tmp_path):
+    """@brief 验证没有改进时会在收敛判定处提前停机，而不是跑满 max_rounds。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     script = llm_script(code("speed=1.0"))
     orch = make_orch(tmp_path, script, calls, max_rounds=10)
@@ -203,7 +258,14 @@ def test_convergence_stops_early(tmp_path):
 
 
 def timed_eval(calls: list):
-    """'// speed=1.0 cv=0.01 confirm=0.99': search measurement, per-repetition cv, and the value of any re-measurement."""
+    """@brief 造一个评测函数，从内核源码注释里读出速度、cv 与复测速度。
+
+    注释形如 `// speed=1.0 cv=0.01 confirm=0.99`：speed 是搜索测量值，cv 是每次重复的
+    变异系数，confirm 是同一源码再次被评测时（复测）使用的值。
+
+    @param calls 每次评测都会追加一条 (mode, source) 记录的列表。
+    @return 可直接传给 Orchestrator 的评测函数。
+    """
     seen: dict[str, int] = {}
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
@@ -225,7 +287,12 @@ def timed_eval(calls: list):
 
 
 def test_a_noisy_measurement_cannot_replace_the_best_and_ties_are_re_measured(tmp_path):
-    """The GEMM case from runs/suite_mini: a 4% 'win' measured at cv 16% displaced a quiet best and did not hold up."""
+    """@brief 验证噪声很大的“赢”不能取代安稳的最优，且平局候选会被重新测量。
+
+    摘自 runs/suite_mini 的 GEMM 案例：在 cv 16% 下测出的 4% “胜利”挤掉了安稳的最优，且经不起复测。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     script = llm_script(code("speed=0.968 cv=0.01 confirm=0.965"), patches={"A": code("speed=1.009 cv=0.16 confirm=0.975"), "B": code("speed=0.70")})
     orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=1, evaluate_fn=timed_eval(calls))
@@ -241,6 +308,10 @@ def test_a_noisy_measurement_cannot_replace_the_best_and_ties_are_re_measured(tm
 
 
 def test_clear_improvements_still_win_and_untied_candidates_are_not_re_measured(tmp_path):
+    """@brief 验证明显提速的候选直接胜出，而未形成平局的候选不会被额外复测。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     script = llm_script(code("speed=1.0"), patches={"A": code("speed=1.2"), "B": code("speed=1.01")})
     orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=1, evaluate_fn=timed_eval(calls))
@@ -253,6 +324,12 @@ def test_clear_improvements_still_win_and_untied_candidates_are_not_re_measured(
 
 
 def failing(base, needle: str):
+    """@brief 包一层客户端：提示词含 needle 时抛 400，其余请求交给 base 处理。
+
+    @param base 正常的脚本化客户端函数。
+    @param needle 触发模拟失败的关键字。
+    @return 路由函数。
+    """
     import openai
 
     from ..support.llm import status_error
@@ -266,6 +343,10 @@ def failing(base, needle: str):
 
 
 def test_a_failed_model_request_skips_only_its_branch(tmp_path):
+    """@brief 验证单个分支的模型请求失败只跳过该分支，其他分支继续并正常完成确认。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     script = failing(llm_script(code("speed=1.0"), patches={"A": code("speed=1.3")}), "**B**")
     orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=2)
@@ -276,6 +357,10 @@ def test_a_failed_model_request_skips_only_its_branch(tmp_path):
 
 
 def test_the_run_stops_when_every_branch_request_fails(tmp_path):
+    """@brief 验证每个分支的请求都失败时整轮停下，并保留已有种子。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     script = failing(llm_script(code("speed=1.0")), "Implement exactly this optimization plan")
     orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=3)
@@ -285,6 +370,10 @@ def test_the_run_stops_when_every_branch_request_fails(tmp_path):
 
 
 def test_a_failed_planner_request_falls_back_to_generic_plans(tmp_path):
+    """@brief 验证规划请求失败时回退到通用计划，本轮仍能产出候选而不中断搜索。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     script = failing(llm_script(code("speed=1.0")), "Diagnose the dominant bottleneck")
     orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=1)
@@ -300,10 +389,19 @@ def test_a_failed_planner_request_falls_back_to_generic_plans(tmp_path):
 
 
 def _plan_prompt(orch):
+    """@brief 取第一条规划提示词，供断言章节裁剪等行为。
+
+    @param orch 已跑过若干轮次的 Orchestrator。
+    @return 首条含规划指令的用户提示词。
+    """
     return _user_prompts(orch, "Diagnose the dominant bottleneck")[0]
 
 
 def test_one_session_does_not_ask_the_planner(tmp_path):
+    """@brief 验证每轮只有一个会话，不再单独发起规划对话，且会话简报保留了种子来源。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     orch = make_orch(tmp_path, llm_script(code("speed=0.9"), patches={"A": code("speed=1.0")}), calls, max_rounds=1)
     run(orch)
@@ -313,6 +411,12 @@ def test_one_session_does_not_ask_the_planner(tmp_path):
 
 
 def test_init_samples_generates_several_initial_kernels_and_the_fastest_seeds_the_search(tmp_path):
+    """@brief 验证初稿候选数由 init_samples 决定，并以最快的初稿作为搜索种子。
+
+    本用例把 init_samples 设为 1，因此只保留一个 init 候选，最优速度取首个采样值 0.4。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     speeds = iter([0.4, 0.9, 0.6])
     base = llm_script(code("speed=0.1"), patches={"A": code("speed=0.2"), "B": code("speed=0.2"), "C": code("speed=0.2")})
@@ -329,6 +433,10 @@ def test_init_samples_generates_several_initial_kernels_and_the_fastest_seeds_th
 
 
 def test_init_samples_survive_one_failed_request_but_not_all(tmp_path):
+    """@brief 验证初稿阶段单次请求失败可由另一委员会补上，全部失败才以 agent_failure 停下。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from taic.llm import LLMError
 
     calls = []
@@ -358,6 +466,10 @@ def test_init_samples_survive_one_failed_request_but_not_all(tmp_path):
 
 
 def test_patience_controls_how_many_rounds_without_improvement_end_the_run(tmp_path):
+    """@brief 验证 patience 决定连续多少轮无改进后停机，停机原因里写明轮数。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     script = llm_script(code("speed=1.0"), patches={"A": code("speed=0.5"), "B": code("speed=0.5"), "C": code("speed=0.5")})
     res = run(make_orch(tmp_path / "a", script, calls, max_rounds=10, patience=2))
@@ -367,7 +479,13 @@ def test_patience_controls_how_many_rounds_without_improvement_end_the_run(tmp_p
 
 
 def _prompts(orch) -> list[str]:
-    """Stand-ins for the old chat prompts. A seedless session is the first draft; a later one carries the seed."""
+    """@brief 把会话简报展成旧式提示词形式，供断言“首稿/带种子”两类会话。
+
+    无种子会话归为初稿提示，后续会话带上种子源码与评分卡。
+
+    @param orch 已跑过若干轮次的 Orchestrator。
+    @return 每个会话对应的一条提示词文本。
+    """
     out = []
     for brief in orch._session_briefs:
         if brief.seedless:
@@ -378,6 +496,13 @@ def _prompts(orch) -> list[str]:
 
 
 def _prior(path: Path, marker: str, **result) -> Path:
+    """@brief 造一个“上一次运行”目录，写入 best.metal 与 result.json。
+
+    @param path 要创建的目录。
+    @param marker 写进内核源码标记行（如 speed=1.4 或 status=compile_error）。
+    @param result 额外的 result.json 字段，可覆盖 task/dtype/size。
+    @return 创建好的目录路径。
+    """
     path.mkdir()
     body = code(marker).split("```metal\n", 1)[1].rsplit("```", 1)[0]
     (path / "best.metal").write_text(body)
@@ -386,6 +511,10 @@ def _prior(path: Path, marker: str, **result) -> Path:
 
 
 def test_a_run_without_from_still_asks_for_a_first_draft(tmp_path):
+    """@brief 验证不带 --from 的新运行仍会先请求首稿。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     orch = make_orch(tmp_path, llm_script(code("speed=1.0")), calls, max_rounds=0)
     res = run(orch)
@@ -394,6 +523,12 @@ def test_a_run_without_from_still_asks_for_a_first_draft(tmp_path):
 
 
 def test_from_run_skips_the_first_draft_when_the_kernel_is_still_eligible(tmp_path):
+    """@brief 验证 --from 的内核仍合格时跳过首稿，直接以它作为种子并重新测量。
+
+    重新测量用的是内核源码本身，而不是从 result.json 抄来的数字。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     prior = _prior(tmp_path / "prior", "speed=1.4")
     script = llm_script(code("speed=0.1"), patches={"A": code("speed=0.5"), "B": code("speed=0.5"), "C": code("speed=0.5")})
@@ -408,6 +543,10 @@ def test_from_run_skips_the_first_draft_when_the_kernel_is_still_eligible(tmp_pa
 
 
 def test_from_run_falls_back_to_a_first_draft_when_the_kernel_is_no_longer_eligible(tmp_path):
+    """@brief 验证 --from 的内核已不合格时回退到请求首稿。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     prior = _prior(tmp_path / "prior", "status=compile_error")
     orch = make_orch(tmp_path, llm_script(code("speed=1.1")), calls, max_rounds=0, from_run=prior)
@@ -417,6 +556,11 @@ def test_from_run_falls_back_to_a_first_draft_when_the_kernel_is_no_longer_eligi
 
 
 def test_from_run_refuses_a_damaged_result_instead_of_starting_over(tmp_path):
+    """@brief 验证 --from 的 result.json 损坏时拒绝启动并提示需人工检查，而不是默默重开。
+
+    @param tmp_path pytest 提供的临时目录。
+    @raises RunStartError 旧运行的 result.json 无法解析时抛出。
+    """
     calls = []
     prior = _prior(tmp_path / "prior", "speed=1.4")
     (prior / "result.json").write_text("{not json")
@@ -427,6 +571,12 @@ def test_from_run_refuses_a_damaged_result_instead_of_starting_over(tmp_path):
 
 
 def _with_bound(calls, bound):
+    """@brief 包一层评测函数，为成功的报告补上指定类型的 roofline 数据。
+
+    @param calls 传给 fake_eval 的调用记录列表。
+    @param bound roofline 瓶颈类型，memory 或 compute。
+    @return 包好之后的评测函数。
+    """
     base = fake_eval(calls)
 
     def ev(*a, **k):
@@ -447,6 +597,11 @@ def _with_bound(calls, bound):
 
 
 def _plan_calls(orch):
+    """@brief 取出客户端里所有规划类调用，用于断言是否真的问了规划器。
+
+    @param orch 目标 Orchestrator。
+    @return 提示词含规划指令的调用记录列表。
+    """
     return [c for c in orch.llm.client.calls if "Diagnose the dominant bottleneck" in c["messages"][-1]["content"]]
 
 
@@ -458,6 +613,15 @@ def _plan_calls(orch):
     ],
 )
 def test_the_planner_sees_only_the_matching_chapter_and_the_same_prompt_each_round(tmp_path, bound, keep, drop):
+    """@brief 验证不单独发起规划调用，而是把 roofline 下界写进会话简报的界说明。
+
+    系统提示里两个章节都在，裁剪由简报里的界说明承担，而不是删掉不匹配的章节。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param bound roofline 瓶颈类型，由 parametrize 提供。
+    @param keep 应对应瓶颈类型的章节标题，用于确认它仍在系统提示里。
+    @param drop 另一章节标题，同样仍在系统提示里，作为未被裁掉的对照。
+    """
     calls = []
     script = llm_script(code("speed=0.9"), patches={"A": code("speed=0.8")})
     orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=2, evaluate_fn=_with_bound(calls, bound))
@@ -469,6 +633,10 @@ def test_the_planner_sees_only_the_matching_chapter_and_the_same_prompt_each_rou
 
 
 def test_a_seed_without_a_roofline_keeps_today_s_planning_prompt(tmp_path):
+    """@brief 验证种子没有 roofline 数据时仍用原有提示词，界说明为空。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     orch = make_orch(tmp_path, llm_script(code("speed=0.9"), patches={"A": code("speed=0.8")}), calls, branches=1, max_rounds=1)
     run(orch)
@@ -479,6 +647,10 @@ def test_a_seed_without_a_roofline_keeps_today_s_planning_prompt(tmp_path):
 
 
 def test_from_run_does_not_use_a_kernel_recorded_for_a_different_task(tmp_path):
+    """@brief 验证 --from 指向其他任务的运行目录时不会拿它的内核当种子。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     prior = _prior(tmp_path / "prior", "speed=9.9", task="gemm")
     orch = make_orch(tmp_path, llm_script(code("speed=1.0")), calls, max_rounds=0, from_run=prior)
@@ -489,7 +661,10 @@ def test_from_run_does_not_use_a_kernel_recorded_for_a_different_task(tmp_path):
 
 
 def test_each_session_edits_the_current_seed(tmp_path):
-    """One session a round. There is no second parent and no planner conversation to resume."""
+    """@brief 验证每轮只有一个会话，且它编辑的是当前种子，没有第二个父本或可恢复的规划对话。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     orch = make_orch(tmp_path, llm_script(code("speed=1.0"), patches={"A": code("speed=0.5"), "B": code("speed=0.5"), "C": code("speed=0.5")}), calls, max_rounds=3, patience=10)
     run(orch)
@@ -499,6 +674,10 @@ def test_each_session_edits_the_current_seed(tmp_path):
 
 
 def test_require_contract_launch_is_passed_into_evaluate(tmp_path):
+    """@brief 验证 require_contract_launch 会原样传给评测函数。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     seen = []
     base = fake_eval(calls)
@@ -513,6 +692,10 @@ def test_require_contract_launch_is_passed_into_evaluate(tmp_path):
 
 
 def test_a_saved_report_from_before_launch_protocol_is_not_cached(tmp_path):
+    """@brief 验证旧 run_config 缺少 launch_protocol 时带启动协议标记的内核不进缓存。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     orch = make_orch(tmp_path, llm_script(code("speed=1")), [], max_rounds=0)
     path = orch.run_dir / "run_config.json"
     path.write_text("{}")
@@ -523,8 +706,13 @@ def test_a_saved_report_from_before_launch_protocol_is_not_cached(tmp_path):
 
 
 def test_the_confirmation_does_not_read_the_evaluation_cache(tmp_path):
-    """The confirm seed is deterministic. With eval_cache on, a resume (or a rerun with the same seed)
-    would replay the stored report in milliseconds and still be published as a remeasure."""
+    """@brief 验证确认阶段禁用评测缓存，每次都是真正的重测。
+
+    确认种子是确定的，若开着 eval_cache，续跑或同种子重跑会在毫秒内重放旧报告，
+    却仍然被当作重测结果发布。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     seen = []
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
@@ -543,10 +731,12 @@ def test_the_confirmation_does_not_read_the_evaluation_cache(tmp_path):
 
 
 def test_confirmation_reports_the_median_of_independent_batches(tmp_path):
-    """The published number is the median over confirm_batches input batches, not one lucky batch.
+    """@brief 验证发布的数字是 confirm_batches 个独立批次的中心值，而不是某一幸运批次。
 
-    runs/conv2d-feedback-20261021 showed why: one batch put the same kernel 1.8% slower than the search
-    measurement and 2.2% below it in speedup, which a single batch reports as if it were the kernel's level.
+    runs/conv2d-feedback-20261021 说明了原因：单个批次把同一个内核测得比搜索测量慢 1.8%、
+    提速低 2.2%，而单批次会把这当成内核的真实水平。
+
+    @param tmp_path pytest 提供的临时目录。
     """
     calls = []
 
@@ -577,6 +767,10 @@ def test_confirmation_reports_the_median_of_independent_batches(tmp_path):
 
 
 def test_a_new_run_freezes_guidance_and_an_old_run_still_copies_the_repo(tmp_path):
+    """@brief 验证新运行会冻结指导文件快照并记录哈希，旧运行则从仓库直接拷贝。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     import hashlib
 
     from taic.kernel_agent import EXPERIENCE, stage_guidance
@@ -613,7 +807,12 @@ def test_a_new_run_freezes_guidance_and_an_old_run_still_copies_the_repo(tmp_pat
 
 
 def test_a_failed_feedback_append_still_ages_an_unverified_premise(tmp_path):
-    """The seq is assigned before the append. A failed write must still move the expiry clock."""
+    """@brief 验证未验证前提按时序变老：feedback 序号尚新时进入提示，序号推进后退出。
+
+    设计上序号在 append 之前分配，因此即使写入失败也必须推动过期时钟。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     orch = make_orch(tmp_path, llm_script(code("speed=1")), [], max_rounds=0)
     claim = {
         "section": "被否决的前提", "audience": "peer", "premise": "unverified",
@@ -634,6 +833,10 @@ def test_a_failed_feedback_append_still_ages_an_unverified_premise(tmp_path):
 
 
 def test_a_remaining_balance_below_a_recent_session_does_not_start_another_session(tmp_path):
+    """@brief 验证剩余额度低于上一次会话花费时不再开会话，以 budget_exhausted 停下并标记会话预算停机。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     orch = make_orch(tmp_path, llm_script(code("speed=1.1")), calls, budget=1.0, max_rounds=3)
 
@@ -650,6 +853,10 @@ def test_a_remaining_balance_below_a_recent_session_does_not_start_another_sessi
 
 
 def test_an_empty_best_file_is_not_a_previous_kernel(tmp_path):
+    """@brief 验证空的 best.metal 不会被当成上一次运行留下的内核。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     prev = tmp_path / "prev"
     prev.mkdir()
     (prev / "best.metal").write_text("")
@@ -660,8 +867,13 @@ def test_an_empty_best_file_is_not_a_previous_kernel(tmp_path):
 
 
 def test_from_run_is_not_an_external_duplicate_on_its_first_evaluation(tmp_path):
-    """The --from kernel is also a candidates/ copy of its old run. The exception must be applied
-    before the external set is consulted, or the new run silently starts a fresh draft."""
+    """@brief 验证 --from 内核在首次评测时不被当成外部重复。
+
+    被 --from 指向的内核也是旧运行的 candidates/ 副本，例外必须在查询外部集合之前生效，
+    否则新运行会默默重开一份首稿。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from taic.llm import LLMConfig, SearchConfig
     from taic.orchestrator import Orchestrator
 
@@ -683,10 +895,23 @@ def test_from_run_is_not_an_external_duplicate_on_its_first_evaluation(tmp_path)
 
 
 def _session_source(marker: str) -> str:
+    """@brief 把 code() 包装的带标记源码拆出纯内核文本。
+
+    @param marker 写进内核源码的标记。
+    @return 不含 Markdown代码围栅的内核源码。
+    """
     return code(marker).split("```metal\n", 1)[1].rsplit("```", 1)[0]
 
 
 def _session_result(marker: str | None, *, failure_class: str = "", cost: float = 0.01, notes: str = "") -> AgentResult:
+    """@brief 造一份 agent 会话结果，可指定失败分类、花费与备注。
+
+    @param marker 内核标记，None 表示这次会话没有交出源码。
+    @param failure_class 失败分类，如 turn_failed；决定 error 与诊断字段。
+    @param cost 本次会话花费美元。
+    @param notes 会话备注正文，会写入 NOTES.md。
+    @return 构造好的 AgentResult。
+    """
     return AgentResult(
         source=None if marker is None else _session_source(marker), cost_usd=cost, cost_incomplete=False,
         status="ok", error="Connection error." if failure_class == "turn_failed" else "", notes=notes,
@@ -700,10 +925,19 @@ def _session_result(marker: str | None, *, failure_class: str = "", cost: float 
 
 
 def _run_events(orch) -> list[dict]:
+    """@brief 读出运行目录里 transcript.jsonl 的全部事件。
+
+    @param orch 目标 Orchestrator。
+    @return 事件字典列表。
+    """
     return [json.loads(line) for line in (orch.run_dir / "transcript.jsonl").read_text().splitlines()]
 
 
 def test_a_provider_failure_retries_inside_the_same_candidate_and_keeps_costs_and_notes(tmp_path):
+    """@brief 验证 provider 失败在同一候选内重试，并累加花费、保留重试得到的备注与来源信息。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     attempts = []
     sleeps = []
 
@@ -753,6 +987,10 @@ def test_a_provider_failure_retries_inside_the_same_candidate_and_keeps_costs_an
 
 
 def test_provider_retries_exhaustion_counts_once_per_round_before_the_existing_two_strike_stop(tmp_path):
+    """@brief 验证重试用尽时每轮只计一次 agent_failure，两轮后由原有两振停机规则收尾。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     attempts = []
 
     def agent(brief, tag):
@@ -779,6 +1017,10 @@ def test_provider_retries_exhaustion_counts_once_per_round_before_the_existing_t
 
 
 def test_a_normal_answer_without_submission_is_not_a_provider_retry(tmp_path):
+    """@brief 验证正常结束但未交内核的回复不算 provider 重试，也不产生 provider_retry 事件。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     attempts = []
 
     def agent(brief, tag):
@@ -801,6 +1043,10 @@ def test_a_normal_answer_without_submission_is_not_a_provider_retry(tmp_path):
 
 
 def test_a_checkpoint_from_a_degraded_session_is_evaluated_without_retrying(tmp_path):
+    """@brief 验证降级会话仍交出内核时直接评测，不额外重试。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     attempts = []
 
     def agent(brief, tag):
@@ -819,6 +1065,10 @@ def test_a_checkpoint_from_a_degraded_session_is_evaluated_without_retrying(tmp_
 
 
 def test_the_budget_gate_runs_between_provider_attempts(tmp_path):
+    """@brief 验证预算闸门在两次 provider 尝试之间生效，额度不足时不再发起重试。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     attempts = []
 
     def agent(brief, tag):
@@ -845,6 +1095,11 @@ def test_the_budget_gate_runs_between_provider_attempts(tmp_path):
 
 
 def test_provider_retries_must_be_a_small_nonnegative_integer(tmp_path):
+    """@brief 验证 provider_retries 与 session_cost_cap_usd 的非法取值在启动时被拒绝。
+
+    @param tmp_path pytest 提供的临时目录。
+    @raises RunStartError 参数不是小整数或非负数值时抛出。
+    """
     for value in (-1, 4, True, "1"):
         orch = make_orch(tmp_path / str(value), llm_script(code("speed=1.0")), [], provider_retries=value)
         with pytest.raises(RunStartError, match="provider_retries"):
@@ -856,6 +1111,12 @@ def test_provider_retries_must_be_a_small_nonnegative_integer(tmp_path):
 
 
 def test_an_interrupted_retry_backoff_restores_the_attempt_and_all_previous_spend(tmp_path):
+    """@brief 验证退避等待被中断时，重试次数与已花费金额都能从快照完整恢复。
+
+    恢复后续跑会接着做下一次重试，并把新一轮花费累加到原总额上。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from taic.orchestrator import StopRun
     from taic.resume import describe, load_snapshot
 
@@ -901,6 +1162,10 @@ def test_an_interrupted_retry_backoff_restores_the_attempt_and_all_previous_spen
 
 
 def test_a_retry_that_returns_no_submission_is_not_retried_again(tmp_path):
+    """@brief 验证重试本身仍未交内核时不再继续重试，并记一次 agent_failure。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     attempts = []
 
     def agent(brief, tag):
@@ -931,6 +1196,10 @@ def test_a_retry_that_returns_no_submission_is_not_retried_again(tmp_path):
 
 
 def test_three_provider_retries_use_bounded_exponential_backoff(tmp_path):
+    """@brief 验证三次 provider 重试按 5/10/20 秒的有界指数退避，且只记一次 agent_failure。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     attempts = []
     sleeps = []
 
@@ -955,6 +1224,10 @@ def test_three_provider_retries_use_bounded_exponential_backoff(tmp_path):
 
 
 def test_timeout_and_process_failure_are_not_provider_retries(tmp_path):
+    """@brief 验证超时与进程失败不会触发 provider 重试。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     for status, failure_class in (("timeout", "timeout"), ("failed", "process_failed")):
         attempts = []
 
@@ -975,6 +1248,10 @@ def test_timeout_and_process_failure_are_not_provider_retries(tmp_path):
 
 
 def test_cost_incomplete_does_not_start_a_provider_retry(tmp_path):
+    """@brief 验证花费数据不完整时以 cost_incomplete 停下，不再发起 provider 重试。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     attempts = []
 
     def agent(brief, tag):
@@ -995,6 +1272,12 @@ def test_cost_incomplete_does_not_start_a_provider_retry(tmp_path):
 
 
 def test_terminal_provider_attempt_marker_is_not_replayed_on_resume(tmp_path):
+    """@brief 验证续跑时已终结的 provider 尝试标记不会被重放，也不会再开会话。
+
+    通过改写 state.json 复现“最后一次尝试与轮次计数器之间”的崩溃窗口。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from taic.resume import load_snapshot
 
     def agent(brief, tag):

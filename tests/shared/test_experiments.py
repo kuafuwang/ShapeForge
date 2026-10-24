@@ -16,11 +16,22 @@ from ..support.orchestrator import PLAN, code, fake_eval, llm_script
 
 
 def kernel_of(task: str) -> str:
+    """@brief 取出任务 fp16/small 规格下的内核名。
+
+    @param task 任务名。
+    @return 该任务合约声明的内核函数名。
+    """
     return get_task(task, "fp16", "small").contract.kernel_name
 
 
 def client_factory(speeds):
-    """A fresh scripted client per run; the initial kernel gets ``speeds[0]``, patch A ``speeds[1]``."""
+    """@brief 构造一个工厂，每次调用都给出全新的脚本化客户端。
+
+    初始内核取 ``speeds[0]``，补丁 A 取 ``speeds[1]``，B 与 C 固定为 speed=0.5。
+
+    @param speeds 依次分配给各次运行的 (初始速度, 补丁 A 速度) 对。
+    @return 无参调用即可得到新 FakeClient 的工厂函数。
+    """
     it = iter(speeds)
 
     def make():
@@ -31,6 +42,10 @@ def client_factory(speeds):
 
 
 def test_suite_runs_resumes_summarizes_and_plots(tmp_path):
+    """@brief 验证批量实验能跑完、断点续跑不重复评估、生成 Markdown 表与图表。
+
+    @param tmp_path pytest 提供的临时目录，用作套件输出目录。
+    """
     calls = []
     evf = fake_eval(calls)
     rows = []
@@ -58,11 +73,19 @@ def test_suite_runs_resumes_summarizes_and_plots(tmp_path):
 
 
 def test_frontier_contains_only_improvements(tmp_path):
+    """@brief 验证前沿曲线只包含标记为 improved 的轨迹点。
+
+    @param tmp_path pytest 提供的临时目录（本用例未使用）。
+    """
     res = {"trace": [{"cost_usd": 0.1, "best_speedup": 0.9, "improved": True}, {"cost_usd": 0.2, "best_speedup": 0.9, "improved": False}, {"cost_usd": 0.3, "best_speedup": 1.2, "improved": True}]}
     assert plots.frontier(res) == [(0.1, 0.9), (0.3, 1.2)]
 
 
 def test_repeatability_table(tmp_path):
+    """@brief 验证重复性表按每轮速度汇总出三次试验值、最优值与均值并渲染进 Markdown。
+
+    @param tmp_path pytest 提供的临时目录，用作重复性实验输出目录。
+    """
     import experiments.repeatability as rp
 
     seq = iter([1.0, 1.2, 1.1])
@@ -83,6 +106,10 @@ def test_repeatability_table(tmp_path):
 
 
 def test_semantic_runner_reports_first_try_and_repairs(tmp_path):
+    """@brief 验证语义测试运行器区分一次即通过与需修复才通过，并统计修复次数。
+
+    @param tmp_path pytest 提供的临时目录，用作语义测试输出目录。
+    """
     import experiments.semantic_tests as st
 
     def one(name, dtype, size, run_dir, **kw):
@@ -102,6 +129,10 @@ def test_semantic_runner_reports_first_try_and_repairs(tmp_path):
 
 
 def test_p1_runs_name_buildable_tasks_and_the_report_renders(tmp_path):
+    """@brief 验证 P1 实验声明的任务都能构建，且报告能汇总失败、退回与合约三份来源。
+
+    @param tmp_path pytest 提供的临时目录，用来放置 summary 与 gemm 输入。
+    """
     from experiments import contract_sensitivity as cs
     from experiments import p1_runs
 
@@ -134,6 +165,10 @@ def test_p1_runs_name_buildable_tasks_and_the_report_renders(tmp_path):
 
 
 def test_cost_report_sums_spend_per_group_and_model(tmp_path):
+    """@brief 验证成本报告按分组与模型累加花费，并把读不了的 result.json 列为待人工检查。
+
+    @param tmp_path pytest 提供的临时目录，用来搭建两个分组目录。
+    """
     from experiments import cost_report
 
     for d, name, usd, model in (("a", "r1", 0.25, "m1"), ("a", "r2", 0.5, "m1"), ("b", "r1", 1.0, "m2")):

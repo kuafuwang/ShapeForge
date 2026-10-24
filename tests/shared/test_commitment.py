@@ -10,12 +10,24 @@ from experiments.common import cap_allows, experiment_commitment, fits_cap, run_
 
 
 def _state(directory, *, spent, budget, pid, script=False):
+    """@brief 在目录里写一份 state.json：脚本作业只标 script 与 phase，正常运行写花费、预算与 pid。
+
+    @param directory 运行目录。
+    @param spent 已花金额。
+    @param budget 预算上限。
+    @param pid 进程号。
+    @param script 是否写成 run_suite 脚本作业的样子。
+    """
     directory.mkdir(parents=True, exist_ok=True)
     doc = {"script": "run_suite", "phase": "run"} if script else {"spent_usd": spent, "budget_usd": budget, "pid": pid, "phase": "llm"}
     (directory / "state.json").write_text(json.dumps(doc))
 
 
 def test_a_finished_run_counts_what_it_spent_and_a_job_file_counts_nothing(tmp_path):
+    """@brief 验证已结束的运行按 result.json 的实际花费计入实验占用，run_suite 脚本作业的 state.json 不算钱。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     _state(tmp_path, spent=0, budget=0, pid=1, script=True)
     run = tmp_path / "relu_fp16"
     _state(run, spent=2.5, budget=15, pid=999999)
@@ -25,6 +37,11 @@ def test_a_finished_run_counts_what_it_spent_and_a_job_file_counts_nothing(tmp_p
 
 
 def test_a_live_run_reserves_its_budget_including_a_top_up(tmp_path, monkeypatch):
+    """@brief 验证活着的运行按 control.json 调高后的预算占用额度，而不是 state.json 里的原预算。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把 pid_alive 固定成「只有 7 号活」。
+    """
     import taic.control as control
 
     monkeypatch.setattr(control, "pid_alive", lambda pid: pid == 7)
@@ -36,6 +53,11 @@ def test_a_live_run_reserves_its_budget_including_a_top_up(tmp_path, monkeypatch
 
 
 def test_a_dead_run_without_a_result_counts_only_what_it_spent(tmp_path, monkeypatch):
+    """@brief 验证进程已死且没有 result.json 的运行只按已花金额占用，不再预留预算。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把 pid_alive 固定成「全部已死」。
+    """
     import taic.control as control
 
     monkeypatch.setattr(control, "pid_alive", lambda pid: False)
@@ -45,6 +67,11 @@ def test_a_dead_run_without_a_result_counts_only_what_it_spent(tmp_path, monkeyp
 
 
 def test_a_top_up_past_the_cap_is_refused_and_one_inside_it_is_allowed(tmp_path, monkeypatch):
+    """@brief 验证超出实验总额上限的加钱被拒（理由带上限数字），上限内的放行，fits_cap 也据此给出结论。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把 pid_alive 固定成「只有 7 号活」。
+    """
     import taic.control as control
 
     monkeypatch.setattr(control, "pid_alive", lambda pid: pid == 7)

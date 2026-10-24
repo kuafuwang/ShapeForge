@@ -48,14 +48,24 @@ _GEMM_ROOFLINE = {
 
 
 def _task():
+    """@brief 取 relu/fp16/small 的题面，供各条提示词用例复用。
+
+    @return Task 对象。
+    """
     return get_task("relu", "fp16", "small")
 
 
 def _plan(bound):
+    """@brief 按给定的 roofline 类别渲染规划用的用户消息。
+
+    @param bound roofline 类别，``memory`` / ``compute`` 或无效值。
+    @return 渲染出的 ``plan_user`` 文本。
+    """
     return prompts.plan_user(_task(), "kernel void relu_kernel() {}", "feedback text", ["h1"], 3, bound=bound, source_fence="metal")
 
 
 def test_the_index_is_deterministic_and_slices_the_existing_file():
+    """@brief 验证索引的切片确定、结果确是 skill 文件里的原文一段，且只含目标章节、不带下一级标题。"""
     file_text = SKILL.read_text()
     a, b = SymptomIndex(), SymptomIndex()
     assert a.by_bound == b.by_bound
@@ -72,6 +82,7 @@ def test_the_index_is_deterministic_and_slices_the_existing_file():
 
 
 def test_memory_selects_the_memory_chapter_and_not_the_compute_chapter():
+    """@brief 验证 memory 类别只带显存章节，其内容与规划请求里都不出现计算章节的写法。"""
     text = section_for("memory")
     assert "move each byte exactly once" in text
     assert "Register-block" not in text
@@ -81,6 +92,7 @@ def test_memory_selects_the_memory_chapter_and_not_the_compute_chapter():
 
 
 def test_compute_selects_the_compute_chapter_and_not_the_memory_chapter():
+    """@brief 验证 compute 类别只带计算章节，其内容与规划请求里都不出现显存章节的写法。"""
     text = section_for("compute")
     assert "Register-block" in text
     assert "move each byte exactly once" not in text
@@ -90,6 +102,7 @@ def test_compute_selects_the_compute_chapter_and_not_the_memory_chapter():
 
 
 def test_bound_of_reads_the_structured_roofline_field():
+    """@brief 验证 ``bound_of`` 只读 roofline 的结构化 ``bound`` 字段，不被反馈文本里提到的另一类别带偏。"""
     assert bound_of({"roofline": _RELU_ROOFLINE}) == "memory"
     assert bound_of({"roofline": _GEMM_ROOFLINE}) == "compute"
     report = EvalReport(task="relu", dtype="fp16", size="paper", mode="full", status="ok")
@@ -101,6 +114,7 @@ def test_bound_of_reads_the_structured_roofline_field():
 
 
 def test_a_missing_or_unknown_bound_does_not_crash_or_invent_one():
+    """@brief 验证缺失或无法识别的 bound 既不报错也不臆造：两者都不带章节，且与不传 bound 的提示词完全一致。"""
     plain = prompts.plan_user(_task(), "k", "bound: compute; achieved 10 GB/s", ["h"], 3, source_fence="metal")
     for report in (
         None,
@@ -131,6 +145,7 @@ def test_a_missing_or_unknown_bound_does_not_crash_or_invent_one():
 
 
 def test_a_known_bound_puts_only_the_matching_chapter_in_the_planning_request():
+    """@brief 验证已知 bound 时规划请求只含对应章节、其他章节被剔除，同时保留固定大纲与 HARNESS_RULES 前缀。"""
     status = status_lines(rnd=2, max_rounds=12, patience_left=3, spent=1.5, budget=3, required_gain=1.014)
     for tools in (False, True):
         system = prompts.system_prompt(_task(), use_tools=tools)

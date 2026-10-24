@@ -28,12 +28,20 @@ BIG = make_usage(miss=100_000, out=50_000)  # $0.09 per request with the default
 
 
 def test_atomic_write_leaves_no_temporary_file(tmp_path):
+    """@brief 验证 control.write_json_atomic 写完控制文件后目录里只剩目标文件，没有残留的临时文件。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     control.write_json_atomic(tmp_path / "x.json", {"a": 1})
     assert json.loads((tmp_path / "x.json").read_text()) == {"a": 1}
     assert [p.name for p in tmp_path.iterdir()] == ["x.json"]
 
 
 def test_ledger_takes_a_raised_budget_before_the_gate(tmp_path):
+    """@brief 验证 CostLedger 在预算闸门之前读入调高后的 control.json：闸门不再抛 BudgetExhausted，on_budget_change 只回调一次，同一份文件不会二次生效。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     led = CostLedger(CFG, 1.0)
     led.watch_control(tmp_path / "control.json")
     led.add(make_usage(miss=3_000_000, out=0))  # $0.90
@@ -51,6 +59,10 @@ def test_ledger_takes_a_raised_budget_before_the_gate(tmp_path):
 
 
 def test_a_lower_request_never_goes_below_what_is_spent(tmp_path):
+    """@brief 验证调低预算的请求不会把上限压到已花金额以下：预算被夹到 total_usd，闸门仍然抛 BudgetExhausted。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     led = CostLedger(CFG, 10.0)
     led.watch_control(tmp_path / "control.json")
     led.add(make_usage(miss=2_000_000, out=0))  # $0.60
@@ -62,6 +74,11 @@ def test_a_lower_request_never_goes_below_what_is_spent(tmp_path):
 
 @pytest.mark.parametrize("content", ["{not json", "[]", '{"budget_usd": "lots"}', '{"budget_usd": -3}', '{"budget_usd": NaN}'])
 def test_a_malformed_control_file_is_ignored_with_a_note(tmp_path, content):
+    """@brief 验证内容损坏的 control.json 被忽略并只记一条提示，预算保持原值，同一份坏文件不会重复报警。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param content 参数化给出的损坏 control.json 内容。
+    """
     led = CostLedger(CFG, 2.0)
     led.watch_control(tmp_path / "control.json")
     notes = []
@@ -74,6 +91,10 @@ def test_a_malformed_control_file_is_ignored_with_a_note(tmp_path, content):
 
 
 def test_a_control_file_from_an_earlier_session_is_not_applied_at_start(tmp_path):
+    """@brief 验证启动前就存在的旧 control.json 不会被新会话在开头套用，预算仍是构造时给出的 2.0。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     control.write_control(tmp_path, 99.0, who="dashboard")
     led = CostLedger(CFG, 2.0)
     led.watch_control(tmp_path / "control.json")
@@ -82,6 +103,10 @@ def test_a_control_file_from_an_earlier_session_is_not_applied_at_start(tmp_path
 
 
 def test_events_history_and_pending_requests(tmp_path):
+    """@brief 验证 budget_history 的 topped_up、initial_budget_usd 与 pending 待生效请求，以及 read_events 记下的 requested 与 applied 事件及金额。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     control.write_control(tmp_path, 8.0, who="dashboard", amount_usd=5.0, old_budget_usd=3.0)
     h = control.budget_history(tmp_path, 3.0)
     assert h["topped_up"] is False and [e["new_budget_usd"] for e in h["pending"]] == [8.0]
@@ -96,6 +121,10 @@ def test_events_history_and_pending_requests(tmp_path):
 
 
 def test_write_control_rejects_bad_numbers(tmp_path):
+    """@brief 验证 write_control 拒绝非法金额（0、负数、NaN、Inf、None、字符串、布尔），且不留下 control.json。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     for bad in (0, -1, float("nan"), float("inf"), None, "x", True):
         with pytest.raises(control.ControlError):
             control.write_control(tmp_path, bad, who="cli")
@@ -103,6 +132,10 @@ def test_write_control_rejects_bad_numbers(tmp_path):
 
 
 def test_run_lock_is_exclusive_and_stale_locks_are_replaced(tmp_path):
+    """@brief 验证运行锁的独占性与失效判定：活着的其他 pid 被拒，已死 pid 视为过期可覆盖，空锁文件也能重新加锁并释放。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     control.acquire_run_lock(tmp_path)
     assert control.lock_holder(tmp_path)["pid"] == os.getpid()
     control.control_path(tmp_path)  # (no effect)
@@ -123,6 +156,10 @@ def test_run_lock_is_exclusive_and_stale_locks_are_replaced(tmp_path):
 
 
 def test_two_processes_cannot_both_hold_the_run_lock(tmp_path):
+    """@brief 用两个真实子进程验证同一运行目录的运行锁只能被一个进程持有，第二个进程拿到 RunLockError。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     script = r"""
 import os, sys, time
 sys.path.insert(0, os.environ["REPO"])
@@ -150,6 +187,10 @@ except control.RunLockError:
 
 
 def test_a_budget_that_clears_the_file_spend_but_not_the_transcript_is_refused(tmp_path):
+    """@brief 验证续跑预算只盖得住 state.json 的已花金额、却盖不住 transcript 里实际花掉的钱时被拒绝（ResumeRefused，退出码 5）。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     folder = run / "candidates" / "000_init"
     folder.mkdir(parents=True)
@@ -171,6 +212,10 @@ def test_a_budget_that_clears_the_file_spend_but_not_the_transcript_is_refused(t
 
 
 def test_a_running_search_continues_past_its_old_budget_after_a_top_up(tmp_path):
+    """@brief 验证运行中的搜索在别人写下 control.json 调高预算后越过原预算继续跑，结果与 state.json 都记下新预算、初始预算与 dashboard 事件。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     seen = {"n": 0}
     inner = FakeClient(None)
@@ -197,6 +242,10 @@ def test_a_running_search_continues_past_its_old_budget_after_a_top_up(tmp_path)
 
 
 def test_a_running_search_picks_up_a_higher_round_limit(tmp_path):
+    """@brief 验证运行中的搜索能读入 control.json 抬高的轮数上限与耐心值，在第 1 轮还在跑时就把 max_rounds 从 1 提到 3。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     seen = {"n": 0}
 
@@ -217,6 +266,10 @@ def test_a_running_search_picks_up_a_higher_round_limit(tmp_path):
 
 
 def test_run_config_holds_the_settings_and_no_credentials(tmp_path):
+    """@brief 验证 run_config.json 记录搜索与模型设置以及 loop_protocol，且不含 API key、base_url 等凭据。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     orch = make_orch(tmp_path, lambda m, **kw: make_response(code("speed=1.0")), calls, max_rounds=0)
     doc = (tmp_path / "run" / "run_config.json").read_text()
@@ -230,11 +283,23 @@ def test_run_config_holds_the_settings_and_no_credentials(tmp_path):
 
 
 def snapshot_of(res, orch):
+    """@brief 把一次运行的结论压成可比较的快照，用于判定中断续跑与一次跑完是否等价。
+
+    @param res 运行结束得到的 RunResult。
+    @param orch 产生该结果的 Orchestrator。
+    @return 含 best、best_speedup、cands、requests、spent 与 history 的字典。
+    """
     cands = sorted((c.label, c.report.status, round(c.report.speedup or 0, 6)) for c in orch.candidates)
     return {"best": res.best_label, "best_speedup": res.best_speedup, "cands": cands, "requests": res.ledger["requests"], "spent": round(res.spent_usd, 9), "history": sorted(orch.history)}
 
 
 def reference(tmp_path, **kw):
+    """@brief 跑一次不被打断的参照搜索，返回它的快照与模型调用次数。
+
+    @param tmp_path pytest 提供的临时目录，运行目录建在它的 ref 子目录下。
+    @param kw 传给 make_orch 的额外搜索配置。
+    @return (快照字典, 模型调用次数) 二元组。
+    """
     calls = []
     orch = make_orch(tmp_path / "ref", script_for(), calls, budget=5.0, max_rounds=3, max_repair=2, patience=20, **kw)
     res = run(orch)
@@ -243,6 +308,11 @@ def reference(tmp_path, **kw):
 
 @pytest.mark.parametrize("kill_at", [2])
 def test_a_killed_run_continues_to_the_same_result_as_an_uninterrupted_one(tmp_path, kill_at):
+    """@brief 验证在第 kill_at 次模型调用处被杀的运行，续跑后得到与一次跑完完全相同的结论，花费、轮次也对得上。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param kill_at 参数化的杀点：第几次模型调用时中断。
+    """
     want, _ = reference(tmp_path)
     counter = {"kill_at": kill_at}
     calls = []
@@ -269,6 +339,10 @@ def test_a_killed_run_continues_to_the_same_result_as_an_uninterrupted_one(tmp_p
 
 
 def test_the_interrupted_round_keeps_finished_branches_and_continues_the_rest(tmp_path):
+    """@brief 验证被打断那轮里已完成的候选被保留、只续做剩下的分支，且 dry-run 不调模型、不写运行锁、不留 state 备份。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     counter = {"kill_at": 2}
     calls = []
     orch = make_orch(tmp_path, script_for(counter), calls, budget=5.0, max_rounds=3, max_repair=2, patience=20)
@@ -289,6 +363,10 @@ def test_the_interrupted_round_keeps_finished_branches_and_continues_the_rest(tm
 
 
 def test_a_report_from_another_protocol_epoch_cannot_be_resumed(tmp_path):
+    """@brief 验证候选 report.json 的 protocol_version 不属于当前协议时，load_snapshot 抛 NeedsInspection 而不是续跑。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1)
     run(orch)
     run_dir = tmp_path / "run"
@@ -302,8 +380,13 @@ def test_a_report_from_another_protocol_epoch_cannot_be_resumed(tmp_path):
 
 
 def test_a_damaged_confirm_report_is_refused_before_any_file_moves(tmp_path):
-    """The old code moved result.json first and only then parsed confirm_report.json, so a damaged
-    report left the run with no result.json and a traceback instead of a clean refusal."""
+    """@brief 验证 confirm_report.json 损坏时 snapshot_results 在任何文件移动之前就抛 ResumeError。
+
+    旧实现先挪走 result.json 再解析 confirm_report.json，结果坏报告让运行既没有 result.json、又只留下 traceback，
+    而不是干脆地拒绝；这里断言 result.json 还在、也没有生成 result.before_topup_1.json。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     run.mkdir()
     (run / "result.json").write_text('{"task": "relu"}')
@@ -315,6 +398,11 @@ def test_a_damaged_confirm_report_is_refused_before_any_file_moves(tmp_path):
 
 
 def test_resume_exits_6_when_the_confirmation_failed(tmp_path, monkeypatch):
+    """@brief 验证确认阶段失败（没有 confirmed_speedup、stop_reason 为 confirm_error）时 taic resume 以退出码 6 结束。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来桩掉 prepare_resume 与 run_prepared。
+    """
     from types import SimpleNamespace
 
     monkeypatch.setattr(cli, "prepare_resume", lambda a: (SimpleNamespace(log=lambda s: None), None, {"unrecorded_settings": []}, {}, 5.0))
@@ -326,8 +414,13 @@ def test_resume_exits_6_when_the_confirmation_failed(tmp_path, monkeypatch):
 
 
 def test_a_rejected_candidate_is_not_replayed_as_the_resumed_seed(tmp_path):
-    """A differential recheck that judged the kernel wrong must survive the rebuild: the resume path used
-    to force ``relation_to_best(True, ...)`` and could hand the seed back to a known-bad kernel."""
+    """@brief 验证被 differential_recheck 判定为错误的候选在重建快照后仍标着 recheck_rejected，不会再次成为续跑的种子。
+
+    旧续跑路径强制 relation_to_best(True, ...)，会把已知有问题的内核重新交回去当种子；这里断言 best_label 为空、
+    notes 里留下 differential recheck 的说明。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1)
     run(orch)
     run_dir = tmp_path / "run"
@@ -343,7 +436,12 @@ def test_a_rejected_candidate_is_not_replayed_as_the_resumed_seed(tmp_path):
 
 
 def test_a_run_killed_during_confirmation_resumes_without_a_new_session(tmp_path):
-    """A search whose last round already ran only needs its confirmation; resuming it must not spend a session."""
+    """@brief 验证在确认阶段被杀的运行续跑时只补做确认、不再开新会话（agent_runner 一旦被调用就断言失败），最后照常写出 result.json。
+
+    最后一轮已经跑完的搜索只差确认这一步。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1)
     run(orch)
     run_dir = tmp_path / "run"
@@ -369,6 +467,10 @@ def test_a_run_killed_during_confirmation_resumes_without_a_new_session(tmp_path
 
 
 def test_resuming_a_run_that_stopped_for_budget_adds_budget_and_keeps_the_old_result(tmp_path):
+    """@brief 验证因预算耗尽的运行在加钱后能续跑：旧 result 与 confirm_report 备份成 before_topup_1、预算与初始预算正确、轮次与账本连续、标签不重复、transcript 记下 resume 事件。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     orch = make_orch(tmp_path, script_for(usage=BIG), calls, budget=0.15, max_rounds=3, max_repair=2, patience=20)
     res = run(orch)
@@ -401,6 +503,12 @@ def test_resuming_a_run_that_stopped_for_budget_adds_budget_and_keeps_the_old_re
 
 @pytest.mark.parametrize("stop, why", [("converged (4 rounds without improvement)", "not for budget"), ("max_rounds", "not for budget"), ("gpu_hang_circuit_breaker", "not for budget"), ("llm_error: x", "not for budget")])
 def test_runs_that_stopped_for_another_reason_are_refused(tmp_path, stop, why):
+    """@brief 验证因收敛、轮数上限、GPU 挂起熔断或 LLM 错误等非预算原因停止的运行不可续，prepare_resume 以退出码 3 拒绝。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param stop 参数化的停止原因。
+    @param why 期望出现在 info 的 reason 里的说明片段。
+    """
     (tmp_path / "result.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "stop_reason": stop, "spent_usd": 1.0, "budget_usd": 2.0, "best_label": "init"}))
     (tmp_path / "state.json").write_text(json.dumps({"phase": "done", "stop_reason": stop, "best_label": "init"}))
     info = rs.inspect_run(tmp_path)
@@ -411,9 +519,11 @@ def test_runs_that_stopped_for_another_reason_are_refused(tmp_path, stop, why):
 
 
 def test_a_run_from_the_old_protocol_is_readable_but_never_resumable(tmp_path):
-    """``load_snapshot`` refuses anything that is not flame_chase_1; the dashboard must say the same.
+    """@brief 验证非 flame_chase_1 协议的旧运行可以读取但永不可续：inspect_run 报 old_protocol 且不可续（包括看板的重置路径），load_snapshot 因缺 loop_protocol 抛 ResumeError。
 
-    A ``resumable: true`` here would render a resume button that always fails after the click.
+    这里若给出 resumable: true，看板就会渲染出一个点下去必然失败的续跑按钮。
+
+    @param tmp_path pytest 提供的临时目录。
     """
     (tmp_path / "state.json").write_text(json.dumps({"pid": 2**22 + 778, "phase": "llm", "task": "relu", "best_label": "init", "spent_usd": 3.0, "budget_usd": 3.0}))
     (tmp_path / "result.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "stop_reason": "budget_exhausted", "spent_usd": 3.0, "budget_usd": 3.0, "best_label": "init"}))
@@ -428,6 +538,10 @@ def test_a_run_from_the_old_protocol_is_readable_but_never_resumable(tmp_path):
 
 
 def test_a_live_run_and_a_held_lock_cannot_be_resumed(tmp_path):
+    """@brief 验证正在运行的搜索（本进程 pid）不可续但可在线加预算，而锁被别的活进程持有时归类为 resuming 同样不可续。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     (tmp_path / "state.json").write_text(json.dumps({"pid": os.getpid(), "phase": "llm", "task": "relu", "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0, "control_supported": True}))
     info = rs.inspect_run(tmp_path)
     assert info["kind"] == "running" and info["resumable"] is False and info["can_topup_live"] is True
@@ -452,6 +566,10 @@ def test_a_live_run_and_a_held_lock_cannot_be_resumed(tmp_path):
 
 
 def test_cli_resume_continues_a_scheduled_provider_retry_from_disk(tmp_path):
+    """@brief 验证被杀在 provider 重试退避中的运行，续跑能从磁盘恢复 provider_attempts 并补做那次重试，花费只按 transcript 记下的算。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from taic.kernel_agent import AgentResult
 
     def source(marker: str) -> str:
@@ -506,6 +624,10 @@ def test_cli_resume_continues_a_scheduled_provider_retry_from_disk(tmp_path):
 
 
 def test_double_resume_is_refused_while_the_first_one_runs(tmp_path):
+    """@brief 验证第一次续跑持锁运行期间，第二次续跑被拒绝（退出码 3，提示仍在运行）。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     orch = make_orch(tmp_path, script_for(usage=BIG), calls, budget=0.15, max_rounds=3, max_repair=2, patience=20)
     run(orch)
@@ -530,6 +652,10 @@ def test_double_resume_is_refused_while_the_first_one_runs(tmp_path):
 
 
 def test_settings_of_a_run_without_run_config_are_inferred_from_its_prompts(tmp_path):
+    """@brief 验证 run_config 缺失时能从提示词推断部分设置（plan_mix、init_samples），而删掉 run_config.json 后则因缺 loop_protocol 拒绝续跑。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     orch = make_orch(tmp_path, script_for(), calls, budget=5.0, max_rounds=2, max_repair=2, patience=20, plan_mix=True, init_samples=1)
     run(orch)
@@ -542,6 +668,12 @@ def test_settings_of_a_run_without_run_config_are_inferred_from_its_prompts(tmp_
 
 
 def test_a_resume_lists_settings_the_old_run_did_not_record_and_still_continues(tmp_path, monkeypatch, capsys):
+    """@brief 验证续跑会报告旧运行没记录下来的设置：有 run_config.json 时 unrecorded_settings 为空，删掉后 cmd_resume 以非零退出码指出 loop_protocol 问题。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来为 prepare_resume 准备环境。
+    @param capsys pytest 的捕获工具，用来读命令行输出。
+    """
     calls = []
     orch = make_orch(tmp_path, script_for(usage=BIG), calls, budget=0.15, max_rounds=3, max_repair=2, patience=20)
     res = run(orch)
@@ -555,6 +687,10 @@ def test_a_resume_lists_settings_the_old_run_did_not_record_and_still_continues(
 
 
 def test_the_ledger_is_rebuilt_from_the_transcript_when_state_is_behind_and_never_under_counted(tmp_path):
+    """@brief 验证账本从 transcript 重建且绝不少算：state.json 落后时以 transcript 为准，transcript 不足时多出的金额记为 unaccounted。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     counter = {"kill_at": 2}
     calls = []
     orch = make_orch(tmp_path, script_for(counter, usage=BIG), calls, budget=50.0, max_rounds=3, max_repair=2, patience=20)
@@ -578,6 +714,10 @@ def test_the_ledger_is_rebuilt_from_the_transcript_when_state_is_behind_and_neve
 
 
 def test_a_damaged_last_transcript_line_is_skipped(tmp_path):
+    """@brief 验证 transcript.jsonl 最后一行损坏时被跳过，快照仍能读出最佳候选并留下 damaged line 说明。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     counter = {"kill_at": 2}
     calls = []
     orch = make_orch(tmp_path, script_for(counter), calls, budget=5.0, max_rounds=3, max_repair=2, patience=20)
@@ -591,6 +731,10 @@ def test_a_damaged_last_transcript_line_is_skipped(tmp_path):
 
 
 def test_trace_entries_missing_from_state_json_are_rebuilt_by_replaying_the_selection(tmp_path):
+    """@brief 验证 state.json 里缺失的 trace 条目通过重放选择过程重建，标签与 improved 与完整 trace 一致。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     counter = {"kill_at": 2}
     calls = []
     orch = make_orch(tmp_path, script_for(counter), calls, budget=5.0, max_rounds=3, max_repair=2, patience=20)
@@ -608,6 +752,11 @@ def test_trace_entries_missing_from_state_json_are_rebuilt_by_replaying_the_sele
 
 
 def _ok_report(speed: float):
+    """@brief 造一份 status 为 ok、带给定加速比的 EvalReport，供候选目录里的 report.json 使用。
+
+    @param speed 该报告的加速比。
+    @return 填好 speedups 的 EvalReport 实例。
+    """
     from tcenv.evaluate import EvalReport
 
     report = EvalReport(task="relu", dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done", speedup=speed)
@@ -616,6 +765,10 @@ def _ok_report(speed: float):
 
 
 def test_a_recheck_rejection_is_not_replayed_as_the_new_seed(tmp_path):
+    """@brief 验证被 differential_recheck 拒绝的候选在 _replay 里不算改进，种子仍停在前一个可用内核。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     for idx, label, speed, rejected in ((0, "init", 1.1, False), (1, "r1.p0", 2.0, True)):
         folder = run / "candidates" / f"{idx:03d}_{label}"
@@ -633,6 +786,10 @@ def test_a_recheck_rejection_is_not_replayed_as_the_new_seed(tmp_path):
 
 
 def test_a_stale_search_seed_does_not_hide_a_newer_kernel(tmp_path):
+    """@brief 验证 state.json 里过期的 search_seed_label 不会遮住更晚写出的更好内核，快照取较新的候选并留下说明。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     for idx, label, speed in ((0, "init", 1.1), (1, "r1.p0", 1.8)):
         folder = run / "candidates" / f"{idx:03d}_{label}"
@@ -650,6 +807,10 @@ def test_a_stale_search_seed_does_not_hide_a_newer_kernel(tmp_path):
 
 
 def test_a_slower_kernel_written_after_state_does_not_become_the_seed(tmp_path):
+    """@brief 验证在 state.json 之后才写出的更慢内核不会成为种子：种子仍是 init，慢候选不记为改进。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     for idx, label, speed in ((0, "init", 1.8), (1, "r1.p0", 1.1)):
         folder = run / "candidates" / f"{idx:03d}_{label}"
@@ -667,6 +828,10 @@ def test_a_slower_kernel_written_after_state_does_not_become_the_seed(tmp_path):
 
 
 def test_chat_with_tools_continues_a_conversation_at_the_given_turn(tmp_path):
+    """@brief 验证 chat_with_tools 能从指定回合继续带工具调用的对话：补上待处理工具的结果，并以 #t2 这样的标签写 transcript。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from taic.llm import LLM, Transcript
 
     sent = []
@@ -688,7 +853,11 @@ def test_chat_with_tools_continues_a_conversation_at_the_given_turn(tmp_path):
 
 
 def script_with_tools(counter: dict | None = None):
-    """Every kernel request first calls ``quick_check`` on a stub, then answers like ``script_for``; the planner answers directly."""
+    """@brief 造一个先对桩内核调 quick_check、再按 script_for 回答的脚本化模型；规划请求直接作答。
+
+    @param counter 可选的调用计数器，可在指定的第几次调用处抛 SystemExit 模拟被杀。
+    @return 接收 (messages, **kw) 的路由函数。
+    """
     base = script_for(None)
 
     def route(messages, **kw):
@@ -708,19 +877,35 @@ def script_with_tools(counter: dict | None = None):
 
 
 def make_tool_orch(tmp_path, script, calls):
+    """@brief 造一个开启工具调用（use_tools=True、kernel_agent=pi）的 Orchestrator。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param script 脚本化模型的路由函数。
+    @param calls 评测调用记录列表，交给 fake_eval 填充。
+    @return 配置好的 Orchestrator。
+    """
     llm_cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=True)
     search = SearchConfig(budget_usd=5.0, branches=1, max_rounds=3, max_repair_tries=2, eval_reps=3, patience=20, kernel_agent="pi")
     return Orchestrator("relu", "fp16", "small", llm_cfg, search, run_dir=tmp_path / "run", evaluate_fn=fake_eval(calls), client=FakeClient(script), log=lambda s: None)
 
 
 def test_a_reply_that_only_asks_for_a_tool_does_not_become_a_kernel(tmp_path):
-    """The search no longer repairs inside a tool conversation. A session that leaves no kernel fails, and two failures stop it."""
+    """@brief 验证只索要工具、最终没交内核的会话不会被当成内核：搜索以 agent_failure 停下且没有胜者。
+
+    搜索不再在工具调用对话里做修复；一个没留下内核的会话算失败，连续两次失败就停。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     res = run(make_tool_orch(tmp_path, script_with_tools(), []))
     assert res.stop_reason == "agent_failure"
     assert res.best_label is None
 
 
 def test_resume_restores_notes_and_the_feedback_sequence(tmp_path):
+    """@brief 验证续跑能恢复上一轮的 NOTES.md 摘要与对方给的提示（feedback），并把反馈序号接到 2。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from taic.kernel_agent import AgentResult
 
     calls = []
@@ -750,6 +935,8 @@ def test_resume_restores_notes_and_the_feedback_sequence(tmp_path):
 
 
 def test_agent_tokens_survive_a_resume_ledger_restore():
+    """@brief 验证 transcript 里 agent 行的四类 token（input、output、cache_read、cache_write）在账本恢复后仍分别记在 hit、miss、write、out 上。
+    """
     events = [{"event": "agent", "label": "init", "cost_usd": 1.0,
                "tokens": {"input": 100, "output": 200, "cache_read": 300, "cache_write": 400}}]
     reqs = rs._requests_from_transcript(events, [])
@@ -761,6 +948,8 @@ def test_agent_tokens_survive_a_resume_ledger_restore():
 
 
 def test_chat_usage_write_tokens_survive_a_resume():
+    """@brief 验证 chat 行 usage 里的 cache_write_tokens 能从 transcript 恢复到续跑的账本请求里。
+    """
     events = [{"event": "chat", "label": "init", "cost_usd": 0.1, "total_usd": 0.1,
                "usage": {"prompt_tokens": 10, "completion_tokens": 2,
                          "prompt_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 4}}}]
@@ -769,7 +958,12 @@ def test_chat_usage_write_tokens_survive_a_resume():
 
 
 def test_a_resume_counts_the_spend_recorded_in_result_json(tmp_path):
-    """result.json is the last written conclusion; ignoring it under-counted spend by the gap."""
+    """@brief 验证续跑把 result.json 记录的已花金额也算进总花费，差额记为 unaccounted。
+
+    result.json 是最后写下的结论；忽略它会按差额少算花费。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1)
     run(orch)
     run_dir = tmp_path / "run"
@@ -783,8 +977,13 @@ def test_a_resume_counts_the_spend_recorded_in_result_json(tmp_path):
 
 
 def test_a_second_topup_never_overwrites_an_earlier_audit_copy(tmp_path):
-    """snapshot_results reuses one generation number for result and confirm_report. A run killed
-    during confirmation can already have confirm_report.before_topup_1.json, which must survive."""
+    """@brief 验证第二次加预算不会覆盖第一次的审计副本：已存在的 confirm_report.before_topup_1.json 保持原样，本次写 before_topup_2。
+
+    snapshot_results 对 result 和 confirm_report 复用同一个 generation 号；在确认阶段被杀的运行可能已经有
+    confirm_report.before_topup_1.json。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     (run_dir / "result.json").write_text('{"generation": 2}')
@@ -797,6 +996,10 @@ def test_a_second_topup_never_overwrites_an_earlier_audit_copy(tmp_path):
 
 
 def test_a_run_config_from_a_newer_code_version_is_refused(tmp_path):
+    """@brief 验证 schema_version 高于当前代码的 run_config.json 被判定不可续，load_snapshot 抛 NeedsInspection。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], max_rounds=1)
     run(orch)
     run_dir = tmp_path / "run"
@@ -810,6 +1013,10 @@ def test_a_run_config_from_a_newer_code_version_is_refused(tmp_path):
 
 
 def test_a_resume_that_cannot_start_puts_the_old_result_back(tmp_path):
+    """@brief 验证续跑在启动阶段失败时，把 result.json 与 confirm_report.json 原样放回，并释放运行锁。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     orch = make_orch(tmp_path, script_for(usage=BIG), [], budget=0.15, max_rounds=3, max_repair=2, patience=20)
     run(orch)
     run_dir = tmp_path / "run"
@@ -831,6 +1038,10 @@ def test_a_resume_that_cannot_start_puts_the_old_result_back(tmp_path):
 
 
 def test_resume_dry_run_leaves_the_run_directory_byte_identical(tmp_path):
+    """@brief 验证 --dry-run 续跑后运行目录逐字节不变，退出码为 0。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     orch = make_orch(tmp_path, script_for(usage=BIG), [], budget=0.15, max_rounds=3, max_repair=2, patience=20)
     run(orch)
     run_dir = tmp_path / "run"
@@ -844,6 +1055,10 @@ def test_resume_dry_run_leaves_the_run_directory_byte_identical(tmp_path):
 
 
 def test_a_cost_incomplete_run_continues_only_with_the_explicit_flag(tmp_path):
+    """@brief 验证因费用统计不完整（cost_incomplete）停下的运行默认不可续，只有显式接受费用缺口才能续。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1)
     run(orch)
     run_dir = tmp_path / "run"
@@ -863,6 +1078,11 @@ def test_a_cost_incomplete_run_continues_only_with_the_explicit_flag(tmp_path):
 
 
 def test_a_resume_carries_unbilled_hmz_sessions_as_unaccounted(tmp_path, monkeypatch):
+    """@brief 验证续跑把未计费的 hmz 会话花费带进来，记成 unaccounted 请求并在 notes 里说明 hmz epics 的缺口。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来桩掉 epic_spend_by_label。
+    """
     import taic.kernel_agent as kernel_agent
 
     orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0)

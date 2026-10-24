@@ -14,10 +14,15 @@ from ..support.orchestrator import PLAN, code, llm_script, make_orch, run
 
 
 def _task():
+    """@brief 取 relu fp16 small 任务对象。
+
+    @return 该规格的 Task。
+    """
     return get_task("relu", "fp16", "small")
 
 
 def test_switches_default_off_and_do_not_change_the_prompt_text():
+    """@brief 验证各开关的默认值，以及关闭时不改变提示词文本；打开后状态行才被注入。"""
     assert SearchConfig().stop_at_roofline is True
     assert SearchConfig().abi_guard is True
     assert SearchConfig().target_note is True
@@ -39,6 +44,10 @@ def test_switches_default_off_and_do_not_change_the_prompt_text():
 
 
 def test_a_baseline_faster_than_the_bound_is_named_and_does_not_count_as_at_the_roof():
+    """@brief 验证基准比理论下界更快时会在提示里点名该基准，且不把搜索当成已到屋顶停机。
+
+    同时覆盖噪音、缺少实测峰值带宽、越过下界等不应判为到屋顶的情形。
+    """
     report = {
         "roofline": {"lower_bound_us": 931.8, "time_over_lower_bound": 1.07, "bound": "compute"},
         "baseline_us": {"mlx": 994.0, "torch_mps": 777.0},
@@ -63,6 +72,7 @@ def test_a_baseline_faster_than_the_bound_is_named_and_does_not_count_as_at_the_
 
 
 def test_the_same_threadgroup_overflow_compares_equal_and_states_the_limit():
+    """@brief 验证同类 threadgroup 显存溢出产生相同 ABI 签名，并转成写明设备上限的中文提示。"""
     a = "static threadgroup memory 40960 B exceeds the device limit of 32768 B"
     b = "static threadgroup memory 36864 B exceeds the device limit of 32768 B"
     assert abi_signature(a) == abi_signature(b)
@@ -73,6 +83,10 @@ def test_the_same_threadgroup_overflow_compares_equal_and_states_the_limit():
 
 
 def test_a_truncated_reply_with_no_kernel_is_retried_once_without_spending_a_repair(tmp_path):
+    """@brief 验证被截断且无内核的回复会重试一次，且不消耗修复额度。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
     seen = {"n": 0}
 
@@ -98,6 +112,7 @@ def test_a_truncated_reply_with_no_kernel_is_retried_once_without_spending_a_rep
 
 
 def test_the_retry_drops_an_empty_assistant_turn_and_its_reasoning():
+    """@brief 验证重试会剔除内容为空的上轮助手消息及其 reasoning，只留下用户消息。"""
     messages = [
         {"role": "user", "content": "write it"},
         {"role": "assistant", "content": "", "reasoning_content": "a" * 50},
@@ -107,6 +122,10 @@ def test_the_retry_drops_an_empty_assistant_turn_and_its_reasoning():
 
 
 def test_a_branch_that_repeats_one_abi_error_stops(tmp_path):
+    """@brief 验证同一 ABI 错误反复出现时分支提前停下，不就地修复，只把限制写进下一轮反馈。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
@@ -144,6 +163,10 @@ def test_a_branch_that_repeats_one_abi_error_stops(tmp_path):
 
 
 def test_the_search_stops_at_the_roofline_and_not_when_the_bound_is_wrong(tmp_path):
+    """@brief 验证达屋顶时在第 1 轮开头就停机，而下界估错（候选快于下界）时不停机。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     def ev_factory(bound_us, baseline_us):
         def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
             r = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=1, stage="done")
@@ -169,6 +192,10 @@ def test_the_search_stops_at_the_roofline_and_not_when_the_bound_is_wrong(tmp_pa
 
 
 def test_a_failed_branch_is_named_in_the_history_only_when_asked(tmp_path):
+    """@brief 验证开启富历史后失败分支的具体错误写进历史，并附上噪音下限证据；关闭时不写。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
@@ -198,6 +225,11 @@ def test_a_failed_branch_is_named_in_the_history_only_when_asked(tmp_path):
 
 
 def _user_messages(orch):
+    """@brief 从运行目录的 transcript.jsonl 里取出所有 user 角色消息。
+
+    @param orch 已写入 transcript 的 Orchestrator。
+    @return user 消息字典列表；文件不存在时返回空列表。
+    """
     out = []
     for event in orch.llm.transcript.events if hasattr(orch.llm.transcript, "events") else []:
         out.append(event)

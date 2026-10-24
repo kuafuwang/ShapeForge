@@ -21,12 +21,23 @@ HANDOFF = "the previous turn's conversation is not included"
 
 
 def _cfg(model: str = "fake", **kw) -> LLMConfig:
+    """@brief 构造一个指向假端点、无工具的 LLMConfig，并允许覆盖字段。
+
+    @param model 模型名。
+    @param kw 需要覆盖的配置字段。
+    @return 构造好的 LLMConfig。
+    """
     base = dict(base_url=ENDPOINT, api_key=SECRET, model=model, reasoning_effort="off", use_tools=False, truncation_retry=False)
     base.update(kw)
     return LLMConfig(**base)
 
 
 def _search(**kw) -> SearchConfig:
+    """@brief 构造一份关闭可选开关的 SearchConfig 基线，并允许覆盖字段。
+
+    @param kw 需要覆盖的配置字段。
+    @return 构造好的 SearchConfig。
+    """
     fields = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False,
                   budget_usd=5.0, branches=1, max_rounds=2, max_repair_tries=1, eval_reps=3, patience=4, kernel_agent="pi")
     fields.update(kw)
@@ -34,6 +45,14 @@ def _search(**kw) -> SearchConfig:
 
 
 def _pair(cfg: LLMConfig, first: str, second: str, *, second_cfg: LLMConfig | None = None) -> list[Committee]:
+    """@brief 用两个各含一名成员的委员会搭出 first/second 双委员会列表。
+
+    @param cfg 基底配置，成员配置由它替换模型名得到。
+    @param first first 委员会的模型名。
+    @param second second 委员会的模型名。
+    @param second_cfg 可选的第二成员独立配置，不传则从 cfg 复制。
+    @return 长度为 2 的委员会列表。
+    """
     left = Committee("first", [Member("deepseek", first, replace(cfg, model=first))])
     right_cfg = second_cfg if second_cfg is not None else replace(cfg, model=second)
     right = Committee("second", [Member("deepseek", second, right_cfg)])
@@ -41,6 +60,17 @@ def _pair(cfg: LLMConfig, first: str, second: str, *, second_cfg: LLMConfig | No
 
 
 def _orch(tmp_path, script, committees, cfg, *, search=None, client=None, log=None):
+    """@brief 在临时目录下建一个带指定委员会与脚本化回复的 Orchestrator。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param script 模型脚本，None 表示不给 agent 脚本。
+    @param committees 两个委员会的列表。
+    @param cfg 模型配置。
+    @param search 搜索配置，None 时用默认基线。
+    @param client 模型客户端，None 时用 FakeClient(script)。
+    @param log 日志回调，None 时静默。
+    @return (Orchestrator, client) 二元组。
+    """
     client = client if client is not None else FakeClient(script)
     orch = Orchestrator(
         "relu", "fp16", "small", cfg, search or _search(),
@@ -51,6 +81,11 @@ def _orch(tmp_path, script, committees, cfg, *, search=None, client=None, log=No
 
 
 def _kinds(client) -> list[tuple[str, str]]:
+    """@brief 把客户端每次调用归类为 init/plan/patch/repair/other，并带上模型名。
+
+    @param client 记录过 calls 的假客户端。
+    @return 每次调用对应的 (类别, 模型名) 列表。
+    """
     out = []
     for call in client.calls:
         text = call["messages"][-1]["content"]
@@ -69,6 +104,10 @@ def _kinds(client) -> list[tuple[str, str]]:
 
 
 def test_different_models_hand_off_a_fresh_plan(tmp_path):
+    """@brief 验证两个不同模型在每轮边界交接，且日志与状态文件不泄露密钥和端点。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     cfg = _cfg("configured")
     committees = _pair(cfg, "model-a", "model-b")
     logs: list[str] = []
@@ -86,6 +125,11 @@ def test_different_models_hand_off_a_fresh_plan(tmp_path):
 
 
 def test_same_model_still_hands_off_without_a_second_client(tmp_path, monkeypatch):
+    """@brief 验证同一模型仍会交接，但只开一个客户端且台账价格配置不被替换。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用来监视 LLM 的构造。
+    """
     made = []
     real = LLM
 
@@ -108,6 +152,11 @@ def test_same_model_still_hands_off_without_a_second_client(tmp_path, monkeypatc
 
 
 def test_two_members_are_refused_before_any_model_call(tmp_path):
+    """@brief 验证委员会带两名成员时在任何模型调用前就被拒绝，且不创建运行目录。
+
+    @param tmp_path pytest 提供的临时目录。
+    @raises RunStartError 委员会成员数不为 1 时抛出。
+    """
     cfg = _cfg()
     member = Member("deepseek", "model-a", replace(cfg, model="model-a"))
     extra = Member("deepseek", "model-b", replace(cfg, model="model-b"))
@@ -124,6 +173,10 @@ def test_two_members_are_refused_before_any_model_call(tmp_path):
 
 
 def test_run_config_lists_both_committees_without_secrets(tmp_path):
+    """@brief 验证 run_config.json 列出两个委员会及其成员模型，但不写密钥与端点。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     cfg = _cfg("configured")
     committees = _pair(cfg, "model-a", "model-b")
     client = FakeClient([])
@@ -141,6 +194,10 @@ def test_run_config_lists_both_committees_without_secrets(tmp_path):
 
 
 def test_round_1_repair_stays_on_the_first_committee(tmp_path):
+    """@brief 验证第 1 轮的修复仍留在 first 委员会，下轮才交接给 second。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     cfg = _cfg("configured")
     committees = _pair(cfg, "model-a", "model-b")
     script = llm_script(code("speed=1.0"), patches={"A": code("status=compile_error")}, fixes=[code("speed=1.2")])
@@ -154,6 +211,11 @@ def test_round_1_repair_stays_on_the_first_committee(tmp_path):
 
 
 def test_a_different_endpoint_opens_another_client_on_the_same_ledger(tmp_path, monkeypatch):
+    """@brief 验证端点不同时另开客户端，但共用同一台账与 transcript，关闭时两个客户端都关。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用来拦截 openai.AsyncOpenAI 的构造。
+    """
     opened = []
 
     class Dummy:
@@ -188,6 +250,7 @@ def test_a_different_endpoint_opens_another_client_on_the_same_ledger(tmp_path, 
 
 
 def test_the_model_picker_rewrites_both_committee_members():
+    """@brief 验证模型选择器只改写 [[committees.members]] 里的 provider/model，不碰 [llm] 段。"""
     from observe.settings import _replace_in_members
 
     text = (
@@ -201,6 +264,11 @@ def test_the_model_picker_rewrites_both_committee_members():
 
 
 def test_a_listed_pair_with_two_members_is_refused_before_credentials(monkeypatch):
+    """@brief 验证配置文件里出现双成员委员会时在读取凭据之前就报错。
+
+    @param monkeypatch pytest 补丁工具，用来把凭据读取换成断言失败。
+    @raises LLMError 委员会声明了两名成员时抛出。
+    """
     def boom(*_a, **_k):
         raise AssertionError("credentials file was read")
 
@@ -215,6 +283,11 @@ def test_a_listed_pair_with_two_members_is_refused_before_credentials(monkeypatc
 
 
 def test_cmd_run_and_run_one_load_the_two_members(tmp_path, monkeypatch):
+    """@brief 验证 run_one 与 `taic run` 两条入口都从配置装载两个委员会成员，并按成员数返回退出码。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用来清理/注入环境变量并替换 Orchestrator。
+    """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", SECRET)
@@ -268,6 +341,7 @@ def test_cmd_run_and_run_one_load_the_two_members(tmp_path, monkeypatch):
 
 
 def test_a_member_can_carry_its_own_reasoning_effort():
+    """@brief 验证每个委员会成员可以各自指定 reasoning_effort，并各自生效。"""
     active = _cfg("same-model")
     raw = {
         "llm": {"provider": "deepseek"},

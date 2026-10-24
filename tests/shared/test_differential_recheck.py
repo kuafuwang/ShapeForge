@@ -17,6 +17,12 @@ SOURCE = "kernel void relu_kernel() { /* candidate */ }\n"
 
 
 def _cfg(on: bool, hangs: int = 3) -> tuple[LLMConfig, SearchConfig]:
+    """@brief 构造本文件测试用的模型配置与搜索配置，可指定差分复核开关与挂起上限。
+
+    @param on 是否开启 differential_recheck。
+    @param hangs 允许的 GPU 挂起次数。
+    @return (LLMConfig, SearchConfig) 二元组。
+    """
     cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
     search = SearchConfig(
         budget_usd=5.0, branches=1, max_rounds=1, eval_reps=3, max_hangs=hangs, differential_recheck=on,
@@ -26,6 +32,17 @@ def _cfg(on: bool, hangs: int = 3) -> tuple[LLMConfig, SearchConfig]:
 
 
 def _report(task, dtype, size, *, mode, seed, status, speed):
+    """@brief 造一份带速度数据与基准数据的 EvalReport；状态为 incorrect 时补上失败用例。
+
+    @param task 任务名。
+    @param dtype 数据类型。
+    @param size 规模名。
+    @param mode 评测模式（full 或 quick）。
+    @param seed 评测种子，None 时记为 0。
+    @param status 报告状态。
+    @param speed 报告的速度值，假值表示无速度。
+    @return 填好的 EvalReport。
+    """
     report = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=0 if seed is None else int(seed), status=status, stage="done", speedup=speed, message=status)
     report.speedups = {"mlx": speed} if speed else {}
     report.candidate_us = 10.0 if speed else None
@@ -37,11 +54,24 @@ def _report(task, dtype, size, *, mode, seed, status, speed):
 
 
 def _orch(tmp_path, name, ev, *, on: bool, hangs: int = 3):
+    """@brief 在给定子目录下创建一个无脚本化回复的 Orchestrator，并注入评测函数。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param name 运行子目录名。
+    @param ev 替换真实评测的函数。
+    @param on 是否开启差分复核。
+    @param hangs 允许的 GPU 挂起次数。
+    @return 构造好的 Orchestrator。
+    """
     cfg, search = _cfg(on, hangs)
     return Orchestrator("relu", "fp16", "small", cfg, search, run_dir=tmp_path / name, client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None, seed=1)
 
 
 def test_the_gate_off_promotes_a_candidate_without_a_second_evaluation(tmp_path):
+    """@brief 验证差分复核关闭时只需一次评测就升为最优，不会生成 rechecks 目录。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
@@ -56,6 +86,10 @@ def test_the_gate_off_promotes_a_candidate_without_a_second_evaluation(tmp_path)
 
 
 def test_a_second_seed_that_is_incorrect_does_not_become_the_seed(tmp_path):
+    """@brief 验证第二次种子复核失败时该候选不作为种子，且写回可人工重测的 recheck 记录。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
@@ -80,6 +114,10 @@ def test_a_second_seed_that_is_incorrect_does_not_become_the_seed(tmp_path):
 
 
 def test_a_second_seed_that_passes_still_becomes_the_seed(tmp_path):
+    """@brief 验证第二次种子复核通过时候选仍然成为最优，且不写 recheck 记录。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
         return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=1.2)
 
@@ -90,6 +128,11 @@ def test_a_second_seed_that_passes_still_becomes_the_seed(tmp_path):
 
 
 def test_a_recheck_timeout_stops_the_search_and_is_not_stored_as_a_wrong_kernel(tmp_path):
+    """@brief 验证复核超时会停下搜索（gpu_hang），且不把超时当成内核错误写入缓存。
+
+    @param tmp_path pytest 提供的临时目录。
+    @raises StopRun 复核超时且已达挂起上限时抛出，原因为 gpu_hang。
+    """
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
         status = "timeout" if mode == "quick" else "ok"
         return _report(task, dtype, size, mode=mode, seed=seed, status=status, speed=1.2 if status == "ok" else None)
@@ -105,6 +148,10 @@ def test_a_recheck_timeout_stops_the_search_and_is_not_stored_as_a_wrong_kernel(
 
 
 def test_a_failed_confirmation_keeps_a_retest_record_and_does_not_run_it(tmp_path):
+    """@brief 验证确认失败时保留待重测记录但不自动执行，并记下失败状态与速度关系。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     calls = []
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
@@ -132,6 +179,10 @@ def test_a_failed_confirmation_keeps_a_retest_record_and_does_not_run_it(tmp_pat
 
 
 def test_overlapping_branches_keep_the_faster_kernel(tmp_path):
+    """@brief 验证并发分支交错完成时，最快的内核最终成为最优。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     fast = SOURCE + "// fast\n"
     slow = SOURCE + "// slow\n"
 
@@ -149,6 +200,10 @@ def test_overlapping_branches_keep_the_faster_kernel(tmp_path):
 
 
 def test_a_later_failed_batch_does_not_publish_the_earlier_success(tmp_path):
+    """@brief 验证后续批次失败时不会拿前面批次的成功来发布，确认结果保持未确认。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     seen = {"n": 0}
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
@@ -177,6 +232,10 @@ def test_a_later_failed_batch_does_not_publish_the_earlier_success(tmp_path):
 
 
 def test_tied_candidates_share_one_confirm_seed(tmp_path):
+    """@brief 验证速度相近的平局候选在确认时共用同一个确认种子，且最优取更快的那个。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     seeds = []
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
@@ -205,6 +264,10 @@ def test_tied_candidates_share_one_confirm_seed(tmp_path):
 
 
 def test_a_rejected_recheck_is_left_out_of_confirmation(tmp_path):
+    """@brief 验证复核被拒的候选不进入确认流程，确认只跑通过复核的那个内核。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     good = SOURCE + "// good\n"
     bad = SOURCE + "// bad\n"
     confirmed = []
@@ -235,6 +298,7 @@ def test_a_rejected_recheck_is_left_out_of_confirmation(tmp_path):
 
 
 def test_a_counterexample_nested_inside_the_report_is_still_refused():
+    """@brief 验证嵌套在 recheck_report 里的 counterexample 也会被剔除，并被记录校验查出。"""
     from taic.orchestrator import _RECHECK_KEYS, _strip_counterexample
 
     nested = {"class": "incorrect", "recheck_report": {"status": "incorrect", "counterexample": [{"case": 1}]}}

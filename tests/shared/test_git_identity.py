@@ -15,6 +15,10 @@ class _Result:
 
 
 def test_the_reviewer_uses_git_var_author_ident(monkeypatch):
+    """@brief 验证审阅者身份取自 `git var GIT_AUTHOR_IDENT`，并解析出姓名、邮箱与来源。
+
+    @param monkeypatch pytest 补丁工具，用来替换 subprocess.run 返回脚本化结果。
+    """
     def fake_run(args, **_kwargs):
         if args[:3] == ["git", "var", "GIT_AUTHOR_IDENT"]:
             return _Result("Ada Lovelace <ada@example.test> 1700000000 +0000\n")
@@ -34,6 +38,10 @@ def test_the_reviewer_uses_git_var_author_ident(monkeypatch):
 
 
 def test_identity_falls_back_to_git_config_then_environment(monkeypatch):
+    """@brief 验证 `git var` 失败后依次回退到 git config 与环境变量，并标出来源。
+
+    @param monkeypatch pytest 补丁工具，用来替换 subprocess.run 并设置环境变量。
+    """
     def config_run(args, **_kwargs):
         if args[:3] == ["git", "var", "GIT_AUTHOR_IDENT"]:
             return _Result("", 128)

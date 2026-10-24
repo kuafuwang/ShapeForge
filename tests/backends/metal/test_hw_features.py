@@ -17,10 +17,22 @@ CONSTS = {"BLOCK_M": 64, "BLOCK_N": 64, "BLOCK_K": 32, "M": 2048, "N": 2048, "K"
 
 
 def feats(src: str, **kw) -> dict:
+    """@brief 用默认常量参数分析一段源码，取得各硬件特性的证据。
+
+    @param src MSL 源码文本。
+    @param kw 其它分析参数，其中 consts 覆盖默认常量表。
+    @return analyze_source 的分析结果。
+    """
     return H.analyze_source(src, consts=kw.pop("consts", CONSTS), **kw)
 
 
 def present(src: str, task: str | None = None) -> set[str]:
+    """@brief 构建不带编译证据的报告，取出判定为存在的特性名集合。
+
+    @param src MSL 源码文本。
+    @param task 任务名，决定期望特性。
+    @return 存在（present）的特性名集合。
+    """
     rep = H.build_report(src, label="t", task=task, compile_evidence=False)
     return {f for f, v in rep.features.items() if v["present"]}
 
@@ -190,6 +202,8 @@ kernel void k(device const uint* bits [[buffer(0)]], device half* y [[buffer(1)]
 # lexical / constants
 # ---------------------------------------------------------------------------------------------------------------------------------------
 def test_strip_comments_and_strings_keeps_layout():
+    """@brief 验证去注释与去字符串只清空内容、保留原长度与换行，使行号仍对得上。
+    """
     src = 'int a; // c1\n/* c2\n c3 */ const char* s = "// not a comment /* x */";\nint b;\n'
     out = H.strip_comments_and_strings(src)
     assert len(out) == len(src) and out.count("\n") == src.count("\n")
@@ -198,6 +212,8 @@ def test_strip_comments_and_strings_keeps_layout():
 
 
 def test_eval_expr_and_constants():
+    """@brief 验证常量表达式求值支持四则运算、强制转换、移位与 sizeof，无法求值则返回 None，并能收集 constexpr/#define。
+    """
     c = {"BLOCK_M": 64, "BLOCK_K": 32}
     assert H.eval_expr("BLOCK_M * (BLOCK_K + 8)", c) == 2560
     assert H.eval_expr("(uint)BLOCK_M / 8u", c) == 8
@@ -211,6 +227,8 @@ def test_eval_expr_and_constants():
 
 
 def test_expand_calls_substitutes_arguments():
+    """@brief 验证内联辅助函数的调用会被实参代入展开，使辅助函数体内的访存也能被检测到。
+    """
     funcs = {f.name: f for f in H.parse_functions("inline void put(threadgroup half* d, uint i, uint4 v) { d[i] = v.x; }\nkernel void k() { }")}
     out = H.expand_calls("put(buf, lid * 2, pa0);", {"put": funcs["put"]})
     assert "buf[(lid * 2)] = pa0.x" in out.replace("  ", " ")
@@ -220,6 +238,8 @@ def test_expand_calls_substitutes_arguments():
 # detection and the negative cases
 # ---------------------------------------------------------------------------------------------------------------------------------------
 def test_matrix_kernel_features():
+    """@brief 验证矩阵核被识别出 MMA 点、2x2 float 累加分片、half 操作数、threadgroup 载入、填充与屏障，且不误报其他特性。
+    """
     e = feats(MATRIX, kernel_name="gemm_kernel")
     m = e["matrix"]
     assert m["present"] and m["mma_sites"] == 1
@@ -235,6 +255,8 @@ def test_matrix_kernel_features():
 
 
 def test_scalar_kernel_has_no_hardware_features():
+    """@brief 验证标量核不会被判为用上矩阵、向量等硬件特性，最多只有单趟、屏障少这类基础判定。
+    """
     p = present(SCALAR)
     assert not (p - {"single_pass", "few_barriers"})
     e = feats(SCALAR)
@@ -243,6 +265,10 @@ def test_scalar_kernel_has_no_hardware_features():
 
 @pytest.mark.parametrize("src", [COMMENT_ONLY, STRING_ONLY])
 def test_mentions_in_comments_and_strings_do_not_count(src):
+    """@brief 验证只在注释或字符串里出现的特性名不会被当成真的用了该特性。
+
+    @param src 参数化的 MSL 片段，一次是注释里的特性名，一次是字符串里的。
+    """
     p = present(src)
     assert not (p - {"single_pass", "few_barriers"}), p
     e = feats(src)
@@ -251,6 +277,8 @@ def test_mentions_in_comments_and_strings_do_not_count(src):
 
 
 def test_vector_widths_loads_and_stores_are_told_apart():
+    """@brief 验证向量访存会区分载入与存储两种方向，各自统计宽度与最大字节数。
+    """
     m = feats(VEC)["memory"]
     assert m["device_load"]["widths"].get("8") and m["device_load"]["widths"].get("16")
     assert m["device_store"]["widths"].get("8") and m["device_store"]["widths"].get("16")
@@ -259,11 +287,15 @@ def test_vector_widths_loads_and_stores_are_told_apart():
 
 
 def test_c_style_casts_are_vector_accesses():
+    """@brief 验证 C 风格指针强转的访存也被归为向量访问，并给出 8 字节宽度。
+    """
     m = feats(CCAST)["memory"]
     assert m["device_load"]["max_bytes"] == 8 and m["device_store"]["max_bytes"] == 8
 
 
 def test_parenthesised_dereference_store_is_a_store():
+    """@brief 验证括号包住的解引用赋值仍被计为一次 16 字节存储，而不是漏算。
+    """
     src = """
     kernel void k(device const half* x [[buffer(0)]], device half* y [[buffer(1)]], uint i [[thread_position_in_grid]]) {
         const uint4 v = *(reinterpret_cast<device const uint4*>(x + i * 8));
@@ -274,6 +306,8 @@ def test_parenthesised_dereference_store_is_a_store():
 
 
 def test_typed_pointers_are_scoped_per_function():
+    """@brief 验证类型化指针的角色（device 载入、threadgroup 存储）按函数作用域分别记账，不会跨函数串味。
+    """
     src = """
     inline void a(device const half* x, thread uint4& r) { const device uint4* p = reinterpret_cast<const device uint4*>(x); r = p[0]; }
     inline void b(threadgroup half* t, uint4 r) { threadgroup uint4* p = reinterpret_cast<threadgroup uint4*>(t); p[0] = r; }
@@ -283,6 +317,8 @@ def test_typed_pointers_are_scoped_per_function():
 
 
 def test_macro_bodies_are_analysed():
+    """@brief 验证宏展开体里的 MMA 调用同样被计为矩阵指令。
+    """
     src = """
     #define MMA(ACC, A, B) simdgroup_multiply_accumulate(ACC, A, B, ACC)
     kernel void k(device half* y [[buffer(0)]]) {
@@ -293,6 +329,8 @@ def test_macro_bodies_are_analysed():
 
 
 def test_double_buffering_patterns():
+    """@brief 验证显式双缓冲的两种写法都能识别，而等大的 A/B 操作数缓冲不会被误判为双缓冲。
+    """
     assert feats(DB_TERNARY)["threadgroup"]["double_buffer"] == "explicit"
     assert feats(DB_STAGE_DIM)["threadgroup"]["double_buffer"] == "explicit"
     # A and B operand tiles of equal size are two buffers, not two stages
@@ -302,6 +340,8 @@ def test_double_buffering_patterns():
 
 
 def test_online_softmax_versus_two_pass():
+    """@brief 验证在线 softmax 与两趟写法能区分，并且能从全局读取次数与单趟特性印证。
+    """
     assert feats(ONLINE)["online_softmax"]["present"]
     assert not feats(TWO_PASS)["online_softmax"]["present"]
     assert feats(TWO_PASS)["global_read_passes"] == {"x": 2}
@@ -310,6 +350,8 @@ def test_online_softmax_versus_two_pass():
 
 
 def test_padding_through_a_named_pad_constant_is_found():
+    """@brief 验证填充通过命名的 PAD 常量间接表达时仍能识别，并附上推导依据；无关常量不算填充。
+    """
     src = """
     kernel void k(device const half* x [[buffer(0)]], device half* y [[buffer(1)]], uint lid [[thread_index_in_threadgroup]]) {
         constexpr uint PAD = 8;
@@ -326,6 +368,8 @@ def test_padding_through_a_named_pad_constant_is_found():
 
 
 def test_online_softmax_is_found_through_an_exp_wrapper_helper():
+    """@brief 验证在线 softmax 能穿透 exp 包装辅助函数识别，而名字近似的 expand 不算指数运算。
+    """
     src = ONLINE.replace("exp2(", "exp2_acc(").replace("kernel void softmax_kernel", "inline float exp2_acc(float x) { return exp2(x); }\nkernel void softmax_kernel")
     assert feats(src)["online_softmax"]["present"]
     assert not feats(TWO_PASS.replace("exp2(", "exp2_acc("))["online_softmax"]["present"]
@@ -333,6 +377,8 @@ def test_online_softmax_is_found_through_an_exp_wrapper_helper():
 
 
 def test_register_prefetch_requires_loads_in_flight_across_the_barrier():
+    """@brief 验证寄存器预取要求载入跨越屏障提前发出，串行版本与流水线版本因此给出相反结果。
+    """
     assert feats(PIPELINED, kernel_name="gemm_kernel")["threadgroup"]["register_prefetch"]
     assert "pipelining" in present(PIPELINED)
     assert not feats(SERIAL, kernel_name="gemm_kernel")["threadgroup"]["register_prefetch"]
@@ -340,6 +386,8 @@ def test_register_prefetch_requires_loads_in_flight_across_the_barrier():
 
 
 def test_bit_packing_needs_bit_ops_on_loaded_data_not_index_math():
+    """@brief 验证位打包只在位运算作用于载入数据时成立，索引算术与普通向量访存都不算。
+    """
     assert feats(BIT_DECODE)["bit_packing"]["present"]
     assert not feats(VEC)["bit_packing"]["present"]
     assert not feats(SCALAR)["bit_packing"]["present"]
@@ -347,6 +395,8 @@ def test_bit_packing_needs_bit_ops_on_loaded_data_not_index_math():
 
 
 def test_simd_and_math_detection():
+    """@brief 验证 simd 归约与洗牌、fast 命名空间数学函数以及 exp2 的 log2(e) 折换都能被识别。
+    """
     src = """
     kernel void k(device const float* x [[buffer(0)]], device float* y [[buffer(1)]], uint lid [[thread_index_in_threadgroup]]) {
         float v = simd_sum(x[lid]) + simd_max(x[lid]) + simd_shuffle_xor(x[lid], 1);
@@ -360,12 +410,16 @@ def test_simd_and_math_detection():
 
 
 def test_tensor_api_and_async_copy_are_recognized():
+    """@brief 验证引入 metal_tensor 或使用 simdgroup_event 时会标记张量 API 与异步拷贝。
+    """
     src = "#include <metal_tensor>\nkernel void k(device half* y [[buffer(0)]]) { simdgroup_event e; }\n"
     e = feats(src)
     assert e["matrix"]["tensor_api"] and e["async_copy"]
 
 
 def test_unreachable_helper_is_not_counted():
+    """@brief 验证 kernel 从未调用的辅助函数里的 simd 调用不计入特性，同时被列为未使用 helper。
+    """
     src = "inline float dead(float v) { return simd_sum(v); }\nkernel void k(device float* y [[buffer(0)]], uint i [[thread_position_in_grid]]) { y[i] = 1.0f; }\n"
     e = feats(src)
     assert e["helpers_unused"] == ["dead"] and not e["simd"]["ops"]
@@ -375,6 +429,8 @@ def test_unreachable_helper_is_not_counted():
 # the generated reference GEMMs and the naive kernels of the repository
 # ---------------------------------------------------------------------------------------------------------------------------------------
 def test_reference_gemm_is_detected_as_matrix_unit_user():
+    """@brief 验证生成的参考 GEMM 被判为矩阵单元使用者：16 个 4x4 float 分片、threadgroup 载入与填充、无双缓冲，并写进汇总。
+    """
     from experiments.contract_sensitivity import gemm_source
 
     src = gemm_source("64x64x32t128", "fp16")
@@ -390,6 +446,8 @@ def test_reference_gemm_is_detected_as_matrix_unit_user():
 
 
 def test_naive_kernels_do_not_claim_a_matrix_unit():
+    """@brief 验证仓库里每个 naive kernel 都不会被误判为用上矩阵单元，也不会虚假声称向量访存（bitdelta_gemm 除外）。
+    """
     from tasks import get_task, list_tasks
 
     for name in list_tasks(True):
@@ -406,8 +464,14 @@ needs_metal = pytest.mark.skipif(H.metal_toolchain() is None, reason="Metal tool
 
 
 def test_the_air_cache_key_moves_with_the_toolchain(monkeypatch, tmp_path):
-    """An Xcode upgrade changes the AIR for the same source; evidence compiled by the old front end
-    must not be served under the new toolchain's key."""
+    """@brief 验证 AIR 缓存键随工具链变化：同一源码在旧前端编出的证据不能在新工具链的键下被复用。
+
+    Xcode 升级会改变同一源码的 AIR；缓存键同时绑定源码文本、std 与 fast_math 选项，
+    以及工具链指纹，任一变化都会得到新键。
+
+    @param monkeypatch pytest 的 monkeypatch，用于把工具链探测固定为临时文件。
+    @param tmp_path pytest 提供的临时目录。
+    """
     import taic.hwfeatures as HF
 
     tool = tmp_path / "metal"
@@ -428,6 +492,10 @@ def test_the_air_cache_key_moves_with_the_toolchain(monkeypatch, tmp_path):
 
 @needs_metal
 def test_compiled_evidence_confirms_matrix_intrinsics_and_widths(tmp_path):
+    """@brief 验证编译证据从 AIR 里读出矩阵指令、f32 累加与 f16 操作数、屏障、共享内存字节与至少 8 字节的访存，且二次编译命中缓存。
+
+    @param tmp_path pytest 提供的临时目录，同时充当 AIR 缓存目录。
+    """
     from experiments.contract_sensitivity import gemm_source
     from tasks import get_task
 
@@ -445,6 +513,10 @@ def test_compiled_evidence_confirms_matrix_intrinsics_and_widths(tmp_path):
 
 @needs_metal
 def test_compiled_evidence_of_scalar_and_vector_kernels(tmp_path):
+    """@brief 验证编译证据能区分标量核（无 MMA、无 simd、最多 2 字节载入）与手写向量核（16 字节载入与存储）。
+
+    @param tmp_path pytest 提供的临时目录，同时充当 AIR 缓存目录。
+    """
     from tasks import get_task
 
     t = get_task("relu", "fp16", "paper")
@@ -459,12 +531,20 @@ def test_compiled_evidence_of_scalar_and_vector_kernels(tmp_path):
 
 @needs_metal
 def test_compile_error_is_reported_not_raised(tmp_path):
+    """@brief 验证编译失败只作为结果里的错误字段返回，不会向调用方抛异常。
+
+    @param tmp_path pytest 提供的临时目录，同时充当 AIR 缓存目录。
+    """
     comp = H.compile_air("kernel void k( { }", cache_dir=tmp_path)
     assert not comp["ok"] and "error" in comp["error"]
 
 
 @needs_metal
 def test_full_report_has_all_three_evidence_levels(tmp_path):
+    """@brief 验证完整报告能叠加源码、编译与实测三层证据，给出“用上且有效”的结论，且 JSON 与内部分析一致。
+
+    @param tmp_path pytest 提供的临时目录，同时充当 AIR 缓存目录。
+    """
     from experiments.contract_sensitivity import gemm_source
 
     measured = {"status": "ok", "candidate_us": 1361.0, "achieved_tflops": 12.6, "peak_tflops_measured": 14.77, "speedup": 0.87, "candidate_us_": 1}
@@ -481,10 +561,17 @@ def test_full_report_has_all_three_evidence_levels(tmp_path):
 # verdicts
 # ---------------------------------------------------------------------------------------------------------------------------------------
 def _meas(**kw):
+    """@brief 构造一份最简实测记录，默认状态 ok、耗时 100 微秒。
+
+    @param kw 要覆盖的实测字段，例如 achieved_tflops。
+    @return 实测字典。
+    """
     return {"status": "ok", "candidate_us": 100.0, **kw}
 
 
 def test_perf_test_uses_the_no_feature_ceiling():
+    """@brief 验证性能判定以不用该特性的上限为基准，覆盖高于/持平/未测三档，缺 naive 基线时按标量 FMA 相对矩阵峰值的比例回退，且变体任务沿用基础族。
+    """
     c = H.Ceilings(naive_tflops=5.5, peak_tflops=14.8, naive_gbps=440.0, peak_gbps=500.0)
     assert H.perf_test("gemm", _meas(achieved_tflops=14.0), c)["result"] == "above"
     assert H.perf_test("gemm", _meas(achieved_tflops=5.6), c)["result"] == "at"
@@ -498,6 +585,8 @@ def test_perf_test_uses_the_no_feature_ceiling():
 
 
 def test_judge_assigns_the_four_verdicts():
+    """@brief 验证判定能给出四种结论，缺失特性按优先级排序，且归因区分 primary 与 joint、按任务族选主特性。
+    """
     src = H.analyze_source(SCALAR)
     f = H.detect_features(src, None)
     f, missing = H.judge("gemm", f, {"result": "unknown"})
@@ -516,6 +605,8 @@ def test_judge_assigns_the_four_verdicts():
 
 
 def test_docs_table3_matches_the_expectations_in_code():
+    """@brief 验证文档表 3 声明的期望特性与代码里的 EXPECTED 表逐项一致，且两边覆盖的任务集合相同。
+    """
     doc = (Path(__file__).resolve().parents[3] / "docs" / "hardware_features.md").read_text().splitlines()
     start = next(i for i, ln in enumerate(doc) if ln.startswith("| task | matrix unit |"))
     header = [c.strip().replace(" ", "_") for c in doc[start].strip("|").split("|")][1:]
@@ -533,6 +624,8 @@ def test_docs_table3_matches_the_expectations_in_code():
 
 
 def test_every_task_has_expectations_and_a_family():
+    """@brief 验证每个任务都有期望特性与所属族，且期望名都在特性表内、等级取值为 required 或 recommended。
+    """
     from tasks import list_tasks
 
     for name in list_tasks(True):
@@ -547,6 +640,13 @@ def test_every_task_has_expectations_and_a_family():
 # run loading and the CLI on a fake runs directory
 # ---------------------------------------------------------------------------------------------------------------------------------------
 def make_run(root: Path, name: str, *, finished: bool) -> Path:
+    """@brief 造一个假 run 目录，含三个候选与对应的 trace，并按是否结束写 result.json 或 state.json。
+
+    @param root runs 根目录。
+    @param name run 目录名。
+    @param finished 为真时写 result.json，否则写 state.json。
+    @return 新建的 run 目录。
+    """
     run = root / name
     for i, (label, src, sp, status) in enumerate([("init", SCALAR, 0.5, "ok"), ("r1.p0", MATRIX, 0.9, "ok"), ("r1.p1", SCALAR, None, "incorrect")]):
         d = run / "candidates" / f"{i:03d}_{label}"
@@ -561,6 +661,10 @@ def make_run(root: Path, name: str, *, finished: bool) -> Path:
 
 
 def test_load_run_marks_partial_runs_and_picks_the_best(tmp_path):
+    """@brief 验证载入 run 时只写 state.json 的 run 被标为不完整，且引用顺序为首个候选、最优候选、其余候选。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     done = make_run(tmp_path, "done", finished=True)
     part = make_run(tmp_path, "part", finished=False)
     info, refs = H.load_run(done, tmp_path)
@@ -571,6 +675,10 @@ def test_load_run_marks_partial_runs_and_picks_the_best(tmp_path):
 
 
 def test_discover_runs_skips_interrupted_backups(tmp_path):
+    """@brief 验证发现 run 时会跳过 _interrupted_ 开头的备份目录。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     make_run(tmp_path, "a", finished=True)
     make_run(tmp_path / "_interrupted_x", "b", finished=True)
     found = H.discover_runs([tmp_path])
@@ -578,6 +686,11 @@ def test_discover_runs_skips_interrupted_backups(tmp_path):
 
 
 def test_cli_end_to_end_on_a_fake_runs_dir(tmp_path, capsys):
+    """@brief 验证 CLI 在假 runs 目录上能产出 REPORT.md、data.json 与 kernels.jsonl，且胜率表按是否存在该特性统计。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获。
+    """
     runs = tmp_path / "runs"
     make_run(runs, "fake_gemm", finished=True)
     out = tmp_path / "out"
@@ -595,6 +708,11 @@ def test_cli_end_to_end_on_a_fake_runs_dir(tmp_path, capsys):
 
 
 def test_cli_single_source(tmp_path, capsys):
+    """@brief 验证 CLI 的单源码模式会打印向量访存宽度，且 --ablate 能无参取得退出码 0。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获，用于读取向量宽度结果。
+    """
     p = tmp_path / "k.metal"
     p.write_text(VEC)
     assert H.main(["--source", str(p), "--no-compile"]) == 0

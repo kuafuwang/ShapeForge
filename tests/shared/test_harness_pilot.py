@@ -8,6 +8,10 @@ from experiments.harness_pilot import summarize
 
 
 def test_a_pilot_summary_counts_placeholders_shadow_and_unchanged(tmp_path):
+    """@brief 验证 pilot 汇总只读运行目录里的文件就能统计会话数、不变率、占位条目、建议面、shadow 投放与花费。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     run.mkdir()
     (run / "feedback.jsonl").write_text(

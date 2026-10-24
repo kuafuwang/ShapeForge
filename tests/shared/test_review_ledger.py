@@ -8,6 +8,12 @@ from taic import review_ledger
 
 
 def _event(seq: int, status: str) -> dict:
+    """@brief 构造一条内容固定的评审账本事件，供哈希链测试使用。
+
+    @param seq 事件序号，决定时间戳与摘要值。
+    @param status 评审状态。
+    @return 待写入账本的事件字典。
+    """
     return {
         "seq": seq,
         "digest": f"d{seq}",
@@ -28,6 +34,10 @@ def _event(seq: int, status: str) -> dict:
 
 
 def test_events_chain_and_verify(tmp_path):
+    """@brief 验证追加的事件按 prev_hash 串成哈希链、verify 返回一致结果，且正文只落哈希不落原文。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     path = tmp_path / "review_events.jsonl"
     hashes = review_ledger.append_events([_event(1, "info"), _event(2, "rejected")], run_id="run-a", path=path)
     assert len(hashes) == 2 and len(set(hashes)) == 2
@@ -41,6 +51,10 @@ def test_events_chain_and_verify(tmp_path):
 
 
 def test_a_tampered_row_breaks_verification(tmp_path):
+    """@brief 验证被篡改状态字段的行会被 verify 判定为断链，并定位到该行序号。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     path = tmp_path / "review_events.jsonl"
     review_ledger.append_events([_event(1, "info")], run_id="run-a", path=path)
     rows = [json.loads(line) for line in path.read_text().splitlines()]

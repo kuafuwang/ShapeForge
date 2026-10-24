@@ -20,10 +20,19 @@ T0 = 1_700_000_000.0
 
 
 def _digest() -> str:
+    """@brief 算出用例源码 SOURCE 的 sha256，用于把确认结果绑定到被重测的内核。
+
+    @return SOURCE 的 sha256 十六进制摘要。
+    """
     return hashlib.sha256(SOURCE.encode()).hexdigest()
 
 
 def test_scan_reads_timeline_marks_confirmed_point_and_handoff(tmp_path, monkeypatch):
+    """@brief 验证扫描器从运行目录读出时间线三条泳道、候选标记、确认点、发布状态与委员会交接，并隐去提示词里的密钥；老运行没有委员会记录时给出说明。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把运行目录与观察缓存指到临时路径。
+    """
     runs = tmp_path / "runs"
     cache = tmp_path / "cache"
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
@@ -162,6 +171,10 @@ def test_scan_reads_timeline_marks_confirmed_point_and_handoff(tmp_path, monkeyp
 
 
 def test_model_notes_show_a_timeout_and_an_empty_tool_reply(tmp_path):
+    """@brief 验证模型备注区分超时、空的工具应答、连接错误、HTTP 错误、截断、正文回复与提前停止，并隐去思考内容。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "kimi"
     run.mkdir()
     secret = "reasoning secret that must not reach the page"
@@ -186,6 +199,10 @@ def test_model_notes_show_a_timeout_and_an_empty_tool_reply(tmp_path):
 
 
 def test_model_notes_show_an_hmz_turn_that_wrote_a_kernel_and_one_that_failed(tmp_path):
+    """@brief 验证模型备注把 hmz 回合分成写出内核、出错与没交内核三类，并标出模型与花费。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "pi"
     run.mkdir()
     (run / "transcript.jsonl").write_text("\n".join([
@@ -200,6 +217,10 @@ def test_model_notes_show_an_hmz_turn_that_wrote_a_kernel_and_one_that_failed(tm
 
 
 def test_agent_diagnostics_reach_model_notes_and_turn_rows(tmp_path):
+    """@brief 验证 agent 的失败诊断既进模型备注（失败类型、hmz 失败回合数与诊断文件路径），也进回合行。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from observe.detail import _present_turn
 
     event = {"kind": "agent", "event": "agent", "label": "r4.p0", "harness": "pi", "provider": "moonshot",
@@ -217,6 +238,10 @@ def test_agent_diagnostics_reach_model_notes_and_turn_rows(tmp_path):
 
 
 def test_pi_lines_keep_the_tool_name_and_drop_a_key(tmp_path):
+    """@brief 验证从 pi 会话里提取的行保留工具名与结果摘要，但丢掉签名、api key 与整段用户提示词。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     session = tmp_path / "session.jsonl"
     session.write_text("\n".join([
         json.dumps({"type": "message", "message": {"role": "assistant", "content": [
@@ -238,6 +263,10 @@ def test_pi_lines_keep_the_tool_name_and_drop_a_key(tmp_path):
 
 
 def test_a_long_pi_session_only_keeps_the_tail(tmp_path):
+    """@brief 验证过长的 pi 会话只保留尾部若干字节与条数，最旧的行被丢弃。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from observe.detail import _PI_KEEP, _PI_TAIL_BYTES
 
     session = tmp_path / "session.jsonl"
@@ -253,6 +282,10 @@ def test_a_long_pi_session_only_keeps_the_tail(tmp_path):
 
 
 def test_an_epic_shows_the_start_the_spend_and_how_it_ended(tmp_path):
+    """@brief 验证 epic 记录能压成开始、打开、花费、结束四行，并隐去整段提示词与会话目录。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from observe.detail import _epic_lines_in
 
     epic = tmp_path / "epic.jsonl"
@@ -274,6 +307,10 @@ def test_an_epic_shows_the_start_the_spend_and_how_it_ended(tmp_path):
 
 
 def test_kernel_writer_follows_the_recorded_mode_and_old_runs_without_it(tmp_path):
+    """@brief 验证 kernel_writer 按 run_config.json 记录的模式判断谁写内核：显式 pi 就是 pi，老运行没有记录时按 transcript 里的事件推断。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     chat = tmp_path / "chat"
     chat.mkdir()
     (chat / "run_config.json").write_text(json.dumps({"search": {"kernel_agent": ""}}))
@@ -293,6 +330,10 @@ def test_kernel_writer_follows_the_recorded_mode_and_old_runs_without_it(tmp_pat
 
 
 def test_chat_tail_shows_the_latest_turn_and_drops_the_system_prompt(tmp_path):
+    """@brief 验证对话尾部只展示最新一轮（发出、收到、思考、工具）并隐去系统提示词、密钥与内核全文。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     path = tmp_path / "transcript.jsonl"
     secret = "sk-secret-value"
     kernel = "kernel void conv2d_kernel() {" + ("x" * 400) + "}"
@@ -327,6 +368,10 @@ def test_chat_tail_shows_the_latest_turn_and_drops_the_system_prompt(tmp_path):
 
 
 def test_chat_inflight_names_a_stream_without_a_prompt(tmp_path):
+    """@brief 验证 llm.json 里正在流式接收的请求被列成「正在接收」一行，不需要提示词内容。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from observe.detail import _chat_inflight
 
     path = tmp_path / "llm.json"
@@ -335,7 +380,13 @@ def test_chat_inflight_names_a_stream_without_a_prompt(tmp_path):
 
 
 def test_the_confirmed_point_shows_the_search_number_apart_and_calls_it_not_published(tmp_path, monkeypatch):
-    """A reader must not mistake the search maximum for the confirmation. Both appear, one labelled not-published."""
+    """@brief 验证确认点与搜索最优点分开展示：确认点给出重测的 1.6896，同时带上未发布的搜索最大 1.7276。
+
+    读者不能把搜索最大值当成确认结果；两个数都出现，其中一个标明未发布。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把运行目录指到临时路径。
+    """
     from observe import detail
 
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(tmp_path))
@@ -361,6 +412,11 @@ def test_the_confirmed_point_shows_the_search_number_apart_and_calls_it_not_publ
 
 
 def test_a_running_run_shows_start_and_elapsed_but_no_end(tmp_path, monkeypatch):
+    """@brief 验证仍在运行的搜索只给出开始时间与已运行时长，没有结束时间。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把运行目录指到临时路径。
+    """
     runs = tmp_path / "runs"
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
     directory = runs / "live"
@@ -379,6 +435,8 @@ def test_a_running_run_shows_start_and_elapsed_but_no_end(tmp_path, monkeypatch)
 
 
 def test_the_detail_page_has_the_run_clock():
+    """@brief 验证详情页 HTML 仍带着运行时钟与预算面板需要的元素 id 与中文文案。
+    """
     html = Path("observe/static/index.html").read_text()
     for token in ("detail-run-clock", "开始时间", "已运行", "结束时间", "formatDuration",
                   "detail-budget", "总预算", "已花", "剩余", "money2", "remaining_usd",
@@ -387,6 +445,11 @@ def test_the_detail_page_has_the_run_clock():
 
 
 def test_the_detail_payload_carries_the_current_budget_spent_and_remaining(tmp_path, monkeypatch):
+    """@brief 验证详情负载给出当前预算、已花与剩余金额。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把运行目录指到临时路径。
+    """
     runs = tmp_path / "runs"
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
     directory = runs / "live"

@@ -12,8 +12,18 @@ from tcenv.backends.metal.testing import prepare_case
 
 
 def sequential_scan(inp, B, S, H, P, N):
-    """y by the per-time-step state recurrence h_t = exp(cs_t - cs_{t-1}) h_{t-1} + dt_t x_t B_t^T, y_t = C_t h_t + D x_t, restarted from the given
-    state at every chunk start (float64). Independent of the matrix (SSD) formulation the reference uses."""
+    """@brief 用逐时间步的状态递推算出 y：h_t = exp(cs_t - cs_{t-1}) h_{t-1} + dt_t x_t B_t^T，y_t = C_t h_t + D x_t，每个 chunk 起点从给定状态重新开始（float64）。
+
+    这一形式与被测参考实现所用的矩阵（SSD）形式无关，两个实现因此可以互相校验。
+
+    @param inp 该用例的输入字典（x、dt、dA_cumsum、Bmat、Cmat、Dskip、states）。
+    @param B batch 大小。
+    @param S 序列长度。
+    @param H 头数。
+    @param P 每个头的维度。
+    @param N 状态维度。
+    @return 形状 [B, S, H, P] 的 float64 输出。
+    """
     x, dt, cs, Bm, Cm, D, st = (inp[k].double() for k in ("x", "dt", "dA_cumsum", "Bmat", "Cmat", "Dskip", "states"))
     NC = S // CHUNK
     y = torch.zeros(B, S, H, P, dtype=torch.float64)
@@ -31,6 +41,8 @@ def sequential_scan(inp, B, S, H, P, N):
 
 
 def test_paper_flops_count_the_shared_bc_product_once():
+    """@brief 验证 paper 规模的 FLOPs 把共享的 B 与 C 乘积只算一次，总数等于手算的 570_425_344。
+    """
     task = get_task("mamba2_chunk_scan", "fp16", "paper")
     batch, seq, heads, headdim, dstate = 2, 2048, 8, 64, 64
     chunks = seq // CHUNK
@@ -41,6 +53,10 @@ def test_paper_flops_count_the_shared_bc_product_once():
 
 @pytest.mark.parametrize("case", ["normal", "wide_range", "large", "outlier"])
 def test_reference_equals_the_sequential_state_recurrence(case):
+    """@brief 验证参考实现在各类输入分布下都与独立的逐时间步递推一致（容差相对且随量级缩放）。
+
+    @param case 参数化的输入用例名（normal、wide_range、large、outlier）。
+    """
     t = get_task("mamba2_chunk_scan", "fp16", "small")
     d = prepare_case(t, case, 21)
     B, S, H, P = t.contract.arg("x").shape
@@ -53,6 +69,11 @@ def test_reference_equals_the_sequential_state_recurrence(case):
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
 @pytest.mark.parametrize("case", ["normal", "wide_range", "large", "tiny", "outlier", "ieee"])
 def test_inputs_keep_the_ssm_invariants_in_every_case(dtype, case):
+    """@brief 验证各用例的输入都满足 SSM 的不变量：dt 在区间内、dA_cumsum 非增且不为正、衰减不会把 exp 冲成 0；ieee 用例只在带进来的状态里放特殊值。
+
+    @param dtype 参数化的数据格式（fp16、bf16）。
+    @param case 参数化的输入用例名。
+    """
     t = get_task("mamba2_chunk_scan", dtype, "small")
     d = prepare_case(t, case, 5)
     dt, cs = d.rounded["dt"].double(), d.rounded["dA_cumsum"].double()
@@ -67,6 +88,8 @@ def test_inputs_keep_the_ssm_invariants_in_every_case(dtype, case):
 
 
 def test_the_chunk_scan_is_causal_inside_a_chunk():
+    """@brief 验证 chunk 内的因果性：改一个时间步的输入只影响它自己和它在同一个 chunk 里的后续输出。
+    """
     t = get_task("mamba2_chunk_scan", "fp16", "small")
     d = prepare_case(t, "normal", 3)
     inp = {k: v.clone() for k, v in d.rounded.items()}
@@ -80,6 +103,10 @@ def test_the_chunk_scan_is_causal_inside_a_chunk():
 
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
 def test_naive_kernel_is_correct_and_the_spec_is_consistent(dtype):
+    """@brief 验证 naive 内核能通过评测，且 triton 源码、生成的 MSL 与 contract 的网格彼此一致。
+
+    @param dtype 参数化的数据格式（fp16、bf16）。
+    """
     t = get_task("mamba2_chunk_scan", dtype, "small")
     rep = evaluate("mamba2_chunk_scan", dtype, "small", t.naive_msl, mode="quick", seed=4)
     assert rep.status == "ok", rep.message
@@ -88,6 +115,8 @@ def test_naive_kernel_is_correct_and_the_spec_is_consistent(dtype):
 
 
 def test_a_kernel_that_ignores_the_carried_in_state_or_the_causal_mask_fails():
+    """@brief 验证丢掉带进来的状态、去掉因果掩码、或漏掉 skip 项的变体在内核层面都被判 incorrect。
+    """
     t = get_task("mamba2_chunk_scan", "fp16", "small")
     src = t.naive_msl
     no_state = src.replace("acc[p] = s * e;", "acc[p] = 0.0f;")

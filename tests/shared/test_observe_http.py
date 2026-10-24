@@ -6,6 +6,11 @@ from observe.app import app
 
 
 def test_the_page_and_json_carry_an_etag_and_revalidate(tmp_path, monkeypatch):
+    """@brief 页面返回 gzip 压缩和 ETag，If-None-Match 命中时返回 304；JSON 接口也带 ETag。
+
+    @param tmp_path pytest 提供的临时目录，用作 runs、数据库和 books 路径。
+    @param monkeypatch pytest 补丁工具，用于设置三个路径环境变量。
+    """
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(tmp_path / "runs"))
     monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
     monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "books.sqlite"))

@@ -12,6 +12,11 @@ from tcenv.children import forget, kill_group, install_termination_handlers, pop
 
 
 def _alive(pid: int) -> bool:
+    """@brief 判断进程是否还活着，已被杀但尚未回收的僵尸进程算作已死。
+
+    @param pid 进程号。
+    @return 进程仍在运行且不是僵尸时为 True。
+    """
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -23,10 +28,12 @@ def _alive(pid: int) -> bool:
 
 
 def test_kill_group_reaches_a_child_that_outlived_its_leader(tmp_path):
-    """`kill_group` used to return as soon as the leader had exited, leaving the survivor running.
+    """@brief 验证 kill_group 能杀掉比组长活得更久的子进程。
 
-    The survivor is what matters in production: a Metal compile child, an xctrace recorder or the
-    pi session behind hmz is still holding the GPU or calling the provider.
+    kill_group 过去只要组长退出就返回，存活的子进程继续跑。生产里要紧的正是这个存活者：一个仍占着 GPU 的
+    Metal 编译子进程、一个 xctrace 录制进程，或 hmz 背后还在调模型的 pi 会话。
+
+    @param tmp_path pytest 提供的临时目录。
     """
     script = tmp_path / "spawn.sh"
     marker = tmp_path / "child.pid"
@@ -57,7 +64,10 @@ def test_kill_group_reaches_a_child_that_outlived_its_leader(tmp_path):
 
 
 def test_scrubbed_env_drops_every_key_shaped_variable():
-    """A child process inherits the environment; *_KEY and *_TOKEN names are secrets too."""
+    """@brief 验证子进程环境里所有密钥形状的变量（*_KEY、*_TOKEN、*_SECRET、*_PASSWORD）都被剔除，而名字里只是含 KEY 的普通变量保留。
+
+    子进程会继承环境，除 *_KEY 和 *_TOKEN 之外，其它名字里带密钥意味的变量同样是密钥。
+    """
     from tcenv.children import scrubbed_env
 
     env = scrubbed_env({
@@ -69,7 +79,12 @@ def test_scrubbed_env_drops_every_key_shaped_variable():
 
 
 def test_sighup_kills_a_registered_child(tmp_path):
-    """Closing an IDE/terminal sends SIGHUP; the hmz session must not outlive the search."""
+    """@brief 验证父进程收到 SIGHUP 时，它注册过的子进程也被杀掉。
+
+    关掉 IDE 或终端会发 SIGHUP，hmz 会话不应该活得比搜索更久。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     import sys
 
     marker = tmp_path / "child.pid"

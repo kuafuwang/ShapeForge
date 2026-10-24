@@ -13,10 +13,26 @@ class FakeUsage(SimpleNamespace):
 
 
 def make_usage(hit: int = 0, miss: int = 1000, out: int = 500) -> FakeUsage:
+    """@brief 构造一个模拟的 usage 对象，含 prompt/completion/total 与缓存命中未命中计数。
+
+    @param hit 缓存命中的 prompt token 数，默认 0。
+    @param miss 缓存未命中的 prompt token 数，默认 1000。
+    @param out 生成的 completion token 数，默认 500。
+    @return 字段齐全的 FakeUsage 实例，支持 model_dump。
+    """
     return FakeUsage(prompt_tokens=hit + miss, completion_tokens=out, total_tokens=hit + miss + out, prompt_cache_hit_tokens=hit, prompt_cache_miss_tokens=miss)
 
 
 def make_response(content: str = "", *, reasoning: str | None = None, tool_calls: list[tuple[str, str, dict]] | None = None, usage: FakeUsage | None = None, finish: str | None = None):
+    """@brief 构造一个形如 chat completion 响应的 SimpleNamespace，供离线脚本化客户端返回。
+
+    @param content 助手消息正文。
+    @param reasoning 推理内容（reasoning_content），None 表示没有。
+    @param tool_calls 工具调用三元组列表 (id, name, arguments)，参数会被 JSON 序列化。
+    @param usage usage 对象，None 时用 make_usage 的默认值。
+    @param finish 显式指定的结束原因；None 时带工具调用为 tool_calls，否则为 stop。
+    @return 含 choices 与 usage 的响应对象。
+    """
     tcs = None
     if tool_calls:
         tcs = [SimpleNamespace(id=i, type="function", function=SimpleNamespace(name=n, arguments=json.dumps(a))) for i, n, a in tool_calls]

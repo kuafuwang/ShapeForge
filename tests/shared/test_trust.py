@@ -11,6 +11,13 @@ from taic import trust
 
 
 def test_a_grant_is_target_and_task_scoped_and_written_to_the_target(tmp_path):
+    """@brief 验证信任授予按 target 与 task 限定、落盘到该 target 的 ``trust.toml``，且校验时逐项拦截不匹配。
+
+    正常情形通过且原因为空；task 不符、scope 不在范围（提示 ``does not include``）、
+    target 不符三种情形都失败且原因提到对应字段。
+
+    @param tmp_path pytest 提供的临时目录，用作 target 根目录。
+    """
     entry = trust.grant(
         "apple-m4-max", "conv2d", "deepseek", "deepseek-flash", effort="high",
         scopes=["overlay:tip"], granted_by="alice", reason="pilot", root=tmp_path,
@@ -29,6 +36,10 @@ def test_a_grant_is_target_and_task_scoped_and_written_to_the_target(tmp_path):
 
 
 def test_protocol_prompt_and_expiry_make_a_grant_stale(tmp_path):
+    """@brief 验证协议版本、prompt sha1 与过期时间任一不符时旧授权即失效，且原因指明哪一项。
+
+    @param tmp_path pytest 提供的临时目录，用作 target 根目录。
+    """
     entry = trust.grant(
         "apple-m4-max", "conv2d", "deepseek", "deepseek-flash", root=tmp_path,
         protocol_version="3", prompt_sha1="prompt-a", scopes=["overlay:tip"],
@@ -47,6 +58,11 @@ def test_protocol_prompt_and_expiry_make_a_grant_stale(tmp_path):
 
 
 def test_a_new_prompt_makes_the_existing_grant_stale_without_rewriting_it(tmp_path, monkeypatch):
+    """@brief 验证 prompt 指纹变化会令已有授权失效，但无需重写授权文件。
+
+    @param tmp_path pytest 提供的临时目录，用作 target 根目录。
+    @param monkeypatch pytest 的替换夹具，用于把 ``current_prompt_sha1`` 换成固定返回值。
+    """
     entry = trust.grant("apple-m4-max", "conv2d", "deepseek", "deepseek-flash", root=tmp_path)
     monkeypatch.setattr(trust, "current_prompt_sha1", lambda target_id=None: entry["prompt_sha1"])
     assert trust.check(entry, target_id="apple-m4-max", task="conv2d", provider="deepseek", model="deepseek-flash")[0]
@@ -55,6 +71,13 @@ def test_a_new_prompt_makes_the_existing_grant_stale_without_rewriting_it(tmp_pa
 
 
 def test_revoke_keeps_an_append_only_audit_and_requires_the_exact_model(tmp_path):
+    """@brief 验证撤销必须精确匹配 model，且审计日志只追加：先 grant 后 revoked，并记下撤销原因。
+
+    另外确认重新 grant 后状态回到 active，且同一 target/task/model 只保留一条授权。
+
+    @param tmp_path pytest 提供的临时目录，用作 target 根目录。
+    @raises trust.TrustError model 与已授权的不一致时由 ``revoke`` 抛出。
+    """
     trust.grant("apple-m4-max", "conv2d", "deepseek", "deepseek-flash", root=tmp_path, granted_by="alice")
     with pytest.raises(trust.TrustError):
         trust.revoke("apple-m4-max", task="conv2d", provider="deepseek", model="other", root=tmp_path)
@@ -70,6 +93,11 @@ def test_revoke_keeps_an_append_only_audit_and_requires_the_exact_model(tmp_path
 
 
 def test_bad_scopes_and_target_ids_are_refused(tmp_path):
+    """@brief 验证非法 scope、含路径穿越的 target id、以及已过去的过期时间都被拒绝。
+
+    @param tmp_path pytest 提供的临时目录，用作 target 根目录。
+    @raises trust.TrustError 上述三种非法授权请求均由 ``grant`` 抛出。
+    """
     with pytest.raises(trust.TrustError):
         trust.grant("apple-m4-max", "conv2d", "deepseek", "deepseek-flash", scopes=["everything"], root=tmp_path)
     with pytest.raises(trust.TrustError):
@@ -79,7 +107,12 @@ def test_bad_scopes_and_target_ids_are_refused(tmp_path):
 
 
 def test_a_grant_without_a_prompt_fingerprint_is_stale(tmp_path):
-    """An old or hand-written row must not become a grant for every prompt surface."""
+    """@brief 验证缺 prompt 指纹的旧行或手写行失效，不会变成对所有 prompt 面的永久授权。
+
+    直接手写一份没有 ``prompt_sha1`` 的 ``trust.toml`` 行，校验时失败且原因提到 prompt。
+
+    @param tmp_path pytest 提供的临时目录，用作手写授权文件所在的 target 根目录。
+    """
     from tcenv.schema import PROTOCOL_VERSION
 
     root = tmp_path / "targets"
@@ -97,7 +130,12 @@ def test_a_grant_without_a_prompt_fingerprint_is_stale(tmp_path):
 
 
 def test_free_text_cannot_open_a_second_grant_table(tmp_path):
-    """A task/reason is written through json.dumps, so newlines and quotes cannot forge a table."""
+    """@brief 验证自由文本不能伪造出第二张授权表：含换行的 task 与 reason 仍只产生一行，且内容原样往返。
+
+    task 与 reason 都是经 ``json.dumps`` 写出的，所以引号与换行无法拼出新表头。
+
+    @param tmp_path pytest 提供的临时目录，用作 target 根目录。
+    """
     import tomllib
 
     entry = trust.grant(
@@ -110,6 +148,10 @@ def test_free_text_cannot_open_a_second_grant_table(tmp_path):
 
 
 def test_the_fingerprint_names_the_prompt_surface():
+    """@brief 验证 prompt 指纹由具名片段组成：含契约渲染、HARNESS 模板与 MSL 参考文档，而非整个模块文件。
+
+    同时确认同一状态下 ``current_prompt_sha1`` 结果稳定。
+    """
     labels = {label for label, _ in trust.prompt_fingerprint_parts()}
     assert "kernel_agent.render_contract" in labels
     assert "harness.TEMPLATE" in labels
@@ -119,7 +161,10 @@ def test_the_fingerprint_names_the_prompt_surface():
 
 
 def test_the_fingerprint_ignores_unrelated_code_in_the_prompt_modules(monkeypatch):
-    """A billing or subprocess edit in kernel_agent.py must not invalidate a grant any more."""
+    """@brief 验证 prompt 模块里与提示无关的代码改动（计费或子进程相关）不再使已有授权失效。
+
+    @param monkeypatch pytest 的替换夹具，用于把 ``kernel_agent.spend_from_stream`` 换成桩。
+    """
     from taic import kernel_agent
 
     before = trust.current_prompt_sha1()
@@ -132,6 +177,10 @@ def test_the_fingerprint_ignores_unrelated_code_in_the_prompt_modules(monkeypatc
 
 
 def test_the_fingerprint_tracks_prompt_functions(monkeypatch):
+    """@brief 验证改动 prompt 函数（``kernel_agent.render_contract``）会让指纹变化。
+
+    @param monkeypatch pytest 的替换夹具，用于插入返回固定文本的契约渲染桩。
+    """
     from taic import kernel_agent
 
     before = trust.current_prompt_sha1()
@@ -144,6 +193,10 @@ def test_the_fingerprint_tracks_prompt_functions(monkeypatch):
 
 
 def test_the_fingerprint_tracks_template_constants(monkeypatch):
+    """@brief 验证改动 HARNESS 模板常量会让指纹变化。
+
+    @param monkeypatch pytest 的替换夹具，用于替换 ``harness.TEMPLATE``。
+    """
     from taic import harness as harness_module
 
     before = trust.current_prompt_sha1()
@@ -152,7 +205,11 @@ def test_the_fingerprint_tracks_template_constants(monkeypatch):
 
 
 def test_backend_skills_come_from_the_target_profile_in_path_order(tmp_path, monkeypatch):
-    """A second backend's skill docs must be covered by its target profile, not by editing trust.py."""
+    """@brief 验证其他 backend 的 skill 文档由 target profile 提供，并按路径顺序排好，无需改 trust.py。
+
+    @param tmp_path pytest 提供的临时目录，用来放 skills 目录与 experience/device 文档。
+    @param monkeypatch pytest 的替换夹具，用于让 ``load_target`` 返回构造好的 profile。
+    """
     from types import SimpleNamespace
 
     import tcenv.target
@@ -169,6 +226,11 @@ def test_backend_skills_come_from_the_target_profile_in_path_order(tmp_path, mon
 
 
 def test_the_fingerprint_is_per_target(tmp_path, monkeypatch):
+    """@brief 验证指纹按 target 区分：不同 target 的 experience/device/skill 给出不同指纹，默认取 apple-m4-max。
+
+    @param tmp_path pytest 提供的临时目录，用来为每个 target 建立文档与 skills 目录。
+    @param monkeypatch pytest 的替换夹具，用于让 ``load_target`` 按 target id 返回对应 profile。
+    """
     from types import SimpleNamespace
 
     import tcenv.target
@@ -189,6 +251,11 @@ def test_the_fingerprint_is_per_target(tmp_path, monkeypatch):
 
 
 def test_a_grant_records_the_prompt_of_its_own_target(tmp_path, monkeypatch):
+    """@brief 验证授权记录的是它所属 target 自己的 prompt 指纹，而不是默认 target 的指纹。
+
+    @param tmp_path pytest 提供的临时目录，用来为每个 target 建立文档与 skills 目录。
+    @param monkeypatch pytest 的替换夹具，用于让 ``load_target`` 按 target id 返回对应 profile。
+    """
     from types import SimpleNamespace
 
     import tcenv.target

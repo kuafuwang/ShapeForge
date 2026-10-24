@@ -22,6 +22,13 @@ _CAND = {"label", "status", "speedup", "within_noise", "differential_recheck", "
 
 
 def _brief(capsys, run_dir=None, *extra):
+    """@brief 调用 taic brief CLI 并返回退出码与捕获的输出。
+
+    @param capsys pytest 的输出捕获器。
+    @param run_dir 可选的 run 目录，None 表示不带目录参数。
+    @param extra 追加给 brief 的额外参数。
+    @return (退出码, stdout, stderr)。
+    """
     argv = (["brief"] if run_dir is None else ["brief", str(run_dir)]) + list(extra)
     code = cli.main(argv)
     captured = capsys.readouterr()
@@ -29,6 +36,11 @@ def _brief(capsys, run_dir=None, *extra):
 
 
 def test_a_run_dir_brief_keeps_search_best_off_the_published_number(tmp_path, capsys):
+    """@brief 只有 state 时 published 为 null、search_best 保留 state 值，候选只输出最近 8 个且不泄露正文。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获器。
+    """
     run = tmp_path / "run"
     run.mkdir()
     trace = []
@@ -83,6 +95,11 @@ def test_a_run_dir_brief_keeps_search_best_off_the_published_number(tmp_path, ca
 
 
 def test_candidate_dirs_supply_outcomes_when_the_trace_is_absent(tmp_path, capsys):
+    """@brief trace 缺失时从 candidates 目录读结果和差分复检，屏蔽正文，计数类字段全为 null。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获器。
+    """
     run = tmp_path / "run"
     (run / "state.json").parent.mkdir()
     (run / "state.json").write_text(json.dumps({
@@ -110,6 +127,11 @@ def test_candidate_dirs_supply_outcomes_when_the_trace_is_absent(tmp_path, capsy
 
 
 def test_a_bound_confirmation_publishes_the_remeasure_not_the_search_best(tmp_path, capsys):
+    """@brief 确认门绑定源码哈希时发布重新测量的值，而不是 search best。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获器。
+    """
     source = f"kernel void k() {{}}\n// {SECRET}\n"
     digest = hashlib.sha256(source.encode()).hexdigest()
     run = tmp_path / "run"
@@ -142,6 +164,11 @@ def test_a_bound_confirmation_publishes_the_remeasure_not_the_search_best(tmp_pa
 
 
 def test_a_result_without_the_hash_field_does_not_publish_its_best(tmp_path, capsys):
+    """@brief 旧版 result 缺少源码哈希字段时不发布 best，publication 标为旧版未绑定源码。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获器。
+    """
     run = tmp_path / "only"
     run.mkdir()
     (run / "result.json").write_text(json.dumps({
@@ -156,6 +183,11 @@ def test_a_result_without_the_hash_field_does_not_publish_its_best(tmp_path, cap
 
 
 def test_a_damaged_result_is_unreadable_and_its_bytes_stay_out(tmp_path, capsys):
+    """@brief result.json 损坏时标为 unreadable，不输出其字节，仍保留 state 里的 search_best。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获器。
+    """
     run = tmp_path / "bad"
     run.mkdir()
     (run / "state.json").write_text(json.dumps({"task": "relu", "best_speedup": 1.5, "round": 1}))
@@ -169,6 +201,11 @@ def test_a_damaged_result_is_unreadable_and_its_bytes_stay_out(tmp_path, capsys)
 
 
 def test_an_empty_directory_is_nulls(tmp_path, capsys):
+    """@brief 空目录输出固定结构且所有事实字段都是 null。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获器。
+    """
     run = tmp_path / "empty"
     run.mkdir()
     code, out, _err = _brief(capsys, run)
@@ -182,6 +219,11 @@ def test_an_empty_directory_is_nulls(tmp_path, capsys):
 
 
 def test_agent_failures_expose_structured_causes_but_not_response_bodies(tmp_path, capsys):
+    """@brief agent_failures 暴露结构化失败原因，但脱敏错误正文和 response_preview。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获器。
+    """
     run = tmp_path / "run"
     run.mkdir()
     (run / "state.json").write_text(json.dumps({"task": "conv2d", "phase": "done", "stop_reason": "agent_failure"}))
@@ -210,6 +252,11 @@ def test_agent_failures_expose_structured_causes_but_not_response_bodies(tmp_pat
 
 
 def test_gpu_events_are_the_cache_tail_and_the_lane_is_omitted_when_absent(tmp_path, capsys):
+    """@brief 没有 GPU 事件时不输出 gpu 字段；--gpu 只取缓存尾部 8 条，并脱敏 what、丢弃 note。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获器。
+    """
     run = tmp_path / "run"
     run.mkdir()
     (run / "state.json").write_text(json.dumps({"task": "relu"}))
@@ -238,6 +285,11 @@ def test_gpu_events_are_the_cache_tail_and_the_lane_is_omitted_when_absent(tmp_p
 
 
 def test_orientation_mentions_committees_and_skips_a_planted_key(monkeypatch, capsys):
+    """@brief 无 run 的 orientation 说明委员会规则，不泄露环境里的密钥和地址，且不超过 80 行。
+
+    @param monkeypatch pytest 补丁工具，用于植入伪造的密钥和地址。
+    @param capsys pytest 的输出捕获器。
+    """
     monkeypatch.setenv("OPENAI_API_KEY", SECRET)
     monkeypatch.setenv("OPENAI_BASE_URL", "https://secret.example.invalid/v1")
     code, out, _err = _brief(capsys)
@@ -248,11 +300,21 @@ def test_orientation_mentions_committees_and_skips_a_planted_key(monkeypatch, ca
 
 
 def test_a_missing_directory_is_refused(tmp_path, capsys):
+    """@brief 目录不存在时退出码 2，stdout 为空，stderr 说明不是目录。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获器。
+    """
     code, out, err = _brief(capsys, tmp_path / "missing")
     assert code == 2 and out == "" and "not a directory" in err
 
 
 def test_brief_reports_winner_and_model_totals_with_old_run_fallback(tmp_path, capsys):
+    """@brief winner 字段与按模型汇总的费用、会话数来自 result 和 transcript，旧 run 也能回退推导。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获器。
+    """
     run = tmp_path / "run"
     run.mkdir()
     trace = [
@@ -284,6 +346,11 @@ def test_brief_reports_winner_and_model_totals_with_old_run_fallback(tmp_path, c
 
 
 def test_brief_derives_winner_model_from_candidate_origin_without_new_result_fields(tmp_path, capsys):
+    """@brief 老 result 没有 winner_* 字段时，从候选 origin 推导 provider、model、committee 和来源。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获器。
+    """
     run = tmp_path / "legacy"
     run.mkdir()
     trace = [{"label": "r1.p0", "status": "ok", "speedup": 1.2, "within_noise": False, "differential_recheck": None,

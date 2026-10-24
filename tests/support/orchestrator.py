@@ -18,10 +18,22 @@ from .fakes import FakeClient, make_response, make_usage
 KERNEL = "relu_kernel"
 
 def code(marker: str, kernel: str = KERNEL) -> str:
+    """@brief 生成一段带标记注释的 metal 代码块，供脚本化评估器解析标记。
+
+    @param marker 写在注释里的标记，例如 speed=1.3。
+    @param kernel kernel 函数名。
+    @return 带 metal 围栏的源码文本。
+    """
     return f"```metal\n// {marker}\nkernel void {kernel}(device const half* x [[buffer(0)]], device half* y [[buffer(1)]]) {{}}\n```"
 
 def fake_eval(calls: list):
-    """Parses '// speed=1.3' or '// status=compile_error' markers out of the source."""
+    """@brief 用源码里的 "// speed=1.3" 或 "// status=compile_error" 标记伪造一次评估结果。
+
+    每次调用把 (mode, source) 记入 calls，便于断言搜索走了哪条分支；标记值不是 speed 时直接当作状态。
+
+    @param calls 收集每次评估 (mode, source) 的列表。
+    @return 可直接交给 Orchestrator 的 evaluate_fn。
+    """
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
         calls.append((mode, source))
@@ -46,7 +58,18 @@ def fake_eval(calls: list):
 PLAN = '```json\n{"bottleneck":"memory","analysis":"x","plans":[{"title":"A","change":"do A"},{"title":"B","change":"do B"},{"title":"C","change":"do C"}]}\n```'
 
 def llm_script(init: str, patches: dict[str, str] | None = None, fixes: list[str] | None = None, plan: str = PLAN, usage=None):
-    """Route on the last user message."""
+    """@brief 按最后一条用户消息路由出脚本化回复，模拟翻译、规划、实现与修复四类提示。
+
+    调用记录挂在返回函数的 seen 上，使测试能断言提示顺序；遇到不认识的提示直接失败。
+
+    @param init 首次翻译请求返回的 kernel 文本。
+    @param patches 以计划标题为键的实现回复，缺省时回退到 speed=0.5 的 kernel。
+    @param fixes 修复轮的回复队列，按顺序消费；用尽后回退到编译失败的 kernel。
+    @param plan 规划请求返回的 JSON 文本。
+    @param usage 每次回复携带的用量，缺省用 make_usage()。
+    @return 接受 messages 的假 LLM 客户端函数。
+    @raises AssertionError 收到无法归类的提示时抛出。
+    """
     patches = patches or {}
     fixes = list(fixes or [])
     seen = {"calls": []}
@@ -70,7 +93,12 @@ def llm_script(init: str, patches: dict[str, str] | None = None, fixes: list[str
     return route
 
 def agent_from_script(script, kernel: str = KERNEL):
-    """One session per call. The first call is the seedless draft; later calls ask for plan A, then B, then C."""
+    """@brief 把脚本化 LLM 包装成 agent_runner：每次调用一个会话，首次无种子起草，之后依次要求计划 A、B、C。
+
+    @param script 由 llm_script 产出的假客户端。
+    @param kernel 期望从回复中抽出的 kernel 名。
+    @return 接受 (brief, tag) 的 agent 运行函数，产出 AgentResult；抽不到源码时状态为 failed。
+    """
     from taic.kernel_agent import AgentResult
     from taic.parse import extract_metal
 
@@ -95,6 +123,24 @@ def agent_from_script(script, kernel: str = KERNEL):
     return run
 
 def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, max_rounds=2, max_repair=2, evaluate_fn=None, max_hangs=1, log=None, from_run=None, **search_kw):
+    """@brief 用假客户端与假评估器搭一个 Orchestrator，并默认关掉生产环境开着的附加提示开关。
+
+    测试只在显式传入时打开某个开关，这样提示断言不会被额外段落干扰。
+
+    @param tmp_path pytest 提供的临时目录，run 目录建在其下。
+    @param script 由 llm_script 产出的假客户端。
+    @param calls 透传给 fake_eval 的评估调用记录。
+    @param budget 搜索预算（美元）。
+    @param branches 并行分支数。
+    @param max_rounds 最大轮数。
+    @param max_repair 最大修复次数。
+    @param evaluate_fn 自定义评估函数，缺省用 fake_eval(calls)。
+    @param max_hangs 允许的挂起次数。
+    @param log 日志回调，缺省丢弃。
+    @param from_run 续跑来源 run 目录。
+    @param search_kw 覆盖其余 SearchConfig 字段。
+    @return 已接好假依赖的 Orchestrator。
+    """
     llm_cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False, truncation_retry=False)
     # The production default is on. Scripted tests pin the switches off unless the test passes one, so a prompt assertion stays about the thing it names.
     off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False, plan_ledger=False)
@@ -106,7 +152,18 @@ def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, ma
     )
 
 def run(orch):
+    """@brief 同步驱动一次搜索，把 Orchestrator 的异步入口跑完。
+
+    @param orch 待驱动的 Orchestrator。
+    @return 搜索结束返回的结果对象。
+    """
     return asyncio.run(orch.run())
 
 def _user_prompts(orch, marker):
+    """@brief 收集证据文本中包含标记的会话提示，用于断言某段提示出现与否。
+
+    @param orch 待检查的 Orchestrator。
+    @param marker 在证据文本中查找的子串。
+    @return 匹配会话的证据文本列表。
+    """
     return [brief.evidence for brief in orch._session_briefs if marker in (brief.evidence or "")]

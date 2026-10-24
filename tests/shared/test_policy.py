@@ -34,6 +34,14 @@ NOISE_Z = 2.0
 
 
 def _report(status: str, speedup: float | None, cv: float | None, reps: int | None) -> EvalReport:
+    """@brief 构造一个带加速比和 benchmark 统计的 EvalReport。
+
+    @param status 评估状态。
+    @param speedup 加速比，None 表示未测出。
+    @param cv 变异系数，None 表示不带 benchmark 统计。
+    @param reps benchmark 重复次数。
+    @return 构造好的 EvalReport。
+    """
     report = EvalReport(task="relu", dtype="fp16", size="small", mode="full", status=status, stage="done", seed=1, message=status, speedup=speedup)
     if speedup is not None:
         report.speedups = {"mlx": speedup}
@@ -49,10 +57,21 @@ def _report(status: str, speedup: float | None, cv: float | None, reps: int | No
 
 
 def _cases(rows):
+    """@brief 把 TIMED 风格的表格行转换成 (label, EvalReport) 列表。
+
+    @param rows (label, status, speedup, cv, reps) 元组序列。
+    @return (label, EvalReport) 列表。
+    """
     return [(label, _report(status, speedup, cv, reps)) for label, status, speedup, cv, reps in rows]
 
 
 def _pure_trace(cases, *, correctness_only: bool) -> list[str]:
+    """@brief 直接调用 policy 纯函数，得到一批用例的 replace/tie/keep 轨迹。
+
+    @param cases 已构造的 (label, EvalReport) 用例。
+    @param correctness_only 是否只看正确性、忽略加速比。
+    @return 关系字符串列表。
+    """
     best_speedup = None
     best_se = 0.0
     best_report = None
@@ -74,6 +93,12 @@ def _pure_trace(cases, *, correctness_only: bool) -> list[str]:
 
 
 def _replay_trace(cases, *, correctness_only: bool) -> list[str]:
+    """@brief 用 resume._replay 重放同一批报告，得到 replace/tie/keep 轨迹。
+
+    @param cases 已构造的 (label, EvalReport) 用例。
+    @param correctness_only 是否只看正确性、忽略加速比。
+    @return 关系字符串列表。
+    """
     search = SearchConfig(min_improvement=MIN_IMPROVEMENT, noise_z=NOISE_Z, correctness_only=correctness_only)
     stored = [{"idx": i, "label": label, "report": report} for i, (label, report) in enumerate(cases)]
     out = []
@@ -88,6 +113,10 @@ def _replay_trace(cases, *, correctness_only: bool) -> list[str]:
 
 
 def test_fake_reports_have_one_replace_tie_keep_trace(tmp_path):
+    """@brief 同一批 fake 报告下，纯函数、resume 重放和关闭二次种子门的 orchestrator 得到同一条轨迹。
+
+    @param tmp_path pytest 提供的临时目录，用作 run 目录。
+    """
     cases = _cases(TIMED)
     pure = _pure_trace(cases, correctness_only=False)
     assert pure == TIMED_TRACE
@@ -129,6 +158,8 @@ def test_fake_reports_have_one_replace_tie_keep_trace(tmp_path):
 
 
 def test_a_correctness_only_replay_uses_the_same_eligibility():
+    """@brief correctness_only 模式下纯函数与重放使用同一可用性规则：没有加速比也算 replace。
+    """
     rows = [
         ("p", "ok", None, None, None),
         ("q", "ok", None, None, None),
@@ -145,6 +176,8 @@ def test_a_correctness_only_replay_uses_the_same_eligibility():
 
 
 def test_confirm_pool_includes_a_tie_and_patience_resets_only_on_a_new_seed():
+    """@brief 确认池包含打平项；只有出现新最优时才重置 patience。
+    """
     assert in_confirm_pool(1.0, 1.0, 1.005) is True
     assert in_confirm_pool(2.0, 1.0, 1.005) is False
     assert next_stagnant(False, 0) == 1
@@ -154,6 +187,8 @@ def test_confirm_pool_includes_a_tie_and_patience_resets_only_on_a_new_seed():
 
 
 def test_confirmation_keeps_the_search_best_inside_the_input_batch_floor():
+    """@brief 确认选择在输入批次内保留 search best，除非另一候选超过噪声阈值；批次不一致时 batches_agree 为 False。
+    """
     quiet = {"median": 1.0, "se": 0.0, "search_best": True}
     nudge = {"median": 1.01, "se": 0.0, "search_best": False}
     clear = {"median": 1.20, "se": 0.0, "search_best": False}
@@ -169,6 +204,8 @@ def test_confirmation_keeps_the_search_best_inside_the_input_batch_floor():
 
 
 def test_recent_session_cost_uses_the_median_and_ignores_empty_history():
+    """@brief session_budget_floor 忽略空、None 和负数历史，按中位数取近期会话成本。
+    """
     from taic.policy import session_budget_floor
 
     assert session_budget_floor([]) is None
@@ -178,6 +215,8 @@ def test_recent_session_cost_uses_the_median_and_ignores_empty_history():
 
 
 def test_a_degenerate_gain_floor_never_promotes_a_slower_kernel():
+    """@brief 退化的增益下限至少为 1.0，慢于当前最优的候选不会被提升。
+    """
     from taic.policy import compare_to_best, required_gain
 
     gain = required_gain(0.5, -2.0, 0.0, 0.0)

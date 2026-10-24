@@ -20,12 +20,18 @@ KERNEL = "relu_kernel"
 
 
 def _legacy_report(**extra) -> dict:
+    """@brief 造一份旧格式的报告 JSON（无 ``schema_version``、``status`` 齐全），可按需补字段。
+
+    @param extra 追加或覆盖的顶层字段。
+    @return 报告字典。
+    """
     doc = {"task": "relu", "dtype": "fp16", "size": "small", "mode": "quick", "status": "ok", "eligible": True}
     doc.update(extra)
     return doc
 
 
 def test_a_legacy_report_loads_and_a_round_trip_records_the_version():
+    """@brief 验证旧报告能加载，且再序列化时补上当前 schema 版本，数值不丢。"""
     rep = EvalReport.from_json(_legacy_report(speedup=1.2))
     assert rep.status == "ok" and rep.eligible and rep.speedup == pytest.approx(1.2)
     again = EvalReport.from_json(rep.to_json())
@@ -34,6 +40,7 @@ def test_a_legacy_report_loads_and_a_round_trip_records_the_version():
 
 
 def test_a_new_report_carries_backend_version_and_a_stage_timeline():
+    """@brief 验证新报告带上后端版本与分阶段时间线，往返一次内容不变。"""
     report = EvalReport(
         task="relu", dtype="fp16", size="small", mode="full", status="ok",
         backend="metal", backend_version="1",
@@ -48,11 +55,13 @@ def test_a_new_report_carries_backend_version_and_a_stage_timeline():
 
 
 def test_eligible_true_without_a_status_loads_as_ok():
+    """@brief 验证只有 ``eligible: true``、没有 status 的旧报告按 ok 加载。"""
     rep = EvalReport.from_json({"task": "relu", "dtype": "fp16", "size": "small", "mode": "full", "eligible": True, "speedup": 1.1})
     assert rep.status == "ok" and rep.eligible and rep.speedup == pytest.approx(1.1)
 
 
 def test_a_report_with_an_unknown_field_or_a_newer_version_needs_inspection():
+    """@brief 验证未知字段、更新的版本号以及把版本写成 bool 都被判为需要人工检查。"""
     with pytest.raises(SchemaError, match="needs human inspection"):
         EvalReport.from_json(_legacy_report(future_field=1))
     with pytest.raises(SchemaError, match="needs human inspection"):
@@ -62,11 +71,16 @@ def test_a_report_with_an_unknown_field_or_a_newer_version_needs_inspection():
 
 
 def test_bench_stats_does_not_grow_a_per_rep_sample_list():
+    """@brief 验证 ``BenchStats`` 不新增逐次样本字段，且差分复检默认关闭。"""
     assert "samples" not in {item.name for item in fields(BenchStats)}
     assert SearchConfig().differential_recheck is False
 
 
 def test_old_result_json_loads_and_a_newer_or_damaged_file_is_not_treated_as_missing(tmp_path):
+    """@brief 验证缺文件返回 None，旧 result.json 照常加载，而更新版本或损坏的文件抛 ``NeedsInspection`` 而不是当成缺失。
+
+    @param tmp_path 临时目录，四种运行目录都在这里造。
+    """
     missing = tmp_path / "missing"
     missing.mkdir()
     assert read_result(missing) is None
@@ -91,6 +105,11 @@ def test_old_result_json_loads_and_a_newer_or_damaged_file_is_not_treated_as_mis
 
 
 def _candidate(run: Path, report: dict | str) -> None:
+    """@brief 造一个只含单候选（``000_init``）的运行目录，并写好报告、state 与运行配置。
+
+    @param run 运行目录根。
+    @param report 候选报告；dict 会转成 JSON，字符串原样写入（用来造损坏文件）。
+    """
     folder = run / "candidates" / "000_init"
     folder.mkdir(parents=True)
     (folder / "kernel.metal").write_text(f"kernel void {KERNEL}() {{}}\n")
@@ -104,6 +123,10 @@ def _candidate(run: Path, report: dict | str) -> None:
 
 
 def test_a_damaged_candidate_report_needs_inspection_and_a_missing_one_does_not(tmp_path):
+    """@brief 验证候选报告损坏时抛 ``NeedsInspection``，空目录判为不可续跑，缺候选报告则报 no candidates。
+
+    @param tmp_path 临时目录，几种运行目录都在这里造。
+    """
     damaged = tmp_path / "damaged"
     _candidate(damaged, "{not json")
     (damaged / "transcript.jsonl").write_text(json.dumps({"event": "chat", "label": "init", "usage": {}, "cost_usd": 0.2, "total_usd": 0.2}) + "\n")
@@ -129,6 +152,10 @@ def test_a_damaged_candidate_report_needs_inspection_and_a_missing_one_does_not(
 
 
 def test_a_checkpoint_request_list_does_not_replace_the_transcript(tmp_path):
+    """@brief 验证账单请求以 ``transcript.jsonl`` 为准，checkpoint 里的请求列表不会覆盖它，且 transcript 不被改写。
+
+    @param tmp_path 临时目录，运行目录在这里造。
+    """
     run = tmp_path / "run"
     _candidate(run, _legacy_report(speedup=1.1))
     transcript = run / "transcript.jsonl"
@@ -149,6 +176,7 @@ def test_a_checkpoint_request_list_does_not_replace_the_transcript(tmp_path):
 
 
 def test_worker_request_version_0_loads_and_a_newer_request_is_refused():
+    """@brief 验证 worker 请求缺版本号时按 v0 接受，未知字段与更新的版本被拒。"""
     from tcenv.schema import REQUEST_SCHEMA_VERSION
 
     base = {"task": "relu", "dtype": "fp16", "size": "small", "kernel_path": "k.metal", "mode": "quick", "seed": 1, "reps": 3, "out": "out.json", "target_id": "apple-m4-max"}
@@ -161,6 +189,10 @@ def test_worker_request_version_0_loads_and_a_newer_request_is_refused():
 
 
 def test_atomic_json_replace_leaves_only_the_finished_file(tmp_path):
+    """@brief 验证原子写只留下最终文件，目录里不残留临时文件。
+
+    @param tmp_path 临时目录，目标路径的父目录会被自动创建。
+    """
     path = tmp_path / "nested" / "report.json"
     write_json_atomic(path, {"schema_version": 1, "status": "ok"})
     assert json.loads(path.read_text())["status"] == "ok"
@@ -168,6 +200,10 @@ def test_atomic_json_replace_leaves_only_the_finished_file(tmp_path):
 
 
 def test_a_damaged_worker_report_is_not_treated_as_a_missing_report(monkeypatch):
+    """@brief 验证 worker 写出损坏报告时归为 crash 并提示人工检查，而不是当成没写报告。
+
+    @param monkeypatch 把评测后的冷却时间置零，避免额外等待。
+    """
     from tcenv import evaluate as ev
 
     monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
@@ -181,6 +217,7 @@ def test_a_damaged_worker_report_is_not_treated_as_a_missing_report(monkeypatch)
 
 
 def test_a_report_records_the_measurement_protocol():
+    """@brief 验证报告带上测量协议版本，并能原样往返。"""
     from tcenv.schema import PROTOCOL_VERSION
 
     report = EvalReport(task="relu", dtype="fp16", size="small", mode="full")

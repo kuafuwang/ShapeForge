@@ -15,10 +15,22 @@ from ..support.orchestrator import code, llm_script, make_orch, run
 
 
 def _text(fenced: str) -> str:
+    """@brief 从带 ```metal 围栏的字符串里取出 kernel 源码正文并补上行尾换行。
+
+    @param fenced 含 ```metal 围栏的文本。
+    @return 围栏内的源码文本。
+    """
     return fenced.split("```metal\n", 1)[1].rsplit("```", 1)[0] + "\n"
 
 
 def test_two_session_failures_stop_and_one_success_clears_the_count(tmp_path):
+    """@brief 验证连续两次会话失败即停止搜索，而一次成功（即使前面有 timeout）会清零失败计数。
+
+    前半断言连续失败后 ``stop_reason`` 为 ``agent_failure`` 且没有 best；后半第一轮 timeout、
+    第二轮成功后 best 为 ``init2`` 且因轮数用尽停止。
+
+    @param tmp_path pytest 提供的临时目录，用来放两次独立试跑的 run 目录。
+    """
     calls = []
 
     def fail(brief, tag):
@@ -48,6 +60,10 @@ def test_two_session_failures_stop_and_one_success_clears_the_count(tmp_path):
 
 
 def test_a_finished_session_without_a_token_count_stops_the_run(tmp_path):
+    """@brief 验证会话完成但没拿到 token 计数时停止搜索，停止原因以 ``cost_incomplete`` 开头。
+
+    @param tmp_path pytest 提供的临时目录，用作搜索的仓目录。
+    """
     calls = []
 
     def blind(brief, tag):
@@ -61,6 +77,12 @@ def test_a_finished_session_without_a_token_count_stops_the_run(tmp_path):
 
 
 def test_a_kernel_from_another_run_is_not_a_result(tmp_path):
+    """@brief 验证从别的 run 里抄来的 kernel（内容与外部 run 的 best.metal 相同）被标为 external_duplicate，不算成绩。
+
+    best 仍为 seed 的 ``init``，候选里出现 ``external_duplicate`` 记录。
+
+    @param tmp_path pytest 提供的临时目录，用来放本次 run 与一个更早的外部 run。
+    """
     calls = []
     other = tmp_path / "runs" / "older"
     other.mkdir(parents=True)
@@ -81,6 +103,10 @@ def test_a_kernel_from_another_run_is_not_a_result(tmp_path):
 
 
 def test_a_timed_self_check_that_hangs_closes_the_workspace_and_the_search(tmp_path):
+    """@brief 验证超时的自测会被 ``earlier_hang`` 识别，并在达到 max_hangs 时触发挂死断路器停止搜索。
+
+    @param tmp_path pytest 提供的临时目录，用来放工作目录与 run 目录。
+    """
     work = tmp_path / "work"
     work.mkdir()
     append(work, {"status": "timeout", "candidate_us": None, "cv": None, "elapsed_s": 3.0})
@@ -106,6 +132,11 @@ def test_a_timed_self_check_that_hangs_closes_the_workspace_and_the_search(tmp_p
 
 
 def test_the_replacement_line_uses_the_outer_rule_and_says_the_self_check_does_not_count():
+    """@brief 验证换种子提示行按外层规则判定，并明确指出自测不算数、没计时时直说不存在计时。
+
+    1.2x 相对 1.0x 的 seed 在 min_improvement=1.005、noise_z=2.0 下提示够换种子；
+    1.001x 提示不够；无 speedup 时提示没有计时。
+    """
     seed = {
         "speedup": 1.0,
         "benchmark": {
@@ -123,6 +154,11 @@ def test_the_replacement_line_uses_the_outer_rule_and_says_the_self_check_does_n
 
 
 def test_an_old_run_directory_cannot_be_resumed(tmp_path):
+    """@brief 验证缺少必要记录的旧 run 目录不能 resume，错误信息会指出协议名为 flame_chase_1。
+
+    @param tmp_path pytest 提供的临时目录，用来放只有 state.json／result.json 的旧目录。
+    @raises AssertionError 如果旧目录没被拒绝就直接通过时由用例自身抛出。
+    """
     from taic.resume import ResumeError, load_snapshot
     from taic.llm import SearchConfig
 
@@ -139,6 +175,11 @@ def test_an_old_run_directory_cannot_be_resumed(tmp_path):
 
 
 def _records(run: Path) -> list[dict]:
+    """@brief 读取 run 目录下 ``feedback.jsonl``，跳过非 JSON 行与坏行。
+
+    @param run run 目录路径。
+    @return 解析成功的 JSON 行列表；文件不存在时返回空列表。
+    """
     path = run / "feedback.jsonl"
     if not path.is_file():
         return []
@@ -154,6 +195,11 @@ def _records(run: Path) -> list[dict]:
 
 
 def _kernel(speed: str) -> str:
+    """@brief 用固定的 kernel 模板生成一份带给定 speed 常量的源码。
+
+    @param speed 写进 kernel 的 speed 取值字符串。
+    @return kernel 源码文本。
+    """
     return _text(code(f"speed={speed}"))
 
 
@@ -162,6 +208,13 @@ _HELP = "kind: tool, prompt\n\n# 需要帮助\n- 需要一把能读带宽的探�
 
 
 def test_a_normal_session_records_feedback_once_and_copies_it(tmp_path):
+    """@brief 验证正常会话只记一条 feedback 记录，并把 FEEDBACK.md 拷贝进候选目录、在 transcript 里只记摘要。
+
+    记录字段包括 seq、exit=normal、outcome=evaluated、kinds、label、candidate_status 与 work_dir；
+    transcript 事件保留 kinds 与章节名，但不含反馈正文（例如 ``float8``）。
+
+    @param tmp_path pytest 提供的临时目录，用作搜索仓目录。
+    """
     calls = []
 
     def write(brief, tag):
@@ -188,6 +241,14 @@ def test_a_normal_session_records_feedback_once_and_copies_it(tmp_path):
 
 
 def test_cost_incomplete_hang_exception_and_eval_error_each_record_once(tmp_path):
+    """@brief 验证四种异常收尾（cost_incomplete、挂死断路器、agent 异常、评测抛错）都只记一条反馈且 exit 分类正确。
+
+    cost_incomplete 与 hang 没有 candidate_status；agent 异常连续两轮各记一条，首条保留旧反馈原文；
+    评测抛错时异常会上抛，但仍先写下 exit=eval_error 的记录。
+
+    @param tmp_path pytest 提供的临时目录，用来为四个场景分别建仓目录。
+    @raises RuntimeError 评测函数抛错时由 ``run`` 原样上抛（``eval broke``）。
+    """
     calls = []
 
     def blind(brief, tag):
@@ -251,6 +312,10 @@ def test_cost_incomplete_hang_exception_and_eval_error_each_record_once(tmp_path
 
 
 def test_a_stale_feedback_file_is_removed_before_the_session_and_not_recorded(tmp_path):
+    """@brief 验证上一轮遗留的 FEEDBACK.md 与 NOTES.md 在会话开始前被清掉，旧前提不会进入记录。
+
+    @param tmp_path pytest 提供的临时目录，用作搜索仓目录。
+    """
     calls = []
     seen = {}
 
@@ -273,6 +338,13 @@ def test_a_stale_feedback_file_is_removed_before_the_session_and_not_recorded(tm
 
 
 def test_peer_tips_pass_within_one_run_and_a_switch_turns_them_off(tmp_path):
+    """@brief 验证 peer tips 在同一 run 内从一次会话传到下一次（未验证前提只保留两个会话），关掉开关后不再传递。
+
+    首次会话无 tips；失败交棒后下一次会话会看到上一条 tip；“被否决的前提”在三个会话后过期。
+    末尾确认 ``peer_tips=False`` 时初始提示为空，且 run_config.json 记下了该开关。
+
+    @param tmp_path pytest 提供的临时目录，用来为三个场景分别建仓目录。
+    """
     calls = []
     seen = {}
 
@@ -319,6 +391,10 @@ def test_peer_tips_pass_within_one_run_and_a_switch_turns_them_off(tmp_path):
 
 
 def test_silent_sessions_count_toward_the_two_session_premise_window(tmp_path):
+    """@brief 验证没有写 feedback 的静默会话也计入两会话的前提窗口，反馈 seq 每个会话都递增。
+
+    @param tmp_path pytest 提供的临时目录，用作搜索仓目录。
+    """
     calls = []
     seen = {}
     kernel = _kernel("1.0")
@@ -342,6 +418,10 @@ def test_silent_sessions_count_toward_the_two_session_premise_window(tmp_path):
 
 
 def test_peer_tips_has_a_command_line_switch_and_resume_keeps_the_recorded_value(monkeypatch):
+    """@brief 验证 ``--no-peer-tips``／``--peer-tips`` 开关生效，resume 时保留记录在 run_config 里的值并标出来源。
+
+    @param monkeypatch pytest 的替换与环境夹具，用于替换 CLI 命令处理函数并注入假 API key／base url。
+    """
     from taic import cli
 
     got = {}
@@ -362,6 +442,13 @@ def test_peer_tips_has_a_command_line_switch_and_resume_keeps_the_recorded_value
 
 
 def test_provider_retries_has_a_cli_switch_and_resume_preserves_or_overrides_it(monkeypatch):
+    """@brief 验证 ``--provider-retries`` 与 ``--session-cost-cap-usd`` 可分别从命令行设置，resume 时保留或覆盖并标出来源。
+
+    未在命令行给出时沿用 run_config 的值且 provenance 为 ``run_config.json``；
+    显式给出时 provenance 变为 ``command line``。
+
+    @param monkeypatch pytest 的替换与环境夹具，用于替换 CLI 命令处理函数并注入假 API key／base url。
+    """
     from taic import cli
     from ..support.resume import ns
 
@@ -389,6 +476,10 @@ def test_provider_retries_has_a_cli_switch_and_resume_preserves_or_overrides_it(
 
 
 def test_feedback_seq_continues_after_a_broken_line(tmp_path):
+    """@brief 验证 feedback.jsonl 尾部有坏行时，新记录的 seq 接着已有的最大值继续。
+
+    @param tmp_path pytest 提供的临时目录，用作搜索仓目录。
+    """
     calls = []
 
     def write(brief, tag):
@@ -404,6 +495,7 @@ def test_feedback_seq_continues_after_a_broken_line(tmp_path):
 
 
 def test_gpu_timestamp_line_compares_seed_and_candidate():
+    """@brief 验证 GPU 时间戳对比行同时给出与 seed 的倍数及两边用时，缺数据时返回空串。"""
     seed = {"benchmark": {"candidate_gpu_us_median": 300.03}}
     candidate = {"benchmark": {"candidate_gpu_us_median": 342.94}}
     line = gpu_timestamp_line(candidate, seed)

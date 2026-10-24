@@ -8,6 +8,8 @@ from tcenv.target import TargetError, calibration_file, load_target, require_act
 
 
 def test_a_device_that_reports_other_limits_is_named_and_the_profile_stays():
+    """@brief 验证实测上限与目标档案一致时不给提示，不一致时给出指出两边具体数字的提示，档案本身不被改写。
+    """
     from tcenv.target import limit_notes
 
     profile = load_target("apple-m4-max")
@@ -19,6 +21,8 @@ def test_a_device_that_reports_other_limits_is_named_and_the_profile_stays():
 
 
 def test_feedback_reads_calibration_peaks():
+    """@brief 验证反馈模块能读到目标标定的峰值（fp16 算力、读带宽、拷贝带宽）。
+    """
     from observe.feedback import _calibration
 
     peaks = _calibration()
@@ -29,6 +33,8 @@ def test_feedback_reads_calibration_peaks():
 
 
 def test_the_current_machine_loads_and_points_at_metal():
+    """@brief 验证当前机器的档案能加载、指向 metal 后端，并给出设备文档、经验文件、skills 目录与目标侧的标定文件。
+    """
     profile = require_active("apple-m4-max")
     assert profile.backend == "metal"
     assert profile.limits.max_threadgroup_memory_bytes == 32768
@@ -41,6 +47,8 @@ def test_the_current_machine_loads_and_points_at_metal():
 
 
 def test_a_reserved_profile_loads_but_cannot_run():
+    """@brief 验证保留状态的档案可以加载，但不能作为运行目标：require_active 抛 TargetError。
+    """
     profile = load_target("_template")
     assert profile.status == "reserved"
     with pytest.raises(TargetError):
@@ -48,11 +56,15 @@ def test_a_reserved_profile_loads_but_cannot_run():
 
 
 def test_an_unknown_target_is_refused():
+    """@brief 验证未知芯片 id 被 load_target 拒绝。
+    """
     with pytest.raises(TargetError):
         load_target("no-such-chip")
 
 
 def test_device_match_rejects_a_different_chip():
+    """@brief 验证设备匹配只认档案对应的芯片名与 GPU 家族，另一代芯片不匹配。
+    """
     from tcenv.target import device_matches
 
     profile = load_target("apple-m4-max")
@@ -61,6 +73,11 @@ def test_device_match_rejects_a_different_chip():
 
 
 def test_catalog_keeps_the_faster_kernel_and_records_the_slower_one(tmp_path, monkeypatch):
+    """@brief 验证内核目录只保留更快的那个内核、每次确认都记进 history，并在出现更快内核时替换 best.metal。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把内核目录的仓库根指到临时路径。
+    """
     import taic.kernel_catalog as catalog
 
     monkeypatch.setattr(catalog, "REPO", tmp_path)
@@ -84,6 +101,10 @@ def test_catalog_keeps_the_faster_kernel_and_records_the_slower_one(tmp_path, mo
 
 
 def test_migrate_moves_a_flat_run_and_stamps_the_target(tmp_path):
+    """@brief 验证迁移把扁平的运行目录挪到目标目录下，并给 state.json 补上 target_id。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from taic.migrate import migrate_runs
 
     run = tmp_path / "20260101_relu"
@@ -96,6 +117,11 @@ def test_migrate_moves_a_flat_run_and_stamps_the_target(tmp_path):
 
 
 def test_catalog_seed_is_read_back_and_a_foreign_run_is_refused(tmp_path, monkeypatch):
+    """@brief 验证从目录读回的种子内核能被用上，而 run_config.json 记录的是其它芯片目录的运行不会被当成本次种子。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把内核目录的仓库根指到临时路径。
+    """
     import taic.kernel_catalog as catalog
     from taic.llm import LLMConfig, SearchConfig
     from taic.orchestrator import Orchestrator
@@ -125,6 +151,10 @@ def test_catalog_seed_is_read_back_and_a_foreign_run_is_refused(tmp_path, monkey
 
 
 def test_a_traversing_target_id_is_refused(tmp_path):
+    """@brief 验证含路径穿越片段的目标 id 被迁移拒绝，运行目录与外部路径都没被改动。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from taic.migrate import migrate_runs
 
     runs = tmp_path / "runs"

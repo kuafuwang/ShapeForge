@@ -8,6 +8,10 @@ from taic import code_agent
 
 
 def test_model_flows_do_not_get_network_or_home_write():
+    """@brief 验证写核与审查 flow 只获得本地权限，不能联网或写 home。
+
+    hmz 不可用时跳过；可用时逐一检查 Assistant/Coder/Reviewer 的 Permission 边界。
+    """
     pytest.importorskip("hmz")
     from hmz.flows import PermissionKind
 
@@ -24,6 +28,10 @@ def test_model_flows_do_not_get_network_or_home_write():
 
 
 def test_code_agent_cannot_patch_security_critical_paths():
+    """@brief 验证 code agent 不能修改测试、评测、提示、信任等安全关键路径。
+
+    同时确认普通实现文件仍可被补丁命中，避免误把整个仓库都封死。
+    """
     for path in (
         "tests/shared/test_code_agent.py",
         "tcenv/evaluate.py",

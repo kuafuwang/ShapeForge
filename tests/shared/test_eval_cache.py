@@ -9,6 +9,11 @@ from tcenv.evaluate import EvalReport, _cache_read, _cache_write, _eval_cache_ke
 
 
 def _key(**over):
+    """@brief 用默认参数生成评估缓存键，允许覆盖任意字段。
+
+    @param over 覆盖默认键字段。
+    @return 缓存键字符串。
+    """
     base = dict(
         task="relu", dtype="fp16", size="small", mode="full", seed=1, reps=15, cases=None,
         fast_bench=False, require_contract_launch=False, validate=False, measure_serial=False,
@@ -19,6 +24,8 @@ def _key(**over):
 
 
 def test_the_key_separates_seed_serial_protocol_and_source():
+    """@brief 缓存键区分 seed、串行测量和 kernel 源码，同输入保持稳定。
+    """
     base = _key()
     assert base != _key(seed=2)
     assert base != _key(measure_serial=True)
@@ -27,6 +34,11 @@ def test_the_key_separates_seed_serial_protocol_and_source():
 
 
 def test_a_cached_report_round_trips(tmp_path, monkeypatch):
+    """@brief EvalReport 写入缓存后能读回，缓存文件带 schema_version。
+
+    @param tmp_path pytest 提供的临时目录，用作缓存目录。
+    @param monkeypatch pytest 补丁工具，用于设置缓存目录环境变量。
+    """
     monkeypatch.setenv("TCENV_EVAL_CACHE_DIR", str(tmp_path))
     report = EvalReport(task="relu", dtype="fp16", size="small", mode="full", status="ok", speedup=1.2, candidate_us=1.0)
     report.benchmark = {"candidate": {"cv": 0.01}}
@@ -37,6 +49,8 @@ def test_a_cached_report_round_trips(tmp_path, monkeypatch):
 
 
 def test_the_search_defaults_keep_serial_off_and_the_cache_on():
+    """@brief SearchConfig 默认关闭串行测量并打开评估缓存。
+    """
     config = SearchConfig()
     assert config.measure_serial is False
     assert config.eval_cache is True

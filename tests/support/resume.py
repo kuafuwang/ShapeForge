@@ -12,6 +12,12 @@ from .orchestrator import code
 
 
 def ns(run_dir: Path, **kw) -> argparse.Namespace:
+    """@brief 造一个覆盖 ``taic resume`` 全部命令行参数的命名空间，默认值取“什么都不改”。
+
+    @param run_dir 运行目录。
+    @param kw 需要覆盖的字段，例如 ``add_budget`` 或 ``max_rounds``。
+    @return 填好默认值再叠加 ``kw`` 的 ``argparse.Namespace``。
+    """
     base = dict(run_dir=str(run_dir), add_budget=None, budget=None, dry_run=False, who="cli", config=None, preset=None, model=None, branches=None, max_rounds=None,
                 effort=None, no_tools=False, profile_best=False, profile_poor=False, plan_mix=False, init_samples=None, patience=None,
                 lift_count_limits=False, accept_cost_gap=False)
@@ -19,7 +25,12 @@ def ns(run_dir: Path, **kw) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 def script_for(counter: dict | None = None, usage=None):
-    """Deterministic, content-based scripted model: the answer depends only on the prompt, never on the order of the calls."""
+    """@brief 造一个内容驱动的脚本化模型：答复只取决于提示词，与调用顺序无关。
+
+    @param counter 可选的计数器字典；置 ``kill_at`` 后在第 N 次调用里抛出 ``SystemExit`` 模拟进程被杀。
+    @param usage 可选的用量对象，未给时用 ``make_usage()``。
+    @return 接收消息列表的 ``route`` 函数，供假客户端调用。
+    """
     pat = {"A": ["status=compile_error", "speed=1.4"], "B": ["speed=1.2"], "C": ["status=incorrect", "status=incorrect", "status=incorrect"]}
 
     def route(messages, **kw):
@@ -48,7 +59,10 @@ def script_for(counter: dict | None = None, usage=None):
     return route
 
 def mark_dead(run_dir: Path) -> None:
-    """The test process plays the killed process: after the "kill" its pid must look dead to the next one."""
+    """@brief 让测试进程扮演被杀的进程：改掉 ``state.json`` 里的 pid，使下一个进程看到它已死。
+
+    @param run_dir 运行目录，其中的 ``state.json`` 会被重写。
+    """
     st = json.loads((run_dir / "state.json").read_text())
     st["pid"] = 2**22 + 4242
     (run_dir / "state.json").write_text(json.dumps(st))

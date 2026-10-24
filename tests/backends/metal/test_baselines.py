@@ -14,6 +14,11 @@ ALL = list(list_tasks(include_phase2=True))
 
 
 def test_composite_operators_have_compiled_baselines():
+    """@brief 检查组合算子的 task 在原有 baseline 之外还声明了编译式 baseline。
+
+    lion 需含 ``torch_compile``；bitdelta_gemm 需同时含 ``mlx_compile`` 与 ``torch_compile``；
+    各 task 都保留原有 ``mlx`` 与 ``torch_mps``。
+    """
     names = {t: {b.name for b in get_task(t, "fp16", "small").baselines} for t in ("lion", "bitdelta_gemm", "silu", "swiglu", "gemm_silu")}
     assert {"torch_compile"} <= names["lion"]
     assert {"mlx_compile", "torch_compile"} <= names["bitdelta_gemm"]
@@ -23,8 +28,14 @@ def test_composite_operators_have_compiled_baselines():
 @pytest.mark.parametrize("name", ALL)
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
 def test_baselines_match_the_reference_on_ordinary_inputs(name, dtype):
-    """The most accurate baseline defines what is achievable (that is how the correctness tolerance is relaxed), but none may be garbage:
-    MLX's fp16 reduction, for instance, is measurably less accurate than torch's."""
+    """@brief 每份 baseline 在小尺寸普通输入上都要贴近参考结果，且最准的一份不能被放宽到失效。
+
+    最准的 baseline 定义了可达上限（正确性容差就是据此放宽的），但任何一份都不能离谱，
+    例如 MLX 的 fp16 归约在可测程度上比 torch 更不准。断言最小误差不超过 2.0、最大误差不超过 16.0。
+
+    @param name 被参数化的 task 名。
+    @param dtype 被参数化的数据类型（fp16 或 bf16）。
+    """
     task = get_task(name, dtype, "small")
     d = prepare_case(task, task.cases[0], 321)
     errs = {}

@@ -17,10 +17,19 @@ pytestmark = pytest.mark.gpu
 
 
 def fenced(src: str) -> str:
+    """@brief 把 MSL 源码包成 ```metal 代码块，也就是脚本化模型在回答里给出的内核形状。
+
+    @param src MSL 源码。
+    @return 带围栏的文本。
+    """
     return f"```metal\n{src}\n```"
 
 
 def test_real_environment_end_to_end_with_scripted_llm(tmp_path):
+    """@brief 用脚本化模型和真实评测环境跑通一次端到端搜索：先落一个编译失败的变体、再修正，最后给出确认结果且没有挂起。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     naive = get_task("relu", "fp16", "small").naive_msl
     broken = naive.replace("y[j] = half(v < 0.0f ? 0.0f : v)", "y[j] = undefined_symbol")
     wrong = naive.replace("v < 0.0f ? 0.0f : v", "v < 0.0f ? 0.1f * v : v")

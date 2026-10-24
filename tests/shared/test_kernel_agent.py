@@ -18,6 +18,12 @@ PRICES = Prices(input=0.3, output=1.2, cache_read=0.006, cache_write=0.0)
 
 
 def _brief(tmp_path: Path, *, seedless: bool = True) -> SessionBrief:
+    """@brief 构造一份 conv2d 的会话简报，供 kernel agent 测试使用。
+
+    @param tmp_path pytest 提供的临时目录，仓库与工作目录都建在其下。
+    @param seedless 是否无种子起草，默认 True。
+    @return 已填好合约、ABI stub 与工作目录的 SessionBrief。
+    """
     work = tmp_path / "agent_work" / "init"
     return SessionBrief(
         repo=tmp_path, task_name="conv2d", dtype="fp16", size="paper", kernel_name="conv2d_kernel",
@@ -28,15 +34,21 @@ def _brief(tmp_path: Path, *, seedless: bool = True) -> SessionBrief:
 
 
 def test_writing_kernels_goes_through_hmz():
+    """@brief 验证默认搜索配置用 pi 作为写 kernel 的代理。
+    """
     assert SearchConfig().kernel_agent == "pi"
 
 
 def test_pi_names_the_model_and_the_effort():
+    """@brief 验证 agent 规格串为 pi/provider/model，带思考强度时追加 :effort。
+    """
     assert agent_spec("moonshot", "kimi-k3") == "pi/moonshot/kimi-k3"
     assert agent_spec("deepseek", "deepseek-flash", "high") == "pi/deepseek/deepseek-flash:high"
 
 
 def test_a_file_that_declares_the_kernel_is_the_source_without_a_fence():
+    """@brief 验证没有代码围栏时整份声明了目标 kernel 的文件也算源码，带 taic-launch 头的暂存文件同样被接受。
+    """
     assert kernel_text("kernel void conv2d_kernel() {}\n", "conv2d_kernel").startswith("kernel void conv2d_kernel")
     assert kernel_text("kernel void other() {}\n", "conv2d_kernel") is None
     staged = "/* taic-launch\nlaunch other grid=1,1,1 threads=32,1,1\n*/\nkernel void other() {}\n"
@@ -44,12 +56,18 @@ def test_a_file_that_declares_the_kernel_is_the_source_without_a_fence():
 
 
 def test_the_submission_name_is_the_task_and_the_session():
+    """@brief 验证提交名由任务、dtype、size 与会话标签拼成，任务名里的空格换成连字符，且不同会话不重名。
+    """
     assert submission_name("conv2d", "fp16", "paper", "r16.p0") == "conv2d-fp16-paper-r16.p0.metal"
     assert submission_name("flash attention", "fp16", "64x32", "init") == "flash-attention-fp16-64x32-init.metal"
     assert submission_name("conv2d", "fp16", "paper", "r1.p0") != submission_name("conv2d", "fp16", "paper", "r2.p0")
 
 
 def test_the_contract_names_both_commands_and_does_not_ask_for_a_fence(tmp_path):
+    """@brief 验证 TASK.md 同时给出 --quick 与 --timed 的提交文件路径、不要求代码围栏，并包含必填的反馈小节。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     brief = _brief(tmp_path)
     text = render_contract(brief)
     submit = str(Path(brief.work_dir) / "conv2d-fp16-paper-init.metal")
@@ -76,6 +94,10 @@ def test_the_contract_names_both_commands_and_does_not_ask_for_a_fence(tmp_path)
 
 
 def test_a_seeded_contract_leads_with_the_outer_measurement(tmp_path):
+    """@brief 验证有种子时契约先给外层实测再给上版自报，并转发 --seed-report、把前序提示标明按未验证处理。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     brief = _brief(tmp_path, seedless=False)
     brief.seed_source = "kernel void conv2d_kernel() {}\n"
     brief.notes_summary = "外层实测：100 µs，状态 ok，没换种子\n上一版自报 10 µs"
@@ -101,6 +123,8 @@ def test_a_seeded_contract_leads_with_the_outer_measurement(tmp_path):
 
 
 def test_spent_on_a_result_line_is_priced_by_kind_and_result_lines_add():
+    """@brief 验证 result 行的 spent 按 kind 累加、按每百万 token 单价折算美元，非 JSON 流返回空账单。
+    """
     stream = "\n".join([
         json.dumps({"kind": "text", "text": "working"}),
         json.dumps({"kind": "result", "spent": "Usage(input=1000000, output=500000, cache_read=2000000)"}),
@@ -117,10 +141,11 @@ def test_spent_on_a_result_line_is_priced_by_kind_and_result_lines_add():
     assert parse_spent("Usage(input=3)") == {"input": 3.0}
 
 def test_a_failed_turn_is_billed_too():
-    """hmz closes a turn with kind=failed when its last request errored, and carries the same spent record.
+    """@brief 验证以 kind=failed 收尾的回合同样按 spent 计费。
 
-    Billing only ``result`` lines under-counts every failed turn: the budget gate then under-counts
-    and the run keeps spending money the ledger never saw.
+    hmz 在最后一次请求出错时会用 kind=failed 结束回合，并带上同样的 spent 记录。
+    只结算 result 行会漏算每个失败回合的用量：预算闸门因此少算，
+    而本运行继续花钱却从未记入账本。只有失败回合的会话仍有账单，不会被标成费用不完整。
     """
     stream = "\n".join([
         json.dumps({"kind": "result", "spent": "Usage(input=1000, output=100)"}),
@@ -136,11 +161,21 @@ def test_a_failed_turn_is_billed_too():
 
 
 def test_a_dollar_slice_becomes_output_tokens():
+    """@brief 验证美元片段按输出单价换算成 token 数，小到不足一枚时至少计一个 token。
+    """
     assert output_tokens_for(1.2, 1.2) == 1_000_000
     assert output_tokens_for(0.0000001, 1.2) == 1
 
 
 def _fake_hmz(path: Path, *, source: str, code: int = 0, spent: str = "Usage(output=1000)", write_submit: bool = True) -> None:
+    """@brief 写一个可执行的假 hmz 脚本，按 submit_name 参数落盘 kernel 并打印结算行。
+
+    @param path 脚本路径。
+    @param source 写入提交文件的 kernel 文本。
+    @param code 脚本退出码。
+    @param spent 结算行里的用量记录。
+    @param write_submit 是否真的写出提交文件。
+    """
     line = json.dumps({"kind": "result", "spent": spent})
     write = f"pathlib.Path(name).write_text({source!r})\n" if write_submit else ""
     path.write_text(
@@ -159,6 +194,10 @@ def _fake_hmz(path: Path, *, source: str, code: int = 0, spent: str = "Usage(out
 
 
 def test_a_fake_hmz_leaves_the_kernel_and_a_computed_cost(tmp_path):
+    """@brief 验证跑完假 hmz 后能拿到 kernel 源码、按输出 token 算出的费用和 NOTES，且 TASK/HARNESS 内容符合约定。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     hmz = tmp_path / "hmz"
     _fake_hmz(hmz, source="kernel void conv2d_kernel() {}\n")
     result = run_kernel_agent(
@@ -180,6 +219,10 @@ def test_a_fake_hmz_leaves_the_kernel_and_a_computed_cost(tmp_path):
 
 
 def test_a_missing_hmz_is_an_error_and_a_timeout_still_returns_the_file(tmp_path):
+    """@brief 验证 hmz 不在 PATH 上时报错，而超时仍会把已写出的 kernel 文件读回来。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     with pytest.raises(AgentError, match="not on PATH"):
         run_kernel_agent(
             _brief(tmp_path), work=tmp_path / "work", provider="deepseek", model="deepseek-flash",
@@ -209,6 +252,10 @@ def test_a_missing_hmz_is_an_error_and_a_timeout_still_returns_the_file(tmp_path
 
 
 def test_a_seed_left_in_kernel_metal_is_not_a_submission(tmp_path):
+    """@brief 验证残留在 kernel.metal 里的种子或旧文件不会被当成本轮提交，会话结束后也不再保留。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     hmz = tmp_path / "hmz"
     _fake_hmz(hmz, source="kernel void conv2d_kernel() { /* new */ }\n", write_submit=False)
     brief = _brief(tmp_path, seedless=False)
@@ -226,6 +273,10 @@ def test_a_seed_left_in_kernel_metal_is_not_a_submission(tmp_path):
 
 
 def test_a_nonzero_exit_with_no_kernel_is_a_failure(tmp_path):
+    """@brief 验证非零退出且没留下 kernel 时会被判为失败，且不伪造反馈。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     hmz = tmp_path / "hmz"
     _fake_hmz(hmz, source="// no kernel\n", code=2)
     result = run_kernel_agent(
@@ -237,6 +288,10 @@ def test_a_nonzero_exit_with_no_kernel_is_a_failure(tmp_path):
 
 
 def test_feedback_is_read_with_the_notes_and_capped(tmp_path):
+    """@brief 验证 FEEDBACK.md 与 NOTES.md 都会被读回，反馈只保留尾部且限长 16384 字符。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     hmz = tmp_path / "hmz"
     _fake_hmz(hmz, source="kernel void conv2d_kernel() {}\n")
     script = hmz.read_text().replace(
@@ -256,6 +311,10 @@ def test_feedback_is_read_with_the_notes_and_capped(tmp_path):
 
 
 def test_task_md_keeps_its_dynamic_blocks_inside_the_budget(tmp_path):
+    """@brief 验证各动态块按字节预算裁剪后仍保留合约、签名与两个命令，并标出被省略的部分。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     brief = _brief(tmp_path, seedless=False)
     brief.scorecard = "s" * 5000
     brief.notes_summary = "n" * 9000
@@ -273,6 +332,10 @@ def test_task_md_keeps_its_dynamic_blocks_inside_the_budget(tmp_path):
 
 
 def test_prune_archives_scratch_and_keeps_the_files_the_search_reads(tmp_path):
+    """@brief 验证清理把临时子目录与探针归档成 tar.gz，同时保留搜索要读的笔记与自检日志。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     work = tmp_path / "run" / "agent_work" / "r1"
     (work / "v").mkdir(parents=True)
     (work / "v" / "ablation.metal").write_text("x" * 2000)
@@ -288,6 +351,15 @@ def test_prune_archives_scratch_and_keeps_the_files_the_search_reads(tmp_path):
 
 
 def _real_brief(tmp_path, task_name: str) -> SessionBrief:
+    """@brief 用真实任务的合约与 Triton 源码构造会话简报。
+
+    仓库根固定为短路径前缀，避免 xdist 的 popen-gwN 临时路径把路径长度算进契约预算，
+    使测试考的是块优先级而不是路径长度。
+
+    @param tmp_path pytest 提供的临时目录；此处不使用，路径改由固定短前缀构造。
+    @param task_name 任务名。
+    @return 对应任务的 SessionBrief。
+    """
     from tasks import get_task
 
     task = get_task(task_name, "fp16", "paper")
@@ -307,6 +379,11 @@ def _real_brief(tmp_path, task_name: str) -> SessionBrief:
 
 @pytest.mark.parametrize("task_name", ["conv2d", "flash_attention"])
 def test_a_real_task_keeps_a_partial_scorecard_instead_of_dropping_it(tmp_path, task_name):
+    """@brief 验证真实任务超预算时保留截断后的外层成绩单，而不是整块丢弃。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param task_name 参数化的任务名，覆盖 conv2d 与 flash_attention。
+    """
     brief = _real_brief(tmp_path, task_name)
     brief.scorecard = "s" * 5000
     brief.notes_summary = "n" * 9000
@@ -324,6 +401,10 @@ def test_a_real_task_keeps_a_partial_scorecard_instead_of_dropping_it(tmp_path, 
 
 
 def test_the_self_check_log_is_inside_the_writable_work_directory(tmp_path):
+    """@brief 验证自检日志目录落在可写的工作目录下，而不是仓库其他位置。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     brief = _brief(tmp_path)
     log = _self_check_dir(brief)
     work = Path(brief.work_dir)
@@ -332,6 +413,10 @@ def test_the_self_check_log_is_inside_the_writable_work_directory(tmp_path):
 
 
 def test_prune_keeps_a_probe_named_by_the_feedback(tmp_path):
+    """@brief 验证被反馈点名的探针在清理时保留，未被点名的脚本则被清掉。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     work = tmp_path / "run" / "agent_work" / "r1"
     work.mkdir(parents=True)
     (work / "FEEDBACK.md").write_text("[已实测: probe.py | x | 1.0 us]\n")
@@ -343,6 +428,10 @@ def test_prune_keeps_a_probe_named_by_the_feedback(tmp_path):
 
 
 def test_an_active_harness_overlay_is_a_budgeted_task_block(tmp_path):
+    """@brief 验证生效中的 harness overlay 会作为受限预算的任务块出现在契约里。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     brief = _real_brief(tmp_path, "conv2d")
     brief.harness_overlay = "\n# 未验证的模型建议（不是合同，不是事实）\n- [run #1] 先读 device.md。\n"
     text = render_contract(brief)
@@ -352,6 +441,10 @@ def test_an_active_harness_overlay_is_a_budgeted_task_block(tmp_path):
 
 
 def test_a_full_overlay_survives_a_contract_that_already_used_the_budget(tmp_path):
+    """@brief 验证契约其他块已吃掉预算时，完整的 overlay 仍能整体保留并保持总长不超限。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     brief = _real_brief(tmp_path, "conv2d")
     brief.harness_overlay = (
         "\n# 未验证的模型建议（不是合同，不是事实）\n"
@@ -369,6 +462,8 @@ def test_a_full_overlay_survives_a_contract_that_already_used_the_budget(tmp_pat
 
 
 def test_kernel_text_uses_the_backend_source_fence():
+    """@brief 验证 kernel_text 识别的是后端声明的代码围栏名，而不是写死 metal。
+    """
     from taic.kernel_agent import kernel_text
 
     text = "```xlang\nkernel void conv2d_kernel() {}\n```"
@@ -377,6 +472,10 @@ def test_kernel_text_uses_the_backend_source_fence():
 
 
 def test_epic_spend_is_grouped_by_session_label_and_stays_inside_the_run(tmp_path):
+    """@brief 验证 epic 用量按会话标签归组、只统计指向本 run 工作区的记录，并跳过截断的末行。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     (run / "agent_work" / "r2.p0").mkdir(parents=True)
     epics = tmp_path / "epics"
@@ -398,7 +497,12 @@ def test_epic_spend_is_grouped_by_session_label_and_stays_inside_the_run(tmp_pat
 
 
 def _fake_hmz_events(path: Path, events: list[dict], *, source: str | None = None) -> None:
-    """A fake hmz that emits the same NDJSON fields as ``hmz exec --json``."""
+    """@brief 造一个假 hmz，输出与 hmz exec --json 相同的 NDJSON 字段。
+
+    @param path 脚本路径。
+    @param events 要逐行打印的事件字典。
+    @param source 非 None 时写入提交文件的 kernel 文本。
+    """
     write = f"pathlib.Path(name).write_text({source!r})\n" if source is not None else ""
     lines = [
         "#!/usr/bin/env python3",
@@ -415,6 +519,13 @@ def _fake_hmz_events(path: Path, events: list[dict], *, source: str | None = Non
 
 
 def _run_fake_events(tmp_path: Path, events: list[dict], *, source: str | None = None) -> AgentResult:
+    """@brief 用输出给定事件流的假 hmz 跑一次 kernel agent。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param events 假 hmz 要打印的事件字典。
+    @param source 非 None 时假 hmz 会写出的 kernel 文本。
+    @return 本次会话的 AgentResult。
+    """
     hmz = tmp_path / "hmz-events"
     _fake_hmz_events(hmz, events, source=source)
     return run_kernel_agent(
@@ -424,6 +535,10 @@ def _run_fake_events(tmp_path: Path, events: list[dict], *, source: str | None =
 
 
 def test_connection_failures_are_diagnosed_without_changing_billing_or_submission_rules(tmp_path):
+    """@brief 验证连接失败只影响诊断分类，不改变计费与提交规则，且诊断信息可直接序列化进 transcript。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     events = [
         {"kind": "tool", "session": "session-r3", "text": "bash"},
         {"kind": "result", "session": "session-r3", "text": "working", "spent": "Usage(output=10)"},
@@ -448,6 +563,10 @@ def test_connection_failures_are_diagnosed_without_changing_billing_or_submissio
 
 
 def test_a_normal_but_unsubmitted_answer_leaves_only_a_bounded_redacted_preview(tmp_path):
+    """@brief 验证模型有回复但未提交时只落盘有限长度、已脱敏的预览与摘要，不保存完整回复。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     secret = "sk-PLANTED-diagnostic-0123456789"
     response = "an unrelated answer " + secret + " " + ("x" * 400)
     events = [
@@ -471,6 +590,10 @@ def test_a_normal_but_unsubmitted_answer_leaves_only_a_bounded_redacted_preview(
 
 
 def test_a_failed_turn_does_not_poison_a_later_valid_submission(tmp_path):
+    """@brief 验证同一会话里先失败后成功时提交仍被接受，失败不记入诊断分类也不留诊断文件。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     source = "kernel void conv2d_kernel() {}\n"
     events = [
         {"kind": "failed", "session": "session-ok", "text": "Connection error.", "spent": "Usage(output=1)"},
@@ -487,6 +610,10 @@ def test_a_failed_turn_does_not_poison_a_later_valid_submission(tmp_path):
 
 
 def test_a_session_cost_cap_is_passed_to_hmz_as_an_outer_budget(tmp_path):
+    """@brief 验证会话费用上限会换算成 hmz 的 budget.cost 与 budget.duration 参数，未设上限时不传该参数。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     hmz = tmp_path / "hmz-cap"
     hmz.write_text(
         "#!/usr/bin/env python3\n"

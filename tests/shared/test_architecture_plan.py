@@ -25,6 +25,7 @@ class _Cand:
 
 
 def test_an_abi_failure_is_not_a_falsified_direction():
+    """@brief 验证 ABI 失败与“正确但没计时”都归为未验证的实现失败，只有真的更慢才算方向被否证，登记表格里也不混淆二者。"""
     kind, hint = classify_outcome("abi_error", "static threadgroup memory 40960 B exceeds the device limit of 32768 B", improved=False, within_noise=False, speedup=None, parent_speedup=1.0)
     assert kind == "untested_impl_fail"
     assert "32768" in hint
@@ -45,6 +46,7 @@ def test_an_abi_failure_is_not_a_falsified_direction():
 
 
 def test_a_same_round_winner_replaced_by_a_sibling_is_not_falsified():
+    """@brief 验证同轮里被兄弟候选顶掉的赢家仍算已验证的胜出，不因更优的 best 出现而降级。"""
     nodes = nodes_from_trace(
         [{"label": "r2.p0", "status": "ok", "speedup": 1.4, "improved": True, "within_noise": False, "best_speedup": 1.8}],
         ["round 2: vectorize the loads -> 1.400x (not better)"],
@@ -53,6 +55,7 @@ def test_a_same_round_winner_replaced_by_a_sibling_is_not_falsified():
 
 
 def test_a_recheck_failure_is_not_a_timed_loss():
+    """@brief 验证差分复检不通过的候选归为未验证的实现失败，不算计时上的损失。"""
     nodes = nodes_from_trace(
         [{"label": "r2.p0", "status": "ok", "speedup": 1.4, "improved": False, "within_noise": False, "best_speedup": 1.0, "differential_recheck": "incorrect"}],
         ["round 2: widen the tile -> 1.400x (not better)"],
@@ -61,6 +64,7 @@ def test_a_recheck_failure_is_not_a_timed_loss():
 
 
 def test_diverse_parent_is_none_until_features_differ():
+    """@brief 验证特征签名相同（仅空白差异）时不会换父代，出现不同特征才选出更远的那个父代。"""
     same = "kernel void k() { o[0] = 1; }\n"
     other = "kernel void k() { simdgroup_matrix<float, 8, 8> acc[4]; simdgroup_multiply_accumulate(acc[0], acc[0], acc[0], acc[0]); }\n"
     best = _Cand(same, 1.0, "seed")
@@ -71,6 +75,7 @@ def test_diverse_parent_is_none_until_features_differ():
 
 
 def test_static_screen_drops_a_32_fragment_gemm_contract():
+    """@brief 验证静态筛选按累加片段数剔掉 32 与 64 片段的 gemm 变体，只保留 16 片段那个。"""
     rows = static_screen_contracts("gemm", ["64x64x32t128", "64x64x32t64", "128x128x32t128"], "fp16", "paper")
     by = {row["variant"]: row for row in rows}
     assert by["64x64x32t128"]["kept"] is True
@@ -81,6 +86,10 @@ def test_static_screen_drops_a_32_fragment_gemm_contract():
 
 
 def test_search_ab_skips_an_occupied_directory(tmp_path: Path):
+    """@brief 验证目标目录已有结果时 search_ab 直接跳过，不调 runner 并记下 occupied 原因。
+
+    @param tmp_path 临时目录，作为 search_ab 的根目录。
+    """
     dest = tmp_path / "fa_on_1"
     dest.mkdir()
     (dest / "result.json").write_text("{}")
@@ -91,6 +100,7 @@ def test_search_ab_skips_an_occupied_directory(tmp_path: Path):
 
 
 def test_suite_metrics_count_only_published_speedups():
+    """@brief 验证汇总指标只统计已发布的 speedup，搜索最好成绩与未发布的行不混进分母。"""
     rows = [
         {"published_speedup": 1.01, "naive_speedup": 0.5, "spent_usd": 2.0},
         {"published_speedup": 0.9, "spent_usd": 1.0},
@@ -103,12 +113,17 @@ def test_suite_metrics_count_only_published_speedups():
 
 
 def test_bootstrap_interval_needs_two_samples():
+    """@brief 验证配对 bootstrap 至少要两个样本，样本完全成比例时区间退化为一个点。"""
     assert paired_bootstrap_speedup_ci([1.0], [1.0]) is None
     lo, hi = paired_bootstrap_speedup_ci([1.0, 1.0, 1.0, 1.0], [2.0, 2.0, 2.0, 2.0], n_boot=50, seed=1)
     assert lo == hi == 2.0
 
 
 def test_experience_index_names_an_added_feature(tmp_path: Path):
+    """@brief 验证经验索引能从两个候选中认出新增的矩阵单元特征，并按是否排除同题给出不同提示。
+
+    @param tmp_path 临时目录，用来造一份含两个候选的运行目录。
+    """
     run = tmp_path / "relu_one"
     for idx, (body, speed) in enumerate((
         ("kernel void k() { o[0] = 1; }\n", 1.0),
@@ -130,6 +145,11 @@ def test_experience_index_names_an_added_feature(tmp_path: Path):
 
 
 def test_repeatability_drops_an_experience_index(tmp_path: Path, monkeypatch):
+    """@brief 验证可重复性实验会清空外部经验索引，并顺带核对快速基准选择、A/B 矩阵成本与 LLMConfig 默认值。
+
+    @param tmp_path 临时目录，运行目录落在这里。
+    @param monkeypatch pytest 替换夹具，用假 ``run_one`` 记录收到的参数。
+    """
     from experiments.repeatability import repeatability_overrides, run_repeatability
 
     seen = {}
@@ -160,6 +180,7 @@ def test_repeatability_drops_an_experience_index(tmp_path: Path, monkeypatch):
 
 
 def test_feature_signature_is_empty_for_a_non_metal_backend():
+    """@brief 验证非 Metal 后端的特征签名为空元组，不做后端特有的特征提取。"""
     from taic.policy import feature_signature
 
     assert feature_signature("kernel void relu_kernel() {}", backend_id="other") == ()

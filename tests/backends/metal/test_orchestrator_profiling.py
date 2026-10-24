@@ -12,6 +12,14 @@ from ...support.orchestrator import _user_prompts, code, llm_script, make_orch, 
 
 
 def _trace(spilled=4096, events=3, code_bytes=6000, active=0.95):
+    """@brief 构造一个字段固定的 TraceSummary 作为 profile 结果。
+
+    @param spilled 寄存器溢出字节数。
+    @param events 溢出事件数。
+    @param code_bytes shader 代码字节数。
+    @param active GPU 活跃时间占比。
+    @return TraceSummary。
+    """
     from tcenv.backends.metal.xctrace import TraceSummary
 
     return TraceSummary(window_s=1.0, n_dispatches=40, dispatch_us_median=50.0, dispatch_us_p10=40.0, dispatch_us_p90=60.0, gpu_active_fraction=active,
@@ -19,6 +27,11 @@ def _trace(spilled=4096, events=3, code_bytes=6000, active=0.95):
 
 
 def test_a_slow_seed_is_profiled_and_the_findings_reach_the_planner_and_every_patch_author(tmp_path, monkeypatch):
+    """@brief 慢种子只 profile 一次，发现会进入规划者和每个补丁作者的提示，并写入 profiles/ 与 result.json。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用于替掉真实的 xctrace。
+    """
     from tcenv.backends.metal import xctrace
 
     traced = []
@@ -38,6 +51,11 @@ def test_a_slow_seed_is_profiled_and_the_findings_reach_the_planner_and_every_pa
 
 
 def test_profiling_is_off_by_default_and_skipped_for_a_seed_that_beats_the_baseline(tmp_path, monkeypatch):
+    """@brief 默认不 profile；种子已经快于 baseline 时也跳过。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用于断言 profile 不会被调用。
+    """
     from tcenv.backends.metal import xctrace
 
     monkeypatch.setattr(xctrace, "profile_kernel", lambda *a, **kw: pytest.fail("must not be traced"))
@@ -50,6 +68,11 @@ def test_profiling_is_off_by_default_and_skipped_for_a_seed_that_beats_the_basel
 
 
 def test_each_source_is_traced_once_and_the_number_of_traces_is_capped(tmp_path, monkeypatch):
+    """@brief 同一源码只 trace 一次并被多轮复用；出现新源码时继续 trace，直到达到 profile_max。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用于记录被 trace 的源码。
+    """
     from tcenv.backends.metal import xctrace
 
     traced = []
@@ -78,6 +101,11 @@ def test_each_source_is_traced_once_and_the_number_of_traces_is_capped(tmp_path,
 
 
 def test_a_failing_trace_never_stops_the_search_and_is_not_retried(tmp_path, monkeypatch):
+    """@brief trace 失败不中断搜索、不重试，只记录错误；每个源码仍只尝试一次。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 补丁工具，用于让 profile_kernel 抛 TraceError。
+    """
     from tcenv.backends.metal import xctrace
 
     n = {"calls": 0}
@@ -96,6 +124,8 @@ def test_a_failing_trace_never_stops_the_search_and_is_not_retried(tmp_path, mon
 
 
 def test_xctrace_advice_only_reports_what_the_trace_supports():
+    """@brief advice 只报告 trace 支持的结论；无问题时明说未发现，format_for_llm 只给出一条 findings。
+    """
     from tcenv.backends.metal.xctrace import advice, format_for_llm
 
     clean = advice(_trace(spilled=0, events=0))
@@ -110,6 +140,10 @@ def test_xctrace_advice_only_reports_what_the_trace_supports():
 
 
 def test_the_profiler_skill_is_only_in_the_system_prompt_of_runs_that_can_attach_a_trace(tmp_path):
+    """@brief profiler 技能只出现在能附上 trace 的 run 的系统提示里，其他 run 的提示逐字节不变。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from taic import prompts
     from tasks import get_task
 

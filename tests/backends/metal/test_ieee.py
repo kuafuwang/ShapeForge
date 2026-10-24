@@ -19,6 +19,12 @@ INF, NAN = float("inf"), float("nan")
 
 @pytest.mark.parametrize("shape", [(4096,), (64, 128), (3, 5, 7), (1 << 16,)])
 def test_inject_specials_plants_all_kinds_and_leaves_the_input_alone(shape):
+    """@brief 验证注入特殊值时涵盖 NaN/±Inf/-0、不改原张量、且数量有上限并可重放。
+
+    同时检查首尾元素必定是特殊值，注入个数在 8 到 257 之间。
+
+    @param shape 输入张量形状，由 parametrize 提供。
+    """
     t = torch.randn(shape)
     before = t.clone()
     u = inject_specials(t, 17)
@@ -38,10 +44,18 @@ def test_inject_specials_plants_all_kinds_and_leaves_the_input_alone(shape):
 
 
 def err(out, ref, scale=1.0):
+    """@brief 用固定容差计算输出与参考之间的缩放误差，便于断言。
+
+    @param out 被测输出值序列。
+    @param ref 参考值序列。
+    @param scale 误差缩放系数，默认 1.0。
+    @return 每个元素一个误差值的一维张量。
+    """
     return scaled_error(torch.tensor(out), torch.tensor(ref), scale, 1e-3, 1e-3, False)
 
 
 def test_matching_special_values_are_exact_matches():
+    """@brief 验证输出与参考的特殊值完全相同（NaN/Inf/-Inf）时误差为零。"""
     assert err([NAN, INF, -INF, 1.0], [NAN, INF, -INF, 1.0]).max() == 0
 
 
@@ -58,11 +72,17 @@ def test_matching_special_values_are_exact_matches():
     ],
 )
 def test_mismatching_special_values_fail(out, ref):
+    """@brief 验证特殊值不匹配（丢失或误现 NaN、符号错、溢出成有限值等）一律判为超容差。
+
+    @param out 被测输出值。
+    @param ref 参考值，由 parametrize 提供各类不匹配组合。
+    """
     e = err([out], [ref])
     assert math.isinf(float(e[0])) or float(e[0]) > 1, e
 
 
 def test_finite_tolerance_is_unchanged():
+    """@brief 验证有限值仍按原容差判定：千分之五以内通过，超出则失败。"""
     assert err([1.0005], [1.0], scale=1.0)[0] < 1
     assert err([1.5], [1.0], scale=1.0)[0] > 1
 
@@ -73,6 +93,14 @@ def test_finite_tolerance_is_unchanged():
 @pytest.mark.parametrize("name", ALL_TASKS)
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
 def test_every_task_has_a_meaningful_ieee_case(name, dtype):
+    """@brief 验证每个任务每种 dtype 都有真能检出问题的 ieee 用例，且可由种子复现。
+
+    参考输出既要有特殊值，也要保留足够的有限值供数值比较；误差缩放必须有限；
+    同种子可复现，与不同种子的原始数据不同。
+
+    @param name 任务名，由 parametrize 提供。
+    @param dtype 数据类型，fp16 或 bf16。
+    """
     task = get_task(name, dtype, "small")
     assert IEEE_CASE in task.cases
     d = prepare_case(task, IEEE_CASE, 99)
@@ -98,6 +126,11 @@ RELU_NAN_DEPENDS_ON_OUTPUT = "if (j < N) { float v = float(x[j]); half r = half(
 
 
 def relu_with(body: str) -> str:
+    """@brief 把 relu naive 内核里的一段标准循环体替换成给定实现。
+
+    @param body 替换后的内核循环体源码。
+    @return 替换好的完整 MSL 源码。
+    """
     src = get_task("relu", "fp16", "small").naive_msl
     assert RELU_OK in src
     return src.replace(RELU_OK, body)
@@ -105,6 +138,10 @@ def relu_with(body: str) -> str:
 
 @gpu
 def test_a_kernel_that_drops_nan_is_rejected_by_the_ieee_case_only():
+    """@brief 验证把 NaN 当 0 输出的内核只会被 ieee 用例揪出，不会误判其他用例。
+
+    需要 GPU。
+    """
     from tcenv.evaluate import evaluate
 
     rep = evaluate("relu", "fp16", "small", relu_with(RELU_DROPS_NAN), mode="quick", seed=5)
@@ -115,6 +152,10 @@ def test_a_kernel_that_drops_nan_is_rejected_by_the_ieee_case_only():
 
 @gpu
 def test_determinism_is_checked_on_every_case_not_only_the_first():
+    """@brief 验证确定性检查会跑遍所有用例，最后一个 ieee 用例也能发现依赖输出初值的内核。
+
+    需要 GPU。
+    """
     from tcenv.evaluate import evaluate
 
     rep = evaluate("relu", "fp16", "small", relu_with(RELU_NAN_DEPENDS_ON_OUTPUT), mode="quick", seed=5)
@@ -127,6 +168,12 @@ def test_determinism_is_checked_on_every_case_not_only_the_first():
 @gpu
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
 def test_naive_kernels_of_all_tasks_pass_the_full_case_list_including_ieee(dtype):
+    """@brief 验证所有任务的 naive 内核在该 dtype 下都能跑完包含 ieee 的完整用例表。
+
+    需要 GPU。
+
+    @param dtype 数据类型，fp16 或 bf16。
+    """
     from tcenv.evaluate import evaluate
 
     for name in ALL_TASKS:
@@ -139,7 +186,13 @@ def test_naive_kernels_of_all_tasks_pass_the_full_case_list_including_ieee(dtype
 @gpu
 @pytest.mark.parametrize("name", ALL_TASKS)
 def test_at_least_one_vendor_baseline_reproduces_the_reference_on_special_values(name):
-    """The case is only a fair requirement where IEEE semantics are achievable with a library implementation."""
+    """@brief 验证每个任务至少有一个厂商标杆能在特殊值上复现参考结果。
+
+    ieee 用例只有在库实现能达到 IEEE 语义时才是公平要求，因此取所有标杆里的最小
+    最差误差来判定。需要 GPU。
+
+    @param name 任务名，由 parametrize 提供。
+    """
     from tcenv.backends.metal.baselines import BaselineRunner
     from tcenv.backends.metal.testing import _floor
 
@@ -156,7 +209,10 @@ def test_at_least_one_vendor_baseline_reproduces_the_reference_on_special_values
 
 
 def test_building_a_task_for_one_dtype_does_not_change_another_dtypes_tolerances():
-    """Regression: the Lion task used a module-level global for atol_rel, so the last dtype built won."""
+    """@brief 回归用例：先构建一种 dtype 再构建另一种，不得改掉前者的容差。
+
+    Lion 任务曾把 atol_rel 存在模块级全局变量里，导致最后构建的 dtype 覆盖了前面的值。
+    """
     def scale(dtype):
         t = get_task("lion", dtype, "small")
         d = prepare_case(t, "tiny", 3)
@@ -168,6 +224,7 @@ def test_building_a_task_for_one_dtype_does_not_change_another_dtypes_tolerances
 
 
 def test_inject_specials_respects_a_cap_but_keeps_first_and_last():
+    """@brief 验证注入特殊值受 max_n 上限约束，同时仍保留首尾两个元素为特殊值。"""
     import torch
 
     from tcenv.backends.metal.testing import inject_specials
@@ -180,7 +237,11 @@ def test_inject_specials_respects_a_cap_but_keeps_first_and_last():
 
 
 def test_conv2d_ieee_reference_keeps_most_outputs_finite_and_matches_conv2d_on_finite_inputs():
-    """CPU conv2d may smear one Inf over a Winograd tile as NaN; the IEEE reference must not, or the case checks nothing."""
+    """@brief 验证 conv2d 的 ieee 参考保大多数输出有限，且有限输入下与 F.conv2d 一致。
+
+    CPU conv2d 可能把一个 Inf 在 Winograd 分块里扩散成 NaN，参考实现必须避免，
+    否则该用例什么都检不出来。
+    """
     import torch
     import torch.nn.functional as F
 
@@ -205,12 +266,14 @@ def test_conv2d_ieee_reference_keeps_most_outputs_finite_and_matches_conv2d_on_f
 
 
 def test_a_non_finite_error_scale_fails_instead_of_passing():
+    """@brief 验证误差缩放为 NaN 或 Inf 时误差判为无限，而不是被当成通过。"""
     for scale in (float("nan"), float("inf")):
         errors = scaled_error(torch.tensor([0.0]), torch.tensor([0.0]), scale, 1e-3, 1e-3, False)
         assert torch.isinf(errors).all(), scale
 
 
 def test_the_absolute_floor_is_half_the_smallest_subnormal():
+    """@brief 验证每种 dtype 的绝对误差下限介于最小次正规数的一半与自身之间，整数类型为零。"""
     from tcenv.backends.metal.testing import _floor
     from tcenv.dtypes import FLOAT_TINY_SUBNORMAL
 
@@ -220,6 +283,11 @@ def test_the_absolute_floor_is_half_the_smallest_subnormal():
 
 
 def _tolerance_task(*, exact: bool = False):
+    """@brief 造一个只有单个 fp16 输出的最小假任务，用于剥离任务本身的容差对比。
+
+    @param exact 是否要求精确相等。
+    @return 带 contract/rtol/atol_rel/exact 的 SimpleNamespace。
+    """
     from types import SimpleNamespace
 
     arg = SimpleNamespace(name="y", dtype="fp16", shape=(1,))
@@ -227,14 +295,25 @@ def _tolerance_task(*, exact: bool = False):
 
 
 def _tolerance_data(*, case: str = "normal"):
+    """@brief 造一份单输出、参考值为 1.0 的 CaseData。
+
+    @param case 用例名。
+    @return 构造好的 CaseData。
+    """
     return CaseData(case=case, seed=1, rounded={}, raw={}, ref={"y": torch.tensor([1.0], dtype=torch.float64)}, scale={"y": torch.tensor(1.0, dtype=torch.float64)})
 
 
 def _tolerance_raw(value: float) -> dict[str, bytes]:
+    """@brief 把单个 fp16 输出值包装成原始字节字典，模拟内核回传的原始输出。
+
+    @param value 要编码的浮点值。
+    @return 键为输出名 y、值为 fp16 字节的字典。
+    """
     return {"y": torch.tensor([value], dtype=torch.float16).numpy().tobytes()}
 
 
 def test_the_baseline_can_widen_the_tolerance_but_never_past_the_cap():
+    """@brief 验证基准可适度放宽容差但受 ALLOW_CAP 封顶，且只在 normal 与非 exact 用例生效。"""
     task, data, candidate = _tolerance_task(), _tolerance_data(), _tolerance_raw(1.004)
     alone = check_case(task, data, candidate, None)
     assert alone.allow == 1.0 and not alone.ok

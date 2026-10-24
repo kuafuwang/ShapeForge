@@ -43,6 +43,10 @@ _RECORDS: pytest.StashKey[list[dict[str, Any]]] = pytest.StashKey()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
+    """@brief 注册 `--no-failure-handoff` 选项，用于关闭失败交接 Markdown 的写入。
+
+    @param parser pytest 选项解析器。
+    """
     parser.addoption(
         "--no-failure-handoff",
         action="store_true",
@@ -52,6 +56,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
+    """@brief 会话开始时记录 git 短哈希并清空记录列表；主进程会删掉旧的 triage 目录。
+
+    @param session 当前 pytest 会话。
+    """
     config = session.config
     config.stash[_GIT] = _git_short(Path(config.rootpath))
     config.stash[_RECORDS] = []
@@ -65,6 +73,11 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]):
+    """@brief hookwrapper：仅在 call 阶段失败时为该用例写一份失败交接。
+
+    @param item 当前测试项。
+    @param call 当前测试的调用信息。
+    """
     outcome = yield
     report = outcome.get_result()
     if report.when != "call" or not report.failed:
@@ -75,6 +88,13 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]):
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """@brief 会话结束时汇总失败记录并写出 triage_summary.md。
+
+    主进程优先从各 worker 的 manifest.jsonl 读取记录，xdist 下才能拿到全部失败。
+
+    @param session 当前 pytest 会话。
+    @param exitstatus pytest 退出码（本函数未使用）。
+    """
     del exitstatus
     config = session.config
     if _disabled(config):
@@ -87,6 +107,12 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
 
 def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pytest.Config) -> None:
+    """@brief 在终端摘要里列出每份失败交接的 Markdown 路径，并给出汇总文件位置。
+
+    @param terminalreporter pytest 终端输出对象。
+    @param exitstatus pytest 退出码（本函数未使用）。
+    @param config pytest 配置对象。
+    """
     del exitstatus
     if _disabled(config):
         return
@@ -105,25 +131,51 @@ def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pyte
 
 
 def _disabled(config: pytest.Config) -> bool:
+    """@brief 判断是否通过 `--no-failure-handoff` 关闭了失败交接。
+
+    @param config pytest 配置对象。
+    @return 关闭时返回 True。
+    """
     return bool(config.getoption("--no-failure-handoff", default=False))
 
 
 def _worker_id(config: pytest.Config) -> str:
+    """@brief 取当前 xdist worker 名，串行运行时为 master。
+
+    @param config pytest 配置对象。
+    @return worker 标识字符串。
+    """
     return run_logs.worker_id(config)
 
 
 def _triage_root(config: pytest.Config) -> Path:
+    """@brief 给出发交根目录 logs/pytest/triage 的路径。
+
+    @param config pytest 配置对象。
+    @return 仓库根下的 triage 目录路径。
+    """
     return Path(config.rootpath) / "logs" / "pytest" / "triage"
 
 
 def _triage_dir(config: pytest.Config) -> Path:
+    """@brief 给出发交写入目录：主进程为 triage 根，worker 为其下的子目录。
+
+    @param config pytest 配置对象。
+    @return 当前进程应该写入的 triage 目录。
+    """
     root = _triage_root(config)
     worker = _worker_id(config)
     return root if worker == "master" else root / worker
 
 
 def _read_manifest_records(root: Path) -> list[dict[str, Any]]:
-    """Read worker manifests for the controller's aggregate summary."""
+    """@brief 读取各 worker 的 manifest.jsonl，用于主进程汇总。
+
+    无法读取的文件与无法解析的行会被跳过。
+
+    @param root triage 根目录。
+    @return 所有 manifest 里解析出的记录字典列表。
+    """
     records: list[dict[str, Any]] = []
     for path in sorted(root.glob("*/manifest.jsonl")):
         try:
@@ -141,6 +193,11 @@ def _read_manifest_records(root: Path) -> list[dict[str, Any]]:
 
 
 def _git_short(root: Path) -> str:
+    """@brief 取仓库当前的短提交哈希，取不到时返回 unknown。
+
+    @param root 仓库根目录。
+    @return 短哈希，失败时为 "unknown"。
+    """
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -155,6 +212,12 @@ def _git_short(root: Path) -> str:
 
 
 def _record_failure(item: pytest.Item, call: pytest.CallInfo[None], report: pytest.TestReport) -> None:
+    """@brief 为一个失败的测试建 triage 目录、写 Markdown 与 manifest，并追加到报告分节。
+
+    @param item 失败的测试项。
+    @param call 调用阶段信息，提供异常信息。
+    @param report 即将输出的测试报告，会追写一段交接路径。
+    """
     excinfo = call.excinfo
     eval_report = _find_eval_report(excinfo)
     payload = _payload(item, excinfo, eval_report)
@@ -191,6 +254,13 @@ def _record_failure(item: pytest.Item, call: pytest.CallInfo[None], report: pyte
 
 
 def _payload(item: pytest.Item, excinfo: pytest.ExceptionInfo[BaseException] | None, eval_report: Any) -> dict[str, Any]:
+    """@brief 组装交截 JSON 的全部字段：源码位置、标记、参数、反馈与复现命令。
+
+    @param item 失败的测试项。
+    @param excinfo 异常信息，可能为 None。
+    @param eval_report 从失败帧里找到的 EvalReport，可能为 None。
+    @return 可直接序列化的交截字典。
+    """
     message = "" if excinfo is None else str(excinfo.value)
     lines = message.splitlines()
     rel, lineno = _source(item, excinfo)
@@ -222,6 +292,11 @@ def _payload(item: pytest.Item, excinfo: pytest.ExceptionInfo[BaseException] | N
 
 
 def _find_eval_report(excinfo: pytest.ExceptionInfo[BaseException] | None) -> Any:
+    """@brief 从异常栈帧里反向查找 EvalReport 对象，优先找 rep/report 变量名。
+
+    @param excinfo 异常信息，可能为 None。
+    @return 找到的 EvalReport，或 None。
+    """
     if excinfo is None:
         return None
     try:
@@ -248,6 +323,12 @@ def _find_eval_report(excinfo: pytest.ExceptionInfo[BaseException] | None) -> An
 
 
 def _error_kind(excinfo: pytest.ExceptionInfo[BaseException] | None, eval_report: Any) -> str:
+    """@brief 定下交截的错误类别：优先用 EvalReport 状态，否则用异常类型名。
+
+    @param excinfo 异常信息，可能为 None。
+    @param eval_report 失败帧里的 EvalReport，可能为 None。
+    @return 错误类别字符串，判定不出时为 "unknown"。
+    """
     status = getattr(eval_report, "status", None)
     if isinstance(status, str) and status:
         return status
@@ -259,6 +340,13 @@ def _error_kind(excinfo: pytest.ExceptionInfo[BaseException] | None, eval_report
 
 
 def _feedback(eval_report: Any) -> str:
+    """@brief 用 format_feedback 把 EvalReport 渲染成文字，并截到 FEEDBACK_MAX。
+
+    渲染失败时返回一段说明失败原因的文字，不抛异常。
+
+    @param eval_report 失败帧里的 EvalReport，可能为 None。
+    @return 反馈文本；没有报告时为空串。
+    """
     if eval_report is None:
         return ""
     try:
@@ -273,6 +361,12 @@ def _feedback(eval_report: Any) -> str:
 
 
 def _source(item: pytest.Item, excinfo: pytest.ExceptionInfo[BaseException] | None) -> tuple[str, int]:
+    """@brief 定位失败的源码位置：优先用异常栈里最深且属于测试文件的帧。
+
+    @param item 失败的测试项。
+    @param excinfo 异常信息，可能为 None。
+    @return (相对仓库根的路径, 1 基行号) 二元组。
+    """
     path = Path(item.path)
     root = Path(item.config.rootpath).resolve()
     try:
@@ -299,6 +393,11 @@ def _source(item: pytest.Item, excinfo: pytest.ExceptionInfo[BaseException] | No
 
 
 def _markers(item: pytest.Item) -> list[str]:
+    """@brief 收集测试项上的标记名，去重并排除 parametrize。
+
+    @param item 测试项。
+    @return 排序后的标记名列表。
+    """
     names: list[str] = []
     for mark in item.iter_markers():
         if mark.name in _SKIP_MARKERS or mark.name in names:
@@ -308,6 +407,11 @@ def _markers(item: pytest.Item) -> list[str]:
 
 
 def _params(item: pytest.Item) -> dict[str, str]:
+    """@brief 取出 parametrize 参数并转成受长度限制的字符串表示。
+
+    @param item 测试项。
+    @return 参数名到 repr 文本的字典；无参数化时为空。
+    """
     callspec = getattr(item, "callspec", None)
     if callspec is None:
         return {}
@@ -321,17 +425,31 @@ def _params(item: pytest.Item) -> dict[str, str]:
 
 
 def _repro(item: pytest.Item) -> str:
+    """@brief 生成可单进程复现该用例的 shell 命令（先 cd 到仓库根）。
+
+    @param item 测试项。
+    @return 包含 cd 与 pytest 调用的多行命令。
+    """
     root = shlex_quote(str(Path(item.config.rootpath).resolve()))
     nodeid = shlex_quote(item.nodeid)
     return f"cd {root}\nuv run pytest -q --tb=short {nodeid}"
 
 
 def shlex_quote(text: str) -> str:
-    """Always a single shell word, and always wrapped in single quotes."""
+    """@brief 把文本包成单个 shell 单词，总是用单引号包裹并转义内部单引号。
+
+    @param text 要引用的原始文本。
+    @return 可直接拼进 shell 命令的引号字符串。
+    """
     return "'" + text.replace("'", "'\"'\"'") + "'"
 
 
 def _sanitize_nodeid(nodeid: str) -> str:
+    """@brief 把 node id 转成可用作文件名的字符串，并截断到 220 字符。
+
+    @param nodeid pytest 测试节点标识。
+    @return 释放了路径分隔符与非法字符的文件名。
+    """
     sanitized = nodeid.replace("/", "_").replace("::", "__")
     for char in '[]:*?"<>|':
         sanitized = sanitized.replace(char, "_")
@@ -339,6 +457,12 @@ def _sanitize_nodeid(nodeid: str) -> str:
 
 
 def _render(nodeid: str, payload: dict[str, Any]) -> str:
+    """@brief 渲染交截 Markdown：复现命令加一个包在四引号围栅里的 JSON 真值块。
+
+    @param nodeid pytest 测试节点标识。
+    @param payload 交截字典。
+    @return 完整的 Markdown 文本。
+    """
     body = json.dumps(payload, ensure_ascii=False, indent=2)
     return (
         f"# Failure triage: `{nodeid}`\n\n"
@@ -357,6 +481,12 @@ def _render(nodeid: str, payload: dict[str, Any]) -> str:
 
 
 def _write_summary(config: pytest.Config, records: list[dict[str, Any]]) -> Path:
+    """@brief 按错误类别分组写出 triage_summary.md。
+
+    @param config pytest 配置对象。
+    @param records 全部失败记录。
+    @return 写出的汇总文件路径。
+    """
     groups: dict[str, list[dict[str, Any]]] = {}
     for rec in records:
         groups.setdefault(str(rec["error_kind"]), []).append(rec)

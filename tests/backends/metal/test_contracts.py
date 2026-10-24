@@ -10,6 +10,10 @@ from tcenv.evaluate import evaluate
 
 
 def test_default_variant_is_the_default_contract():
+    """@brief 验证显式写出的默认变体（``gemm@64x64x32t128``、``flash_attention@32x32t128``）与原 task 契约一致。
+
+    确认 grid、threads、constants 与 naive MSL 都等于不带后缀的默认 task。
+    """
     d, v = get_task("gemm", "fp16", "small"), get_task("gemm@64x64x32t128", "fp16", "small")
     assert d.contract.grid == v.contract.grid and d.contract.threads == v.contract.threads
     assert d.contract.constants == v.contract.constants
@@ -19,6 +23,13 @@ def test_default_variant_is_the_default_contract():
 
 
 def test_a_variant_changes_grid_threads_constants_and_specs_consistently():
+    """@brief 验证变体后缀同时一致地改变 grid、threads、BLOCK_* 常量与生成的源码。
+
+    gemm@128x64x32t256：kernel 名不变、threads 为 256、grid 按 64／128 分块；常量与 triton
+    源码里的 BLOCK_*/num_warps 对上；MSL 与 Triton 模板都不残留未替换的 ``{{``。
+    flash_attention@64x32t256：grid 按 64 分块、threads 为 256，且每行 4 线程对应的
+    ``simd_shuffle_xor(s, 2)`` 出现在 naive MSL 里。
+    """
     t = get_task("gemm@128x64x32t256", "fp16", "paper")
     assert t.name == "gemm@128x64x32t256" and t.contract.kernel_name == "gemm_kernel"
     assert t.contract.threads == (256, 1, 1) and t.contract.grid == (2048 // 64, 2048 // 128, 1)
@@ -38,17 +49,31 @@ def test_a_variant_changes_grid_threads_constants_and_specs_consistently():
     "relu@1x1x1t32", "gemm_silu@64x64x32t128",
 ])
 def test_unrepresentable_variants_are_refused(name):
+    """@brief 验证无法表达为合法契约的变体后缀（非 2 的幂分块、非 32 倍线程数、缺字段或算子不支持）直接报错。
+
+    @param name 被参数化的非法 task 名（如 ``gemm@100x64x32t128``、``relu@1x1x1t32``）。
+    @raises ValueError 变体数值或形状不被契约接受时抛出。
+    @raises KeyError 变体名无法解析或算子没有对应模板时抛出。
+    """
     with pytest.raises((ValueError, KeyError)):
         get_task(name, "fp16", "small")
 
 
 @pytest.mark.parametrize("name", ["gemm@32x32x32t128", "gemm@128x64x32t256", "gemm@64x64x16t64", "flash_attention@64x32t256", "flash_attention@16x32t64", "flash_attention@32x16t128", "flash_attention@32x32t32"])
 def test_the_naive_kernel_is_correct_under_every_variant_contract(name):
+    """@brief 验证 naive kernel 在每种合法变体契约下都能通过 quick 模式评测。
+
+    @param name 被参数化的合法变体 task 名。
+    """
     rep = evaluate(name, "fp16", "small", get_task(name, "fp16", "small").naive_msl, mode="quick")
     assert rep.status == "ok", (name, rep.message)
 
 
 def test_the_hand_written_simdgroup_gemm_is_correct_and_fits_every_listed_contract():
+    """@brief 验证手写 simdgroup gemm 在三个代表性契约下评测通过，且清单里每个变体的 simdgroup 布局合法。
+
+    布局要求：每行/列子块是 8 的倍数、`wm * wn == th // 32`（即线程组数匹配）。
+    """
     from experiments.contract_sensitivity import VARIANTS, gemm_source, simdgroup_layout
 
     for v in ("32x32x32t128", "128x64x32t256", "64x64x32t64"):
@@ -63,6 +88,7 @@ def test_the_hand_written_simdgroup_gemm_is_correct_and_fits_every_listed_contra
 
 
 def test_task_reference_sources_keep_the_metal_alias():
+    """@brief 验证 task 的参考源保留 metal 别名：按 metal 取到 naive MSL，其他键返回空串。"""
     from tasks import get_task
 
     task = get_task("relu", "fp16", "small")

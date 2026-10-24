@@ -31,11 +31,13 @@ _MAX_TAIL = 8_000
 
 
 def worker_id(config: pytest.Config) -> str:
-    """The xdist worker name, or ``master`` in a serial session.
+    """@brief 返回本次会话的 xdist worker 名，串行会话返回 master。
 
-    pytester subprocesses inherit ``PYTEST_XDIST_WORKER`` from the outer run even
-    though they do not load xdist themselves. Trust the environment only when
-    xdist is actually active in this config.
+    pytester 子进程会从外层运行继承 PYTEST_XDIST_WORKER，但这些子进程本身没加载 xdist，
+    所以只有当前 config 真正启用 xdist 时才相信 worker 身份。
+
+    @param config pytest 的 config 对象。
+    @return worker 名，或 master。
     """
     if hasattr(config, "workerinput"):
         workerinput = getattr(config, "workerinput", None)
@@ -45,6 +47,10 @@ def worker_id(config: pytest.Config) -> str:
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
+    """@brief 注册日志相关命令行选项：日志根目录、按目录镜像、关闭单测日志文件。
+
+    @param parser pytest 的选项解析器。
+    """
     parser.addoption(
         "--log-dir",
         action="store",
@@ -66,11 +72,21 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def _log_root(config: pytest.Config) -> Path:
+    """@brief 把 --log-dir 解析成绝对路径，相对路径以 rootpath 为基准。
+
+    @param config pytest 的 config 对象。
+    @return 已解析的日志根目录。
+    """
     path = Path(config.getoption("--log-dir"))
     return path.resolve() if path.is_absolute() else (Path(config.rootpath) / path).resolve()
 
 
 def _safe_nodeid(nodeid: str) -> str:
+    """@brief 把 node id 的路径分隔符与文件名非法字符换成下划线，并限长 220 字符。
+
+    @param nodeid 测试的 node id。
+    @return 可用作单层文件名的字符串。
+    """
     value = nodeid.replace("/", "_").replace("::", "__")
     for char in '[]:*?"<>|':
         value = value.replace(char, "_")
@@ -78,7 +94,7 @@ def _safe_nodeid(nodeid: str) -> str:
 
 
 def per_test_log_path(item: pytest.Item) -> Path:
-    """The per-test log path for this worker, whether or not the file exists yet."""
+    """@brief 计算当前 worker 下单测日志的路径，无论文件是否已存在。"""
     root = _log_root(item.config) / "tests" / worker_id(item.config)
     if item.config.getoption("--log-by-dir"):
         relative = item.nodeid.replace("::", "/")
@@ -89,10 +105,9 @@ def per_test_log_path(item: pytest.Item) -> Path:
 
 
 def current_test_log(item: pytest.Item) -> Path | None:
-    """Path of the per-test log if file logging is enabled for this item.
+    """@brief 返回该测试的单测日志路径，若单测文件日志被关闭则返回 None。
 
-    A pytester subprocess may load only the handoff plugin, so the logging
-    option can be absent there.
+    pytester 子进程可能只加载 handoff 插件，因此那里可能拿不到日志选项。
     """
     try:
         if item.config.getoption("--no-test-file-log"):
@@ -103,7 +118,12 @@ def current_test_log(item: pytest.Item) -> Path | None:
 
 
 def log_tail(path: Path | None, limit: int = _MAX_TAIL) -> str:
-    """A bounded UTF-8 tail suitable for an AI handoff block."""
+    """@brief 读取日志尾部，长度受限，适合放进给 AI 的交接块。
+
+    @param path 日志路径，None 表示没有日志。
+    @param limit 最多保留的字符数。
+    @return 尾部文本；读不到文件时返回空串。
+    """
     if path is None:
         return ""
     try:
@@ -114,6 +134,11 @@ def log_tail(path: Path | None, limit: int = _MAX_TAIL) -> str:
 
 
 def _handler(path: Path) -> logging.Handler:
+    """@brief 按需建父目录并新建一个 DEBUG 级的 UTF-8 文件日志句柄。
+
+    @param path 日志文件路径。
+    @return 已配好格式的 FileHandler。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     handler = logging.FileHandler(path, encoding="utf-8")
     handler.setLevel(logging.DEBUG)
@@ -124,6 +149,10 @@ def _handler(path: Path) -> logging.Handler:
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
+    """@brief 会话开始时建立日志根目录，并把会话日志句柄挂到测试 logger 上（仅一次）。
+
+    @param session pytest 的 session 对象。
+    """
     root = _log_root(session.config)
     root.mkdir(parents=True, exist_ok=True)
     if _SESSION_HANDLER in session.config.stash:
@@ -137,6 +166,10 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 
 
 def pytest_runtest_setup(item: pytest.Item) -> None:
+    """@brief 每个测试开始时挂上单测日志句柄并记下开始时间；关闭文件日志时什么也不做。
+
+    @param item 当前测试项。
+    """
     if item.config.getoption("--no-test-file-log"):
         return
     path = per_test_log_path(item)
@@ -148,6 +181,10 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
 
 
 def pytest_runtest_teardown(item: pytest.Item) -> None:
+    """@brief 测试结束时写下带耗时的结束分隔条，并摘下和关闭该测试的日志句柄。
+
+    @param item 当前测试项。
+    """
     handler = _TEST_HANDLERS.pop(item.nodeid, None)
     started = _TEST_START.pop(item.nodeid, None)
     if handler is not None:
@@ -159,6 +196,11 @@ def pytest_runtest_teardown(item: pytest.Item) -> None:
 
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Generator[None, None, None]:
+    """@brief 测试调用阶段失败时，把该测试日志的受限尾部附到报告 sections 里。
+
+    @param item 当前测试项。
+    @param call 当前阶段的调用信息。
+    """
     outcome = yield
     report = outcome.get_result()
     if report.when != "call" or not report.failed:
@@ -172,6 +214,11 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """@brief 会话结束时记一行收尾日志，并摘下和关闭会话日志句柄。
+
+    @param session pytest 的 session 对象。
+    @param exitstatus pytest 的退出码。
+    """
     _BASE.info("pytest session finish (worker=%s, exit=%s)", worker_id(session.config), exitstatus)
     handler = session.config.stash.get(_SESSION_HANDLER, None)
     if handler is not None:

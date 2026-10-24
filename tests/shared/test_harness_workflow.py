@@ -12,6 +12,11 @@ from tasks import get_task
 
 
 def _doc(action: str):
+    """@brief 构造一条 tip 类型的 harness 建议文档。
+
+    @param action 建议的动作文本。
+    @return 建议 JSON 字典。
+    """
     return {
         "surface": "tip",
         "scope": {"target_id": "apple-m4-max", "task": "conv2d", "dtype": "fp16"},
@@ -22,6 +27,16 @@ def _doc(action: str):
 
 
 def _session(run: Path, seq: int, provider: str, model: str, committee: str, action: str, probe: str):
+    """@brief 在 run 下写一个 session 的 probe.py，并记录该 session 的 harness 建议。
+
+    @param run run 目录。
+    @param seq 会话序号。
+    @param provider 模型提供方。
+    @param model 模型名。
+    @param committee 所属委员会。
+    @param action 建议的动作文本。
+    @param probe 探针脚本内容。
+    """
     work = run / "agent_work" / f"r{seq}.p0"
     work.mkdir(parents=True)
     (work / "probe.py").write_text(probe)
@@ -33,6 +48,10 @@ def _session(run: Path, seq: int, provider: str, model: str, committee: str, act
 
 
 def test_an_active_tip_reaches_the_next_task_and_disable_removes_it(tmp_path):
+    """@brief 两个委员会同意并授信后 tip 生效并进入下次 session brief；disable 后 overlay 为空。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     _session(run, 1, "deepseek", "deepseek-flash", "first", "先读 device.md 的线程组上限。", "print(1)\n")
     _session(run, 2, "moonshot", "kimi-k3", "second", "先读 device.md 的线程组上限。", "print(2)\n")
@@ -62,6 +81,10 @@ def test_an_active_tip_reaches_the_next_task_and_disable_removes_it(tmp_path):
 
 
 def test_a_premise_is_shadow_only_until_the_trusted_record_gate_exists(tmp_path):
+    """@brief premise 目前只做 shadow，即使授信了 premise scope 也不会进入 overlay。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     work = run / "agent_work" / "r1.p0"
     work.mkdir(parents=True)
@@ -81,6 +104,10 @@ def test_a_premise_is_shadow_only_until_the_trusted_record_gate_exists(tmp_path)
 
 
 def test_a_reviewed_active_overlay_is_in_the_next_session_brief_even_when_shadow_is_on(tmp_path):
+    """@brief 已复核的 active overlay 即使 shadow 打开也会出现在下一次 session brief。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     from ..support.orchestrator import code, llm_script, make_orch
 
     orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [])

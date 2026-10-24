@@ -17,20 +17,45 @@ SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "run_detached.py"
 
 
 def _ps(pid: int, field: str) -> str:
+    """@brief 用 ``ps`` 读某个 pid 的单个字段。
+
+    @param pid 目标进程号。
+    @param field ``ps -o`` 的字段名，例如 ``ppid`` / ``tty`` / ``command``。
+    @return 去掉首尾空白的字段值；进程不存在时是空串。
+    """
     return subprocess.run(["ps", "-o", f"{field}=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
 
 
 def _alive(pid: int) -> bool:
+    """@brief 用 ``ps`` 判断该 pid 是否还活着。
+
+    @param pid 目标进程号。
+    @return 进程存在则为 True。
+    """
     return bool(_ps(pid, "pid"))
 
 
 def _launch(tmp_path: Path, *cmd: str, extra=(), pass_fds=()) -> tuple[subprocess.CompletedProcess, Path, Path]:
+    """@brief 通过 ``scripts/run_detached.py`` 启动一条命令。
+
+    @param tmp_path 临时目录，日志与 pidfile 写在这里。
+    @param cmd 交给脚本的命令行。
+    @param extra 传给脚本本身的额外参数，例如 ``--env``。
+    @param pass_fds 需要继承给子进程的描述符。
+    @return ``(CompletedProcess, 日志路径, pidfile 路径)``。
+    """
     log, pidfile = tmp_path / "out.log", tmp_path / "out.pid"
     r = subprocess.run([sys.executable, str(SCRIPT), "--log", str(log), "--pidfile", str(pidfile), *extra, "--", *cmd], capture_output=True, text=True, timeout=20, pass_fds=pass_fds)
     return r, log, pidfile
 
 
 def _wait_for(predicate, timeout=8.0):
+    """@brief 轮询直到条件成立或超时。
+
+    @param predicate 无参可调用对象，返回真值即视为成立。
+    @param timeout 最长等待秒数。
+    @return 超时前条件成立则为 True。
+    """
     end = time.time() + timeout
     while time.time() < end:
         if predicate():
@@ -40,7 +65,10 @@ def _wait_for(predicate, timeout=8.0):
 
 
 def _stop(pid: int) -> None:
-    """Kill the detached process group (never our own) and wait until the process is gone."""
+    """@brief 杀掉被脱离的进程组（绝不杀自己的）并等到该进程消失。
+
+    @param pid 被脱离进程的 pid；等不到它退出则断言失败。
+    """
     pgid = os.getpgid(pid) if _alive(pid) else None
     # 杀的是对方的进程组；pgid 与本测试相同则拒绝，避免把测试自己一起杀掉。
     if pgid is not None and pgid != os.getpgid(0):
@@ -53,6 +81,10 @@ def _stop(pid: int) -> None:
 
 
 def test_the_command_is_detached_from_the_launcher(tmp_path):
+    """@brief 验证脱离契约：启动器立刻返回，印出的 pid 已被 launchd 收养、自成一组成员与会话、无控制终端，进程名就是命令本身。
+
+    @param tmp_path 临时目录，日志与 pidfile 写在这里。
+    """
     # 命令是 sleep 30，长于下面的 15 秒上限：启动器若同步等它结束，时间不变量必破。
     start = time.time()
     r, log, pidfile = _launch(tmp_path, "sleep", "30")
@@ -88,6 +120,10 @@ def test_the_command_is_detached_from_the_launcher(tmp_path):
 
 
 def test_output_goes_to_the_log_stdin_is_empty_and_no_descriptor_leaks(tmp_path):
+    """@brief 验证标准输出与错误都进日志、stdin 为空、继承来的高号描述符被关掉，且短命令结束后进程退出。
+
+    @param tmp_path 临时目录，日志与 pidfile 写在这里。
+    """
     rd, wr = os.pipe()
     leak = os.dup(wr)
     # 故意留下可继承的 fd 40（命令自己不会打开这个号）：/dev/fd/40 还在就只能是继承描述符没关。
@@ -116,6 +152,10 @@ def test_output_goes_to_the_log_stdin_is_empty_and_no_descriptor_leaks(tmp_path)
 
 
 def test_a_command_that_does_not_exist_fails_cleanly(tmp_path):
+    """@brief 验证命令不存在时启动器非零退出并报 not found，不印 pid 也不留 pidfile。
+
+    @param tmp_path 临时目录，日志与 pidfile 的目标位置。
+    """
     r, log, pidfile = _launch(tmp_path, "/nonexistent/definitely-not-a-command", extra=("--no-caffeinate",))
     # 命令不存在时启动器必须非 0 退出，且 stderr 带 not found；0 会让调用方以为已经在跑。
     assert r.returncode != 0 and "not found" in r.stderr
@@ -128,6 +168,10 @@ def test_a_command_that_does_not_exist_fails_cleanly(tmp_path):
 # 本机找不到 caffeinate 就跳过（标记为仅 macOS）。断言只看日志文件：事先写好的第一行还在文件头，说明是追加打开，不是截断重写。
 @pytest.mark.skipif(shutil.which("caffeinate") is None, reason="caffeinate is macOS only")
 def test_the_log_is_appended_not_truncated(tmp_path):
+    """@brief 验证日志以追加方式打开：事先写好的第一行仍在文件头。
+
+    @param tmp_path 临时目录，日志写在这里。
+    """
     log = tmp_path / "out.log"
     log.write_text("earlier output\n")
     r, _, _ = _launch(tmp_path, "true")

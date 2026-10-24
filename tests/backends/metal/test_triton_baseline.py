@@ -12,6 +12,11 @@ from tcenv.triton_runner import spec_fingerprint
 
 
 def test_measure_explains_a_missing_toolchain(monkeypatch):
+    """@brief 验证 Metal 工具链缺失时 measure 抛出带修复命令提示的 RuntimeError。
+
+    @param monkeypatch pytest 补丁工具，用来固定可用性与工具链检查结果。
+    @raises RuntimeError 工具链不可用时抛出，消息包含 `xcodebuild -downloadComponent MetalToolchain`。
+    """
     from tcenv.backends.metal import triton_baseline as tb
 
     monkeypatch.setattr(tb, "available", lambda: True)
@@ -21,7 +26,14 @@ def test_measure_explains_a_missing_toolchain(monkeypatch):
 
 
 def test_only_trustworthy_cached_measurements_are_used(tmp_path, monkeypatch):
-    """A measurement taken on a busy machine (inconsistent with its own sweep) or a launch-bound one must never feed a report."""
+    """@brief 验证只有可信的缓存测量会被采用，其余一概视为无缓存。
+
+    在忙碌机器上测得的（与自身扫描不一致）、launch-bound 的、缺 consistent 字段的、
+    状态不支持的、规格指纹不匹配的、以及指纹出现前测得的旧记录，都必须拒绝。
+
+    @param tmp_path pytest 提供的临时目录，作为缓存目录。
+    @param monkeypatch pytest 补丁工具，用来改写模块级 CACHE_DIR。
+    """
     import json
 
     from tcenv.backends.metal import triton_baseline as tb
@@ -48,6 +60,7 @@ def test_only_trustworthy_cached_measurements_are_used(tmp_path, monkeypatch):
 
 
 def test_estimate_scales_the_ratio_with_the_live_vendor_time():
+    """@brief 验证估算按缓存比值乘以实测厂商标杆耗时，且没有共同基准时返回 None。"""
     from tcenv.backends.metal import triton_baseline as tb
 
     est = tb.estimate({"ratio_to": {"mlx": 1.3, "torch_mps": 1.4}}, {"mlx": 100.0, "torch_mps": 90.0})
@@ -56,12 +69,20 @@ def test_estimate_scales_the_ratio_with_the_live_vendor_time():
 
 
 def test_busy_process_check_ignores_stopped_and_unrelated_processes():
+    """@brief 验证忙碌进程检查在真实机器上可调用并返回列表。
+
+    实现侧会跳过已挂起（ps 状态以 T 开头）以及与本 harness 无关的进程。
+    """
     from tcenv.backends.metal import triton_baseline as tb
 
     assert isinstance(tb.busy_processes(), list)
 
 
 def test_wait_quiet_returns_at_once_on_a_quiet_machine_and_gives_up_after_the_limit(monkeypatch):
+    """@brief 验证等待空闲在工作区安静时立即返回，在负载高或有忙碌进程时超时放弃。
+
+    @param monkeypatch pytest 补丁工具，用来替换负载与忙碌进程探测。
+    """
     from tcenv.backends.metal import triton_baseline as tb
 
     monkeypatch.setattr(tb.os, "getloadavg", lambda: (0.5, 0.5, 0.5))

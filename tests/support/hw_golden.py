@@ -32,29 +32,52 @@ FORCE_AFTER = 40
 
 
 def sha(text: str) -> str:
+    """@brief 算文本的 sha1 十六进制摘要，作为金标文件里的指纹。
+
+    @param text 待哈希的文本。
+    @return 40 位十六进制摘要。
+    """
     return hashlib.sha1(text.encode()).hexdigest()
 
 
 def dumps(data: dict, meta: dict) -> str:
-    """The only spelling ``--record`` may write and the format test may accept."""
+    """@brief 产出 ``--record`` 唯一允许写、格式测试唯一接受的金标文本。
+
+    ``_meta`` 放在最前，缩进 0、键排序，保证同一份数据只有一个字节形态。
+
+    @param data 各区段的指纹字典。
+    @param meta 记录来源（时间、提交、理由）。
+    @return 序列化后的 JSON 文本。
+    """
     return json.dumps({"_meta": meta, **data}, indent=0, sort_keys=True)
 
 
 def fixture_digest(name: str) -> str:
-    """sha256 of the metal source and the report, so a fixture edit cannot pass as a prompt change."""
+    """@brief 算金属源码与报告合起来的 sha256，使 fixture 的改动不能冒充提示词改动。
+
+    @param name fixture 名，对应 ``<name>.metal`` 与 ``<name>.report.json``。
+    @return 小写十六进制摘要。
+    """
     metal = (FIXTURES / f"{name}.metal").read_bytes()
     report = (FIXTURES / f"{name}.report.json").read_bytes()
     return hashlib.sha256(metal + b"\0" + report).hexdigest()
 
 
 def fixture(name: str) -> tuple[dict, str, dict]:
-    """(index entry, kernel source, report json) of a recorded candidate."""
+    """@brief 取一份已记录候选的索引条目、内核源码与报告 JSON。
+
+    @param name fixture 名。
+    @return ``(索引条目, 内核源码, 报告字典)``。
+    """
     idx = json.loads((FIXTURES / "index.json").read_text())[name]
     return idx, (FIXTURES / f"{name}.metal").read_text(), json.loads((FIXTURES / f"{name}.report.json").read_text())
 
 
 def param_keys() -> set[str]:
-    """Every key ``LLM._params`` emits across effort, tools, and max_tokens."""
+    """@brief 穷举 ``LLM._params`` 在 effort、工具与 max_tokens 各组合下会发出的键。
+
+    @return 所有出现过的键名集合，用来和 ``REQUEST_KEYS`` 白名单比对。
+    """
     from taic.llm import CostLedger, LLM, LLMConfig
     from taic.tools import LOOKUP_TOOL, QUICK_CHECK_TOOL
 
@@ -71,6 +94,10 @@ def param_keys() -> set[str]:
 
 
 def task_grid() -> list[tuple[str, str, str]]:
+    """@brief 列出所有参与的题目、dtype 与规模的组合。
+
+    @return ``(题目名, dtype, 规模)`` 三元组列表；题目含普通题、语义题与两个带变体的题。
+    """
     from tasks import SEMANTIC_NAMES, list_tasks
 
     names = list(list_tasks(True)) + list(SEMANTIC_NAMES) + ["flash_attention@64x32t256", "gemm@128x64x32t256"]
@@ -78,6 +105,11 @@ def task_grid() -> list[tuple[str, str, str]]:
 
 
 def system_prompts(extra: dict | None = None) -> dict[str, str]:
+    """@brief 对网格里每个存在的组合，按是否带工具与 profiler 证据算系统提示词的指纹。
+
+    @param extra 额外传给 ``system_prompt`` 的关键字参数。
+    @return 键为 ``题目|dtype|规模|tools=<0/1>|pe=<0/1>``、值为 sha1 的字典。
+    """
     from tasks import get_task
 
     from taic import prompts
@@ -95,6 +127,10 @@ def system_prompts(extra: dict | None = None) -> dict[str, str]:
 
 
 def user_messages() -> dict[str, str]:
+    """@brief 对每个题目算初始、修复、规划与补丁四条用户消息的指纹。
+
+    @return 键为消息类型与题目、值为 sha1 的字典；只在 fp16 上取样。
+    """
     from tasks import get_task
 
     from taic import prompts
@@ -114,6 +150,10 @@ def user_messages() -> dict[str, str]:
 
 
 def feedback_texts() -> dict[str, str]:
+    """@brief 把每份 fixture 报告渲染成反馈文本，并另存一份截断到 6000 字符的版本。
+
+    @return 键为 ``format_feedback[|_cut]|<fixture>``、值为文本本身的字典（文本而不是哈希）。
+    """
     from tcenv.evaluate import EvalReport
     from tcenv.report import format_feedback
 
@@ -128,7 +168,10 @@ def feedback_texts() -> dict[str, str]:
 
 
 def outbound_requests() -> dict[str, str]:
-    """Complete request bodies, including the tool schema and the three effort settings, with the messages held fixed."""
+    """@brief 覆盖完整请求体：消息固定，变化的是工具 schema、三档 effort 与 max_tokens。
+
+    @return 键为组合描述、值为整个请求体 sha1 的字典。
+    """
     from taic.llm import CostLedger, LLM, LLMConfig
     from taic.tools import LOOKUP_TOOL, QUICK_CHECK_TOOL
 
@@ -150,7 +193,11 @@ def outbound_requests() -> dict[str, str]:
 
 
 def _scripted_eval(report_name: str):
-    """An evaluator that returns the recorded report of ``report_name``, with the speedup taken from a ``// speed=`` marker in the source."""
+    """@brief 造一个返回已记录报告的评测器，speedup 取自源码里的 ``// speed=`` 标记。
+
+    @param report_name 作为模板的 fixture 名。
+    @return 可直接当 ``evaluate_fn`` 用的函数；源码里没有标记时沿用报告里的 speedup。
+    """
     import re
 
     from tcenv.evaluate import EvalReport
@@ -169,13 +216,23 @@ def _scripted_eval(report_name: str):
 
 
 def _orch_key(task: str, plan_mix: bool) -> str:
+    """@brief 拼 orchestrator 区段的键，区分题目与是否开启混合规划。
+
+    @param task 题目名。
+    @param plan_mix 是否开启 plan_mix。
+    @return 形如 ``orchestrator|<题目>|plan_mix=<0/1>`` 的键。
+    """
     return f"orchestrator|{task}|plan_mix={int(plan_mix)}"
 
 
 def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]:
-    """The task contracts one scripted search hands to hmz, in order.
+    """@brief 记录一次脚本化搜索按顺序交给 hmz 的 TASK 契约指纹。
 
-    The search does not send chat requests. Each entry hashes the contract text.
+    这条路径不发 chat 请求，所以每个条目哈希的是契约文本；渲染时换成固定的合成路径，
+    使指纹与 checkout 位置无关。
+
+    @param extra_search 覆盖 ``SearchConfig`` 的额外开关。
+    @return 键为 ``_orch_key``、值为条目数、合并 sha 与逐条 sha 的字典。
     """
     from taic.llm import LLMConfig, SearchConfig
     from taic.orchestrator import Orchestrator
@@ -228,6 +285,12 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
 
 
 def compute(extra_system: dict | None = None, extra_search: dict | None = None) -> dict:
+    """@brief 用当前代码算出关掉 ``hw_feedback`` 时的全部指纹。
+
+    @param extra_system 传给系统提示词渲染的额外参数。
+    @param extra_search 覆盖 ``SearchConfig`` 的额外开关。
+    @return 含系统提示词、用户消息、反馈、出站请求与 orchestrator 五个区段的数据。
+    """
     return {
         "system_prompt": system_prompts(extra_system),
         "user_messages": user_messages(),
@@ -238,7 +301,14 @@ def compute(extra_system: dict | None = None, extra_search: dict | None = None) 
 
 
 def changed_keys(got: dict, want: dict) -> list[str]:
-    """Section:key pairs whose recorded value differs. ``_meta`` is provenance, not a prompt."""
+    """@brief 列出记录值有差异的 ``区段:键`` 对。
+
+    ``_meta`` 是来源信息而不是提示词，不参与比较。
+
+    @param got 本次算出的数据。
+    @param want 金标文件里的数据。
+    @return 差异键列表，可直接打印。
+    """
     lines = []
     sections = (set(want) | set(got)) - {"_meta"}
     for sec in sorted(sections):
@@ -255,6 +325,10 @@ def changed_keys(got: dict, want: dict) -> list[str]:
 
 
 def _git_commit() -> str:
+    """@brief 读当前 HEAD 提交号，写进金标文件的来源信息。
+
+    @return 提交 sha；仓库不可用或 git 失败时返回空串。
+    """
     try:
         return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=GOLDEN_DIR.parents[3], text=True).strip()
     except (OSError, subprocess.CalledProcessError):
@@ -262,7 +336,13 @@ def _git_commit() -> str:
 
 
 def _reason(argv: list[str]) -> str:
-    """``--reason "x"`` and ``--reason=x`` are both accepted; a missing value is an empty reason."""
+    """@brief 从命令行里取记录理由，两种写法都认。
+
+    ``--reason "x"`` 与 ``--reason=x`` 都可以；值缺失时返回空串。
+
+    @param argv 命令行参数列表。
+    @return 理由文本。
+    """
     for index, item in enumerate(argv):
         if item == "--reason":
             return argv[index + 1] if index + 1 < len(argv) else ""

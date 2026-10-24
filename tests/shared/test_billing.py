@@ -8,10 +8,17 @@ from taic.llm import CostLedger, LLMConfig
 
 
 def _cfg(**kw):
+    """@brief 造一份只有占位 base_url、key 与 model 的 LLMConfig，可用关键字覆盖任意字段。
+
+    @param kw 要覆盖的配置字段。
+    @return LLMConfig 实例。
+    """
     return LLMConfig(base_url="http://x", api_key="k", model="m", **kw)
 
 
 def test_priced_keeps_the_new_members_cache_write_price():
+    """@brief 验证 _priced 用新成员自己的价格表，缓存写价格没被活动配置里的 0.0 覆盖。
+    """
     active = _cfg(price_cache_write=0.0)
     priced = _priced(
         active, base_url="http://y", api_key="k2", model="kimi-k3",
@@ -22,6 +29,8 @@ def test_priced_keeps_the_new_members_cache_write_price():
 
 
 def test_charge_records_write_tokens_and_the_price_basis():
+    """@brief 验证 charge 记下缓存写 token 与所用价格，summary 里也带着 cache_write 的计价依据。
+    """
     ledger = CostLedger(_cfg(price_in=3.0, price_out=15.0, price_cache_read=0.3, price_cache_write=3.0), 10.0)
     ledger.charge(4.87, "r1", tokens={"input": 1000, "output": 2000, "cache_read": 3000, "cache_write": 1_000_000})
     assert ledger.in_tokens_write == 1_000_000
@@ -34,6 +43,8 @@ def test_charge_records_write_tokens_and_the_price_basis():
 
 
 def test_add_records_cache_write_from_usage_details():
+    """@brief 验证 add 从 usage 的 prompt_tokens_details 里读出 cache_write_tokens 并计入账本。
+    """
     ledger = CostLedger(_cfg(price_in=3.0, price_out=15.0, price_cache_read=0.3, price_cache_write=3.0), 10.0)
     ledger.add({"prompt_tokens": 10, "completion_tokens": 2, "prompt_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 4}}, "t1")
     assert ledger.requests[-1]["write"] == 4
@@ -41,6 +52,10 @@ def test_add_records_cache_write_from_usage_details():
 
 
 def test_recompute_reads_agent_rows_and_leaves_spent_usd_alone(tmp_path):
+    """@brief 验证重算只读 transcript 的 agent 行，把结果写进 cost_recomputed.json，而 result.json 的 spent_usd 保持原样。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     run.mkdir()
     (run / "result.json").write_text(json.dumps({"spent_usd": 1.0}))
@@ -60,6 +75,10 @@ def test_recompute_reads_agent_rows_and_leaves_spent_usd_alone(tmp_path):
 
 
 def test_recompute_marks_a_model_missing_from_the_price_table(tmp_path):
+    """@brief 验证价格表里没有的模型被列进 missing_models，其花费不计入重算总额。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     run.mkdir()
     (run / "transcript.jsonl").write_text(json.dumps(
@@ -71,12 +90,17 @@ def test_recompute_marks_a_model_missing_from_the_price_table(tmp_path):
 
 
 def test_cost_of_uses_each_kind():
+    """@brief 验证 cost_of 对输入、输出、缓存读、缓存写四类 token 分别按各自单价计价。
+    """
     prices = {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.0}
     assert cost_of({"input": 1_000_000, "output": 1_000_000, "cache_read": 1_000_000, "cache_write": 1_000_000}, prices) == 21.3
 
 
 def test_a_non_finite_or_negative_charge_is_refused():
-    """A NaN charge made total_usd NaN, and every budget comparison then returned false."""
+    """@brief 验证非有限或负数的扣费被拒绝（ValueError），总额保持可用。
+
+    一次 NaN 扣费会把 total_usd 变成 NaN，之后所有预算比较都返回 false。
+    """
     ledger = CostLedger(_cfg(), 10.0)
     for bad in (float("nan"), float("inf"), -1.0):
         with pytest.raises(ValueError):

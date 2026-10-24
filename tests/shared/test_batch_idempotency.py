@@ -16,6 +16,11 @@ ENDPOINT = "http://127.0.0.1:1"
 
 
 def _config(tmp_path: Path) -> Path:
+    """@brief 写一份最小 taic.toml（两个委员会、关掉各类开关）供批量用例当预设。
+
+    @param tmp_path 临时目录，配置文件写在其中。
+    @return 配置文件路径。
+    """
     path = tmp_path / "taic.toml"
     path.write_text(
         '[llm]\ncredentials_file = "/no/such/models.json"\nprovider = "deepseek"\nmodel = "deepseek-flash"\n'
@@ -30,6 +35,11 @@ def _config(tmp_path: Path) -> Path:
 
 
 def test_an_interrupted_cell_is_resumed_not_refused(tmp_path, monkeypatch):
+    """@brief 验证被打断的单元格再跑一次是续跑而不是拒绝：轮数已用完时直接补写结果，不再开会话。
+
+    @param tmp_path pytest 临时目录，当作这一格的运行目录。
+    @param monkeypatch 用于设置假的 API 凭据与端点。
+    """
     monkeypatch.setenv("OPENAI_API_KEY", SECRET)
     monkeypatch.setenv("OPENAI_BASE_URL", ENDPOINT)
     config = _config(tmp_path)
@@ -57,6 +67,10 @@ def test_an_interrupted_cell_is_resumed_not_refused(tmp_path, monkeypatch):
 
 
 def test_backfill_records_arms_and_attaches_the_existing_directories(tmp_path):
+    """@brief 验证回填按子目录名生成 arm、把已有运行目录挂上去，并把清单标成已冻结的回填结果。
+
+    @param tmp_path 临时目录，作为批次的根目录。
+    """
     root = tmp_path / "p1"
     for name, task in (("a", "relu"), ("b", "gemm")):
         child = root / name

@@ -9,6 +9,10 @@ from experiments.restore_feedback_evidence import _restore
 
 
 def test_a_named_probe_is_restored_from_scratch(tmp_path):
+    """@brief 验证 FEEDBACK.md 中实测过的探针文件能从 scratch 归档里恢复回 agent 工作目录。
+
+    @param tmp_path pytest 提供的临时目录，用来搭建 run 目录、agent_work 与 scratch 归档。
+    """
     run = tmp_path / "run"
     work = run / "agent_work" / "r1"
     work.mkdir(parents=True)

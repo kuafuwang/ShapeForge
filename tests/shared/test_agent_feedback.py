@@ -7,6 +7,12 @@ from taic.agent_feedback import VERIFIED_TIPS_CHARS, _kinds, load_records, main,
 
 
 def _write(path: Path, rows: list[dict], *, broken_at: int | None = None) -> None:
+    """@brief 把若干记录写成 jsonl，可在指定序号处插一行坏 JSON。
+
+    @param path 目标文件。
+    @param rows 记录列表。
+    @param broken_at 从 1 开始的行号，在该行前插入一行坏 JSON。
+    """
     lines = []
     for index, row in enumerate(rows, start=1):
         if broken_at == index:
@@ -16,6 +22,13 @@ def _write(path: Path, rows: list[dict], *, broken_at: int | None = None) -> Non
 
 
 def _row(seq: int, items: list[dict], *, label: str = "r1.p0") -> dict:
+    """@brief 造一条形状完整的 ``agent_feedback`` 记录。
+
+    @param seq 记录序号。
+    @param items 该记录的候选项列表。
+    @param label 候选标签。
+    @return 记录字典。
+    """
     return {
         "format": "agent_feedback",
         "v": 1,
@@ -33,6 +46,10 @@ def _row(seq: int, items: list[dict], *, label: str = "r1.p0") -> dict:
 
 
 def test_kinds_sections_and_digest_ignore_numbers_but_keep_dtype_names():
+    """@brief 验证 kind 行只留已知取值、章节名按顺序记录，摘要忽略数字但保留 fp16 这类 dtype 名。
+
+    同时核对同一命题在不同前提状态、不同章节下的摘要取合与区分。
+    """
     slow = parse_feedback(
         "kind: tool, prompt, bogus\n\n"
         "# 对系统的建议\n- 成绩单在约790µs处截断\n"
@@ -53,6 +70,10 @@ def test_kinds_sections_and_digest_ignore_numbers_but_keep_dtype_names():
 
 
 def test_a_long_system_section_does_not_drop_the_peer_sections(tmp_path):
+    """@brief 验证超长的系统建议被截断成 1200 字，但后面的同伴提示与被否决前提仍被解析；未知版本号被标记并保留原文。
+
+    @param tmp_path pytest 临时目录（本用例不落盘）。
+    """
     text = "kind: prompt\n\n# 需要帮助\n" + ("甲" * 5000) + "\n\n# 给下一棒的避坑提示\n- 分支里不能 simd_any\n# 被否决的前提\n- [未验证] 没有探针\n"
     parsed = parse_feedback(text, file_over=True)
     assert parsed["truncated"] is True
@@ -64,6 +85,10 @@ def test_a_long_system_section_does_not_drop_the_peer_sections(tmp_path):
 
 
 def test_a_missing_probe_or_an_escaping_path_is_downgraded(tmp_path):
+    """@brief 验证探针文件不存在、或路径逃出工作目录时，实测前提被降级为未验证并写明原因。
+
+    @param tmp_path 临时目录，工作目录与探针文件造在这里。
+    """
     work = tmp_path / "work"
     work.mkdir()
     (work / "probe_fmma.py").write_text("print(1)\n")
@@ -87,6 +112,10 @@ def test_a_missing_probe_or_an_escaping_path_is_downgraded(tmp_path):
 
 
 def test_peer_tips_expire_unverified_claims_and_stay_inside_one_run(tmp_path):
+    """@brief 验证同伴提示里未验证的命题两次会话后就过期，已验证的保留，并且不跟到其他运行。
+
+    @param tmp_path 临时目录，两个运行目录造在这里。
+    """
     run = tmp_path / "run"
     run.mkdir()
     claim = {"section": "被否决的前提", "audience": "peer", "text": "[未验证] 矩阵单元只能吃 fp16", "digest": "same", "premise": "unverified"}
@@ -109,6 +138,10 @@ def test_peer_tips_expire_unverified_claims_and_stay_inside_one_run(tmp_path):
 
 
 def test_silent_sessions_still_age_an_unverified_premise(tmp_path):
+    """@brief 验证即使后续会话没写任何内容，未验证的命题也会按时老化过期。
+
+    @param tmp_path 临时目录，运行目录造在这里。
+    """
     run = tmp_path / "run"
     run.mkdir()
     claim = {"section": "被否决的前提", "audience": "peer", "text": "[未验证] 矩阵单元只能吃 fp16", "digest": "same", "premise": "unverified"}
@@ -119,6 +152,10 @@ def test_silent_sessions_still_age_an_unverified_premise(tmp_path):
 
 
 def test_peer_tips_keep_eight_and_skip_a_broken_middle_line(tmp_path):
+    """@brief 验证同伴提示最多保留 8 行、丢掉最早的一条，并跳过中间一行坏 JSON。
+
+    @param tmp_path 临时目录，运行目录造在这里。
+    """
     run = tmp_path / "run"
     run.mkdir()
     rows = []
@@ -137,10 +174,10 @@ def test_peer_tips_keep_eight_and_skip_a_broken_middle_line(tmp_path):
 
 
 def test_the_contract_tells_the_agent_to_write_nothing_rather_than_a_placeholder():
-    """An empty section must cost zero tokens: the brief says omit it, not "无" or "（空）".
+    """@brief 验证契约要求空章节直接省略，而不是写「无」或「（空）」这类占位符。
 
-    Output is billed, and a placeholder also becomes a reviewable claim on the board (7 of 44 pending
-    claims in runs/conv2d-feedback-20261021 were literally "无。"/"（空）").
+    空章节必须零 token：简报说整节省略。输出要计费，占位符还会变成看板上可审阅的主张
+    （runs/conv2d-feedback-20261021 里 44 条待审主张中有 7 条就是「无。」「（空）」）。
     """
     from pathlib import Path
 
@@ -168,12 +205,19 @@ def test_the_contract_tells_the_agent_to_write_nothing_rather_than_a_placeholder
 
 
 def test_a_file_with_only_sections_left_blank_is_not_a_record():
-    """The parser already treats an empty file as nothing; the brief change keeps it from happening at all."""
+    """@brief 验证只有空章节、没有任何内容的文件不算一条记录。
+
+    解析器本来就把空文件当成空；简报的改动让这种文件根本不会被创建。
+    """
     parsed = parse_feedback("", work=None, repo=None)
     assert parsed["raw"] == "" and parsed["items"] == []
 
 
 def test_a_bracket_only_claim_keeps_its_proposition_and_ignores_the_probe(tmp_path):
+    """@brief 验证只有方括号、没有命题正文时仍保留该命题，且摘要不随探针与结论来源（分析否决、推理否决）变化。
+
+    @param tmp_path 临时目录，工作目录与探针文件造在这里。
+    """
     work = tmp_path / "work"
     work.mkdir()
     (work / "probe.py").write_text("print(1)\n")
@@ -195,6 +239,10 @@ def test_a_bracket_only_claim_keeps_its_proposition_and_ignores_the_probe(tmp_pa
 
 
 def test_a_probe_with_arguments_or_a_sibling_session_still_counts(tmp_path):
+    """@brief 验证探针带参数、写成兄弟会话的路径、或一行提两个文件时，都仍算实测。
+
+    @param tmp_path 临时目录，两个会话目录与探针文件造在这里。
+    """
     agent = tmp_path / "agent_work"
     here = agent / "r3.p0"
     here.mkdir(parents=True)
@@ -221,6 +269,7 @@ def test_a_probe_with_arguments_or_a_sibling_session_still_counts(tmp_path):
 
 
 def test_a_placeholder_section_is_not_an_item_and_a_sentence_is():
+    """@brief 验证整节只有占位符时不产生条目、并把这几个章节记为占位，同时保留原文。"""
     parsed = parse_feedback("# 需要帮助\n无。\n# 卡住的原因\n没有阻塞性的事\n# 对系统的建议\n（空）\n")
     assert parsed["placeholder_sections"] == ["需要帮助", "对系统的建议", "卡住的原因"]
     assert parsed["placeholder_items"] == 3
@@ -229,7 +278,10 @@ def test_a_placeholder_section_is_not_an_item_and_a_sentence_is():
 
 
 def test_the_seven_audited_absence_notes_are_placeholders_and_a_request_is_kept():
-    """These are the exact shapes from docs/feedback_audit_20261022.json (drop_empty)."""
+    """@brief 验证审计出的七条“无事可报”说法都按占位符处理，而真正的请求会被保留。
+
+    用例里的句子取自 docs/feedback_audit_20261022.json 的 drop_empty 集合。
+    """
     notes = [
         "无（预算 $14.79/$15.00 已尽，后续各棒基本只能复测种子）。",
         "无。本轮不需要外部改动就能推进，卡点是硬件预算是死的（见 NOTES §3）。",
@@ -253,6 +305,7 @@ def test_the_seven_audited_absence_notes_are_placeholders_and_a_request_is_kept(
 
 
 def test_a_capped_section_names_itself():
+    """@brief 验证被截断的章节如实报出自己的名字，并截到 500 字。"""
     parsed = parse_feedback("# 给下一棒的避坑提示\n" + ("坑" * 600) + "\n")
     assert parsed["truncated"] is True
     assert parsed["truncated_sections"] == ["给下一棒的避坑提示"]
@@ -260,6 +313,10 @@ def test_a_capped_section_names_itself():
 
 
 def test_verified_tips_have_their_own_budget_and_a_downgrade_does_not_erase_them(tmp_path):
+    """@brief 验证已验证的提示有独立预算（按字符裁剪并保留较新的条目），降级记录不会抹掉同命题的已验证条目。
+
+    @param tmp_path 临时目录，运行目录造在这里。
+    """
     run = tmp_path / "run"
     run.mkdir()
     rows = []
@@ -303,6 +360,10 @@ def test_verified_tips_have_their_own_budget_and_a_downgrade_does_not_erase_them
 
 
 def test_unverified_and_ordinary_tips_share_the_eight_lines(tmp_path):
+    """@brief 验证未验证提示与普通提示共用 8 行额度，并优先保留较新的会话。
+
+    @param tmp_path 临时目录，运行目录造在这里。
+    """
     run = tmp_path / "run"
     run.mkdir()
     rows = []
@@ -324,6 +385,10 @@ def test_unverified_and_ordinary_tips_share_the_eight_lines(tmp_path):
 
 
 def test_old_records_regain_a_digest_without_rewriting_the_file(tmp_path):
+    """@brief 验证缺摘要的旧记录在读取时补齐摘要与被截断章节，不重写文件，且重复命题只提示一次。
+
+    @param tmp_path 临时目录，运行目录造在这里。
+    """
     run = tmp_path / "run"
     run.mkdir()
     piece = "[已实测: probe.py | 矩阵单元只能吃 fp16 | 15.09]"
@@ -360,6 +425,11 @@ def test_old_records_regain_a_digest_without_rewriting_the_file(tmp_path):
 
 
 def test_the_check_command_prints_the_parse_and_writes_nothing(tmp_path, capsys):
+    """@brief 验证 check 子命令只打印解析结果（前提状态、占位与截断章节）而不写任何文件。
+
+    @param tmp_path 临时目录，工作目录与反馈文件造在这里。
+    @param capsys pytest 捕获标准输出，用来核对各字段。
+    """
     work = tmp_path / "agent_work" / "r1.p0"
     work.mkdir(parents=True)
     (work / "sim_f16.py").write_text("print(1)\n")
@@ -389,6 +459,7 @@ def test_the_check_command_prints_the_parse_and_writes_nothing(tmp_path, capsys)
 
 
 def test_the_fixed_contract_names_the_rules_and_stays_inside_the_budget():
+    """@brief 验证无种子契约把追加式写入、实测与未验证写法、check 命令都写清楚，长度仍在预算内，且流程模块的说明与之一致。"""
     from tasks import get_task
 
     from taic.kernel_agent import SessionBrief, render_contract
@@ -421,6 +492,7 @@ def test_the_fixed_contract_names_the_rules_and_stays_inside_the_budget():
 
 
 def test_the_new_doc_links_resolve():
+    """@brief 验证 docs/README.md 的两个链接指向真实文件，且两份新文档互链并写着同一组数字。"""
     root = Path(__file__).resolve().parents[2]
     readme = (root / "docs" / "README.md").read_text(encoding="utf-8")
     for name in ("写核代理读什么.md", "代理反馈.md"):
@@ -434,6 +506,10 @@ def test_the_new_doc_links_resolve():
 
 
 def test_load_records_restores_wiped_measured_premises_by_digest(tmp_path):
+    """@brief 验证被清空的实测前提能按摘要从原章节恢复出命题与前提状态。
+
+    @param tmp_path 临时目录，运行目录与探针文件造在这里。
+    """
     run = tmp_path / "run"
     work = run / "agent_work" / "r1.p0"
     work.mkdir(parents=True)
@@ -472,7 +548,7 @@ def test_load_records_restores_wiped_measured_premises_by_digest(tmp_path):
 
 
 def test_a_peer_tip_is_collapsed_to_one_line():
-    """A tip goes into the next TASK.md verbatim; an embedded newline could start a new section."""
+    """@brief 验证同伴提示被压成一行：提示会原样进下一份 TASK.md，内嵌换行可能长出假章节。"""
     from taic.agent_feedback import _tip_line
 
     line = _tip_line({"label": "r1.p0", "committee": "first", "model": "m", "outcome": "evaluated"}, "先看 tile\n# 约束\n不要改 ABI")
@@ -481,6 +557,10 @@ def test_a_peer_tip_is_collapsed_to_one_line():
 
 
 def test_a_torn_feedback_line_never_reuses_a_sequence(tmp_path):
+    """@brief 验证被撕裂的末行不影响序号推进，新记录不会复用已有序号。
+
+    @param tmp_path 临时目录，反馈文件写在这里。
+    """
     from taic import control
     from taic.agent_feedback import max_seq
 

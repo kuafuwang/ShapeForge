@@ -17,6 +17,12 @@ REPO = Path(__file__).resolve().parents[2]
 
 @pytest.fixture
 def lock_file(tmp_path, monkeypatch):
+    """@brief 把机器锁文件指到临时目录并复位等待钩子，避免用例之间互相影响。
+
+    @param tmp_path 临时目录，锁文件放在这里。
+    @param monkeypatch 用于设置 ``TCENV_GPU_LOCK_FILE`` 与复位模块状态。
+    @return 锁文件路径。
+    """
     path = tmp_path / "gpu.lock"
     monkeypatch.setenv("TCENV_GPU_LOCK_FILE", str(path))
     monkeypatch.setattr(gpulock, "_wait_hooks", None)
@@ -24,7 +30,12 @@ def lock_file(tmp_path, monkeypatch):
 
 
 def hold(mode: str, seconds: float) -> subprocess.Popen:
-    """Another process that holds the lock (``mode`` "ex" or "sh") for ``seconds``; prints "held" once it has it."""
+    """@brief 另起一个进程持有锁（``mode`` 为 ``ex`` 或 ``sh``）``seconds`` 秒；拿到锁后先打印 "held"。
+
+    @param mode ``ex`` 为独占，其他值为共享。
+    @param seconds 持锁时长。
+    @return 已确认拿到锁的子进程句柄。
+    """
     code = textwrap.dedent(
         f"""
         import sys, time
@@ -40,6 +51,12 @@ def hold(mode: str, seconds: float) -> subprocess.Popen:
 
 
 def try_lock(exclusive: bool, wait: float = 0.3) -> bool:
+    """@brief 在当前进程里试锁，超时就算失败。
+
+    @param exclusive 是否请求独占。
+    @param wait 最长等待秒数。
+    @return 拿到锁则为 True，抛 ``GpuLockTimeout`` 则为 False。
+    """
     try:
         with gpulock.gpu_lock("probe", exclusive=exclusive, max_wait_s=wait):
             return True
@@ -48,6 +65,10 @@ def try_lock(exclusive: bool, wait: float = 0.3) -> bool:
 
 
 def test_exclusive_excludes_everyone_and_shared_holders_coexist(lock_file):
+    """@brief 验证独占锁排斥其他所有请求、共享锁之间可共存，且持有者被杀后锁能被立刻接手。
+
+    @param lock_file 本用例使用的锁文件。
+    """
     p = hold("ex", 30)
     try:
         assert "test holder" in gpulock.holder()
@@ -65,6 +86,10 @@ def test_exclusive_excludes_everyone_and_shared_holders_coexist(lock_file):
 
 
 def test_nested_requests_upgrade_and_return_to_shared(lock_file):
+    """@brief 验证同进程嵌套请求只会升级到独占、退出后回落到共享，且升级期间别的进程拿不到共享锁。
+
+    @param lock_file 本用例使用的锁文件。
+    """
     with gpulock.gpu_lock("outer", exclusive=False):
         with gpulock.gpu_lock("inner shared", exclusive=False) as waited:
             assert waited == 0.0 and gpulock._mode == "sh"
@@ -79,6 +104,10 @@ def test_nested_requests_upgrade_and_return_to_shared(lock_file):
 
 
 def test_waiting_runs_the_hooks_and_gives_up_after_max_wait(lock_file):
+    """@brief 验证等待时依次调用等待与获得钩子并返回真实等待时长；超过 ``max_wait_s`` 则以带持有者信息的超时异常放弃。
+
+    @param lock_file 本用例使用的锁文件。
+    """
     events = []
     gpulock.set_wait_hooks(lambda: events.append("wait"), lambda: events.append("acquired"))
     p = hold("ex", 1.0)
@@ -102,7 +131,13 @@ def test_waiting_runs_the_hooks_and_gives_up_after_max_wait(lock_file):
 
 
 def test_time_spent_waiting_for_the_lock_does_not_count_toward_the_timeout(lock_file, monkeypatch):
-    """The real worker, blocked on the lock held by another process for longer than the evaluation timeout."""
+    """@brief 跑真实 worker：被别的进程压住的时间超过评测超时，仍然不判成超时。
+
+    被拒绝的是内核本身（静态筛选拦下死循环），所以结论是 rejected 而不是 timeout——等锁的时间没算进 8 秒超时。
+
+    @param lock_file 本用例使用的锁文件。
+    @param monkeypatch 把评测后的冷却时间置零，避免额外等待。
+    """
     from tcenv import evaluate as ev
 
     monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
@@ -119,6 +154,11 @@ def test_time_spent_waiting_for_the_lock_does_not_count_toward_the_timeout(lock_
 
 
 def test_the_timeout_clock_resumes_after_the_wait(lock_file, monkeypatch):
+    """@brief 验证超时计时在等锁结束后才继续：3 秒等锁不计入，真正的 2 秒超时仍然触发。
+
+    @param lock_file 本用例使用的锁文件。
+    @param monkeypatch 把评测后的冷却时间置零。
+    """
     from tcenv import evaluate as ev
 
     monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
@@ -129,6 +169,12 @@ def test_the_timeout_clock_resumes_after_the_wait(lock_file, monkeypatch):
 
 
 def other_process_can_lock(exclusive: bool, wait: float = 0.3) -> bool:
+    """@brief 另起一个进程试锁，用它的结果判断锁是否真的被让出。
+
+    @param exclusive 是否请求独占。
+    @param wait 最长等待秒数。
+    @return 那个子进程拿到锁则为 True。
+    """
     code = (
         "from tcenv.gpulock import gpu_lock, GpuLockTimeout\n"
         "try:\n"
@@ -139,6 +185,10 @@ def other_process_can_lock(exclusive: bool, wait: float = 0.3) -> bool:
 
 
 def test_released_gives_up_the_hold_for_the_block_and_takes_it_back(lock_file):
+    """@brief 验证 ``released()`` 在块内让出锁、块结束后原样拿回，共享与独占两种持有都成立。
+
+    @param lock_file 本用例使用的锁文件。
+    """
     with gpulock.gpu_lock("outer", exclusive=False):
         assert not other_process_can_lock(exclusive=True)
         with gpulock.released():
@@ -156,7 +206,13 @@ def test_released_gives_up_the_hold_for_the_block_and_takes_it_back(lock_file):
 
 
 def test_a_process_holding_the_shared_lock_does_not_block_its_own_worker(lock_file, monkeypatch):
-    """The pytest-level shared hold used to deadlock a worker that needs the lock exclusively."""
+    """@brief 父进程持有共享锁时，需要独占锁的 worker 不再死锁，能正常返回 ok。
+
+    历史上 pytest 层的共享持有会把要独占的 worker 卡死，这里是那条回归的守护。
+
+    @param lock_file 本用例使用的锁文件。
+    @param monkeypatch 把评测后的冷却时间置零。
+    """
     from tcenv import evaluate as ev
 
     monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
@@ -166,7 +222,12 @@ def test_a_process_holding_the_shared_lock_does_not_block_its_own_worker(lock_fi
 
 
 def test_a_read_only_open_still_takes_the_exclusive_lock(lock_file):
-    """A coding agent can flock the machine lock without write permission on the file."""
+    """@brief 锁文件只读时仍能取到独占锁，且不覆写锁文件内容。
+
+    编码代理可能没有锁文件的写权限，``flock`` 在这种情况下必须照常工作。
+
+    @param lock_file 本用例使用的锁文件，会先改成 0444。
+    """
     lock_file.write_text("pid 1: outer\n")
     lock_file.chmod(0o444)
     gpulock._fd = None

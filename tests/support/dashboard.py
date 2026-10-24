@@ -13,6 +13,10 @@ import pytest
 
 
 def _free_port() -> int:
+    """@brief 向系统申请一个空闲的本地端口，避免测试之间抢占。
+
+    @return 已释放但当前空闲的端口号。
+    """
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
@@ -45,6 +49,14 @@ class _Events(threading.Thread):
 
 
 def _wait(events: queue.Queue, predicate, timeout=3.0):
+    """@brief 从事件队列中阻塞等待第一条满足条件的事件。
+
+    @param events 由 SSE 线程写入的事件队列。
+    @param predicate 判定单条事件是否即目标状态的谓词。
+    @param timeout 最长等待秒数。
+    @return 第一条满足谓词的事件。
+    @raises AssertionError 超时仍未出现满足条件的事件时抛出。
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -58,6 +70,13 @@ def _wait(events: queue.Queue, predicate, timeout=3.0):
 
 @pytest.fixture
 def dashboard(tmp_path, monkeypatch):
+    """@brief 在后台线程启动一个指向临时 runs 目录的 dashboard，并交给测试端口与目录。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的 monkeypatch，用于把运行目录等环境变量指向临时目录。
+    @return 生成器，产出 (端口, runs 目录)，测试结束后关闭服务线程。
+    @raises RuntimeError 服务在限定轮询内未能启动时抛出。
+    """
     import uvicorn
 
     from observe.app import app

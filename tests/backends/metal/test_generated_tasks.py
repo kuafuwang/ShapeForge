@@ -28,11 +28,22 @@ PAIRS = (
 
 
 def _sha(t: torch.Tensor) -> str:
+    """@brief 计算张量连续化后的原始字节摘要，用于逐位比较两份数据。
+
+    @param t 待摘要的张量。
+    @return 十六进制 SHA-256。
+    """
     return hashlib.sha256(t.detach().contiguous().cpu().view(torch.uint8).numpy().tobytes()).hexdigest()
 
 
 @pytest.mark.parametrize("hand_name,hand_build,gen_name", PAIRS)
 def test_generated_task_matches_the_hand_written_one(hand_name, hand_build, gen_name):
+    """@brief 验证生成任务与手写任务在契约、逐位参考数据和 launch header 的 warp 数上一致。
+
+    @param hand_name 手写任务名。
+    @param hand_build 手写任务的构造函数。
+    @param gen_name 生成任务名。
+    """
     hand = hand_build("fp16", "small")
     gen = build_generated(gen_name, "fp16", "small")
     assert mismatches(hand, gen) == []
@@ -56,6 +67,8 @@ def test_generated_task_matches_the_hand_written_one(hand_name, hand_build, gen_
 
 
 def test_a_tolerance_change_fails_the_comparison():
+    """@brief 验证只改容差也会被任务对比捕获，说明比对不只覆盖表达式。
+    """
     hand = build_relu("fp16", "small")
     gen = build_generated("gen_relu", "fp16", "small")
     assert mismatches(hand, gen) == []
@@ -64,6 +77,8 @@ def test_a_tolerance_change_fails_the_comparison():
 
 
 def test_the_manifest_rejects_escape_hatches_and_a_binary_domain_sweep():
+    """@brief 验证清单里的表达式拒绝 import、属性访问与未知调用，且校验拒绝把 domain_case 用于二元函数。
+    """
     with pytest.raises(ValueError):
         parse_expr("__import__('os')", ["x"])
     with pytest.raises(ValueError):
@@ -77,6 +92,8 @@ def test_the_manifest_rejects_escape_hatches_and_a_binary_domain_sweep():
 
 
 def test_generated_names_are_not_in_the_hand_written_list():
+    """@brief 验证生成任务名不会出现在手写任务列表里，但仍可按名取到，未知名则抛 KeyError。
+    """
     assert "gen_relu" not in list_tasks(include_phase2=True)
     assert get_task("gen_relu", "fp16", "small").name == "gen_relu"
     with pytest.raises(KeyError):

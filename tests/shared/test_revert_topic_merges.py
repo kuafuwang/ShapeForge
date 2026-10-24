@@ -9,6 +9,13 @@ from experiments.revert_topic_merges import find, revert
 
 
 def _run(tmp_path: Path, name: str, claims: dict) -> Path:
+    """@brief 写一个带反馈记录和 review claims 的 run 目录。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param name run 目录名。
+    @param claims feedback_review.json 里的 claims 字典。
+    @return 创建出的 run 目录。
+    """
     run = tmp_path / name
     run.mkdir()
     (run / "feedback.jsonl").write_text("{}\n")
@@ -17,6 +24,10 @@ def _run(tmp_path: Path, name: str, claims: dict) -> Path:
 
 
 def test_find_only_selects_duplicate_notes(tmp_path):
+    """@brief find 只挑出 obsolete 且备注写明 duplicate 的条目，忽略其他 obsolete 和已完成条目。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     _run(tmp_path, "run", {
         "1:a": {"status": "obsolete", "note": "audit 2026-10-22: duplicate of run#2:b", "topic": "budget"},
         "2:b": {"status": "obsolete", "note": "audit 2026-10-22: empty placeholder", "topic": "other"},
@@ -27,6 +38,10 @@ def test_find_only_selects_duplicate_notes(tmp_path):
 
 
 def test_revert_writes_pending_and_keeps_history(tmp_path):
+    """@brief revert 把重复条目改回 pending/unchecked，追加 history，并备份原文件。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = _run(tmp_path, "run", {
         "1:a": {"status": "obsolete", "note": "audit 2026-10-22: duplicate of run#2:b", "topic": "budget"},
     })

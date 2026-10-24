@@ -11,6 +11,12 @@ from taic import cli, gc, retrieval
 
 
 def _run(runs: Path, name: str, task: str) -> None:
+    """@brief 在 runs 目录下造一个已结束的假 run，写出 state.json 与 result.json。
+
+    @param runs runs 根目录。
+    @param name run 目录名，即 run id。
+    @param task 该 run 的任务名。
+    """
     directory = runs / name
     directory.mkdir(parents=True)
     (directory / "state.json").write_text(json.dumps({
@@ -22,6 +28,13 @@ def _run(runs: Path, name: str, task: str) -> None:
 
 
 def _candidate(runs: Path, name: str, label: str, status: str) -> None:
+    """@brief 在指定 run 下造一个候选目录，含 kernel.metal 与带状态的 report.json。
+
+    @param runs runs 根目录。
+    @param name 候选所属的 run id。
+    @param label 候选标签，决定目录名后缀。
+    @param status 写进 report.json 的状态，例如 abi_error。
+    """
     folder = runs / name / "candidates" / f"000_{label}"
     folder.mkdir(parents=True)
     (folder / "kernel.metal").write_text("kernel void k() {}\n")
@@ -29,6 +42,12 @@ def _candidate(runs: Path, name: str, label: str, status: str) -> None:
 
 
 def test_query_reads_the_index_and_prints_one_row_per_line(tmp_path, monkeypatch, capsys):
+    """@brief 验证索引刷新后可按任务与失败状态检索，且 query CLI 的 --jsonl 每条结果占一行。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的 monkeypatch，用于把 runs 目录与各索引路径指向临时目录。
+    @param capsys pytest 的输出捕获，用于读取 CLI 输出的 JSONL。
+    """
     runs = tmp_path / "runs"
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
     monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
@@ -50,6 +69,10 @@ def test_query_reads_the_index_and_prints_one_row_per_line(tmp_path, monkeypatch
 
 
 def test_gc_scans_and_applies_only_the_eligible_directories(tmp_path):
+    """@brief 验证扫描只把超过保留天数的目录标为可删，apply 只删它们并写下回收日志。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     root = tmp_path / "deleted"
     old = root / "old"
     new = root / "new"
@@ -69,6 +92,11 @@ def test_gc_scans_and_applies_only_the_eligible_directories(tmp_path):
 
 
 def test_gc_cli_defaults_to_a_report(tmp_path, capsys):
+    """@brief 验证 gc CLI 默认走 dry-run，只报告可删数量而不删除目录。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获，用于解析 CLI 打印的报告。
+    """
     root = tmp_path / "deleted"
     (root / "old").mkdir(parents=True)
     os.utime(root / "old", (time.time() - 40 * 86400,) * 2)
@@ -79,6 +107,11 @@ def test_gc_cli_defaults_to_a_report(tmp_path, capsys):
 
 
 def test_gc_refuses_a_root_outside_the_archive_and_apply_without_confirm(tmp_path, capsys):
+    """@brief 验证 gc 对归档目录之外的 root、零天数以及缺 --confirm 的 --apply 都以非零退出码 5 拒绝。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param capsys pytest 的输出捕获。
+    """
     repo_like = tmp_path / "repo"
     (repo_like / "taic").mkdir(parents=True)
     assert cli.main(["gc", "--root", str(repo_like), "--older-than-days", "30", "--apply", "--confirm"]) == 5
@@ -88,6 +121,10 @@ def test_gc_refuses_a_root_outside_the_archive_and_apply_without_confirm(tmp_pat
 
 
 def test_gc_apply_refuses_paths_outside_the_archive_and_symlinks(tmp_path):
+    """@brief 验证扫描不跟随符号链接，且即使行被标为可删，指向归档根之外的路径也不会被删除。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     root = tmp_path / "deleted"
     root.mkdir()
     old = root / "old"

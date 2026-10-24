@@ -16,6 +16,11 @@ from tcenv.schema import PROTOCOL_VERSION
 
 
 def test_frozen_conditions_cannot_change_and_a_top_up_is_an_extension(tmp_path):
+    """@brief 验证实验冻结条件不可修改，追加预算会记成 extension 而不改冻结值，重复 ensure 幂等保留已挂的 run。
+
+    @param tmp_path pytest 提供的临时目录，用作实验目录。
+    @raises ManifestError 改动 frozen（例如预算）后再次 ensure 时抛出。
+    """
     frozen = {"tasks": ["relu"], "dtype": "fp16", "size": "small", "preset": "base", "model": None, "budget_usd": 3.0, "max_total_usd": None}
     arms = [
         {"arm_id": "off", "delta": {}, "planned_n": 1},
@@ -38,6 +43,10 @@ def test_frozen_conditions_cannot_change_and_a_top_up_is_an_extension(tmp_path):
 
 
 def test_two_arms_share_a_config_hash_and_differ_by_the_switch_delta(tmp_path):
+    """@brief 验证同一实验的两个 arm 共享一个 config_hash，差异只体现在各自的开关 delta 上。
+
+    @param tmp_path pytest 提供的临时目录，用作实验目录。
+    """
     frozen = {"tasks": ["flash_attention"], "dtype": "fp16", "budget_usd": 3.0}
     ensure(
         tmp_path,
@@ -56,6 +65,13 @@ def test_two_arms_share_a_config_hash_and_differ_by_the_switch_delta(tmp_path):
 
 
 def test_legacy_names_and_a_truncated_result_do_not_fail_the_index(tmp_path, monkeypatch):
+    """@brief 验证旧目录命名能被推断出 arm/trial/kind，而 result.json 截断时索引仍能完成同步。
+
+    推断行标为 ``inferred`` 且 binding 为 none；损坏的 run 标为 missing；样本不足时 compare 不下判定。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 目录与索引库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向临时 runs 目录与临时数据库。
+    """
     runs = tmp_path / "runs"
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
     monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
@@ -80,6 +96,11 @@ def test_legacy_names_and_a_truncated_result_do_not_fail_the_index(tmp_path, mon
 
 
 def test_schema_mismatch_rebuilds(tmp_path, monkeypatch):
+    """@brief 验证索引库 schema 版本不匹配时会重建，并把版本写回当前 ``INDEX_SCHEMA_VERSION``。
+
+    @param tmp_path pytest 提供的临时目录，用来放索引库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向空的配置路径。
+    """
     monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
     monkeypatch.setenv("OBSERVE_CARRYOVER", str(tmp_path / "carry.json"))
     path = tmp_path / "observe.sqlite"
@@ -93,6 +114,11 @@ def test_schema_mismatch_rebuilds(tmp_path, monkeypatch):
 
 
 def test_session_diagnostic_columns_are_added_without_changing_the_index_epoch(tmp_path, monkeypatch):
+    """@brief 验证旧 sessions 表缺诊断列时就地补齐，且不抬高 index schema 版本（不触发重建）。
+
+    @param tmp_path pytest 提供的临时目录，用来放索引库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向空的配置路径。
+    """
     monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
     monkeypatch.setenv("OBSERVE_CARRYOVER", str(tmp_path / "carry.json"))
     path = tmp_path / "observe.sqlite"
@@ -112,6 +138,11 @@ def test_session_diagnostic_columns_are_added_without_changing_the_index_epoch(t
 
 
 def test_binding_drift_is_left_out_of_the_arm(tmp_path, monkeypatch):
+    """@brief 验证指纹与锚不一致的 trial 绑定为 drift，既不计入 arm 统计也单独列在 drift 里。
+
+    @param tmp_path pytest 提供的临时目录，用来放实验目录与索引库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向临时 runs 目录与临时数据库。
+    """
     runs = tmp_path / "runs" / "exp"
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(tmp_path / "runs"))
     monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
@@ -135,6 +166,10 @@ def test_binding_drift_is_left_out_of_the_arm(tmp_path, monkeypatch):
 
 
 def test_plan_outcomes_stay_empty_until_the_switch_is_on(tmp_path):
+    """@brief 验证 plan_ledger 关闭时 ``plan_outcomes`` 为空，打开后产出带已被否证结论的节点且不带优先/置信度字段。
+
+    @param tmp_path pytest 提供的临时目录，用作 run 目录。
+    """
     directory = tmp_path / "run"
     directory.mkdir()
     state = {"history": ["round 1: try vectors -> not better"], "trace": [{"label": "r1.p0", "status": "ok", "speedup": 1.0, "best_speedup": 1.2, "improved": False}]}
@@ -145,6 +180,11 @@ def test_plan_outcomes_stay_empty_until_the_switch_is_on(tmp_path):
 
 
 def test_an_idle_frame_does_not_grow_with_finished_runs(tmp_path, monkeypatch):
+    """@brief 验证空闲 tick 的代价不随历史 run 数量增长：两次 tick 都不读 JSON、不列目录。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 目录与索引库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向临时 runs 目录与临时数据库。
+    """
     runs = tmp_path / "runs"
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
     monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
@@ -163,6 +203,11 @@ def test_an_idle_frame_does_not_grow_with_finished_runs(tmp_path, monkeypatch):
 
 
 def test_feature_grid_keeps_the_fastest_in_each_cell(tmp_path, monkeypatch):
+    """@brief 验证 feature grid 每个格子只留最快的候选，且未通过确认的候选不会标记为已发布。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 目录与索引库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向临时 runs 目录与临时数据库。
+    """
     runs = tmp_path / "runs"
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
     monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
@@ -189,6 +234,12 @@ def test_feature_grid_keeps_the_fastest_in_each_cell(tmp_path, monkeypatch):
 
 
 def _finished(directory: Path, *, fingerprint: str, preset_budget: float) -> None:
+    """@brief 在指定目录写下一套已结束 run 的记录文件（state.json、result.json、run_config.json）。
+
+    @param directory 目标 run 目录，不存在时创建。
+    @param fingerprint 写进 ``run_config.json`` 的 task 指纹，用于制造 binding drift。
+    @param preset_budget 写进 result 与 ``search.budget_usd`` 的预算值。
+    """
     directory.mkdir(parents=True)
     (directory / "state.json").write_text(json.dumps({
         "task": "relu", "dtype": "fp16", "phase": "done", "started_at": time.time(), "updated_at": time.time(),
@@ -203,6 +254,11 @@ def _finished(directory: Path, *, fingerprint: str, preset_budget: float) -> Non
 
 
 def test_a_child_attached_later_is_rebound(tmp_path, monkeypatch):
+    """@brief 验证先于实验存在、后来才 attach 的子 run 在下次 sync 后由 drift 重绑为 verified。
+
+    @param tmp_path pytest 提供的临时目录，用来放实验目录与索引库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向临时 runs 目录与临时数据库。
+    """
     runs = tmp_path / "runs"
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
     monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
@@ -220,6 +276,11 @@ def test_a_child_attached_later_is_rebound(tmp_path, monkeypatch):
 
 
 def test_the_lowest_trial_sets_the_fingerprint_anchor(tmp_path, monkeypatch):
+    """@brief 验证编号最小的 trial 决定 arm 的指纹锚：先登记 trial_2 再登记 trial_1，锚取 trial_1，trial_2 转为 drift。
+
+    @param tmp_path pytest 提供的临时目录，用来放实验目录与索引库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向临时 runs 目录与临时数据库。
+    """
     runs = tmp_path / "runs"
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
     monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
@@ -242,6 +303,11 @@ def test_the_lowest_trial_sets_the_fingerprint_anchor(tmp_path, monkeypatch):
 
 
 def test_editing_the_winner_kernel_drops_the_confirmed_speedup(tmp_path, monkeypatch):
+    """@brief 验证 winner kernel 被改后哈希不再对应确认源，已确认的发布状态与加速比会被撤下。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 目录与索引库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向临时 runs 目录与临时数据库。
+    """
     import hashlib
 
     runs = tmp_path / "runs"
@@ -277,6 +343,11 @@ def test_editing_the_winner_kernel_drops_the_confirmed_speedup(tmp_path, monkeyp
 
 
 def test_a_dead_run_leaves_the_near_budget_banner(tmp_path, monkeypatch):
+    """@brief 验证进程已死的 run 在超时后变为 interrupted，且不再显示“接近预算”的提示。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 目录与索引库。
+    @param monkeypatch pytest 的环境变量与替换夹具，用于把 detail 模块的时间推后 100 秒。
+    """
     from observe import detail
     from observe.query import history
 
@@ -300,6 +371,7 @@ def test_a_dead_run_leaves_the_near_budget_banner(tmp_path, monkeypatch):
 
 
 def test_llm_switches_are_visible_to_binding():
+    """@brief 验证开关查找会从 search 段回落到 llm 段，因此 llm 开关对绑定计算可见。"""
     from observe.index import _lookup
 
     config = {"search": {"stop_at_roofline": True}, "llm": {"truncation_retry": True, "model": "m"}}
@@ -308,6 +380,11 @@ def test_llm_switches_are_visible_to_binding():
 
 
 def test_the_connection_can_be_read_from_another_thread(tmp_path, monkeypatch):
+    """@brief 验证索引连接可在其他线程里执行查询而不报错（线程安全的连接配置）。
+
+    @param tmp_path pytest 提供的临时目录，用来放索引库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向临时 runs 目录与空的 books 库。
+    """
     import threading
 
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(tmp_path / "runs"))
@@ -328,6 +405,11 @@ def test_the_connection_can_be_read_from_another_thread(tmp_path, monkeypatch):
 
 
 def _populate(root: Path, count: int) -> None:
+    """@brief 批量生成已结束的 run 目录，每个带 50 个候选占位文件；已存在的目录跳过。
+
+    @param root 生成 run 的根目录，不存在时创建。
+    @param count 目标 run 数量，目录名按 ``run_0000`` 递增编号。
+    """
     root.mkdir(parents=True, exist_ok=True)
     for index in range(count):
         directory = root / f"run_{index:04d}"
@@ -347,6 +429,11 @@ def _populate(root: Path, count: int) -> None:
 
 
 def test_candidates_are_indexed_and_a_list_page_carries_the_next_cursor(tmp_path, monkeypatch):
+    """@brief 验证候选入库、列表分页带 next 游标且两页不重叠，失败与最佳确认查询各自返回预期结果。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 目录与索引库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向临时 runs 目录与空的 books 库。
+    """
     from observe import query as scan
 
     runs = tmp_path / "runs"
@@ -392,6 +479,11 @@ def test_candidates_are_indexed_and_a_list_page_carries_the_next_cursor(tmp_path
 
 
 def test_a_legacy_flame_chase_run_is_not_labelled_chat(tmp_path, monkeypatch):
+    """@brief 验证老 run 凭 loop_protocol 决定协议时代：flame_chase_1 归为 epoch 2，缺失则标 legacy 而不误判成 chat。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 目录与索引库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向临时 runs 目录与空的 books 库。
+    """
     from observe import query as scan
 
     runs = tmp_path / "runs"
@@ -416,6 +508,11 @@ def test_a_legacy_flame_chase_run_is_not_labelled_chat(tmp_path, monkeypatch):
 
 
 def test_sessions_and_model_totals_come_from_agent_rows(tmp_path, monkeypatch):
+    """@brief 验证会话与模型统计只来自 transcript 的 agent 行（chat 行不计），并带上诊断列与 token 数。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 目录与索引库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向临时 runs 目录与空的 books 库。
+    """
     from observe import query as scan
 
     runs = tmp_path / "runs"
@@ -456,7 +553,13 @@ def test_sessions_and_model_totals_come_from_agent_rows(tmp_path, monkeypatch):
 
 
 def test_migrating_a_run_does_not_create_a_second_index_row(tmp_path, monkeypatch):
-    """A rename is not a second run. Keeping the old ledger row doubled the recorded spend."""
+    """@brief 验证迁移一个 run 不会在索引里产生第二行，否则旧账本行会让花费被重复计入。
+
+    改名不是一个新的 run：迁移后只剩迁移命名的那一行，总额不变。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 目录与索引库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向临时 runs 目录与临时数据库。
+    """
     from taic.migrate import migrate_runs
 
     runs = tmp_path / "runs"

@@ -13,6 +13,11 @@ from taic import harness, trust
 
 
 def _doc(**overrides):
+    """@brief 造一份 harness 建议文档（默认是 tip 面），可用关键字覆盖任意字段。
+
+    @param overrides 要覆盖的字段。
+    @return 建议文档字典。
+    """
     doc = {
         "surface": "tip",
         "scope": {"target_id": "apple-m4-max", "task": "conv2d", "dtype": "fp16"},
@@ -25,10 +30,26 @@ def _doc(**overrides):
 
 
 def _block(doc) -> str:
+    """@brief 把建议文档包成 ```harness-proposal 代码块，也就是模型在回答里要产出的形状。
+
+    @param doc 建议文档。
+    @return 带围栏的文本块。
+    """
     return "```harness-proposal\n" + json.dumps(doc, ensure_ascii=False) + "\n```\n"
 
 
 def _session(root: Path, *, seq: int, provider: str, model: str, committee: str, doc, started: float) -> Path:
+    """@brief 手造一个会话工作目录 agent_work/r<seq>.p0，并在里面写一份 probe.py。
+
+    @param root 运行目录。
+    @param seq 会话序号，决定工作目录名。
+    @param provider 模型提供方（本 helper 不读）。
+    @param model 模型名（本 helper 不读）。
+    @param committee 委员会名（本 helper 不读）。
+    @param doc 建议文档（本 helper 不读）。
+    @param started 会话开始时间（本 helper 不读）。
+    @return 建好的会话工作目录。
+    """
     work = root / "agent_work" / f"r{seq}.p0"
     work.mkdir(parents=True)
     (work / "probe.py").write_text("print(1)\n")
@@ -36,6 +57,14 @@ def _session(root: Path, *, seq: int, provider: str, model: str, committee: str,
 
 
 def _record(seq: int, provider: str, model: str, committee: str) -> dict:
+    """@brief 造一行会话记录（序号、label、委员会与模型），交给 record_proposals。
+
+    @param seq 会话序号。
+    @param provider 模型提供方。
+    @param model 模型名。
+    @param committee 委员会名。
+    @return 会话记录字典，label 形如 r<seq>.p0。
+    """
     return {
         "seq": seq, "label": f"r{seq}.p0", "committee": committee,
         "provider": provider, "model": model, "effort": "high", "run_id": "run-1",
@@ -43,6 +72,16 @@ def _record(seq: int, provider: str, model: str, committee: str) -> dict:
 
 
 def _record_proposal(run: Path, work: Path, record: dict, doc, started: float, *, kernel_sha256: str = ""):
+    """@brief 让 harness 把一份建议按给定会话记进运行目录，等价于模型在一次真实会话里提出该建议。
+
+    @param run 运行目录。
+    @param work 会话工作目录。
+    @param record 会话记录。
+    @param doc 建议文档。
+    @param started 会话开始时间，用于判定 probe 是否够新。
+    @param kernel_sha256 对应的内核摘要，premise 面需要。
+    @return record_proposals 写下的行列表。
+    """
     parsed = {"sections": {"对系统的建议": _block(doc)}}
     return harness.record_proposals(
         run, record=record, parsed=parsed, target_id="apple-m4-max", task="conv2d",
@@ -52,6 +91,12 @@ def _record_proposal(run: Path, work: Path, record: dict, doc, started: float, *
 
 
 def _trusted_row(work: Path, *, kernel_sha256: str = "abc", candidate_us: float = 1.0) -> None:
+    """@brief 在会话工作目录里写一份可信的自检行 self_checks.jsonl，作为 premise 面的证据。
+
+    @param work 会话工作目录。
+    @param kernel_sha256 该行对应的内核摘要。
+    @param candidate_us 测得的内核耗时。
+    """
     folder = work / ".selfcheck"
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "self_checks.jsonl").write_text(json.dumps({
@@ -62,6 +107,10 @@ def _trusted_row(work: Path, *, kernel_sha256: str = "abc", candidate_us: float 
 
 
 def test_a_structured_tip_needs_two_trusted_committees_and_shadow_does_not_inject(tmp_path):
+    """@brief 验证结构化的 tip 需要两个受信委员会支持才生效：shadow 阶段只记录不注入，转成 active 后才进 overlay，而且别的目标或协议看不到。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     started = time.time() - 1
     a = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(), started=started)
@@ -91,6 +140,10 @@ def test_a_structured_tip_needs_two_trusted_committees_and_shadow_does_not_injec
 
 
 def test_quorum_uses_only_qualifying_model_rows_for_the_overlay_text(tmp_path):
+    """@brief 验证 overlay 文本只取符合条件的那条模型建议，同一建议的 conversion 占位行不会顶替原文。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     started = time.time() - 1
     a = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(), started=started)
@@ -113,6 +166,10 @@ def test_quorum_uses_only_qualifying_model_rows_for_the_overlay_text(tmp_path):
 
 
 def test_one_model_or_an_untrusted_second_model_does_not_reach_quorum(tmp_path):
+    """@brief 验证法定人数按来源计：第二个模型未受信、或同一模型在两个会话里重复，都凑不成两个来源。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     started = time.time() - 1
     a = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(), started=started)
@@ -134,6 +191,10 @@ def test_one_model_or_an_untrusted_second_model_does_not_reach_quorum(tmp_path):
 
 
 def test_a_premise_needs_a_fresh_local_probe_and_does_not_need_a_vote(tmp_path):
+    """@brief 验证 premise 面只需要一份新的本地实测记录而不需要投票，但仍需人工授权 overlay:premise 范围才会生效。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     started = time.time() - 1
     work = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(surface="premise"), started=started)
@@ -152,6 +213,10 @@ def test_a_premise_needs_a_fresh_local_probe_and_does_not_need_a_vote(tmp_path):
 
 
 def test_probe_escape_stale_probe_and_wrong_scope_are_invalid(tmp_path):
+    """@brief 验证越出工作目录的 probe、早于会话开始的 probe 与 scope 不匹配的建议都被判 invalid，并给出对应原因。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     started = time.time()
     work = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(), started=started)
@@ -170,6 +235,10 @@ def test_probe_escape_stale_probe_and_wrong_scope_are_invalid(tmp_path):
 
 
 def test_a_control_disable_hides_an_active_overlay_and_a_p2_patch_is_generated(tmp_path):
+    """@brief 验证控制开关关闭后已生效的 overlay 不再出现在提示词里，同时能据此生成只改目标 experience.md 的 P2 补丁。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     started = time.time() - 1
     work = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(surface="premise"), started=started)
@@ -192,6 +261,10 @@ def test_a_control_disable_hides_an_active_overlay_and_a_p2_patch_is_generated(t
 
 
 def test_a_p2_patch_passes_git_apply_check_and_changes_only_the_target_file(tmp_path):
+    """@brief 验证 P2 补丁能通过 git apply 的试跑（只检查不改文件）真正落地，只动目标 experience.md，并记下 local promotion 与随后的本地提交。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     import subprocess
 
     run = tmp_path / "run"
@@ -229,8 +302,14 @@ def test_a_p2_patch_passes_git_apply_check_and_changes_only_the_target_file(tmp_
 
 
 def test_the_run_tests_gate_points_at_the_migrated_paths_and_refuses_a_failure(tmp_path, monkeypatch):
-    """The promotion gate used the pre-migration flat paths: pytest exited before running a test,
-    so every ``apply_patch(run_tests=True)`` failed. These assertions are the regression guard."""
+    """@brief 验证晋级前的自测闸门指向迁移后的测试路径，并在自测失败时拒绝落地补丁。
+
+    闸门原先用迁移前的扁平路径，pytest 还没跑到用例就退出，于是每次 apply_patch(run_tests=True) 都失败；
+    这里的断言就是这条回归的守卫。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用桩替换 subprocess.run 与 write_patch。
+    """
     from taic import trust
 
     assert harness.OFFLINE_TESTS
@@ -263,6 +342,10 @@ def test_the_run_tests_gate_points_at_the_migrated_paths_and_refuses_a_failure(t
 
 
 def test_two_models_with_the_same_probe_bytes_are_one_source(tmp_path):
+    """@brief 验证两个模型提交了字节相同的 probe 时只算一个来源，凑不出法定人数。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     started = time.time() - 1
     a = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(), started=started)
@@ -280,6 +363,10 @@ def test_two_models_with_the_same_probe_bytes_are_one_source(tmp_path):
 
 
 def test_a_shell_like_action_is_invalid_and_never_reaches_the_overlay(tmp_path):
+    """@brief 验证带 shell 命令样式的建议文本被判 invalid，不会进 overlay。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     run = tmp_path / "run"
     started = time.time() - 1
     work = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(action="先跑 probe.py; 然后 rm -rf runs"), started=started)
@@ -288,6 +375,10 @@ def test_a_shell_like_action_is_invalid_and_never_reaches_the_overlay(tmp_path):
 
 
 def test_a_premise_needs_a_matching_harness_record_not_just_a_probe(tmp_path):
+    """@brief 验证 premise 需要内核摘要与测量值都匹配的 harness 自检记录，仅仅有一份 probe 文件不够。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     work = tmp_path / "work"
     (work / ".selfcheck").mkdir(parents=True)
     (work / ".selfcheck" / "self_checks.jsonl").write_text(json.dumps({
@@ -311,6 +402,10 @@ def test_a_premise_needs_a_matching_harness_record_not_just_a_probe(tmp_path):
 
 
 def test_an_outer_candidate_report_can_be_the_trusted_record_without_a_selfcheck(tmp_path):
+    """@brief 验证没有 self_checks.jsonl 时，外层候选报告也能充当 premise 的可信记录，但测量值必须与它一致。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     work = tmp_path / "work"
     work.mkdir()
     report = {
@@ -330,6 +425,10 @@ def test_an_outer_candidate_report_can_be_the_trusted_record_without_a_selfcheck
 
 
 def test_a_useful_independent_review_activates_a_single_tip_for_this_run(tmp_path):
+    """@brief 验证一份有用的独立评审能让单条 tip 直接对本运行生效（不靠法定人数），并在 applied 里标出 reviewed。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     import json as _json
 
     run = tmp_path / "run"
@@ -350,7 +449,10 @@ def test_a_useful_independent_review_activates_a_single_tip_for_this_run(tmp_pat
 
 
 def test_overlay_text_flattens_a_row_into_one_line(tmp_path):
-    """An old or hand-edited overlay row must not start a heading or a bullet in the prompt."""
+    """@brief 验证 overlay 文本把多行建议压成一行，旧或手改过的行不会在提示词里起一个标题或新列表项。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
     import json as _json
 
     from tcenv.schema import PROTOCOL_VERSION

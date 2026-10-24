@@ -27,10 +27,19 @@ MAX_SPEEDUP_DELTA = 0.03
 
 
 def _doc() -> dict:
+    """@brief 读入并解析 phase-0 基线 JSON 文档。
+
+    @return 基线文件的解析结果（dict）。
+    """
     return json.loads(BASELINE.read_text())
 
 
 def test_the_phase0_baseline_still_matches_the_source_and_prompt():
+    """@brief 校验记录的 phase-0 基线仍与当前源码、各 schema 版本、prompt 与 task 指纹一致。
+
+    覆盖：源码文件存在且 sha256 未变；report／protocol／index schema 版本号固定在文档记录值；
+    EvalReport 顶层字段顺序、prompt sha1、系统提示词与 contract 描述的 sha256、任务指纹均匹配。
+    """
     doc = _doc()
     source = doc["source"]
     path = REPO / source["path"]
@@ -49,6 +58,11 @@ def test_the_phase0_baseline_still_matches_the_source_and_prompt():
 
 
 def test_the_recorded_gpu_delta_is_recomputed_and_within_a_fixed_gate():
+    """@brief 用三次记录运行重算 GPU 中位数与相对旧值的偏差，并核对是否落在固定验收门槛内。
+
+    门槛：candidate／gpu／mlx 时间与 speedup 的绝对偏差分别不超过 2%、2%、2% 与 0.03。
+    同时校验记录里的 acceptance 阈值与常量一致、中位数为三次运行的 median、delta 由中位数与旧值算出。
+    """
     gpu = _doc()["gpu"]
     acceptance = gpu["acceptance"]
     assert acceptance["candidate_abs_pct"] == MAX_CANDIDATE_PCT

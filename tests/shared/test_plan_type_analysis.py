@@ -26,6 +26,13 @@ SEED = "kernel void k(device half* a [[buffer(0)]]) {\n  a[0] = 1;\n}"
 
 
 def patch_prompt(title: str, change: str, seed: str = SEED) -> str:
+    """@brief 按真实补丁请求的排版拼一段 prompt，使分析器能认出计划标题与变更描述。
+
+    @param title 计划标题。
+    @param change 变更描述。
+    @param seed 补丁前的种子内核源码。
+    @return 拼好的 prompt 文本。
+    """
     return (
         f"Current best kernel for `flash_attention` (fp16):\n```metal\n{seed}\n```\n\nEvaluation feedback of this kernel:\nok\n\n"
         f"Implement exactly this optimization plan and nothing else:\n**{title}**\n{change}\n\nKeep everything that already works. Reply with the complete new kernel in one ```metal block."
@@ -84,7 +91,15 @@ class Writer:
 
 
 def build_fa_run(root: Path, name: str = "fa_run", mixed: bool = False) -> Path:
-    """init ok; round 1 = three plans: p0 data movement (ok), p1 thread mapping (reply cut by max_tokens, then ok after a repair turn), p2 local (abi_error, then ok)."""
+    """@brief 造一个可复现的 FlashAttention 运行：init 成功，第 1 轮三个计划各有不同结局。
+
+    p0 数据搬运（ok）；p1 线程映射（回复被 max_tokens 截断，修复轮后 ok）；p2 局部改动（abi_error，修复后 ok）。
+
+    @param root 运行目录的父目录。
+    @param name 运行目录名。
+    @param mixed 是否用带“第 3 个计划是局部改动”的 plan_mix 规划提示词。
+    @return 建好的运行目录。
+    """
     w = Writer(root, name)
     w.chat("init#t0", content="```metal\n" + SEED + "\n```")
     w.cand("init", "ok", 1.0)
@@ -119,18 +134,26 @@ def build_fa_run(root: Path, name: str = "fa_run", mixed: bool = False) -> Path:
     ],
 )
 def test_classify_plan_kinds(title, change, kind):
+    """@brief 验证计划分类器按标题与描述判出类别，并据此给出 local / structural / unclassified 范围。
+
+    @param title 计划标题。
+    @param change 计划描述。
+    @param kind 期望的类别。
+    """
     r = pta.classify_plan(title, change)
     assert r["kind"] == kind
     assert r["scope"] == ("local" if kind == "local" else "unclassified" if kind == "unclassified" else "structural")
 
 
 def test_fallback_plans_are_generic_whatever_their_words():
+    """@brief 验证兜底计划一律归为 generic，与措辞无关，且标题取自固定的兜底列表。"""
     r = pta.classify_plan("use simdgroup_matrix for matrix products", "stage in threadgroup memory", fallback=True)
     assert r["kind"] == "generic" and r["scope"] == "generic"
     assert all(t in pta.FALLBACK_TITLES for t in ("vectorized 16-byte memory access", "single pass over global memory with SIMD-group reductions"))
 
 
 def test_title_outweighs_a_long_description():
+    """@brief 验证标题的权重高于描述：标题是局部改动时，描述里堆满结构性词也不改判。"""
     # three structural words in the description must not outvote a local headline plus a local description
     r = pta.classify_plan("Hoist the loop-invariant index math", "staging staging staging ring buffer smem")
     assert r["kind"] == "local"
@@ -138,6 +161,7 @@ def test_title_outweighs_a_long_description():
 
 
 def test_task_groups():
+    """@brief 验证题目被并成几组：flash_attention 单列、矩阵类合并、逐元素类按 memory-bound 前缀归组。"""
     assert pta.task_group("flash_attention@64x32t256") == "flash_attention"
     assert pta.task_group("conv2d") == pta.task_group("gemm") == "matrix (gemm/conv2d/mamba2)"
     assert pta.task_group("relu").startswith("memory-bound")
@@ -147,6 +171,7 @@ def test_task_groups():
 # statistics helpers
 # ----------------------------------------------------------------------------------------------------------------------
 def test_fisher_exact_known_values():
+    """@brief 验证 Fisher 精确检验在已知表上给出经典数值，退化表返回 1。"""
     assert pta.fisher_exact(1, 9, 11, 3) == pytest.approx(0.002759, abs=1e-5)  # the classic tea-tasting style table
     assert pta.fisher_exact(5, 5, 5, 5) == pytest.approx(1.0)
     assert pta.fisher_exact(0, 0, 0, 0) == 1.0
@@ -154,6 +179,7 @@ def test_fisher_exact_known_values():
 
 
 def test_wilson_interval_and_small_n_flag():
+    """@brief 验证 Wilson 区间与已知数值一致，样本为 0 时返回 None，小样本比率带 † 标记。"""
     lo, hi = pta.wilson(8, 10)
     assert lo == pytest.approx(0.490, abs=2e-3) and hi == pytest.approx(0.943, abs=2e-3)
     assert pta.wilson(0, 0) == (None, None)
@@ -162,12 +188,14 @@ def test_wilson_interval_and_small_n_flag():
 
 
 def test_mann_whitney_detects_a_shift_and_not_noise():
+    """@brief 验证 Mann-Whitney 检验能分出整体位移与同分布噪声，空样本返回 None。"""
     assert pta.mann_whitney_p([10, 11, 12, 13, 14, 15], [1, 2, 3, 4, 5, 6]) < 0.01
     assert pta.mann_whitney_p([1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6]) > 0.9
     assert pta.mann_whitney_p([], [1]) is None
 
 
 def test_cmh_pools_strata_and_skips_uninformative_ones():
+    """@brief 验证 CMH 合并多个分层并跳过无信息的分层，全部无信息时返回空结果。"""
     # two strata in which A (ok) is clearly better than B: common odds ratio > 1
     res = pta.cmh([(8, 2, 3, 7), (9, 1, 4, 6), (5, 0, 0, 5)])
     assert res["strata"] == 3 and res["odds_ratio"] > 1 and res["p"] < 0.05
@@ -175,6 +203,7 @@ def test_cmh_pools_strata_and_skips_uninformative_ones():
 
 
 def test_within_run_ranks_remove_the_differences_between_runs():
+    """@brief 验证运行内排名把不同量级的运行拉到同一尺度，且缺失值不进排名表。"""
     recs = [{"run": "a", "x": 1}, {"run": "a", "x": 2}, {"run": "a", "x": 3}, {"run": "b", "x": 1000}, {"run": "b", "x": 2000}, {"run": "b", "x": None}]
     rk = pta.within_run_ranks(recs, "x")
     assert [round(rk[id(r)], 3) for r in recs[:3]] == [round(1 / 6, 3), 0.5, round(5 / 6, 3)]
@@ -186,6 +215,7 @@ def test_within_run_ranks_remove_the_differences_between_runs():
 # transcript turns and the cause of a reply without code
 # ----------------------------------------------------------------------------------------------------------------------
 def test_turn_row_reads_tokens_and_how_the_reply_ended():
+    """@brief 验证轮次行从 transcript 事件里读出 token 数、结束原因与代码块计数，usage 是字符串时也不炸。"""
     ev = {"label": "r2.p1#t3", "finish_reason": "length", "usage": {"prompt_tokens": 100, "completion_tokens": CAP, "completion_tokens_details": {"reasoning_tokens": CAP}},
           "reply": {"content": "", "reasoning_content": "a ```x``` b ```y``` c"}, "cost_usd": 0.058}
     row = pta.turn_row(ev, "r2.p1")
@@ -196,6 +226,10 @@ def test_turn_row_reads_tokens_and_how_the_reply_ended():
 
 
 def test_nocode_cause_from_the_last_turn(tmp_path):
+    """@brief 验证五种“没有代码”的成因各自归对，未知标签返回 unknown。
+
+    @param tmp_path 临时目录，运行目录在这里造。
+    """
     w = Writer(tmp_path, "causes")
     w.truncated("a#t0")  # reasoning exhausted the cap
     w.chat("b#t0", finish="length", completion=CAP, reasoning=1000, content="x" * 1000)  # a long visible reply that did not fit
@@ -213,10 +247,19 @@ def test_nocode_cause_from_the_last_turn(tmp_path):
 # ----------------------------------------------------------------------------------------------------------------------
 @pytest.fixture()
 def fa_run(tmp_path):
+    """@brief 造一份 ``build_fa_run`` 生成的运行目录，供分支用例复用。
+
+    @param tmp_path pytest 临时目录。
+    @return 运行目录路径。
+    """
     return build_fa_run(tmp_path / "runs")
 
 
 def test_branches_of_a_hand_built_run(fa_run):
+    """@brief 验证手工运行的每个分支都按首个尝试的状态、成因与计划类别归好，修复轮与 ABI 细节也在内。
+
+    @param fa_run 由 fixture 造好的运行目录。
+    """
     run = pta.load_run(fa_run, "fa_run", "runs")
     assert run.finished and run.k == 3 and run.plan_mix is False
     branches, attempts = pta.build_branches(run, pta.DEFAULT_SIZE_EDGES)
@@ -235,6 +278,10 @@ def test_branches_of_a_hand_built_run(fa_run):
 
 
 def test_a_request_cut_by_the_budget_stop_is_not_blamed_on_the_model(tmp_path):
+    """@brief 验证预算耗尽导致的未完成请求归因于运行结束，而不是模型不给代码。
+
+    @param tmp_path 临时目录，运行目录在这里造。
+    """
     w = Writer(tmp_path, "cut")
     w.chat("init#t0", content="```metal\n" + SEED + "\n```")
     w.cand("init", "ok", 1.0)
@@ -250,6 +297,10 @@ def test_a_request_cut_by_the_budget_stop_is_not_blamed_on_the_model(tmp_path):
 
 
 def test_partial_run_and_half_written_files_do_not_crash_and_are_reported_partial(tmp_path):
+    """@brief 验证正在写盘的部分运行不崩：半截 transcript、空报告与坏 state 都容忍，未评测的请求记为 pending 并排除在统计外。
+
+    @param tmp_path 临时目录，运行目录在这里造。
+    """
     w = Writer(tmp_path, "live")
     w.chat("init#t0", content="```metal\n" + SEED + "\n```")
     w.cand("init", "ok", 1.0)
@@ -273,6 +324,11 @@ def test_partial_run_and_half_written_files_do_not_crash_and_are_reported_partia
 # ----------------------------------------------------------------------------------------------------------------------
 @pytest.fixture()
 def data(tmp_path):
+    """@brief 造一组样本：两个 fa 运行、一个 plan_mix 运行与一个内存受限运行，并跑一次完整分析。
+
+    @param tmp_path pytest 临时目录。
+    @return ``analyse_paths`` 的分析结果。
+    """
     root = tmp_path / "runs"
     root.mkdir()
     build_fa_run(root, "fa_a")
@@ -303,6 +359,10 @@ def data(tmp_path):
 
 
 def test_first_attempt_outcome_by_task_and_scope(data):
+    """@brief 验证按题目与计划范围统计的首个尝试结局数字与样本一致。
+
+    @param data 由 fixture 造好的分析结果。
+    """
     k = data["kinds"]
     fa = k["by_task_scope"]["flash_attention"]
     # fa_a and fa_b: p0 ok (structural) / p1 no_code (structural) / p2 abi (local);  fa_mix: p0 ok, p1 abi (structural) / p2 ok (local)
@@ -315,18 +375,30 @@ def test_first_attempt_outcome_by_task_and_scope(data):
 
 
 def test_classifier_is_checked_against_the_plan_mix_designation(data):
+    """@brief 验证分类器结果与 plan_mix 指定的局部计划一致，没有分歧项。
+
+    @param data 分析结果。
+    """
     v = data["kinds"]["validation"]
     assert v["n"] == 3 and v["agree"] == 3 and v["confusion"] == {"local->local": 1, "structural->structural": 2}
     assert v["disagreements"] == []
 
 
 def test_default_prompt_yields_local_plans_anyway_on_memory_bound_ops(data):
+    """@brief 验证默认提示词下内存受限算子依然会出现局部计划，且 flash_attention 只统计非 plan_mix 的运行。
+
+    @param data 分析结果。
+    """
     dp = data["kinds"]["default_prompt"]
     assert dp["memory-bound (elementwise/reduction/gemv/...)"]["scope"]["local"] == 2
     assert dp["flash_attention"]["n"] == 6  # fa_a + fa_b (fa_mix is a plan_mix run)
 
 
 def test_local_vs_structural_tests_and_abi_by_kind(data):
+    """@brief 验证局部与结构性计划的检验表、以及 ABI 违规按计划类别的分布。
+
+    @param data 分析结果。
+    """
     t = data["kinds"]["tests_fa"]
     assert t["ok"]["local"] == [1, 3] and t["ok"]["structural"] == [3, 6]
     assert t["ok given code"]["structural"] == [3, 4]  # the two cut requests have no kernel
@@ -337,6 +409,10 @@ def test_local_vs_structural_tests_and_abi_by_kind(data):
 
 
 def test_nocode_tables_cause_cost_and_mechanism(data):
+    """@brief 验证“没有代码”的成因、花费、机制与逐运行明细。
+
+    @param data 分析结果。
+    """
     n = data["nocode"]
     assert n["cap_tokens"] == CAP and n["length_turns"] == 2
     assert n["length_cost"] == pytest.approx(0.116)
@@ -353,12 +429,20 @@ def test_nocode_tables_cause_cost_and_mechanism(data):
 
 
 def test_predictor_tables_run_on_small_pools(data):
+    """@brief 验证预测器表在小样本上也能跑，并给出截断数与特征名。
+
+    @param data 分析结果。
+    """
     pr = data["nocode"]["predictors"]["flash_attention (deepseek-flash)"]
     assert pr["truncated"] == 2 and set(pr["features"]) >= {"plan text (characters)", "round"}
     assert pr["by_round"]["rounds 1-2"][0] == 2
 
 
 def test_report_has_the_answer_first_and_all_sections(data):
+    """@brief 验证报告把答案放在最前、章节编号完整，且关键结论与数字都在正文里，不泄露 None 或 nan。
+
+    @param data 分析结果。
+    """
     md = pta.render_report(data)
     heads = [ln for ln in md.splitlines() if ln.startswith("## ")]
     assert heads[0] == "## Answer" and any(h.startswith("## 1. Plan kind") for h in heads) and any(h.startswith("## 2. Replies without code") for h in heads)
@@ -372,6 +456,10 @@ def test_report_has_the_answer_first_and_all_sections(data):
 
 
 def test_data_json_is_serialisable_and_has_no_nan(data):
+    """@brief 验证 ``data.json`` 可序列化且不含 NaN，运行数与样本一致。
+
+    @param data 分析结果。
+    """
     text = json.dumps(data, default=str)
     assert "NaN" not in text and json.loads(text)["meta"]["n_runs"] == 4
 
@@ -380,6 +468,10 @@ def test_data_json_is_serialisable_and_has_no_nan(data):
 # log cross-check, CLI, read-only guarantee
 # ----------------------------------------------------------------------------------------------------------------------
 def test_log_cross_check_matches_the_no_code_lines(tmp_path):
+    """@brief 验证与 orchestrator 日志的交叉核对能认出“只出现在日志”的行，并在报告里给出匹配数。
+
+    @param tmp_path 临时目录，运行目录与日志都在这里造。
+    """
     root = tmp_path / "runs"
     root.mkdir()
     build_fa_run(root, "fa_run")
@@ -397,6 +489,11 @@ def test_log_cross_check_matches_the_no_code_lines(tmp_path):
 
 
 def test_cli_writes_report_and_data_and_never_touches_the_runs(tmp_path, capsys):
+    """@brief 验证 CLI 写出 ``REPORT.md`` 与 ``data.json`` 而不改动任何运行目录文件，非法参数以 SystemExit 退出。
+
+    @param tmp_path 临时目录，输入运行目录与输出目录都在这里。
+    @param capsys pytest 捕获标准输出，用来核对汇总行。
+    """
     root = tmp_path / "runs"
     root.mkdir()
     build_fa_run(root, "fa_run")
@@ -415,6 +512,10 @@ def test_cli_writes_report_and_data_and_never_touches_the_runs(tmp_path, capsys)
 
 
 def test_roots_may_be_globs_and_nested_and_missing_paths_are_ignored(tmp_path):
+    """@brief 验证 roots 支持 glob 与嵌套目录，不存在的路径被忽略。
+
+    @param tmp_path 临时目录。
+    """
     root = tmp_path / "runs"
     (root / "sub").mkdir(parents=True)
     build_fa_run(root / "sub", "fa_run")
@@ -423,6 +524,10 @@ def test_roots_may_be_globs_and_nested_and_missing_paths_are_ignored(tmp_path):
 
 
 def test_nothing_to_analyse_still_renders(tmp_path):
+    """@brief 验证没有运行可分析时仍渲染出含答案段的报告，且花费为有限值。
+
+    @param tmp_path 临时目录，作为空的输入根。
+    """
     d = pta.analyse_paths([str(tmp_path)])
     md = pta.render_report(d)
     assert d["meta"]["n_runs"] == 0 and "## Answer" in md

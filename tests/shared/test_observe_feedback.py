@@ -32,10 +32,22 @@ _TEXT = """kind: tool
 
 
 def _parsed():
+    """@brief 解析模块级样例反馈文本 ``_TEXT``，供各用例复用同一份结构化结果。
+
+    @return ``parse_feedback`` 的解析结果（含 kinds、sections、items、unverified_premises、raw）。
+    """
     return parse_feedback(_TEXT)
 
 
 def _record(parsed: dict, *, seq: int = 1, t: float = 10, label: str = "r1.p0") -> dict:
+    """@brief 把解析结果包装成一条 feedback.jsonl 记录，并补齐顺序号、时间与任务元数据。
+
+    @param parsed ``parse_feedback`` 的解析结果。
+    @param seq 反馈顺序号。
+    @param t 记录时间戳，用于制造新旧关系。
+    @param label 候选标签，同时决定 work_dir 与候选目录名。
+    @return 可直接写入 feedback.jsonl 的字典。
+    """
     return {
         "format": "agent_feedback", "v": 1, "seq": seq, "t": t, "task": "conv2d", "dtype": "fp16", "size": "paper",
         "label": label, "round": 1, "committee": "first", "provider": "deepseek", "model": "deepseek-flash",
@@ -46,6 +58,14 @@ def _record(parsed: dict, *, seq: int = 1, t: float = 10, label: str = "r1.p0") 
 
 
 def _run(root: Path, name: str, record: dict, *, started_at: float) -> Path:
+    """@brief 在根目录下造一个已结束的 run：state.json、feedback.jsonl 与一份 candidate report。
+
+    @param root runs 根目录。
+    @param name run 目录名（即 run_id）。
+    @param record 写进 feedback.jsonl 的记录。
+    @param started_at run 的 started_at／updated_at 时间戳。
+    @return 新建的 run 目录路径。
+    """
     directory = root / name
     directory.mkdir(parents=True)
     (directory / "state.json").write_text(json.dumps({
@@ -62,6 +82,12 @@ def _run(root: Path, name: str, record: dict, *, started_at: float) -> Path:
 
 
 def _open(tmp_path, monkeypatch):
+    """@brief 建临时 runs 目录与环境变量，重置 observe 索引单例并返回目录与索引实例。
+
+    @param tmp_path pytest 提供的临时目录，用作 runs 与各数据库的位置。
+    @param monkeypatch pytest 的环境变量夹具，负责在用例结束后恢复原值。
+    @return ``(runs 目录, 索引实例)`` 二元组。
+    """
     runs = tmp_path / "runs"
     runs.mkdir()
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
@@ -75,6 +101,12 @@ def _open(tmp_path, monkeypatch):
 
 
 def _digest(section: str) -> str:
+    """@brief 取样例文本中指定章节第一条 claim 的 digest。
+
+    @param section 章节名（如“需要帮助”）。
+    @return 该章节第一条 claim 的 digest。
+    @raises AssertionError 样例里找不到该章节时由用例自身抛出。
+    """
     for item in _parsed()["items"]:
         if item["section"] == section:
             return item["digest"]
@@ -82,6 +114,15 @@ def _digest(section: str) -> str:
 
 
 def test_pending_counts_system_and_premise_claims_and_review_changes_them(tmp_path, monkeypatch):
+    """@brief 验证待处理数只统计系统建议与前提两类 claim，并按 kind 过滤；review 后待处理数随之变化。
+
+    同时校验 entries 里候选 report 的来源与数值、未转义的原始文本保留，以及四类缺字段的 review
+    请求（缺证据／缺 change_ref／缺 note／仍是 pending 却声称已验证）都会被拒。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    @raises Refused 缺 evidence、缺 change_ref、缺 note 或仍为 pending 的 review 请求被拒。
+    """
     runs, index = _open(tmp_path, monkeypatch)
     parsed = _parsed()
     _run(runs, "conv", _record(parsed), started_at=50)
@@ -115,6 +156,11 @@ def test_pending_counts_system_and_premise_claims_and_review_changes_them(tmp_pa
 
 
 def test_review_board_lists_every_run_with_the_claim_text(tmp_path, monkeypatch):
+    """@brief 验证 review board 列出每个 run 的 claim 正文，feed 带 target/task，且 dashboard 页面含 review 交互钩子。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     runs, index = _open(tmp_path, monkeypatch)
     parsed = _parsed()
     _run(runs, "conv", _record(parsed, t=10), started_at=50)
@@ -140,6 +186,12 @@ def test_review_board_lists_every_run_with_the_claim_text(tmp_path, monkeypatch)
 
 
 def test_a_review_records_the_git_style_actor_and_rejects_a_stale_expected_status(tmp_path, monkeypatch):
+    """@brief 验证 review 记下 git 风格 actor 与来源：显式给 reviewer 时 source 为 explicit，未给时回退到 git 身份。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量与替换夹具，用于把 git 作者换成本地默认身份。
+    @raises ValueError 调用时给的 expected_status 与当前状态不一致时抛出。
+    """
     runs, index = _open(tmp_path, monkeypatch)
     parsed = _parsed()
     directory = _run(runs, "conv", _record(parsed), started_at=50)
@@ -178,6 +230,15 @@ def test_a_review_records_the_git_style_actor_and_rejects_a_stale_expected_statu
 
 
 def test_a_review_batch_is_previewed_and_written_atomically(tmp_path, monkeypatch):
+    """@brief 验证批量 review 先预览不落盘，写入是原子的：行内状态不匹配时整批不写。
+
+    成功后两行一次写入 feedback_review.json，均带同一个 batch_id 与 reviewer，
+    并在 review 账本里产生两条可通过校验的事件。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs、数据库与 review 账本。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    @raises ValueError 批里第 2 行的 expected_status 已过期时不写入并抛出（提示 ``item 1``）。
+    """
     runs, index = _open(tmp_path, monkeypatch)
     parsed = _parsed()
     directory = _run(runs, "conv", _record(parsed), started_at=50)
@@ -208,6 +269,12 @@ def test_a_review_batch_is_previewed_and_written_atomically(tmp_path, monkeypatc
 
 
 def test_the_feedback_cli_previews_then_writes_a_batch(tmp_path, monkeypatch, capsys):
+    """@brief 验证 ``feedback`` 子命令：``--dry-run`` 不改文件，``--confirm`` 写入并带上 batch_id 与 reviewer 信息。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs、数据库与批文件。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    @param capsys pytest 的输出捕获夹具，用于断言命令行输出了 reviewer 相关说明。
+    """
     from taic.cli import main
 
     runs, index = _open(tmp_path, monkeypatch)
@@ -230,6 +297,11 @@ def test_the_feedback_cli_previews_then_writes_a_batch(tmp_path, monkeypatch, ca
 
 
 def test_open_subclaims_are_counted_without_changing_the_parent_pending_status(tmp_path, monkeypatch):
+    """@brief 验证拆分出的子结论单独计数：父 claim 保持 info，未决子结论计入总数且按序入库。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     runs, index = _open(tmp_path, monkeypatch)
     parsed = parse_feedback("# 对系统的建议\n- 请加一个配对报告。\n")
     _run(runs, "conv", _record(parsed), started_at=50)
@@ -258,6 +330,11 @@ def test_open_subclaims_are_counted_without_changing_the_parent_pending_status(t
 
 
 def test_a_subclaim_text_can_match_an_earlier_subclaim(tmp_path, monkeypatch):
+    """@brief 验证子结论文本相同就能跨 run 匹配到更早的子结论，board 与 detail 都给出 prior。
+
+    @param tmp_path pytest 提供的临时目录，用来放两个 run 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     runs, index = _open(tmp_path, monkeypatch)
     first_text = parse_feedback("# 对系统的建议\n- first parent\n")
     second_text = parse_feedback("# 对系统的建议\n- second parent\n")
@@ -282,6 +359,11 @@ def test_a_subclaim_text_can_match_an_earlier_subclaim(tmp_path, monkeypatch):
 
 
 def test_a_review_shows_prior_exact_digest_verdicts_scoped_to_task_and_target(tmp_path, monkeypatch):
+    """@brief 验证同一 claim 在本 run 之前的历史结论会作为 prior 展示，且当前行不会被当自己的 prior。
+
+    @param tmp_path pytest 提供的临时目录，用来放两个 run 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     runs, index = _open(tmp_path, monkeypatch)
     parsed = _parsed()
     first = _run(runs, "conv", _record(parsed, t=10), started_at=50)
@@ -309,6 +391,13 @@ def test_a_review_shows_prior_exact_digest_verdicts_scoped_to_task_and_target(tm
 
 
 def test_semantic_similarity_finds_a_rephrased_claim_in_the_same_task_and_target(tmp_path, monkeypatch):
+    """@brief 验证同一 task/target 下改写过的 claim 能被语义相似度匹配（score 不低于 0.975）。
+
+    若本机不可用 Apple NaturalLanguage 句向量，用例直接 skip。
+
+    @param tmp_path pytest 提供的临时目录，用来放两个 run 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     from observe.similarity import available
 
     if not available():
@@ -331,6 +420,13 @@ def test_semantic_similarity_finds_a_rephrased_claim_in_the_same_task_and_target
 
 
 def test_a_grown_log_is_read_from_the_cursor_and_a_review_does_not_reread_it(tmp_path, monkeypatch):
+    """@brief 验证增长的 feedback 日志从记录的字节游标续读，而不是解析整份；review 之后也不再重读日志。
+
+    用例把 ``read_appended_records`` 包起来记录起始偏移，并把整份读取入口换成会失败的桩。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量与替换夹具，用于包裹读游标函数并封死整份读取入口。
+    """
     runs, index = _open(tmp_path, monkeypatch)
     parsed = _parsed()
     directory = _run(runs, "conv", _record(parsed, t=10), started_at=50)
@@ -364,6 +460,11 @@ def test_a_grown_log_is_read_from_the_cursor_and_a_review_does_not_reread_it(tmp
 
 
 def test_an_unchanged_reread_does_not_move_the_feedback_revision_and_a_review_is_one_row(tmp_path, monkeypatch):
+    """@brief 验证内容未变的重读不会推高 feedback revision，而一次 review 只产生一行增量。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     runs, index = _open(tmp_path, monkeypatch)
     parsed = _parsed()
     directory = _run(runs, "conv", _record(parsed), started_at=50)
@@ -384,6 +485,11 @@ def test_an_unchanged_reread_does_not_move_the_feedback_revision_and_a_review_is
 
 
 def test_two_reviews_of_one_run_both_land(tmp_path, monkeypatch):
+    """@brief 验证两个线程并发 review 同一 run 的不同 claim 都不报错，两份结论都写入。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     runs, index = _open(tmp_path, monkeypatch)
     parsed = _parsed()
     _run(runs, "conv", _record(parsed), started_at=50)
@@ -408,6 +514,11 @@ def test_two_reviews_of_one_run_both_land(tmp_path, monkeypatch):
 
 
 def test_a_claim_restated_by_a_later_run_is_flagged(tmp_path, monkeypatch):
+    """@brief 验证已被处理过的 claim 被后来的 run 重述时标记为 recurrence，原 run 不算重复。
+
+    @param tmp_path pytest 提供的临时目录，用来放先后两个 run 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     runs, index = _open(tmp_path, monkeypatch)
     parsed = _parsed()
     digest = _digest("被否决的前提")
@@ -424,6 +535,10 @@ def test_a_claim_restated_by_a_later_run_is_flagged(tmp_path, monkeypatch):
 
 
 def test_the_dashboard_escapes_feedback_text():
+    """@brief 验证 dashboard 的 ``esc`` 会把反馈文本转义：用 node 执行页面里的函数，HTML 被转成实体。
+
+    同时确认合法的 review（带证据的 adopted）不会被拒。
+    """
     page = Path("observe/static/index.html").read_text()
     assert "esc(claim.text)" in page and "esc(record.raw)" in page
     start = page.index("function esc(value)")
@@ -435,6 +550,7 @@ def test_the_dashboard_escapes_feedback_text():
 
 
 def test_info_and_obsolete_are_legal_review_states_with_a_reason():
+    """@brief 验证 info 与 obsolete 两种状态的合法性规则：info 只能 unchecked，obsolete 必须带 note。"""
     assert rejection({"status": "info", "verification": "unchecked"}) is None
     assert rejection({"status": "info", "verification": "confirmed"}) is not None
     assert rejection({"status": "obsolete", "verification": "unchecked", "note": "duplicate of a"}) is None
@@ -442,6 +558,11 @@ def test_info_and_obsolete_are_legal_review_states_with_a_reason():
 
 
 def test_a_parser_upgrade_retires_a_removed_claim_with_its_review_status(tmp_path, monkeypatch):
+    """@brief 验证解析器版本变化后消失的 claim 会留下 tombstone，保留它原本的 review 状态并记下原因。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     runs, index = _open(tmp_path, monkeypatch)
     parsed = _parsed()
     directory = _run(runs, "conv", _record(parsed), started_at=50)
@@ -459,6 +580,11 @@ def test_a_parser_upgrade_retires_a_removed_claim_with_its_review_status(tmp_pat
 
 
 def test_fbv4_rebuild_rechecks_a_restored_probe_and_keeps_the_review_key(tmp_path, monkeypatch):
+    """@brief 验证 fbv4 重算时探针文件已恢复就把前提从降级状态重判为 verified，同时保留 review 键（digest）。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     runs, index = _open(tmp_path, monkeypatch)
     parsed = _parsed()
     directory = _run(runs, "conv", _record(parsed), started_at=50)
@@ -486,6 +612,11 @@ def test_fbv4_rebuild_rechecks_a_restored_probe_and_keeps_the_review_key(tmp_pat
 
 
 def test_a_fbv4_placeholder_gets_a_tombstone_even_on_a_fresh_index(tmp_path, monkeypatch):
+    """@brief 验证新索引上 fbv4 的空占位 claim（“无。”）也会留下 obsolete tombstone，而正常 claim 不受影响。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     runs, index = _open(tmp_path, monkeypatch)
     parsed = _parsed()
     directory = _run(runs, "conv", _record(parsed), started_at=50)
@@ -502,12 +633,18 @@ def test_a_fbv4_placeholder_gets_a_tombstone_even_on_a_fresh_index(tmp_path, mon
 
 
 def test_the_harness_panel_distinguishes_reviewed_from_unreviewed():
+    """@brief 验证 harness 面板同时区分已 review／未 review 及子结论、固化状态等文案与样式钩子。"""
     page = Path("observe/static/index.html").read_text()
     for needle in ("未 review", "review 有用", "review 不建议", "h-yes", "h-no", "reviewed_active", "reviewer", "P2 固化", "P2 候选", "change_ref", "固化到本地", "本地已固化", "promotion_commit", "自由文本系统建议", "人确认后转结构化", "送 LLM review", "convert-modal", "已实测 / 探针可读", "未验证 / 探针不可读", "fb-subclaim"):
         assert needle in page
 
 
 def test_compact_suggestions_group_by_digest_and_fetch_one_full_text(tmp_path, monkeypatch):
+    """@brief 验证紧凑列表按 digest 分组、保留总数与截断预览，详情接口返回完整正文。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     from observe.suggestions import compact, detail
 
     runs, index = _open(tmp_path, monkeypatch)
@@ -526,6 +663,11 @@ def test_compact_suggestions_group_by_digest_and_fetch_one_full_text(tmp_path, m
 
 
 def test_the_suggestions_http_endpoints_are_compact_and_detailed(tmp_path, monkeypatch):
+    """@brief 验证 ``/api/v2/suggestions`` 返回紧凑分组、``/api/v2/suggestion`` 返回单条完整正文。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     from starlette.testclient import TestClient
 
     from observe.app import app
@@ -546,6 +688,11 @@ def test_the_suggestions_http_endpoints_are_compact_and_detailed(tmp_path, monke
 
 
 def test_compact_suggestions_page_over_the_whole_filtered_set(tmp_path, monkeypatch):
+    """@brief 验证紧凑列表分页覆盖整个过滤集合：两页拼接后的 digest 集正好等于全部建议。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     from observe.suggestions import compact
 
     runs, index = _open(tmp_path, monkeypatch)
@@ -565,6 +712,11 @@ def test_compact_suggestions_page_over_the_whole_filtered_set(tmp_path, monkeypa
 
 
 def test_compact_does_not_attribute_an_older_conversion_to_the_newest_claim(tmp_path, monkeypatch):
+    """@brief 验证更早的转换不会被算到最新那条 claim 头上：分组取首条代表并标明链接范围，而 detail 仍能查到旧 key。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     from observe.suggestions import compact, detail
 
     runs, index = _open(tmp_path, monkeypatch)
@@ -586,6 +738,11 @@ def test_compact_does_not_attribute_an_older_conversion_to_the_newest_claim(tmp_
 
 
 def test_compact_links_the_exact_seq_not_only_the_first_digest_match(tmp_path, monkeypatch):
+    """@brief 验证转换链接按精确的 seq 匹配而不是只取第一个同 digest 的提案。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     from observe.suggestions import compact, detail
 
     runs, index = _open(tmp_path, monkeypatch)
@@ -612,6 +769,13 @@ def test_compact_links_the_exact_seq_not_only_the_first_digest_match(tmp_path, m
 
 
 def test_a_split_claim_keeps_subclaim_statuses_and_a_parked_parent(tmp_path, monkeypatch):
+    """@brief 验证拆分后的 claim 保留各子结论的状态，父 claim 停在 info，子结论继承 backend/target_id。
+
+    并确认非法组合会被拒：子结论全为已证实却把父状态改成 adopted，或子结论状态名不存在。
+
+    @param tmp_path pytest 提供的临时目录，用来放 runs 与数据库。
+    @param monkeypatch pytest 的环境变量夹具，用于把路径指向临时目录。
+    """
     from observe.feedback import apply_review
 
     runs, index = _open(tmp_path, monkeypatch)

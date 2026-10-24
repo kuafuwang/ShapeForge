@@ -13,6 +13,11 @@ from taic.kernel_agent import Prices
 
 
 def _repo(tmp_path: Path) -> Path:
+    """@brief 在临时目录里建一个已初始化并提过基线提交的 git 仓库，供补丁流程测试使用。
+
+    @param tmp_path pytest 提供的临时目录。
+    @return 新建仓库路径（含一个内容为 ``before`` 的 ``a.txt``）。
+    """
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "a.txt").write_text("before\n")
@@ -25,6 +30,13 @@ def _repo(tmp_path: Path) -> Path:
 
 
 def test_a_code_patch_is_collected_and_applied_only_with_confirmation(tmp_path):
+    """@brief 验证代码补丁先采集到 run 目录，只有带确认人时才会真的写回仓库并记决策事件。
+
+    依次覆盖：采集的补丁含修改与新增文件；``check_only`` 只试应用而不改仓库；带 ``approved_by``
+    时落地改动并追加一条 ``code_promotion`` 决策（change_ref 为空、status 为 local、implemented_by 为 provider/model）。
+
+    @param tmp_path pytest 提供的临时目录，用来放仓库、worktree 与 run 目录。
+    """
     repo = _repo(tmp_path)
     worktree = code_agent.prepare_worktree(repo, tmp_path, "key")
     (worktree / "a.txt").write_text("after\n")
@@ -44,6 +56,10 @@ def test_a_code_patch_is_collected_and_applied_only_with_confirmation(tmp_path):
 
 
 def test_code_agent_budget_scales_with_the_implementer_price(tmp_path):
+    """@brief 验证代码 agent 的预算随实现者模型定价上升，且昂贵模型下预算仍有下限量级。
+
+    @param tmp_path pytest 提供的临时目录（本用例未使用其内容，仅为夹具一致性）。
+    """
     cheap = code_agent.estimate_code_budget(Prices(0.3, 1.2, 0.006, 0), "x" * 3000)
     expensive = code_agent.estimate_code_budget(Prices(3, 15, 0.3, 3), "x" * 3000)
     assert cheap["budget_usd"] < expensive["budget_usd"]
@@ -51,6 +67,13 @@ def test_code_agent_budget_scales_with_the_implementer_price(tmp_path):
 
 
 def test_a_patch_touching_a_forbidden_path_is_refused(tmp_path):
+    """@brief 验证触及禁止路径的补丁被拒，包括路径穿越、八进制转义写成的大路径与 rename/copy。
+
+    同时确认 ``patch_paths`` 能把 git 的八进制转义反解为 ``tasks/x.py``。
+
+    @param tmp_path pytest 提供的临时目录，用作 run 目录的父目录。
+    @raises code_agent.CodeAgentError 补丁路径落在禁区（``may not change``）或含 rename/copy 时由 ``write_patch`` 抛出。
+    """
     patch = """diff --git a/tasks/secret.md b/tasks/secret.md
 new file mode 100644
 --- /dev/null
@@ -80,6 +103,11 @@ new file mode 100644
 
 
 def test_code_tests_run_before_the_live_checkout_is_touched(tmp_path, monkeypatch):
+    """@brief 验证跑测试时仓库尚未被改动：测试桩看到的是改动前的内容，测试结束后才真正写入。
+
+    @param tmp_path pytest 提供的临时目录，用来放仓库、worktree 与 run 目录。
+    @param monkeypatch pytest 的替换夹具，用于把 ``_test_patch_in_worktree`` 换成记录调用时刻的桩。
+    """
     repo = _repo(tmp_path)
     worktree = code_agent.prepare_worktree(repo, tmp_path, "key")
     (worktree / "a.txt").write_text("after\n")
@@ -98,6 +126,13 @@ def test_code_tests_run_before_the_live_checkout_is_touched(tmp_path, monkeypatc
 
 
 def test_a_code_promotion_is_bound_to_the_commit_and_cannot_be_committed_twice(tmp_path):
+    """@brief 验证代码提升绑定了具体提交：一次提交后再次提交会因找不到待提交的本地提升而被拒。
+
+    校验提交记录里的 paths 与 ``promotion_commit`` 事件一致。
+
+    @param tmp_path pytest 提供的临时目录，用来放仓库、worktree 与 run 目录。
+    @raises harness.ProposalError 已无待提交的本地提升时再次提交（``no locally applied promotion``）。
+    """
     repo = _repo(tmp_path)
     worktree = code_agent.prepare_worktree(repo, tmp_path, "key")
     (worktree / "a.txt").write_text("after\n")
@@ -115,6 +150,10 @@ def test_a_code_promotion_is_bound_to_the_commit_and_cannot_be_committed_twice(t
 
 
 def test_a_promotion_keeps_unrelated_staged_paths_out_of_its_commit(tmp_path):
+    """@brief 验证提升提交只包含补丁自己的文件，已暂存的无关文件继续留在暂存区。
+
+    @param tmp_path pytest 提供的临时目录，用来放仓库、worktree 与 run 目录。
+    """
     repo = _repo(tmp_path)
     (repo / "unrelated.txt").write_text("base\n")
     subprocess.run(["git", "add", "unrelated.txt"], cwd=repo, check=True)
@@ -135,6 +174,11 @@ def test_a_promotion_keeps_unrelated_staged_paths_out_of_its_commit(tmp_path):
 
 
 def test_a_code_promotion_refuses_a_changed_patch_file(tmp_path):
+    """@brief 验证落地后补丁文件被改动（哈希变化）时拒绝提交。
+
+    @param tmp_path pytest 提供的临时目录，用来放仓库、worktree 与 run 目录。
+    @raises harness.ProposalError 补丁文件内容与记录的哈希不一致时抛出。
+    """
     repo = _repo(tmp_path)
     worktree = code_agent.prepare_worktree(repo, tmp_path, "key")
     (worktree / "a.txt").write_text("after\n")
@@ -149,6 +193,11 @@ def test_a_code_promotion_refuses_a_changed_patch_file(tmp_path):
 
 
 def test_a_code_promotion_refuses_to_commit_after_the_worktree_diverged(tmp_path):
+    """@brief 验证已应用的补丁被手工改过后，提交阶段能发现工作树已偏离并拒绝提交。
+
+    @param tmp_path pytest 提供的临时目录，用来放仓库、worktree 与 run 目录。
+    @raises harness.ProposalError 仓库文件不再与应用时一致（``no longer match``）时抛出。
+    """
     repo = _repo(tmp_path)
     worktree = code_agent.prepare_worktree(repo, tmp_path, "key")
     (worktree / "a.txt").write_text("after\n")
@@ -162,6 +211,11 @@ def test_a_code_promotion_refuses_to_commit_after_the_worktree_diverged(tmp_path
 
 
 def test_a_code_promotion_refuses_an_unrecorded_executable_bit(tmp_path):
+    """@brief 验证未被记录的可执行位变更也算偏离，提交阶段会拒绝。
+
+    @param tmp_path pytest 提供的临时目录，用来放仓库、worktree 与 run 目录。
+    @raises harness.ProposalError 文件权限与应用时不一致（``no longer match``）时抛出。
+    """
     repo = _repo(tmp_path)
     worktree = code_agent.prepare_worktree(repo, tmp_path, "key")
     (worktree / "a.txt").write_text("after\n")
@@ -175,6 +229,11 @@ def test_a_code_promotion_refuses_an_unrecorded_executable_bit(tmp_path):
 
 
 def test_a_code_promotion_refuses_unrelated_edits_in_the_same_file(tmp_path):
+    """@brief 验证同一文件里出现补丁之外的额外改动时，即使反向应用仍能成功也拒绝提交。
+
+    @param tmp_path pytest 提供的临时目录，用来放仓库、worktree 与 run 目录。
+    @raises harness.ProposalError 文件内容不再是“基线 + 这份补丁”时抛出。
+    """
     repo = _repo(tmp_path)
     (repo / "b.txt").write_text("one\ntwo\nthree\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)

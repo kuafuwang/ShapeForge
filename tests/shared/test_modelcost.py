@@ -8,6 +8,11 @@ from taic.modelcost import from_events
 
 
 def test_model_totals_ignore_scheduling_and_non_finite_costs():
+    """@brief 验证按模型汇总只统计真实的 agent 计费行，跳过重试调度行与非有限花费。
+
+    断言重试调度行不计入会话数，NaN 花费按 0 计但仍计入会话数，
+    同一模型的 token 分类被逐项累加，结果按花费降序排列。
+    """
     rows = from_events([
         {"event": "provider_retry", "provider": "p", "model": "m", "cost_usd": 99},
         {"event": "agent", "provider": "p", "model": "m", "committee": "first", "cost_usd": 0.2,

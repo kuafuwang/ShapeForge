@@ -16,6 +16,12 @@ from observe.query import feature_grid, run_detail
 
 
 def _prepare(tmp_path, monkeypatch) -> tuple[Path, object]:
+    """@brief 把运行目录、索引库、账本与 carryover 都指到临时目录，并取回索引单例。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来设置环境变量。
+    @return (运行根目录, 索引对象) 二元组。
+    """
     runs = tmp_path / "runs"
     runs.mkdir()
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
@@ -26,6 +32,10 @@ def _prepare(tmp_path, monkeypatch) -> tuple[Path, object]:
 
 
 def _running(directory: Path) -> None:
+    """@brief 在目录里写一份「正在运行」的 state.json，pid 用当前进程。
+
+    @param directory 运行目录。
+    """
     directory.mkdir(parents=True)
     (directory / "state.json").write_text(json.dumps({
         "task": "conv2d", "dtype": "fp16", "phase": "llm", "pid": os.getpid(),
@@ -34,10 +44,23 @@ def _running(directory: Path) -> None:
 
 
 def _line(event: str, label: str, **fields) -> str:
+    """@brief 拼一行 transcript.jsonl。
+
+    @param event 事件名。
+    @param label 该行对应的候选标签。
+    @param fields 追加到行里的其它字段。
+    @return 以换行结尾的 JSON 文本。
+    """
     return json.dumps({"event": event, "label": label, **fields}, ensure_ascii=False) + "\n"
 
 
 def _rows(index, run_id: str) -> list[dict]:
+    """@brief 读出索引里某次运行已投影的回合行，并把 seq 合进行的正文。
+
+    @param index 观察索引。
+    @param run_id 运行 id。
+    @return 按 seq 排序的回合字典列表。
+    """
     out = []
     for item in index.conn.execute("SELECT seq, kind, label, row_json FROM turns WHERE run_id = ? ORDER BY seq", (run_id,)):
         body = json.loads(item["row_json"])
@@ -47,6 +70,11 @@ def _rows(index, run_id: str) -> list[dict]:
 
 
 def test_a_running_search_catches_up_without_redrawing_the_detail(tmp_path, monkeypatch):
+    """@brief 验证运行中的搜索只增量读入新增的 transcript 字节、不重绘详情页，transcript 被缩短时重建回合表，索引库重建后回合仍能复原。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把索引与账本指到临时路径。
+    """
     runs, index = _prepare(tmp_path, monkeypatch)
     directory = runs / "conv"
     _running(directory)
@@ -94,6 +122,11 @@ def test_a_running_search_catches_up_without_redrawing_the_detail(tmp_path, monk
 
 
 def test_turns_hide_the_system_prompt_the_kernel_and_secrets(tmp_path, monkeypatch):
+    """@brief 验证回合投影隐去系统提示词、密钥、工具参数与内核全文，并把回复与思考截断到上限。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把索引与账本指到临时路径。
+    """
     runs, index = _prepare(tmp_path, monkeypatch)
     directory = runs / "conv"
     _running(directory)
@@ -128,6 +161,11 @@ def test_turns_hide_the_system_prompt_the_kernel_and_secrets(tmp_path, monkeypat
 
 
 def test_same_label_merges_until_the_label_comes_back_later(tmp_path, monkeypatch):
+    """@brief 验证同一标签的多行（含重试）合并成一个回合，标签再次出现时另起一段，分页游标能逐段往回走。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把索引与账本指到临时路径。
+    """
     runs, index = _prepare(tmp_path, monkeypatch)
     directory = runs / "conv"
     _running(directory)
@@ -154,6 +192,11 @@ def test_same_label_merges_until_the_label_comes_back_later(tmp_path, monkeypatc
 
 
 def test_an_unchanged_stamp_does_not_read_the_turns_table(tmp_path, monkeypatch):
+    """@brief 验证 stamp 未变时获取回合不再读 turns 表，直接返回 same。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把索引与账本指到临时路径。
+    """
     runs, index = _prepare(tmp_path, monkeypatch)
     directory = runs / "conv"
     _running(directory)
@@ -167,6 +210,10 @@ def test_an_unchanged_stamp_does_not_read_the_turns_table(tmp_path, monkeypatch)
 
 
 def _finished(directory: Path) -> None:
+    """@brief 在目录里写一份已结束运行的 state.json 与 result.json。
+
+    @param directory 运行目录。
+    """
     directory.mkdir(parents=True)
     (directory / "state.json").write_text(json.dumps({
         "task": "conv2d", "dtype": "fp16", "phase": "done", "started_at": 1, "updated_at": 1,
@@ -177,6 +224,11 @@ def _finished(directory: Path) -> None:
 
 
 def test_a_finished_run_is_projected_when_its_turn_list_opens(tmp_path, monkeypatch):
+    """@brief 验证已结束的运行不会在后台索引里预投影回合，直到有人打开它的回合列表才读入，之后 stamp 未变也不再解析。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把索引与账本指到临时路径。
+    """
     runs, index = _prepare(tmp_path, monkeypatch)
     directory = runs / "conv"
     _finished(directory)
@@ -194,6 +246,11 @@ def test_a_finished_run_is_projected_when_its_turn_list_opens(tmp_path, monkeypa
 
 
 def test_a_run_that_already_has_turns_still_catches_the_line_written_as_it_finishes(tmp_path, monkeypatch):
+    """@brief 验证已有回合的运行在写出 result.json 时，仍能补上它结束时新写的那一行。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来把索引与账本指到临时路径。
+    """
     runs, index = _prepare(tmp_path, monkeypatch)
     directory = runs / "conv"
     _running(directory)
@@ -210,6 +267,11 @@ def test_a_run_that_already_has_turns_still_catches_the_line_written_as_it_finis
 
 
 def test_feature_grid_signs_a_source_once_and_then_uses_the_cache(tmp_path, monkeypatch):
+    """@brief 验证 feature_grid 对每份不同源码只算一次特征签名（三份文件两份源码就是两次），之后命中缓存，即使 state.json 变了也不再重算。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来包一层能计数的 feature_signature。
+    """
     runs, _index = _prepare(tmp_path, monkeypatch)
     directory = runs / "gemm"
     directory.mkdir()
@@ -248,6 +310,13 @@ def test_feature_grid_signs_a_source_once_and_then_uses_the_cache(tmp_path, monk
 
 
 def test_fa_paper_signs_each_distinct_source_once(tmp_path, monkeypatch):
+    """@brief 用一个真实运行目录验证特征签名按源码摘要去重：每份不同源码只算一次，stamp 未变时不再重算。
+
+    仓库里没有该运行时直接跳过。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具，用来设置环境变量并包一层能计数的 feature_signature。
+    """
     directory = Path("runs/apple-m4-max/p1/fa_paper")
     candidates = directory / "candidates"
     if not candidates.is_dir():

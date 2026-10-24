@@ -14,6 +14,10 @@ from ..support.triton_specs import jit_params
 
 @pytest.mark.parametrize("name", list(list_tasks()) + ["mamba2_chunk_scan"])
 def test_every_kernel_parameter_is_bound_by_the_launch_header(name):
+    """@brief 每个 kernel 参数都能从 launch header 绑定：指针数等于 buffer 数、非指针参数在 header 里有值，num_warps 与 contract 一致。
+
+    @param name 参数化的任务名。
+    """
     t = get_task(name, "fp16", "paper")
     params = jit_params(t.triton_source, t.contract.kernel_name)
     header, nw = parse_launch_header(t.triton_source)
@@ -27,6 +31,10 @@ def test_every_kernel_parameter_is_bound_by_the_launch_header(name):
 
 @pytest.mark.parametrize("name", list(list_tasks()) + ["mamba2_chunk_scan"])
 def test_header_values_agree_with_the_contract_constants(name):
+    """@brief header 里出现的常量与 contract 常量的数值一致。
+
+    @param name 参数化的任务名。
+    """
     t = get_task(name, "fp16", "paper")
     header, _ = parse_launch_header(t.triton_source)
     for cname, _ty, val in t.contract.constants:
@@ -34,6 +42,8 @@ def test_header_values_agree_with_the_contract_constants(name):
             assert float(header[cname]) == pytest.approx(float(val)), (name, cname)
 
 def test_header_parser_handles_eps_floats_and_multiline_headers():
+    """@brief header 解析支持 eps 科学计数法、浮点和跨行续写的 header 行，并忽略非 header 行。
+    """
     h, nw = parse_launch_header("# Launch: grid = (M,), num_warps = 8, M = 4096, eps = 1e-6\n#   BASE = 10000.0\nimport triton\n# N = 5\n")
     assert nw == 8 and h == {"M": 4096, "eps": 1e-6, "BASE": 10000.0}
 
@@ -44,7 +54,13 @@ VENV_PY = Path(__file__).resolve().parents[2] / ".venvs" / "triton-msl" / "bin" 
 @pytest.mark.skipif(not VENV_PY.exists(), reason="isolated triton-msl environment not installed (scripts/install_triton_msl.sh)")
 @pytest.mark.parametrize("name", ["gemm", "gemm_silu", "conv2d", "bitdelta_gemm", "rmsnorm", "flash_attention", "mamba2_chunk_scan"])
 def test_specs_load_as_real_triton_and_bind_all_arguments(name, tmp_path):
-    """Dry run in the isolated environment: real Triton parses the spec and every kernel argument gets a value (no compile, no GPU launch)."""
+    """@brief 在隔离环境 dry run：真实 Triton 能解析 spec 且每个 kernel 参数都拿到值。
+
+    只解析，不编译也不启动 GPU。
+
+    @param name 参数化的任务名。
+    @param tmp_path pytest 提供的临时目录，用于写请求和输出文件。
+    """
     import json
     import os
     import subprocess
@@ -57,6 +73,8 @@ def test_specs_load_as_real_triton_and_bind_all_arguments(name, tmp_path):
     assert r["status"] == "dry_ok", (r, p.stderr[-300:])
 
 def test_the_fingerprint_changes_with_spec_size_contract_and_cases():
+    """@brief spec 指纹随 size、dtype、变体和不同内核变化，相同输入保持稳定。
+    """
     from tcenv.triton_runner import spec_fingerprint
 
     a = spec_fingerprint(get_task("gemm", "fp16", "paper"))
@@ -68,6 +86,10 @@ def test_the_fingerprint_changes_with_spec_size_contract_and_cases():
 
 @pytest.mark.parametrize("name", list(list_tasks()) + ["flash_attention", "lion", "bitdelta_gemm", "mamba2_chunk_scan"])
 def test_header_grid_matches_the_contract_grid(name):
+    """@brief 非 baseline 变体的 header grid（去掉尾部 1）与 contract grid 一致。
+
+    @param name 参数化的任务名。
+    """
     from tcenv.triton_runner import parse_grid, spec_source
 
     t = get_task(name, "fp16", "paper")
@@ -80,6 +102,8 @@ def test_header_grid_matches_the_contract_grid(name):
         assert parse_grid(src, header) == tuple(g), (name, parse_grid(src, header), g)
 
 def test_baseline_variants_declare_a_grid_and_keep_the_kernel_name():
+    """@brief baseline 变体带有 note，声明 grid 和 num_warps，并保留原 kernel 名。
+    """
     from tcenv.triton_runner import parse_grid, spec_source
 
     for name in ("gemm", "gemv", "flash_attention"):
@@ -92,7 +116,11 @@ def test_baseline_variants_declare_a_grid_and_keep_the_kernel_name():
 @pytest.mark.parametrize("name", ["gemm", "gemm_silu", "conv2d"])
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
 def test_variants_are_valid_python_with_every_placeholder_substituted(name, dtype):
-    """The specs the backend can actually compile (it refuses the fused gemm_silu epilogue and the gathered conv2d operand)."""
+    """@brief 后端能编译的 spec 是合法 Python，占位符全部替换，多 kernel 变体用 pipeline 按契约名取输入。
+
+    @param name 参数化的任务名。
+    @param dtype 参数化的数据类型。
+    """
     from tcenv.triton_runner import spec_source
 
     t = get_task(name, dtype, "paper")
@@ -112,7 +140,10 @@ def test_variants_are_valid_python_with_every_placeholder_substituted(name, dtyp
 
 @pytest.mark.parametrize("name", ["gemm", "gemv", "flash_attention"])
 def test_single_kernel_baseline_variants_bind_every_parameter(name):
-    """The variant is what the compiler baseline runs: its kernel parameters must all be bound by its own header (or a contract scalar)."""
+    """@brief 编译器 baseline 跑的变体，其 kernel 参数都必须由自己的 header（或 contract scalar）绑定。
+
+    @param name 参数化的任务名。
+    """
     from tcenv.triton_runner import spec_source
 
     t = get_task(name, "fp16", "paper")
@@ -126,4 +157,6 @@ def test_single_kernel_baseline_variants_bind_every_parameter(name):
     assert nw == t.contract.num_warps
 
 def test_relu_spec_propagates_nan():
+    """@brief relu 的 Triton spec 用 tl.where(x < 0, 0.0, x) 保留 NaN。
+    """
     assert "tl.where(x < 0, 0.0, x)" in get_task("relu", "fp16", "paper").triton_source
