@@ -29,12 +29,14 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ServiceProcess:
-    def __init__(self, tmp_path: Path, *, selfcheck_max: int = 20, selfcheck_max_gpu_s: float = 120.0, allow_kinds: tuple[str, ...] = ("formal_eval", "selfcheck"), expires_at: float | None = None, extra_env: dict[str, str] | None = None) -> None:
+    def __init__(self, tmp_path: Path, *, selfcheck_max: int = 20, selfcheck_max_gpu_s: float = 120.0, allow_kinds: tuple[str, ...] = ("formal_eval", "selfcheck"), expires_at: float | None = None, extra_env: dict[str, str] | None = None, alt: bool = False) -> None:
         env = dict(os.environ)
         if extra_env:
             env.update(extra_env)
         env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
         command = [sys.executable, "-m", "tests.support.npu_sim.service_entry", "--state-dir", str(tmp_path / "state"), "--selfcheck-max", str(selfcheck_max), "--selfcheck-max-gpu-s", str(selfcheck_max_gpu_s)]
+        if alt:
+            command.extend(["--alt-token", "test-alt-token", "--alt-run-id", "run-2", "--alt-session-id", "session-1", "--aging-s", "0.2"])
         for kind in allow_kinds:
             command.extend(["--allow-kind", kind])
         if expires_at is not None:
@@ -56,11 +58,11 @@ class ServiceProcess:
         assert self.proc.stdout is not None
         return read_frame(self.proc.stdout)
 
-    def hello(self, nonce: str = "client-nonce-1") -> Frame:
+    def hello(self, nonce: str = "client-nonce-1", token: str = TOKEN) -> Frame:
         self.send("hello", nonce, {
             "protocol_version": "1",
             "client_nonce": nonce,
-            "session_token": TOKEN,
+            "session_token": token,
             "expected_site_id": "sim-site",
             "expected_worker_build": "sim-build-1",
             "expected_task_pack_digest": TASK_PACK_DIGEST,
@@ -474,3 +476,23 @@ def test_report_seed_mismatch_is_rejected(tmp_path):
         service._validate_worker_result(request, {"report": report, "evidence": {"candidate_sha256": request.candidate_sha256}})
     assert exc_info.value.code == "provenance_mismatch"
     assert "seed" in str(exc_info.value)
+
+
+def test_rehello_switches_grants_and_ages_selfcheck(tmp_path):
+    """@brief 同一连接 re-hello 切换 grant 后，selfcheck 能在短 aging 后越过后续 formal。"""
+    proc = ServiceProcess(tmp_path, alt=True)
+    assert proc.hello().frame_type == "hello"
+    try:
+        first = _request(request_id="fair-a1", source="REMOTE_SLEEP_SHORT", mode="full")
+        _send_request(proc, first)
+        assert proc.hello(nonce="client-nonce-2", token="test-alt-token").frame_type == "hello"
+        second = _request(request_id="fair-b1", source="kernel void demo() {}", kind="selfcheck", run_id="run-2")
+        _send_request(proc, second)
+        assert proc.hello(nonce="client-nonce-3").frame_type == "hello"
+        third = _request(request_id="fair-a2", source="REMOTE_SLEEP_SHORT", mode="full")
+        _send_request(proc, third)
+        frames = [proc.recv() for _ in range(3)]
+        assert [frame.request_id for frame in frames] == ["fair-a1", "fair-b1", "fair-a2"]
+        assert all(frame.frame_type == "result" for frame in frames)
+    finally:
+        proc.close()

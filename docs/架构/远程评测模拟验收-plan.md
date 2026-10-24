@@ -1,6 +1,6 @@
 # 远程评测模拟验收计划
 
-状态：container_only 预验收和 split-control 核心模拟验收已完成（2026-10-25）；扩展故障矩阵与真实 NPU 未做。是[执行运行时与设备扩展计划](执行运行时与设备扩展-plan.md) Phase 2.5 的专项文档。日期：2026-10-24。
+状态：container_only 预验收、split-control 核心与扩展模拟验收已完成（2026-10-25）；真实 NPU 未做。是[执行运行时与设备扩展计划](执行运行时与设备扩展-plan.md) Phase 2.5 的专项文档。日期：2026-10-24。
 
 本文只规定远程受信评测服务的模拟验收，不重复主计划的 runner、EvaluationExecutor、P2 和 backend 设计。主计划负责架构与交付顺序，本文负责环境、真实传输、故障矩阵、授权开关和验收报告。
 
@@ -76,8 +76,8 @@ Phase 2A/2B 完成后，在 Mac 不依赖真实 NPU，通过真实 SSH/VM/Docker
 - 设置 `TAIC_TEST_DOCKER_IMAGE=taic-patch-test:local` 后，宿主机完整 shared 并行套件：987 passed。
 - Docker Ubuntu 隔离环境中的远程/P2/selfcheck 测试：109 passed。
 - 使用现有 Ubuntu ARM VM、VM 内 Docker 和 SSH forced command，运行 `tests/support/npu_sim/phase25_runner.py`：23 个验收项全部通过。覆盖 formal/selfcheck、hello、幂等、同 key 不同 body、Unicode/大帧、错误 worker build、shell/`docker exec` 注入、transport timeout、断连清理和重启恢复。
-- 本次 split-control 报告为 `runs/npu-sim-20261024/report.json`，`split_control=true`、`container_only=false`、`simulated=true`；没有 `run_config.json`。最终没有遗留 evaluator 容器。
+- 本次 split-control 报告为 `runs/npu-sim-20261024/report.json`，`split_control=true`、`container_only=false`、`simulated=true`、`coverage=extended_split_control`；没有 `run_config.json`。最终没有遗留 evaluator 容器。
 - 本次没有运行真实 NPU、真实 GPU、付费模型或安装 NPU SDK。VM 本地延迟只用于控制面诊断，不能用于决定真实远程站点是否需要搬代理。
-- 本次报告的 `coverage` 为 `core_split_control`，尚未执行 half-open/慢消费者、完整帧上限和多 run 公平性扩展矩阵；不把它写成全部 Phase 2.5 条目均已完成。
+- 本次报告的 `coverage` 已更新为 `extended_split_control`，half-open/慢消费者、完整帧上限和多 run 公平性扩展矩阵均已通过；真实 NPU、真实 GPU、付费模型和 NPU SDK 仍未执行。
 
 复现用的构建与验收文件为 `tests/support/docker/Dockerfile.patch-test`、`tests/support/docker/build_patch_test.sh`、`tests/support/docker/Dockerfile.remote-sim`、`tests/support/npu_sim/forced_command.py` 和 `tests/support/npu_sim/phase25_runner.py`。

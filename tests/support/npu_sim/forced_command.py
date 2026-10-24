@@ -24,7 +24,7 @@ SAFE_ID = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 ENTRY_NAMES = {"/usr/local/bin/taic-remote-evaluator", "taic-remote-evaluator"}
 
 
-def _arguments() -> tuple[str, str] | None:
+def _arguments() -> tuple[str, str, float] | None:
     original = os.environ.get("SSH_ORIGINAL_COMMAND", "")
     try:
         parts = shlex.split(original)
@@ -32,27 +32,36 @@ def _arguments() -> tuple[str, str] | None:
         return None
     if not parts or parts[0] not in ENTRY_NAMES:
         return None
-    values = {"run_id": "run-1", "session_id": "session-1"}
+    values = {"run_id": "run-1", "session_id": "session-1", "aging_s": 60.0}
     if len(parts) == 1:
-        return values["run_id"], values["session_id"]
-    if len(parts) != 5:
+        return values["run_id"], values["session_id"], values["aging_s"]
+    if len(parts) not in {3, 5, 7}:
         return None
     index = 1
     seen = set()
     while index < len(parts):
         flag = parts[index]
-        if flag not in {"--run-id", "--session-id"} or flag in seen:
+        if flag not in {"--run-id", "--session-id", "--aging-s"} or flag in seen:
             return None
         seen.add(flag)
         index += 1
         if index >= len(parts):
             return None
         value = parts[index]
-        if not SAFE_ID.fullmatch(value):
-            return None
-        values[flag[2:].replace("-", "_")] = value
+        if flag == "--aging-s":
+            try:
+                number = float(value)
+            except ValueError:
+                return None
+            if not 0 < number <= 60:
+                return None
+            values["aging_s"] = number
+        else:
+            if not SAFE_ID.fullmatch(value):
+                return None
+            values[flag[2:].replace("-", "_")] = value
         index += 1
-    return values["run_id"], values["session_id"]
+    return values["run_id"], values["session_id"], values["aging_s"]
 
 
 def main() -> int:
@@ -60,7 +69,7 @@ def main() -> int:
     if values is None:
         print("forced command accepts only taic-remote-evaluator with bounded run/session ids", file=sys.stderr)
         return 64
-    run_id, session_id = values
+    run_id, session_id, aging_s = values
     container = "taic-npu-sim-" + uuid.uuid4().hex[:16]
     state = Path.home() / "taic-state"
     state.mkdir(parents=True, exist_ok=True)
@@ -74,12 +83,17 @@ def main() -> int:
         "--env", "PYTHONPATH=/opt/taic",
         "--env", "HOME=/tmp",
         "--env", "NPU_SIM_COUNTER=/var/lib/tcenv/counter.txt",
+        "--env", "NPU_SIM_ORDER=/var/lib/tcenv/order.jsonl",
         "taic-remote-sim:local",
         "python3", "-m", "tests.support.npu_sim.service_entry",
+        "--aging-s", str(aging_s),
         "--state-dir", "/var/lib/tcenv/state",
         "--run-id", run_id,
         "--session-id", session_id,
         "--token", "test-session-token",
+        "--alt-token", "test-alt-token",
+        "--alt-run-id", "run-2",
+        "--alt-session-id", "session-1",
     ]
     proc = subprocess.Popen(argv)
     removing = threading.Event()

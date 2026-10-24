@@ -28,6 +28,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--token", default=TOKEN)
     parser.add_argument("--run-id", default="run-1")
     parser.add_argument("--session-id", default="session-1")
+    parser.add_argument("--alt-token", default=None)
+    parser.add_argument("--alt-run-id", default="run-2")
+    parser.add_argument("--alt-session-id", default="session-1")
+    parser.add_argument("--aging-s", type=float, default=60.0)
     parser.add_argument("--signature-key-file", type=Path, default=None)
     args = parser.parse_args(argv)
     identity = ServiceIdentity(
@@ -51,13 +55,17 @@ def main(argv: list[str] | None = None) -> int:
         allowed_kinds=frozenset(args.allow_kind or ["formal_eval", "selfcheck"]),
         expires_at=args.expires_at,
     )
+    grants = [grant]
+    if args.alt_token:
+        grants.append(SessionGrant(token=args.alt_token, run_id=args.alt_run_id, session_id=args.alt_session_id, target_id="sim-npu-test"))
     service = RemoteService(
         identity=identity,
-        grants=[grant],
+        grants=grants,
         worker_command=[sys.executable, "-m", "tests.support.npu_sim.worker_entry"],
         state_dir=args.state_dir,
         selfcheck_max_timed=args.selfcheck_max,
         selfcheck_max_gpu_s=args.selfcheck_max_gpu_s,
+        selfcheck_age_s=args.aging_s,
         signing_key=args.signature_key_file.read_bytes() if args.signature_key_file else None,
     )
     service.serve(sys.stdin.buffer, sys.stdout.buffer)

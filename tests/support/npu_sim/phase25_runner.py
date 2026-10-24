@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import statistics
+import struct
 import subprocess
 import tempfile
 import time
@@ -19,7 +21,8 @@ from dataclasses import replace
 from pathlib import Path
 
 from taic.selfcheck_bridge import SelfCheckClient, SelfCheckConfig, SelfCheckServer
-from tcenv.evaluation import EvaluationRequest
+from tcenv.evaluation import EvaluationError, EvaluationRequest
+from tcenv.remote.protocol import FrameDecoder, HelloRequest, ProtocolError, encode_frame, read_frame, write_frame
 from tcenv.remote.client import CommandTransport, RemoteError, RemoteEvaluator, RemoteEvaluatorPool
 from tests.support.npu_sim.service_entry import TASK_FINGERPRINT, TASK_PACK_DIGEST, TOKEN
 
@@ -49,6 +52,182 @@ def _run(command: list[str], *, timeout: int = 30) -> subprocess.CompletedProces
     return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
 
 
+
+
+class _ThrottledReader:
+    def __init__(self, inner, delay_s: float) -> None:
+        self.inner = inner
+        self.delay_s = delay_s
+
+    def read(self, size: int) -> bytes:
+        if self.delay_s:
+            time.sleep(self.delay_s)
+        return self.inner.read(size)
+
+    def read1(self, size: int) -> bytes:
+        if self.delay_s:
+            time.sleep(self.delay_s)
+        return self.inner.read1(size)
+
+
+class _ThrottledTransport:
+    """Transport fault injector; real service/SSH bytes are still used."""
+
+    def __init__(self, inner, delay_s: float) -> None:
+        self.inner = inner
+        self.delay_s = delay_s
+        self.reader = _ThrottledReader(inner.reader, delay_s)
+        self.writer = inner.writer
+
+    def start(self) -> None:
+        self.inner.start()
+        self.reader.inner = self.inner.reader
+        self.writer = self.inner.writer
+
+    def close(self) -> None:
+        self.inner.close()
+
+
+def _hello(transport, nonce: str, token: str) -> None:
+    hello = HelloRequest(
+        protocol_version="1", client_nonce=nonce, session_token=token,
+        expected_site_id="sim-site", expected_worker_build="sim-build-1",
+        expected_task_pack_digest=TASK_PACK_DIGEST, target_id="sim-npu-test",
+    )
+    write_frame(transport.writer, "hello", nonce, hello.__dict__)
+    frame = read_frame(transport.reader)
+    if frame.frame_type != "hello":
+        raise AssertionError(f"hello failed: {frame.frame_type} {frame.payload}")
+
+
+def _run_frame_limit_matrix(transport_factory, record, check) -> None:
+    evaluator = RemoteEvaluator(transport_factory(("run-1", "session-1", "sim-npu-test")), token=TOKEN, run_id="run-1", session_id="session-1", target_id="sim-npu-test", expected_site_id="sim-site", expected_worker_build="sim-build-1", expected_task_pack_digest=TASK_PACK_DIGEST, task_fingerprint=TASK_FINGERPRINT, timeout_s=8)
+    try:
+        near_source = "x" * 999_000
+        near = evaluator.formal(_request(near_source, request_id="limit-near"))
+        check("frame_near_source_limit", near.report.get("simulated") is True)
+        unicode_source = "🚀" * 250_000  # exactly 1,000,000 UTF-8 bytes
+        unicode_result = evaluator.formal(_request(unicode_source, request_id="limit-unicode-exact"))
+        check("frame_unicode_exact_byte_limit", unicode_result.report.get("simulated") is True)
+    finally:
+        evaluator.close()
+    for name, source in (("source_over_limit", "x" * 1_000_001), ("unicode_over_limit", "🚀" * 250_001)):
+        try:
+            _request(source, request_id=name)
+        except EvaluationError:
+            record(name)
+        else:
+            raise AssertionError(f"{name} was accepted")
+    try:
+        encode_frame("request", "x", {"data": "x" * 2_000_001})
+    except ProtocolError:
+        record("frame_payload_over_limit")
+    else:
+        raise AssertionError("oversize frame payload was accepted")
+    for name, raw in (
+        ("frame_bad_header_length", struct.pack(">I", 1) + b"x"),
+        ("frame_bad_payload_digest", encode_frame("request", "x", {"ok": True})[:-1] + b"0"),
+    ):
+        try:
+            FrameDecoder().feed(raw)
+        except ProtocolError:
+            record(name)
+        else:
+            raise AssertionError(f"{name} was accepted")
+    base = _request()
+    for name, changes in (("reps_over_limit", {"reps": 10_001}), ("candidate_timeout_over_limit", {"candidate_timeout_s": 3601}), ("request_id_over_limit", {"request_id": "x" * 161})):
+        try:
+            replace(base, **changes)
+        except EvaluationError:
+            record(name)
+        else:
+            raise AssertionError(f"{name} was accepted")
+
+
+def _run_half_open_and_reset_matrix(transport_factory, make_pool, admin, record, check) -> None:
+    # Slow consumer: the real remote result still arrives after throttled reads.
+    inner = transport_factory(("run-1", "session-1", "sim-npu-test"))
+    throttled = _ThrottledTransport(inner, 0.03)
+    slow = RemoteEvaluator(throttled, token=TOKEN, run_id="run-1", session_id="session-1", target_id="sim-npu-test", expected_site_id="sim-site", expected_worker_build="sim-build-1", expected_task_pack_digest=TASK_PACK_DIGEST, task_fingerprint=TASK_FINGERPRINT, timeout_s=3)
+    try:
+        result = slow.formal(_request(request_id="slow-consumer"))
+        check("slow_consumer", result.report.get("simulated") is True)
+    finally:
+        slow.close()
+
+    # Half-open: hello succeeds, then the reader is stalled beyond the deadline.
+    inner = transport_factory(("run-1", "session-1", "sim-npu-test"))
+    throttled = _ThrottledTransport(inner, 0.0)
+    half = RemoteEvaluator(throttled, token=TOKEN, run_id="run-1", session_id="session-1", target_id="sim-npu-test", expected_site_id="sim-site", expected_worker_build="sim-build-1", expected_task_pack_digest=TASK_PACK_DIGEST, task_fingerprint=TASK_FINGERPRINT, timeout_s=0.05)
+    try:
+        half.connect()
+        throttled.delay_s = 0.2
+        half.formal(_request(request_id="half-open"))
+    except RemoteError as exc:
+        check("half_open_timeout", exc.code in {"transport_timeout", "transport_closed"}, exc.code)
+    finally:
+        half.close()
+
+    # Reset the actual service container while a job is in flight, then recover
+    # through a fresh SSH connection and verify a new request can complete.
+    reset = RemoteEvaluator(transport_factory(("run-1", "session-1", "sim-npu-test")), token=TOKEN, run_id="run-1", session_id="session-1", target_id="sim-npu-test", expected_site_id="sim-site", expected_worker_build="sim-build-1", expected_task_pack_digest=TASK_PACK_DIGEST, task_fingerprint=TASK_FINGERPRINT, timeout_s=5)
+    try:
+        reset.connect()
+        import threading
+        killer = threading.Thread(target=lambda: (time.sleep(0.2), admin("docker ps -q --filter name=taic-npu-sim | xargs -r docker rm -f")), daemon=True)
+        killer.start()
+        try:
+            reset.formal(_request("REMOTE_SLEEP", request_id="reset-1"))
+        except RemoteError as exc:
+            check("container_reset_error", exc.code in {"transport_closed", "transport_protocol_error", "worker_failed", "candidate_timeout", "transport_timeout"}, exc.code)
+        finally:
+            killer.join(timeout=5)
+    finally:
+        reset.close()
+    after_reset = admin("cat /home/eval/taic-state/counter.txt")
+    check("reset_recovery", after_reset.returncode == 0)
+    recovered_pool = make_pool()
+    try:
+        recovered = recovered_pool.formal(_request(request_id="after-reset"))
+        check("reset_recovery", recovered.report.get("simulated") is True)
+    finally:
+        recovered_pool.close()
+    deadline = time.time() + 8
+    running = admin("docker ps --filter name=taic-npu-sim --format '{{.Names}}'")
+    while running.stdout.strip() and time.time() < deadline:
+        time.sleep(0.25)
+        running = admin("docker ps --filter name=taic-npu-sim --format '{{.Names}}'")
+    check("reset_no_orphan", not running.stdout.strip())
+
+
+def _run_fairness_matrix(transport_factory, admin, record, check) -> None:
+    transport = transport_factory(("run-1", "session-1", "sim-npu-test", 0.2))
+    try:
+        transport.start()
+        _hello(transport, "fair-a-hello", TOKEN)
+        first = _request("REMOTE_SLEEP_SHORT", request_id="fair-a1", mode="full", session_id="session-1")
+        write_frame(transport.writer, "request", first.request_id, first.to_dict())
+        _hello(transport, "fair-b-hello", "test-alt-token")
+        second_source = "kernel void demo() {}"
+        second = replace(first, request_id="fair-b1", kind="selfcheck", mode="quick", run_id="run-2", source=second_source, candidate_sha256=hashlib.sha256(second_source.encode("utf-8")).hexdigest())
+        write_frame(transport.writer, "request", second.request_id, second.to_dict())
+        _hello(transport, "fair-a2-hello", TOKEN)
+        third = replace(first, request_id="fair-a2")
+        write_frame(transport.writer, "request", third.request_id, third.to_dict())
+        arrivals = []
+        for _ in range(3):
+            frame = read_frame(transport.reader)
+            if frame.frame_type == "error":
+                raise AssertionError(frame.payload)
+            if frame.frame_type != "result":
+                raise AssertionError(f"unexpected fairness frame {frame.frame_type}")
+            arrivals.append(frame.request_id)
+        check("fairness_aging_order", arrivals == ["fair-a1", "fair-b1", "fair-a2"], str(arrivals))
+        order = admin("cat /home/eval/taic-state/order.jsonl")
+        check("fairness_order_evidence", order.stdout.index("fair-b1") < order.stdout.index("fair-a2"))
+    finally:
+        transport.close()
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m tests.support.npu_sim.phase25_runner")
     parser.add_argument("--host", required=True)
@@ -73,8 +252,10 @@ def main(argv: list[str] | None = None) -> int:
         record(name, detail=detail)
 
     def transport_factory(key):
-        run_id, session_id, _target = key
+        run_id, session_id, _target, *optional = key
         original = f"/usr/local/bin/taic-remote-evaluator --run-id {run_id} --session-id {session_id}"
+        if optional:
+            original += f" --aging-s {optional[0]}"
         return CommandTransport(_ssh(args.eval_user, args.host, args.key, original), env={})
 
     def admin(command: str, timeout: int = 30) -> subprocess.CompletedProcess:
@@ -199,6 +380,11 @@ def main(argv: list[str] | None = None) -> int:
         restarted = timed_call("restart_idempotent_replay", lambda: pool.formal(request))
         check("restart_idempotent_replay", restarted.report.get("simulated") is True)
         check("restart_no_duplicate_job", counter() == after_timeout_count, f"counter={counter()}")
+        pool.close()
+        pool = None
+        _run_frame_limit_matrix(transport_factory, record, check)
+        _run_half_open_and_reset_matrix(transport_factory, make_pool, admin, record, check)
+        _run_fairness_matrix(transport_factory, admin, record, check)
     except Exception as exc:  # noqa: BLE001 - report every failure before returning nonzero
         failure = f"{type(exc).__name__}: {exc}"
         record("failure", "failed", failure)
@@ -211,7 +397,7 @@ def main(argv: list[str] | None = None) -> int:
         image = admin("docker image inspect --format '{{.Id}}' taic-remote-sim:local")
         report = {
             "schema_version": 1,
-            "coverage": "core_split_control",
+            "coverage": "extended_split_control",
             "simulated": True,
             "container_only": False,
             "split_control": not failure,
@@ -239,7 +425,7 @@ def main(argv: list[str] | None = None) -> int:
             "elapsed_s": round(time.time() - started, 3),
             "remaining_containers": running.stdout.strip(),
             "failure": failure,
-            "not_run": ["half_open_and_slow_consumer_matrix", "full_frame_limit_matrix", "multi_run_fairness_matrix", "real_npu", "real_gpu", "paid_model", "npu_sdk_installation"],
+            "not_run": ["real_npu", "real_gpu", "paid_model", "npu_sdk_installation"],
         }
         path = Path(args.report)
         path.parent.mkdir(parents=True, exist_ok=True)

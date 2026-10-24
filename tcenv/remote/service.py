@@ -162,6 +162,7 @@ class RemoteService:
         selfcheck_max_gpu_s: float = 120.0,
         max_source_bytes: int = 1_000_000,
         signing_key: bytes | None = None,
+        selfcheck_age_s: float = 60.0,
     ) -> None:
         if not grants:
             raise ValueError("at least one session grant is required")
@@ -176,6 +177,9 @@ class RemoteService:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.selfcheck_max_timed = int(selfcheck_max_timed)
         self.selfcheck_max_gpu_s = float(selfcheck_max_gpu_s)
+        if isinstance(selfcheck_age_s, bool) or not isinstance(selfcheck_age_s, (int, float)) or not math.isfinite(selfcheck_age_s) or selfcheck_age_s <= 0:
+            raise ValueError("selfcheck_age_s must be finite and positive")
+        self.selfcheck_age_s = float(selfcheck_age_s)
         self.max_source_bytes = int(max_source_bytes)
         if signing_key is not None and (not isinstance(signing_key, bytes) or not signing_key):
             raise ValueError("signing_key must be non-empty bytes or None")
@@ -290,8 +294,10 @@ class RemoteService:
         self._handle_request(frame)
 
     def _handle_hello(self, frame: Frame) -> None:
-        if self._authenticated:
-            raise ProtocolError("hello may only be sent once per connection")
+        # A connection may re-authenticate with another valid grant. This is
+        # required for a shared broker to serve multiple runs without letting
+        # one run cancel another run's jobs; each request is still checked
+        # against the currently active grant.
         hello = HelloRequest.from_dict(frame.payload)
         if hello.protocol_version != PROTOCOL_VERSION:
             raise ProtocolError("unsupported protocol version")
@@ -462,7 +468,7 @@ class RemoteService:
             def key(job: _Job) -> tuple[float, float]:
                 base = 0.0 if job.request.kind == "formal_eval" else 1.0
                 age = max(0.0, now - job.submitted)
-                effective = base if base == 0.0 else max(0.0, base - min(age / 60.0, 1.0))
+                effective = base if base == 0.0 else max(0.0, base - min(age / self.selfcheck_age_s, 1.0))
                 return effective, job.submitted
 
             index = min(range(len(self._queue)), key=lambda i: key(self._queue[i]))

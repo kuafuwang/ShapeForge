@@ -7,6 +7,7 @@ marked simulated so they can never be mistaken for publishable measurements.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import time
 from pathlib import Path
@@ -25,8 +26,14 @@ class FakeNpuBackend:
             path.write_text(str(count + 1))
         # A deliberate slow path exercises worker timeout/cancellation without
         # requiring a device or a real kernel.
-        if "REMOTE_SLEEP" in request.source:
+        if "REMOTE_SLEEP_SHORT" in request.source:
+            time.sleep(0.4)
+        elif "REMOTE_SLEEP" in request.source:
             time.sleep(5.0)
+        order_path = os.environ.get("NPU_SIM_ORDER")
+        if order_path:
+            with Path(order_path).open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"run_id": request.run_id, "session_id": request.session_id, "kind": request.kind, "request_id": request.request_id}) + "\n")
         digest = hashlib.sha256((request.source + str(request.seed)).encode("utf-8")).hexdigest()
         receipt_digest = hashlib.sha256((request.source + str(request.seed) + request.request_id).encode("utf-8")).hexdigest()
         receipt_id = "sim-replay" if "REPLAY_RECEIPT" in request.source else f"sim-{receipt_digest[:16]}"
