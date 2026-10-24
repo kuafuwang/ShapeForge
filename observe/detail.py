@@ -13,6 +13,7 @@ from pathlib import Path
 
 from experiments.common import conclusion_of_run
 from observe.budget import budget_status
+from taic.redact import redact_text
 from observe.publish import gpu_dir, gpu_events_path, observe_dir
 
 # 超过这么久没再写 state.json，心跳才算停。还要 pid 已经不在，才会把运行标成中断。
@@ -658,7 +659,6 @@ def _retry_kind(error: str) -> str:
     return "retry"
 
 
-_SECRET = re.compile(r"(?i)(api[_-]?key|authorization|bearer\s+|sk-)(\S{0,80})")
 # 网页只留最近这么多行。更早的留在 pi 自己的会话文件里。
 _PI_KEEP = 40
 # 只读文件末尾。一场很长的会话不会每次轮询都整份解析。
@@ -674,7 +674,7 @@ def _clip(text: str, limit: int) -> str:
     @param limit 字符上限。
     @return 折叠空白并截断后的文本，超长时以省略号结尾。
     """
-    cleaned = _SECRET.sub(r"\1…", text or "")
+    cleaned = redact_text(text, one_line=True)
     cleaned = " ".join(cleaned.split())
     if len(cleaned) <= limit:
         return cleaned

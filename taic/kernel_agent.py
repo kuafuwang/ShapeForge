@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .llm import LLMError
+from .redact import redact_text
 from .parse import extract_source
 
 from .target import skill_path
@@ -32,7 +33,6 @@ EXPERIENCE = skill_path("experience")
 _KERNEL = re.compile(r"\bkernel\s+void\s+(\w+)\b")
 _USAGE = re.compile(r"([A-Za-z_]+)=(-?\d+(?:\.\d+)?)")
 _NAME_PART = re.compile(r"[^A-Za-z0-9._-]+")
-_DIAG_SECRET = re.compile(r"sk-[A-Za-z0-9_\-]{12,}")
 _DIAG_PREVIEW_CHARS = 240
 # 一场会话的墙钟。hmz 的回合预算先到；这个秒数只在进程不退出时杀掉它。
 def process_timeout_s(turn_minutes: int) -> float:
@@ -403,7 +403,7 @@ def spend_from_stream(text: str) -> tuple[dict[str, float], bool]:
 
 def _diagnostic_text(value, limit: int) -> str:
     """Return a bounded diagnostic string with common API-key forms redacted."""
-    return _DIAG_SECRET.sub("<redacted>", str(value or "").strip())[:limit]
+    return redact_text(str(value or "").strip(), limit=limit)
 
 
 def diagnostics_from_stream(text: str) -> dict:

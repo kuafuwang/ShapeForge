@@ -20,16 +20,16 @@ from pathlib import Path
 from observe import detail, legacy
 from observe.budget import budget_status
 from observe.ledger import month_of, operator_name
+from taic.redact import redact_text
 
 INDEX_SCHEMA_VERSION = 11
-_DIAG_SECRET = re.compile(r"sk-[A-Za-z0-9_\-]{12,}")
 
 
 def _diagnostic(value, limit: int = 400) -> str:
     """One bounded, single-line diagnostic; response bodies are not indexed."""
     if not isinstance(value, str):
         return ""
-    return _DIAG_SECRET.sub("<redacted>", " ".join(value.split()))[:limit]
+    return redact_text(value, limit=limit, one_line=True)
 _SKIP_DIRS = {"candidates", "__pycache__"}
 _WRITE = threading.Lock()
 _SINGLE: "Index | None" = None

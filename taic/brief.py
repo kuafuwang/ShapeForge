@@ -15,7 +15,7 @@ import re
 import sys
 from pathlib import Path
 
-_SECRET = re.compile(r"sk-[A-Za-z0-9_\-]{12,}")
+from .redact import redact_text
 _REPO = Path(__file__).resolve().parent.parent
 
 CAP = 8
@@ -535,7 +535,7 @@ def _text(value) -> str | None:
     """
     if not isinstance(value, str) or "\n" in value or len(value) > _TEXT:
         return None
-    return _SECRET.sub("<redacted>", value)
+    return redact_text(value, limit=_TEXT)
 
 
 def _number(value):
