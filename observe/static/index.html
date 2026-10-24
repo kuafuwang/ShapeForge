@@ -41,6 +41,11 @@
   #convert-modal form label { display: block; margin: 8px 0; }
   #convert-modal input, #convert-modal select, #convert-modal textarea { width: 100%; box-sizing: border-box; }
   #convert-modal textarea { min-height: 72px; }
+  #query-modal .box { width: min(900px, 94vw); max-height: 88vh; box-sizing: border-box; display: flex; flex-direction: column; }
+  #query-modal h3 { flex: none; }
+  #query-body { min-height: 0; overflow: auto; }
+  #query-body thead th { position: sticky; top: 0; background: var(--card); z-index: 1; }
+  #query-modal .actions { flex: none; margin-top: 12px; justify-content: flex-end; }
   #harness-modal .box { width: min(900px, 94vw); max-height: 88vh; display: flex; flex-direction: column; }
   #harness-modal .harness-body { min-height: 0; overflow: auto; }
   #harness-modal table td { vertical-align: top; }

@@ -454,6 +454,15 @@ def test_reset_adds_15_dollars_lifts_count_limits_and_skips_a_hang(runs, monkeyp
     assert post(port, "patience", {"amount_usd": 5})[0] == 409
 
 
+def test_query_modal_keeps_its_close_button_visible(runs):
+    """@brief 失败/最佳检索表过长时，内容自己滚动，底部关闭按钮留在视口内。"""
+    port, _root = runs
+    status, page = call(port, "GET", "/")
+    assert status == 200
+    assert "#query-modal .box { width: min(900px, 94vw); max-height: 88vh;" in page
+    assert "#query-body { min-height: 0; overflow: auto; }" in page
+
+
 def test_hmz_web_sidecar_api_status_start_and_stop(dashboard, monkeypatch):
     """@brief sidecar 的 URL 需要页面 token；启动和停止保持同源/token 门。"""
     from observe import app
