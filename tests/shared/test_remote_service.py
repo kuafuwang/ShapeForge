@@ -70,7 +70,7 @@ class ServiceProcess:
         })
         while True:
             frame = self.recv()
-            if frame.frame_type == "hello":
+            if frame.frame_type in {"hello", "error"}:
                 return frame
             if pending is not None and frame.frame_type == "result":
                 pending.append(frame)
