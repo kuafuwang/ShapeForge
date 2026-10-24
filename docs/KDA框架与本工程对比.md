@@ -1,6 +1,6 @@
 # 新人说明：现在的 KDA 怎样跑，本工程怎样公布加速比
 
-这篇写给刚打开本仓库的新人。KDA 指 Kernel Design Agents，用编程代理写显卡内核的那条线。2026 年 9 月以后公开的跑法，是 Humanize 上的轮流，加上已经放出的内核。`NVlabs/kda` 的 `main` 仍是更早的薄说明，本文不把它当成现在的流程。
+这篇写给刚打开本仓库的新人。KDA 指 Kernel Design Agents，用编程代理写显卡内核的那条线。2026 年 9 月以后公开的跑法，是 Humanize 上的轮流，加上已经放出的内核。`NVlabs/kda` 的 `main` 现在多了导出工具，但仍不是这一章的 KDA² 实现；KDA² 在 `260927-kda-for-kda` 分支。本文不把 `main` 当成现在的流程。
 
 ## 1. 看完这一页就可以停
 
@@ -272,7 +272,7 @@ runs/<一次搜索>/candidates/<序号>_<标签>/
 | Humanize，含 `flame_chase` | `/Users/kuafu/CLionProjects/humanize` | `main` 的 `ac732f1e`，2026-10-21（2026-10-24 复核）。流程文件 `src/hmz/flows/builtin/flame_chase/__init__.py`；该文件自 `e2013a4` 未改 |
 | Humanize 0.2.1 | 同一远程仓库的 `release/0.2` | PyPI 2026-10-20 的最新发布。`main` 比它多 18 个提交，源码版本是 `0.0.0` 开发版。没有名叫 Humanize2 的分支 |
 | 本工程写核流程 | `taic/flows/kernel_once/__init__.py` | 一个 `assistant`；`taic/kernel_agent.py` 用 `hmz exec -f` 指向它 |
-| KDA² 内核 | `https://github.com/NVlabs/kda/tree/260927-kda-for-kda` | 分支尖端 `f539baab`，说明提交 2026-10-01。本机的 `/Users/kuafu/CLionProjects/kda` 仍停在 `main` 的 `ef6ce61`（2026-09-14），那是更早的薄说明，不是这一章的流程 |
+| KDA² 内核 | `https://github.com/NVlabs/kda/tree/260927-kda-for-kda` | 分支尖端 `f539baab`，说明提交 2026-10-01（2026-10-24 复核）。本机 KDA² 检出在 `/Users/kuafu/CLionProjects/kda-260927-kda`，同一分支；`/Users/kuafu/CLionProjects/kda` 是 `main` 的 `acdd793`（2026-10-18，Hugging Face 导出） |
 | TIRx 诊断外壳 | `https://github.com/mlc-ai/TIRx-harness` | 2026-10-17 仍可克隆。IKET 与 Nsight Compute 的采集脚本在 `evolution/remote/` |
 | CAKE 论文 | arXiv 2608.12629 | 描述中间表示和诊断。未找到公开的编译器仓库 |
 | 本工程已跑完的注意力菜单 | `runs/menu/fa-20261007-210204/summary.md` | 第 3 章的发布加速比 |
