@@ -19,7 +19,7 @@ flowchart LR
   E --> EP["epic<br/>~/.hmz/epics/.../epic.jsonl"]
 ```
 
-源码不进入本仓库。2026-10-19 装上的发布包是 PyPI 的 `hmz` 0.2.0；2026-10-24 已升级到 0.2.1（PyPI 2026-10-20 的最新发布）。本机源码检出 `ac732f1e`（2026-10-21，0.2.1 之后 18 个提交），其中 `flame_chase` 与 `e2013a4` 相同，仍是 48 行。搜索仍只调用 `kernel_once`；`run_config.json` 的 `loop_protocol: flame_chase_1` 只是续跑协议标签。搜索循环、上下文和判卷仍在 [搜索.md](搜索.md)。
+源码不进入本仓库。2026-10-19 装上的发布包是 PyPI 的 `hmz` 0.2.0；2026-10-24 已升级到 0.2.2（PyPI 2026-10-24 的最新发布）。本机源码检出仍是 `ac732f1e`（2026-10-21，0.2.1 之后 18 个提交）；PyPI 0.2.2 已于 2026-10-24 发布（tag `c2946aa`），本机源码尚未切到该 release tag。其中 `flame_chase` 与 `e2013a4` 相同，仍是 48 行。搜索仍只调用 `kernel_once`；`run_config.json` 的 `loop_protocol: flame_chase_1` 只是续跑协议标签。搜索循环、上下文和判卷仍在 [搜索.md](搜索.md)。
 
 ## 它是什么
 

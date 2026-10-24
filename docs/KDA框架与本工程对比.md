@@ -141,7 +141,7 @@
 
 ### 源码核对：本工程没有启动 `flame_chase`
 
-2026-10-24 复核最新源码。本机 `uv tool` 安装的是 `hmz 0.2.1`（PyPI 2026-10-20 的最新发布）；Humanize 检出在 `ac732f1e`（2026-10-21，`v0.2.1` 之后 18 个提交，源码版本写着 `0.0.0`）。`flame_chase/__init__.py` 自 `e2013a4` 起没有改，仍是 48 行。
+2026-10-24 复核最新源码。本机 `uv tool` 安装的是 `hmz 0.2.2`（PyPI 2026-10-24 的最新发布）；Humanize 源码 checkout 仍是 `ac732f1e`（2026-10-21，`v0.2.1` 之后 18 个提交，源码版本写着 `0.0.0`），0.2.2 release tag 是 `c2946aa`（2026-10-24）。`flame_chase/__init__.py` 自 `e2013a4` 起没有改，仍是 48 行。
 
 本工程启动的不是它。`taic/kernel_agent.py` 里：
 
@@ -398,7 +398,7 @@ flowchart TD
 | 材料 | 位置 | 标记 |
 | --- | --- | --- |
 | Humanize，含 `flame_chase` | `/Users/kuafu/CLionProjects/humanize` | `main` 的 `ac732f1e`，2026-10-21（2026-10-24 复核）。流程文件 `src/hmz/flows/builtin/flame_chase/__init__.py`；该文件自 `e2013a4` 未改 |
-| Humanize 0.2.1 | 同一远程仓库的 `release/0.2` | PyPI 2026-10-20 的最新发布。`main` 比它多 18 个提交，源码版本是 `0.0.0` 开发版。没有名叫 Humanize2 的分支 |
+| Humanize 0.2.2 | 同一远程仓库的 `release/0.2` | PyPI 2026-10-24 的最新发布，tag `v0.2.2` 为 `c2946aa`。本机源码 `main` 仍是 `ac732f1e`（0.2.1 时代），尚未切到该 release tag。没有名叫 Humanize2 的分支 |
 | 本工程写核流程 | `taic/flows/kernel_once/__init__.py` | 一个 `assistant`；`taic/kernel_agent.py` 用 `hmz exec -f` 指向它 |
 | KDA² 内核 | `https://github.com/NVlabs/kda/tree/260927-kda-for-kda` | 分支尖端 `f539baab`，说明提交 2026-10-01（2026-10-24 复核）。本机 KDA² 检出在 `/Users/kuafu/CLionProjects/kda-260927-kda`，同一分支；`/Users/kuafu/CLionProjects/kda` 是 `main` 的 `acdd793`（2026-10-18，Hugging Face 导出） |
 | TIRx 诊断外壳 | `https://github.com/mlc-ai/TIRx-harness` | 2026-10-17 仍可克隆。IKET 与 Nsight Compute 的采集脚本在 `evolution/remote/` |
