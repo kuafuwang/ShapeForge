@@ -590,8 +590,15 @@ class DockerPatchTestRunner:
         try:
             with tarfile.open(fileobj=io.BytesIO(completed.stdout), mode="r:") as archive:
                 for member in archive.getmembers():
-                    if member.issym() or member.islnk():
-                        raise CodeAgentError("git archive links are not allowed in an isolated snapshot")
+                    if member.islnk():
+                        raise CodeAgentError("git archive hard links are not allowed in an isolated snapshot")
+                    if member.issym():
+                        # Relative links are part of the repository layout (for
+                        # example .agents/skills/*). Allow them only when their
+                        # resolved target stays inside this snapshot.
+                        link_target = ((destination / member.name).parent / member.linkname).resolve()
+                        if not link_target.is_relative_to(destination.resolve()):
+                            raise CodeAgentError("git archive symlink escapes the isolated snapshot")
                     target = (destination / member.name).resolve()
                     if not target.is_relative_to(destination.resolve()):
                         raise CodeAgentError("git archive contains a path outside the snapshot")
@@ -631,6 +638,19 @@ class DockerPatchTestRunner:
             source.mkdir()
             inputs.mkdir()
             self._snapshot(Path(repo), base, source)
+            # git archive intentionally omits .git. Acceptance tests themselves
+            # create patches/worktrees, so give the temporary snapshot its own
+            # disposable repository instead of mounting the live repository's .git.
+            for argv_init in (
+                ["git", "init", "-q"],
+                ["git", "config", "user.email", "isolated@example.invalid"],
+                ["git", "config", "user.name", "isolated-test"],
+                ["git", "add", "-A"],
+                ["git", "commit", "-qm", "isolated-base"],
+            ):
+                initialized = subprocess.run(argv_init, cwd=source, capture_output=True, text=True)
+                if initialized.returncode != 0:
+                    raise CodeAgentError(f"cannot initialize temporary source repository: {(initialized.stderr or initialized.stdout)[-1000:]}")
             patch_target = inputs / "candidate.patch"
             shutil.copyfile(patch, patch_target)
             request = inputs / "request.json"
@@ -668,12 +688,12 @@ class DockerPatchTestRunner:
                 "--network", "none", "--read-only", "--cap-drop", "ALL",
                 "--security-opt", "no-new-privileges", "--pids-limit", str(self.pids_limit),
                 "--memory", self.memory, "--user", self.user,
-                "--mount", f"type=bind,src={source},dst=/work,rw",
+                "--mount", f"type=bind,src={source},dst=/work",
                 "--mount", f"type=bind,src={inputs},dst=/input,readonly",
                 "--mount", f"type=bind,src={harness},dst=/opt/taic,readonly",
                 "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
                 "--workdir", "/work", "--env", "PYTHONPATH=/opt/taic", "--env", "HOME=/tmp",
-                self.image, "python", "-m", "taic.isolated_patch_worker",
+                self.image, "python3", "-m", "taic.isolated_patch_worker",
                 "--work", "/work", "--patch", "/input/candidate.patch", "--request", "/input/request.json",
             ]
             proc = None

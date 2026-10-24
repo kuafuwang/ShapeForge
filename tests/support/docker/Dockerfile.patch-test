@@ -1,0 +1,21 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-pip git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY wheels/ /tmp/wheels/
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    if ls /tmp/wheels/torch-*.whl >/dev/null 2>&1; then \
+        python3 -m pip install --break-system-packages /tmp/wheels/torch-*.whl; \
+    else \
+        python3 -m pip install --break-system-packages --index-url https://download.pytorch.org/whl/cpu torch; \
+    fi \
+    && python3 -m pip install --break-system-packages numpy pytest pytest-xdist
+
+WORKDIR /opt/taic
