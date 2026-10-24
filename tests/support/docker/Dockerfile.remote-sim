@@ -1,0 +1,16 @@
+FROM taic-patch-test:local
+
+ENV PYTHONPATH=/opt/taic \
+    HOME=/tmp \
+    PYTHONDONTWRITEBYTECODE=1
+
+COPY taic /opt/taic/taic
+COPY tcenv /opt/taic/tcenv
+COPY tasks /opt/taic/tasks
+COPY tests /opt/taic/tests
+COPY experiments /opt/taic/experiments
+COPY observe /opt/taic/observe
+COPY pyproject.toml /opt/taic/pyproject.toml
+
+USER 1000:1000
+WORKDIR /opt/taic

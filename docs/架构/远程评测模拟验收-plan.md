@@ -1,6 +1,6 @@
 # 远程评测模拟验收计划
 
-状态：未实现；是[执行运行时与设备扩展计划](执行运行时与设备扩展-plan.md) Phase 2.5 的专项文档。日期：2026-10-24。
+状态：container_only 预验收和 split-control 模拟验收已完成（2026-10-25）；真实 NPU 未做。是[执行运行时与设备扩展计划](执行运行时与设备扩展-plan.md) Phase 2.5 的专项文档。日期：2026-10-24。
 
 本文只规定远程受信评测服务的模拟验收，不重复主计划的 runner、EvaluationExecutor、P2 和 backend 设计。主计划负责架构与交付顺序，本文负责环境、真实传输、故障矩阵、授权开关和验收报告。
 
@@ -68,3 +68,15 @@ Phase 2A/2B 完成后，在 Mac 不依赖真实 NPU，通过真实 SSH/VM/Docker
 - 模拟报告在外层 provenance 标记 `measurement_kind=simulated`、`publication_allowed=false`，并使用独立 `sim-npu` 测试身份；更根本的是 host `publishable_site_ids` 与 `publishable_epochs` 默认拒绝未登记站点/评测 epoch。任何 `confirmed`、catalog、发布 brief 或加速比汇总都必须拒绝它；模拟得到的数字只能用于断言协议和状态机。
 - Docker 容器断言：非 root、无设备节点、无 Docker socket、无 host HOME/API key、无默认网络、只读依赖/源码输入；网络、挂载、镜像摘要、容器退出和 orphan 清理都写入测试证据。另验证服务端日志默认不含完整源码/任务定义，临时源码目录在 job 完成、取消和 TTL 到期后都删除。
 - 只有 Docker Desktop 而没有 Linux VM 时，测试名称和结果必须写 `container_only`，不能把它计为 SSH/VM 的 split-control 验收。真实 NPU 到来后另开硬件集成测试，不复用模拟结果作为硬件证据。
+
+## 6. 本次已执行的验收
+
+- `hmz` 0.2.2 已安装到 `.venv`，`tests/shared/test_security_boundaries.py`：2 passed。
+- 使用本地 torch wheel 构建 `taic-patch-test:local`，真实 P2 Docker 验收：`tests/shared/test_docker_integration.py`：1 passed。
+- 设置 `TAIC_TEST_DOCKER_IMAGE=taic-patch-test:local` 后，宿主机完整 shared 并行套件：987 passed。
+- Docker Ubuntu 隔离环境中的远程/P2/selfcheck 测试：109 passed。
+- 使用现有 Ubuntu ARM VM、VM 内 Docker 和 SSH forced command，运行 `tests/support/npu_sim/phase25_runner.py`：23 个验收项全部通过。覆盖 formal/selfcheck、hello、幂等、同 key 不同 body、Unicode/大帧、错误 worker build、shell/`docker exec` 注入、transport timeout、断连清理和重启恢复。
+- 本次 split-control 报告为 `runs/npu-sim-20261024/report.json`，`split_control=true`、`container_only=false`、`simulated=true`；没有 `run_config.json`。最终没有遗留 evaluator 容器。
+- 本次没有运行真实 NPU、真实 GPU、付费模型或安装 NPU SDK。VM 本地延迟只用于控制面诊断，不能用于决定真实远程站点是否需要搬代理。
+
+复现用的构建与验收文件为 `tests/support/docker/Dockerfile.patch-test`、`tests/support/docker/build_patch_test.sh`、`tests/support/docker/Dockerfile.remote-sim`、`tests/support/npu_sim/forced_command.py` 和 `tests/support/npu_sim/phase25_runner.py`。
