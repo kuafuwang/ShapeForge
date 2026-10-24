@@ -207,6 +207,24 @@ def test_pool_lru_limit_closes_the_oldest_idle_connection(tmp_path):
         pool.close()
 
 
+def test_pool_discards_a_closed_client_after_timeout(tmp_path):
+    """@brief 超时关闭的连接不能留在 pool 里被下一次请求复用。"""
+    pool = _pool_for_lifecycle(tmp_path)
+    try:
+        assert pool.formal(_request(request_id="pool-live")).report["status"] == "ok"
+        old = next(iter(pool._clients.values()))
+        pool.timeout_s = 0.05
+        with pytest.raises(RemoteError):
+            pool.formal(_request(request_id="pool-timeout", source="REMOTE_SLEEP"))
+        assert old._closed is True
+        pool.timeout_s = 2
+        assert pool.formal(_request(request_id="pool-after-timeout")).report["status"] == "ok"
+        assert old not in pool._clients.values()
+        assert len(pool._clients) == 1
+    finally:
+        pool.close()
+
+
 def test_transport_timeout_closes_the_request(tmp_path):
     """@brief 服务端没有响应时，客户端在 transport timeout 后失败而不是永久等待。"""
     evaluator = _evaluator(tmp_path, timeout_s=0.05)

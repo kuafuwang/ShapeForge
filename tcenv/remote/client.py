@@ -617,6 +617,12 @@ class RemoteEvaluatorPool:
     def reap_idle(self) -> None:
         """Close only inactive clients past the idle timeout or LRU limit."""
         now = time.monotonic()
+        for key, client in list(self._clients.items()):
+            if client._closed:
+                self._clients.pop(key, None)
+                self._last_used.pop(key, None)
+                if self._last is client:
+                    self._last = None
         if self.idle_timeout_s is not None:
             for key, last_used in list(self._last_used.items()):
                 client = self._clients.get(key)
@@ -666,6 +672,12 @@ class RemoteEvaluatorPool:
             raise RemoteError("target_mismatch", "pool does not serve this target")
         key = (run_id, session_id, target_id)
         client = self._clients.get(key)
+        if client is not None and client._closed:
+            self._clients.pop(key, None)
+            self._last_used.pop(key, None)
+            if self._last is client:
+                self._last = None
+            client = None
         if client is not None:
             self._touch(client)
             return client
