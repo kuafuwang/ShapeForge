@@ -88,15 +88,20 @@ class _ThrottledTransport:
         self.inner.close()
 
 
-def _hello(transport, nonce: str, token: str) -> None:
+def _hello(transport, nonce: str, token: str, pending: list | None = None) -> None:
     hello = HelloRequest(
         protocol_version="1", client_nonce=nonce, session_token=token,
         expected_site_id="sim-site", expected_worker_build="sim-build-1",
         expected_task_pack_digest=TASK_PACK_DIGEST, target_id="sim-npu-test",
     )
     write_frame(transport.writer, "hello", nonce, hello.__dict__)
-    frame = read_frame(transport.reader)
-    if frame.frame_type != "hello":
+    while True:
+        frame = read_frame(transport.reader)
+        if frame.frame_type == "hello":
+            return
+        if pending is not None and frame.frame_type == "result":
+            pending.append(frame.request_id)
+            continue
         raise AssertionError(f"hello failed: {frame.frame_type} {frame.payload}")
 
 
@@ -207,15 +212,19 @@ def _run_fairness_matrix(transport_factory, admin, record, check) -> None:
         _hello(transport, "fair-a-hello", TOKEN)
         first = _request("REMOTE_SLEEP_SHORT", request_id="fair-a1", mode="full", session_id="session-1")
         write_frame(transport.writer, "request", first.request_id, first.to_dict())
-        _hello(transport, "fair-b-hello", "test-alt-token")
+        arrivals = []
+        first_result = read_frame(transport.reader)
+        if first_result.frame_type != "result" or first_result.request_id != "fair-a1":
+            raise AssertionError(f"unexpected first result {first_result.frame_type} {first_result.payload}")
+        arrivals.append(first_result.request_id)
+        _hello(transport, "fair-b-hello", "test-alt-token", arrivals)
         second_source = "kernel void demo() {}"
         second = replace(first, request_id="fair-b1", kind="selfcheck", mode="quick", run_id="run-2", source=second_source, candidate_sha256=hashlib.sha256(second_source.encode("utf-8")).hexdigest())
         write_frame(transport.writer, "request", second.request_id, second.to_dict())
-        _hello(transport, "fair-a2-hello", TOKEN)
+        _hello(transport, "fair-a2-hello", TOKEN, arrivals)
         third = replace(first, request_id="fair-a2")
         write_frame(transport.writer, "request", third.request_id, third.to_dict())
-        arrivals = []
-        for _ in range(3):
+        for _ in range(3 - len(arrivals)):
             frame = read_frame(transport.reader)
             if frame.frame_type == "error":
                 raise AssertionError(frame.payload)

@@ -58,7 +58,7 @@ class ServiceProcess:
         assert self.proc.stdout is not None
         return read_frame(self.proc.stdout)
 
-    def hello(self, nonce: str = "client-nonce-1", token: str = TOKEN) -> Frame:
+    def hello(self, nonce: str = "client-nonce-1", token: str = TOKEN, pending: list | None = None) -> Frame:
         self.send("hello", nonce, {
             "protocol_version": "1",
             "client_nonce": nonce,
@@ -68,7 +68,14 @@ class ServiceProcess:
             "expected_task_pack_digest": TASK_PACK_DIGEST,
             "target_id": "sim-npu-test",
         })
-        return self.recv()
+        while True:
+            frame = self.recv()
+            if frame.frame_type == "hello":
+                return frame
+            if pending is not None and frame.frame_type == "result":
+                pending.append(frame)
+            else:
+                raise AssertionError(f"unexpected frame while waiting for hello: {frame.frame_type}")
 
     def close(self) -> None:
         assert self.proc.stdin is not None
@@ -485,13 +492,14 @@ def test_rehello_switches_grants_and_ages_selfcheck(tmp_path):
     try:
         first = _request(request_id="fair-a1", source="REMOTE_SLEEP_SHORT", mode="full")
         _send_request(proc, first)
-        assert proc.hello(nonce="client-nonce-2", token="test-alt-token").frame_type == "hello"
+        frames = []
+        assert proc.hello(nonce="client-nonce-2", token="test-alt-token", pending=frames).frame_type == "hello"
         second = _request(request_id="fair-b1", source="kernel void demo() {}", kind="selfcheck", run_id="run-2")
         _send_request(proc, second)
-        assert proc.hello(nonce="client-nonce-3").frame_type == "hello"
+        assert proc.hello(nonce="client-nonce-3", pending=frames).frame_type == "hello"
         third = _request(request_id="fair-a2", source="REMOTE_SLEEP_SHORT", mode="full")
         _send_request(proc, third)
-        frames = [proc.recv() for _ in range(3)]
+        frames.extend([proc.recv() for _ in range(3 - len(frames))])
         assert [frame.request_id for frame in frames] == ["fair-a1", "fair-b1", "fair-a2"]
         assert all(frame.frame_type == "result" for frame in frames)
     finally:
