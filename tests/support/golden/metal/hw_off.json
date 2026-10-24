@@ -1,8 +1,8 @@
 {
 "_meta": {
-"git_commit": "e58a2e26cddbc87a601382a810ccc4be86615199",
-"reason": "Phase 4: update the prompt-bound experience and taic-tools skill paths to tcenv.backends.metal.runtime; re-record the off baseline and re-grant trust",
-"recorded_at": "2026-10-23T20:37:12+08:00"
+"git_commit": "38cced54f1eb72aa777b402413d1e4c29ff9049d",
+"reason": "checkpoint the first validated kernel immediately instead of waiting for the final wrap",
+"recorded_at": "2026-10-24T08:16:30+08:00"
 },
 "feedback": {
 "format_feedback_cut|compile_error": "STATUS: compile_error  (stage reached: compile)\nMetal compiler rejected the kernel\n\nMetal compiler errors (line numbers refer to your kernel source):\nkernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n",
@@ -23,57 +23,57 @@
 "each": [
 {
 "label": "0",
-"sha": "90a6975f568ece0f69a7713e560e8838a52d948b"
+"sha": "ff569afb63439e411f73ec9eff9fb75194fc18cc"
 },
 {
 "label": "1",
-"sha": "14f33baa010229f8ce9b49a5b8770afa941d8199"
+"sha": "f6e25e2bc908b0534e8847b692dd75a35739deeb"
 }
 ],
 "requests": 2,
-"sha": "13edd1dc537f8bbc81504c96c8af9fee5232e401"
+"sha": "290cc1379c82666c401add6b78f89512463cf50c"
 },
 "orchestrator|gemm|plan_mix=1": {
 "each": [
 {
 "label": "0",
-"sha": "a221a19114ede2109389da68a830f82660f7bb66"
+"sha": "92714c8b24b460a3b9c9d24f52d0d521e45ff406"
 },
 {
 "label": "1",
-"sha": "6fb7f299eb8a281f82526067b98b6a7a81026a17"
+"sha": "d3db2594b614167d41c7514744b627e04b381e58"
 }
 ],
 "requests": 2,
-"sha": "79abb1fdb1af25ed842e5fa1a9b35f286d557dcc"
+"sha": "49c44cedbdd9a1da9b868a9007f2bdfba3824f9f"
 },
 "orchestrator|relu|plan_mix=0": {
 "each": [
 {
 "label": "0",
-"sha": "655e8aa1e183b31986b599eb496c77e69d34cce1"
+"sha": "aa047464173013b69a41aa060a5f5aeb4fe4f3d3"
 },
 {
 "label": "1",
-"sha": "b39004e6d846dbb7e5a6ba330614a9df8afd3e45"
+"sha": "1cf9c088e4d76655424589fd472ed76f407fbdd3"
 }
 ],
 "requests": 2,
-"sha": "2f7ac088ffc97f6b2aa77e25b6b9eae10ef0cdd6"
+"sha": "2e4227ec26b15e8b5a33cf560929d56bfb069a5f"
 },
 "orchestrator|relu|plan_mix=1": {
 "each": [
 {
 "label": "0",
-"sha": "655e8aa1e183b31986b599eb496c77e69d34cce1"
+"sha": "aa047464173013b69a41aa060a5f5aeb4fe4f3d3"
 },
 {
 "label": "1",
-"sha": "b39004e6d846dbb7e5a6ba330614a9df8afd3e45"
+"sha": "1cf9c088e4d76655424589fd472ed76f407fbdd3"
 }
 ],
 "requests": 2,
-"sha": "2f7ac088ffc97f6b2aa77e25b6b9eae10ef0cdd6"
+"sha": "2e4227ec26b15e8b5a33cf560929d56bfb069a5f"
 }
 },
 "outbound": {

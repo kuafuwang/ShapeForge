@@ -70,6 +70,8 @@ def test_the_contract_names_both_commands_and_does_not_ask_for_a_fence(tmp_path)
         assert title in text
     assert "必须写进「被否决的前提」节" in text
     assert "缺权限、sudo、许可证、凭据：当场写 `# 需要帮助`" in text
+    assert "某版一过 `--quick` 就立刻 `cp`" in text and "别等结束" in text
+    assert "checkpoint 不代替外层判卷" in text
     assert "能绕开也写" in text
 
 

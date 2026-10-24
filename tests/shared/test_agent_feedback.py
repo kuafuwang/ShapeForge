@@ -406,7 +406,7 @@ def test_the_fixed_contract_names_the_rules_and_stays_inside_the_budget():
     assert len(text) <= 6040 + 800
     assert "最后写" not in text
     assert "当场追加" in text
-    assert "用 `cp` 复制" in text
+    assert "立刻 `cp` 成" in text and "别等结束" in text
     assert "[已实测: 文件名 | 一句命题 | 数字和单位]" in text
     assert "[未验证 | 一句命题 | 为什么没测]" in text
     assert "「测量」节" in text
