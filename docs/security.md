@@ -61,13 +61,20 @@ flowchart LR
 
 ## P2 code agent
 
-代码 patch 在 detached worktree 中生成，不 commit、不自动 apply。人必须依次执行：
+代码 patch 在 detached worktree 中生成，不 commit、不自动 apply。默认先做不执行代码的静态验收；只有看过 diff 后，才用实名人工批准执行补丁测试：
 
 ```bash
+# 默认：只查路径、allowed_paths、spec、hash 和 claims，不运行补丁代码
 uv run python -m taic.cli harness verify-code RUN --key KEY
+
+# 看过 diff 后：才执行补丁测试
+uv run python -m taic.cli harness verify-code RUN --key KEY --execute --by HUMAN
+
 uv run python -m taic.cli harness apply-code RUN --key KEY --check
 uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 ```
+
+`--execute` 不接受默认的 `cli` 作为审阅人。动态测试仍会执行补丁代码，所以它不是 VM 沙箱；不可信 patch 应先做人工 diff review，再决定是否在隔离环境执行。
 
 ### 永远禁止自动 patch 的路径
 
@@ -76,8 +83,9 @@ uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 - `tests/`
 - `tcenv/evaluate.py`、`tcenv/schema.py`、`tcenv/bench.py`、`tcenv/backends/`
 - `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py`、`taic/review.py`、`taic/trust.py`、`taic/code_agent.py`、`taic/acceptance.py`、`taic/orchestrator.py`、`taic/policy.py`、`taic/control.py`、`taic/llm.py`、`taic/artifacts.py`、`taic/harness_experiment.py`、`taic/resume.py`、`taic/committees.py`、`taic/cli.py`
-- `experiments/common.py`
+- `experiments/common.py`、`experiments/harness_runner.py`、`experiments/harness_cell.py`
 - `observe/`、`targets/`、`backends/`、`.pi/`、`.git/`、`.github/`
+- `conftest.py`、`sitecustomize.py`、`pytest.ini`、`tox.ini`、`setup.cfg`
 - `taic.toml`、`taic.paper.toml`、`control.json`、`pyproject.toml`、`uv.lock`
 
 这些文件如果确实要改，应走单独的人工安全 review，而不是 P2 自动 patch。
@@ -88,6 +96,7 @@ uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 
 - code agent 补丁未触及上述路径时，仍可能改变行为；必须看 diff，不能只看 tests。
 - 没有非空 `allowed_paths` 的 patch 会被拒绝；新提案必须显式列出允许路径。
+- 动态 `verify-code --execute` 和 `apply-code --run-tests` 会在 host 上执行补丁代码；worktree 隔离不是安全沙箱，必须先人工看 diff。
 - `--run-tests` 使用补丁后的工作树，测试被禁改，但仍应检查测试命令和覆盖范围。
 - 人和 reviewer 都可能被提案文本社会工程；不要照着建议里给的命令直接执行。
 
