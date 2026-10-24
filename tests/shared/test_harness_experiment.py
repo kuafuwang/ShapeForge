@@ -101,3 +101,32 @@ def test_collect_arm_reads_trace_and_rejects_an_unbound_run(tmp_path):
     (tmp_path / "result.json").write_text(__import__("json").dumps(result))
     with pytest.raises(ExperimentError, match="expected harness change"):
         collect_arm(plan, tmp_path, "control")
+
+
+def test_collect_arm_rejects_a_missing_cost_ledger(tmp_path):
+    """@brief 有 trace 或支出时，缺失 feedback 账本不能绕过费用对账。"""
+    from taic.harness_experiment import arm_config, collect_arm
+
+    plan = authorize_plan(_plan(), allow_model_spend=True, allow_gpu=True, approved_by="alice")
+    config = arm_config(plan, "control", 7)
+    config["search"].update({"harness_experiment_id": plan["experiment_id"], "harness_experiment_arm": "control", "harness_change_sha256": ""})
+    result = {"schema_version": 1, "protocol_version": "3", "run_seed": 7, "spent_usd": 1.0, "harness_experiment_id": plan["experiment_id"], "harness_experiment_arm": "control", "harness_change_sha256": "", "trace": [{"idx": 1, "status": "ok", "cost_usd": 0.4, "t_s": 8.0}]}
+    (tmp_path / "run_config.json").write_text(__import__("json").dumps(config))
+    (tmp_path / "result.json").write_text(__import__("json").dumps(result))
+    with pytest.raises(ExperimentError, match="complete per-session cost ledger"):
+        collect_arm(plan, tmp_path, "control")
+
+
+def test_latest_effect_verdict_controls_milestones(tmp_path):
+    """@brief 同一实验后续 validated=false 必须撤销旧的 true，并绑定结果摘要。"""
+    from taic.harness_experiment import milestones
+
+    plan = authorize_plan(_plan(), allow_model_spend=True, allow_gpu=True, approved_by="alice")
+    result = _result(plan)
+    result["control"]["first_eligible_cost_usd"]["samples"] = [1.0, 1.0, 1.0]
+    result["treatment"]["first_eligible_cost_usd"]["samples"] = [0.5, 0.5, 0.5]
+    record_effect_validation(tmp_path, result, validated=True, approved_by="bob", reason="paired evidence")
+    row = record_effect_validation(tmp_path, result, validated=False, approved_by="bob", reason="later review rejected it")
+    assert row["result_sha256"] == digest(result)
+    decisions = [__import__("json").loads(line) for line in (tmp_path / "harness_decisions.jsonl").read_text().splitlines()]
+    assert milestones(decisions, plan["proposal_key"])["experiment_validated"] is False

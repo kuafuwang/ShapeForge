@@ -77,10 +77,16 @@ def proposal_costs(run_dir: Path) -> list[dict]:
         related_experiments = [row for row in experiments if row.get("proposal_key") == key]
         review_cost = _sum(related_reviews)
         implementation_cost = _sum(related_impl)
-        experiment_cost = _sum(related_experiments, "spent_usd")
-        if experiment_cost is None:
-            fallback = [row for row in decisions if row.get("proposal_key") == key and row.get("event") == "experiment_result"]
-            experiment_cost = _sum(fallback, "spent_usd") if fallback else None
+        latest_experiments = {}
+        for row in related_experiments:
+            latest_experiments[str(row.get("experiment_id") or row.get("t") or len(latest_experiments))] = row
+        experiment_cost = _sum(list(latest_experiments.values()), "spent_usd")
+        fallback = {}
+        for row in decisions:
+            if row.get("proposal_key") == key and row.get("event") == "experiment_result":
+                fallback[str(row.get("experiment_id") or row.get("t") or len(fallback))] = row
+        if fallback and (not related_experiments or experiment_cost is None):
+            experiment_cost = _sum(list(fallback.values()), "spent_usd")
         if related_impl and any(row.get("cost_usd") is None for row in related_impl):
             implementation_cost = None
         known = [value for value in (review_cost, implementation_cost, experiment_cost) if value is not None]

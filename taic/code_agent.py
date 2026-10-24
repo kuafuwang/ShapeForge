@@ -59,12 +59,19 @@ SECURITY_CRITICAL = (
     "taic/cli.py",
     "taic/flows/",
     "experiments/common.py",
+    "experiments/harness_runner.py",
+    "experiments/harness_cell.py",
     "observe/",
     "targets/",
     "backends/",
     ".pi/",
     ".git/",
     ".github/",
+    "conftest.py",
+    "sitecustomize.py",
+    "pytest.ini",
+    "tox.ini",
+    "setup.cfg",
     "control.json",
     "taic.toml",
     "taic.paper.toml",
@@ -564,7 +571,7 @@ def _test_patch_in_worktree(repo: Path, patch: Path, proposal_key: str, *, check
         shutil.rmtree(parent, ignore_errors=True)
 
 
-def verify_code_patch(run_dir: Path, proposal_key: str, *, root: Path | None = None, approved_by: str = "", legacy_text: str = "", check_ids: list[str] | None = None) -> dict:
+def verify_code_patch(run_dir: Path, proposal_key: str, *, root: Path | None = None, approved_by: str = "", legacy_text: str = "", check_ids: list[str] | None = None, execute: bool = False) -> dict:
     """Run implementation acceptance in isolation, before an effect experiment or local apply."""
     run_dir = Path(run_dir)
     repo = Path(root) if root is not None else Path(__file__).resolve().parent.parent
@@ -612,6 +619,23 @@ def verify_code_patch(run_dir: Path, proposal_key: str, *, root: Path | None = N
         raise CodeAgentError("acceptance requires registered host check_ids; use verify-legacy to map old text explicitly")
     if check_ids is not None and sorted(check_ids) != sorted({item["check_id"] for item in items}):
         raise CodeAgentError("named check_ids differ from the acceptance contract")
+    if not execute:
+        record = {
+            "schema_version": 1, "event": "implementation", "proposal_key": proposal_key,
+            "spec_sha256": spec["spec_sha256"], "patch_sha256": digest,
+            "risk_tier": risk["risk_tier"], "risk_reason": risk["reason"],
+            "accepted": True, "host_verified": False, "static_verified": True, "host_checks": [],
+            "tests_run": "static only; no patch code executed", "t": time.time(),
+        }
+        if legacy_text:
+            record.update({"legacy_upgrade": {"approved_by": approved_by.strip(), "original_text": legacy_text, "check_ids": sorted(check_ids or [])}, "accepted_by_human": approved_by.strip()})
+        meta["acceptance_spec"] = spec
+        meta["implementation"] = record
+        (folder / f"{proposal_key}.implementation.json").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        return record
+    if not approved_by.strip() or approved_by.strip() == "cli":
+        raise CodeAgentError("dynamic patch verification needs a named human approver after diff review")
     results = _test_patch_in_worktree(repo, patch, proposal_key, check_items=items, base_commit=meta.get("base_commit"))
     if not all(result["passed"] for result in results):
         raise CodeAgentError("one or more host acceptance checks failed")
@@ -725,8 +749,9 @@ def apply_code_patch(
         if risk["risk_tier"] == "human_gated" and not approved_by.strip():
             raise CodeAgentError("a security- or evaluator-critical patch needs a named human approver")
         if require_effect_validation and risk["risk_tier"] != "offline_only":
-            from .harness_experiment import read_plan, summarize_result
-            validated = False
+            from .harness_experiment import digest as result_digest
+            from .harness_experiment import latest_effect_validations, summarize_result
+            decisions = []
             decisions_path = run_dir / "harness_decisions.jsonl"
             if decisions_path.is_file():
                 for line in decisions_path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -734,25 +759,28 @@ def apply_code_patch(
                         event = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    if event.get("event") != "effect_validation" or event.get("validated") is not True or not event.get("approved_by"):
+                    if isinstance(event, dict):
+                        decisions.append(event)
+            validated = False
+            for event in latest_effect_validations(decisions, proposal_key).values():
+                if event.get("validated") is not True or not event.get("approved_by"):
+                    continue
+                if event.get("spec_sha256") != spec["spec_sha256"] or event.get("change_sha256") != digest:
+                    continue
+                evidence_path = Path(str(event.get("evidence_path") or run_dir / "harness_experiments" / f"{event.get('experiment_id')}.result.json"))
+                expected = run_dir / "harness_experiments" / f"{event.get('experiment_id')}.result.json"
+                if evidence_path.resolve() != expected.resolve() and evidence_path.resolve().parent.name != event.get("experiment_id"):
+                    continue
+                try:
+                    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                    if event.get("result_sha256") != result_digest(evidence):
                         continue
-                    if event.get("proposal_key") != proposal_key or event.get("spec_sha256") != spec["spec_sha256"] or event.get("change_sha256") != digest:
-                        continue
-                    # Read the host-stored result rather than trusting a copied verdict.
-                    evidence_path = Path(str(event.get("evidence_path") or run_dir / "harness_experiments" / f"{event.get('experiment_id')}.result.json"))
-                    try:
-                        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-                        if evidence_path.resolve() != (run_dir / "harness_experiments" / f"{event.get('experiment_id')}.result.json").resolve() and evidence_path.resolve().parent.name != event.get("experiment_id"):
-                            continue
-                    except (OSError, json.JSONDecodeError):
-                        continue
-                    try:
-                        summary = summarize_result(evidence)
-                    except ValueError:
-                        continue
-                    if summary["experiment_id"] == event["experiment_id"]:
-                        validated = True
-                        break
+                    summary = summarize_result(evidence)
+                except (OSError, ValueError, json.JSONDecodeError):
+                    continue
+                if summary["experiment_id"] == event["experiment_id"] and summary["effect"]["status"] == "supports_effect":
+                    validated = True
+                    break
             if not validated:
                 raise CodeAgentError("no effect validation binds this acceptance spec and patch")
     check = subprocess.run(["git", "apply", "--check", str(patch)], cwd=repo, capture_output=True, text=True)

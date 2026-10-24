@@ -397,15 +397,18 @@ def collect_arm(plan: dict, run_dir: Path, arm: str) -> dict:
     if isinstance(spent, bool) or not isinstance(spent, (int, float)) or not math.isfinite(spent) or spent < 0:
         raise ExperimentError("arm has no finite spend record")
     records = _experiment_feedback_records(directory)
+    trace = result.get("trace")
+    if not records and (spent > 0 or trace):
+        raise ExperimentError("an experiment needs a complete per-session cost ledger")
     if records:
         cumulative = 0.0
         for row in records:
-            if not isinstance(row.get("cost_usd"), (int, float)) or isinstance(row.get("cost_usd"), bool):
+            value = row.get("cost_usd")
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value < 0:
                 raise ExperimentError("an experiment needs a complete per-session cost ledger")
-            cumulative += float(row["cost_usd"])
+            cumulative += float(value)
         if abs(cumulative - spent) > max(0.01, abs(spent) * 0.01):
             raise ExperimentError("session cost ledger does not reconcile with run spend")
-    trace = result.get("trace")
     if not isinstance(trace, list):
         raise ExperimentError("arm has no candidate trace")
     eligible_trace = [row for row in trace if isinstance(row, dict) and row.get("status") == "ok"]
@@ -575,12 +578,26 @@ def summarize_result(document: dict) -> dict:
     }
 
 
+def latest_effect_validations(decisions: list[dict], proposal_key: str) -> dict[str, dict]:
+    """@brief 每个实验只保留最新 verdict，避免旧的 true 覆盖后续 false。"""
+    latest = {}
+    for row in decisions:
+        if not isinstance(row, dict) or row.get("event") != "effect_validation":
+            continue
+        if str(row.get("proposal_key") or "") != proposal_key:
+            continue
+        experiment_id = str(row.get("experiment_id") or "")
+        if experiment_id:
+            latest[experiment_id] = row
+    return latest
+
+
 def milestones(decisions: list[dict], proposal_key: str) -> dict:
     """Keep review, implementation, validation, local application and commit distinct."""
     rows = [row for row in decisions if isinstance(row, dict) and str(row.get("proposal_key") or "") == proposal_key]
     useful = any(row.get("event") == "review" and row.get("useful") is True and row.get("cost_usd") is not None for row in rows)
     implemented = any(row.get("event") == "implementation" and row.get("accepted") is True and row.get("host_verified") is True for row in rows)
-    validated = any(row.get("event") == "effect_validation" and row.get("validated") is True and row.get("approved_by") for row in rows)
+    validated = any(row.get("validated") is True and row.get("approved_by") for row in latest_effect_validations(rows, proposal_key).values())
     local = any(row.get("event") in {"promotion", "code_promotion"} and row.get("status") == "local" for row in rows)
     committed = any(row.get("event") == "promotion_commit" for row in rows)
     return {"reviewed": useful, "implemented": implemented, "experiment_validated": validated, "local": local, "committed": committed}
@@ -603,6 +620,7 @@ def record_effect_validation(run_dir: Path, result: dict, *, validated: bool, ap
             break
         spent_values.append(float(value))
     row = {**summary, "event": "effect_validation", "validated": bool(validated), "approved_by": approved_by.strip(), "reason": reason.strip()[:2000]}
+    row["result_sha256"] = digest(result)
     if spent_values:
         row["spent_usd"] = sum(spent_values)
     if evidence_path is not None:

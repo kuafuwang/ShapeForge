@@ -79,10 +79,30 @@ def test_verify_code_records_host_acceptance_before_apply(tmp_path, monkeypatch)
     code_agent.write_patch(tmp_path, key, {"patch": patch, "report": {"acceptance": [{"check": "test result contains the field", "passed": True}]}}, acceptance_spec=spec)
     monkeypatch.setattr(code_agent, "_test_patch_in_worktree", lambda *args, **kwargs: [{"check_id": item["check_id"], "passed": True, "exit_code": 0, "output_excerpt": "offline fake", "reason": ""} for item in kwargs["check_items"]])
     monkeypatch.setattr("taic.acceptance_checks.run_checks", lambda items, **kwargs: [{"check_id": item["check_id"], "passed": True, "exit_code": 0, "output_excerpt": "offline fake", "reason": ""} for item in items])
-    verified = code_agent.verify_code_patch(tmp_path, key)
+    verified = code_agent.verify_code_patch(tmp_path, key, execute=True, approved_by="alice")
     assert verified["host_verified"] is True
     with pytest.raises(code_agent.CodeAgentError, match="no effect validation"):
         code_agent.apply_code_patch(tmp_path, proposal_key=key, require_effect_validation=True)
+
+
+def test_static_verification_does_not_execute_patch_code(tmp_path, monkeypatch):
+    """@brief 默认静态验收只检查证据，不运行补丁中的 import/pytest。"""
+    key = "0123456789abcdef"
+    row = proposal()
+    spec = acceptance.make_spec(row, {"useful": True, "cost_usd": 0.1})
+    spec["host_checks"] = [{"check_id": "reporting.offline_contract", "description": "offline report check"}]
+    spec["spec_sha256"] = acceptance.digest({key: value for key, value in spec.items() if key != "spec_sha256"})
+    (tmp_path / "harness_proposals.jsonl").write_text(json.dumps({"status": "valid", **row}) + "\n")
+    (tmp_path / "harness_reviews.jsonl").write_text(json.dumps({"event": "review", "proposal_key": key, "useful": True, "cost_usd": 0.1}) + "\n")
+    patch = "diff --git a/tcenv/report.py b/tcenv/report.py\nnew file mode 100644\n--- /dev/null\n+++ b/tcenv/report.py\n@@ -0,0 +1 @@\n+x\n"
+    code_agent.write_patch(tmp_path, key, {"patch": patch, "report": {"acceptance": [{"check": "test result contains the field", "passed": True}]}}, acceptance_spec=spec)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("static verification executed patch code")
+
+    monkeypatch.setattr(code_agent, "_test_patch_in_worktree", forbidden)
+    verified = code_agent.verify_code_patch(tmp_path, key)
+    assert verified["static_verified"] is True and verified["host_verified"] is False
 
 
 def test_legacy_text_requires_named_approval_and_real_registered_checks(tmp_path, monkeypatch):
@@ -96,7 +116,7 @@ def test_legacy_text_requires_named_approval_and_real_registered_checks(tmp_path
     with pytest.raises(code_agent.CodeAgentError, match="legacy acceptance"):
         code_agent.verify_code_patch(tmp_path, key, legacy_text="old human check", check_ids=["reporting.offline_contract"])
     monkeypatch.setattr(code_agent, "_test_patch_in_worktree", lambda *args, **kwargs: [{"check_id": item["check_id"], "passed": True, "exit_code": 0, "output_excerpt": "ran", "reason": ""} for item in kwargs["check_items"]])
-    verified = code_agent.verify_code_patch(tmp_path, key, approved_by="alice", legacy_text="old human check", check_ids=["reporting.offline_contract"])
+    verified = code_agent.verify_code_patch(tmp_path, key, approved_by="alice", legacy_text="old human check", check_ids=["reporting.offline_contract"], execute=True)
     assert verified["legacy_upgrade"]["approved_by"] == "alice"
     assert verified["legacy_upgrade"]["original_text"] == "old human check"
     assert verified["host_checks"][0]["output_excerpt"] == "ran"

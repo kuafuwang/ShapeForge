@@ -31,6 +31,19 @@ def test_duplicate_proposals_do_not_inflate_the_shortlist(tmp_path):
     assert len(rows) == 1 and rows[0]["duplicate_count"] == 2
 
 
+def test_experiment_result_cost_is_not_zero_or_counted_twice(tmp_path):
+    """@brief 已执行实验按 experiment_id 去重记账，缺 validation 也不能报 0。"""
+    (tmp_path / "harness_proposals.jsonl").write_text(json.dumps({"status": "valid", "proposal_key": "k", "t": 1, "proposal": {"kind": "tool", "action": "add a tool"}}) + "\n")
+    (tmp_path / "harness_reviews.jsonl").write_text(json.dumps({"event": "review", "proposal_key": "k", "useful": True, "cost_usd": 0.1, "t": 2}) + "\n")
+    decisions = [
+        {"event": "experiment_result", "proposal_key": "k", "experiment_id": "exp1", "spent_usd": 2.0, "t": 3},
+        {"event": "experiment_result", "proposal_key": "k", "experiment_id": "exp1", "spent_usd": 2.0, "t": 4},
+    ]
+    (tmp_path / "harness_decisions.jsonl").write_text("\n".join(json.dumps(row) for row in decisions) + "\n")
+    item = adoption_summary(tmp_path)["items"][0]
+    assert item["experiment_cost_usd"] == 2.0
+
+
 def test_experiment_cost_and_stage_times_are_attributed_to_the_proposal(tmp_path):
     proposal = {"status": "valid", "proposal_key": "k", "t": 1, "proposal": {"kind": "tool", "action": "add a tool"}}
     review = {"event": "review", "proposal_key": "k", "useful": True, "cost_usd": 0.1, "t": 2}

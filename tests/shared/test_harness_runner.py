@@ -103,6 +103,9 @@ def test_mock_execution_uses_each_cell_and_keeps_paired_results(tmp_path, monkey
     assert {call[2] for call in calls} == {3, 5, 7}
     assert result["summary"]["effect"]["pairs"] == 3
     assert (out / "result.json").is_file()
+    events = [json.loads(line) for line in (out / "harness_decisions.jsonl").read_text().splitlines()]
+    assert events[-1]["event"] == "experiment_result"
+    assert events[-1]["spent_usd"] == 6.0
 
 
 def test_budget_refusal_keeps_every_cell_unstarted(tmp_path, monkeypatch):

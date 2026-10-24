@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import subprocess
+import time
 from pathlib import Path
 
 from taic.harness_experiment import ExperimentError, collect_arm, materialize_arm, read_plan, summarize_result, toml_document
@@ -89,7 +89,8 @@ def _live_run_one(task, dtype, size, run_dir, *, config_path, worktree: Path, **
     from types import SimpleNamespace
 
     request = {"task": task, "dtype": dtype, "size": size, "run_dir": str(run_dir), "config": config_path, "target_id": kwargs.get("target_id") or "apple-m4-max", "seed": kwargs["seed"], "overrides": {key: value for key, value in kwargs.items() if key in {"budget", "branches", "max_rounds"}}}
-    request_path = Path(run_dir) / "cell_request.json"
+    request_path = Path(run_dir).parent / "requests" / f"{Path(run_dir).name}.json"
+    request_path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(request_path, request)
     proc = popen_group([worktree / ".venv" / "bin" / "python" if (worktree / ".venv" / "bin" / "python").is_file() else __import__("sys").executable, "-m", "experiments.harness_cell", str(request_path)], cwd=worktree, env={**dict(__import__("os").environ), "PYTHONPATH": str(worktree)}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
@@ -166,12 +167,26 @@ def execute_plan(plan: dict, *, out_dir: Path, repo: Path, allow_spend: bool = F
             raise ExperimentError(f"paired metric {metric} is missing from one arm")
     summary = summarize_result(result)
     write_json_atomic(out_dir / "result.json", result)
+    source_run = str((plan["acceptance_spec"].get("source") or {}).get("run_id") or "")
+    decisions_dir = Path(repo) / "runs" / source_run if source_run else Path(out_dir)
+    decisions_dir.mkdir(parents=True, exist_ok=True)
+    event = {
+        "event": "experiment_result", "experiment_id": plan["experiment_id"],
+        "proposal_key": plan["proposal_key"], "spec_sha256": plan["spec_sha256"],
+        "change_sha256": plan["change_sha256"], "spent_usd": sum(float(result[arm]["spent_usd"]) for arm in ("control", "treatment")),
+        "result_path": str(out_dir / "result.json"), "t": time.time(),
+    }
+    with (decisions_dir / "harness_decisions.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
     return {"schema_version": 1, "experiment_id": plan["experiment_id"], "status": summary["effect"]["status"], "cells": records, "result": result, "summary": summary}
 
 
 def verify_cell_import(worktree: Path) -> None:
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(worktree) + os.pathsep + env.get("PYTHONPATH", "")
-    proc = subprocess.run(["python", "-c", "import pathlib, taic; assert pathlib.Path(taic.__file__).resolve().is_relative_to(pathlib.Path.cwd().resolve())"], cwd=worktree, env=env, capture_output=True, text=True)
-    if proc.returncode:
-        raise ExperimentError("the cell does not import its own worktree: " + (proc.stderr or proc.stdout)[-1000:])
+    """@brief 静态检查 cell 的源码树，绝不 import 不可信 worktree。
+
+    dry-run 不能为了验证导入路径而执行 sitecustomize、taic 初始化或测试插件。
+    真正的导入由获授权后的 cell 进程完成。
+    """
+    init = worktree / "taic" / "__init__.py"
+    if init.is_symlink() or not init.is_file():
+        raise ExperimentError("the cell does not contain its own taic package")

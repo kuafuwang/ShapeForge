@@ -895,7 +895,9 @@ def cmd_harness(a: argparse.Namespace) -> int:
             if not out.parent.exists():
                 out.parent.mkdir(parents=True)
             if plan["change_sha256"]:
-                copyfile(patch, out.parent / "treatment.patch")
+                artifact_dir = out.parent / plan["experiment_id"]
+                artifact_dir.mkdir(parents=True, exist_ok=True)
+                copyfile(patch, artifact_dir / "treatment.patch")
             if a.allow_spend or a.allow_gpu:
                 from .harness_experiment import authorize_plan
                 plan = authorize_plan(plan, allow_model_spend=a.allow_spend, allow_gpu=a.allow_gpu, approved_by=a.by)
@@ -990,7 +992,7 @@ def cmd_harness(a: argparse.Namespace) -> int:
             from .code_agent import verify_code_patch
             if a.harness_action == "verify-legacy" and not a.legacy_text:
                 raise ValueError("verify-legacy needs --legacy-text")
-            print(json.dumps(verify_code_patch(run, a.key, approved_by=a.by, legacy_text=a.legacy_text, check_ids=a.check_id), ensure_ascii=False, indent=2))
+            print(json.dumps(verify_code_patch(run, a.key, approved_by=a.by, legacy_text=a.legacy_text, check_ids=a.check_id, execute=a.execute), ensure_ascii=False, indent=2))
         elif a.harness_action == "apply-code":
             from . import code_agent
 
@@ -1383,6 +1385,7 @@ def main(argv: list[str] | None = None) -> int:
         hc.add_argument("--by", default="cli", help="named person upgrading a legacy acceptance")
         hc.add_argument("--check-id", action="append", default=None, help="registered host check id; repeat for multiple checks")
         hc.add_argument("--legacy-text", default="", help="original text acceptance to upgrade explicitly")
+        hc.add_argument("--execute", action="store_true", help="execute patched code only after a named human diff review; default is static-only")
     hc = hs.add_parser("apply-code")
     hc.add_argument("run_dir")
     hc.add_argument("--key", required=True)
