@@ -60,6 +60,7 @@ def test_unrepresentable_variants_are_refused(name):
 
 
 @pytest.mark.parametrize("name", ["gemm@32x32x32t128", "gemm@128x64x32t256", "gemm@64x64x16t64", "flash_attention@64x32t256", "flash_attention@16x32t64", "flash_attention@32x16t128", "flash_attention@32x32t32"])
+@pytest.mark.gpu
 def test_the_naive_kernel_is_correct_under_every_variant_contract(name):
     """@brief 验证 naive kernel 在每种合法变体契约下都能通过 quick 模式评测。
 
@@ -69,6 +70,7 @@ def test_the_naive_kernel_is_correct_under_every_variant_contract(name):
     assert rep.status == "ok", (name, rep.message)
 
 
+@pytest.mark.gpu
 def test_the_hand_written_simdgroup_gemm_is_correct_and_fits_every_listed_contract():
     """@brief 验证手写 simdgroup gemm 在三个代表性契约下评测通过，且清单里每个变体的 simdgroup 布局合法。
 

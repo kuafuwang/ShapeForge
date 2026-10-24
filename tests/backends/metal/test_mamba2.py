@@ -102,6 +102,7 @@ def test_the_chunk_scan_is_causal_inside_a_chunk():
 
 
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
+@pytest.mark.gpu
 def test_naive_kernel_is_correct_and_the_spec_is_consistent(dtype):
     """@brief 验证 naive 内核能通过评测，且 triton 源码、生成的 MSL 与 contract 的网格彼此一致。
 
@@ -114,6 +115,7 @@ def test_naive_kernel_is_correct_and_the_spec_is_consistent(dtype):
     assert t.contract.grid == (t.contract.arg("states").shape[1], t.contract.arg("x").shape[0] * t.contract.arg("x").shape[2], 1)
 
 
+@pytest.mark.gpu
 def test_a_kernel_that_ignores_the_carried_in_state_or_the_causal_mask_fails():
     """@brief 验证丢掉带进来的状态、去掉因果掩码、或漏掉 skip 项的变体在内核层面都被判 incorrect。
     """

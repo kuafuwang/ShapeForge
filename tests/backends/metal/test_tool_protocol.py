@@ -118,6 +118,48 @@ def test_handler_source_drift_is_rejected(tmp_path):
         load_manifest(target)
 
 
+def test_probe_refuses_a_reserved_target():
+    """@brief reserved target 不能被探针当成 active Metal 设备使用。"""
+    from tcenv.target import TargetError
+
+    request = _request()
+    request["target_id"] = "_template"
+    with pytest.raises(TargetError):
+        probes.time_msl(request, manifest=get_tool("metal.time_msl"))
+
+
+def test_worker_uses_the_same_unicode_digest_as_the_parent(tmp_path, monkeypatch):
+    """@brief 含中文源码时父子请求摘要必须一致，不能在 handler 前误报 digest mismatch。"""
+    import sys
+
+    from tcenv.tools import worker
+
+    request = _request()
+    request["source"] += "\n// 中文注释：统一摘要\n"
+    out = tmp_path / "result.json"
+    raw = {
+        "tool_id": "metal.time_msl", "session_role": "kernel_once",
+        "request": request, "request_digest": canonical_digest(request),
+        "out": str(out), "heartbeat": str(tmp_path / "heartbeat"),
+    }
+    request_path = tmp_path / "request.json"
+    request_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    def fake_handler(req, *, manifest):
+        return {
+            "schema_version": 1, "tool_id": manifest.tool_id, "version": manifest.version,
+            "request_digest": canonical_digest(req), "tool_manifest_sha256": manifest.digest,
+            "handler_source_sha256": manifest.handler_source_sha256,
+            "status": "ok", "metrics": {}, "units": {}, "target_id": req["target_id"],
+            "protocol_version": "3", "stdout_excerpt": "", "error": "",
+        }
+
+    monkeypatch.setattr("tcenv.tools.registry.load_handler", lambda _manifest: fake_handler)
+    monkeypatch.setattr(sys, "argv", ["tcenv.tools.worker", str(request_path)])
+    assert worker.main() == 0
+    assert json.loads(out.read_text(encoding="utf-8"))["status"] == "ok"
+
+
 def test_scaffold_is_inert_and_never_registers_a_handler(tmp_path):
     from tcenv.tools.scaffold import scaffold_proposal
     result = scaffold_proposal({"action": "add a diagnostic tool", "scope": {"target_id": "apple-m4-max", "task": "conv2d"}, "evidence": {"reproduction": "r", "expected": "e"}}, tmp_path / "draft")

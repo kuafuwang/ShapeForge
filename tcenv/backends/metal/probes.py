@@ -10,9 +10,9 @@ from tcenv.schema import PROTOCOL_VERSION
 
 def time_msl(request: dict, *, manifest) -> dict:
     """Time a single-buffer MSL probe; correctness is outside this tool's claim."""
-    from tcenv.target import load_target
+    from tcenv.target import device_matches, require_active
 
-    target = load_target(request["target_id"])
+    target = require_active(request["target_id"])
     if target.backend != "metal":
         raise ValueError("metal.time_msl requires a Metal target")
     from .runtime import BufferArg, get_context
@@ -33,6 +33,9 @@ def time_msl(request: dict, *, manifest) -> dict:
     try:
         with gpu_lock("typed Metal probe compile", exclusive=False):
             ctx = get_context()
+            info = ctx.info()
+            if not device_matches(target, info):
+                raise ValueError(f"device {info.get('name')} does not match target {target.id}")
             kernel = ctx.compile(request["source"], request["kernel_name"], math="safe")
             if len(kernel.bindings) != 1 or kernel.bindings[0].kind != "buffer" or kernel.bindings[0].index != 0:
                 raise ValueError("metal.time_msl requires exactly one [[buffer(0)]] parameter and no other bindings")

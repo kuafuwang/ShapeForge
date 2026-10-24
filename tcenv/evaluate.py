@@ -999,7 +999,7 @@ def _run_worker(
 
 
 
-EVAL_CACHE_SCHEMA = 1
+EVAL_CACHE_SCHEMA = 2
 
 
 def _eval_cache_dir() -> Path:
@@ -1010,10 +1010,54 @@ def _eval_cache_dir() -> Path:
     return Path(os.environ.get("TCENV_EVAL_CACHE_DIR", Path.home() / ".cache" / "ai_lowerling" / "evals"))
 
 
+def _callable_identity(fn) -> str:
+    """@brief 为缓存键提取可执行函数的源码、闭包和默认值身份。"""
+    if fn is None:
+        return ""
+    import functools
+    import inspect
+
+    if isinstance(fn, functools.partial):
+        return repr({"partial": _callable_identity(fn.func), "args": fn.args, "keywords": fn.keywords})
+    body = {
+        "module": getattr(fn, "__module__", ""),
+        "name": getattr(fn, "__qualname__", getattr(fn, "__name__", repr(fn))),
+        "defaults": repr(getattr(fn, "__defaults__", None)),
+        "kwdefaults": repr(getattr(fn, "__kwdefaults__", None)),
+    }
+    try:
+        body["source"] = inspect.getsource(fn)
+    except (OSError, TypeError):
+        code = getattr(fn, "__code__", None)
+        body["source"] = repr(code.co_code) if code is not None else ""
+    closure = getattr(fn, "__closure__", None)
+    if closure:
+        body["closure"] = repr([cell.cell_contents for cell in closure])
+    return repr(body)
+
+
+def _evaluation_fingerprint(task) -> str:
+    """@brief 计算影响评测结果的可执行语义指纹，而不只任务规格文本。"""
+    from .task import task_fingerprint
+
+    body = {
+        "task": task_fingerprint(task),
+        "gen_inputs": _callable_identity(task.gen_inputs),
+        "reference": _callable_identity(task.reference),
+        "error_scale": _callable_identity(task.error_scale),
+        "baselines": [
+            {"name": impl.name, "framework": impl.framework, "fn": _callable_identity(impl.fn)}
+            for impl in task.baselines
+        ],
+    }
+    return hashlib.sha256(json.dumps(body, ensure_ascii=False, sort_keys=True, default=repr, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 def _eval_cache_key(
     *, task: str, dtype: str, size: str, mode: str, seed: int, reps: int,
     cases: tuple[str, ...] | None, fast_bench: bool, require_contract_launch: bool,
     validate: bool, measure_serial: bool, target_id: str, kernel_source: str,
+    backend_id: str = "", backend_version: str = "", evaluation_fingerprint: str | None = None,
 ) -> str:
     """@brief 计算一次评测的缓存键。
 
@@ -1032,6 +1076,9 @@ def _eval_cache_key(
     @param measure_serial 是否测串行 dispatch。
     @param target_id 目标设备 id。
     @param kernel_source 候选源码。
+    @param backend_id 后端身份；后端变化不能复用旧报告。
+    @param backend_version 后端版本；版本变化不能复用旧报告。
+    @param evaluation_fingerprint 可覆盖的评测语义指纹；默认从任务的可执行输入、参考和基线计算。
     @return 十六进制 sha256 缓存键。
     """
     from .schema import PROTOCOL_VERSION
@@ -1043,8 +1090,11 @@ def _eval_cache_key(
         "protocol": PROTOCOL_VERSION,
         "task": task, "dtype": dtype, "size": size, "mode": mode,
         "task_fingerprint": task_fingerprint(get_task(task, dtype, size)),
+        "evaluation_fingerprint": _evaluation_fingerprint(get_task(task, dtype, size)) if evaluation_fingerprint is None else evaluation_fingerprint,
+        "backend": backend_id,
+        "backend_version": backend_version,
         "kernel_sha256": hashlib.sha256(kernel_source.encode("utf-8")).hexdigest(),
-        "seed": int(seed), "reps": int(reps), "cases": sorted(cases or ()),
+        "seed": int(seed), "reps": int(reps), "cases": list(cases or ()),
         "fast_bench": bool(fast_bench), "require_contract_launch": bool(require_contract_launch),
         "validate": bool(validate), "measure_serial": bool(measure_serial), "target_id": target_id,
     }
@@ -1190,6 +1240,7 @@ def evaluate(
             task=task, dtype=dtype, size=size, mode=mode, seed=seed, reps=reps, cases=cases,
             fast_bench=fast_bench, require_contract_launch=require_contract_launch, validate=validate,
             measure_serial=measure_serial, target_id=target_id, kernel_source=kernel_source,
+            backend_id=getattr(backend, "id", ""), backend_version=getattr(backend, "version", ""),
         )
         cached = _cache_read(cache_key)
         if cached is not None:

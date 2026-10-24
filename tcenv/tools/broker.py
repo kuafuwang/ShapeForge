@@ -115,7 +115,7 @@ def invoke(request: dict, *, session_role: str = "", timeout_s: float = DEFAULT_
 
 def write_evidence(run_dir: Path, request: dict, result: dict) -> Path:
     """Store host-produced evidence atomically and bind it to the source/request digest."""
-    from .manifest import get_tool
+    from .registry import get_tool
     manifest = get_tool(result["tool_id"])
     from .manifest import validated_result
     validated_result(manifest, result)

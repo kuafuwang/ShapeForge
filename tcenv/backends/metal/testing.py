@@ -385,15 +385,23 @@ def run_correctness(
         results.append(res)
         if determinism and res.ok and not s:  # on every case: a race or an output-dependence can hide behind one input distribution
             out2 = launch_once(ctx, kernel, task, argset, fill_zero=True) if launcher is None else launcher(argset, poison=False, fill_zero=True)
-            if out2 != out1:
+            s2 = argset.safety_violations()
+            if s2:
+                res.safety = s2
+                safety.extend(f"[{case}] {m}" for m in s2)
+            elif out2 != out1:
                 nondet.append(
                     "outputs depend on the initial contents of the output buffers (a run with zero-filled outputs differs from a NaN-filled run); "
                     "the kernel must write every output element and must not read or accumulate into outputs"
                 )
             else:
                 out3 = launch_once(ctx, kernel, task, argset) if launcher is None else launcher(argset, poison=True, fill_zero=False)
-                if out3 != out1:
+                s3 = argset.safety_violations()
+                if s3:
+                    res.safety = s3
+                    safety.extend(f"[{case}] {m}" for m in s3)
+                elif out3 != out1:
                     nondet.append("results differ between identical launches (data race or unordered atomics)")
-        if fail_fast and (not res.ok or s or nondet):
+        if fail_fast and (not res.ok or safety or nondet):
             break
     return results, safety, nondet

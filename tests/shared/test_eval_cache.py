@@ -33,6 +33,14 @@ def test_the_key_separates_seed_serial_protocol_and_source():
     assert base == _key()
 
 
+def test_case_order_backend_and_evaluation_semantics_are_part_of_the_key():
+    """@brief 乱序用例、后端身份/版本和可执行评测语义变化都不能复用旧缓存。"""
+    assert _key(cases=("normal", "edge")) != _key(cases=("edge", "normal"))
+    assert _key(backend_id="metal") != _key(backend_id="other")
+    assert _key(backend_version="1") != _key(backend_version="2")
+    assert _key(evaluation_fingerprint="semantics-a") != _key(evaluation_fingerprint="semantics-b")
+
+
 def test_a_cached_report_round_trips(tmp_path, monkeypatch):
     """@brief EvalReport 写入缓存后能读回，缓存文件带 schema_version。
 
