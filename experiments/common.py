@@ -426,6 +426,19 @@ def conclusion_of_run(run_dir: Path, result: dict | None) -> dict:
             return {"speedup": None, "publication": "不确定"}
         if not isinstance(doc, dict):
             return {"speedup": None, "publication": "未确认"}
+        confirmation = (doc.get("benchmark") or {}).get("confirmation")
+        if not isinstance(confirmation, dict):
+            return {"speedup": None, "publication": "未确认"}
+        if confirmation.get("kernel_sha256") != result.get("confirmation_source_sha256"):
+            return {"speedup": None, "publication": "未确认"}
+        if confirmation.get("winner_label") != result.get("confirm_winner_label"):
+            return {"speedup": None, "publication": "未确认"}
+        if confirmation.get("confirmed_values") != result.get("confirmed_values"):
+            return {"speedup": None, "publication": "未确认"}
+        if confirmation.get("speedup") != result.get("confirmed_speedup") or doc.get("speedup") != result.get("confirmed_speedup"):
+            return {"speedup": None, "publication": "未确认"}
+        if result.get("candidate_us") is not None and confirmation.get("candidate_us") != result.get("candidate_us"):
+            return {"speedup": None, "publication": "未确认"}
         # 数字只在同一个测量协议、同一台目标机上可比。缺字段按不可核对处理。
         if str(doc.get("protocol_version") or "") != str(PROTOCOL_VERSION):
             return {"speedup": None, "publication": "未确认"}

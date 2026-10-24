@@ -11,7 +11,7 @@ import pytest
 from experiments.manifest import ManifestError, attach, config_hash, ensure, extend_budget
 from observe.index import INDEX_SCHEMA_VERSION, Index
 from observe.legacy import infer
-from observe.query import compare, plan_outcomes, run_detail
+from observe.query import best_confirmed, compare, plan_outcomes, run_detail
 from tcenv.schema import PROTOCOL_VERSION
 
 
@@ -323,7 +323,7 @@ def test_editing_the_winner_kernel_drops_the_confirmed_speedup(tmp_path, monkeyp
     (directory / "best.metal").write_text(metal)
     (directory / "confirm_report.json").write_text(json.dumps({
         "status": "ok", "speedup": 1.4,
-        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"},
+        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx", "confirmation": {"kernel_sha256": digest, "winner_label": "r1.p0", "confirmed_values": [1.4], "speedup": 1.4, "candidate_us": None}},
         "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
     }))
     (directory / "state.json").write_text(json.dumps({"task": "gemm", "dtype": "fp16", "phase": "done", "started_at": 1, "updated_at": 1}))
@@ -340,6 +340,19 @@ def test_editing_the_winner_kernel_drops_the_confirmed_speedup(tmp_path, monkeyp
     index.sync_known()
     got = index.conn.execute("SELECT publication, published_speedup FROM runs").fetchone()
     assert got["publication"] != "confirmed" and got["published_speedup"] is None
+    assert best_confirmed()["best"] == []
+
+
+def test_drift_does_not_delete_the_ledger(tmp_path, monkeypatch):
+    """@brief 绑定漂移只影响可比性，不得删除已经发生的实际支出。"""
+    monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
+    index = Index(tmp_path / "observe.sqlite")
+    row = {"task": "relu", "started_at": 1.0, "disk_budget_usd": 1.0}
+    index._ledger_row("run", row, 2.0, "manifest", "verified")
+    assert index.total_usd() == 2.0
+    index._ledger_row("run", row, 2.0, "inferred", "drift")
+    assert index.total_usd() == 2.0
 
 
 def test_a_dead_run_leaves_the_near_budget_banner(tmp_path, monkeypatch):

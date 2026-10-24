@@ -65,6 +65,20 @@ def test_a_result_without_the_hash_field_is_an_old_file(tmp_path):
     assert published_conclusion(old)["speedup"] is None
 
 
+def _bind_report(report, digest, values, speedup):
+    """@brief 给测试报告补上与 result 一致的确认元数据。"""
+    benchmark = dict(report.get("benchmark") or {})
+    benchmark["confirmation"] = {
+        "kernel_sha256": digest,
+        "winner_label": "r1.p0",
+        "confirmed_values": list(values),
+        "speedup": speedup,
+        "candidate_us": None,
+    }
+    report["benchmark"] = benchmark
+    return report
+
+
 def test_a_bound_confirmation_shows_the_remeasured_number(tmp_path):
     """@brief 验证摘要绑定成功时用重测值发布，而 best.metal 一变就不再继承搜索数字。
 
@@ -75,10 +89,10 @@ def test_a_bound_confirmation_shows_the_remeasured_number(tmp_path):
     (run / "candidates" / "000_r1.p0").mkdir(parents=True)
     (run / "best.metal").write_text(SOURCE)
     (run / "candidates" / "000_r1.p0" / "kernel.metal").write_text(SOURCE)
-    (run / "confirm_report.json").write_text(json.dumps({
+    (run / "confirm_report.json").write_text(json.dumps(_bind_report({
         "status": "ok", "speedup": 1.25, "benchmark": QUIET_BENCH,
         "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
-    }))
+    }, digest, [1.25], 1.25)))
     result = _result(confirmed_status="ok", confirmed_speedup=1.25, confirmation_source_sha256=digest, confirmed_values=[1.25])
     got = published_conclusion(result, best_metal_sha256=digest, confirm_status="ok", winner_metal_sha256=digest)
     assert got == {"speedup": 1.25, "publication": "confirmed"}
@@ -133,10 +147,10 @@ def test_a_confirmation_served_from_the_evaluation_cache_is_not_published(tmp_pa
     (run / "candidates" / "000_r1.p0").mkdir(parents=True)
     (run / "best.metal").write_text(SOURCE)
     (run / "candidates" / "000_r1.p0" / "kernel.metal").write_text(SOURCE)
-    (run / "confirm_report.json").write_text(json.dumps({
+    (run / "confirm_report.json").write_text(json.dumps(_bind_report({
         "status": "ok", "speedup": 1.25, "cache_hit": True, "benchmark": QUIET_BENCH,
         "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
-    }))
+    }, digest, [1.25, 1.25, 1.25], 1.25)))
     result = _result(confirmed_status="ok", confirmed_speedup=1.25, confirmation_source_sha256=digest, confirmed_values=[1.25, 1.25, 1.25])
     assert conclusion_of_run(run, result) == {"speedup": None, "publication": "不确定"}
 
@@ -153,7 +167,7 @@ def _bound_run(tmp_path, **report_extra):
     (run / "candidates" / "000_r1.p0").mkdir(parents=True, exist_ok=True)
     (run / "best.metal").write_text(SOURCE)
     (run / "candidates" / "000_r1.p0" / "kernel.metal").write_text(SOURCE)
-    report = {"status": "ok", "speedup": 1.25, "benchmark": QUIET_BENCH, "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max"}
+    report = _bind_report({"status": "ok", "speedup": 1.25, "benchmark": QUIET_BENCH, "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max"}, digest, [1.25], 1.25)
     report.update(report_extra)
     (run / "confirm_report.json").write_text(json.dumps(report))
     return run, digest
@@ -167,11 +181,26 @@ def test_the_published_number_must_be_the_median_of_the_recorded_batches(tmp_pat
     @param tmp_path pytest 提供的临时目录。
     """
     run, digest = _bound_run(tmp_path)
+    report = json.loads((run / "confirm_report.json").read_text())
+    report["speedup"] = 1.0
+    report["benchmark"]["confirmation"]["speedup"] = 1.0
+    report["benchmark"]["confirmation"]["confirmed_values"] = [1.0, 1.0, 1.0]
+    (run / "confirm_report.json").write_text(json.dumps(report))
     result = _result(confirmed_status="ok", confirmed_speedup=1.9, confirmation_source_sha256=digest,
                      confirmed_values=[1.0, 1.0, 1.0])
     assert conclusion_of_run(run, result)["speedup"] is None
     result["confirmed_speedup"] = 1.0
     assert conclusion_of_run(run, result) == {"speedup": 1.0, "publication": "confirmed"}
+
+
+def test_a_confirmation_report_with_another_speedup_is_not_published(tmp_path):
+    """@brief 报告里的 speedup 与 result 不一致时，不能用 result 的数字冒充该报告的复测。"""
+    run, digest = _bound_run(tmp_path)
+    report = json.loads((run / "confirm_report.json").read_text())
+    report["speedup"] = 99
+    (run / "confirm_report.json").write_text(json.dumps(report))
+    result = _result(confirmed_status="ok", confirmed_speedup=1.25, confirmation_source_sha256=digest, confirmed_values=[1.25])
+    assert conclusion_of_run(run, result)["speedup"] is None
 
 
 def test_a_non_finite_or_textual_confirmed_speedup_is_not_published(tmp_path):

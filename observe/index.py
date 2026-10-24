@@ -1501,7 +1501,7 @@ class Index:
         @param binding 绑定状态。
         """
         if source == "inferred" or binding == "drift":
-            self.conn.execute("DELETE FROM ledger WHERE run_id = ?", (run_id,))
+            # 漂移只影响可比性，不抹去已经发生的实际支出；否则总账会下降。
             return
         if spent_max is None:
             return

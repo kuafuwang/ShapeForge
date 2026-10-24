@@ -498,6 +498,13 @@ def best_confirmed(*, task: str | None = None, target: str | None = None, limit:
     @param limit 最大行数，上限 100。
     @return 含 ``limit`` 与 ``best`` 的字典。
     """
+    # 完成 run 的 winner/确认文件可能在 root mtime 不变时被改写；发布查询前
+    # 先重新摄取这些行，不能长期展示旧的 confirmed 数字。
+    with borrow() as index:
+        for row in index.conn.execute("SELECT run_id FROM runs WHERE publication = 'confirmed'").fetchall():
+            path = detail.resolve_run(row["run_id"])
+            if path is not None:
+                index._ingest(path, force=True)
     tick()
     limit = max(1, min(int(limit or 20), PAGE_LIMIT))
     clauses = ["publication = 'confirmed'", "published_speedup IS NOT NULL"]

@@ -139,8 +139,8 @@ def test_a_bound_confirmation_publishes_the_remeasure_not_the_search_best(tmp_pa
     (run / "best.metal").write_text(source)
     (run / "candidates" / "000_win" / "kernel.metal").write_text(source)
     (run / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": 7.5,
-        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"},
+        "status": "ok", "speedup": 1.25,
+        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx", "confirmation": {"kernel_sha256": digest, "winner_label": "win", "confirmed_values": [1.25], "speedup": 1.25, "candidate_us": None}},
         "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
     }))
     (run / "state.json").write_text(json.dumps({

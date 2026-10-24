@@ -46,7 +46,7 @@ def test_scan_reads_timeline_marks_confirmed_point_and_handoff(tmp_path, monkeyp
     (winner / "kernel.metal").write_text(SOURCE)
     (directory / "confirm_report.json").write_text(json.dumps({
         "status": "ok", "speedup": 1.25,
-        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"},
+        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx", "confirmation": {"kernel_sha256": digest, "winner_label": "r1.p0", "confirmed_values": [1.25], "speedup": 1.25, "candidate_us": None}},
         "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
     }))
     trace = [

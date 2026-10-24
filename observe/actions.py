@@ -354,6 +354,12 @@ def convert_harness(run_id: str, seq: int, digest: str, body: dict) -> dict:
 
 
 def review_harness(run_id: str, proposal_key: str, body: dict) -> dict:
+    """@brief 串行化同一提案的独立评审，避免按钮并发造成重复付费。"""
+    with _lock_for(f"{run_id}:review:{proposal_key}"):
+        return _review_harness(run_id, proposal_key, body)
+
+
+def _review_harness(run_id: str, proposal_key: str, body: dict) -> dict:
     """@brief 对一条结构化（通常是已转换的）提案执行一次显式独立评审。
 
     只有人点了按钮才会花一次模型调用，从不隐式评审自由文本；既有的评审预算与信任语义不变。
@@ -795,6 +801,12 @@ def _apply_reset_unchecked(item: dict) -> dict:
 
 
 def reset_budgets() -> dict:
+    """@brief 串行化全局 reset，计划、cap 与启动动作在同一临界区内完成。"""
+    with _lock_for("__budget_reset__"):
+        return _reset_budgets()
+
+
+def _reset_budgets() -> dict:
     """@brief ``POST /api/budget/reset``：给每个能继续的搜索加 15 美元，并抬高轮数上限与耐心。
 
     原始英文说明：Adds $15 to every search that can continue and lifts its round limit and patience.
@@ -858,6 +870,31 @@ def _ps_commands() -> list[tuple[int, str]]:
     return _parse_ps(text)
 
 
+def _cwd_of(pid: int) -> Path | None:
+    """@brief 用 lsof 读取进程工作目录；无法确认时返回 None。"""
+    try:
+        text = subprocess.check_output(["lsof", "-a", "-p", str(int(pid)), "-d", "cwd", "-Fn"], text=True, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    for line in text.splitlines():
+        if line.startswith("n"):
+            return Path(line[1:])
+    return None
+
+
+def _is_repo_process(pid: int, command: str) -> bool:
+    """@brief 判断未索引进程是否确属当前 checkout，不能只看命令子串。"""
+    if str(REPO_ROOT) in command:
+        return True
+    cwd = _cwd_of(pid)
+    if cwd is None:
+        return False
+    try:
+        return cwd.resolve().is_relative_to(REPO_ROOT.resolve())
+    except OSError:
+        return False
+
+
 def _stop_groups() -> tuple[list[dict], list[dict]]:
     """@brief 算出要发信号的进程组，以及看到但被拒绝的进程。
 
@@ -887,7 +924,9 @@ def _stop_groups() -> tuple[list[dict], list[dict]]:
             continue
         labels.setdefault(int(pid), []).append(f"{job['id']}（{job.get('script') or '队列'}）")
     for pid, cmd in _ps_commands():
-        if query.pid_alive(pid):
+        # 当前索引之外的同名命令必须验证归属；否则另一个 checkout 也会被
+        # 当作本仓库搜索而收到 SIGTERM。索引中的 PID 仍以其 run 记录为准。
+        if query.pid_alive(pid) and (labels.get(pid) or _is_repo_process(pid, cmd)):
             commands[pid] = cmd
             labels.setdefault(pid, [])
     own_pgid = os.getpgrp()

@@ -454,6 +454,46 @@ def test_reset_adds_15_dollars_lifts_count_limits_and_skips_a_hang(runs, monkeyp
     assert post(port, "patience", {"amount_usd": 5})[0] == 409
 
 
+def test_stop_does_not_target_a_process_from_another_checkout(monkeypatch):
+    """@brief 同名 taic 命令若不属于当前 checkout，不能因为 stop 被误杀。"""
+    from observe import actions, query
+
+    monkeypatch.setattr(query, "history", lambda: [])
+    monkeypatch.setattr(query, "experiment_jobs", lambda: [])
+    monkeypatch.setattr(query, "pid_alive", lambda _pid: True)
+    monkeypatch.setattr(actions, "_ps_commands", lambda: [(7777, "/other/checkout/python -m taic.cli run conv2d")])
+    monkeypatch.setattr(actions, "_is_repo_process", lambda _pid, _cmd: False)
+    groups, _refused = actions._stop_groups()
+    assert groups == []
+
+
+def test_review_and_reset_wrappers_serialize_side_effects(monkeypatch):
+    """@brief 评审和 reset 的包装锁必须让并发副作用串行执行。"""
+    import threading
+    import time
+    from observe import actions
+
+    for public_name, private_name, args in (("review_harness", "_review_harness", ("run", "key", {})), ("reset_budgets", "_reset_budgets", ())):
+        state = {"active": 0, "max_active": 0, "calls": 0}
+
+        def fake(*_args, _state=state, **_kwargs):
+            _state["active"] += 1
+            _state["calls"] += 1
+            _state["max_active"] = max(_state["max_active"], _state["active"])
+            time.sleep(0.01)
+            _state["active"] -= 1
+            return {}
+
+        monkeypatch.setattr(actions, private_name, fake)
+        public = getattr(actions, public_name)
+        threads = [threading.Thread(target=public, args=args) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert state["calls"] == 2 and state["max_active"] == 1
+
+
 def test_parse_ps_keeps_search_processes_and_drops_the_dashboard():
     """@brief 验证 _parse_ps 只留下搜索类进程（taic cli resume 与 experiments.search_ab），丢掉看板自身、评测 worker 与不成形的行。
     """

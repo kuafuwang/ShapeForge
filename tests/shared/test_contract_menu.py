@@ -33,8 +33,8 @@ def _published(run_dir: Path, task: str, speedup: float, *, best: float, spent: 
     cand.mkdir(parents=True)
     (cand / "kernel.metal").write_text(text)
     (run_dir / "confirm_report.json").write_text(json.dumps({
-        "status": "ok",
-        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"},
+        "status": "ok", "speedup": speedup,
+        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx", "confirmation": {"kernel_sha256": digest, "winner_label": label, "confirmed_values": [speedup], "speedup": speedup, "candidate_us": None}},
         "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
     }))
     (run_dir / "result.json").write_text(json.dumps({
