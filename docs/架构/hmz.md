@@ -79,3 +79,5 @@ KDA 教 Nsight 是同一条路。`skills/ncu-report-skill/SKILL.md` 写明先测
 `taic/` 没有 import 或调用 `flame_chase`；上面那个 `flame_chase_1` 字符串不是调用它。不用 `flame_chase` 排班，是因为两个委员会已经在搜索里轮换。下一场读到的是新写的 `TASK.md`：当前核、成绩单和上一场失败反馈。由它排整次搜索，会把计时和换种子交回代理。写内核的那一场不弱：上场的仍是 `pi`。判卷比 `flame_chase` 多，它不判卷。
 
 搜索不再单独规划。模型调用只发生在 `hmz` 拉起的 `pi` 里。`lookup_msl` 和 `quick_check` 不注册进当前搜索。
+
+可观测层按需启动一个 `hmz web --no-open --port 0 --attached` sidecar，作为查看 epic/session 的辅助窗口。它只读 Humanize 的会话视图，不读搜索候选、确认门或 trust，也不作为发布证据；主看板仍是 `python -m observe`。详见 [可观测.md](可观测.md) 的「hmz web 辅助窗口」。

@@ -454,6 +454,44 @@ def test_reset_adds_15_dollars_lifts_count_limits_and_skips_a_hang(runs, monkeyp
     assert post(port, "patience", {"amount_usd": 5})[0] == 409
 
 
+def test_hmz_web_sidecar_api_status_start_and_stop(dashboard, monkeypatch):
+    """@brief sidecar 的 URL 需要页面 token；启动和停止保持同源/token 门。"""
+    from observe import app
+
+    class FakeManager:
+        def __init__(self):
+            self.running = False
+            self.started = 0
+            self.stopped = 0
+
+        def status(self):
+            return {"available": True, "running": self.running, "url": "http://127.0.0.1:43210/?key=x" if self.running else "", "reason": ""}
+
+        def start(self):
+            self.running = True
+            self.started += 1
+            return self.status()
+
+        def stop(self):
+            self.running = False
+            self.stopped += 1
+            return self.status()
+
+    fake = FakeManager()
+    monkeypatch.setattr(app.hmz_web, "manager", fake)
+    port, _runs = dashboard
+    token = token_of(port)
+    status, doc = call(port, "GET", "/api/hmz-web", headers={actions.TOKEN_HEADER: token})
+    assert status == 200 and doc["available"] is True and doc["url"] == ""
+    status, doc = call(port, "POST", "/api/hmz-web", headers={actions.TOKEN_HEADER: token})
+    assert status == 200 and doc["running"] is True and doc["url"].startswith("http://127.0.0.1:")
+    assert fake.started == 1
+    status, doc = call(port, "DELETE", "/api/hmz-web", headers={actions.TOKEN_HEADER: token})
+    assert status == 200 and doc["running"] is False and fake.stopped == 1
+    status, page = call(port, "GET", "/")
+    assert status == 200 and "id=\"hmz-web\"" in page
+
+
 def test_stop_does_not_target_a_process_from_another_checkout(monkeypatch):
     """@brief 同名 taic 命令若不属于当前 checkout，不能因为 stop 被误杀。"""
     from observe import actions, query

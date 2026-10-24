@@ -17,7 +17,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse
 from starlette.routing import Route
 
-from observe import actions, budget, query
+from observe import actions, budget, hmz_web, query
 
 
 
@@ -643,6 +643,38 @@ async def api_delete_records(request) -> JSONResponse:
         return _refused(exc)
 
 
+async def api_hmz_web(request) -> JSONResponse:
+    """@brief 查询、启动或停止可选的 ``hmz web`` sidecar。
+
+    GET 只返回状态；URL 只在携带页面 token 时展示。POST 启动（已有则复用），
+    DELETE 停止。所有写操作仍走同源和 token 检查，不把 sidecar 当数据源。
+
+    @param request Starlette 请求对象。
+    @return sidecar 状态或错误 JSON。
+    """
+    try:
+        if not actions.host_is_loopback(request.headers):
+            raise actions.Refused(403, "refused: this server only answers on 127.0.0.1 / localhost (Host header check)")
+        if request.method == "GET":
+            state = await asyncio.to_thread(hmz_web.manager.status)
+            try:
+                actions.check_token(request.headers)
+            except actions.Refused:
+                state = {**state, "url": ""}
+            return _json(state)
+        actions.check_origin(request.headers)
+        actions.check_token(request.headers)
+        if request.method == "POST":
+            return _json(await asyncio.to_thread(hmz_web.manager.start))
+        if request.method == "DELETE":
+            return _json(await asyncio.to_thread(hmz_web.manager.stop))
+        raise actions.Refused(405, "method not allowed")
+    except actions.Refused as exc:
+        return _refused(exc)
+    except hmz_web.HmzWebError as exc:
+        return _json({"available": False, "running": False, "url": "", "reason": str(exc)}, 503)
+
+
 async def api_budget(_request) -> JSONResponse:
     """@brief v1 兼容接口：返回预算报告。
 
@@ -690,6 +722,7 @@ app = Starlette(
         Route("/api/v2/experiments", api_v2_experiments),
         Route("/api/v2/experiments/{experiment_id:path}", api_v2_experiment),
         Route("/api/v2/budget", api_v2_budget),
+        Route("/api/hmz-web", api_hmz_web, methods=["GET", "POST", "DELETE"]),
         Route("/api/v2/ledger", api_v2_ledger),
         Route("/api/v2/stream", api_stream),
         Route("/api/v2/turns/{run_id:path}", api_v2_turns),

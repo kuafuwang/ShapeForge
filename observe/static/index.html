@@ -219,6 +219,7 @@
   <button type="button" id="feedback-badge" hidden title="打开全部审查">待审查</button>
   <button type="button" id="harness-badge" hidden title="查看本场的结构化提案与 overlay（只读）">结构化提案</button>
   <button type="button" id="term-open">术语</button>
+  <button type="button" id="hmz-web" hidden title="打开 hmz web 会话浏览器">会话</button>
   <button type="button" id="tab-experiments">实验</button>
   <button type="button" id="tab-compare">对照</button>
   <button type="button" id="tab-runs">运行</button>
@@ -1586,6 +1587,51 @@ function showSection(id) {
   if (node) node.scrollIntoView({block: "nearest"});
   if (visible === "ledger") showRight("detail");
 }
+
+async function refreshHmzWeb() {
+  const button = document.getElementById("hmz-web");
+  if (!button) return;
+  try {
+    const response = await fetch("/api/hmz-web", {headers: {"X-Observe-Token": OBSERVE_TOKEN}});
+    if (!response.ok) { button.hidden = true; return; }
+    const doc = await response.json();
+    button.hidden = !doc.available;
+    button.dataset.running = doc.running ? "1" : "0";
+    button.title = doc.running && doc.url ? "打开 hmz web 会话浏览器" : (doc.reason || "启动 hmz web 会话浏览器");
+  } catch (_error) {
+    button.hidden = true;
+  }
+}
+
+async function openHmzWeb() {
+  const button = document.getElementById("hmz-web");
+  const popup = window.open("about:blank", "_blank");
+  if (popup) popup.opener = null;
+  if (!popup) { window.alert("浏览器阻止了新窗口；请允许本站打开窗口后重试。"); return; }
+  const previous = button.textContent;
+  button.disabled = true;
+  button.textContent = "启动中…";
+  try {
+    const response = await fetch("/api/hmz-web", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Observe-Token": OBSERVE_TOKEN},
+    });
+    const doc = await response.json();
+    if (!response.ok || !doc.url) throw new Error(doc.reason || "hmz web did not provide an address");
+    popup.location.replace(doc.url);
+    button.dataset.running = "1";
+    button.title = "打开 hmz web 会话浏览器";
+  } catch (error) {
+    try { popup.close(); } catch (_closeError) { /* the tab is already gone */ }
+    window.alert(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = previous;
+  }
+}
+
+document.getElementById("hmz-web").addEventListener("click", openHmzWeb);
+refreshHmzWeb();
 
 document.getElementById("tab-experiments").addEventListener("click", () => showSection("view-experiments"));
 document.getElementById("tab-compare").addEventListener("click", () => showSection("view-compare"));
