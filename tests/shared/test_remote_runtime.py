@@ -35,7 +35,7 @@ def _config(tmp_path: Path) -> RemoteEvaluationConfig:
         "expected_task_pack_digest": TASK_PACK_DIGEST,
         "task_fingerprint": TASK_FINGERPRINT,
         "publishable_site_ids": [],
-        "socket_root": "/tmp/taic-remote-composition",
+        "socket_root": tempfile.mkdtemp(prefix="taic-remote-", dir="/tmp"),
         "timeout_s": 2,
     }))
     return RemoteEvaluationConfig.from_file(path)
@@ -113,7 +113,7 @@ def test_remote_config_can_use_separate_formal_and_selfcheck_grants(tmp_path):
         "expected_task_pack_digest": TASK_PACK_DIGEST,
         "task_fingerprint": TASK_FINGERPRINT,
         "publishable_site_ids": [],
-        "socket_root": "/tmp/taic-remote-composition",
+        "socket_root": tempfile.mkdtemp(prefix="taic-remote-", dir="/tmp"),
         "timeout_s": 2,
     }))
     config = RemoteEvaluationConfig.from_file(path)
