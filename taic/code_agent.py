@@ -47,15 +47,28 @@ SECURITY_CRITICAL = (
     "taic/trust.py",
     "taic/code_agent.py",
     "taic/acceptance.py",
+    "taic/orchestrator.py",
+    "taic/policy.py",
+    "taic/control.py",
+    "taic/llm.py",
+    "taic/artifacts.py",
+    "taic/harness_experiment.py",
+    "taic/resume.py",
+    "taic/committees.py",
     "taic/cli.py",
     "taic/flows/",
     "experiments/common.py",
+    "observe/",
     "targets/",
     "backends/",
     ".pi/",
+    ".git/",
+    ".github/",
     "control.json",
     "taic.toml",
     "taic.paper.toml",
+    "pyproject.toml",
+    "uv.lock",
 )
 
 
@@ -528,6 +541,44 @@ def _test_patch_in_worktree(repo: Path, patch: Path, proposal_key: str) -> None:
         shutil.rmtree(parent, ignore_errors=True)
 
 
+def _require_allowed_paths(run_dir: Path, proposal_key: str, meta: dict, paths: list[str]) -> list[str]:
+    """@brief 要求补丁有非空、不可越界的 allowed_paths。
+
+    新的 P2 提案必须把验收契约里的 ``allowed_paths`` 列出来；旧补丁没有契约时，
+    从它对应的提案行读取。空列表不再表示“不限制”。
+
+    @param run_dir 运行目录。
+    @param proposal_key 提案键。
+    @param meta 补丁元数据，可能含 ``acceptance_spec``。
+    @param paths 补丁实际触及的路径。
+    @return 归一化后的允许路径列表。
+    @raises CodeAgentError 没有非空允许列表、允许路径本身越界，或补丁超出允许列表时。
+    """
+    spec = meta.get("acceptance_spec") if isinstance(meta.get("acceptance_spec"), dict) else None
+    allowed = spec.get("allowed_paths") if spec is not None else None
+    if allowed is None:
+        proposal = _proposal_row(run_dir, proposal_key)
+        evidence = (proposal.get("proposal") or {}).get("evidence") if isinstance(proposal.get("proposal"), dict) else None
+        allowed = evidence.get("allowed_paths") if isinstance(evidence, dict) else None
+    if not isinstance(allowed, list) or not allowed:
+        raise CodeAgentError("the patch has no non-empty allowed_paths; refusing to apply")
+    normalized = []
+    for raw in allowed:
+        path = _normalize_patch_path(str(raw))
+        if not path or path == ".." or path.startswith("../") or str(raw).startswith("/"):
+            raise CodeAgentError("allowed_paths must stay inside the repository")
+        if forbidden_path(path):
+            raise CodeAgentError(f"allowed_paths names a forbidden path: {path}")
+        normalized.append(path)
+    outside = [
+        path for path in paths
+        if not any(path == root or path.startswith(root.rstrip("/") + "/") for root in normalized)
+    ]
+    if outside:
+        raise CodeAgentError("patch exceeds allowed_paths: " + ", ".join(sorted(outside)))
+    return normalized
+
+
 def apply_code_patch(
     run_dir: Path,
     *,
@@ -562,6 +613,7 @@ def apply_code_patch(
     if meta.get("sha256") and str(meta["sha256"]) != digest:
         raise CodeAgentError("the patch file changed after it was recorded")
     paths = _validate_patch(patch.read_text(encoding="utf-8", errors="replace"))
+    _require_allowed_paths(run_dir, proposal_key, meta, paths)
     check = subprocess.run(["git", "apply", "--check", str(patch)], cwd=repo, capture_output=True, text=True)
     if check.returncode != 0:
         raise CodeAgentError((check.stderr or check.stdout or "git apply --check failed").strip())

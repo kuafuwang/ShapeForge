@@ -75,17 +75,19 @@ uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 
 - `tests/`
 - `tcenv/evaluate.py`、`tcenv/schema.py`、`tcenv/bench.py`、`tcenv/backends/`
-- `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py`、`taic/review.py`、`taic/trust.py`、`taic/code_agent.py`、`taic/acceptance.py`、`taic/cli.py`
+- `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py`、`taic/review.py`、`taic/trust.py`、`taic/code_agent.py`、`taic/acceptance.py`、`taic/orchestrator.py`、`taic/policy.py`、`taic/control.py`、`taic/llm.py`、`taic/artifacts.py`、`taic/harness_experiment.py`、`taic/resume.py`、`taic/committees.py`、`taic/cli.py`
 - `experiments/common.py`
-- `targets/`、`backends/`、`.pi/`
-- `taic.toml`、`taic.paper.toml`、`control.json`
+- `observe/`、`targets/`、`backends/`、`.pi/`、`.git/`、`.github/`
+- `taic.toml`、`taic.paper.toml`、`control.json`、`pyproject.toml`、`uv.lock`
 
 这些文件如果确实要改，应走单独的人工安全 review，而不是 P2 自动 patch。
+
+补丁的 `allowed_paths` 现在必须非空，并覆盖补丁触及的每个路径。没有验收契约、或契约里允许列表为空的旧 patch，`apply-code` 会拒绝落地；不再用空列表表示“不限制”。
 
 ### 仍存在的风险
 
 - code agent 补丁未触及上述路径时，仍可能改变行为；必须看 diff，不能只看 tests。
-- `allowed_paths` 为空时，acceptance 仍允许较宽的路径范围；新提案应显式列出允许路径。
+- 没有非空 `allowed_paths` 的 patch 会被拒绝；新提案必须显式列出允许路径。
 - `--run-tests` 使用补丁后的工作树，测试被禁改，但仍应检查测试命令和覆盖范围。
 - 人和 reviewer 都可能被提案文本社会工程；不要照着建议里给的命令直接执行。
 

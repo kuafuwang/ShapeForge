@@ -29,6 +29,24 @@ def _repo(tmp_path: Path) -> Path:
     return repo
 
 
+def _allow(run: Path, *paths: str) -> None:
+    """@brief 给临时运行目录写入一条带 allowed_paths 的有效提案行。
+
+    @param run 运行目录。
+    @param paths 允许补丁触及的仓库相对路径；不传表示空允许列表。
+    """
+    run.mkdir(parents=True, exist_ok=True)
+    row = {
+        "proposal_key": "key",
+        "status": "valid",
+        "run_id": "run",
+        "seq": 1,
+        "claim_digest": "d",
+        "proposal": {"evidence": {"allowed_paths": list(paths)}},
+    }
+    (run / "harness_proposals.jsonl").write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def test_a_code_patch_is_collected_and_applied_only_with_confirmation(tmp_path):
     """@brief 验证代码补丁先采集到 run 目录，只有带确认人时才会真的写回仓库并记决策事件。
 
@@ -44,6 +62,7 @@ def test_a_code_patch_is_collected_and_applied_only_with_confirmation(tmp_path):
     patch = code_agent.collect_patch(worktree)
     assert "a.txt" in patch and "new.txt" in patch
     run = tmp_path / "run"
+    _allow(run, "a.txt", "new.txt")
     meta = code_agent.write_patch(run, "key", {"patch": patch, "provider": "p", "model": "m", "target_id": "apple-m4-max"})
     checked = code_agent.apply_code_patch(run, proposal_key="key", root=repo, check_only=True)
     assert checked["check"] is True and (repo / "a.txt").read_text() == "before\n"
@@ -113,6 +132,7 @@ def test_code_tests_run_before_the_live_checkout_is_touched(tmp_path, monkeypatc
     (worktree / "a.txt").write_text("after\n")
     patch = code_agent.collect_patch(worktree)
     run = tmp_path / "run"
+    _allow(run, "a.txt", "new.txt")
     code_agent.write_patch(run, "key", {"patch": patch, "provider": "p", "model": "m"})
     seen = []
 
@@ -123,6 +143,21 @@ def test_code_tests_run_before_the_live_checkout_is_touched(tmp_path, monkeypatc
     code_agent.apply_code_patch(run, proposal_key="key", root=repo, run_tests=True, approved_by="alice")
     assert seen == ["before\n"]
     assert (repo / "a.txt").read_text() == "after\n"
+
+
+def test_apply_refuses_a_patch_without_allowed_paths(tmp_path):
+    """@brief 验证没有非空 allowed_paths 的补丁不会碰活仓库。"""
+    repo = _repo(tmp_path)
+    tree = code_agent.prepare_worktree(repo, tmp_path, "key")
+    (tree / "a.txt").write_text("after\n")
+    run = tmp_path / "run"
+    code_agent.write_patch(run, "key", {"patch": code_agent.collect_patch(tree), "provider": "p", "model": "m"})
+    with pytest.raises(code_agent.CodeAgentError, match="allowed_paths"):
+        code_agent.apply_code_patch(run, proposal_key="key", root=repo)
+    _allow(run)
+    with pytest.raises(code_agent.CodeAgentError, match="allowed_paths"):
+        code_agent.apply_code_patch(run, proposal_key="key", root=repo)
+    assert (repo / "a.txt").read_text() == "before\n"
 
 
 def test_a_code_promotion_is_bound_to_the_commit_and_cannot_be_committed_twice(tmp_path):
@@ -139,6 +174,7 @@ def test_a_code_promotion_is_bound_to_the_commit_and_cannot_be_committed_twice(t
     (worktree / "new.txt").write_text("new\n")
     patch = code_agent.collect_patch(worktree)
     run = tmp_path / "run"
+    _allow(run, "a.txt", "new.txt")
     code_agent.write_patch(run, "key", {"patch": patch, "provider": "p", "model": "m"})
     code_agent.apply_code_patch(run, proposal_key="key", root=repo, approved_by="alice")
     committed = harness.commit_local_promotions(run, message="promote code patch", by="alice", root=repo)
@@ -163,6 +199,7 @@ def test_a_promotion_keeps_unrelated_staged_paths_out_of_its_commit(tmp_path):
     tree = code_agent.prepare_worktree(repo, tmp_path, "key")
     (tree / "a.txt").write_text("after\n")
     run = tmp_path / "run"
+    _allow(run, "a.txt", "new.txt")
     code_agent.write_patch(run, "key", {"patch": code_agent.collect_patch(tree)})
     code_agent.apply_code_patch(run, proposal_key="key", root=repo)
     result = harness.commit_local_promotions(run, message="promote", root=repo)
@@ -184,6 +221,7 @@ def test_a_code_promotion_refuses_a_changed_patch_file(tmp_path):
     (worktree / "a.txt").write_text("after\n")
     patch = code_agent.collect_patch(worktree)
     run = tmp_path / "run"
+    _allow(run, "a.txt", "new.txt")
     meta = code_agent.write_patch(run, "key", {"patch": patch, "provider": "p", "model": "m"})
     code_agent.apply_code_patch(run, proposal_key="key", root=repo, approved_by="alice")
     patch_path = Path(meta["patch"])
@@ -203,6 +241,7 @@ def test_a_code_promotion_refuses_to_commit_after_the_worktree_diverged(tmp_path
     (worktree / "a.txt").write_text("after\n")
     patch = code_agent.collect_patch(worktree)
     run = tmp_path / "run"
+    _allow(run, "a.txt", "new.txt")
     code_agent.write_patch(run, "key", {"patch": patch, "provider": "p", "model": "m"})
     code_agent.apply_code_patch(run, proposal_key="key", root=repo, approved_by="alice")
     (repo / "a.txt").write_text("manual edit\n")
@@ -221,6 +260,7 @@ def test_a_code_promotion_refuses_an_unrecorded_executable_bit(tmp_path):
     (worktree / "a.txt").write_text("after\n")
     patch = code_agent.collect_patch(worktree)
     run = tmp_path / "run"
+    _allow(run, "a.txt", "new.txt")
     code_agent.write_patch(run, "key", {"patch": patch, "provider": "p", "model": "m"})
     code_agent.apply_code_patch(run, proposal_key="key", root=repo, approved_by="alice")
     (repo / "a.txt").chmod(0o755)
@@ -242,6 +282,7 @@ def test_a_code_promotion_refuses_unrelated_edits_in_the_same_file(tmp_path):
     (worktree / "b.txt").write_text("ONE\ntwo\nthree\n")
     patch = code_agent.collect_patch(worktree)
     run = tmp_path / "run"
+    _allow(run, "b.txt")
     code_agent.write_patch(run, "key", {"patch": patch, "provider": "p", "model": "m"})
     code_agent.apply_code_patch(run, proposal_key="key", root=repo, approved_by="alice")
     # The reverse apply still succeeds, but the file now has text the patch did not add.

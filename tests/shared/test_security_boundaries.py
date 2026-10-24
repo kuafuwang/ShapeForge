@@ -40,9 +40,22 @@ def test_code_agent_cannot_patch_security_critical_paths():
         "taic/kernel_agent.py",
         "taic/harness.py",
         "taic/trust.py",
+        "taic/orchestrator.py",
+        "taic/policy.py",
+        "taic/control.py",
+        "taic/llm.py",
+        "taic/artifacts.py",
+        "taic/harness_experiment.py",
+        "taic/resume.py",
+        "taic/committees.py",
         "experiments/common.py",
+        "observe/app.py",
         "targets/apple-m4-max/trust.toml",
         ".pi/skills/harness-feedback/SKILL.md",
+        ".git/hooks/pre-commit",
+        ".github/workflows/test.yml",
+        "pyproject.toml",
+        "uv.lock",
     ):
         assert code_agent.forbidden_path(path), path
     assert not code_agent.forbidden_path("taic/feedback_extra.py")
