@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -23,8 +23,15 @@ from .selfcheck_bridge import SelfCheckConfig, SelfCheckServer
 
 
 def _default_socket_root() -> Path:
-    short = Path("/tmp")
-    return (short if short.is_dir() else Path(tempfile.gettempdir())) / "taic-selfcheck"
+    """A host-owned bridge root the fenced agent cannot write.
+
+    ``/tmp`` is deliberately avoided: the hmz fence permits ordinary temp-file
+    writes there, so a same-UID agent could unlink or replace the bridge's
+    socket and token.  The user cache is still short enough for an AF_UNIX
+    socket path and is outside the agent's writable workspace.
+    """
+    cache = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+    return cache / "taic-selfcheck"
 
 
 @dataclass(frozen=True)
@@ -166,10 +173,16 @@ class RemoteEvaluationConfig:
         """Return the per-session bridge factory consumed by Orchestrator."""
         def factory(session_id: str, work: Path, evaluator: Any) -> tuple[SelfCheckServer, str]:
             token = secrets.token_hex(32)
-            checks = work / ".selfcheck"
-            token_file = checks / "token"
             self.socket_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            try:
+                self.socket_root.chmod(0o700)
+            except OSError:
+                pass
             socket_name = hashlib.sha256(f"{run_id}\0{session_id}".encode("utf-8")).hexdigest()[:32] + ".sock"
+            # Keep the capability file outside the agent-writable workspace. The
+            # bridge writes it 0600 and removes it on stop; the agent receives
+            # the value through its session environment.
+            token_file = self.socket_root / (socket_name + ".token")
             config = SelfCheckConfig(
                 task=task,
                 dtype=dtype,
@@ -181,7 +194,6 @@ class RemoteEvaluationConfig:
                 token=token,
                 token_file=token_file,
                 reps=self.selfcheck_reps,
-                self_check_dir=checks,
                 usage_path=work.parent.parent / "selfcheck_usage" / f"{hashlib.sha256(session_id.encode('utf-8')).hexdigest()[:20]}.json",
                 max_timed=self.selfcheck_max_timed,
                 max_gpu_s=self.selfcheck_max_gpu_s,

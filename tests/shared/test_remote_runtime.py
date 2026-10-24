@@ -68,12 +68,13 @@ def test_explicit_remote_config_builds_pool_and_per_session_bridge(tmp_path):
         try:
             checked = SelfCheckClient(server.socket_path, token_file=token_file).check("kernel void demo() {}", "quick")
             assert checked.report["simulated"] is True
-            # The credential lives under the protected .selfcheck directory, so
-            # a session prune while the bridge is alive cannot archive it.
+            # The credential is host-owned, outside the agent-writable
+            # workspace, so a session prune cannot archive or delete it.
+            assert not Path(token_file).is_relative_to(work)
+            assert Path(token_file).parent == server.socket_path.parent
             from taic.kernel_agent import prune_work
             (work / "scratch.txt").write_text("x")
             pruned = prune_work(work, label="init", keep={"candidate.metal"})
-            assert ".selfcheck" in pruned["kept"]
             assert "token" not in pruned.get("archived", [])
             assert Path(token_file).is_file()
         finally:

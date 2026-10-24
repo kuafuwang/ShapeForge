@@ -654,7 +654,9 @@ def test_a_host_bridge_replaces_the_local_selfcheck_command(tmp_path):
     brief.selfcheck_token_file = str(tmp_path / "selfcheck.token")
     command = _check_command(brief, "timed")
     assert "taic.selfcheck_bridge" in command
-    assert "/tmp/taic-selfcheck.sock" in command
+    assert "/tmp/taic-selfcheck.sock" not in command
+    assert str(brief.selfcheck_token_file) not in command
     assert "--timed" in command
+    assert "--socket" not in command and "--token-file" not in command
     assert "--dtype" not in command and "--target" not in command and "--reps" not in command
     assert "conv2d-fp16-paper-init.metal" in command

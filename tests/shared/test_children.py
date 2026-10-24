@@ -78,6 +78,17 @@ def test_scrubbed_env_drops_every_key_shaped_variable():
     assert env == {"PATH": "/bin", "NORMAL_VAR": "v", "KEYBOARD_LAYOUT": "us", "TOKENIZERS_PARALLELISM": "1"}
 
 
+def test_scrubbed_env_can_preserve_one_named_capability():
+    """@brief 只有调用方明确点名的短期能力变量能穿过敏感变量清洗。"""
+    from tcenv.children import scrubbed_env
+
+    env = scrubbed_env(
+        {"PATH": "/bin", "TAIC_SELFCHECK_TOKEN": "scoped", "OTHER_TOKEN": "secret"},
+        keep=frozenset({"TAIC_SELFCHECK_TOKEN"}),
+    )
+    assert env == {"PATH": "/bin", "TAIC_SELFCHECK_TOKEN": "scoped"}
+
+
 def test_sighup_kills_a_registered_child(tmp_path):
     """@brief 验证父进程收到 SIGHUP 时，它注册过的子进程也被杀掉。
 

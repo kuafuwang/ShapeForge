@@ -519,14 +519,13 @@ def _check_command(brief: SessionBrief, mode: str) -> str:
     if brief.selfcheck_socket:
         if not brief.selfcheck_token_file:
             raise ValueError("a host selfcheck bridge needs a per-session token file")
-        # The bridge owns task/target/reps/quota. The agent supplies only the
-        # workspace-relative submission and the fixed mode flag. The token is read
-        # from a 0600 file, never placed in argv or TASK.md.
+        # The bridge owns task/target/reps/quota and supplies the socket/token
+        # through the session environment. The agent supplies only the
+        # workspace-relative submission and the fixed mode flag, so the
+        # credential never appears in argv or TASK.md.
         parts = [
             "uv", "run", "--directory", _shell(str(repo)),
             "python", "-m", "taic.selfcheck_bridge",
-            "--socket", _shell(brief.selfcheck_socket),
-            "--token-file", _shell(brief.selfcheck_token_file),
             "--workspace", _shell(str(work)),
             "--kernel", _shell(name),
             "--quick" if mode == "quick" else "--timed",
@@ -1005,6 +1004,16 @@ def run_kernel_agent(
     if not binary or not Path(binary).is_file():
         raise AgentError("hmz is not on PATH; install it with `uv tool install hmz`")
     work.mkdir(parents=True, exist_ok=True)
+    bridge_token = ""
+    if brief.selfcheck_socket:
+        if not brief.selfcheck_token_file:
+            raise AgentError("a host selfcheck bridge needs a per-session token file")
+        try:
+            bridge_token = Path(brief.selfcheck_token_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise AgentError(f"cannot read the host selfcheck token: {exc}") from exc
+        if not bridge_token or len(bridge_token) > 512:
+            raise AgentError("the host selfcheck token is empty or too large")
     submit = submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext)
     submit_path = work / submit
     submit_path.unlink(missing_ok=True)
@@ -1041,8 +1050,18 @@ def run_kernel_agent(
     try:
         from tcenv.children import forget, kill_group, popen_group
 
+        # Do not inherit a previous session's bridge capability. The only
+        # surviving token is this session's short-lived selfcheck token, and
+        # only when a bridge was actually provisioned.
+        env = dict(os.environ)
+        for name in ("TAIC_SELFCHECK_SOCKET", "TAIC_SELFCHECK_TOKEN", "TAIC_SELFCHECK_TOKEN_FILE"):
+            env.pop(name, None)
+        if bridge_token:
+            env["TAIC_SELFCHECK_SOCKET"] = brief.selfcheck_socket
+            env["TAIC_SELFCHECK_TOKEN"] = bridge_token
         proc = popen_group(
             argv, cwd=work, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env=env, preserve_env=("TAIC_SELFCHECK_TOKEN",) if bridge_token else (),
         )
     except OSError as exc:
         raise AgentError(f"could not start hmz: {exc}") from exc

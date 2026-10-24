@@ -22,19 +22,23 @@ _INSTALLED = False
 _SECRET = re.compile(r"(^|_)(API_?KEY|APIKEY|KEYS?|TOKENS?|SECRETS?|PASSWORDS?|PASSWD|CREDENTIALS?)($|_)", re.I)
 
 
-def scrubbed_env(base: dict | None = None) -> dict[str, str]:
+def scrubbed_env(base: dict | None = None, *, keep: frozenset[str] = frozenset()) -> dict[str, str]:
     """@brief 返回剔除了 API key 等敏感变量的环境。
 
     The parent environment without API keys and other secrets.
 
     The child still receives PATH, HOME and the Metal toolchain variables.
     Credentials for the coding agent live in the models file, not in the environment.
+    ``keep`` is for a short-lived, explicitly scoped capability (the
+    self-check bridge token) that the child must receive; callers must name it
+    exactly rather than treating every token-shaped variable as safe.
 
     @param base 基础环境字典；为 None 时使用 ``os.environ``。
-    @return 仅含非敏感变量的新字典。
+    @param keep 要保留的精确环境变量名。
+    @return 仅含非敏感变量与 ``keep`` 中变量的新字典。
     """
     source = os.environ if base is None else base
-    return {str(key): str(value) for key, value in source.items() if not _SECRET.search(str(key))}
+    return {str(key): str(value) for key, value in source.items() if str(key) in keep or not _SECRET.search(str(key))}
 
 
 def kill_group(proc: subprocess.Popen) -> None:
@@ -123,12 +127,15 @@ def popen_group(argv: list[str], **kwargs) -> subprocess.Popen:
     """@brief 在新会话中启动命令并登记进程组，环境已剔除敏感变量。
 
     Start ``argv`` in a new session and register it. ``env`` is scrubbed.
+    ``preserve_env`` names exact, scoped capabilities that must survive the
+    scrub; it is intentionally not a general "allow secrets" switch.
 
     @param argv 命令行参数列表。
-    @param kwargs 其余传给 ``subprocess.Popen`` 的参数；``env`` 会被清洗。
+    @param kwargs 其余传给 ``subprocess.Popen`` 的参数；``env`` 会被清洗，``preserve_env`` 不作为 Popen 参数。
     @return 已启动并登记的子进程。
     """
-    env = scrubbed_env(kwargs.pop("env", None))
+    preserve = frozenset(kwargs.pop("preserve_env", ()))
+    env = scrubbed_env(kwargs.pop("env", None), keep=preserve)
     proc = subprocess.Popen(argv, start_new_session=True, env=env, **kwargs)
     _GROUP_LEADERS.add(proc.pid)
     register(proc)

@@ -219,6 +219,24 @@ def test_bridge_cli_reads_token_file_and_workspace_relative_kernel(tmp_path, mon
     assert "ok" in capsys.readouterr().out
 
 
+def test_bridge_cli_reads_the_session_token_from_the_environment(tmp_path, monkeypatch, capsys):
+    """@brief host bridge 通过会话环境提供 token，CLI 不需要把凭据写进 argv。"""
+    from taic.selfcheck_bridge import main
+
+    executor = FakeExecutor()
+    server = SelfCheckServer(_config(tmp_path), executor, _short_socket())
+    (tmp_path / "candidate.metal").write_text("kernel void demo() {}")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TAIC_SELFCHECK_SOCKET", str(server.socket_path))
+    monkeypatch.setenv("TAIC_SELFCHECK_TOKEN", "test-token")
+    monkeypatch.delenv("TAIC_SELFCHECK_TOKEN_FILE", raising=False)
+    with server:
+        status = main(["--kernel", "candidate.metal", "--quick"])
+    assert status == 0
+    assert len(executor.requests) == 1
+    assert "ok" in capsys.readouterr().out
+
+
 def test_server_provisions_and_removes_a_0600_token_file(tmp_path):
     """@brief host 生成 0600 token 文件，stop 后删除，不把 token 写进 argv。"""
     token_path = tmp_path / "selfcheck.token"

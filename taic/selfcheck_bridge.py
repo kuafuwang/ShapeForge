@@ -464,7 +464,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         source = _workspace_kernel(args.kernel, args.workspace).read_text(encoding="utf-8")
-        result = SelfCheckClient(args.socket, token_file=args.token_file).check(source, args.mode)
+        result = SelfCheckClient(
+            args.socket,
+            token=os.environ.get("TAIC_SELFCHECK_TOKEN", ""),
+            token_file=args.token_file,
+        ).check(source, args.mode)
         report = result.report if isinstance(result.report, EvalReport) else result.report
         if isinstance(report, dict) and report.get("simulated") is True:
             if args.json:
