@@ -1,0 +1,22 @@
+---
+description: TAIC repository instructions for Cursor
+globs:
+alwaysApply: true
+---
+
+# TAIC project
+
+Read the repository `AGENTS.md` before changing code. It is the canonical project
+instruction file and covers:
+
+- `tests/shared/` vs `tests/backends/<id>/` vs `tests/support/`
+- the safe offline test command
+- GPU and paid-LLM permission rules
+- backend/target layout and the no-shim rule.
+
+The shared skills are available in `.cursor/skills/` and `.agents/skills/`:
+`harness-feedback` and `taic-tools`. They are symlinks to the canonical
+`.pi/skills/harness-feedback` and
+`taic/flows/kernel_once/skills/taic-tools`; do not copy or fork their text.
+
+Before committing, show the proposed commit body. Preserve unrelated changes.

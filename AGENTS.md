@@ -27,3 +27,7 @@ A speedup is published only when the confirmation gate binds the remeasured kern
 The data layer (run layout, SQLite index, retrieval, protocol epochs, cost and retention) is documented in `docs/架构/数据层.md`. `taic query` is the CLI for it: no model call and no GPU, but `best`/`failures`/`sessions`/`models` first refresh the derived index, so it is not a strictly read-only process.
 
 Credentials are never committed.
+
+## Agent skills
+
+Canonical sources: `.pi/skills/harness-feedback/` and `taic/flows/kernel_once/skills/taic-tools/`. Claude/Codex/Cursor/Pi aliases and entry points are documented in `docs/agent-skills.md`. Do not duplicate skill text; edit the canonical source.

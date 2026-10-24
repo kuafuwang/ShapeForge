@@ -10,6 +10,8 @@
 
 测试目录与 golden 放置规则见 `tests/README.md`。
 
+各编码 agent 的 skill 入口见 `docs/agent-skills.md`。
+
 本文其余部分与 [README.md](README.md) 对齐。命令、路径和配置名保持英文。下面这张表是和论文的对照，不是上手步骤。
 
 这是论文 *"AI as a compiler: compiling Triton kernels without the Triton compiler"* 的实验设置，在 Apple M4 Max 上的再实现。
