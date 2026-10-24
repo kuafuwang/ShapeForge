@@ -13,7 +13,6 @@ import hashlib
 import json
 import math
 import os
-import tempfile
 from pathlib import Path
 
 LOG_NAME = "self_checks.jsonl"
@@ -27,10 +26,11 @@ MAX_GPU_S = 120.0
 def _authority_root() -> Path:
     # Never derive the authority root from the evaluated process environment.
     # An agent could otherwise set TCENV_SELFCHECK_HOME back into its workspace.
-    # /tmp is the shared host temp directory on the supported macOS/Linux hosts;
-    # tempfile is only a fallback for non-POSIX development environments.
-    host_tmp = Path("/tmp")
-    return (host_tmp if host_tmp.is_dir() else Path(tempfile.gettempdir())) / "taic-selfcheck-state"
+    # Do not use /tmp: the hmz fence grants temp writes to an agent, so that
+    # would let it delete the very record that is supposed to outrank its
+    # workspace log. The user cache is host-owned and outside the fence.
+    cache = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+    return cache / "taic-selfcheck-state"
 
 
 def authority_log(directory: Path) -> Path:
