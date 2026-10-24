@@ -2,7 +2,7 @@
 
 `hmz` 是别人写的启动器，用来驱动已经登录的编程代理。搜索写内核只走 `hmz exec`，跑一场 `kernel_once`。`--kernel-agent off` 拒绝启动。换种子和确认仍在 `taic`。搜索不再单独发规划请求。`flame_chase` 是 `hmz` 自带的双代理轮流，本仓库的搜索不用它。
 
-源码不进入本仓库。2026-10-19 装上的发布包是 PyPI 的 `hmz` 0.2.0。本机检出 `e2013a4` 里的 `flame_chase` 与该发布包相同。当天 GitHub `main` 的 `737f438` 不改这个文件。搜索循环、上下文和判卷仍在 [搜索.md](搜索.md)。
+源码不进入本仓库。2026-10-19 装上的发布包是 PyPI 的 `hmz` 0.2.0；2026-10-24 已升级到 0.2.1（PyPI 2026-10-20 的最新发布）。本机源码检出 `ac732f1e`（2026-10-21，0.2.1 之后 18 个提交），其中 `flame_chase` 与 `e2013a4` 相同，仍是 48 行。搜索仍只调用 `kernel_once`；`run_config.json` 的 `loop_protocol: flame_chase_1` 只是续跑协议标签。搜索循环、上下文和判卷仍在 [搜索.md](搜索.md)。
 
 ## 它是什么
 
@@ -55,6 +55,6 @@ KDA 教 Nsight 是同一条路。`skills/ncu-report-skill/SKILL.md` 写明先测
 | --- | --- |
 | `hmz exec`、`kernel_once`、本机 `pi`、权限围栏、代理会话、epic 的四行摘要、技能目录 | `flame_chase` 排整次搜索；`hmz web` 当搜索看板；Claude、Codex、Kimi Code、litellm；把 Humanize 源码搬进本仓库 |
 
-不用 `flame_chase` 排班，是因为两个委员会已经在搜索里轮换。下一场读到的是新写的 `TASK.md`：当前核、成绩单和上一场失败反馈。由它排整次搜索，会把计时和换种子交回代理。写内核的那一场不弱：上场的仍是 `pi`。判卷比 `flame_chase` 多，它不判卷。
+`taic/` 没有 import 或调用 `flame_chase`；上面那个 `flame_chase_1` 字符串不是调用它。不用 `flame_chase` 排班，是因为两个委员会已经在搜索里轮换。下一场读到的是新写的 `TASK.md`：当前核、成绩单和上一场失败反馈。由它排整次搜索，会把计时和换种子交回代理。写内核的那一场不弱：上场的仍是 `pi`。判卷比 `flame_chase` 多，它不判卷。
 
 搜索不再单独规划。模型调用只发生在 `hmz` 拉起的 `pi` 里。`lookup_msl` 和 `quick_check` 不注册进当前搜索。

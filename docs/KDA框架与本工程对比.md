@@ -96,6 +96,22 @@
 | `ralph_loop` | 还是每轮新开会话、只留下仓库，但自始至终是同一个角色 |
 | `rlar` | 做事的人留在同一次对话里；每一轮另来一个审查者，交一份带类型的结论，并专门找把测试改弱、把工作做成空壳的情况 |
 
+### 源码核对：本工程没有启动 `flame_chase`
+
+2026-10-24 复核最新源码。本机 `uv tool` 安装的是 `hmz 0.2.1`（PyPI 2026-10-20 的最新发布）；Humanize 检出在 `ac732f1e`（2026-10-21，`v0.2.1` 之后 18 个提交，源码版本写着 `0.0.0`）。`flame_chase/__init__.py` 自 `e2013a4` 起没有改，仍是 48 行。
+
+本工程启动的不是它。`taic/kernel_agent.py` 里：
+
+```python
+FLOW = Path(__file__).resolve().parent / "flows" / "kernel_once"
+...
+argv = [binary, "exec", "-f", str(FLOW), ...]
+```
+
+`taic/` 里没有 import 或调用 `flame_chase`。`taic/flows/kernel_once` 只有一个 `assistant`，一场新会话，写完一颗核就停；两个委员会在外层 `taic` 轮换。`run_config.json` 里的 `loop_protocol: "flame_chase_1"` 只是本工程续跑协议的标签，不是 `hmz -f flame_chase`；改这个名字要升协议并处理旧运行，不能顺手改。
+
+`flame_chase` 的文件本身只做三件事：选出这一轮的角色、`spawn` 一场新会话、把同一句 `task` 交给它。没有抽核、评测、换种子或确认。真正让 KDA² 的倍数成立的是循环外的任务、工具、诊断和验收，不是这 48 行。
+
 判卷不在这几十行里。博客写：CuTe 用 IKET 看核里的流水线，TIRx 在 CPU 上做数值仿真和静态检查。这些工具服务英伟达 GPU。TIRx 的诊断外壳后来公开在 `mlc-ai/TIRx-harness`（2026-10-17 仍可克隆），里面有 IKET 和 Nsight Compute 的采集脚本。CAKE 的论文是 arXiv 2608.12629。编译器仓库没有找到。
 
 已经放出的核在 `NVlabs/kda` 的分支 `260927-kda-for-kda`（说明在 2026-10-01 更新过）。三份前向实现和一份 TIRx 反向核。README 写明来源提交曾放在 `humanfia/kda-for-kda` 和 `humanfia/kda-tirx`，这两个地址目前是 404。能克隆的是整理进 NVlabs 分支之后的核。
@@ -235,8 +251,9 @@ runs/<一次搜索>/candidates/<序号>_<标签>/
 
 | 材料 | 位置 | 标记 |
 | --- | --- | --- |
-| Humanize，含 `flame_chase` | `/Users/kuafu/CLionProjects/humanize` | `main` 的 `e2013a4`，2026-10-18。流程文件 `src/hmz/flows/builtin/flame_chase/__init__.py` |
-| Humanize 0.2.0 | 同一远程仓库的 `release/0.2` | 2026-10-17。`main` 比它新一天。没有名叫 Humanize2 的分支 |
+| Humanize，含 `flame_chase` | `/Users/kuafu/CLionProjects/humanize` | `main` 的 `ac732f1e`，2026-10-21（2026-10-24 复核）。流程文件 `src/hmz/flows/builtin/flame_chase/__init__.py`；该文件自 `e2013a4` 未改 |
+| Humanize 0.2.1 | 同一远程仓库的 `release/0.2` | PyPI 2026-10-20 的最新发布。`main` 比它多 18 个提交，源码版本是 `0.0.0` 开发版。没有名叫 Humanize2 的分支 |
+| 本工程写核流程 | `taic/flows/kernel_once/__init__.py` | 一个 `assistant`；`taic/kernel_agent.py` 用 `hmz exec -f` 指向它 |
 | KDA² 内核 | `https://github.com/NVlabs/kda/tree/260927-kda-for-kda` | 分支尖端 `f539baab`，说明提交 2026-10-01。本机的 `/Users/kuafu/CLionProjects/kda` 仍停在 `main` 的 `ef6ce61`（2026-09-14），那是更早的薄说明，不是这一章的流程 |
 | TIRx 诊断外壳 | `https://github.com/mlc-ai/TIRx-harness` | 2026-10-17 仍可克隆。IKET 与 Nsight Compute 的采集脚本在 `evolution/remote/` |
 | CAKE 论文 | arXiv 2608.12629 | 描述中间表示和诊断。未找到公开的编译器仓库 |

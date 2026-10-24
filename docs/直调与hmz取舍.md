@@ -47,6 +47,8 @@ loop engineering 在这里指：人先规定什么时候开始、什么叫成功
 
 没有把 `hmz` 的 `flame_chase` 接进来排整次搜索。那是两个编程代理轮流改同一份工作区，每轮新开会话，预算花完就停，里面没有抽核和判卷。本仓库的外层循环已经做了轮换和验收。
 
+2026-10-24 复核最新源码：`taic/kernel_agent.py` 的 `-f` 仍指向 `taic/flows/kernel_once`，`taic/` 没有调用 `flame_chase`。`run_config.json` 里的 `loop_protocol: flame_chase_1` 只是本工程的续跑协议标签，不是采用了对方的 flow。源码核对记录见 [KDA框架与本工程对比.md](KDA框架与本工程对比.md)。
+
 ## 这算不算 loop engineering
 
 2026 年中说的 loop engineering，指的是人设计一份循环规格交给现成的编程代理：触发、目标、验证、停止、记忆，代理自己去做，人不再每一步写提示。Macedo 的预印本 [2607.00038](https://arxiv.org/html/2607.00038) 把这件事和两样东西分开：普通的程序循环，以及 harness 里已经有的感知—行动—观察循环。后一个是管道，前一个才是要设计的规格。
