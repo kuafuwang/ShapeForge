@@ -107,7 +107,7 @@ def test_session_diagnostic_columns_are_added_without_changing_the_index_epoch(t
         )""")
     index = Index(path)
     columns = {row[1] for row in index.conn.execute("PRAGMA table_info(sessions)")}
-    assert {"session_id", "failed_turns", "last_kind", "failure_class", "error", "tool_calls", "diagnostics_path"} <= columns
+    assert {"candidate_label", "attempt", "session_id", "failed_turns", "last_kind", "failure_class", "error", "tool_calls", "diagnostics_path"} <= columns
     assert index.conn.execute("SELECT value FROM meta WHERE key = 'index_schema_version'").fetchone()[0] == str(INDEX_SCHEMA_VERSION)
 
 
@@ -429,7 +429,8 @@ def test_sessions_and_model_totals_come_from_agent_rows(tmp_path, monkeypatch):
     (directory / "transcript.jsonl").write_text("\n".join(json.dumps(row) for row in [
         {"event": "agent", "label": "init", "committee": "first", "provider": "deepseek", "model": "deepseek-flash",
          "outcome": "evaluated", "cost_usd": 1.0, "tokens": {"input": 10, "output": 20, "cache_read": 30, "cache_write": 40}},
-        {"event": "agent", "label": "r1.p0", "committee": "second", "provider": "moonshot", "model": "kimi-k3",
+        {"event": "agent", "label": "r1.p0.retry1", "candidate_label": "r1.p0", "attempt": 1,
+         "committee": "second", "provider": "moonshot", "model": "kimi-k3",
          "outcome": "agent_failed", "error": "Connection error.", "cost_usd": 2.0,
          "runtime": {"session_ids": ["session-r1"], "failed_turns": 4, "last_terminal_kind": "failed",
                      "failure_class": "turn_failed", "tool_calls": 7},
@@ -441,6 +442,8 @@ def test_sessions_and_model_totals_come_from_agent_rows(tmp_path, monkeypatch):
     sessions = scan.sessions_page("hmz")["sessions"]
     assert [row["model"] for row in sessions] == ["deepseek-flash", "kimi-k3"]
     assert sessions[0]["tokens_cache_write"] == 40
+    assert sessions[0]["candidate_label"] == "init" and sessions[0]["attempt"] == 0
+    assert sessions[1]["candidate_label"] == "r1.p0" and sessions[1]["attempt"] == 1
     assert sessions[1]["session_id"] == "session-r1" and sessions[1]["failed_turns"] == 4
     assert sessions[1]["last_kind"] == "failed" and sessions[1]["failure_class"] == "turn_failed"
     assert sessions[1]["error"] == "Connection error." and sessions[1]["tool_calls"] == 7

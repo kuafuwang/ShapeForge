@@ -361,6 +361,27 @@ def test_peer_tips_has_a_command_line_switch_and_resume_keeps_the_recorded_value
     assert prov["search.peer_tips"] == "run_config.json"
 
 
+def test_provider_retries_has_a_cli_switch_and_resume_preserves_or_overrides_it(monkeypatch):
+    from taic import cli
+    from ..support.resume import ns
+
+    got = {}
+    monkeypatch.setattr(cli, "cmd_run", lambda args: got.update(run=vars(args)) or 0)
+    monkeypatch.setattr(cli, "cmd_resume", lambda args: got.update(resume=vars(args)) or 0)
+    assert cli.main(["run", "relu", "--provider-retries", "2"]) == 0
+    assert got["run"]["provider_retries"] == 2
+    assert cli.main(["resume", "somewhere", "--provider-retries", "0"]) == 0
+    assert got["resume"]["provider_retries"] == 0
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-0123456789abcdef")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://x")
+    settings = {"search": {"provider_retries": 2}, "llm": {"model": "fake"},
+                "provenance": {"search.provider_retries": "run_config.json"}}
+    _cfg, search, prov = cli._resume_config(ns(Path("somewhere"), dry_run=True), settings, {"model": None})
+    assert search.provider_retries == 2 and prov["search.provider_retries"] == "run_config.json"
+    _cfg, search, prov = cli._resume_config(ns(Path("somewhere"), dry_run=True, provider_retries=0), settings, {"model": None})
+    assert search.provider_retries == 0 and prov["search.provider_retries"] == "command line"
+
+
 def test_feedback_seq_continues_after_a_broken_line(tmp_path):
     calls = []
 

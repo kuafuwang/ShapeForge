@@ -272,6 +272,8 @@ class SearchConfig:
     - ``kernel_agent``：hmz + pi 写每个内核；其它值在启动时被拒绝。
     - ``relay_budget_usd``：一个 session 的输出 token 参考值；实际花费更高只记录，由运行预算去停下个 session。
     - ``turn_minutes``：``kernel_once`` 里主轮的墙钟上限；进程超时更长，只是兜底。
+    - ``provider_retries``：结构化 hmz ``turn_failed`` 且无 submission 时，在同一 committee、同一候选内最多重试几次；
+      默认 0。正常回答但未交卷、timeout、进程失败和已有 checkpoint 不重试。
     - ``require_contract_launch``：合约菜单与变体运行拒收 taic-launch 块，保证 launch 就是菜单选的那个。
     - ``peer_tips``：把本次运行的近期同伴提示放进下一份 TASK.md；关则那块留空；提示从不跨运行。
     - ``harness_auto``：结构化 harness 提案可以落入本次运行的 overlay；默认关。
@@ -318,11 +320,16 @@ class SearchConfig:
     kernel_agent: str = "pi"  # hmz + pi writes every kernel. Any other value is refused at start.
     relay_budget_usd: float = 2.0  # output-token guide for one session. A higher actual cost is logged; the run budget stops the next session
     turn_minutes: int = 25  # wall clock of the main turn inside kernel_once; the process timeout is longer and only a backstop
+    provider_retries: int = 0  # retries of a structured provider turn failure within the same candidate; never retries a normal no-submission answer
     require_contract_launch: bool = False  # contract-menu and variant runs reject a taic-launch block so the launch stays the one the menu chose
     peer_tips: bool = True  # put this run's recent peer tips into the next TASK.md. Off leaves that block empty. Tips never cross runs.
     harness_auto: bool = False  # structured harness proposals may settle into this run's overlay; off by default
     harness_shadow: bool = True  # hold unreviewed quorum entries in shadow; a reviewed tip may activate for this run
     harness_review: bool = True  # let the other committee model review a single-source tip before the next session
+    harness_experiment_id: str = ""  # explicit A/B binding; ordinary searches have no experiment identity
+    harness_experiment_arm: str = ""  # control or treatment, from an authorized experiment plan
+    harness_change_sha256: str = ""  # digest of the treatment patch, empty for control
+    harness_change_path: str = ""  # optional repository-relative patch applied by the experiment driver
 
 
 def _read_toml(path: Path) -> dict:

@@ -21,6 +21,7 @@ _REPO = Path(__file__).resolve().parent.parent
 CAP = 8
 _TEXT = 80
 _GPU_TAIL = 262_144
+_NO_KERNEL_OUTCOMES = frozenset({"agent_failed", "provider_failed", "agent_no_submission"})
 
 ORIENTATION = """\
 taic brief
@@ -42,9 +43,11 @@ Two committees
   If the config has no committees, both copy the [llm] model. --model assigns that one model to both.
   The same model on both seats still starts a new session. There is no handoff sentence in TASK.md.
   The initial draft and round 1 bind first. From round 1, round r binds (r - 1) % 2. The switch is only at a round boundary.
-  Each round is one new hmz session. The task file carries the kernel, the scorecard, and the last failure. It does not carry the previous chat.
-  A session that does not leave a new kernel is agent_failed. The next session goes to the other committee.
-  Two agent_failed sessions in a row stop the search. An incorrect kernel, or a file identical to the seed, clears that count.
+  Each round is one new hmz session by default. search.provider_retries (0-3, default 0) adds bounded
+  same-committee attempts only for a structured provider turn_failed without a submission; each attempt is billed.
+  A normal no-submission answer, timeout/process failure, or available checkpoint is not retried.
+  A final no-kernel outcome (agent_failed, provider_failed, agent_no_submission) hands the next session to the other committee.
+  Two final no-kernel rounds stop with agent_failure. An incorrect kernel, or a file identical to the seed, clears that count.
   A session that ends without a token bill stops the whole search (cost_incomplete).
   Both share one ledger, one transcript.jsonl, and one budget. Keys and endpoints stay out of the run directory.
 
@@ -317,11 +320,13 @@ def _transcript_stats(path: Path) -> tuple[int | None, int | None, int | None, s
             chat += 1
         elif kind == "retry":
             retry += 1
-        elif kind == "agent" and ev.get("outcome") == "agent_failed":
+        elif kind == "agent" and ev.get("outcome") in _NO_KERNEL_OUTCOMES:
             runtime = ev.get("runtime") if isinstance(ev.get("runtime"), dict) else {}
             failed_turns = runtime.get("failed_turns")
             failures.append({
                 "label": _text(ev.get("label")),
+                "candidate_label": _text(ev.get("candidate_label") or ev.get("label")),
+                "attempt": ev.get("attempt") if isinstance(ev.get("attempt"), int) and not isinstance(ev.get("attempt"), bool) and ev.get("attempt") >= 0 else 0,
                 "provider": _text(ev.get("provider")),
                 "model": _text(ev.get("model")),
                 "committee": _text(ev.get("committee")),

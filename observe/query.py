@@ -426,7 +426,7 @@ def sessions_page(run_id: str, *, limit: int = 500) -> dict:
     limit = max(1, min(int(limit or 500), 2000))
     with borrow() as index:
         rows = [dict(row) for row in index.conn.execute(
-            "SELECT run_id, seq, label, committee, provider, model, outcome, cost_usd, "
+            "SELECT run_id, seq, label, candidate_label, attempt, committee, provider, model, outcome, cost_usd, "
             "session_id, failed_turns, last_kind, failure_class, error, tool_calls, diagnostics_path, "
             "tokens_input, tokens_output, tokens_cache_read, tokens_cache_write "
             "FROM sessions WHERE run_id = ? ORDER BY seq LIMIT ?",

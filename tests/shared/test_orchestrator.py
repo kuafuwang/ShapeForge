@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from taic.kernel_agent import agent_for_script
+from taic.kernel_agent import AgentResult, agent_for_script
 from taic.orchestrator import Orchestrator, RunStartError
 from tcenv.evaluate import EvalReport
 from tcenv.schema import PROTOCOL_VERSION
@@ -101,12 +101,15 @@ def test_a_session_that_returns_no_source_is_not_an_unchanged_seed(tmp_path):
     orch.agent_runner = run_agent
     res = run(orch)
     assert res.stop_reason == "agent_failure"
-    assert [line for line in orch.history if "agent_failed" in line]
+    assert [line for line in orch.history if "provider_failed" in line]
     events = [json.loads(line) for line in (orch.run_dir / "transcript.jsonl").read_text().splitlines()]
     agents = [event for event in events if event.get("event") == "agent"]
     assert len(agents) == 2
-    assert all(event["outcome"] == "agent_failed" and event["error"] == "Connection error." for event in agents)
+    assert all(event["outcome"] == "provider_failed" and event["error"] == "Connection error." for event in agents)
     assert all(event["runtime"]["failure_class"] == "turn_failed" and event["runtime"]["failed_turns"] == 4 for event in agents)
+    assert [event["label"] for event in agents] == ["init", "init2"]
+    assert all(event["attempt"] == 0 and event["candidate_label"] == event["label"] for event in agents)
+    assert not any(event.get("event") == "provider_retry" for event in events)
 
 
 def test_a_reply_without_a_code_block_gets_a_nudge(tmp_path):
@@ -677,3 +680,269 @@ def test_from_run_is_not_an_external_duplicate_on_its_first_evaluation(tmp_path)
     evaluated = asyncio.run(orch._eval(source, "prior"))
     assert evaluated.report is not None and evaluated.report.status == "ok" and evaluated.eligible
     assert calls
+
+
+def _session_source(marker: str) -> str:
+    return code(marker).split("```metal\n", 1)[1].rsplit("```", 1)[0]
+
+
+def _session_result(marker: str | None, *, failure_class: str = "", cost: float = 0.01, notes: str = "") -> AgentResult:
+    return AgentResult(
+        source=None if marker is None else _session_source(marker), cost_usd=cost, cost_incomplete=False,
+        status="ok", error="Connection error." if failure_class == "turn_failed" else "", notes=notes,
+        diagnostics={
+            "failure_class": failure_class,
+            "failed_turns": 1 if failure_class == "turn_failed" else 0,
+            "last_terminal_kind": "failed" if failure_class == "turn_failed" else "result",
+            "session_ids": ["s1"],
+        },
+    )
+
+
+def _run_events(orch) -> list[dict]:
+    return [json.loads(line) for line in (orch.run_dir / "transcript.jsonl").read_text().splitlines()]
+
+
+def test_a_provider_failure_retries_inside_the_same_candidate_and_keeps_costs_and_notes(tmp_path):
+    attempts = []
+    sleeps = []
+
+    def agent(brief, tag):
+        if brief.seedless:
+            return _session_result("speed=1.0")
+        attempts.append(tag)
+        if tag == "r1.p0":
+            return _session_result(None, failure_class="turn_failed")
+        if tag == "r1.p0.retry1":
+            return _session_result("speed=1.2", notes="recovered on retry\n")
+        raise AssertionError(tag)
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], max_rounds=1, provider_retries=1)
+    orch.agent_runner = agent
+
+    async def nap(delay):
+        sleeps.append(delay)
+
+    orch._sleep = nap
+    res = run(orch)
+    assert res.stop_reason == "max_rounds"
+    assert res.best_label == "r1.p0" and res.best_speedup == pytest.approx(1.2)
+    assert attempts == ["r1.p0", "r1.p0.retry1"] and sleeps == [5.0]
+    assert res.spent_usd == pytest.approx(0.03) and res.ledger["requests"] == 3
+    assert [c["label"] for c in res.candidates] == ["init", "r1.p0"]
+    assert (orch.run_dir / "candidates" / "001_r1.p0" / "NOTES.md").read_text() == "recovered on retry\n"
+    assert json.loads((orch.run_dir / "run_config.json").read_text())["search"]["provider_retries"] == 1
+    events = _run_events(orch)
+    retry = [event for event in events if event.get("event") == "provider_retry"]
+    assert len(retry) == 1 and retry[0]["candidate_label"] == "r1.p0" and retry[0]["attempt"] == 1
+    assert retry[0]["status"] == "scheduled" and retry[0]["delay_s"] == 5.0
+    agents = [event for event in events if event.get("event") == "agent" and str(event.get("candidate_label")) == "r1.p0"]
+    assert [(event["label"], event["attempt"], event["outcome"]) for event in agents] == [
+        ("r1.p0", 0, "provider_failed"), ("r1.p0.retry1", 1, "evaluated"),
+    ]
+    assert {event["committee"] for event in agents} == {"first"}
+
+
+def test_provider_retries_exhaustion_counts_once_per_round_before_the_existing_two_strike_stop(tmp_path):
+    attempts = []
+
+    def agent(brief, tag):
+        if brief.seedless:
+            return _session_result("speed=1.0")
+        attempts.append(tag)
+        return _session_result(None, failure_class="turn_failed")
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], max_rounds=2, provider_retries=1)
+    orch.agent_runner = agent
+
+    async def nap(_delay):
+        return None
+
+    orch._sleep = nap
+    res = run(orch)
+    assert res.stop_reason == "agent_failure"
+    assert attempts == ["r1.p0", "r1.p0.retry1", "r2.p0", "r2.p0.retry1"]
+    assert res.spent_usd == pytest.approx(0.05)
+    assert res.rounds == 2 and res.best_label == "init"
+    events = _run_events(orch)
+    assert len([event for event in events if event.get("event") == "provider_retry"]) == 2
+    assert json.loads((orch.run_dir / "state.json").read_text())["agent_failures"] == 2
+
+
+def test_a_normal_answer_without_submission_is_not_a_provider_retry(tmp_path):
+    attempts = []
+
+    def agent(brief, tag):
+        if brief.seedless:
+            return _session_result("speed=1.0")
+        attempts.append(tag)
+        return _session_result(None, failure_class="no_submission_after_result")
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], max_rounds=2, provider_retries=3)
+    orch.agent_runner = agent
+    res = run(orch)
+    assert res.stop_reason == "agent_failure"
+    assert attempts == ["r1.p0", "r2.p0"]
+    assert res.spent_usd == pytest.approx(0.03)
+    events = _run_events(orch)
+    assert not any(event.get("event") == "provider_retry" for event in events)
+    assert [event["outcome"] for event in events if event.get("event") == "agent" and not event.get("candidate_label") == "init"] == [
+        "agent_no_submission", "agent_no_submission",
+    ]
+
+
+def test_a_checkpoint_from_a_degraded_session_is_evaluated_without_retrying(tmp_path):
+    attempts = []
+
+    def agent(brief, tag):
+        if brief.seedless:
+            return _session_result("speed=1.0")
+        attempts.append(tag)
+        result = _session_result("speed=1.2")
+        result.diagnostics["failed_turns"] = 1
+        return result
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], max_rounds=1, provider_retries=3)
+    orch.agent_runner = agent
+    res = run(orch)
+    assert res.best_label == "r1.p0" and attempts == ["r1.p0"]
+    assert not any(event.get("event") == "provider_retry" for event in _run_events(orch))
+
+
+def test_the_budget_gate_runs_between_provider_attempts(tmp_path):
+    attempts = []
+
+    def agent(brief, tag):
+        if brief.seedless:
+            return _session_result("speed=1.0")
+        attempts.append(tag)
+        if tag == "r1.p0":
+            return _session_result(None, failure_class="turn_failed")
+        return _session_result("speed=1.2")
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], budget=0.065, max_rounds=1, provider_retries=1)
+    orch.agent_runner = agent
+
+    async def nap(_delay):
+        return None
+
+    orch._sleep = nap
+    res = run(orch)
+    assert res.stop_reason == "budget_exhausted"
+    assert attempts == ["r1.p0"] and res.spent_usd == pytest.approx(0.02)
+    events = _run_events(orch)
+    assert len([event for event in events if event.get("event") == "agent"]) == 2
+    assert len([event for event in events if event.get("event") == "provider_retry"]) == 1
+
+
+def test_provider_retries_must_be_a_small_nonnegative_integer(tmp_path):
+    for value in (-1, 4, True, "1"):
+        orch = make_orch(tmp_path / str(value), llm_script(code("speed=1.0")), [], provider_retries=value)
+        with pytest.raises(RunStartError, match="provider_retries"):
+            run(orch)
+
+
+def test_an_interrupted_retry_backoff_restores_the_attempt_and_all_previous_spend(tmp_path):
+    from taic.orchestrator import StopRun
+    from taic.resume import describe, load_snapshot
+
+    def agent(brief, tag):
+        if brief.seedless:
+            return _session_result("speed=1.0")
+        assert tag == "r1.p0"
+        return _session_result(None, failure_class="turn_failed")
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], max_rounds=2, provider_retries=1)
+    orch.agent_runner = agent
+
+    async def interrupted(_delay):
+        raise StopRun("retry_wait_interrupted")
+
+    orch._sleep = interrupted
+    res = run(orch)
+    assert res.stop_reason == "retry_wait_interrupted"
+    assert json.loads((orch.run_dir / "state.json").read_text())["provider_attempts"] == {"r1.p0": 1}
+    snap = load_snapshot(orch.run_dir, orch.search, KERNEL)
+    assert snap.provider_attempts == {"r1.p0": 1}
+    assert describe(snap)["provider_attempts"] == {"r1.p0": 1}
+    assert snap.spent_usd == pytest.approx(0.02)
+
+    resumed = make_orch(tmp_path / "resumed", llm_script(code("speed=1.0")), [], max_rounds=2, provider_retries=1)
+    resumed.restore(snap, dry_run=True)
+    seen = []
+
+    def recovered(brief, tag):
+        seen.append(tag)
+        return _session_result("speed=1.2")
+
+    resumed.agent_runner = recovered
+    outcome = asyncio.run(resumed._one_session("r1.p0", seedless=False))
+    assert outcome == "evaluated"
+    assert seen == ["r1.p0.retry1"]
+    assert resumed._provider_attempts == {}
+    assert resumed.ledger.total_usd == pytest.approx(0.03)
+    assert resumed._session_costs[-2:] == [0.01, 0.01]
+
+
+def test_three_provider_retries_use_bounded_exponential_backoff(tmp_path):
+    attempts = []
+    sleeps = []
+
+    def agent(brief, tag):
+        if brief.seedless:
+            return _session_result("speed=1.0")
+        attempts.append(tag)
+        return _session_result(None, failure_class="turn_failed")
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], max_rounds=1, provider_retries=3)
+    orch.agent_runner = agent
+
+    async def nap(delay):
+        sleeps.append(delay)
+
+    orch._sleep = nap
+    res = run(orch)
+    assert res.stop_reason == "max_rounds"
+    assert attempts == ["r1.p0", "r1.p0.retry1", "r1.p0.retry2", "r1.p0.retry3"]
+    assert sleeps == [5.0, 10.0, 20.0] and res.spent_usd == pytest.approx(0.05)
+    assert json.loads((orch.run_dir / "state.json").read_text())["agent_failures"] == 1
+
+
+def test_timeout_and_process_failure_are_not_provider_retries(tmp_path):
+    for status, failure_class in (("timeout", "timeout"), ("failed", "process_failed")):
+        attempts = []
+
+        def agent(brief, tag):
+            if brief.seedless:
+                return _session_result("speed=1.0")
+            attempts.append(tag)
+            result = _session_result(None, failure_class=failure_class)
+            result.status = status
+            return result
+
+        orch = make_orch(tmp_path / status, llm_script(code("speed=1.0")), [], max_rounds=1, provider_retries=3)
+        orch.agent_runner = agent
+        res = run(orch)
+        assert res.stop_reason == "max_rounds"
+        assert attempts == ["r1.p0"]
+        assert not any(event.get("event") == "provider_retry" for event in _run_events(orch))
+
+
+def test_cost_incomplete_does_not_start_a_provider_retry(tmp_path):
+    attempts = []
+
+    def agent(brief, tag):
+        if brief.seedless:
+            return _session_result("speed=1.0")
+        attempts.append(tag)
+        result = _session_result(None, failure_class="turn_failed")
+        result.cost_usd = None
+        result.cost_incomplete = True
+        return result
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], max_rounds=1, provider_retries=3)
+    orch.agent_runner = agent
+    res = run(orch)
+    assert res.stop_reason.startswith("cost_incomplete")
+    assert attempts == ["r1.p0"]
+    assert not any(event.get("event") == "provider_retry" for event in _run_events(orch))

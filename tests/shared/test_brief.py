@@ -186,10 +186,11 @@ def test_agent_failures_expose_structured_causes_but_not_response_bodies(tmp_pat
     (run / "state.json").write_text(json.dumps({"task": "conv2d", "phase": "done", "stop_reason": "agent_failure"}))
     rows = [
         {"event": "agent", "label": "r3.p0", "provider": "deepseek", "model": "deepseek-flash", "committee": "first",
-         "outcome": "agent_failed", "error": "Connection error.", "had_kernel": False, "cost_usd": 0.1,
+         "outcome": "provider_failed", "error": "Connection error.", "had_kernel": False, "cost_usd": 0.1,
          "runtime": {"failure_class": "turn_failed", "failed_turns": 4, "last_terminal_kind": "failed"}},
-        {"event": "agent", "label": "r4.p0", "provider": "moonshot", "model": "kimi-k3.1-pro", "committee": "second",
-         "outcome": "agent_failed", "error": SECRET, "had_kernel": False, "cost_usd": 0.2,
+        {"event": "agent", "label": "r4.p0.retry1", "candidate_label": "r4.p0", "attempt": 1,
+         "provider": "moonshot", "model": "kimi-k3.1-pro", "committee": "second",
+         "outcome": "agent_no_submission", "error": SECRET, "had_kernel": False, "cost_usd": 0.2,
          "runtime": {"failure_class": "no_submission_after_result", "failed_turns": 1,
                      "last_terminal_kind": "result", "response_preview": MARKER},
          "diagnostics_path": "agent_diagnostics/r4.json"},
@@ -204,6 +205,7 @@ def test_agent_failures_expose_structured_causes_but_not_response_bodies(tmp_pat
     assert failures[1]["failure_class"] == "no_submission_after_result"
     assert failures[1]["last_terminal_kind"] == "result" and failures[1]["error"] == "<redacted>"
     assert failures[1]["diagnostics_path"] == "agent_diagnostics/r4.json"
+    assert failures[1]["candidate_label"] == "r4.p0" and failures[1]["attempt"] == 1
 
 
 def test_gpu_events_are_the_cache_tail_and_the_lane_is_omitted_when_absent(tmp_path, capsys):

@@ -122,6 +122,7 @@ class Snapshot:
     initial_budget_usd: float | None = None
     resumes: int = 0
     agent_failures: int = 0
+    provider_attempts: dict = field(default_factory=dict)  # candidate label -> next provider retry attempt to run
     # The phase recorded in ``state.json`` when the process stopped. ``confirm`` means the search
     # phase had ended and the resume exists to finish the remeasure, not to start another session.
     phase: str = ""
@@ -826,6 +827,12 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
     history = list((state or {}).get("history") or [])
     stagnant = int((state or {}).get("stagnant") or 0)
     agent_failures = int((state or {}).get("agent_failures") or 0)
+    raw_attempts = (state or {}).get("provider_attempts")
+    provider_attempts = {}
+    if isinstance(raw_attempts, dict):
+        for label, attempt in raw_attempts.items():
+            if isinstance(label, str) and label and isinstance(attempt, int) and not isinstance(attempt, bool) and attempt >= 0:
+                provider_attempts[label] = attempt
     hangs = int(_first((state or {}).get("hangs"), 0) or 0)
     evaluations = int(_first((state or {}).get("evaluations"), len(trace)) or 0)
     crashes = int((state or {}).get("crashes_in_a_row") or 0)
@@ -842,7 +849,8 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
         run_dir=str(run_dir), task=task, dtype=dtype, size=size, model=model, requests=requests, candidates=cands, trace=trace,
         history=history, best_label=best_label, rounds_done=max(0, rnd if search_finished else next_round - 1), next_round=next_round, stagnant=stagnant,
         partial=None, hangs=hangs, evaluations=evaluations, crashes_in_a_row=crashes, system=system, elapsed_s=elapsed,
-        started_at=started, initial_budget_usd=initial, resumes=resumes, agent_failures=agent_failures, phase=phase, search_finished=search_finished, notes=notes,
+        started_at=started, initial_budget_usd=initial, resumes=resumes, agent_failures=agent_failures,
+        provider_attempts=provider_attempts, phase=phase, search_finished=search_finished, notes=notes,
         checks={"loop_protocol": "flame_chase_1"},
     )
 
@@ -886,6 +894,7 @@ def describe(snap: Snapshot) -> dict:
         "evaluations": snap.evaluations, "hangs": snap.hangs, "profiles": len(snap.profiles), "elapsed_s": round(snap.elapsed_s, 1),
         "system_prompt_restored": bool(snap.system),
         "continues_in_round": p.rnd if p else snap.next_round,
+        "provider_attempts": dict(snap.provider_attempts),
         "round": None if not p else {
             "seed": p.seed_label, "plans": [x["title"] for x in (p.plans or [])] or None, "plans_from": p.plan_source,
             "finished_branches": {f"p{i}": lab for i, lab in p.done.items()},

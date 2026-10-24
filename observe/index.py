@@ -440,6 +440,8 @@ class Index:
                 run_id TEXT NOT NULL,
                 seq INTEGER NOT NULL,
                 label TEXT,
+                candidate_label TEXT,
+                attempt INTEGER NOT NULL DEFAULT 0,
                 committee TEXT,
                 provider TEXT,
                 model TEXT,
@@ -587,6 +589,8 @@ class Index:
             self.conn.execute("ALTER TABLE runs ADD COLUMN backend_version TEXT")
         session_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(sessions)")}
         for name, declaration in (
+            ("candidate_label", "TEXT"),
+            ("attempt", "INTEGER NOT NULL DEFAULT 0"),
             ("session_id", "TEXT"),
             ("failed_turns", "INTEGER NOT NULL DEFAULT 0"),
             ("last_kind", "TEXT"),
@@ -1296,13 +1300,16 @@ class Index:
                 self.conn.execute(
                     """
                     INSERT INTO sessions (
-                        run_id, seq, label, committee, provider, model, outcome, cost_usd,
+                        run_id, seq, label, candidate_label, attempt, committee, provider, model, outcome, cost_usd,
                         session_id, failed_turns, last_kind, failure_class, error, tool_calls, diagnostics_path,
                         tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, t
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
-                        run_id, seq, str(event.get("label") or ""), str(event.get("committee") or ""),
+                        run_id, seq, str(event.get("label") or ""),
+                        str(event.get("candidate_label") or event.get("label") or ""),
+                        int(event.get("attempt")) if isinstance(event.get("attempt"), int) and not isinstance(event.get("attempt"), bool) and event.get("attempt") >= 0 else 0,
+                        str(event.get("committee") or ""),
                         str(event.get("provider") or ""), str(event.get("model") or ""), str(event.get("outcome") or ""),
                         _num(event.get("cost_usd")),
                         session_id, count("failed_turns"), _diagnostic(runtime.get("last_terminal_kind"), 40),

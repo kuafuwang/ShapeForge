@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import secrets
 import re
@@ -204,6 +205,10 @@ class RunStartError(Exception):
 
     拒绝发生在这两种情形：目录里已经有一次运行（拒绝覆盖既有文件），或 ``run_config.json`` 写不出去。
     """
+
+
+NO_KERNEL_OUTCOMES = frozenset({"agent_failed", "provider_failed", "agent_no_submission"})
+PROVIDER_RETRY_BASE_DELAY_S = 5.0
 
 
 # 一颗被评过（或即将评）的内核。能否成为下一轮种子不看标签，只看 eligible 加上是否快过测量噪声。
@@ -665,6 +670,8 @@ class Orchestrator:
         self._external_texts: set[str] | None = None
         self._from_text = ""
         self._agent_failures = 0
+        self._provider_attempts: dict[str, int] = {}
+        self._sleep = asyncio.sleep  # tests replace this to avoid waiting through retry backoff
         self._failure_feedback = ""
         self._notes_summary = ""
         self._evidence = ""
@@ -801,6 +808,7 @@ class Orchestrator:
                 "launch_protocol": 1,
                 "loop_protocol": "flame_chase_1",
                 "agent_guidance": self._agent_guidance_record(),
+                "harness_experiment": ({"experiment_id": self.search.harness_experiment_id, "arm": self.search.harness_experiment_arm, "change_sha256": self.search.harness_change_sha256, "change_path": self.search.harness_change_path} if self.search.harness_experiment_id else None),
         }
         # 两个委员会和各自唯一的成员。没有密钥，也没有端点。
         body["committees"] = committees_record(self.committees)
@@ -942,6 +950,7 @@ class Orchestrator:
                 "search_seed_speedup": self._search_seed.speedup if self._search_seed else (self.best.speedup if self.best else None),
                 "confirm_winner_label": self._confirm_winner.label if self._confirm_winner else None,
                 "agent_failures": self._agent_failures,
+                "provider_attempts": dict(self._provider_attempts),
                 "hangs": self.hangs,
                 "crashes_in_a_row": self.crashes_in_a_row,
                 "evaluations": self.evaluations,
@@ -989,17 +998,18 @@ class Orchestrator:
         if self.best:
             self.best.is_best = True
         self.trace = [dict(t) for t in snap.trace]
+        # The session-cost floor must include failed and retried sessions too, not only sessions
+        # that produced a candidate trace entry. The transcript request list has every billed attempt.
         self._session_costs = []
-        previous = 0.0
-        for item in sorted(self.trace, key=lambda row: int(row.get("idx") or 0)):
+        for item in snap.requests:
+            if item.get("label") == "unaccounted":
+                continue
             try:
-                total = float(item.get("cost_usd") or 0.0)
+                cost = float(item.get("cost_usd") or 0.0)
             except (TypeError, ValueError):
                 continue
-            delta = total - previous
-            if delta > 0:
-                self._session_costs.append(delta)
-            previous = max(previous, total)
+            if math.isfinite(cost) and cost > 0:
+                self._session_costs.append(cost)
         self._session_costs = self._session_costs[-8:]
         self.history = list(snap.history)
         self.hangs, self.evaluations, self.crashes_in_a_row = snap.hangs, snap.evaluations, snap.crashes_in_a_row
@@ -1016,6 +1026,7 @@ class Orchestrator:
         self._resumes = snap.resumes + 1
         self._stagnant = snap.stagnant
         self._agent_failures = int(getattr(snap, "agent_failures", 0) or 0)
+        self._provider_attempts = dict(getattr(snap, "provider_attempts", {}) or {})
         self._restore_handoff()
         self._round = snap.partial.rnd if snap.partial else snap.rounds_done
         self._resume = snap
@@ -1639,6 +1650,9 @@ class Orchestrator:
             raise RunStartError("kernel writing goes through hmz; kernel_agent must be pi")
         if self.search.branches != 1 or self.search.init_samples != 1:
             raise RunStartError("this search is one session a round: branches and init_samples must be 1")
+        retries = getattr(self.search, "provider_retries", 0)
+        if isinstance(retries, bool) or not isinstance(retries, int) or not 0 <= retries <= 3:
+            raise RunStartError("provider_retries must be an integer between 0 and 3")
 
     def _ensure_gpu_lock_file(self) -> None:
         """@brief 建好整机的 GPU 锁文件，让只读的会话也能 flock 它。
@@ -1652,9 +1666,43 @@ class Orchestrator:
         path.touch(exist_ok=True)
 
     async def _one_session(self, tag: str, *, seedless: bool) -> str:
-        """@brief 跑一场 hmz 会话，返回 ``agent_failed``、``unchanged`` 或 ``evaluated``。
+        """@brief 运行一个候选会话，并按配置对结构化传输失败做有界重试。
 
-        崩溃或超时之后没有交出内核的会话算 ``agent_failed``。干净退出但没写 submission 文件也算 ``agent_failed``。
+        ``tag`` 始终是候选标签。第零次 attempt 与它同名；重试使用 ``<tag>.retryN`` 作为
+        session/work/submission 标签，但成功后的候选仍叫 ``tag``。只有 ``provider_failed``
+        会重试；正常回答却没交卷、timeout、进程失败、unchanged 和已有 checkpoint 都不重试。
+        每次 attempt 独立过预算门、计费和写诊断，最终无核结果才交给原有的两场失败计数。
+        """
+        retries = getattr(self.search, "provider_retries", 0)
+        attempt = int(self._provider_attempts.get(tag, 0) or 0)
+        if attempt > retries:
+            self._provider_attempts.pop(tag, None)
+            return "provider_failed"
+        while True:
+            session_tag = tag if attempt == 0 else f"{tag}.retry{attempt}"
+            outcome = await self._one_session_attempt(
+                session_tag, seedless=seedless, candidate_label=tag, attempt=attempt,
+            )
+            if outcome != "provider_failed" or attempt >= retries:
+                self._provider_attempts.pop(tag, None)
+                self._publish_state(inflight=None)
+                return outcome
+            attempt += 1
+            self._provider_attempts[tag] = attempt
+            self._publish_state("llm", inflight=None)
+            delay = min(30.0, PROVIDER_RETRY_BASE_DELAY_S * (2 ** (attempt - 1)))
+            self.llm.transcript.log({
+                "event": "provider_retry", "label": session_tag, "candidate_label": tag,
+                "attempt": attempt, "delay_s": delay, "reason": "turn_failed", "status": "scheduled",
+            })
+            self.log(f"  [{tag}] provider turn failed; retry {attempt}/{retries} in {delay:.0f}s")
+            await self._sleep(delay)
+
+    async def _one_session_attempt(self, tag: str, *, seedless: bool, candidate_label: str, attempt: int) -> str:
+        """@brief 跑一场 hmz 会话，返回 ``agent_failed``、``provider_failed``、``agent_no_submission``、``unchanged`` 或 ``evaluated``。
+
+        崩溃、进程失败或超时之后没有交出内核的会话算 ``agent_failed``；结构化 ``turn_failed`` 且没有
+        submission 算 ``provider_failed``；正常 ``result`` 却没写 submission 算 ``agent_no_submission``。
         干净退出但把种子的字节写回该文件算 ``unchanged``，不计一次失败。文件变了就评测，不管进程怎么退出。
         反馈只解析一次、只记录一次，会话提前停下时同样记录。
 
@@ -1665,7 +1713,9 @@ class Orchestrator:
 
         @param tag 会话标签（同时是 ``agent_work/`` 下的目录名，``/`` 会换成 ``_``）。
         @param seedless 是否为初始生成（不把当前种子交给会话）。
-        @return ``agent_failed`` / ``unchanged`` / ``evaluated``。
+        @param candidate_label 成功时要评测的候选标签；重试 session 与它不同。
+        @param attempt 第几次尝试，0 是首次会话。
+        @return ``agent_failed`` / ``provider_failed`` / ``agent_no_submission`` / ``unchanged`` / ``evaluated``。
         @raises BudgetExhausted 余额不足以再开一场会话时。
         @raises StopRun 自检超时把 hangs 推到上限、或会话没有 token 计数时。
         @raises RunStartError 脚本运行时没有注入 ``agent_runner``（不得起 hmz）时。
@@ -1721,6 +1771,7 @@ class Orchestrator:
                     "event": "agent", "label": tag, "harness": "pi", "provider": member.provider, "model": member.model,
                     "committee": self._committee_name, "cost_usd": None, "cost_incomplete": True, "had_kernel": False,
                     "outcome": "agent_failed", "error": str(exc)[:180], "self_checks": 0, "self_check_timeouts": 0,
+                    "candidate_label": candidate_label, "attempt": attempt,
                 }
                 event.update(self._feedback_slim(parsed))
                 self.llm.transcript.log(event)
@@ -1729,7 +1780,7 @@ class Orchestrator:
                 return "agent_failed"
             parsed = self._parsed_feedback(work, result, started)
             if result.cost_usd is None:
-                self.llm.transcript.log(self._agent_event(tag, member, result, "cost_incomplete", parsed))
+                self.llm.transcript.log(self._agent_event(tag, member, result, "cost_incomplete", parsed, candidate_label=candidate_label, attempt=attempt))
                 outcome = None
                 exit_kind = "cost_incomplete"
                 raise StopRun("cost_incomplete: the session finished without a token count, so the ledger cannot continue")
@@ -1745,15 +1796,23 @@ class Orchestrator:
                 # 超时后交回来的核不再送上 GPU。没有内核的超时仍只算代理失败。
                 self.hangs += 1
             seed_source = None if self.best is None else self.best.source
-            if result.status == "timeout" or result.source is None:
+            if result.status == "timeout":
                 outcome = "agent_failed"
+            elif result.source is None:
+                failure_class = str((getattr(result, "diagnostics", {}) or {}).get("failure_class") or "")
+                if failure_class == "turn_failed":
+                    outcome = "provider_failed"
+                elif failure_class == "no_submission_after_result":
+                    outcome = "agent_no_submission"
+                else:
+                    outcome = "agent_failed"
             elif result.status == "failed" and result.source == seed_source:
                 outcome = "agent_failed"
             elif seed_source is not None and result.source == seed_source:
                 outcome = "unchanged"
             else:
                 outcome = "evaluated"
-            self.llm.transcript.log(self._agent_event(tag, member, result, outcome, parsed))
+            self.llm.transcript.log(self._agent_event(tag, member, result, outcome, parsed, candidate_label=candidate_label, attempt=attempt))
             missing = ""
             if result.source is None:
                 from .kernel_agent import submission_name
@@ -1767,8 +1826,8 @@ class Orchestrator:
                 raise StopRun("gpu_hang_circuit_breaker")
             try:
                 if outcome == "evaluated":
-                    cand = await self._eval(result.source, tag)
-                    self._file_session_notes(cand, result)
+                    cand = await self._eval(result.source, candidate_label)
+                    self._file_session_notes(cand, result, work_label=tag)
                     outer = self._outer_line(cand)
                     self._notes_summary = _notes_for_next(outer, result.notes)
                     if cand.report is not None and not cand.eligible and cand.report.status not in ("unchanged", "duplicate", "external_duplicate"):
@@ -1781,8 +1840,8 @@ class Orchestrator:
                         # 这一版已经算对。上一场失败反馈不再指向已经不是种子的核。
                         self._failure_feedback = ""
                 elif outcome == "unchanged" and result.source:
-                    cand = await self._eval(result.source, tag)
-                    self._file_session_notes(cand, result)
+                    cand = await self._eval(result.source, candidate_label)
+                    self._file_session_notes(cand, result, work_label=tag)
                     self._notes_summary = _notes_for_next(self._outer_line(cand), result.notes)
                     self._failure_feedback = ""
                 elif outcome == "unchanged":
@@ -1797,7 +1856,7 @@ class Orchestrator:
                 elif isinstance(exc, (StopRun, BudgetExhausted, RunStartError)):
                     exit_kind = "normal"
                     if cand is None:
-                        cand = self._by_label(tag)
+                        cand = self._by_label(candidate_label)
                 else:
                     outcome = None
                     cand = None
@@ -2121,7 +2180,7 @@ class Orchestrator:
         elif cand.is_best:
             self._failure_feedback = ""
 
-    def _agent_event(self, tag: str, member, result, outcome: str, parsed: dict | None = None) -> dict:
+    def _agent_event(self, tag: str, member, result, outcome: str, parsed: dict | None = None, *, candidate_label: str | None = None, attempt: int = 0) -> dict:
         """@brief 组装一条 ``event: agent`` 的会话记录事件。
 
         含委员会/模型、花费及其是否不完整、是否有内核、outcome、错误前 180 字、自检次数与耗时、token 分项，
@@ -2130,13 +2189,17 @@ class Orchestrator:
         @param tag 会话标签。
         @param member 本轮委员会成员。
         @param result hmz 的会话结果。
-        @param outcome ``evaluated`` / ``unchanged`` / ``agent_failed`` / ``cost_incomplete``。
+        @param outcome ``evaluated`` / ``unchanged`` / ``agent_failed`` / ``provider_failed`` /
+            ``agent_no_submission`` / ``cost_incomplete``。
         @param parsed 反馈解析结果，可为 None。
+        @param candidate_label 这次 session 所服务的候选；缺省与 session 标签相同。
+        @param attempt 第几次 session，0 是首次。
         @return 可直接写进会话记录的字典。
         """
         spent = result.spent or {}
         event = {
             "event": "agent", "label": tag, "harness": "pi", "provider": member.provider, "model": member.model,
+            "candidate_label": candidate_label or tag, "attempt": attempt,
             "committee": self._committee_name, "cost_usd": result.cost_usd, "cost_incomplete": bool(result.cost_incomplete),
             "had_kernel": bool(result.source), "outcome": outcome, "error": (result.error or "")[:180],
             "self_checks": result.self_checks, "self_check_timeouts": result.self_check_timeouts,
@@ -2149,7 +2212,7 @@ class Orchestrator:
         event.update(self._feedback_slim(parsed))
         return event
 
-    def _file_session_notes(self, cand: Candidate, result) -> None:
+    def _file_session_notes(self, cand: Candidate, result, *, work_label: str | None = None) -> None:
         """@brief 把会话的 NOTES、自检结果与反馈抄进候选目录。
 
         NOTES 来自会话结果；自检先看 ``.selfcheck/self_checks.jsonl``，再看工作目录里的副本，最后看受保护的
@@ -2164,7 +2227,7 @@ class Orchestrator:
             return
         if result.notes:
             (folder / "NOTES.md").write_text(result.notes)
-        work = self.run_dir / "agent_work" / cand.label.replace("/", "_")
+        work = self.run_dir / "agent_work" / (work_label or cand.label).replace("/", "_")
         src = work / ".selfcheck" / "self_checks.jsonl"
         if not src.is_file():
             src = work / "self_checks.jsonl"
@@ -2263,8 +2326,8 @@ class Orchestrator:
     async def _initial_generation(self) -> None:
         """@brief 初始生成：最多 ``INITIAL_RESTARTS`` 次，两个委员会轮流接手。
 
-        第一次是 first，失败换 second。一场 ``agent_failed`` 让 ``_agent_failures`` 加一并写一条历史；
-        两场都失败就抛 ``StopRun("agent_failure")`` 停下整次搜索，否则计数归零、拿到种子就退出。
+        第一次是 first，失败换 second。一场最终无核 outcome（``agent_failed``/``provider_failed``/``agent_no_submission``）
+        让 ``_agent_failures`` 加一并写一条历史；两场都失败就抛 ``StopRun("agent_failure")`` 停下整次搜索，否则计数归零、拿到种子就退出。
 
         @raises StopRun 连续两场会话都没有交出内核时。
         """
@@ -2274,9 +2337,9 @@ class Orchestrator:
             label = "init" if restart == 0 else f"init{restart + 1}"
             self.log(f"-- initial generation (attempt {restart + 1}/{INITIAL_RESTARTS}, {self._committee_name})")
             outcome = await self._one_session(label, seedless=True)
-            if outcome == "agent_failed":
+            if outcome in NO_KERNEL_OUTCOMES:
                 self._agent_failures += 1
-                self.history.append(f"initial: {self._committee_name} -> agent_failed")
+                self.history.append(f"initial: {self._committee_name} -> {outcome}")
                 if self._agent_failures >= 2:
                     raise StopRun("agent_failure")
                 continue
@@ -2332,7 +2395,7 @@ class Orchestrator:
         进入 ``_eval`` 时在 ``gpu_lock`` 上排队，GPU 评测串行。只有换过种子才不算停滞（``next_stagnant``），
         停滞到 ``patience`` 就以 ``converged`` 停下。轮数上限每轮重新读：一轮在飞时 control 文件可以把它抬高。
         ``search.stop_at_roofline`` 打开且种子已贴着下界时以 ``at_roofline`` 停下（这是启发式，不是物理最优）。
-        一场 ``agent_failed`` 让 ``_agent_failures`` 加一并写历史，连续两场就以 ``agent_failure`` 停下。
+        一场最终无核 outcome 让 ``_agent_failures`` 加一并写历史，连续两场就以 ``agent_failure`` 停下。
         ``partial`` 被忽略：续跑的那一轮重新开一场会话。会话内触发熔断（``StopRun``）或预算不够（``BudgetExhausted``）时
         异常直接向上传，由 ``run`` 收进 ``stop_reason``。
 
@@ -2381,9 +2444,9 @@ class Orchestrator:
             self._evidence = evidence
             before = seed
             outcome = await self._one_session(f"r{rnd}.p0", seedless=False)
-            if outcome == "agent_failed":
+            if outcome in NO_KERNEL_OUTCOMES:
                 self._agent_failures += 1
-                self.history.append(f"round {rnd}: {self._committee_name} -> agent_failed")
+                self.history.append(f"round {rnd}: {self._committee_name} -> {outcome}")
                 if self._agent_failures >= 2:
                     res.stop_reason = "agent_failure"
                     return
@@ -2742,6 +2805,10 @@ class Orchestrator:
         res.protocol_version = PROTOCOL_VERSION
         result_doc = asdict(res)
         result_doc["schema_version"] = RESULT_SCHEMA_VERSION
+        if self.search.harness_experiment_id:
+            result_doc["harness_experiment_id"] = self.search.harness_experiment_id
+            result_doc["harness_experiment_arm"] = self.search.harness_experiment_arm
+            result_doc["harness_change_sha256"] = self.search.harness_change_sha256
         control.write_json_atomic(self.run_dir / "result.json", result_doc)
         self._archive_if_confirmed(result_doc)
         control.write_json_atomic(self.run_dir / "ledger.json", {"schema_version": LEDGER_SCHEMA_VERSION, "summary": self.ledger.summary(), "requests": self.ledger.requests})
