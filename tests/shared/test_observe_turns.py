@@ -124,7 +124,7 @@ def test_turns_hide_the_system_prompt_the_kernel_and_secrets(tmp_path, monkeypat
     assert len(row["reply"]) <= 800
     assert len(row["thinking"]) <= 300
     assert row["tools"] == ["quick_check"]
-    assert row["sent"].startswith("please sk-")
+    assert row["sent"] == "please <redacted>"
 
 
 def test_same_label_merges_until_the_label_comes_back_later(tmp_path, monkeypatch):
