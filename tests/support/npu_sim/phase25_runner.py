@@ -211,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         image = admin("docker image inspect --format '{{.Id}}' taic-remote-sim:local")
         report = {
             "schema_version": 1,
+            "coverage": "core_split_control",
             "simulated": True,
             "container_only": False,
             "split_control": not failure,
@@ -238,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
             "elapsed_s": round(time.time() - started, 3),
             "remaining_containers": running.stdout.strip(),
             "failure": failure,
-            "not_run": ["real_npu", "real_gpu", "paid_model", "npu_sdk_installation"],
+            "not_run": ["half_open_and_slow_consumer_matrix", "full_frame_limit_matrix", "multi_run_fairness_matrix", "real_npu", "real_gpu", "paid_model", "npu_sdk_installation"],
         }
         path = Path(args.report)
         path.parent.mkdir(parents=True, exist_ok=True)
