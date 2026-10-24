@@ -1,8 +1,8 @@
 {
 "_meta": {
-"git_commit": "84d5585327e6a380389509c662d889b21e5f5edd",
-"reason": "atomic checkpoint and stable synthetic golden paths",
-"recorded_at": "2026-10-24T09:07:20+08:00"
+"git_commit": "0e77c284fbc398f0dd6ea447dd5b543deee0a3b8",
+"reason": "TASK.md marks the sections it clipped for the byte budget and carries the session cost cap; the scripted fixture now echoes the requested task/dtype/size/mode so the orchestrator stops rejecting it as result_mismatch",
+"recorded_at": "2026-10-25T01:19:25+08:00"
 },
 "feedback": {
 "format_feedback_cut|compile_error": "STATUS: compile_error  (stage reached: compile)\nMetal compiler rejected the kernel\n\nMetal compiler errors (line numbers refer to your kernel source):\nkernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n",

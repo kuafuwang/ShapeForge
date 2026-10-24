@@ -92,7 +92,8 @@ def test_a_failed_domain_sweep_writes_a_report_and_no_result(tmp_path):
     win = SimpleNamespace(label="init", source="kernel void k() {}\n")
     asyncio.run(orch._domain_sweep(win))
     doc = json.loads((tmp_path / "run" / "domain_report.json").read_text())
-    assert seen == {"mode": "quick", "cases": ("domain",)}
+    # 本地评测适配器把请求里的 tuple 转成 list 再交给 evaluate_fn（与远程载荷同一形状），所以这里按 list 断言。
+    assert seen == {"mode": "quick", "cases": ["domain"]}
     assert doc["status"] == "incorrect"
     assert not (tmp_path / "run" / "result.json").exists()
 

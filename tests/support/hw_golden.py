@@ -206,6 +206,9 @@ def _scripted_eval(report_name: str):
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
         r = EvalReport.from_json(base)
+        # 报告的身份必须跟请求一致：编排器会拿 task/dtype/size/mode 与请求核对，不一致就判
+        # result_mismatch 并停掉整场搜索。模板是 paper 规模的 full 报告，这里改成这次请求的。
+        r.task, r.dtype, r.size, r.mode = task, dtype, size, mode
         m = re.search(r"// speed=([\d.]+)", source)
         if m:
             sp = float(m.group(1))
