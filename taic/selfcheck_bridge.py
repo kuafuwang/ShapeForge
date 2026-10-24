@@ -14,6 +14,7 @@ omitting ``self_check_dir``.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import hmac
 import json
 import math
@@ -66,6 +67,10 @@ class SelfCheckConfig:
     max_timed: int = 20
     max_gpu_s: float = 120.0
     allowed_modes: frozenset[str] = frozenset({"quick", "timed"})
+    allow_validate: bool = True
+    seed_report_path: Path | None = None
+    min_improvement: float = 1.005
+    noise_z: float = 2.0
     max_source_bytes: int = MAX_SOURCE_BYTES
     close_evaluator_on_stop: bool = False
 
@@ -92,9 +97,13 @@ class SelfCheckConfig:
         if not isinstance(self.max_source_bytes, int) or isinstance(self.max_source_bytes, bool) or self.max_source_bytes <= 0:
             raise ValueError("selfcheck max_source_bytes must be positive")
 
-    def request(self, source: str, mode: str) -> EvaluationRequest:
+    def request(self, source: str, mode: str, *, validate: bool = False) -> EvaluationRequest:
         if mode not in self.allowed_modes:
             raise SelfCheckBridgeError("mode_not_allowed", f"selfcheck mode {mode!r} is not allowed")
+        if not isinstance(validate, bool):
+            raise SelfCheckBridgeError("invalid_request", "validate must be boolean")
+        if validate and (mode != "timed" or not self.allow_validate):
+            raise SelfCheckBridgeError("validate_not_allowed", "validation is not allowed for this selfcheck")
         if not isinstance(source, str):
             raise SelfCheckBridgeError("invalid_source", "source must be text")
         if len(source.encode("utf-8")) > self.max_source_bytes:
@@ -109,7 +118,6 @@ class SelfCheckConfig:
             reps=self.reps,
             cases=self.cases,
             seed=None,
-            self_check_dir=self.self_check_dir,
             target_id=self.target_id,
             run_id=self.run_id,
             session_id=self.session_id,
@@ -118,6 +126,7 @@ class SelfCheckConfig:
             queue_timeout_s=30.0,
             cache_policy="disabled",
             eval_cache=False,
+            validate=validate,
         )
 
 
@@ -242,6 +251,49 @@ class SelfCheckServer:
         if report.get("status") in {"timeout", "crash"}:
             self._usage["hang"] = True
         self._save_usage()
+        if self.config.self_check_dir is not None:
+            # The host, not the remote worker, writes the authoritative row.
+            # ``tcenv.selfcheck.append`` also mirrors it to the host-only log.
+            from tcenv.selfcheck import append
+            from tcenv.schema import PROTOCOL_VERSION
+
+            bench = report.get("benchmark") if isinstance(report.get("benchmark"), dict) else {}
+            candidate = bench.get("candidate") if isinstance(bench.get("candidate"), dict) else {}
+            append(Path(self.config.self_check_dir), {
+                "status": report.get("status"),
+                "candidate_us": report.get("candidate_us"),
+                "cv": candidate.get("cv"),
+                "speedup": report.get("speedup"),
+                "elapsed_s": elapsed,
+                "task": request.task,
+                "dtype": request.dtype,
+                "size": request.size,
+                "target_id": request.target_id,
+                "protocol_version": PROTOCOL_VERSION,
+                "kernel_sha256": hashlib.sha256(request.source.encode("utf-8")).hexdigest(),
+            })
+
+    def _presentation(self, request: EvaluationRequest, result: EvaluationResult) -> dict[str, str]:
+        if request.mode != "timed" or self.config.seed_report_path is None:
+            return {}
+        try:
+            seed = json.loads(Path(self.config.seed_report_path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(seed, dict):
+            return {}
+        from tcenv.verdict import gpu_timestamp_line, replacement_line
+
+        report = result.report
+        return {
+            "gpu_timestamp": gpu_timestamp_line(report, seed),
+            "verdict": replacement_line(
+                report,
+                seed,
+                min_improvement=self.config.min_improvement,
+                noise_z=self.config.noise_z,
+            ),
+        }
 
     def _serve(self) -> None:
         while not self._stop.is_set():
@@ -278,12 +330,12 @@ class SelfCheckServer:
         try:
             raw = _read_line(conn, MAX_MESSAGE_BYTES, stop_event=self._stop)
             document = json.loads(raw.decode("utf-8"))
-            if not isinstance(document, dict) or set(document) != {"mode", "source", "token"}:
-                raise SelfCheckBridgeError("invalid_request", "request fields must be exactly mode, source and token")
+            if not isinstance(document, dict) or not {"mode", "source", "token"} <= set(document) or set(document) - {"mode", "source", "token", "validate"}:
+                raise SelfCheckBridgeError("invalid_request", "request fields must be mode, source, token and optional validate")
             token = document.get("token")
             if not isinstance(token, str) or not hmac.compare_digest(token, self.config.token):
                 raise SelfCheckBridgeError("unauthorized", "selfcheck session token was refused")
-            request = self.config.request(document["source"], document["mode"])
+            request = self.config.request(document["source"], document["mode"], validate=document.get("validate", False))
             quota_error = self._quota_error(request.mode)
             if quota_error is not None:
                 raise quota_error
@@ -299,7 +351,7 @@ class SelfCheckServer:
             if not isinstance(result, EvaluationResult):
                 raise SelfCheckBridgeError("evaluation_unavailable", "evaluator returned an invalid result", retryable=True)
             self._record_usage(request, result)
-            _write_document(conn, {"ok": True, "result": result.to_dict()})
+            _write_document(conn, {"ok": True, "result": result.to_dict(), "presentation": self._presentation(request, result)})
         except SelfCheckBridgeError as exc:
             _write_document(conn, {"ok": False, "error": {"code": exc.code, "message": str(exc)[:1000], "retryable": exc.retryable}})
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
@@ -370,6 +422,7 @@ class SelfCheckClient:
         self.token = token
         self.token_file = str(token_file) if token_file else ""
         self.timeout_s = float(timeout_s)
+        self.last_presentation: dict[str, str] = {}
 
     def _token(self) -> str:
         if self.token:
@@ -383,12 +436,14 @@ class SelfCheckClient:
                 return token
         raise SelfCheckBridgeError("unauthorized", "a selfcheck session token is required")
 
-    def check(self, source: str, mode: str) -> EvaluationResult:
+    def check(self, source: str, mode: str, *, validate: bool = False) -> EvaluationResult:
         if mode not in {"quick", "timed"}:
             raise ValueError("mode must be quick or timed")
+        if validate and mode != "timed":
+            raise ValueError("validation requires a timed selfcheck")
         if not isinstance(source, str):
             raise TypeError("source must be text")
-        payload = json.dumps({"mode": mode, "source": source, "token": self._token()}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        payload = json.dumps({"mode": mode, "source": source, "token": self._token(), "validate": bool(validate)}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         if len(payload) > MAX_MESSAGE_BYTES:
             raise SelfCheckBridgeError("source_too_large", "source exceeds the selfcheck limit")
         try:
@@ -405,6 +460,8 @@ class SelfCheckClient:
         if document.get("ok") is not True:
             error = document.get("error") if isinstance(document.get("error"), dict) else {}
             raise SelfCheckBridgeError(str(error.get("code") or "selfcheck_failed"), str(error.get("message") or "selfcheck failed"), retryable=error.get("retryable") is True)
+        presentation = document.get("presentation")
+        self.last_presentation = {str(k): str(v) for k, v in presentation.items() if isinstance(v, str)} if isinstance(presentation, dict) else {}
         try:
             return EvaluationResult.from_dict(document["result"])
         except (EvaluationError, KeyError, TypeError) as exc:
@@ -455,20 +512,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workspace", default="")
     parser.add_argument("--kernel", required=True)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--validate", action="store_true")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--quick", action="store_const", const="quick", dest="mode")
     group.add_argument("--timed", action="store_const", const="timed", dest="mode")
     args = parser.parse_args(argv)
+    if args.validate and args.mode != "timed":
+        print("--validate belongs to a timed selfcheck", file=sys.stderr)
+        return 2
     if not args.socket:
         print("TAIC_SELFCHECK_SOCKET or --socket is required", file=sys.stderr)
         return 2
     try:
         source = _workspace_kernel(args.kernel, args.workspace).read_text(encoding="utf-8")
-        result = SelfCheckClient(
+        client = SelfCheckClient(
             args.socket,
             token=os.environ.get("TAIC_SELFCHECK_TOKEN", ""),
             token_file=args.token_file,
-        ).check(source, args.mode)
+        )
+        result = client.check(source, args.mode, validate=args.validate)
         report = result.report if isinstance(result.report, EvalReport) else result.report
         if isinstance(report, dict) and report.get("simulated") is True:
             if args.json:
@@ -485,6 +547,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     else:
         print(format_feedback(report))
+        for key in ("gpu_timestamp", "verdict"):
+            line = client.last_presentation.get(key)
+            if line:
+                print(line)
     return 0 if report.status == "ok" else 1
 
 

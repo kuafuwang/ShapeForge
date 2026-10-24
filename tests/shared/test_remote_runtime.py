@@ -84,6 +84,60 @@ def test_explicit_remote_config_builds_pool_and_per_session_bridge(tmp_path):
         evaluator.close()
 
 
+def test_remote_config_can_use_separate_formal_and_selfcheck_grants(tmp_path):
+    """@brief 正式与自测可以使用不同远端 grant；自测 grant 不能冒充 formal。"""
+    formal_token = tmp_path / "formal.token"
+    selfcheck_token = tmp_path / "selfcheck.token"
+    formal_token.write_text("formal-token")
+    selfcheck_token.write_text("selfcheck-token")
+    command = [
+        sys.executable, "-m", "tests.support.npu_sim.service_entry",
+        "--state-dir", str(tmp_path / "state" / "{session_id}"),
+        "--run-id", "{run_id}", "--session-id", "{session_id}",
+        "--formal-token", "formal-token", "--selfcheck-token", "selfcheck-token",
+    ]
+    path = tmp_path / "remote.json"
+    path.write_text(json.dumps({
+        "command": command,
+        "token_file": str(formal_token),
+        "selfcheck_token_file": str(selfcheck_token),
+        "target_id": "sim-npu-test",
+        "expected_site_id": "sim-site",
+        "expected_worker_build": "sim-build-1",
+        "expected_task_pack_digest": TASK_PACK_DIGEST,
+        "task_fingerprint": TASK_FINGERPRINT,
+        "publishable_site_ids": [],
+        "socket_root": "/tmp/taic-remote-composition",
+        "timeout_s": 2,
+    }))
+    config = RemoteEvaluationConfig.from_file(path)
+    evaluator = config.make_evaluator("run-1")
+    selfcheck_pool = config.make_selfcheck_evaluator("run-1")
+    try:
+        assert evaluator.formal(_request()).report["simulated"] is True
+        from tcenv.remote.client import RemoteError
+        try:
+            selfcheck_pool.formal(_request())
+        except RemoteError as exc:
+            assert "selfcheck" in str(exc) or "formal" in str(exc)
+        else:
+            raise AssertionError("a selfcheck-only grant submitted formal evaluation")
+        work = tmp_path / "work"
+        work.mkdir()
+        server, token_file = config.make_bridge_factory(
+            task="relu", dtype="fp16", size="small",
+            task_fingerprint=TASK_FINGERPRINT, run_id="run-1",
+        )("session-1", work, evaluator)
+        try:
+            checked = SelfCheckClient(server.socket_path, token_file=token_file).check("kernel void demo() {}", "quick")
+            assert checked.report["simulated"] is True
+        finally:
+            server.stop()
+    finally:
+        selfcheck_pool.close()
+        evaluator.close()
+
+
 def test_remote_config_rejects_unknown_fields(tmp_path):
     """@brief 配置中的未知字段必须在创建连接前拒绝。"""
     path = tmp_path / "bad.json"

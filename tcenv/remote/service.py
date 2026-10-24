@@ -565,11 +565,46 @@ class RemoteService:
             except Exception as exc:
                 raise _JobFailed("worker_protocol_error", f"invalid EvalReport: {exc}") from exc
 
+    def _relay_progress(self, path: Path, request_id: str, stop: threading.Event) -> None:
+        """Forward bounded progress snapshots without exposing worker paths."""
+        last: dict[str, Any] | None = None
+        allowed = ("task", "dtype", "size", "mode", "stage", "status", "message", "finished", "updated_at")
+        while not stop.wait(0.05):
+            try:
+                document = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(document, dict):
+                continue
+            payload = {key: document[key] for key in allowed if key in document}
+            if payload == last:
+                continue
+            if isinstance(payload.get("message"), str):
+                payload["message"] = payload["message"][:300]
+            if "finished" in payload and not isinstance(payload["finished"], bool):
+                payload.pop("finished")
+            if "updated_at" in payload and not isinstance(payload["updated_at"], (int, float)):
+                payload.pop("updated_at")
+            last = payload
+            self._send("progress", request_id, payload)
+
     def _run_worker(self, job: _Job) -> dict[str, Any]:
         request = job.request
         env = scrubbed_env()
         root = str(Path(__file__).resolve().parents[2])
         env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
+        progress_dir = self.state_dir / "progress"
+        progress_dir.mkdir(parents=True, exist_ok=True)
+        progress_path = progress_dir / (sha256_hex(request.request_id.encode("utf-8")) + ".json")
+        env["TCENV_REMOTE_PROGRESS_PATH"] = str(progress_path)
+        progress_stop = threading.Event()
+        progress_thread = threading.Thread(
+            target=self._relay_progress,
+            args=(progress_path, request.request_id, progress_stop),
+            name="tcenv-remote-progress",
+            daemon=True,
+        )
+        progress_thread.start()
         try:
             proc = popen_group(
                 self.worker_command,
@@ -580,6 +615,8 @@ class RemoteService:
                 cwd=root,
             )
         except OSError as exc:
+            progress_stop.set()
+            progress_thread.join(timeout=1)
             raise _JobFailed("worker_unavailable", f"could not start worker: {exc}") from exc
         job.process = proc
         try:
@@ -593,10 +630,16 @@ class RemoteService:
             raise _JobFailed("candidate_timeout", "worker exceeded the candidate timeout") from exc
         finally:
             job.process = None
+            progress_stop.set()
+            progress_thread.join(timeout=1)
             # Normal worker exit does not prove that its children exited. Match
             # tcenv.evaluate's cleanup and terminate the whole process group.
             kill_group(proc)
             forget(proc)
+            try:
+                progress_path.unlink()
+            except OSError:
+                pass
         if job.cancel.is_set():
             raise _JobFailed("cancelled", "request cancelled")
         if proc.returncode != 0:
@@ -702,7 +745,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--task-pack-digest", required=True)
     parser.add_argument("--calibration-digest", required=True)
     parser.add_argument("--task-fingerprint", action="append", default=[])
-    parser.add_argument("--token", action="append", required=True)
+    parser.add_argument("--token", action="append", default=[])
+    parser.add_argument("--formal-token", action="append", default=[])
+    parser.add_argument("--selfcheck-token", action="append", default=[])
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--session-id", required=True)
     parser.add_argument("--allow-kind", action="append", choices=["formal_eval", "selfcheck"], default=None)
@@ -738,6 +783,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         for token in args.token
     ]
+    grants.extend(
+        SessionGrant(token=token, run_id=args.run_id, session_id=args.session_id, target_id=args.target_id, allowed_kinds=frozenset({"formal_eval"}))
+        for token in args.formal_token
+    )
+    grants.extend(
+        SessionGrant(token=token, run_id=args.run_id, session_id=args.session_id, target_id=args.target_id, allowed_kinds=frozenset({"selfcheck"}))
+        for token in args.selfcheck_token
+    )
+    if not grants:
+        raise ValueError("at least one --token, --formal-token or --selfcheck-token is required")
     signing_key = args.signature_key_file.read_bytes() if args.signature_key_file else None
     if signing_key is not None and not signing_key:
         raise ValueError("signature key file must not be empty")

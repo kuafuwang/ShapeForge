@@ -50,7 +50,7 @@ from .policy import candidate_eligible, choose_confirmed, comparison_speedup, in
 from .committees import committees_record, default_committees, handoff_for, order_committees
 from .parse import parse_plans
 from .evaluation_outbox import EvaluationOutbox
-from .session_runtime import HmzKernelSessionRunner, HmzSessionPlacement, LocalHmzKernelSessionRunner, SessionExecution, SessionPaths
+from .session_runtime import HmzKernelSessionRunner, HmzSessionPlacement, LocalHmzKernelSessionRunner, SelfCheckBinding, SessionExecution, SessionPaths
 from .session_supervisor import NO_KERNEL_OUTCOMES, ProviderRetryController, classify_result, session_origin
 from .symptom import bound_of
 
@@ -2092,6 +2092,11 @@ class Orchestrator:
                         turn_output_tokens=tokens,
                         turn_minutes=int(self.search.turn_minutes),
                         session_cost_cap_usd=session_cap,
+                        selfcheck=SelfCheckBinding(
+                            mode="host_bridge" if bridge_server is not None else "local_cli",
+                            endpoint_id=str(brief.selfcheck_socket),
+                            token_ref=str(brief.selfcheck_token_file),
+                        ),
                     )
                     result = await asyncio.to_thread(
                         self.session_runner.execute, brief,

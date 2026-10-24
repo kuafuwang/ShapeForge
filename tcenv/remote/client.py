@@ -419,6 +419,13 @@ class RemoteEvaluator:
                 if frame.frame_type == "progress":
                     # Progress is advisory. It never completes or changes a request.
                     self.last_progress = frame
+                    if request.progress_path is not None:
+                        try:
+                            from tcenv.events import publish
+
+                            publish(request.progress_path, dict(frame.payload))
+                        except Exception:
+                            pass
                     continue
                 if frame.frame_type == "error":
                     raise self._error_from(frame)

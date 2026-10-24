@@ -202,6 +202,47 @@ def test_bridge_allows_simulated_selfcheck_but_keeps_marker(tmp_path):
     assert result.report["simulated"] is True
 
 
+def test_bridge_validate_is_host_controlled_and_reaches_the_evaluator(tmp_path):
+    """@brief validate 只能由 host 策略开放，并且作为 request.validate 传给 evaluator。"""
+    executor = FakeExecutor()
+    server = SelfCheckServer(_config(tmp_path, allow_validate=True), executor, _short_socket())
+    with server:
+        result = SelfCheckClient(server.socket_path, token="test-token").check("kernel void demo() {}", "timed", validate=True)
+    assert result.report["status"] == "ok"
+    assert executor.requests[0].validate is True
+
+    blocked = SelfCheckServer(_config(tmp_path, allow_validate=False), FakeExecutor(), _short_socket())
+    with blocked:
+        with pytest.raises(SelfCheckBridgeError, match="validation"):
+            SelfCheckClient(blocked.socket_path, token="test-token").check("kernel void demo() {}", "timed", validate=True)
+    with pytest.raises(ValueError, match="validation"):
+        SelfCheckClient(blocked.socket_path, token="test-token").check("kernel void demo() {}", "quick", validate=True)
+
+
+def test_bridge_host_writes_authoritative_selfcheck_row_and_verdict(tmp_path):
+    """@brief timed selfcheck 由 host 写权威行，并用宿主种子报告生成换种子结论。"""
+    seed_path = tmp_path / "seed-report.json"
+    seed_path.write_text(json.dumps({"speedup": 1.0, "benchmark": {"candidate": {"cv": 0.01}}}), encoding="utf-8")
+
+    class FasterExecutor(FakeExecutor):
+        def selfcheck(self, request):
+            result = super().selfcheck(request)
+            result.report.speedup = 2.0
+            result.report.benchmark = {"candidate": {"cv": 0.01}}
+            return result
+
+    config = _config(tmp_path, seed_report_path=seed_path)
+    server = SelfCheckServer(config, FasterExecutor(), _short_socket())
+    with server:
+        client = SelfCheckClient(server.socket_path, token="test-token")
+        client.check("kernel void demo() {}", "timed")
+        assert "够换种子" in client.last_presentation["verdict"]
+    rows = (tmp_path / "checks" / "self_checks.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(rows) == 1
+    row = json.loads(rows[0])
+    assert row["status"] == "ok" and row["kernel_sha256"]
+
+
 def test_bridge_cli_reads_token_file_and_workspace_relative_kernel(tmp_path, monkeypatch, capsys):
     """@brief CLI 从 token 文件取凭据，只接受 workspace 相对候选路径。"""
     from taic.selfcheck_bridge import main

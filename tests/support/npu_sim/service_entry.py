@@ -26,6 +26,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-kind", action="append", choices=["formal_eval", "selfcheck"], default=None)
     parser.add_argument("--expires-at", type=float, default=None)
     parser.add_argument("--token", default=TOKEN)
+    parser.add_argument("--formal-token", default=None)
+    parser.add_argument("--selfcheck-token", default=None)
     parser.add_argument("--run-id", default="run-1")
     parser.add_argument("--session-id", default="session-1")
     parser.add_argument("--alt-token", default=None)
@@ -56,6 +58,10 @@ def main(argv: list[str] | None = None) -> int:
         expires_at=args.expires_at,
     )
     grants = [grant]
+    if args.formal_token:
+        grants.append(SessionGrant(token=args.formal_token, run_id=args.run_id, session_id=args.session_id, target_id="sim-npu-test", allowed_kinds=frozenset({"formal_eval"}), expires_at=args.expires_at))
+    if args.selfcheck_token:
+        grants.append(SessionGrant(token=args.selfcheck_token, run_id=args.run_id, session_id=args.session_id, target_id="sim-npu-test", allowed_kinds=frozenset({"selfcheck"}), expires_at=args.expires_at))
     if args.alt_token:
         grants.append(SessionGrant(token=args.alt_token, run_id=args.alt_run_id, session_id=args.alt_session_id, target_id="sim-npu-test"))
     service = RemoteService(

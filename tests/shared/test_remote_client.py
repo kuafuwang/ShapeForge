@@ -16,7 +16,7 @@ from tests.support.npu_sim.service_entry import TASK_FINGERPRINT, TASK_PACK_DIGE
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _request(*, request_id: str = "client-req-1", kind: str = "formal_eval", mode: str = "quick", source: str = "kernel void demo() {}", session_id: str = "session-1", candidate_timeout_s: float = 2.0) -> EvaluationRequest:
+def _request(*, request_id: str = "client-req-1", kind: str = "formal_eval", mode: str = "quick", source: str = "kernel void demo() {}", session_id: str = "session-1", candidate_timeout_s: float = 2.0, progress_path: Path | None = None) -> EvaluationRequest:
     return EvaluationRequest(
         request_id=request_id,
         run_id="run-1",
@@ -35,6 +35,7 @@ def _request(*, request_id: str = "client-req-1", kind: str = "formal_eval", mod
         candidate_timeout_s=candidate_timeout_s,
         queue_timeout_s=2.0,
         cache_policy="disabled",
+        progress_path=progress_path,
     )
 
 
@@ -134,6 +135,19 @@ def test_pool_binds_each_session_to_its_own_connection(tmp_path):
         assert len(pool._clients) == 2
     finally:
         pool.close()
+
+
+def test_progress_frames_update_the_host_progress_file(tmp_path):
+    """@brief 服务端 progress 只能落到 host 指定路径，不改变请求结果。"""
+    import json
+
+    progress = tmp_path / "eval_progress.json"
+    with _evaluator(tmp_path) as evaluator:
+        result = evaluator.formal(_request(request_id="progress-1", source="REMOTE_PROGRESS", progress_path=progress))
+    assert result.report["status"] == "ok"
+    document = json.loads(progress.read_text())
+    assert document["stage"] == "bench"
+    assert "TCENV_REMOTE_PROGRESS_PATH" not in document
 
 
 def test_transport_timeout_closes_the_request(tmp_path):

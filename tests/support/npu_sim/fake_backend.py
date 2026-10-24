@@ -26,6 +26,14 @@ class FakeNpuBackend:
             path.write_text(str(count + 1))
         # A deliberate slow path exercises worker timeout/cancellation without
         # requiring a device or a real kernel.
+        progress_path = os.environ.get("TCENV_REMOTE_PROGRESS_PATH")
+        if "REMOTE_PROGRESS" in request.source and progress_path:
+            Path(progress_path).write_text(json.dumps({
+                "task": request.task, "dtype": request.dtype, "size": request.size,
+                "mode": request.mode, "stage": "bench", "status": "running",
+                "message": "fake progress", "finished": False, "updated_at": time.time(),
+            }), encoding="utf-8")
+            time.sleep(0.35)
         if "REMOTE_SLEEP_FAIR" in request.source:
             time.sleep(1.0)
         elif "REMOTE_SLEEP_SHORT" in request.source:

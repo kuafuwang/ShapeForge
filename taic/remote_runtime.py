@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import secrets
 from dataclasses import dataclass
@@ -41,6 +42,7 @@ class RemoteEvaluationConfig:
     command: tuple[str, ...]
     token_file: Path
     target_id: str
+    selfcheck_token_file: Path | None = None
     signature_key_file: Path | None = None
     expected_site_id: str = ""
     expected_worker_build: str = ""
@@ -52,6 +54,9 @@ class RemoteEvaluationConfig:
     selfcheck_reps: int = 15
     selfcheck_max_timed: int = 20
     selfcheck_max_gpu_s: float = 120.0
+    selfcheck_allow_validate: bool = True
+    selfcheck_min_improvement: float = 1.005
+    selfcheck_noise_z: float = 2.0
     timeout_s: float = 480.0
 
     @classmethod
@@ -64,9 +69,10 @@ class RemoteEvaluationConfig:
         if not isinstance(document, dict):
             raise ValueError("remote evaluation config must be an object")
         allowed = {
-            "command", "token_file", "signature_key_file", "target_id", "expected_site_id", "expected_worker_build",
+            "command", "token_file", "selfcheck_token_file", "signature_key_file", "target_id", "expected_site_id", "expected_worker_build",
             "expected_task_pack_digest", "task_fingerprint", "publishable_site_ids", "publishable_epochs",
-            "socket_root", "selfcheck_reps", "selfcheck_max_timed", "selfcheck_max_gpu_s", "timeout_s",
+            "socket_root", "selfcheck_reps", "selfcheck_max_timed", "selfcheck_max_gpu_s",
+            "selfcheck_allow_validate", "selfcheck_min_improvement", "selfcheck_noise_z", "timeout_s",
         }
         unknown = set(document) - allowed
         if unknown:
@@ -100,9 +106,16 @@ class RemoteEvaluationConfig:
             value = document.get(name, 120.0 if name == "selfcheck_max_gpu_s" else 480.0)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= 86_400:
                 raise ValueError(f"{name} must be positive")
+        if not isinstance(document.get("selfcheck_allow_validate", True), bool):
+            raise ValueError("selfcheck_allow_validate must be boolean")
+        for name, default, lower in (("selfcheck_min_improvement", 1.005, 1.0), ("selfcheck_noise_z", 2.0, 0.0)):
+            value = document.get(name, default)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < lower:
+                raise ValueError(f"{name} is outside the limit")
         return cls(
             command=tuple(command),
             token_file=resolve(token_file),
+            selfcheck_token_file=resolve(document["selfcheck_token_file"]) if document.get("selfcheck_token_file") else None,
             signature_key_file=resolve(document["signature_key_file"]) if document.get("signature_key_file") else None,
             target_id=target_id,
             expected_site_id=str(document.get("expected_site_id") or ""),
@@ -115,6 +128,9 @@ class RemoteEvaluationConfig:
             selfcheck_reps=document.get("selfcheck_reps", 15),
             selfcheck_max_timed=document.get("selfcheck_max_timed", 20),
             selfcheck_max_gpu_s=float(document.get("selfcheck_max_gpu_s", 120.0)),
+            selfcheck_allow_validate=document.get("selfcheck_allow_validate", True),
+            selfcheck_min_improvement=float(document.get("selfcheck_min_improvement", 1.005)),
+            selfcheck_noise_z=float(document.get("selfcheck_noise_z", 2.0)),
             timeout_s=float(document.get("timeout_s", 480.0)),
         )
 
@@ -134,6 +150,32 @@ class RemoteEvaluationConfig:
         if not token:
             raise RemoteError("session_mismatch", "remote session grant is empty")
         return token
+
+    def selfcheck_token_for_session(self, run_id: str, session_id: str) -> str:
+        path = self.selfcheck_token_file or self.token_file
+        path = Path(self._format(str(path), run_id, session_id))
+        try:
+            token = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RemoteError("session_mismatch", f"cannot read the selfcheck session grant: {exc}", retryable=True) from exc
+        if not token:
+            raise RemoteError("session_mismatch", "selfcheck session grant is empty")
+        return token
+
+    def make_selfcheck_evaluator(self, run_id: str) -> RemoteEvaluatorPool:
+        """Create the pool for selfcheck requests, optionally with a separate grant."""
+        return remote_evaluator_pool_from_command(
+            self.command_for_session,
+            token=self.selfcheck_token_for_session,
+            run_id=run_id,
+            target_id=self.target_id,
+            expected_site_id=self.expected_site_id,
+            expected_worker_build=self.expected_worker_build,
+            expected_task_pack_digest=self.expected_task_pack_digest,
+            task_fingerprint=self.task_fingerprint,
+            timeout_s=self.timeout_s,
+            signature_key=self._signature_key(),
+        )
 
     def _signature_key(self) -> bytes | None:
         if self.signature_key_file is None:
@@ -183,6 +225,7 @@ class RemoteEvaluationConfig:
             # bridge writes it 0600 and removes it on stop; the agent receives
             # the value through its session environment.
             token_file = self.socket_root / (socket_name + ".token")
+            selfcheck_evaluator = self.make_selfcheck_evaluator(run_id) if self.selfcheck_token_file is not None else evaluator
             config = SelfCheckConfig(
                 task=task,
                 dtype=dtype,
@@ -194,11 +237,17 @@ class RemoteEvaluationConfig:
                 token=token,
                 token_file=token_file,
                 reps=self.selfcheck_reps,
+                self_check_dir=work / ".selfcheck",
+                seed_report_path=work / "report.json",
+                allow_validate=self.selfcheck_allow_validate,
+                min_improvement=self.selfcheck_min_improvement,
+                noise_z=self.selfcheck_noise_z,
                 usage_path=work.parent.parent / "selfcheck_usage" / f"{hashlib.sha256(session_id.encode('utf-8')).hexdigest()[:20]}.json",
                 max_timed=self.selfcheck_max_timed,
                 max_gpu_s=self.selfcheck_max_gpu_s,
+                close_evaluator_on_stop=self.selfcheck_token_file is not None,
             )
-            server = SelfCheckServer(config, evaluator, self.socket_root / socket_name)
+            server = SelfCheckServer(config, selfcheck_evaluator, self.socket_root / socket_name)
             try:
                 server.start()
             except Exception:

@@ -6,6 +6,9 @@ only when the service is deployed with the production worker module.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from .protocol import EvaluationRequest, ProtocolError
 from tcenv.evaluation import receipt_id_for
 
@@ -22,6 +25,8 @@ class ProductionBackend:
         # importing a device runtime or a backend in the parent process.
         from tcenv.evaluate import evaluate
 
+        progress_env = os.environ.get("TCENV_REMOTE_PROGRESS_PATH")
+        progress_path = Path(progress_env) if progress_env else None
         report = evaluate(
             request.task,
             request.dtype,
@@ -38,6 +43,7 @@ class ProductionBackend:
             eval_cache=request.cache_policy in {"reuse", "refresh"},
             eval_cache_refresh=request.cache_policy == "refresh",
             target_id=request.target_id,
+            progress_path=progress_path,
         )
         return {
             "report": report.to_json(),
