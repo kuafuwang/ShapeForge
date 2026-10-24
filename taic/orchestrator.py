@@ -47,6 +47,7 @@ from .llm import LLM, BudgetExhausted, CostLedger, LLMConfig, LLMError, SearchCo
 from .policy import candidate_eligible, choose_confirmed, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain, session_budget_floor
 from .committees import committees_record, default_committees, handoff_for, order_committees
 from .parse import parse_plans
+from .session_supervisor import NO_KERNEL_OUTCOMES, ProviderRetryController, classify_result, session_origin
 from .symptom import bound_of
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -205,10 +206,6 @@ class RunStartError(Exception):
 
     拒绝发生在这两种情形：目录里已经有一次运行（拒绝覆盖既有文件），或 ``run_config.json`` 写不出去。
     """
-
-
-NO_KERNEL_OUTCOMES = frozenset({"agent_failed", "provider_failed", "agent_no_submission"})
-PROVIDER_RETRY_BASE_DELAY_S = 5.0
 
 
 # 一颗被评过（或即将评）的内核。能否成为下一轮种子不看标签，只看 eligible 加上是否快过测量噪声。
@@ -686,7 +683,8 @@ class Orchestrator:
         self._external_texts: set[str] | None = None
         self._from_text = ""
         self._agent_failures = 0
-        self._provider_attempts: dict[str, int] = {}
+        self._provider_retry = ProviderRetryController(getattr(self.search, "provider_retries", 0))
+        self._provider_attempts: dict[str, int] = self._provider_retry.attempts
         self._candidate_origins: dict[str, dict] = {}
         self._sleep = asyncio.sleep  # tests replace this to avoid waiting through retry backoff
         self._failure_feedback = ""
@@ -1044,7 +1042,10 @@ class Orchestrator:
         self._resumes = snap.resumes + 1
         self._stagnant = snap.stagnant
         self._agent_failures = int(getattr(snap, "agent_failures", 0) or 0)
-        self._provider_attempts = dict(getattr(snap, "provider_attempts", {}) or {})
+        self._provider_retry = ProviderRetryController(
+            getattr(self.search, "provider_retries", 0), dict(getattr(snap, "provider_attempts", {}) or {}),
+        )
+        self._provider_attempts = self._provider_retry.attempts
         self._restore_handoff()
         self._round = snap.partial.rnd if snap.partial else snap.rounds_done
         self._resume = snap
@@ -1697,37 +1698,22 @@ class Orchestrator:
         会重试；正常回答却没交卷、timeout、进程失败、unchanged 和已有 checkpoint 都不重试。
         每次 attempt 独立过预算门、计费和写诊断，最终无核结果才交给原有的两场失败计数。
         """
-        retries = getattr(self.search, "provider_retries", 0)
-        attempt = int(self._provider_attempts.get(tag, 0) or 0)
-        if attempt > retries:
-            # A terminal marker from a crashed final attempt. Do not open another paid session;
-            # the round caller consumes this provider_failed outcome and increments its counter.
-            return "provider_failed"
-        while True:
-            session_tag = tag if attempt == 0 else f"{tag}.retry{attempt}"
-            outcome = await self._one_session_attempt(
-                session_tag, seedless=seedless, candidate_label=tag, attempt=attempt,
-            )
-            if outcome != "provider_failed":
-                self._provider_attempts.pop(tag, None)
-                self._publish_state(inflight=None)
-                return outcome
-            next_attempt = attempt + 1
-            self._provider_attempts[tag] = next_attempt
-            self._publish_state("llm", inflight=None)
-            if next_attempt > retries:
-                # Keep the terminal marker on disk until the round consumes this outcome. If the
-                # process dies here, resume returns provider_failed without replaying the final
-                # attempt or resetting the retry budget.
-                return "provider_failed"
-            delay = min(30.0, PROVIDER_RETRY_BASE_DELAY_S * (2 ** (next_attempt - 1)))
+        async def attempt(session_tag: str, attempt: int) -> str:
+            return await self._one_session_attempt(session_tag, seedless=seedless, candidate_label=tag, attempt=attempt)
+
+        def publish(phase: str | None) -> None:
+            self._publish_state(phase, inflight=None)
+
+        def scheduled(failed_session_tag: str, candidate_label: str, next_attempt: int, delay: float) -> None:
             self.llm.transcript.log({
-                "event": "provider_retry", "label": session_tag, "candidate_label": tag,
+                "event": "provider_retry", "label": failed_session_tag, "candidate_label": candidate_label,
                 "attempt": next_attempt, "delay_s": delay, "reason": "turn_failed", "status": "scheduled",
             })
-            self.log(f"  [{tag}] provider turn failed; retry {next_attempt}/{retries} in {delay:.0f}s")
-            attempt = next_attempt
-            await self._sleep(delay)
+            self.log(f"  [{candidate_label}] provider turn failed; retry {next_attempt}/{self._provider_retry.retries} in {delay:.0f}s")
+
+        return await self._provider_retry.run(
+            tag, attempt_fn=attempt, publish=publish, on_scheduled=scheduled, sleep=self._sleep,
+        )
 
     async def _one_session_attempt(self, tag: str, *, seedless: bool, candidate_label: str, attempt: int) -> str:
         """@brief 跑一场 hmz 会话，返回 ``agent_failed``、``provider_failed``、``agent_no_submission``、``unchanged`` 或 ``evaluated``。
@@ -1830,22 +1816,7 @@ class Orchestrator:
                 # 超时后交回来的核不再送上 GPU。没有内核的超时仍只算代理失败。
                 self.hangs += 1
             seed_source = None if self.best is None else self.best.source
-            if result.status == "timeout":
-                outcome = "agent_failed"
-            elif result.source is None:
-                failure_class = str((getattr(result, "diagnostics", {}) or {}).get("failure_class") or "")
-                if failure_class == "turn_failed":
-                    outcome = "provider_failed"
-                elif failure_class == "no_submission_after_result":
-                    outcome = "agent_no_submission"
-                else:
-                    outcome = "agent_failed"
-            elif result.status == "failed" and result.source == seed_source:
-                outcome = "agent_failed"
-            elif seed_source is not None and result.source == seed_source:
-                outcome = "unchanged"
-            else:
-                outcome = "evaluated"
+            outcome = classify_result(result, seed_source)
             self.llm.transcript.log(self._agent_event(tag, member, result, outcome, parsed, candidate_label=candidate_label, attempt=attempt))
             missing = ""
             if result.source is None:
@@ -1859,10 +1830,10 @@ class Orchestrator:
                 exit_kind = "hang_circuit_breaker"
                 raise StopRun("gpu_hang_circuit_breaker")
             try:
-                origin = {
-                    "origin": "session", "provider": member.provider, "model": member.model,
-                    "committee": self._committee_name, "session_label": tag, "attempt": attempt,
-                }
+                origin = session_origin(
+                    provider=member.provider, model=member.model, committee=self._committee_name,
+                    session_label=tag, candidate_label=candidate_label, attempt=attempt,
+                )
                 if outcome == "evaluated":
                     cand = await self._eval(result.source, candidate_label, origin=origin)
                     self._file_session_notes(cand, result, work_label=tag)
@@ -2378,7 +2349,7 @@ class Orchestrator:
             if outcome in NO_KERNEL_OUTCOMES:
                 self._agent_failures += 1
                 if outcome == "provider_failed":
-                    self._provider_attempts.pop(label, None)
+                    self._provider_retry.clear(label)
                 self.history.append(f"initial: {self._committee_name} -> {outcome}")
                 if self._agent_failures >= 2:
                     raise StopRun("agent_failure")
@@ -2487,7 +2458,7 @@ class Orchestrator:
             if outcome in NO_KERNEL_OUTCOMES:
                 self._agent_failures += 1
                 if outcome == "provider_failed":
-                    self._provider_attempts.pop(f"r{rnd}.p0", None)
+                    self._provider_retry.clear(f"r{rnd}.p0")
                 self.history.append(f"round {rnd}: {self._committee_name} -> {outcome}")
                 if self._agent_failures >= 2:
                     res.stop_reason = "agent_failure"
