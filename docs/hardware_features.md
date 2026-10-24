@@ -1,5 +1,30 @@
 # Hardware features: what the paper credits, what Apple GPUs offer, and what the generated kernels use
 
+## 中文导读（这篇讲什么）
+
+- **它回答什么问题：** 模型写出来的 Metal 源码，有没有用上论文点名的那些硬件特性；这块苹果 GPU 又到底有没有对应的特性。
+- **短答：** 检测器只能判断「这个特性出现在源码里，或出现在编译器输出里」，**不能判断「加速是它带来的」**。检测器是 `taic/hwfeatures.py`；`experiments/hw_features.py` 在已经落盘的运行上生成报告（`runs/hw_features/REPORT.md`）。搜索默认不开这条，只有设了 `search.hw_feedback` 才会用。
+- **为什么保留论文里的特性名：** 检测器就是按那些名字做匹配的。
+- **谁可以停在这里：** 新读者读完这一段和第 9 节就够。
+
+三条读法：
+
+1. 第 1-3 节是「论文有什么、苹果这边对应什么、每道题的最优核该用什么」。表里的定量数字多是论文作者的解释，不是控制变量的对照实验。
+2. 第 4-5 节是检测器本身和它的校验；第 6 节是一次快照的发现。
+3. 第 7-9 节是限制、可选消融（只写了方案，没跑）和接线。
+
+| 节 | 讲什么 | 中文提示 |
+| --- | --- | --- |
+| 1 | 论文表 1：P1-P17 硬件特性与定量归因 | 归因是作者解释；内存受限的核基本没收益 |
+| 2 | 表 2：每条特性在 M4 Max 上的对应物 | 状态只有三档：直接对应 / 部分对应 / 无对应 |
+| 3 | 表 3：每道题的最优核预期要用什么 | `R` 必需、`r` 推荐、空 = 不适用 |
+| 4 | 检测器：源码、编译产物、实测三级证据 | 不派发 GPU，只编译到 AIR |
+| 5 | 校验：参考核、naive 核、负例、源码对编译器 | 36 个测试 |
+| 6 | 一次快照的发现 | 快照会过期，不是当前 benchmark 结果 |
+| 7 | 限制 | 最重要的一条：存在性能验证，因果不能 |
+| 8 | 可选消融（描述，未运行） | 要独占显卡锁，所以没做 |
+| 9 | 接线：反馈进入搜索循环（可选开启） | 默认关，`--hw-feedback` 打开 |
+
 Question this answers: can we tell whether the Metal text the model wrote uses the hardware features the paper credits, and the features this Apple GPU actually has?
 
 Short answer: the detector can say a feature is present in the source or in the compiler output. It cannot say the speedup happened because of that feature. `taic/hwfeatures.py` is the detector. `experiments/hw_features.py` writes the report over runs already on disk (`runs/hw_features/REPORT.md`). Search does not turn this on unless `search.hw_feedback` is set.
@@ -15,6 +40,12 @@ Page numbers are the page of the PDF (1-15, the number printed at the bottom). "
 ---
 
 ## 1. Table 1 - hardware features and hardware-oriented techniques in the paper
+
+**中文要点：** 论文把 Triton 降到 NVIDIA PTX，测在 L40S（Ada）、H100（Hopper）、B200（Blackwell）三种卡上。P1-P17 是论文在生成的核里、或在「为什么快」的分析里点名的全部特性；表里第三列的数字是论文给出的归因，属于作者解释，不是控制变量实验。
+
+另有两条不属于特性、但读这张表要一起看的结论：源码要求 IEEE-754 语义时，生成的 PTX 会避开 Tensor Core；elementwise 与 recurrent 负载「基本持平」，即内存受限的核从这些特性没有收益。
+
+论文里**搜过但没找到**的项，所以下文不会把任何一条说成「论文的特性」：warp specialization（只在相关工作里作为 Tawa 的异步引用出现）、persistent kernel、occupancy / 寄存器压力调优、128 位向量加载本身（只有 32-bit loads 与 vectorized global stores）、fast-math 开关、启动配置搜索（契约固定网格与线程）。「去掉边界 mask」是 Triton 基线的准备工作，不是生成核的特性。
 
 The paper lowers Triton to NVIDIA PTX on L40S (Ada), H100 (Hopper), B200 (Blackwell). Every feature the paper names in generated kernels or in its analysis of why they are fast:
 
@@ -46,6 +77,17 @@ Also relevant: when the Triton source requests IEEE-754 semantics "the generated
 
 ## 2. Table 2 - Apple / Metal analogue of every paper feature (M4 Max, Apple9 GPU family)
 
+**中文要点：** 这一节逐条给 P1-P17 找 M4 Max 上的对应物，状态只有三档：`direct analogue`（直接对应）、`partial analogue`（部分对应）、`no analogue on M4 Max`（这块芯片没有）。
+
+「How verified（怎么验证的）」有四种：
+
+- **runs**：`runs/` 里真有一颗核用它，经 harness 编译、算对、计时过；
+- **compile**：我在本机工具链（32023.883，MSL 4.0）上编过探针，没有 GPU；
+- **repo doc**：仓库文档（`backends/metal/skills/msl_reference.md` 或 `apple_gpu_optimization.md`）写了，我没有复核；
+- **background**：我了解的苹果文档，标了不确定。
+
+最要紧的五条：P3（Blackwell 的 tensor memory）在 M4 Max 没有对应；P8（异步拷贝）没有公开对应，只能用寄存器预取模拟；P1 的矩阵单元是每个 SIMD group 8x8x8，比论文一个 warp 16x8x16 小；P10 只有宽访存对应，打包算术没有已知对应；FP8 类型完全没有。
+
 Status vocabulary: `direct analogue`, `partial analogue`, `no analogue on M4 Max`. "How verified" says what I actually checked: **runs** = a kernel in `runs/` that uses it, compiled by the harness, correct and benchmarked (the AIR intrinsic names are in the compiled evidence of `runs/hw_features`); **compile** = I compiled a probe with the installed Metal toolchain (32023.883, MSL 4.0) in this session, no GPU; **repo doc** = stated in `backends/metal/skills/msl_reference.md` or `apple_gpu_optimization.md` and not re-checked by me; **background** = my knowledge of Apple's documentation, flagged uncertain.
 
 | ID | Apple analogue | status | how verified | notes / uncertainty |
@@ -72,6 +114,16 @@ Status vocabulary: `direct analogue`, `partial analogue`, `no analogue on M4 Max
 ---
 
 ## 3. Table 3 - hardware features an optimal kernel of each task is expected to use
+
+**中文要点：** `R` = 必需（最优核一定有），`r` = 推荐（论文或仓库技能说有收益，最优核通常有），空 = 不适用。这张表来自技能文档、论文表 1 和本仓库的证据（实测峰值：矩阵约 14.8 TFLOP/s、标量 FMA 约 5.5 TFLOP/s；带宽约 449-527 GB/s）以及每道题的 roofline。机器可读副本是 `experiments.hw_features.EXPECTED`，测试保证这张表与代码一致。
+
+按家族看：
+
+- **elementwise（sigmoid、relu、silu、swiglu、lion、rope）：带宽受限**，算术强度 0.2-1.2 FLOP/B，下界 = 字节 / 475 GB/s；要宽访存和单遍读。
+- **行归约（rmsnorm、softmax、reduction_sum）与 gemv**：同样带宽受限，要 `simd_sum` / `simd_max`；矩阵单元**不**划算，因为这道题就贴着 DRAM roofline。
+- **gemm、gemm_silu、conv2d（隐式 GEMM）、bitdelta_gemm**：计算受限（算术强度 373-1638 FLOP/B，ridge 31），要矩阵单元 + 浮点累加 + 寄存器分块 + threadgroup 暂存。
+- **flash_attention**：矩阵单元、online softmax（必需，不许把分数矩阵落盘）、行归约走 `simd_shuffle_xor`。
+- **mamba2_chunk_scan**：每个 chunk 三次 `dot`（AI 58 FLOP/B），矩阵单元与暂存是推荐，不是旗舰用例。
 
 `R` = required (an optimal kernel has it), `r` = recommended (the paper or the repo's skills say it pays, the best kernels usually have it), empty = not applicable. Derived from `backends/metal/skills/apple_gpu_optimization.md`, the paper (table 1 above) and the evidence in this repository: measured peaks (matrix ~14.8 TFLOP/s vs ~5.5 TFLOP/s scalar FMA for GEMM, bandwidth ~449-527 GB/s) and the roofline of each task (`runs/hw_features/REPORT.md` section 3). The machine-readable copy is `experiments.hw_features.EXPECTED`; `tests/backends/metal/test_hw_features.py` checks that this table and the code agree.
 
@@ -105,6 +157,21 @@ Reasoning per family:
 ---
 
 ## 4. The detector
+
+**中文要点：** 检测器的输入是一份 kernel 源码，输出一份 `HardwareFeatureReport`（`to_json()`，字段 `source`、`compiled`、`measured`、`performance_test`、`features`、`missing`、`summary`）。三级证据分开存放：源码级、编译产物级、实测级。`fast_math` 是唯一的例外，它把源码和编译两级混在一起判。
+
+```mermaid
+flowchart LR
+    SRC["kernel 源码<br/>注释与字符串先清空、宏展开、常量求值"] --> LV1["SOURCE 证据<br/>调用点、访存宽度、threadgroup 字节"]
+    SRC --> CC["Metal 工具链编成 AIR<br/>约 40 ms，无 GPU、无 dispatch"]
+    CC --> LV2["COMPILED 证据<br/>air.simdgroup_matrix_8x8_* 与 air.simd_*、load/store 宽度"]
+    REP["候选的 report.json<br/>roofline 与耗时"] --> LV3["MEASURED 证据<br/>与同题 naive 标量核的天花板比"]
+    LV1 --> CAT["特征目录<br/>论文 P1-P17 + single_pass / unroll 等"]
+    LV2 --> CAT
+    CAT --> V["逐特性判定<br/>used and effective / present but not effective<br/>expected but missing / not applicable"]
+    LV3 --> V
+    V --> DASH["看板一行摘要<br/>约 200 字符"]
+```
 
 `taic/hwfeatures.py` (the detector; `experiments/hw_features.py` is the CLI and report on top of it, and re-exports the whole API). One kernel source in, one `HardwareFeatureReport` out (`to_json()`, dataclass fields `source`, `compiled`, `measured`, `performance_test`, `features`, `missing`, `summary`).
 
@@ -172,6 +239,8 @@ Outputs: `REPORT.md` (tables below), `data.json` (aggregates), `kernels.jsonl` (
 
 ## 5. Validation (details and numbers in `runs/hw_features/REPORT.md`, section 1)
 
+**中文要点：** 校验分五类：手写的参考 GEMM、naive 核、负例、源码级与编译器输出的一致性、单元测试。最关键的两个数：在所有能编译的核上，源码级的矩阵单元标记、浮点累加标记、最宽 load、最宽 store、simd 归约/乱序与 AIR 的一致率是 100%；threadgroup 字节数只差一个。测试是 `tests/backends/metal/test_hw_features.py`，36 个；没有 Metal 工具链时编译类测试跳过。
+
 * **Reference GEMMs**: the 14 hand-written `simdgroup_matrix` kernels of `experiments/contract_sensitivity.py` (sources generated, never run) are all detected as matrix-unit users on both levels (source and AIR), with float accumulators, 4-64 accumulator fragments and the right staging / padding flags (the generator pads by 8 only when it fits in 32 KB: the detector reports `padded: no` exactly for those contracts).
 * **Naive kernels**: none of the 16 `tasks/*/naive.metal` is reported as using a matrix unit or wide accesses (bitdelta's 4-byte `uint` loads aside).
 * **Negative cases**: a feature named only in a comment, only in a string literal, or a plain scalar kernel claim nothing.
@@ -181,6 +250,13 @@ Outputs: `REPORT.md` (tables below), `data.json` (aggregates), `kernels.jsonl` (
 ---
 
 ## 6. Findings (snapshot; `runs/hw_features/REPORT.md` is regenerated, this section is not)
+
+**中文要点：** 这是一次快照：35 个运行（9 个仍是部分，因为实验被重启过）、401 个候选、34 个最优核。四个反直觉的发现：
+
+1. **计算受限的候选 100% 都有矩阵单元**，而且每个运行的第一个正确候选就有；浮点累加、threadgroup 暂存、16 字节访存同样第一次就有。所以这些特性**解释不了胜负**。
+2. **elementwise 的 naive 标量核也已经贴着带宽**（比值 0.99-1.04），`vector_access` 在 relu、sigmoid、silu、swiglu（以及 rmsnorm、reduction_sum）上是「存在但没效果」。
+3. **过犹不及**：每个 SIMD group 32 个及以上累加器片段时，参考 GEMM 反而慢 12-26 倍（寄存器溢出）。
+4. **FlashAttention 的胜负与特性数量只是松相关**：七个最优核全都用 online softmax，但特征最全的 `fa_flash` 也只有 0.735x MLX。
 
 Snapshot of 2026-10-07 05:46: 35 runs (9 still partial, because their experiments were restarted), 401 run candidates, 34 best kernels.
 
@@ -200,6 +276,15 @@ Snapshot of 2026-10-07 05:46: 35 runs (9 still partial, because their experiment
 
 ## 7. Limits
 
+**中文要点：** 六条限制，按重要性排：
+
+1. **存在性可验证，因果不能**；要知道某个特性贡献多少，只能做第 8 节的消融，而特性之间会互相影响。
+2. **模式检测是启发式**（双缓冲、寄存器预取、padding、online softmax、单遍、位打包），修过假阴性，非典型代码还会出错；用运行时数值表示的 stride，`tg_padding` 看不见。
+3. **AIR 不是机器码**：调用点是静态计数，寄存器、溢出和最终调度在 AIR 之后才定；看溢出要用 `tcenv.cli profile`。
+4. **天花板**：16 道题里 11 道用实测的 naive 核当天花板，其余用文档里的比例（报告里标 `fallback`）。
+5. **语义/早期运行**预算不同、有的没有 roofline，不进胜率统计或单独标注。
+6. **快照**：生成这份时实验在重启，部分运行的「best」是当时的 best-so-far。
+
 * **Presence is verified, causal attribution is not.** Only an ablation (section 8) can say how much of a kernel's speed one feature explains; features interact. Non-primary features carry `attribution: joint`.
 * **Pattern detectors are heuristics**: double buffering, register prefetch, padding, online softmax, single pass, bit packing. They were checked by hand against the best kernels listed in section 6 and against the synthetic cases, and they produced false negatives before being fixed (macros, `__restrict`, attribute-qualified arrays, helper-returned loads, scoped pointers); expect more on unusual code. A stride held in a runtime value is invisible to `tg_padding`.
 * **AIR is not machine code**: call-site counts are static; registers, spills and the final scheduling are decided after AIR. Use `tcenv.cli profile` for spills.
@@ -209,9 +294,20 @@ Snapshot of 2026-10-07 05:46: 35 runs (9 still partial, because their experiment
 
 ## 8. Optional ablation (described, not run)
 
+**中文要点：** 想把一次加速归给某个特性，就要造一份「只去掉它」的变体（矩阵单元 → 同 tile 的标量 FMA 循环；宽访存 → 同样地址的标量访问；寄存器分块 → 每个 SIMD group 1 个片段；流水线 → 读、屏障、算、屏障；padding → 补 0；片段收尾 → 先写 threadgroup），保持 ABI 与容差不变，再用 `tcenv.evaluate.evaluate(...)` 评测。`variant_time / original_time` 就是这个特性在**那颗核里**的贡献。这一步要独占显卡锁，所以本文没有跑。
+
 To attribute a speedup to one feature, build a variant of the best kernel with only that feature removed (matrix unit -> scalar FMA loop over the same tile; wide accesses -> scalar accesses of the same addresses; register blocking -> 1 fragment per SIMD group; pipelining -> load, barrier, compute, barrier; padding -> pad 0; epilogue on fragments -> store to threadgroup first), keep the ABI and tolerance, and evaluate it with `tcenv.evaluate.evaluate(task, dtype, size, source)` (interleaved protocol, exclusive GPU lock). `variant_time / original_time` is the feature's contribution *in that kernel*. `python -m experiments.hw_features --ablate` prints the same text. This needs GPU time under the exclusive lock, so it was not done here.
 
 ## 9. Integration
+
+**中文要点：** 接线已完成，但默认关。
+
+- **开关：** `search.hw_feedback`（`SearchConfig`，默认 `false`；`taic.toml` / `taic.paper.toml` 里没有这一项）。用 `taic run ... --hw-feedback`、`taic resume ... --hw-feedback`，或在 driver 的搜索选项里写 `hw_feedback=True` 打开。状态记进 `run_config.json`，`taic resume` 会保留。
+- **块放哪：** 追加到本轮 `TASK.md` 的 evidence 字符串里（那里已经有 profiler 证据）。`render_contract` 把整块 evidence 截到 600 字节，所以硬件块尾部可能被截掉。
+- **说什么：** 最多 12 行、约 150 词：用了什么、离 roofline 多远、最多三条「该有却没有」的特性（各带一句苹果 GPU 提示）、32 个以上累加器片段的警告、一句免责（静态分析的提示，不是硬性要求，实测时间说了算）。已经到 roofline 约 90% 的核**不给**缺失清单。
+- **Skill 2c**（`backends/metal/skills/hardware_feedback.md`，17 行）只在开关打开时追加到系统提示，排在 Skill 2b 之后。
+- **关掉时逐字节一致：** `tests/backends/metal/test_hw_feedback.py` 拿 176 个系统提示、110 条用户消息、12 份格式化过的报告、四次脚本化搜索的全部请求，和 `tests/support/golden/metal/hw_off.json` 对比。
+- **A/B：** `fa_flash_hw` 对 `fa_flash`，只改开关，n=1（随机搜索，只能当轶事）。`fa_flash_hw` 确认约 0.622x，`fa_flash` 约 0.735x；两份文件都没有发布门现在要求的源码 hash。这一对还留下一个教训：第 1 轮时检测器把有 online softmax 的种子误报成缺失（假阴性），第 2 轮起才修好。
 
 **Done: feedback to the search loop (opt-in).** The core of the detector now lives in `taic/hwfeatures.py` (importable without `experiments`; `experiments/hw_features.py` is the report CLI on top of it, with its 36 tests; the feedback has its own in `tests/backends/metal/test_hw_feedback.py`). `taic/hwfeedback.py` wraps it: `hw_feedback(task, source, report, *, backend_id=...) -> str | None` returns a block of at most 12 lines / about 150 words for a *correct* candidate, built from the source, the cached AIR compile (about 40 ms, 10 s limit) and the candidate's own roofline; it returns `None` and logs a warning on any failure, on a 20 s overrun, for failed candidates, for tasks without expectations (the semantic tests), and when the backend's `supports_hw_features` capability is false.
 

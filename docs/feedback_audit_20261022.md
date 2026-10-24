@@ -1,7 +1,14 @@
 # 代理反馈待审统计（2026-10-22）
 
-来源：`/Users/kuafu/CLionProjects/ai_lowerling/data/observe.sqlite`，`status='pending'` 共 **174** 条。
-本报告只读索引和运行目录，不调用模型、不启动 GPU。
+## 这篇讲什么
+
+来源：`/Users/kuafu/CLionProjects/ai_lowerling/data/observe.sqlite`，`status='pending'` 共 **174** 条。本报告只读索引和运行目录，不调用模型、不启动 GPU。
+
+读这份报告要先分清三件事：
+
+- **能被当作实测证据的只有 60 条**，条件是 premise（前提）里有 `[已实测: ...]` 标记，并且探针文件现在能在 `agent_work` 里找到。
+- **采集时探针缺失的 39 条**已经被解析器改写成 `[未验证: ...]`，只能当「别再试」的线索。
+- **agent 自己标了 `[未验证]` 的 35 条**有信息量，不是证据。
 
 ## 结论
 
@@ -12,7 +19,22 @@
 - 不应进入待审：**7 条空占位**（“无/没有/不需要”）；33 条非空建议/求助合并为 10 个主题，其中 **23 条是同一主题的重复**。
 - 行级：83 行 `[已实测]`，其中 83 行探针存在、0 行缺失；74 行 `[未验证]`，190 行分析/补充。
 
+```mermaid
+flowchart TD
+    P["pending 共 174 条"] --> A["被否决的前提 134"]
+    P --> B["对系统的建议 31 + 需要帮助 9 = 40"]
+    A --> A1["verified 60<br/>行内带已实测、探针在<br/>可当证据"]
+    A --> A2["downgraded 39<br/>采集时探针缺失<br/>只当线索"]
+    A --> A3["unverified 35<br/>agent 自标未验证<br/>只当线索"]
+    B --> B1["fixed_in_code 15<br/>当前代码已修"]
+    B --> B2["policy_decision 10<br/>改的是预算/晋升门槛，待政策决定"]
+    B --> B3["actionable_open 8<br/>有效但还开放"]
+    B --> B4["drop_empty 7<br/>空占位，应删"]
+```
+
 ## 分类计数
+
+### 按 verdict
 
 | verdict | 条数 |
 | --- | ---: |
@@ -24,17 +46,23 @@
 | actionable_open | 8 |
 | drop_empty | 7 |
 
+### 按 section
+
 | section | 条数 |
 | --- | ---: |
 | 被否决的前提 | 134 |
 | 对系统的建议 | 31 |
 | 需要帮助 | 9 |
 
+### 被否决的前提：按 stored premise
+
 | 被否决的前提的 stored premise | 条数 |
 | --- | ---: |
 | verified | 60 |
 | downgraded | 39 |
 | unverified | 35 |
+
+### 系统建议/求助：按 topic（含空占位）
 
 | 系统建议/求助 topic（含空占位） | 条数 |
 | --- | ---: |
@@ -48,6 +76,8 @@
 | xctrace | 1 |
 | seed_report | 1 |
 | max_threads | 1 |
+
+### 系统建议/求助：按 topic（不含空占位）
 
 | 非空系统建议/求助 topic | 条数 |
 | --- | ---: |

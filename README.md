@@ -1,8 +1,35 @@
 # AI lowering on Apple GPUs: Triton -> Metal Shading Language
 
-The model writes kernel text. This repository compiles, checks, times, and decides what to keep. A number you can quote is the remeasured one after search, with the source hash bound and the timing quiet. The fastest candidate seen during search is a different number. A default run spends about $15 and alternates two models, `deepseek-flash` then `kimi-k3`. `taic run` and `taic resume` spend money and use the GPU that also drives the display. `uv run python -m taic.cli brief` only reads.
+The model writes kernel text. This repository compiles, checks, times, and decides what to keep.
+
+Two numbers in this project must not be mixed up:
+
+* **Search best** – the fastest candidate seen *during* the search. It is not a publishable number.
+* **Published speedup** – the remeasured number after the search, with the source hash bound and the timing quiet. This is the number you may quote.
+
+A default run spends about $15 and alternates two models, `deepseek-flash` then `kimi-k3`. `taic run` and `taic resume` spend money and use the GPU that also drives the display. `uv run python -m taic.cli brief` only reads.
 
 Kernel writing goes through the local `hmz` launcher (`uv tool install hmz`) and its `pi` agent; `taic run` refuses to start without `hmz` (`docs/架构/hmz.md`).
+
+## What this page covers
+
+| Question | Section |
+| --- | --- |
+| How does this map to the paper? | [paper vs. here](#paper-vs-here) |
+| How do I run one kernel, one search, or the test suite? | [Quick start](#quick-start) |
+| Why can a bad kernel freeze the machine? | [GPU safety](#gpu-safety-read-this) |
+| Why is every timing taken under a machine-wide lock? | [Measurement hygiene](#measurement-hygiene) |
+| What does a candidate kernel have to pass? | [What a candidate has to survive](#what-a-candidate-has-to-survive) |
+| Which problem sizes exist? | [Problem sizes](#problem-sizes) |
+| How much money may a run spend, and what is a worst case? | [Budget](#budget) |
+| Which experiments reproduce which paper figure? | [Experiments](#experiments-paper-section-4) |
+| Which switches exist, and which are only recorded fields? | [Search switches](#search-switches-on-by-default) |
+| What does the dashboard do, and when does it alert? | [Dashboard and budget alerts](#dashboard-and-budget-alerts) |
+| How do I add budget or resume a dead run? | [Adding budget and resuming runs](#adding-budget-and-resuming-runs) |
+| How does the optional Triton -> Metal compiler baseline work? | [Compiler baseline](#compiler-baseline-optional-triton---metal-with-triton-msl) |
+| Where does the code live? | [Layout](#layout) |
+
+## paper vs. here
 
 A re-implementation, for an Apple M4 Max, of the setup of *"AI as a compiler: compiling Triton kernels without the Triton compiler"*.
 An LLM translates a Triton kernel directly into a Metal (MSL) kernel; an evaluation environment compiles, safety-checks,
@@ -19,6 +46,23 @@ differentially tests, benchmarks and profiles every candidate, and the search ke
 | autotuned Triton baseline | faster of MLX and PyTorch-MPS; optionally Triton compiled by `triton-msl` (see below) |
 | FP8 | not available on Apple GPUs; FP16 and BF16 instead |
 | GPT-6 Astra, USD budget | any OpenAI-compatible endpoint. Default committees alternate `deepseek-flash` and `kimi-k3`. Cache-aware USD ledger |
+
+## How one search runs
+
+```mermaid
+flowchart LR
+  cfg["taic.toml + command line"] --> search["taic: search<br/>budget, committees, ledger"]
+  search -->|"one hmz session per round"| hmz["hmz launcher -> pi"]
+  hmz -->|"kernel text"| search
+  search -->|"candidate source (MSL)"| eval["tcenv: evaluation"]
+  eval --> gpu["Apple GPU<br/>(also drives the display)"]
+  eval -->|"report + feedback for the next session"| search
+  search -->|"kept only if safe, correct and faster"| seed["current best (seed)"]
+  search --> confirm["confirmation remeasure"]
+  confirm --> result["result.json:<br/>the published number, if the gate passes"]
+```
+
+Each round is a fresh `hmz` session (a fresh agent session with the model), not a continuation of the previous conversation. Feedback from a failed round goes into the next round's task file.
 
 ## Quick start
 
@@ -45,10 +89,16 @@ badly enough to need a hard reset. Therefore:
 * never run a kernel with an unbounded loop by hand, and never add a test that does;
 * the harness refuses `while (true)` / `for (;;)` / non-Metal `#include` before anything reaches the GPU (`tcenv/backends/metal/screen.py`);
 * every evaluation runs in a worker process that publishes a heartbeat around each GPU launch; the parent `SIGKILL`s the worker after one
-  command buffer has been in flight too long: 2 s for one kernel (4 s under shader validation), or 2 s times the stage count and at most 8 s
-  for a pipeline (validation doubles that, at most 16 s), and enforces an overall timeout;
+  command buffer has been in flight too long, and enforces an overall timeout;
 * the orchestrator stops the *whole run* after the first timed-out evaluation (`max_hangs = 1`);
 * the real-hang test is skipped unless `TCENV_ALLOW_GPU_HANG_TESTS=1`; the supervisor is covered by fake workers instead.
+
+The kill thresholds, per command buffer in flight:
+
+| what is in flight | timeout before `SIGKILL` |
+| --- | --- |
+| one kernel | 2 s (4 s under shader validation) |
+| a pipeline | 2 s times the stage count, at most 8 s (validation doubles that, at most 16 s) |
 
 ## Measurement hygiene
 
@@ -71,6 +121,18 @@ at cv 16% (quiet runs: 0.5-1.5%) displaced a better kernel. Therefore:
 
 Each evaluation runs these stages in order; the first failing one ends it with feedback for the LLM.
 
+```mermaid
+flowchart TD
+  cand["candidate kernel (MSL)"] --> verify["1. verify()<br/>returns unsupported, does not decide the verdict"]
+  verify --> screen["2. screen, compile, ABI<br/>source rules, then MTLComputePipelineReflection<br/>must match the launch contract"]
+  screen --> guard["3. guards, then numbers<br/>guard bands, case suite, three bitwise-equal launches"]
+  guard --> bench["4. benchmark<br/>cv gate, noise gate"]
+  bench --> ok["report: status ok = eligible"]
+  screen --> fb["feedback for the LLM, round ends"]
+  guard --> fb
+  bench --> fb
+```
+
 1. **`verify()` first.** It returns `unsupported` and does not decide the verdict.
 2. **Screen, compile, and ABI.** Source rules (no unbounded loops, only Metal includes), then `MTLComputePipelineReflection` must show exactly the
    buffer names, address spaces and thread-position attributes of the launch contract.
@@ -83,20 +145,39 @@ Each evaluation runs these stages in order; the first failing one ends it with f
 
 `tcenv.verify` stays a stub so a backend can be added without touching the evaluator.
 
-**What the model is told about a slow kernel.** Every evaluation report carries a roofline (bound, achieved GB/s and TFLOP/s as a fraction of the peaks measured
-on this machine, the lower bound) and pipeline statistics (the pipeline's `maxTotalThreadsPerThreadgroup` launch limit, static threadgroup memory; the field alone does not prove register pressure). With
-`search.profile_poor = true` (`taic run ... --profile-poor`), the seed of a round whose speedup is below `profile_poor_below` is traced with Instruments
+### What the model is told about a slow kernel
+
+Every evaluation report carries:
+
+* a **roofline**: the bound, achieved GB/s and TFLOP/s as a fraction of the peaks measured on this machine, and the lower bound;
+* **pipeline statistics**: the pipeline's `maxTotalThreadsPerThreadgroup` launch limit and static threadgroup memory. The field alone does not prove
+  register pressure.
+
+With `search.profile_poor = true` (`taic run ... --profile-poor`), the seed of a round whose speedup is below `profile_poor_below` is traced with Instruments
 (`xctrace`, Metal System Trace) and the findings go into that round's `TASK.md`: compiler register spills (events, bytes), compiled shader size, GPU idle fraction,
 thermal state, each with what to do about it. Each source is traced once, at most `profile_max` times per run, and a failed trace never stops the search. The
 default Metal System Trace template does not include ALU, occupancy, or limiter counters. A template named by `TCENV_XCTRACE_TEMPLATE` can. The traces are stored in `<run>/profiles/`.
 
-Baselines are the fastest of the ones that ran. `silu`, `swiglu`, and Lion use an `mx.compile`d `mlx` baseline. `gemm_silu` compiles the SiLU and leaves the matmul outside it. BitDelta adds `mlx_compile` and `torch_compile`; the compiled decode is fused and the matmul stays a separate call, and there is no `mlx_half_compile`. Mamba-2 adds `mlx_compile`, `mlx_half_compile`, and `torch_half`, and does not add `torch_compile`. `rope` has only MLX. Lion does add `torch_compile`. The strongest baseline is always the minimum over the ones that ran.
+### Which baseline is used
+
+Baselines are the fastest of the ones that ran. What each task adds:
+
+| task | baseline |
+| --- | --- |
+| `silu`, `swiglu`, Lion | an `mx.compile`d `mlx` baseline (Lion also adds `torch_compile`) |
+| `gemm_silu` | compiles the SiLU and leaves the matmul outside it |
+| BitDelta | adds `mlx_compile` and `torch_compile`; the compiled decode is fused and the matmul stays a separate call, and there is no `mlx_half_compile` |
+| Mamba-2 | adds `mlx_compile`, `mlx_half_compile`, and `torch_half`, and does not add `torch_compile` |
+| `rope` | only MLX |
+
+The strongest baseline is always the minimum over the ones that ran.
 
 ## Problem sizes
 
-`--size paper` is the size of every experiment (the paper's shapes where it gives them; conv2d has N=32). `--size small` is for tests. `--size plan`
-exists only where `paper` deviates from the implementation plan: `reduction_sum` is 4096x4096 at `paper` because the plan's 256x4096 problem takes about
-4 us, which is bounded by Metal launch overhead (it measures dispatch, not the kernel); `plan` keeps the plan's shape available for comparison.
+* `--size paper` is the size of every experiment (the paper's shapes where it gives them; conv2d has N=32).
+* `--size small` is for tests.
+* `--size plan` exists only where `paper` deviates from the implementation plan: `reduction_sum` is 4096x4096 at `paper` because the plan's 256x4096 problem takes about
+  4 us, which is bounded by Metal launch overhead (it measures dispatch, not the kernel); `plan` keeps the plan's shape available for comparison.
 
 ## Launch-contract variants
 
@@ -104,21 +185,29 @@ Without a `/* taic-launch */` block, the grid and the threads per group are the 
 
 ## Budget
 
-The paper caps every search at a fixed USD amount (arXiv 2609.36800v1, `docs/2609.36800v1.pdf`): Section 4.3 and Table 1, "a maximum API
-budget of $15 per run for convolution, matrix multiplication, and FlashAttention, and $1 for the simpler elementwise SwiGLU kernel"; Section 4.4
-and Figure 5, "under a $15 budget" for the ten published kernels. The search repeats until the budget is exhausted (Section 3.3); the gate is
-checked before each session, so a session already in flight can finish a little above the cap. `relay_budget_usd` only sizes that session's output-token guide; input and cache can spend more, and that extra is charged to the run budget instead of ending the search. This repository does the same for the run cap, and
-**the default budget is $15 per run** (`SearchConfig`, `taic.cli run`, `run_suite`, `repeatability`, `p1_runs`). The 12-kernel grid of Figure 4
-states no cap, so it uses $15 too; the repeatability experiment (Table 1) gives SwiGLU $1, as the paper does.
+The paper caps every search at a fixed USD amount (arXiv 2609.36800v1, `docs/2609.36800v1.pdf`):
+
+* Section 4.3 and Table 1, "a maximum API budget of $15 per run for convolution, matrix multiplication, and FlashAttention, and $1 for the simpler elementwise SwiGLU kernel";
+* Section 4.4 and Figure 5, "under a $15 budget" for the ten published kernels.
+
+The search repeats until the budget is exhausted (Section 3.3); the gate is checked before each session, so a session already in flight can finish a little above the cap. `relay_budget_usd` only sizes that session's output-token guide; input and cache can spend more, and that extra is charged to the run budget instead of ending the search. This repository does the same for the run cap, and **the default budget is $15 per run** (`SearchConfig`, `taic.cli run`, `run_suite`, `repeatability`, `p1_runs`). The 12-kernel grid of Figure 4 states no cap, so it uses $15 too; the repeatability experiment (Table 1) gives SwiGLU $1, as the paper does.
 
 * **Where it lives.** `taic.paper.toml` is a preset read on top of `taic.toml` (it sets `budget_usd = 15` and `max_rounds = 100`: at $15 the
   budget ends a run, not the round count, whereas the old limit of 12 rounds would have stopped it at about a third of the money). `--preset base`
   or `TAIC_PRESET=base` reads `taic.toml` alone. That file's own ceiling is $50 per run, with `max_rounds = 12` and `patience = 6`; the $15 default is the paper preset, not `taic.toml` by itself. `--config FILE` is used as it is. The paper preset raises `patience` (stop after N rounds without a new best) from 6 to 12, so a short plateau does not end a $15 run, and a kernel that stops improving still spends less than $15.
 * **Override.** `--budget USD` everywhere, `--budget-scale F` on `run_suite` and `repeatability` (for example `0.2` for a smoke run). The
   semantic tests (`$0.15` per run), `counter_teaching` (`$1`) and the unit tests keep their small budgets on purpose.
-* **Worst case.** If every run used its whole budget: `run_suite --tasks all --dtypes fp16,bf16` is 24 runs, $360 (the default `--dtypes` is fp16 only: 12 runs, $180); `repeatability` is 5 trials
-  x ($15 + $15 + $1) = $155 (with `flash_attention` $230); `p1_runs` is 12 named runs, $180. `--max-total-usd USD` (on those three drivers, default off)
-  skips any run whose budget would not fit under a cap on the whole invocation. Finished runs on disk have spent more than the old $3.12 note: `runs/apple-m4-max/conv2d-two-models-20261019` spent about $46 under a $50 ceiling. The $3.12 figure is still the spend of `runs/apple-m4-max/p1/fa_flash`.
+* **Worst case.** If every run used its whole budget. `--max-total-usd USD` (on those three drivers, default off) skips any run whose budget would not fit under a cap on the whole invocation.
+
+| driver | runs | worst case |
+| --- | ---: | ---: |
+| `run_suite --tasks all --dtypes fp16,bf16` | 24 | $360 |
+| `run_suite --tasks all` (default `--dtypes`, fp16 only) | 12 | $180 |
+| `repeatability` | 5 trials x ($15 + $15 + $1) | $155 |
+| `repeatability` with `flash_attention` | 5 trials | $230 |
+| `p1_runs` | 12 named runs | $180 |
+
+* **Already spent.** Finished runs on disk have spent more than the old $3.12 note: `runs/apple-m4-max/conv2d-two-models-20261019` spent about $46 under a $50 ceiling. The $3.12 figure is still the spend of `runs/apple-m4-max/p1/fa_flash`.
 * **Earlier results are not comparable.** They were produced with smaller budgets, which the dashboard shows per run (and each `result.json`
   records as `budget_usd`): `runs/apple-m4-max/suite_full` is mostly $0.5-$1.2 per kernel, except `gemm_fp16`, whose budget field is now $15; `runs/apple-m4-max/repeat_*` $3 per trial, `runs/apple-m4-max/p1` $3 for most runs (the `*_paper`
   runs started later have $15), `runs/semantic_main` $0.15, `runs/pilot_suite_mini_old_protocol` $1.25-$1.5. A run that stopped on
@@ -134,17 +223,20 @@ uv run python -m tcenv.cli profile gemm best.metal                        # xctr
 uv run python -m observe                                                  # local dashboard at http://127.0.0.1:8765
 ```
 
-How to read the numbers: the reported speedup of a run is the *confirmed* one (the winner and its ties re-measured with twice the repetitions;
-a run that has `run_seed` uses the seed derived for the confirm phase, not a fresh random draw); the suite table also lists the speedup of the task's naive hand-written kernel over the same baselines, because some
-baselines are weak (for example Lion and the BitDelta GEMM have no fused library implementation), and a naive kernel that already beats
-the baseline means part of any gain is baseline weakness.
+How to read the numbers:
+
+* the reported speedup of a run is the *confirmed* one (the winner and its ties re-measured with twice the repetitions; a run that has `run_seed` uses the seed derived for the confirm phase, not a fresh random draw);
+* the suite table also lists the speedup of the task's naive hand-written kernel over the same baselines, because some
+  baselines are weak (for example Lion and the BitDelta GEMM have no fused library implementation), and a naive kernel that already beats
+  the baseline means part of any gain is baseline weakness.
 
 ## Hardware-feature feedback (optional, off by default)
 
 `search.hw_feedback = true` (`taic run ... --hw-feedback`, `taic resume ... --hw-feedback`, or `hw_feedback=True` in the search options of a driver, as for `profile_poor`)
 appends a short block (at most 12 lines, about 150 words) to the evidence written into that round's `TASK.md`, in the place where the
-profiler evidence goes. The whole evidence block is capped at 600 bytes in `TASK.md`, so a long block can lose its tail there. It adds `backends/metal/skills/hardware_feedback.md` to the stored system prompt as Skill 2c. The `pi` session reads the task file, not that prompt. The block is computed by `taic/hwfeedback.py` from the static detector of
-`docs/hardware_features.md` (`taic/hwfeatures.py`: the source, the compiled AIR, and the roofline measured for this candidate) and says:
+profiler evidence goes. The whole evidence block is capped at 600 bytes in `TASK.md`, so a long block can lose its tail there. It adds `backends/metal/skills/hardware_feedback.md` to the stored system prompt as Skill 2c. The `pi` session reads the task file, not that prompt.
+
+The block is computed by `taic/hwfeedback.py` from the static detector of `docs/hardware_features.md` (`taic/hwfeatures.py`: the source, the compiled AIR, and the roofline measured for this candidate) and says:
 
 * which Apple-GPU features the kernel uses (matrix unit with its accumulator type and fragment count, threadgroup staging and padding, double buffering or register prefetch, width of the
   device loads and stores, SIMD reductions and shuffles, online softmax, ...) and how far it is from the roofline;
@@ -154,11 +246,13 @@ profiler evidence goes. The whole evidence block is capped at 600 bytes in `TASK
   reach most of the bandwidth there: `docs/hardware_features.md` section 6), and a warning when a kernel has 32 or more accumulator fragments (the reference GEMMs were 12 to 26 times slower)
   or when the pipeline's threadgroup cap equals its launch size (the text says this alone does not prove register pressure).
 
-Why off by default: it is an experiment and nothing yet shows that it helps. With the switch off, `tests/backends/metal/test_hw_feedback.py` checks prompts and feedback against `tests/support/golden/metal/hw_off.json` (176 system prompts, 110 user messages, 12 feedback texts). That file was recorded again on 2026-10-23 (after the prompt-bound paths were updated to `tcenv.backends.metal.runtime`), so it is not a snapshot from before the feature existed; it covers four scripted searches and records the hmz task contracts they produce, not chat requests. `taic.toml` and `taic.paper.toml` do not mention the switch. It is recorded in `run_config.json` and kept by `taic resume`. The analysis never breaks or slows a search: a timeout
-(20 s), a failure or a missing Metal toolchain drops the block and logs a warning. A/B experiment: `experiments.p1_runs` run `fa_flash_hw` is `fa_flash` with only this switch changed
-(n=1 on a stochastic search: an anecdote); the run was started on 2026-10-07 06:08, stopped once and continued with `taic resume` after a detector fix (round 1 saw the earlier block; see `docs/hardware_features.md` section 9). The result is on disk: `runs/apple-m4-max/p1/fa_flash_hw` confirmed about 0.622x, spent about $2.89, and stopped after 8 rounds because four rounds brought no new seed. The comparison `fa_flash` confirmed about 0.735x, spent $3.12, 8 rounds, stopped by its $3 budget. Neither file has the source hash the publication gate now requires, so neither number is a published conclusion about the switch.
+**Why off by default:** it is an experiment and nothing yet shows that it helps. With the switch off, `tests/backends/metal/test_hw_feedback.py` checks prompts and feedback against `tests/support/golden/metal/hw_off.json` (176 system prompts, 110 user messages, 12 feedback texts). That file was recorded again on 2026-10-23 (after the prompt-bound paths were updated to `tcenv.backends.metal.runtime`), so it is not a snapshot from before the feature existed; it covers four scripted searches and records the hmz task contracts they produce, not chat requests. `taic.toml` and `taic.paper.toml` do not mention the switch. It is recorded in `run_config.json` and kept by `taic resume`.
 
-When the hardware-feature block is on and a baseline is already more than 5% faster than the roofline lower bound, the block does not say the kernel is at the ceiling. That bound counts the direct algorithm's operations, and a baseline that beats it is using fewer of them (the measured case is conv2d: torch-mps at 777 us against a 932 us direct-convolution bound, about 1.2x the measured matrix peak). The reachable target is that baseline's time.
+**Failure is non-fatal:** the analysis never breaks or slows a search. A timeout (20 s), a failure or a missing Metal toolchain drops the block and logs a warning.
+
+**A/B experiment:** `experiments.p1_runs` run `fa_flash_hw` is `fa_flash` with only this switch changed (n=1 on a stochastic search: an anecdote); the run was started on 2026-10-07 06:08, stopped once and continued with `taic resume` after a detector fix (round 1 saw the earlier block; see `docs/hardware_features.md` section 9). The result is on disk: `runs/apple-m4-max/p1/fa_flash_hw` confirmed about 0.622x, spent about $2.89, and stopped after 8 rounds because four rounds brought no new seed. The comparison `fa_flash` confirmed about 0.735x, spent $3.12, 8 rounds, stopped by its $3 budget. Neither file has the source hash the publication gate now requires, so neither number is a published conclusion about the switch.
+
+**When the baseline beats the roofline:** with the hardware-feature block on and a baseline already more than 5% faster than the roofline lower bound, the block does not say the kernel is at the ceiling. That bound counts the direct algorithm's operations, and a baseline that beats it is using fewer of them (the measured case is conv2d: torch-mps at 777 us against a 932 us direct-convolution bound, about 1.2x the measured matrix peak). The reachable target is that baseline's time.
 
 ## Search switches (on by default)
 
@@ -191,8 +285,9 @@ In the next table, only the plan ledger is on by default. The live task file sti
 
 `uv run python -m observe` serves a local dashboard (default `http://127.0.0.1:8765`; restart it after updating the code, the page is
 read at start-up). Views: experiments, arm comparison (published speedup, `fast_p`, dollars per unit of gain), a paged run list, best/failure retrieval, one run, a spend ledger, and a cross-run review queue. The page can add budget, reset budgets, stop runs, change the two committees used by the next search, delete a record, review feedback claims, and convert or promote structured harness proposals.
-Runs grouped from an old directory name are marked inferred and are not given a winner. The read API is `/api/v2`. It shows every run's budget next to what it spent, and raises an alert for runs that crossed it. The rule is one pure
-function, `observe.budget.budget_status(spent, budget, stop_reason, running)`:
+Runs grouped from an old directory name are marked inferred and are not given a winner. The read API is `/api/v2`. It shows every run's budget next to what it spent, and raises an alert for runs that crossed it.
+
+The rule is one pure function, `observe.budget.budget_status(spent, budget, stop_reason, running)`:
 
 | level | colour | when |
 |---|---|---|
@@ -216,16 +311,30 @@ own `state.json` / `result.json` / `ledger.json`, so a run launched before this 
 A run that ran out of money (`stop_reason == "budget_exhausted"`) or whose process died (a crash, a closed editor window) can be continued
 from its own directory; nothing already spent is spent again. Two ways, one idea:
 
-* **Live top-up** of a run that is still going: `<run_dir>/control.json` (`{"budget_usd": <new TOTAL>}`, written atomically). The search reads it
-  before every budget gate (one `stat`), raises its budget to it, never below what is already spent, and logs `budget $a -> $b`. Every change is
-  appended to `<run_dir>/budget_events.json` (`requested` by whoever asked, `applied` by the run, `resume` for a restart; each with time, old and
-  new budget, amount and who: `dashboard` / `cli`). Only processes started after this feature read the file: `state.json` of such a process says
-  `"control_supported": true`; a run started by an older version cannot be topped up live (wait for it to stop, then resume it).
-* **Resume** of a stopped run: `uv run python -m taic.cli resume <run_dir> [--add-budget USD | --budget TOTAL] [--dry-run]`. Only a directory whose `run_config.json` says `loop_protocol: flame_chase_1` continues; anything else exits 3. It rebuilds the state
-  from the directory and goes on with the rounds that were not finished, then confirms and finishes as usual. A round that already has a candidate is not redone. A round with no candidate starts a new session. Before it overwrites anything,
-  `result.json` / `confirm_report.json` are kept as `*.before_topup_<n>.json` (and `state.json` as `state.before_resume_<n>.json`), so the earlier
-  result is never lost. `--dry-run` rebuilds everything in memory, prints what would be continued (including the checks between the sources) and writes
-  nothing, calls no model, uses no GPU. A run that stopped because it used its round limit or its patience can be continued with `--lift-count-limits` when it already has an eligible kernel. A GPU hang or a model error is still not resumable. A run still alive, or one that is being resumed (`<run_dir>/resume.lock` of a live pid), is refused. The dashboard "reset budgets" action adds $15 to every resumable run, raises `max_rounds` and `patience` to 100000, and passes `--lift-count-limits`.
+**1. Live top-up of a run that is still going.** `<run_dir>/control.json` (`{"budget_usd": <new TOTAL>}`, written atomically). The search reads it
+before every budget gate (one `stat`), raises its budget to it, never below what is already spent, and logs `budget $a -> $b`. Every change is
+appended to `<run_dir>/budget_events.json` (`requested` by whoever asked, `applied` by the run, `resume` for a restart; each with time, old and
+new budget, amount and who: `dashboard` / `cli`). Only processes started after this feature read the file: `state.json` of such a process says
+`"control_supported": true`; a run started by an older version cannot be topped up live (wait for it to stop, then resume it).
+
+**2. Resume of a stopped run.** `uv run python -m taic.cli resume <run_dir> [--add-budget USD | --budget TOTAL] [--dry-run]`. Only a directory whose `run_config.json` says `loop_protocol: flame_chase_1` continues; anything else exits 3. It rebuilds the state
+from the directory and goes on with the rounds that were not finished, then confirms and finishes as usual. A round that already has a candidate is not redone. A round with no candidate starts a new session. Before it overwrites anything,
+`result.json` / `confirm_report.json` are kept as `*.before_topup_<n>.json` (and `state.json` as `state.before_resume_<n>.json`), so the earlier
+result is never lost. `--dry-run` rebuilds everything in memory, prints what would be continued (including the checks between the sources) and writes
+nothing, calls no model, uses no GPU. A run that stopped because it used its round limit or its patience can be continued with `--lift-count-limits` when it already has an eligible kernel. A GPU hang or a model error is still not resumable. A run still alive, or one that is being resumed (`<run_dir>/resume.lock` of a live pid), is refused. The dashboard "reset budgets" action adds $15 to every resumable run, raises `max_rounds` and `patience` to 100000, and passes `--lift-count-limits`.
+
+```mermaid
+flowchart TD
+  dead["run stopped:<br/>budget_exhausted, crash, or interrupted"] --> can{"run_config.json says<br/>loop_protocol: flame_chase_1"}
+  can -->|no| ex3["exit 3"]
+  can -->|yes| guard{"directory alive, or resume.lock held?"}
+  guard -->|yes| refuse["refused"]
+  guard -->|no| rebuild["rebuild state from the directory"]
+  rebuild --> dry{"--dry-run?"}
+  dry -->|yes| print["print the plan, write nothing,<br/>no model, no GPU"]
+  dry -->|no| rounds["continue unfinished rounds"]
+  rounds --> confirm["confirm, then finish as usual"]
+```
 
 What a resume rebuilds, and from where (`taic/resume.py` has the details):
 
@@ -239,14 +348,23 @@ What a resume rebuilds, and from where (`taic/resume.py` has the details):
 | settings | `run_config.json` (new runs, no credentials in it); older runs: budget and round limit from `state.json`; tool use, profiler skill, plan mix, branches, repair tries and initial samples from the recorded prompts and labels | `patience` and `reasoning_effort` are not recorded by older runs: pass `--patience` (default: `taic.toml`, i.e. what runs older than the presets used) |
 | profiler evidence of earlier rounds | `profiles/r*_<seed>.{txt,json}` | yes; traces that failed are not listed |
 
-Not recoverable: model requests that were in flight when the process died (the provider may have billed them, the ledger never saw them: the
-resume notes list them), and the per-request wall-clock times of earlier sessions (`t` is `null` there). The dry run lists both.
+Not recoverable:
+
+* model requests that were in flight when the process died (the provider may have billed them, the ledger never saw them: the resume notes list them);
+* the per-request wall-clock times of earlier sessions (`t` is `null` there).
+
+The dry run lists both.
 
 **Dashboard.** On a budget-exhausted / over-budget / interrupted run (and on a running run that reached NEAR BUDGET) the top bar has one **Add budget** button; it opens the dialog for the currently selected run, and without a selection it says to pick a run first. The dialog asks for a dollar amount (the field starts at 1). The same page can reset budgets, stop every search, change the two committees used by the next search, and delete a finished record with a reason. After Confirm the page keeps showing
-the live state of the run and its budget history. A refusal from the server is shown in that dialog. The write path (`POST /api/runs/<run>/budget` with `{"amount_usd": 5}` or `{"new_budget_usd": 8}`; `GET /api/runs/<run>/control`
-says what is possible) spends money and starts GPU work, so: the server only answers on a loopback `Host`, an `Origin` header is checked only when the request sends one,
-every POST needs the per-process random token the served page carries (`X-Observe-Token`), the amount must be positive and at most
-`OBSERVE_MAX_TOPUP_USD` (default 25), the run must resolve inside `runs/` (no `..`, no symlink out), and one request per run is in flight at a time.
+the live state of the run and its budget history. A refusal from the server is shown in that dialog. The write path (`POST /api/runs/<run>/budget` with `{"amount_usd": 5}` or `{"new_budget_usd": 8}`; `GET /api/runs/<run>/control` says what is possible) spends money and starts GPU work, so:
+
+* the server only answers on a loopback `Host`;
+* an `Origin` header is checked only when the request sends one;
+* every POST needs the per-process random token the served page carries (`X-Observe-Token`);
+* the amount must be positive and at most `OBSERVE_MAX_TOPUP_USD` (default 25);
+* the run must resolve inside `runs/` (no `..`, no symlink out);
+* one request per run is in flight at a time.
+
 A live run gets `control.json`; a stopped run gets a detached `uv run python -m taic.cli resume ...` (own session, log in `<run_dir>/resume_<n>.log`).
 `OBSERVE_CONTROL_DRYRUN=1` performs every check, records the command that *would* run in `budget_events.json` (kind `dryrun`) and starts nothing.
 
@@ -266,9 +384,7 @@ Provenance: `triton-msl` is the PyPI wheel with a pinned sha256; Triton 3.7.0 (u
 the triton-msl author because upstream has no macOS wheel (its sha256 is stored in `.venvs/triton-msl/TRITON_WHEEL.sha256`). Building Triton from source
 instead needs a 1.7 GB LLVM download from the Triton CDN, which is the slow path.
 
-The result (time relative to MLX, measured interleaved in one process, `num_warps` swept, correctness checked on the same adversarial cases including `ieee`) is
-cached in `runs/triton_baselines/<task>_<dtype>_<size>.json` and shown in evaluation reports as an *estimated* comparison. "Faster than triton-msl" is a much
-weaker statement than the paper's "faster than NVIDIA Triton".
+The result is cached in `runs/triton_baselines/<task>_<dtype>_<size>.json` and shown in evaluation reports as an *estimated* comparison. The measurement is time relative to MLX, measured interleaved in one process, `num_warps` swept, correctness checked on the same adversarial cases including `ieee`. "Faster than triton-msl" is a much weaker statement than the paper's "faster than NVIDIA Triton".
 
 How it is used: triton-msl is **correct-or-refuse**. When it cannot compile a kernel faithfully it raises instead of emitting wrong code, and a refusal is
 recorded as such rather than as a number. Some tasks need a *variant spec* because the task's own Triton text is not in the form the compiler accepts
@@ -296,11 +412,28 @@ through triton-msl is 10x slower than MLX's fused attention and is refused for b
 
 ## Layout
 
-`tcenv/` environment (contract, evaluator, worker) with Metal implementations under `tcenv/backends/metal/` (runtime, ABI check, sanitizers, testing, benchmark, profile, xctrace) -
-`taic/` search (committees, ledger, orchestrator, hmz task files; `taic/llm.py` remains for experiment scripts) - `tasks/` kernels (Triton spec, contract, reference, baselines, naive MSL) -
-`backends/` per-language metadata, skills and wiki - `targets/` chip profiles, measurements and trust - `kernels/` confirmed kernels - `data/` observe index and deleted records -
-`experiments/` - `observe/` (local dashboard; it can spend money and stop runs) - `tests/` (layered `shared/` + `backends/<id>/`; rules in `tests/README.md`) - `runs/` (artifacts, git-ignored).
+| path | contents |
+| --- | --- |
+| `tcenv/` | environment (contract, evaluator, worker); Metal implementations under `tcenv/backends/metal/` (runtime, ABI check, sanitizers, testing, benchmark, profile, xctrace) |
+| `taic/` | search (committees, ledger, orchestrator, hmz task files); `taic/llm.py` remains for experiment scripts |
+| `tasks/` | kernels (Triton spec, contract, reference, baselines, naive MSL) |
+| `backends/` | per-language metadata, skills and wiki |
+| `targets/` | chip profiles, measurements and trust |
+| `kernels/` | confirmed kernels |
+| `data/` | observe index and deleted records |
+| `experiments/` | experiment drivers |
+| `observe/` | local dashboard (it can spend money and stop runs) |
+| `tests/` | layered `shared/` + `backends/<id>/`; rules in `tests/README.md` |
+| `runs/` | artifacts, git-ignored |
 
 Directory conventions: `backends/README.md`, `targets/README.md`, `kernels/README.md`, and `tests/README.md`.
 
-Model/P2 security boundaries: `docs/security.md`. Agent skills and multi-tool entry points: `docs/agent-skills.md`. `docs/` (Chinese notes): `docs/架构说明.md` how the parts divide the work - `docs/架构/可观测.md` how experiments are grouped and how the dashboard reads them - `docs/诚实说明.md` what the pipeline does **not** prove, and how to check every claim - `docs/算子工程师边界.md` what this route replaces and does not replace in human roles (with the evidence paths). Index of the directory: `docs/README.md`.
+Model/P2 security boundaries: `docs/security.md`. Agent skills and multi-tool entry points: `docs/agent-skills.md`.
+
+`docs/` (Chinese notes):
+
+* `docs/架构说明.md` – how the parts divide the work;
+* `docs/架构/可观测.md` – how experiments are grouped and how the dashboard reads them;
+* `docs/诚实说明.md` – what the pipeline does **not** prove, and how to check every claim;
+* `docs/算子工程师边界.md` – what this route replaces and does not replace in human roles (with the evidence paths);
+* `docs/README.md` – index of the directory.

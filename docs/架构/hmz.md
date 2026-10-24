@@ -2,6 +2,23 @@
 
 `hmz` 是别人写的启动器，用来驱动已经登录的编程代理。搜索写内核只走 `hmz exec`，跑一场 `kernel_once`。`--kernel-agent off` 拒绝启动。换种子和确认仍在 `taic`。搜索不再单独发规划请求。`flame_chase` 是 `hmz` 自带的双代理轮流，本仓库的搜索不用它。
 
+## 这篇讲什么
+
+- `hmz` 只负责**启动与围栏**：它不写内核，也不判卷；判卷在 `taic`。
+- 真正的模型调用发生在 `pi` 里，`pi` 由 `hmz` 拉起。链子是 `taic` → `hmz` → `pi` → 模型。
+- 本仓库只给 `hmz` 一份流程 `kernel_once`：一个角色 `assistant`，写完一颗内核就停；两个委员会的轮换由搜索进程负责。
+- `loop_protocol: flame_chase_1` 只是续跑协议标签，不代表调用 `flame_chase`。
+
+```mermaid
+flowchart LR
+  T["taic 搜索进程<br/>准备 TASK.md、判卷、换种子"] --> E["hmz exec -f kernel_once"]
+  E --> F["权限围栏<br/>可读/可写路径、可连主机"]
+  E --> P["pi --mode rpc<br/>代理会话"]
+  P --> M["模型<br/>provider/model[:effort]"]
+  P --> W["工作目录<br/>读 TASK.md、写交卷文件"]
+  E --> EP["epic<br/>~/.hmz/epics/.../epic.jsonl"]
+```
+
 源码不进入本仓库。2026-10-19 装上的发布包是 PyPI 的 `hmz` 0.2.0；2026-10-24 已升级到 0.2.1（PyPI 2026-10-20 的最新发布）。本机源码检出 `ac732f1e`（2026-10-21，0.2.1 之后 18 个提交），其中 `flame_chase` 与 `e2013a4` 相同，仍是 48 行。搜索仍只调用 `kernel_once`；`run_config.json` 的 `loop_protocol: flame_chase_1` 只是续跑协议标签。搜索循环、上下文和判卷仍在 [搜索.md](搜索.md)。
 
 ## 它是什么
@@ -24,7 +41,11 @@ hmz exec -f taic/flows/kernel_once
     -- "Read TASK.md in this directory and do it. Write the finished kernel to <交卷文件名>. The search does not read kernel.metal."
 ```
 
-`submit_name` 是 `{题目}-{dtype}-{规模}-{场次}.metal`。少了它，`kernel_once` 会回落到 `submit.metal`，而搜索只读 `TASK.md` 里写的那份交卷文件。`seed_name` 默认也是 `kernel.metal`；它只用于收尾提示里点名种子文件，实际写入的种子文件由搜索按本场契约放置，交卷文件仍由 `submit_name` 决定。`--json` 让 `hmz` 把 `spent` 等记录写成一行行 JSON，搜索据此记账。
+参数要点：
+
+- `submit_name` 是 `{题目}-{dtype}-{规模}-{场次}.metal`。少了它，`kernel_once` 会回落到 `submit.metal`，而搜索只读 `TASK.md` 里写的那份交卷文件。
+- `seed_name` 默认也是 `kernel.metal`；它只用于收尾提示里点名种子文件，实际写入的种子文件由搜索按本场契约放置，交卷文件仍由 `submit_name` 决定。
+- `--json` 让 `hmz` 把 `spent` 等记录写成一行行 JSON，搜索据此记账。
 
 单场美元上限是剩余预算和 `relay_budget_usd`（默认 2 美元）里较小的那个，再按该委员会的输出单价换成 `turn_output_tokens`。不是把剩余美元原样交给 `budget.cost`。
 

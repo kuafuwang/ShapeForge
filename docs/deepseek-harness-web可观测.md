@@ -1,8 +1,12 @@
 # DeepSeek Harness 的 Web 可观测
 
-这篇记的是别人的网页怎样看见一场会话，不是本仓库的看板。本仓库的看板仍由 `observe` 读 `runs/` 里的目录；实时更新走自己的 SSE（`/api/v2/stream`）加回合轮询，没有他们那条复用的 WebSocket。
+## 这篇讲什么
 
-这篇对过 `/Users/kuafu/workspace/deepseek-harness` 本地检出 `687f282e86`（2026-10-17，`dsh` 0.2.1-rc.2）。那个检出不在本仓库里。浏览器入口是 `apps/web`。`packages/web/web` 是搜索和抓取，没有页面事件通道。
+这篇记录的是另一个项目——DeepSeek Harness——的网页如何看见一场会话，不是本仓库的看板。
+
+本仓库的看板仍由 `observe` 读 `runs/` 里的目录；实时更新走自己的 SSE（`/api/v2/stream`）加回合轮询，没有他们那条复用的 WebSocket。
+
+事实基线：以下内容对照 `/Users/kuafu/workspace/deepseek-harness` 本地检出 `687f282e86`（2026-10-17，`dsh` 0.2.1-rc.2）。那个检出不在本仓库里。浏览器入口是 `apps/web`；`packages/web/web` 是搜索和抓取，没有页面事件通道。
 
 ## 架构
 
@@ -14,7 +18,11 @@
 | 实时 | WebSocket `/api/remote.mux` | 一条物理连接，上面复用多条逻辑流 |
 | 一元调用 | `POST /api/<namespace>/<method>` | 翻更早的历史走这里，不走 WebSocket |
 
+### 鉴权与来源检查
+
 启动 URL 带 `?token=`。校验通过后种 `dsh-auth-*` cookie，再 303 到页面。之后的 WebSocket 和 `POST /api` 靠这张 cookie。请求还要过 Host / Origin：loopback、监听地址本身，或配置里的可信主机。`sec-fetch-site: cross-site` 拒绝。
+
+### 一条事件从落盘到上屏
 
 一条已经落盘的会话事件，路径是：
 
@@ -25,11 +33,37 @@
 5. 浏览器里的 journal stream 收成 `append`，会话窗口 `appendLive`。
 6. 对话装配订阅这份窗口，`useSyncExternalStore` 只通知变了的节点。
 
+```mermaid
+sequenceDiagram
+    participant Loop as agent 循环
+    participant Log as 会话日志
+    participant Follow as follow 流
+    participant Mux as WebSocket /api/remote.mux
+    participant Web as 浏览器
+    Loop->>Log: session.append
+    Log-->>Loop: 提交完成
+    Loop->>Follow: 发出 session/event
+    Follow->>Mux: session.id 匹配则 yield
+    Mux->>Web: 写入帧
+    Web->>Web: journal stream 收成 append，appendLive 更新窗口
+    Web->>Web: useSyncExternalStore 只通知变更节点
+```
+
 还没落盘的流式 token 不进日志。循环发 `agent/assistant-stream`，同一条 `follow` 另送 `{type:'assistant-stream'}` 帧。
 
-每条 `follow` 只跟一个会话地址。第一帧是当前尾窗快照（头、游标、一页记录、`hasMore`、投影、助手基线）。之后持久事件按 `seq` 逐条增量。助手流式帧不占 `seq`。整页还有一条 `$events` 流给会话列表，客户端再按 `sessionId` 分。
+### follow 流与断线重连
 
-断线后再打开，不是从上次的 `seq` 续传。`follow` 请求里没有恢复游标。重连再读当前日志，发一帧新的尾窗，客户端整窗替换。落在这扇尾窗里的事件因此补上；更早的靠 `hasMore`，用 HTTP `session.page` 往前翻。之前已经向前翻进来的页，会被这次替换清掉。心跳连续丢失就断开。重连退避从最多 500 毫秒起，倍数 2，封顶 10000 毫秒。
+每条 `follow` 只跟一个会话地址。第一帧是当前尾窗快照（头、游标、一页记录、`hasMore`、投影、助手基线），之后持久事件按 `seq` 逐条增量。助手流式帧不占 `seq`。整页还有一条 `$events` 流给会话列表，客户端再按 `sessionId` 分。
+
+断线后再打开，不是从上次的 `seq` 续传：`follow` 请求里没有恢复游标。重连时读当前日志，发一帧新的尾窗，客户端整窗替换。落在这扇尾窗里的事件因此补上；更早的靠 `hasMore`，用 HTTP `session.page` 往前翻。之前已经向前翻进来的页，会被这次替换清掉。心跳连续丢失就断开。重连退避从最多 500 毫秒起，倍数 2，封顶 10000 毫秒。
+
+| 场景 | 行为 |
+| --- | --- |
+| 首次打开 | 拉尾窗快照 |
+| 已打开的会话切回去 | 不再请求 |
+| 断线重连 | 整窗替换，不从 `seq` 续传 |
+| 要更早历史 | HTTP `session.page` 按 `hasMore` 前翻 |
+| 窗口 revision 未变 | 订阅方直接返回 |
 
 ## 数据结构
 
@@ -56,7 +90,7 @@
 
 浏览器不另存一份消息文档。Chat 和轨迹页都从事件投影。壳上只在 `localStorage` 的 `dsh.conversation.<sessionId>` 里放草稿和当前视图。
 
-投影出来的形状：
+### 投影出来的形状
 
 | 对象 | 字段里和可观测有关的 |
 | --- | --- |
@@ -66,7 +100,7 @@
 | 一轮 | 位置、状态、步；页脚有 token 合计；过程条有消息数、工具数、子代理数 |
 | 轨迹 | 系统提示、节点、助手、工具、请求头、压缩、回合结束。单元格另有 input / output / cache / think |
 
-不进画面的：
+### 不进画面的东西
 
 - 思考签名留在日志的 `replayState`，投影只拷 `reasoning.text`。
 - 流式工具参数增量不进助手块，归到工具节点。过程行摘要截到 160 个字素。
@@ -84,7 +118,7 @@
 - Markdown 增量解析，已经冻结的块留下，只重画尾部。
 - 工具参数增量走同一套三帧合批。`tool/call` 和 `tool/result` 是立即刷，并取消还没刷的帧。进行中和结果落在同一个 `tool-call` 节点上，不重排消息列表。
 
-列表：
+### 列表与折叠
 
 | 列表 | 做法 |
 | --- | --- |

@@ -3,6 +3,18 @@
 这份文档说明测试应该放在哪一层。根目录已经没有 `test_*.py`；新测试按这里
 的规则放到 `shared/` 或 `backends/<id>/`。
 
+## 这篇讲什么
+
+- 测试按“是否依赖 backend（后端）”分两层：`tests/shared/` 放与 backend 无关的测试，
+  `tests/backends/<id>/` 放某个 backend 专属的测试。
+- 测试基础设施（fake、pytest 插件、helper、golden 数据）统一放 `tests/support/`，
+  这里不放业务测试。
+- 根目录只留 `conftest.py`、`README.md` 和 `__init__.py`，不再放测试文件。
+- 默认并行跑。不占 GPU、不花钱的安全命令是
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`。
+- 测试失败时先读 `logs/pytest/triage/triage_summary.md`（分类摘要），再按失败交接
+  （handoff）里的单进程命令复现，而不是先翻完整日志。
+
 ## 给 AI 的阅读顺序
 
 1. **本文件**：目录分层、放置规则、导入、golden、并行、失败日志。子目录
@@ -83,6 +95,24 @@ tests/
 6. 新测试不要再放到 `tests/` 根目录；根目录只有 `conftest.py`、`README.md`
    和 `__init__.py`。
 
+对应的判断流程：
+
+```mermaid
+flowchart TD
+  A["新增测试"] --> B{"依赖 Metal backend 吗？<br/>看 import、源码扩展名、ABI 或运行时术语"}
+  B -- 否 --> C["tests/shared/test_topic.py"]
+  B -- 是 --> D["tests/backends/metal/test_topic.py"]
+  C --> E{"需要 fixture 吗？"}
+  D --> E
+  E -- 全局 --> F["tests/conftest.py，只放真正全局的 fixture"]
+  E -- 仅某个 backend --> G["tests/backends/id/conftest.py"]
+  E -- 不需要 --> H["测试文件自己准备数据"]
+  C --> I{"需要 fake 或固定数据吗？"}
+  D --> I
+  I -- 需要 --> J["tests/support/：helper、fake、插件"]
+  J --> K["按 backend 的固定数据放 tests/support/golden/backend_id/"]
+```
+
 ## Import 规则
 
 `tests/` 是一个包（每个目录都有 `__init__.py`）。实际约定是**包内相对导入**：
@@ -134,6 +164,14 @@ uv run pytest -q -m 'not gpu and not llm'                # 完整 CPU 套件（�
 uv run pytest -q -m gpu -n 0                             # GPU 套件串行
 ```
 
+三个 marker（标记）的含义，以及安全命令是否排除它们：
+
+| marker | 含义 | `-m 'not gpu and not llm and not slow'` |
+| --- | --- | --- |
+| `gpu` | 需要 Metal 设备；GPU 同时驱动显示器 | 排除 |
+| `llm` | 调用模型端点，会花钱 | 排除 |
+| `slow` | 长时间的检查 | 排除 |
+
 `tests/conftest.py` 给所有 `gpu` 用例加 `xdist_group("gpu")`，配合
 `--dist loadgroup` 把它们固定在同一个 worker 上：GPU 测量本来就要独占锁，
 并行只会让 worker 互等（最长 `DEFAULT_MAX_WAIT_S`，30 分钟）。CPU 用例仍按
@@ -178,25 +216,13 @@ AI/人应先读 `triage_summary.md`，再读对应 Markdown 的 JSON 块，最�
 
 ## 迁移状态
 
-- 阶段 1/2：`shared/`、`backends/`、`support/` 目录和 helper/golden 已建立。
-- 阶段 3：已把第一批明确的 Metal 测试移入 `tests/backends/metal/`
-  （backend adapter/registry/phase 0、launch/ABI、tcenv、baselines、bench limit、
-  pressure、skills/symptom、xctrace、orchestrator GPU）。
-- 阶段 3 第二批：任务/契约层的 Metal 测试（contracts、generated tasks、mamba2、
-  domain sweep、elementwise semantics）也已移入 `tests/backends/metal/`。
-- 阶段 3 收尾：dispatch、IEEE 特殊值、硬件特征检测和 hwfeedback 也已移入
-  `tests/backends/metal/`；通用文件里混着的 Metal 测试也已拆出到
-  `test_abi.py`、`test_triton_baseline.py`、`test_orchestrator_profiling.py`。
-  根目录剩下的是通用搜索/审查/observe/预算/锁/target/schema 测试，不再直接
-  import `tcenv.backends.metal.*`。
-- 阶段 4：已完成，根目录不再有 `test_*.py`；所有 backend 无关测试在
-  `tests/shared/`，所有 Metal 测试在 `tests/backends/metal/`。
-  测试模块之间不再互相 import fixture/helper；共享 dashboard fixture 由
-  `tests/support/dashboard.py` 提供。
-- 迁移时一次只移动一组，先跑目标测试，再跑全量；不要把目录移动和业务改动混在一起。
-- 迁移后校正：`test_distributions.py` 没有 Metal import，已移回 `tests/shared/`；
-  `test_dispatch.py` 的 CPU 半（batch probe / interleaved）并入
-  `tests/shared/test_bench.py`，`tests/backends/metal/test_dispatch.py` 只留 GPU 用例；
-  `test_abi.py` 的单个用例并入 `test_launch.py`；两个自指的 `test_layout.py`
-  换成 `tests/shared/test_structure.py`（根目录无测试、每个目录是包、
-  `shared/` 不 import backend、`support/` 无业务测试）。
+| 阶段 | 内容 |
+| --- | --- |
+| 阶段 1/2 | `shared/`、`backends/`、`support/` 目录和 helper/golden 已建立。 |
+| 阶段 3 | 已把第一批明确的 Metal 测试移入 `tests/backends/metal/`（backend adapter/registry/phase 0、launch/ABI、tcenv、baselines、bench limit、pressure、skills/symptom、xctrace、orchestrator GPU）。 |
+| 阶段 3 第二批 | 任务/契约层的 Metal 测试（contracts、generated tasks、mamba2、domain sweep、elementwise semantics）也已移入 `tests/backends/metal/`。 |
+| 阶段 3 收尾 | dispatch、IEEE 特殊值、硬件特征检测和 hwfeedback 也已移入 `tests/backends/metal/`；通用文件里混着的 Metal 测试也已拆出到 `test_abi.py`、`test_triton_baseline.py`、`test_orchestrator_profiling.py`。根目录剩下的是通用搜索/审查/observe/预算/锁/target/schema 测试，不再直接 import `tcenv.backends.metal.*`。 |
+| 阶段 4 | 已完成，根目录不再有 `test_*.py`；所有 backend 无关测试在 `tests/shared/`，所有 Metal 测试在 `tests/backends/metal/`。测试模块之间不再互相 import fixture/helper；共享 dashboard fixture 由 `tests/support/dashboard.py` 提供。 |
+| 迁移后校正 | `test_distributions.py` 没有 Metal import，已移回 `tests/shared/`；`test_dispatch.py` 的 CPU 半（batch probe / interleaved）并入 `tests/shared/test_bench.py`，`tests/backends/metal/test_dispatch.py` 只留 GPU 用例；`test_abi.py` 的单个用例并入 `test_launch.py`；两个自指的 `test_layout.py` 换成 `tests/shared/test_structure.py`（根目录无测试、每个目录是包、`shared/` 不 import backend、`support/` 无业务测试）。 |
+
+迁移时一次只移动一组，先跑目标测试，再跑全量；不要把目录移动和业务改动混在一起。

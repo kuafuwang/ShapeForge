@@ -1,17 +1,51 @@
 # Backend 协议与 GPU 实现计划
 
-先抽协议，Metal GPU 行为不变；本轮只做 Metal 一个实现，NPU 只留注册位。
+## 这篇讲什么
 
-状态（2026-10-23 审核）：Phase 0 基线已记录（`docs/架构/backend-phase0-baseline.json`）；Phase 1 完成，Phase 2 主体完成（`EvalReport` schema 3、`backend_version`/timeline、索引 v11、`runs.backend`/`runs.backend_version` 已落地），Phase 3 的 `reference_sources`、提示词 fence、技能角色、文件扩展名、`extract_source`、hwfeatures/policy 能力门和 source-fence 调用方已落地，Phase 4 已删除 12 个旧薄包装。未落地：§7.2 的 `Limits` 通用化与 `device_matches`/`limit_notes` 迁移、§8.6 的 `tcenv/report.py`/`taic/feedback_extra.py` 文案收归、§8.2 的 `task_fingerprint` 按 target backend 取参考源；另，`backend.toml` 的 `language`/`file_ext`/`skills` 仍与 `Backend` 类属性重复，注册表只校验 `id`/`version`（§4、§7.1）。Phase 0 的 `prompt_sha1` 已与当前 `taic/harness.py` 不一致（`tests/backends/metal/test_backend_phase0.py` 当前失败），旧 trust grant 失效，需重录或重新授权。GPU 全任务回归按 Phase 2 验收口径仍未完成：2026-10-23 的 16 任务 GPU smoke 通过，但 P0 GPU-timestamp 临界超门 0.028 pp，未重录基线。
-审核：对照当前代码补入 `source_pressure` 的 Metal 归属、嵌套报告 payload、`measure_serial` 默认值、`prompt_sha1` 的实际 SHA-256 和完整 skills 列表。
-Phase 1/2 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/{backend,screen,launch,abi,sanitize,testing,baselines,profile,pressure,runtime,domain,xctrace,triton_baseline}.py`；`tcenv/contract.py` 与 `tcenv/verify.py` 是顶层通用模块，Metal 侧的 `contract.py`/`verify.py` 只做兼容导入。`evaluate`/`worker` 经 adapter，报告 schema 3、backend_version/timeline、索引 v11 和 `runs.backend`/`runs.backend_version` 已落地；Phase 3 提示/文件扩展和 Phase 4 shim 清理已完成。Phase 0 的单个 `flash_attention` GPU 基线已采；2026-10-23 的 16 任务 GPU smoke 全部通过，P0 对比见 `docs/架构/backend-gpu-regression-20261023.md`（GPU-timestamp 临界超门 0.028 pp，未重录基线）。
-目标读者：维护 `taic` / `tcenv` 的工程师
+本文是给维护 `taic` / `tcenv` 的工程师看的设计与实施计划。主题是把 `tcenv` 从“Metal 专用评测器”改成“评测流程 + 可插拔 backend”，同时保证当前 Metal GPU 行为不变；一句话版本见 §0。
+
+读之前先知道四件事：
+
+- 阶段编号全文只有一套，见 §11；§6–§10 是工作包（WP-A 至 WP-D），不自带 Phase 编号，所属阶段在 §11 的表里对齐。
+- 每节里的「已落地」「未落地」「已决定」都是 2026-10-23 审核时的状态，改动代码后要回来更新。
+- 未落地项集中在文首状态、§7.2、§8.2、§8.6 和 §15。
+- 承诺只覆盖 kernel 级设备；图级 NPU 不在范围内（见 §2、§12）。
+
+目标读者：维护 `taic` / `tcenv` 的工程师。
+
 范围：先抽协议，Metal GPU 作为第一个实现；NPU 不实现，只预留注册位和接口。
-阶段编号全文只有一套，见 §11。§6–§10 是工作包（WP-A 至 WP-D），不自带 Phase 编号，所属阶段在 §11 的表里对齐。
+
+## 状态（2026-10-23 审核）
+
+已落地：
+
+- Phase 0 基线已记录（`docs/架构/backend-phase0-baseline.json`）。
+- Phase 1 完成。
+- Phase 2 主体完成：`EvalReport` schema 3、`backend_version`/timeline、索引 v11、`runs.backend`/`runs.backend_version` 已落地。
+- Phase 3 已落地：`reference_sources`、提示词 fence、技能角色、文件扩展名、`extract_source`、hwfeatures/policy 能力门和 source-fence 调用方。
+- Phase 4 已删除 12 个旧薄包装。
+
+未落地：
+
+- §7.2 的 `Limits` 通用化与 `device_matches`/`limit_notes` 迁移。
+- §8.6 的 `tcenv/report.py`/`taic/feedback_extra.py` 文案收归。
+- §8.2 的 `task_fingerprint` 按 target backend 取参考源。
+- `backend.toml` 的 `language`/`file_ext`/`skills` 仍与 `Backend` 类属性重复，注册表只校验 `id`/`version`（§4、§7.1）。
+
+已知不一致与失效项：
+
+- Phase 0 的 `prompt_sha1` 已与当前 `taic/harness.py` 不一致（`tests/backends/metal/test_backend_phase0.py` 当前失败），旧 trust grant 失效，需重录或重新授权。
+- GPU 全任务回归按 Phase 2 验收口径仍未完成：2026-10-23 的 16 任务 GPU smoke 通过，但 P0 GPU-timestamp 临界超门 0.028 pp，未重录基线。
+
+审核记录：对照当前代码补入 `source_pressure` 的 Metal 归属、嵌套报告 payload、`measure_serial` 默认值、`prompt_sha1` 的实际 SHA-256 和完整 skills 列表。
+
+Phase 1/2 实施记录：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/{backend,screen,launch,abi,sanitize,testing,baselines,profile,pressure,runtime,domain,xctrace,triton_baseline}.py`；`tcenv/contract.py` 与 `tcenv/verify.py` 是顶层通用模块，Metal 侧的 `contract.py`/`verify.py` 只做兼容导入。`evaluate`/`worker` 经 adapter，报告 schema 3、backend_version/timeline、索引 v11 和 `runs.backend`/`runs.backend_version` 已落地；Phase 3 提示/文件扩展和 Phase 4 shim 清理已完成。Phase 0 的单个 `flash_attention` GPU 基线已采；2026-10-23 的 16 任务 GPU smoke 全部通过，P0 对比见 `docs/架构/backend-gpu-regression-20261023.md`（GPU-timestamp 临界超门 0.028 pp，未重录基线）。
 
 ## 0. 一句话
 
-把 `tcenv` 从“Metal 专用评测器”改成“评测流程 + 可插拔 backend”。当前 GPU 行为保持不变；未来新增同为 kernel 级的 accelerator 时，只增加一个 backend、对应任务和 skills，不改搜索、反馈、信任和审计主流程。只能跑图级程序的设备（如部分 NPU）不在这句承诺内，见 §2。
+把 `tcenv` 从“Metal 专用评测器”改成“评测流程 + 可插拔 backend”。当前 GPU 行为保持不变；未来新增同为 kernel 级的 accelerator 时，只增加一个 backend、对应任务和 skills，不改搜索、反馈、信任和审计主流程。
+
+只能跑图级程序的设备（如部分 NPU）不在这句承诺内，见 §2。
 
 ### 0.1 术语（首次出现以此为准）
 
@@ -53,6 +87,8 @@ Phase 1/2 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/{
 - `TargetProfile` 已有 `backend`、`language`、`file_ext`、`backend_version` 字段；后三者来自注册表加载的 `Backend` 对象，`backend.toml` 里虽有同名字段，但注册表目前不校验/不回读它们。`targets/_template` 和 `backends/_template` 已存在。
 - `run_config.json` / `result.json` 已记录 `target_id` / `backend`；SQLite `runs` 表也已有 `backend` / `backend_version` 两列（索引 v11），不再只能从 `row_json` 里读。
 
+一句话总结 3.1：搜索、反馈、数据层和 `EvalReport` 的骨架已经通用；还没通用的是 Metal 术语、Metal 文案和几处写死的路径/指纹。
+
 ### 3.2 仍与 Metal 绑定或尚未通用化的部分（2026-10-23 审核）
 
 | 位置 | 现状 |
@@ -86,6 +122,8 @@ Phase 1/2 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/{
 | `tcenv/cli.py` | `eval/naive/profile` 的 MSL 语义；`triton-msl` baseline；xctrace |
 | `backends/metal/` | 只有 `backend.toml`、skills/wiki，没有 backend 代码入口 |
 
+怎么读这张表：左列是文件位置，右列是“为什么它还不算通用”。多数行不是待办，而是“当前冻结在 Metal 上、等第二个 backend 前再处理”的清单。
+
 ### 3.3 三处容易误读的事实（当前值，历史值随文注明）
 
 1. `EvalReport` 的顶层是封闭 schema：当前 `REPORT_SCHEMA_VERSION = 3`（`tcenv/schema.py`；Phase 0/1 时为 2，Phase 2 已升到 3），不认识的顶层字段一律拒读。给它加任何顶层字段都必须先升 schema 版本，不是“加个可选字段”就行；下一次加字段就是 4。**嵌套字典不受这条校验**：`pipeline`、`benchmark` 等字典新增键不会触发 schema 失败；`pipeline.source_pressure` 就是这样进入报告的。Phase 0 必须快照嵌套 payload，Phase 1 必须原样保留，不能把嵌套键变化当作“没有报告变化”。
@@ -94,7 +132,7 @@ Phase 1/2 实施：`tcenv/backends/{base,registry}.py`、`tcenv/backends/metal/{
 
 ## 4. 设计原则
 
-1. **GPU 零行为变化**，口径全文统一如下，不再有第二种说法：已有的字段名、语义、状态码、阶段名、prompt 输出字节保持不变；只允许新增可选字段，且每个 Phase 必须列明本阶段新增哪几个字段。Phase 1 不新增任何**顶层**报告字段，也不改变现有嵌套 payload；当前 `pipeline.source_pressure` / `hints` 必须原样保留（见 §3.3、§11）。
+1. **GPU 零行为变化**。口径全文统一如下，不再有第二种说法：已有的字段名、语义、状态码、阶段名、prompt 输出字节保持不变；只允许新增可选字段，且每个 Phase 必须列明本阶段新增哪几个字段。Phase 1 不新增任何**顶层**报告字段，也不改变现有嵌套 payload；当前 `pipeline.source_pressure` / `hints` 必须原样保留（见 §3.3、§11）。
 2. **协议只描述阶段，不描述 Metal 术语**：通用接口里不出现 `simdgroup`、`threadgroup`、`gpu_family`。
 3. **backend 拥有语言细节**：语言名、扩展名、源码筛选、编译诊断、ABI、启动规格、profile 原语都由 backend 提供。当前运行时读 `Backend.language` / `file_ext` / `skill_*` 类属性；`backend.toml` 里有 `language`、`file_ext`、`skills` 同名字段，但注册表只校验 `id`/`version`，这些字段仍是重复声明，不是唯一权威。第二个 backend 前要统一（§7.1）。
 4. **任务只声明语义和参考**：任务不假设 MSL；参考源码按 backend id 存放（见 §8）。
@@ -143,6 +181,8 @@ tasks/
   <task>/task.py          # 通用元数据 + backend 源码映射
 ```
 
+一句话读法：`taic` 只认识 `EvalReport`；`tcenv/evaluate.py` 负责阶段编排；语言相关的东西全部下沉到 `tcenv/backends/<backend>/`。
+
 ## 6. 工作包 A：Backend 协议
 
 文件建议：`tcenv/backends/base.py`。
@@ -162,10 +202,31 @@ tasks/
 | `bench` | 编排（计时协议）+ backend 会话原语 | 先预分配 `R` 套轮转护栏 buffer 并构造候选/基线计时闭包，再由编排层跑 `interleaved`、CV 与最多 3 次重测，测完后对发射过的 buffer 做护栏与首尾数值抽查（失败改判 `unsafe`） |
 | `done` | 编排 | roofline 在 bench 末尾由编排层按公式算，backend 只提供峰值/标定量；可选附加 `compiler_baseline` |
 
+```mermaid
+flowchart TD
+    A["device_check"] -->|设备不匹配| R["status=rejected"]
+    A -->|通过| B["screen 父进程"]
+    B -->|违例| R
+    B --> P["parse_launch 父进程算看门狗期限"]
+    P --> C["子进程 screen 与启动规格上限检查"]
+    C -->|违例| R
+    C --> D["compile"]
+    D --> E["abi 反射与 pipeline 统计"]
+    E --> F["correctness：安全与数值同一次运行"]
+    F -->|安全违例| U["status=unsafe"]
+    F -->|数值不对| I["status=incorrect"]
+    F -->|通过| G["bench：interleaved、CV、最多 3 次重测"]
+    G -->|测速后抽查失败| U
+    G --> H["done：roofline 由编排层计算"]
+```
+
 另外三个不在阶段序列里、但协议必须显式对齐的机制：
 
 - **对外 `mode` 与子进程 `mode` 的映射**：`evaluate()` 对外接收 `"quick" | "timed" | "full"`；子进程 `evaluate_in_process()` 接收 `"validate" | "quick" | "full"`。其中 `"timed"` 在父进程按 `validate` 标志可选先跑一次 `"validate"` 子进程，再跑一次不插桩的 `"full"` 子进程，最后把 `rep.mode` 写回 `"timed"` 并追加 `self_checks.jsonl`。
-- **validation 子进程三件套**：`full`（及带 `validate=True` 的 `timed`）在 bench 前起一个插桩子进程，期限翻倍。backend 需向父进程提供三项原语：注入插桩环境变量（`validation_env`）、解析子进程 `stderr` 中的校验违例（`parse_validation_stderr`）、以及判断 ABI 失败是否仅因插桩使静态线程组内存翻倍（`is_instrumented_size_only`，若是则放行给后面的非插桩子进程去比目标档案上限）。
+- **validation 子进程三件套**：`full`（及带 `validate=True` 的 `timed`）在 bench 前起一个插桩子进程，期限翻倍。backend 需向父进程提供三项原语：
+  - 注入插桩环境变量（`validation_env`）；
+  - 解析子进程 `stderr` 中的校验违例（`parse_validation_stderr`）；
+  - 判断 ABI 失败是否仅因插桩使静态线程组内存翻倍（`is_instrumented_size_only`，若是则放行给后面的非插桩子进程去比目标档案上限）。
 - **父/子进程切分与惰性导入硬约束**：
   - **父进程只做纯 CPU/文本动作**：`screen`、`parse_launch`（算 `deadline_for_source`）、构造 `validation_env`、解析 `stderr`、用 `target.file_ext` 落临时源文件路径。**硬约束**：父进程调用 `load_backend("metal")` 时，模块顶层不得 `import Metal` / PyObjC / `torch.mps`；设备上下文只能在子进程内惰性初始化。
   - **子进程做设备动作与心跳挂接**：`tcenv/worker.py` 启动后通过 `backend.set_heartbeat_hooks(on_compile=..., on_launch=...)` 绑定 `"C"`/`"B"`/`"E"` 心跳，随后执行 `probe`、`check_launch_limits`、`compile`、`check_abi`、`run_correctness`、`prepare_bench`。父进程的 `supervise()` 和 `gpulock`（共享→独占升级）完全留在编排层。
@@ -354,7 +415,7 @@ def load_backend(name: str) -> Backend:
 
 ### 8.2 `naive_msl` 不只是参考源码
 
-【实施前必须认清】`naive_msl` 现在身兼三职，改名或多值化都会动到它们，本计划逐项给出处理方式，不留给实施者猜：
+【实施前必须认清】`naive_msl` 现在身兼三职，改名或多值化都会动到它们。本计划逐项给出处理方式，不留给实施者猜：
 
 1. **评测自检核**：`tcenv naive` 把它走一遍完整 `evaluate()`，验证评测架本身没坏。某个 backend 没有参考源码时，自检行为要明确定义（跳过并报“无参考”，不能静默通过）。
 2. **任务指纹成分**：`task_fingerprint` 仍然写死 `task.reference_for("metal")`（`tcenv/task.py`），即使任务已有 `reference_sources`。第二个 backend 接入前必须改成按 `target.backend` 取源；届时旧 run 的指纹不可比，要靠 `git_commit` 追溯。当前 Metal run 不受影响。
@@ -364,14 +425,16 @@ def load_backend(name: str) -> Backend:
 
 `Contract` 不是“把 `render_header/assemble` 拆出去”就能通用化的：它本身就是 MSL 启动契约，`grid/threads`、`(name, msl_type, value)` 常量、`[[buffer(n)]]` 都在通用类里，每个 `Task` 还直接持有它（`tcenv/task.py`），各题把 grid/threads/constants 钉死在构造里。
 
-决议（Phase 2 已落）：`grid/threads`、buffer 下标和 `msl_type` 继续留在通用 `Contract`，因为它们同时描述启动几何和 ABI；MSL 文本渲染（`assemble`/`describe`/`abi_stub`/`rewrite_compiler_lines`）由 `MetalBackend` 提供，Phase 2 仍委托现有 `tcenv/contract.py` 实现，保证描述文本和指纹逐字节不变。`tcenv/contract.py` 作为通用模块保留，Metal 侧只留兼容导入；Phase 4 没有删除它，也不在协议迁移中改变 `contract.describe()`。还有一条容易漏的稳定性约束：`Contract.describe()` 的文本被哈希进 `run_config.json`（`contract_description_sha256`），拆分类或改渲染顺序若动了描述文本，Phase 2 的“报告不变”验收测不出来。Phase 2 的验收必须加一条：`contract.describe()` 与 `task_fingerprint` 逐字节快照对比。
+决议（Phase 2 已落）：`grid/threads`、buffer 下标和 `msl_type` 继续留在通用 `Contract`，因为它们同时描述启动几何和 ABI；MSL 文本渲染（`assemble`/`describe`/`abi_stub`/`rewrite_compiler_lines`）由 `MetalBackend` 提供，Phase 2 仍委托现有 `tcenv/contract.py` 实现，保证描述文本和指纹逐字节不变。`tcenv/contract.py` 作为通用模块保留，Metal 侧只留兼容导入；Phase 4 没有删除它，也不在协议迁移中改变 `contract.describe()`。
+
+还有一条容易漏的稳定性约束：`Contract.describe()` 的文本被哈希进 `run_config.json`（`contract_description_sha256`），拆分类或改渲染顺序若动了描述文本，Phase 2 的“报告不变”验收测不出来。Phase 2 的验收必须加一条：`contract.describe()` 与 `task_fingerprint` 逐字节快照对比。
 
 ### 8.4 提示面是 `TASK.md`，不是系统提示
 
 【Phase 3 前必须认清】模型写核真正读的是每场会话目录里的 `TASK.md`，由 `taic/kernel_agent.py::render_contract` 生成，`hmz` 只读它做事。系统提示（`taic/prompts.py`）只是其中一层。Phase 3 前，只把系统提示参数化，验收过了也等于没解耦，因为 `TASK.md` 里还有一整层写死的 Metal 文案：
 
 - “把 Triton 算子写成 Metal”的题面句；
-- ```metal 骨架与种子文件语义；
+- ```` ```metal ```` 骨架与种子文件语义；
 - `stage_guidance` 固定拷的 `msl_reference.md`；
 - `SessionBrief` 里塞入的 `contract.describe()` / `abi_stub()`（经 `taic/orchestrator.py`）。
 
@@ -417,13 +480,17 @@ Phase 3 已把这四层改为从 `SessionBrief`/backend 读取（Metal 默认文
 
 ### 9.3 backend 版本怎么定义
 
-`backend_version` 目前是手写的 `"1"`（`backends/metal/backend.toml` 与 `MetalBackend.version`），注册表校验两者一致，但没有测试卡住“代码目录有改动而版本号未动”。原计划的两种做法（人工版本加测试，或指纹直接覆盖该 backend 的 Python 文件）都未落地；这是 §15 的开放问题 2。仓库里已有 `git_commit` / `git_dirty`，两者一起看才可追溯。
+`backend_version` 目前是手写的 `"1"`（`backends/metal/backend.toml` 与 `MetalBackend.version`），注册表校验两者一致，但没有测试卡住“代码目录有改动而版本号未动”。
+
+原计划的两种做法（人工版本加测试，或指纹直接覆盖该 backend 的 Python 文件）都未落地；这是 §15 的开放问题 2。仓库里已有 `git_commit` / `git_dirty`，两者一起看才可追溯。
 
 设备限制的原计划“记两份”也未落地：报告目前只有 `device_warnings`，档案 limits 与 probe 现场值没有分列字段；当前语义仍是档案值生效、现场值只做提示（见 §7.2）。
 
 ### 9.4 “不混算”先是设计约束，暂不是验收项
 
-本计划不实现第二个 backend，reserved 的 backend 又不能运行，所以“混合 backend 不进同一排名”现在无法用真实数据验收。它在本计划里是设计约束：查询与页面在实现上按 §9.1 的键分组，不得写跨组聚合的代码。等有假 backend 或历史 run 样本能构造混合数据时，再把它升级为验收项并写明样本来源。在此之前，任何 Phase 的验收都不写这一条。
+本计划不实现第二个 backend，reserved 的 backend 又不能运行，所以“混合 backend 不进同一排名”现在无法用真实数据验收。
+
+它在本计划里是设计约束：查询与页面在实现上按 §9.1 的键分组，不得写跨组聚合的代码。等有假 backend 或历史 run 样本能构造混合数据时，再把它升级为验收项并写明样本来源。在此之前，任何 Phase 的验收都不写这一条。
 
 ### 9.5 NPU 预留
 
@@ -439,16 +506,28 @@ Phase 3 已把这四层改为从 `SessionBrief`/backend 读取（Metal 默认文
 - `benchmark` 里已有 `attempts`、`noise_cv`、`gpu_lock_wait_s`，bench 的进度事件已带 `attempt`；
 - `tcenv/events.py` 已在写阶段进度。
 
-因此本计划不设计“编译重试”这类现有流程里不存在的东西，阶段名只用现有枚举（`bench`，不是 `benchmark`）。Phase 2 已补的两件：
+因此本计划不设计“编译重试”这类现有流程里不存在的东西，阶段名只用现有枚举（`bench`，不是 `benchmark`）。
+
+Phase 2 已补的两件：
 
 1. **阶段时间线（已落地）**：`EvalReport.timeline` 每项为 `stage/status/duration_s`，打点在阶段边界，不进 benchmark 的计时窗口，不额外同步 GPU。`attempt`、`error_kind` 等后续再加，不在第一版里全塞。
 2. **backend 维度（已落地）**：`EvalReport` 有 `backend_version` 与 timeline，报告 schema 3（见 §9.2）；SQLite 的 `runs` 表有 `backend` / `backend_version`，索引版本 11（原计划从 10 升到 11，已执行）。历史 run 没有这些字段时显示“未知版本”，不回写、不推断。
 
-以下三项本计划只记名，不排期，不写进任何 Phase 的任务与完成定义：只读的 backend 能力清单接口、设备/工具链健康检查命令、dashboard 的 backend 筛选。dashboard 详情已显示 `backend/target` 行，但没有单独的 backend 筛选器。安全约束先写在这里备查：报告与索引不写 API key、token、完整环境变量；供应商 profiler 大输出只存摘要和路径；错误文本截断后入索引。
+以下三项本计划只记名，不排期，不写进任何 Phase 的任务与完成定义：只读的 backend 能力清单接口、设备/工具链健康检查命令、dashboard 的 backend 筛选。dashboard 详情已显示 `backend/target` 行，但没有单独的 backend 筛选器。
+
+安全约束先写在这里备查：报告与索引不写 API key、token、完整环境变量；供应商 profiler 大输出只存摘要和路径；错误文本截断后入索引。
 
 ## 11. 阶段表（全文唯一的阶段编号）
 
 每格四栏固定：做什么、做完看到什么、本阶段不做什么、验收与回滚。§6–§10 的工作包在表头标注所属阶段。
+
+```mermaid
+flowchart LR
+    P0["Phase 0 冻结基线"] --> P1["Phase 1 adapter 与注册表"]
+    P1 --> P2["Phase 2 迁实现与可观测"]
+    P2 --> P3["Phase 3 任务、提示与技能"]
+    P3 --> P4["Phase 4 删除 shim"]
+```
 
 | Phase | 工作包 | 做什么 | 做完看到什么 | 本阶段不做 | 验收与回滚 |
 |---|---|---|---|---|---|
@@ -462,7 +541,13 @@ Phase 3 已把这四层改为从 `SessionBrief`/backend 读取（Metal 默认文
 
 状态以 2026-10-23 的代码为准：Phase 2/3 的“验收”列是当时的验收标准，不等于所有子项都已落地；未落地项见文首、§7.2、§8.2 和 §8.6。
 
-验收命令按 `tests/README.md`：安全 CPU 套件（AI 默认）是 `uv run pytest -q -m 'not gpu and not llm and not slow'`；完整 CPU 套件去掉 `and not slow`；GPU 套件必须 `uv run pytest -q -m gpu -n 0`，因为真实测量共用 GPU 锁。默认 `-n auto --dist loadgroup` 只是把 GPU 用例固定在同一 worker，不代表可以并行占用 GPU。本计划各 Phase 的“全量测试”均指离线 CPU 套件，GPU 回归另见 `docs/架构/backend-gpu-regression-20261023.md`。
+验收命令按 `tests/README.md`：
+
+- 安全 CPU 套件（AI 默认）：`uv run pytest -q -m 'not gpu and not llm and not slow'`；
+- 完整 CPU 套件：去掉 `and not slow`；
+- GPU 套件必须 `uv run pytest -q -m gpu -n 0`，因为真实测量共用 GPU 锁。
+
+默认 `-n auto --dist loadgroup` 只是把 GPU 用例固定在同一 worker，不代表可以并行占用 GPU。本计划各 Phase 的“全量测试”均指离线 CPU 套件，GPU 回归另见 `docs/架构/backend-gpu-regression-20261023.md`。
 
 ## 12. NPU 未来接入清单（本轮不做）
 
@@ -475,7 +560,7 @@ Phase 3 已把这四层改为从 `SessionBrief`/backend 读取（Metal 默认文
 5. 独立的 protocol/roofline/benchmark 标定；不与 Metal 结果混算（键见 §9.1）。
 6. 独立的 prompt/skills/输出文件扩展名。
 
-图级设备（只能跑图/IR）不在此清单内：它的 `Task` 需要 `GraphTask` 一类的兄弟抽象，搜索层级也要改，属于另一份计划，本计划只在此声明边界，不预留字段。
+图级设备（只能跑图/IR）不在此清单内：它的 `Task` 需要 `GraphTask` 一类的兄弟抽象，搜索层级也要改，属于另一份计划。本计划只在此声明边界，不预留字段。
 
 ## 13. 风险与回滚
 
@@ -525,14 +610,18 @@ Phase 2–4 落地后的当前形态：
 
 ## 15. 已决定与开放问题
 
-已决定（从开放问题中移出，正文已有落点，不再讨论）：
+### 已决定
+
+以下条目已从开放问题中移出，正文已有落点，不再讨论：
 
 1. 参考源码的 key 用 backend id，不用语言名（§8.1）。
 2. `entrypoint` 只允许仓库内 `tcenv.backends.*`，加载时校验前缀与 id 一致性（§7.1）。
 3. `protocol_version` 保持数字代次，另带 `backend` 字段，聚合按两者分组（§9.1）。不在版本号里塞 backend 前缀。
 4. `tcenv/backends/metal/pressure.py` 的 `simdgroup_float8x8` 源码压力提示归 Metal backend；Phase 2 随 `profile.py` 迁入 `backends/metal/`，通用协议不暴露该指标（§8.6）。
 
-开放问题（每条标注当前影响）：
+### 开放问题
+
+每条标注当前影响：
 
 1. `Contract` 的通用化边界（§8.3）已在 Phase 2 按“通用 `Contract` + Metal 渲染委托”落地；剩下的只是非 Metal backend 的 `msl_declaration` 文本。**不阻塞已完成的 Metal 路径**。
 2. `backend_version` 的具体算法：目前仍是手写 `"1"`，注册表校验 toml 与类一致，但没有测试卡住代码漂移，也没有代码指纹（§9.3）。**阻塞可信的多 backend 版本审计**，不阻塞当前 Metal 搜索。
@@ -553,4 +642,3 @@ Phase 2–4 落地后的当前形态：
 - `backends/_template` 文档说明未来 kernel 级 backend 需要实现哪些接口。
 - `source_pressure` 的 `simdgroup_float8x8` 解析归 Metal backend；通用协议和 `TASK.md` 不出现 fragment 术语，报告中的现有提示保持可用。
 - 没有新增 NPU 代码、target 或默认任务；图级设备未被硬塞进 `Task`。
-

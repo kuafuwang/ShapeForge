@@ -1,10 +1,23 @@
 # OpenCode 2.0.32：一轮怎么编排，交互异常怎么收
 
-这篇记的是别人的编程代理 OpenCode，不是本仓库的搜索循环。本仓库读者带走三句：实验脚本里的直调按流接收，空闲超时，还没结束或正文为空时整份重发，截断的工具调用不执行。从中断处接着写、以及先把整段历史压成摘要，没有搬进来。细节在文末。
+## 这篇讲什么
 
-这篇对过 `/Users/kuafu/workspace/opencode-2.0.32`，包版本 `2.0.32`。那个检出不在本仓库里。下面的路径、重试次数和压缩窗口是他们的。
+这篇记录的是另一个项目——编程代理 OpenCode——如何编排一轮对话，以及交互出错时怎么收尾。它不是本仓库的搜索循环。
 
-OpenCode 是一个编程代理框架。用户发一句话，框架调模型，模型可以再调工具，工具结果回到同一条会话，直到这一轮不再需要模型。一次交互拆成三层：
+本仓库读者只需带走四句：
+
+- 实验脚本里的直调按流接收；
+- 有超时（空闲）限制；
+- 还没结束或正文为空时，整份重发；
+- 截断的工具调用不执行。
+
+OpenCode 的「从中断处接着写」、以及先把整段历史压成摘要，都没有搬进来。细节在文末。
+
+事实基线：以下内容对照 `/Users/kuafu/workspace/opencode-2.0.32`，包版本 `2.0.32`。那个检出不在本仓库里，下面的路径、重试次数和压缩窗口都是 OpenCode 的。
+
+## 三层结构
+
+OpenCode 是一个编程代理框架：用户发一句话，框架调模型；模型可以再调工具；工具结果回到同一条会话，直到这一轮不再需要模型。一次交互拆成三层：
 
 | 层 | 目录 | 这一层做完就停在哪 |
 | --- | --- | --- |
@@ -16,20 +29,22 @@ OpenCode 是一个编程代理框架。用户发一句话，框架调模型，�
 
 ## 一轮怎么走
 
-入口是 `packages/core/src/session/session.ts` 的 `Session.prompt`。它先准备附件，再把一条 user 放进 inbox，然后 `execution.wake`。同一条会话同时只有一个执行 fiber：忙的时候只记一次 doorbell，当前 drain 结束再 drain，不开第二条并行执行（`packages/core/src/session/run-coordinator.ts`）。
+入口是 `packages/core/src/session/session.ts` 的 `Session.prompt`。它先准备附件，再把一条 user 消息放进 inbox，然后 `execution.wake`。同一条会话同时只有一个执行 fiber：忙的时候只记一次 doorbell，当前 drain 结束再 drain，不开第二条并行执行（`packages/core/src/session/run-coordinator.ts`）。
 
-消息先只在 inbox 里。`SessionRunner.drain`（`packages/core/src/session/runner/llm.ts`）把可以提升的 input 写成会话消息，再进循环。默认 delivery 是 `steer`，插进当前意图；`queue` 是下一轮，要等这次 continuation 结束才提升。压缩会插到同边界更早的 steer 前面。
+消息先只放在 inbox 里。`SessionRunner.drain`（`packages/core/src/session/runner/llm.ts`）把可以提升的 input 写成会话消息，再进循环。默认 delivery 是 `steer`，插进当前意图；`queue` 是下一轮，要等这次 continuation 结束才提升。压缩会插到同边界更早的 steer 前面。
 
-每一次发给模型之前，顺序是：
+### 每次请求前的四步
 
 1. 先试自动压缩。压成功就换一条新的 assistant id，再转一圈；压失败则这一步直接 `StepFailedError`，不再调主模型。
 2. `SessionModelRequest.baseTranscript` 组 system 和消息。历史经 `toLLMMessages` 降成模型能看的格式。
-3. `session.context` hook 可以改 system、messages、tools、`maxTokens`。不支持的媒体换成错误文本。内联图片超过 25 MiB，从旧到新删到约 15 MiB。
+3. `session.context` hook 可以改 system、messages、tools、`maxTokens`。不支持的媒体换成错误文本。内联图片超过 25 MiB 时，从旧到新删到约 15 MiB。
 4. `LLM.stream` 编译请求并发出。主循环用的是流，不是把流折成一次 `generate` 的旁路。
 
-`step` 从 1 起。新的一轮用户输入会把它打回 1。外层 `while (true)` 在 `runStep` 返回「还要继续」时 `step++`。自动压缩、重试、输出截断续写、溢出补压都留在同一次 `runStep` 里，不增加 `step`。
+### 步数如何递增
 
-一轮 assistant 回来之后：
+`step` 从 1 起，新的一轮用户输入会把它打回 1。外层 `while (true)` 在 `runStep` 返回「还要继续」时 `step++`。自动压缩、重试、输出截断续写、溢出补压都留在同一次 `runStep` 里，不增加 `step`。
+
+### assistant 回来之后
 
 | 条件 | 接着做什么 |
 | --- | --- |
@@ -43,23 +58,46 @@ OpenCode 是一个编程代理框架。用户发一句话，框架调模型，�
 | `content-filter` | 助手标失败，本步结束 |
 | 正常 `stop`，且没有本地工具 | 回到收件箱。没有待提升项，这一轮结束 |
 
+```mermaid
+flowchart TD
+    A["assistant 返回"] --> B{"本步有本地工具调用且 toolChoice 不是 none"}
+    B -->|是| C["再走一步，把工具结果交给模型"]
+    B -->|否| D{"finish 是 length"}
+    D -->|是且还有未完成本地工具| C
+    D -->|是且无未完成工具| E["同一步插入 synthetic，换新 assistant 再问"]
+    D -->|否| F{"流被打断且可重试"}
+    F -->|已有输出| G["标失败，退避后插入从中断处继续"]
+    F -->|没有任何输出| H["同一条 assistant 同一份消息再发"]
+    F -->|否| I{"finish 是 content-filter"}
+    I -->|是| J["助手标失败，本步结束"]
+    I -->|否| K["正常 stop 且无本地工具，回到收件箱"]
+```
+
+### 步数上限与工具并发
+
 没有进程级的步数上限。`Agent.Info.steps` 是可选正整数，内置 agent 不写死它。配了 `steps: N` 时，第 N 步仍带工具定义（为了缓存前缀），但 `toolChoice` 设成 `"none"`，并加一句只许用文字总结的提示。模型若仍发出 tool call，执行函数返回工具错误，并且不再继续。
 
 工具在同一步的流里并行启动：每来一个非托管的 `tool-call` 就 fork 一条 fiber，runner 没有并发上限。下一步请求要等 `Fiber.awaitAll`。托管工具（`providerExecuted`）由流里的 `tool-result` 记账，本地不执行。流被打断时，正在跑的工具 fiber 一并打断。
 
 ## 模型怎么交给这一次请求
 
-每一步都重新解析，不缓存上一次的模型对象。会话没选模型就走默认模型，仍没有则 `ModelNotSelectedError`。选了但当前目录里找不到，是 `ModelUnavailableError`，不会改用另一个能用的。variant 不存在也直接失败，不退回 default。
+每一步都重新解析模型，不缓存上一次的模型对象。
 
-思考档和 effort 来自 variant 叠进模型的 settings / headers / body，不是 runner 每个请求单独传一个参数。会话层每次请求显式放进 generation 的，主要是 `maxTokens`：夹在目录输出上限、1 024 和 256 000 之间，再按上下文剩余空间缩小。
+| 情况 | 结果 |
+| --- | --- |
+| 会话没选模型 | 走默认模型；仍没有则 `ModelNotSelectedError` |
+| 选了但当前目录里找不到 | `ModelUnavailableError`，不会改用另一个能用的 |
+| variant 不存在 | 直接失败，不退回 default |
 
-切模型是显式的 `Session.switchModel`。provider、id、variant 都没变就直接返回。下一次 `load` 读到新的 `session.model`。
+思考档和 effort 来自 variant，叠进模型的 settings / headers / body，不是 runner 每个请求单独传一个参数。会话层每次请求显式放进 generation 的，主要是 `maxTokens`：夹在目录输出上限、1 024 和 256 000 之间，再按上下文剩余空间缩小。
+
+切模型是显式的 `Session.switchModel`。provider、id、variant 都没变就直接返回；下一次 `load` 读到新的 `session.model`。
 
 失败之后不会自动换下一个目录模型。相近的只有传输降级：WebSocket 连接失败，或同一条 socket 连续丢交换 5 次，这条会话改走 HTTP，直到重启或 move。同一条 socket 每 55 分钟轮换一次，空闲 30 分钟关掉。这换的是连接，不是模型。
 
 ## 错误怎么分类，什么会重试
 
-分类在 `packages/ai/src/provider-error.ts` 的 `classifyProviderFailure`。证据按这个顺序用，先命中先返回：HTTP 状态，JSON 里的 code / type，再是文案正则。`x-should-retry` 不参与分类，只在 `isRetryable` 里覆盖：`true` 强制可重试，`false` 强制不重试。
+分类在 `packages/ai/src/provider-error.ts` 的 `classifyProviderFailure`。证据按这个顺序使用，先命中先返回：HTTP 状态，JSON 里的 code / type，再是文案正则。`x-should-retry` 不参与分类，只在 `isRetryable` 里覆盖：`true` 强制可重试，`false` 强制不重试。
 
 | 类别 | 结果 | 会话层 |
 | --- | --- | --- |
@@ -74,9 +112,9 @@ OpenCode 是一个编程代理框架。用户发一句话，框架调模型，�
 | 非法请求、上下文溢出、请求体过大 | `InvalidRequest` | 停。溢出另走压缩 |
 | 调用方截止时间 | `Timeout` 这个 tag | 停。这是媒体轮询的截止，不是 HTTP 空闲 |
 
-HTTP 层发一次就停。`packages/ai` 里没有 LLM 的 `maxRetries`。重试发生在这一轮流结束之后，由 `packages/core/src/session/runner/retry.ts` 决定。
+### 重试预算
 
-默认：
+HTTP 层发一次就停。`packages/ai` 里没有 LLM 的 `maxRetries`。重试发生在这一轮流结束之后，由 `packages/core/src/session/runner/retry.ts` 决定。
 
 | 项 | 值 |
 | --- | --- |
@@ -87,17 +125,31 @@ HTTP 层发一次就停。`packages/ai` 里没有 LLM 的 `maxRetries`。重试�
 | 传输且 `code === "Timeout"` | 最多再批准 3 次 |
 | 关掉某一次 | `session.retry` hook 可以把 `decision.retry` 改成 false |
 
-等响应头的空闲默认 300 000 毫秒，SSE 块与块之间的空闲默认 900 000 毫秒（`packages/ai/src/schema/options.ts` 的 `DEFAULT_HTTP_TIMEOUT_MS`、`DEFAULT_CHUNK_TIMEOUT_MS`）。整次请求的 `timeout` 不设就没有墙钟。单独吃「最多 3 次」的，是 `Transport` 且 `code === "Timeout"` 的那一种。
+空闲超时的默认值：等响应头 300 000 毫秒，SSE 块与块之间 900 000 毫秒（`packages/ai/src/schema/options.ts` 的 `DEFAULT_HTTP_TIMEOUT_MS`、`DEFAULT_CHUNK_TIMEOUT_MS`）。整次请求的 `timeout` 不设就没有墙钟。单独吃「最多 3 次」的，是 `Transport` 且 `code === "Timeout"` 的那一种。
+
+### 没出字时的重试
 
 还没有任何 text、reasoning 或 tool 输出时，可重试失败复用同一条 assistant、同一份消息再发。等待期间错误记在 `assistant.retry` 上，下一次 `step.started` 清掉 error / finish / retry。这条当时是空的，组请求时模型看不见这次失败。
 
-已经出了字再遇到可重试失败：半截留在这条 assistant 上并标失败，退避后插入 synthetic：「The previous response was interrupted. Continue from where you left off without repeating completed content.」然后换新的 assistant。这是让模型接着写，不是从最后一个 SSE 事件续传。限流出现在半截输出之后也走这条。
+### 已经出字之后的重试
 
-OpenResponses 的 WebSocket 续传被拒时另有一次立即重发：`previous_response_not_found` 记 `retry-full`，连接数打满记 `rotate-and-retry-full`。还没出字时不走退避，立刻整包重发，并清掉 checkpoint、关掉这条 socket。这一 step 只给这一次。第二次再被拒就失败，不进入那 10 次退避。
+已经出了字再遇到可重试失败：半截留在这条 assistant 上并标失败，退避后插入 synthetic：
+
+> The previous response was interrupted. Continue from where you left off without repeating completed content.
+
+然后换新的 assistant。这是让模型接着写，不是从最后一个 SSE 事件续传。限流出现在半截输出之后也走这条。
+
+OpenResponses 的 WebSocket 续传被拒时另有一次立即重发：`previous_response_not_found` 记 `retry-full`，连接数打满记 `rotate-and-retry-full`。还没出字时不走退避，立刻整包重发，并清掉 checkpoint、关掉这条 socket。这一 step 只给这一次；第二次再被拒就失败，不进入那 10 次退避。
 
 ## 取消和半截消息
 
-用户取消是 fiber interrupt，不是 `AIError`。`Step.Started` 之前、起始 snapshot 也还没好，什么都不记。已经开始写 assistant 之后：已发布的 text / reasoning / tool input 留在会话里；未结算的工具写成 `Tool execution interrupted`；assistant 写成 `Step interrupted`。默认 interrupt 不 `resume`，不会自动再跑模型。退避睡眠中途取消，不再发下一次请求。
+用户取消是 fiber interrupt，不是 `AIError`。`Step.Started` 之前、起始 snapshot 也还没好时，什么都不记。已经开始写 assistant 之后：
+
+- 已发布的 text / reasoning / tool input 留在会话里；
+- 未结算的工具写成 `Tool execution interrupted`；
+- assistant 写成 `Step interrupted`。
+
+默认 interrupt 不 `resume`，不会自动再跑模型。退避睡眠中途取消，不再发下一次请求。
 
 下次用户请求会带上这条已经结束的半截 assistant。它带 `error` 时，思考正文改成普通 text 再发给模型，provider metadata 不复用。工具错误仍是 tool result。
 
@@ -107,25 +159,33 @@ OpenResponses 的 WebSocket 续传被拒时另有一次立即重发：`previous_
 
 溢出检测在分类器里：code 如 `context_length_exceeded`、`model_context_window_exceeded`、`request_too_large`，或 “prompt too long / context length” 一类文案，收成 `InvalidRequest` + `context-overflow`。限流、以及「`max_tokens` 设得比模型上限还大」的 `too many tokens`，不收成溢出。`packages/ai` 只打标，不压缩。
 
-压缩在 `packages/core/src/session/compaction.ts`。运行时初值是自动压缩开着，最近原文保留 15 000 token。配置可以改 `auto`、`keep.tokens`、`buffer`。
+压缩在 `packages/core/src/session/compaction.ts`。运行时初值是自动压缩开着，最近原文保留 15 000 token。配置可以改 `auto`、`keep.tokens`、`buffer`。
+
+### 压缩天花板怎么算
 
 每一步模型调用之前先看用量。天花板是：
 
 - 配了 `buffer`：窗口减去 `buffer`。
-- 没配：窗口至少 32 000 时，留出 `max(窗口的 10%, 16 000)`；更小的窗口只留 10%。
+- 没配：窗口至少 32 000 时，留出 `max(窗口的 10%, 16 000)`；更小的窗口只留 10%。
 - 窗口未知（输入上限和上下文都 ≤ 0）：天花板是无穷大，自动压缩不触发，只能等服务商拒绝。
 
 估计量用最近一条本服务商、且没有 error 的助手消息的 input、cache、output、reasoning，加上这之后的文本估计。最后一条已经是完成的压缩就跳过，避免连着压。
 
 `auto: false` 时，自动压缩和溢出补压都不做，只剩用户的 `/compact`。
 
+### 溢出与摘要
+
 服务商在还没有可见输出时返回溢出：同一步里 `compact({ reason: "overflow" })` 一次。成功就重来；这一 step 里第二次溢出不再压，错误写上助手消息。已经写出 reasoning 或正文之后，不再为这次溢出去压。溢出本身不进那 10 次重试。
 
-摘要默认用当前会话模型。隐藏 agent `compaction` 若单独配了模型且能解析，才用那个。本地摘要要求回复带模板里的 `##` 标题。第一次没有，就再发一句提醒，只此一次。第二次仍不对、正文为空、`length` 或内容过滤，记一条 `failed`，不把半截摘要入库。可重试的服务商错误在压缩发送循环里走同一套 10 次退避。压缩请求自己再被溢出或请求体过大拒绝时，按第一次被拒请求的估计缩到 70%、50%、35%，三次缩完再被拒就放弃。
+摘要默认用当前会话模型。隐藏 agent `compaction` 若单独配了模型且能解析，才用那个。本地摘要要求回复带模板里的 `##` 标题：第一次没有，就再发一句提醒，只此一次；第二次仍不对、正文为空、`length` 或内容过滤，记一条 `failed`，不把半截摘要入库。可重试的服务商错误在压缩发送循环里走同一套 10 次退避。压缩请求自己再被溢出或请求体过大拒绝时，按第一次被拒请求的估计缩到 70%、50%、35%，三次缩完再被拒就放弃。
 
 压缩不删 `session_message` 行。之后的模型请求从最近一条已完成压缩读起。本地摘要变成一条 user 消息，里面是 `<summary>`，可选再加 `<recent-context>`（`keep` 范围内的最近原文，序列化成文本）。原始行仍留在表里。
 
-`finish === "length"` 不走压缩。半截正文已经写进当前助手消息。没有未完成的本地工具时，插入 synthetic，要求把剩下的工作拆小，同一步里再问。只允许两次这样的续写；第三次助手消息仍是 `length` 就失败。半截 tool call 不执行，标 `tool.input-incomplete`，附上最多 2048 字符的参数摘录，然后进入下一步，把失败的工具结果交给模型，不再插那句拆小的 synthetic。
+### 输出截断
+
+`finish === "length"` 不走压缩。半截正文已经写进当前助手消息。没有未完成的本地工具时，插入 synthetic，要求把剩下的工作拆小，同一步里再问；只允许两次这样的续写，第三次助手消息仍是 `length` 就失败。半截 tool call 不执行，标 `tool.input-incomplete`，附上最多 2048 字符的参数摘录，然后进入下一步，把失败的工具结果交给模型，不再插那句拆小的 synthetic。
+
+### 空回复与只有推理
 
 空的成功 `stop` 当正常结束，主对话不会因此再请求。只有 reasoning、以 `stop` 结束，也当这一步完成；reasoning 已把 `outputStarted` 设为 true，所以不能再走「没出字就透明重试」。压缩若只有 reasoning、没有模板正文，提醒一次后按「没有摘要」失败。
 
@@ -159,4 +219,13 @@ Shell 的非零退出和命令超时是成功的 tool result，正文里带退�
 
 ## 本仓库后来采纳的部分
 
-上面是 OpenCode 在 2.0.32 上的做法。当前搜索写内核只走 `hmz` → `pi`；下面的采纳只适用于实验脚本里的直调。2026-10-20，直调 `taic/llm.py` 采纳了其中能放进一次聊天请求的几条：按流接收，空闲超时，还没有结束原因或正文为空时再发同一份消息，截断的工具调用不执行。自动换模型、整段历史摘要和「从中断处继续」没有搬进来。现行规则在 [直调与hmz取舍.md](直调与hmz取舍.md) 的「实验脚本直调（不是搜索）」。这篇不批准一次新的付费搜索。
+上面是 OpenCode 在 2.0.32 上的做法。当前搜索写内核只走 `hmz` → `pi`；下面的采纳只适用于实验脚本里的直调。
+
+2026-10-20，直调 `taic/llm.py` 采纳了其中能放进一次聊天请求的几条：
+
+- 按流接收；
+- 空闲超时；
+- 还没有结束原因或正文为空时，再发同一份消息；
+- 截断的工具调用不执行。
+
+自动换模型、整段历史摘要和「从中断处继续」没有搬进来。现行规则在 [直调与hmz取舍.md](直调与hmz取舍.md) 的「实验脚本直调（不是搜索）」。这篇不批准一次新的付费搜索。

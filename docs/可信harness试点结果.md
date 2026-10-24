@@ -2,6 +2,18 @@
 
 > **历史快照**：下面的数字和结论是 2026-10-22 写作时从当时运行目录读到的。第三次 run 目录之后被续跑/加过预算，当前 `result.json` 可能与本文不同；凡涉及“当前发布状态”的地方，以运行目录里的 `result.json` / `confirm_report.json` 和 `experiments.common.conclusion_of_run` 为准。
 
+## 这篇讲什么
+
+三次付费试点，一次比一次靠近「模型自己提出系统建议并自动生效」这条链路：
+
+| # | run 目录 | 预算上限 | 实际花费 | 场次 | 结构化提案 | 独立 review | 对外发布（当时） |
+| --- | --- | ---: | ---: | ---: | --- | --- | --- |
+| 1 | `harness-pilot-shadow-20261022` | $15 | $2.6658 | 4 | 0 条 | 无 | `confirmed` 1.1389x |
+| 2 | `harness-pilot-shadow-20261022b` | $5 | $0.7584 | 2 | 1 条 `valid` tip，quorum 0 | kimi，$0.1063 | 不确定 |
+| 3 | `harness-pilot-active-20261022` | $5 | $2.4661（快照） | 4 | 1 条 `tcenv.cli ab` tip | kimi，$0.118 | 不确定 |
+
+第一次运行的一句话结论：**shadow 基础设施可用，但“模型主动提出结构化 harness 建议”的频率为 0/4**。第二次起才有提案，而 active overlay 仍未真正进入 TASK。
+
 ## 运行
 
 - run：`runs/apple-m4-max/harness-pilot-shadow-20261022`
@@ -92,6 +104,20 @@ deepseek 提出“评测报告里打印每个 stage 的编译器寄存器用量�
 确认复测：`r1.p0` 三批中位数 **1.1448x**，但 `confirmed_values` 是 1.1692 / 1.1448 / 1.1445，极差约 2.16% > 2%，所以当时 **publication = 不确定**，没有发布数字。搜索最好值 1.1378x 也不能拿来对外。这是历史快照；续跑后当前胜者和确认值已经变化（见上）。
 
 自动 review 在 r1 后运行：kimi 判 `useful=true`、confidence 0.8，实际 **$0.118**，生成 `reviewed_active`。但这个 run 启动时用的是 `_session_brief` 旧逻辑，且 `harness_shadow=true`；r2/r3 的 `TASK.md` 都没有 overlay。之后修复了 TASK 的 overlay 预留预算；修复后的组 TASK 代码会先把 active overlay 放进块列表，但本次 run 在修复前已经跑完，无法用它的场次验证。
+
+```mermaid
+sequenceDiagram
+  participant R1 as r1.p0（deepseek）
+  participant T as taic harness
+  participant K as kimi-k3（reviewer）
+  participant TK as r2/r3 的 TASK.md
+  R1->>T: 产生 1 条 tcenv.cli ab tip
+  T->>K: 只读 review（$0.118）
+  K-->>T: useful=true，confidence 0.8
+  T->>T: 记为 reviewed_active（本 run 后续场次）
+  T-->>TK: 该 run 仍是 _session_brief 旧逻辑 + harness_shadow=true
+  Note over TK: TASK.md 里没有 overlay
+```
 
 这个 run 的 P2 patch 已被用户认可，应用到 `targets/apple-m4-max/experience.md`；`harness_decisions.jsonl` 的 `promotion_approval` 记录 `applied_by=kuafu` 和离线测试结果（901 passed, 1 skipped）。这仍是 target 级建议，不是测量结论。
 
