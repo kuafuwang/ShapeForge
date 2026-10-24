@@ -105,11 +105,26 @@ def _live_run_one(task, dtype, size, run_dir, *, config_path, worktree: Path, **
     return SimpleNamespace(spent_usd=payload["spent_usd"], stop_reason=payload["stop_reason"], run_seed=payload["run_seed"])
 
 
+def _decisions_dir(plan: dict, out_dir: Path, repo: Path) -> Path:
+    """@brief 把实验事件写回源 run 目录，同时拒绝 source.run_id 的路径穿越。"""
+    source_run = str((plan.get("acceptance_spec", {}).get("source") or {}).get("run_id") or "").replace("\\", "/")
+    if not source_run:
+        return Path(out_dir)
+    rel = Path(source_run)
+    if rel.is_absolute() or ".." in rel.parts or not rel.parts:
+        raise ExperimentError("experiment source run must stay under runs/")
+    root = (Path(repo) / "runs").resolve()
+    target = (root / rel).resolve()
+    if not target.is_relative_to(root):
+        raise ExperimentError("experiment source run must stay under runs/")
+    return target
+
+
 def execute_plan(plan: dict, *, out_dir: Path, repo: Path, allow_spend: bool = False, allow_gpu: bool = False, approved_by: str = "", runner=None) -> dict:
     """Run only an explicitly authorized plan. The default dry-run never reaches this function."""
     plan = read_plan(plan)
-    if plan["status"] != "authorized" or not allow_spend or not allow_gpu or not approved_by.strip():
-        raise ExperimentError("live execution needs an authorized plan, --allow-spend, --allow-gpu and --by")
+    if plan["status"] != "authorized" or not allow_spend or not allow_gpu or approved_by.strip() in {"", "cli"}:
+        raise ExperimentError("live execution needs an authorized plan, --allow-spend, --allow-gpu and a named --by")
     cells = build_cells(plan, out_dir=out_dir, repo=repo)
     if runner is None:
         runner = _live_run_one
@@ -167,8 +182,7 @@ def execute_plan(plan: dict, *, out_dir: Path, repo: Path, allow_spend: bool = F
             raise ExperimentError(f"paired metric {metric} is missing from one arm")
     summary = summarize_result(result)
     write_json_atomic(out_dir / "result.json", result)
-    source_run = str((plan["acceptance_spec"].get("source") or {}).get("run_id") or "")
-    decisions_dir = Path(repo) / "runs" / source_run if source_run else Path(out_dir)
+    decisions_dir = _decisions_dir(plan, out_dir, repo)
     decisions_dir.mkdir(parents=True, exist_ok=True)
     event = {
         "event": "experiment_result", "experiment_id": plan["experiment_id"],

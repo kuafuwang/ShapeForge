@@ -40,6 +40,16 @@ def _plan(repo: Path):
     return make_plan(spec, change_sha256=__import__("hashlib").sha256(patch.encode()).hexdigest(), protocol_version="3", config_sha256=digest(template), seeds=[3, 5, 7], budget_usd=1.0, config_template_document=template, base_commit=base)
 
 
+def test_experiment_result_path_cannot_escape_runs(tmp_path):
+    """@brief source.run_id 来自提案，不能把实验事件写到 runs/ 之外。"""
+    from experiments.harness_runner import _decisions_dir
+
+    repo = _repo(tmp_path)
+    with pytest.raises(ExperimentError, match="source run"):
+        _decisions_dir({"acceptance_spec": {"source": {"run_id": "../../tmp"}}}, repo / "runs" / "exp", repo)
+    assert _decisions_dir({"acceptance_spec": {"source": {"run_id": "apple-m4-max/run"}}}, repo / "runs" / "exp", repo) == (repo / "runs" / "apple-m4-max" / "run").resolve()
+
+
 def test_raw_config_keeps_committees_and_no_secrets(tmp_path):
     repo = _repo(tmp_path)
     plan = _plan(repo)

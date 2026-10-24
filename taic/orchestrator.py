@@ -1414,8 +1414,9 @@ class Orchestrator:
             res.stop_reason = res.stop_reason or str(e)
             self.log(f"== stop: {e}")
         except LLMError as e:
-            res.stop_reason = res.stop_reason or f"llm_error: {e}"
-            self.log(f"== stop: {e}")
+            previous_stop = res.stop_reason
+            res.stop_reason = f"confirm_error: LLMError: {e}"
+            self.log(f"== stop: confirmation failed after {previous_stop or 'search'}: {e}")
         except Exception as e:  # noqa: BLE001 - the run is over; its files still have to be written
             previous_stop = res.stop_reason
             res.stop_reason = f"confirm_error: {type(e).__name__}: {e}"

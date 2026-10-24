@@ -318,7 +318,7 @@ def read_plan(document: dict) -> dict:
         if auth.get("allow_model_spend") is not False or auth.get("allow_gpu") is not False:
             raise ExperimentError("dry-run plans cannot carry execution authorization")
     elif document["status"] == "authorized":
-        if auth.get("allow_model_spend") is not True or auth.get("allow_gpu") is not True or not isinstance(auth.get("approved_by"), str) or not auth["approved_by"].strip():
+        if auth.get("allow_model_spend") is not True or auth.get("allow_gpu") is not True or not isinstance(auth.get("approved_by"), str) or auth["approved_by"].strip() in {"", "cli"}:
             raise ExperimentError("authorized experiments need both explicit permissions and a named approver")
     return document
 
@@ -326,8 +326,8 @@ def read_plan(document: dict) -> dict:
 def authorize_plan(plan: dict, *, allow_model_spend: bool, allow_gpu: bool, approved_by: str) -> dict:
     """Return a new plan; never mutate the dry-run artifact in place."""
     read_plan(plan)
-    if plan["status"] != "dry_run" or not allow_model_spend or not allow_gpu or not approved_by.strip():
-        raise ExperimentError("execution requires a dry-run plan, --allow-spend, --allow-gpu and --by")
+    if plan["status"] != "dry_run" or not allow_model_spend or not allow_gpu or approved_by.strip() in {"", "cli"}:
+        raise ExperimentError("execution requires a dry-run plan, --allow-spend, --allow-gpu and a named --by")
     out = json.loads(json.dumps(plan))
     out["authorization"] = {"allow_model_spend": True, "allow_gpu": True, "approved_by": approved_by.strip()}
     out["status"] = "authorized"
@@ -606,8 +606,8 @@ def milestones(decisions: list[dict], proposal_key: str) -> dict:
 def record_effect_validation(run_dir: Path, result: dict, *, validated: bool, approved_by: str, reason: str, evidence_path: Path | None = None) -> dict:
     """A named person records the effect verdict; measurement code cannot self-approve."""
     summary = summarize_result(result)
-    if not approved_by.strip() or not reason.strip():
-        raise ExperimentError("effect review needs --by and --reason")
+    if approved_by.strip() in {"", "cli"} or not reason.strip():
+        raise ExperimentError("effect review needs a named --by and --reason")
     if validated and summary["effect"]["status"] != "supports_effect":
         raise ExperimentError("cannot validate an effect without passing the frozen sample, effect and guardrail rules")
     if validated and result["plan"]["authorization"].get("approved_by") == approved_by.strip():

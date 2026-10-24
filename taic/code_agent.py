@@ -619,12 +619,15 @@ def verify_code_patch(run_dir: Path, proposal_key: str, *, root: Path | None = N
         raise CodeAgentError("acceptance requires registered host check_ids; use verify-legacy to map old text explicitly")
     if check_ids is not None and sorted(check_ids) != sorted({item["check_id"] for item in items}):
         raise CodeAgentError("named check_ids differ from the acceptance contract")
+    existing = meta.get("implementation") if isinstance(meta.get("implementation"), dict) else {}
+    if not execute and existing.get("host_verified") is True and existing.get("patch_sha256") == digest and existing.get("spec_sha256") == spec["spec_sha256"]:
+        return existing
     if not execute:
         record = {
             "schema_version": 1, "event": "implementation", "proposal_key": proposal_key,
             "spec_sha256": spec["spec_sha256"], "patch_sha256": digest,
             "risk_tier": risk["risk_tier"], "risk_reason": risk["reason"],
-            "accepted": True, "host_verified": False, "static_verified": True, "host_checks": [],
+            "accepted": False, "host_verified": False, "static_verified": True, "host_checks": [],
             "tests_run": "static only; no patch code executed", "t": time.time(),
         }
         if legacy_text:
@@ -746,7 +749,7 @@ def apply_code_patch(
         if implementation.get("spec_sha256") != spec["spec_sha256"] or implementation.get("patch_sha256") != digest or implementation.get("host_verified") is not True or not implementation.get("host_checks"):
             raise CodeAgentError("implementation has no host-verified checks bound to this patch")
         risk = classify_change(spec, patch.read_text(encoding="utf-8", errors="replace"))
-        if risk["risk_tier"] == "human_gated" and not approved_by.strip():
+        if risk["risk_tier"] == "human_gated" and approved_by.strip() in {"", "cli"}:
             raise CodeAgentError("a security- or evaluator-critical patch needs a named human approver")
         if require_effect_validation and risk["risk_tier"] != "offline_only":
             from .harness_experiment import digest as result_digest

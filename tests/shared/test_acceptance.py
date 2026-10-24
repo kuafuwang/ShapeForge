@@ -81,8 +81,10 @@ def test_verify_code_records_host_acceptance_before_apply(tmp_path, monkeypatch)
     monkeypatch.setattr("taic.acceptance_checks.run_checks", lambda items, **kwargs: [{"check_id": item["check_id"], "passed": True, "exit_code": 0, "output_excerpt": "offline fake", "reason": ""} for item in items])
     verified = code_agent.verify_code_patch(tmp_path, key, execute=True, approved_by="alice")
     assert verified["host_verified"] is True
+    # A later static-only invocation must not wipe host-verified evidence.
+    assert code_agent.verify_code_patch(tmp_path, key)["host_verified"] is True
     with pytest.raises(code_agent.CodeAgentError, match="no effect validation"):
-        code_agent.apply_code_patch(tmp_path, proposal_key=key, require_effect_validation=True)
+        code_agent.apply_code_patch(tmp_path, proposal_key=key, require_effect_validation=True, approved_by="alice")
 
 
 def test_static_verification_does_not_execute_patch_code(tmp_path, monkeypatch):
@@ -102,7 +104,7 @@ def test_static_verification_does_not_execute_patch_code(tmp_path, monkeypatch):
 
     monkeypatch.setattr(code_agent, "_test_patch_in_worktree", forbidden)
     verified = code_agent.verify_code_patch(tmp_path, key)
-    assert verified["static_verified"] is True and verified["host_verified"] is False
+    assert verified["static_verified"] is True and verified["host_verified"] is False and verified["accepted"] is False
 
 
 def test_legacy_text_requires_named_approval_and_real_registered_checks(tmp_path, monkeypatch):

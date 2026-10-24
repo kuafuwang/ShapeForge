@@ -35,6 +35,8 @@ def test_dry_run_needs_two_explicit_permissions_and_an_approver():
     assert plan["status"] == "dry_run" and read_plan(plan) == plan
     with pytest.raises(ExperimentError, match="allow-spend"):
         authorize_plan(plan, allow_model_spend=True, allow_gpu=False, approved_by="alice")
+    with pytest.raises(ExperimentError, match="named"):
+        authorize_plan(plan, allow_model_spend=True, allow_gpu=True, approved_by="cli")
     authorized = authorize_plan(plan, allow_model_spend=True, allow_gpu=True, approved_by="alice")
     assert authorized["experiment_id"] != plan["experiment_id"] and authorized["status"] == "authorized"
 
@@ -71,6 +73,8 @@ def test_a_person_records_effect_validation_without_self_approval(tmp_path):
         result[arm]["first_eligible_cost_usd"]["samples"] = [1.0, 1.0, 1.0] if arm == "control" else [0.5, 0.5, 0.5]
     with pytest.raises(ExperimentError, match="reason"):
         record_effect_validation(tmp_path, result, validated=True, approved_by="alice", reason="")
+    with pytest.raises(ExperimentError, match="named --by"):
+        record_effect_validation(tmp_path, result, validated=True, approved_by="cli", reason="review")
     row = record_effect_validation(tmp_path, result, validated=True, approved_by="bob", reason="paired metrics and no guardrail regression")
     assert row["validated"] is True and row["approved_by"] == "bob"
     assert row["spent_usd"] == 2.0

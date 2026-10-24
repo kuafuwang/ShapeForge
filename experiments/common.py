@@ -426,7 +426,8 @@ def conclusion_of_run(run_dir: Path, result: dict | None) -> dict:
             return {"speedup": None, "publication": "不确定"}
         if not isinstance(doc, dict):
             return {"speedup": None, "publication": "未确认"}
-        confirmation = (doc.get("benchmark") or {}).get("confirmation")
+        benchmark = doc.get("benchmark")
+        confirmation = benchmark.get("confirmation") if isinstance(benchmark, dict) else None
         if not isinstance(confirmation, dict):
             return {"speedup": None, "publication": "未确认"}
         if confirmation.get("kernel_sha256") != result.get("confirmation_source_sha256"):

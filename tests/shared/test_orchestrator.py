@@ -85,6 +85,20 @@ def test_confirmation_error_overrides_the_search_stop_reason(tmp_path, monkeypat
     assert res.best_speedup
 
 
+def test_confirmation_llm_error_is_not_hidden_by_an_old_stop_reason(tmp_path, monkeypatch):
+    """@brief 确认阶段的模型错误也必须以 confirm_error 退出，不能沿用 max_rounds。"""
+    from taic.llm import LLMError
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1)
+
+    async def fail_confirmation(_res):
+        raise LLMError("provider refused")
+
+    monkeypatch.setattr(orch, "_confirm", fail_confirmation)
+    res = run(orch)
+    assert res.stop_reason.startswith("confirm_error: LLMError")
+
+
 def test_auto_run_directories_are_unique_even_with_a_frozen_timestamp(tmp_path, monkeypatch):
     """@brief 自动目录不能只靠秒级时间戳，两个同秒实例不能共享产物。"""
     from taic.llm import LLMConfig, SearchConfig
