@@ -113,6 +113,19 @@ def test_symlinked_or_nondirectory_mirror_cannot_redirect_authority(tmp_path):
     assert "timeout" in (earlier_hang(blocked) or "")
 
 
+def test_append_keeps_the_workspace_row_when_host_cache_is_unwritable(tmp_path, monkeypatch):
+    """@brief 围栏内 --timed 不能因为 host cache 不可写而丢掉已完成的结果。"""
+    from tcenv import selfcheck
+
+    host_file = tmp_path / "host-cache-is-a-file"
+    host_file.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr(selfcheck, "_authority_root", lambda: host_file)
+    checks = tmp_path / ".selfcheck"
+    append(checks, {"status": "ok", "elapsed_s": 1.0})
+    assert (checks / LOG_NAME).is_file()
+    assert "ok" in (checks / LOG_NAME).read_text(encoding="utf-8")
+
+
 def test_host_record_survives_workspace_log_tampering(tmp_path):
     """@brief agent 清空 workspace 日志也不能重置 host 侧自测配额或 hang 锁。"""
     for _ in range(MAX_CHECKS):
