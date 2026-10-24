@@ -959,6 +959,7 @@ def run_kernel_agent(
     prices: Prices,
     turn_output_tokens: int,
     turn_minutes: int,
+    session_cost_cap_usd: float | None = None,
     hmz: str | None = None,
     timeout_s: float | None = None,
 ) -> AgentResult:
@@ -974,6 +975,7 @@ def run_kernel_agent(
     @param prices 该模型的费率。
     @param turn_output_tokens 这一回合的输出 token 上限。
     @param turn_minutes 这一回合的分钟预算。
+    @param session_cost_cap_usd 这次 attempt 的外层 hmz 美元上限；None 时不加 ``budget.cost``。
     @param hmz hmz 可执行文件路径；``None`` 时从 PATH 上找。
     @param timeout_s 进程墙钟超时秒数；``None`` 时按回合预算推算。
     @return 本场会话的结果。
@@ -1010,6 +1012,7 @@ def run_kernel_agent(
         "-p", f"submit_name={submit}",
         "-p", f"seed_name={brief.seed_name}",
         "-p", f"budget.duration={flow_minutes}m",
+        *(["-p", f"budget.cost={float(session_cost_cap_usd):g}"] if session_cost_cap_usd is not None else []),
         "--json",
         "--", f"Read TASK.md in this directory and do it. Write the finished kernel to {submit}. The search does not read {brief.seed_name}.",
     ]

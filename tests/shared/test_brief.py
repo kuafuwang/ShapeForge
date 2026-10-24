@@ -15,9 +15,10 @@ _KEYS = {
     "schema_version", "protocol_version", "stamp",
     "task", "dtype", "size", "committee", "model", "phase", "stop_reason", "round",
     "spent_usd", "budget_usd", "published", "publication", "search_best",
-    "cands", "agent_failures", "counts", "paths",
+    "winner_label", "winner_provider", "winner_model", "winner_committee", "winner_origin",
+    "model_totals", "cands", "agent_failures", "counts", "paths",
 }
-_CAND = {"label", "status", "speedup", "within_noise", "differential_recheck"}
+_CAND = {"label", "status", "speedup", "within_noise", "differential_recheck", "origin"}
 
 
 def _brief(capsys, run_dir=None, *extra):
@@ -249,3 +250,50 @@ def test_orientation_mentions_committees_and_skips_a_planted_key(monkeypatch, ca
 def test_a_missing_directory_is_refused(tmp_path, capsys):
     code, out, err = _brief(capsys, tmp_path / "missing")
     assert code == 2 and out == "" and "not a directory" in err
+
+
+def test_brief_reports_winner_and_model_totals_with_old_run_fallback(tmp_path, capsys):
+    run = tmp_path / "run"
+    run.mkdir()
+    trace = [
+        {"label": "init", "status": "ok", "speedup": 1.0, "within_noise": False,
+         "differential_recheck": None, "origin": {"origin": "session", "provider": "deepseek", "model": "deepseek-flash", "committee": "first", "attempt": 0}},
+        {"label": "r1.p0", "status": "ok", "speedup": 1.2, "within_noise": False,
+         "differential_recheck": None, "origin": {"origin": "session", "provider": "moonshot", "model": "kimi-k3", "committee": "second", "attempt": 0}},
+    ]
+    (run / "state.json").write_text(json.dumps({"task": "relu", "best_label": "r1.p0", "trace": trace}))
+    (run / "result.json").write_text(json.dumps({
+        "task": "relu", "best_label": "r1.p0", "winner_label": "r1.p0",
+        "winner_provider": "moonshot", "winner_model": "kimi-k3", "winner_committee": "second", "winner_origin": "session",
+        "trace": trace,
+    }))
+    (run / "transcript.jsonl").write_text("\n".join([
+        json.dumps({"event": "agent", "label": "init", "candidate_label": "init", "provider": "deepseek", "model": "deepseek-flash", "committee": "first", "cost_usd": 0.2,
+                    "tokens": {"input": 10, "output": 20, "cache_read": 30, "cache_write": 0}}),
+        json.dumps({"event": "agent", "label": "r1.p0", "candidate_label": "r1.p0", "provider": "moonshot", "model": "kimi-k3", "committee": "second", "cost_usd": 1.5,
+                    "tokens": {"input": 5, "output": 40, "cache_read": 50, "cache_write": 60}}),
+    ]) + "\n")
+    code, out, _err = _brief(capsys, run)
+    assert code == 0
+    doc = json.loads(out)
+    assert doc["winner_model"] == "kimi-k3" and doc["winner_provider"] == "moonshot"
+    assert doc["winner_origin"] == "session" and doc["winner_label"] == "r1.p0"
+    assert doc["cands"][0]["origin"]["model"] == "deepseek-flash"
+    assert [row["model"] for row in doc["model_totals"]] == ["kimi-k3", "deepseek-flash"]
+    assert doc["model_totals"][0]["cost_usd"] == 1.5 and doc["model_totals"][0]["sessions"] == 1
+
+
+def test_brief_derives_winner_model_from_candidate_origin_without_new_result_fields(tmp_path, capsys):
+    run = tmp_path / "legacy"
+    run.mkdir()
+    trace = [{"label": "r1.p0", "status": "ok", "speedup": 1.2, "within_noise": False, "differential_recheck": None,
+              "origin": {"origin": "session", "provider": "moonshot", "model": "kimi-k3", "committee": "second", "attempt": 0}}]
+    (run / "state.json").write_text(json.dumps({"task": "relu", "best_label": "r1.p0", "trace": trace}))
+    (run / "result.json").write_text(json.dumps({"task": "relu", "best_label": "r1.p0", "trace": trace}))
+    code, out, _err = _brief(capsys, run)
+    assert code == 0
+    doc = json.loads(out)
+    assert doc["winner_label"] == "r1.p0"
+    assert (doc["winner_provider"], doc["winner_model"], doc["winner_committee"], doc["winner_origin"]) == (
+        "moonshot", "kimi-k3", "second", "session",
+    )

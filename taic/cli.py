@@ -84,6 +84,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     cfg, search = load_config(
         a.config, model=a.model, preset=a.preset, budget_usd=a.budget, branches=a.branches,
         max_rounds=a.max_rounds, provider_retries=getattr(a, "provider_retries", None),
+        session_cost_cap_usd=getattr(a, "session_cost_cap_usd", None),
     )
     # 写在配置之后，所以这些开关优先于 taic.toml 和预设。没写的可选整数保持配置值；0 也当成没写。
     if a.no_tools:
@@ -167,7 +168,7 @@ SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "ma
                  "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "confirm_batches", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
                  "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck",
                  "plan_ledger", "diversity_archive", "fast_bench", "experience_index", "kernel_agent", "require_contract_launch",
-                 "relay_budget_usd", "turn_minutes", "provider_retries", "peer_tips", "harness_auto", "harness_shadow", "harness_review")
+                 "relay_budget_usd", "turn_minutes", "provider_retries", "session_cost_cap_usd", "peer_tips", "harness_auto", "harness_shadow", "harness_review")
 LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "keep_transcript_bodies", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry",
               "truncation_retry_effort", "plan_reasoning_effort", "patch_reasoning_effort")
 
@@ -219,7 +220,8 @@ def _resume_config(a: argparse.Namespace, settings: dict, info: dict):
             prov[f"llm.{k}"] = f"preset '{preset}' / default (not recorded by this run)"
     # 这里 0 也算显式给出，会盖过目录里的值。新搜索的 cmd_run 把 0 当成没写，两边不一样。
     flags = {"patience": a.patience, "branches": a.branches, "max_rounds": a.max_rounds, "init_samples": a.init_samples,
-             "provider_retries": getattr(a, "provider_retries", None)}
+             "provider_retries": getattr(a, "provider_retries", None),
+             "session_cost_cap_usd": getattr(a, "session_cost_cap_usd", None)}
     for k, v in flags.items():
         if v is not None:
             setattr(search, k, v)
@@ -1086,6 +1088,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--branches", type=int, default=None)
     p.add_argument("--max-rounds", type=int, default=None)
     p.add_argument("--provider-retries", type=int, default=None, help="retry a structured provider turn failure within the same committee/candidate (0-3, default 0)")
+    p.add_argument("--session-cost-cap-usd", type=float, default=None, help="optional USD cap for one hmz attempt; None keeps the existing total-budget gate")
     p.add_argument("--effort", default=None, choices=["off", "low", "high", "max"])
     _add_role_efforts(p)
     p.add_argument("--no-tools", action="store_true", help="recorded only; the hmz session does not use the chat tool loop")
@@ -1116,6 +1119,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--branches", type=int, default=None)
     r.add_argument("--max-rounds", type=int, default=None)
     r.add_argument("--provider-retries", type=int, default=None, help="override the recorded provider retry count (0-3); omitted keeps the run's value")
+    r.add_argument("--session-cost-cap-usd", type=float, default=None, help="override the recorded per-attempt session cost cap")
     r.add_argument("--effort", default=None, choices=["off", "low", "high", "max"])
     _add_role_efforts(r)
     r.add_argument("--no-tools", action="store_true", help="recorded only; the hmz session does not use the chat tool loop")

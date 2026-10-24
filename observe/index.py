@@ -1379,6 +1379,9 @@ class Index:
             protocol = "flame_chase_1" if str((config or {}).get("loop_protocol") or "") == "flame_chase_1" else "legacy"
         committees = json.dumps((config or {}).get("committees") or [], sort_keys=True, ensure_ascii=False)
         stored = {key: row.get(key) for key in row if key not in ("state", "result")}
+        for key in ("winner_label", "winner_provider", "winner_model", "winner_committee", "winner_origin"):
+            if key in result_doc:
+                stored[key] = result_doc.get(key)
         fingerprint = (config or {}).get("task_fingerprint")
         stored.update({
             "experiment_id": experiment_id,

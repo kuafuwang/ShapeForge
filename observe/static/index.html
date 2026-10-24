@@ -1037,7 +1037,7 @@ async function loadRuns() {
   body.innerHTML = rows.map((row) => {
     const live = row.status === "running" ? `<span class="breathe" title="进行中"></span>` : "";
     const task = String(row.task || "").split("@")[0];
-    return `<tr class="${row.run_id === selectedRun ? "on" : ""}" data-run="${esc(row.run_id)}"><td>${esc(row.run_id)}</td><td>${esc(row.task)} <button type="button" class="quiet" title="按题目名归档这个算子下已结束的搜索" data-delete-operator="${esc(task)}">删除</button></td><td>${row.publication === "in_progress" ? live : ""}${esc(row.publication)}</td><td>${esc(num(row.published_speedup))}</td><td>${esc(money(row.spent_usd))}</td><td>${esc(row.model)}</td><td>${esc(row.stop_reason)}</td><td>${esc(row.binding)}</td><td>${live}<span class="badge ${esc(row.status)}">${esc(row.status)}</span></td></tr>`;
+    return `<tr class="${row.run_id === selectedRun ? "on" : ""}" data-run="${esc(row.run_id)}"><td>${esc(row.run_id)}</td><td>${esc(row.task)} <button type="button" class="quiet" title="按题目名归档这个算子下已结束的搜索" data-delete-operator="${esc(task)}">删除</button></td><td>${row.publication === "in_progress" ? live : ""}${esc(row.publication)}</td><td>${esc(num(row.published_speedup))}</td><td>${esc(money(row.spent_usd))}</td><td>${esc(row.winner_model || row.model)}</td><td>${esc(row.stop_reason)}</td><td>${esc(row.binding)}</td><td>${live}<span class="badge ${esc(row.status)}">${esc(row.status)}</span></td></tr>`;
   }).join("");
   body.querySelectorAll("[data-run]").forEach((tr) => tr.addEventListener("click", () => {
     selectedRun = tr.dataset.run;
@@ -1377,11 +1377,21 @@ function renderDetail(doc) {
       (confirmWinner && confirmWinner !== seedKernel ? ` · 确认胜者（换一批输入重测后活下来的）：<b>${esc(confirmWinner)}</b>` : "") +
       `</p>`
     : "";
-  return `<h2>${esc(doc.id)}</h2><p>${lamp}${esc(doc.target_line || "")} ${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>${timingLine}${budgetLine}${stopLine}${seedLine}` +
+  const winner = doc.winner || {};
+  const winnerLabel = winner.label || (doc.result && (doc.result.winner_label || doc.result.confirm_winner_label)) || "";
+  const winnerModel = [winner.provider || (doc.result && doc.result.winner_provider), winner.model || (doc.result && doc.result.winner_model)].filter(Boolean).join("/");
+  const winnerLine = winnerLabel || winnerModel
+    ? `<p class="muted">胜者：<b>${esc(winnerLabel || "—")}</b>${winnerModel ? ` · ${esc(winnerModel)}` : ""}${winner.origin ? ` · ${esc(winner.origin)}` : ""}</p>`
+    : "";
+  const modelTotals = Array.isArray(doc.model_totals) ? doc.model_totals : [];
+  const modelTable = modelTotals.length
+    ? `<h3>模型费用</h3><table><thead><tr><th>provider</th><th>模型</th><th>委员会</th><th>会话</th><th>花费</th><th>输出 token</th></tr></thead><tbody>${modelTotals.map((row) => `<tr><td>${esc(row.provider || "—")}</td><td>${esc(row.model || "—")}</td><td>${esc(row.committee || "—")}</td><td>${esc(num(row.sessions))}</td><td>${esc(money2(row.cost_usd))}</td><td>${esc(num(row.output_tokens))}</td></tr>`).join("")}</tbody></table>`
+    : "";
+  return `<h2>${esc(doc.id)}</h2><p>${lamp}${esc(doc.target_line || "")} ${esc(doc.publication)} ${esc(num(doc.published_speedup))}</p>${timingLine}${budgetLine}${stopLine}${seedLine}${winnerLine}` +
     `<div>` +
     `<h3>确认点</h3>${confirm}` +
     `<h3>候选</h3>` + (candidates ? `<table><thead><tr><th>序号</th><th>标签</th><th>状态</th><th>阶段</th><th>加速比</th><th>标记</th><th>说明</th></tr></thead><tbody>${candidates}</tbody></table>` : `<p class="muted">没有候选。</p>`) +
-    `<h3>委员会交接</h3>${handoffBlock}` +
+    `<h3>委员会交接</h3>${handoffBlock}` + modelTable +
     `<h3>预算事件</h3>` + (events ? `<table><thead><tr><th>时间</th><th>种类</th><th>谁</th><th>旧预算</th><th>新预算</th><th>备注</th></tr></thead><tbody>${events}</tbody></table>` : `<p class="muted">没有预算事件。</p>`) +
     `<h3>回合</h3>` + writerNote(doc) + `<div class="note-list" id="turns-live"></div>` +
     (writerMode(doc) === "pi"

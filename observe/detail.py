@@ -458,6 +458,11 @@ def row_from_files(directory: Path, state: dict | None, result: dict | None) -> 
         "status": status,
         "state": state,
         "result": result,
+        "winner_label": (result or {}).get("winner_label") or (result or {}).get("confirm_winner_label"),
+        "winner_provider": (result or {}).get("winner_provider"),
+        "winner_model": (result or {}).get("winner_model"),
+        "winner_committee": (result or {}).get("winner_committee"),
+        "winner_origin": (result or {}).get("winner_origin"),
     }
 
 
@@ -2224,6 +2229,14 @@ def run_detail(run_id: str) -> dict | None:
         "confirmations": confirmations,
         "candidates": _candidates(directory),
         "kernel_writer": kernel_writer(directory),
+        "winner": {
+            "label": (result or {}).get("winner_label") or (result or {}).get("confirm_winner_label") or (result or {}).get("best_label"),
+            "provider": (result or {}).get("winner_provider"),
+            "model": (result or {}).get("winner_model"),
+            "committee": (result or {}).get("winner_committee"),
+            "origin": (result or {}).get("winner_origin"),
+        },
+        "model_totals": (result or {}).get("model_totals") or [],
         "publication": conclusion["publication"],
         "published_speedup": conclusion["speedup"],
         "eval_progress": progress,

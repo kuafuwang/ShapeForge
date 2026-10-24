@@ -247,6 +247,9 @@ class Candidate:
 
     # 只做正确性恢复时为真：合格不看加速比，结束时也不做 _confirm。
     correctness_only: bool = False
+    # 写这版内核的会话归属：origin=session/prior，provider/model/committee,
+    # session_label 与 attempt。旧运行没有这一项时为空。
+    origin: dict = field(default_factory=dict)
 
     # 安全且数值正确（EvalReport.status 为 ok）才算合格。正式搜索还要求报告里真有 speedup；缺计时的候选不能换种子。规则在 policy.candidate_eligible。
     @property
@@ -289,7 +292,7 @@ class Candidate:
             "idx": self.idx, "label": self.label, "plan": self.plan, "status": r.status if r else "unevaluated",
             "speedup": r.speedup if r else None, "candidate_us": r.candidate_us if r else None,
             "cost_usd": self.cost_usd, "t_s": self.t_s, "is_best": self.is_best,
-            "message": (r.message[:300] if r else ""),
+            "message": (r.message[:300] if r else ""), "origin": dict(self.origin),
         }
 
 
@@ -309,6 +312,9 @@ class RunResult:
     - ``budget_usd``：结束时的上限（每次加预算都会抬高）。
     - ``best_label``：作为结果的那颗内核的标签。
     - ``best_speedup``：选中那一刻的加速比，不是复测值；复测若改了优胜者，这里仍是该内核在搜索过程中的测量。
+    - ``best_origin``/``best_provider``/``best_model``/``best_committee``：搜索种子的会话归属；旧运行或 ``prior`` 没有时为 None。
+    - ``winner_*``：确认后实际发布的胜者归属；确认没跑时等同 best。
+    - ``model_totals``：按 provider/model/committee 汇总的会话、费用和 token。
     - ``confirmed_speedup``：新种子、两倍重复次数下的加速比，用来压掉「多次噪声测量里挑最大值」。
     - ``confirmed_status``：确认阶段的状态（``ok``、``uncertain`` 或失败状态）。
     - ``confirmed_values``：确认阶段每一批的值。
@@ -344,6 +350,16 @@ class RunResult:
     best_label: str | None = None
     # 选中那一刻的加速比，不是复测值。复测若改了优胜者，这里仍是该内核在搜索过程中的测量。
     best_speedup: float | None = None  # as measured when selected
+    best_origin: str | None = None
+    best_provider: str | None = None
+    best_model: str | None = None
+    best_committee: str | None = None
+    winner_label: str | None = None
+    winner_origin: str | None = None
+    winner_provider: str | None = None
+    winner_model: str | None = None
+    winner_committee: str | None = None
+    model_totals: list = field(default_factory=list)
     # 新种子、两倍重复次数下的加速比，用来压掉「多次噪声测量里挑最大值」。
     confirmed_speedup: float | None = None  # fresh seed, more repetitions
     confirmed_status: str | None = None
@@ -671,6 +687,7 @@ class Orchestrator:
         self._from_text = ""
         self._agent_failures = 0
         self._provider_attempts: dict[str, int] = {}
+        self._candidate_origins: dict[str, dict] = {}
         self._sleep = asyncio.sleep  # tests replace this to avoid waiting through retry backoff
         self._failure_feedback = ""
         self._notes_summary = ""
@@ -984,12 +1001,13 @@ class Orchestrator:
         self.ledger.initial_budget_usd = snap.initial_budget_usd
         self.ledger.t0 = time.time() - (snap.requests[-1].get("t") or 0.0 if snap.requests else 0.0)
         self.candidates, self.cache, self.best = [], {}, None
+        self._candidate_origins = dict(getattr(snap, "candidate_origins", {}) or {})
         by_idx = {t["idx"]: t for t in snap.trace}
         for c in snap.candidates:
             t = by_idx.get(c["idx"], {})
             cand = Candidate(idx=c["idx"], label=c["label"], source=c["source"], report=c["report"], plan=c.get("plan"), cost_usd=t.get("cost_usd", 0.0), t_s=t.get("t_s", 0.0),
                              is_best=False, within_noise=bool(t.get("within_noise")), correctness_only=self.search.correctness_only,
-                             recheck_rejected=bool(c.get("recheck_rejected")))
+                             recheck_rejected=bool(c.get("recheck_rejected")), origin=dict(self._candidate_origins.get(c["label"]) or {}))
             self.candidates.append(cand)
             # 与 _eval 相同：超时和 worker 崩溃是环境故障，不能当成这颗内核的永久判决。
             if cand.report is not None and cand.report.status not in ("timeout", "crash") and self._cache_this(cand.source):
@@ -1082,7 +1100,7 @@ class Orchestrator:
         return required_gain(self.search.min_improvement, self.search.noise_z, speedup_se(a.report), speedup_se(b.report))
 
     # 一颗候选的完整评测，也是唯一更新当前种子的地方。不安全、算错、或快不过测量噪声，都留在记录里但种子不变。默认 max_hangs 为 1，所以一次 timeout 就抛 StopRun，整次搜索停；连续 3 次 crash 同样停。
-    async def _eval(self, source: str, label: str, *, plan: str | None = None) -> Candidate:
+    async def _eval(self, source: str, label: str, *, plan: str | None = None, origin: dict | None = None) -> Candidate:
         """@brief 一颗候选的完整评测（在 GPU 上串行），也是唯一更新当前种子的地方。
 
         不安全、算错、或快不过测量噪声的候选都留在记录里，但种子不变。默认 ``max_hangs`` 为 1，所以一次 timeout
@@ -1099,7 +1117,10 @@ class Orchestrator:
         @return 评测完（或复用结论）的候选。
         @raises StopRun 当 hangs 已达 ``max_hangs``（排队的评测不再上 GPU），或连续三次 worker 崩溃时。
         """
-        cand = Candidate(idx=len(self.candidates), label=label, source=source, plan=plan, correctness_only=self.search.correctness_only)
+        origin = dict(origin or self._candidate_origins.get(label) or {})
+        cand = Candidate(idx=len(self.candidates), label=label, source=source, plan=plan, correctness_only=self.search.correctness_only, origin=origin)
+        if origin:
+            self._candidate_origins[label] = dict(origin)
         copied = self._copied_report(source)
         self.candidates.append(cand)
         self._publish_state("evaluate", inflight=label)
@@ -1173,7 +1194,7 @@ class Orchestrator:
             self._store_recheck(cand, recheck_doc)
         r = cand.report
         self.trace.append(
-            {"idx": cand.idx, "label": label, "status": r.status, "speedup": r.speedup, "cost_usd": cand.cost_usd, "t_s": cand.t_s, "best_speedup": self.best.speedup if self.best else None, "improved": cand.is_best, "within_noise": cand.within_noise, "eval_seed": used_seed, "eval_seed_from": seed_from, "differential_recheck": None if recheck_doc is None else recheck_doc["class"], "parent_label": self._parent_of(label)}
+            {"idx": cand.idx, "label": label, "status": r.status, "speedup": r.speedup, "cost_usd": cand.cost_usd, "t_s": cand.t_s, "best_speedup": self.best.speedup if self.best else None, "improved": cand.is_best, "within_noise": cand.within_noise, "eval_seed": used_seed, "eval_seed_from": seed_from, "differential_recheck": None if recheck_doc is None else recheck_doc["class"], "parent_label": self._parent_of(label), "origin": dict(cand.origin)}
         )
         self._publish_state(inflight=None)
         sp = f"{r.speedup:.3f}x" if r.speedup else "-"
@@ -1517,7 +1538,7 @@ class Orchestrator:
             source = self._prior_kernel_text()
             if source is not None:
                 self.log(f"-- re-evaluating {self.from_run / self.best_name} on {self.task_name} {self.dtype} {self.size}")
-                await self._eval(source, "prior")
+                await self._eval(source, "prior", origin={"origin": "prior"})
                 if self.best:
                     self.log(f"-- seed is that kernel at {self.best.speedup:.3f}x (measured now); skipping the first draft")
                 else:
@@ -1653,6 +1674,9 @@ class Orchestrator:
         retries = getattr(self.search, "provider_retries", 0)
         if isinstance(retries, bool) or not isinstance(retries, int) or not 0 <= retries <= 3:
             raise RunStartError("provider_retries must be an integer between 0 and 3")
+        cap = getattr(self.search, "session_cost_cap_usd", None)
+        if cap is not None and (isinstance(cap, bool) or not isinstance(cap, (int, float)) or not math.isfinite(float(cap)) or cap <= 0):
+            raise RunStartError("session_cost_cap_usd must be a positive finite number or None")
 
     def _ensure_gpu_lock_file(self) -> None:
         """@brief 建好整机的 GPU 锁文件，让只读的会话也能 flock 它。
@@ -1744,6 +1768,9 @@ class Orchestrator:
         slice_usd = self.search.relay_budget_usd if remaining is None else min(remaining, self.search.relay_budget_usd)
         prices = Prices(member.cfg.price_in, member.cfg.price_out, member.cfg.price_cache_read, member.cfg.price_cache_write)
         tokens = output_tokens_for(slice_usd, prices.output)
+        session_cap = getattr(self.search, "session_cost_cap_usd", None)
+        if session_cap is not None and remaining is not None:
+            session_cap = min(float(session_cap), float(remaining))
         work = (self.run_dir / "agent_work" / tag.replace("/", "_")).resolve()
         brief = self._session_brief(seedless, tag, work)
         self._session_briefs.append(brief)
@@ -1767,7 +1794,7 @@ class Orchestrator:
                     result = await asyncio.to_thread(
                         run_kernel_agent, brief, work=work, provider=member.provider, model=member.model,
                         effort=member.cfg.reasoning_effort, prices=prices, turn_output_tokens=tokens,
-                        turn_minutes=int(self.search.turn_minutes),
+                        turn_minutes=int(self.search.turn_minutes), session_cost_cap_usd=session_cap,
                     )
             except (AgentError, LLMError, Exception) as exc:
                 if isinstance(exc, (StopRun, BudgetExhausted, RunStartError)):
@@ -1832,8 +1859,12 @@ class Orchestrator:
                 exit_kind = "hang_circuit_breaker"
                 raise StopRun("gpu_hang_circuit_breaker")
             try:
+                origin = {
+                    "origin": "session", "provider": member.provider, "model": member.model,
+                    "committee": self._committee_name, "session_label": tag, "attempt": attempt,
+                }
                 if outcome == "evaluated":
-                    cand = await self._eval(result.source, candidate_label)
+                    cand = await self._eval(result.source, candidate_label, origin=origin)
                     self._file_session_notes(cand, result, work_label=tag)
                     outer = self._outer_line(cand)
                     self._notes_summary = _notes_for_next(outer, result.notes)
@@ -1847,7 +1878,7 @@ class Orchestrator:
                         # 这一版已经算对。上一场失败反馈不再指向已经不是种子的核。
                         self._failure_feedback = ""
                 elif outcome == "unchanged" and result.source:
-                    cand = await self._eval(result.source, candidate_label)
+                    cand = await self._eval(result.source, candidate_label, origin=origin)
                     self._file_session_notes(cand, result, work_label=tag)
                     self._notes_summary = _notes_for_next(self._outer_line(cand), result.notes)
                     self._failure_feedback = ""
@@ -2800,6 +2831,8 @@ class Orchestrator:
         res.trace = self.trace
         res.candidates = [c.brief() for c in self.candidates]
         res.ledger = self.ledger.summary()
+        from .modelcost import from_path as model_totals_from_path
+        res.model_totals = model_totals_from_path(self.run_dir / "transcript.jsonl")
         res.profiles = self.profiles
         if self._search_seed:
             res.search_seed_label, res.search_seed_speedup = self._search_seed.label, self._search_seed.speedup
@@ -2809,7 +2842,20 @@ class Orchestrator:
                 res.confirmation_source_sha256 = hashlib.sha256(self._confirm_winner.source.encode("utf-8")).hexdigest()
         if self.best:
             res.best_label, res.best_speedup = self.best.label, self.best.speedup
+            best_origin = getattr(self.best, "origin", {}) or {}
+            res.best_origin = best_origin.get("origin")
+            res.best_provider = best_origin.get("provider")
+            res.best_model = best_origin.get("model")
+            res.best_committee = best_origin.get("committee")
             control.write_text_atomic(self.run_dir / self.best_name, self.best.source)
+        winner = self._confirm_winner or self.best
+        if winner:
+            res.winner_label = winner.label
+            winner_origin = getattr(winner, "origin", {}) or {}
+            res.winner_origin = winner_origin.get("origin")
+            res.winner_provider = winner_origin.get("provider")
+            res.winner_model = winner_origin.get("model")
+            res.winner_committee = winner_origin.get("committee")
         res.target_id = self.target_id
         res.backend = self.target.backend
         res.backend_version = self.target.backend_version

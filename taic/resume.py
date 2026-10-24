@@ -123,6 +123,7 @@ class Snapshot:
     resumes: int = 0
     agent_failures: int = 0
     provider_attempts: dict = field(default_factory=dict)  # candidate label -> next provider retry attempt to run
+    candidate_origins: dict = field(default_factory=dict)  # candidate label -> provider/model/committee/origin
     # The phase recorded in ``state.json`` when the process stopped. ``confirm`` means the search
     # phase had ended and the resume exists to finish the remeasure, not to start another session.
     phase: str = ""
@@ -709,6 +710,30 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
     events, bad = read_transcript(run_dir)
     if bad:
         notes.append(f"{bad} damaged line(s) in transcript.jsonl skipped")
+    candidate_origins: dict[str, dict] = {}
+    for event in events:
+        if not isinstance(event, dict) or event.get("event") != "agent":
+            continue
+        label = str(event.get("candidate_label") or event.get("label") or "")
+        if not label:
+            continue
+        provider = str(event.get("provider") or "")
+        model = str(event.get("model") or "")
+        committee = str(event.get("committee") or "")
+        if not (provider or model or committee):
+            continue
+        attempt = event.get("attempt")
+        candidate_origins[label] = {
+            "origin": "session", "provider": provider or None, "model": model or None,
+            "committee": committee or None, "session_label": event.get("label"),
+            "attempt": attempt if isinstance(attempt, int) and not isinstance(attempt, bool) and attempt >= 0 else 0,
+        }
+    for row in (result or {}).get("candidates") or []:
+        if not isinstance(row, dict) or not isinstance(row.get("origin"), dict):
+            continue
+        label = str(row.get("label") or "")
+        if label and label not in candidate_origins:
+            candidate_origins[label] = dict(row["origin"])
     ref = result or state or {}
     task, dtype, size, model = ref.get("task", ""), ref.get("dtype", ""), ref.get("size", ""), ref.get("model", "")
     requests = _requests_from_transcript(events, notes)
@@ -850,7 +875,7 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
         history=history, best_label=best_label, rounds_done=max(0, rnd if search_finished else next_round - 1), next_round=next_round, stagnant=stagnant,
         partial=None, hangs=hangs, evaluations=evaluations, crashes_in_a_row=crashes, system=system, elapsed_s=elapsed,
         started_at=started, initial_budget_usd=initial, resumes=resumes, agent_failures=agent_failures,
-        provider_attempts=provider_attempts, phase=phase, search_finished=search_finished, notes=notes,
+        provider_attempts=provider_attempts, candidate_origins=candidate_origins, phase=phase, search_finished=search_finished, notes=notes,
         checks={"loop_protocol": "flame_chase_1"},
     )
 
@@ -895,6 +920,7 @@ def describe(snap: Snapshot) -> dict:
         "system_prompt_restored": bool(snap.system),
         "continues_in_round": p.rnd if p else snap.next_round,
         "provider_attempts": dict(snap.provider_attempts),
+        "candidate_origins": dict(snap.candidate_origins),
         "round": None if not p else {
             "seed": p.seed_label, "plans": [x["title"] for x in (p.plans or [])] or None, "plans_from": p.plan_source,
             "finished_branches": {f"p{i}": lab for i, lab in p.done.items()},

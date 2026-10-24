@@ -741,6 +741,15 @@ def test_a_provider_failure_retries_inside_the_same_candidate_and_keeps_costs_an
         ("r1.p0", 0, "provider_failed"), ("r1.p0.retry1", 1, "evaluated"),
     ]
     assert {event["committee"] for event in agents} == {"first"}
+    assert (res.best_provider, res.best_model, res.best_committee) == ("deepseek", "fake", "first")
+    assert (res.winner_provider, res.winner_model, res.winner_committee) == ("deepseek", "fake", "first")
+    by_label = {row["label"]: row for row in res.candidates}
+    assert by_label["init"]["origin"]["origin"] == "session"
+    assert by_label["r1.p0"]["origin"]["session_label"] == "r1.p0.retry1"
+    assert by_label["r1.p0"]["origin"]["attempt"] == 1
+    assert res.trace[-1]["origin"]["model"] == "fake"
+    assert res.model_totals[0]["model"] == "fake"
+    assert res.model_totals[0]["sessions"] == 3 and res.model_totals[0]["cost_usd"] == pytest.approx(0.03)
 
 
 def test_provider_retries_exhaustion_counts_once_per_round_before_the_existing_two_strike_stop(tmp_path):
@@ -840,6 +849,10 @@ def test_provider_retries_must_be_a_small_nonnegative_integer(tmp_path):
         orch = make_orch(tmp_path / str(value), llm_script(code("speed=1.0")), [], provider_retries=value)
         with pytest.raises(RunStartError, match="provider_retries"):
             run(orch)
+    for value in (-1, 0, True, "1", float("nan"), float("inf")):
+        orch = make_orch(tmp_path / f"cap-{value}", llm_script(code("speed=1.0")), [], session_cost_cap_usd=value)
+        with pytest.raises(RunStartError, match="session_cost_cap_usd"):
+            run(orch)
 
 
 def test_an_interrupted_retry_backoff_restores_the_attempt_and_all_previous_spend(tmp_path):
@@ -866,6 +879,8 @@ def test_an_interrupted_retry_backoff_restores_the_attempt_and_all_previous_spen
     assert snap.provider_attempts == {"r1.p0": 1}
     assert describe(snap)["provider_attempts"] == {"r1.p0": 1}
     assert snap.spent_usd == pytest.approx(0.02)
+    assert snap.candidate_origins["init"]["provider"] == "deepseek"
+    assert snap.candidate_origins["init"]["origin"] == "session"
 
     resumed = make_orch(tmp_path / "resumed", llm_script(code("speed=1.0")), [], max_rounds=2, provider_retries=1)
     resumed.restore(snap, dry_run=True)
@@ -882,6 +897,7 @@ def test_an_interrupted_retry_backoff_restores_the_attempt_and_all_previous_spen
     assert resumed._provider_attempts == {}
     assert resumed.ledger.total_usd == pytest.approx(0.03)
     assert resumed._session_costs[-2:] == [0.01, 0.01]
+    assert resumed.best is not None and resumed.best.origin["provider"] == "deepseek"
 
 
 def test_a_retry_that_returns_no_submission_is_not_retried_again(tmp_path):

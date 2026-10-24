@@ -372,14 +372,20 @@ def test_provider_retries_has_a_cli_switch_and_resume_preserves_or_overrides_it(
     assert got["run"]["provider_retries"] == 2
     assert cli.main(["resume", "somewhere", "--provider-retries", "0"]) == 0
     assert got["resume"]["provider_retries"] == 0
+    assert cli.main(["run", "relu", "--session-cost-cap-usd", "0.5"]) == 0
+    assert got["run"]["session_cost_cap_usd"] == 0.5
+    assert cli.main(["resume", "somewhere", "--session-cost-cap-usd", "0.75"]) == 0
+    assert got["resume"]["session_cost_cap_usd"] == 0.75
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-0123456789abcdef")
     monkeypatch.setenv("OPENAI_BASE_URL", "http://x")
-    settings = {"search": {"provider_retries": 2}, "llm": {"model": "fake"},
-                "provenance": {"search.provider_retries": "run_config.json"}}
+    settings = {"search": {"provider_retries": 2, "session_cost_cap_usd": 2.5}, "llm": {"model": "fake"},
+                "provenance": {"search.provider_retries": "run_config.json", "search.session_cost_cap_usd": "run_config.json"}}
     _cfg, search, prov = cli._resume_config(ns(Path("somewhere"), dry_run=True), settings, {"model": None})
     assert search.provider_retries == 2 and prov["search.provider_retries"] == "run_config.json"
-    _cfg, search, prov = cli._resume_config(ns(Path("somewhere"), dry_run=True, provider_retries=0), settings, {"model": None})
+    assert search.session_cost_cap_usd == 2.5 and prov["search.session_cost_cap_usd"] == "run_config.json"
+    _cfg, search, prov = cli._resume_config(ns(Path("somewhere"), dry_run=True, provider_retries=0, session_cost_cap_usd=0.75), settings, {"model": None})
     assert search.provider_retries == 0 and prov["search.provider_retries"] == "command line"
+    assert search.session_cost_cap_usd == 0.75 and prov["search.session_cost_cap_usd"] == "command line"
 
 
 def test_feedback_seq_continues_after_a_broken_line(tmp_path):

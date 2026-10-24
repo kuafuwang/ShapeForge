@@ -484,3 +484,37 @@ def test_a_failed_turn_does_not_poison_a_later_valid_submission(tmp_path):
     assert result.diagnostics_path == ""
     assert not (tmp_path / "agent_diagnostics").exists()
 
+
+
+def test_a_session_cost_cap_is_passed_to_hmz_as_an_outer_budget(tmp_path):
+    hmz = tmp_path / "hmz-cap"
+    hmz.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, pathlib, sys\n"
+        "name = 'missing.metal'\n"
+        "for arg in sys.argv:\n"
+        "    if arg.startswith('submit_name='):\n"
+        "        name = arg.split('=', 1)[1]\n"
+        "pathlib.Path('..', pathlib.Path.cwd().name + '-args.json').write_text(json.dumps(sys.argv))\n"
+        "pathlib.Path(name).write_text('kernel void conv2d_kernel() {}\\n')\n"
+        "print(json.dumps({'kind': 'result', 'spent': 'Usage(output=1000)'}))\n"
+    )
+    hmz.chmod(hmz.stat().st_mode | stat.S_IEXEC)
+    work = tmp_path / "work-cap"
+    result = run_kernel_agent(
+        _brief(tmp_path), work=work, provider="deepseek", model="deepseek-flash",
+        effort="high", prices=PRICES, turn_output_tokens=1000, turn_minutes=25,
+        session_cost_cap_usd=1.25, hmz=str(hmz),
+    )
+    args = json.loads((tmp_path / f"{work.name}-args.json").read_text())
+    assert "budget.cost=1.25" in args and "budget.duration=30m" in args
+    assert result.cost_usd == pytest.approx(1000 * PRICES.output / 1_000_000)
+
+    work2 = tmp_path / "work-no-cap"
+    result2 = run_kernel_agent(
+        _brief(tmp_path), work=work2, provider="deepseek", model="deepseek-flash",
+        effort="high", prices=PRICES, turn_output_tokens=1000, turn_minutes=25, hmz=str(hmz),
+    )
+    args2 = json.loads((tmp_path / f"{work2.name}-args.json").read_text())
+    assert not any(arg.startswith("budget.cost=") for arg in args2)
+    assert result2.source.startswith("kernel void conv2d_kernel")

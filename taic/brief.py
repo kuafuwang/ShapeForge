@@ -15,6 +15,7 @@ import re
 import sys
 from pathlib import Path
 
+from .modelcost import from_path as model_totals_from_path
 from .redact import redact_text
 _REPO = Path(__file__).resolve().parent.parent
 
@@ -116,6 +117,11 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
     docs = [d for d in (state, result) if isinstance(d, dict)]
     published, publication = _published(run, result, result_err)
     chat, retry, truncation, transcript_stage, agent_failures = _transcript_stats(run / "transcript.jsonl")
+    cands = _cands(run, state, result)
+    origins = _origins(run / "transcript.jsonl")
+    for row in cands:
+        if not row.get("origin") and row.get("label") in origins:
+            row["origin"] = origins[row["label"]]
     doc = {
         "schema_version": "1",
         "protocol_version": _first(docs, "protocol_version"),
@@ -124,6 +130,12 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
         "size": _first(docs, "size"),
         "committee": _first(docs, "committee"),
         "model": _first(docs, "model"),
+        "winner_label": _first(docs, "winner_label") or _first(docs, "confirm_winner_label") or _first(docs, "best_label"),
+        "winner_provider": _first(docs, "winner_provider"),
+        "winner_model": _first(docs, "winner_model"),
+        "winner_committee": _first(docs, "winner_committee"),
+        "winner_origin": _first(docs, "winner_origin"),
+        "model_totals": model_totals_from_path(run / "transcript.jsonl"),
         "phase": _first(docs, "phase"),
         "stop_reason": _first(docs, "stop_reason"),
         "round": _round_of(state, result),
@@ -132,12 +144,21 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
         "published": published,
         "publication": publication,
         "search_best": _first(docs, "best_speedup"),
-        "cands": _cands(run, state, result),
+        "cands": cands,
         "agent_failures": agent_failures,
         "counts": {"chat": chat, "retry": retry, "truncation_retries": truncation, "eval_stage": _eval_stage(run, transcript_stage)},
         "paths": _paths(run),
         "stamp": _stamp(run),
     }
+    winner_label = doc.get("winner_label")
+    if not doc.get("winner_provider") and isinstance(winner_label, str):
+        found = next((row for row in cands if row.get("label") == winner_label), None)
+        if found and isinstance(found.get("origin"), dict):
+            origin = found["origin"]
+            doc["winner_provider"] = origin.get("provider")
+            doc["winner_model"] = origin.get("model")
+            doc["winner_committee"] = origin.get("committee")
+            doc["winner_origin"] = origin.get("origin")
     if include_gpu:
         gpu = _gpu_events()
         if gpu is not None:
@@ -282,6 +303,7 @@ def _cand_from_trace(item: dict) -> dict:
         "speedup": _number(item.get("speedup")),
         "within_noise": item.get("within_noise") if isinstance(item.get("within_noise"), bool) else None,
         "differential_recheck": _text(recheck),
+        "origin": _origin(item.get("origin")),
     }
 
 
@@ -299,7 +321,43 @@ def _cand_from_dir(path: Path) -> dict:
         "speedup": _number(report.get("speedup")),
         "within_noise": None,
         "differential_recheck": _text(recheck.get("class")),
+        "origin": {},
     }
+
+
+def _origin(value) -> dict:
+    """Keep only bounded, displayable origin fields from a transcript/result row."""
+    if not isinstance(value, dict):
+        return {}
+    out = {}
+    for key in ("origin", "provider", "model", "committee", "session_label"):
+        text = _text(value.get(key))
+        if text:
+            out[key] = text
+    attempt = value.get("attempt")
+    if isinstance(attempt, int) and not isinstance(attempt, bool) and attempt >= 0:
+        out["attempt"] = attempt
+    return out
+
+
+def _origins(path: Path) -> dict[str, dict]:
+    """Map candidate labels to their session provenance from transcript agent rows."""
+    out: dict[str, dict] = {}
+    if not path.is_file():
+        return out
+    for event in _jsonl(path):
+        if event.get("event") != "agent":
+            continue
+        label = event.get("candidate_label") or event.get("label")
+        if not isinstance(label, str) or not label:
+            continue
+        origin = _origin({
+            "origin": "session", "provider": event.get("provider"), "model": event.get("model"),
+            "committee": event.get("committee"), "session_label": event.get("label"), "attempt": event.get("attempt", 0),
+        })
+        if origin:
+            out[label] = origin
+    return out
 
 
 def _transcript_stats(path: Path) -> tuple[int | None, int | None, int | None, str | None, list[dict]]:

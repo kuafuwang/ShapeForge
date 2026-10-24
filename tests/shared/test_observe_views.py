@@ -54,6 +54,9 @@ def test_scan_reads_timeline_marks_confirmed_point_and_handoff(tmp_path, monkeyp
         "best_speedup": 9.9, "confirmed_speedup": 1.25, "confirmed_status": "ok",
         "confirm_winner_label": "r1.p0", "confirmation_source_sha256": digest, "trace": trace,
         "confirmed_values": [1.25], "confirmed_worst": 1.25, "confirmed_best": 1.25, "target_id": "apple-m4-max",
+        "winner_label": "r1.p0", "winner_provider": "b", "winner_model": "model-b", "winner_committee": "second", "winner_origin": "session",
+        "model_totals": [{"provider": "b", "model": "model-b", "committee": "second", "sessions": 1, "cost_usd": 0.3,
+                          "input_tokens": 5, "output_tokens": 10, "cache_read_tokens": 20, "cache_write_tokens": 0}],
     }))
     (directory / "run_config.json").write_text(json.dumps({"committees": [
         {"name": "first", "members": [{"provider": "a", "model": "model-a"}]},
@@ -89,6 +92,8 @@ def test_scan_reads_timeline_marks_confirmed_point_and_handoff(tmp_path, monkeyp
         "running": False,
         "ended_at_estimated": False,
     }
+    assert detail["winner"] == {"label": "r1.p0", "provider": "b", "model": "model-b", "committee": "second", "origin": "session"}
+    assert detail["model_totals"][0]["model"] == "model-b" and detail["model_totals"][0]["cost_usd"] == 0.3
     lanes = detail["timeline"]["lanes"]
     assert [lane["label"] for lane in lanes] == ["问模型", "等锁", "评测"]
     by_label = {lane["label"]: lane["spans"] for lane in lanes}
@@ -376,7 +381,8 @@ def test_a_running_run_shows_start_and_elapsed_but_no_end(tmp_path, monkeypatch)
 def test_the_detail_page_has_the_run_clock():
     html = Path("observe/static/index.html").read_text()
     for token in ("detail-run-clock", "开始时间", "已运行", "结束时间", "formatDuration",
-                  "detail-budget", "总预算", "已花", "剩余", "money2", "remaining_usd"):
+                  "detail-budget", "总预算", "已花", "剩余", "money2", "remaining_usd",
+                  "胜者：", "模型费用"):
         assert token in html
 
 
