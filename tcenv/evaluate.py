@@ -1157,6 +1157,7 @@ def evaluate(
     validate: bool = False,
     measure_serial: bool = False,
     eval_cache: bool = False,
+    eval_cache_refresh: bool = False,
     target_id: str = "apple-m4-max",
 ) -> EvalReport:
     """@brief 在受监督的子进程里评测一份候选内核。
@@ -1187,6 +1188,7 @@ def evaluate(
     @param validate timed 模式下是否先跑着色器校验。
     @param measure_serial 是否额外测串行 dispatch。
     @param eval_cache 是否复用相同参数的缓存报告。
+    @param eval_cache_refresh 是否跳过读缓存、仍写回新报告。
     @param target_id 目标设备 id。
     @return 本次评测的报告。
     """
@@ -1242,7 +1244,7 @@ def evaluate(
             measure_serial=measure_serial, target_id=target_id, kernel_source=kernel_source,
             backend_id=getattr(backend, "id", ""), backend_version=getattr(backend, "version", ""),
         )
-        cached = _cache_read(cache_key)
+        cached = None if eval_cache_refresh else _cache_read(cache_key)
         if cached is not None:
             cached.cache_hit = True
             if self_check_dir is not None and mode == "timed" and cached.status == "ok":
