@@ -884,6 +884,36 @@ def test_an_interrupted_retry_backoff_restores_the_attempt_and_all_previous_spen
     assert resumed._session_costs[-2:] == [0.01, 0.01]
 
 
+def test_a_retry_that_returns_no_submission_is_not_retried_again(tmp_path):
+    attempts = []
+
+    def agent(brief, tag):
+        if brief.seedless:
+            return _session_result("speed=1.0")
+        attempts.append(tag)
+        if tag == "r1.p0":
+            return _session_result(None, failure_class="turn_failed")
+        if tag == "r1.p0.retry1":
+            return _session_result(None, failure_class="no_submission_after_result")
+        raise AssertionError(tag)
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], max_rounds=1, provider_retries=3)
+    orch.agent_runner = agent
+
+    async def nap(_delay):
+        return None
+
+    orch._sleep = nap
+    res = run(orch)
+    assert res.stop_reason == "max_rounds"
+    assert attempts == ["r1.p0", "r1.p0.retry1"]
+    events = _run_events(orch)
+    assert len([event for event in events if event.get("event") == "provider_retry"]) == 1
+    outcomes = [event["outcome"] for event in events if event.get("event") == "agent" and event.get("candidate_label") == "r1.p0"]
+    assert outcomes == ["provider_failed", "agent_no_submission"]
+    assert json.loads((orch.run_dir / "state.json").read_text())["agent_failures"] == 1
+
+
 def test_three_provider_retries_use_bounded_exponential_backoff(tmp_path):
     attempts = []
     sleeps = []

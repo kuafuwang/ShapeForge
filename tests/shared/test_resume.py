@@ -451,6 +451,60 @@ def test_a_live_run_and_a_held_lock_cannot_be_resumed(tmp_path):
         other.wait(timeout=5)
 
 
+def test_cli_resume_continues_a_scheduled_provider_retry_from_disk(tmp_path):
+    from taic.kernel_agent import AgentResult
+
+    def source(marker: str) -> str:
+        return code(marker).split("```metal\n", 1)[1].rsplit("```", 1)[0]
+
+    def result(marker: str | None, failure_class: str = "") -> AgentResult:
+        return AgentResult(
+            source=None if marker is None else source(marker), cost_usd=0.01, cost_incomplete=False,
+            status="ok", error="Connection error." if failure_class == "turn_failed" else "",
+            diagnostics={"failure_class": failure_class, "failed_turns": 1 if failure_class else 0,
+                         "last_terminal_kind": "failed" if failure_class else "result"},
+        )
+
+    def agent(brief, tag):
+        if brief.seedless:
+            return result("speed=1.0")
+        assert tag == "r1.p0"
+        return result(None, "turn_failed")
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], max_rounds=1, provider_retries=1)
+    orch.agent_runner = agent
+
+    async def killed(_delay):
+        raise SystemExit("killed during provider retry backoff")
+
+    orch._sleep = killed
+    with pytest.raises(SystemExit):
+        run(orch)
+    run_dir = tmp_path / "run"
+    assert not (run_dir / "result.json").exists()
+    assert json.loads((run_dir / "state.json").read_text())["provider_attempts"] == {"r1.p0": 1}
+    mark_dead(run_dir)
+    assert rs.inspect_run(run_dir)["kind"] == "interrupted"
+    assert rs.inspect_run(run_dir)["resumable"] is True
+
+    def script(_messages, **_kw):
+        return make_response(code("speed=1.2"), usage=make_usage())
+
+    resumed, snap, report, info, new_budget = cli.prepare_resume(
+        ns(run_dir, add_budget=5.0), client=FakeClient(script), evaluate_fn=fake_eval([]), log=lambda _s: None,
+    )
+    assert snap.provider_attempts == {"r1.p0": 1}
+    assert report["provider_attempts"] == {"r1.p0": 1}
+    res = cli.run_prepared(ns(run_dir, add_budget=5.0), resumed, snap, info, new_budget)
+    events = [json.loads(line) for line in (run_dir / "transcript.jsonl").read_text().splitlines()]
+    retry = next(event for event in events if event.get("event") == "agent" and event.get("label") == "r1.p0.retry1")
+    assert retry["candidate_label"] == "r1.p0" and retry["attempt"] == 1 and retry["outcome"] == "evaluated"
+    assert res.best_label == "r1.p0" and res.best_speedup == pytest.approx(1.2)
+    assert res.resumes == 1 and res.stop_reason == "max_rounds"
+    assert res.spent_usd == pytest.approx(0.02 + retry["cost_usd"])
+    assert json.loads((run_dir / "state.json").read_text())["provider_attempts"] == {}
+
+
 def test_double_resume_is_refused_while_the_first_one_runs(tmp_path):
     calls = []
     orch = make_orch(tmp_path, script_for(usage=BIG), calls, budget=0.15, max_rounds=3, max_repair=2, patience=20)
