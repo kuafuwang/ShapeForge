@@ -13,6 +13,7 @@ import pytest
 from tcenv.schema import PROTOCOL_VERSION
 
 from observe import query as scan
+from observe import detail
 from observe.detail import _chat_lines, _model_notes, _pi_lines_in, kernel_writer
 
 SOURCE = "kernel void gemm() {}\n"
@@ -463,3 +464,44 @@ def test_the_detail_payload_carries_the_current_budget_spent_and_remaining(tmp_p
     assert detail["budget"]["budget"] == pytest.approx(5.0)
     assert detail["budget"]["remaining_usd"] == pytest.approx(4.0)
 
+
+
+def test_pi_feed_finds_the_session_hmz_kept_inside_the_epic(tmp_path, monkeypatch):
+    """@brief 验证跑在 hmz 0.2.2 上的运行仍能看到 pi 输出：会话在 epic 目录里，且 epic 名字把运行名里的下划线换成了连字符。
+
+    hmz 0.2.2 起给每个 epic 建 own home，pi 的会话不再落到 ``~/.pi/agent/sessions``；目录名又会被压成只含
+    字母数字与连字符。两条都对不上时「pi 输出」这块永远是空的，运行看着像没在动。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 提供的环境替换器。
+    """
+    run_name = "20261025-070409_conv2d_fp16_deepseek-flash_g5yab2vc"
+    run = tmp_path / "runs" / "apple-m4-max" / run_name
+    run.mkdir(parents=True)
+    (run / "run_config.json").write_text(json.dumps({"search": {"kernel_agent": "pi"}}))
+    # resolve_run 只认有搜索快照的目录；内容是什么不看。
+    (run / "state.json").write_text(json.dumps({"phase": "llm", "round": 0}))
+
+    slug = "apple-m4-max-20261025-070409-conv2d-fp16-deepseek-flash-g5yab2vc-agent-work-init"
+    epic = tmp_path / "epics" / f"-Users-kuafu-runs-{slug}" / "20261024T230409.781Z-8b40a8"
+    session = epic / "sessions" / "pi" / "sessions" / ("-" + slug + "--")
+    session.mkdir(parents=True)
+    (epic / "epic.jsonl").write_text(json.dumps({
+        "event": "began",
+        "agents": [{"agent": "assistant", "backend": "pi", "model": "deepseek/deepseek-flash"}],
+        "budget": {"cost": 15},
+    }) + "\n")
+    (session / "2026-10-24T23-04-10-012Z_6ba.jsonl").write_text(json.dumps({
+        "message": {"role": "assistant", "content": [{"type": "text", "text": "coalesced epilogue stores"}]},
+    }) + "\n")
+
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(tmp_path / "runs"))
+    empty = tmp_path / "no-pi-sessions"
+    empty.mkdir()
+    assert detail._epic_files(run, tmp_path / "epics") != []
+
+    feed = detail.pi_feed(f"apple-m4-max/{run_name}", sessions_root=empty, epics_root=tmp_path / "epics")
+    assert feed is not None and feed["kernel_writer"] == "pi"
+    assert [row["who"] for row in feed["epics"]] == ["开始"]
+    assert any("coalesced epilogue stores" in row["text"] for row in feed["lines"])
+    assert detail.pi_feed(f"apple-m4-max/{run_name}", sessions_root=empty, epics_root=tmp_path / "epics", stamp=feed["stamp"])["same"] is True

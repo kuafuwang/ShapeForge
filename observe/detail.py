@@ -828,6 +828,18 @@ def _pi_stamp(paths: list[Path]) -> str:
 _EPIC_HOW = {"done": "完成", "failed": "失败", "stopped": "停下"}
 
 
+def _epic_token(token: str) -> str:
+    """@brief 把运行目录名压成 hmz 的 epic 目录里出现的样子。
+
+    hmz 用路径拼目录名，把所有非字母数字的字符（含 ``_``）压成一个连字符；运行目录名里有
+    ``20261025-070409_conv2d_fp16_...`` 这样的下划线，直接拿原名去 glob 永远匹配不上。
+
+    @param token 运行目录名。
+    @return 只含字母数字与连字符的名字；已经如此时原样返回。
+    """
+    return re.sub(r"[^A-Za-z0-9]+", "-", token).strip("-")
+
+
 def _epic_files(directory: Path, root: Path) -> list[Path]:
     """@brief 找出目录名包含该运行的 ``epic.jsonl``，只留最近 8 个。
 
@@ -840,9 +852,29 @@ def _epic_files(directory: Path, root: Path) -> list[Path]:
     token = directory.name
     if not token or not root.is_dir():
         return []
-    found = [path for path in root.glob(f"*{token}*/**/epic.jsonl") if path.is_file()]
+    tokens = {token, _epic_token(token)}
+    found = []
+    for needle in tokens:
+        found.extend(path for path in root.glob(f"*{needle}*/**/epic.jsonl") if path.is_file())
     found.sort(key=lambda item: item.stat().st_mtime)
     return found[-8:]
+
+
+def _epic_pi_sessions(epic_files: list[Path]) -> list[Path]:
+    """@brief 取出 epic 目录里 pi 自己写的会话文件；没有就是空。
+
+    hmz 把 pi 的会话目录收在 ``<epic>/<session>/sessions/pi/sessions/<cwd>/<时间>.jsonl``，
+    所以 ``~/.pi/agent/sessions`` 下看不到这些运行，只有这里能看到会话当时写的东西。
+
+    @param epic_files 该运行的 ``epic.jsonl`` 列表。
+    @return 按修改时间升序的会话文件列表。
+    """
+    found = []
+    for path in epic_files:
+        base = path.parent
+        found.extend(item for item in base.glob("sessions/pi/sessions/*/*.jsonl") if item.is_file())
+    found.sort(key=lambda item: item.stat().st_mtime)
+    return found
 
 
 def _epic_lines_in(path: Path) -> list[dict]:
@@ -1057,7 +1089,7 @@ def kernel_writer(directory: Path) -> str:
     return "chat"
 
 
-def pi_feed(run_id: str, *, sessions_root: Path | None = None, stamp: str = "") -> dict | None:
+def pi_feed(run_id: str, *, sessions_root: Path | None = None, epics_root: Path | None = None, stamp: str = "") -> dict | None:
     """@brief 返回最新 pi 会话的末尾；运行不存在时返回 ``None``。
 
     ``stamp`` 仍与文件匹配时 ``same`` 为真，页面可跳过重绘。
@@ -1065,6 +1097,7 @@ def pi_feed(run_id: str, *, sessions_root: Path | None = None, stamp: str = "") 
 
     @param run_id 运行 id。
     @param sessions_root pi 会话根目录，None 表示 ``~/.pi/agent/sessions``。
+    @param epics_root epic 根目录，None 表示 ``~/.hmz/epics``。
     @param stamp 客户端持有的变更戳，空串表示不复用。
     @return 含 ``same``、``stamp``、``lines``、``epics`` 与 ``kernel_writer`` 的字典。
     """
@@ -1075,9 +1108,11 @@ def pi_feed(run_id: str, *, sessions_root: Path | None = None, stamp: str = "") 
         # 直调模型的一场没有 pi 会话。页面不画那两块，这里也不去扫家目录。
         return {"same": stamp == "chat", "stamp": "chat", "lines": [], "epics": [], "kernel_writer": "chat"}
     root = sessions_root if sessions_root is not None else Path.home() / ".pi" / "agent" / "sessions"
-    files = _pi_session_files(directory, root)
-    epics_root = Path.home() / ".hmz" / "epics"
+    epics_root = epics_root if epics_root is not None else Path.home() / ".hmz" / "epics"
     epic_files = _epic_files(directory, epics_root)
+    # 经 hmz 跑的 pi 把会话写进 epic 目录，``~/.pi/agent/sessions`` 里没有这场；两边都找。
+    files = _pi_session_files(directory, root) + _epic_pi_sessions(epic_files)
+    files.sort(key=lambda item: item.stat().st_mtime)
     current = _pi_stamp(files[-1:]) + "||" + _pi_stamp(epic_files)
     if stamp and stamp == current:
         return {"same": True, "stamp": current, "lines": [], "epics": [], "kernel_writer": "pi"}
