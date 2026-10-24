@@ -1676,26 +1676,33 @@ class Orchestrator:
         retries = getattr(self.search, "provider_retries", 0)
         attempt = int(self._provider_attempts.get(tag, 0) or 0)
         if attempt > retries:
-            self._provider_attempts.pop(tag, None)
+            # A terminal marker from a crashed final attempt. Do not open another paid session;
+            # the round caller consumes this provider_failed outcome and increments its counter.
             return "provider_failed"
         while True:
             session_tag = tag if attempt == 0 else f"{tag}.retry{attempt}"
             outcome = await self._one_session_attempt(
                 session_tag, seedless=seedless, candidate_label=tag, attempt=attempt,
             )
-            if outcome != "provider_failed" or attempt >= retries:
+            if outcome != "provider_failed":
                 self._provider_attempts.pop(tag, None)
                 self._publish_state(inflight=None)
                 return outcome
-            attempt += 1
-            self._provider_attempts[tag] = attempt
+            next_attempt = attempt + 1
+            self._provider_attempts[tag] = next_attempt
             self._publish_state("llm", inflight=None)
-            delay = min(30.0, PROVIDER_RETRY_BASE_DELAY_S * (2 ** (attempt - 1)))
+            if next_attempt > retries:
+                # Keep the terminal marker on disk until the round consumes this outcome. If the
+                # process dies here, resume returns provider_failed without replaying the final
+                # attempt or resetting the retry budget.
+                return "provider_failed"
+            delay = min(30.0, PROVIDER_RETRY_BASE_DELAY_S * (2 ** (next_attempt - 1)))
             self.llm.transcript.log({
                 "event": "provider_retry", "label": session_tag, "candidate_label": tag,
-                "attempt": attempt, "delay_s": delay, "reason": "turn_failed", "status": "scheduled",
+                "attempt": next_attempt, "delay_s": delay, "reason": "turn_failed", "status": "scheduled",
             })
-            self.log(f"  [{tag}] provider turn failed; retry {attempt}/{retries} in {delay:.0f}s")
+            self.log(f"  [{tag}] provider turn failed; retry {next_attempt}/{retries} in {delay:.0f}s")
+            attempt = next_attempt
             await self._sleep(delay)
 
     async def _one_session_attempt(self, tag: str, *, seedless: bool, candidate_label: str, attempt: int) -> str:
@@ -2339,6 +2346,8 @@ class Orchestrator:
             outcome = await self._one_session(label, seedless=True)
             if outcome in NO_KERNEL_OUTCOMES:
                 self._agent_failures += 1
+                if outcome == "provider_failed":
+                    self._provider_attempts.pop(label, None)
                 self.history.append(f"initial: {self._committee_name} -> {outcome}")
                 if self._agent_failures >= 2:
                     raise StopRun("agent_failure")
@@ -2446,6 +2455,8 @@ class Orchestrator:
             outcome = await self._one_session(f"r{rnd}.p0", seedless=False)
             if outcome in NO_KERNEL_OUTCOMES:
                 self._agent_failures += 1
+                if outcome == "provider_failed":
+                    self._provider_attempts.pop(f"r{rnd}.p0", None)
                 self.history.append(f"round {rnd}: {self._committee_name} -> {outcome}")
                 if self._agent_failures >= 2:
                     res.stop_reason = "agent_failure"

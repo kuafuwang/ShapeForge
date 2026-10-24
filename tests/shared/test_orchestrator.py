@@ -976,3 +976,44 @@ def test_cost_incomplete_does_not_start_a_provider_retry(tmp_path):
     assert res.stop_reason.startswith("cost_incomplete")
     assert attempts == ["r1.p0"]
     assert not any(event.get("event") == "provider_retry" for event in _run_events(orch))
+
+
+def test_terminal_provider_attempt_marker_is_not_replayed_on_resume(tmp_path):
+    from taic.resume import load_snapshot
+
+    def agent(brief, tag):
+        if brief.seedless:
+            return _session_result("speed=1.0")
+        assert tag == "r1.p0"
+        return _session_result(None, failure_class="turn_failed")
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], max_rounds=1, provider_retries=1)
+    orch.agent_runner = agent
+
+    async def nap(_delay):
+        return None
+
+    orch._sleep = nap
+    run(orch)
+    run_dir = tmp_path / "run"
+    state = json.loads((run_dir / "state.json").read_text())
+    # Reproduce the crash window between the final provider attempt and the round counter.
+    state["provider_attempts"] = {"r1.p0": 2}
+    state["agent_failures"] = 0
+    state["phase"] = "llm"
+    (run_dir / "state.json").write_text(json.dumps(state))
+    (run_dir / "result.json").unlink(missing_ok=True)
+    snap = load_snapshot(run_dir, orch.search, KERNEL)
+    assert snap.provider_attempts == {"r1.p0": 2}
+    resumed = make_orch(tmp_path / "resumed", llm_script(code("speed=1.0")), [], max_rounds=1, provider_retries=1)
+    resumed.restore(snap, dry_run=True)
+    calls = []
+
+    def should_not_run(brief, tag):
+        calls.append(tag)
+        return _session_result("speed=1.2")
+
+    resumed.agent_runner = should_not_run
+    outcome = asyncio.run(resumed._one_session("r1.p0", seedless=False))
+    assert outcome == "provider_failed" and calls == []
+    assert resumed._provider_attempts == {"r1.p0": 2}
