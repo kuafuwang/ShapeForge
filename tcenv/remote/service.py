@@ -25,6 +25,7 @@ from typing import Any, BinaryIO
 from tcenv.children import forget, kill_group, popen_group, scrubbed_env
 from tcenv.schema import PROTOCOL_VERSION as EVAL_PROTOCOL_VERSION
 from tcenv.schema import write_json_atomic
+from tcenv.evaluation import EvaluationResult, sign_result, validate_receipt
 
 from .protocol import (
     PROTOCOL_VERSION,
@@ -160,6 +161,7 @@ class RemoteService:
         selfcheck_max_timed: int = 20,
         selfcheck_max_gpu_s: float = 120.0,
         max_source_bytes: int = 1_000_000,
+        signing_key: bytes | None = None,
     ) -> None:
         if not grants:
             raise ValueError("at least one session grant is required")
@@ -175,6 +177,9 @@ class RemoteService:
         self.selfcheck_max_timed = int(selfcheck_max_timed)
         self.selfcheck_max_gpu_s = float(selfcheck_max_gpu_s)
         self.max_source_bytes = int(max_source_bytes)
+        if signing_key is not None and (not isinstance(signing_key, bytes) or not signing_key):
+            raise ValueError("signing_key must be non-empty bytes or None")
+        self._signing_key = signing_key
         self._reader: BinaryIO | None = None
         self._writer: BinaryIO | None = None
         self._writer_lock = threading.Lock()
@@ -537,6 +542,16 @@ class RemoteService:
             raise _JobFailed("provenance_mismatch", "evidence candidate digest does not match request")
         if request.seed is not None and report.get("seed") != request.seed:
             raise _JobFailed("provenance_mismatch", "report seed does not match request")
+        try:
+            validate_receipt(EvaluationResult.from_dict({
+                "report": report,
+                "provenance": self.identity.provenance(request_digest=request.request_digest).to_dict(),
+                "evidence": evidence,
+                "receipt": result.get("receipt"),
+                "signature": "",
+            }), request)
+        except Exception as exc:
+            raise _JobFailed("provenance_mismatch", f"invalid result receipt: {exc}") from exc
         if report.get("simulated") is not True:
             try:
                 from tcenv.evaluate import EvalReport
@@ -601,6 +616,8 @@ class RemoteService:
             "receipt": result.get("receipt"),
             "signature": str(result.get("signature") or ""),
         }
+        if self._signing_key is not None:
+            response["signature"] = sign_result(EvaluationResult.from_dict(response), self._signing_key)
         return response
 
     # -- cancellation/state/wire helpers -----------------------------------
@@ -684,6 +701,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--session-id", required=True)
     parser.add_argument("--allow-kind", action="append", choices=["formal_eval", "selfcheck"], default=None)
     parser.add_argument("--publication-allowed", action="store_true", help="advertise that the host allowlist may publish this site")
+    parser.add_argument("--signature-key-file", type=Path, default=None, help="optional file containing an HMAC-SHA256 signing key")
     parser.add_argument("--worker-module", default="tcenv.remote.worker")
     return parser.parse_args(argv)
 
@@ -714,11 +732,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         for token in args.token
     ]
+    signing_key = args.signature_key_file.read_bytes() if args.signature_key_file else None
+    if signing_key is not None and not signing_key:
+        raise ValueError("signature key file must not be empty")
     service = RemoteService(
         identity=identity,
         grants=grants,
         worker_command=[sys.executable, "-m", args.worker_module],
         state_dir=args.state_dir,
+        signing_key=signing_key,
     )
     service.serve(sys.stdin.buffer, sys.stdout.buffer)
     return 0

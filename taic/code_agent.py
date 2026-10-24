@@ -8,6 +8,7 @@ and only ``apply_code_patch(..., approved_by=...)`` writes into the main reposit
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import os
@@ -15,9 +16,14 @@ import posixpath
 import re
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import time
+import uuid
 from pathlib import Path
+from typing import Protocol
+
+from tcenv.children import forget, kill_group, popen_group
 
 from .kernel_agent import Prices, dollars_for, spend_from_stream
 from .llm import LLMError
@@ -25,6 +31,7 @@ from .llm import LLMError
 FLOW = Path(__file__).resolve().parent / "flows" / "code_patch"
 PATCH_DIR = "code_promotions"
 REVIEW_LOG = "harness_reviews.jsonl"
+DIFF_REVIEW_SUFFIX = ".review.json"
 MARGIN = 4.0
 MIN_BUDGET_USD = 0.05
 CACHE_READ_ALLOWANCE = 200_000
@@ -526,6 +533,178 @@ def worktree_matches_patches(repo: Path, patches: list[Path], paths: list[str], 
         shutil.rmtree(parent, ignore_errors=True)
 
 
+class PatchTestRunner(Protocol):
+    """The isolated boundary used by dynamic patch verification."""
+
+    def run(
+        self,
+        repo: Path,
+        patch: Path,
+        proposal_key: str,
+        *,
+        check_items: list[dict] | None = None,
+        base_commit: str | None = None,
+    ) -> list[dict]:
+        """Apply and test the patch without touching the live checkout."""
+        ...
+
+
+class DockerPatchTestRunner:
+    """Run patch checks in a network-less, read-only-root Docker container.
+
+    The host creates a fresh source snapshot with ``git archive``. The live
+    checkout, home directory, provider credentials and Docker socket are never
+    mounted into the container. Only the snapshot (rw), patch/request (ro), and
+    the trusted harness source (ro) are visible. The worker inside the container
+    applies the patch and runs the fixed acceptance check ids.
+    """
+
+    isolated = True
+
+    def __init__(self, image: str, *, docker_binary: str = "docker", timeout_s: float = 3600.0, memory: str = "2g", pids_limit: int = 128, user: str | None = None) -> None:
+        if not isinstance(image, str) or not image.strip():
+            raise ValueError("a Docker image is required for isolated patch tests")
+        if not isinstance(docker_binary, str) or not docker_binary:
+            raise ValueError("docker_binary must be non-empty")
+        if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or not 0 < timeout_s <= 86_400:
+            raise ValueError("patch test runner timeout is invalid")
+        if isinstance(pids_limit, bool) or not isinstance(pids_limit, int) or pids_limit < 1:
+            raise ValueError("pids_limit must be positive")
+        self.image = image
+        self.docker_binary = docker_binary
+        self.timeout_s = float(timeout_s)
+        self.memory = memory
+        self.pids_limit = pids_limit
+        self.user = user or f"{os.getuid()}:{os.getgid()}"
+        self._last_evidence: dict = {"kind": "docker", "image": self.image}
+
+    def evidence(self) -> dict:
+        """Return the environment facts used by the most recent run."""
+        return dict(self._last_evidence)
+
+    @staticmethod
+    def _snapshot(repo: Path, base_commit: str, destination: Path) -> None:
+        completed = subprocess.run(["git", "archive", "--format=tar", base_commit], cwd=repo, capture_output=True)
+        if completed.returncode != 0:
+            raise CodeAgentError((completed.stderr or b"git archive failed").decode("utf-8", errors="replace")[-2000:])
+        try:
+            with tarfile.open(fileobj=io.BytesIO(completed.stdout), mode="r:") as archive:
+                for member in archive.getmembers():
+                    if member.issym() or member.islnk():
+                        raise CodeAgentError("git archive links are not allowed in an isolated snapshot")
+                    target = (destination / member.name).resolve()
+                    if not target.is_relative_to(destination.resolve()):
+                        raise CodeAgentError("git archive contains a path outside the snapshot")
+                archive.extractall(destination, filter="data")
+        except (OSError, tarfile.TarError) as exc:
+            raise CodeAgentError(f"cannot materialize the isolated source snapshot: {exc}") from exc
+
+    def _image_identity(self) -> str:
+        try:
+            completed = subprocess.run([self.docker_binary, "image", "inspect", "--format", "{{.Id}}", self.image], capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise CodeAgentError(f"cannot inspect isolated Docker image {self.image!r}: {exc}") from exc
+        if completed.returncode != 0 or not completed.stdout.strip():
+            raise CodeAgentError(f"cannot identify isolated Docker image {self.image!r}: {(completed.stderr or 'image inspect failed').strip()[-500:]}")
+        return completed.stdout.strip()
+
+    @staticmethod
+    def _remove_container(docker_binary: str, container: str) -> None:
+        try:
+            subprocess.run([docker_binary, "rm", "-f", container], capture_output=True, timeout=10, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    def run(self, repo: Path, patch: Path, proposal_key: str, *, check_items: list[dict] | None = None, base_commit: str | None = None) -> list[dict]:
+        from .acceptance_checks import validate_items
+
+        items = validate_items(check_items or [])
+        if not items:
+            raise CodeAgentError("isolated patch verification needs registered check ids")
+        base = base_commit or _git(Path(repo), "rev-parse", "HEAD").stdout.strip()
+        image_id = self._image_identity()
+        container = "taic-patch-" + uuid.uuid4().hex[:20]
+        with tempfile.TemporaryDirectory(prefix="taic-isolated-patch-") as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            inputs = root / "input"
+            source.mkdir()
+            inputs.mkdir()
+            self._snapshot(Path(repo), base, source)
+            patch_target = inputs / "candidate.patch"
+            shutil.copyfile(patch, patch_target)
+            request = inputs / "request.json"
+            request.write_text(json.dumps({"proposal_key": proposal_key, "base_commit": base, "check_items": items}), encoding="utf-8")
+            # The container runs as an unprivileged user. The snapshot is the only
+            # writable source tree; trusted harness code stays read-only.
+            for path in source.rglob("*"):
+                try:
+                    path.chmod(path.stat().st_mode | 0o666)
+                except OSError:
+                    pass
+            source.chmod(0o777)
+            # Build the trusted harness from the same immutable base commit as
+            # the candidate snapshot, not from the current (possibly dirty)
+            # checkout. runs/, trust/, kernels/ and control_host data stay out.
+            harness_snapshot = root / "harness_snapshot"
+            harness = root / "harness"
+            harness_snapshot.mkdir()
+            harness.mkdir()
+            self._snapshot(Path(repo), base, harness_snapshot)
+            for name in ("taic", "tcenv", "tasks", "tests", "experiments", "observe"):
+                source_dir = harness_snapshot / name
+                if source_dir.is_dir():
+                    shutil.copytree(source_dir, harness / name)
+            if not (harness / "taic" / "isolated_patch_worker.py").is_file():
+                raise CodeAgentError("the base commit does not contain the trusted isolated patch worker")
+            self._last_evidence = {
+                "kind": "docker", "image": self.image, "image_id": image_id, "harness_base_commit": base,
+                "network": "none", "read_only_root": True, "user": self.user,
+                "memory": self.memory, "pids_limit": self.pids_limit,
+                "mounts": ["source-snapshot-rw", "patch-and-request-ro", "base-harness-ro", "tmpfs-tmp"],
+            }
+            argv = [
+                self.docker_binary, "run", "--rm", "--name", container,
+                "--network", "none", "--read-only", "--cap-drop", "ALL",
+                "--security-opt", "no-new-privileges", "--pids-limit", str(self.pids_limit),
+                "--memory", self.memory, "--user", self.user,
+                "--mount", f"type=bind,src={source},dst=/work,rw",
+                "--mount", f"type=bind,src={inputs},dst=/input,readonly",
+                "--mount", f"type=bind,src={harness},dst=/opt/taic,readonly",
+                "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+                "--workdir", "/work", "--env", "PYTHONPATH=/opt/taic", "--env", "HOME=/tmp",
+                self.image, "python", "-m", "taic.isolated_patch_worker",
+                "--work", "/work", "--patch", "/input/candidate.patch", "--request", "/input/request.json",
+            ]
+            proc = None
+            try:
+                try:
+                    proc = popen_group(argv, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "")})
+                except OSError as exc:
+                    raise CodeAgentError(f"cannot start isolated Docker patch runner: {exc}") from exc
+                try:
+                    stdout, stderr = proc.communicate(timeout=self.timeout_s)
+                except subprocess.TimeoutExpired as exc:
+                    self._remove_container(self.docker_binary, container)
+                    kill_group(proc)
+                    raise CodeAgentError("isolated Docker patch runner timed out") from exc
+                if proc.returncode != 0:
+                    tail = (stderr or stdout or b"").decode("utf-8", errors="replace")[-2000:]
+                    raise CodeAgentError(tail or "isolated Docker patch runner failed")
+                try:
+                    results = json.loads((stdout or b"[]").decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise CodeAgentError(f"isolated Docker patch runner did not return JSON: {exc}") from exc
+                if not isinstance(results, list) or not all(isinstance(item, dict) for item in results):
+                    raise CodeAgentError("isolated Docker patch runner result must be a JSON array of objects")
+                return results
+            finally:
+                if proc is not None:
+                    kill_group(proc)
+                    forget(proc)
+                self._remove_container(self.docker_binary, container)
+
+
 def _test_patch_in_worktree(repo: Path, patch: Path, proposal_key: str, *, check_items: list[dict] | None = None, base_commit: str | None = None) -> list[dict]:
     """@brief 在游离工作树里应用并测试生成的补丁，绝不在活工作树里做。
 
@@ -571,7 +750,77 @@ def _test_patch_in_worktree(repo: Path, patch: Path, proposal_key: str, *, check
         shutil.rmtree(parent, ignore_errors=True)
 
 
-def verify_code_patch(run_dir: Path, proposal_key: str, *, root: Path | None = None, approved_by: str = "", legacy_text: str = "", check_ids: list[str] | None = None, execute: bool = False) -> dict:
+def review_code_patch(run_dir: Path, proposal_key: str, *, by: str, root: Path | None = None) -> dict:
+    """Record that a named person inspected the exact patch and acceptance spec.
+
+    This function never applies the patch and never executes patch code. It only
+    writes the review record that a later ``verify_code_patch(execute=True)``
+    must consume. A changed patch, spec or base commit invalidates the record.
+    """
+    reviewer = str(by or "").strip()
+    if not reviewer or reviewer == "cli":
+        raise CodeAgentError("review-code needs a named human reviewer")
+    run_dir = Path(run_dir)
+    repo = Path(root) if root is not None else Path(__file__).resolve().parent.parent
+    folder = run_dir / PATCH_DIR
+    patch = folder / f"{proposal_key}.patch"
+    meta_path = folder / f"{proposal_key}.json"
+    if not patch.is_file() or not meta_path.is_file():
+        raise CodeAgentError("no generated patch and acceptance metadata")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if not meta.get("acceptance_spec"):
+        raise CodeAgentError("review-code needs a recorded acceptance spec")
+    from .acceptance import check_paths, read_spec
+    spec = read_spec(meta["acceptance_spec"])
+    digest = hashlib.sha256(patch.read_bytes()).hexdigest()
+    if meta.get("sha256") != digest:
+        raise CodeAgentError("the patch file changed after it was recorded")
+    paths = _validate_patch(patch.read_text(encoding="utf-8", errors="replace"))
+    _require_allowed_paths(run_dir, proposal_key, meta, paths)
+    if not spec.get("allowed_paths"):
+        raise CodeAgentError("acceptance contract needs non-empty allowed_paths")
+    outside = check_paths(paths, spec["allowed_paths"])
+    if outside:
+        raise CodeAgentError("patch exceeds the acceptance contract: " + ", ".join(outside))
+    base_commit = str(meta.get("base_commit") or _git(repo, "rev-parse", "HEAD").stdout.strip())
+    record = {
+        "schema_version": 1,
+        "event": "code_diff_review",
+        "proposal_key": proposal_key,
+        "patch_sha256": digest,
+        "spec_sha256": spec["spec_sha256"],
+        "base_commit": base_commit,
+        "paths": paths,
+        "reviewed_by": reviewer,
+        "reviewed_at": time.time(),
+    }
+    record["review_sha256"] = hashlib.sha256(json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    (folder / f"{proposal_key}{DIFF_REVIEW_SUFFIX}").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    return record
+
+
+def _read_patch_review(run_dir: Path, proposal_key: str, *, patch_sha256: str, spec_sha256: str, base_commit: str) -> dict:
+    path = Path(run_dir) / PATCH_DIR / f"{proposal_key}{DIFF_REVIEW_SUFFIX}"
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CodeAgentError("dynamic patch verification needs a recorded human review") from exc
+    if not isinstance(record, dict) or record.get("event") != "code_diff_review":
+        raise CodeAgentError("dynamic patch verification needs a recorded human review")
+    if record.get("proposal_key") != proposal_key:
+        raise CodeAgentError("human review belongs to a different proposal")
+    if record.get("patch_sha256") != patch_sha256 or record.get("spec_sha256") != spec_sha256 or record.get("base_commit") != base_commit:
+        raise CodeAgentError("human review does not bind this patch, spec and base commit")
+    if not str(record.get("reviewed_by") or "").strip() or record.get("reviewed_by") == "cli":
+        raise CodeAgentError("human review has no named reviewer")
+    expected = record.get("review_sha256")
+    body = {key: value for key, value in record.items() if key != "review_sha256"}
+    if expected != hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest():
+        raise CodeAgentError("human review record was modified")
+    return record
+
+
+def verify_code_patch(run_dir: Path, proposal_key: str, *, root: Path | None = None, approved_by: str = "", legacy_text: str = "", check_ids: list[str] | None = None, static: bool = False, execute: bool = False, runner: PatchTestRunner | None = None) -> dict:
     """Run implementation acceptance in isolation, before an effect experiment or local apply."""
     run_dir = Path(run_dir)
     repo = Path(root) if root is not None else Path(__file__).resolve().parent.parent
@@ -620,6 +869,17 @@ def verify_code_patch(run_dir: Path, proposal_key: str, *, root: Path | None = N
     if check_ids is not None and sorted(check_ids) != sorted({item["check_id"] for item in items}):
         raise CodeAgentError("named check_ids differ from the acceptance contract")
     existing = meta.get("implementation") if isinstance(meta.get("implementation"), dict) else {}
+    if static and execute:
+        raise CodeAgentError("verify-code accepts --static or --execute, not both")
+    if execute:
+        base_commit = str(meta.get("base_commit") or _git(repo, "rev-parse", "HEAD").stdout.strip())
+        review = _read_patch_review(run_dir, proposal_key, patch_sha256=digest, spec_sha256=spec["spec_sha256"], base_commit=base_commit)
+        if approved_by.strip() != review["reviewed_by"]:
+            raise CodeAgentError("--by must name the human who recorded the diff review")
+        if runner is None:
+            raise CodeAgentError("no isolated patch test runner configured; refusing to execute the patch locally")
+        if getattr(runner, "isolated", False) is not True:
+            raise CodeAgentError("the configured patch runner is not an isolated execution backend")
     if not execute and existing.get("host_verified") is True and existing.get("patch_sha256") == digest and existing.get("spec_sha256") == spec["spec_sha256"]:
         return existing
     if not execute:
@@ -639,16 +899,32 @@ def verify_code_patch(run_dir: Path, proposal_key: str, *, root: Path | None = N
         return record
     if not approved_by.strip() or approved_by.strip() == "cli":
         raise CodeAgentError("dynamic patch verification needs a named human approver after diff review")
-    results = _test_patch_in_worktree(repo, patch, proposal_key, check_items=items, base_commit=meta.get("base_commit"))
-    if not all(result["passed"] for result in results):
+    results = runner.run(repo, patch, proposal_key, check_items=items, base_commit=meta.get("base_commit"))
+    if not isinstance(results, list) or not results:
+        raise CodeAgentError("isolated patch runner returned no acceptance checks")
+    expected_ids = [item["check_id"] for item in items]
+    if len(expected_ids) != len(set(expected_ids)):
+        raise CodeAgentError("acceptance contract contains duplicate check ids")
+    observed_ids = [result.get("check_id") if isinstance(result, dict) else None for result in results]
+    if len(observed_ids) != len(set(observed_ids)) or set(observed_ids) != set(expected_ids):
+        raise CodeAgentError("isolated patch runner returned an incomplete or unexpected check set")
+    if any(not isinstance(result, dict) or result.get("passed") is not True for result in results):
         raise CodeAgentError("one or more host acceptance checks failed")
     if risk["risk_tier"] == "offline_only" and not set(paths) <= set(applicable_paths([item["check_id"] for item in items])):
         raise CodeAgentError("the patch is not covered by its offline acceptance checks")
+    runner_evidence = getattr(runner, "evidence", None)
+    environment = runner_evidence() if callable(runner_evidence) else {}
+    if not isinstance(environment, dict) or not environment.get("kind"):
+        raise CodeAgentError("isolated patch runner returned no environment identity")
+    if environment.get("network") != "none" or environment.get("read_only_root") is not True:
+        raise CodeAgentError("isolated patch runner did not prove network isolation and a read-only root")
     record = {
         "schema_version": 1, "event": "implementation", "proposal_key": proposal_key,
         "spec_sha256": spec["spec_sha256"], "patch_sha256": digest, "risk_tier": risk["risk_tier"], "risk_reason": risk["reason"],
         "accepted": True, "host_verified": True, "host_checks": results,
-        "tests_run": "registered checks and offline pytest in an isolated worktree", "t": time.time(),
+        "tests_run": "registered checks in a host-selected isolated patch runner", "t": time.time(),
+        "diff_review_sha256": review["review_sha256"], "reviewed_by": review["reviewed_by"],
+        "runner": environment,
     }
     if legacy_text:
         record.update({"legacy_upgrade": {"approved_by": approved_by.strip(), "original_text": legacy_text, "check_ids": sorted(check_ids or [])}, "accepted_by_human": approved_by.strip()})

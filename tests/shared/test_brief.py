@@ -16,7 +16,7 @@ _KEYS = {
     "task", "dtype", "size", "committee", "model", "phase", "stop_reason", "round",
     "spent_usd", "budget_usd", "published", "publication", "search_best",
     "winner_label", "winner_provider", "winner_model", "winner_committee", "winner_origin",
-    "model_totals", "cands", "agent_failures", "counts", "paths",
+    "model_totals", "cands", "agent_failures", "counts", "paths", "pending_evaluation",
 }
 _CAND = {"label", "status", "speedup", "within_noise", "differential_recheck", "origin"}
 
@@ -364,3 +364,21 @@ def test_brief_derives_winner_model_from_candidate_origin_without_new_result_fie
     assert (doc["winner_provider"], doc["winner_model"], doc["winner_committee"], doc["winner_origin"]) == (
         "moonshot", "kimi-k3", "second", "session",
     )
+
+
+def test_brief_shows_pending_evaluation_without_report_body(tmp_path):
+    """@brief brief 只显示 outbox 状态和错误码，不泄露候选源码或报告正文。"""
+    run = tmp_path / "run"
+    outbox = run / "evaluation_outbox"
+    outbox.mkdir(parents=True)
+    (run / "state.json").write_text(json.dumps({"task": "relu", "stop_reason": "evaluation_unavailable"}))
+    (outbox / "request.json").write_text(json.dumps({
+        "request_id": "ev-1", "status": "unavailable", "error": {"code": "transport_closed", "message": "secret body", "retryable": True},
+        "candidate_sha256": "a" * 64,
+    }))
+    from taic.brief import summarize_run
+    doc = summarize_run(run)
+    assert doc["pending_evaluation"]["count"] == 1
+    assert doc["pending_evaluation"]["requests"][0]["request_id"] == "ev-1"
+    assert doc["pending_evaluation"]["requests"][0]["error_code"] == "transport_closed"
+    assert "secret body" not in json.dumps(doc)

@@ -20,6 +20,7 @@ dependencies = [
 [project.scripts]
 tcenv = "tcenv.cli:main"
 taic = "taic.cli:main"
+taic-selfcheck = "taic.selfcheck_bridge:main"
 
 [build-system]
 requires = ["hatchling"]

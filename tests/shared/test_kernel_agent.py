@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from taic.kernel_agent import (
-    TASK_MAX_BYTES, AgentError, AgentResult, Prices, SessionBrief, _self_check_dir, agent_spec, dollars_for, kernel_text,
+    TASK_MAX_BYTES, AgentError, AgentResult, Prices, SessionBrief, _check_command, _self_check_dir, agent_spec, dollars_for, kernel_text,
     epic_spend, epic_spend_by_label, output_tokens_for, parse_spent, prune_work, render_contract, run_kernel_agent, spend_from_stream,
     submission_name,
 )
@@ -645,3 +645,16 @@ def test_a_session_cost_cap_is_passed_to_hmz_as_an_outer_budget(tmp_path):
     args2 = json.loads((tmp_path / f"{work2.name}-args.json").read_text())
     assert not any(arg.startswith("budget.cost=") for arg in args2)
     assert result2.source.startswith("kernel void conv2d_kernel")
+
+
+def test_a_host_bridge_replaces_the_local_selfcheck_command(tmp_path):
+    """@brief 远程自测走 host bridge 时，agent 不能自带 task/target/reps。"""
+    brief = _brief(tmp_path)
+    brief.selfcheck_socket = "/tmp/taic-selfcheck.sock"
+    brief.selfcheck_token_file = str(tmp_path / "selfcheck.token")
+    command = _check_command(brief, "timed")
+    assert "taic.selfcheck_bridge" in command
+    assert "/tmp/taic-selfcheck.sock" in command
+    assert "--timed" in command
+    assert "--dtype" not in command and "--target" not in command and "--reps" not in command
+    assert "conv2d-fp16-paper-init.metal" in command

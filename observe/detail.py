@@ -421,6 +421,25 @@ def _budget_events(directory: Path) -> list[dict]:
     return control.read_events(directory)
 
 
+def pending_evaluation(directory: Path) -> dict:
+    """@brief 读取 outbox 的 pending/unavailable 计数与最近请求，供看板只读展示。"""
+    root = directory / "evaluation_outbox"
+    requests = []
+    if root.is_dir():
+        for path in sorted(root.glob("*.json")):
+            if path.name.endswith(".result.json") or path.name == "receipts.json":
+                continue
+            try:
+                document = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(document, dict) or document.get("status") not in {"pending", "unavailable"}:
+                continue
+            error = document.get("error") if isinstance(document.get("error"), dict) else {}
+            requests.append({"request_id": document.get("request_id"), "status": document.get("status"), "error_code": error.get("code"), "retryable": error.get("retryable") is True})
+    return {"count": len(requests), "requests": requests[-8:]}
+
+
 def row_from_files(directory: Path, state: dict | None, result: dict | None) -> dict:
     """@brief 用已加载的文件拼出一行历史行，不遍历 ``runs/``。
 
@@ -451,6 +470,7 @@ def row_from_files(directory: Path, state: dict | None, result: dict | None) -> 
         "disk_budget_usd": budget,
         "budget": budget_status(spent, alert_budget, alert_stop, status == "running"),
         "control": control_hint(directory, state, result, status),
+        "pending_evaluation": pending_evaluation(directory),
         **topup_fields(directory),
         "round": (state or {}).get("round"),
         "max_rounds": (state or {}).get("max_rounds"),
@@ -2221,6 +2241,7 @@ def run_detail(run_id: str) -> dict | None:
         "target_line": f"目标: {target_id} ({backend}{('/' + backend_version) if backend_version else ''})" if target_id else "",
         "budget": budget_status(spent, alert_budget, alert_stop, status == "running"),
         "control": control_hint(directory, state, result, status),
+        "pending_evaluation": pending_evaluation(directory),
         **topup_fields(directory),
         "budget_events": _budget_events(directory),
         "state": state,

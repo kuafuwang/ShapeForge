@@ -31,12 +31,13 @@ import statistics
 import subprocess
 import tempfile
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
 from tasks import get_task
 from tcenv.evaluate import EvalReport, evaluate
+from tcenv.evaluation import EvaluationError, EvaluationRequest, EvaluationResult, EvaluationExecutor, EvaluationUnavailable, LocalEvaluator
 from tcenv.task import task_fingerprint
 from tcenv.schema import SchemaError
 from tcenv.report import format_feedback
@@ -48,6 +49,8 @@ from .llm import LLM, BudgetExhausted, CostLedger, LLMConfig, LLMError, SearchCo
 from .policy import candidate_eligible, choose_confirmed, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain, session_budget_floor
 from .committees import committees_record, default_committees, handoff_for, order_committees
 from .parse import parse_plans
+from .evaluation_outbox import EvaluationOutbox
+from .session_runtime import HmzKernelSessionRunner, HmzSessionPlacement, LocalHmzKernelSessionRunner, SessionExecution, SessionPaths
 from .session_supervisor import NO_KERNEL_OUTCOMES, ProviderRetryController, classify_result, session_origin
 from .symptom import bound_of
 
@@ -552,6 +555,14 @@ class Orchestrator:
         from_run: Path | None = None,
         committees: list | None = None,
         agent_runner: Callable[..., Any] | None = None,
+        evaluator: EvaluationExecutor | None = None,
+        evaluator_factory: Callable[[str], EvaluationExecutor] | None = None,
+        session_runner: HmzKernelSessionRunner | None = None,
+        selfcheck_socket: str = "",
+        selfcheck_token_file: str = "",
+        selfcheck_bridge_factory: Callable[[str, Path, EvaluationExecutor], tuple[Any, str]] | None = None,
+        publishable_site_ids: list[str] | tuple[str, ...] | set[str] | frozenset[str] | None = None,
+        publishable_epochs: list[str] | tuple[str, ...] | set[str] | frozenset[str] | None = None,
         external_roots: list[Path] | None = None,
         target_id: str = "apple-m4-max",
         from_catalog: bool = False,
@@ -577,6 +588,14 @@ class Orchestrator:
         @param from_run ``--from`` 指向的既有运行目录。
         @param committees 委员会列表；None 时由 ``llm_cfg`` 生成 first 与 second。
         @param agent_runner 写核函数（测试注入）；None 时走 hmz。
+        @param evaluator 正式/复查评测适配器；None 时用包住 ``evaluate_fn`` 的 ``LocalEvaluator``。
+        @param evaluator_factory 按已确定的 run_id 创建评测器；与 evaluator 只能二选一。
+        @param session_runner 单场 hmz 会话适配器；None 时用 ``LocalHmzKernelSessionRunner``。
+        @param selfcheck_socket host 已启动的 selfcheck bridge socket；空时用现有本地命令。
+        @param selfcheck_token_file 与 socket 配套的 0600 token 文件；固定 bridge 模式必填。
+        @param selfcheck_bridge_factory 可选的每场 bridge 工厂，参数为 (session_id, work, evaluator)，返回 (server, token_file)。
+        @param publishable_site_ids 允许发布的 host 站点白名单；local 默认只有 local，远程默认空。
+        @param publishable_epochs 可选的精确 evaluator epoch 白名单；None 表示只按站点限制。
         @param external_roots 扫「别的运行里的核」的根目录；None 表示默认扫仓库 ``runs/``。
         @param target_id 目标设备 id。
         @param from_catalog 从 kernel catalog 取上一版内核。
@@ -652,6 +671,59 @@ class Orchestrator:
         self.llm = LLM(llm_cfg, self.ledger, Transcript(self.run_dir / "transcript.jsonl"), client=client, max_concurrency=self._llm_slots)
         self._llms = [self.llm]
         self.evaluate_fn = evaluate_fn or evaluate
+        if evaluator is not None and evaluator_factory is not None:
+            raise RunStartError("evaluator and evaluator_factory are mutually exclusive")
+        if evaluator_factory is not None:
+            evaluator = evaluator_factory(self.run_dir.name)
+        # Local remains the default. Tests may inject either the legacy callable or a
+        # complete executor; production can supply a RemoteEvaluator without changing
+        # the search loop's result handling.
+        self.evaluator: EvaluationExecutor = evaluator or LocalEvaluator(self.evaluate_fn)
+        self._local_evaluator = isinstance(self.evaluator, LocalEvaluator)
+        self.publishable_site_ids = frozenset(publishable_site_ids) if publishable_site_ids is not None else (frozenset({"local"}) if self._local_evaluator else frozenset())
+        self.publishable_epochs = frozenset(publishable_epochs) if publishable_epochs is not None else None
+        if any(not isinstance(site, str) or not site for site in self.publishable_site_ids):
+            raise RunStartError("publishable_site_ids must contain non-empty site ids")
+        if self.publishable_epochs is not None and any(not isinstance(epoch, str) or not epoch for epoch in self.publishable_epochs):
+            raise RunStartError("publishable_epochs must contain non-empty epochs")
+        self._outbox = None if self._local_evaluator else EvaluationOutbox(self.run_dir, signature_key=getattr(self.evaluator, "signature_key", None))
+        execution_document = {
+            "schema_version": 1,
+            "evaluation": "local" if self._local_evaluator else "remote",
+            "publishable_site_ids": sorted(self.publishable_site_ids),
+            "publishable_epochs": None if self.publishable_epochs is None else sorted(self.publishable_epochs),
+            "observed": {},
+        }
+        execution_path = self.run_dir / "execution.json"
+        if not resuming:
+            try:
+                control.write_json_atomic(execution_path, execution_document)
+            except OSError as exc:
+                raise RunStartError(f"cannot start: execution.json was not written ({exc})") from exc
+        elif execution_path.is_file():
+            try:
+                previous_execution = json.loads(execution_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise RunStartError(f"cannot resume: execution.json is unreadable ({exc})") from exc
+            if not isinstance(previous_execution, dict) or previous_execution.get("evaluation") not in {"local", "remote"}:
+                raise RunStartError("cannot resume: execution.json has no valid evaluation mode")
+            if previous_execution["evaluation"] != execution_document["evaluation"]:
+                raise RunStartError("cannot resume with a different evaluator placement")
+            if set(previous_execution.get("publishable_site_ids") or []) != set(execution_document["publishable_site_ids"]):
+                raise RunStartError("cannot resume with a different publication site allowlist")
+            previous_epochs = previous_execution.get("publishable_epochs")
+            current_epochs = execution_document["publishable_epochs"]
+            if previous_epochs is not None and (current_epochs is None or set(previous_epochs) != set(current_epochs)):
+                raise RunStartError("cannot resume with a different publication epoch allowlist")
+        self._session_runner_injected = session_runner is not None
+        self.session_runner: HmzKernelSessionRunner = session_runner or LocalHmzKernelSessionRunner()
+        self.selfcheck_socket = selfcheck_socket
+        self.selfcheck_token_file = selfcheck_token_file
+        self.selfcheck_bridge_factory = selfcheck_bridge_factory
+        if self.selfcheck_socket and not self.selfcheck_token_file:
+            raise RunStartError("selfcheck_socket requires selfcheck_token_file")
+        self.task_fingerprint = task_fingerprint(self.task)
+        self._last_session_id = ""
         # 同一时刻只允许一次 GPU 评测或 Instruments。两份内核抢同一块卡会把计时测脏，挂死时也不能再有内核在跑。
         self.gpu_lock = asyncio.Lock()
         # 升种子要等复查回来再写。锁盖住比较和写入，另一条分支不能对着旧种子同时通过。
@@ -784,9 +856,10 @@ class Orchestrator:
         return handoff_for(self.committees[(rnd - 1) % 2].name)
 
     async def _close_clients(self) -> None:
-        """@brief 关闭本次运行开过的所有 HTTP 客户端。
+        """@brief 关闭本次运行开过的所有 HTTP 客户端和评测连接。
 
-        同一个客户端只关一次；脚本客户端没有东西要关。
+        同一个客户端只关一次；脚本客户端没有东西要关。远程 evaluator pool 的
+        子进程/连接也在这里收尾；关闭失败不改变已经落盘的结果。
         """
         seen: set[int] = set()
         for llm in self._llms:
@@ -795,6 +868,12 @@ class Orchestrator:
                 continue
             seen.add(ident)
             await llm.aclose()
+        close_evaluator = getattr(self.evaluator, "close", None)
+        if callable(close_evaluator):
+            try:
+                await asyncio.to_thread(close_evaluator)
+            except Exception as exc:  # noqa: BLE001 - result is already on disk
+                self.log(f"== warning: closing the evaluator failed: {type(exc).__name__}: {exc}")
 
     # 给 `taic resume` 留的设置。故意不写 API key 和端点。写失败向上抛，调用方不得进入 run()。
     def _write_run_config(self) -> None:
@@ -1102,6 +1181,200 @@ class Orchestrator:
             control.write_json_atomic(d / "report.json", c.report.to_json())
             control.write_text_atomic(d / "feedback.txt", format_feedback(c.report))
 
+    def _evaluation_request(
+        self,
+        source: str,
+        *,
+        mode: str,
+        seed: int | None,
+        reps: int,
+        label: str,
+        eval_cache: bool = False,
+        progress_path: Path | None = None,
+        fast_bench: bool = False,
+        require_contract_launch: bool = False,
+        cases: tuple[str, ...] | None = None,
+    ) -> EvaluationRequest:
+        """@brief 为一颗候选构造统一的正式评测请求。
+
+        local-only 字段只在这里填写，序列化时由 ``EvaluationRequest.to_dict`` 丢弃；
+        远程适配器因此不会看到主机路径。运行没有 ``run_seed`` 时 ``seed`` 保持 None。
+
+        @param source 内核正文。
+        @param mode ``quick`` 或 ``full``。
+        @param seed 派生种子或 None。
+        @param reps 重复次数。
+        @param label 候选标签。
+        @param eval_cache 是否允许复用本地缓存；确认阶段固定 False。
+        @param progress_path 本地进度文件路径。
+        @param fast_bench 是否使用快速基准路径。
+        @param require_contract_launch 是否要求契约启动检查。
+        @param cases 评测用例；None 表示评测器默认。
+        @return 统一的评测请求。
+        """
+        request = EvaluationRequest(
+            task=self.task_name,
+            dtype=self.dtype,
+            size=self.size,
+            source=source,
+            mode=mode,
+            seed=seed,
+            reps=reps,
+            progress_path=progress_path,
+            fast_bench=fast_bench,
+            require_contract_launch=require_contract_launch,
+            cases=cases,
+            measure_serial=self.search.measure_serial,
+            eval_cache=bool(eval_cache),
+            target_id=self.target_id,
+            run_id=self.run_dir.name,
+            session_id=self._last_session_id or label,
+            task_fingerprint=self.task_fingerprint,
+            cache_policy="reuse" if eval_cache else "disabled",
+        )
+        # A deterministic id lets resume retry the same request without starting a
+        # second billable/ GPU evaluation. Label is included so identical source in
+        # two different candidates cannot share an outbox row accidentally.
+        request_id = "ev-" + hashlib.sha256(f"{label}\0{request.request_digest}".encode("utf-8")).hexdigest()[:40]
+        return replace(request, request_id=request_id)
+
+    def _observe_evaluator(self, provenance) -> None:
+        """@brief Record observed evaluator identity and reject identity drift."""
+        if provenance is None:
+            return
+        facts = {
+            "epoch": provenance.epoch,
+            "site_id": provenance.site_id,
+            "device_id": provenance.device_id,
+            "backend": provenance.backend,
+            "backend_version": provenance.backend_version,
+            "target_id": provenance.target_id,
+            "worker_build": provenance.worker_build,
+            "task_pack_digest": provenance.task_pack_digest,
+            "calibration_digest": provenance.calibration_digest,
+            "protocol_version": provenance.protocol_version,
+            "measurement_kind": provenance.measurement_kind,
+            "publication_allowed": provenance.publication_allowed,
+        }
+        path = self.run_dir / "execution.json"
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise EvaluationUnavailable("execution_manifest_error", f"cannot read execution manifest: {exc}") from exc
+        previous = document.get("observed") or {}
+        if previous and previous != facts:
+            raise EvaluationUnavailable("epoch_drift", "observed evaluator identity differs from the execution manifest")
+        if previous == facts:
+            return
+        document["observed"] = facts
+        try:
+            control.write_json_atomic(path, document)
+        except OSError as exc:
+            raise EvaluationUnavailable("execution_manifest_error", f"cannot write execution manifest: {exc}") from exc
+
+    def _check_publication(self, result: EvaluationResult) -> None:
+        """@brief Enforce host publication policy before a report becomes a candidate."""
+        provenance = result.provenance
+        if provenance.measurement_kind != "measured":
+            raise EvaluationUnavailable("simulated_result", "simulated evaluation cannot enter a search")
+        if not provenance.publication_allowed:
+            raise EvaluationUnavailable("publication_refused", "evaluator does not permit publication of this result")
+        if provenance.site_id not in self.publishable_site_ids:
+            raise EvaluationUnavailable("publication_refused", f"evaluator site {provenance.site_id!r} is not host-publishable")
+        if self.publishable_epochs is not None and provenance.epoch not in self.publishable_epochs:
+            raise EvaluationUnavailable("publication_refused", "evaluator epoch is not host-publishable")
+
+    def _evaluate_report(
+        self,
+        source: str,
+        *,
+        mode: str,
+        seed: int | None,
+        reps: int,
+        label: str,
+        eval_cache: bool = False,
+        progress_path: Path | None = None,
+        fast_bench: bool = False,
+        require_contract_launch: bool = False,
+        cases: tuple[str, ...] | None = None,
+    ) -> EvalReport:
+        """@brief 通过当前执行器评测一颗候选并还原成已有 ``EvalReport``。
+
+        默认执行器是 ``LocalEvaluator``，所以 Search 循环对结果的使用方式没有变化；
+        注入的远程执行器只需返回同一 ``EvaluationResult`` 形状。适配器抛出的
+        ``EvaluationError`` 不在这里改写成内核错误，交给上层按基础设施故障处理。
+
+        @param source 内核正文。
+        @param mode 评测模式。
+        @param seed 派生种子或 None。
+        @param reps 重复次数。
+        @param label 候选标签。
+        @param eval_cache 是否允许缓存复用。
+        @param progress_path 本地进度路径。
+        @param fast_bench 是否快速基准。
+        @param require_contract_launch 是否要求契约启动检查。
+        @param cases 评测用例；None 表示评测器默认。
+        @return 评测报告。
+        """
+        request = self._evaluation_request(
+            source, mode=mode, seed=seed, reps=reps, label=label,
+            eval_cache=eval_cache, progress_path=progress_path,
+            fast_bench=fast_bench, require_contract_launch=require_contract_launch, cases=cases,
+        )
+        current_epoch = getattr(self.evaluator, "epoch", "")
+        try:
+            ensure_epoch = getattr(self.evaluator, "ensure_epoch", None)
+            if callable(ensure_epoch):
+                current_epoch = ensure_epoch(request)
+            self._observe_evaluator(getattr(self.evaluator, "provenance", None))
+            result = None
+            if self._outbox is not None:
+                result = self._outbox.begin(request, epoch=current_epoch)
+            if result is None:
+                result = self.evaluator.formal(request)
+            if not isinstance(result, EvaluationResult):
+                raise EvaluationUnavailable("evaluation_result_invalid", "evaluator returned an unexpected result type")
+            provenance = result.provenance
+            if current_epoch and provenance.epoch != current_epoch:
+                raise EvaluationUnavailable("epoch_drift", "evaluator epoch changed during the request")
+            if provenance.request_digest != request.request_digest:
+                raise EvaluationUnavailable("provenance_mismatch", "result request digest does not match the request")
+            if provenance.target_id != request.target_id:
+                raise EvaluationUnavailable("provenance_mismatch", "result target does not match the request")
+            if not self._local_evaluator:
+                evidence = result.evidence
+                if not isinstance(evidence, dict) or evidence.get("candidate_sha256") != request.candidate_sha256:
+                    raise EvaluationUnavailable("provenance_mismatch", "result evidence does not bind the candidate source")
+            report = result.report
+            if provenance.measurement_kind != "measured" or (isinstance(report, dict) and report.get("simulated") is True):
+                raise EvaluationUnavailable("simulated_result", "simulated evaluation cannot enter a search")
+            try:
+                if isinstance(report, dict):
+                    parsed = EvalReport.from_json(report)
+                elif isinstance(report, EvalReport):
+                    parsed = report
+                else:
+                    raise EvaluationUnavailable("evaluation_result_invalid", "evaluator result has no EvalReport or report object")
+            except EvaluationUnavailable:
+                raise
+            except Exception as exc:
+                if self._local_evaluator:
+                    raise
+                raise EvaluationUnavailable("result_invalid", f"invalid evaluator report: {exc}") from exc
+            if parsed.task != request.task or parsed.dtype != request.dtype or parsed.size != request.size or parsed.mode != request.mode:
+                raise EvaluationUnavailable("result_mismatch", "report task/dtype/size/mode does not match the request")
+            if parsed.target_id and parsed.target_id != request.target_id:
+                raise EvaluationUnavailable("result_mismatch", "report target does not match the request")
+            self._check_publication(result)
+            self._observe_evaluator(provenance)
+            if self._outbox is not None:
+                self._outbox.complete(request, result)
+            return parsed
+        except EvaluationUnavailable as exc:
+            if self._outbox is not None:
+                self._outbox.unavailable(request, exc)
+            raise
+
     # a 必须比 b 快出这么多倍才算真正变快：至少 min_improvement，并且要盖过两者加速比标准误合成后再乘 noise_z。差一点只记 within_noise，不能当下一轮种子。
     def _required_gain(self, a: Candidate, b: Candidate) -> float:
         """@brief ``a`` 要比 ``b`` 快多少倍才算真正变快。
@@ -1158,14 +1431,12 @@ class Orchestrator:
                 if self.hangs >= self.search.max_hangs:
                     raise StopRun("gpu_hang_circuit_breaker")
                 rep = await asyncio.to_thread(
-                    self.evaluate_fn, self.task_name, self.dtype, self.size, source,
+                    self._evaluate_report, source,
                     mode="quick" if self.search.correctness_only else "full", seed=phase_seed, reps=self.search.eval_reps,
-                    progress_path=self.run_dir / "eval_progress.json",
-                    **({"fast_bench": True} if self.search.fast_bench and not self.search.correctness_only else {}),
-                    **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
-                    measure_serial=self.search.measure_serial,
-                    eval_cache=self.search.eval_cache,
-                    target_id=self.target_id,
+                    label=label, progress_path=self.run_dir / "eval_progress.json",
+                    fast_bench=bool(self.search.fast_bench and not self.search.correctness_only),
+                    require_contract_launch=bool(self.search.require_contract_launch),
+                    eval_cache=bool(self.search.eval_cache),
                 )
                 self.evaluations += 1
             cand.report = rep
@@ -1269,12 +1540,10 @@ class Orchestrator:
             if self.hangs >= self.search.max_hangs:
                 raise StopRun("gpu_hang_circuit_breaker")
             rep = await asyncio.to_thread(
-                self.evaluate_fn, self.task_name, self.dtype, self.size, cand.source, mode="quick", seed=phase_seed, reps=3,
-                progress_path=self.run_dir / "eval_progress.json",
-                **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
-                measure_serial=self.search.measure_serial,
-                eval_cache=self.search.eval_cache,
-                target_id=self.target_id,
+                self._evaluate_report, cand.source, mode="quick", seed=phase_seed, reps=3,
+                label=cand.label, progress_path=self.run_dir / "eval_progress.json",
+                require_contract_launch=bool(self.search.require_contract_launch),
+                eval_cache=bool(self.search.eval_cache),
             )
         self.evaluations += 1
         if rep.status == "ok":
@@ -1387,6 +1656,9 @@ class Orchestrator:
         except LLMError as e:
             res.stop_reason = f"llm_error: {e}"
             self.log(f"== stop: {e}")
+        except EvaluationUnavailable as e:
+            res.stop_reason = "evaluation_unavailable"
+            self.log(f"== stop: evaluation unavailable ({getattr(e, 'code', 'evaluation_unavailable')}): {e}")
         self._search_seed = self.best  # the kernel the search would mutate next; confirmation may publish a different one
         while self._control_extends(res):
             self.log("-- control file extended this run; continuing before confirmation")
@@ -1404,6 +1676,9 @@ class Orchestrator:
             except LLMError as e:
                 res.stop_reason = f"llm_error: {e}"
                 self.log(f"== stop: {e}")
+            except EvaluationUnavailable as e:
+                res.stop_reason = "evaluation_unavailable"
+                self.log(f"== stop: evaluation unavailable ({getattr(e, 'code', 'evaluation_unavailable')}): {e}")
             self._search_seed = self.best
         # 搜索已经把该花的钱花完了。确认、profiling 和关闭 client 都在收尾面：任何一处抛异常，
         # 都必须仍然写出 result.json / best.metal / ledger.json，而不是让一场已付费的搜索只剩 state.json。
@@ -1417,6 +1692,10 @@ class Orchestrator:
             previous_stop = res.stop_reason
             res.stop_reason = f"confirm_error: LLMError: {e}"
             self.log(f"== stop: confirmation failed after {previous_stop or 'search'}: {e}")
+        except EvaluationUnavailable as e:
+            res.stop_reason = "evaluation_unavailable"
+            res.confirmed_status = "evaluation_unavailable"
+            self.log(f"== stop: evaluation unavailable during confirmation ({getattr(e, 'code', 'evaluation_unavailable')}): {e}")
         except Exception as e:  # noqa: BLE001 - the run is over; its files still have to be written
             previous_stop = res.stop_reason
             res.stop_reason = f"confirm_error: {type(e).__name__}: {e}"
@@ -1758,7 +2037,7 @@ class Orchestrator:
         @raises RunStartError 脚本运行时没有注入 ``agent_runner``（不得起 hmz）时。
         """
         from .agent_feedback import parse_feedback
-        from .kernel_agent import AgentError, Prices, run_kernel_agent, output_tokens_for
+        from .kernel_agent import AgentError, Prices, output_tokens_for
 
         self.ledger.check()
         remaining = self.ledger.remaining
@@ -1778,6 +2057,10 @@ class Orchestrator:
         if session_cap is not None and remaining is not None:
             session_cap = min(float(session_cap), float(remaining))
         work = (self.run_dir / "agent_work" / tag.replace("/", "_")).resolve()
+        # The active session label is the remote grant/session identity. It also gives
+        # subsequent formal evaluations a non-empty session id without inventing a
+        # second session model.
+        self._last_session_id = tag
         brief = self._session_brief(seedless, tag, work)
         self._session_briefs.append(brief)
         self._publish_state("llm", inflight=tag)
@@ -1785,22 +2068,35 @@ class Orchestrator:
         started = time.time()
         seed_label = None if self.best is None else self.best.label
         parsed = parse_feedback("")
+        bridge_server = None
         outcome = None
         cand = None
         exit_kind = "agent_exception"
         try:
             try:
-                if self.agent_runner is None and self._client_injected:
+                if self.selfcheck_bridge_factory is not None:
+                    bridge_server, bridge_token_file = self.selfcheck_bridge_factory(tag, work, self.evaluator)
+                    brief.selfcheck_socket = str(bridge_server.socket_path)
+                    brief.selfcheck_token_file = str(bridge_token_file)
+                if self.agent_runner is None and self._client_injected and not self._session_runner_injected:
                     raise RunStartError("a scripted run needs an agent_runner; it must not start hmz")
                 if self.agent_runner is not None:
                     result = self.agent_runner(brief, tag)
                     if asyncio.iscoroutine(result):
                         result = await result
                 else:
+                    execution = SessionExecution(
+                        placement=HmzSessionPlacement(),
+                        paths=SessionPaths.local(work),
+                        prices=prices,
+                        turn_output_tokens=tokens,
+                        turn_minutes=int(self.search.turn_minutes),
+                        session_cost_cap_usd=session_cap,
+                    )
                     result = await asyncio.to_thread(
-                        run_kernel_agent, brief, work=work, provider=member.provider, model=member.model,
-                        effort=member.cfg.reasoning_effort, prices=prices, turn_output_tokens=tokens,
-                        turn_minutes=int(self.search.turn_minutes), session_cost_cap_usd=session_cap,
+                        self.session_runner.execute, brief,
+                        execution=execution, provider=member.provider, model=member.model,
+                        effort=member.cfg.reasoning_effort,
                     )
             except (AgentError, LLMError, Exception) as exc:
                 if isinstance(exc, (StopRun, BudgetExhausted, RunStartError)):
@@ -1898,6 +2194,11 @@ class Orchestrator:
                 self._record_feedback(tag, member, work, parsed, outcome, cand, exit_kind, seed_label, started=started)
             except OSError:
                 pass
+            finally:
+                if bridge_server is not None:
+                    stop = getattr(bridge_server, "stop", None)
+                    if callable(stop):
+                        stop()
 
     def _prepare_session_dir(self, work: Path) -> None:
         """@brief 会话开始前清掉上一场留下的 notes 与反馈。
@@ -2350,6 +2651,8 @@ class Orchestrator:
             target_id=self.target_id, harness_overlay=harness_overlay,
             file_ext=self.target.file_ext, language_label=backend.display_name,
             source_fence=backend.source_fence, reference_skill=backend.reference_skill,
+            selfcheck_socket=self.selfcheck_socket,
+            selfcheck_token_file=self.selfcheck_token_file,
         )
 
     async def _initial_generation(self) -> None:
@@ -2548,12 +2851,10 @@ class Orchestrator:
                 return
             async with self.gpu_lock:
                 rep = await asyncio.to_thread(
-                    self.evaluate_fn, self.task_name, self.dtype, self.size, win.source, mode="quick", seed=phase_seed, reps=1,
-                    cases=("domain",), progress_path=self.run_dir / "eval_progress.json",
-                    **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
-                    measure_serial=self.search.measure_serial,
-                    eval_cache=self.search.eval_cache,
-                    target_id=self.target_id,
+                    self._evaluate_report, win.source, mode="quick", seed=phase_seed, reps=1,
+                    label=win.label, cases=("domain",), progress_path=self.run_dir / "eval_progress.json",
+                    require_contract_launch=bool(self.search.require_contract_launch),
+                    eval_cache=bool(self.search.eval_cache),
                 )
             if rep.status == "timeout":
                 self.hangs += 1
@@ -2610,14 +2911,12 @@ class Orchestrator:
                     async with self.gpu_lock:
                         phase_seed = self._phase_seed("confirm", seed_label, "")
                         rep = await asyncio.to_thread(
-                            self.evaluate_fn, self.task_name, self.dtype, self.size, c.source, mode="full", seed=phase_seed, reps=self.search.eval_reps * 2,
-                            progress_path=self.run_dir / "eval_progress.json",
-                            **({"require_contract_launch": True} if self.search.require_contract_launch else {}),
-                            measure_serial=self.search.measure_serial,
+                            self._evaluate_report, c.source, mode="full", seed=phase_seed, reps=self.search.eval_reps * 2,
+                            label=c.label, progress_path=self.run_dir / "eval_progress.json",
+                            require_contract_launch=bool(self.search.require_contract_launch),
                             # 确认是「再测一次」，不是取回上一次的结果。确定性种子加上缓存，会让 resume
                             # 或同一个 --seed 的重跑在 2 ms 内复述旧报告，而发布门会把它当成复测。
                             eval_cache=False,
-                            target_id=self.target_id,
                         )
                     seeds.append(phase_seed if phase_seed is not None else rep.seed)
                     if batch == 0:

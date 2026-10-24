@@ -138,6 +138,7 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
         "model_totals": model_totals_from_path(run / "transcript.jsonl"),
         "phase": _first(docs, "phase"),
         "stop_reason": _first(docs, "stop_reason"),
+        "pending_evaluation": _pending_evaluation(run),
         "round": _round_of(state, result),
         "spent_usd": _first(docs, "spent_usd"),
         "budget_usd": _first(docs, "budget_usd"),
@@ -164,6 +165,30 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
         if gpu is not None:
             doc["gpu"] = gpu
     return doc
+
+
+def _pending_evaluation(run: Path) -> dict:
+    """@brief 汇总 outbox 中尚未完成的远程评测，不读取源码或秘密。"""
+    root = run / "evaluation_outbox"
+    rows = []
+    if root.is_dir():
+        for path in sorted(root.glob("*.json")):
+            if path.name.endswith(".result.json") or path.name == "receipts.json":
+                continue
+            try:
+                document = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(document, dict) or document.get("status") not in {"pending", "unavailable"}:
+                continue
+            error = document.get("error") if isinstance(document.get("error"), dict) else {}
+            rows.append({
+                "request_id": document.get("request_id"),
+                "status": document.get("status"),
+                "error_code": error.get("code"),
+                "retryable": error.get("retryable") is True,
+            })
+    return {"count": len(rows), "requests": rows[-CAP:]}
 
 
 def _first(docs: list[dict], key: str):

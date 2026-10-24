@@ -17,6 +17,7 @@ from .protocol import (
     read_frame,
     write_frame,
 )
+from .client import CommandTransport, RemoteError, RemoteEvaluator, RemoteEvaluatorPool, Transport, remote_evaluator_from_command, remote_evaluator_pool_from_command
 from .service import RemoteService, ServiceIdentity, SessionGrant
 
 __all__ = [
@@ -27,7 +28,14 @@ __all__ = [
     "FrameDecoder",
     "HelloRequest",
     "ProtocolError",
+    "CommandTransport",
+    "RemoteError",
+    "RemoteEvaluator",
+    "RemoteEvaluatorPool",
     "RemoteService",
+    "Transport",
+    "remote_evaluator_from_command",
+    "remote_evaluator_pool_from_command",
     "ServiceIdentity",
     "SessionGrant",
     "encode_frame",

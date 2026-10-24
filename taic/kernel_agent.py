@@ -123,6 +123,10 @@ class SessionBrief:
     language_label: str = "Metal"
     source_fence: str = "metal"
     reference_skill: str = "msl_reference"
+    # Empty means the current local ``tcenv.cli eval`` command.  A host bridge
+    # sets this to its per-session socket; the agent still chooses only quick/timed.
+    selfcheck_socket: str = ""
+    selfcheck_token_file: str = ""
 
     @property
     def seed_name(self) -> str:
@@ -512,6 +516,22 @@ def _check_command(brief: SessionBrief, mode: str) -> str:
         "--quick" if mode == "quick" else "--timed",
         "--target", _shell(brief.target_id),
     ]
+    if brief.selfcheck_socket:
+        if not brief.selfcheck_token_file:
+            raise ValueError("a host selfcheck bridge needs a per-session token file")
+        # The bridge owns task/target/reps/quota. The agent supplies only the
+        # workspace-relative submission and the fixed mode flag. The token is read
+        # from a 0600 file, never placed in argv or TASK.md.
+        parts = [
+            "uv", "run", "--directory", _shell(str(repo)),
+            "python", "-m", "taic.selfcheck_bridge",
+            "--socket", _shell(brief.selfcheck_socket),
+            "--token-file", _shell(brief.selfcheck_token_file),
+            "--workspace", _shell(str(work)),
+            "--kernel", _shell(name),
+            "--quick" if mode == "quick" else "--timed",
+        ]
+        return " ".join(parts)
     if mode == "timed":
         parts.extend(["--self-check-dir", _shell(str(_self_check_dir(brief)))])
         parts.append("--reps")

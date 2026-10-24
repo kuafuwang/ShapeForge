@@ -25,6 +25,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--selfcheck-max-gpu-s", type=float, default=120.0)
     parser.add_argument("--allow-kind", action="append", choices=["formal_eval", "selfcheck"], default=None)
     parser.add_argument("--expires-at", type=float, default=None)
+    parser.add_argument("--token", default=TOKEN)
+    parser.add_argument("--run-id", default="run-1")
+    parser.add_argument("--session-id", default="session-1")
+    parser.add_argument("--signature-key-file", type=Path, default=None)
     args = parser.parse_args(argv)
     identity = ServiceIdentity(
         site_id="sim-site",
@@ -40,9 +44,9 @@ def main(argv: list[str] | None = None) -> int:
         publication_allowed=False,
     )
     grant = SessionGrant(
-        token=TOKEN,
-        run_id="run-1",
-        session_id="session-1",
+        token=args.token,
+        run_id=args.run_id,
+        session_id=args.session_id,
         target_id="sim-npu-test",
         allowed_kinds=frozenset(args.allow_kind or ["formal_eval", "selfcheck"]),
         expires_at=args.expires_at,
@@ -54,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         state_dir=args.state_dir,
         selfcheck_max_timed=args.selfcheck_max,
         selfcheck_max_gpu_s=args.selfcheck_max_gpu_s,
+        signing_key=args.signature_key_file.read_bytes() if args.signature_key_file else None,
     )
     service.serve(sys.stdin.buffer, sys.stdout.buffer)
     return 0

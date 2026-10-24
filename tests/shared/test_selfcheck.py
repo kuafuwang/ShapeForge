@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from tcenv.selfcheck import LOG_NAME, MAX_CHECKS, MAX_GPU_S, append, budget_reason, earlier_hang
+from tcenv.selfcheck import LOG_NAME, MAX_CHECKS, MAX_GPU_S, append, authority_log, budget_reason, earlier_hang
 
 
 def _log(directory, rows) -> None:
@@ -78,4 +78,37 @@ def test_damaged_lines_do_not_unlock_the_budget(tmp_path):
     @param tmp_path pytest 提供的临时目录。
     """
     (tmp_path / LOG_NAME).write_text("not json\n" + "".join(json.dumps({"status": "ok", "elapsed_s": 1.0}) + "\n" for _ in range(MAX_CHECKS)))
+    assert budget_reason(tmp_path) is not None
+
+
+def test_host_record_survives_workspace_log_tampering(tmp_path):
+    """@brief agent 清空 workspace 日志也不能重置 host 侧自测配额或 hang 锁。"""
+    for _ in range(MAX_CHECKS):
+        append(tmp_path, {"status": "ok", "elapsed_s": 1.0})
+    append(tmp_path, {"status": "timeout", "elapsed_s": 1.0})
+    authority = authority_log(tmp_path)
+    assert authority.is_file() and authority.stat().st_mode & 0o077 == 0
+    _log(tmp_path, [])
+    assert budget_reason(tmp_path) is not None
+    assert "timeout" in (earlier_hang(tmp_path) or "")
+
+
+def test_invalid_gpu_time_fails_closed(tmp_path):
+    """@brief NaN/Infinity/负数的 GPU 秒数都不能被当作未超预算。"""
+    _log(tmp_path, [{"status": "ok", "elapsed_s": float("nan")}])
+    assert budget_reason(tmp_path) is not None
+    _log(tmp_path, [{"status": "ok", "elapsed_s": float("inf")}])
+    assert budget_reason(tmp_path) is not None
+    _log(tmp_path, [{"status": "ok", "elapsed_s": -1.0}])
+    assert budget_reason(tmp_path) is not None
+
+
+def test_environment_cannot_redirect_host_quota_into_workspace(tmp_path, monkeypatch):
+    """@brief 被测进程设置 TCENV_SELFCHECK_HOME 也不能把权威记录重定向到工作区。"""
+    monkeypatch.setenv("TCENV_SELFCHECK_HOME", str(tmp_path))
+    for _ in range(MAX_CHECKS):
+        append(tmp_path, {"status": "ok", "elapsed_s": 1.0})
+    authority = authority_log(tmp_path)
+    assert not authority.is_relative_to(tmp_path)
+    _log(tmp_path, [])
     assert budget_reason(tmp_path) is not None

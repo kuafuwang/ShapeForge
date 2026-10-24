@@ -28,6 +28,8 @@ class FakeNpuBackend:
         if "REMOTE_SLEEP" in request.source:
             time.sleep(5.0)
         digest = hashlib.sha256((request.source + str(request.seed)).encode("utf-8")).hexdigest()
+        receipt_digest = hashlib.sha256((request.source + str(request.seed) + request.request_id).encode("utf-8")).hexdigest()
+        receipt_id = "sim-replay" if "REPLAY_RECEIPT" in request.source else f"sim-{receipt_digest[:16]}"
         candidate_us = 100.0 + int(digest[:8], 16) % 1000
         report = {
             "task": request.task,
@@ -52,7 +54,7 @@ class FakeNpuBackend:
                 "measurement_kind": "simulated",
             },
             "receipt": {
-                "receipt_id": f"sim-{digest[:16]}",
+                "receipt_id": receipt_id,
                 "request_id": request.request_id,
                 "request_digest": request.request_digest,
                 "measurement_kind": "simulated",

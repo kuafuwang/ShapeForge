@@ -8,6 +8,7 @@ only for existing local callers and is intentionally a re-export, not a second m
 from tcenv.evaluation import (
     LOCAL_ONLY_FIELDS,
     EvaluationExecutor,
+    EvaluationUnavailable,
     EvaluationRequest,
     EvaluationResult,
     EvaluatorProvenance,
@@ -19,6 +20,7 @@ from tcenv.evaluation import (
 __all__ = [
     "LOCAL_ONLY_FIELDS",
     "EvaluationExecutor",
+    "EvaluationUnavailable",
     "EvaluationRequest",
     "EvaluationResult",
     "EvaluatorProvenance",

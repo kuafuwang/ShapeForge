@@ -9,6 +9,7 @@ imports these types from here; it never needs the search package ``taic``.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import math
 import re
@@ -32,6 +33,21 @@ _CACHE_POLICIES = frozenset({"reuse", "refresh", "disabled"})
 
 class EvaluationError(ValueError):
     """A request, provenance or result cannot be accepted."""
+
+
+class EvaluationUnavailable(EvaluationError):
+    """The evaluator could not provide a usable result.
+
+    This is an infrastructure/policy outcome, not a candidate compile, numerical,
+    timeout or crash verdict. ``code`` is stable enough for run bookkeeping and
+    ``retryable`` tells resume whether the same request may be submitted again.
+    """
+
+    def __init__(self, code: str, message: str, *, retryable: bool = False, request_id: str = "") -> None:
+        super().__init__(message)
+        self.code = str(code or "evaluation_unavailable")
+        self.retryable = bool(retryable)
+        self.request_id = request_id
 
 
 def _canonical_json(document: Any) -> bytes:
@@ -280,6 +296,56 @@ class EvaluationResult:
             receipt=document.get("receipt"),
             signature=str(document.get("signature") or ""),
         )
+
+
+def receipt_id_for(request: EvaluationRequest) -> str:
+    """Deterministic receipt id for one request/digest pair."""
+    return _sha256(_canonical_json({"request_id": request.request_id, "request_digest": request.request_digest}))
+
+
+def validate_receipt(result: EvaluationResult, request: EvaluationRequest) -> str:
+    """Validate the receipt/request binding and return its receipt id."""
+    receipt = result.receipt
+    if not isinstance(receipt, dict):
+        raise EvaluationError("remote result has no receipt object")
+    receipt_id = receipt.get("receipt_id")
+    if not isinstance(receipt_id, str) or not receipt_id or len(receipt_id) > 160:
+        raise EvaluationError("receipt_id must be a non-empty bounded string")
+    if receipt.get("request_id") != request.request_id:
+        raise EvaluationError("receipt request_id does not match the request")
+    if receipt.get("request_digest") != request.request_digest:
+        raise EvaluationError("receipt request digest does not match the request")
+    if "candidate_sha256" in receipt and receipt["candidate_sha256"] != request.candidate_sha256:
+        raise EvaluationError("receipt candidate digest does not match the request")
+    if "measurement_kind" in receipt and receipt["measurement_kind"] != result.provenance.measurement_kind:
+        raise EvaluationError("receipt measurement kind does not match provenance")
+    return receipt_id
+
+
+def result_signature_payload(result: EvaluationResult) -> bytes:
+    """Canonical bytes covered by an evaluator result signature."""
+    report = result.report.to_json() if isinstance(result.report, EvalReport) else result.report
+    return _canonical_json({
+        "report": report,
+        "provenance": result.provenance.to_dict(),
+        "evidence": result.evidence,
+        "receipt": result.receipt,
+    })
+
+
+def sign_result(result: EvaluationResult, key: bytes) -> str:
+    """Return an HMAC-SHA256 signature for a result envelope."""
+    if not isinstance(key, bytes) or not key:
+        raise ValueError("a non-empty signature key is required")
+    return hmac.new(key, result_signature_payload(result), hashlib.sha256).hexdigest()
+
+
+def verify_result_signature(result: EvaluationResult, key: bytes) -> bool:
+    """Verify a result signature without accepting an empty/malformed signature."""
+    if not isinstance(key, bytes) or not key or not isinstance(result.signature, str):
+        return False
+    expected = sign_result(result, key)
+    return hmac.compare_digest(result.signature, expected)
 
 
 class EvaluationExecutor(Protocol):

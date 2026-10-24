@@ -139,6 +139,13 @@ def cmd_run(a: argparse.Namespace) -> int:
         try:
             # 显式 --model 让两个委员会都用这个模型。没写时用配置里的两名成员，可以不同。
             committees = load_committees(raw, active=cfg, model_override=a.model)
+            from .remote_runtime import RemoteEvaluationConfig
+            remote = RemoteEvaluationConfig.from_file(a.remote_evaluator_config) if getattr(a, "remote_evaluator_config", None) else None
+            if remote is not None:
+                if remote.target_id != getattr(a, "target", "apple-m4-max"):
+                    raise ValueError(f"remote evaluator target {remote.target_id!r} differs from --target")
+                if not remote.publishable_site_ids:
+                    raise ValueError("remote evaluator config has no publishable_site_ids; refusing to start a search")
             orch = Orchestrator(
                 a.task, a.dtype, a.size, cfg, search,
                 run_dir=Path(a.run_dir) if a.run_dir else None,
@@ -147,7 +154,17 @@ def cmd_run(a: argparse.Namespace) -> int:
                 committees=committees,
                 target_id=getattr(a, "target", "apple-m4-max"),
                 from_catalog=a.from_run == "@catalog",
+                evaluator_factory=None if remote is None else remote.make_evaluator,
+                publishable_site_ids=None if remote is None else remote.publishable_site_ids,
+                publishable_epochs=None if remote is None else remote.publishable_epochs,
             )
+            if remote is not None:
+                if remote.task_fingerprint and remote.task_fingerprint != orch.task_fingerprint:
+                    raise ValueError("remote evaluator task fingerprint differs from this task")
+                orch.selfcheck_bridge_factory = remote.make_bridge_factory(
+                    task=orch.task_name, dtype=orch.dtype, size=orch.size,
+                    task_fingerprint=orch.task_fingerprint, run_id=orch.run_dir.name,
+                )
         except (RunStartError, ValueError, LLMError) as e:
             # 尺寸或任务名不合法是启动失败，和配置写不进去一样，退出码 5。
             print(str(e), file=sys.stderr)
@@ -387,7 +404,59 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
         committees = _committees_for_resume(a, cfg, run_dir)
     except (rs.ResumeError, rs.NeedsInspection, LLMError, control.ControlError, KeyError, ValueError) as e:
         raise ResumeRefused(f"cannot resume {run_dir}: {e}", 5) from e
-    orch = Orchestrator(snap.task, snap.dtype, snap.size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log, resuming=True, committees=committees, target_id=_recorded_target(run_dir, getattr(a, "target", None)))
+    from .remote_runtime import RemoteEvaluationConfig
+    try:
+        remote = RemoteEvaluationConfig.from_file(a.remote_evaluator_config) if getattr(a, "remote_evaluator_config", None) else None
+    except ValueError as exc:
+        raise ResumeRefused(f"cannot load remote evaluator config: {exc}", 5) from exc
+    resume_target = _recorded_target(run_dir, getattr(a, "target", None))
+    if remote is not None:
+        if remote.target_id != resume_target:
+            raise ResumeRefused(f"remote evaluator target {remote.target_id!r} differs from the run target {resume_target!r}", 5)
+        if not remote.publishable_site_ids:
+            raise ResumeRefused("remote evaluator config has no publishable_site_ids", 5)
+    execution_path = run_dir / "execution.json"
+    try:
+        execution = json.loads(execution_path.read_text(encoding="utf-8")) if execution_path.is_file() else None
+    except (OSError, ValueError) as exc:
+        raise ResumeRefused(f"cannot resume: execution.json is unreadable ({exc})", 5) from exc
+    if execution is not None:
+        if not isinstance(execution, dict) or execution.get("evaluation") not in {"local", "remote"}:
+            raise ResumeRefused("cannot resume: execution.json has no valid evaluation mode", 5)
+        mode = execution["evaluation"]
+        if mode == "remote" and remote is None:
+            raise ResumeRefused("cannot resume a remote evaluation without --remote-evaluator-config", 5)
+        if mode == "local" and remote is not None:
+            raise ResumeRefused("cannot switch a local run to remote evaluation during resume", 5)
+        if remote is not None:
+            if set(execution.get("publishable_site_ids") or []) != set(remote.publishable_site_ids):
+                raise ResumeRefused("remote publication site allowlist differs from the original run", 5)
+            recorded_epochs = execution.get("publishable_epochs")
+            if recorded_epochs is not None and set(recorded_epochs) != set(remote.publishable_epochs or []):
+                raise ResumeRefused("remote publication epoch allowlist differs from the original run", 5)
+            observed = execution.get("observed") or {}
+            if isinstance(observed, dict) and observed:
+                for config_name, observed_name in (("expected_site_id", "site_id"), ("expected_worker_build", "worker_build"), ("expected_task_pack_digest", "task_pack_digest")):
+                    expected = getattr(remote, config_name)
+                    if expected and observed.get(observed_name) != expected:
+                        raise ResumeRefused(f"remote evaluator {observed_name} differs from the original observed manifest", 5)
+                observed_epoch = observed.get("epoch")
+                if remote.publishable_epochs is not None and observed_epoch and observed_epoch not in remote.publishable_epochs:
+                    raise ResumeRefused("observed evaluator epoch is not in the resume publication allowlist", 5)
+    orch = Orchestrator(
+        snap.task, snap.dtype, snap.size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log,
+        resuming=True, committees=committees, target_id=_recorded_target(run_dir, getattr(a, "target", None)),
+        evaluator_factory=None if remote is None else remote.make_evaluator,
+        publishable_site_ids=None if remote is None else remote.publishable_site_ids,
+        publishable_epochs=None if remote is None else remote.publishable_epochs,
+    )
+    if remote is not None:
+        if remote.task_fingerprint and remote.task_fingerprint != orch.task_fingerprint:
+            raise ResumeRefused("remote evaluator task fingerprint differs from this run", 5)
+        orch.selfcheck_bridge_factory = remote.make_bridge_factory(
+            task=orch.task_name, dtype=orch.dtype, size=orch.size,
+            task_fingerprint=orch.task_fingerprint, run_id=orch.run_dir.name,
+        )
     variants = {prompts.system_prompt(orch.task, use_tools=cfg.use_tools, profiler_evidence=pe, hw_feedback=hw) for pe in (False, True) for hw in (False, True)}
     # 系统提示若已和现在的 prompts.py 不同，仍用转录里的原文。换提示会让同一次实验的前后轮次对着不同契约说话。
     prompt_changed = bool(snap.system) and snap.system not in variants  # False: the prompt files still produce the prompt the run began with
@@ -512,6 +581,9 @@ def cmd_resume(a: argparse.Namespace) -> int:
         print(str(e), file=sys.stderr)
         return e.code
     except RunStartError as e:
+        print(str(e), file=sys.stderr)
+        return 5
+    except ValueError as e:
         print(str(e), file=sys.stderr)
         return 5
     print(json.dumps({k: getattr(res, k) for k in ("task", "dtype", "model", "best_speedup", "confirmed_speedup", "spent_usd", "budget_usd", "stop_reason", "run_dir")}, indent=2))
@@ -988,11 +1060,16 @@ def cmd_harness(a: argparse.Namespace) -> int:
             )
             meta = code_agent.write_patch(run, str(a.key), result, target_id=target_id, acceptance_spec=spec)
             print(json.dumps(meta, ensure_ascii=False, indent=2, default=str))
+        elif a.harness_action == "review-code":
+            from .code_agent import review_code_patch
+
+            print(json.dumps(review_code_patch(run, a.key, by=a.by), ensure_ascii=False, indent=2))
         elif a.harness_action in {"verify-code", "verify-legacy"}:
-            from .code_agent import verify_code_patch
+            from .code_agent import DockerPatchTestRunner, verify_code_patch
             if a.harness_action == "verify-legacy" and not a.legacy_text:
                 raise ValueError("verify-legacy needs --legacy-text")
-            print(json.dumps(verify_code_patch(run, a.key, approved_by=a.by, legacy_text=a.legacy_text, check_ids=a.check_id, execute=a.execute), ensure_ascii=False, indent=2))
+            runner = DockerPatchTestRunner(a.docker_image, docker_binary=a.docker_binary) if a.docker_image else None
+            print(json.dumps(verify_code_patch(run, a.key, approved_by=a.by, legacy_text=a.legacy_text, check_ids=a.check_id, static=a.static, execute=a.execute, runner=runner), ensure_ascii=False, indent=2))
         elif a.harness_action == "apply-code":
             from . import code_agent
 
@@ -1183,6 +1260,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", default=None)
     p.add_argument("--budget", type=float, default=None, help="USD budget for this kernel (default: the preset's budget_usd, the paper's $15)")
     p.add_argument("--target", default="apple-m4-max", help="device profile id under targets/")
+    p.add_argument("--remote-evaluator-config", default=None, help="explicit JSON remote evaluator/selfcheck composition; default is local")
     p.add_argument("--branches", type=int, default=None)
     p.add_argument("--max-rounds", type=int, default=None)
     p.add_argument("--provider-retries", type=int, default=None, help="retry a structured provider turn failure within the same committee/candidate (0-3, default 0)")
@@ -1232,6 +1310,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--patience", type=int, default=None, help="not recorded by runs older than run_config.json: give the value the run was started with")
     r.add_argument("--lift-count-limits", action="store_true", help="also continue a run that stopped because it used its round limit or its patience")
     r.add_argument("--accept-cost-gap", action="store_true", help="continue a run stopped by cost_incomplete after its hmz epics were reconciled into an unaccounted entry (human decision)")
+    r.add_argument("--remote-evaluator-config", default=None, help="explicit JSON remote evaluator/selfcheck composition; must be supplied again for a remote resume")
     r.set_defaults(fn=cmd_resume)
     q = sub.add_parser("query", help="read-only queries over the observe index (no model call, no GPU)")
     q.add_argument("what", choices=["runs", "best", "failures", "sessions", "models", "capabilities", "suggestions", "suggestion"])
@@ -1378,14 +1457,21 @@ def main(argv: list[str] | None = None) -> int:
     hi.add_argument("--model", default=None)
     hi.add_argument("--budget-usd", type=float, default=None, help="optional cap; otherwise derived from model prices")
     hi.add_argument("--by", default="cli")
+    hr = hs.add_parser("review-code", help="record a named human diff review of a patch; never executes it")
+    hr.add_argument("run_dir")
+    hr.add_argument("--key", required=True)
+    hr.add_argument("--by", required=True, help="named human who inspected the diff")
     for action in ("verify-code", "verify-legacy"):
-        hc = hs.add_parser(action, help="run registered host checks in an isolated worktree; no local apply")
+        hc = hs.add_parser(action, help="run static acceptance or an isolated dynamic runner; never applies locally")
         hc.add_argument("run_dir")
         hc.add_argument("--key", required=True)
-        hc.add_argument("--by", default="cli", help="named person upgrading a legacy acceptance")
+        hc.add_argument("--by", default="cli", help="named person upgrading a legacy acceptance or the reviewer for --execute")
         hc.add_argument("--check-id", action="append", default=None, help="registered host check id; repeat for multiple checks")
         hc.add_argument("--legacy-text", default="", help="original text acceptance to upgrade explicitly")
-        hc.add_argument("--execute", action="store_true", help="execute patched code only after a named human diff review; default is static-only")
+        hc.add_argument("--static", action="store_true", help="only inspect paths/spec/patch hash/claims; never execute patch code")
+        hc.add_argument("--execute", action="store_true", help="execute patched code only after review-code and an isolated runner")
+        hc.add_argument("--docker-image", default=None, help="image for the isolated patch-test container; required with --execute")
+        hc.add_argument("--docker-binary", default="docker", help="Docker-compatible executable used by the isolated runner")
     hc = hs.add_parser("apply-code")
     hc.add_argument("run_dir")
     hc.add_argument("--key", required=True)

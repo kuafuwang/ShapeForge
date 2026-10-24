@@ -7,6 +7,7 @@ only when the service is deployed with the production worker module.
 from __future__ import annotations
 
 from .protocol import EvaluationRequest, ProtocolError
+from tcenv.evaluation import receipt_id_for
 
 
 class ProductionBackend:
@@ -41,7 +42,7 @@ class ProductionBackend:
         return {
             "report": report.to_json(),
             "evidence": {"candidate_sha256": request.candidate_sha256},
-            "receipt": {"request_id": request.request_id, "request_digest": request.request_digest},
+            "receipt": {"receipt_id": receipt_id_for(request), "request_id": request.request_id, "request_digest": request.request_digest, "measurement_kind": "measured"},
         }
 
 
