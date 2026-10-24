@@ -105,20 +105,20 @@ def _hello(transport, nonce: str, token: str, pending: list | None = None) -> No
         raise AssertionError(f"hello failed: {frame.frame_type} {frame.payload}")
 
 
-def _run_frame_limit_matrix(transport_factory, record, check) -> None:
+def _run_frame_limit_matrix(transport_factory, record, check, tag: str) -> None:
     evaluator = RemoteEvaluator(transport_factory(("run-1", "session-1", "sim-npu-test")), token=TOKEN, run_id="run-1", session_id="session-1", target_id="sim-npu-test", expected_site_id="sim-site", expected_worker_build="sim-build-1", expected_task_pack_digest=TASK_PACK_DIGEST, task_fingerprint=TASK_FINGERPRINT, timeout_s=8)
     try:
         near_source = "x" * 999_000
-        near = evaluator.formal(_request(near_source, request_id="limit-near"))
+        near = evaluator.formal(_request(near_source, request_id=f"{tag}-limit-near"))
         check("frame_near_source_limit", near.report.get("simulated") is True)
         unicode_source = "🚀" * 250_000  # exactly 1,000,000 UTF-8 bytes
-        unicode_result = evaluator.formal(_request(unicode_source, request_id="limit-unicode-exact"))
+        unicode_result = evaluator.formal(_request(unicode_source, request_id=f"{tag}-limit-unicode-exact"))
         check("frame_unicode_exact_byte_limit", unicode_result.report.get("simulated") is True)
     finally:
         evaluator.close()
     for name, source in (("source_over_limit", "x" * 1_000_001), ("unicode_over_limit", "🚀" * 250_001)):
         try:
-            _request(source, request_id=name)
+            _request(source, request_id=f"{tag}-{name}")
         except EvaluationError:
             record(name)
         else:
@@ -139,7 +139,7 @@ def _run_frame_limit_matrix(transport_factory, record, check) -> None:
             record(name)
         else:
             raise AssertionError(f"{name} was accepted")
-    base = _request()
+    base = _request(request_id=f"{tag}-limits-base")
     for name, changes in (("reps_over_limit", {"reps": 10_001}), ("candidate_timeout_over_limit", {"candidate_timeout_s": 3601}), ("request_id_over_limit", {"request_id": "x" * 161})):
         try:
             replace(base, **changes)
@@ -149,13 +149,13 @@ def _run_frame_limit_matrix(transport_factory, record, check) -> None:
             raise AssertionError(f"{name} was accepted")
 
 
-def _run_half_open_and_reset_matrix(transport_factory, make_pool, admin, record, check) -> None:
+def _run_half_open_and_reset_matrix(transport_factory, make_pool, admin, record, check, tag: str) -> None:
     # Slow consumer: the real remote result still arrives after throttled reads.
     inner = transport_factory(("run-1", "session-1", "sim-npu-test"))
     throttled = _ThrottledTransport(inner, 0.03)
     slow = RemoteEvaluator(throttled, token=TOKEN, run_id="run-1", session_id="session-1", target_id="sim-npu-test", expected_site_id="sim-site", expected_worker_build="sim-build-1", expected_task_pack_digest=TASK_PACK_DIGEST, task_fingerprint=TASK_FINGERPRINT, timeout_s=3)
     try:
-        result = slow.formal(_request(request_id="slow-consumer"))
+        result = slow.formal(_request(request_id=f"{tag}-slow-consumer"))
         check("slow_consumer", result.report.get("simulated") is True)
     finally:
         slow.close()
@@ -167,9 +167,11 @@ def _run_half_open_and_reset_matrix(transport_factory, make_pool, admin, record,
     try:
         half.connect()
         throttled.delay_s = 0.2
-        half.formal(_request(request_id="half-open"))
+        half.formal(_request(request_id=f"{tag}-half-open"))
     except RemoteError as exc:
         check("half_open_timeout", exc.code in {"transport_timeout", "transport_closed"}, exc.code)
+    else:
+        raise AssertionError("half-open request unexpectedly succeeded")
     finally:
         half.close()
 
@@ -182,9 +184,11 @@ def _run_half_open_and_reset_matrix(transport_factory, make_pool, admin, record,
         killer = threading.Thread(target=lambda: (time.sleep(0.2), admin("docker ps -q --filter name=taic-npu-sim | xargs -r docker rm -f")), daemon=True)
         killer.start()
         try:
-            reset.formal(_request("REMOTE_SLEEP", request_id="reset-1"))
+            reset.formal(_request("REMOTE_SLEEP", request_id=f"{tag}-reset-1"))
         except RemoteError as exc:
             check("container_reset_error", exc.code in {"transport_closed", "transport_protocol_error", "worker_failed", "candidate_timeout", "transport_timeout"}, exc.code)
+        else:
+            raise AssertionError("request unexpectedly survived evaluator container reset")
         finally:
             killer.join(timeout=5)
     finally:
@@ -193,7 +197,7 @@ def _run_half_open_and_reset_matrix(transport_factory, make_pool, admin, record,
     check("reset_recovery", after_reset.returncode == 0)
     recovered_pool = make_pool()
     try:
-        recovered = recovered_pool.formal(_request(request_id="after-reset"))
+        recovered = recovered_pool.formal(_request(request_id=f"{tag}-after-reset"))
         check("reset_recovery", recovered.report.get("simulated") is True)
     finally:
         recovered_pool.close()
@@ -205,24 +209,23 @@ def _run_half_open_and_reset_matrix(transport_factory, make_pool, admin, record,
     check("reset_no_orphan", not running.stdout.strip())
 
 
-def _run_fairness_matrix(transport_factory, admin, record, check) -> None:
+def _run_fairness_matrix(transport_factory, admin, record, check, tag: str) -> None:
     transport = transport_factory(("run-1", "session-1", "sim-npu-test", 0.2))
+    a1, b1, a2 = (f"{tag}-fair-a1", f"{tag}-fair-b1", f"{tag}-fair-a2")
     try:
         transport.start()
         _hello(transport, "fair-a-hello", TOKEN)
-        first = _request("REMOTE_SLEEP_SHORT", request_id="fair-a1", mode="full", session_id="session-1")
+        first = _request("REMOTE_SLEEP_FAIR", request_id=a1, mode="full", session_id="session-1")
         write_frame(transport.writer, "request", first.request_id, first.to_dict())
         arrivals = []
-        first_result = read_frame(transport.reader)
-        if first_result.frame_type != "result" or first_result.request_id != "fair-a1":
-            raise AssertionError(f"unexpected first result {first_result.frame_type} {first_result.payload}")
-        arrivals.append(first_result.request_id)
+        # Submit B while A is still running, then queue A2 behind B. Without
+        # aging, A2 (formal) would jump ahead of B (selfcheck).
         _hello(transport, "fair-b-hello", "test-alt-token", arrivals)
         second_source = "kernel void demo() {}"
-        second = replace(first, request_id="fair-b1", kind="selfcheck", mode="quick", run_id="run-2", source=second_source, candidate_sha256=hashlib.sha256(second_source.encode("utf-8")).hexdigest())
+        second = replace(first, request_id=b1, kind="selfcheck", mode="quick", run_id="run-2", source=second_source, candidate_sha256=hashlib.sha256(second_source.encode("utf-8")).hexdigest())
         write_frame(transport.writer, "request", second.request_id, second.to_dict())
         _hello(transport, "fair-a2-hello", TOKEN, arrivals)
-        third = replace(first, request_id="fair-a2")
+        third = replace(first, request_id=a2)
         write_frame(transport.writer, "request", third.request_id, third.to_dict())
         for _ in range(3 - len(arrivals)):
             frame = read_frame(transport.reader)
@@ -231,9 +234,9 @@ def _run_fairness_matrix(transport_factory, admin, record, check) -> None:
             if frame.frame_type != "result":
                 raise AssertionError(f"unexpected fairness frame {frame.frame_type}")
             arrivals.append(frame.request_id)
-        check("fairness_aging_order", arrivals == ["fair-a1", "fair-b1", "fair-a2"], str(arrivals))
+        check("fairness_aging_order", arrivals == [a1, b1, a2], str(arrivals))
         order = admin("cat /home/eval/taic-state/order.jsonl")
-        check("fairness_order_evidence", order.stdout.index("fair-b1") < order.stdout.index("fair-a2"))
+        check("fairness_order_evidence", order.stdout.index(b1) < order.stdout.index(a2))
     finally:
         transport.close()
 
@@ -391,9 +394,9 @@ def main(argv: list[str] | None = None) -> int:
         check("restart_no_duplicate_job", counter() == after_timeout_count, f"counter={counter()}")
         pool.close()
         pool = None
-        _run_frame_limit_matrix(transport_factory, record, check)
-        _run_half_open_and_reset_matrix(transport_factory, make_pool, admin, record, check)
-        _run_fairness_matrix(transport_factory, admin, record, check)
+        _run_frame_limit_matrix(transport_factory, record, check, run_tag)
+        _run_half_open_and_reset_matrix(transport_factory, make_pool, admin, record, check, run_tag)
+        _run_fairness_matrix(transport_factory, admin, record, check, run_tag)
     except Exception as exc:  # noqa: BLE001 - report every failure before returning nonzero
         failure = f"{type(exc).__name__}: {exc}"
         record("failure", "failed", failure)

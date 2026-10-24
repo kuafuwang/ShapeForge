@@ -73,9 +73,9 @@ Phase 2A/2B 完成后，在 Mac 不依赖真实 NPU，通过真实 SSH/VM/Docker
 
 - `hmz` 0.2.2 已安装到 `.venv`，`tests/shared/test_security_boundaries.py`：2 passed。
 - 使用本地 torch wheel 构建 `taic-patch-test:local`，真实 P2 Docker 验收：`tests/shared/test_docker_integration.py`：1 passed。
-- 设置 `TAIC_TEST_DOCKER_IMAGE=taic-patch-test:local` 后，宿主机完整 shared 并行套件：987 passed。
+- 设置 `TAIC_TEST_DOCKER_IMAGE=taic-patch-test:local` 后，宿主机完整 shared 并行套件：989 passed。
 - Docker Ubuntu 隔离环境中的远程/P2/selfcheck 测试：109 passed。
-- 使用现有 Ubuntu ARM VM、VM 内 Docker 和 SSH forced command，运行 `tests/support/npu_sim/phase25_runner.py`：23 个验收项全部通过。覆盖 formal/selfcheck、hello、幂等、同 key 不同 body、Unicode/大帧、错误 worker build、shell/`docker exec` 注入、transport timeout、断连清理和重启恢复。
+- 使用现有 Ubuntu ARM VM、VM 内 Docker 和 SSH forced command，运行 `tests/support/npu_sim/phase25_runner.py`：41 个验收项全部通过。覆盖 formal/selfcheck、hello、幂等、同 key 不同 body、Unicode/大帧、错误 worker build、shell/`docker exec` 注入、transport timeout、断连清理、重启恢复，以及 half-open/慢消费者、完整帧上限和多 run aging/顺序证据。
 - 本次 split-control 报告为 `runs/npu-sim-20261024/report.json`，`split_control=true`、`container_only=false`、`simulated=true`、`coverage=extended_split_control`；没有 `run_config.json`。最终没有遗留 evaluator 容器。
 - 本次没有运行真实 NPU、真实 GPU、付费模型或安装 NPU SDK。VM 本地延迟只用于控制面诊断，不能用于决定真实远程站点是否需要搬代理。
 - 本次报告的 `coverage` 已更新为 `extended_split_control`，half-open/慢消费者、完整帧上限和多 run 公平性扩展矩阵均已通过；真实 NPU、真实 GPU、付费模型和 NPU SDK 仍未执行。

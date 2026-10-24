@@ -485,6 +485,26 @@ def test_report_seed_mismatch_is_rejected(tmp_path):
     assert "seed" in str(exc_info.value)
 
 
+def test_a_failed_rehello_keeps_the_previous_grant(tmp_path):
+    """@brief 失败的 re-hello 不能提前把连接切到新 grant。"""
+    identity = ServiceIdentity(site_id="sim-site", device_id="sim-device", backend="sim-npu", backend_version="1", target_id="sim-npu-test", worker_build="sim-build-1", task_pack_digest=TASK_PACK_DIGEST, calibration_digest="c" * 64, task_fingerprints=frozenset({TASK_FINGERPRINT}), measurement_kind="simulated", publication_allowed=False)
+    first = SessionGrant(token="first", run_id="run-1", session_id="session-1", target_id="sim-npu-test")
+    second = SessionGrant(token="second", run_id="run-2", session_id="session-1", target_id="sim-npu-test")
+    service = RemoteService(identity=identity, grants=[first, second], worker_command=["/bin/true"], state_dir=tmp_path / "svc")
+    service._authenticated = True
+    service._grant = first
+    hello = {
+        "protocol_version": "1",
+        "client_nonce": "failed-rehello",
+        "session_token": "second",
+        "expected_site_id": "wrong-site",
+    }
+    with pytest.raises(ProtocolError, match="site"):
+        service._handle_hello(Frame("hello", "failed-rehello", hello, 0, ""))
+    assert service._grant is first
+    assert service._authenticated is True
+
+
 def test_rehello_switches_grants_and_ages_selfcheck(tmp_path):
     """@brief 同一连接 re-hello 切换 grant 后，selfcheck 能在短 aging 后越过后续 formal。"""
     proc = ServiceProcess(tmp_path, alt=True)

@@ -26,7 +26,9 @@ class FakeNpuBackend:
             path.write_text(str(count + 1))
         # A deliberate slow path exercises worker timeout/cancellation without
         # requiring a device or a real kernel.
-        if "REMOTE_SLEEP_SHORT" in request.source:
+        if "REMOTE_SLEEP_FAIR" in request.source:
+            time.sleep(1.0)
+        elif "REMOTE_SLEEP_SHORT" in request.source:
             time.sleep(0.4)
         elif "REMOTE_SLEEP" in request.source:
             time.sleep(5.0)

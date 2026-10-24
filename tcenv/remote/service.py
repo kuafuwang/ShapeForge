@@ -306,7 +306,6 @@ class RemoteService:
             raise ProtocolError("session token was refused")
         if grant.expires_at is not None and time.time() >= grant.expires_at:
             raise ProtocolError("session token expired")
-        self._grant = grant
         if hello.client_nonce in self._seen_nonces:
             raise ProtocolError("client nonce was already used")
         if hello.expected_site_id and hello.expected_site_id != self.identity.site_id:
@@ -317,6 +316,7 @@ class RemoteService:
             raise ProtocolError("expected task pack does not match this evaluator")
         if hello.target_id and hello.target_id != self.identity.target_id:
             raise ProtocolError("target is not served by this evaluator")
+        self._grant = grant
         self._seen_nonces.add(hello.client_nonce)
         self._authenticated = True
         server_nonce = secrets.token_hex(16)
