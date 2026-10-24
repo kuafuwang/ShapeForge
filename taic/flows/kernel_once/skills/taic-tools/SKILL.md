@@ -59,10 +59,26 @@ Read this section before comparing two versions or deleting a piece to see what 
 - Treat an ablation delta as untrusted until the control agrees. If the controlled delta is much smaller, report that; do not put the naive delta in `NOTES.md` as the feature's cost.
 - If you split the time into parts, the parts have to add up to the total. When they do not, check the measurement before you explain the kernel.
 
+## Typed probes
+
+The repository also registers `metal.time_msl`. It is a host-owned tool, not a Python
+plugin loader: a request names the tool and its manifest, one `[[buffer(0)]]` MSL kernel,
+grid, threads, buffer bytes and iterations. It never names a module, script or handler.
+The worker uses the same heartbeat supervision, process-group cleanup and GPU lock as
+an evaluation. The host writes the timing evidence; a timing result does not prove
+correctness. Run `python -m tcenv.tools.cli check REQUEST.json` for offline validation.
+`invoke` additionally requires `--allow-gpu`; use it only when GPU execution is approved.
+
+For a tool or reporting suggestion, do not invent a hardware probe. In `HARNESS.md`, give
+`evidence.reproduction` and `evidence.expected` instead. An optional
+`effect_metric_id` selects `first_eligible_cost_usd`, `first_eligible_elapsed_s`,
+`tool_success_rate`, `invalid_feedback_rate`, or `confirmed_speedup`. A useful review,
+a working patch and an improvement in a paired experiment are separate outcomes.
+
 ## Notes
 
 Keep `NOTES.md` current as you go: what each version changed, the self-check microseconds and cv, and whether you kept it. Append a line when you finish a version. Hardware-limit claims need the probe file and the measured number, or the word unverified next to them. The next session reads this file and does not see this conversation.
 
-Keep the submission file named in `TASK.md` equal to the best version so far, and do not wait for the final wrap. As soon as a version passes validation, `cp` it onto the submission name before starting another experiment. Whenever a later self-check is correct and faster, replace the submission immediately and append `NOTES.md`. If nothing has passed yet, `cp` the latest version before the final wrap, not the seed. The file is absent until you copy it. Leaving it absent means this session returned no kernel. A checkpoint only limits what a disconnect can lose; the outer search still re-evaluates it. `kernel.metal` is the seed when one was placed. Do not copy an older kernel into the submission file to make a command pass.
+Keep the submission file named in `TASK.md` equal to the best version so far, and do not wait for the final wrap. As soon as a version passes validation, `cp` it to `<submission>.tmp` and `mv` it onto the submission name before starting another experiment. Whenever a later self-check is correct and faster, replace the submission the same way and append `NOTES.md`. If nothing has passed yet, `cp` the latest version before the final wrap, not the seed. Never write the submission in place: a killed `cp` can leave a partial file. The file is absent until you copy it. Leaving it absent means this session returned no kernel. A checkpoint only limits what a disconnect can lose; the outer search still re-evaluates it. `kernel.metal` is the seed when one was placed. Do not copy an older kernel into the submission file to make a command pass.
 
 Append `FEEDBACK.md` the same way. One line in the matching section when you reject a premise or hit a pitfall. Do not save that file for the end.

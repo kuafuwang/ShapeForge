@@ -45,7 +45,7 @@ def _wrap(name: str, seed_name: str = "kernel.metal") -> str:
     return (
         "Stop changing the kernel and do not run another check. "
         f"If {name} is already in this directory, do not rewrite it. "
-        f"If it is missing, copy your best version onto {name} with cp. "
+        f"If it is missing, copy your best version onto {name}.tmp with cp, then mv {name}.tmp onto {name}. "
         "Do not use the write tool to retype the whole kernel. "
         "The search reads only that file. If it is still missing, the search records that this session returned no kernel. "
         f"{seed_name} is the seed when one was placed. Editing it does not submit. "

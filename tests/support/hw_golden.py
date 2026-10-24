@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from dataclasses import replace
 import os
 import subprocess
 import sys
@@ -215,14 +216,11 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
 
         each = []
         for index, brief in enumerate(orch._session_briefs):
-            # The contract names this session's absolute paths. The golden tracks the wording, not the temp directory.
-            text = render_contract(brief)
-            if brief.work_dir:
-                work = Path(brief.work_dir)
-                text = text.replace(str(work), "<work>")
-                # The self-check log lives next to agent_work, still inside this run.
-                text = text.replace(str(work.parent.parent), "<run>")
-            text = text.replace(str(Path(brief.repo).resolve()), "<repo>")
+            # TASK has a byte budget, so rendering against a checkout-dependent absolute
+            # path changes where optional sections are cut. Render against stable synthetic
+            # paths before hashing; this keeps the golden independent of the checkout root.
+            stable = replace(brief, repo=Path("/repo"), work_dir=f"/work/{brief.label}")
+            text = render_contract(stable)
             each.append({"label": f"{index}", "sha": sha(text)})
         joined = "\n".join(f"{row['label']} {row['sha']}" for row in each)
         out[_orch_key(task, plan_mix)] = {"requests": len(each), "sha": sha(joined), "each": each}
