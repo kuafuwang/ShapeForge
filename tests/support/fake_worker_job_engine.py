@@ -60,6 +60,13 @@ def main() -> int:
         return 7
     if b"NO_RESULT" in source:
         return 0
+    hold_dir = os.environ.get("FAKE_JOB_HOLD_DIR")
+    if b"HOLD_ONCE" in source and hold_dir:
+        marker = Path(hold_dir) / request_id
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        if not marker.exists():
+            marker.write_text("1", encoding="utf-8")
+            time.sleep(30.0)
     if b"RECOVER" in source and fence == 1:
         time.sleep(30.0)
     elif b"FAIR_SLEEP" in source:

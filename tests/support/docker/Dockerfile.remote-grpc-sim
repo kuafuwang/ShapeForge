@@ -1,0 +1,24 @@
+# Test-only simulated evaluator for the Phase 2D2 gRPC/TLS acceptance path.
+#
+# It reuses the Phase 2.5 CPU base (torch/numpy/pytest) and injects
+# tests.support.fake_worker_job_engine through the test-only composition root.
+# No GPU, NPU, NPU SDK, provider credential or simulated publication is allowed.
+FROM taic-patch-test:local
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/taic
+
+RUN python3 -m pip install --break-system-packages \
+        "grpcio==1.69.0" "grpcio-status==1.69.0" "protobuf==5.29.3"
+
+COPY tcenv /opt/taic/tcenv
+COPY tasks /opt/taic/tasks
+COPY tests /opt/taic/tests
+COPY pyproject.toml /opt/taic/pyproject.toml
+
+WORKDIR /opt/taic
+EXPOSE 7443
+ENTRYPOINT ["python3", "-m", "tests.support.npu_sim.grpc_service_entry"]
