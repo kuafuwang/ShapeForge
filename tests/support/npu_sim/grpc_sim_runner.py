@@ -793,6 +793,27 @@ def run_checks(sim: Sim, checker: Checker, *, state_root: Path) -> list[dict]:
         return {"backup_bytes": sqlite_path.stat().st_size, "states": document["states"], "quarantined": len(document["quarantined"])}
     checker.check("backup_restore_quarantine", backup_restore, "recovery")
 
+    def rollback_restart_compat() -> dict:
+        # A schema-compatible restart is the supported rollback step: stop new
+        # work, restart the same image/schema/state, replay a completed result
+        # and accept a new one.  Rolling back to an older image is unrun.
+        sim.stop(grace=10)
+        sim.start()
+        sim.wait_ready()
+        factory = sim.factory(rpc_timeout_s=15)
+        try:
+            replayed = factory.formal(_conformance_request(request_id="sim-formal-ok", source="OK"))
+            new = factory.formal(_conformance_request(request_id="sim-rollback-new", source="OK"))
+            return {
+                "older_image": False,
+                "replayed_attempt": replayed.receipt.get("attempt_id"),
+                "new_status": new.report.get("status"),
+                "new_attempt": new.receipt.get("attempt_id"),
+            }
+        finally:
+            factory.close()
+    checker.check("rollback_restart_compat", rollback_restart_compat, "recovery")
+
     # Start once more for the cleanup/health checks.
     sim.start()
     sim.wait_ready()

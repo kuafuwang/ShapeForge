@@ -40,6 +40,7 @@ def test_simulated_grpc_tls_docker_acceptance(tmp_path):
         "container_restart_explicit_retry",
         "stale_worker_fail_closed",
         "backup_restore_quarantine",
+        "rollback_restart_compat",
         "cleanup",
     ):
         assert results[name]["ok"], results[name]
