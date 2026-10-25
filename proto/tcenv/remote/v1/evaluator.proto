@@ -1,0 +1,349 @@
+syntax = "proto3";
+
+package tcenv.remote.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// External evaluator API for one single-tenant, single-active device frontend.
+// Credentials travel only in authenticated gRPC metadata, never in these messages.
+service Evaluator {
+  rpc GetCapabilities(CapabilitiesRequest) returns (Capabilities);
+  rpc Submit(SubmitRequest) returns (JobSnapshot);
+  rpc GetJob(JobRef) returns (JobSnapshot);
+  rpc Watch(WatchRequest) returns (stream JobEvent);
+  rpc Cancel(CancelRequest) returns (JobSnapshot);
+  rpc Retry(RetryRequest) returns (JobSnapshot);
+}
+
+enum EvaluationKind {
+  EVALUATION_KIND_UNSPECIFIED = 0;
+  EVALUATION_KIND_FORMAL_EVAL = 1;
+  EVALUATION_KIND_SELFCHECK = 2;
+}
+
+enum EvaluationMode {
+  EVALUATION_MODE_UNSPECIFIED = 0;
+  EVALUATION_MODE_QUICK = 1;
+  EVALUATION_MODE_TIMED = 2;
+  EVALUATION_MODE_FULL = 3;
+  EVALUATION_MODE_VALIDATE = 4;
+}
+
+enum CachePolicy {
+  CACHE_POLICY_UNSPECIFIED = 0;
+  CACHE_POLICY_REUSE = 1;
+  CACHE_POLICY_REFRESH = 2;
+  CACHE_POLICY_DISABLED = 3;
+}
+
+enum MeasurementKind {
+  MEASUREMENT_KIND_UNSPECIFIED = 0;
+  MEASUREMENT_KIND_MEASURED = 1;
+  MEASUREMENT_KIND_SIMULATED = 2;
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_ACCEPTED = 1;
+  JOB_STATE_QUEUED = 2;
+  JOB_STATE_RUNNING = 3;
+  JOB_STATE_INTERRUPTED = 4;
+  JOB_STATE_COMPLETED = 5;
+  JOB_STATE_FAILED = 6;
+  JOB_STATE_CANCELLED = 7;
+  // A retention tombstone, not a candidate outcome and not retryable.
+  JOB_STATE_EXPIRED = 8;
+}
+
+enum AttemptState {
+  ATTEMPT_STATE_UNSPECIFIED = 0;
+  ATTEMPT_STATE_QUEUED = 1;
+  ATTEMPT_STATE_RUNNING = 2;
+  ATTEMPT_STATE_INTERRUPTED = 3;
+  ATTEMPT_STATE_COMPLETED = 4;
+  ATTEMPT_STATE_FAILED = 5;
+  ATTEMPT_STATE_CANCELLED = 6;
+}
+
+enum FailureDomain {
+  FAILURE_DOMAIN_UNSPECIFIED = 0;
+  FAILURE_DOMAIN_INFRASTRUCTURE = 1;
+  FAILURE_DOMAIN_POLICY = 2;
+  FAILURE_DOMAIN_PROTOCOL = 3;
+}
+
+enum ProgressStage {
+  PROGRESS_STAGE_UNSPECIFIED = 0;
+  PROGRESS_STAGE_QUEUED = 1;
+  PROGRESS_STAGE_STATIC_CHECK = 2;
+  PROGRESS_STAGE_COMPILE = 3;
+  PROGRESS_STAGE_CORRECTNESS = 4;
+  PROGRESS_STAGE_TIMING = 5;
+  PROGRESS_STAGE_FINALIZING = 6;
+}
+
+// A seed is null when absent, otherwise a canonical unsigned decimal string.
+// The string form preserves values above the IEEE-754 safe-integer range.
+message CaseSelection {
+  repeated string names = 1;
+}
+
+message EvaluationRequest {
+  EvaluationKind kind = 1;
+  string request_id = 2;
+  string run_id = 3;
+  string session_id = 4;
+  string task = 5;
+  string dtype = 6;
+  string size = 7;
+  string target_id = 8;
+  string task_fingerprint = 9;
+  // Lowercase hexadecimal SHA-256 in canonical documents; exactly 64 characters.
+  string candidate_sha256 = 10;
+  // The exact bytes to compile. No newline, Unicode, or other normalization is allowed.
+  bytes source = 11;
+  EvaluationMode mode = 12;
+  optional string seed = 13;
+  uint32 reps = 14;
+  // Both timeouts are inclusive-bounded to 1..3,600,000 milliseconds.
+  uint32 queue_timeout_ms = 15;
+  uint32 candidate_timeout_ms = 16;
+  // Absent means the evaluator default; present with zero names means an empty list.
+  CaseSelection cases = 17;
+  bool fast_bench = 18;
+  bool require_contract_launch = 19;
+  bool validate = 20;
+  bool measure_serial = 21;
+  CachePolicy cache_policy = 22;
+}
+
+// Handshake expectations. Empty worker_build/task_pack_digest/evaluator_epoch
+// are wildcards only in CapabilitiesRequest; job-carrying RPCs pin exact values.
+message ExpectedEvaluator {
+  string site_id = 1;
+  string device_id = 2;
+  string target_id = 3;
+  string worker_build = 4;
+  string task_pack_digest = 5;
+  string evaluator_epoch = 6;
+}
+
+// The three independent identities pinned by a run and by every accepted job.
+message ExpectedIdentities {
+  ExpectedEvaluator evaluator = 1;
+  string api_contract_id = 2;
+  string evidence_contract_id = 3;
+}
+
+message CapabilitiesRequest {
+  repeated string api_contract_ids = 1;
+  repeated string evidence_contract_ids = 2;
+  repeated string required_features = 3;
+  string client_nonce = 4;
+  ExpectedEvaluator expected = 5;
+}
+
+message ResourceLimits {
+  uint32 max_source_bytes = 1;
+  uint32 max_reps = 2;
+  uint32 max_timeout_ms = 3;
+  uint32 max_cases = 4;
+  uint32 max_request_bytes = 5;
+  uint32 max_queue_depth = 6;
+  uint32 max_active_attempts = 7;
+  uint32 max_watch_streams = 8;
+  uint64 max_job_store_bytes = 9;
+  uint32 max_blob_bytes = 10;
+}
+
+message TargetCapability {
+  string target_id = 1;
+  string backend = 2;
+  repeated EvaluationMode modes = 3;
+  repeated string features = 4;
+}
+
+message Capabilities {
+  string client_nonce = 1;
+  string server_nonce = 2;
+  string capability_id = 3;
+  string evaluator_epoch = 4;
+  string api_contract_id = 5;
+  string evidence_contract_id = 6;
+  // attempt_id and request_digest are absent in this capabilities provenance.
+  EvaluatorProvenance provenance = 7;
+  repeated TargetCapability targets = 8;
+  repeated string supported_features = 9;
+  ResourceLimits limits = 10;
+  google.protobuf.Timestamp issued_at = 11;
+  uint32 valid_for_ms = 12;
+}
+
+message SubmitRequest {
+  EvaluationRequest request = 1;
+  string request_digest = 2;
+  ExpectedIdentities expected = 3;
+  string capability_id = 4;
+  repeated string required_features = 5;
+}
+
+message JobRef {
+  string request_id = 1;
+  string request_digest = 2;
+  ExpectedIdentities expected = 3;
+}
+
+message WatchRequest {
+  JobRef job = 1;
+  // Zero requests the retained beginning; otherwise resume after this sequence.
+  uint64 after_sequence = 2;
+  // Absent watches the job; present restricts events to one attempt.
+  optional string attempt_id = 3;
+}
+
+message CancelRequest {
+  JobRef job = 1;
+  // Bounded, sanitized diagnostic text; it does not change the request digest.
+  string reason = 2;
+}
+
+message RetryRequest {
+  JobRef job = 1;
+  // The interrupted attempt being replaced, not the new attempt identifier.
+  string interrupted_attempt_id = 2;
+  // Retry requires a fresh GetCapabilities exchange.
+  string capability_id = 3;
+  repeated string required_features = 4;
+}
+
+message EvaluatorProvenance {
+  uint32 schema_version = 1;
+  string evaluator_epoch = 2;
+  string site_id = 3;
+  string device_id = 4;
+  string backend = 5;
+  string backend_version = 6;
+  string target_id = 7;
+  string worker_build = 8;
+  string task_pack_digest = 9;
+  string calibration_digest = 10;
+  // Execution-semantics version; distinct from the API descriptor contract.
+  string protocol_version = 11;
+  string api_contract_id = 12;
+  string evidence_contract_id = 13;
+  optional string attempt_id = 14;
+  optional string request_digest = 15;
+  MeasurementKind measurement_kind = 16;
+  // A second check only; the host allowlists remain authoritative.
+  bool publication_allowed = 17;
+}
+
+// data is opaque to the transport. The descriptor covers the exact data bytes.
+message OpaqueBlob {
+  string schema_id = 1;
+  string media_type = 2;
+  uint64 size_bytes = 3;
+  string sha256 = 4;
+  bytes data = 5;
+}
+
+message Receipt {
+  string receipt_id = 1;
+  string request_id = 2;
+  string attempt_id = 3;
+  string request_digest = 4;
+  string candidate_sha256 = 5;
+  uint64 lease_fence = 6;
+  uint64 session_sequence = 7;
+  google.protobuf.Timestamp issued_at = 8;
+}
+
+message ResultSignature {
+  string algorithm = 1;
+  string key_id = 2;
+  // Raw 32-byte HMAC-SHA256; canonical evidence documents use lowercase hex.
+  bytes signature = 3;
+}
+
+message EvaluationResult {
+  OpaqueBlob report = 1;
+  EvaluatorProvenance provenance = 2;
+  optional OpaqueBlob evidence = 3;
+  Receipt receipt = 4;
+  ResultSignature signature = 5;
+}
+
+message JobFailure {
+  FailureDomain domain = 1;
+  bool retryable = 2;
+  string code = 3;
+  // Sanitized and bounded; never a shell command, credential, or host path.
+  string message = 4;
+}
+
+message Attempt {
+  string attempt_id = 1;
+  uint64 lease_fence = 2;
+  AttemptState state = 3;
+  uint32 retry_index = 4;
+  bool cancel_requested = 5;
+  google.protobuf.Timestamp queued_at = 6;
+  optional google.protobuf.Timestamp started_at = 7;
+  optional google.protobuf.Timestamp finished_at = 8;
+  optional JobFailure failure = 9;
+}
+
+message JobSnapshot {
+  string request_id = 1;
+  string request_digest = 2;
+  JobState state = 3;
+  EvaluatorProvenance provenance = 4;
+  optional Attempt current_attempt = 5;
+  // Present only for completed jobs with a fully bound result.
+  optional EvaluationResult result = 6;
+  // Infrastructure/policy/protocol failure, never a candidate verdict.
+  optional JobFailure failure = 7;
+  bool cancel_requested = 8;
+  uint64 last_sequence = 9;
+  google.protobuf.Timestamp accepted_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+  optional google.protobuf.Timestamp expires_at = 12;
+}
+
+message JobProgress {
+  ProgressStage stage = 1;
+  uint32 completed_reps = 2;
+  uint32 total_reps = 3;
+  string detail = 4;
+  google.protobuf.Timestamp observed_at = 5;
+}
+
+message JobEvent {
+  string request_id = 1;
+  // Absent only before the first attempt is allocated; progress/results require it.
+  optional string attempt_id = 2;
+  uint64 lease_fence = 3;
+  // Monotonic within a job, including across attempts.
+  uint64 sequence = 4;
+  oneof body {
+    JobProgress progress = 5;
+    // Used for retention-gap recovery, coalescing, and terminal state.
+    JobSnapshot snapshot = 6;
+  }
+}
+
+// Optional typed detail inside google.rpc.Status.details, alongside ErrorInfo
+// and RetryInfo. RPC status is never a durable candidate result.
+message EvaluationErrorDetail {
+  string request_id = 1;
+  string attempt_id = 2;
+  string request_digest = 3;
+  string reason = 4;
+  repeated string missing_features = 5;
+  FailureDomain failure_domain = 6;
+  bool retryable = 7;
+  string evaluator_epoch = 8;
+  string api_contract_id = 9;
+  string evidence_contract_id = 10;
+  uint64 lease_fence = 11;
+}

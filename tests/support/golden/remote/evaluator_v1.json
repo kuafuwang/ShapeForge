@@ -1,0 +1,276 @@
+{
+  "schema_version": 1,
+  "description": "Phase 2C1 backend-neutral contract vectors; simulated identities are not measurements.",
+  "source_base64": "a2VybmVsIHZvaWQgZGVtbygpIHsNCiAgLy8gY2Fmw6kgIA0KfQ0K",
+  "request": {
+    "kind": "formal_eval",
+    "run_id": "run-golden-01",
+    "session_id": "session-golden-01",
+    "task": "relu",
+    "dtype": "fp16",
+    "size": "small",
+    "target_id": "contract-target",
+    "task_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+    "candidate_sha256": "9734f875b964602f68c86e4ab9a9ef39937077d202a8e2b4c2ec4f2544f5ca26",
+    "mode": "quick",
+    "seed": "9007199254740993",
+    "reps": 15,
+    "queue_timeout_ms": 30000,
+    "candidate_timeout_ms": 420000,
+    "cases": [
+      "domain",
+      "边界"
+    ],
+    "fast_bench": false,
+    "require_contract_launch": false,
+    "validate": false,
+    "measure_serial": false,
+    "cache_policy": "reuse"
+  },
+  "request_digest_document": {
+    "document_type": "tcenv.remote.v1.request-digest",
+    "document_version": 1,
+    "digest_algorithm": "sha256-rfc8785-v1",
+    "request": {
+      "kind": "formal_eval",
+      "run_id": "run-golden-01",
+      "session_id": "session-golden-01",
+      "task": "relu",
+      "dtype": "fp16",
+      "size": "small",
+      "target_id": "contract-target",
+      "task_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+      "candidate_sha256": "9734f875b964602f68c86e4ab9a9ef39937077d202a8e2b4c2ec4f2544f5ca26",
+      "mode": "quick",
+      "seed": "9007199254740993",
+      "reps": 15,
+      "queue_timeout_ms": 30000,
+      "candidate_timeout_ms": 420000,
+      "cases": [
+        "domain",
+        "边界"
+      ],
+      "fast_bench": false,
+      "require_contract_launch": false,
+      "validate": false,
+      "measure_serial": false,
+      "cache_policy": "reuse"
+    }
+  },
+  "request_canonical_json": "{\"digest_algorithm\":\"sha256-rfc8785-v1\",\"document_type\":\"tcenv.remote.v1.request-digest\",\"document_version\":1,\"request\":{\"cache_policy\":\"reuse\",\"candidate_sha256\":\"9734f875b964602f68c86e4ab9a9ef39937077d202a8e2b4c2ec4f2544f5ca26\",\"candidate_timeout_ms\":420000,\"cases\":[\"domain\",\"边界\"],\"dtype\":\"fp16\",\"fast_bench\":false,\"kind\":\"formal_eval\",\"measure_serial\":false,\"mode\":\"quick\",\"queue_timeout_ms\":30000,\"reps\":15,\"require_contract_launch\":false,\"run_id\":\"run-golden-01\",\"seed\":\"9007199254740993\",\"session_id\":\"session-golden-01\",\"size\":\"small\",\"target_id\":\"contract-target\",\"task\":\"relu\",\"task_fingerprint\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"validate\":false}}",
+  "request_digest": "7ed35d801eeef6f92b7a4b1e516525513ccf5772a576167dae6b9ed0e8356788",
+  "receipt": {
+    "request_id": "request-golden-01",
+    "attempt_id": "attempt-0001",
+    "document": {
+      "document_type": "tcenv.remote.v1.receipt-id",
+      "document_version": 1,
+      "digest_algorithm": "sha256-rfc8785-v1",
+      "request_id": "request-golden-01",
+      "attempt_id": "attempt-0001",
+      "request_digest": "7ed35d801eeef6f92b7a4b1e516525513ccf5772a576167dae6b9ed0e8356788"
+    },
+    "receipt_id": "25bc8c85b3424e5c79a8d2dadb897cdf95501b7eef8b336b0a8c20356c79e734",
+    "canonical_json": "{\"attempt_id\":\"attempt-0001\",\"digest_algorithm\":\"sha256-rfc8785-v1\",\"document_type\":\"tcenv.remote.v1.receipt-id\",\"document_version\":1,\"request_digest\":\"7ed35d801eeef6f92b7a4b1e516525513ccf5772a576167dae6b9ed0e8356788\",\"request_id\":\"request-golden-01\"}"
+  },
+  "signature": {
+    "key_id": "site-golden/2026-10",
+    "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "report_base64": "eyJzdGF0dXMiOiJvayIsInNpbXVsYXRlZCI6dHJ1ZSwidmFsdWUiOjEuMjV9Cg==",
+    "evidence_base64": "eyJjaGVja3MiOjEsImF1dGhvcml0YXRpdmUiOnRydWV9Cg==",
+    "unsigned_result": {
+      "provenance": {
+        "schema_version": 1,
+        "evaluator_epoch": "2222222222222222222222222222222222222222222222222222222222222222",
+        "site_id": "site-golden",
+        "device_id": "device-golden",
+        "backend": "fake",
+        "backend_version": "1.2.3",
+        "target_id": "contract-target",
+        "worker_build": "build-golden-2026-10",
+        "task_pack_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+        "calibration_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+        "protocol_version": "exec-semantics-1",
+        "api_contract_id": "tcenv.remote.v1.evaluator-api.1",
+        "evidence_contract_id": "tcenv.remote.v1.evidence.1",
+        "attempt_id": "attempt-0001",
+        "request_digest": "7ed35d801eeef6f92b7a4b1e516525513ccf5772a576167dae6b9ed0e8356788",
+        "measurement_kind": "simulated",
+        "publication_allowed": false
+      },
+      "report": {
+        "schema_id": "tcenv.eval-report.v3",
+        "media_type": "application/vnd.tcenv.eval-report.v3+json",
+        "size_bytes": 46,
+        "sha256": "ce9cf8f7b86abcd3eea898552d78bd11577349b344fa2dc9bd7d03085ce131ff"
+      },
+      "evidence": {
+        "schema_id": "tcenv.selfcheck-evidence.v1",
+        "media_type": "application/vnd.tcenv.selfcheck-evidence.v1+json",
+        "size_bytes": 34,
+        "sha256": "a5959bac67449dac887c56eab656a805482aca4380638da7ab8bbaeb906c5b3c"
+      },
+      "receipt": {
+        "receipt_id": "25bc8c85b3424e5c79a8d2dadb897cdf95501b7eef8b336b0a8c20356c79e734",
+        "request_id": "request-golden-01",
+        "attempt_id": "attempt-0001",
+        "request_digest": "7ed35d801eeef6f92b7a4b1e516525513ccf5772a576167dae6b9ed0e8356788",
+        "candidate_sha256": "9734f875b964602f68c86e4ab9a9ef39937077d202a8e2b4c2ec4f2544f5ca26",
+        "lease_fence": "18446744073709551615",
+        "session_sequence": "9007199254740993",
+        "issued_at": "2026-10-25T01:02:03.123456789Z"
+      }
+    },
+    "document": {
+      "document_type": "tcenv.remote.v1.result-signature",
+      "document_version": 1,
+      "signature_algorithm": "hmac-sha256-v1",
+      "key_id": "site-golden/2026-10",
+      "provenance": {
+        "schema_version": 1,
+        "evaluator_epoch": "2222222222222222222222222222222222222222222222222222222222222222",
+        "site_id": "site-golden",
+        "device_id": "device-golden",
+        "backend": "fake",
+        "backend_version": "1.2.3",
+        "target_id": "contract-target",
+        "worker_build": "build-golden-2026-10",
+        "task_pack_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+        "calibration_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+        "protocol_version": "exec-semantics-1",
+        "api_contract_id": "tcenv.remote.v1.evaluator-api.1",
+        "evidence_contract_id": "tcenv.remote.v1.evidence.1",
+        "attempt_id": "attempt-0001",
+        "request_digest": "7ed35d801eeef6f92b7a4b1e516525513ccf5772a576167dae6b9ed0e8356788",
+        "measurement_kind": "simulated",
+        "publication_allowed": false
+      },
+      "report": {
+        "schema_id": "tcenv.eval-report.v3",
+        "media_type": "application/vnd.tcenv.eval-report.v3+json",
+        "size_bytes": 46,
+        "sha256": "ce9cf8f7b86abcd3eea898552d78bd11577349b344fa2dc9bd7d03085ce131ff"
+      },
+      "evidence": {
+        "schema_id": "tcenv.selfcheck-evidence.v1",
+        "media_type": "application/vnd.tcenv.selfcheck-evidence.v1+json",
+        "size_bytes": 34,
+        "sha256": "a5959bac67449dac887c56eab656a805482aca4380638da7ab8bbaeb906c5b3c"
+      },
+      "receipt": {
+        "receipt_id": "25bc8c85b3424e5c79a8d2dadb897cdf95501b7eef8b336b0a8c20356c79e734",
+        "request_id": "request-golden-01",
+        "attempt_id": "attempt-0001",
+        "request_digest": "7ed35d801eeef6f92b7a4b1e516525513ccf5772a576167dae6b9ed0e8356788",
+        "candidate_sha256": "9734f875b964602f68c86e4ab9a9ef39937077d202a8e2b4c2ec4f2544f5ca26",
+        "lease_fence": "18446744073709551615",
+        "session_sequence": "9007199254740993",
+        "issued_at": "2026-10-25T01:02:03.123456789Z"
+      }
+    },
+    "canonical_json": "{\"document_type\":\"tcenv.remote.v1.result-signature\",\"document_version\":1,\"evidence\":{\"media_type\":\"application/vnd.tcenv.selfcheck-evidence.v1+json\",\"schema_id\":\"tcenv.selfcheck-evidence.v1\",\"sha256\":\"a5959bac67449dac887c56eab656a805482aca4380638da7ab8bbaeb906c5b3c\",\"size_bytes\":34},\"key_id\":\"site-golden/2026-10\",\"provenance\":{\"api_contract_id\":\"tcenv.remote.v1.evaluator-api.1\",\"attempt_id\":\"attempt-0001\",\"backend\":\"fake\",\"backend_version\":\"1.2.3\",\"calibration_digest\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"device_id\":\"device-golden\",\"evaluator_epoch\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"evidence_contract_id\":\"tcenv.remote.v1.evidence.1\",\"measurement_kind\":\"simulated\",\"protocol_version\":\"exec-semantics-1\",\"publication_allowed\":false,\"request_digest\":\"7ed35d801eeef6f92b7a4b1e516525513ccf5772a576167dae6b9ed0e8356788\",\"schema_version\":1,\"site_id\":\"site-golden\",\"target_id\":\"contract-target\",\"task_pack_digest\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"worker_build\":\"build-golden-2026-10\"},\"receipt\":{\"attempt_id\":\"attempt-0001\",\"candidate_sha256\":\"9734f875b964602f68c86e4ab9a9ef39937077d202a8e2b4c2ec4f2544f5ca26\",\"issued_at\":\"2026-10-25T01:02:03.123456789Z\",\"lease_fence\":\"18446744073709551615\",\"receipt_id\":\"25bc8c85b3424e5c79a8d2dadb897cdf95501b7eef8b336b0a8c20356c79e734\",\"request_digest\":\"7ed35d801eeef6f92b7a4b1e516525513ccf5772a576167dae6b9ed0e8356788\",\"request_id\":\"request-golden-01\",\"session_sequence\":\"9007199254740993\"},\"report\":{\"media_type\":\"application/vnd.tcenv.eval-report.v3+json\",\"schema_id\":\"tcenv.eval-report.v3\",\"sha256\":\"ce9cf8f7b86abcd3eea898552d78bd11577349b344fa2dc9bd7d03085ce131ff\",\"size_bytes\":46},\"signature_algorithm\":\"hmac-sha256-v1\"}",
+    "hmac_sha256": "530396632bcd7a01122c4fc63181f86fa4e4a7f85069f0defc3ec96bc305a343"
+  },
+  "timeout_seconds_to_ms": [
+    {
+      "seconds": "0.0001",
+      "milliseconds": 1
+    },
+    {
+      "seconds": "1.2340",
+      "milliseconds": 1234
+    },
+    {
+      "seconds": "1.2344",
+      "milliseconds": 1235
+    },
+    {
+      "seconds": "0.1",
+      "milliseconds": 100
+    },
+    {
+      "seconds": "2",
+      "milliseconds": 2000
+    },
+    {
+      "seconds": "3600",
+      "milliseconds": 3600000
+    }
+  ],
+  "timeout_seconds_rejected": [
+    " 1 ",
+    "1 ",
+    " 1",
+    "1.",
+    ".5",
+    "+1",
+    "01"
+  ],
+  "legacy": {
+    "request": {
+      "kind": "formal_eval",
+      "request_id": "request-golden-01",
+      "run_id": "run-golden-01",
+      "session_id": "session-golden-01",
+      "task": "relu",
+      "dtype": "fp16",
+      "size": "small",
+      "target_id": "contract-target",
+      "task_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+      "candidate_sha256": "9734f875b964602f68c86e4ab9a9ef39937077d202a8e2b4c2ec4f2544f5ca26",
+      "source": "kernel void demo() {\r\n  // café  \r\n}\r\n",
+      "mode": "quick",
+      "seed": 9007199254740993,
+      "reps": 15,
+      "queue_timeout_s": 30.0,
+      "candidate_timeout_s": 420.0,
+      "cases": [
+        "domain",
+        "边界"
+      ],
+      "fast_bench": false,
+      "require_contract_launch": false,
+      "validate": false,
+      "measure_serial": false,
+      "cache_policy": "reuse"
+    },
+    "request_digest": "f4b37c71edeb64eee4ee9aa5bd78df7831f076cd9d40b767103a8a697584ca25",
+    "receipt_id": "fa1b9bea11ad0bc95d6f0da456de47de85acb37e86291884fb89db09ede52e7b",
+    "result": {
+      "report": {
+        "status": "ok",
+        "task": "relu",
+        "dtype": "fp16",
+        "size": "small"
+      },
+      "provenance": {
+        "schema_version": 1,
+        "epoch": "5555555555555555555555555555555555555555555555555555555555555555",
+        "site_id": "site-golden",
+        "device_id": "device-golden",
+        "backend": "fake",
+        "backend_version": "1.2.3",
+        "target_id": "contract-target",
+        "worker_build": "build-golden-2026-10",
+        "task_pack_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+        "calibration_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+        "protocol_version": "1",
+        "request_digest": "f4b37c71edeb64eee4ee9aa5bd78df7831f076cd9d40b767103a8a697584ca25",
+        "measurement_kind": "simulated",
+        "publication_allowed": false
+      },
+      "evidence": {
+        "candidate_sha256": "9734f875b964602f68c86e4ab9a9ef39937077d202a8e2b4c2ec4f2544f5ca26"
+      },
+      "receipt": {
+        "receipt_id": "fa1b9bea11ad0bc95d6f0da456de47de85acb37e86291884fb89db09ede52e7b",
+        "request_id": "request-golden-01",
+        "request_digest": "f4b37c71edeb64eee4ee9aa5bd78df7831f076cd9d40b767103a8a697584ca25",
+        "candidate_sha256": "9734f875b964602f68c86e4ab9a9ef39937077d202a8e2b4c2ec4f2544f5ca26"
+      },
+      "signature": ""
+    },
+    "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "signature": "7a8c6cc66ad5b9c79b44118836dd0a1719833e5cc749587ec76eb1ecb638a607"
+  }
+}

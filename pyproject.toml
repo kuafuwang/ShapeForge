@@ -17,6 +17,25 @@ dependencies = [
     "pytest-xdist>=3.8",
 ]
 
+[project.optional-dependencies]
+grpc = [
+    "googleapis-common-protos>=1.70.0,<2",
+    "grpcio>=1.69.0,<2",
+    "grpcio-status>=1.69.0,<2",
+    "protobuf>=5.29.3,<6",
+]
+
+[dependency-groups]
+dev = [
+    "googleapis-common-protos>=1.70.0,<2",
+    "grpcio>=1.69.0,<2",
+    "grpcio-status>=1.69.0,<2",
+    "protobuf>=5.29.3,<6",
+]
+codegen = [
+    "grpcio-tools==1.69.0",
+]
+
 [project.scripts]
 tcenv = "tcenv.cli:main"
 taic = "taic.cli:main"
