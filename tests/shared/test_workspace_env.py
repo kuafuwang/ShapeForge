@@ -467,3 +467,59 @@ def test_the_remote_task_does_not_name_a_control_host_path(tmp_path):
     # The local renderer is unchanged by the optional profile.
     assert render_contract(brief) == local
     assert local != remote
+
+
+def test_staging_refuses_a_symlinked_session_directory(tmp_path):
+    """An agent that replaced its session directory cannot redirect a receipt or input."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    manifest = _manifest(work, ["TASK.md"])
+    receipt = _receipt(work, manifest)
+    workdir = str(root / "run-1" / "init")
+    transport.stage(workdir, work, manifest, receipt)
+    victim = root / "victim"
+    victim.mkdir()
+    import shutil
+
+    shutil.rmtree(Path(workdir) / ".taic")
+    (Path(workdir) / ".taic").symlink_to(victim)
+    with pytest.raises(WorkspaceError, match="create the remote workspace"):
+        transport.stage(workdir, work, manifest, receipt)
+    assert list(victim.iterdir()) == []
+
+
+def test_collection_refuses_a_symlinked_artifact(tmp_path):
+    """A symlinked submission cannot pull another host file into the canonical workspace."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    manifest = _manifest(work, ["TASK.md"])
+    receipt = _receipt(work, manifest)
+    workdir = str(root / "run-1" / "init")
+    transport.stage(workdir, work, manifest, receipt)
+    secret = root / "secret.txt"
+    secret.write_text("not a kernel", encoding="utf-8")
+    (Path(workdir) / "kernel.metal").symlink_to(secret)
+    with pytest.raises(WorkspaceError, match="symlink"):
+        transport.collect(workdir, ["kernel.metal"])
+
+
+def test_the_saved_runtime_argv_carries_its_own_destination_options(tmp_path):
+    """A typed runtime reaches ssh with its port, identity, jump and options; an alias keeps its config."""
+    typed = SavedRuntime(
+        name="gpu-box", harness="local", host="example", user="eval", port=2222,
+        identity_file="/keys/id", proxy_jump="jump", options={"ServerAliveInterval": "30"},
+    )
+    argv = typed.argv("ssh", "echo hi", connect_timeout_s=5)
+    assert argv[:4] == ["ssh", "-T", "-o", "BatchMode=yes"]
+    assert ["-p", "2222"] == argv[argv.index("-p"):argv.index("-p") + 2]
+    assert ["-i", "/keys/id"] == argv[argv.index("-i"):argv.index("-i") + 2]
+    assert ["-J", "jump"] == argv[argv.index("-J"):argv.index("-J") + 2]
+    assert argv[argv.index("-o", argv.index("-J")) + 1] == "ServerAliveInterval=30"
+    assert argv[-2:] == ["eval@example", "echo hi"]
+    alias = SavedRuntime(name="box", harness="local", host="ignored", alias="box-alias", config="/tmp/ssh_config")
+    argv = alias.argv("ssh", "echo hi", connect_timeout_s=5)
+    assert argv[-2:] == ["box-alias", "echo hi"]
+    assert ["-F", "/tmp/ssh_config"] == argv[argv.index("-F"):argv.index("-F") + 2]
+    assert "-p" not in argv

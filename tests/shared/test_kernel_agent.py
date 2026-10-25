@@ -248,6 +248,7 @@ def test_a_missing_hmz_is_an_error_and_a_timeout_still_returns_the_file(tmp_path
     )
     assert result.status == "timeout"
     assert result.cost_incomplete is True
+    assert result.error == "hmz did not finish within 5s"
     assert "new" in result.source
 
 

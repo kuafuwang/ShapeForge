@@ -180,6 +180,7 @@ def _fake_invoke(state: dict, *, status: str = "ok", tokens: bool = True, cost: 
             returncode=returncode,
             stdout=stream,
             stderr="" if status != "crash" else "hmz crashed",
+            error="" if status != "crash" else "hmz crashed",
             spent={"output": 1000} if tokens else {},
             saw_tokens=tokens,
             cost_usd=cost if tokens else None,
@@ -643,3 +644,26 @@ def test_real_hmz_accepts_the_remote_role_and_fails_closed_before_any_session(tm
     # hmz refused before the flow: no session output, no submission, no provider state.
     assert sorted(path.name for path in work.iterdir()) == []
     assert not (tmp_path / "agent-state").exists()
+
+
+def test_the_exact_local_hmz_argv_is_pinned(tmp_path):
+    """No `-e`, no remote flag and the same parameter order as before the optional transport."""
+    from taic.kernel_agent import hmz_argv, prepare_session
+
+    brief = _brief(tmp_path)
+    prepared = prepare_session(brief, Path(brief.work_dir))
+    argv = hmz_argv(brief, prepared, binary="hmz", provider="deepseek", model="deepseek-flash", effort="high", turn_output_tokens=1234, turn_minutes=17, session_cost_cap_usd=1.25)
+    assert argv == [
+        "hmz", "exec", "-f", str(FLOW),
+        "-a", "assistant=pi/deepseek/deepseek-flash:high",
+        "-p", "turn_output_tokens=1234",
+        "-p", "turn_minutes=17",
+        "-p", "wrap_output_tokens=4000",
+        "-p", "wrap_minutes=3",
+        "-p", "submit_name=conv2d-fp16-paper-init.metal",
+        "-p", "seed_name=kernel.metal",
+        "-p", "budget.duration=22m",
+        "-p", "budget.cost=1.25",
+        "--json",
+        "--", "Read TASK.md in this directory and do it. Write the finished kernel to conv2d-fp16-paper-init.metal. The search does not read kernel.metal.",
+    ]

@@ -731,6 +731,11 @@ class Orchestrator:
                     self._isolation_fence.check()
                 except IsolationError as exc:
                     raise RunStartError(f"the agent workspace is not disjoint from trusted evaluation: {exc}") from exc
+                if isolation.simulated:
+                    self.log(
+                        "== warning: the agent isolation seam is simulated; this run is a "
+                        "deterministic test double, not a real remote agent"
+                    )
             self.session_runner: HmzKernelSessionRunner = SshWorkspaceKernelSessionRunner(workspace_config)
         else:
             self.session_runner = session_runner or LocalHmzKernelSessionRunner()

@@ -117,9 +117,9 @@ uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 只有 `workspace.harness=env` 且显式配置 `isolation` 时，agent CLI 才离开 control_host。这一层同样是可选的，默认不启用：
 
 - **短期凭据**：control_host 在内存里 mint 绑定 run/session/runtime 的随机 token（TTL、使用上限），只保存摘要；token 不进 TASK、workspace、manifest、argv 或日志，`repr` 也隐藏。成功、超时、崩溃或无交卷都在 `finally` 里 revoke，并记录清理证据。
-- **凭据 seam**：`loopback-fake` 只在 `127.0.0.1` 提供确定性 provider，必须显式 `simulated=true`；`external-helper` 由 operator 提供，token 经 stdin 而不是 argv 传入，provision/revoke 由它负责。helper 在远端是否真的只写短期凭据是 **operator-attested**，本项目不能证明。
+- **凭据 seam**：`loopback-fake` 只在 `127.0.0.1` 提供确定性 provider，必须显式 `simulated=true`，并记录 `provisioned_to_agent=false`：它只交付给同进程测试替身，不证明真实远端 agent 拿到凭据。`external-helper` 由 operator 提供，token 经 stdin 而不是 argv 传入，provision/revoke 由它负责，记录 `provisioned_to_agent=true`；helper 在远端是否真的只写短期凭据是 **operator-attested**，本项目不能证明。
 - **受信评测围栏**：启动时拒绝任何让 `agent_work` 与 evaluator 候选目录、outbox、manifest/ledger、`tcenv`/`taic`/`tests` 或 selfcheck authority 目录发生包含关系的配置；回收写入仍限制在 `agent_work/<tag>`。它是布局检查，不是沙箱，不能替代远端账号/权限和 hmz 围栏。
-- **放置证据**：epic 的 `opened.harness` 与配置不一致时，该场 `cost_usd=null`、`cost_incomplete=true`，并记 `harness_mismatch`，不把跑错位置的会话账单算进搜索。
+- **放置证据**：`harness=env` 要求 epic 的 `opened.harness` 恰为 `env`，缺失也按不一致处理；`harness=local` 接受 `local` 或空。不一致时该场 `cost_usd=null`、`cost_incomplete=true`，并记 `harness_mismatch`，不把跑错位置的会话账单算进搜索。
 - **失败与孤儿**：凭据 mint/provision 失败是 `credential_unavailable`，不会先启动 agent 再补账；crash/timeout/no-submission 走 typed 失败并撤销凭据；run 结束按 run token 只清扫本 run 的非活跃会话目录。
 - **未证明**：真实主机上的 `harness=env`、真实 pi CLI/外部 helper、远端进程与围栏逃逸、真实 orphan 清理。本机 VM 可达但缺 SSH 私钥，这些验收是 blocked；没有写 `simulated` 报告，也没有真实 provider 调用。
 

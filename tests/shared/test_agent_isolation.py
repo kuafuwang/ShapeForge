@@ -136,6 +136,7 @@ def test_the_external_helper_gets_the_token_on_stdin_and_is_revoked(tmp_path):
     credential = authority.mint(run_id="run-1", session_label="init", runtime="gpu-box", ttl_s=60, max_uses=4)
     evidence = seam.provision(credential, env_spec="remote_workspace=ssh@gpu-box/srv/taic/r/i")
     assert evidence["mode"] == "external-helper" and evidence["token_in_env"] is True
+    assert evidence["provisioned_to_agent"] is True
     assert credential.token not in " ".join(seam.helper)
     seam.revoke(credential)
     assert authority.verify(credential.token) is None
@@ -346,6 +347,7 @@ def _invoke(state: dict, *, status: str = "ok", record: dict | None = None):
             returncode=None if status == "timeout" else (1 if status == "crash" else 0),
             stdout=json.dumps({"kind": "result" if status != "crash" else "failed", "spent": "Usage(output=1000)"}),
             stderr="hmz crashed" if status == "crash" else "",
+            error="hmz crashed" if status == "crash" else "",
             spent={"output": 1000},
             saw_tokens=True,
             cost_usd=0.002,
@@ -400,6 +402,8 @@ def test_a_remote_agent_session_gets_a_scoped_token_and_cleans_up(tmp_path):
     assert result.source and result.source.startswith("kernel void conv2d_kernel")
     assert record["status"] == 200 and record["body"]["choices"][0]["message"]["content"] == "fake"
     assert result.identity["credential"]["mode"] == "loopback-fake"
+    assert result.identity["credential"]["provisioned_to_agent"] is False
+    assert result.identity["credential"]["agent_env"] == "in-process-test-double"
     assert result.identity["credential"]["credential"]["token_at_rest"] is False
     assert record["token"] not in json.dumps(result.identity)
     assert result.identity["credential"]["revoked"] is True
@@ -572,3 +576,83 @@ def test_the_runner_reap_reports_removed_labels(tmp_path):
     labels = runner.reap_orphans(tmp_path / "run", active_labels={"r1.p0"})
     assert labels == ["init"]
     assert removed and removed[0].startswith("run-") and removed[0].endswith(":run:r1.p0")
+
+
+def test_an_unexpected_seam_failure_still_revokes_and_cleans(tmp_path):
+    """Any exception between mint and invoke must not leave a live token or a remote directory."""
+    isolation = IsolatedAgentConfig(credential_seam="loopback-fake", simulated=True)
+    config = _config(tmp_path, isolation=isolation)
+    state: dict = {"tmp_path": tmp_path}
+    host = _Host(state)
+    authority = ScopedCredentialAuthority()
+
+    def exploding_factory(cfg, *, authority):
+        class _Seam:
+            mode = "loopback-fake"
+
+            def provision(self, credential, *, env_spec):
+                raise RuntimeError("the seam crashed after the token was minted")
+
+            def revoke(self, credential):
+                authority.revoke(credential.credential_id)
+
+            def close(self):
+                return
+
+        return _Seam()
+
+    runner = SshWorkspaceKernelSessionRunner(
+        config, transport=host, invoke=_invoke(state), epic_root=tmp_path / "epics",
+        authority=authority, seam_factory=exploding_factory,
+    )
+    brief = _brief(tmp_path)
+    result = runner.execute(brief, execution=_execution(Path(brief.work_dir), config), provider="p", model="m", effort=None)
+    assert result.status == "failed"
+    assert result.diagnostics["failure_class"] == "credential_unavailable"
+    assert authority.live_ids() == ()
+    assert result.identity["cleaned"] is True
+    assert not Path(state["workdir"]).exists()
+
+
+def test_an_env_epic_without_a_harness_field_is_not_trusted(tmp_path):
+    """An absent harness line cannot prove the agent left the control host."""
+    isolation = IsolatedAgentConfig(credential_seam="loopback-fake", simulated=True)
+    config = _config(tmp_path, isolation=isolation)
+    state: dict = {"tmp_path": tmp_path, "write_epic": True, "epic_harness": ""}
+    runner = _runner(tmp_path, _Host(state), state, config=config, invoke=_invoke(state))
+    brief = _brief(tmp_path)
+    result = runner.execute(brief, execution=_execution(Path(brief.work_dir), config), provider="p", model="m", effort=None)
+    assert result.cost_incomplete is True and result.cost_usd is None
+    assert result.diagnostics["workspace_placement"] == "harness_mismatch"
+
+
+def test_remote_authored_selfcheck_rows_are_not_counted(tmp_path):
+    """A remote agent cannot move the outer hang breaker with a forged self-check log."""
+    isolation = IsolatedAgentConfig(credential_seam="loopback-fake", simulated=True)
+    config = _config(tmp_path, isolation=isolation)
+    state: dict = {"tmp_path": tmp_path}
+
+    def invoke(brief, *, work, prepared, provider, model, effort, prices, turn_output_tokens, turn_minutes,
+               session_cost_cap_usd=None, hmz=None, timeout_s=None, env_specs=(), flow=FLOW):
+        del work, provider, model, effort, prices, turn_output_tokens, turn_minutes
+        del session_cost_cap_usd, hmz, timeout_s, flow
+        remote = Path(state["workdir"])
+        (remote / prepared.submit).write_text(f"kernel void {brief.kernel_name}() {{ /* fixed */ }}\n", encoding="utf-8")
+        (remote / "NOTES.md").write_text("notes\n", encoding="utf-8")
+        (remote / "self_checks.jsonl").write_text(
+            json.dumps({"status": "timeout", "elapsed_s": 99.0}) + "\n" + json.dumps({"status": "crash"}) + "\n",
+            encoding="utf-8",
+        )
+        (remote / ".selfcheck").mkdir(exist_ok=True)
+        (remote / ".selfcheck" / "self_checks.jsonl").write_text(json.dumps({"status": "timeout"}) + "\n", encoding="utf-8")
+        return HmzInvocation(
+            status="ok", returncode=0, stdout=json.dumps({"kind": "result", "spent": "Usage(output=1000)"}),
+            stderr="", error="", spent={"output": 1000}, saw_tokens=True, cost_usd=0.002, elapsed_s=0.1, argv=(),
+        )
+
+    runner = _runner(tmp_path, _Host(state), state, config=config, invoke=invoke)
+    brief = _brief(tmp_path)
+    result = runner.execute(brief, execution=_execution(Path(brief.work_dir), config), provider="p", model="m", effort=None)
+    assert result.source is not None
+    assert result.self_checks == 0 and result.self_check_timeouts == 0 and result.self_check_crashes == 0
+    assert not (Path(brief.work_dir) / "self_checks.jsonl").exists()

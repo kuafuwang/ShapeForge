@@ -408,6 +408,10 @@ class LoopbackFakeSeam:
             "base_url": self.provider.base_url,
             "credential": credential.as_ref(),
             "token_in_env": False,
+            # The loopback provider is a test double: nothing is handed to the far side, so
+            # this record must not be read as evidence that a remote agent got a credential.
+            "provisioned_to_agent": False,
+            "agent_env": "in-process-test-double",
             "simulated": True,
             "env_spec_hash": hashlib.sha256(env_spec.encode("utf-8")).hexdigest(),
         }
@@ -477,6 +481,7 @@ class ExternalHelperSeam:
             "mode": self.mode,
             "credential": credential.as_ref(),
             "token_in_env": bool(answer.get("token_in_env", True)),
+            "provisioned_to_agent": True,
             "simulated": False,
             "helper": self.helper[0],
             "env_spec_hash": hashlib.sha256(env_spec.encode("utf-8")).hexdigest(),

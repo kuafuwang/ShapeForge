@@ -378,87 +378,74 @@ class SshWorkspaceKernelSessionRunner:
 
         invocation = None
         collection_error: WorkspaceError | None = None
+        provision_error: tuple[str, str] | None = None
         credential = None
         seam = None
-        if self.isolation is not None and self.isolation.requires_remote_agent:
-            from .agent_isolation import IsolationError
-
-            try:
-                seam = self._seam_factory(self.isolation, authority=self._authority)
-                credential = self._authority.mint(
-                    run_id=run_dir.name,
-                    session_label=brief.label,
-                    runtime=self.config.runtime,
-                    ttl_s=self.isolation.credential_ttl_s,
-                    max_uses=self.isolation.credential_max_uses,
-                )
-                identity["credential"] = seam.provision(credential, env_spec=env_spec)
-            except IsolationError as exc:
-                # No credential means no agent session; nothing has been billed yet.
-                if seam is not None:
-                    try:
-                        seam.close()
-                    except Exception:  # noqa: BLE001 - the typed error below is the result
-                        pass
-                if not self.config.keep_workspace:
-                    try:
-                        self._transport.remove(layout.workdir, receipt)
-                        identity["cleaned"] = True
-                    except WorkspaceError as cleanup_exc:
-                        identity["cleaned"] = False
-                        identity["cleanup_error"] = cleanup_exc.kind
-                return AgentResult(
-                    source=None,
-                    cost_usd=None,
-                    cost_incomplete=False,
-                    status="failed",
-                    error=f"the isolated agent credential was not provisioned: {exc}",
-                    diagnostics={"failure_class": "credential_unavailable", "isolation_error": exc.kind},
-                    identity=identity,
-                )
+        # The mint/provision step is inside this try as well: an unexpected seam failure
+        # must still revoke whatever was minted and clean the staged directory.
         try:
-            invocation = self._invoke(
-                brief,
-                work=host,
-                prepared=prepared,
-                provider=provider,
-                model=model,
-                effort=effort,
-                prices=execution.prices,
-                turn_output_tokens=execution.turn_output_tokens,
-                turn_minutes=execution.turn_minutes,
-                session_cost_cap_usd=execution.session_cost_cap_usd,
-                hmz=execution.hmz_binary,
-                timeout_s=execution.timeout_s,
-                env_specs=(env_spec,),
-                flow=self._flow,
-            )
-            try:
-                found, candidates, missing = self._collect(layout, prepared, host)
-                identity["collected"] = sorted(found)
-                identity["missing"] = sorted(missing)
-                identity["evidence_candidates"] = candidates
-            except WorkspaceError as exc:
-                collection_error = exc
-                identity["collection_error"] = exc.kind
+            if self.isolation is not None and self.isolation.requires_remote_agent:
+                from .agent_isolation import IsolationError
+
+                try:
+                    seam = self._seam_factory(self.isolation, authority=self._authority)
+                    credential = self._authority.mint(
+                        run_id=run_dir.name,
+                        session_label=brief.label,
+                        runtime=self.config.runtime,
+                        ttl_s=self.isolation.credential_ttl_s,
+                        max_uses=self.isolation.credential_max_uses,
+                    )
+                    identity["credential"] = seam.provision(credential, env_spec=env_spec)
+                except Exception as exc:  # noqa: BLE001 - typed below, after cleanup
+                    kind = exc.kind if isinstance(exc, IsolationError) else "credential"
+                    provision_error = (str(kind), str(exc))
+            if provision_error is None:
+                invocation = self._invoke(
+                    brief,
+                    work=host,
+                    prepared=prepared,
+                    provider=provider,
+                    model=model,
+                    effort=effort,
+                    prices=execution.prices,
+                    turn_output_tokens=execution.turn_output_tokens,
+                    turn_minutes=execution.turn_minutes,
+                    session_cost_cap_usd=execution.session_cost_cap_usd,
+                    hmz=execution.hmz_binary,
+                    timeout_s=execution.timeout_s,
+                    env_specs=(env_spec,),
+                    flow=self._flow,
+                )
+                try:
+                    found, candidates, missing = self._collect(layout, prepared, host)
+                    identity["collected"] = sorted(found)
+                    identity["missing"] = sorted(missing)
+                    identity["evidence_candidates"] = candidates
+                except WorkspaceError as exc:
+                    collection_error = exc
+                    identity["collection_error"] = exc.kind
         finally:
+            credential_evidence: dict | None = None
+            if credential is not None or seam is not None:
+                credential_evidence = identity.setdefault("credential", {})
             if credential is not None and seam is not None:
                 try:
                     seam.revoke(credential)
-                    identity["credential"]["revoked"] = True
+                    credential_evidence["revoked"] = True
                 except Exception as exc:  # noqa: BLE001 - cleanup evidence, not a result change
-                    identity["credential"]["revoked"] = False
-                    identity["credential"]["revoke_error"] = f"{type(exc).__name__}: {exc}"[:180]
+                    credential_evidence["revoked"] = False
+                    credential_evidence["revoke_error"] = f"{type(exc).__name__}: {exc}"[:180]
             if seam is not None:
                 try:
                     seam.close()
-                    identity["credential"]["seam_closed"] = True
+                    credential_evidence["seam_closed"] = True
                 except Exception as exc:  # noqa: BLE001
-                    identity["credential"]["seam_closed"] = False
-                    identity["credential"]["seam_error"] = f"{type(exc).__name__}: {exc}"[:180]
+                    credential_evidence["seam_closed"] = False
+                    credential_evidence["seam_error"] = f"{type(exc).__name__}: {exc}"[:180]
             live = self._authority.live_ids()
-            if live:
-                identity["credential"]["live_after_cleanup"] = list(live)
+            if live and credential_evidence is not None:
+                credential_evidence["live_after_cleanup"] = list(live)
             if not self.config.keep_workspace:
                 try:
                     self._transport.remove(layout.workdir, receipt)
@@ -470,6 +457,18 @@ class SshWorkspaceKernelSessionRunner:
                 identity["cleaned"] = False
                 identity["retained"] = True
 
+        if provision_error is not None:
+            kind, message = provision_error
+            # No credential means no agent session; nothing has been billed yet.
+            return AgentResult(
+                source=None,
+                cost_usd=None,
+                cost_incomplete=False,
+                status="failed",
+                error=f"the isolated agent credential was not provisioned: {message}",
+                diagnostics={"failure_class": "credential_unavailable", "isolation_error": kind},
+                identity=identity,
+            )
         if invocation is None:  # pragma: no cover - the invoke seam always returns or raises
             raise AssertionError("a remote session returned without an invocation")
         result = self._agent.collect_session(brief, host, invocation)
@@ -491,7 +490,15 @@ class SshWorkspaceKernelSessionRunner:
             identity["cost_bound"] = True
             recorded = binding.harness
             identity["harness_recorded"] = recorded
-            if recorded and recorded != self.config.harness:
+            # hmz omits `harness` for a session with no machine of its own. For a local
+            # placement that is the older, still-correct line; for an env placement an
+            # absent value means the run cannot prove the agent left the control host.
+            placement_ok = (
+                recorded == "env"
+                if self.config.harness == "env"
+                else (not recorded or recorded == "local")
+            )
+            if not placement_ok:
                 # hmz says the agent ran somewhere other than this config asked for. Never
                 # accept that silently: the session's bill and its placement are both suspect.
                 result.cost_incomplete = True
@@ -511,12 +518,12 @@ class SshWorkspaceKernelSessionRunner:
 
     def _collect(self, layout, prepared, host: Path):
         """Read the declared artifacts back into the canonical host directory."""
+        # Self-check records are deliberately not collected: a remote workspace has no
+        # self-check channel, and remote-authored rows must not reach the outer hang breaker.
         basis = [
             prepared.submit,
             "NOTES.md",
             "FEEDBACK.md",
-            "self_checks.jsonl",
-            ".selfcheck/self_checks.jsonl",
         ]
         found = self._transport.collect(layout.workdir, basis)
         missing = [name for name in basis if name not in found]

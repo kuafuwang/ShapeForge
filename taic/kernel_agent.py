@@ -942,7 +942,7 @@ def _evidence_paths(work: Path) -> set[str]:
         except OSError:
             continue
     keep: set[str] = set()
-    for relative in evidence_candidates(text):
+    for relative in evidence_candidates(text, limit=10_000):
         top = relative.split("/", 1)[0]
         if (work / top).exists():
             keep.add(top)
@@ -1046,6 +1046,8 @@ class HmzInvocation:
     returncode: int | None
     stdout: str
     stderr: str
+    #: The same human-readable failure the pre-refactor ``run_kernel_agent`` reported.
+    error: str
     spent: dict
     saw_tokens: bool
     cost_usd: float | None
@@ -1246,7 +1248,8 @@ def invoke_hmz(
         status=status,
         returncode=returncode,
         stdout=stdout or "",
-        stderr=error if status == "failed" and not stderr else (stderr or ""),
+        stderr=stderr or "",
+        error=error,
         spent=spent,
         saw_tokens=saw_result,
         cost_usd=cost,
@@ -1285,11 +1288,7 @@ def collect_session(
     gpu_s = protected[2] + beside[2]
     crashes = protected[3] + beside[3]
     status = invocation.status
-    error = ""
-    if status == "timeout":
-        error = f"hmz did not finish within {float(invocation.elapsed_s):.0f}s"
-    elif status == "failed":
-        error = (invocation.stderr or invocation.stdout or "").strip()[-400:]
+    error = invocation.error
     diagnostics = diagnostics_from_stream(invocation.stdout or "")
     response = str(diagnostics.pop("_response_text", "") or "")
     diagnostics["hmz_returncode"] = invocation.returncode
@@ -1374,6 +1373,7 @@ def run_kernel_agent(
     @return 本场会话的结果。
     @raises AgentError hmz 不在 PATH 上，或进程起不来时。
     """
+    _bridge_token(brief)  # fail before writing a session directory, as the old order did
     prepared = prepare_session(brief, work)
     invocation = invoke_hmz(
         brief, work=work, prepared=prepared,

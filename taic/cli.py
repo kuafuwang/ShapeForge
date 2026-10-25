@@ -454,6 +454,19 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
             current = {"harness": workspace.harness, "runtime": workspace.runtime, "root": workspace.root}
             if not isinstance(resolved, dict) or any(resolved.get(key) != value for key, value in current.items()):
                 raise ResumeRefused("remote workspace placement differs from the original run", 5)
+            recorded_isolation = resolved.get("isolation") or {}
+            isolation = getattr(workspace, "isolation", None)
+            current_isolation = (
+                {"credential_seam": isolation.credential_seam, "simulated": isolation.simulated}
+                if isolation is not None else {}
+            )
+            if not isinstance(recorded_isolation, dict):
+                raise ResumeRefused("cannot resume: execution.json has a malformed isolation block", 5)
+            for key, value in current_isolation.items():
+                if recorded_isolation.get(key) != value:
+                    raise ResumeRefused(f"remote workspace isolation {key} differs from the original run", 5)
+            if not current_isolation and recorded_isolation:
+                raise ResumeRefused("cannot resume without the original isolation config", 5)
         elif workspace is not None:
             raise ResumeRefused("cannot switch a local run to a remote workspace during resume", 5)
         mode = execution["evaluation"]
