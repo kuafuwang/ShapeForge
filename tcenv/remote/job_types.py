@@ -53,6 +53,14 @@ class StateCorrupt(JobError):
         super().__init__("data_loss", message, failure_domain="infrastructure")
 
 
+class UntrustedSignature(StateCorrupt):
+    """A stored result is signed by a key this frontend no longer trusts.
+
+    Security revocation must not brick the whole frontend: the affected job is
+    quarantined and its result is withheld, while other jobs keep serving.
+    """
+
+
 @dataclass(frozen=True)
 class ExpectedEvaluator:
     site_id: str

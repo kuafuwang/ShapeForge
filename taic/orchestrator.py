@@ -689,12 +689,19 @@ class Orchestrator:
         if self.publishable_epochs is not None and any(not isinstance(epoch, str) or not epoch for epoch in self.publishable_epochs):
             raise RunStartError("publishable_epochs must contain non-empty epochs")
         transport_metadata = self._evaluator_transport_metadata()
+        evaluator_keyring = getattr(self.evaluator, "keyring", None)
+        trusted_external_keys = (
+            frozenset(evaluator_keyring.key_ids)
+            if evaluator_keyring is not None and hasattr(evaluator_keyring, "key_ids")
+            else None
+        )
         self._outbox = None if self._local_evaluator else EvaluationOutbox(
             self.run_dir,
             signature_key=getattr(self.evaluator, "signature_key", None),
             transport=transport_metadata.get("transport", "legacy-ssh"),
             api_contract_id=transport_metadata.get("api_contract_id", ""),
             evidence_contract_id=transport_metadata.get("evidence_contract_id", ""),
+            external_trusted_key_ids=trusted_external_keys,
         )
         execution_document = {
             "schema_version": 1,

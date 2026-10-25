@@ -229,6 +229,18 @@ def test_same_request_id_with_different_body_is_refused(service):
     assert error.payload["code"] == "idempotency_conflict"
 
 
+def test_legacy_service_rejects_a_fingerprint_for_another_task(service):
+    """@brief legacy adapter 也必须把已登记 fingerprint 绑定到 task/dtype/size。"""
+    from dataclasses import replace as dataclass_replace
+
+    request = _request(request_id="legacy-task-binding")
+    _send_request(service, dataclass_replace(request, task="gemm"))
+    error = service.recv()
+    assert error.frame_type == "error"
+    assert error.payload["code"] == "protocol_error"
+    assert "task fingerprint" in error.payload["message"]
+
+
 def test_malformed_request_is_rejected_without_shell_execution(service):
     request = _request()
     payload = request.to_dict()

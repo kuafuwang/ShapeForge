@@ -110,6 +110,10 @@ class RemoteEvaluationConfig:
         else:
             if command_value is not None:
                 raise ValueError("gRPC transport does not accept a command")
+            for name in ("expected_site_id", "expected_device_id"):
+                value = document.get(name)
+                if not isinstance(value, str) or not value:
+                    raise ValueError(f"gRPC transport requires {name}")
             command = []
             for name in ("endpoint", "ca_file", "signature_keyring_file"):
                 value = document.get(name)

@@ -53,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         backend_version=args.backend_version, target_id=args.target_id,
         worker_build=args.worker_build, task_pack_digest=args.task_pack_digest,
         calibration_digest=args.calibration_digest, task_fingerprints=fingerprints,
+        task_bindings={fingerprint: ("relu", "fp16", "small") for fingerprint in fingerprints},
         measurement_kind="simulated", publication_allowed=False,
     )
     grants = load_grants_file(args.grants_file)

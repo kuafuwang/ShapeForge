@@ -47,6 +47,7 @@ from .job_types import (
     JobSnapshot,
     QuotaUsage,
     StateCorrupt,
+    UntrustedSignature,
 )
 
 SCHEMA_VERSION = 1
@@ -546,7 +547,13 @@ class JobStore:
                             or provenance.get("request_digest") != job["request_digest"]
                         ):
                             raise StateCorrupt("result provenance differs from the accepted job identities")
-                        self._result_from_row(result, job=job, attempt=current)
+                        try:
+                            self._result_from_row(result, job=job, attempt=current)
+                        except UntrustedSignature as exc:
+                            corrupt_requests.append((
+                                job["request_id"],
+                                f"result signature key is not trusted: {exc}",
+                            ))
                     if job["state"] in {"accepted", "queued", "running", "interrupted"} and job["source"] is None:
                         raise StateCorrupt("nonterminal job has no exact candidate bytes")
                     if job["state"] in TERMINAL_JOB_STATES and job["source"] is not None:
@@ -885,7 +892,7 @@ class JobStore:
         if signature is not None:
             key = self._verification_keys.get(signature["key_id"])
             if key is None:
-                raise StateCorrupt("stored result signature key is not trusted by this frontend")
+                raise UntrustedSignature("stored result signature key is not trusted by this frontend")
             if not contracts.verify_result_signature(
                 self._result_document(result), key_id=signature["key_id"],
                 key=key, signature=signature["signature"],
@@ -941,7 +948,12 @@ class JobStore:
                 raise StateCorrupt("completed job result is missing")
             if attempt_row is None:
                 raise StateCorrupt("completed job has no current attempt row")
-            result = self._result_from_row(row, job=job, attempt=attempt_row)
+            try:
+                result = self._result_from_row(row, job=job, attempt=attempt_row)
+            except UntrustedSignature:
+                if not job["quarantined"]:
+                    raise
+                result = None
         return JobSnapshot(
             request_id=job["request_id"], request_digest=job["request_digest"], state=job["state"],
             provenance=provenance, current_attempt=attempt, result=result,
@@ -1457,9 +1469,12 @@ class JobStore:
                 params.append(attempt_id)
             earliest = conn.execute("SELECT MIN(sequence) FROM events WHERE request_id=?", (request_id,)).fetchone()[0]
             if earliest is not None and after_sequence < earliest - 1:
-                # Coalesce a retention gap into one complete current snapshot,
-                # even when the caller also filters progress by attempt.
+                # Coalesce a retention gap into one complete current snapshot.
+                # A caller filtering an old attempt must not receive a
+                # snapshot of a different attempt.
                 current = snapshot.current_attempt
+                if attempt_id is not None and (current is None or current.attempt_id != attempt_id):
+                    return []
                 return [JobEvent(request_id, current.attempt_id if current else None, current.lease_fence if current else 0, snapshot.last_sequence, snapshot=snapshot)]
             rows = conn.execute(f"SELECT * FROM events WHERE request_id=? AND sequence>?{filter_sql} ORDER BY sequence", [request_id, after_sequence, *params[1:]]).fetchall()
             result = []

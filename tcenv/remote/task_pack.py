@@ -43,6 +43,7 @@ class TaskPack:
     manifest: dict[str, Any]
     digest: str
     fingerprints: frozenset[str]
+    fingerprint_bindings: dict[str, tuple[str, str, str]]
     tasks: tuple[dict[str, str], ...]
     target_id: str
     backend: str
@@ -164,6 +165,17 @@ def load_task_pack(
         raise TaskPackError("deployed task pack digest differs from the expected digest")
 
     fingerprints = {entry["fingerprint"] for entry in tasks}
+    bindings: dict[str, tuple[str, str, str]] = {}
+    bound_triples: dict[tuple[str, str, str], str] = {}
+    for entry in tasks:
+        fingerprint = entry["fingerprint"]
+        triple = (entry["task"], entry["dtype"], entry["size"])
+        if fingerprint in bindings and bindings[fingerprint] != triple:
+            raise TaskPackError("the same fingerprint is bound to two different tasks")
+        if triple in bound_triples and bound_triples[triple] != fingerprint:
+            raise TaskPackError("the same task/dtype/size is bound to two different fingerprints")
+        bindings[fingerprint] = triple
+        bound_triples[triple] = fingerprint
     if fingerprint_provider is not None:
         for entry in tasks:
             recomputed = fingerprint_provider(entry)
@@ -200,6 +212,7 @@ def load_task_pack(
         manifest=manifest,
         digest=digest,
         fingerprints=frozenset(fingerprints),
+        fingerprint_bindings=bindings,
         tasks=tasks,
         target_id=target_id,
         backend=backend,

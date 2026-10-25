@@ -215,9 +215,32 @@ def request_to_proto(request: ExternalEvaluationRequest) -> pb.EvaluationRequest
     return message
 
 
+def reject_unknown_fields(message, name: str) -> None:
+    """Reject Protobuf fields this contract version does not understand.
+
+    Protobuf preserves unknown fields, so a newer execution option must not be
+    silently ignored before durable acceptance.
+    """
+
+    if not hasattr(message, "SerializeToString") or not hasattr(message, "DiscardUnknownFields"):
+        raise JobError("invalid_argument", f"{name} is not a Protobuf message")
+    clone = message.__class__()
+    clone.CopyFrom(message)
+    clone.DiscardUnknownFields()
+    if message.SerializeToString(deterministic=True) != clone.SerializeToString(deterministic=True):
+        raise JobError("invalid_argument", f"{name} contains unknown fields")
+
+
 def request_from_proto(message: pb.EvaluationRequest) -> ExternalEvaluationRequest:
     if not isinstance(message, pb.EvaluationRequest):
         raise JobError("invalid_argument", "request is not an EvaluationRequest message")
+    reject_unknown_fields(message, "EvaluationRequest")
+    if message.HasField("cases"):
+        reject_unknown_fields(message.cases, "EvaluationRequest.cases")
+    try:
+        message.source.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise JobError("invalid_argument", "candidate source is not valid UTF-8 text") from exc
     kind = _enum(message.kind, KIND_FROM_PROTO, "kind")
     mode = _enum(message.mode, MODE_FROM_PROTO, "mode")
     cache_policy = _enum(message.cache_policy, CACHE_FROM_PROTO, "cache_policy")
@@ -457,6 +480,11 @@ def receipt_from_proto(message: pb.Receipt) -> dict[str, Any]:
 
 
 def _rfc3339_from_timestamp(message: Timestamp) -> str:
+    # The canonical receipt document is signed verbatim.  A Timestamp with
+    # sub-millisecond precision cannot be reconstructed from the canonical
+    # three-digit form without changing the signed bytes, so fail closed.
+    if message.nanos % 1_000_000:
+        raise JobError("invalid_argument", "receipt issued_at has sub-millisecond precision not covered by the canonical document")
     milliseconds = timestamp_milliseconds(message)
     seconds, millis = divmod(milliseconds, 1000)
     try:

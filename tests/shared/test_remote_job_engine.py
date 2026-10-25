@@ -131,6 +131,9 @@ def test_capability_expiry_and_feature_negotiation(service):
     with pytest.raises(JobError, match="unsupported required") as caught:
         service.get_capabilities(
             grant_token=TOKEN, client_nonce="missing-feature-nonce",
+            expected=service.expected_identities.evaluator.to_dict(),
+            api_contract_ids=[service.expected_identities.api_contract_id],
+            evidence_contract_ids=[service.expected_identities.evidence_contract_id],
             required_features=["not-implemented"],
         )
     assert caught.value.code == "failed_precondition"
@@ -139,11 +142,24 @@ def test_capability_expiry_and_feature_negotiation(service):
     assert caught.value.code == "not_found"
 
     nonce = "one-time-client-nonce"
-    service.get_capabilities(grant_token=TOKEN, client_nonce=nonce)
+    service.get_capabilities(
+        grant_token=TOKEN, client_nonce=nonce,
+        expected=service.expected_identities.evaluator.to_dict(),
+        api_contract_ids=[service.expected_identities.api_contract_id],
+        evidence_contract_ids=[service.expected_identities.evidence_contract_id],
+    )
     with pytest.raises(JobError, match="already used"):
-        service.get_capabilities(grant_token=TOKEN, client_nonce=nonce)
+        service.get_capabilities(
+            grant_token=TOKEN, client_nonce=nonce,
+            expected=service.expected_identities.evaluator.to_dict(),
+            api_contract_ids=[service.expected_identities.api_contract_id],
+            evidence_contract_ids=[service.expected_identities.evidence_contract_id],
+        )
     feature_cap = service.get_capabilities(
         grant_token=TOKEN, client_nonce="feature-binding-nonce",
+        expected=service.expected_identities.evaluator.to_dict(),
+        api_contract_ids=[service.expected_identities.api_contract_id],
+        evidence_contract_ids=[service.expected_identities.evidence_contract_id],
         required_features=["progress"],
     )
     with pytest.raises(JobError, match="required features differ"):
@@ -351,6 +367,35 @@ def test_progress_resume_attempt_filter_and_snapshot_fallback(tmp_path):
         service.close()
 
 
+def test_watch_attempt_filter_never_coalesces_another_attempt(tmp_path):
+    """@brief 事件窗口越过旧 attempt 时，旧 attempt 的 Watch 不能收到新 attempt 的快照。"""
+    service = engine(tmp_path / "state", event_window=2)
+    try:
+        req = request("filter-gap", source=b"FAIL_FIRST")
+        submit(service, req)
+        interrupted = wait_state(service, req, {"interrupted"})
+        old_attempt = interrupted.current_attempt
+        retry(service, req, old_attempt.attempt_id, nonce="fresh-attempt-nonce")
+        final = wait_state(service, req, {"completed"})
+        assert final.current_attempt.attempt_id != old_attempt.attempt_id
+        stale = service.watch(
+            request_id=req.request_id, request_digest=req.request_digest,
+            expected=service.expected_identities, grant_token=TOKEN,
+            after_sequence=0, attempt_id=old_attempt.attempt_id,
+        )
+        assert stale == []
+        current = service.watch(
+            request_id=req.request_id, request_digest=req.request_digest,
+            expected=service.expected_identities, grant_token=TOKEN,
+            after_sequence=0, attempt_id=final.current_attempt.attempt_id,
+        )
+        assert len(current) == 1
+        assert current[0].snapshot.state == "completed"
+        assert current[0].attempt_id == final.current_attempt.attempt_id
+    finally:
+        service.close()
+
+
 def test_cancel_kills_worker_group_and_orphan(tmp_path):
     running_marker = tmp_path / "running.json"
     orphan_log = tmp_path / "orphans.jsonl"
@@ -397,6 +442,21 @@ def test_duplicate_result_bytes_are_deduplicated_but_conflicts_are_data_loss(ser
         service.store.complete_attempt(
             req.request_id, attempt, report={**report, "candidate_us": 999.0}, evidence=evidence,
         )
+
+
+def test_task_fingerprint_must_bind_task_dtype_and_size(tmp_path):
+    """@brief 已登记 fingerprint 不能被另一个 task/dtype/size 重用。"""
+    service = engine(tmp_path / "state")
+    try:
+        with pytest.raises(JobError, match="task fingerprint"):
+            submit(service, request("wrong-task", task="gemm"))
+        with pytest.raises(JobError, match="task fingerprint"):
+            submit(service, request("wrong-dtype", dtype="fp32"))
+        with pytest.raises(JobError, match="task fingerprint"):
+            submit(service, request("wrong-size", size="paper"))
+        assert submit(service, request("right-task")).state in {"accepted", "queued", "running", "completed"}
+    finally:
+        service.close()
 
 
 def test_formal_selfcheck_and_mode_scopes_cannot_be_escalated(tmp_path):

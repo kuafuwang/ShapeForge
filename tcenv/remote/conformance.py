@@ -43,13 +43,21 @@ def _metadata(token: str) -> tuple[tuple[str, str], ...]:
     return (("authorization", f"Bearer {token}"),)
 
 
-def _capabilities(stub, token: str, *, features=(), timeout: float = 15.0):
+def _capabilities(stub, token: str, *, expected, features=(), timeout: float = 15.0):
     return stub.GetCapabilities(
         pb.CapabilitiesRequest(
             api_contract_ids=[contracts.API_CONTRACT_ID],
             evidence_contract_ids=[contracts.EVIDENCE_CONTRACT_ID],
             required_features=list(features),
             client_nonce=secrets.token_hex(16),
+            expected=pb.ExpectedEvaluator(
+                site_id=expected.site_id,
+                device_id=expected.device_id,
+                target_id=expected.target_id,
+                worker_build=expected.worker_build,
+                task_pack_digest=expected.task_pack_digest,
+                evaluator_epoch=expected.evaluator_epoch,
+            ),
         ),
         metadata=_metadata(token),
         timeout=timeout,
@@ -97,7 +105,7 @@ def run_conformance(
     # 2. A required feature the frontend does not support fails closed before Submit.
     unsupported = "conformance-unsupported-feature"
     try:
-        _capabilities(stub, token, features=(*required_features, unsupported), timeout=timeout_s)
+        _capabilities(stub, token, expected=factory.expected, features=(*required_features, unsupported), timeout=timeout_s)
         _step(report, "unsupported_required_feature_rejected", ok=False, detail="capabilities succeeded")
     except grpc.RpcError as exc:
         detail = error_detail(exc)
@@ -110,7 +118,7 @@ def run_conformance(
 
     # 3. GetCapabilities and the three identities.
     epoch = factory.ensure_epoch(request)
-    capabilities = _capabilities(stub, token, features=required_features, timeout=timeout_s)
+    capabilities = _capabilities(stub, token, expected=factory.expected, features=required_features, timeout=timeout_s)
     provenance = gc.provenance_from_proto(capabilities.provenance, require_attempt=False)
     _step(
         report, "capabilities",
@@ -171,7 +179,7 @@ def run_conformance(
 
     # 6. Retry is only for interrupted attempts.  A completed job must be refused.
     try:
-        fresh = _capabilities(stub, token, features=required_features, timeout=timeout_s)
+        fresh = _capabilities(stub, token, expected=factory.expected, features=required_features, timeout=timeout_s)
         fresh_expected = gc.expected_identities_from_provenance(
             gc.provenance_from_proto(fresh.provenance, require_attempt=False)
         )
@@ -203,7 +211,7 @@ def run_conformance(
     if second_request is not None:
         second_external = ExternalEvaluationRequest.from_legacy(second_request)
         try:
-            fresh = _capabilities(stub, token, features=required_features, timeout=timeout_s)
+            fresh = _capabilities(stub, token, expected=factory.expected, features=required_features, timeout=timeout_s)
             fresh_expected = gc.expected_identities_from_provenance(
                 gc.provenance_from_proto(fresh.provenance, require_attempt=False)
             )

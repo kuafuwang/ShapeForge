@@ -312,11 +312,19 @@ class JobEngine:
         valid_for_ms: int = 60_000,
     ) -> Capabilities:
         self._required_features(required_features)
+        if not isinstance(expected, Mapping) or not expected:
+            raise JobError("invalid_argument", "capabilities requires explicit expected evaluator identities")
+        for name in ("site_id", "device_id", "target_id"):
+            if not isinstance(expected.get(name), str) or not expected.get(name):
+                raise JobError("invalid_argument", f"capabilities requires expected {name}")
+        for name, values in (("api_contract_ids", api_contract_ids), ("evidence_contract_ids", evidence_contract_ids)):
+            if not isinstance(values, (list, tuple)) or not values:
+                raise JobError("invalid_argument", f"capabilities requires non-empty {name}")
         capabilities = self.store.get_capabilities(
-            grant_token=grant_token, client_nonce=client_nonce, expected=expected or {},
+            grant_token=grant_token, client_nonce=client_nonce, expected=expected,
             expected_identities=self._expected, provenance=self._base_provenance(),
-            api_contract_ids=api_contract_ids or [API_CONTRACT_ID],
-            evidence_contract_ids=evidence_contract_ids or [EVIDENCE_CONTRACT_ID],
+            api_contract_ids=list(api_contract_ids),
+            evidence_contract_ids=list(evidence_contract_ids),
             required_features=required_features, supported_features=self.supported_features,
             valid_for_ms=valid_for_ms,
             limits={
@@ -337,7 +345,7 @@ class JobEngine:
     def _validate_submission(self, request: ExternalEvaluationRequest) -> None:
         if request.target_id != self.identity.target_id:
             raise JobError("failed_precondition", "target is not served by this evaluator")
-        if request.task_fingerprint not in self.identity.task_fingerprints:
+        if not self.identity.accepts_task(request.task, request.dtype, request.size, request.task_fingerprint):
             raise JobError("failed_precondition", "task fingerprint does not match the deployed task pack")
         if request.mode not in self.supported_modes:
             raise JobError("failed_precondition", f"mode {request.mode!r} is not supported by this evaluator")

@@ -79,6 +79,11 @@ def _capabilities(stub, *, metadata=(("authorization", f"Bearer {TOKEN}"),)):
             api_contract_ids=[contracts.API_CONTRACT_ID],
             evidence_contract_ids=[contracts.EVIDENCE_CONTRACT_ID],
             client_nonce="e" * 16,
+            expected=pb.ExpectedEvaluator(
+                site_id=identity().site_id, device_id=identity().device_id,
+                target_id=TARGET, worker_build=identity().worker_build,
+                task_pack_digest=TASK_PACK_DIGEST,
+            ),
         ),
         metadata=metadata,
         timeout=10,

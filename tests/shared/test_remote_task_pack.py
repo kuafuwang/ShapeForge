@@ -37,6 +37,7 @@ def test_task_pack_recomputes_manifest_digest_and_fingerprints(tmp_path):
     assert pack.backend == "metal"
     assert pack.target_id == "apple-m4-max"
     assert pack.fingerprints == {FINGERPRINT}
+    assert pack.fingerprint_bindings == {FINGERPRINT: ("relu", "fp16", "small")}
     assert pack.reference_versions["naive"] == "v1"
     paths = [entry["path"] for entry in pack.manifest["files"]]
     assert paths == sorted(paths)
@@ -80,6 +81,19 @@ def test_task_pack_rejects_symlinks_precomputed_manifest_and_bad_shapes(tmp_path
     (missing / "fingerprints.json").write_text(json.dumps({"schema_version": 1, "tasks": []}), encoding="utf-8")
     with pytest.raises(TaskPackError, match="at least one"):
         load_task_pack(missing)
+
+
+def test_task_pack_rejects_conflicting_fingerprint_bindings(tmp_path):
+    root = _pack(tmp_path / "pack")
+    (root / "fingerprints.json").write_text(json.dumps({
+        "schema_version": 1,
+        "tasks": [
+            {"task": "relu", "dtype": "fp16", "size": "small", "fingerprint": FINGERPRINT},
+            {"task": "gemm", "dtype": "fp16", "size": "small", "fingerprint": FINGERPRINT},
+        ],
+    }), encoding="utf-8")
+    with pytest.raises(TaskPackError, match="same fingerprint"):
+        load_task_pack(root)
 
 
 def test_task_pack_digest_is_canonical_across_roots(tmp_path):

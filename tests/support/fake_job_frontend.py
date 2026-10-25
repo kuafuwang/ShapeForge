@@ -44,7 +44,8 @@ def main() -> int:
         )
         provenance = identity().external_provenance(execution_protocol_version="3")
         cap = store.get_capabilities(
-            grant_token=TOKEN, client_nonce="1234567890abcdef", expected={},
+            grant_token=TOKEN, client_nonce="1234567890abcdef",
+            expected=expected.evaluator.to_dict(),
             expected_identities=expected, provenance=provenance,
             api_contract_ids=[expected.api_contract_id],
             evidence_contract_ids=[expected.evidence_contract_id],

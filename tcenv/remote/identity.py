@@ -13,6 +13,8 @@ import hashlib
 import math
 import re
 from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Mapping
 
 from .contracts import API_CONTRACT_ID, EVIDENCE_CONTRACT_ID
 from .protocol import (
@@ -36,6 +38,11 @@ class ServiceIdentity:
     task_pack_digest: str
     calibration_digest: str
     task_fingerprints: frozenset[str] = frozenset()
+    # fingerprint -> (task, dtype, size).  When present it is authoritative: a
+    # registered fingerprint cannot be reused for a different problem.  Legacy
+    # identities that only have ``task_fingerprints`` keep their historical
+    # flat-set behavior for resume compatibility.
+    task_bindings: Mapping[str, tuple[str, str, str]] | None = None
     measurement_kind: str = "measured"
     publication_allowed: bool = False
 
@@ -43,12 +50,41 @@ class ServiceIdentity:
         for name in ("site_id", "device_id", "backend", "backend_version", "target_id", "worker_build", "task_pack_digest", "calibration_digest"):
             if not isinstance(getattr(self, name), str) or not getattr(self, name):
                 raise ValueError(f"service identity {name} must be non-empty")
+        if self.task_bindings is not None:
+            if not isinstance(self.task_bindings, Mapping) or not self.task_bindings:
+                raise ValueError("service identity task bindings must be a non-empty mapping")
+            normalized: dict[str, tuple[str, str, str]] = {}
+            triples: set[tuple[str, str, str]] = set()
+            for fingerprint, binding in self.task_bindings.items():
+                if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+                    raise ValueError("service identity task fingerprints must be 64 lowercase hex characters")
+                if (
+                    not isinstance(binding, (tuple, list)) or len(binding) != 3
+                    or any(not isinstance(value, str) or not value for value in binding)
+                ):
+                    raise ValueError("service identity task bindings must be (task, dtype, size) triples")
+                triple = (str(binding[0]), str(binding[1]), str(binding[2]))
+                if triple in triples:
+                    raise ValueError("service identity registers two fingerprints for the same task")
+                triples.add(triple)
+                normalized[fingerprint] = triple
+            if self.task_fingerprints and set(self.task_fingerprints) != set(normalized):
+                raise ValueError("service identity task fingerprints and bindings disagree")
+            object.__setattr__(self, "task_bindings", MappingProxyType(normalized))
+            object.__setattr__(self, "task_fingerprints", frozenset(normalized))
         if not self.task_fingerprints:
             raise ValueError("service identity must register at least one task fingerprint")
         if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in self.task_fingerprints):
             raise ValueError("service identity task fingerprints must be 64 lowercase hex characters")
         if self.measurement_kind not in {"measured", "simulated"}:
             raise ValueError("measurement_kind must be measured or simulated")
+
+    def accepts_task(self, task: str, dtype: str, size: str, fingerprint: str) -> bool:
+        """Bind a registered fingerprint to exactly one (task, dtype, size)."""
+
+        if self.task_bindings is not None:
+            return self.task_bindings.get(fingerprint) == (task, dtype, size)
+        return fingerprint in self.task_fingerprints
 
     @property
     def epoch(self) -> str:

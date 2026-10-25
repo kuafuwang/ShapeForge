@@ -59,6 +59,16 @@ def _legacy_request(
     )
 
 
+def _expected_pb(engine) -> pb.ExpectedEvaluator:
+    expected = engine.expected_identities.evaluator
+    return pb.ExpectedEvaluator(
+        site_id=expected.site_id, device_id=expected.device_id,
+        target_id=expected.target_id, worker_build=expected.worker_build,
+        task_pack_digest=expected.task_pack_digest,
+        evaluator_epoch=expected.evaluator_epoch,
+    )
+
+
 def _keyring(*, key: bytes = SIGNING_KEY, key_id: str = SIGNING_KEY_ID) -> SignatureKeyring:
     return SignatureKeyring({key_id: key})
 
@@ -77,6 +87,7 @@ class Harness:
         token_provider=None,
         state_dir: Path | None = None,
         signing_keyring=None,
+        auth_max_failures: int = 64,
     ) -> None:
         self.engine = make_engine(
             state_dir or (tmp_path / "state"),
@@ -90,6 +101,7 @@ class Harness:
             config=GrpcServerConfig(
                 address="127.0.0.1:0", allow_insecure=True,
                 require_client_identity=False, watch_poll_s=0.02,
+                auth_max_failures=auth_max_failures,
             ),
         )
         self.factory = GrpcEvaluatorFactory(
@@ -207,6 +219,19 @@ def test_grpc_grant_and_run_scope_are_enforced(tmp_path):
         with pytest.raises(Exception) as excinfo:
             harness.factory.formal(other_run)
         assert getattr(excinfo.value, "code", "") == "session_mismatch"
+
+
+def test_grpc_task_fingerprint_is_bound_to_task_dtype_and_size(harness):
+    mismatched = _legacy_request(request_id="wrong-task")
+    object.__setattr__(mismatched, "task", "gemm")
+    with pytest.raises(Exception) as excinfo:
+        harness.factory.formal(mismatched)
+    assert getattr(excinfo.value, "code", "") == "precondition_failed"
+    wrong_dtype = _legacy_request(request_id="wrong-dtype")
+    object.__setattr__(wrong_dtype, "dtype", "fp32")
+    with pytest.raises(Exception) as excinfo:
+        harness.factory.formal(wrong_dtype)
+    assert getattr(excinfo.value, "code", "") == "precondition_failed"
 
 
 def test_grpc_interrupted_job_requires_explicit_resume(tmp_path):
@@ -384,6 +409,7 @@ def test_grpc_submit_rejects_a_digest_that_does_not_bind_source_bytes(harness):
             api_contract_ids=[contracts.API_CONTRACT_ID],
             evidence_contract_ids=[contracts.EVIDENCE_CONTRACT_ID],
             client_nonce="b" * 16,
+            expected=_expected_pb(harness.engine),
         ),
         metadata=metadata, timeout=5,
     )
@@ -408,6 +434,7 @@ def test_grpc_stale_capability_from_a_previous_frontend_is_rejected(tmp_path):
                 api_contract_ids=[contracts.API_CONTRACT_ID],
                 evidence_contract_ids=[contracts.EVIDENCE_CONTRACT_ID],
                 client_nonce="c" * 16,
+                expected=_expected_pb(harness.engine),
             ),
             metadata=metadata, timeout=5,
         )
@@ -622,6 +649,7 @@ def test_grpc_reps_and_seed_overflow_are_rejected(harness):
             api_contract_ids=[contracts.API_CONTRACT_ID],
             evidence_contract_ids=[contracts.EVIDENCE_CONTRACT_ID],
             client_nonce="d" * 16,
+            expected=_expected_pb(harness.engine),
         ),
         metadata=metadata, timeout=5,
     )
@@ -666,6 +694,164 @@ def test_grpc_reps_and_seed_overflow_are_rejected(harness):
             metadata=metadata, timeout=5,
         )
     assert excinfo.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+def _capabilities_request(engine, nonce: str, *, api=None, evidence=None) -> pb.CapabilitiesRequest:
+    request = pb.CapabilitiesRequest(
+        api_contract_ids=[contracts.API_CONTRACT_ID] if api is None else api,
+        evidence_contract_ids=[contracts.EVIDENCE_CONTRACT_ID] if evidence is None else evidence,
+        client_nonce=nonce,
+    )
+    if engine is not None:
+        request.expected.CopyFrom(_expected_pb(engine))
+    return request
+
+
+def test_grpc_capabilities_requires_expected_identities_and_contract_offers(harness):
+    stub = harness.factory.stub
+    metadata = (("authorization", f"Bearer {TOKEN}"),)
+    with pytest.raises(grpc.RpcError) as excinfo:
+        stub.GetCapabilities(
+            _capabilities_request(None, "cap-no-expected-0000"), metadata=metadata, timeout=5,
+        )
+    assert excinfo.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    for kwargs in ({"api": []}, {"evidence": []}):
+        with pytest.raises(grpc.RpcError) as excinfo:
+            stub.GetCapabilities(
+                _capabilities_request(harness.engine, "cap-no-offer-000000", **kwargs),
+                metadata=metadata, timeout=5,
+            )
+        assert excinfo.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    partial = pb.CapabilitiesRequest(
+        api_contract_ids=[contracts.API_CONTRACT_ID],
+        evidence_contract_ids=[contracts.EVIDENCE_CONTRACT_ID],
+        client_nonce="cap-partial-expected",
+    )
+    partial.expected.CopyFrom(pb.ExpectedEvaluator(
+        site_id=identity().site_id, target_id=TARGET,
+    ))
+    with pytest.raises(grpc.RpcError) as excinfo:
+        stub.GetCapabilities(partial, metadata=metadata, timeout=5)
+    assert excinfo.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+def test_grpc_unknown_fields_and_non_utf8_source_are_rejected(harness):
+    stub = harness.factory.stub
+    metadata = (("authorization", f"Bearer {TOKEN}"),)
+    expected = gc.expected_identities_to_proto(harness.engine.expected_identities)
+    capabilities = stub.GetCapabilities(
+        _capabilities_request(harness.engine, "unknown-field-cap-00"), metadata=metadata, timeout=5,
+    )
+    body = pb.EvaluationRequest(
+        kind=pb.EVALUATION_KIND_FORMAL_EVAL,
+        request_id="unknown-field-request",
+        run_id="run-1",
+        session_id="session-1",
+        task="relu",
+        dtype="fp16",
+        size="small",
+        target_id=TARGET,
+        task_fingerprint=TASK_FINGERPRINT,
+        candidate_sha256=hashlib.sha256(b"OK").hexdigest(),
+        source=b"OK",
+        mode=pb.EVALUATION_MODE_QUICK,
+        reps=2,
+        queue_timeout_ms=3000,
+        candidate_timeout_ms=3000,
+        cache_policy=pb.CACHE_POLICY_REUSE,
+    )
+    digest = gc.request_from_proto(body).request_digest
+    unknown_field = b"\xb8\x3e\x01"  # field 999, varint 1
+    parsed_body = pb.EvaluationRequest.FromString(body.SerializeToString() + unknown_field)
+    submit = pb.SubmitRequest(
+        request=parsed_body, request_digest=digest, expected=expected,
+        capability_id=capabilities.capability_id,
+    )
+    with pytest.raises(grpc.RpcError) as excinfo:
+        stub.Submit(submit, metadata=metadata, timeout=5)
+    assert excinfo.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+    clean_submit = pb.SubmitRequest(
+        request=body, request_digest=digest, expected=expected,
+        capability_id=capabilities.capability_id,
+    )
+    parsed_submit = pb.SubmitRequest.FromString(clean_submit.SerializeToString() + unknown_field)
+    with pytest.raises(grpc.RpcError) as excinfo:
+        stub.Submit(parsed_submit, metadata=metadata, timeout=5)
+    assert excinfo.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+    non_utf8 = pb.EvaluationRequest()
+    non_utf8.CopyFrom(body)
+    non_utf8.source = b"\xff\xfe"
+    non_utf8.candidate_sha256 = hashlib.sha256(non_utf8.source).hexdigest()
+    with pytest.raises(grpc.RpcError) as excinfo:
+        stub.Submit(
+            pb.SubmitRequest(request=non_utf8, request_digest="0" * 64, expected=expected, capability_id=capabilities.capability_id),
+            metadata=metadata, timeout=5,
+        )
+    assert excinfo.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+def test_grpc_unknown_grant_trips_the_auth_failure_limiter(tmp_path):
+    with Harness(tmp_path, auth_max_failures=2) as harness:
+        stub = harness.factory.stub
+        metadata = (("authorization", "Bearer syntactically-valid-but-unknown"),)
+        for index in range(2):
+            with pytest.raises(grpc.RpcError) as excinfo:
+                stub.GetCapabilities(
+                    _capabilities_request(harness.engine, f"limiter-nonce-{index:06d}"),
+                    metadata=metadata, timeout=5,
+                )
+            assert excinfo.value.code() == grpc.StatusCode.UNAUTHENTICATED
+        with pytest.raises(grpc.RpcError) as excinfo:
+            stub.GetCapabilities(
+                _capabilities_request(harness.engine, "limiter-nonce-final"),
+                metadata=metadata, timeout=5,
+            )
+        assert excinfo.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
+
+
+def test_receipt_rejects_sub_millisecond_issued_at():
+    receipt_id = contracts.attempt_receipt_id(
+        request_id="receipt-request", attempt_id="attempt-1", request_digest="a" * 64,
+    )
+    receipt = pb.Receipt(
+        receipt_id=receipt_id,
+        request_id="receipt-request",
+        attempt_id="attempt-1",
+        request_digest="a" * 64,
+        candidate_sha256="b" * 64,
+        lease_fence=1,
+        session_sequence=1,
+    )
+    receipt.issued_at.seconds = 1_800_000_000
+    receipt.issued_at.nanos = 1
+    with pytest.raises(JobError, match="sub-millisecond"):
+        gc.receipt_from_proto(receipt)
+
+
+def test_grpc_watch_rejects_an_old_attempt_filter(harness):
+    request = _legacy_request(source="FAIL_FIRST", request_id="watch-old-attempt")
+    with pytest.raises(Exception):
+        harness.factory.formal(request)
+    interrupted = harness.engine.store._job_by_id(request.request_id)
+    old_attempt = interrupted.current_attempt.attempt_id
+    harness.factory.formal_resume(request)
+    stub = harness.factory.stub
+    watch = pb.WatchRequest(
+        job=pb.JobRef(
+            request_id=request.request_id,
+            request_digest=contracts_request_digest(request),
+            expected=gc.expected_identities_to_proto(harness.engine.expected_identities),
+        ),
+        after_sequence=0,
+        attempt_id=old_attempt,
+    )
+    with pytest.raises(grpc.RpcError) as excinfo:
+        list(stub.Watch(
+            watch, metadata=(("authorization", f"Bearer {TOKEN}"),), timeout=5,
+        ))
+    assert excinfo.value.code() == grpc.StatusCode.FAILED_PRECONDITION
 
 
 def test_grpc_does_not_replace_the_legacy_ssh_pool():

@@ -162,8 +162,17 @@ def command_grant_mint(args: argparse.Namespace) -> int:
     if out.exists() and not args.append:
         raise SystemExit(f"refusing to overwrite {out} without --append")
     grants = load_grants_file(out) if out.exists() and args.append else []
-    if any(existing.run_id == grant.run_id and existing.session_id == grant.session_id and existing.subject == grant.subject for existing in grants):
-        raise SystemExit("a grant for this run/session/subject already exists; revoke it explicitly first")
+    same_scope = [
+        index for index, existing in enumerate(grants)
+        if (
+            existing.run_id == grant.run_id and existing.session_id == grant.session_id
+            and existing.target_id == grant.target_id and existing.subject == grant.subject
+            and existing.allowed_kinds == grant.allowed_kinds and existing.allowed_modes == grant.allowed_modes
+        )
+    ]
+    if same_scope and not args.renew:
+        raise SystemExit("a grant for this scope already exists; use --renew to rotate its token")
+    grants = [existing for index, existing in enumerate(grants) if index not in same_scope]
     grants.append(grant)
     write_grants_file(out, grants)
     token_path = Path(args.token_out) if args.token_out else out.with_suffix(".token")
@@ -282,6 +291,7 @@ def _parser() -> argparse.ArgumentParser:
     grant = sub.add_parser("grant-mint", help="mint a session grant and its host token file")
     grant.add_argument("--out", required=True, type=Path, help="server grants file")
     grant.add_argument("--append", action="store_true")
+    grant.add_argument("--renew", action="store_true", help="replace the token for the same grant scope")
     grant.add_argument("--token-out", type=Path)
     grant.add_argument("--run-id", required=True)
     grant.add_argument("--session-id", required=True)

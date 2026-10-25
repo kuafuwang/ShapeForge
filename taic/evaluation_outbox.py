@@ -31,6 +31,7 @@ class EvaluationOutbox:
         transport: str = "",
         api_contract_id: str = "",
         evidence_contract_id: str = "",
+        external_trusted_key_ids: frozenset[str] | None = None,
     ) -> None:
         if signature_key is not None and (not isinstance(signature_key, bytes) or not signature_key):
             raise ValueError("signature_key must be non-empty bytes or None")
@@ -44,6 +45,9 @@ class EvaluationOutbox:
         self.transport = transport
         self.api_contract_id = api_contract_id
         self.evidence_contract_id = evidence_contract_id
+        if external_trusted_key_ids is not None and not isinstance(external_trusted_key_ids, frozenset):
+            raise ValueError("external_trusted_key_ids must be a frozenset or None")
+        self.external_trusted_key_ids = external_trusted_key_ids
         # The status read by the last begin(); resume uses it to decide whether
         # an interrupted durable job may be resumed through an explicit Retry.
         self.previous_status = ""
@@ -157,6 +161,15 @@ class EvaluationOutbox:
                 if not isinstance(evidence, dict) or evidence.get("candidate_sha256") != request.candidate_sha256:
                     raise EvaluationUnavailable("outbox_corrupt", "completed result evidence does not match")
                 self._validate_result(request, result)
+                external_key_id = result.receipt.get("signature_key_id") if isinstance(result.receipt, dict) else ""
+                if (
+                    external_key_id and self.external_trusted_key_ids is not None
+                    and external_key_id not in self.external_trusted_key_ids
+                ):
+                    raise EvaluationUnavailable(
+                        "signature_key_revoked",
+                        "outbox result was signed by an external key the host no longer trusts",
+                    )
                 return result
             if document.get("status") not in {"pending", "unavailable"}:
                 raise EvaluationUnavailable("outbox_corrupt", "unknown evaluation outbox status")
@@ -206,11 +219,20 @@ class EvaluationOutbox:
             document = self._document(request, epoch="", status="pending", created_at=time.time())
         code = getattr(error, "code", "evaluation_unavailable")
         retryable = bool(getattr(error, "retryable", False))
+        error_document = {"code": str(code), "message": redact_text(str(error))[:1000], "retryable": retryable}
+        if document.get("status") == "completed":
+            # A completed envelope is immutable.  A revoked external key makes
+            # the replay fail closed, but the retained result is not replaced
+            # by a pending row.
+            document["error"] = error_document
+            document["updated_at"] = time.time()
+            write_json_atomic(path, document)
+            return
         document.update({
             "status": "unavailable",
             "report_path": "",
             "updated_at": time.time(),
-            "error": {"code": str(code), "message": redact_text(str(error))[:1000], "retryable": retryable},
+            "error": error_document,
         })
         write_json_atomic(path, document)
 

@@ -221,6 +221,10 @@ class Sim:
                             api_contract_ids=[contracts.API_CONTRACT_ID],
                             evidence_contract_ids=[contracts.EVIDENCE_CONTRACT_ID],
                             client_nonce="ready-" + "0" * 26,
+                            expected=pb.ExpectedEvaluator(
+                                site_id=SITE, device_id=DEVICE, target_id=TARGET,
+                                worker_build=BUILD, task_pack_digest=TASK_PACK,
+                            ),
                         ),
                         metadata=(("authorization", f"Bearer {token}"),), timeout=5,
                     )
@@ -276,6 +280,10 @@ class Sim:
                 pb.CapabilitiesRequest(
                     api_contract_ids=[api], evidence_contract_ids=[evidence],
                     required_features=list(features), client_nonce=os.urandom(16).hex(),
+                    expected=pb.ExpectedEvaluator(
+                        site_id=SITE, device_id=DEVICE, target_id=TARGET,
+                        worker_build=BUILD, task_pack_digest=TASK_PACK,
+                    ),
                 ),
                 metadata=call_metadata, timeout=10,
             )

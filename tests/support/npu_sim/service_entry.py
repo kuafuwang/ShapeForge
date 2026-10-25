@@ -47,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
         task_pack_digest=TASK_PACK_DIGEST,
         calibration_digest="c" * 64,
         task_fingerprints=frozenset({TASK_FINGERPRINT}),
+        task_bindings={TASK_FINGERPRINT: ("relu", "fp16", "small")},
         measurement_kind="simulated",
         publication_allowed=False,
     )

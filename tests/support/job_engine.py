@@ -27,6 +27,7 @@ def identity() -> ServiceIdentity:
         backend="sim-npu", backend_version="1", target_id=TARGET,
         worker_build="sim-external-build", task_pack_digest=TASK_PACK_DIGEST,
         calibration_digest="c" * 64, task_fingerprints=frozenset({TASK_FINGERPRINT}),
+        task_bindings={TASK_FINGERPRINT: ("relu", "fp16", "small")},
         measurement_kind="simulated", publication_allowed=False,
     )
 
@@ -50,10 +51,11 @@ def request(
     kind: str = "formal_eval", mode: str = "quick", run_id: str = "run-1",
     session_id: str = "session-1", candidate_timeout_ms: int = 3000,
     queue_timeout_ms: int = 3000, reps: int = 2,
+    task: str = "relu", dtype: str = "fp16", size: str = "small",
 ) -> ExternalEvaluationRequest:
     return ExternalEvaluationRequest(
         kind=kind, request_id=request_id, run_id=run_id, session_id=session_id,
-        task="relu", dtype="fp16", size="small", target_id=TARGET,
+        task=task, dtype=dtype, size=size, target_id=TARGET,
         task_fingerprint=TASK_FINGERPRINT,
         candidate_sha256=hashlib.sha256(source).hexdigest(), source=source,
         mode=mode, seed="3", reps=reps, queue_timeout_ms=queue_timeout_ms,
@@ -74,7 +76,7 @@ def store_capabilities(store, *, token: str = TOKEN, nonce: str | None = None):
     expected = expected_identities()
     nonce = secrets.token_hex(16) if nonce is None else nonce.ljust(16, "0")
     return store.get_capabilities(
-        grant_token=token, client_nonce=nonce, expected={},
+        grant_token=token, client_nonce=nonce, expected=expected.evaluator.to_dict(),
         expected_identities=expected,
         provenance=identity().external_provenance(execution_protocol_version="3"),
         api_contract_ids=[expected.api_contract_id],
@@ -111,8 +113,13 @@ def capabilities(engine: JobEngine, *, token: str = TOKEN, nonce: str | None = N
     # Test labels remain readable while meeting the protocol's nonce bound;
     # omitted nonces are fresh, as a real client handshake would be.
     nonce = (secrets.token_hex(16) if nonce is None else nonce).ljust(16, "0")
+    expected = engine.expected_identities
     return engine.get_capabilities(
-        grant_token=token, client_nonce=nonce, valid_for_ms=valid_for_ms,
+        grant_token=token, client_nonce=nonce,
+        expected=expected.evaluator.to_dict(),
+        api_contract_ids=[expected.api_contract_id],
+        evidence_contract_ids=[expected.evidence_contract_id],
+        valid_for_ms=valid_for_ms,
     )
 
 

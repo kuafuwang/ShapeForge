@@ -236,7 +236,21 @@ class RemoteService:
                 f"legacy-refresh:{self.engine.frontend_instance}:{grant.token}:{secrets.token_hex(16)}".encode("utf-8")
             ).hexdigest()[:32]
         )
-        return self.engine.get_capabilities(grant_token=grant.token, client_nonce=client_nonce)
+        expected = self.engine.expected_identities
+        return self.engine.get_capabilities(
+            grant_token=grant.token,
+            client_nonce=client_nonce,
+            expected={
+                "site_id": expected.evaluator.site_id,
+                "device_id": expected.evaluator.device_id,
+                "target_id": expected.evaluator.target_id,
+                "worker_build": expected.evaluator.worker_build,
+                "task_pack_digest": expected.evaluator.task_pack_digest,
+                "evaluator_epoch": expected.evaluator.evaluator_epoch,
+            },
+            api_contract_ids=[expected.api_contract_id],
+            evidence_contract_ids=[expected.evidence_contract_id],
+        )
 
     def _handle_hello(self, frame: Frame) -> None:
         hello = HelloRequest.from_dict(frame.payload)
@@ -348,7 +362,7 @@ class RemoteService:
             raise ProtocolError("validate mode is not supported by this evaluator")
         if len(request.source_bytes) > self.max_source_bytes:
             raise ProtocolError("source exceeds the evaluator limit")
-        if self.identity.task_fingerprints and request.task_fingerprint not in self.identity.task_fingerprints:
+        if not self.identity.accepts_task(request.task, request.dtype, request.size, request.task_fingerprint):
             raise ProtocolError("task fingerprint does not match the evaluator task pack")
         ref = _RequestRef(request, ExternalEvaluationRequest.from_legacy(request), grant)
         snapshot: JobSnapshot | None
@@ -853,6 +867,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--task-pack-digest", required=True)
     parser.add_argument("--calibration-digest", required=True)
     parser.add_argument("--task-fingerprint", action="append", default=[])
+    parser.add_argument(
+        "--task-binding", action="append", default=[], metavar="TASK:DTYPE:SIZE:FINGERPRINT",
+        help="bind a registered fingerprint to exactly one task (recommended)",
+    )
     parser.add_argument("--token", action="append", default=[])
     parser.add_argument("--formal-token", action="append", default=[])
     parser.add_argument("--selfcheck-token", action="append", default=[])
@@ -869,6 +887,14 @@ def main(argv: list[str] | None = None) -> int:
     """Production entry point; no simulation backend is reachable here."""
 
     args = _parse_args(argv)
+    task_bindings = None
+    if args.task_binding:
+        task_bindings = {}
+        for value in args.task_binding:
+            parts = value.split(":")
+            if len(parts) != 4 or any(not part for part in parts):
+                raise ValueError("--task-binding must be TASK:DTYPE:SIZE:FINGERPRINT")
+            task_bindings[parts[3]] = (parts[0], parts[1], parts[2])
     identity = ServiceIdentity(
         site_id=args.site_id,
         device_id=args.device_id,
@@ -879,6 +905,7 @@ def main(argv: list[str] | None = None) -> int:
         task_pack_digest=args.task_pack_digest,
         calibration_digest=args.calibration_digest,
         task_fingerprints=frozenset(args.task_fingerprint),
+        task_bindings=task_bindings,
         measurement_kind="measured",
         publication_allowed=args.publication_allowed,
     )

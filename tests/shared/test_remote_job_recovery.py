@@ -289,7 +289,7 @@ def test_durable_queued_job_restarts_without_a_second_reservation(tmp_path):
     ))
     provenance = service_identity.external_provenance(execution_protocol_version="3")
     cap = store.get_capabilities(
-        grant_token=TOKEN, client_nonce="queued-restart-nonce", expected={},
+        grant_token=TOKEN, client_nonce="queued-restart-nonce", expected=expected.evaluator.to_dict(),
         expected_identities=expected, provenance=provenance,
         api_contract_ids=[expected.api_contract_id],
         evidence_contract_ids=[expected.evidence_contract_id],
@@ -684,10 +684,17 @@ def test_hmac_key_rotation_verifies_history_and_signs_new_results(tmp_path):
     finally:
         second.close()
 
-    # Opening without the historical key fails closed during durable-state
-    # validation instead of silently dropping the old result.
-    with pytest.raises(StateCorrupt, match="not trusted"):
-        JobStore(state, signing_key=key2, signing_key_id=id2)
+    # Opening without the historical key must not brick the frontend.  The
+    # affected result is quarantined and withheld, while the store still opens.
+    without_old = JobStore(state, signing_key=key2, signing_key_id=id2)
+    try:
+        snapshot = without_old._job_by_id(old_request.request_id)
+        assert snapshot.state == "completed"
+        assert snapshot.quarantined is True
+        assert snapshot.result is None
+        assert "not trusted" in snapshot.recovery_error
+    finally:
+        without_old.close()
 
 
 def test_restart_revokes_grants_absent_from_the_deployment_file(tmp_path):
@@ -781,6 +788,37 @@ def test_restart_with_a_renewed_token_supersedes_without_cancelling_jobs(tmp_pat
         final = wait_state(second, req, {"completed"}, token=renewed)
         assert final.current_attempt.attempt_id == queued.current_attempt.attempt_id
         assert final.current_attempt.retry_index == 1
+    finally:
+        second.close()
+
+
+def test_revoked_signature_key_quarantines_only_the_affected_result(tmp_path):
+    """@brief 撤销历史 HMAC key 不能阻止 frontend 重启；受影响结果隔离，其他 job 继续服务。"""
+    key1 = b"revoked-key-32-bytes-long!!!!!!!"
+    key2 = b"current-key-32-bytes-long!!!!!!!"
+    id1 = "sim-external-site/key-1"
+    id2 = "sim-external-site/key-2"
+    state = tmp_path / "state"
+    first = engine(state, signing_key=key1, signing_key_id=id1)
+    old_request = request("revoked-result")
+    try:
+        submit(first, old_request)
+        wait_state(first, old_request, {"completed"})
+    finally:
+        first.close()
+
+    second = engine(state, signing_key=key2, signing_key_id=id2)
+    try:
+        snapshot = second.store._job_by_id(old_request.request_id)
+        assert snapshot.state == "completed"
+        assert snapshot.quarantined is True
+        assert snapshot.result is None
+        assert "not trusted" in snapshot.recovery_error
+        fresh = request("after-revocation")
+        submit(second, fresh)
+        final = wait_state(second, fresh, {"completed"})
+        assert final.result is not None
+        assert final.result.signature["key_id"] == id2
     finally:
         second.close()
 

@@ -77,9 +77,21 @@ def test_grant_mint_appends_grants_and_writes_a_private_token_file(tmp_path):
     duplicate = _admin(
         "grant-mint", "--out", str(grants_path), "--append",
         "--run-id", "run-1", "--session-id", "session-1", "--target-id", "target-1",
-        "--subject", "host-evaluator", check=False,
+        "--subject", "host-evaluator", "--kinds", "formal_eval", check=False,
     )
     assert duplicate.returncode != 0 and "already exists" in (duplicate.stdout + duplicate.stderr)
+    renewed_token = tmp_path / "renewed.token"
+    _admin(
+        "grant-mint", "--out", str(grants_path), "--append", "--renew",
+        "--token-out", str(renewed_token),
+        "--run-id", "run-1", "--session-id", "session-1", "--target-id", "target-1",
+        "--subject", "host-evaluator", "--kinds", "formal_eval", "--expires-in", "60",
+    )
+    rotated = load_grants_file(grants_path)
+    matching = [grant for grant in rotated if grant.session_id == "session-1"]
+    assert len(matching) == 1
+    assert matching[0].token == renewed_token.read_text().strip()
+    assert matching[0].token != grants[0].token
 
 
 @pytest.mark.skipif(shutil.which("openssl") is None, reason="openssl is required for certificate tooling")

@@ -267,6 +267,7 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
         watch_poll_s: float = DEFAULT_WATCH_POLL_S,
         require_client_identity: bool = False,
         max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES,
+        auth_limiter: AuthFailureLimiter | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         if isinstance(max_watch_streams, bool) or not isinstance(max_watch_streams, int) or max_watch_streams < 1:
@@ -278,6 +279,7 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
         self.watch_poll_s = float(watch_poll_s)
         self.require_client_identity = bool(require_client_identity)
         self.max_message_bytes = int(max_message_bytes)
+        self.auth_limiter = auth_limiter
         self.logger = logger or logging.getLogger("tcenv.remote.grpc")
         self._watch_slots = threading.BoundedSemaphore(max_watch_streams)
 
@@ -287,7 +289,18 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
             raise JobError("permission_denied", "a client certificate is required")
         return _bearer_token(context.invocation_metadata())
 
+    def _record_auth_failure(self, error: JobError) -> JobError:
+        if self.auth_limiter is None:
+            return error
+        if error.code == "unauthenticated" or (error.code == "permission_denied" and "revoked" in str(error)):
+            try:
+                self.auth_limiter.record_failure()
+            except AuthenticationLimitExceeded as limit:
+                return limit
+        return error
+
     def _abort(self, context: grpc.ServicerContext, error: JobError, **details: Any) -> None:
+        error = self._record_auth_failure(error)
         abort_with_error(context, error, state_dir=self.engine.store.state_dir, engine=self.engine, **details)
 
     def _unexpected(self, context: grpc.ServicerContext, exc: BaseException, **details: Any) -> None:
@@ -299,9 +312,14 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
         grant_token = ""
         try:
             grant_token = self._grant(context)
-            expected = gc.expected_evaluator_document(
-                request.expected if request.HasField("expected") else None, strict=False,
-            ) if request.HasField("expected") else {}
+            gc.reject_unknown_fields(request, "CapabilitiesRequest")
+            if not request.HasField("expected"):
+                raise JobError("invalid_argument", "capabilities requires expected evaluator identities")
+            gc.reject_unknown_fields(request.expected, "CapabilitiesRequest.expected")
+            expected = gc.expected_evaluator_document(request.expected, strict=False)
+            for name in ("site_id", "device_id", "target_id"):
+                if not expected.get(name):
+                    raise JobError("invalid_argument", f"capabilities requires expected {name}")
             capabilities = self.engine.get_capabilities(
                 grant_token=grant_token,
                 client_nonce=request.client_nonce,
@@ -325,8 +343,11 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
         request_id = ""
         try:
             grant_token = self._grant(context)
+            gc.reject_unknown_fields(request, "SubmitRequest")
             if not request.HasField("request") or not request.HasField("expected"):
                 raise JobError("invalid_argument", "Submit requires request and expected identities")
+            gc.reject_unknown_fields(request.expected, "SubmitRequest.expected")
+            gc.reject_unknown_fields(request.expected.evaluator, "SubmitRequest.expected.evaluator")
             evaluation = gc.request_from_proto(request.request)
             request_id = evaluation.request_id
             if request.request_digest != evaluation.request_digest:
@@ -348,8 +369,11 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
             raise AssertionError("unreachable")  # pragma: no cover
 
     def _job_reference(self, reference: pb.JobRef) -> tuple[str, str, Any]:
+        gc.reject_unknown_fields(reference, "JobRef")
         if not reference.HasField("expected"):
             raise JobError("invalid_argument", "job reference requires exact expected identities")
+        gc.reject_unknown_fields(reference.expected, "JobRef.expected")
+        gc.reject_unknown_fields(reference.expected.evaluator, "JobRef.expected.evaluator")
         request_id = reference.request_id
         gc.identifier(request_id, "request_id")
         digest = gc.hex64(reference.request_digest, "request_digest")
@@ -382,6 +406,7 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
         attempt_filter = None
         try:
             grant_token = self._grant(context)
+            gc.reject_unknown_fields(request, "WatchRequest")
             if not request.HasField("job"):
                 raise JobError("invalid_argument", "Watch requires a job reference")
             request_id, digest, expected = self._job_reference(request.job)
@@ -423,6 +448,9 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
             current = self.engine.get_job(
                 request_id=request_id, request_digest=digest, expected=expected, grant_token=grant_token,
             )
+            current_attempt_id = current.current_attempt.attempt_id if current.current_attempt else None
+            if attempt_id is not None and current_attempt_id != attempt_id:
+                raise JobError("failed_precondition", "attempt filter does not match the current attempt")
             if current.state in TERMINAL_JOB_STATES and after_sequence >= current.last_sequence:
                 # The caller already consumed the terminal event, or asked from
                 # beyond it.  Return the durable terminal snapshot once.
@@ -445,8 +473,21 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
                     attempt_id=attempt_id,
                 )
                 if not events:
-                    # A retention gap coalesces into one snapshot event whose
-                    # sequence is the current durable last_sequence.
+                    current = self.engine.get_job(
+                        request_id=request_id, request_digest=digest, expected=expected, grant_token=grant_token,
+                    )
+                    current_attempt_id = current.current_attempt.attempt_id if current.current_attempt else None
+                    if attempt_id is not None and current_attempt_id != attempt_id:
+                        raise JobError("failed_precondition", "attempt filter does not match the current attempt")
+                    if current.state in TERMINAL_JOB_STATES:
+                        yield gc.event_to_proto(JobEvent(
+                            request_id=current.request_id,
+                            attempt_id=current_attempt_id,
+                            lease_fence=current.current_attempt.lease_fence if current.current_attempt else 0,
+                            sequence=current.last_sequence,
+                            snapshot=current,
+                        ))
+                        return
                     time.sleep(self.watch_poll_s)
                     continue
                 for event in events:
@@ -470,6 +511,7 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
         digest = ""
         try:
             grant_token = self._grant(context)
+            gc.reject_unknown_fields(request, "CancelRequest")
             if not request.HasField("job"):
                 raise JobError("invalid_argument", "Cancel requires a job reference")
             request_id, digest, expected = self._job_reference(request.job)
@@ -492,6 +534,7 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
         digest = ""
         try:
             grant_token = self._grant(context)
+            gc.reject_unknown_fields(request, "RetryRequest")
             if not request.HasField("job"):
                 raise JobError("invalid_argument", "Retry requires a job reference")
             request_id, digest, expected = self._job_reference(request.job)
@@ -628,6 +671,7 @@ def build_server(
         watch_poll_s=config.watch_poll_s,
         require_client_identity=config.require_client_identity and not config.allow_insecure,
         max_message_bytes=config.max_message_bytes,
+        auth_limiter=limiter,
         logger=logger,
     )
     options = [

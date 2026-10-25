@@ -93,6 +93,7 @@ def verify_deployment(
         task_pack_digest=pack.digest,
         calibration_digest=_digest(args.calibration_digest, "--calibration-digest"),
         task_fingerprints=pack.fingerprints,
+        task_bindings=pack.fingerprint_bindings,
         measurement_kind=args.measurement_kind,
         publication_allowed=bool(args.publication_allowed),
     )

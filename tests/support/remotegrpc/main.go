@@ -257,7 +257,12 @@ func checkBlob(descriptor map[string]any, data []byte, name string) error {
 
 func verifyResult(d *descriptors, result protoreflect.Message, keyring *keyringFile, siteID, candidateSHA string) (string, error) {
 	provenance := provenanceMap(getMessage(result, "provenance"))
-	receipt := receiptMap(getMessage(result, "receipt"))
+	receiptMessage := getMessage(result, "receipt")
+	issuedAt := getMessage(receiptMessage, "issued_at")
+	if issuedAt.Get(field(issuedAt, "nanos")).Int()%1_000_000 != 0 {
+		return "", errors.New("receipt issued_at has sub-millisecond precision")
+	}
+	receipt := receiptMap(receiptMessage)
 	reportData := getBytes(getMessage(result, "report"), "data")
 	reportDescriptor := blobMap(getMessage(result, "report"))
 	if err := checkBlob(reportDescriptor, reportData, "report"); err != nil {
@@ -466,6 +471,7 @@ type conformance struct {
 	keyring  *keyringFile
 	timeout  time.Duration
 	features []string
+	expected expectedEvaluator
 	report   map[string]any
 }
 
@@ -498,6 +504,7 @@ func (c *conformance) capabilities(features []string) (*dynamicpb.Message, error
 		appendString(msg, "required_features", feature)
 	}
 	setString(msg, "client_nonce", fmt.Sprintf("%032x", time.Now().UnixNano()))
+	c.expected.fill(setMessage(msg, "expected"))
 	ctx, cancel := c.rpcCtx()
 	defer cancel()
 	response := c.d.new("tcenv.remote.v1.Capabilities")
@@ -664,6 +671,11 @@ func main() {
 	tokenFile := flag.String("token-file", "", "session grant token file")
 	keyringPath := flag.String("keyring", "", "HMAC verifier keyring")
 	targetID := flag.String("target-id", "", "target id")
+	siteID := flag.String("site-id", "", "expected site id")
+	deviceID := flag.String("device-id", "", "expected device id")
+	workerBuild := flag.String("worker-build", "", "expected worker build")
+	taskPackDigest := flag.String("task-pack-digest", "", "expected task pack digest")
+	expectedEpoch := flag.String("expected-epoch", "", "expected evaluator epoch (optional)")
 	runID := flag.String("run-id", "", "run id")
 	sessionID := flag.String("session-id", "", "session id")
 	requestID := flag.String("request-id", "go-conformance-1", "primary request id")
@@ -683,7 +695,7 @@ func main() {
 	timeout := flag.Duration("timeout", 30*time.Second, "per-RPC timeout")
 	out := flag.String("out", "", "write the JSON report here")
 	flag.Parse()
-	if *descPath == "" || *endpoint == "" || *ca == "" || *cert == "" || *key == "" || *tokenFile == "" || *keyringPath == "" || *targetID == "" || *runID == "" || *sessionID == "" || *task == "" || *fingerprint == "" || *sourceFile == "" {
+	if *descPath == "" || *endpoint == "" || *ca == "" || *cert == "" || *key == "" || *tokenFile == "" || *keyringPath == "" || *targetID == "" || *siteID == "" || *deviceID == "" || *workerBuild == "" || *taskPackDigest == "" || *runID == "" || *sessionID == "" || *task == "" || *fingerprint == "" || *sourceFile == "" {
 		fmt.Fprintln(os.Stderr, "missing required flags")
 		os.Exit(2)
 	}
@@ -743,7 +755,16 @@ func main() {
 		options.Seed = *seed
 		options.SeedPresent = true
 	}
-	client := &conformance{ctx: context.Background(), conn: conn, d: d, token: token, keyring: keyring, timeout: *timeout, features: []string{"durable-jobs", "attempt-receipts", "progress"}, report: report}
+	client := &conformance{
+		ctx: context.Background(), conn: conn, d: d, token: token, keyring: keyring,
+		timeout: *timeout, features: []string{"durable-jobs", "attempt-receipts", "progress"},
+		expected: expectedEvaluator{
+			SiteID: *siteID, DeviceID: *deviceID, TargetID: *targetID,
+			WorkerBuild: *workerBuild, TaskPackDigest: *taskPackDigest,
+			EvaluatorEpoch: *expectedEpoch,
+		},
+		report: report,
+	}
 
 	// 1. Unauthenticated capabilities must be refused.
 	unauth := &conformance{ctx: context.Background(), conn: conn, d: d, token: "", timeout: *timeout, report: report}
