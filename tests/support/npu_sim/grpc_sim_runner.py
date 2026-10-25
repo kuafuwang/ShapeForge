@@ -669,6 +669,7 @@ def run_checks(sim: Sim, checker: Checker, *, state_root: Path) -> list[dict]:
                 "attempts_before_retry": attempts_before,
                 "attempts_after_retry": attempts_after,
                 "lease_fence": result.receipt.get("lease_fence"),
+                "note": "host closed the old channel; the durable attempt stayed interrupted until explicit Retry",
             }
         finally:
             resumed_factory.close()
@@ -822,6 +823,15 @@ def build_and_run(*, report_path: Path, keep: bool = False, fresh: bool = False)
     build_elapsed = time.monotonic() - build_started
     image_id = docker.image_id(IMAGE)
     sim = Sim(root=report_path.parent, docker=docker)
+    os_release = docker.run(
+        "run", "--rm", "--entrypoint", "cat", IMAGE, "/etc/os-release", check=False,
+    ).stdout
+    container_os = next(
+        (line.split("=", 1)[1].strip().strip('"') for line in os_release.splitlines() if line.startswith("PRETTY_NAME=")),
+        "unknown",
+    )
+    docker_version = docker.run("version", "--format", "{{.Server.Version}}", check=False).stdout.strip()
+    docker_platform = docker.run("info", "--format", "{{.OSType}}/{{.Architecture}}", check=False).stdout.strip()
     report: dict = {
         "schema_version": 1,
         "simulated": True,
@@ -830,8 +840,10 @@ def build_and_run(*, report_path: Path, keep: bool = False, fresh: bool = False)
         "date": time.strftime("%Y-%m-%d"),
         "environment": {
             "control_host": f"macOS {platform.mac_ver()[0]} {platform.machine()}",
-            "container_platform": docker.run("info", "--format", "{{.OperatingSystem}} {{.Architecture}}").stdout.strip(),
+            "container_platform": docker_platform,
+            "container_os": container_os,
             "container_host": "Docker Desktop Linux VM",
+            "docker_engine": docker_version,
             "image": IMAGE,
             "image_id": image_id,
             "container_user": f"{os.getuid()}:{os.getgid()}",
