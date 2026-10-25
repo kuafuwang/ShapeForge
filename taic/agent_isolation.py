@@ -468,6 +468,8 @@ class ExternalHelperSeam:
         self.calls.append(action)
         if completed.returncode != 0:
             detail = redact_text((completed.stderr or completed.stdout or "").strip()[-400:], limit=400)
+            # A helper may echo what it was given; the token must not reach a log or a result.
+            detail = detail.replace(credential.token, "[redacted]")
             raise IsolationError("helper", f"the credential helper failed with exit {completed.returncode}: {detail}")
         try:
             answer = json.loads(completed.stdout or "{}")

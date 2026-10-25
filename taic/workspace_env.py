@@ -672,8 +672,17 @@ class SshWorkspaceTransport:
     # -- fixed commands --------------------------------------------------------------
 
     def make_workdir(self, workdir: str) -> None:
-        """Create the session workdir and its marker parent."""
-        self._checked(f"umask 077; mkdir -p -- {_quote(workdir)} {_quote(workdir + '/.taic')}", what="create the remote workspace")
+        """Create the session workdir and its marker parent.
+
+        A symlink where one of those directories belongs is refused: an agent that replaced
+        its session directory between two attempts must not be able to redirect a receipt or
+        a staged input to another path on the host.
+        """
+        self._checked(
+            f"umask 077; mkdir -p -- {_quote(workdir)} && [ ! -L {_quote(workdir)} ] && "
+            f"mkdir -p -- {_quote(workdir + '/.taic')} && [ ! -L {_quote(workdir + '/.taic')} ]",
+            what="create the remote workspace",
+        )
 
     def write_receipt(self, workdir: str, receipt: WorkspaceReceipt) -> None:
         """Write the receipt atomically, before any input file is staged."""
@@ -822,14 +831,20 @@ class SshWorkspaceTransport:
     # -- file primitives -------------------------------------------------------------
 
     def _write(self, workdir: str, relative: str, data: bytes) -> None:
-        """Atomically replace one file under ``workdir``."""
+        """Atomically replace one file under ``workdir``.
+
+        The temporary name comes from ``mktemp``, so a file or symlink an agent left at a
+        predictable temporary path cannot capture the write; a symlinked parent directory is
+        refused for the same reason.
+        """
         clean = _safe_relative(relative)
         target = workdir + "/" + clean
         parent = target.rsplit("/", 1)[0]
-        temp = target + ".taic.tmp"
         command = (
-            f"umask 077; mkdir -p -- {_quote(parent)} && "
-            f"cat > {_quote(temp)} && mv -f -- {_quote(temp)} {_quote(target)}"
+            f"umask 077; mkdir -p -- {_quote(parent)} && [ ! -L {_quote(parent)} ] && "
+            f"temp=$(mktemp -- {_quote(parent + '/.taic.XXXXXX')}) && "
+            f"{{ cat > \"$temp\" && mv -f -- \"$temp\" {_quote(target)}; }} || "
+            f"{{ [ -z \"$temp\" ] || rm -f -- \"$temp\"; exit 1; }}"
         )
         self._checked(command, stdin_bytes=data, what=f"write {clean}")
 
@@ -848,6 +863,9 @@ class SshWorkspaceTransport:
             if code in (1, 2):
                 return None
             raise WorkspaceError("unavailable", f"cannot reach the host to read {clean}", returncode=code)
+        code, _out, _err = self._run(f"test ! -L {_quote(target)}")
+        if code != 0:
+            raise WorkspaceError("path", f"the remote artifact {clean} is a symlink and was refused")
         code, out, err = self._run(f"wc -c -- {_quote(target)}")
         if code != 0:
             text = _bounded_text(err) or "no diagnostic"
@@ -943,7 +961,13 @@ def prompt_surface_digest(work: Path, flow_dir: Path) -> tuple[str, str, str]:
                 continue
             relative = path.relative_to(skill_root).as_posix()
             skill_digest.update(relative.encode("utf-8") + b"\0")
-            skill_digest.update(path.read_bytes())
+            try:
+                skill_digest.update(path.read_bytes())
+            except OSError:
+                # The local runner never hashed skill files before this profile existed; an
+                # unreadable one is recorded as such rather than turning into a new failure
+                # before the session starts.
+                skill_digest.update(b"<unreadable>")
     skill_sha = skill_digest.hexdigest()
     task_sha = _sha256(task_bytes)
     combined = _sha256(_canonical_json({"task_sha256": task_sha, "skill_sha256": skill_sha}))

@@ -214,6 +214,21 @@ def test_the_fence_refuses_an_overlapping_workspace(tmp_path):
         TrustedEvaluationFence(trusted_paths=(run,), host_workspace=workspace)
 
 
+def test_materializing_a_collected_path_cannot_escape_the_workspace(tmp_path):
+    """Even a hostile artifact name cannot write outside the canonical agent_work directory."""
+    from taic.session_runtime import SshWorkspaceKernelSessionRunner
+    from taic.workspace_env import check_relative_destination
+
+    for bad in ("../candidates/001/report.json", "/tmp/escape", "a/../../escape"):
+        with pytest.raises(WorkspaceError):
+            check_relative_destination(tmp_path / "run" / "agent_work" / "init", bad)
+    host = _Host({"tmp_path": tmp_path})
+    config = _config(tmp_path)
+    runner = SshWorkspaceKernelSessionRunner(config, transport=host, epic_root=tmp_path / "epics")
+    with pytest.raises(WorkspaceError):
+        runner._materialize(tmp_path / "run" / "agent_work" / "init", {"../candidates/x": b"x"})
+
+
 def test_the_fence_refuses_a_write_into_a_trusted_artifact(tmp_path):
     """A collected or staged path can never land on the evaluator's files."""
     run = tmp_path / "run"
@@ -656,3 +671,21 @@ def test_remote_authored_selfcheck_rows_are_not_counted(tmp_path):
     assert result.source is not None
     assert result.self_checks == 0 and result.self_check_timeouts == 0 and result.self_check_crashes == 0
     assert not (Path(brief.work_dir) / "self_checks.jsonl").exists()
+
+
+def test_a_helper_that_echoes_the_token_does_not_leak_it(tmp_path):
+    """The token is scrubbed from the helper's own diagnostic before it becomes an error."""
+    echo = tmp_path / "echo.py"
+    echo.write_text(
+        "import sys\n"
+        "sys.stderr.write(sys.stdin.read())\n"
+        "sys.exit(9)\n",
+        encoding="utf-8",
+    )
+    authority = ScopedCredentialAuthority()
+    seam = ExternalHelperSeam(authority, (sys.executable, str(echo)))
+    credential = authority.mint(run_id="run-1", session_label="init", runtime="gpu-box", ttl_s=60, max_uses=1)
+    with pytest.raises(IsolationError) as raised:
+        seam.provision(credential, env_spec="x")
+    assert credential.token not in str(raised.value)
+    assert "[redacted]" in str(raised.value)
