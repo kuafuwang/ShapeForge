@@ -21,6 +21,7 @@ from tcenv.remote.grpc_client import (
 )
 from tcenv.remote.grpc_server import (
     GrpcServerConfig,
+    RunningServer,
     build_server,
     status_for_error,
 )
@@ -141,6 +142,24 @@ def harness(tmp_path):
     value = Harness(tmp_path)
     yield value
     value.close()
+
+
+def test_running_server_stop_waits_for_grpc_shutdown():
+    class FakeGrpcServer:
+        def __init__(self) -> None:
+            self.stopped = threading.Event()
+
+        def stop(self, _grace_s):
+            timer = threading.Timer(0.1, self.stopped.set)
+            timer.start()
+            return self.stopped
+
+    fake = FakeGrpcServer()
+    running = RunningServer(server=fake, service=object(), address="unused")
+    started = time.monotonic()
+    running.stop(grace_s=0)
+    assert fake.stopped.is_set()
+    assert time.monotonic() - started >= 0.05
 
 
 def test_grpc_round_trip_binds_attempt_receipt_and_signature(harness):

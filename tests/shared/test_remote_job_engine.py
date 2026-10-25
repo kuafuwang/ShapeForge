@@ -407,9 +407,18 @@ def test_cancel_kills_worker_group_and_orphan(tmp_path):
         submit(service, req)
         wait_state(service, req, {"running"})
         deadline = time.monotonic() + 5
-        while not orphan_log.is_file() and time.monotonic() < deadline:
+        orphan_lines: list[str] = []
+        while time.monotonic() < deadline:
+            try:
+                orphan_lines = orphan_log.read_text(encoding="utf-8").splitlines()
+            except FileNotFoundError:
+                orphan_lines = []
+            if orphan_lines:
+                break
             time.sleep(0.02)
-        orphan_pid = json.loads(orphan_log.read_text(encoding="utf-8").splitlines()[0])["pid"]
+        if not orphan_lines:
+            pytest.fail("orphan worker did not record its process ID")
+        orphan_pid = json.loads(orphan_lines[0])["pid"]
         service.cancel(
             request_id=req.request_id, request_digest=req.request_digest,
             expected=service.expected_identities, grant_token=TOKEN,

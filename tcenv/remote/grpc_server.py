@@ -652,7 +652,22 @@ class RunningServer:
     port: int = field(default=0)
 
     def stop(self, *, grace_s: float = 2.0) -> None:
-        self.server.stop(grace_s)
+        """Stop ingress and wait until gRPC has released its serving threads.
+
+        ``grpc.Server.stop`` returns an event rather than synchronously joining
+        the server.  Closing the durable engine before that event fires lets an
+        old serving thread overlap the next frontend or a client subprocess
+        fork.  Bound the wait, but never report a successful close while the
+        old server is still running.
+        """
+
+        stopped = self.server.stop(grace_s)
+        timeout_s = max(0.1, float(grace_s) + 1.0)
+        if stopped is not None:
+            if not stopped.wait(timeout=timeout_s):
+                raise TimeoutError("gRPC server did not stop within the close deadline")
+        elif not self.server.wait_for_termination(timeout=timeout_s):
+            raise TimeoutError("gRPC server did not stop within the close deadline")
 
     def wait_for_termination(self, timeout: float | None = None) -> bool:
         return self.server.wait_for_termination(timeout)

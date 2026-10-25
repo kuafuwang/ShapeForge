@@ -1543,6 +1543,7 @@ def limits_checks(sim: Sim, checker: Checker) -> None:
             held: list = []
             first_events: list[int] = []
             stream_errors: list[str] = []
+            threads: list[threading.Thread] = []
             hold = sim.factory(port=port, rpc_timeout_s=8)
             hold_request = _request("limits-watch-hold", "PROGRESS SLEEP", candidate_s=25)
             hold_thread, _hold_errors = _threaded(hold, hold_request)
@@ -1576,8 +1577,15 @@ def limits_checks(sim: Sim, checker: Checker) -> None:
                     except grpc.RpcError as exc:
                         stream_errors.append(exc.code().name)
                         return
-                    for _event in stream:
-                        pass
+                    try:
+                        for _event in stream:
+                            pass
+                    except grpc.RpcError as exc:
+                        # The finally block intentionally cancels held streams.
+                        # Preserve every other terminal stream error instead of
+                        # leaking an unhandled exception from this test thread.
+                        if exc.code() != grpc.StatusCode.CANCELLED:
+                            stream_errors.append(exc.code().name)
 
                 # The running job already has one client Watch attached (the
                 # formal() probe thread), which occupies one of the two slots.
@@ -1614,6 +1622,8 @@ def limits_checks(sim: Sim, checker: Checker) -> None:
                         stream.cancel()
                     except Exception:
                         pass
+                for thread in threads:
+                    thread.join(timeout=5)
                 hold.cancel("limits-watch-hold")
                 hold.close()
                 hold_thread.join(timeout=10)
