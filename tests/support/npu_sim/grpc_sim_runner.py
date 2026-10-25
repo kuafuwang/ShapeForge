@@ -63,13 +63,24 @@ CONTAINER_PORT = 7443
 
 def _docker_env() -> dict[str, str]:
     env = dict(os.environ)
-    # Docker Desktop writes buildx state into ~/.docker; some fences deny it.
+    if "DOCKER_HOST" in env:
+        return env
+    # Resolve the current context before isolating the CLI config: Docker
+    # Desktop writes buildx state into ~/.docker, which some fences deny.
+    try:
+        completed = subprocess.run(
+            ["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
+            text=True, capture_output=True, check=False,
+        )
+        host = completed.stdout.strip()
+    except OSError:
+        host = ""
+    if host:
+        env["DOCKER_HOST"] = host
     if "DOCKER_CONFIG" not in env:
         candidate = Path(os.environ.get("TMPDIR") or "/tmp") / "tcenv-docker-config"
         candidate.mkdir(parents=True, exist_ok=True)
         env["DOCKER_CONFIG"] = str(candidate)
-    if "DOCKER_HOST" not in env:
-        env["DOCKER_HOST"] = "unix:///Users/kuafu/.docker/run/docker.sock"
     return env
 
 
