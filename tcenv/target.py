@@ -1,4 +1,4 @@
-"""Device profiles and Metal backend identity. No import of ``taic``."""
+"""Backend-neutral device profiles. No import of ``taic``."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Mapping
 
 REPO = Path(__file__).resolve().parent.parent
 TARGETS = REPO / "targets"
@@ -24,7 +25,11 @@ class TargetError(RuntimeError):
 
 @dataclass(frozen=True)
 class Limits:
-    """@brief 目标设备在执行层面强制的一组硬上限。"""
+    """Metal compatibility view of four target limits.
+
+    Generic target loading and evaluation use ``TargetProfile.raw_limits`` and
+    backend hooks instead.  A future non-MSL target need not define these keys.
+    """
 
     max_buffer_index: int
     max_threads_per_threadgroup: int
@@ -40,14 +45,33 @@ class TargetProfile:
     backend: str
     status: str
     display_name: str
+    # Metal compatibility fields; generic matching is Backend.probe/device_matches.
     match_name_contains: str
     match_family: str
     calibration_device_name: str
-    limits: Limits
+    raw_limits: Mapping[str, Any]
     root: Path
     language: str
     file_ext: str
     backend_version: str = ""
+
+    @property
+    def limits(self) -> Limits:
+        """Return the legacy Metal limits view, validating only when a Metal caller asks.
+
+        B0.5 keeps this property for apple-m4-max and Metal profiling modules.
+        Generic code must not access it: missing/non-integer keys are a
+        backend-specific target error, not a target-file schema requirement.
+        """
+        try:
+            return Limits(
+                max_buffer_index=int(self.raw_limits["max_buffer_index"]),
+                max_threads_per_threadgroup=int(self.raw_limits["max_threads_per_threadgroup"]),
+                max_threadgroup_memory_bytes=int(self.raw_limits["max_threadgroup_memory_bytes"]),
+                counter_sample_us=int(self.raw_limits["counter_sample_us"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise TargetError(f"target {self.id} has invalid Metal limits: {exc}") from exc
 
     @property
     def device_doc(self) -> Path:
@@ -120,12 +144,7 @@ def load_target(target_id: str | None = None) -> TargetProfile:
         match_name_contains=str(device.get("match_name_contains") or ""),
         match_family=str(device.get("match_family") or ""),
         calibration_device_name=str(device.get("calibration_device_name") or ""),
-        limits=Limits(
-            max_buffer_index=int(limits["max_buffer_index"]),
-            max_threads_per_threadgroup=int(limits["max_threads_per_threadgroup"]),
-            max_threadgroup_memory_bytes=int(limits["max_threadgroup_memory_bytes"]),
-            counter_sample_us=int(limits["counter_sample_us"]),
-        ),
+        raw_limits=dict(limits),
         root=root,
         language=str(backend_doc.get("language") or ""),
         file_ext=str(backend_doc.get("file_ext") or ""),
@@ -147,42 +166,17 @@ def require_active(target_id: str | None = None) -> TargetProfile:
 
 
 def device_matches(profile: TargetProfile, info: dict) -> bool:
-    """@brief 判断实际设备信息是否匹配目标档案。
+    """Compatibility entry point; matching semantics belong to the selected backend."""
+    from .backends.registry import load_backend
 
-    @param profile 目标档案。
-    @param info 设备探测返回的字典。
-    @return 名称包含匹配串且 GPU family 一致时为 True。
-    """
-    name = str(info.get("name") or "")
-    family = str(info.get("gpu_family") or "")
-    return profile.match_name_contains in name and family == profile.match_family
+    return load_backend(profile.backend).device_matches(profile, info)
 
 
 def limit_notes(profile: TargetProfile, info: dict) -> list[str]:
-    """@brief 设备上报的上限与档案不一致时给出提醒。
+    """Compatibility entry point; limit comparisons belong to the selected backend."""
+    from .backends.registry import load_backend
 
-    Warn when the device reports a thread or threadgroup-memory cap the profile does not record.
-
-    Buffer index and the counter sample interval are not in ``info()``. The profile limit stays in force.
-
-    @param profile 目标档案。
-    @param info 设备探测返回的字典。
-    @return 提醒字符串列表；一致时为空列表。
-    """
-    notes = []
-    live_threads = info.get("max_threads_per_threadgroup")
-    live_memory = info.get("max_threadgroup_memory_bytes")
-    if live_threads is not None and int(live_threads) != profile.limits.max_threads_per_threadgroup:
-        notes.append(
-            f"target {profile.id} records {profile.limits.max_threads_per_threadgroup} threads per threadgroup; "
-            f"this device reports {int(live_threads)}. The profile limit stays in force."
-        )
-    if live_memory is not None and int(live_memory) != profile.limits.max_threadgroup_memory_bytes:
-        notes.append(
-            f"target {profile.id} records {profile.limits.max_threadgroup_memory_bytes} B of threadgroup memory; "
-            f"this device reports {int(live_memory)} B. The profile limit stays in force."
-        )
-    return notes
+    return load_backend(profile.backend).limit_notes(profile, info)
 
 
 def calibration_cache_path(target_id: str | None = None) -> Path:

@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ..base import LaunchRejected
+
 # 段数上限的用处是给解析和 ABI 检查一个有限的输入，不是性能：编码实测 1.42 µs/段（1000 段 1.42 ms），
 # 而每段的 dispatch 都在计时窗内，多段只会自罚时间。真实的段数本来就被回复长度压住（max_tokens 48000，
 # 一行 launch 约 50 字节）。32 的依据是经验区间：Winograd F(2x2,3x3) 是 4 段，split-K 是 k+1 段（本仓库
@@ -21,10 +23,6 @@ MAX_STAGES = 32
 MAX_THREADGROUPS = 1 << 24
 MARKER = "taic-launch"
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-
-
-class LaunchRejected(ValueError):
-    """The launch block is present and illegal. Evaluation stops before the compiler."""
 
 
 @dataclass(frozen=True)

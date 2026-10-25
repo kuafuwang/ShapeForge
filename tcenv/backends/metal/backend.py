@@ -7,9 +7,10 @@ implementation only when called.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
-from ..base import BenchHarness, Capabilities, DeviceInfo
+from ..base import BenchHarness, Capabilities, DeviceInfo, LaunchRejected
 
 
 class MetalBackend:
@@ -62,6 +63,45 @@ class MetalBackend:
         }
         return parse_launch_spec(source, constants)
 
+    def source_name_pattern(self, kernel_name: str) -> str:
+        """Return the legacy MSL declaration regex used by source extraction."""
+        return r"\bkernel\s+void\s+" + re.escape(kernel_name) + r"\b"
+
+    def launch_stage_count(self, source: str, contract: Any) -> int:
+        """Parse the Metal launch block only to size the generic watchdog."""
+        spec = self.parse_launch(source, contract)
+        return 1 if spec is None else len(spec.stages)
+
+    def validate_launch(
+        self,
+        spec: Any,
+        *,
+        source: str,
+        contract: Any,
+        task: Any,
+        target: Any,
+        device_info: Mapping[str, Any],
+        require_contract_launch: bool,
+    ) -> None:
+        """Apply Metal grid/threadgroup/workspace limits after generic parsing."""
+        if spec is not None and require_contract_launch:
+            raise LaunchRejected("a contract experiment requires the task's own launch; taic-launch is not allowed here")
+        if spec is None:
+            return
+        from .launch import check_launch_limits
+
+        mtp = device_info.get("max_threads_per_threadgroup_xyz") or (device_info["max_threads_per_threadgroup"],) * 3
+        check_launch_limits(
+            spec,
+            contract_names={a.name for a in contract.args},
+            max_threads_xyz=tuple(mtp),
+            max_threads_product=int(device_info["max_threads_per_threadgroup"]),
+            max_threadgroup_memory_bytes=int(device_info["max_threadgroup_memory_bytes"]),
+            recommended_working_set_bytes=int(device_info.get("recommended_working_set_bytes") or 0),
+            max_buffer_length=int(device_info.get("max_buffer_length") or 2**31),
+            rotation_sets=self.rotation_sets(task),
+        )
+
     def validation_env(self, base_env: Mapping[str, str]) -> dict[str, str]:
         """@brief 在给定环境变量上叠加 Metal 着色器校验开关。
 
@@ -71,6 +111,17 @@ class MetalBackend:
         from .sanitize import env_with_validation
 
         return env_with_validation(dict(base_env))
+
+    def worker_env(self, base_env: Mapping[str, str], *, validation: bool) -> dict[str, str]:
+        """Enable Metal validation, or remove inherited instrumentation for timed runs."""
+        if validation:
+            return self.validation_env(base_env)
+        from .sanitize import VALIDATION_ENV
+
+        env = dict(base_env)
+        for key in VALIDATION_ENV:
+            env.pop(key, None)
+        return env
 
     def parse_validation_stderr(self, stderr: str) -> list[str]:
         """@brief 从校验子进程的 stderr 中抽取违例行。
@@ -103,6 +154,49 @@ class MetalBackend:
         from .abi import validation_problems
 
         return validation_problems(violations, static_bytes, max_tg_memory)
+
+    def validation_summary(self, *, size_only: bool, target: Any) -> str:
+        """Preserve the existing Metal shader-validation report text."""
+        if not size_only:
+            return "clean"
+        limit = target.limits.max_threadgroup_memory_bytes
+        return (
+            "skipped: the validation pipeline's threadgroup size is the instrumented figure; "
+            f"the uninstrumented pipeline checked the {limit} B limit"
+        )
+
+    def compiler_baseline(self, task_name: str, dtype: str, size: str, baseline_us: Mapping[str, float], candidate_us: float) -> dict:
+        """Load the optional Triton→Metal comparison owned by this backend."""
+        from .triton_baseline import estimate, load_cached
+
+        cached = load_cached(task_name, dtype, size)
+        est = estimate(cached, baseline_us) if cached else None
+        if est:
+            est["speedup"] = est["estimated_us"] / candidate_us
+        return est or {}
+
+    def device_matches(self, target: Any, info: Mapping[str, Any]) -> bool:
+        """Match the Apple device name and Metal GPU family recorded by the target."""
+        name = str(info.get("name") or "")
+        family = str(info.get("gpu_family") or "")
+        return target.match_name_contains in name and family == target.match_family
+
+    def limit_notes(self, target: Any, info: Mapping[str, Any]) -> list[str]:
+        """Preserve the existing Metal profile-vs-device limit warnings."""
+        notes = []
+        live_threads = info.get("max_threads_per_threadgroup")
+        live_memory = info.get("max_threadgroup_memory_bytes")
+        if live_threads is not None and int(live_threads) != target.limits.max_threads_per_threadgroup:
+            notes.append(
+                f"target {target.id} records {target.limits.max_threads_per_threadgroup} threads per threadgroup; "
+                f"this device reports {int(live_threads)}. The profile limit stays in force."
+            )
+        if live_memory is not None and int(live_memory) != target.limits.max_threadgroup_memory_bytes:
+            notes.append(
+                f"target {target.id} records {target.limits.max_threadgroup_memory_bytes} B of threadgroup memory; "
+                f"this device reports {int(live_memory)} B. The profile limit stays in force."
+            )
+        return notes
 
     def set_heartbeat_hooks(self, *, on_compile=None, on_launch=None) -> None:
         """@brief 安装编译与启动前后的心跳回调。
@@ -262,16 +356,34 @@ class MetalBackend:
         """@brief 读取设备的名称、家族与各项上限。
 
         @param ctx Metal 上下文。
-        @param target 目标档案；当前实现未使用。
+        @param target 目标档案；在这里校验 Metal limits 与设备身份。
         @return 填充好的 DeviceInfo。
         """
         info = ctx.info()
+        matches = True
+        match_error = ""
+        warnings: tuple[str, ...] = ()
+        if target is not None:
+            # Force validation of all four Metal limits here, at device_check,
+            # rather than making them generic target.toml schema keys.
+            _ = target.limits
+            matches = self.device_matches(target, info)
+            if not matches:
+                match_error = (
+                    f"device {info.get('name') or ''} ({info.get('gpu_family') or ''}) does not match target {target.id} "
+                    f"({target.match_name_contains}, {target.match_family})"
+                )
+            else:
+                warnings = tuple(self.limit_notes(target, info))
         return DeviceInfo(
             backend=self.id,
             name=str(info.get("name") or ""),
             family=str(info.get("gpu_family") or ""),
             limits=dict(info),
             raw=dict(info),
+            matches=matches,
+            match_error=match_error,
+            warnings=warnings,
         )
 
     def compile(self, ctx: Any, source: str, contract: Any, *, math: str = "fast"):
@@ -302,30 +414,43 @@ class MetalBackend:
         contract: Any,
         kernels: list[Any],
         *,
-        max_tg_memory: int,
-        max_buffer_index: int,
-        target_id: str,
+        target: Any = None,
+        device_info: Mapping[str, Any] | None = None,
         spec: Any = None,
+        validation: bool = False,
+        max_tg_memory: int | None = None,
+        max_buffer_index: int | None = None,
+        target_id: str = "",
     ) -> list[str]:
-        """@brief 按契约检查单核或整条流水线的 ABI。
+        """Check Metal ABI using target-owned limits; retain the old call shape.
 
-        @param contract 任务契约。
-        @param kernels 已编译的核列表。
-        @param max_tg_memory threadgroup 内存上限。
-        @param max_buffer_index buffer 槽位上限。
-        @param target_id 目标机型标识。
-        @param spec 流水线启动规格；省略时检查单核。
-        @return ABI 问题列表，空列表表示通过。
+        ``target``/``device_info`` are the generic evaluator path.  The three
+        legacy keyword arguments remain for existing Metal tooling and tests.
         """
         from . import abi as abi_mod
 
+        if target is not None:
+            target_id = target.id
+            # The legacy evaluator checks live device's threadgroup-memory
+            # report, while buffer-slot policy comes from the target profile.
+            max_tg_memory = (
+                device_info["max_threadgroup_memory_bytes"]
+                if device_info is not None else target.limits.max_threadgroup_memory_bytes
+            )
+            max_buffer_index = target.limits.max_buffer_index
         if spec is None:
-            return abi_mod.check_abi(contract, kernels[0], max_tg_memory=max_tg_memory, target_id=target_id)
-        by_name = {kernel.name: kernel for kernel in kernels}
-        return abi_mod.check_pipeline(
-            contract, by_name, spec,
-            max_tg_memory=max_tg_memory, max_buffer_index=max_buffer_index, target_id=target_id,
-        )
+            problems = abi_mod.check_abi(contract, kernels[0], max_tg_memory=max_tg_memory, target_id=target_id or None)
+        else:
+            by_name = {kernel.name: kernel for kernel in kernels}
+            problems = abi_mod.check_pipeline(
+                contract, by_name, spec,
+                max_tg_memory=max_tg_memory, max_buffer_index=max_buffer_index, target_id=target_id or None,
+            )
+        if validation:
+            if max_tg_memory is None:
+                raise ValueError("Metal validation ABI checks require a threadgroup memory limit")
+            problems = self.validation_problems(problems, [k.static_tg_bytes for k in kernels], max_tg_memory)
+        return problems
 
     def pipeline_stats(self, kernel: Any, contract: Any, device_info: Mapping[str, Any], *, kernel_source: str | None = None) -> dict:
         """@brief 汇总单个 pipeline 的设备统计与源码级压力提示。

@@ -147,7 +147,7 @@ def coverage_for_report(task, results, kernel_source: str, toolchain: dict) -> d
         dtype=task.dtype,
         contract_sha256=hashlib.sha256(task.contract.describe().encode("utf-8")).hexdigest(),
         source_sha256=hashlib.sha256(kernel_source.encode("utf-8")).hexdigest(),
-        task_fingerprint=task_fingerprint(task),
+        task_fingerprint=task_fingerprint(task, "metal"),
         toolchain=toolchain,
         layout={"seed": first.seed, "copies_per_pattern": n // PATTERN_COUNT, "positions": "random permutation"},
         input_sha256=first.input_sha256,

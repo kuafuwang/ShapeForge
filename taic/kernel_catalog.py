@@ -99,7 +99,7 @@ def archive_confirmed(
         "task": task,
         "dtype": dtype,
         "size": size,
-        "task_fingerprint": task_fingerprint(get_task(task, dtype, size)),
+        "task_fingerprint": task_fingerprint(get_task(task, dtype, size), backend),
         "calibration_sha256": sha256_file(calib_path) if calib_path.is_file() else "",
         "run_id": run_id,
         "winner_label": label,

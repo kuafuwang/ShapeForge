@@ -17,6 +17,16 @@ def test_parent_side_screen_and_launch_parse_delegate():
     assert backend.parse_launch("kernel void k() {}", task.contract) is None
 
 
+def test_metal_declaration_hook_preserves_taic_launch_extraction():
+    """The new declaration hook must not disable Metal's launch-block priority."""
+    from taic.kernel_agent import kernel_text
+
+    backend = load_backend("metal")
+    source = "/* taic-launch\nlaunch other grid=1,1,1 threads=32,1,1\n*/\nkernel void other() {}\n"
+    pattern = backend.source_name_pattern("relu_kernel")
+    assert kernel_text(source, "relu_kernel", source_fence="metal", source_name_pattern=pattern) == source
+
+
 def test_check_abi_pipeline_receives_every_kernel_and_buffer_limit(monkeypatch):
     """@brief 验证 check_abi 把每个 kernel 按名传入 ABI 流水线，并透传缓冲区上限与 spec。
 
@@ -41,6 +51,54 @@ def test_check_abi_pipeline_receives_every_kernel_and_buffer_limit(monkeypatch):
         max_tg_memory=32768, max_buffer_index=7, target_id="apple-m4-max", spec=spec,
     ) == []
     assert seen == {"names": ["a", "b"], "limit": 7, "spec": spec}
+
+
+def test_generic_abi_hook_keeps_live_memory_and_profile_buffer_limits(monkeypatch):
+    """The refactored call shape must not swap live and profile limit sources."""
+    from tcenv.target import load_target
+
+    backend = load_backend("metal")
+    seen = {}
+
+    class Kernel:
+        name = "relu_kernel"
+
+    def fake(contract, by_name, spec, **kwargs):
+        seen.update(kwargs)
+        return []
+
+    monkeypatch.setattr("tcenv.backends.metal.abi.check_pipeline", fake)
+    backend.check_abi(
+        object(), [Kernel()], target=load_target("apple-m4-max"),
+        device_info={"max_threadgroup_memory_bytes": 16384}, spec=object(),
+    )
+    assert seen["max_tg_memory"] == 16384
+    assert seen["max_buffer_index"] == 30
+    assert seen["target_id"] == "apple-m4-max"
+
+
+def test_generic_abi_and_launch_hooks_keep_metal_limits():
+    """Generic hook inputs still reach the original Metal limit checks."""
+    import pytest
+
+    from tcenv.backends.base import LaunchRejected
+    from tcenv.target import load_target
+
+    backend = load_backend("metal")
+    task = get_task("relu", "fp16", "paper")
+    target = load_target("apple-m4-max")
+    info = {
+        "max_threads_per_threadgroup_xyz": (1024, 1024, 1024),
+        "max_threads_per_threadgroup": 1024,
+        "max_threadgroup_memory_bytes": 32768,
+        "recommended_working_set_bytes": 1 << 30,
+        "max_buffer_length": 1 << 30,
+    }
+    accepted = backend.parse_launch("/* taic-launch\nlaunch relu_kernel grid=1,1,1 threads=32,1,1\n*/", task.contract)
+    backend.validate_launch(accepted, source="", contract=task.contract, task=task, target=target, device_info=info, require_contract_launch=False)
+    rejected = backend.parse_launch("/* taic-launch\nlaunch relu_kernel grid=1,1,1 threads=2048,1,1\n*/", task.contract)
+    with pytest.raises(LaunchRejected, match="device limit 1024"):
+        backend.validate_launch(rejected, source="", contract=task.contract, task=task, target=target, device_info=info, require_contract_launch=False)
 
 
 def test_contract_rendering_is_delegated_without_changing_text():
@@ -163,3 +221,55 @@ def test_triton_baseline_command_uses_the_moved_module(monkeypatch):
     monkeypatch.setattr(triton_baseline, "available", lambda: False)
     args = SimpleNamespace(task="gemm", dtype="fp16", size="paper", reps=1, wait_quiet=1.0)
     assert cli.cmd_triton_baseline(args) == 1
+
+
+def test_invalid_metal_limits_are_reported_as_device_check(monkeypatch, tmp_path):
+    """Malformed Metal limits fail at device_check, never at candidate compile."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from tcenv import evaluate as ev
+    from tcenv.target import load_target
+
+    backend = load_backend("metal")
+    profile = replace(
+        load_target("apple-m4-max"),
+        raw_limits={
+            "max_buffer_index": "not-an-int",
+            "max_threads_per_threadgroup": 1024,
+            "max_threadgroup_memory_bytes": 32768,
+            "counter_sample_us": 1000,
+        },
+    )
+    monkeypatch.setattr("tcenv.target.require_active", lambda target_id: profile)
+    monkeypatch.setattr("tcenv.target.load_target", lambda target_id: profile)
+    monkeypatch.setattr("tcenv.backends.registry.load_backend", lambda name: backend)
+    monkeypatch.setattr(backend, "context", lambda: SimpleNamespace(info=lambda: {}))
+    report = ev._evaluate_in_process(
+        "relu", "fp16", "small", "kernel void relu_kernel() {}\n",
+        mode="quick", seed=1, reps=1, target_id=profile.id,
+    )
+    assert report.status == "rejected" and report.stage == "device_check"
+    assert "invalid Metal limits" in report.message
+
+
+def test_heartbeat_callers_pass_a_backend_explicitly():
+    """Metal workers must not silently lose launch/compile heartbeat hooks."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    for relative in ("tcenv/xcworker.py", "tcenv/tools/worker.py", "tcenv/worker.py"):
+        tree = ast.parse((root / relative).read_text(encoding="utf-8"))
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_install_heartbeat"
+        ]
+        assert calls, relative
+        for call in calls:
+            assert len(call.args) >= 2 or any(keyword.arg == "backend" for keyword in call.keywords), relative
+            if len(call.args) >= 2:
+                assert not isinstance(call.args[1], ast.Constant) or call.args[1].value is not None, relative
+            for keyword in call.keywords:
+                if keyword.arg == "backend":
+                    assert not isinstance(keyword.value, ast.Constant) or keyword.value.value is not None, relative

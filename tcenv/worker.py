@@ -18,14 +18,14 @@ from pathlib import Path
 # 心跳和监督的分工在这里：本进程只广播状态，不自己决定死亡。
 # B/E 包住每一次 command buffer 的提交和完成，父进程用 B 的墙上时间判断单次启动是否该杀。
 # W/E 包住等 GPU 锁。W 期间核没有在跑，父进程不计这段时间。
-def _install_heartbeat(path: str | None, backend=None) -> None:
+def _install_heartbeat(path: str | None, backend) -> None:
     """@brief 安装 worker 心跳：编译、启动与等 GPU 锁都会原地写一个状态字母。
 
     Publish "B<time>" before and "E<time>" after every GPU launch, and "W<time>" while waiting for the GPU lock
     (fixed width, overwritten in place).
 
     @param path 心跳文件路径；为空时直接返回。
-    @param backend 可选的后端对象，提供 ``set_heartbeat_hooks``；为 None 时使用 Metal 运行时钩子。
+    @param backend 必选的后端对象，提供 ``set_heartbeat_hooks``；调用方必须显式选择，禁止隐式回退 Metal。
     """
     if not path:
         return
@@ -45,13 +45,9 @@ def _install_heartbeat(path: str | None, backend=None) -> None:
         lambda: os.pwrite(fd, f"B{time.time():020.6f}\n".encode(), 0),
         lambda: os.pwrite(fd, f"E{time.time():020.6f}\n".encode(), 0),
     )
-    if backend is not None:
-        backend.set_heartbeat_hooks(on_compile=compile_hooks, on_launch=launch_hooks)
-    else:
-        from .backends.metal.runtime import set_compile_hooks, set_launch_hooks
-
-        set_compile_hooks(*compile_hooks)
-        set_launch_hooks(*launch_hooks)
+    backend.set_heartbeat_hooks(on_compile=compile_hooks, on_launch=launch_hooks)
+    # A missing/invalid target must not silently select Metal.  The evaluator
+    # will report device_check; only a resolved backend may install hooks.
     set_wait_hooks(
         lambda: os.pwrite(fd, f"W{time.time():020.6f}\n".encode(), 0),
         lambda: os.pwrite(fd, f"E{time.time():020.6f}\n".encode(), 0),
@@ -108,7 +104,10 @@ def main() -> int:
             # A bad target/backend is reported by evaluate_in_process as a device_check
             # rejection. Do not swallow unrelated errors: the outer handler must write a crash.
             backend = None
-        _install_heartbeat(req.get("heartbeat"), backend)
+        if backend is not None:
+            _install_heartbeat(req.get("heartbeat"), backend)
+        # Invalid targets skip backend-specific hooks but still reach
+        # evaluate_in_process for the established device_check rejection.
         if req.get("stage"):
             from tcenv.events import bind_progress
 

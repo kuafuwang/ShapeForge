@@ -1,8 +1,21 @@
 """Backend protocol for the evaluation layer.
 
-Phase 1 is intentionally small: the Metal adapter delegates to today's functions
-and no component is moved.  The protocol draws the boundary that later phases can
-migrate behind without changing the orchestrator.
+B0.5 keeps the original execution primitives and adds the remaining parent/
+worker hooks: source declarations, launch validation/deadlines, sanitization,
+device/target matching and optional compiler baselines.  Metal owns its grid,
+threadgroup, shader-validation and Triton→MSL rules behind these hooks.
+
+B2 compatibility inventory, deliberately not claimed complete here:
+``tcenv.contract.Contract`` is still an MSL ABI/launch contract; formal-
+verification and coverage/diagnostic wording still contain Metal assumptions;
+and the GPU lock/command-buffer supervisor is the existing Metal timing
+infrastructure.  The remaining compatibility inventory also includes the
+MSL-shaped launcher closure and coverage toolchain in ``tcenv.evaluate``,
+Metal-specific retry/status strings, and Metal-default profiling/worker
+fallbacks.  ``taic/orchestrator.py`` still has Metal-shaped nudge wording.
+These are intentionally preserved Metal behaviors, not neutral contracts.
+A fake backend proves import and hook boundaries, not a non-MSL KernelContract
+or NPU execution semantics.
 """
 
 from __future__ import annotations
@@ -11,15 +24,26 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Protocol
 
 
+class LaunchRejected(ValueError):
+    """Backend-neutral launch rejection raised before compilation or allocation."""
+
+
 @dataclass(frozen=True)
 class DeviceInfo:
-    """@brief 一次设备探测的结果：后端名、设备名、family 与原始信息。"""
+    """@brief 一次设备探测的结果：后端名、设备名、family 与原始信息。
+
+    ``matches``/``match_error`` and ``warnings`` are produced by the backend's
+    target hook.  The generic evaluator never interprets Metal limit names.
+    """
 
     backend: str
     name: str
     family: str
     limits: Mapping[str, Any] = field(default_factory=dict)
     raw: Mapping[str, Any] = field(default_factory=dict)
+    matches: bool = False
+    match_error: str = ""
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -51,9 +75,8 @@ class BenchHarness:
 class Backend(Protocol):
     """@brief 评测层与具体加速器之间的边界协议。
 
-    Phase 1 is intentionally small: the Metal adapter delegates to today's functions
-    and no component is moved.  The protocol draws the boundary that later phases can
-    migrate behind without changing the orchestrator.
+    Parent/worker evaluation calls these hooks rather than importing a concrete
+    backend.  See the module docstring for the remaining B2 contract blockers.
     """
 
     id: str
@@ -83,12 +106,34 @@ class Backend(Protocol):
         ...
 
     def parse_launch(self, source: str, contract: Any) -> Any | None:
-        """@brief 解析候选自带的 taic-launch 块。
+        """@brief 解析候选自带的启动块。
 
         @param source 候选源码。
         @param contract 编译契约。
-        @return 启动规格；没有该块时为 None。
+        @return 后端自己的启动规格；没有该块时为 None。
         """
+        ...
+
+    def source_name_pattern(self, kernel_name: str) -> str:
+        """Return a regex identifying the backend's declaration of ``kernel_name``."""
+        ...
+
+    def launch_stage_count(self, source: str, contract: Any) -> int:
+        """Return the number of device launches used for watchdog sizing."""
+        ...
+
+    def validate_launch(
+        self,
+        spec: Any,
+        *,
+        source: str,
+        contract: Any,
+        task: Any,
+        target: Any,
+        device_info: Mapping[str, Any],
+        require_contract_launch: bool,
+    ) -> None:
+        """Validate one parsed launch using backend-owned rules and target limits."""
         ...
 
     def validation_env(self, base_env: Mapping[str, str]) -> dict[str, str]:
@@ -97,6 +142,10 @@ class Backend(Protocol):
         @param base_env 基础环境。
         @return 新的环境字典。
         """
+        ...
+
+    def worker_env(self, base_env: Mapping[str, str], *, validation: bool) -> dict[str, str]:
+        """Return a worker environment with backend sanitization enabled or removed."""
         ...
 
     def parse_validation_stderr(self, stderr: str) -> list[str]:
@@ -123,6 +172,22 @@ class Backend(Protocol):
         @param max_tg_memory 设备线程组内存上限。
         @return 过滤后的违例列表。
         """
+        ...
+
+    def validation_summary(self, *, size_only: bool, target: Any) -> str:
+        """Describe the backend validation outcome without changing ``EvalReport``."""
+        ...
+
+    def compiler_baseline(self, task_name: str, dtype: str, size: str, baseline_us: Mapping[str, float], candidate_us: float) -> dict:
+        """Return optional backend compiler-baseline evidence, or an empty dict."""
+        ...
+
+    def device_matches(self, target: Any, info: Mapping[str, Any]) -> bool:
+        """Match probed identity using backend/target-owned rules."""
+        ...
+
+    def limit_notes(self, target: Any, info: Mapping[str, Any]) -> list[str]:
+        """Return warnings for differences between target metadata and live limits."""
         ...
 
     # Child-process methods.  The caller supplies the runtime context.
@@ -291,21 +356,12 @@ class Backend(Protocol):
         contract: Any,
         kernels: list[Any],
         *,
-        max_tg_memory: int,
-        max_buffer_index: int,
-        target_id: str,
+        target: Any,
+        device_info: Mapping[str, Any],
         spec: Any = None,
+        validation: bool = False,
     ) -> list[str]:
-        """@brief 反射检查编译结果是否匹配契约与启动规格。
-
-        @param contract 编译契约。
-        @param kernels 编译出的内核。
-        @param max_tg_memory 设备线程组内存上限。
-        @param max_buffer_index 最大 buffer 槽位。
-        @param target_id 目标 id。
-        @param spec 可选启动规格。
-        @return 违例列表；为空表示通过。
-        """
+        """Check compiled artifacts against backend-owned ABI and target limits."""
         ...
     def pipeline_stats(self, kernel: Any, contract: Any, device_info: Mapping[str, Any], *, kernel_source: str | None = None) -> dict:
         """@brief 单核的流水线统计。

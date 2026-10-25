@@ -90,16 +90,20 @@ class Task:
         return sum(a.nbytes for a in self.contract.buffers)
 
 
-def task_fingerprint(task: Task) -> str:
-    """@brief 计算被测问题的指纹。
+def task_fingerprint(task: Task, backend_id: str = "metal") -> str:
+    """@brief 计算被测问题在指定 backend 上的指纹。
 
     Identity of the measured problem, separate from ``tcenv.triton_runner.spec_fingerprint``.
+    Metal deliberately keeps the legacy hash input byte-for-byte.  Other backend
+    ids are included explicitly and select ``reference_for(backend_id)``; they
+    never silently hash only the Metal reference source.
 
-    ``spec_fingerprint`` is the triton-msl baseline cache key. This one also covers the naive kernel, the tolerances,
-    the flop and byte counts, and whether a full-domain sweep is declared. The reference function's code is not hashed;
-    ``run_config.json`` records ``git_commit`` and ``git_dirty`` for that.
+    ``spec_fingerprint`` is the triton-msl baseline cache key. This one also covers the backend's reference kernel,
+    the tolerances, the flop and byte counts, and whether a full-domain sweep is declared. The reference function's
+    code is not hashed; ``run_config.json`` records ``git_commit`` and ``git_dirty`` for that.
 
     @param task 要取指纹的任务。
+    @param backend_id 目标 backend；缺省 ``metal`` 只用于历史兼容。
     @return 十六进制 sha256 指纹。
     """
     import hashlib
@@ -121,10 +125,11 @@ def task_fingerprint(task: Task) -> str:
         "domain_case": bool(meta.get("domain_case")),
         "source": meta.get("source") or "",
     }
+    backend_id = str(backend_id or "metal")
     parts = (
         task.contract.describe(),
         task.triton_source,
-        task.reference_for("metal"),
+        task.reference_for(backend_id),
         repr(task.cases),
         repr((task.rtol, task.atol_rel, task.exact)),
         repr((task.flops, task.min_bytes)),
@@ -132,6 +137,9 @@ def task_fingerprint(task: Task) -> str:
         task.size,
         json.dumps(recorded, sort_keys=True, ensure_ascii=False),
     )
+    if backend_id != "metal":
+        # Metal's published/run-config fingerprints must remain unchanged.
+        parts = (f"backend:{backend_id}", *parts)
     h = hashlib.sha256()
     for part in parts:
         h.update(part.encode())

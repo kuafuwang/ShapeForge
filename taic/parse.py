@@ -15,7 +15,7 @@ _METAL_TAGS = {"metal", "msl", "cpp", "c++", "c", "cuda", "objc", ""}
 
 
 # 认定回复里要评测的那份源码。多块代码时，最后一块「标签像 MSL，且声明了 kernel void <kernel_name>」才算，前面的示例片段忽略。没有这样的块就是抽失败，编排器只追问，不把其它文本送去编译。
-def extract_source(text: str, kernel_name: str, *, tags: set[str] | None = None) -> str | None:
+def extract_source(text: str, kernel_name: str, *, tags: set[str] | None = None, source_name_pattern: str | None = None) -> str | None:
     """@brief 从回复里抽出要评测的那份源码。
 
     默认标签集仍是历史上的 Metal 集合。最后一块声明了 ``kernel void <kernel_name>`` 的块胜出；
@@ -24,18 +24,21 @@ def extract_source(text: str, kernel_name: str, *, tags: set[str] | None = None)
     @param text 模型回复全文。
     @param kernel_name 契约要求的核函数名。
     @param tags 调用方认可的围栏标签集；缺省为 Metal 常用标签集（含空标签）。
+    @param source_name_pattern 可选 backend 提供的声明正则；缺省保持 ``kernel void``/taic-launch 兼容语义。
     @return 抽到的源码（末尾带一个换行）；没有合格代码块时为 ``None``。
     """
     accepted = _METAL_TAGS if tags is None else {str(tag).lower() for tag in tags}
     blocks = [(tag.lower(), body) for tag, body in _FENCE.findall(text or "")]
     # 说明文字和 ```json 规划块不在候选里。
     code = [b for tag, b in blocks if tag in accepted]
-    # 带启动说明的块优先。说明不合法时也把这块送去评测，由评测拒绝，不退回旁边那颗契约核。
-    marked = [b for b in code if "taic-launch" in b]
+    # taic-launch is the Metal compatibility rule.  A backend-supplied
+    # declaration pattern must not accidentally opt into MSL launch semantics.
+    marked = [b for b in code if "taic-launch" in b] if source_name_pattern is None else []
     if marked:
         return marked[-1].strip("\n") + "\n"
     # 必须出现契约里的内核名。同名的多块取最后一块：模型常先贴片段，再贴完整内核。
-    named = [b for b in code if re.search(r"\bkernel\s+void\s+" + re.escape(kernel_name) + r"\b", b)]
+    pattern = source_name_pattern or (r"\bkernel\s+void\s+" + re.escape(kernel_name) + r"\b")
+    named = [b for b in code if re.search(pattern, b)]
     if named:
         return named[-1].strip("\n") + "\n"
     # 有围栏但没有约定的 kernel void 名字，与完全没有围栏相同，都是抽失败。

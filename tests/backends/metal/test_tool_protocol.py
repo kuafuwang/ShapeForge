@@ -155,9 +155,19 @@ def test_worker_uses_the_same_unicode_digest_as_the_parent(tmp_path, monkeypatch
         }
 
     monkeypatch.setattr("tcenv.tools.registry.load_handler", lambda _manifest: fake_handler)
+    seen = {}
+
+    def fake_heartbeat(path, backend):
+        seen["path"] = path
+        seen["backend"] = backend
+
+    # Patch the source module because tools.worker imports the helper inside main().
+    monkeypatch.setattr("tcenv.worker._install_heartbeat", fake_heartbeat)
     monkeypatch.setattr(sys, "argv", ["tcenv.tools.worker", str(request_path)])
     assert worker.main() == 0
     assert json.loads(out.read_text(encoding="utf-8"))["status"] == "ok"
+    assert seen["path"] == raw["heartbeat"]
+    assert seen["backend"].id == "metal"
 
 
 def test_scaffold_is_inert_and_never_registers_a_handler(tmp_path):

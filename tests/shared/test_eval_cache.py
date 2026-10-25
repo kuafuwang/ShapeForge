@@ -41,6 +41,15 @@ def test_case_order_backend_and_evaluation_semantics_are_part_of_the_key():
     assert _key(evaluation_fingerprint="semantics-a") != _key(evaluation_fingerprint="semantics-b")
 
 
+def test_the_key_separates_target_device_and_backend():
+    """@brief 同一任务在不同设备/后端不得复用同一份缓存报告。"""
+    assert _key(target_id="sim-npu-test", backend_id="sim-npu", backend_version="1") != _key()
+    assert _key(target_id="other-device", backend_id="metal") != _key()
+    assert _key(target_id="sim-npu-test", backend_id="sim-npu", backend_version="1") != _key(
+        target_id="sim-npu-test", backend_id="metal", backend_version="1"
+    )
+
+
 def test_a_cached_report_round_trips(tmp_path, monkeypatch):
     """@brief EvalReport 写入缓存后能读回，缓存文件带 schema_version。
 

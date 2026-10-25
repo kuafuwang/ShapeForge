@@ -9,6 +9,12 @@ Paper correspondence (Section 3.1):
 
 A candidate kernel is *valid* only if it exposes exactly this ABI. The harness
 (not the model) chooses the launch configuration.
+
+B2 blocker: despite its historical top-level location, this is the Metal/MSL
+contract (``kernel void``, ``[[buffer(n)]]``, grid/threadgroups and MSL constants).
+B0.5 lets backends treat it as opaque; it does not define a non-MSL
+KernelContract.  A future kernel-level NPU needs that separate contract rather
+than reusing this text renderer and pretending it is backend-neutral.
 """
 # 契约关。compile 把这里生成的文件头接到候选正文前面；abi 关再拿编译结果对这份契约。
 # 契约固定函数名、每个参数的槽位与读写、以及并发度（grid 上有多少线程组、每组多少线程）。这些在 tasks 里由框架写成 Contract。模型提交的是带这个签名的内核函数，改不了这份对象。

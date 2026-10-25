@@ -326,38 +326,37 @@ def _evaluate_in_process(
     from .verify import verify
 
     rep.verification = verify(task, kernel_source).to_json()  # formal equivalence: unsupported for MSL (tcenv.verify)
-    from .target import TargetError, device_matches, limit_notes, require_active
+    from .target import TargetError, require_active
+
+    def reject_device(message: str) -> EvalReport:
+        rep.stage = "device_check"
+        rep.status = "rejected"
+        rep.message = message
+        rep.elapsed_s = time.perf_counter() - t_start
+        rep.timeline = [{"stage": "device_check", "status": "rejected", "duration_s": rep.elapsed_s}]
+        return rep
 
     try:
         profile = require_active(target_id)
     except TargetError as exc:
-        rep.stage = "device_check"
-        rep.status = "rejected"
-        rep.message = str(exc)
-        rep.elapsed_s = time.perf_counter() - t_start
-        rep.timeline = [{"stage": "device_check", "status": "rejected", "duration_s": rep.elapsed_s}]
-        return rep
+        return reject_device(str(exc))
     contract = task.contract
     from .backends.registry import load_backend
 
     backend = load_backend(profile.backend)
     ctx = backend.context()
-    dev_info = backend.probe(ctx, profile).raw
+    try:
+        device = backend.probe(ctx, profile)
+    except TargetError as exc:
+        return reject_device(str(exc))
+    dev_info = device.raw
     rep.backend = profile.backend
     rep.backend_version = profile.backend_version
     rep.device_name = str(dev_info.get("name") or "")
     rep.gpu_family = str(dev_info.get("gpu_family") or "")
-    if not device_matches(profile, dev_info):
-        rep.stage = "device_check"
-        rep.status = "rejected"
-        rep.message = (
-            f"device {rep.device_name} ({rep.gpu_family}) does not match target {profile.id} "
-            f"({profile.match_name_contains}, {profile.match_family})"
-        )
-        rep.elapsed_s = time.perf_counter() - t_start
-        rep.timeline = [{"stage": "device_check", "status": "rejected", "duration_s": rep.elapsed_s}]
-        return rep
-    rep.device_warnings = limit_notes(profile, dev_info)
+    if not device.matches:
+        return reject_device(device.match_error or f"device {rep.device_name} does not match target {profile.id}")
+    rep.device_warnings = list(device.warnings)
 
     def _enter(stage: str) -> None:
         nonlocal stage_name, stage_started
@@ -379,9 +378,7 @@ def _evaluate_in_process(
         _note_stage(stage=rep.stage, status=status, task=task_name, dtype=dtype, size=size, mode=mode)
         return rep
 
-    # -- static screen (before anything touches the GPU) ---------------------------
-    from .backends.metal.screen import screen_source
-
+    # -- static screen (before anything touches the device) ------------------------
     rep.stage = "screen"
     _enter("screen")
     _note_stage(stage="screen", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
@@ -391,24 +388,19 @@ def _evaluate_in_process(
         rep.abi = {"ok": False, "violations": refused}
         return finish("rejected", "refused before compilation: " + refused[0])
 
-    from .backends.metal.launch import LaunchRejected, check_launch_limits
+    from .backends.base import LaunchRejected
 
     try:
         spec = backend.parse_launch(kernel_source, contract)
-        if spec is not None and require_contract_launch:
-            raise LaunchRejected("a contract experiment requires the task's own launch; taic-launch is not allowed here")
-        if spec is not None:
-            mtp = dev_info.get("max_threads_per_threadgroup_xyz") or (dev_info["max_threads_per_threadgroup"],) * 3
-            check_launch_limits(
-                spec,
-                contract_names={a.name for a in contract.args},
-                max_threads_xyz=tuple(mtp),
-                max_threads_product=int(dev_info["max_threads_per_threadgroup"]),
-                max_threadgroup_memory_bytes=int(dev_info["max_threadgroup_memory_bytes"]),
-                recommended_working_set_bytes=int(dev_info.get("recommended_working_set_bytes") or 0),
-                max_buffer_length=int(dev_info.get("max_buffer_length") or 2**31),
-                rotation_sets=backend.rotation_sets(task),
-            )
+        backend.validate_launch(
+            spec,
+            source=kernel_source,
+            contract=contract,
+            task=task,
+            target=profile,
+            device_info=dev_info,
+            require_contract_launch=require_contract_launch,
+        )
     except LaunchRejected as e:
         rep.abi = {"ok": False, "violations": [str(e)]}
         return finish("rejected", "refused before compilation: " + str(e))
@@ -447,18 +439,11 @@ def _evaluate_in_process(
     _note_stage(stage="abi", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
     problems = backend.check_abi(
         contract, kernels,
-        max_tg_memory=dev_info["max_threadgroup_memory_bytes"],
-        max_buffer_index=profile.limits.max_buffer_index,
-        target_id=target_id,
+        target=profile,
+        device_info=dev_info,
         spec=spec,
+        validation=(mode == "validate"),
     )
-    # 插桩会把静态线程组内存报成大约两倍。超过设备上限后再启动，Metal 在
-    # validateComputeFunctionArguments 里断言并 SIGABRT，子进程变成 crash。
-    # 这种只回报那一条、不启动。父进程改用不插桩的完整评测去比目标档案里的线程组内存上限。
-    if mode == "validate":
-        problems = backend.validation_problems(
-            problems, [k.static_tg_bytes for k in kernels], dev_info["max_threadgroup_memory_bytes"],
-        )
     rep.abi = {"ok": not problems, "violations": problems}
     if spec is None:
         rep.pipeline = backend.pipeline_stats(kernel, contract, dev_info, kernel_source=kernel_source)
@@ -644,16 +629,10 @@ def _evaluate_in_process(
         if fast_bench:
             _remember_baseline(task_name, dtype, size, best, target_id=target_id)
     rep.roofline = backend.roofline(task, cand.median_s, calib)
-    try:  # compiler baseline (Triton -> Metal through triton-msl), when it was measured for this task
-        from .backends.metal.triton_baseline import estimate, load_cached
-
-        cached = load_cached(task_name, dtype, size)
-        est = estimate(cached, rep.baseline_us) if cached else None
-        if est:
-            est["speedup"] = est["estimated_us"] / cand.median_us
-            rep.compiler_baseline = est
+    try:  # optional backend-owned compiler baseline (Triton→MSL on Metal)
+        rep.compiler_baseline = backend.compiler_baseline(task_name, dtype, size, rep.baseline_us, cand.median_us)
     except Exception:  # noqa: BLE001 - optional information must never fail an evaluation
-        # 拿不到 Triton→Metal 的对照就跳过。它是附加信息，失败不能把已经通过的候选改判。
+        # 拿不到后端编译器对照就跳过。它是附加信息，失败不能把已经通过的候选改判。
         pass
     rep.stage = "done"
     _enter("done")
@@ -691,7 +670,7 @@ def command_buffer_deadline_s(n_stages: int) -> float:
     return min(PIPELINE_DEADLINE_CAP_S, LAUNCH_DEADLINE_S * stages)
 
 
-def deadline_for_source(task: str, dtype: str, size: str, source: str) -> float:
+def deadline_for_source(task: str, dtype: str, size: str, source: str, *, backend: Any = None) -> float:
     """@brief 按候选源码决定本次 command buffer 的等待时限。
 
     The command-buffer wait for this source. An unreadable launch block stays at 2 seconds.
@@ -706,24 +685,22 @@ def deadline_for_source(task: str, dtype: str, size: str, source: str) -> float:
     """
     from tasks import get_task
 
-    from .backends.metal.launch import LaunchRejected, parse_launch_spec
+    from .backends.base import LaunchRejected
 
     try:
         contract = get_task(task, dtype, size).contract
-    except Exception:  # noqa: BLE001 - an unknown task still has the single-kernel wait
+    except Exception:  # noqa: BLE001 - an unknown task still has the single-launch wait
         return LAUNCH_DEADLINE_S
-    constants = {
-        name: int(value)
-        for name, _typ, value in contract.constants
-        if isinstance(value, int) and not isinstance(value, bool)
-    }
+    if backend is None:
+        # Compatibility for Metal profiling callers.  The generic evaluator
+        # always supplies its already-resolved backend.
+        from .backends.registry import load_backend
+
+        backend = load_backend("metal")
     try:
-        spec = parse_launch_spec(source, constants)
+        return command_buffer_deadline_s(backend.launch_stage_count(source, contract))
     except LaunchRejected:
         return LAUNCH_DEADLINE_S
-    if spec is None:
-        return LAUNCH_DEADLINE_S
-    return command_buffer_deadline_s(len(spec.stages))
 # 杀掉失控核之后先歇一会儿再评下一份，给 GPU 从这次提交里恢复的时间。
 POST_KILL_COOLDOWN_S = 3.0  # give the GPU time to recover after a runaway kernel was killed
 
@@ -863,6 +840,7 @@ def _run_worker(
     require_contract_launch: bool = False,
     measure_serial: bool = True,
     target_id: str = "apple-m4-max",
+    backend: Any = None,
 ) -> EvalReport:
     """@brief 在一份新临时目录里拉起一个 worker 并回收它的报告。
 
@@ -892,7 +870,13 @@ def _run_worker(
     @param target_id 目标设备 id。
     @return worker 报告；被杀或崩溃时返回对应的 timeout / crash 报告。
     """
-    from .backends.metal.sanitize import VALIDATION_ENV, env_with_validation, validation_problems
+    if backend is None:
+        # Direct Metal-era callers remain valid, but target selection goes
+        # through the registry rather than importing a Metal runtime here.
+        from .backends.registry import load_backend
+        from .target import load_target
+
+        backend = load_backend(load_target(target_id).backend)
 
     with tempfile.TemporaryDirectory(prefix="tcenv_") as td:
         tdp = Path(td)
@@ -914,14 +898,9 @@ def _run_worker(
         from .children import forget, kill_group, popen_group, scrubbed_env
 
         env = scrubbed_env()
-        if validation:
-            env = env_with_validation(env)
-        else:
-            # A shell that exported MTL_SHADER_VALIDATION would instrument the timed build as well:
-            # the candidate pays for validation while the MLX/torch baselines do not, and no field
-            # in the report would show it. The timed worker gets an uninstrumented environment.
-            for key in VALIDATION_ENV:
-                env.pop(key, None)
+        # Metal removes inherited MTL_* instrumentation for timed workers and
+        # enables it for validation workers; other backends own their own env.
+        env = backend.worker_env(env, validation=validation)
         env["PYTHONPATH"] = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
         env.setdefault("TORCHINDUCTOR_COMPILE_THREADS", "1")  # no compile-worker pool that could outlive a SIGKILLed worker
         base = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=seed)
@@ -988,7 +967,7 @@ def _run_worker(
             return base
         if validation:
             # 校验违例在子进程 stderr 里，不在 JSON。status 已是 ok、incorrect、unsafe 或 runtime_error，说明核启动过，改判 unsafe。
-            probs = validation_problems(stderr)
+            probs = backend.parse_validation_stderr(stderr)
             rep.safety = dict(rep.safety or {})
             rep.safety["validation"] = probs
             if probs and rep.status in (STATUS_OK, "incorrect", "unsafe", "runtime_error"):
@@ -1036,12 +1015,12 @@ def _callable_identity(fn) -> str:
     return repr(body)
 
 
-def _evaluation_fingerprint(task) -> str:
+def _evaluation_fingerprint(task, backend_id: str = "metal") -> str:
     """@brief 计算影响评测结果的可执行语义指纹，而不只任务规格文本。"""
     from .task import task_fingerprint
 
     body = {
-        "task": task_fingerprint(task),
+        "task": task_fingerprint(task, backend_id),
         "gen_inputs": _callable_identity(task.gen_inputs),
         "reference": _callable_identity(task.reference),
         "error_scale": _callable_identity(task.error_scale),
@@ -1085,12 +1064,14 @@ def _eval_cache_key(
     from .task import task_fingerprint
     from tasks import get_task
 
+    task_obj = get_task(task, dtype, size)
+    fingerprint_backend = backend_id or "metal"
     body = {
         "schema": EVAL_CACHE_SCHEMA,
         "protocol": PROTOCOL_VERSION,
         "task": task, "dtype": dtype, "size": size, "mode": mode,
-        "task_fingerprint": task_fingerprint(get_task(task, dtype, size)),
-        "evaluation_fingerprint": _evaluation_fingerprint(get_task(task, dtype, size)) if evaluation_fingerprint is None else evaluation_fingerprint,
+        "task_fingerprint": task_fingerprint(task_obj, fingerprint_backend),
+        "evaluation_fingerprint": _evaluation_fingerprint(task_obj, fingerprint_backend) if evaluation_fingerprint is None else evaluation_fingerprint,
         "backend": backend_id,
         "backend_version": backend_version,
         "kernel_sha256": hashlib.sha256(kernel_source.encode("utf-8")).hexdigest(),
@@ -1195,13 +1176,16 @@ def evaluate(
     seed = int(seed if seed is not None else secrets.randbits(48))
     t0 = time.perf_counter()
     from .backends.registry import load_backend
-    from .backends.metal.screen import screen_source
-    from .target import TargetError, load_target as _load_target
+    from .target import TargetError, load_target
 
+    profile = None
+    target_error = None
     try:
-        backend = load_backend(_load_target(target_id).backend)
-    except TargetError:
+        profile = load_target(target_id)
+        backend = load_backend(profile.backend)
+    except TargetError as exc:
         backend = None
+        target_error = exc
 
     def _live(rep: EvalReport) -> EvalReport:
         if progress_path is not None:
@@ -1235,6 +1219,13 @@ def evaluate(
                 "kernel_sha256": hashlib.sha256(kernel_source.encode("utf-8")).hexdigest(),
             })
         return _live(rep)
+
+    if backend is None or profile is None:
+        rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=seed, status="rejected", stage="device_check")
+        rep.message = str(target_error or f"target {target_id} has no usable backend")
+        rep.elapsed_s = time.perf_counter() - t0
+        rep.timeline = [{"stage": "device_check", "status": "rejected", "duration_s": rep.elapsed_s}]
+        return _checked(rep)
 
     cache_key = None
     if eval_cache and not fast_bench and seed is not None:
@@ -1271,8 +1262,8 @@ def evaluate(
             rep.elapsed_s = time.perf_counter() - t0
             return _live(rep)
 
-    # 明显的死循环和非法 include 在这里结束，不起子进程，也不把核提交到 GPU。
-    refused = backend.screen(kernel_source) if backend is not None else screen_source(kernel_source)
+    # Backend-specific static rejection happens before a worker or device launch.
+    refused = backend.screen(kernel_source)
     if refused:  # never reaches a worker, let alone the GPU
         rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=seed, status="rejected", stage="screen")
         rep.message = "refused before compilation: " + refused[0]
@@ -1290,52 +1281,44 @@ def evaluate(
         except Exception:
             pass
     with tempfile.TemporaryDirectory(prefix="tcenv_src_") as td:
-        kp = Path(workdir or td) / f"kernel{backend.file_ext if backend is not None else '.metal'}"
+        kp = Path(workdir or td) / f"kernel{profile.file_ext}"
         kp.parent.mkdir(parents=True, exist_ok=True)
         kp.write_text(kernel_source)
-        deadline = deadline_for_source(task, dtype, size, kernel_source)
-        def _validation_pass() -> tuple[EvalReport | None, bool]:
-            """Run the instrumented pass. Returns (a failure to stop on, whether the only complaint was the static limit)."""
-            # 校验子进程在 bench 之前：打开会插桩访存和 barrier 的 shader validation，期限是这次 command buffer 时限的两倍。
-            # 单核仍是 4 秒。流水线是「每段 2 秒、封顶 8 秒」的两倍。这次不过关就带着它的状态码返回。
-            v = _run_worker(task, dtype, size, kp, "validate", seed, reps, timeout or 120.0, validation=True, cases=cases, launch_deadline_s=2 * deadline, progress_path=progress_path, require_contract_launch=require_contract_launch, measure_serial=measure_serial, target_id=target_id)
-            # 校验插桩会把静态线程组内存报成大约两倍。只有这一条时，不拿它否决内核，改由下面不插桩的编译去比目标档案里的上限。
-            from .backends.metal.abi import only_static_threadgroup_limit
+        deadline = deadline_for_source(task, dtype, size, kernel_source, backend=backend)
 
-            size_only = v.status == "abi_error" and only_static_threadgroup_limit((v.abi or {}).get("violations") or [])
+        def _validation_pass() -> tuple[EvalReport | None, bool]:
+            """Run the backend instrumented pass and classify its only-limit exemption."""
+            v = _run_worker(task, dtype, size, kp, "validate", seed, reps, timeout or 120.0, validation=True, cases=cases, launch_deadline_s=2 * deadline, progress_path=progress_path, require_contract_launch=require_contract_launch, measure_serial=measure_serial, target_id=target_id, backend=backend)
+            size_only = v.status == "abi_error" and backend.is_instrumented_size_only((v.abi or {}).get("violations") or [])
             return (None if (v.status == STATUS_OK or size_only) else v), size_only
 
-        from .target import load_target
+        def validation_note(size_only: bool) -> str:
+            if not backend.capabilities.supports_validation:
+                return "unsupported"
+            return backend.validation_summary(size_only=size_only, target=profile)
 
-        tg_limit = load_target(target_id).limits.max_threadgroup_memory_bytes
         size_only = False
-        if mode == "full" or (mode == "timed" and validate):
+        if backend.capabilities.supports_validation and (mode == "full" or (mode == "timed" and validate)):
             failed, size_only = _validation_pass()
             if failed is not None:
                 failed.mode = "full" if mode == "full" else "timed"
                 failed.elapsed_s = time.perf_counter() - t0
                 return _checked(failed)
         if mode == "full":
-            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, measure_serial=measure_serial, target_id=target_id)
+            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, measure_serial=measure_serial, target_id=target_id, backend=backend)
             rep.safety = dict(rep.safety or {})
             rep.safety["validation"] = []
-            rep.safety["shader_validation"] = (
-                f"skipped: the validation pipeline's threadgroup size is the instrumented figure; the uninstrumented pipeline checked the {tg_limit} B limit"
-                if size_only else "clean"
-            )
+            rep.safety["shader_validation"] = validation_note(size_only)
         elif mode == "timed":
-            # 和 full 同一套计时。校验只在调用方要求时跑（--timed --validate）：它慢，而且插桩会把线程组内存报成大约两倍。
-            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, measure_serial=measure_serial, target_id=target_id)
+            # 和 full 同一套计时。校验只在后端支持且调用方要求时跑。
+            rep = _run_worker(task, dtype, size, kp, "full", seed, reps, timeout or 420.0, validation=False, cases=cases, progress_path=progress_path, fast_bench=fast_bench, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, measure_serial=measure_serial, target_id=target_id, backend=backend)
             rep.mode = "timed"
             if validate:
                 rep.safety = dict(rep.safety or {})
                 rep.safety["validation"] = []
-                rep.safety["shader_validation"] = (
-                    f"skipped: the validation pipeline's threadgroup size is the instrumented figure; the uninstrumented pipeline checked the {tg_limit} B limit"
-                    if size_only else "clean"
-                )
+                rep.safety["shader_validation"] = validation_note(size_only)
         else:
-            rep = _run_worker(task, dtype, size, kp, "quick", seed, reps, timeout or 240.0, validation=False, cases=cases, progress_path=progress_path, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, measure_serial=measure_serial, target_id=target_id)
+            rep = _run_worker(task, dtype, size, kp, "quick", seed, reps, timeout or 240.0, validation=False, cases=cases, progress_path=progress_path, launch_deadline_s=deadline, require_contract_launch=require_contract_launch, measure_serial=measure_serial, target_id=target_id, backend=backend)
         rep.elapsed_s = time.perf_counter() - t0
         if cache_key is not None:
             _cache_write(cache_key, rep)

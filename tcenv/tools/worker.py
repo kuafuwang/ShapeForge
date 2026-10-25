@@ -24,7 +24,11 @@ def main() -> int:
             raise ToolError("the worker role lacks the approved tool capabilities")
         if canonical_digest(raw["request"]) != raw["request_digest"]:
             raise ToolError("request digest mismatch")
-        _install_heartbeat(raw.get("heartbeat"))
+        from tcenv.backends.registry import load_backend
+        from tcenv.target import load_target
+
+        backend = load_backend(load_target(str(raw["request"]["target_id"])).backend)
+        _install_heartbeat(raw.get("heartbeat"), backend)
         handler = load_handler(manifest)
         result = validated_result(manifest, handler(raw["request"], manifest=manifest))
         write_json_atomic(out, result)

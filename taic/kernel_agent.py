@@ -130,6 +130,9 @@ class SessionBrief:
     # sets this to its per-session socket; the agent still chooses only quick/timed.
     selfcheck_socket: str = ""
     selfcheck_token_file: str = ""
+    # Empty is the legacy MSL extractor.  Backends may provide a declaration
+    # regex without serializing a callable into the session brief.
+    source_name_pattern: str = ""
 
     @property
     def seed_name(self) -> str:
@@ -246,7 +249,7 @@ def submission_name(task: str, dtype: str, size: str, label: str, file_ext: str 
     return "-".join(parts) + (file_ext if str(file_ext).startswith(".") else "." + str(file_ext))
 
 
-def kernel_text(text: str, kernel_name: str, *, source_fence: str = "metal") -> str | None:
+def kernel_text(text: str, kernel_name: str, *, source_fence: str = "metal", source_name_pattern: str | None = None) -> str | None:
     """@brief 取出 ``text`` 里的内核源码。
 
     优先用围栏块；没有围栏时，整份文件只要声明了内核就算数。``source_fence`` 不是
@@ -255,13 +258,21 @@ def kernel_text(text: str, kernel_name: str, *, source_fence: str = "metal") -> 
     @param text agent 写出的原始文本。
     @param kernel_name 期望的内核函数名。
     @param source_fence 围栏语言标签，缺省 ``metal``。
+    @param source_name_pattern 可选 backend 声明正则；缺省保持 MSL 整文件兜底。
     @return 源码文本；取不到时为 ``None``。
     """
     tags = None if source_fence == "metal" else {source_fence}
-    fenced = extract_source(text, kernel_name, tags=tags)
+    # Metal always takes the legacy path, even when the orchestrator supplies
+    # its explicit declaration regex; taic-launch priority must not change.
+    pattern = None if source_fence == "metal" else source_name_pattern
+    fenced = extract_source(text, kernel_name, tags=tags, source_name_pattern=pattern)
     if fenced:
         return fenced
     body = (text or "").strip("\n")
+    if source_fence != "metal" and source_name_pattern:
+        return body + "\n" if re.search(source_name_pattern, body) else None
+    # Legacy MSL fallback.  Non-MSL backends supply a pattern above rather
+    # than borrowing kernel-void/taic-launch recognition.
     if "taic-launch" in body and _KERNEL.search(body):
         return body + "\n"
     if _KERNEL.search(body) and re.search(r"\bkernel\s+void\s+" + re.escape(kernel_name) + r"\b", body):
@@ -1096,7 +1107,7 @@ def run_kernel_agent(
     # The session is already billed at this point. A non-UTF-8 byte in a comment must degrade to a
     # replacement character, not raise away the AgentResult that carries the cost.
     written = submit_path.read_text(encoding="utf-8", errors="replace") if submit_path.is_file() else ""
-    source = kernel_text(written, brief.kernel_name, source_fence=brief.source_fence)
+    source = kernel_text(written, brief.kernel_name, source_fence=brief.source_fence, source_name_pattern=brief.source_name_pattern or None)
     notes = ""
     notes_path = work / "NOTES.md"
     if notes_path.is_file():
@@ -1193,7 +1204,7 @@ def agent_for_script(script, kernel_name: str):
             text = choices[0].message.content or ""
         elif isinstance(resp, str):
             text = resp
-        source = kernel_text(text, kernel_name, source_fence=brief.source_fence)
+        source = kernel_text(text, kernel_name, source_fence=brief.source_fence, source_name_pattern=brief.source_name_pattern or None)
         usage = getattr(resp, "usage", None)
         if usage is None:
             cost = 0.01

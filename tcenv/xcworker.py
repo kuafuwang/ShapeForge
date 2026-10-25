@@ -26,9 +26,13 @@ def main() -> int:
     from .backends.metal.runtime import get_context
     from .backends.metal.sanitize import ArgSet
     from .backends.metal.testing import prepare_case
+    from .backends.registry import load_backend
     from .worker import _install_heartbeat
 
-    _install_heartbeat(req.get("heartbeat"))
+    # xcworker is explicitly a Metal worker; resolve the backend instead of
+    # relying on the removed implicit Metal fallback in _install_heartbeat.
+    backend = load_backend("metal")
+    _install_heartbeat(req.get("heartbeat"), backend)
     task = get_task(req["task"], req["dtype"], req["size"])
     ctx = get_context()
     candidate = Path(req["kernel_path"]).read_text()

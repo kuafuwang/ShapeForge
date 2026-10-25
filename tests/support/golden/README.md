@@ -6,14 +6,19 @@
   backend 专属的，不能混在一起。
 - 未来的 backend 在 `metal/` 旁边加一个 `golden/<id>/`，不要再把 backend 专属文件
   直接放到 `golden/` 根下。
-- 读写的实现是 `tests.support.hw_golden`；录制和放置规则在 `../../README.md`。
+- backend 无关的对外 evaluator 合约向量放在 `remote/`；它不是新 backend，也不包含硬件测量。
+- backend 读写的实现是 `tests.support.hw_golden`；对外协议只读 loader 是
+  `tests.support.remote_contract`。录制和放置规则在 `../../README.md`。
 
 ```text
 golden/
-└── metal/
-    ├── backend_phase0_kernel.metal
-    ├── hw_off.json
-    └── fixtures/
+├── metal/
+│   ├── backend_phase0_kernel.metal
+│   ├── hw_off.json
+│   └── fixtures/
+└── remote/
+    ├── evaluator_v1.json
+    └── evaluator_v1_baseline.desc  # v1 schema compatibility baseline，不是运行时输入
 ```
 
 ## 规则

@@ -726,7 +726,7 @@ class Orchestrator:
         self.selfcheck_bridge_factory = selfcheck_bridge_factory
         if self.selfcheck_socket and not self.selfcheck_token_file:
             raise RunStartError("selfcheck_socket requires selfcheck_token_file")
-        self.task_fingerprint = task_fingerprint(self.task)
+        self.task_fingerprint = task_fingerprint(self.task, self.target.backend)
         self._last_session_id = ""
         # 同一时刻只允许一次 GPU 评测或 Instruments。两份内核抢同一块卡会把计时测脏，挂死时也不能再有内核在跑。
         self.gpu_lock = asyncio.Lock()
@@ -907,8 +907,12 @@ class Orchestrator:
                 "system_prompt_sha1": hashlib.sha1(self.system.encode()).hexdigest(),
                 "contract_description_sha256": hashlib.sha256(contract_text.encode("utf-8")).hexdigest(),
                 "triton_source_sha256": hashlib.sha256(triton_text.encode("utf-8")).hexdigest(),
-                "task_fingerprint": task_fingerprint(self.task),
-                "hash_scope": "task_fingerprint hashes the contract, the triton source, the naive kernel, cases, tolerances, flops, min_bytes and the ieee/domain meta. The two hashes above are contract.describe() and task.triton_source. reference and baseline implementations are not included",
+                "task_fingerprint": task_fingerprint(self.task, self.target.backend),
+                "hash_scope": (
+                    "task_fingerprint hashes the contract, the triton source, the naive kernel, cases, tolerances, flops, min_bytes and the ieee/domain meta. The two hashes above are contract.describe() and task.triton_source. reference and baseline implementations are not included"
+                    if self.target.backend == "metal" else
+                    "task_fingerprint hashes the contract, the triton source, the reference kernel for the target backend, cases, tolerances, flops, min_bytes and the ieee/domain meta. The two hashes above are contract.describe() and task.triton_source. reference and baseline implementations are not included"
+                ),
                 "git_commit": commit,
                 "git_dirty": dirty,
                 "price_snapshot": {member.model: {"input": member.cfg.price_in, "output": member.cfg.price_out, "cacheRead": member.cfg.price_cache_read, "cacheWrite": member.cfg.price_cache_write} for committee in self.committees for member in committee.members},
@@ -2686,6 +2690,7 @@ class Orchestrator:
             target_id=self.target_id, harness_overlay=harness_overlay,
             file_ext=self.target.file_ext, language_label=backend.display_name,
             source_fence=backend.source_fence, reference_skill=backend.reference_skill,
+            source_name_pattern=backend.source_name_pattern(self.task.contract.kernel_name),
             selfcheck_socket=self.selfcheck_socket,
             selfcheck_token_file=self.selfcheck_token_file,
         )

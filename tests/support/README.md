@@ -21,7 +21,11 @@
 | `handoff.py` | 失败 AI handoff 插件 | pytest 插件 |
 | `run_logs.py` | xdist worker 日志插件 | pytest 插件 |
 | `hw_golden.py` | golden 读取/重录 | Metal-only 工具 |
+| `remote_contract.py` | 对外 evaluator 合约 golden 的路径与只读 loader | helper |
+| `remotecontract/` | 独立 Go digest/receipt/HMAC/timeout golden verifier | 跨语言测试工具 |
+| `backend_neutral_driver.py` | fresh-interpreter 的 B0.5 Metal import 阻断与 fake 评测驱动 | support helper |
 | `golden/<backend_id>/` | 按 backend 分目录的 golden 数据 | 数据 |
+| `golden/remote/` | backend 无关的对外协议 golden；不是新 backend | 数据 |
 
 本目录不放业务测试（`tests/shared/test_structure.py` 会检查）。`hw_golden.py`
 目前读取 `golden/metal/`，是 Metal-only 的 golden 工具；新增第二个 backend 时
