@@ -6,10 +6,13 @@
 FROM taic-patch-test:local
 
 ARG DEBIAN_FRONTEND=noninteractive
+# Immutable image revision for the previous-image rollback acceptance step.
+ARG TCENV_SIM_IMAGE_REVISION=current
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/opt/taic
+    PYTHONPATH=/opt/taic \
+    TCENV_SIM_IMAGE_REVISION=${TCENV_SIM_IMAGE_REVISION}
 
 RUN python3 -m pip install --break-system-packages \
         "grpcio==1.69.0" "grpcio-status==1.69.0" "protobuf==5.29.3"

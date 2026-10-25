@@ -1,6 +1,6 @@
 # 执行运行时与设备扩展计划
 
-状态：设计计划；Phase 0a/0b/1a/1b/2A/2B/2.5/2C/2D1 已实现，2D2 的本地 Docker 模拟验收已通过；其中 2A/2B/2.5 是 `legacy-ssh` 基线与历史模拟验收，当前实现记录见 [执行运行时与设备扩展.md](执行运行时与设备扩展.md)，部署/轮换见 [远程评测部署与轮换](远程评测部署与轮换.md)。**远程评测服务是对外交付物，协议为 gRPC + TLS + Protobuf；2C 合约/核心/adapter、2D1 制品与本机 Docker 模拟已交付。** Phase 3/4、真实远程站点发布、真实设备与真实 NPU 仍是计划；`legacy-ssh` 数据面与 `RemoteEvaluatorPool` 尚未删除。已吸收多轮评审，详见 §15。日期：2026-10-24（实现记录更新于 2026-10-25，对外协议与 2C/2D 实现更新于同日）。默认保持现有 local 行为；旧 Phase 2.5 只证明 SSH/自定义帧链路，不能充当 gRPC 对外生产门禁。对外生产仍需真实站点/设备验收，真实站点发布另有门禁，不做真实 NPU。
+状态：设计计划；Phase 0a/0b/1a/1b/2A/2B/2.5/2C/2D1 已实现，2D2 的本地 Docker 模拟验收已按 49 项必需矩阵全部通过（2026-10-25 复审后重跑）；其中 2A/2B/2.5 是 `legacy-ssh` 基线与历史模拟验收，当前实现记录见 [执行运行时与设备扩展.md](执行运行时与设备扩展.md)，部署/轮换见 [远程评测部署与轮换](远程评测部署与轮换.md)。**远程评测服务是对外交付物，协议为 gRPC + TLS + Protobuf；2C 合约/核心/adapter、2D1 制品与本机 Docker 模拟已交付。** Phase 3/4、真实远程站点发布、真实设备与真实 NPU 仍是计划；`legacy-ssh` 数据面与 `RemoteEvaluatorPool` 尚未删除。已吸收多轮评审，详见 §15。日期：2026-10-24（实现记录更新于 2026-10-25，对外协议与 2C/2D 实现更新于同日）。默认保持现有 local 行为；旧 Phase 2.5 只证明 SSH/自定义帧链路，不能充当 gRPC 对外生产门禁。对外生产仍需真实站点/设备验收，真实站点发布另有门禁，不做真实 NPU。
 
 本文只规划执行隔离和设备扩展，不批准实现 NPU、CUDA、ROCm 或第二个 target，不批准付费搜索，也不批准运行 GPU。
 
@@ -870,7 +870,9 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 
 **2D 验收：** 对外制品可独立部署，非 Python 外部 conformance 通过，真实 TLS/mTLS、grant/key 轮换、attempt/fence、备份恢复与 RPO/RTO 证据齐全，local 默认无 socket/证书/gRPC 依赖，旧 run 只能按各自固定协议 resume。不调用真实模型，不跑真实 GPU/NPU，不产生性能或发布数字。
 
-**2D 实现记录（2026-10-25）：** 2D1 交付生产入口 `python -m tcenv.remote.grpc_service`、镜像/入口（`deploy/remote-evaluator/`）、`scripts/remote_evaluator_admin.py`、`scripts/remote_evaluator_client.py`、`python -m tcenv.remote.state_admin`、任务包重算与 Python/Go conformance；2D2 在本机 Docker Desktop Linux VM 上用测试专用 fake backend 跑通 28 项矩阵（TLS/mTLS、CA/SAN/client 证书、grant 到期/撤销/scope、错误 key、未知合约/feature、reset/half-open/慢消费者/deadline、容器重启、SIGKILL 旧 worker、quota、backup/restore、schema-compatible rollback restart、cleanup），报告写入 `runs/grpc-sim-20261025/report.json`，`simulated=true`、`publication_allowed=false`，不写 `run_config.json`，不进入 confirmed/catalog/brief。该环境是 Docker Desktop 的 Linux VM，不是用户自管的 Ubuntu VM + SSH 链路；真实站点、真实设备、CRL/OCSP、多副本/HA 与 exactly-once 仍未验收。
+**2D 实现记录（2026-10-25）：** 2D1 交付生产入口 `python -m tcenv.remote.grpc_service`、镜像/入口（`deploy/remote-evaluator/`）、`scripts/remote_evaluator_admin.py`、`scripts/remote_evaluator_client.py`、`python -m tcenv.remote.state_admin`、任务包重算与 Python/Go conformance；2D2 在本机 Docker Desktop Linux VM 上用测试专用 fake backend 跑通 **49 项必需矩阵**，报告写入 `runs/grpc-sim-20261025/report.json`：TLS/mTLS、明文/缺证书/错 CA/错 SAN、同 CA 正常轮换与静态逐证书撤销、grant 过期/撤销/scope/续期重接/时钟偏移、formal-selfcheck 互换、未签名/错误 key/正常轮换/撤销 key、未知 API/evidence/feature、secret redaction、强制中断后的显式 Retry、重复 Submit 的 receipt 去重、重复 GetJob 不重复计费、timed lease 互斥、跨 run 公平与 aging、queue/Watch/DB/auth 失败上限、`cache_policy=disabled`、权威 selfcheck 证据、reset/half-open/慢消费者/deadline、容器重启、SIGKILL 旧 worker、backup/restore 隔离、真实前一产品 commit 回滚（不同 image id/digest/commit，同一持久状态，schema 兼容）、明文与凭据不落日志、post-cleanup 证据。报告保持 `simulated=true`、`publication_allowed=false`，不写 `run_config.json`，不进入 confirmed/catalog/brief。
+
+`status=passed` 的判定是：每个必需 check 都实际运行且通过、没有必需项落在 `not_run`、并且 cleanup 在容器删除后确认没有遗留容器/进程组/临时目录；任一必需项失败、未运行或被标为 blocker 时只能是 `failed`/`blocked`。仍明确不验收：真实 GPU/NPU、NPU SDK、真实模型、SSH 数据面、硬件性能/发布数字、HA/多副本、CRL/OCSP 网络获取（只有重启加载的静态叶子证书撤销表）、schema-breaking 降级与 exactly-once。该环境是 Docker Desktop 的 Linux VM，不是用户自管的 Ubuntu VM + SSH 链路。
 
 ##### 2C/2D 交付切片与删除纪律
 
@@ -1094,5 +1096,6 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 | 单租户与 host HMAC 决策 | 固定。v1 一个 frontend 只服务一个客户组织；不实现多租户/跨租户队列；结果只由 host-controlled HMAC verifier 校验，不承诺第三方独立验签，不增加 Ed25519/ECDSA | §0、§2、§3、§6.4.1、§14、§15 |
 | 第二轮协议与恢复复审 | 采纳并统一。job 与 attempt 分离，Submit 只创建/回放，Retry 显式创建 attempt；receipt/provenance/signature 带 attempt，设备使用 lease fence；grant 续期/撤销和 keyring 轮换独立于测量 epoch；v1 明确 single-active non-HA，并补备份恢复、时间、required features 和标准错误 | §6.4、§6.4.1、§10、§11 Phase 2C/2D、§12、§13、§14 |
 | 2C/2D1 实现与本机 2D2 | 采纳并落地。gRPC adapter、TLS/mTLS、持久核心、制品/工具、Python+Go conformance 与 Docker Linux VM 模拟矩阵完成；grant 文件成为重启权威集合（移除即撤销，同 scope 新 token 续期）；HMAC 正常轮换保留历史 key。真实站点/设备、CRL/OCSP、HA 与旧数据面删除仍开放 | §11 Phase 2C/2D、§12、§15 |
+| 2D2 最终验收复审（真实回滚、逐证书撤销、未签名结果、外部 Retry、完整矩阵、cleanup 证据、passed 判定） | 采纳并落地：新增重启加载的静态叶子证书撤销表（真实被撤销证书验证）；未签名结果由测试 composition root 在 RPC 边界扣留签名；Python/Go conformance 强制中断后显式 Retry，并实际执行 grant 续期重接与 HMAC 正常轮换/撤销；模拟矩阵扩到 49 项必需 check，含真实前一镜像回滚与容器删除后的最终 cleanup 证据；`status=passed` 只由“必需项全部运行且通过 + cleanup final”推出。重跑 2D2 通过，报告仍为 `simulated=true`、`publication_allowed=false`。CRL/OCSP 网络获取仍不验收 | §11 Phase 2C/2D、§12、§15 |
 | 服务端合约复审（fingerprint 绑定、未知字段/UTF-8、撤销 key 重启、认证限速、receipt 精度、Watch filter、capabilities 必填） | 采纳并修复：fingerprint 绑定 `(task,dtype,size)`；未知 Protobuf 字段和非 UTF-8 source 在 durable accept 前拒绝；撤销历史 HMAC key 只隔离受影响结果、不阻止 frontend 重启；合法但未知的 grant 计入认证失败限速；receipt `issued_at` 拒绝亚毫秒；旧 attempt 的 Watch filter 不跨 attempt；capabilities 必须提供 expected 与非空 contract offers。已补回归测试并重跑 targeted/full safe + 2D2 | §6.4.1、§11 Phase 2C/2D、§15 |
 | 共享 host 身份与删除 pool | 采纳。固定共享 host mTLS identity + per-call grant，不使用每场证书；每 host 进程每 endpoint 一个 channel，删除 RemoteEvaluatorPool；旧传输删除后仍保留历史证据只读验证 | §6.4.1、§10、§11 删除纪律、§13 |
