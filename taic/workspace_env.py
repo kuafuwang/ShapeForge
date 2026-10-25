@@ -242,6 +242,8 @@ class RemoteWorkspaceConfig:
     max_file_bytes: int = 2_000_000
     max_total_bytes: int = 8_000_000
     keep_workspace: bool = False
+    #: Set only for the optional Phase 4 remote-agent placement.
+    isolation: Any = None
 
     def __post_init__(self) -> None:
         if not _RUNTIME_NAME.fullmatch(str(self.runtime)):
@@ -272,6 +274,22 @@ class RemoteWorkspaceConfig:
             raise WorkspaceError("config", "max_file_bytes cannot exceed max_total_bytes")
         if not isinstance(self.keep_workspace, bool):
             raise WorkspaceError("config", "keep_workspace must be a boolean")
+        from .agent_isolation import IsolatedAgentConfig, IsolationError
+
+        if self.isolation is not None and not isinstance(self.isolation, IsolatedAgentConfig):
+            raise WorkspaceError("config", "isolation must be an IsolatedAgentConfig")
+        try:
+            if self.harness == "env":
+                if self.isolation is None or not self.isolation.requires_remote_agent:
+                    raise WorkspaceError(
+                        "config",
+                        "harness=env needs an explicit isolation credential seam; there is no "
+                        "silent remote-agent credential",
+                    )
+            elif self.isolation is not None and self.isolation.credential_seam != "none":
+                raise WorkspaceError("config", "harness=local cannot provision a remote agent credential")
+        except IsolationError as exc:
+            raise WorkspaceError("config", exc.args[0]) from exc
 
     @classmethod
     def from_file(cls, path: Path | str) -> "RemoteWorkspaceConfig":
@@ -286,7 +304,7 @@ class RemoteWorkspaceConfig:
         allowed = {
             "runtime", "root", "harness", "ssh_binary", "settings_file",
             "connect_timeout_s", "command_timeout_s", "max_file_bytes", "max_total_bytes",
-            "keep_workspace",
+            "keep_workspace", "isolation",
         }
         unknown = set(document) - allowed
         if unknown:
@@ -310,6 +328,12 @@ class RemoteWorkspaceConfig:
             value = document.get(name)
             if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
                 raise WorkspaceError("config", f"{name} must be an integer")
+        from .agent_isolation import IsolatedAgentConfig, IsolationError
+
+        try:
+            isolation = IsolatedAgentConfig.from_dict(document["isolation"]) if "isolation" in document else None
+        except IsolationError as exc:
+            raise WorkspaceError("config", exc.args[0]) from exc
         return cls(
             runtime=document["runtime"],
             root=document["root"],
@@ -321,6 +345,7 @@ class RemoteWorkspaceConfig:
             max_file_bytes=int(document.get("max_file_bytes", 2_000_000)),
             max_total_bytes=int(document.get("max_total_bytes", 8_000_000)),
             keep_workspace=bool(document.get("keep_workspace", False)),
+            isolation=isolation,
         )
 
 
@@ -742,6 +767,58 @@ class SshWorkspaceTransport:
             raise WorkspaceError("cleanup", f"the remote workspace {workdir} survived removal")
         return True
 
+    # -- orphan reaping --------------------------------------------------------------
+
+    def list_receipts(self, run_token: str) -> list[tuple[str, WorkspaceReceipt]]:
+        """List the session directories this run's token owns on the host.
+
+        The command is fixed and bounded; every returned path is checked to be a session
+        directory under ``<root>/<run token>`` before its receipt is read.
+        """
+        if not _RUN_TOKEN.fullmatch(str(run_token)):
+            raise WorkspaceError("path", f"the run token {run_token!r} is outside the allowlist")
+        root = str(PurePosixPath(self.config.root) / run_token)
+        code, out, err = self._run(f"find {_quote(root)} -mindepth 3 -maxdepth 3 -name session.json -print")
+        if code != 0:
+            _code, _out, _err = self._run(f"test -e {_quote(root)}")
+            if _code != 0:
+                return []
+            raise WorkspaceError("unavailable", f"cannot list the remote run root: {_bounded_text(err)}")
+        found: list[tuple[str, WorkspaceReceipt]] = []
+        prefix = root + "/"
+        for line in out.decode("utf-8", "replace").splitlines():
+            path = line.strip()
+            if not path.startswith(prefix) or not path.endswith("/.taic/session.json"):
+                continue
+            workdir = path[: -len("/.taic/session.json")]
+            label = workdir[len(prefix):].split("/", 1)[0]
+            if not _RUN_TOKEN.fullmatch(label) or "/" in label:
+                continue
+            receipt = self.read_receipt(workdir)
+            if receipt is not None:
+                found.append((workdir, receipt))
+            if len(found) >= 256:
+                break
+        return found
+
+    def reap_orphans(self, run_token: str, run_id: str, active_labels: Iterable[str]) -> list[str]:
+        """Remove this run's session directories whose labels are no longer active.
+
+        A directory whose receipt belongs to another run is left alone; so is one without a
+        receipt.  Returns the labels that were removed.
+        """
+        active = {str(label) for label in active_labels}
+        removed: list[str] = []
+        for workdir, receipt in self.list_receipts(run_token):
+            if str(receipt.document.get("run_id") or "") != str(run_id):
+                continue
+            label = workdir.rsplit("/", 1)[-1]
+            if label in active:
+                continue
+            if self.remove(workdir, receipt):
+                removed.append(label)
+        return removed
+
     # -- file primitives -------------------------------------------------------------
 
     def _write(self, workdir: str, relative: str, data: bytes) -> None:
@@ -887,6 +964,10 @@ class EpicBinding:
     sessions: tuple[str, ...]
     cost_usd: float
     began_at: str
+    #: Where hmz says the agent's harness ran: `local`, `env`, or `<backend>:<name>`.
+    harness: str = ""
+    #: The account the session ran as, as hmz recorded it.
+    provider: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -897,6 +978,8 @@ class EpicBinding:
             "sessions": list(self.sessions),
             "cost_usd": self.cost_usd,
             "began_at": self.began_at,
+            "harness": self.harness,
+            "provider": self.provider,
         }
 
 
@@ -968,6 +1051,7 @@ def epic_for_session(
             number = event.get("cost")
             if isinstance(number, (int, float)) and not isinstance(number, bool):
                 cost += float(number)
+        opened = next((event for event in events if event.get("event") == "opened"), {})
         sessions = tuple(
             str(event.get("session"))
             for event in events
@@ -981,6 +1065,8 @@ def epic_for_session(
             sessions=sessions,
             cost_usd=cost,
             began_at=began_at,
+            harness=str(opened.get("harness") or ""),
+            provider=str(opened.get("provider") or ""),
         )
         if best is None or began_at > best.began_at:
             best = binding

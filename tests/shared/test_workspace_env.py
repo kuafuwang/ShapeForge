@@ -188,15 +188,18 @@ def test_config_from_file_refuses_unknown_fields_and_resolves_the_settings_file(
 
 def test_the_saved_runtime_harness_must_match_the_config(tmp_path):
     """A Phase 3 config cannot silently run the agent on the host, or the reverse."""
+    from taic.agent_isolation import IsolatedAgentConfig
+
     _settings(tmp_path, harness="local")
     config = _config(tmp_path)
     runtime = read_runtime(config)
     assert runtime.harness == "local"
     assert runtime.destination == "eval@127.0.0.1"
+    env = dict(harness="env", isolation=IsolatedAgentConfig(credential_seam="loopback-fake", simulated=True))
     with pytest.raises(WorkspaceError, match="harness"):
-        read_runtime(_config(tmp_path, harness="env"))
+        read_runtime(_config(tmp_path, **env))
     _settings(tmp_path, harness="env")
-    assert read_runtime(_config(tmp_path, harness="env")).harness == "env"
+    assert read_runtime(_config(tmp_path, **env)).harness == "env"
     with pytest.raises(WorkspaceError, match="harness"):
         read_runtime(_config(tmp_path))
 

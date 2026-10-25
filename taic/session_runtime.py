@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Protocol
@@ -194,6 +195,8 @@ class SshWorkspaceKernelSessionRunner:
         now: Callable[[], float] | None = None,
         flow: Path | None = None,
         epic_root: Path | None = None,
+        authority=None,
+        seam_factory: Callable[..., object] | None = None,
     ) -> None:
         """Bind the config and the injectable transport/invocation seams.
 
@@ -204,6 +207,8 @@ class SshWorkspaceKernelSessionRunner:
         @param now wall-clock source, injectable for epic binding tests.
         @param flow the flow directory whose prompt surface is hashed.
         @param epic_root where hmz keeps epics; None reads ``~/.hmz/epics``.
+        @param authority the scoped-credential authority; tests may share one.
+        @param seam_factory builder for the credential seam; tests may inject a fake.
         """
         from . import kernel_agent as agent_module
         from .workspace_env import SshWorkspaceTransport
@@ -216,6 +221,11 @@ class SshWorkspaceKernelSessionRunner:
         self._flow = Path(flow) if flow is not None else agent_module.FLOW
         self._epic_root = Path(epic_root) if epic_root is not None else None
         self._agent = agent_module
+        from .agent_isolation import ScopedCredentialAuthority, build_seam
+
+        self.isolation = getattr(config, "isolation", None)
+        self._authority = authority or ScopedCredentialAuthority()
+        self._seam_factory = seam_factory or build_seam
 
     @property
     def placement(self):
@@ -225,6 +235,12 @@ class SshWorkspaceKernelSessionRunner:
             workspace_env="ssh",
             endpoint=self.config.runtime,
         )
+
+    def reap_orphans(self, run_dir: Path, *, active_labels: Iterable[str]) -> list[str]:
+        """Remove remote session directories of this run that no active label owns."""
+        from .workspace_env import run_token
+
+        return self._transport.reap_orphans(run_token(Path(run_dir)), Path(run_dir).name, active_labels)
 
     def paths(self, host_work: Path, session_label: str) -> "SessionPaths":
         """The host canonical and agent-visible paths for one session.
@@ -362,6 +378,44 @@ class SshWorkspaceKernelSessionRunner:
 
         invocation = None
         collection_error: WorkspaceError | None = None
+        credential = None
+        seam = None
+        if self.isolation is not None and self.isolation.requires_remote_agent:
+            from .agent_isolation import IsolationError
+
+            try:
+                seam = self._seam_factory(self.isolation, authority=self._authority)
+                credential = self._authority.mint(
+                    run_id=run_dir.name,
+                    session_label=brief.label,
+                    runtime=self.config.runtime,
+                    ttl_s=self.isolation.credential_ttl_s,
+                    max_uses=self.isolation.credential_max_uses,
+                )
+                identity["credential"] = seam.provision(credential, env_spec=env_spec)
+            except IsolationError as exc:
+                # No credential means no agent session; nothing has been billed yet.
+                if seam is not None:
+                    try:
+                        seam.close()
+                    except Exception:  # noqa: BLE001 - the typed error below is the result
+                        pass
+                if not self.config.keep_workspace:
+                    try:
+                        self._transport.remove(layout.workdir, receipt)
+                        identity["cleaned"] = True
+                    except WorkspaceError as cleanup_exc:
+                        identity["cleaned"] = False
+                        identity["cleanup_error"] = cleanup_exc.kind
+                return AgentResult(
+                    source=None,
+                    cost_usd=None,
+                    cost_incomplete=False,
+                    status="failed",
+                    error=f"the isolated agent credential was not provisioned: {exc}",
+                    diagnostics={"failure_class": "credential_unavailable", "isolation_error": exc.kind},
+                    identity=identity,
+                )
         try:
             invocation = self._invoke(
                 brief,
@@ -388,6 +442,23 @@ class SshWorkspaceKernelSessionRunner:
                 collection_error = exc
                 identity["collection_error"] = exc.kind
         finally:
+            if credential is not None and seam is not None:
+                try:
+                    seam.revoke(credential)
+                    identity["credential"]["revoked"] = True
+                except Exception as exc:  # noqa: BLE001 - cleanup evidence, not a result change
+                    identity["credential"]["revoked"] = False
+                    identity["credential"]["revoke_error"] = f"{type(exc).__name__}: {exc}"[:180]
+            if seam is not None:
+                try:
+                    seam.close()
+                    identity["credential"]["seam_closed"] = True
+                except Exception as exc:  # noqa: BLE001
+                    identity["credential"]["seam_closed"] = False
+                    identity["credential"]["seam_error"] = f"{type(exc).__name__}: {exc}"[:180]
+            live = self._authority.live_ids()
+            if live:
+                identity["credential"]["live_after_cleanup"] = list(live)
             if not self.config.keep_workspace:
                 try:
                     self._transport.remove(layout.workdir, receipt)
@@ -418,6 +489,17 @@ class SshWorkspaceKernelSessionRunner:
         if binding is not None:
             identity["epic"] = binding.as_dict()
             identity["cost_bound"] = True
+            recorded = binding.harness
+            identity["harness_recorded"] = recorded
+            if recorded and recorded != self.config.harness:
+                # hmz says the agent ran somewhere other than this config asked for. Never
+                # accept that silently: the session's bill and its placement are both suspect.
+                result.cost_incomplete = True
+                result.cost_usd = None
+                result.diagnostics["workspace_placement"] = "harness_mismatch"
+                result.diagnostics["harness_expected"] = self.config.harness
+                result.diagnostics["harness_recorded"] = recorded
+                identity["cost_bound"] = False
         else:
             result.cost_incomplete = True
             result.cost_usd = None

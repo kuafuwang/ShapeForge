@@ -24,16 +24,24 @@ MAX_CHECKS = 20
 MAX_GPU_S = 120.0
 
 
-def _authority_root() -> Path:
-    # Never derive the authority root from the evaluated process environment.
-    # An agent could otherwise set TCENV_SELFCHECK_HOME back into its workspace.
-    # Do not use /tmp: the hmz fence grants temp writes to an agent, so that
-    # would let it delete the very record that is supposed to outrank its
-    # workspace log. The user cache is host-owned and outside the fence.
-    # The local CLI runs inside the agent process, so HOME/XDG_CACHE_HOME are
-    # agent-controlled too. Resolve the account home from the OS database.
+def authority_root() -> Path:
+    """The host-owned directory of authoritative self-check records.
+
+    Never derive it from the evaluated process environment: an agent could otherwise set
+    ``TCENV_SELFCHECK_HOME`` back into its workspace. ``/tmp`` is avoided because the hmz
+    fence grants temp writes to an agent, which would let it delete the very record that
+    outranks its workspace log. ``HOME``/``XDG_CACHE_HOME`` are agent-controlled too, so
+    the account home comes from the OS database.
+
+    @return the absolute host path of the self-check authority directory.
+    """
     cache = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".cache"
     return cache / "taic-selfcheck-state"
+
+
+def _authority_root() -> Path:
+    """Backwards-compatible private alias of :func:`authority_root`."""
+    return authority_root()
 
 
 def authority_log(directory: Path) -> Path:

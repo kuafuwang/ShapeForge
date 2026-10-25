@@ -129,6 +129,9 @@ class FakeHost:
                 self.collected.append(relative)
         return found
 
+    def reap_orphans(self, run_token, run_id, active_labels):
+        return []
+
     def remove(self, workdir, receipt) -> bool:
         if self.fail_remove:
             raise WorkspaceError("cleanup", "the remote workspace survived removal")

@@ -717,6 +717,20 @@ class Orchestrator:
                 self._workspace_runtime = read_runtime(workspace_config)
             except WorkspaceError as exc:
                 raise RunStartError(f"remote workspace is not usable: {exc.message}") from exc
+            isolation = getattr(workspace_config, "isolation", None)
+            self._isolation_fence = None
+            if isolation is not None:
+                from .agent_isolation import IsolationError, TrustedEvaluationFence, default_trusted_paths
+
+                trusted = default_trusted_paths(self.run_dir, repo_root=REPO_ROOT) + tuple(Path(path) for path in isolation.trusted_evaluator_paths)
+                try:
+                    self._isolation_fence = TrustedEvaluationFence(
+                        trusted_paths=trusted,
+                        host_workspace=self.run_dir / "agent_work",
+                    )
+                    self._isolation_fence.check()
+                except IsolationError as exc:
+                    raise RunStartError(f"the agent workspace is not disjoint from trusted evaluation: {exc}") from exc
             self.session_runner: HmzKernelSessionRunner = SshWorkspaceKernelSessionRunner(workspace_config)
         else:
             self.session_runner = session_runner or LocalHmzKernelSessionRunner()
@@ -745,14 +759,27 @@ class Orchestrator:
         }
         execution_document.update(self._evaluator_contract_metadata())
         if self._workspace_config is not None:
+            resolved = {
+                "harness": self._workspace_config.harness,
+                "runtime": self._workspace_config.runtime,
+                "root": self._workspace_config.root,
+            }
+            isolation = getattr(self._workspace_config, "isolation", None)
+            if isolation is not None:
+                import hashlib
+
+                trusted = sorted(str(path) for path in getattr(self, "_isolation_fence", None).trusted_paths) if getattr(self, "_isolation_fence", None) is not None else []
+                resolved["isolation"] = {
+                    "credential_seam": isolation.credential_seam,
+                    "simulated": isolation.simulated,
+                    "agent_kind": isolation.agent_kind,
+                    "trusted_paths": len(trusted),
+                    "trusted_paths_sha256": hashlib.sha256("\n".join(trusted).encode("utf-8")).hexdigest(),
+                }
             execution_document["workspace"] = {
                 "backend": "ssh",
                 "requested": "remote-workspace",
-                "resolved": {
-                    "harness": self._workspace_config.harness,
-                    "runtime": self._workspace_config.runtime,
-                    "root": self._workspace_config.root,
-                },
+                "resolved": resolved,
             }
         execution_path = self.run_dir / "execution.json"
         if not resuming:
@@ -1831,7 +1858,41 @@ class Orchestrator:
             await self._close_clients()  # every HTTP client this run opened, on the loop that used it (asyncio.run closes the loop afterwards)
         except Exception as e:  # noqa: BLE001 - the result is already on disk; a close error must not hide it
             self.log(f"== warning: closing the HTTP clients failed: {type(e).__name__}: {e}")
+        try:
+            await asyncio.to_thread(self._reap_workspace_orphans)
+        except Exception as e:  # noqa: BLE001 - orphan cleanup is housekeeping, not the result
+            self.log(f"== warning: reaping remote workspace orphans failed: {type(e).__name__}: {e}")
         return self._finish(res)
+
+    def _reap_workspace_orphans(self) -> None:
+        """Remove remote session directories of this run that no session label owns.
+
+        A crash can leave a remote directory behind.  Only this run's own token tree is
+        listed, only receipts whose ``run_id`` is this run are removed, and an explicit
+        ``keep_workspace`` disables the sweep.  Removal failure is logged, not raised.
+        """
+        if self._workspace_config is None:
+            return
+        if getattr(self._workspace_config, "keep_workspace", False):
+            return
+        reap = getattr(self.session_runner, "reap_orphans", None)
+        if not callable(reap):
+            return
+        labels = {brief.label for brief in self._session_briefs}
+        try:
+            for line in (self.run_dir / "transcript.jsonl").read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and event.get("event") == "agent" and event.get("label"):
+                    labels.add(str(event["label"]))
+        except OSError:
+            pass
+        removed = reap(self.run_dir, active_labels=labels)
+        if removed:
+            self.log(f"== workspace: removed {len(removed)} orphan remote session director"
+                     f"{'y' if len(removed) == 1 else 'ies'}: {', '.join(sorted(removed))}")
 
     def _control_extends(self, res: RunResult) -> bool:
         """@brief 搜索停下后 control 文件带来的改动是否允许再跑一轮。
