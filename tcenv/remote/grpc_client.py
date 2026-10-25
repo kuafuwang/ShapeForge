@@ -14,6 +14,7 @@ by a durable pending outbox row) may call ``Retry`` on an interrupted job.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import threading
@@ -56,6 +57,54 @@ _TRANSIENT_GRPC_CODES = frozenset({
     grpc.StatusCode.RESOURCE_EXHAUSTED,
 })
 _MAX_GRACE_SUBMIT_RETRIES = 2
+_CHANNEL_LOCK = threading.Lock()
+_SHARED_CHANNELS: dict[str, tuple[grpc.Channel, int]] = {}
+
+
+def _acquire_shared_channel(channel_key: str, factory: Callable[[], grpc.Channel]) -> grpc.Channel:
+    """One channel per host process per endpoint/TLS identity."""
+
+    with _CHANNEL_LOCK:
+        existing = _SHARED_CHANNELS.get(channel_key)
+        if existing is not None:
+            channel, refs = existing
+            _SHARED_CHANNELS[channel_key] = (channel, refs + 1)
+            return channel
+        channel = factory()
+        _SHARED_CHANNELS[channel_key] = (channel, 1)
+        return channel
+
+
+def _release_shared_channel(channel_key: str) -> None:
+    close: grpc.Channel | None = None
+    with _CHANNEL_LOCK:
+        existing = _SHARED_CHANNELS.get(channel_key)
+        if existing is None:
+            return
+        channel, refs = existing
+        if refs <= 1:
+            close = channel
+            _SHARED_CHANNELS.pop(channel_key, None)
+        else:
+            _SHARED_CHANNELS[channel_key] = (channel, refs - 1)
+    if close is not None:
+        close.close()
+
+
+def _channel_identity(*, endpoint: str, server_name: str, ca_file: Path, certificate_file: Path | None, private_key_file: Path | None) -> str:
+    digest = hashlib.sha256()
+    for label, path in (("ca", ca_file), ("cert", certificate_file), ("key", private_key_file)):
+        digest.update(label.encode("ascii"))
+        if path is not None:
+            try:
+                digest.update(Path(path).read_bytes())
+            except OSError:
+                digest.update(str(path).encode("utf-8"))
+        digest.update(b"\0")
+    digest.update(endpoint.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(server_name.encode("utf-8"))
+    return digest.hexdigest()
 
 
 class KeyringError(EvaluationUnavailable):
@@ -826,6 +875,7 @@ class GrpcEvaluatorFactory:
         job_margin_s: float = 30.0,
         max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES,
         channel: grpc.Channel | None = None,
+        channel_key: str = "",
         progress_publisher: Callable[[Path, dict[str, Any]], None] | None = None,
     ) -> None:
         if not isinstance(run_id, str) or not run_id:
@@ -867,8 +917,10 @@ class GrpcEvaluatorFactory:
         self._lock = threading.RLock()
         self._sessions: dict[tuple[str, str, str], GrpcEvaluator] = {}
         self._closed = False
-        self._owns_channel = channel is None
-        if channel is None:
+        self._channel_key = channel_key if channel is None and channel_key else ""
+        self._owns_channel = channel is None and not self._channel_key
+
+        def create_channel() -> grpc.Channel:
             options = [
                 ("grpc.max_send_message_length", self.max_message_bytes),
                 ("grpc.max_receive_message_length", self.max_message_bytes),
@@ -879,9 +931,11 @@ class GrpcEvaluatorFactory:
             if server_name_override:
                 options.append(("grpc.ssl_target_name_override", server_name_override))
             if allow_insecure:
-                channel = grpc.insecure_channel(endpoint, options=options)
-            else:
-                channel = grpc.secure_channel(endpoint, credentials, options=options)
+                return grpc.insecure_channel(endpoint, options=options)
+            return grpc.secure_channel(endpoint, credentials, options=options)
+
+        if channel is None:
+            channel = _acquire_shared_channel(self._channel_key, create_channel) if self._channel_key else create_channel()
         self._channel = channel
         self._stub = pb_grpc.EvaluatorStub(channel)
 
@@ -1009,7 +1063,9 @@ class GrpcEvaluatorFactory:
                 return
             self._closed = True
             self._sessions.clear()
-        if self._owns_channel:
+        if self._channel_key:
+            _release_shared_channel(self._channel_key)
+        elif self._owns_channel:
             self._channel.close()
 
 
@@ -1042,6 +1098,13 @@ def grpc_evaluator_factory_from_config(
         private_key_file=None if private_key_file is None else Path(private_key_file),
     )
     resolved_keyring = keyring or SignatureKeyring.from_file(keyring_file)
+    channel_key = _channel_identity(
+        endpoint=endpoint,
+        server_name=server_name_override,
+        ca_file=Path(ca_file),
+        certificate_file=None if certificate_file is None else Path(certificate_file),
+        private_key_file=None if private_key_file is None else Path(private_key_file),
+    )
     return GrpcEvaluatorFactory(
         endpoint=endpoint,
         token_provider=token_provider,
@@ -1055,6 +1118,7 @@ def grpc_evaluator_factory_from_config(
         legacy_signature_key=legacy_signature_key,
         credentials=credentials,
         server_name_override=server_name_override,
+        channel_key=channel_key,
         rpc_timeout_s=rpc_timeout_s,
         watch_slice_s=watch_slice_s,
         job_margin_s=job_margin_s,

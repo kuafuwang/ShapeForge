@@ -226,12 +226,18 @@ def test_grpc_remote_config_builds_shared_channel_factories(tmp_path):
         assert metadata["api_contract_id"] == "tcenv.remote.v1.evaluator-api.1"
         assert metadata["evidence_contract_id"] == "tcenv.remote.v1.evidence.1"
         assert metadata["result_signature_key_ids"] == ["sim-site/key-1"]
+        # One host channel per endpoint/TLS identity: formal and selfcheck
+        # factories share it, and closing both releases the registry entry.
+        assert formal._channel is selfcheck._channel
+        from tcenv.remote import grpc_client as grpc_client_module
+        assert grpc_client_module._SHARED_CHANNELS
         # A renewed token file is re-read per call, never cached in the factory.
         (tmp_path / "grant.token").write_text("renewed-grant")
         assert formal.token_provider("run-1", "session-1") == "renewed-grant"
     finally:
         formal.close()
         selfcheck.close()
+    assert not grpc_client_module._SHARED_CHANNELS
 
 
 def test_grpc_remote_config_rejects_missing_tls_material_or_mixed_transports(tmp_path):
