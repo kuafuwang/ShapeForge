@@ -194,6 +194,12 @@ class GrpcExpected:
         }
 
 
+def _closed_error(exc: ValueError) -> EvaluationUnavailable:
+    return EvaluationUnavailable(
+        "transport_closed", f"gRPC channel is closed: {exc}", retryable=True,
+    )
+
+
 def _rpc_error(exc: grpc.RpcError) -> EvaluationUnavailable:
     code = exc.code()
     status = None
@@ -357,7 +363,7 @@ class GrpcEvaluator:
                 )),
                 metadata=self._metadata(), timeout=self.rpc_timeout_s,
             )
-        except grpc.RpcError:
+        except (grpc.RpcError, ValueError):
             # Cancellation is best effort from the host; the durable job state
             # is reconciled by the next GetJob.
             return
@@ -433,6 +439,8 @@ class GrpcEvaluator:
             )
         except grpc.RpcError as exc:
             raise _rpc_error(exc) from exc
+        except ValueError as exc:
+            raise _closed_error(exc) from exc
         self._validate_capabilities(capabilities, nonce=nonce)
         with self._lock:
             self._capability_id = capabilities.capability_id
@@ -491,7 +499,10 @@ class GrpcEvaluator:
             capability_id=self._capability_id,
             required_features=list(self.required_features),
         )
-        return self.stub.Submit(request, metadata=self._metadata(), timeout=self.rpc_timeout_s)
+        try:
+            return self.stub.Submit(request, metadata=self._metadata(), timeout=self.rpc_timeout_s)
+        except ValueError as exc:
+            raise _closed_error(exc) from exc
 
     def _get_job(self, external: Any) -> pb.JobSnapshot | None:
         expected = self._expected_for_submit()
@@ -509,6 +520,8 @@ class GrpcEvaluator:
             if error.code == "job_not_found":
                 return None
             raise error from exc
+        except ValueError as exc:
+            raise _closed_error(exc) from exc
 
     def _evaluate(self, request: EvaluationRequest, *, allow_retry: bool) -> EvaluationResult:
         external = self._external_request(request)
@@ -573,6 +586,8 @@ class GrpcEvaluator:
             return self.stub.Retry(request, metadata=self._metadata(), timeout=self.rpc_timeout_s)
         except grpc.RpcError as exc:
             raise _rpc_error(exc) from exc
+        except ValueError as exc:
+            raise _closed_error(exc) from exc
 
     def _snapshot_error(self, snapshot: pb.JobSnapshot, state: str) -> EvaluationUnavailable:
         if snapshot.HasField("failure"):
@@ -628,6 +643,10 @@ class GrpcEvaluator:
                         return self._result_from_snapshot(snapshot, external, request)
                     if state in {"failed", "cancelled", "expired", "interrupted"}:
                         raise self._snapshot_error(snapshot, state)
+            except EvaluationUnavailable:
+                raise
+            except ValueError as exc:
+                raise _closed_error(exc) from exc
             except grpc.RpcError as exc:
                 error = _rpc_error(exc)
                 if error.code not in {"transport_unavailable", "transport_timeout", "transport_cancelled", "aborted"}:
@@ -868,6 +887,12 @@ class GrpcEvaluatorFactory:
 
     # -- properties used by the search loop -------------------------------
     @property
+    def stub(self):
+        """Shared channel stub; conformance probes reuse it without a second channel."""
+
+        return self._stub
+
+    @property
     def provenance(self) -> EvaluatorProvenance | None:
         return self._last().provenance
 
@@ -930,16 +955,26 @@ class GrpcEvaluatorFactory:
                 self._sessions[key] = client
             return client
 
-    def _for_request(self, request: EvaluationRequest) -> GrpcEvaluator:
-        run_id = request.run_id or self.run_id
-        session_id = request.session_id or self.session_id
-        target_id = request.target_id or self.target_id
+    def ensure_connected(self) -> str:
+        """Handshake without submitting work (CLI diagnostics and conformance)."""
+
+        return self._session(self.run_id, self.session_id or "conformance", self.target_id).ensure_epoch(None)
+
+    def _for_request(self, request: EvaluationRequest | None) -> GrpcEvaluator:
+        if request is None:
+            run_id = self.run_id
+            session_id = self.session_id or "conformance"
+            target_id = self.target_id
+        else:
+            run_id = request.run_id or self.run_id
+            session_id = request.session_id or self.session_id
+            target_id = request.target_id or self.target_id
         if not session_id:
             raise EvaluationUnavailable("session_mismatch", "request has no session id for a gRPC evaluator")
         return self._session(run_id, session_id, target_id)
 
     # -- EvaluationExecutor ------------------------------------------------
-    def ensure_epoch(self, request: EvaluationRequest) -> str:
+    def ensure_epoch(self, request: EvaluationRequest | None) -> str:
         return self._for_request(request).ensure_epoch(request)
 
     def formal(self, request: EvaluationRequest) -> EvaluationResult:
@@ -988,6 +1023,7 @@ def grpc_evaluator_factory_from_config(
     certificate_file: Path | None = None,
     private_key_file: Path | None = None,
     keyring_file: Path,
+    keyring: SignatureKeyring | None = None,
     legacy_signature_key: bytes | None = None,
     expected: GrpcExpected | None = None,
     api_contract_ids: Iterable[str] = (contracts.API_CONTRACT_ID,),
@@ -1005,7 +1041,7 @@ def grpc_evaluator_factory_from_config(
         certificate_file=None if certificate_file is None else Path(certificate_file),
         private_key_file=None if private_key_file is None else Path(private_key_file),
     )
-    keyring = SignatureKeyring.from_file(keyring_file)
+    resolved_keyring = keyring or SignatureKeyring.from_file(keyring_file)
     return GrpcEvaluatorFactory(
         endpoint=endpoint,
         token_provider=token_provider,
@@ -1015,7 +1051,7 @@ def grpc_evaluator_factory_from_config(
         api_contract_ids=api_contract_ids,
         evidence_contract_ids=evidence_contract_ids,
         required_features=required_features,
-        keyring=keyring,
+        keyring=resolved_keyring,
         legacy_signature_key=legacy_signature_key,
         credentials=credentials,
         server_name_override=server_name_override,

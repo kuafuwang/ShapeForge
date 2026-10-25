@@ -20,7 +20,7 @@ from tcenv.remote.job_types import (
 )
 
 from ..support.job_engine import (
-    TOKEN, capabilities, engine, expected_identities, get, grant, identity,
+    OTHER_TOKEN, TOKEN, capabilities, engine, expected_identities, get, grant, identity,
     request, retry, store_capabilities, submit, submit_to_store, wait_state,
 )
 
@@ -688,6 +688,74 @@ def test_hmac_key_rotation_verifies_history_and_signs_new_results(tmp_path):
     # validation instead of silently dropping the old result.
     with pytest.raises(StateCorrupt, match="not trusted"):
         JobStore(state, signing_key=key2, signing_key_id=id2)
+
+
+def test_restart_revokes_grants_absent_from_the_deployment_file(tmp_path):
+    """@brief 部署 grant 文件是权威集合：删除 token 后重启会撤销并取消关联任务。"""
+    state = tmp_path / "state"
+    first = engine(state)
+    try:
+        req = request("revoked-by-restart", source=b"SLEEP")
+        submit(first, req)
+        running = wait_state(first, req, {"running"})
+    finally:
+        first.close()
+    second = engine(state, grants=[grant(OTHER_TOKEN, subject="other-subject")])
+    try:
+        final = second.store._job_by_id(req.request_id)
+        assert final.state == "cancelled"
+        with pytest.raises(JobError, match="revoked"):
+            get(second, req, token=TOKEN)
+        with pytest.raises(JobError, match="not visible|not_found"):
+            get(second, req, token=OTHER_TOKEN)
+        assert running.current_attempt is not None
+    finally:
+        second.close()
+
+
+def test_state_admin_backup_and_inspect_use_the_signing_keyring(tmp_path):
+    """@brief 离线备份/巡检必须能用 keyring 验证已签名结果，而不是报 key 未受信。"""
+    from tcenv.remote.keyring import KeyringFile, write_keyring_file
+
+    key = b"state-admin-key-32-bytes-long!!!"
+    key_id = "sim-external-site/key-1"
+    state = tmp_path / "state"
+    service = engine(state, signing_key=key, signing_key_id=key_id)
+    req = request("state-admin-completed")
+    try:
+        submit(service, req)
+        wait_state(service, req, {"completed"})
+    finally:
+        service.close()
+    keyring = tmp_path / "keyring.json"
+    write_keyring_file(keyring, KeyringFile({key_id: key}, frozenset(), key_id))
+    backup = tmp_path / "backup.sqlite3"
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(ROOT) + os.pathsep + environment.get("PYTHONPATH", "")
+    backup_run = subprocess.run(
+        [sys.executable, "-m", "tcenv.remote.state_admin", "backup", "--state-dir", str(state),
+         "--out", str(backup), "--keyring-file", str(keyring)],
+        cwd=ROOT, text=True, capture_output=True, env=environment, check=False,
+    )
+    assert backup_run.returncode == 0, backup_run.stdout + backup_run.stderr
+    assert backup.is_file()
+    inspect_run = subprocess.run(
+        [sys.executable, "-m", "tcenv.remote.state_admin", "inspect", "--state-dir", str(state),
+         "--keyring-file", str(keyring)],
+        cwd=ROOT, text=True, capture_output=True, env=environment, check=False,
+    )
+    assert inspect_run.returncode == 0, inspect_run.stdout + inspect_run.stderr
+    document = json.loads(inspect_run.stdout)
+    assert document["states"].get("completed") == 1
+    assert document["quarantined"] == []
+    restored = tmp_path / "restored"
+    restore_run = subprocess.run(
+        [sys.executable, "-m", "tcenv.remote.state_admin", "restore", "--backup", str(backup),
+         "--state-dir", str(restored)],
+        cwd=ROOT, text=True, capture_output=True, env=environment, check=False,
+    )
+    assert restore_run.returncode == 0, restore_run.stdout + restore_run.stderr
+    assert (restored / "jobs.sqlite3").is_file()
 
 
 def test_schema_version_is_transactional_and_failed_commit_is_rolled_back(tmp_path):

@@ -674,6 +674,38 @@ class JobStore:
             conn.execute("UPDATE capabilities SET expires_at_ms=0 WHERE token_sha256=?", (token_hash,))
             return row["scope_id"]
 
+    def revoke_unlisted_scopes(self, keep_scope_ids: set[str]) -> list[str]:
+        """Make the deployment grant file authoritative for active scopes.
+
+        A token removed from the restart configuration is a security
+        revocation: it stops authenticating and its active jobs are cancelled.
+        A renewed token keeps the same scope id, so normal rotation survives.
+        """
+
+        if not isinstance(keep_scope_ids, set) or any(not isinstance(scope_id, str) for scope_id in keep_scope_ids):
+            raise JobError("invalid_argument", "keep_scope_ids must be a set of scope ids")
+        now = _now_ms(self._clock)
+        revoked: list[str] = []
+        with self._write() as conn:
+            rows = conn.execute("SELECT DISTINCT scope_id FROM grants WHERE status='active'").fetchall()
+            for row in rows:
+                scope_id = row[0]
+                if scope_id in keep_scope_ids:
+                    continue
+                conn.execute("UPDATE grants SET status='revoked',updated_at_ms=? WHERE scope_id=? AND status='active'", (now, scope_id))
+                conn.execute("""
+                    UPDATE capabilities SET expires_at_ms=0
+                    WHERE scope_id=? AND token_sha256 IN (
+                        SELECT token_sha256 FROM grants WHERE scope_id=?
+                    )
+                """, (scope_id, scope_id))
+                revoked.append(scope_id)
+        return revoked
+
+    def active_scope_ids(self) -> set[str]:
+        with self._lock:
+            return {row[0] for row in self._conn.execute("SELECT DISTINCT scope_id FROM grants WHERE status='active'")}
+
     def scope_jobs(self, scope_id: str) -> list[str]:
         with self._lock:
             return [row[0] for row in self._conn.execute(
@@ -1800,21 +1832,36 @@ class JobStore:
         """Restore into a fresh state dir; opening it quarantines every nonterminal job."""
 
         backup = Path(backup).resolve(strict=True)
-        source = sqlite3.connect(f"file:{backup}?mode=ro", uri=True)
-        try:
-            rows = source.execute("PRAGMA integrity_check").fetchall()
-            if len(rows) != 1 or rows[0][0] != "ok" or source.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
-                raise StateCorrupt("backup is corrupt or has an unsupported schema")
-        except sqlite3.DatabaseError as exc:
-            raise StateCorrupt(f"cannot restore backup: {exc}") from exc
-        finally:
-            source.close()
         target_dir = _prepare_state_dir(state_dir)
         if any(target_dir.iterdir()):
             raise JobError("failed_precondition", "restore requires an empty state directory")
         target = target_dir / "jobs.sqlite3"
-        shutil.copyfile(backup, target)
-        os.chmod(target, 0o600)
+        temporary = target_dir / "jobs.sqlite3.restore-tmp"
+        # Copy first and validate the copy: the backup itself may live on a
+        # read-only mount where SQLite cannot create WAL sidecar files.
+        try:
+            shutil.copyfile(backup, temporary)
+            os.chmod(temporary, 0o600)
+            source = sqlite3.connect(temporary)
+            try:
+                rows = source.execute("PRAGMA integrity_check").fetchall()
+                if len(rows) != 1 or rows[0][0] != "ok" or source.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+                    raise StateCorrupt("backup is corrupt or has an unsupported schema")
+            finally:
+                source.close()
+        except sqlite3.DatabaseError as exc:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+            raise StateCorrupt(f"cannot restore backup: {exc}") from exc
+        except OSError:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+            raise
+        os.replace(temporary, target)
         target_fd = os.open(target, os.O_RDONLY)
         try:
             os.fsync(target_fd)

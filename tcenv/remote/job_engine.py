@@ -254,8 +254,9 @@ class JobEngine:
             signing_keyring=signing_keyring, **store_options,
         )
         try:
-            for grant in grants:
-                self.store.register_grant(grant)
+            configured_scopes = {self.store.register_grant(grant) for grant in grants}
+            for scope_id in self.store.revoke_unlisted_scopes(configured_scopes):
+                self.store.cancel_scope(scope_id)
             self._recover()
             for request_id in self.store.accepted_jobs():
                 self.store.enqueue_accepted(request_id)
