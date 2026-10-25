@@ -169,6 +169,12 @@ def _key_id(value: Any) -> str:
     return value
 
 
+def key_id(value: Any) -> str:
+    """Validate a bounded ``site/key-version`` signature identifier."""
+
+    return _key_id(value)
+
+
 def _hex64(value: Any, name: str) -> str:
     if not isinstance(value, str) or not _HEX64.fullmatch(value):
         raise ContractError(f"{name} must be 64 lowercase hexadecimal characters")
@@ -437,8 +443,9 @@ def validate_blob(descriptor: Any, data: Any, *, allow_empty: bool = False) -> d
     return normalized
 
 
-def _provenance_document(value: Any) -> dict[str, Any]:
-    if not isinstance(value, Mapping) or set(value) != _PROVENANCE_FIELDS:
+def _provenance_document(value: Any, *, require_attempt: bool = True) -> dict[str, Any]:
+    expected_fields = _PROVENANCE_FIELDS if require_attempt else _PROVENANCE_FIELDS - {"attempt_id", "request_digest"}
+    if not isinstance(value, Mapping) or set(value) != expected_fields:
         raise ContractError("provenance fields are missing or unknown")
     schema_version = _integer(value["schema_version"], "schema_version", 1, 1)
     if value["api_contract_id"] != API_CONTRACT_ID:
@@ -448,7 +455,7 @@ def _provenance_document(value: Any) -> dict[str, Any]:
     measurement_kind = value["measurement_kind"]
     if measurement_kind not in _MEASUREMENT_KINDS:
         raise ContractError("unknown critical measurement_kind")
-    return {
+    document = {
         "schema_version": schema_version,
         "evaluator_epoch": _hex64(value["evaluator_epoch"], "evaluator_epoch"),
         "site_id": _identifier(value["site_id"], "site_id"),
@@ -462,11 +469,30 @@ def _provenance_document(value: Any) -> dict[str, Any]:
         "protocol_version": _text(value["protocol_version"], "protocol_version", max_bytes=64),
         "api_contract_id": API_CONTRACT_ID,
         "evidence_contract_id": EVIDENCE_CONTRACT_ID,
-        "attempt_id": _identifier(value["attempt_id"], "attempt_id"),
-        "request_digest": _hex64(value["request_digest"], "request_digest"),
         "measurement_kind": measurement_kind,
         "publication_allowed": _boolean(value["publication_allowed"], "publication_allowed"),
     }
+    if require_attempt:
+        document["attempt_id"] = _identifier(value["attempt_id"], "attempt_id")
+        document["request_digest"] = _hex64(value["request_digest"], "request_digest")
+    return document
+
+
+def provenance_document(value: Any, *, require_attempt: bool = True) -> dict[str, Any]:
+    """Validate one typed provenance document.
+
+    Capabilities omit ``attempt_id``/``request_digest``; jobs and results must
+    include both.  The returned mapping uses the same field order as the
+    canonical signature document.
+    """
+
+    return _provenance_document(value, require_attempt=require_attempt)
+
+
+def receipt_document(value: Any) -> dict[str, Any]:
+    """Validate and return one attempt-scoped receipt document."""
+
+    return _receipt_document(value)
 
 
 def _receipt_document(value: Any) -> dict[str, Any]:

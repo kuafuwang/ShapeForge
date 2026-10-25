@@ -224,6 +224,8 @@ class JobStore:
         selfcheck_gpu_reservation_s: float = 1.0,
         signing_key: bytes | None = None,
         signing_key_id: str = "",
+        signing_keyring: Mapping[str, bytes] | None = None,
+        clock_skew_ms: int = 0,
         clock=time.time,
     ) -> None:
         self.state_dir = _prepare_state_dir(state_dir)
@@ -237,6 +239,9 @@ class JobStore:
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
                 raise ValueError(f"{name} must be a positive integer")
+        if isinstance(clock_skew_ms, bool) or not isinstance(clock_skew_ms, int) or not 0 <= clock_skew_ms <= 300_000:
+            raise ValueError("clock_skew_ms must be an integer between 0 and 300000")
+        self.clock_skew_ms = clock_skew_ms
         self.event_window = event_window
         self.retention_ms = retention_ms
         self.max_queue_depth = max_queue_depth
@@ -251,6 +256,28 @@ class JobStore:
             raise ValueError("signing_key_id is required with a signing key")
         self._signing_key = signing_key
         self._signing_key_id = signing_key_id
+        # Verification keys survive normal HMAC rotation: historical results
+        # keep verifying with their original key while new results use the
+        # active key.  A revoked key is simply absent from this mapping.
+        self._verification_keys: dict[str, bytes] = {}
+        if signing_keyring is not None:
+            if not isinstance(signing_keyring, Mapping):
+                raise ValueError("signing_keyring must be a key_id -> key mapping")
+            for key_id, value in signing_keyring.items():
+                try:
+                    contracts.key_id(key_id)
+                except contracts.ContractError as exc:
+                    raise ValueError("signing_keyring key id is invalid") from exc
+                if not isinstance(value, (bytes, bytearray, memoryview)) or len(bytes(value)) < 32:
+                    raise ValueError("signing_keyring keys must contain at least 32 bytes")
+                self._verification_keys[str(key_id)] = bytes(value)
+            if signing_key is not None:
+                if signing_key_id not in self._verification_keys:
+                    raise ValueError("the active signing key id must appear in signing_keyring")
+                if self._verification_keys[signing_key_id] != signing_key:
+                    raise ValueError("the active signing key differs from its signing_keyring entry")
+        elif signing_key is not None:
+            self._verification_keys = {signing_key_id: signing_key}
         self._clock = clock
         self._lock = threading.RLock()
         self._closed = False
@@ -589,7 +616,9 @@ class JobStore:
             raise JobError("permission_denied", "session grant was revoked")
         if row["status"] != "active":
             raise JobError("unauthenticated", "session grant was superseded; use the renewed grant")
-        if row["expires_at_ms"] is not None and now_ms >= row["expires_at_ms"]:
+        # Bounded clock skew only widens the ordinary expiry window.  Revocation
+        # and generation checks above stay exact.
+        if row["expires_at_ms"] is not None and now_ms >= row["expires_at_ms"] + self.clock_skew_ms:
             raise JobError("unauthenticated", "session grant expired")
         return row
 
@@ -726,7 +755,7 @@ class JobStore:
         expected: ExpectedIdentities, features: frozenset[str], now_ms: int,
     ) -> sqlite3.Row:
         row = conn.execute("SELECT * FROM capabilities WHERE capability_id=?", (capability_id,)).fetchone()
-        if row is None or now_ms >= row["expires_at_ms"] or row["frontend_instance"] != self.frontend_instance:
+        if row is None or now_ms >= row["expires_at_ms"] + self.clock_skew_ms or row["frontend_instance"] != self.frontend_instance:
             raise JobError("failed_precondition", "capability is expired or belongs to an old frontend; re-hello")
         if row["token_sha256"] != grant["token_sha256"] or row["scope_id"] != grant["scope_id"] or row["generation"] != grant["generation"]:
             raise JobError("failed_precondition", "capability is not bound to the current grant; re-hello")
@@ -821,10 +850,13 @@ class JobStore:
             or receipt.get("session_sequence") != str(attempt["session_sequence"])
         ):
             raise StateCorrupt("result provenance/receipt differs from the accepted job and attempt")
-        if signature is not None and self._signing_key is not None:
-            if signature["key_id"] != self._signing_key_id or not contracts.verify_result_signature(
-                self._result_document(result), key_id=self._signing_key_id,
-                key=self._signing_key, signature=signature["signature"],
+        if signature is not None:
+            key = self._verification_keys.get(signature["key_id"])
+            if key is None:
+                raise StateCorrupt("stored result signature key is not trusted by this frontend")
+            if not contracts.verify_result_signature(
+                self._result_document(result), key_id=signature["key_id"],
+                key=key, signature=signature["signature"],
             ):
                 raise StateCorrupt("stored result signature does not verify with the configured key")
 
@@ -843,27 +875,6 @@ class JobStore:
         if row["result_sha256"] != _result_digest(result):
             raise StateCorrupt("stored result envelope digest does not match its complete contents")
         return result
-
-    def _replay_result(
-        self, stored: JobResult, report: bytes, evidence: bytes | None,
-        *, signing_key: bytes | None, signing_key_id: str,
-    ) -> JobResult:
-        try:
-            contracts.validate_blob(stored.report_descriptor, report)
-            if (evidence is None) != (stored.evidence is None):
-                raise StateCorrupt("same attempt changed evidence null/presence")
-            if stored.evidence_descriptor is not None:
-                contracts.validate_blob(stored.evidence_descriptor, evidence or b"", allow_empty=True)
-        except contracts.ContractError as exc:
-            raise StateCorrupt("same attempt/receipt produced different result bytes") from exc
-        signature = self._make_signature(
-            self._result_document(stored), signing_key=signing_key, signing_key_id=signing_key_id,
-        )
-        return JobResult(
-            report, dict(stored.report_descriptor), evidence,
-            None if stored.evidence_descriptor is None else dict(stored.evidence_descriptor),
-            dict(stored.provenance), dict(stored.receipt), signature,
-        )
 
     @staticmethod
     def _make_signature(
@@ -1532,11 +1543,13 @@ class JobStore:
                 if stored_row is None:
                     raise StateCorrupt("completed job result is missing")
                 stored = self._result_from_row(stored_row, job=job, attempt=row)
-                replay = self._replay_result(
-                    stored, report_bytes, evidence_bytes,
-                    signing_key=effective_signing_key, signing_key_id=effective_signing_key_id,
+                # A duplicate completion replays the committed bytes and never
+                # re-signs them with a newly rotated key.
+                same_evidence = (
+                    (stored.evidence is None and evidence_bytes is None)
+                    or (stored.evidence is not None and evidence_bytes is not None and stored.evidence == evidence_bytes)
                 )
-                if _result_digest(replay) != stored_row["result_sha256"]:
+                if stored.report != report_bytes or not same_evidence:
                     raise StateCorrupt("same attempt/receipt produced a different full result envelope")
                 return self._snapshot(conn, job)
             if job["state"] != "running" or job["current_attempt_id"] != attempt.attempt_id or row["lease_fence"] != attempt.lease_fence or row["state"] != "running":

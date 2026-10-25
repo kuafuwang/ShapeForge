@@ -23,10 +23,30 @@ from .redact import redact_text
 class EvaluationOutbox:
     """Persist one JSON state and one result envelope per request id."""
 
-    def __init__(self, run_dir: Path | str, *, signature_key: bytes | None = None) -> None:
+    def __init__(
+        self,
+        run_dir: Path | str,
+        *,
+        signature_key: bytes | None = None,
+        transport: str = "",
+        api_contract_id: str = "",
+        evidence_contract_id: str = "",
+    ) -> None:
         if signature_key is not None and (not isinstance(signature_key, bytes) or not signature_key):
             raise ValueError("signature_key must be non-empty bytes or None")
+        for name, value in (
+            ("transport", transport), ("api_contract_id", api_contract_id),
+            ("evidence_contract_id", evidence_contract_id),
+        ):
+            if not isinstance(value, str):
+                raise ValueError(f"outbox {name} must be text")
         self.signature_key = signature_key
+        self.transport = transport
+        self.api_contract_id = api_contract_id
+        self.evidence_contract_id = evidence_contract_id
+        # The status read by the last begin(); resume uses it to decide whether
+        # an interrupted durable job may be resumed through an explicit Retry.
+        self.previous_status = ""
         self.root = Path(run_dir) / "evaluation_outbox"
         self.root.mkdir(parents=True, exist_ok=True)
         self._receipt_index_path = self.root / "receipts.json"
@@ -50,8 +70,7 @@ class EvaluationOutbox:
     def _result_path(self, request_id: str) -> Path:
         return self.root / f"{self._key(request_id)}.result.json"
 
-    @staticmethod
-    def _document(request: EvaluationRequest, *, epoch: str, status: str, created_at: float) -> dict[str, Any]:
+    def _document(self, request: EvaluationRequest, *, epoch: str, status: str, created_at: float) -> dict[str, Any]:
         now = time.time()
         return {
             "schema_version": 1,
@@ -61,11 +80,29 @@ class EvaluationOutbox:
             "request_digest": request.request_digest,
             "candidate_sha256": request.candidate_sha256,
             "evaluator_epoch": epoch,
+            "transport": self.transport,
+            "api_contract_id": self.api_contract_id,
+            "evidence_contract_id": self.evidence_contract_id,
+            "attempt_id": "",
+            "signature_key_id": "",
+            "signature_algorithm": "",
             "status": status,
             "report_path": "",
             "created_at": created_at,
             "updated_at": now,
         }
+
+    def _check_binding(self, document: dict[str, Any]) -> None:
+        for key, expected in (
+            ("transport", self.transport),
+            ("api_contract_id", self.api_contract_id),
+            ("evidence_contract_id", self.evidence_contract_id),
+        ):
+            previous = document.get(key)
+            if previous and expected and previous != expected:
+                raise EvaluationUnavailable(
+                    f"{key}_mismatch", f"evaluation outbox {key} differs from the current evaluator"
+                )
 
     def _validate_result(self, request: EvaluationRequest, result: EvaluationResult) -> None:
         receipt_id = validate_receipt(result, request)
@@ -80,6 +117,7 @@ class EvaluationOutbox:
 
     def begin(self, request: EvaluationRequest, *, epoch: str = "") -> EvaluationResult | None:
         """Return a completed result or persist a pending request before sending."""
+        self.previous_status = ""
         path = self._state_path(request.request_id)
         if path.is_file():
             try:
@@ -90,6 +128,8 @@ class EvaluationOutbox:
                 raise EvaluationUnavailable("outbox_corrupt", f"cannot read evaluation outbox: {exc}") from exc
             if not isinstance(document, dict) or document.get("request_digest") != request.request_digest:
                 raise EvaluationUnavailable("outbox_conflict", "outbox request id is bound to a different request")
+            self._check_binding(document)
+            self.previous_status = str(document.get("status") or "")
             previous_epoch = document.get("evaluator_epoch")
             if epoch and previous_epoch and previous_epoch != epoch:
                 raise EvaluationUnavailable("epoch_drift", "evaluator epoch differs from the outbox request")
@@ -140,10 +180,14 @@ class EvaluationOutbox:
             document = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else self._document(request, epoch=result.provenance.epoch, status="pending", created_at=time.time())
         except (OSError, ValueError) as exc:
             raise EvaluationUnavailable("outbox_corrupt", f"cannot update evaluation outbox: {exc}") from exc
+        receipt = result.receipt if isinstance(result.receipt, dict) else {}
         document.update({
             "evaluator_epoch": result.provenance.epoch,
             "status": "completed",
             "report_path": str(result_path.relative_to(path.parent.parent)),
+            "attempt_id": str(receipt.get("attempt_id") or ""),
+            "signature_key_id": str(receipt.get("signature_key_id") or ""),
+            "signature_algorithm": str(receipt.get("signature_algorithm") or ""),
             "updated_at": time.time(),
         })
         document.pop("error", None)

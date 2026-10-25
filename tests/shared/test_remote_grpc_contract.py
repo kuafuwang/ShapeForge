@@ -265,7 +265,8 @@ builtins.__import__ = guarded
 from tcenv.evaluation import LocalEvaluator
 from tcenv.remote import contracts
 from tcenv.remote.v1 import evaluator_pb2
-assert LocalEvaluator and contracts and evaluator_pb2
+import taic.remote_runtime
+assert LocalEvaluator and contracts and evaluator_pb2 and taic.remote_runtime
 assert "grpc" not in sys.modules
 '''
     completed = subprocess.run(

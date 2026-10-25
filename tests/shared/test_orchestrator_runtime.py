@@ -223,3 +223,109 @@ def test_execution_manifest_rejects_observed_identity_drift(tmp_path):
     orch._observe_evaluator(provenance)
     with pytest.raises(EvaluationUnavailable, match="identity"):
         orch._observe_evaluator(replace(provenance, worker_build="different-build"))
+
+
+class GrpcShapedEvaluator(RecordingEvaluator):
+    """A recording evaluator that exposes the gRPC host-adapter metadata."""
+
+    transport_kind = "grpc"
+    supports_explicit_retry = True
+
+    def __init__(self, *, fail_formal: bool = False) -> None:
+        super().__init__()
+        self.fail_formal = fail_formal
+        self.resume_calls = 0
+        self._provenance = None
+
+    def execution_metadata(self) -> dict:
+        return {
+            "transport": "grpc",
+            "api_contract_id": "tcenv.remote.v1.evaluator-api.1",
+            "evidence_contract_id": "tcenv.remote.v1.evidence.1",
+            "request_digest_algorithm": "sha256-rfc8785-v1",
+            "result_signature_algorithm": "hmac-sha256-v1",
+            "result_signature_key_ids": ["sim-site/key-1"],
+        }
+
+    @property
+    def provenance(self):
+        return self._provenance
+
+    def _result(self, request):
+        result = super().formal(request)
+        result.receipt["attempt_id"] = "attempt-1"
+        result.receipt["signature_key_id"] = "sim-site/key-1"
+        result.receipt["signature_algorithm"] = "hmac-sha256-v1"
+        self._provenance = result.provenance
+        return result
+
+    def formal(self, request):
+        if self.fail_formal:
+            self.requests.append(request)
+            raise EvaluationUnavailable("interrupted", "durable attempt was interrupted", retryable=True)
+        return self._result(request)
+
+    def formal_resume(self, request):
+        self.resume_calls += 1
+        return self._result(request)
+
+
+def test_execution_manifest_and_outbox_record_grpc_contract_metadata(tmp_path):
+    """@brief gRPC run 必须把 transport、两个合约、attempt 与 key_id 写进证据。"""
+    evaluator = GrpcShapedEvaluator()
+    orch = make_orch(
+        tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0,
+        evaluator=evaluator, publishable_site_ids={"local"}, publishable_epochs={_test_epoch()},
+    )
+    res = run(orch)
+    assert res.best_speedup == 1.2
+    document = json.loads((orch.run_dir / "execution.json").read_text())
+    assert document["transport"] == "grpc"
+    assert document["api_contract_id"] == "tcenv.remote.v1.evaluator-api.1"
+    assert document["evidence_contract_id"] == "tcenv.remote.v1.evidence.1"
+    observed = document["observed"]
+    assert observed["transport"] == "grpc"
+    assert observed["api_contract_id"] == "tcenv.remote.v1.evaluator-api.1"
+    rows = list((orch.run_dir / "evaluation_outbox").glob("*.json"))
+    state = json.loads(next(path for path in rows if not path.name.endswith(".result.json") and path.name != "receipts.json").read_text())
+    assert state["status"] == "completed"
+    assert state["transport"] == "grpc"
+    assert state["api_contract_id"] == "tcenv.remote.v1.evaluator-api.1"
+    assert state["attempt_id"] == "attempt-1"
+    assert state["signature_key_id"] == "sim-site/key-1"
+    assert state["signature_algorithm"] == "hmac-sha256-v1"
+
+
+def test_resume_uses_explicit_retry_only_for_a_pending_outbox_row(tmp_path):
+    """@brief 只有持久 pending/unavailable 行才驱动 Retry；普通 Submit 不会自动重试。"""
+    evaluator = GrpcShapedEvaluator(fail_formal=True)
+    orch = make_orch(
+        tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0,
+        evaluator=evaluator, publishable_site_ids={"local"}, publishable_epochs={_test_epoch()},
+    )
+    source = "// speed=1.2\nkernel void demo() {}"
+    with pytest.raises(EvaluationUnavailable):
+        orch._evaluate_report(source, mode="quick", seed=3, reps=1, label="init")
+    assert evaluator.resume_calls == 0
+    report = orch._evaluate_report(source, mode="quick", seed=3, reps=1, label="init")
+    assert report.status == "ok"
+    assert evaluator.resume_calls == 1
+
+
+def test_resume_rejects_a_grpc_run_without_its_contract_identities(tmp_path):
+    """@brief 新 gRPC run 缺 api/evidence contract 时不能伪装成可续跑。"""
+    from taic.orchestrator import RunStartError
+    from tests.support.fakes import FakeClient
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0)
+    (orch.run_dir / "execution.json").write_text(json.dumps({
+        "schema_version": 1, "evaluation": "remote", "transport": "grpc",
+        "publishable_site_ids": ["local"], "publishable_epochs": ["e" * 64],
+    }))
+    with pytest.raises(RunStartError, match="api_contract_id"):
+        type(orch)(
+            orch.task_name, orch.dtype, orch.size, orch.cfg, orch.search,
+            run_dir=orch.run_dir, resuming=True, client=FakeClient([]),
+            evaluate_fn=fake_eval([]), evaluator=GrpcShapedEvaluator(),
+            publishable_site_ids={"local"}, publishable_epochs={"e" * 64},
+        )

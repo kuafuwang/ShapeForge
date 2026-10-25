@@ -648,6 +648,48 @@ def test_macos_process_token_is_stable_for_a_live_process():
         process.wait()
 
 
+def test_hmac_key_rotation_verifies_history_and_signs_new_results(tmp_path):
+    """@brief 正常轮换后旧结果仍可用旧 key 验证，新结果用当前 key；缺失旧 key 则 fail closed。"""
+    key1 = b"rotation-old-key-32-bytes-long!!"
+    key2 = b"rotation-new-key-32-bytes-long!!"
+    id1 = "sim-external-site/key-1"
+    id2 = "sim-external-site/key-2"
+    state = tmp_path / "state"
+    first = engine(state, signing_key=key1, signing_key_id=id1)
+    old_request = request("rotation-old")
+    try:
+        submit(first, old_request)
+        old_result = wait_state(first, old_request, {"completed"})
+    finally:
+        first.close()
+
+    ring = {id1: key1, id2: key2}
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            second = engine(state, signing_key=key2, signing_key_id=id2, signing_keyring=ring)
+            break
+        except JobError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+    try:
+        replay = get(second, old_request)
+        assert replay.result.signature["key_id"] == id1
+        assert replay.result.signature["signature"] == old_result.result.signature["signature"]
+        new_request = request("rotation-new")
+        submit(second, new_request)
+        new_result = wait_state(second, new_request, {"completed"})
+        assert new_result.result.signature["key_id"] == id2
+    finally:
+        second.close()
+
+    # Opening without the historical key fails closed during durable-state
+    # validation instead of silently dropping the old result.
+    with pytest.raises(StateCorrupt, match="not trusted"):
+        JobStore(state, signing_key=key2, signing_key_id=id2)
+
+
 def test_schema_version_is_transactional_and_failed_commit_is_rolled_back(tmp_path):
     store = JobStore(tmp_path / "state")
     try:

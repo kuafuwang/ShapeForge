@@ -688,14 +688,23 @@ class Orchestrator:
             raise RunStartError("remote evaluator requires an explicit evaluator epoch allowlist")
         if self.publishable_epochs is not None and any(not isinstance(epoch, str) or not epoch for epoch in self.publishable_epochs):
             raise RunStartError("publishable_epochs must contain non-empty epochs")
-        self._outbox = None if self._local_evaluator else EvaluationOutbox(self.run_dir, signature_key=getattr(self.evaluator, "signature_key", None))
+        transport_metadata = self._evaluator_transport_metadata()
+        self._outbox = None if self._local_evaluator else EvaluationOutbox(
+            self.run_dir,
+            signature_key=getattr(self.evaluator, "signature_key", None),
+            transport=transport_metadata.get("transport", "legacy-ssh"),
+            api_contract_id=transport_metadata.get("api_contract_id", ""),
+            evidence_contract_id=transport_metadata.get("evidence_contract_id", ""),
+        )
         execution_document = {
             "schema_version": 1,
             "evaluation": "local" if self._local_evaluator else "remote",
+            "transport": "" if self._local_evaluator else transport_metadata.get("transport", "legacy-ssh"),
             "publishable_site_ids": sorted(self.publishable_site_ids),
             "publishable_epochs": None if self.publishable_epochs is None else sorted(self.publishable_epochs),
             "observed": {},
         }
+        execution_document.update(self._evaluator_contract_metadata())
         execution_path = self.run_dir / "execution.json"
         if not resuming:
             try:
@@ -719,6 +728,17 @@ class Orchestrator:
                 raise RunStartError("cannot resume a remote run without an explicit publication epoch allowlist")
             if previous_epochs is not None and (current_epochs is None or set(previous_epochs) != set(current_epochs)):
                 raise RunStartError("cannot resume with a different publication epoch allowlist")
+            previous_transport = previous_execution.get("transport") or "legacy-ssh"
+            current_transport = execution_document["transport"] or "legacy-ssh"
+            if previous_transport != current_transport:
+                raise RunStartError("cannot resume with a different evaluator transport")
+            if current_transport == "grpc":
+                for key in ("api_contract_id", "evidence_contract_id"):
+                    previous_value = previous_execution.get(key)
+                    if not previous_value:
+                        raise RunStartError(f"cannot resume a gRPC run without its {key}")
+                    if previous_value != execution_document.get(key):
+                        raise RunStartError(f"cannot resume with a different {key}")
         self._session_runner_injected = session_runner is not None
         self.session_runner: HmzKernelSessionRunner = session_runner or LocalHmzKernelSessionRunner()
         self.selfcheck_socket = selfcheck_socket
@@ -1246,6 +1266,38 @@ class Orchestrator:
         request_id = "ev-" + hashlib.sha256(f"{label}\0{request.request_digest}".encode("utf-8")).hexdigest()[:40]
         return replace(request, request_id=request_id)
 
+    def _evaluator_transport_metadata(self) -> dict:
+        """Return transport/contract metadata the evaluator reports about itself."""
+
+        if self._local_evaluator:
+            return {"transport": ""}
+        getter = getattr(self.evaluator, "execution_metadata", None)
+        metadata = getter() if callable(getter) else None
+        if not isinstance(metadata, dict):
+            return {"transport": getattr(self.evaluator, "transport_kind", "legacy-ssh") or "legacy-ssh"}
+        transport = metadata.get("transport") or getattr(self.evaluator, "transport_kind", "legacy-ssh") or "legacy-ssh"
+        result = {"transport": transport}
+        for key in (
+            "api_contract_id", "evidence_contract_id", "request_digest_algorithm",
+            "result_signature_algorithm", "result_signature_key_ids",
+        ):
+            value = metadata.get(key)
+            if value:
+                result[key] = value
+        return result
+
+    def _evaluator_contract_metadata(self) -> dict:
+        """Return the three identity/contract fields recorded in execution.json."""
+
+        metadata = self._evaluator_transport_metadata()
+        if metadata.get("transport") != "grpc":
+            return {}
+        keys = (
+            "api_contract_id", "evidence_contract_id", "request_digest_algorithm",
+            "result_signature_algorithm", "result_signature_key_ids",
+        )
+        return {key: metadata[key] for key in keys if key in metadata}
+
     def _observe_evaluator(self, provenance) -> None:
         """@brief Record observed evaluator identity and reject identity drift."""
         if provenance is None:
@@ -1264,6 +1316,9 @@ class Orchestrator:
             "measurement_kind": provenance.measurement_kind,
             "publication_allowed": provenance.publication_allowed,
         }
+        if self._evaluator_transport_metadata().get("transport") == "grpc":
+            facts.update(self._evaluator_contract_metadata())
+            facts["transport"] = "grpc"
         path = self.run_dir / "execution.json"
         try:
             document = json.loads(path.read_text(encoding="utf-8"))
@@ -1336,10 +1391,19 @@ class Orchestrator:
                 current_epoch = ensure_epoch(request)
             self._observe_evaluator(getattr(self.evaluator, "provenance", None))
             result = None
+            resume_interrupted = False
             if self._outbox is not None:
                 result = self._outbox.begin(request, epoch=current_epoch)
+                resume_interrupted = result is None and self._outbox.previous_status in {"pending", "unavailable"}
             if result is None:
-                result = self.evaluator.formal(request)
+                resume_fn = getattr(self.evaluator, "formal_resume", None)
+                if resume_interrupted and callable(resume_fn):
+                    # A durable pending row means this run is resuming.  Submit
+                    # still only replays; Retry is the explicit recovery action
+                    # for an interrupted attempt.
+                    result = resume_fn(request)
+                else:
+                    result = self.evaluator.formal(request)
             if not isinstance(result, EvaluationResult):
                 raise EvaluationUnavailable("evaluation_result_invalid", "evaluator returned an unexpected result type")
             provenance = result.provenance

@@ -42,6 +42,21 @@ class RemoteEvaluationConfig:
     command: tuple[str, ...]
     token_file: Path
     target_id: str
+    transport: str = "legacy-ssh"
+    endpoint: str = ""
+    tls_server_name: str = ""
+    ca_file: Path | None = None
+    client_certificate_file: Path | None = None
+    client_private_key_file: Path | None = None
+    signature_keyring_file: Path | None = None
+    api_contract_ids: tuple[str, ...] = ()
+    evidence_contract_ids: tuple[str, ...] = ()
+    required_features: tuple[str, ...] = ()
+    rpc_timeout_s: float = 30.0
+    watch_slice_s: float = 30.0
+    job_margin_s: float = 30.0
+    expected_device_id: str = ""
+    expected_epoch: str = ""
     selfcheck_token_file: Path | None = None
     signature_key_file: Path | None = None
     expected_site_id: str = ""
@@ -71,7 +86,11 @@ class RemoteEvaluationConfig:
         if not isinstance(document, dict):
             raise ValueError("remote evaluation config must be an object")
         allowed = {
-            "command", "token_file", "selfcheck_token_file", "signature_key_file", "target_id", "expected_site_id", "expected_worker_build",
+            "transport", "command", "endpoint", "tls_server_name", "ca_file",
+            "client_certificate_file", "client_private_key_file", "signature_keyring_file",
+            "api_contract_ids", "evidence_contract_ids", "required_features",
+            "rpc_timeout_s", "watch_slice_s", "job_margin_s", "expected_device_id", "expected_epoch",
+            "token_file", "selfcheck_token_file", "signature_key_file", "target_id", "expected_site_id", "expected_worker_build",
             "expected_task_pack_digest", "task_fingerprint", "publishable_site_ids", "publishable_epochs",
             "socket_root", "selfcheck_reps", "selfcheck_max_timed", "selfcheck_max_gpu_s",
             "selfcheck_allow_validate", "selfcheck_min_improvement", "selfcheck_noise_z",
@@ -80,9 +99,35 @@ class RemoteEvaluationConfig:
         unknown = set(document) - allowed
         if unknown:
             raise ValueError(f"unknown remote evaluation fields: {sorted(unknown)}")
-        command = document.get("command")
-        if not isinstance(command, list) or not command or any(not isinstance(part, str) or not part for part in command):
-            raise ValueError("remote command must be a non-empty argv list")
+        transport = document.get("transport", "legacy-ssh")
+        if transport not in {"legacy-ssh", "grpc"}:
+            raise ValueError("remote transport must be legacy-ssh or grpc")
+        command_value = document.get("command")
+        if transport == "legacy-ssh":
+            if not isinstance(command_value, list) or not command_value or any(not isinstance(part, str) or not part for part in command_value):
+                raise ValueError("remote command must be a non-empty argv list")
+            command = list(command_value)
+        else:
+            if command_value is not None:
+                raise ValueError("gRPC transport does not accept a command")
+            command = []
+            for name in ("endpoint", "ca_file", "signature_keyring_file"):
+                value = document.get(name)
+                if not isinstance(value, str) or not value:
+                    raise ValueError(f"gRPC transport requires {name}")
+            endpoint = document["endpoint"]
+            if any(character in endpoint for character in "/ \t\n"):
+                raise ValueError("gRPC endpoint must be host:port without credentials")
+            certificate = document.get("client_certificate_file")
+            private_key = document.get("client_private_key_file")
+            if (certificate is None) != (private_key is None):
+                raise ValueError("client_certificate_file and client_private_key_file must be supplied together")
+            if certificate is not None and (not isinstance(certificate, str) or not certificate or not isinstance(private_key, str) or not private_key):
+                raise ValueError("client certificate paths must be non-empty strings")
+            for name in ("api_contract_ids", "evidence_contract_ids", "required_features"):
+                value = document.get(name)
+                if value is not None and (not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value)):
+                    raise ValueError(f"{name} must be a list of non-empty strings")
         token_file = document.get("token_file")
         target_id = document.get("target_id")
         if not isinstance(token_file, str) or not token_file:
@@ -121,8 +166,27 @@ class RemoteEvaluationConfig:
             value = document.get(name, default)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < lower:
                 raise ValueError(f"{name} is outside the limit")
+        for name, default in (("rpc_timeout_s", 30.0), ("watch_slice_s", 30.0), ("job_margin_s", 30.0)):
+            value = document.get(name, default)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value <= 86_400:
+                raise ValueError(f"{name} must be positive and bounded")
         return cls(
             command=tuple(command),
+            transport=transport,
+            endpoint=str(document.get("endpoint") or ""),
+            tls_server_name=str(document.get("tls_server_name") or ""),
+            ca_file=resolve(document["ca_file"]) if document.get("ca_file") else None,
+            client_certificate_file=resolve(document["client_certificate_file"]) if document.get("client_certificate_file") else None,
+            client_private_key_file=resolve(document["client_private_key_file"]) if document.get("client_private_key_file") else None,
+            signature_keyring_file=resolve(document["signature_keyring_file"]) if document.get("signature_keyring_file") else None,
+            api_contract_ids=tuple(document.get("api_contract_ids") or ()),
+            evidence_contract_ids=tuple(document.get("evidence_contract_ids") or ()),
+            required_features=tuple(document.get("required_features") or ()),
+            rpc_timeout_s=float(document.get("rpc_timeout_s", 30.0)),
+            watch_slice_s=float(document.get("watch_slice_s", 30.0)),
+            job_margin_s=float(document.get("job_margin_s", 30.0)),
+            expected_device_id=str(document.get("expected_device_id") or ""),
+            expected_epoch=str(document.get("expected_epoch") or ""),
             token_file=resolve(token_file),
             selfcheck_token_file=resolve(document["selfcheck_token_file"]) if document.get("selfcheck_token_file") else None,
             signature_key_file=resolve(document["signature_key_file"]) if document.get("signature_key_file") else None,
@@ -187,10 +251,12 @@ class RemoteEvaluationConfig:
             raise RemoteError("session_mismatch", "selfcheck session grant is empty")
         return token
 
-    def make_selfcheck_evaluator(self, run_id: str) -> RemoteEvaluatorPool:
-        """Create a selfcheck-only pool; never silently reuse the formal grant."""
+    def make_selfcheck_evaluator(self, run_id: str):
+        """Create a selfcheck-only evaluator; never silently reuse the formal grant."""
         if self.selfcheck_token_file is None:
             raise ValueError("remote selfcheck requires selfcheck_token_file")
+        if self.transport == "grpc":
+            return self._make_grpc_factory(run_id, selfcheck=True)
         return remote_evaluator_pool_from_command(
             lambda key: self.command_for_session(key, evaluation_kind="selfcheck"),
             token=self.selfcheck_token_for_session,
@@ -217,8 +283,44 @@ class RemoteEvaluationConfig:
             raise ValueError("remote signature key file must not be empty")
         return key
 
-    def make_evaluator(self, run_id: str) -> RemoteEvaluatorPool:
-        """Create a pool whose connections are keyed by run/session/target."""
+    def _make_grpc_factory(self, run_id: str, *, selfcheck: bool):
+        if self.ca_file is None or self.signature_keyring_file is None:
+            raise ValueError("gRPC transport requires ca_file and signature_keyring_file")
+        from tcenv.remote.grpc_client import DEFAULT_REQUIRED_FEATURES, GrpcExpected, grpc_evaluator_factory_from_config
+        from tcenv.remote import contracts
+
+        required = self.required_features or DEFAULT_REQUIRED_FEATURES
+        return grpc_evaluator_factory_from_config(
+            endpoint=self.endpoint,
+            token_provider=self.selfcheck_token_for_session if selfcheck else self.token_for_session,
+            run_id=run_id,
+            target_id=self.target_id,
+            ca_file=self.ca_file,
+            certificate_file=self.client_certificate_file,
+            private_key_file=self.client_private_key_file,
+            keyring_file=self.signature_keyring_file,
+            legacy_signature_key=self._signature_key(),
+            expected=GrpcExpected(
+                site_id=self.expected_site_id,
+                device_id=self.expected_device_id,
+                target_id=self.target_id,
+                worker_build=self.expected_worker_build,
+                task_pack_digest=self.expected_task_pack_digest,
+                evaluator_epoch=self.expected_epoch,
+            ),
+            api_contract_ids=self.api_contract_ids or (contracts.API_CONTRACT_ID,),
+            evidence_contract_ids=self.evidence_contract_ids or (contracts.EVIDENCE_CONTRACT_ID,),
+            required_features=required,
+            server_name_override=self.tls_server_name,
+            rpc_timeout_s=self.rpc_timeout_s,
+            watch_slice_s=self.watch_slice_s,
+            job_margin_s=self.job_margin_s,
+        )
+
+    def make_evaluator(self, run_id: str):
+        """Create an executor whose connections are keyed by run/session/target."""
+        if self.transport == "grpc":
+            return self._make_grpc_factory(run_id, selfcheck=False)
         return remote_evaluator_pool_from_command(
             self.command_for_session,
             token=self.token_for_session,

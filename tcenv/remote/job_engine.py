@@ -208,6 +208,7 @@ class JobEngine:
         worker_env: Mapping[str, str] | None = None,
         signing_key: bytes | None = None,
         signing_key_id: str = "",
+        signing_keyring: Mapping[str, bytes] | None = None,
         selfcheck_age_s: float = 60.0,
         require_evidence: bool = False,
         **store_options: Any,
@@ -250,7 +251,7 @@ class JobEngine:
             raise ValueError("external evaluator calibration_digest must be 64 lowercase hex characters")
         self.store = JobStore(
             state_dir, signing_key=signing_key, signing_key_id=signing_key_id,
-            **store_options,
+            signing_keyring=signing_keyring, **store_options,
         )
         try:
             for grant in grants:
@@ -268,6 +269,17 @@ class JobEngine:
     @property
     def expected_identities(self) -> ExpectedIdentities:
         return self._expected
+
+    def _required_features(self, values: Any) -> frozenset[str]:
+        features = JobStore._features(values)
+        missing = features - self.supported_features
+        if missing:
+            raise JobError(
+                "failed_precondition",
+                f"unsupported required features: {sorted(missing)}",
+                missing_features=tuple(sorted(missing)),
+            )
+        return features
 
     @property
     def frontend_instance(self) -> str:
@@ -288,6 +300,7 @@ class JobEngine:
         required_features: list[str] | tuple[str, ...] = (),
         valid_for_ms: int = 60_000,
     ) -> Capabilities:
+        self._required_features(required_features)
         capabilities = self.store.get_capabilities(
             grant_token=grant_token, client_nonce=client_nonce, expected=expected or {},
             expected_identities=self._expected, provenance=self._base_provenance(),
@@ -324,6 +337,7 @@ class JobEngine:
         grant_token: str,
     ) -> JobSnapshot:
         self._validate_submission(request)
+        self._required_features(required_features)
         snapshot, _created = self.store.submit(
             request=request, request_digest=request.request_digest, expected=expected,
             provenance=self._base_provenance(), capability_id=capability_id,
@@ -362,6 +376,7 @@ class JobEngine:
         interrupted_attempt_id: str, capability_id: str,
         required_features: list[str] | tuple[str, ...] = (), grant_token: str,
     ) -> JobSnapshot:
+        self._required_features(required_features)
         snapshot = self.store.retry(
             grant_token=grant_token, request_id=request_id, request_digest=request_digest,
             expected=expected, interrupted_attempt_id=interrupted_attempt_id,

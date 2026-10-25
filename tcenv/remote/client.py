@@ -545,6 +545,20 @@ class RemoteEvaluatorPool:
     provider receives ``(run_id, session_id)``; both are host-controlled.
     """
 
+    transport_kind = "legacy-ssh"
+
+    def execution_metadata(self) -> dict:
+        """Historical SSH frame transport; kept for resume compatibility."""
+
+        return {
+            "transport": self.transport_kind,
+            "api_contract_id": "",
+            "evidence_contract_id": "",
+            "request_digest_algorithm": "",
+            "result_signature_algorithm": "",
+            "result_signature_key_ids": [],
+        }
+
     def __init__(
         self,
         transport_factory: Callable[[tuple[str, str, str]], Transport],

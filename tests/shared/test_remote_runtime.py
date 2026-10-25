@@ -176,3 +176,97 @@ def test_remote_config_rejects_unknown_fields(tmp_path):
         assert "unknown" in str(exc)
     else:
         raise AssertionError("unknown remote config field was accepted")
+
+
+def _grpc_document(tmp_path: Path, pki, **overrides) -> Path:
+    token_file = tmp_path / "grant.token"
+    token_file.write_text(TOKEN)
+    selfcheck_file = tmp_path / "selfcheck-grant.token"
+    selfcheck_file.write_text("selfcheck-token")
+    keyring = pki.keyring_file(key_id="sim-site/key-1", key=b"k" * 32)
+    document = {
+        "transport": "grpc",
+        "endpoint": "127.0.0.1:1",
+        "tls_server_name": "localhost",
+        "token_file": str(token_file),
+        "selfcheck_token_file": str(selfcheck_file),
+        "ca_file": str(pki.ca_cert),
+        "client_certificate_file": str(pki.client_cert),
+        "client_private_key_file": str(pki.client_key),
+        "signature_keyring_file": str(keyring),
+        "target_id": "sim-npu-test",
+        "expected_site_id": "sim-site",
+        "expected_device_id": "sim-device",
+        "expected_worker_build": "sim-build-1",
+        "expected_task_pack_digest": TASK_PACK_DIGEST,
+        "task_fingerprint": TASK_FINGERPRINT,
+        "publishable_site_ids": [],
+        "socket_root": tempfile.mkdtemp(prefix="taic-remote-", dir="/tmp"),
+    }
+    document.update(overrides)
+    path = tmp_path / "remote-grpc.json"
+    path.write_text(json.dumps(document))
+    return path
+
+
+def test_grpc_remote_config_builds_shared_channel_factories(tmp_path):
+    from tcenv.remote.grpc_client import GrpcEvaluatorFactory
+    from tests.support.remote_pki import make_pki
+
+    pki = make_pki(tmp_path / "pki")
+    config = RemoteEvaluationConfig.from_file(_grpc_document(tmp_path, pki))
+    assert config.transport == "grpc"
+    formal = config.make_evaluator("run-1")
+    selfcheck = config.make_selfcheck_evaluator("run-1")
+    try:
+        assert isinstance(formal, GrpcEvaluatorFactory)
+        assert isinstance(selfcheck, GrpcEvaluatorFactory)
+        metadata = formal.execution_metadata()
+        assert metadata["transport"] == "grpc"
+        assert metadata["api_contract_id"] == "tcenv.remote.v1.evaluator-api.1"
+        assert metadata["evidence_contract_id"] == "tcenv.remote.v1.evidence.1"
+        assert metadata["result_signature_key_ids"] == ["sim-site/key-1"]
+        # A renewed token file is re-read per call, never cached in the factory.
+        (tmp_path / "grant.token").write_text("renewed-grant")
+        assert formal.token_provider("run-1", "session-1") == "renewed-grant"
+    finally:
+        formal.close()
+        selfcheck.close()
+
+
+def test_grpc_remote_config_rejects_missing_tls_material_or_mixed_transports(tmp_path):
+    from tests.support.remote_pki import make_pki
+
+    pki = make_pki(tmp_path / "pki")
+    base = json.loads(_grpc_document(tmp_path, pki).read_text())
+    for field in ("ca_file", "signature_keyring_file"):
+        document = dict(base)
+        document.pop(field)
+        path = tmp_path / f"missing-{field}.json"
+        path.write_text(json.dumps(document))
+        try:
+            RemoteEvaluationConfig.from_file(path)
+        except ValueError as exc:
+            assert field in str(exc)
+        else:
+            raise AssertionError(f"gRPC config without {field} was accepted")
+    mixed = dict(base)
+    mixed["command"] = [sys.executable, "-c", "pass"]
+    path = tmp_path / "mixed.json"
+    path.write_text(json.dumps(mixed))
+    try:
+        RemoteEvaluationConfig.from_file(path)
+    except ValueError as exc:
+        assert "command" in str(exc)
+    else:
+        raise AssertionError("a gRPC config with a command was accepted")
+    half_cert = dict(base)
+    half_cert.pop("client_private_key_file")
+    path = tmp_path / "half-cert.json"
+    path.write_text(json.dumps(half_cert))
+    try:
+        RemoteEvaluationConfig.from_file(path)
+    except ValueError as exc:
+        assert "together" in str(exc)
+    else:
+        raise AssertionError("half a client identity was accepted")

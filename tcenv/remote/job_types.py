@@ -37,6 +37,7 @@ class JobError(ValueError):
         failure_domain: str = "",
         request_id: str = "",
         attempt_id: str = "",
+        missing_features: tuple[str, ...] = (),
     ) -> None:
         super().__init__(message[:4000])
         self.code = code
@@ -44,6 +45,7 @@ class JobError(ValueError):
         self.failure_domain = failure_domain
         self.request_id = request_id
         self.attempt_id = attempt_id
+        self.missing_features = tuple(missing_features)
 
 
 class StateCorrupt(JobError):

@@ -393,7 +393,7 @@ def test_duplicate_result_bytes_are_deduplicated_but_conflicts_are_data_loss(ser
     evidence = final.result.evidence_json()
     replay = service.store.complete_attempt(req.request_id, attempt, report=report, evidence=evidence)
     assert replay.result.receipt == final.result.receipt
-    with pytest.raises(StateCorrupt, match="different result bytes"):
+    with pytest.raises(StateCorrupt, match="different full result envelope"):
         service.store.complete_attempt(
             req.request_id, attempt, report={**report, "candidate_us": 999.0}, evidence=evidence,
         )
@@ -421,6 +421,34 @@ def test_formal_selfcheck_and_mode_scopes_cannot_be_escalated(tmp_path):
             assert caught.value.code == "not_found"
     finally:
         service.close()
+
+
+def test_bounded_clock_skew_widens_only_grant_and_capability_expiry(tmp_path):
+    """@brief 有限时钟偏移只放宽 grant/capability 临期，不放宽撤销与 generation。"""
+    now = 1_800_000_000.0
+    expired = grant(expires_at=now - 1.0)
+    service = engine(tmp_path / "skewed", grants=[expired], clock=lambda: now, clock_skew_ms=5_000)
+    try:
+        capabilities(service, nonce="skewed-grant-nonce")
+    except JobError as exc:  # pragma: no cover - asserted for a clear failure
+        pytest.fail(f"bounded skew should accept a grant expired by one second: {exc}")
+    finally:
+        service.close()
+
+    strict = engine(tmp_path / "strict", grants=[expired], clock=lambda: now)
+    try:
+        with pytest.raises(JobError, match="expired"):
+            capabilities(strict, nonce="strict-grant-nonce")
+    finally:
+        strict.close()
+
+    revoked = engine(tmp_path / "revoked", grants=[expired], clock=lambda: now, clock_skew_ms=5_000)
+    try:
+        revoked.revoke_grant(expired.token)
+        with pytest.raises(JobError, match="revoked"):
+            capabilities(revoked, nonce="revoked-grant-nonce")
+    finally:
+        revoked.close()
 
 
 def test_plain_grant_expiry_does_not_stop_accepted_job_and_renewal_recovers_read(tmp_path):
@@ -718,7 +746,8 @@ def test_fatal_scheduler_store_error_makes_submit_and_get_unavailable(tmp_path):
         service.close()
 
 
-def test_duplicate_completion_rejects_a_different_signing_key_envelope(tmp_path):
+def test_duplicate_completion_replays_the_committed_key_envelope(tmp_path):
+    """@brief 重复完成只回放已提交签名，不会用轮换后的新 key 重签历史结果。"""
     key1 = b"external-test-signing-key-32-bytes!"
     key2 = b"another-test-signing-key-32-bytes!"
     service = engine(tmp_path / "state", signing_key=key1, signing_key_id="sim-external-site/key-1")
@@ -726,11 +755,18 @@ def test_duplicate_completion_rejects_a_different_signing_key_envelope(tmp_path)
         req = request("signed-replay-key-mismatch")
         submit(service, req)
         final = wait_state(service, req, {"completed"})
+        replay = service.store.complete_attempt(
+            req.request_id, final.current_attempt,
+            report=final.result.report_json(), evidence=final.result.evidence_json(),
+            signing_key=key2, signing_key_id="sim-external-site/key-2",
+        )
+        assert replay.result.signature == final.result.signature
+        assert replay.result.signature["key_id"] == "sim-external-site/key-1"
         with pytest.raises(StateCorrupt, match="full result envelope"):
             service.store.complete_attempt(
                 req.request_id, final.current_attempt,
-                report=final.result.report_json(), evidence=final.result.evidence_json(),
-                signing_key=key2, signing_key_id="sim-external-site/key-2",
+                report={**final.result.report_json(), "candidate_us": 999.0},
+                evidence=final.result.evidence_json(),
             )
     finally:
         service.close()
@@ -746,7 +782,7 @@ def test_engine_result_envelope_conflict_on_completed_job_fails_closed(tmp_path)
         req = request("signed-replay-engine-fail-closed")
         submit(service, req)
         final = wait_state(service, req, {"completed"})
-        report = final.result.report_json()
+        report = {**final.result.report_json(), "candidate_us": 999.0}
         evidence = final.result.evidence_json()
         with pytest.raises(StateCorrupt, match="full result envelope"):
             service.store.complete_attempt(
