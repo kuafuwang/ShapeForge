@@ -45,6 +45,9 @@ def test_simulated_grpc_tls_docker_acceptance(tmp_path):
     assert cleanup["final"] is True
     assert cleanup["containers_left"] == []
     assert cleanup["kept_for_inspection"] is False
+    assert set(cleanup["volumes_retained"]) == {
+        "taic-sim-state", "taic-sim-limits", "taic-sim-backup", "taic-sim-restored",
+    }
     assert not any(cleanup["temp_paths"].values()), cleanup["temp_paths"]
     assert not any(cleanup["process_groups"].values()), cleanup["process_groups"]
 

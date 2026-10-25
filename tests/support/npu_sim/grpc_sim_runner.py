@@ -242,6 +242,40 @@ class Docker:
     def remove(self, name: str) -> None:
         self.run("rm", "-f", name, check=False)
 
+    def volume_remove(self, name: str) -> None:
+        self.run("volume", "rm", "-f", name, check=False)
+
+    def volume_create(self, name: str, *, uid: int, gid: int) -> None:
+        """Create a writable named volume for the non-root frontend user."""
+
+        self.volume_remove(name)
+        self.run("volume", "create", name)
+        self.run(
+            "run", "--rm", "--user", "0:0", "--mount", f"type=volume,src={name},dst=/state",
+            "--entrypoint", "chown", IMAGE, "-R", f"{uid}:{gid}", "/state",
+        )
+
+    def volume_query(self, volume: str, query: str, params=()) -> list[tuple]:
+        script = (
+            "import sqlite3,json,sys;"
+            "con=sqlite3.connect('file:/state/jobs.sqlite3?mode=ro',uri=True);"
+            "print(json.dumps(con.execute(sys.argv[1],json.loads(sys.argv[2])).fetchall()))"
+        )
+        completed = self.run(
+            "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
+            "--mount", f"type=volume,src={volume},dst=/state",
+            "--entrypoint", "python3", IMAGE, "-c", script, query, json.dumps(list(params)),
+        )
+        return [tuple(row) for row in json.loads(completed.stdout)]
+
+    def volume_text(self, volume: str, path: str) -> str:
+        completed = self.run(
+            "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
+            "--mount", f"type=volume,src={volume},dst=/state",
+            "--entrypoint", "cat", IMAGE, path,
+        )
+        return completed.stdout
+
     def acceptance_containers(self) -> list[str]:
         completed = self.run("ps", "-a", "--filter", "name=taic-grpc-sim", "--format", "{{.Names}}", check=False)
         return [line.strip() for line in completed.stdout.split() if line.strip()]
@@ -320,13 +354,18 @@ class Sim:
         self.docker = docker
         self.root = root
         self.config = root / "container-config"
-        self.state = root / "container-state"
-        self.restored_state = root / "container-state-restored"
-        self.backup = root / "container-backup"
-        self.limits_state = root / "container-limits"
-        for directory in (self.config, self.state, self.backup, self.restored_state, self.limits_state):
-            directory.mkdir(parents=True, exist_ok=True)
-            directory.chmod(0o700)
+        self.config.mkdir(parents=True, exist_ok=True)
+        self.config.chmod(0o700)
+        # SQLite WAL and its shared-memory index must live on a Linux
+        # filesystem: a Docker Desktop bind mount is not coherent with the
+        # container's mmap and can SIGBUS the frontend.  Named volumes also
+        # match the production "dedicated persistent volume" contract.
+        self.state_volume = "taic-sim-state"
+        self.backup_volume = "taic-sim-backup"
+        self.restored_volume = "taic-sim-restored"
+        self.limits_volume = "taic-sim-limits"
+        for volume in (self.state_volume, self.backup_volume, self.restored_volume, self.limits_volume):
+            docker.volume_create(volume, uid=os.getuid(), gid=os.getgid())
         self.pki = make_pki(self.config / "pki")
         self.key1 = new_key()
         self.key2 = new_key()
@@ -381,7 +420,7 @@ class Sim:
 
     # -- container lifecycle -------------------------------------------------
     def start(
-        self, *, image: str = IMAGE, state: Path | None = None, port: int | None = None,
+        self, *, image: str = IMAGE, volume: str | None = None, port: int | None = None,
         name: str | None = None, extra_args: tuple[str, ...] = (), legacy: bool = False,
     ) -> int:
         name = name or self.name
@@ -396,7 +435,7 @@ class Sim:
             "--user", f"{uid}:{gid}", "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
             "--mount", f"type=bind,src={self.config},dst=/etc/tcenv,readonly",
-            "--mount", f"type=bind,src={state or self.state},dst=/state",
+            "--mount", f"type=volume,src={volume or self.state_volume},dst=/state",
             image,
             "--listen", f"0.0.0.0:{CONTAINER_PORT}",
             "--state-dir", "/state",
@@ -604,22 +643,17 @@ class Sim:
             return name if name in self.running_names else ""
         return self.name if self.name in self.running_names else ""
 
-    def sql(self, query: str, params=(), *, container: str | None = None, state: Path | None = None) -> list[tuple]:
+    def sql(self, query: str, params=(), *, container: str | None = None, volume: str | None = None) -> list[tuple]:
         image = self._running_container(container)
         if image:
             completed = self.docker.run(
                 "exec", image, "python3", "-c", self._SQL_SCRIPT, query, json.dumps(list(params)),
             )
             return [tuple(row) for row in json.loads(completed.stdout)]
-        path = (state or self.state) / "jobs.sqlite3"
-        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        try:
-            return [tuple(row) for row in connection.execute(query, tuple(params)).fetchall()]
-        finally:
-            connection.close()
+        return self.docker.volume_query(volume or self.state_volume, query, params)
 
-    def attempts(self, request_id: str, *, container: str | None = None) -> int:
-        rows = self.sql("SELECT COUNT(*) FROM attempts WHERE request_id=?", (request_id,), container=container)
+    def attempts(self, request_id: str, *, container: str | None = None, volume: str | None = None) -> int:
+        rows = self.sql("SELECT COUNT(*) FROM attempts WHERE request_id=?", (request_id,), container=container, volume=volume)
         return int(rows[0][0])
 
     def job_state(self, request_id: str, *, container: str | None = None) -> dict[str, object]:
@@ -664,21 +698,24 @@ class Sim:
             "signature": None if rows[0][3] is None else json.loads(rows[0][3]),
         }
 
+    def state_text(self, name: str) -> str:
+        if self.name in self.running_names:
+            return self.docker.run("exec", self.name, "cat", f"/state/{name}").stdout
+        return self.docker.volume_text(self.state_volume, f"/state/{name}")
+
     def worker_count(self) -> int:
-        path = self.state / "worker-count.txt"
-        return int(path.read_text(encoding="utf-8")) if path.is_file() else 0
+        try:
+            value = self.state_text("worker-count.txt").strip()
+        except RuntimeError:
+            return 0
+        return int(value) if value else 0
 
     def worker_order(self) -> list[dict]:
-        path = self.state / "worker-order.jsonl"
-        if not path.is_file():
+        try:
+            text = self.state_text("worker-order.jsonl")
+        except RuntimeError:
             return []
-        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-
-    def stale_bridge_dirs(self) -> list[str]:
-        root = self.state / "bridge-tmp"
-        if not root.is_dir():
-            return []
-        return [entry.name for entry in root.iterdir()]
+        return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
 def _grpc_code(exc: BaseException) -> str:
@@ -1309,8 +1346,6 @@ def recovery_checks(sim: Sim, checker: Checker) -> None:
     # Restart with a running job.
     def restart_recovery() -> dict:
         factory = sim.factory(rpc_timeout_s=8, watch_slice_s=3, job_margin_s=15)
-        running = sim.state / "running.json"
-        running.unlink(missing_ok=True)
         thread, errors = _threaded(factory, _request("sim-restart", "HOLD_ONCE", candidate_s=60))
         try:
             _wait_for_running(sim, "sim-restart", errors=errors)
@@ -1372,7 +1407,7 @@ def recovery_checks(sim: Sim, checker: Checker) -> None:
             factory.close()
     checker.check("stale_worker_fail_closed", stale_worker, "recovery")
 
-    # Backup / restore
+    # Backup / restore on persistent volumes.
     def backup_restore() -> dict:
         factory = sim.factory(rpc_timeout_s=8, watch_slice_s=3, job_margin_s=15)
         thread, _errors = _threaded(factory, _request("sim-backup-running", "SLEEP", candidate_s=30))
@@ -1383,34 +1418,29 @@ def recovery_checks(sim: Sim, checker: Checker) -> None:
         finally:
             factory.close()
         docker = sim.docker
-        backup_dir = sim.backup
-        for entry in backup_dir.iterdir():
-            if entry.is_dir():
-                shutil.rmtree(entry)
-            else:
-                entry.unlink()
+        docker.volume_create(sim.backup_volume, uid=os.getuid(), gid=os.getgid())
+        docker.volume_create(sim.restored_volume, uid=os.getuid(), gid=os.getgid())
         common = [
             "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
             "--entrypoint", "python3",
-            "--mount", f"type=bind,src={sim.state},dst=/state",
-            "--mount", f"type=bind,src={backup_dir},dst=/backup",
+            "--mount", f"type=volume,src={sim.state_volume},dst=/state",
+            "--mount", f"type=volume,src={sim.backup_volume},dst=/backup",
             "--mount", f"type=bind,src={sim.config},dst=/etc/tcenv,readonly",
             IMAGE,
         ]
         docker.run(*common, "-m", "tcenv.remote.state_admin", "backup", "--state-dir", "/state", "--out", "/backup/state.sqlite3", "--keyring-file", "/etc/tcenv/keyring.json")
-        sqlite_path = backup_dir / "state.sqlite3"
-        if not sqlite_path.is_file() or sqlite_path.stat().st_size == 0:
+        backup_bytes = int(docker.run(
+            "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
+            "--mount", f"type=volume,src={sim.backup_volume},dst=/backup",
+            "--entrypoint", "stat", IMAGE, "-c", "%s", "/backup/state.sqlite3",
+        ).stdout.strip() or 0)
+        if backup_bytes <= 0:
             raise AssertionError("backup file was not produced")
-        for entry in list(sim.restored_state.iterdir()):
-            if entry.is_dir():
-                shutil.rmtree(entry)
-            else:
-                entry.unlink()
         docker.run(
             "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
             "--entrypoint", "python3",
-            "--mount", f"type=bind,src={backup_dir},dst=/backup,readonly",
-            "--mount", f"type=bind,src={sim.restored_state},dst=/restored",
+            "--mount", f"type=volume,src={sim.backup_volume},dst=/backup,readonly",
+            "--mount", f"type=volume,src={sim.restored_volume},dst=/restored",
             "--mount", f"type=bind,src={sim.config},dst=/etc/tcenv,readonly",
             IMAGE,
             "-m", "tcenv.remote.state_admin", "restore", "--backup", "/backup/state.sqlite3", "--state-dir", "/restored",
@@ -1418,7 +1448,7 @@ def recovery_checks(sim: Sim, checker: Checker) -> None:
         inspect = docker.run(
             "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
             "--entrypoint", "python3",
-            "--mount", f"type=bind,src={sim.restored_state},dst=/restored",
+            "--mount", f"type=volume,src={sim.restored_volume},dst=/restored",
             "--mount", f"type=bind,src={sim.config},dst=/etc/tcenv,readonly",
             IMAGE,
             "-m", "tcenv.remote.state_admin", "inspect", "--state-dir", "/restored", "--keyring-file", "/etc/tcenv/keyring.json",
@@ -1430,22 +1460,23 @@ def recovery_checks(sim: Sim, checker: Checker) -> None:
             raise AssertionError("restore did not quarantine nonterminal jobs")
         sim.start()
         sim.wait_ready()
-        return {"backup_bytes": sqlite_path.stat().st_size, "states": document["states"], "quarantined": len(document["quarantined"])}
+        return {
+            "backup_bytes": backup_bytes,
+            "states": document["states"],
+            "quarantined": len(document["quarantined"]),
+            "backup_volume": sim.backup_volume,
+            "restored_volume": sim.restored_volume,
+        }
     checker.check("backup_restore_quarantine", backup_restore, "recovery")
 
 
 def limits_checks(sim: Sim, checker: Checker) -> None:
     """Exercise queue, stream, DB-byte and auth-failure limits on a small store."""
 
-    limits_state = sim.limits_state
     main_port = sim.port
-    for entry in list(limits_state.iterdir()):
-        if entry.is_dir():
-            shutil.rmtree(entry)
-        else:
-            entry.unlink()
+    sim.docker.volume_create(sim.limits_volume, uid=os.getuid(), gid=os.getgid())
     port = sim.start(
-        name=LIMITS_NAME, state=limits_state,
+        name=LIMITS_NAME, volume=sim.limits_volume,
         extra_args=(
             "--max-queue-depth", "2", "--max-db-bytes", "1000000",
             "--max-watch-streams", "2", "--auth-max-failures", "3",
@@ -1845,15 +1876,37 @@ def rotation_checks(sim: Sim, checker: Checker) -> None:
         revoked_thread.join(timeout=10)
 
 
+def _inspect_volume(docker: Docker, volume: str) -> dict:
+    """Inspect one stopped state volume without a host-side SQLite connection."""
+
+    script = (
+        "import json,pathlib,sqlite3;"
+        "root=pathlib.Path('/state');"
+        "temp=[e.name for e in root.iterdir() if '.tmp-' in e.name or '.restore-tmp' in e.name];"
+        "bridge=root/'bridge-tmp';"
+        "temp += ['bridge-tmp/'+e.name for e in bridge.iterdir()] if bridge.is_dir() else [];"
+        "running=workers=0;"
+        "db=root/'jobs.sqlite3';"
+        "running=int(sqlite3.connect(f'file:{db}?mode=ro',uri=True).execute(\"SELECT COUNT(*) FROM attempts WHERE state='running'\").fetchone()[0]) if db.is_file() else 0;"
+        "workers=int(sqlite3.connect(f'file:{db}?mode=ro',uri=True).execute(\"SELECT COUNT(*) FROM attempts WHERE worker_pid IS NOT NULL AND state IN ('queued','running')\").fetchone()[0]) if db.is_file() else 0;"
+        "print(json.dumps({'temp': sorted(temp), 'running': running, 'workers': workers}))"
+    )
+    completed = docker.run(
+        "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
+        "--mount", f"type=volume,src={volume},dst=/state",
+        "--entrypoint", "python3", IMAGE, "-c", script,
+    )
+    return json.loads(completed.stdout)
+
+
 def cleanup_evidence(sim: Sim, docker: Docker, *, kept: bool) -> dict:
     containers = docker.acceptance_containers()
+    volumes = [sim.state_volume, sim.limits_volume, sim.backup_volume, sim.restored_volume]
     evidence: dict = {
         "containers_left": containers,
         "kept_for_inspection": kept,
         "images_retained": {IMAGE: docker.image_id(IMAGE), IMAGE_PREVIOUS: docker.image_id(IMAGE_PREVIOUS)},
-        "state_dirs_retained": [
-            path.name for path in (sim.state, sim.restored_state, sim.backup, sim.limits_state) if path.exists()
-        ],
+        "volumes_retained": volumes,
         "temp_paths": {},
         "process_groups": {},
         "final": False,
@@ -1861,34 +1914,19 @@ def cleanup_evidence(sim: Sim, docker: Docker, *, kept: bool) -> dict:
     if kept:
         evidence["note"] = "container kept for inspection; this is not a final cleanup proof"
         return evidence
-    temp_paths: dict[str, list[str]] = {}
-    for directory in (sim.state, sim.limits_state):
-        if not directory.is_dir():
-            continue
-        leftovers = [entry.name for entry in directory.iterdir() if ".tmp-" in entry.name or ".restore-tmp" in entry.name]
-        bridge = directory / "bridge-tmp"
-        if bridge.is_dir():
-            leftovers.extend(f"bridge-tmp/{entry.name}" for entry in bridge.iterdir())
-        temp_paths[directory.name] = sorted(leftovers)
-    evidence["temp_paths"] = temp_paths
-    process_groups: dict[str, int] = {}
-    for label, state in (("primary", sim.state), ("limits", sim.limits_state)):
-        database = state / "jobs.sqlite3"
-        if not database.is_file():
-            process_groups[label] = 0
-            continue
-        connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    for label, volume in (("primary", sim.state_volume), ("limits", sim.limits_volume)):
         try:
-            process_groups[label] = int(connection.execute(
-                "SELECT COUNT(*) FROM attempts WHERE state='running' OR (worker_pid IS NOT NULL AND state IN ('queued','running'))"
-            ).fetchone()[0])
-        finally:
-            connection.close()
-    evidence["process_groups"] = process_groups
+            inspected = _inspect_volume(docker, volume)
+        except Exception as exc:  # noqa: BLE001 - a missing volume is a cleanup failure
+            evidence["temp_paths"][volume] = [f"inspect failed: {type(exc).__name__}"]
+            evidence["process_groups"][label] = -1
+            continue
+        evidence["temp_paths"][volume] = inspected["temp"]
+        evidence["process_groups"][label] = int(inspected["running"]) + int(inspected["workers"])
     evidence["final"] = bool(
         not containers
-        and not any(temp_paths.values())
-        and not any(process_groups.values())
+        and not any(evidence["temp_paths"].values())
+        and not any(evidence["process_groups"].values())
     )
     return evidence
 
@@ -1910,6 +1948,9 @@ def build_and_run(*, report_path: Path, keep: bool = False, fresh: bool = False)
                 else:
                     entry.unlink()
     docker = Docker()
+    if fresh:
+        for volume in ("taic-sim-state", "taic-sim-backup", "taic-sim-restored", "taic-sim-limits"):
+            docker.volume_remove(volume)
     docker.start_events()
     report: dict = {
         "schema_version": 1,
