@@ -140,7 +140,12 @@ def cmd_run(a: argparse.Namespace) -> int:
             # 显式 --model 让两个委员会都用这个模型。没写时用配置里的两名成员，可以不同。
             committees = load_committees(raw, active=cfg, model_override=a.model)
             from .remote_runtime import RemoteEvaluationConfig
+            from .workspace_env import RemoteWorkspaceConfig, WorkspaceError
             remote = RemoteEvaluationConfig.from_file(a.remote_evaluator_config) if getattr(a, "remote_evaluator_config", None) else None
+            try:
+                workspace = RemoteWorkspaceConfig.from_file(a.remote_workspace_config) if getattr(a, "remote_workspace_config", None) else None
+            except WorkspaceError as exc:
+                raise ValueError(f"remote workspace config: {exc.message}") from exc
             if remote is not None:
                 if remote.target_id != getattr(a, "target", "apple-m4-max"):
                     raise ValueError(f"remote evaluator target {remote.target_id!r} differs from --target")
@@ -161,6 +166,7 @@ def cmd_run(a: argparse.Namespace) -> int:
                 evaluator_factory=None if remote is None else remote.make_evaluator,
                 publishable_site_ids=None if remote is None else remote.publishable_site_ids,
                 publishable_epochs=None if remote is None else remote.publishable_epochs,
+                workspace_config=workspace,
             )
             if remote is not None:
                 if remote.task_fingerprint and remote.task_fingerprint != orch.task_fingerprint:
@@ -411,10 +417,15 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
     except (rs.ResumeError, rs.NeedsInspection, LLMError, control.ControlError, KeyError, ValueError) as e:
         raise ResumeRefused(f"cannot resume {run_dir}: {e}", 5) from e
     from .remote_runtime import RemoteEvaluationConfig
+    from .workspace_env import RemoteWorkspaceConfig, WorkspaceError
     try:
         remote = RemoteEvaluationConfig.from_file(a.remote_evaluator_config) if getattr(a, "remote_evaluator_config", None) else None
     except ValueError as exc:
         raise ResumeRefused(f"cannot load remote evaluator config: {exc}", 5) from exc
+    try:
+        workspace = RemoteWorkspaceConfig.from_file(a.remote_workspace_config) if getattr(a, "remote_workspace_config", None) else None
+    except WorkspaceError as exc:
+        raise ResumeRefused(f"cannot load remote workspace config: {exc.message}", 5) from exc
     resume_target = _recorded_target(run_dir, getattr(a, "target", None))
     if remote is not None:
         if remote.target_id != resume_target:
@@ -433,6 +444,18 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
     if execution is not None:
         if not isinstance(execution, dict) or execution.get("evaluation") not in {"local", "remote"}:
             raise ResumeRefused("cannot resume: execution.json has no valid evaluation mode", 5)
+        recorded_workspace = execution.get("workspace")
+        if recorded_workspace is not None:
+            if workspace is None:
+                raise ResumeRefused("cannot resume a remote-workspace run without --remote-workspace-config", 5)
+            if not isinstance(recorded_workspace, dict):
+                raise ResumeRefused("cannot resume: execution.json has a malformed workspace placement", 5)
+            resolved = recorded_workspace.get("resolved") or {}
+            current = {"harness": workspace.harness, "runtime": workspace.runtime, "root": workspace.root}
+            if not isinstance(resolved, dict) or any(resolved.get(key) != value for key, value in current.items()):
+                raise ResumeRefused("remote workspace placement differs from the original run", 5)
+        elif workspace is not None:
+            raise ResumeRefused("cannot switch a local run to a remote workspace during resume", 5)
         mode = execution["evaluation"]
         if mode == "remote" and remote is None:
             raise ResumeRefused("cannot resume a remote evaluation without --remote-evaluator-config", 5)
@@ -461,6 +484,7 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
         evaluator_factory=None if remote is None else remote.make_evaluator,
         publishable_site_ids=None if remote is None else remote.publishable_site_ids,
         publishable_epochs=None if remote is None else remote.publishable_epochs,
+        workspace_config=workspace,
     )
     if remote is not None:
         if remote.task_fingerprint and remote.task_fingerprint != orch.task_fingerprint:
@@ -1275,6 +1299,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--budget", type=float, default=None, help="USD budget for this kernel (default: the preset's budget_usd, the paper's $15)")
     p.add_argument("--target", default="apple-m4-max", help="device profile id under targets/")
     p.add_argument("--remote-evaluator-config", default=None, help="explicit JSON remote evaluator/selfcheck composition; default is local")
+    p.add_argument("--remote-workspace-config", default=None, help="explicit JSON SSH workspace placement for the kernel session; default is the local workspace")
     p.add_argument("--branches", type=int, default=None)
     p.add_argument("--max-rounds", type=int, default=None)
     p.add_argument("--provider-retries", type=int, default=None, help="retry a structured provider turn failure within the same committee/candidate (0-3, default 0)")
@@ -1325,6 +1350,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--lift-count-limits", action="store_true", help="also continue a run that stopped because it used its round limit or its patience")
     r.add_argument("--accept-cost-gap", action="store_true", help="continue a run stopped by cost_incomplete after its hmz epics were reconciled into an unaccounted entry (human decision)")
     r.add_argument("--remote-evaluator-config", default=None, help="explicit JSON remote evaluator/selfcheck composition; must be supplied again for a remote resume")
+    r.add_argument("--remote-workspace-config", default=None, help="explicit JSON SSH workspace placement; must be supplied again for a remote-workspace resume")
     r.set_defaults(fn=cmd_resume)
     q = sub.add_parser("query", help="read-only queries over the observe index (no model call, no GPU)")
     q.add_argument("what", choices=["runs", "best", "failures", "sessions", "models", "capabilities", "suggestions", "suggestion"])

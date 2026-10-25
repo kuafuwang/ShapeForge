@@ -100,6 +100,18 @@ uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 - `--run-tests` 使用补丁后的工作树，测试被禁改，但仍应检查测试命令和覆盖范围。
 - 人和 reviewer 都可能被提案文本社会工程；不要照着建议里给的命令直接执行。
 
+## 可选远端 workspace（Phase 3，transport-only）
+
+默认仍是 `workspace=local`。显式传 `--remote-workspace-config` 后，写核会话的文件与命令放在一台预置 SSH 主机上，但**这首先只是 transport**，不是安全隔离：
+
+- 配置只写 hmz 已保存的 ssh runtime 名、远端根目录和期望的 `harness`；主机/用户/端口/identity 文件留在 hmz 的 `settings.yaml`，不进本项目配置、manifest、TASK 或日志。启动前校验 runtime 的 `harness` 与配置一致，不一致就拒绝，不静默改变代理位置。
+- 输入与回收都按白名单 manifest：拒绝绝对路径、`..`、符号链接、设备文件、超大文件和总量超限；host 侧只把回收文件写进 `agent_work/<tag>`，并再次校验目标没有逃出该目录。
+- 远端只执行 transport 自己的固定命令；agent 不能通过它运行任意 shell、argv 或环境变量。会话目录先写 receipt（绑定 run/session/runtime/workdir/manifest/prompt hash），同 receipt 幂等，不同 receipt 的目录不复用也不删除；清理前重读 receipt。
+- 本阶段远端 workspace **没有**自测通道：TASK 使用独立 profile，不打印 control_host 路径，也不提供 `tcenv eval`/`taic-selfcheck`；runner 拒绝 host bridge 绑定。自测仍属于 Phase 2 的 `EvaluationExecutor`。
+- 费用按 `began.workspace + envs/used + 开始时间` 绑定 hmz epic；绑定不上时记 `cost_incomplete`，不借别的会话账单。
+- **未证明**：hmz 围栏能否阻止内循环读取/改写 control_host 文件。真机逃逸测试与真实 SSH 验收都还没跑（本机 VM 可连通但 SSH 私钥缺失），所以不能把这条路径写成“隔离”或“不可信 P2 的默认环境”。
+- 远端 workspace 不持有 provider 凭据：凭据仍只在 control_host 的 pi/hmz 一侧；也不把 `~/.pi`、ssh agent、Docker socket 或仓库挂进远端工作目录。
+
 ## 操作规则
 
 - 普通搜索不重跑 `taic run`/`taic resume` 以外的 GPU。

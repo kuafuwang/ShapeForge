@@ -1,14 +1,34 @@
-"""One coding-agent session in the workspace it is given.
+"""One coding agent session in the workspace it is given.
 
 The search starts this with ``hmz exec``. The flow does not plan, time, or decide which kernel stays.
 The main turn has its own token and time budget. The submission file, NOTES.md and FEEDBACK.md are
 updated during that turn. When the budget is spent, one short turn copies the best kernel with
 ``cp`` if the submission file is still missing, then fills in any lines those two notes still lack.
+
+``workspace`` is the local directory the run was started in and is what every default run uses.
+``remote_workspace`` is an optional second role: when the search passes
+``-e remote_workspace=ssh@<runtime>/<path>`` the agent works there instead. Only one of the two is
+used, and a run that names neither adds no ``-e`` and keeps the current local behaviour exactly.
 """
 
 from datetime import timedelta
+from typing import NotRequired
 
-from hmz.flows import Agent, AgentCollection, Budget, EnvCollection, FlowContext, FlowParams, LocalEnv, Permission, PermissionKind, flow
+from hmz.flows import (
+    Agent,
+    AgentCollection,
+    BashEnvMixin,
+    Budget,
+    Env,
+    EnvCollection,
+    FilesEnvMixin,
+    FlowContext,
+    FlowParams,
+    LocalEnv,
+    Permission,
+    PermissionKind,
+    flow,
+)
 from hmz.flows.errors import BudgetExceeded
 
 
@@ -24,16 +44,27 @@ class Assistant(Agent):
 
     _skills = ("taic-tools",)
 
+
 class Agents(AgentCollection):
     """The one coding agent that writes the kernel."""
 
     assistant: Assistant
 
 
+class RemoteWorkspace(Env, BashEnvMixin, FilesEnvMixin):
+    """An optional workspace on a pre-provisioned host, reached over ssh.
+
+    The mixins are what the coding agent needs of it: run programs and read and write the
+    session's files. Nothing else is granted, and the role is absent unless the caller passes
+    it with ``-e``.
+    """
+
+
 class Envs(EnvCollection):
     """The directory that holds the seed, ``TASK.md``, and the submission file."""
 
     workspace: LocalEnv
+    remote_workspace: NotRequired[RemoteWorkspace]
 
 
 class Params(FlowParams):
@@ -67,7 +98,9 @@ async def kernel_once(task: str, *, agents: Agents, envs: Envs, params: Params, 
     del ctx
     assistant = agents["assistant"]
     session = await assistant.spawn()
-    env = envs["workspace"]
+    # The remote role is filled only by an explicit `-e`; a local run still takes the
+    # runtime's own workspace and never reaches for a host.
+    env = envs.get("remote_workspace") or envs["workspace"]
     budget = Budget(
         output_tokens=params.turn_output_tokens,
         duration=timedelta(minutes=params.turn_minutes),

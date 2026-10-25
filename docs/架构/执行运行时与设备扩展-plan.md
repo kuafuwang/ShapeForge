@@ -1,6 +1,6 @@
 # 执行运行时与设备扩展计划
 
-状态：设计计划；Phase 0a/0b/1a/1b/2A/2B/2.5/2C/2D1 已实现，2D2 的本地 Docker 模拟验收已按 49 项必需矩阵全部通过（2026-10-25 复审后重跑）；其中 2A/2B/2.5 是 `legacy-ssh` 基线与历史模拟验收，当前实现记录见 [执行运行时与设备扩展.md](执行运行时与设备扩展.md)，部署/轮换见 [远程评测部署与轮换](远程评测部署与轮换.md)。**远程评测服务是对外交付物，协议为 gRPC + TLS + Protobuf；2C 合约/核心/adapter、2D1 制品与本机 Docker 模拟已交付。** Phase 3/4、真实远程站点发布、真实设备与真实 NPU 仍是计划；`legacy-ssh` 数据面与 `RemoteEvaluatorPool` 尚未删除。已吸收多轮评审，详见 §15。日期：2026-10-24（实现记录更新于 2026-10-25，对外协议与 2C/2D 实现更新于同日）。默认保持现有 local 行为；旧 Phase 2.5 只证明 SSH/自定义帧链路，不能充当 gRPC 对外生产门禁。对外生产仍需真实站点/设备验收，真实站点发布另有门禁，不做真实 NPU。
+状态：设计计划；Phase 0a/0b/1a/1b/2A/2B/2.5/2C/2D1 已实现，2D2 的本地 Docker 模拟验收已按 49 项必需矩阵全部通过（2026-10-25 复审后重跑）；其中 2A/2B/2.5 是 `legacy-ssh` 基线与历史模拟验收，当前实现记录见 [执行运行时与设备扩展.md](执行运行时与设备扩展.md)，部署/轮换见 [远程评测部署与轮换](远程评测部署与轮换.md)。**远程评测服务是对外交付物，协议为 gRPC + TLS + Protobuf；2C 合约/核心/adapter、2D1 制品与本机 Docker 模拟已交付。** Phase 3 的可选 SSH workspace transport 已实现并通过离线验收（**transport-only**：真实主机/围栏验收 blocked，缺 SSH 私钥）；Phase 4、真实远程站点发布、真实设备与真实 NPU 仍是计划；`legacy-ssh` 数据面与 `RemoteEvaluatorPool` 尚未删除。已吸收多轮评审，详见 §15。日期：2026-10-24（实现记录更新于 2026-10-26，Phase 3 状态见 §11）。默认保持现有 local 行为；旧 Phase 2.5 只证明 SSH/自定义帧链路，不能充当 gRPC 对外生产门禁。对外生产仍需真实站点/设备验收，真实站点发布另有门禁，不做真实 NPU。
 
 本文只规划执行隔离和设备扩展，不批准实现 NPU、CUDA、ROCm 或第二个 target，不批准付费搜索，也不批准运行 GPU。
 
@@ -909,6 +909,8 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 - 用 fake agent 写固定 kernel 做端到端测试，不调用真实模型。
 
 验收：远端组合与 local 产生同样的候选结构并物化到同一 canonical 布局；外循环能独立评测交回的 kernel；workspace 无 control_host repo/home 写权限；费用可按 session identity 对账，对不上记 `cost_incomplete`。
+
+**Phase 3 实现记录（2026-10-26）：** 已实现 `taic/workspace_env.py`（可达 runtime 预检与 harness 绑定、受限 manifest、receipt/幂等、固定命令 transport、超时/断连 typed 错误、清理、epic 绑定）、`taic/workspace_prompt.py`（独立 remote TASK profile，不含控制机路径与自测命令）、`kernel_once` 的可选 `remote_workspace` Env 角色、`SshWorkspaceKernelSessionRunner`、`--remote-workspace-config`、`execution.json` 的 workspace 块与 resume 绑定，以及 agent 事件的 `identity`。local 默认仍不传 `-e`、不写 workspace 块、TASK 字节与 `current_prompt_sha1()` 不变。离线验收：`tests/shared/test_workspace_env.py`（真实固定命令针对本地 stand-in）、`tests/shared/test_workspace_remote.py`（fake transport E2E + 真实 hmz `-e` fail-closed）；安全套件仅剩沙箱既有失败（`~/.cache` 不可写、`ps` 被拒、AF_UNIX 路径过长）。**未验收**：真实 SSH 主机执行、hmz 围栏逃逸测试、远端自测（本阶段明确不做）。本机 Ubuntu ARM VM 可连通但缺 SSH 私钥（`eval`/`kuafu` publickey denied），真实 transport 验收标记 **blocked**，未生成报告；因此 Phase 3 只能标 transport-only，不能声称隔离。
 
 #### Phase 4：按证据决定是否搬代理（可选）
 

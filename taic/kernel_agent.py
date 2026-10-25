@@ -18,6 +18,7 @@ import signal
 import subprocess
 import tarfile
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -169,6 +170,9 @@ class AgentResult:
     # Structured hmz/pi diagnostics. These explain an agent_failed without changing its meaning.
     diagnostics: dict = field(default_factory=dict)
     diagnostics_path: str = ""
+    # Host-owned session identity evidence. Empty for the local default; an optional remote
+    # workspace fills it with the receipt, batch/epic binding and prompt-surface hashes.
+    identity: dict = field(default_factory=dict)
 
 
 def epic_spend_by_label(run_dir: Path, *, root: Path | None = None) -> dict[str, float] | None:
@@ -882,6 +886,45 @@ _WORK_KEEP = frozenset({"NOTES.md", "FEEDBACK.md", "self_checks.jsonl", "TASK.md
 _EVIDENCE_TOKEN = re.compile(r"[A-Za-z0-9_./-]+\.(?:py|metal|md|json|sh|txt)")
 
 
+def evidence_candidates(text: str, *, limit: int = 16) -> list[str]:
+    """@brief 从反馈或笔记文本里取出被点名的相对路径候选。
+
+    只做格式与安全筛选，不检查文件是否存在：远端 workspace 要先用这份清单去取文件，再决定
+    哪些真的存在。``..``、绝对路径和兄弟会话路径在这里就被丢掉。
+
+    @param text FEEDBACK.md 或 NOTES.md 的文本。
+    @param limit 候选数量上限。
+    @return 去重后的 POSIX 相对路径，保持出现顺序。
+    """
+    from .workspace_env import WorkspaceError, _safe_relative
+
+    found: list[str] = []
+    seen: set[str] = set()
+    for token in _EVIDENCE_TOKEN.findall(text or ""):
+        clean = token.strip()
+        if clean.startswith("PWD/"):
+            clean = clean[4:]
+        if clean.startswith("runs/"):
+            continue
+        parts = Path(clean).parts
+        if not parts:
+            continue
+        # A token such as r11.p0/bench2.py belongs to a sibling work directory.
+        if len(parts) > 1 and re.fullmatch(r"r\d+\.p\d+", parts[0]):
+            continue
+        try:
+            relative = _safe_relative("/".join(parts))
+        except WorkspaceError:
+            continue
+        if relative in seen:
+            continue
+        seen.add(relative)
+        found.append(relative)
+        if len(found) >= limit:
+            break
+    return found
+
+
 def _evidence_paths(work: Path) -> set[str]:
     """@brief 取会话自己的反馈或笔记里点名的顶层条目。
 
@@ -899,21 +942,10 @@ def _evidence_paths(work: Path) -> set[str]:
         except OSError:
             continue
     keep: set[str] = set()
-    for token in _EVIDENCE_TOKEN.findall(text):
-        clean = token.strip()
-        if clean.startswith("PWD/"):
-            clean = clean[4:]
-        if clean.startswith("runs/"):
-            continue
-        parts = Path(clean).parts
-        if not parts:
-            continue
-        # A token such as r11.p0/bench2.py belongs to a sibling work directory.
-        if len(parts) > 1 and re.fullmatch(r"r\d+\.p\d+", parts[0]):
-            continue
-        top = work / parts[0]
-        if top.exists():
-            keep.add(parts[0])
+    for relative in evidence_candidates(text):
+        top = relative.split("/", 1)[0]
+        if (work / top).exists():
+            keep.add(top)
     return keep
 
 
@@ -989,52 +1021,58 @@ def prune_work(work: Path, *, label: str, keep: set[str] | None = None, max_byte
     }
 
 
-def run_kernel_agent(
-    brief: SessionBrief,
-    *,
-    work: Path,
-    provider: str,
-    model: str,
-    effort: str | None,
-    prices: Prices,
-    turn_output_tokens: int,
-    turn_minutes: int,
-    session_cost_cap_usd: float | None = None,
-    hmz: str | None = None,
-    timeout_s: float | None = None,
-) -> AgentResult:
-    """@brief 跑一场 hmz 会话。
+@dataclass(frozen=True)
+class PreparedSession:
+    """The canonical host files one session starts from, and the prompt-surface hashes.
 
-    超时也照样返回内核文件，不抛异常：会话已经计费，成本必须带回给调用方。
-
-    @param brief 本场会话的契约。
-    @param work 会话工作目录，不存在时创建。
-    @param provider provider 名。
-    @param model 模型名。
-    @param effort 推理强度；为空时不带后缀。
-    @param prices 该模型的费率。
-    @param turn_output_tokens 这一回合的输出 token 上限。
-    @param turn_minutes 这一回合的分钟预算。
-    @param session_cost_cap_usd 这次 attempt 的外层 hmz 美元上限；None 时不加 ``budget.cost``。
-    @param hmz hmz 可执行文件路径；``None`` 时从 PATH 上找。
-    @param timeout_s 进程墙钟超时秒数；``None`` 时按回合预算推算。
-    @return 本场会话的结果。
-    @raises AgentError hmz 不在 PATH 上，或进程起不来时。
+    ``run_kernel_agent`` writes these before ``hmz exec`` starts; the optional SSH workspace
+    runner writes the same files and then stages exactly this list, so both placements hand
+    the agent the same contract, seed and guidance.
     """
-    binary = hmz or shutil.which("hmz")
-    if not binary or not Path(binary).is_file():
-        raise AgentError("hmz is not on PATH; install it with `uv tool install hmz`")
+
+    submit: str
+    seed: str
+    files: tuple[str, ...]
+    task_sha256: str
+    skill_sha256: str
+    prompt_surface_sha256: str
+
+
+@dataclass(frozen=True)
+class HmzInvocation:
+    """What one ``hmz exec`` process left behind, before any artifact is interpreted."""
+
+    status: str  # ok, timeout, failed
+    returncode: int | None
+    stdout: str
+    stderr: str
+    spent: dict
+    saw_tokens: bool
+    cost_usd: float | None
+    elapsed_s: float
+    argv: tuple[str, ...]
+
+
+def prepare_session(
+    brief: SessionBrief,
+    work: Path,
+    *,
+    remote_workspace: bool = False,
+    flow: Path = FLOW,
+) -> PreparedSession:
+    """Write the canonical local session directory and hash its prompt surface.
+
+    This is the one place a session's inputs are created, for both placements.  The local
+    TASK renderer is byte-for-byte the one used before the optional transport existed; a
+    remote workspace gets its own renderer that does not print control_host paths.
+
+    @param brief the session contract.
+    @param work canonical host work directory; created if missing.
+    @param remote_workspace render the transport-only TASK for a session with no local check.
+    @param flow the flow directory whose skills are part of the prompt surface.
+    @return the prepared paths and hashes.
+    """
     work.mkdir(parents=True, exist_ok=True)
-    bridge_token = ""
-    if brief.selfcheck_socket:
-        if not brief.selfcheck_token_file:
-            raise AgentError("a host selfcheck bridge needs a per-session token file")
-        try:
-            bridge_token = Path(brief.selfcheck_token_file).read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise AgentError(f"cannot read the host selfcheck token: {exc}") from exc
-        if not bridge_token or len(bridge_token) > 512:
-            raise AgentError("the host selfcheck token is empty or too large")
     submit = submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext)
     submit_path = work / submit
     submit_path.unlink(missing_ok=True)
@@ -1047,27 +1085,122 @@ def run_kernel_agent(
         (work / "report.json").write_text(brief.seed_report_json)
     stage_guidance(work, brief)
     from .harness import write_template
+
     write_template(work)
-    (work / "TASK.md").write_text(render_contract(brief))
-    if timeout_s is None:
-        timeout_s = process_timeout_s(turn_minutes)
+    if remote_workspace:
+        from .workspace_prompt import render_remote_contract
+
+        (work / "TASK.md").write_text(render_remote_contract(brief))
+    else:
+        (work / "TASK.md").write_text(render_contract(brief))
+    from .workspace_env import prompt_surface_digest
+
+    task_sha, skill_sha, combined = prompt_surface_digest(work, flow)
+    files = ["TASK.md"]
+    if seed_path.is_file():
+        files.append(brief.seed_name)
+    for name in ("report.json", "HARNESS.md", "device.md", f"{brief.reference_skill}.md", "experience.md"):
+        if (work / name).is_file():
+            files.append(name)
+    return PreparedSession(
+        submit=submit,
+        seed=brief.seed_name,
+        files=tuple(files),
+        task_sha256=task_sha,
+        skill_sha256=skill_sha,
+        prompt_surface_sha256=combined,
+    )
+
+
+def _bridge_token(brief: SessionBrief) -> str:
+    """Read this session's short-lived selfcheck token, if a bridge was provisioned."""
+    if not brief.selfcheck_socket:
+        return ""
+    if not brief.selfcheck_token_file:
+        raise AgentError("a host selfcheck bridge needs a per-session token file")
+    try:
+        token = Path(brief.selfcheck_token_file).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise AgentError(f"cannot read the host selfcheck token: {exc}") from exc
+    if not token or len(token) > 512:
+        raise AgentError("the host selfcheck token is empty or too large")
+    return token
+
+
+def hmz_argv(
+    brief: SessionBrief,
+    prepared: PreparedSession,
+    *,
+    binary: str,
+    provider: str,
+    model: str,
+    effort: str | None,
+    turn_output_tokens: int,
+    turn_minutes: int,
+    session_cost_cap_usd: float | None,
+    env_specs: Sequence[str] = (),
+    flow: Path = FLOW,
+) -> list[str]:
+    """Build the exact ``hmz exec`` line for one session.
+
+    ``env_specs`` is empty for every default run, so the local argv is unchanged.  A remote
+    workspace adds one ``-e`` mapping and nothing else.
+    """
     flow_minutes = int(turn_minutes) + WRAP_MINUTES + FLOW_SLACK_MINUTES
-    argv = [
-        binary, "exec", "-f", str(FLOW),
+    return [
+        binary, "exec", "-f", str(flow),
+        *[part for spec in env_specs for part in ("-e", spec)],
         "-a", f"assistant={agent_spec(provider, model, effort)}",
         "-p", f"turn_output_tokens={int(turn_output_tokens)}",
         "-p", f"turn_minutes={int(turn_minutes)}",
         "-p", f"wrap_output_tokens={WRAP_OUTPUT_TOKENS}",
         "-p", f"wrap_minutes={WRAP_MINUTES}",
-        "-p", f"submit_name={submit}",
-        "-p", f"seed_name={brief.seed_name}",
+        "-p", f"submit_name={prepared.submit}",
+        "-p", f"seed_name={prepared.seed}",
         "-p", f"budget.duration={flow_minutes}m",
         *(["-p", f"budget.cost={float(session_cost_cap_usd):g}"] if session_cost_cap_usd is not None else []),
         "--json",
-        "--", f"Read TASK.md in this directory and do it. Write the finished kernel to {submit}. The search does not read {brief.seed_name}.",
+        "--", f"Read TASK.md in this directory and do it. Write the finished kernel to {prepared.submit}. The search does not read {prepared.seed}.",
     ]
+
+
+def invoke_hmz(
+    brief: SessionBrief,
+    *,
+    work: Path,
+    prepared: PreparedSession,
+    provider: str,
+    model: str,
+    effort: str | None,
+    prices: Prices,
+    turn_output_tokens: int,
+    turn_minutes: int,
+    session_cost_cap_usd: float | None = None,
+    hmz: str | None = None,
+    timeout_s: float | None = None,
+    env_specs: Sequence[str] = (),
+    flow: Path = FLOW,
+) -> HmzInvocation:
+    """Run one ``hmz exec`` and collect its streams, status and token counts.
+
+    The session is billed whether or not the process exits cleanly, so a timeout is a
+    returned status rather than an exception.
+    """
+    binary = hmz or shutil.which("hmz")
+    if not binary or not Path(binary).is_file():
+        raise AgentError("hmz is not on PATH; install it with `uv tool install hmz`")
+    bridge_token = _bridge_token(brief)
+    argv = hmz_argv(
+        brief, prepared,
+        binary=binary, provider=provider, model=model, effort=effort,
+        turn_output_tokens=turn_output_tokens, turn_minutes=turn_minutes,
+        session_cost_cap_usd=session_cost_cap_usd, env_specs=env_specs, flow=flow,
+    )
+    if timeout_s is None:
+        timeout_s = process_timeout_s(turn_minutes)
     status = "ok"
     error = ""
+    started = time.monotonic()
     try:
         from tcenv.children import forget, kill_group, popen_group
 
@@ -1101,9 +1234,39 @@ def run_kernel_agent(
     finally:
         kill_group(proc)
         forget(proc)
+    elapsed = time.monotonic() - started
     stream = (stdout or "") + "\n" + (stderr or "")
     spent, saw_result = spend_from_stream(stream)
     cost = dollars_for(spent, prices) if saw_result else None
+    returncode = proc.returncode
+    if status != "timeout" and returncode not in (0, None):
+        status = "failed"
+        error = (stderr or stdout or "").strip()[-400:]
+    return HmzInvocation(
+        status=status,
+        returncode=returncode,
+        stdout=stdout or "",
+        stderr=error if status == "failed" and not stderr else (stderr or ""),
+        spent=spent,
+        saw_tokens=saw_result,
+        cost_usd=cost,
+        elapsed_s=elapsed,
+        argv=tuple(argv),
+    )
+
+
+def collect_session(
+    brief: SessionBrief,
+    work: Path,
+    invocation: HmzInvocation,
+) -> AgentResult:
+    """Read the canonical local files back into the result the outer loop consumes.
+
+    For a remote workspace the runner has already materialized exactly these files into
+    ``work``; this step is identical for both placements, which is what keeps candidate
+    layout, feedback parsing, self-check counting and pruning on one code path.
+    """
+    submit_path = work / submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext)
     # The session is already billed at this point. A non-UTF-8 byte in a comment must degrade to a
     # replacement character, not raise away the AgentResult that carries the cost.
     written = submit_path.read_text(encoding="utf-8", errors="replace") if submit_path.is_file() else ""
@@ -1121,12 +1284,15 @@ def run_kernel_agent(
     timeouts = protected[1] + beside[1]
     gpu_s = protected[2] + beside[2]
     crashes = protected[3] + beside[3]
-    if status != "timeout" and proc.returncode not in (0, None):
-        status = "failed"
-        error = (stderr or stdout or "").strip()[-400:]
-    diagnostics = diagnostics_from_stream(stdout or "")
+    status = invocation.status
+    error = ""
+    if status == "timeout":
+        error = f"hmz did not finish within {float(invocation.elapsed_s):.0f}s"
+    elif status == "failed":
+        error = (invocation.stderr or invocation.stdout or "").strip()[-400:]
+    diagnostics = diagnostics_from_stream(invocation.stdout or "")
     response = str(diagnostics.pop("_response_text", "") or "")
-    diagnostics["hmz_returncode"] = proc.returncode
+    diagnostics["hmz_returncode"] = invocation.returncode
     if status == "timeout":
         diagnostics["failure_class"] = "timeout"
     elif status == "failed":
@@ -1168,11 +1334,54 @@ def run_kernel_agent(
     except OSError as exc:  # pruning is housekeeping; it must not discard the billed session
         pruned = {"error": f"{type(exc).__name__}: {exc}"}
     return AgentResult(
-        source=source, cost_usd=cost, cost_incomplete=not saw_result, status=status, error=error,
-        spent=spent, notes=notes, feedback=feedback, self_checks=checks, self_check_timeouts=timeouts,
+        source=source, cost_usd=invocation.cost_usd, cost_incomplete=not invocation.saw_tokens,
+        status=status, error=error,
+        spent=invocation.spent, notes=notes, feedback=feedback, self_checks=checks, self_check_timeouts=timeouts,
         self_check_crashes=crashes, self_check_gpu_s=gpu_s, pruned=pruned,
         diagnostics=diagnostics, diagnostics_path=diagnostics_path,
     )
+
+
+def run_kernel_agent(
+    brief: SessionBrief,
+    *,
+    work: Path,
+    provider: str,
+    model: str,
+    effort: str | None,
+    prices: Prices,
+    turn_output_tokens: int,
+    turn_minutes: int,
+    session_cost_cap_usd: float | None = None,
+    hmz: str | None = None,
+    timeout_s: float | None = None,
+) -> AgentResult:
+    """@brief 跑一场 hmz 会话。
+
+    超时也照样返回内核文件，不抛异常：会话已经计费，成本必须带回给调用方。
+
+    @param brief 本场会话的契约。
+    @param work 会话工作目录，不存在时创建。
+    @param provider provider 名。
+    @param model 模型名。
+    @param effort 推理强度；为空时不带后缀。
+    @param prices 该模型的费率。
+    @param turn_output_tokens 这一回合的输出 token 上限。
+    @param turn_minutes 这一回合的分钟预算。
+    @param session_cost_cap_usd 这次 attempt 的外层 hmz 美元上限；None 时不加 ``budget.cost``。
+    @param hmz hmz 可执行文件路径；``None`` 时从 PATH 上找。
+    @param timeout_s 进程墙钟超时秒数；``None`` 时按回合预算推算。
+    @return 本场会话的结果。
+    @raises AgentError hmz 不在 PATH 上，或进程起不来时。
+    """
+    prepared = prepare_session(brief, work)
+    invocation = invoke_hmz(
+        brief, work=work, prepared=prepared,
+        provider=provider, model=model, effort=effort, prices=prices,
+        turn_output_tokens=turn_output_tokens, turn_minutes=turn_minutes,
+        session_cost_cap_usd=session_cost_cap_usd, hmz=hmz, timeout_s=timeout_s,
+    )
+    return collect_session(brief, work, invocation)
 
 
 def agent_for_script(script, kernel_name: str):

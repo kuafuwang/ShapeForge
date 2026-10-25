@@ -50,7 +50,15 @@ from .policy import candidate_eligible, choose_confirmed, comparison_speedup, in
 from .committees import committees_record, default_committees, handoff_for, order_committees
 from .parse import parse_plans
 from .evaluation_outbox import EvaluationOutbox
-from .session_runtime import HmzKernelSessionRunner, HmzSessionPlacement, LocalHmzKernelSessionRunner, SelfCheckBinding, SessionExecution, SessionPaths
+from .session_runtime import (
+    HmzKernelSessionRunner,
+    HmzSessionPlacement,
+    LocalHmzKernelSessionRunner,
+    SelfCheckBinding,
+    SessionExecution,
+    SessionPaths,
+    SshWorkspaceKernelSessionRunner,
+)
 from .session_supervisor import NO_KERNEL_OUTCOMES, ProviderRetryController, classify_result, session_origin
 from .symptom import bound_of
 
@@ -558,6 +566,7 @@ class Orchestrator:
         evaluator: EvaluationExecutor | None = None,
         evaluator_factory: Callable[[str], EvaluationExecutor] | None = None,
         session_runner: HmzKernelSessionRunner | None = None,
+        workspace_config: Any = None,
         selfcheck_socket: str = "",
         selfcheck_token_file: str = "",
         selfcheck_bridge_factory: Callable[[str, Path, EvaluationExecutor], tuple[Any, str]] | None = None,
@@ -591,6 +600,7 @@ class Orchestrator:
         @param evaluator 正式/复查评测适配器；None 时用包住 ``evaluate_fn`` 的 ``LocalEvaluator``。
         @param evaluator_factory 按已确定的 run_id 创建评测器；与 evaluator 只能二选一。
         @param session_runner 单场 hmz 会话适配器；None 时用 ``LocalHmzKernelSessionRunner``。
+        @param workspace_config 显式选择的远端 workspace 配置；None（默认）是 local，行为不变。
         @param selfcheck_socket host 已启动的 selfcheck bridge socket；空时用现有本地命令。
         @param selfcheck_token_file 与 socket 配套的 0600 token 文件；固定 bridge 模式必填。
         @param selfcheck_bridge_factory 可选的每场 bridge 工厂，参数为 (session_id, work, evaluator)，返回 (server, token_file)。
@@ -688,6 +698,28 @@ class Orchestrator:
             raise RunStartError("remote evaluator requires an explicit evaluator epoch allowlist")
         if self.publishable_epochs is not None and any(not isinstance(epoch, str) or not epoch for epoch in self.publishable_epochs):
             raise RunStartError("publishable_epochs must contain non-empty epochs")
+        # A remote workspace also supplies its own runner, so a scripted run may use it and
+        # must not fall back to starting hmz itself.
+        self._session_runner_injected = session_runner is not None or workspace_config is not None
+        self._workspace_config = workspace_config
+        self._workspace_runtime = None
+        if workspace_config is not None:
+            from .workspace_env import WorkspaceError, read_runtime
+
+            if session_runner is not None:
+                raise RunStartError("session_runner and workspace_config are mutually exclusive")
+            if selfcheck_socket or selfcheck_token_file or selfcheck_bridge_factory is not None:
+                raise RunStartError(
+                    "a remote workspace has no host self-check bridge; self-check stays on the "
+                    "Phase 2 EvaluationExecutor and this transport does not forward it"
+                )
+            try:
+                self._workspace_runtime = read_runtime(workspace_config)
+            except WorkspaceError as exc:
+                raise RunStartError(f"remote workspace is not usable: {exc.message}") from exc
+            self.session_runner: HmzKernelSessionRunner = SshWorkspaceKernelSessionRunner(workspace_config)
+        else:
+            self.session_runner = session_runner or LocalHmzKernelSessionRunner()
         transport_metadata = self._evaluator_transport_metadata()
         evaluator_keyring = getattr(self.evaluator, "keyring", None)
         trusted_external_keys = (
@@ -712,6 +744,16 @@ class Orchestrator:
             "observed": {},
         }
         execution_document.update(self._evaluator_contract_metadata())
+        if self._workspace_config is not None:
+            execution_document["workspace"] = {
+                "backend": "ssh",
+                "requested": "remote-workspace",
+                "resolved": {
+                    "harness": self._workspace_config.harness,
+                    "runtime": self._workspace_config.runtime,
+                    "root": self._workspace_config.root,
+                },
+            }
         execution_path = self.run_dir / "execution.json"
         if not resuming:
             try:
@@ -739,6 +781,9 @@ class Orchestrator:
             current_transport = execution_document["transport"] or "legacy-ssh"
             if previous_transport != current_transport:
                 raise RunStartError("cannot resume with a different evaluator transport")
+            previous_workspace = previous_execution.get("workspace")
+            if previous_workspace != execution_document.get("workspace"):
+                raise RunStartError("cannot resume with a different workspace placement")
             if current_transport == "grpc":
                 for key in ("api_contract_id", "evidence_contract_id"):
                     previous_value = previous_execution.get(key)
@@ -746,8 +791,6 @@ class Orchestrator:
                         raise RunStartError(f"cannot resume a gRPC run without its {key}")
                     if previous_value != execution_document.get(key):
                         raise RunStartError(f"cannot resume with a different {key}")
-        self._session_runner_injected = session_runner is not None
-        self.session_runner: HmzKernelSessionRunner = session_runner or LocalHmzKernelSessionRunner()
         self.selfcheck_socket = selfcheck_socket
         self.selfcheck_token_file = selfcheck_token_file
         self.selfcheck_bridge_factory = selfcheck_bridge_factory
@@ -2184,9 +2227,15 @@ class Orchestrator:
                     if asyncio.iscoroutine(result):
                         result = await result
                 else:
+                    if self._workspace_config is not None:
+                        placement = getattr(self.session_runner, "placement", HmzSessionPlacement())
+                        paths = self.session_runner.paths(work, tag)
+                    else:
+                        placement = HmzSessionPlacement()
+                        paths = SessionPaths.local(work)
                     execution = SessionExecution(
-                        placement=HmzSessionPlacement(),
-                        paths=SessionPaths.local(work),
+                        placement=placement,
+                        paths=paths,
                         prices=prices,
                         turn_output_tokens=tokens,
                         turn_minutes=int(self.search.turn_minutes),
@@ -2643,6 +2692,12 @@ class Orchestrator:
             "runtime": dict(getattr(result, "diagnostics", {}) or {}),
             "diagnostics_path": getattr(result, "diagnostics_path", "") or None,
         }
+        # The local default records no workspace identity, so its event keys and bytes stay
+        # exactly what they were.  A remote session adds the receipt, prompt hashes and epic
+        # binding the outer loop needs to reconcile cost.
+        identity = dict(getattr(result, "identity", {}) or {})
+        if identity:
+            event["identity"] = identity
         event.update(self._feedback_slim(parsed))
         return event
 
