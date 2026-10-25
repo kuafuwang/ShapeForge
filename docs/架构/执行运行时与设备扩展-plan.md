@@ -870,7 +870,7 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 
 **2D 验收：** 对外制品可独立部署，非 Python 外部 conformance 通过，真实 TLS/mTLS、grant/key 轮换、attempt/fence、备份恢复与 RPO/RTO 证据齐全，local 默认无 socket/证书/gRPC 依赖，旧 run 只能按各自固定协议 resume。不调用真实模型，不跑真实 GPU/NPU，不产生性能或发布数字。
 
-**2D 实现记录（2026-10-25）：** 2D1 交付生产入口 `python -m tcenv.remote.grpc_service`、镜像/入口（`deploy/remote-evaluator/`）、`scripts/remote_evaluator_admin.py`、`scripts/remote_evaluator_client.py`、`python -m tcenv.remote.state_admin`、任务包重算与 Python/Go conformance；2D2 在本机 Docker Desktop Linux VM 上用测试专用 fake backend 跑通 27 项矩阵（TLS/mTLS、CA/SAN/client 证书、grant 到期/撤销/scope、错误 key、未知合约/feature、reset/half-open/慢消费者/deadline、容器重启、SIGKILL 旧 worker、quota、backup/restore、cleanup），报告写入 `runs/grpc-sim-20261025/report.json`，`simulated=true`、`publication_allowed=false`，不写 `run_config.json`，不进入 confirmed/catalog/brief。该环境是 Docker Desktop 的 Linux VM，不是用户自管的 Ubuntu VM + SSH 链路；真实站点、真实设备、CRL/OCSP、多副本/HA 与 exactly-once 仍未验收。
+**2D 实现记录（2026-10-25）：** 2D1 交付生产入口 `python -m tcenv.remote.grpc_service`、镜像/入口（`deploy/remote-evaluator/`）、`scripts/remote_evaluator_admin.py`、`scripts/remote_evaluator_client.py`、`python -m tcenv.remote.state_admin`、任务包重算与 Python/Go conformance；2D2 在本机 Docker Desktop Linux VM 上用测试专用 fake backend 跑通 28 项矩阵（TLS/mTLS、CA/SAN/client 证书、grant 到期/撤销/scope、错误 key、未知合约/feature、reset/half-open/慢消费者/deadline、容器重启、SIGKILL 旧 worker、quota、backup/restore、schema-compatible rollback restart、cleanup），报告写入 `runs/grpc-sim-20261025/report.json`，`simulated=true`、`publication_allowed=false`，不写 `run_config.json`，不进入 confirmed/catalog/brief。该环境是 Docker Desktop 的 Linux VM，不是用户自管的 Ubuntu VM + SSH 链路；真实站点、真实设备、CRL/OCSP、多副本/HA 与 exactly-once 仍未验收。
 
 ##### 2C/2D 交付切片与删除纪律
 
