@@ -736,7 +736,9 @@ class Orchestrator:
                         "== warning: the agent isolation seam is simulated; this run is a "
                         "deterministic test double, not a real remote agent"
                     )
-            self.session_runner: HmzKernelSessionRunner = SshWorkspaceKernelSessionRunner(workspace_config)
+            self.session_runner: HmzKernelSessionRunner = SshWorkspaceKernelSessionRunner(
+                workspace_config, fence=getattr(self, "_isolation_fence", None),
+            )
         else:
             self.session_runner = session_runner or LocalHmzKernelSessionRunner()
         transport_metadata = self._evaluator_transport_metadata()

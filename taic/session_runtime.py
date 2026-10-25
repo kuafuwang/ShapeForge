@@ -197,6 +197,8 @@ class SshWorkspaceKernelSessionRunner:
         epic_root: Path | None = None,
         authority=None,
         seam_factory: Callable[..., object] | None = None,
+        fence=None,
+        assistant_spec: str | None = None,
     ) -> None:
         """Bind the config and the injectable transport/invocation seams.
 
@@ -209,6 +211,10 @@ class SshWorkspaceKernelSessionRunner:
         @param epic_root where hmz keeps epics; None reads ``~/.hmz/epics``.
         @param authority the scoped-credential authority; tests may share one.
         @param seam_factory builder for the credential seam; tests may inject a fake.
+        @param fence a :class:`taic.agent_isolation.TrustedEvaluationFence`; collected
+            artifacts are checked against it before they are written.
+        @param assistant_spec test-only ``hmz -a`` override for the deterministic fake-agent
+            simulation; production leaves it ``None`` and gets ``pi/provider/model``.
         """
         from . import kernel_agent as agent_module
         from .workspace_env import SshWorkspaceTransport
@@ -226,6 +232,8 @@ class SshWorkspaceKernelSessionRunner:
         self.isolation = getattr(config, "isolation", None)
         self._authority = authority or ScopedCredentialAuthority()
         self._seam_factory = seam_factory or build_seam
+        self._fence = fence
+        self._assistant_spec = assistant_spec
 
     @property
     def placement(self):
@@ -388,7 +396,8 @@ class SshWorkspaceKernelSessionRunner:
                 from .agent_isolation import IsolationError
 
                 try:
-                    seam = self._seam_factory(self.isolation, authority=self._authority)
+                    scope = {"run_id": run_dir.name, "session_label": brief.label, "runtime": self.config.runtime}
+                    seam = self._seam_factory(self.isolation, authority=self._authority, scope=scope)
                     credential = self._authority.mint(
                         run_id=run_dir.name,
                         session_label=brief.label,
@@ -416,6 +425,7 @@ class SshWorkspaceKernelSessionRunner:
                     timeout_s=execution.timeout_s,
                     env_specs=(env_spec,),
                     flow=self._flow,
+                    assistant_spec=self._assistant_spec,
                 )
                 try:
                     found, candidates, missing = self._collect(layout, prepared, host)
@@ -498,6 +508,31 @@ class SshWorkspaceKernelSessionRunner:
                 if self.config.harness == "env"
                 else (not recorded or recorded == "local")
             )
+            stream_sessions = tuple(str(item) for item in (result.diagnostics.get("session_ids") or ()))
+            epic_sessions = tuple(binding.sessions)
+            session_ok = bool(epic_sessions)
+            if stream_sessions:
+                session_ok = session_ok and any(item in epic_sessions for item in stream_sessions)
+            elif len(epic_sessions) != 1:
+                session_ok = False
+            cost_ok = True
+            if binding.cost_usd is not None and result.cost_usd is not None:
+                tolerance = max(0.001, 0.01 * max(abs(binding.cost_usd), abs(result.cost_usd)))
+                cost_ok = abs(binding.cost_usd - float(result.cost_usd)) <= tolerance
+            identity["epic_sessions"] = list(epic_sessions)
+            identity["stream_sessions"] = list(stream_sessions)
+            identity["cost_reconciled"] = bool(cost_ok and session_ok)
+            if not session_ok:
+                result.cost_incomplete = True
+                result.cost_usd = None
+                result.diagnostics["cost_binding"] = "session_mismatch"
+                identity["cost_bound"] = False
+            if not cost_ok:
+                result.cost_incomplete = True
+                result.cost_usd = None
+                result.diagnostics["cost_binding"] = "cost_mismatch"
+                result.diagnostics["epic_cost_usd"] = round(float(binding.cost_usd), 6)
+                identity["cost_bound"] = False
             if not placement_ok:
                 # hmz says the agent ran somewhere other than this config asked for. Never
                 # accept that silently: the session's bill and its placement are both suspect.
@@ -541,12 +576,19 @@ class SshWorkspaceKernelSessionRunner:
             extra = {name: data for name, data in extra.items() if name not in found}
             self._materialize(host, extra)
         found.update(extra)
+        total = sum(len(data) for data in found.values())
+        if total > self.config.max_total_bytes:
+            from .workspace_env import WorkspaceError
+
+            raise WorkspaceError(
+                "manifest",
+                f"the collected artifacts are over {self.config.max_total_bytes} bytes across both reads",
+            )
         # A timeout may still leave a checkpointed submission; anything the transport did
         # not return is recorded as a missing artifact, never invented locally.
         return found, candidates, missing
 
-    @staticmethod
-    def _materialize(host: Path, files: dict[str, bytes]) -> None:
+    def _materialize(self, host: Path, files: dict[str, bytes]) -> None:
         """Write collected bytes atomically under the canonical host directory."""
         from .workspace_env import check_relative_destination
 
@@ -554,6 +596,10 @@ class SshWorkspaceKernelSessionRunner:
 
         for relative, data in files.items():
             target = check_relative_destination(host, relative)
+            if self._fence is not None:
+                # Belt and braces: the destination is already confined to agent_work, and
+                # the fence refuses anything that resolves onto a trusted evaluator artifact.
+                self._fence.refuse_write(target)
             target.parent.mkdir(parents=True, exist_ok=True)
             handle, temp_name = tempfile.mkstemp(prefix=".taic-", dir=str(target.parent))
             try:

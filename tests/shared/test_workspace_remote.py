@@ -152,9 +152,9 @@ def _fake_invoke(state: dict, *, status: str = "ok", tokens: bool = True, cost: 
     """Build an ``invoke_hmz``-shaped seam that writes into the fake remote directory."""
 
     def invoke(brief, *, work, prepared, provider, model, effort, prices, turn_output_tokens, turn_minutes,
-               session_cost_cap_usd=None, hmz=None, timeout_s=None, env_specs=(), flow=FLOW):
+               session_cost_cap_usd=None, hmz=None, timeout_s=None, env_specs=(), flow=FLOW, assistant_spec=None):
         del work, provider, model, effort, prices, turn_output_tokens, turn_minutes
-        del session_cost_cap_usd, hmz, timeout_s, flow
+        del session_cost_cap_usd, hmz, timeout_s, flow, assistant_spec
         assert len(env_specs) == 1
         remote = Path(state["workdir"])
         # A timeout may leave a checkpointed submission; a crash or a normal answer without a
@@ -543,7 +543,7 @@ def _write_settings(config: RemoteWorkspaceConfig, *, harness: str) -> None:
         "      options: {}\n"
         "      alias: ''\n"
         "      config: ''\n"
-        "      workdir: /srv/taic\n"
+        f"      workdir: {config.root}\n"
         "      fallback: []\n"
         "      made: typed\n"
         f"      harness: {harness}\n",

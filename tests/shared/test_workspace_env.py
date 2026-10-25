@@ -51,9 +51,10 @@ def _config(tmp_path: Path, *, harness: str = "local", root: str | None = None, 
     return RemoteWorkspaceConfig(**values)
 
 
-def _settings(tmp_path: Path, *, harness: str = "local", port: int = 2222, host: str = "127.0.0.1") -> Path:
+def _settings(tmp_path: Path, *, harness: str = "local", port: int = 2222, host: str = "127.0.0.1", root: str | None = None) -> Path:
     """Write one saved hmz ssh runtime the way hmz's settings file keeps it."""
     path = tmp_path / "hmz-settings.yaml"
+    saved_root = root or str(tmp_path / "srv" / "taic")
     path.write_text(
         "runtimes:\n"
         "  ssh:\n"
@@ -66,7 +67,7 @@ def _settings(tmp_path: Path, *, harness: str = "local", port: int = 2222, host:
         "      options: {}\n"
         "      alias: ''\n"
         "      config: ''\n"
-        "      workdir: /srv/taic\n"
+        f"      workdir: {saved_root}\n"
         "      fallback: []\n"
         "      made: typed\n"
         f"      harness: {harness}\n",
@@ -250,7 +251,11 @@ def test_prompt_surface_digest_covers_task_and_flow_skills(tmp_path):
     (flow / "skills" / "taic-tools").mkdir(parents=True)
     (flow / "skills" / "taic-tools" / "SKILL.md").write_text("skill", encoding="utf-8")
     first = prompt_surface_digest(work, flow)
-    assert first[0] == "sha256:" .replace("sha256:", "") or len(first[0]) == 64
+    import re
+
+    assert re.fullmatch(r"[0-9a-f]{64}", first[0])
+    assert re.fullmatch(r"[0-9a-f]{64}", first[1])
+    assert first[0] != first[1]
     (flow / "skills" / "taic-tools" / "SKILL.md").write_text("skill 2", encoding="utf-8")
     assert prompt_surface_digest(work, flow)[1] != first[1]
 
@@ -580,3 +585,90 @@ def test_a_broken_receipt_cannot_block_cleanup_or_reaping(tmp_path):
     (root_dir / "init2" / ".taic" / "session.json").symlink_to(root / "elsewhere.json")
     removed = transport.reap_orphans(token, "run", set())
     assert "init2" in removed
+
+
+def test_keep_workspace_must_be_a_real_boolean(tmp_path):
+    """JSON `"keep_workspace": "false"` must not silently turn into True and retain a host workspace."""
+    path = tmp_path / "workspace.json"
+    path.write_text(json.dumps({"runtime": "gpu-box", "root": "/srv/taic", "keep_workspace": "false"}))
+    with pytest.raises(WorkspaceError, match="keep_workspace"):
+        RemoteWorkspaceConfig.from_file(path)
+    path.write_text(json.dumps({"runtime": "gpu-box", "root": "/srv/taic", "keep_workspace": False}))
+    assert RemoteWorkspaceConfig.from_file(path).keep_workspace is False
+
+
+def test_a_tampered_receipt_is_a_conflict_and_still_reapable(tmp_path):
+    """A stored receipt_id is never trusted without recomputation."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    manifest = _manifest(work, ["TASK.md"])
+    receipt = _receipt(work, manifest)
+    workdir = str(root / "run-1" / "init")
+    transport.stage(workdir, work, manifest, receipt)
+    marker = Path(workdir) / ".taic" / "session.json"
+    document = json.loads(marker.read_text())
+    document["receipt_id"] = "0" * 64
+    marker.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(WorkspaceError, match="does not match"):
+        transport.read_receipt(workdir)
+    assert transport.list_receipts("run-1") == [(workdir, None)]
+    assert transport.remove(workdir, receipt) is True
+    assert not Path(workdir).exists()
+
+
+def test_a_tampered_receipt_is_reaped_by_its_marker(tmp_path):
+    """A tampered receipt cannot make its directory invisible to the orphan sweep."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    manifest = _manifest(work, ["TASK.md"])
+    from taic.workspace_env import run_token
+
+    token = run_token(tmp_path / "run")
+    root_dir = Path(config.root) / token
+    receipt = WorkspaceReceipt.build(
+        run_id="run", session_label="init", session_id="init", runtime="gpu-box",
+        workdir=str(root_dir / "init"), host_work=work, manifest=manifest, prompt_surface_sha256="a" * 64,
+    )
+    transport.stage(str(root_dir / "init"), work, manifest, receipt)
+    marker = root_dir / "init" / ".taic" / "session.json"
+    document = json.loads(marker.read_text())
+    document["run_id"] = "another-run"
+    marker.write_text(json.dumps(document), encoding="utf-8")
+    assert "init" in transport.reap_orphans(token, "run", set())
+
+
+def test_collection_has_a_cumulative_byte_cap(tmp_path):
+    """Per-file caps are not enough: the whole collected set is bounded too."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(RemoteWorkspaceConfig(**{**config.__dict__, "max_file_bytes": 100, "max_total_bytes": 100}))
+    manifest = _manifest(work, ["TASK.md"], max_file_bytes=100)
+    workdir = str(root / "run-1" / "init")
+    transport.stage(workdir, work, manifest, _receipt(work, manifest))
+    for index in range(3):
+        (Path(workdir) / f"part{index}.md").write_text("x" * 40, encoding="utf-8")
+    with pytest.raises(WorkspaceError, match="over 100 bytes"):
+        transport.collect(workdir, ["part0.md", "part1.md", "part2.md"])
+
+
+def test_a_runtime_saved_workdir_must_match_the_configured_root(tmp_path):
+    """Staging one directory while the runtime runs the agent in another is refused."""
+    _settings(tmp_path, harness="local", root="/srv/somewhere-else")
+    with pytest.raises(WorkspaceError, match="saves workdir"):
+        read_runtime(_config(tmp_path))
+
+
+def test_a_symlinked_run_token_is_refused_before_creating_anything(tmp_path):
+    """make_workdir walks existing components before mkdir, so a symlinked parent creates nothing."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    victim = root / "victim"
+    victim.mkdir(parents=True)
+    token = run_token(tmp_path / "run")
+    (Path(config.root) / token).symlink_to(victim)
+    with pytest.raises(WorkspaceError):
+        transport.make_workdir(str(Path(config.root) / token / "init"))
+    assert list(victim.iterdir()) == []

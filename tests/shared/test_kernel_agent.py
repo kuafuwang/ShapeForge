@@ -228,6 +228,9 @@ def test_a_missing_hmz_is_an_error_and_a_timeout_still_returns_the_file(tmp_path
             _brief(tmp_path), work=tmp_path / "work", provider="deepseek", model="deepseek-flash",
             effort=None, prices=PRICES, turn_output_tokens=10, turn_minutes=1, hmz=str(tmp_path / "missing"),
         )
+    # The pre-refactor order failed before writing any session file.
+    assert not (tmp_path / "work" / "TASK.md").exists()
+    assert not (tmp_path / "work").exists()
     hmz = tmp_path / "hmz"
     hmz.write_text(
         "#!/usr/bin/env python3\n"

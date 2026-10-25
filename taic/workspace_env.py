@@ -328,6 +328,8 @@ class RemoteWorkspaceConfig:
             value = document.get(name)
             if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
                 raise WorkspaceError("config", f"{name} must be an integer")
+        if not isinstance(document.get("keep_workspace", False), bool):
+            raise WorkspaceError("config", "keep_workspace must be a boolean")
         from .agent_isolation import IsolatedAgentConfig, IsolationError
 
         try:
@@ -344,7 +346,7 @@ class RemoteWorkspaceConfig:
             command_timeout_s=float(document.get("command_timeout_s", 60.0)),
             max_file_bytes=int(document.get("max_file_bytes", 2_000_000)),
             max_total_bytes=int(document.get("max_total_bytes", 8_000_000)),
-            keep_workspace=bool(document.get("keep_workspace", False)),
+            keep_workspace=document.get("keep_workspace", False),
             isolation=isolation,
         )
 
@@ -366,6 +368,7 @@ class SavedRuntime:
     proxy_jump: str = ""
     alias: str = ""
     config: str = ""
+    workdir: str = ""
     options: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -456,6 +459,13 @@ def read_runtime(config: RemoteWorkspaceConfig) -> SavedRuntime:
     for key in options:
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", key):
             raise WorkspaceError("config", f"runtime {config.runtime!r} has an invalid ssh option name")
+    saved_workdir = str(entry.get("workdir") or "").rstrip("/")
+    if saved_workdir and saved_workdir != config.root.rstrip("/"):
+        raise WorkspaceError(
+            "config",
+            f"runtime {config.runtime!r} saves workdir {saved_workdir!r}, but this config stages "
+            f"under {config.root!r}; refusing to stage one directory and run the agent in another",
+        )
     return SavedRuntime(
         name=config.runtime,
         harness=harness,
@@ -466,6 +476,7 @@ def read_runtime(config: RemoteWorkspaceConfig) -> SavedRuntime:
         proxy_jump=str(entry.get("proxy_jump") or ""),
         alias=alias,
         config=str(entry.get("config") or ""),
+        workdir=saved_workdir,
         options={str(k): str(v) for k, v in options.items()},
     )
 
@@ -484,6 +495,12 @@ class WorkspaceReceipt:
 
     document: dict[str, Any]
     receipt_id: str
+
+    #: The fields the receipt id is computed over; ``receipt_id`` itself is not one of them.
+    IDENTITY_KEYS = (
+        "schema_version", "run_id", "session_label", "session_id",
+        "workspace", "manifest_digest", "prompt_surface_sha256", "epic",
+    )
 
     @classmethod
     def build(
@@ -518,6 +535,41 @@ class WorkspaceReceipt:
         document = dict(identity)
         document["receipt_id"] = receipt_id
         return cls(document=document, receipt_id=receipt_id)
+
+    @classmethod
+    def from_document(cls, document: object) -> "WorkspaceReceipt":
+        """Validate one stored receipt and recompute its id from its own fields.
+
+        A remote agent can edit ``.taic/session.json``.  The stored ``receipt_id`` is
+        therefore never trusted on its own: the digest is recomputed over the identity
+        fields, and a mismatch is a conflict (a broken receipt eligible for marker-based
+        cleanup), not an authoritative claim about which session owns the directory.
+
+        @raises WorkspaceError with kind ``conflict`` for a malformed or tampered receipt.
+        """
+        if not isinstance(document, dict):
+            raise WorkspaceError("conflict", "the remote session receipt is not an object")
+        identity: dict[str, Any] = {}
+        for key in cls.IDENTITY_KEYS:
+            if key not in document:
+                raise WorkspaceError("conflict", f"the remote session receipt has no {key}")
+            identity[key] = document[key]
+        if not isinstance(identity["schema_version"], int) or identity["schema_version"] != SCHEMA_VERSION:
+            raise WorkspaceError("conflict", "the remote session receipt has an unknown schema version")
+        for key in ("run_id", "session_label", "session_id", "manifest_digest", "prompt_surface_sha256", "epic"):
+            if not isinstance(identity[key], str):
+                raise WorkspaceError("conflict", f"the remote session receipt has a non-string {key}")
+        workspace = identity["workspace"]
+        if not isinstance(workspace, dict) or any(
+            not isinstance(workspace.get(key), str)
+            for key in ("backend", "runtime", "workdir", "host_work_sha256")
+        ):
+            raise WorkspaceError("conflict", "the remote session receipt has a malformed workspace")
+        stored = document.get("receipt_id")
+        computed = _sha256(_canonical_json(identity))
+        if not isinstance(stored, str) or stored != computed:
+            raise WorkspaceError("conflict", "the remote session receipt id does not match its contents")
+        return cls(document=dict(document), receipt_id=computed)
 
     def json_bytes(self) -> bytes:
         return _canonical_json(self.document) + b"\n"
@@ -711,8 +763,11 @@ class SshWorkspaceTransport:
         its session directory between two attempts must not be able to redirect a receipt or
         a staged input to another path on the host.
         """
+        # The walk runs before every mkdir: a symlinked parent is refused before anything is
+        # created through it, and again after creation to close the obvious race.
         self._checked(
-            f"umask 077; mkdir -p -- {_quote(workdir)} || exit 1; {self._walk(workdir)}; "
+            f"umask 077; {self._walk(workdir)}; mkdir -p -- {_quote(workdir)} || exit 1; "
+            f"{self._walk(workdir)}; {self._walk(workdir, ['.taic'])}; "
             f"mkdir -p -- {_quote(workdir + '/.taic')} || exit 1; {self._walk(workdir, ['.taic'])}",
             what="create the remote workspace",
         )
@@ -730,9 +785,7 @@ class SshWorkspaceTransport:
             document = json.loads(data.decode("utf-8"))
         except (UnicodeDecodeError, ValueError) as exc:
             raise WorkspaceError("conflict", f"the remote session receipt is not readable JSON: {exc}") from exc
-        if not isinstance(document, dict) or not isinstance(document.get("receipt_id"), str):
-            raise WorkspaceError("conflict", "the remote session receipt has no receipt_id")
-        return WorkspaceReceipt(document=document, receipt_id=document["receipt_id"])
+        return WorkspaceReceipt.from_document(document)
 
     def stage(self, workdir: str, host_work: Path, manifest: WorkspaceManifest, receipt: WorkspaceReceipt) -> None:
         """Stage every manifest file, verifying the receipt first.
@@ -768,11 +821,18 @@ class SshWorkspaceTransport:
         Each file is sized before it is read and refused if it is over the per-file cap.
         """
         found: dict[str, bytes] = {}
+        total = 0
         for raw in paths:
             relative = _safe_relative(raw)
             data = self._read(workdir, relative)
             if data is None:
                 continue
+            total += len(data)
+            if total > self.config.max_total_bytes:
+                raise WorkspaceError(
+                    "manifest",
+                    f"the collected artifacts are over {self.config.max_total_bytes} bytes",
+                )
             found[relative] = data
         return found
 
@@ -804,7 +864,10 @@ class SshWorkspaceTransport:
         try:
             current = self.read_receipt(workdir)
         except WorkspaceError as exc:
-            if exc.kind != "path":
+            # A symlinked or tampered receipt cannot make cleanup refuse.  The directory is
+            # still under our run token and carries a marker; `rm -rf` does not follow the
+            # link, so removing it is safe.
+            if exc.kind not in ("path", "conflict"):
                 raise
             broken = True
         if current is None and not broken:
@@ -1113,7 +1176,10 @@ def epic_for_session(
             continue
         began_at = str(began.get("at") or "")
         epoch = _epoch_seconds(began_at)
-        if epoch is not None and epoch + 2.0 < not_before:
+        if epoch is None:
+            # Without a parseable start time this epic cannot be attributed to an attempt.
+            continue
+        if epoch + 2.0 < not_before:
             continue
         cost = 0.0
         for event in events:

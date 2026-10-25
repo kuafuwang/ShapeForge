@@ -121,7 +121,8 @@ uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 - **受信评测围栏**：启动时拒绝任何让 `agent_work` 与 evaluator 候选目录、outbox、manifest/ledger、`tcenv`/`taic`/`tests` 或 selfcheck authority 目录发生包含关系的配置；回收写入仍限制在 `agent_work/<tag>`。它是布局检查，不是沙箱，不能替代远端账号/权限和 hmz 围栏。
 - **放置证据**：`harness=env` 要求 epic 的 `opened.harness` 恰为 `env`，缺失也按不一致处理；`harness=local` 接受 `local` 或空。不一致时该场 `cost_usd=null`、`cost_incomplete=true`，并记 `harness_mismatch`，不把跑错位置的会话账单算进搜索。
 - **失败与孤儿**：凭据 mint/provision 失败是 `credential_unavailable`，不会先启动 agent 再补账；crash/timeout/no-submission 走 typed 失败并撤销凭据；run 结束按 run token 只清扫本 run 的非活跃会话目录。
-- **未证明**：真实主机上的 `harness=env`、真实 pi CLI/外部 helper、远端进程与围栏逃逸、真实 orphan 清理。本机 VM 可达但缺 SSH 私钥，这些验收是 blocked；没有写 `simulated` 报告，也没有真实 provider 调用。
+- **Docker 隔离模拟已通过（2026-10-26）**：真实 SSH transport + `harness=env` 在 Ubuntu 24.04 容器内运行确定性 fake agent，host 侧 helper 经 `docker exec` 交付短期 token，agent 调 control-host fake provider；13 项必需 check 全过，报告为 `runs/remote-agent-sim-20261026/report.json`（`simulated=true`、`publication_allowed=false`，不进入搜索/发布）。
+- **仍未证明**：真实 pi CLI 与真实 provider、真实 Ubuntu VM、生产 `online=NONE` 围栏（模拟 fixture 放宽为 `ALL`）、远端进程/围栏逃逸和真实 orphan 清理。本机 VM 可达但缺 SSH 私钥，这些验收是 blocked。
 
 ## 操作规则
 

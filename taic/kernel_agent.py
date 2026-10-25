@@ -1142,17 +1142,19 @@ def hmz_argv(
     session_cost_cap_usd: float | None,
     env_specs: Sequence[str] = (),
     flow: Path = FLOW,
+    assistant_spec: str | None = None,
 ) -> list[str]:
     """Build the exact ``hmz exec`` line for one session.
 
     ``env_specs`` is empty for every default run, so the local argv is unchanged.  A remote
-    workspace adds one ``-e`` mapping and nothing else.
+    workspace adds one ``-e`` mapping and nothing else.  ``assistant_spec`` is a test seam
+    for the deterministic fake-agent simulation; production always uses ``agent_spec``.
     """
     flow_minutes = int(turn_minutes) + WRAP_MINUTES + FLOW_SLACK_MINUTES
     return [
         binary, "exec", "-f", str(flow),
         *[part for spec in env_specs for part in ("-e", spec)],
-        "-a", f"assistant={agent_spec(provider, model, effort)}",
+        "-a", f"assistant={assistant_spec or agent_spec(provider, model, effort)}",
         "-p", f"turn_output_tokens={int(turn_output_tokens)}",
         "-p", f"turn_minutes={int(turn_minutes)}",
         "-p", f"wrap_output_tokens={WRAP_OUTPUT_TOKENS}",
@@ -1182,6 +1184,7 @@ def invoke_hmz(
     timeout_s: float | None = None,
     env_specs: Sequence[str] = (),
     flow: Path = FLOW,
+    assistant_spec: str | None = None,
 ) -> HmzInvocation:
     """Run one ``hmz exec`` and collect its streams, status and token counts.
 
@@ -1197,6 +1200,7 @@ def invoke_hmz(
         binary=binary, provider=provider, model=model, effort=effort,
         turn_output_tokens=turn_output_tokens, turn_minutes=turn_minutes,
         session_cost_cap_usd=session_cost_cap_usd, env_specs=env_specs, flow=flow,
+        assistant_spec=assistant_spec,
     )
     if timeout_s is None:
         timeout_s = process_timeout_s(turn_minutes)
@@ -1373,13 +1377,16 @@ def run_kernel_agent(
     @return 本场会话的结果。
     @raises AgentError hmz 不在 PATH 上，或进程起不来时。
     """
-    _bridge_token(brief)  # fail before writing a session directory, as the old order did
+    binary = hmz or shutil.which("hmz")
+    if not binary or not Path(binary).is_file():
+        raise AgentError("hmz is not on PATH; install it with `uv tool install hmz`")
+    _bridge_token(brief)  # both checks happen before any session file is written
     prepared = prepare_session(brief, work)
     invocation = invoke_hmz(
         brief, work=work, prepared=prepared,
         provider=provider, model=model, effort=effort, prices=prices,
         turn_output_tokens=turn_output_tokens, turn_minutes=turn_minutes,
-        session_cost_cap_usd=session_cost_cap_usd, hmz=hmz, timeout_s=timeout_s,
+        session_cost_cap_usd=session_cost_cap_usd, hmz=binary, timeout_s=timeout_s,
     )
     return collect_session(brief, work, invocation)
 

@@ -324,15 +324,26 @@ class _Host:
         return True
 
 
-def _epic(tmp_path: Path, *, host_work: Path, env_spec: str, harness: str, cost: float = 0.002) -> None:
+def _epic(
+    tmp_path: Path,
+    *,
+    host_work: Path,
+    env_spec: str,
+    harness: str,
+    cost: float = 0.002,
+    sessions: tuple[str, ...] = ("pi-remote-1",),
+    began_at: str | None = None,
+) -> None:
     folder = tmp_path / "epics" / "epic-1" / "20261026T000000.000Z-deadbeef"
     folder.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
-    events = [
-        {"event": "began", "at": stamp, "workspace": str(host_work.resolve()), "envs": [env_spec], "used": [env_spec]},
-        {"event": "opened", "at": stamp, "session": "pi-remote-1", "harness": harness, "provider": "local"},
-        {"event": "usage", "at": stamp, "cost": cost},
-    ]
+    began = {"event": "began", "workspace": str(host_work.resolve()), "envs": [env_spec], "used": [env_spec]}
+    if began_at is not None:
+        began["at"] = began_at
+    events = [began]
+    for session in sessions:
+        events.append({"event": "opened", "at": stamp, "session": session, "harness": harness, "provider": "local"})
+    events.append({"event": "usage", "at": stamp, "cost": cost})
     (folder / "epic.jsonl").write_text("\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8")
 
 
@@ -340,9 +351,9 @@ def _invoke(state: dict, *, status: str = "ok", record: dict | None = None):
     """A fake remote agent: writes the submission and (optionally) uses the provider token."""
 
     def invoke(brief, *, work, prepared, provider, model, effort, prices, turn_output_tokens, turn_minutes,
-               session_cost_cap_usd=None, hmz=None, timeout_s=None, env_specs=(), flow=FLOW):
+               session_cost_cap_usd=None, hmz=None, timeout_s=None, env_specs=(), flow=FLOW, assistant_spec=None):
         del work, provider, model, effort, prices, turn_output_tokens, turn_minutes
-        del session_cost_cap_usd, hmz, timeout_s, flow
+        del session_cost_cap_usd, hmz, timeout_s, flow, assistant_spec
         remote = Path(state["workdir"])
         if status in ("ok", "timeout"):
             (remote / prepared.submit).write_text(f"kernel void {brief.kernel_name}() {{ /* fixed */ }} // speed=1.2\n", encoding="utf-8")
@@ -355,7 +366,10 @@ def _invoke(state: dict, *, status: str = "ok", record: dict | None = None):
         if state.get("write_epic"):
             _epic(
                 state["tmp_path"], host_work=Path(brief.work_dir), env_spec=env_specs[0],
-                harness=state.get("epic_harness", "env"), cost=0.002,
+                harness=state.get("epic_harness", "env"),
+                cost=float(state.get("epic_cost", 0.002)),
+                sessions=tuple(state.get("epic_sessions", ("pi-remote-1",))),
+                began_at=state.get("epic_began_at", time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())),
             )
         return HmzInvocation(
             status="timeout" if status == "timeout" else ("failed" if status == "crash" else "ok"),
@@ -388,8 +402,9 @@ def test_a_remote_agent_session_gets_a_scoped_token_and_cleans_up(tmp_path):
     record: dict = {}
     authority = ScopedCredentialAuthority()
 
-    def seam_factory(cfg, *, authority):
-        outer = LoopbackFakeSeam(authority)
+    def seam_factory(cfg, *, authority, scope=None):
+        assert scope == {"run_id": "run", "session_label": "init", "runtime": "gpu-box"}
+        outer = LoopbackFakeSeam(authority, expected_scope=scope)
 
         class _Recording:
             mode = outer.mode
@@ -601,7 +616,7 @@ def test_an_unexpected_seam_failure_still_revokes_and_cleans(tmp_path):
     host = _Host(state)
     authority = ScopedCredentialAuthority()
 
-    def exploding_factory(cfg, *, authority):
+    def exploding_factory(cfg, *, authority, scope=None):
         class _Seam:
             mode = "loopback-fake"
 
@@ -648,9 +663,9 @@ def test_remote_authored_selfcheck_rows_are_not_counted(tmp_path):
     state: dict = {"tmp_path": tmp_path}
 
     def invoke(brief, *, work, prepared, provider, model, effort, prices, turn_output_tokens, turn_minutes,
-               session_cost_cap_usd=None, hmz=None, timeout_s=None, env_specs=(), flow=FLOW):
+               session_cost_cap_usd=None, hmz=None, timeout_s=None, env_specs=(), flow=FLOW, assistant_spec=None):
         del work, provider, model, effort, prices, turn_output_tokens, turn_minutes
-        del session_cost_cap_usd, hmz, timeout_s, flow
+        del session_cost_cap_usd, hmz, timeout_s, flow, assistant_spec
         remote = Path(state["workdir"])
         (remote / prepared.submit).write_text(f"kernel void {brief.kernel_name}() {{ /* fixed */ }}\n", encoding="utf-8")
         (remote / "NOTES.md").write_text("notes\n", encoding="utf-8")
@@ -700,3 +715,118 @@ def test_remote_notes_cannot_import_selfcheck_rows(tmp_path):
     assert _remote_evidence_allowed("self_checks.jsonl") is False
     assert _remote_evidence_allowed(".selfcheck/self_checks.jsonl") is False
     assert _remote_evidence_allowed("a/.selfcheck/x.json") is False
+
+
+def test_a_cost_mismatch_is_not_accepted_as_the_bill(tmp_path):
+    """The epic amount must reconcile with the amount this session reports."""
+    isolation = IsolatedAgentConfig(credential_seam="loopback-fake", simulated=True)
+    config = _config(tmp_path, isolation=isolation)
+    state: dict = {"tmp_path": tmp_path, "write_epic": True, "epic_harness": "env", "epic_cost": 0.01}
+    runner = _runner(tmp_path, _Host(state), state, config=config, invoke=_invoke(state))
+    brief = _brief(tmp_path)
+    result = runner.execute(brief, execution=_execution(Path(brief.work_dir), config), provider="p", model="m", effort=None)
+    assert result.cost_incomplete is True and result.cost_usd is None
+    assert result.diagnostics["cost_binding"] == "cost_mismatch"
+    assert result.identity["cost_bound"] is False
+
+
+def test_an_epic_with_several_sessions_is_not_this_session(tmp_path):
+    """More than one opened session cannot be attributed to one tracked session."""
+    isolation = IsolatedAgentConfig(credential_seam="loopback-fake", simulated=True)
+    config = _config(tmp_path, isolation=isolation)
+    state: dict = {
+        "tmp_path": tmp_path, "write_epic": True, "epic_harness": "env",
+        "epic_sessions": ("pi-remote-1", "pi-remote-2"),
+    }
+    runner = _runner(tmp_path, _Host(state), state, config=config, invoke=_invoke(state))
+    brief = _brief(tmp_path)
+    result = runner.execute(brief, execution=_execution(Path(brief.work_dir), config), provider="p", model="m", effort=None)
+    assert result.cost_incomplete is True and result.cost_usd is None
+    assert result.diagnostics["cost_binding"] == "session_mismatch"
+
+
+def test_an_epic_without_a_start_time_is_not_bound(tmp_path):
+    """A missing began.at makes the epic unattributable, not silently eligible."""
+    isolation = IsolatedAgentConfig(credential_seam="loopback-fake", simulated=True)
+    config = _config(tmp_path, isolation=isolation)
+    state: dict = {"tmp_path": tmp_path, "write_epic": True, "epic_harness": "env", "epic_began_at": ""}
+    runner = _runner(tmp_path, _Host(state), state, config=config, invoke=_invoke(state))
+    brief = _brief(tmp_path)
+    result = runner.execute(brief, execution=_execution(Path(brief.work_dir), config), provider="p", model="m", effort=None)
+    assert result.cost_incomplete is True and result.cost_usd is None
+    assert result.diagnostics["cost_binding"] == "unbound"
+
+
+def test_a_token_from_another_run_is_refused(tmp_path):
+    """Scope is checked, not just recorded: run A's token cannot answer for run B."""
+    authority = ScopedCredentialAuthority()
+    credential = authority.mint(run_id="run-A", session_label="init", runtime="gpu-box", ttl_s=60, max_uses=2)
+    assert authority.verify(credential.token, scope={"run_id": "run-A", "session_label": "init", "runtime": "gpu-box"}) == credential.credential_id
+    assert authority.verify(credential.token, scope={"run_id": "run-B", "session_label": "init", "runtime": "gpu-box"}) is None
+    assert authority.verify(credential.token, scope={"run_id": "run-A", "session_label": "other", "runtime": "gpu-box"}) is None
+    provider = LoopbackFakeProvider(authority, expected_scope={"run_id": "run-B", "session_label": "init", "runtime": "gpu-box"}).start()
+    try:
+        assert _post(provider.base_url, credential.token)[0] == 401
+    finally:
+        provider.close()
+    with pytest.raises(IsolationError, match="another session"):
+        LoopbackFakeSeam(authority, expected_scope={"run_id": "run-B", "session_label": "init", "runtime": "gpu-box"}).provision(
+            credential, env_spec="x",
+        )
+
+
+def test_the_runner_checks_collected_paths_against_the_fence(tmp_path):
+    """The production materialization path calls the fence, not only check_relative_destination."""
+    from taic.agent_isolation import IsolationError
+
+    class Recording:
+        def __init__(self) -> None:
+            self.paths = []
+
+        def refuse_write(self, target):
+            self.paths.append(Path(target))
+            raise IsolationError("fence", f"refused {target}")
+
+    isolation = IsolatedAgentConfig(credential_seam="loopback-fake", simulated=True)
+    config = _config(tmp_path, isolation=isolation)
+    fence = Recording()
+    runner = SshWorkspaceKernelSessionRunner(config, transport=_Host({"tmp_path": tmp_path}), fence=fence)
+    with pytest.raises(IsolationError, match="refused"):
+        runner._materialize(tmp_path / "run" / "agent_work" / "init", {"NOTES.md": b"x"})
+    assert fence.paths and fence.paths[0].name == "NOTES.md"
+
+
+def test_a_remote_workspace_installs_no_host_selfcheck_bridge(tmp_path):
+    """The CLI helper keeps formal evaluation but never hands the agent a bridge it cannot reach."""
+    from types import SimpleNamespace
+
+    from taic.cli import _selfcheck_bridge_for
+
+    logs: list[str] = []
+    orch = SimpleNamespace(
+        task_name="relu", dtype="fp16", size="small", task_fingerprint="a" * 64,
+        run_dir=tmp_path / "run", search=SimpleNamespace(require_contract_launch=False, min_improvement=1.005, noise_z=2.0),
+        log=logs.append,
+    )
+
+    class Remote:
+        task_fingerprint = "a" * 64
+
+        def make_bridge_factory(self, **kwargs):  # pragma: no cover - must not be called
+            raise AssertionError("a remote workspace must not install a self-check bridge")
+
+    assert _selfcheck_bridge_for(orch, None, object()) is None
+    assert _selfcheck_bridge_for(orch, Remote(), object()) is None
+    assert logs and "no self-check channel" in logs[0]
+
+    class LocalRemote(Remote):
+        def make_bridge_factory(self, **kwargs):
+            return kwargs
+
+    factory = _selfcheck_bridge_for(orch, LocalRemote(), None)
+    assert factory and factory["run_id"] == "run"
+
+    bad = LocalRemote()
+    bad.task_fingerprint = "b" * 64
+    with pytest.raises(ValueError, match="fingerprint"):
+        _selfcheck_bridge_for(orch, bad, None)

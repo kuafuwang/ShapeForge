@@ -44,6 +44,31 @@ def _recorded_target(run_dir: Path, requested: str | None) -> str:
     return recorded
 
 
+def _selfcheck_bridge_for(orch, remote, workspace):
+    """Decide whether this run installs the per-session host self-check bridge.
+
+    A remote workspace has no self-check channel: the agent runs on a host the bridge does
+    not reach, and the transport refuses to pretend otherwise.  Formal evaluation still uses
+    the remote evaluator.  The task-fingerprint check is about the evaluator, not the
+    workspace, so it runs in both cases.
+
+    @raises ValueError when the remote evaluator targets a different task.
+    """
+    if remote is None:
+        return None
+    if remote.task_fingerprint and remote.task_fingerprint != orch.task_fingerprint:
+        raise ValueError("remote evaluator task fingerprint differs from this run")
+    if workspace is not None:
+        orch.log("== note: a remote workspace has no self-check channel; only formal evaluation is enabled")
+        return None
+    return remote.make_bridge_factory(
+        task=orch.task_name, dtype=orch.dtype, size=orch.size,
+        task_fingerprint=orch.task_fingerprint, run_id=orch.run_dir.name,
+        require_contract_launch=bool(orch.search.require_contract_launch),
+        min_improvement=float(orch.search.min_improvement), noise_z=float(orch.search.noise_z),
+    )
+
+
 def _result_code(res) -> int:
     """@brief 已结束的一次搜索对应的进程退出码。
 
@@ -170,15 +195,9 @@ def cmd_run(a: argparse.Namespace) -> int:
                 publishable_epochs=None if remote is None else remote.publishable_epochs,
                 workspace_config=workspace,
             )
-            if remote is not None:
-                if remote.task_fingerprint and remote.task_fingerprint != orch.task_fingerprint:
-                    raise ValueError("remote evaluator task fingerprint differs from this task")
-                orch.selfcheck_bridge_factory = remote.make_bridge_factory(
-                    task=orch.task_name, dtype=orch.dtype, size=orch.size,
-                    task_fingerprint=orch.task_fingerprint, run_id=orch.run_dir.name,
-                    require_contract_launch=bool(orch.search.require_contract_launch),
-                    min_improvement=float(orch.search.min_improvement), noise_z=float(orch.search.noise_z),
-                )
+            bridge_factory = _selfcheck_bridge_for(orch, remote, workspace)
+            if bridge_factory is not None:
+                orch.selfcheck_bridge_factory = bridge_factory
         except (RunStartError, ValueError, LLMError) as e:
             # 尺寸或任务名不合法是启动失败，和配置写不进去一样，退出码 5。
             print(str(e), file=sys.stderr)
@@ -516,15 +535,12 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
         publishable_epochs=None if remote is None else remote.publishable_epochs,
         workspace_config=workspace,
     )
-    if remote is not None:
-        if remote.task_fingerprint and remote.task_fingerprint != orch.task_fingerprint:
-            raise ResumeRefused("remote evaluator task fingerprint differs from this run", 5)
-        orch.selfcheck_bridge_factory = remote.make_bridge_factory(
-            task=orch.task_name, dtype=orch.dtype, size=orch.size,
-            task_fingerprint=orch.task_fingerprint, run_id=orch.run_dir.name,
-            require_contract_launch=bool(orch.search.require_contract_launch),
-            min_improvement=float(orch.search.min_improvement), noise_z=float(orch.search.noise_z),
-        )
+    try:
+        bridge_factory = _selfcheck_bridge_for(orch, remote, workspace)
+    except ValueError as exc:
+        raise ResumeRefused(str(exc), 5) from exc
+    if bridge_factory is not None:
+        orch.selfcheck_bridge_factory = bridge_factory
     variants = {prompts.system_prompt(orch.task, use_tools=cfg.use_tools, profiler_evidence=pe, hw_feedback=hw) for pe in (False, True) for hw in (False, True)}
     # 系统提示若已和现在的 prompts.py 不同，仍用转录里的原文。换提示会让同一次实验的前后轮次对着不同契约说话。
     prompt_changed = bool(snap.system) and snap.system not in variants  # False: the prompt files still produce the prompt the run began with

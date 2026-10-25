@@ -193,10 +193,18 @@ class ScopedCredentialAuthority:
             }
         return ScopedCredential(credential_id=credential_id, token=token, scope=scope, expires_at=expires_at, max_uses=int(max_uses))
 
-    def verify(self, token: str, *, now: float | None = None) -> str | None:
-        """Return the credential id for a live token, or ``None``.
+    def verify(
+        self,
+        token: str,
+        *,
+        now: float | None = None,
+        scope: dict[str, str] | None = None,
+    ) -> str | None:
+        """Return the credential id for a live token in ``scope``, or ``None``.
 
-        Expiry and revocation are both refusals.  A token is not consumed here: a fake
+        Expiry, revocation and a scope mismatch are all refusals.  A token minted for run A
+        must not be accepted for run B even if it leaks, so every caller that knows the
+        expected run/session/runtime passes it here.  A token is not consumed here: a fake
         provider may call this and then :meth:`consume`, so that a rejected request is not
         billed against the use budget.
         """
@@ -206,12 +214,17 @@ class ScopedCredentialAuthority:
         stamp = self._clock() if now is None else float(now)
         with self._lock:
             for credential_id, record in self._records.items():
-                if secret_compare(record["digest"], digest):
-                    if record["revoked"] or stamp >= record["expires_at"]:
+                if not secret_compare(record["digest"], digest):
+                    continue
+                if record["revoked"] or stamp >= record["expires_at"]:
+                    return None
+                if record["uses"] >= record["max_uses"]:
+                    return None
+                if scope is not None:
+                    recorded = record["scope"]
+                    if any(str(recorded.get(key)) != str(value) for key, value in scope.items()):
                         return None
-                    if record["uses"] >= record["max_uses"]:
-                        return None
-                    return credential_id
+                return credential_id
         return None
 
     def consume(self, credential_id: str) -> bool:
@@ -267,8 +280,9 @@ class LoopbackFakeProvider:
     the answer, so quota behaviour is exercised too.
     """
 
-    def __init__(self, authority: ScopedCredentialAuthority) -> None:
+    def __init__(self, authority: ScopedCredentialAuthority, *, expected_scope: dict[str, str] | None = None) -> None:
         self.authority = authority
+        self.expected_scope = dict(expected_scope) if expected_scope else None
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self.requests: list[dict[str, Any]] = []
@@ -297,7 +311,7 @@ class LoopbackFakeProvider:
                 body = self.rfile.read(min(length, 1_000_000))
                 header = self.headers.get("Authorization") or ""
                 token = header[7:].strip() if header.startswith("Bearer ") else ""
-                credential_id = authority.verify(token)
+                credential_id = authority.verify(token, scope=provider.expected_scope)
                 if credential_id is None or not authority.consume(credential_id):
                     self._reply(401, {"error": {"message": "unauthorized", "type": "invalid_request_error"}})
                     return
@@ -340,6 +354,7 @@ class LoopbackFakeProvider:
                 self.end_headers()
                 self.wfile.write(body)
 
+        provider = self
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, name="taic-fake-provider", daemon=True)
         thread.start()
@@ -377,6 +392,14 @@ class CredentialSeam(Protocol):
         ...
 
 
+def _check_credential_scope(credential: ScopedCredential, expected: dict[str, str] | None) -> None:
+    """Refuse a credential whose own scope does not match the session the seam serves."""
+    if expected is None:
+        return
+    if any(str(credential.scope.get(key)) != str(value) for key, value in expected.items()):
+        raise IsolationError("credential", "the scoped credential belongs to another session")
+
+
 class NoCredentialSeam:
     """The default: no agent runs outside the control host, so there is nothing to hand out."""
 
@@ -397,11 +420,19 @@ class LoopbackFakeSeam:
 
     mode = "loopback-fake"
 
-    def __init__(self, authority: ScopedCredentialAuthority, *, provider: LoopbackFakeProvider | None = None) -> None:
+    def __init__(
+        self,
+        authority: ScopedCredentialAuthority,
+        *,
+        provider: LoopbackFakeProvider | None = None,
+        expected_scope: dict[str, str] | None = None,
+    ) -> None:
         self.authority = authority
-        self.provider = provider or LoopbackFakeProvider(authority)
+        self.expected_scope = dict(expected_scope) if expected_scope else None
+        self.provider = provider or LoopbackFakeProvider(authority, expected_scope=self.expected_scope)
 
     def provision(self, credential: ScopedCredential, *, env_spec: str) -> dict[str, Any]:
+        _check_credential_scope(credential, getattr(self, "expected_scope", None))
         self.provider.start()
         return {
             "mode": self.mode,
@@ -433,12 +464,22 @@ class ExternalHelperSeam:
 
     mode = "external-helper"
 
-    def __init__(self, authority: ScopedCredentialAuthority, helper: tuple[str, ...], *, timeout_s: float = 30.0) -> None:
+    def __init__(
+        self,
+        authority: ScopedCredentialAuthority,
+        helper: tuple[str, ...],
+        *,
+        timeout_s: float = 30.0,
+        expected_scope: dict[str, str] | None = None,
+        provider_base_url: str = "",
+    ) -> None:
         if not helper:
             raise IsolationError("config", "external-helper needs an argv helper")
         self.authority = authority
         self.helper = tuple(helper)
         self.timeout_s = float(timeout_s)
+        self.expected_scope = dict(expected_scope) if expected_scope else None
+        self.provider_base_url = str(provider_base_url or "")
         self.calls: list[str] = []
 
     def _run(self, action: str, credential: ScopedCredential, *, env_spec: str) -> dict[str, Any]:
@@ -452,6 +493,8 @@ class ExternalHelperSeam:
             "max_uses": credential.max_uses,
             "env_spec": env_spec,
         }
+        if self.provider_base_url:
+            document["provider_base_url"] = self.provider_base_url
         try:
             completed = subprocess.run(
                 list(self.helper),
@@ -478,6 +521,7 @@ class ExternalHelperSeam:
         return answer if isinstance(answer, dict) else {}
 
     def provision(self, credential: ScopedCredential, *, env_spec: str) -> dict[str, Any]:
+        _check_credential_scope(credential, getattr(self, "expected_scope", None))
         answer = self._run("provision", credential, env_spec=env_spec)
         return {
             "mode": self.mode,
@@ -499,15 +543,20 @@ class ExternalHelperSeam:
         return
 
 
-def build_seam(config: IsolatedAgentConfig | None, *, authority: ScopedCredentialAuthority | None = None) -> CredentialSeam:
+def build_seam(
+    config: IsolatedAgentConfig | None,
+    *,
+    authority: ScopedCredentialAuthority | None = None,
+    scope: dict[str, str] | None = None,
+) -> CredentialSeam:
     """Build the seam named by ``config``, or the no-op default."""
     if config is None or config.credential_seam == "none":
         return NoCredentialSeam()
     authority = authority or ScopedCredentialAuthority()
     if config.credential_seam == "loopback-fake":
-        return LoopbackFakeSeam(authority)
+        return LoopbackFakeSeam(authority, expected_scope=scope)
     if config.credential_seam == "external-helper":
-        return ExternalHelperSeam(authority, config.helper)
+        return ExternalHelperSeam(authority, config.helper, expected_scope=scope)
     raise IsolationError("config", f"unknown credential_seam {config.credential_seam!r}")
 
 
