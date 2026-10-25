@@ -1,0 +1,161 @@
+"""Scriptable CPU-only legacy worker used by legacy-worker bridge tests."""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+from tcenv.remote.protocol import EvaluationRequest, write_frame, read_frame
+
+LONG_DETAIL = "benchmark:" + "x" * 1000 + ":END"
+
+
+def _record(request: EvaluationRequest, stdin_eof: bool) -> None:
+    destination = os.environ.get("FAKE_LEGACY_RECORD")
+    if not destination:
+        return
+    parent = os.getppid()
+    Path(destination).write_text(json.dumps({
+        "pid": os.getpid(),
+        "parent_pid": parent,
+        "pgid": os.getpgid(0),
+        "parent_pgid": os.getpgid(parent),
+        "request_id": request.request_id,
+        "source": request.source,
+        "candidate_sha256": request.candidate_sha256,
+        "stdin_eof": stdin_eof,
+        "progress_path": os.environ.get("TCENV_REMOTE_PROGRESS_PATH", ""),
+    }), encoding="utf-8")
+
+
+def _progress(document: dict[str, Any]) -> None:
+    path = os.environ.get("TCENV_REMOTE_PROGRESS_PATH")
+    if not path:
+        raise RuntimeError("bridge did not provide a legacy progress path")
+    Path(path).write_text(json.dumps(document), encoding="utf-8")
+
+
+def _result(request: EvaluationRequest, *, request_id: str | None = None) -> None:
+    report = {
+        "task": request.task,
+        "dtype": request.dtype,
+        "size": request.size,
+        "mode": request.mode,
+        "seed": request.seed,
+        "status": "ok",
+        "stage": "done",
+        "candidate_us": 1.0,
+        "speedup": 1.0,
+        "elapsed_s": 0.0,
+        "target_id": request.target_id,
+        "protocol_version": "3",
+        "simulated": True,
+        "legacy_report_marker": "report-from-legacy-worker",
+    }
+    evidence = {
+        "request_id": request.request_id,
+        "candidate_sha256": request.candidate_sha256,
+        "measurement_kind": "simulated",
+        "legacy_evidence_marker": "evidence-from-legacy-worker",
+    }
+    write_frame(sys.stdout.buffer, "result", request_id or request.request_id, {
+        "report": report,
+        "evidence": evidence,
+        "receipt": {"receipt_id": "legacy-receipt-must-not-cross-the-bridge"},
+        "signature": "legacy-signature-must-not-cross-the-bridge",
+    })
+
+
+def _wait_for_release() -> bool:
+    release = os.environ.get("FAKE_LEGACY_RELEASE")
+    if not release:
+        return False
+    deadline = time.monotonic() + 10.0
+    while not Path(release).exists():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
+    return True
+
+
+def main() -> int:
+    frame = read_frame(sys.stdin.buffer)
+    if frame.frame_type != "request":
+        raise RuntimeError("fake legacy worker expected a request")
+    request = EvaluationRequest.from_dict(frame.payload)
+    if request.request_id != frame.request_id:
+        raise RuntimeError("fake legacy worker request id mismatch")
+    # communicate(input=...) must send exactly one frame and then close stdin.
+    stdin_eof = sys.stdin.buffer.read(1) == b""
+    _record(request, stdin_eof)
+    behavior = os.environ.get("FAKE_LEGACY_BEHAVIOR", "success")
+
+    if behavior == "nonzero":
+        return 23
+    if behavior == "sleep":
+        time.sleep(60.0)
+        return 0
+    if behavior == "malformed":
+        sys.stdout.buffer.write(b"not-a-legacy-frame")
+        sys.stdout.buffer.flush()
+        return 0
+    if behavior == "wrong_request":
+        _result(request, request_id="another-request")
+        return 0
+    if behavior == "multiple":
+        _result(request)
+        _result(request)
+        return 0
+    if behavior == "missing_report":
+        write_frame(sys.stdout.buffer, "result", request.request_id, {"evidence": {}})
+        return 0
+    if behavior == "invalid_report":
+        write_frame(sys.stdout.buffer, "result", request.request_id, {
+            "report": [], "evidence": None,
+        })
+        return 0
+    if behavior == "wrong_type":
+        write_frame(sys.stdout.buffer, "progress", request.request_id, {"stage": "done"})
+        return 0
+    if behavior == "invalid_evidence":
+        write_frame(sys.stdout.buffer, "result", request.request_id, {
+            "report": {"status": "ok"}, "evidence": [],
+        })
+        return 0
+
+    if behavior == "progress_handshake":
+        _progress({
+            "stage": "bench",
+            "status": "running",
+            "message": LONG_DETAIL,
+            "updated_at": 1234.567,
+            "path_must_not_cross": os.environ.get("TCENV_REMOTE_PROGRESS_PATH", ""),
+        })
+        if not _wait_for_release():
+            return 24
+        _progress({
+            "stage": "done",
+            "status": "ok",
+            "message": "terminal done",
+            "updated_at": 5,
+            "finished": True,
+        })
+    elif behavior == "unknown_progress":
+        _progress({
+            "stage": "not-a-real-stage",
+            "message": "unknown legacy stage",
+            "updated_at": "not-a-timestamp",
+        })
+    elif behavior != "success":
+        raise RuntimeError(f"unknown fake behavior {behavior!r}")
+
+    _result(request)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
