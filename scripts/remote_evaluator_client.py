@@ -155,9 +155,35 @@ def _parser() -> argparse.ArgumentParser:
     conformance = sub.add_parser("conformance", help="run the wire conformance flow")
     _add_transport(conformance)
     _add_request(conformance)
+    conformance.add_argument(
+        "--retry-source-file", required=True, type=Path,
+        help="candidate bytes whose first attempt the evaluator interrupts",
+    )
+    conformance.add_argument("--retry-request-id", default="conformance-retry-1")
     conformance.add_argument("--cancel-source-file", type=Path)
     conformance.add_argument("--cancel-request-id", default="conformance-cancel-1")
+
+    reattach = sub.add_parser(
+        "reattach", help="replay an accepted job (grant renewal / key rotation phase)",
+    )
+    _add_transport(reattach)
+    _add_request(reattach)
+    reattach.add_argument("--expect-attempt-id", default="")
+    reattach.add_argument("--expect-key-id", default="")
+    reattach.add_argument(
+        "--revoke-key", action="append", default=[],
+        help="revoke this key ID in the host keyring before verification",
+    )
     return parser
+
+
+def _request_from_paths(args: argparse.Namespace, request_id: str, source_file: Path):
+    saved = args.source_file
+    args.source_file = source_file
+    try:
+        return _request(args, request_id=request_id)
+    finally:
+        args.source_file = saved
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -180,17 +206,28 @@ def main(argv: list[str] | None = None) -> int:
             result = factory.formal(request) if request.kind == "formal_eval" else factory.selfcheck(request)
             print(json.dumps({"ok": True, "result": result_summary(result)}, indent=2, sort_keys=True))
             return 0
+        if args.command == "reattach":
+            for key_id in args.revoke_key:
+                factory.keyring.revoke(key_id)
+            result = factory.formal(request) if request.kind == "formal_eval" else factory.selfcheck(request)
+            summary = result_summary(result)
+            failures = []
+            if args.expect_attempt_id and summary["attempt_id"] != args.expect_attempt_id:
+                failures.append("attempt id differs from the interrupted/replayed attempt")
+            if args.expect_key_id and summary["signature_key_id"] != args.expect_key_id:
+                failures.append("result signature key id differs from the expected key")
+            print(json.dumps({"ok": not failures, "result": summary, "failures": failures}, indent=2, sort_keys=True))
+            return 0 if not failures else 1
+        retry_request = _request_from_paths(args, args.retry_request_id, args.retry_source_file)
         second = None
         if args.cancel_source_file is not None:
-            saved = args.source_file
-            args.source_file = args.cancel_source_file
-            second = _request(args, request_id=args.cancel_request_id)
-            args.source_file = saved
+            second = _request_from_paths(args, args.cancel_request_id, args.cancel_source_file)
         token = _token(args.token_file)
         report = run_conformance(
             factory=factory,
             request=request,
             second_request=second,
+            retry_request=retry_request,
             token=token,
             required_features=tuple(args.required_features),
             timeout_s=args.timeout,
@@ -198,7 +235,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0 if report["ok"] else 1
     except Exception as exc:  # noqa: BLE001 - the CLI reports a sanitized failure
-        print(json.dumps({"ok": False, "error": type(exc).__name__, "message": str(exc)[:1000]}, indent=2))
+        print(json.dumps({
+            "ok": False,
+            "error": type(exc).__name__,
+            "code": getattr(exc, "code", ""),
+            "message": str(exc)[:1000],
+        }, indent=2))
         return 2
     finally:
         if factory is not None:

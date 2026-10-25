@@ -28,6 +28,11 @@ from grpc_status import rpc_status
 from . import grpc_contract as gc
 from .job_engine import JobEngine
 from .job_types import TERMINAL_JOB_STATES, JobError, JobEvent
+from .revocation import (
+    normalize_fingerprints,
+    peer_certificate_present,
+    peer_certificate_sha256,
+)
 from .v1 import evaluator_pb2 as pb
 from .v1 import evaluator_pb2_grpc as pb_grpc
 
@@ -243,17 +248,7 @@ class SessionGrantInterceptor(grpc.ServerInterceptor):
 
 
 def _peer_certificate_present(context: grpc.ServicerContext) -> bool:
-    try:
-        auth = context.auth_context()
-    except Exception:  # pragma: no cover - defensive for non-TLS contexts
-        return False
-    if not isinstance(auth, Mapping):
-        return False
-    for key in ("x509_pem_cert", "x509_pem_cert_chain"):
-        values = auth.get(key)
-        if values:
-            return True
-    return False
+    return peer_certificate_present(context)
 
 
 class EvaluatorService(pb_grpc.EvaluatorServicer):
@@ -268,6 +263,7 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
         require_client_identity: bool = False,
         max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES,
         auth_limiter: AuthFailureLimiter | None = None,
+        revoked_client_certificates: Iterable[str] = (),
         logger: logging.Logger | None = None,
     ) -> None:
         if isinstance(max_watch_streams, bool) or not isinstance(max_watch_streams, int) or max_watch_streams < 1:
@@ -280,6 +276,7 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
         self.require_client_identity = bool(require_client_identity)
         self.max_message_bytes = int(max_message_bytes)
         self.auth_limiter = auth_limiter
+        self.revoked_client_certificates = normalize_fingerprints(frozenset(revoked_client_certificates))
         self.logger = logger or logging.getLogger("tcenv.remote.grpc")
         self._watch_slots = threading.BoundedSemaphore(max_watch_streams)
 
@@ -287,6 +284,12 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
     def _grant(self, context: grpc.ServicerContext) -> str:
         if self.require_client_identity and not _peer_certificate_present(context):
             raise JobError("permission_denied", "a client certificate is required")
+        if self.revoked_client_certificates:
+            fingerprint = peer_certificate_sha256(context)
+            if fingerprint is None:
+                raise JobError("permission_denied", "a client certificate is required")
+            if fingerprint in self.revoked_client_certificates:
+                raise JobError("permission_denied", "client certificate was revoked")
         return _bearer_token(context.invocation_metadata())
 
     def _record_auth_failure(self, error: JobError) -> JobError:
@@ -626,6 +629,7 @@ class GrpcServerConfig:
     client_ca_file: Path | None = None
     auth_max_failures: int = 64
     auth_window_s: float = 60.0
+    revoked_client_certificates: frozenset[str] = frozenset()
 
     def credentials(self) -> grpc.ServerCredentials | None:
         if self.allow_insecure:
@@ -660,18 +664,27 @@ def build_server(
     config: GrpcServerConfig | None = None,
     credentials: grpc.ServerCredentials | None = None,
     logger: logging.Logger | None = None,
+    service_factory: type[EvaluatorService] | None = None,
 ) -> RunningServer:
+    """Build the authenticated ingress over one durable engine.
+
+    ``service_factory`` is an extension point for the test-only composition root
+    that injects acceptance faults (for example, withholding the result
+    signature) at the RPC boundary.  Production passes ``None``.
+    """
     config = config or GrpcServerConfig()
     if credentials is None and not config.allow_insecure:
         credentials = config.credentials()
     limiter = AuthFailureLimiter(max_failures=config.auth_max_failures, window_s=config.auth_window_s)
-    service = EvaluatorService(
+    factory = service_factory or EvaluatorService
+    service = factory(
         engine,
         max_watch_streams=config.max_watch_streams,
         watch_poll_s=config.watch_poll_s,
         require_client_identity=config.require_client_identity and not config.allow_insecure,
         max_message_bytes=config.max_message_bytes,
         auth_limiter=limiter,
+        revoked_client_certificates=config.revoked_client_certificates,
         logger=logger,
     )
     options = [

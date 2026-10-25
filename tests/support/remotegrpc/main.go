@@ -255,55 +255,55 @@ func checkBlob(descriptor map[string]any, data []byte, name string) error {
 	return nil
 }
 
-func verifyResult(d *descriptors, result protoreflect.Message, keyring *keyringFile, siteID, candidateSHA string) (string, error) {
+func verifyResult(d *descriptors, result protoreflect.Message, keyring *keyringFile, siteID, candidateSHA string) (string, string, error) {
 	provenance := provenanceMap(getMessage(result, "provenance"))
 	receiptMessage := getMessage(result, "receipt")
 	issuedAt := getMessage(receiptMessage, "issued_at")
 	if issuedAt.Get(field(issuedAt, "nanos")).Int()%1_000_000 != 0 {
-		return "", errors.New("receipt issued_at has sub-millisecond precision")
+		return "", "", errors.New("receipt issued_at has sub-millisecond precision")
 	}
 	receipt := receiptMap(receiptMessage)
 	reportData := getBytes(getMessage(result, "report"), "data")
 	reportDescriptor := blobMap(getMessage(result, "report"))
 	if err := checkBlob(reportDescriptor, reportData, "report"); err != nil {
-		return "", err
+		return "", "", err
 	}
 	var evidenceDescriptor any
 	if has(result, "evidence") {
 		data := getBytes(getMessage(result, "evidence"), "data")
 		descriptor := blobMap(getMessage(result, "evidence"))
 		if err := checkBlob(descriptor, data, "evidence"); err != nil {
-			return "", err
+			return "", "", err
 		}
 		evidenceDescriptor = descriptor
 	}
 	if provenance["attempt_id"] != receipt["attempt_id"] || provenance["request_digest"] != receipt["request_digest"] {
-		return "", errors.New("provenance and receipt attempt/digest differ")
+		return "", "", errors.New("provenance and receipt attempt/digest differ")
 	}
 	if receipt["candidate_sha256"] != candidateSHA {
-		return "", errors.New("receipt candidate digest does not match the request")
+		return "", "", errors.New("receipt candidate digest does not match the request")
 	}
 	expectedReceipt := shaHex(mustCanonical(receiptDocument(
 		receipt["request_id"].(string), receipt["attempt_id"].(string), receipt["request_digest"].(string),
 	)))
 	if receipt["receipt_id"] != expectedReceipt {
-		return "", errors.New("receipt id does not bind the attempt")
+		return "", "", errors.New("receipt id does not bind the attempt")
 	}
 	signature := getMessage(result, "signature")
 	keyID := getString(signature, "key_id")
 	if getString(signature, "algorithm") != "hmac-sha256-v1" {
-		return "", errors.New("unsupported result signature algorithm")
+		return "", "", errors.New("unsupported result signature algorithm")
 	}
 	if !strings.HasPrefix(keyID, siteID+"/") {
-		return "", errors.New("result key id is not scoped to the evaluator site")
+		return "", "", errors.New("result key id is not scoped to the evaluator site")
 	}
 	rawSignature := getBytes(signature, "signature")
 	if len(rawSignature) != 32 {
-		return "", errors.New("result signature is not 32 bytes")
+		return "", "", errors.New("result signature is not 32 bytes")
 	}
 	key, err := keyring.trusted(keyID)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	document, err := resultDocument(map[string]any{
 		"provenance": provenance,
@@ -312,15 +312,15 @@ func verifyResult(d *descriptors, result protoreflect.Message, keyring *keyringF
 		"receipt":    receipt,
 	}, keyID)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	payload := mustCanonical(document)
 	mac := hmac.New(sha256.New, key)
 	mac.Write(payload)
 	if !hmac.Equal(mac.Sum(nil), rawSignature) {
-		return "", errors.New("result signature does not verify")
+		return "", "", errors.New("result signature does not verify")
 	}
-	return receipt["attempt_id"].(string), nil
+	return receipt["attempt_id"].(string), keyID, nil
 }
 
 func mustCanonical(document map[string]any) []byte {
@@ -690,6 +690,11 @@ func main() {
 	reps := flag.Int("reps", 2, "reps")
 	queueTimeout := flag.Int("queue-timeout-ms", 30000, "queue timeout ms")
 	candidateTimeout := flag.Int("candidate-timeout-ms", 120000, "candidate timeout ms")
+	flowMode := flag.String("flow", "conformance", "conformance or reattach (replay an accepted job)")
+	retrySource := flag.String("retry-source-file", "", "source whose first attempt must be interrupted")
+	retryRequestID := flag.String("retry-request-id", "go-conformance-retry-1", "forced-interruption request id")
+	expectAttemptID := flag.String("expect-attempt-id", "", "reattach: assert the replayed attempt id")
+	expectKeyID := flag.String("expect-key-id", "", "assert the result signature key id")
 	cancelSource := flag.String("cancel-source-file", "", "second job source to cancel")
 	cancelRequestID := flag.String("cancel-request-id", "go-conformance-cancel-1", "second request id")
 	timeout := flag.Duration("timeout", 30*time.Second, "per-RPC timeout")
@@ -697,6 +702,14 @@ func main() {
 	flag.Parse()
 	if *descPath == "" || *endpoint == "" || *ca == "" || *cert == "" || *key == "" || *tokenFile == "" || *keyringPath == "" || *targetID == "" || *siteID == "" || *deviceID == "" || *workerBuild == "" || *taskPackDigest == "" || *runID == "" || *sessionID == "" || *task == "" || *fingerprint == "" || *sourceFile == "" {
 		fmt.Fprintln(os.Stderr, "missing required flags")
+		os.Exit(2)
+	}
+	if *flowMode != "conformance" && *flowMode != "reattach" {
+		fmt.Fprintln(os.Stderr, "--flow must be conformance or reattach")
+		os.Exit(2)
+	}
+	if *flowMode == "conformance" && *retrySource == "" {
+		fmt.Fprintln(os.Stderr, "--retry-source-file is required for the conformance flow")
 		os.Exit(2)
 	}
 	report := map[string]any{"schema_version": 1, "client": "go", "ok": true, "steps": []map[string]any{}, "evaluator_endpoint": *endpoint}
@@ -766,21 +779,23 @@ func main() {
 		report: report,
 	}
 
-	// 1. Unauthenticated capabilities must be refused.
-	unauth := &conformance{ctx: context.Background(), conn: conn, d: d, token: "", timeout: *timeout, report: report}
-	if _, err := unauth.capabilities(nil); err == nil {
-		client.step("unauthenticated_capabilities_rejected", false, "call succeeded", nil)
-	} else {
-		client.step("unauthenticated_capabilities_rejected", status.Code(err) == 16, err.Error(), nil)
-	}
+	// 1. Unauthenticated capabilities must be refused (conformance flow).
+	if *flowMode == "conformance" {
+		unauth := &conformance{ctx: context.Background(), conn: conn, d: d, token: "", timeout: *timeout, report: report}
+		if _, err := unauth.capabilities(nil); err == nil {
+			client.step("unauthenticated_capabilities_rejected", false, "call succeeded", nil)
+		} else {
+			client.step("unauthenticated_capabilities_rejected", status.Code(err) == 16, err.Error(), nil)
+		}
 
-	// 2. Unknown required feature fails closed with a typed detail.
-	unsupported := "go-conformance-unsupported"
-	if _, err := client.capabilities([]string{"durable-jobs", unsupported}); err == nil {
-		client.step("unsupported_required_feature_rejected", false, "capabilities succeeded", nil)
-	} else {
-		missing := missingFeatures(d, err)
-		client.step("unsupported_required_feature_rejected", status.Code(err) == 9 && contains(missing, unsupported), err.Error(), map[string]any{"missing_features": missing})
+		// 2. Unknown required feature fails closed with a typed detail.
+		unsupported := "go-conformance-unsupported"
+		if _, err := client.capabilities([]string{"durable-jobs", unsupported}); err == nil {
+			client.step("unsupported_required_feature_rejected", false, "capabilities succeeded", nil)
+		} else {
+			missing := missingFeatures(d, err)
+			client.step("unsupported_required_feature_rejected", status.Code(err) == 9 && contains(missing, unsupported), err.Error(), map[string]any{"missing_features": missing})
+		}
 	}
 
 	// 3. Capabilities and the three identities.
@@ -801,7 +816,8 @@ func main() {
 	expected := expectedFromProvenance(provenance)
 	digest := options.digest()
 
-	// 4. Submit + Watch/GetJob, with explicit Retry for an interrupted attempt.
+	// 4. Submit + Watch/GetJob.  A completed job replays; an interrupted one is
+	// resumed only through the explicit Retry RPC.
 	snapshot, err := client.submit(options, expected, getString(capMsg, "capability_id"))
 	if err != nil {
 		fail(err)
@@ -826,7 +842,7 @@ func main() {
 		if err != nil {
 			fail(err)
 		}
-		client.step("retry_interrupted_attempt", getEnum(snapshot, "state") == 5, "", map[string]any{"attempt_id": attempt})
+		client.step("submit_watch_result_after_retry", getEnum(snapshot, "state") == 5, "", map[string]any{"attempt_id": attempt})
 	}
 	client.step("submit_watch_result", getEnum(snapshot, "state") == 5, "", nil)
 
@@ -837,25 +853,93 @@ func main() {
 	}
 	client.step("getjob_terminal_snapshot", getEnum(finalSnapshot, "state") == 5, "", map[string]any{"last_sequence": getUint(finalSnapshot, "last_sequence")})
 	verifiedAttempt := ""
+	verifiedKeyID := ""
 	if has(finalSnapshot, "result") {
-		verifiedAttempt, err = verifyResult(d, getMessage(finalSnapshot, "result"), keyring, expected.SiteID, shaHex(source))
+		verifiedAttempt, verifiedKeyID, err = verifyResult(d, getMessage(finalSnapshot, "result"), keyring, expected.SiteID, shaHex(source))
 		if err != nil {
 			client.step("verify_result_signature", false, err.Error(), nil)
 		} else {
-			client.step("verify_result_signature", true, "", map[string]any{"attempt_id": verifiedAttempt})
+			client.step("verify_result_signature", true, "", map[string]any{"attempt_id": verifiedAttempt, "key_id": verifiedKeyID})
 		}
 	} else {
 		client.step("verify_result_signature", false, "terminal snapshot has no result", nil)
 	}
-
-	// 6. Retry of a completed job is refused.
-	fresh, err := client.capabilities([]string{"durable-jobs", "attempt-receipts", "progress"})
-	if err == nil {
-		freshMsg := fresh.ProtoReflect()
-		freshExpected := expectedFromProvenance(getMessage(freshMsg, "provenance"))
-		_, err = client.retry(freshExpected, options.RequestID, digest, verifiedAttempt, getString(freshMsg, "capability_id"))
+	if *expectKeyID != "" {
+		client.step("result_uses_expected_key", verifiedKeyID == *expectKeyID, "", map[string]any{"key_id": verifiedKeyID, "expected_key_id": *expectKeyID})
 	}
-	client.step("retry_completed_rejected", err != nil && status.Code(err) == 9, errorText(err), nil)
+	if *expectAttemptID != "" {
+		client.step("reattach_matches_historical_attempt", verifiedAttempt != "" && verifiedAttempt == *expectAttemptID, "", map[string]any{"attempt_id": verifiedAttempt, "expected_attempt_id": *expectAttemptID})
+	}
+
+	if *flowMode == "conformance" {
+		// 6. Force an interrupted attempt, then create the next attempt with the
+		// explicit Retry RPC and prove the new attempt/fence strictly increased.
+		retryBytes, readErr := os.ReadFile(*retrySource)
+		if readErr != nil {
+			fail(readErr)
+		}
+		retryOptions := options
+		retryOptions.RequestID = *retryRequestID
+		retryOptions.Source = retryBytes
+		retryOptions.CandidateTimeoutMs = 20000
+		caps, err := client.capabilities([]string{"durable-jobs", "attempt-receipts", "progress"})
+		if err != nil {
+			fail(err)
+		}
+		capsMsg := caps.ProtoReflect()
+		retryExpected := expectedFromProvenance(getMessage(capsMsg, "provenance"))
+		retryDigest := retryOptions.digest()
+		submitted, err := client.submit(retryOptions, retryExpected, getString(capsMsg, "capability_id"))
+		if err != nil {
+			fail(err)
+		}
+		interrupted, err := client.watchToTerminal(retryExpected, retryOptions.RequestID, retryDigest, getUint(submitted, "last_sequence"), time.Time{})
+		if err != nil {
+			fail(err)
+		}
+		interruptedAttempt := getString(getMessage(interrupted, "current_attempt"), "attempt_id")
+		interruptedFence := getUint(getMessage(interrupted, "current_attempt"), "lease_fence")
+		client.step("interrupted_before_retry", getEnum(interrupted, "state") == 4 && interruptedAttempt != "", "", map[string]any{
+			"state":       int(getEnum(interrupted, "state")),
+			"attempt_id":  interruptedAttempt,
+			"lease_fence": strconv.FormatUint(interruptedFence, 10),
+		})
+		if getEnum(interrupted, "state") == 4 && interruptedAttempt != "" {
+			fresh, err := client.capabilities([]string{"durable-jobs", "attempt-receipts", "progress"})
+			if err != nil {
+				fail(err)
+			}
+			freshMsg := fresh.ProtoReflect()
+			retryExpected = expectedFromProvenance(getMessage(freshMsg, "provenance"))
+			retried, err := client.retry(retryExpected, retryOptions.RequestID, retryDigest, interruptedAttempt, getString(freshMsg, "capability_id"))
+			if err != nil {
+				client.step("retry_interrupted_attempt", false, err.Error(), map[string]any{"interrupted_attempt_id": interruptedAttempt})
+			} else {
+				completed, err := client.watchToTerminal(retryExpected, retryOptions.RequestID, retryDigest, getUint(retried, "last_sequence"), time.Time{})
+				if err != nil {
+					fail(err)
+				}
+				retriedAttempt := getString(getMessage(completed, "current_attempt"), "attempt_id")
+				retriedFence := getUint(getMessage(completed, "current_attempt"), "lease_fence")
+				client.step("retry_interrupted_attempt", getEnum(completed, "state") == 5 && retriedAttempt != "" && retriedAttempt != interruptedAttempt && retriedFence > interruptedFence, "", map[string]any{
+					"state":                   int(getEnum(completed, "state")),
+					"attempt_id":              retriedAttempt,
+					"interrupted_attempt_id":  interruptedAttempt,
+					"lease_fence":             strconv.FormatUint(retriedFence, 10),
+					"interrupted_lease_fence": strconv.FormatUint(interruptedFence, 10),
+				})
+			}
+		}
+
+		// 7. Retry of a completed job is refused.
+		fresh, err := client.capabilities([]string{"durable-jobs", "attempt-receipts", "progress"})
+		if err == nil {
+			freshMsg := fresh.ProtoReflect()
+			freshExpected := expectedFromProvenance(getMessage(freshMsg, "provenance"))
+			_, err = client.retry(freshExpected, options.RequestID, digest, verifiedAttempt, getString(freshMsg, "capability_id"))
+		}
+		client.step("retry_completed_rejected", err != nil && status.Code(err) == 9, errorText(err), nil)
+	}
 
 	// 7. Cancel a second job.
 	if *cancelSource != "" {

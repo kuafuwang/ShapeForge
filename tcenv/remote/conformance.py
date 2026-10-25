@@ -78,12 +78,19 @@ def run_conformance(
     factory: GrpcEvaluatorFactory,
     request,
     second_request=None,
+    retry_request=None,
     token: str = "",
     required_features: tuple[str, ...] = DEFAULT_REQUIRED_FEATURES,
     timeout_s: float = 30.0,
     poll_s: float = 0.05,
 ) -> dict[str, Any]:
-    """Run the conformance flow and return a report; never raises for a failed step."""
+    """Run the conformance flow and return a report; never raises for a failed step.
+
+    ``retry_request`` must name a payload whose first attempt the evaluator
+    interrupts; the flow then proves the explicit ``Retry`` RPC (not an implicit
+    second Submit) creates a new attempt.  A conformance run without that
+    request is not evidence for the retry semantics.
+    """
 
     report: dict[str, Any] = {
         "schema_version": 1,
@@ -158,6 +165,15 @@ def run_conformance(
         else:
             _step(report, "submit_watch_result", ok=False, detail=f"{code}: {exc}")
 
+    report["primary"] = {
+        "request_id": external.request_id,
+        "request_digest": external.request_digest,
+        "attempt_id": "" if result is None else result.receipt.get("attempt_id", ""),
+        "receipt_id": "" if result is None else result.receipt.get("receipt_id", ""),
+        "signature_key_id": "" if result is None else result.receipt.get("signature_key_id", ""),
+        "evaluator_epoch": "" if result is None else result.provenance.epoch,
+    }
+
     # 5. GetJob must agree with the watched terminal snapshot.
     try:
         snapshot = stub.GetJob(
@@ -207,7 +223,51 @@ def run_conformance(
             reason=detail.reason if detail is not None else "",
         )
 
-    # 7. Cancel a second job and confirm the durable terminal state.
+    # 7. A forced interrupted attempt must be resumed by the explicit Retry RPC
+    # and create a strictly newer attempt/lease fence.
+    if retry_request is not None:
+        interrupted_attempt = ""
+        interrupted_fence = 0
+        try:
+            factory.formal(retry_request)
+            _step(
+                report, "interrupted_before_retry", ok=False,
+                detail="the fault request completed instead of interrupting",
+            )
+        except Exception as exc:  # noqa: BLE001 - typed failure is expected here
+            code = getattr(exc, "code", "")
+            retryable = bool(getattr(exc, "retryable", False))
+            snapshot = None
+            if retryable and code in {"interrupted", "frontend_stopped", "worker_failed", "worker_protocol_error"}:
+                try:
+                    snapshot = factory.get_job(retry_request)
+                except Exception:  # noqa: BLE001
+                    snapshot = None
+            state = gc.state_from_proto(snapshot.state) if snapshot is not None else ""
+            if snapshot is not None and snapshot.HasField("current_attempt"):
+                interrupted_attempt = snapshot.current_attempt.attempt_id
+                interrupted_fence = int(snapshot.current_attempt.lease_fence)
+            _step(
+                report, "interrupted_before_retry",
+                ok=retryable and state == "interrupted" and bool(interrupted_attempt),
+                detail=code, attempt_id=interrupted_attempt, lease_fence=interrupted_fence,
+            )
+        if interrupted_attempt:
+            try:
+                resumed = factory.formal_resume(retry_request)
+                resumed_attempt = resumed.receipt.get("attempt_id", "")
+                resumed_fence = int(resumed.receipt.get("lease_fence", "0"))
+                _step(
+                    report, "submit_watch_result_after_retry",
+                    ok=bool(resumed_attempt) and resumed_attempt != interrupted_attempt
+                    and resumed_fence > interrupted_fence,
+                    attempt_id=resumed_attempt, interrupted_attempt_id=interrupted_attempt,
+                    lease_fence=resumed_fence, interrupted_lease_fence=interrupted_fence,
+                )
+            except Exception as exc:  # noqa: BLE001
+                _step(report, "submit_watch_result_after_retry", ok=False, detail=str(exc))
+
+    # 8. Cancel a second job and confirm the durable terminal state.
     if second_request is not None:
         second_external = ExternalEvaluationRequest.from_legacy(second_request)
         try:

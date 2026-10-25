@@ -417,6 +417,22 @@ class GrpcEvaluator:
             # is reconciled by the next GetJob.
             return
 
+    def get_job(self, request: EvaluationRequest) -> pb.JobSnapshot:
+        """Authenticated GetJob for Submit/Retry reconciliation.
+
+        The call never submits, retries or cancels; it returns the durable
+        snapshot so a caller can read the current attempt and lease fence.
+        """
+
+        external = self._external_request(request)
+        self._handshake()
+        snapshot = self._get_job(external)
+        if snapshot is None:
+            raise EvaluationUnavailable(
+                "job_not_found", "the accepted job is not visible in this grant scope",
+            )
+        return snapshot
+
     def formal(self, request: EvaluationRequest) -> EvaluationResult:
         if request.kind != "formal_eval":
             raise ValueError("formal() requires kind='formal_eval'")
@@ -1045,6 +1061,11 @@ class GrpcEvaluatorFactory:
         if request.kind != "formal_eval":
             raise ValueError("formal_resume() requires kind='formal_eval'")
         return self._for_request(request).formal_resume(request)
+
+    def get_job(self, request: EvaluationRequest):
+        """Read the durable snapshot without submitting, retrying or cancelling."""
+
+        return self._for_request(request).get_job(request)
 
     def selfcheck_resume(self, request: EvaluationRequest) -> EvaluationResult:
         if request.kind != "selfcheck":

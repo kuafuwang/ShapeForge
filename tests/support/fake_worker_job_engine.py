@@ -56,6 +56,17 @@ def main() -> int:
         time.sleep(0.1)
     if b"FAIL_FIRST" in source and fence == 1:
         return 7
+    fail_dir = os.environ.get("FAKE_JOB_FAIL_DIR")
+    if b"FAIL_ONCE" in source and fail_dir:
+        # Per-request failure marker: independent of the global lease fence, so
+        # a retry probe need not be the very first attempt in the store.
+        marker = Path(fail_dir) / request_id
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        if marker.exists():
+            pass
+        else:
+            marker.write_text("1", encoding="utf-8")
+            return 7
     if b"EXIT" in source:
         return 7
     if b"NO_RESULT" in source:

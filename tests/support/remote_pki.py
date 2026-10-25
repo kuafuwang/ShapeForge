@@ -28,6 +28,8 @@ class Pki:
     server_key: Path
     client_cert: Path
     client_key: Path
+    rotated_client_cert: Path
+    rotated_client_key: Path
     other_ca_cert: Path
     other_client_cert: Path
     other_client_key: Path
@@ -124,6 +126,8 @@ def make_pki(directory: Path, *, san: str = "DNS:localhost,IP:127.0.0.1") -> Pki
 
     server_cert, server_key = issued("server", client=False)
     client_cert, client_key = issued("client", client=True)
+    # A second, currently trusted client leaf for normal mTLS rotation tests.
+    rotated_client_cert, rotated_client_key = issued("client-rotated", client=True)
 
     other_ca_cert, other_ca_key = root / "other-ca.pem", root / "other-ca.key"
     other_config = _config(
@@ -141,7 +145,8 @@ def make_pki(directory: Path, *, san: str = "DNS:localhost,IP:127.0.0.1") -> Pki
     )
 
     for path in (ca_key, ca_cert, other_ca_key, other_ca_cert, server_cert, client_cert,
-                 other_client_cert, server_key, client_key, other_client_key):
+                 other_client_cert, server_key, client_key, other_client_key,
+                 rotated_client_cert, rotated_client_key):
         path.chmod(0o600)
     return Pki(
         root=root,
@@ -151,6 +156,8 @@ def make_pki(directory: Path, *, san: str = "DNS:localhost,IP:127.0.0.1") -> Pki
         server_key=server_key,
         client_cert=client_cert,
         client_key=client_key,
+        rotated_client_cert=rotated_client_cert,
+        rotated_client_key=rotated_client_key,
         other_ca_cert=other_ca_cert,
         other_client_cert=other_client_cert,
         other_client_key=other_client_key,

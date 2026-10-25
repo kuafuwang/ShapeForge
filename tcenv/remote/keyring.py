@@ -130,12 +130,16 @@ def dump_keyring(keyring: KeyringFile, *, active_key_id: str | None = None) -> d
         _validate_key_id(active)
         if active not in keyring.trusted:
             raise KeyringError("active_key_id must name a trusted, non-revoked key")
-    return {
+    document = {
         "schema_version": SCHEMA_VERSION,
         "keys": {key_id: key.hex() for key_id, key in sorted(keyring.keys.items()) if key_id not in keyring.revoked},
         "revoked": sorted(keyring.revoked),
-        "active_key_id": active,
     }
+    # A verifier-only host keyring has no signer, so the optional field is
+    # omitted rather than written as an invalid empty key id.
+    if active:
+        document["active_key_id"] = active
+    return document
 
 
 def write_keyring_file(path: Path | str, keyring: KeyringFile) -> Path:

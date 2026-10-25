@@ -31,6 +31,7 @@ from .grants import load_grants_file
 from .identity import ServiceIdentity
 from .job_engine import JobEngine
 from .keyring import load_keyring_file
+from .revocation import load_revocation_file
 from .task_pack import TaskPack, production_fingerprint_provider, load_task_pack
 
 LOGGER = logging.getLogger("tcenv.remote.grpc_service")
@@ -102,10 +103,17 @@ def verify_deployment(
         raise ValueError("every grant must target the deployed --target-id")
     keyring = load_keyring_file(args.signing_keyring_file)
     keyring.require_active()
+    _revoked_certificates(args)
     for path in (args.certificate_file, args.private_key_file, args.client_ca_file):
         if not Path(path).is_file():
             raise ValueError(f"TLS material is missing: {path}")
     return pack, identity, grants, keyring
+
+
+def _revoked_certificates(args: argparse.Namespace) -> frozenset[str]:
+    if getattr(args, "revoked_client_certificates", None) is None:
+        return frozenset()
+    return load_revocation_file(args.revoked_client_certificates)
 
 
 def build_stack(
@@ -144,6 +152,7 @@ def build_stack(
                 client_ca_file=Path(args.client_ca_file),
                 auth_max_failures=args.auth_max_failures,
                 auth_window_s=args.auth_window_s,
+                revoked_client_certificates=_revoked_certificates(args),
             ),
         )
     except Exception:
@@ -170,6 +179,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--certificate-file", required=True, type=Path)
     parser.add_argument("--private-key-file", required=True, type=Path)
     parser.add_argument("--client-ca-file", required=True, type=Path)
+    parser.add_argument(
+        "--revoked-client-certificates", type=Path, default=None,
+        help="0600 JSON list of revoked client leaf-certificate SHA-256 fingerprints",
+    )
     parser.add_argument("--worker-module", default="tcenv.remote.worker")
     parser.add_argument("--measurement-kind", choices=["measured", "simulated"], default="measured")
     parser.add_argument("--publication-allowed", action="store_true")
@@ -197,7 +210,8 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"ok site={identity.site_id} target={identity.target_id} backend={identity.backend} "
             f"task_pack_digest={pack.digest} fingerprints={len(pack.fingerprints)} "
-            f"grants={len(grants)} active_key_id={active_key_id}"
+            f"grants={len(grants)} active_key_id={active_key_id} "
+            f"revoked_client_certificates={len(_revoked_certificates(args))}"
         )
         return 0
     stack = build_stack(args)
