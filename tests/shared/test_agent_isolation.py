@@ -689,3 +689,14 @@ def test_a_helper_that_echoes_the_token_does_not_leak_it(tmp_path):
         seam.provision(credential, env_spec="x")
     assert credential.token not in str(raised.value)
     assert "[redacted]" in str(raised.value)
+
+
+def test_remote_notes_cannot_import_selfcheck_rows(tmp_path):
+    """The evidence guard refuses self-check artifacts even if a future token pattern allows them."""
+    from taic.session_runtime import _remote_evidence_allowed
+
+    assert _remote_evidence_allowed("probe.py") is True
+    assert _remote_evidence_allowed("notes/bench.md") is True
+    assert _remote_evidence_allowed("self_checks.jsonl") is False
+    assert _remote_evidence_allowed(".selfcheck/self_checks.jsonl") is False
+    assert _remote_evidence_allowed("a/.selfcheck/x.json") is False

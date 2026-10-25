@@ -13,6 +13,8 @@ import json
 import sys
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
 
 # 一次新搜索从这里进入。load_config 把预设和命令行里非空的预算、分支数、轮数上限合成 LLMConfig 与 SearchConfig，再交给 Orchestrator.run。有 best_speedup 则进程成功，一颗合格内核都没有则失败。
 def _recorded_target(run_dir: Path, requested: str | None) -> str:
@@ -454,14 +456,29 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
             current = {"harness": workspace.harness, "runtime": workspace.runtime, "root": workspace.root}
             if not isinstance(resolved, dict) or any(resolved.get(key) != value for key, value in current.items()):
                 raise ResumeRefused("remote workspace placement differs from the original run", 5)
-            recorded_isolation = resolved.get("isolation") or {}
-            isolation = getattr(workspace, "isolation", None)
-            current_isolation = (
-                {"credential_seam": isolation.credential_seam, "simulated": isolation.simulated}
-                if isolation is not None else {}
-            )
-            if not isinstance(recorded_isolation, dict):
+            recorded_isolation = resolved.get("isolation")
+            if recorded_isolation is not None and not isinstance(recorded_isolation, dict):
                 raise ResumeRefused("cannot resume: execution.json has a malformed isolation block", 5)
+            if recorded_isolation is None:
+                recorded_isolation = {}
+            isolation = getattr(workspace, "isolation", None)
+            current_isolation: dict = {}
+            if isolation is not None:
+                import hashlib
+
+                from .agent_isolation import default_trusted_paths
+
+                trusted = sorted(
+                    str(path)
+                    for path in default_trusted_paths(run_dir, repo_root=REPO_ROOT)
+                    + tuple(Path(path) for path in isolation.trusted_evaluator_paths)
+                )
+                current_isolation = {
+                    "credential_seam": isolation.credential_seam,
+                    "simulated": isolation.simulated,
+                    "agent_kind": isolation.agent_kind,
+                    "trusted_paths_sha256": hashlib.sha256("\n".join(trusted).encode("utf-8")).hexdigest(),
+                }
             for key, value in current_isolation.items():
                 if recorded_isolation.get(key) != value:
                     raise ResumeRefused(f"remote workspace isolation {key} differs from the original run", 5)

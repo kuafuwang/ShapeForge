@@ -671,6 +671,39 @@ class SshWorkspaceTransport:
 
     # -- fixed commands --------------------------------------------------------------
 
+    def _segments(self, workdir: str, extra: Iterable[str] = ()) -> list[str]:
+        """Split ``workdir`` into checked components below the configured root."""
+        root = self.config.root.rstrip("/") or "/"
+        prefix = root + "/"
+        if not workdir.startswith(prefix):
+            raise WorkspaceError("path", f"the remote workdir {workdir!r} is not under the configured root")
+        parts = [part for part in workdir[len(prefix):].split("/") if part]
+        for part in parts:
+            if not _RUN_TOKEN.fullmatch(part):
+                raise WorkspaceError("path", f"the remote path component {part!r} is outside the allowlist")
+        for part in extra:
+            text = str(part)
+            if text in (".", "..") or not _SEGMENT.fullmatch(text):
+                raise WorkspaceError("path", f"the remote path component {text!r} is outside the allowlist")
+            parts.append(text)
+        return parts
+
+    def _walk(self, workdir: str, extra: Iterable[str] = (), *, final: str = "") -> str:
+        """A fixed shell walk from the configured root, refusing every symlinked component.
+
+        A leaf-only ``test ! -L`` is not enough: a symlinked session directory or a symlinked
+        subdirectory would still redirect a read.  The walk covers every component below the
+        operator-owned root; nothing an agent can create changes where a path resolves.
+        """
+        parts = self._segments(workdir, extra)
+        pieces = [f"p={_quote(self.config.root)}", '[ ! -L "$p" ] || { echo taic: the remote workspace root is a symlink >&2; exit 4; }']
+        for part in parts:
+            pieces.append(f'p="$p"/{_quote(part)}')
+            pieces.append('[ ! -L "$p" ] || { echo taic: a path component below the remote workspace root is a symlink >&2; exit 4; }')
+        if final:
+            pieces.append(final)
+        return "; ".join(pieces)
+
     def make_workdir(self, workdir: str) -> None:
         """Create the session workdir and its marker parent.
 
@@ -679,8 +712,8 @@ class SshWorkspaceTransport:
         a staged input to another path on the host.
         """
         self._checked(
-            f"umask 077; mkdir -p -- {_quote(workdir)} && [ ! -L {_quote(workdir)} ] && "
-            f"mkdir -p -- {_quote(workdir + '/.taic')} && [ ! -L {_quote(workdir + '/.taic')} ]",
+            f"umask 077; mkdir -p -- {_quote(workdir)} || exit 1; {self._walk(workdir)}; "
+            f"mkdir -p -- {_quote(workdir + '/.taic')} || exit 1; {self._walk(workdir, ['.taic'])}",
             what="create the remote workspace",
         )
 
@@ -759,17 +792,30 @@ class SshWorkspaceTransport:
         return code == 0
 
     def remove(self, workdir: str, receipt: WorkspaceReceipt | None) -> bool:
-        """Remove the session directory only when it still carries our receipt.
+        """Remove the session directory when it is one of ours.
 
-        Returns whether it was removed.  A directory without a receipt is left alone: it is
-        not ours to delete.  A removal that fails is a typed cleanup error.
+        Returns whether it was removed.  A directory with no marker at all is left alone: it
+        is not ours to delete.  A broken or symlinked receipt cannot make cleanup refuse; the
+        marker still proves this is a session directory under our root, and ``rm -rf`` on a
+        symlink removes the link rather than following it.
         """
-        current = self.read_receipt(workdir)
-        if current is None:
-            if self.exists(workdir):
+        current: WorkspaceReceipt | None = None
+        broken = False
+        try:
+            current = self.read_receipt(workdir)
+        except WorkspaceError as exc:
+            if exc.kind != "path":
+                raise
+            broken = True
+        if current is None and not broken:
+            if not self.exists(workdir):
+                return False
+            marker_code, _out, _err = self._run(
+                f"test -L {_quote(workdir + '/.taic')} || test -e {_quote(workdir + '/.taic')}"
+            )
+            if marker_code != 0:
                 raise WorkspaceError("conflict", f"the remote workspace {workdir} has no receipt; leaving it alone")
-            return False
-        if receipt is not None and current.receipt_id != receipt.receipt_id:
+        if receipt is not None and current is not None and current.receipt_id != receipt.receipt_id:
             raise WorkspaceError("conflict", f"the remote workspace {workdir} belongs to another session receipt")
         self._checked(f"rm -rf -- {_quote(workdir)}", what="remove the remote workspace")
         if self.exists(workdir):
@@ -778,7 +824,7 @@ class SshWorkspaceTransport:
 
     # -- orphan reaping --------------------------------------------------------------
 
-    def list_receipts(self, run_token: str) -> list[tuple[str, WorkspaceReceipt]]:
+    def list_receipts(self, run_token: str) -> list[tuple[str, WorkspaceReceipt | None]]:
         """List the session directories this run's token owns on the host.
 
         The command is fixed and bounded; every returned path is checked to be a session
@@ -793,7 +839,7 @@ class SshWorkspaceTransport:
             if _code != 0:
                 return []
             raise WorkspaceError("unavailable", f"cannot list the remote run root: {_bounded_text(err)}")
-        found: list[tuple[str, WorkspaceReceipt]] = []
+        found: list[tuple[str, WorkspaceReceipt | None]] = []
         prefix = root + "/"
         for line in out.decode("utf-8", "replace").splitlines():
             path = line.strip()
@@ -803,9 +849,12 @@ class SshWorkspaceTransport:
             label = workdir[len(prefix):].split("/", 1)[0]
             if not _RUN_TOKEN.fullmatch(label) or "/" in label:
                 continue
-            receipt = self.read_receipt(workdir)
-            if receipt is not None:
-                found.append((workdir, receipt))
+            try:
+                receipt = self.read_receipt(workdir)
+            except WorkspaceError:
+                # A broken or symlinked receipt must not make its directory unreapable.
+                receipt = None
+            found.append((workdir, receipt))
             if len(found) >= 256:
                 break
         return found
@@ -819,7 +868,7 @@ class SshWorkspaceTransport:
         active = {str(label) for label in active_labels}
         removed: list[str] = []
         for workdir, receipt in self.list_receipts(run_token):
-            if str(receipt.document.get("run_id") or "") != str(run_id):
+            if receipt is not None and str(receipt.document.get("run_id") or "") != str(run_id):
                 continue
             label = workdir.rsplit("/", 1)[-1]
             if label in active:
@@ -839,9 +888,10 @@ class SshWorkspaceTransport:
         """
         clean = _safe_relative(relative)
         target = workdir + "/" + clean
+        parent_parts = clean.split("/")[:-1]
         parent = target.rsplit("/", 1)[0]
         command = (
-            f"umask 077; mkdir -p -- {_quote(parent)} && [ ! -L {_quote(parent)} ] && "
+            f"umask 077; mkdir -p -- {_quote(parent)}; {self._walk(workdir, parent_parts)}; "
             f"temp=$(mktemp -- {_quote(parent + '/.taic.XXXXXX')}) && "
             f"{{ cat > \"$temp\" && mv -f -- \"$temp\" {_quote(target)}; }} || "
             f"{{ [ -z \"$temp\" ] || rm -f -- \"$temp\"; exit 1; }}"
@@ -856,16 +906,13 @@ class SshWorkspaceTransport:
         cap = self.config.max_file_bytes if limit is None else int(limit)
         clean = _safe_relative(relative)
         target = workdir + "/" + clean
-        code, _out, _err = self._run(f"test -f {_quote(target)}")
+        code, _out, err = self._run(self._walk(workdir, clean.split("/"), final='[ -f "$p" ] || exit 3'))
+        if code == 4:
+            raise WorkspaceError("path", f"the remote artifact {clean} has a symlinked component and was refused")
         if code != 0:
-            # `test -f` is our fixed probe for "this file is not there": a broken host
-            # is a different return code and stays an error.
-            if code in (1, 2):
+            if code == 3:
                 return None
-            raise WorkspaceError("unavailable", f"cannot reach the host to read {clean}", returncode=code)
-        code, _out, _err = self._run(f"test ! -L {_quote(target)}")
-        if code != 0:
-            raise WorkspaceError("path", f"the remote artifact {clean} is a symlink and was refused")
+            raise WorkspaceError("unavailable", f"cannot reach the host to read {clean}: {_bounded_text(err)}", returncode=code)
         code, out, err = self._run(f"wc -c -- {_quote(target)}")
         if code != 0:
             text = _bounded_text(err) or "no diagnostic"

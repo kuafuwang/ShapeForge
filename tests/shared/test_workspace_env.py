@@ -383,11 +383,14 @@ def test_a_timeout_kills_the_local_process_group(tmp_path):
 
 def test_a_broken_command_is_a_typed_protocol_error(tmp_path):
     """A non-zero fixed command is a protocol failure, not a candidate result."""
-    work, config, _root = _work(tmp_path)
+    work, config, root = _work(tmp_path)
     fake = _FakeSsh(tmp_path / "fake-ssh")
     transport = fake.transport(config)
+    # The configured root is a regular file, so the fixed mkdir command cannot succeed.
+    root.parent.mkdir(parents=True, exist_ok=True)
+    root.write_text("not a directory", encoding="utf-8")
     with pytest.raises(WorkspaceError) as raised:
-        transport.make_workdir("/proc/definitely-not-writable/taic")
+        transport.make_workdir(str(root / "run-1" / "init"))
     assert raised.value.kind == "protocol"
 
 
@@ -523,3 +526,57 @@ def test_the_saved_runtime_argv_carries_its_own_destination_options(tmp_path):
     assert argv[-2:] == ["box-alias", "echo hi"]
     assert ["-F", "/tmp/ssh_config"] == argv[argv.index("-F"):argv.index("-F") + 2]
     assert "-p" not in argv
+
+
+def test_collection_refuses_a_symlinked_session_directory_or_subdirectory(tmp_path):
+    """A symlinked workdir or subdirectory cannot redirect a read to another host path."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    manifest = _manifest(work, ["TASK.md"])
+    receipt = _receipt(work, manifest)
+    workdir = str(root / "run-1" / "init")
+    transport.stage(workdir, work, manifest, receipt)
+
+    victim = root / "victim"
+    victim.mkdir(parents=True)
+    (victim / "kernel.metal").write_text("stolen", encoding="utf-8")
+    (Path(workdir) / "sub").symlink_to(victim)
+    with pytest.raises(WorkspaceError, match="symlinked component"):
+        transport.collect(workdir, ["sub/kernel.metal"])
+
+    import shutil
+
+    shutil.rmtree(workdir)
+    Path(workdir).symlink_to(victim)
+    with pytest.raises(WorkspaceError):
+        transport.collect(workdir, ["kernel.metal"])
+
+
+def test_a_broken_receipt_cannot_block_cleanup_or_reaping(tmp_path):
+    """A symlinked receipt is still a session directory of ours; removal and the sweep proceed."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    manifest = _manifest(work, ["TASK.md"])
+    from taic.workspace_env import run_token
+
+    token = run_token(tmp_path / "run")
+    root_dir = Path(config.root) / token
+    good = WorkspaceReceipt.build(
+        run_id="run", session_label="init", session_id="init", runtime="gpu-box",
+        workdir=str(root_dir / "init"), host_work=work, manifest=manifest, prompt_surface_sha256="a" * 64,
+    )
+    transport.stage(str(root_dir / "init"), work, manifest, good)
+    (root_dir / "init" / ".taic" / "session.json").unlink()
+    (root_dir / "init" / ".taic" / "session.json").symlink_to(root / "elsewhere.json")
+    listed = transport.list_receipts(token)
+    assert listed and listed[0][1] is None
+    assert transport.remove(str(root_dir / "init"), good) is True
+    assert not (root_dir / "init").exists()
+
+    transport.stage(str(root_dir / "init2"), work, manifest, _receipt(work, manifest, label="init2"))
+    (root_dir / "init2" / ".taic" / "session.json").unlink()
+    (root_dir / "init2" / ".taic" / "session.json").symlink_to(root / "elsewhere.json")
+    removed = transport.reap_orphans(token, "run", set())
+    assert "init2" in removed

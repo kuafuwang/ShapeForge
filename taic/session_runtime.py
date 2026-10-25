@@ -529,7 +529,10 @@ class SshWorkspaceKernelSessionRunner:
         missing = [name for name in basis if name not in found]
         self._materialize(host, found)
         text = b"".join(found.get(name, b"") for name in ("NOTES.md", "FEEDBACK.md"))
-        candidates = self._agent.evidence_candidates(text.decode("utf-8", "replace"))
+        candidates = [
+            name for name in self._agent.evidence_candidates(text.decode("utf-8", "replace"), limit=16)
+            if _remote_evidence_allowed(name)
+        ]
         extra: dict[str, bytes] = {}
         if candidates:
             extra = self._transport.collect(layout.workdir, candidates)
@@ -547,9 +550,33 @@ class SshWorkspaceKernelSessionRunner:
         """Write collected bytes atomically under the canonical host directory."""
         from .workspace_env import check_relative_destination
 
+        import tempfile
+
         for relative, data in files.items():
             target = check_relative_destination(host, relative)
             target.parent.mkdir(parents=True, exist_ok=True)
-            temp = target.with_name(target.name + ".taic.tmp")
-            temp.write_bytes(data)
-            os.replace(temp, target)
+            handle, temp_name = tempfile.mkstemp(prefix=".taic-", dir=str(target.parent))
+            try:
+                with os.fdopen(handle, "wb") as stream:
+                    stream.write(data)
+                os.replace(temp_name, target)
+            except BaseException:
+                try:
+                    os.unlink(temp_name)
+                except OSError:
+                    pass
+                raise
+
+
+def _remote_evidence_allowed(relative: str) -> bool:
+    """Whether a file named by remote notes may be imported into the canonical workspace.
+
+    Self-check artifacts never may: a remote workspace has no self-check channel, and a
+    remote-authored row must not reach the outer hang breaker through the evidence path.
+    """
+    parts = relative.split("/")
+    if "self_checks.jsonl" in parts or relative == "self_checks.jsonl":
+        return False
+    if any(part == ".selfcheck" for part in parts):
+        return False
+    return True

@@ -683,3 +683,17 @@ def test_a_host_bridge_replaces_the_local_selfcheck_command(tmp_path):
     assert "--socket" not in command and "--token-file" not in command
     assert "--dtype" not in command and "--target" not in command and "--reps" not in command
     assert "conv2d-fp16-paper-init.metal" in command
+
+
+def test_prune_keeps_every_evidence_file_named_by_the_notes(tmp_path):
+    """A long evidence list is not silently truncated before pruning decides what to keep."""
+    from taic.kernel_agent import _evidence_paths
+
+    work = tmp_path / "work"
+    work.mkdir()
+    names = [f"probe_{index}.py" for index in range(24)]
+    for name in names:
+        (work / name).write_text("x", encoding="utf-8")
+    (work / "NOTES.md").write_text("\n".join(names) + "\n", encoding="utf-8")
+    kept = _evidence_paths(work)
+    assert kept == set(names)

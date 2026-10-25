@@ -886,14 +886,14 @@ _WORK_KEEP = frozenset({"NOTES.md", "FEEDBACK.md", "self_checks.jsonl", "TASK.md
 _EVIDENCE_TOKEN = re.compile(r"[A-Za-z0-9_./-]+\.(?:py|metal|md|json|sh|txt)")
 
 
-def evidence_candidates(text: str, *, limit: int = 16) -> list[str]:
+def evidence_candidates(text: str, *, limit: int | None = 16) -> list[str]:
     """@brief 从反馈或笔记文本里取出被点名的相对路径候选。
 
     只做格式与安全筛选，不检查文件是否存在：远端 workspace 要先用这份清单去取文件，再决定
     哪些真的存在。``..``、绝对路径和兄弟会话路径在这里就被丢掉。
 
     @param text FEEDBACK.md 或 NOTES.md 的文本。
-    @param limit 候选数量上限。
+    @param limit 候选数量上限；``None`` 表示不设上限（prune 保留集合仍按旧行为）。
     @return 去重后的 POSIX 相对路径，保持出现顺序。
     """
     from .workspace_env import WorkspaceError, _safe_relative
@@ -920,7 +920,7 @@ def evidence_candidates(text: str, *, limit: int = 16) -> list[str]:
             continue
         seen.add(relative)
         found.append(relative)
-        if len(found) >= limit:
+        if limit is not None and len(found) >= limit:
             break
     return found
 
@@ -942,7 +942,7 @@ def _evidence_paths(work: Path) -> set[str]:
         except OSError:
             continue
     keep: set[str] = set()
-    for relative in evidence_candidates(text, limit=10_000):
+    for relative in evidence_candidates(text, limit=None):
         top = relative.split("/", 1)[0]
         if (work / top).exists():
             keep.add(top)
