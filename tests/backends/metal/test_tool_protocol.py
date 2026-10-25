@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -104,7 +105,7 @@ def test_broker_cleans_up_the_worker_and_never_imports_a_request_handler(monkeyp
     assert calls[0][0] == "spawn" and calls[1] == ("release",) and calls[2][0] == "supervise"
     assert ("kill", 12345) in calls and ("forget", 12345) in calls
     spawn = calls[0][2]
-    assert spawn["cwd"].name == "ai_lowerling" and "TCENV_TOOL_REGISTRY" not in spawn["env"]
+    assert spawn["cwd"] == Path(__file__).resolve().parents[3] and "TCENV_TOOL_REGISTRY" not in spawn["env"]
 
 
 def test_handler_source_drift_is_rejected(tmp_path):

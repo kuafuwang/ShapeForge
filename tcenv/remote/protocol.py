@@ -64,8 +64,16 @@ class Frame:
     payload_sha256: str
 
 
-def encode_frame(frame_type: str, request_id: str, payload: dict[str, Any]) -> bytes:
-    """Encode one frame, rejecting oversize headers and payloads."""
+def encode_frame(
+    frame_type: str, request_id: str, payload: dict[str, Any], *,
+    max_payload: int = MAX_FRAME_PAYLOAD,
+) -> bytes:
+    """Encode one frame, rejecting oversize headers and payloads.
+
+    The default is the frozen legacy limit.  A newer private worker protocol
+    may explicitly choose a different bounded limit without changing legacy
+    wire behavior.
+    """
     if frame_type not in _FRAME_TYPES:
         raise ProtocolError(f"unknown frame type {frame_type!r}")
     if not isinstance(request_id, str) or not _REQUEST_ID.fullmatch(request_id):
@@ -74,7 +82,9 @@ def encode_frame(frame_type: str, request_id: str, payload: dict[str, Any]) -> b
         raw = canonical_json(payload)
     except (TypeError, ValueError) as exc:
         raise ProtocolError(f"frame payload is not canonical JSON: {exc}") from exc
-    if len(raw) > MAX_FRAME_PAYLOAD:
+    if isinstance(max_payload, bool) or not isinstance(max_payload, int) or not 0 < max_payload <= 64_000_000:
+        raise ProtocolError("frame payload limit is invalid")
+    if len(raw) > max_payload:
         raise ProtocolError("frame payload exceeds the limit")
     header = {
         "schema_version": SCHEMA_VERSION,
@@ -89,7 +99,7 @@ def encode_frame(frame_type: str, request_id: str, payload: dict[str, Any]) -> b
     return struct.pack(">I", len(encoded_header)) + encoded_header + raw
 
 
-def _header(bytes_: bytes) -> dict[str, Any]:
+def _header(bytes_: bytes, *, max_payload: int = MAX_FRAME_PAYLOAD) -> dict[str, Any]:
     try:
         header = json.loads(bytes_.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -103,7 +113,7 @@ def _header(bytes_: bytes) -> dict[str, Any]:
     if not isinstance(header.get("request_id"), str) or not _REQUEST_ID.fullmatch(header["request_id"]):
         raise ProtocolError("invalid frame request_id")
     length = header.get("payload_length")
-    if isinstance(length, bool) or not isinstance(length, int) or not 0 <= length <= MAX_FRAME_PAYLOAD:
+    if isinstance(length, bool) or not isinstance(length, int) or not 0 <= length <= max_payload:
         raise ProtocolError("invalid frame payload_length")
     digest = header.get("payload_sha256")
     if not isinstance(digest, str) or not _HEX64.fullmatch(digest):
@@ -145,7 +155,7 @@ class FrameDecoder:
             if len(self._buffer) < 4 + header_len:
                 break
             header_raw = bytes(self._buffer[4 : 4 + header_len])
-            header = _header(header_raw)
+            header = _header(header_raw, max_payload=self._max_payload)
             payload_len = int(header["payload_length"])
             if payload_len > self._max_payload:
                 raise ProtocolError("frame payload length is outside the limit")
@@ -183,15 +193,15 @@ def _read_exact(stream: BinaryIO, size: int) -> bytes:
     return bytes(out)
 
 
-def read_frame(stream: BinaryIO) -> Frame:
+def read_frame(stream: BinaryIO, *, max_payload: int = MAX_FRAME_PAYLOAD) -> Frame:
     """Read exactly one frame from a blocking binary stream."""
     header_len_raw = _read_exact(stream, 4)
     header_len = struct.unpack(">I", header_len_raw)[0]
     if header_len <= 0 or header_len > MAX_HEADER_BYTES:
         raise ProtocolError("frame header length is outside the limit")
-    header = _header(_read_exact(stream, header_len))
+    header = _header(_read_exact(stream, header_len), max_payload=max_payload)
     payload_len = int(header["payload_length"])
-    if payload_len > MAX_FRAME_PAYLOAD:
+    if payload_len > max_payload:
         raise ProtocolError("frame payload length is outside the limit")
     raw = _read_exact(stream, payload_len)
     return Frame(
@@ -203,8 +213,11 @@ def read_frame(stream: BinaryIO) -> Frame:
     )
 
 
-def write_frame(stream: BinaryIO, frame_type: str, request_id: str, payload: dict[str, Any]) -> None:
-    stream.write(encode_frame(frame_type, request_id, payload))
+def write_frame(
+    stream: BinaryIO, frame_type: str, request_id: str, payload: dict[str, Any], *,
+    max_payload: int = MAX_FRAME_PAYLOAD,
+) -> None:
+    stream.write(encode_frame(frame_type, request_id, payload, max_payload=max_payload))
     stream.flush()
 
 

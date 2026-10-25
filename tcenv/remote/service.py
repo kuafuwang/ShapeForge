@@ -12,7 +12,6 @@ import argparse
 import json
 import math
 import os
-import re
 import secrets
 import subprocess
 import sys
@@ -27,110 +26,21 @@ from tcenv.schema import PROTOCOL_VERSION as EVAL_PROTOCOL_VERSION
 from tcenv.schema import write_json_atomic
 from tcenv.evaluation import EvaluationResult, sign_result, validate_receipt
 
+from .identity import ServiceIdentity, SessionGrant
 from .protocol import (
     PROTOCOL_VERSION,
     SCHEMA_VERSION,
     EvaluationRequest,
-    EvaluatorProvenance,
     Frame,
     FrameDecoder,
     HelloRequest,
     ProtocolError,
     encode_frame,
-    provenance_epoch,
     sha256_hex,
     write_frame,
 )
 
 MAX_WORKER_STDERR = 4_000
-
-
-@dataclass(frozen=True)
-class ServiceIdentity:
-    """Stable description of the evaluator site and build."""
-
-    site_id: str
-    device_id: str
-    backend: str
-    backend_version: str
-    target_id: str
-    worker_build: str
-    task_pack_digest: str
-    calibration_digest: str
-    task_fingerprints: frozenset[str] = frozenset()
-    measurement_kind: str = "measured"
-    publication_allowed: bool = False
-
-    def __post_init__(self) -> None:
-        for name in ("site_id", "device_id", "backend", "backend_version", "target_id", "worker_build", "task_pack_digest", "calibration_digest"):
-            if not isinstance(getattr(self, name), str) or not getattr(self, name):
-                raise ValueError(f"service identity {name} must be non-empty")
-        if not self.task_fingerprints:
-            raise ValueError("service identity must register at least one task fingerprint")
-        if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in self.task_fingerprints):
-            raise ValueError("service identity task fingerprints must be 64 lowercase hex characters")
-        if self.measurement_kind not in {"measured", "simulated"}:
-            raise ValueError("measurement_kind must be measured or simulated")
-
-    @property
-    def epoch(self) -> str:
-        return provenance_epoch(
-            site_id=self.site_id,
-            device_id=self.device_id,
-            backend=self.backend,
-            backend_version=self.backend_version,
-            target_id=self.target_id,
-            worker_build=self.worker_build,
-            task_pack_digest=self.task_pack_digest,
-            calibration_digest=self.calibration_digest,
-            protocol_version=PROTOCOL_VERSION,
-        )
-
-    def provenance(self, *, request_digest: str = "") -> EvaluatorProvenance:
-        return EvaluatorProvenance(
-            schema_version=SCHEMA_VERSION,
-            epoch=self.epoch,
-            site_id=self.site_id,
-            device_id=self.device_id,
-            backend=self.backend,
-            backend_version=self.backend_version,
-            target_id=self.target_id,
-            worker_build=self.worker_build,
-            task_pack_digest=self.task_pack_digest,
-            calibration_digest=self.calibration_digest,
-            protocol_version=PROTOCOL_VERSION,
-            request_digest=request_digest,
-            measurement_kind=self.measurement_kind,
-            publication_allowed=self.publication_allowed,
-        )
-
-
-@dataclass(frozen=True)
-class SessionGrant:
-    """The only authority a session token grants to an evaluator client."""
-
-    token: str
-    run_id: str
-    session_id: str
-    target_id: str
-    allowed_kinds: frozenset[str] = frozenset({"formal_eval", "selfcheck"})
-    expires_at: float | None = None
-    max_timed: int = 20
-    max_gpu_s: float = 120.0
-
-    def __post_init__(self) -> None:
-        for name in ("token", "run_id", "session_id", "target_id"):
-            value = getattr(self, name)
-            if not isinstance(value, str) or not value:
-                raise ValueError(f"session grant {name} must be non-empty")
-        if not self.allowed_kinds or not self.allowed_kinds <= {"formal_eval", "selfcheck"}:
-            raise ValueError("session grant kinds are invalid")
-        if self.expires_at is not None and (isinstance(self.expires_at, bool) or not isinstance(self.expires_at, (int, float)) or not math.isfinite(self.expires_at)):
-            raise ValueError("session grant expiry must be a finite timestamp or null")
-        if isinstance(self.max_timed, bool) or not isinstance(self.max_timed, int) or self.max_timed < 1:
-            raise ValueError("session grant timed quota must be a positive integer")
-        if isinstance(self.max_gpu_s, bool) or not isinstance(self.max_gpu_s, (int, float)) or not math.isfinite(self.max_gpu_s) or self.max_gpu_s <= 0:
-            raise ValueError("session grant GPU quota must be finite and positive")
 
 
 @dataclass

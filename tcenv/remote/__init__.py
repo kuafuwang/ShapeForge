@@ -18,7 +18,22 @@ from .protocol import (
     write_frame,
 )
 from .client import CommandTransport, RemoteError, RemoteEvaluator, RemoteEvaluatorPool, Transport, remote_evaluator_from_command, remote_evaluator_pool_from_command
-from .service import RemoteService, ServiceIdentity, SessionGrant
+from .identity import ServiceIdentity, SessionGrant
+from .job_engine import JobEngine
+from .job_store import JobStore
+from .job_types import (
+    Attempt,
+    Capabilities,
+    ExpectedEvaluator,
+    ExpectedIdentities,
+    ExternalEvaluationRequest,
+    JobError,
+    JobEvent,
+    JobFailure,
+    JobResult,
+    JobSnapshot,
+)
+from .service import RemoteService
 
 __all__ = [
     "EvaluationRequest",
@@ -38,6 +53,18 @@ __all__ = [
     "remote_evaluator_pool_from_command",
     "ServiceIdentity",
     "SessionGrant",
+    "JobEngine",
+    "JobStore",
+    "Attempt",
+    "Capabilities",
+    "ExpectedEvaluator",
+    "ExpectedIdentities",
+    "ExternalEvaluationRequest",
+    "JobError",
+    "JobEvent",
+    "JobFailure",
+    "JobResult",
+    "JobSnapshot",
     "encode_frame",
     "read_frame",
     "write_frame",
