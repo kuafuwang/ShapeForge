@@ -1,6 +1,6 @@
 # 执行运行时与设备扩展计划
 
-状态：未实现；已吸收多轮评审，详见 §15。日期：2026-10-24。默认保持现有 local 行为；远程评测在声称可用于生产前必须通过 Phase 2.5 的真实传输模拟验收，不做真实 NPU。
+状态：设计计划；Phase 0a/0b/1a/1b/2A/2B/2.5/2C/2D1 已实现，2D2 的本地 Docker 模拟验收已通过；其中 2A/2B/2.5 是 `legacy-ssh` 基线与历史模拟验收，当前实现记录见 [执行运行时与设备扩展.md](执行运行时与设备扩展.md)，部署/轮换见 [远程评测部署与轮换](远程评测部署与轮换.md)。**远程评测服务是对外交付物，协议为 gRPC + TLS + Protobuf；2C 合约/核心/adapter、2D1 制品与本机 Docker 模拟已交付。** Phase 3/4、真实远程站点发布、真实设备与真实 NPU 仍是计划；`legacy-ssh` 数据面与 `RemoteEvaluatorPool` 尚未删除。已吸收多轮评审，详见 §15。日期：2026-10-24（实现记录更新于 2026-10-25，对外协议与 2C/2D 实现更新于同日）。默认保持现有 local 行为；旧 Phase 2.5 只证明 SSH/自定义帧链路，不能充当 gRPC 对外生产门禁。对外生产仍需真实站点/设备验收，真实站点发布另有门禁，不做真实 NPU。
 
 本文只规划执行隔离和设备扩展，不批准实现 NPU、CUDA、ROCm 或第二个 target，不批准付费搜索，也不批准运行 GPU。
 
@@ -8,7 +8,7 @@
 
 - [backend 协议与 GPU 实现计划](backend协议与GPU实现-plan.md)：设备 backend、target、评测协议和 Metal 迁移。
 - [hmz](hmz.md)：当前 `hmz + pi` 写核路径。
-- [远程评测模拟验收计划](远程评测模拟验收-plan.md)：Phase 2.5 的环境、真实传输、故障矩阵、授权与验收细则。
+- [远程评测模拟验收计划](远程评测模拟验收-plan.md)：旧 `legacy-ssh` Phase 2.5 的环境、真实传输、故障矩阵、授权与验收细则；不覆盖新的 gRPC/TLS 对外验收。
 - [安全边界](../security.md)：不可信模型反馈、P2 patch 和人工 apply 的边界。
 
 ## 0. 一句话
@@ -37,6 +37,8 @@
 │  Backend × Target（当前本机为 metal × apple-m4-max）       │
 └────────────────────────────────────────────────────────────┘
 ```
+
+**对外协议边界已经定死：control_host 到远程受信评测服务只暴露版本化的 gRPC + TLS + Protobuf API。** 首版 evaluator 是**单租户 + single-active + non-HA** 的：每个 `device_id` 由一个 frontend/设备信任域服务一个客户组织的多个 run/session，不引入 tenant id、跨租户共享队列或租户计费；多设备使用独立 frontend、endpoint、队列和持久状态，不在 v1 隐藏多设备路由。结果签名固定为 **host-controlled HMAC-SHA256 verifier**，不承诺第三方独立验签或不可否认性。现有 SSH forced command + 长度前缀 JSON 帧保留为 `legacy-ssh`，只用于旧 run 兼容和历史回归，不是对外交付目标；agent 到 host 的 Unix-socket selfcheck bridge，以及 service 到一次性 worker 的私有进程边界不属于对外协议。
 
 也就是说，`taic + hmz + pi` 留在 control_host，pi 写的候选源码、结构化自测请求与正式评测请求发给远程受信评测服务，服务在其设备侧用 GPU/NPU worker 执行并回传报告。只要这条通道能做到设备侧闭合计时、独占租约、身份与配额分离、报告绑定源码/设备/构建摘要，pi 就**不需要**去 GPU/NPU 主机，不需要把 provider 登录态带到设备主机，也不需要本计划去实现 VM、设备直通或远程 agent 生命周期。
 
@@ -82,6 +84,7 @@
 7. 让当前 local 组合成为兼容默认路径，远端或隔离组合必须显式选择；不可信 P2 不得因为隔离环境不可用而自动改跑 local。
 8. 每一场内循环的输入、输出与证据都有清单：可写工作区与只读上下文分开，自测与工具证据以受信设备操作端记录为准，超时或断连后仍能回收已落盘的交卷 checkpoint。
 9. 对外只暴露少数命名拓扑 Profile；底层放置维度保留给运行证据与未来扩展，任意笛卡尔积组合在配置加载时拒绝。
+10. 远程 evaluator 按独立产品交付：发布 `.proto`、服务/客户端制品、兼容性政策、部署与证书轮换文档及 conformance kit。对外只支持 gRPC + TLS + Protobuf；v1 是单租户、每设备 single-active、non-HA，结果只由 host-controlled HMAC verifier 校验；local 默认路径和本地 selfcheck bridge 不因此增加网络监听或证书依赖。
 
 ## 3. 非目标
 
@@ -96,6 +99,8 @@
 - 不把 workspace 隔离当成候选 kernel 的安全证明；host/远程评测仍会执行不可信 kernel。
 - 不在 MVP 中发明通用的 agent 框架，也不承诺 pi 以外的编程代理；先抽 `HmzKernelSessionRunner`，`agent_kind` 只记录当前支持的 `pi`。
 - 不在本计划中实现 hypervisor 或 VM 生命周期平台；默认路径根本不需要 VM，若以后启用可选的 colocated 扩展，虚拟机也必须预先存在并通过 SSH 或所选环境后端可达。
+- 不在首版实现多租户/SaaS：不引入 tenant id、跨租户共享队列、租户计费或跨租户数据隔离；单租户之外的共享部署另立计划。
+- 不承诺结果签名的第三方独立验证或不可否认性；v1 只支持 host-controlled HMAC-SHA256 verifier，不设计公开公钥分发和 Ed25519/ECDSA 套件。
 
 ## 4. 先分清外循环与内循环，再分位置
 
@@ -163,6 +168,8 @@ Profile 只固定放置关系，不固定操作系统、容器运行时或设备
 │ Backend × Target → GPU / NPU                                │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+`split-control` 中 control_host 到远程服务的两支箭头，目标都走 **gRPC + TLS + Protobuf**；formal 与 selfcheck 仍使用不同 grant。TLS/mTLS 解决通道和 workload 身份，session grant 解决 run/session/kind/quota 授权，二者不能互相替代。
 
 原则：
 
@@ -281,10 +288,10 @@ MVP 的 `execute` 是同步调用：runner 内部按本场 deadline 监督并强
 
 ### 6.4 EvaluationExecutor：Local/Remote 共用，设备操作必须可信
 
-这是本计划的主接口之一；与之配套还需要 selfcheck bridge、EvidenceStore、帧协议和可部署服务端。可信评测的放置不由 pi 的位置决定，也不要求评测控制进程与设备同机。它分成两半：
+这是本计划的主接口之一；与之配套还需要 selfcheck bridge、EvidenceStore、版本化 Protobuf 合约、gRPC/TLS adapter 和可部署服务端。私有 worker 可以继续使用现有帧协议，但它不是对外 API。可信评测的放置不由 pi 的位置决定，也不要求评测控制进程与设备同机。它分成两半：
 
-- **评测客户端（本仓库实现）**：`EvaluationExecutor` 的 `formal` 与 `selfcheck` 两个方法。`LocalEvaluator` 包装现有 `tcenv.evaluate`；`RemoteEvaluator` 按下面的窄协议调用远程受信评测服务。正式评测与自测共用传输、认证、请求摘要、设备租约、超时与审计，但结果类型、模式白名单与配额分开；`tool_probe` 只借同一传输与租约，不并进评测结果类型。
-- **设备侧执行端（优先接入设备方已部署的服务，没有时才在设备站点部署）**：在设备站点运行版本化的 `tcenv`/backend，直接操作目标 GPU/NPU。它必须不受 pi 写权限影响。设备方已有满足下面五条的服务时，本仓库只写客户端，不实现服务端、队列与 VM 生命周期。若由本项目部署，帧编解码、forced-command 入口、认证/幂等、队列/租约和 worker supervisor 是正式代码，规划放在 `tcenv/remote/`；`tests/support/npu_sim/` 只放 fake backend、fixture 和故障注入，Phase 2.5 测的是同一份可部署服务端，不是另写的测试替身。
+- **评测客户端（本仓库实现）**：`EvaluationExecutor` 的 `formal` 与 `selfcheck` 两个方法。`LocalEvaluator` 包装现有 `tcenv.evaluate`；`RemoteEvaluator` 按下面的窄业务语义和 §6.4.1 的版本化 gRPC 合约调用远程受信评测服务。正式评测与自测共用传输、认证、请求摘要、设备租约、超时与审计，但结果类型、模式白名单与配额分开；`tool_probe` 只借同一传输与租约，不并进评测结果类型。
+- **设备侧执行端（本项目对外交付）**：在设备站点运行版本化的 `tcenv`/backend，直接操作目标 GPU/NPU，且不受 pi 写权限影响。本项目交付 `.proto`、生产服务端、客户端和 conformance kit；设备方可以提供兼容实现，但必须通过同一业务语义与故障恢复验收，不能只生成相同 gRPC stub 就算兼容。gRPC ingress、认证/授权、持久幂等、队列/租约和 worker supervisor 是正式代码，放在 `tcenv/remote/`；`tests/support/npu_sim/` 只放 fake backend、fixture 和故障注入。旧 Phase 2.5 验证的是 `legacy-ssh` 服务端，新对外服务端必须另过 Phase 2C/2D。
 
 对外请求只用结构化字段加源码，由执行端自己创建内部临时路径；**不复用**当前 `tcenv.worker` 那种带 `kernel_path / out / heartbeat / stage` 本地路径的内部请求。接口必须覆盖当前 `tcenv.evaluate()` 的语义，而不是只覆盖一个简化 demo：
 
@@ -317,7 +324,7 @@ class EvaluationRequest:
 @dataclass(frozen=True)
 class EvaluatorProvenance:
     schema_version: int
-    epoch: str                     # 下列 site/device/build/task_pack/calibration/protocol 的摘要
+    epoch: str                     # 测量身份：site/device/build/task_pack/calibration/执行语义
     site_id: str
     device_id: str
     backend: str
@@ -326,8 +333,11 @@ class EvaluatorProvenance:
     worker_build: str
     task_pack_digest: str          # 服务端版本化任务包的摘要
     calibration_digest: str
-    protocol_version: str
-    request_digest: str            # hello 时为空；job/result 时必填
+    protocol_version: str          # 仅执行语义版本，不等于完整 API descriptor
+    api_contract_id: str           # API/descriptor 兼容身份，单独固定
+    evidence_contract_id: str      # digest/receipt/signature 验证身份，单独固定
+    attempt_id: str                # capabilities 为空；job/result 绑定单次执行
+    request_digest: str            # capabilities 时为空；job/result 时必填
     measurement_kind: str          # measured | simulated
     publication_allowed: bool      # 仅作第二道校验；host allowlist 才是发布许可
 
@@ -343,18 +353,18 @@ class EvaluationResult:
 `workdir`、`out`、`heartbeat`、`progress_path`、`self_check_dir` 是执行端内部派生路径，不进入 RPC。
 `reps`、`cases`、最大 timeout 与配额受服务端策略限制；selfcheck 不能通过修改命令行放大它们。
 `candidate_sha256` 对实际发送和实际编译的字节计算，不做换行转换、Unicode 规范化、trim 或二次改写。
-`request_id` 就是幂等键；request digest 用规范 JSON（例如 RFC 8785）计算，候选字节摘要独立绑定。
+`request_id` 就是幂等键。**Protobuf 序列化不是规范序列化，不能对普通或所谓 deterministic 的 Protobuf 字节直接计算跨语言稳定摘要。** gRPC 对外 v1 先从校验后的业务请求生成传输无关的 digest document，再用带算法标识的 `SHA256(RFC8785(digest_document))` 计算 request digest；候选字节摘要独立绑定。旧 run 继续使用原有 Python 规范 JSON 摘要，不把旧算法换名成 RFC 8785，也不跨算法回放幂等记录。
 服务端必须重算 `task_fingerprint`（当前已经包含 `task.contract.describe()`）并比对，不再另传一份冗余的
 `contract_digest`。不一致时拒绝请求，记为 evaluator/protocol mismatch，不能误判成候选的 compile_error
 或 incorrect。`cache_policy=disabled` 必须能表达确认阶段的 `eval_cache=False`。
 
-**先握手，再固定 epoch，再提交 job。** 协议以 `hello` / `capabilities` 开始：客户端声明协议版本范围、一次性 `client_nonce`、session token、期望的 site_id、expected_worker_build 与 expected_task_pack_digest；服务端返回回声 nonce、自己的 `server_nonce`、不含 request_digest 的 `EvaluatorProvenance` 和能力清单（支持的 target/mode、最大源码、配额、task_pack_digest）。host 先验证已认证通道、nonce、session token 与服务身份，再校验 expected_worker_build，并把这次返回固定为 evaluator epoch；nonce 不符、旧 hello 重放、身份或 build 不匹配都拒绝连接，不能等第一份报告才取得基准。hello 的签名/通道身份必须能绑定到后续报告，不能只信第一帧里的自我声明。
+**先握手，再固定测量 epoch 与两个合约身份，再提交 job。** 对外 gRPC 以 `GetCapabilities` 开始：客户端声明 API/digest/signature 版本范围和 `required_features`、一次性 `client_nonce`、期望的 site_id、expected_worker_build 与 expected_task_pack_digest；session grant 走认证 metadata，不塞进 Protobuf 或摘要。服务端返回回声 nonce、自己的 `server_nonce`/`capability_id`、不含 request_digest/attempt_id 的 `EvaluatorProvenance`、`api_contract_id`、`evidence_contract_id` 和能力清单（target/mode、最大源码、配额、task_pack_digest、feature bits）。host 验证 TLS/mTLS、nonce、每 RPC grant 和身份，并分别固定 `evaluator_epoch`、API contract 与 evidence contract；缺少必需 feature 时客户端必须在 Submit 前 fail closed，服务端也要拒绝自己认识但不支持的 required feature。通道身份、测量 epoch、两个合约与后续结果签名必须形成同一条证据链。
 
 任务包随服务端以只读、版本化方式部署，包含服务端重算所需的 `tasks/`、契约、容差、参考实现与基线。
 `task_pack_digest` 由其规范清单计算并纳入 epoch。清单（`task_pack_manifest`）至少包含 schema_version、
 backend/target、排序后的 POSIX 相对路径、每个文件的实际字节 sha256 与大小、参考/基线版本；digest 用
 同一份规范 JSON 计算，不包含 mtime、宿主机绝对路径或临时文件。host 在 expected_task_pack_digest 为空时，
-用同一 manifest 规则计算本地包；否则 hello/job 阶段明确报 task pack mismatch，不能分不清候选错误与任务版本漂移。
+用同一 manifest 规则计算本地包；否则 capabilities/job 阶段明确报 task pack mismatch，不能分不清候选错误与任务版本漂移。
 任务包的动态更新走独立的受信部署/管理流程，不放进 agent 可请求的 eval RPC；更新后形成新的 epoch，必须重新登记发布许可。
 
 两者合起来必须提供 **TrustedDeviceOperation**，满足下面五条：
@@ -365,23 +375,75 @@ backend/target、排序后的 POSIX 相对路径、每个文件的实际字节 s
 4. **计时在设备侧闭合。** 候选启动、重复计时与设备时间戳都在设备侧完成；网络往返只发生在提交与回传阶段，不进入计时窗口。若某个“远程操作”实现把每次 launch 都变成一次网络往返，它没有可信计时能力。
 5. **报告带执行端身份回传。** 除 `EvalReport` 本体外，还要记录评测代码/镜像摘要、backend 版本、target 与设备身份、标定摘要、协议版本、请求摘要与签名。签名放在报告外层信封 `{report, provenance, signature}`，不把传输证明塞进 `EvalReport` 本体。评测控制端只接受 schema、源码摘要、target/设备与协议都对得上的报告；评测缓存键必须并入 evaluator `site_id`、设备身份、评测构建摘要与标定摘要，不能把一个站点的缓存报告用到另一个站点。
 
-**宿主默认拒绝未登记站点和 evaluator epoch 发布。** `ExecutionConfig` 在 control_host 同时维护 `publishable_site_ids` 与 `publishable_epochs`。站点白名单限制服务位置，epoch 白名单精确绑定 site/device/worker_build/task_pack/calibration/protocol；split-control 必须同时命中当前 site 与当前 epoch 才能进入 confirmed、catalog、brief 的发布加速比和种子比较。`local-integrated` 的现有 local 身份保留兼容，split-control 两个列表默认都为空，必须由人显式登记；epoch 任何字段变化都要重新登记，不能靠旧 site 白名单放行新设备或新构建。`sim-npu` 永远不在生产 allowlist；远端 `measurement_kind` / `publication_allowed` 只作第二道校验，远端漏写或伪造标记也不能绕过宿主默认拒绝。未登记站点或 epoch 的报告只能作为未验证诊断证据，不能进入候选缓存或确认门。
+**宿主默认拒绝未登记站点和 evaluator epoch 发布。** `ExecutionConfig` 在 control_host 同时维护 `publishable_site_ids` 与 `publishable_epochs`。站点白名单限制服务位置，epoch 白名单精确绑定 site/device/worker_build/task_pack/calibration/执行语义；split-control 必须同时命中当前 site 与当前 epoch 才能进入 confirmed、catalog、brief 的发布加速比和种子比较。`local-integrated` 的现有 local 身份保留兼容，split-control 两个列表默认都为空，必须由人显式登记；epoch 任何字段变化都要重新登记，不能靠旧 site 白名单放行新设备或新构建。`sim-npu` 永远不在生产 allowlist；远端 `measurement_kind` / `publication_allowed` 只作第二道校验，远端漏写或伪造标记也不能绕过宿主默认拒绝。未登记站点或 epoch 的报告只能作为未验证诊断证据，不能进入候选缓存或确认门。
 
-**一次运行固定 evaluator epoch。** 运行开始时由 host 观测并固定 site/device/backend/backend_version/target/worker_build/calibration/protocol 及其 `epoch` 摘要，写入 execution manifest。之后每份 `EvaluationResult` 都与它比对；中途重新部署、换设备或换标定时抛 `EvaluationProvenanceError`，不得进入 orchestrator 只按源码哈希键的内存缓存，也不得与旧候选比较或进入确认。该情况以 `evaluation_environment_changed` 停止；resume 默认要求同一 epoch，改变 epoch 必须显式新运行或重新建立基线。
+**一次运行固定 evaluator epoch、API contract 与 evidence contract。** 运行开始时由 host 观测并固定 site/device/backend/backend_version/target/worker_build/calibration/执行语义及其 `epoch` 摘要，同时固定 `api_contract_id` 与 `evidence_contract_id`，写入 execution manifest。测量 epoch 决定结果能否比较；API/evidence contract 决定能否通信和验证。之后每份 `EvaluationResult` 都分别与三者比对；中途换设备、换标定或执行语义变化时抛 `EvaluationProvenanceError`，不得进入缓存、候选比较或确认，并以 `evaluation_environment_changed` 停止。API/evidence 不兼容是 `evaluation_unavailable`，不是候选错误。resume 默认要求三者不变；测量 epoch 改变必须显式新运行或重新建立基线。服务端升级但仍提供旧合约时，旧 run 可继续用旧合约；新 run 使用新 API/evidence contract 本身不要求推翻仍可比的测量基线。
 
-**传输故障与候选故障分开。** SSH 断开、服务不可达、协议不兼容、报告 provenance 不匹配分别用
+**传输故障与候选故障分开。** gRPC 连接断开、TLS 握手/证书失败、服务不可达、API 不兼容、报告 provenance 不匹配分别用
 `EvaluationTransportError` / `EvaluationProvenanceError` 表示，不能伪装成候选的 `crash` 或 `timeout`，
 也不能直接变成 `agent_failed`。设备侧真正的候选 timeout/crash 才写入 `EvalReport`；selfcheck 的暂时
 不可用按 §7 非零返回、不计次数且不写权威记录，正式评测的基础设施失败进入独立的 `evaluation_unavailable` / 停止或 resume 路径。
 
-正式评测的 `evaluation_unavailable` 不计入 `hangs`、`crashes_in_a_row` 或 `_agent_failures`，不把下一场交给另一个委员会。当前候选及其 `EvaluationRequest` 先以 `pending_evaluation` 持久化，run 以可 resume 状态停止；resume 时只在 request digest 与 evaluator epoch 都不变时，用同一 `request_id` 重查/重提。服务端必须在开始 job 前持久化幂等记录和最终结果，才能避免客户端断线后的重复设备执行；没有这层持久化时只能声称 at-least-once 执行，不能声称 exactly-once。
+正式评测的 `evaluation_unavailable` 不计入 `hangs`、`crashes_in_a_row` 或 `_agent_failures`，不把下一场交给另一个委员会。当前候选及其 `EvaluationRequest` 先以 `pending_evaluation` 持久化，run 以可 resume 状态停止；resume 时只在 request digest、测量 epoch、API/evidence contract 都不变时，用同一 `request_id` 重查/重提；需要重新执行 interrupted job 时通过 Retry 获得新的 attempt_id，而不是改写旧 attempt。服务端必须在开始 job 前持久化幂等记录，并在发出最终响应前持久化最终结果，才能避免客户端断线后的重复设备执行；没有这层持久化时只能声称 at-least-once 执行，不能声称 exactly-once。
 
-**超时、取消和进度分层。** 请求体只携带服务端需要的 `queue_timeout_s` 与 `candidate_timeout_s`；transport timeout 是客户端本地策略，不进入 request digest，由客户端按“排队上限 + 候选执行上限 + 协议收尾余量”计算，resume 可只调整本地余量而不改变 request_id。客户端先断线不能假设服务端已经停止。协议增加 cancel 帧、job/租约 TTL 和服务端超时清扫，取消必须终止 worker 进程组并回传最终状态。可选 progress 帧绑定 request_id 和递增序号，host 校验后写回 `eval_progress.json`，不能由远端指定 host 路径。
+**超时、取消和进度分层。** 请求体只携带服务端需要的 `queue_timeout_s` 与 `candidate_timeout_s`；RPC deadline 是客户端本地策略，不进入 request digest，由客户端按“排队上限 + 候选执行上限 + 协议收尾余量”计算，resume 可只调整本地余量而不改变 request_id。客户端取消 RPC 或 Watch 断流不等于服务端 job 已取消。显式 `Cancel`、job/租约 TTL 和服务端超时清扫必须终止 worker 进程组并留下可查终态；progress 用绑定 request_id、attempt_id 和递增 sequence 的 `JobEvent`，host 校验后写回 `eval_progress.json`，不能由远端指定 host 路径。
 
 **缓存所有权先定再接入。** LocalEvaluator 的缓存由 local evaluator 管理；RemoteEvaluator 默认只使用
 远程受信服务的缓存，host 不再用旧 key 直接复用 remote report。若 host 也缓存，键必须包含完整 request
 与 provenance digest。当前 `_fast_bench_path()` / `_remembered_baseline()` 的最快基线缓存同样影响结果，
 也必须按 site/device/build 隔离，或明确只存在设备侧服务内；不能只扩展 `_eval_cache_key()` 就算完成。
+
+#### 6.4.1 对外 gRPC 合约与信任边界（Phase 2C/2D；2C 与 2D1 已实现，真实站点/设备未验收）
+
+**交付范围。** 对外交付物包括版本化 `.proto` 与 descriptor set、生产 gRPC server、客户端、可重复生成的代码、部署/轮换文档和 conformance kit。协议正文另放 `docs/架构/对外评测服务协议.md`，由 Phase 2C1 与 `.proto` 同步维护；本 plan 只保留阶段、信任边界和验收，避免规范与计划双写漂移。`LocalEvaluator`、agent→host Unix-socket selfcheck bridge、service→一次性 worker 的私有管道不因此改成 gRPC；跨 control_host 与 evaluator 的 formal/selfcheck 调用则不再新增 SSH 数据面。gRPC/Protobuf 使用可选依赖组和独立 server 制品，local 默认路径不得在 import 时要求 gRPC 或证书。
+
+初版 API 形状固定为持久 job，而不是让一次设备执行依附于一条长 RPC：
+
+```proto
+syntax = "proto3";
+package tcenv.remote.v1;
+
+service Evaluator {
+  rpc GetCapabilities(CapabilitiesRequest) returns (Capabilities);
+  rpc Submit(SubmitRequest) returns (JobSnapshot);
+  rpc GetJob(JobRef) returns (JobSnapshot);
+  rpc Watch(WatchRequest) returns (stream JobEvent);
+  rpc Cancel(CancelRequest) returns (JobSnapshot);
+  rpc Retry(RetryRequest) returns (JobSnapshot);
+}
+```
+
+- `GetCapabilities` 返回 `evaluator_epoch/api_contract_id/evidence_contract_id/capability_id` 和 feature bits；`SubmitRequest` 同时携带 request、三个期望身份、capability_id 与 `required_features`。客户端在 capabilities 阶段发现缺 feature 就不 Submit，服务端也必须拒绝自己识别但不支持的 required feature；不能只依赖客户端内存里的握手结果。
+- `Submit` 只创建或幂等回放，不为已有 job 创建新执行。`Retry` 只对 `interrupted`（包括可重试基础设施失败）显式创建新 attempt，必须保持 request_id/digest、grant scope、测量 epoch 和两个合约不变；Retry 前重新 GetCapabilities 取得新的 capability_id，并分配新的 `attempt_id/lease_fence`。completed/failed/cancelled 终态 job 不允许 Retry。
+- `GetJob` 用于提交结果不明时按同一 request_id/digest 对账；`Watch` 只附加到已有 job，支持 `after_sequence + attempt_id` 续传进度与终态；`Cancel` 幂等请求取消，最终状态由 `GetJob`/`Watch` 确认；`Retry` 不是 Watch 断流或 RPC 超时的自动动作。
+- `GetJob` 的 `NOT_FOUND` 表示在当前 grant scope 中没有可见的已接受记录，不表示候选失败，也不泄露其他 session 的 job。只有确认 request 未被接受时，客户端才在有界宽限期后用完全相同的 payload 重试 Submit；已接受但 interrupted 的 job 只能走 Retry。
+- gRPC status 表示 RPC/认证/传输结果，复用 `google.rpc.Status`、`ErrorInfo`、`RetryInfo` 和少量 typed evaluation detail，不另造平行错误 JSON。durable job outcome 才表示评测结果；candidate 的 compile_error/incorrect/crash 是 `completed + EvalReport`；可重试基础设施失败进入 `interrupted`，不可重试基础设施/策略失败进入终态 `failed`，并附 `failure_domain/retryable`。`UNAVAILABLE`、`DEADLINE_EXCEEDED`、TLS 错误或 Watch 断开都不能映射成 candidate crash/timeout，也不能被当成 exactly-once。
+- `Watch` 的每个事件都带 `attempt_id + sequence`，sequence 在同一 job 内单调。事件有界保留；若 `after_sequence` 早于保留窗口，服务端先返回完整 `JobSnapshot`，再续发新事件；慢消费者只能拿到合并后的最新快照，不能无界占用内存。长时间 job 的正式评测 adapter 必须支持 Keepalive、断流后重连和 GetJob 轮询兜底，不能把一条 Watch 的 deadline 当作 worker 取消。
+- 所有安全与摘要关键字段使用明确 Protobuf message，不把整个请求塞进 JSON 字符串或无版本 `google.protobuf.Struct`。若 report/evidence 暂以 opaque bytes 交付，必须另带 schema、media type、大小和 digest。`seed=None`、`cases=None` 等“缺省不同于零值”的字段必须显式建模 presence。
+- 候选源码使用 `bytes source`，不是会做 UTF-8 隐式转换的 `string`；服务端按实际收到的字节计算并核对 `candidate_sha256`，再严格解码为受支持文本格式。digest document 使用该源码摘要，不重复塞入整份源码；超时统一为有界整数毫秒，超出跨语言安全整数范围的 seed/ID 用字符串表示。
+- 新摘要算法标识为 `sha256-rfc8785-v1`。digest document 排除 request_id、attempt_id、凭据、TLS 身份、RPC deadline、trace/retry/stream sequence 和本地路径，纳入所有影响执行的字段及显式默认值；候选仍按实际传输/编译的字节独立 SHA-256，不做换行或 Unicode 规范化。服务端重算并比对，outbox 与服务端幂等记录同时保存 attempt、测量 epoch、API contract 和 evidence contract。现有秒值到整数毫秒的舍入规则必须写进协议并有 golden，不能各语言自行截断。
+- 结果签名同样覆盖版本化规范文档，不签原始 Protobuf 字节。新的可发布外部结果必须配置结果验签并记录 algorithm/key id；未签名结果只能作诊断。旧 artifact 按旧算法验证，不重签、不改写历史。**v1 只支持 `hmac-sha256-v1` 的 host-controlled verifier**；HMAC 只证明共享密钥信任域内的来源，不向独立第三方提供不可否认性。第三方独立验签不在本产品范围内，不在 v1 设计公钥分发或 Ed25519/ECDSA；若未来需要，必须另立 evidence contract，不能把 HMAC 换名冒充。host verifier 使用按 site/key_id 索引的 keyring，正常轮换的旧 key 至少保留到其结果过期，新 job 使用当前 key；因泄露而撤销的 key 立即从可信 keyring 删除，相关结果不可再发布。密钥轮换本身不改变测量 epoch。
+- 三种身份不得混算：`evaluator_epoch` 只包含影响测量可比性的 site/device/backend/build/task pack/calibration/执行语义；`api_contract_id` 绑定实际使用的 RPC/字段语义与 required features，不是整个 proto 文件的盲哈希；新增无关 RPC 不改变旧合约 ID；`evidence_contract_id` 绑定 request digest、receipt 和 HMAC 验证规则。三者都固定在 run/outbox 并随结果校验，只有执行语义变化才强制新测量基线。Submit 的期望值与结果 provenance 必须闭环，不能只在 execution manifest 里记录。
+
+**TLS、mTLS、grant 与签名各管一件事。** 生产必须 TLS，校验受信 CA、SAN/hostname，禁止 insecure channel；生产 split-control 使用**共享 host mTLS identity + 每 RPC session grant**，不使用每场 client certificate。初版由 evaluator frontend 直接终止 TLS/mTLS，每个 device frontend 只开一个受防火墙 allowlist 保护的 TCP listener；不经过未受信的 L7 代理。`GetCapabilities` 也必须认证，标准 health 只允许 loopback 或认证访问；如果以后引入反向代理，必须单独验收代理终止 mTLS、身份转发和 metadata 剥离。每个 `Submit/GetJob/Watch/Cancel/Retry` 都需在 metadata 中重新授权短期 session grant；formal/selfcheck grant 继续分离，selfcheck 不得回退 formal。metadata、私钥和完整 token 不进 digest、业务消息或日志。TLS/mTLS 不替代 quota、host site/epoch 发布白名单或结果签名；模拟结果经过正确认证后仍禁止发布。
+
+**长期客户端凭据不属于 agent。** 共享 host mTLS 私钥、formal session grant 和 HMAC verifier keyring 由 fence 外的 host evaluator client 持有，不能放进 workspace、TASK、argv 或 agent 可读环境；agent 只拿 selfcheck-only 短期 capability。生产使用独立 host credential helper/账号或经验证的等价 host-only 边界，不再引入每场 client certificate；同 UID 的 0600 不能单独作为安全承诺。每个 host 进程对每个 endpoint 共用一个 gRPC channel，`GrpcEvaluatorFactory` 只注入 per-call grant、epoch/contract 和结果校验。Phase 2D 要验证 agent 直接读取、复制或重放 formal key/grant 失败。
+
+**轮换、过期与撤销。** job store 保存 `grant_subject + run/session/kind/target scope`，不保存原始 token。普通过期时，已接受 job 可继续执行，但过期 grant 不能发起新 RPC；相同 subject/scope 的续期 grant 可以重新 GetJob/Watch/Retry 原 job。grant 或 mTLS identity 因安全原因撤销时，立即禁止新 Submit/Retry 和读取，并由服务端取消关联 active attempts；不能靠已撤销 token/证书再调用 Cancel。selfcheck session 结束只撤销并取消该 session 的 selfcheck，不影响 formal。Retry 前必须重新 GetCapabilities。mTLS 正常轮换不中断已接受 job；HMAC keyring 正常轮换时旧 key 只用于历史结果，撤销 key 则全部拒绝。
+
+**兼容性与部署。** package、RPC 名和 field number 稳定，删除字段必须 reserve，v1 内只允许经过 feature/digest 协商的可选增量；breaking change 开并行 v2 和新的 API/evidence contract。发布 proto/descriptor，运行 breaking-change 检查和旧客户端/新服务端、新客户端/旧服务端矩阵；生成代码必须可重复且 CI 检查无漂移。v1 每个 `device_id` 对应一个 single-active frontend、一个持久队列和一个 device lease owner，明确 non-HA；多设备部署独立 frontend，不共享一个全局串行队列。多副本必须另有共享事务存储、lease fencing 与恢复设计。即使单租户也要按 grant 限制队列深度、活动 attempt、Watch 数、消息大小、并发 stream、数据库字节和认证失败速率；达到上限以 `RESOURCE_EXHAUSTED` 拒绝，不允许先写满磁盘。
+
+**单一持久核心与两级状态机。** 初版使用单进程 SQLite（Python 标准库 `sqlite3`）WAL、`synchronous=FULL` 和 `BEGIN IMMEDIATE`，数据库位于 device frontend 的持久宿主卷，目录 0700，不允许放在 workspace、`/tmp`、容器 ephemeral filesystem 或网络文件系统。逻辑 job 以 request_id 标识，执行 attempt 以服务端 attempt_id 标识。job 的 `accepted/queued/running/interrupted` 可恢复，`completed/failed/cancelled` 是终态；candidate 的 compile_error/incorrect/crash 是 completed 的 EvalReport，不是 failed job。`Submit` 在同一事务内校验 digest/grant、插入或读取幂等 job、预占 quota、写入 accepted，提交成功后才能 enqueue。`Retry` 只在 interrupted 上创建新 attempt，最多允许配置的次数，同一 job 同时最多一个 active attempt；failed 只表示不可重试终态，completed/failed/cancelled 均不可改写。running 与 attempt/fence 必须先落盘再启动 worker；result、receipt、attempt、quota 结算和终态必须同事务落盘，最终 RPC/JobEvent 只能在终态提交成功后发出。Retry 按新 attempt 重新排队，不利用原 job 的 aging 插队。
+
+**attempt receipt 与设备 fencing。** 每次 attempt 分配单调 `lease_fence`，worker 只有在 attempt_id/fence 仍为当前值时才能取得设备并提交结果。服务重启后先核对并清理旧 worker/lease；未确认旧 worker 已死亡前不得启动新 attempt。旧 fence 的结果只能作诊断，不能覆盖有效终态。`receipt_id = SHA256(canonical(request_id, attempt_id, request_digest))`；receipt、provenance、签名和 outbox 都带 attempt_id，同一 receipt_id 对应不同结果字节判为证据损坏，不做普通去重。已完成 job 只回放；accepted/queued 可重新入队；running 在旧 worker/lease 清理后转为 interrupted，只能显式 Retry，不能自动重跑。SQLite 只服务单 frontend/单写者；多副本不能用同一方案冒充 HA。
+
+**结果、事件、保留期与 quota。** 原始源码和临时目录在 job 终态后删除，最终 report/evidence/receipt 及必要 attempt 诊断的保留期可配置且不得短于 control host 的 resume 保留期（初版默认 30 天）；幂等 tombstone 至少覆盖结果保留期，job event 只保留有界窗口。TTL 到期后 `GetJob` 返回明确的 `expired`，不能重新分配同一 request_id 给出不同结果。所有持久记录同时保存 attempt、测量 epoch、API/evidence contract 和 grant scope，跨合约或跨测量 epoch 不得回放。quota reservation 属于逻辑 job，attempt 的实际执行另记，Retry 不得重复预占；同时限制最大 attempt 数。未真正执行的基础设施失败/队列超时退回 reservation；selfcheck 继续沿用“基础设施失败不计次数、不写权威记录，真实候选 timed 结果才计数”的语义，不能把终态一概写成扣费。
+
+**single-active 的可用性承诺。** v1 明确 non-HA，不承诺自动故障转移。进程/容器崩溃时，RPO 是持久卷上已 fsync 的事务；磁盘/站点丢失的 RPO 由备份周期决定，不能声称零丢失。RTO 是运维重启、数据库恢复、旧 worker/lease 清理和设备健康检查完成。Phase 2D 必须包含 SQLite 备份/恢复与 WAL 恢复演练；恢复后所有非终态 job 先隔离检查，不得自动执行。
+
+**时间语义。** grant 过期、撤销、retention 和持久 deadline 以服务端时间为准；运行中超时使用 monotonic clock，落盘绝对时间使用 UTC，重启后的剩余 TTL 按持久 deadline 重算。证书/grant 临期接受有限时钟偏差，超过即 fail closed；客户端时钟不参与新鲜度判定。
+
+**长任务客户端流程。** `Submit` 结果不明时先 `GetJob`；只有当前 scope 中确认未接受的 request 才在有界宽限期后用完全相同的 payload 重试 Submit，已接受但 interrupted 的 job 用显式 Retry。`Watch` 断开只触发重新 attach，不触发取消；若事件窗口已过，直接读取终态 `JobSnapshot`。同步 `EvaluationExecutor` 的 adapter 必须组合 Keepalive、Watch 重连和有界 `GetJob` 轮询，不能依赖一条长期 stream 永不中断。
 
 按设备形态落地：
 
@@ -465,7 +527,7 @@ host bridge 每场使用独立 socket，放在 agent 不可写的 host 目录（
 - 多 run 共用评测端时不能只有全局 formal 优先：按 run/session 做加权公平或 aging，formal 优先限定在同 run 内或设置全局上限，避免一个 run 饿死另一个 run 的全部自测。公平性只作用于租约获取顺序，不抢占已开始的设备 launch。
 - 调用方身份至少分外循环正式评测与内循环自测。自测 token 绑定 run/session、target、允许模式与过期时间；次数与 GPU 时间上限由评测端服务端策略执行，不能靠 workspace 内的本地计数文件，也不能把上限只写进 token 文案。
 
-传输优先选站点内 Unix socket/vsock，或 SSH forced command / socket forwarding；不直接新开局域网 TCP 服务。服务端 stdout 只允许帧字节，sshd banner/motd、forced-command 杂散输出和任何非帧文本都视为协议错误；stderr 只走受限日志通道，不能混入帧解析。若走 SSH forced command，第一版可依靠通道认证暂缓报告独立签名，但身份、请求幂等与防重放第一天就要有：同一 idempotency key + 同一 request digest 只能返回原结果且不重复占设备，同 key + 不同 body 必须拒绝，过期 token 与 formal/selfcheck 身份互换必须拒绝。正式远程评测进入发布链前，报告完整性必须与执行端身份绑定（§6.4 第 5 条）。
+**control_host 到 evaluator 的对外数据面固定为 gRPC + TLS + Protobuf，不再以 SSH forced command/socket forwarding 作为目标部署，也不提供静默 insecure 或 SSH fallback。** agent→host selfcheck bridge 可以继续使用 Unix socket，service→一次性 worker 的私有边界也可以保留现有帧；即使这些组件同机，外部 evaluator API 的合约也不改变。SSH 仍可用于机器管理、P2、workspace 或 provider 隧道，但不承载新的对外评测 RPC。身份、每 RPC 授权、请求幂等与防重放第一天就要有：同一 idempotency key + 同一 request digest 只能返回原结果且不重复占设备，同 key + 不同 body 必须拒绝，过期 token 与 formal/selfcheck 身份互换必须拒绝。正式外部结果进入发布链前必须验签并绑定执行端身份（§6.4 第 5 条）；旧 `legacy-ssh` 的可选签名规则只用于历史兼容。
 
 租约不能无意改变当前 Metal 的并发语义：correctness 等未计时阶段可共享，benchmark 才升级独占。formal 的优先体现在获取租约时的排队优先级，不是抢占已经在设备上执行的 launch；是否支持更粗粒度独占要由 backend capability 明确声明。
 
@@ -560,7 +622,7 @@ harness review-code RUN --key KEY --by HUMAN
 
 凭据放在编程代理进程实际调用 provider 的那一侧，不按 workspace 名称推断：
 
-- `harness=local`：凭据与 `~/.pi` 留在 control_host，不下发到 workspace 环境；workspace 只能通过 hmz 工具通道读写本场文件与执行命令。
+- `harness=local`：provider 凭据与 `~/.pi` 留在 control_host，不下发到 workspace 环境；workspace 只能通过 hmz 工具通道读写本场文件与执行命令。远程 evaluator 的 mTLS client 私钥、formal session grant 和 HMAC 验证密钥属于 host evaluator client，不属于 workspace 或 agent 环境；同 UID 下不能只靠 0600 文件权限声称隔离。
 - `harness=env/remote`：远端需要 agent CLI 的登录态。优先用短期、最小权限的凭据下发；control_host 侧 provider 反向代理（经 SSH 反向隧道把 provider 请求转回 control_host 注入凭据）是优先验证的候选，它能避免远端落盘长期 key 并在隧道断开后切断后续调用，但只有在验证它能完整承载所选代理的 streaming、重试、用量回传与预算熔断后才采用，不能预先写成已解决记账。
 - 默认禁止任意 egress，设备站点受信评测域的自测通道单独放行；
 - 不把 control_host 的 `~/.pi`、auth、ssh agent、Docker socket 或桌面会话暴露给 workspace 环境。
@@ -572,7 +634,7 @@ harness review-code RUN --key KEY --by HUMAN
 - 优先按 session 重置 workspace 状态，避免恶意状态跨 run 残留；
 - reset 或销毁远端 workspace 之前，必须先回收交卷 checkpoint、工件清单与 hmz epic 定位信息。**费用对账键必须具体化**：当前 `epic_spend_by_label` 按本地 `<run>/agent_work` 下的 workspace 路径与 basename 匹配 epic，远端 workspace 后必然失效。`AgentResult` 要带回一组可绑定标识——`taic` 的 run/session label、hmz 的 session/epic 引用、远端 workspace identity——并写清三者如何绑定、用确定性的 remote workspace 映射作后备、两个 run 用相同 label 时如何防串账；只把字段改名成 `session_id` 不算完成；
 - epic 取不回或绑定不上时，本场记为费用不完整（`cost_incomplete`）。`resume` 的 epic 对账与 `--accept-cost-gap` 语义保持不变：缺失对账不能静默当作零花费；
-- 外循环负责清理环境、子进程、端口转发和孤儿会话，并继续对账模型费用；
+- 外循环负责清理环境、子进程、gRPC channel/stream、旧路径的端口转发和孤儿会话，并继续对账模型费用；Watch 断开只表示 detach，必须能用持久 job 状态对账，不能靠关闭 stream 假装 worker 已清理；
 - 日志回传 control_host 后做敏感信息脱敏和保留期管理，不把远端环境当成永久秘密存储；
 - hypervisor、容器运行时、镜像和共享文件系统仍可能有漏洞，需保持更新并减少设备暴露。
 
@@ -585,19 +647,20 @@ workspace 隔离是防御层，不是对候选 kernel 正确性的证明，也�
 - **同机不同账号不是强隔离。** 若 pi 能拿到 sudo/root、宿主管理接口或评测目录写权限，受信域即失效。评测域至少要做到 pi 无提权、无评测安装写权限、无报告目录写权限。
 - **候选仍在真设备上执行。** 受信域解决的是“谁判卷、结果能不能被改”，不解决恶意 kernel 攻击驱动、让设备挂死或污染后续计时的风险。现有静态筛查、保护带、超时杀进程与确认门仍要保留；单设备站点在 timeout/crash 后先跑一次轻量已知-good 健康探针，探针失败才隔离设备并要求处理，不把完整 naive 评测当作每次异常的默认恢复动作。
 - **签名只证明来源。** 报告签名能证明结果来自登记的评测域，不能证明那台设备上的评测代码没有被站点管理员替换。评测构建摘要、设备身份与标定摘要必须一并记录，变更时按新评测环境处理，不与旧结果混算。
+- **host 客户端凭据不是 agent 资产。** formal mTLS 私钥、formal grant 和 HMAC verifier keyring 若与 pi 同 UID 且可读，受信评测域会被绕过。凭据必须由 fence 外的 host credential helper/evaluator client 持有，生产使用独立账号/进程或经验证的等价 host-only 边界；固定共享 host mTLS identity，不使用每场短期证书，并在 Phase 2D 做直接读取尝试。
 
 ### 9.6 候选源码与任务数据的生命周期
 
 远程评测会把候选源码以及服务端重现任务所需的契约/参考/基线定义带离 control_host。`split-control` 的启用记录必须明确数据接收方；设备方或第三方托管服务不能因“只是评测”就默认获得无限期保留权。
 
-- 服务端日志默认只记录 request_id、source/task digest、状态和必要错误，不记录完整源码、Triton 规格或参考实现；调试需要原文时必须单独开启并有期限。
+- 服务端与 gRPC access/interceptor 日志默认只记录 request_id、source/task digest、状态和必要错误，不记录完整源码、Triton 规格、参考实现、Authorization/metadata token、私钥或证书私钥材料；调试需要原文时必须单独开启并有期限。
 - 为编译/评测临时落盘的源码和任务包使用 0600 权限与 job 独立目录，job 结束、取消或 TTL 到期后删除；崩溃转储、备份和日志归档也纳入同一清理策略。
 - 记录谁能读源码与任务数据、保留多久、何时删除、是否用于训练或其他任务；跨第三方服务前需要人的明确授权。
 - 回传 control_host 的 evidence 只保留验收所需的最小内容；API key、provider 登录态和宿主敏感路径不得随请求或调试日志发送。
 
 ## 10. 配置、resume 与证据
 
-用单独的 `ExecutionConfig` 解析 `[execution]`、`[agent]`、`[workspace]`、`[evaluation]`，**不塞进 `SearchConfig`**：当前 `load_config()` 只保留 `SearchConfig` 认识的字段，未知字段会被静默过滤，不能依赖它拒绝非法组合。字段名为草案，默认形态只需要 `[execution]` 与 `[evaluation]` 两段：
+用单独的 `ExecutionConfig` 解析 `[execution]`、`[agent]`、`[workspace]`、`[evaluation]`，**不塞进 `SearchConfig`**。以下是目标 schema，不是当前可运行配置；当前代码尚未实现该 TOML resolver，现有远程路径仍使用独立 JSON 配置。当前 `load_config()` 只保留 `SearchConfig` 认识的字段，未知字段会被静默过滤，不能依赖它拒绝非法组合。字段名为草案，默认形态只需要 `[execution]` 与 `[evaluation]` 两段：
 
 ```toml
 [execution]
@@ -616,8 +679,18 @@ network = "deny"
 reset = "per_session"
 
 [evaluation]
-transport = "local"           # local | ssh | unix-socket：到评测执行端的传输
-endpoint = ""                 # 不含凭据；local 时为空
+transport = "local"           # local | grpc | legacy-ssh（仅旧 run 兼容）
+endpoint = ""                 # gRPC endpoint，不含凭据；local 时为空
+api_version = ""              # 外部为 tcenv.remote.v1
+api_contract_id = ""          # 外部 API/descriptor + required features
+evidence_contract_id = ""    # digest/receipt/HMAC 验证合约
+request_digest_algorithm = "" # 外部为 sha256-rfc8785-v1
+tls_server_name = ""          # 期望的 SAN/hostname
+ca_file = ""                  # 秘密与私钥只给文件引用，不写进 manifest
+client_certificate_file = "" # 共享 host mTLS identity，不使用每场证书
+client_private_key_file = ""
+signature_keyring_file = ""  # host HMAC verifier keyring；外部可发布结果必填
+signature_key_ids = []        # 允许验证的 key_id；remote 可发布必须非空，空列表只够诊断
 site_id = "local"             # 不透明站点标识，如 "npu-node-01"
 expected_worker_build = ""    # 可选的期望/allowlist 构建摘要；不是实际观测值
 expected_task_pack_digest = "" # 可选的期望任务包摘要；空时由 host 任务清单计算
@@ -636,14 +709,21 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 
 ```json
 {
-  "hmz_version": "0.2.1",
+  "hmz_version": "0.2.2",
   "agent_kind": "pi",
   "agent_impl_version": "...",
   "harness_placement": "local",
   "workspace_env": "local",
   "control_host": "local",
   "profile": "split-control",
-  "evaluator_transport": "ssh",
+  "evaluator_transport": "grpc",
+  "evaluator_api_version": "tcenv.remote.v1",
+  "api_contract_id": "...",
+  "evidence_contract_id": "...",
+  "request_digest_algorithm": "sha256-rfc8785-v1",
+  "result_signature_algorithm": "hmac-sha256-v1",
+  "result_signature_key_ids": ["..."],
+  "tls_server_name": "evaluator.example.internal",
   "evaluator_site_id": "npu-node-01",
   "device_id": "...",
   "evaluation_trust_domain": "service",
@@ -669,7 +749,9 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 
 ### 10.1 Schema 与缓存的升级纪律
 
-- Phase 0a–2 不改 `EvalReport` 顶层 schema。execution manifest 只进 `run_config.json` 的可选块与 session 记录；`run_config` 现有读取不因可选块拒绝旧文件，resume 必须显式校验它，不能靠未知键被忽略就假装已绑定。
+- Phase 0a–2D 不因传输迁移改 `EvalReport` 顶层 schema。execution manifest 只进 `run_config.json` 的可选块与 session 记录；`run_config` 现有读取不因可选块拒绝旧文件，resume 必须显式校验它，不能靠未知键被忽略就假装已绑定。`evaluator_epoch`、`api_contract_id`、`evidence_contract_id` 分开进入 manifest/outbox；跨 transport、API 或 evidence contract 不得隐式续跑，但只有执行语义变化才强制新测量基线。
+- 旧 `execution.json` 的 `evaluation=remote` 且缺少 transport/API/evidence 字段时，只能按 `legacy-ssh` + legacy evidence 读取；`evaluation=local` 仍是 local。新 gRPC run 的三类身份、attempt_id 和 keyring 规则缺一不可，不能用缺省值伪装。旧 JSON `signature_key_file` 仅作为 legacy 单 key verifier，新 gRPC 使用 keyring。
+- Protobuf field number 不复用，删除字段 reserve；`optional`/wrapper/`oneof` 表达 presence，未知 critical enum 与不支持的必需 feature fail closed。proto/descriptor 是外部兼容合约，生成代码可重复；普通 Protobuf bytes 不作为 digest 或签名输入。
 - 接入远程评测时若要给报告加执行端身份，优先用报告外层信封承载 `provenance` 与签名。只有评测结果本体确需新字段时，才一次性把 `REPORT_SCHEMA_VERSION` 从 3 升到 4，并写清旧报告读取规则。
 - SQLite 索引不因单 run 展示而升版。只有看板或查询确实要按 placement、evaluator site 或评测构建筛选时，才评估 `INDEX_SCHEMA_VERSION` 升版与全量重建成本。
 - `eval_cache` 在接入跨站点评测前必须扩展键：并入 evaluator `site_id`、设备身份、backend 版本、评测构建摘要与标定摘要。扩展前的缓存不能被远端或虚拟化评测复用。LocalEvaluator 与 RemoteEvaluator 的缓存所有者按 §6.4 分开；remote 默认由服务端缓存，host 若缓存必须包含完整 request + provenance digest。
@@ -680,7 +762,7 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 - 默认 `pi + harness=local + workspace=local`，不改变现有运行；local 是受信开发路径，不是隔离承诺；
 - 不可信 P2 默认要求隔离动态测试环境，不能因不可用而自动改跑 local；
 - `resume` 必须在任何模型/GPU 工作之前校验 execution manifest（profile、resolved placement 与 evaluator epoch），不一致就停；默认沿用原 placement 与 evaluator epoch，切换组合不得静默发生，需显式新运行或显式授权；
-- 正式请求在首次发送前写入 run 内 `evaluation_outbox/<request_id>.json`，至少包含 `run_id`、`session_id`、`request_id`、`request_digest`、`candidate_sha256`、`evaluator_epoch`、`status`（pending/completed/unavailable）、`report_path`、创建/更新时间；不含秘密。收到结果后原子标记完成。`evaluation_unavailable` 恢复时先读 outbox；同 digest/epoch 才允许重查或重提，服务端也必须有持久化幂等记录，不能只在客户端保存 request_id。
+- 正式请求在首次发送前写入 run 内 `evaluation_outbox/<request_id>.json`，至少包含 `run_id`、`session_id`、`request_id`、`request_digest`、`candidate_sha256`、`evaluator_epoch`、`api_contract_id`、`evidence_contract_id`、接受后的 `attempt_id`、`status`（pending/completed/unavailable）、`report_path`、创建/更新时间；不含秘密。收到结果后原子标记完成，completed outbox 不可被另一个 attempt 覆盖或 Retry；只有 pending/unavailable 且身份一致的请求才能恢复。`evaluation_unavailable` 恢复时先读 outbox；同 digest/测量 epoch/两个合约才允许重查或重提，Retry 产生新的 attempt_id；服务端也必须有持久化幂等记录，不能只在客户端保存 request_id。
 - `RunResult.stop_reason` 使用独立的 `evaluation_unavailable`，brief/observe 从 outbox 显示 `pending_evaluation` 与最后传输错误，不把它映射成 candidate crash 或 agent failure。outbox 是 sidecar 状态，不改变 `EvalReport` schema；只有需要按 pending/epoch 过滤查询时才评估 SQLite 索引升级。
 - A/B 实验的 control/treatment 两臂必须冻结同一个 placement 与 evaluator，否则实验差异会混入环境变量；环境/VM 成本单独记账，不混入模型 `CostLedger`，也不计入 kernel 加速比；
 - 每场 workspace 按策略 fresh/reset，远端临时状态不是 resume 的唯一来源；control_host 的候选、转录、报告和账本必须足以重建；
@@ -690,7 +772,7 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 
 ## 11. 实施阶段
 
-顺序的原则只有三条：先证明 local 行为不变，先堵住 P2 在 host 执行不可信 patch 的洞，远程设备先接评测、最后才考虑搬代理。Phase 1a 与 Phase 1b 分别验收 static 和 isolated dynamic，不能相互代替；Phase 2A 与 Phase 2B 是同一服务端的连续交付物，不设第二条并行实现线；Phase 2.5 的 Docker/VM 集成是远程生产前的必选验收，缺环境先创建/安装，但它不阻塞 Phase 0a/0b/1a 的独立交付，Phase 1b 可用独立的隔离环境先行完成。
+顺序的原则只有三条：先证明 local 行为不变，先堵住 P2 在 host 执行不可信 patch 的洞，远程设备先接评测、最后才考虑搬代理。Phase 1a 与 Phase 1b 分别验收 static 和 isolated dynamic，不能相互代替；Phase 2A/2B/2.5 已交付 `legacy-ssh` 基线，Phase 2C/2D 才交付新的 gRPC 对外合约、服务端与生产验收。旧 Phase 2.5 不阻塞 Phase 0a/0b/1a，也不能替代新对外门禁；Phase 2C 的离线合约与核心重构可以先做，Phase 2D 的真实 TLS 集成必须复用同一业务核心。
 
 #### Phase 0a：local 写核 runner 抽取（不改行为）
 
@@ -726,9 +808,9 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 
 #### Phase 2：远程评测服务与客户端（两个连续交付物）
 
-Phase 2A 先交付唯一的 `tcenv.remote` 服务端并用子进程管道验证，Phase 2B 再接客户端、桥接和远程调用；不再在 Phase 2 之外另起一条服务端实现线。先不做完整设备平台，也不搬代理。
+以下 Phase 2A/2B 记录已实现的 `legacy-ssh` 基线，不表示目标对外协议已经交付。Phase 2C 在这份业务核心上增加 gRPC adapter，不再另起一条服务端业务实现线；先不做完整设备平台，也不搬代理。
 
-##### Phase 2A：同一份 `tcenv.remote` 服务端 + 子进程管道
+##### Phase 2A：同一份 `tcenv.remote` 服务端 + 子进程管道（已实现，legacy-ssh 基线）
 
 1. **正式服务端代码**：帧编解码、hello/capabilities、forced-command 入口、认证/幂等、队列/租约和 worker supervisor 放在 `tcenv/remote/`；`tests/support/npu_sim/` 只放共享 FakeNpuBackend、fixture、测试镜像与故障注入 helper。B0.5 与 Phase 2A 复用同一份 fake backend，不维护两套。
 2. **测试注入不进入生产入口**：`sim-npu` 只在测试 fixture/临时 registry 中，不能注册成 production active target，也不通过改成 `active` 绕过 `require_active`。生产服务端制品不包含 sim 适配器或 `allow_simulation` 分支；FakeNpuBackend 只经测试镜像/测试 composition root 的 backend 注入点进入，2.5 要断言生产入口上模拟适配不可达。fake backend 不要求 `kernel void`、Metal import 或 GPU threadgroup limits，返回确定性的 report/provenance、task fingerprint、task_pack/site/device/build 与 receipt。
@@ -737,7 +819,7 @@ Phase 2A 先交付唯一的 `tcenv.remote` 服务端并用子进程管道验证�
 
 验收：同一 `tcenv.remote` 服务端在子进程+管道上完成 hello、formal/selfcheck、报告/evidence/receipt、幂等和故障恢复；生产入口不包含 sim 代码；没有第二套测试专用服务端，没有 Docker、模型、GPU 或真实 NPU 依赖。
 
-##### Phase 2B：EvaluationExecutor + selfcheck bridge + RemoteEvaluator
+##### Phase 2B：EvaluationExecutor + selfcheck bridge + RemoteEvaluator（已实现，legacy-ssh 基线）
 
 - **先过桥接关卡**：在真实 hmz `online=NONE` 围栏下，分别于 macOS 与 Linux 用 fake agent 验证每场 0600 socket、session token、只允许 selfcheck、跨会话不可冒用和结束销毁；不通过就先解决桥接，不进入远程联调；
 - `LocalEvaluator` 仍是现有 `tcenv.evaluate` 的 adapter；桥接通过后，MVP 用 host Unix-socket bridge 打通 `taic-selfcheck`，再接 `RemoteEvaluator`（独立受保护 CLI 仅作后续可选 spike）；
@@ -751,14 +833,67 @@ Phase 2A 先交付唯一的 `tcenv.remote` 服务端并用子进程管道验证�
 
 验收：真实围栏下 host bridge 先通过；hello 能固定 epoch 并发现 task pack 不匹配；pi 留在 control_host 就能完成远程自测与正式评测；pi 无法伪造报告、冒用 formal 身份或抢占计时租约；RPC 不接受 shell/任意路径或杂散 stdout；自测输出与当前 quick/timed/validate/verdict 语义一致；远程基础设施故障不会误触发候选 hang/crash/agent_failure 计数；未登记站点或 epoch 不能发布；epoch 变化会停止而不是混算；pending_evaluation 可按同一 request_id 幂等恢复；progress 能安全回到看板；多 run 自测不会被单一 formal 队列饿死。
 
-#### Phase 2.5：macOS → Linux VM → Docker 的远程服务集成（远程生产前必做）
+#### Phase 2.5：macOS → SSH → Linux VM → Docker（已实现，legacy-ssh 历史验收）
 
-详细环境 provisioning、真实传输用例、故障矩阵、授权开关与验收报告见[远程评测模拟验收计划](远程评测模拟验收-plan.md)。本阶段只保留四条约束：
+详细环境 provisioning、真实传输用例、故障矩阵、授权开关与验收报告见[远程评测模拟验收计划](远程评测模拟验收-plan.md)。本阶段的 41 项结果只证明旧 SSH/自定义帧模拟链路：
 
-- 它是声称远程评测可用于生产前的必做验收，不是 local/P2 的总闸门；
-- 使用 Phase 2A 已交付的同一 `tcenv.remote` 服务端，不另写测试替身；真实穿过 Mac → SSH → Linux VM → Docker → worker；
+- 它不是 local/P2 的总闸门，也不再是对外 gRPC 生产验收的充分条件；
+- 它使用 Phase 2A/2B 的同一 `legacy-ssh` 服务端，穿过 Mac → SSH → Linux VM → Docker → worker；
 - `sim-npu` 只是 CPU 假设备，不做真实 NPU，不产生性能或发布结论；
-- 缺 Linux VM/Docker 时按专项文档创建/安装，不把缺环境作为跳过理由。
+- 报告和测试作为历史回归保留，不改写成 gRPC、TLS、Protobuf 或外部兼容性证据。
+
+#### Phase 2C：对外 Protobuf 合约、传输无关核心与 gRPC adapter（2C1/2C2/2C3 已实现）
+
+1. 冻结 local 与 `legacy-ssh` 回归基线；发布 `tcenv.remote.v1` 的 `.proto`、descriptor、资源上限、`google.rpc` 错误映射、required features、job/attempt/Retry、三类身份、兼容政策，以及 digest/signature/receipt 的跨语言 golden。proto 是唯一外部 schema 来源，Python 生成代码可重复入库，CI 验证生成物无漂移；锁定 gRPC/Protobuf/status 依赖。
+2. 把业务核心从 `serve(reader, writer)` 与连接级 `_grant/_authenticated` 中拆出，改为每 RPC 授权和持久 job/attempt ownership。保留 `tcenv/evaluation.py` 的业务校验，adapter 负责 Protobuf 映射；job 是逻辑请求，attempt 是实际执行，candidate report 与基础设施 outcome 分开。
+3. 实现 `GetCapabilities/Submit/GetJob/Watch/Cancel/Retry`、TLS/mTLS/session-grant interceptor、结果验签与 `EvaluationExecutor.formal/selfcheck`。本地 selfcheck bridge 不变；每个 host 进程对每 endpoint 共用一个 channel，以 `GrpcEvaluatorFactory` 替代 pool，grant/quota 继续分开。
+4. 幂等接受跨并发连接原子化：Submit 只创建/回放，Retry 只在 interrupted 上创建新 attempt；attempt_id、receipt、lease_fence、grant scope、quota 和终态可恢复。旧 worker/fence 未清理前不能启动新 attempt；损坏状态拒绝服务。
+5. 服务端从只读任务包重算 `task_pack_manifest`、`task_pack_digest` 和 `task_fingerprint`，在 job 启动前与请求及期望值比对；不一致属于 evaluator/protocol mismatch，不能进入 worker。用版本化任务包 golden 证明跨版本和跨站点不会误用旧参考/容差。
+6. 落实 grant 续期/撤销、mTLS/HMAC keyring 轮换、服务端时间/时钟偏移、SQLite 持久卷、备份恢复、RPO/RTO 和 single-active non-HA 口径。
+7. execution manifest 与 outbox 增加 transport、测量 epoch、API/evidence contract、attempt_id、signature key_id 元数据；旧文件按 legacy 规则读取，新 gRPC 不允许缺省。私有 worker、Backend × Target、cache owner、发布门、Metal 和 local TASK/skill 字节不变。
+
+**2C 离线验收：** Protobuf breaking-change、required features 与新旧客户端矩阵通过；至少两种独立语言实现的 digest/signature/receipt golden 一致；presence、未知 critical enum、溢出和消息大小 fail closed；task pack/task fingerprint 重算通过；三类身份分别校验，无关 API 改动不迫使测量 rebaseline。Submit 只创建/回放，Retry 只创建新 attempt；同 receipt 不同字节、旧 fence、旧 worker、并发 Retry 和重复终态全部拒绝。按 accepted 后、enqueue 前、worker 启动后、result 提交前后等崩溃点验证 SQLite 恢复、quota、备份/恢复和 attempt 状态。Watch/GetJob、grant 续期/撤销、keyring 轮换和时钟偏移通过；现有 local/legacy CPU 回归通过，不调用模型、不跑 GPU/NPU。
+
+**2C 实现记录（2026-10-25）：** 2C1 合约已由 `proto/tcenv/remote/v1/evaluator.proto`、descriptor、`tcenv/remote/contracts.py` 和 Python/Go golden 交付；2C2 在 `job_store.py`/`job_engine.py` 交付 SQLite WAL 持久 job/attempt、lease fence、quota、receipt、backup/restore、隔离恢复与 grant 权威集合（缺失 token 重启即撤销、同 scope 新 token 续期）；2C3 在 `grpc_contract.py`/`grpc_server.py`/`grpc_client.py` 交付六 RPC、每 RPC grant、TLS/mTLS、required features、Watch/GetJob 对账、`GrpcEvaluatorFactory`、keyring 轮换/撤销与 clock skew。离线验收由 `tests/shared/test_remote_grpc_adapter.py`、`test_remote_grpc_tls.py`、`test_remote_job_engine.py`、`test_remote_job_recovery.py` 覆盖；`legacy-ssh` 与 `RemoteEvaluatorPool` 为历史 resume 保留，尚未删除（见删除纪律）。
+
+#### Phase 2D：外部交付物、真实 gRPC/TLS 集成与迁移门禁（2D1 已实现；2D2 本机 Docker 模拟已通过；真实站点/设备未验收）
+
+1. 交付生产 server/container、proto/descriptor、外部客户端与 conformance kit，以及证书、grant、HMAC keyring 的 provision/rotation/revocation runbook 和持久状态迁移说明。模拟 backend 只能存在于测试制品，生产 composition root 不可达。
+2. 新增 fake-backend 验收路径 `macOS control_host → gRPC/TLS → Linux VM/Docker evaluator → worker`；评测数据面不经过 SSH forced command。SSH 只可作带外管理，不计入协议证据。
+3. 覆盖明文、错误 CA、错误 SAN、缺少/错误/已撤销客户端证书、过期/撤销/错误 scope grant、formal/selfcheck 互换、未签名、错误 key、已撤销 key、未知 API/evidence contract、缺失 required feature 和 secret redaction；全部 fail closed，site/epoch 仍默认拒绝发布。正常轮换的旧 key 与撤销 key 必须区分。
+4. 注入连接 reset、half-open、慢消费者、deadline、server/container restart、旧 worker 存活和 rollback。验证 Submit 对账、显式 Retry、attempt/fence、旧结果拒绝、progress 去重续传、终态回放、quota、worker 进程组/临时文件/设备租约清理。
+5. 覆盖 grant 续期/撤销、mTLS 证书与 HMAC keyring 轮换/撤销、时钟偏移、备份/恢复和持久卷重启；验证普通过期可续期接回、撤销取消 active attempts、正常轮换旧 key 只可验历史结果、撤销 key 全部拒绝，所有非终态 job 在恢复后先隔离检查。
+6. 验证两个并发 run 不饿死 selfcheck、不能同时取得计时租约，重复 GetJob 不重复计费；队列/Watch/stream/DB/认证失败上限生效；`cache_policy=disabled`、receipt 去重、权威 selfcheck 证据与模拟结果发布拒绝保持原语义。验收承诺是持久幂等回放与经过测试的重复抑制，不宣称所有崩溃窗口都 exactly-once。
+7. 通过后才允许新的外部 split-control 配置选择 `grpc`，并显式登记新的 evaluator epoch、API contract 与 evidence contract。旧 Phase 2.5 结果不能勾掉上述任一项；真实站点、真实设备与发布许可仍另行验收。
+8. 新报告写到 `runs/grpc-sim-<日期>/report.json`，记录 transport、测量 epoch、API/evidence contract、attempt/fence、TLS/mTLS 与故障矩阵证据，并保持 `simulated=true`、`publication_allowed=false`。它不是搜索 run，不写 `run_config.json`，不覆盖旧 `runs/npu-sim-*` 报告，也不进入 confirmed/catalog/brief。
+9. conformance kit 至少有一个非 Python gRPC client 完整执行 `GetCapabilities → Submit → Watch/GetJob → Retry/Cancel`，并覆盖 grant/key 轮换和错误 detail；不能只共享 digest golden 就声称外部客户端兼容。
+
+**2D 验收：** 对外制品可独立部署，非 Python 外部 conformance 通过，真实 TLS/mTLS、grant/key 轮换、attempt/fence、备份恢复与 RPO/RTO 证据齐全，local 默认无 socket/证书/gRPC 依赖，旧 run 只能按各自固定协议 resume。不调用真实模型，不跑真实 GPU/NPU，不产生性能或发布数字。
+
+**2D 实现记录（2026-10-25）：** 2D1 交付生产入口 `python -m tcenv.remote.grpc_service`、镜像/入口（`deploy/remote-evaluator/`）、`scripts/remote_evaluator_admin.py`、`scripts/remote_evaluator_client.py`、`python -m tcenv.remote.state_admin`、任务包重算与 Python/Go conformance；2D2 在本机 Docker Desktop Linux VM 上用测试专用 fake backend 跑通 27 项矩阵（TLS/mTLS、CA/SAN/client 证书、grant 到期/撤销/scope、错误 key、未知合约/feature、reset/half-open/慢消费者/deadline、容器重启、SIGKILL 旧 worker、quota、backup/restore、cleanup），报告写入 `runs/grpc-sim-20261025/report.json`，`simulated=true`、`publication_allowed=false`，不写 `run_config.json`，不进入 confirmed/catalog/brief。该环境是 Docker Desktop 的 Linux VM，不是用户自管的 Ubuntu VM + SSH 链路；真实站点、真实设备、CRL/OCSP、多副本/HA 与 exactly-once 仍未验收。
+
+##### 2C/2D 交付切片与删除纪律
+
+不要把一个巨大的 `2C` 当成一次不可回滚的大爆炸重构。内部至少按下面切片交付，每片都要能独立跑离线验收：
+
+- **2C1 合约**：proto/descriptor、job/attempt/Retry、required features、三类身份、`google.rpc` 错误、digest/signature/receipt 类型与跨语言 golden，以及独立的 `docs/架构/对外评测服务协议.md`；
+- **2C2 核心**：传输无关的 job/attempt engine、SQLite 持久状态、每 RPC 授权、quota、lease fencing、备份与恢复；
+- **2C3 接入**：gRPC adapter、共享 channel + `GrpcEvaluatorFactory`、Watch/GetJob/Submit/Retry 对账、local selfcheck bridge 保持不变；
+- **2D1 制品**：生产镜像、TLS/mTLS、证书/grant/key 轮换、外部客户端和 conformance kit；
+- **2D2 集成**：Mac→Linux VM/Docker/TLS 故障矩阵、迁移、回滚和外部发布门禁。
+
+引入 gRPC 是为了消除重复实现，不是再维护一套协议。2C/2D 完成后必须执行以下删除，不能把旧路径永久留成第二套产品：
+
+- 对外数据面删除 `CommandTransport`、`SSH forced-command` evaluator 入口、`FrameDecoder`/自定义长度前缀读写和手写 hello/cancel/progress 帧；旧路径只保留在一个隔离的 `legacy-ssh` 迁移 adapter 中，且不得接收新配置。
+- 删除连接级 `_authenticated/_grant` 和重复的队列/幂等实现；gRPC 与 legacy adapter 必须调用同一个 job engine，不能各自实现业务规则。
+- 整个删除 `RemoteEvaluatorPool`，不再保留另一层 idle/LRU/reconnect。共享 host mTLS identity 下每个 host 进程对每 endpoint 共用一个 channel，`GrpcEvaluatorFactory` 只负责 per-call grant、三类身份与结果校验；不再引入每场 client certificate。
+- 删除重复的 protobuf/domain 映射：`.proto` 是唯一外部 schema，generated message 只在 adapter 边界出现，业务校验仍只在 `tcenv/evaluation.py` 或明确的 transport-neutral 核心中。
+- 旧 Phase 2.5 的 forced-command/service-entry 测试代码、自定义帧测试和旧报告生成脚本在 legacy 保留期结束后删除；历史报告保留为只读 artifact，不保留可运行的第二套服务。删除 transport 前先把旧 `provenance_epoch`、legacy digest 和 HMAC verifier 移到独立的历史证据模块；**删除的是旧数据面，不是旧证据读取与验证能力**。
+- 明确**不删除**：local `LocalEvaluator`、agent→host Unix-socket selfcheck bridge、service→一次性 worker 的私有帧、SSH workspace/P2 隔离和 provider 隧道。它们不是外部 gRPC 的替代实现。
+
+删除的前置条件是：2D 外部验收通过、所有可 resume 的历史 `legacy-ssh` run 已过期或完成、gRPC conformance 与故障矩阵有独立报告。删除前 `legacy-ssh` 只能用于旧 run，配置加载器必须拒绝新外部 run；不保留静默 fallback。短期重构成本由本期承担，不用“以后再统一”换取长期双栈维护。
+
+**本次删除状态：** 前置条件尚未满足（真实站点/设备 2D 未验收、历史 `legacy-ssh` run 未逐条确认过期/完成），因此**未删除** `CommandTransport`、forced-command 入口、自定义帧、`RemoteEvaluatorPool` 或旧 Phase 2.5 测试代码；它们只保留历史 resume 兼容，不被新 gRPC run 使用。gRPC 与 legacy adapter 已经共用同一个 `JobEngine`，没有第二套队列/幂等/worker 业务实现。
 
 #### Phase 3：一个 SSH workspace 的 transport spike（可选，Phase 2 之后）
 
@@ -820,9 +955,14 @@ Phase 2A 先交付唯一的 `tcenv.remote` 服务端并用子进程管道验证�
 - placement 配置写入、resume 绑定、实际 TASK 哈希与 prompt hash 记录；
 - RPC schema、hello/capabilities、task_pack/expected_worker_build 校验、queue/candidate/transport 三层超时、cancel、TTL、预算和非法请求拒绝；transport timeout 不进入 request digest，resume 可只调整本地余量；
 - 多 run 队列公平或 aging、formal 优先不跨 run 饿死 selfcheck；selfcheck 默认 20 次/120 GPU 秒与 TASK 文案一致，evaluation_unavailable 非零返回但不计次数、不写权威记录；
-- `request_id` 幂等、规范 JSON request digest、候选实际字节 digest，以及同 key 不同 body 拒绝；服务端幂等记录必须先于 job 启动持久化；
+- `request_id` 幂等、gRPC v1 的 RFC 8785 digest document 与 legacy digest golden、候选实际字节 digest，以及同 key 不同 body 拒绝；服务端幂等记录必须先于 job 启动持久化，并绑定测量 epoch、API/evidence contract 和 attempt；SQLite 事务、崩溃恢复、终态不可变和 quota 只结算一次要有故障注入；
+- gRPC 的 host 凭证边界：agent 不能读取/复用 formal mTLS 私钥、formal grant 或 HMAC keyring；GetCapabilities/Submit/GetJob/Watch/Cancel/Retry 全部经过每 RPC 授权；grant 续期可接回原 job，撤销与过期语义分开，mTLS/keyring 轮换不改变测量 epoch；
+- Submit 绑定测量 epoch、API/evidence contract、capability 和 required features，拒绝错误身份、重连到另一实例、重启后旧 capability 和跨合约请求；task pack 与 task_fingerprint 由服务端重算；无关 descriptor 变化不迫使测量 rebaseline；
+- job/attempt/Retry 状态机：interrupted 可恢复而非终态；Submit 不为旧 job 新建 attempt；同 receipt 不同字节、旧 lease_fence、旧 worker、并发 active attempt 和重复终态都拒绝；candidate report 与基础设施 outcome 分开；
+- Watch 断流只 detach，event 带 attempt_id+sequence，窗口过期返回快照，GetJob 兜底，长任务不会被 RPC deadline 误判为 worker 取消；
+- SQLite 崩溃点、备份/恢复、持久卷、RPO/RTO、服务端 monotonic/UTC 时间、时钟偏移、队列/Watch/stream/DB/认证失败上限均有测试；
 - evaluator epoch 在运行中漂移时停止并不进入源码缓存/比较；未登记 `publishable_site_ids` / `publishable_epochs` 的站点或 epoch 即使漏写 simulated 标记也不能发布；
-- `pending_evaluation` 不计 hangs/crashes/agent_failures、不换委员会，resume 只在 request digest 与 epoch 不变时复用 request_id；progress 帧只能由 host 写到固定看板路径；
+- `pending_evaluation` 不计 hangs/crashes/agent_failures、不换委员会，resume 只在 request digest、测量 epoch、API/evidence contract 不变时复用 request_id；Retry 必须生成新的 attempt_id/receipt/lease_fence，外部 progress JobEvent 只能由 host 写到固定看板路径；
 - 远程设备默认组合校验：设备不在本地时，pi 留在 control_host 且自测/正式评测都经 `RemoteEvaluator` 仍可达；不能因为没搬代理就宣称不可自测，也不能在评测端不可达时假装可自测；
 - 命名 Profile 的合法组合与非法笛卡尔积拒绝；同一 Profile 在本地 GPU、虚拟化设备与远程 NPU 节点上只换 backend/target，不换放置语义；
 - premise 新鲜度在 workspace 时钟快慢两种偏移下都不能误判；权威自测记录与 workspace 镜像不一致时以权威记录为准，且按 receipt 去重后次数与 GPU 时间不翻倍；
@@ -841,14 +981,15 @@ Phase 2A 先交付唯一的 `tcenv.remote` 服务端并用子进程管道验证�
 完整的模拟测试矩阵、环境 provisioning、授权开关和 `runs/npu-sim-<日期>/report.json` 规范见[远程评测模拟验收计划](远程评测模拟验收-plan.md)。这里只保留测试体系约束：
 
 - 纯 fake 测试默认进入安全 CPU 套件；Docker/VM 集成只使用 `npu_sim` marker，conftest 在未设置 `TAIC_DOCKER_NPU_SIM=1` 时先 skip；测试模块必须 import-safe，顶层不得创建 Docker client、连接 socket、启动 VM 或读取凭据，所有外部动作放在 lazy fixture 中，skip 先于 fixture 执行；
-- Phase 2.5 验收的是正式 `tcenv.remote` 服务端的真实 SSH/VM/Docker 链路，不是本机 fake 函数或另一套测试服务；
+- 旧 Phase 2.5 验收的是 `legacy-ssh` 服务端的真实 SSH/VM/Docker 链路；Phase 2D 必须另跑 gRPC/TLS/Protobuf 路径，两者报告分开；
 - 模拟报告必须被 host 发布策略拒绝，不产生 NPU 性能、硬件正确性或发布加速比结论；
 - 环境授权与执行开关只在专项文档 §5 记录，主 plan 不保留第二份口径。
 
 ### 显式授权的集成测试
 
 - 在真实 hmz `online=NONE` 围栏下分别于 macOS 与 Linux 验证 host bridge：每场 socket 0600、目录不可写、session token 经会话环境注入而不落 argv/TASK/workspace/manifest/log、只允许 selfcheck、跨会话拒绝和结束销毁；明确同 OS 用户下文件权限不是能力边界，token 才是 selfcheck-only 能力票；不调用模型/GPU；
-- 验证 Phase 2.5 镜像运行的是正式 `tcenv.remote` 服务端，而 FakeNpuBackend 只通过测试注入；生产制品不得包含 sim 适配器或 `allow_simulation` 可达路径；frame codec、forced-command、认证/幂等、队列/租约与 worker supervisor 不得存在测试专用的另一套实现；
+- 验证旧 Phase 2.5 镜像运行的是正式 `legacy-ssh` 服务端，而 FakeNpuBackend 只通过测试注入；新 Phase 2D 对 gRPC 制品做同样的生产可达性检查，认证/幂等、队列/租约与 worker supervisor 不得存在测试专用的另一套实现；
+- Phase 2D 覆盖 TLS/mTLS、证书/grant/HMAC keyring 轮换、每 RPC 授权、跨连接并发幂等、Watch 续传、Submit/GetJob/Retry 对账、旧 worker/fence、服务端重启、备份恢复与回滚；gRPC 的 RPC 成功不等于候选成功，RPC 断开不等于 worker 已停止；至少一个非 Python client 跑完整 RPC 流程；
 - 在一台预置 SSH 主机或本地虚拟机中用 fake agent 写核；
 - SSH/挂载/网络断开、环境崩溃、超时和清理；
 - `harness=local` 时验证工具锚定不能绕过 workspace 访问 control_host 文件；
@@ -861,6 +1002,9 @@ Phase 2A 先交付唯一的 `tcenv.remote` 服务端并用子进程管道验证�
 - 远端组合只通过统一 runner 接口接入，失败不得改变 local；
 - 任何 local prompt、报告 schema 或 Metal 行为变化都视为单独变更，不能用本计划的名义合入；
 - P2 隔离 runner 失败时保留 local runner，但不可信 patch 不得因此自动改跑 local；
+- 每个 run 固定 `local`、`grpc` 或限期保留的 `legacy-ssh`，禁止失败后静默换协议或改跑 local；`legacy-ssh` 只允许 resume 已固定的历史 run，新外部 run 必须拒绝该选项，保留期结束后删除旧数据面。旧 `execution.json` 缺少新字段时只按 legacy 解释，新 gRPC 的三类身份和 attempt/keyring 元数据不可缺省；旧 outbox 只按旧算法恢复，gRPC outbox 只按匹配测量 epoch、API/evidence contract 恢复，跨协议恢复必须显式新 run/rebaseline；
+- gRPC 回滚先停止新 Submit/Retry，再 drain 或显式 Cancel 并核对 attempt 终态、旧 fence、worker 与租约清理；已完成证据与 outbox 保留。服务端二进制回滚必须仍读懂持久 job/attempt store schema，不能靠删状态恢复；
+- `local-integrated` 回滚或默认启动不要求证书、token、gRPC server 或网络监听，local TASK、Metal、缓存、报告 schema 与确认门不变；
 - `verify-code --static` 可独立回滚，不得因为动态 runner 不可用而跳过人工审阅直接执行 patch。
 
 ## 14. 已定落点与仍待评审的问题
@@ -871,26 +1015,36 @@ Phase 2A 先交付唯一的 `tcenv.remote` 服务端并用子进程管道验证�
 | --- | --- |
 | 对外支持几种拓扑 | 只支持 §4.2 的三个命名 Profile（`local-integrated` / `split-control` / `device-site-colocated`）；远程设备默认 `split-control`，底层维度只作证据与扩展点，非法组合在配置加载时拒绝 |
 | workspace reset | 默认 `per_session`；reset 前必须完成工件与 epic 回收 |
-| 自测通道 | 同站点优先本地通道或 Unix socket/vsock；跨机优先 SSH forced command 或 socket forwarding；不新开局域网 TCP |
+| 对外评测协议 | **gRPC + TLS + Protobuf**；远程 evaluator 是独立对外交付物。旧 SSH/自定义帧仅为 `legacy-ssh`，不是目标接口。2C/2D1 已实现、2D2 本机模拟通过；真实站点/设备未验收，不得声称对外生产就绪 |
+| 租户模型 | **单租户**：一个 evaluator frontend/设备信任域只服务一个客户组织；多租户、跨租户队列和计费不在 v1 |
+| 可用性与设备范围 | v1 明确 **single-active + non-HA**，每个 device_id 一个 frontend/queue/lease/SQLite；多设备独立 frontend，多副本另案。持久卷、备份恢复、RPO/RTO 是 2D 门禁 |
+| 测量与合约身份 | `evaluator_epoch` 只决定测量可比性；`api_contract_id` 决定通信兼容；`evidence_contract_id` 决定 digest/receipt/HMAC 验证。key/cert 轮换不自动改变测量 epoch |
+| 客户端凭证与 channel | 共享 host mTLS identity + 每 RPC grant；host 进程每 endpoint 一个 channel，删除 RemoteEvaluatorPool，不使用每场 client certificate |
+| 结果验证 | **仅 host-controlled HMAC-SHA256 verifier**；不承诺第三方独立验签或不可否认性，不设计 Ed25519/ECDSA 公钥分发 |
+| 自测通道 | agent→host 可保留 Unix socket bridge；control_host→evaluator 的 formal/selfcheck 都走 gRPC + TLS + Protobuf。跨机不再以 SSH forced command/socket forwarding 为目标数据面 |
 | 自测命令 | local-integrated 保留现有 `tcenv eval`；split-control 使用稳定的 `taic-selfcheck`，由 runner 提供且不可被代理替换 |
+| 入站网络 | 初版 frontend 直接终止 TLS/mTLS，一个受防火墙保护的 TCP listener；GetCapabilities 也要认证；反向代理/L7 转发另开验收 |
 | P2 隔离环境 | 只读依赖层 + 临时源码树离线跑测试；人工审阅记录绑定 patch/spec/base |
 | 设备健康恢复 | timeout/crash 后先跑轻量已知-good 探针，失败才隔离设备 |
-| Docker/NPU 模拟 | **远程生产前必选**：Phase 2A 先用同一 `tcenv.remote` 服务端和子进程管道暴露问题，Phase 2.5 再用 Mac 控制面 + Linux VM Docker 验收**可部署的远程受信评测服务端**；真实 SSH/forced command/长度前缀帧传输源码、命令、报告与证据；不做真实 NPU 测试，不发布模拟数字。细则见[远程评测模拟验收计划](远程评测模拟验收-plan.md) |
-| 评测环境一致性 | 运行开始固定 evaluator epoch；每份结果校验，漂移即停止，不进入源码缓存、候选比较或确认；resume 默认要求同一 epoch |
+| Docker/NPU 模拟 | 旧 Phase 2.5 的 SSH/自定义帧 41 项是已完成的历史证据；**新的对外生产门禁是 Phase 2D 的 gRPC/TLS/Protobuf 集成与外部 conformance**。两者都不做真实 NPU、不发布模拟数字 |
+| 评测环境一致性 | 运行开始分别固定 evaluator epoch、API contract、evidence contract；每份结果校验三者，测量漂移或不兼容即停止，不进入源码缓存、候选比较或确认；resume 默认要求三者不变 |
 | 发布许可 | host `publishable_site_ids` 与 `publishable_epochs` 默认拒绝未登记站点/epoch；远端 simulated/publication 标记只作第二道校验 |
 
 仍待评审：
 
-1. 第一个远程受信评测服务端由谁在设备侧提供——设备方托管、内部平台提供，还是本项目在设备站点部署（例如 SSH forced command）？它的身份、配额、设备锁与报告摘要是否满足 §6.4 五条？
+1. 对外制品与合约由本项目提供已经确定；v1 每个 device frontend 使用 single-active SQLite WAL job/attempt store，多副本与 HA 另案设计。仍待确定的是各站点由谁运营、CA/mTLS 身份如何签发轮换、host credential helper 的独立账号/进程由谁提供，以及设备锁由谁持有。设备方的兼容实现必须满足 §6.4 五条并通过同一 conformance，不得只兼容 RPC 形状。
 2. 真实远程站点的自测往返延迟是多少、何时触发 Phase 4 搬代理？Phase 2.5 的本地 VM 数据只用于协议与下限诊断，不能用来定阈值；必须在真实站点另测。
 3. 目标设备是单块直通、虚拟功能还是可多域共享？单设备时租约切换、重置与健康检查由谁负责？
 4. 受信评测执行端用独立账号、容器还是独立 guest？pi 的最高权限到哪里为止？
 5. NPU 未来是 kernel 级还是 graph/IR 级？这决定是否复用当前 `Task`/`Contract`。
 6. 若以后真做 `harness=env/remote`，短期凭据下发与 provider 反向代理先验证哪一条？两者都要做小规模 spike 后再定，不阻塞 Phase 2。
+7. 单租户 frontend 的客户组织内是否需要更细的 project/team 配额？这不改变租户模型，但会决定 grant 管理和审计字段。
 
-实施顺序固定为 Phase 0a/0b → Phase 1a → Phase 1b → Phase 2A → Phase 2B → Phase 2.5；B0.5 可与前期离线工作并行。Phase 0a、0b、1a、1b、2A、2B 各自独立验收，不提前引入远端写核、代理搬家、真实 NPU 或新的 GPU 行为。Phase 2.5 是远程评测声称可用于生产前的门禁，不是全 plan 或 local/P2 工作的门禁；其环境授权与执行开关统一见[远程评测模拟验收计划](远程评测模拟验收-plan.md) §5，没有环境时先创建/安装。
+实施顺序固定为 Phase 0a/0b → Phase 1a → Phase 1b → Phase 2A → Phase 2B → Phase 2.5 → **Phase 2C → Phase 2D**；其中 2A/2B/2.5 已完成且属于 `legacy-ssh`；2C1/2C2/2C3 与 2D1 已完成，2D2 的本机 Docker 模拟验收已通过。B0.5 可与前期离线工作并行。Phase 2C 已冻结合约、拆出传输无关核心并过离线验收，Phase 2D 已交付真实 TLS/外部制品和本机故障矩阵；真实站点/设备 2D 与发布许可仍未完成，不得声称 gRPC 对外生产就绪。Phase 3/4、真实 NPU 和新的 GPU 行为仍不提前引入。旧 Phase 2.5 与新 Phase 2D 都不是 local/P2 的总闸门；真实站点发布还需单独授权与登记。
 
 ## 15. 评审采纳记录
+
+早期涉及“SSH 优先”“不新开 TCP”“签名可暂缓”和“Phase 2.5 是远程生产门禁”的记录是当时的 `legacy-ssh` 决策。本轮“对外交付采用 gRPC + TLS + Protobuf”明确更新这些落点；Phase 3 workspace、P2 和带外管理中的 SSH 不受影响。
 
 | 建议 | 处理 | 落点 |
 | --- | --- | --- |
@@ -906,7 +1060,7 @@ Phase 2A 先交付唯一的 `tcenv.remote` 服务端并用子进程管道验证�
 | 正式评测/自测共用客户端，不做巨型 Broker | 采纳并改写。共用 `EvaluationExecutor` 的传输、认证、租约与审计；`tool_probe` 只借租约，不并结果类型；对外请求不复用 worker 的本地路径字段 | §6.4、§7、§7.1 |
 | epic session identity 与 receipt 去重 | 采纳。对账键具体绑定 taic/hmz/workspace 三方标识，对不上记 `cost_incomplete`；自测按 receipt 去重 | §7.2、§9.4 |
 | execution manifest 分 requested/resolved/observed | 采纳并改写。独立 `ExecutionConfig` 解析，不塞 `SearchConfig`；resume 在模型/GPU 工作前校验；A/B 两臂冻结同一 placement/evaluator | §10 |
-| 自测 RPC 收窄 | 采纳。短时 token、速率限制、源码上限、评测端计数，SSH forced command/port forwarding 优先；签名可随通道认证暂缓，幂等与防重放不可省 | §7 |
+| 自测 RPC 收窄 | 历史落点已更新。短时 token、速率限制、源码上限、评测端计数、幂等与防重放继续保留；对外数据面改为 gRPC/TLS，新的可发布外部结果必须验签，不再以 SSH 通道认证为由暂缓 | §6.4.1、§7、§11 Phase 2C/2D |
 | 成本、清理、日志和 resume | 采纳。分别计时、孤儿清理、脱敏、workspace reset、control_host 证据恢复 | §9.4、§10 |
 | NPU 前先 backend-neutral cleanup | 采纳。新增 Phase B0.5 拆 Metal 硬编码并用 fake backend 验证，不等真 NPU 到场才发现耦合 | §11 Phase B0.5 |
 | NPU 独立设备线 | 采纳。kernel 级与 graph/IR 级分开，不和远端 workspace 实施捆绑；kernel 级优先走 `RemoteEvaluator` 接入 | §11 Phase B2 |
@@ -918,7 +1072,7 @@ Phase 2A 先交付唯一的 `tcenv.remote` 服务端并用子进程管道验证�
 | selfcheck 桥接与输出 | 采纳。先实现 host bridge 或受保护 CLI，再接 RemoteEvaluator；复用现有 report/verdict formatter；显式处理 `online=NONE` 与 local/remote 两套提示面 | §7、§11 Phase 2 |
 | 传输错误与任务/缓存边界 | 采纳。基础设施错误不等同候选 crash/timeout；请求绑定 task_fingerprint；明确 local/remote cache 与 fast_bench 基线缓存的 site/device/build 隔离 | §6.4、§10.1、§11 Phase 2 |
 | P2 生成阶段与人工审阅 | 采纳并限定安全承诺。补充 `review-code`/`approve-execution` 记录；若要求全链路不执行未审阅代码，code_patch 生成也必须隔离 | §8、§11 Phase 1 |
-| macOS/Linux VM/Docker NPU 模拟 | 采纳为**远程生产前必选验收**。Phase 2A 先交付并验证唯一 `tcenv.remote`，Phase 2.5 再用同一服务端穿过 SSH/forced command/长度前缀帧，验证数据传输、命令边界、报告回传和故障恢复；fake `sim-npu` 只是设备桩，不做真实 NPU，不产生性能或发布结论。环境授权与开关统一见[远程评测模拟验收计划](远程评测模拟验收-plan.md) §5 | §11 Phase 2/2.5、§12、§14 |
+| macOS/Linux VM/Docker NPU 模拟 | 已完成并保留为 `legacy-ssh` 历史验收。fake `sim-npu` 只是设备桩，不做真实 NPU，不产生性能或发布结论；它不能替代 Phase 2D 的 gRPC/TLS 对外验收 | §11 Phase 2.5/2D、§12、§14 |
 | 测可部署服务而非测试替身 | 采纳。frame codec、forced-command、认证/幂等、队列/租约和 worker supervisor 归入正式 `tcenv.remote`；tests/support 只提供 fake backend、fixture 与故障注入 | §6.4、§11 Phase 2.5 |
 | 宿主发布许可与 evaluator epoch | 采纳。host 默认拒绝未登记站点发布；运行开始固定 evaluator epoch，中途漂移即停止，不进入缓存、比较或确认 | §6.4、§10、§14 |
 | 桥接、超时与恢复 | 采纳。真实 hmz 围栏验证先行；每场 0600 socket 与 token；三层 deadline、cancel/TTL、progress 和 pending_evaluation 幂等恢复补齐 | §6.4、§7、§11 Phase 2 |
@@ -928,9 +1082,16 @@ Phase 2A 先交付唯一的 `tcenv.remote` 服务端并用子进程管道验证�
 | hello、任务包与 evaluator epoch | 采纳。hello/capabilities 返回首份 provenance 与能力清单；expected_worker_build 在握手时校验；任务包只读版本化部署并计算 task_pack_digest，纳入 epoch | §6.4、§11 Phase 2B |
 | selfcheck 能力票与配额 | 采纳并修正。socket/token 经会话环境注入，不能声称只在 shim 进程；同 OS 用户下文件权限不是边界，selfcheck-only token 才是。配额默认 20 次/120 GPU 秒并驱动 TASK 文案，evaluation_unavailable 不计次数、不写权威记录 | §7、§10、§12 |
 | 传输超时、队列公平与生产模拟隔离 | 采纳。transport timeout 移到客户端、不进 request digest；多 run 按公平/aging 排队；生产制品不包含 sim 适配器或 allow_simulation 可达路径 | §6.4、§7.1、§11 Phase 2A/2.5 |
-| 授权来源与门禁范围 | 采纳并限定。plan 只记录用户明确授权的来源和范围，执行开关防默认副作用；Phase 2.5 是远程生产前门禁，不是 local/P2 的总闸门；缺环境仍先 provisioning | §11 Phase 2.5、[远程评测模拟验收计划](远程评测模拟验收-plan.md) §5、§14 |
+| 授权来源与门禁范围 | 采纳并随对外协议更新。旧 Phase 2.5 与新 Phase 2D 都不是 local/P2 总闸门；对外 gRPC 生产必须通过 2D，真实站点发布另需授权，缺环境仍先 provisioning | §11 Phase 2.5/2C/2D、§14 |
 | 拆分主计划与模拟验收 | 采纳。主 plan 保留架构、顺序和链接；环境 provisioning、真实传输、故障矩阵、授权开关与报告细则移入独立专项文档，授权口径只在专项文档 §5 保留一份 | §11 Phase 2.5、§12、[远程评测模拟验收计划](远程评测模拟验收-plan.md) |
 | 配置、hello 与精确发布许可 | 采纳。显式 `[execution].profile/selfcheck`；hello 绑定 nonce/session/服务身份；发布同时要求 site 与精确 evaluator epoch，epoch 变化必须重新登记 | §6.4、§10、§14 |
 | pending 数据模型与 P2 环境拆分 | 采纳。outbox 记录 request/candidate/epoch/status/report，`RunResult.stop_reason=evaluation_unavailable`，brief/observe 可读；Phase 1 拆成无环境 static 与需隔离环境的 dynamic，不互相冒充完成 | §10、§11 Phase 1 |
 | 自测上下文、任务包与 import-safe | 采纳。verdict 使用 SessionBrief 的 host 上下文；task_pack_manifest 规范 digest；AgentResult.artifacts 可选；npu_sim 测试模块 import-safe，skip 先于外部副作用 | §6.1、§6.4、§7、§12、专项文档 §5 |
 | NPU import boundary 与 KernelContract | 采纳。B0.5 明确通用 fake backend 路径不得 import Metal、task_fingerprint 按 backend 取参考源；kernel 级 NPU 先补非 MSL KernelContract，再谈实现 | §11 Phase B0.5/B2 |
+| 对外交付采用 gRPC + TLS + Protobuf | 采纳为本轮明确决策。旧 SSH/自定义帧降为 `legacy-ssh`；新增 Phase 2C 合约/核心/adapter 与 Phase 2D 真实 TLS/外部制品门禁。TLS、mTLS、grant、结果签名和 host 发布许可分层；旧模拟报告不冒充新协议证据，local 默认不变 | §0、§2、§6.4.1、§7.1、§10、§11 Phase 2C/2D、§13、§14 |
+| 外部交付复审：凭证、持久化和长任务 | 采纳。host 客户端独占 formal mTLS/HMAC 凭据；单 frontend SQLite WAL 事务 job store；Submit 绑定 epoch/capability；task pack/fingerprint 服务端重算；Watch/GetJob 可恢复；TLS 直接终止并认证 capabilities | §6.4.1、§9.3、§9.5、§11 Phase 2C/2D、§12 |
+| 重构期删除重复实现 | 采纳。单一 job engine、单一 domain→proto adapter；legacy SSH 仅临时迁移；gRPC 通过后删除自定义帧、forced-command、连接级认证和重复 pool/队列；local bridge 与私有 worker 帧保留 | §11 Phase 2C/2D 删除纪律、§13 |
+| 单租户与 host HMAC 决策 | 固定。v1 一个 frontend 只服务一个客户组织；不实现多租户/跨租户队列；结果只由 host-controlled HMAC verifier 校验，不承诺第三方独立验签，不增加 Ed25519/ECDSA | §0、§2、§3、§6.4.1、§14、§15 |
+| 第二轮协议与恢复复审 | 采纳并统一。job 与 attempt 分离，Submit 只创建/回放，Retry 显式创建 attempt；receipt/provenance/signature 带 attempt，设备使用 lease fence；grant 续期/撤销和 keyring 轮换独立于测量 epoch；v1 明确 single-active non-HA，并补备份恢复、时间、required features 和标准错误 | §6.4、§6.4.1、§10、§11 Phase 2C/2D、§12、§13、§14 |
+| 2C/2D1 实现与本机 2D2 | 采纳并落地。gRPC adapter、TLS/mTLS、持久核心、制品/工具、Python+Go conformance 与 Docker Linux VM 模拟矩阵完成；grant 文件成为重启权威集合（移除即撤销，同 scope 新 token 续期）；HMAC 正常轮换保留历史 key。真实站点/设备、CRL/OCSP、HA 与旧数据面删除仍开放 | §11 Phase 2C/2D、§12、§15 |
+| 共享 host 身份与删除 pool | 采纳。固定共享 host mTLS identity + per-call grant，不使用每场证书；每 host 进程每 endpoint 一个 channel，删除 RemoteEvaluatorPool；旧传输删除后仍保留历史证据只读验证 | §6.4.1、§10、§11 删除纪律、§13 |
