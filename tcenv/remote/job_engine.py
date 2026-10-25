@@ -254,7 +254,17 @@ class JobEngine:
             signing_keyring=signing_keyring, **store_options,
         )
         try:
-            configured_scopes = {self.store.register_grant(grant) for grant in grants}
+            configured_scopes: set[str] = set()
+            for grant in grants:
+                try:
+                    configured_scopes.add(self.store.register_grant(grant))
+                except JobError as exc:
+                    if exc.code != "already_exists":
+                        raise
+                    # A new token for the same subject/run/session/kind/target
+                    # scope is a normal renewal: supersede the old generation
+                    # without cancelling accepted jobs.
+                    configured_scopes.add(self.store.renew_grant(grant))
             for scope_id in self.store.revoke_unlisted_scopes(configured_scopes):
                 self.store.cancel_scope(scope_id)
             self._recover()

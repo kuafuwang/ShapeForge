@@ -758,6 +758,33 @@ def test_state_admin_backup_and_inspect_use_the_signing_keyring(tmp_path):
     assert (restored / "jobs.sqlite3").is_file()
 
 
+def test_restart_with_a_renewed_token_supersedes_without_cancelling_jobs(tmp_path):
+    """@brief 同一 scope 的新 token 在重启时按续期处理，旧 token 失效但任务保留。"""
+    state = tmp_path / "state"
+    original = grant()
+    first = engine(state, grants=[original])
+    try:
+        req = request("renewed-token", source=b"RECOVER")
+        submit(first, req)
+        running = wait_state(first, req, {"running"})
+    finally:
+        first.close()
+    renewed = "renewed-external-token"
+    second = engine(state, grants=[grant(renewed)])
+    try:
+        snapshot = get(second, req, token=renewed)
+        assert snapshot.state == "interrupted"
+        assert snapshot.current_attempt.attempt_id == running.current_attempt.attempt_id
+        with pytest.raises(JobError, match="unauthenticated|superseded"):
+            get(second, req, token=TOKEN)
+        queued = retry(second, req, snapshot.current_attempt.attempt_id, token=renewed)
+        final = wait_state(second, req, {"completed"}, token=renewed)
+        assert final.current_attempt.attempt_id == queued.current_attempt.attempt_id
+        assert final.current_attempt.retry_index == 1
+    finally:
+        second.close()
+
+
 def test_schema_version_is_transactional_and_failed_commit_is_rolled_back(tmp_path):
     store = JobStore(tmp_path / "state")
     try:
