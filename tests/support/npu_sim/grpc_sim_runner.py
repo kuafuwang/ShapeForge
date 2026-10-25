@@ -42,13 +42,10 @@ from tcenv.remote.grpc_client import (
     grpc_evaluator_factory_from_config,
     load_client_credentials,
 )
-from tcenv.remote.grpc_server import load_client_credentials as _load_client_credentials  # noqa: F401
 from tcenv.remote.grants import SessionGrant, write_grants_file
-from tcenv.remote.identity import SessionGrant as _SessionGrant  # noqa: F401
 from tcenv.remote.keyring import KeyringFile, new_key, write_keyring_file
 from tcenv.remote.v1 import evaluator_pb2 as pb
 from tcenv.remote.v1 import evaluator_pb2_grpc as pb_grpc
-from tcenv.remote.task_pack import load_task_pack
 from tests.support.npu_sim.tcp_proxy import FaultProxy
 from tests.support.remote_pki import make_pki
 
@@ -867,6 +864,25 @@ def build_and_run(*, report_path: Path, keep: bool = False, fresh: bool = False)
         failures = [result for result in checker.results if not result["ok"]]
         report["status"] = "passed" if not failures else "failed"
         report["failed_checks"] = [result["name"] for result in failures]
+        capabilities = next((result for result in checker.results if result["name"] == "tls_mtls_capabilities"), None)
+        if capabilities is not None and capabilities.get("evidence"):
+            report["identities"]["evaluator_epoch"] = capabilities["evidence"].get("evaluator_epoch", "")
+            report["transport"]["tls"] = {
+                "mutual": True,
+                "client_certificate": "shared host mTLS identity",
+                "server_san": "localhost/127.0.0.1",
+                "plaintext_rejected": next(
+                    (result["ok"] for result in checker.results if result["name"] == "plaintext_rejected"), False,
+                ),
+                "missing_client_certificate_rejected": next(
+                    (result["ok"] for result in checker.results if result["name"] == "missing_client_cert"), False,
+                ),
+            }
+        report["attempts"] = [
+            {"request_id": result["name"], **{key: value for key, value in (result.get("evidence") or {}).items() if key in {"attempt_id", "lease_fence"}}}
+            for result in checker.results
+            if (result.get("evidence") or {}).get("attempt_id") or (result.get("evidence") or {}).get("lease_fence")
+        ]
         report["cleanup"] = {"containers_left": docker.run("ps", "-a", "--filter", "name=taic-grpc-sim", "--format", "{{.Names}}").stdout.split(), "image_retained": image_id}
     except BaseException as exc:  # noqa: BLE001 - report the blocker instead of faking a pass
         report["status"] = "blocked"
