@@ -321,6 +321,13 @@ def build_previous_image(docker: "Docker", root: Path, *, label: str) -> dict:
     }
 
 
+def volume_names(root: Path) -> dict[str, str]:
+    """Per-report persistent volume names (never shared between runs)."""
+
+    suffix = hashlib.sha1(str(Path(root).resolve()).encode("utf-8")).hexdigest()[:10]
+    return {name: f"taic-sim-{suffix}-{name}" for name in ("state", "backup", "restored", "limits")}
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -360,10 +367,11 @@ class Sim:
         # filesystem: a Docker Desktop bind mount is not coherent with the
         # container's mmap and can SIGBUS the frontend.  Named volumes also
         # match the production "dedicated persistent volume" contract.
-        self.state_volume = "taic-sim-state"
-        self.backup_volume = "taic-sim-backup"
-        self.restored_volume = "taic-sim-restored"
-        self.limits_volume = "taic-sim-limits"
+        names = volume_names(root)
+        self.state_volume = names["state"]
+        self.backup_volume = names["backup"]
+        self.restored_volume = names["restored"]
+        self.limits_volume = names["limits"]
         for volume in (self.state_volume, self.backup_volume, self.restored_volume, self.limits_volume):
             docker.volume_create(volume, uid=os.getuid(), gid=os.getgid())
         self.pki = make_pki(self.config / "pki")
@@ -1949,7 +1957,7 @@ def build_and_run(*, report_path: Path, keep: bool = False, fresh: bool = False)
                     entry.unlink()
     docker = Docker()
     if fresh:
-        for volume in ("taic-sim-state", "taic-sim-backup", "taic-sim-restored", "taic-sim-limits"):
+        for volume in volume_names(report_path.parent).values():
             docker.volume_remove(volume)
     docker.start_events()
     report: dict = {
