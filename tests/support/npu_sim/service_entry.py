@@ -35,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--alt-session-id", default="session-1")
     parser.add_argument("--aging-s", type=float, default=60.0)
     parser.add_argument("--signature-key-file", type=Path, default=None)
+    parser.add_argument("--worker-module", default="tests.support.npu_sim.worker_entry")
     args = parser.parse_args(argv)
     identity = ServiceIdentity(
         site_id="sim-site",
@@ -67,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     service = RemoteService(
         identity=identity,
         grants=grants,
-        worker_command=[sys.executable, "-m", "tests.support.npu_sim.worker_entry"],
+        worker_command=[sys.executable, "-m", args.worker_module],
         state_dir=args.state_dir,
         selfcheck_max_timed=args.selfcheck_max,
         selfcheck_max_gpu_s=args.selfcheck_max_gpu_s,

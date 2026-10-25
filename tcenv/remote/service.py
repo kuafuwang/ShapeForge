@@ -1,19 +1,19 @@
-"""The server half of the remote evaluator protocol.
+"""The legacy frame adapter for the durable remote evaluator job engine.
 
-The service core is deliberately backend-agnostic.  A deployment supplies a
-fixed worker command (the production command is ``python -m tcenv.remote.worker``);
-tests supply their own composition root under ``tests/support/npu_sim``.  The
-worker is always a separate process and its stdout is a frame stream.
+The wire protocol remains the original length-prefixed frame protocol.  Queueing,
+idempotency, quota, attempts, leasing and worker supervision belong to
+:class:`tcenv.remote.job_engine.JobEngine`; this module only authenticates legacy
+connections and translates requests, events and results.  The existing legacy
+worker remains behind ``tcenv.remote.legacy_worker_bridge``.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
-import os
 import secrets
-import subprocess
 import sys
 import threading
 import time
@@ -21,12 +21,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from tcenv.children import forget, kill_group, popen_group, scrubbed_env
-from tcenv.schema import PROTOCOL_VERSION as EVAL_PROTOCOL_VERSION
-from tcenv.schema import write_json_atomic
 from tcenv.evaluation import EvaluationResult, sign_result, validate_receipt
 
 from .identity import ServiceIdentity, SessionGrant
+from .job_engine import JobEngine
+from .job_types import ExternalEvaluationRequest, JobError, JobSnapshot
 from .protocol import (
     PROTOCOL_VERSION,
     SCHEMA_VERSION,
@@ -35,31 +34,36 @@ from .protocol import (
     FrameDecoder,
     HelloRequest,
     ProtocolError,
-    encode_frame,
     sha256_hex,
     write_frame,
 )
 
 MAX_WORKER_STDERR = 4_000
+_DELIVERY_POLL_S = 0.05
+_ENGINE_TIMEOUT_MESSAGE = "candidate exceeded the durable execution deadline"
+
+
+@dataclass(frozen=True)
+class _RequestRef:
+    """Non-authoritative connection state used to adapt and scope one job."""
+
+    legacy: EvaluationRequest
+    external: ExternalEvaluationRequest
+    grant: SessionGrant
 
 
 @dataclass
-class _Job:
-    request: EvaluationRequest
-    submitted: float
-    cancel: threading.Event = field(default_factory=threading.Event)
-    process: subprocess.Popen | None = None
-
-
-class _JobFailed(RuntimeError):
-    def __init__(self, code: str, message: str, *, retryable: bool = False) -> None:
-        super().__init__(message)
-        self.code = code
-        self.retryable = retryable
+class _Delivery:
+    ref: _RequestRef
+    after_sequence: int
+    # Serializes "this delivery still owns the request" with the frame write,
+    # without holding the coordinator lock across pipe I/O.
+    send_lock: threading.Lock = field(default_factory=threading.Lock)
+    superseded: bool = False
 
 
 class RemoteService:
-    """Minimal authenticated broker with idempotency, priority and one lease."""
+    """One legacy frame connection backed by one durable ``JobEngine``."""
 
     def __init__(
         self,
@@ -94,92 +98,68 @@ class RemoteService:
         if signing_key is not None and (not isinstance(signing_key, bytes) or not signing_key):
             raise ValueError("signing_key must be non-empty bytes or None")
         self._signing_key = signing_key
+
+        # There is no lossless automatic migration for the old counters: in
+        # particular, a reserved slot may or may not have executed.  Never drop
+        # that history silently.  An operator must explicitly export/remove it
+        # before opening the SQLite-authoritative service.
+        self._selfcheck_usage_path = self.state_dir / "selfcheck_usage.json"
+        try:
+            self._selfcheck_usage_path.lstat()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise ValueError(f"cannot inspect legacy selfcheck usage at {self._selfcheck_usage_path}: {exc}") from exc
+        else:
+            raise ValueError(
+                f"legacy selfcheck usage at {self._selfcheck_usage_path} cannot be "
+                "safely imported automatically; migrate or remove it explicitly"
+            )
+
         self._reader: BinaryIO | None = None
         self._writer: BinaryIO | None = None
         self._writer_lock = threading.Lock()
-        self._queue: list[_Job] = []
-        self._sequence = 0
-        self._jobs: dict[str, _Job] = {}
-        self._active: _Job | None = None
         self._authenticated = False
         self._grant: SessionGrant | None = None
+        self._capability_id = ""
+        self._capability_grant_token = ""
         self._seen_nonces: set[str] = set()
-        self._selfcheck_counts: dict[tuple[str, str], int] = {}
-        self._selfcheck_gpu_s: dict[tuple[str, str], float] = {}
-        self._selfcheck_hangs: set[tuple[str, str]] = set()
-        self._selfcheck_usage_path = self.state_dir / "selfcheck_usage.json"
-        self._load_selfcheck_usage()
         self._stop = threading.Event()
-        self._handler: threading.Thread | None = None
-        self._lock = threading.Lock()
-        self._usage_lock = threading.Lock()
+        self._closed = False
+        self._delivery_lock = threading.Lock()
+        self._deliveries: dict[str, _Delivery] = {}
+        self._delivery_thread: threading.Thread | None = None
+        self._requests: dict[str, _RequestRef] = {}
 
-    def _load_selfcheck_usage(self) -> None:
-        if not self._selfcheck_usage_path.is_file():
-            return
-        try:
-            document = json.loads(self._selfcheck_usage_path.read_text(encoding="utf-8"))
-            if not isinstance(document, dict):
-                raise ValueError("selfcheck usage is not an object")
-            for key, row in document.items():
-                if not isinstance(row, dict):
-                    raise ValueError("selfcheck usage row is not an object")
-                run_id, session_id = key.split("/", 1)
-                count = row["count"]
-                gpu_s = row["gpu_s"]
-                hang = row.get("hang", False)
-                if not isinstance(count, int) or isinstance(count, bool) or count < 0:
-                    raise ValueError("invalid selfcheck count")
-                if not isinstance(gpu_s, (int, float)) or isinstance(gpu_s, bool) or not math.isfinite(gpu_s) or gpu_s < 0:
-                    raise ValueError("invalid selfcheck GPU time")
-                if not isinstance(hang, bool):
-                    raise ValueError("invalid selfcheck hang flag")
-                self._selfcheck_counts[(run_id, session_id)] = count
-                self._selfcheck_gpu_s[(run_id, session_id)] = float(gpu_s)
-                if hang:
-                    self._selfcheck_hangs.add((run_id, session_id))
-        except (OSError, KeyError, ValueError, json.JSONDecodeError) as exc:
-            raise ValueError(f"cannot read selfcheck usage: {exc}") from exc
+        # The v1 engine correctly requires a 32-byte key, whereas legacy HMAC
+        # accepted any non-empty key.  Derive a stable private engine key without
+        # weakening that v1 rule.  The external signature never crosses the
+        # legacy boundary; results are signed again with the original legacy key.
+        engine_signing_key = hashlib.sha256(signing_key).digest() if signing_key is not None else None
+        self.engine = JobEngine(
+            identity=identity,
+            grants=grants,
+            worker_command=[sys.executable, "-m", "tcenv.remote.legacy_worker_bridge"],
+            worker_env={"TCENV_LEGACY_WORKER_COMMAND": json.dumps(self.worker_command)},
+            state_dir=self.state_dir,
+            signing_key=engine_signing_key,
+            signing_key_id="legacy/v1" if engine_signing_key is not None else "",
+            selfcheck_age_s=selfcheck_age_s,
+            require_evidence=True,
+            selfcheck_max_timed=self.selfcheck_max_timed,
+            selfcheck_max_gpu_s=self.selfcheck_max_gpu_s,
+        )
 
-    def _save_selfcheck_usage(self) -> None:
-        keys = set(self._selfcheck_counts) | set(self._selfcheck_gpu_s) | self._selfcheck_hangs
-        document = {
-            f"{run_id}/{session_id}": {"count": self._selfcheck_counts.get((run_id, session_id), 0), "gpu_s": self._selfcheck_gpu_s.get((run_id, session_id), 0.0), "hang": (run_id, session_id) in self._selfcheck_hangs}
-            for run_id, session_id in keys
-        }
-        write_json_atomic(self._selfcheck_usage_path, document)
-
-    def _mark_selfcheck_hang(self, request: EvaluationRequest) -> None:
-        if request.kind == "selfcheck" and request.mode == "timed":
-            key = (request.run_id, request.session_id)
-            with self._usage_lock:
-                self._selfcheck_hangs.add(key)
-                self._save_selfcheck_usage()
-
-    def _refund_selfcheck(self, request: EvaluationRequest) -> None:
-        """Release a reserved timed slot when no candidate verdict was obtained."""
-        if request.kind != "selfcheck" or request.mode != "timed":
-            return
-        key = (request.run_id, request.session_id)
-        with self._usage_lock:
-            count = self._selfcheck_counts.get(key, 0)
-            if count:
-                self._selfcheck_counts[key] = count - 1
-                self._save_selfcheck_usage()
-
-    # -- public entry point -------------------------------------------------
+    # -- public entry point and lifecycle ----------------------------------
     def serve(self, reader: BinaryIO, writer: BinaryIO) -> None:
-        """Serve frames until EOF, then stop and reap the worker."""
+        """Serve legacy frames until EOF, then stop delivery and the engine."""
+
         self._reader, self._writer = reader, writer
-        self._handler = threading.Thread(target=self._worker_loop, name="tcenv-remote-jobs", daemon=True)
-        self._handler.start()
         decoder = FrameDecoder()
         try:
             while not self._stop.is_set():
-                # ``BufferedReader.read(n)`` on a pipe waits for n bytes or EOF.
-                # A short hello frame would therefore sit unprocessed while the
-                # control connection remains open. ``read1`` returns what is
-                # currently available and keeps the framing incremental.
+                # ``read1`` handles a short frame without waiting for a full
+                # 64-KiB read on a pipe which remains open.
                 read_chunk = getattr(reader, "read1", reader.read)
                 chunk = read_chunk(65_536)
                 if not chunk:
@@ -188,19 +168,41 @@ class RemoteService:
                     try:
                         self._handle_frame(frame)
                     except ProtocolError as exc:
-                        # A malformed request is one rejected job, not a reason to tear
-                        # down an otherwise authenticated control connection.
                         self._send_error(frame.request_id, "protocol_error", str(exc))
+                    except JobError as exc:
+                        self._send_job_error(frame.request_id, exc)
             decoder.finish()
         except ProtocolError as exc:
             self._send_error("", "protocol_error", str(exc))
         except OSError:
             pass
         finally:
-            self._stop.set()
-            self._cancel(self._active)
-            self._handler.join(timeout=5.0)
+            self.close()
             self._reader = self._writer = None
+
+    def close(self) -> None:
+        """Stop delivery before closing the engine; safe to call more than once."""
+
+        if self._closed:
+            return
+        self._closed = True
+        self._stop.set()
+        with self._delivery_lock:
+            delivery_thread = self._delivery_thread
+        if delivery_thread is not None and delivery_thread is not threading.current_thread():
+            delivery_thread.join(timeout=2.0)
+        with self._delivery_lock:
+            self._deliveries.clear()
+            self._delivery_thread = None
+        # JobEngine owns scheduler/store ordering and worker process-group
+        # cleanup.  Do not close its store directly under a live scheduler.
+        self.engine.close()
+
+    def __enter__(self) -> "RemoteService":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
 
     # -- frame handlers -----------------------------------------------------
     def _handle_frame(self, frame: Frame) -> None:
@@ -216,11 +218,27 @@ class RemoteService:
             raise ProtocolError("hello must be completed before an evaluation request")
         self._handle_request(frame)
 
+    @staticmethod
+    def _capability_nonce(frontend: str, grant: SessionGrant, client_nonce: str) -> str:
+        # Capabilities and nonce uniqueness are frontend-scoped in SQLite.
+        # Including the instance preserves the legacy ability to reconnect with
+        # a client-chosen nonce without weakening replay checks within one
+        # frontend.  The raw grant never appears in the derived nonce.
+        return hashlib.sha256(
+            f"legacy:{frontend}:{grant.token}:{client_nonce}".encode("utf-8")
+        ).hexdigest()[:32]
+
+    def _mint_capability(self, grant: SessionGrant, *, legacy_nonce: str | None = None):
+        client_nonce = (
+            self._capability_nonce(self.engine.frontend_instance, grant, legacy_nonce)
+            if legacy_nonce is not None
+            else hashlib.sha256(
+                f"legacy-refresh:{self.engine.frontend_instance}:{grant.token}:{secrets.token_hex(16)}".encode("utf-8")
+            ).hexdigest()[:32]
+        )
+        return self.engine.get_capabilities(grant_token=grant.token, client_nonce=client_nonce)
+
     def _handle_hello(self, frame: Frame) -> None:
-        # A connection may re-authenticate with another valid grant. This is
-        # required for a shared broker to serve multiple runs without letting
-        # one run cancel another run's jobs; each request is still checked
-        # against the currently active grant.
         hello = HelloRequest.from_dict(frame.payload)
         if hello.protocol_version != PROTOCOL_VERSION:
             raise ProtocolError("unsupported protocol version")
@@ -239,10 +257,15 @@ class RemoteService:
             raise ProtocolError("expected task pack does not match this evaluator")
         if hello.target_id and hello.target_id != self.identity.target_id:
             raise ProtocolError("target is not served by this evaluator")
+
+        # Do not mutate the active grant/capability until every legacy and
+        # engine check has succeeded: a failed re-hello keeps the old identity.
+        capability = self._mint_capability(grant, legacy_nonce=hello.client_nonce)
         self._grant = grant
+        self._capability_id = capability.capability_id
+        self._capability_grant_token = grant.token
         self._seen_nonces.add(hello.client_nonce)
         self._authenticated = True
-        server_nonce = secrets.token_hex(16)
         capabilities = {
             "protocol_version": PROTOCOL_VERSION,
             "site_id": self.identity.site_id,
@@ -260,26 +283,11 @@ class RemoteService:
             {
                 "protocol_version": PROTOCOL_VERSION,
                 "client_nonce": hello.client_nonce,
-                "server_nonce": server_nonce,
+                "server_nonce": capability.server_nonce,
                 "provenance": self.identity.provenance().to_dict(),
                 "capabilities": capabilities,
             },
         )
-
-    def _handle_cancel(self, frame: Frame) -> None:
-        if not self._authenticated:
-            raise ProtocolError("hello must be completed before cancel")
-        request_id = frame.payload.get("request_id")
-        if not isinstance(request_id, str):
-            raise ProtocolError("cancel needs a request_id")
-        job = self._jobs.get(request_id)
-        if job is None:
-            self._send_error(request_id, "unknown_request", "no such in-flight request")
-            return
-        # Cancellation is also a privileged operation: a token for one run may
-        # not cancel another run's job merely by learning its request_id.
-        self._grant_for_request(job.request)
-        self._cancel(job)
 
     def _grant_for_request(self, request: EvaluationRequest) -> SessionGrant:
         grant = self._grant
@@ -295,7 +303,39 @@ class RemoteService:
             raise ProtocolError("session grant target does not match")
         if request.kind not in grant.allowed_kinds:
             raise ProtocolError(f"session grant does not allow {request.kind}")
+        if request.mode not in grant.modes_for(request.kind):
+            raise ProtocolError(f"session grant does not allow {request.kind} mode {request.mode}")
         return grant
+
+    def _submit(self, ref: _RequestRef) -> JobSnapshot:
+        grant = ref.grant
+        capability_id = self._capability_id if self._capability_grant_token == grant.token else ""
+        if not capability_id:
+            capability = self._mint_capability(grant)
+            capability_id = capability.capability_id
+            self._capability_id = capability_id
+            self._capability_grant_token = grant.token
+        try:
+            return self.engine.submit(
+                request=ref.external,
+                expected=self.engine.expected_identities,
+                capability_id=capability_id,
+                grant_token=grant.token,
+            )
+        except JobError as exc:
+            if exc.code != "failed_precondition" or "capability" not in str(exc):
+                raise
+        # A long-lived legacy connection can outlive the short v1 capability.
+        # Refresh once; never retry the submission for other failures.
+        capability = self._mint_capability(grant)
+        self._capability_id = capability.capability_id
+        self._capability_grant_token = grant.token
+        return self.engine.submit(
+            request=ref.external,
+            expected=self.engine.expected_identities,
+            capability_id=capability.capability_id,
+            grant_token=grant.token,
+        )
 
     def _handle_request(self, frame: Frame) -> None:
         request = EvaluationRequest.from_dict(frame.payload)
@@ -310,359 +350,473 @@ class RemoteService:
             raise ProtocolError("source exceeds the evaluator limit")
         if self.identity.task_fingerprints and request.task_fingerprint not in self.identity.task_fingerprints:
             raise ProtocolError("task fingerprint does not match the evaluator task pack")
-        digest = request.request_digest
-        existing = self._load_state(request.request_id)
-        if existing is not None:
-            if existing.get("request_digest") != digest:
+        ref = _RequestRef(request, ExternalEvaluationRequest.from_legacy(request), grant)
+        snapshot: JobSnapshot | None
+        try:
+            snapshot = self.engine.get_job(
+                request_id=request.request_id,
+                request_digest=ref.external.request_digest,
+                expected=self.engine.expected_identities,
+                grant_token=grant.token,
+            )
+        except JobError as exc:
+            if exc.code == "not_found":
+                snapshot = None
+            elif exc.code == "failed_precondition" and "digest differs" in str(exc):
                 self._send_error(request.request_id, "idempotency_conflict", "request_id was reused with a different body")
                 return
-            status = existing.get("status")
-            if status == "completed":
-                response = existing.get("response")
-                if isinstance(response, dict):
+            else:
+                raise
+
+        if snapshot is None:
+            # SQLite is authoritative.  Legacy JSON is consulted only when no
+            # visible engine job exists, and is never rewritten by this service.
+            legacy = self._load_state(request.request_id)
+            if legacy is not None:
+                if legacy.get("request_id") != request.request_id:
+                    raise ProtocolError(f"request state for {request.request_id} has the wrong request_id")
+                if legacy.get("request_digest") != request.request_digest:
+                    self._send_error(request.request_id, "idempotency_conflict", "request_id was reused with a different body")
+                    return
+                status = legacy.get("status")
+                if status == "completed":
+                    response = legacy.get("response")
+                    if not isinstance(response, dict):
+                        self._send_error(request.request_id, "worker_protocol_error", "completed request has no response")
+                        return
+                    self._remember_ref(ref)
                     self._send("result", request.request_id, response)
                     return
-                self._send_error(request.request_id, "worker_protocol_error", "completed request has no response")
+                if status == "failed":
+                    error = legacy.get("error")
+                    if (
+                        not isinstance(error, dict)
+                        or not isinstance(error.get("retryable"), bool)
+                        or not isinstance(error.get("code"), str)
+                        or not isinstance(error.get("message"), str)
+                    ):
+                        raise ProtocolError(f"request state for {request.request_id} has invalid failure state")
+                    if not error["retryable"]:
+                        self._remember_ref(ref)
+                        self._send_error(
+                            request.request_id,
+                            error["code"] or "worker_failed",
+                            "legacy worker failed" if error["code"] in {"worker_failed", "worker_unavailable"} else (error["message"] or "request failed"),
+                            retryable=False,
+                        )
+                        return
+                    # Retryable legacy failure: the old worker is gone, so this
+                    # explicit resubmission creates the first durable attempt.
+                elif status != "running":
+                    self._send_error(request.request_id, "state_error", f"unknown request state {status!r}")
+                    return
+                # A legacy running row has no live worker after migration.  Only
+                # this explicit resubmission creates a new engine job.
+
+            snapshot = self._submit(ref)
+            self._remember_ref(ref)
+            if snapshot.state in {"accepted", "queued", "running"}:
+                self._start_delivery(ref, after_sequence=0)
                 return
-            if status == "running":
-                if request.request_id in self._jobs:
-                    self._send_error(request.request_id, "in_progress", "this request_id is already in progress", retryable=True)
-                    return
-                # A service restart can leave a durable running row without a live
-                # worker. Do not strand it forever: make the abandoned attempt
-                # retryable and let the same idempotent request be submitted again.
-                self._remember_state(request.request_id, {
-                    "schema_version": SCHEMA_VERSION,
-                    "request_id": request.request_id,
-                    "request_digest": digest,
-                    "status": "failed",
-                    "error": {"code": "evaluation_unavailable", "message": "worker disappeared after restart", "retryable": True},
-                    "updated_at": time.time(),
-                })
-            elif status == "failed":
-                error = existing.get("error") or {}
-                if not error.get("retryable"):
-                    self._send_error(request.request_id, str(error.get("code") or "worker_failed"), str(error.get("message") or "request failed"), retryable=False)
-                    return
-                # Retryable failures (for example a lost worker) are eligible for
-                # one fresh attempt with the same request id and digest.
-            else:
-                self._send_error(request.request_id, "state_error", f"unknown request state {status!r}")
+            self._send_snapshot(snapshot, ref)
+            return
+
+        self._remember_ref(ref)
+        if snapshot.state in {"accepted", "queued", "running"}:
+            # Submit/GetJob replay never creates an attempt or automatically
+            # retries active work.  The original delivery remains the only one.
+            self._send_error(request.request_id, "in_progress", "this request_id is already in progress", retryable=True)
+            return
+        if snapshot.state == "interrupted":
+            attempt = snapshot.current_attempt
+            if (
+                snapshot.failure is not None and snapshot.failure.retryable
+                and not snapshot.quarantined and attempt is not None
+            ):
+                # Retry is an explicit legacy resubmission and always uses a
+                # fresh post-interruption capability/attempt/fence.
+                capability = self._mint_capability(grant)
+                self._capability_id = capability.capability_id
+                self._capability_grant_token = grant.token
+                snapshot = self.engine.retry(
+                    request_id=request.request_id,
+                    request_digest=ref.external.request_digest,
+                    expected=self.engine.expected_identities,
+                    interrupted_attempt_id=attempt.attempt_id,
+                    capability_id=capability.capability_id,
+                    grant_token=grant.token,
+                )
+                self._start_delivery(ref, after_sequence=snapshot.last_sequence, replace=True)
                 return
-        if request.kind == "selfcheck" and request.mode == "timed":
-            key = (request.run_id, request.session_id)
-            with self._usage_lock:
-                if key in self._selfcheck_hangs:
-                    self._send_error(request.request_id, "selfcheck_hang", "a previous self-check timed out or crashed")
-                    return
-                count = self._selfcheck_counts.get(key, 0)
-                if count >= min(self.selfcheck_max_timed, grant.max_timed):
-                    self._send_error(request.request_id, "selfcheck_quota", "self-check count quota is exhausted")
-                    return
-                if self._selfcheck_gpu_s.get(key, 0.0) >= min(self.selfcheck_max_gpu_s, grant.max_gpu_s):
-                    self._send_error(request.request_id, "selfcheck_quota", "self-check GPU-time quota is exhausted")
-                    return
-                self._selfcheck_counts[key] = count + 1
-                self._save_selfcheck_usage()
-        self._remember_state(request.request_id, {
-            "schema_version": SCHEMA_VERSION,
-            "request_id": request.request_id,
-            "request_digest": digest,
-            "status": "running",
-            "updated_at": time.time(),
-        })
-        job = _Job(request=request, submitted=time.perf_counter())
-        with self._jobs_lock():
-            self._jobs[request.request_id] = job
-            self._sequence += 1
-            self._queue.append(job)
+        # Terminal, expired and non-retryable interrupted snapshots are durable
+        # outcomes.  In particular, none is silently submitted as a new job.
+        self._send_snapshot(snapshot, ref)
 
-    def _next_job(self) -> _Job | None:
-        """Take the oldest effective-priority job, allowing selfcheck to age.
+    def _remember_ref(self, ref: _RequestRef) -> None:
+        previous = self._requests.get(ref.legacy.request_id)
+        if previous is None:
+            self._requests[ref.legacy.request_id] = ref
 
-        Formal work starts ahead of selfcheck, but a selfcheck job older than a
-        minute reaches the same priority. Ties are FIFO, so one run cannot starve
-        another run's selfcheck indefinitely.
-        """
-        with self._jobs_lock():
-            if not self._queue:
-                return None
-            now = time.perf_counter()
-
-            def key(job: _Job) -> tuple[float, float]:
-                base = 0.0 if job.request.kind == "formal_eval" else 1.0
-                age = max(0.0, now - job.submitted)
-                effective = base if base == 0.0 else max(0.0, base - min(age / self.selfcheck_age_s, 1.0))
-                return effective, job.submitted
-
-            index = min(range(len(self._queue)), key=lambda i: key(self._queue[i]))
-            return self._queue.pop(index)
-
-    # -- worker thread ------------------------------------------------------
-    def _worker_loop(self) -> None:
-        while not self._stop.is_set():
-            job = self._next_job()
-            if job is None:
-                time.sleep(0.1)
-                continue
-            if job.cancel.is_set():
-                self._refund_selfcheck(job.request)
-                self._finish_job(job, "cancelled", "request cancelled before it started")
-                with self._jobs_lock():
-                    self._jobs.pop(job.request.request_id, None)
-                continue
-            if time.perf_counter() - job.submitted > job.request.queue_timeout_s:
-                self._refund_selfcheck(job.request)
-                self._finish_job(job, "queue_timeout", "request exceeded the queue timeout", retryable=True)
-                with self._jobs_lock():
-                    self._jobs.pop(job.request.request_id, None)
-                continue
-            self._active = job
-            try:
-                if job.cancel.is_set():
-                    raise _JobFailed("cancelled", "request cancelled")
-                response = self._run_worker(job)
-                # _run_worker linearizes cancellation before returning a valid
-                # result. Once it has returned, commit and deliver that result
-                # fully instead of recording usage and then reporting cancelled.
-                if job.request.kind == "selfcheck" and job.request.mode == "timed":
-                    report = response.get("report") or {}
-                    elapsed = report.get("elapsed_s", 0.0)
-                    if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) and elapsed >= 0 and math.isfinite(elapsed):
-                        key = (job.request.run_id, job.request.session_id)
-                        with self._usage_lock:
-                            self._selfcheck_gpu_s[key] = self._selfcheck_gpu_s.get(key, 0.0) + float(elapsed)
-                            if report.get("status") in {"timeout", "crash"}:
-                                self._selfcheck_hangs.add(key)
-                            self._save_selfcheck_usage()
-                self._remember_state(job.request.request_id, {
-                    "schema_version": SCHEMA_VERSION,
-                    "request_id": job.request.request_id,
-                    "request_digest": job.request.request_digest,
-                    "status": "completed",
-                    "response": response,
-                    "updated_at": time.time(),
-                })
-                self._send("result", job.request.request_id, response)
-            except _JobFailed as exc:
-                if exc.code == "candidate_timeout":
-                    self._mark_selfcheck_hang(job.request)
-                else:
-                    # Transport, cancellation, worker and protocol failures are
-                    # infrastructure outcomes, not candidate crash/hang evidence.
-                    self._refund_selfcheck(job.request)
-                self._finish_job(job, exc.code, str(exc), retryable=exc.retryable)
-            except Exception as exc:  # noqa: BLE001 - a broken worker is a protocol error, not a host crash
-                self._refund_selfcheck(job.request)
-                self._finish_job(job, "worker_failed", f"{type(exc).__name__}: {exc}"[:MAX_WORKER_STDERR])
-            finally:
-                self._active = None
-                with self._jobs_lock():
-                    self._jobs.pop(job.request.request_id, None)
-
-    def _validate_worker_result(self, request: EvaluationRequest, result: dict[str, Any]) -> None:
-        report = result.get("report")
-        if not isinstance(report, dict):
-            raise _JobFailed("worker_protocol_error", "worker result has no report object")
-        if report.get("simulated") is True and self.identity.measurement_kind != "simulated":
-            raise _JobFailed("provenance_mismatch", "simulated report from a measured evaluator")
-        for key, expected in (("task", request.task), ("dtype", request.dtype), ("size", request.size), ("mode", request.mode), ("target_id", request.target_id), ("protocol_version", EVAL_PROTOCOL_VERSION)):
-            actual = report.get(key)
-            if actual != expected:
-                raise _JobFailed("provenance_mismatch", f"report {key} does not match request: {actual!r} != {expected!r}")
-        allowed_status = {"ok", "rejected", "compile_error", "abi_error", "unsafe", "incorrect", "runtime_error", "timeout", "crash", "unchanged", "duplicate", "external_duplicate", "refused_hang"}
-        if report.get("status") not in allowed_status:
-            raise _JobFailed("worker_protocol_error", f"unknown report status {report.get('status')!r}")
-        evidence = result.get("evidence")
-        if not isinstance(evidence, dict):
-            raise _JobFailed("provenance_mismatch", "worker result has no evidence object")
-        if evidence.get("candidate_sha256") != request.candidate_sha256:
-            raise _JobFailed("provenance_mismatch", "evidence candidate digest does not match request")
-        if request.seed is not None and report.get("seed") != request.seed:
-            raise _JobFailed("provenance_mismatch", "report seed does not match request")
+    # -- cancellation -------------------------------------------------------
+    def _handle_cancel(self, frame: Frame) -> None:
+        if not self._authenticated:
+            raise ProtocolError("hello must be completed before cancel")
+        request_id = frame.payload.get("request_id")
+        if not isinstance(request_id, str):
+            raise ProtocolError("cancel needs a request_id")
+        if request_id != frame.request_id:
+            raise ProtocolError("cancel frame and body request_id disagree")
+        ref = self._requests.get(request_id)
+        if ref is None:
+            self._send_error(request_id, "unknown_request", "no such in-flight request")
+            return
+        # Check the current grant, not the grant captured at Submit.  This
+        # rejects cross-run/session/target cancellation after a re-hello.
+        self._grant_for_request(ref.legacy)
+        grant = self._grant
+        assert grant is not None
+        if grant.scope_document() != ref.grant.scope_document():
+            raise ProtocolError("session grant scope does not own this request")
         try:
-            validate_receipt(EvaluationResult.from_dict({
-                "report": report,
-                "provenance": self.identity.provenance(request_digest=request.request_digest).to_dict(),
-                "evidence": evidence,
-                "receipt": result.get("receipt"),
-                "signature": "",
-            }), request)
-        except Exception as exc:
-            raise _JobFailed("provenance_mismatch", f"invalid result receipt: {exc}") from exc
-        if report.get("simulated") is not True:
-            try:
-                from tcenv.evaluate import EvalReport
-                EvalReport.from_json(report)
-            except Exception as exc:
-                raise _JobFailed("worker_protocol_error", f"invalid EvalReport: {exc}") from exc
-
-    def _relay_progress(self, path: Path, request_id: str, stop: threading.Event) -> None:
-        """Forward bounded progress snapshots without exposing worker paths."""
-        last: dict[str, Any] | None = None
-        allowed = ("task", "dtype", "size", "mode", "stage", "status", "message", "finished", "updated_at")
-
-        def relay_one() -> None:
-            nonlocal last
-            try:
-                document = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            snapshot = self.engine.get_job(
+                request_id=request_id,
+                request_digest=ref.external.request_digest,
+                expected=self.engine.expected_identities,
+                grant_token=grant.token,
+            )
+        except JobError as exc:
+            if exc.code == "not_found":
+                self._send_error(request_id, "unknown_request", "no such in-flight request")
                 return
-            if not isinstance(document, dict):
-                return
-            payload = {key: document[key] for key in allowed if key in document}
-            if payload == last:
-                return
-            if isinstance(payload.get("message"), str):
-                payload["message"] = payload["message"][:300]
-            if "finished" in payload and not isinstance(payload["finished"], bool):
-                payload.pop("finished")
-            if "updated_at" in payload and not isinstance(payload["updated_at"], (int, float)):
-                payload.pop("updated_at")
-            last = payload
-            self._send("progress", request_id, payload)
-
-        while not stop.is_set():
-            relay_one()
-            stop.wait(0.05)
-        # A worker commonly writes its terminal snapshot immediately before
-        # exiting. Drain it before _run_worker unlinks the progress file.
-        relay_one()
-
-    def _run_worker(self, job: _Job) -> dict[str, Any]:
-        request = job.request
-        env = scrubbed_env()
-        root = str(Path(__file__).resolve().parents[2])
-        env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
-        progress_dir = self.state_dir / "progress"
-        progress_dir.mkdir(parents=True, exist_ok=True)
-        progress_path = progress_dir / (sha256_hex(request.request_id.encode("utf-8")) + ".json")
-        # A retry may reuse the same request id after an interrupted service.
-        # Never relay the previous attempt's snapshot as this job's progress.
-        try:
-            progress_path.unlink()
-        except OSError:
-            pass
-        env["TCENV_REMOTE_PROGRESS_PATH"] = str(progress_path)
-        progress_stop = threading.Event()
-        progress_thread = threading.Thread(
-            target=self._relay_progress,
-            args=(progress_path, request.request_id, progress_stop),
-            name="tcenv-remote-progress",
-            daemon=True,
+            raise
+        # Cancel owns this request's next response.  Supersede any polling
+        # delivery first so a terminal frame from the old attempt cannot race
+        # the cancellation reply.
+        self._supersede_delivery(request_id)
+        snapshot = self.engine.cancel(
+            request_id=request_id,
+            request_digest=ref.external.request_digest,
+            expected=self.engine.expected_identities,
+            grant_token=grant.token,
         )
-        progress_thread.start()
+        if snapshot.state in {"completed", "failed", "expired"}:
+            self._send_error(request_id, "unknown_request", "no such in-flight request")
+        elif snapshot.state == "cancelled":
+            self._send_snapshot(snapshot, ref)
+        else:
+            # A running attempt only records cancel_requested here; the new
+            # delivery emits the terminal frame after the worker group exits.
+            self._start_delivery(ref, after_sequence=snapshot.last_sequence)
+
+    # -- engine delivery and legacy result mapping -------------------------
+    def _start_delivery(self, ref: _RequestRef, *, after_sequence: int, replace: bool = False) -> None:
+        request_id = ref.legacy.request_id
+        with self._delivery_lock:
+            previous = self._deliveries.get(request_id)
+            if previous is not None and not replace:
+                return
+            if previous is not None:
+                # Wait for an in-flight frame of the replaced delivery so no
+                # stale terminal frame can follow the freshly installed Retry.
+                with previous.send_lock:
+                    previous.superseded = True
+            self._deliveries[request_id] = _Delivery(ref, after_sequence)
+            if self._delivery_thread is None:
+                self._delivery_thread = threading.Thread(
+                    target=self._deliver_loop,
+                    name="tcenv-legacy-delivery",
+                    daemon=True,
+                )
+                self._delivery_thread.start()
+
+    def _supersede_delivery(self, request_id: str) -> None:
+        """Stop a polling delivery from writing after this call returns."""
+
+        with self._delivery_lock:
+            previous = self._deliveries.pop(request_id, None)
+        if previous is not None:
+            with previous.send_lock:
+                previous.superseded = True
+
+    def _is_current_delivery(self, delivery: _Delivery) -> bool:
+        with self._delivery_lock:
+            return self._deliveries.get(delivery.ref.legacy.request_id) is delivery
+
+    @staticmethod
+    def _is_delivery_end(snapshot: JobSnapshot) -> bool:
+        # Interrupted is terminal for one legacy response.  A later explicit
+        # resubmission installs a fresh delivery/attempt instead of auto-retry.
+        return snapshot.state in {"completed", "failed", "cancelled", "interrupted", "expired"}
+
+    def _deliver_one(self, delivery: _Delivery) -> bool:
+        """Poll one job without blocking; return when its delivery is finished."""
+
+        ref = delivery.ref
+        request_id = ref.legacy.request_id
         try:
-            proc = popen_group(
-                self.worker_command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                cwd=root,
+            events = self.engine.watch(
+                request_id=request_id,
+                request_digest=ref.external.request_digest,
+                expected=self.engine.expected_identities,
+                grant_token=ref.grant.token,
+                after_sequence=delivery.after_sequence,
             )
-        except OSError as exc:
-            progress_stop.set()
-            progress_thread.join(timeout=1)
+        except JobError:
+            # Watch gaps already coalesce to snapshots.  For any other watch
+            # failure, reconcile once through GetJob rather than spinning.
             try:
-                progress_path.unlink()
-            except OSError:
-                pass
-            raise _JobFailed("worker_unavailable", f"could not start worker: {exc}", retryable=True) from exc
-        job.process = proc
-        try:
-            out, err = proc.communicate(
-                encode_frame("request", request.request_id, request.to_dict()),
-                timeout=float(request.candidate_timeout_s),
-            )
-        except subprocess.TimeoutExpired as exc:
-            kill_group(proc)
-            proc.communicate()
-            raise _JobFailed("candidate_timeout", "worker exceeded the candidate timeout") from exc
-        finally:
-            job.process = None
-            progress_stop.set()
-            progress_thread.join(timeout=1)
-            # Normal worker exit does not prove that its children exited. Match
-            # tcenv.evaluate's cleanup and terminate the whole process group.
-            kill_group(proc)
-            forget(proc)
-            try:
-                progress_path.unlink()
-            except OSError:
-                pass
-        if job.cancel.is_set():
-            raise _JobFailed("cancelled", "request cancelled")
-        if proc.returncode != 0:
-            tail = (err or b"").decode("utf-8", errors="replace")[-MAX_WORKER_STDERR:]
-            raise _JobFailed("worker_failed", f"worker exited {proc.returncode}: {tail}")
-        decoder = FrameDecoder()
-        try:
-            frames = decoder.feed(out or b"")
-            decoder.finish()
-        except ProtocolError as exc:
-            raise _JobFailed("worker_protocol_error", str(exc)) from exc
-        if len(frames) != 1 or frames[0].frame_type != "result" or frames[0].request_id != request.request_id:
-            raise _JobFailed("worker_protocol_error", "worker did not emit exactly one matching result frame")
-        result = frames[0].payload
-        self._validate_worker_result(request, result)
+                snapshot = self.engine.get_job(
+                    request_id=request_id,
+                    request_digest=ref.external.request_digest,
+                    expected=self.engine.expected_identities,
+                    grant_token=ref.grant.token,
+                )
+            except JobError as exc:
+                if not self._stop.is_set() and self._is_current_delivery(delivery):
+                    self._send_job_error(request_id, exc)
+                return True
+            delivery.after_sequence = max(delivery.after_sequence, snapshot.last_sequence)
+            if self._is_delivery_end(snapshot):
+                self._send_snapshot(snapshot, ref, delivery=delivery)
+                return True
+            return False
+        for event in events:
+            if self._stop.is_set() or not self._is_current_delivery(delivery):
+                return False
+            delivery.after_sequence = max(delivery.after_sequence, event.sequence)
+            if event.progress is not None:
+                if not self._send_if_current(
+                    delivery, "progress", request_id, self._legacy_progress(ref.legacy, event.progress),
+                ):
+                    return False
+            if event.snapshot is not None and self._is_delivery_end(event.snapshot):
+                self._send_snapshot(event.snapshot, ref, delivery=delivery)
+                return True
+        return False
+
+    def _deliver_loop(self) -> None:
+        # One coordinator preserves the legacy service's deterministic
+        # cross-request terminal ordering while every individual poll remains
+        # bounded and non-blocking.  Submission order is only a tie-breaker:
+        # active jobs are skipped, so priority scheduling is not changed.
+        while not self._stop.is_set():
+            with self._delivery_lock:
+                deliveries = list(self._deliveries.values())
+            for delivery in deliveries:
+                if self._stop.is_set():
+                    return
+                if not self._is_current_delivery(delivery):
+                    continue
+                if self._deliver_one(delivery):
+                    with self._delivery_lock:
+                        if self._deliveries.get(delivery.ref.legacy.request_id) is delivery:
+                            self._deliveries.pop(delivery.ref.legacy.request_id, None)
+            self._stop.wait(_DELIVERY_POLL_S)
+
+    @staticmethod
+    def _legacy_progress(request: EvaluationRequest, progress: dict[str, Any]) -> dict[str, Any]:
+        stages = {
+            "queued": "queued",
+            "static_check": "static",
+            "compile": "compile",
+            "correctness": "correctness",
+            "timing": "bench",
+            "finalizing": "done",
+        }
+        stage = stages.get(str(progress.get("stage")), "queued")
+        observed = progress.get("observed_at_ms")
+        updated_at = observed / 1000.0 if isinstance(observed, int) and not isinstance(observed, bool) else time.time()
+        return {
+            "task": request.task,
+            "dtype": request.dtype,
+            "size": request.size,
+            "mode": request.mode,
+            "stage": stage,
+            "status": "ok" if stage == "done" else "running",
+            "message": str(progress.get("detail") or "")[:300],
+            "updated_at": updated_at,
+            "finished": stage == "done",
+        }
+
+    def _legacy_response(self, snapshot: JobSnapshot, ref: _RequestRef) -> dict[str, Any]:
+        if snapshot.result is None:
+            raise JobError("data_loss", "completed job has no result")
+        if snapshot.result.signature is not None and self._signing_key is None:
+            # Do not turn a previously signed durable result into an unsigned
+            # legacy result merely because the restarted adapter lost its key.
+            raise JobError("provenance_mismatch", "signed engine result requires the legacy signing key")
+        request = ref.legacy
+        report = snapshot.result.report_json()
+        evidence = snapshot.result.evidence_json()
+        if not isinstance(evidence, dict):
+            raise JobError("provenance_mismatch", "worker result has no evidence object")
+        if evidence.get("candidate_sha256") != request.candidate_sha256:
+            raise JobError("provenance_mismatch", "evidence candidate digest does not match request")
+        # The attempt receipt supplies attempt/fence/candidate binding, but its
+        # digest belongs to the v1 canonical request.  Legacy verification must
+        # see the original legacy digest; the legacy HMAC below covers this
+        # translated envelope, not the external signature.
+        receipt = dict(snapshot.result.receipt)
+        receipt["request_digest"] = request.request_digest
+        receipt["measurement_kind"] = self.identity.measurement_kind
         response = {
             "schema_version": SCHEMA_VERSION,
             "request_id": request.request_id,
             "request_digest": request.request_digest,
-            "report": result["report"],
+            "report": report,
             "provenance": self.identity.provenance(request_digest=request.request_digest).to_dict(),
-            "evidence": result.get("evidence"),
-            "receipt": result.get("receipt"),
-            "signature": str(result.get("signature") or ""),
+            "evidence": evidence,
+            "receipt": receipt,
+            "signature": "",
         }
+        try:
+            validate_receipt(EvaluationResult.from_dict(response), request)
+        except Exception as exc:
+            raise JobError("provenance_mismatch", f"invalid legacy result receipt: {exc}") from exc
         if self._signing_key is not None:
             response["signature"] = sign_result(EvaluationResult.from_dict(response), self._signing_key)
         return response
 
-    # -- cancellation/state/wire helpers -----------------------------------
-    def _cancel(self, job: _Job | None) -> None:
-        if job is None:
-            return
-        job.cancel.set()
-        proc = job.process
-        if proc is not None and proc.poll() is None:
+    def _send_snapshot(
+        self, snapshot: JobSnapshot, ref: _RequestRef, *, delivery: _Delivery | None = None,
+    ) -> None:
+        request_id = ref.legacy.request_id
+
+        def emit(frame_type: str, payload: dict[str, Any]) -> None:
+            if delivery is None:
+                self._send(frame_type, request_id, payload)
+            else:
+                # The replaced/Retyred delivery must never append a stale
+                # terminal frame after the new attempt already owns the request.
+                self._send_if_current(delivery, frame_type, request_id, payload)
+
+        if snapshot.state == "completed":
             try:
-                kill_group(proc)
-            except OSError:
-                pass
+                response = self._legacy_response(snapshot, ref)
+            except JobError as exc:
+                emit("error", self._error_payload(request_id, self._job_error_code(exc), self._job_error_message(exc), retryable=exc.retryable))
+                return
+            report = response["report"]
+            status = report.get("status")
+            # A durable engine deadline is the old worker-timeout outcome.  For
+            # timed selfcheck, timeout/crash also locks future timed attempts in
+            # the same atomic engine commit and is surfaced as candidate_timeout.
+            engine_deadline = status == "timeout" and report.get("message") == _ENGINE_TIMEOUT_MESSAGE
+            timed_hang = ref.legacy.kind == "selfcheck" and ref.legacy.mode == "timed" and status in {"timeout", "crash"}
+            if engine_deadline or timed_hang:
+                emit("error", self._error_payload(
+                    request_id, "candidate_timeout", "worker exceeded the candidate timeout",
+                ))
+                return
+            emit("result", response)
+            return
+        if snapshot.state == "expired":
+            emit("error", self._error_payload(request_id, "state_error", "request result has expired"))
+            return
+        failure = snapshot.failure
+        code = failure.code if failure is not None else snapshot.state
+        retryable = failure.retryable if failure is not None else False
+        message = failure.message if failure is not None else f"request {snapshot.state}"
+        mapped = self._failure_code(code, message)
+        # Engine diagnostics can contain bridge stderr.  Keep the useful legacy
+        # failure category without forwarding process output or host paths.
+        if mapped in {"worker_failed", "worker_unavailable", "worker_supervisor_failed"}:
+            message = "legacy worker failed"
+        emit("error", self._error_payload(request_id, mapped, message, retryable=retryable))
 
-    def _finish_job(self, job: _Job, code: str, message: str, *, retryable: bool = False) -> None:
-        self._remember_state(job.request.request_id, {
-            "schema_version": SCHEMA_VERSION,
-            "request_id": job.request.request_id,
-            "request_digest": job.request.request_digest,
-            "status": "failed",
-            "error": {"code": code, "message": message, "retryable": retryable},
-            "updated_at": time.time(),
-        })
-        self._send_error(job.request.request_id, code, message, retryable=retryable)
+    @staticmethod
+    def _failure_code(code: str, message: str) -> str:
+        if code == "frontend_stopped":
+            return "evaluation_unavailable"
+        if code == "worker_supervisor_failed":
+            return "worker_failed"
+        if code != "worker_result_invalid":
+            return code
+        # JobEngine deliberately separates candidate reports from job failures;
+        # recover the legacy validation categories at the adapter boundary.
+        if "EvalReport validation" in message or "invalid candidate report" in message:
+            return "worker_protocol_error"
+        return "provenance_mismatch"
 
+    # -- legacy read-only state --------------------------------------------
     def _load_state(self, request_id: str) -> dict[str, Any] | None:
         path = self._state_path(request_id)
         try:
-            document = json.loads(path.read_text(encoding="utf-8"))
+            path.lstat()
         except FileNotFoundError:
             return None
+        except OSError as exc:
+            raise ProtocolError(f"cannot inspect request state for {request_id}: {exc}") from exc
+        try:
+            # Once a legacy row exists, even a broken symlink, disappearing
+            # file or permission error is a failed read, never a fresh job.
+            document = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise ProtocolError(f"cannot read request state for {request_id}: {exc}") from exc
         if not isinstance(document, dict):
             raise ProtocolError(f"request state for {request_id} is not an object")
         return document
 
-    def _remember_state(self, request_id: str, document: dict[str, Any]) -> None:
-        write_json_atomic(self._state_path(request_id), document)
-
     def _state_path(self, request_id: str) -> Path:
         return self.state_dir / f"{sha256_hex(request_id.encode('utf-8'))}.json"
 
-    def _jobs_lock(self) -> threading.Lock:
-        return self._lock
+    # -- wire/error helpers -------------------------------------------------
+    def _safe_message(self, message: str) -> str:
+        value = str(message)
+        for secret in self.grants:
+            value = value.replace(secret, "<grant>")
+        for path in (str(self.state_dir), str(Path(__file__).resolve().parents[2])):
+            if path:
+                value = value.replace(path, "<state>")
+        return value[:MAX_WORKER_STDERR]
+
+    def _job_error_code(self, error: JobError) -> str:
+        message = str(error)
+        if error.code == "already_exists" or (error.code == "failed_precondition" and "digest differs" in message):
+            return "idempotency_conflict"
+        if error.code == "resource_exhausted" and "self-check" in message:
+            return "selfcheck_quota"
+        if error.code == "failed_precondition" and "candidate hang" in message:
+            return "selfcheck_hang"
+        if error.code == "not_found":
+            return "unknown_request"
+        if error.code in {"invalid_argument", "unauthenticated", "permission_denied", "failed_precondition"}:
+            return "protocol_error"
+        if error.code == "data_loss":
+            return "state_error"
+        if error.code in {"provenance_mismatch", "worker_protocol_error", "worker_failed", "worker_unavailable"}:
+            return error.code
+        return "evaluation_unavailable"
+
+    def _send_job_error(self, request_id: str, error: JobError) -> None:
+        self._send_error(
+            request_id, self._job_error_code(error), self._job_error_message(error),
+            retryable=error.retryable,
+        )
+
+    def _job_error_message(self, error: JobError) -> str:
+        code = self._job_error_code(error)
+        # Bridge/process stderr is deliberately not part of the legacy wire.
+        return "legacy worker failed" if code == "worker_failed" else self._safe_message(str(error))
+
+    def _send_if_current(
+        self, delivery: _Delivery, frame_type: str, request_id: str, payload: dict[str, Any],
+    ) -> bool:
+        """Send one frame only while this delivery still owns the request.
+
+        The ownership check and the write share ``_delivery_lock`` with
+        ``_start_delivery(replace=True)``; a Retry therefore either installs the
+        replacement before the stale check (the frame is dropped) or after this
+        write completes (the frame is the pre-Retry terminal outcome).
+        """
+
+        with delivery.send_lock:
+            if delivery.superseded or self._stop.is_set():
+                return False
+            if not self._is_current_delivery(delivery):
+                return False
+            self._send(frame_type, request_id, payload)
+            return True
 
     def _send(self, frame_type: str, request_id: str, payload: dict[str, Any]) -> None:
         writer = self._writer
@@ -674,14 +828,17 @@ class RemoteService:
             except (BrokenPipeError, OSError):
                 self._stop.set()
 
-    def _send_error(self, request_id: str, code: str, message: str, *, retryable: bool = False) -> None:
-        self._send("error", request_id or "unknown", {
+    def _error_payload(self, request_id: str, code: str, message: str, *, retryable: bool = False) -> dict[str, Any]:
+        return {
             "schema_version": SCHEMA_VERSION,
             "code": code,
-            "message": message[:MAX_WORKER_STDERR],
+            "message": self._safe_message(message),
             "retryable": retryable,
             "request_id": request_id,
-        })
+        }
+
+    def _send_error(self, request_id: str, code: str, message: str, *, retryable: bool = False) -> None:
+        self._send("error", request_id or "unknown", self._error_payload(request_id, code, message, retryable=retryable))
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -710,6 +867,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     """Production entry point; no simulation backend is reachable here."""
+
     args = _parse_args(argv)
     identity = ServiceIdentity(
         site_id=args.site_id,

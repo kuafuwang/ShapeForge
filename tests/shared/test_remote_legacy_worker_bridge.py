@@ -23,6 +23,7 @@ from tcenv.remote.worker_protocol import (
 
 from ..support.fake_worker_legacy_bridge import LONG_DETAIL
 from ..support.job_engine import request as make_request
+from ..support.process_state import process_state
 
 ROOT = Path(__file__).resolve().parents[2]
 NPU_WORKER = [sys.executable, "-m", "tests.support.npu_sim.worker_entry"]
@@ -50,6 +51,7 @@ def _spawn_bridge(
     env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     env["TMPDIR"] = str(temp_root)
     env.pop("TCENV_LEGACY_WORKER_COMMAND", None)
+    env.pop("TCENV_REMOTE_STATE_DIR", None)
     env.pop("FAKE_LEGACY_BEHAVIOR", None)
     env.pop("FAKE_LEGACY_RECORD", None)
     env.pop("FAKE_LEGACY_RELEASE", None)
@@ -161,16 +163,9 @@ def _recv_engine_frame(
 
 
 def _ps_state(pid: int) -> str | None:
-    completed = subprocess.run(
-        ["ps", "-p", str(pid), "-o", "stat="],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        return None
-    return completed.stdout.strip() or None
+    """State/reaped probe; never executes ``ps``, which a fence can deny."""
+
+    return process_state(pid)
 
 
 def test_npu_worker_result_progress_binding_and_temp_cleanup(tmp_path):
@@ -245,6 +240,43 @@ def test_exact_legacy_request_same_process_group_and_success_reap(tmp_path):
         assert "signature" not in result_frame.payload
     finally:
         _destroy_bridge(process)
+
+
+def test_state_scoped_temp_root_prunes_residue_and_cleans_the_attempt(tmp_path):
+    """@brief 临时目录由 state 目录限定：SIGKILL 残留会在下一次尝试前清掉。"""
+    request = _request()
+    record_path = tmp_path / "scoped-record.json"
+    state_dir = tmp_path / "state"
+    root = state_dir / "bridge-tmp"
+    stale = root / "attempt-orphan"
+    stale.mkdir(parents=True)
+    (stale / "progress.json").write_text("{}", encoding="utf-8")
+    unrelated = root / "not-ours.txt"
+    unrelated.write_text("keep", encoding="utf-8")
+
+    returncode, output, error, _temp_root = _run_bridge(
+        tmp_path, request, _attempt(), FAKE_WORKER,
+        extra_env={
+            "FAKE_LEGACY_RECORD": str(record_path),
+            "TCENV_REMOTE_STATE_DIR": str(state_dir),
+        },
+    )
+    assert returncode == 0, error.decode("utf-8", errors="replace")
+    progress_path = Path(json.loads(record_path.read_text(encoding="utf-8"))["progress_path"])
+    assert progress_path.parent.parent == root
+    assert progress_path.parent.name.startswith("attempt-")
+    assert not progress_path.parent.exists()
+    assert not stale.exists()
+    assert unrelated.read_text(encoding="utf-8") == "keep"
+    assert list(root.iterdir()) == [unrelated]
+
+
+def test_non_lowercase_state_dir_is_not_used_for_temp_root(tmp_path):
+    """@brief 非绝对路径不能悄悄把临时目录指到当前工作目录之外的相对位置。"""
+    from tcenv.remote.legacy_worker_bridge import _bridge_temp_root
+
+    assert _bridge_temp_root({"TCENV_REMOTE_STATE_DIR": "relative/state"}) is None
+    assert _bridge_temp_root({}) is None
 
 
 def test_nonexistent_child_command_fails_without_a_result(tmp_path):

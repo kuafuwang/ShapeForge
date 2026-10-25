@@ -5,8 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import select
+import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -20,21 +23,22 @@ from tcenv.remote.protocol import (
 )
 from tcenv.remote.production import ProductionBackend
 from tcenv.evaluate import EvalReport
-from tcenv.remote.service import RemoteService, ServiceIdentity, SessionGrant, _Job, _JobFailed
+from tcenv.remote.service import RemoteService, ServiceIdentity, SessionGrant
 from tcenv.evaluation import EvaluationError
 from tests.support.npu_sim.service_entry import TASK_FINGERPRINT, TASK_PACK_DIGEST, TOKEN
+from tests.support.process_state import process_is_alive
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class ServiceProcess:
-    def __init__(self, tmp_path: Path, *, selfcheck_max: int = 20, selfcheck_max_gpu_s: float = 120.0, allow_kinds: tuple[str, ...] = ("formal_eval", "selfcheck"), expires_at: float | None = None, extra_env: dict[str, str] | None = None, alt: bool = False) -> None:
+    def __init__(self, tmp_path: Path, *, selfcheck_max: int = 20, selfcheck_max_gpu_s: float = 120.0, allow_kinds: tuple[str, ...] = ("formal_eval", "selfcheck"), expires_at: float | None = None, extra_env: dict[str, str] | None = None, alt: bool = False, worker_module: str = "tests.support.npu_sim.worker_entry") -> None:
         env = dict(os.environ)
         if extra_env:
             env.update(extra_env)
         env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
-        command = [sys.executable, "-m", "tests.support.npu_sim.service_entry", "--state-dir", str(tmp_path / "state"), "--selfcheck-max", str(selfcheck_max), "--selfcheck-max-gpu-s", str(selfcheck_max_gpu_s)]
+        command = [sys.executable, "-m", "tests.support.npu_sim.service_entry", "--state-dir", str(tmp_path / "state"), "--selfcheck-max", str(selfcheck_max), "--selfcheck-max-gpu-s", str(selfcheck_max_gpu_s), "--worker-module", worker_module]
         if alt:
             command.extend(["--alt-token", "test-alt-token", "--alt-run-id", "run-2", "--alt-session-id", "session-1", "--aging-s", "0.2"])
         for kind in allow_kinds:
@@ -253,32 +257,28 @@ def test_cancel_kills_the_worker_and_returns_cancelled(tmp_path):
         proc.close()
 
 
-def test_cancellation_after_a_worker_result_does_not_corrupt_usage(tmp_path):
-    """@brief 已有有效 worker 结果时完整提交，不能先记 GPU/hang 再返回 cancelled 并退次数。"""
-    import time
-    identity = ServiceIdentity(site_id="sim-site", device_id="sim-device", backend="sim-npu", backend_version="1", target_id="sim-npu-test", worker_build="sim-build-1", task_pack_digest=TASK_PACK_DIGEST, calibration_digest="c" * 64, task_fingerprints=frozenset({TASK_FINGERPRINT}), measurement_kind="simulated", publication_allowed=False)
-    grant = SessionGrant(token=TOKEN, run_id="run-1", session_id="session-1", target_id="sim-npu-test")
-    service = RemoteService(identity=identity, grants=[grant], worker_command=["/bin/true"], state_dir=tmp_path / "svc")
-    request = _request(kind="selfcheck", mode="timed")
-    job = _Job(request=request, submitted=time.perf_counter())
-    service._queue.append(job)
-    service._selfcheck_counts[(request.run_id, request.session_id)] = 1
-
-    def completed_with_late_cancel(_job):
-        job.cancel.set()
-        return {"report": {"status": "ok", "elapsed_s": 0.5}}
-
-    sent = []
-    service._run_worker = completed_with_late_cancel
-    def send(frame_type, request_id, payload):
-        sent.append((frame_type, request_id, payload))
-        service._stop.set()
-    service._send = send
-    service._worker_loop()
-    assert sent[0][0] == "result"
-    key = (request.run_id, request.session_id)
-    assert service._selfcheck_counts[key] == 1
-    assert service._selfcheck_gpu_s[key] == 0.5
+def test_cancellation_after_commit_does_not_refund_or_rewrite_usage(tmp_path):
+    """@brief 终态提交后 cancel 不能改写结果或退还已经结算的 timed 配额。"""
+    proc = ServiceProcess(tmp_path, selfcheck_max=1)
+    assert proc.hello().frame_type == "hello"
+    try:
+        first = _request(request_id="committed-selfcheck", kind="selfcheck", mode="timed")
+        _send_request(proc, first)
+        assert proc.recv().frame_type == "result"
+        proc.send("cancel", first.request_id, {"request_id": first.request_id})
+        assert proc.recv().payload["code"] == "unknown_request"
+        second = _request(request_id="committed-selfcheck-next", kind="selfcheck", mode="timed")
+        _send_request(proc, second)
+        assert proc.recv().payload["code"] == "selfcheck_quota"
+        with sqlite3.connect(tmp_path / "state" / "jobs.sqlite3") as connection:
+            row = connection.execute(
+                "SELECT used_count,used_gpu_us,reserved_count FROM quotas WHERE run_id=? AND session_id=?",
+                ("run-1", "session-1"),
+            ).fetchone()
+        assert row == (1, 500_000, 0)
+        assert not (tmp_path / "state" / "selfcheck_usage.json").exists()
+    finally:
+        proc.close()
 
 
 def test_worker_timeout_is_an_infrastructure_error_not_a_candidate_crash(tmp_path):
@@ -385,14 +385,19 @@ def test_gpu_time_quota_is_enforced(tmp_path):
 
 def test_report_target_mismatch_is_rejected(tmp_path):
     """@brief worker 报告 target 与请求不符时必须拒绝，不得只接受 dict。"""
-    identity = ServiceIdentity(site_id="sim-site", device_id="sim-device", backend="sim-npu", backend_version="1", target_id="sim-npu-test", worker_build="sim-build-1", task_pack_digest=TASK_PACK_DIGEST, calibration_digest="c" * 64, task_fingerprints=frozenset({TASK_FINGERPRINT}), measurement_kind="simulated", publication_allowed=False)
-    grant = SessionGrant(token=TOKEN, run_id="run-1", session_id="session-1", target_id="sim-npu-test")
-    service = RemoteService(identity=identity, grants=[grant], worker_command=["/bin/true"], state_dir=tmp_path / "svc")
-    request = _request()
-    report = {"task": request.task, "dtype": request.dtype, "size": request.size, "mode": request.mode, "target_id": "other-target", "protocol_version": "3", "status": "ok", "simulated": True}
-    with pytest.raises(_JobFailed) as exc_info:
-        service._validate_worker_result(request, {"report": report})
-    assert exc_info.value.code == "provenance_mismatch"
+    proc = ServiceProcess(
+        tmp_path,
+        worker_module="tests.support.fake_worker_legacy_bridge",
+        extra_env={"FAKE_LEGACY_BEHAVIOR": "target_mismatch"},
+    )
+    assert proc.hello().frame_type == "hello"
+    try:
+        _send_request(proc, _request())
+        error = proc.recv()
+        assert error.frame_type == "error"
+        assert error.payload["code"] == "provenance_mismatch"
+    finally:
+        proc.close()
 
 
 def test_provenance_from_dict_rejects_missing_fields():
@@ -437,17 +442,22 @@ def test_corrupt_request_state_fails_closed(tmp_path):
 
 def test_cancel_is_scoped_to_the_grant(tmp_path):
     """@brief 取消操作也必须绑定 run/session，不能跨 run 取消他人任务。"""
-    identity = ServiceIdentity(site_id="sim-site", device_id="sim-device", backend="sim-npu", backend_version="1", target_id="sim-npu-test", worker_build="sim-build-1", task_pack_digest=TASK_PACK_DIGEST, calibration_digest="c" * 64, task_fingerprints=frozenset({TASK_FINGERPRINT}), measurement_kind="simulated", publication_allowed=False)
-    first = SessionGrant(token="first", run_id="run-1", session_id="session-1", target_id="sim-npu-test")
-    second = SessionGrant(token="second", run_id="run-2", session_id="session-2", target_id="sim-npu-test")
-    service = RemoteService(identity=identity, grants=[first, second], worker_command=["/bin/true"], state_dir=tmp_path / "svc")
-    service._authenticated = True
-    service._grant = first
-    other = _request(request_id="other", run_id="run-2", session_id="session-2")
-    job = service._jobs["other"] = type("Job", (), {"request": other, "cancel": __import__("threading").Event(), "process": None})()
-    frame = Frame("cancel", "other", {"request_id": "other"}, 0, "")
-    with pytest.raises(ProtocolError, match="run_id|session_id"):
-        service._handle_cancel(frame)
+    proc = ServiceProcess(tmp_path, alt=True)
+    assert proc.hello().frame_type == "hello"
+    try:
+        request = _request(request_id="cross-grant-cancel", source="REMOTE_SLEEP", timeout=20.0)
+        _send_request(proc, request)
+        time.sleep(0.2)
+        assert proc.hello(nonce="cross-grant-hello", token="test-alt-token").frame_type == "hello"
+        proc.send("cancel", request.request_id, {"request_id": request.request_id})
+        rejected = proc.recv()
+        assert rejected.payload["code"] == "protocol_error"
+        assert "run_id" in rejected.payload["message"]
+        assert proc.hello(nonce="original-grant-hello", token=TOKEN).frame_type == "hello"
+        proc.send("cancel", request.request_id, {"request_id": request.request_id})
+        assert proc.recv().payload["code"] == "cancelled"
+    finally:
+        proc.close()
 
 
 def test_service_identity_requires_a_registered_task_fingerprint():
@@ -473,15 +483,20 @@ def test_formal_validate_is_rejected_before_a_worker(tmp_path):
 
 def test_missing_evidence_is_rejected(tmp_path):
     """@brief worker 省略 evidence 时不能绕过 source digest 绑定。"""
-    identity = ServiceIdentity(site_id="sim-site", device_id="sim-device", backend="sim-npu", backend_version="1", target_id="sim-npu-test", worker_build="sim-build-1", task_pack_digest=TASK_PACK_DIGEST, calibration_digest="c" * 64, task_fingerprints=frozenset({TASK_FINGERPRINT}), measurement_kind="simulated", publication_allowed=False)
-    grant = SessionGrant(token=TOKEN, run_id="run-1", session_id="session-1", target_id="sim-npu-test")
-    service = RemoteService(identity=identity, grants=[grant], worker_command=["/bin/true"], state_dir=tmp_path / "svc")
-    request = _request()
-    report = {"task": request.task, "dtype": request.dtype, "size": request.size, "mode": request.mode, "target_id": request.target_id, "protocol_version": "3", "status": "ok", "simulated": True, "seed": request.seed}
-    with pytest.raises(_JobFailed) as exc_info:
-        service._validate_worker_result(request, {"report": report})
-    assert exc_info.value.code == "provenance_mismatch"
-    assert "evidence" in str(exc_info.value)
+    proc = ServiceProcess(
+        tmp_path,
+        worker_module="tests.support.fake_worker_legacy_bridge",
+        extra_env={"FAKE_LEGACY_BEHAVIOR": "missing_evidence"},
+    )
+    assert proc.hello().frame_type == "hello"
+    try:
+        _send_request(proc, _request())
+        error = proc.recv()
+        assert error.frame_type == "error"
+        assert error.payload["code"] == "provenance_mismatch"
+        assert "evidence" in error.payload["message"]
+    finally:
+        proc.close()
 
 
 def test_worker_infrastructure_failure_does_not_consume_quota_or_lock_timed(tmp_path):
@@ -528,15 +543,20 @@ def test_selfcheck_timeout_locks_future_timed_requests(tmp_path):
 
 def test_report_seed_mismatch_is_rejected(tmp_path):
     """@brief report seed 与请求 seed 不一致时，报告不能进入候选。"""
-    identity = ServiceIdentity(site_id="sim-site", device_id="sim-device", backend="sim-npu", backend_version="1", target_id="sim-npu-test", worker_build="sim-build-1", task_pack_digest=TASK_PACK_DIGEST, calibration_digest="c" * 64, task_fingerprints=frozenset({TASK_FINGERPRINT}), measurement_kind="simulated", publication_allowed=False)
-    grant = SessionGrant(token=TOKEN, run_id="run-1", session_id="session-1", target_id="sim-npu-test")
-    service = RemoteService(identity=identity, grants=[grant], worker_command=["/bin/true"], state_dir=tmp_path / "svc")
-    request = _request()
-    report = {"task": request.task, "dtype": request.dtype, "size": request.size, "mode": request.mode, "target_id": request.target_id, "protocol_version": "3", "status": "ok", "simulated": True, "seed": request.seed + 1}
-    with pytest.raises(_JobFailed) as exc_info:
-        service._validate_worker_result(request, {"report": report, "evidence": {"candidate_sha256": request.candidate_sha256}})
-    assert exc_info.value.code == "provenance_mismatch"
-    assert "seed" in str(exc_info.value)
+    proc = ServiceProcess(
+        tmp_path,
+        worker_module="tests.support.fake_worker_legacy_bridge",
+        extra_env={"FAKE_LEGACY_BEHAVIOR": "seed_mismatch"},
+    )
+    assert proc.hello().frame_type == "hello"
+    try:
+        _send_request(proc, _request())
+        error = proc.recv()
+        assert error.frame_type == "error"
+        assert error.payload["code"] == "provenance_mismatch"
+        assert "seed" in error.payload["message"]
+    finally:
+        proc.close()
 
 
 def test_a_failed_rehello_keeps_the_previous_grant(tmp_path):
@@ -553,10 +573,13 @@ def test_a_failed_rehello_keeps_the_previous_grant(tmp_path):
         "session_token": "second",
         "expected_site_id": "wrong-site",
     }
-    with pytest.raises(ProtocolError, match="site"):
-        service._handle_hello(Frame("hello", "failed-rehello", hello, 0, ""))
-    assert service._grant is first
-    assert service._authenticated is True
+    try:
+        with pytest.raises(ProtocolError, match="site"):
+            service._handle_hello(Frame("hello", "failed-rehello", hello, 0, ""))
+        assert service._grant is first
+        assert service._authenticated is True
+    finally:
+        service.close()
 
 
 def test_rehello_switches_grants_and_ages_selfcheck(tmp_path):
@@ -578,3 +601,197 @@ def test_rehello_switches_grants_and_ages_selfcheck(tmp_path):
         assert all(frame.frame_type == "result" for frame in frames)
     finally:
         proc.close()
+
+
+def test_sqlite_replay_survives_restart_and_shadows_legacy_json(tmp_path):
+    """@brief SQLite 终态可跨重启回放，且不再读取同 request 的损坏旧 JSON。"""
+    counter = tmp_path / "restart-worker-count.txt"
+    request = _request(request_id="sqlite-restart-replay")
+    first = ServiceProcess(tmp_path, extra_env={"NPU_SIM_COUNTER": str(counter)})
+    try:
+        assert first.hello(nonce="restart-first-hello").frame_type == "hello"
+        _send_request(first, request)
+        initial = first.recv()
+        assert initial.frame_type == "result"
+    finally:
+        first.close()
+    # A same-named legacy file is not authoritative once SQLite has a job.
+    (tmp_path / "state" / (hashlib.sha256(request.request_id.encode()).hexdigest() + ".json")).write_text("not-json")
+
+    second = ServiceProcess(tmp_path, extra_env={"NPU_SIM_COUNTER": str(counter)})
+    try:
+        assert second.hello(nonce="restart-second-hello").frame_type == "hello"
+        _send_request(second, request)
+        replay = second.recv()
+        assert replay.frame_type == "result"
+        assert replay.payload["report"] == initial.payload["report"]
+        assert replay.payload["receipt"] == initial.payload["receipt"]
+        assert counter.read_text() == "1"
+        with sqlite3.connect(tmp_path / "state" / "jobs.sqlite3") as connection:
+            assert connection.execute("SELECT COUNT(*) FROM jobs WHERE request_id=?", (request.request_id,)).fetchone()[0] == 1
+            assert connection.execute("SELECT state FROM jobs WHERE request_id=?", (request.request_id,)).fetchone()[0] == "completed"
+        assert not (tmp_path / "state" / "selfcheck_usage.json").exists()
+    finally:
+        second.close()
+
+
+def test_interrupted_attempt_requires_explicit_resubmit_after_restart(tmp_path):
+    """@brief 重启只恢复 interrupted；只有同 digest 的显式重提才分配新 attempt。"""
+    counter = tmp_path / "interrupted-worker-count.txt"
+    request = _request(request_id="restart-interrupted", source="REMOTE_SLEEP", timeout=30.0)
+    first = ServiceProcess(tmp_path, extra_env={"NPU_SIM_COUNTER": str(counter)})
+    try:
+        assert first.hello(nonce="interrupted-first-hello").frame_type == "hello"
+        _send_request(first, request)
+        deadline = time.monotonic() + 3.0
+        while not counter.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert counter.read_text() == "1"
+    finally:
+        first.close()
+
+    second = ServiceProcess(tmp_path, extra_env={"NPU_SIM_COUNTER": str(counter)})
+    try:
+        assert second.hello(nonce="interrupted-second-hello").frame_type == "hello"
+        time.sleep(0.2)
+        assert counter.read_text() == "1", "recovery must not silently rerun an interrupted attempt"
+        _send_request(second, request)
+        result = second.recv()
+        assert result.frame_type == "result"
+        assert counter.read_text() == "2"
+    finally:
+        second.close()
+
+
+def test_cancel_of_an_interrupted_attempt_gets_exactly_one_terminal_reply(tmp_path):
+    """@brief interrupted 状态显式取消只回一个终态帧，不依赖投递线程。"""
+    proc = ServiceProcess(tmp_path, extra_env={"NPU_SIM_WORKER_EXIT": "7"})
+    try:
+        assert proc.hello(nonce="interrupt-cancel-hello").frame_type == "hello"
+        request = _request(request_id="interrupt-then-cancel")
+        _send_request(proc, request)
+        interrupted = proc.recv()
+        assert interrupted.frame_type == "error"
+        assert interrupted.payload["code"] == "worker_failed"
+        assert interrupted.payload["retryable"] is True
+        proc.send("cancel", request.request_id, {"request_id": request.request_id})
+        cancelled = proc.recv()
+        assert cancelled.frame_type == "error"
+        assert cancelled.payload["code"] == "cancelled"
+        # No second terminal frame may follow the cancellation reply.
+        assert proc.proc.stdout is not None
+        assert select.select([proc.proc.stdout], [], [], 0.3)[0] == []
+    finally:
+        proc.close()
+
+
+def test_legacy_completed_json_replays_without_starting_a_worker(tmp_path):
+    """@brief 没有 SQLite job 时，旧 completed JSON 仍是只读回放记录。"""
+    counter = tmp_path / "legacy-json-worker-count.txt"
+    proc = ServiceProcess(tmp_path, extra_env={"NPU_SIM_COUNTER": str(counter)})
+    request = _request(request_id="legacy-completed-json")
+    response = {"schema_version": 1, "request_id": request.request_id, "request_digest": request.request_digest, "legacy_replay": True}
+    _write_state(tmp_path, request, {
+        "schema_version": 1,
+        "request_id": request.request_id,
+        "request_digest": request.request_digest,
+        "status": "completed",
+        "response": response,
+        "updated_at": 0.0,
+    })
+    try:
+        assert proc.hello().frame_type == "hello"
+        _send_request(proc, request)
+        replay = proc.recv()
+        assert replay.frame_type == "result"
+        assert replay.payload == response
+        assert not counter.exists()
+    finally:
+        proc.close()
+
+
+def test_legacy_selfcheck_usage_fails_closed_instead_of_being_ignored(tmp_path):
+    """@brief 旧配额文件无法无损导入时必须在启动时明确拒绝。"""
+    state = tmp_path / "legacy-usage-state"
+    state.mkdir()
+    (state / "selfcheck_usage.json").write_text("{}")
+    identity = ServiceIdentity(site_id="sim-site", device_id="sim-device", backend="sim-npu", backend_version="1", target_id="sim-npu-test", worker_build="sim-build-1", task_pack_digest=TASK_PACK_DIGEST, calibration_digest="c" * 64, task_fingerprints=frozenset({TASK_FINGERPRINT}), measurement_kind="simulated", publication_allowed=False)
+    grant = SessionGrant(token=TOKEN, run_id="run-1", session_id="session-1", target_id="sim-npu-test")
+    with pytest.raises(ValueError, match="cannot be safely imported"):
+        RemoteService(identity=identity, grants=[grant], worker_command=["/bin/true"], state_dir=state)
+    assert not (state / "jobs.sqlite3").exists()
+
+
+def test_active_resubmit_is_not_an_implicit_retry(tmp_path):
+    """@brief queued/running 重提只回 in_progress，原 attempt 继续且只执行一次。"""
+    counter = tmp_path / "active-resubmit-count.txt"
+    proc = ServiceProcess(tmp_path, extra_env={"NPU_SIM_COUNTER": str(counter)})
+    try:
+        assert proc.hello().frame_type == "hello"
+        request = _request(request_id="active-resubmit", source="REMOTE_SLEEP", timeout=20.0)
+        _send_request(proc, request)
+        _send_request(proc, request)
+        in_progress = proc.recv()
+        assert in_progress.payload["code"] == "in_progress"
+        assert in_progress.payload["retryable"] is True
+        assert proc.recv().frame_type == "result"
+        assert counter.read_text() == "1"
+    finally:
+        proc.close()
+
+
+def test_candidate_crash_report_remains_a_completed_result(tmp_path):
+    """@brief 非 timed-selfcheck 的候选 crash 是 report，不伪装成基础设施错误。"""
+    proc = ServiceProcess(
+        tmp_path,
+        worker_module="tests.support.fake_worker_legacy_bridge",
+        extra_env={"FAKE_LEGACY_BEHAVIOR": "candidate_crash"},
+    )
+    try:
+        assert proc.hello().frame_type == "hello"
+        _send_request(proc, _request(request_id="candidate-crash-result"))
+        result = proc.recv()
+        assert result.frame_type == "result"
+        assert result.payload["report"]["status"] == "crash"
+    finally:
+        proc.close()
+
+
+def _process_is_alive(pid: int) -> bool:
+    """Liveness probe that never executes ``ps`` (a fence can deny it)."""
+
+    return process_is_alive(pid)
+
+
+def test_cancel_cleans_worker_group_and_close_releases_store(tmp_path):
+    """@brief cancel 杀掉 bridge/legacy 子进程组，close 后同一 store 可重新打开。"""
+    record = tmp_path / "cancel-worker-record.json"
+    proc = ServiceProcess(
+        tmp_path,
+        worker_module="tests.support.fake_worker_legacy_bridge",
+        extra_env={"FAKE_LEGACY_BEHAVIOR": "sleep", "FAKE_LEGACY_RECORD": str(record)},
+    )
+    worker_pid = None
+    try:
+        assert proc.hello(nonce="cleanup-first-hello").frame_type == "hello"
+        request = _request(request_id="cleanup-cancel", timeout=30.0)
+        _send_request(proc, request)
+        deadline = time.monotonic() + 3.0
+        while not record.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        worker_pid = json.loads(record.read_text())["pid"]
+        proc.send("cancel", request.request_id, {"request_id": request.request_id})
+        assert proc.recv().payload["code"] == "cancelled"
+    finally:
+        proc.close()
+    assert worker_pid is not None
+    deadline = time.monotonic() + 3.0
+    while _process_is_alive(worker_pid) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not _process_is_alive(worker_pid), "legacy worker survived cancellation"
+
+    reopened = ServiceProcess(tmp_path)
+    try:
+        assert reopened.hello(nonce="cleanup-second-hello").frame_type == "hello"
+    finally:
+        reopened.close()

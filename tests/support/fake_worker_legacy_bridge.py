@@ -62,6 +62,16 @@ def _result(request: EvaluationRequest, *, request_id: str | None = None) -> Non
         "measurement_kind": "simulated",
         "legacy_evidence_marker": "evidence-from-legacy-worker",
     }
+    behavior = os.environ.get("FAKE_LEGACY_BEHAVIOR", "success")
+    if behavior == "target_mismatch":
+        report["target_id"] = "other-target"
+    elif behavior == "seed_mismatch":
+        report["seed"] = (request.seed or 0) + 1
+    elif behavior == "missing_evidence":
+        evidence = None
+    elif behavior == "candidate_crash":
+        report["status"] = "crash"
+        report["elapsed_s"] = 0.25
     write_frame(sys.stdout.buffer, "result", request_id or request.request_id, {
         "report": report,
         "evidence": evidence,
@@ -150,7 +160,7 @@ def main() -> int:
             "message": "unknown legacy stage",
             "updated_at": "not-a-timestamp",
         })
-    elif behavior != "success":
+    elif behavior not in {"success", "target_mismatch", "seed_mismatch", "missing_evidence", "candidate_crash"}:
         raise RuntimeError(f"unknown fake behavior {behavior!r}")
 
     _result(request)

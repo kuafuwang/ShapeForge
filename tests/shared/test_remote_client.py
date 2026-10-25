@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import os
 import sys
@@ -10,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from tcenv.evaluation import EvaluationRequest
+from tcenv.evaluation import EvaluationRequest, EvaluationResult, sign_result
+from tcenv.remote.protocol import Frame
 from tcenv.remote.client import CommandTransport, RemoteError, RemoteEvaluator, RemoteEvaluatorPool
 from tests.support.npu_sim.service_entry import TASK_FINGERPRINT, TASK_PACK_DIGEST, TOKEN
 
@@ -240,11 +242,28 @@ def test_signature_is_verified_and_receipt_replay_is_scoped_by_digest(tmp_path):
     """@brief 配置密钥后签名必须验证；同 receipt 跨不同 digest 必须拒绝。"""
     key = b"test-signing-key"
     with _evaluator(tmp_path, signing_key=key) as evaluator:
-        result = evaluator.formal(_request(request_id="signed-1", source="REPLAY_RECEIPT"))
+        first_request = _request(request_id="signed-1", source="REPLAY_RECEIPT")
+        result = evaluator.formal(first_request)
         assert result.signature
         assert result.receipt["receipt_id"]
+        assert result.receipt["request_digest"] == first_request.request_digest
+        assert result.receipt["attempt_id"]
+
+        # JobEngine receipts are attempt-scoped, so two real attempts no longer
+        # collide merely because a fake legacy worker reused a receipt id.
+        second_request = _request(request_id="signed-2", source="REPLAY_RECEIPT", mode="full")
+        second = evaluator.formal(second_request)
+        assert second.receipt["receipt_id"] != result.receipt["receipt_id"]
+
+        # Exercise the host-side replay guard directly with a correctly signed
+        # but maliciously reused receipt id.
+        payload = copy.deepcopy(second.to_dict())
+        payload["receipt"]["receipt_id"] = result.receipt["receipt_id"]
+        payload["signature"] = ""
+        payload["signature"] = sign_result(EvaluationResult.from_dict(payload), key)
+        replay = Frame("result", second_request.request_id, payload, 0, "")
         with pytest.raises(RemoteError) as exc_info:
-            evaluator.formal(_request(request_id="signed-2", source="REPLAY_RECEIPT", mode="full"))
+            evaluator._validate_result(second_request, replay)
         assert exc_info.value.code == "receipt_replay"
 
 

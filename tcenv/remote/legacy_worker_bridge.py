@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -27,10 +28,12 @@ from typing import Any, BinaryIO, Mapping
 
 from .job_types import ExternalEvaluationRequest
 from .protocol import FrameDecoder, ProtocolError, encode_frame
-from .worker_protocol import read_request, write_progress, write_result
+from .worker_protocol import STATE_DIR_ENV, read_request, write_progress, write_result
 
 _LEGACY_COMMAND_ENV = "TCENV_LEGACY_WORKER_COMMAND"
 _PROGRESS_ENV = "TCENV_REMOTE_PROGRESS_PATH"
+_BRIDGE_TMP_DIRNAME = "bridge-tmp"
+_ATTEMPT_TMP_PREFIX = "attempt-"
 _MAX_PROGRESS_BYTES = 65_536
 _PROGRESS_POLL_S = 0.05
 _MAX_DETAIL_CHARS = 300
@@ -73,6 +76,58 @@ def _legacy_command(environ: Mapping[str, str]) -> list[str]:
             f"{_LEGACY_COMMAND_ENV} must be a JSON array of non-empty strings"
         )
     return value
+
+
+def _prune_stale_attempt_dirs(root: Path) -> None:
+    """Remove attempt temp dirs left behind by a SIGKILLed bridge.
+
+    One frontend runs at most one attempt at a time and the engine confirms the
+    previous worker group is gone before spawning the next, so every entry under
+    this state-scoped root is stale when a new bridge starts.  Only our own
+    prefix is removed; symlinks are unlinked, never followed.
+    """
+
+    try:
+        entries = list(os.scandir(root))
+    except OSError:
+        return
+    for entry in entries:
+        if not entry.name.startswith(_ATTEMPT_TMP_PREFIX):
+            continue
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(entry.path, ignore_errors=True)
+            else:
+                os.unlink(entry.path)
+        except OSError:
+            continue
+
+
+def _bridge_temp_root(environ: Mapping[str, str]) -> Path | None:
+    """Return the state-scoped temp root for one attempt, or ``None``.
+
+    Residue under a process-wide temp directory cannot be attributed or cleaned
+    safely; the engine passes its persistent state directory so leftovers are
+    scoped to this single-active frontend.  A missing or unusable root falls back
+    to the standard temp directory instead of failing the candidate.
+    """
+
+    raw = environ.get(STATE_DIR_ENV)
+    if not raw:
+        return None
+    try:
+        state_dir = Path(raw)
+        if not state_dir.is_absolute():
+            return None
+        root = state_dir / _BRIDGE_TMP_DIRNAME
+        root.mkdir(mode=0o700, exist_ok=True)
+        if root.is_symlink() or not root.is_dir():
+            return None
+        os.chmod(root, 0o700)
+    except OSError:
+        return None
+    _prune_stale_attempt_dirs(root)
+    return root
 
 
 def _translate_progress(document: Any) -> dict[str, Any] | None:
@@ -239,7 +294,8 @@ def _run_legacy_worker(
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     legacy = request.to_legacy()
     legacy_request = encode_frame("request", legacy.request_id, legacy.to_dict())
-    with tempfile.TemporaryDirectory(prefix="tcenv-legacy-worker-") as temporary:
+    temp_root = _bridge_temp_root(environ)
+    with tempfile.TemporaryDirectory(prefix=_ATTEMPT_TMP_PREFIX, dir=temp_root) as temporary:
         progress_path = Path(temporary) / "progress.json"
         child_env = dict(environ)
         child_env[_PROGRESS_ENV] = str(progress_path)

@@ -32,10 +32,76 @@ from .job_types import (
     StateCorrupt,
 )
 from .protocol import FrameDecoder
-from .worker_protocol import MAX_WORKER_FRAME_PAYLOAD, decode_worker_frame, encode_request
+from .worker_protocol import (
+    MAX_WORKER_FRAME_PAYLOAD,
+    STATE_DIR_ENV,
+    decode_worker_frame,
+    encode_request,
+)
 
 MAX_STDERR = 4000
 _CLOSE_SCHEDULER_JOIN_S = 1.0
+_PROC_PIDTBSDINFO = 3
+_MACOS_BSDPROC_INFO = None
+
+
+def _macos_libproc_start_time(pid: int) -> tuple[int, int] | None:
+    """Read (start_sec, start_usec) through libproc without executing ``ps``.
+
+    A hardened or fenced host can deny executing ``ps`` while still allowing the
+    same process-start information through ``proc_pidinfo``.  This is the same
+    operating-system source ``ps -o lstart=`` reports, only at higher resolution;
+    it never invents an identity for a process that cannot be inspected.
+    """
+
+    global _MACOS_BSDPROC_INFO
+    if pid <= 0:
+        return None
+    try:
+        import ctypes
+        import ctypes.util
+
+        if _MACOS_BSDPROC_INFO is None:
+            class ProcBsdInfo(ctypes.Structure):
+                _fields_ = [
+                    ("pbi_flags", ctypes.c_uint32), ("pbi_status", ctypes.c_uint32),
+                    ("pbi_xstatus", ctypes.c_uint32), ("pbi_pid", ctypes.c_uint32),
+                    ("pbi_ppid", ctypes.c_uint32), ("pbi_uid", ctypes.c_uint32),
+                    ("pbi_gid", ctypes.c_uint32), ("pbi_ruid", ctypes.c_uint32),
+                    ("pbi_rgid", ctypes.c_uint32), ("pbi_svuid", ctypes.c_uint32),
+                    ("pbi_svgid", ctypes.c_uint32), ("rfu_1", ctypes.c_uint32),
+                    ("pbi_comm", ctypes.c_char * 16), ("pbi_name", ctypes.c_char * 32),
+                    ("pbi_nfiles", ctypes.c_uint32), ("pbi_pgid", ctypes.c_uint32),
+                    ("pbi_pjobc", ctypes.c_uint32), ("e_tdev", ctypes.c_uint32),
+                    ("e_tpgid", ctypes.c_uint32), ("pbi_nice", ctypes.c_int32),
+                    ("pbi_start_tvsec", ctypes.c_uint64),
+                    ("pbi_start_tvusec", ctypes.c_uint64),
+                ]
+
+            library = ctypes.CDLL(ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib")
+            library.proc_pidinfo.argtypes = [
+                ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                ctypes.c_void_p, ctypes.c_int,
+            ]
+            library.proc_pidinfo.restype = ctypes.c_int
+            _MACOS_BSDPROC_INFO = (library, ProcBsdInfo)
+        library, structure = _MACOS_BSDPROC_INFO
+        info = structure()
+        written = library.proc_pidinfo(
+            int(pid), _PROC_PIDTBSDINFO, 0, ctypes.byref(info), ctypes.sizeof(info),
+        )
+        if written != ctypes.sizeof(info) or info.pbi_start_tvsec <= 0:
+            return None
+        return int(info.pbi_start_tvsec), int(info.pbi_start_tvusec)
+    except (ImportError, OSError, AttributeError, ValueError):
+        return None
+
+
+def _macos_start_token(pid: int) -> str | None:
+    value = _macos_libproc_start_time(pid)
+    if value is None:
+        return None
+    return f"libproc:{value[0]}.{value[1]:06d}"
 
 
 def _process_start_token_once(pid: int) -> str | None:
@@ -60,19 +126,25 @@ def _process_start_token_once(pid: int) -> str | None:
                 capture_output=True, timeout=5, check=False,
             )
         except (OSError, subprocess.TimeoutExpired):
-            return None
+            return _macos_start_token(pid)
         boot_time = boot.stdout.strip()
         if boot.returncode != 0 or not boot_time:
-            return None
+            return _macos_start_token(pid)
     try:
         completed = subprocess.run(
             ["ps", "-p", str(pid), "-o", "lstart="], text=True,
             capture_output=True, timeout=5, check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return None
+        return _macos_start_token(pid) if sys.platform == "darwin" else None
     value = completed.stdout.strip()
-    return f"ps:{boot_time}:{value}" if completed.returncode == 0 and value else None
+    if completed.returncode == 0 and value:
+        return f"ps:{boot_time}:{value}"
+    # ``ps`` can also refuse a live process without raising (fenced hosts and
+    # hardened sandboxes return a nonzero exit).  Fall back to the same kernel
+    # information instead of turning a healthy worker into an infrastructure
+    # failure.
+    return _macos_start_token(pid) if sys.platform == "darwin" else None
 
 
 def process_start_token(pid: int, *, attempts: int = 1) -> str | None:
@@ -80,7 +152,9 @@ def process_start_token(pid: int, *, attempts: int = 1) -> str | None:
 
     Recovery uses one probe so an already-dead worker is not delayed.  A newly
     spawned worker uses three probes because a short ``ps`` timeout must not be
-    mistaken for a candidate/infrastructure failure on a busy frontend.
+    mistaken for a candidate/infrastructure failure on a busy frontend.  When
+    ``ps`` is unavailable on macOS the token comes from ``libproc``; a process
+    that cannot be inspected at all still yields no token (fail closed).
     """
 
     for index in range(max(1, attempts)):
@@ -135,12 +209,15 @@ class JobEngine:
         signing_key: bytes | None = None,
         signing_key_id: str = "",
         selfcheck_age_s: float = 60.0,
+        require_evidence: bool = False,
         **store_options: Any,
     ) -> None:
         if not worker_command or not all(isinstance(part, str) and part for part in worker_command):
             raise ValueError("worker_command must be a non-empty argv list")
         if not isinstance(execution_protocol_version, str) or not execution_protocol_version:
             raise ValueError("execution_protocol_version must be non-empty")
+        if not isinstance(require_evidence, bool):
+            raise ValueError("require_evidence must be boolean")
         if isinstance(selfcheck_age_s, bool) or not isinstance(selfcheck_age_s, (int, float)) or not math.isfinite(selfcheck_age_s) or selfcheck_age_s <= 0:
             raise ValueError("selfcheck_age_s must be finite and positive")
         if signing_key is not None and (not isinstance(signing_key, bytes) or len(signing_key) < 32):
@@ -157,6 +234,7 @@ class JobEngine:
         self._signing_key = signing_key
         self._signing_key_id = signing_key_id
         self.selfcheck_age_ms = int(selfcheck_age_s * 1000)
+        self.require_evidence = require_evidence
         self._stop = threading.Event()
         self._condition = threading.Condition()
         self._active_lock = threading.Lock()
@@ -446,6 +524,9 @@ class JobEngine:
     def _popen(self) -> subprocess.Popen:
         env = scrubbed_env()
         env.update(self.worker_env)
+        # Engine-owned, so a caller cannot point the private worker temp root at
+        # another attempt's state directory.
+        env[STATE_DIR_ENV] = str(self.store.state_dir)
         root = str(Path(__file__).resolve().parents[2])
         env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
         return popen_group(
@@ -481,6 +562,15 @@ class JobEngine:
         self, running: _Running, *, report: dict[str, Any], evidence: dict[str, Any] | None,
     ) -> None:
         request, attempt = running.request, running.attempt
+        if self.require_evidence and evidence is None:
+            # Legacy evaluator results require candidate-binding evidence.  The
+            # policy is enforced before the terminal/quota commit; the external
+            # engine default still permits opaque null evidence.
+            self._handle_worker_job_error(
+                running,
+                JobError("invalid_argument", "worker result has no evidence object"),
+            )
+            return
         try:
             snapshot = self.store.complete_attempt(
                 request.request_id, attempt, report=report, evidence=evidence,

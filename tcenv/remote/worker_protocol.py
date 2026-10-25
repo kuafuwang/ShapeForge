@@ -14,6 +14,9 @@ from .job_types import Attempt, ExternalEvaluationRequest, JobError
 from .protocol import Frame, encode_frame, read_frame, write_frame
 
 WORKER_PROTOCOL_VERSION = "tcenv.remote.worker.v1"
+# Private environment channel: the state directory scopes per-attempt temp
+# residue to this single-active frontend so it can be cleaned on the next start.
+STATE_DIR_ENV = "TCENV_REMOTE_STATE_DIR"
 # Two maximum external blobs plus a bounded envelope.  Legacy frames keep
 # their original 2,000,000-byte default.
 MAX_WORKER_FRAME_PAYLOAD = 33_000_000

@@ -585,6 +585,69 @@ def test_macos_process_token_includes_kern_boottime(monkeypatch):
     )
 
 
+def test_macos_libproc_token_is_used_when_ps_cannot_be_executed(monkeypatch):
+    """@brief 围栏禁止执行 ps 时，仍用 libproc 读取真实启动时间而不是报告身份失败。"""
+    import tcenv.remote.job_engine as job_engine_module
+
+    monkeypatch.setattr(Path, "is_file", lambda _path: False)
+    monkeypatch.setattr(job_engine_module.sys, "platform", "darwin")
+
+    class Completed:
+        returncode = 0
+        stdout = "{ sec = 123, usec = 456 }\n"
+
+    def fake_run(argv, **_kwargs):
+        if argv[0] == "/usr/sbin/sysctl":
+            return Completed()
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(job_engine_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        job_engine_module, "_macos_libproc_start_time", lambda pid: (1792921801, 342978) if pid == 5150 else None,
+    )
+    assert job_engine_module._process_start_token_once(5150) == "libproc:1792921801.342978"
+    assert job_engine_module._process_start_token_once(5151) is None
+
+
+def test_macos_libproc_token_needs_a_real_process_for_nonzero_ps_exit(monkeypatch):
+    """@brief ps 非零退出同样走 libproc；没有该进程时返回 None（fail closed）。"""
+    import tcenv.remote.job_engine as job_engine_module
+
+    monkeypatch.setattr(Path, "is_file", lambda _path: False)
+    monkeypatch.setattr(job_engine_module.sys, "platform", "darwin")
+
+    class Completed:
+        def __init__(self, returncode, stdout=""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    def fake_run(argv, **_kwargs):
+        if argv[0] == "/usr/sbin/sysctl":
+            return Completed(0, "{ sec = 123, usec = 456 }\n")
+        return Completed(1)
+
+    monkeypatch.setattr(job_engine_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(job_engine_module, "_macos_libproc_start_time", lambda _pid: None)
+    assert job_engine_module._process_start_token_once(5150) is None
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="libproc is the macOS fallback")
+def test_macos_process_token_is_stable_for_a_live_process():
+    """@brief 真实子进程必须拿到稳定 token，同一进程两次探测不得漂移。"""
+    import tcenv.remote.job_engine as job_engine_module
+
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        first = job_engine_module._process_start_token_once(process.pid)
+        second = job_engine_module._process_start_token_once(process.pid)
+        assert first is not None
+        assert first == second
+        assert first.startswith(("ps:", "libproc:"))
+    finally:
+        process.kill()
+        process.wait()
+
+
 def test_schema_version_is_transactional_and_failed_commit_is_rolled_back(tmp_path):
     store = JobStore(tmp_path / "state")
     try:

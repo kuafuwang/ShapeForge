@@ -145,15 +145,28 @@ class RemoteEvaluationConfig:
             timeout_s=float(document.get("timeout_s", 480.0)),
         )
 
-    def _format(self, value: str, run_id: str, session_id: str) -> str:
-        return value.format(run_id=run_id, session_id=session_id, target_id=self.target_id)
+    def _format(self, value: str, run_id: str, session_id: str, evaluation_kind: str) -> str:
+        return value.format(
+            run_id=run_id,
+            session_id=session_id,
+            target_id=self.target_id,
+            evaluation_kind=evaluation_kind,
+        )
 
-    def command_for_session(self, key: tuple[str, str, str]) -> list[str]:
+    def command_for_session(self, key: tuple[str, str, str], evaluation_kind: str = "formal_eval") -> list[str]:
+        """Build one legacy frontend command.
+
+        Concurrent formal/selfcheck processes are independent legacy frontends.
+        Configurations which keep their SQLite state in the command can use the
+        ``{evaluation_kind}`` placeholder to give each frontend its own
+        single-active store instead of violating the owner lock.
+        """
+
         run_id, session_id, _target = key
-        return [self._format(part, run_id, session_id) for part in self.command]
+        return [self._format(part, run_id, session_id, evaluation_kind) for part in self.command]
 
     def token_for_session(self, run_id: str, session_id: str) -> str:
-        path = Path(self._format(str(self.token_file), run_id, session_id))
+        path = Path(self._format(str(self.token_file), run_id, session_id, "formal_eval"))
         try:
             token = path.read_text(encoding="utf-8").strip()
         except OSError as exc:
@@ -165,7 +178,7 @@ class RemoteEvaluationConfig:
     def selfcheck_token_for_session(self, run_id: str, session_id: str) -> str:
         if self.selfcheck_token_file is None:
             raise RemoteError("selfcheck_grant_required", "remote selfcheck requires a separate selfcheck_token_file")
-        path = Path(self._format(str(self.selfcheck_token_file), run_id, session_id))
+        path = Path(self._format(str(self.selfcheck_token_file), run_id, session_id, "selfcheck"))
         try:
             token = path.read_text(encoding="utf-8").strip()
         except OSError as exc:
@@ -179,7 +192,7 @@ class RemoteEvaluationConfig:
         if self.selfcheck_token_file is None:
             raise ValueError("remote selfcheck requires selfcheck_token_file")
         return remote_evaluator_pool_from_command(
-            self.command_for_session,
+            lambda key: self.command_for_session(key, evaluation_kind="selfcheck"),
             token=self.selfcheck_token_for_session,
             run_id=run_id,
             target_id=self.target_id,

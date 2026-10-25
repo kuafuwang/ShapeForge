@@ -24,7 +24,7 @@ def _config(tmp_path: Path) -> RemoteEvaluationConfig:
     selfcheck_file.write_text("selfcheck-token")
     command = [
         sys.executable, "-m", "tests.support.npu_sim.service_entry",
-        "--state-dir", str(tmp_path / "state" / "{session_id}"),
+        "--state-dir", str(tmp_path / "state" / "{evaluation_kind}" / "{session_id}"),
         "--run-id", "{run_id}", "--session-id", "{session_id}", "--token", TOKEN,
         "--selfcheck-token", "selfcheck-token",
     ]
@@ -102,7 +102,7 @@ def test_remote_config_can_use_separate_formal_and_selfcheck_grants(tmp_path):
     selfcheck_token.write_text("selfcheck-token")
     command = [
         sys.executable, "-m", "tests.support.npu_sim.service_entry",
-        "--state-dir", str(tmp_path / "state" / "{session_id}"),
+        "--state-dir", str(tmp_path / "state" / "{evaluation_kind}" / "{session_id}"),
         "--run-id", "{run_id}", "--session-id", "{session_id}",
         "--formal-token", "formal-token", "--selfcheck-token", "selfcheck-token",
     ]
@@ -132,6 +132,9 @@ def test_remote_config_can_use_separate_formal_and_selfcheck_grants(tmp_path):
             assert "selfcheck" in str(exc) or "formal" in str(exc)
         else:
             raise AssertionError("a selfcheck-only grant submitted formal evaluation")
+        # The bridge owns a new frontend for the same per-kind state path;
+        # release this explicit probe before opening that frontend.
+        selfcheck_pool.close()
         work = tmp_path / "work"
         work.mkdir()
         server, token_file = config.make_bridge_factory(
