@@ -735,6 +735,14 @@ class JobEngine:
         """
 
         if self.supervisor.kind != EXECUTION_CONTAINER:
+            # The mirror case: a job accepted under a pinned container image
+            # must not be executed (and signed) by the local process plane.
+            accepted = str((snapshot.provenance or {}).get("worker_build") or "")
+            if "+img:" in accepted:
+                return (
+                    f"queued job was accepted with worker_build {accepted!r}, which is bound to a "
+                    "container image; refusing to execute it with the process supervisor"
+                )
             return ""
         digest = str(getattr(self.supervisor, "image_digest", "") or "")
         accepted = str((snapshot.provenance or {}).get("worker_build") or "")

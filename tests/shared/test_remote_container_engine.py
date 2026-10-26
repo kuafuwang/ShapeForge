@@ -507,3 +507,57 @@ def _attempt_rows(service: JobEngine, req) -> list:
         "SELECT * FROM attempts WHERE request_id=?", (req.request_id,),
     ).fetchall()
     return list(row)
+
+
+def test_process_engine_refuses_a_job_accepted_by_the_container_plane(tmp_path):
+    """The mirror case: a pinned-image job must not run on local processes."""
+
+    from tcenv.remote.contracts import API_CONTRACT_ID, EVIDENCE_CONTRACT_ID
+
+    state = tmp_path / "state"
+    req = request("process-stale-container-build")
+    accepted_identity = container_identity()
+    expected = helpers.expected_identities(accepted_identity)
+    provenance = accepted_identity.external_provenance(
+        execution_protocol_version="3",
+        api_contract_id=API_CONTRACT_ID, evidence_contract_id=EVIDENCE_CONTRACT_ID,
+    )
+    store = JobStore(state)
+    store.register_grant(grant())
+    try:
+        capability = store.get_capabilities(
+            grant_token=TOKEN, client_nonce="2" * 16, expected=expected.evaluator.to_dict(),
+            expected_identities=expected, provenance=provenance,
+            api_contract_ids=[API_CONTRACT_ID], evidence_contract_ids=[EVIDENCE_CONTRACT_ID],
+            required_features=[], supported_features=frozenset(),
+        )
+        store.submit(
+            request=req, request_digest=req.request_digest, expected=expected,
+            provenance=provenance, capability_id=capability.capability_id,
+            required_features=[], grant_token=TOKEN,
+        )
+        assert store.enqueue_accepted(req.request_id).state == "queued"
+    finally:
+        store.close()
+
+    marker = tmp_path / "worker-started"
+    process_engine = JobEngine(
+        identity=accepted_identity, grants=[grant()],
+        worker_command=[sys.executable, "-m", "tests.support.fake_worker_job_engine"],
+        worker_cwd=Path(__file__).resolve().parents[2], state_dir=state,
+        worker_env={"FAKE_JOB_STARTED": str(marker)},
+    )
+    try:
+        assert process_engine.supervisor.kind == "process"
+        deadline = time.monotonic() + 15.0
+        final = process_engine.store._job_by_id(req.request_id)
+        while final.state not in {"interrupted", "failed", "completed"} and time.monotonic() < deadline:
+            time.sleep(0.02)
+            final = process_engine.store._job_by_id(req.request_id)
+        assert final.state == "interrupted"
+        assert final.failure is not None and final.failure.code == "worker_build_mismatch"
+        assert final.quarantined is True
+        assert final.result is None
+        assert marker.exists() is False
+    finally:
+        process_engine.close()
