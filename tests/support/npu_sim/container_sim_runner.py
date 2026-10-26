@@ -86,7 +86,11 @@ def _docker(*args: str, timeout: float = 60.0) -> subprocess.CompletedProcess:
 def _ps_tokens(token: str) -> list[str]:
     completed = _run(["ps", "-eo", "pid,args"], timeout=30.0)
     if completed.returncode != 0:
-        return [f"<ps unavailable: {completed.stderr.strip()}>"]
+        # A refused/failed ps is *not* evidence of absence: the caller must fail
+        # the check instead of reading an error string as a visible process.
+        raise RuntimeError(
+            f"ps failed with rc {completed.returncode}: {completed.stderr.strip()[-300:]}"
+        )
     return [line.strip() for line in completed.stdout.splitlines() if token in line and "ps -eo" not in line]
 
 
@@ -131,6 +135,14 @@ class Report:
         self.blockers: list[str] = []
 
     def record(self, name: str, status: str, detail: str, **evidence) -> None:
+        previous = self.checks.get(name)
+        if previous is not None:
+            # Status is monotonic: a recorded failure or not_run can never be
+            # improved to passed later in the run.
+            if previous["status"] == "failed":
+                status = "failed"
+            elif previous["status"] == "not_run" and status == "passed":
+                status = "not_run"
         self.checks[name] = {
             "name": name,
             "required": name in REQUIRED_CHECKS,

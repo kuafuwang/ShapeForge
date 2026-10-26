@@ -72,3 +72,36 @@ def test_report_cannot_pass_after_a_failed_evidence_command(tmp_path):
         extra={"no_run_config_json": True, "no_confirmed_or_catalog_written": True},
     )
     assert document["status"] == "blocked"
+
+
+def test_a_failed_check_cannot_be_overwritten_as_passed(tmp_path):
+    report = runner.Report(tmp_path)
+    report.failed(runner.REQUIRED_CHECKS[0], "the fault really fired")
+    report.passed(runner.REQUIRED_CHECKS[0], "later optimism")
+    for name in runner.REQUIRED_CHECKS[1:]:
+        report.passed(name, "ok")
+    document = report.write(cleanup={"final": True})
+    assert document["status"] == "failed"
+    assert report.checks[runner.REQUIRED_CHECKS[0]]["status"] == "failed"
+
+
+def test_a_not_run_check_cannot_be_improved_to_passed(tmp_path):
+    report = runner.Report(tmp_path)
+    report.skip(runner.REQUIRED_CHECKS[0], "the fault did not fire")
+    report.passed(runner.REQUIRED_CHECKS[0], "later optimism")
+    for name in runner.REQUIRED_CHECKS[1:]:
+        report.passed(name, "ok")
+    document = report.write(cleanup={"final": True})
+    assert document["status"] != "passed"
+    assert report.checks[runner.REQUIRED_CHECKS[0]]["status"] == "not_run"
+
+
+def test_ps_failure_is_an_error_not_a_visible_process(monkeypatch):
+    def failing_run(argv, *, timeout=60.0):
+        import subprocess
+        return subprocess.CompletedProcess(argv, 1, "", "ps: Operation not permitted")
+
+    monkeypatch.setattr(runner, "_run", failing_run)
+    import pytest as _pytest
+    with _pytest.raises(RuntimeError, match="ps failed"):
+        runner._ps_tokens("taic-token")
