@@ -38,6 +38,7 @@ from .supervisor import (
     AttemptSpec,
     AttemptSupervisor,
     ProcessAttemptSupervisor,
+    StartRefused,
     SupervisorError,
     WorkerHandle,
 )
@@ -49,10 +50,12 @@ from .worker_protocol import (
 )
 
 MAX_STDERR = 4000
-_CLOSE_SCHEDULER_JOIN_S = 1.0
 # Upper bound on one supervisor wait slice: the candidate deadline is re-checked
 # at least this often, so a late exit is classified against the real clock.
 _DEADLINE_SLICE_S = 1.0
+# Short close() probe: lets an already-idle scheduler exit so the store can be
+# closed synchronously, without letting a blocking teardown extend close(wait).
+_CLOSE_SCHEDULER_PROBE_S = 0.2
 # Bounded synchronous teardown for a container Cancel RPC (kill + delete +
 # verify).  The scheduler performs the same teardown asynchronously if this
 # window expires; the job is already durably cancelled either way.
@@ -763,13 +766,10 @@ class JobEngine:
             return None
         # The writer authorizes under ``_active_lock``; the flag is therefore
         # never set "after" an authorization that already decided to write.
+        # The kill itself happens on the bounded scheduling path: doing it here
+        # would let a blocking ``supervisor.kill`` outlive the caller's teardown
+        # deadline (Cancel RPC, close(wait), ProductionStack.stop).
         running.cancel_requested = True
-        handle = running.handle
-        if handle is not None:
-            try:
-                self.supervisor.kill(handle)
-            except Exception:  # a failed kill is reported by cleanup/quarantine
-                pass
         return running
 
     def _popen(self) -> subprocess.Popen:
@@ -1055,6 +1055,12 @@ class JobEngine:
                 ))
                 self._stop.set()
                 return
+            # The failed cleanup is also an unverified shutdown: record it for
+            # close()/ProductionStack.stop, not only on the container branch.
+            if self._close_error is None:
+                self._close_error = RuntimeError(
+                    f"worker cleanup was not verified: {recovery_error}"[:1000]
+                )
             current = snapshot.current_attempt
             if (
                 snapshot.state == "running" and current is not None
@@ -1272,6 +1278,20 @@ class JobEngine:
         # The candidate deadline is re-checked under the same lock so an
         # ``inspect``/identity probe that overran it can never be followed by a
         # start.
+        def authorize_start() -> str:
+            # Called by the supervisor *after* its last blocking preparation and
+            # immediately before the spawn, while this thread still holds
+            # ``_active_lock`` (re-entrant).  A deadline or cancellation that
+            # arrived during a slow daemon bind therefore never starts a worker.
+            with self._active_lock:
+                if self._stop.is_set() or running.stopping:
+                    return "stopped"
+                if running.cancel_requested:
+                    return "cancelled"
+                if self._overdue(running):
+                    return "deadline"
+                return ""
+
         with self._active_lock:
             before_start = self.store._job_by_id(request.request_id)
             cancelled_before_start = bool(before_start.cancel_requested or running.cancel_requested)
@@ -1279,8 +1299,16 @@ class JobEngine:
                 overdue_before_start = True
             elif not cancelled_before_start:
                 try:
-                    self.supervisor.start(handle)
+                    self.supervisor.start(handle, authorize=authorize_start)
                     stdin, stdout, stderr = self.supervisor.streams(handle)
+                except StartRefused as exc:
+                    if exc.reason == "deadline":
+                        overdue_before_start = True
+                    elif exc.reason == "cancelled":
+                        cancelled_before_start = True
+                        running.cancel_requested = True
+                    else:
+                        start_error = exc
                 except Exception as exc:
                     start_error = exc
         if overdue_before_start:
@@ -1345,6 +1373,10 @@ class JobEngine:
 
         def write_request() -> None:
             try:
+                # Encoding is not free (a large candidate is copied and framed):
+                # do it *before* the final authorization, so a deadline that
+                # passes during encoding can never be followed by a write.
+                payload = encode_request(request, attempt)
                 # The authorization and the cancellation are mutually exclusive:
                 # whoever takes ``_active_lock`` first wins.  A cancel that wins
                 # (including its durable commit) means this worker never
@@ -1359,7 +1391,7 @@ class JobEngine:
                         return
                     running.request_authorized = True
                 assert stdin is not None
-                stdin.write(encode_request(request, attempt))
+                stdin.write(payload)
                 stdin.flush()
                 stdin.close()
             except BaseException as exc:  # broken pipe is handled by the supervisor
@@ -1369,8 +1401,6 @@ class JobEngine:
         writer_thread.start()
         handle.metadata["writer_state"] = "running"
         try:
-            if running.cancel_requested:
-                self.supervisor.kill(handle)
             try:
                 # The request writer is concurrent: a broken worker that never
                 # reads stdin still cannot escape the candidate deadline.
@@ -1384,6 +1414,11 @@ class JobEngine:
                 while True:
                     if self._overdue(running):
                         timed_out = True
+                        break
+                    # Cancel/close must be torn down by this bounded scheduling
+                    # path, not by the RPC or the close() caller: their waits
+                    # then bound their own return instead of a blocking kill.
+                    if running.cancel_requested or running.stopping or self._stop.is_set():
                         break
                     remaining = self._attempt_deadline(running) - self._monotonic()
                     returncode = self.supervisor.wait(
@@ -1568,27 +1603,21 @@ class JobEngine:
                 if running is not None:
                     running.stopping = True
                     handle = running.handle
-            if handle is not None:
-                try:
-                    kill_error = self.supervisor.kill(handle)
-                except Exception as exc:  # supervisor failures are shutdown data
-                    self._close_error = exc
-                else:
-                    # ``kill`` reports an unverified stop as a non-empty string
-                    # instead of raising: dropping it would let close() claim a
-                    # verified shutdown while the worker may still be alive.
-                    if kill_error and self._close_error is None:
-                        self._close_error = RuntimeError(
-                            f"worker teardown was not verified: {kill_error}"[:1000]
-                        )
+            # Teardown is performed by the bounded scheduling path (its wait
+            # loop notices ``stopping`` and cleans up under the supervisor's own
+            # kill timeout).  Calling kill() here would make close(wait) and
+            # ProductionStack.stop wait for that kill instead of bounding their
+            # own return.
             self._wake()
             scheduler = getattr(self, "_scheduler", None)
             if scheduler is not None:
-                scheduler.join(timeout=_CLOSE_SCHEDULER_JOIN_S)
+                # A short probe lets an idle scheduler finish so the common case
+                # (restart tests, ProductionStack.stop) still closes the store
+                # synchronously.  A busy or gated scheduler is handed to the
+                # finalizer: close(wait=...) must bound its own return, not the
+                # duration of a blocking kill.
+                scheduler.join(timeout=_CLOSE_SCHEDULER_PROBE_S)
                 if scheduler.is_alive():
-                    # Closing the store under a live scheduler thread would
-                    # corrupt the queue, so the last step moves to a finalizer
-                    # that ProductionStack.stop waits for.
                     threading.Thread(
                         target=self._close_store_after_scheduler,
                         args=(scheduler, self.store),

@@ -217,7 +217,9 @@ def test_single_owner_permissions_and_corrupt_state_fail_closed(tmp_path):
     req = request("durable")
     submit(service, req)
     wait_state(service, req, {"completed"})
-    service.close()
+    # The store must really be closed (bounded wait) before it is corrupted on
+    # disk; close() without a wait hands the final close to a finalizer.
+    assert service.close(wait=20.0) is True
 
     (state / "jobs.sqlite3").write_bytes(b"not a sqlite database")
     with pytest.raises(StateCorrupt):
@@ -707,7 +709,7 @@ def test_restart_revokes_grants_absent_from_the_deployment_file(tmp_path):
         submit(first, req)
         running = wait_state(first, req, {"running"})
     finally:
-        first.close()
+        assert first.close(wait=20.0) is True
     second = engine(state, grants=[grant(OTHER_TOKEN, subject="other-subject")])
     try:
         final = second.store._job_by_id(req.request_id)
@@ -776,7 +778,7 @@ def test_restart_with_a_renewed_token_supersedes_without_cancelling_jobs(tmp_pat
         submit(first, req)
         running = wait_state(first, req, {"running"})
     finally:
-        first.close()
+        assert first.close(wait=20.0) is True
     renewed = "renewed-external-token"
     second = engine(state, grants=[grant(renewed)])
     try:

@@ -38,7 +38,7 @@ from .job_types import (
 __all__ = [
     "EXECUTION_CONTAINER", "EXECUTION_KINDS", "EXECUTION_PROCESS",
     "AttemptSpec", "AttemptSupervisor", "ProcessAttemptSupervisor",
-    "SupervisorError", "WorkerHandle", "WorkerStatus",
+    "StartRefused", "SupervisorError", "WorkerHandle", "WorkerStatus",
 ]
 
 _CLEANUP_POLL_S = 0.02
@@ -47,6 +47,19 @@ _CLEANUP_DEADLINE_S = 3.0
 
 class SupervisorError(RuntimeError):
     """A bounded, sanitized failure of the execution supervisor itself."""
+
+
+class StartRefused(SupervisorError):
+    """The engine withdrew the start authorization after blocking preparation.
+
+    ``reason`` is one of ``deadline``, ``cancelled`` or ``stopped`` so the
+    engine can route the attempt to the timeout/cancel/stop outcome instead of
+    an infrastructure failure.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"start refused: {reason}")
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -126,8 +139,13 @@ class AttemptSupervisor(Protocol):
     def create(self, spec: AttemptSpec) -> WorkerHandle:
         """Create exactly one worker without letting it run the request yet."""
 
-    def start(self, handle: WorkerHandle) -> None:
-        """Start the created worker and attach the bounded private stream."""
+    def start(self, handle: WorkerHandle, *, authorize: Callable[[], str] | None = None) -> None:
+        """Start the created worker after the last blocking preparation.
+
+        ``authorize`` is called immediately before the worker may run (and,
+        for the container supervisor, after its blocking daemon bind).  A
+        non-empty return means "do not start" and raises :class:`StartRefused`.
+        """
 
     def streams(self, handle: WorkerHandle) -> tuple[BinaryIO | None, BinaryIO, BinaryIO]:
         """Return ``(stdin, stdout, stderr)`` for the private worker protocol."""
@@ -212,7 +230,11 @@ class ProcessAttemptSupervisor:
         process = self._spawn()
         return WorkerHandle(spec=spec, kind=self.kind, process=process)
 
-    def start(self, handle: WorkerHandle) -> None:
+    def start(self, handle: WorkerHandle, *, authorize: Callable[[], str] | None = None) -> None:
+        if authorize is not None:
+            reason = authorize()
+            if reason:
+                raise StartRefused(reason)
         handle.started = True
 
     def streams(self, handle: WorkerHandle) -> tuple[BinaryIO | None, BinaryIO, BinaryIO]:

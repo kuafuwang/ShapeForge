@@ -1436,7 +1436,9 @@ def test_close_contains_an_arbitrary_supervisor_exception_and_closes_the_store(t
 
     service.supervisor.kill = exploding_kill
     try:
-        assert service.close() is False, "an unverified shutdown must be reported, not hidden"
+        # The teardown runs on the bounded scheduling path; close(wait) waits
+        # for that path and still reports the contained supervisor exception.
+        assert service.close(wait=20.0) is False, "an unverified shutdown must be reported, not hidden"
         assert isinstance(service.close_error, RuntimeError)
         # A second close reports the same failure instead of pretending success,
         # and the store is never closed underneath a live scheduler thread.
@@ -1478,10 +1480,10 @@ def test_close_never_reports_closed_while_the_finalizer_is_running(tmp_path):
 
     service.store.close = slow_store_close
     results: dict[str, bool] = {}
-    first = threading.Thread(target=lambda: results.__setitem__("first", service.close()))
+    first = threading.Thread(target=lambda: results.__setitem__("first", service.close(wait=30.0)))
     first.start()
     assert entered.wait(30), "store.close was never called"
-    second = threading.Thread(target=lambda: results.__setitem__("second", service.close()))
+    second = threading.Thread(target=lambda: results.__setitem__("second", service.close(wait=30.0)))
     second.start()
     # A concurrent close must wait for the first cleanup instead of claiming a
     # shutdown that has not happened yet.

@@ -1236,7 +1236,8 @@ def test_an_unverified_cleanup_is_also_an_unverified_shutdown(tmp_path):
 def test_close_does_not_ignore_a_nonempty_kill_result(tmp_path):
     """``Supervisor.kill`` reports an unverified stop as a string, not a raise."""
 
-    service = helpers.engine(tmp_path / "state")
+    clock = _FrozenClock()
+    service = helpers.engine(tmp_path / "state", monotonic=clock.now)
     req = request("close-kill-unverified", source=b"SLEEP", candidate_timeout_ms=1500)
     handle = None
     original_kill = None
@@ -1256,7 +1257,8 @@ def test_close_does_not_ignore_a_nonempty_kill_result(tmp_path):
         service.supervisor.kill = lambda target: "injected kill failure"
         assert service.close(wait=20.0) is False
         assert service.close_error is not None
-        assert "teardown was not verified" in str(service.close_error)
+        # The unverified kill is reported by the bounded scheduling path.
+        assert "injected kill failure" in str(service.close_error)
     finally:
         if original_kill is not None:
             service.supervisor.kill = original_kill
@@ -1407,6 +1409,167 @@ def test_a_daemon_switch_during_start_never_writes_the_request(tmp_path, monkeyp
         assert not order.exists()
     finally:
         fake.set_control(daemon_id=daemon_a)
+        service.close()
+
+
+def test_start_never_runs_when_the_daemon_bind_spends_the_deadline(tmp_path):
+    """The final start authorization runs after the blocking bind, not before."""
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    clock = _FakeClock()
+    service = container_engine(tmp_path / "state", docker, monotonic=clock.now)
+    original_start = service.supervisor.start
+    original_bind = service.supervisor._bind_daemon
+
+    def start_with_slow_bind(handle, *, authorize=None):
+        def bind_and_advance(target):
+            value = original_bind(target)
+            # The daemon query alone spends the candidate budget.
+            clock.advance(61.0)
+            return value
+
+        service.supervisor._bind_daemon = bind_and_advance
+        try:
+            return original_start(handle, authorize=authorize)
+        finally:
+            service.supervisor._bind_daemon = original_bind
+
+    service.supervisor.start = start_with_slow_bind
+    req = request("start-deadline-bind", source=b"OK", candidate_timeout_ms=60_000)
+    try:
+        submit(service, req)
+        final = wait_state(service, req, {"completed", "interrupted", "failed"}, timeout=30.0)
+        # The bind consumed the budget, so docker start must never be called.
+        assert not any(len(call) > 1 and call[1] == "start" for call in fake.calls())
+        assert final.state == "completed" and final.result is not None
+        assert final.result.report_json()["status"] == "timeout"
+        assert fake.records() == []
+    finally:
+        service.close()
+
+
+def test_the_request_is_not_written_when_encoding_crosses_the_deadline(tmp_path, monkeypatch):
+    """Authorization is re-checked after encode_request and before the write."""
+
+    import tcenv.remote.job_engine as job_engine_module
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    clock = _FakeClock()
+    order = tmp_path / "worker-order.jsonl"
+    service = container_engine(
+        tmp_path / "state", docker, worker_env={"FAKE_JOB_ORDER": str(order)},
+        monotonic=clock.now,
+    )
+    original_encode = job_engine_module.encode_request
+
+    def slow_encode(*args, **kwargs):
+        payload = original_encode(*args, **kwargs)
+        # Encoding a large candidate can itself cross the deadline.
+        clock.advance(61.0)
+        return payload
+
+    monkeypatch.setattr(job_engine_module, "encode_request", slow_encode)
+    req = request(
+        "encode-crosses-deadline", source=b"x" * 100_000, candidate_timeout_ms=60_000,
+    )
+    try:
+        submit(service, req)
+        final = wait_state(service, req, {"completed", "interrupted", "failed"}, timeout=30.0)
+        assert final.result is not None
+        assert final.result.report_json()["status"] == "timeout"
+        # The worker appends its order only after read_request: no request bytes
+        # were written after the encode crossed the deadline.
+        assert not order.exists()
+        assert fake.records() == []
+    finally:
+        service.close()
+
+
+def test_cancel_returns_within_its_bound_while_the_kill_is_gated(tmp_path):
+    """Cancel must not wait for a blocking supervisor.kill."""
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(ContainerSupervisorConfig(
+        image="taic-worker-sim:local", image_digest=IMAGE_DIGEST, docker=str(docker),
+        env={"HOME": "/tmp", "PYTHONPATH": "/opt/taic"}, kill_timeout_s=5.0,
+    ))
+    service = JobEngine(
+        identity=container_identity(), grants=[grant()],
+        worker_command=[sys.executable, "-m", "tests.support.fake_worker_job_engine"],
+        worker_cwd=Path(__file__).resolve().parents[2], state_dir=tmp_path / "state",
+        supervisor=supervisor, cancel_teardown_s=0.2,
+    )
+    gate = threading.Event()
+    kill_entered = threading.Event()
+    original_kill = supervisor.kill
+
+    def gated_kill(handle):
+        kill_entered.set()
+        gate.wait(10.0)
+        return original_kill(handle)
+
+    supervisor.kill = gated_kill
+    req = request("cancel-gated-kill", source=b"SLEEP", candidate_timeout_ms=60_000)
+    try:
+        submit(service, req)
+        deadline = time.monotonic() + 15.0
+        while not fake.records() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert fake.records(), "container was never created"
+        started = time.monotonic()
+        cancelled = service.cancel(
+            request_id=req.request_id, request_digest=req.request_digest,
+            expected=service.expected_identities, grant_token=TOKEN,
+        )
+        elapsed = time.monotonic() - started
+        # The teardown wait is bounded by cancel_teardown_s; the kill happens on
+        # the scheduling path and must not extend the RPC.
+        assert elapsed < 0.8, elapsed
+        assert cancelled.state == "running" and cancelled.cancel_requested is True
+        assert kill_entered.wait(5.0), "the scheduler never reached the kill"
+        gate.set()
+        final = wait_state(service, req, {"cancelled"}, timeout=20.0)
+        assert final.state == "cancelled"
+        assert fake.records() == []
+    finally:
+        gate.set()
+        supervisor.kill = original_kill
+        service.close()
+
+
+def test_close_returns_within_wait_while_the_kill_is_gated(tmp_path):
+    """close(wait) bounds its return; it never performs the kill synchronously."""
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    service = container_engine(tmp_path / "state", docker)
+    gate = threading.Event()
+    kill_entered = threading.Event()
+    original_kill = service.supervisor.kill
+
+    def gated_kill(handle):
+        kill_entered.set()
+        gate.wait(10.0)
+        return original_kill(handle)
+
+    service.supervisor.kill = gated_kill
+    req = request("close-gated-kill", source=b"SLEEP", candidate_timeout_ms=60_000)
+    try:
+        submit(service, req)
+        deadline = time.monotonic() + 15.0
+        while not fake.records() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert fake.records(), "container was never created"
+        started = time.monotonic()
+        assert service.close(wait=0.5) is False
+        elapsed = time.monotonic() - started
+        assert elapsed < 1.0, elapsed
+        assert kill_entered.wait(5.0), "the scheduler never reached the kill"
+        gate.set()
+        assert service.close(wait=20.0) is True
+        assert fake.records() == []
+    finally:
+        gate.set()
+        service.supervisor.kill = original_kill
         service.close()
 
 

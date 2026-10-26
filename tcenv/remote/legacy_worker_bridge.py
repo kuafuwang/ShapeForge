@@ -519,6 +519,11 @@ def _run_legacy_worker(
             )
         if stdout_pipe.error:
             raise _BridgeFailure(stdout_pipe.error)
+        if stderr_pipe is not None and stderr_pipe.error:
+            # A stderr read failure is a reader failure too: the bridge cannot
+            # prove it saw the complete child output, so it must not return the
+            # report as a clean success.
+            raise _BridgeFailure(stderr_pipe.error)
         if len(stdout_pipe.results) != 1:
             raise _BridgeFailure("legacy worker did not emit exactly one result frame")
         report, evidence = _decode_legacy_result_frame(

@@ -585,6 +585,39 @@ def test_a_descendant_holding_stdin_cannot_block_the_bridge(tmp_path, monkeypatc
     assert output.getvalue() == b""
 
 
+def test_a_stderr_reader_failure_fails_the_bridge(tmp_path, monkeypatch):
+    """Both readers must be error-free, not only stdout."""
+
+    import io
+    import threading
+
+    import tcenv.remote.legacy_worker_bridge as bridge
+
+    original_run = bridge._LegacyPipe._run
+
+    def run_or_fail(self):
+        if self._decode:
+            return original_run(self)
+        self._fail("could not read legacy worker output: injected stderr failure")
+
+    monkeypatch.setattr(bridge._LegacyPipe, "_run", run_or_fail)
+    request_obj = _request(source=b"// STREAM\r\nkernel void demo() {} \r\n")
+    output = io.BytesIO()
+    environ = dict(os.environ)
+    environ["PYTHONPATH"] = str(ROOT) + os.pathsep + environ.get("PYTHONPATH", "")
+    environ["FAKE_LEGACY_BEHAVIOR"] = "success"
+    environ.pop("TCENV_REMOTE_STATE_DIR", None)
+    with pytest.raises(bridge._BridgeFailure, match="injected stderr failure"):
+        bridge._run_legacy_worker(
+            FAKE_WORKER, request_obj, output,
+            attempt_id=_attempt().attempt_id,
+            lease_fence=_attempt().lease_fence,
+            environ=environ,
+            write_lock=threading.Lock(),
+        )
+    assert output.getvalue() == b""
+
+
 def test_streaming_pipes_keep_their_buffers_bounded():
     import io
 

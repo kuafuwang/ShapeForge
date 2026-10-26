@@ -45,6 +45,7 @@ from .job_types import Attempt
 from .supervisor import (
     EXECUTION_CONTAINER,
     AttemptSpec,
+    StartRefused,
     SupervisorError,
     WorkerHandle,
     WorkerStatus,
@@ -605,12 +606,23 @@ class DockerAttemptSupervisor:
                 return f"worker container environment carries {name}"
         return ""
 
-    def start(self, handle: WorkerHandle) -> None:
+    def start(
+        self, handle: WorkerHandle, *, authorize: Callable[[], str] | None = None,
+    ) -> None:
         if not handle.container_id:
             raise SupervisorError("container start requires a created container id")
         error = self._bind_daemon(handle)
         if error:
             raise SupervisorError(error)
+        # Everything above (especially ``docker info``) can block and spend the
+        # candidate deadline.  The engine's final start authorization therefore
+        # runs here, after the last blocking bind and immediately before the
+        # spawn, so a deadline or cancellation that arrived during the bind
+        # never results in ``docker start``.
+        if authorize is not None:
+            reason = authorize()
+            if reason:
+                raise StartRefused(reason)
         try:
             attach = popen_group(
                 self._attach_argv(handle),
