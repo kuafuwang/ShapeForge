@@ -17,19 +17,23 @@ The worker image is built locally from an already-present base image
 (``taic-remote-sim:local``); no registry/network access is required.
 
 When the runner itself runs inside a harness container it needs the host Docker
-CLI + socket, and it must keep the host cgroup namespace (``--cgroupns host``)
-and the host docker group so the cgroup lifecycle check can observe the worker's
-real host cgroup instead of silently passing in a private namespace.
+CLI + socket, the host docker group, the host cgroup namespace
+(``--cgroupns host``) and the host PID namespace (``--pid=host``): the cgroup
+lifecycle check and the host survivor scans are meaningless in a private
+namespace.  The runner proves both (a self-spawned ``ps`` control and the live
+worker container's host PID) before trusting an empty survivor scan.
 
 Required checks cover: a real 60s-sleep timeout that kills parent and child and
-leaves no container/process/cgroup/temp path; Cancel that kills the worker and
-rejects an old-fence result; frontend SIGKILL/restart that cleans the container
-and marks the attempt interrupted (or quarantines when cleanup cannot be
-verified) without auto-running it again; a normal fake report/evidence/receipt
-that validates; the hardened worker posture (no Docker socket, no control-host
-home/repo mount, no long-term credentials, no network, read-only root); and the
-production entry's refusal of test composition roots.  ``status=passed`` needs
-every required check to run and pass plus final cleanup evidence.
+leaves no container/process/cgroup/temp path; Cancel of an actively executing
+worker that rejects a late result; frontend SIGKILL/restart (verified from the
+daemon after the kill) that cleans the container and marks the attempt
+interrupted (or quarantines when cleanup cannot be verified) without
+auto-running it again; a stale-fence result refused while a *newer* attempt is
+executing; a normal fake report/evidence/receipt that validates; the hardened
+worker posture (no Docker socket, no control-host home/repo mount, no long-term
+credentials, no network, read-only root); and the production entry's refusal of
+test composition roots.  ``status=passed`` needs every required check to run and
+pass plus final cleanup evidence.
 """
 
 from __future__ import annotations
@@ -60,6 +64,7 @@ REQUIRED_CHECKS = (
     "cancel_kills_worker_and_rejects_old_result",
     "crash_restart_cleans_container_and_marks_interrupted",
     "crash_restart_never_reruns_the_attempt",
+    "stale_fence_cannot_commit_while_a_newer_attempt_runs",
     "crash_quarantine_blocks_retry_when_cleanup_is_unverified",
     "normal_report_evidence_and_receipt_validate",
     "worker_has_no_socket_home_repo_or_credentials",
@@ -222,10 +227,78 @@ def _inspect_container(container_id: str) -> dict | None:
 
 
 def _container_state(container_id: str) -> str:
-    document = _inspect_container(container_id)
-    if document is None:
-        return "absent"
+    completed = _docker("inspect", "--type", "container", container_id)
+    if completed.returncode != 0:
+        text = (completed.stdout + completed.stderr).lower()
+        if "no such" in text or "not found" in text:
+            return "absent"
+        raise RuntimeError(
+            f"docker inspect failed for {container_id}: {completed.stderr.strip()[:300]}"
+        )
+    try:
+        document = json.loads(completed.stdout)[0]
+    except (ValueError, IndexError) as exc:
+        raise RuntimeError(f"docker inspect output for {container_id} is invalid: {exc}") from exc
     return str((document.get("State") or {}).get("Status") or "unknown")
+
+
+def _positive_process_control() -> dict:
+    """Prove this process can see host processes before trusting a null scan.
+
+    The survivor checks conclude "nothing left" from an empty ``ps`` match; that
+    is only evidence if the same scan can see a process we know exists.
+    """
+
+    token = f"taic-container-sim-ps-control-{os.getpid()}-{int(time.time())}"
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(20)", token],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        seen = _wait(lambda: _ps_tokens(token), 10.0, "the ps positive control")
+    finally:
+        child.kill()
+        child.wait(timeout=10)
+    return {"token": token, "visible": bool(seen), "scan": seen[:4]}
+
+
+def _host_pid_visibility(container_id: str) -> dict:
+    """Prove a *host* process of the worker container is visible to ``ps``.
+
+    The survivor scans conclude "no process left" from an empty host ``ps``
+    match.  Inside a harness container that only sees its own PID namespace the
+    scan is blind, so the acceptance must show it can see the worker's host PID
+    (run the frontend with ``--pid=host``).
+    """
+
+    document = _inspect_container(container_id)
+    pid = 0
+    if isinstance(document, dict):
+        value = (document.get("State") or {}).get("Pid")
+        if isinstance(value, int) and not isinstance(value, bool):
+            pid = value
+    completed = _run(["ps", "-p", str(pid), "-o", "pid,args"], timeout=30.0)
+    return {
+        "container_id": container_id,
+        "host_pid": pid,
+        "returncode": completed.returncode,
+        "visible": bool(pid) and completed.returncode == 0 and str(pid) in completed.stdout,
+        "scan": completed.stdout[-2000:],
+        "stderr": completed.stderr[-500:],
+    }
+
+
+def _attach_visible(container_id: str) -> list[str]:
+    """The frontend's ``docker start --attach`` client for this container."""
+
+    completed = _run(["ps", "-eo", "pid,args"], timeout=30.0)
+    if completed.returncode != 0:
+        return [f"<ps unavailable: {completed.stderr.strip()}>"]
+    return [
+        line.strip() for line in completed.stdout.splitlines()
+        if container_id in line and "docker start --attach" in line and "ps -eo" not in line
+    ]
 
 
 def _labeled_containers() -> list[str]:
@@ -315,6 +388,7 @@ def _check_preflight(report: Report, out: Path, image: str, digest: str) -> None
         report.skip("preflight_docker_and_pinned_image", server.stderr.strip()[:300])
         raise SystemExit("docker is unavailable")
     info = _docker("info", "--format", "{{.Driver}}|{{.CgroupDriver}}|{{.CgroupVersion}}")
+    supervisor = common.supervisor(digest, image=image)
     report.environment.update({
         "hostname": socket.gethostname(),
         "frontend_runtime": _frontend_runtime(),
@@ -325,10 +399,10 @@ def _check_preflight(report: Report, out: Path, image: str, digest: str) -> None
         "docker_info": info.stdout.strip(),
         "image": image,
         "image_digest": digest,
+        "daemon_id": supervisor.daemon_identity(),
         "worker_build": common.worker_build(digest),
         "control_plane": "same host (VM-local Docker socket, no SSH data plane)",
     })
-    supervisor = common.supervisor(digest, image=image)
     identity_error = supervisor.verify_image()
     if identity_error:
         report.failed("preflight_docker_and_pinned_image", identity_error)
@@ -354,8 +428,15 @@ def _check_timeout(report: Report, out: Path, state: Path, digest: str) -> None:
             return completed.stdout if token in completed.stdout else None
 
         top_stdout = _wait(child_visible, 15.0, "the sleeping child to appear in docker top")
+        ps_control = _positive_process_control()
+        host_pid = _host_pid_visibility(container_id)
+        attach_before = _attach_visible(container_id)
         cgroup_before = _cgroup_exists(container_id)
         _write_evidence(out, "timeout-top", ["docker", "top", container_id, "-o", "pid,args"])
+        (out / "evidence-timeout-attach.json").write_text(
+            json.dumps({"attach": attach_before, "ps_control": ps_control}, indent=2),
+            encoding="utf-8",
+        )
 
         if token not in top_stdout:
             report.failed(
@@ -397,11 +478,23 @@ def _check_timeout(report: Report, out: Path, state: Path, digest: str) -> None:
             problems.append(f"label-matched containers remain: {labeled}")
         if temp_leftovers:
             problems.append(f"per-attempt env/temp files remain: {[p.name for p in temp_leftovers]}")
+        if not attach_before:
+            problems.append("the frontend's attach client was never observed while the worker ran")
+        if not ps_control["visible"]:
+            problems.append("the ps positive control was not visible; empty survivor scans prove nothing")
+        if not host_pid["visible"]:
+            problems.append(
+                "the worker container's host PID was not visible; run the frontend with --pid=host "
+                "or the empty survivor scans prove nothing"
+            )
         evidence = {
             "container_id": container_id, "container_state_after": state_after,
             "cgroup_before": cgroup_before, "cgroup_after": cgroup_after,
             "survivor_processes": survivors, "attach_survivors": attach_survivors,
             "labeled_containers": labeled, "temp_leftovers": [p.name for p in temp_leftovers],
+            "attach_before_timeout": attach_before[-2000:],
+            "ps_positive_control": ps_control,
+            "host_pid_visibility": host_pid,
         }
         if problems:
             report.failed("timeout_delete_removes_container_cgroup_and_temp", "; ".join(problems), **evidence)
@@ -422,6 +515,8 @@ def _check_cancel(report: Report, state: Path, digest: str) -> None:
     try:
         common.submit(engine, request_obj)
         attempt = _wait_attempt_container(engine, request_obj)
+        ps_control = _positive_process_control()
+        host_pid = _host_pid_visibility(attempt.container_id)
 
         # Cancel must land while the worker is executing the candidate, not
         # merely while a container record exists: require the child the fake
@@ -439,6 +534,10 @@ def _check_cancel(report: Report, state: Path, digest: str) -> None:
         problems = []
         if token not in top_before_cancel:
             problems.append("the worker was not executing the candidate before Cancel")
+        if not ps_control["visible"]:
+            problems.append("the ps positive control was not visible; empty survivor scans prove nothing")
+        if not host_pid["visible"]:
+            problems.append("the worker container's host PID was not visible before Cancel")
         if cancelled.state != "cancelled" or snapshot.state != "cancelled":
             problems.append(f"cancel returned {cancelled.state}/{snapshot.state}")
         if _container_state(attempt.container_id) != "absent":
@@ -461,11 +560,14 @@ def _check_cancel(report: Report, state: Path, digest: str) -> None:
             problems.append(f"old-fence result was not rejected: state={late.state}")
         if common.get(engine, request_obj).result is not None:
             problems.append("a result exists for a cancelled job")
+
         evidence = {
             "container_id": attempt.container_id, "cancel_state": cancelled.state,
             "late_commit_state": late.state, "survivor_processes": survivors,
             "child_token_before_cancel": token in top_before_cancel,
             "top_before_cancel": top_before_cancel[-2000:],
+            "ps_positive_control": ps_control,
+            "host_pid_visibility": host_pid,
         }
         if problems:
             report.failed("cancel_kills_worker_and_rejects_old_result", "; ".join(problems), **evidence)
@@ -511,8 +613,17 @@ def _crash_state(out: Path, state: Path, digest: str, request_id: str) -> dict:
 
         info["top_before_crash"] = _wait(child_visible, 30.0, "the crashing worker's child")
         info["child_token"] = token
+        info["cgroup_before_crash"] = _cgroup_exists(info["container_id"])
+        (out / f"evidence-crash-{request_id}-top.json").write_text(
+            json.dumps({"top": info["top_before_crash"], "child_token": token}, indent=2),
+            encoding="utf-8",
+        )
         child.kill()  # SIGKILL: no handlers, no cleanup, a real frontend crash
-        child.wait(timeout=30)
+        info["frontend_returncode"] = child.wait(timeout=30)
+        # Liveness of the old worker must be established *after* the frontend
+        # died, from the daemon, not from the frontend's own last words.
+        info["was_running_after_crash"] = _container_state(info["container_id"]) == "running"
+        _write_evidence(out, f"crash-{request_id}-inspect", ["docker", "inspect", "--type", "container", info["container_id"]])
     finally:
         if child.poll() is None:
             child.kill()
@@ -523,7 +634,7 @@ def _crash_state(out: Path, state: Path, digest: str, request_id: str) -> dict:
 def _check_crash(report: Report, out: Path, state: Path, digest: str) -> None:
     info = _crash_state(out, state, digest, "sim-crash")
     container_id = info["container_id"]
-    still_running = _container_state(container_id) == "running"
+    still_running = info["was_running_after_crash"]
     recovered = common.engine(state, digest)
     try:
         snapshot = _wait(
@@ -543,6 +654,7 @@ def _check_crash(report: Report, out: Path, state: Path, digest: str) -> None:
         rows = recovered.store._conn.execute(
             "SELECT attempt_id FROM attempts WHERE request_id=?", (info["request_id"],),
         ).fetchall()
+        cgroup_after = _cgroup_exists(container_id)
         evidence = {
             "container_id": container_id, "was_running_after_crash": still_running,
             "attempt_id": info["attempt_id"], "attempt_rows": len(rows),
@@ -550,9 +662,20 @@ def _check_crash(report: Report, out: Path, state: Path, digest: str) -> None:
             "recovery_error": snapshot.recovery_error, "frontend_log": info["frontend_log"],
             "child_token": info.get("child_token"),
             "child_running_before_crash": bool(info.get("top_before_crash")),
+            "frontend_signal_exit": info.get("frontend_returncode"),
+            "cgroup_before_crash": info.get("cgroup_before_crash"),
+            "cgroup_after_recovery": cgroup_after,
         }
         if not info.get("child_token") or info["child_token"] not in (info.get("top_before_crash") or ""):
             problems.append("the old worker was not executing the candidate when the frontend crashed")
+        if info.get("frontend_returncode") != -9:
+            problems.append(f"the frontend was not killed by SIGKILL: {info.get('frontend_returncode')}")
+        if not still_running:
+            problems.append("the old container was not verified running after the frontend died")
+        if not info.get("cgroup_before_crash"):
+            problems.append("the old container cgroup was never observed while it ran")
+        if cgroup_after:
+            problems.append("the old container cgroup survived recovery")
         if problems:
             report.failed("crash_restart_cleans_container_and_marks_interrupted", "; ".join(problems), **evidence)
         else:
@@ -586,6 +709,99 @@ def _request_from_info(info: dict):
     if request_obj.request_digest != info["request_digest"]:
         raise RuntimeError("reconstructed crash request digest differs from the durable job")
     return request_obj
+
+
+def _check_stale_fence(report: Report, out: Path, state: Path, digest: str) -> None:
+    """A late result for an interrupted attempt must not touch the newer run."""
+
+    info = json.loads((out / "crash-sim-crash-ready.json").read_text(encoding="utf-8"))
+    engine = common.engine(state, digest)
+    try:
+        request_obj = _request_from_info(info)
+        interrupted = _wait(
+            lambda: (lambda value: value if value.state == "interrupted" else None)(
+                common.get(engine, request_obj)
+            ),
+            90.0, "the interrupted attempt before Retry",
+        )
+        old_attempt = interrupted.current_attempt
+        cap = common.capabilities(engine)
+        retried = engine.retry(
+            request_id=request_obj.request_id, request_digest=request_obj.request_digest,
+            expected=engine.expected_identities,
+            interrupted_attempt_id=old_attempt.attempt_id,
+            capability_id=cap.capability_id, grant_token=common.TOKEN,
+        )
+        newer = _wait_attempt_container(engine, request_obj)
+        token = f"{CHILD_TOKEN_PREFIX}-{request_obj.request_id}"
+
+        def newer_child_visible() -> str | None:
+            completed = _docker("top", newer.container_id, "-o", "pid,args")
+            return completed.stdout if token in completed.stdout else None
+
+        top_newer = _wait(newer_child_visible, 30.0, "the newer attempt's child")
+        host_pid = _host_pid_visibility(newer.container_id)
+        _write_evidence(out, "stale-fence-top", ["docker", "top", newer.container_id, "-o", "pid,args"])
+        was_running = _container_state(newer.container_id) == "running"
+        forged = {
+            "task": request_obj.task, "dtype": request_obj.dtype, "size": request_obj.size,
+            "mode": request_obj.mode, "seed": request_obj.seed_int, "status": "ok",
+            "stage": "done", "target_id": request_obj.target_id,
+            "protocol_version": "3", "simulated": True,
+        }
+        stale = engine.store.complete_attempt(
+            request_obj.request_id, old_attempt, report=forged,
+            evidence={"candidate_sha256": request_obj.candidate_sha256},
+        )
+        problems = []
+        if old_attempt.attempt_id == newer.attempt_id:
+            problems.append("Retry did not create a newer attempt")
+        if not top_newer:
+            problems.append("the newer attempt was not executing before the stale commit")
+        if not host_pid["visible"]:
+            problems.append("the newer container's host PID was not visible")
+        if not was_running:
+            problems.append("the newer attempt's container was not running")
+        if stale.result is not None:
+            problems.append("the stale fence committed a result while a newer attempt ran")
+        if stale.state != "running":
+            problems.append(f"the stale fence changed the newer job state to {stale.state}")
+        if stale.current_attempt is None or stale.current_attempt.attempt_id != newer.attempt_id:
+            problems.append("the stale fence changed the current attempt")
+        if common.get(engine, request_obj).result is not None:
+            problems.append("a result exists before the newer attempt finished")
+        engine.cancel(
+            request_id=request_obj.request_id, request_digest=request_obj.request_digest,
+            expected=engine.expected_identities, grant_token=common.TOKEN,
+        )
+        if _container_state(newer.container_id) != "absent":
+            problems.append("the newer attempt's container survived Cancel")
+        evidence = {
+            "old_attempt_id": old_attempt.attempt_id,
+            "newer_attempt_id": newer.attempt_id,
+            "retry_state": retried.state,
+            "newer_container_id": newer.container_id,
+            "newer_child_token": token,
+            "newer_was_running": was_running,
+            "stale_commit_state": stale.state,
+            "stale_commit_result": stale.result is not None,
+            "host_pid_visibility": host_pid,
+            "ps_positive_control": _positive_process_control(),
+        }
+        (out / "stale-fence.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+        if problems:
+            report.failed(
+                "stale_fence_cannot_commit_while_a_newer_attempt_runs",
+                "; ".join(problems), **evidence,
+            )
+        else:
+            report.passed(
+                "stale_fence_cannot_commit_while_a_newer_attempt_runs",
+                "a result for the interrupted attempt was refused while the newer attempt was executing",
+                **evidence,
+            )
+    finally:
+        engine.close()
 
 
 def _check_crash_quarantine(report: Report, out: Path, state: Path, digest: str) -> None:
@@ -701,6 +917,10 @@ def _check_normal(report: Report, out: Path, state: Path, digest: str) -> None:
     engine.store.attach_container = attach_and_observe
     try:
         common.submit(engine, request_obj)
+        running = _wait_attempt_container(engine, request_obj)
+        cgroup_running = _cgroup_exists(running.container_id)
+        observed["cgroup_running"] = cgroup_running
+        observed["daemon_id"] = engine.supervisor.daemon_identity()
         final = _wait_job(engine, request_obj, {"completed"}, timeout_s=120.0)
         problems = []
         result = final.result
@@ -763,8 +983,14 @@ def _check_normal(report: Report, out: Path, state: Path, digest: str) -> None:
                 problems.append(
                     f"exactly one owned container must exist at the durable attach: {labels_at_attach}"
                 )
+            if not cgroup_running:
+                problems.append("the worker cgroup was never observed while the attempt ran")
+            if _cgroup_exists(attempt.container_id):
+                problems.append("the worker cgroup survived a completed attempt")
             if _container_state(attempt.container_id) != "absent":
                 problems.append("container survived a completed attempt")
+            if attempt.container_daemon != observed.get("daemon_id"):
+                problems.append("the attempt did not persist the executing daemon identity")
             leftovers = [p.name for p in (state / "container-env").glob("*")] if (state / "container-env").is_dir() else []
             if leftovers:
                 problems.append(f"per-attempt env files remain: {leftovers}")
@@ -778,6 +1004,8 @@ def _check_normal(report: Report, out: Path, state: Path, digest: str) -> None:
             "signature_verified": signature_verified,
             "worker_build": result.provenance.get("worker_build") if result else "",
             "report_status": result.report_json().get("status") if result else "",
+            "cgroup_running": cgroup_running,
+            "daemon_id": observed.get("daemon_id"),
         }
         if problems:
             report.failed("normal_report_evidence_and_receipt_validate", "; ".join(problems), **evidence)
@@ -1017,6 +1245,8 @@ def _final_cleanup(report: Report, out: Path, states: list[Path]) -> dict:
         removed.append(container_id)
     remaining = _labeled_containers()
     by_name = _docker("ps", "--all", "--quiet", "--filter", "name=tcenv-attempt-")
+    if by_name.returncode != 0:
+        raise RuntimeError(f"docker ps (name filter) failed: {by_name.stderr.strip()[:300]}")
     named = [line for line in by_name.stdout.splitlines() if line.strip()]
     tokens = _ps_tokens_settled(CHILD_TOKEN_PREFIX)
     attach = _ps_tokens_settled("docker start --attach --interactive")
@@ -1026,6 +1256,7 @@ def _final_cleanup(report: Report, out: Path, states: list[Path]) -> dict:
         if env_dir.is_dir():
             temp.extend(str(path) for path in env_dir.glob("*"))
     scratch = list(Path("/tmp").glob("tcenv-container-sim-*"))
+    ps_control = _positive_process_control()
     evidence = {
         "removed_containers": removed,
         "remaining_labeled_containers": remaining,
@@ -1034,6 +1265,7 @@ def _final_cleanup(report: Report, out: Path, states: list[Path]) -> dict:
         "survivor_attach_clients": attach,
         "temp_files": temp,
         "scratch_dirs": [str(path) for path in scratch],
+        "ps_positive_control": ps_control,
     }
     problems = []
     for key in (
@@ -1042,6 +1274,8 @@ def _final_cleanup(report: Report, out: Path, states: list[Path]) -> dict:
     ):
         if evidence[key]:
             problems.append(f"{key}: {evidence[key]}")
+    if not ps_control["visible"]:
+        problems.append("the ps positive control was not visible; empty process scans prove nothing")
     final = not problems
     (out / "final-cleanup.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
     if final:
@@ -1100,6 +1334,7 @@ def main(argv: list[str] | None = None) -> int:
         _check_timeout(report, out, states[0], digest)
         _check_cancel(report, states[1], digest)
         _check_crash(report, out, states[2], digest)
+        _check_stale_fence(report, out, states[2], digest)
         _check_crash_quarantine(report, out, states[3], digest)
         _check_normal(report, out, states[4], digest)
         _check_posture(report, out, states[5], digest)
