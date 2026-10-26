@@ -20,6 +20,8 @@ from .contracts import API_CONTRACT_ID, EVIDENCE_CONTRACT_ID
 from .identity import ServiceIdentity, SessionGrant
 from .job_store import JobStore
 from .job_types import (
+    EXECUTION_CONTAINER,
+    EXECUTION_PROCESS,
     Attempt,
     Capabilities,
     ExpectedEvaluator,
@@ -32,6 +34,13 @@ from .job_types import (
     StateCorrupt,
 )
 from .protocol import FrameDecoder
+from .supervisor import (
+    AttemptSpec,
+    AttemptSupervisor,
+    ProcessAttemptSupervisor,
+    SupervisorError,
+    WorkerHandle,
+)
 from .worker_protocol import (
     MAX_WORKER_FRAME_PAYLOAD,
     STATE_DIR_ENV,
@@ -41,6 +50,10 @@ from .worker_protocol import (
 
 MAX_STDERR = 4000
 _CLOSE_SCHEDULER_JOIN_S = 1.0
+# Bounded synchronous teardown for a container Cancel RPC (kill + delete +
+# verify).  The scheduler performs the same teardown asynchronously if this
+# window expires; the job is already durably cancelled either way.
+CONTAINER_CANCEL_TEARDOWN_S = 20.0
 _PROC_PIDTBSDINFO = 3
 _MACOS_BSDPROC_INFO = None
 
@@ -187,9 +200,10 @@ class _Running:
     request: ExternalEvaluationRequest
     attempt: Attempt
     started_monotonic: float = field(default_factory=time.monotonic)
-    process: subprocess.Popen | None = None
+    handle: WorkerHandle | None = None
     cancel_requested: bool = False
     stopping: bool = False
+    teardown_done: threading.Event = field(default_factory=threading.Event)
 
 
 class JobEngine:
@@ -211,6 +225,7 @@ class JobEngine:
         signing_keyring: Mapping[str, bytes] | None = None,
         selfcheck_age_s: float = 60.0,
         require_evidence: bool = False,
+        supervisor: AttemptSupervisor | None = None,
         **store_options: Any,
     ) -> None:
         if not worker_command or not all(isinstance(part, str) and part for part in worker_command):
@@ -225,6 +240,30 @@ class JobEngine:
             raise ValueError("signing key must contain at least 32 bytes")
         if signing_key is not None and not signing_key_id:
             raise ValueError("signing_key_id is required with a signing key")
+        if supervisor is None:
+            # Historical local development path: one process-group worker per
+            # attempt.  The engine's ``_popen`` hook stays the single spawn
+            # point so existing local behavior (and its tests) are unchanged.
+            supervisor = ProcessAttemptSupervisor(
+                spawn=lambda: self._popen(),
+                kill=lambda process: kill_group(process),
+                group_alive=_group_exists,
+                forget=forget,
+            )
+        if getattr(supervisor, "kind", None) not in (EXECUTION_PROCESS, EXECUTION_CONTAINER):
+            raise ValueError("supervisor kind is not a supported execution kind")
+        if supervisor.kind == EXECUTION_CONTAINER:
+            # The signed result provenance must bind the exact image that ran
+            # the attempt.  ``worker_build`` carries the pinned digest, and the
+            # container supervisor re-verifies the image id before create.
+            digest = str(getattr(supervisor, "image_digest", "") or "")
+            if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+                raise ValueError("container supervisor must expose its pinned image digest")
+            if not identity.worker_build.endswith(f"+img:{digest}"):
+                raise ValueError(
+                    "container execution requires worker_build to bind the pinned image digest"
+                )
+        self.supervisor: AttemptSupervisor = supervisor
         self.identity = identity
         self.execution_protocol_version = execution_protocol_version
         self.supported_features = frozenset(supported_features)
@@ -386,8 +425,20 @@ class JobEngine:
             grant_token=grant_token, request_id=request_id, request_digest=request_digest,
             expected=expected, reason=reason,
         )
-        self._cancel_active(request_id)
+        running = self._cancel_active(request_id)
         self._wake()
+        if (
+            running is not None
+            and self.supervisor.kind == EXECUTION_CONTAINER
+            and running.request.request_id == request_id
+            and not running.teardown_done.is_set()
+        ):
+            # Container cancellation is confirmed synchronously: Kill -> Delete
+            # -> verify must finish (or quarantine) before the RPC reports the
+            # cancelled snapshot.  A timed-out wait still returns the durable
+            # cancelled state; a failed cleanup quarantines the job.
+            running.teardown_done.wait(timeout=CONTAINER_CANCEL_TEARDOWN_S)
+            snapshot = self.store._job_by_id(request_id)
         return snapshot
 
     def retry(
@@ -444,8 +495,26 @@ class JobEngine:
             error = self._cleanup_recovered_worker(attempt)
             self.store.recovered_attempt(request_id, attempt, cleanup_error=error)
 
+    def _cleanup_recovered_worker(self, attempt: Attempt) -> str:
+        """Clean the worker a crashed frontend left behind, or refuse to guess.
+
+        The attempt's durable ``execution_kind`` decides which supervisor may
+        touch it.  A running attempt is never re-executed: recovery either
+        confirms the old container/process group is gone and marks the attempt
+        interrupted (explicit Retry only), or quarantines the job.
+        """
+
+        kind = getattr(attempt, "execution_kind", EXECUTION_PROCESS)
+        if kind not in (EXECUTION_PROCESS, EXECUTION_CONTAINER):
+            return "persisted execution kind is unknown; manual cleanup required"
+        if kind != self.supervisor.kind:
+            return "running attempt belongs to another execution supervisor; manual cleanup required"
+        if kind == EXECUTION_CONTAINER:
+            return self.supervisor.cleanup_recovered(attempt)
+        return self._cleanup_recovered_process(attempt)
+
     @staticmethod
-    def _cleanup_recovered_worker(attempt: Attempt) -> str:
+    def _cleanup_recovered_process(attempt: Attempt) -> str:
         pid = attempt.worker_pid
         pgid = attempt.worker_pgid
         if pid is None and pgid is None:
@@ -482,7 +551,10 @@ class JobEngine:
     def _schedule_loop(self) -> None:
         while not self._stop.is_set():
             try:
-                claimed = self.store.claim_next(selfcheck_age_ms=self.selfcheck_age_ms)
+                claimed = self.store.claim_next(
+                    selfcheck_age_ms=self.selfcheck_age_ms,
+                    execution_kind=self.supervisor.kind,
+                )
             except Exception as exc:
                 # Durable corruption is fail-closed: stop the scheduler and
                 # make subsequent Submit/GetJob calls unavailable as well.
@@ -504,7 +576,7 @@ class JobEngine:
                     running.cancel_requested = True
                 self._run_worker(running)
             except Exception as exc:
-                self._cleanup_supervisor_process(running)
+                self._cleanup_supervisor_handle(running)
                 try:
                     if isinstance(exc, JobError):
                         self._handle_worker_job_error(running, exc)
@@ -520,40 +592,52 @@ class JobEngine:
                 with self._active_lock:
                     if self._active is running:
                         self._active = None
+                running.teardown_done.set()
                 self._wake()
 
-    @staticmethod
-    def _cleanup_supervisor_process(running: _Running | None) -> None:
-        """Best-effort process cleanup on an unexpected supervisor exit."""
+    def _cleanup_supervisor_handle(self, running: _Running | None) -> None:
+        """Best-effort execution cleanup on an unexpected supervisor exit."""
 
-        if running is None or running.process is None:
+        if running is None or running.handle is None:
             return
-        process = running.process
+        handle = running.handle
         try:
-            kill_group(process)
-        except OSError:
+            self.supervisor.cleanup(handle)
+        except (OSError, SupervisorError):
             pass
         finally:
-            forget(process)
-        for stream in (process.stdin, process.stdout, process.stderr):
+            self.supervisor.release(handle)
+            self._close_handle_streams(handle)
+
+    @staticmethod
+    def _close_handle_streams(handle: WorkerHandle) -> None:
+        for stream in (
+            getattr(getattr(handle, "process", None), "stdin", None),
+            getattr(getattr(handle, "process", None), "stdout", None),
+            getattr(getattr(handle, "process", None), "stderr", None),
+            getattr(getattr(handle, "attach", None), "stdin", None),
+            getattr(getattr(handle, "attach", None), "stdout", None),
+            getattr(getattr(handle, "attach", None), "stderr", None),
+        ):
             try:
                 if stream is not None:
                     stream.close()
             except OSError:
                 pass
 
-    def _cancel_active(self, request_id: str) -> None:
+    def _cancel_active(self, request_id: str) -> _Running | None:
         with self._active_lock:
             running = self._active
             if running is None or running.request.request_id != request_id:
-                return
+                return None
             running.cancel_requested = True
-            process = running.process
-        if process is not None and process.poll() is None:
+            handle = running.handle
+        if handle is not None:
             try:
-                kill_group(process)
-            except OSError:
+                self.supervisor.kill(handle)
+            except (OSError, SupervisorError):
                 pass
+        return running
 
     def _popen(self) -> subprocess.Popen:
         env = scrubbed_env()
@@ -619,37 +703,54 @@ class JobEngine:
         if snapshot.state in {"queued", "running"} and snapshot.cancel_requested:
             self.store.finish_cancellation(request.request_id, attempt)
 
-    def _cleanup_worker_before_request(self, process: subprocess.Popen) -> str:
+    def _cleanup_handle_quietly(self, handle: WorkerHandle) -> str:
+        """Kill, delete and verify a worker that must not receive a request."""
+
         try:
-            kill_group(process)
-        except OSError as exc:
-            return f"could not kill worker process group before request: {exc}"
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            return "worker did not exit; pre-request cleanup could not be confirmed"
-        except OSError as exc:
-            return f"could not confirm worker exit before request: {exc}"
-        if _group_exists(process.pid):
-            return "worker process group survived pre-request cleanup"
-        forget(process)
-        return ""
+            error = self.supervisor.cleanup(handle)
+        except (OSError, SupervisorError) as exc:
+            error = f"execution cleanup failed: {exc}"
+        if not error:
+            try:
+                error = self.supervisor.cleanup_residue(handle)
+            except (OSError, SupervisorError) as exc:
+                error = f"execution residue check failed: {exc}"
+        self.supervisor.release(handle)
+        self._close_handle_streams(handle)
+        return error
+
+    def _record_cleanup_hazard(self, running: _Running, error: str) -> None:
+        """Fail closed: no result commit and no Retry while cleanup is unproven."""
+
+        request, attempt = running.request, running.attempt
+        snapshot = self.store._job_by_id(request.request_id)
+        current = snapshot.current_attempt
+        if (
+            snapshot.state == "running" and current is not None
+            and current.attempt_id == attempt.attempt_id
+            and current.lease_fence == attempt.lease_fence
+        ):
+            self.store.recovered_attempt(
+                request.request_id, attempt, cleanup_error=error[:1000],
+            )
+            return
+        self.store.record_cleanup_hazard(request.request_id, attempt, error[:1000])
 
     def _abort_worker_before_request(
-        self, running: _Running, process: subprocess.Popen, failure: JobFailure,
+        self, running: _Running, handle: WorkerHandle, failure: JobFailure,
         *, worker_attached: bool,
     ) -> None:
         request, attempt = running.request, running.attempt
-        cleanup_error = self._cleanup_worker_before_request(process)
-        for stream in (process.stdin, process.stdout, process.stderr):
-            try:
-                if stream is not None:
-                    stream.close()
-            except OSError:
-                pass
+        cleanup_error = self._cleanup_handle_quietly(handle)
         snapshot = self.store._job_by_id(request.request_id)
         if cleanup_error:
             recovery_error = f"{failure.message}; {cleanup_error}"[:1000]
+            if handle.kind == EXECUTION_CONTAINER:
+                # The container has a durable identity (id and/or deterministic
+                # name), so operator release can recheck it; quarantine rather
+                # than taking the whole frontend down.
+                self._record_cleanup_hazard(running, recovery_error)
+                return
             if not worker_attached:
                 # No durable PID/start token was confirmed, so quarantine
                 # release could mistake the live worker for a no-request
@@ -691,9 +792,13 @@ class JobEngine:
         if running.cancel_requested:
             self.store.finish_cancellation(request.request_id, attempt)
             return
+        spec = AttemptSpec(
+            request=request, attempt=attempt, state_dir=self.store.state_dir,
+            command=tuple(self.worker_command), env=dict(self.worker_env),
+        )
         try:
-            process = self._popen()
-        except OSError as exc:
+            handle = self.supervisor.create(spec)
+        except (OSError, SupervisorError) as exc:
             if self.store._job_by_id(request.request_id).cancel_requested or running.cancel_requested:
                 self.store.finish_cancellation(request.request_id, attempt)
             else:
@@ -701,31 +806,63 @@ class JobEngine:
                     "infrastructure", True, "worker_unavailable", f"could not start worker: {exc}"[:1000],
                 ))
             return
-        running.process = process
+        running.handle = handle
         if self._stop.is_set() or running.stopping:
-            self._abort_worker_before_request(running, process, JobFailure(
+            self._abort_worker_before_request(running, handle, JobFailure(
                 "infrastructure", True, "frontend_stopped", "frontend stopped during worker startup",
             ), worker_attached=False)
             return
-        token = process_start_token(process.pid, attempts=3)
-        if token is None:
-            kill_group(process)
-            forget(process)
-            if self.store._job_by_id(request.request_id).cancel_requested or running.cancel_requested:
-                self.store.finish_cancellation(request.request_id, attempt)
-            else:
+        if handle.kind == EXECUTION_PROCESS:
+            process = handle.process
+            if process is None:
+                self._cleanup_handle_quietly(handle)
                 self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
-                    "infrastructure", True, "worker_identity_unavailable", "could not bind worker PID start token",
+                    "infrastructure", True, "worker_unavailable",
+                    "process supervisor returned no worker process",
                 ))
-            return
-        attached_ok = self.store.attach_worker(
-            request.request_id, attempt,
-            pid=process.pid, pgid=process.pid, start_token=token,
-        )
+                return
+            # A raised identity probe propagates to the scheduler's generic
+            # supervisor-failure path, which cleans the unattached worker.
+            token = process_start_token(process.pid, attempts=3)
+            if token is None:
+                self._cleanup_handle_quietly(handle)
+                if self.store._job_by_id(request.request_id).cancel_requested or running.cancel_requested:
+                    self.store.finish_cancellation(request.request_id, attempt)
+                else:
+                    self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                        "infrastructure", True, "worker_identity_unavailable",
+                        "could not bind worker PID start token",
+                    ))
+                return
+            attached_ok = self.store.attach_worker(
+                request.request_id, attempt,
+                pid=process.pid, pgid=process.pid, start_token=token,
+            )
+        else:
+            identity_error = self.supervisor.verify_identity(handle)
+            if identity_error:
+                cleanup_error = self._cleanup_handle_quietly(handle)
+                detail = identity_error if not cleanup_error else f"{identity_error}; {cleanup_error}"
+                failure = JobFailure(
+                    "infrastructure", True, "worker_container_identity", detail[:1000],
+                )
+                if cleanup_error:
+                    self._record_cleanup_hazard(running, f"{failure.message}; {cleanup_error}"[:1000])
+                elif self.store._job_by_id(request.request_id).cancel_requested or running.cancel_requested:
+                    self.store.finish_cancellation(request.request_id, attempt)
+                else:
+                    self.store.interrupt_attempt(request.request_id, attempt, failure)
+                return
+            attached_ok = self.store.attach_container(
+                request.request_id, attempt,
+                container_id=handle.container_id, container_name=handle.container_name,
+                image_ref=handle.image_ref, image_digest=handle.image_digest,
+                runtime=handle.runtime,
+            )
         if not attached_ok:
-            self._abort_worker_before_request(running, process, JobFailure(
+            self._abort_worker_before_request(running, handle, JobFailure(
                 "infrastructure", True, "worker_attach_fenced",
-                "worker PID/start token was not attached to the exact running attempt/fence",
+                "worker identity was not attached to the exact running attempt/fence",
             ), worker_attached=False)
             return
         # Attach is another durable boundary.  Re-read cancellation before the
@@ -733,7 +870,7 @@ class JobEngine:
         attached = self.store._job_by_id(request.request_id)
         if attached.cancel_requested or running.cancel_requested:
             running.cancel_requested = True
-            self._abort_worker_before_request(running, process, JobFailure(
+            self._abort_worker_before_request(running, handle, JobFailure(
                 "infrastructure", True, "worker_cleanup_failed",
                 "worker cleanup after cancellation failed",
             ), worker_attached=True)
@@ -744,24 +881,34 @@ class JobEngine:
             or current.attempt_id != attempt.attempt_id
             or current.lease_fence != attempt.lease_fence
         ):
-            self._abort_worker_before_request(running, process, JobFailure(
+            self._abort_worker_before_request(running, handle, JobFailure(
                 "infrastructure", True, "worker_attach_fenced",
                 "durable attempt/fence changed after worker attach",
             ), worker_attached=True)
             return
         if self._stop.is_set() or running.stopping:
-            self._abort_worker_before_request(running, process, JobFailure(
+            self._abort_worker_before_request(running, handle, JobFailure(
                 "infrastructure", True, "frontend_stopped", "frontend stopped before worker request",
             ), worker_attached=True)
             return
+        try:
+            # The request is only written after the worker is durably attached
+            # and started, so a crash can never hide an executing container.
+            self.supervisor.start(handle)
+            stdin, stdout, stderr = self.supervisor.streams(handle)
+        except (OSError, SupervisorError) as exc:
+            self._abort_worker_before_request(running, handle, JobFailure(
+                "infrastructure", True, "worker_start_failed", f"could not start worker: {exc}"[:1000],
+            ), worker_attached=True)
+            return
         stdout_error: list[BaseException] = []
+        supervisor_error: list[BaseException] = []
         results: list[dict[str, Any]] = []
 
         def read_stdout() -> None:
             decoder = FrameDecoder(max_payload=MAX_WORKER_FRAME_PAYLOAD)
             try:
-                assert process.stdout is not None
-                read_chunk = getattr(process.stdout, "read1", process.stdout.read)
+                read_chunk = getattr(stdout, "read1", stdout.read)
                 while True:
                     chunk = read_chunk(65_536)
                     if not chunk:
@@ -781,10 +928,9 @@ class JobEngine:
         stderr_tail: list[str] = []
 
         def read_stderr() -> None:
-            assert process.stderr is not None
             tail = bytearray()
             while True:
-                chunk = process.stderr.read(4096)
+                chunk = stderr.read(4096)
                 if not chunk:
                     break
                 tail = (tail + chunk)[-MAX_STDERR:]
@@ -795,16 +941,17 @@ class JobEngine:
         out_thread.start()
         err_thread.start()
         timed_out = False
+        returncode: int | None = None
         write_error: list[BaseException] = []
 
         def write_request() -> None:
             try:
                 if self._stop.is_set() or running.stopping:
                     return
-                assert process.stdin is not None
-                process.stdin.write(encode_request(request, attempt))
-                process.stdin.flush()
-                process.stdin.close()
+                assert stdin is not None
+                stdin.write(encode_request(request, attempt))
+                stdin.flush()
+                stdin.close()
             except BaseException as exc:  # broken pipe is handled by the supervisor
                 write_error.append(exc)
 
@@ -812,35 +959,47 @@ class JobEngine:
         writer_thread.start()
         try:
             if running.cancel_requested:
-                kill_group(process)
+                self.supervisor.kill(handle)
             try:
                 # The request writer is concurrent: a broken worker that never
                 # reads stdin still cannot escape the candidate deadline.
                 remaining = request.candidate_timeout_ms / 1000.0 - (time.monotonic() - running.started_monotonic)
-                process.wait(timeout=max(0.001, remaining))
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                kill_group(process)
-        except (BrokenPipeError, OSError) as exc:
-            stdout_error.append(exc)
+                returncode = self.supervisor.wait(handle, max(0.001, remaining))
+                timed_out = returncode is None
+            except (BrokenPipeError, OSError) as exc:
+                stdout_error.append(exc)
+            except SupervisorError as exc:
+                supervisor_error.append(exc)
         finally:
             writer_thread.join(timeout=2)
-            if write_error and not running.cancel_requested and not timed_out:
+            if write_error and not running.cancel_requested and not timed_out and not supervisor_error:
                 stdout_error.append(write_error[0])
+            # Kill then delete then verify, on every path (timeout, cancel and
+            # a normal exit): a worker process/container must be provably gone
+            # before any result may be committed.
             try:
-                kill_group(process)  # also reaps any surviving process-group children
-            except OSError:
-                pass
-            forget(process)
+                cleanup_error = self.supervisor.cleanup(handle)
+            except (OSError, SupervisorError) as exc:
+                cleanup_error = f"execution cleanup failed: {exc}"
+            if not cleanup_error:
+                try:
+                    cleanup_error = self.supervisor.cleanup_residue(handle)
+                except (OSError, SupervisorError) as exc:
+                    cleanup_error = f"execution residue check failed: {exc}"
+            self.supervisor.release(handle)
             out_thread.join(timeout=2)
             err_thread.join(timeout=2)
-            for stream in (process.stdout, process.stderr):
-                try:
-                    if stream is not None:
-                        stream.close()
-                except OSError:
-                    pass
+            self._close_handle_streams(handle)
 
+        if cleanup_error:
+            self._record_cleanup_hazard(running, cleanup_error)
+            return
+        if supervisor_error:
+            error = supervisor_error[0]
+            self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                "infrastructure", True, "worker_supervisor_failed", str(error)[:1000],
+            ))
+            return
         snapshot = self.store._job_by_id(request.request_id)
         if snapshot.cancel_requested or running.cancel_requested:
             self.store.finish_cancellation(request.request_id, attempt)
@@ -877,10 +1036,10 @@ class JobEngine:
                     "protocol", True, "worker_protocol_error", str(error)[:1000],
                 ))
             return
-        if process.returncode != 0:
+        if returncode != 0:
             detail = stderr_tail[0].replace(str(self.store.state_dir), "<state>") if stderr_tail else ""
             self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
-                "infrastructure", True, "worker_failed", f"worker exited {process.returncode}: {detail}"[:1000],
+                "infrastructure", True, "worker_failed", f"worker exited {returncode}: {detail}"[:1000],
             ))
             return
         if len(results) != 1:
@@ -901,13 +1060,13 @@ class JobEngine:
             running = self._active
             if running is not None:
                 running.stopping = True
-                process = running.process
+                handle = running.handle
             else:
-                process = None
-        if process is not None and process.poll() is None:
+                handle = None
+        if handle is not None:
             try:
-                kill_group(process)
-            except OSError:
+                self.supervisor.kill(handle)
+            except (OSError, SupervisorError):
                 pass
         self._wake()
         scheduler = getattr(self, "_scheduler", None)

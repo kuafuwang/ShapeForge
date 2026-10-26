@@ -26,6 +26,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
 
+from .container_supervisor import (
+    ContainerSupervisorConfig,
+    DockerAttemptSupervisor,
+    container_worker_build,
+    normalize_image_digest,
+)
 from .grpc_server import DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_MAX_WATCH_STREAMS, GrpcServerConfig, RunningServer, build_server
 from .grants import load_grants_file
 from .identity import ServiceIdentity
@@ -74,15 +80,72 @@ def _task_pack(
     return pack
 
 
+def _worker_execution(args: argparse.Namespace) -> str:
+    return getattr(args, "worker_execution", "container")
+
+
+def build_supervisor(args: argparse.Namespace):
+    """Build the execution supervisor this deployment selected (no fallback)."""
+
+    mode = _worker_execution(args)
+    if mode == "container":
+        if not getattr(args, "worker_image", ""):
+            raise ValueError("container execution requires --worker-image")
+        if not getattr(args, "worker_image_digest", ""):
+            raise ValueError("container execution requires --worker-image-digest")
+        digest = normalize_image_digest(args.worker_image_digest)
+        if not args.worker_build.endswith(f"+img:{digest}"):
+            raise ValueError(
+                "container execution requires --worker-build to end with "
+                f"+img:{digest} (use {container_worker_build('build-name', digest)!r})"
+            )
+        if not getattr(args, "worker_python", "python3"):
+            raise ValueError("container execution requires --worker-python")
+        config = ContainerSupervisorConfig(
+            image=args.worker_image,
+            image_digest=digest,
+            docker=getattr(args, "docker_binary", "docker") or "docker",
+            docker_host=getattr(args, "docker_host", "") or "",
+            runtime=getattr(args, "worker_runtime", "") or "",
+            runtime_profile=getattr(args, "worker_runtime_profile", "runc") or "runc",
+            user=getattr(args, "worker_user", "65534:65534"),
+            pids_limit=getattr(args, "worker_pids_limit", 256),
+            memory=getattr(args, "worker_memory", "2g"),
+            cpus=getattr(args, "worker_cpus", "2"),
+            scratch_size=getattr(args, "worker_scratch_size", "512m"),
+            tmp_size=getattr(args, "worker_tmp_size", "64m"),
+            env={
+                "HOME": "/tmp",
+                "PYTHONPATH": getattr(args, "worker_image_pythonpath", "/opt/taic") or "/opt/taic",
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONUNBUFFERED": "1",
+            },
+            cli_timeout_s=float(getattr(args, "container_cli_timeout_s", 30.0)),
+            kill_timeout_s=float(getattr(args, "container_kill_timeout_s", 15.0)),
+        )
+        return DockerAttemptSupervisor(config)
+    if mode == "process":
+        # Explicit, documented local-development path.  The production external
+        # deployment must not silently fall back to it.
+        if not getattr(args, "allow_process_worker", False):
+            raise ValueError(
+                "process execution is for local development only; "
+                "pass --allow-process-worker with --worker-execution process"
+            )
+        return None
+    raise ValueError("--worker-execution must be container or process")
+
+
 def verify_deployment(
     args: argparse.Namespace,
     *,
     fingerprint_provider: Callable[[Mapping[str, str]], str] | None = None,
-) -> tuple[TaskPack, ServiceIdentity, list, object]:
+) -> tuple[TaskPack, ServiceIdentity, list, object, object]:
     """Validate every deployment input without opening a listener or state DB."""
 
     if not args.worker_module or args.worker_module.startswith("tests.") or args.worker_module.startswith("tests/"):
         raise ValueError("the production entry point cannot run a test/composition worker module")
+    supervisor = build_supervisor(args)
     pack = _task_pack(args, fingerprint_provider=fingerprint_provider)
     identity = ServiceIdentity(
         site_id=args.site_id,
@@ -107,7 +170,7 @@ def verify_deployment(
     for path in (args.certificate_file, args.private_key_file, args.client_ca_file):
         if not Path(path).is_file():
             raise ValueError(f"TLS material is missing: {path}")
-    return pack, identity, grants, keyring
+    return pack, identity, grants, keyring, supervisor
 
 
 def _revoked_certificates(args: argparse.Namespace) -> frozenset[str]:
@@ -121,13 +184,25 @@ def build_stack(
     *,
     fingerprint_provider: Callable[[Mapping[str, str]], str] | None = None,
 ) -> ProductionStack:
-    pack, identity, grants, keyring = verify_deployment(args, fingerprint_provider=fingerprint_provider)
+    pack, identity, grants, keyring, supervisor = verify_deployment(
+        args, fingerprint_provider=fingerprint_provider,
+    )
     active_key_id, active_key = keyring.require_active()
+    if _worker_execution(args) == "container":
+        python = args.worker_python
+        worker_command = [python, "-m", "tcenv.remote.legacy_worker_bridge"]
+        worker_env = {"TCENV_LEGACY_WORKER_COMMAND": json.dumps([python, "-m", args.worker_module])}
+    else:
+        worker_command = [sys.executable, "-m", "tcenv.remote.legacy_worker_bridge"]
+        worker_env = {
+            "TCENV_LEGACY_WORKER_COMMAND": json.dumps([sys.executable, "-m", args.worker_module]),
+        }
     engine = JobEngine(
         identity=identity,
         grants=grants,
-        worker_command=[sys.executable, "-m", "tcenv.remote.legacy_worker_bridge"],
-        worker_env={"TCENV_LEGACY_WORKER_COMMAND": json.dumps([sys.executable, "-m", args.worker_module])},
+        worker_command=worker_command,
+        worker_env=worker_env,
+        supervisor=supervisor,
         state_dir=Path(args.state_dir),
         signing_key=active_key,
         signing_key_id=active_key_id,
@@ -184,6 +259,33 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="0600 JSON list of revoked client leaf-certificate SHA-256 fingerprints",
     )
     parser.add_argument("--worker-module", default="tcenv.remote.worker")
+    parser.add_argument(
+        "--worker-execution", choices=["container", "process"], default="container",
+        help="execution plane; the production external evaluator uses disposable containers",
+    )
+    parser.add_argument(
+        "--allow-process-worker", action="store_true",
+        help="local development only: allow one process worker instead of a container",
+    )
+    parser.add_argument("--worker-image", default="")
+    parser.add_argument("--worker-image-digest", default="", help="pinned sha256 image id")
+    parser.add_argument("--worker-image-pythonpath", default="/opt/taic")
+    parser.add_argument("--worker-python", default="python3")
+    parser.add_argument("--worker-runtime", default="", help="optional OCI runtime, e.g. runsc/kata-runtime")
+    parser.add_argument(
+        "--worker-runtime-profile", choices=["runc", "gvisor", "kata"], default="runc",
+        help="recorded runtime profile; gVisor/Kata are not implemented or validated yet",
+    )
+    parser.add_argument("--worker-user", default="65534:65534")
+    parser.add_argument("--worker-pids-limit", type=int, default=256)
+    parser.add_argument("--worker-memory", default="2g")
+    parser.add_argument("--worker-cpus", default="2")
+    parser.add_argument("--worker-scratch-size", default="512m")
+    parser.add_argument("--worker-tmp-size", default="64m")
+    parser.add_argument("--docker-binary", default="docker")
+    parser.add_argument("--docker-host", default="")
+    parser.add_argument("--container-cli-timeout-s", type=float, default=30.0)
+    parser.add_argument("--container-kill-timeout-s", type=float, default=15.0)
     parser.add_argument("--measurement-kind", choices=["measured", "simulated"], default="measured")
     parser.add_argument("--publication-allowed", action="store_true")
     parser.add_argument("--selfcheck-max-timed", type=int, default=20)
@@ -205,12 +307,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.measurement_kind != "measured":
         raise SystemExit("the production gRPC entry point refuses simulated measurement identity")
     if args.check:
-        pack, identity, grants, keyring = verify_deployment(args)
+        pack, identity, grants, keyring, supervisor = verify_deployment(args)
         active_key_id, _key = keyring.require_active()
+        execution = "container" if supervisor is not None else "process"
+        image = (
+            f" image={supervisor.config.image} image_digest={supervisor.image_digest}"
+            f" runtime_profile={supervisor.runtime_profile}"
+            if supervisor is not None else ""
+        )
         print(
             f"ok site={identity.site_id} target={identity.target_id} backend={identity.backend} "
             f"task_pack_digest={pack.digest} fingerprints={len(pack.fingerprints)} "
             f"grants={len(grants)} active_key_id={active_key_id} "
+            f"execution={execution}{image} "
             f"revoked_client_certificates={len(_revoked_certificates(args))}"
         )
         return 0

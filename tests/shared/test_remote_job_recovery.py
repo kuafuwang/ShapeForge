@@ -558,7 +558,7 @@ def test_linux_process_token_includes_boot_identity_and_never_kills_on_mismatch(
         job_engine_module.os, "killpg",
         lambda *_args: pytest.fail("a reboot-mismatched process group must not be signalled"),
     )
-    error = job_engine_module.JobEngine._cleanup_recovered_worker(attempt)
+    error = job_engine_module.JobEngine._cleanup_recovered_process(attempt)
     assert "start token differs" in error
 
 
@@ -826,7 +826,9 @@ def test_revoked_signature_key_quarantines_only_the_affected_result(tmp_path):
 def test_schema_version_is_transactional_and_failed_commit_is_rolled_back(tmp_path):
     store = JobStore(tmp_path / "state")
     try:
-        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        from tcenv.remote.job_store import SCHEMA_VERSION
+
+        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 2
         assert not store._conn.in_transaction
 
         def deny_commit(action, arg1, _arg2, _database, _source):
@@ -843,6 +845,37 @@ def test_schema_version_is_transactional_and_failed_commit_is_rolled_back(tmp_pa
         assert store.unavailable
     finally:
         store.close()
+
+
+def test_schema_v1_database_migrates_in_place_and_keeps_results(tmp_path):
+    state = tmp_path / "state"
+    service = engine(state)
+    req = request("schema-v1-migration")
+    try:
+        submit(service, req)
+        wait_state(service, req, {"completed"})
+    finally:
+        service.close()
+    connection = sqlite3.connect(state / "jobs.sqlite3")
+    try:
+        for column in (
+            "container_runtime", "container_image_digest", "container_image_ref",
+            "container_name", "container_id", "execution_kind",
+        ):
+            connection.execute(f"ALTER TABLE attempts DROP COLUMN {column}")
+        connection.execute("PRAGMA user_version=1")
+        connection.commit()
+    finally:
+        connection.close()
+    migrated = engine(state)
+    try:
+        assert migrated.store._conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        snapshot = get(migrated, req)
+        assert snapshot.state == "completed" and snapshot.result is not None
+        assert snapshot.current_attempt.execution_kind == "process"
+        assert snapshot.current_attempt.container_id == ""
+    finally:
+        migrated.close()
 
 
 def test_tampered_stored_signature_is_rejected_when_serving_result(tmp_path):

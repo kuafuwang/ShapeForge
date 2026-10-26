@@ -166,25 +166,60 @@ def test_production_grpc_entry_check_validates_pack_keyring_and_grants(tmp_path)
         "--private-key-file", str(tls / "server.key"),
         "--client-ca-file", str(tls / "ca.pem"),
     ]
+    process_base = base + ["--worker-execution", "process", "--allow-process-worker"]
     completed = subprocess.run(
-        [sys.executable, "-m", "tcenv.remote.grpc_service", *base],
+        [sys.executable, "-m", "tcenv.remote.grpc_service", *process_base],
         cwd=ROOT, text=True, capture_output=True, check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "task_pack_digest=" + digest in completed.stdout
     assert "active_key_id=sim-site/key-1" in completed.stdout
+    assert "execution=process" in completed.stdout
     assert not (tmp_path / "state").exists()
 
-    # A test worker module and a simulated measurement identity are refused.
-    for replacement in (["--worker-module", "tests.support.fake_worker_job_engine"], ["--measurement-kind", "simulated"]):
-        arguments = list(base)
-        arguments[arguments.index("--check") : arguments.index("--check") + 1] = []
+    # The production external entry point uses disposable containers by
+    # default and refuses every ambiguous configuration instead of falling back.
+    digest_hex = "d" * 64
+    container_base = list(base)
+    container_base[container_base.index("--worker-build") + 1] = f"build-1+img:{digest_hex}"
+    container_base += [
+        "--worker-image", "taic-worker:local", "--worker-image-digest", digest_hex,
+    ]
+    container_check = subprocess.run(
+        [sys.executable, "-m", "tcenv.remote.grpc_service", *container_base],
+        cwd=ROOT, text=True, capture_output=True, check=False,
+    )
+    assert container_check.returncode == 0, container_check.stdout + container_check.stderr
+    assert "execution=container" in container_check.stdout
+    assert f"image_digest={digest_hex}" in container_check.stdout
+    assert not (tmp_path / "state").exists()
+
+    refusals = [
+        ["--worker-module", "tests.support.fake_worker_job_engine"],
+        ["--measurement-kind", "simulated"],
+        # No silent fallback: an unset image, an unpinned digest, a build id
+        # that does not bind the digest, or process mode without opt-in.
+        ["--worker-image", ""],
+        ["--worker-image-digest", ""],
+        ["--worker-build", "build-1"],
+        ["--worker-execution", "process"],
+        ["--worker-runtime-profile", "gvisor", "--worker-runtime", "runsc", "--worker-image-digest", "x"],
+    ]
+    for replacement in refusals:
+        arguments = [argument for argument in container_base if argument not in ("--check",)]
+        arguments.insert(0, "--check")
+        index = 0
+        while index < len(arguments):
+            if arguments[index] == replacement[0]:
+                del arguments[index:index + 2]
+            else:
+                index += 1
         arguments.extend(replacement)
         refused = subprocess.run(
             [sys.executable, "-m", "tcenv.remote.grpc_service", *arguments],
             cwd=ROOT, text=True, capture_output=True, check=False,
         )
-        assert refused.returncode != 0
+        assert refused.returncode != 0, (replacement, refused.stdout, refused.stderr)
 
 
 def test_generated_secret_files_are_never_group_readable(tmp_path):
