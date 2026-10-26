@@ -1624,6 +1624,48 @@ def test_close_is_bounded_while_the_spawn_is_gated(tmp_path, monkeypatch):
         service.close()
 
 
+def test_a_failing_second_reader_start_never_closes_the_first_reader(tmp_path, monkeypatch):
+    """The cleanup boundary must not close a live stdout reader."""
+
+    docker, _fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    service = container_engine(tmp_path / "state", docker, monotonic=_FrozenClock().now)
+    original_streams = service.supervisor.streams
+    release = threading.Event()
+    closed: list[bool] = []
+
+    class _BlockedRead:
+        def read(self, _size=-1):
+            release.wait(30.0)
+            return b""
+
+        def close(self):
+            closed.append(True)
+
+    def streams(handle):
+        stdin, _stdout, stderr = original_streams(handle)
+        return stdin, _BlockedRead(), stderr
+
+    service.supervisor.streams = streams
+    original_start = threading.Thread.start
+
+    def start(self):
+        if self.name == "tcenv-worker-stderr":
+            raise RuntimeError("injected stderr reader start failure")
+        return original_start(self)
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    req = request("second-reader-failure", source=b"OK")
+    try:
+        submit(service, req)
+        final = wait_state(service, req, {"interrupted", "failed", "completed"}, timeout=30.0)
+        assert final.state in {"interrupted", "failed"}
+        assert final.result is None
+        assert closed == [], "the live stdout reader's stream was closed"
+    finally:
+        release.set()
+        service.close()
+
+
 def test_a_daemon_switch_during_start_never_writes_the_request(tmp_path, monkeypatch):
     """The daemon re-check after the spawn aborts before the request writer."""
 

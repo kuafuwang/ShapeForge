@@ -1426,8 +1426,11 @@ class JobEngine:
         out_thread = threading.Thread(target=read_stdout, name="tcenv-worker-stdout", daemon=True)
         err_thread = threading.Thread(target=read_stderr, name="tcenv-worker-stderr", daemon=True)
         out_thread.start()
-        err_thread.start()
+        # Record the first reader before starting the second: if the second
+        # start raises, the first reader may still own stdout and must never be
+        # closed by the cleanup boundary.
         handle.metadata["reader_state"] = "running"
+        err_thread.start()
         timed_out = False
         returncode: int | None = None
         write_error: list[BaseException] = []
