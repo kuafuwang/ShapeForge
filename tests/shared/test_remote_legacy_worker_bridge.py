@@ -530,6 +530,32 @@ def test_a_descendant_holding_the_pipe_cannot_block_the_bridge(tmp_path, monkeyp
     assert output.getvalue() == b""
 
 
+def test_a_request_write_epipe_with_a_success_result_is_not_accepted(tmp_path):
+    """A child that never reads the request cannot have its result accepted."""
+
+    import io
+    import threading
+
+    import tcenv.remote.legacy_worker_bridge as bridge
+
+    request_obj = _request(source=b"x" * 900_000)
+    output = io.BytesIO()
+    environ = dict(os.environ)
+    environ["PYTHONPATH"] = str(ROOT) + os.pathsep + environ.get("PYTHONPATH", "")
+    environ["FAKE_LEGACY_BEHAVIOR"] = "result_without_reading"
+    environ["FAKE_LEGACY_REQUEST_ID"] = request_obj.request_id
+    environ.pop("TCENV_REMOTE_STATE_DIR", None)
+    with pytest.raises(bridge._BridgeFailure, match="request write failed"):
+        bridge._run_legacy_worker(
+            FAKE_WORKER, request_obj, output,
+            attempt_id=_attempt().attempt_id,
+            lease_fence=_attempt().lease_fence,
+            environ=environ,
+            write_lock=threading.Lock(),
+        )
+    assert output.getvalue() == b""
+
+
 def test_a_descendant_holding_stdin_cannot_block_the_bridge(tmp_path, monkeypatch):
     """The child exits without reading a large request; its descendant holds stdin."""
 

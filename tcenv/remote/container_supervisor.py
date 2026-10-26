@@ -619,6 +619,7 @@ class DockerAttemptSupervisor:
 
     def start(
         self, handle: WorkerHandle, *, authorize: Callable[[], str] | None = None,
+        gate: object | None = None,
     ) -> None:
         if not handle.container_id:
             raise SupervisorError("container start requires a created container id")
@@ -630,16 +631,26 @@ class DockerAttemptSupervisor:
         # runs here, after the last blocking bind and immediately before the
         # spawn, so a deadline or cancellation that arrived during the bind
         # never results in ``docker start``.
-        if authorize is not None:
-            reason = authorize()
-            if reason:
-                raise StartRefused(reason)
         try:
-            attach = popen_group(
-                self._attach_argv(handle),
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                env=self._cli_env(),
-            )
+            if gate is not None:
+                with gate:  # type: ignore[attr-defined]
+                    attach = popen_group(
+                        self._attach_argv(handle),
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        env=self._cli_env(),
+                    )
+            else:
+                if authorize is not None:
+                    reason = authorize()
+                    if reason:
+                        raise StartRefused(reason)
+                attach = popen_group(
+                    self._attach_argv(handle),
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    env=self._cli_env(),
+                )
+        except StartRefused:
+            raise
         except BaseException as exc:
             # ``popen_group`` can raise after the process already exists (e.g.
             # its process-registry bookkeeping fails), so no Popen handle

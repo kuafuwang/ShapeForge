@@ -230,7 +230,15 @@ class ProcessAttemptSupervisor:
         process = self._spawn()
         return WorkerHandle(spec=spec, kind=self.kind, process=process)
 
-    def start(self, handle: WorkerHandle, *, authorize: Callable[[], str] | None = None) -> None:
+    def start(
+        self, handle: WorkerHandle, *,
+        authorize: Callable[[], str] | None = None,
+        gate: object | None = None,
+    ) -> None:
+        if gate is not None:
+            with gate:  # type: ignore[attr-defined]
+                handle.started = True
+            return
         if authorize is not None:
             reason = authorize()
             if reason:

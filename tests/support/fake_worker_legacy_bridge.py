@@ -95,6 +95,16 @@ def _wait_for_release() -> bool:
 
 def main() -> int:
     behavior = os.environ.get("FAKE_LEGACY_BEHAVIOR", "success")
+    if behavior == "result_without_reading":
+        # Emit a success result without reading the request, then exit: the
+        # bridge's large write gets EPIPE and must not accept the result.
+        request_id = os.environ.get("FAKE_LEGACY_REQUEST_ID", "bridge-request-1")
+        write_frame(sys.stdout.buffer, "result", request_id, {
+            "report": {"status": "ok", "legacy_report_marker": "unread"},
+            "evidence": None,
+        })
+        sys.stdout.buffer.flush()
+        return 0
     if behavior == "exit_with_stdin_holder":
         # Exit without reading the request while a descendant keeps the stdin
         # read end open: the bridge's writer blocks on a full pipe and must not

@@ -1468,6 +1468,91 @@ def test_recovery_cleanup_failure_makes_close_report_an_unverified_shutdown(tmp_
         recovered.close()
 
 
+def test_a_live_stderr_reader_blocks_the_ok_commit(tmp_path):
+    """Both readers must reach EOF; a live stderr reader cannot be ignored."""
+
+    docker, _fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    service = container_engine(
+        tmp_path / "state", docker, monotonic=_FrozenClock().now,
+    )
+    original_streams = service.supervisor.streams
+    release = threading.Event()
+
+    class _NeverEndingRead:
+        def read(self, _size=-1):
+            release.wait(30.0)
+            return b""
+
+        def close(self):
+            return None
+
+    def streams(handle):
+        stdin, stdout, _stderr = original_streams(handle)
+        return stdin, stdout, _NeverEndingRead()
+
+    service.supervisor.streams = streams
+    req = request("stderr-never-eof", source=b"OK")
+    try:
+        submit(service, req)
+        final = wait_state(service, req, {"completed", "interrupted", "failed"}, timeout=30.0)
+        assert final.state == "interrupted"
+        assert final.failure is not None and final.failure.code == "worker_protocol_error"
+        assert final.result is None
+    finally:
+        release.set()
+        service.close()
+
+
+def test_a_revocation_cannot_commit_between_authorization_and_start(tmp_path, monkeypatch):
+    """The start gate holds _active_lock across the spawn, not only the check."""
+
+    import tcenv.remote.container_supervisor as supervisor_module
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    service = container_engine(
+        tmp_path / "state", docker, monotonic=_FrozenClock().now,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    original_popen = supervisor_module.popen_group
+
+    def gated_popen(*args, **kwargs):
+        entered.set()
+        assert release.wait(10.0), "the test never released the spawn"
+        return original_popen(*args, **kwargs)
+
+    monkeypatch.setattr(supervisor_module, "popen_group", gated_popen)
+    req = request("revoke-interleave", source=b"OK", candidate_timeout_ms=60_000)
+    try:
+        submit(service, req)
+        assert entered.wait(10.0), "the spawn gate was never reached"
+        completed: list[bool] = []
+
+        def revoke() -> None:
+            service.revoke_grant(TOKEN)
+            completed.append(True)
+
+        thread = threading.Thread(target=revoke, name="revoke-probe")
+        thread.start()
+        time.sleep(0.3)
+        # The durable revocation must still be blocked on the start gate.
+        assert thread.is_alive(), "revocation committed between authorization and start"
+        release.set()
+        thread.join(10.0)
+        assert completed
+        # The revoke removed the grant, so poll the durable store directly.
+        deadline = time.monotonic() + 30.0
+        final = service.store._job_by_id(req.request_id)
+        while final.state not in {"cancelled", "interrupted", "failed"} and time.monotonic() < deadline:
+            time.sleep(0.02)
+            final = service.store._job_by_id(req.request_id)
+        assert final.state in {"cancelled", "interrupted"}
+        assert final.result is None
+    finally:
+        release.set()
+        service.close()
+
+
 def test_a_daemon_switch_during_start_never_writes_the_request(tmp_path, monkeypatch):
     """The daemon re-check after the spawn aborts before the request writer."""
 
@@ -1522,7 +1607,7 @@ def test_start_never_runs_when_the_daemon_bind_spends_the_deadline(tmp_path):
     original_start = service.supervisor.start
     original_bind = service.supervisor._bind_daemon
 
-    def start_with_slow_bind(handle, *, authorize=None):
+    def start_with_slow_bind(handle, *, authorize=None, gate=None):
         def bind_and_advance(target):
             value = original_bind(target)
             # The daemon query alone spends the candidate budget.
@@ -1531,7 +1616,7 @@ def test_start_never_runs_when_the_daemon_bind_spends_the_deadline(tmp_path):
 
         service.supervisor._bind_daemon = bind_and_advance
         try:
-            return original_start(handle, authorize=authorize)
+            return original_start(handle, authorize=authorize, gate=gate)
         finally:
             service.supervisor._bind_daemon = original_bind
 

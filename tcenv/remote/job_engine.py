@@ -213,6 +213,43 @@ class _Running:
     request_authorized: bool = False
 
 
+class _StartGate:
+    """Hold ``_active_lock`` across the final authorization and the spawn.
+
+    ``__enter__`` re-checks stop/cancel/deadline while holding the engine lock
+    and refuses (raising :class:`StartRefused`) without spawning.  The lock is
+    released only after ``popen_group`` returned, so a durable revocation or
+    cancel cannot commit in the gap between the check and the start.  The
+    blocking daemon bind happens before this gate, so Cancel/close keep their
+    bounded returns.
+    """
+
+    def __init__(self, engine: "JobEngine", running: "_Running") -> None:
+        self._engine = engine
+        self._running = running
+        self._entered = False
+
+    def __enter__(self) -> "_StartGate":
+        self._engine._active_lock.acquire()
+        reason = ""
+        if self._engine._stop.is_set() or self._running.stopping:
+            reason = "stopped"
+        elif self._running.cancel_requested:
+            reason = "cancelled"
+        elif self._engine._overdue(self._running):
+            reason = "deadline"
+        if reason:
+            self._engine._active_lock.release()
+            raise StartRefused(reason)
+        self._entered = True
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        if self._entered:
+            self._entered = False
+            self._engine._active_lock.release()
+
+
 class JobEngine:
     """One persistent queue and one active attempt for one device frontend."""
 
@@ -1287,34 +1324,21 @@ class JobEngine:
         # The candidate deadline is re-checked under the same lock so an
         # ``inspect``/identity probe that overran it can never be followed by a
         # start.
-        def authorize_start() -> str:
-            # Called by the supervisor *after* its last blocking preparation and
-            # immediately before the spawn, while this thread still holds
-            # ``_active_lock`` (re-entrant).  A deadline or cancellation that
-            # arrived during a slow daemon bind therefore never starts a worker.
-            with self._active_lock:
-                if self._stop.is_set() or running.stopping:
-                    return "stopped"
-                if running.cancel_requested:
-                    return "cancelled"
-                if self._overdue(running):
-                    return "deadline"
-                return ""
-
-        # The blocking supervisor preparation (daemon bind + spawn) must not
-        # hold ``_active_lock``: Cancel/close take it to commit the durable
+        gate = _StartGate(self, running)
+        # The blocking supervisor preparation (daemon bind) must not hold
+        # ``_active_lock``: Cancel/close take it to commit the durable
         # cancellation and to stop the attempt, and a slow bind would make them
-        # exceed their own deadlines.  The supervisor calls ``authorize_start``
-        # (which takes the lock briefly) after the bind and before the spawn, and
-        # the writer re-authorizes under the lock after encoding, so a cancel
-        # that wins the lock is never followed by delivering candidate bytes.
+        # exceed their own deadlines.  The supervisor then runs the spawn inside
+        # ``gate``, which re-checks the state while holding the lock, so a
+        # cancellation/revocation can never commit between the final check and
+        # the start.  The writer re-authorizes after encoding as well.
         before_start = self.store._job_by_id(request.request_id)
         cancelled_before_start = bool(before_start.cancel_requested or running.cancel_requested)
         if not cancelled_before_start and self._overdue(running):
             overdue_before_start = True
         elif not cancelled_before_start:
             try:
-                self.supervisor.start(handle, authorize=authorize_start)
+                self.supervisor.start(handle, gate=gate)
                 stdin, stdout, stderr = self.supervisor.streams(handle)
             except StartRefused as exc:
                 if exc.reason == "deadline":
@@ -1521,9 +1545,11 @@ class JobEngine:
                     "protocol", True, "worker_protocol_error", str(error)[:1000],
                 ))
             return
-        if reader_alive:
-            # The stdout reader never reached EOF/decoder.finish(): frames may
-            # still be unvalidated, so no result may be committed.
+        if readers_alive:
+            # Either reader may still hand the worker's output to the decoder: a
+            # live stderr reader can hold back/obscure the child's output just as
+            # a live stdout reader can.  No result may be committed until both
+            # readers reached EOF.
             self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
                 "protocol", True, "worker_protocol_error",
                 "worker output was not fully read and validated before the result decision",
