@@ -297,7 +297,12 @@ class JobEngine:
         # cancellation and then calls the internal cancel helper.
         self._active_lock = threading.RLock()
         self._active: _Running | None = None
-        self._closed = False
+        # Shutdown state: ``_close_lock`` serializes close() so a second caller
+        # cannot be told "closed" while the first is still tearing down.
+        self._close_lock = threading.Lock()
+        self._close_started = False
+        self._close_error: BaseException | None = None
+        self._closed_event = threading.Event()
         self._unreported_hazard = ""
         self._expected = ExpectedIdentities(ExpectedEvaluator(
             site_id=identity.site_id, device_id=identity.device_id, target_id=identity.target_id,
@@ -489,10 +494,13 @@ class JobEngine:
         return self.store.renew_grant(grant)
 
     def revoke_grant(self, token: str) -> None:
-        scope_id = self.store.revoke_grant(token)
         with self._active_lock:
-            # The durable revocation and every start authorization share this
-            # lock, so a worker cannot be started after its grant was revoked.
+            # The durable revocation, the scope cancellation and every start /
+            # request-write authorization share this one lock.  Committing the
+            # revocation outside it left a window where a worker could still be
+            # started (and receive the request) after the grant was durably
+            # revoked but before its scope was cancelled.
+            scope_id = self.store.revoke_grant(token)
             running = self.store.cancel_scope(scope_id)
             for request_id in running:
                 self._cancel_active_locked(request_id)
@@ -667,6 +675,14 @@ class JobEngine:
             except Exception:
                 pass
             self._close_handle_streams(handle)
+        if not error:
+            # A verified kill/delete is not a verified *residue-free* worker:
+            # a surviving attach client (or scratch/env file) must still block
+            # the interrupt/result path exactly as it does everywhere else.
+            try:
+                error = self.supervisor.cleanup_residue(handle)
+            except Exception as exc:
+                error = f"execution residue check failed: {exc}"[:1000]
         return error
 
     @staticmethod
@@ -725,6 +741,81 @@ class JobEngine:
         return popen_group(
             self.worker_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, env=env, cwd=str(self.worker_cwd),
+        )
+
+    def _accepted_provenance(self, running: _Running) -> dict[str, Any]:
+        """The accepted base provenance of this job (no attempt/request fields)."""
+
+        snapshot = self.store._job_by_id(running.request.request_id)
+        return {
+            key: value for key, value in (snapshot.provenance or {}).items()
+            if key not in {"attempt_id", "request_digest"}
+        }
+
+    def _attempt_deadline(self, running: _Running) -> float:
+        """Absolute monotonic deadline for this attempt's setup and execution."""
+
+        return running.started_monotonic + running.request.candidate_timeout_ms / 1000.0
+
+    def _overdue(self, running: _Running) -> bool:
+        return time.monotonic() >= self._attempt_deadline(running)
+
+    def _timeout_report(self, running: _Running, message: str) -> dict[str, Any]:
+        """The durable timeout report for one attempt that never finished in time."""
+
+        from tcenv.evaluate import EvalReport
+
+        request = running.request
+        report = EvalReport(
+            task=request.task, dtype=request.dtype, size=request.size, mode=request.mode,
+            status="timeout", stage="timeout", message=message,
+            seed=request.seed_int or 0, protocol_version=self.execution_protocol_version,
+            target_id=request.target_id, backend=self.identity.backend,
+            backend_version=self.identity.backend_version,
+            elapsed_s=request.candidate_timeout_ms / 1000.0,
+        ).to_json()
+        if self.identity.measurement_kind == "simulated":
+            report["simulated"] = True
+        return report
+
+    def _complete_timeout_result(self, running: _Running, *, message: str) -> None:
+        self._complete_worker_result(
+            running, report=self._timeout_report(running, message),
+            evidence={"candidate_sha256": running.request.candidate_sha256},
+        )
+
+    def _finish_overdue_attempt(
+        self, running: _Running, *, attempt: Attempt, handle: WorkerHandle | None = None,
+    ) -> None:
+        """The candidate deadline expired before the worker could run it.
+
+        Setup (daemon query, image inspect/create, identity check, start) counts
+        against the same deadline as execution.  A worker that has not started
+        when the deadline passes must never be started or written to; the
+        attempt is cleaned up and reported as the timeout it is.
+        """
+
+        if handle is not None:
+            cleanup_error = self._cleanup_handle_quietly(handle)
+        else:
+            cleanup_error = self._cleanup_uncreated_worker(attempt)
+        if cleanup_error:
+            self._record_cleanup_hazard(
+                running,
+                f"candidate deadline expired during setup; {cleanup_error}"[:1000],
+            )
+            return
+        snapshot = self.store._job_by_id(running.request.request_id)
+        if snapshot.cancel_requested or running.cancel_requested:
+            self.store.finish_cancellation(running.request.request_id, attempt)
+            return
+        if running.stopping or self._stop.is_set():
+            self.store.interrupt_attempt(running.request.request_id, attempt, JobFailure(
+                "infrastructure", True, "frontend_stopped", "frontend stopped while the attempt was active",
+            ))
+            return
+        self._complete_timeout_result(
+            running, message="candidate deadline expired before the worker ran it",
         )
 
     def _handle_worker_job_error(self, running: _Running, exc: JobError) -> None:
@@ -819,13 +910,27 @@ class JobEngine:
 
         accepted = snapshot.expected
         if accepted is not None and accepted.to_dict() == self._expected.to_dict():
-            accepted_build = str((snapshot.provenance or {}).get("worker_build") or "")
-            if accepted_build == self.identity.worker_build:
+            # The provenance is signed into the result byte for byte.  Every
+            # field (measurement_kind, publication_allowed, backend, epoch,
+            # calibration, contracts) must be the one this frontend signs now;
+            # comparing only worker_build would let a queued job be executed and
+            # published under a provenance it was never accepted with.
+            accepted_provenance = {
+                key: value for key, value in (snapshot.provenance or {}).items()
+                # These two are attempt/request scoped and are added to the
+                # accepted base provenance when the snapshot is built.
+                if key not in {"attempt_id", "request_digest"}
+            }
+            expected_provenance = self._base_provenance()
+            if accepted_provenance == expected_provenance:
                 return ""
+            drifting = sorted(
+                key for key in set(accepted_provenance) | set(expected_provenance)
+                if accepted_provenance.get(key) != expected_provenance.get(key)
+            )
             return (
-                f"queued job provenance records worker_build {accepted_build!r} but this "
-                f"frontend is {self.identity.worker_build!r}; refusing to sign a result for "
-                "another build"
+                "queued job provenance differs from this frontend's provenance "
+                f"(fields: {drifting}); refusing to execute and sign it here"
             )
         durable = accepted.to_dict() if accepted is not None else None
         return (
@@ -955,6 +1060,11 @@ class JobEngine:
                 ))
                 return
             attempt = replace(attempt, container_daemon=daemon)
+        if self._overdue(running):
+            # The daemon query (or anything before it) already spent the whole
+            # candidate deadline: no container may be created or started now.
+            self._finish_overdue_attempt(running, attempt=attempt)
+            return
         spec = AttemptSpec(
             request=request, attempt=attempt, state_dir=self.store.state_dir,
             command=tuple(self.worker_command), env=dict(self.worker_env),
@@ -984,6 +1094,11 @@ class JobEngine:
             self._abort_worker_before_request(running, handle, JobFailure(
                 "infrastructure", True, "frontend_stopped", "frontend stopped during worker startup",
             ), worker_attached=False)
+            return
+        if self._overdue(running):
+            # ``create``/``image inspect`` overran the candidate deadline.  The
+            # container exists but must never be started.
+            self._finish_overdue_attempt(running, attempt=attempt, handle=handle)
             return
         if handle.kind == EXECUTION_PROCESS:
             process = handle.process
@@ -1094,18 +1209,27 @@ class JobEngine:
         # this worker.
         start_error: BaseException | None = None
         cancelled_before_start = False
+        overdue_before_start = False
         # The Cancel RPC commits the durable cancellation while holding
         # ``_active_lock``; reading the durable state and starting the worker
         # under the same lock makes "cancelled before start" impossible to miss.
+        # The candidate deadline is re-checked under the same lock so an
+        # ``inspect``/identity probe that overran it can never be followed by a
+        # start.
         with self._active_lock:
             before_start = self.store._job_by_id(request.request_id)
             cancelled_before_start = bool(before_start.cancel_requested or running.cancel_requested)
-            if not cancelled_before_start:
+            if not cancelled_before_start and self._overdue(running):
+                overdue_before_start = True
+            elif not cancelled_before_start:
                 try:
                     self.supervisor.start(handle)
                     stdin, stdout, stderr = self.supervisor.streams(handle)
                 except Exception as exc:
                     start_error = exc
+        if overdue_before_start:
+            self._finish_overdue_attempt(running, attempt=attempt, handle=handle)
+            return
         if cancelled_before_start:
             running.cancel_requested = True
             self._abort_worker_before_request(running, handle, JobFailure(
@@ -1170,6 +1294,11 @@ class JobEngine:
                 # receives candidate bytes.
                 with self._active_lock:
                     if self._stop.is_set() or running.stopping or running.cancel_requested:
+                        return
+                    if self._overdue(running):
+                        # Never send candidate bytes after the deadline: the
+                        # worker is killed at the deadline anyway, so writing
+                        # would only claim execution that did not happen.
                         return
                     running.request_authorized = True
                 assert stdin is not None
@@ -1244,25 +1373,28 @@ class JobEngine:
                 "infrastructure", True, "frontend_stopped", "frontend stopped while the attempt was active",
             ))
             return
+        if timed_out:
+            # The candidate deadline takes precedence over every *valid* result:
+            # a worker that emitted a result and then hung did not finish inside
+            # the durable deadline, so committing it would turn a hang into an
+            # unearned "ok".  A result that does not even validate is a protocol
+            # failure, not a timeout: laundering it into a timeout would hide a
+            # broken worker behind a plausible slow-candidate outcome.
+            if results:
+                try:
+                    self.store.validate_worker_result(
+                        request, report=results[0].get("report"),
+                        evidence=results[0].get("evidence"),
+                        provenance=self._accepted_provenance(running),
+                    )
+                except JobError as exc:
+                    self._handle_worker_job_error(running, exc)
+                    return
+            self._complete_timeout_result(
+                running, message="candidate exceeded the durable execution deadline",
+            )
+            return
         if not results:
-            if timed_out:
-                from tcenv.evaluate import EvalReport
-
-                report = EvalReport(
-                    task=request.task, dtype=request.dtype, size=request.size, mode=request.mode,
-                    status="timeout", stage="timeout", message="candidate exceeded the durable execution deadline",
-                    seed=request.seed_int or 0, protocol_version=self.execution_protocol_version,
-                    target_id=request.target_id, backend=self.identity.backend,
-                    backend_version=self.identity.backend_version,
-                    elapsed_s=request.candidate_timeout_ms / 1000.0,
-                ).to_json()
-                if self.identity.measurement_kind == "simulated":
-                    report["simulated"] = True
-                self._complete_worker_result(
-                    running, report=report,
-                    evidence={"candidate_sha256": request.candidate_sha256},
-                )
-                return
             if returncode != 0:
                 detail = stderr_tail[0].replace(str(self.store.state_dir), "<state>") if stderr_tail else ""
                 self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
@@ -1276,13 +1408,14 @@ class JobEngine:
         # A complete result was decoded and ``decoder.finish()`` validated the
         # stream (no malformed frame, no second result, reader reached EOF).
         # A worker that then also exited non-zero is still a failure: the result
-        # must not be trusted over a crashed supervisor exit.
+        # must not be trusted over a crashed supervisor exit.  A timeout already
+        # returned above, so ``returncode`` is a real exit code here.
         if len(results) != 1:
             self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
                 "protocol", True, "worker_protocol_error", "worker emitted multiple results",
             ))
             return
-        if returncode not in (0, None):
+        if returncode != 0:
             detail = stderr_tail[0].replace(str(self.store.state_dir), "<state>") if stderr_tail else ""
             self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
                 "infrastructure", True, "worker_failed", f"worker exited {returncode}: {detail}"[:1000],
@@ -1292,40 +1425,87 @@ class JobEngine:
             running, report=results[0]["report"], evidence=results[0]["evidence"],
         )
 
-    def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        self._stop.set()
-        with self._active_lock:
-            running = self._active
-            if running is not None:
-                running.stopping = True
-                handle = running.handle
-            else:
-                handle = None
-        if handle is not None:
-            try:
-                self.supervisor.kill(handle)
-            except (OSError, SupervisorError):
-                pass
-        self._wake()
-        scheduler = getattr(self, "_scheduler", None)
-        if scheduler is not None:
-            scheduler.join(timeout=_CLOSE_SCHEDULER_JOIN_S)
-            if scheduler.is_alive():
-                threading.Thread(
-                    target=self._close_store_after_scheduler,
-                    args=(scheduler, self.store),
-                    name="tcenv-external-jobs-close", daemon=True,
-                ).start()
-                return
-        self.store.close()
+    def close(self, *, wait: float | None = None) -> bool:
+        """Stop the frontend; ``True`` only once the durable store is closed.
 
-    @staticmethod
-    def _close_store_after_scheduler(scheduler: threading.Thread, store: JobStore) -> None:
-        scheduler.join()
-        store.close()
+        Fails soft but visibly: an arbitrary supervisor exception is contained
+        (reported through the return value, never raised out of a shutdown), the
+        store is closed only after its writer stopped, and a scheduler that
+        refuses to stop leaves the last step to the bounded finalizer instead of
+        being closed underneath a live writer.
+        """
+
+        with self._close_lock:
+            if not self._close_started:
+                self._close_started = True
+                self._close_once()
+        if self._closed_event.is_set():
+            return self._close_error is None
+        if wait is None:
+            return False
+        return self._closed_event.wait(timeout=max(0.0, float(wait))) and self._close_error is None
+
+    def _close_once(self) -> None:
+        """One shutdown attempt; every failure is recorded, never raised."""
+
+        try:
+            self._stop.set()
+            with self._active_lock:
+                running = self._active
+                handle = None
+                if running is not None:
+                    running.stopping = True
+                    handle = running.handle
+            if handle is not None:
+                try:
+                    self.supervisor.kill(handle)
+                except Exception as exc:  # supervisor failures are shutdown data
+                    self._close_error = exc
+            self._wake()
+            scheduler = getattr(self, "_scheduler", None)
+            if scheduler is not None:
+                scheduler.join(timeout=_CLOSE_SCHEDULER_JOIN_S)
+                if scheduler.is_alive():
+                    # Closing the store under a live scheduler thread would
+                    # corrupt the queue, so the last step moves to a finalizer
+                    # that ProductionStack.stop waits for.
+                    threading.Thread(
+                        target=self._close_store_after_scheduler,
+                        args=(scheduler, self.store),
+                        name="tcenv-external-jobs-close", daemon=True,
+                    ).start()
+                    return
+            try:
+                self.store.close()
+            except Exception as exc:
+                self._close_error = exc
+            self._closed_event.set()
+        except Exception as exc:  # pragma: no cover - defensive shutdown boundary
+            if self._close_error is None:
+                self._close_error = exc
+            self._closed_event.set()
+
+    @property
+    def close_error(self) -> BaseException | None:
+        return self._close_error
+
+    @property
+    def closed(self) -> bool:
+        """True only once the durable store is really closed."""
+
+        return self._closed_event.is_set()
+
+    def _close_store_after_scheduler(self, scheduler: threading.Thread, store: JobStore) -> None:
+        try:
+            scheduler.join()
+        except Exception as exc:  # pragma: no cover - defensive shutdown boundary
+            self._close_error = exc
+        try:
+            store.close()
+        except Exception as exc:  # pragma: no cover - defensive shutdown boundary
+            self._close_error = exc
+        finally:
+            self._closed_event.set()
 
     def __enter__(self) -> "JobEngine":
         return self

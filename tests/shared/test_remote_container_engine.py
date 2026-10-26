@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import sys
 import threading
 import time
@@ -15,9 +16,10 @@ from tcenv.remote.container_supervisor import ContainerSupervisorConfig, DockerA
 from tcenv.remote.job_engine import JobEngine
 from tcenv.remote.job_store import JobStore
 from tcenv.remote.job_types import Attempt, JobError
-from tcenv.remote.supervisor import AttemptSpec
+from tcenv.remote.supervisor import AttemptSpec, WorkerHandle
 from tests.support import job_engine as helpers
 from tests.support.fake_docker import install_fake_docker
+from tests.support.process_state import process_state
 from tests.support.job_engine import (
     TOKEN, capabilities, get, grant, request, submit, wait_state,
 )
@@ -88,7 +90,9 @@ def test_container_engine_commits_result_only_after_verified_cleanup(tmp_path):
 def test_container_timeout_kills_parent_and_child_then_reports_timeout(tmp_path):
     docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
     service = container_engine(tmp_path / "state", docker)
-    req = request("container-timeout", source=b"SLEEP", candidate_timeout_ms=1200)
+    # The candidate deadline also covers container setup (a fake docker call is a
+    # python process), so the worker needs a budget it can actually start within.
+    req = request("container-timeout", source=b"SLEEP", candidate_timeout_ms=4000)
     try:
         submit(service, req)
         final = wait_state(service, req, {"completed"}, timeout=15.0)
@@ -396,7 +400,7 @@ def _supervisor_config(docker: Path) -> ContainerSupervisorConfig:
     )
 
 
-def _crashed_running_attempt(state: Path, docker: Path, req):
+def _crashed_running_attempt(state: Path, docker: Path, req, *, start: bool = False):
     """Build the exact durable state a crashed frontend leaves behind."""
 
     from tcenv.remote.contracts import API_CONTRACT_ID, EVIDENCE_CONTRACT_ID
@@ -443,6 +447,11 @@ def _crashed_running_attempt(state: Path, docker: Path, req):
             container_name=handle.container_name, image_ref=handle.image_ref,
             image_digest=handle.image_digest, runtime=handle.runtime, daemon=daemon,
         )
+        if start:
+            # A real crash can also happen after the container was started (and
+            # its attach client spawned) but before any result was committed.
+            supervisor.start(handle)
+            handle.attach and time.sleep(0.2)
     finally:
         store.close()
     return attempt, handle, supervisor
@@ -606,7 +615,7 @@ def test_malformed_result_is_not_converted_into_a_candidate_timeout(tmp_path):
         worker_cwd=Path(__file__).resolve().parents[2], state_dir=tmp_path / "state",
         worker_env={"FAULT_WORKER_MODE": "wrong_task_hang"}, supervisor=supervisor,
     )
-    req = request("container-wrong-task-hang", source=b"OK", candidate_timeout_ms=1500)
+    req = request("container-wrong-task-hang", source=b"OK", candidate_timeout_ms=4000)
     try:
         submit(service, req)
         final = wait_state(service, req, {"failed", "interrupted", "completed"}, timeout=20.0)
@@ -633,7 +642,7 @@ def test_second_result_blocks_the_commit_of_the_first(tmp_path):
         worker_cwd=Path(__file__).resolve().parents[2], state_dir=tmp_path / "state",
         worker_env={"FAULT_WORKER_MODE": "double_result"}, supervisor=supervisor,
     )
-    req = request("container-double-result", source=b"OK", candidate_timeout_ms=1500)
+    req = request("container-double-result", source=b"OK", candidate_timeout_ms=4000)
     try:
         submit(service, req)
         final = wait_state(service, req, {"failed", "interrupted", "completed"}, timeout=20.0)
@@ -758,14 +767,55 @@ def test_generic_cleanup_exception_quarantines_and_keeps_the_scheduler(tmp_path)
         service.close()
 
 
+class _WriterGateLock:
+    """``_active_lock`` wrapper that parks the request-writer thread at its gate.
+
+    The test uses it to reach the writer deterministically: the writer thread
+    announces itself, waits for the test to release the gate, and only then
+    acquires the real lock.  A cancellation that commits in that window must
+    make the writer decline, and the durable commit is observable before the
+    gate opens.
+    """
+
+    def __init__(self, inner, *, writer_name: str) -> None:
+        self._inner = inner
+        self._writer_name = writer_name
+        self.writer_waiting = threading.Event()
+        self.writer_gate = threading.Event()
+        self.writer_entered = threading.Event()
+        self.writer_saw_cancel: list[bool] = []
+
+    def _is_writer(self) -> bool:
+        return threading.current_thread().name == self._writer_name
+
+    def __enter__(self):
+        if self._is_writer():
+            self.writer_waiting.set()
+            assert self.writer_gate.wait(30), "the test never released the writer gate"
+        result = self._inner.__enter__()
+        if self._is_writer():
+            self.writer_entered.set()
+        return result
+
+    def __exit__(self, *exc_info):
+        return self._inner.__exit__(*exc_info)
+
+    def acquire(self, *args, **kwargs):
+        return self._inner.acquire(*args, **kwargs)
+
+    def release(self):
+        return self._inner.release()
+
+
 def test_cancel_rpc_committed_before_start_never_runs_the_worker(tmp_path):
     docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
     marker = tmp_path / "worker-started"
+    order = tmp_path / "worker-order.jsonl"
     service = JobEngine(
         identity=container_identity(), grants=[grant()],
         worker_command=[sys.executable, "-m", "tests.support.fake_worker_job_engine"],
         worker_cwd=Path(__file__).resolve().parents[2], state_dir=tmp_path / "state",
-        worker_env={"FAKE_JOB_STARTED": str(marker)},
+        worker_env={"FAKE_JOB_STARTED": str(marker), "FAKE_JOB_ORDER": str(order)},
         supervisor=DockerAttemptSupervisor(ContainerSupervisorConfig(
             image="taic-worker-sim:local", image_digest=IMAGE_DIGEST, docker=str(docker),
             env={"HOME": "/tmp", "PYTHONPATH": "/opt/taic"}, kill_timeout_s=5.0,
@@ -773,43 +823,59 @@ def test_cancel_rpc_committed_before_start_never_runs_the_worker(tmp_path):
         cancel_teardown_s=0.3,
     )
     req = request("cancel-rpc-before-start", source=b"SLEEP", candidate_timeout_ms=60_000)
-    original_attach = service.store.attach_container
-    entered = threading.Event()
-    proceed = threading.Event()
+    # The engine reaches the writer (the worker really starts), and the writer
+    # is parked at the exact authorization the cancellation must win.
+    gate = _WriterGateLock(service._active_lock, writer_name="tcenv-worker-stdin")
+    service._active_lock = gate
+    committed = threading.Event()
     rpc_snapshot: dict = {}
+    original_store_cancel = service.store.cancel
 
-    def attach_then_pause(*args, **kwargs):
-        attached = original_attach(*args, **kwargs)
-        entered.set()
-        proceed.wait(20)
-        return attached
+    def cancel_and_signal(*args, **kwargs):
+        snapshot = original_store_cancel(*args, **kwargs)
+        # Durable cancellation is committed *while* the cancel holds the lock.
+        committed.set()
+        return snapshot
 
-    def cancel_while_paused():
-        entered.wait(20)
+    service.store.cancel = cancel_and_signal
+
+    def cancel_when_the_writer_is_parked():
+        assert gate.writer_waiting.wait(30), "the writer gate was never reached"
         rpc_snapshot["snapshot"] = service.cancel(
             request_id=req.request_id, request_digest=req.request_digest,
             expected=service.expected_identities, grant_token=TOKEN,
         )
-        proceed.set()
 
-    service.store.attach_container = attach_then_pause
-    canceller = threading.Thread(target=cancel_while_paused, name="cancel-rpc")
+    canceller = threading.Thread(target=cancel_when_the_writer_is_parked, name="cancel-rpc")
     canceller.start()
     try:
         submit(service, req)
+        assert committed.wait(30), "the cancellation never committed"
+        # The worker process really started (so the writer is the thing that has
+        # to decline), independent of whether it ever received the request.
+        deadline = time.monotonic() + 20.0
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.exists(), "the worker never started; the writer gate was not reached"
+        gate.writer_gate.set()
         canceller.join(timeout=30)
         assert not canceller.is_alive()
         final = wait_state(service, req, {"cancelled"}, timeout=20.0)
-        # The RPC committed the durable cancellation while the engine was still
-        # between the durable attach and the start authorization.
+        assert gate.writer_entered.is_set(), "the writer never reached its authorization"
         rpc = rpc_snapshot["snapshot"]
-        assert rpc.state == "cancelled" or (rpc.state == "running" and rpc.cancel_requested)
-        assert marker.exists() is False, "a cancelled attempt started its worker"
-        assert not any(len(call) > 1 and call[1] == "start" for call in fake.calls())
+        assert rpc.state in {"cancelled", "running"}
+        if rpc.state == "running":
+            assert rpc.cancel_requested is True
+        # The worker was started and then killed, but it never received one
+        # candidate byte: the writer authorized after the durable cancellation.
+        assert not order.exists(), "a cancelled attempt received the candidate"
+        assert any(len(call) > 1 and call[1] == "start" for call in fake.calls())
+        assert "kill" in [call[1] for call in fake.calls() if len(call) > 1]
         assert fake.records() == []
         assert final.result is None
         assert final.current_attempt is not None and final.current_attempt.state == "cancelled"
     finally:
+        gate.writer_gate.set()
         service.close()
 
 
@@ -968,3 +1034,415 @@ def test_container_engine_refuses_the_same_image_at_another_epoch(tmp_path):
         assert not any(len(call) > 1 and call[1] in {"create", "start"} for call in fake.calls())
     finally:
         engine.close()
+
+
+def test_a_valid_result_followed_by_a_hang_is_a_timeout_not_ok(tmp_path):
+    """The candidate deadline outranks a result the worker never finished."""
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_supervisor_config(docker))
+    service = JobEngine(
+        identity=container_identity(), grants=[grant()],
+        worker_command=[sys.executable, "-m", "tests.support.fake_worker_bad_output"],
+        worker_cwd=Path(__file__).resolve().parents[2], state_dir=tmp_path / "state",
+        worker_env={"FAULT_WORKER_MODE": "valid_hang"}, supervisor=supervisor,
+    )
+    req = request("container-valid-hang", source=b"OK", candidate_timeout_ms=4000)
+    try:
+        submit(service, req)
+        final = wait_state(service, req, {"completed", "failed", "interrupted"}, timeout=30.0)
+        # A complete, valid report exists - but the worker never returned inside
+        # its deadline, so committing "ok" would turn a hang into a speed-up.
+        assert final.state == "completed"
+        assert final.result is not None
+        report = final.result.report_json()
+        assert report["status"] == "timeout"
+        assert report["stage"] == "timeout"
+        assert "deadline" in report["message"]
+        assert fake.records() == []
+    finally:
+        service.close()
+
+
+def test_daemon_switch_after_create_quarantines_and_keeps_the_old_container(tmp_path):
+    """A / B daemon switch after ``create`` must not read as a clean absence."""
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_supervisor_config(docker))
+    marker = tmp_path / "worker-started"
+    service = JobEngine(
+        identity=container_identity(), grants=[grant()],
+        worker_command=[sys.executable, "-m", "tests.support.fake_worker_job_engine"],
+        worker_cwd=Path(__file__).resolve().parents[2], state_dir=tmp_path / "state",
+        worker_env={"FAKE_JOB_STARTED": str(marker)}, supervisor=supervisor,
+    )
+    req = request("container-daemon-switch-after-create", source=b"OK", candidate_timeout_ms=60_000)
+    original_create = supervisor.create
+
+    def create_then_switch_daemon(spec):
+        handle = original_create(spec)
+        # The engine's Docker endpoint now answers as another Engine: the
+        # container it created is invisible here but still exists over there.
+        fake.set_control(daemon_id="fake-daemon-b")
+        return handle
+
+    supervisor.create = create_then_switch_daemon
+    try:
+        submit(service, req)
+        snapshot = wait_state(service, req, {"running", "interrupted", "failed", "completed"}, timeout=30.0)
+        deadline = time.monotonic() + 20.0
+        while not snapshot.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = service.store._job_by_id(req.request_id)
+        assert snapshot.quarantined is True
+        assert "another Docker daemon" in snapshot.recovery_error
+        assert snapshot.result is None
+        # verify_identity and every cleanup/absence proof stayed bound to daemon
+        # A, so the container is still there and nothing was started or written.
+        assert marker.exists() is False
+        assert len(fake.records()) == 1
+        assert not any(len(call) > 1 and call[1] == "start" for call in fake.calls())
+        cap = capabilities(service)
+        with pytest.raises(JobError, match="quarantined"):
+            service.retry(
+                request_id=req.request_id, request_digest=req.request_digest,
+                expected=service.expected_identities,
+                interrupted_attempt_id=snapshot.current_attempt.attempt_id,
+                capability_id=cap.capability_id, grant_token=TOKEN,
+            )
+    finally:
+        service.close()
+        fake.set_control(daemon_id=fake.control().get("daemon_id", ""))
+        for record in fake.records():
+            fake._cmd_rm(["--force", record["Id"]])
+
+
+def test_container_engine_refuses_a_queued_job_whose_provenance_drifted(tmp_path):
+    """A provenance field other than worker_build still names another evaluator."""
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    state = tmp_path / "state"
+    req = request("container-provenance-drift")
+    # Same expected identities (so the build/epoch comparison passes), but the
+    # job was accepted with a provenance this frontend must never sign.
+    accepted = replace(container_identity(), publication_allowed=True)
+    _queued_job_accepted_by(state, req, accepted_identity=accepted)
+    service = container_engine(state, docker)
+    marker = tmp_path / "worker-started"
+    service.worker_env["FAKE_JOB_STARTED"] = str(marker)
+    try:
+        final = _wait_for_state(service, req, {"interrupted", "failed", "completed"})
+        assert final.state == "interrupted"
+        assert final.failure is not None and final.failure.code == "worker_build_mismatch"
+        assert "publication_allowed" in final.failure.message
+        assert final.quarantined is True and final.result is None
+        assert fake.records() == []
+        assert not any(len(call) > 1 and call[1] in {"create", "start"} for call in fake.calls())
+        assert marker.exists() is False
+    finally:
+        service.close()
+
+
+class _ResidueStubSupervisor:
+    """A container supervisor whose cleanup hides a surviving attach client."""
+
+    kind = "container"
+    image_digest = IMAGE_DIGEST
+
+    def __init__(self) -> None:
+        self.daemon = "stub-daemon-1"
+        self.residue = "container attach client survived cleanup"
+        self.calls: list[str] = []
+        self.released = 0
+
+    def daemon_identity(self) -> str:
+        return self.daemon
+
+    def expected_worker_build(self, name: str) -> str:
+        return f"{name}+img:{IMAGE_DIGEST}"
+
+    def create(self, spec):
+        return WorkerHandle(
+            spec=spec, kind=self.kind, container_id="a" * 64,
+            container_name=f"tcenv-attempt-{spec.attempt.attempt_id}",
+            image_ref="taic-worker-sim:local", image_digest=IMAGE_DIGEST,
+            runtime="runc", container_daemon=self.daemon,
+        )
+
+    def verify_identity(self, handle) -> str:
+        self.calls.append("verify_identity")
+        raise RuntimeError("identity probe exploded")
+
+    def start(self, handle) -> None:  # pragma: no cover - must never run
+        raise AssertionError("a failed identity check must never start the worker")
+
+    def streams(self, handle):  # pragma: no cover - must never run
+        raise AssertionError("a failed identity check must never stream")
+
+    def kill(self, handle) -> str:  # pragma: no cover - cleanup() is used
+        self.calls.append("kill")
+        return ""
+
+    def delete(self, handle) -> str:  # pragma: no cover - cleanup() is used
+        self.calls.append("delete")
+        return ""
+
+    def verify_absent(self, handle) -> str:  # pragma: no cover - cleanup() is used
+        self.calls.append("verify_absent")
+        return ""
+
+    def cleanup(self, handle) -> str:
+        self.calls.append("cleanup")
+        return ""
+
+    def cleanup_residue(self, handle) -> str:
+        self.calls.append("cleanup_residue")
+        return self.residue
+
+    def cleanup_recovered(self, attempt, *, state_dir, daemon: str = "") -> str:
+        return ""
+
+    def release(self, handle) -> None:
+        self.released += 1
+
+
+def test_generic_supervisor_exception_verifies_residue_and_quarantines(tmp_path):
+    """A verified kill/delete is not a verified residue-free worker."""
+
+    supervisor = _ResidueStubSupervisor()
+    service = JobEngine(
+        identity=container_identity(), grants=[grant()],
+        worker_command=[sys.executable, "-m", "tests.support.fake_worker_job_engine"],
+        worker_cwd=Path(__file__).resolve().parents[2], state_dir=tmp_path / "state",
+        supervisor=supervisor,
+    )
+    req = request("container-residue-exception", source=b"OK", candidate_timeout_ms=60_000)
+    try:
+        submit(service, req)
+        snapshot = service.store._job_by_id(req.request_id)
+        deadline = time.monotonic() + 20.0
+        while not snapshot.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = service.store._job_by_id(req.request_id)
+        # cleanup() reported success but the residue check found the surviving
+        # attach client, so the attempt must stay quarantined (no Retry, no result).
+        assert snapshot.quarantined is True
+        assert "attach client survived" in snapshot.recovery_error
+        assert snapshot.result is None
+        assert supervisor.calls[:2] == ["verify_identity", "cleanup"]
+        assert "cleanup_residue" in supervisor.calls
+        assert supervisor.released == 1
+    finally:
+        service.close()
+
+
+def test_recovery_reaps_a_surviving_attach_client(tmp_path):
+    """A crashed frontend's leftover attach client is residue, not a clean end."""
+
+    docker, fake = install_fake_docker(
+        tmp_path / "docker", image_digest=IMAGE_DIGEST, control={"hang_attach": True},
+    )
+    state = tmp_path / "state"
+    req = request("container-hang-attach-crash", source=b"OK", candidate_timeout_ms=60_000)
+    attempt, handle, supervisor = _crashed_running_attempt(state, docker, req, start=True)
+    attach = handle.attach
+    assert attach is not None and attach.poll() is None
+    fake.set_control(hang_attach=False)
+    recovered = container_engine(state, docker)
+    try:
+        snapshot = get(recovered, req)
+        assert snapshot.state == "interrupted"
+        assert snapshot.quarantined is False, snapshot.recovery_error
+        assert snapshot.failure is not None and snapshot.failure.code == "frontend_restarted"
+        assert snapshot.result is None
+        assert attach.wait(timeout=20) == -signal.SIGKILL
+        assert process_state(attach.pid) is None
+        assert fake.records() == []
+    finally:
+        recovered.close()
+        supervisor.cleanup(handle)
+        supervisor.release(handle)
+
+
+def test_operator_release_reaps_a_surviving_attach_client(tmp_path):
+    """Operator release rechecks the same residue before it clears quarantine."""
+
+    docker, fake = install_fake_docker(
+        tmp_path / "docker", image_digest=IMAGE_DIGEST, control={"hang_attach": True},
+    )
+    state = tmp_path / "state"
+    req = request("container-hang-attach-release", source=b"OK", candidate_timeout_ms=60_000)
+    attempt, handle, supervisor = _crashed_running_attempt(state, docker, req, start=True)
+    attach = handle.attach
+    assert attach is not None and attach.poll() is None
+    fake.set_control(fail_rm=True)
+    quarantined = container_engine(state, docker)
+    try:
+        snapshot = get(quarantined, req)
+        assert snapshot.state == "running" and snapshot.quarantined is True
+        # The injected delete failure is what blocked the first recovery.
+        assert "injected rm failure" in snapshot.recovery_error
+        fake.set_control(fail_rm=False, hang_attach=False)
+        released = quarantined.release_quarantine(req.request_id)
+        assert released.state == "interrupted"
+        assert released.quarantined is False, released.recovery_error
+        assert attach.wait(timeout=20) == -signal.SIGKILL
+        assert process_state(attach.pid) is None
+        assert fake.records() == []
+    finally:
+        quarantined.close()
+        supervisor.cleanup(handle)
+        supervisor.release(handle)
+
+
+def test_slow_create_never_starts_the_container_after_the_deadline(tmp_path):
+    docker, fake = install_fake_docker(
+        tmp_path / "docker", image_digest=IMAGE_DIGEST, control={"slow_create_s": 1.5},
+    )
+    marker = tmp_path / "worker-started"
+    order = tmp_path / "worker-order.jsonl"
+    service = container_engine(
+        tmp_path / "state", docker,
+        worker_env={"FAKE_JOB_STARTED": str(marker), "FAKE_JOB_ORDER": str(order)},
+    )
+    req = request("container-slow-create", source=b"OK", candidate_timeout_ms=500)
+    try:
+        submit(service, req)
+        final = wait_state(service, req, {"completed", "failed", "interrupted"}, timeout=30.0)
+        # ``create`` themselves overran the deadline: the container exists but
+        # must be deleted without ever being started or written to.
+        assert final.state == "completed"
+        assert final.result is not None and final.result.report_json()["status"] == "timeout"
+        assert final.quarantined is False
+        assert marker.exists() is False
+        assert not order.exists()
+        assert fake.records() == []
+        assert not any(len(call) > 1 and call[1] == "start" for call in fake.calls())
+    finally:
+        service.close()
+
+
+def test_identity_probe_that_spends_the_deadline_never_starts_the_container(tmp_path):
+    """The container was created, but the identity probe after it ran out the clock."""
+
+    docker, fake = install_fake_docker(
+        tmp_path / "docker", image_digest=IMAGE_DIGEST, control={"slow_inspect_s": 0.8},
+    )
+    marker = tmp_path / "worker-started"
+    order = tmp_path / "worker-order.jsonl"
+    service = container_engine(
+        tmp_path / "state", docker,
+        worker_env={"FAKE_JOB_STARTED": str(marker), "FAKE_JOB_ORDER": str(order)},
+    )
+    req = request("container-slow-identity", source=b"OK", candidate_timeout_ms=500)
+    try:
+        submit(service, req)
+        final = wait_state(service, req, {"completed", "failed", "interrupted"}, timeout=30.0)
+        # ``create`` was fast enough; only the post-create identity probe overran
+        # the deadline, so the pre-start check must delete the container unstarted.
+        assert final.state == "completed"
+        assert final.result is not None and final.result.report_json()["status"] == "timeout"
+        assert final.quarantined is False
+        assert marker.exists() is False
+        assert not order.exists()
+        assert fake.records() == []
+        assert not any(len(call) > 1 and call[1] == "start" for call in fake.calls())
+    finally:
+        service.close()
+
+
+def test_overdue_daemon_query_never_creates_or_starts_a_container(tmp_path):
+    docker, fake = install_fake_docker(
+        tmp_path / "docker", image_digest=IMAGE_DIGEST, control={"slow_info_s": 0.8},
+    )
+    marker = tmp_path / "worker-started"
+    order = tmp_path / "worker-order.jsonl"
+    service = container_engine(
+        tmp_path / "state", docker,
+        worker_env={"FAKE_JOB_STARTED": str(marker), "FAKE_JOB_ORDER": str(order)},
+    )
+    req = request("container-slow-info", source=b"OK", candidate_timeout_ms=300)
+    try:
+        submit(service, req)
+        final = wait_state(service, req, {"completed", "failed", "interrupted"}, timeout=30.0)
+        assert final.state == "completed"
+        assert final.result is not None and final.result.report_json()["status"] == "timeout"
+        assert marker.exists() is False
+        assert not order.exists()
+        assert fake.records() == []
+        assert not any(
+            len(call) > 1 and call[1] in {"create", "start"} for call in fake.calls()
+        )
+    finally:
+        service.close()
+
+
+def test_revocation_commits_and_cancels_under_the_start_lock(tmp_path):
+    """A durable revocation must not be overtaken by a start or a request write."""
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    order = tmp_path / "worker-order.jsonl"
+    service = container_engine(
+        tmp_path / "state", docker,
+        worker_env={"FAKE_JOB_ORDER": str(order)},
+    )
+    req = request("revoke-paused", source=b"SLEEP", candidate_timeout_ms=60_000)
+    attached = threading.Event()
+    attach_release = threading.Event()
+    committed = threading.Event()
+    resume = threading.Event()
+    original_attach = service.store.attach_container
+    original_revoke = service.store.revoke_grant
+
+    def attach_then_pause(*args, **kwargs):
+        result = original_attach(*args, **kwargs)
+        attached.set()
+        assert attach_release.wait(30), "the test never released the durable attach"
+        return result
+
+    def revoke_then_pause(token):
+        scope_id = original_revoke(token)  # durable revocation is committed here
+        committed.set()
+        assert resume.wait(30), "the test never released the revocation"
+        return scope_id
+
+    service.store.attach_container = attach_then_pause
+    service.store.revoke_grant = revoke_then_pause
+    revoker = threading.Thread(target=lambda: service.revoke_grant(TOKEN), name="revoke-grant")
+    try:
+        submit(service, req)
+        assert attached.wait(30), "the engine never reached the durable container attach"
+        revoker.start()
+        # The revocation is durably committed but its scope cancellation has not
+        # run yet: exactly the window the old code left open.
+        assert committed.wait(30), "the revocation never committed"
+        attach_release.set()
+        # Give the scheduler time to reach (and, before the fix, pass) the start
+        # authorization it must not be able to take before the cancellation.
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline and not order.exists():
+            time.sleep(0.02)
+        assert not order.exists(), "the worker received the candidate after the revocation"
+        assert not any(len(call) > 1 and call[1] == "start" for call in fake.calls())
+        resume.set()
+        revoker.join(timeout=30)
+        assert not revoker.is_alive()
+        # The grant is revoked, so the token can no longer read the job: read the
+        # durable snapshot through the store instead.
+        final = service.store._job_by_id(req.request_id)
+        deadline = time.monotonic() + 20.0
+        while final.state != "cancelled" and time.monotonic() < deadline:
+            time.sleep(0.02)
+            final = service.store._job_by_id(req.request_id)
+        assert final.state == "cancelled"
+        assert final.result is None
+        assert final.cancel_requested is True
+        assert final.failure is not None
+        assert final.failure.code in {"cancelled", "grant_revoked"}
+        assert not order.exists()
+        assert fake.records() == []
+        assert not any(len(call) > 1 and call[1] == "start" for call in fake.calls())
+    finally:
+        attach_release.set()
+        resume.set()
+        service.close()

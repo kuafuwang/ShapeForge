@@ -136,6 +136,23 @@ def main() -> int:
             "report": {"status": "ok"}, "evidence": [],
         })
         return 0
+    if behavior == "stderr_flood":
+        # A sustained stderr stream must not be buffered by the bridge, and it
+        # must not cost the attempt its valid report.
+        block = b"e" * 65536
+        for _ in range(int(os.environ.get("FAKE_LEGACY_FLOOD_BLOCKS", "128"))):
+            sys.stderr.buffer.write(block)
+        sys.stderr.buffer.flush()
+        _result(request)
+        return 0
+    if behavior == "stdout_garbage_flood":
+        # Unbounded stdout that is not a frame: the bridge must fail bounded and
+        # still reap this child instead of buffering whatever it writes.
+        block = b"g" * 65536
+        for _ in range(int(os.environ.get("FAKE_LEGACY_FLOOD_BLOCKS", "64"))):
+            sys.stdout.buffer.write(block)
+        sys.stdout.buffer.flush()
+        return 0
 
     if behavior == "progress_handshake":
         _progress({

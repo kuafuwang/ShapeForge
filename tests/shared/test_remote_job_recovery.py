@@ -7,6 +7,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -968,7 +969,7 @@ def test_stale_recovery_cannot_interrupt_a_newer_running_attempt(tmp_path):
 
 
 def test_stale_recovery_and_retry_race_never_clobber_the_newer_attempt(tmp_path):
-    """Concurrent release/Retry: the stale recovery write either wins or aborts."""
+    """Both stale-recovery outcomes are exercised; neither touches a newer attempt."""
 
     state = tmp_path / "state"
     service = engine(state)
@@ -977,10 +978,36 @@ def test_stale_recovery_and_retry_race_never_clobber_the_newer_attempt(tmp_path)
         submit(service, req)
         wait_state(service, req, {"running"})
         first = service.store._job_by_id(req.request_id).current_attempt
+        # Branch 1 (applied): the attempt is still running, so recovery binds the
+        # cleanup error to that exact attempt and quarantines it.
+        applied = service.store.recovered_attempt(req.request_id, first, cleanup_error="late")
+        assert applied.state == "running"
+        assert applied.quarantined is True and applied.recovery_error == "late"
+        assert applied.current_attempt.attempt_id == first.attempt_id
+        cap = capabilities(service)
+        with pytest.raises(JobError, match="quarantined"):
+            service.store.retry(
+                request_id=req.request_id, request_digest=req.request_digest,
+                expected=service.expected_identities, interrupted_attempt_id=first.attempt_id,
+                capability_id=cap.capability_id, required_features=[], grant_token=TOKEN,
+            )
         service.store.interrupt_attempt(req.request_id, first, JobFailure(
             "infrastructure", True, "frontend_restarted", "simulated restart",
         ))
+        # Branch 2 (aborted): once the attempt is no longer running, the same
+        # stale write must be refused instead of re-opening it.
+        with pytest.raises(JobError):
+            service.store.recovered_attempt(req.request_id, first, cleanup_error="late")
         cap = capabilities(service)
+        service.store.retry(
+            request_id=req.request_id, request_digest=req.request_digest,
+            expected=service.expected_identities, interrupted_attempt_id=first.attempt_id,
+            capability_id=cap.capability_id, required_features=[], grant_token=TOKEN,
+        )
+        newer = service.store._job_by_id(req.request_id).current_attempt
+        assert newer is not None and newer.attempt_id != first.attempt_id
+        # A stale recovery that races the newer attempt in another thread is
+        # refused and leaves the newer attempt untouched.
         outcome: list[str] = []
 
         def stale_recovery():
@@ -990,29 +1017,21 @@ def test_stale_recovery_and_retry_race_never_clobber_the_newer_attempt(tmp_path)
             except JobError:
                 outcome.append("aborted")
 
-        import threading
-
         thread = threading.Thread(target=stale_recovery)
         thread.start()
-        service.store.retry(
-            request_id=req.request_id, request_digest=req.request_digest,
-            expected=service.expected_identities, interrupted_attempt_id=first.attempt_id,
-            capability_id=cap.capability_id, required_features=[], grant_token=TOKEN,
-        )
         thread.join(timeout=10)
         assert not thread.is_alive()
+        assert outcome == ["aborted"]
         current = service.store._job_by_id(req.request_id)
-        if outcome == ["applied"]:
-            # The stale write landed before the retry: it only ever affected
-            # the attempt it recovered, and the retry then created a new one.
-            assert current.state in {"interrupted", "queued", "running"}
-        else:
-            assert outcome == ["aborted"]
-        current = service.store._job_by_id(req.request_id)
-        if current.current_attempt is not None:
-            assert current.current_attempt.attempt_id != first.attempt_id or current.state in {
-                "interrupted", "cancelled", "failed", "completed",
-            }
+        assert current.current_attempt.attempt_id == newer.attempt_id
+        assert current.quarantined is False
+        # ... and the newer attempt still finishes normally.  A stale recovery
+        # of the *terminal* job is refused too (the state-based branch).
+        final = wait_state(service, req, {"completed"})
+        assert final.current_attempt.attempt_id == newer.attempt_id
+        with pytest.raises(JobError):
+            service.store.recovered_attempt(req.request_id, first, cleanup_error="late")
+        assert service.store._job_by_id(req.request_id).state == "completed"
     finally:
         service.close()
 

@@ -38,6 +38,12 @@ _MAX_PROGRESS_BYTES = 65_536
 _PROGRESS_POLL_S = 0.05
 _MAX_DETAIL_CHARS = 300
 _MAX_OBSERVED_AT_MS = 2**63 - 1
+# The legacy child's pipes are read as a stream: a sustained flood costs a
+# fixed-size chunk buffer plus one result frame, never the whole stream.
+_BRIDGE_CHUNK = 65_536
+_MAX_BRIDGE_STDOUT_BYTES = 16_000_000
+_MAX_BRIDGE_STDERR_TAIL = 8_192
+_PIPE_JOIN_S = 10.0
 
 _STAGE_MAP = {
     "queued": "queued",
@@ -238,16 +244,11 @@ class _ProgressRelay:
             raise _BridgeFailure(f"could not write engine progress: {self._error}") from self._error
 
 
-def _decode_legacy_result(output: bytes, request_id: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    decoder = FrameDecoder()
-    try:
-        frames = decoder.feed(output)
-        decoder.finish()
-    except ProtocolError as exc:
-        raise _BridgeFailure(f"legacy worker emitted malformed frames: {exc}") from exc
-    if len(frames) != 1 or frames[0].frame_type != "result":
+def _decode_legacy_result_frame(frame: Any, request_id: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Validate the one result frame a legacy worker may return."""
+
+    if frame.frame_type != "result":
         raise _BridgeFailure("legacy worker did not emit exactly one result frame")
-    frame = frames[0]
     if frame.request_id != request_id:
         raise _BridgeFailure("legacy worker result request_id does not match the request")
     report = frame.payload.get("report")
@@ -261,25 +262,100 @@ def _decode_legacy_result(output: bytes, request_id: str) -> tuple[dict[str, Any
     return report, evidence
 
 
-def _close_process(process: subprocess.Popen) -> None:
-    """Kill an unfinished direct child, reap it, and close every pipe."""
+class _LegacyPipe:
+    """One bounded streaming reader for a legacy child pipe.
 
-    try:
-        if process.poll() is None:
+    ``decode`` marks the stdout stream: frames are decoded as they arrive and at
+    most one result frame is retained.  Once a limit or a protocol error is hit
+    the reader keeps *draining* (without buffering) so a flooding child is never
+    blocked on a full pipe, which would turn a bounded failure into a hang.  The
+    stderr stream only keeps a fixed-size tail and never fails the attempt.
+    """
+
+    def __init__(self, stream: BinaryIO, *, decode: bool) -> None:
+        self._stream = stream
+        self._decode = decode
+        self._decoder = FrameDecoder() if decode else None
+        self._results: list[Any] = []
+        self._error = ""
+        self._bytes = 0
+        self._tail = bytearray()
+        self._thread = threading.Thread(
+            target=self._run, name="tcenv-legacy-worker-pipe", daemon=True,
+        )
+
+    @property
+    def results(self) -> list[Any]:
+        return self._results
+
+    @property
+    def error(self) -> str:
+        return self._error
+
+    @property
+    def tail(self) -> str:
+        return self._tail.decode("utf-8", errors="replace")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def join(self, timeout: float = _PIPE_JOIN_S) -> bool:
+        self._thread.join(timeout=timeout)
+        return not self._thread.is_alive()
+
+    def _fail(self, message: str) -> None:
+        if not self._error:
+            self._error = message
+
+    def _run(self) -> None:
+        while True:
             try:
-                process.kill()
-            except ProcessLookupError:
+                chunk = self._stream.read(_BRIDGE_CHUNK)
+            except (OSError, ValueError) as exc:
+                self._fail(f"could not read legacy worker output: {exc}")
+                return
+            if not chunk:
+                break
+            self._consume(chunk)
+        if self._decoder is not None and not self._error:
+            try:
+                self._decoder.finish()
+            except ProtocolError as exc:
+                self._fail(f"legacy worker emitted malformed frames: {exc}")
+
+    def _consume(self, chunk: bytes) -> None:
+        self._bytes += len(chunk)
+        if self._decode and not self._error and self._bytes > _MAX_BRIDGE_STDOUT_BYTES:
+            self._fail("legacy worker output exceeded the bridge limit")
+        if self._decoder is None:
+            self._tail = (self._tail + chunk)[-_MAX_BRIDGE_STDERR_TAIL:]
+            return
+        if self._error:
+            return  # drain and discard, never buffer a flood
+        try:
+            frames = self._decoder.feed(chunk)
+        except ProtocolError as exc:
+            self._fail(f"legacy worker emitted malformed frames: {exc}")
+            return
+        for frame in frames:
+            if frame.frame_type != "result":
+                self._fail("legacy worker did not emit exactly one result frame")
+                return
+            self._results.append(frame)
+            if len(self._results) > 1:
+                self._fail("legacy worker did not emit exactly one result frame")
+                return
+
+
+def _close_process(process: subprocess.Popen) -> None:
+    """Close every pipe of an already reaped direct child."""
+
+    for stream in (process.stdin, process.stdout, process.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
                 pass
-        # A successful communicate() already waited.  After an exceptional
-        # path this wait is mandatory: a bridge failure must not leave a zombie.
-        process.wait()
-    finally:
-        for stream in (process.stdin, process.stdout, process.stderr):
-            if stream is not None:
-                try:
-                    stream.close()
-                except OSError:
-                    pass
 
 
 def _run_legacy_worker(
@@ -308,6 +384,8 @@ def _run_legacy_worker(
             write_lock=write_lock,
         )
         process: subprocess.Popen | None = None
+        stdout_pipe: _LegacyPipe | None = None
+        stderr_pipe: _LegacyPipe | None = None
         try:
             try:
                 # No start_new_session/popen_group: this child must remain in
@@ -322,15 +400,47 @@ def _run_legacy_worker(
                 )
             except OSError as exc:
                 raise _BridgeFailure(f"could not start legacy worker: {exc}") from exc
+            assert process.stdin is not None and process.stdout is not None and process.stderr is not None
             relay.start()
-            output, _stderr = process.communicate(input=legacy_request)
-            # communicate() has reaped the child and reached stdout EOF.  Stop
-            # asynchronous polling, but retain the file for one terminal drain.
+            stdout_pipe = _LegacyPipe(process.stdout, decode=True)
+            stderr_pipe = _LegacyPipe(process.stderr, decode=False)
+            stdout_pipe.start()
+            stderr_pipe.start()
+
+            def write_request() -> None:
+                try:
+                    process.stdin.write(legacy_request)
+                    process.stdin.flush()
+                    process.stdin.close()
+                except (BrokenPipeError, OSError, ValueError):
+                    # A child that died before reading stdin is reported by its
+                    # exit status, exactly as communicate() reported it.
+                    pass
+
+            writer = threading.Thread(
+                target=write_request, name="tcenv-legacy-worker-stdin", daemon=True,
+            )
+            writer.start()
+            # Reap the child first; the pipes then reach EOF and every reader
+            # finishes.  A child that ignores its request is bounded by the
+            # engine's candidate deadline, which kills the whole process group.
+            process.wait()
+            stdout_pipe.join()
+            stderr_pipe.join()
+            writer.join(timeout=_PIPE_JOIN_S)
+            # The readers reached EOF: the child is reaped.  Stop asynchronous
+            # polling, but retain the file for one terminal drain.
             relay.stop()
             relay.raise_if_failed()
             if process.returncode != 0:
                 raise _BridgeFailure(f"legacy worker exited {process.returncode}")
-            report, evidence = _decode_legacy_result(output or b"", request.request_id)
+            if stdout_pipe.error:
+                raise _BridgeFailure(stdout_pipe.error)
+            if len(stdout_pipe.results) != 1:
+                raise _BridgeFailure("legacy worker did not emit exactly one result frame")
+            report, evidence = _decode_legacy_result_frame(
+                stdout_pipe.results[0], request.request_id,
+            )
             # The terminal write often happens immediately before child exit.
             # Drain it only after the result is known valid, and always before
             # the engine result frame is written by main().
@@ -339,7 +449,21 @@ def _run_legacy_worker(
         finally:
             relay.stop()
             if process is not None:
-                _close_process(process)
+                try:
+                    if process.poll() is None:
+                        try:
+                            process.kill()
+                        except ProcessLookupError:
+                            pass
+                    process.wait()
+                finally:
+                    # Kill/reap before joining readers and closing pipes, so a
+                    # failed attempt still ends with a reaped child and EOF
+                    # rather than a reader blocked on a closed stream.
+                    for pipe in (stdout_pipe, stderr_pipe):
+                        if pipe is not None:
+                            pipe.join(timeout=_PIPE_JOIN_S)
+                    _close_process(process)
 
 
 def main(argv: list[str] | None = None) -> int:

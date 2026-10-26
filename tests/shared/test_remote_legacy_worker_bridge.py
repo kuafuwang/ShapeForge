@@ -439,3 +439,104 @@ def test_every_documented_legacy_stage_alias_maps_to_an_engine_stage():
         }) == {
             "stage": engine_stage, "detail": "detail", "observed_at_ms": 1250,
         }
+
+
+def test_sustained_stderr_flood_keeps_the_report_and_reaps_the_child(tmp_path):
+    """8 MiB of stderr must cost bounded memory, not the valid result."""
+
+    request = _request(source=b"// STDERR_FLOOD\r\nkernel void demo() {} \r\n")
+    attempt = _attempt()
+    record_path = tmp_path / "flood-record.json"
+    returncode, output, error, temp_root = _run_bridge(
+        tmp_path, request, attempt, FAKE_WORKER,
+        extra_env={
+            "FAKE_LEGACY_RECORD": str(record_path),
+            "FAKE_LEGACY_BEHAVIOR": "stderr_flood",
+            "FAKE_LEGACY_FLOOD_BLOCKS": "128",
+        },
+    )
+    assert returncode == 0, error.decode("utf-8", errors="replace")[-2000:]
+    decoded = _decode_engine_frames(output, request, attempt)
+    assert len(decoded) == 1 and decoded[0][1] == "result"
+    assert decoded[0][2]["report"]["legacy_report_marker"] == "report-from-legacy-worker"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert _ps_state(record["pid"]) is None, "the flooding child was not reaped"
+    assert list(temp_root.iterdir()) == []
+
+
+def test_sustained_stdout_flood_fails_bounded_and_reaps_the_child(tmp_path):
+    """4 MiB of non-frame stdout must fail the attempt, not buffer or leak."""
+
+    request = _request(source=b"// STDOUT_FLOOD\r\nkernel void demo() {} \r\n")
+    attempt = _attempt()
+    record_path = tmp_path / "stdout-flood-record.json"
+    returncode, output, error, temp_root = _run_bridge(
+        tmp_path, request, attempt, FAKE_WORKER,
+        extra_env={
+            "FAKE_LEGACY_RECORD": str(record_path),
+            "FAKE_LEGACY_BEHAVIOR": "stdout_garbage_flood",
+            "FAKE_LEGACY_FLOOD_BLOCKS": "64",
+        },
+    )
+    assert returncode == 1
+    assert output == b"", "a failed bridge must never emit an engine result"
+    message = error.decode("utf-8", errors="replace")
+    assert "malformed frames" in message
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert _ps_state(record["pid"]) is None, "the flooding child was not reaped"
+    assert list(temp_root.iterdir()) == []
+
+
+def test_streaming_pipes_keep_their_buffers_bounded():
+    import io
+
+    from tcenv.remote.legacy_worker_bridge import _MAX_BRIDGE_STDERR_TAIL, _LegacyPipe
+
+    stderr_pipe = _LegacyPipe(io.BytesIO(b"e" * (4 * 1024 * 1024)), decode=False)
+    stderr_pipe.start()
+    assert stderr_pipe.join(30)
+    assert stderr_pipe.error == ""
+    assert len(stderr_pipe.tail.encode("utf-8")) <= _MAX_BRIDGE_STDERR_TAIL
+
+    stdout_pipe = _LegacyPipe(io.BytesIO(b"g" * (4 * 1024 * 1024)), decode=True)
+    stdout_pipe.start()
+    assert stdout_pipe.join(30)
+    # The first four bytes are not a frame header, so the decoder fails at once
+    # and the remaining stream is drained instead of retained.
+    assert "malformed frames" in stdout_pipe.error
+    assert stdout_pipe.results == []
+
+
+def test_the_bridge_streams_the_child_instead_of_buffering_with_communicate(tmp_path, monkeypatch):
+    """A 3-line regression for blocker 7: ``communicate()`` is gone."""
+
+    import io
+    import threading
+
+    import tcenv.remote.legacy_worker_bridge as bridge
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError(
+            "the bridge must stream the child's pipes, not buffer them with communicate()"
+        )
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", forbidden)
+    request = _request(source=b"// STREAM\r\nkernel void demo() {} \r\n")
+    output = io.BytesIO()
+    environ = dict(os.environ)
+    environ["PYTHONPATH"] = str(ROOT) + os.pathsep + environ.get("PYTHONPATH", "")
+    environ["FAKE_LEGACY_BEHAVIOR"] = "success"
+    environ.pop("TCENV_REMOTE_STATE_DIR", None)
+    report, evidence = bridge._run_legacy_worker(
+        FAKE_WORKER, request, output,
+        attempt_id=_attempt().attempt_id,
+        lease_fence=_attempt().lease_fence,
+        environ=environ,
+        write_lock=threading.Lock(),
+    )
+    assert report["legacy_report_marker"] == "report-from-legacy-worker"
+    assert evidence["legacy_evidence_marker"] == "evidence-from-legacy-worker"
+    # ``_run_legacy_worker`` returns the validated report/evidence; the engine
+    # result frame is written by ``main`` and never carries the legacy bytes.
+    assert output.getvalue() == b""
+    assert report["legacy_report_marker"] == "report-from-legacy-worker"

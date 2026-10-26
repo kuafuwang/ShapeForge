@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -12,6 +13,7 @@ from dataclasses import replace
 import pytest
 
 from tcenv.remote.identity import ServiceIdentity, SessionGrant
+from tcenv.remote.job_store import JobStore
 from tcenv.remote.job_types import JobError, StateCorrupt
 from tcenv.remote.protocol import provenance_epoch
 
@@ -1409,3 +1411,84 @@ def test_worker_frame_request_id_is_bound_to_the_active_request():
         Frame("progress", "request-1", payload, 0, "0" * 64),
         attempt, request_id="request-1",
     )[0] == "progress"
+
+
+def test_close_contains_an_arbitrary_supervisor_exception_and_closes_the_store(tmp_path):
+    """A shutdown must never raise out of close(), and must not leak the store."""
+
+    state = tmp_path / "state"
+    service = engine(state)
+    req = request("close-contains-kill-failure", source=b"SLEEP", candidate_timeout_ms=60_000)
+    submit(service, req)
+    wait_state(service, req, {"running"})
+    deadline = time.monotonic() + 20.0
+    while (
+        time.monotonic() < deadline
+        and (service._active is None or service._active.handle is None)
+    ):
+        time.sleep(0.02)
+    assert service._active is not None and service._active.handle is not None
+
+    original_kill = service.supervisor.kill
+
+    def exploding_kill(handle):
+        raise RuntimeError("supervisor exploded during shutdown")
+
+    service.supervisor.kill = exploding_kill
+    try:
+        assert service.close() is False, "an unverified shutdown must be reported, not hidden"
+        assert isinstance(service.close_error, RuntimeError)
+        # A second close reports the same failure instead of pretending success,
+        # and the store is never closed underneath a live scheduler thread.
+        assert service.close() is False
+    finally:
+        # Let the live worker exit, as an out-of-band stop would: the deferred
+        # finalizer then closes the store instead of leaking it.
+        service.supervisor.kill = original_kill
+        handle = service._active.handle if service._active is not None else None
+        if handle is not None and handle.process is not None:
+            try:
+                os.killpg(handle.process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+    deadline = time.monotonic() + 30.0
+    while not service.closed and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert service.closed is True, "the store was leaked after a failed shutdown"
+    reopened = JobStore(state)
+    try:
+        assert reopened._job_by_id(req.request_id).state in {
+            "running", "interrupted", "completed",
+        }
+    finally:
+        reopened.close()
+
+
+def test_close_never_reports_closed_while_the_finalizer_is_running(tmp_path):
+    state = tmp_path / "state"
+    service = engine(state)
+    entered = threading.Event()
+    release = threading.Event()
+    original_close = service.store.close
+
+    def slow_store_close():
+        entered.set()
+        assert release.wait(30), "the test never released the store close"
+        return original_close()
+
+    service.store.close = slow_store_close
+    results: dict[str, bool] = {}
+    first = threading.Thread(target=lambda: results.__setitem__("first", service.close()))
+    first.start()
+    assert entered.wait(30), "store.close was never called"
+    second = threading.Thread(target=lambda: results.__setitem__("second", service.close()))
+    second.start()
+    # A concurrent close must wait for the first cleanup instead of claiming a
+    # shutdown that has not happened yet.
+    time.sleep(0.5)
+    assert "second" not in results
+    release.set()
+    first.join(timeout=30)
+    second.join(timeout=30)
+    assert results == {"first": True, "second": True}
+    assert service.closed is True

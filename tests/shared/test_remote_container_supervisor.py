@@ -571,3 +571,36 @@ def test_cleanup_residue_detects_a_surviving_attach_client(tmp_path):
     if handle.attach is not None:
         handle.attach.wait(timeout=10)
     supervisor.release(handle)
+
+
+def test_every_lifecycle_step_is_bound_to_the_creating_daemon(tmp_path):
+    """A / B switch: the container on A must never be "absent" on B."""
+
+    docker_a, fake_a = install_fake_docker(tmp_path / "docker-a", image_digest=IMAGE_DIGEST)
+    supervisor_a = DockerAttemptSupervisor(_config(tmp_path, docker_a))
+    handle = supervisor_a.create(_spec(tmp_path, (sys.executable, "-c", "import time; time.sleep(30)")))
+    daemon_a = supervisor_a.daemon_identity()
+    assert handle.container_daemon == daemon_a
+    # The same physical daemon now answers with another identity: "not found"
+    # here proves nothing, because the container is still alive over there.
+    fake_a.set_control(daemon_id="fake-daemon-b")
+    for name, call in (
+        ("verify_identity", lambda: supervisor_a.verify_identity(handle)),
+        ("kill", lambda: supervisor_a.kill(handle)),
+        ("delete", lambda: supervisor_a.delete(handle)),
+        ("verify_absent", lambda: supervisor_a.verify_absent(handle)),
+        ("cleanup", lambda: supervisor_a.cleanup(handle)),
+        ("cleanup_residue", lambda: supervisor_a.cleanup_residue(handle)),
+    ):
+        result = call()
+        assert "another Docker daemon" in result, (name, result)
+    with pytest.raises(SupervisorError, match="another Docker daemon"):
+        supervisor_a.start(handle)
+    with pytest.raises(SupervisorError, match="another Docker daemon"):
+        supervisor_a.status(handle)
+    # Nothing was started or deleted through the wrong identity.
+    assert len(fake_a.records()) == 1
+    assert fake_a.record(handle.container_id)["State"]["Status"] == "created"
+    fake_a.set_control(daemon_id=daemon_a)
+    assert supervisor_a.cleanup(handle) == ""
+    supervisor_a.release(handle)

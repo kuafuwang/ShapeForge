@@ -1467,6 +1467,10 @@ class JobStore:
                 or job["current_attempt_id"] != attempt.attempt_id
                 or row["lease_fence"] != attempt.lease_fence or row["state"] != "running"
                 or row["execution_kind"] != EXECUTION_CONTAINER
+                # ``attach_daemon`` persists the engine before the container can
+                # exist.  Overwriting it here would make recovery compare the
+                # attempt against the daemon that never held the container.
+                or (row["container_daemon"] and row["container_daemon"] != daemon)
             ):
                 self._diagnostic(conn, request_id, attempt.attempt_id, "stale_container_attach", {
                     "container_id": container_id,
@@ -1801,11 +1805,9 @@ class JobStore:
                 return self._snapshot(conn, conn.execute("SELECT * FROM jobs WHERE request_id=?", (request_id,)).fetchone())
             request = self._request(conn, job)
             base_provenance = _loads(job["provenance_json"])
-            self._validate_report(request, report, evidence)
-            if report.get("protocol_version") != base_provenance.get("protocol_version"):
-                raise JobError("invalid_argument", "worker report execution protocol differs from the evaluator epoch")
-            if (report.get("simulated") is True) != (base_provenance.get("measurement_kind") == "simulated"):
-                raise JobError("invalid_argument", "worker report measurement kind differs from evaluator provenance")
+            self.validate_worker_result(
+                request, report=report, evidence=evidence, provenance=base_provenance,
+            )
             provenance = {**base_provenance, "attempt_id": attempt.attempt_id, "request_digest": job["request_digest"]}
             receipt_id = contracts.attempt_receipt_id(
                 request_id=request_id, attempt_id=attempt.attempt_id, request_digest=job["request_digest"],
@@ -1854,6 +1856,25 @@ class JobStore:
             conn.execute("UPDATE jobs SET state='completed',source=NULL,failure_json=NULL,expires_at_ms=?,updated_at_ms=? WHERE request_id=?", (expires, now, request_id))
             self._add_event(conn, request_id, "snapshot", {}, attempt.attempt_id, attempt.lease_fence, now)
             return self._snapshot(conn, conn.execute("SELECT * FROM jobs WHERE request_id=?", (request_id,)).fetchone())
+
+    @staticmethod
+    def validate_worker_result(
+        request: ExternalEvaluationRequest, *, report: Any, evidence: Any,
+        provenance: Mapping[str, Any],
+    ) -> None:
+        """Validate a decoded worker result against the request and provenance.
+
+        Shared by the commit path and the candidate-deadline path, so a result
+        that does not even validate is never laundered into a timeout.
+        """
+
+        if not isinstance(report, dict) or not isinstance(provenance, Mapping):
+            raise JobError("invalid_argument", "worker returned an invalid candidate report")
+        JobStore._validate_report(request, report, evidence)
+        if report.get("protocol_version") != provenance.get("protocol_version"):
+            raise JobError("invalid_argument", "worker report execution protocol differs from the evaluator epoch")
+        if (report.get("simulated") is True) != (provenance.get("measurement_kind") == "simulated"):
+            raise JobError("invalid_argument", "worker report measurement kind differs from evaluator provenance")
 
     @staticmethod
     def _validate_report(request: ExternalEvaluationRequest, report: dict[str, Any], evidence: dict[str, Any] | None) -> None:

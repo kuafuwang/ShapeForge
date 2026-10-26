@@ -78,6 +78,10 @@ class WorkerHandle:
     image_ref: str = ""
     image_digest: str = ""
     runtime: str = ""
+    # The Docker Engine identity this container was created on.  Every later
+    # lifecycle/verification call is bound to it: "absent on another daemon"
+    # proves nothing about a container that survives on this one.
+    container_daemon: str = ""
     attach: subprocess.Popen | None = None
     started: bool = False
     scratch_dir: Path | None = None

@@ -807,3 +807,51 @@ def test_cancel_cleans_worker_group_and_close_releases_store(tmp_path):
         assert reopened.hello(nonce="cleanup-second-hello").frame_type == "hello"
     finally:
         reopened.close()
+
+
+class _StubServer:
+    def __init__(self) -> None:
+        self.stops: list[float] = []
+
+    def stop(self, *, grace_s: float = 2.0) -> None:
+        self.stops.append(grace_s)
+
+
+class _StubEngine:
+    """A shutdown that never finishes but must be reported, not swallowed."""
+
+    close_error = RuntimeError("the finalizer is still running")
+
+    def __init__(self) -> None:
+        self.waits: list[float | None] = []
+
+    def close(self, *, wait: float | None = None) -> bool:
+        self.waits.append(wait)
+        return False
+
+
+def test_production_stop_fails_visibly_when_the_shutdown_is_not_verified():
+    from tcenv.remote.grpc_service import ProductionStack
+
+    server = _StubServer()
+    stub = _StubEngine()
+    stack = ProductionStack(engine=stub, server=server, identity=None, task_pack=None)
+    with pytest.raises(TimeoutError, match="verified shutdown"):
+        stack.stop(grace_s=0.2)
+    assert server.stops == [0.2]
+    # It waited for a verified cleanup before declaring the failure.
+    assert stub.waits and stub.waits[0] is not None and stub.waits[0] >= 1.0
+
+
+def test_production_stop_closes_the_engine_store(tmp_path):
+    from tcenv.remote.grpc_service import ProductionStack
+    from tests.support.job_engine import engine as build_engine
+
+    service = build_engine(tmp_path / "state")
+    server = _StubServer()
+    stack = ProductionStack(engine=service, server=server, identity=None, task_pack=None)
+    stack.stop(grace_s=0.2)
+    assert server.stops == [0.2]
+    assert service.closed is True
+    # A second stop is a harmless no-op, not a second cleanup.
+    stack.stop(grace_s=0.2)

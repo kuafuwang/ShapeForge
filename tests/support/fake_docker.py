@@ -133,7 +133,11 @@ class FakeDocker:
     def _cmd_info(self, argv: list[str]) -> int:
         flags, positionals = _parse_flags(argv, {"--format"}, set())
         del positionals
-        if self.control().get("fail_info"):
+        control = self.control()
+        if control.get("slow_info_s"):
+            # A daemon query that is slow enough to spend a candidate deadline.
+            time.sleep(float(control["slow_info_s"]))
+        if control.get("fail_info"):
             print("Error response from daemon: injected info failure", file=sys.stderr)
             return 1
         if flags.get("--format") == "{{.ID}}":
@@ -166,6 +170,10 @@ class FakeDocker:
         if control.get("fail_create"):
             print("Error response from daemon: injected create failure", file=sys.stderr)
             return 125
+        if control.get("slow_create_s"):
+            # A create that outlives the candidate deadline: the container really
+            # exists afterwards, so the engine must clean it up without starting.
+            time.sleep(float(control["slow_create_s"]))
         if len(positionals) < 2:
             print("fake docker create requires an image and command", file=sys.stderr)
             return 64
@@ -260,6 +268,11 @@ class FakeDocker:
         if not positionals:
             print("fake docker inspect requires a reference", file=sys.stderr)
             return 64
+        control = self.control()
+        if control.get("slow_inspect_s"):
+            # An identity/absence probe that outlives the candidate deadline: the
+            # container may not be started (or written to) after it returns.
+            time.sleep(float(control["slow_inspect_s"]))
         documents = []
         for ref in positionals:
             record, _path = self._find(ref)

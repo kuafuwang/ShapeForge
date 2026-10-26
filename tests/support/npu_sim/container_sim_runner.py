@@ -835,8 +835,16 @@ def _check_crash_quarantine(report: Report, out: Path, state: Path, digest: str)
             90.0, "crash quarantine",
         )
         problems = []
+        # The quarantine reason must be the failure the wrapper actually
+        # injected: any other "could not delete" (a missing label, a name
+        # conflict, an unrelated daemon error) would otherwise pass silently.
         if "could not delete" not in snapshot.recovery_error:
             problems.append(f"unexpected quarantine reason: {snapshot.recovery_error!r}")
+        if "injected rm failure" not in snapshot.recovery_error:
+            problems.append(
+                "quarantine was not caused by the injected rm failure: "
+                f"{snapshot.recovery_error!r}"
+            )
         cap = common.capabilities(quarantined_engine)
         try:
             quarantined_engine.retry(

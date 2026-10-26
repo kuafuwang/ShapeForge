@@ -52,8 +52,22 @@ class ProductionStack:
     task_pack: TaskPack
 
     def stop(self, *, grace_s: float = 5.0) -> None:
+        """Stop ingress, then wait for a verified engine shutdown.
+
+        ``JobEngine.close`` reports whether the durable store really closed.  A
+        production shutdown must not return while the engine's finalizer is
+        still running: that would let the next frontend overlap a store writer
+        this process still owns.  Fail visibly instead.
+        """
+
         self.server.stop(grace_s=grace_s)
-        self.engine.close()
+        wait_s = max(1.0, float(grace_s) + 1.0)
+        if not self.engine.close(wait=wait_s):
+            error = self.engine.close_error
+            detail = "" if error is None else f": {error}"
+            raise TimeoutError(
+                f"job engine did not finish a verified shutdown within {wait_s:.1f}s{detail}"
+            )
 
 
 def _digest(value: str, name: str) -> str:

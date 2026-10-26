@@ -31,6 +31,7 @@ import os
 import re
 import select
 import shutil
+import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -39,6 +40,7 @@ from typing import Any, BinaryIO, Mapping
 
 from tcenv.children import forget, kill_group, popen_group, scrubbed_env
 
+from . import hostprocs
 from .job_types import Attempt
 from .supervisor import (
     EXECUTION_CONTAINER,
@@ -496,14 +498,47 @@ class DockerAttemptSupervisor:
         container_id = completed.stdout.decode("utf-8", errors="replace").strip()
         if _CONTAINER_ID.fullmatch(container_id) is None:
             raise SupervisorError("docker create returned an unexpected container id")
+        # Bind the handle to the daemon the engine already persisted.  A daemon
+        # switch between the durable attach and ``create`` must fail closed here
+        # rather than let a later "absent" on the new daemon clear quarantine
+        # while the container still runs on the old one.
+        daemon = getattr(spec.attempt, "container_daemon", "") or ""
+        if not daemon:
+            daemon = self.daemon_identity()
         handle = WorkerHandle(
             spec=spec, kind=self.kind, container_id=container_id, container_name=name,
             image_ref=self.config.image, image_digest=self.config.image_digest,
             runtime=self.config.runtime or self.config.runtime_profile,
+            container_daemon=daemon,
         )
         return handle
 
+    def _bind_daemon(self, handle: WorkerHandle) -> str:
+        """Return "" only when this supervisor's engine owns the handle.
+
+        Every lifecycle and absence proof is bound to the daemon the container
+        was created on.  Reconciling against another engine cannot observe the
+        container, so it must never be mistaken for a verified cleanup.
+        """
+
+        bound = getattr(handle, "container_daemon", "") or ""
+        if not bound:
+            return "worker handle carries no Docker daemon identity; refusing to act on it"
+        try:
+            current = self.daemon_identity()
+        except SupervisorError as exc:
+            return f"could not verify the worker's Docker daemon: {exc}"
+        if current != bound:
+            return (
+                "worker container belongs to another Docker daemon "
+                f"({bound!r} != {current!r}); refusing to reconcile it here"
+            )
+        return ""
+
     def verify_identity(self, handle: WorkerHandle) -> str:
+        error = self._bind_daemon(handle)
+        if error:
+            return error
         document, error = self._inspect(handle.container_id)
         if error:
             return f"could not verify worker container: {error}"
@@ -553,6 +588,9 @@ class DockerAttemptSupervisor:
     def start(self, handle: WorkerHandle) -> None:
         if not handle.container_id:
             raise SupervisorError("container start requires a created container id")
+        error = self._bind_daemon(handle)
+        if error:
+            raise SupervisorError(error)
         try:
             attach = popen_group(
                 self._attach_argv(handle),
@@ -624,6 +662,9 @@ class DockerAttemptSupervisor:
         return None
 
     def status(self, handle: WorkerHandle) -> WorkerStatus:
+        error = self._bind_daemon(handle)
+        if error:
+            raise SupervisorError(error)
         status, error = self._status_for(handle.container_id)
         if error:
             raise SupervisorError(error)
@@ -679,6 +720,47 @@ class DockerAttemptSupervisor:
             return _sanitize(completed.stderr.decode("utf-8", errors="replace") or "docker rm failed")
         return ""
 
+    def _attach_survivors(self, ref: str) -> tuple[list[int], str]:
+        """Host processes still attaching to ``ref`` (a crash leaves them).
+
+        ``docker start --attach`` is a client, not part of the container: a
+        frontend crash can leave it running after the container record is gone.
+        Recovery cannot verify "nothing survived" without looking for it.  The
+        argv is read from the kernel (``/proc`` or ``sysctl``) because a fenced
+        host may deny executing ``ps``.
+        """
+
+        if not ref or _CONTAINER_ID.fullmatch(ref) is None:
+            return [], ""
+        try:
+            return hostprocs.pids_mentioning(ref, "--attach"), ""
+        except OSError as exc:
+            return [], f"could not inspect host processes: {_sanitize(str(exc))}"
+
+    def _reap_attach_survivors(self, ref: str) -> str:
+        """Kill leftover attach clients for ``ref`` and prove they are gone."""
+
+        survivors, error = self._attach_survivors(ref)
+        if error:
+            return error
+        for pid in survivors:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                continue
+            except OSError as exc:
+                return f"could not stop a surviving attach client: {_sanitize(str(exc))}"
+        deadline = time.monotonic() + self.config.kill_timeout_s
+        while True:
+            survivors, error = self._attach_survivors(ref)
+            if error:
+                return error
+            if not survivors:
+                return ""
+            if time.monotonic() >= deadline:
+                return "an attach client for the worker container survived cleanup"
+            time.sleep(_KILL_POLL_S)
+
     def _label_duplicates(self, attempt_id: str) -> tuple[list[str], str]:
         completed = self._cli(["ps", "--all", "--quiet", "--filter", f"label={_SCRATCH_LABEL_PREFIX}={attempt_id}"])
         if completed.returncode != 0:
@@ -702,11 +784,17 @@ class DockerAttemptSupervisor:
         return self._cgroup_residue(container_id)
 
     def kill(self, handle: WorkerHandle) -> str:
+        error = self._bind_daemon(handle)
+        if error:
+            return error
         error = self._kill_ref(handle.container_id or handle.container_name)
         self._stop_attach(handle)
         return error
 
     def delete(self, handle: WorkerHandle) -> str:
+        error = self._bind_daemon(handle)
+        if error:
+            return error
         error = self._delete_ref(handle.container_id or handle.container_name)
         self._stop_attach(handle)
         if handle.scratch_dir is not None:
@@ -771,6 +859,9 @@ class DockerAttemptSupervisor:
         return ""
 
     def verify_absent(self, handle: WorkerHandle) -> str:
+        error = self._bind_daemon(handle)
+        if error:
+            return error
         return self._verify_ref_absent(
             handle.container_id or handle.container_name, handle.attempt_id,
             container_id=handle.container_id,
@@ -861,6 +952,13 @@ class DockerAttemptSupervisor:
                 if error:
                     return f"could not delete a recovered worker container: {error}"
         error = self._verify_ref_absent(ref, attempt.attempt_id, container_id=stored_id)
+        if error:
+            return error
+        # A crashed frontend can leave the ``docker start --attach`` client of
+        # this exact container behind.  Recovery owns the container, so it owns
+        # the client too: reap it and prove it is gone before reporting a clean
+        # recovery (an operator release would otherwise re-check the residue).
+        error = self._reap_attach_survivors(ref)
         if error:
             return error
         error = self._remove_env_file(attempt.attempt_id, state_dir)
