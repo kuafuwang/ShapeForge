@@ -691,9 +691,12 @@ class JobEngine:
         # ``read`` deadlocks on the buffer lock.  ``_run_worker`` records whether
         # the readers were started and whether they finished; only close the
         # read sides when that is provably safe.
-        confirmed = getattr(handle, "metadata", {}).get("reader_state")
+        reader_state = getattr(handle, "metadata", {}).get("reader_state")
+        writer_state = getattr(handle, "metadata", {}).get("writer_state")
         self._close_handle_streams(
-            handle, include_reads=confirmed in {None, "done"},
+            handle,
+            include_reads=reader_state in {None, "done"},
+            include_writes=writer_state in {None, "done"},
         )
         if not problems:
             # A verified kill/delete is not a verified *residue-free* worker:
@@ -708,19 +711,24 @@ class JobEngine:
         return "; ".join(problems)
 
     @staticmethod
-    def _close_handle_streams(handle: WorkerHandle, *, include_reads: bool = True) -> None:
-        """Close the worker's private streams; never deadlock on a live reader.
+    def _close_handle_streams(
+        handle: WorkerHandle, *, include_reads: bool = True, include_writes: bool = True,
+    ) -> None:
+        """Close the worker's private streams; never deadlock on a live thread.
 
-        ``BufferedReader.close`` takes the buffer lock, so closing stdout/stderr
-        while a reader thread is still blocked inside ``read`` deadlocks the
-        scheduler.  Callers that cannot prove the readers finished pass
-        ``include_reads=False`` and close only the writer side.
+        ``BufferedReader.close``/``BufferedWriter.close`` take the buffered
+        object's lock, so closing stdout/stderr while a reader is blocked in
+        ``read`` (or stdin while the request writer is blocked in ``write``)
+        deadlocks the scheduler.  Callers pass ``include_reads=False`` /
+        ``include_writes=False`` unless the matching thread provably finished.
         """
 
-        streams = [
-            getattr(getattr(handle, "process", None), "stdin", None),
-            getattr(getattr(handle, "attach", None), "stdin", None),
-        ]
+        streams: list = []
+        if include_writes:
+            streams += [
+                getattr(getattr(handle, "process", None), "stdin", None),
+                getattr(getattr(handle, "attach", None), "stdin", None),
+            ]
         if include_reads:
             streams += [
                 getattr(getattr(handle, "process", None), "stdout", None),
@@ -1359,6 +1367,7 @@ class JobEngine:
 
         writer_thread = threading.Thread(target=write_request, name="tcenv-worker-stdin", daemon=True)
         writer_thread.start()
+        handle.metadata["writer_state"] = "running"
         try:
             if running.cancel_requested:
                 self.supervisor.kill(handle)
@@ -1397,18 +1406,47 @@ class JobEngine:
             # closed only after the readers reached EOF, so a reader is never
             # turned into a spurious protocol error by the cleanup itself.
             cleanup_error = self._cleanup_handle_quietly(handle, close_streams=False)
-            out_thread.join(timeout=2)
-            err_thread.join(timeout=2)
+            # When cleanup already failed the attempt is a hazard regardless of
+            # the streams, so a blocked reader/writer only needs a short bounded
+            # probe (a verified cleanup keeps the full window for the late EPIPE
+            # or EOF that a real exit produces).
+            join_window = 0.2 if cleanup_error else 2.0
+            out_thread.join(timeout=join_window)
+            err_thread.join(timeout=join_window)
+            # The request writer must also be checked *after* cleanup: a worker
+            # that never read stdin leaves it blocked inside ``write`` with a
+            # full pipe, and closing that buffered writer from this thread would
+            # wait on the writer's lock forever (the same deadlock class as the
+            # readers).  A late EPIPE after the worker really died gets this
+            # second bounded window to finish.
+            writer_thread.join(timeout=join_window)
+            writer_alive = writer_thread.is_alive()
             reader_alive = out_thread.is_alive()
-            # Only close the read sides once both readers returned.  A worker
-            # that survived a failed cleanup keeps them blocked; closing the
-            # buffered objects from here would deadlock on the buffer lock.
             readers_alive = out_thread.is_alive() or err_thread.is_alive()
             handle.metadata["reader_state"] = "running" if readers_alive else "done"
-            self._close_handle_streams(handle, include_reads=not readers_alive)
+            handle.metadata["writer_state"] = "running" if writer_alive else "done"
+            self._close_handle_streams(
+                handle, include_reads=not readers_alive, include_writes=not writer_alive,
+            )
 
         if cleanup_error:
-            self._record_cleanup_hazard(running, cleanup_error)
+            if writer_alive:
+                cleanup_error = (
+                    f"{cleanup_error}; the request writer is still blocked on stdin "
+                    "after cleanup"
+                )
+            self._record_cleanup_hazard(running, cleanup_error[:1000])
+            return
+        if writer_alive:
+            # The request may be only partially delivered and its stdin stream
+            # is still owned by the writer thread: neither a result commit nor a
+            # verified teardown is acceptable, and the stream must not be closed
+            # from here.  Quarantine so no Retry starts over a live worker.
+            self._record_cleanup_hazard(
+                running,
+                "worker request writer did not finish after cleanup; "
+                "the attempt is not a verified result or teardown",
+            )
             return
         if stdout_error:
             error = stdout_error[0]

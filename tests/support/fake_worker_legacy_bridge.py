@@ -94,6 +94,21 @@ def _wait_for_release() -> bool:
 
 
 def main() -> int:
+    behavior = os.environ.get("FAKE_LEGACY_BEHAVIOR", "success")
+    if behavior == "exit_with_stdin_holder":
+        # Exit without reading the request while a descendant keeps the stdin
+        # read end open: the bridge's writer blocks on a full pipe and must not
+        # be "closed" from another thread.  Only stdin is inherited; stdout and
+        # stderr are closed in the descendant so the readers still see EOF.
+        holder = subprocess.Popen(
+            [sys.executable, "-c", "import sys, time; time.sleep(float(sys.argv[1]))",
+             os.environ.get("FAKE_LEGACY_HOLD_S", "5")],
+            stdin=sys.stdin, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        destination = os.environ.get("FAKE_LEGACY_HOLDER_PID")
+        if destination:
+            Path(destination).write_text(str(holder.pid), encoding="utf-8")
+        return 0
     frame = read_frame(sys.stdin.buffer)
     if frame.frame_type != "request":
         raise RuntimeError("fake legacy worker expected a request")

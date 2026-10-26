@@ -1243,6 +1243,60 @@ def test_close_does_not_ignore_a_nonempty_kill_result(tmp_path):
         service.close()
 
 
+def test_a_blocked_request_writer_is_a_hazard_not_a_scheduler_deadlock(tmp_path):
+    """900 KB into a worker that never reads stdin, with a failed kill.
+
+    The writer thread is blocked inside ``stdin.write``; closing that buffered
+    writer from the scheduler used to deadlock on its lock, so the cleanup
+    hazard was never recorded and the process could not shut down.
+    """
+
+    service = helpers.engine(tmp_path / "state")
+    # A worker that sleeps without ever reading its stdin: the 900 KB request
+    # fills the pipe and blocks the writer.
+    service.worker_command = [sys.executable, "-c", "import time; time.sleep(60)"]
+    processes = []
+    original_popen = service._popen
+
+    def recording_popen():
+        process = original_popen()
+        processes.append(process)
+        return process
+
+    service._popen = recording_popen
+    original_kill = service.supervisor.kill
+    service.supervisor.kill = lambda handle: "injected kill failure"
+    req = request("blocked-writer", source=b"x" * 900_000, candidate_timeout_ms=1200)
+    try:
+        submit(service, req)
+        deadline = time.monotonic() + 15.0
+        snapshot = service.store._job_by_id(req.request_id)
+        while not snapshot.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = service.store._job_by_id(req.request_id)
+        assert snapshot.quarantined is True, snapshot
+        assert "writer" in (snapshot.recovery_error or "")
+        # Shutdown must also return: neither the scheduler nor close() may block
+        # on the live writer.  It is not a verified shutdown, so close is False.
+        started = time.monotonic()
+        assert service.close(wait=10.0) is False
+        assert time.monotonic() - started < 9.0
+        assert service.close_error is not None
+    finally:
+        service.supervisor.kill = original_kill
+        for process in processes:
+            if process.poll() is None:
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                try:
+                    process.wait(timeout=10)
+                except Exception:
+                    pass
+        service.close()
+
+
 def test_an_exit_observed_after_the_deadline_is_still_a_timeout(tmp_path):
     """A late exit code must not turn a deadline overrun into an earned ok.
 

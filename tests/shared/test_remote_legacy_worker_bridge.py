@@ -530,6 +530,61 @@ def test_a_descendant_holding_the_pipe_cannot_block_the_bridge(tmp_path, monkeyp
     assert output.getvalue() == b""
 
 
+def test_a_descendant_holding_stdin_cannot_block_the_bridge(tmp_path, monkeypatch):
+    """The child exits without reading a large request; its descendant holds stdin."""
+
+    import io
+    import threading
+    import time
+
+    import tcenv.remote.legacy_worker_bridge as bridge
+
+    monkeypatch.setattr(bridge, "_PIPE_JOIN_S", 0.2)
+    holder_file = tmp_path / "holder.pid"
+    # Large enough to fill the pipe buffer and block the writer.
+    request_obj = _request(source=b"// STREAM\r\n" + b"x" * 900_000)
+    output = io.BytesIO()
+    environ = dict(os.environ)
+    environ["PYTHONPATH"] = str(ROOT) + os.pathsep + environ.get("PYTHONPATH", "")
+    environ["FAKE_LEGACY_BEHAVIOR"] = "exit_with_stdin_holder"
+    environ["FAKE_LEGACY_HOLDER_PID"] = str(holder_file)
+    environ["FAKE_LEGACY_HOLD_S"] = "5"
+    environ.pop("TCENV_REMOTE_STATE_DIR", None)
+    outcome: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            bridge._run_legacy_worker(
+                FAKE_WORKER, request_obj, output,
+                attempt_id=_attempt().attempt_id,
+                lease_fence=_attempt().lease_fence,
+                environ=environ,
+                write_lock=threading.Lock(),
+            )
+        except BaseException as exc:  # noqa: BLE001 - the thread reports the failure
+            outcome.append(exc)
+
+    started = time.monotonic()
+    thread = threading.Thread(target=run, name="legacy-writer-probe", daemon=True)
+    thread.start()
+    thread.join(5.0)
+    elapsed = time.monotonic() - started
+    holder = holder_file.read_text(encoding="utf-8") if holder_file.is_file() else ""
+    if holder:
+        try:
+            os.kill(int(holder), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    thread.join(5.0)
+    # The writer stays blocked until the holder dies; closing its buffered
+    # stdin from the bridge would wait on the writer's lock instead of failing.
+    assert not thread.is_alive()
+    assert outcome and isinstance(outcome[0], bridge._BridgeFailure)
+    assert "request writer did not finish" in str(outcome[0])
+    assert elapsed < 2.0, elapsed
+    assert output.getvalue() == b""
+
+
 def test_streaming_pipes_keep_their_buffers_bounded():
     import io
 

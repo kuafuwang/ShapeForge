@@ -362,7 +362,9 @@ class _LegacyPipe:
                 return
 
 
-def _close_process(process: subprocess.Popen, *, close_reads: bool = True) -> None:
+def _close_process(
+    process: subprocess.Popen, *, close_reads: bool = True, close_writes: bool = True,
+) -> None:
     """Close the pipes of an already reaped direct child.
 
     ``BufferedReader.close`` waits for the buffer lock a reader thread holds
@@ -371,7 +373,9 @@ def _close_process(process: subprocess.Popen, *, close_reads: bool = True) -> No
     only be closed once their readers proved they finished.
     """
 
-    streams = [process.stdin]
+    streams = []
+    if close_writes:
+        streams.append(process.stdin)
     if close_reads:
         streams += [process.stdout, process.stderr]
     for stream in streams:
@@ -410,6 +414,8 @@ def _run_legacy_worker(
         process: subprocess.Popen | None = None
         stdout_pipe: _LegacyPipe | None = None
         stderr_pipe: _LegacyPipe | None = None
+        # Only proven-done writers may have their stdin closed.
+        writer_done = False
         try:
             try:
                 # No start_new_session/popen_group: this child must remain in
@@ -455,6 +461,11 @@ def _run_legacy_worker(
             stdout_done = stdout_pipe.join()
             stderr_done = stderr_pipe.join()
             writer.join(timeout=_PIPE_JOIN_S)
+            # A writer still blocked in ``write`` means the request was never
+            # fully delivered (a descendant can hold the stdin read end after
+            # this child exits).  Closing its buffered stdin would wait on the
+            # writer's lock, so the post-conditions below fail instead.
+            writer_done = not writer.is_alive()
             # The readers reached EOF: the child is reaped.  Stop asynchronous
             # polling, but retain the file for one terminal drain.
             relay.stop()
@@ -484,12 +495,18 @@ def _run_legacy_worker(
                     # blocked after this child was reaped; closing its read
                     # stream here would wait on the reader's buffer lock and
                     # defeat the bounded join.
-                    _close_process(process, close_reads=readers_done)
+                    _close_process(
+                        process, close_reads=readers_done, close_writes=writer_done,
+                    )
         # Post-conditions are evaluated only after the child was reaped, every
         # pipe was closed and the readers were joined: a reader exception or a
         # stream that never reached EOF must fail instead of yielding the one
         # frame it managed to decode.
         assert process is not None and stdout_pipe is not None
+        if not writer_done:
+            raise _BridgeFailure(
+                "legacy worker request writer did not finish before the bounded join deadline"
+            )
         if process.returncode != 0:
             raise _BridgeFailure(f"legacy worker exited {process.returncode}")
         if not stdout_done:
