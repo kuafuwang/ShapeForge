@@ -11,10 +11,17 @@ from __future__ import annotations
 import argparse
 import json
 import signal
+import sys
 import time
 from pathlib import Path
 
 from tests.support.npu_sim import container_sim_common as common
+
+
+def _log(message: str) -> None:
+    """Keep a readable frontend log next to the acceptance report."""
+
+    print(f"[frontend-child] {message}", file=sys.stderr, flush=True)
 
 
 def _wait_running(engine, request_obj, deadline: float) -> dict[str, str]:
@@ -47,12 +54,18 @@ def main() -> int:
     engine = common.engine(args.state_dir, args.digest, docker=args.docker)
     request_obj = common.request(args.request_id, source=b"SLEEP60", candidate_timeout_ms=600_000)
     try:
+        _log(f"starting request={args.request_id} state={args.state_dir}")
         common.submit(engine, request_obj)
         info = _wait_running(engine, request_obj, time.monotonic() + args.deadline_s)
         # Give the attach client a moment to reach the running container so the
         # crash really happens mid-execution.
         time.sleep(1.0)
+        _log(
+            "attached attempt={attempt_id} fence={lease_fence} container={container_id} "
+            "state={state}".format(**info)
+        )
         args.ready.write_text(json.dumps(info, sort_keys=True), encoding="utf-8")
+        _log("ready; waiting to be SIGKILLed")
         signal.pause()
     finally:
         engine.close()

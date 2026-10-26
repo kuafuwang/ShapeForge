@@ -16,6 +16,11 @@ flag, from a staging checkout of this repository:
 The worker image is built locally from an already-present base image
 (``taic-remote-sim:local``); no registry/network access is required.
 
+When the runner itself runs inside a harness container it needs the host Docker
+CLI + socket, and it must keep the host cgroup namespace (``--cgroupns host``)
+and the host docker group so the cgroup lifecycle check can observe the worker's
+real host cgroup instead of silently passing in a private namespace.
+
 Required checks cover: a real 60s-sleep timeout that kills parent and child and
 leaves no container/process/cgroup/temp path; Cancel that kills the worker and
 rejects an old-fence result; frontend SIGKILL/restart that cleans the container
@@ -42,6 +47,7 @@ from pathlib import Path
 
 from tcenv.remote.container_supervisor import DockerAttemptSupervisor
 from tcenv.remote.job_types import JobError
+from tcenv.remote import contracts
 from tests.support.npu_sim import container_sim_common as common
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -144,9 +150,24 @@ class Report:
             name for name in REQUIRED_CHECKS
             if name in self.checks and self.checks[name]["status"] != "passed"
         ]
-        status = "passed" if not missing and not not_passed and cleanup.get("final") else (
-            "blocked" if self.blockers else "failed"
-        )
+        failed = [
+            name for name in REQUIRED_CHECKS
+            if name in self.checks and self.checks[name]["status"] == "failed"
+        ]
+        not_run = [
+            name for name in REQUIRED_CHECKS
+            if name not in self.checks or self.checks[name]["status"] == "not_run"
+        ]
+        # A blocker recorded after a check seems to have passed must not be
+        # folded back into ``status=passed``.
+        if not missing and not not_passed and cleanup.get("final") and not self.blockers:
+            status = "passed"
+        elif failed:
+            status = "failed"
+        elif self.blockers or not_run:
+            status = "blocked"
+        else:
+            status = "failed"
         document = {
             "report_schema": "taic.container-sim.v1",
             "kind": "container-execution-acceptance",
@@ -277,6 +298,16 @@ def _wait_attempt_container(engine, request_obj, *, timeout_s: float = 90.0, run
     return _wait(attached, timeout_s, f"container for {request_obj.request_id}")
 
 
+def _frontend_runtime() -> str:
+    """Where the acceptance frontend itself runs (host or a harness container)."""
+
+    if Path("/.dockerenv").exists():
+        return "docker-container"
+    if Path("/run/.containerenv").exists():
+        return "podman-container"
+    return "host"
+
+
 def _check_preflight(report: Report, out: Path, image: str, digest: str) -> None:
     server = _docker("version", "--format", "{{.Server.Version}}")
     if server.returncode != 0:
@@ -286,6 +317,7 @@ def _check_preflight(report: Report, out: Path, image: str, digest: str) -> None
     info = _docker("info", "--format", "{{.Driver}}|{{.CgroupDriver}}|{{.CgroupVersion}}")
     report.environment.update({
         "hostname": socket.gethostname(),
+        "frontend_runtime": _frontend_runtime(),
         "kernel": platform.release(),
         "machine": platform.machine(),
         "python": platform.python_version(),
@@ -390,12 +422,23 @@ def _check_cancel(report: Report, state: Path, digest: str) -> None:
     try:
         common.submit(engine, request_obj)
         attempt = _wait_attempt_container(engine, request_obj)
+
+        # Cancel must land while the worker is executing the candidate, not
+        # merely while a container record exists: require the child the fake
+        # worker spawns after it read the private request.
+        def child_visible() -> str | None:
+            completed = _docker("top", attempt.container_id, "-o", "pid,args")
+            return completed.stdout if token in completed.stdout else None
+
+        top_before_cancel = _wait(child_visible, 30.0, "the cancelled worker's child")
         cancelled = engine.cancel(
             request_id=request_obj.request_id, request_digest=request_obj.request_digest,
             expected=engine.expected_identities, grant_token=common.TOKEN,
         )
         snapshot = common.get(engine, request_obj)
         problems = []
+        if token not in top_before_cancel:
+            problems.append("the worker was not executing the candidate before Cancel")
         if cancelled.state != "cancelled" or snapshot.state != "cancelled":
             problems.append(f"cancel returned {cancelled.state}/{snapshot.state}")
         if _container_state(attempt.container_id) != "absent":
@@ -421,13 +464,15 @@ def _check_cancel(report: Report, state: Path, digest: str) -> None:
         evidence = {
             "container_id": attempt.container_id, "cancel_state": cancelled.state,
             "late_commit_state": late.state, "survivor_processes": survivors,
+            "child_token_before_cancel": token in top_before_cancel,
+            "top_before_cancel": top_before_cancel[-2000:],
         }
         if problems:
             report.failed("cancel_kills_worker_and_rejects_old_result", "; ".join(problems), **evidence)
         else:
             report.passed(
                 "cancel_kills_worker_and_rejects_old_result",
-                "Cancel killed and deleted the worker synchronously; the old attempt/fence cannot commit",
+                "Cancel killed and deleted an actively executing worker synchronously; the old attempt/fence cannot commit",
                 **evidence,
             )
     finally:
@@ -437,6 +482,7 @@ def _check_cancel(report: Report, state: Path, digest: str) -> None:
 def _crash_state(out: Path, state: Path, digest: str, request_id: str) -> dict:
     ready = out / f"crash-{request_id}-ready.json"
     log = out / f"crash-{request_id}-frontend.log"
+    token = f"{CHILD_TOKEN_PREFIX}-{request_id}"
     if ready.exists():
         ready.unlink()
     environment = dict(os.environ, PYTHONPATH=str(ROOT))
@@ -455,6 +501,16 @@ def _crash_state(out: Path, state: Path, digest: str, request_id: str) -> dict:
         info = json.loads(ready.read_text(encoding="utf-8"))
         if _container_state(info["container_id"]) != "running":
             raise RuntimeError("crashed frontend's container is not running")
+
+        # The crash must land while the worker is executing the candidate: the
+        # old container has to be live (and in the middle of the work) when the
+        # frontend dies, or the recovery check would be vacuous.
+        def child_visible() -> str | None:
+            completed = _docker("top", info["container_id"], "-o", "pid,args")
+            return completed.stdout if token in completed.stdout else None
+
+        info["top_before_crash"] = _wait(child_visible, 30.0, "the crashing worker's child")
+        info["child_token"] = token
         child.kill()  # SIGKILL: no handlers, no cleanup, a real frontend crash
         child.wait(timeout=30)
     finally:
@@ -492,7 +548,11 @@ def _check_crash(report: Report, out: Path, state: Path, digest: str) -> None:
             "attempt_id": info["attempt_id"], "attempt_rows": len(rows),
             "failure": snapshot.failure.code if snapshot.failure else None,
             "recovery_error": snapshot.recovery_error, "frontend_log": info["frontend_log"],
+            "child_token": info.get("child_token"),
+            "child_running_before_crash": bool(info.get("top_before_crash")),
         }
+        if not info.get("child_token") or info["child_token"] not in (info.get("top_before_crash") or ""):
+            problems.append("the old worker was not executing the candidate when the frontend crashed")
         if problems:
             report.failed("crash_restart_cleans_container_and_marks_interrupted", "; ".join(problems), **evidence)
         else:
@@ -629,6 +689,7 @@ def _check_normal(report: Report, out: Path, state: Path, digest: str) -> None:
     )
     request_obj = common.request("sim-normal")
     observed: dict = {}
+    signature_verified = False
     original_attach = engine.store.attach_container
 
     def attach_and_observe(*args, **kwargs):
@@ -669,6 +730,26 @@ def _check_normal(report: Report, out: Path, state: Path, digest: str) -> None:
                 problems.append("result is unsigned")
             elif result.signature.get("key_id") != "sim-container-site/key-1":
                 problems.append("result signature key id differs")
+            else:
+                # Recompute the HMAC independently: the acceptance must verify
+                # the signature bytes, not merely the key id it claims.
+                signed = {
+                    "provenance": result.provenance,
+                    "report": result.report_descriptor,
+                    "evidence": result.evidence_descriptor,
+                    "receipt": receipt,
+                }
+                key_id = result.signature["key_id"]
+                recomputed = contracts.sign_result(signed, key_id=key_id, key=signing_key)
+                if recomputed != result.signature.get("signature"):
+                    problems.append("result HMAC does not verify against the simulated key")
+                elif not contracts.verify_result_signature(
+                    signed, key_id=key_id, key=signing_key,
+                    signature=result.signature["signature"],
+                ):
+                    problems.append("contract result-signature verification failed")
+                else:
+                    signature_verified = True
             if attempt.execution_kind != "container":
                 problems.append("attempt execution kind is not container")
             if attempt.container_image_digest != digest:
@@ -677,6 +758,11 @@ def _check_normal(report: Report, out: Path, state: Path, digest: str) -> None:
                 problems.append("attempt runtime profile differs")
             if observed.get("state_at_attach") != "created":
                 problems.append(f"container state at durable attach was {observed.get('state_at_attach')!r}, not created")
+            labels_at_attach = observed.get("labeled_at_attach") or []
+            if sorted(labels_at_attach) != [attempt.container_id[:12]]:
+                problems.append(
+                    f"exactly one owned container must exist at the durable attach: {labels_at_attach}"
+                )
             if _container_state(attempt.container_id) != "absent":
                 problems.append("container survived a completed attempt")
             leftovers = [p.name for p in (state / "container-env").glob("*")] if (state / "container-env").is_dir() else []
@@ -686,8 +772,10 @@ def _check_normal(report: Report, out: Path, state: Path, digest: str) -> None:
             "attempt_id": attempt.attempt_id if attempt else "",
             "container_id": attempt.container_id if attempt else "",
             "state_at_durable_attach": observed.get("state_at_attach"),
+            "labeled_at_attach": observed.get("labeled_at_attach"),
             "receipt_id": result.receipt.get("receipt_id") if result else "",
             "signature_key_id": result.signature.get("key_id") if result and result.signature else "",
+            "signature_verified": signature_verified,
             "worker_build": result.provenance.get("worker_build") if result else "",
             "report_status": result.report_json().get("status") if result else "",
         }
