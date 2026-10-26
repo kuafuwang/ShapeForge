@@ -828,7 +828,7 @@ def test_schema_version_is_transactional_and_failed_commit_is_rolled_back(tmp_pa
     try:
         from tcenv.remote.job_store import SCHEMA_VERSION
 
-        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 2
+        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 3
         assert not store._conn.in_transaction
 
         def deny_commit(action, arg1, _arg2, _database, _source):
@@ -859,8 +859,8 @@ def test_schema_v1_database_migrates_in_place_and_keeps_results(tmp_path):
     connection = sqlite3.connect(state / "jobs.sqlite3")
     try:
         for column in (
-            "container_runtime", "container_image_digest", "container_image_ref",
-            "container_name", "container_id", "execution_kind",
+            "container_daemon", "container_runtime", "container_image_digest",
+            "container_image_ref", "container_name", "container_id", "execution_kind",
         ):
             connection.execute(f"ALTER TABLE attempts DROP COLUMN {column}")
         connection.execute("PRAGMA user_version=1")
@@ -869,11 +869,12 @@ def test_schema_v1_database_migrates_in_place_and_keeps_results(tmp_path):
         connection.close()
     migrated = engine(state)
     try:
-        assert migrated.store._conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert migrated.store._conn.execute("PRAGMA user_version").fetchone()[0] == 3
         snapshot = get(migrated, req)
         assert snapshot.state == "completed" and snapshot.result is not None
         assert snapshot.current_attempt.execution_kind == "process"
         assert snapshot.current_attempt.container_id == ""
+        assert snapshot.current_attempt.container_daemon == ""
     finally:
         migrated.close()
 
@@ -894,8 +895,8 @@ def test_backup_taken_before_the_schema_upgrade_can_be_restored(tmp_path):
     connection = sqlite3.connect(backup)
     try:
         for column in (
-            "container_runtime", "container_image_digest", "container_image_ref",
-            "container_name", "container_id", "execution_kind",
+            "container_daemon", "container_runtime", "container_image_digest",
+            "container_image_ref", "container_name", "container_id", "execution_kind",
         ):
             connection.execute(f"ALTER TABLE attempts DROP COLUMN {column}")
         connection.execute("PRAGMA user_version=1")
@@ -906,7 +907,7 @@ def test_backup_taken_before_the_schema_upgrade_can_be_restored(tmp_path):
     JobStore.restore_backup(backup, restored_dir)
     restored = engine(restored_dir)
     try:
-        assert restored.store._conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert restored.store._conn.execute("PRAGMA user_version").fetchone()[0] == 3
         snapshot = get(restored, req)
         assert snapshot.state == "completed" and snapshot.result is not None
         assert snapshot.current_attempt.execution_kind == "process"
@@ -932,3 +933,237 @@ def test_tampered_stored_signature_is_rejected_when_serving_result(tmp_path):
             get(service, req)
     finally:
         service.close()
+
+
+def test_stale_recovery_cannot_interrupt_a_newer_running_attempt(tmp_path):
+    """A delayed recovery write for attempt A must not touch attempt B."""
+
+    state = tmp_path / "state"
+    service = engine(state)
+    req = request("stale-recovery")
+    try:
+        submit(service, req)
+        wait_state(service, req, {"running"})
+        first = service.store._job_by_id(req.request_id).current_attempt
+        service.store.interrupt_attempt(req.request_id, first, JobFailure(
+            "infrastructure", True, "frontend_restarted", "simulated restart",
+        ))
+        cap = capabilities(service)
+        service.retry(
+            request_id=req.request_id, request_digest=req.request_digest,
+            expected=service.expected_identities, interrupted_attempt_id=first.attempt_id,
+            capability_id=cap.capability_id, grant_token=TOKEN,
+        )
+        second = wait_state(service, req, {"running"}).current_attempt
+        assert second.attempt_id != first.attempt_id and second.lease_fence > first.lease_fence
+        with pytest.raises(JobError, match="recovery state changed"):
+            service.store.recovered_attempt(req.request_id, first, cleanup_error="late cleanup")
+        current = service.store._job_by_id(req.request_id)
+        assert current.state == "running"
+        assert current.quarantined is False
+        assert current.current_attempt.attempt_id == second.attempt_id
+        assert current.current_attempt.state == "running"
+    finally:
+        service.close()
+
+
+def test_stale_recovery_and_retry_race_never_clobber_the_newer_attempt(tmp_path):
+    """Concurrent release/Retry: the stale recovery write either wins or aborts."""
+
+    state = tmp_path / "state"
+    service = engine(state)
+    req = request("stale-recovery-race")
+    try:
+        submit(service, req)
+        wait_state(service, req, {"running"})
+        first = service.store._job_by_id(req.request_id).current_attempt
+        service.store.interrupt_attempt(req.request_id, first, JobFailure(
+            "infrastructure", True, "frontend_restarted", "simulated restart",
+        ))
+        cap = capabilities(service)
+        outcome: list[str] = []
+
+        def stale_recovery():
+            try:
+                service.store.recovered_attempt(req.request_id, first, cleanup_error="late")
+                outcome.append("applied")
+            except JobError:
+                outcome.append("aborted")
+
+        import threading
+
+        thread = threading.Thread(target=stale_recovery)
+        thread.start()
+        service.store.retry(
+            request_id=req.request_id, request_digest=req.request_digest,
+            expected=service.expected_identities, interrupted_attempt_id=first.attempt_id,
+            capability_id=cap.capability_id, required_features=[], grant_token=TOKEN,
+        )
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+        current = service.store._job_by_id(req.request_id)
+        if outcome == ["applied"]:
+            # The stale write landed before the retry: it only ever affected
+            # the attempt it recovered, and the retry then created a new one.
+            assert current.state in {"interrupted", "queued", "running"}
+        else:
+            assert outcome == ["aborted"]
+        current = service.store._job_by_id(req.request_id)
+        if current.current_attempt is not None:
+            assert current.current_attempt.attempt_id != first.attempt_id or current.state in {
+                "interrupted", "cancelled", "failed", "completed",
+            }
+    finally:
+        service.close()
+
+
+def test_recovery_without_a_durable_pid_fails_closed(tmp_path):
+    """A crash between process spawn and PID attach leaves no proof of death."""
+
+    state = tmp_path / "state"
+    req = request("pre-attach-crash", source=b"SLEEP")
+    # Durable running attempt with no PID/start token: exactly what a SIGKILL
+    # between spawn and the PID attach leaves behind.
+    store = JobStore(state)
+    store.register_grant(grant())
+    try:
+        submit_to_store(store, req)
+        store.enqueue_accepted(req.request_id)
+        claimed = store.claim_next()
+        assert claimed is not None
+        _request, attempt = claimed
+        assert attempt.worker_pid is None and attempt.worker_pgid is None
+    finally:
+        store.close()
+    service = None
+    try:
+        recovered = engine(state)
+        try:
+            snapshot = get(recovered, req)
+            assert snapshot.state == "running" and snapshot.quarantined is True
+            assert "no durable PID" in snapshot.recovery_error
+            assert snapshot.result is None
+            cap = capabilities(recovered)
+            with pytest.raises(JobError, match="quarantined"):
+                recovered.retry(
+                    request_id=req.request_id, request_digest=req.request_digest,
+                    expected=recovered.expected_identities,
+                    interrupted_attempt_id=snapshot.current_attempt.attempt_id,
+                    capability_id=cap.capability_id, grant_token=TOKEN,
+                )
+            # Operator release must not turn "unprovable" into a clean Retry.
+            released = recovered.release_quarantine(req.request_id)
+            assert released.state == "running" and released.quarantined is True
+            assert "no durable PID" in released.recovery_error
+        finally:
+            recovered.close()
+    finally:
+        if service is not None:
+            service.close()
+
+
+def test_start_token_timeout_is_a_cleanup_hazard_not_a_retry(tmp_path, monkeypatch):
+    from tcenv.remote import job_engine as module
+
+    monkeypatch.setattr(module, "process_start_token", lambda pid, attempts=3: None)
+    monkeypatch.setattr(module, "_group_exists", lambda pgid: True)
+    state = tmp_path / "state"
+    service = engine(state)
+    req = request("token-none-hazard")
+    try:
+        submit(service, req)
+        deadline = time.monotonic() + 20.0
+        snapshot = get(service, req)
+        while not snapshot.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = get(service, req)
+        assert snapshot.state == "running" and snapshot.quarantined is True
+        assert "start token" in snapshot.recovery_error
+        assert "survived cleanup" in snapshot.recovery_error
+        cap = capabilities(service)
+        with pytest.raises(JobError, match="quarantined"):
+            service.retry(
+                request_id=req.request_id, request_digest=req.request_digest,
+                expected=service.expected_identities,
+                interrupted_attempt_id=snapshot.current_attempt.attempt_id,
+                capability_id=cap.capability_id, grant_token=TOKEN,
+            )
+    finally:
+        monkeypatch.undo()
+        service.close()
+
+
+def test_schema_v2_database_migrates_to_v3_and_keeps_container_identity(tmp_path):
+    state = tmp_path / "state"
+    service = engine(state)
+    req = request("schema-v2-migration")
+    try:
+        submit(service, req)
+        wait_state(service, req, {"completed"})
+    finally:
+        service.close()
+    connection = sqlite3.connect(state / "jobs.sqlite3")
+    try:
+        connection.execute(
+            "UPDATE attempts SET execution_kind='container',container_id=?,container_name=?,"
+            "container_image_ref='worker:1',container_image_digest=?,container_runtime='runc'",
+            ("a" * 24, "tcenv-attempt-schema-v2", "d" * 64),
+        )
+        connection.execute("ALTER TABLE attempts DROP COLUMN container_daemon")
+        connection.execute("PRAGMA user_version=2")
+        connection.commit()
+    finally:
+        connection.close()
+    migrated = engine(state)
+    try:
+        assert migrated.store._conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        snapshot = get(migrated, req)
+        assert snapshot.state == "completed" and snapshot.result is not None
+        attempt = snapshot.current_attempt
+        assert attempt.execution_kind == "container"
+        assert attempt.container_id == "a" * 24
+        assert attempt.container_image_digest == "d" * 64
+        assert attempt.container_daemon == ""
+    finally:
+        migrated.close()
+
+
+def test_v2_backup_restores_with_signed_history_and_key_rotation(tmp_path):
+    key1 = b"rotation-key-one-32-bytes-long!!!!"
+    key2 = b"rotation-key-two-32-bytes-long!!!!"
+    id1 = "sim-external-site/key-1"
+    id2 = "sim-external-site/key-2"
+    state = tmp_path / "state"
+    backup = tmp_path / "backup-v2.sqlite3"
+    first = engine(state, signing_key=key1, signing_key_id=id1, signing_keyring={id1: key1})
+    req = request("v2-rotation-history")
+    try:
+        submit(first, req)
+        wait_state(first, req, {"completed"})
+        first.backup(backup)
+    finally:
+        first.close()
+    connection = sqlite3.connect(backup)
+    try:
+        connection.execute("ALTER TABLE attempts DROP COLUMN container_daemon")
+        connection.execute("PRAGMA user_version=2")
+        connection.commit()
+    finally:
+        connection.close()
+    restored_dir = tmp_path / "restored"
+    JobStore.restore_backup(backup, restored_dir)
+    rotated = engine(
+        restored_dir, signing_key=key2, signing_key_id=id2,
+        signing_keyring={id1: key1, id2: key2},
+    )
+    try:
+        assert rotated.store._conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        historical = get(rotated, req)
+        assert historical.state == "completed" and historical.result is not None
+        assert historical.result.signature["key_id"] == id1
+        fresh = request("v2-rotation-fresh")
+        submit(rotated, fresh)
+        final = wait_state(rotated, fresh, {"completed"})
+        assert final.result.signature["key_id"] == id2
+    finally:
+        rotated.close()

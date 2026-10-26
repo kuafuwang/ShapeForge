@@ -54,9 +54,12 @@ from .job_types import (
 )
 
 # v2 adds the execution supervisor identity of one attempt: the container that
-# ran it, its pinned image and runtime.  v1 databases are migrated in place.
-SCHEMA_VERSION = 2
+# ran it, its pinned image and runtime.  v3 adds the Docker daemon identity so
+# recovery can refuse to reconcile an attempt against another daemon.  v1/v2
+# databases are migrated in place.
+SCHEMA_VERSION = 3
 _CONTAINER_ID = re.compile(r"[0-9a-f]{12,64}")
+_DAEMON_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 DEFAULT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 DB_WRITE_SLACK_BYTES = 64 * 1024
 _FEATURE = re.compile(r"[A-Za-z0-9._:-]{1,80}")
@@ -379,7 +382,7 @@ class JobStore:
         with self._lock:
             conn = self._conn
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, SCHEMA_VERSION):
+            if version not in (0, 1, 2, SCHEMA_VERSION):
                 raise StateCorrupt(f"unsupported job-store schema version {version}")
             if version == 0 and conn.execute("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1").fetchone():
                 raise StateCorrupt("unversioned job-store tables are not accepted")
@@ -396,7 +399,24 @@ class JobStore:
                     ALTER TABLE attempts ADD COLUMN container_image_ref TEXT NOT NULL DEFAULT '';
                     ALTER TABLE attempts ADD COLUMN container_image_digest TEXT NOT NULL DEFAULT '';
                     ALTER TABLE attempts ADD COLUMN container_runtime TEXT NOT NULL DEFAULT '';
-                    PRAGMA user_version=2;
+                    ALTER TABLE attempts ADD COLUMN container_daemon TEXT NOT NULL DEFAULT '';
+                    PRAGMA user_version=3;
+                    COMMIT;
+                    """)
+                except sqlite3.DatabaseError:
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK")
+                    raise
+                version = SCHEMA_VERSION
+            if version == 2:
+                # v2 -> v3: one extra durable column; existing container rows
+                # keep an empty daemon identity and are therefore quarantined if
+                # recovery ever has to reconcile them.
+                try:
+                    conn.executescript("""
+                    BEGIN IMMEDIATE;
+                    ALTER TABLE attempts ADD COLUMN container_daemon TEXT NOT NULL DEFAULT '';
+                    PRAGMA user_version=3;
                     COMMIT;
                     """)
                 except sqlite3.DatabaseError:
@@ -454,6 +474,7 @@ class JobStore:
                     container_id TEXT NOT NULL DEFAULT '', container_name TEXT NOT NULL DEFAULT '',
                     container_image_ref TEXT NOT NULL DEFAULT '', container_image_digest TEXT NOT NULL DEFAULT '',
                     container_runtime TEXT NOT NULL DEFAULT '',
+                    container_daemon TEXT NOT NULL DEFAULT '',
                     failure_json TEXT, diagnostic_json TEXT,
                     UNIQUE(request_id, lease_fence), UNIQUE(request_id, retry_index)
                 );
@@ -546,6 +567,10 @@ class JobStore:
                             raise StateCorrupt("invalid durable execution kind")
                         if row["container_id"] and _CONTAINER_ID.fullmatch(row["container_id"]) is None:
                             raise StateCorrupt("invalid durable container id")
+                        if row["container_daemon"] and _DAEMON_ID.fullmatch(row["container_daemon"]) is None:
+                            raise StateCorrupt("invalid durable container daemon identity")
+                        if row["execution_kind"] == EXECUTION_PROCESS and row["container_daemon"]:
+                            raise StateCorrupt("process attempt carries a container daemon identity")
                         if row["execution_kind"] == EXECUTION_PROCESS and row["container_id"]:
                             raise StateCorrupt("process attempt carries a container id")
                         if row["container_image_digest"] and re.fullmatch(r"[0-9a-f]{64}", row["container_image_digest"]) is None:
@@ -871,6 +896,7 @@ class JobStore:
             execution_kind=row["execution_kind"], container_id=row["container_id"],
             container_name=row["container_name"], container_image_ref=row["container_image_ref"],
             container_image_digest=row["container_image_digest"], container_runtime=row["container_runtime"],
+            container_daemon=row["container_daemon"],
         )
 
     @staticmethod
@@ -1005,6 +1031,7 @@ class JobStore:
             accepted_at_ms=job["accepted_at_ms"], updated_at_ms=job["updated_at_ms"],
             expires_at_ms=job["expires_at_ms"], quarantined=bool(job["quarantined"]),
             recovery_error=job["recovery_error"],
+            expected=ExpectedIdentities.from_dict(_loads(job["expected_json"])),
         )
 
     def _scoped_job(self, conn: sqlite3.Connection, token: str, request_id: str, now_ms: int) -> tuple[sqlite3.Row, sqlite3.Row]:
@@ -1373,17 +1400,55 @@ class JobStore:
                 return False
             return True
 
+    def attach_daemon(self, request_id: str, attempt: Attempt, *, daemon: str) -> bool:
+        """Persist the Docker daemon identity before the container is created.
+
+        A crash between ``create`` and the durable ``container_id`` attach must
+        still be recoverable against the *same* daemon; persisting the identity
+        first also makes a daemon switch a hard stop instead of a false
+        "absent".
+        """
+
+        if not isinstance(daemon, str) or _DAEMON_ID.fullmatch(daemon) is None:
+            raise StateCorrupt("container daemon identity is invalid")
+        with self._write() as conn:
+            row = conn.execute("SELECT * FROM attempts WHERE attempt_id=?", (attempt.attempt_id,)).fetchone()
+            job = conn.execute("SELECT * FROM jobs WHERE request_id=?", (request_id,)).fetchone()
+            if (
+                row is None or job is None or job["state"] != "running"
+                or job["current_attempt_id"] != attempt.attempt_id
+                or row["lease_fence"] != attempt.lease_fence or row["state"] != "running"
+                or row["execution_kind"] != EXECUTION_CONTAINER
+                or (row["container_daemon"] and row["container_daemon"] != daemon)
+            ):
+                self._diagnostic(conn, request_id, attempt.attempt_id, "stale_daemon_attach", {
+                    "daemon": daemon,
+                })
+                return False
+            updated = conn.execute("""
+                UPDATE attempts SET container_daemon=?
+                WHERE attempt_id=? AND lease_fence=? AND state='running' AND execution_kind=?
+            """, (daemon, attempt.attempt_id, attempt.lease_fence, EXECUTION_CONTAINER))
+            if updated.rowcount != 1:
+                self._diagnostic(conn, request_id, attempt.attempt_id, "stale_daemon_attach", {
+                    "daemon": daemon,
+                })
+                return False
+            return True
+
     def attach_container(
         self, request_id: str, attempt: Attempt, *,
         container_id: str, container_name: str, image_ref: str,
-        image_digest: str, runtime: str,
+        image_digest: str, runtime: str, daemon: str,
     ) -> bool:
         """Persist the created container before it is allowed to start.
 
         The durable append happens after ``docker create`` and before
         ``docker start`` so a frontend crash can always reconcile the exact
         container (and, when the create output never reached the store, its
-        deterministic name) instead of re-running the attempt.
+        deterministic name) instead of re-running the attempt.  The daemon
+        identity is persisted with it: recovery must not reconcile the attempt
+        against a different Docker Engine.
         """
 
         if not isinstance(container_id, str) or _CONTAINER_ID.fullmatch(container_id) is None:
@@ -1392,6 +1457,8 @@ class JobStore:
             raise StateCorrupt("container name is invalid")
         if not isinstance(image_digest, str) or re.fullmatch(r"[0-9a-f]{64}", image_digest) is None:
             raise StateCorrupt("container image digest is invalid")
+        if not isinstance(daemon, str) or _DAEMON_ID.fullmatch(daemon) is None:
+            raise StateCorrupt("container daemon identity is invalid")
         with self._write() as conn:
             row = conn.execute("SELECT * FROM attempts WHERE attempt_id=?", (attempt.attempt_id,)).fetchone()
             job = conn.execute("SELECT * FROM jobs WHERE request_id=?", (request_id,)).fetchone()
@@ -1407,10 +1474,10 @@ class JobStore:
                 return False
             updated = conn.execute("""
                 UPDATE attempts SET container_id=?,container_name=?,container_image_ref=?,
-                  container_image_digest=?,container_runtime=?
+                  container_image_digest=?,container_runtime=?,container_daemon=?
                 WHERE attempt_id=? AND lease_fence=? AND state='running' AND execution_kind=?
             """, (
-                container_id, container_name, image_ref, image_digest, runtime,
+                container_id, container_name, image_ref, image_digest, runtime, daemon,
                 attempt.attempt_id, attempt.lease_fence, EXECUTION_CONTAINER,
             ))
             if updated.rowcount != 1:
@@ -1820,13 +1887,23 @@ class JobStore:
             return result
 
     def recovered_attempt(self, request_id: str, attempt: Attempt, *, cleanup_error: str = "") -> JobSnapshot:
-        """Finish recovery only after the caller confirms old group/fence cleanup."""
+        """Finish recovery only after the caller confirms old group/fence cleanup.
+
+        The write is bound to the exact attempt and fence it recovered: a
+        delayed recovery of attempt A must never interrupt a newer running
+        attempt B of the same job.
+        """
 
         now = _now_ms(self._clock)
         with self._write() as conn:
             job = conn.execute("SELECT * FROM jobs WHERE request_id=?", (request_id,)).fetchone()
             row = conn.execute("SELECT * FROM attempts WHERE attempt_id=?", (attempt.attempt_id,)).fetchone()
-            if job is None or row is None or job["state"] != "running" or row["lease_fence"] != attempt.lease_fence:
+            if (
+                job is None or row is None or job["state"] != "running"
+                or job["current_attempt_id"] != attempt.attempt_id
+                or row["state"] != "running"
+                or row["lease_fence"] != attempt.lease_fence
+            ):
                 raise JobError("aborted", "running recovery state changed")
             if cleanup_error:
                 conn.execute("UPDATE jobs SET quarantined=1,recovery_error=?,updated_at_ms=? WHERE request_id=?", (cleanup_error[:1000], now, request_id))
@@ -1982,7 +2059,7 @@ class JobStore:
                 version = source.execute("PRAGMA user_version").fetchone()[0]
                 # A backup taken before a schema upgrade is migrated in place
                 # by the normal open path; refuse only unknown versions.
-                if len(rows) != 1 or rows[0][0] != "ok" or version not in (1, SCHEMA_VERSION):
+                if len(rows) != 1 or rows[0][0] != "ok" or version not in (1, 2, SCHEMA_VERSION):
                     raise StateCorrupt("backup is corrupt or has an unsupported schema")
             finally:
                 source.close()

@@ -132,6 +132,13 @@ def build_supervisor(args: argparse.Namespace):
                 "process execution is for local development only; "
                 "pass --allow-process-worker with --worker-execution process"
             )
+        if "+img:" in str(getattr(args, "worker_build", "")):
+            # A process worker cannot have run a pinned image; signing such a
+            # worker_build would claim an image that never executed.
+            raise ValueError(
+                "process execution cannot claim an image-pinned worker_build "
+                "(+img:<digest>); use --worker-execution container"
+            )
         return None
     raise ValueError("--worker-execution must be container or process")
 

@@ -29,6 +29,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import select
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -49,7 +51,12 @@ from .worker_protocol import STATE_DIR_ENV
 
 _IMAGE_DIGEST = re.compile(r"(?:sha256:)?([0-9a-f]{64})")
 _CONTAINER_ID = re.compile(r"[0-9a-f]{12,64}")
+# Container names must be a safe subset; attempt ids are engine-generated.
 _ATTEMPT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}")
+# Labels carry contract-valid ids unchanged: the request id is client-chosen and
+# may contain ':', lead with punctuation, or be up to 160 characters.
+_REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,160}")
+_DAEMON_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _SECRET_ENV = re.compile(
     r"(^|_)(API_?KEY|APIKEY|KEYS?|TOKENS?|SECRETS?|PASSWORDS?|PASSWD|CREDENTIALS?)($|_)",
@@ -63,7 +70,9 @@ _FORBIDDEN_WORKER_ENV = frozenset({
 })
 _CLI_ENV_KEEP = ("PATH", "HOME", "SSH_AUTH_SOCK", "DOCKER_HOST", "DOCKER_CONFIG", "LANG", "LC_ALL")
 _MAX_CLI_OUTPUT = 1_000_000
+_MAX_CLI_CHUNK = 65_536
 _MAX_ERROR_CHARS = 500
+_MAX_ENV_FILE_BYTES = 64 * 1024
 _KILL_POLL_S = 0.05
 _SCRATCH_LABEL_PREFIX = "tcenv.attempt"
 _OWNER_LABEL = "tcenv.owner"
@@ -73,6 +82,19 @@ _RUNTIME_PROFILES = frozenset({"runc", "gvisor", "kata"})
 def _sanitize(raw: str) -> str:
     text = " ".join(str(raw).replace("\x00", " ").split())
     return text[:_MAX_ERROR_CHARS]
+
+
+def _terminate(process: subprocess.Popen) -> None:
+    """Stop a helper CLI process whose output could not be bounded."""
+
+    try:
+        process.kill()
+    except OSError:
+        return
+    try:
+        process.wait(timeout=5.0)
+    except subprocess.TimeoutExpired:
+        return
 
 
 def normalize_image_digest(value: str) -> str:
@@ -152,6 +174,7 @@ class ContainerSupervisorConfig:
     })
     cli_timeout_s: float = 30.0
     kill_timeout_s: float = 15.0
+    cgroup_root: str = "/sys/fs/cgroup"
 
     def __post_init__(self) -> None:
         if not isinstance(self.image, str) or not self.image or "\x00" in self.image or self.image.startswith("-"):
@@ -179,6 +202,8 @@ class ContainerSupervisorConfig:
             raise SupervisorError("docker CLI timeout is out of range")
         if isinstance(self.kill_timeout_s, bool) or not 1 <= float(self.kill_timeout_s) <= 300:
             raise SupervisorError("container kill timeout is out of range")
+        if not isinstance(self.cgroup_root, str) or not self.cgroup_root.startswith("/") or "\x00" in self.cgroup_root:
+            raise SupervisorError("cgroup root must be an absolute host path")
         object.__setattr__(self, "env", _validate_env(dict(self.env)))
 
 
@@ -191,7 +216,7 @@ def build_create_args(
 
     if not _ATTEMPT_ID.fullmatch(attempt_id):
         raise SupervisorError("attempt id cannot be used in container labels")
-    if not _ATTEMPT_ID.fullmatch(request_id):
+    if _REQUEST_ID.fullmatch(request_id) is None:
         raise SupervisorError("request id cannot be used in container labels")
     argv = [
         "create",
@@ -247,6 +272,8 @@ def _tmpfs_spec(path: str, size: str, *, exec_allowed: bool) -> str:
 def _write_env_file(path: Path, env: Mapping[str, str]) -> None:
     lines = [f"{key}={value}" for key, value in sorted(env.items())]
     payload = ("\n".join(lines) + "\n").encode("utf-8")
+    if len(payload) > _MAX_ENV_FILE_BYTES:
+        raise SupervisorError("worker environment file is too large")
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         written = 0
@@ -285,25 +312,70 @@ class DockerAttemptSupervisor:
         return {key: base[key] for key in _CLI_ENV_KEEP if key in base}
 
     def _cli(self, args: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess:
+        """Run one Docker CLI call with a streaming, bounded output capture.
+
+        ``subprocess.run(capture_output=True)`` would buffer whatever the CLI
+        prints before any size check; a flood then costs memory.  The pipes are
+        drained in fixed-size chunks and the process is killed as soon as the
+        limit is exceeded.
+        """
+
         argv = [self.config.docker]
         if self.config.docker_host:
             argv += ["--host", self.config.docker_host]
         argv += args
+        deadline = time.monotonic() + (self.config.cli_timeout_s if timeout is None else timeout)
         try:
-            completed = subprocess.run(
+            process = subprocess.Popen(
                 argv,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=self.config.cli_timeout_s if timeout is None else timeout,
                 env=self._cli_env(),
-                check=False,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except OSError as exc:
             raise SupervisorError(f"docker {args[0]} failed: {_sanitize(str(exc))}") from exc
-        if len(completed.stdout) > _MAX_CLI_OUTPUT or len(completed.stderr) > _MAX_CLI_OUTPUT:
-            raise SupervisorError(f"docker {args[0]} produced unbounded output")
-        return completed
+        streams = {
+            "stdout": process.stdout,
+            "stderr": process.stderr,
+        }
+        buffers = {"stdout": bytearray(), "stderr": bytearray()}
+        open_streams = {name: stream for name, stream in streams.items() if stream is not None}
+        try:
+            while open_streams:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise SupervisorError(f"docker {args[0]} failed: timed out")
+                ready = select.select(list(open_streams.values()), [], [], min(remaining, 0.2))[0]
+                for stream in ready:
+                    name = next(key for key, value in open_streams.items() if value is stream)
+                    chunk = os.read(stream.fileno(), _MAX_CLI_CHUNK)
+                    if not chunk:
+                        open_streams.pop(name)
+                        continue
+                    buffers[name].extend(chunk)
+                    if len(buffers[name]) > _MAX_CLI_OUTPUT:
+                        raise SupervisorError(f"docker {args[0]} produced unbounded output")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SupervisorError(f"docker {args[0]} failed: timed out")
+            try:
+                returncode = process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                raise SupervisorError(f"docker {args[0]} failed: timed out") from None
+        except BaseException:
+            _terminate(process)
+            raise
+        finally:
+            for stream in streams.values():
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+        return subprocess.CompletedProcess(
+            argv, returncode, bytes(buffers["stdout"]), bytes(buffers["stderr"]),
+        )
 
     @staticmethod
     def _missing(completed: subprocess.CompletedProcess) -> bool:
@@ -350,6 +422,25 @@ class DockerAttemptSupervisor:
         ), ""
 
     # -- identity ----------------------------------------------------------
+    def daemon_identity(self) -> str:
+        """Stable identity of the Docker Engine this supervisor talks to.
+
+        Recovery persists this with the attempt: reconciling an attempt against
+        another daemon would "prove" absence while the old container is still
+        running somewhere else.
+        """
+
+        completed = self._cli(["info", "--format", "{{.ID}}"])
+        if completed.returncode != 0:
+            raise SupervisorError(
+                "docker info failed: "
+                + _sanitize(completed.stderr.decode("utf-8", errors="replace") or "unknown error")
+            )
+        daemon = completed.stdout.decode("utf-8", errors="replace").strip()
+        if _DAEMON_ID.fullmatch(daemon) is None:
+            raise SupervisorError("docker info returned an invalid daemon identity")
+        return daemon
+
     def verify_image(self) -> str:
         completed = self._cli(["image", "inspect", "--format", "{{.Id}}", self.config.image])
         if completed.returncode != 0:
@@ -369,6 +460,7 @@ class DockerAttemptSupervisor:
         env.update(_validate_env(dict(spec.env)))
         env[STATE_DIR_ENV] = f"{self.config.scratch_path}/state"
         env_file = spec.state_dir / "container-env" / f"{spec.attempt.attempt_id}.env"
+        create_error: str = ""
         try:
             env_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(env_file.parent, 0o700)
@@ -379,12 +471,23 @@ class DockerAttemptSupervisor:
             )
             completed = self._cli(argv, timeout=max(self.config.cli_timeout_s, 60.0))
         except OSError as exc:
-            raise SupervisorError(f"could not prepare worker container: {_sanitize(str(exc))}") from exc
+            create_error = f"could not prepare worker container: {_sanitize(str(exc))}"
+            completed = None
         finally:
+            # The per-attempt env file holds the worker environment; leaving it
+            # behind is a cleanup failure, not a warning.
             try:
                 env_file.unlink()
-            except OSError:
+            except FileNotFoundError:
                 pass
+            except OSError as exc:
+                unlink_error = _sanitize(str(exc))
+                create_error = (create_error + "; " if create_error else "") + (
+                    f"could not remove the per-attempt env file: {unlink_error}"
+                )
+        if create_error:
+            raise SupervisorError(create_error)
+        assert completed is not None
         if completed.returncode != 0:
             raise SupervisorError(
                 "docker create failed: "
@@ -496,6 +599,12 @@ class DockerAttemptSupervisor:
                     raise SupervisorError("worker container exited without an exit code")
                 self._stop_attach(handle)
                 return status.exit_code
+            if status.state != "running":
+                # Absent/created/unknown is not a deadline: returning None here
+                # would report a candidate timeout for a status we cannot read.
+                raise SupervisorError(
+                    f"worker container state at the deadline is {status.state}, not running"
+                )
             return None
         status, error = self._status_for(handle.container_id)
         if error:
@@ -579,7 +688,7 @@ class DockerAttemptSupervisor:
             return [], "docker ps returned an unexpected container id"
         return ids, ""
 
-    def _verify_ref_absent(self, ref: str, attempt_id: str) -> str:
+    def _verify_ref_absent(self, ref: str, attempt_id: str, *, container_id: str = "") -> str:
         status, error = self._status_for(ref)
         if error:
             return f"could not verify container absence: {error}"
@@ -590,7 +699,7 @@ class DockerAttemptSupervisor:
             return f"could not verify container labels: {duplicates_error}"
         if duplicates:
             return "a label-matched worker container is still present"
-        return ""
+        return self._cgroup_residue(container_id)
 
     def kill(self, handle: WorkerHandle) -> str:
         error = self._kill_ref(handle.container_id or handle.container_name)
@@ -601,16 +710,71 @@ class DockerAttemptSupervisor:
         error = self._delete_ref(handle.container_id or handle.container_name)
         self._stop_attach(handle)
         if handle.scratch_dir is not None:
+            scratch = Path(handle.scratch_dir)
             try:
-                import shutil
-
-                shutil.rmtree(handle.scratch_dir, ignore_errors=True)
-            except OSError:
+                shutil.rmtree(scratch)
+            except FileNotFoundError:
                 pass
+            except OSError as exc:
+                error = error or f"could not remove the per-attempt scratch directory: {_sanitize(str(exc))}"
+            if scratch.exists():
+                error = error or "per-attempt scratch directory survived cleanup"
         return error
 
+    def _cgroup_paths(self, container_id: str) -> list[Path]:
+        if not container_id or _CONTAINER_ID.fullmatch(container_id) is None:
+            return []
+        root = Path(self.config.cgroup_root)
+        return [
+            root / "system.slice" / f"docker-{container_id}.scope",
+            root / "docker" / container_id,
+        ]
+
+    def _cgroup_residue(self, container_id: str) -> str:
+        paths = self._cgroup_paths(container_id)
+        deadline = time.monotonic() + 1.0
+        while True:
+            for path in paths:
+                try:
+                    present = path.exists()
+                except OSError as exc:
+                    return f"could not verify the container cgroup: {_sanitize(str(exc))}"
+                if present:
+                    if time.monotonic() < deadline:
+                        time.sleep(_KILL_POLL_S)
+                        break
+                    return f"container cgroup survived cleanup: {path}"
+            else:
+                return ""
+
+    @staticmethod
+    def _env_file_for(attempt_id: str, state_dir: Path) -> Path:
+        return Path(state_dir) / "container-env" / f"{attempt_id}.env"
+
+    def _env_file_residue(self, attempt_id: str, state_dir: Path) -> str:
+        path = self._env_file_for(attempt_id, state_dir)
+        try:
+            if path.exists():
+                return "per-attempt container environment file was not removed"
+        except OSError as exc:
+            return f"could not verify the per-attempt container environment file: {_sanitize(str(exc))}"
+        return ""
+
+    def _remove_env_file(self, attempt_id: str, state_dir: Path) -> str:
+        path = self._env_file_for(attempt_id, state_dir)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return ""
+        except OSError as exc:
+            return f"could not remove the recovered per-attempt env file: {_sanitize(str(exc))}"
+        return ""
+
     def verify_absent(self, handle: WorkerHandle) -> str:
-        return self._verify_ref_absent(handle.container_id or handle.container_name, handle.attempt_id)
+        return self._verify_ref_absent(
+            handle.container_id or handle.container_name, handle.attempt_id,
+            container_id=handle.container_id,
+        )
 
     def cleanup(self, handle: WorkerHandle) -> str:
         error = self.kill(handle)
@@ -625,19 +789,42 @@ class DockerAttemptSupervisor:
         error = self.verify_absent(handle)
         if error:
             return error
-        env_file = handle.spec.state_dir / "container-env" / f"{handle.attempt_id}.env"
-        if env_file.exists():
-            return "per-attempt container environment file was not removed"
+        error = self._env_file_residue(handle.attempt_id, handle.spec.state_dir)
+        if error:
+            return error
+        if handle.scratch_dir is not None and Path(handle.scratch_dir).exists():
+            return "per-attempt scratch directory survived cleanup"
         attach = handle.attach
         if attach is not None and attach.poll() is None:
             return "container attach client survived cleanup"
         return ""
 
-    def cleanup_recovered(self, attempt: Attempt) -> str:
+    def cleanup_recovered(self, attempt: Attempt, *, state_dir: Path, daemon: str = "") -> str:
+        """Clean one recovered attempt, bound to its daemon and its temp state.
+
+        ``daemon`` is the current engine's daemon identity, used only when the
+        attempt never reached the durable attach (a create-time crash), so no
+        daemon was persisted.  A persisted daemon that differs from this
+        engine's is a hard stop: "absent on another daemon" proves nothing.
+        """
+
         if getattr(attempt, "execution_kind", "") != self.kind:
             return (
                 "running attempt was not started by the container supervisor; "
                 "refusing to guess its cleanup"
+            )
+        persisted = getattr(attempt, "container_daemon", "") or ""
+        expected_daemon = persisted or daemon
+        if not expected_daemon:
+            return "recovered container attempt has no persisted Docker daemon identity; manual cleanup required"
+        try:
+            current_daemon = self.daemon_identity()
+        except SupervisorError as exc:
+            return f"could not verify the recovered worker's Docker daemon: {exc}"
+        if current_daemon != expected_daemon:
+            return (
+                "recovered container belongs to another Docker daemon "
+                f"({expected_daemon!r} != {current_daemon!r}); refusing to reconcile it here"
             )
         stored_id = getattr(attempt, "container_id", "") or ""
         stored_name = getattr(attempt, "container_name", "") or container_name_for(attempt.attempt_id)
@@ -673,7 +860,13 @@ class DockerAttemptSupervisor:
                 error = self._delete_ref(duplicate)
                 if error:
                     return f"could not delete a recovered worker container: {error}"
-        return self._verify_ref_absent(ref, attempt.attempt_id)
+        error = self._verify_ref_absent(ref, attempt.attempt_id, container_id=stored_id)
+        if error:
+            return error
+        error = self._remove_env_file(attempt.attempt_id, state_dir)
+        if error:
+            return error
+        return self._env_file_residue(attempt.attempt_id, state_dir)
 
     def release(self, handle: WorkerHandle) -> None:
         self._stop_attach(handle)

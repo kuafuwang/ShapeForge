@@ -221,6 +221,19 @@ def test_production_grpc_entry_check_validates_pack_keyring_and_grants(tmp_path)
         )
         assert refused.returncode != 0, (replacement, refused.stdout, refused.stderr)
 
+    # A local process worker must not claim an image-pinned build identity: the
+    # signed result would name an image that never executed.
+    process_with_image = list(base) + [
+        "--worker-execution", "process", "--allow-process-worker",
+    ]
+    process_with_image[process_with_image.index("--worker-build") + 1] = f"build-1+img:{digest_hex}"
+    refused = subprocess.run(
+        [sys.executable, "-m", "tcenv.remote.grpc_service", *process_with_image],
+        cwd=ROOT, text=True, capture_output=True, check=False,
+    )
+    assert refused.returncode != 0
+    assert "image-pinned" in refused.stdout + refused.stderr
+
 
 def test_generated_secret_files_are_never_group_readable(tmp_path):
     grants = tmp_path / "grants.json"

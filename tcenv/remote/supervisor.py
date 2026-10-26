@@ -155,8 +155,16 @@ class AttemptSupervisor(Protocol):
     def cleanup_residue(self, handle: WorkerHandle) -> str:
         """Check for leftover child processes and per-attempt temp files."""
 
-    def cleanup_recovered(self, attempt: Attempt) -> str:
-        """Clean a worker recovered from durable state after a frontend restart."""
+    def daemon_identity(self) -> str:
+        """Stable engine identity persisted with an attempt (empty for local)."""
+
+    def cleanup_recovered(self, attempt: Attempt, *, state_dir: Path, daemon: str = "") -> str:
+        """Clean a worker recovered from durable state after a frontend restart.
+
+        ``state_dir`` is the durable state root (per-attempt temp files live
+        under ``container-env/``); ``daemon`` is the current engine identity,
+        used only when the attempt never reached a durable attach.
+        """
 
     def release(self, handle: WorkerHandle) -> None:
         """Drop in-memory registrations after confirmed cleanup."""
@@ -262,7 +270,11 @@ class ProcessAttemptSupervisor:
         del handle
         return ""
 
-    def cleanup_recovered(self, attempt: Attempt) -> str:
+    def daemon_identity(self) -> str:
+        return ""
+
+    def cleanup_recovered(self, attempt: Attempt, *, state_dir: Path, daemon: str = "") -> str:
+        del attempt, state_dir, daemon
         raise SupervisorError("process recovery is owned by the job engine")
 
     def release(self, handle: WorkerHandle) -> None:

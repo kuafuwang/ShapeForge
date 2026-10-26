@@ -267,24 +267,45 @@ def test_exited_container_without_an_exit_code_is_never_a_timeout(tmp_path, monk
 def test_cleanup_recovered_uses_persisted_identity_and_refuses_mismatch(tmp_path):
     docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
     supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    daemon = supervisor.daemon_identity()
     handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "pass")))
     attempt = Attempt(**{**handle.spec.attempt.__dict__, "container_id": handle.container_id,
-                        "container_name": handle.container_name, "execution_kind": "container"})
-    assert supervisor.cleanup_recovered(attempt) == ""
+                        "container_name": handle.container_name, "execution_kind": "container",
+                        "container_daemon": daemon})
+    assert supervisor.cleanup_recovered(attempt, state_dir=tmp_path / "state") == ""
     assert fake.records() == []
 
-    # A crash between create and the durable id attach leaves no container id.
+    # A crash between create and the durable id attach leaves no container id,
+    # but the daemon identity is persisted before create.
     docker2, fake2 = install_fake_docker(tmp_path / "docker2", image_digest=IMAGE_DIGEST)
     supervisor2 = DockerAttemptSupervisor(_config(tmp_path, docker2))
+    daemon2 = supervisor2.daemon_identity()
     handle = supervisor2.create(_spec(tmp_path, (sys.executable, "-c", "pass")))
     named = Attempt(**{**handle.spec.attempt.__dict__, "container_id": "",
-                       "container_name": handle.container_name, "execution_kind": "container"})
-    assert supervisor2.cleanup_recovered(named) == ""
+                       "container_name": handle.container_name, "execution_kind": "container",
+                       "container_daemon": daemon2})
+    assert supervisor2.cleanup_recovered(named, state_dir=tmp_path / "state") == ""
     assert fake2.records() == []
 
     # A process-supervisor attempt must never be guessed at by the container path.
     process_attempt = Attempt(**{**handle.spec.attempt.__dict__, "execution_kind": "process"})
-    assert "not started by the container supervisor" in supervisor2.cleanup_recovered(process_attempt)
+    assert "not started by the container supervisor" in supervisor2.cleanup_recovered(
+        process_attempt, state_dir=tmp_path / "state",
+    )
+
+    # Without a persisted daemon (create-time crash before the daemon attach),
+    # recovery refuses to guess: "absent here" proves nothing.
+    handle = supervisor2.create(_spec(tmp_path, (sys.executable, "-c", "pass")))
+    no_daemon = Attempt(**{**handle.spec.attempt.__dict__, "container_id": "",
+                           "container_name": handle.container_name, "execution_kind": "container"})
+    assert "no persisted Docker daemon identity" in supervisor2.cleanup_recovered(
+        no_daemon, state_dir=tmp_path / "state",
+    )
+    # ... but the creating engine may name its own daemon explicitly.
+    assert supervisor2.cleanup_recovered(
+        no_daemon, state_dir=tmp_path / "state", daemon=daemon2,
+    ) == ""
+    assert fake2.records() == []
 
     # A deterministic-name collision with a different attempt label is
     # refused, not deleted.
@@ -298,8 +319,9 @@ def test_cleanup_recovered_uses_persisted_identity_and_refuses_mismatch(tmp_path
     record["Config"]["Labels"]["tcenv.attempt"] = "attempt-other"
     path.write_text(json.dumps(record), encoding="utf-8")
     unnamed = Attempt(**{**handle.spec.attempt.__dict__, "container_id": "",
-                         "container_name": handle.container_name, "execution_kind": "container"})
-    assert "label does not match" in supervisor3.cleanup_recovered(unnamed)
+                         "container_name": handle.container_name, "execution_kind": "container",
+                         "container_daemon": supervisor3.daemon_identity()})
+    assert "label does not match" in supervisor3.cleanup_recovered(unnamed, state_dir=tmp_path / "state")
     assert len(fake3.records()) == 1
     supervisor3.delete(handle)
     supervisor3.release(handle)
@@ -308,11 +330,13 @@ def test_cleanup_recovered_uses_persisted_identity_and_refuses_mismatch(tmp_path
 def test_cleanup_recovered_is_fail_closed_when_delete_fails(tmp_path):
     docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
     supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    daemon = supervisor.daemon_identity()
     handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "pass")))
     attempt = Attempt(**{**handle.spec.attempt.__dict__, "container_id": handle.container_id,
-                        "container_name": handle.container_name, "execution_kind": "container"})
+                        "container_name": handle.container_name, "execution_kind": "container",
+                        "container_daemon": daemon})
     fake.set_control(fail_rm=True)
-    error = supervisor.cleanup_recovered(attempt)
+    error = supervisor.cleanup_recovered(attempt, state_dir=tmp_path / "state")
     # The container never started, so stopping it is removal; either way the
     # injected ``rm`` failure must surface instead of being reported as clean.
     assert "could not stop" in error or "could not delete" in error
@@ -322,9 +346,9 @@ def test_cleanup_recovered_is_fail_closed_when_delete_fails(tmp_path):
     # not the exit code, decides.
     fake.set_control(rm_leaves_running=True)
     handle.started = True
-    assert "still present" in supervisor.cleanup_recovered(attempt)
+    assert "still present" in supervisor.cleanup_recovered(attempt, state_dir=tmp_path / "state")
     fake.set_control(rm_leaves_running=False)
-    assert supervisor.cleanup_recovered(attempt) == ""
+    assert supervisor.cleanup_recovered(attempt, state_dir=tmp_path / "state") == ""
 
 
 def test_runtime_profile_and_build_identity_are_explicit(tmp_path):
@@ -343,3 +367,207 @@ def test_runtime_profile_and_build_identity_are_explicit(tmp_path):
     )
     assert args[args.index("--runtime") + 1] == "runsc"
     assert args[-4:] == ["taic-worker-sim:local", "python3", "-m", "worker"]
+
+
+def test_wait_only_reports_a_deadline_for_a_verified_running_worker(tmp_path, monkeypatch):
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "import time; time.sleep(30)")))
+    supervisor.start(handle)
+    _wait_running(supervisor, handle)
+    for state in ("unknown", "created", "absent"):
+        monkeypatch.setattr(supervisor, "_status_for", lambda ref, s=state: (WorkerStatus(s), ""))
+        with pytest.raises(SupervisorError, match="not running"):
+            supervisor.wait(handle, 0.2)
+    monkeypatch.undo()
+    assert supervisor.cleanup(handle) == ""
+    supervisor.release(handle)
+
+
+def test_cli_output_flood_is_bounded_and_the_helper_is_stopped(tmp_path):
+    docker, fake = install_fake_docker(
+        tmp_path / "docker", image_digest=IMAGE_DIGEST, control={"flood_bytes": 5_000_000},
+    )
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    with pytest.raises(SupervisorError, match="unbounded output"):
+        supervisor._cli(["info", "--format", "flood"])
+    # The helper was killed instead of being drained into memory.
+    assert not any("flood" in " ".join(call) and call[-1] == "flood" for call in fake.calls()[1:])
+
+
+def test_contract_valid_request_ids_stay_in_the_labels(tmp_path):
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    config = _config(tmp_path, docker)
+    for request_id in (":leading", "a:b.c", "x" * 160):
+        args = build_create_args(
+            config, name="tcenv-attempt-attempt-7-0123456789abcdef",
+            attempt_id="attempt-7-0123456789abcdef", request_id=request_id,
+            env_file=tmp_path / "env", command=("python3", "-c", "pass"),
+        )
+        assert f"tcenv.request={request_id}" in args
+    # Request ids outside the name subset but inside the wire contract are
+    # still valid labels (the container *name* only uses the attempt id).
+    oversized = "y" * 161
+    with pytest.raises(SupervisorError):
+        build_create_args(
+            config, name="tcenv-attempt-attempt-7-0123456789abcdef",
+            attempt_id="attempt-7-0123456789abcdef", request_id=oversized,
+            env_file=tmp_path / "env", command=("python3", "-c", "pass"),
+        )
+
+
+def test_contract_valid_request_id_executes_end_to_end(tmp_path):
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    base = _spec(tmp_path, (sys.executable, "-c", "import sys; sys.stdin.buffer.read(); print('ok')"))
+    request_obj = request(":colon.id", source=b"OK")
+    spec = AttemptSpec(
+        request=request_obj, attempt=base.attempt, state_dir=base.state_dir,
+        command=base.command, env=base.env,
+    )
+    handle = supervisor.create(spec)
+    try:
+        supervisor.start(handle)
+        stdin, stdout, _stderr = supervisor.streams(handle)
+        stdin.write(b"request")
+        stdin.close()
+        assert supervisor.wait(handle, 10.0) == 0
+        assert stdout.read() == b"ok\n"
+        assert supervisor.cleanup(handle) == ""
+    finally:
+        supervisor.cleanup(handle)
+        supervisor.release(handle)
+
+
+def test_cgroup_env_file_and_scratch_residue_are_cleanup_errors(tmp_path):
+    cgroup_root = tmp_path / "cgroup"
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker, cgroup_root=str(cgroup_root)))
+    handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "pass")))
+    assert supervisor.cleanup(handle) == ""
+    # A cgroup that outlived the container record is residue, not cleanup.
+    scope = cgroup_root / "system.slice" / f"docker-{handle.container_id}.scope"
+    scope.mkdir(parents=True)
+    assert "cgroup survived" in supervisor.verify_absent(handle)
+    assert "cgroup survived" in supervisor.cleanup_residue(handle)
+    scope.rmdir()
+    # A per-attempt env file left behind is residue too.
+    env_path = tmp_path / "state" / "container-env" / f"{handle.attempt_id}.env"
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text("HOME=/tmp\n", encoding="utf-8")
+    assert "environment file" in supervisor.cleanup_residue(handle)
+    env_path.unlink()
+    # A scratch directory that cannot be removed is a delete failure, not a
+    # warning (a read-only directory makes the unlink fail).
+    scratch = tmp_path / "scratch"
+    (scratch).mkdir()
+    (scratch / "keep").write_text("x", encoding="utf-8")
+    scratch.chmod(0o500)
+    handle.scratch_dir = scratch
+    try:
+        assert "scratch directory" in supervisor.delete(handle)
+    finally:
+        scratch.chmod(0o700)
+    handle.scratch_dir = None
+    supervisor.release(handle)
+
+
+def test_create_fails_closed_when_the_env_file_cannot_be_removed(tmp_path, monkeypatch):
+    from tcenv.remote import container_supervisor as module
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    original_write = module._write_env_file
+
+    def write_then_seal(path, env):
+        original_write(path, env)
+        path.parent.chmod(0o500)
+
+    monkeypatch.setattr(module, "_write_env_file", write_then_seal)
+    try:
+        with pytest.raises(SupervisorError, match="env file"):
+            supervisor.create(_spec(tmp_path, (sys.executable, "-c", "pass")))
+    finally:
+        (tmp_path / "state" / "container-env").chmod(0o700)
+        monkeypatch.undo()
+    # The container the daemon created is cleaned through its durable identity.
+    attempt = _attempt()
+    from dataclasses import replace as _replace
+
+    assert supervisor.cleanup_recovered(
+        _replace(attempt, execution_kind="container",
+                 container_daemon=supervisor.daemon_identity()),
+        state_dir=tmp_path / "state",
+    ) == ""
+    assert fake.records() == []
+
+
+def test_worker_environment_is_isolated_from_the_host(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOST_ONLY_MARKER", "must-not-leak")
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    probe = (
+        "import json,os,sys;sys.stdin.buffer.read();"
+        "print(json.dumps(dict(os.environ)))"
+    )
+    handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", probe)))
+    try:
+        supervisor.start(handle)
+        stdin, stdout, _stderr = supervisor.streams(handle)
+        stdin.write(b"request")
+        stdin.close()
+        assert supervisor.wait(handle, 10.0) == 0
+        env = json.loads(stdout.read())
+        assert "HOST_ONLY_MARKER" not in env
+        assert "PWD" not in env and "SHLVL" not in env
+        assert env["HOME"] == "/tmp"
+        assert env["TCENV_REMOTE_STATE_DIR"] == "/scratch/state"
+        assert supervisor.cleanup(handle) == ""
+    finally:
+        supervisor.cleanup(handle)
+        supervisor.release(handle)
+
+
+def test_cleanup_recovered_removes_a_create_time_env_file(tmp_path):
+    """A SIGKILL during create leaves the per-attempt env file behind."""
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    daemon = supervisor.daemon_identity()
+    attempt = Attempt(**{**_attempt().__dict__, "execution_kind": "container",
+                        "container_daemon": daemon})
+    env_path = tmp_path / "state" / "container-env" / f"{attempt.attempt_id}.env"
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text("HOME=/tmp\n", encoding="utf-8")
+    assert supervisor.cleanup_recovered(
+        attempt, state_dir=tmp_path / "state",
+    ) == ""
+    assert not env_path.exists()
+
+    # A file that cannot be removed is a cleanup failure, not a warning.
+    env_path.write_text("HOME=/tmp\n", encoding="utf-8")
+    env_path.parent.chmod(0o500)
+    try:
+        error = supervisor.cleanup_recovered(attempt, state_dir=tmp_path / "state")
+        assert "env file" in error
+    finally:
+        env_path.parent.chmod(0o700)
+        env_path.unlink()
+
+
+def test_cleanup_residue_detects_a_surviving_attach_client(tmp_path):
+    docker, fake = install_fake_docker(
+        tmp_path / "docker", image_digest=IMAGE_DIGEST, control={"hang_attach": True},
+    )
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "pass")))
+    supervisor.start(handle)
+    # The fake attach client stays alive after the container is gone.
+    supervisor._stop_attach = lambda target: None
+    assert supervisor.cleanup(handle) == ""
+    assert "attach client survived" in supervisor.cleanup_residue(handle)
+    handle.attach and handle.attach.kill()
+    if handle.attach is not None:
+        handle.attach.wait(timeout=10)
+    supervisor.release(handle)

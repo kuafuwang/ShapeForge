@@ -16,6 +16,7 @@ rm failure, a survivor after kill, a stuck attach).
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import signal
@@ -128,6 +129,21 @@ class FakeDocker:
             print(f"fake docker does not implement {command}", file=sys.stderr)
             return 64
         return int(handler(rest))
+
+    def _cmd_info(self, argv: list[str]) -> int:
+        flags, positionals = _parse_flags(argv, {"--format"}, set())
+        del positionals
+        if self.control().get("fail_info"):
+            print("Error response from daemon: injected info failure", file=sys.stderr)
+            return 1
+        if flags.get("--format") == "{{.ID}}":
+            print(self.control().get("daemon_id", "11111111-2222-3333-4444-555555555555"))
+            return 0
+        if flags.get("--format") and "flood" in str(flags.get("--format")):
+            sys.stdout.write("x" * int(self.control().get("flood_bytes", 2_000_000)))
+            return 0
+        print("{}")
+        return 0
 
     def _cmd_image(self, argv: list[str]) -> int:
         if argv[:1] != ["inspect"]:
@@ -272,7 +288,10 @@ class FakeDocker:
             print("Error response from daemon: injected start failure", file=sys.stderr)
             return 125
         command = record["fake"]["command"]
-        env = dict(os.environ)
+        # Docker gives the container only the image/config environment plus the
+        # explicit env file; it never forwards the client's environment.  The
+        # fake must do the same or unit tests would not prove isolation.
+        env = {"PATH": "/usr/local/bin:/usr/bin:/bin"}
         for line in record["fake"]["env"]:
             key, _, value = line.partition("=")
             env[key] = value
@@ -408,7 +427,10 @@ def install_fake_docker(directory: Path, *, image_digest: str = "a" * 64, contro
     fake = FakeDocker(directory)
     fake.state.mkdir(parents=True, exist_ok=True)
     (fake.state / "containers").mkdir(parents=True, exist_ok=True)
-    initial = {"image_id": f"sha256:{image_digest}"}
+    # Each installed fake is a distinct "Docker Engine": two fake daemons must
+    # not share an identity, or a recovery test could reconcile across them.
+    default_daemon = "fake-" + hashlib.sha256(str(directory.resolve()).encode("utf-8")).hexdigest()[:32]
+    initial = {"image_id": f"sha256:{image_digest}", "daemon_id": default_daemon}
     initial.update(control or {})
     _dump(fake.control_path, initial)
     return executable, fake

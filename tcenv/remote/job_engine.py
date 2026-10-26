@@ -204,6 +204,11 @@ class _Running:
     cancel_requested: bool = False
     stopping: bool = False
     teardown_done: threading.Event = field(default_factory=threading.Event)
+    # Serializes the request-write authorization with cancellation.  The
+    # decision "this worker may receive the request" is made under this lock,
+    # so a durable cancel can never be followed by a newly authorized request.
+    request_lock: threading.Lock = field(default_factory=threading.Lock)
+    request_authorized: bool = False
 
 
 class JobEngine:
@@ -226,6 +231,7 @@ class JobEngine:
         selfcheck_age_s: float = 60.0,
         require_evidence: bool = False,
         supervisor: AttemptSupervisor | None = None,
+        cancel_teardown_s: float = CONTAINER_CANCEL_TEARDOWN_S,
         **store_options: Any,
     ) -> None:
         if not worker_command or not all(isinstance(part, str) and part for part in worker_command):
@@ -252,6 +258,10 @@ class JobEngine:
             )
         if getattr(supervisor, "kind", None) not in (EXECUTION_PROCESS, EXECUTION_CONTAINER):
             raise ValueError("supervisor kind is not a supported execution kind")
+        if supervisor.kind == EXECUTION_PROCESS and "+img:" in str(identity.worker_build):
+            # A process worker cannot have run a pinned image: signing such a
+            # worker_build would claim an image that never executed.
+            raise ValueError("process execution cannot claim an image-pinned worker_build")
         if supervisor.kind == EXECUTION_CONTAINER:
             # The signed result provenance must bind the exact image that ran
             # the attempt.  ``worker_build`` carries the pinned digest, and the
@@ -264,6 +274,13 @@ class JobEngine:
                     "container execution requires worker_build to bind the pinned image digest"
                 )
         self.supervisor: AttemptSupervisor = supervisor
+        if (
+            isinstance(cancel_teardown_s, bool)
+            or not isinstance(cancel_teardown_s, (int, float))
+            or not 0 < float(cancel_teardown_s) <= 120
+        ):
+            raise ValueError("cancel_teardown_s must be a positive bounded number of seconds")
+        self.cancel_teardown_s = float(cancel_teardown_s)
         self.identity = identity
         self.execution_protocol_version = execution_protocol_version
         self.supported_features = frozenset(supported_features)
@@ -277,9 +294,12 @@ class JobEngine:
         self.require_evidence = require_evidence
         self._stop = threading.Event()
         self._condition = threading.Condition()
-        self._active_lock = threading.Lock()
+        # Re-entrant: the Cancel RPC holds it while committing the durable
+        # cancellation and then calls the internal cancel helper.
+        self._active_lock = threading.RLock()
         self._active: _Running | None = None
         self._closed = False
+        self._unreported_hazard = ""
         self._expected = ExpectedIdentities(ExpectedEvaluator(
             site_id=identity.site_id, device_id=identity.device_id, target_id=identity.target_id,
             worker_build=identity.worker_build, task_pack_digest=identity.task_pack_digest,
@@ -421,23 +441,34 @@ class JobEngine:
         )
 
     def cancel(self, *, request_id: str, request_digest: str, expected: ExpectedIdentities, grant_token: str, reason: str = "") -> JobSnapshot:
-        snapshot = self.store.cancel(
-            grant_token=grant_token, request_id=request_id, request_digest=request_digest,
-            expected=expected, reason=reason,
-        )
-        running = self._cancel_active(request_id)
+        """Durably cancel, then stop any active worker.
+
+        The durable cancellation and the start authorization share
+        ``_active_lock``: a worker that has not been authorized to receive the
+        request can never be started after the cancellation commits.  The RPC
+        then waits for teardown within one total deadline; if teardown is still
+        outstanding, the returned snapshot is the durable
+        ``running``/``cancel_requested`` state (never a synchronous-teardown
+        claim) and the scheduler finishes the cancellation.
+        """
+
+        deadline = time.monotonic() + self.cancel_teardown_s
+        with self._active_lock:
+            snapshot = self.store.cancel(
+                grant_token=grant_token, request_id=request_id, request_digest=request_digest,
+                expected=expected, reason=reason,
+            )
+            running = self._cancel_active_locked(request_id)
         self._wake()
         if (
             running is not None
             and self.supervisor.kind == EXECUTION_CONTAINER
             and running.request.request_id == request_id
-            and not running.teardown_done.is_set()
         ):
-            # Container cancellation is confirmed synchronously: Kill -> Delete
-            # -> verify must finish (or quarantine) before the RPC reports the
-            # cancelled snapshot.  A timed-out wait still returns the durable
-            # cancelled state; a failed cleanup quarantines the job.
-            running.teardown_done.wait(timeout=CONTAINER_CANCEL_TEARDOWN_S)
+            if not running.teardown_done.is_set():
+                running.teardown_done.wait(timeout=max(0.0, deadline - time.monotonic()))
+            # Always report the durable state: cancelled only once the worker is
+            # gone, otherwise running+cancel_requested with teardown pending.
             snapshot = self.store._job_by_id(request_id)
         return snapshot
 
@@ -460,9 +491,12 @@ class JobEngine:
 
     def revoke_grant(self, token: str) -> None:
         scope_id = self.store.revoke_grant(token)
-        running = self.store.cancel_scope(scope_id)
-        for request_id in running:
-            self._cancel_active(request_id)
+        with self._active_lock:
+            # The durable revocation and every start authorization share this
+            # lock, so a worker cannot be started after its grant was revoked.
+            running = self.store.cancel_scope(scope_id)
+            for request_id in running:
+                self._cancel_active_locked(request_id)
         self._wake()
 
     def release_quarantine(self, request_id: str) -> JobSnapshot:
@@ -510,7 +544,10 @@ class JobEngine:
         if kind != self.supervisor.kind:
             return "running attempt belongs to another execution supervisor; manual cleanup required"
         if kind == EXECUTION_CONTAINER:
-            return self.supervisor.cleanup_recovered(attempt)
+            try:
+                return self.supervisor.cleanup_recovered(attempt, state_dir=self.store.state_dir)
+            except Exception as exc:
+                return f"execution cleanup failed: {exc}"[:1000]
         return self._cleanup_recovered_process(attempt)
 
     @staticmethod
@@ -518,10 +555,15 @@ class JobEngine:
         pid = attempt.worker_pid
         pgid = attempt.worker_pgid
         if pid is None and pgid is None:
-            # The durable running fence precedes spawn.  If no PID was attached,
-            # the worker had no request bytes and its stdin closed with the old
-            # frontend, so there is no confirmed device execution to preserve.
-            return ""
+            # The durable running fence precedes spawn, so a crash between the
+            # spawn and the PID attach leaves a live worker with no durable
+            # identity.  Stdin EOF does not prove the process (or a child that
+            # ignored it) is gone, so this must fail closed: operator release
+            # has to recheck it manually rather than get a Retry.
+            return (
+                "running process attempt has no durable PID/start token; "
+                "the old worker cannot be proven dead, so manual cleanup is required"
+            )
         if pid is None or pgid != pid or pid <= 1 or pgid == os.getpgid(0):
             return "invalid persisted worker process identity; manual cleanup required"
         current = process_start_token(pid)
@@ -571,31 +613,38 @@ class JobEngine:
                 self._active = running
             try:
                 # Cancel may have committed after claim_next but before the
-                # in-memory active record existed for _cancel_active to find.
+                # in-memory active record existed for the cancel path to find.
                 if self.store._job_by_id(request.request_id).cancel_requested:
                     running.cancel_requested = True
                 self._run_worker(running)
             except Exception as exc:
+                # This boundary must contain every supervisor failure: an
+                # uncaught exception here would kill the scheduler thread and
+                # leave a running, unquarantined job (Retry offered) behind.
                 cleanup_error = self._cleanup_supervisor_handle(running)
+                detail = f"{type(exc).__name__}: {exc}"
+                if cleanup_error:
+                    detail = f"{detail}; {cleanup_error}"
                 try:
                     if cleanup_error:
                         # Fail closed: an unexpected supervisor error must not
                         # turn into "interrupted, safe to Retry" while the old
                         # worker may still be alive.
-                        self._record_cleanup_hazard(
-                            running,
-                            f"{type(exc).__name__}: {exc}; {cleanup_error}"[:1000],
-                        )
+                        self._record_cleanup_hazard(running, detail[:1000])
                     elif isinstance(exc, JobError):
                         self._handle_worker_job_error(running, exc)
                     else:
                         self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
-                            "infrastructure", True, "worker_supervisor_failed",
-                            f"{type(exc).__name__}: {exc}"[:1000],
+                            "infrastructure", True, "worker_supervisor_failed", detail[:1000],
                         ))
-                except Exception as store_exc:
-                    self.store.mark_unavailable(store_exc)
-                    self._stop.set()
+                except Exception:
+                    # Even the durable write failed: keep the loop alive, mark
+                    # the store unavailable, and remember the hazard in memory.
+                    self._unreported_hazard = detail[:1000]
+                    try:
+                        self.store.mark_unavailable(exc)
+                    finally:
+                        self._stop.set()
             finally:
                 with self._active_lock:
                     if self._active is running:
@@ -611,10 +660,13 @@ class JobEngine:
         handle = running.handle
         try:
             error = self.supervisor.cleanup(handle)
-        except (OSError, SupervisorError) as exc:
-            error = f"execution cleanup failed: {exc}"
+        except Exception as exc:
+            error = f"execution cleanup failed: {exc}"[:1000]
         finally:
-            self.supervisor.release(handle)
+            try:
+                self.supervisor.release(handle)
+            except Exception:
+                pass
             self._close_handle_streams(handle)
         return error
 
@@ -635,16 +687,33 @@ class JobEngine:
                 pass
 
     def _cancel_active(self, request_id: str) -> _Running | None:
+        """Stop the in-memory worker after a *durable* terminal transition.
+
+        It writes nothing durable (Cancel and revocation go through
+        ``_cancel_active_locked`` while holding ``_active_lock``, after their
+        own durable commit); it is for callers that already moved the durable
+        state and only need the live worker stopped.
+        """
+
         with self._active_lock:
-            running = self._active
-            if running is None or running.request.request_id != request_id:
-                return None
+            return self._cancel_active_locked(request_id)
+
+    def _cancel_active_locked(self, request_id: str) -> _Running | None:
+        """Mark (and stop) the active worker; caller holds ``_active_lock``."""
+
+        running = self._active
+        if running is None or running.request.request_id != request_id:
+            return None
+        running.cancel_requested = True
+        # The writer authorizes under ``request_lock``; take it here so the
+        # cancel and the authorization cannot interleave.
+        with running.request_lock:
             running.cancel_requested = True
-            handle = running.handle
+        handle = running.handle
         if handle is not None:
             try:
                 self.supervisor.kill(handle)
-            except (OSError, SupervisorError):
+            except Exception:  # a failed kill is reported by cleanup/quarantine
                 pass
         return running
 
@@ -712,63 +781,79 @@ class JobEngine:
         if snapshot.state in {"queued", "running"} and snapshot.cancel_requested:
             self.store.finish_cancellation(request.request_id, attempt)
 
+    def _supervisor_daemon(self) -> tuple[str, str]:
+        """Return ``(error, daemon_identity)`` for the current execution engine."""
+
+        try:
+            daemon = self.supervisor.daemon_identity()
+        except Exception as exc:
+            return f"could not verify the Docker daemon identity: {exc}"[:1000], ""
+        if not daemon:
+            return "the execution engine reported no daemon identity", ""
+        return "", daemon
+
     def _cleanup_uncreated_worker(self, attempt: Attempt) -> str:
         """Clean a worker whose creation failed before any id was durable."""
 
         if self.supervisor.kind != EXECUTION_CONTAINER:
-            # The process supervisor spawns synchronously: a raised OSError did
-            # not leave a registered process behind.
+            # The process supervisor spawns synchronously: a raised exception
+            # did not leave a registered process behind (the generic spawn
+            # path registers only after Popen succeeds).
             return ""
+        daemon_error, daemon = self._supervisor_daemon()
         try:
-            return self.supervisor.cleanup_recovered(attempt)
-        except (OSError, SupervisorError) as exc:
-            return f"execution cleanup failed: {exc}"
+            return self.supervisor.cleanup_recovered(
+                attempt, state_dir=self.store.state_dir, daemon=daemon,
+            ) or daemon_error
+        except Exception as exc:
+            return f"execution cleanup failed: {exc}"[:1000]
 
-    def _accepted_build_error(self, snapshot: JobSnapshot) -> str:
-        """Refuse a queued job accepted under a different execution identity.
+    def _accepted_identity_error(self, snapshot: JobSnapshot) -> str:
+        """Refuse a queued job accepted by a different evaluator identity.
 
-        A job's durable provenance records the ``worker_build`` that accepted
-        it, and that provenance is what the signed result will carry.  A
-        container frontend must only execute jobs whose accepted build already
-        binds its own pinned image digest; otherwise the result would claim an
-        image that never ran (or drop the digest entirely).
+        The job's durable ``expected`` identities (site/device/target,
+        worker_build, task pack digest, evaluator epoch, API/evidence contract)
+        are what the signed result will claim, and ``provenance`` records the
+        accepting frontend's full identity.  Executing the job under any other
+        build - another process build, another image, or the same image at a
+        different epoch - would sign a result that names an evaluator which
+        never ran it.  Both planes must match completely.
         """
 
-        if self.supervisor.kind != EXECUTION_CONTAINER:
-            # The mirror case: a job accepted under a pinned container image
-            # must not be executed (and signed) by the local process plane.
-            accepted = str((snapshot.provenance or {}).get("worker_build") or "")
-            if "+img:" in accepted:
-                return (
-                    f"queued job was accepted with worker_build {accepted!r}, which is bound to a "
-                    "container image; refusing to execute it with the process supervisor"
-                )
-            return ""
-        digest = str(getattr(self.supervisor, "image_digest", "") or "")
-        accepted = str((snapshot.provenance or {}).get("worker_build") or "")
-        suffix = f"+img:{digest}"
-        if accepted.endswith(suffix):
-            return ""
+        accepted = snapshot.expected
+        if accepted is not None and accepted.to_dict() == self._expected.to_dict():
+            accepted_build = str((snapshot.provenance or {}).get("worker_build") or "")
+            if accepted_build == self.identity.worker_build:
+                return ""
+            return (
+                f"queued job provenance records worker_build {accepted_build!r} but this "
+                f"frontend is {self.identity.worker_build!r}; refusing to sign a result for "
+                "another build"
+            )
+        durable = accepted.to_dict() if accepted is not None else None
         return (
-            f"queued job was accepted with worker_build {accepted!r}, which does not bind "
-            f"this frontend's pinned image {suffix!r}; refusing to execute it under another "
-            "execution identity"
+            "queued job was accepted by a different evaluator identity "
+            f"({durable!r} != {self._expected.to_dict()!r}); refusing to execute it here"
         )
 
-    def _cleanup_handle_quietly(self, handle: WorkerHandle) -> str:
+    def _cleanup_handle_quietly(self, handle: WorkerHandle, *, close_streams: bool = True) -> str:
         """Kill, delete and verify a worker that must not receive a request."""
 
         try:
             error = self.supervisor.cleanup(handle)
-        except (OSError, SupervisorError) as exc:
-            error = f"execution cleanup failed: {exc}"
+        except Exception as exc:
+            error = f"execution cleanup failed: {exc}"[:1000]
         if not error:
             try:
                 error = self.supervisor.cleanup_residue(handle)
-            except (OSError, SupervisorError) as exc:
-                error = f"execution residue check failed: {exc}"
-        self.supervisor.release(handle)
-        self._close_handle_streams(handle)
+            except Exception as exc:
+                error = f"execution residue check failed: {exc}"[:1000]
+        try:
+            self.supervisor.release(handle)
+        except Exception:
+            pass
+        if close_streams:
+            self._close_handle_streams(handle)
         return error
 
     def _record_cleanup_hazard(self, running: _Running, error: str) -> None:
@@ -844,28 +929,46 @@ class JobEngine:
         if running.cancel_requested:
             self.store.finish_cancellation(request.request_id, attempt)
             return
-        build_error = self._accepted_build_error(self.store._job_by_id(request.request_id))
-        if build_error:
-            # The accepted job carries the submitting evaluator's worker_build.
-            # Running it under another image would sign a result that either
-            # lost the pinned digest or named an image that never ran.
+        identity_error = self._accepted_identity_error(self.store._job_by_id(request.request_id))
+        if identity_error:
+            # The accepted job carries the submitting evaluator's identity.
+            # Running it under any other build would sign a result that names
+            # an evaluator/image which never ran it.
             self.store.interrupt_attempt(
                 request.request_id, attempt,
-                JobFailure("infrastructure", False, "worker_build_mismatch", build_error[:1000]),
-                quarantine=True, recovery_error=build_error[:1000],
+                JobFailure("infrastructure", False, "worker_build_mismatch", identity_error[:1000]),
+                quarantine=True, recovery_error=identity_error[:1000],
             )
             return
+        if self.supervisor.kind == EXECUTION_CONTAINER:
+            # Bind the attempt to this Docker daemon before any container can
+            # exist, so a crash between create and the id attach is recoverable
+            # only against the same engine (and a daemon switch fails closed).
+            daemon_error, daemon = self._supervisor_daemon()
+            if daemon_error:
+                self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                    "infrastructure", True, "worker_daemon_identity", daemon_error[:1000],
+                ))
+                return
+            if not self.store.attach_daemon(request.request_id, attempt, daemon=daemon):
+                # No container exists yet; the durable fence moved on.
+                self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                    "infrastructure", True, "worker_attach_fenced",
+                    "the Docker daemon identity was not attached to the exact running attempt/fence",
+                ))
+                return
+            attempt = replace(attempt, container_daemon=daemon)
         spec = AttemptSpec(
             request=request, attempt=attempt, state_dir=self.store.state_dir,
             command=tuple(self.worker_command), env=dict(self.worker_env),
         )
         try:
             handle = self.supervisor.create(spec)
-        except (OSError, SupervisorError) as exc:
-            # ``docker create`` can have created the container even though the
-            # CLI failed or timed out, so the caller never learned the id.  The
-            # deterministic name/label is the only durable identity left: clean
-            # it and prove absence before offering Retry.
+        except Exception as exc:
+            # A create failure is ambiguous by construction (the daemon may have
+            # created the container while the CLI failed, timed out or raised),
+            # so any exception - not only the typed ones - must be followed by a
+            # durable-identity cleanup.
             residue_error = self._cleanup_uncreated_worker(attempt)
             if residue_error:
                 self._record_cleanup_hazard(
@@ -888,7 +991,12 @@ class JobEngine:
         if handle.kind == EXECUTION_PROCESS:
             process = handle.process
             if process is None:
-                self._cleanup_handle_quietly(handle)
+                cleanup_error = self._cleanup_handle_quietly(handle)
+                if cleanup_error:
+                    self._record_cleanup_hazard(
+                        running, f"process supervisor returned no worker process; {cleanup_error}"[:1000],
+                    )
+                    return
                 self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
                     "infrastructure", True, "worker_unavailable",
                     "process supervisor returned no worker process",
@@ -898,8 +1006,15 @@ class JobEngine:
             # supervisor-failure path, which cleans the unattached worker.
             token = process_start_token(process.pid, attempts=3)
             if token is None:
-                self._cleanup_handle_quietly(handle)
-                if self.store._job_by_id(request.request_id).cancel_requested or running.cancel_requested:
+                # The process exists but has no durable start-token identity:
+                # unless the whole group is proven dead, Retry must be refused.
+                cleanup_error = self._cleanup_handle_quietly(handle)
+                if cleanup_error:
+                    self._record_cleanup_hazard(
+                        running,
+                        f"could not bind worker PID start token; {cleanup_error}"[:1000],
+                    )
+                elif self.store._job_by_id(request.request_id).cancel_requested or running.cancel_requested:
                     self.store.finish_cancellation(request.request_id, attempt)
                 else:
                     self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
@@ -926,11 +1041,22 @@ class JobEngine:
                 else:
                     self.store.interrupt_attempt(request.request_id, attempt, failure)
                 return
+            daemon_error, daemon = self._supervisor_daemon()
+            if daemon_error:
+                cleanup_error = self._cleanup_handle_quietly(handle)
+                detail = daemon_error if not cleanup_error else f"{daemon_error}; {cleanup_error}"
+                if cleanup_error:
+                    self._record_cleanup_hazard(running, detail[:1000])
+                else:
+                    self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                        "infrastructure", True, "worker_daemon_identity", detail[:1000],
+                    ))
+                return
             attached_ok = self.store.attach_container(
                 request.request_id, attempt,
                 container_id=handle.container_id, container_name=handle.container_name,
                 image_ref=handle.image_ref, image_digest=handle.image_digest,
-                runtime=handle.runtime,
+                runtime=handle.runtime, daemon=daemon,
             )
         if not attached_ok:
             self._abort_worker_before_request(running, handle, JobFailure(
@@ -969,8 +1095,11 @@ class JobEngine:
         # cancellation re-read happens under the same lock the Cancel RPC takes,
         # so a cancellation that wins the lock can never be followed by starting
         # this worker.
-        start_error: OSError | SupervisorError | None = None
+        start_error: BaseException | None = None
         cancelled_before_start = False
+        # The Cancel RPC commits the durable cancellation while holding
+        # ``_active_lock``; reading the durable state and starting the worker
+        # under the same lock makes "cancelled before start" impossible to miss.
         with self._active_lock:
             before_start = self.store._job_by_id(request.request_id)
             cancelled_before_start = bool(before_start.cancel_requested or running.cancel_requested)
@@ -978,7 +1107,7 @@ class JobEngine:
                 try:
                     self.supervisor.start(handle)
                     stdin, stdout, stderr = self.supervisor.streams(handle)
-                except (OSError, SupervisorError) as exc:
+                except Exception as exc:
                     start_error = exc
         if cancelled_before_start:
             running.cancel_requested = True
@@ -1038,10 +1167,13 @@ class JobEngine:
 
         def write_request() -> None:
             try:
-                # A cancellation that landed after the worker started must not
-                # hand it a candidate to execute.
-                if self._stop.is_set() or running.stopping or running.cancel_requested:
-                    return
+                # The authorization and the cancellation are mutually exclusive:
+                # whichever takes ``request_lock`` first wins.  A cancel that
+                # wins means the worker never receives candidate bytes.
+                with running.request_lock:
+                    if self._stop.is_set() or running.stopping or running.cancel_requested:
+                        return
+                    running.request_authorized = True
                 assert stdin is not None
                 stdin.write(encode_request(request, attempt))
                 stdin.flush()
@@ -1070,23 +1202,34 @@ class JobEngine:
                 stdout_error.append(write_error[0])
             # Kill then delete then verify, on every path (timeout, cancel and
             # a normal exit): a worker process/container must be provably gone
-            # before any result may be committed.
-            try:
-                cleanup_error = self.supervisor.cleanup(handle)
-            except (OSError, SupervisorError) as exc:
-                cleanup_error = f"execution cleanup failed: {exc}"
-            if not cleanup_error:
-                try:
-                    cleanup_error = self.supervisor.cleanup_residue(handle)
-                except (OSError, SupervisorError) as exc:
-                    cleanup_error = f"execution residue check failed: {exc}"
-            self.supervisor.release(handle)
+            # before any result may be committed.  The private streams are
+            # closed only after the readers reached EOF, so a reader is never
+            # turned into a spurious protocol error by the cleanup itself.
+            cleanup_error = self._cleanup_handle_quietly(handle, close_streams=False)
             out_thread.join(timeout=2)
             err_thread.join(timeout=2)
+            reader_alive = out_thread.is_alive()
             self._close_handle_streams(handle)
 
         if cleanup_error:
             self._record_cleanup_hazard(running, cleanup_error)
+            return
+        if stdout_error:
+            error = stdout_error[0]
+            if isinstance(error, JobError):
+                self._handle_worker_job_error(running, error)
+            else:
+                self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                    "protocol", True, "worker_protocol_error", str(error)[:1000],
+                ))
+            return
+        if reader_alive:
+            # The stdout reader never reached EOF/decoder.finish(): frames may
+            # still be unvalidated, so no result may be committed.
+            self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                "protocol", True, "worker_protocol_error",
+                "worker output was not fully read and validated before the result decision",
+            ))
             return
         if supervisor_error:
             error = supervisor_error[0]
@@ -1103,42 +1246,48 @@ class JobEngine:
                 "infrastructure", True, "frontend_stopped", "frontend stopped while the attempt was active",
             ))
             return
-        if timed_out:
-            from tcenv.evaluate import EvalReport
+        if not results:
+            if timed_out:
+                from tcenv.evaluate import EvalReport
 
-            report = EvalReport(
-                task=request.task, dtype=request.dtype, size=request.size, mode=request.mode,
-                status="timeout", stage="timeout", message="candidate exceeded the durable execution deadline",
-                seed=request.seed_int or 0, protocol_version=self.execution_protocol_version,
-                target_id=request.target_id, backend=self.identity.backend,
-                backend_version=self.identity.backend_version,
-                elapsed_s=request.candidate_timeout_ms / 1000.0,
-            ).to_json()
-            if self.identity.measurement_kind == "simulated":
-                report["simulated"] = True
-            self._complete_worker_result(
-                running, report=report,
-                evidence={"candidate_sha256": request.candidate_sha256},
-            )
-            return
-        if stdout_error:
-            error = stdout_error[0]
-            if isinstance(error, JobError):
-                self._handle_worker_job_error(running, error)
-            else:
+                report = EvalReport(
+                    task=request.task, dtype=request.dtype, size=request.size, mode=request.mode,
+                    status="timeout", stage="timeout", message="candidate exceeded the durable execution deadline",
+                    seed=request.seed_int or 0, protocol_version=self.execution_protocol_version,
+                    target_id=request.target_id, backend=self.identity.backend,
+                    backend_version=self.identity.backend_version,
+                    elapsed_s=request.candidate_timeout_ms / 1000.0,
+                ).to_json()
+                if self.identity.measurement_kind == "simulated":
+                    report["simulated"] = True
+                self._complete_worker_result(
+                    running, report=report,
+                    evidence={"candidate_sha256": request.candidate_sha256},
+                )
+                return
+            if returncode != 0:
+                detail = stderr_tail[0].replace(str(self.store.state_dir), "<state>") if stderr_tail else ""
                 self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
-                    "protocol", True, "worker_protocol_error", str(error)[:1000],
+                    "infrastructure", True, "worker_failed", f"worker exited {returncode}: {detail}"[:1000],
                 ))
+                return
+            self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                "protocol", True, "worker_protocol_error", "worker did not emit exactly one result",
+            ))
             return
-        if returncode != 0:
+        # A complete result was decoded and ``decoder.finish()`` validated the
+        # stream (no malformed frame, no second result, reader reached EOF).
+        # A worker that then also exited non-zero is still a failure: the result
+        # must not be trusted over a crashed supervisor exit.
+        if len(results) != 1:
+            self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                "protocol", True, "worker_protocol_error", "worker emitted multiple results",
+            ))
+            return
+        if returncode not in (0, None):
             detail = stderr_tail[0].replace(str(self.store.state_dir), "<state>") if stderr_tail else ""
             self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
                 "infrastructure", True, "worker_failed", f"worker exited {returncode}: {detail}"[:1000],
-            ))
-            return
-        if len(results) != 1:
-            self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
-                "protocol", True, "worker_protocol_error", "worker did not emit exactly one result",
             ))
             return
         self._complete_worker_result(

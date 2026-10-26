@@ -385,6 +385,7 @@ class Attempt:
     container_image_ref: str = ""
     container_image_digest: str = ""
     container_runtime: str = ""
+    container_daemon: str = ""
 
 
 @dataclass(frozen=True)
@@ -428,6 +429,9 @@ class JobSnapshot:
     expires_at_ms: int | None
     quarantined: bool = False
     recovery_error: str = ""
+    # The evaluator identities the job was accepted under; a frontend must not
+    # execute/sign it under any other build or epoch.
+    expected: ExpectedIdentities | None = None
 
 
 @dataclass(frozen=True)
