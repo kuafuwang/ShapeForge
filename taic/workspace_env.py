@@ -714,8 +714,15 @@ class SshWorkspaceTransport:
                     pass
 
     def _checked(self, command: str, *, stdin_bytes: bytes | None = None, timeout_s: float | None = None, what: str = "remote command") -> bytes:
-        """Run ``command`` and raise unless it exits zero."""
+        """Run ``command`` and raise unless it exits zero.
+
+        Exit 4 is the fixed component walk's symlink refusal, so it becomes a ``path`` error:
+        a caller can tell "this path is not ours to touch" from "the host answered badly".
+        """
         code, out, err = self._run(command, stdin_bytes=stdin_bytes, timeout_s=timeout_s)
+        if code == 4:
+            detail = _bounded_text(err) or "a path component below the remote workspace root is a symlink"
+            raise WorkspaceError("path", f"{what}: {detail}", returncode=code)
         if code != 0:
             detail = _bounded_text(err) or _bounded_text(out) or "no diagnostic"
             raise WorkspaceError("protocol", f"{what} failed with exit {code}: {detail}", returncode=code)
@@ -740,14 +747,8 @@ class SshWorkspaceTransport:
             parts.append(text)
         return parts
 
-    def _walk(self, workdir: str, extra: Iterable[str] = (), *, final: str = "") -> str:
-        """A fixed shell walk from the configured root, refusing every symlinked component.
-
-        A leaf-only ``test ! -L`` is not enough: a symlinked session directory or a symlinked
-        subdirectory would still redirect a read.  The walk covers every component below the
-        operator-owned root; nothing an agent can create changes where a path resolves.
-        """
-        parts = self._segments(workdir, extra)
+    def _walk_parts(self, parts: list[str], *, final: str = "") -> str:
+        """A fixed shell walk over already-checked components, refusing every symlink."""
         pieces = [f"p={_quote(self.config.root)}", '[ ! -L "$p" ] || { echo taic: the remote workspace root is a symlink >&2; exit 4; }']
         for part in parts:
             pieces.append(f'p="$p"/{_quote(part)}')
@@ -755,6 +756,15 @@ class SshWorkspaceTransport:
         if final:
             pieces.append(final)
         return "; ".join(pieces)
+
+    def _walk(self, workdir: str, extra: Iterable[str] = (), *, final: str = "") -> str:
+        """A fixed shell walk from the configured root, refusing every symlinked component.
+
+        A leaf-only ``test ! -L`` is not enough: a symlinked session directory or a symlinked
+        subdirectory would still redirect a read.  The walk covers every component below the
+        operator-owned root; nothing an agent can create changes where a path resolves.
+        """
+        return self._walk_parts(self._segments(workdir, extra), final=final)
 
     def make_workdir(self, workdir: str) -> None:
         """Create the session workdir and its marker parent.
@@ -851,22 +861,38 @@ class SshWorkspaceTransport:
         code, _out, _err = self._run(f"test -e {_quote(workdir)}")
         return code == 0
 
+    def _remove_command(self, workdir: str) -> str:
+        """The fixed removal command: re-walk every parent, then unlink or delete the leaf.
+
+        ``rm -rf`` follows a symlinked *parent* component in the directory part of its path, so
+        a walk that ran before an agent replaced ``<root>/<run token>`` would not protect the
+        delete itself.  The parents are therefore walked again in the same command that
+        deletes.  A leaf that is itself a symlink is unlinked, never recursed into: the
+        directory it names survives, and nothing outside our root is touched.
+        """
+        parts = self._segments(workdir)
+        # The target is rebuilt from the checked components: a trailing slash on the caller's
+        # string would make `rm -rf dir/` follow a leaf symlink instead of unlinking it.
+        target = _quote("/".join([self.config.root.rstrip("/"), *parts]))
+        return f"{self._walk_parts(parts[:-1])}; if [ -L {target} ]; then rm -f -- {target}; else rm -rf -- {target}; fi"
+
     def remove(self, workdir: str, receipt: WorkspaceReceipt | None) -> bool:
         """Remove the session directory when it is one of ours.
 
         Returns whether it was removed.  A directory with no marker at all is left alone: it
-        is not ours to delete.  A broken or symlinked receipt cannot make cleanup refuse; the
-        marker still proves this is a session directory under our root, and ``rm -rf`` on a
-        symlink removes the link rather than following it.
+        is not ours to delete.  A broken or symlinked *receipt file* cannot make cleanup
+        refuse; the marker still proves this is a session directory under our root.
+        A symlinked parent component is a typed ``path`` refusal: the delete is re-walked, so
+        cleanup can never follow a link out of the workspace.
         """
         current: WorkspaceReceipt | None = None
         broken = False
         try:
             current = self.read_receipt(workdir)
         except WorkspaceError as exc:
-            # A symlinked or tampered receipt cannot make cleanup refuse.  The directory is
-            # still under our run token and carries a marker; `rm -rf` does not follow the
-            # link, so removing it is safe.
+            # A symlinked or tampered receipt cannot make cleanup refuse.  Only the receipt
+            # *file* is unreadable here; the re-walk in `_remove_command` still refuses to
+            # delete through a symlinked parent, so this never widens what cleanup may touch.
             if exc.kind not in ("path", "conflict"):
                 raise
             broken = True
@@ -880,7 +906,7 @@ class SshWorkspaceTransport:
                 raise WorkspaceError("conflict", f"the remote workspace {workdir} has no receipt; leaving it alone")
         if receipt is not None and current is not None and current.receipt_id != receipt.receipt_id:
             raise WorkspaceError("conflict", f"the remote workspace {workdir} belongs to another session receipt")
-        self._checked(f"rm -rf -- {_quote(workdir)}", what="remove the remote workspace")
+        self._checked(self._remove_command(workdir), what="remove the remote workspace")
         if self.exists(workdir):
             raise WorkspaceError("cleanup", f"the remote workspace {workdir} survived removal")
         return True
@@ -946,15 +972,17 @@ class SshWorkspaceTransport:
         """Atomically replace one file under ``workdir``.
 
         The temporary name comes from ``mktemp``, so a file or symlink an agent left at a
-        predictable temporary path cannot capture the write; a symlinked parent directory is
-        refused for the same reason.
+        predictable temporary path cannot capture the write.  The component walk runs *before*
+        ``mkdir -p``: a symlinked parent is refused before a directory is created on the other
+        side of the link, and once more after creation to close the obvious race.
         """
         clean = _safe_relative(relative)
         target = workdir + "/" + clean
         parent_parts = clean.split("/")[:-1]
         parent = target.rsplit("/", 1)[0]
         command = (
-            f"umask 077; mkdir -p -- {_quote(parent)}; {self._walk(workdir, parent_parts)}; "
+            f"umask 077; {self._walk(workdir, parent_parts)}; mkdir -p -- {_quote(parent)} || exit 1; "
+            f"{self._walk(workdir, parent_parts)}; "
             f"temp=$(mktemp -- {_quote(parent + '/.taic.XXXXXX')}) && "
             f"{{ cat > \"$temp\" && mv -f -- \"$temp\" {_quote(target)}; }} || "
             f"{{ [ -z \"$temp\" ] || rm -f -- \"$temp\"; exit 1; }}"

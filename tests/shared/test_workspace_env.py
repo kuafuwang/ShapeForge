@@ -672,3 +672,81 @@ def test_a_symlinked_run_token_is_refused_before_creating_anything(tmp_path):
     with pytest.raises(WorkspaceError):
         transport.make_workdir(str(Path(config.root) / token / "init"))
     assert list(victim.iterdir()) == []
+
+
+def test_removal_refuses_a_symlinked_run_token_and_keeps_the_outside_victim(tmp_path):
+    """Cleanup re-walks every parent first: `rm -rf` must never follow a symlinked run token."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    manifest = _manifest(work, ["TASK.md"])
+    receipt = _receipt(work, manifest)
+    token = run_token(tmp_path / "run")
+    victim = tmp_path / "outside" / "victim"
+    (victim / "init").mkdir(parents=True)
+    (victim / "init" / "keep.txt").write_text("precious", encoding="utf-8")
+    Path(config.root).mkdir(parents=True, exist_ok=True)
+    (Path(config.root) / token).symlink_to(victim)
+    workdir = str(Path(config.root) / token / "init")
+    with pytest.raises(WorkspaceError) as raised:
+        transport.remove(workdir, receipt)
+    assert raised.value.kind == "path"
+    assert (victim / "init" / "keep.txt").read_text(encoding="utf-8") == "precious"
+    assert (Path(config.root) / token).is_symlink()
+
+
+def test_a_write_creates_nothing_through_a_symlinked_label(tmp_path):
+    """A receipt write walks the parent before mkdir, so no directory appears outside the root."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    manifest = _manifest(work, ["TASK.md"])
+    receipt = _receipt(work, manifest)
+    token = run_token(tmp_path / "run")
+    victim = tmp_path / "outside" / "victim"
+    victim.mkdir(parents=True)
+    (Path(config.root) / token).mkdir(parents=True)
+    (Path(config.root) / token / "init").symlink_to(victim)
+    workdir = str(Path(config.root) / token / "init")
+    with pytest.raises(WorkspaceError) as raised:
+        transport.write_receipt(workdir, receipt)
+    assert raised.value.kind == "path"
+    assert list(victim.rglob("*")) == []
+
+
+def test_removal_unlinks_a_symlinked_label_leaf_and_keeps_the_victim(tmp_path):
+    """A leaf symlink is unlinked, never followed: the directory it names survives intact."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    manifest = _manifest(work, ["TASK.md"])
+    receipt = _receipt(work, manifest)
+    token = run_token(tmp_path / "run")
+    victim = tmp_path / "outside" / "victim"
+    victim.mkdir(parents=True)
+    (victim / "keep.txt").write_text("precious", encoding="utf-8")
+    (Path(config.root) / token).mkdir(parents=True)
+    (Path(config.root) / token / "init").symlink_to(victim)
+    workdir = str(Path(config.root) / token / "init")
+    assert transport.remove(workdir, receipt) is True
+    assert not (Path(config.root) / token / "init").is_symlink()
+    assert (victim / "keep.txt").read_text(encoding="utf-8") == "precious"
+
+
+def test_a_trailing_slash_cannot_turn_a_leaf_symlink_into_a_recursive_delete(tmp_path):
+    """`rm -rf dir/` follows a leaf symlink; the target is rebuilt from checked components."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    manifest = _manifest(work, ["TASK.md"])
+    receipt = _receipt(work, manifest)
+    token = run_token(tmp_path / "run")
+    victim = tmp_path / "outside" / "victim"
+    victim.mkdir(parents=True)
+    (victim / "keep.txt").write_text("precious", encoding="utf-8")
+    (Path(config.root) / token).mkdir(parents=True)
+    (Path(config.root) / token / "init").symlink_to(victim)
+    workdir = str(Path(config.root) / token / "init")
+    assert transport.remove(workdir + "/", receipt) is True
+    assert not (Path(config.root) / token / "init").is_symlink()
+    assert (victim / "keep.txt").read_text(encoding="utf-8") == "precious"
