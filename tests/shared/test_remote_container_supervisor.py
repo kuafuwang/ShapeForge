@@ -17,7 +17,7 @@ from tcenv.remote.container_supervisor import (
     normalize_image_digest,
 )
 from tcenv.remote.job_types import Attempt
-from tcenv.remote.supervisor import AttemptSpec, SupervisorError, WorkerHandle
+from tcenv.remote.supervisor import AttemptSpec, SupervisorError
 from tests.support.fake_docker import install_fake_docker
 from tests.support.job_engine import request
 

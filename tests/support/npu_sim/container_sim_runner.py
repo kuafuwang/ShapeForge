@@ -38,7 +38,6 @@ import socket
 import subprocess
 import sys
 import time
-import uuid
 from pathlib import Path
 
 from tcenv.remote.container_supervisor import DockerAttemptSupervisor
