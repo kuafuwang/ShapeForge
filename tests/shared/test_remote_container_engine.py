@@ -73,6 +73,27 @@ else:
 '''
 
 
+class _FrozenClock:
+    """A monotonic clock that does not advance until the test says so.
+
+    A normal-path test must not race the candidate deadline against container
+    setup: the budget stays at its production value (3s) and the clock is simply
+    held still until the worker result is committed.
+    """
+
+    def __init__(self, start: float = 1_000.0) -> None:
+        self._lock = threading.Lock()
+        self._value = float(start)
+
+    def now(self) -> float:
+        with self._lock:
+            return self._value
+
+    def advance(self, seconds: float) -> None:
+        with self._lock:
+            self._value += max(0.0, float(seconds))
+
+
 class _FakeClock:
     """A monotonic clock the test advances to expire the candidate deadline."""
 
@@ -121,7 +142,8 @@ def container_engine(
 
 def test_container_engine_commits_result_only_after_verified_cleanup(tmp_path):
     docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
-    service = container_engine(tmp_path / "state", docker)
+    clock = _FrozenClock()
+    service = container_engine(tmp_path / "state", docker, monotonic=clock.now)
     req = request("container-ok")
     original_attach = service.store.attach_container
     observed: dict[str, object] = {}
@@ -140,6 +162,13 @@ def test_container_engine_commits_result_only_after_verified_cleanup(tmp_path):
         submit(service, req)
         final = wait_state(service, req, {"completed"})
         assert final.result is not None
+        # The normal path must really be the ok path: a pre-start deadline
+        # timeout would still "complete", but with no create/attach and no
+        # digest-bearing report.
+        assert final.result.report_json()["status"] == "ok"
+        assert final.failure is None
+        assert observed["create_calls"], "no container was created"
+        assert observed["row_id"], "the durable attach never happened"
         assert final.result.receipt["attempt_id"] == final.current_attempt.attempt_id
         assert final.result.provenance["worker_build"].endswith(f"+img:{IMAGE_DIGEST}")
         assert final.current_attempt.execution_kind == "container"
@@ -1333,6 +1362,51 @@ def test_an_exit_observed_after_the_deadline_is_still_a_timeout(tmp_path):
         assert report["stage"] == "timeout"
         assert "deadline" in report["message"]
     finally:
+        service.close()
+
+
+def test_a_daemon_switch_during_start_never_writes_the_request(tmp_path, monkeypatch):
+    """The daemon re-check after the spawn aborts before the request writer."""
+
+    import tcenv.remote.container_supervisor as supervisor_module
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    order = tmp_path / "worker-order.jsonl"
+    service = container_engine(
+        tmp_path / "state", docker, worker_env={"FAKE_JOB_ORDER": str(order)},
+    )
+    daemon_a = service.supervisor.daemon_identity()
+    original_popen = supervisor_module.popen_group
+
+    def popen_then_switch(*args, **kwargs):
+        fake.set_control(daemon_id="fake-daemon-b")
+        return original_popen(*args, **kwargs)
+
+    monkeypatch.setattr(supervisor_module, "popen_group", popen_then_switch)
+    req = request("container-daemon-switch-during-start", candidate_timeout_ms=60_000)
+    try:
+        submit(service, req)
+        deadline = time.monotonic() + 20.0
+        snapshot = service.store._job_by_id(req.request_id)
+        while not snapshot.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = service.store._job_by_id(req.request_id)
+        # The cleanup was attempted against A while the endpoint answered B, so
+        # the residue hazard is kept (quarantine) instead of a fake absence.
+        assert snapshot.quarantined is True, snapshot.recovery_error
+        assert "another Docker daemon" in (snapshot.recovery_error or "")
+        assert snapshot.result is None
+        # The worker never received a request: it only appends after read_request.
+        assert not order.exists()
+        # Operator release after the endpoint is back on A proves the container
+        # was still there and is now gone.
+        fake.set_control(daemon_id=daemon_a)
+        released = service.release_quarantine(req.request_id)
+        assert released.state == "interrupted", released.recovery_error
+        assert fake.records() == []
+        assert not order.exists()
+    finally:
+        fake.set_control(daemon_id=daemon_a)
         service.close()
 
 

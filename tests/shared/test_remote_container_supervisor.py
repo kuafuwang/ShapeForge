@@ -351,6 +351,36 @@ def test_cleanup_recovered_is_fail_closed_when_delete_fails(tmp_path):
     assert supervisor.cleanup_recovered(attempt, state_dir=tmp_path / "state") == ""
 
 
+def test_start_rechecks_the_daemon_after_spawning_the_attach_client(tmp_path, monkeypatch):
+    """A switch inside ``popen_group`` must stop start() before any stream."""
+
+    import tcenv.remote.container_supervisor as supervisor_module
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    daemon_a = supervisor.daemon_identity()
+    handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "import time; time.sleep(2)")))
+    original_popen = supervisor_module.popen_group
+
+    def popen_then_switch(*args, **kwargs):
+        # The check before the spawn passed; the endpoint answers as B when the
+        # attach client is created.
+        fake.set_control(daemon_id="fake-daemon-b")
+        return original_popen(*args, **kwargs)
+
+    monkeypatch.setattr(supervisor_module, "popen_group", popen_then_switch)
+    try:
+        with pytest.raises(SupervisorError, match="another Docker daemon"):
+            supervisor.start(handle)
+        assert handle.started is False
+        assert any(len(call) > 1 and call[1] == "start" for call in fake.calls())
+        fake.set_control(daemon_id=daemon_a)
+        assert supervisor.cleanup(handle) == ""
+    finally:
+        fake.set_control(daemon_id=daemon_a)
+        supervisor.release(handle)
+
+
 def test_cleanup_recovered_rechecks_the_daemon_during_the_sequence(tmp_path):
     """A switch after the entry check must stop the kill/delete/absence proof."""
 

@@ -620,6 +620,14 @@ class DockerAttemptSupervisor:
         except OSError as exc:
             raise SupervisorError(f"could not attach to worker container: {_sanitize(str(exc))}") from exc
         handle.attach = attach
+        # The daemon can switch between the check above and the spawn (the CLI
+        # process is started by us, but the endpoint is external).  Re-bind
+        # before any stream is handed to the engine: an attach client talking to
+        # another Engine must never be followed by a request write.
+        changed = self._bind_daemon(handle)
+        if changed:
+            self._stop_attach(handle)
+            raise SupervisorError(changed)
         handle.started = True
 
     def _attach_argv(self, handle: WorkerHandle) -> list[str]:
