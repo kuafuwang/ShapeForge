@@ -16,6 +16,11 @@ JOB_STATES = frozenset({
 })
 TERMINAL_JOB_STATES = frozenset({"completed", "failed", "cancelled", "expired"})
 ATTEMPT_STATES = frozenset({"queued", "running", "interrupted", "completed", "failed", "cancelled"})
+# Which execution supervisor started one attempt.  A frontend never guesses:
+# recovery and release only clean the kind that durably created the attempt.
+EXECUTION_PROCESS = "process"
+EXECUTION_CONTAINER = "container"
+EXECUTION_KINDS = frozenset({EXECUTION_PROCESS, EXECUTION_CONTAINER})
 CANDIDATE_STATUSES = frozenset({
     "ok", "rejected", "compile_error", "abi_error", "unsafe", "incorrect",
     "runtime_error", "timeout", "crash", "unchanged", "duplicate",
@@ -374,6 +379,12 @@ class Attempt:
     worker_pgid: int | None = None
     worker_start_token: str = ""
     frontend_instance: str = ""
+    execution_kind: str = EXECUTION_PROCESS
+    container_id: str = ""
+    container_name: str = ""
+    container_image_ref: str = ""
+    container_image_digest: str = ""
+    container_runtime: str = ""
 
 
 @dataclass(frozen=True)

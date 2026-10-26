@@ -34,6 +34,9 @@ from .identity import SessionGrant
 from .job_types import (
     ATTEMPT_STATES,
     CANDIDATE_STATUSES,
+    EXECUTION_CONTAINER,
+    EXECUTION_KINDS,
+    EXECUTION_PROCESS,
     JOB_STATES,
     TERMINAL_JOB_STATES,
     Attempt,
@@ -50,7 +53,10 @@ from .job_types import (
     UntrustedSignature,
 )
 
-SCHEMA_VERSION = 1
+# v2 adds the execution supervisor identity of one attempt: the container that
+# ran it, its pinned image and runtime.  v1 databases are migrated in place.
+SCHEMA_VERSION = 2
+_CONTAINER_ID = re.compile(r"[0-9a-f]{12,64}")
 DEFAULT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 DB_WRITE_SLACK_BYTES = 64 * 1024
 _FEATURE = re.compile(r"[A-Za-z0-9._:-]{1,80}")
@@ -373,10 +379,31 @@ class JobStore:
         with self._lock:
             conn = self._conn
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, SCHEMA_VERSION):
+            if version not in (0, 1, SCHEMA_VERSION):
                 raise StateCorrupt(f"unsupported job-store schema version {version}")
             if version == 0 and conn.execute("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1").fetchone():
                 raise StateCorrupt("unversioned job-store tables are not accepted")
+            if version == 1:
+                # In-place, transactional migration: an existing deployment's
+                # durable queue keeps its jobs/attempts/results and gains the
+                # execution-supervisor identity columns.
+                try:
+                    conn.executescript("""
+                    BEGIN IMMEDIATE;
+                    ALTER TABLE attempts ADD COLUMN execution_kind TEXT NOT NULL DEFAULT 'process';
+                    ALTER TABLE attempts ADD COLUMN container_id TEXT NOT NULL DEFAULT '';
+                    ALTER TABLE attempts ADD COLUMN container_name TEXT NOT NULL DEFAULT '';
+                    ALTER TABLE attempts ADD COLUMN container_image_ref TEXT NOT NULL DEFAULT '';
+                    ALTER TABLE attempts ADD COLUMN container_image_digest TEXT NOT NULL DEFAULT '';
+                    ALTER TABLE attempts ADD COLUMN container_runtime TEXT NOT NULL DEFAULT '';
+                    PRAGMA user_version=2;
+                    COMMIT;
+                    """)
+                except sqlite3.DatabaseError:
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK")
+                    raise
+                version = SCHEMA_VERSION
             try:
                 conn.executescript(f"""
                 BEGIN IMMEDIATE;
@@ -423,6 +450,10 @@ class JobStore:
                     session_sequence INTEGER NOT NULL, capability_id TEXT NOT NULL DEFAULT '',
                     frontend_instance TEXT NOT NULL DEFAULT '',
                     worker_pid INTEGER, worker_pgid INTEGER, worker_start_token TEXT NOT NULL DEFAULT '',
+                    execution_kind TEXT NOT NULL DEFAULT 'process',
+                    container_id TEXT NOT NULL DEFAULT '', container_name TEXT NOT NULL DEFAULT '',
+                    container_image_ref TEXT NOT NULL DEFAULT '', container_image_digest TEXT NOT NULL DEFAULT '',
+                    container_runtime TEXT NOT NULL DEFAULT '',
                     failure_json TEXT, diagnostic_json TEXT,
                     UNIQUE(request_id, lease_fence), UNIQUE(request_id, retry_index)
                 );
@@ -510,6 +541,15 @@ class JobStore:
                     attempts = self._conn.execute("SELECT * FROM attempts WHERE request_id=?", (job["request_id"],)).fetchall()
                     if any(row["state"] not in ATTEMPT_STATES for row in attempts):
                         raise StateCorrupt("invalid durable attempt state")
+                    for row in attempts:
+                        if row["execution_kind"] not in EXECUTION_KINDS:
+                            raise StateCorrupt("invalid durable execution kind")
+                        if row["container_id"] and _CONTAINER_ID.fullmatch(row["container_id"]) is None:
+                            raise StateCorrupt("invalid durable container id")
+                        if row["execution_kind"] == EXECUTION_PROCESS and row["container_id"]:
+                            raise StateCorrupt("process attempt carries a container id")
+                        if row["container_image_digest"] and re.fullmatch(r"[0-9a-f]{64}", row["container_image_digest"]) is None:
+                            raise StateCorrupt("invalid durable container image digest")
                     by_id = {row["attempt_id"]: row for row in attempts}
                     current = by_id.get(job["current_attempt_id"])
                     if job["state"] == "accepted":
@@ -828,6 +868,9 @@ class JobStore:
             finished_at_ms=row["finished_at_ms"], failure=JobFailure.from_dict(_loads(row["failure_json"]) if row["failure_json"] else None),
             session_sequence=row["session_sequence"], worker_pid=row["worker_pid"], worker_pgid=row["worker_pgid"],
             worker_start_token=row["worker_start_token"], frontend_instance=row["frontend_instance"],
+            execution_kind=row["execution_kind"], container_id=row["container_id"],
+            container_name=row["container_name"], container_image_ref=row["container_image_ref"],
+            container_image_digest=row["container_image_digest"], container_runtime=row["container_runtime"],
         )
 
     @staticmethod
@@ -1255,7 +1298,11 @@ class JobStore:
         self._add_event(conn, request_id, "snapshot", {}, attempt.attempt_id if attempt else None, attempt.lease_fence if attempt else 0, now)
 
     # -- scheduling and worker fencing -------------------------------------
-    def claim_next(self, *, selfcheck_age_ms: int = 60_000) -> tuple[ExternalEvaluationRequest, Attempt] | None:
+    def claim_next(
+        self, *, selfcheck_age_ms: int = 60_000, execution_kind: str = EXECUTION_PROCESS,
+    ) -> tuple[ExternalEvaluationRequest, Attempt] | None:
+        if execution_kind not in EXECUTION_KINDS:
+            raise ValueError("unknown execution kind")
         now = _now_ms(self._clock)
         with self._write() as conn:
             if conn.execute("SELECT 1 FROM jobs WHERE state='running' LIMIT 1").fetchone():
@@ -1294,9 +1341,12 @@ class JobStore:
             _priority, _queued, _rid, row, request = min(candidates, key=lambda value: value[:3])
             attempt_id = row["a_attempt_id"]
             updated = conn.execute("""
-                UPDATE attempts SET state='running',started_at_ms=?,deadline_at_ms=?,frontend_instance=?
+                UPDATE attempts SET state='running',started_at_ms=?,deadline_at_ms=?,frontend_instance=?,execution_kind=?
                 WHERE attempt_id=? AND state='queued'
-            """, (now, now + request.candidate_timeout_ms, self.frontend_instance, attempt_id))
+            """, (
+                now, now + request.candidate_timeout_ms, self.frontend_instance,
+                execution_kind, attempt_id,
+            ))
             if updated.rowcount != 1:
                 raise JobError("aborted", "queue attempt changed while claiming the device")
             conn.execute("UPDATE jobs SET state='running',updated_at_ms=? WHERE request_id=?", (now, request.request_id))
@@ -1322,6 +1372,75 @@ class JobStore:
                 self._diagnostic(conn, request_id, attempt.attempt_id, "stale_worker_attach", {"pid": pid})
                 return False
             return True
+
+    def attach_container(
+        self, request_id: str, attempt: Attempt, *,
+        container_id: str, container_name: str, image_ref: str,
+        image_digest: str, runtime: str,
+    ) -> bool:
+        """Persist the created container before it is allowed to start.
+
+        The durable append happens after ``docker create`` and before
+        ``docker start`` so a frontend crash can always reconcile the exact
+        container (and, when the create output never reached the store, its
+        deterministic name) instead of re-running the attempt.
+        """
+
+        if not isinstance(container_id, str) or _CONTAINER_ID.fullmatch(container_id) is None:
+            raise StateCorrupt("container id is invalid")
+        if not isinstance(container_name, str) or not container_name:
+            raise StateCorrupt("container name is invalid")
+        if not isinstance(image_digest, str) or re.fullmatch(r"[0-9a-f]{64}", image_digest) is None:
+            raise StateCorrupt("container image digest is invalid")
+        with self._write() as conn:
+            row = conn.execute("SELECT * FROM attempts WHERE attempt_id=?", (attempt.attempt_id,)).fetchone()
+            job = conn.execute("SELECT * FROM jobs WHERE request_id=?", (request_id,)).fetchone()
+            if (
+                row is None or job is None or job["state"] != "running"
+                or job["current_attempt_id"] != attempt.attempt_id
+                or row["lease_fence"] != attempt.lease_fence or row["state"] != "running"
+                or row["execution_kind"] != EXECUTION_CONTAINER
+            ):
+                self._diagnostic(conn, request_id, attempt.attempt_id, "stale_container_attach", {
+                    "container_id": container_id,
+                })
+                return False
+            updated = conn.execute("""
+                UPDATE attempts SET container_id=?,container_name=?,container_image_ref=?,
+                  container_image_digest=?,container_runtime=?
+                WHERE attempt_id=? AND lease_fence=? AND state='running' AND execution_kind=?
+            """, (
+                container_id, container_name, image_ref, image_digest, runtime,
+                attempt.attempt_id, attempt.lease_fence, EXECUTION_CONTAINER,
+            ))
+            if updated.rowcount != 1:
+                self._diagnostic(conn, request_id, attempt.attempt_id, "stale_container_attach", {
+                    "container_id": container_id,
+                })
+                return False
+            return True
+
+    def record_cleanup_hazard(self, request_id: str, attempt: Attempt, error: str) -> JobSnapshot:
+        """Fail closed after an unverified kill/delete.
+
+        The job keeps its terminal or running state but is marked quarantined
+        with the cleanup error: Retry refuses a quarantined job and an operator
+        must re-run recovery instead of assuming the old worker is gone.
+        """
+
+        now = _now_ms(self._clock)
+        with self._write() as conn:
+            job = conn.execute("SELECT * FROM jobs WHERE request_id=?", (request_id,)).fetchone()
+            if job is None:
+                raise StateCorrupt("cleanup hazard references an unknown job")
+            conn.execute(
+                "UPDATE jobs SET quarantined=1,recovery_error=?,updated_at_ms=? WHERE request_id=?",
+                (str(error)[:1000], now, request_id),
+            )
+            self._diagnostic(conn, request_id, attempt.attempt_id, "cleanup_incomplete", {
+                "error": str(error)[:500],
+            })
+            return self._snapshot(conn, conn.execute("SELECT * FROM jobs WHERE request_id=?", (request_id,)).fetchone())
 
     def active_attempt(self, request_id: str) -> Attempt | None:
         with self._lock:
