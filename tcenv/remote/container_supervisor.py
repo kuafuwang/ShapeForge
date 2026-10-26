@@ -527,6 +527,21 @@ class DockerAttemptSupervisor:
             runtime=self.config.runtime or self.config.runtime_profile,
             container_daemon=daemon,
         )
+        # The create CLI can execute on another daemon while the endpoint returns
+        # to the persisted one (A->B->A).  Re-bind and prove the created id is
+        # visible there; otherwise an "absent" cleanup would look clean while the
+        # container still exists elsewhere.
+        error = self._guard_daemon(daemon, "could not verify the created worker container")
+        if error:
+            raise DaemonChanged(
+                f"{error}; container {container_id} may exist on another daemon"
+            )
+        document, inspect_error = self._inspect(container_id)
+        if inspect_error or document is None:
+            raise DaemonChanged(
+                f"created container {container_id} is not visible on the persisted "
+                f"daemon (it may exist on another daemon): {inspect_error or 'absent'}"
+            )
         return handle
 
     def _bind_daemon(self, handle: WorkerHandle) -> str:

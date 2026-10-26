@@ -1660,6 +1660,58 @@ def test_a_failing_second_reader_start_never_closes_the_first_reader(tmp_path, m
         service.close()
 
 
+def test_create_on_daemon_b_while_observing_a_is_quarantined(tmp_path):
+    """A->B->A: the created container must not look like a clean absence on A."""
+
+    from dataclasses import replace as _replace
+    import subprocess
+
+    root = tmp_path
+    docker_a, fake_a = install_fake_docker(root / "docker-a", image_digest=IMAGE_DIGEST)
+    docker_b, fake_b = install_fake_docker(root / "docker-b", image_digest=IMAGE_DIGEST)
+    service = container_engine(root / "state", docker_a, monotonic=_FrozenClock().now)
+    supervisor = service.supervisor
+    original_cli = supervisor._cli
+
+    def cli(args, *, timeout=None):
+        if args and args[0] == "create":
+            supervisor.config = _replace(supervisor.config, docker=str(docker_b))
+            try:
+                return original_cli(args, timeout=timeout)
+            finally:
+                supervisor.config = _replace(supervisor.config, docker=str(docker_a))
+        return original_cli(args, timeout=timeout)
+
+    supervisor._cli = cli
+    req = request("create-aba", source=b"OK", candidate_timeout_ms=60_000)
+    try:
+        submit(service, req)
+        deadline = time.monotonic() + 20.0
+        snapshot = service.store._job_by_id(req.request_id)
+        while not snapshot.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = service.store._job_by_id(req.request_id)
+        assert snapshot.quarantined is True, snapshot.recovery_error
+        assert "another daemon" in (snapshot.recovery_error or "")
+        assert snapshot.result is None
+        assert len(fake_b.records()) == 1, "the B container must still be recorded"
+        cap = capabilities(service)
+        with pytest.raises(JobError, match="quarantined"):
+            service.retry(
+                request_id=req.request_id, request_digest=req.request_digest,
+                expected=service.expected_identities,
+                interrupted_attempt_id=snapshot.current_attempt.attempt_id,
+                capability_id=cap.capability_id, grant_token=TOKEN,
+            )
+    finally:
+        service.close()
+        for record in fake_b.records():
+            subprocess.run(
+                [str(docker_b), "rm", "--force", record["Id"]],
+                capture_output=True, check=False,
+            )
+
+
 def test_a_daemon_switch_during_start_never_writes_the_request(tmp_path, monkeypatch):
     """The daemon re-check after the spawn aborts before the request writer."""
 

@@ -253,6 +253,12 @@ class _StartGate:
             raise StartRefused("stopped")
         if self._running.cancel_requested:
             raise StartRefused("cancelled")
+        # The Cancel timeout branch commits durably before it can set the
+        # in-memory flag; re-read the durable state so a commit that landed
+        # between those two steps still refuses the start.
+        durable = self._engine.store._job_by_id(self._running.request.request_id)
+        if durable.cancel_requested:
+            raise StartRefused("cancelled")
         if self._engine._overdue(self._running):
             raise StartRefused("deadline")
 
@@ -1794,22 +1800,6 @@ class JobEngine:
 
     def __enter__(self) -> "JobEngine":
         return self
-
-    def check(self) -> None:
-        """Re-check the state immediately before the real spawn.
-
-        Called by the supervisor after any pre-spawn gate and before the actual
-        Popen; the engine lock is still held, but a Cancel timeout branch may
-        have set ``cancel_requested`` without it, so this read is the last
-        chance to refuse a start that would follow a durable cancellation.
-        """
-
-        if self._engine._stop.is_set() or self._running.stopping:
-            raise StartRefused("stopped")
-        if self._running.cancel_requested:
-            raise StartRefused("cancelled")
-        if self._engine._overdue(self._running):
-            raise StartRefused("deadline")
 
     def __exit__(self, *_exc: object) -> None:
         self.close()
