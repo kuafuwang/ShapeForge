@@ -38,13 +38,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO, Mapping
 
-from tcenv.children import forget, kill_group, popen_group, scrubbed_env
+from tcenv.children import _GROUP_LEADERS, forget, kill_group, register, scrubbed_env
 
 from . import hostprocs
 from .job_types import Attempt
 from .supervisor import (
     EXECUTION_CONTAINER,
     AttemptSpec,
+    DaemonChanged,
     StartRefused,
     SupervisorError,
     WorkerHandle,
@@ -296,6 +297,9 @@ class DockerAttemptSupervisor:
         if not isinstance(config, ContainerSupervisorConfig):
             raise SupervisorError("container supervisor requires a validated configuration")
         self.config = config
+        # Test seam: called before the gate's final check, so a cancellation or
+        # revocation can be interleaved deterministically.
+        self._before_spawn = None
 
     # -- configuration surface used by composition roots --------------------
     @property
@@ -634,21 +638,13 @@ class DockerAttemptSupervisor:
         try:
             if gate is not None:
                 with gate:  # type: ignore[attr-defined]
-                    attach = popen_group(
-                        self._attach_argv(handle),
-                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                        env=self._cli_env(),
-                    )
+                    attach = self._spawn_attach(handle, gate)
             else:
                 if authorize is not None:
                     reason = authorize()
                     if reason:
                         raise StartRefused(reason)
-                attach = popen_group(
-                    self._attach_argv(handle),
-                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    env=self._cli_env(),
-                )
+                attach = self._spawn_attach(handle, None)
         except StartRefused:
             raise
         except BaseException as exc:
@@ -673,6 +669,35 @@ class DockerAttemptSupervisor:
                 changed = f"{changed}; {leftover}"[:1000]
             raise SupervisorError(changed)
         handle.started = True
+
+    def _spawn_attach(self, handle: WorkerHandle, gate: object | None) -> subprocess.Popen:
+        """Spawn the attach client with a final cancel/stop check before Popen.
+
+        ``children.popen_group`` is entered before its fork, so a cancellation
+        that commits while a caller gates that helper would still be followed by
+        an exec.  This spawn keeps the same process-group registration
+        (``_GROUP_LEADERS`` + ``register``) but runs the engine gate's last check
+        after any test/caller gate and immediately before the real Popen.
+        """
+
+        if self._before_spawn is not None:
+            self._before_spawn()
+        if gate is not None:
+            gate.check()  # type: ignore[attr-defined]
+        argv = self._attach_argv(handle)
+        try:
+            process = subprocess.Popen(
+                argv,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env=scrubbed_env(self._cli_env()), start_new_session=True,
+            )
+        except OSError as exc:
+            raise SupervisorError(f"could not attach to worker container: {_sanitize(str(exc))}") from exc
+        # Same bookkeeping as ``children.popen_group``: the group leader is
+        # registered so kill_group/forget keep their process-group semantics.
+        _GROUP_LEADERS.add(process.pid)
+        register(process)
+        return process
 
     def _attach_argv(self, handle: WorkerHandle) -> list[str]:
         argv = [self.config.docker]

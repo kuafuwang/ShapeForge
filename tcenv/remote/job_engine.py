@@ -36,6 +36,7 @@ from .job_types import (
 from .protocol import FrameDecoder
 from .supervisor import (
     AttemptSpec,
+    DaemonChanged,
     AttemptSupervisor,
     ProcessAttemptSupervisor,
     StartRefused,
@@ -231,18 +232,29 @@ class _StartGate:
 
     def __enter__(self) -> "_StartGate":
         self._engine._active_lock.acquire()
-        reason = ""
-        if self._engine._stop.is_set() or self._running.stopping:
-            reason = "stopped"
-        elif self._running.cancel_requested:
-            reason = "cancelled"
-        elif self._engine._overdue(self._running):
-            reason = "deadline"
-        if reason:
+        try:
+            self.check()
+        except BaseException:
             self._engine._active_lock.release()
-            raise StartRefused(reason)
+            raise
         self._entered = True
         return self
+
+    def check(self) -> None:
+        """Re-check the state immediately before the real spawn.
+
+        Called by the supervisor after any pre-spawn gate and before the actual
+        Popen; the engine lock is still held, but a Cancel timeout branch may
+        have set ``cancel_requested`` without it, so this read is the last
+        chance to refuse a start that would follow a durable cancellation.
+        """
+
+        if self._engine._stop.is_set() or self._running.stopping:
+            raise StartRefused("stopped")
+        if self._running.cancel_requested:
+            raise StartRefused("cancelled")
+        if self._engine._overdue(self._running):
+            raise StartRefused("deadline")
 
     def __exit__(self, *_exc: object) -> None:
         if self._entered:
@@ -1196,6 +1208,14 @@ class JobEngine:
         )
         try:
             handle = self.supervisor.create(spec)
+        except DaemonChanged as exc:
+            # The container may exist on another daemon; an absence on the
+            # persisted one proves nothing, so this must not become a retryable
+            # interrupted attempt.
+            self._record_cleanup_hazard(
+                running, f"could not start worker: {exc}"[:1000],
+            )
+            return
         except Exception as exc:
             # A create failure is ambiguous by construction (the daemon may have
             # created the container while the CLI failed, timed out or raised),
@@ -1774,6 +1794,22 @@ class JobEngine:
 
     def __enter__(self) -> "JobEngine":
         return self
+
+    def check(self) -> None:
+        """Re-check the state immediately before the real spawn.
+
+        Called by the supervisor after any pre-spawn gate and before the actual
+        Popen; the engine lock is still held, but a Cancel timeout branch may
+        have set ``cancel_requested`` without it, so this read is the last
+        chance to refuse a start that would follow a durable cancellation.
+        """
+
+        if self._engine._stop.is_set() or self._running.stopping:
+            raise StartRefused("stopped")
+        if self._running.cancel_requested:
+            raise StartRefused("cancelled")
+        if self._engine._overdue(self._running):
+            raise StartRefused("deadline")
 
     def __exit__(self, *_exc: object) -> None:
         self.close()

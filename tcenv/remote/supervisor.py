@@ -38,7 +38,7 @@ from .job_types import (
 __all__ = [
     "EXECUTION_CONTAINER", "EXECUTION_KINDS", "EXECUTION_PROCESS",
     "AttemptSpec", "AttemptSupervisor", "ProcessAttemptSupervisor",
-    "StartRefused", "SupervisorError", "WorkerHandle", "WorkerStatus",
+    "DaemonChanged", "StartRefused", "SupervisorError", "WorkerHandle", "WorkerStatus",
 ]
 
 _CLEANUP_POLL_S = 0.02
@@ -47,6 +47,10 @@ _CLEANUP_DEADLINE_S = 3.0
 
 class SupervisorError(RuntimeError):
     """A bounded, sanitized failure of the execution supervisor itself."""
+
+
+class DaemonChanged(SupervisorError):
+    """A container operation observed a different Docker daemon than persisted."""
 
 
 class StartRefused(SupervisorError):

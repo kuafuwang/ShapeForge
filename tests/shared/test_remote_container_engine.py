@@ -1514,14 +1514,11 @@ def test_a_revocation_cannot_commit_between_authorization_and_start(tmp_path, mo
     )
     entered = threading.Event()
     release = threading.Event()
-    original_popen = supervisor_module.popen_group
-
-    def gated_popen(*args, **kwargs):
+    def gated_spawn():
         entered.set()
         assert release.wait(10.0), "the test never released the spawn"
-        return original_popen(*args, **kwargs)
 
-    monkeypatch.setattr(supervisor_module, "popen_group", gated_popen)
+    service.supervisor._before_spawn = gated_spawn
     req = request("revoke-interleave", source=b"OK", candidate_timeout_ms=60_000)
     try:
         submit(service, req)
@@ -1563,14 +1560,11 @@ def test_cancel_is_bounded_while_the_spawn_is_gated(tmp_path, monkeypatch):
     service.cancel_teardown_s = 0.5
     entered = threading.Event()
     release = threading.Event()
-    original_popen = supervisor_module.popen_group
-
-    def gated_popen(*args, **kwargs):
+    def gated_spawn():
         entered.set()
         assert release.wait(10.0), "the test never released the spawn"
-        return original_popen(*args, **kwargs)
 
-    monkeypatch.setattr(supervisor_module, "popen_group", gated_popen)
+    service.supervisor._before_spawn = gated_spawn
     req = request("cancel-gated-spawn", source=b"OK", candidate_timeout_ms=60_000)
     try:
         submit(service, req)
@@ -1587,6 +1581,9 @@ def test_cancel_is_bounded_while_the_spawn_is_gated(tmp_path, monkeypatch):
         final = wait_state(service, req, {"cancelled"}, timeout=20.0)
         assert final.state == "cancelled"
         assert final.result is None
+        # The durable cancellation committed before the gate opened: no start
+        # may follow it.
+        assert not any(len(call) > 1 and call[1] == "start" for call in _fake.calls())
     finally:
         release.set()
         service.close()
@@ -1601,14 +1598,11 @@ def test_close_is_bounded_while_the_spawn_is_gated(tmp_path, monkeypatch):
     service = container_engine(tmp_path / "state", docker, monotonic=_FrozenClock().now)
     entered = threading.Event()
     release = threading.Event()
-    original_popen = supervisor_module.popen_group
-
-    def gated_popen(*args, **kwargs):
+    def gated_spawn():
         entered.set()
         assert release.wait(10.0), "the test never released the spawn"
-        return original_popen(*args, **kwargs)
 
-    monkeypatch.setattr(supervisor_module, "popen_group", gated_popen)
+    service.supervisor._before_spawn = gated_spawn
     req = request("close-gated-spawn", source=b"OK", candidate_timeout_ms=60_000)
     try:
         submit(service, req)
@@ -1677,13 +1671,13 @@ def test_a_daemon_switch_during_start_never_writes_the_request(tmp_path, monkeyp
         tmp_path / "state", docker, worker_env={"FAKE_JOB_ORDER": str(order)},
     )
     daemon_a = service.supervisor.daemon_identity()
-    original_popen = supervisor_module.popen_group
+    original_spawn = service.supervisor._spawn_attach
 
-    def popen_then_switch(*args, **kwargs):
+    def spawn_then_switch(handle, gate):
         fake.set_control(daemon_id="fake-daemon-b")
-        return original_popen(*args, **kwargs)
+        return original_spawn(handle, gate)
 
-    monkeypatch.setattr(supervisor_module, "popen_group", popen_then_switch)
+    monkeypatch.setattr(service.supervisor, "_spawn_attach", spawn_then_switch)
     req = request("container-daemon-switch-during-start", candidate_timeout_ms=60_000)
     try:
         submit(service, req)

@@ -333,13 +333,9 @@ def _host_pid_visibility(container_id: str) -> dict:
 def _attach_visible(container_id: str) -> list[str]:
     """The frontend's ``docker start --attach`` client for this container."""
 
-    completed = _run(["ps", "-eo", "pid,args"], timeout=30.0)
-    if completed.returncode != 0:
-        return [f"<ps unavailable: {completed.stderr.strip()}>"]
-    return [
-        line.strip() for line in completed.stdout.splitlines()
-        if container_id in line and "docker start --attach" in line and "ps -eo" not in line
-    ]
+    # ``_ps_tokens`` raises on a refused/failed ps: an error string must never be
+    # read as "the attach client is visible".
+    return [line for line in _ps_tokens(container_id) if "docker start --attach" in line]
 
 
 def _labeled_containers() -> list[str]:

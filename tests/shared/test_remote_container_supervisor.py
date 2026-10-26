@@ -360,15 +360,15 @@ def test_start_rechecks_the_daemon_after_spawning_the_attach_client(tmp_path, mo
     supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
     daemon_a = supervisor.daemon_identity()
     handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "import time; time.sleep(2)")))
-    original_popen = supervisor_module.popen_group
+    original_spawn = supervisor._spawn_attach
 
-    def popen_then_switch(*args, **kwargs):
+    def spawn_then_switch(handle, gate):
         # The check before the spawn passed; the endpoint answers as B when the
         # attach client is created.
         fake.set_control(daemon_id="fake-daemon-b")
-        return original_popen(*args, **kwargs)
+        return original_spawn(handle, gate)
 
-    monkeypatch.setattr(supervisor_module, "popen_group", popen_then_switch)
+    monkeypatch.setattr(supervisor, "_spawn_attach", spawn_then_switch)
     try:
         with pytest.raises(SupervisorError, match="another Docker daemon"):
             supervisor.start(handle)
