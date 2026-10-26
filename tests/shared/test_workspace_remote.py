@@ -391,6 +391,36 @@ def test_an_unavailable_host_is_a_typed_failure_and_does_not_claim_a_bill(tmp_pa
     assert not Path(brief.work_dir, submission_name("conv2d", "fp16", "paper", "init")).exists()
 
 
+def test_an_unavailable_workspace_is_a_no_kernel_handoff_not_a_stopped_ledger(tmp_path):
+    """An unbilled infrastructure failure is a zero-cost no-kernel handoff, not an unknown bill.
+
+    ``workspace_unavailable`` returns ``cost_usd=None, cost_incomplete=False``: nothing was
+    billed, so the ledger knows the cost exactly.  The run must hand the next session to the
+    other committee and end as ``agent_failure``, not stop as ``cost_incomplete``.
+    """
+    from tests.support.orchestrator import code, llm_script, make_orch, run
+
+    config = _config(tmp_path / "outer")
+    _write_settings(config, harness="local")
+    orch = make_orch(tmp_path / "outer", llm_script(code("speed=1.2")), [], max_rounds=0, workspace_config=config)
+    orch.agent_runner = None
+    state: dict = {}
+    orch.session_runner = _runner(
+        tmp_path / "outer", FakeHost(state, fail_stage=True), config=config, invoke=_fake_invoke(state),
+    )
+    result = run(orch)
+    assert not str(result.stop_reason or "").startswith("cost_incomplete")
+    assert result.stop_reason == "agent_failure"
+    assert result.spent_usd == pytest.approx(0.0)
+    events = [json.loads(line) for line in (orch.run_dir / "transcript.jsonl").read_text().splitlines()]
+    agent_events = [event for event in events if event.get("event") == "agent"]
+    assert [event["outcome"] for event in agent_events] == ["agent_failed", "agent_failed"]
+    assert [(event["cost_usd"], event["cost_incomplete"]) for event in agent_events] == [(None, False), (None, False)]
+    assert [event["runtime"]["failure_class"] for event in agent_events] == ["workspace_unavailable"] * 2
+    assert [event["identity"]["cleaned"] for event in agent_events] == [True, True]
+    assert not any(event.get("event") == "provider_retry" for event in events)
+
+
 def test_an_unbound_epic_is_cost_incomplete(tmp_path):
     """A session whose bill cannot be tied to its epic stops the ledger, not the candidate."""
     brief = _brief(tmp_path)

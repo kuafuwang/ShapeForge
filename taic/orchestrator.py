@@ -2214,8 +2214,9 @@ class Orchestrator:
 
         开跑前先过预算闸门：余额不足 $0.05、或余额低于最近一场会话的成本（session cost floor）时抛 ``BudgetExhausted``，
         不再开新会话。本场会话的模型请求发给本轮委员会的唯一成员，输出 token 上限由 ``relay_budget_usd`` 折算。
-        自检超时计进 ``hangs``，达 ``max_hangs`` 时抛 ``StopRun`` 熔断；会话结束却没有 token 计数时也抛 ``StopRun``，
-        因为账本无法继续。
+        自检超时计进 ``hangs``，达 ``max_hangs`` 时抛 ``StopRun`` 熔断；会话结束后花费仍不完整（``cost_incomplete``）时也抛 ``StopRun``，
+        因为账本无法继续。``cost_usd=None`` 但 ``cost_incomplete=False`` 是「一分钱都没花」的环境失败，按零花费照常记一笔，
+        走普通的无核交接，不在这里停下。
 
         @param tag 会话标签（同时是 ``agent_work/`` 下的目录名，``/`` 会换成 ``_``）。
         @param seedless 是否为初始生成（不把当前种子交给会话）。
@@ -2223,7 +2224,7 @@ class Orchestrator:
         @param attempt 第几次尝试，0 是首次会话。
         @return ``agent_failed`` / ``provider_failed`` / ``agent_no_submission`` / ``unchanged`` / ``evaluated``。
         @raises BudgetExhausted 余额不足以再开一场会话时。
-        @raises StopRun 自检超时把 hangs 推到上限、或会话没有 token 计数时。
+        @raises StopRun 自检超时把 hangs 推到上限、或会话花费不完整（``cost_incomplete``）时。
         @raises RunStartError 脚本运行时没有注入 ``agent_runner``（不得起 hmz）时。
         """
         from .agent_feedback import parse_feedback
@@ -2336,16 +2337,21 @@ class Orchestrator:
                 exit_kind = "agent_exception"
                 return "agent_failed"
             parsed = self._parsed_feedback(work, result, started)
-            if result.cost_usd is None:
+            if result.cost_incomplete:
+                # Only an unknown bill stops the ledger. An optional runner can return an
+                # unbilled infrastructure failure as `cost_usd=None, cost_incomplete=False`
+                # (workspace or credential unavailable): nothing was billed, so the cost is
+                # known to be zero and the session is an ordinary no-kernel failure.
                 self.llm.transcript.log(self._agent_event(tag, member, result, "cost_incomplete", parsed, candidate_label=candidate_label, attempt=attempt))
                 outcome = None
                 exit_kind = "cost_incomplete"
                 raise StopRun("cost_incomplete: the session finished without a token count, so the ledger cannot continue")
-            self.ledger.charge(result.cost_usd, tag, tokens=result.spent, basis=prices.as_dict())
-            self._session_costs.append(float(result.cost_usd))
-            if result.cost_usd > self.search.relay_budget_usd + 1e-6:
+            billed = 0.0 if result.cost_usd is None else float(result.cost_usd)
+            self.ledger.charge(billed, tag, tokens=result.spent, basis=prices.as_dict())
+            self._session_costs.append(billed)
+            if billed > self.search.relay_budget_usd + 1e-6:
                 self.log(
-                    f"  [{tag}] session spent ${result.cost_usd:.2f}, above the ${self.search.relay_budget_usd:.2f} output-token guide. "
+                    f"  [{tag}] session spent ${billed:.2f}, above the ${self.search.relay_budget_usd:.2f} output-token guide. "
                     "The run budget still stops the next session."
                 )
             self.hangs += int(result.self_check_timeouts or 0)

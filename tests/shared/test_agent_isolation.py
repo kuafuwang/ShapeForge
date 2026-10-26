@@ -502,6 +502,47 @@ def test_a_missing_credential_seam_never_starts_the_agent(tmp_path):
     assert not Path(state["workdir"]).exists()
 
 
+def test_an_unavailable_credential_is_a_no_kernel_handoff_not_a_stopped_ledger(tmp_path):
+    """A session that never got a credential was never billed, so the ledger is not incomplete.
+
+    ``credential_unavailable`` returns ``cost_usd=None, cost_incomplete=False``.  The run hands
+    the next session to the other committee and ends as ``agent_failure``.
+    """
+    from tests.support.orchestrator import code, llm_script, make_orch, run
+
+    isolation = IsolatedAgentConfig(credential_seam="loopback-fake", simulated=True)
+    config = _config(tmp_path / "env", isolation=isolation)
+    config.settings_file.parent.mkdir(parents=True, exist_ok=True)
+    config.settings_file.write_text(
+        "runtimes:\n  ssh:\n    gpu-box:\n      host: 127.0.0.1\n      user: eval\n      harness: env\n",
+        encoding="utf-8",
+    )
+    state: dict = {"tmp_path": tmp_path / "env"}
+    host = _Host(state)
+
+    def broken_factory(cfg, *, authority):
+        raise IsolationError("credential", "the helper refused")
+
+    runner = SshWorkspaceKernelSessionRunner(
+        config, transport=host, invoke=_invoke(state), epic_root=tmp_path / "env" / "epics",
+        seam_factory=broken_factory,
+    )
+    orch = make_orch(tmp_path / "env", llm_script(code("speed=1.2")), [], max_rounds=0, workspace_config=config)
+    orch.agent_runner = None
+    orch.session_runner = runner
+    result = run(orch)
+    assert not str(result.stop_reason or "").startswith("cost_incomplete")
+    assert result.stop_reason == "agent_failure"
+    assert result.spent_usd == pytest.approx(0.0)
+    events = [json.loads(line) for line in (orch.run_dir / "transcript.jsonl").read_text().splitlines()]
+    agent_events = [event for event in events if event.get("event") == "agent"]
+    assert [event["outcome"] for event in agent_events] == ["agent_failed", "agent_failed"]
+    assert [(event["cost_usd"], event["cost_incomplete"]) for event in agent_events] == [(None, False), (None, False)]
+    assert [event["runtime"]["failure_class"] for event in agent_events] == ["credential_unavailable"] * 2
+    assert [event["identity"]["cleaned"] for event in agent_events] == [True, True]
+    assert not any(event.get("event") == "provider_retry" for event in events)
+
+
 def test_the_orchestrator_refuses_env_without_isolation_and_records_isolation_with_it(tmp_path):
     """A remote agent requires the explicit seam; the run record says which one."""
     from tests.support.orchestrator import code, llm_script, make_orch, run
