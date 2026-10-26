@@ -105,3 +105,13 @@ def test_ps_failure_is_an_error_not_a_visible_process(monkeypatch):
     import pytest as _pytest
     with _pytest.raises(RuntimeError, match="ps failed"):
         runner._ps_tokens("taic-token")
+
+
+def test_a_failed_check_keeps_its_detail_and_evidence(tmp_path):
+    report = runner.Report(tmp_path)
+    report.failed(runner.REQUIRED_CHECKS[0], "the real failure", reason="rm failed")
+    report.passed(runner.REQUIRED_CHECKS[0], "later optimism")
+    entry = report.checks[runner.REQUIRED_CHECKS[0]]
+    assert entry["status"] == "failed"
+    assert entry["detail"] == "the real failure"
+    assert entry["evidence"] == {"reason": "rm failed"}

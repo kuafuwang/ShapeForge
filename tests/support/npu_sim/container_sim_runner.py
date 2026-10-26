@@ -137,19 +137,33 @@ class Report:
     def record(self, name: str, status: str, detail: str, **evidence) -> None:
         previous = self.checks.get(name)
         if previous is not None:
-            # Status is monotonic: a recorded failure or not_run can never be
-            # improved to passed later in the run.
+            # Status is monotonic and the first failure keeps its detail and
+            # evidence: a later optimistic record must not erase what failed.
             if previous["status"] == "failed":
-                status = "failed"
-            elif previous["status"] == "not_run" and status == "passed":
-                status = "not_run"
-        self.checks[name] = {
+                previous.setdefault("history", []).append(
+                    {"status": status, "detail": detail, "evidence": evidence}
+                )
+                print(f"[failed] {name}: {previous['detail']} (later {status} kept out)", flush=True)
+                return
+            if previous["status"] == "not_run" and status == "passed":
+                previous.setdefault("history", []).append(
+                    {"status": status, "detail": detail, "evidence": evidence}
+                )
+                print(f"[not_run] {name}: {previous['detail']} (later pass kept out)", flush=True)
+                return
+        entry = {
             "name": name,
             "required": name in REQUIRED_CHECKS,
             "status": status,
             "detail": detail,
             "evidence": evidence,
         }
+        if previous is not None:
+            entry["history"] = previous.get("history", []) + [{
+                "status": previous["status"], "detail": previous["detail"],
+                "evidence": previous["evidence"],
+            }]
+        self.checks[name] = entry
         print(f"[{status}] {name}: {detail}", flush=True)
 
     def passed(self, name: str, detail: str, **evidence) -> None:

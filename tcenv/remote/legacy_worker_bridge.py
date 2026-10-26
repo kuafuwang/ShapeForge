@@ -444,7 +444,7 @@ def _run_legacy_worker(
                     process.stdin.write(legacy_request)
                     process.stdin.flush()
                     process.stdin.close()
-                except (BrokenPipeError, OSError, ValueError) as exc:
+                except BaseException as exc:
                     # A failed write means the request was not fully delivered.
                     # Even if the child managed to emit a result (e.g. it exited
                     # before reading a large request), that result cannot be

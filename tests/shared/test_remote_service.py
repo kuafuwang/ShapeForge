@@ -855,3 +855,19 @@ def test_production_stop_closes_the_engine_store(tmp_path):
     assert service.closed is True
     # A second stop is a harmless no-op, not a second cleanup.
     stack.stop(grace_s=0.2)
+
+
+def test_production_stop_closes_the_engine_even_when_ingress_fails(tmp_path):
+    from tcenv.remote.grpc_service import ProductionStack
+    from tests.support.job_engine import engine as build_engine
+
+    class _ExplodingServer:
+        def stop(self, *, grace_s: float = 2.0) -> None:
+            del grace_s
+            raise RuntimeError("ingress exploded")
+
+    service = build_engine(tmp_path / "state")
+    stack = ProductionStack(engine=service, server=_ExplodingServer(), identity=None, task_pack=None)
+    with pytest.raises(TimeoutError, match="ingress stop failed"):
+        stack.stop(grace_s=0.2)
+    assert service.closed is True

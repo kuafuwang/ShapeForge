@@ -60,14 +60,24 @@ class ProductionStack:
         this process still owns.  Fail visibly instead.
         """
 
-        self.server.stop(grace_s=grace_s)
+        server_error: BaseException | None = None
+        try:
+            self.server.stop(grace_s=grace_s)
+        except BaseException as exc:  # ingress failures must not skip the engine
+            server_error = exc
         wait_s = max(1.0, float(grace_s) + 1.0)
-        if not self.engine.close(wait=wait_s):
-            error = self.engine.close_error
+        verified = self.engine.close(wait=wait_s)
+        error = self.engine.close_error
+        problems: list[str] = []
+        if server_error is not None:
+            problems.append(f"ingress stop failed: {server_error}")
+        if not verified:
             detail = "" if error is None else f": {error}"
-            raise TimeoutError(
+            problems.append(
                 f"job engine did not finish a verified shutdown within {wait_s:.1f}s{detail}"
             )
+        if problems:
+            raise TimeoutError("; ".join(problems))
 
 
 def _digest(value: str, name: str) -> str:
