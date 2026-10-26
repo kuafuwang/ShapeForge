@@ -212,6 +212,11 @@ class FakeDocker:
                     )
                     return 125
             _dump(self.containers / f"{container_id}.json", record)
+        if control.get("fail_create_after_record"):
+            # The daemon really created the container while the CLI still failed
+            # (a timeout or a broken client): the caller never learns the id.
+            print("Error response from daemon: create completed but the client failed", file=sys.stderr)
+            return 125
         print(container_id)
         return 0
 

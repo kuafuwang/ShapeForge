@@ -878,6 +878,42 @@ def test_schema_v1_database_migrates_in_place_and_keeps_results(tmp_path):
         migrated.close()
 
 
+def test_backup_taken_before_the_schema_upgrade_can_be_restored(tmp_path):
+    """A v1 backup must restore: the open path migrates it in place."""
+
+    state = tmp_path / "state"
+    backup = tmp_path / "backup.sqlite3"
+    service = engine(state)
+    req = request("schema-v1-backup")
+    try:
+        submit(service, req)
+        wait_state(service, req, {"completed"})
+        service.backup(backup)
+    finally:
+        service.close()
+    connection = sqlite3.connect(backup)
+    try:
+        for column in (
+            "container_runtime", "container_image_digest", "container_image_ref",
+            "container_name", "container_id", "execution_kind",
+        ):
+            connection.execute(f"ALTER TABLE attempts DROP COLUMN {column}")
+        connection.execute("PRAGMA user_version=1")
+        connection.commit()
+    finally:
+        connection.close()
+    restored_dir = tmp_path / "restored"
+    JobStore.restore_backup(backup, restored_dir)
+    restored = engine(restored_dir)
+    try:
+        assert restored.store._conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        snapshot = get(restored, req)
+        assert snapshot.state == "completed" and snapshot.result is not None
+        assert snapshot.current_attempt.execution_kind == "process"
+    finally:
+        restored.close()
+
+
 def test_tampered_stored_signature_is_rejected_when_serving_result(tmp_path):
     key = b"external-test-signing-key-32-bytes!"
     service = engine(tmp_path / "state", signing_key=key, signing_key_id="sim-external-site/key-1")

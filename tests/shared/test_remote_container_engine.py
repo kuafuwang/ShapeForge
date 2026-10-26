@@ -189,9 +189,162 @@ def test_container_create_failure_never_falls_back_to_a_process_worker(tmp_path)
         final = wait_state(service, req, {"interrupted"})
         assert final.failure is not None and final.failure.code == "worker_unavailable"
         assert final.failure.retryable is True
+        assert final.quarantined is False
         assert marker.exists() is False
         assert fake.records() == []
         assert service.supervisor.kind == "container"
+    finally:
+        service.close()
+
+
+def test_ambiguous_create_failure_cleans_the_container_it_never_learned_about(tmp_path):
+    """The daemon can create the container while the CLI still fails."""
+
+    docker, fake = install_fake_docker(
+        tmp_path / "docker", image_digest=IMAGE_DIGEST,
+        control={"fail_create_after_record": True},
+    )
+    marker = tmp_path / "worker-started"
+    service = container_engine(tmp_path / "state", docker, worker_env={"FAKE_JOB_STARTED": str(marker)})
+    req = request("container-create-ambiguous")
+    try:
+        submit(service, req)
+        final = wait_state(service, req, {"interrupted"})
+        # The engine never saw a container id; the deterministic name/label had
+        # to be cleaned and verified before Retry became available.
+        assert fake.records() == []
+        assert final.quarantined is False
+        assert final.failure is not None and final.failure.code == "worker_unavailable"
+        assert marker.exists() is False
+        assert not any(len(call) > 1 and call[1] == "start" for call in fake.calls())
+        assert any(len(call) > 1 and call[1] == "rm" for call in fake.calls())
+    finally:
+        service.close()
+
+
+def test_ambiguous_create_failure_quarantines_when_cleanup_is_unverified(tmp_path):
+    docker, fake = install_fake_docker(
+        tmp_path / "docker", image_digest=IMAGE_DIGEST,
+        control={"fail_create_after_record": True, "fail_rm": True},
+    )
+    service = container_engine(tmp_path / "state", docker)
+    req = request("container-create-ambiguous-quarantine")
+    try:
+        submit(service, req)
+        deadline = time.monotonic() + 15.0
+        final = get(service, req)
+        while not (final.quarantined or final.state in {"completed", "failed", "interrupted"}) and time.monotonic() < deadline:
+            time.sleep(0.02)
+            final = get(service, req)
+        assert final.state == "running" and final.quarantined is True
+        assert "injected rm failure" in final.recovery_error
+        assert len(fake.records()) == 1
+        cap = capabilities(service)
+        with pytest.raises(JobError, match="quarantined"):
+            service.retry(
+                request_id=req.request_id, request_digest=req.request_digest,
+                expected=service.expected_identities,
+                interrupted_attempt_id=final.current_attempt.attempt_id,
+                capability_id=cap.capability_id, grant_token=TOKEN,
+            )
+        fake.set_control(fail_rm=False)
+        released = service.release_quarantine(req.request_id)
+        assert released.state == "interrupted" and released.quarantined is False
+        assert fake.records() == []
+    finally:
+        service.close()
+
+
+def test_cancel_committed_before_start_never_lets_the_worker_run(tmp_path):
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    marker = tmp_path / "worker-started"
+    service = container_engine(tmp_path / "state", docker, worker_env={"FAKE_JOB_STARTED": str(marker)})
+    req = request("container-cancel-before-start", source=b"SLEEP", candidate_timeout_ms=60_000)
+    original_attach = service.store.attach_container
+    original_job_by_id = service.store._job_by_id
+    state = {"attached": False, "reads": 0, "cancelled": False}
+
+    def attach_and_arm(*args, **kwargs):
+        attached = original_attach(*args, **kwargs)
+        state["attached"] = True
+        return attached
+
+    def job_by_id(request_id):
+        if state["attached"] and not state["cancelled"]:
+            state["reads"] += 1
+            if state["reads"] == 2:
+                # A Cancel RPC that commits durably after the fence re-read but
+                # before the worker starts: the container exists (created) and
+                # must never receive the request.
+                state["cancelled"] = True
+                service.store.cancel(
+                    grant_token=TOKEN, request_id=req.request_id,
+                    request_digest=req.request_digest, expected=service.expected_identities,
+                )
+        return original_job_by_id(request_id)
+
+    service.store.attach_container = attach_and_arm
+    service.store._job_by_id = job_by_id
+    try:
+        submit(service, req)
+        final = wait_state(service, req, {"cancelled"}, timeout=15.0)
+        assert state["cancelled"] is True and state["reads"] >= 2
+        assert final.current_attempt is not None and final.current_attempt.state == "cancelled"
+        assert marker.exists() is False, "a cancelled attempt started its worker"
+        assert not any(len(call) > 1 and call[1] == "start" for call in fake.calls())
+        assert fake.records() == []
+        assert final.result is None
+    finally:
+        service.close()
+
+
+def test_container_engine_refuses_a_job_accepted_by_another_image(tmp_path):
+    from tcenv.remote.contracts import API_CONTRACT_ID, EVIDENCE_CONTRACT_ID
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    state = tmp_path / "state"
+    req = request("container-stale-build")
+    # Accept and queue the job under a different (pre-upgrade) execution
+    # identity, exactly as a previous deployment would have left it.
+    stale_identity = replace(container_identity(), worker_build=f"sim-external-build+img:{'e' * 64}")
+    expected = helpers.expected_identities(stale_identity)
+    provenance = stale_identity.external_provenance(
+        execution_protocol_version="3",
+        api_contract_id=API_CONTRACT_ID, evidence_contract_id=EVIDENCE_CONTRACT_ID,
+    )
+    store = JobStore(state)
+    store.register_grant(grant())
+    try:
+        capability = store.get_capabilities(
+            grant_token=TOKEN, client_nonce="1" * 16, expected=expected.evaluator.to_dict(),
+            expected_identities=expected, provenance=provenance,
+            api_contract_ids=[API_CONTRACT_ID], evidence_contract_ids=[EVIDENCE_CONTRACT_ID],
+            required_features=[], supported_features=frozenset(),
+        )
+        store.submit(
+            request=req, request_digest=req.request_digest, expected=expected,
+            provenance=provenance, capability_id=capability.capability_id,
+            required_features=[], grant_token=TOKEN,
+        )
+        assert store.enqueue_accepted(req.request_id).state == "queued"
+    finally:
+        store.close()
+
+    service = container_engine(state, docker)
+    try:
+        deadline = time.monotonic() + 15.0
+        final = service.store._job_by_id(req.request_id)
+        while final.state not in {"interrupted", "failed", "completed"} and time.monotonic() < deadline:
+            time.sleep(0.02)
+            final = service.store._job_by_id(req.request_id)
+        assert final.state == "interrupted"
+        assert final.failure is not None and final.failure.code == "worker_build_mismatch"
+        assert final.failure.retryable is False
+        assert final.quarantined is True
+        assert "does not bind this frontend's pinned image" in final.recovery_error
+        assert final.result is None
+        assert fake.records() == []
+        assert not any(len(call) > 1 and call[1] in {"create", "start"} for call in fake.calls())
     finally:
         service.close()
 
@@ -304,7 +457,9 @@ def test_container_crash_with_unverified_cleanup_quarantines_without_retry(tmp_p
     try:
         snapshot = get(recovered, req)
         assert snapshot.state == "running" and snapshot.quarantined is True
-        assert "could not delete" in snapshot.recovery_error
+        # This attempt's container was created but never started, so the
+        # injected ``rm`` failure is reported when stopping it.
+        assert "injected rm failure" in snapshot.recovery_error
         assert snapshot.current_attempt.attempt_id == attempt.attempt_id
         cap = capabilities(recovered)
         with pytest.raises(JobError, match="quarantined"):

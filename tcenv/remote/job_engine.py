@@ -712,6 +712,41 @@ class JobEngine:
         if snapshot.state in {"queued", "running"} and snapshot.cancel_requested:
             self.store.finish_cancellation(request.request_id, attempt)
 
+    def _cleanup_uncreated_worker(self, attempt: Attempt) -> str:
+        """Clean a worker whose creation failed before any id was durable."""
+
+        if self.supervisor.kind != EXECUTION_CONTAINER:
+            # The process supervisor spawns synchronously: a raised OSError did
+            # not leave a registered process behind.
+            return ""
+        try:
+            return self.supervisor.cleanup_recovered(attempt)
+        except (OSError, SupervisorError) as exc:
+            return f"execution cleanup failed: {exc}"
+
+    def _accepted_build_error(self, snapshot: JobSnapshot) -> str:
+        """Refuse a queued job accepted under a different execution identity.
+
+        A job's durable provenance records the ``worker_build`` that accepted
+        it, and that provenance is what the signed result will carry.  A
+        container frontend must only execute jobs whose accepted build already
+        binds its own pinned image digest; otherwise the result would claim an
+        image that never ran (or drop the digest entirely).
+        """
+
+        if self.supervisor.kind != EXECUTION_CONTAINER:
+            return ""
+        digest = str(getattr(self.supervisor, "image_digest", "") or "")
+        accepted = str((snapshot.provenance or {}).get("worker_build") or "")
+        suffix = f"+img:{digest}"
+        if accepted.endswith(suffix):
+            return ""
+        return (
+            f"queued job was accepted with worker_build {accepted!r}, which does not bind "
+            f"this frontend's pinned image {suffix!r}; refusing to execute it under another "
+            "execution identity"
+        )
+
     def _cleanup_handle_quietly(self, handle: WorkerHandle) -> str:
         """Kill, delete and verify a worker that must not receive a request."""
 
@@ -801,6 +836,17 @@ class JobEngine:
         if running.cancel_requested:
             self.store.finish_cancellation(request.request_id, attempt)
             return
+        build_error = self._accepted_build_error(self.store._job_by_id(request.request_id))
+        if build_error:
+            # The accepted job carries the submitting evaluator's worker_build.
+            # Running it under another image would sign a result that either
+            # lost the pinned digest or named an image that never ran.
+            self.store.interrupt_attempt(
+                request.request_id, attempt,
+                JobFailure("infrastructure", False, "worker_build_mismatch", build_error[:1000]),
+                quarantine=True, recovery_error=build_error[:1000],
+            )
+            return
         spec = AttemptSpec(
             request=request, attempt=attempt, state_dir=self.store.state_dir,
             command=tuple(self.worker_command), env=dict(self.worker_env),
@@ -808,7 +854,17 @@ class JobEngine:
         try:
             handle = self.supervisor.create(spec)
         except (OSError, SupervisorError) as exc:
-            if self.store._job_by_id(request.request_id).cancel_requested or running.cancel_requested:
+            # ``docker create`` can have created the container even though the
+            # CLI failed or timed out, so the caller never learned the id.  The
+            # deterministic name/label is the only durable identity left: clean
+            # it and prove absence before offering Retry.
+            residue_error = self._cleanup_uncreated_worker(attempt)
+            if residue_error:
+                self._record_cleanup_hazard(
+                    running,
+                    f"could not start worker: {exc}; {residue_error}"[:1000],
+                )
+            elif self.store._job_by_id(request.request_id).cancel_requested or running.cancel_requested:
                 self.store.finish_cancellation(request.request_id, attempt)
             else:
                 self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
@@ -900,14 +956,33 @@ class JobEngine:
                 "infrastructure", True, "frontend_stopped", "frontend stopped before worker request",
             ), worker_attached=True)
             return
-        try:
-            # The request is only written after the worker is durably attached
-            # and started, so a crash can never hide an executing container.
-            self.supervisor.start(handle)
-            stdin, stdout, stderr = self.supervisor.streams(handle)
-        except (OSError, SupervisorError) as exc:
+        # The request is only written after the worker is durably attached and
+        # started, so a crash can never hide an executing container.  The final
+        # cancellation re-read happens under the same lock the Cancel RPC takes,
+        # so a cancellation that wins the lock can never be followed by starting
+        # this worker.
+        start_error: OSError | SupervisorError | None = None
+        cancelled_before_start = False
+        with self._active_lock:
+            before_start = self.store._job_by_id(request.request_id)
+            cancelled_before_start = bool(before_start.cancel_requested or running.cancel_requested)
+            if not cancelled_before_start:
+                try:
+                    self.supervisor.start(handle)
+                    stdin, stdout, stderr = self.supervisor.streams(handle)
+                except (OSError, SupervisorError) as exc:
+                    start_error = exc
+        if cancelled_before_start:
+            running.cancel_requested = True
             self._abort_worker_before_request(running, handle, JobFailure(
-                "infrastructure", True, "worker_start_failed", f"could not start worker: {exc}"[:1000],
+                "infrastructure", True, "worker_cleanup_failed",
+                "worker cleanup after cancellation failed",
+            ), worker_attached=True)
+            return
+        if start_error is not None:
+            self._abort_worker_before_request(running, handle, JobFailure(
+                "infrastructure", True, "worker_start_failed",
+                f"could not start worker: {start_error}"[:1000],
             ), worker_attached=True)
             return
         stdout_error: list[BaseException] = []
@@ -955,7 +1030,9 @@ class JobEngine:
 
         def write_request() -> None:
             try:
-                if self._stop.is_set() or running.stopping:
+                # A cancellation that landed after the worker started must not
+                # hand it a candidate to execute.
+                if self._stop.is_set() or running.stopping or running.cancel_requested:
                     return
                 assert stdin is not None
                 stdin.write(encode_request(request, attempt))

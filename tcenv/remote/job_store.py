@@ -1979,7 +1979,10 @@ class JobStore:
             source = sqlite3.connect(temporary)
             try:
                 rows = source.execute("PRAGMA integrity_check").fetchall()
-                if len(rows) != 1 or rows[0][0] != "ok" or source.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+                version = source.execute("PRAGMA user_version").fetchone()[0]
+                # A backup taken before a schema upgrade is migrated in place
+                # by the normal open path; refuse only unknown versions.
+                if len(rows) != 1 or rows[0][0] != "ok" or version not in (1, SCHEMA_VERSION):
                     raise StateCorrupt("backup is corrupt or has an unsupported schema")
             finally:
                 source.close()

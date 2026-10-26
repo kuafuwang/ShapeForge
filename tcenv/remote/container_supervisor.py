@@ -492,6 +492,8 @@ class DockerAttemptSupervisor:
                 raise SupervisorError(f"could not verify the worker container deadline: {error}")
             if status.state == "exited":
                 # The container is done; only a stuck attach client remains.
+                if status.exit_code is None:
+                    raise SupervisorError("worker container exited without an exit code")
                 self._stop_attach(handle)
                 return status.exit_code
             return None
@@ -502,6 +504,8 @@ class DockerAttemptSupervisor:
             raise SupervisorError("container attach ended while the worker container is still running")
         if status.state != "exited":
             raise SupervisorError(f"worker container state after exit is {status.state}")
+        if status.exit_code is None:
+            raise SupervisorError("worker container exited without an exit code")
         return status.exit_code
 
     def exit_code(self, handle: WorkerHandle) -> int | None:
@@ -533,10 +537,14 @@ class DockerAttemptSupervisor:
         status, error = self._status_for(ref)
         if error:
             return f"could not verify container before kill: {error}"
-        if status.state in {"absent", "exited", "created"}:
-            # ``created`` never ran: there is no process to signal, only the
-            # container record to delete.
+        if status.state in {"absent", "exited"}:
             return ""
+        if status.state == "created":
+            # A container that never ran has no process to signal, but a
+            # concurrent ``docker start`` could still start it after this
+            # call.  Force removal is the only proof it can never run the
+            # request, so a cancellation cannot be overtaken by a slow start.
+            return self._delete_ref(ref)
         completed = self._cli(["kill", "--signal", "SIGKILL", ref], timeout=self.config.kill_timeout_s)
         if completed.returncode != 0:
             again, again_error = self._status_for(ref)

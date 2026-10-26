@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ from tcenv.remote.container_supervisor import (
     normalize_image_digest,
 )
 from tcenv.remote.job_types import Attempt
-from tcenv.remote.supervisor import AttemptSpec, SupervisorError
+from tcenv.remote.supervisor import AttemptSpec, SupervisorError, WorkerStatus
 from tests.support.fake_docker import install_fake_docker
 from tests.support.job_engine import request
 
@@ -182,11 +183,23 @@ def test_timeout_root_cleanup_kills_worker_and_child(tmp_path):
     assert fake.records() == []
 
 
+def _wait_running(supervisor: DockerAttemptSupervisor, handle, *, timeout: float = 10.0) -> None:
+    """``start`` returns before the daemon flips the container to running."""
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if supervisor.status(handle).state == "running":
+            return
+        time.sleep(0.02)
+    raise AssertionError("container never reached the running state")
+
+
 def test_kill_and_delete_are_idempotent_and_verify(tmp_path):
     docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
     supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
     handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "import time; time.sleep(30)")))
     supervisor.start(handle)
+    _wait_running(supervisor, handle)
     assert supervisor.kill(handle) == ""
     assert supervisor.kill(handle) == ""
     assert supervisor.status(handle).state == "exited"
@@ -201,11 +214,24 @@ def test_kill_and_delete_are_idempotent_and_verify(tmp_path):
     survivor_supervisor = DockerAttemptSupervisor(_config(tmp_path, survivor[0], kill_timeout_s=1.5))
     handle = survivor_supervisor.create(_spec(tmp_path, (sys.executable, "-c", "import time; time.sleep(30)")))
     survivor_supervisor.start(handle)
+    _wait_running(survivor_supervisor, handle)
     error = survivor_supervisor.kill(handle)
     assert "did not stop" in error
     assert survivor_supervisor.cleanup(handle) != ""
     survivor_supervisor.delete(handle)
     survivor_supervisor.release(handle)
+
+
+def test_kill_of_a_created_container_removes_it_before_it_can_start(tmp_path):
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "import time; time.sleep(30)")))
+    # Never started: there is no process to signal, so the only way to prove a
+    # concurrent ``docker start`` cannot run the cancelled candidate is removal.
+    assert supervisor.kill(handle) == ""
+    assert fake.records() == []
+    assert supervisor.verify_absent(handle) == ""
+    supervisor.release(handle)
 
 
 def test_attach_ended_while_container_running_is_an_error(tmp_path):
@@ -220,6 +246,21 @@ def test_attach_ended_while_container_running_is_an_error(tmp_path):
     fake.set_control(detach_leaves_running=False)
     assert supervisor.cleanup(handle) == ""
     assert supervisor.verify_absent(handle) == ""
+    supervisor.release(handle)
+
+
+def test_exited_container_without_an_exit_code_is_never_a_timeout(tmp_path, monkeypatch):
+    docker, _fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "import time; time.sleep(30)")))
+    supervisor.start(handle)
+    # A malformed status must be a supervisor failure, not a candidate timeout:
+    # returning None here would be read as "the deadline expired".
+    monkeypatch.setattr(supervisor, "_status_for", lambda ref: (WorkerStatus("exited", None), ""))
+    with pytest.raises(SupervisorError, match="without an exit code"):
+        supervisor.wait(handle, 0.2)
+    monkeypatch.undo()
+    assert supervisor.cleanup(handle) == ""
     supervisor.release(handle)
 
 
@@ -271,7 +312,11 @@ def test_cleanup_recovered_is_fail_closed_when_delete_fails(tmp_path):
     attempt = Attempt(**{**handle.spec.attempt.__dict__, "container_id": handle.container_id,
                         "container_name": handle.container_name, "execution_kind": "container"})
     fake.set_control(fail_rm=True)
-    assert "could not delete" in supervisor.cleanup_recovered(attempt)
+    error = supervisor.cleanup_recovered(attempt)
+    # The container never started, so stopping it is removal; either way the
+    # injected ``rm`` failure must surface instead of being reported as clean.
+    assert "could not stop" in error or "could not delete" in error
+    assert "injected rm failure" in error
     fake.set_control(fail_rm=False)
     # ``rm`` reports success but leaves the container behind: verification,
     # not the exit code, decides.
