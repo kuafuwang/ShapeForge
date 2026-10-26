@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -112,6 +113,20 @@ def main() -> int:
     if behavior == "malformed":
         sys.stdout.buffer.write(b"not-a-legacy-frame")
         sys.stdout.buffer.flush()
+        return 0
+    if behavior == "exit_with_pipe_holder":
+        # A descendant inherits stdout/stderr and keeps them open after this
+        # worker exits: the bridge's readers cannot reach EOF, so the bounded
+        # join must fail instead of blocking on a stream close.
+        holder = subprocess.Popen([
+            sys.executable, "-c",
+            "import sys,time; time.sleep(float(sys.argv[1]))",
+            os.environ.get("FAKE_LEGACY_HOLD_S", "2"),
+        ])
+        destination = os.environ.get("FAKE_LEGACY_HOLDER_PID")
+        if destination:
+            Path(destination).write_text(str(holder.pid), encoding="utf-8")
+        _result(request)
         return 0
     if behavior == "wrong_request":
         _result(request, request_id="another-request")

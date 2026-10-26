@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from tcenv.children import forget, kill_group, popen_group, scrubbed_env
 from tcenv.schema import PROTOCOL_VERSION as EXECUTION_PROTOCOL_VERSION
@@ -50,6 +50,9 @@ from .worker_protocol import (
 
 MAX_STDERR = 4000
 _CLOSE_SCHEDULER_JOIN_S = 1.0
+# Upper bound on one supervisor wait slice: the candidate deadline is re-checked
+# at least this often, so a late exit is classified against the real clock.
+_DEADLINE_SLICE_S = 1.0
 # Bounded synchronous teardown for a container Cancel RPC (kill + delete +
 # verify).  The scheduler performs the same teardown asynchronously if this
 # window expires; the job is already durably cancelled either way.
@@ -231,6 +234,7 @@ class JobEngine:
         require_evidence: bool = False,
         supervisor: AttemptSupervisor | None = None,
         cancel_teardown_s: float = CONTAINER_CANCEL_TEARDOWN_S,
+        monotonic: Callable[[], float] | None = None,
         **store_options: Any,
     ) -> None:
         if not worker_command or not all(isinstance(part, str) and part for part in worker_command):
@@ -273,6 +277,10 @@ class JobEngine:
                     "container execution requires worker_build to bind the pinned image digest"
                 )
         self.supervisor: AttemptSupervisor = supervisor
+        # Monotonic clock seam.  Production always uses ``time.monotonic``; the
+        # deadline tests advance a controlled clock instead of widening the
+        # candidate budget until a real-time race "usually" goes their way.
+        self._monotonic: Callable[[], float] = monotonic or time.monotonic
         if (
             isinstance(cancel_teardown_s, bool)
             or not isinstance(cancel_teardown_s, (int, float))
@@ -615,7 +623,7 @@ class JobEngine:
                     self._condition.wait(timeout=0.05)
                 continue
             request, attempt = claimed
-            running = _Running(request, attempt)
+            running = _Running(request, attempt, started_monotonic=self._monotonic())
             with self._active_lock:
                 self._active = running
             try:
@@ -665,17 +673,29 @@ class JobEngine:
         if running is None or running.handle is None:
             return ""
         handle = running.handle
+        problems: list[str] = []
         try:
             error = self.supervisor.cleanup(handle)
         except Exception as exc:
             error = f"execution cleanup failed: {exc}"[:1000]
-        finally:
-            try:
-                self.supervisor.release(handle)
-            except Exception:
-                pass
-            self._close_handle_streams(handle)
-        if not error:
+        if error:
+            problems.append(error)
+        # ``release`` is part of cleanup: a failure means the attach client may
+        # still exist, so it cannot be swallowed while the caller is told the
+        # teardown was verified.
+        try:
+            self.supervisor.release(handle)
+        except Exception as exc:
+            problems.append(f"execution release failed: {exc}"[:1000])
+        # Closing a buffered read stream while its reader is still blocked in
+        # ``read`` deadlocks on the buffer lock.  ``_run_worker`` records whether
+        # the readers were started and whether they finished; only close the
+        # read sides when that is provably safe.
+        confirmed = getattr(handle, "metadata", {}).get("reader_state")
+        self._close_handle_streams(
+            handle, include_reads=confirmed in {None, "done"},
+        )
+        if not problems:
             # A verified kill/delete is not a verified *residue-free* worker:
             # a surviving attach client (or scratch/env file) must still block
             # the interrupt/result path exactly as it does everywhere else.
@@ -683,18 +703,32 @@ class JobEngine:
                 error = self.supervisor.cleanup_residue(handle)
             except Exception as exc:
                 error = f"execution residue check failed: {exc}"[:1000]
-        return error
+            if error:
+                problems.append(error)
+        return "; ".join(problems)
 
     @staticmethod
-    def _close_handle_streams(handle: WorkerHandle) -> None:
-        for stream in (
+    def _close_handle_streams(handle: WorkerHandle, *, include_reads: bool = True) -> None:
+        """Close the worker's private streams; never deadlock on a live reader.
+
+        ``BufferedReader.close`` takes the buffer lock, so closing stdout/stderr
+        while a reader thread is still blocked inside ``read`` deadlocks the
+        scheduler.  Callers that cannot prove the readers finished pass
+        ``include_reads=False`` and close only the writer side.
+        """
+
+        streams = [
             getattr(getattr(handle, "process", None), "stdin", None),
-            getattr(getattr(handle, "process", None), "stdout", None),
-            getattr(getattr(handle, "process", None), "stderr", None),
             getattr(getattr(handle, "attach", None), "stdin", None),
-            getattr(getattr(handle, "attach", None), "stdout", None),
-            getattr(getattr(handle, "attach", None), "stderr", None),
-        ):
+        ]
+        if include_reads:
+            streams += [
+                getattr(getattr(handle, "process", None), "stdout", None),
+                getattr(getattr(handle, "process", None), "stderr", None),
+                getattr(getattr(handle, "attach", None), "stdout", None),
+                getattr(getattr(handle, "attach", None), "stderr", None),
+            ]
+        for stream in streams:
             try:
                 if stream is not None:
                     stream.close()
@@ -758,7 +792,7 @@ class JobEngine:
         return running.started_monotonic + running.request.candidate_timeout_ms / 1000.0
 
     def _overdue(self, running: _Running) -> bool:
-        return time.monotonic() >= self._attempt_deadline(running)
+        return self._monotonic() >= self._attempt_deadline(running)
 
     def _timeout_report(self, running: _Running, message: str) -> dict[str, Any]:
         """The durable timeout report for one attempt that never finished in time."""
@@ -941,26 +975,40 @@ class JobEngine:
     def _cleanup_handle_quietly(self, handle: WorkerHandle, *, close_streams: bool = True) -> str:
         """Kill, delete and verify a worker that must not receive a request."""
 
+        problems: list[str] = []
         try:
             error = self.supervisor.cleanup(handle)
         except Exception as exc:
             error = f"execution cleanup failed: {exc}"[:1000]
-        if not error:
+        if error:
+            problems.append(error)
+        # ``release`` drops the attach client; a failure there is a residue risk
+        # and must not be swallowed, so it runs before the residue proof.
+        try:
+            self.supervisor.release(handle)
+        except Exception as exc:
+            problems.append(f"execution release failed: {exc}"[:1000])
+        if not problems:
             try:
                 error = self.supervisor.cleanup_residue(handle)
             except Exception as exc:
                 error = f"execution residue check failed: {exc}"[:1000]
-        try:
-            self.supervisor.release(handle)
-        except Exception:
-            pass
+            if error:
+                problems.append(error)
         if close_streams:
             self._close_handle_streams(handle)
-        return error
+        return "; ".join(problems)
 
     def _record_cleanup_hazard(self, running: _Running, error: str) -> None:
-        """Fail closed: no result commit and no Retry while cleanup is unproven."""
+        """Fail closed: no result commit, no Retry and no verified shutdown.
 
+        An asynchronous cleanup failure is not only a job state: the process
+        may still own a surviving worker, so ``close()`` must report the
+        unverified teardown instead of returning ``True`` with no error.
+        """
+
+        if self._close_error is None:
+            self._close_error = RuntimeError(f"worker cleanup was not verified: {error}"[:1000])
         request, attempt = running.request, running.attempt
         snapshot = self.store._job_by_id(request.request_id)
         current = snapshot.current_attempt
@@ -1282,6 +1330,7 @@ class JobEngine:
         err_thread = threading.Thread(target=read_stderr, name="tcenv-worker-stderr", daemon=True)
         out_thread.start()
         err_thread.start()
+        handle.metadata["reader_state"] = "running"
         timed_out = False
         returncode: int | None = None
         write_error: list[BaseException] = []
@@ -1316,9 +1365,24 @@ class JobEngine:
             try:
                 # The request writer is concurrent: a broken worker that never
                 # reads stdin still cannot escape the candidate deadline.
-                remaining = request.candidate_timeout_ms / 1000.0 - (time.monotonic() - running.started_monotonic)
-                returncode = self.supervisor.wait(handle, max(0.001, remaining))
-                timed_out = returncode is None
+                #
+                # Wait in bounded slices so the absolute deadline is re-checked
+                # against the clock (and a test can expire it deterministically)
+                # instead of trusting one long wait.  The deadline remains
+                # absolute: ``DockerAttemptSupervisor.wait`` can notice an exit
+                # on a slow daemon query and return a *real* exit code after the
+                # deadline, which is still a timeout, never an earned "ok".
+                while True:
+                    if self._overdue(running):
+                        timed_out = True
+                        break
+                    remaining = self._attempt_deadline(running) - self._monotonic()
+                    returncode = self.supervisor.wait(
+                        handle, max(0.001, min(_DEADLINE_SLICE_S, remaining)),
+                    )
+                    if returncode is not None:
+                        timed_out = self._overdue(running)
+                        break
             except (BrokenPipeError, OSError) as exc:
                 stdout_error.append(exc)
             except SupervisorError as exc:
@@ -1336,7 +1400,12 @@ class JobEngine:
             out_thread.join(timeout=2)
             err_thread.join(timeout=2)
             reader_alive = out_thread.is_alive()
-            self._close_handle_streams(handle)
+            # Only close the read sides once both readers returned.  A worker
+            # that survived a failed cleanup keeps them blocked; closing the
+            # buffered objects from here would deadlock on the buffer lock.
+            readers_alive = out_thread.is_alive() or err_thread.is_alive()
+            handle.metadata["reader_state"] = "running" if readers_alive else "done"
+            self._close_handle_streams(handle, include_reads=not readers_alive)
 
         if cleanup_error:
             self._record_cleanup_hazard(running, cleanup_error)
@@ -1446,7 +1515,12 @@ class JobEngine:
         return self._closed_event.wait(timeout=max(0.0, float(wait))) and self._close_error is None
 
     def _close_once(self) -> None:
-        """One shutdown attempt; every failure is recorded, never raised."""
+        """One shutdown attempt; every failure is recorded, never raised.
+
+        A supervisor that returns a non-empty ``kill`` result did *not* prove
+        the worker stopped, so shutdown is incomplete even though the store can
+        still close.  The error is remembered for ``close()``/ProductionStack.
+        """
 
         try:
             self._stop.set()
@@ -1458,9 +1532,17 @@ class JobEngine:
                     handle = running.handle
             if handle is not None:
                 try:
-                    self.supervisor.kill(handle)
+                    kill_error = self.supervisor.kill(handle)
                 except Exception as exc:  # supervisor failures are shutdown data
                     self._close_error = exc
+                else:
+                    # ``kill`` reports an unverified stop as a non-empty string
+                    # instead of raising: dropping it would let close() claim a
+                    # verified shutdown while the worker may still be alive.
+                    if kill_error and self._close_error is None:
+                        self._close_error = RuntimeError(
+                            f"worker teardown was not verified: {kill_error}"[:1000]
+                        )
             self._wake()
             scheduler = getattr(self, "_scheduler", None)
             if scheduler is not None:

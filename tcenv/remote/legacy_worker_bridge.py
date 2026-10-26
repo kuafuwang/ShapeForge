@@ -299,29 +299,44 @@ class _LegacyPipe:
     def start(self) -> None:
         self._thread.start()
 
-    def join(self, timeout: float = _PIPE_JOIN_S) -> bool:
-        self._thread.join(timeout=timeout)
+    def join(self, timeout: float | None = None) -> bool:
+        # Resolve the bound at call time so the pipeline limit stays a single
+        # module constant (and a short bounded join can be exercised for real).
+        self._thread.join(timeout=_PIPE_JOIN_S if timeout is None else timeout)
         return not self._thread.is_alive()
+
+    def is_alive(self) -> bool:
+        return self._thread.is_alive()
 
     def _fail(self, message: str) -> None:
         if not self._error:
             self._error = message
 
     def _run(self) -> None:
-        while True:
-            try:
-                chunk = self._stream.read(_BRIDGE_CHUNK)
-            except (OSError, ValueError) as exc:
-                self._fail(f"could not read legacy worker output: {exc}")
-                return
-            if not chunk:
-                break
-            self._consume(chunk)
-        if self._decoder is not None and not self._error:
-            try:
-                self._decoder.finish()
-            except ProtocolError as exc:
-                self._fail(f"legacy worker emitted malformed frames: {exc}")
+        # The reader thread must never die with an uncaught exception: a partial
+        # frame sequence would then look like a complete, successful read.  Any
+        # failure (including a decoder RecursionError) becomes a bounded error
+        # that the caller checks before accepting a result.
+        try:
+            while True:
+                try:
+                    chunk = self._stream.read(_BRIDGE_CHUNK)
+                except (OSError, ValueError) as exc:
+                    self._fail(f"could not read legacy worker output: {exc}")
+                    return
+                if not chunk:
+                    break
+                self._consume(chunk)
+            if self._decoder is not None and not self._error:
+                try:
+                    self._decoder.finish()
+                except ProtocolError as exc:
+                    self._fail(f"legacy worker emitted malformed frames: {exc}")
+        except BaseException as exc:  # noqa: BLE001 - the thread boundary must not swallow
+            self._fail(
+                "legacy worker output reader failed: "
+                f"{type(exc).__name__}: {exc}"[:1000]
+            )
 
     def _consume(self, chunk: bytes) -> None:
         self._bytes += len(chunk)
@@ -347,10 +362,19 @@ class _LegacyPipe:
                 return
 
 
-def _close_process(process: subprocess.Popen) -> None:
-    """Close every pipe of an already reaped direct child."""
+def _close_process(process: subprocess.Popen, *, close_reads: bool = True) -> None:
+    """Close the pipes of an already reaped direct child.
 
-    for stream in (process.stdin, process.stdout, process.stderr):
+    ``BufferedReader.close`` waits for the buffer lock a reader thread holds
+    while blocked in ``read``.  A descendant that inherited stdout/stderr can
+    keep that read blocked long after this child exited, so the read sides may
+    only be closed once their readers proved they finished.
+    """
+
+    streams = [process.stdin]
+    if close_reads:
+        streams += [process.stdout, process.stderr]
+    for stream in streams:
         if stream is not None:
             try:
                 stream.close()
@@ -425,27 +449,16 @@ def _run_legacy_worker(
             # finishes.  A child that ignores its request is bounded by the
             # engine's candidate deadline, which kills the whole process group.
             process.wait()
-            stdout_pipe.join()
-            stderr_pipe.join()
+            # A reader that did not finish before the bounded join is *not* a
+            # completed stream: accepting the frames it happened to retain
+            # would commit a partial, unvalidated result.
+            stdout_done = stdout_pipe.join()
+            stderr_done = stderr_pipe.join()
             writer.join(timeout=_PIPE_JOIN_S)
             # The readers reached EOF: the child is reaped.  Stop asynchronous
             # polling, but retain the file for one terminal drain.
             relay.stop()
             relay.raise_if_failed()
-            if process.returncode != 0:
-                raise _BridgeFailure(f"legacy worker exited {process.returncode}")
-            if stdout_pipe.error:
-                raise _BridgeFailure(stdout_pipe.error)
-            if len(stdout_pipe.results) != 1:
-                raise _BridgeFailure("legacy worker did not emit exactly one result frame")
-            report, evidence = _decode_legacy_result_frame(
-                stdout_pipe.results[0], request.request_id,
-            )
-            # The terminal write often happens immediately before child exit.
-            # Drain it only after the result is known valid, and always before
-            # the engine result frame is written by main().
-            relay.relay_one()
-            return report, evidence
         finally:
             relay.stop()
             if process is not None:
@@ -463,7 +476,42 @@ def _run_legacy_worker(
                     for pipe in (stdout_pipe, stderr_pipe):
                         if pipe is not None:
                             pipe.join(timeout=_PIPE_JOIN_S)
-                    _close_process(process)
+                    readers_done = all(
+                        pipe is None or not pipe.is_alive()
+                        for pipe in (stdout_pipe, stderr_pipe)
+                    )
+                    # A descendant can inherit the pipe and keep a reader
+                    # blocked after this child was reaped; closing its read
+                    # stream here would wait on the reader's buffer lock and
+                    # defeat the bounded join.
+                    _close_process(process, close_reads=readers_done)
+        # Post-conditions are evaluated only after the child was reaped, every
+        # pipe was closed and the readers were joined: a reader exception or a
+        # stream that never reached EOF must fail instead of yielding the one
+        # frame it managed to decode.
+        assert process is not None and stdout_pipe is not None
+        if process.returncode != 0:
+            raise _BridgeFailure(f"legacy worker exited {process.returncode}")
+        if not stdout_done:
+            raise _BridgeFailure(
+                "legacy worker output reader did not finish before the bounded join deadline"
+            )
+        if not stderr_done:
+            raise _BridgeFailure(
+                "legacy worker stderr reader did not finish before the bounded join deadline"
+            )
+        if stdout_pipe.error:
+            raise _BridgeFailure(stdout_pipe.error)
+        if len(stdout_pipe.results) != 1:
+            raise _BridgeFailure("legacy worker did not emit exactly one result frame")
+        report, evidence = _decode_legacy_result_frame(
+            stdout_pipe.results[0], request.request_id,
+        )
+        # The terminal write often happens immediately before child exit.
+        # Drain it only after the result is known valid, and always before the
+        # engine result frame is written by main().
+        relay.relay_one()
+        return report, evidence
 
 
 def main(argv: list[str] | None = None) -> int:

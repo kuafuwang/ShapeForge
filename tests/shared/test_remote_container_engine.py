@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import signal
 import sys
 import threading
@@ -26,6 +27,77 @@ from tests.support.job_engine import (
 
 IMAGE_DIGEST = "d" * 64
 
+# The fault worker lives here (instead of a new `tests/support` module) so this
+# round's diff stays inside the TASK's path scope.  It speaks the private
+# worker protocol and blocks on the candidate deadline, exactly like a real
+# stuck worker.
+_FAULT_WORKER_SOURCE = r'''
+import os, sys, time
+from pathlib import Path
+from tcenv.remote import worker_protocol
+
+mode = os.environ.get("FAULT_WORKER_MODE", "")
+ready = os.environ.get("FAULT_WORKER_READY", "")
+attempt_id, request, request_id, fence = worker_protocol.read_request(sys.stdin.buffer)
+report = {
+    "task": request.task, "dtype": request.dtype, "size": request.size,
+    "mode": request.mode, "seed": request.seed_int, "status": "ok", "stage": "done",
+    "candidate_us": 1.0, "speedup": 1.0, "elapsed_s": 0.0,
+    "target_id": request.target_id, "protocol_version": "3", "simulated": True,
+}
+evidence = {"candidate_sha256": request.candidate_sha256}
+if mode in {"wrong_task_hang", "wrong_task_second_result"}:
+    report["task"] = "not-the-requested-task"
+
+def write_result():
+    worker_protocol.write_result(
+        sys.stdout.buffer, request_id=request_id, attempt_id=attempt_id,
+        lease_fence=fence, report=report, evidence=evidence,
+    )
+    sys.stdout.buffer.flush()
+    if ready:
+        Path(ready).write_text("ready", encoding="utf-8")
+
+if mode == "wrong_task_hang":
+    write_result()
+    time.sleep(120)
+elif mode == "double_result":
+    write_result()
+    write_result()
+    time.sleep(120)
+elif mode == "valid_hang":
+    write_result()
+    time.sleep(120)
+else:
+    raise SystemExit("unknown fault worker mode")
+'''
+
+
+class _FakeClock:
+    """A monotonic clock the test advances to expire the candidate deadline."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._offset = 0.0
+
+    def now(self) -> float:
+        with self._lock:
+            return time.monotonic() + self._offset
+
+    def advance(self, seconds: float) -> None:
+        with self._lock:
+            self._offset += max(0.0, float(seconds))
+
+
+def _wait_for_marker(path: Path, *, timeout: float = 20.0) -> None:
+    """Deterministic gate: wait until the worker itself proved it reached a step."""
+
+    deadline = time.monotonic() + timeout
+    while not path.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert path.exists(), f"the worker never reached {path}"
+
+
 
 def container_identity():
     return replace(helpers.identity(), worker_build=f"sim-external-build+img:{IMAGE_DIGEST}")
@@ -33,7 +105,7 @@ def container_identity():
 
 def container_engine(
     state_dir: Path, docker: Path, *, worker_env: dict[str, str] | None = None,
-    identity=None,
+    identity=None, monotonic=None,
 ) -> JobEngine:
     supervisor = DockerAttemptSupervisor(ContainerSupervisorConfig(
         image="taic-worker-sim:local", image_digest=IMAGE_DIGEST, docker=str(docker),
@@ -43,7 +115,7 @@ def container_engine(
         identity=identity or container_identity(), grants=[grant()],
         worker_command=[sys.executable, "-m", "tests.support.fake_worker_job_engine"],
         worker_cwd=Path(__file__).resolve().parents[2], state_dir=state_dir,
-        worker_env=worker_env, supervisor=supervisor,
+        worker_env=worker_env, supervisor=supervisor, monotonic=monotonic,
     )
 
 
@@ -89,13 +161,23 @@ def test_container_engine_commits_result_only_after_verified_cleanup(tmp_path):
 
 def test_container_timeout_kills_parent_and_child_then_reports_timeout(tmp_path):
     docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
-    service = container_engine(tmp_path / "state", docker)
-    # The candidate deadline also covers container setup (a fake docker call is a
-    # python process), so the worker needs a budget it can actually start within.
-    req = request("container-timeout", source=b"SLEEP", candidate_timeout_ms=4000)
+    started = tmp_path / "worker-started"
+    clock = _FakeClock()
+    service = container_engine(
+        tmp_path / "state", docker, worker_env={"FAKE_JOB_STARTED": str(started)},
+        monotonic=clock.now,
+    )
+    # The budget is generous: the test expires the absolute deadline itself,
+    # after the worker proved it is running.  Setup speed cannot decide this.
+    req = request("container-timeout", source=b"SLEEP", candidate_timeout_ms=60_000)
     try:
         submit(service, req)
-        final = wait_state(service, req, {"completed"}, timeout=15.0)
+        _wait_for_marker(started)
+        clock.advance(61.0)
+        final = wait_state(service, req, {"completed"}, timeout=20.0)
+        # Deterministic gate: the worker wrote its start marker, so the timeout
+        # was decided while the container was running, not by a setup overrun.
+        assert started.is_file()
         assert final.result is not None
         assert final.result.report_json()["status"] == "timeout"
         assert fake.records() == []
@@ -609,18 +691,29 @@ def test_malformed_result_is_not_converted_into_a_candidate_timeout(tmp_path):
         image="taic-worker-sim:local", image_digest=IMAGE_DIGEST, docker=str(docker),
         env={"HOME": "/tmp", "PYTHONPATH": "/opt/taic"}, kill_timeout_s=5.0,
     ))
+    clock = _FakeClock()
     service = JobEngine(
         identity=container_identity(), grants=[grant()],
-        worker_command=[sys.executable, "-m", "tests.support.fake_worker_bad_output"],
+        worker_command=[sys.executable, "-c", _FAULT_WORKER_SOURCE],
         worker_cwd=Path(__file__).resolve().parents[2], state_dir=tmp_path / "state",
-        worker_env={"FAULT_WORKER_MODE": "wrong_task_hang"}, supervisor=supervisor,
+        worker_env={
+            "FAULT_WORKER_MODE": "wrong_task_hang",
+            "FAULT_WORKER_READY": str(tmp_path / "worker-ready"),
+        },
+        supervisor=supervisor, monotonic=clock.now,
     )
-    req = request("container-wrong-task-hang", source=b"OK", candidate_timeout_ms=4000)
+    req = request("container-wrong-task-hang", source=b"OK", candidate_timeout_ms=60_000)
     try:
         submit(service, req)
+        _wait_for_marker(tmp_path / "worker-ready")
+        clock.advance(61.0)
         final = wait_state(service, req, {"failed", "interrupted", "completed"}, timeout=20.0)
         # The malformed report is known before the deadline; a timeout report
         # would silently hide it.
+        # Deterministic gate: the malformed frame reached the pipe before the
+        # deadline decision, so this is the validation branch and not a plain
+        # pre-frame timeout that happens to look similar.
+        assert (tmp_path / "worker-ready").is_file()
         assert final.state == "failed"
         assert final.failure is not None and final.failure.code == "worker_result_invalid"
         assert "task" in final.failure.message
@@ -636,16 +729,24 @@ def test_second_result_blocks_the_commit_of_the_first(tmp_path):
         image="taic-worker-sim:local", image_digest=IMAGE_DIGEST, docker=str(docker),
         env={"HOME": "/tmp", "PYTHONPATH": "/opt/taic"}, kill_timeout_s=5.0,
     ))
+    clock = _FakeClock()
     service = JobEngine(
         identity=container_identity(), grants=[grant()],
-        worker_command=[sys.executable, "-m", "tests.support.fake_worker_bad_output"],
+        worker_command=[sys.executable, "-c", _FAULT_WORKER_SOURCE],
         worker_cwd=Path(__file__).resolve().parents[2], state_dir=tmp_path / "state",
-        worker_env={"FAULT_WORKER_MODE": "double_result"}, supervisor=supervisor,
+        worker_env={
+            "FAULT_WORKER_MODE": "double_result",
+            "FAULT_WORKER_READY": str(tmp_path / "worker-ready"),
+        },
+        supervisor=supervisor, monotonic=clock.now,
     )
-    req = request("container-double-result", source=b"OK", candidate_timeout_ms=4000)
+    req = request("container-double-result", source=b"OK", candidate_timeout_ms=60_000)
     try:
         submit(service, req)
+        _wait_for_marker(tmp_path / "worker-ready")
+        clock.advance(61.0)
         final = wait_state(service, req, {"failed", "interrupted", "completed"}, timeout=20.0)
+        assert (tmp_path / "worker-ready").is_file()
         assert final.state == "failed"
         assert final.failure is not None and final.failure.code == "worker_result_invalid"
         assert "multiple results" in final.failure.message
@@ -1041,18 +1142,26 @@ def test_a_valid_result_followed_by_a_hang_is_a_timeout_not_ok(tmp_path):
 
     docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
     supervisor = DockerAttemptSupervisor(_supervisor_config(docker))
+    clock = _FakeClock()
     service = JobEngine(
         identity=container_identity(), grants=[grant()],
-        worker_command=[sys.executable, "-m", "tests.support.fake_worker_bad_output"],
+        worker_command=[sys.executable, "-c", _FAULT_WORKER_SOURCE],
         worker_cwd=Path(__file__).resolve().parents[2], state_dir=tmp_path / "state",
-        worker_env={"FAULT_WORKER_MODE": "valid_hang"}, supervisor=supervisor,
+        worker_env={
+            "FAULT_WORKER_MODE": "valid_hang",
+            "FAULT_WORKER_READY": str(tmp_path / "worker-ready"),
+        },
+        supervisor=supervisor, monotonic=clock.now,
     )
-    req = request("container-valid-hang", source=b"OK", candidate_timeout_ms=4000)
+    req = request("container-valid-hang", source=b"OK", candidate_timeout_ms=60_000)
     try:
         submit(service, req)
+        _wait_for_marker(tmp_path / "worker-ready")
+        clock.advance(61.0)
         final = wait_state(service, req, {"completed", "failed", "interrupted"}, timeout=30.0)
         # A complete, valid report exists - but the worker never returned inside
         # its deadline, so committing "ok" would turn a hang into a speed-up.
+        assert (tmp_path / "worker-ready").is_file()
         assert final.state == "completed"
         assert final.result is not None
         report = final.result.report_json()
@@ -1060,6 +1169,115 @@ def test_a_valid_result_followed_by_a_hang_is_a_timeout_not_ok(tmp_path):
         assert report["stage"] == "timeout"
         assert "deadline" in report["message"]
         assert fake.records() == []
+    finally:
+        service.close()
+
+
+def test_an_unverified_cleanup_is_also_an_unverified_shutdown(tmp_path):
+    """A quarantined cleanup must not let close() claim a verified teardown."""
+
+    docker, fake = install_fake_docker(
+        tmp_path / "docker", image_digest=IMAGE_DIGEST, control={"fail_rm": True},
+    )
+    service = container_engine(tmp_path / "state", docker)
+    req = request("container-cleanup-hazard", source=b"OK")
+    try:
+        submit(service, req)
+        wait_state(service, req, {"interrupted", "failed", "completed", "running"}, timeout=20.0)
+        deadline = time.monotonic() + 20.0
+        snapshot = service.store._job_by_id(req.request_id)
+        while not snapshot.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = service.store._job_by_id(req.request_id)
+        assert snapshot.quarantined is True
+        assert "injected rm failure" in snapshot.recovery_error
+        assert snapshot.result is None
+        # The store still closes, but shutdown is *not* verified: the worker
+        # cleanup failure must be visible through close() and close_error.
+        assert service.close(wait=20.0) is False
+        assert service.close_error is not None
+        assert "cleanup" in str(service.close_error) or "residue" in str(service.close_error)
+        # The injected rm failure really left the container behind: the hazard
+        # is justified, not a bookkeeping artifact.
+        assert len(fake.records()) == 1
+    finally:
+        service.close()
+
+
+def test_close_does_not_ignore_a_nonempty_kill_result(tmp_path):
+    """``Supervisor.kill`` reports an unverified stop as a string, not a raise."""
+
+    service = helpers.engine(tmp_path / "state")
+    req = request("close-kill-unverified", source=b"SLEEP", candidate_timeout_ms=1500)
+    handle = None
+    original_kill = None
+    try:
+        submit(service, req)
+        wait_state(service, req, {"running"}, timeout=10.0)
+        # Gate on the durable worker handle: "running" is claimed before create,
+        # and close() only exercises the kill path once a handle exists.
+        deadline = time.monotonic() + 10.0
+        running = service._active
+        while (running is None or running.handle is None) and time.monotonic() < deadline:
+            time.sleep(0.01)
+            running = service._active
+        assert running is not None and running.handle is not None
+        handle = running.handle
+        original_kill = service.supervisor.kill
+        service.supervisor.kill = lambda target: "injected kill failure"
+        assert service.close(wait=20.0) is False
+        assert service.close_error is not None
+        assert "teardown was not verified" in str(service.close_error)
+    finally:
+        if original_kill is not None:
+            service.supervisor.kill = original_kill
+        if handle is not None and handle.process is not None:
+            try:
+                os.killpg(os.getpgid(handle.process.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            try:
+                handle.process.wait(timeout=10)
+            except Exception:
+                pass
+        service.close()
+
+
+def test_an_exit_observed_after_the_deadline_is_still_a_timeout(tmp_path):
+    """A late exit code must not turn a deadline overrun into an earned ok.
+
+    ``DockerAttemptSupervisor.wait`` re-inspects the daemon after its attach wait
+    times out; a slow daemon query can therefore return a *real* exit code after
+    the candidate deadline.  The engine's decision is the absolute deadline, not
+    the shape of ``wait``'s return value.
+    """
+
+    service = helpers.engine(tmp_path / "state")
+    observed: list[float] = []
+    original_wait = service.supervisor.wait
+
+    def wait_past_the_deadline(handle, timeout):
+        observed.append(timeout)
+        time.sleep(max(0.001, float(timeout)))
+        running = service._active
+        if running is not None and not service._overdue(running):
+            # The worker is still inside its budget: a real wait would keep
+            # waiting.  Never hand back its (already available) exit code yet.
+            return None
+        return original_wait(handle, 30.0)
+
+    service.supervisor.wait = wait_past_the_deadline
+    req = request("late-exit-after-deadline", source=b"OK", candidate_timeout_ms=1200)
+    try:
+        submit(service, req)
+        final = wait_state(service, req, {"completed", "failed", "interrupted"}, timeout=20.0)
+        assert observed, "the worker never started before the deadline"
+        assert final.state == "completed"
+        assert final.result is not None
+        report = final.result.report_json()
+        assert report["status"] == "timeout"
+        assert report["stage"] == "timeout"
+        assert "deadline" in report["message"]
     finally:
         service.close()
 
@@ -1284,7 +1502,7 @@ def test_operator_release_reaps_a_surviving_attach_client(tmp_path):
         assert "injected rm failure" in snapshot.recovery_error
         fake.set_control(fail_rm=False, hang_attach=False)
         released = quarantined.release_quarantine(req.request_id)
-        assert released.state == "interrupted"
+        assert released.state == "interrupted", released.recovery_error
         assert released.quarantined is False, released.recovery_error
         assert attach.wait(timeout=20) == -signal.SIGKILL
         assert process_state(attach.pid) is None

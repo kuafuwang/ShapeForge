@@ -351,6 +351,54 @@ def test_cleanup_recovered_is_fail_closed_when_delete_fails(tmp_path):
     assert supervisor.cleanup_recovered(attempt, state_dir=tmp_path / "state") == ""
 
 
+def test_cleanup_recovered_rechecks_the_daemon_during_the_sequence(tmp_path):
+    """A switch after the entry check must stop the kill/delete/absence proof."""
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    daemon_a = supervisor.daemon_identity()
+    handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "import time; time.sleep(30)")))
+    attempt = Attempt(**{**handle.spec.attempt.__dict__, "container_id": handle.container_id,
+                        "container_name": handle.container_name, "execution_kind": "container",
+                        "container_daemon": daemon_a})
+    state = tmp_path / "state"
+    try:
+        # Switch right after the inspect: the kill must not run on daemon B.
+        original_inspect = supervisor._inspect
+
+        def inspect_then_switch(ref):
+            result = original_inspect(ref)
+            fake.set_control(daemon_id="fake-daemon-b")
+            return result
+
+        supervisor._inspect = inspect_then_switch
+        error = supervisor.cleanup_recovered(attempt, state_dir=state)
+        assert "another Docker daemon" in error
+        records = fake.records()
+        assert len(records) == 1, records
+        assert records[0]["State"]["Status"] in {"created", "running"}
+
+        # Switch inside the delete: even a successful delete cannot be reported
+        # as a verified cleanup for the original daemon.
+        supervisor._inspect = original_inspect
+        fake.set_control(daemon_id=daemon_a)
+        original_delete = supervisor._delete_ref
+
+        def delete_then_switch(ref):
+            error = original_delete(ref)
+            fake.set_control(daemon_id="fake-daemon-b")
+            return error
+
+        supervisor._delete_ref = delete_then_switch
+        error = supervisor.cleanup_recovered(attempt, state_dir=state)
+        assert "another Docker daemon" in error
+        assert fake.records() == []
+    finally:
+        fake.set_control(daemon_id=daemon_a)
+        supervisor.cleanup(handle)
+        supervisor.release(handle)
+
+
 def test_runtime_profile_and_build_identity_are_explicit(tmp_path):
     docker, _fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
     assert normalize_image_digest("sha256:" + IMAGE_DIGEST) == IMAGE_DIGEST
@@ -571,6 +619,136 @@ def test_cleanup_residue_detects_a_surviving_attach_client(tmp_path):
     if handle.attach is not None:
         handle.attach.wait(timeout=10)
     supervisor.release(handle)
+
+
+def test_a_process_scan_failure_is_never_an_empty_residue_list(tmp_path, monkeypatch):
+    """Unknown is not "no attach client": enumeration failures fail closed."""
+
+    from tcenv.remote import hostprocs
+
+    docker, _fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+
+    def exploding_scan():
+        raise hostprocs.HostProcsError("could not enumerate host processes: injected")
+
+    monkeypatch.setattr(hostprocs, "iter_processes", exploding_scan)
+    with pytest.raises(hostprocs.HostProcsError):
+        hostprocs.pids_mentioning("c" * 64, "--attach")
+    survivors, error = supervisor._attach_survivors("c" * 64)
+    assert survivors == []
+    assert "could not inspect host processes" in error
+    # The residue/recovery proofs propagate that error instead of treating the
+    # scan as clean.
+    assert supervisor._reap_attach_survivors("c" * 64) == error
+
+    # The Linux enumeration itself fails closed on an unreadable /proc and on
+    # an over-long process table.
+    def denied(path):
+        raise PermissionError("injected /proc denial")
+
+    monkeypatch.setattr(hostprocs.os, "scandir", denied)
+    with pytest.raises(hostprocs.HostProcsError, match="could not enumerate"):
+        list(hostprocs._linux_processes())
+
+
+def test_a_live_darwin_process_with_a_huge_environment_is_still_scanned():
+    """A 20 KB environment must not turn a live attach process into "not found"."""
+
+    import os
+    import subprocess
+
+    from tcenv.remote import hostprocs
+
+    if sys.platform != "darwin":
+        pytest.skip("KERN_PROCARGS2 only exists on Darwin")
+    token = "taic-hostprocs-big-env-token"
+    env = dict(os.environ, HUGE="x" * 20_000, TOKEN=token)
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(10)", "--attach", token],
+        env=env,
+    )
+    try:
+        argv = hostprocs._darwin_argv(process.pid)
+        assert argv[-2:] == ("--attach", token)
+        assert process.pid in hostprocs.pids_mentioning(token, "--attach")
+    finally:
+        process.kill()
+        process.wait(timeout=10)
+
+
+def test_the_darwin_sysctl_prototype_uses_size_t(monkeypatch):
+    import ctypes
+
+    from tcenv.remote import hostprocs
+
+    if sys.platform != "darwin":
+        pytest.skip("KERN_PROCARGS2 only exists on Darwin")
+    hostprocs._LIBC = None
+    libc, _libproc = hostprocs._darwin_libraries()
+    assert libc.sysctl.argtypes[3] == ctypes.POINTER(ctypes.c_size_t)
+    assert libc.sysctl.restype is ctypes.c_int
+
+
+class _FakeSysctl:
+    """Minimal KERN_PROCARGS2 replacement for malformed/over-limit records."""
+
+    def __init__(self, payload: bytes, *, full_size: int | None = None) -> None:
+        self.payload = payload
+        self.full_size = len(payload) if full_size is None else full_size
+
+    def sysctl(self, mib, namelen, oldp, oldlenp, newp, newlen):
+        import ctypes
+
+        size = oldlenp._obj
+        if oldp is None:
+            size.value = self.full_size
+            return 0
+        limit = min(size.value, len(self.payload))
+        ctypes.memmove(oldp, self.payload, limit)
+        size.value = limit
+        return 0
+
+
+def _record(payload: bytes) -> bytes:
+    return len(payload).to_bytes(4, "little") + payload
+
+
+@pytest.mark.parametrize(
+    ("payload", "full_size", "message"),
+    [
+        (b"", 4, "malformed argument record"),
+        (b"\x00\x00\x00\x00execpath\x00", None, "malformed argument count"),
+        (_record(b"/bin/x\x00a\x00b\x00"), None, "exceeds the bounded read limit"),
+    ],
+)
+def test_malformed_darwin_records_fail_closed(monkeypatch, payload, full_size, message):
+    from tcenv.remote import hostprocs
+
+    class _LibProc:
+        @staticmethod
+        def proc_listpids(kind, subtype, buffer, size):
+            return 0
+
+    monkeypatch.setattr(
+        hostprocs, "_darwin_libraries",
+        lambda: (_FakeSysctl(payload, full_size=full_size), _LibProc()),
+    )
+    with pytest.raises(hostprocs.HostProcsError, match=message):
+        hostprocs._darwin_argv(4242)
+
+
+def test_darwin_process_enumeration_failure_raises_instead_of_returning_empty(monkeypatch):
+    from tcenv.remote import hostprocs
+
+    class _LibProc:
+        @staticmethod
+        def proc_listpids(kind, subtype, buffer, size):
+            return 0
+
+    monkeypatch.setattr(hostprocs, "_darwin_libraries", lambda: (None, _LibProc()))
+    with pytest.raises(hostprocs.HostProcsError, match="could not enumerate"):
+        hostprocs._darwin_pids()
 
 
 def test_every_lifecycle_step_is_bound_to_the_creating_daemon(tmp_path):

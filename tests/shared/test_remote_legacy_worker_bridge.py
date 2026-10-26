@@ -487,6 +487,49 @@ def test_sustained_stdout_flood_fails_bounded_and_reaps_the_child(tmp_path):
     assert list(temp_root.iterdir()) == []
 
 
+def test_a_descendant_holding_the_pipe_cannot_block_the_bridge(tmp_path, monkeypatch):
+    """The bounded join must bound the call even when a descendant holds stdout."""
+
+    import io
+    import threading
+    import time
+
+    import tcenv.remote.legacy_worker_bridge as bridge
+
+    monkeypatch.setattr(bridge, "_PIPE_JOIN_S", 0.05)
+    holder_file = tmp_path / "holder.pid"
+    request = _request(source=b"// STREAM\r\nkernel void demo() {} \r\n")
+    output = io.BytesIO()
+    environ = dict(os.environ)
+    environ["PYTHONPATH"] = str(ROOT) + os.pathsep + environ.get("PYTHONPATH", "")
+    environ["FAKE_LEGACY_BEHAVIOR"] = "exit_with_pipe_holder"
+    environ["FAKE_LEGACY_HOLDER_PID"] = str(holder_file)
+    environ["FAKE_LEGACY_HOLD_S"] = "5"
+    environ.pop("TCENV_REMOTE_STATE_DIR", None)
+    started = time.monotonic()
+    try:
+        with pytest.raises(bridge._BridgeFailure, match="did not finish"):
+            bridge._run_legacy_worker(
+                FAKE_WORKER, request, output,
+                attempt_id=_attempt().attempt_id,
+                lease_fence=_attempt().lease_fence,
+                environ=environ,
+                write_lock=threading.Lock(),
+            )
+    finally:
+        holder = holder_file.read_text(encoding="utf-8") if holder_file.is_file() else ""
+        if holder:
+            try:
+                os.kill(int(holder), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    elapsed = time.monotonic() - started
+    # A blocked BufferedReader.close() would wait for the 5s holder; the bridge
+    # must return after its bounded joins instead.
+    assert elapsed < 2.0, elapsed
+    assert output.getvalue() == b""
+
+
 def test_streaming_pipes_keep_their_buffers_bounded():
     import io
 
@@ -505,6 +548,99 @@ def test_streaming_pipes_keep_their_buffers_bounded():
     # and the remaining stream is drained instead of retained.
     assert "malformed frames" in stdout_pipe.error
     assert stdout_pipe.results == []
+
+
+class _ExplodingStream:
+    """Yields one complete frame, then fails like a decoder stack overflow."""
+
+    def __init__(self, first: bytes) -> None:
+        self._first = first
+        self._exploded = False
+
+    def read(self, _size: int) -> bytes:
+        if self._first:
+            data, self._first = self._first, b""
+            return data
+        if not self._exploded:
+            self._exploded = True
+            raise RecursionError("injected decoder recursion")
+        return b""
+
+
+class _BlockingStream:
+    """Never returns EOF until released; models a reader stuck before finish."""
+
+    def __init__(self, release) -> None:
+        self._release = release
+        self._first = b""
+
+    def read(self, _size: int) -> bytes:
+        self._release.wait(10.0)
+        return self._first
+
+
+def test_a_reader_exception_after_a_frame_is_an_error_not_a_result():
+    import io
+
+    from tcenv.remote.legacy_worker_bridge import _LegacyPipe
+    from tcenv.remote.protocol import encode_frame
+
+    frame = encode_frame(
+        "result", "bridge-request-1",
+        {"report": {"status": "ok"}, "evidence": {"candidate_sha256": "a" * 64}},
+    )
+    pipe = _LegacyPipe(_ExplodingStream(frame), decode=True)
+    pipe.start()
+    assert pipe.join(10.0) is True
+    # The frame was decoded, but the reader never finished cleanly: accepting it
+    # would commit a partial stream, so the error must be recorded.
+    assert len(pipe.results) == 1
+    assert "RecursionError" in pipe.error
+
+
+def test_a_reader_that_never_finishes_is_not_reported_as_complete():
+    import threading
+
+    from tcenv.remote.legacy_worker_bridge import _LegacyPipe
+
+    release = threading.Event()
+    pipe = _LegacyPipe(_BlockingStream(release), decode=True)
+    pipe.start()
+    assert pipe.join(0.1) is False
+    release.set()
+    assert pipe.join(10.0) is True
+    assert pipe.error == ""
+    assert pipe.results == []
+
+
+def test_the_bridge_refuses_a_result_when_the_reader_did_not_finish(tmp_path, monkeypatch):
+    import io
+    import threading
+
+    import tcenv.remote.legacy_worker_bridge as bridge
+
+    original_join = bridge._LegacyPipe.join
+
+    def unfinished_decode_reader(self, timeout=bridge._PIPE_JOIN_S):
+        finished = original_join(self, timeout)
+        return False if self._decode else finished
+
+    monkeypatch.setattr(bridge._LegacyPipe, "join", unfinished_decode_reader)
+    request = _request(source=b"// STREAM\r\nkernel void demo() {} \r\n")
+    output = io.BytesIO()
+    environ = dict(os.environ)
+    environ["PYTHONPATH"] = str(ROOT) + os.pathsep + environ.get("PYTHONPATH", "")
+    environ["FAKE_LEGACY_BEHAVIOR"] = "success"
+    environ.pop("TCENV_REMOTE_STATE_DIR", None)
+    with pytest.raises(bridge._BridgeFailure, match="did not finish"):
+        bridge._run_legacy_worker(
+            FAKE_WORKER, request, output,
+            attempt_id=_attempt().attempt_id,
+            lease_fence=_attempt().lease_fence,
+            environ=environ,
+            write_lock=threading.Lock(),
+        )
+    assert output.getvalue() == b""
 
 
 def test_the_bridge_streams_the_child_instead_of_buffering_with_communicate(tmp_path, monkeypatch):

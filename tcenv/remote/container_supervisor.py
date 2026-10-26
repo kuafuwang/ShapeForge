@@ -535,6 +535,26 @@ class DockerAttemptSupervisor:
             )
         return ""
 
+    def _guard_daemon(self, expected: str, prefix: str) -> str:
+        """Re-verify the persisted daemon around one cleanup step.
+
+        A single check at the entry of a multi-step sequence is not enough: the
+        endpoint can start answering as another Engine between the inspect, the
+        kill, the delete and the absence proof.  Any such switch makes every
+        later observation meaningless, so it fails closed and names the step.
+        """
+
+        try:
+            current = self.daemon_identity()
+        except SupervisorError as exc:
+            return f"{prefix}: could not verify the Docker daemon: {exc}"
+        if current != expected:
+            return (
+                f"{prefix}: container belongs to another Docker daemon "
+                f"({expected!r} != {current!r}); refusing to reconcile it here"
+            )
+        return ""
+
     def verify_identity(self, handle: WorkerHandle) -> str:
         error = self._bind_daemon(handle)
         if error:
@@ -789,6 +809,11 @@ class DockerAttemptSupervisor:
             return error
         error = self._kill_ref(handle.container_id or handle.container_name)
         self._stop_attach(handle)
+        # A switch during the kill means the observation (and possibly the
+        # signal) belonged to another Engine; never report a verified stop.
+        changed = self._bind_daemon(handle)
+        if changed:
+            return changed if not error else f"{error}; {changed}"
         return error
 
     def delete(self, handle: WorkerHandle) -> str:
@@ -797,6 +822,9 @@ class DockerAttemptSupervisor:
             return error
         error = self._delete_ref(handle.container_id or handle.container_name)
         self._stop_attach(handle)
+        changed = self._bind_daemon(handle)
+        if changed:
+            return changed if not error else f"{error}; {changed}"
         if handle.scratch_dir is not None:
             scratch = Path(handle.scratch_dir)
             try:
@@ -807,6 +835,9 @@ class DockerAttemptSupervisor:
                 error = error or f"could not remove the per-attempt scratch directory: {_sanitize(str(exc))}"
             if scratch.exists():
                 error = error or "per-attempt scratch directory survived cleanup"
+        changed = self._bind_daemon(handle)
+        if changed:
+            return changed if not error else f"{error}; {changed}"
         return error
 
     def _cgroup_paths(self, container_id: str) -> list[Path]:
@@ -862,10 +893,13 @@ class DockerAttemptSupervisor:
         error = self._bind_daemon(handle)
         if error:
             return error
-        return self._verify_ref_absent(
+        error = self._verify_ref_absent(
             handle.container_id or handle.container_name, handle.attempt_id,
             container_id=handle.container_id,
         )
+        if error:
+            return error
+        return self._bind_daemon(handle)
 
     def cleanup(self, handle: WorkerHandle) -> str:
         error = self.kill(handle)
@@ -888,7 +922,8 @@ class DockerAttemptSupervisor:
         attach = handle.attach
         if attach is not None and attach.poll() is None:
             return "container attach client survived cleanup"
-        return ""
+        # The residue proof is only valid for the daemon it was taken on.
+        return self._bind_daemon(handle)
 
     def cleanup_recovered(self, attempt: Attempt, *, state_dir: Path, daemon: str = "") -> str:
         """Clean one recovered attempt, bound to its daemon and its temp state.
@@ -908,63 +943,118 @@ class DockerAttemptSupervisor:
         expected_daemon = persisted or daemon
         if not expected_daemon:
             return "recovered container attempt has no persisted Docker daemon identity; manual cleanup required"
-        try:
-            current_daemon = self.daemon_identity()
-        except SupervisorError as exc:
-            return f"could not verify the recovered worker's Docker daemon: {exc}"
-        if current_daemon != expected_daemon:
-            return (
-                "recovered container belongs to another Docker daemon "
-                f"({expected_daemon!r} != {current_daemon!r}); refusing to reconcile it here"
-            )
+        def guard(prefix: str) -> str:
+            return self._guard_daemon(expected_daemon, prefix)
+
+        error = guard("could not verify the recovered worker's Docker daemon")
+        if error:
+            return error
         stored_id = getattr(attempt, "container_id", "") or ""
         stored_name = getattr(attempt, "container_name", "") or container_name_for(attempt.attempt_id)
         if stored_id and _CONTAINER_ID.fullmatch(stored_id) is None:
             return "persisted container id is invalid; manual cleanup required"
         ref = stored_id or stored_name
+        error = guard("could not inspect the recovered worker container")
+        if error:
+            return error
         document, error = self._inspect(ref)
         if error:
             return f"could not inspect the recovered worker container: {error}"
+        # The inspect only counts for the daemon it ran on; a switch right after
+        # the entry check must not let kill/delete run against another Engine.
+        error = guard("could not inspect the recovered worker container")
+        if error:
+            return error
         if document is not None:
             labels = (document.get("Config") or {}).get("Labels") or {}
             if labels.get(_SCRATCH_LABEL_PREFIX) != attempt.attempt_id:
                 return "recovered container label does not match the persisted attempt"
             if stored_id and document.get("Id") != stored_id:
                 return "recovered container id does not match the persisted id"
+            error = guard("could not stop the recovered worker container")
+            if error:
+                return error
             error = self._kill_ref(ref)
             if error:
                 return f"could not stop the recovered worker container: {error}"
+            error = guard("could not stop the recovered worker container")
+            if error:
+                return error
+            error = guard("could not delete the recovered worker container")
+            if error:
+                return error
             error = self._delete_ref(ref)
             if error:
                 return f"could not delete the recovered worker container: {error}"
+            error = guard("could not delete the recovered worker container")
+            if error:
+                return error
         else:
             # A crash between ``create`` and the durable attach leaves no id.
             # The deterministic name is still authoritative; the label check
             # above already refused a name collision.
+            error = guard("could not verify recovered container cleanup")
+            if error:
+                return error
             duplicates, duplicates_error = self._label_duplicates(attempt.attempt_id)
             if duplicates_error:
                 return f"could not verify recovered container cleanup: {duplicates_error}"
+            error = guard("could not verify recovered container cleanup")
+            if error:
+                return error
             for duplicate in duplicates:
+                error = guard("could not stop a recovered worker container")
+                if error:
+                    return error
                 error = self._kill_ref(duplicate)
                 if error:
                     return f"could not stop a recovered worker container: {error}"
+                error = guard("could not stop a recovered worker container")
+                if error:
+                    return error
+                error = guard("could not delete a recovered worker container")
+                if error:
+                    return error
                 error = self._delete_ref(duplicate)
                 if error:
                     return f"could not delete a recovered worker container: {error}"
+                error = guard("could not delete a recovered worker container")
+                if error:
+                    return error
+        error = guard("could not prove the recovered container absent")
+        if error:
+            return error
         error = self._verify_ref_absent(ref, attempt.attempt_id, container_id=stored_id)
+        if error:
+            return error
+        error = guard("could not prove the recovered container absent")
         if error:
             return error
         # A crashed frontend can leave the ``docker start --attach`` client of
         # this exact container behind.  Recovery owns the container, so it owns
         # the client too: reap it and prove it is gone before reporting a clean
         # recovery (an operator release would otherwise re-check the residue).
+        error = guard("could not reap the recovered worker's attach client")
+        if error:
+            return error
         error = self._reap_attach_survivors(ref)
+        if error:
+            return error
+        error = guard("could not reap the recovered worker's attach client")
+        if error:
+            return error
+        error = guard("could not clear the recovered worker's environment file")
         if error:
             return error
         error = self._remove_env_file(attempt.attempt_id, state_dir)
         if error:
             return error
-        return self._env_file_residue(attempt.attempt_id, state_dir)
+        error = self._env_file_residue(attempt.attempt_id, state_dir)
+        if error:
+            return error
+        # Never report a clean recovery without a last binding to the daemon the
+        # attempt was created on.
+        return guard("could not verify the recovered worker's Docker daemon")
 
     def release(self, handle: WorkerHandle) -> None:
         self._stop_attach(handle)
