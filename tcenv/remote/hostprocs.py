@@ -137,6 +137,18 @@ def _darwin_pids() -> list[int]:
     raise HostProcsError("host process table kept growing during the bounded scan")
 
 
+def _darwin_skip_or_raise(
+    pid: int, executable_names: frozenset[str], message: str,
+) -> tuple[str, ...]:
+    """Over-limit/malformed records: only possible attach executables fail closed."""
+
+    if executable_names:
+        path = _darwin_pidpath(pid)
+        if not path or os.path.basename(path) not in executable_names:
+            return ()
+    raise HostProcsError(f"process {pid} {message}")
+
+
 def _darwin_argv(pid: int, executable_names: frozenset[str] = frozenset()) -> tuple[str, ...]:
     libc, _libproc = _darwin_libraries()
     mib = (ctypes.c_int * 3)(_CTL_KERN, _KERN_PROCARGS2, pid)
@@ -146,7 +158,7 @@ def _darwin_argv(pid: int, executable_names: frozenset[str] = frozenset()) -> tu
     if size.value <= 8:
         # The kernel succeeded for a live process but the record cannot even
         # hold argc + exec path: unknown is not "no arguments".
-        raise HostProcsError(f"process {pid} returned a malformed argument record")
+        return _darwin_skip_or_raise(pid, executable_names, "returned a malformed argument record")
     read_size = min(size.value, _MAX_ARGS_BYTES)
     buffer = ctypes.create_string_buffer(read_size)
     sized = ctypes.c_size_t(read_size)
@@ -154,11 +166,13 @@ def _darwin_argv(pid: int, executable_names: frozenset[str] = frozenset()) -> tu
         return _darwin_unreadable(pid, executable_names)
     raw = buffer.raw[: sized.value]
     if len(raw) < 4:
-        raise HostProcsError(f"process {pid} returned a truncated argument record")
+        return _darwin_skip_or_raise(pid, executable_names, "returned a truncated argument record")
     # Layout: 4-byte argc, exec path, NUL padding, argv[0..argc-1], environment.
     argc = int.from_bytes(raw[:4], sys.byteorder)
     if argc <= 0 or argc > 4096:
-        raise HostProcsError(f"process {pid} returned a malformed argument count ({argc})")
+        return _darwin_skip_or_raise(
+            pid, executable_names, f"returned a malformed argument count ({argc})",
+        )
     # If the bounded read cut the record, drop the partial trailing string; the
     # argv completeness check below then decides whether the prefix was enough.
     truncated = sized.value >= read_size and not raw.endswith(b"\x00")
@@ -176,8 +190,8 @@ def _darwin_argv(pid: int, executable_names: frozenset[str] = frozenset()) -> tu
         part.decode("utf-8", errors="replace") for part in parts[index:index + argc]
     )
     if len(argv) != argc:
-        raise HostProcsError(
-            f"process {pid} argument vector exceeds the bounded read limit"
+        return _darwin_skip_or_raise(
+            pid, executable_names, "argument vector exceeds the bounded read limit",
         )
     return argv
 

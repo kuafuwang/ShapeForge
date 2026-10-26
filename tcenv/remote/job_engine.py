@@ -502,12 +502,29 @@ class JobEngine:
         """
 
         deadline = time.monotonic() + self.cancel_teardown_s
-        with self._active_lock:
+        acquired = self._active_lock.acquire(timeout=self.cancel_teardown_s)
+        if acquired:
+            try:
+                snapshot = self.store.cancel(
+                    grant_token=grant_token, request_id=request_id, request_digest=request_digest,
+                    expected=expected, reason=reason,
+                )
+                running = self._cancel_active_locked(request_id)
+            finally:
+                self._active_lock.release()
+        else:
+            # A spawn is holding the lock: never let cancel_teardown_s become
+            # unbounded.  Commit the durable cancellation without the lock and
+            # set the in-memory flag (a bool, atomic under the GIL) so both the
+            # writer's final check and the scheduler's wait loop observe it; the
+            # request bytes are therefore never sent after this commit.
             snapshot = self.store.cancel(
                 grant_token=grant_token, request_id=request_id, request_digest=request_digest,
                 expected=expected, reason=reason,
             )
-            running = self._cancel_active_locked(request_id)
+            running = self._active
+            if running is not None and running.request.request_id == request_id:
+                running.cancel_requested = True
         self._wake()
         if (
             running is not None
@@ -1428,6 +1445,11 @@ class JobEngine:
                 with self._active_lock:
                     if self._stop.is_set() or running.stopping or running.cancel_requested:
                         return
+                    # A Cancel may have committed while a spawn held the lock
+                    # (its in-memory flag is set unlocked); re-read the durable
+                    # state as well before sending any candidate bytes.
+                    if self.store._job_by_id(request.request_id).cancel_requested:
+                        return
                     if self._overdue(running):
                         # Never send candidate bytes after the deadline: the
                         # worker is killed at the deadline anyway, so writing
@@ -1655,7 +1677,9 @@ class JobEngine:
         try:
             if not self._close_started:
                 self._close_started = True
-                self._close_once(probe=None if wait is not None else 0.2)
+                self._close_once(
+                    probe=None if wait is not None else 0.2, deadline=deadline,
+                )
         finally:
             self._close_lock.release()
         if self._closed_event.is_set():
@@ -1666,7 +1690,7 @@ class JobEngine:
             timeout=max(0.0, deadline - time.monotonic()),
         ) and self._close_error is None
 
-    def _close_once(self, probe: float | None = None) -> None:
+    def _close_once(self, probe: float | None = None, deadline: float | None = None) -> None:
         """One shutdown attempt; every failure is recorded, never raised.
 
         A supervisor that returns a non-empty ``kill`` result did *not* prove
@@ -1676,12 +1700,23 @@ class JobEngine:
 
         try:
             self._stop.set()
-            with self._active_lock:
-                running = self._active
-                handle = None
-                if running is not None:
-                    running.stopping = True
-                    handle = running.handle
+            # Never wait indefinitely for a spawn that holds the lock: close(wait)
+            # must bound its own return.  ``_stop`` is already set, so the
+            # scheduler notices it after the spawn and tears down; the finalizer
+            # closes the store once the scheduler exits.
+            if deadline is None:
+                acquired = self._active_lock.acquire(blocking=False)
+            else:
+                acquired = self._active_lock.acquire(
+                    timeout=max(0.0, deadline - time.monotonic()),
+                )
+            if acquired:
+                try:
+                    running = self._active
+                    if running is not None:
+                        running.stopping = True
+                finally:
+                    self._active_lock.release()
             # Teardown is performed by the bounded scheduling path (its wait
             # loop notices ``stopping`` and cleans up under the supervisor's own
             # kill timeout).  Calling kill() here would make close(wait) and

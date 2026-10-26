@@ -1553,6 +1553,77 @@ def test_a_revocation_cannot_commit_between_authorization_and_start(tmp_path, mo
         service.close()
 
 
+def test_cancel_is_bounded_while_the_spawn_is_gated(tmp_path, monkeypatch):
+    """cancel_teardown_s bounds the RPC even when a spawn holds _active_lock."""
+
+    import tcenv.remote.container_supervisor as supervisor_module
+
+    docker, _fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    service = container_engine(tmp_path / "state", docker, monotonic=_FrozenClock().now)
+    service.cancel_teardown_s = 0.5
+    entered = threading.Event()
+    release = threading.Event()
+    original_popen = supervisor_module.popen_group
+
+    def gated_popen(*args, **kwargs):
+        entered.set()
+        assert release.wait(10.0), "the test never released the spawn"
+        return original_popen(*args, **kwargs)
+
+    monkeypatch.setattr(supervisor_module, "popen_group", gated_popen)
+    req = request("cancel-gated-spawn", source=b"OK", candidate_timeout_ms=60_000)
+    try:
+        submit(service, req)
+        assert entered.wait(10.0), "the spawn gate was never reached"
+        started = time.monotonic()
+        cancelled = service.cancel(
+            request_id=req.request_id, request_digest=req.request_digest,
+            expected=service.expected_identities, grant_token=TOKEN,
+        )
+        elapsed = time.monotonic() - started
+        assert elapsed < 1.2, elapsed
+        assert cancelled.cancel_requested is True
+        release.set()
+        final = wait_state(service, req, {"cancelled"}, timeout=20.0)
+        assert final.state == "cancelled"
+        assert final.result is None
+    finally:
+        release.set()
+        service.close()
+
+
+def test_close_is_bounded_while_the_spawn_is_gated(tmp_path, monkeypatch):
+    """close(wait) bounds its return even when a spawn holds _active_lock."""
+
+    import tcenv.remote.container_supervisor as supervisor_module
+
+    docker, _fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    service = container_engine(tmp_path / "state", docker, monotonic=_FrozenClock().now)
+    entered = threading.Event()
+    release = threading.Event()
+    original_popen = supervisor_module.popen_group
+
+    def gated_popen(*args, **kwargs):
+        entered.set()
+        assert release.wait(10.0), "the test never released the spawn"
+        return original_popen(*args, **kwargs)
+
+    monkeypatch.setattr(supervisor_module, "popen_group", gated_popen)
+    req = request("close-gated-spawn", source=b"OK", candidate_timeout_ms=60_000)
+    try:
+        submit(service, req)
+        assert entered.wait(10.0), "the spawn gate was never reached"
+        started = time.monotonic()
+        assert service.close(wait=0.5) is False
+        elapsed = time.monotonic() - started
+        assert elapsed < 1.2, elapsed
+        release.set()
+        assert service.close(wait=20.0) is True
+    finally:
+        release.set()
+        service.close()
+
+
 def test_a_daemon_switch_during_start_never_writes_the_request(tmp_path, monkeypatch):
     """The daemon re-check after the spawn aborts before the request writer."""
 
