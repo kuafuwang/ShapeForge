@@ -204,10 +204,9 @@ class _Running:
     cancel_requested: bool = False
     stopping: bool = False
     teardown_done: threading.Event = field(default_factory=threading.Event)
-    # Serializes the request-write authorization with cancellation.  The
-    # decision "this worker may receive the request" is made under this lock,
-    # so a durable cancel can never be followed by a newly authorized request.
-    request_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Set under ``_active_lock`` when the writer is allowed to send the
+    # request; the same lock spans the durable cancel commit, so a durable
+    # cancellation can never be followed by a newly authorized request.
     request_authorized: bool = False
 
 
@@ -704,11 +703,9 @@ class JobEngine:
         running = self._active
         if running is None or running.request.request_id != request_id:
             return None
+        # The writer authorizes under ``_active_lock``; the flag is therefore
+        # never set "after" an authorization that already decided to write.
         running.cancel_requested = True
-        # The writer authorizes under ``request_lock``; take it here so the
-        # cancel and the authorization cannot interleave.
-        with running.request_lock:
-            running.cancel_requested = True
         handle = running.handle
         if handle is not None:
             try:
@@ -1168,9 +1165,10 @@ class JobEngine:
         def write_request() -> None:
             try:
                 # The authorization and the cancellation are mutually exclusive:
-                # whichever takes ``request_lock`` first wins.  A cancel that
-                # wins means the worker never receives candidate bytes.
-                with running.request_lock:
+                # whoever takes ``_active_lock`` first wins.  A cancel that wins
+                # (including its durable commit) means this worker never
+                # receives candidate bytes.
+                with self._active_lock:
                     if self._stop.is_set() or running.stopping or running.cancel_requested:
                         return
                     running.request_authorized = True
