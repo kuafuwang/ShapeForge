@@ -641,8 +641,10 @@ def test_cleanup_residue_detects_a_surviving_attach_client(tmp_path):
     supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
     handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "pass")))
     supervisor.start(handle)
-    # The fake attach client stays alive after the container is gone.
+    # The fake attach client stays alive after the container is gone, as if the
+    # handle had lost it: cleanup's own reap is disabled for this probe too.
     supervisor._stop_attach = lambda target: None
+    supervisor._reap_attach_survivors = lambda ref: ""
     assert supervisor.cleanup(handle) == ""
     assert "attach client survived" in supervisor.cleanup_residue(handle)
     handle.attach and handle.attach.kill()
@@ -659,7 +661,7 @@ def test_a_process_scan_failure_is_never_an_empty_residue_list(tmp_path, monkeyp
     docker, _fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
     supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
 
-    def exploding_scan():
+    def exploding_scan(*_args, **_kwargs):
         raise hostprocs.HostProcsError("could not enumerate host processes: injected")
 
     monkeypatch.setattr(hostprocs, "iter_processes", exploding_scan)
@@ -682,6 +684,97 @@ def test_a_process_scan_failure_is_never_an_empty_residue_list(tmp_path, monkeyp
         list(hostprocs._linux_processes())
 
 
+def test_create_rejects_a_daemon_switch_after_the_durable_attach(tmp_path):
+    """A switch between the durable attach and docker create must fail closed."""
+
+    from dataclasses import replace
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    daemon_a = supervisor.daemon_identity()
+    spec = _spec(tmp_path, (sys.executable, "-c", "import time; time.sleep(2)"))
+    spec = AttemptSpec(
+        request=spec.request, attempt=replace(spec.attempt, container_daemon=daemon_a),
+        state_dir=spec.state_dir, command=spec.command, env=dict(spec.env),
+    )
+    fake.set_control(daemon_id="fake-daemon-b")
+    try:
+        with pytest.raises(SupervisorError, match="another Docker daemon"):
+            supervisor.create(spec)
+        # No container was created on the new daemon.
+        assert fake.records() == []
+        assert not any(len(call) > 1 and call[1] == "create" for call in fake.calls())
+    finally:
+        fake.set_control(daemon_id=daemon_a)
+
+
+def test_poll_wait_and_exit_code_reject_a_daemon_switch(tmp_path):
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    daemon_a = supervisor.daemon_identity()
+    handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "import time; time.sleep(30)")))
+    supervisor.start(handle)
+    fake.set_control(daemon_id="fake-daemon-b")
+    try:
+        for name, call in (
+            ("poll", lambda: supervisor.poll(handle)),
+            ("wait", lambda: supervisor.wait(handle, 0.05)),
+            ("exit_code", lambda: supervisor.exit_code(handle)),
+        ):
+            with pytest.raises(SupervisorError, match="another Docker daemon"):
+                call()
+    finally:
+        fake.set_control(daemon_id=daemon_a)
+        assert supervisor.cleanup(handle) == ""
+        supervisor.release(handle)
+
+
+def test_reaping_does_not_signal_a_reused_pid(tmp_path, monkeypatch):
+    from tcenv.remote import container_supervisor as supervisor_module
+
+    docker, _fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    calls = {"scan": 0}
+    signals: list[int] = []
+
+    def one_scan_then_empty(ref, *args, **kwargs):
+        calls["scan"] += 1
+        return [424242] if calls["scan"] == 1 else []
+
+    monkeypatch.setattr(supervisor_module.hostprocs, "pids_mentioning", one_scan_then_empty)
+    monkeypatch.setattr(supervisor_module.hostprocs, "pid_mentions", lambda pid, *needles: False)
+    monkeypatch.setattr(supervisor_module.os, "kill", lambda pid, sig: signals.append(pid))
+    assert supervisor._reap_attach_survivors("c" * 64) == ""
+    assert signals == [], "a reused PID must never be signalled"
+
+
+def test_cleanup_recovered_checks_the_full_id_cgroup_of_a_name_only_duplicate(tmp_path):
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    cgroup_root = tmp_path / "cgroup"
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker, cgroup_root=str(cgroup_root)))
+    daemon_a = supervisor.daemon_identity()
+    handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "import time; time.sleep(2)")))
+    attempt = Attempt(
+        attempt_id=handle.attempt_id, lease_fence=handle.lease_fence, state="running",
+        retry_index=0, cancel_requested=False, queued_at_ms=0, started_at_ms=1,
+        container_id="", container_name=handle.container_name,
+        execution_kind="container", container_daemon=daemon_a,
+    )
+    # The name-only recovery finds the duplicate by label, deletes it, and must
+    # still verify the duplicate's full-id cgroup.
+    cgroup = cgroup_root / "docker" / handle.container_id
+    cgroup.mkdir(parents=True)
+    try:
+        error = supervisor.cleanup_recovered(attempt, state_dir=tmp_path / "state")
+        assert "cgroup" in error and "survived" in error
+        assert fake.records() == []
+    finally:
+        import shutil
+        shutil.rmtree(cgroup, ignore_errors=True)
+        fake.set_control(daemon_id=daemon_a)
+        supervisor.release(handle)
+
+
 def test_a_live_darwin_process_with_a_huge_environment_is_still_scanned():
     """A 20 KB environment must not turn a live attach process into "not found"."""
 
@@ -701,7 +794,10 @@ def test_a_live_darwin_process_with_a_huge_environment_is_still_scanned():
     try:
         argv = hostprocs._darwin_argv(process.pid)
         assert argv[-2:] == ("--attach", token)
-        assert process.pid in hostprocs.pids_mentioning(token, "--attach")
+        assert process.pid in hostprocs.pids_mentioning(
+            token, "--attach",
+            executable_names=frozenset({os.path.basename(sys.executable), "python3"}),
+        )
     finally:
         process.kill()
         process.wait(timeout=10)

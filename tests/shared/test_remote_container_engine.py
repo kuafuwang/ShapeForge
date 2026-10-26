@@ -298,7 +298,10 @@ def test_container_create_failure_never_falls_back_to_a_process_worker(tmp_path)
         tmp_path / "docker", image_digest=IMAGE_DIGEST, control={"fail_create": True},
     )
     marker = tmp_path / "worker-started"
-    service = container_engine(tmp_path / "state", docker, worker_env={"FAKE_JOB_STARTED": str(marker)})
+    service = container_engine(
+        tmp_path / "state", docker, worker_env={"FAKE_JOB_STARTED": str(marker)},
+        monotonic=_FrozenClock().now,
+    )
     req = request("container-create-failure")
     try:
         submit(service, req)
@@ -321,7 +324,10 @@ def test_ambiguous_create_failure_cleans_the_container_it_never_learned_about(tm
         control={"fail_create_after_record": True},
     )
     marker = tmp_path / "worker-started"
-    service = container_engine(tmp_path / "state", docker, worker_env={"FAKE_JOB_STARTED": str(marker)})
+    service = container_engine(
+        tmp_path / "state", docker, worker_env={"FAKE_JOB_STARTED": str(marker)},
+        monotonic=_FrozenClock().now,
+    )
     req = request("container-create-ambiguous")
     try:
         submit(service, req)
@@ -374,7 +380,10 @@ def test_ambiguous_create_failure_quarantines_when_cleanup_is_unverified(tmp_pat
 def test_cancel_committed_before_start_never_lets_the_worker_run(tmp_path):
     docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
     marker = tmp_path / "worker-started"
-    service = container_engine(tmp_path / "state", docker, worker_env={"FAKE_JOB_STARTED": str(marker)})
+    service = container_engine(
+        tmp_path / "state", docker, worker_env={"FAKE_JOB_STARTED": str(marker)},
+        monotonic=_FrozenClock().now,
+    )
     req = request("container-cancel-before-start", source=b"SLEEP", candidate_timeout_ms=60_000)
     original_attach = service.store.attach_container
     original_job_by_id = service.store._job_by_id
@@ -471,7 +480,10 @@ def test_container_posture_mismatch_before_start_is_never_executed(tmp_path):
         control={"binds": ["/var/run/docker.sock:/var/run/docker.sock"]},
     )
     marker = tmp_path / "worker-started"
-    service = container_engine(tmp_path / "state", docker, worker_env={"FAKE_JOB_STARTED": str(marker)})
+    service = container_engine(
+        tmp_path / "state", docker, worker_env={"FAKE_JOB_STARTED": str(marker)},
+        monotonic=_FrozenClock().now,
+    )
     req = request("container-posture-mismatch")
     try:
         submit(service, req)
@@ -866,7 +878,7 @@ def test_generic_cleanup_exception_quarantines_and_keeps_the_scheduler(tmp_path)
         identity=container_identity(), grants=[grant()],
         worker_command=[sys.executable, "-m", "tests.support.fake_worker_job_engine"],
         worker_cwd=Path(__file__).resolve().parents[2], state_dir=tmp_path / "state",
-        supervisor=supervisor,
+        supervisor=supervisor, monotonic=_FrozenClock().now,
     )
     req = request("container-generic-cleanup-failure")
     try:
@@ -1365,6 +1377,95 @@ def test_an_exit_observed_after_the_deadline_is_still_a_timeout(tmp_path):
         assert "deadline" in report["message"]
     finally:
         service.close()
+
+
+def test_a_late_stdin_close_error_cannot_become_an_ok_result(tmp_path):
+    """A writer that only fails while closing must not launder a result into ok."""
+
+    docker, _fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    service = container_engine(tmp_path / "state", docker)
+    original_streams = service.supervisor.streams
+
+    class _BrokenClose:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def write(self, data):
+            return self._inner.write(data)
+
+        def flush(self):
+            return self._inner.flush()
+
+        def close(self):
+            raise BrokenPipeError("injected late EPIPE")
+
+    def streams(handle):
+        stdin, stdout, stderr = original_streams(handle)
+        return _BrokenClose(stdin), stdout, stderr
+
+    service.supervisor.streams = streams
+    req = request("late-epipe", source=b"OK", candidate_timeout_ms=60_000)
+    try:
+        submit(service, req)
+        final = wait_state(service, req, {"completed", "interrupted", "failed"}, timeout=30.0)
+        assert final.state == "interrupted"
+        assert final.failure is not None and final.failure.code == "worker_protocol_error"
+        assert final.result is None
+    finally:
+        service.close()
+
+
+def test_a_stderr_read_failure_cannot_become_an_ok_result(tmp_path):
+    """The result gate must cover both readers, not only stdout."""
+
+    docker, _fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    service = container_engine(tmp_path / "state", docker)
+    original_streams = service.supervisor.streams
+
+    class _BrokenRead:
+        def read(self, _size=-1):
+            raise OSError("injected stderr failure")
+
+        def close(self):
+            return None
+
+    def streams(handle):
+        stdin, stdout, _stderr = original_streams(handle)
+        return stdin, stdout, _BrokenRead()
+
+    service.supervisor.streams = streams
+    req = request("stderr-failure", source=b"OK", candidate_timeout_ms=60_000)
+    try:
+        submit(service, req)
+        final = wait_state(service, req, {"completed", "interrupted", "failed"}, timeout=30.0)
+        assert final.state == "interrupted"
+        assert final.failure is not None and final.failure.code == "worker_protocol_error"
+        assert "stderr" in final.failure.message
+        assert final.result is None
+    finally:
+        service.close()
+
+
+def test_recovery_cleanup_failure_makes_close_report_an_unverified_shutdown(tmp_path):
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    state = tmp_path / "state"
+    req = request("recovery-close", source=b"SLEEP", candidate_timeout_ms=60_000)
+    _attempt, handle, supervisor = _crashed_running_attempt(state, docker, req)
+    fake.set_control(fail_rm=True)
+    recovered = container_engine(state, docker)
+    try:
+        snapshot = recovered.store._job_by_id(req.request_id)
+        assert snapshot.quarantined is True
+        # A quarantined running attempt whose container may still be alive is an
+        # unverified shutdown; close() must not report True.
+        assert recovered.close(wait=20.0) is False
+        assert recovered.close_error is not None
+        assert "cleanup" in str(recovered.close_error)
+    finally:
+        fake.set_control(fail_rm=False)
+        supervisor.cleanup(handle)
+        supervisor.release(handle)
+        recovered.close()
 
 
 def test_a_daemon_switch_during_start_never_writes_the_request(tmp_path, monkeypatch):

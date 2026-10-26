@@ -437,15 +437,19 @@ def _run_legacy_worker(
             stdout_pipe.start()
             stderr_pipe.start()
 
+            write_error: list[BaseException] = []
+
             def write_request() -> None:
                 try:
                     process.stdin.write(legacy_request)
                     process.stdin.flush()
                     process.stdin.close()
-                except (BrokenPipeError, OSError, ValueError):
-                    # A child that died before reading stdin is reported by its
-                    # exit status, exactly as communicate() reported it.
-                    pass
+                except (BrokenPipeError, OSError, ValueError) as exc:
+                    # A failed write means the request was not fully delivered.
+                    # Even if the child managed to emit a result (e.g. it exited
+                    # before reading a large request), that result cannot be
+                    # accepted as an execution of this request.
+                    write_error.append(exc)
 
             writer = threading.Thread(
                 target=write_request, name="tcenv-legacy-worker-stdin", daemon=True,
@@ -506,6 +510,12 @@ def _run_legacy_worker(
         if not writer_done:
             raise _BridgeFailure(
                 "legacy worker request writer did not finish before the bounded join deadline"
+            )
+        if write_error:
+            error = write_error[0]
+            raise _BridgeFailure(
+                "legacy worker request write failed: "
+                f"{type(error).__name__}: {error}"[:1000]
             )
         if process.returncode != 0:
             raise _BridgeFailure(f"legacy worker exited {process.returncode}")

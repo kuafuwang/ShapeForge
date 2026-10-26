@@ -163,11 +163,19 @@ class Report:
             name for name in REQUIRED_CHECKS
             if name not in self.checks or self.checks[name]["status"] == "not_run"
         ]
+        extra = extra or {}
+        # Any explicit "forbidden artifact exists" flag (false) means the run is
+        # not publishable as a pass.  The runner always supplies these flags.
+        artifacts_forbidden = any(
+            value is False for key, value in extra.items() if key.startswith("no_")
+        )
         # A blocker recorded after a check seems to have passed must not be
-        # folded back into ``status=passed``.
-        if not missing and not not_passed and cleanup.get("final") and not self.blockers:
+        # folded back into ``status=passed``; neither may a forbidden artifact
+        # (run_config / confirmed / catalog / brief) nor a failed evidence
+        # command.
+        if not missing and not not_passed and cleanup.get("final") and not self.blockers and not artifacts_forbidden:
             status = "passed"
-        elif failed:
+        elif failed or artifacts_forbidden:
             status = "failed"
         elif self.blockers or not_run:
             status = "blocked"
@@ -199,7 +207,7 @@ class Report:
         return document
 
 
-def _write_evidence(out: Path, name: str, argv: list[str]) -> dict:
+def _write_evidence(out: Path, name: str, argv: list[str], *, report: "Report | None" = None) -> dict:
     completed = _run(argv, timeout=120.0)
     path = out / f"evidence-{name}.json"
     document = {
@@ -213,6 +221,13 @@ def _write_evidence(out: Path, name: str, argv: list[str]) -> dict:
     except ValueError:
         pass
     path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if completed.returncode != 0 and report is not None:
+        # Evidence a check relies on must have been collected: a failed evidence
+        # command is a blocker, never a silent pass.
+        report.blockers.append(
+            f"evidence command {name!r} failed with rc {completed.returncode}: "
+            f"{completed.stderr.strip()[-300:]}"
+        )
     return {"file": path.name, "returncode": completed.returncode}
 
 
@@ -432,7 +447,7 @@ def _check_timeout(report: Report, out: Path, state: Path, digest: str) -> None:
         host_pid = _host_pid_visibility(container_id)
         attach_before = _attach_visible(container_id)
         cgroup_before = _cgroup_exists(container_id)
-        _write_evidence(out, "timeout-top", ["docker", "top", container_id, "-o", "pid,args"])
+        _write_evidence(out, "timeout-top", ["docker", "top", container_id, "-o", "pid,args"], report=report)
         (out / "evidence-timeout-attach.json").write_text(
             json.dumps({"attach": attach_before, "ps_control": ps_control}, indent=2),
             encoding="utf-8",
@@ -581,7 +596,7 @@ def _check_cancel(report: Report, state: Path, digest: str) -> None:
         engine.close()
 
 
-def _crash_state(out: Path, state: Path, digest: str, request_id: str) -> dict:
+def _crash_state(out: Path, state: Path, digest: str, request_id: str, report: Report) -> dict:
     ready = out / f"crash-{request_id}-ready.json"
     log = out / f"crash-{request_id}-frontend.log"
     token = f"{CHILD_TOKEN_PREFIX}-{request_id}"
@@ -623,7 +638,7 @@ def _crash_state(out: Path, state: Path, digest: str, request_id: str) -> dict:
         # Liveness of the old worker must be established *after* the frontend
         # died, from the daemon, not from the frontend's own last words.
         info["was_running_after_crash"] = _container_state(info["container_id"]) == "running"
-        _write_evidence(out, f"crash-{request_id}-inspect", ["docker", "inspect", "--type", "container", info["container_id"]])
+        _write_evidence(out, f"crash-{request_id}-inspect", ["docker", "inspect", "--type", "container", info["container_id"]], report=report)
     finally:
         if child.poll() is None:
             child.kill()
@@ -632,7 +647,7 @@ def _crash_state(out: Path, state: Path, digest: str, request_id: str) -> dict:
 
 
 def _check_crash(report: Report, out: Path, state: Path, digest: str) -> None:
-    info = _crash_state(out, state, digest, "sim-crash")
+    info = _crash_state(out, state, digest, "sim-crash", report)
     container_id = info["container_id"]
     still_running = info["was_running_after_crash"]
     recovered = common.engine(state, digest)
@@ -741,7 +756,7 @@ def _check_stale_fence(report: Report, out: Path, state: Path, digest: str) -> N
 
         top_newer = _wait(newer_child_visible, 30.0, "the newer attempt's child")
         host_pid = _host_pid_visibility(newer.container_id)
-        _write_evidence(out, "stale-fence-top", ["docker", "top", newer.container_id, "-o", "pid,args"])
+        _write_evidence(out, "stale-fence-top", ["docker", "top", newer.container_id, "-o", "pid,args"], report=report)
         was_running = _container_state(newer.container_id) == "running"
         forged = {
             "task": request_obj.task, "dtype": request_obj.dtype, "size": request_obj.size,
@@ -805,7 +820,7 @@ def _check_stale_fence(report: Report, out: Path, state: Path, digest: str) -> N
 
 
 def _check_crash_quarantine(report: Report, out: Path, state: Path, digest: str) -> None:
-    info = _crash_state(out, state, digest, "sim-quarantine")
+    info = _crash_state(out, state, digest, "sim-quarantine", report)
     container_id = info["container_id"]
     wrapper = out / "docker-fail-rm"
     real_docker = shutil.which("docker")
@@ -1038,7 +1053,7 @@ def _check_posture(report: Report, out: Path, state: Path, digest: str) -> None:
         host = inspect.get("HostConfig") or {}
         config = inspect.get("Config") or {}
         env_names = [item.split("=", 1)[0] for item in (config.get("Env") or [])]
-        _write_evidence(out, "posture-inspect", ["docker", "inspect", container_id])
+        _write_evidence(out, "posture-inspect", ["docker", "inspect", container_id], report=report)
         probe = (
             "import json,os,socket,sys;"
             "r={'uid':os.getuid(),'gid':os.getgid(),"
@@ -1310,6 +1325,11 @@ def main(argv: list[str] | None = None) -> int:
 
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
+    previous = out / "report.json"
+    if previous.exists():
+        # A rerun must never leave an older "passed" report in place if this run
+        # fails before writing a new one.
+        os.replace(previous, out / "report.json.previous")
     report = Report(out)
     log_handle = (out / "container-sim.log").open("a", encoding="utf-8")
 
@@ -1356,7 +1376,13 @@ def main(argv: list[str] | None = None) -> int:
         report.blockers.append(f"{type(exc).__name__}: {exc}")
         log(f"acceptance failed: {type(exc).__name__}: {exc}")
     finally:
-        cleanup = _final_cleanup(report, out, states)
+        try:
+            cleanup = _final_cleanup(report, out, states)
+        except Exception as exc:
+            report.blockers.append(
+                f"final cleanup failed: {type(exc).__name__}: {exc}"[:1000]
+            )
+            cleanup = {"final": False, "error": f"{type(exc).__name__}: {exc}"[:1000]}
         extra = {
             "no_run_config_json": not (out / "run_config.json").exists(),
             "no_confirmed_or_catalog_written": not any(

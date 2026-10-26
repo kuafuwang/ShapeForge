@@ -455,6 +455,17 @@ class DockerAttemptSupervisor:
 
     # -- lifecycle ---------------------------------------------------------
     def create(self, spec: AttemptSpec) -> WorkerHandle:
+        # The engine persisted the daemon identity before create.  A switch
+        # between that durable attach and this call would create the container
+        # on another Engine while every later proof is bound to the persisted
+        # one; verify it first, before any container exists.
+        persisted_daemon = getattr(spec.attempt, "container_daemon", "") or ""
+        if persisted_daemon:
+            error = self._guard_daemon(
+                persisted_daemon, "could not create the worker container",
+            )
+            if error:
+                raise SupervisorError(error)
         digest_error = self.verify_image()
         if digest_error:
             raise SupervisorError(f"worker image identity check failed: {digest_error}")
@@ -629,8 +640,15 @@ class DockerAttemptSupervisor:
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 env=self._cli_env(),
             )
-        except OSError as exc:
-            raise SupervisorError(f"could not attach to worker container: {_sanitize(str(exc))}") from exc
+        except BaseException as exc:
+            # ``popen_group`` can raise after the process already exists (e.g.
+            # its process-registry bookkeeping fails), so no Popen handle
+            # reaches us.  Reap any attach client by its argv before failing.
+            leftover = self._reap_attach_survivors(handle.container_id)
+            detail = "" if not leftover else f"; {leftover}"
+            raise SupervisorError(
+                f"could not attach to worker container: {_sanitize(str(exc))}{detail}"
+            ) from exc
         handle.attach = attach
         # The daemon can switch between the check above and the spawn (the CLI
         # process is started by us, but the endpoint is external).  Re-bind
@@ -639,6 +657,9 @@ class DockerAttemptSupervisor:
         changed = self._bind_daemon(handle)
         if changed:
             self._stop_attach(handle)
+            leftover = self._reap_attach_survivors(handle.container_id)
+            if leftover:
+                changed = f"{changed}; {leftover}"[:1000]
             raise SupervisorError(changed)
         handle.started = True
 
@@ -656,15 +677,26 @@ class DockerAttemptSupervisor:
         return attach.stdin, attach.stdout, attach.stderr
 
     def poll(self, handle: WorkerHandle) -> int | None:
-        status, _error = self._status_for(handle.container_id)
+        error = self._bind_daemon(handle)
+        if error:
+            raise SupervisorError(error)
+        status, error = self._status_for(handle.container_id)
+        if error:
+            raise SupervisorError(f"could not poll the worker container: {error}")
         if status.state == "exited":
             return status.exit_code if status.exit_code is not None else -1
         return None
+
+    def _verify_still_bound(self, handle: WorkerHandle, what: str) -> None:
+        error = self._bind_daemon(handle)
+        if error:
+            raise SupervisorError(f"{what}: {error}")
 
     def wait(self, handle: WorkerHandle, timeout: float) -> int | None:
         attach = handle.attach
         if attach is None:
             raise SupervisorError("container wait requires an attached start")
+        self._verify_still_bound(handle, "worker deadline status is not bound")
         try:
             attach.wait(timeout=max(0.001, timeout))
         except subprocess.TimeoutExpired:
@@ -675,6 +707,7 @@ class DockerAttemptSupervisor:
                 # The container is done; only a stuck attach client remains.
                 if status.exit_code is None:
                     raise SupervisorError("worker container exited without an exit code")
+                self._verify_still_bound(handle, "worker exit status is not bound")
                 self._stop_attach(handle)
                 return status.exit_code
             if status.state != "running":
@@ -683,6 +716,7 @@ class DockerAttemptSupervisor:
                 raise SupervisorError(
                     f"worker container state at the deadline is {status.state}, not running"
                 )
+            self._verify_still_bound(handle, "worker deadline status is not bound")
             return None
         status, error = self._status_for(handle.container_id)
         if error:
@@ -693,11 +727,18 @@ class DockerAttemptSupervisor:
             raise SupervisorError(f"worker container state after exit is {status.state}")
         if status.exit_code is None:
             raise SupervisorError("worker container exited without an exit code")
+        self._verify_still_bound(handle, "worker exit status is not bound")
         return status.exit_code
 
     def exit_code(self, handle: WorkerHandle) -> int | None:
-        status, _error = self._status_for(handle.container_id)
+        error = self._bind_daemon(handle)
+        if error:
+            raise SupervisorError(error)
+        status, error = self._status_for(handle.container_id)
+        if error:
+            raise SupervisorError(f"could not read the worker exit code: {error}")
         if status.state == "exited":
+            self._verify_still_bound(handle, "worker exit code is not bound")
             return status.exit_code
         return None
 
@@ -760,6 +801,21 @@ class DockerAttemptSupervisor:
             return _sanitize(completed.stderr.decode("utf-8", errors="replace") or "docker rm failed")
         return ""
 
+    def _attach_executable_names(self) -> frozenset[str]:
+        """Executables whose processes can be this supervisor's attach clients."""
+
+        names = {os.path.basename(self.config.docker)}
+        try:
+            with open(self.config.docker, "rb") as handle:
+                first = handle.readline(256)
+        except OSError:
+            return frozenset(name for name in names if name)
+        if first.startswith(b"#!"):
+            parts = first[2:].strip().split()
+            if parts:
+                names.add(os.path.basename(parts[-1].decode("utf-8", errors="replace")))
+        return frozenset(name for name in names if name)
+
     def _attach_survivors(self, ref: str) -> tuple[list[int], str]:
         """Host processes still attaching to ``ref`` (a crash leaves them).
 
@@ -773,7 +829,9 @@ class DockerAttemptSupervisor:
         if not ref or _CONTAINER_ID.fullmatch(ref) is None:
             return [], ""
         try:
-            return hostprocs.pids_mentioning(ref, "--attach"), ""
+            return hostprocs.pids_mentioning(
+                ref, "--attach", executable_names=self._attach_executable_names(),
+            ), ""
         except OSError as exc:
             return [], f"could not inspect host processes: {_sanitize(str(exc))}"
 
@@ -784,6 +842,14 @@ class DockerAttemptSupervisor:
         if error:
             return error
         for pid in survivors:
+            try:
+                still = hostprocs.pid_mentions(pid, ref, "--attach")
+            except OSError as exc:
+                return f"could not re-verify a surviving attach client: {_sanitize(str(exc))}"
+            if not still:
+                # The PID vanished or was reused by an unrelated process since
+                # the scan: never signal it as an attach client.
+                continue
             try:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
@@ -928,7 +994,12 @@ class DockerAttemptSupervisor:
         error = self.delete(handle)
         if error:
             return f"delete: {error}"
-        return self.verify_absent(handle)
+        error = self.verify_absent(handle)
+        if error:
+            return error
+        # A lost attach client is not observable through the handle or the
+        # container record: prove none survives by argv.
+        return self._reap_attach_survivors(handle.container_id or handle.container_name)
 
     def cleanup_residue(self, handle: WorkerHandle) -> str:
         error = self.verify_absent(handle)
@@ -941,6 +1012,11 @@ class DockerAttemptSupervisor:
             return "per-attempt scratch directory survived cleanup"
         attach = handle.attach
         if attach is not None and attach.poll() is None:
+            return "container attach client survived cleanup"
+        survivors, survivors_error = self._attach_survivors(handle.container_id)
+        if survivors_error:
+            return survivors_error
+        if survivors:
             return "container attach client survived cleanup"
         # The residue proof is only valid for the daemon it was taken on.
         return self._bind_daemon(handle)
@@ -985,12 +1061,17 @@ class DockerAttemptSupervisor:
         error = guard("could not inspect the recovered worker container")
         if error:
             return error
+        resolved_id = stored_id
         if document is not None:
             labels = (document.get("Config") or {}).get("Labels") or {}
             if labels.get(_SCRATCH_LABEL_PREFIX) != attempt.attempt_id:
                 return "recovered container label does not match the persisted attempt"
             if stored_id and document.get("Id") != stored_id:
                 return "recovered container id does not match the persisted id"
+            if not resolved_id:
+                resolved_id = str(document.get("Id") or "")
+                if not resolved_id or _CONTAINER_ID.fullmatch(resolved_id) is None:
+                    return "recovered container has no usable full id; manual cleanup required"
             error = guard("could not stop the recovered worker container")
             if error:
                 return error
@@ -1007,6 +1088,10 @@ class DockerAttemptSupervisor:
             if error:
                 return f"could not delete the recovered worker container: {error}"
             error = guard("could not delete the recovered worker container")
+            if error:
+                return error
+            # A name-only recovery must still prove the full id's cgroup is gone.
+            error = self._cgroup_residue(resolved_id)
             if error:
                 return error
         else:
@@ -1041,10 +1126,15 @@ class DockerAttemptSupervisor:
                 error = guard("could not delete a recovered worker container")
                 if error:
                     return error
+                # Every duplicate is verified by its full id, not only by the
+                # deterministic name.
+                error = self._cgroup_residue(duplicate)
+                if error:
+                    return error
         error = guard("could not prove the recovered container absent")
         if error:
             return error
-        error = self._verify_ref_absent(ref, attempt.attempt_id, container_id=stored_id)
+        error = self._verify_ref_absent(ref, attempt.attempt_id, container_id=resolved_id)
         if error:
             return error
         error = guard("could not prove the recovered container absent")
@@ -1057,7 +1147,7 @@ class DockerAttemptSupervisor:
         error = guard("could not reap the recovered worker's attach client")
         if error:
             return error
-        error = self._reap_attach_survivors(ref)
+        error = self._reap_attach_survivors(resolved_id or ref)
         if error:
             return error
         error = guard("could not reap the recovered worker's attach client")

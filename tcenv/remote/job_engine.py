@@ -53,9 +53,6 @@ MAX_STDERR = 4000
 # Upper bound on one supervisor wait slice: the candidate deadline is re-checked
 # at least this often, so a late exit is classified against the real clock.
 _DEADLINE_SLICE_S = 1.0
-# Short close() probe: lets an already-idle scheduler exit so the store can be
-# closed synchronously, without letting a blocking teardown extend close(wait).
-_CLOSE_SCHEDULER_PROBE_S = 0.2
 # Bounded synchronous teardown for a container Cancel RPC (kill + delete +
 # verify).  The scheduler performs the same teardown asynchronously if this
 # window expires; the job is already durably cancelled either way.
@@ -526,6 +523,8 @@ class JobEngine:
             # Operator release is an explicit request to retry cleanup, not
             # permission to forget a possibly live old worker or device lease.
             error = self._cleanup_recovered_worker(attempt)
+            if error:
+                self._record_close_error(f"operator release cleanup was not verified: {error}")
             snapshot = self.store.recovered_attempt(request_id, attempt, cleanup_error=error)
             if snapshot.state == "running":
                 return snapshot
@@ -545,6 +544,10 @@ class JobEngine:
     def _recover(self) -> None:
         for request_id, attempt, _quarantined in self.store.running_attempts():
             error = self._cleanup_recovered_worker(attempt)
+            if error:
+                # A quarantined running attempt whose container may still be
+                # alive is an unverified shutdown, not a clean start.
+                self._record_close_error(f"recovered worker cleanup was not verified: {error}")
             self.store.recovered_attempt(request_id, attempt, cleanup_error=error)
 
     def _cleanup_recovered_worker(self, attempt: Attempt) -> str:
@@ -1007,6 +1010,12 @@ class JobEngine:
             self._close_handle_streams(handle)
         return "; ".join(problems)
 
+    def _record_close_error(self, message: str) -> None:
+        """Remember an unverified teardown for close()/ProductionStack.stop."""
+
+        if self._close_error is None:
+            self._close_error = RuntimeError(message[:1000])
+
     def _record_cleanup_hazard(self, running: _Running, error: str) -> None:
         """Fail closed: no result commit, no Retry and no verified shutdown.
 
@@ -1292,25 +1301,31 @@ class JobEngine:
                     return "deadline"
                 return ""
 
-        with self._active_lock:
-            before_start = self.store._job_by_id(request.request_id)
-            cancelled_before_start = bool(before_start.cancel_requested or running.cancel_requested)
-            if not cancelled_before_start and self._overdue(running):
-                overdue_before_start = True
-            elif not cancelled_before_start:
-                try:
-                    self.supervisor.start(handle, authorize=authorize_start)
-                    stdin, stdout, stderr = self.supervisor.streams(handle)
-                except StartRefused as exc:
-                    if exc.reason == "deadline":
-                        overdue_before_start = True
-                    elif exc.reason == "cancelled":
-                        cancelled_before_start = True
-                        running.cancel_requested = True
-                    else:
-                        start_error = exc
-                except Exception as exc:
+        # The blocking supervisor preparation (daemon bind + spawn) must not
+        # hold ``_active_lock``: Cancel/close take it to commit the durable
+        # cancellation and to stop the attempt, and a slow bind would make them
+        # exceed their own deadlines.  The supervisor calls ``authorize_start``
+        # (which takes the lock briefly) after the bind and before the spawn, and
+        # the writer re-authorizes under the lock after encoding, so a cancel
+        # that wins the lock is never followed by delivering candidate bytes.
+        before_start = self.store._job_by_id(request.request_id)
+        cancelled_before_start = bool(before_start.cancel_requested or running.cancel_requested)
+        if not cancelled_before_start and self._overdue(running):
+            overdue_before_start = True
+        elif not cancelled_before_start:
+            try:
+                self.supervisor.start(handle, authorize=authorize_start)
+                stdin, stdout, stderr = self.supervisor.streams(handle)
+            except StartRefused as exc:
+                if exc.reason == "deadline":
+                    overdue_before_start = True
+                elif exc.reason == "cancelled":
+                    cancelled_before_start = True
+                    running.cancel_requested = True
+                else:
                     start_error = exc
+            except Exception as exc:
+                start_error = exc
         if overdue_before_start:
             self._finish_overdue_attempt(running, attempt=attempt, handle=handle)
             return
@@ -1353,13 +1368,18 @@ class JobEngine:
 
         stderr_tail: list[str] = []
 
+        stderr_error: list[BaseException] = []
+
         def read_stderr() -> None:
             tail = bytearray()
-            while True:
-                chunk = stderr.read(4096)
-                if not chunk:
-                    break
-                tail = (tail + chunk)[-MAX_STDERR:]
+            try:
+                while True:
+                    chunk = stderr.read(4096)
+                    if not chunk:
+                        break
+                    tail = (tail + chunk)[-MAX_STDERR:]
+            except BaseException as exc:  # the reader boundary must record, not die
+                stderr_error.append(exc)
             stderr_tail.append(tail.decode("utf-8", errors="replace"))
 
         out_thread = threading.Thread(target=read_stdout, name="tcenv-worker-stdout", daemon=True)
@@ -1456,6 +1476,15 @@ class JobEngine:
             # second bounded window to finish.
             writer_thread.join(timeout=join_window)
             writer_alive = writer_thread.is_alive()
+            # A writer that only failed during cleanup (a late EPIPE when the
+            # worker exits before reading the whole request) is still a request
+            # that was not fully delivered: it must never be reported as ok.
+            if (
+                write_error
+                and not running.cancel_requested and not running.stopping
+                and not self._stop.is_set() and not timed_out and not supervisor_error
+            ):
+                stdout_error.append(write_error[0])
             reader_alive = out_thread.is_alive()
             readers_alive = out_thread.is_alive() or err_thread.is_alive()
             handle.metadata["reader_state"] = "running" if readers_alive else "done"
@@ -1513,6 +1542,15 @@ class JobEngine:
         if running.stopping or self._stop.is_set():
             self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
                 "infrastructure", True, "frontend_stopped", "frontend stopped while the attempt was active",
+            ))
+            return
+        if stderr_error:
+            # The stderr reader failed; the bridge cannot prove it saw the
+            # complete child output, so an "ok" result is not acceptable.
+            error = stderr_error[0]
+            self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                "protocol", True, "worker_protocol_error",
+                f"worker stderr could not be read: {error}"[:1000],
             ))
             return
         if timed_out:
@@ -1577,17 +1615,32 @@ class JobEngine:
         being closed underneath a live writer.
         """
 
-        with self._close_lock:
+        if wait is None:
+            deadline = None
+            acquired = self._close_lock.acquire(blocking=False)
+        else:
+            deadline = time.monotonic() + max(0.0, float(wait))
+            acquired = self._close_lock.acquire(timeout=max(0.0, deadline - time.monotonic()))
+        if not acquired:
+            # Another close is still starting the teardown: never claim it.
+            if wait is None:
+                return self._closed_event.is_set() and self._close_error is None
+            return False
+        try:
             if not self._close_started:
                 self._close_started = True
-                self._close_once()
+                self._close_once(probe=None if wait is not None else 0.2)
+        finally:
+            self._close_lock.release()
         if self._closed_event.is_set():
             return self._close_error is None
         if wait is None:
             return False
-        return self._closed_event.wait(timeout=max(0.0, float(wait))) and self._close_error is None
+        return self._closed_event.wait(
+            timeout=max(0.0, deadline - time.monotonic()),
+        ) and self._close_error is None
 
-    def _close_once(self) -> None:
+    def _close_once(self, probe: float | None = None) -> None:
         """One shutdown attempt; every failure is recorded, never raised.
 
         A supervisor that returns a non-empty ``kill`` result did *not* prove
@@ -1610,25 +1663,23 @@ class JobEngine:
             # own return.
             self._wake()
             scheduler = getattr(self, "_scheduler", None)
-            if scheduler is not None:
-                # A short probe lets an idle scheduler finish so the common case
-                # (restart tests, ProductionStack.stop) still closes the store
-                # synchronously.  A busy or gated scheduler is handed to the
-                # finalizer: close(wait=...) must bound its own return, not the
-                # duration of a blocking kill.
-                scheduler.join(timeout=_CLOSE_SCHEDULER_PROBE_S)
-                if scheduler.is_alive():
-                    threading.Thread(
-                        target=self._close_store_after_scheduler,
-                        args=(scheduler, self.store),
-                        name="tcenv-external-jobs-close", daemon=True,
-                    ).start()
+            if probe is not None and scheduler is not None:
+                # close() without a wait keeps the historical idle behavior (the
+                # store is closed before returning); a close(wait=...) never
+                # joins here, because its return must be bounded by wait.
+                scheduler.join(timeout=probe)
+                if not scheduler.is_alive():
+                    try:
+                        self.store.close()
+                    except Exception as exc:
+                        self._close_error = exc
+                    self._closed_event.set()
                     return
-            try:
-                self.store.close()
-            except Exception as exc:
-                self._close_error = exc
-            self._closed_event.set()
+            threading.Thread(
+                target=self._close_store_after_scheduler,
+                args=(scheduler, self.store),
+                name="tcenv-external-jobs-close", daemon=True,
+            ).start()
         except Exception as exc:  # pragma: no cover - defensive shutdown boundary
             if self._close_error is None:
                 self._close_error = exc
@@ -1644,9 +1695,10 @@ class JobEngine:
 
         return self._closed_event.is_set()
 
-    def _close_store_after_scheduler(self, scheduler: threading.Thread, store: JobStore) -> None:
+    def _close_store_after_scheduler(self, scheduler: threading.Thread | None, store: JobStore) -> None:
         try:
-            scheduler.join()
+            if scheduler is not None:
+                scheduler.join()
         except Exception as exc:  # pragma: no cover - defensive shutdown boundary
             self._close_error = exc
         try:
