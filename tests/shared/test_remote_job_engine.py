@@ -1142,6 +1142,70 @@ def test_supervisor_error_after_popen_cleans_unattached_worker(tmp_path, monkeyp
                     stream.close()
 
 
+def test_supervisor_error_with_uncleaned_worker_quarantines_instead_of_interrupting(tmp_path, monkeypatch):
+    import tcenv.remote.job_engine as job_engine_module
+
+    request_marker = tmp_path / "worker-received-request"
+    service = engine(tmp_path / "state", worker_env={"FAKE_JOB_RUNNING": str(request_marker)})
+    processes = []
+    encoded = []
+    original_popen = service._popen
+    original_kill = job_engine_module.kill_group
+    original_encode = job_engine_module.encode_request
+
+    def recording_popen():
+        process = original_popen()
+        processes.append(process)
+        return process
+
+    def failing_kill(process):
+        raise OSError("injected kill failure")
+
+    def fail_process_identity(*_args, **_kwargs):
+        raise RuntimeError("injected supervisor failure after popen")
+
+    def recording_encode(*args, **kwargs):
+        encoded.append(True)
+        return original_encode(*args, **kwargs)
+
+    service._popen = recording_popen
+    monkeypatch.setattr(job_engine_module, "kill_group", failing_kill)
+    monkeypatch.setattr(job_engine_module, "process_start_token", fail_process_identity)
+    monkeypatch.setattr(job_engine_module, "encode_request", recording_encode)
+    try:
+        req = request("supervisor-error-uncleaned", source=b"SLEEP", candidate_timeout_ms=30_000)
+        submit(service, req)
+        deadline = time.monotonic() + 5
+        snapshot = service.store._job_by_id(req.request_id)
+        while not snapshot.quarantined and time.monotonic() < deadline:
+            time.sleep(0.01)
+            snapshot = service.store._job_by_id(req.request_id)
+        assert snapshot.quarantined is True
+        assert snapshot.state == "running"
+        assert "injected kill failure" in snapshot.recovery_error
+        assert snapshot.result is None
+        assert encoded == [] and not request_marker.exists()
+        # Retry is refused while the old worker's death is unproven.
+        cap = capabilities(service)
+        with pytest.raises(JobError, match="quarantined"):
+            service.retry(
+                request_id=req.request_id, request_digest=req.request_digest,
+                expected=service.expected_identities,
+                interrupted_attempt_id=snapshot.current_attempt.attempt_id,
+                capability_id=cap.capability_id, grant_token=TOKEN,
+            )
+    finally:
+        monkeypatch.setattr(job_engine_module, "kill_group", original_kill)
+        for process in processes:
+            if process.poll() is None:
+                original_kill(process)
+            job_engine_module.forget(process)
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+        service.close()
+
+
 def test_attach_failure_never_writes_request_and_is_recoverable(tmp_path, monkeypatch):
     import tcenv.remote.job_engine as job_engine_module
 

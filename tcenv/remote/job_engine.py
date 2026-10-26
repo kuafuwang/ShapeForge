@@ -576,9 +576,17 @@ class JobEngine:
                     running.cancel_requested = True
                 self._run_worker(running)
             except Exception as exc:
-                self._cleanup_supervisor_handle(running)
+                cleanup_error = self._cleanup_supervisor_handle(running)
                 try:
-                    if isinstance(exc, JobError):
+                    if cleanup_error:
+                        # Fail closed: an unexpected supervisor error must not
+                        # turn into "interrupted, safe to Retry" while the old
+                        # worker may still be alive.
+                        self._record_cleanup_hazard(
+                            running,
+                            f"{type(exc).__name__}: {exc}; {cleanup_error}"[:1000],
+                        )
+                    elif isinstance(exc, JobError):
                         self._handle_worker_job_error(running, exc)
                     else:
                         self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
@@ -595,19 +603,20 @@ class JobEngine:
                 running.teardown_done.set()
                 self._wake()
 
-    def _cleanup_supervisor_handle(self, running: _Running | None) -> None:
-        """Best-effort execution cleanup on an unexpected supervisor exit."""
+    def _cleanup_supervisor_handle(self, running: _Running | None) -> str:
+        """Execution cleanup on an unexpected supervisor exit; "" only if proven."""
 
         if running is None or running.handle is None:
-            return
+            return ""
         handle = running.handle
         try:
-            self.supervisor.cleanup(handle)
-        except (OSError, SupervisorError):
-            pass
+            error = self.supervisor.cleanup(handle)
+        except (OSError, SupervisorError) as exc:
+            error = f"execution cleanup failed: {exc}"
         finally:
             self.supervisor.release(handle)
             self._close_handle_streams(handle)
+        return error
 
     @staticmethod
     def _close_handle_streams(handle: WorkerHandle) -> None:
