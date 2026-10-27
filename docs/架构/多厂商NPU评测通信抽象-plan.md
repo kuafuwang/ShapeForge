@@ -349,6 +349,14 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
 - 持久化迁移：job store schema v4 的版本白名单含 v3，v3→v4 原位迁移（加
   `attempts.device_binding_json`）与 v3 备份恢复都有独立回归，迁移后任务/结果/attempt 保留，
   旧 attempt 的绑定为空因此永不被别的设备组 reconcile；v1/v2→v4 路径保持。
+- 终态读路径（source 已删除）：`contracts.npu_stored_request_document` 从持久化字段重建
+  canonical request（精确字段集、逐字段校验、CandidateDigest 不依赖 source 字节、拒绝
+  legacy `candidate_sha256`），重算并比对 `jobs.request_digest`；`_validate_result_envelope`
+  与 store 打开时的 `_validate_durable_state` 都执行该检查，并交叉核对 accepted base
+  provenance、`attempts.device_binding_json` 与签名 result 的 device group/artifact/launch/
+  timing。因此改 `request_json` 的 `task`/`execution`/加 `candidate_sha256`、改
+  `jobs.provenance_json` 或 attempt 绑定后，直接 `_job_by_id` 读与关闭后重开都 fail closed
+  （`from_stored` 也不再静默丢弃 legacy 字段）。旧 Metal 读路径不变。
 - `CandidateDigest` 链：canonical request → request digest（绑定 source sha256、execution
   spec 与 device group）→ receipt（`candidate_digest`，不双写 `candidate_sha256`）→
   outbox 行 `schema_version=2` + result envelope → HMAC result signature → resume。
@@ -409,9 +417,9 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   controller 发取消。Host API 时间与 device event 时间分开记录，`candidate_us` 取自
   device event。
 - 验证证据（每条命令各自单独跑）：
-  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **43 passed**
+  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **48 passed**
   （含 v3→v4 迁移/备份恢复、wire receipt 与 host HMAC 篡改、时钟/候选时间自相矛盾、
-  hanging cancel/reconcile 回归）；
+  hanging cancel/reconcile、终态 request/provenance/attempt 绑定篡改回归）；
   `test_remote_grpc_{adapter,tls,contract,revocation}.py` 与
   `test_remote_{conformance,go_conformance}.py` 六个旧文件 **62 passed**；
   `test_orchestrator_runtime.py` **18 passed**（含 NPU host 接线回归）；
@@ -419,7 +427,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   container_supervisor,runtime}.py` + `test_evaluation_outbox.py` **265 passed, 1 skipped**
   （跳过项是 Linux-only 的 `PF_KTHREAD` 检查）；`test_selfcheck_bridge.py` 在本机围栏里
   **18 failed, 1 passed**（全部是短 TMPDIR 导致的 AF_UNIX 路径超长，非围栏环境应全通过）。
-  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2242 passed / 6 skipped /
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2249 passed / 6 skipped /
   32 failed**。这批失败全部
   是本机 hmz 围栏环境造成：`test_selfcheck_bridge.py` 的 AF_UNIX 路径超长（短 TMPDIR），
   `ps` 被禁（`test_children`、`test_run_detached`、`test_triton_baseline`）与 HOME 权威

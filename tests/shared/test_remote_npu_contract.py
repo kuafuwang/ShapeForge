@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import sqlite3
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -13,7 +14,7 @@ import pytest
 
 from tcenv.evaluation import EvaluationRequest, EvaluationUnavailable
 from tcenv.remote import contracts
-from tcenv.remote.job_types import JobError
+from tcenv.remote.job_types import JobError, StateCorrupt
 from tests.support.job_engine import (
     NPU_TARGET,
     NPU_TASK_FINGERPRINT,
@@ -604,3 +605,137 @@ def test_npu_ok_report_candidate_time_must_come_from_the_device_event(tmp_path):
             contracts.npu_report_timing_check(evidence, forged)
     finally:
         engine.close(wait=5)
+
+
+def _completed_npu_job(tmp_path, request_id: str):
+    """Complete one NPU job through the fake gRPC loop and return its state dir."""
+
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    state = root / "state"
+    controller = FakeVendorAController(ledger_path)
+    engine = npu_engine(
+        state, ledger_path=ledger_path, controller=controller,
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    request = npu_request(request_id, source=SOURCE)
+    npu_submit(engine, request)
+    deadline = time.monotonic() + 10
+    snapshot = npu_get(engine, request)
+    while snapshot.state != "completed" and time.monotonic() < deadline:
+        time.sleep(0.02)
+        snapshot = npu_get(engine, request)
+    assert snapshot.state == "completed" and snapshot.result is not None
+    return engine, request, state, ledger_path
+
+
+def _sql_update(state: Path, statement: str, parameters: tuple) -> None:
+    connection = sqlite3.connect(state / "jobs.sqlite3")
+    try:
+        connection.execute(statement, parameters)
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _rewrite_json_column(state: Path, table: str, column: str, request_id: str, mutate) -> None:
+    connection = sqlite3.connect(state / "jobs.sqlite3")
+    try:
+        row = connection.execute(
+            f"SELECT {column} FROM {table} WHERE request_id=?", (request_id,),
+        ).fetchone()
+        document = json.loads(row[0])
+        mutate(document)
+        connection.execute(
+            f"UPDATE {table} SET {column}=? WHERE request_id=?",
+            (json.dumps(document, sort_keys=True), request_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _tamper_request_task(document):
+    document["task"] = "forged-task"
+
+
+def _tamper_request_execution(document):
+    document["execution"]["launch_kind"] = "GRAPH"
+
+
+def _tamper_request_dual_identity(document):
+    document["candidate_sha256"] = document["candidate_digest"]["value"]
+
+
+def _tamper_job_provenance_generation(document):
+    document["device_group"]["resource_generation"] = "999"
+
+
+def _tamper_job_provenance_launch(document):
+    document["launch_kind"] = "GRAPH"
+
+
+def _tamper_binding_generation(document):
+    document["resource_generation"] = "999"
+
+
+@pytest.mark.parametrize("mutate", [
+    _tamper_request_task,
+    _tamper_request_execution,
+    _tamper_request_dual_identity,
+    _tamper_job_provenance_generation,
+    _tamper_job_provenance_launch,
+])
+def test_a_tampered_npu_durable_identity_is_never_served(tmp_path, mutate):
+    """@brief 持久化 request/provenance 被篡改后，直接读取与重开都必须 fail closed。"""
+    engine, request, state, ledger_path = _completed_npu_job(tmp_path, "npu-durable-tamper-1")
+    try:
+        if mutate is _tamper_request_task or mutate is _tamper_request_execution \
+                or mutate is _tamper_request_dual_identity:
+            _rewrite_json_column(state, "jobs", "request_json", request.request_id, mutate)
+        else:
+            _rewrite_json_column(state, "jobs", "provenance_json", request.request_id, mutate)
+
+        with pytest.raises(StateCorrupt):
+            npu_get(engine, request)
+        with pytest.raises(StateCorrupt):
+            engine.store._job_by_id(request.request_id)
+    finally:
+        engine.close(wait=5)
+
+    with pytest.raises(StateCorrupt):
+        npu_engine(
+            state, ledger_path=ledger_path, controller=FakeVendorAController(ledger_path),
+            signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+        )
+
+
+def test_a_tampered_attempt_device_binding_is_never_served(tmp_path):
+    """@brief attempt lease 的 device binding 必须与签名 result 的绑定一致。"""
+    engine, request, state, ledger_path = _completed_npu_job(tmp_path, "npu-binding-tamper-1")
+    try:
+        _rewrite_json_column(state, "attempts", "device_binding_json", request.request_id,
+                             _tamper_binding_generation)
+        with pytest.raises(StateCorrupt):
+            npu_get(engine, request)
+        with pytest.raises(StateCorrupt):
+            engine.store._job_by_id(request.request_id)
+    finally:
+        engine.close(wait=5)
+
+    with pytest.raises(StateCorrupt):
+        npu_engine(
+            state, ledger_path=ledger_path, controller=FakeVendorAController(ledger_path),
+            signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+        )
+
+
+def test_a_stored_request_with_two_candidate_identities_is_rejected():
+    """@brief from_stored 不得静默丢弃 legacy candidate_sha256 来接受混合身份。"""
+    from tcenv.remote.job_types import ExternalEvaluationRequest, JobError
+
+    request = npu_request("npu-stored-dual-1", source=SOURCE)
+    document = {"request_id": request.request_id, **request.digest_fields()}
+    document["candidate_sha256"] = request.candidate_digest["value"]
+    with pytest.raises(JobError, match="also carries candidate_sha256"):
+        ExternalEvaluationRequest.from_stored(document, request.source)

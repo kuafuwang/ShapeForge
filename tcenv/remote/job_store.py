@@ -586,6 +586,31 @@ class JobStore:
                                 job["request_id"],
                                 f"stored request bytes do not match request_digest: {exc}",
                             ))
+                    elif self.contract.npu_source:
+                        # A terminal NPU job has no source bytes left, so the
+                        # active-request path above cannot run.  Validate the
+                        # persisted canonical fields and recompute the digest
+                        # from them; a tampered task/execution/identity is a
+                        # durable-state corruption, not a replayable job.
+                        try:
+                            stored_digest = contracts.npu_stored_request_digest(
+                                _loads(job["request_json"]),
+                            )
+                            contracts.provenance_document(
+                                _loads(job["provenance_json"]), require_attempt=False,
+                                dialect=self.contract,
+                            )
+                        except (contracts.ContractError, TypeError, ValueError) as exc:
+                            corrupt_requests.append((
+                                job["request_id"],
+                                f"stored NPU request/provenance is invalid: {exc}",
+                            ))
+                        else:
+                            if stored_digest != job["request_digest"]:
+                                corrupt_requests.append((
+                                    job["request_id"],
+                                    "stored NPU request digest does not match the accepted digest",
+                                ))
                     attempts = self._conn.execute("SELECT * FROM attempts WHERE request_id=?", (job["request_id"],)).fetchall()
                     if any(row["state"] not in ATTEMPT_STATES for row in attempts):
                         raise StateCorrupt("invalid durable attempt state")
@@ -998,16 +1023,63 @@ class JobStore:
         ):
             raise StateCorrupt("result provenance/receipt differs from the accepted job and attempt")
         if dialect.npu_source:
-            candidate = request_document.get("candidate_digest")
-            execution = request_document.get("execution")
-            if not isinstance(candidate, Mapping) or not isinstance(execution, Mapping):
-                raise StateCorrupt("stored NPU request has no candidate/execution binding")
+            # A terminal job has already deleted its source bytes, so the
+            # digest cannot be recomputed from bytes.  It can still be
+            # recomputed from the persisted canonical fields (which never
+            # contained the bytes), which is what catches a tampered
+            # task/execution/identity.  Every field is revalidated and a legacy
+            # `candidate_sha256` is rejected rather than ignored.
+            try:
+                stored_request = contracts.npu_stored_request_document(request_document)
+                stored_digest = contracts.npu_stored_request_digest(request_document)
+            except contracts.ContractError as exc:
+                raise StateCorrupt(f"stored NPU request document is invalid: {exc}") from exc
+            if stored_digest != job["request_digest"]:
+                raise StateCorrupt("stored NPU request digest does not match the accepted request digest")
+            accepted = stored_request["request"]
+            candidate = accepted["candidate_digest"]
+            execution = accepted["execution"]
+            try:
+                job_provenance = contracts.provenance_document(
+                    _loads(job["provenance_json"]), require_attempt=False, dialect=dialect,
+                )
+                validated_provenance = contracts.provenance_document(
+                    result.provenance, require_attempt=True, dialect=dialect,
+                )
+                attempt_binding = (
+                    None if attempt["device_binding_json"] is None
+                    else contracts.device_group_document(_loads(attempt["device_binding_json"]))
+                )
+            except (contracts.ContractError, TypeError, ValueError, KeyError) as exc:
+                raise StateCorrupt(f"stored NPU binding is invalid: {exc}") from exc
             if (
-                receipt.get("candidate_digest") != contracts.candidate_digest_document(candidate)
-                or receipt.get("device_group") != contracts.device_group_document(execution.get("device_group"))
+                receipt.get("candidate_digest") != candidate
+                or receipt.get("device_group") != execution["device_group"]
                 or provenance.get("device_group") != receipt.get("device_group")
             ):
                 raise StateCorrupt("result candidate/device binding differs from the accepted NPU request")
+            # The accepted base provenance, the attempt lease and the signed
+            # result must describe one and the same device group and execution
+            # shape.  A rewritten jobs.provenance_json or
+            # attempts.device_binding_json therefore cannot ride along with an
+            # otherwise valid result.
+            if (
+                job_provenance["device_group"] != receipt.get("device_group")
+                or attempt_binding is None
+                or attempt_binding != job_provenance["device_group"]
+                or validated_provenance["device_group"] != job_provenance["device_group"]
+                or job_provenance["artifact_kind"] != execution["artifact_kind"]
+                or job_provenance["launch_kind"] != execution["launch_kind"]
+                or job_provenance["launch_subtype"] != execution["launch_subtype"]
+                or sorted(job_provenance["timing_sources"]) != execution["required_timing_sources"]
+                or validated_provenance["artifact_kind"] != execution["artifact_kind"]
+                or validated_provenance["launch_kind"] != execution["launch_kind"]
+                or validated_provenance["launch_subtype"] != execution["launch_subtype"]
+                or sorted(validated_provenance["timing_sources"]) != execution["required_timing_sources"]
+            ):
+                raise StateCorrupt(
+                    "job/attempt/result NPU bindings disagree with the accepted request"
+                )
             if result.evidence is None:
                 raise StateCorrupt("NPU result requires timing evidence")
             try:

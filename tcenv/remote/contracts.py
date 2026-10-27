@@ -573,6 +573,42 @@ def request_digest_document(
     }
 
 
+def npu_stored_request_document(document: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate a persisted NPU request whose source bytes are gone.
+
+    A terminal job deletes its source, but the canonical request document never
+    contained the bytes: it contains the CandidateDigest.  Rebuilding it from the
+    stored document therefore still yields the exact digest the frontend
+    accepted, while every public/execution field is validated again and the
+    legacy ``candidate_sha256`` is rejected instead of being silently dropped.
+    """
+
+    if not isinstance(document, Mapping):
+        raise ContractError("stored request must be an object")
+    if any(not isinstance(key, str) for key in document):
+        raise ContractError("stored request field names must be strings")
+    expected = _NPU_SOURCE_REQUEST_FIELDS | {"request_id"}
+    if set(document) != expected:
+        missing = sorted(expected - set(document))
+        unknown = sorted(set(document) - expected)
+        raise ContractError(f"stored request fields are missing or unknown: missing={missing} unknown={unknown}")
+    request = _common_request_fields(document)
+    request["candidate_digest"] = candidate_digest_document(document["candidate_digest"])
+    request["execution"] = npu_execution_document(document["execution"])
+    return {
+        "document_type": NPU_SOURCE_REQUEST_DOCUMENT_TYPE,
+        "document_version": NPU_SOURCE_DOCUMENT_VERSION,
+        "digest_algorithm": REQUEST_DIGEST_ALGORITHM,
+        "request": request,
+    }
+
+
+def npu_stored_request_digest(document: Mapping[str, Any]) -> str:
+    """Return the digest of a source-less NPU stored request."""
+
+    return _document_digest(npu_stored_request_document(document))
+
+
 def request_digest(
     document: Mapping[str, Any], *, source_bytes: bytes | bytearray | memoryview,
     dialect: ContractDialect = LEGACY_DIALECT,

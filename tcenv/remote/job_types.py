@@ -442,11 +442,20 @@ class ExternalEvaluationRequest:
         if "execution" in fields or "candidate_digest" in fields:
             if "execution" not in fields or "candidate_digest" not in fields:
                 raise JobError("invalid_argument", "stored NPU request is incomplete")
+            if "candidate_sha256" in fields:
+                # The two candidate identities never coexist.  Dropping the
+                # legacy field here would silently accept a mixed request, so it
+                # is a stored-state corruption instead.
+                raise JobError("invalid_argument", "stored NPU request also carries candidate_sha256")
+            allowed = (set(cls.without_source_fields()) - {"candidate_sha256"}) | {
+                "candidate_digest", "execution",
+            }
+            if set(fields) != allowed:
+                raise JobError("invalid_argument", "stored NPU request fields are missing or unknown")
             npu = NpuSourceRequest.from_dict({
                 "candidate_digest": fields.pop("candidate_digest"),
                 "execution": fields.pop("execution"),
             })
-            fields.pop("candidate_sha256", None)
             request = cls(**fields, source=source, candidate_sha256="", npu=npu)
             if request.npu.candidate_digest.value != hashlib.sha256(source).hexdigest():
                 raise JobError("invalid_argument", "stored NPU candidate digest does not match the source")
