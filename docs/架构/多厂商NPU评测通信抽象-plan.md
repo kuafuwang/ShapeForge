@@ -31,10 +31,14 @@ vendor shell、路径、MPI 命令或裸设备地址。**通信统一的是请�
 | 单机 mesh/torus 与多机 C2C/MPI | `TX81平台软件安装部署指南` §4.1–4.5：discovery、`node_connections.json`、fabric_manager、MPI 网卡绑定 | 组网是站点 provisioning 与 lease 配置，不是 agent 请求字段；跨节点 fabric 不穿过 control_host |
 | 容器设备映射 | 安装指南 §3.2：`host-hal`、`--network=host`、按需映射 `/dev/accel_drv_mgr` 与 `/dev/accel/dev-*`，非特权为推荐方式 | 可复用容器生命周期，但设备映射、host network 与挂载必须是受信部署 profile，不能由候选配置 |
 | SMI 健康/拓扑/reset | `SMI工具使用指南`：TxIPC 获取健康、利用率、拓扑；`--reset` 对所有设备且需先结束占用；FAQ 要求物理机 root 运行 discovery_host | 健康检查与 reset 是独立运维能力；reset 必须限权并评估整机/整组影响，厂商只支持全设备 reset 时不能假装按组隔离，也不能作为每个 job 的默认动作 |
-| Profiler 独立通道（HLD/LLD，分阶段） | `tx82_profiler_hld` §1–3、`raPTI_LLD` §1–4：Host/API span、Intercept Queue、per-die 与 launch 汇总、PMC buffer、correlation id | Host API EXIT 不是设备完成；计时证据必须区分 host wall、device event、profiler dispatch，并保留关联与完整性信息 |
+| Profiler 独立通道（HLD §3 阶段表；LLD 有部分实现/运行样例） | `tx82_profiler_hld` §1–3、`lld-tx82-profiler-ch01`、`raPTI_LLD` §1–4：Host/API span、Intercept Queue、per-die 与 launch 汇总、PMC buffer、correlation id | Host API EXIT 不是设备完成；计时证据必须区分 host wall、device event、profiler dispatch，并保留关联与完整性信息 |
 
-Profiler 的 HLD/LLD 把 Host/Device 时间、Intercept Queue、双 buffer 和内存周期管理分为 P1–P4；
-这些是计划接口，不是已验收能力，在这些阶段完成前不能当成既有能力。
+Profiler 的阶段表只在 `tx82_profiler_hld` §3（HLD Phase 1 Host/Device 时间、HLD Phase 2
+Intercept、HLD Phase 3 双 buffer、HLD Phase 4 memory 生命周期）；`lld-tx82-profiler-ch01`
+记录 LLD 的 Phase 1 部分实现（换 Create/Destroy、intercept 建队、Register WI），`raPTI_LLD`
+附录 A 有 Host/API span 与 per-die/launch 设备时间的运行日志样例。这些说明厂商侧有部分实现，
+但不是本项目在目标设备/版本上的验收；只有对应能力交付、核验并进入 `TimingEvidence` 后
+才能使用。
 
 另外两条必须正面处理，而不能照抄进生产：
 
@@ -175,15 +179,17 @@ BDF、rank 坐标或 fabric 命令。
   cache policy 进入新 contract 的 canonical request document；`CandidateDigest(algorithm,
   value)` 对 source 取 sha256(source bytes)，对 bundle 取 `artifact_set_digest`，再由
   request digest 同时绑定 CandidateDigest 与上述执行/放置字段；
-- **bundle 必须启用新的 API/evidence contract**，不是向旧 v1 偷加可选字段。新 contract
-  用 oneof 明确 source 与 bundle 恰好一个，并给 request/receipt/result document 新的
-  `document_type` 或 `document_version`；旧 `tcenv.remote.v1.*` 与 `schema_version=1`
-  字段集不变。`CandidateDigest` 贯穿 canonical request、request digest、新的 receipt
-  （使用 `candidate_digest`，不双写 `candidate_sha256`）、outbox、结果签名和 resume；
-  不能留空、各算一份或在旧字段中暗换含义；
+- **bundle 必须启用新的 API/evidence contract**，不是向旧 v1 偷加可选字段。带 bundle 的
+  新 contract 版本用 oneof 明确 source 与 bundle 恰好一个，并给 request/receipt/result
+  document 新的 `document_type` 或 `document_version`；旧 `tcenv.remote.v1.*` 与
+  `schema_version=1` 字段集不变。`CandidateDigest` 贯穿 canonical request、request digest、
+  新的 receipt（使用 `candidate_digest`，不双写 `candidate_sha256`）、outbox、结果签名和
+  resume；不能留空、各算一份或在旧字段中暗换含义；
+- P0 可以先只发布 source 分支的新 contract；bundle 在 P1 以同一新 contract 的后续版本
+  加入，不能把 bundle 塞回旧 v1；
 - 实际 bundle 字节与 manifest 按 source 的同一 job 生命周期持久化，支持恢复和幂等；终态后
-  按既有清理策略删除。旧 contract 只接受现有 source 形状（既有 Metal 与测试 fake 回归）；
-  生产 NPU target 的请求（包括单 source）一律使用新 contract，混合、缺失或 digest 不符均拒绝。
+  按既有清理策略删除。旧 contract 只接受现有 Metal/source 及旧验证语义；所有 NPU 请求
+  （含 simulated/fake 与单 source）一律使用新 contract，混合、缺失或 digest 不符均拒绝。
 
 首版只允许有界 inline bundle。大模型/大图需要后续独立的 content-addressed blob 通道
 （上传前声明 size/digest、落盘复核、receipt 绑定、配额与清理）；不得以宿主路径、共享目录
@@ -299,40 +305,52 @@ worker profile 的取舍：
 
 ## 8. 分阶段实施与验收
 
-### P0：中立模型与双 fake vendor（无真实设备）
+### P0：最小 source-only NPU 新 contract 与六 RPC 通信闭环
 
-交付公共 profile、ArtifactBundle/ExecutionSpec、CapabilityDescriptor、TimingEvidence 的
-schema/golden，以及两个 fake vendor：
+只证明最小闭环，不先扩 bundle、graph 或复杂计时：
 
-- A：单 source → ELF（公共 `KERNEL`，profile 子类型 SIMT），device event；
-- B：graph-only（`GRAPH`）+ 异步服务式执行，无 ELF/stream/rank/die，以服务返回的 completion
-  token 映射同步与 timing evidence。
+- 新 NPU API/evidence contract 先只有 source 分支；bundle 在 P1 作为同一新 contract 的
+  后续版本加入，不回到旧 v1；
+- 最小 capability/feature 协商：新 contract ID、source artifact、`KERNEL`、单 fake 设备组；
+  不展开 bundle/多 rank/die/profiler；
+- 单 source fake vendor A：source → ELF（公共 `KERNEL`，profile 子类型 SIMT），device
+  event；最小 `TimingEvidence` 只记录 source、clock domain、同步完成和单设备 elapsed；
+- 六 RPC 全链路：GetCapabilities → Submit → GetJob/Watch；Cancel 覆盖显式取消，
+  Retry 覆盖 interrupted attempt 的新 capability/fence 恢复；
+- `CandidateDigest` 的必要持久链：canonical request、request digest、新 receipt
+  （`candidate_digest`）、outbox、结果签名和 resume；新的 document_type/version 与 outbox
+  行版本同时落地，旧 Metal/source contract 的字段和验证不变；
+- 路径/digest/feature/限额 fail closed；旧 attempt/fence 结果拒绝；simulated/异常结果不可发布。
 
-验收：两个 fake vendor 在 driver/evidence 边界跑通同一中立模型；路径/digest/未知 role/未知
-feature/超限额均 fail closed；证据完整性按各自声明的拓扑判定，不要求所有厂商都有 rank/die；
-本阶段不接入或修改现有六 RPC 与旧 contract，新 schema 只作离线 golden；现有
-Metal/local/gRPC 测试不变。P0 只证明模型与两种 fake driver 形态，不证明 RPC 通信；通信
-闭环与跨语言 conformance 在 P1。
+验收：同一客户端经六 RPC 跑通 A 的提交、观察、取消、恢复/重试；`CandidateDigest` 在
+canonical request/request digest、receipt、outbox、签名和 resume 全链一致，篡改任一环节被拒；
+现有 Metal/local 测试不变；`sim-npu` 等 fake gRPC 用例迁移到新 contract，不能继续走旧
+contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profiler 计时。
 
-### P1：协议兼容与跨语言 conformance
+### P1：bundle、graph-only 异步 fake 与 conformance
 
-现有 Metal/source 继续使用旧 contract；所有生产 NPU 请求（含单 source 与 bundle）必须使用新的
-API/evidence contract 与显式 `CandidateDigest`，并接入 request digest、Receipt、outbox、
-签名和恢复，不能只改文档。
-新 contract 中 source/bundle oneof、混合/缺失/digest 不符均拒绝。完成同一客户端经六 RPC
-跑通 P0 的 A/B、Python/Go golden、服务端按 contract + required_features fail-closed、
-旧 contract 只接受现有 source 形状且只对显式登记的 Metal/测试 fake target 开放（生产 NPU
-target 不在 allowlist）、新客户端不 Submit 不支持形态、大 bundle 限额和 receipt 绑定；
-新 contract 使用自己的 document_type/version 与 outbox 行版本，旧行按旧算法验证、不迁移。
-unknown Protobuf field 在不同实现里可能被忽略或保留，不能写成“旧客户端自然拒绝”的验收
-预期；必须由服务端按 contract 明确拒绝。不得改变旧 source 请求、六 RPC 或旧结果验证。
+在 P0 闭环上扩展，不改 P0 的 source-only 语义：
+
+- 用同一新 contract 的后续版本启用 source/bundle oneof 与 ArtifactBundle/ExecutionSpec；
+  bundle 必须新版本化，不能作为旧 v1 的可选字段；
+- 第二个 fake vendor B：graph-only（`GRAPH`）+ 异步服务式执行，无 ELF/stream/rank/die，
+  以服务返回的 completion token 映射同步与 timing evidence；
+- 扩展 `TimingEvidence`：按声明拓扑判定完整性，无 rank/die 不判缺失；Host launch 时间单独
+  记录，不能写成 device elapsed；bundle 的 `artifact_set_digest` 进入签名 result envelope；
+- 完成 bundle 的 CandidateDigest/receipt/outbox/签名/恢复闭环，以及 Python/Go golden；
+- 旧 contract 只接受现有 Metal/source 及旧验证语义；所有 NPU 请求（含 simulated/fake 与
+  单 source）一律走新 contract；`sim-npu` 等 fake 不再有旧 contract 例外；旧 contract 只对
+  现有 Metal target 开放，不靠请求形状判断；服务端按 contract + required_features fail-closed；
+- unknown Protobuf field 由服务端按 contract 明确拒绝；不得改变旧 Metal source 请求、六 RPC
+  或旧结果验证。
 
 ### P2：清微单节点通信试点（另行授权真实设备）
 
 先用厂商提供的 known-good executable module，不先假设 Triton 源码工具链已通：
 
 - provision 核验 driver/firmware/runtime、设备映射、拓扑与任务包；
-- GetCapabilities → Submit → Watch/GetJob → Cancel/Retry；
+- GetCapabilities → Submit → Watch/GetJob；Cancel 与 Retry 分别覆盖显式取消与 interrupted
+  attempt 的新 capability/fence 恢复；
 - load/launch/sync、超时/取消清理、旧 fence 拒绝、异常后 known-good 健康探针；
 - worker 被杀后由 worker 外 DeviceController 按 attempt/fence 完成设备侧 reconcile；若无法
   证明模块/stream/IPC/profiler 已释放，只能 quarantine + 人工恢复，不算自动清理通过；
@@ -343,9 +361,12 @@ unknown Protobuf field 在不同实现里可能被忽略或保留，不能写成
 
 ### P3：清微计时与多 die/card
 
-先 device event，再按需要用 raPTI/profiler；校验 Host/Device 时间不混淆、per-die 与 launch
-汇总完整、异常缓冲不发布。profiler 的 HLD/LLD 阶段未完成时，P3 只验收 device event，
-profiler 计时单独 blocked，不把设计接口当已交付。之后扩到多 die/card，按声明拓扑保留所需
+先 device event。raPTI/profiler 不按 HLD/LLD 整体放行，而按 `tx82_profiler_hld` §3 的能力
+逐项设门：HLD Phase 1 Host/Device 时间（LLD 的 Phase 1 队列层部分已做，raPTI 日志样例可见
+Host/API 与 device timing）、HLD Phase 2 Intercept Queue、HLD Phase 3 双 buffer、HLD Phase 4
+memory 生命周期。目标版本上某项能力可用，且 `TimingEvidence` 能核验 correlation/per-die/launch
+汇总/flush/丢缓冲后，才开启该项；厂商日志样例或 HLD/LLD 描述不等于本项目验收。未核验项
+保持 blocked，P3 仍可只用 device event 独立验收。之后扩到多 die/card，按声明拓扑保留所需
 device/rank/die 证据，并验证租约互斥、C2C 故障、取消/恢复与 reset 作用域。
 
 ### P4：第二家真实厂商与多机扩展
