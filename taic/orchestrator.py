@@ -49,7 +49,7 @@ from .llm import LLM, BudgetExhausted, CostLedger, LLMConfig, LLMError, SearchCo
 from .policy import candidate_eligible, choose_confirmed, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain, session_budget_floor
 from .committees import committees_record, default_committees, handoff_for, order_committees
 from .parse import parse_plans
-from .evaluation_outbox import EvaluationOutbox
+from .evaluation_outbox import EvaluationOutbox, bind_wire_digest
 from .session_runtime import (
     HmzKernelSessionRunner,
     HmzSessionPlacement,
@@ -1495,6 +1495,10 @@ class Orchestrator:
             if callable(ensure_epoch):
                 current_epoch = ensure_epoch(request)
             self._observe_evaluator(getattr(self.evaluator, "provenance", None))
+            # The NPU contract's wire digest binds CandidateDigest and the
+            # capability device group.  Record that exact identity before the
+            # durable row, Submit, the receipt and any later resume.
+            request = bind_wire_digest(request, self.evaluator, self._outbox)
             result = None
             resume_interrupted = False
             if self._outbox is not None:
@@ -1520,7 +1524,14 @@ class Orchestrator:
                 raise EvaluationUnavailable("provenance_mismatch", "result target does not match the request")
             if not self._local_evaluator:
                 evidence = result.evidence
-                if not isinstance(evidence, dict) or evidence.get("candidate_sha256") != request.candidate_sha256:
+                npu_contract = bool(self._outbox is not None and self._outbox.npu_contract)
+                if npu_contract:
+                    candidate = evidence.get("candidate_digest") if isinstance(evidence, dict) else None
+                    if not isinstance(candidate, dict) or candidate.get("value") != request.candidate_sha256:
+                        raise EvaluationUnavailable(
+                            "provenance_mismatch", "result evidence does not bind the candidate digest",
+                        )
+                elif not isinstance(evidence, dict) or evidence.get("candidate_sha256") != request.candidate_sha256:
                     raise EvaluationUnavailable("provenance_mismatch", "result evidence does not bind the candidate source")
             report = result.report
             if provenance.measurement_kind != "measured" or (isinstance(report, dict) and report.get("simulated") is True):

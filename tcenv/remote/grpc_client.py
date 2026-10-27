@@ -435,7 +435,7 @@ class GrpcEvaluator:
         """
 
         self._handshake()
-        return self._attach_contract(self._external_request(request)).request_digest
+        return self._wire_request(self._external_request(request)).request_digest
 
     def cancel(self, request_id: str) -> None:
         with self._lock:
@@ -465,7 +465,9 @@ class GrpcEvaluator:
         """
 
         self._handshake()
-        external = self._attach_contract(self._external_request(request))
+        external = self._attach_contract(
+            self._external_request(request), expected_digest=request.contract_request_digest,
+        )
         snapshot = self._get_job(external)
         if snapshot is None:
             raise EvaluationUnavailable(
@@ -517,13 +519,12 @@ class GrpcEvaluator:
             raise EvaluationUnavailable("target_mismatch", "request target differs from this evaluator")
         return external
 
-    def _attach_contract(self, external: Any, *, expected_digest: str = "") -> Any:
+    def _wire_request(self, external: Any) -> Any:
         """Attach the capability's exact NPU execution binding, or return legacy.
 
-        ``expected_digest`` is the host-durable wire digest an outbox row already
-        records.  When the capability device group (or the request) changed, the
-        recomputed digest differs and the call fails closed before Submit, so a
-        resume can never silently evaluate under a new resource generation.
+        This is the identity the evaluator will actually submit.  It never
+        consults a host-side digest, so it is also what
+        ``wire_request_digest()`` hands to the durable host outbox.
         """
 
         if not self.contract.npu_source:
@@ -537,8 +538,28 @@ class GrpcEvaluator:
             candidate_digest=CandidateDigest("sha256", digest),
             execution=self._npu_execution,
         )
-        wired = replace(external, candidate_sha256="", npu=npu)
-        if expected_digest and expected_digest != wired.request_digest:
+        return replace(external, candidate_sha256="", npu=npu)
+
+    def _attach_contract(self, external: Any, *, expected_digest: str = "") -> Any:
+        """Bind the request to the exact wire identity the host recorded.
+
+        ``expected_digest`` is the host-durable wire digest an outbox row already
+        records.  A missing digest is refused (no silent fallback to the legacy
+        host digest), and a changed device group or request fails closed before
+        Submit, so a resume can never silently evaluate under a new resource
+        generation.
+        """
+
+        wired = self._wire_request(external)
+        if not self.contract.npu_source:
+            return wired
+        if not expected_digest:
+            raise EvaluationUnavailable(
+                "request_digest_missing",
+                "the NPU contract requires the host wire request digest; "
+                "call wire_request_digest() before submitting or resuming",
+            )
+        if expected_digest != wired.request_digest:
             raise EvaluationUnavailable(
                 "request_digest_mismatch",
                 "the durable host request digest differs from the NPU contract digest; "
@@ -980,6 +1001,7 @@ class GrpcEvaluator:
                     device_group=external.npu.execution.device_group.to_dict(),
                     measurement_kind=provenance["measurement_kind"],
                     publication_allowed=provenance["publication_allowed"],
+                    report_status=report.get("status") if isinstance(report, dict) else None,
                 )
             except contracts.ContractError as exc:
                 raise EvaluationUnavailable("result_invalid", f"NPU timing evidence is invalid: {exc}") from exc
@@ -988,6 +1010,10 @@ class GrpcEvaluator:
         elif not isinstance(evidence, dict) or evidence.get("candidate_sha256") != external.candidate_sha256:
             raise EvaluationUnavailable("provenance_mismatch", "evidence does not bind the exact candidate bytes")
         legacy_receipt = dict(receipt)
+        # The host result/envelope keeps the historical host-side digest.  For
+        # the NPU contract `request.request_digest` *is* the wire digest
+        # (`_attach_contract` refuses anything else), so this is the identity
+        # mapping there and the legacy mapping for the Metal/source contract.
         legacy_receipt["request_digest"] = request.request_digest
         if self.contract.npu_source:
             legacy_receipt.pop("candidate_sha256", None)

@@ -57,6 +57,9 @@ class CleanupProof:
     device_group_id: str
     resource_generation: str
     complete: bool
+    vendor_id: str = ""
+    profile_digest: str = ""
+    topology_digest: str = ""
     live_resources: tuple[str, ...] = ()
     released_resources: tuple[str, ...] = ()
     detail: str = ""

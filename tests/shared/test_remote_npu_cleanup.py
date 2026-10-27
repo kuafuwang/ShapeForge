@@ -3,21 +3,30 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import subprocess
+import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from tcenv.remote import contracts
-from tcenv.remote.drivers.base import CleanupProof
+from tcenv.remote.drivers.base import CleanupProof, VendorFacts
 from tcenv.remote.job_types import JobError
 from tests.support.job_engine import (
+    NPU_FEATURES,
     NPU_TARGET,
     NPU_TOKEN,
     npu_engine,
+    npu_expected_identities,
     npu_get,
+    npu_grant,
+    npu_identity,
     npu_request,
     npu_retry,
+    npu_capabilities,
     npu_submit,
 )
 from tests.support.vendor_sim.ledger import VendorLedger
@@ -116,15 +125,29 @@ def test_unproven_device_cleanup_quarantines_and_refuses_retry(tmp_path):
         engine.close(wait=5)
 
 
-def test_a_missing_device_controller_cannot_prove_cleanup(tmp_path):
+def test_an_npu_engine_without_a_device_controller_is_a_composition_error(tmp_path):
     root = tmp_path / "run"
+    with pytest.raises(ValueError, match="worker-external device controller"):
+        npu_engine(
+            root / "state", ledger_path=root / "ledger.json", controller=None,
+            signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+        )
+
+
+def test_losing_the_device_controller_still_cannot_prove_cleanup(tmp_path):
+    root = tmp_path / "run"
+    controller = FakeVendorAController(root / "ledger.json")
     engine = npu_engine(
-        root / "state", ledger_path=root / "ledger.json", controller=None,
+        root / "state", ledger_path=root / "ledger.json", controller=controller,
+        worker_env={"TCENV_VENDOR_A_SLOW": "1"},
         signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
     )
     try:
         request = npu_request("npu-no-controller-1", source=SOURCE)
         npu_submit(engine, request)
+        # A controller that disappears while the attempt runs cannot be replaced
+        # by the worker-local cooperative close: cleanup stays unproven.
+        engine.device_controller = None
         deadline = time.monotonic() + 10
         snapshot = npu_get(engine, request)
         while not snapshot.quarantined and time.monotonic() < deadline:
@@ -239,3 +262,247 @@ def test_production_entry_refuses_the_npu_contract_and_a_non_metal_legacy_target
     )
     with pytest.raises(ValueError, match="unsupported API/evidence contract pair"):
         verify_deployment(mixed)
+
+
+# -- trusted device facts feed the real capability path --------------------
+class _UnhealthyController(FakeVendorAController):
+    def __init__(self, ledger_path, **kwargs):
+        super().__init__(ledger_path, healthy=False, **kwargs)
+
+
+def test_unhealthy_device_group_fails_capabilities(tmp_path):
+    """@brief 不健康设备组不能继续广告 available，GetCapabilities 必须 fail closed。"""
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path,
+        controller=_UnhealthyController(ledger_path),
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        with pytest.raises(JobError) as excinfo:
+            npu_capabilities(engine)
+        assert excinfo.value.code == "failed_precondition"
+        assert "not available" in str(excinfo.value)
+        assert engine.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+        assert engine.store._conn.execute("SELECT COUNT(*) FROM capabilities").fetchone()[0] == 0
+    finally:
+        engine.close(wait=5)
+
+
+def test_unprobeable_or_foreign_device_group_fails_capabilities(tmp_path):
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+
+    class _Raising(FakeVendorAController):
+        def probe(self, profile):
+            raise RuntimeError("smi exploded")
+
+    class _ForeignGeneration(FakeVendorAController):
+        def capabilities(self, facts):
+            advertised = dict(super().capabilities(facts))
+            advertised["device_groups"] = [{
+                **advertised["device_groups"][0], "resource_generation": "2",
+            }]
+            return advertised
+
+    class _ForeignFacts(FakeVendorAController):
+        def probe(self, profile):
+            facts = super().probe(profile)
+            return VendorFacts(
+                vendor_id=facts.vendor_id, device_group_id=facts.device_group_id,
+                profile_digest="0" * 64, topology_digest=facts.topology_digest,
+                resource_generation=facts.resource_generation,
+            )
+
+    for controller, match in (
+        (_Raising(ledger_path), "device probe failed"),
+        (_ForeignFacts(ledger_path), "profile_digest"),
+        (_ForeignGeneration(ledger_path), "resource_generation"),
+    ):
+        engine = npu_engine(
+            root / "state", ledger_path=ledger_path, controller=controller,
+            signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+        )
+        try:
+            with pytest.raises(JobError, match=match) as excinfo:
+                npu_capabilities(engine)
+            assert excinfo.value.code == "failed_precondition"
+        finally:
+            engine.close(wait=5)
+
+
+def test_a_hanging_device_probe_is_bounded(tmp_path):
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+
+    class _Hanging(FakeVendorAController):
+        def probe(self, profile):
+            time.sleep(10.0)
+            return super().probe(profile)
+
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=_Hanging(ledger_path),
+        device_probe_timeout_s=0.2,
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        started = time.monotonic()
+        with pytest.raises(JobError, match="did not return within") as excinfo:
+            npu_capabilities(engine)
+        assert excinfo.value.code == "failed_precondition"
+        assert time.monotonic() - started < 5.0
+    finally:
+        engine.close(wait=5)
+
+
+# -- the lease carries the accepted device binding -------------------------
+def test_attempt_lease_records_the_accepted_device_binding(tmp_path):
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    controller = FakeVendorAController(ledger_path)
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=controller,
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-lease-binding-1", source=SOURCE)
+        npu_submit(engine, request)
+        _wait_engine(engine, request, {"completed"})
+        row = engine.store._conn.execute(
+            "SELECT device_binding_json FROM attempts ORDER BY lease_fence DESC LIMIT 1",
+        ).fetchone()
+        assert json.loads(row["device_binding_json"]) == build_execution().device_group.to_dict()
+    finally:
+        engine.close(wait=5)
+
+
+def test_cleanup_proof_from_another_profile_is_rejected(tmp_path):
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+
+    class _ForeignProof(FakeVendorAController):
+        def reconcile(self, attempt_id, lease_fence):
+            proof = super().reconcile(attempt_id, lease_fence)
+            return replace(proof, profile_digest="0" * 64)
+
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=_ForeignProof(ledger_path),
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-proof-binding-1", source=SOURCE)
+        npu_submit(engine, request)
+        deadline = time.monotonic() + 10
+        snapshot = npu_get(engine, request)
+        while not snapshot.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = npu_get(engine, request)
+        assert snapshot.quarantined is True
+        assert "different device binding" in snapshot.recovery_error
+        assert snapshot.result is None
+    finally:
+        engine.close(wait=5)
+
+
+def test_restart_into_another_resource_generation_quarantines_the_old_attempt(tmp_path):
+    """@brief 重启换组时不能拿新组 controller 对旧 attempt reconcile/取消，只能 quarantine。"""
+    state = tmp_path / "run" / "state"
+    ledger_path = tmp_path / "run" / "ledger.json"
+    request = npu_request("npu-cross-group-1", source=SOURCE)
+    expected = npu_expected_identities()
+    identity = npu_identity()
+    from tcenv.remote import contracts as remote_contracts
+    from tcenv.remote.job_store import JobStore
+    from tests.support.vendor_sim.vendor_a import build_execution
+
+    provenance = identity.external_provenance(
+        execution_protocol_version="3",
+        api_contract_id=remote_contracts.NPU_SOURCE_API_CONTRACT_ID,
+        evidence_contract_id=remote_contracts.NPU_SOURCE_EVIDENCE_CONTRACT_ID,
+        npu_execution=build_execution().to_dict(),
+    )
+    store = JobStore(state, contract=remote_contracts.NPU_SOURCE_DIALECT)
+    try:
+        store.register_grant(npu_grant())
+        capability = store.get_capabilities(
+            grant_token=NPU_TOKEN, client_nonce="a" * 32,
+            expected=expected.evaluator.to_dict(), expected_identities=expected,
+            provenance=provenance,
+            api_contract_ids=[remote_contracts.NPU_SOURCE_API_CONTRACT_ID],
+            evidence_contract_ids=[remote_contracts.NPU_SOURCE_EVIDENCE_CONTRACT_ID],
+            required_features=list(NPU_FEATURES), supported_features=frozenset(NPU_FEATURES),
+        )
+        store.submit(
+            request=request, request_digest=request.request_digest, expected=expected,
+            provenance=provenance, capability_id=capability.capability_id,
+            required_features=list(NPU_FEATURES), grant_token=NPU_TOKEN,
+        )
+        store.enqueue_accepted(request.request_id)
+        attempt = store._job_by_id(request.request_id).current_attempt
+        assert attempt is not None and attempt.device_binding == build_execution().device_group.to_dict()
+    finally:
+        store.close()
+
+    # Stage the durable shape of a crashed frontend: the attempt was running and
+    # its worker is already gone.
+    gone = subprocess.Popen([sys.executable, "-c", "pass"])
+    gone.wait()
+    connection = sqlite3.connect(state / "jobs.sqlite3")
+    try:
+        connection.execute(
+            "UPDATE attempts SET state='running',started_at_ms=1,worker_pid=?,worker_pgid=?,"
+            "worker_start_token='' WHERE attempt_id=?",
+            (gone.pid, gone.pid, attempt.attempt_id),
+        )
+        connection.execute("UPDATE jobs SET state='running' WHERE request_id=?", (request.request_id,))
+        connection.commit()
+    finally:
+        connection.close()
+
+    controller = FakeVendorAController(ledger_path)
+    restarted = npu_engine(
+        state, ledger_path=ledger_path, controller=controller, generation="2",
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        snapshot = restarted.store._job_by_id(request.request_id)
+        assert snapshot.quarantined is True
+        assert snapshot.state == "running"
+        assert "another device group" in snapshot.recovery_error
+        assert snapshot.result is None
+        # The old lease is not cancelled through the new group's controller.
+        restarted._cancel_device(snapshot.current_attempt)
+        assert VendorLedger(ledger_path).is_cancelled(attempt.attempt_id, attempt.lease_fence) is False
+        # And the operators' release path cannot mark it interrupted either.
+        released = restarted.release_quarantine(request.request_id)
+        assert released.state == "running" and released.quarantined is True
+    finally:
+        restarted.close(wait=5)
+
+
+# -- legacy test composition roots must not pretend to be NPU --------------
+def test_legacy_test_composition_roots_cannot_serve_fake_npu_traffic():
+    """@brief 仅保留给 legacy transport 的测试组合根不得再冒充 NPU 入口。"""
+    from tests.support.job_engine import identity as legacy_identity
+    from tests.support.npu_sim import grpc_service_entry
+
+    assert legacy_identity().backend == "sim-fake"
+    assert "npu" not in legacy_identity().backend.lower()
+
+    argv = [
+        "--state-dir", "/nonexistent/state",
+        "--backend", "sim-npu", "--target-id", "sim-grpc-target",
+        "--grants-file", "/nonexistent/grants.json",
+        "--keyring-file", "/nonexistent/keyring.json",
+        "--certificate-file", "/nonexistent/server.pem",
+        "--private-key-file", "/nonexistent/server.key",
+        "--client-ca-file", "/nonexistent/ca.pem",
+    ]
+    with pytest.raises(SystemExit, match="legacy Metal/source contract"):
+        grpc_service_entry.main(argv)
+    npu_target = list(argv)
+    npu_target[npu_target.index("--backend") + 1] = "sim-cpu"
+    npu_target[npu_target.index("--target-id") + 1] = "sim-npu-target"
+    with pytest.raises(SystemExit, match="legacy Metal/source contract"):
+        grpc_service_entry.main(npu_target)

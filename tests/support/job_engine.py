@@ -24,7 +24,7 @@ TARGET = "sim-external-test"
 def identity() -> ServiceIdentity:
     return ServiceIdentity(
         site_id="sim-external-site", device_id="sim-external-device",
-        backend="sim-npu", backend_version="1", target_id=TARGET,
+        backend="sim-fake", backend_version="1", target_id=TARGET,
         worker_build="sim-external-build", task_pack_digest=TASK_PACK_DIGEST,
         calibration_digest="c" * 64, task_fingerprints=frozenset({TASK_FINGERPRINT}),
         task_bindings={TASK_FINGERPRINT: ("relu", "fp16", "small")},
@@ -202,7 +202,7 @@ def npu_request(
     request_id: str = "npu-request-1", *, source: bytes = b"npu-kernel relu_kernel\n",
     run_id: str = "npu-run-1", session_id: str = "npu-session-1",
     candidate_timeout_ms: int = 3000, queue_timeout_ms: int = 3000,
-    reps: int = 2, mode: str = "quick",
+    reps: int = 2, mode: str = "quick", kind: str = "formal_eval",
 ) -> ExternalEvaluationRequest:
     from tcenv.remote.job_types import (
         CandidateDigest, DeviceGroupBinding, NpuExecutionSpec, NpuSourceRequest,
@@ -216,7 +216,7 @@ def npu_request(
         execution=execution,
     )
     return ExternalEvaluationRequest(
-        kind="formal_eval", request_id=request_id, run_id=run_id,
+        kind=kind, request_id=request_id, run_id=run_id,
         session_id=session_id, task="relu", dtype="fp16", size="small",
         target_id=NPU_TARGET, task_fingerprint=NPU_TASK_FINGERPRINT,
         candidate_sha256="", source=source, mode=mode, seed="3", reps=reps,
@@ -237,9 +237,10 @@ def npu_expected_identities(value: ServiceIdentity | None = None) -> ExpectedIde
 
 
 def npu_engine(
-    state_dir: Path, *, ledger_path: Path, controller=None,
+    state_dir: Path, *, ledger_path: Path, controller,
     grants: list[SessionGrant] | None = None,
-    worker_env: dict[str, str] | None = None, **options,
+    worker_env: dict[str, str] | None = None,
+    generation: str = "1", **options,
 ) -> JobEngine:
     from tcenv.remote import contracts
     from tests.support.vendor_sim.vendor_a import build_execution
@@ -254,7 +255,7 @@ def npu_engine(
         supported_features=frozenset(NPU_FEATURES),
         supported_modes=frozenset({"quick", "full"}),
         contract=contracts.NPU_SOURCE_DIALECT,
-        npu_execution=build_execution(),
+        npu_execution=build_execution(generation),
         device_controller=controller,
         **options,
     )

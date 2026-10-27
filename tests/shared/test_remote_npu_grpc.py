@@ -51,8 +51,11 @@ def _capabilities(harness: NpuGrpcHarness, *, features=NPU_FEATURES):
     )
 
 
-def _submit(harness: NpuGrpcHarness, capability, request_id: str, *, source: bytes = SOURCE):
-    external = npu_request(request_id, source=source, candidate_timeout_ms=3000)
+def _submit(
+    harness: NpuGrpcHarness, capability, request_id: str, *, source: bytes = SOURCE,
+    candidate_timeout_ms: int = 3000,
+):
+    external = npu_request(request_id, source=source, candidate_timeout_ms=candidate_timeout_ms)
     snapshot = harness.factory.stub.Submit(
         pb.SubmitRequest(
             request=gc.request_to_proto(external, dialect=contracts.NPU_SOURCE_DIALECT),
@@ -202,7 +205,7 @@ def test_cancel_after_the_terminal_state_does_not_touch_the_device_lease(tmp_pat
         assert _get_job(harness, external).HasField("result")
         # The same attempt fed straight to the controller *would* be marked; the
         # terminal-state guard in the Cancel path is what prevents it.
-        harness.engine._cancel_device(final.current_attempt)
+        harness.engine.device_controller.cancel(attempt_id, fence)
         assert ledger.is_cancelled(attempt_id, fence) is True
 
 
@@ -397,3 +400,57 @@ def test_npu_contract_rejects_legacy_or_other_device_group_submission(tmp_path):
                 metadata=METADATA, timeout=10,
             )
         assert excinfo.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+def test_npu_candidate_timeout_completes_a_diagnostic_timeout_report(tmp_path):
+    """@brief 候选超时保持 timeout 语义，且 NPU 证据是诚实的诊断行。"""
+    with NpuGrpcHarness(tmp_path, worker_env={"TCENV_VENDOR_A_SLOW": "1"}) as harness:
+        capability = _capabilities(harness)
+        external, _ = _submit(harness, capability, "npu-timeout-1", candidate_timeout_ms=200)
+        final = _wait_state(harness, external, {"completed"})
+        assert final.HasField("result")
+        report = gc.report_json(gc.blob_from_proto(final.result.report, allow_empty=False)[0])
+        assert report["status"] == "timeout"
+        assert report["stage"] == "timeout"
+        evidence = gc.evidence_json(gc.blob_from_proto(final.result.evidence, allow_empty=True)[0])
+        assert evidence["complete"] is False
+        assert evidence["timing"]["synchronization_completed"] is False
+        assert evidence["timing"]["device_elapsed_ns"] == 0
+        assert evidence["timing"]["launches"] == 0
+        assert evidence["timing"]["clock_domain"] == contracts.NPU_UNOBSERVED_CLOCK_DOMAIN
+        assert evidence["publication_allowed"] is False
+        receipt = gc.receipt_from_proto(
+            final.result.receipt, dialect=contracts.NPU_SOURCE_DIALECT,
+        )
+        assert receipt["candidate_digest"] == external.candidate_digest
+        assert evidence["candidate_digest"] == receipt["candidate_digest"]
+        assert final.provenance.publication_allowed is False
+        # The job is terminal, so the result is durable and replayable rather
+        # than an interrupt that needs an explicit Retry.
+        assert not final.HasField("failure")
+
+
+def test_npu_selfcheck_hang_still_records_a_timeout_report(tmp_path):
+    """@brief selfcheck 的 hang 变成可记账的 timeout 报告，而不是协议失败。"""
+    with NpuGrpcHarness(tmp_path, worker_env={"TCENV_VENDOR_A_SLOW": "1"}) as harness:
+        capability = _capabilities(harness)
+        external = npu_request(
+            "npu-selfcheck-timeout-1", source=SOURCE, kind="selfcheck", mode="quick",
+            candidate_timeout_ms=200,
+        )
+        harness.factory.stub.Submit(
+            pb.SubmitRequest(
+                request=gc.request_to_proto(external, dialect=contracts.NPU_SOURCE_DIALECT),
+                request_digest=external.request_digest,
+                expected=gc.expected_identities_to_proto(harness.engine.expected_identities),
+                capability_id=capability.capability_id,
+                required_features=list(NPU_FEATURES),
+            ),
+            metadata=METADATA, timeout=10,
+        )
+        final = _wait_state(harness, external, {"completed"})
+        report = gc.report_json(gc.blob_from_proto(final.result.report, allow_empty=False)[0])
+        assert report["status"] == "timeout"
+        assert report["simulated"] is True
+        evidence = gc.evidence_json(gc.blob_from_proto(final.result.evidence, allow_empty=True)[0])
+        assert evidence["complete"] is False and evidence["publication_allowed"] is False

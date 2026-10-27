@@ -392,3 +392,110 @@ def test_resume_rejects_a_remote_manifest_without_a_transport(tmp_path):
             publishable_site_ids={"local"}, publishable_epochs={"e" * 64},
         )
     assert manifest.read_text() == before
+
+
+class NpuShapedEvaluator(RecordingEvaluator):
+    """Host-adapter double for the npu-source contract (no device, no gRPC)."""
+
+    WIRE_DIGEST = "3" * 64
+    DEVICE_GROUP = {
+        "device_group_id": "vendor-a-group-0",
+        "vendor_id": "vendor-a",
+        "profile_digest": "1" * 64,
+        "topology_digest": "2" * 64,
+        "resource_generation": "1",
+    }
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.wire_calls = 0
+        self._provenance = None
+
+    def execution_metadata(self) -> dict:
+        from tcenv.remote import contracts
+
+        return {
+            "transport": "grpc",
+            "api_contract_id": contracts.NPU_SOURCE_API_CONTRACT_ID,
+            "evidence_contract_id": contracts.NPU_SOURCE_EVIDENCE_CONTRACT_ID,
+            "request_digest_algorithm": contracts.REQUEST_DIGEST_ALGORITHM,
+            "result_signature_algorithm": contracts.RESULT_SIGNATURE_ALGORITHM,
+            "result_signature_key_ids": ["sim-site/key-1"],
+        }
+
+    def wire_request_digest(self, request) -> str:
+        self.wire_calls += 1
+        return self.WIRE_DIGEST
+
+    @property
+    def provenance(self):
+        return self._provenance
+
+    def formal(self, request):
+        from tcenv.remote.contracts import NPU_TIMING_EVIDENCE_SCHEMA_ID
+
+        assert request.contract_request_digest == self.WIRE_DIGEST, "host must bind the wire digest first"
+        self.requests.append(request)
+        report = self.base(
+            request.task, request.dtype, request.size, request.source,
+            mode=request.mode, seed=request.seed, reps=request.reps,
+        )
+        evidence = {
+            "schema_id": NPU_TIMING_EVIDENCE_SCHEMA_ID,
+            "candidate_digest": {"algorithm": "sha256", "value": request.candidate_sha256},
+            "device_group": dict(self.DEVICE_GROUP),
+            "timing": {
+                "source": "DEVICE_EVENT", "clock_domain": "host-double-clock",
+                "synchronization_completed": True, "device_elapsed_ns": 1_000,
+                "host_api_elapsed_ns": 2_000, "launches": 1,
+            },
+            "measurement_kind": "measured",
+            "publication_allowed": True,
+            "complete": True,
+        }
+        receipt = {
+            "receipt_id": receipt_id_for(request), "request_id": request.request_id,
+            "request_digest": request.request_digest,
+            "candidate_digest": {"algorithm": "sha256", "value": request.candidate_sha256},
+            "device_group": dict(self.DEVICE_GROUP),
+            "measurement_kind": "measured",
+        }
+        provenance = replace(
+            local_provenance(request), publication_allowed=True,
+            request_digest=request.request_digest,
+        )
+        result = EvaluationResult(report=report, provenance=provenance, evidence=evidence, receipt=receipt)
+        self._provenance = provenance
+        return result
+
+
+def test_npu_contract_run_binds_the_wire_digest_before_the_durable_row(tmp_path):
+    """@brief host 编排必须用 `wire_request_digest` 绑定 NPU 行、Submit 与 resume 同一身份。"""
+    evaluator = NpuShapedEvaluator()
+    orch = make_orch(
+        tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0,
+        evaluator=evaluator, publishable_site_ids={"local"}, publishable_epochs={_test_epoch()},
+    )
+    source = "// speed=1.2\nkernel void demo() {}"
+    report = orch._evaluate_report(source, mode="quick", seed=3, reps=1, label="init")
+    assert report.status == "ok"
+    assert evaluator.wire_calls == 1
+    assert evaluator.requests[0].request_digest == NpuShapedEvaluator.WIRE_DIGEST
+
+    rows = [
+        path for path in (orch.run_dir / "evaluation_outbox").glob("*.json")
+        if not path.name.endswith(".result.json") and path.name != "receipts.json"
+    ]
+    assert len(rows) == 1
+    state = json.loads(rows[0].read_text())
+    assert state["schema_version"] == 2
+    assert state["request_digest"] == NpuShapedEvaluator.WIRE_DIGEST
+    assert state["candidate_digest"]["value"] == evaluator.requests[0].candidate_sha256
+    assert state["device_group"] == NpuShapedEvaluator.DEVICE_GROUP
+    assert state["status"] == "completed"
+
+    # Resume replays the retained envelope under the same identity: no second
+    # Submit and no silently different digest.
+    replay = orch._evaluate_report(source, mode="quick", seed=3, reps=1, label="init")
+    assert replay.status == "ok"
+    assert len(evaluator.requests) == 1

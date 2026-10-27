@@ -1,9 +1,13 @@
 """Test-only gRPC composition root for the simulated Docker acceptance path.
 
-This is NOT the production entry point.  It injects the CPU fake worker from
-``tests.support.fake_worker_job_engine`` and a simulated device identity so the
-macOS control host can exercise real gRPC/TLS/mTLS, durable jobs, attempts and
-fault recovery without a GPU, NPU or NPU SDK.
+This is NOT the production entry point and it is NOT an NPU composition root.
+It injects the CPU fake worker from ``tests.support.fake_worker_job_engine`` and
+a simulated device identity so the macOS control host can exercise real
+gRPC/TLS/mTLS on the **legacy Metal/source contract**: durable jobs, attempts,
+restart and fault recovery.  Every NPU (fake/simulated/source) request must use
+the `tcenv.remote.npu-source.*` contract and its test-only composition root
+(``tests.support.vendor_sim``), so this entry refuses NPU-looking identities
+instead of serving fake NPU traffic under the old contract.
 
 The production ``tcenv.remote.grpc_service`` entry refuses test worker modules
 and simulated measurement identities, so this module cannot be reached there.
@@ -104,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-dir", required=True, type=Path)
     parser.add_argument("--site-id", default="sim-grpc-site")
     parser.add_argument("--device-id", default="sim-grpc-device")
-    parser.add_argument("--backend", default="sim-npu")
+    parser.add_argument("--backend", default="sim-cpu")
     parser.add_argument("--backend-version", default="1")
     parser.add_argument("--target-id", default="sim-grpc-target")
     parser.add_argument("--worker-build", default="sim-grpc-build-1")
@@ -132,6 +136,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--worker-env", default="{}", help="JSON object of extra fake-worker env")
     args = parser.parse_args(argv)
+    if "npu" in args.backend.lower() or "npu" in args.target_id.lower():
+        # The legacy contract is Metal/source only; NPU fake traffic belongs to
+        # the npu-source contract (tests/support/vendor_sim), not here.
+        raise SystemExit(
+            "this composition root serves the legacy Metal/source contract only; "
+            "NPU (fake/simulated/source) requests must use the npu-source contract "
+            "and its test composition root"
+        )
     fingerprints = frozenset(args.task_fingerprint or ["a" * 64])
     identity = ServiceIdentity(
         site_id=args.site_id, device_id=args.device_id, backend=args.backend,

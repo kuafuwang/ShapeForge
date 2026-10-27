@@ -55,9 +55,11 @@ from .job_types import (
 
 # v2 adds the execution supervisor identity of one attempt: the container that
 # ran it, its pinned image and runtime.  v3 adds the Docker daemon identity so
-# recovery can refuse to reconcile an attempt against another daemon.  v1/v2
-# databases are migrated in place.
-SCHEMA_VERSION = 3
+# recovery can refuse to reconcile an attempt against another daemon.  v4 adds
+# the accepted logical device group/profile/topology/resource generation of one
+# lease, so recovery can refuse to reconcile an attempt through another group's
+# controller.  Older databases are migrated in place.
+SCHEMA_VERSION = 4
 _CONTAINER_ID = re.compile(r"[0-9a-f]{12,64}")
 _DAEMON_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 DEFAULT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -411,7 +413,7 @@ class JobStore:
                     if conn.in_transaction:
                         conn.execute("ROLLBACK")
                     raise
-                version = SCHEMA_VERSION
+                version = 3
             if version == 2:
                 # v2 -> v3: one extra durable column; existing container rows
                 # keep an empty daemon identity and are therefore quarantined if
@@ -421,6 +423,23 @@ class JobStore:
                     BEGIN IMMEDIATE;
                     ALTER TABLE attempts ADD COLUMN container_daemon TEXT NOT NULL DEFAULT '';
                     PRAGMA user_version=3;
+                    COMMIT;
+                    """)
+                except sqlite3.DatabaseError:
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK")
+                    raise
+                version = 3
+            if version == 3:
+                # v3 -> v4: every attempt/lease records the accepted logical
+                # device group/profile/topology/resource generation.  Older
+                # attempts keep NULL and are therefore never reconciled against
+                # a group this frontend merely happens to be configured with.
+                try:
+                    conn.executescript("""
+                    BEGIN IMMEDIATE;
+                    ALTER TABLE attempts ADD COLUMN device_binding_json TEXT;
+                    PRAGMA user_version=4;
                     COMMIT;
                     """)
                 except sqlite3.DatabaseError:
@@ -479,6 +498,7 @@ class JobStore:
                     container_image_ref TEXT NOT NULL DEFAULT '', container_image_digest TEXT NOT NULL DEFAULT '',
                     container_runtime TEXT NOT NULL DEFAULT '',
                     container_daemon TEXT NOT NULL DEFAULT '',
+                    device_binding_json TEXT,
                     failure_json TEXT, diagnostic_json TEXT,
                     UNIQUE(request_id, lease_fence), UNIQUE(request_id, retry_index)
                 );
@@ -908,6 +928,9 @@ class JobStore:
             container_name=row["container_name"], container_image_ref=row["container_image_ref"],
             container_image_digest=row["container_image_digest"], container_runtime=row["container_runtime"],
             container_daemon=row["container_daemon"],
+            device_binding=(
+                None if row["device_binding_json"] is None else _loads(row["device_binding_json"])
+            ),
         )
 
     @staticmethod
@@ -986,12 +1009,14 @@ class JobStore:
                 raise StateCorrupt("NPU result requires timing evidence")
             try:
                 evidence_document = _loads(result.evidence)
+                report_status = _loads(result.report).get("status")
                 contracts.npu_timing_evidence_document(
                     evidence_document,
                     source_bytes=None,
                     device_group=receipt["device_group"],
                     measurement_kind=provenance["measurement_kind"],
                     publication_allowed=provenance["publication_allowed"],
+                    report_status=report_status,
                 )
             except (contracts.ContractError, StateCorrupt, TypeError, ValueError) as exc:
                 raise StateCorrupt(f"NPU result timing evidence is invalid: {exc}") from exc
@@ -1232,11 +1257,16 @@ class JobStore:
             ON CONFLICT(run_id,session_id) DO UPDATE SET value=excluded.value
         """, (request.run_id, request.session_id, sequence))
         attempt_id = f"attempt-{fence}-{uuid.uuid4().hex[:16]}"
+        # Bind the lease to the device group the job was accepted with, not to
+        # whatever this frontend is configured with now.  A crash/restart into
+        # another group must never reconcile or interrupt the old attempt.
+        device_binding = _loads(job["provenance_json"]).get("device_group") or None
         conn.execute("""
-            INSERT INTO attempts(attempt_id,request_id,lease_fence,retry_index,state,queued_at_ms,deadline_at_ms,session_sequence,capability_id,frontend_instance)
-            VALUES(?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO attempts(attempt_id,request_id,lease_fence,retry_index,state,queued_at_ms,deadline_at_ms,session_sequence,capability_id,frontend_instance,device_binding_json)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
         """, (attempt_id, request.request_id, fence, retry_index, "queued", now,
-              now + request.queue_timeout_ms, sequence, capability_id, self.frontend_instance))
+              now + request.queue_timeout_ms, sequence, capability_id, self.frontend_instance,
+              _json(device_binding) if device_binding is not None else None))
         conn.execute("""
             UPDATE jobs SET current_attempt_id=?,capability_id=?,state='queued',cancel_requested=0,
               failure_json=NULL,expires_at_ms=NULL,updated_at_ms=? WHERE request_id=?
@@ -1960,6 +1990,7 @@ class JobStore:
                     device_group=request.npu.execution.device_group.to_dict(),
                     measurement_kind=provenance.get("measurement_kind"),
                     publication_allowed=provenance.get("publication_allowed"),
+                    report_status=report.get("status"),
                 )
             except contracts.ContractError as exc:
                 raise JobError("invalid_argument", f"NPU timing evidence is invalid: {exc}") from exc

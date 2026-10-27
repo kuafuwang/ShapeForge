@@ -18,7 +18,7 @@ from tcenv.schema import PROTOCOL_VERSION as EXECUTION_PROTOCOL_VERSION
 
 from . import contracts
 from .contracts import API_CONTRACT_ID, EVIDENCE_CONTRACT_ID
-from .drivers.base import CleanupProof, DeviceController
+from .drivers.base import CleanupProof, DeviceController, HealthProof, VendorFacts
 from .identity import ServiceIdentity, SessionGrant
 from .job_store import JobStore
 from .job_types import (
@@ -296,6 +296,7 @@ class JobEngine:
         contract: contracts.ContractDialect = contracts.LEGACY_DIALECT,
         npu_execution: NpuExecutionSpec | None = None,
         device_controller: DeviceController | None = None,
+        device_probe_timeout_s: float = 2.0,
         **store_options: Any,
     ) -> None:
         if not worker_command or not all(isinstance(part, str) and part for part in worker_command):
@@ -311,8 +312,20 @@ class JobEngine:
                 raise ValueError("the NPU contract requires a typed execution binding")
         elif npu_execution is not None:
             raise ValueError("the legacy contract cannot carry an NPU execution binding")
+        if contract.npu_source and device_controller is None:
+            # Cancelling and reconciling device resources is worker-external by
+            # construction: an NPU frontend without a controller could never
+            # prove a cleanup, so it is a composition error, not a degraded mode.
+            raise ValueError("the NPU contract requires a worker-external device controller")
         if device_controller is not None and not contract.npu_source:
             raise ValueError("a device controller is only valid with the NPU contract")
+        if (
+            isinstance(device_probe_timeout_s, bool)
+            or not isinstance(device_probe_timeout_s, (int, float))
+            or not math.isfinite(device_probe_timeout_s)
+            or not 0.05 <= device_probe_timeout_s <= 30.0
+        ):
+            raise ValueError("device_probe_timeout_s must be a finite number between 0.05 and 30 seconds")
         if isinstance(selfcheck_age_s, bool) or not isinstance(selfcheck_age_s, (int, float)) or not math.isfinite(selfcheck_age_s) or selfcheck_age_s <= 0:
             raise ValueError("selfcheck_age_s must be finite and positive")
         if signing_key is not None and (not isinstance(signing_key, bytes) or len(signing_key) < 32):
@@ -362,6 +375,7 @@ class JobEngine:
         self.contract = contract
         self.npu_execution = npu_execution
         self.device_controller = device_controller
+        self.device_probe_timeout_s = float(device_probe_timeout_s)
         self.execution_protocol_version = execution_protocol_version
         self.supported_features = frozenset(supported_features)
         self.supported_modes = frozenset(supported_modes)
@@ -468,6 +482,9 @@ class JobEngine:
         for name, values in (("api_contract_ids", api_contract_ids), ("evidence_contract_ids", evidence_contract_ids)):
             if not isinstance(values, (list, tuple)) or not values:
                 raise JobError("invalid_argument", f"capabilities requires non-empty {name}")
+        # Probe the trusted device first: a group that cannot be verified must
+        # not consume the client nonce or leave a durable capability behind.
+        device_target = self._device_capability() if self.contract.npu_source else {}
         capabilities = self.store.get_capabilities(
             grant_token=grant_token, client_nonce=client_nonce, expected=expected,
             expected_identities=self._expected, provenance=self._base_provenance(),
@@ -489,21 +506,128 @@ class JobEngine:
             "modes": sorted(self.supported_modes),
             "features": sorted(self.supported_features),
         }
-        if self.contract.npu_source and self.npu_execution is not None:
-            group = self.npu_execution.device_group
-            target.update({
-                "artifact_kinds": ["source"],
-                "launch_kinds": [self.npu_execution.launch_kind],
-                "launch_subtypes": [self.npu_execution.launch_subtype],
-                "timing_sources": list(self.npu_execution.required_timing_sources),
-                "device_groups": [{
-                    **group.to_dict(),
-                    "logical_devices": 1,
-                    "state": "available",
-                    "timing_sources": list(self.npu_execution.required_timing_sources),
-                }],
-            })
+        target.update(device_target)
         return replace(capabilities, target_capabilities=(target,))
+
+    # -- trusted device facts ----------------------------------------------
+    def _device_profile(self) -> dict[str, str]:
+        if self.npu_execution is None:
+            raise JobError("failed_precondition", "this evaluator has no NPU device binding")
+        return self.npu_execution.device_group.to_dict()
+
+    def _bounded_device_call(self, name: str, call: Callable[[], Any]) -> tuple[Any, str]:
+        """Run one trusted controller call with a bounded wall-clock wait."""
+
+        outcome: dict[str, Any] = {}
+
+        def run() -> None:
+            try:
+                outcome["value"] = call()
+            except BaseException as exc:  # noqa: BLE001 - a controller failure is infrastructure
+                outcome["error"] = f"{name} raised {type(exc).__name__}: {exc}"[:500]
+
+        thread = threading.Thread(target=run, name=f"device-{name}", daemon=True)
+        thread.start()
+        thread.join(self.device_probe_timeout_s)
+        if thread.is_alive():
+            return None, f"{name} did not return within {self.device_probe_timeout_s:.3f}s"
+        if "error" in outcome:
+            return None, str(outcome["error"])
+        return outcome.get("value"), ""
+
+    def _check_device_binding(
+        self, value: Mapping[str, Any], *, where: str, keys: tuple[str, ...] | None = None,
+    ) -> None:
+        binding = self._device_profile()
+        for key in (keys if keys is not None else tuple(binding)):
+            expected = binding[key]
+            if value.get(key) != expected:
+                raise JobError(
+                    "failed_precondition",
+                    f"{where} reports {key}={value.get(key)!r}, this evaluator serves {expected!r}",
+                )
+
+    def _device_capability(self) -> dict[str, Any]:
+        """Build the P0 capability from trusted probed facts, or fail closed.
+
+        A device group that cannot be probed, is not healthy, or a controller
+        that names another profile/topology/resource generation must not be
+        advertised as available: the client would otherwise submit into a group
+        this frontend cannot cancel or reconcile.
+        """
+
+        controller = self.device_controller
+        if controller is None:
+            raise JobError("failed_precondition", "no device controller is configured")
+        profile = self._device_profile()
+        facts, error = self._bounded_device_call("probe", lambda: controller.probe(profile))
+        if error:
+            raise JobError("failed_precondition", f"device probe failed: {error}")
+        if not isinstance(facts, VendorFacts):
+            raise JobError("failed_precondition", "device controller returned untyped probe facts")
+        if facts.state != "available":
+            raise JobError("failed_precondition", f"device group is {facts.state!r}, not available")
+        self._check_device_binding(
+            {
+                "device_group_id": facts.device_group_id,
+                "vendor_id": facts.vendor_id,
+                "profile_digest": facts.profile_digest,
+                "topology_digest": facts.topology_digest,
+                "resource_generation": facts.resource_generation,
+            },
+            where="device probe",
+        )
+        health, error = self._bounded_device_call("health_check", lambda: controller.health_check(profile))
+        if error:
+            raise JobError("failed_precondition", f"device health check failed: {error}")
+        if not isinstance(health, HealthProof):
+            raise JobError("failed_precondition", "device controller returned an untyped health proof")
+        if not health.ok:
+            raise JobError("failed_precondition", f"device known-good probe failed: {health.detail}"[:500])
+        self._check_device_binding(
+            {"device_group_id": health.device_group_id, "resource_generation": health.resource_generation},
+            where="device health proof", keys=("device_group_id", "resource_generation"),
+        )
+        advertised, error = self._bounded_device_call(
+            "capabilities", lambda: controller.capabilities(facts),
+        )
+        if error:
+            raise JobError("failed_precondition", f"device capabilities failed: {error}")
+        if not isinstance(advertised, Mapping):
+            raise JobError("failed_precondition", "device controller returned untyped capabilities")
+        execution = self.npu_execution
+        if execution is None:
+            raise JobError("failed_precondition", "this evaluator has no NPU execution binding")
+        artifact_kinds = list(advertised.get("artifact_kinds") or ())
+        launch_kinds = list(advertised.get("launch_kinds") or ())
+        launch_subtypes = list(advertised.get("launch_subtypes") or ())
+        timing_sources = list(advertised.get("timing_sources") or ())
+        if artifact_kinds != ["source"]:
+            raise JobError("failed_precondition", "device does not advertise the source artifact kind")
+        if launch_kinds != [execution.launch_kind] or launch_subtypes != [execution.launch_subtype]:
+            raise JobError("failed_precondition", "device does not advertise the served launch kind/subtype")
+        if timing_sources != list(execution.required_timing_sources):
+            raise JobError("failed_precondition", "device does not advertise the served timing source")
+        groups = advertised.get("device_groups")
+        if not isinstance(groups, (list, tuple)) or len(groups) != 1:
+            raise JobError("failed_precondition", "device must advertise exactly one logical device group")
+        group = dict(groups[0]) if isinstance(groups[0], Mapping) else None
+        if group is None:
+            raise JobError("failed_precondition", "device advertised an untyped device group")
+        self._check_device_binding(group, where="device capability")
+        if group.get("state") != "available":
+            raise JobError("failed_precondition", f"device group is {group.get('state')!r}, not available")
+        return {
+            "artifact_kinds": artifact_kinds,
+            "launch_kinds": launch_kinds,
+            "launch_subtypes": launch_subtypes,
+            "timing_sources": timing_sources,
+            "device_groups": [{
+                **group,
+                "logical_devices": int(group.get("logical_devices") or 0),
+                "timing_sources": list(group.get("timing_sources") or ()),
+            }],
+        }
 
     def _validate_submission(self, request: ExternalEvaluationRequest) -> None:
         if request.contract != self.contract:
@@ -954,10 +1078,45 @@ class JobEngine:
             report["simulated"] = True
         return report
 
+    def _timeout_evidence(self, running: _Running, message: str) -> dict[str, Any]:
+        """Diagnostic evidence for a candidate that never produced a device event.
+
+        The durable deadline fired, so no device synchronization was observed.
+        The NPU contract must not launder that into a completed device event:
+        the row keeps the exact CandidateDigest/device group binding, reports no
+        launch and no device time, names the unobserved clock and is never
+        publishable.  ``JobStore`` requires the matching ``status=timeout``.
+        """
+
+        request = running.request
+        if request.npu is None or self.npu_execution is None:
+            raise StateCorrupt("the NPU contract has no execution binding for a timeout report")
+        return {
+            "schema_id": contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID,
+            "candidate_digest": request.npu.candidate_digest.to_dict(),
+            "device_group": request.npu.execution.device_group.to_dict(),
+            "timing": {
+                "source": "DEVICE_EVENT",
+                "clock_domain": contracts.NPU_UNOBSERVED_CLOCK_DOMAIN,
+                "synchronization_completed": False,
+                "device_elapsed_ns": 0,
+                "host_api_elapsed_ns": request.candidate_timeout_ms * 1_000_000,
+                "launches": 0,
+            },
+            "measurement_kind": self.identity.measurement_kind,
+            "publication_allowed": False,
+            "complete": False,
+            "diagnostics": {"timeout": True, "detail": message[:400]},
+        }
+
     def _complete_timeout_result(self, running: _Running, *, message: str) -> None:
+        evidence = (
+            {"candidate_sha256": running.request.candidate_sha256}
+            if not self.contract.npu_source
+            else self._timeout_evidence(running, message)
+        )
         self._complete_worker_result(
-            running, report=self._timeout_report(running, message),
-            evidence={"candidate_sha256": running.request.candidate_sha256},
+            running, report=self._timeout_report(running, message), evidence=evidence,
         )
 
     def _finish_overdue_attempt(
@@ -1019,12 +1178,49 @@ class JobEngine:
                 self._stop.set()
 
     # -- device controller boundary ----------------------------------------
+    @staticmethod
+    def _lease_binding(value: Any) -> dict[str, Any] | None:
+        """Normalize the device binding a lease was accepted with."""
+
+        if value is None:
+            return None
+        try:
+            return contracts.device_group_document(value)
+        except contracts.ContractError:
+            return None
+
+    def _lease_device_error(self, attempt: Attempt) -> tuple[dict[str, Any] | None, str]:
+        """Return ``(accepted_binding, "")`` or ``(None, error)`` for one lease.
+
+        The lease is bound to the device group/profile/topology/resource
+        generation the job was accepted with.  A frontend that restarted into a
+        different group must not reconcile (or interrupt) the old attempt
+        through the new group's controller.
+        """
+
+        if not self.contract.npu_source:
+            return None, ""
+        if self.npu_execution is None:
+            return None, "this evaluator has no NPU device binding"
+        accepted = self._lease_binding(getattr(attempt, "device_binding", None))
+        if accepted is None:
+            return None, "the accepted attempt has no durable device group binding"
+        current = self.npu_execution.device_group.to_dict()
+        if accepted != current:
+            changed = sorted(
+                key for key in current if accepted.get(key) != current[key]
+            )
+            return None, (
+                "the accepted attempt belongs to another device group "
+                f"({','.join(changed)}): this controller cannot reconcile it"
+            )
+        return accepted, ""
+
     def _reconcile_device(self, attempt: Attempt) -> str:
         """Return "" only when the worker-external controller proved cleanup.
 
-        A worker-local ``VendorDriver.close`` is cooperative, never proof: for
-        the NPU contract a frontend without a controller must quarantine rather
-        than claim the device resources are gone.
+        A worker-local ``VendorDriver.close`` is cooperative, never proof, and
+        the proof must name the exact device binding the lease was accepted with.
         """
 
         controller = self.device_controller
@@ -1032,6 +1228,9 @@ class JobEngine:
             if self.contract.npu_source:
                 return "no device controller is configured; device cleanup cannot be proven"
             return ""
+        accepted, lease_error = self._lease_device_error(attempt)
+        if lease_error:
+            return lease_error
         try:
             proof = controller.reconcile(attempt.attempt_id, attempt.lease_fence)
         except Exception as exc:  # noqa: BLE001 - a controller failure is infrastructure
@@ -1043,13 +1242,20 @@ class JobEngine:
                 "device cleanup proof is bound to a different attempt/fence: "
                 f"{proof.attempt_id}/{proof.lease_fence}"
             )
-        if self.npu_execution is not None:
-            group = self.npu_execution.device_group
-            if (
-                proof.device_group_id != group.device_group_id
-                or proof.resource_generation != group.resource_generation
-            ):
-                return "device cleanup proof names a different device group/resource generation"
+        if accepted is not None:
+            proof_binding = {
+                "device_group_id": proof.device_group_id,
+                "vendor_id": proof.vendor_id,
+                "profile_digest": proof.profile_digest,
+                "topology_digest": proof.topology_digest,
+                "resource_generation": proof.resource_generation,
+            }
+            if proof_binding != accepted:
+                changed = sorted(key for key in accepted if proof_binding.get(key) != accepted[key])
+                return (
+                    "device cleanup proof names a different device binding "
+                    f"({','.join(changed) or 'unknown'}) than the accepted lease"
+                )
         if not proof.complete:
             live = ",".join(proof.live_resources) or "unknown"
             return f"device cleanup was not proven; live resources: {live}; {proof.detail}"[:1000]
@@ -1084,9 +1290,18 @@ class JobEngine:
         self._cancel_device(snapshot.current_attempt)
 
     def _cancel_device(self, attempt: Attempt | None) -> None:
-        """Best-effort typed cancel; cleanup is still proven by reconcile."""
+        """Best-effort typed cancel; cleanup is still proven by reconcile.
+
+        A cancel is only delivered for a lease this frontend's controller owns;
+        another group's attempt is left to quarantine plus operator recovery
+        instead of being cancelled through the wrong device group.
+        """
 
         if attempt is None or self.device_controller is None:
+            return
+        _accepted, lease_error = self._lease_device_error(attempt)
+        if lease_error:
+            self._record_close_error(f"device cancel was not delivered: {lease_error}")
             return
         try:
             self.device_controller.cancel(attempt.attempt_id, attempt.lease_fence)

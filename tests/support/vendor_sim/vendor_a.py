@@ -67,8 +67,18 @@ VENDOR_A_GROUP = DeviceGroupBinding(
 )
 
 
-def build_execution() -> NpuExecutionSpec:
-    return NpuExecutionSpec(device_group=VENDOR_A_GROUP)
+def build_execution(generation: str = RESOURCE_GENERATION) -> NpuExecutionSpec:
+    """Return the fake vendor A binding; ``generation`` models a device reset."""
+
+    if generation == RESOURCE_GENERATION:
+        return NpuExecutionSpec(device_group=VENDOR_A_GROUP)
+    return NpuExecutionSpec(device_group=DeviceGroupBinding(
+        device_group_id=VENDOR_A_GROUP.device_group_id,
+        vendor_id=VENDOR_A_GROUP.vendor_id,
+        profile_digest=VENDOR_A_GROUP.profile_digest,
+        topology_digest=VENDOR_A_GROUP.topology_digest,
+        resource_generation=generation,
+    ))
 
 
 def _ledger_path() -> Path:
@@ -192,6 +202,7 @@ class FakeVendorADriver:
             },
             "measurement_kind": "simulated",
             "publication_allowed": False,
+            "complete": True,
             "diagnostics": {
                 "vendor_id": VENDOR_ID,
                 "artifact_format": prepared.module_format,
@@ -253,15 +264,27 @@ class FakeVendorAController:
     def cancel(self, attempt_id: str, lease_fence: int) -> None:
         self.ledger.mark_cancelled(attempt_id=attempt_id, lease_fence=lease_fence)
 
+    def _proof(self, attempt_id: str, lease_fence: int, **fields: Any) -> CleanupProof:
+        """Every proof names the exact device binding it was produced for."""
+
+        group = VENDOR_A_GROUP
+        return CleanupProof(
+            attempt_id=attempt_id, lease_fence=lease_fence,
+            device_group_id=group.device_group_id,
+            resource_generation=group.resource_generation,
+            vendor_id=group.vendor_id,
+            profile_digest=group.profile_digest,
+            topology_digest=group.topology_digest,
+            **fields,
+        )
+
     def reconcile(self, attempt_id: str, lease_fence: int) -> CleanupProof:
         try:
             resources = self.ledger.attempt_resources(attempt_id, lease_fence)
             live = self.ledger.live_resources()
         except LedgerError as exc:
-            return CleanupProof(
-                attempt_id=attempt_id, lease_fence=lease_fence,
-                device_group_id=DEVICE_GROUP_ID,
-                resource_generation=RESOURCE_GENERATION,
+            return self._proof(
+                attempt_id, lease_fence,
                 complete=False, detail=f"ledger unreadable: {exc}",
             )
         stale = [
@@ -269,26 +292,20 @@ class FakeVendorAController:
             if resource["attempt_id"] == attempt_id and resource["lease_fence"] != lease_fence
         ]
         if stale:
-            return CleanupProof(
-                attempt_id=attempt_id, lease_fence=lease_fence,
-                device_group_id=DEVICE_GROUP_ID,
-                resource_generation=RESOURCE_GENERATION,
+            return self._proof(
+                attempt_id, lease_fence,
                 complete=False,
                 live_resources=tuple(sorted(r["kind"] for r in stale)),
                 detail="resources belong to a stale fence of the same attempt",
             )
         if not resources:
-            return CleanupProof(
-                attempt_id=attempt_id, lease_fence=lease_fence,
-                device_group_id=DEVICE_GROUP_ID,
-                resource_generation=RESOURCE_GENERATION,
+            return self._proof(
+                attempt_id, lease_fence,
                 complete=True, detail="no live resources for this attempt/fence",
             )
         if not self.release_supported:
-            return CleanupProof(
-                attempt_id=attempt_id, lease_fence=lease_fence,
-                device_group_id=DEVICE_GROUP_ID,
-                resource_generation=RESOURCE_GENERATION,
+            return self._proof(
+                attempt_id, lease_fence,
                 complete=False,
                 live_resources=tuple(sorted(r["kind"] for r in resources)),
                 detail="fake controller cannot prove external release",
@@ -296,19 +313,15 @@ class FakeVendorAController:
         released = self.ledger.release_attempt(attempt_id, lease_fence)
         remaining = self.ledger.attempt_resources(attempt_id, lease_fence)
         if remaining:
-            return CleanupProof(
-                attempt_id=attempt_id, lease_fence=lease_fence,
-                device_group_id=DEVICE_GROUP_ID,
-                resource_generation=RESOURCE_GENERATION,
+            return self._proof(
+                attempt_id, lease_fence,
                 complete=False,
                 live_resources=tuple(sorted(r["kind"] for r in remaining)),
                 released_resources=tuple(released),
                 detail="external release left live resources",
             )
-        return CleanupProof(
-            attempt_id=attempt_id, lease_fence=lease_fence,
-            device_group_id=DEVICE_GROUP_ID,
-            resource_generation=RESOURCE_GENERATION,
+        return self._proof(
+            attempt_id, lease_fence,
             complete=True, released_resources=tuple(released),
             detail="external release verified against the attempt/fence ledger",
         )

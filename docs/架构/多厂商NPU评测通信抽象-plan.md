@@ -349,40 +349,73 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
 - `CandidateDigest` 链：canonical request → request digest（绑定 source sha256、execution
   spec 与 device group）→ receipt（`candidate_digest`，不双写 `candidate_sha256`）→
   outbox 行 `schema_version=2` + result envelope → HMAC result signature → resume。
-  新增 `GrpcEvaluator.wire_request_digest()`，host 用它写入
-  `EvaluationRequest.contract_request_digest`；已记录的 wire digest 与服务端重算不一致时在
-  Submit 之前 fail closed。
+  `GrpcEvaluator.wire_request_digest()` 给出 wire digest，host 侧唯一接线点是
+  `taic.evaluation_outbox.bind_wire_digest()`（`taic/orchestrator.py` 在 `begin` 前调用，
+  由 `tests/shared/test_orchestrator_runtime.py` 的 NPU host-adapter 回归覆盖 begin→Submit→
+  complete→resume）；
+  wire digest **不许回退**：缺字段时 client 在 Submit/GetJob 前、outbox 在
+  begin/complete 时都以 `request_digest_missing` 拒绝，已记录值与服务端重算不一致则以
+  `request_digest_mismatch` 在 Submit 前拒绝。旧 Metal 的 host digest 与 wire digest 本来就
+  是两个函数，旧路径继续用 host digest，不受影响。
 - 设备组绑定：`device_group_id/vendor_id/profile_digest/topology_digest/resource_generation`
   进入 capability（target.device_groups + provenance）、request digest、receipt、provenance
   与 Retry（Retry capability 的 device group 必须与 job 记录一致，串组即
-  `failed_precondition`）。租约侧由 `DeviceController.reconcile(attempt_id, lease_fence)` 的
-  `CleanupProof` 逐项核对 attempt/fence/group/generation。
+  `failed_precondition`）。attempt/lease 把接受时的完整绑定持久化到
+  `attempts.device_binding_json`（store schema v4），`CleanupProof` 携带同一组
+  vendor/profile/topology/generation；cancel/reconcile 只对“该 lease 接受时的绑定”生效，
+  重启换组时既不向新组 controller 发取消，也不能把旧 attempt 标成 interrupted，只能
+  quarantine。
+- 设备事实进入 capability：`GetCapabilities` 先用 worker 外 controller 做有界
+  `probe`/`health_check`/`capabilities`（`device_probe_timeout_s`，默认 2s），逐项核对
+  vendor/profile/topology/resource generation 与 P0 执行形状；探测失败、超时、不健康或
+  绑定不一致都 `failed_precondition`，且在消耗 nonce、写入 capability 之前失败。NPU 组合根
+  缺 controller 属于装配错误（构造即 `ValueError`），运行期 controller 消失同样只能
+  quarantine。
+- 超时与诊断证据：candidate deadline 仍产出 `status=timeout` 的 completed 报告，但 NPU 证据
+  新增 `complete` 字段。`complete=false` 必须未同步、零 device 时间、零 launch、时钟域为
+  `unobserved`、不可发布；`status=ok` 必须 `complete=true`，`status=timeout` 不得
+  `complete=true`。Host API 时间与 device event 时间继续分开，绝不把 host 等待写成
+  device elapsed。
 - driver 边界：`tcenv/remote/drivers/base.py` 只有 typed 协议与数据类（`VendorFacts`、
   `PreparedAttempt`、`VendorOutcome`、`CleanupProof`、`HealthProof`）；无 shell、路径、BDF、
   vendor key-value。fake vendor A（source → fake ELF/SIMT、device event、跨进程资源台账）只在
   `tests/support/vendor_sim/`，生产组合根不 import。
-- 生产入口：`python -m tcenv.remote.grpc_service` 对 `npu-source` contract 直接
-  `ValueError`（P0 没有生产 NPU adapter/controller），并拒绝把旧 contract 服务给非 Metal
-  target/backend；local、selfcheck bridge、私有 worker 帧、容器执行面、Metal 默认路径未改。
+- 生产入口与测试组合根：`python -m tcenv.remote.grpc_service` 对 `npu-source` contract
+  直接 `ValueError`（P0 没有生产 NPU adapter/controller），并拒绝把旧 contract 服务给非
+  Metal target/backend。测试 side 只有一个 NPU gRPC 组合根（`tests/support/vendor_sim/`，
+  新 contract）；`tests/support/npu_sim/grpc_service_entry.py` 明确降级为 legacy
+  Metal/source transport 验收根，backend 默认 `sim-cpu` 并且拒绝任何 NPU 形态身份，
+  `tests/support/job_engine.py` 的通用旧路径 fixture backend 改为 `sim-fake`。local、
+  selfcheck bridge、私有 worker 帧、容器执行面、Metal 默认路径未改
+  （`tests/support/npu_sim/fake_backend.py` 是本地 Backend、不发 gRPC 请求，不在 contract
+  范围内）。
 - 清理语义：worker 被杀/超时/取消后由 worker 外 controller reconcile；`complete=False` →
   job quarantine、不提交结果、不允许 Retry、`close()` 报错。终态 job 的 Cancel 不再向
   controller 发取消。Host API 时间与 device event 时间分开记录，`candidate_us` 取自
   device event。
-- 验证证据：`tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` 共 23 项通过；
-  `test_remote_grpc_{adapter,tls,contract,revocation}.py`、`test_remote_{conformance,
-  go_conformance}.py` 83 项通过；`test_remote_{job_engine,job_recovery,
-  legacy_worker_bridge,container_engine,container_supervisor,runtime}.py`、
-  `test_evaluation_outbox.py`、`test_selfcheck_bridge.py` 264 项通过。
-  `uv run pytest -q -m 'not gpu and not llm and not slow'`：2216 passed / 6 skipped /
-  32 failed，失败全部是本机 hmz 围栏环境造成：`test_selfcheck_bridge.py` 18 项 AF_UNIX
-  路径超长（短 TMPDIR），`ps` 被禁（`test_children`、`test_run_detached`、
-  `test_triton_baseline`）与 HOME 权威日志不可写（`test_selfcheck`、`test_harness`、
-  `test_kernel_agent`）；这些文件不 import remote/NPU/新测试，也不是本轮改动范围。
+- 验证证据（每条命令各自单独跑）：
+  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **36 passed**；
+  `test_remote_grpc_{adapter,tls,contract,revocation}.py` 与
+  `test_remote_{conformance,go_conformance}.py` 六个旧文件 **62 passed**；
+  `test_orchestrator_runtime.py` **18 passed**（含 NPU host 接线回归）；
+  `test_remote_{job_engine,job_recovery,legacy_worker_bridge,container_engine,
+  container_supervisor,runtime}.py` + `test_evaluation_outbox.py` **263 passed, 1 skipped**
+  （跳过项是 Linux-only 的 `PF_KTHREAD` 检查）；`test_selfcheck_bridge.py` 在本机围栏里
+  **18 failed, 1 passed**（全部是短 TMPDIR 导致的 AF_UNIX 路径超长，非围栏环境应全通过）。
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2233 passed / 6 skipped /
+  32 failed**。这批失败全部
+  是本机 hmz 围栏环境造成：`test_selfcheck_bridge.py` 的 AF_UNIX 路径超长（短 TMPDIR），
+  `ps` 被禁（`test_children`、`test_run_detached`、`test_triton_baseline`）与 HOME 权威
+  日志不可写（`test_selfcheck`、`test_harness`、`test_kernel_agent`）；失败文件不 import
+  remote/NPU/新测试。
 - 未做（不得据此宣称已支持）：bundle/oneof/`artifact_set_digest`、graph-only fake B、P2a
   TSM simulator、P2 真实设备、profiler 计时、多 rank/die、device group 并入 evaluator
-  epoch、`DeviceController` 调用的显式超时预算、host 编排（`taic/orchestrator.py`）写入
-  wire digest 的实际接线。所有结果为 `simulated=true`、`publication_allowed=false`，不产生
-  性能或发布结论。
+  epoch、`DeviceController.cancel/reconcile` 的显式超时预算（capability 路径的
+  probe/health/capabilities 已是有界的）、跨 contract 的滚动升级（legacy state 与
+  npu-source state 不兼容，换 contract 需要新 state 目录与新 evaluator epoch，Docker 滚动
+  重启验收因此未重跑）、`tests/support/npu_sim/grpc_sim_runner.py` 的 Docker 验收（本机
+  无 Docker 权限，只做了 import/入口拒绝的回归）。所有结果为 `simulated=true`、
+  `publication_allowed=false`，不产生性能或发布结论。
 
 ### P1：bundle、graph-only 异步 fake 与 conformance
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -21,10 +22,36 @@ from tcenv.remote.contracts import (
     NPU_TIMING_EVIDENCE_SCHEMA_ID,
     ContractError,
     device_group_document,
+    npu_timing_evidence_document,
 )
 
 from .control import write_json_atomic
 from .redact import redact_text
+
+
+def bind_wire_digest(
+    request: EvaluationRequest, evaluator: Any, outbox: "EvaluationOutbox | None",
+) -> EvaluationRequest:
+    """Return the request keyed by the exact digest the evaluator will submit.
+
+    This is the one host-side wiring point for the NPU contract: the durable
+    outbox row, the submitted request, the receipt and a later resume all use
+    the same identity.  The legacy contract keeps its historical digest and
+    this is a no-op.
+    """
+
+    if outbox is None or not outbox.npu_contract:
+        return request
+    wire = getattr(evaluator, "wire_request_digest", None)
+    if not callable(wire):
+        raise EvaluationUnavailable(
+            "request_digest_missing",
+            "the NPU contract requires an evaluator that exposes wire_request_digest()",
+        )
+    digest = wire(request)
+    if not isinstance(digest, str) or not digest:
+        raise EvaluationUnavailable("request_digest_missing", "evaluator returned no wire request digest")
+    return replace(request, contract_request_digest=digest)
 
 
 class EvaluationOutbox:
@@ -159,6 +186,18 @@ class EvaluationOutbox:
             if not isinstance(receipt_group, dict) or evidence.get("device_group") != receipt_group:
                 raise EvaluationUnavailable("evidence_mismatch", "outbox NPU device group binding differs")
             self._device_group(receipt_group, where="receipt")
+            report = result.report if isinstance(result.report, dict) else {}
+            try:
+                npu_timing_evidence_document(
+                    evidence,
+                    source_bytes=request.source_bytes,
+                    device_group=receipt_group,
+                    report_status=report.get("status"),
+                )
+            except ContractError as exc:
+                raise EvaluationUnavailable(
+                    "evidence_mismatch", f"outbox NPU timing evidence is invalid: {exc}",
+                ) from exc
         if self.signature_key is not None:
             if not verify_result_signature(result, self.signature_key):
                 raise EvaluationUnavailable("signature_mismatch", "outbox result signature does not verify")
@@ -168,8 +207,31 @@ class EvaluationOutbox:
         if previous is not None and previous != request.request_digest:
             raise EvaluationUnavailable("receipt_replay", "receipt id was already used for a different request digest")
 
+    def require_wire_digest(self, request: EvaluationRequest) -> None:
+        """Refuse an NPU row that is not keyed by the exact wire identity.
+
+        The NPU request digest binds CandidateDigest and the capability's device
+        group, so it cannot be recomputed from the host request.  Without it the
+        row, the receipt and the resume identity would silently describe a
+        different job, so this fails closed instead.
+        """
+
+        if not self.npu_contract:
+            return
+        if not isinstance(request.contract_request_digest, str) or not request.contract_request_digest:
+            raise EvaluationUnavailable(
+                "request_digest_missing",
+                "the NPU outbox requires the host wire request digest; "
+                "call the evaluator's wire_request_digest() before begin/complete",
+            )
+        if request.request_digest != request.contract_request_digest:
+            raise EvaluationUnavailable(
+                "request_digest_mismatch", "the host request digest is not the NPU wire digest",
+            )
+
     def begin(self, request: EvaluationRequest, *, epoch: str = "") -> EvaluationResult | None:
         """Return a completed result or persist a pending request before sending."""
+        self.require_wire_digest(request)
         self.previous_status = ""
         path = self._state_path(request.request_id)
         if path.is_file():
@@ -260,6 +322,7 @@ class EvaluationOutbox:
 
     def complete(self, request: EvaluationRequest, result: EvaluationResult) -> None:
         """Atomically retain the result envelope and mark the request completed."""
+        self.require_wire_digest(request)
         self._validate_result(request, result)
         path = self._state_path(request.request_id)
         result_path = self._result_path(request.request_id)
@@ -290,6 +353,15 @@ class EvaluationOutbox:
 
     def unavailable(self, request: EvaluationRequest, error: BaseException) -> None:
         """Record an infrastructure/policy failure without inventing a report."""
+        if self.npu_contract and not request.contract_request_digest:
+            if not self._state_path(request.request_id).is_file():
+                # A missing wire digest means nothing was durably accepted, so
+                # there is no row to reconcile; never overwrite the failure the
+                # caller is already reporting with a second one.
+                return
+            raise EvaluationUnavailable(
+                "request_digest_missing", "the NPU outbox row is not keyed by the wire request digest",
+            )
         path = self._state_path(request.request_id)
         try:
             import json

@@ -586,6 +586,9 @@ class Attempt:
     container_image_digest: str = ""
     container_runtime: str = ""
     container_daemon: str = ""
+    # The logical device group/profile/topology/resource generation this lease
+    # was accepted under.  Empty for the legacy Metal/source contract.
+    device_binding: Mapping[str, str] | None = None
 
 
 @dataclass(frozen=True)

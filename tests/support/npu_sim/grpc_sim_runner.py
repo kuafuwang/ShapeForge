@@ -5,6 +5,12 @@ built from the test-only composition root, injects transport/auth/restart/key
 rotation faults and writes ``runs/grpc-sim-<date>/report.json``.  No GPU, NPU,
 NPU SDK, real model, SSH data plane or publication claim is involved.
 
+This is the **legacy Metal/source contract** transport acceptance: it proves
+TLS/mTLS, the six RPCs, restart durability and fault handling, and its fake
+identity deliberately does not claim to be NPU.  NPU (fake/simulated/source)
+traffic is covered by the npu-source contract in
+``tests/shared/test_remote_npu_*.py``; the package name is historical.
+
 Usage (explicit authorization):
 
     TAIC_DOCKER_GRPC_SIM=1 uv run python -m tests.support.npu_sim.grpc_sim_runner

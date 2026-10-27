@@ -831,7 +831,7 @@ def test_schema_version_is_transactional_and_failed_commit_is_rolled_back(tmp_pa
     try:
         from tcenv.remote.job_store import SCHEMA_VERSION
 
-        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 3
+        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 4
         assert not store._conn.in_transaction
 
         def deny_commit(action, arg1, _arg2, _database, _source):
@@ -862,8 +862,9 @@ def test_schema_v1_database_migrates_in_place_and_keeps_results(tmp_path):
     connection = sqlite3.connect(state / "jobs.sqlite3")
     try:
         for column in (
-            "container_daemon", "container_runtime", "container_image_digest",
-            "container_image_ref", "container_name", "container_id", "execution_kind",
+            "device_binding_json", "container_daemon", "container_runtime",
+            "container_image_digest", "container_image_ref", "container_name",
+            "container_id", "execution_kind",
         ):
             connection.execute(f"ALTER TABLE attempts DROP COLUMN {column}")
         connection.execute("PRAGMA user_version=1")
@@ -872,7 +873,7 @@ def test_schema_v1_database_migrates_in_place_and_keeps_results(tmp_path):
         connection.close()
     migrated = engine(state)
     try:
-        assert migrated.store._conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert migrated.store._conn.execute("PRAGMA user_version").fetchone()[0] == 4
         snapshot = get(migrated, req)
         assert snapshot.state == "completed" and snapshot.result is not None
         assert snapshot.current_attempt.execution_kind == "process"
@@ -898,8 +899,9 @@ def test_backup_taken_before_the_schema_upgrade_can_be_restored(tmp_path):
     connection = sqlite3.connect(backup)
     try:
         for column in (
-            "container_daemon", "container_runtime", "container_image_digest",
-            "container_image_ref", "container_name", "container_id", "execution_kind",
+            "device_binding_json", "container_daemon", "container_runtime",
+            "container_image_digest", "container_image_ref", "container_name",
+            "container_id", "execution_kind",
         ):
             connection.execute(f"ALTER TABLE attempts DROP COLUMN {column}")
         connection.execute("PRAGMA user_version=1")
@@ -910,7 +912,7 @@ def test_backup_taken_before_the_schema_upgrade_can_be_restored(tmp_path):
     JobStore.restore_backup(backup, restored_dir)
     restored = engine(restored_dir)
     try:
-        assert restored.store._conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert restored.store._conn.execute("PRAGMA user_version").fetchone()[0] == 4
         snapshot = get(restored, req)
         assert snapshot.state == "completed" and snapshot.result is not None
         assert snapshot.current_attempt.execution_kind == "process"
@@ -1169,6 +1171,7 @@ def test_schema_v2_database_migrates_to_v3_and_keeps_container_identity(tmp_path
             "container_image_ref='worker:1',container_image_digest=?,container_runtime='runc'",
             ("a" * 24, "tcenv-attempt-schema-v2", "d" * 64),
         )
+        connection.execute("ALTER TABLE attempts DROP COLUMN device_binding_json")
         connection.execute("ALTER TABLE attempts DROP COLUMN container_daemon")
         connection.execute("PRAGMA user_version=2")
         connection.commit()
@@ -1176,7 +1179,7 @@ def test_schema_v2_database_migrates_to_v3_and_keeps_container_identity(tmp_path
         connection.close()
     migrated = engine(state)
     try:
-        assert migrated.store._conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert migrated.store._conn.execute("PRAGMA user_version").fetchone()[0] == 4
         snapshot = get(migrated, req)
         assert snapshot.state == "completed" and snapshot.result is not None
         attempt = snapshot.current_attempt
@@ -1205,6 +1208,7 @@ def test_v2_backup_restores_with_signed_history_and_key_rotation(tmp_path):
         first.close()
     connection = sqlite3.connect(backup)
     try:
+        connection.execute("ALTER TABLE attempts DROP COLUMN device_binding_json")
         connection.execute("ALTER TABLE attempts DROP COLUMN container_daemon")
         connection.execute("PRAGMA user_version=2")
         connection.commit()
@@ -1217,7 +1221,7 @@ def test_v2_backup_restores_with_signed_history_and_key_rotation(tmp_path):
         signing_keyring={id1: key1, id2: key2},
     )
     try:
-        assert rotated.store._conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert rotated.store._conn.execute("PRAGMA user_version").fetchone()[0] == 4
         historical = get(rotated, req)
         assert historical.state == "completed" and historical.result is not None
         assert historical.result.signature["key_id"] == id1

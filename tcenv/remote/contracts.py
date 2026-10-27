@@ -37,6 +37,8 @@ NPU_SOURCE_RESULT_DOCUMENT_TYPE = "tcenv.remote.npu-source.result-signature"
 NPU_SOURCE_DOCUMENT_VERSION = 2
 NPU_TIMING_EVIDENCE_SCHEMA_ID = "tcenv.remote.npu-source.timing-evidence.1"
 NPU_EVIDENCE_MEDIA_TYPE = "application/vnd.tcenv.npu-source.timing-evidence.v1+json"
+# Clock domain recorded when no device clock was ever observed (killed worker).
+NPU_UNOBSERVED_CLOCK_DOMAIN = "unobserved"
 REQUEST_DIGEST_ALGORITHM = "sha256-rfc8785-v1"
 RECEIPT_DIGEST_ALGORITHM = "sha256-rfc8785-v1"
 RESULT_SIGNATURE_ALGORITHM = "hmac-sha256-v1"
@@ -855,7 +857,7 @@ _NPU_TIMING_FIELDS = frozenset({
 })
 _NPU_EVIDENCE_FIELDS = frozenset({
     "schema_id", "candidate_digest", "device_group", "timing",
-    "measurement_kind", "publication_allowed",
+    "measurement_kind", "publication_allowed", "complete",
 })
 
 
@@ -864,13 +866,20 @@ def npu_timing_evidence_document(
     device_group: Mapping[str, Any] | None = None,
     measurement_kind: str | None = None,
     publication_allowed: bool | None = None,
+    report_status: str | None = None,
 ) -> dict[str, Any]:
     """Validate the P0 minimal TimingEvidence document.
 
     Device and host time are deliberately separate fields.  A simulated result
-    can never claim publication, a device source must synchronize, and a known
-    clock domain is required.  P0 has no rank/die/profiler fields, so their
-    absence is not treated as missing evidence.
+    can never claim publication, and a known clock domain is required.  P0 has
+    no rank/die/profiler fields, so their absence is not treated as missing.
+
+    ``complete`` separates a real device observation from honest diagnostic
+    evidence: a report that claims ``ok`` needs a completed device event, and
+    evidence that never synchronized must not claim one.  A worker killed by the
+    durable deadline therefore reports ``status=timeout`` with
+    ``complete=false``, zero device time, no launch and no publish permission,
+    instead of inventing a completed device event.
     """
 
     if not isinstance(value, Mapping) or not _NPU_EVIDENCE_FIELDS <= set(value):
@@ -883,6 +892,7 @@ def npu_timing_evidence_document(
     group = device_group_document(value["device_group"])
     if device_group is not None and group != device_group_document(device_group):
         raise ContractError("timing evidence device group differs from the accepted capability")
+    complete = _boolean(value["complete"], "complete")
     timing = value["timing"]
     if not isinstance(timing, Mapping) or set(timing) != _NPU_TIMING_FIELDS:
         raise ContractError("timing fields are missing or unknown")
@@ -891,21 +901,39 @@ def npu_timing_evidence_document(
         raise ContractError("P0 timing source must be DEVICE_EVENT")
     clock_domain = _text(timing["clock_domain"], "timing.clock_domain", max_bytes=96)
     synchronized = _boolean(timing["synchronization_completed"], "timing.synchronization_completed")
-    if not synchronized:
-        raise ContractError("timing evidence requires completed synchronization")
     device_elapsed = _integer(timing["device_elapsed_ns"], "timing.device_elapsed_ns", 0, _MAX_SAFE_INTEGER)
     host_elapsed = _integer(timing["host_api_elapsed_ns"], "timing.host_api_elapsed_ns", 0, _MAX_SAFE_INTEGER)
-    launches = _integer(timing["launches"], "timing.launches", 1, 1_000_000)
+    launches = _integer(timing["launches"], "timing.launches", 0, 1_000_000)
     kind = value["measurement_kind"]
     if kind not in _MEASUREMENT_KINDS:
         raise ContractError("timing evidence measurement_kind is invalid")
     publish = _boolean(value["publication_allowed"], "publication_allowed")
     if kind == "simulated" and publish:
         raise ContractError("simulated timing evidence cannot be publishable")
+    if complete:
+        if not synchronized:
+            raise ContractError("timing evidence requires completed synchronization")
+        if launches < 1:
+            raise ContractError("completed timing evidence requires at least one launch")
+    else:
+        # No device event was observed: the row may only be diagnostic.
+        if synchronized:
+            raise ContractError("incomplete timing evidence cannot claim completed synchronization")
+        if launches or device_elapsed:
+            raise ContractError("incomplete timing evidence cannot report device time or a launch")
+        if clock_domain != NPU_UNOBSERVED_CLOCK_DOMAIN:
+            raise ContractError("incomplete timing evidence must name the unobserved clock domain")
+        if publish:
+            raise ContractError("incomplete timing evidence cannot be publishable")
     if measurement_kind is not None and kind != measurement_kind:
         raise ContractError("timing evidence measurement kind differs from provenance")
-    if publication_allowed is not None and publish != publication_allowed:
+    if publication_allowed is not None and publish != publication_allowed and complete:
         raise ContractError("timing evidence publication permission differs from provenance")
+    if report_status is not None:
+        if report_status == "ok" and not complete:
+            raise ContractError("an ok report requires completed device timing evidence")
+        if report_status == "timeout" and complete:
+            raise ContractError("a timeout report cannot claim a completed device event")
     document: dict[str, Any] = {
         "schema_id": NPU_TIMING_EVIDENCE_SCHEMA_ID,
         "candidate_digest": candidate,
@@ -920,6 +948,7 @@ def npu_timing_evidence_document(
         },
         "measurement_kind": kind,
         "publication_allowed": publish,
+        "complete": complete,
     }
     if "diagnostics" in value:
         diagnostics = value["diagnostics"]
