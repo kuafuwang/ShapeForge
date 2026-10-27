@@ -23,6 +23,11 @@ site/device/evaluator epoch。
 vendor shell、路径、MPI 命令或裸设备地址。**通信统一的是请求、能力、工件、结果、错误与
 计时证据，不是假装所有 NPU 都有相同的 kernel ABI。**
 
+构建也必须是统一的一层：`ArtifactBuilder` 在 control_host 或 evaluator 内把 source 变成
+工件，产出相同的 `ArtifactBundle`、`BuildProvenance` 和 `BuildEvidence`。local Metal 与
+远程 NPU 不再各写一套“先编译再执行”的隐式流程；传输与设备执行分别交给
+ArtifactTransport 和 VendorDriver。
+
 ## 1. 清微资料揭示的实际形态
 
 | 形态 | 资料依据 | 对抽象的要求 |
@@ -83,13 +88,18 @@ host 交互；最终操作驱动和物理 NPU 的仍是 host 上的运行时与�
 - `Backend` 负责源码/语言/launch 规则，`AttemptSupervisor` 负责 worker 生命周期；在
   Backend/worker 与设备之间还缺一个明确的**厂商设备驱动层**，不能直接往 gRPC server 或
   Docker supervisor 里塞 SDK。
+- 编译目前隐含在 evaluator worker 内，无法表达 control_host 本地编译、evaluator 端编译和
+  预编译工件三种时序。需要统一的 `ArtifactBuilder`，把构建产物与构建证据从传输、执行中
+  拆出来（§4.2.1）。
 - `EvalReport` 的标量耗时不足以解释多 rank、profiler 缓冲、时钟域与证据缺失；厂商错误也
   不能只靠字符串归类。
 
 ## 3. 目标架构
 
 ```text
-control_host
+control_host（编译服务器）
+  LLM / pi / hmz / taic / git / 编译工具链
+  SourceBundle → ArtifactBuilder → ArtifactBundle + BuildProvenance
   taic / GrpcEvaluatorFactory / outbox / publication gate
                  │  同一 tcenv.remote.v1（或兼容扩展）
                  ▼
@@ -112,7 +122,19 @@ control_host
                                           受信 worker 按 content id 分块读取 ┘
 ```
 
-- control_host 不需要安装任何厂商 SDK，也不直接接触 `/dev/*`、卡侧 AP 或 fabric。
+- control_host 同时是编译服务器：LLM、git、源码管理、编译与打包都留在富环境一侧；NPU
+  服务器只保留受信执行所需的最小 runtime/driver/evaluator，不要求 LLM、git 凭据或完整
+  编译环境。control_host 不直接接触 `/dev/*`、卡侧 AP 或 fabric。
+
+构建、传输和执行严格分层：
+
+```text
+SourceBundle
+  → ArtifactBuilder（control_host 或 evaluator）
+  → ArtifactBundle + BuildProvenance + BuildEvidence
+  → ArtifactTransport（本地引用 / inline / BlobChannel）
+  → VendorDriver（校验、加载、执行、计时）
+```
 - 每个逻辑设备组仍对应一个 single-active frontend、一份持久状态和一个 lease owner；
   多设备/多厂商使用独立 frontend，不在 v1 暗做全局调度或 HA。
 - `Backend` 继续负责源码、语言、参考实现、任务指纹和 launch 校验；`VendorDriver` 负责
@@ -175,6 +197,39 @@ health 由 `DeviceController` 负责，reset 与 worker 形态属于服务端受
 Protobuf message，允许另带 `schema_id + digest` 的厂商说明 blob 供诊断，但**请求执行不得
 依赖任意 vendor key-value**；vendor-specific 配置固定在服务端受信 profile。客户端缺少
 必需 feature 时不 Submit，服务端在 create/start 前同样拒绝。
+
+### 4.2.1 ArtifactBuilder：统一 local/remote 构建
+
+`ArtifactBuilder` 负责把 source 变成可执行工件，是 Backend/任务语义层的一部分，不属于
+BlobChannel 或 VendorDriver。建议边界：
+
+```text
+ArtifactBuilder:
+  probe(build_profile) -> BuildCapabilities
+  build(source_bundle, task_contract, build_profile, deadline) -> BuildOutcome
+```
+
+`BuildOutcome` 统一包含：
+
+- `ArtifactBundle`：可执行 module/graph/model 及 manifest/digest；
+- `BuildProvenance`：builder id、构建主机/profile、工具链与 SDK 版本、source digest、
+  编译 profile、artifact_set_digest；
+- `BuildEvidence`：compile/pipeline 状态、日志、耗时和错误分类。
+
+placement 只改变构建位置，不改变产物语义：
+
+| 模式 | 构建位置与时序 | 后续路径 |
+| --- | --- | --- |
+| 预编译 | control_host 先构建，成功后 Submit；失败则不 Submit | ArtifactTransport → 远程 NPU，仅加载/执行 |
+| 构建并评测 | source 提交给 evaluator，在同一 attempt 内构建并执行 | evaluator worker 内构建后进入 VendorDriver |
+| 本地构建执行 | control_host 本地构建并执行，如现有 Metal | 无远程传输，保持现有 local 语义 |
+
+`BuildProvenance` 不改变 `artifact_set_digest` 只描述工件 manifest/字节的规则；它作为独立
+字段进入 canonical request、outbox/resume 和签名 BuildEvidence。若构建环境变化会影响测量
+可比性，host 还必须按新测量基线处理，不能只换 artifact digest 就继续比较。
+
+builder 只能使用登记的 build_profile/toolchain，不接受任意 shell、路径或构建命令。接收方
+仍要复核 artifact digest、厂商签名/ABI 与任务契约，BuildProvenance 不是免验证证明。
 
 ### 4.3 ArtifactBundle 与 ExecutionSpec
 
@@ -379,6 +434,9 @@ DeviceController:
 
 约束：
 
+- VendorDriver 不负责定义编译流程：预编译工件只做校验/加载；构建并评测模式才在 worker
+  内先调用 ArtifactBuilder，再进入 prepare。两种模式必须产出同样的 ArtifactBundle、
+  BuildProvenance 和 BuildEvidence，不得在 driver 内另藏一套 vendor 专用编译协议。
 - frontend 在 worker create/start 前只做纯 schema/policy/digest/capability 校验，不加载
   厂商 SDK；worker 启动后、执行前再由 driver `prepare` 校验设备与工件并准备资源，这一阶段
   同样计入 attempt deadline，且必须可 Cancel、可被后续 reconcile 清理；
@@ -420,7 +478,7 @@ worker profile 的取舍：
 
 | 清微能力 | 适配位置与规则 |
 | --- | --- |
-| `txModuleLoad`/ELF/bin | `ArtifactCodec` 校验 executable module 的 manifest/digest；厂商 runtime 仍做模块签名校验。来源编译另属 Backend/toolchain，不能假定 Metal/Triton 源码天然兼容 |
+| `txModuleLoad`/ELF/bin | `ArtifactCodec` 校验 executable module 的 manifest/digest；厂商 runtime 仍做模块签名校验。清微主路径由 control_host 的 ArtifactBuilder 预编译并交接，NPU 服务器不拉源码、不配完整编译环境；若选择 evaluator 端编译，也必须复用同一 BuildOutcome。不能假定 Metal/Triton 源码天然兼容 |
 | SIMT/Cluster launch | `LaunchAdapter` 把公共 `KERNEL` 的受信 profile 子类型（SIMT/Cluster）映射到 `txLaunchKernel*`；grid/block/cluster 参数来自已校验 ExecutionSpec，AP 调度细节不外露 |
 | graph/model/BPM | 映射到 `GRAPH_DEFINITION`/`MODEL_DEFINITION` role 与 `GRAPH`/`MODEL` typed launch；`txLoadGraph` 的 case 目录由 driver 从已校验 bundle 在 attempt 作用域内物化，agent 不提供路径；BPM 使用公共 `PARAMETER_TABLE`，不增加任意路径字段 |
 | stream/event | 基础同步与 `DEVICE_EVENT` 计时；stream 创建/同步/销毁纳入 cleanup 证明 |
@@ -438,6 +496,8 @@ worker profile 的取舍：
 - 容器默认非特权、只读 rootfs、无 host HOME/凭据、最小设备映射。厂商 host-hal 或多机组网
   所需的 host network、`/tmp`、`/sys`、`/lib/modules` 等宿主挂载是显式例外，逐项最小化、
   只读优先并单独验收，不能扩展成任意 egress 或通用宿主路径。
+- NPU 服务器只保留最小受信执行环境：runtime/driver/evaluator、必要任务包与设备工具；
+  LLM、git 凭据、源码仓库和完整编译工具链默认留在 control_host，不随工件下发。
 - 每客户 Docker 只隔离其软件环境。设备组 lease 必须跨该 host 上所有客户容器与 host 入口
   统一判定；一个客户的容器删除不能释放其他客户的 lease，reset 也必须评估对所有客户及
   in-flight attempt 的影响，不能写成容器级 reset。
@@ -948,6 +1008,43 @@ TMPDIR 下 **18 failed / 1 passed**（AF_UNIX 路径超长，未改测试），`
 profile 侧的物理 id 绑定；`declared_devices` 与 profile 的 rank/die 事实只核对「有没有该维度 +
 数量」，没有逐 die 的拓扑摘要绑定；P2a/真实设备、真实 rank/die 聚合、真实 SDK 计时仍全部未做。
 
+### P1c：统一 ArtifactBuilder 与 control_host 工件交接（无真实设备）
+
+位置：P1 之后、P2a 之前。用统一 ArtifactBuilder 把 local/remote 构建与传输/执行分开，
+再用小文件证明 control_host 预编译工件可以进入 NPU 评测。此阶段不访问真实 NPU，也不要求
+在 NPU 服务器上安装编译器、git 或 LLM 凭据。
+
+**实现与映射**
+
+- 实现 `ArtifactBuilder` 的 probe/build/BuildOutcome 与 deadline/错误分类，构建过程只接受
+  登记的 build_profile/toolchain；source digest、builder/toolchain/profile 与实际 artifact
+  字节都进入 BuildProvenance/BuildEvidence，并接入 canonical request、outbox、签名和 resume。
+- 现有 Metal 只建立概念映射：MetalSourceBuilder 仍在 control_host 编译并创建 pipeline，
+  旧 candidate_sha256、compile/pipeline 报告字段与执行行为不变，不为了统一接口重写 Metal。
+- TSM 主路径使用 control_host 的 TsmModuleBuilder：小 source → 小 ELF/module →
+  ArtifactBundle/manifest → BlobChannel → fake NPU VendorDriver。NPU 侧只校验并加载，
+  不拉源码、不调用编译器。
+- 另测 evaluator 端构建：source 经六 RPC 提交后由 evaluator 内 ArtifactBuilder 构建并
+  进入 VendorDriver；两种时序的 ArtifactBundle、BuildProvenance、BuildEvidence 和错误
+  分类一致。
+
+**模拟验收**
+
+| 场景 | 必须证明 |
+| --- | --- |
+| control_host 预编译 | build 成功后才 Submit；NPU 端收到的 ELF 与本地构建字节一致，无编译器/git/LLM 依赖 |
+| evaluator 端构建 | source 在同一 attempt 内构建并执行，digest/provenance/evidence 与预编译路径语义一致 |
+| 构建失败 | 预编译失败不 Submit；attempt 内构建失败映射为 compile failure，不伪装成基础设施 timeout 或 ok |
+| 工具链/profile 不匹配 | builder/probe 返回与 profile 不符时 Submit/create/start 前拒绝 |
+| 工件篡改 | 修改 manifest、ELF 字节、blob digest、builder 版本或 BuildProvenance 任一环节均被拒 |
+| 中断与恢复 | 构建/上传中断后续传与 resume 不重复构建、不混用旧 artifact；旧 attempt/fence 结果被拒 |
+| 清理 | 构建临时文件、blob 引用与设备 module 都按 job 生命周期清理；无法证明时 quarantine |
+| local Metal 回归 | 现有 Metal/local 编译、报告和发布语义不变 |
+
+验收必须包含真实六 RPC 与 BlobChannel，而不是只测 builder 函数；编译日志、artifact
+manifest、BuildProvenance 与 fake NPU 的加载记录形成闭环。小文件只证明抽象和状态机，
+不证明真实 TX 编译器 ABI、跨版本兼容、真实 NPU 加载或构建性能。
+
 ### P2a：TSM 模拟验收（无真实设备）
 
 位置：P1 之后、P2 之前。近期没有清微设备，因此先假设设备存在，用 TSM simulator 模拟
@@ -969,7 +1066,8 @@ evidence 映射），只把 SDK 调用与设备状态换成 sim；其上的 `Ven
 - `tests/support/tsm_sim/`（规划，当前不存在）：`runtime/`（module/function/launch/
   stream/event/IPC）、`smi/`（probe/health/topology/reset/discovery）、`profiler/`（Host 与
   Device span、correlation、双 buffer、flush）、`ledger/`（attempt 资源账本）、`faults/`、
-  `clock.py`（虚拟时钟）、`known_good/`（module 字节 + manifest + digest）、`facade.py`
+  `clock.py`（虚拟时钟）、`known_good/`（由 control_host ArtifactBuilder 产出的 module
+  字节 + manifest + digest + BuildProvenance）、`facade.py`
   （对 driver 暴露的 typed 协议）。另设 `host/`（共享 runtime/设备组状态、lease 与 reset）
   和 `customers/`（A/B 两套独立 Docker 软件环境、镜像/文件视图与入口）；两个客户入口和
   host 入口必须映射到同一份 host 设备状态，不得在 sim 里虚拟成三张独立 NPU。
@@ -1121,6 +1219,8 @@ P2a 的模拟结果不构成本阶段证据：下面每一项仍须在真实设�
 先用厂商提供的 known-good executable module，不先假设 Triton 源码工具链已通：
 
 - provision 核验 driver/firmware/runtime、设备映射、拓扑与任务包；
+- 在 control_host 用登记的 TsmModuleBuilder 构建 known-good module，记录工具链/SDK、source
+  digest、BuildProvenance，并经 BlobChannel 上传；NPU 端只复核工件与构建证据，不重新编译；
 - 在 host 与每客户 Docker 两种入口分别执行 known-good 流程，确认它们指向同一 host 设备组；
   两个客户环境争用排他计时 lease 时不能并行，删除一个客户容器不能误清另一个客户的资源；
 - GetCapabilities → Submit → Watch/GetJob；Cancel 与 Retry 分别覆盖显式取消与 interrupted
@@ -1170,7 +1270,8 @@ device/rank/die 证据，并验证租约互斥、C2C 故障、取消/恢复与 r
 ## 10. 接入清微前必须回答的问题
 
 1. Triton/其他源码到 TX ELF/bin 的正式编译器、ABI、grid/block/cluster 契约、正确性参考实现
-   与容差是什么？没有这份契约，只能先做 known-good module 通信试点。
+   与容差是什么？control_host 的 BuildProfile、工具链/SDK 版本、source digest 与
+   BuildProvenance 如何登记并传入结果证据？没有这些契约，只能先做 known-good module 通信试点。
 2. serial/UUID 等稳定硬件身份如何取得？user/mesh/soft/slot 的映射在重启、换卡、容器重建后
    如何复核？
 3. frontend/worker/DeviceController/host-hal 的实际部署边界是什么？每客户 Docker 与 host
