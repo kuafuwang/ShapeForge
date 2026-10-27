@@ -1,0 +1,396 @@
+{
+  "npu_bundle": {
+    "artifact_set_digest": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b",
+    "bundle_manifest": {
+      "entries": [
+        {
+          "media_type": "application/json",
+          "path": "graph/main.json",
+          "role": "GRAPH_DEFINITION",
+          "sha256": "6f76f615c84fcc86dcc6b96989bdd97a6477461ba6697b40064e2cf7869d7b8b",
+          "size_bytes": 67
+        },
+        {
+          "media_type": "application/octet-stream",
+          "path": "graph/params.bin",
+          "role": "PARAMETER_TABLE",
+          "sha256": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+          "size_bytes": 1024
+        }
+      ],
+      "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1",
+      "schema_version": 1
+    },
+    "evidence": {
+      "artifact_set_digest": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b",
+      "buffer": null,
+      "candidate_digest": {
+        "algorithm": "sha256-bundle-v1",
+        "value": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b"
+      },
+      "complete": true,
+      "device_group": {
+        "device_group_id": "vendor-b-group-0",
+        "profile_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+        "resource_generation": "1",
+        "topology_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+        "vendor_id": "vendor-b"
+      },
+      "measurement_kind": "simulated",
+      "publication_allowed": false,
+      "schema_id": "tcenv.remote.npu-bundle.timing-evidence.2",
+      "spans": [
+        {
+          "clock_domain": "vendor-b-service-clock-v1",
+          "device_id": "device-0",
+          "die": null,
+          "elapsed_ns": 1250000,
+          "rank": null
+        }
+      ],
+      "timing": {
+        "clock_domain": "vendor-b-service-clock-v1",
+        "device_elapsed_ns": 1250000,
+        "host_api_elapsed_ns": 2500000,
+        "launches": 1,
+        "source": "DEVICE_EVENT",
+        "synchronization_completed": true
+      },
+      "topology": {
+        "declared_devices": [
+          "device-0"
+        ],
+        "logical_devices": 1,
+        "required_die_spans": null,
+        "required_rank_spans": null
+      }
+    },
+    "receipt": {
+      "attempt_id": "attempt-9-golden",
+      "canonical_json": "{\"attempt_id\":\"attempt-9-golden\",\"candidate_digest\":{\"algorithm\":\"sha256-bundle-v1\",\"value\":\"509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b\"},\"device_group\":{\"device_group_id\":\"vendor-b-group-0\",\"profile_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"resource_generation\":\"1\",\"topology_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"vendor_id\":\"vendor-b\"},\"digest_algorithm\":\"sha256-rfc8785-v1\",\"document_type\":\"tcenv.remote.npu-bundle.receipt-id\",\"document_version\":4,\"request_digest\":\"02f794184fd2c7bfd4d06b865ffe621037f872c573f151a564a5e8cef6d3b84e\",\"request_id\":\"bundle-golden-1\"}",
+      "document": {
+        "attempt_id": "attempt-9-golden",
+        "candidate_digest": {
+          "algorithm": "sha256-bundle-v1",
+          "value": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b"
+        },
+        "device_group": {
+          "device_group_id": "vendor-b-group-0",
+          "profile_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "resource_generation": "1",
+          "topology_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "vendor_id": "vendor-b"
+        },
+        "digest_algorithm": "sha256-rfc8785-v1",
+        "document_type": "tcenv.remote.npu-bundle.receipt-id",
+        "document_version": 4,
+        "request_digest": "02f794184fd2c7bfd4d06b865ffe621037f872c573f151a564a5e8cef6d3b84e",
+        "request_id": "bundle-golden-1"
+      },
+      "receipt_id": "bd4c6c5f54f5fb195ed3b75aa01517c54d4849111ab509430071ec5f1511e1c6",
+      "request_id": "bundle-golden-1"
+    },
+    "request": {
+      "artifact": {
+        "bundle": {
+          "artifact_set_digest": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b",
+          "entries": [
+            {
+              "content": "inline",
+              "media_type": "application/json",
+              "path": "graph/main.json",
+              "role": "GRAPH_DEFINITION",
+              "sha256": "6f76f615c84fcc86dcc6b96989bdd97a6477461ba6697b40064e2cf7869d7b8b",
+              "size_bytes": 67
+            },
+            {
+              "content": "inline",
+              "media_type": "application/octet-stream",
+              "path": "graph/params.bin",
+              "role": "PARAMETER_TABLE",
+              "sha256": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+              "size_bytes": 1024
+            }
+          ],
+          "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+        }
+      },
+      "cache_policy": "reuse",
+      "candidate_digest": {
+        "algorithm": "sha256-bundle-v1",
+        "value": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b"
+      },
+      "candidate_timeout_ms": 3000,
+      "cases": null,
+      "dtype": "fp16",
+      "execution": {
+        "artifact_kind": "bundle",
+        "device_group": {
+          "device_group_id": "vendor-b-group-0",
+          "profile_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "resource_generation": "1",
+          "topology_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "vendor_id": "vendor-b"
+        },
+        "launch_kind": "GRAPH",
+        "launch_subtype": "SERVICE",
+        "required_timing_sources": [
+          "DEVICE_EVENT"
+        ],
+        "resources": {
+          "logical_devices": 1,
+          "required_die_spans": null,
+          "required_rank_spans": null
+        },
+        "schema_id": "tcenv.remote.npu-bundle.execution.1",
+        "source_media_type": "application/octet-stream",
+        "synchronization": "service-completion-token",
+        "task_family": "graph"
+      },
+      "fast_bench": false,
+      "kind": "formal_eval",
+      "measure_serial": false,
+      "mode": "quick",
+      "queue_timeout_ms": 3000,
+      "reps": 2,
+      "require_contract_launch": false,
+      "run_id": "golden-run",
+      "seed": "3",
+      "session_id": "golden-session",
+      "size": "small",
+      "target_id": "sim-npu-graph",
+      "task": "relu",
+      "task_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "validate": false
+    },
+    "request_canonical_json": "{\"digest_algorithm\":\"sha256-rfc8785-v1\",\"document_type\":\"tcenv.remote.npu-bundle.request-digest\",\"document_version\":4,\"request\":{\"artifact\":{\"bundle\":{\"artifact_set_digest\":\"509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b\",\"entries\":[{\"content\":\"inline\",\"media_type\":\"application/json\",\"path\":\"graph/main.json\",\"role\":\"GRAPH_DEFINITION\",\"sha256\":\"6f76f615c84fcc86dcc6b96989bdd97a6477461ba6697b40064e2cf7869d7b8b\",\"size_bytes\":67},{\"content\":\"inline\",\"media_type\":\"application/octet-stream\",\"path\":\"graph/params.bin\",\"role\":\"PARAMETER_TABLE\",\"sha256\":\"785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9\",\"size_bytes\":1024}],\"schema_id\":\"tcenv.remote.npu-bundle.artifact-bundle.1\"}},\"cache_policy\":\"reuse\",\"candidate_digest\":{\"algorithm\":\"sha256-bundle-v1\",\"value\":\"509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b\"},\"candidate_timeout_ms\":3000,\"cases\":null,\"dtype\":\"fp16\",\"execution\":{\"artifact_kind\":\"bundle\",\"device_group\":{\"device_group_id\":\"vendor-b-group-0\",\"profile_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"resource_generation\":\"1\",\"topology_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"vendor_id\":\"vendor-b\"},\"launch_kind\":\"GRAPH\",\"launch_subtype\":\"SERVICE\",\"required_timing_sources\":[\"DEVICE_EVENT\"],\"resources\":{\"logical_devices\":1,\"required_die_spans\":null,\"required_rank_spans\":null},\"schema_id\":\"tcenv.remote.npu-bundle.execution.1\",\"source_media_type\":\"application/octet-stream\",\"synchronization\":\"service-completion-token\",\"task_family\":\"graph\"},\"fast_bench\":false,\"kind\":\"formal_eval\",\"measure_serial\":false,\"mode\":\"quick\",\"queue_timeout_ms\":3000,\"reps\":2,\"require_contract_launch\":false,\"run_id\":\"golden-run\",\"seed\":\"3\",\"session_id\":\"golden-session\",\"size\":\"small\",\"target_id\":\"sim-npu-graph\",\"task\":\"relu\",\"task_fingerprint\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"validate\":false}}",
+    "request_digest": "02f794184fd2c7bfd4d06b865ffe621037f872c573f151a564a5e8cef6d3b84e",
+    "request_digest_document": {
+      "digest_algorithm": "sha256-rfc8785-v1",
+      "document_type": "tcenv.remote.npu-bundle.request-digest",
+      "document_version": 4,
+      "request": {
+        "artifact": {
+          "bundle": {
+            "artifact_set_digest": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b",
+            "entries": [
+              {
+                "content": "inline",
+                "media_type": "application/json",
+                "path": "graph/main.json",
+                "role": "GRAPH_DEFINITION",
+                "sha256": "6f76f615c84fcc86dcc6b96989bdd97a6477461ba6697b40064e2cf7869d7b8b",
+                "size_bytes": 67
+              },
+              {
+                "content": "inline",
+                "media_type": "application/octet-stream",
+                "path": "graph/params.bin",
+                "role": "PARAMETER_TABLE",
+                "sha256": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+                "size_bytes": 1024
+              }
+            ],
+            "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+          }
+        },
+        "cache_policy": "reuse",
+        "candidate_digest": {
+          "algorithm": "sha256-bundle-v1",
+          "value": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b"
+        },
+        "candidate_timeout_ms": 3000,
+        "cases": null,
+        "dtype": "fp16",
+        "execution": {
+          "artifact_kind": "bundle",
+          "device_group": {
+            "device_group_id": "vendor-b-group-0",
+            "profile_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "resource_generation": "1",
+            "topology_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "vendor_id": "vendor-b"
+          },
+          "launch_kind": "GRAPH",
+          "launch_subtype": "SERVICE",
+          "required_timing_sources": [
+            "DEVICE_EVENT"
+          ],
+          "resources": {
+            "logical_devices": 1,
+            "required_die_spans": null,
+            "required_rank_spans": null
+          },
+          "schema_id": "tcenv.remote.npu-bundle.execution.1",
+          "source_media_type": "application/octet-stream",
+          "synchronization": "service-completion-token",
+          "task_family": "graph"
+        },
+        "fast_bench": false,
+        "kind": "formal_eval",
+        "measure_serial": false,
+        "mode": "quick",
+        "queue_timeout_ms": 3000,
+        "reps": 2,
+        "require_contract_launch": false,
+        "run_id": "golden-run",
+        "seed": "3",
+        "session_id": "golden-session",
+        "size": "small",
+        "target_id": "sim-npu-graph",
+        "task": "relu",
+        "task_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "validate": false
+      }
+    },
+    "signature": {
+      "canonical_json": "{\"document_type\":\"tcenv.remote.npu-bundle.result-signature\",\"document_version\":4,\"evidence\":{\"media_type\":\"application/vnd.tcenv.npu-bundle.timing-evidence.v2+json\",\"schema_id\":\"tcenv.remote.npu-bundle.timing-evidence.2\",\"sha256\":\"a15b44bd085db28ba8fe420799727662664ff09c929516e3a11acd1828dbf554\",\"size_bytes\":1056},\"key_id\":\"npu-bundle-site/key-1\",\"provenance\":{\"api_contract_id\":\"tcenv.remote.npu-bundle.evaluator-api.1\",\"artifact_kind\":\"bundle\",\"attempt_id\":\"attempt-9-golden\",\"backend\":\"vendor-b\",\"backend_version\":\"1\",\"calibration_digest\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"device_group\":{\"device_group_id\":\"vendor-b-group-0\",\"profile_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"resource_generation\":\"1\",\"topology_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"vendor_id\":\"vendor-b\"},\"device_id\":\"sim-npu-graph-device\",\"evaluator_epoch\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"evidence_contract_id\":\"tcenv.remote.npu-bundle.evidence.1\",\"launch_kind\":\"GRAPH\",\"launch_subtype\":\"SERVICE\",\"measurement_kind\":\"simulated\",\"protocol_version\":\"3\",\"publication_allowed\":false,\"request_digest\":\"02f794184fd2c7bfd4d06b865ffe621037f872c573f151a564a5e8cef6d3b84e\",\"schema_version\":1,\"site_id\":\"sim-npu-site\",\"target_id\":\"sim-npu-graph\",\"task_pack_digest\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"timing_sources\":[\"DEVICE_EVENT\"],\"worker_build\":\"fake-vendor-b-worker-1\"},\"receipt\":{\"attempt_id\":\"attempt-9-golden\",\"candidate_digest\":{\"algorithm\":\"sha256-bundle-v1\",\"value\":\"509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b\"},\"device_group\":{\"device_group_id\":\"vendor-b-group-0\",\"profile_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"resource_generation\":\"1\",\"topology_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"vendor_id\":\"vendor-b\"},\"issued_at\":\"2026-10-29T00:00:00Z\",\"lease_fence\":\"9\",\"receipt_id\":\"bd4c6c5f54f5fb195ed3b75aa01517c54d4849111ab509430071ec5f1511e1c6\",\"request_digest\":\"02f794184fd2c7bfd4d06b865ffe621037f872c573f151a564a5e8cef6d3b84e\",\"request_id\":\"bundle-golden-1\",\"session_sequence\":\"2\"},\"report\":{\"media_type\":\"application/json\",\"schema_id\":\"tcenv.eval-report.v3\",\"sha256\":\"fca6f9a51eaf87cb0287a82644f5f047a32b642eece5abbeb128f06381915ae6\",\"size_bytes\":52},\"signature_algorithm\":\"hmac-sha256-v1\"}",
+      "document": {
+        "document_type": "tcenv.remote.npu-bundle.result-signature",
+        "document_version": 4,
+        "evidence": {
+          "media_type": "application/vnd.tcenv.npu-bundle.timing-evidence.v2+json",
+          "schema_id": "tcenv.remote.npu-bundle.timing-evidence.2",
+          "sha256": "a15b44bd085db28ba8fe420799727662664ff09c929516e3a11acd1828dbf554",
+          "size_bytes": 1056
+        },
+        "key_id": "npu-bundle-site/key-1",
+        "provenance": {
+          "api_contract_id": "tcenv.remote.npu-bundle.evaluator-api.1",
+          "artifact_kind": "bundle",
+          "attempt_id": "attempt-9-golden",
+          "backend": "vendor-b",
+          "backend_version": "1",
+          "calibration_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "device_group": {
+            "device_group_id": "vendor-b-group-0",
+            "profile_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "resource_generation": "1",
+            "topology_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "vendor_id": "vendor-b"
+          },
+          "device_id": "sim-npu-graph-device",
+          "evaluator_epoch": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "evidence_contract_id": "tcenv.remote.npu-bundle.evidence.1",
+          "launch_kind": "GRAPH",
+          "launch_subtype": "SERVICE",
+          "measurement_kind": "simulated",
+          "protocol_version": "3",
+          "publication_allowed": false,
+          "request_digest": "02f794184fd2c7bfd4d06b865ffe621037f872c573f151a564a5e8cef6d3b84e",
+          "schema_version": 1,
+          "site_id": "sim-npu-site",
+          "target_id": "sim-npu-graph",
+          "task_pack_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "timing_sources": [
+            "DEVICE_EVENT"
+          ],
+          "worker_build": "fake-vendor-b-worker-1"
+        },
+        "receipt": {
+          "attempt_id": "attempt-9-golden",
+          "candidate_digest": {
+            "algorithm": "sha256-bundle-v1",
+            "value": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b"
+          },
+          "device_group": {
+            "device_group_id": "vendor-b-group-0",
+            "profile_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "resource_generation": "1",
+            "topology_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "vendor_id": "vendor-b"
+          },
+          "issued_at": "2026-10-29T00:00:00Z",
+          "lease_fence": "9",
+          "receipt_id": "bd4c6c5f54f5fb195ed3b75aa01517c54d4849111ab509430071ec5f1511e1c6",
+          "request_digest": "02f794184fd2c7bfd4d06b865ffe621037f872c573f151a564a5e8cef6d3b84e",
+          "request_id": "bundle-golden-1",
+          "session_sequence": "2"
+        },
+        "report": {
+          "media_type": "application/json",
+          "schema_id": "tcenv.eval-report.v3",
+          "sha256": "fca6f9a51eaf87cb0287a82644f5f047a32b642eece5abbeb128f06381915ae6",
+          "size_bytes": 52
+        },
+        "signature_algorithm": "hmac-sha256-v1"
+      },
+      "evidence_base64": "eyJhcnRpZmFjdF9zZXRfZGlnZXN0IjoiNTA5MDkxYjkwNmViZGJjOGViZmVkYTk5OTFkYTAzM2M3ZGJmYzkzNmU2MzVmNWY3YjA4M2NkNzU2NzE3ZTIwYiIsImJ1ZmZlciI6bnVsbCwiY2FuZGlkYXRlX2RpZ2VzdCI6eyJhbGdvcml0aG0iOiJzaGEyNTYtYnVuZGxlLXYxIiwidmFsdWUiOiI1MDkwOTFiOTA2ZWJkYmM4ZWJmZWRhOTk5MWRhMDMzYzdkYmZjOTM2ZTYzNWY1ZjdiMDgzY2Q3NTY3MTdlMjBiIn0sImNvbXBsZXRlIjp0cnVlLCJkZXZpY2VfZ3JvdXAiOnsiZGV2aWNlX2dyb3VwX2lkIjoidmVuZG9yLWItZ3JvdXAtMCIsInByb2ZpbGVfZGlnZXN0IjoiMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMSIsInJlc291cmNlX2dlbmVyYXRpb24iOiIxIiwidG9wb2xvZ3lfZGlnZXN0IjoiMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMiIsInZlbmRvcl9pZCI6InZlbmRvci1iIn0sIm1lYXN1cmVtZW50X2tpbmQiOiJzaW11bGF0ZWQiLCJwdWJsaWNhdGlvbl9hbGxvd2VkIjpmYWxzZSwic2NoZW1hX2lkIjoidGNlbnYucmVtb3RlLm5wdS1idW5kbGUudGltaW5nLWV2aWRlbmNlLjIiLCJzcGFucyI6W3siY2xvY2tfZG9tYWluIjoidmVuZG9yLWItc2VydmljZS1jbG9jay12MSIsImRldmljZV9pZCI6ImRldmljZS0wIiwiZGllIjpudWxsLCJlbGFwc2VkX25zIjoxMjUwMDAwLCJyYW5rIjpudWxsfV0sInRpbWluZyI6eyJjbG9ja19kb21haW4iOiJ2ZW5kb3ItYi1zZXJ2aWNlLWNsb2NrLXYxIiwiZGV2aWNlX2VsYXBzZWRfbnMiOjEyNTAwMDAsImhvc3RfYXBpX2VsYXBzZWRfbnMiOjI1MDAwMDAsImxhdW5jaGVzIjoxLCJzb3VyY2UiOiJERVZJQ0VfRVZFTlQiLCJzeW5jaHJvbml6YXRpb25fY29tcGxldGVkIjp0cnVlfSwidG9wb2xvZ3kiOnsiZGVjbGFyZWRfZGV2aWNlcyI6WyJkZXZpY2UtMCJdLCJsb2dpY2FsX2RldmljZXMiOjEsInJlcXVpcmVkX2RpZV9zcGFucyI6bnVsbCwicmVxdWlyZWRfcmFua19zcGFucyI6bnVsbH19",
+      "hmac_sha256": "d89a7fc9d145e33d9d3337ab3a763fe47e9245820955d0ac79506391b0b2d8f8",
+      "key_hex": "6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b",
+      "key_id": "npu-bundle-site/key-1",
+      "report_base64": "eyJzdGF0dXMiOiJvayIsInNpbXVsYXRlZCI6dHJ1ZSwiY2FuZGlkYXRlX3VzIjoxMjUwfQ==",
+      "unsigned_result": {
+        "document_type": "tcenv.remote.npu-bundle.result-signature",
+        "document_version": 4,
+        "evidence": {
+          "media_type": "application/vnd.tcenv.npu-bundle.timing-evidence.v2+json",
+          "schema_id": "tcenv.remote.npu-bundle.timing-evidence.2",
+          "sha256": "a15b44bd085db28ba8fe420799727662664ff09c929516e3a11acd1828dbf554",
+          "size_bytes": 1056
+        },
+        "key_id": "npu-bundle-site/key-1",
+        "provenance": {
+          "api_contract_id": "tcenv.remote.npu-bundle.evaluator-api.1",
+          "artifact_kind": "bundle",
+          "attempt_id": "attempt-9-golden",
+          "backend": "vendor-b",
+          "backend_version": "1",
+          "calibration_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "device_group": {
+            "device_group_id": "vendor-b-group-0",
+            "profile_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "resource_generation": "1",
+            "topology_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "vendor_id": "vendor-b"
+          },
+          "device_id": "sim-npu-graph-device",
+          "evaluator_epoch": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "evidence_contract_id": "tcenv.remote.npu-bundle.evidence.1",
+          "launch_kind": "GRAPH",
+          "launch_subtype": "SERVICE",
+          "measurement_kind": "simulated",
+          "protocol_version": "3",
+          "publication_allowed": false,
+          "request_digest": "02f794184fd2c7bfd4d06b865ffe621037f872c573f151a564a5e8cef6d3b84e",
+          "schema_version": 1,
+          "site_id": "sim-npu-site",
+          "target_id": "sim-npu-graph",
+          "task_pack_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "timing_sources": [
+            "DEVICE_EVENT"
+          ],
+          "worker_build": "fake-vendor-b-worker-1"
+        },
+        "receipt": {
+          "attempt_id": "attempt-9-golden",
+          "candidate_digest": {
+            "algorithm": "sha256-bundle-v1",
+            "value": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b"
+          },
+          "device_group": {
+            "device_group_id": "vendor-b-group-0",
+            "profile_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "resource_generation": "1",
+            "topology_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "vendor_id": "vendor-b"
+          },
+          "issued_at": "2026-10-29T00:00:00Z",
+          "lease_fence": "9",
+          "receipt_id": "bd4c6c5f54f5fb195ed3b75aa01517c54d4849111ab509430071ec5f1511e1c6",
+          "request_digest": "02f794184fd2c7bfd4d06b865ffe621037f872c573f151a564a5e8cef6d3b84e",
+          "request_id": "bundle-golden-1",
+          "session_sequence": "2"
+        },
+        "report": {
+          "media_type": "application/json",
+          "schema_id": "tcenv.eval-report.v3",
+          "sha256": "fca6f9a51eaf87cb0287a82644f5f047a32b642eece5abbeb128f06381915ae6",
+          "size_bytes": 52
+        },
+        "signature_algorithm": "hmac-sha256-v1"
+      }
+    }
+  },
+  "schema_id": "tcenv.remote.npu-bundle.contract-golden.1"
+}

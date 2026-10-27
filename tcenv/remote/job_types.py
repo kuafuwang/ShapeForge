@@ -257,8 +257,41 @@ class DeviceGroupBinding:
 
 
 @dataclass(frozen=True)
+class NpuResources:
+    """Declared logical resource requirements of one execution.
+
+    Only *requirements* live here: logical device count and whether the task
+    needs per-rank/per-die evidence.  Physical BDF, rank coordinates and fabric
+    placement are decided by the trusted server profile and are not
+    representable, so an agent cannot ask for a specific die or link.
+    """
+
+    logical_devices: int = 1
+    required_rank_spans: int | None = None
+    required_die_spans: int | None = None
+
+    def __post_init__(self) -> None:
+        try:
+            contracts.device_group_requirements(self.to_dict())
+        except contracts.ContractError as exc:
+            raise JobError("invalid_argument", str(exc)) from exc
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "logical_devices": self.logical_devices,
+            "required_rank_spans": self.required_rank_spans,
+            "required_die_spans": self.required_die_spans,
+        }
+
+
+@dataclass(frozen=True)
 class NpuExecutionSpec:
-    """P0 source-only execution shape."""
+    """NPU execution shape.
+
+    ``spec_version=1`` is the P0/P0b source/KERNEL/SIMT shape and serializes to
+    exactly the seven original fields.  ``spec_version=4`` is the P1 shape and
+    adds the execution schema id, the task family and the declared resources.
+    """
 
     device_group: DeviceGroupBinding
     source_media_type: str = "text/plain; charset=utf-8"
@@ -267,16 +300,51 @@ class NpuExecutionSpec:
     launch_subtype: str = "SIMT"
     required_timing_sources: tuple[str, ...] = ("DEVICE_EVENT",)
     synchronization: str = "stream-event"
+    # -- document version 4 ------------------------------------------------
+    spec_version: int = 1
+    task_family: str | None = None
+    resources: NpuResources | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.device_group, DeviceGroupBinding):
             raise JobError("invalid_argument", "execution requires a typed DeviceGroupBinding")
+        if self.spec_version not in (1, 4):
+            raise JobError("invalid_argument", "execution spec_version must be 1 or 4")
+        if self.spec_version == 4:
+            if self.task_family not in ("kernel", "graph"):
+                raise JobError("invalid_argument", "execution task_family must be kernel or graph")
+            if self.resources is None:
+                object.__setattr__(self, "resources", NpuResources())
+            elif not isinstance(self.resources, NpuResources):
+                raise JobError("invalid_argument", "execution requires typed resource requirements")
+        elif self.task_family is not None or self.resources is not None:
+            raise JobError(
+                "invalid_argument", "resource requirements belong to the version 4 execution spec"
+            )
         try:
-            contracts.npu_execution_document(self.to_dict())
+            self._normalized()
         except contracts.ContractError as exc:
             raise JobError("invalid_argument", str(exc)) from exc
 
-    def to_dict(self) -> dict[str, Any]:
+    def _normalized(self) -> dict[str, Any]:
+        if self.spec_version == 4:
+            return contracts.npu_bundle_execution_document(
+                {
+                    "schema_id": contracts.NPU_BUNDLE_EXECUTION_SCHEMA_ID,
+                    "task_family": self.task_family,
+                    "artifact_kind": self.artifact_kind,
+                    "launch_kind": self.launch_kind,
+                    "launch_subtype": self.launch_subtype,
+                    "source_media_type": self.source_media_type,
+                    "device_group": self.device_group.to_dict(),
+                    "resources": self.resources.to_dict(),
+                    "required_timing_sources": list(self.required_timing_sources),
+                    "synchronization": self.synchronization,
+                }
+            )
+        return contracts.npu_execution_document(self._p0_dict())
+
+    def _p0_dict(self) -> dict[str, Any]:
         return {
             "artifact_kind": self.artifact_kind,
             "launch_kind": self.launch_kind,
@@ -287,13 +355,44 @@ class NpuExecutionSpec:
             "synchronization": self.synchronization,
         }
 
+    @property
+    def version(self) -> int:
+        return self.spec_version
+
+    @property
+    def declared_resources(self) -> NpuResources:
+        return self.resources or NpuResources()
+
+    def to_dict(self) -> dict[str, Any]:
+        if self.spec_version != 4:
+            return self._p0_dict()
+        return {
+            "schema_id": contracts.NPU_BUNDLE_EXECUTION_SCHEMA_ID,
+            "task_family": self.task_family,
+            "artifact_kind": self.artifact_kind,
+            "launch_kind": self.launch_kind,
+            "launch_subtype": self.launch_subtype,
+            "source_media_type": self.source_media_type,
+            "device_group": self.device_group.to_dict(),
+            "resources": self.resources.to_dict() if self.resources else None,
+            "required_timing_sources": list(self.required_timing_sources),
+            "synchronization": self.synchronization,
+        }
+
     @classmethod
     def from_dict(cls, document: Mapping[str, Any]) -> "NpuExecutionSpec":
         if not isinstance(document, Mapping):
             raise JobError("invalid_argument", "execution spec must be an object")
+        version = 4 if "schema_id" in document else 1
         try:
-            normalized = contracts.npu_execution_document(document)
+            if version == 4:
+                normalized = contracts.npu_bundle_execution_document(document)
+            else:
+                normalized = contracts.npu_execution_document(document)
             group = DeviceGroupBinding(**normalized["device_group"])
+            resources = None
+            if version == 4:
+                resources = NpuResources(**normalized["resources"])
             return cls(
                 device_group=group,
                 source_media_type=normalized["source_media_type"],
@@ -302,6 +401,9 @@ class NpuExecutionSpec:
                 launch_subtype=normalized["launch_subtype"],
                 required_timing_sources=tuple(normalized["required_timing_sources"]),
                 synchronization=normalized["synchronization"],
+                spec_version=version,
+                task_family=normalized["task_family"] if version == 4 else None,
+                resources=resources,
             )
         except contracts.ContractError as exc:
             raise JobError("invalid_argument", str(exc)) from exc
@@ -309,24 +411,48 @@ class NpuExecutionSpec:
 
 @dataclass(frozen=True)
 class NpuSourceRequest:
-    """NPU request payload: CandidateDigest plus the source-only execution shape.
+    """NPU request payload: CandidateDigest plus one artifact branch.
 
-    ``blob`` selects the artifact form: absent means the exact source bytes are
-    inline (the P0 ``npu-source`` contract), present means the bytes live in the
-    content-addressed blob channel (the P0b ``npu-blob`` contract).  The two forms
-    never coexist in one request.
+    Three artifact forms exist across the NPU contract versions and exactly one
+    is set at a time:
+
+    * ``blob`` — a content-addressed reference (``npu-blob``);
+    * ``bundle`` — a versioned artifact set (``npu-bundle``, document version 4);
+    * neither — the exact inline source bytes (``npu-source``, or the source
+      branch of the bundle contract).
+
+    The contract identity decides which forms are admissible; the payload never
+    selects a contract by its own shape.
     """
 
     candidate_digest: CandidateDigest
     execution: NpuExecutionSpec
     blob: BlobDescriptor | None = None
+    bundle: "ArtifactBundle | None" = None
 
     def __post_init__(self) -> None:
+        from .artifact_bundle import ArtifactBundle
+
         if not isinstance(self.candidate_digest, CandidateDigest):
             raise JobError("invalid_argument", "NPU request requires a typed CandidateDigest")
         if not isinstance(self.execution, NpuExecutionSpec):
             raise JobError("invalid_argument", "NPU request requires a typed execution spec")
-        if self.blob is not None:
+        if self.blob is not None and self.bundle is not None:
+            raise JobError("invalid_argument", "an NPU request carries exactly one artifact branch")
+        if self.bundle is not None:
+            if not isinstance(self.bundle, ArtifactBundle):
+                raise JobError("invalid_argument", "NPU artifact bundle must be typed")
+            if self.candidate_digest.algorithm != contracts.BUNDLE_DIGEST_ALGORITHM:
+                raise JobError(
+                    "invalid_argument", "a bundle candidate requires the sha256-bundle-v1 digest algorithm"
+                )
+            if self.candidate_digest.value != self.bundle.artifact_set_digest:
+                raise JobError(
+                    "invalid_argument", "a bundle candidate digest must equal artifact_set_digest"
+                )
+            if self.execution.artifact_kind != "bundle":
+                raise JobError("invalid_argument", "a bundle requires artifact_kind=bundle")
+        elif self.blob is not None:
             if not isinstance(self.blob, BlobDescriptor):
                 raise JobError("invalid_argument", "NPU blob reference must be typed")
             if self.candidate_digest.algorithm != contracts.BLOB_DIGEST_ALGORITHM:
@@ -335,12 +461,22 @@ class NpuSourceRequest:
                 raise JobError("invalid_argument", "a blob candidate digest must equal the blob descriptor digest")
             if self.execution.source_media_type != self.blob.media_type:
                 raise JobError("invalid_argument", "blob media type differs from the execution media type")
-        elif self.candidate_digest.algorithm != "sha256":
-            raise JobError("invalid_argument", "an inline candidate requires the sha256 digest algorithm")
+        else:
+            if self.candidate_digest.algorithm != "sha256":
+                raise JobError("invalid_argument", "an inline candidate requires the sha256 digest algorithm")
+            if self.execution.artifact_kind != "source":
+                raise JobError("invalid_argument", "an inline candidate requires artifact_kind=source")
 
     @property
     def artifact_form(self) -> str:
+        if self.bundle is not None:
+            return "bundle"
         return "blob" if self.blob is not None else "source"
+
+    def blob_entries(self) -> tuple[Any, ...]:
+        """Blob-backed bundle entries (empty for a single-blob request)."""
+
+        return () if self.bundle is None else self.bundle.blob_entries
 
     def to_dict(self) -> dict[str, Any]:
         document: dict[str, Any] = {
@@ -349,25 +485,75 @@ class NpuSourceRequest:
         }
         if self.blob is not None:
             document["blob_ref"] = self.blob.to_dict()
+        if self.bundle is not None:
+            document["artifact"] = {"bundle": self.bundle.to_dict()}
         return document
 
     @classmethod
-    def from_dict(cls, document: Mapping[str, Any]) -> "NpuSourceRequest":
-        expected = {"candidate_digest", "execution"} | ({"blob_ref"} if "blob_ref" in document else set())
-        if not isinstance(document, Mapping) or set(document) != expected:
+    def from_dict(
+        cls, document: Mapping[str, Any], *, dialect: "contracts.ContractDialect | None" = None,
+    ) -> "NpuSourceRequest":
+        from .artifact_bundle import ArtifactBundle, BundleError
+
+        if not isinstance(document, Mapping):
             raise JobError("invalid_argument", "NPU request fields are missing or unknown")
+        expected = {"candidate_digest", "execution"}
+        if "blob_ref" in document:
+            expected |= {"blob_ref"}
+        if "artifact" in document:
+            expected |= {"artifact"}
+        if set(document) != expected:
+            raise JobError("invalid_argument", "NPU request fields are missing or unknown")
+        if "blob_ref" in document and "artifact" in document:
+            raise JobError("invalid_argument", "an NPU request carries exactly one artifact branch")
         blob = None if "blob_ref" not in document else BlobDescriptor.from_dict(document["blob_ref"])
-        allowed = (contracts.BLOB_DIGEST_ALGORITHM,) if blob is not None else ("sha256",)
+        bundle = None
+        artifact = document.get("artifact")
+        if artifact is not None:
+            if not isinstance(artifact, Mapping) or len(artifact) != 1:
+                raise JobError("invalid_argument", "artifact must carry exactly one branch")
+            branch = next(iter(artifact))
+            if branch == "bundle":
+                try:
+                    bundle = ArtifactBundle.from_document(artifact[branch])
+                except BundleError as exc:
+                    raise JobError("invalid_argument", str(exc)) from exc
+            elif branch == "source":
+                descriptor = artifact[branch]
+                if not isinstance(descriptor, Mapping) or set(descriptor) != {"size_bytes", "sha256"}:
+                    raise JobError(
+                        "invalid_argument", "the source artifact must carry size_bytes and sha256"
+                    )
+            else:
+                raise JobError("invalid_argument", "artifact must carry exactly one branch")
+        if bundle is not None:
+            allowed = (contracts.BUNDLE_DIGEST_ALGORITHM,)
+        elif blob is not None:
+            allowed = (contracts.BLOB_DIGEST_ALGORITHM,)
+        else:
+            allowed = ("sha256",)
         try:
             digest = contracts.candidate_digest_document(
                 document["candidate_digest"], allowed_algorithms=allowed,
             )
         except contracts.ContractError as exc:
             raise JobError("invalid_argument", str(exc)) from exc
+        if artifact is not None and "source" in artifact:
+            descriptor = artifact["source"]
+            if (
+                descriptor.get("sha256") != digest["value"]
+                or not isinstance(descriptor.get("size_bytes"), int)
+                or isinstance(descriptor.get("size_bytes"), bool)
+                or descriptor["size_bytes"] < 1
+            ):
+                raise JobError(
+                    "invalid_argument", "the source artifact does not describe the CandidateDigest"
+                )
         return cls(
             candidate_digest=CandidateDigest(digest["algorithm"], digest["value"], allowed_algorithms=allowed),
             execution=NpuExecutionSpec.from_dict(document["execution"]),
             blob=blob,
+            bundle=bundle,
         )
 
 
@@ -398,6 +584,11 @@ class ExternalEvaluationRequest:
     measure_serial: bool = False
     cache_policy: str = "reuse"
     npu: NpuSourceRequest | None = None
+    #: The contract version this request is meant for.  The bundle contract has
+    #: two artifact branches (inline source or bundle) under one identity, so the
+    #: version cannot be inferred from the payload; the server still rejects a
+    #: request whose dialect differs from its own configured one.
+    contract_dialect: contracts.ContractDialect | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.request_id, str) or not _ID.fullmatch(self.request_id):
@@ -418,6 +609,35 @@ class ExternalEvaluationRequest:
                 "invalid_argument",
                 "a blob candidate must not also carry inline source bytes",
             )
+        if self.npu is not None and self.npu.bundle is not None and self.source:
+            raise JobError(
+                "invalid_argument",
+                "a bundle candidate must not also carry inline source bytes",
+            )
+        if self.npu is None:
+            if self.contract_dialect is not None and self.contract_dialect.npu_source:
+                raise JobError(
+                    "invalid_argument", "a legacy request cannot claim an NPU contract version"
+                )
+        else:
+            dialect = self.contract
+            if not dialect.npu_source:
+                raise JobError(
+                    "invalid_argument", "an NPU request must name an NPU contract version"
+                )
+            form = self.npu.artifact_form
+            if form == "bundle" and not dialect.npu_bundle:
+                raise JobError(
+                    "invalid_argument", "a bundle request requires the bundle contract version"
+                )
+            if form == "blob" and not dialect.npu_blob:
+                raise JobError(
+                    "invalid_argument", "a blob request requires the blob contract version"
+                )
+            if form == "source" and dialect.npu_blob:
+                raise JobError(
+                    "invalid_argument", "the blob contract does not accept an inline source candidate"
+                )
         # This performs all source, enum, integer, UTF-8 and explicit-default checks.
         self.digest_document()
 
@@ -452,17 +672,53 @@ class ExternalEvaluationRequest:
         }
         if self.npu.blob is not None:
             fields["blob_ref"] = self.npu.blob.to_dict()
+        if self.contract.npu_bundle:
+            fields["artifact"] = self.artifact_document()
         return fields
+
+    def artifact_document(self) -> dict[str, Any]:
+        """The bundle contract's source/bundle oneof document.
+
+        The inline branch carries only the exact size and SHA-256; the bundle
+        branch carries the manifest digest and the per-entry manifest.  The
+        bytes themselves never enter a digest document.
+        """
+
+        if self.npu is None or not self.contract.npu_bundle:
+            raise JobError("invalid_argument", "only the bundle contract has an artifact oneof")
+        if self.npu.bundle is not None:
+            return {"bundle": self.npu.bundle.to_dict()}
+        digest = hashlib.sha256(self.source).hexdigest()
+        return {"source": {"size_bytes": len(self.source), "sha256": digest}}
 
     @property
     def contract(self) -> contracts.ContractDialect:
         if self.npu is None:
             return contracts.LEGACY_DIALECT
+        if self.contract_dialect is not None:
+            return self.contract_dialect
+        if self.npu.bundle is not None:
+            return contracts.NPU_BUNDLE_DIALECT
         return contracts.NPU_BLOB_DIALECT if self.npu.blob is not None else contracts.NPU_SOURCE_DIALECT
 
     @property
     def blob(self) -> BlobDescriptor | None:
         return None if self.npu is None else self.npu.blob
+
+    @property
+    def artifact_bytes(self) -> bytes:
+        """Exact bytes this job persists for its candidate.
+
+        The persisted blob is the inline source for a source candidate and the
+        canonical entry payload for an artifact set; both are deleted together
+        with the job at a terminal state.  A blob candidate embeds nothing.
+        """
+
+        if self.npu is not None and self.npu.bundle is not None:
+            from .artifact_bundle import payload_bytes
+
+            return payload_bytes(self.npu.bundle)
+        return self.source
 
     def digest_document(self) -> dict[str, Any]:
         try:
@@ -499,10 +755,17 @@ class ExternalEvaluationRequest:
 
         A blob candidate carries no bytes at all: the worker gets the trusted
         content id and reads the store itself, so a large artifact never becomes
-        one base64 worker frame.
+        one base64 worker frame.  A bundle carries only its inline entries (the
+        ones under the inline limit); blob-backed entries stay references.
         """
 
         document = {**self.without_source(), "source_base64": base64.b64encode(self.source).decode("ascii")}
+        # The artifact oneof document is derived, not transported: a bundle goes
+        # as typed entries (with their exact inline bytes), an inline source as
+        # the exact bytes below.  Carrying both would let two identities drift.
+        document.pop("artifact", None)
+        if self.npu is not None and self.npu.bundle is not None:
+            document["bundle"] = self.npu.bundle.to_worker_dict()
         return document
 
     @classmethod
@@ -514,7 +777,9 @@ class ExternalEvaluationRequest:
         except (ValueError, TypeError) as exc:
             raise JobError("invalid_argument", "worker source_base64 is invalid") from exc
         if "execution" in document or "candidate_digest" in document:
-            extra = {"blob_ref"} if "blob_ref" in document else set()
+            from .artifact_bundle import ArtifactBundle, BundleError
+
+            extra = {key for key in ("blob_ref", "bundle") if key in document}
             allowed = (set(cls.without_source_fields()) - {"candidate_sha256"}) | {
                 "candidate_digest", "execution", "source_base64",
             } | extra
@@ -522,23 +787,61 @@ class ExternalEvaluationRequest:
                 raise JobError("invalid_argument", "worker NPU request fields are missing or unknown")
             fields = {
                 key: value for key, value in document.items()
-                if key not in {"source_base64", "candidate_digest", "execution", "blob_ref"}
+                if key not in {"source_base64", "candidate_digest", "execution", "blob_ref", "bundle"}
             }
             if fields["cases"] is not None:
                 fields["cases"] = tuple(fields["cases"])
-            npu_document: dict[str, Any] = {
-                "candidate_digest": document["candidate_digest"],
-                "execution": document["execution"],
-            }
+            execution = NpuExecutionSpec.from_dict(document["execution"])
+            bundle = None
+            if "bundle" in document:
+                if execution.version != 4 or execution.artifact_kind != "bundle":
+                    raise JobError(
+                        "invalid_argument", "an artifact bundle requires the version 4 bundle execution spec"
+                    )
+                try:
+                    bundle = ArtifactBundle.from_worker_dict(document["bundle"])
+                except BundleError as exc:
+                    raise JobError("invalid_argument", str(exc)) from exc
+                if source:
+                    raise JobError("invalid_argument", "worker bundle request must not carry source bytes")
             if "blob_ref" in document:
-                npu_document["blob_ref"] = document["blob_ref"]
-            npu = NpuSourceRequest.from_dict(npu_document)
-            if npu.blob is not None:
+                npu = NpuSourceRequest.from_dict({
+                    "candidate_digest": document["candidate_digest"],
+                    "execution": document["execution"],
+                    "blob_ref": document["blob_ref"],
+                })
                 if source:
                     raise JobError("invalid_argument", "worker blob request must not carry source bytes")
-            elif npu.candidate_digest.value != hashlib.sha256(source).hexdigest():
+                return cls(
+                    **fields, source=source, candidate_sha256="", npu=npu,
+                    contract_dialect=contracts.NPU_BLOB_DIALECT,
+                )
+            if bundle is not None:
+                allowed_digest = (contracts.BUNDLE_DIGEST_ALGORITHM,)
+            else:
+                allowed_digest = ("sha256",)
+            try:
+                digest = contracts.candidate_digest_document(
+                    document["candidate_digest"], allowed_algorithms=allowed_digest,
+                )
+            except contracts.ContractError as exc:
+                raise JobError("invalid_argument", str(exc)) from exc
+            npu = NpuSourceRequest(
+                candidate_digest=CandidateDigest(
+                    digest["algorithm"], digest["value"], allowed_algorithms=allowed_digest,
+                ),
+                execution=execution,
+                bundle=bundle,
+            )
+            if bundle is None and npu.candidate_digest.value != hashlib.sha256(source).hexdigest():
                 raise JobError("invalid_argument", "worker NPU candidate digest does not match the source")
-            return cls(**fields, source=source, candidate_sha256="", npu=npu)
+            dialect = (
+                contracts.NPU_BUNDLE_DIALECT if execution.version == 4
+                else contracts.NPU_SOURCE_DIALECT
+            )
+            return cls(
+                **fields, source=source, candidate_sha256="", npu=npu, contract_dialect=dialect,
+            )
         allowed = set(cls.without_source_fields()) | {"source_base64"}
         if set(document) != allowed:
             raise JobError("invalid_argument", "worker request fields are missing or unknown")
@@ -569,7 +872,7 @@ class ExternalEvaluationRequest:
                 # legacy field here would silently accept a mixed request, so it
                 # is a stored-state corruption instead.
                 raise JobError("invalid_argument", "stored NPU request also carries candidate_sha256")
-            extra = {"blob_ref"} if "blob_ref" in fields else set()
+            extra = {key for key in ("blob_ref", "artifact") if key in fields}
             allowed = (set(cls.without_source_fields()) - {"candidate_sha256"}) | {
                 "candidate_digest", "execution",
             } | extra
@@ -581,13 +884,45 @@ class ExternalEvaluationRequest:
             }
             if "blob_ref" in fields:
                 npu_document["blob_ref"] = fields.pop("blob_ref")
+            if "artifact" in fields:
+                npu_document["artifact"] = fields.pop("artifact")
             npu = NpuSourceRequest.from_dict(npu_document)
+            request_source = source
             if npu.blob is not None:
                 if source:
                     raise JobError("invalid_argument", "stored blob request carries unexpected source bytes")
+            elif npu.bundle is not None:
+                from .artifact_bundle import BundleError, payload_bundle
+
+                if not source:
+                    raise JobError("invalid_argument", "stored bundle request carries no artifact payload")
+                try:
+                    stored = payload_bundle(source)
+                except BundleError as exc:
+                    raise JobError("invalid_argument", f"stored bundle payload is invalid: {exc}") from exc
+                if stored.to_dict() != npu.bundle.to_dict():
+                    raise JobError(
+                        "invalid_argument", "stored bundle payload does not match the accepted artifact set"
+                    )
+                npu = NpuSourceRequest(
+                    candidate_digest=npu.candidate_digest, execution=npu.execution,
+                    blob=npu.blob, bundle=stored,
+                )
+                # The payload was the persisted artifact container, not inline
+                # source bytes: the typed bundle now owns them.
+                request_source = b""
             elif npu.candidate_digest.value != hashlib.sha256(source).hexdigest():
                 raise JobError("invalid_argument", "stored NPU candidate digest does not match the source")
-            return cls(**fields, source=source, candidate_sha256="", npu=npu)
+            if npu.blob is not None:
+                dialect = contracts.NPU_BLOB_DIALECT
+            elif npu.execution.version == 4:
+                dialect = contracts.NPU_BUNDLE_DIALECT
+            else:
+                dialect = contracts.NPU_SOURCE_DIALECT
+            return cls(
+                **fields, source=request_source, candidate_sha256="", npu=npu,
+                contract_dialect=dialect,
+            )
         return cls(**fields, source=source)
 
     @classmethod

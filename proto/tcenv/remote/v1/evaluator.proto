@@ -121,7 +121,9 @@ message DeviceGroupBinding {
 
 // P0 deliberately supports only artifact_kind=source, launch_kind=KERNEL,
 // launch_subtype=SIMT, source_media_type text and stream-event synchronization.
-// Bundle/graph/model/multi-rank fields are added by later contract versions.
+// P1 (document version 4) adds spec_version/task_family/resources; every field
+// below 8 must stay at its default for the earlier contract versions, which
+// reject a non-default value instead of ignoring it.
 message NpuExecutionSpec {
   string artifact_kind = 1;
   string launch_kind = 2;
@@ -130,6 +132,44 @@ message NpuExecutionSpec {
   DeviceGroupBinding device_group = 5;
   repeated string required_timing_sources = 6;
   string synchronization = 7;
+  // P1 only.  0 for the P0/P0b contract versions.
+  uint32 spec_version = 8;
+  // "kernel" or "graph"; the shape above is derived from it.
+  string task_family = 9;
+  string execution_schema_id = 10;
+  NpuResourceRequirements resources = 11;
+}
+
+// The logical resources an agent may *ask for*.  Physical BDF, rank, die and
+// fabric placement are decided by the trusted server-side profile, never here.
+// A zero/null required_*_spans means the vendor shape has no such dimension.
+message NpuResourceRequirements {
+  uint32 logical_devices = 1;
+  optional uint32 required_rank_spans = 2;
+  optional uint32 required_die_spans = 3;
+}
+
+// One artifact of a versioned bundle.  Its bytes are either inlined (small) or
+// referenced through the independent content-addressed BlobChannel (large);
+// exactly one branch is set.  The path is always a relative POSIX path.
+message ArtifactBundleEntry {
+  string path = 1;
+  string role = 2;
+  string media_type = 3;
+  uint64 size_bytes = 4;
+  // Lowercase hexadecimal SHA-256 of the exact bytes, never of a rewritten form.
+  string sha256 = 5;
+  oneof content {
+    bytes data = 6;
+    BlobRef blob_ref = 7;
+  }
+}
+
+// P1 artifact set.  schema_id and the manifest are part of artifact_set_digest;
+// the entries are transmitted in path order.
+message ArtifactBundle {
+  string schema_id = 1;
+  repeated ArtifactBundleEntry entries = 2;
 }
 
 message DeviceGroupCapability {
@@ -179,6 +219,10 @@ message EvaluationRequest {
   // RPCs keep carrying metadata only.  The legacy and npu-source contracts
   // reject this field.
   BlobRef blob_ref = 25;
+  // Present exactly for the P1 bundle contract (document version 4), and never
+  // together with inline `source` bytes: the artifact payload is one of the two
+  // branches, exactly one.  The earlier contract versions reject this field.
+  ArtifactBundle bundle = 26;
 }
 
 // Handshake expectations. Empty worker_build/task_pack_digest/evaluator_epoch

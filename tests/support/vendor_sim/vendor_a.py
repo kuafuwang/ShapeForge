@@ -15,7 +15,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from tcenv.remote.contracts import NPU_TIMING_EVIDENCE_SCHEMA_ID, npu_execution_document
+from tcenv.remote.contracts import (
+    NPU_TIMING_EVIDENCE_SCHEMA_ID,
+    npu_bundle_execution_document,
+    npu_execution_document,
+)
 from tcenv.remote.drivers.base import (
     CleanupProof,
     HealthProof,
@@ -130,7 +134,15 @@ class FakeVendorADriver:
     ) -> PreparedAttempt:
         if not isinstance(spec, NpuExecutionSpec):
             raise ValueError("vendor A requires the typed NpuExecutionSpec")
-        normalized = npu_execution_document(spec.to_dict())
+        # The same driver serves both the source-only contract (document version
+        # 1) and the version 4 source branch of the bundle contract; the schema
+        # follows the spec version, never the caller's expectation.
+        if spec.version == 4:
+            normalized = npu_bundle_execution_document(spec.to_dict())
+            if normalized["task_family"] != "kernel" or normalized["artifact_kind"] != "source":
+                raise ValueError("vendor A serves only the inline source/kernel shape")
+        else:
+            normalized = npu_execution_document(spec.to_dict())
         expected_group = self.binding()
         if normalized["device_group"] != expected_group:
             raise ValueError("vendor A received a different device group/profile/topology/generation")

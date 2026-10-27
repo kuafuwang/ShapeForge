@@ -341,8 +341,12 @@ class JobEngine:
                 # Without the data plane a blob-reference job could never be
                 # verified or dispatched: a composition error, not a degraded mode.
                 raise ValueError("the NPU blob contract requires a blob channel store")
-        elif blob_store is not None:
-            raise ValueError("a blob channel store is only valid with the NPU blob contract")
+        elif blob_store is not None and not contract.npu_bundle:
+            raise ValueError("a blob channel store is only valid with an NPU artifact contract")
+        elif blob_store is not None and not isinstance(blob_store, BlobStore):
+            # The bundle contract reuses the content-addressed channel for large
+            # entries, so a supplied store must still be the real one.
+            raise ValueError("a blob channel store must be a BlobStore")
         if (
             isinstance(device_call_timeout_s, bool)
             or not isinstance(device_call_timeout_s, (int, float))
@@ -672,12 +676,39 @@ class JobEngine:
             raise JobError("failed_precondition", "device controller returned untyped probe facts")
         if facts.state != "available":
             raise JobError("failed_precondition", f"device group is {facts.state!r}, not available")
+        execution_binding = self.npu_execution
+        if execution_binding is None:
+            raise JobError("failed_precondition", "this evaluator has no NPU execution binding")
+        declared = execution_binding.declared_resources
+        if declared.logical_devices != 1:
+            # One single-active frontend still serves one logical device group
+            # with one logical device; P1 does not silently become a multi-device
+            # scheduler, so a request for more is refused before any device call.
+            raise JobError(
+                "failed_precondition",
+                f"P1 serves exactly one logical device; the request declares {declared.logical_devices}",
+            )
         if isinstance(facts.logical_devices, bool) or facts.logical_devices != 1:
             raise JobError(
                 "failed_precondition",
-                f"P0 serves exactly one logical device; the probe reports {facts.logical_devices!r}",
+                f"P1 serves exactly one logical device; the probe reports {facts.logical_devices!r}",
             )
-        if tuple(facts.timing_sources) != tuple(self.npu_execution.required_timing_sources if self.npu_execution else ()):
+        if (facts.ranks or 0) != (declared.required_rank_spans or 0):
+            # The rank/die shape belongs to the trusted profile.  A request that
+            # asks for rank evidence the device does not have (or that ignores
+            # ranks it does have) must be refused before create/start.
+            raise JobError(
+                "failed_precondition",
+                f"the request declares {declared.required_rank_spans} rank span(s); "
+                f"the trusted profile serves {facts.ranks or 0}",
+            )
+        if (facts.dies or 0) != (declared.required_die_spans or 0):
+            raise JobError(
+                "failed_precondition",
+                f"the request declares {declared.required_die_spans} die span(s); "
+                f"the trusted profile serves {facts.dies or 0}",
+            )
+        if tuple(facts.timing_sources) != tuple(execution_binding.required_timing_sources):
             raise JobError(
                 "failed_precondition",
                 "the probe does not report the served DEVICE_EVENT timing source",
@@ -726,8 +757,11 @@ class JobEngine:
         launch_kinds = list(advertised.get("launch_kinds") or ())
         launch_subtypes = list(advertised.get("launch_subtypes") or ())
         timing_sources = list(advertised.get("timing_sources") or ())
-        if artifact_kinds != ["source"]:
-            raise JobError("failed_precondition", "device does not advertise the source artifact kind")
+        if artifact_kinds != [execution.artifact_kind]:
+            raise JobError(
+                "failed_precondition",
+                f"device does not advertise the {execution.artifact_kind} artifact kind it is served for",
+            )
         if launch_kinds != [execution.launch_kind] or launch_subtypes != [execution.launch_subtype]:
             raise JobError("failed_precondition", "device does not advertise the served launch kind/subtype")
         if timing_sources != list(execution.required_timing_sources):
@@ -753,7 +787,7 @@ class JobEngine:
         if isinstance(logical_devices, bool) or not isinstance(logical_devices, int) or logical_devices != 1:
             raise JobError(
                 "failed_precondition",
-                "P0 serves exactly one logical device; the device group reports "
+                "P1 serves exactly one logical device; the device group reports "
                 f"{logical_devices!r}",
             )
         return {
@@ -763,7 +797,7 @@ class JobEngine:
             "timing_sources": timing_sources,
             "device_groups": [{
                 **group,
-                "logical_devices": 1,
+                "logical_devices": execution.declared_resources.logical_devices,
                 "timing_sources": list(execution.required_timing_sources),
             }],
         }
@@ -779,36 +813,74 @@ class JobEngine:
             run_id=scope["run_id"], session_id=scope["session_id"],
         )
 
+    def _artifact_blobs(self, request: ExternalEvaluationRequest) -> tuple[dict[str, Any], ...]:
+        """Every content-addressed descriptor this request's artifact needs.
+
+        A blob-contract request references one blob; a bundle contract may
+        reference several (one per large entry).  Inline bundle entries need no
+        lease at all, so the list is empty for them.
+        """
+
+        if request.blob is not None:
+            return (request.blob.to_dict(),)
+        if request.npu is None or request.npu.bundle is None:
+            return ()
+        return tuple(dict(entry.blob_ref or {}) for entry in request.npu.bundle.blob_entries)
+
     def _lease_blob(self, request: ExternalEvaluationRequest, grant_token: str) -> bool:
-        """Require a ready, in-scope blob before anything durable is written.
+        """Require ready, in-scope artifacts before anything durable is written.
 
         An unfinished upload, another scope's content id, or a descriptor that
         disagrees with the bytes on disk can never be submitted as a complete
         artifact.  The lease is what later releases (or safely keeps) the bytes.
+        A multi-entry bundle leases every blob it references; the first failure
+        drops the leases already taken here so a rejected Submit never leaves an
+        orphan behind.
         Returns whether a lease was taken, so a rejected Submit can drop it.
         """
 
         if self.blob_store is None:
             return False
-        if request.blob is None:
+        descriptors = self._artifact_blobs(request)
+        if not descriptors:
             return False
         scope = self._blob_scope(grant_token)
         try:
-            state = self.blob_store.state(scope, request.blob.content_id)
-            if not state.ready:
-                raise JobError(
-                    "failed_precondition",
-                    f"blob is {state.state}; only a committed blob can be submitted",
-                )
-            if state.descriptor != request.blob.to_dict():
-                raise JobError(
-                    "failed_precondition",
-                    "request blob descriptor differs from the committed blob",
-                )
-            self.blob_store.attach(scope, request.blob.content_id, request.request_id)
+            for descriptor in descriptors:
+                content_id = descriptor["content_id"]
+                state = self.blob_store.state(scope, content_id)
+                if not state.ready:
+                    raise JobError(
+                        "failed_precondition",
+                        f"blob is {state.state}; only a committed blob can be submitted",
+                    )
+                if state.descriptor != descriptor:
+                    raise JobError(
+                        "failed_precondition",
+                        "request blob descriptor differs from the committed blob",
+                    )
+                self.blob_store.attach(scope, content_id, request.request_id)
         except BlobError as exc:
+            self._drop_attached_blobs(request.request_id)
             raise JobError(_BLOB_JOB_ERRORS.get(exc.code, "failed_precondition"), exc.detail) from exc
+        except BaseException:
+            self._drop_attached_blobs(request.request_id)
+            raise
         return True
+
+    def _drop_attached_blobs(self, request_id: str) -> None:
+        """Best-effort rollback of leases taken by a Submit that never landed.
+
+        Only a *new* Submit reaches here (a replay never leases), and Submit
+        holds ``_submit_lock``, so every lease dropped here is one this call took.
+        """
+
+        if self.blob_store is None:
+            return
+        try:
+            self.blob_store.release(request_id, cleanup=False)
+        except Exception:  # noqa: BLE001 - rollback is best effort by design
+            pass
 
     def _release_blob_lease(self, request_id: str, *, attempt: Attempt | None = None) -> None:
         """Release a terminal job's blob lease and record a failed cleanup.
@@ -1388,18 +1460,49 @@ class JobEngine:
         request = running.request
         if request.npu is None or self.npu_execution is None:
             raise StateCorrupt("the NPU contract has no execution binding for a timeout report")
+        timing = {
+            "source": "DEVICE_EVENT",
+            "clock_domain": contracts.NPU_UNOBSERVED_CLOCK_DOMAIN,
+            "synchronization_completed": False,
+            "device_elapsed_ns": 0,
+            "host_api_elapsed_ns": request.candidate_timeout_ms * 1_000_000,
+            "launches": 0,
+        }
+        if self.contract.npu_bundle:
+            # The version 2 evidence still states the declared topology, so the
+            # row is comparable with a completed measurement; no span exists
+            # because no device event was ever observed.
+            declared = request.npu.execution.declared_resources
+            candidate = request.npu.candidate_digest
+            return {
+                "schema_id": contracts.NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
+                "candidate_digest": candidate.to_dict(),
+                "artifact_set_digest": (
+                    candidate.value
+                    if candidate.algorithm == contracts.BUNDLE_DIGEST_ALGORITHM else None
+                ),
+                "device_group": request.npu.execution.device_group.to_dict(),
+                "topology": {
+                    "logical_devices": declared.logical_devices,
+                    "declared_devices": [
+                        f"device-{index}" for index in range(declared.logical_devices)
+                    ],
+                    "required_rank_spans": declared.required_rank_spans,
+                    "required_die_spans": declared.required_die_spans,
+                },
+                "spans": [],
+                "timing": timing,
+                "buffer": None,
+                "measurement_kind": self.identity.measurement_kind,
+                "publication_allowed": False,
+                "complete": False,
+                "diagnostics": {"timeout": True, "detail": message[:400]},
+            }
         return {
             "schema_id": contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID,
             "candidate_digest": request.npu.candidate_digest.to_dict(),
             "device_group": request.npu.execution.device_group.to_dict(),
-            "timing": {
-                "source": "DEVICE_EVENT",
-                "clock_domain": contracts.NPU_UNOBSERVED_CLOCK_DOMAIN,
-                "synchronization_completed": False,
-                "device_elapsed_ns": 0,
-                "host_api_elapsed_ns": request.candidate_timeout_ms * 1_000_000,
-                "launches": 0,
-            },
+            "timing": timing,
             "measurement_kind": self.identity.measurement_kind,
             "publication_allowed": False,
             "complete": False,

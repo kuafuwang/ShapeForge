@@ -1,0 +1,646 @@
+"""P1 bundle contract: artifact set, oneof, digest chain, storage and evidence.
+
+The tests here are deliberately structural: a bundle's identity is the
+canonical manifest digest, so a rewritten path, a normalized byte, a swapped
+transport form or a rewritten attempt must all fail closed rather than quietly
+re-identify the artifact.
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+import time
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from taic.evaluation_outbox import EvaluationOutbox, bind_wire_digest
+from tcenv.evaluation import EvaluationRequest, EvaluationUnavailable
+from tcenv.remote import contracts
+from tcenv.remote.artifact_bundle import (
+    BUNDLE_SCHEMA_ID,
+    MAX_BUNDLE_INLINE_ENTRY_BYTES,
+    ArtifactBundle,
+    BundleEntry,
+    BundleError,
+    artifact_set_digest,
+    bundle_document,
+    entry_from_file,
+    payload_bundle,
+    payload_bytes,
+    validate_relative_path,
+)
+from tcenv.remote.job_types import JobError, StateCorrupt
+from tests.support.job_engine import (
+    NPU_BUNDLE_FEATURES,
+    NPU_TASK_FINGERPRINT,
+    NPU_TOKEN,
+    npu_bundle_engine,
+    npu_bundle_get,
+    npu_bundle_request,
+    npu_bundle_submit,
+)
+from tests.support.vendor_sim.harness import (
+    NPU_HOST_SIGNATURE_KEY,
+    GraphGrpcHarness,
+)
+from tests.support.vendor_sim.vendor_b import (
+    FakeVendorBController,
+    build_graph_bundle,
+    build_graph_execution,
+)
+
+GRAPH_ENTRIES = (
+    ("graph/main.json", "GRAPH_DEFINITION", "application/json", b'{"nodes":[1,2]}\n'),
+    ("graph/params.bin", "PARAMETER_TABLE", "application/octet-stream", b"\x00\x01\x02\xfe\xff"),
+)
+
+
+def _bundle(entries=GRAPH_ENTRIES) -> ArtifactBundle:
+    return ArtifactBundle(entries=tuple(
+        BundleEntry(
+            path=path, role=role, media_type=media_type, size_bytes=len(data),
+            sha256=hashlib.sha256(data).hexdigest(), data=data,
+        )
+        for path, role, media_type, data in entries
+    ))
+
+
+def _wait(engine, request, states, timeout: float = 20.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        snapshot = npu_bundle_get(engine, request)
+        if snapshot.state in states:
+            return snapshot
+        time.sleep(0.02)
+    raise AssertionError(f"job did not reach {states}; last state {snapshot.state}")
+
+
+# -- artifact set identity -------------------------------------------------
+def test_the_artifact_set_digest_covers_the_path_sorted_manifest_only():
+    forward = _bundle()
+    reverse = _bundle(tuple(reversed(GRAPH_ENTRIES)))
+    assert forward.artifact_set_digest == reverse.artifact_set_digest
+    manifest = forward.manifest
+    assert [entry["path"] for entry in manifest["entries"]] == ["graph/main.json", "graph/params.bin"]
+    # The manifest never contains bytes, transport form or a host path.
+    encoded = json.dumps(manifest, sort_keys=True)
+    assert "data" not in manifest["entries"][0]
+    assert "blob_ref" not in encoded
+    assert str(Path.home()) not in encoded
+
+
+@pytest.mark.parametrize("mutation", ["path", "role", "media_type", "size_bytes", "sha256"])
+def test_any_manifest_field_change_changes_the_artifact_set_digest(mutation):
+    bundle = _bundle()
+    changed = {
+        "path": "graph/other.json", "role": "AUXILIARY", "media_type": "text/plain",
+        "size_bytes": bundle.entries[0].size_bytes + 1, "sha256": "0" * 64,
+    }[mutation]
+    documents = [item.manifest() for item in bundle.entries]
+    documents[0][mutation] = changed
+    assert artifact_set_digest(BUNDLE_SCHEMA_ID, documents) != bundle.artifact_set_digest
+
+
+def test_exact_bytes_are_never_normalized():
+    """A CRLF rewrite or a BOM is a different artifact, not the same one."""
+
+    lf = b"graph { }\n"
+    crlf = b"graph { }\r\n"
+    bom = b"\xef\xbb\xbfgraph { }\n"
+    digests = {
+        artifact_set_digest(BUNDLE_SCHEMA_ID, [{
+            "path": "g/x", "role": "GRAPH_DEFINITION", "media_type": "text/plain",
+            "size_bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+        }])
+        for data in (lf, crlf, bom)
+    }
+    assert len(digests) == 3
+    entry = BundleEntry(path="g/x", role="GRAPH_DEFINITION", media_type="text/plain",
+                        size_bytes=len(lf), sha256=hashlib.sha256(lf).hexdigest(), data=crlf)
+    with pytest.raises(BundleError):
+        ArtifactBundle(entries=(entry,))
+
+
+@pytest.mark.parametrize("path", [
+    "/etc/passwd", "graph/../../etc/passwd", "./graph/main.json", "graph/./main.json",
+    "graph//main.json", "graph/", "", "graph\\main.json", "graph/\x00main.json",
+    "graph/main.json ", " graph/main.json",
+])
+def test_unsafe_bundle_paths_are_rejected(path):
+    with pytest.raises(BundleError):
+        validate_relative_path(path)
+
+
+def test_duplicate_and_case_colliding_paths_are_rejected():
+    first = BundleEntry(path="graph/Main.json", role="AUXILIARY", media_type="text/plain",
+                        size_bytes=1, sha256=hashlib.sha256(b"a").hexdigest(), data=b"a")
+    duplicate = BundleEntry(path="graph/Main.json", role="AUXILIARY", media_type="text/plain",
+                            size_bytes=1, sha256=hashlib.sha256(b"b").hexdigest(), data=b"b")
+    colliding = BundleEntry(path="graph/main.json", role="AUXILIARY", media_type="text/plain",
+                            size_bytes=1, sha256=hashlib.sha256(b"c").hexdigest(), data=b"c")
+    for second in (duplicate, colliding):
+        with pytest.raises(BundleError, match="duplicated"):
+            ArtifactBundle(entries=(first, second))
+
+
+def test_a_symlink_or_device_node_never_becomes_a_bundle_entry(tmp_path):
+    source = tmp_path / "artifacts"
+    source.mkdir()
+    (source / "main.json").write_bytes(b"{}")
+    (source / "link.json").symlink_to(source / "main.json")
+    with pytest.raises(BundleError, match="symbolic link"):
+        entry_from_file(source, "link.json", role="AUXILIARY", media_type="application/json")
+    with pytest.raises(BundleError, match="regular file"):
+        entry_from_file("/dev", "null", role="AUXILIARY", media_type="application/octet-stream")
+    with pytest.raises(BundleError, match="segments"):
+        entry_from_file(source, "../artifacts/main.json", role="AUXILIARY", media_type="application/json")
+    # A symbolic-linked *parent* would move the read outside the source tree.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "main.json").write_bytes(b"{}")
+    (source / "linked").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(BundleError, match="escapes its root|symbolic link"):
+        entry_from_file(source, "linked/main.json", role="AUXILIARY", media_type="application/json")
+
+
+def test_inline_size_limits_and_the_required_blob_form():
+    big = b"x" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 1)
+    entry = BundleEntry(path="model/weights.bin", role="MODEL_DEFINITION",
+                        media_type="application/octet-stream", size_bytes=len(big),
+                        sha256=hashlib.sha256(big).hexdigest(), data=big)
+    with pytest.raises(BundleError, match="inline byte limit"):
+        ArtifactBundle(entries=(entry,))
+    # A large entry must reference the content-addressed channel; a small one
+    # must not (the transport form is decided by size, not by the caller).
+    small = b"small"
+    descriptor = {
+        "content_id": contracts.blob_content_id(hashlib.sha256(small).hexdigest()),
+        "sha256": hashlib.sha256(small).hexdigest(),
+        "size_bytes": len(small), "media_type": "application/octet-stream", "chunk_size": 4,
+    }
+    with pytest.raises(BundleError, match="must be inlined"):
+        ArtifactBundle(entries=(BundleEntry(
+            path="p.bin", role="PARAMETER_TABLE", media_type="application/octet-stream",
+            size_bytes=len(small), sha256=descriptor["sha256"], blob_ref=descriptor,
+        ),))
+    # And a blob reference whose identity disagrees with the manifest is refused.
+    with pytest.raises(BundleError, match="does not match its manifest identity"):
+        ArtifactBundle(entries=(BundleEntry(
+            path="p.bin", role="PARAMETER_TABLE", media_type="application/octet-stream",
+            size_bytes=len(big), sha256=hashlib.sha256(big).hexdigest(),
+            blob_ref=dict(descriptor, size_bytes=len(big)),
+        ),))
+
+
+def test_a_rewritten_entry_list_cannot_keep_the_old_artifact_identity():
+    bundle = _bundle()
+    document = copy.deepcopy(bundle.to_dict())
+    document["entries"][0]["sha256"] = "0" * 64
+    with pytest.raises(BundleError, match="artifact_set_digest"):
+        bundle_document(document)
+    document = copy.deepcopy(bundle.to_dict())
+    document["artifact_set_digest"] = "1" * 64
+    with pytest.raises(BundleError, match="artifact_set_digest"):
+        bundle_document(document)
+
+
+def test_the_bundle_payload_round_trips_and_refuses_a_swapped_payload():
+    bundle = build_graph_bundle()
+    payload = payload_bytes(bundle)
+    restored = payload_bundle(payload)
+    assert restored.to_dict() == bundle.to_dict()
+    tampered = payload.replace(b"GRAPH", b"graph")
+    with pytest.raises(BundleError):
+        payload_bundle(tampered)
+
+
+# -- version 4 request identity -------------------------------------------
+def test_the_source_bundle_oneof_is_exactly_one_branch():
+    bundle = build_graph_bundle()
+    execution = build_graph_execution()
+    digest = {"algorithm": contracts.BUNDLE_DIGEST_ALGORITHM, "value": bundle.artifact_set_digest}
+    common = dict(
+        kind="formal_eval", run_id="r", session_id="s", task="relu", dtype="fp16",
+        size="small", target_id="sim-npu-graph", task_fingerprint="d" * 64, mode="quick",
+        seed="3", reps=2, queue_timeout_ms=3000, candidate_timeout_ms=3000, cases=None,
+        fast_bench=False, require_contract_launch=False, validate=False,
+        measure_serial=False, cache_policy="reuse",
+        candidate_digest=digest, execution=execution.to_dict(),
+    )
+    both = {**common, "artifact": {
+        "bundle": bundle.to_dict(), "source": {"size_bytes": 1, "sha256": "0" * 64},
+    }}
+    with pytest.raises(contracts.ContractError, match="exactly one"):
+        contracts.request_digest(both, source_bytes=b"", dialect=contracts.NPU_BUNDLE_DIALECT)
+    neither = {**common, "artifact": {}}
+    with pytest.raises(contracts.ContractError, match="exactly one"):
+        contracts.request_digest(neither, source_bytes=b"", dialect=contracts.NPU_BUNDLE_DIALECT)
+    # A bundle branch that is offered the source contract, and a source branch
+    # offered the blob contract, are both refused: the contract version decides
+    # the admissible form.
+    with pytest.raises(contracts.ContractError):
+        contracts.request_digest(
+            {**common, "artifact": {"bundle": bundle.to_dict()}}, source_bytes=b"",
+            dialect=contracts.NPU_BLOB_DIALECT,
+        )
+    source = b"npu-kernel relu\n"
+    source_request = {
+        **common,
+        "candidate_digest": {"algorithm": "sha256", "value": hashlib.sha256(source).hexdigest()},
+        "execution": replace(execution, artifact_kind="source", launch_kind="KERNEL",
+                             launch_subtype="SIMT", synchronization="stream-event",
+                             task_family="kernel",
+                             source_media_type="text/plain; charset=utf-8").to_dict(),
+        "artifact": {"source": {"size_bytes": len(source),
+                                "sha256": hashlib.sha256(source).hexdigest()}},
+    }
+    source_digest = contracts.request_digest(
+        source_request, source_bytes=source, dialect=contracts.NPU_BUNDLE_DIALECT,
+    )
+    assert len(source_digest) == 64
+    stored = contracts.npu_stored_request_digest(
+        {**source_request, "request_id": "req-1"}, dialect=contracts.NPU_BUNDLE_DIALECT,
+    )
+    assert stored == source_digest
+    with pytest.raises(contracts.ContractError):
+        contracts.request_digest(
+            {**source_request, "blob_ref": {}}, source_bytes=source,
+            dialect=contracts.NPU_BUNDLE_DIALECT,
+        )
+
+
+def test_the_execution_spec_states_the_family_and_refuses_a_borrowed_shape():
+    execution = build_graph_execution().to_dict()
+    assert execution["resources"] == {
+        "logical_devices": 1, "required_rank_spans": None, "required_die_spans": None,
+    }
+    # A graph task cannot borrow stream synchronization or the SIMT subtype.
+    broken = dict(execution, synchronization="stream-event")
+    with pytest.raises(contracts.ContractError, match="requires"):
+        contracts.npu_bundle_execution_document(broken)
+    broken = dict(execution, launch_subtype="SIMT")
+    with pytest.raises(contracts.ContractError, match="requires"):
+        contracts.npu_bundle_execution_document(broken)
+    # The cache policy stays a request-level field, never part of the spec.
+    with pytest.raises(contracts.ContractError, match="unknown"):
+        contracts.npu_bundle_execution_document(dict(execution, cache_policy="refresh"))
+    # A physical placement hint has no representation at all.
+    with pytest.raises(contracts.ContractError, match="unknown"):
+        contracts.npu_bundle_execution_document(dict(execution, bdf="0000:01:00.0"))
+
+
+def test_an_old_contract_version_cannot_carry_the_version_4_shape():
+    request = npu_bundle_request()
+    fields = request.digest_fields()
+    with pytest.raises(contracts.ContractError, match="unknown request fields"):
+        contracts.request_digest(fields, source_bytes=b"", dialect=contracts.NPU_SOURCE_DIALECT)
+    with pytest.raises(contracts.ContractError, match="unknown request fields"):
+        contracts.request_digest(fields, source_bytes=b"", dialect=contracts.NPU_BLOB_DIALECT)
+
+
+# -- timing evidence version 2 --------------------------------------------
+def _evidence(**overrides):
+    bundle = build_graph_bundle()
+    document = {
+        "schema_id": contracts.NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
+        "candidate_digest": {"algorithm": contracts.BUNDLE_DIGEST_ALGORITHM,
+                             "value": bundle.artifact_set_digest},
+        "artifact_set_digest": bundle.artifact_set_digest,
+        "device_group": build_graph_execution().device_group.to_dict(),
+        "topology": {
+            "logical_devices": 1, "declared_devices": ["device-0"],
+            "required_rank_spans": None, "required_die_spans": None,
+        },
+        "spans": [{"device_id": "device-0", "rank": None, "die": None,
+                   "clock_domain": "svc-clock", "elapsed_ns": 1_250_000}],
+        "timing": {
+            "source": "DEVICE_EVENT", "clock_domain": "svc-clock",
+            "synchronization_completed": True, "device_elapsed_ns": 1_250_000,
+            "host_api_elapsed_ns": 2_500_000, "launches": 1,
+        },
+        "buffer": None,
+        "measurement_kind": "simulated",
+        "publication_allowed": False,
+        "complete": True,
+    }
+    document.update(overrides)
+    return document
+
+
+def test_version_two_evidence_separates_host_and_device_time():
+    document = contracts.npu_timing_evidence_document_v2(_evidence())
+    assert document["timing"]["host_api_elapsed_ns"] == 2_500_000
+    assert document["timing"]["device_elapsed_ns"] == 1_250_000
+    report = {"status": "ok", "candidate_us": 1250.0}
+    contracts.npu_report_timing_check(document, report)
+    # A report that claims the host time as the candidate time is refused.
+    with pytest.raises(contracts.ContractError, match="device-event elapsed"):
+        contracts.npu_report_timing_check(document, {"status": "ok", "candidate_us": 2500.0})
+
+
+@pytest.mark.parametrize("mutation,match", [
+    (lambda d: d["spans"].clear(), "missing a declared device span"),
+    (lambda d: d["timing"].__setitem__("device_elapsed_ns", 999), "aggregate"),
+    (lambda d: d["timing"].__setitem__("clock_domain", "unobserved"), "observed clock domain"),
+    (lambda d: d["spans"][0].__setitem__("rank", 0), "must not report a rank"),
+    (lambda d: d.update(buffer={"flushed": True, "records_written": 4,
+                                "records_delivered": 3, "dropped": 1, "overwritten": 0}),
+     "intact buffer"),
+    (lambda d: d.update(buffer={"flushed": False, "records_written": 4,
+                                "records_delivered": 4, "dropped": 0, "overwritten": 0}),
+     "flushed buffer"),
+])
+def test_incomplete_or_contradictory_evidence_is_never_complete(mutation, match):
+    document = _evidence()
+    mutation(document)
+    with pytest.raises(contracts.ContractError, match=match):
+        contracts.npu_timing_evidence_document_v2(document)
+
+
+def test_a_declared_rank_shape_requires_every_rank_span():
+    from tcenv.remote.job_types import NpuResources
+
+    resources = NpuResources(required_rank_spans=2)
+    document = _evidence()
+    document["topology"]["required_rank_spans"] = 2
+    document["spans"] = [
+        {"device_id": "device-0", "rank": 0, "die": None,
+         "clock_domain": "svc-clock", "elapsed_ns": 1_250_000},
+    ]
+    with pytest.raises(contracts.ContractError, match="missing a declared rank span"):
+        contracts.npu_timing_evidence_document_v2(document, expected_resources=resources.to_dict())
+    # The declared device count is part of the topology contract too.
+    with pytest.raises(contracts.ContractError, match="differs from the declared execution"):
+        contracts.npu_timing_evidence_document_v2(
+            _evidence(), expected_resources=NpuResources(required_die_spans=2).to_dict(),
+        )
+    # A diagnostic row is admissible but never publishable and never "ok".
+    diagnostic = _evidence(
+        complete=False, spans=[],
+        timing={"source": "DEVICE_EVENT", "clock_domain": "unobserved",
+                "synchronization_completed": False, "device_elapsed_ns": 0,
+                "host_api_elapsed_ns": 1_000, "launches": 0},
+    )
+    document = contracts.npu_timing_evidence_document_v2(diagnostic)
+    assert document["complete"] is False and document["publication_allowed"] is False
+    with pytest.raises(contracts.ContractError, match="ok report"):
+        contracts.npu_timing_evidence_document_v2(diagnostic, report_status="ok")
+    with pytest.raises(contracts.ContractError, match="cannot be publishable"):
+        contracts.npu_timing_evidence_document_v2(
+            _evidence(complete=False, spans=[],
+                      timing={"source": "DEVICE_EVENT", "clock_domain": "unobserved",
+                              "synchronization_completed": False, "device_elapsed_ns": 0,
+                              "host_api_elapsed_ns": 1_000, "launches": 0},
+                      publication_allowed=True),
+        )
+
+
+# -- submission, storage and cleanup --------------------------------------
+def test_a_bundle_job_persists_verifies_and_cleans_up_its_artifact_bytes(tmp_path):
+    root = tmp_path / "run"
+    service = root / "graph-service.json"
+    controller = FakeVendorBController(service)
+    engine = npu_bundle_engine(
+        root / "state", service_path=service, controller=controller,
+        signing_key=b"s" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_bundle_request("bundle-store-1")
+        npu_bundle_submit(engine, request)
+        final = _wait(engine, request, {"completed", "failed", "interrupted"})
+        assert final.state == "completed", final.failure
+        evidence = json.loads(final.result.evidence)
+        assert evidence["artifact_set_digest"] == request.npu.bundle.artifact_set_digest
+        row = engine.store._conn.execute(
+            "SELECT source FROM jobs WHERE request_id=?", (request.request_id,)
+        ).fetchone()
+        # Terminal cleanup removes the artifact payload with the job.
+        assert row["source"] is None
+        stored = engine.store._conn.execute(
+            "SELECT request_json, request_digest FROM jobs WHERE request_id=?",
+            (request.request_id,),
+        ).fetchone()
+        document = json.loads(stored["request_json"])
+        assert "bundle" in document["artifact"]
+        assert contracts.npu_stored_request_digest(
+            document, dialect=contracts.NPU_BUNDLE_DIALECT,
+        ) == stored["request_digest"]
+    finally:
+        engine.close(wait=5)
+
+
+def test_a_rewritten_stored_request_or_payload_fails_closed(tmp_path):
+    root = tmp_path / "run"
+    service = root / "graph-service.json"
+    controller = FakeVendorBController(service)
+    state = root / "state"
+    engine = npu_bundle_engine(
+        state, service_path=service, controller=controller,
+        signing_key=b"s" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_bundle_request("bundle-tamper-1")
+        npu_bundle_submit(engine, request)
+        _wait(engine, request, {"completed", "failed", "interrupted"})
+        # Rewriting the artifact document (a different graph path) changes the
+        # recomputed digest, so the durable read refuses the row.
+        connection = engine.store._conn
+        row = connection.execute(
+            "SELECT request_json FROM jobs WHERE request_id=?", (request.request_id,)
+        ).fetchone()
+        document = json.loads(row["request_json"])
+        document["artifact"]["bundle"]["entries"][0]["path"] = "graph/evil.json"
+        connection.execute(
+            "UPDATE jobs SET request_json=? WHERE request_id=?",
+            (json.dumps(document), request.request_id),
+        )
+        connection.commit()
+        with pytest.raises((StateCorrupt, JobError)):
+            engine.store._job_by_id(request.request_id)
+    finally:
+        engine.close(wait=5)
+
+    # Reopening the store re-validates every durable row: a rewritten request
+    # document must fail closed instead of loading a different artifact set.
+    with pytest.raises((StateCorrupt, JobError)):
+        reopened = npu_bundle_engine(
+            state, service_path=service, controller=controller,
+            signing_key=b"s" * 32, signing_key_id="sim-npu-site/key-1",
+        )
+        try:
+            reopened.store._job_by_id("bundle-tamper-1")
+        finally:
+            reopened.close(wait=5)
+
+
+def test_a_tampered_bundle_payload_is_refused_on_reload(tmp_path):
+    request = npu_bundle_request("bundle-payload-1")
+    document = request.without_source()
+    payload = request.artifact_bytes
+    from tcenv.remote.job_types import ExternalEvaluationRequest
+
+    restored = ExternalEvaluationRequest.from_stored(document, payload)
+    assert restored.request_digest == request.request_digest
+    with pytest.raises(JobError, match="payload"):
+        ExternalEvaluationRequest.from_stored(document, payload.replace(b"PARAMETER_TABLE", b"AUXILIARY    "))
+
+
+def test_the_bundle_candidate_digest_binds_the_manifest_not_the_transport():
+    from tcenv.remote.job_types import CandidateDigest, NpuSourceRequest
+
+    bundle = build_graph_bundle()
+    request = npu_bundle_request("bundle-digest-1", bundle=bundle)
+    assert request.candidate_digest == {
+        "algorithm": contracts.BUNDLE_DIGEST_ALGORITHM,
+        "value": bundle.artifact_set_digest,
+    }
+    # A candidate digest that does not describe this artifact set is refused
+    # before a digest is ever computed.
+    other = _bundle()
+    with pytest.raises(JobError, match="candidate digest must equal artifact_set_digest"):
+        NpuSourceRequest(
+            candidate_digest=CandidateDigest(
+                contracts.BUNDLE_DIGEST_ALGORITHM, other.artifact_set_digest,
+                allowed_algorithms=(contracts.BUNDLE_DIGEST_ALGORITHM,),
+            ),
+            execution=build_graph_execution(),
+            bundle=bundle,
+        )
+    # The same bytes reach the same identity whether the caller lists the
+    # entries forward or backward.
+    reversed_bundle = _bundle(tuple(reversed(GRAPH_ENTRIES)))
+    assert npu_bundle_request("bundle-digest-2", bundle=reversed_bundle).request_digest == (
+        npu_bundle_request("bundle-digest-2", bundle=_bundle()).request_digest
+    )
+
+
+# -- host outbox chain ----------------------------------------------------
+def _outbox(root: Path) -> EvaluationOutbox:
+    return EvaluationOutbox(
+        root, signature_key=NPU_HOST_SIGNATURE_KEY, transport="grpc",
+        api_contract_id=contracts.NPU_BUNDLE_API_CONTRACT_ID,
+        evidence_contract_id=contracts.NPU_BUNDLE_EVIDENCE_CONTRACT_ID,
+    )
+
+
+def _host_request(tmp_path: Path, harness: GraphGrpcHarness, request_id: str) -> EvaluationRequest:
+    inner = EvaluationRequest(
+        kind="formal_eval", request_id=request_id, run_id="npu-run-1",
+        session_id="npu-session-1", task="relu", dtype="fp16", size="small",
+        target_id=harness.engine.identity.target_id,
+        task_fingerprint=NPU_TASK_FINGERPRINT, source="", mode="quick", seed=3, reps=2,
+        queue_timeout_s=3.0, candidate_timeout_s=3.0,
+    )
+    return bind_wire_digest(inner, harness.factory, npu_contract=True)
+
+
+def test_the_outbox_binds_the_artifact_set_digest_and_algorithm(tmp_path):
+    root = tmp_path / "run"
+    with GraphGrpcHarness(tmp_path) as harness:
+        request = _host_request(tmp_path, harness, "bundle-outbox-1")
+        assert request.wire_candidate_algorithm == contracts.BUNDLE_DIGEST_ALGORITHM
+        assert request.wire_candidate_digest == harness.bundle.artifact_set_digest
+        outbox = _outbox(root)
+        assert outbox.begin(request, epoch=harness.factory.epoch) is None
+        result = harness.factory.formal(request)
+        outbox.complete(request, result)
+        row = json.loads(outbox._state_path(request.request_id).read_text(encoding="utf-8"))
+        assert row["schema_version"] == 2
+        assert row["candidate_digest"] == {
+            "algorithm": contracts.BUNDLE_DIGEST_ALGORITHM,
+            "value": harness.bundle.artifact_set_digest,
+        }
+        replay = _outbox(root).begin(request, epoch=harness.factory.epoch)
+        assert replay is not None
+        assert replay.receipt["candidate_digest"] == row["candidate_digest"]
+
+        # A rewritten row or a rewritten retained envelope must not replay.
+        row["candidate_digest"]["value"] = "4" * 64
+        outbox._state_path(request.request_id).write_text(json.dumps(row), encoding="utf-8")
+        with pytest.raises(EvaluationUnavailable):
+            _outbox(root).begin(request, epoch=harness.factory.epoch)
+
+
+def test_the_outbox_refuses_a_bundle_row_without_the_wire_identity(tmp_path):
+    root = tmp_path / "run"
+    with GraphGrpcHarness(tmp_path) as harness:
+        request = _host_request(tmp_path, harness, "bundle-outbox-2")
+        unbound = replace(request, wire_candidate_algorithm="")
+        with pytest.raises(EvaluationUnavailable, match="algorithm"):
+            _outbox(root).begin(unbound, epoch=harness.factory.epoch)
+        unbound = replace(request, wire_candidate_digest="")
+        with pytest.raises(EvaluationUnavailable, match="CandidateDigest"):
+            _outbox(root).begin(unbound, epoch=harness.factory.epoch)
+        # A candidate value the evaluator did not bind is refused at the next
+        # wire binding: the host cannot recompute it, so the evaluator is the
+        # authority and the durable row must agree with it.
+        other = replace(request, wire_candidate_digest="5" * 64)
+        with pytest.raises(EvaluationUnavailable, match="differs"):
+            bind_wire_digest(other, harness.factory, npu_contract=True)
+
+
+def test_a_tampered_bundle_receipt_or_evidence_breaks_the_signed_chain(tmp_path):
+    root = tmp_path / "run"
+    with GraphGrpcHarness(tmp_path) as harness:
+        request = _host_request(tmp_path, harness, "bundle-outbox-3")
+        outbox = _outbox(root)
+        outbox.begin(request, epoch=harness.factory.epoch)
+        result = harness.factory.formal(request)
+        outbox.complete(request, result)
+
+        payload = json.loads(outbox._result_path(request.request_id).read_text(encoding="utf-8"))
+        payload["evidence"]["artifact_set_digest"] = "6" * 64
+        outbox._result_path(request.request_id).write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(EvaluationUnavailable):
+            _outbox(root).begin(request, epoch=harness.factory.epoch)
+
+        payload["evidence"]["artifact_set_digest"] = harness.bundle.artifact_set_digest
+        payload["receipt"]["candidate_digest"]["value"] = "7" * 64
+        outbox._result_path(request.request_id).write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(EvaluationUnavailable):
+            _outbox(root).begin(request, epoch=harness.factory.epoch)
+
+
+# -- fence and retry ------------------------------------------------------
+def test_an_interrupted_bundle_attempt_retries_with_a_new_fence(tmp_path):
+    root = tmp_path / "run"
+    service = root / "graph-service.json"
+    controller = FakeVendorBController(service)
+    engine = npu_bundle_engine(
+        root / "state", service_path=service, controller=controller,
+        signing_key=b"s" * 32, signing_key_id="sim-npu-site/key-1",
+        worker_env={"TCENV_VENDOR_B_FAULT": "lost_token"},
+    )
+    try:
+        request = npu_bundle_request("bundle-retry-1", candidate_timeout_ms=4000)
+        first = npu_bundle_submit(engine, request)
+        attempt = first.current_attempt
+        interrupted = _wait(engine, request, {"interrupted", "failed", "completed"})
+        assert interrupted.state == "interrupted", interrupted.state
+        engine.worker_env["TCENV_VENDOR_B_FAULT"] = ""
+        # The old attempt cannot be retried with the old capability id, and the
+        # new attempt gets a strictly newer fence.
+        from tests.support.job_engine import npu_bundle_capabilities
+
+        capability = npu_bundle_capabilities(engine)
+        retried = engine.retry(
+            request_id=request.request_id, request_digest=request.request_digest,
+            expected=engine.expected_identities, interrupted_attempt_id=attempt.attempt_id,
+            capability_id=capability.capability_id, required_features=list(NPU_BUNDLE_FEATURES),
+            grant_token=NPU_TOKEN,
+        )
+        assert retried.current_attempt.attempt_id != attempt.attempt_id
+        assert retried.current_attempt.lease_fence > attempt.lease_fence
+        with pytest.raises(JobError):
+            engine.retry(
+                request_id=request.request_id, request_digest=request.request_digest,
+                expected=engine.expected_identities, interrupted_attempt_id=attempt.attempt_id,
+                capability_id=capability.capability_id,
+                required_features=list(NPU_BUNDLE_FEATURES), grant_token=NPU_TOKEN,
+            )
+    finally:
+        engine.close(wait=5)

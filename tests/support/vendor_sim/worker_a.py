@@ -10,6 +10,7 @@ from pathlib import Path
 
 from tcenv.remote import worker_protocol
 from tcenv.remote.blob_channel import BlobReader
+from tcenv.remote.contracts import NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID
 from tcenv.schema import PROTOCOL_VERSION
 
 from .ledger import VendorLedger
@@ -18,6 +19,10 @@ from .vendor_a import FakeVendorADriver
 VENDOR_LEDGER_ENV = "TCENV_VENDOR_LEDGER"
 #: Engine-owned blob root (never an agent-supplied path).
 BLOB_ROOT_ENV = "TCENV_BLOB_ROOT"
+
+
+def env_degrade() -> str:
+    return os.environ.get("TCENV_VENDOR_A_DEGRADE") or ""
 
 
 def _read_blob(descriptor: dict, root: str) -> tuple[bytes, int, int]:
@@ -101,6 +106,44 @@ def main() -> int:
     finally:
         driver.close(prepared)
     evidence = dict(outcome.evidence)
+    if request.npu.execution.version == 4:
+        # The bundle contract signs TimingEvidence version 2: the same host/device
+        # split plus the declared topology and the per-device spans.
+        timing = dict(evidence["timing"])
+        declared = request.npu.execution.declared_resources
+        evidence = {
+            "schema_id": NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
+            "candidate_digest": dict(evidence["candidate_digest"]),
+            "artifact_set_digest": None,
+            "device_group": dict(evidence["device_group"]),
+            "topology": {
+                "logical_devices": declared.logical_devices,
+                "declared_devices": [f"device-{index}" for index in range(declared.logical_devices)],
+                "required_rank_spans": declared.required_rank_spans,
+                "required_die_spans": declared.required_die_spans,
+            },
+            "spans": [{
+                "device_id": "device-0",
+                "rank": None,
+                "die": None,
+                "clock_domain": timing["clock_domain"],
+                "elapsed_ns": int(timing["device_elapsed_ns"]),
+            }],
+            "timing": timing,
+            "buffer": None,
+            "measurement_kind": evidence["measurement_kind"],
+            "publication_allowed": evidence["publication_allowed"],
+            "complete": evidence["complete"],
+            "diagnostics": dict(evidence.get("diagnostics") or {}),
+        }
+        if env_degrade() == "drop_span":
+            # Claims completeness while the only declared device span is gone.
+            evidence["spans"] = []
+        elif env_degrade() == "buffer_drop":
+            evidence["buffer"] = {
+                "flushed": True, "records_written": 2, "records_delivered": 2,
+                "dropped": 1, "overwritten": 0,
+            }
     if evidence.get("candidate_digest") != request.npu.candidate_digest.to_dict():
         return 14
     device_elapsed_ns = int(evidence["timing"]["device_elapsed_ns"])

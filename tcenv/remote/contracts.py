@@ -52,6 +52,26 @@ BLOB_CONTENT_ID_PREFIX = "blob-sha256-v1:"
 #: CandidateDigest algorithm used by the blob-reference contract.
 BLOB_DIGEST_ALGORITHM = "sha256-blob-v1"
 MAX_BLOB_CHUNK_BYTES = 4 * 1024 * 1024
+# P1 NPU contract: the same six RPCs and durable machinery, with a versioned
+# ArtifactBundle artifact, an explicit source/bundle artifact oneof and a
+# complete ExecutionSpec (task family, launch kind, logical device group,
+# declared resources, synchronization and timing requirements).  The bundle is
+# part of *this* document version; it is not an optional field on
+# `npu-source`/`npu-blob` and not a field on the legacy Metal/source contract.
+NPU_BUNDLE_API_CONTRACT_ID = "tcenv.remote.npu-bundle.evaluator-api.1"
+NPU_BUNDLE_EVIDENCE_CONTRACT_ID = "tcenv.remote.npu-bundle.evidence.1"
+NPU_BUNDLE_REQUEST_DOCUMENT_TYPE = "tcenv.remote.npu-bundle.request-digest"
+NPU_BUNDLE_RECEIPT_DOCUMENT_TYPE = "tcenv.remote.npu-bundle.receipt-id"
+NPU_BUNDLE_RESULT_DOCUMENT_TYPE = "tcenv.remote.npu-bundle.result-signature"
+NPU_BUNDLE_DOCUMENT_VERSION = 4
+NPU_BUNDLE_EXECUTION_SCHEMA_ID = "tcenv.remote.npu-bundle.execution.1"
+#: CandidateDigest algorithm for an artifact set (bundle).
+BUNDLE_DIGEST_ALGORITHM = "sha256-bundle-v1"
+#: P1 timing evidence schema.  Version 1 (P0/P0b) stays byte-identical; the
+#: versioned successor adds the declared topology, per-device spans and buffer
+#: completeness that a completeness decision needs.
+NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID = "tcenv.remote.npu-bundle.timing-evidence.2"
+NPU_BUNDLE_EVIDENCE_MEDIA_TYPE = "application/vnd.tcenv.npu-bundle.timing-evidence.v2+json"
 NPU_TIMING_EVIDENCE_SCHEMA_ID = "tcenv.remote.npu-source.timing-evidence.1"
 NPU_EVIDENCE_MEDIA_TYPE = "application/vnd.tcenv.npu-source.timing-evidence.v1+json"
 # Clock domain recorded when no device clock was ever observed (killed worker).
@@ -83,9 +103,9 @@ class ContractDialect:
     result_document_type: str
     document_version: int
     npu_source: bool = False
-    #: ``source`` (inline candidate bytes) or ``blob`` (content-addressed
-    #: reference).  The contract identity selects the form; a request shape
-    #: never does.
+    #: ``source`` (inline candidate bytes), ``blob`` (content-addressed
+    #: reference) or ``bundle`` (versioned artifact set).  The contract identity
+    #: selects the admissible form; a request shape never does.
     artifact_form: str = "source"
 
     @property
@@ -97,9 +117,19 @@ class ContractDialect:
         return self.artifact_form == "blob"
 
     @property
+    def npu_bundle(self) -> bool:
+        return self.artifact_form == "bundle"
+
+    @property
     def candidate_algorithms(self) -> tuple[str, ...]:
         """CandidateDigest algorithms this dialect accepts."""
 
+        if self.npu_bundle:
+            # The bundle contract exposes the source/bundle artifact oneof, so
+            # both candidate identities are legitimate *under* the same
+            # contract: an inline source keeps `sha256`, an artifact set uses
+            # `sha256-bundle-v1`.
+            return ("sha256", BUNDLE_DIGEST_ALGORITHM)
         return (BLOB_DIGEST_ALGORITHM,) if self.npu_blob else ("sha256",)
 
 
@@ -132,13 +162,24 @@ NPU_BLOB_DIALECT = ContractDialect(
     npu_source=True,
     artifact_form="blob",
 )
-NPU_DIALECTS = (NPU_SOURCE_DIALECT, NPU_BLOB_DIALECT)
+NPU_BUNDLE_DIALECT = ContractDialect(
+    api_contract_id=NPU_BUNDLE_API_CONTRACT_ID,
+    evidence_contract_id=NPU_BUNDLE_EVIDENCE_CONTRACT_ID,
+    request_document_type=NPU_BUNDLE_REQUEST_DOCUMENT_TYPE,
+    receipt_document_type=NPU_BUNDLE_RECEIPT_DOCUMENT_TYPE,
+    result_document_type=NPU_BUNDLE_RESULT_DOCUMENT_TYPE,
+    document_version=NPU_BUNDLE_DOCUMENT_VERSION,
+    npu_source=True,
+    artifact_form="bundle",
+)
+NPU_DIALECTS = (NPU_SOURCE_DIALECT, NPU_BLOB_DIALECT, NPU_BUNDLE_DIALECT)
 NPU_API_CONTRACT_IDS = frozenset(dialect.api_contract_id for dialect in NPU_DIALECTS)
 NPU_EVIDENCE_CONTRACT_IDS = frozenset(dialect.evidence_contract_id for dialect in NPU_DIALECTS)
 CONTRACT_DIALECTS = {
     LEGACY_DIALECT.api_contract_id: LEGACY_DIALECT,
     NPU_SOURCE_DIALECT.api_contract_id: NPU_SOURCE_DIALECT,
     NPU_BLOB_DIALECT.api_contract_id: NPU_BLOB_DIALECT,
+    NPU_BUNDLE_DIALECT.api_contract_id: NPU_BUNDLE_DIALECT,
 }
 
 
@@ -603,6 +644,181 @@ _NPU_SOURCE_REQUEST_FIELDS = frozenset(
     (set(_REQUEST_FIELD_SET) - {"candidate_sha256"}) | {"candidate_digest", "execution"}
 )
 _NPU_BLOB_REQUEST_FIELDS = _NPU_SOURCE_REQUEST_FIELDS | {"blob_ref"}
+#: Bundles: the artifact payload is one explicit oneof branch, never an
+#: optional field, and never both branches at once.
+_NPU_BUNDLE_REQUEST_FIELDS = frozenset(
+    (set(_REQUEST_FIELD_SET) - {"candidate_sha256"}) | {"candidate_digest", "execution", "artifact"}
+)
+ARTIFACT_SOURCE = "source"
+ARTIFACT_BUNDLE = "bundle"
+_NPU_BUNDLE_EXECUTION_FIELDS = frozenset({
+    "schema_id", "task_family", "artifact_kind", "launch_kind", "launch_subtype",
+    "source_media_type", "device_group", "resources", "required_timing_sources",
+    "synchronization",
+})
+_NPU_RESOURCE_FIELDS = frozenset({"logical_devices", "required_rank_spans", "required_die_spans"})
+#: P1 keeps device-event timing only; profiler dispatch stays blocked until the
+#: P3 per-capability gate, so an agent cannot ask for a source this frontend
+#: cannot corroborate.
+_NPU_BUNDLE_TIMING_SOURCES = frozenset({"DEVICE_EVENT"})
+#: Declared task families and the execution shape each one implies.  The shape
+#: is derived, never taken from a client-supplied default: a graph request that
+#: claims SIMT/stream semantics is a contract error.
+_TASK_FAMILIES = {
+    "kernel": ("source", "KERNEL", "SIMT", "stream-event"),
+    "graph": ("bundle", "GRAPH", "SERVICE", "service-completion-token"),
+}
+#: The main artifact media type each task family implies.  It is derived rather
+#: than negotiated so a client and a frontend can never disagree about the
+#: execution document (which is part of the request digest); a bundle's real
+#: media types live on its entries.
+_TASK_FAMILY_MEDIA_TYPE = {
+    "kernel": "text/plain; charset=utf-8",
+    "graph": "application/octet-stream",
+}
+#: One served device group per frontend in P1, matching the single-active lease.
+MAX_LOGICAL_DEVICES = 8
+MAX_DECLARED_SPANS = 64
+
+
+def npu_bundle_execution_document(value: Any) -> dict[str, Any]:
+    """Validate the versioned P1 ExecutionSpec document.
+
+    It states the task family, the launch kind, the logical device group, the
+    declared resource/topology requirements, the synchronization strategy and
+    the timing sources.  The cache policy stays a request-level field and is
+    rejected here (unknown field).  Physical BDF/rank/fabric placement is not
+    representable: the trusted server-side profile decides it.
+    """
+
+    if not isinstance(value, Mapping) or set(value) != _NPU_BUNDLE_EXECUTION_FIELDS:
+        raise ContractError("execution spec fields are missing or unknown")
+    if value["schema_id"] != NPU_BUNDLE_EXECUTION_SCHEMA_ID:
+        raise ContractError("execution spec schema_id is not supported by this contract version")
+    task_family = _text(value["task_family"], "execution.task_family", max_bytes=32)
+    shape = _TASK_FAMILIES.get(task_family)
+    if shape is None:
+        raise ContractError("execution.task_family must be kernel or graph")
+    artifact_kind = _text(value["artifact_kind"], "execution.artifact_kind", max_bytes=32)
+    launch_kind = _text(value["launch_kind"], "execution.launch_kind", max_bytes=32)
+    launch_subtype = _text(value["launch_subtype"], "execution.launch_subtype", max_bytes=32)
+    synchronization = _text(value["synchronization"], "execution.synchronization", max_bytes=32)
+    if (artifact_kind, launch_kind, launch_subtype, synchronization) != shape:
+        raise ContractError(
+            f"execution.task_family {task_family!r} requires "
+            f"artifact_kind={shape[0]}/{shape[1]}/{shape[2]}/{shape[3]}"
+        )
+    timing_sources = value["required_timing_sources"]
+    if not isinstance(timing_sources, (list, tuple)) or not timing_sources:
+        raise ContractError("execution requires at least one timing source")
+    sources = [_text(item, "execution.required_timing_sources", max_bytes=32) for item in timing_sources]
+    if any(item not in _NPU_BUNDLE_TIMING_SOURCES for item in sources):
+        raise ContractError("P1 supports only DEVICE_EVENT timing")
+    # ``null`` states that the dimension does not exist for this vendor shape;
+    # it is not the same as declaring zero spans.
+    declared = device_group_requirements(value["resources"])
+    media_type = _text(value["source_media_type"], "execution.source_media_type", max_bytes=64)
+    if media_type != _TASK_FAMILY_MEDIA_TYPE[task_family]:
+        raise ContractError(
+            f"execution.task_family {task_family!r} requires source_media_type "
+            f"{_TASK_FAMILY_MEDIA_TYPE[task_family]!r}"
+        )
+    return {
+        "schema_id": NPU_BUNDLE_EXECUTION_SCHEMA_ID,
+        "task_family": task_family,
+        "artifact_kind": artifact_kind,
+        "launch_kind": launch_kind,
+        "launch_subtype": launch_subtype,
+        "source_media_type": media_type,
+        "device_group": device_group_document(value["device_group"]),
+        "resources": declared,
+        "required_timing_sources": sorted(set(sources)),
+        "synchronization": synchronization,
+    }
+
+
+def npu_artifact_document(value: Any, *, execution: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the source/bundle artifact oneof document.
+
+    Exactly one branch is present.  A bundle is versioned and carries its
+    manifest digest; an inline source carries only its size and digest, because
+    the exact bytes travel in the message envelope and are re-hashed there.
+    """
+
+    if not isinstance(value, Mapping) or len(value) != 1:
+        raise ContractError("artifact must carry exactly one of source or bundle")
+    branch = next(iter(value))
+    if branch not in (ARTIFACT_SOURCE, ARTIFACT_BUNDLE):
+        raise ContractError("artifact must carry exactly one of source or bundle")
+    if branch == ARTIFACT_SOURCE:
+        if execution["artifact_kind"] != "source":
+            raise ContractError("an inline source artifact requires artifact_kind=source")
+        descriptor = value[branch]
+        if not isinstance(descriptor, Mapping) or set(descriptor) != {"size_bytes", "sha256"}:
+            raise ContractError("the inline source artifact must carry exactly size_bytes and sha256")
+        return {
+            ARTIFACT_SOURCE: {
+                "size_bytes": _integer(descriptor["size_bytes"], "artifact.source.size_bytes", 1, MAX_SOURCE_BYTES),
+                "sha256": _hex64(descriptor["sha256"], "artifact.source.sha256"),
+            }
+        }
+    if execution["artifact_kind"] != "bundle":
+        raise ContractError("a bundle artifact requires artifact_kind=bundle")
+    from .artifact_bundle import BundleError, bundle_document
+
+    try:
+        normalized = bundle_document(value[branch])
+    except BundleError as exc:
+        raise ContractError(str(exc)) from exc
+    return {ARTIFACT_BUNDLE: {
+        "schema_id": normalized["schema_id"],
+        "artifact_set_digest": normalized["artifact_set_digest"],
+        "entries": normalized["entries"],
+    }}
+
+
+def _npu_bundle_request_fields(
+    document: Mapping[str, Any], source: bytes, *, bytes_available: bool = True,
+) -> dict[str, Any]:
+    """Validate one bundle-contract request (source branch or bundle branch).
+
+    ``bytes_available=False`` is the terminal-storage path: the source bytes are
+    gone, so only the persisted descriptor is re-checked.  The digest is
+    unaffected because the canonical document never contained the bytes.
+    """
+
+    request = _common_request_fields(document)
+    execution = npu_bundle_execution_document(document["execution"])
+    artifact = npu_artifact_document(document["artifact"], execution=execution)
+    if ARTIFACT_BUNDLE in artifact:
+        if source:
+            raise ContractError("a bundle request must not embed inline source bytes")
+        digest = candidate_digest_document(
+            document["candidate_digest"], allowed_algorithms=(BUNDLE_DIGEST_ALGORITHM,),
+        )
+        if digest["value"] != artifact[ARTIFACT_BUNDLE]["artifact_set_digest"]:
+            raise ContractError("candidate_digest does not match the bundle artifact_set_digest")
+    else:
+        descriptor = artifact[ARTIFACT_SOURCE]
+        if bytes_available:
+            if not source:
+                raise ContractError("an inline source artifact requires exact source bytes")
+            digest = candidate_digest_document(
+                document["candidate_digest"], allowed_algorithms=("sha256",), source_bytes=source,
+            )
+            if descriptor["size_bytes"] != len(source):
+                raise ContractError("artifact.source does not describe the exact source bytes")
+        else:
+            digest = candidate_digest_document(
+                document["candidate_digest"], allowed_algorithms=("sha256",),
+            )
+        if descriptor["sha256"] != digest["value"]:
+            raise ContractError("artifact.source does not describe the exact source bytes")
+    request["candidate_digest"] = digest
+    request["execution"] = execution
+    request["artifact"] = artifact
+    return request
+
 
 
 def _npu_blob_request_fields(document: Mapping[str, Any], source: bytes) -> dict[str, Any]:
@@ -648,6 +864,21 @@ def request_digest_document(
     source = _source_bytes(source_bytes)
     if "source" in document and _source_bytes(document["source"]) != source:
         raise ContractError("request source and source_bytes differ")
+
+    if dialect.npu_bundle:
+        allowed = _NPU_BUNDLE_REQUEST_FIELDS | _EXCLUDED_REQUEST_FIELDS | {"source"}
+        unknown = set(document) - allowed
+        if unknown:
+            raise ContractError(f"unknown request fields: {sorted(unknown)}")
+        missing = _NPU_BUNDLE_REQUEST_FIELDS - set(document)
+        if missing:
+            raise ContractError(f"missing explicit request fields/defaults: {sorted(missing)}")
+        return {
+            "document_type": dialect.request_document_type,
+            "document_version": dialect.document_version,
+            "digest_algorithm": REQUEST_DIGEST_ALGORITHM,
+            "request": _npu_bundle_request_fields(document, source),
+        }
 
     if dialect.npu_blob:
         allowed = _NPU_BLOB_REQUEST_FIELDS | _EXCLUDED_REQUEST_FIELDS | {"source"}
@@ -723,7 +954,11 @@ def npu_stored_request_document(
         raise ContractError("stored request must be an object")
     if any(not isinstance(key, str) for key in document):
         raise ContractError("stored request field names must be strings")
-    fields = _NPU_BLOB_REQUEST_FIELDS if dialect.npu_blob else _NPU_SOURCE_REQUEST_FIELDS
+    fields = (
+        _NPU_BUNDLE_REQUEST_FIELDS if dialect.npu_bundle
+        else _NPU_BLOB_REQUEST_FIELDS if dialect.npu_blob
+        else _NPU_SOURCE_REQUEST_FIELDS
+    )
     expected = fields | {"request_id"}
     if set(document) != expected:
         missing = sorted(expected - set(document))
@@ -733,7 +968,16 @@ def npu_stored_request_document(
     # digest; it still has to be a well-formed identifier and the caller must
     # compare it with the durable job row.
     _identifier(document["request_id"], "request_id")
-    if dialect.npu_blob:
+    if dialect.npu_bundle:
+        # A bundle request is reconstructed from its artifact oneof: the
+        # document never contained the inline bytes (only their size and
+        # SHA-256), so the digest is still the one the frontend accepted.  A
+        # bundle entry list rewritten after the fact no longer adds up to
+        # ``artifact_set_digest`` and is refused inside the validator.
+        if "blob_ref" in document:
+            raise ContractError("the bundle contract does not accept a request-level blob reference")
+        request = _npu_bundle_request_fields(document, b"", bytes_available=False)
+    elif dialect.npu_blob:
         request = _npu_blob_request_fields(document, b"")
     else:
         request = _common_request_fields(document)
@@ -896,10 +1140,17 @@ def _provenance_document(
             raise ContractError("provenance timing_sources must be a non-empty array")
         sources = [_text(item, "timing_source", max_bytes=32) for item in timing_sources]
         if any(item not in _NPU_TIMING_SOURCES for item in sources):
-            raise ContractError("provenance timing source is not supported by P0")
+            raise ContractError("provenance timing source is not supported by this contract")
         document["timing_sources"] = sorted(set(sources))
-        if document["artifact_kind"] != "source" or document["launch_kind"] != "KERNEL" or document["launch_subtype"] != "SIMT":
-            raise ContractError("provenance execution shape is not supported by P0")
+        shape = (
+            document["artifact_kind"], document["launch_kind"], document["launch_subtype"],
+        )
+        allowed_shapes = (
+            {shape for shape in _TASK_FAMILIES.values()} if dialect.npu_bundle
+            else {("source", "KERNEL", "SIMT")}
+        )
+        if shape not in {tuple(item[:3]) for item in allowed_shapes}:
+            raise ContractError("provenance execution shape is not supported by this contract")
     if require_attempt:
         document["attempt_id"] = _identifier(value["attempt_id"], "attempt_id")
         document["request_digest"] = _hex64(value["request_digest"], "request_digest")
@@ -1197,3 +1448,357 @@ def npu_timing_evidence_document(
                 raise ContractError("timing diagnostics must be scalar")
         document["diagnostics"] = dict(diagnostics)
     return document
+
+
+# -- P1 TimingEvidence version 2 -------------------------------------------
+#: Version 2 keeps the version-1 host/device split and adds the declared
+#: topology, the per-device spans and the buffer completeness that a
+#: completeness decision needs.  It is a *new* schema: version 1 (P0/P0b) is
+#: unchanged, so old evidence validates byte-for-byte as before.
+_NPU_V2_TOPOLOGY_FIELDS = frozenset({
+    "logical_devices", "declared_devices", "required_rank_spans", "required_die_spans",
+})
+_NPU_V2_SPAN_FIELDS = frozenset({"device_id", "rank", "die", "clock_domain", "elapsed_ns"})
+_NPU_V2_BUFFER_FIELDS = frozenset({
+    "flushed", "records_written", "records_delivered", "dropped", "overwritten",
+})
+_NPU_V2_EVIDENCE_FIELDS = frozenset({
+    "schema_id", "candidate_digest", "artifact_set_digest", "device_group", "topology",
+    "spans", "timing", "buffer", "measurement_kind", "publication_allowed", "complete",
+})
+MAX_EVIDENCE_SPANS = 64
+
+
+def _topology_document(value: Any) -> dict[str, Any]:
+    """Validate the declared topology an evidence row claims to cover."""
+
+    if not isinstance(value, Mapping) or set(value) != _NPU_V2_TOPOLOGY_FIELDS:
+        raise ContractError("timing evidence topology fields are missing or unknown")
+    logical_devices = _integer(
+        value["logical_devices"], "topology.logical_devices", 1, MAX_LOGICAL_DEVICES,
+    )
+    declared = value["declared_devices"]
+    if not isinstance(declared, (list, tuple)) or not declared or len(declared) > MAX_EVIDENCE_SPANS:
+        raise ContractError("topology.declared_devices must be a bounded non-empty array")
+    devices = [_identifier(item, "topology.declared_devices") for item in declared]
+    if len(set(devices)) != len(devices):
+        raise ContractError("topology.declared_devices must be unique")
+    if len(devices) != logical_devices:
+        raise ContractError("topology.declared_devices disagrees with logical_devices")
+    document: dict[str, Any] = {
+        "logical_devices": logical_devices,
+        "declared_devices": sorted(devices),
+    }
+    for name in ("required_rank_spans", "required_die_spans"):
+        raw = value[name]
+        document[name] = (
+            None if raw is None
+            else _integer(raw, f"topology.{name}", 1, MAX_DECLARED_SPANS)
+        )
+    return document
+
+
+def _span_documents(value: Any, topology: Mapping[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(value, (list, tuple)) or len(value) > MAX_EVIDENCE_SPANS:
+        raise ContractError("timing evidence spans must be a bounded array")
+    spans: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, Mapping) or set(item) != _NPU_V2_SPAN_FIELDS:
+            raise ContractError("timing evidence span fields are missing or unknown")
+        device_id = _identifier(item["device_id"], "span.device_id")
+        if device_id in seen:
+            raise ContractError("timing evidence reports a device span twice")
+        seen.add(device_id)
+        rank = item["rank"]
+        die = item["die"]
+        if rank is not None:
+            rank = _integer(rank, "span.rank", 0, MAX_DECLARED_SPANS - 1)
+        if die is not None:
+            die = _integer(die, "span.die", 0, MAX_DECLARED_SPANS - 1)
+        if topology["required_rank_spans"] is None and rank is not None:
+            # A vendor shape without a rank dimension must not invent ranks: the
+            # field is not required, and fabricating it would fake topology
+            # evidence the trusted profile never declared.
+            raise ContractError("a span must not report a rank the topology does not declare")
+        if topology["required_die_spans"] is None and die is not None:
+            raise ContractError("a span must not report a die the topology does not declare")
+        spans.append({
+            "device_id": device_id,
+            "rank": rank,
+            "die": die,
+            "clock_domain": _text(item["clock_domain"], "span.clock_domain", max_bytes=96),
+            "elapsed_ns": _integer(item["elapsed_ns"], "span.elapsed_ns", 0, _MAX_SAFE_INTEGER),
+        })
+    return spans
+
+
+def _buffer_document(value: Any) -> dict[str, Any] | None:
+    """Validate the optional profiler/event buffer completeness block."""
+
+    if value is None:
+        return None
+    if not isinstance(value, Mapping) or set(value) != _NPU_V2_BUFFER_FIELDS:
+        raise ContractError("timing evidence buffer fields are missing or unknown")
+    document = {
+        "flushed": _boolean(value["flushed"], "buffer.flushed"),
+        "records_written": _integer(value["records_written"], "buffer.records_written", 0, 1_000_000),
+        "records_delivered": _integer(
+            value["records_delivered"], "buffer.records_delivered", 0, 1_000_000,
+        ),
+        "dropped": _integer(value["dropped"], "buffer.dropped", 0, 1_000_000),
+        "overwritten": _integer(value["overwritten"], "buffer.overwritten", 0, 1_000_000),
+    }
+    return document
+
+
+def npu_timing_evidence_document_v2(
+    value: Any, *, source_bytes: bytes | bytearray | memoryview | None = None,
+    device_group: Mapping[str, Any] | None = None,
+    expected_artifact_set_digest: str | None = None,
+    expected_resources: Mapping[str, Any] | None = None,
+    measurement_kind: str | None = None,
+    publication_allowed: bool | None = None,
+    report_status: str | None = None,
+    dialect: ContractDialect = NPU_BUNDLE_DIALECT,
+) -> dict[str, Any]:
+    """Validate P1 TimingEvidence (schema version 2).
+
+    Completeness is decided by the *declared* topology, not by a fixed field
+    list: a single-device or service-style vendor with no rank/die dimension is
+    complete without rank/die spans, while a topology that declares them must
+    report every one.  A missing required span, an unknown clock domain, an
+    incomplete buffer or a contradictory aggregate makes the row diagnostic
+    only: ``complete=False`` and ``publication_allowed=False``.
+
+    Host launch time stays in ``host_api_elapsed_ns`` and is never used as the
+    device elapsed time.  ``device_elapsed_ns`` must equal the aggregate the
+    spans define, which is the slowest device span (the completion time of the
+    measurement, not an average).
+    """
+
+    if not isinstance(value, Mapping) or not _NPU_V2_EVIDENCE_FIELDS <= set(value):
+        raise ContractError("timing evidence fields are missing")
+    if set(value) - (_NPU_V2_EVIDENCE_FIELDS | {"diagnostics"}):
+        raise ContractError("timing evidence has unknown fields")
+    if value["schema_id"] != NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID:
+        raise ContractError("timing evidence schema_id is not supported by this contract version")
+    candidate = candidate_digest_document(
+        value["candidate_digest"], source_bytes=source_bytes,
+        allowed_algorithms=dialect.candidate_algorithms,
+    )
+    group = device_group_document(value["device_group"])
+    if device_group is not None and group != device_group_document(device_group):
+        raise ContractError("timing evidence device group differs from the accepted capability")
+    artifact_set_digest = value["artifact_set_digest"]
+    if candidate["algorithm"] == BUNDLE_DIGEST_ALGORITHM:
+        if not isinstance(artifact_set_digest, str):
+            raise ContractError("a bundle candidate requires artifact_set_digest evidence")
+        _hex64(artifact_set_digest, "artifact_set_digest")
+        if artifact_set_digest != candidate["value"]:
+            raise ContractError("artifact_set_digest differs from the candidate digest")
+    elif artifact_set_digest is not None:
+        raise ContractError("an inline source candidate must not claim an artifact_set_digest")
+    if (
+        expected_artifact_set_digest is not None
+        and artifact_set_digest != expected_artifact_set_digest
+    ):
+        raise ContractError("timing evidence artifact_set_digest differs from the accepted artifact")
+    topology = _topology_document(value["topology"])
+    if expected_resources is not None:
+        declared = device_group_requirements(expected_resources)
+        if topology["logical_devices"] != declared["logical_devices"] or (
+            topology["required_rank_spans"] != declared["required_rank_spans"]
+            or topology["required_die_spans"] != declared["required_die_spans"]
+        ):
+            raise ContractError(
+                "timing evidence topology differs from the declared execution resources"
+            )
+    spans = _span_documents(value["spans"], topology)
+    complete = _boolean(value["complete"], "complete")
+    timing = value["timing"]
+    if not isinstance(timing, Mapping) or set(timing) != _NPU_TIMING_FIELDS:
+        raise ContractError("timing fields are missing or unknown")
+    source = _text(timing["source"], "timing.source", max_bytes=32)
+    if source not in _NPU_BUNDLE_TIMING_SOURCES:
+        raise ContractError("P1 timing source must be DEVICE_EVENT")
+    clock_domain = _text(timing["clock_domain"], "timing.clock_domain", max_bytes=96)
+    synchronized = _boolean(timing["synchronization_completed"], "timing.synchronization_completed")
+    device_elapsed = _integer(timing["device_elapsed_ns"], "timing.device_elapsed_ns", 0, _MAX_SAFE_INTEGER)
+    host_elapsed = _integer(timing["host_api_elapsed_ns"], "timing.host_api_elapsed_ns", 0, _MAX_SAFE_INTEGER)
+    launches = _integer(timing["launches"], "timing.launches", 0, 1_000_000)
+    kind = value["measurement_kind"]
+    if kind not in _MEASUREMENT_KINDS:
+        raise ContractError("timing evidence measurement_kind is invalid")
+    publish = _boolean(value["publication_allowed"], "publication_allowed")
+    buffer_document = _buffer_document(value["buffer"])
+    if kind == "simulated" and publish:
+        raise ContractError("simulated timing evidence cannot be publishable")
+    if complete:
+        if not synchronized:
+            raise ContractError("timing evidence requires completed synchronization")
+        if launches < 1:
+            raise ContractError("completed timing evidence requires at least one launch")
+        if device_elapsed <= 0:
+            raise ContractError("completed timing evidence requires a positive device elapsed time")
+        if clock_domain == NPU_UNOBSERVED_CLOCK_DOMAIN:
+            raise ContractError("completed timing evidence requires an observed clock domain")
+        if [span["device_id"] for span in spans] != topology["declared_devices"]:
+            missing = sorted(
+                set(topology["declared_devices"]) - {span["device_id"] for span in spans}
+            )
+            raise ContractError(
+                "completed timing evidence is missing a declared device span: "
+                + (",".join(missing) or "duplicate/unknown span")
+            )
+        for span in spans:
+            if span["clock_domain"] == NPU_UNOBSERVED_CLOCK_DOMAIN:
+                raise ContractError("a completed span requires an observed clock domain")
+            if span["clock_domain"] != clock_domain:
+                raise ContractError("all spans of one measurement must share the reported clock domain")
+        aggregate = max(span["elapsed_ns"] for span in spans)
+        if aggregate != device_elapsed:
+            raise ContractError(
+                "device_elapsed_ns is not the aggregate of the declared device spans "
+                f"({device_elapsed} vs {aggregate})"
+            )
+        required_ranks = topology["required_rank_spans"]
+        if required_ranks is not None:
+            ranks = {span["rank"] for span in spans}
+            if None in ranks or ranks != set(range(required_ranks)):
+                raise ContractError(
+                    "completed timing evidence is missing a declared rank span"
+                )
+            if len(spans) % required_ranks:
+                raise ContractError("span count does not cover the declared rank shape")
+        required_dies = topology["required_die_spans"]
+        if required_dies is not None:
+            dies = {span["die"] for span in spans}
+            if None in dies or dies != set(range(required_dies)):
+                raise ContractError(
+                    "completed timing evidence is missing a declared die span"
+                )
+        if buffer_document is not None:
+            if not buffer_document["flushed"]:
+                raise ContractError("completed timing evidence requires a flushed buffer")
+            if buffer_document["dropped"] or buffer_document["overwritten"]:
+                raise ContractError("completed timing evidence requires an intact buffer")
+            if buffer_document["records_delivered"] < buffer_document["records_written"]:
+                raise ContractError("completed timing evidence requires every record to be delivered")
+    else:
+        # No device event was observed, or the observation is incomplete: the
+        # row may only be diagnostic.
+        if synchronized:
+            raise ContractError("incomplete timing evidence cannot claim completed synchronization")
+        if launches or device_elapsed:
+            raise ContractError("incomplete timing evidence cannot report device time or a launch")
+        if clock_domain != NPU_UNOBSERVED_CLOCK_DOMAIN:
+            raise ContractError("incomplete timing evidence must name the unobserved clock domain")
+        if publish:
+            raise ContractError("incomplete timing evidence cannot be publishable")
+    if measurement_kind is not None and kind != measurement_kind:
+        raise ContractError("timing evidence measurement kind differs from provenance")
+    if publication_allowed is not None and publish != publication_allowed and complete:
+        raise ContractError("timing evidence publication permission differs from provenance")
+    if report_status is not None:
+        if report_status == "ok" and not complete:
+            raise ContractError("an ok report requires completed device timing evidence")
+        if report_status == "timeout" and complete:
+            raise ContractError("a timeout report cannot claim a completed device event")
+    document: dict[str, Any] = {
+        "schema_id": NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
+        "candidate_digest": candidate,
+        "artifact_set_digest": artifact_set_digest,
+        "device_group": group,
+        "topology": topology,
+        "spans": spans,
+        "timing": {
+            "source": source,
+            "clock_domain": clock_domain,
+            "synchronization_completed": synchronized,
+            "device_elapsed_ns": device_elapsed,
+            "host_api_elapsed_ns": host_elapsed,
+            "launches": launches,
+        },
+        "buffer": buffer_document,
+        "measurement_kind": kind,
+        "publication_allowed": publish,
+        "complete": complete,
+    }
+    if "diagnostics" in value:
+        document["diagnostics"] = _npu_diagnostics(value["diagnostics"])
+    return document
+
+
+def device_group_requirements(value: Any) -> dict[str, Any]:
+    """Normalize the declared resource requirements of an execution spec."""
+
+    if not isinstance(value, Mapping) or set(value) != _NPU_RESOURCE_FIELDS:
+        raise ContractError("execution.resources fields are missing or unknown")
+    declared: dict[str, Any] = {
+        "logical_devices": _integer(
+            value["logical_devices"], "execution.resources.logical_devices", 1, MAX_LOGICAL_DEVICES,
+        ),
+    }
+    for name in ("required_rank_spans", "required_die_spans"):
+        raw = value[name]
+        declared[name] = (
+            None if raw is None else _integer(raw, f"execution.resources.{name}", 1, MAX_DECLARED_SPANS)
+        )
+    return declared
+
+
+def _npu_diagnostics(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or len(value) > 32:
+        raise ContractError("timing diagnostics must be a bounded object")
+    document: dict[str, Any] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key or not key.isascii() or len(key) > 64:
+            raise ContractError("timing diagnostic key is invalid")
+        if isinstance(item, str):
+            document[key] = _text(item, "timing diagnostic", max_bytes=512, empty=True)
+        elif isinstance(item, bool):
+            document[key] = item
+        elif isinstance(item, int):
+            if not -_MAX_SAFE_INTEGER <= item <= _MAX_SAFE_INTEGER:
+                raise ContractError("timing diagnostic integer is unsafe")
+            document[key] = item
+        elif item is None:
+            document[key] = None
+        else:
+            raise ContractError("timing diagnostics must be scalar")
+    return document
+
+
+def npu_evidence_document(
+    value: Any, *, dialect: ContractDialect, source_bytes: bytes | bytearray | memoryview | None = None,
+    device_group: Mapping[str, Any] | None = None,
+    expected_artifact_set_digest: str | None = None,
+    expected_resources: Mapping[str, Any] | None = None,
+    measurement_kind: str | None = None,
+    publication_allowed: bool | None = None,
+    report_status: str | None = None,
+) -> dict[str, Any]:
+    """Validate TimingEvidence with the schema the contract version defines.
+
+    One dispatch point keeps the version-1 (P0/P0b) and version-2 (P1) schemas
+    from drifting apart at the four places that validate a result: the job
+    store's durable read and worker-result paths, the host outbox and the gRPC
+    client.
+    """
+
+    if dialect.npu_bundle:
+        return npu_timing_evidence_document_v2(
+            value, source_bytes=source_bytes, device_group=device_group,
+            expected_artifact_set_digest=expected_artifact_set_digest,
+            expected_resources=expected_resources,
+            measurement_kind=measurement_kind, publication_allowed=publication_allowed,
+            report_status=report_status, dialect=dialect,
+        )
+    if expected_artifact_set_digest is not None or expected_resources is not None:
+        raise ContractError("this contract version has no artifact set or resource requirements")
+    return npu_timing_evidence_document(
+        value, source_bytes=source_bytes, device_group=device_group,
+        measurement_kind=measurement_kind, publication_allowed=publication_allowed,
+        report_status=report_status, dialect=dialect,
+    )

@@ -1217,10 +1217,18 @@ class JobStore:
             try:
                 evidence_document = _loads(result.evidence)
                 report_status = _loads(result.report).get("status")
-                contracts.npu_timing_evidence_document(
+                contracts.npu_evidence_document(
                     evidence_document,
                     source_bytes=None,
                     device_group=receipt["device_group"],
+                    expected_artifact_set_digest=(
+                        candidate["value"]
+                        if dialect.npu_bundle and candidate["algorithm"] == contracts.BUNDLE_DIGEST_ALGORITHM
+                        else None
+                    ),
+                    expected_resources=(
+                        execution["resources"] if dialect.npu_bundle else None
+                    ),
                     measurement_kind=provenance["measurement_kind"],
                     publication_allowed=provenance["publication_allowed"],
                     report_status=report_status,
@@ -1441,13 +1449,17 @@ class JobStore:
             if depth >= self.max_queue_depth:
                 raise JobError("resource_exhausted", "device queue depth limit is exhausted")
             request_json = _json(request.without_source())
-            self._ensure_db_capacity(len(request.source) + len(request_json.encode("utf-8")) + 8192)
+            # The persisted artifact bytes are the inline source, or the bundle's
+            # canonical entry payload; both live in the same column so a bundle
+            # is restored (and cleaned up) exactly like a source candidate.
+            artifact_bytes = request.artifact_bytes
+            self._ensure_db_capacity(len(artifact_bytes) + len(request_json.encode("utf-8")) + 8192)
             conn.execute("""
                 INSERT INTO jobs(request_id,request_digest,request_json,source,state,expected_json,provenance_json,
                   evaluator_epoch,api_contract_id,evidence_contract_id,grant_subject,grant_scope_id,grant_scope_json,
                   capability_id,accepted_at_ms,updated_at_ms,last_sequence)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
-            """, (request.request_id, request_digest, request_json, sqlite3.Binary(request.source),
+            """, (request.request_id, request_digest, request_json, sqlite3.Binary(artifact_bytes),
                   "accepted", _json(expected.to_dict()), _json(provenance), expected.evaluator.evaluator_epoch,
                   expected.api_contract_id, expected.evidence_contract_id, grant["subject"], grant["scope_id"],
                   grant["scope_json"], capability_id, now, now))
@@ -2225,13 +2237,26 @@ class JobStore:
             if not isinstance(evidence, dict):
                 raise JobError("invalid_argument", "NPU worker result requires timing evidence")
             try:
-                contracts.npu_timing_evidence_document(
+                contracts.npu_evidence_document(
                     evidence,
-                    # A blob candidate's bytes never entered the request; its
-                    # digest was verified by the blob channel at commit and the
-                    # candidate digest is compared below against the request.
-                    source_bytes=None if request.blob is not None else request.source,
+                    # A blob or bundle candidate's bytes never entered the
+                    # request; their digest was verified by the channel or the
+                    # bundle manifest and the candidate digest is compared below
+                    # against the request.
+                    source_bytes=(
+                        request.source if request.npu.artifact_form == "source" else None
+                    ),
                     device_group=request.npu.execution.device_group.to_dict(),
+                    expected_artifact_set_digest=(
+                        request.npu.candidate_digest.value
+                        if self.contract.npu_bundle
+                        and request.npu.candidate_digest.algorithm == contracts.BUNDLE_DIGEST_ALGORITHM
+                        else None
+                    ),
+                    expected_resources=(
+                        request.npu.execution.declared_resources.to_dict()
+                        if self.contract.npu_bundle else None
+                    ),
                     measurement_kind=provenance.get("measurement_kind"),
                     publication_allowed=provenance.get("publication_allowed"),
                     report_status=report.get("status"),

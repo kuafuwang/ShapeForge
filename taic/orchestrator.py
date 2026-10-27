@@ -1530,17 +1530,23 @@ class Orchestrator:
                 evidence = result.evidence
                 npu_contract = bool(self._outbox is not None and self._outbox.npu_contract)
                 if npu_contract:
-                    blob_contract = bool(self._outbox.dialect.npu_blob)
-                    if blob_contract and not request.wire_candidate_digest:
-                        # A blob candidate has no inline bytes, so there is no host
-                        # digest to compare against: the wire CandidateDigest is the
-                        # only identity, and a missing one must fail closed.
+                    artifact_contract = bool(
+                        self._outbox.dialect.npu_blob or self._outbox.dialect.npu_bundle
+                    )
+                    if artifact_contract and not request.wire_candidate_digest:
+                        # A blob or bundle candidate has no inline bytes, so there
+                        # is no host digest to compare against: the wire
+                        # CandidateDigest is the only identity, and a missing one
+                        # must fail closed.
                         raise EvaluationUnavailable(
                             "request_digest_missing",
-                            "the blob result requires the bound wire CandidateDigest",
+                            "the artifact result requires the bound wire CandidateDigest",
                         )
                     expected = {
-                        "algorithm": self._outbox.dialect.candidate_algorithms[0],
+                        "algorithm": (
+                            request.wire_candidate_algorithm
+                            or self._outbox.dialect.candidate_algorithms[0]
+                        ),
                         "value": request.wire_candidate_digest or request.candidate_sha256,
                     }
                     candidate = evidence.get("candidate_digest") if isinstance(evidence, dict) else None

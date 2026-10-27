@@ -26,6 +26,7 @@ MAX_SOURCE_BYTES = 1_000_000
 MAX_TIMEOUT_S = 3_600.0
 MAX_REPS = 10_000
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
+_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _KINDS = frozenset({"formal_eval", "selfcheck"})
 _CACHE_POLICIES = frozenset({"reuse", "refresh", "disabled"})
@@ -100,6 +101,11 @@ class EvaluationRequest:
     # Empty keeps the historical ``sha256(source)`` identity, and this field
     # never enters ``to_dict``/the legacy digest.
     wire_candidate_digest: str = ""
+    # Host-only CandidateDigest *algorithm* for the same value.  The bundle
+    # contract has two artifact branches with different algorithms, so neither
+    # the contract nor the value identifies it; empty keeps the historical
+    # ``sha256``/``sha256-blob-v1`` choice from the contract identity.
+    wire_candidate_algorithm: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, str):
@@ -155,6 +161,11 @@ class EvaluationRequest:
             # A blob candidate only makes sense on the contract that binds its
             # descriptor; a bare candidate digest would be an unreviewed identity.
             raise EvaluationError("wire_candidate_digest requires the contract_request_digest identity")
+        if self.wire_candidate_algorithm and not _IDENTIFIER.fullmatch(self.wire_candidate_algorithm):
+            # The algorithm may be bound before (or without) a value: the durable
+            # outbox is what refuses an artifact candidate with no digest, so this
+            # field stays a plain host-side annotation.
+            raise EvaluationError("wire_candidate_algorithm must be a bounded identifier")
 
     @property
     def kernel_source(self) -> str:
@@ -342,7 +353,10 @@ def validate_receipt(result: EvaluationResult, request: EvaluationRequest) -> st
         # A blob candidate's digest is the uploaded artifact's, bound by the host
         # composition root (``wire_candidate_digest``); the inline candidate keeps
         # the original sha256(source) identity and algorithm.
-        expected_algorithm = "sha256-blob-v1" if request.wire_candidate_digest else "sha256"
+        expected_algorithm = (
+            "sha256-blob-v1" if request.wire_candidate_digest and not request.wire_candidate_algorithm
+            else request.wire_candidate_algorithm or "sha256"
+        )
         expected_value = request.wire_candidate_digest or request.candidate_sha256
         if (
             not isinstance(candidate, dict)

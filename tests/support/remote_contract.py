@@ -226,3 +226,241 @@ def write_blob_golden(path: Path | None = None) -> Path:
         json.dumps(build_blob_golden(), indent=2, sort_keys=True) + "\n", encoding="utf-8",
     )
     return target
+
+
+# -- P1 bundle contract vector --------------------------------------------
+BUNDLE_GOLDEN = SUPPORT / "golden" / "remote" / "npu_bundle_v4.json"
+BUNDLE_REQUEST_ID = "bundle-golden-1"
+BUNDLE_ATTEMPT_ID = "attempt-9-golden"
+BUNDLE_LEASE_FENCE = "9"
+BUNDLE_SESSION_SEQUENCE = "2"
+BUNDLE_ISSUED_AT = "2026-10-29T00:00:00Z"
+BUNDLE_KEY_ID = "npu-bundle-site/key-1"
+BUNDLE_KEY = b"k" * 32
+BUNDLE_DEVICE_ELAPSED_NS = 1_250_000
+BUNDLE_HOST_ELAPSED_NS = 2_500_000
+BUNDLE_CLOCK_DOMAIN = "vendor-b-service-clock-v1"
+BUNDLE_DEVICE_GROUP = {
+    "device_group_id": "vendor-b-group-0",
+    "vendor_id": "vendor-b",
+    "profile_digest": "1" * 64,
+    "topology_digest": "2" * 64,
+    "resource_generation": "1",
+}
+BUNDLE_ENTRIES = (
+    ("graph/main.json", "GRAPH_DEFINITION", "application/json",
+     b'{"schema":"fake-graph-v1","nodes":[{"op":"matmul"},{"op":"relu"}]}\n'),
+    ("graph/params.bin", "PARAMETER_TABLE", "application/octet-stream",
+     bytes(range(256)) * 4),
+)
+
+
+def load_bundle_golden() -> dict[str, Any]:
+    return json.loads(BUNDLE_GOLDEN.read_text(encoding="utf-8"))
+
+
+def build_bundle_golden() -> dict[str, Any]:
+    """Return the complete P1 bundle contract vector.
+
+    It is built from the production functions so the Python test detects drift,
+    while the independent Go verifier rebuilds every document from the raw
+    fields (manifest, request, receipt, result signature).
+    """
+
+    from tcenv.remote.artifact_bundle import (
+        BUNDLE_SCHEMA_ID,
+        ArtifactBundle,
+        BundleEntry,
+        canonical_manifest,
+    )
+
+    entries = [
+        BundleEntry(
+            path=path, role=role, media_type=media_type, size_bytes=len(data),
+            sha256=hashlib.sha256(data).hexdigest(), data=data,
+        )
+        for path, role, media_type, data in BUNDLE_ENTRIES
+    ]
+    bundle = ArtifactBundle(entries=tuple(entries))
+    artifact_set = bundle.artifact_set_digest
+    execution = {
+        "schema_id": contracts.NPU_BUNDLE_EXECUTION_SCHEMA_ID,
+        "task_family": "graph",
+        "artifact_kind": "bundle",
+        "launch_kind": "GRAPH",
+        "launch_subtype": "SERVICE",
+        "source_media_type": "application/octet-stream",
+        "device_group": dict(BUNDLE_DEVICE_GROUP),
+        "resources": {
+            "logical_devices": 1,
+            "required_rank_spans": None,
+            "required_die_spans": None,
+        },
+        "required_timing_sources": ["DEVICE_EVENT"],
+        "synchronization": "service-completion-token",
+    }
+    request = {
+        "kind": "formal_eval",
+        "run_id": "golden-run",
+        "session_id": "golden-session",
+        "task": "relu",
+        "dtype": "fp16",
+        "size": "small",
+        "target_id": "sim-npu-graph",
+        "task_fingerprint": "d" * 64,
+        "candidate_digest": {"algorithm": contracts.BUNDLE_DIGEST_ALGORITHM, "value": artifact_set},
+        "execution": execution,
+        "artifact": {"bundle": bundle.to_dict()},
+        "mode": "quick",
+        "seed": "3",
+        "reps": 2,
+        "queue_timeout_ms": 3000,
+        "candidate_timeout_ms": 3000,
+        "cases": None,
+        "fast_bench": False,
+        "require_contract_launch": False,
+        "validate": False,
+        "measure_serial": False,
+        "cache_policy": "reuse",
+    }
+    request_document = contracts.request_digest_document(
+        request, source_bytes=b"", dialect=contracts.NPU_BUNDLE_DIALECT,
+    )
+    request_digest = contracts.request_digest(
+        request, source_bytes=b"", dialect=contracts.NPU_BUNDLE_DIALECT,
+    )
+    receipt = {
+        "receipt_id": contracts.attempt_receipt_id(
+            request_id=BUNDLE_REQUEST_ID, attempt_id=BUNDLE_ATTEMPT_ID,
+            request_digest=request_digest, candidate_digest=request["candidate_digest"],
+            device_group=BUNDLE_DEVICE_GROUP, dialect=contracts.NPU_BUNDLE_DIALECT,
+        ),
+        "request_id": BUNDLE_REQUEST_ID,
+        "attempt_id": BUNDLE_ATTEMPT_ID,
+        "request_digest": request_digest,
+        "lease_fence": BUNDLE_LEASE_FENCE,
+        "session_sequence": BUNDLE_SESSION_SEQUENCE,
+        "issued_at": BUNDLE_ISSUED_AT,
+        "candidate_digest": request["candidate_digest"],
+        "device_group": dict(BUNDLE_DEVICE_GROUP),
+    }
+    receipt_document = contracts.receipt_id_document(
+        request_id=BUNDLE_REQUEST_ID, attempt_id=BUNDLE_ATTEMPT_ID,
+        request_digest=request_digest, candidate_digest=request["candidate_digest"],
+        device_group=BUNDLE_DEVICE_GROUP, dialect=contracts.NPU_BUNDLE_DIALECT,
+    )
+    provenance = {
+        "schema_version": 1,
+        "evaluator_epoch": "e" * 64,
+        "site_id": "sim-npu-site",
+        "device_id": "sim-npu-graph-device",
+        "backend": "vendor-b",
+        "backend_version": "1",
+        "target_id": "sim-npu-graph",
+        "worker_build": "fake-vendor-b-worker-1",
+        "task_pack_digest": "f" * 64,
+        "calibration_digest": "c" * 64,
+        "protocol_version": "3",
+        "api_contract_id": contracts.NPU_BUNDLE_API_CONTRACT_ID,
+        "evidence_contract_id": contracts.NPU_BUNDLE_EVIDENCE_CONTRACT_ID,
+        "measurement_kind": "simulated",
+        "publication_allowed": False,
+        "device_group": dict(BUNDLE_DEVICE_GROUP),
+        "artifact_kind": "bundle",
+        "launch_kind": "GRAPH",
+        "launch_subtype": "SERVICE",
+        "timing_sources": ["DEVICE_EVENT"],
+        "attempt_id": BUNDLE_ATTEMPT_ID,
+        "request_digest": request_digest,
+    }
+    report = (b'{"status":"ok","simulated":true,"candidate_us":%d}'
+              % (BUNDLE_DEVICE_ELAPSED_NS // 1000))
+    evidence_document = {
+        "schema_id": contracts.NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
+        "candidate_digest": request["candidate_digest"],
+        "artifact_set_digest": artifact_set,
+        "device_group": dict(BUNDLE_DEVICE_GROUP),
+        "topology": {
+            "logical_devices": 1,
+            "declared_devices": ["device-0"],
+            "required_rank_spans": None,
+            "required_die_spans": None,
+        },
+        "spans": [{
+            "device_id": "device-0", "rank": None, "die": None,
+            "clock_domain": BUNDLE_CLOCK_DOMAIN, "elapsed_ns": BUNDLE_DEVICE_ELAPSED_NS,
+        }],
+        "timing": {
+            "source": "DEVICE_EVENT", "clock_domain": BUNDLE_CLOCK_DOMAIN,
+            "synchronization_completed": True,
+            "device_elapsed_ns": BUNDLE_DEVICE_ELAPSED_NS,
+            "host_api_elapsed_ns": BUNDLE_HOST_ELAPSED_NS,
+            "launches": 1,
+        },
+        "buffer": None,
+        "measurement_kind": "simulated",
+        "publication_allowed": False,
+        "complete": True,
+    }
+    evidence = json.dumps(
+        evidence_document, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    unsigned = {
+        "provenance": provenance,
+        "report": _descriptor(report, schema_id="tcenv.eval-report.v3", media_type="application/json"),
+        "evidence": _descriptor(
+            evidence, schema_id=contracts.NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
+            media_type=contracts.NPU_BUNDLE_EVIDENCE_MEDIA_TYPE,
+        ),
+        "receipt": receipt,
+    }
+    signature_document = contracts.result_signature_document(
+        unsigned, key_id=BUNDLE_KEY_ID, dialect=contracts.NPU_BUNDLE_DIALECT,
+    )
+    signature = contracts.sign_result(
+        unsigned, key_id=BUNDLE_KEY_ID, key=BUNDLE_KEY, dialect=contracts.NPU_BUNDLE_DIALECT,
+    )
+    return {
+        "schema_id": "tcenv.remote.npu-bundle.contract-golden.1",
+        "npu_bundle": {
+            "request": request,
+            "bundle_manifest": canonical_manifest(
+                BUNDLE_SCHEMA_ID, [entry.manifest() for entry in bundle.entries],
+            ),
+            "artifact_set_digest": artifact_set,
+            "request_digest_document": request_document,
+            "request_canonical_json": contracts.canonical_digest_document(request_document).decode("utf-8"),
+            "request_digest": request_digest,
+            "receipt": {
+                "request_id": BUNDLE_REQUEST_ID,
+                "attempt_id": BUNDLE_ATTEMPT_ID,
+                "document": receipt_document,
+                "canonical_json": contracts.canonical_digest_document(receipt_document).decode("utf-8"),
+                "receipt_id": receipt["receipt_id"],
+            },
+            "evidence": evidence_document,
+            "signature": {
+                "key_id": BUNDLE_KEY_ID,
+                "key_hex": BUNDLE_KEY.hex(),
+                "report_base64": base64.b64encode(report).decode("ascii"),
+                "evidence_base64": base64.b64encode(evidence).decode("ascii"),
+                "unsigned_result": contracts.result_signature_document(
+                    unsigned, key_id=BUNDLE_KEY_ID, dialect=contracts.NPU_BUNDLE_DIALECT,
+                ),
+                "document": signature_document,
+                "canonical_json": contracts.canonical_digest_document(signature_document).decode("utf-8"),
+                "hmac_sha256": signature,
+            },
+        },
+    }
+
+
+def write_bundle_golden(path: Path | None = None) -> Path:
+    """Write the P1 vector (fixture maintenance only; the test never records)."""
+
+    target = path or BUNDLE_GOLDEN
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(build_bundle_golden(), indent=2, sort_keys=True) + "\n", encoding="utf-8",
+    )
+    return target

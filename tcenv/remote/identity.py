@@ -177,9 +177,15 @@ class ServiceIdentity:
                 raise ValueError("NPU provenance requires the NPU evidence contract")
             if not isinstance(npu_execution, Mapping):
                 raise ValueError("NPU provenance requires a validated execution binding")
-            from .contracts import npu_execution_document
+            from .contracts import dialect_for, npu_bundle_execution_document, npu_execution_document
 
-            execution = npu_execution_document(npu_execution)
+            # The document version follows the contract, never the shape of the
+            # mapping: a version 4 execution spec is validated by its own schema.
+            execution = (
+                npu_bundle_execution_document(npu_execution)
+                if dialect_for(api_contract_id).npu_bundle
+                else npu_execution_document(npu_execution)
+            )
             document["device_group"] = execution["device_group"]
             document["artifact_kind"] = execution["artifact_kind"]
             document["launch_kind"] = execution["launch_kind"]

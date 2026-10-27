@@ -26,6 +26,11 @@ class VendorFacts:
     topology_digest: str
     resource_generation: str
     logical_devices: int = 1
+    #: Rank/die dimensions of the trusted profile.  0 means the vendor shape has
+    #: no such dimension (a graph/service vendor); an agent can then never
+    #: demand rank or die evidence, and evidence that invents one is refused.
+    ranks: int = 0
+    dies: int = 0
     driver_version: str = ""
     firmware_version: str = ""
     runtime_version: str = ""
@@ -95,8 +100,10 @@ class VendorDriver(Protocol):
     vendor_id: str
 
     def prepare(
-        self, spec: Any, source: bytes, attempt_context: Mapping[str, Any],
+        self, spec: Any, artifact: Any, attempt_context: Mapping[str, Any],
     ) -> PreparedAttempt: ...
+    #: ``artifact`` is the exact source bytes for the inline-source shape, or the
+    #: typed ArtifactBundle for the artifact-set shape.  It is never a path.
 
     def execute(
         self, prepared: PreparedAttempt, *, deadline_monotonic: float,

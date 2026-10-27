@@ -25,13 +25,18 @@ from tcenv.remote.contracts import (
     candidate_digest_document,
     device_group_document,
     dialect_for,
+    npu_evidence_document,
     npu_report_timing_check,
-    npu_timing_evidence_document,
     receipt_document,
 )
 
 from .control import write_json_atomic
 from .redact import redact_text
+
+#: CandidateDigest algorithm of an artifact set (bundle contract).
+BUNDLE_ALGORITHM = "sha256-bundle-v1"
+#: TimingEvidence schema of the P1 bundle contract (version 2).
+BUNDLE_EVIDENCE_SCHEMA_ID = "tcenv.remote.npu-bundle.timing-evidence.2"
 
 
 def bind_wire_digest(
@@ -64,11 +69,30 @@ def bind_wire_digest(
     candidate = "" if not callable(candidate_wire) else candidate_wire(request)
     if candidate and not isinstance(candidate, str):
         raise EvaluationUnavailable("request_digest_missing", "evaluator returned an invalid wire CandidateDigest")
+    algorithm_wire = getattr(evaluator, "wire_candidate_algorithm", None)
+    algorithm = "" if not callable(algorithm_wire) else algorithm_wire(request)
+    if algorithm and not isinstance(algorithm, str):
+        raise EvaluationUnavailable(
+            "request_digest_missing", "evaluator returned an invalid wire CandidateDigest algorithm"
+        )
+    if algorithm and not candidate:
+        raise EvaluationUnavailable(
+            "request_digest_missing", "a wire CandidateDigest algorithm requires its value"
+        )
+    if request.wire_candidate_algorithm and algorithm and algorithm != request.wire_candidate_algorithm:
+        raise EvaluationUnavailable(
+            "request_digest_mismatch",
+            "the bound wire CandidateDigest algorithm differs from the evaluator's candidate",
+        )
+    bound_algorithm = request.wire_candidate_algorithm or algorithm
     dialect = getattr(evaluator, "contract", None)
     blob_contract = bool(getattr(dialect, "npu_blob", False)) or bool(
         outbox is not None and outbox.dialect.npu_blob
     )
-    if blob_contract:
+    bundle_contract = bool(getattr(dialect, "npu_bundle", False)) or bool(
+        outbox is not None and outbox.dialect.npu_bundle
+    )
+    if blob_contract or bundle_contract:
         # The blob contract can never fall back to `candidate_sha256` (that is the
         # empty host source).  Check an already-bound candidate *before* the first
         # binding, so a changed evaluator candidate is refused instead of silently
@@ -76,14 +100,22 @@ def bind_wire_digest(
         if not candidate:
             raise EvaluationUnavailable(
                 "request_digest_missing",
-                "the blob contract requires an evaluator CandidateDigest",
+                "the blob/bundle contract requires an evaluator CandidateDigest",
+            )
+        if bundle_contract and not bound_algorithm:
+            raise EvaluationUnavailable(
+                "request_digest_missing",
+                "the bundle contract requires an evaluator CandidateDigest algorithm",
             )
         if request.wire_candidate_digest and candidate != request.wire_candidate_digest:
             raise EvaluationUnavailable(
                 "request_digest_mismatch",
                 "the bound wire CandidateDigest differs from the evaluator's candidate",
             )
-        return replace(request, contract_request_digest=digest, wire_candidate_digest=candidate)
+        return replace(
+            request, contract_request_digest=digest, wire_candidate_digest=candidate,
+            wire_candidate_algorithm=bound_algorithm,
+        )
     if request.wire_candidate_digest:
         if candidate and candidate != request.wire_candidate_digest:
             raise EvaluationUnavailable(
@@ -173,6 +205,15 @@ class EvaluationOutbox:
                 raise ValueError("evaluation receipt index is not a string map")
             self._receipts = document
 
+    @property
+    def evidence_schema_id(self) -> str:
+        """The TimingEvidence schema this contract version signs."""
+
+        return (
+            BUNDLE_EVIDENCE_SCHEMA_ID if self.dialect.npu_bundle
+            else NPU_TIMING_EVIDENCE_SCHEMA_ID
+        )
+
     def _key(self, request_id: str) -> str:
         return hashlib.sha256(request_id.encode("utf-8")).hexdigest()
 
@@ -217,13 +258,21 @@ class EvaluationOutbox:
         a blob nobody uploaded.
         """
 
-        if self.dialect.npu_blob and not request.wire_candidate_digest:
+        if (self.dialect.npu_blob or self.dialect.npu_bundle) and not request.wire_candidate_digest:
             raise EvaluationUnavailable(
                 "request_digest_missing",
-                "the blob outbox requires the wire CandidateDigest; bind it from the "
-                "uploaded descriptor before begin/complete/unavailable",
+                "the artifact outbox requires the wire CandidateDigest; bind it from the "
+                "uploaded descriptor or the bundle manifest before begin/complete/unavailable",
             )
-        algorithm = self.dialect.candidate_algorithms[0]
+        if self.dialect.npu_bundle and not request.wire_candidate_algorithm:
+            # Two artifact branches share this contract, so the algorithm is the
+            # only thing that separates an inline source from an artifact set.
+            # Guessing it from the value would let a rewritten candidate pass.
+            raise EvaluationUnavailable(
+                "request_digest_missing",
+                "the bundle outbox requires the wire CandidateDigest algorithm",
+            )
+        algorithm = request.wire_candidate_algorithm or self.dialect.candidate_algorithms[0]
         value = request.wire_candidate_digest or request.candidate_sha256
         try:
             return candidate_digest_document(
@@ -341,7 +390,7 @@ class EvaluationOutbox:
             candidate = wire["candidate_digest"]
             receipt_group = wire["device_group"]
             evidence = result.evidence
-            if not isinstance(evidence, dict) or evidence.get("schema_id") != NPU_TIMING_EVIDENCE_SCHEMA_ID:
+            if not isinstance(evidence, dict) or evidence.get("schema_id") != self.evidence_schema_id:
                 raise EvaluationUnavailable("evidence_mismatch", "outbox NPU result has no timing evidence")
             if evidence.get("candidate_digest") != candidate:
                 raise EvaluationUnavailable("evidence_mismatch", "outbox NPU evidence CandidateDigest differs from receipt")
@@ -353,12 +402,22 @@ class EvaluationOutbox:
                 )
             report = result.report if isinstance(result.report, dict) else {}
             try:
-                npu_timing_evidence_document(
+                npu_evidence_document(
                     evidence,
-                    # A blob candidate has no inline bytes to rehash here; its
-                    # digest is bound by the receipt/row comparison above.
-                    source_bytes=None if self.dialect.npu_blob else request.source_bytes,
+                    # A blob or bundle candidate has no inline bytes to rehash
+                    # here; its digest is bound by the receipt/row comparison
+                    # above.  The host does not have the execution resources, so
+                    # the topology-versus-execution check stays in the frontend.
+                    source_bytes=(
+                        None if (self.dialect.npu_blob or self.dialect.npu_bundle)
+                        else request.source_bytes
+                    ),
                     device_group=receipt_group,
+                    expected_artifact_set_digest=(
+                        candidate["value"]
+                        if self.dialect.npu_bundle
+                        and candidate["algorithm"] == BUNDLE_ALGORITHM else None
+                    ),
                     report_status=report.get("status"),
                     dialect=self.dialect,
                 )
@@ -456,7 +515,7 @@ class EvaluationOutbox:
                         raise EvaluationUnavailable("outbox_corrupt", str(exc)) from exc
                     if (
                         not isinstance(evidence, dict)
-                        or evidence.get("schema_id") != NPU_TIMING_EVIDENCE_SCHEMA_ID
+                        or evidence.get("schema_id") != self.evidence_schema_id
                         or evidence.get("candidate_digest") != candidate
                     ):
                         raise EvaluationUnavailable("outbox_corrupt", "completed NPU result evidence does not match")
@@ -545,7 +604,7 @@ class EvaluationOutbox:
             detail = ""
             if not request.contract_request_digest:
                 detail = "the NPU outbox row is not keyed by the wire request digest"
-            elif self.dialect.npu_blob and not request.wire_candidate_digest:
+            elif (self.dialect.npu_blob or self.dialect.npu_bundle) and not request.wire_candidate_digest:
                 detail = "the blob outbox row is not keyed by the wire CandidateDigest"
             if detail:
                 if not self._state_path(request.request_id).is_file():

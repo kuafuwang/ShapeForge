@@ -364,6 +364,7 @@ class GrpcEvaluator:
         progress_publisher: Callable[[Path, dict[str, Any]], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
         blob_descriptor: Callable[[Any], Any] | None = None,
+        bundle_provider: Callable[[Any], Any] | None = None,
     ) -> None:
         self.stub = stub
         self.token_provider = token_provider
@@ -387,6 +388,10 @@ class GrpcEvaluator:
         # for a request.  It is composition-root configuration, never a request
         # field, so a caller cannot point the evaluator at arbitrary content.
         self.blob_descriptor = blob_descriptor
+        # Host-side hook that returns the validated ArtifactBundle for a request.
+        # Like the blob descriptor hook it is composition-root configuration, so a
+        # caller can never point the evaluator at an arbitrary artifact set.
+        self.bundle_provider = bundle_provider
         self._lock = threading.RLock()
         self._provenance: dict[str, Any] | None = None
         self._epoch = ""
@@ -455,6 +460,21 @@ class GrpcEvaluator:
         if wired.npu is None:
             return ""
         return wired.npu.candidate_digest.value
+
+    def wire_candidate_algorithm(self, request: EvaluationRequest) -> str:
+        """Return the CandidateDigest algorithm the wire request binds.
+
+        The bundle contract has two artifact branches with different algorithms
+        (``sha256`` for an inline source, ``sha256-bundle-v1`` for an artifact
+        set), so the host outbox cannot infer the algorithm from the contract or
+        from the value.  It is bound explicitly here instead.
+        """
+
+        self._handshake()
+        wired = self._wire_request(self._external_request(request))
+        if wired.npu is None:
+            return ""
+        return wired.npu.candidate_digest.algorithm
 
     def cancel(self, request_id: str) -> None:
         with self._lock:
@@ -580,12 +600,58 @@ class GrpcEvaluator:
                     "a blob candidate must not also carry inline source bytes",
                 )
             return replace(external, candidate_sha256="", npu=npu)
+        if self.contract.npu_bundle and self._npu_execution.artifact_kind == "bundle":
+            bundle = self._bundle_for(external)
+            if external.source:
+                raise EvaluationUnavailable(
+                    "evaluation_request_invalid",
+                    "a bundle candidate must not also carry inline source bytes",
+                )
+            npu = NpuSourceRequest(
+                candidate_digest=CandidateDigest(
+                    contracts.BUNDLE_DIGEST_ALGORITHM, bundle.artifact_set_digest,
+                    allowed_algorithms=(contracts.BUNDLE_DIGEST_ALGORITHM,),
+                ),
+                execution=self._npu_execution,
+                bundle=bundle,
+            )
+            return replace(
+                external, candidate_sha256="", source=b"", npu=npu,
+                contract_dialect=self.contract,
+            )
         digest = hashlib.sha256(external.source).hexdigest()
         npu = NpuSourceRequest(
             candidate_digest=CandidateDigest("sha256", digest),
             execution=self._npu_execution,
         )
-        return replace(external, candidate_sha256="", npu=npu)
+        return replace(
+            external, candidate_sha256="", npu=npu,
+            contract_dialect=self.contract if self.contract.npu_bundle else None,
+        )
+
+    def _bundle_for(self, external: Any) -> Any:
+        """Return the validated artifact set for this candidate (host-owned hook)."""
+
+        from .artifact_bundle import ArtifactBundle, BundleError
+
+        if self.bundle_provider is None:
+            raise EvaluationUnavailable(
+                "bundle_missing",
+                "the bundle contract requires a composition-root artifact bundle provider",
+            )
+        try:
+            value = self.bundle_provider(external)
+        except EvaluationUnavailable:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a host hook failure is not a result
+            raise EvaluationUnavailable("bundle_missing", f"artifact bundle lookup failed: {exc}") from exc
+        if not isinstance(value, ArtifactBundle):
+            raise EvaluationUnavailable("bundle_missing", "the artifact bundle provider returned an untyped bundle")
+        try:
+            value.verify_bytes()
+        except BundleError as exc:
+            raise EvaluationUnavailable("bundle_missing", f"artifact bundle is invalid: {exc}") from exc
+        return value
 
     def _blob_descriptor_for(self, external: Any) -> Any:
         """Return the uploaded descriptor for this candidate (host-owned hook)."""
@@ -696,7 +762,32 @@ class GrpcEvaluator:
         if self.contract.npu_source:
             try:
                 group = DeviceGroupBinding(**provenance["device_group"])
-                execution = NpuExecutionSpec(device_group=group)
+                if self.contract.npu_bundle:
+                    # The bundle contract binds the full version 4 execution
+                    # shape the evaluator advertised, never a guessed default.
+                    task_family = {"KERNEL": "kernel", "GRAPH": "graph"}.get(
+                        provenance["launch_kind"]
+                    )
+                    if task_family is None:
+                        raise ValueError("unsupported launch kind")
+                    execution = NpuExecutionSpec(
+                        device_group=group,
+                        artifact_kind=provenance["artifact_kind"],
+                        launch_kind=provenance["launch_kind"],
+                        launch_subtype=provenance["launch_subtype"],
+                        source_media_type=(
+                            "text/plain; charset=utf-8" if task_family == "kernel"
+                            else "application/octet-stream"
+                        ),
+                        synchronization=(
+                            "stream-event" if task_family == "kernel"
+                            else "service-completion-token"
+                        ),
+                        spec_version=4,
+                        task_family=task_family,
+                    )
+                else:
+                    execution = NpuExecutionSpec(device_group=group)
             except (KeyError, TypeError, ValueError) as exc:
                 raise EvaluationUnavailable("capability_invalid", f"NPU capability binding is invalid: {exc}") from exc
             target = None
@@ -706,12 +797,19 @@ class GrpcEvaluator:
                     break
             if target is None:
                 raise EvaluationUnavailable("capability_invalid", "capabilities omitted the served target")
-            if "source" not in target.artifact_kinds or "KERNEL" not in target.launch_kinds:
-                raise EvaluationUnavailable("capability_invalid", "NPU capability omitted source/KERNEL")
-            if "SIMT" not in target.launch_subtypes:
-                # The execution binding this client builds is SIMT; never claim a
-                # subtype the evaluator did not advertise.
-                raise EvaluationUnavailable("capability_invalid", "NPU capability omitted the SIMT launch subtype")
+            if (
+                provenance["artifact_kind"] not in target.artifact_kinds
+                or provenance["launch_kind"] not in target.launch_kinds
+            ):
+                raise EvaluationUnavailable(
+                    "capability_invalid", "NPU capability omitted the advertised artifact/launch kind",
+                )
+            if provenance["launch_subtype"] not in target.launch_subtypes:
+                # The execution binding this client builds uses the advertised
+                # subtype; never claim one the evaluator did not offer.
+                raise EvaluationUnavailable(
+                    "capability_invalid", "NPU capability omitted the advertised launch subtype"
+                )
             if "DEVICE_EVENT" not in target.timing_sources:
                 raise EvaluationUnavailable("capability_invalid", "NPU capability omitted DEVICE_EVENT timing")
             matched = [
@@ -1078,12 +1176,25 @@ class GrpcEvaluator:
             if not isinstance(evidence, dict):
                 raise EvaluationUnavailable("result_invalid", "NPU result has no timing evidence")
             try:
-                contracts.npu_timing_evidence_document(
+                contracts.npu_evidence_document(
                     evidence,
-                    # A blob candidate has no inline bytes: its digest was bound by
-                    # the request digest and verified by the blob channel.
-                    source_bytes=None if external.blob is not None else external.source,
+                    # A blob or bundle candidate has no inline bytes: its digest
+                    # was bound by the request digest and verified by the blob
+                    # channel or the bundle manifest.
+                    source_bytes=(
+                        external.source if external.npu.artifact_form == "source" else None
+                    ),
                     device_group=external.npu.execution.device_group.to_dict(),
+                    expected_artifact_set_digest=(
+                        external.npu.candidate_digest.value
+                        if self.contract.npu_bundle
+                        and external.npu.candidate_digest.algorithm == contracts.BUNDLE_DIGEST_ALGORITHM
+                        else None
+                    ),
+                    expected_resources=(
+                        external.npu.execution.declared_resources.to_dict()
+                        if self.contract.npu_bundle else None
+                    ),
                     measurement_kind=provenance["measurement_kind"],
                     publication_allowed=provenance["publication_allowed"],
                     report_status=report.get("status") if isinstance(report, dict) else None,
@@ -1150,6 +1261,7 @@ class GrpcEvaluatorFactory:
         channel_key: str = "",
         progress_publisher: Callable[[Path, dict[str, Any]], None] | None = None,
         blob_descriptor: Callable[[Any], Any] | None = None,
+        bundle_provider: Callable[[Any], Any] | None = None,
     ) -> None:
         if not isinstance(run_id, str) or not run_id:
             raise ValueError("gRPC evaluator run_id is required")
@@ -1185,6 +1297,10 @@ class GrpcEvaluatorFactory:
         self.max_message_bytes = int(max_message_bytes)
         self.progress_publisher = progress_publisher
         self.blob_descriptor = blob_descriptor
+        # Host-side hook that returns the validated ArtifactBundle for a request.
+        # Like the blob descriptor hook it is composition-root configuration, so a
+        # caller can never point the evaluator at an arbitrary artifact set.
+        self.bundle_provider = bundle_provider
         self._lock = threading.RLock()
         self._sessions: dict[tuple[str, str, str], GrpcEvaluator] = {}
         self._closed = False
@@ -1278,6 +1394,7 @@ class GrpcEvaluatorFactory:
                     job_margin_s=self.job_margin_s,
                     progress_publisher=self.progress_publisher,
                     blob_descriptor=self.blob_descriptor,
+                    bundle_provider=self.bundle_provider,
                 )
                 self._sessions[key] = client
             return client
@@ -1313,6 +1430,11 @@ class GrpcEvaluatorFactory:
         """Expose the wire CandidateDigest so the outbox binds the same candidate."""
 
         return self._for_request(request).wire_candidate_digest(request)
+
+    def wire_candidate_algorithm(self, request: EvaluationRequest) -> str:
+        """Expose the wire CandidateDigest algorithm so the outbox binds it too."""
+
+        return self._for_request(request).wire_candidate_algorithm(request)
 
     def formal(self, request: EvaluationRequest) -> EvaluationResult:
         if request.kind != "formal_eval":

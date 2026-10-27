@@ -14,6 +14,8 @@ from tests.support.job_engine import (
     NPU_FEATURES,
     NPU_TARGET,
     NPU_TOKEN,
+    npu_bundle_engine,
+    npu_bundle_features,
     npu_engine,
     npu_features,
     npu_identity,
@@ -208,4 +210,195 @@ class BlobNpuGrpcHarness(NpuGrpcHarness):
             offset += len(chunk)
         if commit:
             self.blob_store.commit(scope, descriptor.content_id)
+        return descriptor
+
+
+class _BundleHarnessBase:
+    """Shared P1 wiring: the bundle contract over one fake vendor."""
+
+    vendor = ""
+
+    def close(self) -> None:
+        self.factory.close()
+        self.server.stop(grace_s=0.2)
+        self.engine.close(wait=5.0)
+
+    def __enter__(self) -> "_BundleHarnessBase":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
+class BundleSourceGrpcHarness(_BundleHarnessBase):
+    """Vendor A (source -> ELF/SIMT) served under the version 4 contract.
+
+    The same contract version that carries an artifact bundle also carries the
+    inline source branch, so the source/bundle oneof is exercised by two
+    genuinely different vendors rather than by one vendor with two payloads.
+    """
+
+    vendor = "vendor-a"
+
+    def __init__(
+        self, root: Path, *, ledger: Path | None = None,
+        controller: Any | None = None, worker_env: dict[str, str] | None = None,
+        release_supported: bool = True, generation: str = "1",
+        signing_key: bytes | None = NPU_SIGNING_KEY,
+        required_features: tuple[str, ...] | None = None,
+        token: str = NPU_TOKEN,
+        **engine_options: Any,
+    ) -> None:
+        from tests.support.vendor_sim.vendor_a import FakeVendorAController
+
+        self.root = root
+        self.ledger_path = ledger or (root / "vendor-ledger.json")
+        self.controller = controller or FakeVendorAController(
+            self.ledger_path, release_supported=release_supported, generation=generation,
+        )
+        keyring = {} if signing_key is None else {NPU_SIGNING_KEY_ID: signing_key}
+        self.engine = npu_bundle_engine(
+            root / "state", service_path=self.ledger_path, controller=self.controller,
+            vendor="vendor-a", worker_env=worker_env, signing_key=signing_key,
+            signing_key_id=NPU_SIGNING_KEY_ID if signing_key is not None else "",
+            signing_keyring=keyring, generation=generation, **engine_options,
+        )
+        self.server = build_server(
+            self.engine,
+            config=GrpcServerConfig(
+                address="127.0.0.1:0", allow_insecure=True,
+                require_client_identity=False, watch_poll_s=0.02,
+            ),
+        )
+        identity = self.engine.identity
+        self.factory = GrpcEvaluatorFactory(
+            endpoint=self.server.address,
+            token_provider=lambda _run, _session: token,
+            run_id="npu-run-1",
+            target_id=identity.target_id,
+            expected=GrpcExpected(
+                site_id=identity.site_id, device_id=identity.device_id,
+                target_id=identity.target_id, worker_build=identity.worker_build,
+                task_pack_digest=identity.task_pack_digest,
+            ),
+            api_contract_ids=(contracts.NPU_BUNDLE_API_CONTRACT_ID,),
+            evidence_contract_ids=(contracts.NPU_BUNDLE_EVIDENCE_CONTRACT_ID,),
+            required_features=required_features or npu_bundle_features(),
+            keyring=SignatureKeyring(keyring),
+            legacy_signature_key=NPU_HOST_SIGNATURE_KEY,
+            allow_insecure=True,
+            watch_slice_s=1.0,
+            job_margin_s=6.0,
+        )
+
+
+class GraphGrpcHarness(_BundleHarnessBase):
+    """Vendor B: a graph artifact set executed by an asynchronous service.
+
+    It optionally carries the P0b blob channel so a large bundle entry can be
+    transported by content id instead of being inlined.
+    """
+
+    vendor = "vendor-b"
+
+    def __init__(
+        self, root: Path, *, service: Path | None = None,
+        controller: Any | None = None, worker_env: dict[str, str] | None = None,
+        release_supported: bool = True, generation: str = "1",
+        signing_key: bytes | None = NPU_SIGNING_KEY,
+        required_features: tuple[str, ...] | None = None,
+        token: str = NPU_TOKEN,
+        blob_store: bool = False,
+        blob_limits: Any | None = None,
+        **engine_options: Any,
+    ) -> None:
+        from tests.support.vendor_sim.vendor_b import FakeVendorBController, build_graph_bundle
+
+        self.root = root
+        self.service_path = service or (root / "graph-service.json")
+        self.controller = controller or FakeVendorBController(
+            self.service_path, release_supported=release_supported, generation=generation,
+        )
+        keyring = {} if signing_key is None else {NPU_SIGNING_KEY_ID: signing_key}
+        self.blob_store = None
+        self.blob_channel = None
+        self.blob_ref = None
+        if blob_store:
+            self.blob_store = BlobStore(root / "state" / "blobs", limits=blob_limits or BlobLimits(
+                max_size_bytes=4 << 20, max_chunk_size=65536, min_chunk_size=1,
+                max_chunks=8192, max_uploads_per_scope=4,
+            ))
+        self.engine = npu_bundle_engine(
+            root / "state", service_path=self.service_path, controller=self.controller,
+            vendor="vendor-b", worker_env=worker_env, signing_key=signing_key,
+            signing_key_id=NPU_SIGNING_KEY_ID if signing_key is not None else "",
+            signing_keyring=keyring, generation=generation, blob_store=self.blob_store,
+            **engine_options,
+        )
+        #: Set by the test before submitting; defaults to the deterministic graph.
+        self.bundle = build_graph_bundle()
+        if self.blob_store is not None:
+            authorizer = StoreAuthorizer(
+                self.engine.store.blob_scope, site_id=self.engine.identity.site_id,
+                device_id=self.engine.identity.device_id,
+            )
+            self.blob_channel = build_blob_service(self.blob_store, authorizer)
+        self.server = build_server(
+            self.engine,
+            config=GrpcServerConfig(
+                address="127.0.0.1:0", allow_insecure=True,
+                require_client_identity=False, watch_poll_s=0.02,
+            ),
+            blob_channel=self.blob_channel,
+        )
+        identity = self.engine.identity
+        self.factory = GrpcEvaluatorFactory(
+            endpoint=self.server.address,
+            token_provider=lambda _run, _session: token,
+            run_id="npu-run-1",
+            target_id=identity.target_id,
+            expected=GrpcExpected(
+                site_id=identity.site_id, device_id=identity.device_id,
+                target_id=identity.target_id, worker_build=identity.worker_build,
+                task_pack_digest=identity.task_pack_digest,
+            ),
+            api_contract_ids=(contracts.NPU_BUNDLE_API_CONTRACT_ID,),
+            evidence_contract_ids=(contracts.NPU_BUNDLE_EVIDENCE_CONTRACT_ID,),
+            required_features=required_features or npu_bundle_features(blob=blob_store),
+            keyring=SignatureKeyring(keyring),
+            legacy_signature_key=NPU_HOST_SIGNATURE_KEY,
+            allow_insecure=True,
+            watch_slice_s=1.0,
+            job_margin_s=6.0,
+            bundle_provider=lambda _request: self.bundle,
+            blob_descriptor=(
+                (lambda _request: self.blob_ref) if blob_store else None
+            ),
+        )
+
+    def scope(self, token: str = NPU_TOKEN):
+        from tcenv.remote.blob_channel import BlobScope
+
+        grant_scope = self.engine.store.blob_scope(token)
+        identity = self.engine.identity
+        return BlobScope(
+            site_id=identity.site_id, device_id=identity.device_id,
+            target_id=grant_scope["target_id"], subject=grant_scope["subject"],
+            run_id=grant_scope["run_id"], session_id=grant_scope["session_id"],
+        )
+
+    def upload(self, data: bytes, *, chunk_size: int = 4096, media_type="application/octet-stream"):
+        """Upload a large bundle entry through the P0b blob channel."""
+
+        from tcenv.remote.job_types import BlobDescriptor
+
+        descriptor = BlobDescriptor.for_bytes(data, media_type=media_type, chunk_size=chunk_size)
+        scope = self.scope()
+        self.blob_store.begin(scope, descriptor.to_dict())
+        offset = 0
+        while offset < len(data):
+            chunk = data[offset:offset + chunk_size]
+            self.blob_store.write_chunk(scope, descriptor.content_id, offset, chunk)
+            offset += len(chunk)
+        self.blob_store.commit(scope, descriptor.content_id)
         return descriptor

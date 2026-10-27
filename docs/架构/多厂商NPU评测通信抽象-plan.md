@@ -740,6 +740,99 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
 - unknown Protobuf field 由服务端按 contract 明确拒绝；不得改变旧 Metal source 请求、六 RPC
   或旧结果验证。
 
+**P1 实施记录（2026-10-29，代码已落地，未接入真实设备/SDK/对象存储）**
+
+- contract 身份：新增 `tcenv.remote.npu-bundle.evaluator-api.1` /
+  `tcenv.remote.npu-bundle.evidence.1`，document_type 为 `.request-digest` /
+  `.receipt-id` / `.result-signature`，`document_version=4`。P0（v2）、P0b（v3）与旧
+  `tcenv.remote.v1.*`（v1）的 document/字段/摘要字节不变；`ContractDialect.artifact_form`
+  增加 `bundle`，`candidate_algorithms` 在 v4 为 `("sha256", "sha256-bundle-v1")`。
+- source/bundle oneof：v4 request 的 `artifact` 必须恰好一个分支 ——
+  `{"source": {size, sha256}}`（inline 源）或 `{"bundle": <ArtifactBundle>}`（工件集）；两个或
+  零个分支、以及把 bundle 塞进 v3、把 v4 请求喂给旧 contract，全部 `ContractError`。v4 拒绝
+  request 级 `blob_ref`（大件按 entry 走 P0b 通道）。分支与 contract 版本的双向选择都是
+  fail closed，不靠请求形状猜 contract。
+- ArtifactBundle（`tcenv/remote/artifact_bundle.py`）：
+  `schema_id=tcenv.remote.npu-bundle.artifact-bundle.1`；每项只有相对 POSIX 路径、公共 role
+  （`SOURCE`/`EXECUTABLE_MODULE`/`GRAPH_DEFINITION`/`MODEL_DEFINITION`/`PARAMETER_TABLE`/
+  `AUXILIARY`）、media type、实际字节 size 与 sha256；
+  `artifact_set_digest = SHA256(RFC8785(canonical_manifest))`，manifest 只覆盖 schema_id、
+  schema_version、path/role/media_type/size/sha256 并按 path 稳定排序，不含字节、传输形态、
+  device group、placement、ExecutionSpec 或 cache policy。实际字节复核不做换行/Unicode 规范化
+  （CRLF/BOM 是另一个工件）。拒绝绝对路径、`..`/`.`/空段、反斜杠、控制字符、前后空白、
+  重复与大小写冲突路径、符号链接、设备节点/FIFO、超 inline 单件 262144/总 1000000/64 件限额、
+  size 或 sha256 与字节不符、blob 引用与 manifest 身份不符；小件不允许 blob、大件不允许 inline。
+- ExecutionSpec：v4 文档显式含 `schema_id`、`task_family`（`kernel`/`graph`）、
+  `artifact_kind`、`launch_kind`、`launch_subtype`、media type、逻辑 `device_group`、
+  `resources`（`logical_devices` + `required_rank_spans`/`required_die_spans`，`null` 表示该
+  维度不存在）、必需 timing source 与 synchronization；形状由 task family 推导
+  （kernel→source/KERNEL/SIMT/stream-event，graph→bundle/GRAPH/SERVICE/
+  service-completion-token），cache policy 仍是 request 级字段；BDF/物理 rank/fabric 没有任何
+  字段。`VendorFacts.ranks/dies`（0 = 无该维度）来自受信 profile，引擎在 GetCapabilities 的
+  probe 阶段逐项比对，agent 声明 rank span 而 profile 没有该维度时在 create/start 前
+  `failed_precondition`（不建 job、不建 attempt、不碰设备）。
+- 第二个 fake vendor B（`tests/support/vendor_sim/vendor_b.py` + `graph_service.py`）：bundle/
+  `GRAPH`/`SERVICE`，**无 ELF、无 stream、无 rank/die**；`prepare` 把 graph job 交给文件支撑的
+  异步服务并立即返回 `queued`（`launch_returned_before_completion=true`），`execute` 轮询服务
+  直到它返回本次提交的 completion token，`device_elapsed_ns` 只来自服务记录，
+  `host_api_elapsed_ns` 是 host 轮询耗时；它与 A 的形态差异是编译产物/同步语义/完成观察三者
+  同时不同，而不是改名复用 A 的 SIMT 行为。A 也被同一 v4 contract 的 source 分支服务
+  （`BundleSourceGrpcHarness`），证明 oneof 两分支都真实可跑。
+- TimingEvidence v2（`tcenv.remote.npu-bundle.timing-evidence.2`）：新增
+  `artifact_set_digest`、`topology`（`logical_devices`/`declared_devices`/
+  `required_rank_spans`/`required_die_spans`）、`spans`（每设备一条，rank/die 不适用时为
+  `null`，且不得凭空编造声明里没有的维度）与可选 `buffer`（flushed/written/delivered/
+  dropped/overwritten）。完整性按声明拓扑判定：缺声明设备 span、缺声明 rank/die span、时钟域
+  未知、`device_elapsed_ns` 不等于最慢 span、buffer 丢弃/覆盖/未 flush/少交付、span 时钟域
+  不一致 → 只能 `complete=false` + `publication_allowed=false` 的诊断行；`status=ok` 必须完整，
+  `status=timeout` 不得完整；Host 时间与 device 时间始终两个字段，v1 evidence 一字未改。
+- 链与持久化：v4 canonical request（含 `artifact` oneof）→ request digest → receipt
+  （`candidate_digest` + device group，无 `candidate_sha256`）→ outbox 行 `schema_version=2` →
+  HMAC result signature → resume。bundle 的 inline 字节以 canonical payload 存进 job 的
+  `source` 列（与旧 source 同一生命周期与终态清理），`from_stored` 重建 typed bundle 并复核
+  payload 与 `artifact` 文档一致。host 侧新增 `wire_candidate_algorithm`（host-only，不进
+  `to_dict`/旧 digest）：v4 两个分支的 CandidateDigest 算法不同，只绑 value 会让一个 bundle
+  摘要被当成 inline 摘要，outbox 缺 algorithm 即 `request_digest_missing`。旧 Metal/source 与
+  P0/P0b 的 `candidate_sha256`/receipt/outbox/HMAC 语义不变。
+- worker 内/外边界：`FakeVendorBDriver.close` 只做协作式 collect；真正的释放由 worker 外
+  `FakeVendorBController.reconcile` 按 attempt/fence/完整绑定核对服务状态后给出
+  `CleanupProof`。丢失/重复/错误 completion token、`never_complete`、worker 在 submit 后被
+  SIGKILL、服务拒绝释放（`keep_service_job`）→ 都没有 `ok` 结果；清理未证明即 quarantine 且
+  Retry 被拒；服务把提交留在 live 时证据保持可观察。
+- 六 RPC 与 wire：`evaluator.proto` 新增 `ArtifactBundle`/`ArtifactBundleEntry`（entry 内容是
+  真 oneof：`data` 或 `blob_ref`）、`EvaluationRequest.bundle = 26`、`NpuResourceRequirements`
+  与 `NpuExecutionSpec` 8..11；六 RPC 名字、1..25 号字段、旧 digest/HMAC 不变，
+  `scripts/generate_evaluator_proto.py --check` 通过（protoc 29.3）。旧 contract 收到 v4
+  execution/bundle 字段按 contract 明确拒绝；未知 Protobuf field 在 request、execution、
+  bundle、bundle entry 四级拒绝（`reject_unknown_fields`）。
+- Python/Go golden：`tests/support/golden/remote/npu_bundle_v4.json` 由生产函数生成，独立 Go
+  verifier（`tests/support/remotecontract`）只读原始字段重建 canonical manifest、
+  artifact_set_digest、request document、receipt、result envelope 与 HMAC，并独立复算 v2 证据的
+  完整性规则（声明设备 span、聚合 device 时间、host/device 分离、无 rank/die）；旧
+  `evaluator_v1.json` 与 `npu_blob_v3.json` 向量继续通过。
+- 验证证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **42 passed**、
+  `test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py`
+  **14 passed**、`test_remote_npu_bundle_go_conformance.py` **12 passed**（合计 76）；P0/P0b
+  回归 `test_remote_npu_{contract,grpc,cleanup}.py` +
+  `test_remote_blob_{channel,contract,grpc,go_conformance}.py` **170 passed**；旧
+  `test_remote_grpc_{adapter,tls,contract,revocation}.py` + `test_remote_{conformance,
+  go_conformance}.py` **62 passed**；`test_remote_{job_engine,job_recovery,
+  legacy_worker_bridge,container_engine,container_supervisor,runtime}.py` +
+  `test_evaluation_outbox.py` **265 passed, 1 skipped**；`test_selfcheck_bridge.py` 在本机
+  围栏默认 TMPDIR 下 **18 failed / 1 passed**（AF_UNIX 路径超长，未改测试），`TMPDIR=/tmp` 下
+  **19 passed**。`uv run pytest -q -m 'not gpu and not llm and not slow'`：**2447 passed /
+  6 skipped / 32 failed**，32 项仍是本机围栏环境（selfcheck AF_UNIX 路径、`ps` 被禁、HOME
+  权威日志不可写），失败文件不 import P1 新代码。
+- 变异核验（临时改动后复原，对应测试转失败）：跳过 bundle manifest 的 digest 复核、允许
+  `..`/`.` 路径段、允许 artifact 同时带两个分支、跳过声明设备 span 检查、让 fake B 用 host
+  时间当 device 时间、让 driver 接受任意 completion token、让 `_reconcile_device` 直接返回
+  成功。故障注入先证明触发（服务记录 `fault_fired`/`device_failed`、或提交仍在 live）再断言
+  结果。
+- 未做（不得据此宣称）：P2a TSM simulator、真实 TX SDK/driver/firmware、真实 graph 包格式与
+  签名校验、多 die/rank 聚合与 profiler 计时、GB 级工件与对象存储吞吐、容器设备映射、
+  生产发布；`python -m tcenv.remote.grpc_service` 仍对 NPU contract 直接报错，fake vendor 只在
+  `tests/support/vendor_sim/`。所有结果 `simulated=true`、`publication_allowed=false`。
+
 ### P2a：TSM 模拟验收（无真实设备）
 
 位置：P1 之后、P2 之前。近期没有清微设备，因此先假设设备存在，用 TSM simulator 模拟

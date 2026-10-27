@@ -24,6 +24,7 @@ import (
 
 type Golden struct {
 	Blob                  *BlobGolden     `json:"npu_blob"`
+	Bundle                *BundleGolden   `json:"npu_bundle"`
 	SourceBase64          string          `json:"source_base64"`
 	Request               map[string]any  `json:"request"`
 	RequestDigestDocument map[string]any  `json:"request_digest_document"`
@@ -44,6 +45,21 @@ type BlobGolden struct {
 	RequestCanonicalJSON  string          `json:"request_canonical_json"`
 	RequestDigest         string          `json:"request_digest"`
 	Receipt               ReceiptGolden   `json:"receipt"`
+	Signature             SignatureGolden `json:"signature"`
+}
+
+// BundleGolden freezes the P1 bundle-contract documents.  The Go side rebuilds
+// the canonical manifest, the artifact-set digest, the request document, the
+// receipt and the signed result from the raw fields.
+type BundleGolden struct {
+	Request               map[string]any  `json:"request"`
+	BundleManifest        map[string]any  `json:"bundle_manifest"`
+	ArtifactSetDigest     string          `json:"artifact_set_digest"`
+	RequestDigestDocument map[string]any  `json:"request_digest_document"`
+	RequestCanonicalJSON  string          `json:"request_canonical_json"`
+	RequestDigest         string          `json:"request_digest"`
+	Receipt               ReceiptGolden   `json:"receipt"`
+	Evidence              map[string]any  `json:"evidence"`
 	Signature             SignatureGolden `json:"signature"`
 }
 
@@ -553,6 +569,376 @@ func verifyBlob(golden *BlobGolden) error {
 	return nil
 }
 
+var bundleManifestFields = []string{"path", "role", "media_type", "size_bytes", "sha256"}
+
+// bundleManifest rebuilds the canonical manifest the artifact-set digest covers.
+// It sorts entries by path and never looks at the content form: the manifest is
+// the stable identity of the exact bytes, not of how they were transported.
+func bundleManifest(schemaID string, entries []any) (map[string]any, error) {
+	if schemaID != "tcenv.remote.npu-bundle.artifact-bundle.1" {
+		return nil, fmt.Errorf("unsupported bundle schema %q", schemaID)
+	}
+	manifest := make([]any, 0, len(entries))
+	seen := map[string]bool{}
+	for _, raw := range entries {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			return nil, errors.New("bundle entry is not an object")
+		}
+		canonicalEntry := make(map[string]any, len(bundleManifestFields))
+		for _, name := range bundleManifestFields {
+			value, present := entry[name]
+			if !present {
+				return nil, fmt.Errorf("bundle entry field %s is missing", name)
+			}
+			canonicalEntry[name] = value
+		}
+		path, ok := canonicalEntry["path"].(string)
+		if !ok || path == "" {
+			return nil, errors.New("bundle entry path is not a non-empty string")
+		}
+		if strings.HasPrefix(path, "/") || strings.Contains(path, "\\") ||
+			strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
+			return nil, fmt.Errorf("unsafe bundle path %q", path)
+		}
+		for _, segment := range strings.Split(path, "/") {
+			if segment == "" || segment == "." || segment == ".." {
+				return nil, fmt.Errorf("unsafe bundle path segment in %q", path)
+			}
+		}
+		if seen[strings.ToLower(path)] {
+			return nil, fmt.Errorf("duplicate bundle path %q", path)
+		}
+		seen[strings.ToLower(path)] = true
+		if _, ok := canonicalEntry["size_bytes"].(json.Number); !ok {
+			return nil, fmt.Errorf("bundle entry %q size is not an integer", path)
+		}
+		if digest, ok := canonicalEntry["sha256"].(string); !ok || len(digest) != 64 {
+			return nil, fmt.Errorf("bundle entry %q SHA-256 is invalid", path)
+		}
+		manifest = append(manifest, canonicalEntry)
+	}
+	if len(manifest) == 0 {
+		return nil, errors.New("bundle has no entries")
+	}
+	sort.Slice(manifest, func(i, j int) bool {
+		return manifest[i].(map[string]any)["path"].(string) <
+			manifest[j].(map[string]any)["path"].(string)
+	})
+	return map[string]any{
+		"schema_id":      schemaID,
+		"schema_version": 1,
+		"entries":        manifest,
+	}, nil
+}
+
+func bundleRequestDocument(request map[string]any) (map[string]any, error) {
+	fields := []string{
+		"kind", "run_id", "session_id", "task", "dtype", "size", "target_id",
+		"task_fingerprint", "candidate_digest", "execution", "artifact", "mode", "seed", "reps",
+		"queue_timeout_ms", "candidate_timeout_ms", "cases", "fast_bench",
+		"require_contract_launch", "validate", "measure_serial", "cache_policy",
+	}
+	if len(request) != len(fields) {
+		return nil, fmt.Errorf("bundle request has %d fields, want %d", len(request), len(fields))
+	}
+	canonicalRequest := make(map[string]any, len(fields))
+	for _, name := range fields {
+		value, present := request[name]
+		if !present {
+			return nil, fmt.Errorf("bundle request field %s is missing", name)
+		}
+		canonicalRequest[name] = value
+	}
+	artifact, ok := canonicalRequest["artifact"].(map[string]any)
+	if !ok || len(artifact) != 1 {
+		return nil, errors.New("artifact must carry exactly one branch")
+	}
+	bundle, ok := artifact["bundle"].(map[string]any)
+	if !ok {
+		return nil, errors.New("this vector must carry the bundle branch")
+	}
+	execution, ok := canonicalRequest["execution"].(map[string]any)
+	if !ok {
+		return nil, errors.New("execution is not an object")
+	}
+	if execution["task_family"] != "graph" || execution["artifact_kind"] != "bundle" ||
+		execution["launch_kind"] != "GRAPH" || execution["launch_subtype"] != "SERVICE" {
+		return nil, errors.New("execution shape is not the graph/service shape")
+	}
+	if execution["schema_id"] != "tcenv.remote.npu-bundle.execution.1" {
+		return nil, errors.New("execution schema id is not the version 4 schema")
+	}
+	schemaID, ok := bundle["schema_id"].(string)
+	if !ok {
+		return nil, errors.New("bundle schema id is not a string")
+	}
+	entries, ok := bundle["entries"].([]any)
+	if !ok {
+		return nil, errors.New("bundle entries are not an array")
+	}
+	manifest, err := bundleManifest(schemaID, entries)
+	if err != nil {
+		return nil, err
+	}
+	manifestBytes, err := canonical(manifest)
+	if err != nil {
+		return nil, fmt.Errorf("bundle manifest canonicalization: %w", err)
+	}
+	artifactSet := shaHex(manifestBytes)
+	if bundle["artifact_set_digest"] != artifactSet {
+		return nil, errors.New("bundle artifact_set_digest does not bind the manifest")
+	}
+	candidate, ok := canonicalRequest["candidate_digest"].(map[string]any)
+	if !ok {
+		return nil, errors.New("candidate_digest is not an object")
+	}
+	if candidate["algorithm"] != "sha256-bundle-v1" || candidate["value"] != artifactSet {
+		return nil, errors.New("candidate digest does not bind the artifact set")
+	}
+	return map[string]any{
+		"document_type":    "tcenv.remote.npu-bundle.request-digest",
+		"document_version": 4,
+		"digest_algorithm": "sha256-rfc8785-v1",
+		"request":          canonicalRequest,
+	}, nil
+}
+
+func bundleReceiptDocument(requestID, attemptID, requestDigest string, candidate, group any) map[string]any {
+	return map[string]any{
+		"document_type":    "tcenv.remote.npu-bundle.receipt-id",
+		"document_version": 4,
+		"digest_algorithm": "sha256-rfc8785-v1",
+		"request_id":       requestID,
+		"attempt_id":       attemptID,
+		"request_digest":   requestDigest,
+		"candidate_digest": candidate,
+		"device_group":     group,
+	}
+}
+
+func bundleResultDocument(unsigned map[string]any, keyID string) map[string]any {
+	return map[string]any{
+		"document_type":       "tcenv.remote.npu-bundle.result-signature",
+		"document_version":    4,
+		"signature_algorithm": "hmac-sha256-v1",
+		"key_id":              keyID,
+		"provenance":          unsigned["provenance"],
+		"report":              unsigned["report"],
+		"evidence":            unsigned["evidence"],
+		"receipt":             unsigned["receipt"],
+	}
+}
+
+// verifyBundleEvidence independently checks the P1 completeness rules that make
+// a device measurement publishable: one span per declared device, an aggregate
+// that is the slowest span, no invented rank/die dimension, and a device time
+// that is the one the report claims -- never the host launch time.
+func verifyBundleEvidence(evidence map[string]any, artifactSet string) error {
+	if evidence["schema_id"] != "tcenv.remote.npu-bundle.timing-evidence.2" {
+		return errors.New("evidence schema id is not the version 2 schema")
+	}
+	candidate, ok := evidence["candidate_digest"].(map[string]any)
+	if !ok || candidate["value"] != artifactSet || candidate["algorithm"] != "sha256-bundle-v1" {
+		return errors.New("evidence candidate digest does not bind the artifact set")
+	}
+	if evidence["artifact_set_digest"] != artifactSet {
+		return errors.New("evidence artifact_set_digest differs from the artifact set")
+	}
+	if evidence["complete"] != true {
+		return errors.New("evidence is not complete")
+	}
+	if evidence["publication_allowed"] != false {
+		return errors.New("a simulated vector must not be publishable")
+	}
+	topology, ok := evidence["topology"].(map[string]any)
+	if !ok {
+		return errors.New("evidence topology is missing")
+	}
+	declared, ok := topology["declared_devices"].([]any)
+	if !ok || len(declared) != 1 {
+		return errors.New("this vector declares exactly one device")
+	}
+	spans, ok := evidence["spans"].([]any)
+	if !ok || len(spans) != len(declared) {
+		return errors.New("evidence is missing a declared device span")
+	}
+	var aggregate int64
+	for _, raw := range spans {
+		span, ok := raw.(map[string]any)
+		if !ok {
+			return errors.New("span is not an object")
+		}
+		if span["rank"] != nil || span["die"] != nil {
+			return errors.New("a service vendor must not invent rank/die spans")
+		}
+		if span["device_id"] != declared[0] {
+			return errors.New("span device id differs from the declared device")
+		}
+		elapsed, ok := span["elapsed_ns"].(json.Number)
+		if !ok {
+			return errors.New("span elapsed is not an integer")
+		}
+		value, err := strconv.ParseInt(elapsed.String(), 10, 64)
+		if err != nil {
+			return err
+		}
+		if value > aggregate {
+			aggregate = value
+		}
+	}
+	timing, ok := evidence["timing"].(map[string]any)
+	if !ok {
+		return errors.New("evidence timing is missing")
+	}
+	deviceElapsed, ok := timing["device_elapsed_ns"].(json.Number)
+	if !ok {
+		return errors.New("device elapsed is not an integer")
+	}
+	device, err := strconv.ParseInt(deviceElapsed.String(), 10, 64)
+	if err != nil {
+		return err
+	}
+	if device != aggregate {
+		return errors.New("device_elapsed_ns is not the aggregate of the declared spans")
+	}
+	hostElapsed, ok := timing["host_api_elapsed_ns"].(json.Number)
+	if !ok {
+		return errors.New("host api elapsed is not an integer")
+	}
+	host, err := strconv.ParseInt(hostElapsed.String(), 10, 64)
+	if err != nil {
+		return err
+	}
+	if device <= 0 || host <= 0 {
+		return errors.New("host and device elapsed must both be observed")
+	}
+	if timing["synchronization_completed"] != true || timing["source"] != "DEVICE_EVENT" {
+		return errors.New("evidence is not a completed device-event observation")
+	}
+	if timing["clock_domain"] != spans[0].(map[string]any)["clock_domain"] {
+		return errors.New("span and aggregate clock domains differ")
+	}
+	return nil
+}
+
+func verifyBundle(golden *BundleGolden) error {
+	requestDoc, err := bundleRequestDocument(golden.Request)
+	if err != nil {
+		return err
+	}
+	if err := checkDocument(
+		requestDoc, golden.RequestDigestDocument, golden.RequestCanonicalJSON,
+		golden.RequestDigest, "bundle request",
+	); err != nil {
+		return err
+	}
+	artifactSet := golden.Request["candidate_digest"].(map[string]any)["value"]
+	if artifactSet != golden.ArtifactSetDigest {
+		return errors.New("bundle artifact-set digest differs from the candidate digest")
+	}
+	manifest, err := bundleManifest(
+		golden.BundleManifest["schema_id"].(string),
+		golden.Request["artifact"].(map[string]any)["bundle"].(map[string]any)["entries"].([]any),
+	)
+	if err != nil {
+		return err
+	}
+	manifestBytes, err := canonical(manifest)
+	if err != nil {
+		return err
+	}
+	if shaHex(manifestBytes) != golden.ArtifactSetDigest {
+		return errors.New("artifact-set digest does not bind the canonical manifest")
+	}
+	expectedManifest, err := canonical(golden.BundleManifest)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(manifestBytes, expectedManifest) {
+		return errors.New("independently constructed bundle manifest differs")
+	}
+	if err := verifyBundleEvidence(golden.Evidence, golden.ArtifactSetDigest); err != nil {
+		return err
+	}
+	if golden.Evidence["artifact_set_digest"] != golden.ArtifactSetDigest {
+		return errors.New("evidence artifact-set digest differs")
+	}
+	receiptDoc := bundleReceiptDocument(
+		golden.Receipt.RequestID, golden.Receipt.AttemptID, golden.RequestDigest,
+		golden.Request["candidate_digest"], golden.Signature.UnsignedResult["receipt"].(map[string]any)["device_group"],
+	)
+	if err := checkDocument(
+		receiptDoc, golden.Receipt.Document, golden.Receipt.CanonicalJSON,
+		golden.Receipt.ReceiptID, "bundle receipt",
+	); err != nil {
+		return err
+	}
+	report, err := base64.StdEncoding.DecodeString(golden.Signature.ReportBase64)
+	if err != nil {
+		return err
+	}
+	evidence, err := base64.StdEncoding.DecodeString(golden.Signature.EvidenceBase64)
+	if err != nil {
+		return err
+	}
+	if err := checkBlob(golden.Signature.UnsignedResult["report"], report, "bundle report"); err != nil {
+		return err
+	}
+	if err := checkBlob(golden.Signature.UnsignedResult["evidence"], evidence, "bundle evidence"); err != nil {
+		return err
+	}
+	var reportDocument map[string]any
+	reportDecoder := json.NewDecoder(bytes.NewReader(report))
+	reportDecoder.UseNumber()
+	if err := reportDecoder.Decode(&reportDocument); err != nil {
+		return fmt.Errorf("bundle report is not JSON: %w", err)
+	}
+	timing := golden.Evidence["timing"].(map[string]any)
+	deviceElapsed := timing["device_elapsed_ns"].(json.Number)
+	candidateUs, ok := reportDocument["candidate_us"].(json.Number)
+	if !ok {
+		return errors.New("bundle report has no candidate_us")
+	}
+	nanos, err := strconv.ParseInt(deviceElapsed.String(), 10, 64)
+	if err != nil {
+		return err
+	}
+	micros, err := strconv.ParseFloat(candidateUs.String(), 64)
+	if err != nil {
+		return err
+	}
+	if micros != float64(nanos)/1000.0 {
+		return errors.New("report candidate_us does not come from the device elapsed time")
+	}
+	resultDoc := bundleResultDocument(golden.Signature.UnsignedResult, golden.Signature.KeyID)
+	expectedResult, err := canonical(golden.Signature.Document)
+	if err != nil {
+		return err
+	}
+	canonicalResult, err := canonical(resultDoc)
+	if err != nil {
+		return err
+	}
+	if string(canonicalResult) != golden.Signature.CanonicalJSON {
+		return errors.New("bundle result canonical JSON differs")
+	}
+	if !bytes.Equal(canonicalResult, expectedResult) {
+		return errors.New("independently constructed bundle result differs")
+	}
+	key, err := hex.DecodeString(golden.Signature.KeyHex)
+	if err != nil {
+		return errors.New("invalid bundle HMAC golden key")
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write(canonicalResult)
+	actual := hex.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(actual), []byte(golden.Signature.HMACSHA256)) {
+		return fmt.Errorf("bundle HMAC got %s, want %s", actual, golden.Signature.HMACSHA256)
+	}
+	return nil
+}
+
 func main() {
 	goldenPath := flag.String("golden", "", "path to evaluator_v1.json")
 	flag.Parse()
@@ -577,6 +963,16 @@ func main() {
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		fmt.Fprintln(os.Stderr, "golden has trailing JSON")
 		os.Exit(1)
+	}
+	if golden.Bundle != nil {
+		if err := verifyBundle(golden.Bundle); err != nil {
+			fmt.Fprintln(os.Stderr, "Go bundle contract verification failed:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("ok bundle artifact_set=%s request=%s receipt=%s signature=%s\n",
+			golden.Bundle.ArtifactSetDigest, golden.Bundle.RequestDigest,
+			golden.Bundle.Receipt.ReceiptID, golden.Bundle.Signature.HMACSHA256)
+		return
 	}
 	if golden.Blob != nil {
 		if err := verifyBlob(golden.Blob); err != nil {

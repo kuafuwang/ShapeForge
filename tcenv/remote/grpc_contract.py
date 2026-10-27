@@ -233,20 +233,83 @@ def request_to_proto(
             message.blob_ref.CopyFrom(blob_ref_to_proto(request.npu.blob))
         elif dialect.npu_blob:
             raise JobError("invalid_argument", "the blob contract requires a blob reference")
+        if request.npu.bundle is not None:
+            if not dialect.npu_bundle:
+                raise JobError("invalid_argument", "only the bundle contract can carry an artifact bundle")
+            message.bundle.CopyFrom(bundle_to_proto(request.npu.bundle))
+        elif dialect.npu_bundle and not request.source:
+            # The bundle contract exposes a source/bundle oneof: exactly one
+            # branch must be present, so an empty request is refused.
+            raise JobError("invalid_argument", "the bundle contract requires exactly one artifact branch")
+        if dialect.npu_bundle and request.npu.bundle is not None and request.source:
+            raise JobError("invalid_argument", "a bundle request must not embed inline source bytes")
     return message
+
+
+def bundle_entry_to_proto(value) -> pb.ArtifactBundleEntry:
+    message = pb.ArtifactBundleEntry(
+        path=value.path, role=value.role, media_type=value.media_type,
+        size_bytes=value.size_bytes, sha256=value.sha256,
+    )
+    if value.blob_ref is not None:
+        message.blob_ref.CopyFrom(blob_ref_to_proto(value.blob_ref))
+    else:
+        message.data = value.data or b""
+    return message
+
+
+def bundle_to_proto(value) -> pb.ArtifactBundle:
+    message = pb.ArtifactBundle(schema_id=value.schema_id)
+    message.entries.extend(bundle_entry_to_proto(entry) for entry in value.entries)
+    return message
+
+
+def bundle_from_proto(message: pb.ArtifactBundle):
+    """Rebuild the typed bundle from the wire message (verifying exact bytes)."""
+
+    from .artifact_bundle import ArtifactBundle, BundleError, BundleEntry
+
+    if not isinstance(message, pb.ArtifactBundle):
+        raise JobError("invalid_argument", "bundle is not an ArtifactBundle message")
+    reject_unknown_fields(message, "EvaluationRequest.bundle")
+    entries = []
+    for entry in message.entries:
+        reject_unknown_fields(entry, "ArtifactBundleEntry")
+        content = entry.WhichOneof("content")
+        if content is None:
+            raise JobError("invalid_argument", "a bundle entry must be inline or blob-backed")
+        if content == "blob_ref":
+            reject_unknown_fields(entry.blob_ref, "ArtifactBundleEntry.blob_ref")
+            blob_ref = blob_ref_from_proto(entry.blob_ref).to_dict()
+            data = None
+        else:
+            blob_ref = None
+            data = bytes(entry.data)
+        entries.append(BundleEntry(
+            path=entry.path, role=entry.role, media_type=entry.media_type,
+            size_bytes=int(entry.size_bytes), sha256=entry.sha256,
+            data=data, blob_ref=blob_ref,
+        ))
+    try:
+        return ArtifactBundle(entries=tuple(entries))
+    except BundleError as exc:
+        raise JobError("invalid_argument", f"artifact bundle is invalid: {exc}") from exc
 
 
 def candidate_digest_to_proto(value: CandidateDigest) -> pb.CandidateDigest:
     return pb.CandidateDigest(algorithm=value.algorithm, value=value.value)
 
 
-def blob_ref_to_proto(value: "BlobDescriptor") -> pb.BlobRef:
+def blob_ref_to_proto(value: Any) -> pb.BlobRef:
+    """Serialize a descriptor; a typed BlobDescriptor or its document is accepted."""
+
+    document = value.to_dict() if hasattr(value, "to_dict") else dict(value)
     return pb.BlobRef(
-        content_id=value.content_id,
-        sha256=value.sha256,
-        size_bytes=value.size_bytes,
-        media_type=value.media_type,
-        chunk_size=value.chunk_size,
+        content_id=document["content_id"],
+        sha256=document["sha256"],
+        size_bytes=int(document["size_bytes"]),
+        media_type=document["media_type"],
+        chunk_size=int(document["chunk_size"]),
     )
 
 
@@ -270,7 +333,9 @@ def device_group_to_proto(value: DeviceGroupBinding) -> pb.DeviceGroupBinding:
     )
 
 
-def execution_to_proto(value: NpuExecutionSpec) -> pb.NpuExecutionSpec:
+def execution_to_proto(
+    value: NpuExecutionSpec, *, dialect: contracts.ContractDialect | None = None,
+) -> pb.NpuExecutionSpec:
     message = pb.NpuExecutionSpec(
         artifact_kind=value.artifact_kind,
         launch_kind=value.launch_kind,
@@ -280,33 +345,78 @@ def execution_to_proto(value: NpuExecutionSpec) -> pb.NpuExecutionSpec:
         synchronization=value.synchronization,
     )
     message.device_group.CopyFrom(device_group_to_proto(value.device_group))
+    if value.spec_version == 4:
+        resources = value.declared_resources
+        message.spec_version = 4
+        message.task_family = value.task_family or ""
+        message.execution_schema_id = contracts.NPU_BUNDLE_EXECUTION_SCHEMA_ID
+        message.resources.logical_devices = resources.logical_devices
+        if resources.required_rank_spans is not None:
+            message.resources.required_rank_spans = resources.required_rank_spans
+        if resources.required_die_spans is not None:
+            message.resources.required_die_spans = resources.required_die_spans
     return message
 
 
-def execution_from_proto(message: pb.NpuExecutionSpec) -> NpuExecutionSpec:
+def execution_from_proto(
+    message: pb.NpuExecutionSpec, *, dialect: contracts.ContractDialect | None = None,
+) -> NpuExecutionSpec:
     if not isinstance(message, pb.NpuExecutionSpec):
         raise JobError("invalid_argument", "execution is not an NpuExecutionSpec message")
+    reject_unknown_fields(message, "NpuExecutionSpec")
     if not message.HasField("device_group"):
         raise JobError("invalid_argument", "NPU execution requires a device group binding")
+    dialect = dialect or contracts.NPU_SOURCE_DIALECT
+    has_resources = message.HasField("resources")
+    if not dialect.npu_bundle:
+        if message.spec_version or message.task_family or message.execution_schema_id or has_resources:
+            # Silently ignoring a version 4 execution spec on an earlier contract
+            # would accept an execution shape the server never validated.
+            raise JobError(
+                "invalid_argument",
+                "this contract version does not accept the version 4 execution spec fields",
+            )
+    document: dict[str, Any] = {
+        "artifact_kind": message.artifact_kind,
+        "launch_kind": message.launch_kind,
+        "launch_subtype": message.launch_subtype,
+        "source_media_type": message.source_media_type,
+        "device_group": {
+            "device_group_id": message.device_group.device_group_id,
+            "vendor_id": message.device_group.vendor_id,
+            "profile_digest": message.device_group.profile_digest,
+            "topology_digest": message.device_group.topology_digest,
+            "resource_generation": message.device_group.resource_generation,
+        },
+        "required_timing_sources": list(message.required_timing_sources),
+        "synchronization": message.synchronization,
+    }
+    if dialect.npu_bundle:
+        if message.spec_version != 4 or message.execution_schema_id != contracts.NPU_BUNDLE_EXECUTION_SCHEMA_ID:
+            raise JobError(
+                "invalid_argument", "the bundle contract requires the version 4 execution spec"
+            )
+        if not has_resources:
+            raise JobError("invalid_argument", "the version 4 execution spec requires declared resources")
+        reject_unknown_fields(message.resources, "NpuResourceRequirements")
+        document["schema_id"] = message.execution_schema_id
+        document["task_family"] = message.task_family
+        document["resources"] = {
+            "logical_devices": int(message.resources.logical_devices),
+            "required_rank_spans": (
+                int(message.resources.required_rank_spans)
+                if message.resources.HasField("required_rank_spans") else None
+            ),
+            "required_die_spans": (
+                int(message.resources.required_die_spans)
+                if message.resources.HasField("required_die_spans") else None
+            ),
+        }
     try:
-        return NpuExecutionSpec.from_dict({
-            "artifact_kind": message.artifact_kind,
-            "launch_kind": message.launch_kind,
-            "launch_subtype": message.launch_subtype,
-            "source_media_type": message.source_media_type,
-            "device_group": {
-                "device_group_id": message.device_group.device_group_id,
-                "vendor_id": message.device_group.vendor_id,
-                "profile_digest": message.device_group.profile_digest,
-                "topology_digest": message.device_group.topology_digest,
-                "resource_generation": message.device_group.resource_generation,
-            },
-            "required_timing_sources": list(message.required_timing_sources),
-            "synchronization": message.synchronization,
-        })
+        return NpuExecutionSpec.from_dict(document)
     except JobError:
         raise
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, contracts.ContractError) as exc:
         raise JobError("invalid_argument", f"NPU execution is invalid: {exc}") from exc
 
 
@@ -339,6 +449,13 @@ def request_from_proto(
         raise JobError("invalid_argument", "request CandidateDigest/execution presence differs from the contract")
     if message.HasField("blob_ref") != dialect.npu_blob:
         raise JobError("invalid_argument", "request blob reference presence differs from the contract")
+    if message.HasField("bundle") and not dialect.npu_bundle:
+        raise JobError("invalid_argument", "only the bundle contract accepts an artifact bundle")
+    if dialect.npu_bundle and message.HasField("blob_ref"):
+        raise JobError(
+            "invalid_argument",
+            "the bundle contract transports artifact bytes inline or per entry, not as one request blob",
+        )
     if dialect.npu_source:
         if message.candidate_sha256:
             raise JobError("invalid_argument", "the NPU contract does not accept candidate_sha256")
@@ -350,18 +467,29 @@ def request_from_proto(
             allowed_algorithms=allowed,
         )
         blob = None if not message.HasField("blob_ref") else blob_ref_from_proto(message.blob_ref)
+        bundle = None if not message.HasField("bundle") else bundle_from_proto(message.bundle)
+        execution = execution_from_proto(message.execution, dialect=dialect)
+        if bundle is not None and bytes(message.source):
+            raise JobError(
+                "invalid_argument", "a bundle request must not embed inline source bytes"
+            )
+        if bundle is None and dialect.npu_bundle and not bytes(message.source):
+            raise JobError("invalid_argument", "the bundle contract requires exactly one artifact branch")
         npu = NpuSourceRequest(
             candidate_digest=CandidateDigest(
                 digest["algorithm"], digest["value"], allowed_algorithms=allowed,
             ),
-            execution=execution_from_proto(message.execution),
+            execution=execution,
             blob=blob,
+            bundle=bundle,
         )
     else:
         if message.candidate_digest.ByteSize() or message.execution.ByteSize():
             raise JobError("invalid_argument", "the legacy contract does not accept NPU request fields")
-        if message.blob_ref.ByteSize():
-            raise JobError("invalid_argument", "the legacy contract does not accept a blob reference")
+        if message.blob_ref.ByteSize() or message.bundle.ByteSize():
+            raise JobError(
+                "invalid_argument", "the legacy contract does not accept a blob or bundle reference"
+            )
         npu = None
         try:
             message.source.decode("utf-8", errors="strict")
@@ -408,6 +536,7 @@ def request_from_proto(
             measure_serial=bool(message.measure_serial),
             cache_policy=cache_policy,
             npu=npu,
+            contract_dialect=dialect if npu is not None else None,
         )
     except contracts.ContractError as exc:
         raise JobError("invalid_argument", str(exc)) from exc
