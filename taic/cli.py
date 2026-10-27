@@ -506,6 +506,12 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
         elif workspace is not None:
             raise ResumeRefused("cannot switch a local run to a remote workspace during resume", 5)
         mode = execution["evaluation"]
+        if mode == "remote" and execution.get("transport") in {None, "", "legacy-ssh"}:
+            raise ResumeRefused(
+                "cannot resume: the legacy-ssh evaluator transport is no longer supported; "
+                "remote runs must have an explicit gRPC transport",
+                5,
+            )
         if mode == "remote" and remote is None:
             raise ResumeRefused("cannot resume a remote evaluation without --remote-evaluator-config", 5)
         if mode == "local" and remote is not None:

@@ -1122,3 +1122,26 @@ def test_a_resume_carries_unbilled_hmz_sessions_as_unaccounted(tmp_path, monkeyp
     rows = [row for row in snap.requests if row.get("label") == "unaccounted"]
     assert rows and rows[-1]["total_usd"] == pytest.approx(5.0)
 
+
+
+def test_resume_rejects_a_legacy_ssh_execution_manifest(tmp_path):
+    """@brief 旧 legacy-ssh manifest 的续跑必须明确拒绝，且不改写 transport。"""
+    orch = make_orch(
+        tmp_path, script_for(usage=BIG), [], budget=0.15, max_rounds=3,
+        max_repair=2, patience=20,
+    )
+    run(orch)
+    run_dir = tmp_path / "run"
+    mark_dead(run_dir)
+    manifest = run_dir / "execution.json"
+    manifest.write_text(json.dumps({
+        "schema_version": 1, "evaluation": "remote", "transport": "legacy-ssh",
+        "publishable_site_ids": ["local"], "publishable_epochs": ["e" * 64],
+    }))
+    before = manifest.read_text()
+    with pytest.raises(cli.ResumeRefused, match="legacy-ssh"):
+        cli.prepare_resume(
+            ns(run_dir, add_budget=5.0), client=FakeClient([]),
+            evaluate_fn=fake_eval([]), log=lambda _s: None,
+        )
+    assert manifest.read_text() == before
