@@ -8,7 +8,7 @@
 
 - [backend 协议与 GPU 实现计划](backend协议与GPU实现-plan.md)：设备 backend、target、评测协议和 Metal 迁移。
 - [hmz](hmz.md)：当前 `hmz + pi` 写核路径。
-- [远程评测模拟验收计划](远程评测模拟验收-plan.md)：旧 `legacy-ssh` Phase 2.5 的环境、真实传输、故障矩阵、授权与验收细则；不覆盖新的 gRPC/TLS 对外验收。
+- [远程评测模拟验收计划](远程评测模拟验收-plan.md)：Phase 2.5 的历史验收证据与边界；旧 SSH 实现和 runner 已删除，不覆盖当前 gRPC/TLS 对外验收。
 - [安全边界](../security.md)：不可信模型反馈、P2 patch 和人工 apply 的边界。
 
 ## 0. 一句话
@@ -353,7 +353,7 @@ class EvaluationResult:
 `workdir`、`out`、`heartbeat`、`progress_path`、`self_check_dir` 是执行端内部派生路径，不进入 RPC。
 `reps`、`cases`、最大 timeout 与配额受服务端策略限制；selfcheck 不能通过修改命令行放大它们。
 `candidate_sha256` 对实际发送和实际编译的字节计算，不做换行转换、Unicode 规范化、trim 或二次改写。
-`request_id` 就是幂等键。**Protobuf 序列化不是规范序列化，不能对普通或所谓 deterministic 的 Protobuf 字节直接计算跨语言稳定摘要。** gRPC 对外 v1 先从校验后的业务请求生成传输无关的 digest document，再用带算法标识的 `SHA256(RFC8785(digest_document))` 计算 request digest；候选字节摘要独立绑定。旧 run 继续使用原有 Python 规范 JSON 摘要，不把旧算法换名成 RFC 8785，也不跨算法回放幂等记录。
+`request_id` 就是幂等键。**Protobuf 序列化不是规范序列化，不能对普通或所谓 deterministic 的 Protobuf 字节直接计算跨语言稳定摘要。** gRPC 对外 v1 先从校验后的业务请求生成传输无关的 digest document，再用带算法标识的 `SHA256(RFC8785(digest_document))` 计算 request digest；候选字节摘要独立绑定。旧 artifact 只按原有 Python 规范 JSON 摘要只读验证，不把旧算法换名成 RFC 8785，也不跨算法回放幂等记录；旧 SSH run 不再可 resume。
 服务端必须重算 `task_fingerprint`（当前已经包含 `task.contract.describe()`）并比对，不再另传一份冗余的
 `contract_digest`。不一致时拒绝请求，记为 evaluator/protocol mismatch，不能误判成候选的 compile_error
 或 incorrect。`cache_policy=disabled` 必须能表达确认阶段的 `eval_cache=False`。
@@ -808,30 +808,17 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 
 #### Phase 2：远程评测服务与客户端（两个连续交付物）
 
-以下 Phase 2A/2B 记录已实现的 `legacy-ssh` 基线，不表示目标对外协议已经交付。Phase 2C 在这份业务核心上增加 gRPC adapter，不再另起一条服务端业务实现线；先不做完整设备平台，也不搬代理。
+以下 Phase 2A/2B 是历史交付记录，不是当前可选实现。它们曾提供 SSH forced-command、
+自定义外部帧和旧 `RemoteEvaluatorPool`；这些对外数据面、服务端入口与专用测试已于
+2026-10-27 删除，旧 manifest 不再可 resume。当前只保留下面的 gRPC 路径，以及私有
+worker 帧、Unix selfcheck bridge、local evaluator 和历史证据只读验证。
 
-##### Phase 2A：同一份 `tcenv.remote` 服务端 + 子进程管道（已实现，legacy-ssh 基线）
+##### Phase 2A/2B：旧 SSH 基线（历史，已移除）
 
-1. **正式服务端代码**：帧编解码、hello/capabilities、forced-command 入口、认证/幂等、队列/租约和 worker supervisor 放在 `tcenv/remote/`；`tests/support/npu_sim/` 只放共享 FakeNpuBackend、fixture、测试镜像与故障注入 helper。B0.5 与 Phase 2A 复用同一份 fake backend，不维护两套。
-2. **测试注入不进入生产入口**：`sim-npu` 只在测试 fixture/临时 registry 中，不能注册成 production active target，也不通过改成 `active` 绕过 `require_active`。生产服务端制品不包含 sim 适配器或 `allow_simulation` 分支；FakeNpuBackend 只经测试镜像/测试 composition root 的 backend 注入点进入，2.5 要断言生产入口上模拟适配不可达。fake backend 不要求 `kernel void`、Metal import 或 GPU threadgroup limits，返回确定性的 report/provenance、task fingerprint、task_pack/site/device/build 与 receipt。
-3. **子进程管道先行**：不用 Docker，先以子进程 + 管道运行同一份 `tcenv.remote` 服务端和帧编解码，形成真实字节与进程边界。帧至少含 `schema_version`、`frame_type`、`request_id`、`payload_length` 与 `payload_sha256`，限制帧/总请求大小，支持拆包、合包与有界内存读取；stdin/stdout 传数据帧，stderr 只作受限日志。forced command 只映射固定 evaluator entrypoint，`SSH_ORIGINAL_COMMAND` 只做严格协议/版本匹配，请求不能触发任意 shell、路径、环境或 `docker exec`。
-4. **把问题变成回归测试**：覆盖 `SessionExecution` 参数、selfcheck bridge、request 覆盖当前 `tcenv.evaluate`、远程传输错误分类、task/task_pack fingerprint、缓存跨 site、receipt 去重、premise 执行证据与模拟发布门禁。已存在行为用普通测试；未实现接口用 `xfail(strict=True)` 或明确的 milestone-gated skip，不能让默认快速套件新增红灯。host `publishable_site_ids` 与 `publishable_epochs` 默认拒绝未登记站点/epoch，远端漏写或伪造 simulated 标记也不能进入确认、catalog 或发布数字。
-
-验收：同一 `tcenv.remote` 服务端在子进程+管道上完成 hello、formal/selfcheck、报告/evidence/receipt、幂等和故障恢复；生产入口不包含 sim 代码；没有第二套测试专用服务端，没有 Docker、模型、GPU 或真实 NPU 依赖。
-
-##### Phase 2B：EvaluationExecutor + selfcheck bridge + RemoteEvaluator（已实现，legacy-ssh 基线）
-
-- **先过桥接关卡**：在真实 hmz `online=NONE` 围栏下，分别于 macOS 与 Linux 用 fake agent 验证每场 0600 socket、session token、只允许 selfcheck、跨会话不可冒用和结束销毁；不通过就先解决桥接，不进入远程联调；
-- `LocalEvaluator` 仍是现有 `tcenv.evaluate` 的 adapter；桥接通过后，MVP 用 host Unix-socket bridge 打通 `taic-selfcheck`，再接 `RemoteEvaluator`（独立受保护 CLI 仅作后续可选 spike）；
-- `taic-selfcheck` 只接受受限模式与 workspace 相对候选路径，复用现有 report/verdict formatter；selfcheck 的 task/target/reps/cases/quota 由 host/服务端决定；`evaluation_unavailable` 非零返回、不计次数且不写权威记录；
-- `RemoteEvaluator` 先完成 hello/capabilities 与 expected_worker_build/task_pack_digest 校验，再固定 evaluator epoch，最后用 SSH forced command 或本地服务调用正式服务端；请求包含 §6.4 的完整字段、task_fingerprint 与 cache_policy，报告以 `EvaluationResult` 带回 request/source/target/build/provenance/receipt；
-- 实现 host `publishable_site_ids` 与 `publishable_epochs` 默认拒绝和 `pending_evaluation` / `evaluation_unavailable` 的可 resume 状态，基础设施故障不计 hangs/crashes/agent_failures，也不换委员会；
-- 实现服务端 queue/candidate 两层超时与客户端 transport 超时、cancel 帧、租约 TTL 和可选 progress 帧；请求 outbox 与服务端幂等记录先于 job 启动持久化，resume 只在 request digest 与 epoch 不变时复用 request_id；
-- 正式评测与自测用不同身份与配额，默认值与本地 20 次/120 GPU 秒对齐，TASK 由 resolved 配额生成；按 run/session 做公平或 aging，formal 优先不饿死其他 run；
-- host `EvidenceStore` 负责权威写入与 receipt 去重，远程服务不直接写 control_host 任意路径；认证传输第一天就绪，幂等、过期 token、身份隔离与防重放不能省；
-- SSH/服务/协议/provenance 故障与候选 timeout/crash 分类处理；Local/remote 缓存所有者、fast_bench 基线缓存和 `cache_policy=disabled` 行为一并验证；全部使用 fake agent / fake backend，不调用真实模型。
-
-验收：真实围栏下 host bridge 先通过；hello 能固定 epoch 并发现 task pack 不匹配；pi 留在 control_host 就能完成远程自测与正式评测；pi 无法伪造报告、冒用 formal 身份或抢占计时租约；RPC 不接受 shell/任意路径或杂散 stdout；自测输出与当前 quick/timed/validate/verdict 语义一致；远程基础设施故障不会误触发候选 hang/crash/agent_failure 计数；未登记站点或 epoch 不能发布；epoch 变化会停止而不是混算；pending_evaluation 可按同一 request_id 幂等恢复；progress 能安全回到看板；多 run 自测不会被单一 formal 队列饿死。
+- 当时完成了子进程/SSH 传输、认证幂等、队列/租约、formal/selfcheck、receipt、
+  outbox 和 host 发布门，为后续传输无关的 `JobEngine` 提供了业务基线。
+- 当时的报告只能证明旧 SSH/帧链路；不能充当 gRPC/TLS 的外部合约或生产验收。
+  可运行的旧服务端、客户端和 Phase 2.5 runner 已删除，不再维护第二套传输。
 
 #### Phase 2.5：macOS → SSH → Linux VM → Docker（已实现，legacy-ssh 历史验收）
 
@@ -840,11 +827,11 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 - 它不是 local/P2 的总闸门，也不再是对外 gRPC 生产验收的充分条件；
 - 它使用 Phase 2A/2B 的同一 `legacy-ssh` 服务端，穿过 Mac → SSH → Linux VM → Docker → worker；
 - `sim-npu` 只是 CPU 假设备，不做真实 NPU，不产生性能或发布结论；
-- 报告和测试作为历史回归保留，不改写成 gRPC、TLS、Protobuf 或外部兼容性证据。
+- 报告保留为历史 artifact；旧可运行 runner、forced-command fixture 和专用测试已删除，不能按旧文档复现，也不改写成 gRPC、TLS、Protobuf 或外部兼容性证据。
 
 #### Phase 2C：对外 Protobuf 合约、传输无关核心与 gRPC adapter（2C1/2C2/2C3 已实现）
 
-1. 冻结 local 与 `legacy-ssh` 回归基线；发布 `tcenv.remote.v1` 的 `.proto`、descriptor、资源上限、`google.rpc` 错误映射、required features、job/attempt/Retry、三类身份、兼容政策，以及 digest/signature/receipt 的跨语言 golden。proto 是唯一外部 schema 来源，Python 生成代码可重复入库，CI 验证生成物无漂移；锁定 gRPC/Protobuf/status 依赖。
+1. 冻结 local 与当时的旧传输回归基线（历史动作）；发布 `tcenv.remote.v1` 的 `.proto`、descriptor、资源上限、`google.rpc` 错误映射、required features、job/attempt/Retry、三类身份、兼容政策，以及 digest/signature/receipt 的跨语言 golden。proto 是唯一外部 schema 来源，Python 生成代码可重复入库，CI 验证生成物无漂移；锁定 gRPC/Protobuf/status 依赖。
 2. 把业务核心从 `serve(reader, writer)` 与连接级 `_grant/_authenticated` 中拆出，改为每 RPC 授权和持久 job/attempt ownership。保留 `tcenv/evaluation.py` 的业务校验，adapter 负责 Protobuf 映射；job 是逻辑请求，attempt 是实际执行，candidate report 与基础设施 outcome 分开。
 3. 实现 `GetCapabilities/Submit/GetJob/Watch/Cancel/Retry`、TLS/mTLS/session-grant interceptor、结果验签与 `EvaluationExecutor.formal/selfcheck`。本地 selfcheck bridge 不变；每个 host 进程对每 endpoint 共用一个 channel，以 `GrpcEvaluatorFactory` 替代 pool，grant/quota 继续分开。
 4. 幂等接受跨并发连接原子化：Submit 只创建/回放，Retry 只在 interrupted 上创建新 attempt；attempt_id、receipt、lease_fence、grant scope、quota 和终态可恢复。旧 worker/fence 未清理前不能启动新 attempt；损坏状态拒绝服务。
@@ -868,7 +855,7 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 8. 新报告写到 `runs/grpc-sim-<日期>/report.json`，记录 transport、测量 epoch、API/evidence contract、attempt/fence、TLS/mTLS 与故障矩阵证据，并保持 `simulated=true`、`publication_allowed=false`。它不是搜索 run，不写 `run_config.json`，不覆盖旧 `runs/npu-sim-*` 报告，也不进入 confirmed/catalog/brief。
 9. conformance kit 至少有一个非 Python gRPC client 完整执行 `GetCapabilities → Submit → Watch/GetJob → Retry/Cancel`，并覆盖 grant/key 轮换和错误 detail；不能只共享 digest golden 就声称外部客户端兼容。
 
-**2D 验收：** 对外制品可独立部署，非 Python 外部 conformance 通过，真实 TLS/mTLS、grant/key 轮换、attempt/fence、备份恢复与 RPO/RTO 证据齐全，local 默认无 socket/证书/gRPC 依赖，旧 run 只能按各自固定协议 resume。不调用真实模型，不跑真实 GPU/NPU，不产生性能或发布数字。
+**2D 验收：** 对外制品可独立部署，非 Python 外部 conformance 通过，真实 TLS/mTLS、grant/key 轮换、attempt/fence、备份恢复与 RPO/RTO 证据齐全，local 默认无 socket/证书/gRPC 依赖。旧 artifact 只按原规则只读验证；legacy SSH 数据面已删除，旧 manifest 不可 resume。不调用真实模型，不跑真实 GPU/NPU，不产生性能或发布数字。
 
 **2D 实现记录（2026-10-25）：** 2D1 交付生产入口 `python -m tcenv.remote.grpc_service`、镜像/入口（`deploy/remote-evaluator/`）、`scripts/remote_evaluator_admin.py`、`scripts/remote_evaluator_client.py`、`python -m tcenv.remote.state_admin`、任务包重算与 Python/Go conformance；2D2 在本机 Docker Desktop Linux VM 上用测试专用 fake backend 跑通 **49 项必需矩阵**，报告写入 `runs/grpc-sim-20261025/report.json`：TLS/mTLS、明文/缺证书/错 CA/错 SAN、同 CA 正常轮换与静态逐证书撤销、grant 过期/撤销/scope/续期重接/时钟偏移、formal-selfcheck 互换、未签名/错误 key/正常轮换/撤销 key、未知 API/evidence/feature、secret redaction、强制中断后的显式 Retry、重复 Submit 的 receipt 去重、重复 GetJob 不重复计费、timed lease 互斥、跨 run 公平与 aging、queue/Watch/DB/auth 失败上限、`cache_policy=disabled`、权威 selfcheck 证据、reset/half-open/慢消费者/deadline、容器重启、SIGKILL 旧 worker、backup/restore 隔离、真实前一产品 commit 回滚（不同 image id/digest/commit，同一 Docker 命名卷持久状态，schema 兼容）、明文与凭据不落日志、post-cleanup 证据（state 放在 Docker 命名卷上，避免 Docker Desktop bind-mount 的 SQLite WAL mmap 不一致）。报告保持 `simulated=true`、`publication_allowed=false`，不写 `run_config.json`，不进入 confirmed/catalog/brief。
 
@@ -931,7 +918,7 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 - 旧 Phase 2.5 的 forced-command/service-entry、legacy 客户端/服务端测试和可运行验收脚本已删除；历史报告保留为只读 artifact，不保留可运行的第二套服务。旧 `provenance_epoch`、legacy digest 和 HMAC verifier 仍由 `tcenv.evaluation` 与 `tests/shared/test_remote_evidence_contract.py` 的 legacy golden 覆盖；**删除的是旧数据面，不是旧证据读取与验证能力**。
 - 明确**不删除**：local `LocalEvaluator`、agent→host Unix-socket selfcheck bridge、service→一次性 worker 的私有帧、SSH workspace/P2 隔离和 provider 隧道。它们不是外部 gRPC 的替代实现。
 
-删除旧数据面的前置条件经 2026-10-27 明确决定修正为：gRPC conformance 与故障矩阵已有独立报告、当前仓库没有可 resume 的 `legacy-ssh` run（`runs/` 全部为 local）、用户明确批准删除。真实站点/设备的 2D 验收仍是生产门禁，但不是删除旧数据面的前置条件；本次删除不构成生产验收。删除前 `legacy-ssh` 只能用于旧 run，配置加载器必须拒绝新外部 run；不保留静默 fallback。短期重构成本由本期承担，不用“以后再统一”换取长期双栈维护。
+2026-10-27 经用户明确批准并完成删除：gRPC conformance 与故障矩阵已有独立报告，当前仓库没有可 resume 的 legacy run（`runs/` 全部为 local）。真实站点/设备的 2D 验收仍是生产门禁，但不是删除旧数据面的前置条件；本次删除不构成生产验收。新配置只接受显式 `transport=grpc`，旧 manifest 明确拒绝 resume，不保留静默 fallback，也不再维护双栈。
 
 **本次删除状态（2026-10-27）：** 经用户明确决定并核对当前仓库后执行删除。`runs/` 中现有 4 份 `execution.json` 全部为 `evaluation=local`，`run_config`/`control`/`state` 没有 legacy-ssh 或 remote evaluator 引用，也没有已知需要 legacy resume 的 run；因此不再等待未来 NPU 或真实站点。已删除 `CommandTransport`、`RemoteEvaluator`、`RemoteEvaluatorPool`、`remote_evaluator_pool_from_command`、`python -m tcenv.remote.service` forced-command 前端、`RemoteService`、Phase 2.5 的 forced-command/service-entry/验收 runner 及 legacy-only 测试；`tcenv.remote.client` 与 `tcenv.remote.service` 不再可导入。远程配置现在必须显式 `transport=grpc`，省略 transport、写 `legacy-ssh` 或带 `command` 都在加载时拒绝；旧 `execution.json` 声明 `legacy-ssh`（或 remote 缺 transport）时 resume 明确失败且不修改 transport。保留项：`tcenv.remote.protocol` 的 `FrameDecoder`/帧编解码（service→一次性 worker 与 `legacy_worker_bridge`）、私有 worker 协议、容器 supervisor/engine、Unix-socket selfcheck bridge、local evaluator 默认组合，以及历史 legacy digest/provenance/HMAC 读取验证。gRPC 与删除前的 legacy adapter 共用同一个 `JobEngine`，没有第二套队列/幂等/worker 业务实现。真实站点/设备 2D 仍未验收，本次删除不构成生产或发布声明。
 
@@ -1025,14 +1012,14 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 完整的模拟测试矩阵、环境 provisioning、授权开关和 `runs/npu-sim-<日期>/report.json` 规范见[远程评测模拟验收计划](远程评测模拟验收-plan.md)。这里只保留测试体系约束：
 
 - 纯 fake 测试默认进入安全 CPU 套件；Docker/VM 集成只使用 `npu_sim` marker，conftest 在未设置 `TAIC_DOCKER_NPU_SIM=1` 时先 skip；测试模块必须 import-safe，顶层不得创建 Docker client、连接 socket、启动 VM 或读取凭据，所有外部动作放在 lazy fixture 中，skip 先于 fixture 执行；
-- 旧 Phase 2.5 验收的是 `legacy-ssh` 服务端的真实 SSH/VM/Docker 链路；Phase 2D 必须另跑 gRPC/TLS/Protobuf 路径，两者报告分开；
+- 旧 Phase 2.5 验收的是已删除的 SSH/自定义帧链路，只保留历史报告；Phase 2D 使用独立的 gRPC/TLS/Protobuf 路径与报告，不能互相冒充；
 - 模拟报告必须被 host 发布策略拒绝，不产生 NPU 性能、硬件正确性或发布加速比结论；
 - 环境授权与执行开关只在专项文档 §5 记录，主 plan 不保留第二份口径。
 
 ### 显式授权的集成测试
 
 - 在真实 hmz `online=NONE` 围栏下分别于 macOS 与 Linux 验证 host bridge：每场 socket 0600、目录不可写、session token 经会话环境注入而不落 argv/TASK/workspace/manifest/log、只允许 selfcheck、跨会话拒绝和结束销毁；明确同 OS 用户下文件权限不是能力边界，token 才是 selfcheck-only 能力票；不调用模型/GPU；
-- 验证旧 Phase 2.5 镜像运行的是正式 `legacy-ssh` 服务端，而 FakeNpuBackend 只通过测试注入；新 Phase 2D 对 gRPC 制品做同样的生产可达性检查，认证/幂等、队列/租约与 worker supervisor 不得存在测试专用的另一套实现；
+- Phase 2D 对 gRPC 制品做生产可达性检查，认证/幂等、队列/租约与 worker supervisor 不得存在测试专用的另一套实现；旧 Phase 2.5 服务端已删除，不再作为可运行验收对象；
 - Phase 2D 覆盖 TLS/mTLS、证书/grant/HMAC keyring 轮换、每 RPC 授权、跨连接并发幂等、Watch 续传、Submit/GetJob/Retry 对账、旧 worker/fence、服务端重启、备份恢复与回滚；gRPC 的 RPC 成功不等于候选成功，RPC 断开不等于 worker 已停止；至少一个非 Python client 跑完整 RPC 流程；
 - 在一台预置 SSH 主机或本地虚拟机中用 fake agent 写核；
 - SSH/挂载/网络断开、环境崩溃、超时和清理；
@@ -1085,7 +1072,7 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 6. 若以后真做 `harness=env/remote`，短期凭据下发与 provider 反向代理先验证哪一条？两者都要做小规模 spike 后再定，不阻塞 Phase 2。
 7. 单租户 frontend 的客户组织内是否需要更细的 project/team 配额？这不改变租户模型，但会决定 grant 管理和审计字段。
 
-实施顺序固定为 Phase 0a/0b → Phase 1a → Phase 1b → Phase 2A → Phase 2B → Phase 2.5 → **Phase 2C → Phase 2D**；其中 2A/2B/2.5 已完成且属于 `legacy-ssh`；2C1/2C2/2C3 与 2D1 已完成，2D2 的本机 Docker 模拟验收已通过。B0.5 可与前期离线工作并行。Phase 2C 已冻结合约、拆出传输无关核心并过离线验收，Phase 2D 已交付真实 TLS/外部制品和本机故障矩阵；真实站点/设备 2D 与发布许可仍未完成，不得声称 gRPC 对外生产就绪。Phase 3/4、真实 NPU 和新的 GPU 行为仍不提前引入。旧 Phase 2.5 与新 Phase 2D 都不是 local/P2 的总闸门；真实站点发布还需单独授权与登记。
+实施顺序固定为 Phase 0a/0b → Phase 1a → Phase 1b → Phase 2A → Phase 2B → Phase 2.5 → **Phase 2C → Phase 2D**；其中 2A/2B/2.5 是历史交付，旧 SSH 数据面已于 2026-10-27 删除；2C1/2C2/2C3 与 2D1 已完成，2D2 的本机 Docker 模拟验收已通过。B0.5 可与前期离线工作并行。Phase 2C 已冻结合约、拆出传输无关核心并过离线验收，Phase 2D 已交付真实 TLS/外部制品和本机故障矩阵；真实站点/设备 2D 与发布许可仍未完成，不得声称 gRPC 对外生产就绪。Phase 3/4、真实 NPU 和新的 GPU 行为仍不提前引入。旧 Phase 2.5 与新 Phase 2D 都不是 local/P2 的总闸门；真实站点发布还需单独授权与登记。
 
 ## 15. 评审采纳记录
 
@@ -1118,7 +1105,7 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 | 传输错误与任务/缓存边界 | 采纳。基础设施错误不等同候选 crash/timeout；请求绑定 task_fingerprint；明确 local/remote cache 与 fast_bench 基线缓存的 site/device/build 隔离 | §6.4、§10.1、§11 Phase 2 |
 | P2 生成阶段与人工审阅 | 采纳并限定安全承诺。补充 `review-code`/`approve-execution` 记录；若要求全链路不执行未审阅代码，code_patch 生成也必须隔离 | §8、§11 Phase 1 |
 | macOS/Linux VM/Docker NPU 模拟 | 已完成并保留为 `legacy-ssh` 历史验收。fake `sim-npu` 只是设备桩，不做真实 NPU，不产生性能或发布结论；它不能替代 Phase 2D 的 gRPC/TLS 对外验收 | §11 Phase 2.5/2D、§12、§14 |
-| 测可部署服务而非测试替身 | 采纳。frame codec、forced-command、认证/幂等、队列/租约和 worker supervisor 归入正式 `tcenv.remote`；tests/support 只提供 fake backend、fixture 与故障注入 | §6.4、§11 Phase 2.5 |
+| 测可部署服务而非测试替身 | 采纳。gRPC ingress、认证/幂等、队列/租约和 worker supervisor 归入正式 `tcenv.remote`；tests/support 只提供 fake backend、fixture 与故障注入。旧 forced-command 入口已删除 | §6.4、§11 Phase 2C/2D |
 | 宿主发布许可与 evaluator epoch | 采纳。host 默认拒绝未登记站点发布；运行开始固定 evaluator epoch，中途漂移即停止，不进入缓存、比较或确认 | §6.4、§10、§14 |
 | 桥接、超时与恢复 | 采纳。真实 hmz 围栏验证先行；每场 0600 socket 与 token；三层 deadline、cancel/TTL、progress 和 pending_evaluation 幂等恢复补齐 | §6.4、§7、§11 Phase 2 |
 | 请求字段与数据生命周期 | 采纳并修正。task_fingerprint 不再重复 contract_digest；候选按实际字节哈希；request_id 明确为幂等键，provenance 类型化；补源码/任务数据的日志、保留和删除边界 | §6.4、§9.6 |
@@ -1133,9 +1120,9 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 | pending 数据模型与 P2 环境拆分 | 采纳。outbox 记录 request/candidate/epoch/status/report，`RunResult.stop_reason=evaluation_unavailable`，brief/observe 可读；Phase 1 拆成无环境 static 与需隔离环境的 dynamic，不互相冒充完成 | §10、§11 Phase 1 |
 | 自测上下文、任务包与 import-safe | 采纳。verdict 使用 SessionBrief 的 host 上下文；task_pack_manifest 规范 digest；AgentResult.artifacts 可选；npu_sim 测试模块 import-safe，skip 先于外部副作用 | §6.1、§6.4、§7、§12、专项文档 §5 |
 | NPU import boundary 与 KernelContract | 采纳。B0.5 明确通用 fake backend 路径不得 import Metal、task_fingerprint 按 backend 取参考源；kernel 级 NPU 先补非 MSL KernelContract，再谈实现 | §11 Phase B0.5/B2 |
-| 对外交付采用 gRPC + TLS + Protobuf | 采纳为本轮明确决策。旧 SSH/自定义帧降为 `legacy-ssh`；新增 Phase 2C 合约/核心/adapter 与 Phase 2D 真实 TLS/外部制品门禁。TLS、mTLS、grant、结果签名和 host 发布许可分层；旧模拟报告不冒充新协议证据，local 默认不变 | §0、§2、§6.4.1、§7.1、§10、§11 Phase 2C/2D、§13、§14 |
+| 对外交付采用 gRPC + TLS + Protobuf | 采纳并落地。旧 SSH/自定义外部帧已删除；Phase 2C 合约/核心/adapter 与 Phase 2D 真实 TLS/外部制品门禁保留。TLS、mTLS、grant、结果签名和 host 发布许可分层；旧模拟报告不冒充新协议证据，local 默认不变 | §0、§2、§6.4.1、§7.1、§10、§11 Phase 2C/2D、§13、§14 |
 | 外部交付复审：凭证、持久化和长任务 | 采纳。host 客户端独占 formal mTLS/HMAC 凭据；单 frontend SQLite WAL 事务 job store；Submit 绑定 epoch/capability；task pack/fingerprint 服务端重算；Watch/GetJob 可恢复；TLS 直接终止并认证 capabilities | §6.4.1、§9.3、§9.5、§11 Phase 2C/2D、§12 |
-| 重构期删除重复实现 | 采纳。单一 job engine、单一 domain→proto adapter；legacy SSH 仅临时迁移；gRPC 通过后删除自定义帧、forced-command、连接级认证和重复 pool/队列；local bridge 与私有 worker 帧保留 | §11 Phase 2C/2D 删除纪律、§13 |
+| 重构期删除重复实现 | 采纳并落地。单一 job engine、单一 domain→proto adapter；旧 SSH 外部帧、forced-command、连接级认证和重复 pool/队列已于 2026-10-27 删除；local bridge 与私有 worker 帧保留 | §11 Phase 2C/2D 删除纪律、§13 |
 | 单租户与 host HMAC 决策 | 固定。v1 一个 frontend 只服务一个客户组织；不实现多租户/跨租户队列；结果只由 host-controlled HMAC verifier 校验，不承诺第三方独立验签，不增加 Ed25519/ECDSA | §0、§2、§3、§6.4.1、§14、§15 |
 | 第二轮协议与恢复复审 | 采纳并统一。job 与 attempt 分离，Submit 只创建/回放，Retry 显式创建 attempt；receipt/provenance/signature 带 attempt，设备使用 lease fence；grant 续期/撤销和 keyring 轮换独立于测量 epoch；v1 明确 single-active non-HA，并补备份恢复、时间、required features 和标准错误 | §6.4、§6.4.1、§10、§11 Phase 2C/2D、§12、§13、§14 |
 | 2C/2D1 实现与本机 2D2 | 采纳并落地。gRPC adapter、TLS/mTLS、持久核心、制品/工具、Python+Go conformance 与 Docker Linux VM 模拟矩阵完成；grant 文件成为重启权威集合（移除即撤销，同 scope 新 token 续期）；HMAC 正常轮换保留历史 key。真实站点/设备、CRL/OCSP、HA 与旧数据面删除仍开放 | §11 Phase 2C/2D、§12、§15 |
