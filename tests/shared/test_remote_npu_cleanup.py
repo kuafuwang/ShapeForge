@@ -648,6 +648,7 @@ def test_generation_two_run_records_and_releases_only_its_own_generation(tmp_pat
         assert snapshot.result is not None
         ledger = VendorLedger(ledger_path)
         assert ledger.live_resources() == []
+        assert ledger.read()["device_running"] == []
         proof = controller.reconcile(
             snapshot.current_attempt.attempt_id, snapshot.current_attempt.lease_fence,
         )
@@ -705,3 +706,147 @@ def test_reconcile_refuses_resources_from_another_device_group(tmp_path):
     assert proof.complete is False
     assert "another device group/profile/topology/resource generation" in proof.detail
     assert ledger.attempt_resources("attempt-cross-group", 9)
+
+
+# -- a running fake device is part of the lease too ------------------------
+def test_close_and_reconcile_clear_the_running_marker(tmp_path):
+    """@brief 真实顺序 prepare→execute→close→reconcile 后 marker 必须清空且证明可复核。"""
+    from tests.support.vendor_sim.vendor_a import FakeVendorADriver
+
+    ledger_path = tmp_path / "ledger.json"
+    ledger = VendorLedger(ledger_path)
+    driver = FakeVendorADriver(ledger)
+    prepared = driver.prepare(
+        build_execution(), SOURCE, {"attempt_id": "attempt-marker", "lease_fence": 1},
+    )
+    driver.execute(prepared, deadline_monotonic=time.monotonic() + 5)
+    assert ledger.read()["device_running"] == ["attempt-marker:1"]
+    driver.close(prepared)
+    assert ledger.read()["device_running"] == []
+    proof = FakeVendorAController(ledger_path).reconcile("attempt-marker", 1)
+    assert proof.complete is True
+    assert ledger.read()["device_running"] == []
+
+
+def test_a_foreign_running_marker_is_never_cleared_or_claimed(tmp_path):
+    """@brief 异代际 controller 不能清除或证明仍在运行的 marker。"""
+    from tests.support.vendor_sim.vendor_a import FakeVendorADriver
+
+    ledger_path = tmp_path / "ledger.json"
+    ledger = VendorLedger(ledger_path)
+    prepared = FakeVendorADriver(ledger, generation="1").prepare(
+        build_execution("1"), SOURCE, {"attempt_id": "attempt-run-gen1", "lease_fence": 2},
+    )
+    FakeVendorADriver(ledger, generation="1").execute(
+        prepared, deadline_monotonic=time.monotonic() + 5,
+    )
+    assert ledger.read()["device_running"] == ["attempt-run-gen1:2"]
+
+    foreign = FakeVendorAController(ledger_path, generation="2").reconcile("attempt-run-gen1", 2)
+    assert foreign.complete is False
+    assert foreign.live_resources == ("running",)
+    assert "another device group/profile/topology/resource generation" in foreign.detail
+    # Nothing was deleted: the running marker and its scope survive.
+    assert ledger.read()["device_running"] == ["attempt-run-gen1:2"]
+    assert ledger.attempt_resources("attempt-run-gen1", 2)
+
+    matching = FakeVendorAController(ledger_path, generation="1").reconcile("attempt-run-gen1", 2)
+    assert matching.complete is True
+    assert ledger.read()["device_running"] == []
+    assert ledger.attempt_resources("attempt-run-gen1", 2) == []
+
+
+def test_normal_completion_leaves_no_running_marker(tmp_path):
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path,
+        controller=FakeVendorAController(ledger_path),
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-marker-completed-1", source=SOURCE)
+        npu_submit(engine, request)
+        _wait_engine(engine, request, {"completed"})
+        ledger = VendorLedger(ledger_path)
+        assert ledger.live_resources() == []
+        assert ledger.read()["device_running"] == []
+    finally:
+        engine.close(wait=5)
+
+
+def test_cancel_leaves_no_running_marker(tmp_path):
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path,
+        controller=FakeVendorAController(ledger_path),
+        worker_env={"TCENV_VENDOR_A_SLOW": "1"},
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-marker-cancel-1", source=SOURCE)
+        npu_submit(engine, request)
+        ledger = VendorLedger(ledger_path)
+        deadline = time.monotonic() + 10
+        snapshot = npu_get(engine, request)
+        while time.monotonic() < deadline and not ledger.read()["device_running"]:
+            time.sleep(0.02)
+            snapshot = npu_get(engine, request)
+        attempt = snapshot.current_attempt
+        assert ledger.read()["device_running"] == [f"{attempt.attempt_id}:{attempt.lease_fence}"]
+        engine.cancel(
+            request_id=request.request_id, request_digest=request.request_digest,
+            expected=engine.expected_identities, grant_token=NPU_TOKEN,
+            reason="marker regression",
+        )
+        final = _wait_engine(engine, request, {"cancelled"})
+        assert final.result is None
+        assert ledger.live_resources() == []
+        assert ledger.read()["device_running"] == []
+    finally:
+        engine.close(wait=5)
+
+
+def test_killed_worker_reconciles_and_clears_the_running_marker(tmp_path):
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    controller = FakeVendorAController(ledger_path)
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=controller,
+        worker_env={"TCENV_VENDOR_A_ABORT_AFTER_LAUNCH": "1"},
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-marker-killed-1", source=SOURCE)
+        npu_submit(engine, request)
+        snapshot = _wait_engine(engine, request, {"interrupted"})
+        ledger = VendorLedger(ledger_path)
+        assert ledger.read()["device_running"] == []
+        proof = controller.reconcile(
+            snapshot.current_attempt.attempt_id, snapshot.current_attempt.lease_fence,
+        )
+        assert proof.complete is True
+        assert ledger.read()["device_running"] == []
+    finally:
+        engine.close(wait=5)
+
+
+def test_generation_two_run_clears_its_running_marker_and_keeps_a_generation_one_marker(tmp_path):
+    """@brief generation 2 运行清自己的 marker；对方代际的 marker 在异代际 reconcile 下保留。"""
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    controller = FakeVendorAController(ledger_path, generation="2")
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=controller,
+        generation="2", signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-marker-gen2-1", source=SOURCE, generation="2")
+        npu_submit(engine, request)
+        _wait_engine(engine, request, {"completed"})
+        ledger = VendorLedger(ledger_path)
+        assert ledger.read()["device_running"] == []
+        assert ledger.live_resources() == []
+    finally:
+        engine.close(wait=5)

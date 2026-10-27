@@ -60,7 +60,10 @@ class VendorLedger:
 
     def _read_unlocked(self) -> dict[str, Any]:
         if not self.path.is_file():
-            return {"schema_version": 1, "resources": {}, "cancelled": [], "device_running": [], "probes": []}
+            return {
+                "schema_version": 1, "resources": {}, "cancelled": [],
+                "device_running": [], "running_scope": {}, "probes": [],
+            }
         try:
             document = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
@@ -70,6 +73,11 @@ class VendorLedger:
         for key in ("resources", "cancelled", "device_running", "probes"):
             if not isinstance(document.get(key), (dict, list)):
                 raise LedgerError("fake vendor ledger is corrupt")
+        # A running marker is only meaningful with the binding it was taken
+        # under; a marker without a scope can never be released.
+        document.setdefault("running_scope", {})
+        if not isinstance(document["running_scope"], dict):
+            raise LedgerError("fake vendor ledger is corrupt")
         return document
 
     def read(self) -> dict[str, Any]:
@@ -98,11 +106,26 @@ class VendorLedger:
             }
         return resource_id
 
-    def mark_device_running(self, *, attempt_id: str, lease_fence: int) -> None:
+    def mark_device_running(
+        self, *, attempt_id: str, lease_fence: int, binding: Mapping[str, str],
+    ) -> None:
+        marker = f"{attempt_id}:{lease_fence}"
         with self._locked() as document:
-            marker = f"{attempt_id}:{lease_fence}"
             if marker not in document["device_running"]:
                 document["device_running"].append(marker)
+            document["running_scope"][marker] = {
+                key: binding.get(key) for key in _BINDING_KEYS
+            }
+
+    def attempt_running(self, attempt_id: str, lease_fence: int) -> list[dict[str, Any]]:
+        """Return this attempt/fence's running markers with their binding."""
+
+        marker = f"{attempt_id}:{lease_fence}"
+        with self._locked() as document:
+            if marker not in document["device_running"]:
+                return []
+            scope = document["running_scope"].get(marker)
+            return [{"marker": marker, "binding": None if scope is None else dict(scope)}]
 
     def mark_cancelled(self, *, attempt_id: str, lease_fence: int) -> None:
         with self._locked() as document:
@@ -140,6 +163,7 @@ class VendorLedger:
         """
 
         released: list[str] = []
+        marker = f"{attempt_id}:{lease_fence}"
         with self._locked() as document:
             for resource_id, resource in list(document["resources"].items()):
                 if resource["attempt_id"] != attempt_id or resource["lease_fence"] != lease_fence:
@@ -148,10 +172,15 @@ class VendorLedger:
                     continue
                 released.append(resource_id)
                 del document["resources"][resource_id]
-            if binding is None:
-                marker = f"{attempt_id}:{lease_fence}"
-                if marker in document["device_running"]:
+            # The running marker is part of the same lease: only the binding it
+            # was taken under (or an explicit unscoped release) may clear it.
+            scope = document["running_scope"].get(marker)
+            if marker in document["device_running"]:
+                if binding is None or (scope is not None and all(
+                    scope.get(key) == binding.get(key) for key in _BINDING_KEYS
+                )):
                     document["device_running"].remove(marker)
+                    document["running_scope"].pop(marker, None)
         return sorted(released)
 
     def clear(self) -> None:
@@ -159,6 +188,7 @@ class VendorLedger:
             document["resources"] = {}
             document["cancelled"] = []
             document["device_running"] = []
+            document["running_scope"] = {}
             document["probes"] = []
 
     def is_cancelled(self, attempt_id: str, lease_fence: int) -> bool:

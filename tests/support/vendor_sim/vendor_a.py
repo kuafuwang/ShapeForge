@@ -170,6 +170,7 @@ class FakeVendorADriver:
         started = time.monotonic_ns()
         self.ledger.mark_device_running(
             attempt_id=prepared.attempt_id, lease_fence=prepared.lease_fence,
+            binding=self.binding(),
         )
         if progress is not None:
             progress({"stage": "compile", "completed_reps": 0, "total_reps": 1, "detail": "fake ELF/SIMT prepared"})
@@ -310,10 +311,38 @@ class FakeVendorAController:
                 live_resources=tuple(sorted(r["kind"] for r in stale)),
                 detail="resources belong to a stale fence of the same attempt",
             )
-        if not resources:
+        bound = self.binding()
+        try:
+            markers = self.ledger.attempt_running(attempt_id, lease_fence)
+        except LedgerError as exc:
             return self._proof(
                 attempt_id, lease_fence,
-                complete=True, detail="no live resources for this attempt/fence",
+                complete=False, detail=f"ledger unreadable: {exc}",
+            )
+        foreign_markers = [
+            marker for marker in markers
+            if marker["binding"] is None or not all(
+                marker["binding"].get(key) == bound.get(key)
+                for key in ("device_group_id", "vendor_id", "profile_digest",
+                            "topology_digest", "resource_generation")
+            )
+        ]
+        if foreign_markers:
+            # A device that is still running under another binding must not be
+            # reported as cleaned, and its marker must survive.
+            return self._proof(
+                attempt_id, lease_fence,
+                complete=False,
+                live_resources=("running",),
+                detail=(
+                    "the attempt is still marked running under another device "
+                    "group/profile/topology/resource generation"
+                ),
+            )
+        if not resources and not markers:
+            return self._proof(
+                attempt_id, lease_fence,
+                complete=True, detail="no live resources or running marker for this attempt/fence",
             )
         foreign = [
             resource for resource in resources
@@ -336,20 +365,21 @@ class FakeVendorAController:
             return self._proof(
                 attempt_id, lease_fence,
                 complete=False,
-                live_resources=tuple(sorted(r["kind"] for r in resources)),
+                live_resources=tuple(sorted(r["kind"] for r in resources)) or ("running",),
                 detail="fake controller cannot prove external release",
             )
-        released = self.ledger.release_attempt(
-            attempt_id, lease_fence, binding=self.binding(),
-        )
+        released = self.ledger.release_attempt(attempt_id, lease_fence, binding=bound)
         remaining = self.ledger.attempt_resources(attempt_id, lease_fence)
-        if remaining:
+        still_running = self.ledger.attempt_running(attempt_id, lease_fence)
+        if remaining or still_running:
             return self._proof(
                 attempt_id, lease_fence,
                 complete=False,
-                live_resources=tuple(sorted(r["kind"] for r in remaining)),
+                live_resources=(
+                    tuple(sorted(r["kind"] for r in remaining)) if remaining else ("running",)
+                ),
                 released_resources=tuple(released),
-                detail="external release left live resources",
+                detail="external release left live resources or a running marker",
             )
         return self._proof(
             attempt_id, lease_fence,

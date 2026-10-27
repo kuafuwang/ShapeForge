@@ -421,16 +421,20 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   device event。fake vendor 的 `prepare` 全程使用已校验的当前绑定（`PreparedAttempt` 与
   ledger 行都写 vendor/profile/topology/generation），`reconcile`/`release_attempt` 在释放前
   逐项核对绑定：异组或异代际的资源既不删也不证明已清理，proof 保持 `complete=False` 并把
-  它们列为 live resources 供 quarantine。
+  它们列为 live resources 供 quarantine。运行状态同样属于租约：`mark_device_running` 记录当时
+  的完整绑定，只有匹配绑定的 driver `close` 或 controller `reconcile` 才能清除它，且清除后
+  必须复核为空才可返回 `complete=True`；仍有 marker（或只剩 marker）时 proof 一律
+  `complete=False`，异组/异代际的 marker 原样保留。
 - 终态 request_id：`request_id` 不属于 canonical digest，因此
   `npu_stored_request_document` 单独校验其标识符形状，`_validate_result_envelope` 与
   `_validate_durable_state` 都把它与 `jobs.request_id` 比对；篡改后直接读与重开都
   fail closed。
 - 验证证据（每条命令各自单独跑）：
-  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **56 passed**
+  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **62 passed**
   （wire receipt 与 host HMAC 篡改、时钟/候选时间自相矛盾、hanging cancel/reconcile、
   终态 request_id/task/execution/provenance/attempt 绑定篡改、Submit 跨 generation
-  capability、fake vendor 的代际 prepare/台账与异组/异代际 reconcile 拒绝）；
+  capability、fake vendor 的代际 prepare/台账、运行 marker 与异组/异代际
+  reconcile 拒绝并保留对方 running 证据）；
   `test_remote_grpc_{adapter,tls,contract,revocation}.py` 与
   `test_remote_{conformance,go_conformance}.py` 六个旧文件 **62 passed**；
   `test_orchestrator_runtime.py` **18 passed**（含 NPU host 接线回归）；
@@ -440,7 +444,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `test_remote_job_recovery.py`，`_validate_durable_state` 的终态读校验同文件覆盖）；
   `test_selfcheck_bridge.py` 在本机围栏默认 TMPDIR 下 **18 failed, 1 passed**（全部是
   短 TMPDIR 导致的 AF_UNIX 路径超长），`TMPDIR=/tmp` 下 **19 passed**。
-  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2255 passed / 6 skipped /
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2261 passed / 6 skipped /
   32 failed**。这批失败全部
   是本机 hmz 围栏环境造成：`test_selfcheck_bridge.py` 的 AF_UNIX 路径超长（短 TMPDIR），
   `ps` 被禁（`test_children`、`test_run_detached`、`test_triton_baseline`）与 HOME 权威

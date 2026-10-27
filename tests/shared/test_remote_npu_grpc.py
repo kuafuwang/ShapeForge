@@ -181,6 +181,7 @@ def test_explicit_cancel_reaches_terminal_and_releases_device_resources(tmp_path
         final = _wait_state(harness, external, {"cancelled"})
         assert not final.HasField("result")
         assert ledger.live_resources() == []
+        assert ledger.read()["device_running"] == []
 
 
 def test_cancel_after_the_terminal_state_does_not_touch_the_device_lease(tmp_path):
