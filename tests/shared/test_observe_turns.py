@@ -12,7 +12,7 @@ import pytest
 
 from observe.detail import turns_feed
 from observe.index import get_index
-from observe.query import feature_grid, run_detail
+from observe.query import feature_grid, run_detail, run_summary
 
 
 def _prepare(tmp_path, monkeypatch) -> tuple[Path, object]:
@@ -85,6 +85,7 @@ def test_a_running_search_catches_up_without_redrawing_the_detail(tmp_path, monk
     assert index.stats["turn_parses"] == 1
     assert index.conn.execute("SELECT turn_bytes FROM runs WHERE run_id = 'conv'").fetchone()["turn_bytes"] == len(first.encode())
     stamp = run_detail("conv")["detail_stamp"]
+    summary_stamp = run_summary("conv")["detail_stamp"]
     turns = index.turns_revision()
     with transcript.open("ab") as handle:
         handle.write(b',"model":"kimi-k3","reply":{"content":"second"}}\n')
@@ -96,8 +97,13 @@ def test_a_running_search_catches_up_without_redrawing_the_detail(tmp_path, monk
     assert revision_after == revision
     assert changed == []
     assert index.turns_revision() == turns + 1
-    assert run_detail("conv")["detail_stamp"] == stamp
-    assert run_detail("conv", stamp=stamp) == {"same": True, "id": "conv", "detail_stamp": stamp}
+    # 追加对话只前移回合版本，不动摘要戳（§5.2）；但完整详情含 timeline（问模型泳道读 transcript），
+    # 它自己的戳必须前移。共用摘要戳会让完整详情的旧负载一直命中 same（同一类陈旧响应 bug）。
+    assert run_summary("conv")["detail_stamp"] == summary_stamp
+    moved = run_detail("conv")["detail_stamp"]
+    assert moved != stamp
+    assert run_detail("conv", stamp=stamp).get("same") is not True
+    assert run_detail("conv", stamp=moved) == {"same": True, "id": "conv", "detail_stamp": moved}
     rows = _rows(index, "conv")
     assert [row["seq"] for row in rows] == [1, 2]
     assert rows[1]["reply"] == "second"
@@ -341,6 +347,8 @@ def test_fa_paper_signs_each_distinct_source_once(tmp_path, monkeypatch):
 
     monkeypatch.setattr(query, "feature_signature", wrapped)
     query._GRID_CACHE.clear()
+    # 详情读路径不再摄取索引；要拿到 detail_stamp 就先让索引收录这一场（页面由列表页完成）。
+    get_index().resolve("apple-m4-max/p1/fa_paper")
     detail = run_detail("apple-m4-max/p1/fa_paper")
     assert calls["n"] == len(distinct)
     assert detail["detail_stamp"]
@@ -348,3 +356,288 @@ def test_fa_paper_signs_each_distinct_source_once(tmp_path, monkeypatch):
     assert calls["n"] == len(distinct)
     assert run_detail("apple-m4-max/p1/fa_paper", stamp=detail["detail_stamp"])["same"] is True
     assert calls["n"] == len(distinct)
+
+
+def _reference_groups(index, run_id: str) -> list[dict]:
+    """@brief 独立的逐组期望值：把整份投影行按相邻同标签分组（旧 ``_turn_groups`` 语义）。
+
+    @param index 观察索引。
+    @param run_id 运行 id。
+    @return 每组含 label/min_seq/max_seq/事件数。
+    """
+    from observe.detail import _turn_groups
+
+    events = _rows(index, run_id)
+    return [
+        {"label": group["label"], "min_seq": group["min_seq"], "max_seq": group["max_seq"],
+         "count": len(group["events"])}
+        for group in _turn_groups(events)
+    ]
+
+
+def test_the_grp_projection_matches_the_adjacent_label_reference(tmp_path, monkeypatch):
+    """@brief §5.3 验收①/②：三份夹具逐组等价，且跨多次摄入的分组边界与整段重算一致。
+
+    ① 同标签重试共组；② 续跑时同名标签再次出现另起一组（分两次摄入）；③ 单组 500 事件。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具。
+    """
+    runs, index = _prepare(tmp_path, monkeypatch)
+    directory = runs / "conv"
+    _running(directory)
+    transcript = directory / "transcript.jsonl"
+    lines = [
+        _line("chat", "A", reply={"content": "first"}),
+        _line("retry", "A", error="timeout talking"),
+        _line("chat", "A", reply={"content": "still A"}),
+        _line("chat", "B", reply={"content": "B"}),
+    ]
+    transcript.write_text("".join(lines))
+    index.tick()
+    # 续跑：同名 A 在 B 之后再出现，必须另起一组；再追加一条 B 又一组。
+    with transcript.open("a", encoding="utf-8") as handle:
+        handle.write(_line("chat", "A", reply={"content": "A again"}))
+    index.tick()
+    with transcript.open("a", encoding="utf-8") as handle:
+        handle.write(_line("chat", "B", reply={"content": "B again"}))
+    index.tick()
+    assert _reference_groups(index, "conv") == [
+        {"label": "A", "min_seq": 1, "max_seq": 3, "count": 3},
+        {"label": "B", "min_seq": 4, "max_seq": 4, "count": 1},
+        {"label": "A", "min_seq": 5, "max_seq": 5, "count": 1},
+        {"label": "B", "min_seq": 6, "max_seq": 6, "count": 1},
+    ]
+    feed = turns_feed("conv", limit=2)
+    assert [(row["label"], row["min_seq"], row["max_seq"]) for row in feed["rows"]] == [("A", 5, 5), ("B", 6, 6)]
+    older = turns_feed("conv", before=feed["cursor"], limit=2)
+    assert [(row["label"], row["min_seq"], row["max_seq"]) for row in older["rows"]] == [("A", 1, 3), ("B", 4, 4)]
+    assert older["cursor"] is None
+    # 空标签每行一组。
+    _running(runs / "blank")
+    (runs / "blank" / "transcript.jsonl").write_text("".join([
+        _line("chat", "", reply={"content": "x"}),
+        _line("chat", "", reply={"content": "y"}),
+    ]))
+    index.tick()
+    assert [row["count"] for row in _reference_groups(index, "blank")] == [1, 1]
+
+
+def _many_groups(directory: Path, count: int) -> None:
+    """@brief 写一场 ``count`` 组的 transcript：每组一行，标签 c0,c1,...
+
+    @param directory 运行目录。
+    @param count 组数。
+    """
+    _running(directory)
+    with (directory / "transcript.jsonl").open("w", encoding="utf-8") as handle:
+        for index in range(count):
+            handle.write(_line("chat", f"c{index}", reply={"content": "r"}))
+
+
+def test_a_page_reads_only_its_own_groups_and_does_not_grow_with_the_run(tmp_path, monkeypatch):
+    """@brief §5.3 验收③：一页只读本页组的事件总数，100 组与 10,000 组的 run 读行数相同。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具。
+    """
+    from observe import detail
+
+    runs, index = _prepare(tmp_path, monkeypatch)
+    _many_groups(runs / "small", 100)
+    _many_groups(runs / "huge", 10_000)
+    index.tick()
+
+    parsed: list[int] = []
+    real = detail._parse_turn_rows
+
+    def counting(rows):
+        parsed.append(len(rows))
+        return real(rows)
+
+    monkeypatch.setattr(detail, "_parse_turn_rows", counting)
+    small = turns_feed("small", limit=40)
+    small_rows = sum(parsed)
+    parsed.clear()
+    huge = turns_feed("huge", limit=40)
+    huge_rows = sum(parsed)
+    assert len(small["rows"]) == 40 and len(huge["rows"]) == 40
+    assert small_rows == huge_rows == 40, (small_rows, huge_rows)
+    assert small["cursor"] is not None and huge["cursor"] is not None
+    monkeypatch.setattr(detail, "_parse_turn_rows", real)
+
+
+def test_a_500_event_group_is_truncated_in_sql_and_all_1_returns_it(tmp_path, monkeypatch):
+    """@brief §5.3 验收④：单组 500 事件只读最新 400 条并标 ``truncated_events``；``all=1`` 读回全量。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具。
+    """
+    from observe import detail
+
+    runs, index = _prepare(tmp_path, monkeypatch)
+    directory = runs / "big"
+    _running(directory)
+    with (directory / "transcript.jsonl").open("w", encoding="utf-8") as handle:
+        for _ in range(500):
+            handle.write(_line("retry", "A", error="timeout talking"))
+    index.tick()
+    assert _reference_groups(index, "big") == [{"label": "A", "min_seq": 1, "max_seq": 500, "count": 500}]
+    grp = index.conn.execute("SELECT DISTINCT grp FROM turns WHERE run_id = 'big'").fetchone()[0]
+
+    parsed: list[int] = []
+    real = detail._parse_turn_rows
+
+    def counting(rows):
+        parsed.append(len(rows))
+        return real(rows)
+
+    monkeypatch.setattr(detail, "_parse_turn_rows", counting)
+    feed = turns_feed("big", limit=10)
+    assert sum(parsed) == detail.TURN_GROUP_EVENTS
+    monkeypatch.setattr(detail, "_parse_turn_rows", real)
+    assert len(feed["rows"]) == 1
+    row = feed["rows"][0]
+    assert row["truncated_events"] == 100 and len(row["retries"]) == 400
+    assert (row["min_seq"], row["max_seq"]) == (1, 500)
+
+    full = turns_feed("big", grp=grp, everything=True)
+    assert full["all"] is True and full["grp"] == grp
+    assert len(full["rows"]) == 1 and len(full["rows"][0]["retries"]) == 500
+    assert "truncated_events" not in full["rows"][0]
+
+
+def test_the_two_group_queries_and_the_rows_query_use_the_group_index(tmp_path, monkeypatch):
+    """@brief §5.3 验收⑤：实现真正发出的三条 ``FROM turns`` 语句都走 ``turns_run_grp``，不 ``SCAN turns``。
+
+    这里 EXPLAIN 的是 trace 抓到的真实语句，不是测试里手抄的 SQL——手抄件会和实现一起漂移。
+    跨组 ``ORDER BY seq`` 可能出现 ``USE TEMP B-TREE``，这是正常的。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具。
+    """
+    from observe.index import Index
+
+    runs, index = _prepare(tmp_path, monkeypatch)
+    _many_groups(runs / "conv", 60)
+    index.tick()
+    turns_feed("conv", limit=40)  # 预热投影
+    real = Index.read_only
+    statements: list[str] = []
+
+    def instrumented(self):
+        conn = real(self)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(Index, "read_only", instrumented)
+    statements.clear()
+    turns_feed("conv", limit=40)
+    monkeypatch.setattr(Index, "read_only", real)
+
+    turn_sql = [sql for sql in statements if "FROM turns" in sql]
+    assert len(turn_sql) >= 3, turn_sql
+    assert any("GROUP BY grp" in sql and "MIN(seq)" in sql for sql in turn_sql), turn_sql
+    assert any("COUNT(*)" in sql for sql in turn_sql), turn_sql
+    assert any("row_json" in sql and "ORDER BY seq" in sql for sql in turn_sql), turn_sql
+    conn = real(index)
+    try:
+        for sql in turn_sql:
+            plan = conn.execute("EXPLAIN QUERY PLAN " + sql).fetchall()
+            text = " | ".join(str(row["detail"]) for row in plan)
+            assert "turns_run_grp" in text, (sql, text)
+            assert "SCAN turns" not in text, (sql, text)
+    finally:
+        conn.close()
+
+
+def test_rows_projected_before_grp_existed_are_regrouped_on_the_next_touch(tmp_path, monkeypatch):
+    """@brief 升级修复：``turns`` 已有行但 ``grp`` 全是 0（旧代码没写过组号）时，下一次追平整份重投影。
+
+    这是 schema 12 落地后才加投影规则留下的唯一不可恢复状态；``turn_bytes`` 已到文件末尾，
+    所以修复必须先归零偏移再重读，否则会一直跳过重建。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具。
+    """
+    runs, index = _prepare(tmp_path, monkeypatch)
+    directory = runs / "conv"
+    _running(directory)
+    (directory / "transcript.jsonl").write_text("".join([
+        _line("chat", "A", reply={"content": "one"}),
+        _line("retry", "A", error="timeout talking"),
+        _line("chat", "B", reply={"content": "two"}),
+    ]))
+    index.tick()
+    expected = _reference_groups(index, "conv")
+    assert expected == [{"label": "A", "min_seq": 1, "max_seq": 2, "count": 2},
+                        {"label": "B", "min_seq": 3, "max_seq": 3, "count": 1}]
+    # 模拟升级前的库：行都在、偏移也到末尾，但没有组号。
+    stale = turns_feed("conv")
+    index.conn.execute("UPDATE turns SET grp = 0 WHERE run_id = 'conv'")
+    index.conn.commit()
+    index.stats["turn_parses"] = 0
+    index.tick()
+    assert turns_feed("conv", stamp=stale["stamp"]) != {"same": True, "stamp": stale["stamp"]}, (
+        "重投影没有改 turn_bytes，必须靠 epoch 让旧 stamp 失效"
+    )
+    assert index.stats["turn_parses"] == 3, "整份重投影一次"
+    assert index.conn.execute("SELECT MIN(grp) FROM turns WHERE run_id = 'conv'").fetchone()[0] >= 1
+    assert _reference_groups(index, "conv") == expected
+    # 第二次不再重投影。
+    index.stats["turn_parses"] = 0
+    index.tick()
+    assert index.stats["turn_parses"] == 0
+
+
+def test_a_turn_page_is_bounded_at_the_sqlite_layer(tmp_path, monkeypatch):
+    """@brief PR8：在 SQLite 层证明翻页只读本页的组/事件，并 EXPLAIN 实际执行的组查询。
+
+    只看 ``_parse_turn_rows`` 的计数位于 fetch 之后，证明不了没有先 ``fetchall()`` 再切片。
+    这里用 trace/progress handler 抓真实 SQL 与 VDBE 步数：5000 组的 run 与 60 组的 run
+    读一页的步数相当，且每条 ``FROM turns`` 的语句都带 run_id 与 LIMIT/BETWEEN/IN 边界。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具。
+    """
+    from observe.index import Index
+
+    runs, index = _prepare(tmp_path, monkeypatch)
+    _many_groups(runs / "small", 60)
+    _many_groups(runs / "huge", 5000)
+    index.tick()
+    turns_feed("huge", limit=40)  # 预热投影，后面的计数只量读页
+    real = Index.read_only
+    statements: list[str] = []
+    ops = {"n": 0}
+
+    def instrumented(self):
+        conn = real(self)
+        conn.set_trace_callback(statements.append)
+
+        def handler() -> int:
+            ops["n"] += 1
+            return 0
+
+        conn.set_progress_handler(handler, 1)
+        return conn
+
+    monkeypatch.setattr(Index, "read_only", instrumented)
+
+    statements.clear()
+    ops["n"] = 0
+    turns_feed("small", limit=40)
+    small_ops = ops["n"]
+    statements.clear()
+    ops["n"] = 0
+    huge = turns_feed("huge", limit=40)
+    huge_ops = ops["n"]
+    assert len(huge["rows"]) == 40
+    assert huge_ops < small_ops * 3 + 5000, (small_ops, huge_ops)
+
+    turn_sql = [sql for sql in statements if "FROM turns" in sql]
+    assert turn_sql, statements
+    for sql in turn_sql:
+        assert "run_id" in sql, sql
+        assert "LIMIT" in sql or "BETWEEN" in sql or "IN (" in sql, sql
+    monkeypatch.setattr(Index, "read_only", real)

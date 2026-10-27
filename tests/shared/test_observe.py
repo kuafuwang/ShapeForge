@@ -137,7 +137,7 @@ def test_stream_reports_a_phase_change(dashboard):
     doc["updated_at"] = time.time()
     publish(state_path, doc)
     frame = _wait(reader.events, lambda item: "gemm_fp16" in item.get("runs", []))
-    detail = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v2/runs/gemm_fp16", timeout=5).read().decode())
+    detail = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v2/runs/gemm_fp16/detail", timeout=5).read().decode())
     assert detail["state"]["phase"] == "evaluate"
     assert frame["revision"] >= 1
     reader.close()

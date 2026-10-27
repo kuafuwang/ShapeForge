@@ -124,6 +124,15 @@ async def api_v2_overview(_request) -> JSONResponse:
     return _json(await asyncio.to_thread(query.overview))
 
 
+async def api_v2_patrol(_request) -> JSONResponse:
+    """@brief 首屏『进行中 / 需要注意 / 最近结果』的巡检读模型（§6.4，响应 ≤1.5KB）。
+
+    @param _request 未使用的请求对象。
+    @return 固定键集合的巡检 JSON 响应。
+    """
+    return _json(await asyncio.to_thread(query.patrol))
+
+
 async def api_v2_runs(request) -> JSONResponse:
     """@brief 按查询参数分页列出运行；非法 limit/offset 退回 50/0。
 
@@ -157,39 +166,76 @@ async def api_v2_runs(request) -> JSONResponse:
 
 
 async def api_v2_candidates(request) -> JSONResponse:
-    """@brief 列出一个运行的候选 kernel。
+    """@brief 列出一个运行的候选内核（候选面板：候选行 + 轨迹标记）。
 
-    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``status`` / ``limit``。
-    @return 候选列表 JSON 响应。
+    打开这块之前不读任何 ``report.json``；``stamp`` 相同则只回标记。支持 ``status``/``stage``
+    过滤与 ``limit``/``cursor`` 翻页；戳始终覆盖全部候选，过滤不改变新鲜度判断。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``status``/``stage``/``limit``/``cursor``/``stamp``。
+    @return 候选面板 JSON 响应；运行不存在时返回 404。
     """
-    return _json(await asyncio.to_thread(
-        query.candidates_page,
+    params = request.query_params
+    raw_limit = params.get("limit")
+    try:
+        limit = int(raw_limit) if raw_limit else query.CANDIDATES_PAGE
+    except ValueError:
+        return _json({"error": "limit must be an integer"}, status=400)
+    doc = await asyncio.to_thread(
+        query.candidates_panel,
         request.path_params["run_id"],
-        status=request.query_params.get("status") or None,
-        limit=int(request.query_params.get("limit", "200") or 200),
-    ))
+        status=params.get("status") or None,
+        stage=params.get("stage") or None,
+        limit=limit,
+        cursor=params.get("cursor") or None,
+        stamp=params.get("stamp") or "",
+        label=params.get("label") or None,
+    )
+    if doc is None:
+        return _json({"error": "not found"}, status=404)
+    return _json(doc)
 
 
 async def api_v2_sessions(request) -> JSONResponse:
-    """@brief 列出一个运行的模型会话。
+    """@brief 列出一个运行的模型会话；``stamp`` 相同则不回正文。
 
-    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``limit``。
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``limit`` / ``stamp``。
     @return 会话列表 JSON 响应。
     """
     return _json(await asyncio.to_thread(
         query.sessions_page,
         request.path_params["run_id"],
         limit=int(request.query_params.get("limit", "500") or 500),
+        stamp=request.query_params.get("stamp") or "",
     ))
 
 
-async def api_v2_model_stats(_request) -> JSONResponse:
-    """@brief 返回按模型聚合的统计。
+async def api_v2_model_stats(request) -> JSONResponse:
+    """@brief 返回按模型聚合的统计；可用 ``run`` 限定一个运行。
 
-    @param _request 未使用的请求对象。
+    @param request Starlette 请求对象，查询参数可含 ``run`` 或 ``run_id``。
     @return 模型统计 JSON 响应。
     """
-    return _json(await asyncio.to_thread(query.model_stats))
+    run_id = request.query_params.get("run") or request.query_params.get("run_id") or None
+    return _json(await asyncio.to_thread(query.model_stats, run_id))
+
+
+async def api_v2_search(request) -> JSONResponse:
+    """@brief §10.3 跨表搜索：runs/candidates 走 FTS5，失败簇走小表。
+
+    @param request Starlette 请求对象，查询参数含 ``q``，可含 ``kind``/``limit``。
+    @return 搜索 JSON 响应。
+    """
+    params = request.query_params
+    try:
+        limit = int(params.get("limit", "20") or 20)
+    except ValueError:
+        limit = 20
+    return _json(await asyncio.to_thread(
+        query.search,
+        q=params.get("q") or "",
+        kind=params.get("kind") or "runs",
+        limit=limit,
+    ))
 
 
 async def api_v2_failures(request) -> JSONResponse:
@@ -203,8 +249,148 @@ async def api_v2_failures(request) -> JSONResponse:
         query.failures,
         status=params.get("status") or None,
         task=params.get("task") or None,
+        sig=params.get("sig") or None,
+        run=params.get("run") or None,
+        label=params.get("label") or None,
         limit=int(params.get("limit", "50") or 50),
     ))
+
+
+async def api_v2_publications(request) -> JSONResponse:
+    """@brief 发布史：目录事实、环比、当前发布判定与来源可用性（§8.1）。
+
+    @param request Starlette 请求对象，查询参数可含 ``task``/``target``/``dtype``/``size``/``stamp``。
+    @return 发布史 JSON 响应。
+    """
+    from observe import publications
+
+    params = request.query_params
+    doc = await asyncio.to_thread(
+        publications.publications,
+        task=params.get("task") or None,
+        target=params.get("target") or None,
+        dtype=params.get("dtype") or None,
+        size=params.get("size") or None,
+        stamp=params.get("stamp") or "",
+    )
+    return _json(doc)
+
+
+async def api_v2_publications_source(request):
+    """@brief 按目录史摘要返回确认内核源码（§9.1：blob 是持久证据，源目录删了也还在）。
+
+    @param request Starlette 请求对象，路径含 ``sha256``。
+    @return 纯文本源码；摘要非法或 blob 不存在时返回 404。
+    """
+    from starlette.responses import PlainTextResponse
+
+    from taic.blobs import read_source
+
+    source = await asyncio.to_thread(read_source, request.path_params["sha256"])
+    if source is None:
+        return _json({"error": "not found"}, status=404)
+    return PlainTextResponse(source, media_type="text/plain; charset=utf-8")
+
+
+async def api_v2_gap(request) -> JSONResponse:
+    """@brief 落差面板：每场已发布运行的 search→published，以及每美元口径。
+
+    @param request Starlette 请求对象，查询参数可含 ``protocol_epoch``/``task``/``target``/``stamp``。
+    @return 面板 JSON；跨协议纪元又没指定 epoch 时返回 400。
+    """
+    from observe import analysis
+
+    params = request.query_params
+    try:
+        doc = await asyncio.to_thread(
+            analysis.gap,
+            protocol_epoch=params.get("protocol_epoch") or None,
+            task=params.get("task") or None,
+            target=params.get("target") or None,
+            stamp=params.get("stamp") or "",
+        )
+    except analysis.EpochRequired as exc:
+        return _json({"error": "protocol_epoch required", "epochs": exc.epochs}, status=400)
+    return _json(doc)
+
+
+async def api_v2_committees(request) -> JSONResponse:
+    """@brief 委员会有效性面板：单位是 session，按 task + protocol_epoch 分桶。
+
+    @param request Starlette 请求对象，查询参数可含 ``task``/``stamp``。
+    @return 面板 JSON 响应。
+    """
+    from observe import analysis
+
+    params = request.query_params
+    try:
+        doc = await asyncio.to_thread(
+            analysis.committees,
+            task=params.get("task") or None,
+            protocol_epoch=params.get("protocol_epoch") or None,
+            stamp=params.get("stamp") or "",
+        )
+    except analysis.EpochRequired as exc:
+        return _json({"error": "protocol_epoch required", "epochs": exc.epochs}, status=400)
+    return _json(doc)
+
+
+async def api_v2_noise(request) -> JSONResponse:
+    """@brief 噪声面板：候选 cv 的分位数、reps 分布与 cache_hit 覆盖率。
+
+    @param request Starlette 请求对象，查询参数可含 ``task``/``stamp``。
+    @return 面板 JSON 响应。
+    """
+    from observe import analysis
+
+    params = request.query_params
+    try:
+        doc = await asyncio.to_thread(
+            analysis.noise,
+            task=params.get("task") or None,
+            protocol_epoch=params.get("protocol_epoch") or None,
+            stamp=params.get("stamp") or "",
+        )
+    except analysis.EpochRequired as exc:
+        return _json({"error": "protocol_epoch required", "epochs": exc.epochs}, status=400)
+    return _json(doc)
+
+
+async def api_v2_failure_clusters(request) -> JSONResponse:
+    """@brief 列出失败簇（按签名聚合，从成员表派生）。
+
+    @param request Starlette 请求对象，查询参数可含 ``task`` / ``stage`` / ``limit``。
+    @return 失败簇 JSON 响应；``limit`` 非整数时返回 400。
+    """
+    params = request.query_params
+    raw = params.get("limit")
+    try:
+        limit = int(raw) if raw else 20
+    except ValueError:
+        return _json({"error": "limit must be an integer"}, status=400)
+    return _json(await asyncio.to_thread(
+        query.failure_clusters,
+        task=params.get("task") or None,
+        stage=params.get("stage") or None,
+        limit=limit,
+    ))
+
+
+async def api_v2_failure_cluster(request) -> JSONResponse:
+    """@brief 返回一个失败簇的证据行（只从索引读）。
+
+    @param request Starlette 请求对象，路径含 ``sig``，查询参数可含 ``limit``。
+    @return 失败簇详情 JSON 响应；``limit`` 非整数时返回 400。
+    """
+    raw = request.query_params.get("limit")
+    try:
+        limit = int(raw) if raw else 20
+    except ValueError:
+        return _json({"error": "limit must be an integer"}, status=400)
+    doc = await asyncio.to_thread(query.failure_cluster, request.path_params["sig"], limit=limit)
+    if doc is None:
+        return _json({"error": "not found"}, status=404)
+    return _json(doc)
 
 
 async def api_v2_best(request) -> JSONResponse:
@@ -223,12 +409,177 @@ async def api_v2_best(request) -> JSONResponse:
 
 
 async def api_v2_run(request) -> JSONResponse:
-    """@brief 返回单个运行的详情；找不到时返回 404。
+    """@brief 返回单个运行的 L1 摘要；重面板各自有端点。找不到时返回 404。
+
+    完整详情（旧行为）仍在 ``/api/v2/runs/{id}/detail`` 与 v1 的 ``/api/runs/{id}``。
 
     @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``stamp``。
-    @return 运行详情 JSON 响应。
+    @return 摘要 JSON 响应；运行不存在时返回 404。
     """
-    doc = await asyncio.to_thread(query.run_detail, request.path_params["run_id"], stamp=request.query_params.get("stamp") or "")
+    doc = await asyncio.to_thread(
+        query.run_summary, request.path_params["run_id"], stamp=request.query_params.get("stamp") or "",
+    )
+    if doc is None:
+        return _json({"error": "not found"}, status=404)
+    return _json(doc)
+
+
+async def _panel(loader, request) -> JSONResponse:
+    """@brief 面板端点的共同外壳：带 ``stamp`` 调用并保留 404。
+
+    @param loader 面板查询函数（除 ``run_id`` 外只接受 ``stamp``）。
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``stamp``。
+    @return 面板 JSON 响应；运行不存在时返回 404。
+    """
+    doc = await asyncio.to_thread(loader, request.path_params["run_id"], stamp=request.query_params.get("stamp") or "")
+    if doc is None:
+        return _json({"error": "not found"}, status=404)
+    return _json(doc)
+
+
+async def api_v2_run_detail(request) -> JSONResponse:
+    """@brief 一次返回完整详情（摘要 + 全部重面板）；v1 与调试用的旧行为。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``stamp``。
+    @return 运行详情 JSON 响应；运行不存在时返回 404。
+    """
+    doc = await asyncio.to_thread(
+        query.run_detail, request.path_params["run_id"], stamp=request.query_params.get("stamp") or "",
+    )
+    if doc is None:
+        return _json({"error": "not found"}, status=404)
+    return _json(doc)
+
+
+async def api_v2_run_candidate(request) -> JSONResponse:
+    """@brief 返回单颗候选的完整报告、有界内核片段与相对报告路径。
+
+    @param request Starlette 请求对象，路径含 ``run_id`` 与 ``label``，查询参数可含 ``stamp``。
+    @return 候选 JSON 响应；运行或候选不存在时返回 404。
+    """
+    doc = await asyncio.to_thread(
+        query.candidate_panel,
+        request.path_params["run_id"],
+        request.path_params["label"],
+        stamp=request.query_params.get("stamp") or "",
+    )
+    if doc is None:
+        return _json({"error": "not found"}, status=404)
+    return _json(doc)
+
+
+async def api_v2_run_feedback(request) -> JSONResponse:
+    """@brief 返回反馈面板：条目与评审状态都在，但不带每条记录的 ``raw`` 全文。
+
+    记录按页返回（缺省 10 条/页），``limit``/``cursor`` 只影响本页，不改变面板戳的覆盖范围。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``stamp``/``limit``/``cursor``。
+    @return 反馈面板 JSON 响应；运行不存在时返回 404。
+    """
+    try:
+        limit = int(request.query_params.get("limit") or query.FEEDBACK_PAGE)
+        raw_seq = request.query_params.get("seq")
+        seq = int(raw_seq) if raw_seq not in (None, "") else None
+    except ValueError:
+        return _json({"error": "limit/seq must be an integer"}, status=400)
+    doc = await asyncio.to_thread(
+        query.feedback_panel,
+        request.path_params["run_id"],
+        stamp=request.query_params.get("stamp") or "",
+        limit=limit,
+        cursor=request.query_params.get("cursor") or None,
+        seq=seq,
+    )
+    if doc is None:
+        return _json({"error": "not found"}, status=404)
+    return _json(doc)
+
+
+async def api_v2_run_feedback_record(request) -> JSONResponse:
+    """@brief 返回一条反馈记录的全文（含 ``raw``、claim 正文与校准）。
+
+    @param request Starlette 请求对象，路径含 ``run_id`` 与整数 ``seq``，查询参数可含 ``stamp``。
+    @return 单条记录 JSON 响应；运行或序号不存在时返回 404。
+    """
+    doc = await asyncio.to_thread(
+        query.feedback_record,
+        request.path_params["run_id"],
+        request.path_params["seq"],
+        stamp=request.query_params.get("stamp") or "",
+    )
+    if doc is None:
+        return _json({"error": "not found"}, status=404)
+    return _json(doc)
+
+
+async def api_v2_run_timeline(request) -> JSONResponse:
+    """@brief 返回时间线面板（GPU 锁泳道与评测/问模型跨度）。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``stamp``。
+    @return 时间线面板 JSON 响应；运行不存在时返回 404。
+    """
+    return await _panel(query.timeline_panel, request)
+
+
+async def api_v2_run_budget_events(request) -> JSONResponse:
+    """@brief 返回预算事件面板。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``stamp``。
+    @return 预算事件面板 JSON 响应；运行不存在时返回 404。
+    """
+    return await _panel(query.budget_events_panel, request)
+
+
+async def api_v2_run_llm(request) -> JSONResponse:
+    """@brief 返回在飞模型请求预览面板。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``stamp``。
+    @return ``llm`` 面板 JSON 响应；运行不存在时返回 404。
+    """
+    return await _panel(query.llm_panel, request)
+
+
+async def api_v2_run_grid(request) -> JSONResponse:
+    """@brief 返回特征格子面板。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``stamp``。
+    @return 特征格子面板 JSON 响应；运行不存在时返回 404。
+    """
+    return await _panel(query.grid_panel, request)
+
+
+async def api_v2_run_lineage(request) -> JSONResponse:
+    """@brief 返回种子链与跨场同源面板（§8.3）。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``stamp``。
+    @return 面板 JSON 响应；运行不存在时返回 404。
+    """
+    from observe import lineage
+
+    return await _panel(lineage.lineage_panel, request)
+
+
+async def api_v2_run_plan(request) -> JSONResponse:
+    """@brief 返回计划结局面板。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``stamp``。
+    @return 计划结局面板 JSON 响应；运行不存在时返回 404。
+    """
+    return await _panel(query.plan_panel, request)
+
+
+async def api_v2_run_raw(request) -> JSONResponse:
+    """@brief 返回原始文件（``?key=state|result|confirm``），显式调试用。
+
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数含 ``key``，可含 ``stamp``。
+    @return 原始文件 JSON 响应；运行不存在或 key 不合法时返回 404。
+    """
+    doc = await asyncio.to_thread(
+        query.raw_panel,
+        request.path_params["run_id"],
+        request.query_params.get("key") or "",
+        stamp=request.query_params.get("stamp") or "",
+    )
     if doc is None:
         return _json({"error": "not found"}, status=404)
     return _json(doc)
@@ -239,22 +590,24 @@ async def api_v2_turns(request) -> JSONResponse:
 
     原始英文说明：One window of model turns. A matching stamp returns no rows and does not read the turns table.
 
-    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``before`` / ``limit`` / ``stamp``。
+    @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``before`` / ``grp`` / ``all`` / ``limit`` / ``stamp``。
     @return 轮次窗口 JSON 响应；运行不存在时返回 404。
     """
-    from observe.detail import turns_feed
+    from observe.detail import TURNS_PAGE, turns_feed
 
     params = request.query_params
     try:
-        limit = int(params.get("limit", "40"))
+        limit = int(params.get("limit", str(TURNS_PAGE)))
     except ValueError:
-        limit = 40
+        limit = TURNS_PAGE
     feed = await asyncio.to_thread(
         turns_feed,
         request.path_params["run_id"],
         before=params.get("before"),
         limit=limit,
         stamp=params.get("stamp") or "",
+        grp=params.get("grp"),
+        everything=params.get("all") in ("1", "true", "yes"),
     )
     if feed is None:
         return _json({"error": "not found"}, status=404)
@@ -278,13 +631,29 @@ async def api_v2_pi(request) -> JSONResponse:
     return _json(feed)
 
 
-async def api_v2_experiments(_request) -> JSONResponse:
-    """@brief 列出实验。
+async def api_v2_live(_request) -> JSONResponse:
+    """@brief 按需的活状态总览（GPU、在跑的运行/评估、心跳、任务与实验队列）。
+
+    §11.5：首屏 `/api/v2/overview` 只留反馈计数，这些字段要读机全局文件，必须显式按需取。
 
     @param _request 未使用的请求对象。
-    @return 实验列表 JSON 响应。
+    @return 活状态 JSON 响应。
     """
-    return _json(await asyncio.to_thread(query.experiments))
+    return _json(await asyncio.to_thread(query.live_overview))
+
+
+async def api_v2_experiments(request) -> JSONResponse:
+    """@brief 列出实验（keyset 游标）。
+
+    @param request Starlette 请求对象，查询参数可含 ``limit`` / ``cursor``。
+    @return 实验分页 JSON 响应。
+    """
+    params = request.query_params
+    try:
+        limit = int(params.get("limit", str(query.EXPERIMENTS_PAGE)))
+    except ValueError:
+        return _json({"error": "limit must be an integer"}, status=400)
+    return _json(await asyncio.to_thread(query.experiments, limit=limit, cursor=params.get("cursor") or None))
 
 
 async def api_v2_experiment(request) -> JSONResponse:
@@ -302,14 +671,36 @@ async def api_v2_feedback(request) -> JSONResponse:
     @param request Starlette 请求对象，查询参数可含 ``since``。
     @return 反馈看板 JSON 响应。
     """
-    raw = request.query_params.get("since")
+    params = request.query_params
+    raw = params.get("since")
     since = None
     if raw not in (None, ""):
         try:
             since = int(raw)
         except ValueError:
             return _json({"error": "since must be an integer"}, status=400)
-    return _json(await asyncio.to_thread(query.feedback_board, since=since))
+    try:
+        limit = int(params.get("limit", "200"))
+        offset = int(params.get("offset", "0"))
+    except ValueError:
+        return _json({"error": "limit and offset must be integers"}, status=400)
+    return _json(await asyncio.to_thread(
+        query.feedback_board, since=since, limit=limit, offset=offset,
+        full=params.get("full") == "1",
+        similar=params.get("similar") == "1",
+    ))
+
+
+async def api_v2_run_similar(request) -> JSONResponse:
+    """@brief 返回一场运行里待审 claim 的语义近邻；展开该 run 时才调用，运行不存在返回 404。
+
+    @param request Starlette 请求对象，路径含 ``run_id``。
+    @return ``{run_id, items}`` JSON 响应。
+    """
+    doc = await asyncio.to_thread(query.feedback_similar, request.path_params["run_id"])
+    if doc is None:
+        return _json({"error": "not found"}, status=404)
+    return _json(doc)
 
 
 async def api_v2_suggestions(request) -> JSONResponse:
@@ -386,27 +777,6 @@ async def api_v2_ledger(_request) -> JSONResponse:
     @return 账本报告 JSON 响应。
     """
     return _json(await asyncio.to_thread(query.ledger_report))
-
-
-async def api_v1_history(_request) -> JSONResponse:
-    """@brief 返回 v1 历史行列表。
-
-    @param _request 未使用的请求对象。
-    @return 历史行 JSON 响应。
-    """
-    return _json(await asyncio.to_thread(query.history))
-
-
-async def api_v1_run(request) -> JSONResponse:
-    """@brief 返回 v1 运行详情；找不到时返回 404。
-
-    @param request Starlette 请求对象，路径含 ``run_id``。
-    @return 运行详情 JSON 响应。
-    """
-    doc = await asyncio.to_thread(query.run_detail, request.path_params["run_id"])
-    if doc is None:
-        return _json({"error": "not found"}, status=404)
-    return _json(doc)
 
 
 def _refused(exc: actions.Refused) -> JSONResponse:
@@ -615,7 +985,14 @@ async def api_deletions(request) -> JSONResponse:
     try:
         if not actions.host_is_loopback(request.headers):
             raise actions.Refused(403, "refused: this server only answers on 127.0.0.1 / localhost (Host header check)")
-        return _json(await asyncio.to_thread(list_deletions))
+        params = request.query_params
+        try:
+            limit = int(params.get("limit", "100"))
+        except ValueError:
+            return _json({"error": "limit must be an integer"}, status=400)
+        return _json(await asyncio.to_thread(
+            list_deletions, limit=limit, cursor=params.get("cursor") or None,
+        ))
     except actions.Refused as exc:
         return _refused(exc)
 
@@ -714,6 +1091,8 @@ app = Starlette(
         Route("/", index),
         Route("/reviews", index),
         Route("/api/v2/overview", api_v2_overview),
+        Route("/api/v2/live", api_v2_live),
+        Route("/api/v2/patrol", api_v2_patrol),
         Route("/api/v2/feedback", api_v2_feedback),
         Route("/api/v2/suggestions", api_v2_suggestions),
         Route("/api/v2/suggestion", api_v2_suggestion),
@@ -727,13 +1106,32 @@ app = Starlette(
         Route("/api/v2/stream", api_stream),
         Route("/api/v2/turns/{run_id:path}", api_v2_turns),
         Route("/api/v2/failures", api_v2_failures),
+        Route("/api/v2/publications", api_v2_publications),
+        Route("/api/v2/search", api_v2_search),
+        Route("/api/v2/publications/{sha256}/source", api_v2_publications_source),
+        Route("/api/v2/gap", api_v2_gap),
+        Route("/api/v2/committees", api_v2_committees),
+        Route("/api/v2/noise", api_v2_noise),
         Route("/api/v2/best", api_v2_best),
+        Route("/api/v2/failure-clusters", api_v2_failure_clusters),
+        Route("/api/v2/failure-clusters/{sig}", api_v2_failure_cluster),
         Route("/api/v2/runs/{run_id:path}/candidates", api_v2_candidates),
+        Route("/api/v2/runs/{run_id:path}/candidate/{label}", api_v2_run_candidate),
+        Route("/api/v2/runs/{run_id:path}/feedback/{seq:int}", api_v2_run_feedback_record),
+        Route("/api/v2/runs/{run_id:path}/feedback", api_v2_run_feedback),
+        Route("/api/v2/runs/{run_id:path}/timeline", api_v2_run_timeline),
+        Route("/api/v2/runs/{run_id:path}/budget-events", api_v2_run_budget_events),
+        Route("/api/v2/runs/{run_id:path}/llm", api_v2_run_llm),
+        Route("/api/v2/runs/{run_id:path}/grid", api_v2_run_grid),
+        Route("/api/v2/runs/{run_id:path}/plan", api_v2_run_plan),
+        Route("/api/v2/runs/{run_id:path}/lineage", api_v2_run_lineage),
+        Route("/api/v2/runs/{run_id:path}/raw", api_v2_run_raw),
+        Route("/api/v2/runs/{run_id:path}/detail", api_v2_run_detail),
+        Route("/api/v2/runs/{run_id:path}/similar", api_v2_run_similar),
         Route("/api/v2/runs/{run_id:path}/sessions", api_v2_sessions),
         Route("/api/v2/model-stats", api_v2_model_stats),
         Route("/api/v2/pi/{run_id:path}", api_v2_pi),
         Route("/api/v2/runs/{run_id:path}", api_v2_run),
-        Route("/api/history", api_v1_history),
         Route("/api/overview", api_v2_overview),
         Route("/api/budget", api_budget),
         Route("/api/budget/reset", api_reset, methods=["GET", "POST"]),
@@ -747,8 +1145,6 @@ app = Starlette(
         Route("/api/runs/{run_id:path}/harness/{key}/review", api_review_harness, methods=["POST"]),
         Route("/api/runs/{run_id:path}/harness/{key}/promote", api_promote_harness, methods=["POST"]),
         Route("/api/runs/{run_id:path}/feedback/{seq}/claims/{digest}/review", api_review_feedback, methods=["POST"]),
-        Route("/api/runs/{run_id:path}", api_v1_run),
-        Route("/api/stream", api_stream),
     ]
 )
 app.add_middleware(ETagMiddleware)
@@ -760,4 +1156,9 @@ def main() -> None:
     """
     import uvicorn
 
+    from observe import simcache
+
+    # 后台预热句向量/相似结论：请求路径只读持久缓存，不为重计算卡住其它接口。
+    # 只在真实服务进程启动；测试里的 TestClient 不启动额外线程。
+    simcache.start_warmer()
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("OBSERVE_PORT", "8765")), log_level="info")

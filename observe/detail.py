@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -13,6 +14,7 @@ from pathlib import Path
 
 from experiments.common import conclusion_of_run
 from observe.budget import budget_status
+from taic.reads import head_text, iter_jsonl, tail_rows, tail_rows_across, tail_text
 from taic.redact import redact_text
 from observe.publish import gpu_dir, gpu_events_path, observe_dir
 
@@ -24,7 +26,6 @@ EVENT_TAIL = 40
 _UNIX = 1_000_000_000
 # 旧运行的 state.json 没有 committee 这一键。页面只留这一句，不补两个委员会。
 NO_COMMITTEE_NOTE = "这次搜索没有委员会记录"
-_gpu_cache: dict = {"sig": None, "events": []}
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -39,6 +40,28 @@ def runs_root() -> Path:
     if env:
         return Path(env)
     return REPO_ROOT / "runs"
+
+
+_ROOT_CACHE: dict[str, tuple[str, Path, str]] = {}
+
+
+def root_path() -> tuple[Path, str]:
+    """@brief 取（只解析一次的）``runs/`` 根：解析后的 Path 与规整后的字符串。
+
+    ``Path.resolve()`` 在 macOS 上逐级 ``lstat``；一份详情里 400 颗候选会调很多次 ``_rel``。
+    这里缓存解析后的根，并用字符串前缀剥离算相对路径，不再逐个目录 ``realpath``。
+    原始英文说明：The resolved runs root, cached by the raw ``AI_LOWERLING_RUNS_DIR`` value.
+
+    @return ``(resolved Path, normpath 文本)``。
+    """
+    raw = os.fspath(runs_root())
+    cached = _ROOT_CACHE.get("root")
+    if cached is not None and cached[0] == raw:
+        return cached[1], cached[2]
+    resolved = Path(raw).resolve()
+    text = os.path.normpath(os.fspath(resolved))
+    _ROOT_CACHE["root"] = (raw, resolved, text)
+    return resolved, text
 
 
 # state.json 里的 pid 可能已经过期。信号 0 只问进程还在不在：权限不够说明进程在，查找失败说明已经退出。
@@ -98,12 +121,13 @@ def _age(doc: dict | None) -> dict | None:
 
 
 # 只接受 runs/ 里面的相对目录，避免查询串用 .. 读到仓库外。两份快照都不存在，就不是一次搜索。
-def resolve_run(run_id: str) -> Path | None:
+def resolve_run(run_id: str, *, root: Path | None = None) -> Path | None:
     """@brief 把 run id 解析为 ``runs/`` 下确实含有搜索快照的目录，拒绝任何越界路径。
 
     原始英文说明：A directory under ``runs/`` that holds a search snapshot. Rejects anything that climbs out.
 
     @param run_id 相对 ``runs/`` 的运行 id。
+    @param root 已解析的 ``runs/`` 根；索引器传入缓存值，避免每帧重复 ``realpath``。
     @return 解析后的目录；越界、不存在或两份快照都没有时返回 None。
     """
     if not run_id or "\x00" in run_id:
@@ -111,14 +135,18 @@ def resolve_run(run_id: str) -> Path | None:
     rel = Path(run_id)
     if rel.is_absolute() or ".." in rel.parts:
         return None
-    root = runs_root().resolve()
+    root = Path(root) if root is not None else root_path()[0]
     try:
         path = (root / rel).resolve()
     except OSError:
         return None
     if path != root and root not in path.parents:
         return None
-    if not path.is_dir():
+    try:
+        if not path.is_dir():
+            return None
+    except OSError:
+        # 名字超过文件系统上限（ENAMETOOLONG）之类的情况：这条 run 不可能在盘上存在。
         return None
     if not (path / "state.json").exists() and not (path / "result.json").exists():
         # 这里只看文件在不在。内容截断仍算「有这份运行」，解析失败后面另当缺失快照。
@@ -126,11 +154,48 @@ def resolve_run(run_id: str) -> Path | None:
     return path
 
 
+# 取目标身份要整读 ``run_config.json`` 与目标档案。面板 stamp 只允许 stat：同一目录在一次请求里
+# 会被多个面板问到，所以按 ``(mtime_ns,size)`` 记住上一次的解析结果，配置改了键就变。
+# 每个 run 一条 (目录, run_config 指纹) 记录，约 200B。/best 与面板 stamp 在每个请求里都要问它，
+# 上限太小会在几千个已确认运行上反复逐出、把 stat 变成读文件。
+@functools.lru_cache(maxsize=8192)
+def _target_identity_cached(directory: str, signature: str) -> tuple[str, str, str]:
+    """@brief ``target_identity`` 的有缓存版本；缓存的键是目录与 ``run_config.json`` 的 stat。
+
+    @param directory 运行目录的文本路径。
+    @param signature ``run_config.json`` 的 ``(mtime_ns,size)`` 指纹。
+    @return 三元组：目标 id、后端 id 与内核文件扩展名。
+    """
+    return _target_identity_uncached(Path(directory))
+
+
+def _config_signature(directory: Path) -> str:
+    """@brief 取 ``run_config.json`` 的 ``(mtime_ns,size)`` 指纹，不改动文件。
+
+    @param directory 运行目录。
+    @return 指纹字符串；文件不存在时为 ``0:0``。
+    """
+    try:
+        stat = (Path(directory) / "run_config.json").stat()
+    except OSError:
+        return "0:0"
+    return f"{stat.st_mtime_ns}:{stat.st_size}"
+
+
 # 页面上的运行 id 是 runs/ 下的相对路径，详情接口再用 resolve_run 认回来。
 def target_identity(directory: Path) -> tuple[str, str, str]:
     """@brief 取一个运行的 ``(target_id, backend_id, file_ext)``，旧运行回退到 Metal。
 
     原始英文说明：``(target_id, backend_id, file_ext)`` for a run; legacy Metal fallback.
+
+    @param directory 运行目录。
+    @return 三元组：目标 id、后端 id 与内核文件扩展名（带点）。
+    """
+    return _target_identity_cached(str(Path(directory)), _config_signature(directory))
+
+
+def _target_identity_uncached(directory: Path) -> tuple[str, str, str]:
+    """@brief 现读 ``run_config.json`` 与目标档案算出目标身份。
 
     @param directory 运行目录。
     @return 三元组：目标 id、后端 id 与内核文件扩展名（带点）。
@@ -166,13 +231,77 @@ def target_file_names(directory: Path) -> tuple[str, str]:
     return f"kernel{ext}", f"best{ext}"
 
 
+def candidate_kernel_files(candidates_dir: Path) -> list[str]:
+    """@brief 列出一颗候选目录里所有 ``kernel.*`` 文件名；只列目录，不读配置。
+
+    面板 stamp 只允许 stat，而权威文件名要读 ``run_config.json``。只取“字典序第一个”会在
+    混入 ``kernel.aaa`` 时选错文件；stamp 覆盖全部 ``kernel.*``，payload 另按 target 选权威文件。
+
+    @param candidates_dir 一颗候选目录。
+    @return 文件名列表，按名字排序。
+    """
+    try:
+        return sorted(
+            entry.name for entry in os.scandir(candidates_dir)
+            if entry.name.startswith("kernel.") and entry.is_file()
+        )
+    except OSError:
+        return []
+
+
+def candidate_row(directory: Path, path: Path) -> dict:
+    """@brief 把一颗候选目录读成面板/详情的一行（报告字段 + 权威内核片段）。
+
+    内核片段按 target 的权威文件名取（``target_file_names``），不按字典序猜。
+
+    @param directory 运行目录。
+    @param path 候选目录。
+    @return 候选行字典。
+    """
+    report = _load(path / "report.json") or {}
+    prefix, _, label = path.name.partition("_")
+    try:
+        idx = int(prefix)
+    except ValueError:
+        # 目录名不是「序号_标签」时仍展示，只是没有序号。
+        idx = None
+        label = path.name
+    roof = report.get("roofline") or {}
+    bench = report.get("benchmark") or {}
+    kernel = target_file_names(directory)[0]
+    return {
+        "idx": idx,
+        "label": label,
+        "status": report.get("status"),
+        "stage": report.get("stage"),
+        "mode": report.get("mode"),
+        "speedup": report.get("speedup"),
+        "candidate_us": report.get("candidate_us"),
+        "message": (report.get("message") or "")[:300],
+        "cases": _cases(report),
+        "roofline": {key: roof.get(key) for key in ("achieved_tflops", "achieved_gbps", "compute_fraction", "bandwidth_fraction", "bound")},
+        "benchmark": {key: bench.get(key) for key in ("noisy", "attempts", "noise_cv")},
+        "excerpt": _excerpt(path / kernel) if (path / kernel).is_file() else "",
+    }
+
+
 def _rel(path: Path) -> str:
     """@brief 取运行目录相对 ``runs/`` 根目录的 POSIX 路径。
 
     @param path 运行目录。
     @return 相对路径文本，用作页面上的运行 id。
     """
-    return path.resolve().relative_to(runs_root().resolve()).as_posix()
+    text = os.fspath(path)
+    if not os.path.isabs(text):
+        text = os.fspath(Path(text).resolve())
+    text = os.path.normpath(text)
+    _, root = root_path()
+    if text == root:
+        return ""
+    prefix = root + os.sep
+    if not text.startswith(prefix):
+        raise ValueError(f"{text} is not inside {root}")
+    return text[len(prefix):].replace(os.sep, "/")
 
 
 # 完成先看 result 能否读成对象，或 state 的 phase 已经是 done。结果缺失时：15 秒内有心跳或 pid 还在，当作仍在跑；心跳过期且进程不在是中断；连 state 都没有是未知。
@@ -421,10 +550,22 @@ def _budget_events(directory: Path) -> list[dict]:
     return control.read_events(directory)
 
 
-def pending_evaluation(directory: Path) -> dict:
-    """@brief 读取 outbox 的 pending/unavailable 计数与最近请求，供看板只读展示。"""
+PENDING_EVAL_REQUESTS = 8
+
+
+def _pending_requests(directory: Path) -> tuple[list[dict], float | None]:
+    """@brief 扫一遍 outbox，列出 pending/unavailable 的请求（按文件名顺序）与最新文件 mtime。
+
+    ``receipts.json`` 与 ``*.result.json`` 是回执与结果，不算待评测请求；坏 JSON 跳过。
+    mtime 作为窄投影的 ``updated_at``：它来自磁盘，删库重建后得到同一个值（不用 ``time.time()``）。
+    原始英文说明：One scan of the outbox for the pending/unavailable requests that still need an evaluation.
+
+    @param directory 运行目录。
+    @return 二元组：请求字典列表（未截断）与最新文件 mtime（秒）；没有 outbox 时为 None。
+    """
     root = directory / "evaluation_outbox"
     requests = []
+    newest = None
     if root.is_dir():
         for path in sorted(root.glob("*.json")):
             if path.name.endswith(".result.json") or path.name == "receipts.json":
@@ -435,9 +576,71 @@ def pending_evaluation(directory: Path) -> dict:
                 continue
             if not isinstance(document, dict) or document.get("status") not in {"pending", "unavailable"}:
                 continue
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                mtime = None
+            if mtime is not None and (newest is None or mtime > newest):
+                newest = mtime
             error = document.get("error") if isinstance(document.get("error"), dict) else {}
             requests.append({"request_id": document.get("request_id"), "status": document.get("status"), "error_code": error.get("code"), "retryable": error.get("retryable") is True})
-    return {"count": len(requests), "requests": requests[-8:]}
+    return requests, newest
+
+
+def pending_evaluation(directory: Path) -> dict:
+    """@brief 读取 outbox 的 pending/unavailable 计数与最近请求，供看板只读展示。
+
+    形状是 ``{"count": n, "requests": [...最多 8 条...]}``；索引把它窄投影进 ``run_pending_eval``。
+
+    @param directory 运行目录。
+    @return 计数与最近 8 条请求。
+    """
+    requests, _newest = _pending_requests(directory)
+    return {"count": len(requests), "requests": requests[-PENDING_EVAL_REQUESTS:]}
+
+
+def pending_evaluation_table(directory: Path) -> dict:
+    """@brief 摄入用的 outbox 窄投影：聚合计数、最后一条错误码与最近 8 条请求。
+
+    与 :func:`pending_evaluation` 读同一批文件，但保留 ``pending``/``unavailable`` 的**全量**计数
+    （旧形状只有总数），供 ``run_pending_eval`` 表逐字段对拍。``updated_at`` 取最新请求文件的 mtime。
+
+    @param directory 运行目录。
+    @return 含 ``pending``/``unavailable``/``last_error_code``/``retryable``/``requests``/``updated_at`` 的字典。
+    """
+    requests, newest = _pending_requests(directory)
+    kept = requests[-PENDING_EVAL_REQUESTS:]
+    last = kept[-1] if kept else {}
+    return {
+        "pending": sum(1 for item in requests if item.get("status") == "pending"),
+        "unavailable": sum(1 for item in requests if item.get("status") == "unavailable"),
+        "last_error_code": last.get("error_code"),
+        "retryable": last.get("retryable") is True,
+        "requests": kept,
+        "updated_at": newest,
+    }
+
+
+# ``query runs`` 的 L0 行用机器码而不是完整停止原因：实测最长一条 stop_reason 有 224 字符
+# （一条 HTTP 402 provider 错误），原样放进窄行必然超出 200B 预算。完整文本留在 ``--wide``
+# 与详情里。
+STOP_CODE_CHARS = 24
+
+
+def stop_code(stop_reason) -> str:
+    """@brief L0 的停止码：停止原因里冒号前的第一段，再取其中的第一个词，最多 24 字符。
+
+    “哪一类停止”就够机器筛选了（``budget_exhausted``/``llm_error``/``converged``）。取第一个词
+    是因为 ``converged (12 rounds without improvement)`` 这类文本里轮数会变：按字符截断会把同一类
+    停止切成 ``converged (12 rounds wit`` 与 ``converged (4 rounds with`` 两个码，机器筛不出来。
+    完整文本仍留在 ``--wide`` 与详情里。
+
+    @param stop_reason 原始的停止原因，可为 None。
+    @return 短的机器码；没有停止原因时为空串。
+    """
+    segment = str(stop_reason or "").split(":", 1)[0].strip()
+    words = segment.split()
+    return (words[0] if words else "")[:STOP_CODE_CHARS]
 
 
 def row_from_files(directory: Path, state: dict | None, result: dict | None) -> dict:
@@ -462,6 +665,8 @@ def row_from_files(directory: Path, state: dict | None, result: dict | None) -> 
         "dtype": (result or state or {}).get("dtype") or "",
         "phase": (state or {}).get("phase") or "",
         "stop_reason": stop,
+        # 窄码随 S1c 的窄投影一起写在摄入时（不靠读时截断），L0 行只 SELECT。
+        "stop_code": stop_code(stop),
         "speedup": conclusion["speedup"] if result else (state or {}).get("best_speedup"),
         "publication": conclusion["publication"],
         "published_speedup": conclusion["speedup"],
@@ -487,33 +692,36 @@ def row_from_files(directory: Path, state: dict | None, result: dict | None) -> 
 
 
 # 事件日志是追加写的，进程被杀掉时最后一行可能只写了一半。解析失败的那一行丢掉，前面完整的事件仍然留下。
-def _tail_events() -> list[dict]:
-    """@brief 读 GPU 事件日志末尾若干行，跳过被杀时写了一半的行。
+def gpu_event_paths() -> list[Path]:
+    """@brief GPU 事件日志的逻辑顺序：轮转保留的分片（旧→新）再加活动文件。
 
-    @return 事件字典列表，最多 ``EVENT_TAIL`` 条。
+    @return 路径列表；没有分片时只有活动文件。
     """
     path = gpu_events_path()
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        shards = sorted(
+            (item for item in path.parent.iterdir() if item.name.startswith(path.name + ".") and item.is_file()),
+            key=lambda item: (item.stat().st_mtime_ns, item.name),
+        )
     except OSError:
-        return []
-    out = []
-    for line in lines[-EVENT_TAIL:]:
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            # 半行 JSON 不是一条事件。跳过它，避免整段日志因为最后一次追加没写完而作废。
-            continue
-        if isinstance(item, dict):
-            out.append(item)
-    return out
+        shards = []
+    return shards + [path]
+
+
+def _tail_events() -> list[dict]:
+    """@brief 读 GPU 事件日志的逻辑尾（跨轮转分片），跳过被杀时写了一半的行。
+
+    @return 事件字典列表，最多 ``EVENT_TAIL`` 条。
+    """
+    # 尾读一段就够画最近的事件；被杀时写了一半的行由解析器丢掉。
+    return tail_rows_across(gpu_event_paths(), keep=EVENT_TAIL)
 
 
 # 只展示 pid 还活着的持有者和等待者。进程退出后留下的 json 不再占着「正在用 GPU」。
-def gpu_snapshot() -> dict:
-    """@brief 列出仍在运行的 GPU 持有者与等待者，以及最近的事件。
+def _gpu_locks() -> tuple[list[dict], list[dict]]:
+    """@brief 列出仍在运行的 GPU 锁持有者与等待者；不读事件日志。
 
-    @return 含 ``holders``、``waiters`` 与 ``events`` 的字典。
+    @return ``(holders, waiters)`` 两个字典列表。
     """
     holders: list[dict] = []
     waiters: list[dict] = []
@@ -527,7 +735,25 @@ def gpu_snapshot() -> dict:
                 waiters.append(doc)
             else:
                 holders.append(doc)
+    return holders, waiters
+
+
+def gpu_snapshot() -> dict:
+    """@brief 列出仍在运行的 GPU 持有者与等待者，以及最近的事件。
+
+    @return 含 ``holders``、``waiters`` 与 ``events`` 的字典。
+    """
+    holders, waiters = _gpu_locks()
     return {"holders": holders, "waiters": waiters, "events": _tail_events()}
+
+
+def gpu_lock_counts() -> dict:
+    """@brief 只给锁的两个计数：巡检只要数字，不读机全局事件日志。
+
+    @return 含 ``holders`` 与 ``waiters`` 计数的字典。
+    """
+    holders, waiters = _gpu_locks()
+    return {"holders": len(holders), "waiters": len(waiters)}
 
 
 # 评测心跳在进程退出后还会留在缓存目录。finished 或 pid 已死的不再算作正在评测。
@@ -601,16 +827,19 @@ def _cases(report: dict) -> list[dict]:
 
 
 # 核源码只带开头一小段，页面用来认出是哪份核。文件读不到时留空，不让详情整页失败。
+# 400 字符的 UTF-8 上限是 1,600 字节，读 2,048 字节不会截断可见文本。
+_EXCERPT_BYTES = 2048
+
+
 def _excerpt(path: Path) -> str:
     """@brief 取内核源码开头一小段用于辨认；文件读不到时留空。
+
+    只读开头的字节：400 个字符在 UTF-8 里最多 1,600 字节，读 2,048 字节足够，不必整份加载。
 
     @param path 内核文件路径。
     @return 前 400 个字符，或空串。
     """
-    try:
-        return path.read_text(encoding="utf-8")[:400]
-    except OSError:
-        return ""
+    return head_text(path, limit=_EXCERPT_BYTES)[:400]
 
 
 # 详情要列出每次候选的评测结论。report.json 截断时这一格仍在，只是状态字段为空。
@@ -623,34 +852,7 @@ def _candidates(directory: Path) -> list[dict]:
     root = directory / "candidates"
     if not root.is_dir():
         return []
-    rows = []
-    kernel_name, _best_name = target_file_names(directory)
-    for path in sorted(item for item in root.iterdir() if item.is_dir()):
-        report = _load(path / "report.json") or {}
-        prefix, _, label = path.name.partition("_")
-        try:
-            idx = int(prefix)
-        except ValueError:
-            # 目录名不是「序号_标签」时仍展示，只是没有序号。
-            idx = None
-            label = path.name
-        roof = report.get("roofline") or {}
-        bench = report.get("benchmark") or {}
-        rows.append({
-            "idx": idx,
-            "label": label,
-            "status": report.get("status"),
-            "stage": report.get("stage"),
-            "mode": report.get("mode"),
-            "speedup": report.get("speedup"),
-            "candidate_us": report.get("candidate_us"),
-            "message": (report.get("message") or "")[:300],
-            "cases": _cases(report),
-            "roofline": {key: roof.get(key) for key in ("achieved_tflops", "achieved_gbps", "compute_fraction", "bandwidth_fraction", "bound")},
-            "benchmark": {key: bench.get(key) for key in ("noisy", "attempts", "noise_cv")},
-            "excerpt": _excerpt(path / kernel_name),
-        })
-    return rows
+    return [candidate_row(directory, path) for path in sorted(item for item in root.iterdir() if item.is_dir())]
 
 
 # 没有心跳字母就不当作还活着。评测进度和 tcenv 文件的形状不同，这里只抽出页面要的三个字段。
@@ -731,21 +933,14 @@ def _pi_hint(arguments) -> str:
 def _tail_text(path: Path) -> str:
     """@brief 读取会话文件末尾一段；丢掉不完整的第一行，避免被当成 JSON 解析。
 
+    实现在 :func:`taic.reads.tail_text`，这里只固定本视图的字节上限。
+
     原始英文说明：The end of a session file. A partial first line is dropped so it is not parsed as JSON.
 
     @param path 会话文件路径。
     @return 末尾文本；读不了时为空串。
     """
-    try:
-        size = path.stat().st_size
-        with path.open("rb") as handle:
-            if size > _PI_TAIL_BYTES:
-                handle.seek(size - _PI_TAIL_BYTES)
-                handle.readline()
-            data = handle.read()
-    except OSError:
-        return ""
-    return data.decode("utf-8", errors="replace")
+    return tail_text(path, limit=_PI_TAIL_BYTES)
 
 
 def _pi_lines_in(path: Path) -> list[dict]:
@@ -886,17 +1081,7 @@ def _epic_lines_in(path: Path) -> list[dict]:
     @return 每项含 ``who`` 与 ``text`` 的展示行列表。
     """
     lines = []
-    try:
-        raw = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return lines
-    for raw_line in raw[-80:]:
-        try:
-            item = json.loads(raw_line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(item, dict):
-            continue
+    for item in tail_rows(path, keep=80):
         event = item.get("event")
         if event == "began":
             agents = item.get("agents") if isinstance(item.get("agents"), list) else []
@@ -1057,6 +1242,34 @@ def chat_feed(run_id: str, *, stamp: str = "") -> dict | None:
     lines = _chat_lines(directory / "transcript.jsonl")
     lines.extend(_chat_inflight(directory / "llm.json"))
     return {"same": False, "stamp": current, "lines": lines[-_PI_KEEP:]}
+
+
+def recorded_kernel_writer(directory: Path, config: dict | None = None) -> str | None:
+    """@brief 只凭配置与 ``agent_work`` 判断写核方式；不打开 transcript。
+
+    冷建用它代替 :func:`kernel_writer`：旧运行没有 ``search.kernel_agent`` 时返回 None，让索引器把
+    这行留到下一次对账/读取时再用 transcript 判断（§11.4：冷建读 transcript 字节 = 0）。
+
+    原始英文说明：The recorded writer mode, from config and ``agent_work`` only.
+
+    @param directory 运行目录。
+    @param config 已解析的 ``run_config.json``；None 时现读。
+    @return ``"pi"`` / ``"chat"``；无法从便宜来源判断时返回 None。
+    """
+    cfg = config if isinstance(config, dict) else (_load(directory / "run_config.json") or {})
+    search = cfg.get("search") if isinstance(cfg.get("search"), dict) else {}
+    recorded = search.get("kernel_agent") if isinstance(search, dict) else None
+    if recorded == "pi":
+        return "pi"
+    if isinstance(recorded, str):
+        return "chat"
+    work = directory / "agent_work"
+    try:
+        if work.is_dir() and any(work.iterdir()):
+            return "pi"
+    except OSError:
+        return None
+    return None
 
 
 def kernel_writer(directory: Path) -> str:
@@ -1350,12 +1563,15 @@ def _present_turn(group: dict) -> dict:
         "preview": "",
         "preview_thinking": "",
         "stale": False,
+        **({"truncated_events": int(group["truncated_events"])} if group.get("truncated_events") else {}),
     }
 
 
 def _turn_groups(events: list[dict]) -> list[dict]:
     """@brief 把相邻同标签的事件合成一组；同名标签之后再出现算另一组。
 
+    旧实现将就地在 Python 里分组整段事件。现在分组由索引投影的 ``turns.grp`` 决定，
+    这里只保留作逐组等价的参考实现（测试用它当独立的期望值）。
     原始英文说明：Consecutive events with the same label are one group. A later repeat of that label is another group.
 
     @param events 已带 ``seq`` 的事件列表。
@@ -1386,11 +1602,144 @@ def _before_seq(before) -> int | None:
         return None
 
 
-def _turns_stamp(turn_bytes: int, directory: Path) -> str:
-    """@brief 拼出轮次数据的变更戳：转录与 ``llm.json`` 的大小与 mtime，加上已存轮次字节数。
+def _grp_param(grp) -> int | None:
+    """@brief 把 ``grp`` 参数解析成整数；缺失或非法时返回 None。
+
+    @param grp 客户端传入的组号。
+    @return 整数组号或 None。
+    """
+    if grp is None or grp == "":
+        return None
+    try:
+        return int(grp)
+    except (TypeError, ValueError):
+        return None
+
+
+def _turn_grp_bound(conn, run_id: str, before_seq: int | None, grp_cursor: int | None) -> int | None:
+    """@brief 把 ``grp``/``before`` 换算成排他上界（只取 ``grp < bound`` 的组）。
+
+    ``before`` 是旧契约（页面最旧一组的最小 seq）：先按 seq 查出组号，再排它。
+    若行已不在（客户端拿着旧游标），退回“seq 更小的最新一行”所在的组并包含那组。
+    ``grp_cursor`` 是新的组游标，本身就是排他上界。
+    原始英文说明：Turn the seq/group cursors into the exclusive upper bound of the group page.
+
+    @param conn 只读连接。
+    @param run_id 运行 id。
+    @param before_seq 旧契约的 seq 游标。
+    @param grp_cursor 新的组游标。
+    @return 排他上界；不设上界时为 None。
+    """
+    if grp_cursor is not None:
+        return grp_cursor
+    if before_seq is None:
+        return None
+    row = conn.execute("SELECT grp FROM turns WHERE run_id = ? AND seq = ?", (run_id, before_seq)).fetchone()
+    if row is not None:
+        return int(row["grp"])
+    row = conn.execute(
+        "SELECT grp FROM turns WHERE run_id = ? AND seq < ? ORDER BY seq DESC LIMIT 1", (run_id, before_seq)
+    ).fetchone()
+    if row is None:
+        return 0
+    return int(row["grp"]) + 1
+
+
+def _parse_turn_rows(rows) -> list[dict]:
+    """@brief 把 ``(seq, row_json)`` 行解成事件，坏 JSON 与半行照旧丢掉。
+
+    @param rows sqlite 行序列（含 ``seq`` 与 ``row_json``）。
+    @return 按输入顺序的事件列表，每个事件带 ``seq``。
+    """
+    events = []
+    for item in rows:
+        try:
+            event = json.loads(item["row_json"] or "{}")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        event["seq"] = int(item["seq"])
+        events.append(event)
+    return events
+
+
+def _group_rows(conn, run_id: str, grp: int, *, limit: int | None) -> list:
+    """@brief 取一组的行；``limit`` 给定时只取最新 ``limit`` 条（再反转成展示顺序）。
+
+    截断下推到 SQL：大组不会先把整组 ``fetchall()`` 进内存。
+    原始英文说明：The rows of one group, newest-first truncated in SQL when a limit is given.
+
+    @param conn 只读连接。
+    @param run_id 运行 id。
+    @param grp 组号。
+    @param limit 最多取多少条（None 表示全量，只有显式 ``all=1`` 才用）。
+    @return 按 seq 升序的 ``(seq, row_json)`` 行列表。
+    """
+    if limit is None:
+        return conn.execute(
+            "SELECT seq, row_json FROM turns WHERE run_id = ? AND grp = ? ORDER BY seq", (run_id, grp)
+        ).fetchall()
+    fetched = conn.execute(
+        "SELECT seq, row_json FROM turns WHERE run_id = ? AND grp = ? ORDER BY seq DESC LIMIT ?",
+        (run_id, grp, limit),
+    ).fetchall()
+    return list(reversed(fetched))
+
+
+def _page_groups(conn, run_id: str, *, bound: int | None, limit: int) -> tuple[list[dict], bool]:
+    """@brief 取一页组（新→旧）并判断更早还有多少组。
+
+    两条组查询都走 ``turns_run_grp(run_id, grp, seq)``；本页的行用闭区间 ``grp BETWEEN`` 取，
+    不会因为把最大 grp 当排他上界而整组丢掉。
+    原始英文说明：One page of groups (newest first) plus whether older groups exist.
+
+    @param conn 只读连接。
+    @param run_id 运行 id。
+    @param bound 排他上界；None 表示首页。
+    @param limit 最多几组。
+    @return 二元组：新→旧的组列表（含 min_seq/max_seq/label）与是否还有更早的组。
+    """
+    sql = "SELECT grp, MIN(seq) AS min_seq, MAX(seq) AS max_seq, label FROM turns WHERE run_id = ?"
+    args: list = [run_id]
+    if bound is not None:
+        sql += " AND grp < ?"
+        args.append(bound)
+    sql += " GROUP BY grp ORDER BY grp DESC LIMIT ?"
+    args.append(limit + 1)
+    fetched = [dict(item) for item in conn.execute(sql, args)]
+    return fetched[:limit], len(fetched) > limit
+
+
+def _group_counts(conn, run_id: str, grps: list[int]) -> dict[int, int]:
+    """@brief 一页各组的事件数（SQL 聚合），用于判定哪些组要截断。
+
+    @param conn 只读连接。
+    @param run_id 运行 id。
+    @param grps 本页的组号。
+    @return 组号到事件数的映射。
+    """
+    if not grps:
+        return {}
+    lo, hi = min(grps), max(grps)
+    return {
+        int(row["grp"]): int(row["n"])
+        for row in conn.execute(
+            "SELECT grp, COUNT(*) AS n FROM turns WHERE run_id = ? AND grp BETWEEN ? AND ? GROUP BY grp",
+            (run_id, lo, hi),
+        )
+    }
+
+
+def _turns_stamp(turn_bytes: int, directory: Path, epoch: int = 0) -> str:
+    """@brief 拼出轮次数据的变更戳：转录与 ``llm.json`` 的大小与 mtime、已存字节数与投影 epoch。
+
+    ``epoch`` 覆盖“字节偏移不变但投影内容变了”的情况：旧 ``grp=0`` 行整份重投影时
+    ``turn_bytes`` 可能不变，只有 epoch 能证明旧的 ``same`` 已经失效。
 
     @param turn_bytes 索引中已存的轮次字节数。
     @param directory 运行目录。
+    @param epoch 该 run 的轮次投影 epoch。
     @return 变更戳字符串。
     """
     def part(path: Path) -> tuple[int, int]:
@@ -1402,7 +1751,7 @@ def _turns_stamp(turn_bytes: int, directory: Path) -> str:
 
     transcript = part(directory / "transcript.jsonl")
     live = part(directory / "llm.json")
-    return f"{transcript[0]}.{transcript[1]}.{int(turn_bytes)}.{live[0]}.{live[1]}"
+    return f"{transcript[0]}.{transcript[1]}.{int(turn_bytes)}.{int(epoch)}.{live[0]}.{live[1]}"
 
 
 def _stopped_turns(directory: Path) -> list[dict]:
@@ -1497,17 +1846,28 @@ def _attach_preview(rows: list[dict], directory: Path, *, running: bool, tail: b
         target["stale"] = not running
 
 
-def turns_feed(run_id: str, *, before=None, limit: int = 40, stamp: str = "") -> dict | None:
-    """@brief 返回一段合并后的轮次窗口；``before`` 是页面上最旧那一组的最小 seq。
+TURN_GROUP_EVENTS = 400
+# §10.4 组级上限：回合一页 40 组。前端“更早”按这个页大小翻，服务端夹到 1..200。
+TURNS_PAGE = 40
 
+
+def turns_feed(run_id: str, *, before=None, limit: int = TURNS_PAGE, stamp: str = "", grp=None, everything: bool = False) -> dict | None:
+    """@brief 返回一段按组切页的轮次窗口；``before``/``grp`` 是页面上最旧那一组的游标。
+
+    组由索引投影的 ``turns.grp`` 决定：相邻同标签一组，同名标签再次出现另起一组，空标签每行一组。
+    翻页是组 keyset：先取一页组，再用闭区间 ``grp BETWEEN`` 取这些组的行；单组超过
+    ``TURN_GROUP_EVENTS`` 条时只取最新 400 条（SQL 下推）并标 ``truncated_events``。
+    ``grp=<g>&all=1`` 显式读回该组全量聚合。
     ``stamp`` 仍匹配时 ``same`` 为真，此时不读轮次表。
-    原始英文说明：A window of merged turns. ``same`` is true when ``stamp`` still matches, and then the turns table is not read.
+    原始英文说明：A window of turns paged by group. ``same`` is true when ``stamp`` still matches, and then the turns table is not read.
 
     @param run_id 运行 id。
-    @param before 向更早翻页时的 seq 边界，可为 None。
-    @param limit 最大行数，会被夹到 1..200。
+    @param before 旧契约的 seq 游标（页面最旧一组的最小 seq），可为 None。
+    @param limit 最大组数，会被夹到 1..200。
     @param stamp 客户端持有的变更戳，空串表示不复用。
-    @return 含 ``same``、``stamp``、``cursor`` 与 ``rows`` 的字典；运行不存在时为 None。
+    @param grp 新的组游标（排他上界），可为 None。
+    @param everything 为 True 且给了 ``grp`` 时返回该组全量聚合（不截断）。
+    @return 含 ``same``、``stamp``、``cursor``、``grp_cursor`` 与 ``rows`` 的字典；运行不存在时为 None。
     """
     directory = resolve_run(run_id)
     if directory is None:
@@ -1519,46 +1879,87 @@ def turns_feed(run_id: str, *, before=None, limit: int = 40, stamp: str = "") ->
     try:
         limit = int(limit)
     except (TypeError, ValueError):
-        limit = 40
+        limit = TURNS_PAGE
     limit = max(1, min(limit, 200))
     before_seq = _before_seq(before)
+    grp_cursor = _grp_param(grp)
+    full = bool(everything) and grp_cursor is not None
     conn = index.read_only()
     try:
         stored = conn.execute("SELECT turn_bytes, status FROM runs WHERE run_id = ?", (run_id,)).fetchone()
         turn_bytes = int(stored["turn_bytes"] or 0) if stored else 0
         running = bool(stored) and stored["status"] == "running"
-        current = _turns_stamp(turn_bytes, directory)
-        if stamp and stamp == current and before_seq is None:
+        epoch_row = conn.execute("SELECT value FROM meta WHERE key = ?", (f"turns_epoch:{run_id}",)).fetchone()
+        epoch = int(epoch_row[0]) if epoch_row is not None and str(epoch_row[0]).isdigit() else 0
+        current = _turns_stamp(turn_bytes, directory, epoch)
+        if stamp and stamp == current and before_seq is None and grp_cursor is None:
             return {"same": True, "stamp": current}
         index.stats["turn_reads"] = index.stats.get("turn_reads", 0) + 1
-        fetched = conn.execute(
-            "SELECT seq, row_json FROM turns WHERE run_id = ? ORDER BY seq",
-            (run_id,),
-        ).fetchall()
+        if full:
+            fetched = conn.execute(
+                "SELECT grp, MIN(seq) AS min_seq, MAX(seq) AS max_seq, label FROM turns"
+                " WHERE run_id = ? AND grp = ? GROUP BY grp",
+                (run_id, grp_cursor),
+            ).fetchone()
+            groups = [] if fetched is None else [dict(fetched)]
+            rows = []
+            if groups:
+                group = {
+                    "label": groups[0].get("label") or "",
+                    "min_seq": int(groups[0]["min_seq"]),
+                    "max_seq": int(groups[0]["max_seq"]),
+                    "events": _parse_turn_rows(_group_rows(conn, run_id, grp_cursor, limit=None)),
+                }
+                rows = [_present_turn(group)]
+            return {"same": False, "stamp": current, "cursor": None, "grp_cursor": None,
+                    "all": True, "grp": grp_cursor, "rows": rows}
+        bound = _turn_grp_bound(conn, run_id, before_seq, grp_cursor)
+        page, has_older = _page_groups(conn, run_id, bound=bound, limit=limit)
+        window = list(reversed(page))  # 展示顺序：旧→新
+        counts = _group_counts(conn, run_id, [int(item["grp"]) for item in window])
+        truncated = {key: value for key, value in counts.items() if value > TURN_GROUP_EVENTS}
+        by_grp: dict[int, list[dict]] = {}
+        small = [int(item["grp"]) for item in window if int(item["grp"]) not in truncated]
+        if small:
+            if len(small) == len(window):
+                # 常见情况：本页没有超上限的组，一条闭区间查询取全部行（走 turns_run_grp）。
+                fetched = conn.execute(
+                    "SELECT grp, seq, row_json FROM turns WHERE run_id = ? AND grp BETWEEN ? AND ? ORDER BY seq",
+                    (run_id, small[0], small[-1]),
+                ).fetchall()
+            else:
+                placeholders = ",".join("?" for _ in small)
+                fetched = conn.execute(
+                    "SELECT grp, seq, row_json FROM turns WHERE run_id = ? AND grp IN (" + placeholders + ")"
+                    " ORDER BY seq",
+                    (run_id, *small),
+                ).fetchall()
+            for item in fetched:
+                by_grp.setdefault(int(item["grp"]), []).append(item)
+        for grp_number in truncated:
+            by_grp[grp_number] = _group_rows(conn, run_id, grp_number, limit=TURN_GROUP_EVENTS)
     finally:
         conn.close()
-    events = []
-    for item in fetched:
-        try:
-            event = json.loads(item["row_json"] or "{}")
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(event, dict):
-            continue
-        event["seq"] = int(item["seq"])
-        events.append(event)
-    groups = _turn_groups(events)
-    eligible = [group for group in groups if before_seq is None or group["min_seq"] < before_seq]
-    window = eligible[-limit:]
-    cursor = None
-    if window and eligible and window[0]["min_seq"] > eligible[0]["min_seq"]:
-        cursor = window[0]["min_seq"]
-    rows = [_present_turn(group) for group in window]
-    tail = before_seq is None
+    rows = []
+    for item in window:
+        number = int(item["grp"])
+        events = _parse_turn_rows(by_grp.get(number, []))
+        group = {
+            "label": item.get("label") or "",
+            "min_seq": int(item["min_seq"]),
+            "max_seq": int(item["max_seq"]),
+            "events": events,
+        }
+        if number in truncated:
+            group["truncated_events"] = truncated[number] - TURN_GROUP_EVENTS
+        rows.append(_present_turn(group))
+    cursor = int(window[0]["min_seq"]) if window and has_older else None
+    grp_cursor_out = int(window[0]["grp"]) if window and has_older else None
+    tail = bound is None
     if tail:
         rows.extend(_stopped_turns(directory))
     _attach_preview(rows, directory, running=running, tail=tail)
-    return {"same": False, "stamp": current, "cursor": cursor, "rows": rows}
+    return {"same": False, "stamp": current, "cursor": cursor, "grp_cursor": grp_cursor_out, "rows": rows}
 
 
 def _agent_note(item: dict, label: str) -> dict:
@@ -1606,17 +2007,7 @@ def _model_notes(directory: Path) -> list[dict]:
     """
     notes = []
     path = directory / "transcript.jsonl"
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        lines = []
-    for line in lines:
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(item, dict):
-            continue
+    for item in iter_jsonl(path):
         event = item.get("event")
         label = item.get("label") if isinstance(item.get("label"), str) else ""
         model = item.get("model") if isinstance(item.get("model"), str) else ""
@@ -1673,18 +2064,10 @@ def _chat_events(directory: Path) -> list[dict]:
     @return 每项含 ``label`` 及 ``seconds`` / ``t`` / ``started_at`` / ``ended_at`` / ``at`` 中可用的数值。
     """
     path = directory / "transcript.jsonl"
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return []
     kept_keys = ("seconds", "t", "started_at", "ended_at", "at")
     out = []
-    for line in lines:
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(item, dict) or item.get("event") != "chat":
+    for item in iter_jsonl(path):
+        if item.get("event") != "chat":
             continue
         kept: dict = {}
         label = item.get("label")
@@ -1818,36 +2201,6 @@ def _model_spans(directory: Path, origin: float | None) -> list[dict]:
     return spans
 
 
-def _gpu_events_all() -> list[dict]:
-    """@brief 读取全部带时间戳的 GPU 事件，按文件签名缓存。
-
-    @return 事件字典列表；文件不存在时为空。
-    """
-    path = gpu_events_path()
-    try:
-        stat = path.stat()
-    except OSError:
-        return []
-    sig = (str(path), stat.st_mtime_ns, stat.st_size)
-    if _gpu_cache["sig"] == sig:
-        return _gpu_cache["events"]
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return []
-    out = []
-    for line in lines:
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(item, dict) and _as_float(item.get("t")) is not None:
-            out.append(item)
-    _gpu_cache["sig"] = sig
-    _gpu_cache["events"] = out
-    return out
-
-
 def _token(text: str, word: str) -> bool:
     """@brief 判断 ``word`` 是否以完整 token 形式出现在 ``text`` 中（不匹配子串）。
 
@@ -1978,7 +2331,6 @@ def _lock_spans(state: dict | None, result: dict | None, progress: dict | None, 
     if start is None or end is None:
         return []
     lo, hi = start - 2.0, end + 2.0
-    pending: dict = {}
     spans = []
 
     def _emit(wait: dict, stop: float) -> None:
@@ -1994,20 +2346,122 @@ def _lock_spans(state: dict | None, result: dict | None, progress: dict | None, 
             stop = hi
         spans.append({"start": begin, "end": stop})
 
-    for event in sorted(_gpu_events_all(), key=lambda item: float(item["t"])):
-        kind = event.get("kind")
-        epid = event.get("pid")
-        if kind == "wait":
-            previous = pending.get(epid)
-            if previous is not None:
-                _emit(previous, float(previous["t"]))
-            pending[epid] = event
-            continue
-        if kind in ("acquire", "give_up") and epid in pending:
-            _emit(pending.pop(epid), float(event["t"]))
-    for wait in pending.values():
-        _emit(wait, float(wait["t"]))
+    # 区间已经由索引里的增量摄取物化：这里只查与本次运行窗口相交的 span 和仍未配对的 wait。
+    # 输出顺序与旧重放一致：先按“关闭事件”的时刻（overwrite 用新 wait、acquire 用 acquire），
+    # 最后才是仍未配对的 wait（各自零长，按 pending 的插入顺序）。
+    # 未配对 wait 只会以自身时间零长出现，所以可以按窗口在 SQL 里过滤（10 万个窗口外的 pending
+    # wait 不应该被取回来）。
+    from observe.index import borrow, get_index
+
+    get_index().ensure_gpu_events()
+    with borrow() as held:
+        closed, waits = _lock_rows(held.conn, lo, hi)
+    for row in closed:
+        _emit({"pid": row["pid"], "t": row["start"], "mode": row["mode"], "what": row["what"]}, float(row["end"]))
+    for row in waits:
+        _emit({"pid": row["pid"], "t": row["t"], "mode": row["mode"], "what": row["what"]}, float(row["t"]))
     return spans
+
+
+# 区间查询的有界读：桶索引由摄取侧维护（见 Index._index_span）。普通 B-tree 只能在一侧开区间，
+# 另一侧会扫全部历史/未来行；桶把候选集限制在窗口覆盖的 10 秒桶，超长 span 单独一张小表。
+LOCK_SPAN_BUCKET_SECONDS = 10.0
+LOCK_SPAN_LONG_SECONDS = 3600.0
+LOCK_SPAN_SLOT_SQL = (
+    "SELECT l.rowid AS rowid, l.pid, l.start, l.end, l.closed_at, l.mode, l.what"
+    " FROM lock_spans l"
+    " WHERE l.rowid IN (SELECT span_id FROM lock_span_slots WHERE bucket BETWEEN ? AND ?)"
+    " AND l.start <= ? AND l.end >= ?"
+)
+LOCK_SPAN_LONG_SQL = (
+    "SELECT l.rowid AS rowid, l.pid, l.start, l.end, l.closed_at, l.mode, l.what"
+    " FROM lock_spans_long g JOIN lock_spans l ON l.rowid = g.span_id"
+    " WHERE l.start <= ? AND l.end >= ?"
+)
+LOCK_SPAN_SQL = (
+    "SELECT rowid, pid, start, end, closed_at, mode, what FROM lock_spans "
+    "WHERE end >= ? AND start <= ? ORDER BY closed_at, rowid"
+)
+PENDING_WAIT_SQL = (
+    "SELECT pid, t, mode, what, seq FROM gpu_waits WHERE t >= ? AND t <= ? ORDER BY seq"
+)
+
+
+def _has_span_slots(conn) -> bool:
+    """@brief 库里有没有桶索引（旧库尚未补建时退回普通索引）。
+
+    @param conn 索引连接。
+    @return 存在时为 True。
+    """
+    try:
+        return conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lock_span_slots'"
+        ).fetchone() is not None
+    except Exception:  # noqa: BLE001 - 只读连接异常时退回普通索引
+        return False
+
+
+def _lock_rows(conn, lo: float, hi: float):
+    """@brief 取与窗口相交的已配对区间与窗口内的未配对 wait。
+
+    未配对 wait 只以自身时间零长出现，所以窗口外的 pending wait 不必取回（10 万个也不会进内存）。
+    已配对区间走摄取时维护的桶索引：只读窗口覆盖的桶（+ 极少数超长 span），不沿 ``end`` 索引
+    扫全部未来行。结果按旧重放的 ``(closed_at, rowid)`` 排序。
+
+    @param conn 索引连接。
+    @param lo 窗口下界。
+    @param hi 窗口上界。
+    @return ``(closed_rows, pending_rows)``，都已按旧重放的输出顺序排好。
+    """
+    if _has_span_slots(conn):
+        first = int(lo // LOCK_SPAN_BUCKET_SECONDS)
+        last = int(hi // LOCK_SPAN_BUCKET_SECONDS)
+        closed = list(conn.execute(LOCK_SPAN_SLOT_SQL, (first, last, hi, lo)).fetchall())
+        closed.extend(conn.execute(LOCK_SPAN_LONG_SQL, (hi, lo)).fetchall())
+        closed.sort(key=lambda row: (float(row["closed_at"] or 0.0), int(row["rowid"])))
+    else:
+        closed = conn.execute(LOCK_SPAN_SQL, (lo, hi)).fetchall()
+    waits = conn.execute(PENDING_WAIT_SQL, (lo, hi)).fetchall()
+    return closed, waits
+
+
+def gpu_shard_stamps() -> list[str]:
+    """@brief 机全局事件日志保留分片的 ``(名字, mtime_ns, size)`` 指纹。
+
+    时间线戳要包含分片：分片单独被删/被改时活动文件不变，只盯活动文件会一直回 ``same``。
+
+    @return 指纹字符串列表，按分片名排序。
+    """
+    path = gpu_events_path()
+    try:
+        items = [item for item in path.parent.iterdir() if item.name.startswith(path.name + ".") and item.is_file()]
+    except OSError:
+        return []
+    parts = []
+    for item in sorted(items, key=lambda entry: entry.name):
+        try:
+            stat = item.stat()
+        except OSError:
+            continue
+        parts.append(f"{item.name}:{stat.st_mtime_ns}:{stat.st_size}")
+    return parts
+
+
+def gpu_history_truncated() -> bool:
+    """@brief 机全局 GPU 事件历史是否被截断过（源文件被删除或替换且没有保留分片）。
+
+    @return 标记为截断时为 True。
+    """
+    from observe.index import Index, borrow
+
+    try:
+        if Index._gpu_marker(gpu_events_path()).is_file():
+            return True
+    except Exception:  # noqa: BLE001 - 标记只是辅助事实，读不到时退回 meta
+        pass
+    with borrow() as held:
+        row = held.conn.execute("SELECT value FROM meta WHERE key = 'gpu_events_truncated'").fetchone()
+    return bool(row is not None and str(row[0]) == "1")
 
 
 # 评测进度文件每次覆盖，盘上只有最近这一段。没有这份文件时这一道是空的。
@@ -2050,7 +2504,9 @@ def _timeline(directory: Path, state: dict | None, result: dict | None, progress
             {"label": "问模型", "spans": _model_spans(directory, origin)},
             {"label": "等锁", "spans": _lock_spans(state, result, progress, status)},
             {"label": "评测", "spans": _eval_spans(progress)},
-        ]
+        ],
+        # 源日志被人为删除/替换过时明确标出来，不假装历史完整。
+        "truncated_history": gpu_history_truncated(),
     }
 
 
@@ -2243,10 +2699,16 @@ def _handoff(directory: Path, state: dict | None, result: dict | None, trace) ->
 
 
 # 详情把 state 和 result 叠在一起。截断的那一份是 None，另一份仍能提供轨迹、花费和停止原因。
-def run_detail(run_id: str) -> dict | None:
+# trace 与 confirmations 不再拷贝：它们与 state.trace / result.confirmations 逐字节相同，走 /raw 取。
+def run_detail(run_id: str, *, include: frozenset[str] | None = None) -> dict | None:
     """@brief 把一个运行的 state 与 result 叠成详情负载；截断的那份为 None，另一份仍提供轨迹、花费与停止原因。
 
+    ``include`` 为 None 时装配全部面板（旧行为）；给定集合时只装配集合里的重面板，
+    轻量字段（状态、预算、发布、胜者、计时、确认点、交接）始终保留。传空集即得 L1 摘要。
+
     @param run_id 运行 id。
+    @param include 需要装配的重面板名（``candidates``/``budget_events``/``timeline``/``candidate_marks``/
+        ``llm``/``state``/``result``/``pending_evaluation``）。
     @return 详情字典；运行不存在时返回 None。
     """
     directory = resolve_run(run_id)
@@ -2255,7 +2717,6 @@ def run_detail(run_id: str) -> dict | None:
     state = _load(directory / "state.json")
     result = _load(directory / "result.json")
     trace = (state or {}).get("trace") or (result or {}).get("trace") or []
-    confirmations = (state or {}).get("confirmations") or (result or {}).get("confirmations") or []
     status = liveness(state, result, directory)
     spent, budget = money_fields(directory, state, result)
     stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
@@ -2267,7 +2728,7 @@ def run_detail(run_id: str) -> dict | None:
     target_id = named.get("id") or (state or {}).get("target_id") or (result or {}).get("target_id") or ""
     backend = named.get("backend") or (state or {}).get("backend") or (result or {}).get("backend") or ""
     backend_version = named.get("backend_version") or (state or {}).get("backend_version") or (result or {}).get("backend_version") or ""
-    return {
+    document = {
         "id": _rel(directory),
         "status": status,
         "target_id": target_id,
@@ -2276,14 +2737,12 @@ def run_detail(run_id: str) -> dict | None:
         "target_line": f"目标: {target_id} ({backend}{('/' + backend_version) if backend_version else ''})" if target_id else "",
         "budget": budget_status(spent, alert_budget, alert_stop, status == "running"),
         "control": control_hint(directory, state, result, status),
-        "pending_evaluation": pending_evaluation(directory),
         **topup_fields(directory),
-        "budget_events": _budget_events(directory),
-        "state": state,
-        "result": result,
-        "trace": trace,
-        "confirmations": confirmations,
-        "candidates": _candidates(directory),
+        "stop_reason": stop,
+        "task": (result or {}).get("task") or (state or {}).get("task") or "",
+        "best_label": (state or {}).get("best_label") or (result or {}).get("best_label") or "",
+        "confirm_winner_label": (result or {}).get("confirm_winner_label") or "",
+        "inflight_label": (state or {}).get("inflight_label") or "",
         "kernel_writer": kernel_writer(directory),
         "winner": {
             "label": (result or {}).get("winner_label") or (result or {}).get("confirm_winner_label") or (result or {}).get("best_label"),
@@ -2296,11 +2755,25 @@ def run_detail(run_id: str) -> dict | None:
         "publication": conclusion["publication"],
         "published_speedup": conclusion["speedup"],
         "eval_progress": progress,
-        "llm": _load(directory / "llm.json"),
         "timing": _run_timing(directory, state, result, progress, status),
-        "timeline": _timeline(directory, state, result, progress, status),
-        "candidate_marks": _candidate_marks(trace),
         "confirmed_point": _confirmed_point(result, trace, conclusion),
         "handoff": _handoff(directory, state, result, trace),
     }
+    if include is None or "pending_evaluation" in include:
+        document["pending_evaluation"] = pending_evaluation(directory)
+    if include is None or "budget_events" in include:
+        document["budget_events"] = _budget_events(directory)
+    if include is None or "state" in include:
+        document["state"] = state
+    if include is None or "result" in include:
+        document["result"] = result
+    if include is None or "candidates" in include:
+        document["candidates"] = _candidates(directory)
+    if include is None or "llm" in include:
+        document["llm"] = _load(directory / "llm.json")
+    if include is None or "timeline" in include:
+        document["timeline"] = _timeline(directory, state, result, progress, status)
+    if include is None or "candidate_marks" in include:
+        document["candidate_marks"] = _candidate_marks(trace)
+    return document
 

@@ -11,13 +11,16 @@ from tcenv.schema import PROTOCOL_VERSION
 SECRET = "sk-PLANTED-brief-secret-0123456789"
 MARKER = "MSG-BODY-ONLY-9f3a"
 
+# §6.1 的 L1 默认形状：候选清单、模型费用与完整失败列表要 ``--expand cands,models,failures``。
 _KEYS = {
     "schema_version", "protocol_version", "stamp",
     "task", "dtype", "size", "committee", "model", "phase", "stop_reason", "round",
     "spent_usd", "budget_usd", "published", "publication", "search_best",
     "winner_label", "winner_provider", "winner_model", "winner_committee", "winner_origin",
-    "model_totals", "cands", "agent_failures", "counts", "paths", "pending_evaluation",
+    "candidate_us", "baseline_us", "last_failure", "counts", "paths", "pending_evaluation",
 }
+_EXPANDED_KEYS = _KEYS | {"model_totals", "cands", "agent_failures"}
+_EXPAND = ("--expand", "cands,models,failures")
 _CAND = {"label", "status", "speedup", "within_noise", "differential_recheck", "origin"}
 
 
@@ -71,13 +74,13 @@ def test_a_run_dir_brief_keeps_search_best_off_the_published_number(tmp_path, ca
     )
     (run / "eval_progress.json").write_text(json.dumps({"stage": "bench", "status": "running", "message": f"{MARKER} {SECRET}"}))
 
-    code, out, _err = _brief(capsys, run)
+    code, out, _err = _brief(capsys, run, *_EXPAND)
     assert code == 0
     assert out.endswith("\n") and out.strip().count("\n") == 0
     assert '"published":null' in out and '"search_best":1.5' in out
     assert SECRET not in out and MARKER not in out
     doc = json.loads(out)
-    assert set(doc) == _KEYS
+    assert set(doc) == _EXPANDED_KEYS
     assert doc["task"] == "relu" and doc["dtype"] == "fp16" and doc["size"] == "small"
     assert doc["committee"] == "second" and doc["model"] == "model-live" and doc["phase"] == "evaluate"
     assert doc["stop_reason"] == "" and doc["round"] == 3
@@ -114,7 +117,7 @@ def test_candidate_dirs_supply_outcomes_when_the_trace_is_absent(tmp_path, capsy
     last = run / "candidates" / "008_c8"
     (last / "differential_recheck.json").write_text(json.dumps({"class": "timeout", "recheck_report": {"message": SECRET}}))
 
-    code, out, _err = _brief(capsys, run)
+    code, out, _err = _brief(capsys, run, *_EXPAND)
     assert code == 0
     doc = json.loads(out)
     assert SECRET not in out and MARKER not in out
@@ -213,7 +216,8 @@ def test_an_empty_directory_is_nulls(tmp_path, capsys):
     doc = json.loads(out)
     assert set(doc) == _KEYS
     assert doc["task"] is None and doc["published"] is None and doc["publication"] is None and doc["search_best"] is None
-    assert doc["cands"] == [] and doc["agent_failures"] == []
+    assert doc["last_failure"] is None and doc["candidate_us"] is None and doc["baseline_us"] is None
+    assert "cands" not in doc and "agent_failures" not in doc and "model_totals" not in doc
     assert doc["counts"] == {"chat": None, "retry": None, "truncation_retries": None, "eval_stage": None}
     assert all(v is None for v in doc["paths"].values())
 
@@ -239,7 +243,7 @@ def test_agent_failures_expose_structured_causes_but_not_response_bodies(tmp_pat
          "diagnostics_path": "agent_diagnostics/r4.json"},
     ]
     (run / "transcript.jsonl").write_text("\n".join(json.dumps(row) for row in rows) + "\n")
-    code, out, _err = _brief(capsys, run)
+    code, out, _err = _brief(capsys, run, *_EXPAND)
     assert code == 0 and MARKER not in out and SECRET not in out
     failures = json.loads(out)["agent_failures"]
     assert len(failures) == 2
@@ -335,7 +339,7 @@ def test_brief_reports_winner_and_model_totals_with_old_run_fallback(tmp_path, c
         json.dumps({"event": "agent", "label": "r1.p0", "candidate_label": "r1.p0", "provider": "moonshot", "model": "kimi-k3", "committee": "second", "cost_usd": 1.5,
                     "tokens": {"input": 5, "output": 40, "cache_read": 50, "cache_write": 60}}),
     ]) + "\n")
-    code, out, _err = _brief(capsys, run)
+    code, out, _err = _brief(capsys, run, *_EXPAND)
     assert code == 0
     doc = json.loads(out)
     assert doc["winner_model"] == "kimi-k3" and doc["winner_provider"] == "moonshot"

@@ -1,6 +1,6 @@
 """Budget control of one run directory: the live top-up file, the budget history, the one-process-per-run lock.
 
-Standard library only (no ``tcenv``, no ``openai``), so that the dashboard and the command line can use it without the search stack.
+Standard library only (plus the stdlib-only ``tcenv.index_journal`` helper), so that the dashboard and the command line can use it without the search stack.
 
 Files in a run directory (all JSON, all written atomically):
 
@@ -55,6 +55,19 @@ class RunLockError(RuntimeError):
 
 
 # 读者可能正在打开同一个文件。先写到旁边的临时文件，再用 replace 换成正式名字：要么看到旧的完整 JSON，要么看到新的，不会看到写了一半的。
+def _note_write(path: Path) -> None:
+    """@brief 落盘后给索引器记一行（旁路日志，永不抛错）。
+
+    @param path 刚写完的文件路径。
+    """
+    try:
+        from tcenv.index_journal import note
+
+        note(path)
+    except Exception:  # noqa: BLE001 - 索引日志不能影响写入方
+        return
+
+
 def write_json_atomic(path: Path, doc) -> None:
     """@brief 把 ``doc`` 序列化后写到 ``path`` 旁边，再用 ``os.replace`` 换到正式名字。
 
@@ -82,6 +95,7 @@ def write_text_atomic(path: Path, text: str, *, encoding: str = "utf-8") -> None
     try:
         tmp.write_text(text, encoding=encoding)
         os.replace(tmp, path)
+        _note_write(path)
     finally:
         try:
             tmp.unlink()
@@ -132,6 +146,7 @@ def append_jsonl(path: Path, row, *, sort_keys: bool = False) -> None:
         handle.write(line)
         handle.flush()
         os.fsync(handle.fileno())
+    _note_write(path)
 
 
 # 信号 0 不杀进程，只问这个 pid 还在不在。锁文件会比进程活得长，所以过期看 pid，不看文件时间。
@@ -447,6 +462,7 @@ def acquire_run_lock(run_dir: Path, who: str = "resume") -> Path:
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
+    _note_write(path)
     return path
 
 
@@ -464,3 +480,6 @@ def release_run_lock(run_dir: Path) -> None:
             lock_path(run_dir).unlink()
         except OSError:
             pass
+        else:
+            # 删除也是一次“这个 run 的可续跑状态变了”，索引器要重新读 lock。
+            _note_write(lock_path(run_dir))

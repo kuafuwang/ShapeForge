@@ -152,14 +152,95 @@ def _read_log() -> list[dict]:
     return rows
 
 
-def list_deletions() -> dict:
-    """@brief 返回删除日志（旧到新）；这是页面读取该日志的唯一途径。
+DELETIONS_PAGE = 100
+DELETIONS_BYTES = 96 * 1024
+_DELETION_FIELD_LIMITS = {"archive": 512, "kind": 32, "name": 256, "reason": 512, "ip": 64, "who": 32}
 
-    原始英文说明：The log, oldest first. This is the only way the page reads it.
 
-    @return 含 ``deletions`` 键、值为日志条目列表的字典。
+def _bounded_entry(entry: dict) -> dict:
+    """@brief 把一条删除记录压到有界大小：长文本截断、runs 只留前 50 条。
+
+    删除理由由人输入，不能让它把一页响应撑到 MB 级。截断只影响展示；日志文件本身不改。
+
+    @param entry 日志里的原始条目。
+    @return 有界副本。
     """
-    return {"deletions": _read_log()}
+    bounded: dict = {}
+    for key, value in entry.items():
+        if isinstance(value, str) and key in _DELETION_FIELD_LIMITS:
+            bounded[key] = value[: _DELETION_FIELD_LIMITS[key]]
+        elif key == "runs" and isinstance(value, list):
+            bounded["runs"] = [str(item)[:256] for item in value[:50]]
+            if len(value) > 50:
+                bounded["runs_total"] = len(value)
+        elif isinstance(value, (str, int, float, bool)) or value is None:
+            bounded[key] = value[:512] if isinstance(value, str) else value
+        else:
+            bounded[key] = str(value)[:512]
+    return bounded
+
+
+def list_deletions(*, limit: int = DELETIONS_PAGE, cursor: str | None = None) -> dict:
+    """@brief 返回删除日志（旧到新）的一页：字节游标 + 条数/字节双上限。
+
+    ``cursor`` 是上一页返回的字节偏移（不透明字符串）。一页在条数或字节预算任一到达上限时停止，
+    因此大 ``reason`` 不会把响应撑大；``truncated`` 表示还有下一页。
+
+    原始英文说明：The log, oldest first, paged by a byte cursor with a byte budget.
+
+    @param limit 单页条数，上限 100。
+    @param cursor 上一页的字节游标。
+    @return 含 ``deletions``、``next`` 与 ``truncated`` 的字典。
+    """
+    limit = max(1, min(int(limit or DELETIONS_PAGE), DELETIONS_PAGE))
+    offset = 0
+    if cursor not in (None, ""):
+        try:
+            offset = max(0, int(cursor))
+        except (TypeError, ValueError):
+            offset = 0
+    path = log_path()
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return {"deletions": [], "next": None, "truncated": False}
+    if offset > size:
+        offset = 0
+    rows: list[dict] = []
+    used = 0
+    position = offset
+    try:
+        handle = path.open("rb")
+    except OSError:
+        return {"deletions": [], "next": None, "truncated": False}
+    with handle:
+        handle.seek(offset)
+        while len(rows) < limit:
+            start = handle.tell()
+            line = handle.readline()
+            if not line:
+                position = None
+                break
+            if not line.endswith(b"\n"):
+                # 写到一半的尾行不解析，也不算已消费。
+                position = start
+                break
+            position = handle.tell()
+            try:
+                item = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                continue
+            if not isinstance(item, dict):
+                continue
+            bounded = _bounded_entry(item)
+            encoded = json.dumps(bounded, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            if rows and used + len(encoded) + 1 > DELETIONS_BYTES:
+                position = start
+                break
+            rows.append(bounded)
+            used += len(encoded) + 1
+    next_cursor = str(position) if position is not None and position < size else None
+    return {"deletions": rows, "next": next_cursor, "truncated": next_cursor is not None}
 
 
 def _append(entry: dict) -> None:

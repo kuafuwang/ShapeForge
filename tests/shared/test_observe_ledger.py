@@ -168,6 +168,60 @@ def test_a_carryover_checksum_mismatch_refuses_to_build(tmp_path, monkeypatch):
         Index(tmp_path / "observe.sqlite")
 
 
+def test_the_monthly_operators_match_the_old_per_month_queries(tmp_path, monkeypatch):
+    """@brief §11.5：一次 GROUP BY month, operator 的结果与旧的“每月再查一次”逐字段一致。
+
+    旧实现每个月单独查 operator（1+N 次）。这里用同一份行同时跑两条路径：
+    ``ledger_report()`` 的新聚合，与按月份循环的旧查询写法。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具。
+    """
+    from observe import query
+
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(tmp_path / "runs"))
+    monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
+    monkeypatch.setenv("OBSERVE_CARRYOVER", str(tmp_path / "carry.json"))
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "absent.sqlite"))
+    index = Index(tmp_path / "observe.sqlite")
+    rows = []
+    for month, operator, spent in (
+        ("2026-08", "alice", 1.0), ("2026-08", "alice", 2.5), ("2026-08", "bob", 4.0),
+        ("2026-09", "bob", 3.0), ("2026-09", "carol", 0.5), ("2026-10", "alice", 7.25),
+    ):
+        rows.append((f"{month}/{operator}/{len(rows)}", operator, month, 1.0, spent, 10.0))
+    index.conn.executemany(
+        "INSERT INTO ledger (run_id, operator, month, started_at, spent_max_usd, budget_usd)"
+        " VALUES (?,?,?,?,?,?)",
+        rows,
+    )
+    index.conn.commit()
+    # 旧写法：先取月份，再每月一次 GROUP BY operator。
+    months = [row[0] for row in index.conn.execute("SELECT DISTINCT month FROM ledger ORDER BY month")]
+    legacy = []
+    for month in months:
+        operators = [
+            {"operator": row["operator"], "runs": row["runs"], "spent_usd": round(row["spent"], 6)}
+            for row in index.conn.execute(
+                "SELECT operator, COUNT(*) AS runs, COALESCE(SUM(spent_max_usd), 0) AS spent FROM ledger"
+                " WHERE month = ? GROUP BY operator ORDER BY spent DESC, operator",
+                (month,),
+            )
+        ]
+        totals = index.conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(spent_max_usd), 0) FROM ledger WHERE month = ?", (month,),
+        ).fetchone()
+        legacy.append({
+            "month": month, "runs": int(totals[0]), "spent_usd": round(float(totals[1]), 6),
+            "operators": operators,
+        })
+    report = query.ledger_report()
+    assert report["by_month"] == legacy, (report["by_month"], legacy)
+    assert report["runs"] == len(rows)
+    assert report["spent_usd"] == pytest.approx(18.25)
+    assert [row["operator"] for row in report["by_operator"]][0] == "alice"
+
+
 def test_month_of_is_local_time():
     """@brief 验证 month_of 对空时间戳返回 unknown，对同一时间戳给出稳定结果。
     """

@@ -70,6 +70,47 @@ def _write_wide(root: Path) -> None:
         (path / "report.json").write_text(json.dumps({"speedup": 1.0, "status": "ok"}))
 
 
+def _write_feedback_run(root: Path) -> None:
+    """@brief 造一个 11 候选、80 条反馈记录的运行，用来量反馈密集型详情。
+
+    生产里详情最大的一块是 `feedback`（plan 实测占 68%），只量 400 候选会漏掉它。
+
+    @param root 放置运行目录的根。
+    """
+    directory = root / "feedback_demo"
+    directory.mkdir()
+    (directory / "state.json").write_text(json.dumps({
+        "task": "gemm", "dtype": "fp16", "phase": "done", "started_at": 1, "updated_at": 1,
+        "committee": "first", "round": 1, "model": "bench",
+    }))
+    (directory / "result.json").write_text(json.dumps({
+        "task": "gemm", "dtype": "fp16", "stop_reason": "max_rounds", "spent_usd": 0.1, "budget_usd": 1,
+    }))
+    (directory / "run_config.json").write_text(json.dumps({
+        "task": "gemm", "dtype": "fp16", "size": "paper",
+        "search": {"plan_ledger": False},
+        "committees": [{"name": "first", "members": [{"model": "bench"}]}],
+    }))
+    candidates = directory / "candidates"
+    candidates.mkdir()
+    for cand in range(11):
+        path = candidates / f"{cand:03d}_r1.p{cand}"
+        path.mkdir()
+        (path / "kernel.metal").write_text("kernel void k() {}\n")
+        (path / "report.json").write_text(json.dumps({"speedup": 1.0, "status": "ok"}))
+    records = []
+    for seq in range(80):
+        records.append(json.dumps({
+            "format": "agent_feedback", "seq": seq + 1, "t": seq,
+            "label": f"r{seq % 11}.p0", "round": seq % 11, "committee": "first",
+            "items": [{
+                "digest": f"d{seq:04d}", "section": "对系统的建议", "audience": "system", "premise": "",
+                "text": f"建议 {seq}：" + "x" * 180,
+            }],
+        }))
+    (directory / "feedback.jsonl").write_text("\n".join(records) + "\n", encoding="utf-8")
+
+
 def _purge() -> str:
     """@brief 尝试清掉系统文件缓存，供冷缓存计时用。
 
@@ -139,6 +180,42 @@ def main() -> None:
         detail = run_detail("wide")
         _line("detail with 400 candidates and the feature grid", time.perf_counter() - started, 1.0)
         print(f"detail candidates={len(detail['candidates'])} grid={len(detail['feature_grid'])}")
+
+        # 新增的测量档位（plan S0）：反馈密集详情、预算/总览、best 冷热。
+        import observe.query as query_mod
+
+        query_mod.detail.gpu_snapshot = lambda: {"holders": [], "waiters": [], "events": []}
+        query_mod.detail.live_evals = lambda: []
+        _write_feedback_run(runs)
+        started = time.perf_counter()
+        feedback_detail = run_detail("feedback_demo")
+        _line("detail with 80 feedback records", time.perf_counter() - started, 1.0)
+        print(f"feedback bytes={len(json.dumps(feedback_detail.get('feedback') or {}))} "
+              f"candidates bytes={len(json.dumps(feedback_detail.get('candidates') or []))} "
+              f"total bytes={len(json.dumps(feedback_detail, default=str))}")
+
+        started = time.perf_counter()
+        budget = query_mod.budget_report()
+        _line("/api/v2/budget (1000 runs)", time.perf_counter() - started, 0.200)
+        started = time.perf_counter()
+        overview = query_mod.overview()
+        _line("/api/v2/overview (1000 runs)", time.perf_counter() - started, 0.200)
+        live = query_mod.live_overview()
+        print(f"budget bytes={len(json.dumps(budget, default=str))} "
+              f"overview bytes={len(json.dumps(overview, default=str))} "
+              f"live.gpu bytes={len(json.dumps(live.get('gpu') or {}, default=str))} "
+              f"flagged={len(budget.get('flagged') or [])}")
+
+        started = time.perf_counter()
+        best_cold = query_mod.best_confirmed()
+        _line("/api/v2/best cold", time.perf_counter() - started, 0.200)
+        started = time.perf_counter()
+        query_mod.best_confirmed()
+        _line("/api/v2/best warm", time.perf_counter() - started, 0.200)
+        print(f"best rows={len(best_cold.get('best') or [])} "
+              "(合成目录未过确认门时为 0，量的是这条路径本身)")
+        print("note: 1000 个合成目录只有 candidates/*.json，没有 candidates/*/report.json，"
+              "索引 candidates 行数为 0（无候选语料）")
 
         index.conn.close()
         import observe.index as index_mod

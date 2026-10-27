@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from experiments.manifest import ManifestError, attach, config_hash, ensure, ext
 from observe.index import INDEX_SCHEMA_VERSION, Index
 from observe.legacy import infer
 from observe.query import best_confirmed, compare, plan_outcomes, run_detail
+from taic.agent_feedback import parse_feedback
 from tcenv.schema import PROTOCOL_VERSION
 
 
@@ -113,6 +115,128 @@ def test_schema_mismatch_rebuilds(tmp_path, monkeypatch):
     assert version == str(INDEX_SCHEMA_VERSION)
 
 
+def _schema_11_with_a_ledger(path: Path) -> None:
+    """@brief 造一个版本 11、带一条 2.5 美元账本的旧库。
+
+    @param path 数据库路径。
+    """
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO meta VALUES ('index_schema_version', '11')")
+        conn.execute("CREATE TABLE runs (run_id TEXT PRIMARY KEY, task TEXT, status TEXT)")
+        conn.execute("INSERT INTO runs VALUES ('conv2d/old', 'conv2d', 'done')")
+        conn.execute("""CREATE TABLE ledger (
+            run_id TEXT PRIMARY KEY, operator TEXT, month TEXT, started_at REAL,
+            spent_max_usd REAL, budget_usd REAL
+        )""")
+        conn.execute("INSERT INTO ledger VALUES ('conv2d/old', 'kuafu', '2026-10', 1.0, 2.5, 3.0)")
+
+
+def test_a_ledger_write_failure_aborts_the_rebuild_and_keeps_the_old_database(tmp_path, monkeypatch):
+    """@brief PR6：旁路账本写失败必须中止重建、保留旧库；修复后重开仍能恢复 2.5 美元。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具。
+    """
+    import observe.index as index_mod
+
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
+    monkeypatch.setenv("OBSERVE_CARRYOVER", str(tmp_path / "carry.json"))
+    path = tmp_path / "observe.sqlite"
+    _schema_11_with_a_ledger(path)
+    original = path.read_bytes()
+    real_replace = index_mod.os.replace
+
+    def denied(*_args, **_kwargs):
+        raise PermissionError("read-only volume")
+
+    monkeypatch.setattr(index_mod.os, "replace", denied)
+    with pytest.raises(index_mod.CarryoverError):
+        index_mod.Index(path)
+    assert path.exists() and path.read_bytes() == original, "保全失败时不能删旧库"
+    assert not index_mod.preserved_ledger_path(path).exists()
+
+    monkeypatch.setattr(index_mod.os, "replace", real_replace)
+    index = index_mod.Index(path)
+    assert index.total_usd() == pytest.approx(2.5)
+    assert index.conn.execute("SELECT value FROM meta WHERE key = 'index_schema_version'").fetchone()[0] == "12"
+
+
+def test_a_ledger_read_failure_aborts_the_rebuild_and_keeps_the_old_database(tmp_path, monkeypatch):
+    """@brief PR6：旧库账本读不出来（锁/损坏）也必须中止重建，不能当作空账本丢掉。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具。
+    """
+    import observe.index as index_mod
+
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
+    monkeypatch.setenv("OBSERVE_CARRYOVER", str(tmp_path / "carry.json"))
+    path = tmp_path / "observe.sqlite"
+    _schema_11_with_a_ledger(path)
+    original = path.read_bytes()
+    real_connect = sqlite3.connect
+
+    def locked(target, *args, **kwargs):
+        if isinstance(target, str) and "mode=ro" in target:
+            raise sqlite3.OperationalError("database is locked")
+        return real_connect(target, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", locked)
+    with pytest.raises(index_mod.CarryoverError):
+        index_mod.Index(path)
+    assert path.exists() and path.read_bytes() == original
+    monkeypatch.setattr(sqlite3, "connect", real_connect)
+    assert index_mod.Index(path).total_usd() == pytest.approx(2.5)
+
+
+def test_an_old_schema_database_is_discarded_and_rebuilt_with_its_ledger(tmp_path, monkeypatch):
+    """@brief §12.1 老 schema 迁移：版本 11 的库删库重建，账本行从旁路恢复，schema 12 结构齐全。
+
+    跨版本没有就地迁移：重建后旧 ``runs`` 行消失（由发现重新摄），但已发生的花费不能消失。
+
+    @param tmp_path pytest 提供的临时目录，用来放旧库。
+    @param monkeypatch pytest 的环境变量夹具，用于指向空的配置路径。
+    """
+    import sqlite3
+
+    from observe.index import preserved_ledger_path
+
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
+    monkeypatch.setenv("OBSERVE_CARRYOVER", str(tmp_path / "carry.json"))
+    path = tmp_path / "observe.sqlite"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO meta VALUES ('index_schema_version', '11')")
+        conn.execute("""CREATE TABLE runs (
+            run_id TEXT PRIMARY KEY, task TEXT, status TEXT, publication TEXT, published_speedup REAL
+        )""")
+        conn.execute("INSERT INTO runs VALUES ('conv2d/old', 'conv2d', 'done', 'confirmed', 1.5)")
+        conn.execute("""CREATE TABLE ledger (
+            run_id TEXT PRIMARY KEY, operator TEXT, month TEXT, started_at REAL,
+            spent_max_usd REAL, budget_usd REAL
+        )""")
+        conn.execute("INSERT INTO ledger VALUES ('conv2d/old', 'kuafu', '2026-10', 1.0, 2.5, 3.0)")
+
+    index = Index(path)
+    version = index.conn.execute("SELECT value FROM meta WHERE key = 'index_schema_version'").fetchone()[0]
+    assert version == str(INDEX_SCHEMA_VERSION) == "12"
+    assert index.conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0, "旧行随旧库一起丢掉，由发现重建"
+    assert index.total_usd() == pytest.approx(2.5), "重建不能丢掉已记录的花费"
+    assert not preserved_ledger_path(path).exists(), "回放后旁路文件应该被删掉"
+
+    columns = {row[1] for row in index.conn.execute("PRAGMA table_info(runs)")}
+    assert {"search_best_speedup", "stop_code", "control_action", "control_reason",
+            "topped_up", "initial_budget_usd"} <= columns
+    turns = {row[1] for row in index.conn.execute("PRAGMA table_info(turns)")}
+    assert "grp" in turns
+    tables = {row[0] for row in index.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert {"run_pending_eval", "confirmed_best", "failure_members", "kernel_history", "run_rollup",
+            "gpu_events", "lock_spans", "blob_refs", "runs_fts", "cands_fts"} <= tables
+    indexes = {row[0] for row in index.conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert {"candidates_sig", "sessions_sig", "turns_run_grp"} <= indexes
+
+
 def test_session_diagnostic_columns_are_added_without_changing_the_index_epoch(tmp_path, monkeypatch):
     """@brief 验证旧 sessions 表缺诊断列时就地补齐，且不抬高 index schema 版本（不触发重建）。
 
@@ -135,6 +259,572 @@ def test_session_diagnostic_columns_are_added_without_changing_the_index_epoch(t
     columns = {row[1] for row in index.conn.execute("PRAGMA table_info(sessions)")}
     assert {"candidate_label", "attempt", "session_id", "failed_turns", "last_kind", "failure_class", "error", "tool_calls", "diagnostics_path"} <= columns
     assert index.conn.execute("SELECT value FROM meta WHERE key = 'index_schema_version'").fetchone()[0] == str(INDEX_SCHEMA_VERSION)
+
+
+def _schema_index(tmp_path, monkeypatch) -> Index:
+    """@brief 建一个临时索引库（不扫 runs/）。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的环境变量夹具。
+    @return 新建的 ``Index``。
+    """
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
+    monkeypatch.setenv("OBSERVE_CARRYOVER", str(tmp_path / "carry.json"))
+    return Index(tmp_path / "observe.sqlite")
+
+
+def test_schema_12_declares_every_new_column_index_and_table(tmp_path, monkeypatch):
+    """@brief §12.1：schema 12 的新列、新索引与新表都在建库时出现。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的环境变量夹具。
+    """
+    index = _schema_index(tmp_path, monkeypatch)
+    assert INDEX_SCHEMA_VERSION == 12
+    assert index.conn.execute("SELECT value FROM meta WHERE key = 'index_schema_version'").fetchone()[0] == "12"
+
+    def columns(table):
+        return {row[1]: row for row in index.conn.execute(f"PRAGMA table_info({table})")}
+
+    runs = columns("runs")
+    assert {"search_best_speedup", "stop_code", "control_action", "control_reason", "topped_up",
+            "initial_budget_usd"} <= set(runs)
+    # PR4 不依赖新列：result-only 的目录 mtime 依赖折进 schema-11 就有的 fp_state。
+    assert "dir_mtime_ns" not in runs
+    assert {"message", "failure_sig", "cv", "reps", "cache_hit"} <= set(columns("candidates"))
+    assert "failure_sig" in columns("sessions")
+    turns = columns("turns")
+    assert turns["grp"][4] == "0" and turns["grp"][3] == 1  # dflt_value / notnull
+
+    expected_tables = {
+        "failure_members": ["run_id", "idx", "sig", "status", "stage", "observed_at"],
+        "kernel_history": ["target_id", "task", "dtype", "size", "seq", "run_id_raw", "run_id", "winner_label",
+                           "source_sha256", "confirmed_speedup", "confirmed_values_json", "candidate_us",
+                           "baseline_us_json", "task_fingerprint", "calibration_sha256", "updated_at",
+                           "source_unknown"],
+        "run_rollup": ["day", "task", "dtype", "size", "target_id", "protocol_epoch", "runs", "confirmed",
+                       "spent_usd", "published_sum", "published_max"],
+        "confirmed_best": ["run_id", "task", "dtype", "size", "target_id", "protocol_epoch",
+                           "published_speedup", "kernel_sha256", "confirmed_at"],
+        "run_pending_eval": ["run_id", "pending", "unavailable", "last_error_code", "retryable",
+                             "requests_json", "updated_at"],
+        "gpu_events": ["t", "pid", "kind", "mode", "what"],
+        "gpu_waits": ["pid", "t", "mode", "what", "seq"],
+        "lock_spans": ["pid", "start", "end", "closed_at", "mode", "what"],
+        "blob_refs": ["sha256", "ref_kind", "ref_id", "created_at"],
+        "run_parents": ["path"],
+    }
+    for table, expected in expected_tables.items():
+        assert list(columns(table)) == expected, table
+    for table, key in (
+        ("failure_members", ["run_id", "idx"]),
+        ("kernel_history", ["target_id", "task", "dtype", "size", "seq"]),
+        ("run_rollup", ["day", "task", "dtype", "size", "target_id", "protocol_epoch"]),
+        ("confirmed_best", ["run_id"]),
+        ("run_pending_eval", ["run_id"]),
+        ("gpu_waits", ["pid"]),
+        ("blob_refs", ["sha256", "ref_kind", "ref_id"]),
+        ("run_parents", ["path"]),
+    ):
+        pk = [(row[1], row[5]) for row in index.conn.execute(f"PRAGMA table_info({table})") if row[5]]
+        assert [name for name, _rank in sorted(pk, key=lambda item: item[1])] == key, table
+
+    indexes = {row[0] for row in index.conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert {"candidates_sig", "sessions_sig", "turns_run_grp", "lock_spans_window", "gpu_events_pid",
+            "runs_budget_cover"} <= indexes
+    # 有界区间读的桶索引：span_id 是 lock_spans.rowid；超长 span 只进单独的小表。
+    slots = columns("lock_span_slots")
+    assert [name for name in slots] == ["bucket", "span_id"]
+    assert [name for name in columns("lock_spans_long")] == ["span_id"]
+    triggers = {row[0] for row in index.conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+    assert {"runs_fts_ai", "runs_fts_au", "runs_fts_ad", "cands_fts_ai", "cands_fts_au", "cands_fts_ad"} <= triggers
+    # §10.3 的列形状：runs 投影 run_id/task/dtype/target_id/model/stop_reason；候选投影 label/message。
+    assert index._fts_columns("runs_fts") == ("run_id", "task", "dtype", "target_id", "model", "stop_reason")
+    assert index._fts_columns("cands_fts") == ("label", "message")
+
+
+def test_the_runs_fts_projection_covers_the_six_documented_fields(tmp_path, monkeypatch):
+    """@brief §10.3：``runs_fts`` 逐字段可检索（run_id/task/dtype/target_id/model/stop_reason），不再索引 operator。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的环境变量夹具。
+    """
+    index = _schema_index(tmp_path, monkeypatch)
+    index.conn.execute(
+        "INSERT INTO runs (run_id, task, dtype, target_id, model, stop_reason) "
+        "VALUES ('conv2d/one', 'conv2d', 'fp16', 'apple-m4-max', 'deepseek-flash', 'max_rounds')"
+    )
+    for column, term in (
+        ("run_id", "one"), ("task", "conv2d"), ("dtype", "fp16"),
+        ("target_id", "apple"), ("model", "deepseek"), ("stop_reason", "rounds"),
+    ):
+        hits = index.conn.execute(
+            "SELECT run_id FROM runs_fts WHERE runs_fts MATCH ?", (term,)
+        ).fetchall()
+        assert [row[0] for row in hits] == ["conv2d/one"], column
+    # operator 不再进投影：搜它既命不中，也不代表运行内容。
+    assert index.conn.execute("SELECT COUNT(*) FROM runs_fts WHERE runs_fts MATCH 'kuafu'").fetchone()[0] == 0
+
+
+def test_a_wrong_or_partial_fts_projection_is_repaired_on_open(tmp_path, monkeypatch):
+    """@brief 同版本的旧投影（operator 当列、触发器缺失）在下次打开时被修好并重建，已有行可检索。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的环境变量夹具。
+    """
+    import sqlite3
+
+    from observe.index import db_path
+
+    index = _schema_index(tmp_path, monkeypatch)
+    index.conn.execute(
+        "INSERT INTO runs (run_id, task, dtype, target_id, model, stop_reason, operator) "
+        "VALUES ('conv2d/one', 'conv2d', 'fp16', 'apple-m4-max', 'deepseek-flash', 'max_rounds', 'kuafu')"
+    )
+    index.conn.commit()
+    db = db_path()
+    index.conn.close()
+
+    # 造出上一版的错形状：runs_fts 索引 operator，触发器只建了一个旧列顺序的 INSERT。
+    conn = sqlite3.connect(db)
+    conn.execute("DROP TABLE runs_fts")
+    conn.execute(
+        "CREATE VIRTUAL TABLE runs_fts USING fts5(run_id, task, operator, model, "
+        "content='runs', content_rowid='rowid', tokenize='unicode61')"
+    )
+    conn.execute("DROP TRIGGER IF EXISTS runs_fts_ai")
+    conn.execute("DROP TRIGGER IF EXISTS runs_fts_ad")
+    conn.execute("DROP TRIGGER IF EXISTS runs_fts_au")
+    conn.execute("INSERT INTO runs_fts(runs_fts) VALUES ('rebuild')")
+    conn.execute(
+        "CREATE TRIGGER runs_fts_ai AFTER INSERT ON runs BEGIN "
+        "INSERT INTO runs_fts(rowid, run_id, task, operator, model) "
+        "VALUES (new.rowid, new.run_id, new.task, new.operator, new.model); END"
+    )
+    conn.commit()
+    conn.close()
+
+    repaired = Index(db)
+    assert repaired._fts_columns("runs_fts") == ("run_id", "task", "dtype", "target_id", "model", "stop_reason")
+    triggers = {row[0] for row in repaired.conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+    assert {"runs_fts_ai", "runs_fts_au", "runs_fts_ad"} <= triggers
+    # 修复时从内容表重建过：已有的那一行按新列可命中。
+    for term in ("conv2d", "fp16", "apple", "rounds"):
+        assert repaired.conn.execute("SELECT COUNT(*) FROM runs_fts WHERE runs_fts MATCH ?", (term,)).fetchone()[0] == 1
+    assert repaired.conn.execute("SELECT COUNT(*) FROM runs_fts WHERE runs_fts MATCH 'kuafu'").fetchone()[0] == 0
+
+    # 新触发器跟随写入：dtype/target/stop_reason 的改动都能检索到。
+    repaired.conn.execute(
+        "UPDATE runs SET dtype = 'bf16', target_id = 'apple-m5', stop_reason = 'budget_exhausted' WHERE run_id = 'conv2d/one'"
+    )
+    for term in ("bf16", "apple", "exhausted"):
+        assert repaired.conn.execute("SELECT COUNT(*) FROM runs_fts WHERE runs_fts MATCH ?", (term,)).fetchone()[0] == 1
+    assert repaired.conn.execute("SELECT COUNT(*) FROM runs_fts WHERE runs_fts MATCH 'fp16'").fetchone()[0] == 0
+
+
+def _candidate_run(root: Path, name: str = "conv2d/fts") -> Path:
+    """@brief 造一个带两颗同序号候选（``000_alpha`` / ``000_beta``）的运行，用来打候选 upsert 的冲突路径。
+
+    @param root runs 根目录。
+    @param name run id。
+    @return 新建的 run 目录。
+    """
+    directory = root / name
+    directory.mkdir(parents=True)
+    (directory / "state.json").write_text(json.dumps({
+        "task": "conv2d", "dtype": "fp16", "phase": "done", "started_at": 10.0, "updated_at": 20.0,
+    }), encoding="utf-8")
+    (directory / "result.json").write_text(json.dumps({
+        "task": "conv2d", "dtype": "fp16", "size": "paper", "stop_reason": "max_rounds",
+        "started_at": 10.0, "spent_usd": 0.1, "best_speedup": 1.0,
+    }), encoding="utf-8")
+    for suffix, token in (("alpha", "oldtoken"), ("beta", "newtoken")):
+        folder = directory / "candidates" / f"000_{suffix}"
+        folder.mkdir(parents=True)
+        (folder / "kernel.metal").write_text("kernel void k() {}\n", encoding="utf-8")
+        (folder / "report.json").write_text(json.dumps({
+            "status": "ok", "stage": "bench", "speedup": 1.0, "message": token,
+        }), encoding="utf-8")
+    return directory
+
+
+def test_candidate_upsert_on_the_same_idx_keeps_the_fts_projection_consistent(tmp_path, monkeypatch):
+    """@brief §PR6：同一 ``(run_id, idx)`` 冲突走 ON CONFLICT，不触发 REPLACE 的隐式删除；FTS 仍一致。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的环境变量夹具。
+    """
+    import sqlite3
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
+    index = Index(tmp_path / "observe.sqlite")
+    directory = _candidate_run(runs)
+    index.sync_known()
+    # 两颗候选的 idx 都是 0：后一颗必须更新前一颗的行，而不是留下一条没有内容行的 FTS 记录。
+    rows = [dict(row) for row in index.conn.execute("SELECT idx, label FROM candidates")]
+    assert len(rows) == 1 and rows[0]["label"] == "beta"
+    index.conn.execute("INSERT INTO cands_fts(cands_fts) VALUES ('integrity-check')")
+
+    # 再摄取一次（报告内容不变）也不能把投影写坏。
+    index.sync_known()
+    index.conn.execute("INSERT INTO cands_fts(cands_fts) VALUES ('integrity-check')")
+    assert index.conn.execute("SELECT COUNT(*) FROM cands_fts WHERE cands_fts MATCH 'beta'").fetchone()[0] == 1
+
+
+def test_drop_archived_removes_candidates_and_their_fts_rows(tmp_path, monkeypatch):
+    """@brief §PR6：归档删除要同时清掉 candidates 与 cands_fts，之后还能继续写。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的环境变量夹具。
+    """
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
+    index = Index(tmp_path / "observe.sqlite")
+    directory = _candidate_run(runs, "conv2d/gone")
+    index.sync_known()
+    assert index.conn.execute("SELECT COUNT(*) FROM cands_fts WHERE cands_fts MATCH 'beta'").fetchone()[0] == 1
+
+    index.drop_archived(["conv2d/gone"], [])
+    assert index.conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
+    assert index.conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0] == 0
+    assert index.conn.execute("SELECT COUNT(*) FROM cands_fts WHERE cands_fts MATCH 'beta'").fetchone()[0] == 0
+    index.conn.execute("INSERT INTO cands_fts(cands_fts) VALUES ('integrity-check')")
+
+    # 删除之后再导入同一目录：投影要能重新接收新行。
+    index._ingest(directory, force=True)
+    assert index.conn.execute("SELECT COUNT(*) FROM cands_fts WHERE cands_fts MATCH 'beta'").fetchone()[0] == 1
+    index.conn.execute("INSERT INTO cands_fts(cands_fts) VALUES ('integrity-check')")
+
+
+def test_a_same_column_but_contentless_or_corrupt_fts_projection_is_repaired(tmp_path, monkeypatch):
+    """@brief §PR6：列名相同但 ``content`` 声明错误/内容损坏的投影，也要在打开时被修好并重建。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的环境变量夹具。
+    """
+    import sqlite3
+
+    from observe.index import db_path
+
+    index = _schema_index(tmp_path, monkeypatch)
+    index.conn.execute(
+        "INSERT INTO runs (run_id, task, dtype, target_id, model, stop_reason) "
+        "VALUES ('conv2d/one', 'conv2d', 'fp16', 'apple-m4-max', 'deepseek-flash', 'max_rounds')"
+    )
+    index.conn.commit()
+    db = db_path()
+    index.conn.close()
+
+    # 列名相同，但声明成 contentless（没有 content）；旧代码只看列名，会永远跳过 rebuild。
+    conn = sqlite3.connect(db)
+    conn.execute("DROP TABLE runs_fts")
+    conn.execute(
+        "CREATE VIRTUAL TABLE runs_fts USING fts5(run_id, task, dtype, target_id, model, stop_reason, tokenize='unicode61')"
+    )
+    conn.execute("INSERT INTO runs_fts(run_id, task, dtype, target_id, model, stop_reason) "
+                 "VALUES ('conv2d/one', 'conv2d', 'fp16', 'apple-m4-max', 'deepseek-flash', 'max_rounds')")
+    conn.commit()
+    conn.close()
+
+    repaired = Index(db)
+    assert repaired._fts_columns("runs_fts") == ("run_id", "task", "dtype", "target_id", "model", "stop_reason")
+    assert repaired.conn.execute("SELECT COUNT(*) FROM runs_fts WHERE runs_fts MATCH 'fp16'").fetchone()[0] == 1
+    repaired.conn.execute("INSERT INTO runs_fts(runs_fts) VALUES ('integrity-check')")
+
+    # 内容损坏：往 external-content 投影里塞一条没有内容行的 phantom row，重开时必须被修掉。
+    repaired.conn.execute(
+        "INSERT INTO runs_fts(rowid, run_id, task, dtype, target_id, model, stop_reason) "
+        "VALUES (99999, 'phantom', 'conv2d', 'fp16', 'apple-m4-max', 'm', 'max_rounds')"
+    )
+    repaired.conn.commit()
+    repaired.conn.close()
+
+    again = Index(db)
+    assert again.conn.execute("SELECT COUNT(*) FROM runs_fts WHERE runs_fts MATCH 'phantom'").fetchone()[0] == 0
+    assert again.conn.execute("SELECT COUNT(*) FROM runs_fts WHERE runs_fts MATCH 'fp16'").fetchone()[0] == 1
+    again.conn.execute("INSERT INTO runs_fts(runs_fts) VALUES ('integrity-check')")
+
+    # 同 rowid、错 token：把 rowid 1 的索引项换成另一个 token（行数、rowid 都不变）。
+    again.conn.execute("INSERT INTO runs_fts(runs_fts, rowid, run_id, task, dtype, target_id, model, stop_reason) "
+                       "VALUES ('delete', 1, 'conv2d/one', 'conv2d', 'fp16', 'apple-m4-max', 'deepseek-flash', 'max_rounds')")
+    again.conn.execute("INSERT INTO runs_fts(rowid, run_id, task, dtype, target_id, model, stop_reason) "
+                       "VALUES (1, 'conv2d/one', 'conv2d', 'wrongtoken', 'apple-m4-max', 'deepseek-flash', 'max_rounds')")
+    again.conn.commit()
+    again.conn.close()
+
+    repaired_swap = Index(db)
+    assert repaired_swap.conn.execute(
+        "SELECT COUNT(*) FROM runs_fts WHERE runs_fts MATCH 'wrongtoken'"
+    ).fetchone()[0] == 0, "指向错误 token 的索引必须在打开时被重建掉"
+    rows = sorted(row[0] for row in repaired_swap.conn.execute(
+        "SELECT rowid FROM runs_fts WHERE runs_fts MATCH 'fp16'"
+    ))
+    assert rows == [1], f"真实 token 必须恢复且只指向 rowid 1，实际 {rows}"
+    content_rows = sorted(row[0] for row in repaired_swap.conn.execute("SELECT rowid FROM runs WHERE rowid IN (1, 2)"))
+    index_rows = sorted(row[0] for row in repaired_swap.conn.execute(
+        "SELECT rowid FROM runs_fts WHERE runs_fts MATCH 'conv2d'"
+    ))
+    assert index_rows == content_rows, "源表与投影的 rowid 集合必须精确一致"
+
+
+def _confirmed_schema_run(root: Path) -> Path:
+    """@brief 造一个能通过发布门的 run，让重建对拍里的 ``confirmed_best`` 非空。
+
+    @param root runs 根目录。
+    @return run 目录。
+    """
+    import hashlib
+
+    from tcenv.schema import PROTOCOL_VERSION
+
+    source = "kernel void k() {}\n"
+    digest = hashlib.sha256(source.encode()).hexdigest()
+    directory = root / "conv2d" / "confirmed"
+    (directory / "candidates" / "000_r1.p0").mkdir(parents=True)
+    (directory / "best.metal").write_text(source, encoding="utf-8")
+    (directory / "candidates" / "000_r1.p0" / "kernel.metal").write_text(source, encoding="utf-8")
+    (directory / "candidates" / "000_r1.p0" / "report.json").write_text(
+        json.dumps({"status": "ok", "stage": "bench", "speedup": 1.1}), encoding="utf-8"
+    )
+    (directory / "state.json").write_text(json.dumps({
+        "task": "conv2d", "dtype": "fp16", "phase": "done", "started_at": 10.0, "updated_at": 20.0,
+    }), encoding="utf-8")
+    (directory / "run_config.json").write_text(json.dumps({
+        "target": {"id": "apple-m4-max", "backend": "metal", "backend_version": "v1"},
+    }), encoding="utf-8")
+    values = [1.1]
+    (directory / "result.json").write_text(json.dumps({
+        "task": "conv2d", "dtype": "fp16", "size": "paper", "stop_reason": "max_rounds",
+        "started_at": 10.0, "spent_usd": 0.2, "target_id": "apple-m4-max",
+        "confirmed_speedup": 1.1, "confirmed_status": "ok", "confirm_winner_label": "r1.p0",
+        "confirmation_source_sha256": digest, "confirmed_values": values,
+        "confirmed_worst": 1.1, "confirmed_best": 1.1,
+    }), encoding="utf-8")
+    (directory / "confirm_report.json").write_text(json.dumps({
+        "status": "ok", "speedup": 1.1,
+        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15},
+                      "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx",
+                      "confirmation": {"kernel_sha256": digest, "winner_label": "r1.p0",
+                                       "confirmed_values": values, "speedup": 1.1, "candidate_us": None}},
+        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
+    }), encoding="utf-8")
+    return directory
+
+
+def _schema_run(root: Path) -> Path:
+    """@brief 造一个带候选与转录的已结束 run，供 schema 重建对拍。
+
+    @param root runs 根目录。
+    @return 新建的 run 目录。
+    """
+    directory = root / "conv2d" / "schema"
+    folder = directory / "candidates" / "000_r1.p0"
+    folder.mkdir(parents=True)
+    (folder / "kernel.metal").write_text("kernel void k() {}\n", encoding="utf-8")
+    (folder / "report.json").write_text(json.dumps({
+        "status": "ok", "stage": "bench", "speedup": 1.2, "message": "coalesced epilogue stores",
+        "benchmark": {"noise_cv": 0.01, "attempts": 3}, "candidate_us": 700.0,
+    }), encoding="utf-8")
+    (directory / "state.json").write_text(json.dumps({
+        "task": "conv2d", "dtype": "fp16", "phase": "done", "started_at": 10.0, "updated_at": 20.0,
+        "spent_usd": 0.4, "budget_usd": 2.0, "operator": "kuafu",
+    }), encoding="utf-8")
+    (directory / "result.json").write_text(json.dumps({
+        "task": "conv2d", "dtype": "fp16", "size": "paper", "stop_reason": "max_rounds", "started_at": 10.0,
+        "spent_usd": 0.5, "budget_usd": 2.0,
+    }), encoding="utf-8")
+    (directory / "transcript.jsonl").write_text(json.dumps({
+        "event": "agent", "label": "r1.p0", "candidate_label": "r1.p0", "provider": "deepseek",
+        "model": "deepseek-flash", "committee": "first", "outcome": "evaluated", "cost_usd": 0.25,
+        "tokens": {"input": 4, "output": 8},
+    }) + "\n", encoding="utf-8")
+    parsed = parse_feedback("kind: tool\n\n# 需要帮助\n- 缺一把探针\n")
+    (directory / "feedback.jsonl").write_text(json.dumps({
+        "format": "agent_feedback", "v": 1, "seq": 1, "t": 11.0, "task": "conv2d", "dtype": "fp16",
+        "size": "paper", "label": "r1.p0", "round": 1, "committee": "first", "provider": "deepseek",
+        "model": "deepseek-flash", "outcome": "evaluated", "kinds": parsed["kinds"],
+        "sections": parsed["sections"], "items": parsed["items"],
+        "unverified_premises": parsed["unverified_premises"], "raw": parsed["raw"],
+    }, ensure_ascii=False) + "\n", encoding="utf-8")
+    return directory
+
+
+# 这些表由 SQLite 自己维护（FTS5 影子表），重建对拍时比它们没有意义。
+_SHADOW_PREFIXES = ("runs_fts_", "cands_fts_")
+
+
+def _snapshot(index: Index) -> dict:
+    """@brief 对拍用的逐字段快照：``sqlite_master`` 里每张业务表按 rowid 排序后的全部列。
+
+    包含 schema 12 新建的表（空表也要出现在字典里），但不比 FTS5 的影子表。
+
+    @param index 索引实例。
+    @return 表名到行列表的字典。
+    """
+    tables = [
+        row[0] for row in index.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        )
+    ]
+    out = {}
+    for table in tables:
+        # meta 里有 built_at/偏移这类每次建库都会变的状态；它不承载 runs/ 的事实。
+        if table == "meta" or table.startswith(_SHADOW_PREFIXES) or table in ("runs_fts", "cands_fts"):
+            continue
+        # ``lock_span_slots`` 是 WITHOUT ROWID，不能统一按 rowid 排；下面的 sorted 已经给出稳定顺序。
+        out[table] = sorted(
+            (dict(row) for row in index.conn.execute(f"SELECT * FROM {table}")),
+            key=lambda row: json.dumps(row, sort_keys=True, ensure_ascii=False),
+        )
+    return out
+
+
+def test_dropping_the_database_and_rebuilding_gives_the_same_rows(tmp_path, monkeypatch):
+    """@brief §12.1：删库重建后逐字段一致，包括新列与被触发器维护的 FTS 投影。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的环境变量夹具。
+    """
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
+    monkeypatch.setenv("OBSERVE_TICK_INTERVAL", "0")
+    monkeypatch.setenv("OBSERVE_FULL_TICK_INTERVAL", "3600")
+    directory = _schema_run(runs)
+    _confirmed_schema_run(runs)
+    db = tmp_path / "observe.sqlite"
+    first = Index(db)
+    first.sync_known()
+    first.ensure_turns(directory)  # 已结束的 run 按需投影轮次；这里要先有行才能对拍 grp。
+    before = _snapshot(first)
+    assert len(before["confirmed_best"]) == 1, "重建对拍必须覆盖非空的 confirmed_best"
+    assert before["runs"][0]["run_id"] == "conv2d/schema"
+    # PR9 给所有候选写脱敏 message；只有失败候选有 failure_sig。
+    by_run = {row["run_id"]: row for row in before["candidates"]}
+    assert by_run["conv2d/schema"]["message"] == "coalesced epilogue stores"
+    assert all(row["failure_sig"] is None for row in before["candidates"])
+    assert by_run["conv2d/schema"]["cv"] is None  # 夹具的 benchmark 没有 candidate.cv
+    assert before["turns"][0]["grp"] == 1, "PR8 投影从 1 开始；相邻同标签共组"
+    fts_before = sorted(tuple(row) for row in first.conn.execute(
+        "SELECT run_id FROM runs_fts WHERE runs_fts MATCH 'conv2d'"
+    ))
+    cands_before = sorted(tuple(row) for row in first.conn.execute(
+        "SELECT label FROM cands_fts WHERE cands_fts MATCH 'p0'"
+    ))
+    assert fts_before == [("conv2d/confirmed",), ("conv2d/schema",)]
+    assert cands_before == [("r1.p0",), ("r1.p0",)]
+    first.conn.close()
+
+    for suffix in ("", "-wal", "-shm"):
+        path = Path(str(db) + suffix) if suffix else db
+        if path.exists():
+            path.unlink()
+    second = Index(db)
+    second.sync_known()
+    second.ensure_turns(directory)
+    after = _snapshot(second)
+    assert after == before
+    assert sorted(tuple(row) for row in second.conn.execute(
+        "SELECT run_id FROM runs_fts WHERE runs_fts MATCH 'conv2d'"
+    )) == fts_before
+    assert sorted(tuple(row) for row in second.conn.execute(
+        "SELECT label FROM cands_fts WHERE cands_fts MATCH 'p0'"
+    )) == cands_before
+
+
+def test_missing_cleanup_clears_candidates_fts_and_confirmed_best(tmp_path, monkeypatch):
+    """@brief 物理删除、running→missing、broken run 都走同一套清理：发布字段、候选、FTS 与物化表。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的环境变量夹具。
+    """
+    import os
+    import shutil
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
+    monkeypatch.setenv("OBSERVE_TICK_INTERVAL", "0")
+    monkeypatch.setenv("OBSERVE_FULL_TICK_INTERVAL", "3600")
+    index = Index(tmp_path / "observe.sqlite")
+
+    confirmed = _confirmed_schema_run(runs)
+    cands = _candidate_run(runs, "conv2d/cands")
+    index.sync_known()
+    assert index.conn.execute("SELECT COUNT(*) FROM confirmed_best").fetchone()[0] == 1
+    assert index.conn.execute("SELECT COUNT(*) FROM cands_fts WHERE cands_fts MATCH 'beta'").fetchone()[0] == 1
+
+    # 物理删除。
+    shutil.rmtree(confirmed)
+    shutil.rmtree(cands)
+    index.sync_known()
+    assert index.conn.execute("SELECT COUNT(*) FROM confirmed_best").fetchone()[0] == 0
+    assert index.conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0] == 0
+    assert index.conn.execute("SELECT COUNT(*) FROM cands_fts WHERE cands_fts MATCH 'beta'").fetchone()[0] == 0
+
+    # running → missing。
+    live = runs / "conv2d" / "live"
+    (live / "candidates" / "000_r1").mkdir(parents=True)
+    (live / "state.json").write_text(json.dumps({
+        "pid": os.getpid(), "phase": "plan", "started_at": 10.0, "updated_at": 20.0,
+        "task": "conv2d", "dtype": "fp16",
+    }), encoding="utf-8")
+    index.sync_known()
+    assert index.conn.execute("SELECT status FROM runs WHERE run_id = 'conv2d/live'").fetchone()[0] == "running"
+    shutil.rmtree(live)
+    index.tick()
+    assert index.conn.execute("SELECT COUNT(*) FROM candidates WHERE run_id = 'conv2d/live'").fetchone()[0] == 0
+    row = index.conn.execute("SELECT status, publication FROM runs WHERE run_id = 'conv2d/live'").fetchone()
+    assert (row["status"], row["publication"]) == ("missing", None)
+
+    # broken run（两份快照都读不出来）。
+    broken = runs / "conv2d" / "broken"
+    (broken / "candidates" / "000_r1").mkdir(parents=True)
+    (broken / "result.json").write_text('{"task": "conv2d", ', encoding="utf-8")
+    index.sync_known()
+    row = index.conn.execute("SELECT status, publication FROM runs WHERE run_id = 'conv2d/broken'").fetchone()
+    assert (row["status"], row["publication"]) == ("missing", None)
+    assert index.conn.execute("SELECT COUNT(*) FROM candidates WHERE run_id = 'conv2d/broken'").fetchone()[0] == 0
+
+
+def test_the_fts_triggers_follow_insert_update_and_delete(tmp_path, monkeypatch):
+    """@brief FTS 触发器覆盖插入、就地改写与删除；先旧后新的值都要从投影里消失。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的环境变量夹具。
+    """
+    index = _schema_index(tmp_path, monkeypatch)
+    run = {
+        "run_id": "r1", "status": "done", "task": "conv2d", "operator": "kuafu", "model": "m1",
+    }
+    columns = ", ".join(run)
+    marks = ", ".join("?" for _ in run)
+    index.conn.execute(f"INSERT INTO runs ({columns}) VALUES ({marks})", tuple(run.values()))
+    assert index.conn.execute("SELECT COUNT(*) FROM runs_fts WHERE runs_fts MATCH 'conv2d'").fetchone()[0] == 1
+    index.conn.execute("UPDATE runs SET task = 'relu', operator = 'other' WHERE run_id = 'r1'")
+    assert index.conn.execute("SELECT COUNT(*) FROM runs_fts WHERE runs_fts MATCH 'conv2d'").fetchone()[0] == 0
+    assert index.conn.execute("SELECT COUNT(*) FROM runs_fts WHERE runs_fts MATCH 'relu'").fetchone()[0] == 1
+    index.conn.execute("DELETE FROM runs WHERE run_id = 'r1'")
+    assert index.conn.execute("SELECT COUNT(*) FROM runs_fts WHERE runs_fts MATCH 'relu'").fetchone()[0] == 0
+
+    index.conn.execute(
+        "INSERT INTO candidates (run_id, idx, label, message) VALUES ('r1', 0, 'r1.p0', 'coalesced stores')"
+    )
+    assert index.conn.execute("SELECT COUNT(*) FROM cands_fts WHERE cands_fts MATCH 'coalesced'").fetchone()[0] == 1
+    index.conn.execute("UPDATE candidates SET message = 'vectorized loads' WHERE run_id = 'r1' AND idx = 0")
+    assert index.conn.execute("SELECT COUNT(*) FROM cands_fts WHERE cands_fts MATCH 'coalesced'").fetchone()[0] == 0
+    assert index.conn.execute("SELECT COUNT(*) FROM cands_fts WHERE cands_fts MATCH 'vectorized'").fetchone()[0] == 1
+    index.conn.execute("DELETE FROM candidates WHERE run_id = 'r1'")
+    assert index.conn.execute("SELECT COUNT(*) FROM cands_fts WHERE cands_fts MATCH 'vectorized'").fetchone()[0] == 0
 
 
 def test_binding_drift_is_left_out_of_the_arm(tmp_path, monkeypatch):

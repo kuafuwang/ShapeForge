@@ -21,6 +21,8 @@ import math
 from typing import Any
 from urllib.parse import quote
 
+BANNER_CHIPS = 10
+
 NEAR_FRACTION = 0.8
 EXHAUSTED_STOP_REASON = "budget_exhausted"
 _EPS = 1e-9  # float noise: a run that ends at exactly its budget is not "over"
@@ -50,6 +52,55 @@ def _num(value: Any) -> float | None:
 
 # 三档可以同时成立，level 取 flags 里最重的一档。缺预算或缺花费不会抛错。
 # 刚好花到预算不算超（要多出 1e-9 以上）。耗尽只认停止原因，哪怕花费仍略低于上限。接近预算要求仍在跑，已结束的高花费不挂这一档。
+def _grade(spent: Any, budget: Any, stop_reason: Any, running: bool):
+    """@brief 预算分级的标量实现；``budget_status`` 与 ``summarize_columns`` 共用同一套判定。
+
+    @param spent 已花费美元数，可为 None。
+    @param budget 预算美元数，可为 None；非正值视为未知。
+    @param stop_reason 停止原因，等于 ``budget_exhausted`` 时计入“耗尽”。
+    @param running 搜索是否仍在运行。
+    @return ``(spent, budget, flags, level, known, over, used_pct, over_usd, over_pct)``。
+    """
+    s = _num(spent)
+    b = _num(budget)
+    if b is not None and b <= 0:
+        b = None
+    exhausted = str(stop_reason or "").strip() == EXHAUSTED_STOP_REASON
+    known = s is not None and b is not None
+    over = bool(known and s - b > _EPS)
+    near = bool(known and running and not over and not exhausted and s >= NEAR_FRACTION * b - _EPS)
+    flags = [name for name, on in (("over", over), ("exhausted", exhausted), ("near", near)) if on]
+    level = flags[0] if flags else ("ok" if known else "unknown")
+    used_pct = round(s / b * 100.0, 1) if known else None
+    over_usd = (max(s - b, 0.0) if over else 0.0) if known else None
+    over_pct = (round((s - b) / b * 100.0, 1) if over else 0.0) if known else None
+    return s, b, flags, level, known, over, used_pct, over_usd, over_pct
+
+
+def _status_text(spent: Any, budget: Any, used_pct: Any, over: bool, over_usd: Any, over_pct: Any) -> str:
+    """@brief 横幅上的一段文字；只有 ``budget_status`` 与 flagged 行需要。
+
+    @param spent 已花费。
+    @param budget 告警预算。
+    @param used_pct 已用百分比。
+    @param over 是否超预算。
+    @param over_usd 超出金额。
+    @param over_pct 超出百分比。
+    @return 展示文本。
+    """
+    parts = []
+    if spent is not None:
+        parts.append(f"${spent:.3f}" + (f" / ${budget:.2f}" if budget is not None else ""))
+    elif budget is not None:
+        parts.append(f"budget ${budget:.2f}")
+    if used_pct is not None:
+        parts.append(f"{used_pct:.1f}%")
+    text = " · ".join(parts) if parts else "no budget recorded"
+    if over:
+        text += f" · over by ${over_usd:.3f} (+{over_pct:.1f}%)"
+    return text
+
+
 def budget_status(spent: Any, budget: Any, stop_reason: Any = None, running: bool = False) -> dict:
     """@brief 对一个运行做预算分级。
 
@@ -65,34 +116,7 @@ def budget_status(spent: Any, budget: Any, stop_reason: Any = None, running: boo
         ``flagged``、``label``（未告警时为空串）、``spent`` / ``budget``（浮点或 None）、``used_pct``、
         ``over_usd`` / ``over_pct``（未超时为 0.0，无法计算时为 None）以及 ``text``。
     """
-    s = _num(spent)
-    b = _num(budget)
-    if b is not None and b <= 0:
-        # 非正预算无法算百分比。改成缺失后走 unknown，除非停止原因单独构成「耗尽」。
-        b = None
-    exhausted = str(stop_reason or "").strip() == EXHAUSTED_STOP_REASON
-    known = s is not None and b is not None
-    # 超预算：两边都是有限数，且花费比预算至少大过浮点噪声。刚好等于预算不是 OVER BUDGET。
-    over = known and s - b > _EPS
-    # 接近预算：必须仍在跑，并且还没超、也还没因 budget_exhausted 停下。门槛是预算的 80%。
-    near = known and bool(running) and not over and not exhausted and s >= NEAR_FRACTION * b - _EPS
-    # 书写顺序就是严重程度。又超又耗尽时 level 是 over，两档都留在 flags 里。
-    flags = [name for name, on in (("over", over), ("exhausted", exhausted), ("near", near)) if on]
-    # 没有告警时，数齐了是 ok，缺花费或缺预算是 unknown。唯独停止原因是 budget_exhausted 时，缺数字也算 exhausted。
-    level = flags[0] if flags else ("ok" if known else "unknown")
-    used_pct = round(s / b * 100.0, 1) if known else None
-    over_usd = (max(s - b, 0.0) if over else 0.0) if known else None
-    over_pct = (round((s - b) / b * 100.0, 1) if over else 0.0) if known else None
-    parts = []
-    if s is not None:
-        parts.append(f"${s:.3f}" + (f" / ${b:.2f}" if b is not None else ""))
-    elif b is not None:
-        parts.append(f"budget ${b:.2f}")
-    if used_pct is not None:
-        parts.append(f"{used_pct:.1f}%")
-    text = " · ".join(parts) if parts else "no budget recorded"
-    if over:
-        text += f" · over by ${over_usd:.3f} (+{over_pct:.1f}%)"
+    s, b, flags, level, known, over, used_pct, over_usd, over_pct = _grade(spent, budget, stop_reason, running)
     return {
         "level": level,
         "flags": flags,
@@ -105,7 +129,7 @@ def budget_status(spent: Any, budget: Any, stop_reason: Any = None, running: boo
         "used_pct": used_pct,
         "over_usd": over_usd,
         "over_pct": over_pct,
-        "text": text,
+        "text": _status_text(s, b, used_pct, over, over_usd, over_pct),
     }
 
 
@@ -183,6 +207,83 @@ def summarize(rows: list[dict]) -> dict:
     }
 
 
+def summarize_columns(rows, *, totals=None) -> dict:
+    """@brief 窄投影行的预算汇总：不构造每行的状态/历史字典，只给 flagged 行建对象。
+
+    ``rows`` 可以是全量行（自己累加合计），也可以只是“可能 flagged”的候选集：给 ``totals``
+    时合计与 ``n_runs`` 由 SQL 聚合给出，本函数只负责逐行判定（调用方必须保证候选集覆盖所有
+    flagged 行）。字段与 :func:`summarize` 完全相同；判定复用 :func:`_grade`，不另写阈值。
+
+    @param rows 可迭代的窄行：``(id, task, dtype, status, stop_reason, spent, alert_budget,
+        disk_budget, control_action, control_reason, topped_up)``。
+    @param totals 可选的 ``(n_runs, total_spent, total_budget, total_over)``（已由 SQL 算好）。
+    @return 与 :func:`summarize` 相同形状的报告字典。
+    """
+    flagged = []
+    spent_total = budget_total = over_total = 0.0
+    counts = {"over": 0, "exhausted": 0, "near": 0}
+    total_rows = 0
+    for item in rows:
+        total_rows += 1
+        (run_id, task, dtype, status, raw_stop, spent, alert, disk,
+         control_action, control_reason, topped) = item
+        status = status or ""
+        stop = raw_stop or ""
+        shown = _num(alert)
+        on_disk = _num(disk)
+        spent_n = _num(spent)
+        # 与 query._budget_row 一致：尚未被运行采纳的加预算会撤销旧的 budget_exhausted 标记。
+        if (
+            shown is not None and on_disk is not None and shown > on_disk + 1e-9
+            and stop == EXHAUSTED_STOP_REASON and spent_n is not None and shown > spent_n
+        ):
+            stop = ""
+        s, b, flags, level, known, over, used_pct, over_usd, over_pct = _grade(spent, alert, stop, status == "running")
+        if s is not None:
+            spent_total += s
+        if b is not None:
+            budget_total += b
+        if over_usd:
+            over_total += over_usd
+        for flag in flags:
+            counts[flag] += 1
+        if flags:
+            flagged.append({
+                "id": run_id,
+                "task": task or "",
+                "dtype": dtype or "",
+                "status": status,
+                "level": level,
+                "flags": flags,
+                "label": LABELS.get(level, ""),
+                "spent_usd": s,
+                "budget_usd": b,
+                "used_pct": used_pct,
+                "over_usd": over_usd,
+                "over_pct": over_pct,
+                "text": _status_text(s, b, used_pct, over, over_usd, over_pct),
+                "control": {"action": control_action, "reason": control_reason or ""},
+                "topped_up": bool(topped),
+            })
+    flagged.sort(key=lambda item: (SEVERITY[item["level"]], -(item["over_pct"] or 0.0), -(item["used_pct"] or 0.0), str(item["id"])))
+    if totals is None:
+        n_runs, spent_total, budget_total, over_total = total_rows, spent_total, budget_total, over_total
+    else:
+        n_runs, spent_total, budget_total, over_total = totals
+    return {
+        "n_runs": n_runs,
+        "n_flagged": len(flagged),
+        "n_over": counts["over"],
+        "n_exhausted": counts["exhausted"],
+        "n_near": counts["near"],
+        "level": flagged[0]["level"] if flagged else "ok",
+        "total_spent_usd": round(spent_total, 6),
+        "total_budget_usd": round(budget_total, 6),
+        "total_over_usd": round(over_total, 6),
+        "flagged": flagged,
+    }
+
+
 # 首屏在服务端把告警画进 HTML，没开 JavaScript 也能看见。页面脚本随后用同一份报告重画。
 def render_banner_html(report: dict) -> str:
     """@brief 把预算报告渲染成 HTML 横幅，供首屏与无 JavaScript 的读者使用。
@@ -201,15 +302,21 @@ def render_banner_html(report: dict) -> str:
     for flag, key in (("over", "n_over"), ("exhausted", "n_exhausted"), ("near", "n_near")):
         if report.get(key):
             head.append(f'<span class="bb-count {flag}">{report[key]} {LABELS[flag]} {LABELS_CN[flag]}</span>')
+    head.append(f'<span class="bb-count total">共 {report.get("n_flagged", 0)} 条</span>')
     head.append(f'<span class="bb-total">{esc(total)}' + (f" · 超出合计 +${report['total_over_usd']:.3f}" if report.get("total_over_usd") else "") + "</span>")
     chips = []
-    for item in report.get("flagged", []):
+    flagged = report.get("flagged", [])
+    for item in flagged[:BANNER_CHIPS]:
         run_id = str(item.get("id") or "")
         names = " + ".join(LABELS[f] for f in item["flags"])
         title = (item.get("task") or run_id) + (f" {item['dtype']}" if item.get("dtype") else "")
         chips.append(
             f'<a class="chip {item["level"]}" href="/?run={quote(run_id, safe="")}" data-run="{esc(run_id, quote=True)}">'
-            f"<b>{esc(run_id)}</b> <span>{esc(title)}</span> <i>{esc(names)}</i> <span>{esc(item['text'])}</span></a>"
+            f'<b class="id-text" title="{esc(run_id, quote=True)}">{esc(run_id)}</b> '
+            f"<span>{esc(title)}</span> <i>{esc(names)}</i> <span>{esc(item['text'])}</span></a>"
         )
+    if len(flagged) > BANNER_CHIPS:
+        # 总条数在标题里，列表只画前 N 条；否则 500 条告警的 HTML 会线性膨胀。
+        chips.append(f'<span class="bb-more">还有 {len(flagged) - BANNER_CHIPS} 条</span>')
     head.append('<button type="button" id="budget-toggle" class="budget-toggle" aria-expanded="true" title="收起预算告警">收起</button>')
     return f'<div class="bb alert {report["level"]}" data-level="{report["level"]}"><div class="bb-head">{" ".join(head)}</div><div class="bb-list">{"".join(chips)}</div></div>'

@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -435,6 +437,648 @@ def test_a_running_run_shows_start_and_elapsed_but_no_end(tmp_path, monkeypatch)
     assert detail["timing"]["running"] is True
 
 
+def test_the_panels_are_collapsed_until_opened_and_kept_across_a_refresh_in_node():
+    """@brief 用 Node 执行面板纯函数：合上时不读文件、展开后注入 payload、刷新后保留已读面板。
+
+    @raises subprocess.CalledProcessError Node 脚本里的断言失败时抛出。
+    """
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    page = Path("observe/static/index.html").read_text()
+
+    def extract(name):
+        start = page.index(f"function {name}(")
+        brace = page.index("{", start)
+        depth = 0
+        for index in range(brace, len(page)):
+            if page[index] == "{":
+                depth += 1
+            elif page[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return page[start:index + 1]
+        raise AssertionError(f"unclosed function {name}")
+
+    names = ("esc", "panelLabel", "panelKey", "panelNames", "panelLoaded", "mergeCandidatePage", "mergePanel",
+             "carryPanels", "panelSection", "planPanelFetches")
+    script = "\n".join(extract(name) for name in names) + r'''
+let candidateContentEpoch = 0, feedbackContentEpoch = 0;
+let navigationEpoch = 0;
+function panelBody(name) { return "BODY:" + name; }
+const names = panelNames();
+const expected = ["candidates", "budget-events", "grid", "plan", "lineage", "feedback"];
+if (JSON.stringify(names) !== JSON.stringify(expected)) throw new Error("panel list drifted: " + names);
+if (panelKey("budget-events") !== "budget_events" || panelKey("lineage") !== "lineage"
+    || panelKey("feedback") !== "feedback") throw new Error("panel key mapping wrong");
+
+const closed = panelSection("candidates", {}, false);
+if (!closed.includes("data-panel=\"candidates\"")) throw new Error("panel is not addressable");
+if (!closed.includes("收起时不读文件")) throw new Error("cold panel has no placeholder");
+if (closed.includes(" open")) throw new Error("cold panel rendered open");
+
+const doc = {};
+mergePanel("candidates", doc, {candidates: [{label: "a"}], candidate_marks: [{label: "a"}]});
+if (!panelLoaded("candidates", doc)) throw new Error("candidates payload did not land");
+if (doc.candidates.length !== 1 || doc.candidate_marks.length !== 1) throw new Error("candidates payload incomplete");
+const opened = panelSection("candidates", doc, true);
+// 展开态不在 markup 里：插入带 open 的 details 会派发 toggle，展开由 restoreDetailOpenState 恢复。
+if (opened.includes(" open")) throw new Error("open must not be serialized into the panel markup");
+if (!opened.includes("BODY:candidates")) throw new Error("loaded panel did not render its body");
+
+// 已加载但用户合上：内容留在 DOM 里，但刷新后不重取。
+const collapsed = panelSection("candidates", doc, false);
+if (collapsed.includes(" open")) throw new Error("collapsed loaded panel rendered open");
+if (!collapsed.includes("BODY:candidates")) throw new Error("collapsed panel lost its loaded body");
+const openSet = new Set(["candidates", "grid"]);
+if (JSON.stringify(planPanelFetches(names, openSet)) !== JSON.stringify(["candidates", "grid"])) {
+  throw new Error("only open panels may be refetched: " + JSON.stringify(planPanelFetches(names, openSet)));
+}
+if (planPanelFetches(names, new Set()) .length !== 0) throw new Error("no open panels must mean no requests");
+
+mergePanel("budget-events", doc, {budget_events: [1, 2]});
+mergePanel("grid", doc, {feature_grid: [1]});
+mergePanel("plan", doc, {plan_outcomes: [1]});
+mergePanel("lineage", doc, {lineage: {nodes: [], edges: []}});
+mergePanel("feedback", doc, {feedback: {records: []}});
+for (const name of names) if (!panelLoaded(name, doc)) throw new Error(name + " did not land");
+
+// 刷新后的新详情只有摘要：旧 payload 必须搬过去，否则已展开的块会退回占位。
+const fresh = {id: "run"};
+carryPanels(doc, fresh);
+for (const name of names) if (!panelLoaded(name, fresh)) throw new Error(name + " was dropped on refresh");
+const untouched = {id: "run2", candidates: [{label: "own"}]};
+carryPanels(doc, untouched);
+if (untouched.candidates.length !== 1 || untouched.candidates[0].label !== "own") throw new Error("carryPanels clobbered the new payload");
+console.log("ok");
+'''
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == "ok"
+
+
+def test_the_compare_view_names_mixed_configs_in_node():
+    """@brief 验收（plan §8.0 第 3 条）：混合臂在对照视图里点名 config_key 与 run id，纯单配置臂不显示。
+
+    @raises subprocess.CalledProcessError Node 脚本里的断言失败时抛出。
+    """
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    page = Path("observe/static/index.html").read_text()
+
+    def extract(name, *, is_async=False):
+        marker = f"async function {name}(" if is_async else f"function {name}("
+        start = page.index(marker)
+        brace = page.index("{", start)
+        depth = 0
+        for index in range(brace, len(page)):
+            if page[index] == "{":
+                depth += 1
+            elif page[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return page[start:index + 1]
+        raise AssertionError(f"unclosed function {name}")
+
+    script = "\n".join((extract("esc"), extract("num"), extract("loadCompare", is_async=True))) + r'''
+const hosts = {};
+globalThis.document = { getElementById: (id) => (hosts[id] = hosts[id] || { innerHTML: "" }) };
+const arm = (key) => ({ arm_id: "relu", median: null, min: null, max: null, published_n: 0, n: 1,
+  confirmed_n: 0, fast: { "1": { share: 0, n: 0 } }, spent_usd: 0.1, gain_per_usd: null, config_key: key });
+const base = { experiment_id: "exp", found: true, verdict: "样本不足以判定", reason: "发布数字少于 2 个",
+  winner: null, drift: [], inferred: [], arms: [arm("aaaaaaaaaaaa"), arm("bbbbbbbbbbbb")],
+  mixed: [{ arm_id: "relu", config_key: "aaaaaaaaaaaa", runs: ["exp/relu/trial_1"] },
+          { arm_id: "relu", config_key: "bbbbbbbbbbbb", runs: ["exp/relu/trial_2"] }] };
+const pureArm = { ...base.arms[0] };
+delete pureArm.config_key;
+const responses = [base, { ...base, arms: [pureArm], mixed: [] }];
+globalThis.fetch = async () => ({ json: async () => responses.shift() });
+loadCompare("exp").then(() => {
+  const html = hosts["view-compare"].innerHTML;
+  if (!html.includes("混合配置")) throw new Error("mixed header missing: " + html);
+  if (!html.includes("aaaaaaaaaaaa") || !html.includes("bbbbbbbbbbbb")) throw new Error("config keys missing");
+  if (!html.includes("exp/relu/trial_1") || !html.includes("exp/relu/trial_2")) throw new Error("run ids missing");
+  if (!html.includes("配置 aaaaaaaaaaaa")) throw new Error("arm row not labelled with config key");
+  return loadCompare("exp");
+}).then(() => {
+  const clean = hosts["view-compare"].innerHTML;
+  if (clean.includes("混合配置")) throw new Error("pure arm must not show a mixed block");
+  if (clean.includes("配置 ")) throw new Error("pure arm must not label a config key");
+  console.log("ok");
+}).catch((err) => { console.error(err); process.exit(1); });
+'''
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ok"
+
+
+def test_the_detail_page_renders_each_heavy_block_as_a_collapsed_panel():
+    """@brief 验证详情页把五个重块都改成 panelSection，不再在 renderDetail 里内联候选/预算/格子/计划表。"""
+    page = Path("observe/static/index.html").read_text()
+    start = page.index("function detailSections(doc)")
+    end = page.index("function feedbackClaimCard(claim)")
+    body = page[start:end]
+    for name in ("candidates", "budget-events", "grid", "plan", "feedback"):
+        assert f'panelSection("{name}", doc, openPanels.has("{name}"))' in body
+    assert "newestFirst(doc.candidates)" not in body
+    assert "newestFirst(doc.feature_grid)" not in body
+    assert "newestFirst(doc.plan_outcomes)" not in body
+    assert "newestFirst(doc.budget_events)" not in body
+    load = page[page.index("async function loadDetail(id)"):page.index("function ledgerTable(")]
+    assert "bindPanels(host)" in load and "refreshOpenPanels(id)" in load
+    # §10.4：详情用 keyed patch，不再整块 innerHTML = renderDetail(...)。
+    assert "patchDetail(host, doc)" in load and "renderDetail(doc)" not in load
+    refresh = page[page.index("function refreshOpenPanels(id)"):page.index("async function loadDetail(id)")]
+    assert "planPanelFetches(panelNames(), openPanels, [pendingPanel, pendingPanelOwner])" in refresh and "loadPanel(name, id)" in refresh
+
+
+def test_a_cold_detail_open_only_requests_the_summary_in_node():
+    """@brief Node 执行详情请求计划：冷开只发摘要；回合/pi/会话成本要展开才请求。
+
+    @raises subprocess.CalledProcessError Node 脚本里的断言失败时抛出。
+    """
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    page = Path("observe/static/index.html").read_text()
+
+    def extract(name):
+        start = page.index(f"function {name}(")
+        brace = page.index("{", start)
+        depth = 0
+        for index in range(brace, len(page)):
+            if page[index] == "{":
+                depth += 1
+            elif page[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return page[start:index + 1]
+        raise AssertionError(f"unclosed function {name}")
+
+    script = extract("planDetailRequests") + r'''
+const cold = planDetailRequests({hasRun: true});
+if (cold.detail !== true) throw new Error("cold open must request the summary");
+if (cold.turns || cold.live || cold.costs) throw new Error("cold open must not request turns/live/costs: " + JSON.stringify(cold));
+const warm = planDetailRequests({hasRun: true, turnsOpen: true, piOpen: true, costsOpen: true});
+if (!warm.turns || !warm.live || !warm.costs) throw new Error("open sections must be requested on refresh");
+const empty = planDetailRequests({hasRun: false, turnsOpen: true});
+if (empty.detail || empty.turns) throw new Error("no run must mean no requests");
+console.log("ok");
+'''
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == "ok"
+
+    load = page[page.index("async function loadDetail(id)"):page.index("function ledgerTable(")]
+    assert "planDetailRequests(" in load
+    assert "refreshTurns(true);\n  refreshLive();" not in load
+    assert "loadSessionCosts(id, true);" not in load.split("planDetailRequests", 1)[-1].split("}", 1)[0]
+    turns = page[page.index("async function refreshTurns(reset)"):page.index("async function loadEarlier()")]
+    assert "!turnsOpen" in turns
+    live = page[page.index("async function refreshLive()"):page.index("setInterval(")]
+    assert "!piOpen" in live
+    panel = page[page.index("async function loadPanel(name, id)"):page.index("function bindPanels(host)")]
+    assert "bindFeedback(again)" not in panel
+    assert page.count("\n  bindFeedback(host);") == 1 and "bindFeedback(again)" not in page
+
+
+def test_a_summary_same_still_refreshes_open_panels_in_node():
+    """@brief 真正执行异步 ``loadDetail()``：摘要回 ``same`` 时，已展开面板仍发请求；合上的不发。
+
+    @raises subprocess.CalledProcessError Node 脚本里的断言失败时抛出。
+    """
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    page = Path("observe/static/index.html").read_text()
+
+    def extract(name, *, asynchronous=False):
+        start = page.index(("async function " if asynchronous else "function ") + name + "(")
+        brace = page.index("{", start)
+        depth = 0
+        for index in range(brace, len(page)):
+            if page[index] == "{":
+                depth += 1
+            elif page[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return page[start:index + 1]
+        raise AssertionError(f"unclosed function {name}")
+
+    names = ("panelNames", "panelKey", "panelLoaded", "planPanelFetches", "panelQuery")
+    functions = "\n".join(extract(name) for name in names)
+    functions += "\n" + extract("refreshOpenPanels") + "\n" + extract("consumePendingPanel") + "\n" + extract("loadPanel", asynchronous=True)
+    functions += "\n" + extract("loadDetail", asynchronous=True)
+    script = functions + r'''
+let candidateContentEpoch = 0, feedbackContentEpoch = 0;
+function syncDetailSectionCache() {}
+let navigationEpoch = 0;
+function panelBody(name) { return "BODY:" + name; }
+function bindCandidatePicks() {}
+function bindFeedback() {}
+function mergePanel() {}
+function refreshLive() {}
+function esc(value) { return String(value ?? ""); }
+function panelLabel(name) { return name; }
+function resetPanels() {}
+function carryPanels() {}
+function renderDetail() { return ""; }
+function patchDetail() {}
+function restoreDetailOpenState() {}
+function detailPatchedRun() { return ""; }
+function clearDetailPatch() {}
+function overlayClose() {}
+function detailScroller() { return null; }
+function rememberDetailScroll() {}
+function recallDetailScroll() {}
+function bindPanels() {}
+function paintDetailHead() {}
+function openStage() {}
+function applyPendingDetail() {}
+function planDetailRequests() { return {detail: true, turns: false, live: false, costs: false}; }
+function refreshTurns() {}
+function loadSessionCosts() {}
+function loadFeedbackRecord() {}
+function panelUrl(id, name) { return "/api/v2/runs/" + id.split("/").map(encodeURIComponent).join("/") + "/" + name; }
+
+const hosts = {"panel-candidates": {innerHTML: ""}};
+const fetches = [];
+globalThis.document = {
+  getElementById: (id) => hosts[id] || null,
+};
+globalThis.fetch = async (url) => {
+  fetches.push(String(url));
+  return {ok: true, json: async () => ({same: true, detail_stamp: "s1", stamp: "p1"})};
+};
+let detailToken = 0, detailDoc = {}, detailId = "run", detailStamp = "s1";
+let selectedRun = "run", visible = "detail", selectedCandidate = "";
+let panelStamps = {candidates: "p1"}, panelTokens = {}, openPanels = new Set(["candidates"]);
+const panelInflight = new Map();
+let panelRequestSeq = 0;
+let turnsOpen = false, piOpen = false, costsOpen = false, handoffOpen = false;
+let restoredDetailView = null;
+let pendingPanel = "";
+let pendingPanelOwner = "";
+const CANDIDATES_PAGE = 50, FEEDBACK_PAGE = 10;
+let candidateStatus = "", candidateStage = "", candidatePages = 1, feedbackPages = 1;
+
+(async () => {
+  await loadDetail("run");
+  if (fetches.length !== 2) throw new Error("expected summary + open panel requests, got " + JSON.stringify(fetches));
+  if (!fetches[0].startsWith("/api/v2/runs/run?stamp=s1")) throw new Error("summary request wrong: " + fetches[0]);
+  if (!fetches[1].includes("/candidates?limit=50&stamp=p1")) throw new Error("open panel was not refreshed: " + fetches[1]);
+
+  // 合上的面板不让摘要 same 触发任何请求。
+  fetches.length = 0;
+  openPanels = new Set();
+  await loadDetail("run");
+  if (fetches.length !== 1) throw new Error("collapsed panel must not be refetched, got " + JSON.stringify(fetches));
+  console.log("ok");
+})().catch((error) => { console.error(error); process.exit(1); });
+'''
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == "ok"
+
+
+def test_stale_async_responses_are_discarded_in_node():
+    """@brief 用 deferred JSON 驱动三个异步路径：切 run 或改戳后，旧响应不得合并/缓存/渲染。
+
+    @raises subprocess.CalledProcessError Node 脚本里的断言失败时抛出。
+    """
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    page = Path("observe/static/index.html").read_text()
+
+    def extract(name, *, asynchronous=False):
+        start = page.index(("async function " if asynchronous else "function ") + name + "(")
+        brace = page.index("{", start)
+        depth = 0
+        for index in range(brace, len(page)):
+            if page[index] == "{":
+                depth += 1
+            elif page[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return page[start:index + 1]
+        raise AssertionError(f"unclosed function {name}")
+
+    functions = "\n".join(extract(name, asynchronous=True) for name in ("loadMoreCandidates", "loadFeedbackRecord", "openFeedbackClaim"))
+    script = functions + r'''
+let candidateContentEpoch = 0, feedbackContentEpoch = 0;
+function syncDetailSectionCache() {}
+let navigationEpoch = 0;
+let merges = [];
+let rendered = [];
+let reviews = [];
+let fetches = 0;
+let releases = [];
+function panelUrl(id, name) { return "/api/v2/runs/" + id + "/" + name; }
+function mergeCandidatePage(doc, payload, append) { merges.push([doc.id, append, payload.candidates.length]); }
+function panelBody(name, doc) { return "BODY"; }
+function bindCandidatePicks() {}
+function feedbackFullMarkup(record) { return "FULL:" + record.seq; }
+function pickFeedbackFull(cache, stamp, key) {
+  const entry = cache.get(key);
+  return entry && entry.stamp === stamp ? entry.record : null;
+}
+function openReview(id, claim, record) { reviews.push([id, claim.digest]); }
+function revealFeedbackRecord() {}
+const hosts = {};
+globalThis.document = {getElementById: (id) => hosts[id] || null};
+globalThis.fetch = async (url) => {
+  fetches += 1;
+  await new Promise((resolve) => releases.push(resolve));
+  if (String(url).includes("/feedback/")) return {ok: true, json: async () => ({record: {seq: 7, claims: [{digest: "a", text: "T"}]}})};
+  return {ok: true, json: async () => ({candidates: [{label: "x"}], total: 2, next: null})};
+};
+let selectedRun = "A", detailId = "A", detailDoc = {id: "A", candidates: [], candidatesNext: "c1"};
+let panelStamps = {feedback: "s1"}, panelTokens = {}, openPanels = new Set();
+const panelInflight = new Map();
+let panelRequestSeq = 0;
+let candidatePageToken = 0, feedbackRecordToken = 0, feedbackClaimToken = 0;
+let currentSeq = 0;
+const CANDIDATES_PAGE = 50, FEEDBACK_PAGE = 10;
+let candidateStatus = "", candidateStage = "", candidatePages = 1, feedbackPages = 1;
+function panelQuery() { return "limit=" + CANDIDATES_PAGE; }
+function repaintCandidatePanel(doc) { panelBody("candidates", doc); }
+function commitUrl() {}
+function currentViewState() { return {}; }
+const fullFeedback = new Map();
+let reviewsCalibration = null;
+
+(async () => {
+  // 1) 候选续页：请求在途时切到另一场，响应必须丢弃。
+  const paging = loadMoreCandidates();
+  detailId = "B";
+  detailDoc = {id: "B", candidates: [], candidatesNext: null};
+  selectedRun = "B";
+  releases.shift()();
+  await paging;
+  if (merges.length !== 0) throw new Error("stale candidate page merged: " + JSON.stringify(merges));
+  if (detailDoc.candidates.length !== 0) throw new Error("stale page mutated the new run");
+
+  // 2) 反馈全文：请求在途时同一个 run 的反馈戳变了，旧响应不得盖新戳。
+  detailId = "A";
+  detailDoc = {id: "A", feedback: {records: [{seq: 7, claims: [{digest: "a"}]}]}};
+  selectedRun = "A";
+  panelStamps = {feedback: "s1"};
+  hosts["feedback-full-7"] = {innerHTML: "before"};
+  const loading = loadFeedbackRecord(7, "A");
+  panelStamps = {feedback: "s2"};
+  releases.shift()();
+  await loading;
+  if (fullFeedback.size !== 0) throw new Error("stale record cached under a new stamp");
+  if (hosts["feedback-full-7"].innerHTML !== "before") throw new Error("stale record rendered");
+
+  // 3) 单条处理：请求在途时切 run，不能弹到新 run 上。
+  panelStamps = {feedback: "s3"};
+  const claiming = openFeedbackClaim(7, "a");
+  detailId = "B";
+  releases.shift()();
+  await claiming;
+  if (reviews.length !== 0) throw new Error("stale claim opened a review: " + JSON.stringify(reviews));
+  console.log("ok");
+})().catch((error) => { console.error(error); process.exit(1); });
+'''
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == "ok"
+
+
+def test_one_feedback_click_makes_exactly_one_fetch_in_node():
+    """@brief 真跑 ``openFeedbackClaim`` 的网络路径：一次点击只发一个反馈全文请求（不靠 stub 计数）。
+
+    @raises subprocess.CalledProcessError Node 脚本里的断言失败时抛出。
+    """
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    page = Path("observe/static/index.html").read_text()
+
+    def extract(name, *, asynchronous=False):
+        start = page.index(("async function " if asynchronous else "function ") + name + "(")
+        brace = page.index("{", start)
+        depth = 0
+        for index in range(brace, len(page)):
+            if page[index] == "{":
+                depth += 1
+            elif page[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return page[start:index + 1]
+        raise AssertionError(f"unclosed function {name}")
+
+    script = extract("bindFeedback") + "\n" + extract("openFeedbackClaim", asynchronous=True) + r'''
+let navigationEpoch = 0;
+const fetches = [];
+const reviews = [];
+globalThis.fetch = async (url) => {
+  fetches.push(String(url));
+  return {ok: true, json: async () => ({record: {seq: 7, claims: [{digest: "a", text: "T"}]}})};
+};
+function openReview(id, claim, record) { reviews.push([id, claim.digest, record.seq]); }
+function pickFeedbackFull() { return null; }
+let selectedRun = "run", detailId = "run";
+let detailDoc = {id: "run", feedback: {records: [{seq: 7, claims: [{digest: "a"}]}]}};
+let panelStamps = {feedback: "s1"};
+let feedbackClaimToken = 0;
+let currentSeq = 0;
+function commitUrl() {}
+function currentViewState() { return {}; }
+const fullFeedback = new Map();
+let reviewsCalibration = null;
+
+const listeners = [];
+const host = {dataset: {}, addEventListener: (type, handler) => listeners.push(handler)};
+bindFeedback(host);
+bindFeedback(host);  // guard：重复安装不再叠加监听
+if (listeners.length !== 1) throw new Error("bindFeedback installed " + listeners.length + " listeners");
+const button = {dataset: {seq: "7", digest: "a"}};
+listeners[0]({target: {closest: (selector) => (selector === ".feedback-open" ? button : null)}});
+
+setTimeout(() => {
+  if (fetches.length !== 1) throw new Error("one click must trigger exactly one fetch, got " + JSON.stringify(fetches));
+  if (reviews.length !== 1 || reviews[0][1] !== "a") throw new Error("review not opened once: " + JSON.stringify(reviews));
+  console.log("ok");
+}, 20);
+'''
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == "ok"
+
+
+def test_one_feedback_click_makes_exactly_one_request_in_node():
+    """@brief Node 驱动反馈委托监听：一次点击只触发一次 openFeedbackClaim，重复安装不会叠加。
+
+    @raises subprocess.CalledProcessError Node 脚本里的断言失败时抛出。
+    """
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    page = Path("observe/static/index.html").read_text()
+
+    def extract(name):
+        start = page.index(f"function {name}(")
+        brace = page.index("{", start)
+        depth = 0
+        for index in range(brace, len(page)):
+            if page[index] == "{":
+                depth += 1
+            elif page[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return page[start:index + 1]
+        raise AssertionError(f"unclosed function {name}")
+
+    script = extract("bindFeedback") + r'''
+let calls = [];
+function openFeedbackClaim(seq, digest) { calls.push([seq, digest]); }
+const listeners = [];
+const host = {dataset: {}, addEventListener: (type, handler) => listeners.push(handler)};
+bindFeedback(host);
+bindFeedback(host);  // 重复安装必须被 guard 拦掉
+if (listeners.length !== 1) throw new Error("bindFeedback installed " + listeners.length + " listeners");
+const button = {dataset: {seq: "7", digest: "abc"}};
+listeners[0]({target: {closest: (selector) => (selector === ".feedback-open" ? button : null)}});
+if (calls.length !== 1) throw new Error("one click must make exactly one request, got " + calls.length);
+if (calls[0][0] !== "7" || calls[0][1] !== "abc") throw new Error("wrong claim forwarded: " + JSON.stringify(calls[0]));
+listeners[0]({target: {closest: () => null}});
+if (calls.length !== 1) throw new Error("a click outside a claim must not fetch");
+console.log("ok");
+'''
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == "ok"
+
+
+def test_candidate_paging_and_full_feedback_freshness_in_node():
+    """@brief Node 执行候选分页与全文缓存：250 颗分两页可达；全文缓存按反馈戳失效。
+
+    @raises subprocess.CalledProcessError Node 脚本里的断言失败时抛出。
+    """
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    page = Path("observe/static/index.html").read_text()
+
+    def extract(name):
+        start = page.index(f"function {name}(")
+        brace = page.index("{", start)
+        depth = 0
+        for index in range(brace, len(page)):
+            if page[index] == "{":
+                depth += 1
+            elif page[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return page[start:index + 1]
+        raise AssertionError(f"unclosed function {name}")
+
+    functions = "\n".join(
+        extract(name)
+        for name in ("mergeCandidatePage", "mergePanel", "carryPanels", "panelKey", "panelNames",
+                     "panelLoaded", "pickFeedbackFull")
+    )
+    script = functions + r'''
+let navigationEpoch = 0, candidateContentEpoch = 0, feedbackContentEpoch = 0;
+function row(index) { return {idx: index, label: "c" + index}; }
+let candidatePages = 1, feedbackPages = 1;
+const first = Array.from({length: 200}, (_, index) => row(index));
+const second = Array.from({length: 50}, (_, index) => row(200 + index));
+const doc = {};
+let state = mergeCandidatePage(doc, {candidates: first, candidate_marks: [{label: "c0"}], total: 250, next: "cur1"}, false);
+if (doc.candidates.length !== 200 || state.next !== "cur1" || state.total !== 250) throw new Error("first page wrong");
+state = mergeCandidatePage(doc, {candidates: second, total: 250, next: null}, true);
+if (doc.candidates.length !== 250) throw new Error("second page not appended: " + doc.candidates.length);
+if (new Set(doc.candidates.map((item) => item.label)).size !== 250) throw new Error("candidate page dedupe failed");
+if (state.next !== null) throw new Error("next should clear after the last page");
+mergeCandidatePage(doc, {candidates: second, total: 250, next: null}, true);
+if (doc.candidates.length !== 250) throw new Error("re-appending a page duplicated rows");
+if (!doc.candidate_marks || doc.candidate_marks.length !== 1) throw new Error("marks lost on page merge");
+
+// 详情刷新：carryPanels 把旧 detailDoc 当 payload 传回来，游标与总数必须原样保留。
+const carried = {id: "run"};
+const pageOne = {candidates: first, candidate_marks: [{label: "c0"}], candidatesNext: "cur1", candidatesTotal: 250};
+carryPanels(pageOne, carried);
+if (!Array.isArray(carried.candidates) || carried.candidates.length !== 200) throw new Error("carryPanels lost the first page");
+if (carried.candidatesNext !== "cur1") throw new Error("carryPanels lost the cursor: " + carried.candidatesNext);
+if (carried.candidatesTotal !== 250) throw new Error("carryPanels reset the total: " + carried.candidatesTotal);
+mergeCandidatePage(carried, {candidates: second, total: 250, next: null}, true);
+if (carried.candidates.length !== 250) throw new Error("second page lost after carryPanels refresh");
+if (new Set(carried.candidates.map((item) => item.label)).size !== 250) throw new Error("carryPanels page merge duplicated rows");
+
+const cache = new Map();
+cache.set("run:1", {stamp: "s1", record: {seq: 1, status: "pending"}});
+if (pickFeedbackFull(cache, "s1", "run:1") === null) throw new Error("fresh full record must be reused");
+if (pickFeedbackFull(cache, "s2", "run:1") !== null) throw new Error("stale full record must be ignored after a stamp change");
+if (pickFeedbackFull(cache, "", "run:1") !== null) throw new Error("a missing stamp must not reuse the cache");
+console.log("ok");
+'''
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == "ok"
+
+    markup = page[page.index("function candidatesMarkup(doc)"):page.index("async function loadMoreCandidates()")]
+    assert "candidates-more" in markup and "candidatesNext" in markup
+    more = page[page.index("async function loadMoreCandidates()"):page.index("// 展开（open）与已加载（loaded）")]
+    assert "cursor=" in more and 'panelQuery("candidates")' in more
+    assert "fullFeedback.set(key, {stamp:" in page
+
+
+def test_the_feedback_panel_is_a_compact_list_and_the_full_view_carries_the_text_in_node():
+    """@brief Node 执行反馈面板纯函数：列表不含正文/原文，全文视图才带 claim 正文与 raw，且都转义。
+
+    @raises subprocess.CalledProcessError Node 脚本里的断言失败时抛出。
+    """
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    page = Path("observe/static/index.html").read_text()
+
+    def extract(name):
+        start = page.index(f"function {name}(")
+        brace = page.index("{", start)
+        depth = 0
+        for index in range(brace, len(page)):
+            if page[index] == "{":
+                depth += 1
+            elif page[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return page[start:index + 1]
+        raise AssertionError(f"unclosed function {name}")
+
+    names = ("esc", "num", "paginateGroup", "tailWindow", "feedbackClaimCard", "feedbackCompactMarkup", "feedbackFullMarkup")
+    script = "\n".join(extract(name) for name in names) + r'''
+const FEEDBACK_PAGE = 10;
+const TEXT_WINDOW_BYTES = 256 * 1024;
+let feedbackPages = 1;
+let feedbackNotice = "";
+let currentSeq = 0;
+function subclaimsMarkup() { return ""; }
+function priorMarkup() { return ""; }
+function similarMarkup() { return ""; }
+
+const compactRecord = {
+  seq: 7, label: "r1.p0", round: 1, committee: "first", provider: "deepseek", model: "deepseek-flash",
+  outcome: "evaluated", kinds: "tool", truncated_sections: [],
+  claim_counts: {total: 2, pending: 1, adopted: 1},
+  claims: [
+    {digest: "a", section: "需要帮助", premise: "unverified", audience: "system", status: "pending", subclaims_count: 1, open_subclaims_count: 1, text: "LEAKED compact text"},
+    {digest: "b", section: "对系统的建议", premise: "verified", audience: "system", status: "adopted", subclaims_count: 0, open_subclaims_count: 0},
+  ],
+};
+const compact = feedbackCompactMarkup({feedback: {records: [compactRecord]}});
+if (compact.includes("LEAKED compact text")) throw new Error("compact list leaked claim text");
+if (!compact.includes("需要帮助") || !compact.includes("pending")) throw new Error("compact list lost the index fields");
+if (!compact.includes("pending 1")) throw new Error("compact list lost the claim counts");
+if (!compact.includes("data-feedback-seq=\"7\"")) throw new Error("compact list has no full-view loader");
+if (!compact.includes("data-digest=\"a\"")) throw new Error("compact list lost the review entry point");
+if (feedbackCompactMarkup({feedback: {records: []}}).includes("fb-session")) throw new Error("empty state wrong");
+
+const fullRecord = Object.assign({}, compactRecord, {
+  raw: "SECRET <img onerror=alert(1)>",
+  claims: [{digest: "a", section: "需要帮助", premise: "unverified", audience: "system", status: "pending",
+            text: "<script>alert(2)</script> 正文", subclaims: [], open_subclaims: []}],
+});
+const full = feedbackFullMarkup(fullRecord);
+if (!full.includes("&lt;script&gt;alert(2)&lt;/script&gt;")) throw new Error("full view did not escape claim text");
+if (full.includes("<script>alert(2)</script>")) throw new Error("full view rendered raw HTML");
+if (!full.includes("SECRET &lt;img onerror=alert(1)&gt;")) throw new Error("full view lost the raw text");
+if (!full.includes("原文")) throw new Error("full view has no raw section");
+console.log("ok");
+'''
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == "ok"
+
+
 def test_the_detail_page_has_the_run_clock():
     """@brief 验证详情页 HTML 仍带着运行时钟与预算面板需要的元素 id 与中文文案。
     """
@@ -443,6 +1087,103 @@ def test_the_detail_page_has_the_run_clock():
                   "detail-budget", "总预算", "已花", "剩余", "money2", "remaining_usd",
                   "胜者：", "模型费用"):
         assert token in html
+
+
+def test_the_detail_page_exposes_session_and_model_cost_efficiency():
+    """@brief 验证成本表使用真实 KPI 字段、转义与 stamp 短路；不只做函数名/排版断言。"""
+    html = Path("observe/static/index.html").read_text()
+    for token in (
+        "会话成本", "工具调用", "cache_read", "cache_write", "cache_read/output",
+        "USD per 1M output", "场均（全部会话）", "记录成本", "成本覆盖",
+        "esc(row.label ||", "esc(row.model ||", "number2(row.cache_read_per_output)",
+        "money2(row.usd_per_1m_output)", "money2(row.cost_per_session_usd)",
+        "row.sessions_with_cost", "row.tokens_output", "/sessions", "/api/v2/model-stats?run=",
+        "sessionCostStamp", "doc.same", "modelCostTable",
+    ):
+        assert token in html
+    assert "model_turns" not in html
+    # 后端 null/NaN/Infinity 由 test_session_kpi 做行为验收；这里没有 JS 运行时，不能假称覆盖运行时渲染。
+    assert "loadSessionCosts(id, true);" in html  # 完整重绘必须恢复两张表；只有 turns_revision 用 stamp。
+    assert "loadSessionCosts(selectedRun);" in html
+    assert "catch (error)" in html
+    assert "if (doc.same) return;" in html
+
+
+def test_cost_tables_escape_and_render_nulls_in_node():
+    """@brief 用 Node 真正执行两张成本表：文本转义、成本覆盖与 NaN/Infinity 空值行为。"""
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    page = Path("observe/static/index.html").read_text()
+
+    def extract(name):
+        start = page.index(f"function {name}(")
+        brace = page.index("{", start)
+        depth = 0
+        for index in range(brace, len(page)):
+            if page[index] == "{":
+                depth += 1
+            elif page[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return page[start:index + 1]
+        raise AssertionError(f"unclosed function {name}")
+
+    functions = "\n".join(extract(name) for name in ("esc", "num", "money2", "number2", "modelCostTable", "sessionCostTable"))
+    script = functions + r'''
+const model = modelCostTable([{provider:"p",model:"<img onerror=alert(1)>",committee:"first",sessions:2,sessions_with_cost:null,cost_usd:0.5,cache_read_tokens:8,cache_write_tokens:4,output_tokens:8,cache_read_per_output:NaN,usd_per_1m_output:Infinity,cost_per_session_usd:0.25}]);
+if (!model.includes("&lt;img onerror=alert(1)&gt;")) throw new Error("model escaping failed");
+if (!model.includes("—")) throw new Error("model null/NaN placeholder missing");
+const session = sessionCostTable([{label:"<img onerror=alert(2)>",model:"m",outcome:"ok",tool_calls:2,tokens_output:2,cache_read_per_output:NaN,usd_per_1m_output:Infinity,cost_usd:0.2}]);
+if (!session.includes("&lt;img onerror=alert(2)&gt;")) throw new Error("session escaping failed");
+if (!session.includes("—")) throw new Error("session null/NaN placeholder missing");
+if (session.includes("Infinity") || session.includes("NaN")) throw new Error("non-finite value rendered");
+console.log("ok");
+'''
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == "ok"
+
+
+def test_model_stats_failure_preserves_session_table_and_stamp_in_node():
+    """@brief 用 Node 模拟 sessions 成功、model-stats 失败：会话表不被覆盖，stamp 也不丢。"""
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    page = Path("observe/static/index.html").read_text()
+
+    def extract(name, *, asynchronous=False):
+        start = page.index(("async function " if asynchronous else "function ") + name + "(")
+        brace = page.index("{", start)
+        depth = 0
+        for index in range(brace, len(page)):
+            if page[index] == "{":
+                depth += 1
+            elif page[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return page[start:index + 1]
+        raise AssertionError(f"unclosed function {name}")
+
+    functions = "\n".join(extract(name) for name in ("esc", "num", "money2", "number2", "modelCostTable", "sessionCostTable"))
+    functions += "\n" + extract("loadSessionCosts", asynchronous=True)
+    script = functions + r'''
+const hosts = {"session-costs": {innerHTML: ""}, "model-costs": {innerHTML: "fallback"}};
+globalThis.document = {getElementById: (id) => hosts[id] || null};
+function syncDetailSectionCache() {}
+globalThis.detailId = "run";
+let sessionCostToken = 0, sessionCostStamp = "", sessionCostRun = "";
+globalThis.fetch = async (url) => {
+  if (url.includes("/sessions")) return {ok: true, json: async () => ({same: false, stamp: "s1", sessions: [{label: "ok", model: "m", outcome: "evaluated", tool_calls: 1, tokens_output: 2, cache_read_per_output: 1, usd_per_1m_output: 1, cost_usd: 0.2}]})};
+  throw new Error("model-stats down");
+};
+(async () => {
+  await loadSessionCosts("run");
+  if (sessionCostStamp !== "s1") throw new Error("stamp lost after model-stats failure");
+  if (!hosts["session-costs"].innerHTML.includes("ok")) throw new Error("session table was overwritten");
+  if (hosts["session-costs"].innerHTML.includes("读取失败")) throw new Error("session table shows an error after sessions succeeded");
+  console.log("ok");
+})().catch((error) => { console.error(error); process.exit(1); });
+'''
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == "ok"
 
 
 def test_the_detail_payload_carries_the_current_budget_spent_and_remaining(tmp_path, monkeypatch):

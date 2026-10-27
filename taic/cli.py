@@ -828,18 +828,23 @@ def cmd_brief(a: argparse.Namespace) -> int:
     from .kernel_catalog import list_kernels
 
     if getattr(a, "kernels", False):
-        rows = list_kernels(getattr(a, "target", None))
+        rows = list_kernels(
+            getattr(a, "target", None), limit=getattr(a, "limit", None), cursor=getattr(a, "cursor", None),
+        )
         print(json.dumps(rows, ensure_ascii=False, separators=(",", ":")))
         return 0
-    return run_brief(a.run_dir, include_gpu=bool(getattr(a, "gpu", False)))
+    return run_brief(
+        a.run_dir, include_gpu=bool(getattr(a, "gpu", False)), expand=getattr(a, "expand", "") or "",
+    )
 
 
 def cmd_query(a: argparse.Namespace) -> int:
     """@brief ``taic query``：对 observe 索引做查询，不发模型请求、不上 GPU。
 
-    但 ``best``/``failures``/``sessions``/``models`` 会先刷新派生索引，所以它不是严格的只读进程（``capabilities``、
-    ``suggestions``、``suggestion`` 则直接读）。``sessions`` 需要 ``--run``，``suggestion`` 需要 ``--run`` +
-    ``--seq`` + ``--digest``，缺了只报错。``--jsonl`` 且结果里有行列表时，逐行一个 JSON 对象输出。
+    但 ``best``/``failures``/``sessions``/``models`` 会先刷新派生索引，``patrol`` 会刷新目录史投影
+    （``kernel_history``，不是 ``tick()``），所以它不是严格的只读进程（``capabilities``、``suggestions``、
+    ``suggestion`` 则直接读）。``sessions`` 需要 ``--run``，``suggestion`` 需要 ``--run`` + ``--seq`` +
+    ``--digest``，缺了只报错。``--jsonl`` 且结果里有行列表时，逐行一个 JSON 对象输出。
 
     @param a argparse 命名空间：``what`` 选用哪个查询，其余是 ``task``/``target``/``model``/``status``/
         ``limit``/``sort``/``cursor`` 等筛选项。
@@ -848,17 +853,28 @@ def cmd_query(a: argparse.Namespace) -> int:
     from . import retrieval
 
     what = a.what
+    limit = a.limit
     if what == "capabilities":
         data = retrieval.capabilities()
+    elif what == "patrol":
+        # §6.4：一次调用给一屏判定；不摄取索引、不解码 row_json。
+        data = retrieval.patrol()
     elif what == "runs":
+        # L0 是默认：4 个窄字段（run_id/publication/published_speedup/stop_code）。``--wide`` 才给页面那 22 列（旧行为）。
         data = retrieval.runs(
-            task=a.task, publication=a.publication, status=a.status,
-            min_speedup=a.min_speedup, sort=a.sort, cursor=a.cursor, limit=a.limit,
+            task=a.task, dtype=a.dtype, model=a.model, target=a.target,
+            publication=a.publication, status=a.status,
+            min_speedup=a.min_speedup, sort=a.sort, cursor=a.cursor,
+            limit=20 if limit is None else limit, compact=not a.wide,
         )
     elif what == "best":
-        data = retrieval.best(task=a.task, limit=a.limit)
+        data = retrieval.best(task=a.task, target=a.target, limit=20 if limit is None else limit)
     elif what == "failures":
-        data = retrieval.failures(status=a.status, task=a.task, limit=a.limit)
+        data = retrieval.failures(
+            status=a.status, task=a.task, sig=getattr(a, "sig", None),
+            run=getattr(a, "run", None), label=getattr(a, "label", None),
+            limit=20 if limit is None else limit,
+        )
     elif what == "sessions":
         if not a.run:
             print("query sessions needs --run RUN_ID", file=sys.stderr)
@@ -879,7 +895,7 @@ def cmd_query(a: argparse.Namespace) -> int:
             print(f"suggestion not found: {exc}", file=sys.stderr)
             return 5
     else:
-        data = retrieval.models()
+        data = retrieval.models(limit=50 if limit is None else limit)
     if a.jsonl and isinstance(data, dict):
         rows = data.get("runs") or data.get("best") or data.get("failures") or data.get("sessions") or data.get("models") or data.get("groups")
         if isinstance(rows, list):
@@ -928,6 +944,83 @@ def cmd_gc(a: argparse.Namespace) -> int:
             "eligible_bytes": sum(row["bytes"] for row in rows if row["eligible"]),
             "rows": rows,
         }, ensure_ascii=False))
+    return 0
+
+
+def cmd_evidence_export(a: argparse.Namespace) -> int:
+    """@brief ``taic evidence export RUN_DIR --out x.tar.gz``：两遍流式导出证据包。
+
+    @param a argparse 命名空间：``run_dir``/``out``/``format``。
+    @return 成功为 0；源目录不存在或写包失败为 5。
+    """
+    from . import evidence
+
+    out = Path(a.out)
+    try:
+        manifest = evidence.export(Path(a.run_dir), out, fmt=a.format)
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"evidence export failed: {exc}", file=sys.stderr)
+        return 5
+    print(json.dumps({
+        "out": str(out), "format": a.format, "run_id": manifest["run_id"],
+        "files": len(manifest["files"]), "excluded": len(manifest["excluded"]),
+        "missing": len(manifest["missing"]), "truncated": len(manifest["truncated"]),
+        "bytes": sum(int(row["bytes"]) for row in manifest["files"]),
+        "inventory_sha256": manifest["inventory_sha256"],
+    }, ensure_ascii=False))
+    return 0
+
+
+def cmd_evidence_verify(a: argparse.Namespace) -> int:
+    """@brief ``taic evidence verify x.tar.gz [--against RUN_DIR]``：纯标准库校验。
+
+    @param a argparse 命名空间：``package``/``against``。
+    @return 校验通过为 0；任一断言失败为 5（失败项在 JSON 里点名）。
+    """
+    from . import evidence
+
+    result = evidence.verify(Path(a.package), against=Path(a.against) if a.against else None)
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result["ok"] else 5
+
+
+def cmd_blobs(a: argparse.Namespace) -> int:
+    """@brief ``taic blobs``：报告内容寻址 blob 的保留情况；``--prune`` 默认 dry-run。
+
+    blob 是持久证据（不能从 runs/kernels 重建），所以默认不删；``--apply`` 必须同时给 ``--prune``
+    与 ``--confirm``。删除依据是 blob 文件自身 mtime，不是 ``blob_refs.created_at``。
+
+    @param a argparse 命名空间：``root``/``prune``/``days``/``apply``/``confirm``/``json``。
+    @return 成功为 0；``--apply`` 缺少 ``--prune`` 或 ``--confirm`` 时为 5。
+    """
+    from . import blobs
+
+    root = Path(a.root).resolve() if a.root else blobs.blob_root()
+    days = float(a.days) if a.days is not None else blobs.retention_days()
+    rows = blobs.scan(root, older_than_days=days)
+    eligible = [row for row in rows if row["eligible"]]
+    if a.apply and not a.prune:
+        print("refusing blobs --apply without --prune (nothing says which blobs to remove)", file=sys.stderr)
+        return 5
+    if a.apply and not getattr(a, "confirm", False):
+        print("refusing blobs --apply without --confirm (run it with --prune to see the list first)", file=sys.stderr)
+        return 5
+    if a.apply:
+        result = blobs.apply(rows)
+        print(json.dumps({"root": str(root), "mode": "apply", **result, "total": len(rows)}, ensure_ascii=False))
+        return 0
+    document = {
+        "root": str(root),
+        "mode": "dry-run" if a.prune else "report",
+        "older_than_days": days,
+        "total": len(rows),
+        "total_bytes": sum(row["bytes"] for row in rows),
+        "eligible": len(eligible),
+        "eligible_bytes": sum(row["bytes"] for row in eligible),
+    }
+    if a.prune or a.json:
+        document["rows"] = rows if a.json else eligible
+    print(json.dumps(document, ensure_ascii=False))
     return 0
 
 
@@ -1405,11 +1498,15 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--remote-workspace-config", default=None, help="explicit JSON SSH workspace placement; must be supplied again for a remote-workspace resume")
     r.set_defaults(fn=cmd_resume)
     q = sub.add_parser("query", help="read-only queries over the observe index (no model call, no GPU)")
-    q.add_argument("what", choices=["runs", "best", "failures", "sessions", "models", "capabilities", "suggestions", "suggestion"])
+    q.add_argument("what", choices=["runs", "best", "failures", "sessions", "models", "capabilities", "suggestions", "suggestion", "patrol"])
+    q.add_argument("--sig", default=None, help="failures: filter by failure-cluster signature")
+    q.add_argument("--label", default=None, help="failures: filter by candidate label")
     q.add_argument("--task", default=None)
+    q.add_argument("--dtype", default=None)
     q.add_argument("--target", default=None)
     q.add_argument("--model", default=None)
-    q.add_argument("--publication", default=None)
+    q.add_argument("--publication", default=None,
+                   help="runs: confirmed|in_progress|unconfirmed|uncertain|legacy（也接受原始短语）")
     q.add_argument("--status", default=None)
     q.add_argument("--run", default=None)
     q.add_argument("--seq", type=int, default=None)
@@ -1419,7 +1516,8 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--min-speedup", type=float, default=None)
     q.add_argument("--sort", default="started", choices=["started", "speedup", "spent"])
     q.add_argument("--cursor", default=None)
-    q.add_argument("--limit", type=int, default=50)
+    q.add_argument("--limit", type=int, default=None, help="rows per query; runs/failures default to 20, models 50")
+    q.add_argument("--wide", action="store_true", help="runs: the 22-column row instead of the L0 4-field row")
     q.add_argument("--jsonl", action="store_true", help="one JSON object per row")
     q.set_defaults(fn=cmd_query)
     g = sub.add_parser("gc", help="report or remove old data/deleted directories (default dry-run)")
@@ -1428,10 +1526,32 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--apply", action="store_true", help="delete eligible directories; without it only report")
     g.add_argument("--confirm", action="store_true", help="required with --apply: deletes are irreversible")
     g.set_defaults(fn=cmd_gc)
+    bl = sub.add_parser("blobs", help="report or prune content-addressed kernel blobs (default report/dry-run)")
+    bl.add_argument("--root", default=None, help="blob root; default data/blobs or TAIC_BLOB_ROOT")
+    bl.add_argument("--prune", action="store_true", help="list blobs past the retention line")
+    bl.add_argument("--days", type=float, default=None, help="retention days; default 365 or TAIC_BLOB_RETENTION_DAYS")
+    bl.add_argument("--apply", action="store_true", help="delete eligible blobs; requires --prune and --confirm")
+    bl.add_argument("--confirm", action="store_true", help="required with --apply: deletes are irreversible")
+    bl.add_argument("--json", action="store_true", help="include every blob row in the report")
+    bl.set_defaults(fn=cmd_blobs)
+    ev = sub.add_parser("evidence", help="export or verify a run's evidence package (never calls a model or the GPU)")
+    evs = ev.add_subparsers(dest="evidence_action", required=True)
+    ex = evs.add_parser("export", help="two-pass streaming export of one run")
+    ex.add_argument("run_dir")
+    ex.add_argument("--out", required=True)
+    ex.add_argument("--format", choices=["tar.gz", "json"], default="tar.gz")
+    ex.set_defaults(fn=cmd_evidence_export)
+    evv = evs.add_parser("verify", help="verify a package with the standard library only")
+    evv.add_argument("package")
+    evv.add_argument("--against", default=None, help="recompute the source inventory and compare")
+    evv.set_defaults(fn=cmd_evidence_verify)
     b = sub.add_parser("brief", help="read-only orientation, or JSON facts for one run directory (no model call, no GPU)")
     b.add_argument("run_dir", nargs="?", default=None, help="run directory; omit for a repo orientation")
     b.add_argument("--kernels", action="store_true", help="list confirmed kernels; optional --target filters one profile")
     b.add_argument("--target", default=None)
+    b.add_argument("--limit", type=int, default=20, help="kernels: how many rows; the L1 brief ignores it")
+    b.add_argument("--cursor", default=None, help="kernels: a keyset cursor from the previous page")
+    b.add_argument("--expand", default="", help="comma list of heavy sections to add: cands,models,failures")
     b.add_argument("--gpu", action="store_true", help="include the machine-wide GPU lock tail (other runs, changes with wall clock; off by default)")
     b.set_defaults(fn=cmd_brief)
     m = sub.add_parser("migrate-runs", help="move flat run directories into runs/<target>/")

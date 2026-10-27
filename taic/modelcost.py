@@ -2,28 +2,71 @@
 
 from __future__ import annotations
 
-import json
 import math
 from pathlib import Path
 
+from .reads import iter_jsonl
 
-def from_events(events) -> list[dict]:
-    """Aggregate one row per provider/model/committee from agent events.
 
-    Retry scheduling rows and chat rows are not sessions; only ``event=agent`` carries
-    the billed token counts. A non-finite cost is ignored rather than poisoning the total.
+def _ratio(numerator, denominator, *, scale: float = 1.0) -> float | None:
+    """Return a finite, non-negative ratio, or ``None`` for invalid inputs."""
+    if isinstance(numerator, bool) or isinstance(denominator, bool):
+        return None
+    if not isinstance(numerator, (int, float)) or not isinstance(denominator, (int, float)):
+        return None
+    try:
+        numerator_float = float(numerator)
+        denominator_float = float(denominator)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if not math.isfinite(numerator_float) or not math.isfinite(denominator_float):
+        return None
+    if numerator_float < 0 or denominator_float <= 0:
+        return None
+    value = numerator_float * scale / denominator_float
+    return round(value, 6) if math.isfinite(value) else None
+
+
+def efficiency_fields(*, tokens_cache_read, tokens_output, cost_usd, sessions=None) -> dict:
+    """Derive session/model cost efficiency without changing the recorded totals.
+
+    ``sessions`` is supplied only for aggregate rows. Passing zero still returns the
+    aggregate field with a null value; omitting it leaves that field out entirely.
     """
-    totals: dict[tuple[str, str, str], dict] = {}
-    for event in events:
+    fields = {
+        "cache_read_per_output": _ratio(tokens_cache_read, tokens_output),
+        "usd_per_1m_output": _ratio(cost_usd, tokens_output, scale=1_000_000),
+    }
+    if sessions is not None:
+        fields["cost_per_session_usd"] = _ratio(cost_usd, sessions)
+    return fields
+
+
+class Totals:
+    """增量聚合 agent 行：每个 provider/model/committee 一行，不保留输入事件。
+
+    Streaming callers (``taic.brief``) feed one event at a time; ``from_events`` is the
+    convenience wrapper for an iterable/sequence.
+    """
+
+    def __init__(self) -> None:
+        """@brief 建一个空的聚合器。"""
+        self._rows: dict[tuple[str, str, str], dict] = {}
+
+    def add(self, event) -> None:
+        """@brief 收一条事件；非 agent 行直接忽略。
+
+        @param event 转录事件。
+        """
         if not isinstance(event, dict) or event.get("event") != "agent":
-            continue
+            return
         provider = str(event.get("provider") or "")
         model = str(event.get("model") or "")
         committee = str(event.get("committee") or "")
         key = (provider, model, committee)
-        row = totals.setdefault(key, {
+        row = self._rows.setdefault(key, {
             "provider": provider, "model": model, "committee": committee,
-            "sessions": 0, "cost_usd": 0.0,
+            "sessions": 0, "cost_usd": 0.0, "_cost_values": 0,
             "input_tokens": 0, "output_tokens": 0,
             "cache_read_tokens": 0, "cache_write_tokens": 0,
         })
@@ -31,6 +74,7 @@ def from_events(events) -> list[dict]:
         cost = event.get("cost_usd")
         if isinstance(cost, (int, float)) and not isinstance(cost, bool) and math.isfinite(float(cost)):
             row["cost_usd"] += float(cost)
+            row["_cost_values"] += 1
         tokens = event.get("tokens") if isinstance(event.get("tokens"), dict) else {}
         for key_name, token_name in (
             ("input_tokens", "input"), ("output_tokens", "output"),
@@ -39,24 +83,37 @@ def from_events(events) -> list[dict]:
             value = tokens.get(token_name, 0)
             if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)):
                 row[key_name] += int(value)
-    rows = list(totals.values())
-    for row in rows:
-        row["cost_usd"] = round(row["cost_usd"], 6)
-    return sorted(rows, key=lambda row: (-row["cost_usd"], -row["sessions"], row["provider"], row["model"], row["committee"]))
+
+    def result(self) -> list[dict]:
+        """@brief 结算成排好序的模型费用行。
+
+        @return 每个 provider/model/committee 一行的列表。
+        """
+        rows = list(self._rows.values())
+        for row in rows:
+            row["cost_usd"] = round(row["cost_usd"], 6)
+            cost_values = row.pop("_cost_values")
+            row["sessions_with_cost"] = cost_values
+            cost = row["cost_usd"] if cost_values else None
+            row.update(efficiency_fields(
+                tokens_cache_read=row["cache_read_tokens"], tokens_output=row["output_tokens"],
+                cost_usd=cost, sessions=row["sessions"],
+            ))
+        return sorted(rows, key=lambda row: (-row["cost_usd"], -row["sessions"], row["provider"], row["model"], row["committee"]))
+
+
+def from_events(events) -> list[dict]:
+    """Aggregate one row per provider/model/committee from agent events.
+
+    Retry scheduling rows and chat rows are not sessions; only ``event=agent`` carries
+    the billed token counts. A non-finite cost is ignored rather than poisoning the total.
+    """
+    totals = Totals()
+    for event in events:
+        totals.add(event)
+    return totals.result()
 
 
 def from_path(path: Path) -> list[dict]:
     """Read a transcript path and aggregate its agent rows; missing/invalid files yield []."""
-    events = []
-    try:
-        text = Path(path).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-    for line in text.splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(event, dict):
-            events.append(event)
-    return from_events(events)
+    return from_events(iter_jsonl(path))

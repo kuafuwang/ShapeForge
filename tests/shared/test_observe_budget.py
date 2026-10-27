@@ -308,6 +308,87 @@ def test_budget_report_names_the_runs_that_exceeded(runs_dir):
     assert rep["total_over_usd"] == pytest.approx(0.1229796840000015 + 0.036134728000001, abs=1e-6)
 
 
+def test_budget_rows_match_history_field_by_field_without_row_json(runs_dir):
+    """@brief §5.6 验收：窄投影逐字段等于旧历史行，且 ``row_json`` 坏掉也不影响报告。
+
+    把每行的 ``row_json`` 改成非法 JSON；只要 ``budget_rows``/``budget_report`` 还解码它就会炸。
+    同时逐行对拍 ``budget``（含 ``control``/``topped_up``/``initial_budget_usd``），证明窄列在摄入时已经算好。
+
+    @param runs_dir 运行根目录。
+    """
+    expected = {row["id"]: row for row in scan.history()}
+    with scan.get_index().conn as conn:
+        conn.execute("UPDATE runs SET row_json = '{broken'")
+    rows = {row["id"]: row for row in scan.budget_rows()}
+    assert set(rows) == set(expected)
+    for run_id, old in expected.items():
+        new = rows[run_id]
+        for key in ("task", "dtype", "status", "stop_reason", "spent_usd", "budget_usd",
+                    "budget", "control", "topped_up", "initial_budget_usd"):
+            assert new[key] == old[key], (run_id, key)
+    assert scan.budget_report() == summarize(list(expected.values()))
+
+
+def test_a_missing_run_is_not_counted_by_the_budget_report(runs_dir):
+    """@brief 窄投影仍排除 ``missing`` 行，与旧 ``history()`` 的 ``n_runs`` 口径一致。
+
+    @param runs_dir 运行根目录。
+    """
+    scan.refresh()
+    before = scan.budget_report()["n_runs"]
+    index = scan.get_index()
+    assert index._mark_missing("suite/old_run") is True
+    index.conn.commit()
+    report = scan.budget_report()
+    assert report["n_runs"] == before - 1
+    assert "suite/old_run" not in [row["id"] for row in scan.budget_rows()]
+
+
+def test_the_budget_narrow_columns_come_from_ingest_not_from_a_read_time_guess(runs_dir):
+    """@brief §5.6：``control``/``topped_up``/``initial_budget_usd`` 由摄入写成列，读时不再推导。
+
+    ``control`` 要看 ``resume.lock`` 的持有者，``topped_up`` 要看是否真的存在已生效的加预算事件；
+    两者都不能在读时从 ``spent``/``budget`` 反推。这条测试直接读窄列，并与 ``control_hint`` 的现场结果对拍。
+
+    @param runs_dir 运行根目录。
+    """
+    from observe import detail
+
+    run = runs_dir / "suite" / "rope_fp16"
+    (run / "budget_events.json").write_text(json.dumps([
+        {"kind": "applied", "old_budget_usd": 0.8, "new_budget_usd": 4.0},
+    ]))
+    assert scan.refresh() is None
+    with scan.get_index().conn as conn:
+        row = dict(conn.execute(
+            "SELECT control_action, control_reason, topped_up, initial_budget_usd,"
+            " budget_usd, granted_budget_usd FROM runs WHERE run_id = 'suite/rope_fp16'"
+        ).fetchone())
+    state = detail._load(run / "state.json")
+    result = detail._load(run / "result.json")
+    status = detail.liveness(state, result, run)
+    hinted = detail.control_hint(run, state, result, status)
+    assert row["control_action"] == hinted["action"]
+    assert row["control_reason"] == hinted["reason"]
+    assert row["topped_up"] == 1 and row["initial_budget_usd"] == pytest.approx(0.8)
+    assert row["granted_budget_usd"] == pytest.approx(4.0)
+    assert row["budget_usd"] == pytest.approx(0.8), "granted_budget_usd 是告警预算，budget_usd 是盘上预算"
+
+
+def test_overview_reads_running_rows_without_decoding_row_json(runs_dir):
+    """@brief §5.7 验收：``overview`` 的活运行只查一遍窄列，``row_json`` 解码行数 = 0。
+
+    @param runs_dir 运行根目录。
+    """
+    scan.refresh()
+    with scan.get_index().conn as conn:
+        conn.execute("UPDATE runs SET row_json = '{broken'")
+    overview = scan.live_overview()
+    live = overview["live_runs"]
+    assert [row["id"] for row in live] == ["p1/conv2d_paper"]
+    assert live[0]["status"] == "running" and live[0]["budget"]["level"] == "near"
+
+
 def test_spend_and_budget_fall_back_to_state_and_to_ledger_json(runs_dir):
     """@brief 验证 ``result.json`` 缺金额时依次回落到 ``state.json`` 的 ledger 与 ``ledger.json`` 的两种形状。
 
@@ -384,7 +465,7 @@ def test_a_named_run_without_its_own_model_does_not_require_a_null_model():
         "filter-task", "filter-dtype", "filter-model", "filter-status",
         "runs-prev", "runs-next", "by_operator", "by_month",
         "budget-amount", "budget-save", 'method: "POST"', "X-Observe-Token", 'classList.add("open")',
-        "function newestFirst", "newestFirst(doc.candidates)", "newestFirst(doc.budget_events)", "newestFirst(handoff.rounds)", "newestFirst(doc.plan_outcomes)", "newestFirst(doc.by_month)", "newestFirst(doc.feature_grid)",
+        "function newestFirst", "function newestCandidates", "newestCandidates(doc.candidates)", "newestFirst(doc.budget_events)", "newestFirst(handoff.rounds)", "newestFirst(doc.plan_outcomes)", "newestFirst(doc.by_month)", "newestFirst(doc.feature_grid)",
         "安检", "阶段", "代码", 'class="excerpt"', "--blue: #0a66c2", "@keyframes breathe", 'class="breathe"',
         'id="workspace"', 'id="side-toggle"', 'id="runs-toggle"', 'id="detail-toggle"', 'id="detail-task"', 'id="detail-status"', "function paintDetailHead", 'id="view-experiments"', 'id="view-compare"', 'id="view-detail"',
         "<th>目录</th><th>种类</th><th>操作</th>",
@@ -415,20 +496,22 @@ def test_the_page_script_renders_badges_filters_and_sorting(dashboard):  # noqa:
         assert needle in page, needle
 
 
-def test_the_budget_api_and_the_history_api_expose_the_alerts(dashboard, runs_dir):  # noqa: F811
-    """@brief 验证预算、历史与单运行三个接口都暴露出同一套告警。
+def test_the_budget_api_and_the_runs_api_expose_the_alerts(dashboard, runs_dir):  # noqa: F811
+    """@brief 验证预算与运行列表接口都暴露出同一套告警（v1 的 history/runs 已按 §11.5 下线）。
 
     @param dashboard dashboard fixture。
     @param runs_dir 运行根目录。
     """
     port, _ = dashboard
-    rep = json.loads(_get(port, "/api/budget"))
+    rep = json.loads(_get(port, "/api/v2/budget"))
     assert rep["n_over"] == 2 and {f["id"] for f in rep["flagged"] if f["level"] == "over"} == {"p1/fa_flash", "p1/fa_pro"}
-    rows = {row["id"]: row for row in json.loads(_get(port, "/api/history"))}
-    assert rows["p1/fa_flash"]["budget"]["label"] == "OVER BUDGET" and rows["suite/rope_fp16"]["budget"]["label"] == "BUDGET EXHAUSTED"
-    assert rows["p1/conv2d_paper"]["budget"]["label"] == "NEAR BUDGET"
-    one = json.loads(_get(port, "/api/runs/p1/fa_pro"))
-    assert one["budget"]["level"] == "over" and one["budget"]["over_usd"] == pytest.approx(0.036134728000001)
+    labels = {f["id"]: f["label"] for f in rep["flagged"]}
+    assert labels["p1/fa_flash"] == "OVER BUDGET" and labels["suite/rope_fp16"] == "BUDGET EXHAUSTED"
+    assert labels["p1/conv2d_paper"] == "NEAR BUDGET"
+    page = json.loads(_get(port, "/api/v2/runs?limit=100"))
+    rows = {row["run_id"]: row for row in page["runs"]}
+    over = rows["p1/fa_pro"]
+    assert over["spent_usd"] - over["budget_usd"] == pytest.approx(0.036134728000001)
 
 
 def test_a_damaged_run_directory_does_not_break_the_page(dashboard):  # noqa: F811
@@ -622,3 +705,124 @@ def test_remaining_is_the_current_budget_minus_the_spend():
     assert budget_status(None, 3.0)["remaining_usd"] is None
     assert budget_status(1.0, None)["remaining_usd"] is None
 
+
+
+def test_two_live_runs_keep_the_history_order_and_pick_the_latest_heartbeat(tmp_path, monkeypatch):
+    """@brief PR7 回归：窄投影必须保留 ``history()`` 的 ``started_at DESC``，``overview`` 的 ``live[0]`` 不能选错。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具。
+    """
+    import os
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    for name, started, stage in (("z_late", 200.0, "bench"), ("a_early", 100.0, "plan")):
+        directory = runs / name
+        directory.mkdir()
+        (directory / "state.json").write_text(json.dumps({
+            "pid": os.getpid(), "updated_at": time.time(), "started_at": started,
+            "phase": "evaluate", "task": "conv2d", "dtype": "fp16", "spent_usd": 13.0, "budget_usd": 15.0,
+        }))
+        (directory / "eval_progress.json").write_text(json.dumps({
+            "stage": stage, "entered_at": started, "updated_at": started + 1, "finished": False,
+            "heartbeat": "B", "heartbeat_age_s": 1,
+        }))
+    scan.refresh()
+    history_live = [row["id"] for row in scan.history() if row["status"] == "running"]
+    assert history_live == ["z_late", "a_early"]
+    assert [row["id"] for row in scan.budget_rows(status="running")] == history_live
+    assert [row["id"] for row in scan.budget_rows() if row["status"] == "running"] == history_live
+    overview = scan.live_overview()
+    assert [row["id"] for row in overview["live_runs"]] == history_live
+    assert overview["heartbeat"] is not None
+    assert overview["heartbeat"].get("stage") == "bench", "心跳必须取最新开始的那一场"
+
+
+def test_the_sql_aggregate_report_equals_the_full_history_report_on_mixed_rows(tmp_path, monkeypatch):
+    """@brief PR7：SQL 合计 + 候选集判定的报告，与旧 ``summarize(history())`` 逐字段相同。
+
+    200 行混合超预算/耗尽/在跑/缺预算/缺花费；同时覆盖“已记录但未生效的加预算撤销耗尽”这一行。
+    停止原因里刻意混入前后空白（``'  budget_exhausted\\n'``/``'\\tbudget_exhausted '``）：
+    ``_grade`` 用 ``strip()`` 判“耗尽”，SQL 候选集必须同意；旧实现用 ``stop_reason = 'budget_exhausted'``
+    等值过滤，这些行会被先筛掉，窄投影的 ``n_exhausted``/``n_flagged`` 于是少报。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具。
+    """
+    import random
+
+    from observe.index import Index
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
+    monkeypatch.setenv("OBSERVE_CARRYOVER", str(tmp_path / "carry.json"))
+    # 直接插入 DB 行（没有对应目录）；关掉读时 tick，避免周期对账把它们标成 missing。
+    monkeypatch.setenv("OBSERVE_REFRESH_ON_READ", "0")
+    index = Index(tmp_path / "observe.sqlite")
+    random.seed(11)
+    history_rows = []
+    for number in range(200):
+        spent = round(random.uniform(0, 20), 6)
+        budget = round(random.uniform(0.5, 15), 4)
+        status = random.choice(["done", "running", "interrupted", "done", "done"])
+        stop = random.choice([
+            "max_rounds", "budget_exhausted", "converged", "",
+            # 带前后空白的停止原因：``_grade`` strip 之后同样是“预算耗尽”。
+            "  budget_exhausted\n", "\tbudget_exhausted ",
+        ])
+        granted = budget
+        if number % 17 == 0:
+            # 已记录但尚未采纳的加预算：告警预算高于盘上预算，耗尽标记应被撤销。
+            granted = round(budget + 10.0, 4)
+            stop = "budget_exhausted"
+            spent = round(budget - 1.0, 6)
+        effective_stop = stop
+        if granted > budget + 1e-9 and stop == "budget_exhausted" and spent < granted:
+            effective_stop = ""
+        row = {
+            "id": f"r{number}", "task": "relu", "dtype": "fp16", "status": status,
+            "stop_reason": stop, "spent_usd": spent, "budget_usd": granted,
+            "topped_up": bool(number % 3), "control": {"action": None, "reason": ""},
+            # 真实 history 行的 budget 是摄入时用“告警 stop”算好的；这里复刻同一语义。
+            "budget": budget_status(spent, granted, effective_stop, status == "running"),
+        }
+        history_rows.append(row)
+        index.conn.execute(
+            "INSERT INTO runs (run_id, task, dtype, status, stop_reason, spent_usd, budget_usd,"
+            " granted_budget_usd, started_at, control_action, control_reason, topped_up, row_json)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (f"r{number}", "relu", "fp16", status, stop, spent, budget, granted, float(number),
+             None, "", 1 if row["topped_up"] else 0, json.dumps(row)),
+        )
+    index.conn.commit()
+    expected = summarize(history_rows)
+    whitespace_exhausted = [
+        row for row in history_rows
+        if row["stop_reason"] != row["stop_reason"].strip() and row["stop_reason"].strip() == "budget_exhausted"
+    ]
+    assert whitespace_exhausted, "固定种子下必须含带前后空白的停止原因，否则这条回归什么都没测"
+    assert expected["n_exhausted"] >= len(whitespace_exhausted)
+    assert scan.budget_report() == expected
+    assert scan.budget_report()["n_exhausted"] >= len(whitespace_exhausted)
+
+
+def test_the_banner_caps_chips_but_keeps_the_full_count():
+    """@brief §10.1 验收：500 条告警时横幅 HTML ≤8KB，标题仍给出总数与“还有 N 条”。
+
+    @raises AssertionError 横幅随告警数线性增长时抛出。
+    """
+    from observe.budget import render_banner_html, summarize
+
+    rows = [
+        _row(f"task/{number:04d}", 3.0 + number / 1000.0, 3.0, "budget_exhausted")
+        for number in range(500)
+    ]
+    html = render_banner_html(summarize(rows))
+    assert len(html.encode("utf-8")) <= 8192
+    assert "共 500 条" in html
+    assert "还有 490 条" in html
+    assert html.count('class="chip ') == 10

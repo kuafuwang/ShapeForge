@@ -10,12 +10,14 @@ one compact JSON object built only from files on disk.
 from __future__ import annotations
 
 import hashlib
+from collections import deque
 import json
 import re
 import sys
 from pathlib import Path
 
-from .modelcost import from_path as model_totals_from_path
+from .modelcost import Totals
+from .reads import iter_jsonl, parse_jsonl, tail_text, tail_valid_rows_across
 from .redact import redact_text
 _REPO = Path(__file__).resolve().parent.parent
 
@@ -83,11 +85,25 @@ Open next
 """
 
 
-def run_brief(run_dir: str | None, *, include_gpu: bool = False) -> int:
+def expand_set(value) -> frozenset[str]:
+    """@brief 解析 ``--expand`` 那个逗号列表，丢掉未知词。
+
+    @param value 逗号分隔的重面板名，也可以是已经切好的集合。
+    @return 只有 ``cands``/``models``/``failures`` 的集合。
+    """
+    if isinstance(value, (set, frozenset, list, tuple)):
+        parts = [str(item) for item in value]
+    else:
+        parts = str(value or "").split(",")
+    return frozenset(part.strip().lower() for part in parts if part.strip().lower() in EXPANDABLE)
+
+
+def run_brief(run_dir: str | None, *, include_gpu: bool = False, expand="") -> int:
     """@brief 打印导览文字，或一个 JSON 对象。
 
     @param run_dir 运行目录；为空时打印导览。
     @param include_gpu 是否追加上机全局 GPU 锁事件尾巴。
+    @param expand 逗号分隔的重面板名（``cands``/``models``/``failures``）；默认只给 L1。
     @return 退出码：成功为 0，``run_dir`` 不是目录时为 2。
     """
     if not run_dir:
@@ -97,18 +113,25 @@ def run_brief(run_dir: str | None, *, include_gpu: bool = False) -> int:
     if not path.is_dir():
         print(f"not a directory: {run_dir}", file=sys.stderr)
         return 2
-    print(json.dumps(summarize_run(path, include_gpu=include_gpu), ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    doc = summarize_run(path, include_gpu=include_gpu, expand=expand_set(expand))
+    print(json.dumps(doc, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
     return 0
 
 
-def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
-    """@brief 生成一个可直接序列化成 JSON 的摘要对象。
+def summarize_run(run_dir: Path, *, include_gpu: bool = False, expand: frozenset[str] = frozenset()) -> dict:
+    """@brief 生成一个可直接序列化成 JSON 的摘要对象（默认是 §6.1 的 L1 形状）。
 
-    缺文件就是 null。消息正文与内核源码不进入输出。transcript 只读一遍；机全局的 GPU 锁尾巴是 opt-in，
+    缺文件就是 null。消息正文与内核源码不进入输出。transcript 由 ``_transcript`` 做**一次**流式遍历，
+    同时产出计数、agent 失败、候选来源与模型费用（§5.5.1）；机全局的 GPU 锁尾巴是 opt-in，
     因为它属于别的运行，且随墙钟时间变化。
+
+    默认只给 L1：``cands``（一场最多 8 条候选）、``model_totals`` 与完整的 ``agent_failures``
+    改成 ``expand`` 里的 ``cands``/``models``/``failures`` 才输出；L1 里只留**最近一条**失败的
+    短投影（带会话指纹），够回答“这场为什么停”。
 
     @param run_dir 运行目录。
     @param include_gpu 是否把机全局 GPU 锁事件带上（最多最后 8 条）。
+    @param expand 需要额外输出的重面板集合（``cands``/``models``/``failures``）。
     @return 摘要字典。
     """
     run = Path(run_dir)
@@ -116,9 +139,13 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
     result, result_err = _load_result(run)
     docs = [d for d in (state, result) if isinstance(d, dict)]
     published, publication = _published(run, result, result_err)
-    chat, retry, truncation, transcript_stage, agent_failures = _transcript_stats(run / "transcript.jsonl")
     cands = _cands(run, state, result)
-    origins = _origins(run / "transcript.jsonl")
+    transcript = _transcript(
+        run / "transcript.jsonl",
+        labels={row["label"] for row in cands if isinstance(row.get("label"), str) and row.get("label")},
+    )
+    chat, retry, truncation, transcript_stage, agent_failures = transcript["stats"]
+    origins = transcript["origins"]
     for row in cands:
         if not row.get("origin") and row.get("label") in origins:
             row["origin"] = origins[row["label"]]
@@ -135,7 +162,6 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
         "winner_model": _first(docs, "winner_model"),
         "winner_committee": _first(docs, "winner_committee"),
         "winner_origin": _first(docs, "winner_origin"),
-        "model_totals": model_totals_from_path(run / "transcript.jsonl"),
         "phase": _first(docs, "phase"),
         "stop_reason": _first(docs, "stop_reason"),
         "pending_evaluation": _pending_evaluation(run),
@@ -145,12 +171,19 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
         "published": published,
         "publication": publication,
         "search_best": _first(docs, "best_speedup"),
-        "cands": cands,
-        "agent_failures": agent_failures,
+        # 复测与基线耗时取自确认报告本身：L1 里这两个数回答“快了多少、相对谁”。
+        **_confirmed_timings(run),
+        "last_failure": _last_failure(agent_failures),
         "counts": {"chat": chat, "retry": retry, "truncation_retries": truncation, "eval_stage": _eval_stage(run, transcript_stage)},
         "paths": _paths(run),
         "stamp": _stamp(run),
     }
+    if "models" in expand:
+        doc["model_totals"] = transcript["model_totals"]
+    if "cands" in expand:
+        doc["cands"] = cands
+    if "failures" in expand:
+        doc["agent_failures"] = agent_failures
     winner_label = doc.get("winner_label")
     if not doc.get("winner_provider") and isinstance(winner_label, str):
         found = next((row for row in cands if row.get("label") == winner_label), None)
@@ -165,6 +198,64 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False) -> dict:
         if gpu is not None:
             doc["gpu"] = gpu
     return doc
+
+
+EXPANDABLE = ("cands", "models", "failures")
+LAST_FAILURE_CHARS = 120
+
+
+def _baseline_us(value):
+    """@brief 基线耗时按原 schema 返回：真实文件是 ``{基线名: 微秒}`` 字典，旧文件可能是标量。
+
+    实测 36/36 份真实 ``confirm_report.json`` 的 ``baseline_us`` 都是 ``{"mlx": …, "torch_mps": …}``，
+    不是标量；把它丢成 None 会让 L1 少掉“相对谁”的一半。这里逐项保留（键名与数值都来自文件，
+    不替读者挑一个“权威基线”；``benchmark.best_baseline`` 仍在 confirm 文件里）。非数值项丢掉，
+    一个都不剩时返回 None。
+
+    @param value ``confirm_report.json`` 里的 ``baseline_us``。
+    @return 标量、``{名字: 微秒}`` 字典或 None。
+    """
+    if isinstance(value, dict):
+        cleaned = {}
+        for name, item in value.items():
+            number = _number(item)
+            if number is not None and isinstance(name, str) and name:
+                cleaned[name] = number
+        return cleaned or None
+    return _number(value)
+
+
+def _confirmed_timings(run: Path) -> dict:
+    """@brief 取确认报告里的两次计时，供 L1 直接回答“快了多少、相对谁”。
+
+    数字来自确认门复测（``confirm_report.json`` 顶层），不是搜索最优；没有确认报告时两个都是 None。
+    ``candidate_us`` 是标量，``baseline_us`` 按真实 schema 是字典（见 :func:`_baseline_us`）。
+
+    @param run 运行目录。
+    @return 含 ``candidate_us`` 与 ``baseline_us`` 的字典。
+    """
+    confirm = _read_obj(run / "confirm_report.json") or {}
+    return {"candidate_us": _number(confirm.get("candidate_us")), "baseline_us": _baseline_us(confirm.get("baseline_us"))}
+
+
+def _last_failure(failures: list[dict]) -> dict | None:
+    """@brief L1 里的最近一条失败：失败类、会话指纹与截短后的脱敏错误。
+
+    完整失败列表（最多 4 条）留给 ``--expand failures``；这一条够判断“这场为什么停”。
+
+    @param failures ``_transcript`` 收集的失败条目（最早在前）。
+    @return 短字典；没有失败时为 None。
+    """
+    if not failures:
+        return None
+    last = failures[-1]
+    return {
+        "label": last.get("label"),
+        "outcome": last.get("outcome"),
+        "failure_class": last.get("failure_class"),
+        "sig": last.get("sig"),
+        "error": redact_text(last.get("error") or "", limit=LAST_FAILURE_CHARS, one_line=True) or None,
+    }
 
 
 def _pending_evaluation(run: Path) -> dict:
@@ -365,39 +456,28 @@ def _origin(value) -> dict:
     return out
 
 
-def _origins(path: Path) -> dict[str, dict]:
-    """Map candidate labels to their session provenance from transcript agent rows."""
-    out: dict[str, dict] = {}
-    if not path.is_file():
-        return out
-    for event in _jsonl(path):
-        if event.get("event") != "agent":
-            continue
-        label = event.get("candidate_label") or event.get("label")
-        if not isinstance(label, str) or not label:
-            continue
-        origin = _origin({
-            "origin": "session", "provider": event.get("provider"), "model": event.get("model"),
-            "committee": event.get("committee"), "session_label": event.get("label"), "attempt": event.get("attempt", 0),
-        })
-        if origin:
-            out[label] = origin
-    return out
+def _transcript(path: Path, labels: set[str] | None = None) -> dict:
+    """@brief 一次流式遍历 ``transcript.jsonl``：计数、agent 失败、候选来源与模型费用。
 
-
-def _transcript_stats(path: Path) -> tuple[int | None, int | None, int | None, str | None, list[dict]]:
-    """@brief 一次遍历统计对话、重试、截断、阶段与最近几场 agent 失败。
+    三个消费者（统计、候选来源、模型费用）合并成一次 ``iter_jsonl`` pass：agent 行逐条喂给
+    ``modelcost.Totals`` 增量聚合，**不保留事件列表**；失败只留最后 4 条（deque），来源只保留
+    ``labels`` 里会被输出的候选，内存不随全部标签/失败行增长。坏行由 ``iter_jsonl`` 跳过。
 
     @param path ``transcript.jsonl`` 的路径。
-    @return ``(chat 数, retry 数, 截断数, 最后阶段, agent 失败摘要)``。
-        文件不存在时前四项为 ``None``，失败列表为空。响应正文不进入摘要。
+    @param labels 需要来源的候选标签集合；None 表示保留全部（诊断用）。
+    @return ``{"stats": (chat, retry, truncated, stage, failures), "origins": {...}, "model_totals": [...]}``；
+        文件不存在时 ``stats`` 前四项为 None，其余为空。
     """
     if not path.is_file():
-        return None, None, None, None, []
+        return {"stats": (None, None, None, None, []), "origins": {}, "model_totals": []}
+    from observe.failure_sig import session_failure_signature
+
     chat = retry = truncated = 0
     stage = None
-    failures: list[dict] = []
-    for ev in _jsonl(path):
+    failures: deque = deque(maxlen=4)
+    origins: dict[str, dict] = {}
+    totals = Totals()
+    for ev in iter_jsonl(path):
         kind = ev.get("event")
         if kind == "chat":
             chat += 1
@@ -407,6 +487,11 @@ def _transcript_stats(path: Path) -> tuple[int | None, int | None, int | None, s
             runtime = ev.get("runtime") if isinstance(ev.get("runtime"), dict) else {}
             failed_turns = runtime.get("failed_turns")
             failures.append({
+                # 与 ``sessions.failure_sig`` 同源的会话指纹：索引摄取用的是同一条规则、同一份原文，
+                # 所以 ``query failures --sig`` 能直接对上 brief 里的 last_failure.sig。
+                "sig": session_failure_signature(
+                    ev.get("outcome"), runtime.get("failure_class"), ev.get("error") or runtime.get("last_error"),
+                ),
                 "label": _text(ev.get("label")),
                 "candidate_label": _text(ev.get("candidate_label") or ev.get("label")),
                 "attempt": ev.get("attempt") if isinstance(ev.get("attempt"), int) and not isinstance(ev.get("attempt"), bool) and ev.get("attempt") >= 0 else 0,
@@ -422,6 +507,16 @@ def _transcript_stats(path: Path) -> tuple[int | None, int | None, int | None, s
                 "cost_usd": _number(ev.get("cost_usd")),
                 "diagnostics_path": _text(ev.get("diagnostics_path")),
             })
+        if kind == "agent":
+            label = ev.get("candidate_label") or ev.get("label")
+            if isinstance(label, str) and label and (labels is None or label in labels):
+                origin = _origin({
+                    "origin": "session", "provider": ev.get("provider"), "model": ev.get("model"),
+                    "committee": ev.get("committee"), "session_label": ev.get("label"), "attempt": ev.get("attempt", 0),
+                })
+                if origin:
+                    origins[label] = origin
+            totals.add(ev)
         if ev.get("event") == "warning" and ev.get("message") == "reply truncated by max_tokens":
             truncated += 1
         elif ev.get("finish_reason") == "length":
@@ -429,7 +524,11 @@ def _transcript_stats(path: Path) -> tuple[int | None, int | None, int | None, s
         found = ev.get("stage")
         if isinstance(found, str):
             stage = _text(found)
-    return chat, retry, truncated, stage, failures[-4:]
+    return {
+        "stats": (chat, retry, truncated, stage, list(failures)),
+        "origins": origins,
+        "model_totals": totals.result(),
+    }
 
 
 def _eval_stage(run: Path, transcript_stage: str | None):
@@ -460,10 +559,17 @@ def _gpu_events() -> list[dict] | None:
     from tcenv.events import gpu_events_path
 
     path = gpu_events_path()
-    if not path.is_file():
+    try:
+        shards = sorted(
+            (item for item in path.parent.iterdir() if item.name.startswith(path.name + ".") and item.is_file()),
+            key=lambda item: (item.stat().st_mtime_ns, item.name),
+        )
+    except OSError:
+        shards = []
+    if not shards and not path.is_file():
         return None
     rows = []
-    for ev in _jsonl(path, tail=True):
+    for ev in tail_valid_rows_across(shards + [path], keep=CAP, max_bytes=_GPU_TAIL):
         what = ev.get("what")
         rows.append({
             "t": _number(ev.get("t")),
@@ -561,51 +667,26 @@ def _read_obj(path: Path) -> dict | None:
 
 
 def _jsonl(path: Path, *, tail: bool = False) -> list[dict]:
-    """@brief 读一份 JSONL，坏行跳过。
+    """@brief 读一份 JSONL，坏行跳过；``tail`` 只读末尾一段（用于很大的 GPU 事件日志）。
 
     @param path 文件路径。
-    @param tail 是否只读末尾一段（用于很大的 GPU 事件日志）。
+    @param tail 是否只读末尾一段。
     @return 解析成功的字典列表；文件不可读时为空列表。
     """
-    try:
-        if tail:
-            text = _tail_text(path)
-        else:
-            text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-    rows = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            ev = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(ev, dict):
-            rows.append(ev)
-    return rows
+    if tail:
+        return parse_jsonl(tail_text(path, limit=_GPU_TAIL))
+    return list(iter_jsonl(path))
 
 
 def _tail_text(path: Path) -> str:
     """@brief 读文件末尾至多 ``_GPU_TAIL`` 字节，并丢掉第一个半行。
 
+    实现在 :mod:`taic.reads`；``brief`` 保留这个名字给既有调用方。
+
     @param path 文件路径。
     @return 文本内容；文件不可读时为空字符串。
     """
-    try:
-        size = path.stat().st_size
-    except OSError:
-        return ""
-    with path.open("rb") as handle:
-        handle.seek(max(0, size - _GPU_TAIL))
-        data = handle.read().decode("utf-8", errors="replace")
-    if size > _GPU_TAIL:
-        cut = data.find("\n")
-        if cut >= 0:
-            data = data[cut + 1 :]
-    return data
+    return tail_text(path, limit=_GPU_TAIL)
 
 
 def _text(value) -> str | None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import re
+import time
 from functools import lru_cache
 
 _CJK = re.compile(r"[\u3400-\u9fff]")
@@ -88,32 +89,45 @@ def embedding(text: str) -> tuple[float, ...] | None:
     text = " ".join(str(text or "").split())
     if not text:
         return None
-    model = _model(_language(text))
+    language = _language(text)
+    model = _model(language)
     if model is None:
         return None
+    # 句向量是确定性函数：先进持久缓存，命中就不再调系统模型（进程重启也不重算）。
+    from observe import simcache
+
+    cached = simcache.get_embedding(language, text)
+    if cached is not None:
+        return cached
     try:
         vector = model.vectorForString_(text)
         if vector is None:
             return None
-        return tuple(float(value) for value in vector)
+        result = tuple(float(value) for value in vector)
     except Exception:
         return None
+    simcache.put_embedding(language, text, result)
+    return result
 
 
 def clear_cache() -> None:
     """@brief 清空 ``embedding`` 的 LRU 缓存与已缓存的模型对象。
     """
     embedding.cache_clear()
+    _tokens.cache_clear()
     _MODELS.clear()
 
 
-def _tokens(text: str) -> set[str]:
+@lru_cache(maxsize=8192)
+def _tokens(text: str) -> frozenset[str]:
     """@brief 切出 CJK 字 bigram 与代码风格的拉丁/数字 token。
 
     原始英文说明：CJK character bigrams plus code-like Latin/number tokens.
 
+    按文本缓存：同一批候选会被几十条待审 claim 反复比较，切词是热路径上最贵的一步。
+
     @param text 待切分文本。
-    @return token 集合（已转小写）。
+    @return 不可变 token 集合（已转小写）。
     """
     out: set[str] = set()
     for match in _TOKEN.finditer(str(text or "").lower()):
@@ -125,7 +139,7 @@ def _tokens(text: str) -> set[str]:
                 out.update(token[index:index + 2] for index in range(len(token) - 1))
         else:
             out.add(token)
-    return out
+    return frozenset(out)
 
 
 def lexical_overlap(a: str, b: str) -> float:
@@ -180,7 +194,10 @@ def find_similar(text: str, candidates: list[dict], *, threshold: float | None =
         threshold = 0.975 if _language(text) == "zh-Hans" else 0.65
     min_overlap = 0.20 if _language(text) == "zh-Hans" else 0.15
     scored = []
-    for candidate in candidates:
+    for position, candidate in enumerate(candidates):
+        # 重计算期间每 16 个候选让出一次 GIL：单进程看板的其它请求不能被相似计算拖住。
+        if position and position % 16 == 0:
+            time.sleep(0)
         candidate_text = str(candidate.get("text") or "")
         if lexical_overlap(text, candidate_text) < min_overlap:
             continue

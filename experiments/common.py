@@ -404,55 +404,82 @@ def conclusion_of_run(run_dir: Path, result: dict | None) -> dict:
     The publication verdict for one run directory. A bare ``result.json`` is not enough to call a number confirmed.
 
     @param run_dir 搜索目录。
-    @param result 该目录的结果字典；可以为 ``None``。
+    @param result 该目录的结果字典；可以为 None。
     @return ``{"speedup": ..., "publication": ...}``；缓存命中、计时不稳或各批不一致时标为 ``不确定``。
     """
+    return _conclusion_verdict(run_dir, result)[0]
+
+
+def publication_reason(run_dir: Path, result: dict | None) -> dict:
+    """@brief 发布判定 + 原因码（只给观测用；``conclusion_of_run`` 仍只返回两个键）。
+
+    原因码按代码顺序给出“第一个命中的分支”，可直接映射到行动（重新确认、修协议、等安静测量等），
+    不发明组合码。旧格式确认报告只报 ``missing_confirmation_block``，协议缺失等其他问题不进 reason。
+
+    @param run_dir 搜索目录。
+    @param result 该目录的结果字典；可以为 None。
+    @return ``{"publication": ..., "reason": ...}``。
+    """
+    got, reason = _conclusion_verdict(run_dir, result)
+    return {"publication": got["publication"], "reason": reason}
+
+
+def _conclusion_verdict(run_dir: Path, result: dict | None) -> tuple[dict, str]:
+    """@brief ``conclusion_of_run`` 的内部实现：返回（结论, 原因码）。
+
+    @param run_dir 搜索目录。
+    @param result 该目录的结果字典；可以为 None。
+    @return ``({"speedup": ..., "publication": ...}, reason)``。
+    """
     if not result:
-        return published_conclusion(None)
+        return published_conclusion(None), "no_result_json"
     best, winner, status = _confirmation_files(Path(run_dir), result.get("confirm_winner_label"))
-    got = published_conclusion(result, best_metal_sha256=best, confirm_status=status, winner_metal_sha256=winner)
-    if got["publication"] == "confirmed":
-        try:
-            doc = json.loads((Path(run_dir) / "confirm_report.json").read_text())
-        except (OSError, ValueError):
-            doc = None
-        from tcenv.bench import timing_is_uncertain
+    got, reason = _published_verdict(
+        result, best_metal_sha256=best, confirm_status=status, winner_metal_sha256=winner,
+    )
+    if got["publication"] != "confirmed":
+        return got, reason
+    try:
+        doc = json.loads((Path(run_dir) / "confirm_report.json").read_text())
+    except (OSError, ValueError):
+        doc = None
+    from tcenv.bench import timing_is_uncertain
 
-        from tcenv.schema import PROTOCOL_VERSION
+    from tcenv.schema import PROTOCOL_VERSION
 
-        if isinstance(doc, dict) and doc.get("cache_hit") is True:
-            # 确认报告若来自评测缓存，它只是复述了上一次的测量，不是这一次的复测。
-            # 缓存键不含设备、macOS 与 MSL 版本，也不能证明是同一台机器上量的。
-            return {"speedup": None, "publication": "不确定"}
-        if not isinstance(doc, dict):
-            return {"speedup": None, "publication": "未确认"}
-        benchmark = doc.get("benchmark")
-        confirmation = benchmark.get("confirmation") if isinstance(benchmark, dict) else None
-        if not isinstance(confirmation, dict):
-            return {"speedup": None, "publication": "未确认"}
-        if confirmation.get("kernel_sha256") != result.get("confirmation_source_sha256"):
-            return {"speedup": None, "publication": "未确认"}
-        if confirmation.get("winner_label") != result.get("confirm_winner_label"):
-            return {"speedup": None, "publication": "未确认"}
-        if confirmation.get("confirmed_values") != result.get("confirmed_values"):
-            return {"speedup": None, "publication": "未确认"}
-        if confirmation.get("speedup") != result.get("confirmed_speedup") or doc.get("speedup") != result.get("confirmed_speedup"):
-            return {"speedup": None, "publication": "未确认"}
-        if result.get("candidate_us") is not None and confirmation.get("candidate_us") != result.get("candidate_us"):
-            return {"speedup": None, "publication": "未确认"}
-        # 数字只在同一个测量协议、同一台目标机上可比。缺字段按不可核对处理。
-        if str(doc.get("protocol_version") or "") != str(PROTOCOL_VERSION):
-            return {"speedup": None, "publication": "未确认"}
-        if str(doc.get("target_id") or "") != str(result.get("target_id") or ""):
-            return {"speedup": None, "publication": "未确认"}
-        if timing_is_uncertain(doc):
-            return {"speedup": None, "publication": "不确定"}
-        from taic.policy import batches_agree
+    if isinstance(doc, dict) and doc.get("cache_hit") is True:
+        # 确认报告若来自评测缓存，它只是复述了上一次的测量，不是这一次的复测。
+        # 缓存键不含设备、macOS 与 MSL 版本，也不能证明是同一台机器上量的。
+        return {"speedup": None, "publication": "不确定"}, "cache_hit"
+    if not isinstance(doc, dict):
+        return {"speedup": None, "publication": "未确认"}, "missing_confirmation_block"
+    benchmark = doc.get("benchmark")
+    confirmation = benchmark.get("confirmation") if isinstance(benchmark, dict) else None
+    if not isinstance(confirmation, dict):
+        return {"speedup": None, "publication": "未确认"}, "missing_confirmation_block"
+    if confirmation.get("kernel_sha256") != result.get("confirmation_source_sha256"):
+        return {"speedup": None, "publication": "未确认"}, "sha_mismatch"
+    if confirmation.get("winner_label") != result.get("confirm_winner_label"):
+        return {"speedup": None, "publication": "未确认"}, "label_mismatch"
+    if confirmation.get("confirmed_values") != result.get("confirmed_values"):
+        return {"speedup": None, "publication": "未确认"}, "values_mismatch"
+    if confirmation.get("speedup") != result.get("confirmed_speedup") or doc.get("speedup") != result.get("confirmed_speedup"):
+        return {"speedup": None, "publication": "未确认"}, "speedup_mismatch"
+    if result.get("candidate_us") is not None and confirmation.get("candidate_us") != result.get("candidate_us"):
+        return {"speedup": None, "publication": "未确认"}, "candidate_us_mismatch"
+    # 数字只在同一个测量协议、同一台目标机上可比。缺字段按不可核对处理。
+    if str(doc.get("protocol_version") or "") != str(PROTOCOL_VERSION):
+        return {"speedup": None, "publication": "未确认"}, "protocol_mismatch"
+    if str(doc.get("target_id") or "") != str(result.get("target_id") or ""):
+        return {"speedup": None, "publication": "未确认"}, "target_mismatch"
+    if timing_is_uncertain(doc):
+        return {"speedup": None, "publication": "不确定"}, "timing_uncertain"
+    from taic.policy import batches_agree
 
-        # 同一颗核各批极差超过 2% 时，中位数仍留在 result.json，对外不把它当成精确值。
-        if not batches_agree(result.get("confirmed_values")):
-            return {"speedup": None, "publication": "不确定"}
-    return got
+    # 同一颗核各批极差超过 2% 时，中位数仍留在 result.json，对外不把它当成精确值。
+    if not batches_agree(result.get("confirmed_values")):
+        return {"speedup": None, "publication": "不确定"}, "batches_disagree"
+    return got, "confirmed"
 
 
 def _finite_positive(value) -> bool:
@@ -475,35 +502,47 @@ def published_conclusion(result: dict | None, *, best_metal_sha256: str | None =
     @param winner_metal_sha256 胜者候选内核的摘要。
     @return ``{"speedup": ..., "publication": ...}``。
     """
+    return _published_verdict(
+        result, best_metal_sha256=best_metal_sha256, confirm_status=confirm_status,
+        winner_metal_sha256=winner_metal_sha256,
+    )[0]
+
+
+def _published_verdict(result: dict | None, *, best_metal_sha256: str | None = None, confirm_status: str | None = None, winner_metal_sha256: str | None = None) -> tuple[dict, str]:
+    """@brief ``published_conclusion`` 的内部实现：返回（结论, 原因码）。
+
+    @param result 结果字典；可以为 ``None``。
+    @param best_metal_sha256 ``best.metal`` 的摘要。
+    @param confirm_status 复测报告的状态。
+    @param winner_metal_sha256 胜者候选内核的摘要。
+    @return ``({"speedup": ..., "publication": ...}, reason)``。
+    """
     if not result:
-        return {"speedup": None, "publication": "in_progress"}
+        return {"speedup": None, "publication": "in_progress"}, "no_result_json"
     if "confirmation_source_sha256" not in result:
-        return {"speedup": None, "publication": "旧版未绑定源码"}
+        return {"speedup": None, "publication": "旧版未绑定源码"}, "not_confirmed"
     recorded = result.get("confirmation_source_sha256")
     winner = result.get("confirm_winner_label")
-    bound = (
-        result.get("confirmed_status") == "ok"
-        and confirm_status == "ok"
-        and isinstance(recorded, str) and recorded != ""
-        and recorded == best_metal_sha256 == winner_metal_sha256
-        and isinstance(winner, str) and winner != ""
-    )
-    if not bound:
-        return {"speedup": None, "publication": "未确认"}
+    if result.get("confirmed_status") != "ok" or confirm_status != "ok":
+        return {"speedup": None, "publication": "未确认"}, "not_confirmed"
+    if not isinstance(recorded, str) or recorded == "" or recorded != best_metal_sha256 or recorded != winner_metal_sha256:
+        return {"speedup": None, "publication": "未确认"}, "sha_mismatch"
+    if not isinstance(winner, str) or winner == "":
+        return {"speedup": None, "publication": "未确认"}, "label_mismatch"
     value = result.get("confirmed_speedup")
     if not _finite_positive(value):
-        return {"speedup": None, "publication": "未确认"}
+        return {"speedup": None, "publication": "未确认"}, "not_confirmed"
     values = result.get("confirmed_values")
     if not isinstance(values, list) or not values:
-        return {"speedup": None, "publication": "未确认"}
+        return {"speedup": None, "publication": "未确认"}, "values_mismatch"
     numbers = [float(item) for item in values if isinstance(item, (int, float)) and not isinstance(item, bool)]
     if len(numbers) != len(values) or not all(_finite_positive(item) for item in numbers):
-        return {"speedup": None, "publication": "未确认"}
+        return {"speedup": None, "publication": "未确认"}, "values_mismatch"
     # 公布的数字必须是各批的中位数本身，而不是与它们无关的另一个字段。
     median = statistics.median(numbers)
     if abs(float(value) - median) > 1e-9 * max(1.0, abs(median)):
-        return {"speedup": None, "publication": "未确认"}
-    return {"speedup": median, "publication": "confirmed"}
+        return {"speedup": None, "publication": "未确认"}, "speedup_mismatch"
+    return {"speedup": median, "publication": "confirmed"}, "confirmed"
 
 
 def publication_role(

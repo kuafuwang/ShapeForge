@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from observe.actions import Refused, review_feedback
-from observe.feedback import apply_review, apply_reviews, entries, preview_reviews, rejection, review_board, review_feed, summary_from_index
+from observe.feedback import apply_review, apply_reviews, entries, preview_reviews, rejection, review_board, review_feed, review_similar, summary_from_index
 from taic.agent_feedback import read_appended_records
 from taic.agent_feedback import parse_feedback
 
@@ -390,6 +390,135 @@ def test_a_review_shows_prior_exact_digest_verdicts_scoped_to_task_and_target(tm
     assert current["prior"] == []
 
 
+def test_the_first_feedback_page_defers_similar_and_a_run_query_computes_only_that_run(tmp_path, monkeypatch):
+    """@brief 首屏快照默认不算语义近邻；按 run 查询只算那一场的待审 claim，显式 similar=True 保持旧行为。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch 用假的 similar_claims 记录调用，避免依赖 Apple 句向量。
+    """
+    runs, index = _open(tmp_path, monkeypatch)
+    first = parse_feedback("# 对系统的建议\n- 矩阵单元和 SIMT ALU 吞吐相近。\n")
+    second = parse_feedback("# 对系统的建议\n- 矩阵单元和 SIMT ALU 吞吐差不多。\n")
+    _run(runs, "conv", _record(first, t=10), started_at=50)
+    _run(runs, "conv2", _record(second, t=20), started_at=80)
+    index.sync_known()
+    calls = []
+
+    def fake_similar(conn, *, digest, task, target_id, text, before_t=None, exclude_run="", exclude_seq=None, limit=3):
+        calls.append(exclude_run)
+        return [{"run_id": "conv", "seq": 1, "digest": "old", "text": "旧建议", "score": 0.99}]
+
+    monkeypatch.setattr("observe.feedback.similar_claims", fake_similar)
+    feed = review_feed(index.conn, since=None)
+    assert calls == [], "首屏不应为全部待审 claim 算近邻"
+    assert feed["similar_attached"] is False
+    assert all("similar" not in row for row in feed["upserts"])
+    review_feed(index.conn, since=None, similar=True)
+    assert calls, "显式 similar=True 必须保留旧的 eager 行为"
+    calls.clear()
+    doc = review_similar(index.conn, "conv2")
+    assert calls == ["conv2"], calls
+    assert doc["run_id"] == "conv2"
+    assert doc["items"][0]["similar"][0]["run_id"] == "conv"
+    calls.clear()
+    review_similar(index.conn, "conv")
+    assert calls == ["conv"], "只能算被请求那一场，不能顺带算其他 run"
+
+
+def test_one_run_similar_caps_at_two_hundred_claims_and_says_so(tmp_path, monkeypatch):
+    """@brief 单场 ``/similar`` 也有界：250 条待审 claim 只算 200 条，并带 ``truncated``。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具。
+    """
+    from observe import feedback, similarity
+
+    # 本机有句向量时 200 条会真的去算（实测 2.9s）；这条只锁“单场有界 + truncated”，
+    # 把检索关掉，别让性能测试拖慢快套件。
+    monkeypatch.setattr(similarity, "available", lambda: False)
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
+    import observe.index as index_mod
+
+    index_mod._SINGLE = None
+    index = index_mod.get_index()
+    directory = runs / "many"
+    directory.mkdir(parents=True)
+    (directory / "state.json").write_text(json.dumps({
+        "task": "conv2d", "dtype": "fp16", "phase": "done", "started_at": 10, "updated_at": 10,
+    }), encoding="utf-8")
+    # 一条记录最多 50 项，还按“去数字后”的文本去重（digest 不含数字）；250 条 claim 要用 5 条
+    # 记录，且每条正文得带不同的字母尾巴，否则 50 项会被折叠成十几项。
+    def tag(number: int) -> str:
+        letters = ""
+        while True:
+            letters = chr(ord("a") + number % 26) + letters
+            number //= 26
+            if not number:
+                return letters
+
+    lines = []
+    for record_seq in range(5):
+        bullets = "".join(
+            f"- 记录 {tag(record_seq * 50 + number)} 的建议：把 {tag(record_seq * 50 + number)} 步做窄。\n"
+            for number in range(50)
+        )
+        parsed = parse_feedback("# 对系统的建议\n" + bullets)
+        assert len(parsed["items"]) == 50
+        lines.append(json.dumps(_record(parsed, seq=record_seq + 1, t=10.0 + record_seq), ensure_ascii=False))
+    (directory / "feedback.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    index.sync_known()
+    claims = index.conn.execute("SELECT COUNT(*) FROM feedback_claims WHERE run_id = 'many'").fetchone()[0]
+    assert claims == 250, claims
+    doc = feedback.review_similar(index.conn, "many")
+    assert doc["truncated"] is True
+    assert len(doc["items"]) == feedback.REVIEW_SIMILAR_MAX_CLAIMS == 200
+    assert all(set(item) == {"run_id", "seq", "digest", "similar"} for item in doc["items"])
+
+
+def test_a_record_with_two_claims_pages_by_claim_without_losing_one(tmp_path, monkeypatch):
+    """@brief 回归：快照分页单位是 claim。一条 record 下两条 claim 时，limit=1 必须能翻到两条。
+
+    过去 ``total`` 取 ``feedback_items`` 的行数、分页却按 ``feedback_claims`` 走，于是
+    total=1、next_offset=None，前端翻页循环停在第 1 页，第二条 claim 永远看不到。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的替换工具。
+    """
+    import observe.index as index_mod
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    monkeypatch.setenv("OBSERVE_DB", str(tmp_path / "observe.sqlite"))
+    monkeypatch.setenv("AI_LOWERLING_BOOKS", str(tmp_path / "none.sqlite"))
+    index_mod._SINGLE = None
+    index = index_mod.get_index()
+    # 一条 feedback 记录（run_id=r, seq=1）下两条 claim（d1/d2）。
+    index.conn.execute(
+        "INSERT INTO feedback_items (run_id, seq, t, task, dtype, size, label)"
+        " VALUES ('r', 1, 2.0, 'relu', 'fp16', 'paper', 'r1')",
+    )
+    index.conn.executemany(
+        "INSERT INTO feedback_claims (run_id, seq, digest, section, audience, premise, status, rev)"
+        " VALUES ('r', 1, ?, '对系统的建议', 'system', 'p', 'pending', 1)",
+        [("d1",), ("d2",)],
+    )
+    index.conn.commit()
+
+    first = review_feed(index.conn, limit=1)
+    assert first["total"] == 2, first["total"]
+    assert first["next_offset"] == 1, first["next_offset"]
+    second = review_feed(index.conn, limit=1, offset=first["next_offset"])
+    assert second["total"] == 2 and second["next_offset"] is None, second
+    # 逐页取完不重不漏：前端就是按 next_offset 循环的。
+    seen = [row["digest"] for row in first["upserts"] + second["upserts"]]
+    assert sorted(seen) == ["d1", "d2"], seen
+
+
 def test_semantic_similarity_finds_a_rephrased_claim_in_the_same_task_and_target(tmp_path, monkeypatch):
     """@brief 验证同一 task/target 下改写过的 claim 能被语义相似度匹配（score 不低于 0.975）。
 
@@ -513,6 +642,33 @@ def test_two_reviews_of_one_run_both_land(tmp_path, monkeypatch):
     assert len(saved["claims"]) == 2
 
 
+def test_the_resolve_existence_check_runs_inside_the_write_lock(tmp_path, monkeypatch):
+    """@brief 回归：``Index.resolve`` 的行存在性检查必须在写锁内。
+
+    锁外读共享写连接时，并行请求的写事务会让这条 SELECT 瞬时看不到已提交的行：
+    ``test_two_reviews_of_one_run_both_land`` 因此偶发 404 ``no such run``（六进程压力下实测
+    约 1% 失效）。用 SQL trace 断言检查语句执行时当前线程持有 ``_WRITE``。
+
+    @param tmp_path pytest 提供的临时目录。
+    @param monkeypatch pytest 的环境变量夹具。
+    """
+    import observe.index as index_mod
+
+    runs, index = _open(tmp_path, monkeypatch)
+    _run(runs, "conv", _record(_parsed()), started_at=50)
+    index.sync_known()
+    seen: list[tuple[str, bool]] = []
+    index.conn.set_trace_callback(lambda sql: seen.append((sql, index_mod._WRITE.locked())))
+    try:
+        resolved = index.resolve("conv")
+    finally:
+        index.conn.set_trace_callback(None)
+    assert resolved is not None and resolved.name == "conv", resolved
+    checks = [item for item in seen if item[0].lstrip().lower().startswith("select 1 from runs where run_id")]
+    assert checks, seen
+    assert all(held for _sql, held in checks), checks
+
+
 def test_a_claim_restated_by_a_later_run_is_flagged(tmp_path, monkeypatch):
     """@brief 验证已被处理过的 claim 被后来的 run 重述时标记为 recurrence，原 run 不算重复。
 
@@ -540,7 +696,7 @@ def test_the_dashboard_escapes_feedback_text():
     同时确认合法的 review（带证据的 adopted）不会被拒。
     """
     page = Path("observe/static/index.html").read_text()
-    assert "esc(claim.text)" in page and "esc(record.raw)" in page
+    assert "esc(claim.text)" in page and "esc(rawWindow.text)" in page and "tailWindow(record.raw)" in page
     start = page.index("function esc(value)")
     end = page.index("\n}", start) + 2
     script = page[start:end] + "\nprocess.stdout.write(esc('<img onerror=\"alert(1)\">'))"

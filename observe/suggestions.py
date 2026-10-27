@@ -90,33 +90,48 @@ def _read_jsonl(path: Path) -> list[dict]:
     return rows
 
 
-def _linked(directory: Path, *, seq: int, digest: str) -> tuple[str, list[str]]:
-    """@brief 找出该 claim 对应的确切提案（而非仅文本相同的首个提案）及其评审结论。
+def _link_tables(directory: Path) -> tuple[dict[tuple[str, int], str], dict[str, list[str]]]:
+    """@brief 一次读完提案与评审两份 JSONL，做成 dict 索引。
+
+    @param directory 运行目录。
+    @return ``((digest, seq) -> proposal_key, proposal_key -> [useful|not-useful])``。
+    """
+    proposals: dict[tuple[str, int], str] = {}
+    for row in _read_jsonl(directory / "harness_proposals.jsonl"):
+        if row.get("status") == "valid":
+            proposals.setdefault(
+                (str(row.get("claim_digest") or ""), int(row.get("seq") or 0)),
+                str(row.get("proposal_key") or ""),
+            )
+    reviews: dict[str, list[str]] = {}
+    for row in _read_jsonl(directory / "harness_reviews.jsonl"):
+        reviews.setdefault(str(row.get("proposal_key") or ""), []).append(
+            "useful" if row.get("useful") is True else "not-useful"
+        )
+    return proposals, reviews
+
+
+def _linked(directory: Path, *, seq: int, digest: str, cache: dict) -> tuple[str, list[str]]:
+    """@brief 找出该 claim 对应的确切提案及其评审结论。
+
+    请求内缓存按运行目录保存两份 JSONL 的索引：20 组建议可能来自 20 个不同运行，旧实现每组
+    各读两遍文件；现在每个目录只读一次。
 
     原始英文说明：The exact proposal for this claim, not merely the first proposal with the same text.
 
     @param directory 运行目录。
     @param seq 反馈条目序号。
     @param digest 条目摘要。
+    @param cache 本次请求的目录级缓存。
     @return 二元组：有效提案的 ``proposal_key``（没有时为空串），以及该提案的评审列表（useful/not-useful）。
     """
-    key = ""
-    for row in _read_jsonl(directory / "harness_proposals.jsonl"):
-        if (
-            str(row.get("claim_digest") or "") == str(digest)
-            and int(row.get("seq") or 0) == int(seq)
-            and row.get("status") == "valid"
-        ):
-            key = str(row.get("proposal_key") or "")
-            break
-    reviews = []
-    if key:
-        reviews = [
-            "useful" if row.get("useful") is True else "not-useful"
-            for row in _read_jsonl(directory / "harness_reviews.jsonl")
-            if str(row.get("proposal_key") or "") == key
-        ]
-    return key, reviews
+    tables = cache.get(directory)
+    if tables is None:
+        tables = _link_tables(directory)
+        cache[directory] = tables
+    proposals, review_index = tables
+    key = proposals.get((str(digest), int(seq)), "")
+    return key, list(review_index.get(key, [])) if key else []
 
 
 def compact(
@@ -172,6 +187,7 @@ def compact(
         WHERE {' AND '.join(clauses)}
     """
     groups: dict[str, dict] = {}
+    links: dict[Path, tuple[dict, dict]] = {}
     with borrow() as index:
         total_claims = int(index.conn.execute(f"SELECT COUNT(*) {base}", args).fetchone()[0])
         total_groups = int(index.conn.execute(f"SELECT COUNT(DISTINCT c.digest) {base}", args).fetchone()[0])
@@ -236,7 +252,8 @@ def compact(
             record = _record(directory, row.get("line_at"))
             if record is not None:
                 text = _item_text(record, digest)
-            converted_key, reviews = _linked(directory, seq=int(row.get("seq") or 0), digest=digest)
+            converted_key, reviews = _linked(
+                directory, seq=int(row.get("seq") or 0), digest=digest, cache=links)
         bucket = dims.get(digest) or {}
         groups[digest] = {
             "digest": digest,

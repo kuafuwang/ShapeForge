@@ -216,6 +216,22 @@ def update_progress(**fields) -> None:
         return
 
 
+def _note_index(path: Path) -> None:
+    """@brief 文件日志真正落盘后，给索引侧写一行旁路日志。
+
+    写在写入器线程里而不是 :func:`publish` 调用处：发布是排队的，调用点记日志会让索引在文件还没落地时
+    就去 stat，把旧内容配上新日志。
+
+    @param path 刚写入的文件路径。
+    """
+    try:
+        from .index_journal import note
+
+        note(path)
+    except Exception:  # noqa: BLE001 - 旁路日志不能影响状态发布
+        return
+
+
 def _on_event(kind: str, payload: dict) -> None:
     """@brief 内置文件写入器的分发入口。
 
@@ -248,6 +264,7 @@ def _write_json(path: Path, doc: dict) -> None:
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(data, encoding="utf-8")
     os.replace(tmp, path)
+    _note_index(path)
 
 
 def _append_jsonl(path: Path, doc: dict) -> None:
@@ -261,6 +278,7 @@ def _append_jsonl(path: Path, doc: dict) -> None:
     line = json.dumps(doc, ensure_ascii=False, default=str) + "\n"
     with path.open("a", encoding="utf-8") as handle:
         handle.write(line)
+    _note_index(path)
 
 
 def _gpu_file(pid: int, waiter: bool) -> Path:
@@ -285,6 +303,50 @@ def _unlink(path: Path) -> None:
         return
 
 
+def _env_int(name: str, default: int) -> int:
+    """@brief 读一个非负整数环境变量；非法时用默认值。
+
+    @param name 环境变量名。
+    @param default 默认值。
+    @return 解析后的整数。
+    """
+    try:
+        value = int(os.environ.get(name, ""))
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
+def _rotate_jsonl(path: Path, *, limit_env: str, default_limit: int) -> None:
+    """@brief 超过字节上限时把 JSONL 改名保留成一个分片。
+
+    轮转是“改名保留”，**不删除**旧内容：索引在 inode 变化后按分片重放，删库后也必须能从保留的
+    分片重建同样的历史。清理旧分片只能由运维显式做，索引会把缺失的分片标记为历史截断。
+
+    @param path 正在追加的 JSONL 文件。
+    @param limit_env 上限的字节数环境变量名。
+    @param default_limit 默认字节上限。
+    """
+    path = Path(path)
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return
+    limit = _env_int(limit_env, default_limit)
+    if limit <= 0 or size < limit:
+        return
+    stamp = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+    target = path.with_name(f"{path.name}.{stamp}")
+    suffix = 1
+    while target.exists():
+        target = path.with_name(f"{path.name}.{stamp}.{suffix}")
+        suffix += 1
+    try:
+        path.rename(target)
+    except OSError:
+        return
+
+
 def _record_gpu(kind: str, mode: str, what: str) -> None:
     """@brief 更新 GPU 锁状态快照并追加一条事件。
 
@@ -305,7 +367,9 @@ def _record_gpu(kind: str, mode: str, what: str) -> None:
             _unlink(_gpu_file(pid, waiter=False))
     else:
         return
-    _append_jsonl(gpu_events_path(), {"t": now, "pid": pid, "kind": kind, "mode": mode, "what": what})
+    events_path = gpu_events_path()
+    _rotate_jsonl(events_path, limit_env="TCENV_GPU_EVENTS_MAX_BYTES", default_limit=8 * 1024 * 1024)
+    _append_jsonl(events_path, {"t": now, "pid": pid, "kind": kind, "mode": mode, "what": what})
 
 
 def _bind_progress(path: str | None) -> None:

@@ -22,6 +22,8 @@ from typing import Any, Generator
 
 import pytest
 
+from taic.reads import tail_text
+
 _BASE = logging.getLogger("ai_lowerling.tests")
 _LOG_HANDLERS: dict[str, logging.Handler] = {}
 _TEST_HANDLERS: dict[str, logging.Handler] = {}
@@ -126,10 +128,8 @@ def log_tail(path: Path | None, limit: int = _MAX_TAIL) -> str:
     """
     if path is None:
         return ""
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
+    # 只读尾部：limit 是字符数，UTF-8 每字符最多 4 字节，留 4 倍再加一点余量。
+    text = tail_text(path, limit=max(0, limit) * 4 + 8, trim_partial=False)
     return text[-max(0, limit):]
 
 

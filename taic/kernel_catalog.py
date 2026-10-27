@@ -3,10 +3,63 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import time
 from pathlib import Path
 
 from tcenv.target import REPO
+
+LOG = logging.getLogger("taic.kernel_catalog")
+
+
+def blob_root() -> Path:
+    """@brief 内容寻址 blob 的根目录（确认写路径的持久证据，不是派生可删数据）。
+
+    ``TAIC_BLOB_ROOT`` 可以把测试或只读自检重定向到仓库之外；observe 与 taic 共用这一份定义，
+    否则两边的路径会悄悄分叉。
+
+    @return 默认 ``data/blobs`` 或环境变量指定的目录。
+    """
+    override = os.environ.get("TAIC_BLOB_ROOT")
+    return Path(override) if override else REPO / "data" / "blobs"
+
+
+def blob_path(sha256: str) -> Path:
+    """@brief 一个摘要对应的 blob 路径：``<root>/<sha[:2]>/<sha>``。
+
+    @param sha256 内核源码的十六进制摘要。
+    @return blob 文件路径（不保证存在）。
+    """
+    return blob_root() / sha256[:2] / sha256
+
+
+def write_blob(source: str, sha256: str | None = None) -> Path | None:
+    """@brief 把确认过的源码写成内容寻址 blob；已存在则跳过，失败只记一行日志。
+
+    捕获点必须在确认写路径上（调用方手里已有源码字符串），不能等到周期对账：确认写盘到观察进程
+    下一次 tick 之间，run 目录可能已经被删，而这是唯一副本。写 blob **不增加 I/O**，也**不允许**
+    让确认失败——与 publish 的 never-raises 是同一条纪律。
+
+    @param source 已确认的内核源码。
+    @param sha256 源码摘要；``None`` 时现算（调用方通常已经有）。
+    @return blob 路径；写失败时返回 None。
+    """
+    import hashlib
+
+    from . import control
+
+    digest = sha256 or hashlib.sha256(source.encode("utf-8")).hexdigest()
+    try:
+        path = blob_path(digest)
+        if path.is_file():
+            return path
+        control.write_text_atomic(path, source)
+        return path
+    except OSError as exc:
+        # 半截文件由 write_text_atomic 的 finally 清掉；正式名字只可能是完整内容。
+        LOG.warning("blob write failed for %s: %s", digest, exc)
+        return None
 
 
 def catalog_root() -> Path:
@@ -110,6 +163,8 @@ def archive_confirmed(
         "baseline_us": baseline_us or {},
         "updated_at": time.time(),
     }
+    # §9.1：blob 与目录史同一处写；失败吞掉，确认照常成功（索引侧会补登记已有的 blob）。
+    write_blob(source, record["source_sha256"])
     with (folder / "history.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     best = folder / f"best{file_ext}"
@@ -122,10 +177,15 @@ def archive_confirmed(
     return best
 
 
-def list_kernels(target_id: str | None = None) -> list[dict]:
+def list_kernels(target_id: str | None = None, *, limit: int | None = None, cursor: str | None = None) -> list[dict]:
     """@brief 列出已确认内核的 ``meta.json`` 内容，并补上内核文件路径。
 
+    目录史会随发布增长，所以按 ``path`` 排序后支持 keyset 分页：``cursor`` 传上一页最后一行的
+    ``path``，``limit`` 给本页行数。两参数都不给时返回全部（旧行为）。
+
     @param target_id 只看这个目标；``None`` 时扫描所有目标。
+    @param limit 本页最多返回多少行；``None`` 表示不限。
+    @param cursor 上一页最后一行的 ``path``；只返回排序在它之后的行。
     @return 元数据字典列表；每个多一个 ``path`` 键指向 ``best.*``。
     """
     root = catalog_root()
@@ -145,4 +205,9 @@ def list_kernels(target_id: str | None = None) -> list[dict]:
                 found = sorted(meta.parent.glob("best.*"))
                 doc["path"] = str(found[0] if found else meta.parent / "best.metal")
                 rows.append(doc)
+    rows.sort(key=lambda row: str(row.get("path") or ""))
+    if cursor:
+        rows = [row for row in rows if str(row.get("path") or "") > str(cursor)]
+    if limit is not None:
+        rows = rows[: max(0, int(limit))]
     return rows

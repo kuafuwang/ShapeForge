@@ -854,12 +854,15 @@ def _has_text(record: dict) -> bool:
     return bool(record.get("items"))
 
 
-def entries(directory: Path) -> dict:
+def entries(directory: Path, *, with_calibration: bool = True) -> dict:
     """@brief 返回一个运行的完整反馈，带评审状态和评审者可粘贴的数字。
+
+    ``with_calibration=False`` 时不读本机标定文件：紧凑列表不展示它，读它只会白白多开一个文件。
 
     原始英文说明：One run's feedback, with the review state and the numbers a reviewer can paste.
 
     @param directory 运行目录。
+    @param with_calibration 是否附带本机标定。
     @return 含 ``records`` 与 ``calibration`` 的字典。
     """
     review = _load_review(directory / "feedback_review.json")["claims"]
@@ -896,7 +899,7 @@ def entries(directory: Path) -> dict:
             "report": _report_brief(report, source),
             "report_path": report_path,
         })
-    return {"records": records, "calibration": _calibration()}
+    return {"records": records, "calibration": _calibration() if with_calibration else None}
 
 
 def summary_from_index(conn, *, task: str | None = None, model: str | None = None, kind: str | None = None, status: str | None = None) -> dict:
@@ -1261,16 +1264,23 @@ def similar_claims(conn, *, digest: str, task: str, target_id: str, text: str, b
     @param limit 最多返回条数。
     @return 带 ``score`` 与补齐文本的 claim 行列表。
     """
-    from . import similarity
+    from . import similarity, simcache
 
     if not text or not similarity.available():
         return []
-    candidates = _candidate_texts(conn, task=task, target_id=target_id, before_t=before_t)
-    candidates = [
-        row for row in candidates
-        if not (row.get("run_id") == exclude_run and row.get("seq") == exclude_seq)
-    ]
-    scored = similarity.find_similar(text, candidates, limit=limit)
+    # 近邻只从更早的 claim 里选：语料键不变时结果不可变，直接读持久缓存，不为每次请求重算。
+    corpus = _corpus_key(conn, task=task, target_id=target_id, before_t=before_t)
+    cache_id = (str(exclude_run or ""), int(exclude_seq or 0), str(digest or ""))
+    scored = simcache.get_similar(*cache_id, corpus)
+    if scored is None:
+        candidates = _candidate_texts(conn, task=task, target_id=target_id, before_t=before_t)
+        candidates = [
+            row for row in candidates
+            if not (row.get("run_id") == exclude_run and row.get("seq") == exclude_seq)
+        ]
+        scored = similarity.find_similar(text, candidates, limit=limit)
+        # 空结果也缓存：找不到近邻的 claim 同样不值得每次重嵌一遍候选语料。
+        simcache.put_similar(*cache_id, corpus, scored)
     if not scored:
         return []
     cache: dict[str, dict] = {}
@@ -1286,7 +1296,143 @@ def similar_claims(conn, *, digest: str, task: str, target_id: str, text: str, b
         row["evidence"] = str(source.get("evidence") or "")
         row["evidence_source"] = str(source.get("evidence_source") or "")
         row["subclaims"] = list(saved.get("subclaims") or [])
+        # 缓存只存检索结果；评审状态以当前评审文件为准，不能因为缓存而回到旧状态。
+        for field in ("status", "verification", "change_ref"):
+            if source.get(field) is not None:
+                row[field] = source.get(field)
     return scored
+
+
+def _corpus_key(conn, *, task: str, target_id: str, before_t: float | None) -> tuple[int, int]:
+    """@brief 候选语料键：``(候选条数, 候选 rev)``，任一变化都必须让近邻缓存失效。
+
+    @param conn 索引数据库连接。
+    @param task 任务名。
+    @param target_id 目标硬件 id。
+    @param before_t 只要更早的记录，可为 None。
+    @return 两个整数组成的键。
+    """
+    params: list[object] = [task, target_id]
+    clause = ""
+    if before_t is not None:
+        clause = " AND i.t < ?"
+        params.append(float(before_t))
+    claims = conn.execute(
+        "SELECT COUNT(*), COALESCE(MAX(c.rev), 0) FROM feedback_claims c"
+        " JOIN feedback_items i ON i.run_id = c.run_id AND i.seq = c.seq"
+        " LEFT JOIN runs r ON r.run_id = c.run_id"
+        " WHERE i.task = ? AND r.target_id = ? AND c.digest <> ''" + clause,
+        params,
+    ).fetchone()
+    subs = conn.execute(
+        "SELECT COUNT(*), COALESCE(MAX(s.rowid), 0) FROM feedback_subclaims s"
+        " JOIN feedback_claims c ON c.run_id = s.run_id AND c.seq = s.seq AND c.digest = s.parent_digest"
+        " JOIN feedback_items i ON i.run_id = s.run_id AND i.seq = s.seq"
+        " LEFT JOIN runs r ON r.run_id = s.run_id"
+        " WHERE i.task = ? AND r.target_id = ? AND s.text <> ''" + clause,
+        params,
+    ).fetchone()
+    return (int(claims[0]) + int(subs[0]), int(claims[1]) + int(subs[1]))
+
+
+def _warm_state(conn) -> str:
+    """@brief 预热的工作发现指纹：待审集合、语料大小与评审代际的廉价摘要。
+
+    三条不 JOIN 的聚合查询就够了：任何一条变化都可能让某些缓存失效，所以指纹变了就重新发现；
+    指纹不变时预热的空闲轮只花这三条查询，不再逐条算语料键。指纹是保守近似——它多报变化
+    （多扫一轮），不会漏报导致读路径拿到错数据：读路径自己仍按 ``_corpus_key`` 核新鲜度。
+
+    @param conn 索引数据库连接。
+    @return 指纹字符串。
+    """
+    pending = conn.execute(
+        "SELECT COUNT(*), COALESCE(MAX(rev), 0), COALESCE(SUM(LENGTH(digest) + seq), 0), COALESCE(MAX(digest), '')"
+        " FROM feedback_claims WHERE status = 'pending' AND digest <> ''",
+    ).fetchone()
+    subs = conn.execute(
+        "SELECT COUNT(*), COALESCE(MAX(rowid), 0), COALESCE(SUM(LENGTH(text)), 0) FROM feedback_subclaims WHERE text <> ''",
+    ).fetchone()
+    corpus = conn.execute(
+        "SELECT COUNT(*), COALESCE(MAX(rev), 0) FROM feedback_claims WHERE digest <> ''",
+    ).fetchone()
+    return "|".join(str(part) for part in (*pending, *subs, *corpus))
+
+
+# 没有正文的待审 claim：一轮里跳过就别每轮重读它的文件。集合随指纹变化清空（正文可能后补）。
+_TEXTLESS: set[tuple[str, int, str]] = set()
+_TEXTLESS_STATE = ""
+
+WARM_BATCH = 500
+
+
+def warm_similar_once(conn=None) -> bool:
+    """@brief 为一条尚未缓存近邻的待审 claim 做预热；做了工作返回 True。
+
+    每次只推进一条，由调用方睡眠让出 GIL；没有可用句向量或没有工作时返回 False。工作发现是
+    廉价的：空闲轮只发三条不 JOIN 的聚合查询，再读一次缓存键，不逐条算语料键（那是全量扫描）。
+
+    @param conn 索引数据库连接；None 时用只读连接（不占主索引写锁，后台预热走这条）。
+    @return 是否完成了一条 claim 的近邻计算。
+    """
+    from . import similarity, simcache
+
+    global _TEXTLESS_STATE
+
+    if not similarity.available():
+        return False
+    if conn is None:
+        from observe.index import reader
+
+        conn = reader()
+    state = _warm_state(conn)
+    if simcache.get_warm_state() == state:
+        return False
+    if state != _TEXTLESS_STATE:
+        _TEXTLESS.clear()
+        _TEXTLESS_STATE = state
+    rows = [dict(row) for row in conn.execute(
+        _CLAIM_LIST + " WHERE c.status = 'pending' AND c.digest <> '' ORDER BY i.t DESC, c.seq DESC LIMIT ?",
+        (WARM_BATCH,),
+    )]
+    if not rows:
+        simcache.set_warm_state(state)
+        return False
+    cached = simcache.cached_keys([str(row["run_id"]) for row in rows])
+    # 语料键按（task, target, t）分组算一次：同场 run 的待审 claim 语料完全相同，不必每条都查。
+    corpora: dict[tuple[str, str, float | None], tuple[int, int]] = {}
+
+    def corpus_of(row: dict) -> tuple[int, int]:
+        key = (str(row.get("task") or ""), str(row.get("target_id") or ""), row.get("t"))
+        if key not in corpora:
+            corpora[key] = _corpus_key(conn, task=key[0], target_id=key[1], before_t=key[2])
+        return corpora[key]
+
+    for row in rows:
+        identity = (str(row["run_id"]), int(row["seq"]), str(row.get("digest") or ""))
+        if identity in _TEXTLESS:
+            continue
+        if cached.get(identity) == corpus_of(row):
+            continue
+        _attach_claim_text([row])
+        text = str(row.get("text") or "")
+        if not text:
+            _TEXTLESS.add(identity)
+            continue
+        similar_claims(
+            conn,
+            digest=identity[2],
+            task=str(row.get("task") or ""),
+            target_id=str(row.get("target_id") or ""),
+            text=text,
+            before_t=row.get("t"),
+            exclude_run=identity[0],
+            exclude_seq=identity[1],
+        )
+        return True
+    # 本批里没有可做的工作：记下指纹，之后的空闲轮只花三条聚合查询；顺手把库压回上限。
+    simcache.set_warm_state(state)
+    simcache.prune()
+    return False
 
 
 def attach_similar_claims(conn, rows: list[dict], *, limit: int = 3) -> None:
@@ -1512,14 +1658,26 @@ _CLAIM_LIST = """
 """
 
 
-def review_feed(conn, *, since: int | None = None) -> dict:
+FEEDBACK_SNAPSHOT_PAGE = 200
+FEEDBACK_FULL_BYTES = 512 * 1024
+REVIEW_SIMILAR_MAX_CLAIMS = 200
+
+
+def review_feed(conn, *, since: int | None = None, limit: int | None = None, offset: int = 0, full: bool = False, similar: bool = False) -> dict:
     """@brief 返回一份快照，或只返回 ``since`` 之后变化的 claim。
 
     ``since`` 等于当前反馈 revision 时不返回任何行；只为出现在本次答案里的运行读取文本。
+    首屏快照默认分页（``limit``/``offset``）；全量只在显式 ``full=True`` 时给出，并带字节上限与
+    ``truncated`` 标记，避免一次响应把整份主张列表塞给客户端。
     原始英文说明：A snapshot, or only the claims that changed after ``since``.
 
     @param conn 索引数据库连接。
     @param since 客户端已持有的反馈 revision，None 表示要全量快照。
+    @param limit 单页条数；None 时用 :data:`FEEDBACK_SNAPSHOT_PAGE`。
+    @param offset 快照页偏移（只在 ``since is None`` 时生效）。
+    @param full 为 True 时返回全量（仍有字节上限）。
+    @param similar 为 True 才给每行算语义近邻。默认 False：90 条待审 claim 各算一次句向量会让首屏多花数秒，
+        相似结论改由 :func:`review_similar` 在展开某一场运行时按需计算。
     @return 含 ``same``、``snapshot``、``rev``、计数、``upserts`` 与 ``removed`` 的字典。
     """
     rev = _feedback_revision(conn)
@@ -1533,10 +1691,27 @@ def review_feed(conn, *, since: int | None = None) -> dict:
             "open_subclaims_total": open_subclaims_total,
             "open_work_total": pending_total + open_subclaims_total, "upserts": [], "removed": [],
         }
+    next_offset = None
+    total = None
     if since is None:
-        rows = [dict(row) for row in conn.execute(_CLAIM_LIST + " ORDER BY i.t DESC, c.seq DESC")]
-        removed: list[dict] = []
         snapshot = True
+        removed: list[dict] = []
+        # 分页对象是 claim（一条 record 可以有多条 claim），所以总数必须与分页单位一致：
+        # 拿 feedback_items 计数会让“一条 item 多 claim”的快照提前判定到底，前端静默丢掉后面的 claim。
+        total = int(conn.execute(
+            "SELECT COUNT(*) FROM feedback_claims c"
+            " JOIN feedback_items i ON i.run_id = c.run_id AND i.seq = c.seq",
+        ).fetchone()[0])
+        if full:
+            rows = [dict(row) for row in conn.execute(_CLAIM_LIST + " ORDER BY i.t DESC, c.seq DESC")]
+        else:
+            page = max(1, int(limit or FEEDBACK_SNAPSHOT_PAGE))
+            offset = max(0, int(offset or 0))
+            rows = [dict(row) for row in conn.execute(
+                _CLAIM_LIST + " ORDER BY i.t DESC, c.seq DESC LIMIT ? OFFSET ?", (page, offset),
+            )]
+            if offset + len(rows) < total:
+                next_offset = offset + len(rows)
     else:
         rows = [dict(row) for row in conn.execute(_CLAIM_LIST + " WHERE c.rev > ? ORDER BY i.t DESC, c.seq DESC", (int(since),))]
         removed = [
@@ -1549,8 +1724,10 @@ def review_feed(conn, *, since: int | None = None) -> dict:
         snapshot = False
     calibration = _attach_claim_text(rows)
     attach_prior_claims(conn, rows)
-    attach_similar_claims(conn, rows)
-    return {
+    if similar:
+        attach_similar_claims(conn, rows)
+    result = {
+        "similar_attached": similar,
         "same": False,
         "snapshot": snapshot,
         "rev": rev,
@@ -1560,6 +1737,84 @@ def review_feed(conn, *, since: int | None = None) -> dict:
         "upserts": rows,
         "removed": removed,
         "calibration": calibration,
+        "total": total,
+        "next_offset": next_offset,
+    }
+    if full:
+        # 全量导出也要有字节上限：对**最终序列化结果**做预算，envelope、calibration、truncated
+        # 都算在内；超了就二分收缩行数并重编码，直到连 envelope 也达标（只累加行字节会漏掉外壳）。
+        result = _cap_full_export(result, FEEDBACK_FULL_BYTES)
+    return result
+
+
+def _encoded_size(doc: dict) -> int:
+    """@brief 响应的真实字节数（与 HTTP 层同一套 serialization）。
+
+    @param doc 响应字典。
+    @return UTF-8 字节数。
+    """
+    return len(json.dumps(doc, ensure_ascii=False, default=str).encode("utf-8"))
+
+
+def _cap_full_export(result: dict, limit: int) -> dict:
+    """@brief 把全量导出的最终 body 压到 ``limit`` 字节以内，并如实标 ``truncated``。
+
+    行数对序列化字节单调，所以用二分找最大可保留行数；``truncated`` 在收缩时恒为 True，
+    二分区间内不参与单调性判断。空 envelope 本身就超限时保留 0 行并照样标 ``truncated``。
+
+    @param result 完整响应（``upserts`` 为全部行）。
+    @param limit 字节上限。
+    @return 收缩后的响应副本（未超限时原样返回）。
+    """
+    rows = list(result.get("upserts") or [])
+    if _encoded_size(result) <= limit:
+        return result
+
+    def body(count: int) -> dict:
+        trimmed = dict(result)
+        trimmed["upserts"] = rows[:count]
+        trimmed["truncated"] = True
+        return trimmed
+
+    low, high = 0, len(rows) - 1 if rows else 0
+    best = body(0)
+    while low <= high:
+        middle = (low + high) // 2
+        candidate = body(middle)
+        if _encoded_size(candidate) <= limit:
+            best, low = candidate, middle + 1
+        else:
+            high = middle - 1
+    return best
+
+
+def review_similar(conn, run_id: str, *, limit: int = 3) -> dict:
+    """@brief 只算一场运行里待审 claim 的语义近邻，供展开该 run 时按需调用。
+
+    首屏快照不为全部待审行算近邻（每条都要嵌入候选语料），把成本缩到用户真正展开的那一场。
+
+    @param conn 索引数据库连接。
+    @param run_id 运行 id（索引里的相对路径）。
+    @param limit 每条 claim 最多挂几条近邻。
+    @return ``{run_id, items: [{run_id, seq, digest, similar}]}``；没有待审行时 items 为空。
+    """
+    rows = [dict(row) for row in conn.execute(
+        _CLAIM_LIST + " WHERE c.run_id = ? ORDER BY i.t DESC, c.seq DESC", (run_id,),
+    )]
+    pending = [row for row in rows if str(row.get("status") or "") == "pending"]
+    # 单场也必须有界：成本与响应都随待审条数增长，超出部分如实标记而不是静默丢掉。
+    truncated = len(pending) > REVIEW_SIMILAR_MAX_CLAIMS
+    pending = pending[:REVIEW_SIMILAR_MAX_CLAIMS]
+    _attach_claim_text(pending)
+    attach_prior_claims(conn, pending)
+    attach_similar_claims(conn, pending, limit=limit)
+    return {
+        "run_id": run_id,
+        "items": [
+            {"run_id": run_id, "seq": row["seq"], "digest": row["digest"], "similar": row.get("similar") or []}
+            for row in pending
+        ],
+        "truncated": truncated,
     }
 
 
