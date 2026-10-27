@@ -634,6 +634,66 @@ def test_container_crash_with_unverified_cleanup_quarantines_without_retry(tmp_p
         recovered.close()
 
 
+def test_recovery_quarantines_when_a_candidate_attach_client_cannot_be_inspected(
+    tmp_path, monkeypatch,
+):
+    """An unreadable candidate process means unverified cleanup, so no Retry."""
+
+    import subprocess
+
+    from tcenv.remote import hostprocs
+
+    docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
+    state = tmp_path / "state"
+    req = request("container-recovery-uninspectable", source=b"SLEEP", candidate_timeout_ms=60_000)
+    attempt, _handle, _supervisor = _crashed_running_attempt(state, docker, req)
+    # A live process of this account running the executable the supervisor
+    # spawns, whose argv the kernel refuses: it could be the attach client the
+    # dead frontend left behind, so "cannot tell" must not read as "gone".
+    blocker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    original_read = hostprocs._read_argv
+    original_path = hostprocs._executable_path
+
+    def denied(pid):
+        if pid == blocker.pid:
+            raise hostprocs._Unreadable("injected EIO: the kernel refused the argument read")
+        return original_read(pid)
+
+    monkeypatch.setattr(hostprocs, "_read_argv", denied)
+    monkeypatch.setattr(
+        hostprocs, "_executable_path",
+        lambda pid: "/usr/local/bin/docker" if pid == blocker.pid else original_path(pid),
+    )
+    recovered = container_engine(state, docker)
+    try:
+        snapshot = get(recovered, req)
+        assert snapshot.state == "running" and snapshot.quarantined is True
+        assert snapshot.current_attempt.attempt_id == attempt.attempt_id
+        assert "could not inspect host processes" in snapshot.recovery_error
+        assert f"could not inspect live process {blocker.pid}" in snapshot.recovery_error
+        # The container itself was killed and removed: exactly the state in which
+        # the old code would have claimed a verified cleanup and offered Retry.
+        assert fake.records() == []
+        cap = capabilities(recovered)
+        with pytest.raises(JobError, match="quarantined") as retry_error:
+            recovered.retry(
+                request_id=req.request_id, request_digest=req.request_digest,
+                expected=recovered.expected_identities,
+                interrupted_attempt_id=snapshot.current_attempt.attempt_id,
+                capability_id=cap.capability_id, grant_token=TOKEN,
+            )
+        assert retry_error.value.code == "failed_precondition"
+        # Operator release re-runs the same proof: only a working scan releases.
+        monkeypatch.undo()
+        released = recovered.release_quarantine(req.request_id)
+        assert released.state == "interrupted" and released.quarantined is False
+        assert len(_attempt_rows(recovered, req)) == 1
+    finally:
+        blocker.kill()
+        blocker.wait(timeout=15)
+        recovered.close()
+
+
 def test_process_supervisor_refuses_to_clean_a_container_attempt(tmp_path):
     docker, fake = install_fake_docker(tmp_path / "docker", image_digest=IMAGE_DIGEST)
     state = tmp_path / "state"

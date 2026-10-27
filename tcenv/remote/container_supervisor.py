@@ -853,18 +853,34 @@ class DockerAttemptSupervisor:
         return ""
 
     def _attach_executable_names(self) -> frozenset[str]:
-        """Executables whose processes can be this supervisor's attach clients."""
+        """Executables whose processes can be this supervisor's attach clients.
 
-        names = {os.path.basename(self.config.docker)}
+        ``_attach_argv`` spawns ``self.config.docker`` directly, so a surviving
+        attach client is that executable - or, when the CLI is a script, the
+        interpreter named by its shebang.  The name is resolved through ``PATH``
+        as well (``#!/usr/bin/env python3`` execs ``python3.12``), because the
+        kernel reports the interpreter's real basename.  The set is only used to
+        decide whether a process whose argv cannot be read is a candidate; a
+        name that cannot be determined simply cannot narrow the scan.
+        """
+
+        configured = self.config.docker
+        resolved = configured if os.sep in configured else (shutil.which(configured) or "")
+        names = {os.path.basename(configured)}
         try:
-            with open(self.config.docker, "rb") as handle:
+            with open(resolved or configured, "rb") as handle:
                 first = handle.readline(256)
         except OSError:
             return frozenset(name for name in names if name)
         if first.startswith(b"#!"):
             parts = first[2:].strip().split()
             if parts:
-                names.add(os.path.basename(parts[-1].decode("utf-8", errors="replace")))
+                interpreter = parts[-1].decode("utf-8", errors="replace")
+                names.add(os.path.basename(interpreter))
+                if os.sep not in interpreter:
+                    found = shutil.which(interpreter)
+                    if found:
+                        names.add(os.path.basename(found))
         return frozenset(name for name in names if name)
 
     def _attach_survivors(self, ref: str) -> tuple[list[int], str]:
