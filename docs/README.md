@@ -57,6 +57,7 @@ uv run python -m taic.cli brief RUN_DIR
 | [架构/数据层.md](架构/数据层.md) | 一次搜索留下什么、SQLite 索引怎样建、`taic query` 怎样查、协议版本/成本/保留期。 |
 | [架构/可观测.md](架构/可观测.md) | 实验怎样分组，看板怎样读。 |
 | [架构/hmz.md](架构/hmz.md) | `hmz` 是别人写的启动器。搜索写内核只走它，再由它调用 `pi`。`--kernel-agent off` 拒绝启动。 |
+| [架构/多厂商NPU评测通信抽象-plan.md](架构/多厂商NPU评测通信抽象-plan.md) | 未来多厂商 NPU infra 的通信抽象：统一 gRPC 控制面、厂商 driver、工件/能力/计时证据与验收；未实现。 |
 | [架构/远程评测模拟验收-plan.md](架构/远程评测模拟验收-plan.md) | Phase 2.5 历史验收证据与边界；旧 SSH 数据面和 runner 已删除，当前远程评测见执行运行时文档。 |
 
 ### 一条内核与一道题的具体问题
