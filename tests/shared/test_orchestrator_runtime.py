@@ -9,7 +9,7 @@ import pytest
 
 from taic.kernel_agent import AgentResult
 from tcenv.evaluation import EvaluationUnavailable
-from tcenv.evaluation import EvaluationResult, local_provenance, receipt_id_for
+from tcenv.evaluation import EvaluationResult, local_provenance, receipt_id_for, sign_result
 
 from ..support.orchestrator import code, fake_eval, llm_script, make_orch, run
 
@@ -398,6 +398,7 @@ class NpuShapedEvaluator(RecordingEvaluator):
     """Host-adapter double for the npu-source contract (no device, no gRPC)."""
 
     WIRE_DIGEST = "3" * 64
+    signature_key = b"host-envelope-key-32-bytes-long!!"
     DEVICE_GROUP = {
         "device_group_id": "vendor-a-group-0",
         "vendor_id": "vendor-a",
@@ -441,13 +442,18 @@ class NpuShapedEvaluator(RecordingEvaluator):
             request.task, request.dtype, request.size, request.source,
             mode=request.mode, seed=request.seed, reps=request.reps,
         )
+        device_elapsed_ns = 1_000
+        # The wire report is JSON, and an ok report's candidate time must be the
+        # device-event elapsed time.
+        report = report.to_json() if hasattr(report, "to_json") else dict(report)
+        report["candidate_us"] = device_elapsed_ns / 1000.0
         evidence = {
             "schema_id": NPU_TIMING_EVIDENCE_SCHEMA_ID,
             "candidate_digest": {"algorithm": "sha256", "value": request.candidate_sha256},
             "device_group": dict(self.DEVICE_GROUP),
             "timing": {
                 "source": "DEVICE_EVENT", "clock_domain": "host-double-clock",
-                "synchronization_completed": True, "device_elapsed_ns": 1_000,
+                "synchronization_completed": True, "device_elapsed_ns": device_elapsed_ns,
                 "host_api_elapsed_ns": 2_000, "launches": 1,
             },
             "measurement_kind": "measured",
@@ -477,7 +483,12 @@ class NpuShapedEvaluator(RecordingEvaluator):
             local_provenance(request), publication_allowed=True,
             request_digest=request.request_digest,
         )
-        result = EvaluationResult(report=report, provenance=provenance, evidence=evidence, receipt=receipt)
+        result = EvaluationResult(
+            report=report, provenance=provenance, evidence=evidence, receipt=receipt, signature="",
+        )
+        # The retained envelope must be authenticated: the outbox refuses to
+        # retain or replay an NPU result without the host HMAC.
+        result.signature = sign_result(result, self.signature_key)
         self._provenance = provenance
         return result
 

@@ -1021,6 +1021,7 @@ class JobStore:
                     publication_allowed=provenance["publication_allowed"],
                     report_status=report_status,
                 )
+                contracts.npu_report_timing_check(evidence_document, _loads(result.report))
             except (contracts.ContractError, StateCorrupt, TypeError, ValueError) as exc:
                 raise StateCorrupt(f"NPU result timing evidence is invalid: {exc}") from exc
             if evidence_document.get("candidate_digest") != receipt.get("candidate_digest"):
@@ -1995,6 +1996,7 @@ class JobStore:
                     publication_allowed=provenance.get("publication_allowed"),
                     report_status=report.get("status"),
                 )
+                contracts.npu_report_timing_check(evidence, report)
             except contracts.ContractError as exc:
                 raise JobError("invalid_argument", f"NPU timing evidence is invalid: {exc}") from exc
             if evidence.get("candidate_digest") != request.candidate_digest:

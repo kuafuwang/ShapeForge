@@ -360,8 +360,13 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   begin/complete 时都以 `request_digest_missing` 拒绝，已记录值与服务端重算不一致则以
   `request_digest_mismatch` 在 Submit 前拒绝。outbox 在 complete 与 replay 共用的校验里按
   NPU dialect 重算 wire receipt（剔除宿主附加的 signature/measurement 元字段），所以
-  retained result 的 `receipt_id`/规范字段被改写时 replay 直接拒绝。旧 Metal 的 host
-  digest 与 wire digest 本来就是两个函数，旧路径继续用 host digest，不受影响。
+  retained result 的 `receipt_id`/规范字段被改写时 replay 直接拒绝。
+- retained envelope 必须可认证：NPU outbox 强制要求 host 结果签名 key（缺失则构造
+  `ValueError`），complete 与 replay 都要求 `result.signature` 并用该 key 做 HMAC 验证，
+  覆盖 report/provenance/evidence/receipt 全字段。因此“伪造 attempt/fence 后用公开算法
+  重算合法 `receipt_id`”“把 evidence 提成 measured/可发布”“改写 report 或 provenance”
+  以及换 key/撤销 key 后重放都被拒；无 key 的 outbox 不再能保留 NPU 结果。旧 Metal 的
+  host digest 与可选签名语义不受影响。
 - 设备组绑定：`device_group_id/vendor_id/profile_digest/topology_digest/resource_generation`
   进入 capability（target.device_groups + provenance）、request digest、receipt、provenance
   与 Retry（Retry capability 的 device group 必须与 job 记录一致，串组即
@@ -379,8 +384,12 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   quarantine、不提交结果、也不宣告 cancelled/interrupted（Cancel RPC 自身有界返回）。
 - 超时与诊断证据：candidate deadline 仍产出 `status=timeout` 的 completed 报告，但 NPU 证据
   新增 `complete` 字段。`complete=false` 必须未同步、零 device 时间、零 launch、时钟域为
-  `unobserved`、不可发布；`status=ok` 必须 `complete=true`，`status=timeout` 不得
-  `complete=true`。Host API 时间与 device event 时间继续分开，绝不把 host 等待写成
+  `unobserved`、不可发布；`complete=true` 必须已同步、至少一次 launch、正 device 耗时且
+  时钟域已观测；`status=ok` 必须 `complete=true`，`status=timeout` 不得 `complete=true`。
+  `status=ok` 的报告还要满足 `candidate_us ≈ device_elapsed_ns/1000`（容差 1µs 级），
+  由 `contracts.npu_report_timing_check` 在 store（worker result 与已存 envelope）、host
+  client 与 outbox replay 三处执行，所以“candidate_us=50000 而 device_elapsed_ns=1000”
+  这种自相矛盾结果会被拒。Host API 时间与 device event 时间继续分开，绝不把 host 等待写成
   device elapsed。
 - driver 边界：`tcenv/remote/drivers/base.py` 只有 typed 协议与数据类（`VendorFacts`、
   `PreparedAttempt`、`VendorOutcome`、`CleanupProof`、`HealthProof`）；无 shell、路径、BDF、
@@ -400,8 +409,9 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   controller 发取消。Host API 时间与 device event 时间分开记录，`candidate_us` 取自
   device event。
 - 验证证据（每条命令各自单独跑）：
-  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **39 passed**
-  （含 v3→v4 迁移/备份恢复、wire receipt 篡改、hanging cancel/reconcile 回归）；
+  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **43 passed**
+  （含 v3→v4 迁移/备份恢复、wire receipt 与 host HMAC 篡改、时钟/候选时间自相矛盾、
+  hanging cancel/reconcile 回归）；
   `test_remote_grpc_{adapter,tls,contract,revocation}.py` 与
   `test_remote_{conformance,go_conformance}.py` 六个旧文件 **62 passed**；
   `test_orchestrator_runtime.py` **18 passed**（含 NPU host 接线回归）；
@@ -409,7 +419,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   container_supervisor,runtime}.py` + `test_evaluation_outbox.py` **265 passed, 1 skipped**
   （跳过项是 Linux-only 的 `PF_KTHREAD` 检查）；`test_selfcheck_bridge.py` 在本机围栏里
   **18 failed, 1 passed**（全部是短 TMPDIR 导致的 AF_UNIX 路径超长，非围栏环境应全通过）。
-  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2238 passed / 6 skipped /
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2242 passed / 6 skipped /
   32 failed**。这批失败全部
   是本机 hmz 围栏环境造成：`test_selfcheck_bridge.py` 的 AF_UNIX 路径超长（短 TMPDIR），
   `ps` 被禁（`test_children`、`test_run_detached`、`test_triton_baseline`）与 HOME 权威

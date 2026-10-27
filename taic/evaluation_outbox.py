@@ -23,6 +23,7 @@ from tcenv.remote.contracts import (
     NPU_TIMING_EVIDENCE_SCHEMA_ID,
     ContractError,
     device_group_document,
+    npu_report_timing_check,
     npu_timing_evidence_document,
     receipt_document,
 )
@@ -102,6 +103,10 @@ class EvaluationOutbox:
             or self.evidence_contract_id != NPU_SOURCE_EVIDENCE_CONTRACT_ID
         ):
             raise ValueError("outbox NPU contract requires both NPU API and evidence contract ids")
+        if self.npu_contract and self.signature_key is None:
+            # A complete receipt id is not an authenticator: without the host
+            # HMAC a rewritten attempt/fence/report/evidence would still replay.
+            raise ValueError("the NPU outbox requires the host result signature key")
         self.document_version = 2 if self.npu_contract else 1
         # The status read by the last begin(); resume uses it to decide whether
         # an interrupted durable job may be resumed through an explicit Retry.
@@ -218,6 +223,10 @@ class EvaluationOutbox:
                 raise EvaluationUnavailable("evidence_mismatch", "outbox NPU evidence CandidateDigest differs from receipt")
             if evidence.get("device_group") != receipt_group:
                 raise EvaluationUnavailable("evidence_mismatch", "outbox NPU device group binding differs")
+            if not isinstance(result.signature, str) or not result.signature:
+                raise EvaluationUnavailable(
+                    "signature_missing", "outbox NPU result requires the host envelope signature",
+                )
             report = result.report if isinstance(result.report, dict) else {}
             try:
                 npu_timing_evidence_document(
@@ -226,6 +235,7 @@ class EvaluationOutbox:
                     device_group=receipt_group,
                     report_status=report.get("status"),
                 )
+                npu_report_timing_check(evidence, report)
             except ContractError as exc:
                 raise EvaluationUnavailable(
                     "evidence_mismatch", f"outbox NPU timing evidence is invalid: {exc}",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -12,14 +13,19 @@ import pytest
 
 from tcenv.evaluation import EvaluationRequest, EvaluationUnavailable
 from tcenv.remote import contracts
+from tcenv.remote.job_types import JobError
 from tests.support.job_engine import (
     NPU_TARGET,
     NPU_TASK_FINGERPRINT,
     NPU_TOKEN,
+    npu_engine,
     npu_get,
     npu_request,
+    npu_submit,
 )
+from tests.support.vendor_sim.vendor_a import FakeVendorAController
 from tests.support.vendor_sim.harness import (
+    NPU_HOST_SIGNATURE_KEY,
     NPU_SIGNING_KEY_ID,
     NpuGrpcHarness,
 )
@@ -38,9 +44,10 @@ def _legacy_request(request_id: str = "npu-outbox-1", *, source: bytes = SOURCE)
     )
 
 
-def _npu_outbox(root: Path) -> EvaluationOutbox:
+def _npu_outbox(root: Path, *, signature_key: bytes | None = None) -> EvaluationOutbox:
     return EvaluationOutbox(
         root,
+        signature_key=NPU_HOST_SIGNATURE_KEY if signature_key is None else signature_key,
         transport="grpc",
         api_contract_id=contracts.NPU_SOURCE_API_CONTRACT_ID,
         evidence_contract_id=contracts.NPU_SOURCE_EVIDENCE_CONTRACT_ID,
@@ -436,3 +443,164 @@ def test_npu_outbox_rejects_a_rewritten_wire_receipt_on_replay(tmp_path):
 
         result_path.write_text(json.dumps(original), encoding="utf-8")
         assert _npu_outbox(root).begin(request, epoch=harness.factory.epoch) is not None
+
+
+def test_npu_outbox_requires_a_host_signature_key(tmp_path):
+    """@brief NPU outbox 没有宿主 HMAC key 就构造失败，不能靠 receipt_id 当认证。"""
+    with pytest.raises(ValueError, match="host result signature key"):
+        EvaluationOutbox(
+            tmp_path / "unsigned",
+            transport="grpc",
+            api_contract_id=contracts.NPU_SOURCE_API_CONTRACT_ID,
+            evidence_contract_id=contracts.NPU_SOURCE_EVIDENCE_CONTRACT_ID,
+        )
+
+
+def test_npu_replay_rejects_a_forged_but_self_consistent_envelope(tmp_path):
+    """@brief 合法重算 receipt_id 的伪造 attempt/fence、report、evidence、provenance 都必须被拒。"""
+    root = tmp_path / "run"
+    with NpuGrpcHarness(tmp_path) as harness:
+        outbox = _npu_outbox(root)
+        request = bind_wire_digest(_legacy_request("npu-forge-1"), harness.factory, outbox)
+        assert outbox.begin(request, epoch=harness.factory.epoch) is None
+        result = harness.factory.formal(request)
+        outbox.complete(request, result)
+
+        result_path = outbox._result_path(request.request_id)
+        original = json.loads(result_path.read_text(encoding="utf-8"))
+        assert _npu_outbox(root).begin(request, epoch=harness.factory.epoch) is not None
+
+        def replay(payload):
+            result_path.write_text(json.dumps(payload), encoding="utf-8")
+            try:
+                return _npu_outbox(root).begin(request, epoch=harness.factory.epoch)
+            finally:
+                result_path.write_text(json.dumps(original), encoding="utf-8")
+
+        # 1. Forge the attempt/fence, then recompute a *valid* receipt id from the
+        #    forged fields.  Only the host HMAC can tell this envelope apart.
+        forged = copy.deepcopy(original)
+        forged["receipt"]["attempt_id"] = "attempt-forged"
+        forged["receipt"]["lease_fence"] = "999"
+        forged["receipt"]["receipt_id"] = contracts.attempt_receipt_id(
+            request_id=forged["receipt"]["request_id"],
+            attempt_id="attempt-forged", request_digest=forged["receipt"]["request_digest"],
+            candidate_digest=forged["receipt"]["candidate_digest"],
+            device_group=forged["receipt"]["device_group"],
+            dialect=contracts.NPU_SOURCE_DIALECT,
+        )
+        wire_fields = (
+            "receipt_id", "request_id", "attempt_id", "request_digest", "candidate_digest",
+            "device_group", "lease_fence", "session_sequence", "issued_at",
+        )
+        contracts.receipt_document(
+            {key: forged["receipt"][key] for key in wire_fields},
+            dialect=contracts.NPU_SOURCE_DIALECT,
+        )
+        with pytest.raises(EvaluationUnavailable, match="signature"):
+            replay(forged)
+
+        # 2. Rewrite a signed report field that the timing rule does not cover:
+        #    only the host HMAC can reject it.
+        faster = copy.deepcopy(original)
+        faster["report"]["speedup"] = 9.9
+        with pytest.raises(EvaluationUnavailable, match="signature"):
+            replay(faster)
+
+        # 3. Promote the evidence to publishable/measured after the fact.
+        promoted = copy.deepcopy(original)
+        promoted["evidence"]["measurement_kind"] = "measured"
+        promoted["evidence"]["publication_allowed"] = True
+        with pytest.raises(EvaluationUnavailable, match="signature"):
+            replay(promoted)
+
+        # 4. Rewrite the provenance identity.
+        provenance = copy.deepcopy(original)
+        provenance["provenance"]["site_id"] = "another-site"
+        with pytest.raises(EvaluationUnavailable, match="signature"):
+            replay(provenance)
+
+        # 5. A different (rotated or revoked) host key cannot authenticate the
+        #    retained envelope either.
+        result_path.write_text(json.dumps(original), encoding="utf-8")
+        with pytest.raises(EvaluationUnavailable, match="signature"):
+            _npu_outbox(root, signature_key=b"other-host-envelope-key-32-bytes!").begin(
+                request, epoch=harness.factory.epoch,
+            )
+
+
+def test_npu_completed_evidence_requires_an_observed_clock_and_device_time(tmp_path):
+    """@brief complete/ok 不能同时声明未观测时钟或零设备耗时。"""
+    request = npu_request("npu-clock-1", source=SOURCE)
+    evidence = {
+        "schema_id": contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID,
+        "candidate_digest": request.candidate_digest,
+        "device_group": request.npu.execution.device_group.to_dict(),
+        "timing": {
+            "source": "DEVICE_EVENT",
+            "clock_domain": contracts.NPU_UNOBSERVED_CLOCK_DOMAIN,
+            "synchronization_completed": True,
+            "device_elapsed_ns": 1_000,
+            "host_api_elapsed_ns": 2_000,
+            "launches": 1,
+        },
+        "measurement_kind": "simulated",
+        "publication_allowed": False,
+        "complete": True,
+    }
+    with pytest.raises(contracts.ContractError, match="observed clock domain"):
+        contracts.npu_timing_evidence_document(evidence, report_status="ok")
+
+    zero_time = copy.deepcopy(evidence)
+    zero_time["timing"].update({
+        "clock_domain": "vendor-a-device-event-clock-v1", "device_elapsed_ns": 0,
+    })
+    with pytest.raises(contracts.ContractError, match="positive device elapsed"):
+        contracts.npu_timing_evidence_document(zero_time, report_status="ok")
+
+    # A diagnostic row may keep the unobserved clock, but it cannot be "complete".
+    evidence["complete"] = False
+    evidence["timing"].update({
+        "synchronization_completed": False, "launches": 0, "device_elapsed_ns": 0,
+    })
+    contracts.npu_timing_evidence_document(evidence, report_status="timeout")
+
+
+def test_npu_ok_report_candidate_time_must_come_from_the_device_event(tmp_path):
+    """@brief ok 报告的 candidate_us 必须来自 device event，不能写成 host 时间。"""
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    controller = FakeVendorAController(ledger_path)
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=controller,
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-timing-bind-1", source=SOURCE)
+        npu_submit(engine, request)
+        deadline = time.monotonic() + 10
+        snapshot = npu_get(engine, request)
+        while snapshot.state != "completed" and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = npu_get(engine, request)
+        assert snapshot.state == "completed"
+        evidence = snapshot.result.evidence_json()
+        assert evidence["complete"] is True
+        report = snapshot.result.report_json()
+        assert report["status"] == "ok"
+        assert report["candidate_us"] == evidence["timing"]["device_elapsed_ns"] / 1000.0
+
+        # A report whose candidate time is a host wall time is rejected by the
+        # store, and the device time is not silently preferred instead.
+        forged = dict(report)
+        forged["candidate_us"] = 50_000.0
+        with pytest.raises(JobError, match="device-event elapsed time"):
+            engine.store.validate_worker_result(
+                request=request, report=forged, evidence=evidence,
+                provenance=snapshot.result.provenance,
+            )
+        # The host-side replay check applies the same rule.
+        with pytest.raises(contracts.ContractError, match="device-event elapsed time"):
+            contracts.npu_report_timing_check(evidence, forged)
+    finally:
+        engine.close(wait=5)

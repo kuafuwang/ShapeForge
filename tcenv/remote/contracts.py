@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -861,6 +862,40 @@ _NPU_EVIDENCE_FIELDS = frozenset({
 })
 
 
+#: One microsecond of tolerance when matching a report's `candidate_us` against
+#: the device-event elapsed time (a driver may round the reported microseconds).
+NPU_CANDIDATE_US_TOLERANCE = 1e-3
+
+
+def npu_report_timing_check(evidence: Mapping[str, Any], report: Mapping[str, Any]) -> None:
+    """Require an ``ok`` NPU report's candidate time to be the device event time.
+
+    Host launch time is recorded separately, so a report that claims ``ok`` must
+    carry the device-event elapsed time as its candidate time.  Diagnostic rows
+    (timeout, compile error, ...) are not constrained here; their evidence is
+    validated by :func:`npu_timing_evidence_document`.
+    """
+
+    if not isinstance(report, Mapping) or report.get("status") != "ok":
+        return
+    timing = evidence.get("timing") if isinstance(evidence, Mapping) else None
+    if not isinstance(timing, Mapping):
+        raise ContractError("an ok report requires timing evidence")
+    device_elapsed = timing.get("device_elapsed_ns")
+    if isinstance(device_elapsed, bool) or not isinstance(device_elapsed, int) or device_elapsed <= 0:
+        raise ContractError("an ok report requires a positive device-event elapsed time")
+    candidate_us = report.get("candidate_us")
+    if isinstance(candidate_us, bool) or not isinstance(candidate_us, (int, float)):
+        raise ContractError("an ok report requires a numeric candidate_us")
+    if not math.isfinite(float(candidate_us)):
+        raise ContractError("an ok report requires a finite candidate_us")
+    if abs(float(candidate_us) - device_elapsed / 1000.0) > NPU_CANDIDATE_US_TOLERANCE:
+        raise ContractError(
+            "report candidate_us does not come from the device-event elapsed time "
+            f"({candidate_us} us vs {device_elapsed} ns)"
+        )
+
+
 def npu_timing_evidence_document(
     value: Any, *, source_bytes: bytes | bytearray | memoryview | None = None,
     device_group: Mapping[str, Any] | None = None,
@@ -915,6 +950,10 @@ def npu_timing_evidence_document(
             raise ContractError("timing evidence requires completed synchronization")
         if launches < 1:
             raise ContractError("completed timing evidence requires at least one launch")
+        if device_elapsed <= 0:
+            raise ContractError("completed timing evidence requires a positive device elapsed time")
+        if clock_domain == NPU_UNOBSERVED_CLOCK_DOMAIN:
+            raise ContractError("completed timing evidence requires an observed clock domain")
     else:
         # No device event was observed: the row may only be diagnostic.
         if synchronized:

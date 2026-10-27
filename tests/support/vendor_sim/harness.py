@@ -18,6 +18,10 @@ from tests.support.vendor_sim.vendor_a import FakeVendorAController
 
 NPU_SIGNING_KEY = b"n" * 32
 NPU_SIGNING_KEY_ID = "sim-npu-site/key-1"
+#: Host-side HMAC over the retained result envelope.  The NPU contract refuses
+#: an outbox without it, so a retained envelope can never be replayed without
+#: authenticating every field (report, evidence, provenance, receipt).
+NPU_HOST_SIGNATURE_KEY = b"host-envelope-key-32-bytes-long!!"
 
 
 class NpuGrpcHarness:
@@ -65,7 +69,7 @@ class NpuGrpcHarness:
             evidence_contract_ids=(contracts.NPU_SOURCE_EVIDENCE_CONTRACT_ID,),
             required_features=required_features,
             keyring=SignatureKeyring(keyring),
-            legacy_signature_key=None,
+            legacy_signature_key=NPU_HOST_SIGNATURE_KEY,
             allow_insecure=True,
             watch_slice_s=1.0,
             job_margin_s=6.0,

@@ -1003,6 +1003,7 @@ class GrpcEvaluator:
                     publication_allowed=provenance["publication_allowed"],
                     report_status=report.get("status") if isinstance(report, dict) else None,
                 )
+                contracts.npu_report_timing_check(evidence, report)
             except contracts.ContractError as exc:
                 raise EvaluationUnavailable("result_invalid", f"NPU timing evidence is invalid: {exc}") from exc
             if evidence.get("candidate_digest") != receipt["candidate_digest"]:
