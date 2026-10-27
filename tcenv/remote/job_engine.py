@@ -590,6 +590,13 @@ class JobEngine:
             raise JobError("failed_precondition", "device controller returned an untyped health proof")
         if not health.ok:
             raise JobError("failed_precondition", f"device known-good probe failed: {health.detail}"[:500])
+        if not health.executed_known_good:
+            # "ok" without running the known-good probe proves nothing; the
+            # group must not be advertised as available.
+            raise JobError(
+                "failed_precondition",
+                "device health check did not execute the known-good probe",
+            )
         self._check_device_binding(
             {"device_group_id": health.device_group_id, "resource_generation": health.resource_generation},
             where="device health proof", keys=("device_group_id", "resource_generation"),
@@ -1269,6 +1276,14 @@ class JobEngine:
         if not proof.complete:
             live = ",".join(proof.live_resources) or "unknown"
             return f"device cleanup was not proven; live resources: {live}; {proof.detail}"[:1000]
+        if proof.live_resources:
+            # A "complete" proof that still names live resources contradicts
+            # itself; treat it as an unproven cleanup, never as success.
+            live = ",".join(sorted(proof.live_resources))
+            return (
+                f"device cleanup claimed complete but still reports live resources: {live}; "
+                f"{proof.detail}"
+            )[:1000]
         return ""
 
     def _record_device_cleanup_failure(self, request_id: str, attempt: Attempt, error: str) -> None:

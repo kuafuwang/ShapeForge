@@ -915,3 +915,129 @@ def test_a_rejected_grant_never_touches_the_device(tmp_path, case):
         assert engine.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
     finally:
         engine.close(wait=5)
+
+
+# -- a contradictory cleanup proof and an unexecuted known-good probe ------
+class _LyingCleanupController(FakeVendorAController):
+    """Claims `complete=True` while still naming a live matching resource."""
+
+    def reconcile(self, attempt_id, lease_fence):
+        proof = super().reconcile(attempt_id, lease_fence)
+        return replace(proof, complete=True, live_resources=("module",))
+
+
+def test_a_complete_proof_that_still_names_live_resources_is_quarantined(tmp_path):
+    """@brief complete=True 但仍有 live resource 的 proof 不得提交结果。"""
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path,
+        controller=_LyingCleanupController(ledger_path),
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-lying-proof-1", source=SOURCE)
+        npu_submit(engine, request)
+        deadline = time.monotonic() + 10
+        snapshot = npu_get(engine, request)
+        while not snapshot.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = npu_get(engine, request)
+        assert snapshot.quarantined is True
+        assert snapshot.result is None
+        assert "live resources" in snapshot.recovery_error
+        assert engine.close_error is not None
+        # Retry stays refused while the cleanup claim contradicts the ledger.
+        with pytest.raises(JobError) as excinfo:
+            npu_retry(engine, request, snapshot.current_attempt.attempt_id)
+        assert excinfo.value.code == "failed_precondition"
+    finally:
+        engine.close(wait=5)
+
+
+def test_a_contradictory_cleanup_proof_cannot_finish_a_cancellation(tmp_path):
+    """@brief Cancel 共用路径同样不接受自相矛盾的清理证明。"""
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path,
+        controller=_LyingCleanupController(ledger_path),
+        worker_env={"TCENV_VENDOR_A_SLOW": "1"},
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-lying-cancel-1", source=SOURCE)
+        npu_submit(engine, request)
+        ledger = VendorLedger(ledger_path)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not ledger.live_resources():
+            time.sleep(0.02)
+        engine.cancel(
+            request_id=request.request_id, request_digest=request.request_digest,
+            expected=engine.expected_identities, grant_token=NPU_TOKEN,
+            reason="contradictory proof",
+        )
+        deadline = time.monotonic() + 10
+        final = npu_get(engine, request)
+        while not final.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            final = npu_get(engine, request)
+        assert final.quarantined is True
+        assert final.state != "cancelled"
+        assert final.result is None
+        assert "live resources" in final.recovery_error
+    finally:
+        engine.close(wait=5)
+
+
+def test_a_contradictory_cleanup_proof_cannot_become_retryable(tmp_path):
+    """@brief kill/timeout 后的 interrupted+Retry 路径也不接受矛盾 proof。"""
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path,
+        controller=_LyingCleanupController(ledger_path),
+        worker_env={"TCENV_VENDOR_A_ABORT_AFTER_LAUNCH": "1"},
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-lying-retry-1", source=SOURCE)
+        npu_submit(engine, request)
+        deadline = time.monotonic() + 10
+        snapshot = npu_get(engine, request)
+        while not snapshot.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = npu_get(engine, request)
+        assert snapshot.quarantined is True
+        assert snapshot.state == "running"
+        assert "live resources" in snapshot.recovery_error
+        with pytest.raises(JobError) as excinfo:
+            npu_retry(engine, request, snapshot.current_attempt.attempt_id)
+        assert excinfo.value.code == "failed_precondition"
+    finally:
+        engine.close(wait=5)
+
+
+def test_a_health_proof_without_the_known_good_probe_fails_capabilities(tmp_path):
+    """@brief ok=True 但未执行 known-good 探针不能广告 available。"""
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+
+    class _UnverifiedHealth(FakeVendorAController):
+        def health_check(self, profile):
+            proof = super().health_check(profile)
+            return replace(proof, ok=True, executed_known_good=False)
+
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=_UnverifiedHealth(ledger_path),
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        with pytest.raises(JobError) as excinfo:
+            npu_capabilities(engine)
+        assert excinfo.value.code == "failed_precondition"
+        assert "known-good" in str(excinfo.value)
+        assert engine.store._conn.execute("SELECT COUNT(*) FROM capabilities").fetchone()[0] == 0
+        assert engine.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+    finally:
+        engine.close(wait=5)

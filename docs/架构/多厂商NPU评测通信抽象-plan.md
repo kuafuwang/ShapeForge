@@ -391,7 +391,8 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   未通过时直接返回 `unauthenticated`/`permission_denied` 且完全不触发设备操作；随后才用
   worker 外 controller 做有界
   `probe`/`health_check`/`capabilities`（`device_call_timeout_s`，默认 2s），逐项核对
-  vendor/profile/topology/resource generation 与 P0 执行形状；探测失败、超时、不健康或
+  vendor/profile/topology/resource generation 与 P0 执行形状；探测失败、超时、不健康
+  （含 `ok=True` 但没有真正执行 known-good 探针的 `executed_known_good=False`）或
   绑定不一致都 `failed_precondition`，且在消耗 nonce、写入 capability 之前失败。NPU 组合根
   缺 controller 属于装配错误（构造即 `ValueError`），运行期 controller 消失同样只能
   quarantine。`cancel`/`reconcile` 复用同一有界机制：超时按基础设施失败处理，job 保持
@@ -427,17 +428,21 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   它们列为 live resources 供 quarantine。运行状态同样属于租约：`mark_device_running` 记录当时
   的完整绑定，只有匹配绑定的 driver `close` 或 controller `reconcile` 才能清除它，且清除后
   必须复核为空才可返回 `complete=True`；仍有 marker（或只剩 marker）时 proof 一律
-  `complete=False`，异组/异代际的 marker 原样保留。
+  `complete=False`，异组/异代际的 marker 原样保留。成功 proof 还必须是
+  `complete=True` 且 `live_resources` 为空：自相矛盾（声称完成却仍列 live resource）的
+  proof 按基础设施清理失败处理，结果不提交、Cancel 不终结、Retry 被拒。
 - 终态 request_id：`request_id` 不属于 canonical digest，因此
   `npu_stored_request_document` 单独校验其标识符形状，`_validate_result_envelope` 与
   `_validate_durable_state` 都把它与 `jobs.request_id` 比对；篡改后直接读与重开都
   fail closed。
 - 验证证据（每条命令各自单独跑）：
-  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **66 passed**
+  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **70 passed**
   （wire receipt 与 host HMAC 篡改、时钟/候选时间自相矛盾、hanging cancel/reconcile、
   终态 request_id/task/execution/provenance/attempt 绑定篡改、Submit 跨 generation
   capability、fake vendor 的代际 prepare/台账、运行 marker 与异组/异代际
-  reconcile 拒绝并保留对方 running 证据、无效/过期/撤销 grant 下零设备调用）；
+  reconcile 拒绝并保留对方 running 证据、无效/过期/撤销 grant 下零设备调用、
+  自相矛盾 proof（complete=True 且有 live resource）在提交/Cancel/Retry 三路 quarantine、
+  未执行 known-good 探针的健康证明不广告 available）；
   `test_remote_grpc_{adapter,tls,contract,revocation}.py` 与
   `test_remote_{conformance,go_conformance}.py` 六个旧文件 **62 passed**；
   `test_orchestrator_runtime.py` **18 passed**（含 NPU host 接线回归）；
@@ -447,7 +452,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `test_remote_job_recovery.py`，`_validate_durable_state` 的终态读校验同文件覆盖）；
   `test_selfcheck_bridge.py` 在本机围栏默认 TMPDIR 下 **18 failed, 1 passed**（全部是
   短 TMPDIR 导致的 AF_UNIX 路径超长），`TMPDIR=/tmp` 下 **19 passed**。
-  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2265 passed / 6 skipped /
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2269 passed / 6 skipped /
   32 failed**。这批失败全部
   是本机 hmz 围栏环境造成：`test_selfcheck_bridge.py` 的 AF_UNIX 路径超长（短 TMPDIR），
   `ps` 被禁（`test_children`、`test_run_detached`、`test_triton_baseline`）与 HOME 权威
