@@ -43,6 +43,16 @@ Intercept、HLD Phase 3 双 buffer、HLD Phase 4 memory 生命周期）；`lld-t
 但不是本项目在目标设备/版本上的验收；只有对应能力交付、核验并进入 `TimingEvidence` 后
 才能使用。
 
+### 1.1 清微 Docker 的真正边界
+
+清微 Docker 是**客户软件环境、依赖与操作界面的隔离**，不是硬件隔离。每个客户可以有自己的
+Linux 镜像、runtime、配置和文件视图，并通过设备映射、共享文件、IPC/共享内存等机制与
+host 交互；最终操作驱动和物理 NPU 的仍是 host 上的运行时与设备。客户既可在 host 上操作，
+也可在自己的 Docker 内操作，但共享同一个 host kernel 与物理设备。
+
+因此“每客户一个 Docker”不等于每客户一张 NPU，也不构成独立 lease 或强安全边界。客户环境
+可以隔离，设备组、discovery、健康检查、reset 和资源清理仍必须按 host/设备组统一管理。
+
 另外两条必须正面处理，而不能照抄进生产：
 
 - 多机部署资料出现“免密 root 登录其他机器”和物理机 root discovery 的要求。它们只能进入
@@ -396,7 +406,9 @@ DeviceController:
 worker profile 的取舍：
 
 1. **容器设备映射（优先）**：复用现有容器执行面，按 profile 映射必要设备节点、只读系统
-   视图与网络策略。
+   视图与网络策略。对清微而言，这首先表示每客户一套软件环境，不是设备隔离；host 与容器
+   入口都映射到同一个 host 设备组，DeviceController/lease 在 host 侧统一，删容器只结束
+   worker，不能当作设备资源或共享状态的清理证明。
 2. **受信 host runtime**：仅当厂商明确不支持容器时另做生产级 supervisor；当前 process
    supervisor 是本地开发路径，不能直接宣称满足 NPU 生产隔离。
 3. **厂商专用受信 RPC**：若设备只提供远程服务，新增的是共享受信设备控制适配层的内部
@@ -413,7 +425,7 @@ worker profile 的取舍：
 | graph/model/BPM | 映射到 `GRAPH_DEFINITION`/`MODEL_DEFINITION` role 与 `GRAPH`/`MODEL` typed launch；`txLoadGraph` 的 case 目录由 driver 从已校验 bundle 在 attempt 作用域内物化，agent 不提供路径；BPM 使用公共 `PARAMETER_TABLE`，不增加任意路径字段 |
 | stream/event | 基础同步与 `DEVICE_EVENT` 计时；stream 创建/同步/销毁纳入 cleanup 证明 |
 | raPTI/profiler | `PROFILER_DISPATCH` 计时适配，保留 launch correlation id、per-die 与全 die 汇总、flush/完整性；Host EXIT 不当设备时间 |
-| `/dev/accel*` 与 host-hal | 受信 profile 精确映射所需节点；默认非特权。厂商非特权 recipe 仍带 `--network=host` 与 `/tmp`、`/sys`、`/lib/modules` 挂载，host network 与这些宿主挂载都是显式例外，逐项最小化、只读优先并单独验收 |
+| `/dev/accel*` 与 host-hal | 每客户 Docker 提供独立软件环境/文件视图，通过设备映射、共享文件/IPC 与 host 交互；最终由 host runtime/driver 操作设备，不是每客户独立 NPU。受信 profile 精确映射所需节点；默认非特权。`--network=host`、`/tmp`、`/sys`、`/lib/modules` 都是显式例外，逐项最小化、只读优先并单独验收 |
 | SMI/TxIPC | probe/topology/health；health 失败先隔离设备组。`tsm_smi --reset` 只支持全设备、需先结束占用，不能按 job/单卡 reset；按整机影响评估并限权，不在每个 job 默认执行 |
 | discovery/C2C/MPI | 仅在站点 provisioning、能力发布前和故障恢复时由受信运维路径处理；发现失败即 capabilities 不可用/quarantine，不进入候选执行 |
 | user/mesh/soft/slot id | 持久映射并记录证据；soft id 不单独作为稳定身份，serial/UUID 缺失列为发布阻塞问题 |
@@ -426,6 +438,9 @@ worker profile 的取舍：
 - 容器默认非特权、只读 rootfs、无 host HOME/凭据、最小设备映射。厂商 host-hal 或多机组网
   所需的 host network、`/tmp`、`/sys`、`/lib/modules` 等宿主挂载是显式例外，逐项最小化、
   只读优先并单独验收，不能扩展成任意 egress 或通用宿主路径。
+- 每客户 Docker 只隔离其软件环境。设备组 lease 必须跨该 host 上所有客户容器与 host 入口
+  统一判定；一个客户的容器删除不能释放其他客户的 lease，reset 也必须评估对所有客户及
+  in-flight attempt 的影响，不能写成容器级 reset。
 - 站点 provisioning 与每次 attempt 分开：root discovery、固件升级、fabric 配置不进 job；
   这些状态未验证时 GetCapabilities 必须失败或标为不可用。
 - `simulated=true` 永不可发布。真实结果还需 measured、正确设备侧计时、完整证据、签名、
@@ -942,7 +957,9 @@ evidence 映射），只把 SDK 调用与设备状态换成 sim；其上的 `Ven
   stream/event/IPC）、`smi/`（probe/health/topology/reset/discovery）、`profiler/`（Host 与
   Device span、correlation、双 buffer、flush）、`ledger/`（attempt 资源账本）、`faults/`、
   `clock.py`（虚拟时钟）、`known_good/`（module 字节 + manifest + digest）、`facade.py`
-  （对 driver 暴露的 typed 协议）。
+  （对 driver 暴露的 typed 协议）。另设 `host/`（共享 runtime/设备组状态、lease 与 reset）
+  和 `customers/`（A/B 两套独立 Docker 软件环境、镜像/文件视图与入口）；两个客户入口和
+  host 入口必须映射到同一份 host 设备状态，不得在 sim 里虚拟成三张独立 NPU。
 - 注入点只能是测试 composition root：复用 P0/P1 的 test-only entry 骨架与
   `tests/support/npu_sim/`、`tests/support/remote_pki.py`、`tests/support/remotegrpc/`；生产
   组合根不得 import `tests.support.tsm_sim`，由 import/结构检查断言，而不是靠约定。
@@ -969,6 +986,11 @@ evidence 映射），只把 SDK 调用与设备状态换成 sim；其上的 `Ven
    topology digest，供 `capabilities` 判定可用性。
 7. worker 已死、设备仍 running：sim 保留设备侧状态；`DeviceController.reconcile` 必须按
    attempt/fence 核对并给出 `CleanupProof`；不能证明就 quarantine，不能报告自动清理成功。
+8. 客户环境/host：A/B 各自 Docker 有独立镜像、runtime 配置和文件视图，但 host 设备组、
+   driver/firmware 与 lease 共享；host 与 Docker 两种入口都能看到同一设备时间线。A 的容器
+   删除只结束 A 的 worker，host 资源与 B 的运行状态不被误删；B 不能在 A 持有排他 lease 时
+   启动另一路正式计时。reset 对 A/B 与 host 入口的所有 in-flight attempt 生效，不能伪装成
+   单容器 reset。
 
 **故障注入**
 
@@ -990,6 +1012,8 @@ evidence 映射），只把 SDK 调用与设备状态换成 sim；其上的 `Ven
 | flush 记录未完整交付 | flush 已触发、记录投递 | flush 调用已记录，但交付记录少于已写记录 | 证据不完整，只作诊断，不发布 |
 | 健康探针失败 | known-good module 在健康设备上失败 | 探针确实被执行 | 设备组 quarantine，暂停接新 job |
 | reset 的全设备影响 | 运行中 reset | 占用检查与 generation++ 均被记录 | 有占用时拒绝 reset；reset 后 in-flight 结果作废，无单卡/单 job 语义 |
+| 客户 A 容器消失、B 仍在运行 | A 有未完成 host 资源，B 有独立 attempt | A 的容器已删除，A 的 host 资源仍 live，B 的设备时间线未改变 | 只 reconcile A 的资源；不得误删 B 或宣称整组清理完成 |
+| 两客户争用同一 host 设备组 | A 持排他计时 lease，B 从自己的 Docker 提交 | B 确实使用不同客户环境，但 host group 相同 | B 排队/按公平策略执行，不能并行取得同一计时 lease |
 
 worker SIGKILL 的 execute 一例必须先证明设备仍在执行：kill 前已有 `launch_started`，kill 后、
 reconcile 前仍读到 `device_running` 与未释放资源；prepare/close 阶段另各一例，只要求 pid 消失
@@ -1012,7 +1036,9 @@ reconcile 必须成功，`CleanupProof` 完整且台账清零；归属或证明�
   BDF/rank 或任意 vendor 参数；三层断言：schema 拒绝、策略在 create/start 前拒绝、sim
   台账中这类调用为零。
 - 不能借 simulator 放行 privileged、host 凭据或 host HOME；测试 composition root 不放松
-  容器策略，sim 拒绝来自 env 的提权开关。
+  容器策略，sim 拒绝来自 env 的提权开关。客户 B 默认也看不到客户 A 的私有文件、attempt
+  目录或凭据，只有 profile 明确允许的 host 共享路径/IPC 才能访问；“同组设备可共享”不能被
+  解释成“客户文件可互读”。
 - sim 接口只接受 typed 值：越界路径、root 操作、未知 API 一律 typed 失败，不得默默成功。
 
 **可证伪性**
@@ -1031,7 +1057,8 @@ reconcile 必须成功，`CleanupProof` 完整且台账清零；归属或证明�
 
 - 真实 TX SDK/driver/firmware ABI、真实错误码取值与 AP 内部调度；
 - 容器 `/dev/accel_drv_mgr`、`/dev/accel/dev-*`、host-hal、`--network=host` 与 `/tmp`、
-  `/sys`、`/lib/modules` 挂载是否真的可用；
+  `/sys`、`/lib/modules` 挂载是否真的可用；每客户 Docker 的真实文件/IPC 共享机制、跨客户
+  隔离与 host 最终执行路径也不能由 sim 证明；
 - 物理机 root discovery、fabric_manager、真实 C2C 链路与 MPI 绑定；
 - `tsm_smi --reset` 的真实全设备影响、驱动卸载/重装与同站其他 job 误伤；
 - 真实设备内存/句柄是否真的释放（sim 只证明台账与调用序列自洽）；
@@ -1054,12 +1081,13 @@ reconcile 必须成功，`CleanupProof` 完整且台账清零；归属或证明�
 | G8 计时与证据 | event/profiler/rank-die；缺 span、丢缓冲、flush 不全三类注入分别判定 | P1 已有完整性判定 | 缺项只作诊断；`simulated=true` |
 | G9 安全负例 | tsm-shell/MPI/fabric/root/路径/BDF/rank/vendor 参数 | P0/P1 已有 shell/path/feature 负例 | 三层拒绝且台账零调用 |
 | G10 conformance 与回归 | Python/Go conformance、Metal/local | P1 已建立 | 旧 contract 与旧验证不变 |
+| G11 客户 Docker/host 共享 | A/B 独立软件环境、同一 host 设备组；host 与 Docker 两入口 | P2a 新增 | 同一设备时间线；排他 lease 互斥；删 A 容器不误删 B；reset 影响所有客户 |
 
 G7、G9 与 P0/P1 重叠的部分直接复用，不重复建设：P2a 只加设备侧资源、异步完成与证据部分。
 
 验收条件：
 
-1. G1–G9 离线通过，不需要 SDK、GPU/NPU 或真实 provider，可带 `-m 'not gpu and not llm'`；
+1. G1–G11 离线通过，不需要 SDK、GPU/NPU 或真实 provider，可带 `-m 'not gpu and not llm'`；
    虚拟时钟，无长 sleep 轮询，结果确定。
 2. 每条故障注入先证明触发再断言结果；变异表逐条能复现失败。
 3. 跑完 P2a 后 confirmed/catalog/brief 与基线一致，没有新增性能数字。
@@ -1080,6 +1108,8 @@ P2a 的模拟结果不构成本阶段证据：下面每一项仍须在真实设�
 先用厂商提供的 known-good executable module，不先假设 Triton 源码工具链已通：
 
 - provision 核验 driver/firmware/runtime、设备映射、拓扑与任务包；
+- 在 host 与每客户 Docker 两种入口分别执行 known-good 流程，确认它们指向同一 host 设备组；
+  两个客户环境争用排他计时 lease 时不能并行，删除一个客户容器不能误清另一个客户的资源；
 - GetCapabilities → Submit → Watch/GetJob；Cancel 与 Retry 分别覆盖显式取消与 interrupted
   attempt 的新 capability/fence 恢复；
 - load/launch/sync、超时/取消清理、旧 fence 拒绝、异常后 known-good 健康探针；
@@ -1130,9 +1160,9 @@ device/rank/die 证据，并验证租约互斥、C2C 故障、取消/恢复与 r
    与容差是什么？没有这份契约，只能先做 known-good module 通信试点。
 2. serial/UUID 等稳定硬件身份如何取得？user/mesh/soft/slot 的映射在重启、换卡、容器重建后
    如何复核？
-3. frontend/worker/DeviceController/host-hal 的实际部署边界是什么？`/dev/accel_drv_mgr` 与
-   dev-* 各自必要吗？host network、`/tmp`、`/sys`、`/lib/modules` 哪些只需只读，哪些确实
-   不需要？
+3. frontend/worker/DeviceController/host-hal 的实际部署边界是什么？每客户 Docker 与 host
+   共享哪些文件/IPC，最终由哪个 host 组件执行？`/dev/accel_drv_mgr` 与 dev-* 各自必要吗？
+   host network、`/tmp`、`/sys`、`/lib/modules` 哪些只需只读，哪些确实不需要？
 4. 物理机 root discovery 能否由设备方 provision 一次完成？组网变化如何通知 frontend？
    免密 root SSH 能否被最小权限的受管替代完全消除？
 5. reset 的真实作用域、已占用设备处理与 known-good 探针内容是什么？全卡 reset 如何防止
