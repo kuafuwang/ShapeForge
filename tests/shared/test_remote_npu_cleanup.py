@@ -910,7 +910,8 @@ def test_a_rejected_grant_never_touches_the_device(tmp_path, case):
         assert excinfo.value.code in {"unauthenticated", "permission_denied"}
         # No device operation happened and nothing durable was written.
         assert (controller.probe_calls, controller.health_calls) == (0, 0)
-        assert ledger.read()["probes"] == []
+        # No device write happened at all, so the ledger was never created.
+        assert not ledger.exists()
         assert engine.store._conn.execute("SELECT COUNT(*) FROM capabilities").fetchone()[0] == 0
         assert engine.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
     finally:
@@ -1109,3 +1110,238 @@ def test_the_controller_refuses_the_known_good_probe_while_running(tmp_path):
     healthy = controller.health_check({"device_group_id": profile["device_group_id"]})
     assert healthy.ok is True and healthy.executed_known_good is True
     assert len(ledger.read()["probes"]) == probes_before + 1
+
+
+# -- the whole probe sequence excludes a candidate start --------------------
+def test_a_gated_probe_blocks_the_candidate_start_until_it_finishes(tmp_path):
+    """@brief probe 序列持有设备组 lease：探测未完成时候选不得启动（无竞态）。"""
+    import threading
+
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    entered = threading.Event()
+    release = threading.Event()
+
+    class _Gated(FakeVendorAController):
+        gated = False
+
+        def health_check(self, profile):
+            if self.gated:
+                entered.set()
+                assert release.wait(10.0), "the health probe was never released"
+            return super().health_check(profile)
+
+    controller = _Gated(ledger_path)
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=controller,
+        worker_env={"TCENV_VENDOR_A_SLOW": "1"},
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        stale_capability = npu_capabilities(engine)      # probe before any attempt
+        controller.gated = True
+        outcome: dict[str, object] = {}
+
+        def second_probe() -> None:
+            try:
+                outcome["capability"] = npu_capabilities(engine)
+            except BaseException as exc:  # noqa: BLE001 - recorded for the assertion
+                outcome["error"] = exc
+
+        prober = threading.Thread(target=second_probe, name="gated-probe")
+        prober.start()
+        assert entered.wait(10.0), "the probe never entered health_check"
+
+        # While the known-good probe is blocked, submit a job with the earlier
+        # capability: it may be accepted durably but must not start.
+        request = npu_request("npu-lease-gate-1", source=SOURCE)
+        engine.submit(
+            request=request, expected=engine.expected_identities,
+            capability_id=stale_capability.capability_id,
+            required_features=list(NPU_FEATURES), grant_token=NPU_TOKEN,
+        )
+        deadline = time.monotonic() + 0.4
+        while time.monotonic() < deadline:
+            ledger = VendorLedger(ledger_path) if ledger_path.is_file() else None
+            if ledger is not None and ledger.exists():
+                assert ledger.read()["device_running"] == [], "a candidate device ran during the probe"
+            assert engine.store._conn.execute(
+                "SELECT COUNT(*) FROM attempts WHERE state='running'",
+            ).fetchone()[0] == 0
+            time.sleep(0.02)
+
+        release.set()
+        prober.join(10.0)
+        assert "capability" in outcome and "error" not in outcome
+        final = _wait_engine(engine, request, {"completed"})
+        assert final.result is not None
+    finally:
+        release.set()
+        engine.close(wait=5)
+
+
+def test_a_missing_ledger_is_not_a_cleanup_proof(tmp_path):
+    """@brief 台账被删除后 reconcile 不得声称已清理。"""
+    from tests.support.vendor_sim.vendor_a import FakeVendorADriver
+
+    ledger_path = tmp_path / "ledger.json"
+    ledger = VendorLedger(ledger_path)
+    driver = FakeVendorADriver(ledger)
+    prepared = driver.prepare(
+        build_execution(), SOURCE, {"attempt_id": "attempt-missing-ledger", "lease_fence": 1},
+    )
+    driver.execute(prepared, deadline_monotonic=time.monotonic() + 5)
+    ledger_path.unlink()
+    proof = FakeVendorAController(ledger_path).reconcile("attempt-missing-ledger", 1)
+    assert proof.complete is False
+    assert "ledger is missing" in proof.detail
+    # Reading or releasing must not recreate the missing evidence.
+    assert not ledger.exists()
+
+
+def test_the_worker_cannot_clear_the_cleanup_ledger():
+    """@brief clear() 只是测试装配助手，worker 侧不能擦掉清理证据。"""
+    import tempfile
+
+    path = Path(tempfile.mkdtemp()) / "ledger.json"
+    ledger = VendorLedger(path)
+    ledger.record_resource(
+        attempt_id="a", lease_fence=1, device_group_id="g", resource_generation="1",
+        kind="module", detail={},
+    )
+    with pytest.raises(TypeError, match="test-setup"):
+        ledger.clear()  # type: ignore[call-arg]
+    assert ledger.attempt_resources("a", 1)
+
+
+class _VanishingLedgerController(FakeVendorAController):
+    """Deletes the cleanup evidence before it looks, as a lost ledger would."""
+
+    def reconcile(self, attempt_id, lease_fence):
+        if self.ledger.path.exists():
+            self.ledger.path.unlink()
+        return super().reconcile(attempt_id, lease_fence)
+
+
+def test_a_missing_ledger_blocks_result_commit_and_cancellation(tmp_path):
+    """@brief controller 看不到台账时，结果不提交、Cancel 也不宣告完成。"""
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    controller = _VanishingLedgerController(ledger_path)
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=controller,
+        worker_env={"TCENV_VENDOR_A_SLOW": "1"},
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-missing-ledger-commit-1", source=SOURCE)
+        npu_submit(engine, request)
+        deadline = time.monotonic() + 10
+        snapshot = npu_get(engine, request)
+        while not snapshot.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = npu_get(engine, request)
+        assert snapshot.quarantined is True
+        assert snapshot.result is None
+        assert "ledger is missing" in snapshot.recovery_error
+        with pytest.raises(JobError):
+            npu_retry(engine, request, snapshot.current_attempt.attempt_id)
+    finally:
+        engine.close(wait=5)
+
+
+def test_a_missing_ledger_blocks_cancellation_completion(tmp_path):
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    controller = _VanishingLedgerController(ledger_path)
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=controller,
+        worker_env={"TCENV_VENDOR_A_SLOW": "1"},
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-missing-ledger-cancel-1", source=SOURCE)
+        npu_submit(engine, request)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not npu_get(engine, request).state == "running":
+            time.sleep(0.02)
+        engine.cancel(
+            request_id=request.request_id, request_digest=request.request_digest,
+            expected=engine.expected_identities, grant_token=NPU_TOKEN,
+            reason="missing ledger",
+        )
+        deadline = time.monotonic() + 10
+        final = npu_get(engine, request)
+        while not final.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            final = npu_get(engine, request)
+        assert final.quarantined is True
+        assert final.state != "cancelled"
+        assert final.result is None
+    finally:
+        engine.close(wait=5)
+
+
+def test_a_missing_ledger_blocks_recovery_retry(tmp_path):
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    controller = _VanishingLedgerController(ledger_path)
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=controller,
+        worker_env={"TCENV_VENDOR_A_ABORT_AFTER_LAUNCH": "1"},
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-missing-ledger-recover-1", source=SOURCE)
+        npu_submit(engine, request)
+        deadline = time.monotonic() + 10
+        snapshot = npu_get(engine, request)
+        while not snapshot.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = npu_get(engine, request)
+        assert snapshot.quarantined is True
+        assert snapshot.state == "running"
+        with pytest.raises(JobError):
+            npu_retry(engine, request, snapshot.current_attempt.attempt_id)
+    finally:
+        engine.close(wait=5)
+
+
+def test_a_contradictory_device_group_capability_is_refused(tmp_path):
+    """@brief 组内 timing 或逻辑设备数与 P0 不符时拒绝且不写 capability。"""
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+
+    class _BadGroup(FakeVendorAController):
+        def __init__(self, path, *, timing, devices):
+            super().__init__(path)
+            self._timing = timing
+            self._devices = devices
+
+        def capabilities(self, facts):
+            advertised = dict(super().capabilities(facts))
+            advertised["device_groups"] = [{
+                **advertised["device_groups"][0],
+                "timing_sources": list(self._timing),
+                "logical_devices": self._devices,
+            }]
+            return advertised
+
+    for timing, devices, match in (
+        (["HOST_WALL"], 1, "DEVICE_EVENT"),
+        (["DEVICE_EVENT"], 0, "one logical device"),
+        (["DEVICE_EVENT"], 2, "one logical device"),
+    ):
+        engine = npu_engine(
+            root / "state", ledger_path=ledger_path,
+            controller=_BadGroup(ledger_path, timing=timing, devices=devices),
+            signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+        )
+        try:
+            with pytest.raises(JobError, match=match) as excinfo:
+                npu_capabilities(engine)
+            assert excinfo.value.code == "failed_precondition"
+            assert engine.store._conn.execute("SELECT COUNT(*) FROM capabilities").fetchone()[0] == 0
+            assert engine.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+        finally:
+            engine.close(wait=5)

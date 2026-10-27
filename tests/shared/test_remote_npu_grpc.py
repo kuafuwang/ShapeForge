@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 import time
 from pathlib import Path
@@ -10,6 +11,7 @@ import grpc
 import pytest
 from grpc_status import rpc_status
 
+from tcenv.evaluation import EvaluationRequest, EvaluationUnavailable
 from tcenv.remote import contracts
 from tcenv.remote import grpc_contract as gc
 from tcenv.remote.v1 import evaluator_pb2 as pb
@@ -527,3 +529,91 @@ def test_submit_rejects_a_capability_from_another_resource_generation(tmp_path):
             final.result.receipt, dialect=contracts.NPU_SOURCE_DIALECT,
         )
         assert receipt["device_group"]["resource_generation"] == "2"
+
+
+def _host_request(request_id: str, *, kind: str = "formal_eval", mode: str = "quick"):
+    return EvaluationRequest(
+        kind=kind, request_id=request_id, run_id="npu-run-1", session_id="npu-session-1",
+        task="relu", dtype="fp16", size="small", target_id=NPU_TARGET,
+        task_fingerprint="d" * 64, source=SOURCE.decode("utf-8"), mode=mode,
+        seed=3, reps=2, queue_timeout_s=3.0, candidate_timeout_s=3.0,
+    )
+
+
+def test_host_selfcheck_path_binds_the_wire_digest(tmp_path):
+    """@brief 宿主 selfcheck/selfcheck_resume 经 adapter 也必须绑定 wire digest 才能提交。"""
+    import hashlib
+
+    with NpuGrpcHarness(tmp_path) as harness:
+        first = harness.factory.selfcheck(_host_request("npu-selfcheck-bind-1", kind="selfcheck"))
+        candidate = {"algorithm": "sha256", "value": hashlib.sha256(SOURCE).hexdigest()}
+        assert first.receipt["candidate_digest"] == candidate
+        assert "candidate_sha256" not in first.receipt
+        assert first.provenance.request_digest
+        assert first.provenance.measurement_kind == "simulated"
+
+        resumed = harness.factory.selfcheck_resume(
+            _host_request("npu-selfcheck-bind-2", kind="selfcheck"),
+        )
+        assert resumed.receipt["candidate_digest"] == candidate
+        assert harness.engine.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
+
+
+def test_the_host_selfcheck_bridge_completes_on_the_npu_contract(tmp_path):
+    """@brief 真正经 SelfCheckServer/Client 的宿主桥在 NPU contract 下也能跑通。"""
+    import uuid
+
+    from taic.selfcheck_bridge import SelfCheckClient, SelfCheckConfig, SelfCheckServer
+    from tests.support.job_engine import NPU_TASK_FINGERPRINT
+
+    with NpuGrpcHarness(tmp_path) as harness:
+        socket_path = Path("/tmp") / f"taic-npu-sc-{uuid.uuid4().hex}.sock"
+        config = SelfCheckConfig(
+            task="relu", dtype="fp16", size="small", target_id=NPU_TARGET,
+            task_fingerprint=NPU_TASK_FINGERPRINT, run_id="npu-run-1",
+            session_id="npu-session-1", token="bridge-token", reps=2,
+            self_check_dir=tmp_path / "checks", workspace=tmp_path,
+        )
+        server = SelfCheckServer(config, harness.factory, socket_path)
+        try:
+            with server:
+                result = SelfCheckClient(server.socket_path, token="bridge-token").check(
+                    SOURCE.decode("utf-8"), "quick",
+                )
+        finally:
+            try:
+                socket_path.unlink()
+            except OSError:
+                pass
+        assert result.report["status"] == "ok"
+        assert result.receipt["candidate_digest"]["value"] == hashlib.sha256(SOURCE).hexdigest()
+        assert harness.engine.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+
+
+def test_the_client_rejects_a_device_group_that_contradicts_its_binding(tmp_path):
+    """@brief 客户端也要校验组内 timing/logical_devices/vendor，而不只看顶层。"""
+    with NpuGrpcHarness(tmp_path) as harness:
+        capability = _capabilities(harness)
+        evaluator = harness.factory._last()
+
+        def mutate(field, value):
+            doctored = pb.Capabilities()
+            doctored.CopyFrom(capability)
+            if field == "timing":
+                del doctored.targets[0].device_groups[0].timing_sources[:]
+                doctored.targets[0].device_groups[0].timing_sources.append(value)
+            else:
+                setattr(doctored.targets[0].device_groups[0], field, value)
+            return doctored
+
+        evaluator._validate_capabilities(capability, nonce=capability.client_nonce)
+        for field, value in (
+            ("timing", "HOST_WALL"),
+            ("logical_devices", 0),
+            ("logical_devices", 2),
+            ("vendor_id", "vendor-b"),
+        ):
+            with pytest.raises(EvaluationUnavailable):
+                evaluator._validate_capabilities(
+                    mutate(field, value), nonce=capability.client_nonce,
+                )

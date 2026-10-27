@@ -376,6 +376,10 @@ class JobEngine:
         self.npu_execution = npu_execution
         self.device_controller = device_controller
         self.device_call_timeout_s = float(device_call_timeout_s)
+        # Covers the whole device-operation sequence, not just a check: the
+        # scheduler holds it from the durable claim to attempt teardown, and
+        # GetCapabilities takes it (non-blocking) around probe/health/capabilities.
+        self._device_lease = threading.Lock()
         self.execution_protocol_version = execution_protocol_version
         self.supported_features = frozenset(supported_features)
         self.supported_modes = frozenset(supported_modes)
@@ -488,12 +492,22 @@ class JobEngine:
             # read-only (no nonce use, no capability row); the durable write
             # still happens in store.get_capabilities below.
             self.store.require_grant(grant_token)
-            # The known-good probe owns the device group: it never runs while a
-            # candidate attempt is active (the controller re-checks the lease).
-            self._require_idle_device_group()
-        # Then probe the trusted device: a group that cannot be verified must
-        # not consume the client nonce or leave a durable capability behind.
-        device_target = self._device_capability() if self.contract.npu_source else {}
+            # The known-good probe owns the device group for its whole sequence:
+            # the scheduler holds the same lease from claim to teardown, so a
+            # probe can never overlap a candidate start.
+            if not self._device_lease.acquire(blocking=False):
+                raise JobError(
+                    "failed_precondition",
+                    "the device group is executing an attempt; GetCapabilities does not "
+                    "probe it until the lease is released",
+                )
+        try:
+            # Probe the trusted device: a group that cannot be verified must not
+            # consume the client nonce or leave a durable capability behind.
+            device_target = self._device_capability() if self.contract.npu_source else {}
+        finally:
+            if self.contract.npu_source:
+                self._device_lease.release()
         capabilities = self.store.get_capabilities(
             grant_token=grant_token, client_nonce=client_nonce, expected=expected,
             expected_identities=self._expected, provenance=self._base_provenance(),
@@ -519,18 +533,6 @@ class JobEngine:
         return replace(capabilities, target_capabilities=(target,))
 
     # -- trusted device facts ----------------------------------------------
-    def _require_idle_device_group(self) -> None:
-        """Refuse capability probing while an attempt leases the device group."""
-
-        with self._active_lock:
-            active = self._active
-        if active is not None or self.store.running_attempts():
-            raise JobError(
-                "failed_precondition",
-                "the device group is executing an attempt; GetCapabilities does not "
-                "probe it until the lease is released",
-            )
-
     def _device_profile(self) -> dict[str, str]:
         if self.npu_execution is None:
             raise JobError("failed_precondition", "this evaluator has no NPU device binding")
@@ -645,6 +647,21 @@ class JobEngine:
         self._check_device_binding(group, where="device capability")
         if group.get("state") != "available":
             raise JobError("failed_precondition", f"device group is {group.get('state')!r}, not available")
+        # The group's own timing and cardinality must match the advertised shape;
+        # a group that reports HOST_WALL or zero devices contradicts P0.
+        group_timing = list(group.get("timing_sources") or ())
+        if group_timing != list(execution.required_timing_sources):
+            raise JobError(
+                "failed_precondition",
+                "device group does not advertise the served DEVICE_EVENT timing source",
+            )
+        logical_devices = group.get("logical_devices")
+        if isinstance(logical_devices, bool) or not isinstance(logical_devices, int) or logical_devices != 1:
+            raise JobError(
+                "failed_precondition",
+                "P0 serves exactly one logical device; the device group reports "
+                f"{logical_devices!r}",
+            )
         return {
             "artifact_kinds": artifact_kinds,
             "launch_kinds": launch_kinds,
@@ -652,8 +669,8 @@ class JobEngine:
             "timing_sources": timing_sources,
             "device_groups": [{
                 **group,
-                "logical_devices": int(group.get("logical_devices") or 0),
-                "timing_sources": list(group.get("timing_sources") or ()),
+                "logical_devices": 1,
+                "timing_sources": list(execution.required_timing_sources),
             }],
         }
 
@@ -896,65 +913,79 @@ class JobEngine:
 
     def _schedule_loop(self) -> None:
         while not self._stop.is_set():
+            # The device-group lease is taken before the durable claim and held
+            # for the whole attempt, so a capability probe can never run
+            # concurrently with a candidate start or execution.
+            self._device_lease.acquire()
+            idle = False
             try:
-                claimed = self.store.claim_next(
-                    selfcheck_age_ms=self.selfcheck_age_ms,
-                    execution_kind=self.supervisor.kind,
-                )
-            except Exception as exc:
-                # Durable corruption is fail-closed: stop the scheduler and
-                # make subsequent Submit/GetJob calls unavailable as well.
-                self.store.mark_unavailable(exc)
-                self._stop.set()
-                break
-            if claimed is None:
+                try:
+                    claimed = self.store.claim_next(
+                        selfcheck_age_ms=self.selfcheck_age_ms,
+                        execution_kind=self.supervisor.kind,
+                    )
+                except Exception as exc:
+                    # Durable corruption is fail-closed: stop the scheduler and
+                    # make subsequent Submit/GetJob calls unavailable as well.
+                    self.store.mark_unavailable(exc)
+                    self._stop.set()
+                    break
+                if claimed is None:
+                    idle = True
+                else:
+                    self._run_claimed(claimed)
+            finally:
+                self._device_lease.release()
+            if idle:
+                # Never sleep while holding the device-group lease.
                 with self._condition:
                     self._condition.wait(timeout=0.05)
-                continue
-            request, attempt = claimed
-            running = _Running(request, attempt, started_monotonic=self._monotonic())
-            with self._active_lock:
-                self._active = running
+
+    def _run_claimed(self, claimed: tuple[ExternalEvaluationRequest, Attempt]) -> None:
+        request, attempt = claimed
+        running = _Running(request, attempt, started_monotonic=self._monotonic())
+        with self._active_lock:
+            self._active = running
+        try:
+            # Cancel may have committed after claim_next but before the
+            # in-memory active record existed for the cancel path to find.
+            if self.store._job_by_id(request.request_id).cancel_requested:
+                running.cancel_requested = True
+            self._run_worker(running)
+        except Exception as exc:
+            # This boundary must contain every supervisor failure: an
+            # uncaught exception here would kill the scheduler thread and
+            # leave a running, unquarantined job (Retry offered) behind.
+            cleanup_error = self._cleanup_supervisor_handle(running)
+            detail = f"{type(exc).__name__}: {exc}"
+            if cleanup_error:
+                detail = f"{detail}; {cleanup_error}"
             try:
-                # Cancel may have committed after claim_next but before the
-                # in-memory active record existed for the cancel path to find.
-                if self.store._job_by_id(request.request_id).cancel_requested:
-                    running.cancel_requested = True
-                self._run_worker(running)
-            except Exception as exc:
-                # This boundary must contain every supervisor failure: an
-                # uncaught exception here would kill the scheduler thread and
-                # leave a running, unquarantined job (Retry offered) behind.
-                cleanup_error = self._cleanup_supervisor_handle(running)
-                detail = f"{type(exc).__name__}: {exc}"
                 if cleanup_error:
-                    detail = f"{detail}; {cleanup_error}"
+                    # Fail closed: an unexpected supervisor error must not
+                    # turn into "interrupted, safe to Retry" while the old
+                    # worker may still be alive.
+                    self._record_cleanup_hazard(running, detail[:1000])
+                elif isinstance(exc, JobError):
+                    self._handle_worker_job_error(running, exc)
+                else:
+                    self._interrupt_attempt(request.request_id, attempt, JobFailure(
+                        "infrastructure", True, "worker_supervisor_failed", detail[:1000],
+                    ))
+            except Exception:
+                # Even the durable write failed: keep the loop alive, mark
+                # the store unavailable, and remember the hazard in memory.
+                self._unreported_hazard = detail[:1000]
                 try:
-                    if cleanup_error:
-                        # Fail closed: an unexpected supervisor error must not
-                        # turn into "interrupted, safe to Retry" while the old
-                        # worker may still be alive.
-                        self._record_cleanup_hazard(running, detail[:1000])
-                    elif isinstance(exc, JobError):
-                        self._handle_worker_job_error(running, exc)
-                    else:
-                        self._interrupt_attempt(request.request_id, attempt, JobFailure(
-                            "infrastructure", True, "worker_supervisor_failed", detail[:1000],
-                        ))
-                except Exception:
-                    # Even the durable write failed: keep the loop alive, mark
-                    # the store unavailable, and remember the hazard in memory.
-                    self._unreported_hazard = detail[:1000]
-                    try:
-                        self.store.mark_unavailable(exc)
-                    finally:
-                        self._stop.set()
-            finally:
-                with self._active_lock:
-                    if self._active is running:
-                        self._active = None
-                running.teardown_done.set()
-                self._wake()
+                    self.store.mark_unavailable(exc)
+                finally:
+                    self._stop.set()
+        finally:
+            with self._active_lock:
+                if self._active is running:
+                    self._active = None
+            running.teardown_done.set()
+            self._wake()
 
     def _cleanup_supervisor_handle(self, running: _Running | None) -> str:
         """Execution cleanup on an unexpected supervisor exit; "" only if proven."""

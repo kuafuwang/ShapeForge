@@ -239,6 +239,9 @@ class FakeVendorAController:
         self.generation = generation
 
     def _busy(self) -> bool:
+        if not self.ledger.exists():
+            # Nothing was ever prepared on this group, so nothing is running.
+            return False
         try:
             return bool(self.ledger.running_markers())
         except LedgerError:
@@ -312,6 +315,13 @@ class FakeVendorAController:
         )
 
     def reconcile(self, attempt_id: str, lease_fence: int) -> CleanupProof:
+        if not self.ledger.exists():
+            # Missing evidence is never proof that the device resources are gone.
+            return self._proof(
+                attempt_id, lease_fence,
+                complete=False,
+                detail="the fake vendor ledger is missing; cleanup cannot be proven",
+            )
         try:
             resources = self.ledger.attempt_resources(attempt_id, lease_fence)
             live = self.ledger.live_resources()

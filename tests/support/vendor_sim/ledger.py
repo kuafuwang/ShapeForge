@@ -38,12 +38,19 @@ class VendorLedger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
 
+    def exists(self) -> bool:
+        return self.path.is_file()
+
     @contextmanager
-    def _locked(self) -> Iterator[dict[str, Any]]:
+    def _locked(self, *, create: bool = True) -> Iterator[dict[str, Any]]:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
+            if not create and not self.path.is_file():
+                # A deleted ledger is missing evidence, not an empty device.
+                # Never recreate it from a read or a release.
+                raise LedgerError("fake vendor ledger is missing")
             document = self._read_unlocked()
             yield document
             temporary = self.path.with_name(self.path.name + ".tmp")
@@ -81,7 +88,7 @@ class VendorLedger:
         return document
 
     def read(self) -> dict[str, Any]:
-        with self._locked() as document:
+        with self._locked(create=False) as document:
             return json.loads(json.dumps(document))
 
     def record_resource(
@@ -120,7 +127,7 @@ class VendorLedger:
     def running_markers(self) -> list[dict[str, Any]]:
         """Every running marker with the binding it was taken under."""
 
-        with self._locked() as document:
+        with self._locked(create=False) as document:
             return [
                 {
                     "marker": marker,
@@ -136,7 +143,7 @@ class VendorLedger:
         """Return this attempt/fence's running markers with their binding."""
 
         marker = f"{attempt_id}:{lease_fence}"
-        with self._locked() as document:
+        with self._locked(create=False) as document:
             if marker not in document["device_running"]:
                 return []
             scope = document["running_scope"].get(marker)
@@ -156,14 +163,14 @@ class VendorLedger:
             })
 
     def attempt_resources(self, attempt_id: str, lease_fence: int) -> list[dict[str, Any]]:
-        with self._locked() as document:
+        with self._locked(create=False) as document:
             return [
                 resource for resource in document["resources"].values()
                 if resource["attempt_id"] == attempt_id and resource["lease_fence"] == lease_fence
             ]
 
     def live_resources(self) -> list[dict[str, Any]]:
-        with self._locked() as document:
+        with self._locked(create=False) as document:
             return list(document["resources"].values())
 
     def release_attempt(
@@ -179,7 +186,7 @@ class VendorLedger:
 
         released: list[str] = []
         marker = f"{attempt_id}:{lease_fence}"
-        with self._locked() as document:
+        with self._locked(create=False) as document:
             for resource_id, resource in list(document["resources"].items()):
                 if resource["attempt_id"] != attempt_id or resource["lease_fence"] != lease_fence:
                     continue
@@ -198,7 +205,11 @@ class VendorLedger:
                     document["running_scope"].pop(marker, None)
         return sorted(released)
 
-    def clear(self) -> None:
+    def clear(self, *, operator: bool = False) -> None:
+        """Erase the ledger.  Test setup only, never a vendor/worker action."""
+
+        if operator is not True:
+            raise TypeError("VendorLedger.clear() is a test-setup helper; pass operator=True")
         with self._locked() as document:
             document["resources"] = {}
             document["cancelled"] = []

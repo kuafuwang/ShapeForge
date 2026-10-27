@@ -32,6 +32,8 @@ from tcenv.evaluation import EvaluationError, EvaluationExecutor, EvaluationRequ
 from tcenv.report import format_feedback
 from tcenv.schema import write_json_atomic
 
+from .evaluation_outbox import bind_wire_digest
+
 MAX_MESSAGE_BYTES = 1_100_000
 MAX_SOURCE_BYTES = 1_000_000
 
@@ -43,6 +45,17 @@ class SelfCheckBridgeError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.retryable = bool(retryable)
+
+
+def _uses_npu_contract(evaluator: object) -> bool:
+    """True when the host evaluator serves the NPU source contract."""
+
+    contract = getattr(evaluator, "contract", None)
+    if contract is not None and getattr(contract, "npu_source", False):
+        return True
+    from tcenv.remote.contracts import NPU_SOURCE_API_CONTRACT_ID
+
+    return getattr(evaluator, "api_contract_id", "") == NPU_SOURCE_API_CONTRACT_ID
 
 
 @dataclass(frozen=True)
@@ -371,6 +384,12 @@ class SelfCheckServer:
                 raise quota_error
             self._active_requests.add(request.request_id)
             try:
+                # Selfcheck has no durable outbox row, but the NPU contract still
+                # requires the exact wire identity (CandidateDigest + device
+                # group) before the adapter submits.
+                request = bind_wire_digest(
+                    request, self.evaluator, npu_contract=_uses_npu_contract(self.evaluator),
+                )
                 result = self.evaluator.selfcheck(request)
             except EvaluationUnavailable as exc:
                 raise SelfCheckBridgeError(exc.code, str(exc), retryable=exc.retryable) from exc

@@ -483,7 +483,7 @@ class GrpcEvaluator:
     def selfcheck(self, request: EvaluationRequest) -> EvaluationResult:
         if request.kind != "selfcheck":
             raise ValueError("selfcheck() requires kind='selfcheck'")
-        return self._evaluate(request, allow_retry=False)
+        return self._evaluate(self._bind_selfcheck(request), allow_retry=False)
 
     def formal_resume(self, request: EvaluationRequest) -> EvaluationResult:
         """Resume an interrupted formal job through the explicit Retry RPC."""
@@ -495,7 +495,19 @@ class GrpcEvaluator:
     def selfcheck_resume(self, request: EvaluationRequest) -> EvaluationResult:
         if request.kind != "selfcheck":
             raise ValueError("selfcheck_resume() requires kind='selfcheck'")
-        return self._evaluate(request, allow_retry=True)
+        return self._evaluate(self._bind_selfcheck(request), allow_retry=True)
+
+    def _bind_selfcheck(self, request: EvaluationRequest) -> EvaluationRequest:
+        """Bind the wire identity for a selfcheck that has no durable outbox row.
+
+        A selfcheck result is not keyed by a host outbox row, so the adapter
+        binds the exact identity it is about to submit and return.  Formal
+        evaluations always require the caller's durable digest.
+        """
+
+        if not self.contract.npu_source or request.contract_request_digest:
+            return request
+        return replace(request, contract_request_digest=self.wire_request_digest(request))
 
     # -- transport helpers --------------------------------------------------
     def _metadata(self) -> tuple[tuple[str, str], ...]:
@@ -642,15 +654,26 @@ class GrpcEvaluator:
                 raise EvaluationUnavailable("capability_invalid", "NPU capability omitted source/KERNEL")
             if "DEVICE_EVENT" not in target.timing_sources:
                 raise EvaluationUnavailable("capability_invalid", "NPU capability omitted DEVICE_EVENT timing")
-            if not any(
-                candidate.device_group_id == group.device_group_id
+            matched = [
+                candidate for candidate in target.device_groups
+                if candidate.device_group_id == group.device_group_id
+                and candidate.vendor_id == group.vendor_id
                 and candidate.profile_digest == group.profile_digest
                 and candidate.topology_digest == group.topology_digest
                 and candidate.resource_generation == group.resource_generation
                 and candidate.state == "available"
-                for candidate in target.device_groups
-            ):
+            ]
+            if not matched:
                 raise EvaluationUnavailable("capability_invalid", "NPU capability device group is missing or unavailable")
+            served = matched[0]
+            if "DEVICE_EVENT" not in served.timing_sources:
+                raise EvaluationUnavailable(
+                    "capability_invalid", "NPU capability device group omits DEVICE_EVENT timing",
+                )
+            if served.logical_devices != 1:
+                raise EvaluationUnavailable(
+                    "capability_invalid", "NPU capability device group does not serve exactly one logical device",
+                )
             self._npu_execution = execution
         else:
             self._npu_execution = None

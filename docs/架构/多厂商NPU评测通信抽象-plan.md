@@ -369,6 +369,17 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `request_digest_mismatch` 在 Submit 前拒绝。outbox 在 complete 与 replay 共用的校验里按
   NPU dialect 重算 wire receipt（剔除宿主附加的 signature/measurement 元字段），所以
   retained result 的 `receipt_id`/规范字段被改写时 replay 直接拒绝。
+- selfcheck 的宿主链路也绑定同一身份：`taic/selfcheck_bridge.py` 在提交前用
+  `bind_wire_digest(..., npu_contract=...)` 绑定（selfcheck 没有 outbox 行），
+  `GrpcEvaluator.selfcheck`/`selfcheck_resume` 在请求缺 wire digest 时用
+  `wire_request_digest()` 绑定即将提交并返回的同一身份；旧 Metal selfcheck 路径不变。
+- 设备组 lease：scheduler 在 durable claim 之前取得、直到 attempt teardown 才释放，
+  `GetCapabilities` 用非阻塞方式取同一把锁并覆盖 probe/health/capabilities 整个序列，
+  因此探测不会与候选启动/执行并发（busy 时直接 `failed_precondition`，controller 也会在
+  running marker 存在时拒绝 probe/known-good 探针且不记录 probe）。
+- 清理证据必须存在：fake ledger 被删除时 `reconcile` 返回 `complete=False`
+  （「ledger is missing」），读取/释放不会重建文件，`clear()` 只有测试装配
+  （`operator=True`）可用；结果提交、Cancel、恢复路径都因此 quarantine。
 - outbox 每个写读路径都核对既有行：`begin`/`complete`/`unavailable` 在任何 state 或
   result 写入前统一校验 `schema_version`、`transport`/API/evidence contract（NPU 缺字段
   直接拒绝，不按“旧行”放行）、`request_id`、`request_digest`、`CandidateDigest` 与状态；
@@ -444,14 +455,16 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `_validate_durable_state` 都把它与 `jobs.request_id` 比对；篡改后直接读与重开都
   fail closed。
 - 验证证据（每条命令各自单独跑）：
-  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **75 passed**
+  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **86 passed**
   （wire receipt 与 host HMAC 篡改、时钟/候选时间自相矛盾、hanging cancel/reconcile、
   终态 request_id/task/execution/provenance/attempt 绑定篡改、Submit 跨 generation
   capability、fake vendor 的代际 prepare/台账、运行 marker 与异组/异代际
   reconcile 拒绝并保留对方 running 证据、无效/过期/撤销 grant 下零设备调用、
   自相矛盾 proof（complete=True 且有 live resource）在提交/Cancel/Retry 三路 quarantine、
   未执行 known-good 探针的健康证明不广告 available、outbox 行篡改/已完成行不可改写/
-  损坏行不被静默重建、活跃 lease 下 GetCapabilities 零设备调用）；
+  损坏行不被静默重建、活跃 lease 下 GetCapabilities 零设备调用、宿主 selfcheck/adapter
+  绑定 wire digest、probe 序列与候选启动互斥、缺失台账不算清理、组内 timing/设备数矛盾
+  被拒）；
   `test_remote_grpc_{adapter,tls,contract,revocation}.py` 与
   `test_remote_{conformance,go_conformance}.py` 六个旧文件 **62 passed**；
   `test_orchestrator_runtime.py` **18 passed**（含 NPU host 接线回归）；
@@ -461,7 +474,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `test_remote_job_recovery.py`，`_validate_durable_state` 的终态读校验同文件覆盖）；
   `test_selfcheck_bridge.py` 在本机围栏默认 TMPDIR 下 **18 failed, 1 passed**（全部是
   短 TMPDIR 导致的 AF_UNIX 路径超长），`TMPDIR=/tmp` 下 **19 passed**。
-  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2274 passed / 6 skipped /
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2285 passed / 6 skipped /
   32 failed**。这批失败全部
   是本机 hmz 围栏环境造成：`test_selfcheck_bridge.py` 的 AF_UNIX 路径超长（短 TMPDIR），
   `ps` 被禁（`test_children`、`test_run_detached`、`test_triton_baseline`）与 HOME 权威

@@ -829,3 +829,44 @@ def test_legacy_outbox_binding_still_tolerates_older_rows(tmp_path):
     row.pop("api_contract_id")
     path.write_text(json.dumps(row), encoding="utf-8")
     assert EvaluationOutbox(tmp_path, transport="grpc").begin(request, epoch="e" * 64) is None
+
+
+def test_npu_outbox_candidate_digest_shape_is_exact(tmp_path):
+    """@brief CandidateDigest 必须精确两键；额外键在 begin/complete/unavailable/replay 都被拒。"""
+    root = tmp_path / "run"
+    with NpuGrpcHarness(tmp_path) as harness:
+        outbox = _npu_outbox(root)
+        request = bind_wire_digest(_legacy_request("npu-candidate-shape-1"), harness.factory, outbox)
+        assert outbox.begin(request, epoch=harness.factory.epoch) is None
+        result = harness.factory.formal(request)
+        state_path = outbox._state_path(request.request_id)
+
+        def tamper() -> bytes:
+            row = json.loads(state_path.read_text(encoding="utf-8"))
+            row["candidate_digest"] = {**row["candidate_digest"], "extra": "tampered"}
+            state_path.write_text(json.dumps(row), encoding="utf-8")
+            return state_path.read_bytes()
+
+        for call in (
+            lambda: _npu_outbox(root).begin(request, epoch=harness.factory.epoch),
+            lambda: outbox.complete(request, result),
+            lambda: _npu_outbox(root).unavailable(request, EvaluationUnavailable("transport_timeout", "boom")),
+        ):
+            before = tamper()
+            with pytest.raises(EvaluationUnavailable):
+                call()
+            # The rejected call changed no row byte and wrote no result.
+            assert state_path.read_bytes() == before
+            assert not outbox._result_path(request.request_id).exists()
+
+        # A completed row with a tampered CandidateDigest cannot replay either.
+        state_path.write_text(json.dumps(outbox._document(
+            request, epoch=harness.factory.epoch, status="pending", created_at=1.0,
+        )), encoding="utf-8")
+        outbox.complete(request, result)
+        completed = json.loads(state_path.read_text(encoding="utf-8"))
+        assert completed["status"] == "completed"
+        completed["candidate_digest"] = {**completed["candidate_digest"], "extra": "tampered"}
+        state_path.write_text(json.dumps(completed), encoding="utf-8")
+        with pytest.raises(EvaluationUnavailable):
+            _npu_outbox(root).begin(request, epoch=harness.factory.epoch)

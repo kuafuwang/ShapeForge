@@ -22,6 +22,7 @@ from tcenv.remote.contracts import (
     NPU_SOURCE_EVIDENCE_CONTRACT_ID,
     NPU_TIMING_EVIDENCE_SCHEMA_ID,
     ContractError,
+    candidate_digest_document,
     device_group_document,
     npu_report_timing_check,
     npu_timing_evidence_document,
@@ -33,17 +34,21 @@ from .redact import redact_text
 
 
 def bind_wire_digest(
-    request: EvaluationRequest, evaluator: Any, outbox: "EvaluationOutbox | None",
+    request: EvaluationRequest, evaluator: Any, outbox: "EvaluationOutbox | None" = None,
+    *, npu_contract: bool | None = None,
 ) -> EvaluationRequest:
     """Return the request keyed by the exact digest the evaluator will submit.
 
     This is the one host-side wiring point for the NPU contract: the durable
     outbox row, the submitted request, the receipt and a later resume all use
-    the same identity.  The legacy contract keeps its historical digest and
-    this is a no-op.
+    the same identity.  ``npu_contract`` covers callers without a durable row
+    (the selfcheck bridge); it defaults to the outbox's contract.  The legacy
+    contract keeps its historical digest and this is a no-op.
     """
 
-    if outbox is None or not outbox.npu_contract:
+    if npu_contract is None:
+        npu_contract = bool(outbox is not None and outbox.npu_contract)
+    if not npu_contract:
         return request
     wire = getattr(evaluator, "wire_request_digest", None)
     if not callable(wire):
@@ -213,11 +218,13 @@ class EvaluationOutbox:
         if document.get("request_digest") != request.request_digest:
             raise EvaluationUnavailable("outbox_conflict", "outbox request id is bound to a different request digest")
         candidate = document.get("candidate_digest")
-        if (
-            not isinstance(candidate, dict)
-            or candidate.get("algorithm") != "sha256"
-            or candidate.get("value") != request.candidate_sha256
-        ):
+        try:
+            candidate = candidate_digest_document(candidate)
+        except ContractError as exc:
+            raise EvaluationUnavailable(
+                "outbox_corrupt", f"outbox CandidateDigest is invalid: {exc}",
+            ) from exc
+        if candidate["value"] != request.candidate_sha256:
             raise EvaluationUnavailable(
                 "outbox_corrupt", "outbox CandidateDigest does not bind the request source",
             )
