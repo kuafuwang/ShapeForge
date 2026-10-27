@@ -187,6 +187,17 @@ uv run pytest -q -m gpu -n 0                             # GPU 套件串行
 - 少数测试只读仓库里的 `runs/`（例如 `shared/test_observe_turns.py`），
   目录不在时 skip；全新 checkout 的 skip 不是失败。
 
+## 外部环境与副作用
+
+- Docker/VM/远程服务集成测试必须 import-safe：模块顶层不得创建 Docker client、连接
+  socket、启动 VM、读取宿主机凭据或执行其他外部副作用；这些动作只能放在 lazy fixture
+  或测试函数内。
+- 缺授权或缺环境时，skip 必须先于任何外部 fixture/安装/连接动作执行，不能先产生副作用
+  再补一个 skip。专用授权开关只用于对应集成测试，不改变上面的默认安全命令。
+- 纯 fake 测试默认进入 CPU 安全套件；真实外部服务使用独立、显式的 opt-in，失败不得
+  静默退回 local 或真实设备。测试需要清理时，清理本身也要有验证，不能以未清理的残留
+  换取通过。
+
 ## 日志与 AI handoff
 
 xdist 下每个 worker 独立写：
