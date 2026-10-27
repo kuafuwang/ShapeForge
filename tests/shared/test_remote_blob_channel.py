@@ -43,6 +43,10 @@ class Clock:
         return self.value
 
 
+def _content_digest(content_id: str) -> str:
+    return content_id[len(contracts.BLOB_CONTENT_ID_PREFIX):]
+
+
 def make_store(root, *, io=None, clock=None, **limits):
     defaults = {
         "max_size_bytes": 4096, "min_chunk_size": 1, "max_chunk_size": 64,
@@ -207,6 +211,77 @@ def test_replaying_an_acknowledged_chunk_is_idempotent_only_for_identical_bytes(
     assert conflict.value.code == "failed_precondition"
 
 
+def test_every_acknowledged_chunk_can_be_replayed_not_only_the_last(tmp_path):
+    store = make_store(tmp_path / "blobs")
+    data = os.urandom(12)
+    descriptor = descriptor_for(data, chunk_size=4)
+    store.begin(SCOPE, descriptor)
+    for offset in (0, 4, 8):
+        store.write_chunk(SCOPE, descriptor["content_id"], offset, data[offset:offset + 4])
+    before = store.state(SCOPE, descriptor["content_id"])
+    assert before.received_bytes == 12 and before.verified_chunks == (0, 1, 2)
+
+    # Re-sending chunk 0 while chunks 1 and 2 are already acknowledged (any
+    # number of later chunks) is an idempotent acknowledgement.
+    for offset in (0, 4, 8):
+        replayed = store.write_chunk(
+            SCOPE, descriptor["content_id"], offset, data[offset:offset + 4],
+        )
+        assert replayed.received_bytes == before.received_bytes
+        assert replayed.verified_chunks == before.verified_chunks
+        assert replayed.state == "uploading"
+    assert store.commit(SCOPE, descriptor["content_id"]).state == "ready"
+    assert read_all(store, SCOPE, descriptor["content_id"]) == data
+
+
+def test_a_replay_of_a_short_final_chunk_checks_its_exact_length(tmp_path):
+    store = make_store(tmp_path / "blobs")
+    data = os.urandom(10)
+    descriptor = descriptor_for(data, chunk_size=4)
+    store.begin(SCOPE, descriptor)
+    for offset, length in ((0, 4), (4, 4), (8, 2)):
+        store.write_chunk(SCOPE, descriptor["content_id"], offset, data[offset:offset + length])
+    state = store.state(SCOPE, descriptor["content_id"])
+    assert state.received_bytes == 10 and state.verified_chunks == (0, 1, 2)
+
+    # The last chunk is only 2 bytes: the same 2 bytes are an idempotent replay,
+    # a 4-byte payload at the same boundary is not the acknowledged chunk.
+    assert store.write_chunk(SCOPE, descriptor["content_id"], 8, data[8:10]).received_bytes == 10
+    with pytest.raises(BlobError) as longer:
+        store.write_chunk(SCOPE, descriptor["content_id"], 8, data[8:10] + b"ZZ")
+    assert longer.value.code == "failed_precondition"
+    assert store.commit(SCOPE, descriptor["content_id"]).state == "ready"
+    assert read_all(store, SCOPE, descriptor["content_id"]) == data
+
+
+def test_a_replay_off_a_chunk_boundary_beyond_the_acknowledged_range_or_with_other_bytes_is_refused(tmp_path):
+    store = make_store(tmp_path / "blobs")
+    data = os.urandom(12)
+    descriptor = descriptor_for(data, chunk_size=4)
+    store.begin(SCOPE, descriptor)
+    for offset in (0, 4, 8):
+        store.write_chunk(SCOPE, descriptor["content_id"], offset, data[offset:offset + 4])
+
+    with pytest.raises(BlobError) as boundary:
+        store.write_chunk(SCOPE, descriptor["content_id"], 2, data[2:6])
+    assert boundary.value.code == "failed_precondition"
+    assert "boundary" in boundary.value.detail
+
+    with pytest.raises(BlobError) as wrong_bytes:
+        store.write_chunk(SCOPE, descriptor["content_id"], 0, b"XXXX")
+    assert wrong_bytes.value.code == "failed_precondition"
+
+    with pytest.raises(BlobError) as short:
+        store.write_chunk(SCOPE, descriptor["content_id"], 0, data[0:2])
+    assert short.value.code == "failed_precondition"
+
+    # Not acknowledged yet, so it is not a replay: it is a gap.
+    with pytest.raises(BlobError) as beyond:
+        store.write_chunk(SCOPE, descriptor["content_id"], 12, b"")
+    assert beyond.value.code == "failed_precondition"
+    assert store.state(SCOPE, descriptor["content_id"]).received_bytes == 12
+
+
 def test_out_of_order_offsets_are_refused(tmp_path):
     store = make_store(tmp_path / "blobs")
     data = os.urandom(12)
@@ -320,6 +395,68 @@ def test_oversized_blob_chunk_and_quota_are_refused_before_bytes_land(tmp_path):
     assert store.usage()["ready_bytes"] == 8
 
 
+def test_unfinished_declarations_reserve_the_scope_quota(tmp_path):
+    # Two 8-byte declarations fit neither the 12-byte scope nor the 12-byte
+    # global quota, even though neither has written a byte yet.
+    store = make_store(
+        tmp_path / "blobs", max_size_bytes=64, max_scope_bytes=12,
+        max_total_bytes=12, max_uploads_per_scope=2,
+    )
+    first = descriptor_for(os.urandom(8), chunk_size=4)
+    second = descriptor_for(os.urandom(8), chunk_size=4)
+    store.begin(SCOPE, first)
+
+    with pytest.raises(BlobError) as over_scope:
+        store.begin(SCOPE, second)
+    assert over_scope.value.code == "resource_exhausted"
+    usage = store.usage()
+    assert usage["reserved_bytes"] == 8
+    assert usage["quota_bytes"] == 8
+    assert usage["open_uploads"] == 1
+    assert usage["ready_bytes"] == 0
+
+    # Giving the reservation back frees exactly the scope quota again.
+    store.abort(SCOPE, first["content_id"])
+    assert store.usage()["reserved_bytes"] == 0
+    store.begin(SCOPE, second)
+    assert store.usage()["reserved_bytes"] == 8
+
+
+def test_unfinished_declarations_reserve_the_global_quota_across_scopes(tmp_path):
+    store = make_store(
+        tmp_path / "blobs", max_size_bytes=64, max_scope_bytes=64, max_total_bytes=12,
+    )
+    first = descriptor_for(os.urandom(8), chunk_size=4)
+    second = descriptor_for(os.urandom(8), chunk_size=4)
+    store.begin(SCOPE, first)
+    with pytest.raises(BlobError) as over_total:
+        store.begin(OTHER_SCOPE, second)
+    assert over_total.value.code == "resource_exhausted"
+
+    store.abort(SCOPE, first["content_id"])
+    store.begin(OTHER_SCOPE, second)
+    assert store.usage()["reserved_bytes"] == 8
+
+
+def test_a_declared_upload_cannot_write_past_a_shrunken_quota(tmp_path):
+    store = make_store(tmp_path / "blobs", max_scope_bytes=12, max_total_bytes=12)
+    data = os.urandom(8)
+    descriptor = descriptor_for(data, chunk_size=4)
+    store.begin(SCOPE, descriptor)
+
+    # Simulate an operator lowering the quota after the declaration: the write
+    # path must re-check and fail before storing a byte.
+    store.limits = BlobLimits(
+        **{**store.limits.document(), "max_scope_bytes": 4, "max_total_bytes": 4}
+    )
+    with pytest.raises(BlobError) as over:
+        store.write_chunk(SCOPE, descriptor["content_id"], 0, data[0:4])
+    assert over.value.code == "resource_exhausted"
+    state = store.state(SCOPE, descriptor["content_id"])
+    assert state.received_bytes == 0
+    assert not store.files.chunks(_content_digest(descriptor["content_id"]))
+
+
 def test_more_chunks_than_declared_and_oversized_write_are_refused(tmp_path):
     store = make_store(tmp_path / "blobs")
     data = os.urandom(8)
@@ -355,13 +492,21 @@ def test_concurrent_uploads_of_one_content_id_never_interleave_corruptly(tmp_pat
         thread.start()
     for thread in threads:
         thread.join()
-    assert errors and all(error.code == "failed_precondition" for error in errors)
+    # Identical concurrent uploads are idempotent: whatever loses the race
+    # replays an acknowledged chunk, so a refusal can only be a precondition
+    # conflict, and the acknowledged prefix is always contiguous.
+    assert all(error.code == "failed_precondition" for error in errors)
     state = store.state(SCOPE, descriptor["content_id"])
-    # Whoever won wrote every chunk exactly once; the store is either complete or
-    # still missing a suffix, never a hole in the middle.
     assert state.verified_chunks == tuple(range(len(state.verified_chunks)))
-    if state.received_bytes == len(data):
-        assert store.commit(SCOPE, descriptor["content_id"]).state == "ready"
+    assert state.received_bytes == len(data)
+    assert store.commit(SCOPE, descriptor["content_id"]).state == "ready"
+    assert read_all(store, SCOPE, descriptor["content_id"]) == data
+
+    # Different bytes at an acknowledged boundary are still a conflict after the
+    # concurrent phase.
+    with pytest.raises(BlobError) as conflict:
+        store.write_chunk(SCOPE, descriptor["content_id"], 0, b"ZZZZ")
+    assert conflict.value.code == "failed_precondition"
 
 
 # -- authorization ---------------------------------------------------------

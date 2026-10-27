@@ -200,6 +200,71 @@ def test_duplicate_chunk_and_commit_are_idempotent(frontend):
     assert _status(after_ready) == grpc.StatusCode.FAILED_PRECONDITION
 
 
+def test_begin_upload_reserves_the_declared_size_in_the_scope_quota(tmp_path):
+    limits = BlobLimits(
+        max_size_bytes=64, min_chunk_size=1, max_chunk_size=8, max_chunks=64,
+        max_scope_bytes=12, max_total_bytes=12, max_uploads_per_scope=2,
+    )
+    fe = Frontend(tmp_path / "reserve-scope", limits=limits)
+    try:
+        first = fe.client.begin(descriptor_for(os.urandom(8), chunk_size=4, media_type=MEDIA))
+        assert first.state == bp.BLOB_STATE_ACCEPTED
+        # Nothing has been written yet, but the declaration already reserves its
+        # bytes: a second 8-byte declaration cannot slip under the 12-byte quota.
+        with pytest.raises(grpc.RpcError) as reserved:
+            fe.client.begin(descriptor_for(os.urandom(8), chunk_size=4, media_type=MEDIA))
+        assert _status(reserved) == grpc.StatusCode.RESOURCE_EXHAUSTED
+        assert fe.harness.blob_store.usage()["reserved_bytes"] == 8
+        assert fe.harness.blob_store.usage()["ready_bytes"] == 0
+    finally:
+        fe.close()
+
+
+def test_begin_upload_reserves_the_declared_size_in_the_global_quota(tmp_path):
+    owner = npu_grant()
+    other = npu_grant(token="reserve-other", subject="reserve-other", session_id="reserve-other")
+    limits = BlobLimits(
+        max_size_bytes=64, min_chunk_size=1, max_chunk_size=8, max_chunks=64,
+        max_scope_bytes=64, max_total_bytes=12, max_uploads_per_scope=2,
+    )
+    fe = Frontend(tmp_path / "reserve-total", grants=[owner, other], limits=limits)
+    try:
+        BlobClient(fe.channel, owner.token).begin(
+            descriptor_for(os.urandom(8), chunk_size=4, media_type=MEDIA),
+        )
+        with pytest.raises(grpc.RpcError) as reserved:
+            BlobClient(fe.channel, other.token).begin(
+                descriptor_for(os.urandom(8), chunk_size=4, media_type=MEDIA),
+            )
+        assert _status(reserved) == grpc.StatusCode.RESOURCE_EXHAUSTED
+    finally:
+        fe.close()
+
+
+def test_replaying_an_older_chunk_is_idempotent_and_off_boundary_is_refused(frontend):
+    data = os.urandom(12)
+    ref = descriptor_for(data, chunk_size=4, media_type=MEDIA)
+    frontend.client.begin(ref)
+    for offset in (0, 4, 8):
+        frontend.client.write(ref.content_id, offset, data[offset:offset + 4])
+    assert frontend.client.status(ref.content_id).received_bytes == 12
+
+    # Chunk 0 and chunk 1 are still replayable after later chunks were acked.
+    for offset in (0, 4):
+        replay = frontend.client.write(ref.content_id, offset, data[offset:offset + 4])
+        assert replay.received_bytes == 12
+        assert list(replay.verified_chunks) == [0, 1, 2]
+
+    with pytest.raises(grpc.RpcError) as boundary:
+        frontend.client.write(ref.content_id, 2, data[2:6])
+    assert _status(boundary) == grpc.StatusCode.FAILED_PRECONDITION
+    with pytest.raises(grpc.RpcError) as different:
+        frontend.client.write(ref.content_id, 0, b"ZZZZ")
+    assert _status(different) == grpc.StatusCode.FAILED_PRECONDITION
+    assert frontend.client.commit(ref.content_id).state == bp.BLOB_STATE_READY
+    assert frontend.client.download(ref.content_id) == data
+
+
 def test_a_digest_mismatch_fails_the_blob_closed(frontend):
     data = os.urandom(8)
     wrong_digest = hashlib.sha256(b"other").hexdigest()

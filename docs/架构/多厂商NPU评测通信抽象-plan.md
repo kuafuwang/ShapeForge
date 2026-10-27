@@ -281,8 +281,10 @@ accepted ──begin──▶ uploading ──commit(复核 size+sha256)──�
 **分块与内存边界**
 
 - `WriteChunk(content_id, offset, data)` 只接受 `offset == received_bytes` 的顺序块（乱序、越界、
-  超 `chunk_size`、超过声明 `size_bytes` 都拒绝）；`offset < received_bytes` 的重放只有在已落盘
-  字节完全相同时才幂等 ack，否则冲突。
+  超 `chunk_size`、超过声明 `size_bytes` 都拒绝）。`offset < received_bytes` 的重放按**声明 chunk
+  边界**定位第 `offset / chunk_size` 块（不是只认最后一块）：该块必须已在已验证集合内，长度必须
+  等于声明长度（最后一块可短），字节完全相同时幂等 ack、不推进进度；非边界、超出已验证范围、
+  长度不符或字节不同一律冲突。
 - `ReadChunk(content_id, offset, length)` 只返回 `length <= chunk_size` 的区间，读取路径按实际
   区间读文件，不把整份内容读入内存；commit 复核 digest 用固定大小缓冲流式哈希。
 - 背压是协议的一部分：每个 chunk 一个 RPC ack，客户端最多一个 chunk 在途；服务端不缓存后续
@@ -297,7 +299,11 @@ accepted ──begin──▶ uploading ──commit(复核 size+sha256)──�
 - agent 只提供 descriptor 与 offset/长度，不提供本地路径、共享目录、URL 或任意 vendor 参数；
   服务端把 blob 放在自己 state 目录下，worker 由引擎注入受信 blob 根，不接受 agent 输入。
 - 限额：单 blob 声明大小、`chunk_size` 上下界、chunk 数量、每 scope 并发上传数、每 scope 与
-  全局字节配额都显式配置并在分配/写入前检查；超限返回 `resource_exhausted`，不落半份数据。
+  全局字节配额都显式配置。字节配额按**声明大小预留**：`accepted`/`uploading` 的 blob 从 `begin`
+  起就占住整份 `size_bytes`（不是只算已落盘 chunk），所以两个未完成上传不能各自通过检查后再一起
+  写超；`ready` 按声明（已验证）字节计，`failed`/`quarantine` 按仍占盘的残留字节计。`write_chunk`
+  在落盘前按同一账本再复查一次（配额被调小或账本不一致时 fail closed），超限返回
+  `resource_exhausted`，不落半份数据。
 - 生命周期：upload/commit/abort 一旦记录 attempt/fence 就绑定它，旧 attempt 既不能完成也不能 abort 新上传；
   lease 以 `request_id` 为键（Submit 早于 attempt 分配），只由引擎在终态释放，agent 没有任何清理入口。
   `Submit` 成功后 blob 与 `request_id` 建立 lease；job/attempt 进入终态后释放 lease，
@@ -649,14 +655,23 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   记录上传产物的 digest，`bind_wire_digest` 同时绑定 wire digest 与 wire CandidateDigest；
   blob outbox 缺该字段即 `request_digest_missing`，row/result 的 `candidate_digest` 按 wire 值
   校验，篡改 row、receipt、evidence 或 host 签名都被拒。
+- 配额与重放的复审修复（`af575be` 之后）：字节配额原先只统计已落盘 chunk，两个 8 字节声明在
+  `max_scope_bytes=max_total_bytes=12` 下都能通过并各自写满；现按声明大小在 `begin` 预留、在
+  `write_chunk` 复查，账本另给出 `reserved_bytes`/`quota_bytes`。重放原先只认最后一块，写完
+  offset 0/4/8 后重放 offset 0 被误拒；现按声明边界定位任意已确认块并核对完整长度与字节。
+  新增 store 用例（两个未完成声明同 scope / 跨 scope 超全局配额、abort 释放预留、配额调小后
+  写入 fail closed 且零落盘、非整除末尾块重放）与 gRPC 用例（BeginUpload 预留 scope/全局配额、
+  跨多个后续 chunk 重放 offset 0/4、非边界与不同字节拒绝）；并发相同 content id 在幂等重放下
+  不再报错，断言改为前缀连续、可提交、逐字节一致。
 - 变异核验（临时改动后复原）：跳过 commit 摘要校验、忽略 cleanup 失败、接受旧 attempt/fence、
-  跳过 scope 校验、同时去掉两道 ready 守卫，对应测试全部转为失败；FaultIO 记录的 chunk/offset、
-  台账与 `io.crashes` 证明故障确实触发。
+  跳过 scope 校验、同时去掉两道 ready 守卫，对应测试全部转为失败；另外把配额改回只算落盘字节
+  会让新增的预留用例失败。FaultIO 记录的 chunk/offset、台账与 `io.crashes` 证明故障确实触发。
 - 验证证据（每条命令单独跑）：
-  `tests/shared/test_remote_blob_channel.py` **30 passed**（边界、二进制、读写峰值、崩溃续传、
-  重复/乱序、错误 digest、同 id 不同大小、未 ready、跨 scope、旧 attempt、超限、并发、过期/
+  `tests/shared/test_remote_blob_channel.py` **36 passed**（边界、二进制、读写峰值、崩溃续传、
+  任意已确认块重放与短尾块、乱序、错误 digest、同 id 不同大小、未 ready、跨 scope、旧 attempt、
+  未完成声明按声明大小预留 scope/全局配额、abort 释放预留、配额调小后写入零落盘、并发、过期/
   sweep、cleanup quarantine、孤儿 release、corrupt chunk 检测）；
-  `tests/shared/test_remote_blob_grpc.py` **15 passed**（真实 gRPC 上传/流式下载逐字节一致、
+  `tests/shared/test_remote_blob_grpc.py` **18 passed**（真实 gRPC 上传/流式下载逐字节一致、
   空文件、缺失/过期/撤销/越权 grant 零落盘或零读取、越界/超 chunk/乱序拒绝、断点续传、
   重复 chunk/commit、digest 不符 fail closed、同 id 不同大小、abort、慢消费者有界预取、
   message 无路径/URL/命令、BlobChannel 与六 RPC 分离且 field number 不变）；
@@ -674,7 +689,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `test_evaluation_outbox.py` + `test_orchestrator_runtime.py` **283 passed, 1 skipped**
   （Linux-only 跳过项不变）；`test_selfcheck_bridge.py` 在 `TMPDIR=/tmp` 下 **19 passed**，
   在本机 hmz 围栏默认 TMPDIR 下仍是 **18 failed / 1 passed**（AF_UNIX 路径超长，未改测试）。
-  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2353 passed / 6 skipped /
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2362 passed / 6 skipped /
   32 failed**，32 项仍全是本机围栏环境（selfcheck AF_UNIX 路径、`ps` 被禁、HOME 权威日志
   不可写），失败文件不 import remote/NPU/blob 新代码。
 - 未做（不得据此宣称）：大文件/GB 模型吞吐与容量、真实对象存储、跨站点性能、真实 NPU 大工件

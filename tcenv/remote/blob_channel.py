@@ -455,39 +455,105 @@ class BlobStore:
         self._require_live(manifest, now=now, allow_failed=allow_failed)
         return digest, manifest
 
-    def _usage_locked(self) -> dict[str, int]:
-        ready = partial = uploads = blobs = 0
+    @staticmethod
+    def _charge(manifest: Mapping[str, Any], on_disk: int) -> int:
+        """Return the bytes this blob occupies against the quotas.
+
+        A declared-but-unfinished upload reserves its **whole declared size**, not
+        just the chunks already on disk: otherwise two concurrent declarations
+        could both pass the check and then both write past the quota.  A ready
+        blob is charged its declared (verified) bytes.  A failed/quarantined blob
+        is charged whatever residue still exists on disk, because that space is
+        not free yet.
+        """
+
+        declared = int(manifest["descriptor"]["size_bytes"])
+        if manifest["state"] in {STATE_ACCEPTED, STATE_UPLOADING, STATE_READY}:
+            return declared
+        return on_disk
+
+    @staticmethod
+    def _scope_key(scope: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
+        return tuple(sorted(scope.items()))
+
+    def _ledger_locked(self, *, byte_stats: bool = False) -> dict[str, Any]:
+        """One pass over the store: declared charges, reservations and totals.
+
+        ``quota_bytes`` is what the quota checks use: the declared size of every
+        ready or unfinished blob plus the residual bytes of failed artifacts.
+
+        The write path deliberately asks without ``byte_stats``: a chunk write
+        must not stat every other artifact, and for ready/unfinished blobs the
+        declared charge (which is what the quota reserves) is already exact.  The
+        ``*_bytes`` fields are the on-disk view used by ``usage()`` and tests.
+        """
+
+        ledger: dict[str, Any] = {
+            "blobs": 0, "ready_bytes": 0, "partial_bytes": 0, "open_uploads": 0,
+            "reserved_bytes": 0, "quota_bytes": 0,
+            "scope_charge": {}, "scope_uploads": {},
+        }
         for digest in self._files.iter_blob_digests():
             manifest = self._files.load(digest)
             if manifest is None:
                 continue
-            blobs += 1
-            size = sum(self.io.size(path) for path in self._files.chunks(digest))
-            if manifest["state"] == STATE_READY:
-                ready += size
+            ledger["blobs"] += 1
+            state = manifest["state"]
+            if state in {STATE_READY, STATE_ACCEPTED, STATE_UPLOADING}:
+                on_disk = 0
+                if byte_stats:
+                    on_disk = sum(self.io.size(path) for path in self._files.chunks(digest))
+                    if state == STATE_READY:
+                        ledger["ready_bytes"] += on_disk
+                    else:
+                        ledger["partial_bytes"] += on_disk
+                charge = int(manifest["descriptor"]["size_bytes"])
             else:
-                partial += size
-            if manifest["state"] in {STATE_ACCEPTED, STATE_UPLOADING}:
-                uploads += 1
-        return {"blobs": blobs, "ready_bytes": ready, "partial_bytes": partial, "open_uploads": uploads}
+                # A failed/quarantined artifact may still hold residual bytes
+                # (cleanup failed): that space is not free yet.
+                on_disk = sum(self.io.size(path) for path in self._files.chunks(digest))
+                ledger["partial_bytes"] += on_disk
+                charge = on_disk
+            ledger["quota_bytes"] += charge
+            key = self._scope_key(manifest["scope"])
+            ledger["scope_charge"][key] = ledger["scope_charge"].get(key, 0) + charge
+            if state in {STATE_ACCEPTED, STATE_UPLOADING}:
+                ledger["open_uploads"] += 1
+                ledger["reserved_bytes"] += charge
+                ledger["scope_uploads"][key] = ledger["scope_uploads"].get(key, 0) + 1
+        return ledger
 
-    def usage(self) -> dict[str, int]:
+    def usage(self) -> dict[str, Any]:
         """Return the store ledger (used by quota checks and the tests)."""
 
         with self._lock:
-            return self._usage_locked()
+            return self._ledger_locked(byte_stats=True)
 
-    def _scope_usage_locked(self, scope: BlobScope) -> tuple[int, int]:
-        byte_total = 0
-        uploads = 0
-        for digest in self._files.iter_blob_digests():
+    def _check_quota_locked(
+        self, scope: BlobScope, digest: str | None, declared: int,
+    ) -> None:
+        """Refuse a declaration or a write that the quota cannot hold.
+
+        ``digest`` names the blob being checked (``None`` for a new declaration);
+        its own existing charge is excluded before the new declaration is added,
+        so a replayed write only fails when the *rest* of the store grew or the
+        limits shrank.
+        """
+
+        ledger = self._ledger_locked()
+        own = 0
+        if digest is not None:
             manifest = self._files.load(digest)
-            if manifest is None or manifest.get("scope") != scope.document():
-                continue
-            byte_total += sum(self.io.size(path) for path in self._files.chunks(digest))
-            if manifest["state"] in {STATE_ACCEPTED, STATE_UPLOADING}:
-                uploads += 1
-        return byte_total, uploads
+            if manifest is not None:
+                on_disk = 0
+                if manifest["state"] in {STATE_FAILED, STATE_QUARANTINE}:
+                    on_disk = sum(self.io.size(path) for path in self._files.chunks(digest))
+                own = self._charge(manifest, on_disk)
+        key = self._scope_key(scope.document())
+        if ledger["scope_charge"].get(key, 0) - own + declared > self.limits.max_scope_bytes:
+            raise BlobError("resource_exhausted", "grant scope byte quota is exhausted")
+        if ledger["quota_bytes"] - own + declared > self.limits.max_total_bytes:
+            raise BlobError("resource_exhausted", "blob store byte quota is exhausted")
 
     # -- upload ------------------------------------------------------------
     def begin(
@@ -519,14 +585,13 @@ class BlobStore:
                 # A resume keeps the durable state: `accepted` only becomes
                 # `uploading` when the first chunk is acknowledged.
                 return self._state(manifest)
-            scope_bytes, uploads = self._scope_usage_locked(scope)
-            if uploads >= self.limits.max_uploads_per_scope:
+            ledger = self._ledger_locked()
+            key = self._scope_key(scope.document())
+            if ledger["scope_uploads"].get(key, 0) >= self.limits.max_uploads_per_scope:
                 raise BlobError("resource_exhausted", "scope has too many concurrent uploads")
-            usage = self._usage_locked()
-            if usage["ready_bytes"] + usage["partial_bytes"] + normalized["size_bytes"] > self.limits.max_total_bytes:
-                raise BlobError("resource_exhausted", "blob store byte quota is exhausted")
-            if scope_bytes + normalized["size_bytes"] > self.limits.max_scope_bytes:
-                raise BlobError("resource_exhausted", "grant scope byte quota is exhausted")
+            # The declared size is reserved now, before any byte is written, so a
+            # second declaration cannot slip in and later overflow the quota.
+            self._check_quota_locked(scope, None, normalized["size_bytes"])
             manifest = {
                 "schema_version": BLOB_MANIFEST_SCHEMA_VERSION,
                 "descriptor": normalized,
@@ -579,17 +644,37 @@ class BlobStore:
             received = int(manifest["received_bytes"])
             index = len(manifest["verified_chunks"])
             if offset < received:
-                existing = self._files.chunk_path(digest, index - 1)
-                if not self.io.exists(existing):
+                # A replay is addressed by the declared chunk boundary, not by
+                # "the last chunk": re-sending any acknowledged chunk (not only
+                # the newest) is an idempotent ack when the bytes are identical.
+                chunk_size = descriptor["chunk_size"]
+                if offset % chunk_size:
+                    raise BlobError(
+                        "failed_precondition", "replayed offset is not a declared chunk boundary",
+                    )
+                replayed = offset // chunk_size
+                if replayed >= len(manifest["verified_chunks"]):
+                    raise BlobError(
+                        "failed_precondition", "replayed offset is beyond the acknowledged chunks",
+                    )
+                expected = min(chunk_size, descriptor["size_bytes"] - offset)
+                path = self._files.chunk_path(digest, replayed)
+                if not self.io.exists(path):
                     raise BlobError("unavailable", "already acknowledged chunk is missing")
-                previous = self.io.read(existing, descriptor["chunk_size"] + 1)
-                if offset != received - len(previous):
-                    raise BlobError("failed_precondition", "replayed offset is not an acknowledged chunk boundary")
-                if previous != payload:
+                stored = self.io.read(path, chunk_size + 1)
+                if len(stored) != expected or len(payload) != expected:
+                    raise BlobError(
+                        "failed_precondition",
+                        "replayed chunk length differs from the acknowledged chunk",
+                    )
+                if stored != payload:
                     raise BlobError("failed_precondition", "replayed offset carries different bytes")
                 return self._state(manifest)
             if offset != received:
                 raise BlobError("failed_precondition", "chunk offset must equal the verified upload length")
+            # Re-check the quota on the write path as well: a shrunken limit or a
+            # corrupted reservation must stop the upload instead of overshooting.
+            self._check_quota_locked(scope, digest, descriptor["size_bytes"])
             if received + len(payload) > descriptor["size_bytes"]:
                 raise BlobError("out_of_range", "chunk would exceed the declared blob size")
             expected_index = -(-descriptor["size_bytes"] // descriptor["chunk_size"]) - 1
