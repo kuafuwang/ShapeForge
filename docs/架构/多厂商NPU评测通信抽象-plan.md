@@ -894,17 +894,29 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
    `test_a_topology_no_evidence_row_could_cover_is_refused_up_front`；Go verifier 用同一组
    golden 向量（`npu_bundle.completeness_vectors`，6 个含 4 个应拒）独立复算，Python 侧也断言
    两边判决一致。
-4. **多 blob entry attach 失败的回滚范围（部分证伪，已收紧）**。复现尝试：job A 已持有 X 的
-   lease，再提交引用 X + 未 commit 的 Y 的 job B——旧实现 `release(B)` 只删 B 的 lease，A 的
-   lease 保留（按 request id 释放，不会跨 request）。真正的隐患是同一 request id 上**不同
-   attempt** 的 lease（P0b 通道把 lease 绑 attempt/fence，P2a 会用到）：旧回滚按 request id
-   释放会把旧 attempt 的 lease 一起删掉。修复：`BlobStore.detach(scope, content_id,
-   request_id)` 只删单个 (blob, request) 的 lease（字节保留、不删文件），`_lease_blob` 记录本次
-   循环真正新增的 content id 并只回滚这些。回归：
+4. **多 blob entry attach 失败的回滚范围（部分证伪，已收紧；复核后补全第二条路径）**。复现
+   尝试：job A 已持有 X 的 lease，再提交引用 X + 未 commit 的 Y 的 job B——旧实现 `release(B)`
+   只删 B 的 lease，A 的 lease 保留（按 request id 释放，不会跨 request）。真正的隐患是同一
+   request id 上**不同 attempt** 的 lease（P0b 通道把 lease 绑 attempt/fence，P2a 会用到）：
+   旧回滚按 request id 释放会把旧 attempt 的 lease 一起删掉。修复：`BlobStore.detach(scope,
+   content_id, request_id)` 只删单个 (blob, request) 的 lease（字节保留、不删文件），
+   `_lease_blob` 记录本次循环真正新增的 content id 并只回滚这些。回归：
    `test_a_rejected_multi_entry_submit_only_rolls_back_its_own_leases`（旧 attempt 的绑定 lease
    存活、本次新 lease 回收、被拒 Submit 不留 job、字节仍可用）。诚实结论：按字面「释放同
    request 已接受 job 的 lease」在现实现里不可达（`job_exists` 为真时根本不 lease，且
    `_submit_lock` 串行化），已在此说明而不是当成已发生的 bug。
+   第二轮复核又发现同一条 attach 之后还有**第二条全 request `release`**：`JobEngine.submit`
+   在 `_lease_blob` 成功、`store.submit`（例如 capability 已失效）随后失败时，仍调
+   `blob_store.release(request_id, cleanup=False)`。复现：同一 request 先持 `older` 的
+   attempt/fence lease，再提交只引用已 ready `fresh` 的 bundle 并给一个从未签发的
+   capability——调用前 `older.leases == (request_id,)`，调用后变成 `()`，`fresh` 也被清空。
+   修复：`_lease_blob` 返回 `_ArtifactLease(scope, content_ids)`（本次真正新增的 lease），
+   `submit` 的失败路径改为 `_drop_attached_blobs(lease.scope, request_id, lease.content_ids)`；
+   `job_engine` 里已不存在按 request id 的整体 `release`（只剩终态清理 `_release_blob_lease`，
+   那本来就要释放该 request 的全部 lease）。回归：
+   `test_a_store_rejection_after_attach_keeps_an_older_attempt_lease`（旧 attempt lease 存活且
+   仍绑 attempt/fence、本次新 lease 回收、无 job row、两份 blob 仍 ready），保留原 attach 失败
+   回归；变异核验：把该路径改回 `release(request_id)` 时新回归立即转失败。
 5. **没有 blob 通道时 blob 形态 bundle 仍被接受（确认，已修）**。复现：无 `blob_store` 的 v4
    frontend 提交带 blob entry 的 bundle，旧实现照常建 job/attempt、lease 设备，worker 才因缺
    `TCENV_BLOB_ROOT` 返回 17，被记成可重试的 infrastructure failure。修复：`submit` 在
@@ -916,11 +928,12 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
    拒绝释放）与资源账本本轮复核未发现新漏洞，对应回归在原文件保持；report descriptor 的
    schema 身份此前无人校验，已并入第 2 项的签名入口检查；bundle 终态 blob 清理失败原先只有
    P0b 单 blob 的回归，现补 `test_a_failing_bundle_blob_cleanup_is_quarantined_not_hidden`
-   （注入 `remove` I/O 失败 → blob quarantine + job 记录 hazard，不伪装成干净清理）。
+   （注入 `remove` I/O 失败 → blob quarantine + job 记录 hazard，不伪装成干净清理）。“回滚只
+   覆盖本次 lease”这条同类漏洞确实还有第二条路径（见第 4 项第二轮），已一并修掉并补回归。
 
 修复后证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **52 passed**、
-`test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **17 passed**、
-`test_remote_npu_bundle_go_conformance.py` **14 passed**（合计 91）；P0/P0b 回归
+`test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **18 passed**、
+`test_remote_npu_bundle_go_conformance.py` **14 passed**（合计 92）；P0/P0b 回归
 `test_remote_npu_{contract,grpc,cleanup}.py` +
 `test_remote_blob_{channel,contract,grpc,go_conformance}.py` **170 passed**；
 `test_remote_grpc_{adapter,tls,contract,revocation}.py` + `test_remote_{conformance,

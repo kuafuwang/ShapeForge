@@ -203,6 +203,20 @@ def _group_exists(pgid: int) -> bool:
         return True
 
 
+@dataclass(frozen=True)
+class _ArtifactLease:
+    """The blob leases *one* Submit operation took.
+
+    Rollback is scoped to this value -- the scope plus the content ids the attach
+    loop actually created -- never to the request id: a request may already own a
+    lease taken under an earlier attempt/fence, and dropping that lease would
+    free bytes another execution is still reading.
+    """
+
+    scope: BlobScope
+    content_ids: tuple[str, ...]
+
+
 @dataclass
 class _Running:
     request: ExternalEvaluationRequest
@@ -845,7 +859,9 @@ class JobEngine:
                 "this evaluator has no blob channel; a blob-backed artifact cannot be served",
             )
 
-    def _lease_blob(self, request: ExternalEvaluationRequest, grant_token: str) -> bool:
+    def _lease_blob(
+        self, request: ExternalEvaluationRequest, grant_token: str,
+    ) -> _ArtifactLease | None:
         """Require ready, in-scope artifacts before anything durable is written.
 
         An unfinished upload, another scope's content id, or a descriptor that
@@ -853,13 +869,13 @@ class JobEngine:
         artifact.  The lease is what later releases (or safely keeps) the bytes.
         A multi-entry bundle leases every blob it references; a failure drops only
         the leases this call took, so a request that already owns a live lease
-        keeps it.
-        Returns whether a lease was taken, so a rejected Submit can drop it.
+        keeps it.  The returned lease is what the caller rolls back if the durable
+        insert is then rejected; ``None`` means this request needed no lease.
         """
 
         descriptors = self._artifact_blobs(request)
         if not descriptors:
-            return False
+            return None
         if self.blob_store is None:
             # Unreachable through Submit (``_validate_submission`` refuses first),
             # but a future caller must not silently skip the lease.
@@ -894,7 +910,7 @@ class JobEngine:
         except BaseException:
             self._drop_attached_blobs(scope, request.request_id, taken)
             raise
-        return True
+        return _ArtifactLease(scope=scope, content_ids=tuple(taken))
 
     def _drop_attached_blobs(
         self, scope: BlobScope, request_id: str, content_ids: Iterable[str],
@@ -1015,9 +1031,9 @@ class JobEngine:
         # blob, and the loser would leave an orphan lease keyed by the shared
         # request id (releasing it would also risk the winner's lease).
         with self._submit_lock:
-            leased = False
+            lease: _ArtifactLease | None = None
             if self.blob_store is not None and not self.store.job_exists(request.request_id):
-                leased = self._lease_blob(request, grant_token)
+                lease = self._lease_blob(request, grant_token)
             try:
                 snapshot, _created = self.store.submit(
                     request=request, request_digest=request.request_digest, expected=expected,
@@ -1025,15 +1041,16 @@ class JobEngine:
                     required_features=required_features, grant_token=grant_token,
                 )
             except BaseException:
-                if leased and not self.store.job_exists(request.request_id):
+                if lease is not None and not self.store.job_exists(request.request_id):
                     # A rejected new Submit must not leave a lease behind; the
                     # bytes stay (the caller may fix the request and retry the
-                    # same upload).  A durable job keeps its lease: a failed
-                    # replay is not a terminal outcome.
-                    try:
-                        self.blob_store.release(request.request_id, cleanup=False)
-                    except BlobError:
-                        pass
+                    # same upload).  Only the leases this operation created are
+                    # dropped -- releasing by request id here would also free a
+                    # lease an earlier attempt/fence still owns.  A durable job
+                    # keeps its lease: a failed replay is not a terminal outcome.
+                    self._drop_attached_blobs(
+                        lease.scope, request.request_id, lease.content_ids,
+                    )
                 raise
         if snapshot.state == "accepted" and not snapshot.quarantined:
             snapshot = self.store.enqueue_accepted(request.request_id)

@@ -22,6 +22,7 @@ from tests.support.job_engine import (
     npu_bundle_execution,
     npu_bundle_get,
     npu_bundle_request,
+    npu_bundle_features,
     npu_bundle_retry,
     npu_bundle_submit,
 )
@@ -474,5 +475,54 @@ def test_a_failing_bundle_blob_cleanup_is_quarantined_not_hidden(tmp_path):
         # The job records the hazard instead of claiming a clean teardown.
         assert engine.close_error is not None
         assert "blob cleanup failed" in str(engine.close_error)
+    finally:
+        engine.close(wait=5)
+
+
+def test_a_store_rejection_after_attach_keeps_an_older_attempt_lease(tmp_path):
+    """The durable-insert failure path must roll back the same narrow scope.
+
+    A rejected capability is refused *after* the artifact was leased (the lease
+    happens before the durable insert).  Releasing by request id there would drop
+    the lease an earlier attempt/fence of this request still owns, exactly like
+    the attach-failure path did before it was narrowed.
+    """
+
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+    from tcenv.remote.blob_channel import BlobAttempt, BlobError
+
+    engine, controller, store = _blob_engine(tmp_path / "run")
+    del controller
+    try:
+        older = _upload(engine, b"O" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 8))
+        fresh = _upload(engine, b"F" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 16))
+        scope = _scope(engine)
+        store.attach(
+            scope, older["content_id"], "bundle-post-attach-1",
+            attempt=BlobAttempt(attempt_id="attempt-old", lease_fence=1),
+        )
+        assert store.state(scope, older["content_id"]).leases == ("bundle-post-attach-1",)
+
+        request = npu_bundle_request(
+            "bundle-post-attach-1", bundle=_blob_bundle([fresh], b"unused"),
+        )
+        with pytest.raises(JobError, match="capability is expired"):
+            engine.submit(
+                request=request, expected=engine.expected_identities,
+                capability_id="capability-never-issued",
+                required_features=list(npu_bundle_features(blob=True)),
+                grant_token=NPU_TOKEN,
+            )
+
+        # The lease this Submit created is gone; the older attempt's is not.
+        assert store.state(scope, fresh["content_id"]).leases == ()
+        earlier = store.state(scope, older["content_id"])
+        assert earlier.leases == ("bundle-post-attach-1",)
+        with pytest.raises(BlobError, match="another attempt/fence"):
+            store.attach(scope, older["content_id"], "bundle-post-attach-1")
+        # A rejected Submit leaves no durable job and both uploads stay usable.
+        assert engine.store.job_exists(request.request_id) is False
+        assert store.state(scope, fresh["content_id"]).ready is True
+        assert store.state(scope, older["content_id"]).ready is True
     finally:
         engine.close(wait=5)
