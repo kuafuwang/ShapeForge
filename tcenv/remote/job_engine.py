@@ -422,6 +422,9 @@ class JobEngine:
         # Re-entrant: the Cancel RPC holds it while committing the durable
         # cancellation and then calls the internal cancel helper.
         self._active_lock = threading.RLock()
+        # Serializes Submit's replay check + blob lease + durable insert.  It is
+        # never held by the scheduler or the device paths.
+        self._submit_lock = threading.Lock()
         self._active: _Running | None = None
         # Shutdown state: ``_close_lock`` serializes close() so a second caller
         # cannot be told "closed" while the first is still tearing down.
@@ -897,26 +900,33 @@ class JobEngine:
         # RPC's replay semantics.  The store still re-validates every identity
         # and answers a replay from the committed row, so a different digest or
         # another grant scope is refused exactly as before.
-        leased = False
-        if self.blob_store is not None and not self.store.job_exists(request.request_id):
-            leased = self._lease_blob(request, grant_token)
-        try:
-            snapshot, _created = self.store.submit(
-                request=request, request_digest=request.request_digest, expected=expected,
-                provenance=self._base_provenance(), capability_id=capability_id,
-                required_features=required_features, grant_token=grant_token,
-            )
-        except BaseException:
-            if leased and not self.store.job_exists(request.request_id):
-                # A rejected Submit must not leave a lease behind; the bytes stay
-                # (the caller may fix the request and retry the same upload).
-                # An existing accepted job keeps its lease: a failed replay is
-                # not a terminal outcome.
-                try:
-                    self.blob_store.release(request.request_id, cleanup=False)
-                except BlobError:
-                    pass
-            raise
+        #
+        # The replay check, the lease and the durable insert are one critical
+        # section.  Two concurrent Submits of one request id with different
+        # artifacts would otherwise both see "no job", both lease their own
+        # blob, and the loser would leave an orphan lease keyed by the shared
+        # request id (releasing it would also risk the winner's lease).
+        with self._submit_lock:
+            leased = False
+            if self.blob_store is not None and not self.store.job_exists(request.request_id):
+                leased = self._lease_blob(request, grant_token)
+            try:
+                snapshot, _created = self.store.submit(
+                    request=request, request_digest=request.request_digest, expected=expected,
+                    provenance=self._base_provenance(), capability_id=capability_id,
+                    required_features=required_features, grant_token=grant_token,
+                )
+            except BaseException:
+                if leased and not self.store.job_exists(request.request_id):
+                    # A rejected new Submit must not leave a lease behind; the
+                    # bytes stay (the caller may fix the request and retry the
+                    # same upload).  A durable job keeps its lease: a failed
+                    # replay is not a terminal outcome.
+                    try:
+                        self.blob_store.release(request.request_id, cleanup=False)
+                    except BlobError:
+                        pass
+                raise
         if snapshot.state == "accepted" and not snapshot.quarantined:
             snapshot = self.store.enqueue_accepted(request.request_id)
             self._condition.acquire()

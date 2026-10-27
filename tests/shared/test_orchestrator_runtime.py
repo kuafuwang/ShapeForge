@@ -438,8 +438,10 @@ class NpuShapedEvaluator(RecordingEvaluator):
 
         assert request.contract_request_digest == self.WIRE_DIGEST, "host must bind the wire digest first"
         self.requests.append(request)
+        # The fake evaluator renders a report from a marker in its source; a blob
+        # candidate has no source, so the marker is supplied only to the double.
         report = self.base(
-            request.task, request.dtype, request.size, request.source,
+            request.task, request.dtype, request.size, "// speed=1.0",
             mode=request.mode, seed=request.seed, reps=request.reps,
         )
         device_elapsed_ns = 1_000
@@ -491,6 +493,142 @@ class NpuShapedEvaluator(RecordingEvaluator):
         result.signature = sign_result(result, self.signature_key)
         self._provenance = provenance
         return result
+
+
+class BlobShapedEvaluator(NpuShapedEvaluator):
+    """Host-adapter double for the P0b blob contract (no bytes, no device)."""
+
+    WIRE_DIGEST = "4" * 64
+    BLOB_SHA = "9" * 64
+
+    def execution_metadata(self) -> dict:
+        from tcenv.remote import contracts
+
+        return {
+            "transport": "grpc",
+            "api_contract_id": contracts.NPU_BLOB_API_CONTRACT_ID,
+            "evidence_contract_id": contracts.NPU_BLOB_EVIDENCE_CONTRACT_ID,
+            "request_digest_algorithm": contracts.REQUEST_DIGEST_ALGORITHM,
+            "result_signature_algorithm": contracts.RESULT_SIGNATURE_ALGORITHM,
+            "result_signature_key_ids": ["sim-site/key-1"],
+        }
+
+    def wire_request_digest(self, request) -> str:
+        self.wire_calls += 1
+        return self.WIRE_DIGEST
+
+    def wire_candidate_digest(self, request) -> str:
+        # The blob contract's candidate identity: what the composition root
+        # uploaded, not sha256 of the (empty) host source.
+        assert request.source == ""
+        return self.BLOB_SHA
+
+    def formal(self, request):
+        from tcenv.remote import contracts
+        from tcenv.remote.contracts import NPU_TIMING_EVIDENCE_SCHEMA_ID
+
+        assert request.contract_request_digest == self.WIRE_DIGEST
+        assert request.wire_candidate_digest == self.BLOB_SHA, "host must bind the wire candidate first"
+        assert request.source == "", "a blob candidate must not carry inline source bytes"
+        self.requests.append(request)
+        # The fake evaluator renders a report from a marker in its source; a blob
+        # candidate has no source, so the marker is supplied only to the double.
+        report = self.base(
+            request.task, request.dtype, request.size, "// speed=1.0",
+            mode=request.mode, seed=request.seed, reps=request.reps,
+        )
+        device_elapsed_ns = 1_000
+        report = report.to_json() if hasattr(report, "to_json") else dict(report)
+        report["candidate_us"] = device_elapsed_ns / 1000.0
+        candidate = {"algorithm": contracts.BLOB_DIGEST_ALGORITHM, "value": self.BLOB_SHA}
+        evidence = {
+            "schema_id": NPU_TIMING_EVIDENCE_SCHEMA_ID,
+            "candidate_digest": dict(candidate),
+            "device_group": dict(self.DEVICE_GROUP),
+            "timing": {
+                "source": "DEVICE_EVENT", "clock_domain": "host-double-clock",
+                "synchronization_completed": True, "device_elapsed_ns": device_elapsed_ns,
+                "host_api_elapsed_ns": 2_000, "launches": 1,
+            },
+            "measurement_kind": "measured",
+            "publication_allowed": True,
+            "complete": True,
+        }
+        attempt_id, issued_at = "attempt-1", "2026-01-01T00:00:00Z"
+        receipt = {
+            "receipt_id": contracts.attempt_receipt_id(
+                request_id=request.request_id, attempt_id=attempt_id,
+                request_digest=request.request_digest, candidate_digest=candidate,
+                device_group=self.DEVICE_GROUP, dialect=contracts.NPU_BLOB_DIALECT,
+            ),
+            "request_id": request.request_id, "attempt_id": attempt_id,
+            "request_digest": request.request_digest,
+            "candidate_digest": dict(candidate),
+            "device_group": dict(self.DEVICE_GROUP),
+            "lease_fence": "1", "session_sequence": "1", "issued_at": issued_at,
+            "measurement_kind": "measured",
+            "signature_key_id": "sim-site/key-1",
+            "signature_algorithm": "hmac-sha256-v1",
+        }
+        provenance = replace(
+            local_provenance(request), publication_allowed=True,
+            request_digest=request.request_digest,
+        )
+        result = EvaluationResult(
+            report=report, provenance=provenance, evidence=evidence, receipt=receipt, signature="",
+        )
+        result.signature = sign_result(result, self.signature_key)
+        self._provenance = provenance
+        return result
+
+
+def test_blob_contract_result_binds_the_wire_candidate_digest(tmp_path):
+    """@brief blob 证据必须对上 wire CandidateDigest；host 空 source 的摘要不参与比较。"""
+    import hashlib
+
+    evaluator = BlobShapedEvaluator()
+    orch = make_orch(
+        tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0,
+        evaluator=evaluator, publishable_site_ids={"local"}, publishable_epochs={_test_epoch()},
+    )
+    # A blob candidate is referenced: the host source is empty.
+    report = orch._evaluate_report("", mode="quick", seed=3, reps=1, label="init")
+    assert report.status == "ok"
+    assert evaluator.requests[0].candidate_sha256 == hashlib.sha256(b"").hexdigest()
+    assert evaluator.requests[0].wire_candidate_digest == BlobShapedEvaluator.BLOB_SHA
+
+    rows = [
+        path for path in (orch.run_dir / "evaluation_outbox").glob("*.json")
+        if not path.name.endswith(".result.json") and path.name != "receipts.json"
+    ]
+    assert len(rows) == 1
+    state = json.loads(rows[0].read_text())
+    assert state["schema_version"] == 2
+    assert state["candidate_digest"] == {
+        "algorithm": "sha256-blob-v1", "value": BlobShapedEvaluator.BLOB_SHA,
+    }
+
+
+def test_blob_contract_result_with_another_candidate_is_rejected(tmp_path):
+    """@brief 证据里的 candidate 被换成别的 blob 时，orchestrator 候选校验必须拒绝。"""
+
+    class WrongCandidate(BlobShapedEvaluator):
+        def formal(self, request):
+            result = super().formal(request)
+            return replace(
+                result,
+                evidence={**result.evidence, "candidate_digest": {
+                    "algorithm": "sha256-blob-v1", "value": "0" * 64,
+                }},
+            )
+
+    orch = make_orch(
+        tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0,
+        evaluator=WrongCandidate(), publishable_site_ids={"local"},
+        publishable_epochs={_test_epoch()},
+    )
+    with pytest.raises(EvaluationUnavailable, match="candidate"):
+        orch._evaluate_report("", mode="quick", seed=3, reps=1, label="init")
 
 
 def test_npu_contract_run_binds_the_wire_digest_before_the_durable_row(tmp_path):

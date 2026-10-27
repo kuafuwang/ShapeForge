@@ -64,14 +64,38 @@ def bind_wire_digest(
     candidate = "" if not callable(candidate_wire) else candidate_wire(request)
     if candidate and not isinstance(candidate, str):
         raise EvaluationUnavailable("request_digest_missing", "evaluator returned an invalid wire CandidateDigest")
-    if candidate and candidate != request.candidate_sha256:
-        # A blob candidate's digest is not derivable from the host request; the
-        # row and the submitted request must carry the same one.
+    dialect = getattr(evaluator, "contract", None)
+    blob_contract = bool(getattr(dialect, "npu_blob", False)) or bool(
+        outbox is not None and outbox.dialect.npu_blob
+    )
+    if blob_contract:
+        # The blob contract can never fall back to `candidate_sha256` (that is the
+        # empty host source).  Check an already-bound candidate *before* the first
+        # binding, so a changed evaluator candidate is refused instead of silently
+        # rewriting the durable identity of a resume.
+        if not candidate:
+            raise EvaluationUnavailable(
+                "request_digest_missing",
+                "the blob contract requires an evaluator CandidateDigest",
+            )
+        if request.wire_candidate_digest and candidate != request.wire_candidate_digest:
+            raise EvaluationUnavailable(
+                "request_digest_mismatch",
+                "the bound wire CandidateDigest differs from the evaluator's candidate",
+            )
         return replace(request, contract_request_digest=digest, wire_candidate_digest=candidate)
-    if request.wire_candidate_digest and candidate and candidate != request.wire_candidate_digest:
+    if request.wire_candidate_digest:
+        if candidate and candidate != request.wire_candidate_digest:
+            raise EvaluationUnavailable(
+                "request_digest_mismatch",
+                "the bound wire CandidateDigest differs from the evaluator's candidate",
+            )
+        return replace(request, contract_request_digest=digest, wire_candidate_digest=request.wire_candidate_digest)
+    if candidate and candidate != request.candidate_sha256:
+        # The inline contract must bind the same bytes the request carries.
         raise EvaluationUnavailable(
             "request_digest_mismatch",
-            "the bound wire CandidateDigest differs from the evaluator's candidate",
+            "the evaluator's inline candidate differs from the request source",
         )
     return replace(request, contract_request_digest=digest)
 

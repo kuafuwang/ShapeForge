@@ -601,7 +601,8 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   多设备或 HOST_WALL 被拒）；
   `test_remote_grpc_{adapter,tls,contract,revocation}.py` 与
   `test_remote_{conformance,go_conformance}.py` 六个旧文件 **62 passed**；
-  `test_orchestrator_runtime.py` **18 passed**（含 NPU host 接线回归）；
+  `test_orchestrator_runtime.py` **20 passed**（含 NPU host 接线回归与 blob wire-candidate 证据
+  校验：合法 blob 结果通过、证据换 candidate 被拒）；
   `test_remote_{job_engine,job_recovery,legacy_worker_bridge,container_engine,
   container_supervisor,runtime}.py` + `test_evaluation_outbox.py` **265 passed, 1 skipped**
   （跳过项是 Linux-only 的 `PF_KTHREAD` 检查；v3→v4 原位迁移与 v3 备份恢复回归在
@@ -673,11 +674,23 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   新建或改写任何 blob 行之前执行同一身份门（缺 wire digest 或缺 wire CandidateDigest 都拒绝；
   无持久接受记录时不写行、静默返回，沿用既有 missing-wire 语义）。原先 `unavailable` 只检查
   wire digest，会写入一行伪造的 `sha256-blob-v1` 空内容摘要。
+- 编排层与并发提交的复审修复（`946cb34` 之后）：
+  host 编排的 NPU evidence 校验改用 wire CandidateDigest（blob 形态下 host `candidate_sha256`
+  是空 source 摘要，不能作为期望值；缺 wire candidate 即 `request_digest_missing`，证据
+  candidate 的 algorithm/value 必须与 outbox dialect 一致）。`JobEngine.submit` 把「重放判定 +
+  取 lease + 持久提交」放进同一临界区，两个同 request id、不同 blob/digest 的并发 Submit 只会
+  留下胜方的 lease（败方 `already_exists`，既不新增孤儿 lease 也不误删胜方 lease）。
+  `bind_wire_digest` 先检查已有 `wire_candidate_digest` 是否被 evaluator 改变，再做首次 blob
+  绑定（矛盾即 `request_digest_mismatch`，evaluator 不再给出 candidate 即
+  `request_digest_missing`），并且不再用「candidate 是否等于 host 摘要」推断形态，零字节 blob
+  （其摘要恰等于空 source 摘要）也能正确绑定。
 - 变异核验（临时改动后复原）：跳过 commit 摘要校验、忽略 cleanup 失败、接受旧 attempt/fence、
   跳过 scope 校验、同时去掉两道 ready 守卫，对应测试全部转为失败；把配额改回只算落盘字节会让
   预留用例失败；把 submit 改回先取 lease 会让 completed/failed/重启后的 replay 用例失败；把
-  outbox 的候选回退与 `unavailable` 门去掉会让缺 candidate 的用例失败。FaultIO 记录的
-  chunk/offset、台账与 `io.crashes` 证明故障确实触发。
+  outbox 的候选回退与 `unavailable` 门去掉会让缺 candidate 的用例失败；把编排层改回比较
+  host `candidate_sha256` 会让 blob 证据用例被误拒；把 Submit 的临界区换成空上下文会让并发用例
+  重新出现两个 lease；把 `bind_wire_digest` 改回先按值比较会让重绑定篡改用例通过篡改。
+  FaultIO 记录的 chunk/offset、台账与 `io.crashes` 证明故障确实触发。
 - 验证证据（每条命令单独跑）：
   `tests/shared/test_remote_blob_channel.py` **36 passed**（边界、二进制、读写峰值、崩溃续传、
   任意已确认块重放与短尾块、乱序、错误 digest、同 id 不同大小、未 ready、跨 scope、旧 attempt、
@@ -687,9 +700,10 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   空文件、缺失/过期/撤销/越权 grant 零落盘或零读取、越界/超 chunk/乱序拒绝、断点续传、
   重复 chunk/commit、digest 不符 fail closed、同 id 不同大小、abort、慢消费者有界预取、
   message 无路径/URL/命令、BlobChannel 与六 RPC 分离且 field number 不变）；
-  `tests/shared/test_remote_blob_contract.py` **18 passed**（未 ready/跨 scope 不可 Submit、
+  `tests/shared/test_remote_blob_contract.py` **21 passed**（未 ready/跨 scope 不可 Submit、
   端到端 digest 链与 fake worker 分块读取台账、completed/failed/重启后的同 request 重复 Submit
-  从持久行回放且不新建 lease、outbox 绑定/replay 与缺字段/篡改/换 candidate 拒绝、`unavailable`
+  从持久行回放且不新建 lease、同 request id 不同 blob 的并发 Submit 只留胜方 lease、outbox
+  绑定/replay/重绑定篡改与缺字段拒绝、`unavailable`
   缺 wire CandidateDigest 不写行/不伪造空内容摘要、store 内 `blob_ref` 的 sha/size/chunk/media
   篡改在直读与重开都 fail closed、interrupted attempt 用同一 blob Retry、cleanup 失败
   quarantine、重启释放孤儿 lease、npu-source 拒绝 `blob_ref` 而旧 Metal digest 仍是 version 1）；
@@ -702,7 +716,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `test_evaluation_outbox.py` + `test_orchestrator_runtime.py` **283 passed, 1 skipped**
   （Linux-only 跳过项不变）；`test_selfcheck_bridge.py` 在 `TMPDIR=/tmp` 下 **19 passed**，
   在本机 hmz 围栏默认 TMPDIR 下仍是 **18 failed / 1 passed**（AF_UNIX 路径超长，未改测试）。
-  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2366 passed / 6 skipped /
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2371 passed / 6 skipped /
   32 failed**，32 项仍全是本机围栏环境（selfcheck AF_UNIX 路径、`ps` 被禁、HOME 权威日志
   不可写），失败文件不 import remote/NPU/blob 新代码。
 - 未做（不得据此宣称）：大文件/GB 模型吞吐与容量、真实对象存储、跨站点性能、真实 NPU 大工件

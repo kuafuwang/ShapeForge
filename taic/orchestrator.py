@@ -1530,8 +1530,21 @@ class Orchestrator:
                 evidence = result.evidence
                 npu_contract = bool(self._outbox is not None and self._outbox.npu_contract)
                 if npu_contract:
+                    blob_contract = bool(self._outbox.dialect.npu_blob)
+                    if blob_contract and not request.wire_candidate_digest:
+                        # A blob candidate has no inline bytes, so there is no host
+                        # digest to compare against: the wire CandidateDigest is the
+                        # only identity, and a missing one must fail closed.
+                        raise EvaluationUnavailable(
+                            "request_digest_missing",
+                            "the blob result requires the bound wire CandidateDigest",
+                        )
+                    expected = {
+                        "algorithm": self._outbox.dialect.candidate_algorithms[0],
+                        "value": request.wire_candidate_digest or request.candidate_sha256,
+                    }
                     candidate = evidence.get("candidate_digest") if isinstance(evidence, dict) else None
-                    if not isinstance(candidate, dict) or candidate.get("value") != request.candidate_sha256:
+                    if not isinstance(candidate, dict) or candidate != expected:
                         raise EvaluationUnavailable(
                             "provenance_mismatch", "result evidence does not bind the candidate digest",
                         )

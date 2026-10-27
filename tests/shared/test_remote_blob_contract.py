@@ -12,6 +12,8 @@ import hashlib
 import json
 import os
 import sqlite3
+import threading
+import threading
 from dataclasses import replace
 import time
 from pathlib import Path
@@ -408,6 +410,151 @@ def test_a_terminal_job_replays_after_a_frontend_restart(tmp_path):
         assert reopened.engine.blob_store.leases() == {}
     finally:
         reopened.close()
+
+
+# -- concurrent Submit of one request id with two artifacts ---------------
+def test_two_concurrent_submits_of_one_request_id_leave_only_the_winner_lease(tmp_path):
+    harness = BlobNpuGrpcHarness(tmp_path / "blob-race")
+    try:
+        blobs = [
+            harness.upload(os.urandom(8), chunk_size=4),
+            harness.upload(os.urandom(8), chunk_size=4),
+        ]
+        engine = harness.engine
+        capability = npu_capabilities(engine)
+
+        # Force the dangerous interleaving deterministically: the replay check
+        # reads "no job", then stalls long enough for the other Submit to reach
+        # the same check.  Without one critical section both would lease their
+        # own artifact and the loser would leave an orphan lease keyed by the
+        # shared request id.
+        real_exists = engine.store.job_exists
+        start = threading.Barrier(2, timeout=10)
+
+        def delayed_exists(request_id: str) -> bool:
+            exists = real_exists(request_id)
+            if not exists:
+                time.sleep(0.15)
+            return exists
+
+        engine.store.job_exists = delayed_exists
+        results: list[tuple[int, Any]] = []
+
+        def submit(index: int) -> None:
+            request = npu_request("blob-race-1", blob=blobs[index])
+            try:
+                start.wait()
+                snapshot = engine.submit(
+                    request=request, expected=engine.expected_identities,
+                    capability_id=capability.capability_id,
+                    required_features=list(npu_features(contracts.NPU_BLOB_DIALECT)),
+                    grant_token=NPU_TOKEN,
+                )
+                results.append((index, snapshot))
+            except JobError as exc:
+                results.append((index, exc))
+
+        threads = [threading.Thread(target=submit, args=(index,)) for index in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        assert len(results) == 2, "a concurrent Submit never returned"
+
+        successes = [(index, value) for index, value in results if not isinstance(value, JobError)]
+        failures = [(index, value) for index, value in results if isinstance(value, JobError)]
+        assert len(successes) == 1, results
+        assert len(failures) == 1
+        winner_index, _winner = successes[0]
+        assert failures[0][1].code == "already_exists"
+        winner_blob = blobs[winner_index]
+
+        # The durable job names exactly the winner's artifact...
+        connection = sqlite3.connect(engine.store.state_dir / "jobs.sqlite3")
+        try:
+            row = connection.execute(
+                "SELECT request_json FROM jobs WHERE request_id=?", ("blob-race-1",),
+            ).fetchone()
+        finally:
+            connection.close()
+        assert row is not None
+        assert json.loads(row[0])["blob_ref"] == winner_blob.to_dict()
+
+        # ...and only the winner's lease survives: the loser neither added an
+        # orphan lease nor deleted the winner's.
+        assert engine.blob_store.leases() == {"blob-race-1": [winner_blob.content_id]}
+
+        # The job still runs to completion and its terminal cleanup releases the
+        # single lease.
+        request = npu_request("blob-race-1", blob=winner_blob)
+        wait_for(harness, request, {"completed"}, timeout=20)
+        assert engine.blob_store.leases() == {}
+    finally:
+        harness.close()
+
+
+# -- host binding never silently rewrites the blob candidate ---------------
+class _StubBlobEvaluator:
+    contract = contracts.NPU_BLOB_DIALECT
+
+    def __init__(self, request_digest: str, candidate: str | None) -> None:
+        self.request_digest = request_digest
+        self.candidate = candidate
+
+    def wire_request_digest(self, request) -> str:
+        return self.request_digest
+
+    def wire_candidate_digest(self, request) -> str:
+        if self.candidate is None:
+            raise AssertionError("this evaluator must not expose a candidate")
+        return self.candidate
+
+
+class _StubBlobEvaluatorWithoutCandidate(_StubBlobEvaluator):
+    def __init__(self, request_digest: str) -> None:
+        super().__init__(request_digest, None)
+
+    wire_candidate_digest = None  # type: ignore[assignment]
+
+
+def test_bind_wire_digest_refuses_to_rebind_a_changed_blob_candidate():
+    evaluator = _StubBlobEvaluator("1" * 64, "a" * 64)
+    request = host_request("blob-rebind-1")
+    bound = bind_wire_digest(request, evaluator, None, npu_contract=True)
+    assert bound.contract_request_digest == "1" * 64
+    assert bound.wire_candidate_digest == "a" * 64
+
+    # The same candidate keeps the committed identity.
+    again = bind_wire_digest(bound, evaluator, None, npu_contract=True)
+    assert again.wire_candidate_digest == "a" * 64
+    assert again.contract_request_digest == "1" * 64
+
+    # Another candidate for an already-bound request is refused, not applied.
+    changed = _StubBlobEvaluator("1" * 64, "c" * 64)
+    with pytest.raises(EvaluationUnavailable) as mismatch:
+        bind_wire_digest(bound, changed, None, npu_contract=True)
+    assert mismatch.value.code == "request_digest_mismatch"
+
+    # An evaluator that no longer exposes a candidate cannot bind at all.
+    with pytest.raises(EvaluationUnavailable) as missing:
+        bind_wire_digest(request, _StubBlobEvaluatorWithoutCandidate("1" * 64), None, npu_contract=True)
+    assert missing.value.code == "request_digest_missing"
+
+    # A first binding still accepts a fresh candidate for a fresh request.
+    fresh = bind_wire_digest(host_request("blob-rebind-2"), changed, None, npu_contract=True)
+    assert fresh.wire_candidate_digest == "c" * 64
+
+
+def test_bind_wire_digest_binds_a_zero_byte_blob_candidate_that_equals_the_empty_source():
+    empty_digest = hashlib.sha256(b"").hexdigest()
+    request = host_request("blob-rebind-empty")
+    assert request.candidate_sha256 == empty_digest
+    evaluator = _StubBlobEvaluator("2" * 64, empty_digest)
+    bound = bind_wire_digest(request, evaluator, None, npu_contract=True)
+    # The value equals the empty-source digest, but the blob form must still
+    # record it; inferring the form from equality would drop the identity.
+    assert bound.wire_candidate_digest == empty_digest
+    assert bound.contract_request_digest == "2" * 64
 
 
 # -- durable tamper --------------------------------------------------------
