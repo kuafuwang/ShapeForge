@@ -329,6 +329,61 @@ canonical request/request digest、receipt、outbox、签名和 resume 全链一
 现有 Metal/local 测试不变；`sim-npu` 等 fake gRPC 用例迁移到新 contract，不能继续走旧
 contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profiler 计时。
 
+**P0 实施记录（2026-10-27，代码已落地，未接入真实设备）**
+
+- contract 身份：新增 `tcenv.remote.npu-source.evaluator-api.1` /
+  `tcenv.remote.npu-source.evidence.1`，document_type 为 `.request-digest` /
+  `.receipt-id` / `.result-signature`，`document_version=2`；旧
+  `tcenv.remote.v1.*`（version 1）字段与摘要字节不变（同源对照脚本核对过
+  `request_digest_document`/`request_digest`/`attempt_receipt_id`/`provenance_document`/
+  `receipt_document`）。`contracts.ContractDialect` 选择身份字符串与 receipt 形状，不由
+  请求形状推断；`dialect_for` 拒绝未知或混合的 API/evidence 配对。
+- proto 增补：`EvaluationRequest` 字段 23/24（`CandidateDigest`、`NpuExecutionSpec`），
+  `TargetCapability` 5–9（artifact/launch/subtype/device_groups/timing_sources），
+  `EvaluatorProvenance` 18–22，`Receipt` 9/10。`scripts/generate_evaluator_proto.py
+  --check` 通过（protoc 29.3 / grpc_python_plugin 1.69.0）。六 RPC 名字与语义未变，
+  未新增厂商专用 RPC。
+- P0 执行形状：`artifact_kind=source`、`launch_kind=KERNEL`、
+  `launch_subtype=SIMT`、`synchronization=stream-event`、`required_timing_sources` 只允许
+  `DEVICE_EVENT`、单逻辑设备组；bundle/graph/model/多 rank/die/profiler 一律 `ContractError`。
+- `CandidateDigest` 链：canonical request → request digest（绑定 source sha256、execution
+  spec 与 device group）→ receipt（`candidate_digest`，不双写 `candidate_sha256`）→
+  outbox 行 `schema_version=2` + result envelope → HMAC result signature → resume。
+  新增 `GrpcEvaluator.wire_request_digest()`，host 用它写入
+  `EvaluationRequest.contract_request_digest`；已记录的 wire digest 与服务端重算不一致时在
+  Submit 之前 fail closed。
+- 设备组绑定：`device_group_id/vendor_id/profile_digest/topology_digest/resource_generation`
+  进入 capability（target.device_groups + provenance）、request digest、receipt、provenance
+  与 Retry（Retry capability 的 device group 必须与 job 记录一致，串组即
+  `failed_precondition`）。租约侧由 `DeviceController.reconcile(attempt_id, lease_fence)` 的
+  `CleanupProof` 逐项核对 attempt/fence/group/generation。
+- driver 边界：`tcenv/remote/drivers/base.py` 只有 typed 协议与数据类（`VendorFacts`、
+  `PreparedAttempt`、`VendorOutcome`、`CleanupProof`、`HealthProof`）；无 shell、路径、BDF、
+  vendor key-value。fake vendor A（source → fake ELF/SIMT、device event、跨进程资源台账）只在
+  `tests/support/vendor_sim/`，生产组合根不 import。
+- 生产入口：`python -m tcenv.remote.grpc_service` 对 `npu-source` contract 直接
+  `ValueError`（P0 没有生产 NPU adapter/controller），并拒绝把旧 contract 服务给非 Metal
+  target/backend；local、selfcheck bridge、私有 worker 帧、容器执行面、Metal 默认路径未改。
+- 清理语义：worker 被杀/超时/取消后由 worker 外 controller reconcile；`complete=False` →
+  job quarantine、不提交结果、不允许 Retry、`close()` 报错。终态 job 的 Cancel 不再向
+  controller 发取消。Host API 时间与 device event 时间分开记录，`candidate_us` 取自
+  device event。
+- 验证证据：`tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` 共 23 项通过；
+  `test_remote_grpc_{adapter,tls,contract,revocation}.py`、`test_remote_{conformance,
+  go_conformance}.py` 83 项通过；`test_remote_{job_engine,job_recovery,
+  legacy_worker_bridge,container_engine,container_supervisor,runtime}.py`、
+  `test_evaluation_outbox.py`、`test_selfcheck_bridge.py` 264 项通过。
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`：2216 passed / 6 skipped /
+  32 failed，失败全部是本机 hmz 围栏环境造成：`test_selfcheck_bridge.py` 18 项 AF_UNIX
+  路径超长（短 TMPDIR），`ps` 被禁（`test_children`、`test_run_detached`、
+  `test_triton_baseline`）与 HOME 权威日志不可写（`test_selfcheck`、`test_harness`、
+  `test_kernel_agent`）；这些文件不 import remote/NPU/新测试，也不是本轮改动范围。
+- 未做（不得据此宣称已支持）：bundle/oneof/`artifact_set_digest`、graph-only fake B、P2a
+  TSM simulator、P2 真实设备、profiler 计时、多 rank/die、device group 并入 evaluator
+  epoch、`DeviceController` 调用的显式超时预算、host 编排（`taic/orchestrator.py`）写入
+  wire digest 的实际接线。所有结果为 `simulated=true`、`publication_allowed=false`，不产生
+  性能或发布结论。
+
 ### P1：bundle、graph-only 异步 fake 与 conformance
 
 在 P0 闭环上扩展，不改 P0 的 source-only 语义：

@@ -16,7 +16,9 @@ from typing import Any, Callable, Iterable, Mapping
 from tcenv.children import forget, kill_group, popen_group, scrubbed_env
 from tcenv.schema import PROTOCOL_VERSION as EXECUTION_PROTOCOL_VERSION
 
+from . import contracts
 from .contracts import API_CONTRACT_ID, EVIDENCE_CONTRACT_ID
+from .drivers.base import CleanupProof, DeviceController
 from .identity import ServiceIdentity, SessionGrant
 from .job_store import JobStore
 from .job_types import (
@@ -31,6 +33,7 @@ from .job_types import (
     JobEvent,
     JobFailure,
     JobSnapshot,
+    NpuExecutionSpec,
     StateCorrupt,
 )
 from .protocol import FrameDecoder
@@ -290,6 +293,9 @@ class JobEngine:
         supervisor: AttemptSupervisor | None = None,
         cancel_teardown_s: float = CONTAINER_CANCEL_TEARDOWN_S,
         monotonic: Callable[[], float] | None = None,
+        contract: contracts.ContractDialect = contracts.LEGACY_DIALECT,
+        npu_execution: NpuExecutionSpec | None = None,
+        device_controller: DeviceController | None = None,
         **store_options: Any,
     ) -> None:
         if not worker_command or not all(isinstance(part, str) and part for part in worker_command):
@@ -298,6 +304,15 @@ class JobEngine:
             raise ValueError("execution_protocol_version must be non-empty")
         if not isinstance(require_evidence, bool):
             raise ValueError("require_evidence must be boolean")
+        if not isinstance(contract, contracts.ContractDialect):
+            raise ValueError("contract must be a ContractDialect")
+        if contract.npu_source:
+            if not isinstance(npu_execution, NpuExecutionSpec):
+                raise ValueError("the NPU contract requires a typed execution binding")
+        elif npu_execution is not None:
+            raise ValueError("the legacy contract cannot carry an NPU execution binding")
+        if device_controller is not None and not contract.npu_source:
+            raise ValueError("a device controller is only valid with the NPU contract")
         if isinstance(selfcheck_age_s, bool) or not isinstance(selfcheck_age_s, (int, float)) or not math.isfinite(selfcheck_age_s) or selfcheck_age_s <= 0:
             raise ValueError("selfcheck_age_s must be finite and positive")
         if signing_key is not None and (not isinstance(signing_key, bytes) or len(signing_key) < 32):
@@ -344,6 +359,9 @@ class JobEngine:
             raise ValueError("cancel_teardown_s must be a positive bounded number of seconds")
         self.cancel_teardown_s = float(cancel_teardown_s)
         self.identity = identity
+        self.contract = contract
+        self.npu_execution = npu_execution
+        self.device_controller = device_controller
         self.execution_protocol_version = execution_protocol_version
         self.supported_features = frozenset(supported_features)
         self.supported_modes = frozenset(supported_modes)
@@ -371,13 +389,13 @@ class JobEngine:
             site_id=identity.site_id, device_id=identity.device_id, target_id=identity.target_id,
             worker_build=identity.worker_build, task_pack_digest=identity.task_pack_digest,
             evaluator_epoch=identity.external_epoch(execution_protocol_version=execution_protocol_version),
-        ), API_CONTRACT_ID, EVIDENCE_CONTRACT_ID)
+        ), contract.api_contract_id, contract.evidence_contract_id)
         self._expected.validate()
         if len(identity.calibration_digest) != 64 or any(c not in "0123456789abcdef" for c in identity.calibration_digest):
             raise ValueError("external evaluator calibration_digest must be 64 lowercase hex characters")
         self.store = JobStore(
             state_dir, signing_key=signing_key, signing_key_id=signing_key_id,
-            signing_keyring=signing_keyring, **store_options,
+            signing_keyring=signing_keyring, contract=contract, **store_options,
         )
         try:
             configured_scopes: set[str] = set()
@@ -425,7 +443,11 @@ class JobEngine:
     def _base_provenance(self) -> dict[str, Any]:
         return self.identity.external_provenance(
             execution_protocol_version=self.execution_protocol_version,
-            api_contract_id=API_CONTRACT_ID, evidence_contract_id=EVIDENCE_CONTRACT_ID,
+            api_contract_id=self.contract.api_contract_id,
+            evidence_contract_id=self.contract.evidence_contract_id,
+            npu_execution=(
+                None if self.npu_execution is None else self.npu_execution.to_dict()
+            ),
         )
 
     # -- transport-neutral RPC surface -------------------------------------
@@ -461,16 +483,44 @@ class JobEngine:
                 "max_blob_bytes": 16_000_000,
             },
         )
-        return replace(capabilities, target_capabilities=({
+        target = {
             "target_id": self.identity.target_id,
             "backend": self.identity.backend,
             "modes": sorted(self.supported_modes),
             "features": sorted(self.supported_features),
-        },))
+        }
+        if self.contract.npu_source and self.npu_execution is not None:
+            group = self.npu_execution.device_group
+            target.update({
+                "artifact_kinds": ["source"],
+                "launch_kinds": [self.npu_execution.launch_kind],
+                "launch_subtypes": [self.npu_execution.launch_subtype],
+                "timing_sources": list(self.npu_execution.required_timing_sources),
+                "device_groups": [{
+                    **group.to_dict(),
+                    "logical_devices": 1,
+                    "state": "available",
+                    "timing_sources": list(self.npu_execution.required_timing_sources),
+                }],
+            })
+        return replace(capabilities, target_capabilities=(target,))
 
     def _validate_submission(self, request: ExternalEvaluationRequest) -> None:
+        if request.contract != self.contract:
+            raise JobError(
+                "failed_precondition",
+                "request contract is not served by this evaluator; re-handshake with the exact contract",
+            )
         if request.target_id != self.identity.target_id:
             raise JobError("failed_precondition", "target is not served by this evaluator")
+        if self.contract.npu_source:
+            if request.npu is None or self.npu_execution is None:
+                raise JobError("invalid_argument", "NPU request has no execution binding")
+            if request.npu.execution.to_dict() != self.npu_execution.to_dict():
+                raise JobError(
+                    "failed_precondition",
+                    "request device group/profile/topology/resource generation differs from the served group",
+                )
         if not self.identity.accepts_task(request.task, request.dtype, request.size, request.task_fingerprint):
             raise JobError("failed_precondition", "task fingerprint does not match the deployed task pack")
         if request.mode not in self.supported_modes:
@@ -528,6 +578,7 @@ class JobEngine:
                     expected=expected, reason=reason,
                 )
                 running = self._cancel_active_locked(request_id)
+                self._cancel_device_for(snapshot)
             finally:
                 self._active_lock.release()
         else:
@@ -543,6 +594,7 @@ class JobEngine:
             running = self._active
             if running is not None and running.request.request_id == request_id:
                 running.cancel_requested = True
+            self._cancel_device_for(snapshot)
         self._wake()
         if (
             running is not None
@@ -583,7 +635,8 @@ class JobEngine:
             scope_id = self.store.revoke_grant(token)
             running = self.store.cancel_scope(scope_id)
             for request_id in running:
-                self._cancel_active_locked(request_id)
+                active = self._cancel_active_locked(request_id)
+                self._cancel_device(active.attempt if active is not None else None)
         self._wake()
 
     def release_quarantine(self, request_id: str) -> JobSnapshot:
@@ -638,10 +691,16 @@ class JobEngine:
             return "running attempt belongs to another execution supervisor; manual cleanup required"
         if kind == EXECUTION_CONTAINER:
             try:
-                return self.supervisor.cleanup_recovered(attempt, state_dir=self.store.state_dir)
+                error = self.supervisor.cleanup_recovered(attempt, state_dir=self.store.state_dir)
             except Exception as exc:
                 return f"execution cleanup failed: {exc}"[:1000]
-        return self._cleanup_recovered_process(attempt)
+            if error:
+                return error
+            return self._reconcile_device(attempt)
+        error = self._cleanup_recovered_process(attempt)
+        if error:
+            return error
+        return self._reconcile_device(attempt)
 
     @staticmethod
     def _cleanup_recovered_process(attempt: Attempt) -> str:
@@ -727,7 +786,7 @@ class JobEngine:
                     elif isinstance(exc, JobError):
                         self._handle_worker_job_error(running, exc)
                     else:
-                        self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                        self._interrupt_attempt(request.request_id, attempt, JobFailure(
                             "infrastructure", True, "worker_supervisor_failed", detail[:1000],
                         ))
                 except Exception:
@@ -924,10 +983,10 @@ class JobEngine:
             return
         snapshot = self.store._job_by_id(running.request.request_id)
         if snapshot.cancel_requested or running.cancel_requested:
-            self.store.finish_cancellation(running.request.request_id, attempt)
+            self._finish_cancellation(running.request.request_id, attempt)
             return
         if running.stopping or self._stop.is_set():
-            self.store.interrupt_attempt(running.request.request_id, attempt, JobFailure(
+            self._interrupt_attempt(running.request.request_id, attempt, JobFailure(
                 "infrastructure", True, "frontend_stopped", "frontend stopped while the attempt was active",
             ))
             return
@@ -941,15 +1000,15 @@ class JobEngine:
         code = exc.code if exc.code in {"data_loss", "resource_exhausted"} else "worker_result_invalid"
         failure = JobFailure(domain, exc.retryable, code, str(exc)[:1000])
         if exc.retryable:
-            self.store.interrupt_attempt(request.request_id, attempt, failure)
+            self._interrupt_attempt(request.request_id, attempt, failure)
             return
         if exc.code == "data_loss":
-            applied = self.store.interrupt_attempt(
+            applied = self._interrupt_attempt(
                 request.request_id, attempt, failure,
                 quarantine=True, recovery_error=str(exc),
             )
         else:
-            applied = self.store.fail_attempt(request.request_id, attempt, failure)
+            applied = self._fail_attempt(request.request_id, attempt, failure)
         if not applied:
             snapshot = self.store._job_by_id(request.request_id)
             if snapshot.state in {"completed", "failed", "cancelled", "expired"}:
@@ -958,6 +1017,108 @@ class JobEngine:
                     f"{snapshot.state}: {exc}"
                 ))
                 self._stop.set()
+
+    # -- device controller boundary ----------------------------------------
+    def _reconcile_device(self, attempt: Attempt) -> str:
+        """Return "" only when the worker-external controller proved cleanup.
+
+        A worker-local ``VendorDriver.close`` is cooperative, never proof: for
+        the NPU contract a frontend without a controller must quarantine rather
+        than claim the device resources are gone.
+        """
+
+        controller = self.device_controller
+        if controller is None:
+            if self.contract.npu_source:
+                return "no device controller is configured; device cleanup cannot be proven"
+            return ""
+        try:
+            proof = controller.reconcile(attempt.attempt_id, attempt.lease_fence)
+        except Exception as exc:  # noqa: BLE001 - a controller failure is infrastructure
+            return f"device reconcile raised {type(exc).__name__}: {exc}"[:1000]
+        if not isinstance(proof, CleanupProof):
+            return "device controller returned an untyped cleanup proof"
+        if proof.attempt_id != attempt.attempt_id or proof.lease_fence != attempt.lease_fence:
+            return (
+                "device cleanup proof is bound to a different attempt/fence: "
+                f"{proof.attempt_id}/{proof.lease_fence}"
+            )
+        if self.npu_execution is not None:
+            group = self.npu_execution.device_group
+            if (
+                proof.device_group_id != group.device_group_id
+                or proof.resource_generation != group.resource_generation
+            ):
+                return "device cleanup proof names a different device group/resource generation"
+        if not proof.complete:
+            live = ",".join(proof.live_resources) or "unknown"
+            return f"device cleanup was not proven; live resources: {live}; {proof.detail}"[:1000]
+        return ""
+
+    def _record_device_cleanup_failure(self, request_id: str, attempt: Attempt, error: str) -> None:
+        if self._close_error is None:
+            self._close_error = RuntimeError(f"device cleanup was not verified: {error}"[:1000])
+        try:
+            snapshot = self.store._job_by_id(request_id)
+            current = snapshot.current_attempt
+            if (
+                snapshot.state == "running" and current is not None
+                and current.attempt_id == attempt.attempt_id
+                and current.lease_fence == attempt.lease_fence
+            ):
+                self.store.recovered_attempt(request_id, attempt, cleanup_error=error[:1000])
+                return
+            self.store.record_cleanup_hazard(request_id, attempt, error[:1000])
+        except Exception as exc:  # noqa: BLE001 - defensive durable boundary
+            self._record_close_error(f"could not persist device cleanup hazard: {exc}")
+            try:
+                self.store.mark_unavailable(exc)
+            finally:
+                self._stop.set()
+
+    def _cancel_device_for(self, snapshot: JobSnapshot) -> None:
+        """Cancel a live device lease; a terminal job has nothing to cancel."""
+
+        if snapshot.state != "running":
+            return
+        self._cancel_device(snapshot.current_attempt)
+
+    def _cancel_device(self, attempt: Attempt | None) -> None:
+        """Best-effort typed cancel; cleanup is still proven by reconcile."""
+
+        if attempt is None or self.device_controller is None:
+            return
+        try:
+            self.device_controller.cancel(attempt.attempt_id, attempt.lease_fence)
+        except Exception as exc:  # noqa: BLE001 - reconcile decides, not the RPC
+            self._record_close_error(f"device cancel could not be delivered: {exc}")
+
+    def _interrupt_attempt(
+        self, request_id: str, attempt: Attempt, failure: JobFailure,
+        *, quarantine: bool = False, recovery_error: str = "",
+    ) -> bool:
+        error = self._reconcile_device(attempt)
+        if error:
+            self._record_device_cleanup_failure(request_id, attempt, error)
+            return False
+        return self.store.interrupt_attempt(
+            request_id, attempt, failure,
+            quarantine=quarantine, recovery_error=recovery_error,
+        )
+
+    def _finish_cancellation(self, request_id: str, attempt: Attempt) -> bool:
+        error = self._reconcile_device(attempt)
+        if error:
+            self._record_device_cleanup_failure(request_id, attempt, error)
+            return False
+        return self.store.finish_cancellation(request_id, attempt)
+
+    def _fail_attempt(self, request_id: str, attempt: Attempt, failure: JobFailure) -> bool:
+        error = self._reconcile_device(attempt)
+        if error:
+            self._record_device_cleanup_failure(request_id, attempt, error)
+            return False
+        return self.store.fail_attempt(request_id, attempt, failure)
 
     def _complete_worker_result(
         self, running: _Running, *, report: dict[str, Any], evidence: dict[str, Any] | None,
@@ -972,6 +1133,10 @@ class JobEngine:
                 JobError("invalid_argument", "worker result has no evidence object"),
             )
             return
+        device_error = self._reconcile_device(attempt)
+        if device_error:
+            self._record_device_cleanup_failure(request.request_id, attempt, device_error)
+            return
         try:
             snapshot = self.store.complete_attempt(
                 request.request_id, attempt, report=report, evidence=evidence,
@@ -984,7 +1149,7 @@ class JobEngine:
         # New stores finish this atomically in complete_attempt; this also
         # prevents a still-running response from wedging the single-active queue.
         if snapshot.state in {"queued", "running"} and snapshot.cancel_requested:
-            self.store.finish_cancellation(request.request_id, attempt)
+            self._finish_cancellation(request.request_id, attempt)
 
     def _supervisor_daemon(self) -> tuple[str, str]:
         """Return ``(error, daemon_identity)`` for the current execution engine."""
@@ -1160,26 +1325,26 @@ class JobEngine:
                 self._stop.set()
             return
         if snapshot.cancel_requested or running.cancel_requested:
-            self.store.finish_cancellation(request.request_id, attempt)
+            self._finish_cancellation(request.request_id, attempt)
             return
-        self.store.interrupt_attempt(request.request_id, attempt, failure)
+        self._interrupt_attempt(request.request_id, attempt, failure)
 
     def _run_worker(self, running: _Running) -> None:
         request, attempt = running.request, running.attempt
         if running.stopping or self._stop.is_set():
-            self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+            self._interrupt_attempt(request.request_id, attempt, JobFailure(
                 "infrastructure", True, "frontend_stopped", "frontend stopped before worker startup",
             ))
             return
         if running.cancel_requested:
-            self.store.finish_cancellation(request.request_id, attempt)
+            self._finish_cancellation(request.request_id, attempt)
             return
         identity_error = self._accepted_identity_error(self.store._job_by_id(request.request_id))
         if identity_error:
             # The accepted job carries the submitting evaluator's identity.
             # Running it under any other build would sign a result that names
             # an evaluator/image which never ran it.
-            self.store.interrupt_attempt(
+            self._interrupt_attempt(
                 request.request_id, attempt,
                 JobFailure("infrastructure", False, "worker_build_mismatch", identity_error[:1000]),
                 quarantine=True, recovery_error=identity_error[:1000],
@@ -1191,13 +1356,13 @@ class JobEngine:
             # only against the same engine (and a daemon switch fails closed).
             daemon_error, daemon = self._supervisor_daemon()
             if daemon_error:
-                self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                self._interrupt_attempt(request.request_id, attempt, JobFailure(
                     "infrastructure", True, "worker_daemon_identity", daemon_error[:1000],
                 ))
                 return
             if not self.store.attach_daemon(request.request_id, attempt, daemon=daemon):
                 # No container exists yet; the durable fence moved on.
-                self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                self._interrupt_attempt(request.request_id, attempt, JobFailure(
                     "infrastructure", True, "worker_attach_fenced",
                     "the Docker daemon identity was not attached to the exact running attempt/fence",
                 ))
@@ -1234,9 +1399,9 @@ class JobEngine:
                     f"could not start worker: {exc}; {residue_error}"[:1000],
                 )
             elif self.store._job_by_id(request.request_id).cancel_requested or running.cancel_requested:
-                self.store.finish_cancellation(request.request_id, attempt)
+                self._finish_cancellation(request.request_id, attempt)
             else:
-                self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                self._interrupt_attempt(request.request_id, attempt, JobFailure(
                     "infrastructure", True, "worker_unavailable", f"could not start worker: {exc}"[:1000],
                 ))
             return
@@ -1260,7 +1425,7 @@ class JobEngine:
                         running, f"process supervisor returned no worker process; {cleanup_error}"[:1000],
                     )
                     return
-                self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                self._interrupt_attempt(request.request_id, attempt, JobFailure(
                     "infrastructure", True, "worker_unavailable",
                     "process supervisor returned no worker process",
                 ))
@@ -1278,9 +1443,9 @@ class JobEngine:
                         f"could not bind worker PID start token; {cleanup_error}"[:1000],
                     )
                 elif self.store._job_by_id(request.request_id).cancel_requested or running.cancel_requested:
-                    self.store.finish_cancellation(request.request_id, attempt)
+                    self._finish_cancellation(request.request_id, attempt)
                 else:
-                    self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                    self._interrupt_attempt(request.request_id, attempt, JobFailure(
                         "infrastructure", True, "worker_identity_unavailable",
                         "could not bind worker PID start token",
                     ))
@@ -1300,9 +1465,9 @@ class JobEngine:
                 if cleanup_error:
                     self._record_cleanup_hazard(running, f"{failure.message}; {cleanup_error}"[:1000])
                 elif self.store._job_by_id(request.request_id).cancel_requested or running.cancel_requested:
-                    self.store.finish_cancellation(request.request_id, attempt)
+                    self._finish_cancellation(request.request_id, attempt)
                 else:
-                    self.store.interrupt_attempt(request.request_id, attempt, failure)
+                    self._interrupt_attempt(request.request_id, attempt, failure)
                 return
             daemon_error, daemon = self._supervisor_daemon()
             if daemon_error:
@@ -1311,7 +1476,7 @@ class JobEngine:
                 if cleanup_error:
                     self._record_cleanup_hazard(running, detail[:1000])
                 else:
-                    self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                    self._interrupt_attempt(request.request_id, attempt, JobFailure(
                         "infrastructure", True, "worker_daemon_identity", detail[:1000],
                     ))
                 return
@@ -1592,7 +1757,7 @@ class JobEngine:
             if isinstance(error, JobError):
                 self._handle_worker_job_error(running, error)
             else:
-                self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                self._interrupt_attempt(request.request_id, attempt, JobFailure(
                     "protocol", True, "worker_protocol_error", str(error)[:1000],
                 ))
             return
@@ -1601,23 +1766,23 @@ class JobEngine:
             # live stderr reader can hold back/obscure the child's output just as
             # a live stdout reader can.  No result may be committed until both
             # readers reached EOF.
-            self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+            self._interrupt_attempt(request.request_id, attempt, JobFailure(
                 "protocol", True, "worker_protocol_error",
                 "worker output was not fully read and validated before the result decision",
             ))
             return
         if supervisor_error:
             error = supervisor_error[0]
-            self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+            self._interrupt_attempt(request.request_id, attempt, JobFailure(
                 "infrastructure", True, "worker_supervisor_failed", str(error)[:1000],
             ))
             return
         snapshot = self.store._job_by_id(request.request_id)
         if snapshot.cancel_requested or running.cancel_requested:
-            self.store.finish_cancellation(request.request_id, attempt)
+            self._finish_cancellation(request.request_id, attempt)
             return
         if running.stopping or self._stop.is_set():
-            self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+            self._interrupt_attempt(request.request_id, attempt, JobFailure(
                 "infrastructure", True, "frontend_stopped", "frontend stopped while the attempt was active",
             ))
             return
@@ -1625,7 +1790,7 @@ class JobEngine:
             # The stderr reader failed; the bridge cannot prove it saw the
             # complete child output, so an "ok" result is not acceptable.
             error = stderr_error[0]
-            self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+            self._interrupt_attempt(request.request_id, attempt, JobFailure(
                 "protocol", True, "worker_protocol_error",
                 f"worker stderr could not be read: {error}"[:1000],
             ))
@@ -1654,11 +1819,11 @@ class JobEngine:
         if not results:
             if returncode != 0:
                 detail = stderr_tail[0].replace(str(self.store.state_dir), "<state>") if stderr_tail else ""
-                self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+                self._interrupt_attempt(request.request_id, attempt, JobFailure(
                     "infrastructure", True, "worker_failed", f"worker exited {returncode}: {detail}"[:1000],
                 ))
                 return
-            self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+            self._interrupt_attempt(request.request_id, attempt, JobFailure(
                 "protocol", True, "worker_protocol_error", "worker did not emit exactly one result",
             ))
             return
@@ -1668,13 +1833,13 @@ class JobEngine:
         # must not be trusted over a crashed supervisor exit.  A timeout already
         # returned above, so ``returncode`` is a real exit code here.
         if len(results) != 1:
-            self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+            self._interrupt_attempt(request.request_id, attempt, JobFailure(
                 "protocol", True, "worker_protocol_error", "worker emitted multiple results",
             ))
             return
         if returncode != 0:
             detail = stderr_tail[0].replace(str(self.store.state_dir), "<state>") if stderr_tail else ""
-            self.store.interrupt_attempt(request.request_id, attempt, JobFailure(
+            self._interrupt_attempt(request.request_id, attempt, JobFailure(
                 "infrastructure", True, "worker_failed", f"worker exited {returncode}: {detail}"[:1000],
             ))
             return

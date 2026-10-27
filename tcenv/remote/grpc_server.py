@@ -351,7 +351,9 @@ class EvaluatorService(pb_grpc.EvaluatorServicer):
                 raise JobError("invalid_argument", "Submit requires request and expected identities")
             gc.reject_unknown_fields(request.expected, "SubmitRequest.expected")
             gc.reject_unknown_fields(request.expected.evaluator, "SubmitRequest.expected.evaluator")
-            evaluation = gc.request_from_proto(request.request)
+            evaluation = gc.request_from_proto(
+                request.request, dialect=self.engine.contract,
+            )
             request_id = evaluation.request_id
             if request.request_digest != evaluation.request_digest:
                 raise JobError("invalid_argument", "request_digest does not match the normalized request and source bytes")

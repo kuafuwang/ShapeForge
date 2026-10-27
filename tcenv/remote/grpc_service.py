@@ -32,6 +32,7 @@ from .container_supervisor import (
     container_worker_build,
     normalize_image_digest,
 )
+from . import contracts
 from .grpc_server import DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_MAX_WATCH_STREAMS, GrpcServerConfig, RunningServer, build_server
 from .grants import load_grants_file
 from .identity import ServiceIdentity
@@ -176,6 +177,21 @@ def verify_deployment(
 
     if not args.worker_module or args.worker_module.startswith("tests.") or args.worker_module.startswith("tests/"):
         raise ValueError("the production entry point cannot run a test/composition worker module")
+    try:
+        dialect = contracts.dialect_for(args.api_contract_id, args.evidence_contract_id)
+    except contracts.ContractError as exc:
+        raise ValueError(f"unsupported API/evidence contract pair: {exc}") from exc
+    if dialect.npu_source:
+        # P0 ships the source-only NPU contract and its fake vendor only in the
+        # test composition root.  A production NPU adapter/DeviceController has
+        # not been implemented or validated, so this entry must not pretend it
+        # can serve one.
+        raise ValueError("the P0 NPU source contract is test-only; no production NPU adapter is installed")
+    if args.target_id != "apple-m4-max" or args.backend != "metal":
+        raise ValueError(
+            "the legacy source contract is only served for the existing Metal target "
+            "apple-m4-max; use the versioned NPU contract for other targets"
+        )
     supervisor = build_supervisor(args)
     pack = _task_pack(args, fingerprint_provider=fingerprint_provider)
     identity = ServiceIdentity(
@@ -235,6 +251,7 @@ def build_stack(
         worker_env=worker_env,
         supervisor=supervisor,
         state_dir=Path(args.state_dir),
+        contract=contracts.dialect_for(args.api_contract_id, args.evidence_contract_id),
         signing_key=active_key,
         signing_key_id=active_key_id,
         signing_keyring=keyring.trusted,
@@ -276,6 +293,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--backend", required=True)
     parser.add_argument("--backend-version", required=True)
     parser.add_argument("--target-id", required=True)
+    parser.add_argument(
+        "--api-contract-id", default=contracts.API_CONTRACT_ID,
+        help="external API contract; the legacy source contract is Metal-only",
+    )
+    parser.add_argument(
+        "--evidence-contract-id", default=contracts.EVIDENCE_CONTRACT_ID,
+        help="external evidence contract paired with --api-contract-id",
+    )
     parser.add_argument("--worker-build", required=True)
     parser.add_argument("--calibration-digest", required=True)
     parser.add_argument("--task-pack-root", required=True, type=Path)

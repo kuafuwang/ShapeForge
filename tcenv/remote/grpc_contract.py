@@ -20,7 +20,9 @@ from google.protobuf.timestamp_pb2 import Timestamp
 from . import contracts
 from .job_types import (
     Attempt,
+    CandidateDigest,
     Capabilities,
+    DeviceGroupBinding,
     ExpectedEvaluator,
     ExpectedIdentities,
     ExternalEvaluationRequest,
@@ -29,6 +31,8 @@ from .job_types import (
     JobFailure,
     JobResult,
     JobSnapshot,
+    NpuExecutionSpec,
+    NpuSourceRequest,
 )
 from .v1 import evaluator_pb2 as pb
 
@@ -185,7 +189,12 @@ def timestamp_from_rfc3339(text: str) -> Timestamp:
 
 
 # -- request ---------------------------------------------------------------
-def request_to_proto(request: ExternalEvaluationRequest) -> pb.EvaluationRequest:
+def request_to_proto(
+    request: ExternalEvaluationRequest,
+    *, dialect: contracts.ContractDialect = contracts.LEGACY_DIALECT,
+) -> pb.EvaluationRequest:
+    if request.contract != dialect:
+        raise JobError("invalid_argument", "request contract differs from the configured evaluator contract")
     message = pb.EvaluationRequest(
         kind=KIND_TO_PROTO[request.kind],
         request_id=request.request_id,
@@ -196,7 +205,7 @@ def request_to_proto(request: ExternalEvaluationRequest) -> pb.EvaluationRequest
         size=request.size,
         target_id=request.target_id,
         task_fingerprint=request.task_fingerprint,
-        candidate_sha256=request.candidate_sha256,
+        candidate_sha256="" if dialect.npu_source else request.candidate_sha256,
         source=request.source,
         mode=MODE_TO_PROTO[request.mode],
         reps=request.reps,
@@ -212,7 +221,66 @@ def request_to_proto(request: ExternalEvaluationRequest) -> pb.EvaluationRequest
         message.seed = request.seed
     if request.cases is not None:
         message.cases.names.extend(request.cases)
+    if dialect.npu_source:
+        if request.npu is None:
+            raise JobError("invalid_argument", "NPU request has no CandidateDigest/execution binding")
+        message.candidate_digest.CopyFrom(candidate_digest_to_proto(request.npu.candidate_digest))
+        message.execution.CopyFrom(execution_to_proto(request.npu.execution))
     return message
+
+
+def candidate_digest_to_proto(value: CandidateDigest) -> pb.CandidateDigest:
+    return pb.CandidateDigest(algorithm=value.algorithm, value=value.value)
+
+
+def device_group_to_proto(value: DeviceGroupBinding) -> pb.DeviceGroupBinding:
+    return pb.DeviceGroupBinding(
+        device_group_id=value.device_group_id,
+        vendor_id=value.vendor_id,
+        profile_digest=value.profile_digest,
+        topology_digest=value.topology_digest,
+        resource_generation=value.resource_generation,
+    )
+
+
+def execution_to_proto(value: NpuExecutionSpec) -> pb.NpuExecutionSpec:
+    message = pb.NpuExecutionSpec(
+        artifact_kind=value.artifact_kind,
+        launch_kind=value.launch_kind,
+        launch_subtype=value.launch_subtype,
+        source_media_type=value.source_media_type,
+        required_timing_sources=list(value.required_timing_sources),
+        synchronization=value.synchronization,
+    )
+    message.device_group.CopyFrom(device_group_to_proto(value.device_group))
+    return message
+
+
+def execution_from_proto(message: pb.NpuExecutionSpec) -> NpuExecutionSpec:
+    if not isinstance(message, pb.NpuExecutionSpec):
+        raise JobError("invalid_argument", "execution is not an NpuExecutionSpec message")
+    if not message.HasField("device_group"):
+        raise JobError("invalid_argument", "NPU execution requires a device group binding")
+    try:
+        return NpuExecutionSpec.from_dict({
+            "artifact_kind": message.artifact_kind,
+            "launch_kind": message.launch_kind,
+            "launch_subtype": message.launch_subtype,
+            "source_media_type": message.source_media_type,
+            "device_group": {
+                "device_group_id": message.device_group.device_group_id,
+                "vendor_id": message.device_group.vendor_id,
+                "profile_digest": message.device_group.profile_digest,
+                "topology_digest": message.device_group.topology_digest,
+                "resource_generation": message.device_group.resource_generation,
+            },
+            "required_timing_sources": list(message.required_timing_sources),
+            "synchronization": message.synchronization,
+        })
+    except JobError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise JobError("invalid_argument", f"NPU execution is invalid: {exc}") from exc
 
 
 def reject_unknown_fields(message, name: str) -> None:
@@ -231,16 +299,36 @@ def reject_unknown_fields(message, name: str) -> None:
         raise JobError("invalid_argument", f"{name} contains unknown fields")
 
 
-def request_from_proto(message: pb.EvaluationRequest) -> ExternalEvaluationRequest:
+def request_from_proto(
+    message: pb.EvaluationRequest,
+    *, dialect: contracts.ContractDialect = contracts.LEGACY_DIALECT,
+) -> ExternalEvaluationRequest:
     if not isinstance(message, pb.EvaluationRequest):
         raise JobError("invalid_argument", "request is not an EvaluationRequest message")
     reject_unknown_fields(message, "EvaluationRequest")
     if message.HasField("cases"):
         reject_unknown_fields(message.cases, "EvaluationRequest.cases")
-    try:
-        message.source.decode("utf-8", errors="strict")
-    except UnicodeDecodeError as exc:
-        raise JobError("invalid_argument", "candidate source is not valid UTF-8 text") from exc
+    if message.HasField("candidate_digest") != dialect.npu_source or message.HasField("execution") != dialect.npu_source:
+        raise JobError("invalid_argument", "request CandidateDigest/execution presence differs from the contract")
+    if dialect.npu_source:
+        if message.candidate_sha256:
+            raise JobError("invalid_argument", "the NPU contract does not accept candidate_sha256")
+        if not message.candidate_digest.algorithm or not message.candidate_digest.value:
+            raise JobError("invalid_argument", "request CandidateDigest is incomplete")
+        npu = NpuSourceRequest(
+            candidate_digest=CandidateDigest(
+                message.candidate_digest.algorithm, message.candidate_digest.value,
+            ),
+            execution=execution_from_proto(message.execution),
+        )
+    else:
+        if message.candidate_digest.ByteSize() or message.execution.ByteSize():
+            raise JobError("invalid_argument", "the legacy contract does not accept NPU request fields")
+        npu = None
+        try:
+            message.source.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise JobError("invalid_argument", "candidate source is not valid UTF-8 text") from exc
     kind = _enum(message.kind, KIND_FROM_PROTO, "kind")
     mode = _enum(message.mode, MODE_FROM_PROTO, "mode")
     cache_policy = _enum(message.cache_policy, CACHE_FROM_PROTO, "cache_policy")
@@ -268,7 +356,7 @@ def request_from_proto(message: pb.EvaluationRequest) -> ExternalEvaluationReque
             size=_bounded_text(message.size, "size", max_bytes=128),
             target_id=_identifier(message.target_id, "target_id"),
             task_fingerprint=_hex64(message.task_fingerprint, "task_fingerprint"),
-            candidate_sha256=_hex64(message.candidate_sha256, "candidate_sha256"),
+            candidate_sha256="" if dialect.npu_source else _hex64(message.candidate_sha256, "candidate_sha256"),
             source=source,
             mode=mode,
             seed=seed,
@@ -281,9 +369,12 @@ def request_from_proto(message: pb.EvaluationRequest) -> ExternalEvaluationReque
             validate=bool(message.validate),
             measure_serial=bool(message.measure_serial),
             cache_policy=cache_policy,
+            npu=npu,
         )
     except contracts.ContractError as exc:
         raise JobError("invalid_argument", str(exc)) from exc
+    except JobError:
+        raise
 
 
 # -- identities -------------------------------------------------------------
@@ -356,10 +447,9 @@ def expected_identities_from_proto(message: pb.ExpectedIdentities) -> ExpectedId
             api_contract_id=message.api_contract_id,
             evidence_contract_id=message.evidence_contract_id,
         )
-        if expected.api_contract_id != contracts.API_CONTRACT_ID:
-            raise JobError("failed_precondition", "expected API contract is not supported by this client")
-        if expected.evidence_contract_id != contracts.EVIDENCE_CONTRACT_ID:
-            raise JobError("failed_precondition", "expected evidence contract is not supported by this client")
+        # Resolve the exact pair so an unsupported or mixed contract is rejected
+        # before the store ever records a capability.
+        expected.validate()
         return expected
     except JobError:
         raise
@@ -367,11 +457,19 @@ def expected_identities_from_proto(message: pb.ExpectedIdentities) -> ExpectedId
         raise JobError("invalid_argument", f"expected identities are invalid: {exc}") from exc
 
 
+def _document_dialect(document: Mapping[str, Any]) -> contracts.ContractDialect:
+    try:
+        return contracts.dialect_for(document["api_contract_id"], document["evidence_contract_id"])
+    except (KeyError, TypeError, contracts.ContractError) as exc:
+        raise JobError("invalid_argument", "unknown API/evidence contract pair") from exc
+
+
 def expected_identities_from_provenance(document: Mapping[str, Any]) -> ExpectedIdentities:
+    dialect = _document_dialect(document)
     if isinstance(document, Mapping) and ("attempt_id" in document or "request_digest" in document):
-        provenance = contracts.provenance_document(document, require_attempt=True)
+        provenance = contracts.provenance_document(document, require_attempt=True, dialect=dialect)
     else:
-        provenance = contracts.provenance_document(document, require_attempt=False)
+        provenance = contracts.provenance_document(document, require_attempt=False, dialect=dialect)
     return ExpectedIdentities(
         ExpectedEvaluator(
             site_id=provenance["site_id"],
@@ -387,8 +485,14 @@ def expected_identities_from_provenance(document: Mapping[str, Any]) -> Expected
 
 
 # -- provenance, receipt and signature -------------------------------------
-def provenance_to_proto(document: Mapping[str, Any], *, require_attempt: bool) -> pb.EvaluatorProvenance:
-    provenance = contracts.provenance_document(document, require_attempt=require_attempt)
+def provenance_to_proto(
+    document: Mapping[str, Any], *, require_attempt: bool,
+    dialect: contracts.ContractDialect | None = None,
+) -> pb.EvaluatorProvenance:
+    selected = dialect or _document_dialect(document)
+    provenance = contracts.provenance_document(
+        document, require_attempt=require_attempt, dialect=selected,
+    )
     message = pb.EvaluatorProvenance(
         schema_version=provenance["schema_version"],
         evaluator_epoch=provenance["evaluator_epoch"],
@@ -406,17 +510,34 @@ def provenance_to_proto(document: Mapping[str, Any], *, require_attempt: bool) -
         measurement_kind=MEASUREMENT_TO_PROTO[provenance["measurement_kind"]],
         publication_allowed=provenance["publication_allowed"],
     )
+    if selected.npu_source:
+        message.device_group.CopyFrom(pb.DeviceGroupBinding(**provenance["device_group"]))
+        message.artifact_kind = provenance["artifact_kind"]
+        message.launch_kind = provenance["launch_kind"]
+        message.launch_subtype = provenance["launch_subtype"]
+        message.timing_sources.extend(provenance["timing_sources"])
     if require_attempt:
         message.attempt_id = provenance["attempt_id"]
         message.request_digest = provenance["request_digest"]
     return message
 
 
-def provenance_from_proto(message: pb.EvaluatorProvenance, *, require_attempt: bool) -> dict[str, Any]:
+def provenance_from_proto(
+    message: pb.EvaluatorProvenance, *, require_attempt: bool,
+    dialect: contracts.ContractDialect | None = None,
+) -> dict[str, Any]:
     if not isinstance(message, pb.EvaluatorProvenance):
         raise JobError("invalid_argument", "provenance is not an EvaluatorProvenance message")
     if message.HasField("attempt_id") != require_attempt or message.HasField("request_digest") != require_attempt:
         raise JobError("invalid_argument", "provenance attempt/digest presence differs from the contract")
+    selected = dialect or _document_dialect({
+        "api_contract_id": message.api_contract_id,
+        "evidence_contract_id": message.evidence_contract_id,
+    })
+    if message.HasField("device_group") != selected.npu_source:
+        raise JobError("invalid_argument", "provenance device group presence differs from the contract")
+    if bool(message.artifact_kind) != selected.npu_source or bool(message.launch_kind) != selected.npu_source:
+        raise JobError("invalid_argument", "provenance execution shape presence differs from the contract")
     measurement = _enum(message.measurement_kind, MEASUREMENT_FROM_PROTO, "measurement_kind")
     document: dict[str, Any] = {
         "schema_version": int(message.schema_version),
@@ -435,46 +556,92 @@ def provenance_from_proto(message: pb.EvaluatorProvenance, *, require_attempt: b
         "measurement_kind": measurement,
         "publication_allowed": bool(message.publication_allowed),
     }
+    if selected.npu_source:
+        if not message.HasField("device_group") or message.launch_subtype == "" or not message.timing_sources:
+            raise JobError("invalid_argument", "NPU provenance is missing its device/execution binding")
+        document["device_group"] = {
+            "device_group_id": message.device_group.device_group_id,
+            "vendor_id": message.device_group.vendor_id,
+            "profile_digest": message.device_group.profile_digest,
+            "topology_digest": message.device_group.topology_digest,
+            "resource_generation": message.device_group.resource_generation,
+        }
+        document["artifact_kind"] = message.artifact_kind
+        document["launch_kind"] = message.launch_kind
+        document["launch_subtype"] = message.launch_subtype
+        document["timing_sources"] = list(message.timing_sources)
     if require_attempt:
         document["attempt_id"] = message.attempt_id
         document["request_digest"] = message.request_digest
     try:
-        return contracts.provenance_document(document, require_attempt=require_attempt)
+        return contracts.provenance_document(
+            document, require_attempt=require_attempt, dialect=selected,
+        )
     except contracts.ContractError as exc:
         raise JobError("invalid_argument", f"provenance is invalid: {exc}") from exc
 
 
-def receipt_to_proto(receipt: Mapping[str, Any]) -> pb.Receipt:
-    document = contracts.receipt_document(receipt)
-    return pb.Receipt(
+def receipt_to_proto(
+    receipt: Mapping[str, Any], *, dialect: contracts.ContractDialect = contracts.LEGACY_DIALECT,
+) -> pb.Receipt:
+    document = contracts.receipt_document(receipt, dialect=dialect)
+    message = pb.Receipt(
         receipt_id=document["receipt_id"],
         request_id=document["request_id"],
         attempt_id=document["attempt_id"],
         request_digest=document["request_digest"],
-        candidate_sha256=document["candidate_sha256"],
+        candidate_sha256="" if dialect.npu_source else document["candidate_sha256"],
         lease_fence=int(document["lease_fence"]),
         session_sequence=int(document["session_sequence"]),
         issued_at=timestamp_from_rfc3339(document["issued_at"]),
     )
+    if dialect.npu_source:
+        message.candidate_digest.CopyFrom(pb.CandidateDigest(**document["candidate_digest"]))
+        message.device_group.CopyFrom(pb.DeviceGroupBinding(**document["device_group"]))
+    return message
 
 
-def receipt_from_proto(message: pb.Receipt) -> dict[str, Any]:
+def receipt_from_proto(
+    message: pb.Receipt, *, dialect: contracts.ContractDialect | None = None,
+) -> dict[str, Any]:
     if not isinstance(message, pb.Receipt):
         raise JobError("invalid_argument", "receipt is not a Receipt message")
     if not message.HasField("issued_at"):
         raise JobError("invalid_argument", "receipt issued_at is required")
+    selected = dialect
+    if selected is None:
+        selected = contracts.NPU_SOURCE_DIALECT if message.HasField("candidate_digest") else contracts.LEGACY_DIALECT
+    if message.HasField("candidate_digest") != selected.npu_source or message.HasField("device_group") != selected.npu_source:
+        raise JobError("invalid_argument", "receipt candidate/device binding presence differs from the contract")
+    if selected.npu_source and message.candidate_sha256:
+        raise JobError("invalid_argument", "the NPU receipt does not dual-write candidate_sha256")
+    if not selected.npu_source and (message.candidate_digest.ByteSize() or message.device_group.ByteSize()):
+        raise JobError("invalid_argument", "the legacy receipt does not accept NPU binding fields")
     document = {
         "receipt_id": message.receipt_id,
         "request_id": message.request_id,
         "attempt_id": message.attempt_id,
         "request_digest": message.request_digest,
-        "candidate_sha256": message.candidate_sha256,
         "lease_fence": str(int(message.lease_fence)),
         "session_sequence": str(int(message.session_sequence)),
         "issued_at": _rfc3339_from_timestamp(message.issued_at),
     }
+    if selected.npu_source:
+        document["candidate_digest"] = {
+            "algorithm": message.candidate_digest.algorithm,
+            "value": message.candidate_digest.value,
+        }
+        document["device_group"] = {
+            "device_group_id": message.device_group.device_group_id,
+            "vendor_id": message.device_group.vendor_id,
+            "profile_digest": message.device_group.profile_digest,
+            "topology_digest": message.device_group.topology_digest,
+            "resource_generation": message.device_group.resource_generation,
+        }
+    else:
+        document["candidate_sha256"] = message.candidate_sha256
     try:
-        return contracts.receipt_document(document)
+        return contracts.receipt_document(document, dialect=selected)
     except contracts.ContractError as exc:
         raise JobError("invalid_argument", f"receipt is invalid: {exc}") from exc
 
@@ -561,6 +728,8 @@ def _result_document(
     evidence: tuple[bytes, dict[str, Any]] | None,
     provenance: dict[str, Any],
     receipt: dict[str, Any],
+    *,
+    dialect: contracts.ContractDialect = contracts.LEGACY_DIALECT,
 ) -> dict[str, Any]:
     document = {
         "provenance": provenance,
@@ -569,17 +738,20 @@ def _result_document(
         "receipt": receipt,
     }
     try:
-        contracts.result_signature_document(document, key_id="placeholder/1")
+        contracts.result_signature_document(document, key_id="placeholder/1", dialect=dialect)
     except contracts.ContractError as exc:
         raise JobError("invalid_argument", f"result envelope is invalid: {exc}") from exc
     return document
 
 
-def result_to_proto(result: JobResult) -> pb.EvaluationResult:
+def result_to_proto(
+    result: JobResult, *, dialect: contracts.ContractDialect | None = None,
+) -> pb.EvaluationResult:
+    selected = dialect or _document_dialect(result.provenance)
     message = pb.EvaluationResult(
         report=blob_to_proto(result.report, result.report_descriptor),
-        provenance=provenance_to_proto(result.provenance, require_attempt=True),
-        receipt=receipt_to_proto(result.receipt),
+        provenance=provenance_to_proto(result.provenance, require_attempt=True, dialect=selected),
+        receipt=receipt_to_proto(result.receipt, dialect=selected),
     )
     if result.evidence is not None and result.evidence_descriptor is not None:
         message.evidence.CopyFrom(blob_to_proto(result.evidence, result.evidence_descriptor))
@@ -590,6 +762,7 @@ def result_to_proto(result: JobResult) -> pb.EvaluationResult:
 
 def result_from_proto(
     message: pb.EvaluationResult,
+    *, dialect: contracts.ContractDialect | None = None,
 ) -> tuple[bytes, dict[str, Any], bytes | None, dict[str, Any] | None, dict[str, Any], dict[str, Any], dict[str, str]]:
     """Validate one result message and return its transport-neutral pieces."""
 
@@ -599,10 +772,16 @@ def result_from_proto(
         raise JobError("invalid_argument", "result is missing report, provenance, receipt or signature")
     report = blob_from_proto(message.report, allow_empty=False)
     evidence = blob_from_proto(message.evidence, allow_empty=True) if message.HasField("evidence") else None
-    provenance = provenance_from_proto(message.provenance, require_attempt=True)
-    receipt = receipt_from_proto(message.receipt)
+    selected = dialect
+    if selected is None:
+        selected = _document_dialect({
+            "api_contract_id": message.provenance.api_contract_id,
+            "evidence_contract_id": message.provenance.evidence_contract_id,
+        })
+    provenance = provenance_from_proto(message.provenance, require_attempt=True, dialect=selected)
+    receipt = receipt_from_proto(message.receipt, dialect=selected)
     signature = signature_from_proto(message.signature)
-    _result_document(report, evidence, provenance, receipt)
+    _result_document(report, evidence, provenance, receipt, dialect=selected)
     return (
         report[0], report[1],
         None if evidence is None else evidence[0],
@@ -721,7 +900,10 @@ _LIMIT_FIELDS = (
 
 
 def capabilities_to_proto(capabilities: Capabilities, *, extra_limits: Mapping[str, int] | None = None) -> pb.Capabilities:
-    provenance = contracts.provenance_document(capabilities.provenance, require_attempt=False)
+    selected = _document_dialect(capabilities.provenance)
+    provenance = contracts.provenance_document(
+        capabilities.provenance, require_attempt=False, dialect=selected,
+    )
     message = pb.Capabilities(
         client_nonce=capabilities.client_nonce,
         server_nonce=capabilities.server_nonce,
@@ -729,19 +911,35 @@ def capabilities_to_proto(capabilities: Capabilities, *, extra_limits: Mapping[s
         evaluator_epoch=provenance["evaluator_epoch"],
         api_contract_id=provenance["api_contract_id"],
         evidence_contract_id=provenance["evidence_contract_id"],
-        provenance=provenance_to_proto(provenance, require_attempt=False),
+        provenance=provenance_to_proto(provenance, require_attempt=False, dialect=selected),
         supported_features=sorted(capabilities.supported_features),
         issued_at=timestamp_message(capabilities.issued_at_ms),
         valid_for_ms=int(capabilities.valid_for_ms),
     )
     for target in capabilities.target_capabilities:
         modes = [MODE_TO_PROTO[mode] for mode in target.get("modes", ()) if mode in MODE_TO_PROTO]
-        message.targets.add(
+        target_message = message.targets.add(
             target_id=target.get("target_id", ""),
             backend=target.get("backend", ""),
             modes=modes,
             features=list(target.get("features", ())),
         )
+        if selected.npu_source:
+            target_message.artifact_kinds.extend(target.get("artifact_kinds", ()))
+            target_message.launch_kinds.extend(target.get("launch_kinds", ()))
+            target_message.launch_subtypes.extend(target.get("launch_subtypes", ()))
+            target_message.timing_sources.extend(target.get("timing_sources", ()))
+            for group in target.get("device_groups", ()):
+                target_message.device_groups.add(
+                    device_group_id=group.get("device_group_id", ""),
+                    vendor_id=group.get("vendor_id", ""),
+                    profile_digest=group.get("profile_digest", ""),
+                    topology_digest=group.get("topology_digest", ""),
+                    resource_generation=group.get("resource_generation", ""),
+                    logical_devices=int(group.get("logical_devices", 0)),
+                    state=group.get("state", ""),
+                    timing_sources=list(group.get("timing_sources", ())),
+                )
     limits = dict(capabilities.limits)
     limits.update(extra_limits or {})
     for name in _LIMIT_FIELDS:

@@ -88,6 +88,48 @@ message CaseSelection {
   repeated string names = 1;
 }
 
+// P0 NPU source identity.  algorithm is sha256 and value is the exact source
+// sha256.  The legacy Metal/source contract keeps candidate_sha256 instead.
+message CandidateDigest {
+  string algorithm = 1;
+  string value = 2;
+}
+
+// Logical device group binding.  resource_generation is a canonical unsigned
+// decimal string and must be refreshed by GetCapabilities after a reset or
+// topology change.
+message DeviceGroupBinding {
+  string device_group_id = 1;
+  string vendor_id = 2;
+  string profile_digest = 3;
+  string topology_digest = 4;
+  string resource_generation = 5;
+}
+
+// P0 deliberately supports only artifact_kind=source, launch_kind=KERNEL,
+// launch_subtype=SIMT, source_media_type text and stream-event synchronization.
+// Bundle/graph/model/multi-rank fields are added by later contract versions.
+message NpuExecutionSpec {
+  string artifact_kind = 1;
+  string launch_kind = 2;
+  string launch_subtype = 3;
+  string source_media_type = 4;
+  DeviceGroupBinding device_group = 5;
+  repeated string required_timing_sources = 6;
+  string synchronization = 7;
+}
+
+message DeviceGroupCapability {
+  string device_group_id = 1;
+  string vendor_id = 2;
+  string profile_digest = 3;
+  string topology_digest = 4;
+  string resource_generation = 5;
+  uint32 logical_devices = 6;
+  string state = 7;
+  repeated string timing_sources = 8;
+}
+
 message EvaluationRequest {
   EvaluationKind kind = 1;
   string request_id = 2;
@@ -115,6 +157,10 @@ message EvaluationRequest {
   bool validate = 20;
   bool measure_serial = 21;
   CachePolicy cache_policy = 22;
+  // Present exactly for the NPU source contract; the legacy contract rejects
+  // both fields and continues to use candidate_sha256 above.
+  CandidateDigest candidate_digest = 23;
+  NpuExecutionSpec execution = 24;
 }
 
 // Handshake expectations. Empty worker_build/task_pack_digest/evaluator_epoch
@@ -161,6 +207,12 @@ message TargetCapability {
   string backend = 2;
   repeated EvaluationMode modes = 3;
   repeated string features = 4;
+  // NPU contract only; empty for the legacy Metal/source contract.
+  repeated string artifact_kinds = 5;
+  repeated string launch_kinds = 6;
+  repeated string launch_subtypes = 7;
+  repeated DeviceGroupCapability device_groups = 8;
+  repeated string timing_sources = 9;
 }
 
 message Capabilities {
@@ -236,6 +288,12 @@ message EvaluatorProvenance {
   MeasurementKind measurement_kind = 16;
   // A second check only; the host allowlists remain authoritative.
   bool publication_allowed = 17;
+  // NPU contract only; absent/empty for the legacy Metal/source contract.
+  DeviceGroupBinding device_group = 18;
+  string artifact_kind = 19;
+  string launch_kind = 20;
+  string launch_subtype = 21;
+  repeated string timing_sources = 22;
 }
 
 // data is opaque to the transport. The descriptor covers the exact data bytes.
@@ -256,6 +314,10 @@ message Receipt {
   uint64 lease_fence = 6;
   uint64 session_sequence = 7;
   google.protobuf.Timestamp issued_at = 8;
+  // NPU contract only.  candidate_sha256 above stays empty for this contract
+  // and must not be dual-written; the legacy contract leaves these unset.
+  CandidateDigest candidate_digest = 9;
+  DeviceGroupBinding device_group = 10;
 }
 
 message ResultSignature {

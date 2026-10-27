@@ -15,6 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from tcenv.evaluation import EvaluationRequest, EvaluationResult, EvaluationUnavailable, validate_receipt, verify_result_signature
+from tcenv.remote.contracts import (
+    NPU_SOURCE_API_CONTRACT_ID,
+    NPU_SOURCE_EVIDENCE_CONTRACT_ID,
+    NPU_TIMING_EVIDENCE_SCHEMA_ID,
+    ContractError,
+    device_group_document,
+)
 
 from .control import write_json_atomic
 from .redact import redact_text
@@ -48,6 +55,16 @@ class EvaluationOutbox:
         if external_trusted_key_ids is not None and not isinstance(external_trusted_key_ids, frozenset):
             raise ValueError("external_trusted_key_ids must be a frozenset or None")
         self.external_trusted_key_ids = external_trusted_key_ids
+        self.npu_contract = (
+            self.api_contract_id == NPU_SOURCE_API_CONTRACT_ID
+            or self.evidence_contract_id == NPU_SOURCE_EVIDENCE_CONTRACT_ID
+        )
+        if self.npu_contract and (
+            self.api_contract_id != NPU_SOURCE_API_CONTRACT_ID
+            or self.evidence_contract_id != NPU_SOURCE_EVIDENCE_CONTRACT_ID
+        ):
+            raise ValueError("outbox NPU contract requires both NPU API and evidence contract ids")
+        self.document_version = 2 if self.npu_contract else 1
         # The status read by the last begin(); resume uses it to decide whether
         # an interrupted durable job may be resumed through an explicit Retry.
         self.previous_status = ""
@@ -76,13 +93,12 @@ class EvaluationOutbox:
 
     def _document(self, request: EvaluationRequest, *, epoch: str, status: str, created_at: float) -> dict[str, Any]:
         now = time.time()
-        return {
-            "schema_version": 1,
+        document = {
+            "schema_version": self.document_version,
             "run_id": request.run_id,
             "session_id": request.session_id,
             "request_id": request.request_id,
             "request_digest": request.request_digest,
-            "candidate_sha256": request.candidate_sha256,
             "evaluator_epoch": epoch,
             "transport": self.transport,
             "api_contract_id": self.api_contract_id,
@@ -95,8 +111,25 @@ class EvaluationOutbox:
             "created_at": created_at,
             "updated_at": now,
         }
+        if self.npu_contract:
+            document["candidate_digest"] = {"algorithm": "sha256", "value": request.candidate_sha256}
+        else:
+            document["candidate_sha256"] = request.candidate_sha256
+        return document
+
+    def _device_group(self, value: Any, *, where: str) -> dict[str, str]:
+        """Validate the NPU device-group binding this outbox row must carry."""
+
+        try:
+            return device_group_document(value)
+        except ContractError as exc:
+            raise EvaluationUnavailable(
+                "evidence_mismatch", f"outbox NPU {where} device group is invalid: {exc}",
+            ) from exc
 
     def _check_binding(self, document: dict[str, Any]) -> None:
+        if document.get("schema_version") != self.document_version:
+            raise EvaluationUnavailable("outbox_conflict", "evaluation outbox row version differs from the contract")
         for key, expected in (
             ("transport", self.transport),
             ("api_contract_id", self.api_contract_id),
@@ -110,6 +143,22 @@ class EvaluationOutbox:
 
     def _validate_result(self, request: EvaluationRequest, result: EvaluationResult) -> None:
         receipt_id = validate_receipt(result, request)
+        if self.npu_contract:
+            receipt = result.receipt if isinstance(result.receipt, dict) else {}
+            candidate = receipt.get("candidate_digest")
+            if not isinstance(candidate, dict) or candidate.get("value") != request.candidate_sha256:
+                raise EvaluationUnavailable("receipt_mismatch", "outbox NPU receipt CandidateDigest does not match")
+            if "candidate_sha256" in receipt:
+                raise EvaluationUnavailable("receipt_mismatch", "outbox NPU receipt dual-writes candidate_sha256")
+            evidence = result.evidence
+            if not isinstance(evidence, dict) or evidence.get("schema_id") != NPU_TIMING_EVIDENCE_SCHEMA_ID:
+                raise EvaluationUnavailable("evidence_mismatch", "outbox NPU result has no timing evidence")
+            if evidence.get("candidate_digest") != candidate:
+                raise EvaluationUnavailable("evidence_mismatch", "outbox NPU evidence CandidateDigest differs from receipt")
+            receipt_group = receipt.get("device_group")
+            if not isinstance(receipt_group, dict) or evidence.get("device_group") != receipt_group:
+                raise EvaluationUnavailable("evidence_mismatch", "outbox NPU device group binding differs")
+            self._device_group(receipt_group, where="receipt")
         if self.signature_key is not None:
             if not verify_result_signature(result, self.signature_key):
                 raise EvaluationUnavailable("signature_mismatch", "outbox result signature does not verify")
@@ -133,6 +182,16 @@ class EvaluationOutbox:
             if not isinstance(document, dict) or document.get("request_digest") != request.request_digest:
                 raise EvaluationUnavailable("outbox_conflict", "outbox request id is bound to a different request")
             self._check_binding(document)
+            if self.npu_contract:
+                candidate = document.get("candidate_digest")
+                if (
+                    not isinstance(candidate, dict)
+                    or candidate.get("algorithm") != "sha256"
+                    or candidate.get("value") != request.candidate_sha256
+                ):
+                    raise EvaluationUnavailable(
+                        "outbox_corrupt", "outbox CandidateDigest does not bind the request source",
+                    )
             self.previous_status = str(document.get("status") or "")
             previous_epoch = document.get("evaluator_epoch")
             if epoch and previous_epoch and previous_epoch != epoch:
@@ -158,9 +217,27 @@ class EvaluationOutbox:
                 if result.provenance.request_digest != request.request_digest:
                     raise EvaluationUnavailable("outbox_corrupt", "completed result request digest does not match")
                 evidence = result.evidence
-                if not isinstance(evidence, dict) or evidence.get("candidate_sha256") != request.candidate_sha256:
+                if self.npu_contract:
+                    candidate = result.receipt.get("candidate_digest") if isinstance(result.receipt, dict) else None
+                    if (
+                        not isinstance(evidence, dict)
+                        or evidence.get("schema_id") != NPU_TIMING_EVIDENCE_SCHEMA_ID
+                        or not isinstance(candidate, dict)
+                        or evidence.get("candidate_digest") != candidate
+                        or candidate.get("value") != request.candidate_sha256
+                    ):
+                        raise EvaluationUnavailable("outbox_corrupt", "completed NPU result evidence does not match")
+                elif not isinstance(evidence, dict) or evidence.get("candidate_sha256") != request.candidate_sha256:
                     raise EvaluationUnavailable("outbox_corrupt", "completed result evidence does not match")
                 self._validate_result(request, result)
+                if self.npu_contract:
+                    stored_group = self._device_group(document.get("device_group"), where="row")
+                    receipt_group = result.receipt.get("device_group") if isinstance(result.receipt, dict) else None
+                    if stored_group != self._device_group(receipt_group, where="result"):
+                        raise EvaluationUnavailable(
+                            "outbox_corrupt",
+                            "outbox NPU device group does not match the retained result",
+                        )
                 external_key_id = result.receipt.get("signature_key_id") if isinstance(result.receipt, dict) else ""
                 if (
                     external_key_id and self.external_trusted_key_ids is not None
@@ -203,6 +280,9 @@ class EvaluationOutbox:
             "signature_algorithm": str(receipt.get("signature_algorithm") or ""),
             "updated_at": time.time(),
         })
+        if self.npu_contract:
+            document["candidate_digest"] = receipt.get("candidate_digest")
+            document["device_group"] = receipt.get("device_group")
         document.pop("error", None)
         write_json_atomic(path, document)
         self._receipts[validate_receipt(result, request)] = request.request_digest

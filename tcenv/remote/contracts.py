@@ -18,12 +18,25 @@ import hashlib
 import hmac
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from typing import Any, Mapping
 
 API_CONTRACT_ID = "tcenv.remote.v1.evaluator-api.1"
 EVIDENCE_CONTRACT_ID = "tcenv.remote.v1.evidence.1"
+# P0 NPU contract: source-only artifact, public KERNEL (SIMT profile subtype),
+# one logical device group and DEVICE_EVENT timing.  It shares the six RPCs and
+# the durable job/attempt/fence machinery with the legacy Metal/source
+# contract, but has its own identity, canonical document types and receipt.
+NPU_SOURCE_API_CONTRACT_ID = "tcenv.remote.npu-source.evaluator-api.1"
+NPU_SOURCE_EVIDENCE_CONTRACT_ID = "tcenv.remote.npu-source.evidence.1"
+NPU_SOURCE_REQUEST_DOCUMENT_TYPE = "tcenv.remote.npu-source.request-digest"
+NPU_SOURCE_RECEIPT_DOCUMENT_TYPE = "tcenv.remote.npu-source.receipt-id"
+NPU_SOURCE_RESULT_DOCUMENT_TYPE = "tcenv.remote.npu-source.result-signature"
+NPU_SOURCE_DOCUMENT_VERSION = 2
+NPU_TIMING_EVIDENCE_SCHEMA_ID = "tcenv.remote.npu-source.timing-evidence.1"
+NPU_EVIDENCE_MEDIA_TYPE = "application/vnd.tcenv.npu-source.timing-evidence.v1+json"
 REQUEST_DIGEST_ALGORITHM = "sha256-rfc8785-v1"
 RECEIPT_DIGEST_ALGORITHM = "sha256-rfc8785-v1"
 RESULT_SIGNATURE_ALGORITHM = "hmac-sha256-v1"
@@ -32,6 +45,64 @@ REQUEST_DOCUMENT_TYPE = "tcenv.remote.v1.request-digest"
 RECEIPT_DOCUMENT_TYPE = "tcenv.remote.v1.receipt-id"
 RESULT_DOCUMENT_TYPE = "tcenv.remote.v1.result-signature"
 CONTRACT_DOCUMENT_VERSION = 1
+
+
+@dataclass(frozen=True)
+class ContractDialect:
+    """One versioned external API/evidence contract.
+
+    The dialect selects identity strings, canonical document types and the
+    receipt shape.  It never selects behaviour from the shape of a request: the
+    frontend's configured dialect is authoritative and a request that does not
+    match it is rejected before durable acceptance.
+    """
+
+    api_contract_id: str
+    evidence_contract_id: str
+    request_document_type: str
+    receipt_document_type: str
+    result_document_type: str
+    document_version: int
+    npu_source: bool = False
+
+    @property
+    def identity_pair(self) -> tuple[str, str]:
+        return (self.api_contract_id, self.evidence_contract_id)
+
+
+LEGACY_DIALECT = ContractDialect(
+    api_contract_id=API_CONTRACT_ID,
+    evidence_contract_id=EVIDENCE_CONTRACT_ID,
+    request_document_type=REQUEST_DOCUMENT_TYPE,
+    receipt_document_type=RECEIPT_DOCUMENT_TYPE,
+    result_document_type=RESULT_DOCUMENT_TYPE,
+    document_version=CONTRACT_DOCUMENT_VERSION,
+    npu_source=False,
+)
+NPU_SOURCE_DIALECT = ContractDialect(
+    api_contract_id=NPU_SOURCE_API_CONTRACT_ID,
+    evidence_contract_id=NPU_SOURCE_EVIDENCE_CONTRACT_ID,
+    request_document_type=NPU_SOURCE_REQUEST_DOCUMENT_TYPE,
+    receipt_document_type=NPU_SOURCE_RECEIPT_DOCUMENT_TYPE,
+    result_document_type=NPU_SOURCE_RESULT_DOCUMENT_TYPE,
+    document_version=NPU_SOURCE_DOCUMENT_VERSION,
+    npu_source=True,
+)
+CONTRACT_DIALECTS = {
+    LEGACY_DIALECT.api_contract_id: LEGACY_DIALECT,
+    NPU_SOURCE_DIALECT.api_contract_id: NPU_SOURCE_DIALECT,
+}
+
+
+def dialect_for(api_contract_id: str, evidence_contract_id: str | None = None) -> ContractDialect:
+    """Resolve an exact contract pair; unknown or mixed pairs fail closed."""
+
+    dialect = CONTRACT_DIALECTS.get(api_contract_id)
+    if dialect is None:
+        raise ContractError("API contract is not supported")
+    if evidence_contract_id is not None and evidence_contract_id != dialect.evidence_contract_id:
+        raise ContractError("API and evidence contracts are not a supported pair")
+    return dialect
 
 MAX_SOURCE_BYTES = 1_000_000
 MAX_BLOB_BYTES = 16_000_000
@@ -297,48 +368,16 @@ def seconds_to_timeout_ms(seconds: int | float | str | Decimal) -> int:
     return milliseconds
 
 
-def request_digest_document(
-    document: Mapping[str, Any], *, source_bytes: bytes | bytearray | memoryview
-) -> dict[str, Any]:
-    """Validate and return the complete versioned request digest document.
-
-    The input must explicitly contain every execution field, including fields
-    whose values are defaults.  Known transport/idempotency/local-only fields
-    are excluded.  If ``source`` is present it must be byte-identical to the
-    separately supplied ``source_bytes``; source text is never implicitly
-    encoded and source bytes never enter the JSON document.
-    """
-
-    if not isinstance(document, Mapping):
-        raise ContractError("request must be an object")
-    if any(not isinstance(key, str) for key in document):
-        raise ContractError("request field names must be strings")
-    source = _source_bytes(source_bytes)
-    allowed = _REQUEST_FIELD_SET | _EXCLUDED_REQUEST_FIELDS | {"source"}
-    unknown = set(document) - allowed
-    if unknown:
-        raise ContractError(f"unknown request fields: {sorted(unknown)}")
-    missing = _REQUEST_FIELD_SET - set(document)
-    if missing:
-        raise ContractError(f"missing explicit request fields/defaults: {sorted(missing)}")
-    if "source" in document and _source_bytes(document["source"]) != source:
-        raise ContractError("request source and source_bytes differ")
-
-    candidate_sha256 = hashlib.sha256(source).hexdigest()
-    if document["candidate_sha256"] != candidate_sha256:
-        raise ContractError("candidate_sha256 does not match the exact source bytes")
-
+def _common_request_fields(document: Mapping[str, Any]) -> dict[str, Any]:
     kind = _text(document["kind"], "kind", max_bytes=32)
     if kind not in _KINDS:
         raise ContractError("kind must be formal_eval or selfcheck")
     mode = _text(document["mode"], "mode", max_bytes=32)
     if mode not in _MODES[kind]:
         raise ContractError(f"mode {mode!r} is not allowed for {kind}")
-
     seed = document["seed"]
     if seed is not None:
         seed = _decimal_uint(seed, "seed")
-
     cases_value = document["cases"]
     if cases_value is None:
         cases = None
@@ -346,12 +385,10 @@ def request_digest_document(
         if not isinstance(cases_value, (list, tuple)) or len(cases_value) > MAX_CASES:
             raise ContractError("cases must be a bounded array or null")
         cases = [_text(case, "case", max_bytes=256) for case in cases_value]
-
     cache_policy = _text(document["cache_policy"], "cache_policy", max_bytes=32)
     if cache_policy not in _CACHE_POLICIES:
         raise ContractError("cache_policy must be reuse, refresh or disabled")
-
-    request = {
+    return {
         "kind": kind,
         "run_id": _identifier(document["run_id"], "run_id"),
         "session_id": _identifier(document["session_id"], "session_id"),
@@ -360,7 +397,6 @@ def request_digest_document(
         "size": _text(document["size"], "size", max_bytes=128),
         "target_id": _identifier(document["target_id"], "target_id"),
         "task_fingerprint": _hex64(document["task_fingerprint"], "task_fingerprint"),
-        "candidate_sha256": candidate_sha256,
         "mode": mode,
         "seed": seed,
         "reps": _integer(document["reps"], "reps", 1, MAX_REPS),
@@ -377,40 +413,220 @@ def request_digest_document(
         "measure_serial": _boolean(document["measure_serial"], "measure_serial"),
         "cache_policy": cache_policy,
     }
+
+
+def candidate_digest_document(value: Any, *, source_bytes: bytes | bytearray | memoryview | None = None) -> dict[str, str]:
+    """Validate the P0 source CandidateDigest and optionally bind exact bytes."""
+
+    if not isinstance(value, Mapping) or set(value) != {"algorithm", "value"}:
+        raise ContractError("candidate_digest must have exactly algorithm and value")
+    algorithm = _text(value["algorithm"], "candidate_digest.algorithm", max_bytes=32)
+    if algorithm != "sha256":
+        raise ContractError("candidate_digest.algorithm must be sha256")
+    digest = _hex64(value["value"], "candidate_digest.value")
+    if source_bytes is not None:
+        try:
+            source = _source_bytes(source_bytes)
+        except ContractError as exc:
+            raise ContractError(str(exc)) from exc
+        if hashlib.sha256(source).hexdigest() != digest:
+            raise ContractError("candidate_digest does not match the exact source bytes")
+    return {"algorithm": algorithm, "value": digest}
+
+
+def candidate_digest(source_bytes: bytes | bytearray | memoryview) -> dict[str, str]:
+    return {"algorithm": "sha256", "value": hashlib.sha256(_source_bytes(source_bytes)).hexdigest()}
+
+
+_DEVICE_GROUP_FIELDS = frozenset({
+    "device_group_id", "vendor_id", "profile_digest", "topology_digest", "resource_generation",
+})
+
+
+def device_group_document(value: Any) -> dict[str, str]:
+    """Validate the minimal logical DeviceGroup binding used by P0."""
+
+    if not isinstance(value, Mapping) or set(value) != _DEVICE_GROUP_FIELDS:
+        raise ContractError("device_group fields are missing or unknown")
     return {
-        "document_type": REQUEST_DOCUMENT_TYPE,
-        "document_version": CONTRACT_DOCUMENT_VERSION,
+        "device_group_id": _identifier(value["device_group_id"], "device_group.device_group_id"),
+        "vendor_id": _identifier(value["vendor_id"], "device_group.vendor_id"),
+        "profile_digest": _hex64(value["profile_digest"], "device_group.profile_digest"),
+        "topology_digest": _hex64(value["topology_digest"], "device_group.topology_digest"),
+        "resource_generation": _decimal_uint(
+            value["resource_generation"], "device_group.resource_generation", minimum=1,
+        ),
+    }
+
+
+_NPU_EXECUTION_FIELDS = frozenset({
+    "artifact_kind", "launch_kind", "launch_subtype", "source_media_type",
+    "device_group", "required_timing_sources", "synchronization",
+})
+_NPU_TIMING_SOURCES = frozenset({"DEVICE_EVENT"})
+
+
+def npu_execution_document(value: Any) -> dict[str, Any]:
+    """Validate the P0 source-only execution spec.
+
+    P0 deliberately has no bundle, graph, model, multi-rank, die or profiler
+    branch.  Unsupported values fail closed before durable acceptance.
+    """
+
+    if not isinstance(value, Mapping) or set(value) != _NPU_EXECUTION_FIELDS:
+        raise ContractError("execution spec fields are missing or unknown")
+    artifact_kind = _text(value["artifact_kind"], "execution.artifact_kind", max_bytes=32)
+    if artifact_kind != "source":
+        raise ContractError("P0 supports only the source artifact kind")
+    launch_kind = _text(value["launch_kind"], "execution.launch_kind", max_bytes=32)
+    if launch_kind != "KERNEL":
+        raise ContractError("P0 supports only the KERNEL launch kind")
+    launch_subtype = _text(value["launch_subtype"], "execution.launch_subtype", max_bytes=32)
+    if launch_subtype != "SIMT":
+        raise ContractError("P0 supports only the SIMT launch subtype")
+    timing_sources = value["required_timing_sources"]
+    if not isinstance(timing_sources, (list, tuple)) or not timing_sources:
+        raise ContractError("execution requires at least one timing source")
+    sources = [_text(item, "execution.required_timing_sources", max_bytes=32) for item in timing_sources]
+    if any(item not in _NPU_TIMING_SOURCES for item in sources):
+        raise ContractError("P0 supports only DEVICE_EVENT timing")
+    synchronization = _text(value["synchronization"], "execution.synchronization", max_bytes=32)
+    if synchronization != "stream-event":
+        raise ContractError("P0 supports only stream-event synchronization")
+    return {
+        "artifact_kind": artifact_kind,
+        "launch_kind": launch_kind,
+        "launch_subtype": launch_subtype,
+        "source_media_type": _text(value["source_media_type"], "execution.source_media_type", max_bytes=64),
+        "device_group": device_group_document(value["device_group"]),
+        "required_timing_sources": sorted(set(sources)),
+        "synchronization": synchronization,
+    }
+
+
+_NPU_SOURCE_REQUEST_FIELDS = frozenset(
+    (set(_REQUEST_FIELD_SET) - {"candidate_sha256"}) | {"candidate_digest", "execution"}
+)
+
+
+def request_digest_document(
+    document: Mapping[str, Any], *, source_bytes: bytes | bytearray | memoryview,
+    dialect: ContractDialect = LEGACY_DIALECT,
+) -> dict[str, Any]:
+    """Validate and return the complete versioned request digest document.
+
+    The input must explicitly contain every execution field, including fields
+    whose values are defaults.  Known transport/idempotency/local-only fields
+    are excluded.  If ``source`` is present it must be byte-identical to the
+    separately supplied ``source_bytes``; source text is never implicitly
+    encoded and source bytes never enter the JSON document.
+    """
+
+    if not isinstance(document, Mapping):
+        raise ContractError("request must be an object")
+    if any(not isinstance(key, str) for key in document):
+        raise ContractError("request field names must be strings")
+    source = _source_bytes(source_bytes)
+    if "source" in document and _source_bytes(document["source"]) != source:
+        raise ContractError("request source and source_bytes differ")
+
+    if not dialect.npu_source:
+        allowed = _REQUEST_FIELD_SET | _EXCLUDED_REQUEST_FIELDS | {"source"}
+        unknown = set(document) - allowed
+        if unknown:
+            raise ContractError(f"unknown request fields: {sorted(unknown)}")
+        missing = _REQUEST_FIELD_SET - set(document)
+        if missing:
+            raise ContractError(f"missing explicit request fields/defaults: {sorted(missing)}")
+        candidate_sha256 = hashlib.sha256(source).hexdigest()
+        if document["candidate_sha256"] != candidate_sha256:
+            raise ContractError("candidate_sha256 does not match the exact source bytes")
+        request = _common_request_fields(document)
+        request["candidate_sha256"] = candidate_sha256
+        return {
+            "document_type": dialect.request_document_type,
+            "document_version": dialect.document_version,
+            "digest_algorithm": REQUEST_DIGEST_ALGORITHM,
+            "request": request,
+        }
+
+    allowed = _NPU_SOURCE_REQUEST_FIELDS | _EXCLUDED_REQUEST_FIELDS | {"source"}
+    unknown = set(document) - allowed
+    if unknown:
+        raise ContractError(f"unknown request fields: {sorted(unknown)}")
+    missing = _NPU_SOURCE_REQUEST_FIELDS - set(document)
+    if missing:
+        raise ContractError(f"missing explicit request fields/defaults: {sorted(missing)}")
+    request = _common_request_fields(document)
+    request["candidate_digest"] = candidate_digest_document(
+        document["candidate_digest"], source_bytes=source,
+    )
+    request["execution"] = npu_execution_document(document["execution"])
+    return {
+        "document_type": dialect.request_document_type,
+        "document_version": dialect.document_version,
         "digest_algorithm": REQUEST_DIGEST_ALGORITHM,
         "request": request,
     }
 
 
 def request_digest(
-    document: Mapping[str, Any], *, source_bytes: bytes | bytearray | memoryview
+    document: Mapping[str, Any], *, source_bytes: bytes | bytearray | memoryview,
+    dialect: ContractDialect = LEGACY_DIALECT,
 ) -> str:
     """Return ``SHA256(RFC8785(versioned_request_document))`` as lowercase hex."""
 
-    return _document_digest(request_digest_document(document, source_bytes=source_bytes))
+    return _document_digest(
+        request_digest_document(document, source_bytes=source_bytes, dialect=dialect)
+    )
 
 
-def receipt_id_document(*, request_id: str, attempt_id: str, request_digest: str) -> dict[str, Any]:
+def receipt_id_document(
+    *, request_id: str, attempt_id: str, request_digest: str,
+    candidate_digest: Mapping[str, Any] | None = None,
+    device_group: Mapping[str, Any] | None = None,
+    dialect: ContractDialect = LEGACY_DIALECT,
+) -> dict[str, Any]:
     """Return the versioned document binding a receipt to exactly one attempt."""
 
+    if not dialect.npu_source:
+        if candidate_digest is not None or device_group is not None:
+            raise ContractError("the legacy receipt cannot carry NPU binding fields")
+        return {
+            "document_type": dialect.receipt_document_type,
+            "document_version": dialect.document_version,
+            "digest_algorithm": RECEIPT_DIGEST_ALGORITHM,
+            "request_id": _identifier(request_id, "request_id"),
+            "attempt_id": _identifier(attempt_id, "attempt_id"),
+            "request_digest": _hex64(request_digest, "request_digest"),
+        }
+    if candidate_digest is None or device_group is None:
+        raise ContractError("the NPU receipt requires a CandidateDigest and DeviceGroup binding")
     return {
-        "document_type": RECEIPT_DOCUMENT_TYPE,
-        "document_version": CONTRACT_DOCUMENT_VERSION,
+        "document_type": dialect.receipt_document_type,
+        "document_version": dialect.document_version,
         "digest_algorithm": RECEIPT_DIGEST_ALGORITHM,
         "request_id": _identifier(request_id, "request_id"),
         "attempt_id": _identifier(attempt_id, "attempt_id"),
         "request_digest": _hex64(request_digest, "request_digest"),
+        "candidate_digest": candidate_digest_document(candidate_digest),
+        "device_group": device_group_document(device_group),
     }
 
 
-def attempt_receipt_id(*, request_id: str, attempt_id: str, request_digest: str) -> str:
+def attempt_receipt_id(
+    *, request_id: str, attempt_id: str, request_digest: str,
+    candidate_digest: Mapping[str, Any] | None = None,
+    device_group: Mapping[str, Any] | None = None,
+    dialect: ContractDialect = LEGACY_DIALECT,
+) -> str:
     """Return the attempt-scoped SHA-256 receipt identifier."""
 
     return _document_digest(
-        receipt_id_document(request_id=request_id, attempt_id=attempt_id, request_digest=request_digest)
+        receipt_id_document(
+            request_id=request_id, attempt_id=attempt_id, request_digest=request_digest,
+            candidate_digest=candidate_digest, device_group=device_group, dialect=dialect,
+        )
     )
 
 
@@ -443,15 +659,26 @@ def validate_blob(descriptor: Any, data: Any, *, allow_empty: bool = False) -> d
     return normalized
 
 
-def _provenance_document(value: Any, *, require_attempt: bool = True) -> dict[str, Any]:
+_NPU_PROVENANCE_FIELDS = _PROVENANCE_FIELDS | {
+    "device_group", "artifact_kind", "launch_kind", "launch_subtype", "timing_sources",
+}
+
+
+def _provenance_document(
+    value: Any, *, require_attempt: bool = True, dialect: ContractDialect = LEGACY_DIALECT,
+) -> dict[str, Any]:
     expected_fields = _PROVENANCE_FIELDS if require_attempt else _PROVENANCE_FIELDS - {"attempt_id", "request_digest"}
+    if dialect.npu_source:
+        expected_fields = _NPU_PROVENANCE_FIELDS if require_attempt else _NPU_PROVENANCE_FIELDS - {"attempt_id", "request_digest"}
     if not isinstance(value, Mapping) or set(value) != expected_fields:
         raise ContractError("provenance fields are missing or unknown")
     schema_version = _integer(value["schema_version"], "schema_version", 1, 1)
-    if value["api_contract_id"] != API_CONTRACT_ID:
-        raise ContractError("provenance api_contract_id is not supported")
-    if value["evidence_contract_id"] != EVIDENCE_CONTRACT_ID:
-        raise ContractError("provenance evidence_contract_id is not supported")
+    try:
+        selected = dialect_for(value["api_contract_id"], value["evidence_contract_id"])
+    except ContractError as exc:
+        raise ContractError("provenance API/evidence contract is not supported") from exc
+    if selected != dialect:
+        raise ContractError("provenance contract differs from the configured dialect")
     measurement_kind = value["measurement_kind"]
     if measurement_kind not in _MEASUREMENT_KINDS:
         raise ContractError("unknown critical measurement_kind")
@@ -467,18 +694,34 @@ def _provenance_document(value: Any, *, require_attempt: bool = True) -> dict[st
         "task_pack_digest": _hex64(value["task_pack_digest"], "task_pack_digest"),
         "calibration_digest": _hex64(value["calibration_digest"], "calibration_digest"),
         "protocol_version": _text(value["protocol_version"], "protocol_version", max_bytes=64),
-        "api_contract_id": API_CONTRACT_ID,
-        "evidence_contract_id": EVIDENCE_CONTRACT_ID,
+        "api_contract_id": dialect.api_contract_id,
+        "evidence_contract_id": dialect.evidence_contract_id,
         "measurement_kind": measurement_kind,
         "publication_allowed": _boolean(value["publication_allowed"], "publication_allowed"),
     }
+    if dialect.npu_source:
+        document["device_group"] = device_group_document(value["device_group"])
+        document["artifact_kind"] = _text(value["artifact_kind"], "artifact_kind", max_bytes=32)
+        document["launch_kind"] = _text(value["launch_kind"], "launch_kind", max_bytes=32)
+        document["launch_subtype"] = _text(value["launch_subtype"], "launch_subtype", max_bytes=32)
+        timing_sources = value["timing_sources"]
+        if not isinstance(timing_sources, (list, tuple)) or not timing_sources:
+            raise ContractError("provenance timing_sources must be a non-empty array")
+        sources = [_text(item, "timing_source", max_bytes=32) for item in timing_sources]
+        if any(item not in _NPU_TIMING_SOURCES for item in sources):
+            raise ContractError("provenance timing source is not supported by P0")
+        document["timing_sources"] = sorted(set(sources))
+        if document["artifact_kind"] != "source" or document["launch_kind"] != "KERNEL" or document["launch_subtype"] != "SIMT":
+            raise ContractError("provenance execution shape is not supported by P0")
     if require_attempt:
         document["attempt_id"] = _identifier(value["attempt_id"], "attempt_id")
         document["request_digest"] = _hex64(value["request_digest"], "request_digest")
     return document
 
 
-def provenance_document(value: Any, *, require_attempt: bool = True) -> dict[str, Any]:
+def provenance_document(
+    value: Any, *, require_attempt: bool = True, dialect: ContractDialect = LEGACY_DIALECT,
+) -> dict[str, Any]:
     """Validate one typed provenance document.
 
     Capabilities omit ``attempt_id``/``request_digest``; jobs and results must
@@ -486,28 +729,39 @@ def provenance_document(value: Any, *, require_attempt: bool = True) -> dict[str
     canonical signature document.
     """
 
-    return _provenance_document(value, require_attempt=require_attempt)
+    return _provenance_document(value, require_attempt=require_attempt, dialect=dialect)
 
 
-def receipt_document(value: Any) -> dict[str, Any]:
+def receipt_document(
+    value: Any, *, dialect: ContractDialect = LEGACY_DIALECT,
+) -> dict[str, Any]:
     """Validate and return one attempt-scoped receipt document."""
 
-    return _receipt_document(value)
+    return _receipt_document(value, dialect=dialect)
 
 
-def _receipt_document(value: Any) -> dict[str, Any]:
-    if not isinstance(value, Mapping) or set(value) != _RECEIPT_FIELDS:
+def _receipt_document(
+    value: Any, *, dialect: ContractDialect = LEGACY_DIALECT,
+) -> dict[str, Any]:
+    expected_fields = _RECEIPT_FIELDS if not dialect.npu_source else (
+        (_RECEIPT_FIELDS - {"candidate_sha256"}) | {"candidate_digest", "device_group"}
+    )
+    if not isinstance(value, Mapping) or set(value) != expected_fields:
         raise ContractError("receipt fields are missing or unknown")
     receipt = {
         "receipt_id": _hex64(value["receipt_id"], "receipt_id"),
         "request_id": _identifier(value["request_id"], "request_id"),
         "attempt_id": _identifier(value["attempt_id"], "attempt_id"),
         "request_digest": _hex64(value["request_digest"], "request_digest"),
-        "candidate_sha256": _hex64(value["candidate_sha256"], "candidate_sha256"),
         "lease_fence": _decimal_uint(value["lease_fence"], "lease_fence", minimum=1),
         "session_sequence": _decimal_uint(value["session_sequence"], "session_sequence"),
         "issued_at": _text(value["issued_at"], "issued_at", max_bytes=40),
     }
+    if dialect.npu_source:
+        receipt["candidate_digest"] = candidate_digest_document(value["candidate_digest"])
+        receipt["device_group"] = device_group_document(value["device_group"])
+    else:
+        receipt["candidate_sha256"] = _hex64(value["candidate_sha256"], "candidate_sha256")
     if not _UTC.fullmatch(receipt["issued_at"]):
         raise ContractError("issued_at must be an RFC 3339 UTC timestamp")
     try:
@@ -518,13 +772,18 @@ def _receipt_document(value: Any) -> dict[str, Any]:
         request_id=receipt["request_id"],
         attempt_id=receipt["attempt_id"],
         request_digest=receipt["request_digest"],
+        candidate_digest=receipt.get("candidate_digest"),
+        device_group=receipt.get("device_group"),
+        dialect=dialect,
     )
     if not hmac.compare_digest(receipt["receipt_id"], expected):
-        raise ContractError("receipt_id does not bind request_id, attempt_id, and request_digest")
+        raise ContractError("receipt_id does not bind the request, attempt, candidate and device group")
     return receipt
 
 
-def result_signature_document(document: Mapping[str, Any], *, key_id: str) -> dict[str, Any]:
+def result_signature_document(
+    document: Mapping[str, Any], *, key_id: str, dialect: ContractDialect = LEGACY_DIALECT,
+) -> dict[str, Any]:
     """Validate a result envelope and return its versioned HMAC input document.
 
     Report/evidence bytes are represented by their validated descriptors.  The
@@ -534,18 +793,20 @@ def result_signature_document(document: Mapping[str, Any], *, key_id: str) -> di
 
     if not isinstance(document, Mapping) or set(document) != _RESULT_FIELDS:
         raise ContractError("signed result must contain exactly provenance/report/evidence/receipt")
-    provenance = _provenance_document(document["provenance"])
+    provenance = _provenance_document(document["provenance"], dialect=dialect)
     report = _blob_descriptor(document["report"], "report", allow_empty=False)
     evidence_value = document["evidence"]
     evidence = None if evidence_value is None else _blob_descriptor(evidence_value, "evidence", allow_empty=True)
-    receipt = _receipt_document(document["receipt"])
+    receipt = _receipt_document(document["receipt"], dialect=dialect)
     if provenance["attempt_id"] != receipt["attempt_id"]:
         raise ContractError("provenance and receipt attempt_id differ")
     if provenance["request_digest"] != receipt["request_digest"]:
         raise ContractError("provenance and receipt request_digest differ")
+    if dialect.npu_source and provenance["device_group"] != receipt["device_group"]:
+        raise ContractError("provenance and receipt device groups differ")
     return {
-        "document_type": RESULT_DOCUMENT_TYPE,
-        "document_version": CONTRACT_DOCUMENT_VERSION,
+        "document_type": dialect.result_document_type,
+        "document_version": dialect.document_version,
         "signature_algorithm": RESULT_SIGNATURE_ALGORITHM,
         "key_id": _key_id(key_id),
         "provenance": provenance,
@@ -564,19 +825,117 @@ def _signature_key(key: Any) -> bytes:
     return key_bytes
 
 
-def sign_result(document: Mapping[str, Any], *, key_id: str, key: bytes) -> str:
+def sign_result(
+    document: Mapping[str, Any], *, key_id: str, key: bytes,
+    dialect: ContractDialect = LEGACY_DIALECT,
+) -> str:
     """Return lowercase-hex HMAC-SHA256 over the canonical result document."""
 
-    payload = canonical_digest_document(result_signature_document(document, key_id=key_id))
+    payload = canonical_digest_document(
+        result_signature_document(document, key_id=key_id, dialect=dialect)
+    )
     return hmac.new(_signature_key(key), payload, hashlib.sha256).hexdigest()
 
 
 def verify_result_signature(
-    document: Mapping[str, Any], *, key_id: str, key: bytes, signature: str
+    document: Mapping[str, Any], *, key_id: str, key: bytes, signature: str,
+    dialect: ContractDialect = LEGACY_DIALECT,
 ) -> bool:
     """Verify a signature and its key identifier without accepting malformed hex."""
 
     if not isinstance(signature, str) or not _HEX64.fullmatch(signature):
         return False
-    expected = sign_result(document, key_id=key_id, key=key)
+    expected = sign_result(document, key_id=key_id, key=key, dialect=dialect)
     return hmac.compare_digest(signature, expected)
+
+
+_NPU_TIMING_FIELDS = frozenset({
+    "source", "clock_domain", "synchronization_completed",
+    "device_elapsed_ns", "host_api_elapsed_ns", "launches",
+})
+_NPU_EVIDENCE_FIELDS = frozenset({
+    "schema_id", "candidate_digest", "device_group", "timing",
+    "measurement_kind", "publication_allowed",
+})
+
+
+def npu_timing_evidence_document(
+    value: Any, *, source_bytes: bytes | bytearray | memoryview | None = None,
+    device_group: Mapping[str, Any] | None = None,
+    measurement_kind: str | None = None,
+    publication_allowed: bool | None = None,
+) -> dict[str, Any]:
+    """Validate the P0 minimal TimingEvidence document.
+
+    Device and host time are deliberately separate fields.  A simulated result
+    can never claim publication, a device source must synchronize, and a known
+    clock domain is required.  P0 has no rank/die/profiler fields, so their
+    absence is not treated as missing evidence.
+    """
+
+    if not isinstance(value, Mapping) or not _NPU_EVIDENCE_FIELDS <= set(value):
+        raise ContractError("timing evidence fields are missing")
+    if set(value) - (_NPU_EVIDENCE_FIELDS | {"diagnostics"}):
+        raise ContractError("timing evidence has unknown fields")
+    if value["schema_id"] != NPU_TIMING_EVIDENCE_SCHEMA_ID:
+        raise ContractError("timing evidence schema_id is not supported by P0")
+    candidate = candidate_digest_document(value["candidate_digest"], source_bytes=source_bytes)
+    group = device_group_document(value["device_group"])
+    if device_group is not None and group != device_group_document(device_group):
+        raise ContractError("timing evidence device group differs from the accepted capability")
+    timing = value["timing"]
+    if not isinstance(timing, Mapping) or set(timing) != _NPU_TIMING_FIELDS:
+        raise ContractError("timing fields are missing or unknown")
+    source = _text(timing["source"], "timing.source", max_bytes=32)
+    if source != "DEVICE_EVENT":
+        raise ContractError("P0 timing source must be DEVICE_EVENT")
+    clock_domain = _text(timing["clock_domain"], "timing.clock_domain", max_bytes=96)
+    synchronized = _boolean(timing["synchronization_completed"], "timing.synchronization_completed")
+    if not synchronized:
+        raise ContractError("timing evidence requires completed synchronization")
+    device_elapsed = _integer(timing["device_elapsed_ns"], "timing.device_elapsed_ns", 0, _MAX_SAFE_INTEGER)
+    host_elapsed = _integer(timing["host_api_elapsed_ns"], "timing.host_api_elapsed_ns", 0, _MAX_SAFE_INTEGER)
+    launches = _integer(timing["launches"], "timing.launches", 1, 1_000_000)
+    kind = value["measurement_kind"]
+    if kind not in _MEASUREMENT_KINDS:
+        raise ContractError("timing evidence measurement_kind is invalid")
+    publish = _boolean(value["publication_allowed"], "publication_allowed")
+    if kind == "simulated" and publish:
+        raise ContractError("simulated timing evidence cannot be publishable")
+    if measurement_kind is not None and kind != measurement_kind:
+        raise ContractError("timing evidence measurement kind differs from provenance")
+    if publication_allowed is not None and publish != publication_allowed:
+        raise ContractError("timing evidence publication permission differs from provenance")
+    document: dict[str, Any] = {
+        "schema_id": NPU_TIMING_EVIDENCE_SCHEMA_ID,
+        "candidate_digest": candidate,
+        "device_group": group,
+        "timing": {
+            "source": source,
+            "clock_domain": clock_domain,
+            "synchronization_completed": synchronized,
+            "device_elapsed_ns": device_elapsed,
+            "host_api_elapsed_ns": host_elapsed,
+            "launches": launches,
+        },
+        "measurement_kind": kind,
+        "publication_allowed": publish,
+    }
+    if "diagnostics" in value:
+        diagnostics = value["diagnostics"]
+        if not isinstance(diagnostics, Mapping) or len(diagnostics) > 32:
+            raise ContractError("timing diagnostics must be a bounded object")
+        for key, item in diagnostics.items():
+            if not isinstance(key, str) or not key or not key.isascii() or len(key) > 64:
+                raise ContractError("timing diagnostic key is invalid")
+            if isinstance(item, str):
+                _text(item, "timing diagnostic", max_bytes=512, empty=True)
+            elif isinstance(item, bool):
+                pass
+            elif isinstance(item, int):
+                if not -_MAX_SAFE_INTEGER <= item <= _MAX_SAFE_INTEGER:
+                    raise ContractError("timing diagnostic integer is unsafe")
+            elif item is not None:
+                raise ContractError("timing diagnostics must be scalar")
+        document["diagnostics"] = dict(diagnostics)
+    return document

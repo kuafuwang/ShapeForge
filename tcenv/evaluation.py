@@ -90,6 +90,10 @@ class EvaluationRequest:
     queue_timeout_s: float = 30.0
     candidate_timeout_s: float = 420.0
     cache_policy: str = "reuse"
+    # Host-only NPU wire digest.  When set, the outbox/resume identity uses the
+    # new contract's canonical request digest; the legacy to_dict/digest is
+    # unchanged and this field never leaves the host.
+    contract_request_digest: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, str):
@@ -137,6 +141,8 @@ class EvaluationRequest:
                 raise EvaluationError(f"{name} must be boolean")
         if self.cache_policy not in _CACHE_POLICIES:
             raise EvaluationError("cache_policy must be reuse, refresh or disabled")
+        if self.contract_request_digest and not _HEX64.fullmatch(self.contract_request_digest):
+            raise EvaluationError("contract_request_digest must be 64 lowercase hex characters")
 
     @property
     def kernel_source(self) -> str:
@@ -148,6 +154,8 @@ class EvaluationRequest:
 
     @property
     def request_digest(self) -> str:
+        if self.contract_request_digest:
+            return self.contract_request_digest
         return request_digest(self)
 
     def to_dict(self) -> dict[str, Any]:
@@ -317,6 +325,17 @@ def validate_receipt(result: EvaluationResult, request: EvaluationRequest) -> st
         raise EvaluationError("receipt request digest does not match the request")
     if "candidate_sha256" in receipt and receipt["candidate_sha256"] != request.candidate_sha256:
         raise EvaluationError("receipt candidate digest does not match the request")
+    if "candidate_digest" in receipt:
+        candidate = receipt["candidate_digest"]
+        if (
+            not isinstance(candidate, dict)
+            or set(candidate) != {"algorithm", "value"}
+            or candidate.get("algorithm") != "sha256"
+            or candidate.get("value") != request.candidate_sha256
+        ):
+            raise EvaluationError("receipt CandidateDigest does not match the request")
+        if "candidate_sha256" in receipt:
+            raise EvaluationError("the NPU receipt must not dual-write candidate_sha256")
     if "measurement_kind" in receipt and receipt["measurement_kind"] != result.provenance.measurement_kind:
         raise EvaluationError("receipt measurement kind does not match provenance")
     return receipt_id

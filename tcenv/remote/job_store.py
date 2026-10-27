@@ -237,7 +237,11 @@ class JobStore:
         signing_keyring: Mapping[str, bytes] | None = None,
         clock_skew_ms: int = 0,
         clock=time.time,
+        contract: contracts.ContractDialect = contracts.LEGACY_DIALECT,
     ) -> None:
+        if not isinstance(contract, contracts.ContractDialect):
+            raise ValueError("store contract must be a ContractDialect")
+        self.contract = contract
         self.state_dir = _prepare_state_dir(state_dir)
         self.frontend_instance = frontend_instance or secrets.token_hex(16)
         if not _FEATURE.fullmatch(self.frontend_instance):
@@ -814,6 +818,12 @@ class JobStore:
         if isinstance(valid_for_ms, bool) or not isinstance(valid_for_ms, int) or not 1 <= valid_for_ms <= 300_000:
             raise JobError("invalid_argument", "valid_for_ms is outside the capability bounds")
         expected_identities.validate()
+        if expected_identities.contract != self.contract:
+            raise JobError("failed_precondition", "capabilities requested a different API/evidence contract")
+        try:
+            contracts.provenance_document(provenance, require_attempt=False, dialect=self.contract)
+        except contracts.ContractError as exc:
+            raise JobError("invalid_argument", f"capabilities provenance is invalid: {exc}") from exc
         actual = expected_identities.evaluator.to_dict()
         if not isinstance(expected, Mapping):
             raise JobError("invalid_argument", "capabilities expected evaluator must be an object")
@@ -868,8 +878,7 @@ class JobStore:
         return row
 
     # -- request and snapshot helpers --------------------------------------
-    @staticmethod
-    def _request(conn: sqlite3.Connection, job: sqlite3.Row) -> ExternalEvaluationRequest:
+    def _request(self, conn: sqlite3.Connection, job: sqlite3.Row) -> ExternalEvaluationRequest:
         if job["source"] is None:
             raise StateCorrupt("active job source bytes are unavailable")
         try:
@@ -878,6 +887,8 @@ class JobStore:
             raise
         except (JobError, TypeError, ValueError, KeyError) as exc:
             raise StateCorrupt(f"stored request is invalid: {exc}") from exc
+        if request.contract != self.contract:
+            raise StateCorrupt("stored request contract differs from this frontend")
         if request.request_id != job["request_id"] or request.request_digest != job["request_digest"]:
             raise StateCorrupt("stored request bytes/source do not match request_id/request_digest")
         return request
@@ -911,6 +922,7 @@ class JobStore:
     def _validate_result_envelope(
         self, result: JobResult, *, job: sqlite3.Row, attempt: sqlite3.Row,
     ) -> None:
+        dialect = self.contract
         try:
             contracts.validate_blob(result.report_descriptor, result.report)
             if (result.evidence is None) != (result.evidence_descriptor is None):
@@ -925,13 +937,15 @@ class JobStore:
                     raise StateCorrupt("result signature algorithm is unsupported")
                 if not isinstance(signature["signature"], str) or not re.fullmatch(r"[0-9a-f]{64}", signature["signature"]):
                     raise StateCorrupt("result signature must be 32 bytes of lowercase hex")
-                contracts.result_signature_document(self._result_document(result), key_id=signature["key_id"])
+                contracts.result_signature_document(
+                    self._result_document(result), key_id=signature["key_id"], dialect=dialect,
+                )
             else:
                 # Unsigned results still require the complete typed envelope.
                 # Use the same contract validators without inventing a signing
                 # key ID merely to call result_signature_document.
-                provenance = contracts._provenance_document(result.provenance)
-                receipt = contracts._receipt_document(result.receipt)
+                provenance = contracts._provenance_document(result.provenance, dialect=dialect)
+                receipt = contracts._receipt_document(result.receipt, dialect=dialect)
                 if provenance["attempt_id"] != receipt["attempt_id"] or provenance["request_digest"] != receipt["request_digest"]:
                     raise StateCorrupt("unsigned result provenance/receipt binding is inconsistent")
         except StateCorrupt:
@@ -953,18 +967,46 @@ class JobStore:
             or receipt.get("request_id") != job["request_id"]
             or receipt.get("attempt_id") != attempt["attempt_id"]
             or receipt.get("request_digest") != job["request_digest"]
-            or receipt.get("candidate_sha256") != request_document.get("candidate_sha256")
             or receipt.get("lease_fence") != str(attempt["lease_fence"])
             or receipt.get("session_sequence") != str(attempt["session_sequence"])
         ):
             raise StateCorrupt("result provenance/receipt differs from the accepted job and attempt")
+        if dialect.npu_source:
+            candidate = request_document.get("candidate_digest")
+            execution = request_document.get("execution")
+            if not isinstance(candidate, Mapping) or not isinstance(execution, Mapping):
+                raise StateCorrupt("stored NPU request has no candidate/execution binding")
+            if (
+                receipt.get("candidate_digest") != contracts.candidate_digest_document(candidate)
+                or receipt.get("device_group") != contracts.device_group_document(execution.get("device_group"))
+                or provenance.get("device_group") != receipt.get("device_group")
+            ):
+                raise StateCorrupt("result candidate/device binding differs from the accepted NPU request")
+            if result.evidence is None:
+                raise StateCorrupt("NPU result requires timing evidence")
+            try:
+                evidence_document = _loads(result.evidence)
+                contracts.npu_timing_evidence_document(
+                    evidence_document,
+                    source_bytes=None,
+                    device_group=receipt["device_group"],
+                    measurement_kind=provenance["measurement_kind"],
+                    publication_allowed=provenance["publication_allowed"],
+                )
+            except (contracts.ContractError, StateCorrupt, TypeError, ValueError) as exc:
+                raise StateCorrupt(f"NPU result timing evidence is invalid: {exc}") from exc
+            if evidence_document.get("candidate_digest") != receipt.get("candidate_digest"):
+                raise StateCorrupt("NPU timing evidence candidate digest differs from the receipt")
+        else:
+            if receipt.get("candidate_sha256") != request_document.get("candidate_sha256"):
+                raise StateCorrupt("result receipt candidate_sha256 differs from the accepted request")
         if signature is not None:
             key = self._verification_keys.get(signature["key_id"])
             if key is None:
                 raise UntrustedSignature("stored result signature key is not trusted by this frontend")
             if not contracts.verify_result_signature(
                 self._result_document(result), key_id=signature["key_id"],
-                key=key, signature=signature["signature"],
+                key=key, signature=signature["signature"], dialect=dialect,
             ):
                 raise StateCorrupt("stored result signature does not verify with the configured key")
 
@@ -984,15 +1026,16 @@ class JobStore:
             raise StateCorrupt("stored result envelope digest does not match its complete contents")
         return result
 
-    @staticmethod
     def _make_signature(
-        document: Mapping[str, Any], *, signing_key: bytes | None, signing_key_id: str,
+        self, document: Mapping[str, Any], *, signing_key: bytes | None, signing_key_id: str,
     ) -> dict[str, Any] | None:
         if signing_key is None:
             return None
         if not signing_key_id:
             raise ValueError("signing_key_id is required with a signing key")
-        signature_hex = contracts.sign_result(document, key_id=signing_key_id, key=signing_key)
+        signature_hex = contracts.sign_result(
+            document, key_id=signing_key_id, key=signing_key, dialect=self.contract,
+        )
         return {
             "algorithm": contracts.RESULT_SIGNATURE_ALGORITHM,
             "key_id": signing_key_id,
@@ -1132,6 +1175,8 @@ class JobStore:
         if request.request_digest != request_digest:
             raise JobError("invalid_argument", "request digest does not match the normalized request")
         expected.validate()
+        if request.contract != self.contract or expected.contract != self.contract:
+            raise JobError("failed_precondition", "request/expected contract differs from this evaluator")
         features = self._features(required_features)
         now = _now_ms(self._clock)
         self.expire_jobs(now_ms=now)
@@ -1235,6 +1280,15 @@ class JobStore:
             grant, job = self._scoped_job(conn, grant_token, request_id, now)
             self._check_ref(job, request_digest, expected)
             capability = self._capability(conn, capability_id, grant, expected, features, now)
+            if self.contract.npu_source:
+                capability_provenance = _loads(capability["provenance_json"])
+                job_provenance = _loads(job["provenance_json"])
+                if capability_provenance.get("device_group") != job_provenance.get("device_group"):
+                    raise JobError(
+                        "failed_precondition",
+                        "Retry capability names a different device group/profile/topology/resource generation",
+                        request_id=request_id,
+                    )
             if job["quarantined"]:
                 raise JobError("failed_precondition", "restored job is quarantined pending operator inspection", request_id=request_id)
             if job["state"] != "interrupted" or not interrupted_attempt_id or job["current_attempt_id"] != interrupted_attempt_id:
@@ -1809,18 +1863,36 @@ class JobStore:
                 request, report=report, evidence=evidence, provenance=base_provenance,
             )
             provenance = {**base_provenance, "attempt_id": attempt.attempt_id, "request_digest": job["request_digest"]}
+            if self.contract.npu_source:
+                if request.npu is None:
+                    raise StateCorrupt("NPU job has no candidate/execution binding")
+                candidate = request.npu.candidate_digest.to_dict()
+                device_group = request.npu.execution.device_group.to_dict()
+            else:
+                candidate = None
+                device_group = None
             receipt_id = contracts.attempt_receipt_id(
                 request_id=request_id, attempt_id=attempt.attempt_id, request_digest=job["request_digest"],
+                candidate_digest=candidate, device_group=device_group, dialect=self.contract,
             )
             receipt = {
                 "receipt_id": receipt_id, "request_id": request_id, "attempt_id": attempt.attempt_id,
-                "request_digest": job["request_digest"], "candidate_sha256": request.candidate_sha256,
+                "request_digest": job["request_digest"],
                 "lease_fence": str(attempt.lease_fence), "session_sequence": str(row["session_sequence"]),
                 "issued_at": _rfc3339(now),
             }
+            if self.contract.npu_source:
+                receipt["candidate_digest"] = candidate
+                receipt["device_group"] = device_group
+            else:
+                receipt["candidate_sha256"] = request.candidate_sha256
             report_descriptor = _blob_descriptor(report_bytes, schema_id="tcenv.eval-report.v3")
+            evidence_schema = (
+                contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID if self.contract.npu_source
+                else "tcenv.remote.v1.selfcheck-evidence"
+            )
             evidence_descriptor = None if evidence_bytes is None else _blob_descriptor(
-                evidence_bytes, schema_id="tcenv.remote.v1.selfcheck-evidence", allow_empty=True,
+                evidence_bytes, schema_id=evidence_schema, allow_empty=True,
             )
             signature = self._make_signature({
                 "provenance": provenance, "report": report_descriptor,
@@ -1857,9 +1929,8 @@ class JobStore:
             self._add_event(conn, request_id, "snapshot", {}, attempt.attempt_id, attempt.lease_fence, now)
             return self._snapshot(conn, conn.execute("SELECT * FROM jobs WHERE request_id=?", (request_id,)).fetchone())
 
-    @staticmethod
     def validate_worker_result(
-        request: ExternalEvaluationRequest, *, report: Any, evidence: Any,
+        self, request: ExternalEvaluationRequest, *, report: Any, evidence: Any,
         provenance: Mapping[str, Any],
     ) -> None:
         """Validate a decoded worker result against the request and provenance.
@@ -1870,11 +1941,30 @@ class JobStore:
 
         if not isinstance(report, dict) or not isinstance(provenance, Mapping):
             raise JobError("invalid_argument", "worker returned an invalid candidate report")
+        if request.contract != self.contract:
+            raise JobError("invalid_argument", "worker request contract differs from this evaluator")
         JobStore._validate_report(request, report, evidence)
         if report.get("protocol_version") != provenance.get("protocol_version"):
             raise JobError("invalid_argument", "worker report execution protocol differs from the evaluator epoch")
         if (report.get("simulated") is True) != (provenance.get("measurement_kind") == "simulated"):
             raise JobError("invalid_argument", "worker report measurement kind differs from evaluator provenance")
+        if self.contract.npu_source:
+            if request.npu is None:
+                raise JobError("invalid_argument", "NPU request has no candidate/execution binding")
+            if not isinstance(evidence, dict):
+                raise JobError("invalid_argument", "NPU worker result requires timing evidence")
+            try:
+                contracts.npu_timing_evidence_document(
+                    evidence,
+                    source_bytes=request.source,
+                    device_group=request.npu.execution.device_group.to_dict(),
+                    measurement_kind=provenance.get("measurement_kind"),
+                    publication_allowed=provenance.get("publication_allowed"),
+                )
+            except contracts.ContractError as exc:
+                raise JobError("invalid_argument", f"NPU timing evidence is invalid: {exc}") from exc
+            if evidence.get("candidate_digest") != request.candidate_digest:
+                raise JobError("invalid_argument", "NPU timing evidence candidate digest differs from the request")
 
     @staticmethod
     def _validate_report(request: ExternalEvaluationRequest, report: dict[str, Any], evidence: dict[str, Any] | None) -> None:
@@ -1885,10 +1975,12 @@ class JobStore:
                 raise JobError("invalid_argument", f"worker report {key} does not bind the request")
         if request.seed is not None and report.get("seed") != request.seed_int:
             raise JobError("invalid_argument", "worker report seed does not bind the request")
-        if evidence is not None and (
-            not isinstance(evidence, dict) or evidence.get("candidate_sha256") != request.candidate_sha256
-        ):
-            raise JobError("invalid_argument", "worker evidence does not bind the exact candidate bytes")
+        if evidence is not None:
+            if request.npu is None:
+                if not isinstance(evidence, dict) or evidence.get("candidate_sha256") != request.candidate_sha256:
+                    raise JobError("invalid_argument", "worker evidence does not bind the exact candidate bytes")
+            elif not isinstance(evidence, dict) or evidence.get("candidate_digest") != request.candidate_digest:
+                raise JobError("invalid_argument", "worker evidence does not bind the exact CandidateDigest")
         if report.get("simulated") is not True:
             from tcenv.evaluate import EvalReport
             try:

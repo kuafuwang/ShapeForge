@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -118,10 +119,17 @@ class ExpectedIdentities:
 
     def validate(self) -> None:
         self.evaluator.validate()
-        if self.api_contract_id != contracts.API_CONTRACT_ID:
-            raise JobError("failed_precondition", "unsupported API contract")
-        if self.evidence_contract_id != contracts.EVIDENCE_CONTRACT_ID:
-            raise JobError("failed_precondition", "unsupported evidence contract")
+        try:
+            contracts.dialect_for(self.api_contract_id, self.evidence_contract_id)
+        except contracts.ContractError as exc:
+            raise JobError("failed_precondition", "unsupported API/evidence contract pair") from exc
+
+    @property
+    def contract(self) -> contracts.ContractDialect:
+        try:
+            return contracts.dialect_for(self.api_contract_id, self.evidence_contract_id)
+        except contracts.ContractError as exc:
+            raise JobError("failed_precondition", "unsupported API/evidence contract pair") from exc
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -143,6 +151,137 @@ class ExpectedIdentities:
         )
         value.validate()
         return value
+
+
+@dataclass(frozen=True)
+class CandidateDigest:
+    """P0 source candidate identity; algorithm is always sha256."""
+
+    algorithm: str
+    value: str
+
+    def __post_init__(self) -> None:
+        try:
+            document = contracts.candidate_digest_document(
+                {"algorithm": self.algorithm, "value": self.value}
+            )
+        except contracts.ContractError as exc:
+            raise JobError("invalid_argument", str(exc)) from exc
+        if document["algorithm"] != self.algorithm or document["value"] != self.value:
+            raise JobError("invalid_argument", "candidate digest was not normalized")
+
+    def to_dict(self) -> dict[str, str]:
+        return {"algorithm": self.algorithm, "value": self.value}
+
+
+@dataclass(frozen=True)
+class DeviceGroupBinding:
+    """Durable logical device group identity used by the NPU contract."""
+
+    device_group_id: str
+    vendor_id: str
+    profile_digest: str
+    topology_digest: str
+    resource_generation: str
+
+    def __post_init__(self) -> None:
+        try:
+            contracts.device_group_document(self.to_dict())
+        except contracts.ContractError as exc:
+            raise JobError("invalid_argument", str(exc)) from exc
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "device_group_id": self.device_group_id,
+            "vendor_id": self.vendor_id,
+            "profile_digest": self.profile_digest,
+            "topology_digest": self.topology_digest,
+            "resource_generation": self.resource_generation,
+        }
+
+
+@dataclass(frozen=True)
+class NpuExecutionSpec:
+    """P0 source-only execution shape."""
+
+    device_group: DeviceGroupBinding
+    source_media_type: str = "text/plain; charset=utf-8"
+    artifact_kind: str = "source"
+    launch_kind: str = "KERNEL"
+    launch_subtype: str = "SIMT"
+    required_timing_sources: tuple[str, ...] = ("DEVICE_EVENT",)
+    synchronization: str = "stream-event"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.device_group, DeviceGroupBinding):
+            raise JobError("invalid_argument", "execution requires a typed DeviceGroupBinding")
+        try:
+            contracts.npu_execution_document(self.to_dict())
+        except contracts.ContractError as exc:
+            raise JobError("invalid_argument", str(exc)) from exc
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_kind": self.artifact_kind,
+            "launch_kind": self.launch_kind,
+            "launch_subtype": self.launch_subtype,
+            "source_media_type": self.source_media_type,
+            "device_group": self.device_group.to_dict(),
+            "required_timing_sources": list(self.required_timing_sources),
+            "synchronization": self.synchronization,
+        }
+
+    @classmethod
+    def from_dict(cls, document: Mapping[str, Any]) -> "NpuExecutionSpec":
+        if not isinstance(document, Mapping):
+            raise JobError("invalid_argument", "execution spec must be an object")
+        try:
+            normalized = contracts.npu_execution_document(document)
+            group = DeviceGroupBinding(**normalized["device_group"])
+            return cls(
+                device_group=group,
+                source_media_type=normalized["source_media_type"],
+                artifact_kind=normalized["artifact_kind"],
+                launch_kind=normalized["launch_kind"],
+                launch_subtype=normalized["launch_subtype"],
+                required_timing_sources=tuple(normalized["required_timing_sources"]),
+                synchronization=normalized["synchronization"],
+            )
+        except contracts.ContractError as exc:
+            raise JobError("invalid_argument", str(exc)) from exc
+
+
+@dataclass(frozen=True)
+class NpuSourceRequest:
+    """P0 NPU request payload: CandidateDigest plus source-only execution."""
+
+    candidate_digest: CandidateDigest
+    execution: NpuExecutionSpec
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.candidate_digest, CandidateDigest):
+            raise JobError("invalid_argument", "NPU request requires a typed CandidateDigest")
+        if not isinstance(self.execution, NpuExecutionSpec):
+            raise JobError("invalid_argument", "NPU request requires a typed execution spec")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_digest": self.candidate_digest.to_dict(),
+            "execution": self.execution.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, document: Mapping[str, Any]) -> "NpuSourceRequest":
+        if not isinstance(document, Mapping) or set(document) != {"candidate_digest", "execution"}:
+            raise JobError("invalid_argument", "NPU request fields are missing or unknown")
+        try:
+            digest = contracts.candidate_digest_document(document["candidate_digest"])
+        except contracts.ContractError as exc:
+            raise JobError("invalid_argument", str(exc)) from exc
+        return cls(
+            candidate_digest=CandidateDigest(digest["algorithm"], digest["value"]),
+            execution=NpuExecutionSpec.from_dict(document["execution"]),
+        )
 
 
 @dataclass(frozen=True)
@@ -171,17 +310,25 @@ class ExternalEvaluationRequest:
     validate: bool = False
     measure_serial: bool = False
     cache_policy: str = "reuse"
+    npu: NpuSourceRequest | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.request_id, str) or not _ID.fullmatch(self.request_id):
             raise JobError("invalid_argument", "request_id must be a bounded opaque identifier")
         if not isinstance(self.cases, tuple) and self.cases is not None:
             raise JobError("invalid_argument", "cases must be a tuple or null")
+        # The two contracts never share a candidate identity: the NPU request
+        # carries CandidateDigest and must not dual-write the legacy field.
+        if self.npu is not None and self.candidate_sha256:
+            raise JobError(
+                "invalid_argument",
+                "the NPU contract must not also carry the legacy candidate_sha256",
+            )
         # This performs all source, enum, integer, UTF-8 and explicit-default checks.
         self.digest_document()
 
     def digest_fields(self) -> dict[str, Any]:
-        return {
+        common = {
             "kind": self.kind,
             "run_id": self.run_id,
             "session_id": self.session_id,
@@ -190,7 +337,6 @@ class ExternalEvaluationRequest:
             "size": self.size,
             "target_id": self.target_id,
             "task_fingerprint": self.task_fingerprint,
-            "candidate_sha256": self.candidate_sha256,
             "mode": self.mode,
             "seed": self.seed,
             "reps": self.reps,
@@ -203,19 +349,36 @@ class ExternalEvaluationRequest:
             "measure_serial": self.measure_serial,
             "cache_policy": self.cache_policy,
         }
+        if self.npu is None:
+            return {"candidate_sha256": self.candidate_sha256, **common}
+        return {"candidate_digest": self.npu.candidate_digest.to_dict(), "execution": self.npu.execution.to_dict(), **common}
+
+    @property
+    def contract(self) -> contracts.ContractDialect:
+        return contracts.NPU_SOURCE_DIALECT if self.npu is not None else contracts.LEGACY_DIALECT
 
     def digest_document(self) -> dict[str, Any]:
         try:
-            return contracts.request_digest_document(self.digest_fields(), source_bytes=self.source)
+            return contracts.request_digest_document(
+                self.digest_fields(), source_bytes=self.source, dialect=self.contract,
+            )
         except contracts.ContractError as exc:
             raise JobError("invalid_argument", str(exc)) from exc
 
     @property
     def request_digest(self) -> str:
         try:
-            return contracts.request_digest(self.digest_fields(), source_bytes=self.source)
+            return contracts.request_digest(
+                self.digest_fields(), source_bytes=self.source, dialect=self.contract,
+            )
         except contracts.ContractError as exc:
             raise JobError("invalid_argument", str(exc)) from exc
+
+    @property
+    def candidate_digest(self) -> dict[str, str]:
+        if self.npu is not None:
+            return self.npu.candidate_digest.to_dict()
+        return {"algorithm": "sha256", "value": self.candidate_sha256}
 
     @property
     def seed_int(self) -> int | None:
@@ -233,13 +396,30 @@ class ExternalEvaluationRequest:
     def from_worker_dict(cls, document: Mapping[str, Any]) -> "ExternalEvaluationRequest":
         if not isinstance(document, Mapping) or "source_base64" not in document:
             raise JobError("invalid_argument", "worker request has no exact source bytes")
-        allowed = set(cls.without_source_fields()) | {"source_base64"}
-        if set(document) != allowed:
-            raise JobError("invalid_argument", "worker request fields are missing or unknown")
         try:
             source = base64.b64decode(document["source_base64"], validate=True)
         except (ValueError, TypeError) as exc:
             raise JobError("invalid_argument", "worker source_base64 is invalid") from exc
+        if "execution" in document or "candidate_digest" in document:
+            allowed = (set(cls.without_source_fields()) - {"candidate_sha256"}) | {
+                "candidate_digest", "execution", "source_base64",
+            }
+            if set(document) != allowed:
+                raise JobError("invalid_argument", "worker NPU request fields are missing or unknown")
+            fields = {key: value for key, value in document.items() if key not in {"source_base64", "candidate_digest", "execution"}}
+            if fields["cases"] is not None:
+                fields["cases"] = tuple(fields["cases"])
+            npu = NpuSourceRequest.from_dict({
+                "candidate_digest": document["candidate_digest"],
+                "execution": document["execution"],
+            })
+            request = cls(**fields, source=source, candidate_sha256="", npu=npu)
+            if request.npu.candidate_digest.value != hashlib.sha256(source).hexdigest():
+                raise JobError("invalid_argument", "worker NPU candidate digest does not match the source")
+            return request
+        allowed = set(cls.without_source_fields()) | {"source_base64"}
+        if set(document) != allowed:
+            raise JobError("invalid_argument", "worker request fields are missing or unknown")
         fields = {key: value for key, value in document.items() if key != "source_base64"}
         if fields["cases"] is not None:
             fields["cases"] = tuple(fields["cases"])
@@ -259,10 +439,24 @@ class ExternalEvaluationRequest:
         fields = dict(document)
         if fields.get("cases") is not None:
             fields["cases"] = tuple(fields["cases"])
+        if "execution" in fields or "candidate_digest" in fields:
+            if "execution" not in fields or "candidate_digest" not in fields:
+                raise JobError("invalid_argument", "stored NPU request is incomplete")
+            npu = NpuSourceRequest.from_dict({
+                "candidate_digest": fields.pop("candidate_digest"),
+                "execution": fields.pop("execution"),
+            })
+            fields.pop("candidate_sha256", None)
+            request = cls(**fields, source=source, candidate_sha256="", npu=npu)
+            if request.npu.candidate_digest.value != hashlib.sha256(source).hexdigest():
+                raise JobError("invalid_argument", "stored NPU candidate digest does not match the source")
+            return request
         return cls(**fields, source=source)
 
     @classmethod
-    def from_legacy(cls, request: Any) -> "ExternalEvaluationRequest":
+    def from_legacy(
+        cls, request: Any, *, npu: NpuSourceRequest | None = None,
+    ) -> "ExternalEvaluationRequest":
         """Adapt ``tcenv.evaluation.EvaluationRequest`` without changing its digest."""
 
         from tcenv.evaluation import EvaluationRequest
@@ -286,7 +480,7 @@ class ExternalEvaluationRequest:
             size=request.size,
             target_id=request.target_id,
             task_fingerprint=request.task_fingerprint,
-            candidate_sha256=request.candidate_sha256,
+            candidate_sha256="" if npu is not None else request.candidate_sha256,
             source=request.source_bytes,
             mode=request.mode,
             seed=None if request.seed is None else str(request.seed),
@@ -299,11 +493,17 @@ class ExternalEvaluationRequest:
             validate=request.validate,
             measure_serial=request.measure_serial,
             cache_policy=request.cache_policy,
+            npu=npu,
         )
 
     def to_legacy(self) -> Any:
         """Adapt to the existing private worker/evaluator request when needed."""
 
+        if self.npu is not None:
+            # The NPU contract has no legacy evaluator mapping: silently
+            # downgrading it would drop CandidateDigest, the device group and
+            # the device-side timing evidence.
+            raise JobError("invalid_argument", "the NPU contract has no legacy request mapping")
         from tcenv.evaluation import EvaluationRequest
 
         try:

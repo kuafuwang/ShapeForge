@@ -19,7 +19,7 @@ import json
 import secrets
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
@@ -36,7 +36,13 @@ from tcenv.evaluation import (
 
 from . import contracts, grpc_contract as gc
 from .grpc_server import DEFAULT_MAX_MESSAGE_BYTES, load_client_credentials
-from .job_types import JobError
+from .job_types import (
+    CandidateDigest,
+    DeviceGroupBinding,
+    JobError,
+    NpuExecutionSpec,
+    NpuSourceRequest,
+)
 from .v1 import evaluator_pb2 as pb
 from .v1 import evaluator_pb2_grpc as pb_grpc
 
@@ -183,6 +189,7 @@ class SignatureKeyring:
 
     def verify(
         self, *, site_id: str, key_id: str, document: Mapping[str, Any], signature: str,
+        dialect: contracts.ContractDialect = contracts.LEGACY_DIALECT,
     ) -> None:
         if not isinstance(key_id, str) or not key_id.startswith(f"{site_id}/"):
             raise KeyringError("signature_key_id_mismatch", "result key_id is not scoped to the evaluator site")
@@ -193,7 +200,9 @@ class SignatureKeyring:
         if key is None:
             raise KeyringError("signature_key_unknown", "result signature key is not trusted by this host")
         try:
-            valid = contracts.verify_result_signature(document, key_id=key_id, key=key, signature=signature)
+            valid = contracts.verify_result_signature(
+                document, key_id=key_id, key=key, signature=signature, dialect=dialect,
+            )
         except contracts.ContractError as exc:
             raise KeyringError("signature_invalid", f"cannot verify the result signature: {exc}") from exc
         if not valid:
@@ -247,6 +256,22 @@ def _closed_error(exc: ValueError) -> EvaluationUnavailable:
     return EvaluationUnavailable(
         "transport_closed", f"gRPC channel is closed: {exc}", retryable=True,
     )
+
+
+def _resolve_contract(
+    api_contract_ids: Iterable[str], evidence_contract_ids: Iterable[str],
+) -> contracts.ContractDialect:
+    """Select exactly one supported contract pair; mixed pairs fail closed."""
+
+    apis = tuple(dict.fromkeys(api_contract_ids))
+    evidences = tuple(dict.fromkeys(evidence_contract_ids))
+    matches = [
+        dialect for dialect in contracts.CONTRACT_DIALECTS.values()
+        if dialect.api_contract_id in apis and dialect.evidence_contract_id in evidences
+    ]
+    if len(matches) != 1:
+        raise ValueError("api_contract_ids/evidence_contract_ids must select exactly one supported contract")
+    return matches[0]
 
 
 def _rpc_error(exc: grpc.RpcError) -> EvaluationUnavailable:
@@ -330,6 +355,7 @@ class GrpcEvaluator:
         api_contract_ids: tuple[str, ...],
         evidence_contract_ids: tuple[str, ...],
         required_features: tuple[str, ...],
+        contract: contracts.ContractDialect,
         keyring: SignatureKeyring,
         legacy_signature_key: bytes | None,
         rpc_timeout_s: float,
@@ -347,6 +373,7 @@ class GrpcEvaluator:
         self.api_contract_ids = api_contract_ids
         self.evidence_contract_ids = evidence_contract_ids
         self.required_features = required_features
+        self.contract = contract
         self.keyring = keyring
         self.legacy_signature_key = legacy_signature_key
         self.signature_key = legacy_signature_key
@@ -360,6 +387,7 @@ class GrpcEvaluator:
         self._epoch = ""
         self._capability_id = ""
         self._expected_identities: Any = None
+        self._npu_execution: NpuExecutionSpec | None = None
         self._active: dict[str, tuple[str, Any]] = {}
 
     # -- public adapter surface --------------------------------------------
@@ -376,17 +404,17 @@ class GrpcEvaluator:
 
     @property
     def api_contract_id(self) -> str:
-        return contracts.API_CONTRACT_ID
+        return self.contract.api_contract_id
 
     @property
     def evidence_contract_id(self) -> str:
-        return contracts.EVIDENCE_CONTRACT_ID
+        return self.contract.evidence_contract_id
 
     def execution_metadata(self) -> dict[str, Any]:
         return {
             "transport": self.transport_kind,
-            "api_contract_id": contracts.API_CONTRACT_ID,
-            "evidence_contract_id": contracts.EVIDENCE_CONTRACT_ID,
+            "api_contract_id": self.contract.api_contract_id,
+            "evidence_contract_id": self.contract.evidence_contract_id,
             "request_digest_algorithm": contracts.REQUEST_DIGEST_ALGORITHM,
             "result_signature_algorithm": contracts.RESULT_SIGNATURE_ALGORITHM,
             "result_signature_key_ids": list(self.keyring.key_ids),
@@ -396,6 +424,18 @@ class GrpcEvaluator:
         del request
         self._handshake()
         return self._epoch
+
+    def wire_request_digest(self, request: EvaluationRequest) -> str:
+        """Return the request digest this evaluator will actually submit.
+
+        The NPU contract's canonical request also binds CandidateDigest and the
+        capability's device group, so the durable host outbox must key its row
+        by this value instead of the legacy host-only digest.  Handshake first:
+        the device group is only known from GetCapabilities.
+        """
+
+        self._handshake()
+        return self._attach_contract(self._external_request(request)).request_digest
 
     def cancel(self, request_id: str) -> None:
         with self._lock:
@@ -424,8 +464,8 @@ class GrpcEvaluator:
         snapshot so a caller can read the current attempt and lease fence.
         """
 
-        external = self._external_request(request)
         self._handshake()
+        external = self._attach_contract(self._external_request(request))
         snapshot = self._get_job(external)
         if snapshot is None:
             raise EvaluationUnavailable(
@@ -476,6 +516,35 @@ class GrpcEvaluator:
         if external.target_id != self.target_id:
             raise EvaluationUnavailable("target_mismatch", "request target differs from this evaluator")
         return external
+
+    def _attach_contract(self, external: Any, *, expected_digest: str = "") -> Any:
+        """Attach the capability's exact NPU execution binding, or return legacy.
+
+        ``expected_digest`` is the host-durable wire digest an outbox row already
+        records.  When the capability device group (or the request) changed, the
+        recomputed digest differs and the call fails closed before Submit, so a
+        resume can never silently evaluate under a new resource generation.
+        """
+
+        if not self.contract.npu_source:
+            return external
+        if self._npu_execution is None:
+            self._handshake()
+        if self._npu_execution is None:
+            raise EvaluationUnavailable("capability_invalid", "capabilities omitted the NPU device group")
+        digest = hashlib.sha256(external.source).hexdigest()
+        npu = NpuSourceRequest(
+            candidate_digest=CandidateDigest("sha256", digest),
+            execution=self._npu_execution,
+        )
+        wired = replace(external, candidate_sha256="", npu=npu)
+        if expected_digest and expected_digest != wired.request_digest:
+            raise EvaluationUnavailable(
+                "request_digest_mismatch",
+                "the durable host request digest differs from the NPU contract digest; "
+                "the device group or the request changed since it was recorded",
+            )
+        return wired
 
     def _handshake(self) -> pb.Capabilities:
         with self._lock:
@@ -530,6 +599,40 @@ class GrpcEvaluator:
             raise EvaluationUnavailable("capability_invalid", "capabilities API contract and provenance disagree")
         if capabilities.evidence_contract_id != provenance["evidence_contract_id"]:
             raise EvaluationUnavailable("capability_invalid", "capabilities evidence contract and provenance disagree")
+        if (
+            capabilities.api_contract_id != self.contract.api_contract_id
+            or capabilities.evidence_contract_id != self.contract.evidence_contract_id
+        ):
+            raise EvaluationUnavailable("api_contract_mismatch", "evaluator selected a different configured contract")
+        if self.contract.npu_source:
+            try:
+                group = DeviceGroupBinding(**provenance["device_group"])
+                execution = NpuExecutionSpec(device_group=group)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise EvaluationUnavailable("capability_invalid", f"NPU capability binding is invalid: {exc}") from exc
+            target = None
+            for candidate in capabilities.targets:
+                if candidate.target_id == provenance["target_id"]:
+                    target = candidate
+                    break
+            if target is None:
+                raise EvaluationUnavailable("capability_invalid", "capabilities omitted the served target")
+            if "source" not in target.artifact_kinds or "KERNEL" not in target.launch_kinds:
+                raise EvaluationUnavailable("capability_invalid", "NPU capability omitted source/KERNEL")
+            if "DEVICE_EVENT" not in target.timing_sources:
+                raise EvaluationUnavailable("capability_invalid", "NPU capability omitted DEVICE_EVENT timing")
+            if not any(
+                candidate.device_group_id == group.device_group_id
+                and candidate.profile_digest == group.profile_digest
+                and candidate.topology_digest == group.topology_digest
+                and candidate.resource_generation == group.resource_generation
+                and candidate.state == "available"
+                for candidate in target.device_groups
+            ):
+                raise EvaluationUnavailable("capability_invalid", "NPU capability device group is missing or unavailable")
+            self._npu_execution = execution
+        else:
+            self._npu_execution = None
         for name, expected in self.expected.wildcards().items():
             if name == "evaluator_epoch":
                 expected = expected or self._epoch
@@ -558,7 +661,7 @@ class GrpcEvaluator:
     def _submit(self, external: Any) -> pb.JobSnapshot:
         expected = self._expected_for_submit()
         request = pb.SubmitRequest(
-            request=gc.request_to_proto(external),
+            request=gc.request_to_proto(external, dialect=self.contract),
             request_digest=external.request_digest,
             expected=gc.expected_identities_to_proto(expected),
             capability_id=self._capability_id,
@@ -589,9 +692,12 @@ class GrpcEvaluator:
             raise _closed_error(exc) from exc
 
     def _evaluate(self, request: EvaluationRequest, *, allow_retry: bool) -> EvaluationResult:
-        external = self._external_request(request)
+        external = None
         try:
             self._handshake()
+            external = self._attach_contract(
+                self._external_request(request), expected_digest=request.contract_request_digest,
+            )
             with self._lock:
                 self._active[external.request_id] = (external.request_digest, self._expected_for_submit())
             snapshot = self._submit_with_grace(external)
@@ -605,8 +711,9 @@ class GrpcEvaluator:
                 raise self._snapshot_error(snapshot, state)
             return self._watch_to_result(external, request, snapshot)
         finally:
-            with self._lock:
-                self._active.pop(external.request_id, None)
+            if external is not None:
+                with self._lock:
+                    self._active.pop(external.request_id, None)
 
     def _submit_with_grace(self, external: Any) -> pb.JobSnapshot:
         grace_retries = 0
@@ -798,14 +905,18 @@ class GrpcEvaluator:
                 report_bytes, report_descriptor,
                 evidence_bytes, evidence_descriptor,
                 provenance, receipt, signature,
-            ) = gc.result_from_proto(snapshot.result)
+            ) = gc.result_from_proto(snapshot.result, dialect=self.contract)
         except JobError as exc:
             raise EvaluationUnavailable("result_invalid", str(exc)) from exc
         if report_descriptor["schema_id"] != gc.REPORT_SCHEMA_ID:
             raise EvaluationUnavailable("result_invalid", "report schema is not accepted by this host")
         if evidence_descriptor is None:
             raise EvaluationUnavailable("result_invalid", "external results require candidate-binding evidence")
-        if evidence_descriptor["schema_id"] != gc.EVIDENCE_SCHEMA_ID:
+        expected_evidence_schema = (
+            contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID if self.contract.npu_source
+            else gc.EVIDENCE_SCHEMA_ID
+        )
+        if evidence_descriptor["schema_id"] != expected_evidence_schema:
             raise EvaluationUnavailable("result_invalid", "evidence schema is not accepted by this host")
         if provenance["request_digest"] != external.request_digest:
             raise EvaluationUnavailable("provenance_mismatch", "result request digest does not match")
@@ -813,7 +924,18 @@ class GrpcEvaluator:
             raise EvaluationUnavailable("receipt_invalid", "receipt request_id does not match")
         if receipt["request_digest"] != external.request_digest:
             raise EvaluationUnavailable("receipt_invalid", "receipt request digest does not match")
-        if receipt["candidate_sha256"] != external.candidate_sha256:
+        if self.contract.npu_source:
+            if external.npu is None or self._npu_execution is None:
+                raise EvaluationUnavailable("provenance_mismatch", "NPU request/execution binding is missing")
+            expected_candidate = external.npu.candidate_digest.to_dict()
+            expected_group = self._npu_execution.device_group.to_dict()
+            if receipt["candidate_digest"] != expected_candidate:
+                raise EvaluationUnavailable("receipt_invalid", "receipt CandidateDigest does not match the request")
+            if receipt["device_group"] != expected_group:
+                raise EvaluationUnavailable("receipt_invalid", "receipt device group does not match the capability")
+            if provenance["device_group"] != receipt["device_group"]:
+                raise EvaluationUnavailable("provenance_mismatch", "provenance and receipt device groups differ")
+        elif receipt["candidate_sha256"] != external.candidate_sha256:
             raise EvaluationUnavailable("receipt_invalid", "receipt candidate digest does not match")
         if provenance["attempt_id"] != receipt["attempt_id"]:
             raise EvaluationUnavailable("receipt_invalid", "provenance and receipt attempt ids differ")
@@ -821,6 +943,9 @@ class GrpcEvaluator:
             request_id=external.request_id,
             attempt_id=receipt["attempt_id"],
             request_digest=external.request_digest,
+            candidate_digest=receipt.get("candidate_digest"),
+            device_group=receipt.get("device_group"),
+            dialect=self.contract,
         )
         if receipt["receipt_id"] != expected_receipt:
             raise EvaluationUnavailable("receipt_invalid", "receipt id does not bind this attempt")
@@ -838,16 +963,34 @@ class GrpcEvaluator:
             key_id=signature["key_id"],
             document=document,
             signature=signature["signature"],
+            dialect=self.contract,
         )
         try:
             report = gc.report_json(report_bytes)
             evidence = gc.evidence_json(evidence_bytes)
         except JobError as exc:
             raise EvaluationUnavailable("result_invalid", str(exc)) from exc
-        if not isinstance(evidence, dict) or evidence.get("candidate_sha256") != external.candidate_sha256:
+        if self.contract.npu_source:
+            if not isinstance(evidence, dict):
+                raise EvaluationUnavailable("result_invalid", "NPU result has no timing evidence")
+            try:
+                contracts.npu_timing_evidence_document(
+                    evidence,
+                    source_bytes=external.source,
+                    device_group=external.npu.execution.device_group.to_dict(),
+                    measurement_kind=provenance["measurement_kind"],
+                    publication_allowed=provenance["publication_allowed"],
+                )
+            except contracts.ContractError as exc:
+                raise EvaluationUnavailable("result_invalid", f"NPU timing evidence is invalid: {exc}") from exc
+            if evidence.get("candidate_digest") != receipt["candidate_digest"]:
+                raise EvaluationUnavailable("provenance_mismatch", "timing evidence candidate digest differs")
+        elif not isinstance(evidence, dict) or evidence.get("candidate_sha256") != external.candidate_sha256:
             raise EvaluationUnavailable("provenance_mismatch", "evidence does not bind the exact candidate bytes")
         legacy_receipt = dict(receipt)
         legacy_receipt["request_digest"] = request.request_digest
+        if self.contract.npu_source:
+            legacy_receipt.pop("candidate_sha256", None)
         legacy_receipt["measurement_kind"] = provenance["measurement_kind"]
         legacy_receipt["signature_key_id"] = signature["key_id"]
         legacy_receipt["signature_algorithm"] = signature["algorithm"]
@@ -917,10 +1060,7 @@ class GrpcEvaluatorFactory:
         self.expected = expected
         self.api_contract_ids = tuple(api_contract_ids)
         self.evidence_contract_ids = tuple(evidence_contract_ids)
-        if contracts.API_CONTRACT_ID not in self.api_contract_ids:
-            raise ValueError("api_contract_ids must include the implemented API contract")
-        if contracts.EVIDENCE_CONTRACT_ID not in self.evidence_contract_ids:
-            raise ValueError("evidence_contract_ids must include the implemented evidence contract")
+        self.contract = _resolve_contract(self.api_contract_ids, self.evidence_contract_ids)
         self.required_features = tuple(dict.fromkeys(required_features))
         self.keyring = keyring
         self.legacy_signature_key = legacy_signature_key
@@ -972,17 +1112,17 @@ class GrpcEvaluatorFactory:
 
     @property
     def api_contract_id(self) -> str:
-        return contracts.API_CONTRACT_ID
+        return self.contract.api_contract_id
 
     @property
     def evidence_contract_id(self) -> str:
-        return contracts.EVIDENCE_CONTRACT_ID
+        return self.contract.evidence_contract_id
 
     def execution_metadata(self) -> dict[str, Any]:
         return {
             "transport": self.transport_kind,
-            "api_contract_id": contracts.API_CONTRACT_ID,
-            "evidence_contract_id": contracts.EVIDENCE_CONTRACT_ID,
+            "api_contract_id": self.contract.api_contract_id,
+            "evidence_contract_id": self.contract.evidence_contract_id,
             "request_digest_algorithm": contracts.REQUEST_DIGEST_ALGORITHM,
             "result_signature_algorithm": contracts.RESULT_SIGNATURE_ALGORITHM,
             "result_signature_key_ids": list(self.keyring.key_ids),
@@ -1015,6 +1155,7 @@ class GrpcEvaluatorFactory:
                     api_contract_ids=self.api_contract_ids,
                     evidence_contract_ids=self.evidence_contract_ids,
                     required_features=self.required_features,
+                    contract=self.contract,
                     keyring=self.keyring,
                     legacy_signature_key=self.legacy_signature_key,
                     rpc_timeout_s=self.rpc_timeout_s,
@@ -1046,6 +1187,11 @@ class GrpcEvaluatorFactory:
     # -- EvaluationExecutor ------------------------------------------------
     def ensure_epoch(self, request: EvaluationRequest | None) -> str:
         return self._for_request(request).ensure_epoch(request)
+
+    def wire_request_digest(self, request: EvaluationRequest) -> str:
+        """Expose the wire digest so the host outbox binds the same request."""
+
+        return self._for_request(request).wire_request_digest(request)
 
     def formal(self, request: EvaluationRequest) -> EvaluationResult:
         if request.kind != "formal_eval":

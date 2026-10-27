@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping
 
-from .contracts import API_CONTRACT_ID, EVIDENCE_CONTRACT_ID
+from .contracts import API_CONTRACT_ID, EVIDENCE_CONTRACT_ID, NPU_SOURCE_API_CONTRACT_ID, NPU_SOURCE_EVIDENCE_CONTRACT_ID
 from .protocol import (
     PROTOCOL_VERSION,
     SCHEMA_VERSION,
@@ -145,11 +145,14 @@ class ServiceIdentity:
         attempt_id: str = "",
         api_contract_id: str = API_CONTRACT_ID,
         evidence_contract_id: str = EVIDENCE_CONTRACT_ID,
+        npu_execution: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         """Build the external typed-provenance document.
 
         Capabilities omit ``attempt_id`` and ``request_digest``; accepted jobs
-        always include the digest and results include both fields.
+        always include the digest and results include both fields.  The NPU
+        source contract adds the logical device group and execution shape;
+        the legacy Metal/source document keeps exactly its original fields.
         """
 
         document: dict[str, object] = {
@@ -169,6 +172,21 @@ class ServiceIdentity:
             "measurement_kind": self.measurement_kind,
             "publication_allowed": self.publication_allowed,
         }
+        if api_contract_id == NPU_SOURCE_API_CONTRACT_ID:
+            if evidence_contract_id != NPU_SOURCE_EVIDENCE_CONTRACT_ID:
+                raise ValueError("NPU provenance requires the NPU evidence contract")
+            if not isinstance(npu_execution, Mapping):
+                raise ValueError("NPU provenance requires a validated execution binding")
+            from .contracts import npu_execution_document
+
+            execution = npu_execution_document(npu_execution)
+            document["device_group"] = execution["device_group"]
+            document["artifact_kind"] = execution["artifact_kind"]
+            document["launch_kind"] = execution["launch_kind"]
+            document["launch_subtype"] = execution["launch_subtype"]
+            document["timing_sources"] = execution["required_timing_sources"]
+        elif npu_execution is not None:
+            raise ValueError("the legacy contract cannot carry an NPU execution binding")
         if attempt_id:
             document["attempt_id"] = attempt_id
         if request_digest:
