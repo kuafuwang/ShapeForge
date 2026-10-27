@@ -405,15 +405,23 @@ evidence 映射），只把 SDK 调用与设备状态换成 sim；其上的 `Ven
 | --- | --- | --- | --- |
 | AP/SDK hang | `prepare` 内加载或 launch 前 | 调用记录有 entered、无 returned | JobEngine deadline 到期，基础设施 timeout；不自动重跑 |
 | launch 后 hang | launch 已返回、event 永不 signal | 状态含 `launch_started` 与 `device_running` | 设备侧超时；Host elapsed 不进入 device elapsed |
-| worker SIGKILL | prepare / execute / close 各一次 | pid 消失且台账仍有 live 资源 | reconcile 成功或 quarantine，二者必居其一且附证据 |
+| worker SIGKILL | execute（prepare/close 另各一例） | execute：kill 前已有 `launch_started`，kill 后、reconcile 前仍能读到 `device_running` 与 live 资源 | reconcile 成功或 quarantine，二者必居其一且附证据 |
 | C2C down | 执行中对端链路 up→down | 链路状态确实为 down，执行已开始 | 基础设施错误；不映射成候选 crash/timeout/ok |
 | discovery 失败 | probe / capability 计算 | discovery 调用已执行并失败 | capabilities 不可用；Submit 在 create/start 前拒绝 |
 | 版本或 profile 不匹配 | probe 返回值 vs profile | 逐项比对失败（driver/firmware/runtime/profiler） | capabilities 不可用；Submit 在 create/start 前拒绝；不记候选错误 |
 | 拓扑代际变化 | attempt 中途 generation++ | 旧与新 generation 同时可观察 | 旧 capability/fence 的提交与结果被拒；影响测量则新 epoch |
 | IPC/stream/module 泄漏 | close 吞掉 close/destroy/unload | close 后 ledger live 计数仍 > 0 | `CleanupProof` 不完整 → quarantine |
-| profiler 异常 | 缺 span、丢 Buffer-HW 半区或 Buffer-CPU 覆盖、跳过 flush | drop/flush-error 计数被 evidence 读到 | 证据不完整，只作诊断，不发布 |
+| 缺必需 span | profiler 已记录设备完成与 correlation | `device_completed` 与 correlation 存在，但必需 span 查询为空 | 证据不完整，只作诊断，不发布 |
+| buffer 实际丢弃/覆盖 | Buffer-HW 半区或 Buffer-CPU ring | drop/overwrite 计数 > 0，或记录序号出现缺口 | 证据不完整，只作诊断，不发布 |
+| flush 记录未完整交付 | flush 已触发、记录投递 | flush 调用已记录，但交付记录少于已写记录 | 证据不完整，只作诊断，不发布 |
 | 健康探针失败 | known-good module 在健康设备上失败 | 探针确实被执行 | 设备组 quarantine，暂停接新 job |
 | reset 的全设备影响 | 运行中 reset | 占用检查与 generation++ 均被记录 | 有占用时拒绝 reset；reset 后 in-flight 结果作废，无单卡/单 job 语义 |
+
+worker SIGKILL 的 execute 一例必须先证明设备仍在执行：kill 前已有 `launch_started`，kill 后、
+reconcile 前仍读到 `device_running` 与未释放资源；prepare/close 阶段另各一例，只要求 pid 消失
+且台账仍有 live 资源。SIGKILL 用两个变体覆盖两种结论：资源仍可按 attempt/fence 归属时，
+reconcile 必须成功，`CleanupProof` 完整且台账清零；归属或证明被破坏时，只能 quarantine。
+这样既不会始终 quarantine 空过，删除 reconcile 也必定让成功变体失败。
 
 **计时与发布**
 
@@ -466,10 +474,10 @@ evidence 映射），只把 SDK 调用与设备状态换成 sim；其上的 `Ven
 | G2 module/launch/stream/event | 句柄生命周期基本闭环 | P2a 新增 | 校验顺序与失效句柄拒绝 |
 | G3 Host 先返回 | 异步完成语义 | P2a 新增（P1 已单列 Host launch） | Host 完成不等于执行完成 |
 | G4 资源归属 | module/stream/IPC/profiler buffer 账本 | P2a 新增 | close 只释放本 attempt；泄漏可检出 |
-| G5 reconcile | 三阶段 SIGKILL | P2a 新增（复用 supervisor kill/absence） | reconcile 或 quarantine，无第三种结论 |
+| G5 reconcile | 三阶段 SIGKILL；execute 路径先证 `launch_started` 与 kill 后 `device_running` | P2a 新增（复用 supervisor kill/absence） | 可证明：`CleanupProof` 完整且台账清零；不可证明：quarantine 且无自动清理声明 |
 | G6 topology/version | probe、generation、epoch | P1 已有 topology digest | 不匹配即不可用；代际变化拒旧 fence |
 | G7 Cancel/Retry/fence | 取消与 interrupted 恢复 | P0/P1 已覆盖 JobEngine 语义 | P2a 只补设备资源随取消/重试释放 |
-| G8 计时与证据 | event/profiler/rank-die/flush | P1 已有完整性判定 | 缺项只作诊断；`simulated=true` |
+| G8 计时与证据 | event/profiler/rank-die；缺 span、丢缓冲、flush 不全三类注入分别判定 | P1 已有完整性判定 | 缺项只作诊断；`simulated=true` |
 | G9 安全负例 | tsm-shell/MPI/fabric/root/路径/BDF/rank/vendor 参数 | P0/P1 已有 shell/path/feature 负例 | 三层拒绝且台账零调用 |
 | G10 conformance 与回归 | Python/Go conformance、Metal/local | P1 已建立 | 旧 contract 与旧验证不变 |
 
