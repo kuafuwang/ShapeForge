@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import os
 import signal
+import sys
 import threading
 import time
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
@@ -21,6 +23,7 @@ from ..support.job_engine import (
     OTHER_TOKEN, TARGET, TOKEN, capabilities, engine, get, grant, identity,
     request, retry, submit, wait_state,
 )
+from ..support.process_state import process_is_alive
 
 
 @pytest.fixture
@@ -1498,3 +1501,115 @@ def test_close_never_reports_closed_while_the_finalizer_is_running(tmp_path):
     second.join(timeout=30)
     assert results == {"first": True, "second": True}
     assert service.closed is True
+
+
+def _bridge_engine(tmp_path: Path, behavior: str, *, extra_env: dict[str, str] | None = None, state_dir: Path | None = None):
+    """Run the production bridge command over the scriptable legacy worker."""
+    from tcenv.remote.job_engine import JobEngine
+
+    env = {
+        "TCENV_LEGACY_WORKER_COMMAND": json.dumps([
+            sys.executable, "-m", "tests.support.fake_worker_legacy_bridge",
+        ]),
+        "FAKE_LEGACY_BEHAVIOR": behavior,
+    }
+    if extra_env:
+        env.update(extra_env)
+    return JobEngine(
+        identity=identity(),
+        grants=[grant()],
+        worker_command=[sys.executable, "-m", "tcenv.remote.legacy_worker_bridge"],
+        worker_env=env,
+        worker_cwd=Path(__file__).resolve().parents[2],
+        state_dir=Path(state_dir) if state_dir is not None else tmp_path / "state",
+    )
+
+
+def _assert_legacy_bridge_binding_failure(tmp_path: Path, behavior: str, needle: str, request_id: str) -> None:
+    service = _bridge_engine(tmp_path, behavior)
+    try:
+        req = request(request_id, source=b"OK")
+        submit(service, req)
+        final = wait_state(service, req, {"failed"})
+        assert final.result is None
+        assert final.failure.code == "worker_result_invalid"
+        assert not final.failure.retryable
+        assert needle in final.failure.message
+    finally:
+        service.close()
+
+
+def test_legacy_bridge_report_target_mismatch_is_not_committed(tmp_path):
+    """@brief worker 报告 target 与请求不符时由保留的 bridge 链路拒绝，不提交结果。"""
+    _assert_legacy_bridge_binding_failure(
+        tmp_path, "target_mismatch", "target_id", "bridge-target-mismatch",
+    )
+
+
+def test_legacy_bridge_report_seed_mismatch_is_not_committed(tmp_path):
+    """@brief worker 报告 seed 与请求不符时由保留的 bridge 链路拒绝，不提交结果。"""
+    _assert_legacy_bridge_binding_failure(
+        tmp_path, "seed_mismatch", "seed", "bridge-seed-mismatch",
+    )
+
+
+def test_cancellation_after_commit_does_not_refund_or_rewrite_usage(tmp_path):
+    """@brief 已提交终态再 cancel 不得改写结果或退还已结算的 timed 配额。"""
+    service = engine(tmp_path / "state", selfcheck_max_timed=1)
+    try:
+        first = request("committed-selfcheck", kind="selfcheck", mode="timed")
+        submit(service, first)
+        completed = wait_state(service, first, {"completed"})
+        original = completed.result
+        assert original is not None
+        after_cancel = service.cancel(
+            request_id=first.request_id, request_digest=first.request_digest,
+            expected=service.expected_identities, grant_token=TOKEN,
+        )
+        assert after_cancel.state == "completed"
+        assert after_cancel.result == original
+        usage = service.store.quota_usage(first)
+        assert (usage.used_count, usage.used_gpu_us, usage.reserved_count, usage.reserved_gpu_us) == (1, 500_000, 0, 0)
+        second = request("committed-selfcheck-next", kind="selfcheck", mode="timed")
+        with pytest.raises(JobError, match="count quota"):
+            submit(service, second)
+        assert service.store.quota_usage(second).used_count == 1
+    finally:
+        service.close()
+
+
+def test_legacy_bridge_cancel_kills_child_and_store_reopens(tmp_path):
+    """@brief cancel 杀掉 bridge/legacy 子进程，close 后同一 store 可重新打开。"""
+    record = tmp_path / "cancel-worker-record.json"
+    service = _bridge_engine(
+        tmp_path, "sleep", extra_env={"FAKE_LEGACY_RECORD": str(record)},
+    )
+    worker_pid = None
+    try:
+        req = request("bridge-cancel-cleanup", source=b"OK", candidate_timeout_ms=30_000)
+        submit(service, req)
+        deadline = time.monotonic() + 5.0
+        while not record.is_file() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert record.is_file(), "fake legacy worker did not record its PID"
+        worker_pid = json.loads(record.read_text())["pid"]
+        service.cancel(
+            request_id=req.request_id, request_digest=req.request_digest,
+            expected=service.expected_identities, grant_token=TOKEN,
+        )
+        final = wait_state(service, req, {"cancelled"})
+        assert final.result is None and final.cancel_requested
+    finally:
+        service.close()
+    assert worker_pid is not None
+    deadline = time.monotonic() + 5.0
+    while process_is_alive(worker_pid) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not process_is_alive(worker_pid), "legacy child survived cancellation"
+
+    reopened = _bridge_engine(tmp_path, "success")
+    try:
+        snapshot = get(reopened, req)
+        assert snapshot.state == "cancelled"
+    finally:
+        reopened.close()
