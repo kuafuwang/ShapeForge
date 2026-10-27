@@ -417,7 +417,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   controller 发取消。Host API 时间与 device event 时间分开记录，`candidate_us` 取自
   device event。
 - 验证证据（每条命令各自单独跑）：
-  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **48 passed**
+  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **50 passed**
   （含 v3→v4 迁移/备份恢复、wire receipt 与 host HMAC 篡改、时钟/候选时间自相矛盾、
   hanging cancel/reconcile、终态 request/provenance/attempt 绑定篡改回归）；
   `test_remote_grpc_{adapter,tls,contract,revocation}.py` 与
