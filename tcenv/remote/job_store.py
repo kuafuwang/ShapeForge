@@ -749,6 +749,20 @@ class JobStore:
             raise JobError("unauthenticated", "session grant expired")
         return row
 
+    def require_grant(self, grant_token: str) -> None:
+        """Authenticate a grant without consuming a nonce or writing a row.
+
+        Device probing must never run for an unauthenticated, expired or
+        revoked token, so the NPU frontend calls this before it touches the
+        device.  The durable capability write still happens later in
+        :meth:`get_capabilities`; this check is read-only.
+        """
+
+        now = _now_ms(self._clock)
+        with self._lock:
+            self._ensure_available()
+            self._grant_row(self._conn, grant_token, now)
+
     def register_grant(self, grant: SessionGrant, *, renew: bool = False) -> str:
         if not isinstance(grant, SessionGrant):
             raise TypeError("grant must be a SessionGrant")

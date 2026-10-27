@@ -482,7 +482,13 @@ class JobEngine:
         for name, values in (("api_contract_ids", api_contract_ids), ("evidence_contract_ids", evidence_contract_ids)):
             if not isinstance(values, (list, tuple)) or not values:
                 raise JobError("invalid_argument", f"capabilities requires non-empty {name}")
-        # Probe the trusted device first: a group that cannot be verified must
+        if self.contract.npu_source:
+            # Authenticate before any device operation: probe/health are device
+            # calls and must not run for a rejected grant.  This pre-check is
+            # read-only (no nonce use, no capability row); the durable write
+            # still happens in store.get_capabilities below.
+            self.store.require_grant(grant_token)
+        # Then probe the trusted device: a group that cannot be verified must
         # not consume the client nonce or leave a durable capability behind.
         device_target = self._device_capability() if self.contract.npu_source else {}
         capabilities = self.store.get_capabilities(

@@ -386,7 +386,10 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   vendor/profile/topology/generation；cancel/reconcile 只对“该 lease 接受时的绑定”生效，
   重启换组时既不向新组 controller 发取消，也不能把旧 attempt 标成 interrupted，只能
   quarantine。
-- 设备事实进入 capability：`GetCapabilities` 先用 worker 外 controller 做有界
+- 设备事实进入 capability：`GetCapabilities` 先用只读的 grant 预检
+  （`JobStore.require_grant`，不消费 nonce、不写 capability 行）确认调用方已认证，
+  未通过时直接返回 `unauthenticated`/`permission_denied` 且完全不触发设备操作；随后才用
+  worker 外 controller 做有界
   `probe`/`health_check`/`capabilities`（`device_call_timeout_s`，默认 2s），逐项核对
   vendor/profile/topology/resource generation 与 P0 执行形状；探测失败、超时、不健康或
   绑定不一致都 `failed_precondition`，且在消耗 nonce、写入 capability 之前失败。NPU 组合根
@@ -430,11 +433,11 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `_validate_durable_state` 都把它与 `jobs.request_id` 比对；篡改后直接读与重开都
   fail closed。
 - 验证证据（每条命令各自单独跑）：
-  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **62 passed**
+  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **66 passed**
   （wire receipt 与 host HMAC 篡改、时钟/候选时间自相矛盾、hanging cancel/reconcile、
   终态 request_id/task/execution/provenance/attempt 绑定篡改、Submit 跨 generation
   capability、fake vendor 的代际 prepare/台账、运行 marker 与异组/异代际
-  reconcile 拒绝并保留对方 running 证据）；
+  reconcile 拒绝并保留对方 running 证据、无效/过期/撤销 grant 下零设备调用）；
   `test_remote_grpc_{adapter,tls,contract,revocation}.py` 与
   `test_remote_{conformance,go_conformance}.py` 六个旧文件 **62 passed**；
   `test_orchestrator_runtime.py` **18 passed**（含 NPU host 接线回归）；
@@ -444,7 +447,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `test_remote_job_recovery.py`，`_validate_durable_state` 的终态读校验同文件覆盖）；
   `test_selfcheck_bridge.py` 在本机围栏默认 TMPDIR 下 **18 failed, 1 passed**（全部是
   短 TMPDIR 导致的 AF_UNIX 路径超长），`TMPDIR=/tmp` 下 **19 passed**。
-  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2261 passed / 6 skipped /
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2265 passed / 6 skipped /
   32 failed**。这批失败全部
   是本机 hmz 围栏环境造成：`test_selfcheck_bridge.py` 的 AF_UNIX 路径超长（短 TMPDIR），
   `ps` 被禁（`test_children`、`test_run_detached`、`test_triton_baseline`）与 HOME 权威

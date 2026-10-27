@@ -850,3 +850,68 @@ def test_generation_two_run_clears_its_running_marker_and_keeps_a_generation_one
         assert ledger.live_resources() == []
     finally:
         engine.close(wait=5)
+
+
+# -- the grant is authenticated before any device operation ----------------
+class _CountingController(FakeVendorAController):
+    def __init__(self, ledger_path, **kwargs):
+        super().__init__(ledger_path, **kwargs)
+        self.probe_calls = 0
+        self.health_calls = 0
+
+    def probe(self, profile):
+        self.probe_calls += 1
+        return super().probe(profile)
+
+    def health_check(self, profile):
+        self.health_calls += 1
+        return super().health_check(profile)
+
+
+def _counting_engine(tmp_path, *, grants=None):
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    controller = _CountingController(ledger_path)
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=controller,
+        grants=grants, signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    return engine, controller, VendorLedger(ledger_path), root
+
+
+def test_a_valid_grant_probes_before_the_capability_row(tmp_path):
+    """@brief 合法 grant 才触发 probe/health，且 capability 行只有一条。"""
+    engine, controller, ledger, _root = _counting_engine(tmp_path)
+    try:
+        capability = npu_capabilities(engine)
+        assert capability.capability_id
+        assert (controller.probe_calls, controller.health_calls) == (1, 1)
+        assert len(ledger.read()["probes"]) == 2
+        assert engine.store._conn.execute("SELECT COUNT(*) FROM capabilities").fetchone()[0] == 1
+    finally:
+        engine.close(wait=5)
+
+
+@pytest.mark.parametrize("case", ["invalid", "expired", "revoked"])
+def test_a_rejected_grant_never_touches_the_device(tmp_path, case):
+    """@brief 无效/过期/撤销 grant 不得触发 probe/health，也不得写 capability/job。"""
+    grants = None
+    token = NPU_TOKEN
+    if case == "expired":
+        grants = [npu_grant(expires_at=time.time() - 60)]
+    engine, controller, ledger, _root = _counting_engine(tmp_path, grants=grants)
+    try:
+        if case == "invalid":
+            token = "definitely-invalid"
+        elif case == "revoked":
+            engine.revoke_grant(NPU_TOKEN)
+        with pytest.raises(JobError) as excinfo:
+            npu_capabilities(engine, token=token)
+        assert excinfo.value.code in {"unauthenticated", "permission_denied"}
+        # No device operation happened and nothing durable was written.
+        assert (controller.probe_calls, controller.health_calls) == (0, 0)
+        assert ledger.read()["probes"] == []
+        assert engine.store._conn.execute("SELECT COUNT(*) FROM capabilities").fetchone()[0] == 0
+        assert engine.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+    finally:
+        engine.close(wait=5)
