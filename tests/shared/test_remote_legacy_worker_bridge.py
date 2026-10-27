@@ -15,7 +15,7 @@ import pytest
 
 from tcenv.remote.job_types import Attempt, ExternalEvaluationRequest
 from tcenv.remote.legacy_worker_bridge import _translate_progress
-from tcenv.remote.protocol import FrameDecoder, read_frame
+from tcenv.remote.protocol import FrameDecoder, ProtocolError, read_frame
 from tcenv.remote.worker_protocol import (
     MAX_WORKER_FRAME_PAYLOAD,
     decode_worker_frame,
@@ -793,7 +793,7 @@ def test_the_bridge_streams_the_child_instead_of_buffering_with_communicate(tmp_
     assert report["legacy_report_marker"] == "report-from-legacy-worker"
 
 
-def _production_request(*, cache_policy: str):
+def _production_request(*, cache_policy: str, mode: str = "quick"):
     from tcenv.remote.protocol import EvaluationRequest
 
     source = "kernel void demo() {}"
@@ -809,7 +809,7 @@ def _production_request(*, cache_policy: str):
         task_fingerprint="a" * 64,
         candidate_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),
         source=source,
-        mode="quick",
+        mode=mode,
         seed=3,
         reps=2,
         queue_timeout_s=2.0,
@@ -836,3 +836,11 @@ def test_production_cache_policy_is_mapped(monkeypatch):
     assert seen[-1]["eval_cache"] is False and seen[-1]["eval_cache_refresh"] is False
     ProductionBackend().evaluate(_production_request(cache_policy="refresh"))
     assert seen[-1]["eval_cache"] is True and seen[-1]["eval_cache_refresh"] is True
+
+
+def test_production_validate_is_rejected_instead_of_silently_becoming_quick():
+    """@brief 生产 validate 不得沿 public evaluate 的 quick fallback 执行。"""
+    from tcenv.remote.production import ProductionBackend
+
+    with pytest.raises(ProtocolError, match="validate"):
+        ProductionBackend().evaluate(_production_request(cache_policy="disabled", mode="validate"))

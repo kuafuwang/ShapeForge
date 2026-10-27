@@ -15,6 +15,11 @@ from tests.support.remote_pki import make_pki
 TASK_FINGERPRINT = "a" * 64
 TASK_PACK_DIGEST = "b" * 64
 TOKEN = "test-session-token"
+SIGNING_KEY = b"t" * 32
+SIGNING_KEY_ID = "sim-external-site/key-1"
+FORMAL_TOKEN = "grpc-e2e-formal-grant"
+SELFCHECK_TOKEN = "grpc-e2e-selfcheck-grant"
+TARGET = "sim-external-test"
 
 
 def _grpc_document(tmp_path: Path, pki, **overrides) -> Path:
@@ -189,3 +194,198 @@ def test_grpc_selfcheck_bridge_uses_the_grpc_factory_and_releases_it(tmp_path):
         server.stop()
     assert not Path(token_file).exists()
     assert not grpc_client_module._SHARED_CHANNELS
+
+
+@pytest.fixture
+def mtls_evaluator(tmp_path):
+    """A real mTLS gRPC frontend over the durable engine and fake private worker."""
+    import shutil
+
+    from tcenv.remote.grpc_server import GrpcServerConfig, build_server
+    from tests.support.job_engine import engine as make_engine, grant
+    from tests.support.remote_pki import PkiUnavailable
+
+    if shutil.which("openssl") is None:
+        pytest.skip("openssl is required for disposable test certificates")
+    try:
+        pki = make_pki(tmp_path / "pki")
+    except PkiUnavailable as exc:
+        pytest.skip(str(exc))
+    engine = make_engine(
+        tmp_path / "state",
+        grants=[
+            grant(FORMAL_TOKEN, kinds=frozenset({"formal_eval"}), subject="formal"),
+            grant(SELFCHECK_TOKEN, kinds=frozenset({"selfcheck"}), subject="selfcheck"),
+        ],
+        signing_key=SIGNING_KEY,
+        signing_key_id=SIGNING_KEY_ID,
+    )
+    server = build_server(
+        engine,
+        config=GrpcServerConfig(
+            address="127.0.0.1:0",
+            allow_insecure=False,
+            require_client_identity=True,
+            certificate_file=pki.server_cert,
+            private_key_file=pki.server_key,
+            client_ca_file=pki.ca_cert,
+            watch_poll_s=0.02,
+        ),
+    )
+    try:
+        yield engine, server, pki
+    finally:
+        server.stop(grace_s=0.2)
+        engine.close()
+
+
+def _mtls_document(tmp_path: Path, pki, server, *, selfcheck_token: str | None = SELFCHECK_TOKEN) -> Path:
+    from tests.support.job_engine import identity
+
+    formal_file = tmp_path / "formal.token"
+    formal_file.write_text(FORMAL_TOKEN)
+    keyring = pki.keyring_file(key_id=SIGNING_KEY_ID, key=SIGNING_KEY)
+    document = {
+        "transport": "grpc",
+        "endpoint": f"127.0.0.1:{server.port}",
+        "tls_server_name": "localhost",
+        "token_file": str(formal_file),
+        "ca_file": str(pki.ca_cert),
+        "client_certificate_file": str(pki.client_cert),
+        "client_private_key_file": str(pki.client_key),
+        "signature_keyring_file": str(keyring),
+        "target_id": TARGET,
+        "expected_site_id": identity().site_id,
+        "expected_device_id": identity().device_id,
+        "expected_worker_build": identity().worker_build,
+        "expected_task_pack_digest": TASK_PACK_DIGEST,
+        "task_fingerprint": TASK_FINGERPRINT,
+        "publishable_site_ids": [],
+        "socket_root": tempfile.mkdtemp(prefix="taic-remote-", dir="/tmp"),
+        "selfcheck_reps": 2,
+        "selfcheck_max_timed": 2,
+        "selfcheck_max_gpu_s": 10.0,
+    }
+    if selfcheck_token is not None:
+        selfcheck_file = tmp_path / "selfcheck.token"
+        selfcheck_file.write_text(selfcheck_token)
+        document["selfcheck_token_file"] = str(selfcheck_file)
+    path = tmp_path / "remote-grpc-mtls.json"
+    path.write_text(json.dumps(document))
+    return path
+
+
+def _mtls_request(request_id: str = "grpc-e2e-formal"):
+    from tcenv.evaluation import EvaluationRequest
+
+    return EvaluationRequest(
+        kind="formal_eval",
+        request_id=request_id,
+        run_id="run-1",
+        session_id="session-1",
+        task="relu",
+        dtype="fp16",
+        size="small",
+        target_id=TARGET,
+        task_fingerprint=TASK_FINGERPRINT,
+        source="OK",
+        mode="quick",
+        seed=3,
+        reps=2,
+        queue_timeout_s=10.0,
+        candidate_timeout_s=10.0,
+        cache_policy="disabled",
+    )
+
+
+def test_grpc_selfcheck_runs_through_the_unix_bridge_with_its_own_grant(tmp_path, mtls_evaluator):
+    """@brief 真实 mTLS RPC 经 Unix bridge 执行 selfcheck，并保留 token/seed 宿主边界。"""
+    from taic.selfcheck_bridge import SelfCheckClient
+    from tcenv.evaluation import EvaluationUnavailable
+
+    _engine, server, pki = mtls_evaluator
+    config = RemoteEvaluationConfig.from_file(_mtls_document(tmp_path, pki, server))
+    formal = config.make_evaluator("run-1")
+    selfcheck_probe = config.make_selfcheck_evaluator("run-1")
+    try:
+        result = formal.formal(_mtls_request())
+        assert result.report["simulated"] is True
+        with pytest.raises(EvaluationUnavailable) as caught:
+            selfcheck_probe.formal(_mtls_request("grpc-e2e-probe-formal"))
+        message = str(caught.value).lower()
+        assert "selfcheck" in message or "formal" in message or "kind" in message
+
+        work = tmp_path / "work"
+        work.mkdir()
+        seed_json = json.dumps({"speedup": 1.0, "benchmark": {"candidate": {"cv": 0.01}}})
+        (work / "report.json").write_text(seed_json)
+        factory = config.make_bridge_factory(
+            task="relu", dtype="fp16", size="small",
+            task_fingerprint=TASK_FINGERPRINT, run_id="run-1",
+        )
+        bridge, token_file = factory("session-1", work, formal)
+        try:
+            assert not bridge._usage_path.is_relative_to(work)
+            assert bridge.config.seed_report_path is not None
+            assert not bridge.config.seed_report_path.is_relative_to(work)
+            (work / "report.json").write_text(json.dumps({"speedup": 1000.0}))
+            assert bridge.config.seed_report_path.read_text() == seed_json
+            checked = SelfCheckClient(bridge.socket_path, token_file=token_file).check(
+                "kernel void demo() {}", "quick",
+            )
+            assert checked.report["simulated"] is True
+            assert checked.report["status"] == "ok"
+            assert checked.receipt["attempt_id"]
+            # The credential is host-owned, outside the agent-writable
+            # workspace, so a session prune cannot archive or delete it.
+            assert not Path(token_file).is_relative_to(work)
+            assert Path(token_file).parent == bridge.socket_path.parent
+            from taic.kernel_agent import prune_work
+            (work / "scratch.txt").write_text("x")
+            pruned = prune_work(work, label="init", keep={"candidate.metal"})
+            assert "token" not in pruned.get("archived", [])
+            assert Path(token_file).is_file()
+        finally:
+            bridge.stop()
+        assert not Path(token_file).exists()
+    finally:
+        selfcheck_probe.close()
+        formal.close()
+
+
+def test_grpc_selfcheck_requires_its_own_grant(tmp_path, mtls_evaluator):
+    """@brief 缺少独立 selfcheck grant 时禁止复用 formal evaluator。"""
+    _engine, server, pki = mtls_evaluator
+    config = RemoteEvaluationConfig.from_file(_mtls_document(tmp_path, pki, server, selfcheck_token=None))
+    with pytest.raises(ValueError, match="selfcheck_token_file"):
+        config.make_bridge_factory(
+            task="relu", dtype="fp16", size="small",
+            task_fingerprint=TASK_FINGERPRINT, run_id="run-1",
+        )
+    with pytest.raises(ValueError, match="selfcheck_token_file"):
+        config.make_selfcheck_evaluator("run-1")
+
+
+def test_grpc_selfcheck_does_not_fall_back_to_the_formal_grant(tmp_path, mtls_evaluator):
+    """@brief 把 formal grant 当 selfcheck grant 时由真实 RPC 拒绝，而不是静默复用。"""
+    from taic.selfcheck_bridge import SelfCheckBridgeError, SelfCheckClient
+
+    _engine, server, pki = mtls_evaluator
+    config = RemoteEvaluationConfig.from_file(
+        _mtls_document(tmp_path, pki, server, selfcheck_token=FORMAL_TOKEN),
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+    bridge, token_file = config.make_bridge_factory(
+        task="relu", dtype="fp16", size="small",
+        task_fingerprint=TASK_FINGERPRINT, run_id="run-1",
+    )("session-1", work, None)
+    try:
+        with pytest.raises(SelfCheckBridgeError) as caught:
+            SelfCheckClient(bridge.socket_path, token_file=token_file).check(
+                "kernel void demo() {}", "quick",
+            )
+        message = str(caught.value).lower()
+        assert "selfcheck" in message or "kind" in message or "grant" in message
+    finally:
+        bridge.stop()

@@ -103,6 +103,12 @@ def test_external_identity_is_separate_from_legacy_epoch_and_digest():
     assert external["evidence_contract_id"] == "tcenv.remote.v1.evidence.1"
 
 
+def test_service_identity_requires_a_registered_task_fingerprint():
+    """@brief 生产身份不能为空 task fingerprint 集合，否则会接受任意任务。"""
+    with pytest.raises(ValueError, match="task fingerprint"):
+        ServiceIdentity(site_id="s", device_id="d", backend="b", backend_version="1", target_id="t", worker_build="w", task_pack_digest="p", calibration_digest="c", task_fingerprints=frozenset(), measurement_kind="measured")
+
+
 @pytest.mark.parametrize("source,status", [
     (b"COMPILE_ERROR", "compile_error"),
     (b"INCORRECT", "incorrect"),
