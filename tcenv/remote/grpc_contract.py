@@ -20,6 +20,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 from . import contracts
 from .job_types import (
     Attempt,
+    BlobDescriptor,
     CandidateDigest,
     Capabilities,
     DeviceGroupBinding,
@@ -226,11 +227,37 @@ def request_to_proto(
             raise JobError("invalid_argument", "NPU request has no CandidateDigest/execution binding")
         message.candidate_digest.CopyFrom(candidate_digest_to_proto(request.npu.candidate_digest))
         message.execution.CopyFrom(execution_to_proto(request.npu.execution))
+        if request.npu.blob is not None:
+            if not dialect.npu_blob:
+                raise JobError("invalid_argument", "the inline contract cannot carry a blob reference")
+            message.blob_ref.CopyFrom(blob_ref_to_proto(request.npu.blob))
+        elif dialect.npu_blob:
+            raise JobError("invalid_argument", "the blob contract requires a blob reference")
     return message
 
 
 def candidate_digest_to_proto(value: CandidateDigest) -> pb.CandidateDigest:
     return pb.CandidateDigest(algorithm=value.algorithm, value=value.value)
+
+
+def blob_ref_to_proto(value: "BlobDescriptor") -> pb.BlobRef:
+    return pb.BlobRef(
+        content_id=value.content_id,
+        sha256=value.sha256,
+        size_bytes=value.size_bytes,
+        media_type=value.media_type,
+        chunk_size=value.chunk_size,
+    )
+
+
+def blob_ref_from_proto(message: pb.BlobRef) -> "BlobDescriptor":
+    return BlobDescriptor.from_dict({
+        "content_id": message.content_id,
+        "sha256": message.sha256,
+        "size_bytes": int(message.size_bytes),
+        "media_type": message.media_type,
+        "chunk_size": int(message.chunk_size),
+    })
 
 
 def device_group_to_proto(value: DeviceGroupBinding) -> pb.DeviceGroupBinding:
@@ -310,20 +337,31 @@ def request_from_proto(
         reject_unknown_fields(message.cases, "EvaluationRequest.cases")
     if message.HasField("candidate_digest") != dialect.npu_source or message.HasField("execution") != dialect.npu_source:
         raise JobError("invalid_argument", "request CandidateDigest/execution presence differs from the contract")
+    if message.HasField("blob_ref") != dialect.npu_blob:
+        raise JobError("invalid_argument", "request blob reference presence differs from the contract")
     if dialect.npu_source:
         if message.candidate_sha256:
             raise JobError("invalid_argument", "the NPU contract does not accept candidate_sha256")
         if not message.candidate_digest.algorithm or not message.candidate_digest.value:
             raise JobError("invalid_argument", "request CandidateDigest is incomplete")
+        allowed = dialect.candidate_algorithms
+        digest = contracts.candidate_digest_document(
+            {"algorithm": message.candidate_digest.algorithm, "value": message.candidate_digest.value},
+            allowed_algorithms=allowed,
+        )
+        blob = None if not message.HasField("blob_ref") else blob_ref_from_proto(message.blob_ref)
         npu = NpuSourceRequest(
             candidate_digest=CandidateDigest(
-                message.candidate_digest.algorithm, message.candidate_digest.value,
+                digest["algorithm"], digest["value"], allowed_algorithms=allowed,
             ),
             execution=execution_from_proto(message.execution),
+            blob=blob,
         )
     else:
         if message.candidate_digest.ByteSize() or message.execution.ByteSize():
             raise JobError("invalid_argument", "the legacy contract does not accept NPU request fields")
+        if message.blob_ref.ByteSize():
+            raise JobError("invalid_argument", "the legacy contract does not accept a blob reference")
         npu = None
         try:
             message.source.decode("utf-8", errors="strict")

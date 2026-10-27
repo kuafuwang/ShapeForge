@@ -1,0 +1,123 @@
+syntax = "proto3";
+
+package tcenv.remote.blob.v1;
+
+// Independent content-addressed blob data plane for the external evaluator.
+//
+// This service is deliberately separate from `tcenv.remote.v1.Evaluator`:
+// control metadata (job/attempt/fence/receipt) stays on the six Evaluator RPCs,
+// while candidate bytes travel through this chunked channel.  No message here
+// carries a host path, a URL, or vendor parameters; a caller only names a
+// content id and an offset.
+//
+// Authorization uses the same per-RPC session grant as the Evaluator service,
+// carried in authenticated gRPC metadata.  The server resolves the token into a
+// site/device/target/subject/run/session scope and refuses every operation that
+// does not belong to it.
+service BlobChannel {
+  // Declare size/digest/media type/chunk size before any byte is stored.
+  rpc BeginUpload(BeginUploadRequest) returns (BlobStatus);
+  // Append one chunk at the verified upload offset (sequential, acked).
+  rpc WriteChunk(WriteChunkRequest) returns (BlobStatus);
+  // Re-verify the received bytes against the declaration and mark the blob ready.
+  rpc CommitUpload(CommitUploadRequest) returns (BlobStatus);
+  // Give up on an unfinished upload and free its bytes.
+  rpc AbortUpload(AbortUploadRequest) returns (BlobStatus);
+  // Read the durable state (state, verified bytes, leases, expiry).
+  rpc GetBlob(BlobRefRequest) returns (BlobStatus);
+  // Read one bounded range; length is capped by the declared chunk_size.
+  rpc ReadChunk(ReadChunkRequest) returns (ChunkData);
+  // Stream a committed blob from an offset in chunk-sized responses.
+  rpc StreamBlob(StreamBlobRequest) returns (stream ChunkData);
+}
+
+// A content-addressed reference.  It is also embedded in the Evaluator's
+// canonical request, so the same five fields identify the artifact on both
+// planes.
+message BlobRef {
+  string content_id = 1;
+  string sha256 = 2;
+  uint64 size_bytes = 3;
+  string media_type = 4;
+  uint32 chunk_size = 5;
+}
+
+enum BlobState {
+  BLOB_STATE_UNSPECIFIED = 0;
+  BLOB_STATE_ACCEPTED = 1;
+  BLOB_STATE_UPLOADING = 2;
+  BLOB_STATE_READY = 3;
+  BLOB_STATE_FAILED = 4;
+  BLOB_STATE_QUARANTINE = 5;
+}
+
+// The attempt/fence that owns an upload.  Empty before the first Submit; once
+// set, another attempt can neither finish nor clean up this upload.
+message BlobBinding {
+  string attempt_id = 1;
+  uint64 lease_fence = 2;
+}
+
+message BlobStatus {
+  BlobRef descriptor = 1;
+  BlobState state = 2;
+  // Bytes acknowledged so far; resume writes from exactly this offset.
+  uint64 received_bytes = 3;
+  // Indices of the chunks the store already verified (the resume point).
+  repeated uint32 verified_chunks = 4;
+  // Request ids currently leasing this blob (idempotent replay support).
+  repeated string request_ids = 5;
+  // Store-side expiry; an expired blob is refused and swept.
+  int64 expires_at_ms = 6;
+  // "pending" | "done" | "quarantine"; a cleanup failure is never "done".
+  string cleanup_state = 7;
+  // Present only when the blob was quarantined; never a secret.
+  string quarantine_reason = 8;
+}
+
+message BeginUploadRequest {
+  BlobRef descriptor = 1;
+  // Client-generated, telemetry/idempotency only; it never authorizes anything.
+  string client_nonce = 2;
+  BlobBinding binding = 3;
+}
+
+message WriteChunkRequest {
+  string content_id = 1;
+  uint64 offset = 2;
+  // At most the declared chunk_size; empty chunks are refused.
+  bytes data = 3;
+  BlobBinding binding = 4;
+}
+
+message CommitUploadRequest {
+  string content_id = 1;
+  BlobBinding binding = 2;
+}
+
+message AbortUploadRequest {
+  string content_id = 1;
+  BlobBinding binding = 2;
+}
+
+message BlobRefRequest {
+  string content_id = 1;
+}
+
+message ReadChunkRequest {
+  string content_id = 1;
+  uint64 offset = 2;
+  uint32 length = 3;
+}
+
+message StreamBlobRequest {
+  string content_id = 1;
+  uint64 offset = 2;
+}
+
+message ChunkData {
+  bytes data = 1;
+  uint64 offset = 2;
+  // True on the final response of a stream.
+  bool done = 3;
+}

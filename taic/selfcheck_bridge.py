@@ -53,9 +53,9 @@ def _uses_npu_contract(evaluator: object) -> bool:
     contract = getattr(evaluator, "contract", None)
     if contract is not None and getattr(contract, "npu_source", False):
         return True
-    from tcenv.remote.contracts import NPU_SOURCE_API_CONTRACT_ID
+    from tcenv.remote.contracts import NPU_API_CONTRACT_IDS
 
-    return getattr(evaluator, "api_contract_id", "") == NPU_SOURCE_API_CONTRACT_ID
+    return getattr(evaluator, "api_contract_id", "") in NPU_API_CONTRACT_IDS
 
 
 @dataclass(frozen=True)

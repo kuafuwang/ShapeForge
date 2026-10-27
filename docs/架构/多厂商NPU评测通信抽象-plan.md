@@ -15,6 +15,9 @@ site/device/evaluator epoch。
   `DeviceController` 组成，共同把能力发现、工件校验、加载/启动、同步/取消、清理证明、
   健康检查和计时证据映射到共同语义。厂商 SDK、固件、驱动、卡侧处理器和组网工具只出现在
   这一层及其部署 profile 中。
+3. **独立 blob 数据面**（P0b，见 §4.5）：控制元数据继续走 gRPC/TLS/Protobuf，候选大工件改走
+  受信、content-addressed 的分块通道。六 RPC 与 `EvaluationRequest` 不再承载整份大模型/大图
+  字节；候选身份仍由 `CandidateDigest` + request digest 绑定，blob 只是同一身份的字节来源。
 
 外部 API 不新增 `TsmSubmit`、`VendorBSubmit` 之类的厂商专用入口；agent 也不能指定任意
 vendor shell、路径、MPI 命令或裸设备地址。**通信统一的是请求、能力、工件、结果、错误与
@@ -65,7 +68,8 @@ Intercept、HLD Phase 3 双 buffer、HLD Phase 4 memory 生命周期）；`lld-t
 - `TargetCapability` 目前只有 target/backend/modes/features，无法表达设备组、执行物、
   启动方式、计时来源与设备组可用/隔离状态。
 - `EvaluationRequest.source` 只描述单份待编译源码，不能无损表达 ELF/bin、graph、model、
-  参数表及辅助文件，也没有大工件传输通道。
+  参数表及辅助文件。P0b 先补独立 blob 通道与单个 blob 候选引用（§4.5）；多件 bundle 与
+  graph/model 语义仍属 P1。
 - `Backend` 负责源码/语言/launch 规则，`AttemptSupervisor` 负责 worker 生命周期；在
   Backend/worker 与设备之间还缺一个明确的**厂商设备驱动层**，不能直接往 gRPC server 或
   Docker supervisor 里塞 SDK。
@@ -91,6 +95,11 @@ control_host
                  └──────────────┬─────────────────┘
                                 ▼
                   厂商 runtime / driver / device group
+
+独立 blob 数据面（P0b，与控制面并列、不共享消息）
+  agent ──gRPC BlobChannel（grant 绑定、分块、content-addressed）──▶ BlobStore（单写者 state 目录）
+                                                                        ▲
+                                          受信 worker 按 content id 分块读取 ┘
 ```
 
 - control_host 不需要安装任何厂商 SDK，也不直接接触 `/dev/*`、卡侧 AP 或 fabric。
@@ -105,7 +114,10 @@ control_host
 - `tcenv/remote/drivers/<vendor_id>/`：厂商 infra adapter。
 - `backends/<id>/`、`targets/<id>/`：公开元数据、skills、芯片/设备 profile。
 - `deploy/vendors/<vendor_id>/`：受信镜像、依赖清单、provision/health 脚本与部署 profile。
+- `tcenv/remote/blob_channel.py`、`tcenv/remote/blob_service.py`：P0b 的 blob 数据面与独立
+  gRPC 服务（§4.5）；不进六 RPC。
 - `tests/support/vendor_sim/`：至少两种不同形态的 fake vendor 与 golden；不进入生产组合根。
+- `tests/support/blob_sim/`：blob 通道的故障注入 IO、崩溃/重建与配额场景；只在测试组合根注入。
 - `tests/support/tsm_sim/`：P2a 的清微 runtime/SMI/profiler 模拟器与故障注入（见 §8 P2a），
   只在测试 composition root 注入。
 
@@ -193,9 +205,9 @@ BDF、rank 坐标或 fabric 命令。
   按既有清理策略删除。旧 contract 只接受现有 Metal/source 及旧验证语义；所有 NPU 请求
   （含 simulated/fake 与单 source）一律使用新 contract，混合、缺失或 digest 不符均拒绝。
 
-首版只允许有界 inline bundle。大模型/大图需要后续独立的 content-addressed blob 通道
-（上传前声明 size/digest、落盘复核、receipt 绑定、配额与清理）；不得以宿主路径、共享目录
-或 `source` 伪装大工件传输。
+首版只允许有界 inline bundle。大模型/大图需要独立的 content-addressed blob 通道（§4.5，
+P0b 已先落地单 blob 候选引用）；不得以宿主路径、共享目录或 `source` 伪装大工件传输。
+ArtifactBundle 进入 blob 形态仍属 P1，不能借 P0b 提前宣称。
 
 ### 4.4 Result、TimingEvidence 与错误
 
@@ -218,6 +230,116 @@ Host launch 返回耗时单独记录，不能写成 device elapsed。
 厂商错误码与诊断原文（脱敏、有界）保留在 evidence；共同分类仍只有候选 compile/incorrect/
 crash/timeout、基础设施、协议/策略。C2C down、discovery 失败、驱动/固件不兼容、设备 reset、
 license/配额等必须映射为正确的基础设施类别，不能变成候选 timeout 或 ok。
+
+### 4.5 独立 content-addressed blob 通道（P0b）
+
+目标：大模型/大图不进入单条 `EvaluationRequest`/`OpaqueBlob`/Protobuf 大消息。控制元数据仍是
+六 RPC + TLS + Protobuf，大二进制走独立的受信分块通道：`BlobChannel` gRPC 服务，与 Evaluator
+控制面是不同 service、不同 proto package、不同消息，六 RPC 名称、field number、digest 与 HMAC
+算法一个字节都不变。
+
+**边界（本轮只做小文件模拟）**
+
+- 只证明协议、分块、完整性、恢复、授权与清理；不证明大文件吞吐、容量、跨站点性能或真实
+  NPU 可用性。真实对象存储/模型下载/设备访问一律不做。
+- 不实现 P1 的 graph-only fake、ArtifactBundle 或复杂 ExecutionSpec；blob 引用只挂在
+  P0 已有的 `artifact_kind=source` + `KERNEL`/`SIMT` 形状上，多件/多角色 bundle 留给 P1。
+- 不改旧 Metal/source contract：`tcenv.remote.v1.*` 的请求、receipt、outbox 与签名语义不动；
+  P0 的 `npu-source` contract 也不动，blob 形态是它的**后续 contract 版本**。
+
+**BlobDescriptor（稳定身份）**
+
+| 字段 | 规则 |
+| --- | --- |
+| `content_id` | `blob-sha256-v1:<64 hex>`；算法固定为内容 sha256 的算法标签化表示，同字节同 id |
+| `sha256` | 实际内容 SHA-256，必须与 `content_id` 的 hex 逐字节相同，否则 fail closed |
+| `size_bytes` | 声明大小；提交时按实际落盘字节复核 |
+| `media_type` | 必须等于请求 `execution.source_media_type`；不做内容嗅探或转码 |
+| `chunk_size` | 声明分块大小（1..上限），upload/read 的边界都由它决定 |
+
+原始二进制不透明：不做 Base64、不做 UTF-8 校验、不逐字段序列化模型。descriptor 是 canonical
+request 的一部分，因此 `CandidateDigest`/request digest 绑定的是**内容身份**，不是校验和备注。
+
+**状态机与持久化**
+
+```text
+accepted ──begin──▶ uploading ──commit(复核 size+sha256)──▶ ready
+                        │                                   │
+                        ├──abort/fail/超限/复核不符──▶ failed
+                        └──cleanup 失败──────────────▶ quarantine（不假装已清理）
+```
+
+- 每个 blob 一个 manifest（0600，原子写 + fsync + rename）记录 descriptor、状态、已验证 chunk
+  集合与 `received_bytes`、scope 绑定、TTL、lease 列表、cleanup 结果与 quarantine 原因；
+  chunk 各自成文件，写入用临时文件 + rename，崩溃不会产生"半块已确认"。
+- `ready` 是唯一可被 Submit 引用的状态；`uploading`/`failed` 一律拒绝，`quarantine` 永不自动
+  复用。重复 `commit` 在 descriptor 与字节一致时幂等返回 `ready`；`ready` 之后任何 chunk 写入
+  都被拒绝。
+- 崩溃/重启后按 `content_id` + manifest 里已验证的 offset 续传；未验证的临时 chunk 被丢弃，
+  续传从第一个未验证 offset 继续。
+
+**分块与内存边界**
+
+- `WriteChunk(content_id, offset, data)` 只接受 `offset == received_bytes` 的顺序块（乱序、越界、
+  超 `chunk_size`、超过声明 `size_bytes` 都拒绝）；`offset < received_bytes` 的重放只有在已落盘
+  字节完全相同时才幂等 ack，否则冲突。
+- `ReadChunk(content_id, offset, length)` 只返回 `length <= chunk_size` 的区间，读取路径按实际
+  区间读文件，不把整份内容读入内存；commit 复核 digest 用固定大小缓冲流式哈希。
+- 背压是协议的一部分：每个 chunk 一个 RPC ack，客户端最多一个 chunk 在途；服务端不缓存后续
+  块。慢消费者不会让服务端堆内存。
+
+**授权、配额与生命周期**
+
+- 每个 upload/read/commit/lease 都必须携带该 RPC 的 session grant；服务端把 token 解析成
+  `BlobScope`（site/device/target/subject/run/session），与 blob 记录的 scope 逐字段比较。
+  未认证、过期、已撤销的 grant 在触碰存储之前就被拒绝；跨 scope 读取（越权）即使知道
+  `content_id` 也拒绝。
+- agent 只提供 descriptor 与 offset/长度，不提供本地路径、共享目录、URL 或任意 vendor 参数；
+  服务端把 blob 放在自己 state 目录下，worker 由引擎注入受信 blob 根，不接受 agent 输入。
+- 限额：单 blob 声明大小、`chunk_size` 上下界、chunk 数量、每 scope 并发上传数、每 scope 与
+  全局字节配额都显式配置并在分配/写入前检查；超限返回 `resource_exhausted`，不落半份数据。
+- 生命周期：upload/commit/abort 一旦记录 attempt/fence 就绑定它，旧 attempt 既不能完成也不能 abort 新上传；
+  lease 以 `request_id` 为键（Submit 早于 attempt 分配），只由引擎在终态释放，agent 没有任何清理入口。
+  `Submit` 成功后 blob 与 `request_id` 建立 lease；job/attempt 进入终态后释放 lease，
+  最后一个 lease 释放且策略允许时删除字节；上传未完成就终态/断链的临时 blob 由 sweep 按 TTL
+  清理。清理失败必须把 blob 标成 `quarantine` 并保留证据，绝不返回"已清理"。
+
+**与 NPU contract 的集成（新 contract，旧 contract 不动）**
+
+- 新 contract：`tcenv.remote.npu-blob.evaluator-api.1` / `tcenv.remote.npu-blob.evidence.1`，
+  document version 3，仍复用六 RPC、job/attempt/fence、device group 与 `DEVICE_EVENT` 约束。
+- 互斥规则：`npu-source` 只接受 inline source；`npu-blob` 只接受 blob 引用且**禁止**携带任何
+  source 字节。两种形态由 contract 身份选择，不由请求形状猜测；混用、缺 blob 引用、带 source
+  字节都 fail closed。
+- `CandidateDigest`：blob 形态用 `algorithm=sha256-blob-v1`，`value` 等于 descriptor 的 `sha256`
+  并等于实际内容哈希；inline 形态保持 `sha256`。request digest 同时绑定 `candidate_digest`、
+  `blob_ref`（content id/size/media type/chunk size）与 `execution`。
+- 链：canonical request → request digest → receipt（`candidate_digest` + device group）→ outbox 行
+  （`schema_version=2`）→ HMAC result signature → resume（终态无字节时按持久化字段重建）。任一
+  环节改写 descriptor/digest 都被拒。
+- 未完成 blob、非本 scope 的 blob、digest/size 与 descriptor 不符的 blob 不许 Submit；attempt
+  dispatch 时 worker 再按 content id 分块读取并复核整份 digest，读失败按基础设施失败处理。
+
+**小文件模拟验收矩阵（本轮）**
+
+| 维度 | 覆盖 |
+| --- | --- |
+| 分块 | `chunk_size` 极小强制多块；空文件、1 字节、正好一个 chunk、chunk+1、含 NUL/非 UTF-8 随机二进制 |
+| 字节一致 | 上传后逐 chunk 读回与原文逐字节相同；无整文件内存缓冲（记录单次读写峰值） |
+| 续传/幂等 | 中断后按已验证 offset 续传；重复 chunk、重复 commit、重复 begin 幂等；同 id 不同字节/大小/digest 冲突 |
+| 拒绝面 | 乱序、越界 offset、超 chunk/超大小/超配额、未 ready 使用、重复 ready 后写入、越权/过期/撤销 grant |
+| 故障 | 存储写入/清理失败、进程崩溃后重启、并发相同 content id、慢消费者背压、cleanup 失败必须 quarantine |
+| 契约链 | descriptor/digest 在 request digest、receipt、outbox、签名、resume 全链一致；篡改任一环节被拒 |
+| 回归 | 旧 Metal/source 的 candidate_sha256/receipt/outbox 验证不变；六 RPC、field number、HMAC 不变 |
+
+**变异可证伪性**：跳过 commit 的 digest 复核、允许 `uploading` 被 Submit 使用、把整份文件读入
+内存、忽略 cleanup 失败、旧 fence/旧 attempt 提交或清理新 blob、跨 scope 读取放行——每一条都
+必须让对应测试失败。
+
+**模拟无法证明（留待真实环境）**：真实对象存储/共享存储的吞吐与容量、跨站点带宽与尾延迟、
+大模型（GB 级）的并发与断点续传、服务端进程崩溃时的存储原子性、真实 NPU 上大工件加载路径、
+multipart 校验与运维配额。本轮结果一律 `simulated=true`、`publication_allowed=false`，不进入
+confirmed/catalog/brief，不产生性能或"大模型已支持"的结论。
 
 ## 5. VendorDriver 与生命周期
 
@@ -493,6 +615,71 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `tests/support/npu_sim/grpc_sim_runner.py` 的 Docker 验收（本机无 Docker 权限，只做了
   import/入口拒绝的回归）。所有结果为 `simulated=true`、`publication_allowed=false`，
   不产生性能或发布结论。
+
+### P0b：独立 content-addressed blob 通道与候选 blob 引用（已实现，无真实设备）
+
+在 P0 闭环之上只加数据面与必要集成，不改 P0 语义：
+
+- 设计、状态机、授权/配额/清理与模拟矩阵见 §4.5；
+- 新 contract `tcenv.remote.npu-blob.*`（document version 3）只增加“候选字节来自 blob”这一形态，
+  `artifact_kind=source`、`KERNEL`/`SIMT`、单设备组、`DEVICE_EVENT` 与 P0 完全一致；
+- 独立 gRPC `BlobChannel` 服务（新 proto package），不新增 Evaluator RPC，不改六 RPC 与旧
+  field number/digest/HMAC；
+- 验收不覆盖 P1 的 bundle/graph-only fake、P2a 的 TSM simulator 或任何真实设备。
+
+**P0b 实施记录（2026-10-28，代码已落地，未接入真实设备/对象存储）**
+
+- 数据面：`tcenv/remote/blob_channel.py`（manifest 状态机、chunk 文件、scope 绑定、配额/TTL、
+  lease 与 sweep、quarantine）与 `tcenv/remote/blob_service.py`（`BlobChannel` servicer）。proto 为
+  `proto/tcenv/remote/blob/v1/blob.proto`，生成物在 `tcenv/remote/blob/v1/`，由
+  `scripts/generate_evaluator_proto.py` 一起生成并 `--check`；`evaluator.proto` 只新增字段 25
+  `EvaluationRequest.blob_ref`，六 RPC 与 1..24 号字段不变，生成物字节可复现。
+- 契约：`contracts.NPU_BLOB_DIALECT`（`tcenv.remote.npu-blob.evaluator-api.1` /
+  `tcenv.remote.npu-blob.evidence.1`，document version 3）。blob 形态 `candidate_digest.algorithm`
+  固定 `sha256-blob-v1`，`blob_ref` 必填且禁止 source 字节；`npu-source` 拒绝 `blob_ref`。
+  receipt、provenance、timing evidence 与 result signature 形状与 P0 相同，digest 通过
+  `candidate_digest` 进入，descriptor 通过 request digest 进入。
+- 集成：`Submit` 在写入任何 job 之前要求 blob `ready`、scope 相同、descriptor 与请求一致
+  （未 ready 或跨 scope 一律拒绝，且不建 job、不建 attempt、不取 lease）；attempt dispatch 由
+  引擎注入受信 blob 根（`<state_dir>/blobs`，agent 不能提供路径），fake worker 按 content id
+  分块读取并复核整份 digest，chunk 数/最大 chunk/摘要写进 fake 台账；终态释放 lease 并按策略
+  清理，cleanup 失败 → blob `quarantine` + job 记录 hazard；崩溃/重启后 `reconcile_blobs` 按
+  `JobStore.live_request_ids()` 释放孤儿 lease。
+- host 侧：`EvaluationRequest.wire_candidate_digest`（host-only，不进 `to_dict`/旧 digest）
+  记录上传产物的 digest，`bind_wire_digest` 同时绑定 wire digest 与 wire CandidateDigest；
+  blob outbox 缺该字段即 `request_digest_missing`，row/result 的 `candidate_digest` 按 wire 值
+  校验，篡改 row、receipt、evidence 或 host 签名都被拒。
+- 变异核验（临时改动后复原）：跳过 commit 摘要校验、忽略 cleanup 失败、接受旧 attempt/fence、
+  跳过 scope 校验、同时去掉两道 ready 守卫，对应测试全部转为失败；FaultIO 记录的 chunk/offset、
+  台账与 `io.crashes` 证明故障确实触发。
+- 验证证据（每条命令单独跑）：
+  `tests/shared/test_remote_blob_channel.py` **30 passed**（边界、二进制、读写峰值、崩溃续传、
+  重复/乱序、错误 digest、同 id 不同大小、未 ready、跨 scope、旧 attempt、超限、并发、过期/
+  sweep、cleanup quarantine、孤儿 release、corrupt chunk 检测）；
+  `tests/shared/test_remote_blob_grpc.py` **15 passed**（真实 gRPC 上传/流式下载逐字节一致、
+  空文件、缺失/过期/撤销/越权 grant 零落盘或零读取、越界/超 chunk/乱序拒绝、断点续传、
+  重复 chunk/commit、digest 不符 fail closed、同 id 不同大小、abort、慢消费者有界预取、
+  message 无路径/URL/命令、BlobChannel 与六 RPC 分离且 field number 不变）；
+  `tests/shared/test_remote_blob_contract.py` **14 passed**（未 ready/跨 scope 不可 Submit、
+  端到端 digest 链与 fake worker 分块读取台账、outbox 绑定/replay 与缺字段/篡改/换 candidate
+  拒绝、store 内 `blob_ref` 的 sha/size/chunk/media 篡改在直读与重开都 fail closed、interrupted
+  attempt 用同一 blob Retry、cleanup 失败 quarantine、重启释放孤儿 lease、npu-source 拒绝
+  `blob_ref` 而旧 Metal digest 仍是 version 1）；
+  `tests/shared/test_remote_blob_go_conformance.py` **7 passed**（Go 独立重建 canonical
+  request/receipt/签名并拒绝 candidate/blob size/canonical JSON/receipt id/HMAC 五类篡改）。
+  既有 P0 回归：`test_remote_npu_{contract,grpc,cleanup}.py` **88 passed**；旧
+  `test_remote_grpc_{adapter,tls,contract,revocation}.py` + `test_remote_{conformance,
+  go_conformance}.py` **62 passed**；`test_remote_{job_engine,job_recovery,
+  legacy_worker_bridge,container_engine,container_supervisor,runtime}.py` +
+  `test_evaluation_outbox.py` + `test_orchestrator_runtime.py` **283 passed, 1 skipped**
+  （Linux-only 跳过项不变）；`test_selfcheck_bridge.py` 在 `TMPDIR=/tmp` 下 **19 passed**，
+  在本机 hmz 围栏默认 TMPDIR 下仍是 **18 failed / 1 passed**（AF_UNIX 路径超长，未改测试）。
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2353 passed / 6 skipped /
+  32 failed**，32 项仍全是本机围栏环境（selfcheck AF_UNIX 路径、`ps` 被禁、HOME 权威日志
+  不可写），失败文件不 import remote/NPU/blob 新代码。
+- 未做（不得据此宣称）：大文件/GB 模型吞吐与容量、真实对象存储、跨站点性能、真实 NPU 大工件
+  加载、multipart/运维配额、服务端 SIGKILL 时的存储原子性、bundle/graph-only fake、P2a TSM
+  simulator。所有结果 `simulated=true`、`publication_allowed=false`。
 
 ### P1：bundle、graph-only 异步 fake 与 conformance
 

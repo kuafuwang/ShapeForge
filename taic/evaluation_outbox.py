@@ -17,13 +17,14 @@ from typing import Any
 
 from tcenv.evaluation import EvaluationRequest, EvaluationResult, EvaluationUnavailable, validate_receipt, verify_result_signature
 from tcenv.remote.contracts import (
-    NPU_SOURCE_API_CONTRACT_ID,
-    NPU_SOURCE_DIALECT,
-    NPU_SOURCE_EVIDENCE_CONTRACT_ID,
+    LEGACY_DIALECT,
+    NPU_API_CONTRACT_IDS,
+    NPU_EVIDENCE_CONTRACT_IDS,
     NPU_TIMING_EVIDENCE_SCHEMA_ID,
     ContractError,
     candidate_digest_document,
     device_group_document,
+    dialect_for,
     npu_report_timing_check,
     npu_timing_evidence_document,
     receipt_document,
@@ -59,6 +60,19 @@ def bind_wire_digest(
     digest = wire(request)
     if not isinstance(digest, str) or not digest:
         raise EvaluationUnavailable("request_digest_missing", "evaluator returned no wire request digest")
+    candidate_wire = getattr(evaluator, "wire_candidate_digest", None)
+    candidate = "" if not callable(candidate_wire) else candidate_wire(request)
+    if candidate and not isinstance(candidate, str):
+        raise EvaluationUnavailable("request_digest_missing", "evaluator returned an invalid wire CandidateDigest")
+    if candidate and candidate != request.candidate_sha256:
+        # A blob candidate's digest is not derivable from the host request; the
+        # row and the submitted request must carry the same one.
+        return replace(request, contract_request_digest=digest, wire_candidate_digest=candidate)
+    if request.wire_candidate_digest and candidate and candidate != request.wire_candidate_digest:
+        raise EvaluationUnavailable(
+            "request_digest_mismatch",
+            "the bound wire CandidateDigest differs from the evaluator's candidate",
+        )
     return replace(request, contract_request_digest=digest)
 
 
@@ -99,15 +113,20 @@ class EvaluationOutbox:
         if external_trusted_key_ids is not None and not isinstance(external_trusted_key_ids, frozenset):
             raise ValueError("external_trusted_key_ids must be a frozenset or None")
         self.external_trusted_key_ids = external_trusted_key_ids
-        self.npu_contract = (
-            self.api_contract_id == NPU_SOURCE_API_CONTRACT_ID
-            or self.evidence_contract_id == NPU_SOURCE_EVIDENCE_CONTRACT_ID
+        npu_ids = (
+            self.api_contract_id in NPU_API_CONTRACT_IDS
+            or self.evidence_contract_id in NPU_EVIDENCE_CONTRACT_IDS
         )
-        if self.npu_contract and (
-            self.api_contract_id != NPU_SOURCE_API_CONTRACT_ID
-            or self.evidence_contract_id != NPU_SOURCE_EVIDENCE_CONTRACT_ID
-        ):
-            raise ValueError("outbox NPU contract requires both NPU API and evidence contract ids")
+        if npu_ids:
+            # The dialect (inline source vs blob reference) comes from the exact
+            # contract pair, never from the shape of a request or result.
+            try:
+                self.dialect = dialect_for(self.api_contract_id, self.evidence_contract_id)
+            except ContractError as exc:
+                raise ValueError("outbox NPU contract requires both NPU API and evidence contract ids") from exc
+        else:
+            self.dialect = LEGACY_DIALECT
+        self.npu_contract = npu_ids
         if self.npu_contract and self.signature_key is None:
             # A complete receipt id is not an authenticator: without the host
             # HMAC a rewritten attempt/fence/report/evidence would still replay.
@@ -160,10 +179,25 @@ class EvaluationOutbox:
             "updated_at": now,
         }
         if self.npu_contract:
-            document["candidate_digest"] = {"algorithm": "sha256", "value": request.candidate_sha256}
+            document["candidate_digest"] = self._expected_candidate(request)
         else:
             document["candidate_sha256"] = request.candidate_sha256
         return document
+
+    def _expected_candidate(self, request: EvaluationRequest) -> dict[str, str]:
+        """Return the wire CandidateDigest this row/result must carry."""
+
+        algorithm = self.dialect.candidate_algorithms[0]
+        value = request.wire_candidate_digest or request.candidate_sha256
+        try:
+            return candidate_digest_document(
+                {"algorithm": algorithm, "value": value},
+                allowed_algorithms=self.dialect.candidate_algorithms,
+            )
+        except ContractError as exc:
+            raise EvaluationUnavailable(
+                "evidence_mismatch", f"outbox CandidateDigest is invalid: {exc}",
+            ) from exc
 
     def _device_group(self, value: Any, *, where: str) -> dict[str, str]:
         """Validate the NPU device-group binding this outbox row must carry."""
@@ -219,14 +253,16 @@ class EvaluationOutbox:
             raise EvaluationUnavailable("outbox_conflict", "outbox request id is bound to a different request digest")
         candidate = document.get("candidate_digest")
         try:
-            candidate = candidate_digest_document(candidate)
+            candidate = candidate_digest_document(
+                candidate, allowed_algorithms=self.dialect.candidate_algorithms,
+            )
         except ContractError as exc:
             raise EvaluationUnavailable(
                 "outbox_corrupt", f"outbox CandidateDigest is invalid: {exc}",
             ) from exc
-        if candidate["value"] != request.candidate_sha256:
+        if candidate != self._expected_candidate(request):
             raise EvaluationUnavailable(
-                "outbox_corrupt", "outbox CandidateDigest does not bind the request source",
+                "outbox_corrupt", "outbox CandidateDigest does not bind the request candidate",
             )
         status = document.get("status")
         if status not in {"pending", "unavailable", "completed"}:
@@ -248,14 +284,14 @@ class EvaluationOutbox:
         receipt = result.receipt if isinstance(result.receipt, dict) else {}
         document = {key: receipt.get(key) for key in _NPU_WIRE_RECEIPT_FIELDS}
         try:
-            wire = receipt_document(document, dialect=NPU_SOURCE_DIALECT)
+            wire = receipt_document(document, dialect=self.dialect)
         except ContractError as exc:
             raise EvaluationUnavailable(
                 "receipt_mismatch", f"outbox NPU receipt is invalid: {exc}",
             ) from exc
         if wire["request_id"] != request.request_id or wire["request_digest"] != request.request_digest:
             raise EvaluationUnavailable("receipt_mismatch", "outbox NPU receipt does not bind this request")
-        if wire["candidate_digest"]["value"] != request.candidate_sha256:
+        if wire["candidate_digest"] != self._expected_candidate(request):
             raise EvaluationUnavailable("receipt_mismatch", "outbox NPU receipt CandidateDigest does not match")
         return wire
 
@@ -283,9 +319,12 @@ class EvaluationOutbox:
             try:
                 npu_timing_evidence_document(
                     evidence,
-                    source_bytes=request.source_bytes,
+                    # A blob candidate has no inline bytes to rehash here; its
+                    # digest is bound by the receipt/row comparison above.
+                    source_bytes=None if self.dialect.npu_blob else request.source_bytes,
                     device_group=receipt_group,
                     report_status=report.get("status"),
+                    dialect=self.dialect,
                 )
                 npu_report_timing_check(evidence, report)
             except ContractError as exc:
@@ -321,6 +360,12 @@ class EvaluationOutbox:
         if request.request_digest != request.contract_request_digest:
             raise EvaluationUnavailable(
                 "request_digest_mismatch", "the host request digest is not the NPU wire digest",
+            )
+        if self.dialect.npu_blob and not request.wire_candidate_digest:
+            raise EvaluationUnavailable(
+                "request_digest_missing",
+                "the blob contract requires the wire CandidateDigest; "
+                "bind it from the uploaded descriptor before begin/complete",
             )
 
     def begin(self, request: EvaluationRequest, *, epoch: str = "") -> EvaluationResult | None:

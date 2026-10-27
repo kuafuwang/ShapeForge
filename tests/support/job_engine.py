@@ -203,7 +203,7 @@ def npu_request(
     run_id: str = "npu-run-1", session_id: str = "npu-session-1",
     candidate_timeout_ms: int = 3000, queue_timeout_ms: int = 3000,
     reps: int = 2, mode: str = "quick", kind: str = "formal_eval",
-    generation: str = "1",
+    generation: str = "1", blob=None,
 ) -> ExternalEvaluationRequest:
     from tcenv.remote.job_types import (
         CandidateDigest, DeviceGroupBinding, NpuExecutionSpec, NpuSourceRequest,
@@ -214,10 +214,27 @@ def npu_request(
 
     group = VENDOR_A_GROUP
     execution = build_execution(generation) if generation != "1" else NpuExecutionSpec(device_group=group)
-    npu = NpuSourceRequest(
-        candidate_digest=CandidateDigest("sha256", hashlib.sha256(source).hexdigest()),
-        execution=execution,
-    )
+    if blob is not None:
+        from tcenv.remote import contracts
+        from tcenv.remote.job_types import BlobDescriptor
+
+        descriptor = blob if isinstance(blob, BlobDescriptor) else BlobDescriptor.from_dict(blob)
+        npu = NpuSourceRequest(
+            candidate_digest=CandidateDigest(
+                contracts.BLOB_DIGEST_ALGORITHM, descriptor.sha256,
+                allowed_algorithms=(contracts.BLOB_DIGEST_ALGORITHM,),
+            ),
+            execution=execution,
+            blob=descriptor,
+        )
+        # A blob candidate is referenced, never embedded: no source bytes travel
+        # in the control-plane request.
+        source = b""
+    else:
+        npu = NpuSourceRequest(
+            candidate_digest=CandidateDigest("sha256", hashlib.sha256(source).hexdigest()),
+            execution=execution,
+        )
     return ExternalEvaluationRequest(
         kind=kind, request_id=request_id, run_id=run_id,
         session_id=session_id, task="relu", dtype="fp16", size="small",
@@ -228,26 +245,38 @@ def npu_request(
     )
 
 
-def npu_expected_identities(value: ServiceIdentity | None = None) -> ExpectedIdentities:
+def npu_expected_identities(value: ServiceIdentity | None = None, *, contract=None) -> ExpectedIdentities:
     value = value or npu_identity()
     from tcenv.remote import contracts
 
+    contract = contract or contracts.NPU_SOURCE_DIALECT
     return ExpectedIdentities(ExpectedEvaluator(
         site_id=value.site_id, device_id=value.device_id, target_id=value.target_id,
         worker_build=value.worker_build, task_pack_digest=value.task_pack_digest,
         evaluator_epoch=value.external_epoch(execution_protocol_version="3"),
-    ), contracts.NPU_SOURCE_API_CONTRACT_ID, contracts.NPU_SOURCE_EVIDENCE_CONTRACT_ID)
+    ), contract.api_contract_id, contract.evidence_contract_id)
+
+
+def npu_features(contract=None) -> tuple[str, ...]:
+    """Return the features the P0/P0b fake vendor advertises."""
+
+    from tcenv.remote import contracts
+
+    if contract is not None and contract.npu_blob:
+        return (*NPU_FEATURES, "blob-artifact")
+    return NPU_FEATURES
 
 
 def npu_engine(
     state_dir: Path, *, ledger_path: Path, controller,
     grants: list[SessionGrant] | None = None,
     worker_env: dict[str, str] | None = None,
-    generation: str = "1", **options,
+    generation: str = "1", contract=None, blob_store=None, **options,
 ) -> JobEngine:
     from tcenv.remote import contracts
     from tests.support.vendor_sim.vendor_a import build_execution
 
+    contract = contract or contracts.NPU_SOURCE_DIALECT
     env = dict(worker_env or {})
     env["TCENV_VENDOR_LEDGER"] = str(ledger_path)
     env["TCENV_VENDOR_A_GENERATION"] = generation
@@ -256,19 +285,21 @@ def npu_engine(
         worker_command=[sys.executable, "-m", "tests.support.vendor_sim.worker_a"],
         worker_cwd=Path(__file__).resolve().parents[2],
         state_dir=state_dir, worker_env=env,
-        supported_features=frozenset(NPU_FEATURES),
+        supported_features=frozenset(npu_features(contract)),
         supported_modes=frozenset({"quick", "full"}),
-        contract=contracts.NPU_SOURCE_DIALECT,
+        contract=contract,
         npu_execution=build_execution(generation),
         device_controller=controller,
+        blob_store=blob_store,
         **options,
     )
 
 
 def npu_capabilities(
     engine: JobEngine, *, token: str = NPU_TOKEN, nonce: str | None = None,
-    required_features: tuple[str, ...] = NPU_FEATURES,
+    required_features: tuple[str, ...] | None = None,
 ):
+    required_features = tuple(required_features if required_features is not None else npu_features(engine.contract))
     nonce = (secrets.token_hex(16) if nonce is None else nonce).ljust(16, "0")
     expected = engine.expected_identities
     return engine.get_capabilities(
@@ -287,7 +318,7 @@ def npu_submit(
     cap = npu_capabilities(engine, token=token, nonce=nonce)
     return engine.submit(
         request=req, expected=engine.expected_identities,
-        capability_id=cap.capability_id, required_features=list(NPU_FEATURES),
+        capability_id=cap.capability_id, required_features=list(npu_features(engine.contract)),
         grant_token=token,
     )
 

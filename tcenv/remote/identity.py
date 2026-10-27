@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping
 
-from .contracts import API_CONTRACT_ID, EVIDENCE_CONTRACT_ID, NPU_SOURCE_API_CONTRACT_ID, NPU_SOURCE_EVIDENCE_CONTRACT_ID
+from .contracts import API_CONTRACT_ID, EVIDENCE_CONTRACT_ID, NPU_API_CONTRACT_IDS, NPU_EVIDENCE_CONTRACT_IDS
 from .protocol import (
     PROTOCOL_VERSION,
     SCHEMA_VERSION,
@@ -172,8 +172,8 @@ class ServiceIdentity:
             "measurement_kind": self.measurement_kind,
             "publication_allowed": self.publication_allowed,
         }
-        if api_contract_id == NPU_SOURCE_API_CONTRACT_ID:
-            if evidence_contract_id != NPU_SOURCE_EVIDENCE_CONTRACT_ID:
+        if api_contract_id in NPU_API_CONTRACT_IDS:
+            if evidence_contract_id not in NPU_EVIDENCE_CONTRACT_IDS:
                 raise ValueError("NPU provenance requires the NPU evidence contract")
             if not isinstance(npu_execution, Mapping):
                 raise ValueError("NPU provenance requires a validated execution binding")

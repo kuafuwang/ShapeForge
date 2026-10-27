@@ -94,6 +94,17 @@ class _FakeModule:
     size: int
 
 
+def _candidate_digest(attempt_context: Mapping[str, Any], source: bytes) -> dict[str, str]:
+    """Return the request's CandidateDigest, or the inline sha256 fallback."""
+
+    candidate = attempt_context.get("candidate_digest")
+    if isinstance(candidate, Mapping) and set(candidate) == {"algorithm", "value"}:
+        if candidate["value"] != hashlib.sha256(source).hexdigest():
+            raise ValueError("vendor A candidate digest does not match the received artifact")
+        return {"algorithm": str(candidate["algorithm"]), "value": str(candidate["value"])}
+    return {"algorithm": "sha256", "value": hashlib.sha256(source).hexdigest()}
+
+
 class FakeVendorADriver:
     """Worker-local cooperative driver used by the fake worker process."""
 
@@ -159,6 +170,10 @@ class FakeVendorADriver:
                 "module": module.digest,
                 "stream": f"{attempt_id}:stream",
                 "source_sha256": hashlib.sha256(source).hexdigest(),
+                # The candidate identity comes from the accepted request, so a
+                # blob-delivered artifact reports the same digest algorithm the
+                # control plane bound (never a locally invented one).
+                "candidate_digest": _candidate_digest(attempt_context, source),
             },
         )
 
@@ -191,10 +206,7 @@ class FakeVendorADriver:
             host_api_elapsed_ns = max(host_api_elapsed_ns, 50_000_000)
         evidence = {
             "schema_id": NPU_TIMING_EVIDENCE_SCHEMA_ID,
-            "candidate_digest": {
-                "algorithm": "sha256",
-                "value": prepared.handles["source_sha256"],
-            },
+            "candidate_digest": prepared.handles["candidate_digest"],
             "device_group": {**VENDOR_A_GROUP.to_dict(), "resource_generation": self.generation},
             "timing": {
                 "source": "DEVICE_EVENT",

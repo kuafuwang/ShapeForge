@@ -594,7 +594,9 @@ class JobStore:
                         # durable-state corruption, not a replayable job.
                         try:
                             stored_document = _loads(job["request_json"])
-                            stored_digest = contracts.npu_stored_request_digest(stored_document)
+                            stored_digest = contracts.npu_stored_request_digest(
+                                stored_document, dialect=self.contract,
+                            )
                             if stored_document.get("request_id") != job["request_id"]:
                                 raise contracts.ContractError(
                                     "stored request_id differs from the durable job",
@@ -762,6 +764,29 @@ class JobStore:
         with self._lock:
             self._ensure_available()
             self._grant_row(self._conn, grant_token, now)
+
+    def blob_scope(self, grant_token: str) -> dict[str, str]:
+        """Return the durable non-secret scope of one live grant (read-only).
+
+        The P0b blob channel resolves a token through this method, so a blob
+        upload/read is admitted exactly while the same grant that would admit the
+        job is active.  No nonce is consumed and no row is written: the blob
+        channel must not be able to spend the job's capabilities.
+        """
+
+        now = _now_ms(self._clock)
+        with self._lock:
+            self._ensure_available()
+            row = self._grant_row(self._conn, grant_token, now)
+            scope = _loads(row["scope_json"])
+            if not isinstance(scope, dict):
+                raise JobError("permission_denied", "session grant scope is corrupt")
+            return {
+                "subject": str(row["subject"]),
+                "run_id": str(scope["run_id"]),
+                "session_id": str(scope["session_id"]),
+                "target_id": str(scope["target_id"]),
+            }
 
     def register_grant(self, grant: SessionGrant, *, renew: bool = False) -> str:
         if not isinstance(grant, SessionGrant):
@@ -1129,8 +1154,12 @@ class JobStore:
             # task/execution/identity.  Every field is revalidated and a legacy
             # `candidate_sha256` is rejected rather than ignored.
             try:
-                stored_request = contracts.npu_stored_request_document(request_document)
-                stored_digest = contracts.npu_stored_request_digest(request_document)
+                stored_request = contracts.npu_stored_request_document(
+                    request_document, dialect=dialect,
+                )
+                stored_digest = contracts.npu_stored_request_digest(
+                    request_document, dialect=dialect,
+                )
             except contracts.ContractError as exc:
                 raise StateCorrupt(f"stored NPU request document is invalid: {exc}") from exc
             if request_document.get("request_id") != job["request_id"]:
@@ -1195,6 +1224,7 @@ class JobStore:
                     measurement_kind=provenance["measurement_kind"],
                     publication_allowed=provenance["publication_allowed"],
                     report_status=report_status,
+                    dialect=dialect,
                 )
                 contracts.npu_report_timing_check(evidence_document, _loads(result.report))
             except (contracts.ContractError, StateCorrupt, TypeError, ValueError) as exc:
@@ -1470,6 +1500,32 @@ class JobStore:
                     raise StateCorrupt("accepted job already has an attempt")
                 self._allocate_attempt(conn, job, now, retry_index=0)
             return self._snapshot(conn, conn.execute("SELECT * FROM jobs WHERE request_id=?", (request_id,)).fetchone())
+
+    def job_exists(self, request_id: str) -> bool:
+        """Read-only existence check used by the blob lease rollback path."""
+
+        with self._lock:
+            self._ensure_available()
+            row = self._conn.execute(
+                "SELECT 1 FROM jobs WHERE request_id=?", (request_id,),
+            ).fetchone()
+            return row is not None
+
+    def live_request_ids(self) -> list[str]:
+        """Return every request that can still use a leased artifact.
+
+        The blob channel releases leases only for requests outside this set, so a
+        crash cannot strand bytes while a live job may still read them.
+        """
+
+        with self._lock:
+            self._ensure_available()
+            return [
+                row[0] for row in self._conn.execute(
+                    "SELECT request_id FROM jobs "
+                    "WHERE state IN ('accepted','queued','running','interrupted')"
+                )
+            ]
 
     def accepted_jobs(self) -> list[str]:
         with self._lock:
@@ -2171,11 +2227,15 @@ class JobStore:
             try:
                 contracts.npu_timing_evidence_document(
                     evidence,
-                    source_bytes=request.source,
+                    # A blob candidate's bytes never entered the request; its
+                    # digest was verified by the blob channel at commit and the
+                    # candidate digest is compared below against the request.
+                    source_bytes=None if request.blob is not None else request.source,
                     device_group=request.npu.execution.device_group.to_dict(),
                     measurement_kind=provenance.get("measurement_kind"),
                     publication_allowed=provenance.get("publication_allowed"),
                     report_status=report.get("status"),
+                    dialect=self.contract,
                 )
                 contracts.npu_report_timing_check(evidence, report)
             except contracts.ContractError as exc:

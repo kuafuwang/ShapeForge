@@ -23,6 +23,7 @@ import (
 )
 
 type Golden struct {
+	Blob                  *BlobGolden     `json:"npu_blob"`
 	SourceBase64          string          `json:"source_base64"`
 	Request               map[string]any  `json:"request"`
 	RequestDigestDocument map[string]any  `json:"request_digest_document"`
@@ -32,6 +33,18 @@ type Golden struct {
 	Signature             SignatureGolden `json:"signature"`
 	Timeouts              []TimeoutGolden `json:"timeout_seconds_to_ms"`
 	RejectedTimeouts      []string        `json:"timeout_seconds_rejected"`
+}
+
+// BlobGolden freezes the P0b blob-reference contract documents.  It is verified
+// independently from the Python implementation: the Go side rebuilds the
+// canonical request, receipt and signed result from the raw fields.
+type BlobGolden struct {
+	Request               map[string]any  `json:"request"`
+	RequestDigestDocument map[string]any  `json:"request_digest_document"`
+	RequestCanonicalJSON  string          `json:"request_canonical_json"`
+	RequestDigest         string          `json:"request_digest"`
+	Receipt               ReceiptGolden   `json:"receipt"`
+	Signature             SignatureGolden `json:"signature"`
 }
 
 type ReceiptGolden struct {
@@ -220,6 +233,80 @@ func requestDocument(request map[string]any) (map[string]any, error) {
 	}, nil
 }
 
+var blobRequestFields = []string{
+	"kind", "run_id", "session_id", "task", "dtype", "size", "target_id",
+	"task_fingerprint", "candidate_digest", "execution", "blob_ref", "mode", "seed", "reps",
+	"queue_timeout_ms", "candidate_timeout_ms", "cases", "fast_bench",
+	"require_contract_launch", "validate", "measure_serial", "cache_policy",
+}
+
+func blobRequestDocument(request map[string]any) (map[string]any, error) {
+	if len(request) != len(blobRequestFields) {
+		return nil, fmt.Errorf("blob request has %d fields, want %d", len(request), len(blobRequestFields))
+	}
+	canonicalRequest := make(map[string]any, len(blobRequestFields))
+	for _, name := range blobRequestFields {
+		value, present := request[name]
+		if !present {
+			return nil, fmt.Errorf("blob request field %s is missing", name)
+		}
+		canonicalRequest[name] = value
+	}
+	blob, ok := canonicalRequest["blob_ref"].(map[string]any)
+	if !ok {
+		return nil, errors.New("blob_ref is not an object")
+	}
+	candidate, ok := canonicalRequest["candidate_digest"].(map[string]any)
+	if !ok {
+		return nil, errors.New("candidate_digest is not an object")
+	}
+	if candidate["algorithm"] != "sha256-blob-v1" || candidate["value"] != blob["sha256"] {
+		return nil, errors.New("candidate digest does not bind the blob descriptor")
+	}
+	if blob["content_id"] != "blob-sha256-v1:"+fmt.Sprint(blob["sha256"]) {
+		return nil, errors.New("content id does not bind the blob digest")
+	}
+	execution, ok := canonicalRequest["execution"].(map[string]any)
+	if !ok {
+		return nil, errors.New("execution is not an object")
+	}
+	if execution["source_media_type"] != blob["media_type"] {
+		return nil, errors.New("blob media type differs from the execution media type")
+	}
+	return map[string]any{
+		"document_type":    "tcenv.remote.npu-blob.request-digest",
+		"document_version": 3,
+		"digest_algorithm": "sha256-rfc8785-v1",
+		"request":          canonicalRequest,
+	}, nil
+}
+
+func blobReceiptDocument(requestID, attemptID, requestDigest string, candidate, group any) map[string]any {
+	return map[string]any{
+		"document_type":    "tcenv.remote.npu-blob.receipt-id",
+		"document_version": 3,
+		"digest_algorithm": "sha256-rfc8785-v1",
+		"request_id":       requestID,
+		"attempt_id":       attemptID,
+		"request_digest":   requestDigest,
+		"candidate_digest": candidate,
+		"device_group":     group,
+	}
+}
+
+func blobResultDocument(unsigned map[string]any, keyID string) (map[string]any, error) {
+	return map[string]any{
+		"document_type":       "tcenv.remote.npu-blob.result-signature",
+		"document_version":    3,
+		"signature_algorithm": "hmac-sha256-v1",
+		"key_id":              keyID,
+		"provenance":          unsigned["provenance"],
+		"report":              unsigned["report"],
+		"evidence":            unsigned["evidence"],
+		"receipt":             unsigned["receipt"],
+	}, nil
+}
+
 func receiptDocument(requestID, attemptID, requestDigest string) map[string]any {
 	return map[string]any{
 		"document_type":    "tcenv.remote.v1.receipt-id",
@@ -399,6 +486,73 @@ func verify(golden *Golden) error {
 	return nil
 }
 
+func verifyBlob(golden *BlobGolden) error {
+	requestDoc, err := blobRequestDocument(golden.Request)
+	if err != nil {
+		return err
+	}
+	if err := checkDocument(
+		requestDoc, golden.RequestDigestDocument, golden.RequestCanonicalJSON,
+		golden.RequestDigest, "blob request",
+	); err != nil {
+		return err
+	}
+
+	candidate := golden.Request["candidate_digest"]
+	execution, _ := golden.Request["execution"].(map[string]any)
+	group := execution["device_group"]
+	receiptDoc := blobReceiptDocument(
+		golden.Receipt.RequestID, golden.Receipt.AttemptID, golden.RequestDigest, candidate, group,
+	)
+	if err := checkDocument(
+		receiptDoc, golden.Receipt.Document, golden.Receipt.CanonicalJSON,
+		golden.Receipt.ReceiptID, "blob receipt",
+	); err != nil {
+		return err
+	}
+
+	report, err := base64.StdEncoding.DecodeString(golden.Signature.ReportBase64)
+	if err != nil {
+		return fmt.Errorf("blob report base64: %w", err)
+	}
+	evidence, err := base64.StdEncoding.DecodeString(golden.Signature.EvidenceBase64)
+	if err != nil {
+		return fmt.Errorf("blob evidence base64: %w", err)
+	}
+	if err := checkBlob(golden.Signature.UnsignedResult["report"], report, "blob report"); err != nil {
+		return err
+	}
+	if err := checkBlob(golden.Signature.UnsignedResult["evidence"], evidence, "blob evidence"); err != nil {
+		return err
+	}
+	resultDoc, err := blobResultDocument(golden.Signature.UnsignedResult, golden.Signature.KeyID)
+	if err != nil {
+		return err
+	}
+	canonicalResult, err := canonical(resultDoc)
+	if err != nil {
+		return fmt.Errorf("blob result canonicalization: %w", err)
+	}
+	expectedResult, err := canonical(golden.Signature.Document)
+	if err != nil || !bytes.Equal(canonicalResult, expectedResult) {
+		return errors.New("blob result independently constructed document differs")
+	}
+	if string(canonicalResult) != golden.Signature.CanonicalJSON {
+		return errors.New("blob result canonical JSON differs")
+	}
+	key, err := hex.DecodeString(golden.Signature.KeyHex)
+	if err != nil || len(key) < 32 {
+		return errors.New("invalid blob HMAC golden key")
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write(canonicalResult)
+	actualSignature := hex.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(actualSignature), []byte(golden.Signature.HMACSHA256)) {
+		return fmt.Errorf("blob HMAC got %s, want %s", actualSignature, golden.Signature.HMACSHA256)
+	}
+	return nil
+}
+
 func main() {
 	goldenPath := flag.String("golden", "", "path to evaluator_v1.json")
 	flag.Parse()
@@ -423,6 +577,15 @@ func main() {
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		fmt.Fprintln(os.Stderr, "golden has trailing JSON")
 		os.Exit(1)
+	}
+	if golden.Blob != nil {
+		if err := verifyBlob(golden.Blob); err != nil {
+			fmt.Fprintln(os.Stderr, "Go blob contract verification failed:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("ok blob request=%s receipt=%s signature=%s\n",
+			golden.Blob.RequestDigest, golden.Blob.Receipt.ReceiptID, golden.Blob.Signature.HMACSHA256)
+		return
 	}
 	if err := verify(&golden); err != nil {
 		fmt.Fprintln(os.Stderr, "Go contract verification failed:", err)

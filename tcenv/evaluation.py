@@ -94,6 +94,12 @@ class EvaluationRequest:
     # new contract's canonical request digest; the legacy to_dict/digest is
     # unchanged and this field never leaves the host.
     contract_request_digest: str = ""
+    # Host-only wire CandidateDigest for the P0b blob contract.  A blob
+    # candidate's bytes are not in ``source``, so its digest cannot be derived
+    # here; the composition root binds the digest of the artifact it uploaded.
+    # Empty keeps the historical ``sha256(source)`` identity, and this field
+    # never enters ``to_dict``/the legacy digest.
+    wire_candidate_digest: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, str):
@@ -143,6 +149,12 @@ class EvaluationRequest:
             raise EvaluationError("cache_policy must be reuse, refresh or disabled")
         if self.contract_request_digest and not _HEX64.fullmatch(self.contract_request_digest):
             raise EvaluationError("contract_request_digest must be 64 lowercase hex characters")
+        if self.wire_candidate_digest and not _HEX64.fullmatch(self.wire_candidate_digest):
+            raise EvaluationError("wire_candidate_digest must be 64 lowercase hex characters")
+        if self.wire_candidate_digest and not self.contract_request_digest:
+            # A blob candidate only makes sense on the contract that binds its
+            # descriptor; a bare candidate digest would be an unreviewed identity.
+            raise EvaluationError("wire_candidate_digest requires the contract_request_digest identity")
 
     @property
     def kernel_source(self) -> str:
@@ -327,11 +339,16 @@ def validate_receipt(result: EvaluationResult, request: EvaluationRequest) -> st
         raise EvaluationError("receipt candidate digest does not match the request")
     if "candidate_digest" in receipt:
         candidate = receipt["candidate_digest"]
+        # A blob candidate's digest is the uploaded artifact's, bound by the host
+        # composition root (``wire_candidate_digest``); the inline candidate keeps
+        # the original sha256(source) identity and algorithm.
+        expected_algorithm = "sha256-blob-v1" if request.wire_candidate_digest else "sha256"
+        expected_value = request.wire_candidate_digest or request.candidate_sha256
         if (
             not isinstance(candidate, dict)
             or set(candidate) != {"algorithm", "value"}
-            or candidate.get("algorithm") != "sha256"
-            or candidate.get("value") != request.candidate_sha256
+            or candidate.get("algorithm") != expected_algorithm
+            or candidate.get("value") != expected_value
         ):
             raise EvaluationError("receipt CandidateDigest does not match the request")
         if "candidate_sha256" in receipt:

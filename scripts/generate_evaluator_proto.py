@@ -24,6 +24,23 @@ ROOT = Path(__file__).resolve().parents[1]
 PROTO_REL = Path("tcenv/remote/v1/evaluator.proto")
 PROTOC_VERSION = "29.3"
 GRPC_PLUGIN_VERSION = "1.69.0"
+#: Every checked-in Protobuf artifact and the proto it is generated from.  The
+#: blob channel is a separate proto package on purpose: it must not add an RPC
+#: or reuse a message from the six-RPC Evaluator control plane.
+PROTO_TARGETS = (
+    {
+        "proto": "tcenv/remote/v1/evaluator.proto",
+        "package_dir": "tcenv/remote/v1",
+        "stem": "evaluator",
+        "descriptor": "proto/tcenv/remote/v1/evaluator.desc",
+    },
+    {
+        "proto": "tcenv/remote/blob/v1/blob.proto",
+        "package_dir": "tcenv/remote/blob/v1",
+        "stem": "blob",
+        "descriptor": "proto/tcenv/remote/blob/v1/blob.desc",
+    },
+)
 
 
 def _tool(name: str, override: str | None = None) -> str:
@@ -31,6 +48,33 @@ def _tool(name: str, override: str | None = None) -> str:
     if not path:
         raise RuntimeError(f"required generator {name!r} was not found on PATH")
     return str(path)
+
+
+def _generate_one(
+    output: Path, protoc: str, plugin: str, target: dict[str, str],
+) -> dict[Path, bytes]:
+    package_dir = output / target["package_dir"]
+    package_dir.mkdir(parents=True, exist_ok=True)
+    descriptor = output / f"{target['stem']}.desc"
+    command = [
+        protoc,
+        f"--plugin=protoc-gen-grpc_python={plugin}",
+        "-I",
+        "proto",
+        f"--python_out={output}",
+        f"--grpc_python_out={output}",
+        f"--descriptor_set_out={descriptor}",
+        "--include_imports",
+        target["proto"],
+    ]
+    env = dict(os.environ, LC_ALL="C")
+    subprocess.run(command, cwd=ROOT, check=True, env=env)
+    stem = target["stem"]
+    return {
+        ROOT / target["package_dir"] / f"{stem}_pb2.py": (package_dir / f"{stem}_pb2.py").read_bytes(),
+        ROOT / target["package_dir"] / f"{stem}_pb2_grpc.py": (package_dir / f"{stem}_pb2_grpc.py").read_bytes(),
+        ROOT / target["descriptor"]: descriptor.read_bytes(),
+    }
 
 
 def _generate(output: Path) -> dict[Path, bytes]:
@@ -42,32 +86,9 @@ def _generate(output: Path) -> dict[Path, bytes]:
     if version != f"libprotoc {PROTOC_VERSION}":
         raise RuntimeError(f"need libprotoc {PROTOC_VERSION}, found {version!r}")
 
-    python_dir = output / "tcenv" / "remote" / "v1"
-    python_dir.mkdir(parents=True, exist_ok=True)
-    descriptor = output / "evaluator.desc"
-    command = [
-        protoc,
-        f"--plugin=protoc-gen-grpc_python={plugin}",
-        "-I",
-        "proto",
-        f"--python_out={output}",
-        f"--grpc_python_out={output}",
-        f"--descriptor_set_out={descriptor}",
-        "--include_imports",
-        str(PROTO_REL),
-    ]
-    env = dict(os.environ, LC_ALL="C")
-    subprocess.run(command, cwd=ROOT, check=True, env=env)
-
-    generated = {
-        ROOT / "tcenv" / "remote" / "v1" / "evaluator_pb2.py": (
-            python_dir / "evaluator_pb2.py"
-        ).read_bytes(),
-        ROOT / "tcenv" / "remote" / "v1" / "evaluator_pb2_grpc.py": (
-            python_dir / "evaluator_pb2_grpc.py"
-        ).read_bytes(),
-        ROOT / "proto" / "tcenv" / "remote" / "v1" / "evaluator.desc": descriptor.read_bytes(),
-    }
+    generated: dict[Path, bytes] = {}
+    for target in PROTO_TARGETS:
+        generated.update(_generate_one(output, protoc, plugin, target))
     stub = generated[ROOT / "tcenv" / "remote" / "v1" / "evaluator_pb2_grpc.py"].decode("utf-8")
     match = re.search(r"^GRPC_GENERATED_VERSION = '([^']+)'$", stub, re.MULTILINE)
     if match is not None and match.group(1) != GRPC_PLUGIN_VERSION:

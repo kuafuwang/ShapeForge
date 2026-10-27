@@ -36,6 +36,22 @@ NPU_SOURCE_REQUEST_DOCUMENT_TYPE = "tcenv.remote.npu-source.request-digest"
 NPU_SOURCE_RECEIPT_DOCUMENT_TYPE = "tcenv.remote.npu-source.receipt-id"
 NPU_SOURCE_RESULT_DOCUMENT_TYPE = "tcenv.remote.npu-source.result-signature"
 NPU_SOURCE_DOCUMENT_VERSION = 2
+# P0b NPU contract: same source/KERNEL/SIMT/DEVICE_EVENT shape as P0, but the
+# candidate bytes live in the independent content-addressed blob channel.  It is
+# a later version of the NPU contract, not a new field on `npu-source` and not a
+# field on the legacy Metal/source contract.
+NPU_BLOB_API_CONTRACT_ID = "tcenv.remote.npu-blob.evaluator-api.1"
+NPU_BLOB_EVIDENCE_CONTRACT_ID = "tcenv.remote.npu-blob.evidence.1"
+NPU_BLOB_REQUEST_DOCUMENT_TYPE = "tcenv.remote.npu-blob.request-digest"
+NPU_BLOB_RECEIPT_DOCUMENT_TYPE = "tcenv.remote.npu-blob.receipt-id"
+NPU_BLOB_RESULT_DOCUMENT_TYPE = "tcenv.remote.npu-blob.result-signature"
+NPU_BLOB_DOCUMENT_VERSION = 3
+#: Content id prefix: the digest algorithm is tagged so a content id can never
+#: be confused with a bare hex digest from another algorithm.
+BLOB_CONTENT_ID_PREFIX = "blob-sha256-v1:"
+#: CandidateDigest algorithm used by the blob-reference contract.
+BLOB_DIGEST_ALGORITHM = "sha256-blob-v1"
+MAX_BLOB_CHUNK_BYTES = 4 * 1024 * 1024
 NPU_TIMING_EVIDENCE_SCHEMA_ID = "tcenv.remote.npu-source.timing-evidence.1"
 NPU_EVIDENCE_MEDIA_TYPE = "application/vnd.tcenv.npu-source.timing-evidence.v1+json"
 # Clock domain recorded when no device clock was ever observed (killed worker).
@@ -67,10 +83,24 @@ class ContractDialect:
     result_document_type: str
     document_version: int
     npu_source: bool = False
+    #: ``source`` (inline candidate bytes) or ``blob`` (content-addressed
+    #: reference).  The contract identity selects the form; a request shape
+    #: never does.
+    artifact_form: str = "source"
 
     @property
     def identity_pair(self) -> tuple[str, str]:
         return (self.api_contract_id, self.evidence_contract_id)
+
+    @property
+    def npu_blob(self) -> bool:
+        return self.artifact_form == "blob"
+
+    @property
+    def candidate_algorithms(self) -> tuple[str, ...]:
+        """CandidateDigest algorithms this dialect accepts."""
+
+        return (BLOB_DIGEST_ALGORITHM,) if self.npu_blob else ("sha256",)
 
 
 LEGACY_DIALECT = ContractDialect(
@@ -90,10 +120,25 @@ NPU_SOURCE_DIALECT = ContractDialect(
     result_document_type=NPU_SOURCE_RESULT_DOCUMENT_TYPE,
     document_version=NPU_SOURCE_DOCUMENT_VERSION,
     npu_source=True,
+    artifact_form="source",
 )
+NPU_BLOB_DIALECT = ContractDialect(
+    api_contract_id=NPU_BLOB_API_CONTRACT_ID,
+    evidence_contract_id=NPU_BLOB_EVIDENCE_CONTRACT_ID,
+    request_document_type=NPU_BLOB_REQUEST_DOCUMENT_TYPE,
+    receipt_document_type=NPU_BLOB_RECEIPT_DOCUMENT_TYPE,
+    result_document_type=NPU_BLOB_RESULT_DOCUMENT_TYPE,
+    document_version=NPU_BLOB_DOCUMENT_VERSION,
+    npu_source=True,
+    artifact_form="blob",
+)
+NPU_DIALECTS = (NPU_SOURCE_DIALECT, NPU_BLOB_DIALECT)
+NPU_API_CONTRACT_IDS = frozenset(dialect.api_contract_id for dialect in NPU_DIALECTS)
+NPU_EVIDENCE_CONTRACT_IDS = frozenset(dialect.evidence_contract_id for dialect in NPU_DIALECTS)
 CONTRACT_DIALECTS = {
     LEGACY_DIALECT.api_contract_id: LEGACY_DIALECT,
     NPU_SOURCE_DIALECT.api_contract_id: NPU_SOURCE_DIALECT,
+    NPU_BLOB_DIALECT.api_contract_id: NPU_BLOB_DIALECT,
 }
 
 
@@ -418,14 +463,26 @@ def _common_request_fields(document: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def candidate_digest_document(value: Any, *, source_bytes: bytes | bytearray | memoryview | None = None) -> dict[str, str]:
-    """Validate the P0 source CandidateDigest and optionally bind exact bytes."""
+def candidate_digest_document(
+    value: Any, *, source_bytes: bytes | bytearray | memoryview | None = None,
+    allowed_algorithms: tuple[str, ...] = ("sha256",), blob: Any = None,
+) -> dict[str, str]:
+    """Validate a CandidateDigest and optionally bind exact bytes or a blob.
+
+    The inline source contract accepts only ``sha256`` over the request bytes.
+    The blob-reference contract accepts only ``sha256-blob-v1`` and requires the
+    value to equal the descriptor digest, so a candidate can never be replayed
+    under another artifact form.  ``blob`` is the descriptor document, not a
+    second place to declare the bytes.
+    """
 
     if not isinstance(value, Mapping) or set(value) != {"algorithm", "value"}:
         raise ContractError("candidate_digest must have exactly algorithm and value")
     algorithm = _text(value["algorithm"], "candidate_digest.algorithm", max_bytes=32)
-    if algorithm != "sha256":
-        raise ContractError("candidate_digest.algorithm must be sha256")
+    if algorithm not in allowed_algorithms:
+        raise ContractError(
+            "candidate_digest.algorithm must be one of " + ", ".join(sorted(allowed_algorithms))
+        )
     digest = _hex64(value["value"], "candidate_digest.value")
     if source_bytes is not None:
         try:
@@ -434,11 +491,46 @@ def candidate_digest_document(value: Any, *, source_bytes: bytes | bytearray | m
             raise ContractError(str(exc)) from exc
         if hashlib.sha256(source).hexdigest() != digest:
             raise ContractError("candidate_digest does not match the exact source bytes")
+    if blob is not None:
+        if blob_descriptor_document(blob)["sha256"] != digest:
+            raise ContractError("candidate_digest does not match the blob descriptor digest")
     return {"algorithm": algorithm, "value": digest}
 
 
 def candidate_digest(source_bytes: bytes | bytearray | memoryview) -> dict[str, str]:
     return {"algorithm": "sha256", "value": hashlib.sha256(_source_bytes(source_bytes)).hexdigest()}
+
+
+_BLOB_REF_FIELDS = frozenset({"content_id", "sha256", "size_bytes", "media_type", "chunk_size"})
+
+
+def blob_content_id(digest: str) -> str:
+    """Return the stable algorithm-tagged content id for a content digest."""
+
+    return BLOB_CONTENT_ID_PREFIX + _hex64(digest, "blob sha256")
+
+
+def blob_descriptor_document(value: Any) -> dict[str, Any]:
+    """Validate one content-addressed blob reference document.
+
+    The reference is canonical request input: it carries the content identity,
+    the exact byte count, the media type and the chunk boundary.  It never
+    carries a host path, a URL or vendor parameters.
+    """
+
+    if not isinstance(value, Mapping) or set(value) != _BLOB_REF_FIELDS:
+        raise ContractError("blob_ref fields are missing or unknown")
+    digest = _hex64(value["sha256"], "blob_ref.sha256")
+    content_id = _text(value["content_id"], "blob_ref.content_id", max_bytes=96)
+    if content_id != blob_content_id(digest):
+        raise ContractError("blob_ref.content_id does not bind blob_ref.sha256")
+    return {
+        "content_id": content_id,
+        "sha256": digest,
+        "size_bytes": _integer(value["size_bytes"], "blob_ref.size_bytes", 0, MAX_UINT64),
+        "media_type": _text(value["media_type"], "blob_ref.media_type", max_bytes=160),
+        "chunk_size": _integer(value["chunk_size"], "blob_ref.chunk_size", 1, MAX_BLOB_CHUNK_BYTES),
+    }
 
 
 _DEVICE_GROUP_FIELDS = frozenset({
@@ -510,6 +602,30 @@ def npu_execution_document(value: Any) -> dict[str, Any]:
 _NPU_SOURCE_REQUEST_FIELDS = frozenset(
     (set(_REQUEST_FIELD_SET) - {"candidate_sha256"}) | {"candidate_digest", "execution"}
 )
+_NPU_BLOB_REQUEST_FIELDS = _NPU_SOURCE_REQUEST_FIELDS | {"blob_ref"}
+
+
+def _npu_blob_request_fields(document: Mapping[str, Any], source: bytes) -> dict[str, Any]:
+    """Validate the blob-reference candidate reference (no inline bytes).
+
+    The blob contract deliberately refuses inline source bytes: a candidate is
+    either transferred through the content-addressed channel or it is not
+    admissible under this contract.  Admission also requires the descriptor to
+    agree with the declared media type and with the CandidateDigest.
+    """
+
+    if source:
+        raise ContractError("the blob contract must not embed candidate source bytes")
+    blob = blob_descriptor_document(document["blob_ref"])
+    request = _common_request_fields(document)
+    request["candidate_digest"] = candidate_digest_document(
+        document["candidate_digest"], allowed_algorithms=(BLOB_DIGEST_ALGORITHM,), blob=blob,
+    )
+    request["execution"] = npu_execution_document(document["execution"])
+    if request["execution"]["source_media_type"] != blob["media_type"]:
+        raise ContractError("blob_ref.media_type differs from execution.source_media_type")
+    request["blob_ref"] = blob
+    return request
 
 
 def request_digest_document(
@@ -532,6 +648,21 @@ def request_digest_document(
     source = _source_bytes(source_bytes)
     if "source" in document and _source_bytes(document["source"]) != source:
         raise ContractError("request source and source_bytes differ")
+
+    if dialect.npu_blob:
+        allowed = _NPU_BLOB_REQUEST_FIELDS | _EXCLUDED_REQUEST_FIELDS | {"source"}
+        unknown = set(document) - allowed
+        if unknown:
+            raise ContractError(f"unknown request fields: {sorted(unknown)}")
+        missing = _NPU_BLOB_REQUEST_FIELDS - set(document)
+        if missing:
+            raise ContractError(f"missing explicit request fields/defaults: {sorted(missing)}")
+        return {
+            "document_type": dialect.request_document_type,
+            "document_version": dialect.document_version,
+            "digest_algorithm": REQUEST_DIGEST_ALGORITHM,
+            "request": _npu_blob_request_fields(document, source),
+        }
 
     if not dialect.npu_source:
         allowed = _REQUEST_FIELD_SET | _EXCLUDED_REQUEST_FIELDS | {"source"}
@@ -573,21 +704,27 @@ def request_digest_document(
     }
 
 
-def npu_stored_request_document(document: Mapping[str, Any]) -> dict[str, Any]:
+def npu_stored_request_document(
+    document: Mapping[str, Any], *, dialect: ContractDialect = NPU_SOURCE_DIALECT,
+) -> dict[str, Any]:
     """Validate a persisted NPU request whose source bytes are gone.
 
     A terminal job deletes its source, but the canonical request document never
-    contained the bytes: it contains the CandidateDigest.  Rebuilding it from the
-    stored document therefore still yields the exact digest the frontend
-    accepted, while every public/execution field is validated again and the
-    legacy ``candidate_sha256`` is rejected instead of being silently dropped.
+    contained the bytes: it contains the CandidateDigest (and, for the blob
+    contract, the content-addressed reference).  Rebuilding it from the stored
+    document therefore still yields the exact digest the frontend accepted,
+    while every public/execution field is validated again and the legacy
+    ``candidate_sha256`` is rejected instead of being silently dropped.
     """
 
+    if not dialect.npu_source:
+        raise ContractError("only an NPU contract has a source-less stored request")
     if not isinstance(document, Mapping):
         raise ContractError("stored request must be an object")
     if any(not isinstance(key, str) for key in document):
         raise ContractError("stored request field names must be strings")
-    expected = _NPU_SOURCE_REQUEST_FIELDS | {"request_id"}
+    fields = _NPU_BLOB_REQUEST_FIELDS if dialect.npu_blob else _NPU_SOURCE_REQUEST_FIELDS
+    expected = fields | {"request_id"}
     if set(document) != expected:
         missing = sorted(expected - set(document))
         unknown = sorted(set(document) - expected)
@@ -596,21 +733,26 @@ def npu_stored_request_document(document: Mapping[str, Any]) -> dict[str, Any]:
     # digest; it still has to be a well-formed identifier and the caller must
     # compare it with the durable job row.
     _identifier(document["request_id"], "request_id")
-    request = _common_request_fields(document)
-    request["candidate_digest"] = candidate_digest_document(document["candidate_digest"])
-    request["execution"] = npu_execution_document(document["execution"])
+    if dialect.npu_blob:
+        request = _npu_blob_request_fields(document, b"")
+    else:
+        request = _common_request_fields(document)
+        request["candidate_digest"] = candidate_digest_document(document["candidate_digest"])
+        request["execution"] = npu_execution_document(document["execution"])
     return {
-        "document_type": NPU_SOURCE_REQUEST_DOCUMENT_TYPE,
-        "document_version": NPU_SOURCE_DOCUMENT_VERSION,
+        "document_type": dialect.request_document_type,
+        "document_version": dialect.document_version,
         "digest_algorithm": REQUEST_DIGEST_ALGORITHM,
         "request": request,
     }
 
 
-def npu_stored_request_digest(document: Mapping[str, Any]) -> str:
+def npu_stored_request_digest(
+    document: Mapping[str, Any], *, dialect: ContractDialect = NPU_SOURCE_DIALECT,
+) -> str:
     """Return the digest of a source-less NPU stored request."""
 
-    return _document_digest(npu_stored_request_document(document))
+    return _document_digest(npu_stored_request_document(document, dialect=dialect))
 
 
 def request_digest(
@@ -652,7 +794,9 @@ def receipt_id_document(
         "request_id": _identifier(request_id, "request_id"),
         "attempt_id": _identifier(attempt_id, "attempt_id"),
         "request_digest": _hex64(request_digest, "request_digest"),
-        "candidate_digest": candidate_digest_document(candidate_digest),
+        "candidate_digest": candidate_digest_document(
+            candidate_digest, allowed_algorithms=dialect.candidate_algorithms,
+        ),
         "device_group": device_group_document(device_group),
     }
 
@@ -801,7 +945,9 @@ def _receipt_document(
         "issued_at": _text(value["issued_at"], "issued_at", max_bytes=40),
     }
     if dialect.npu_source:
-        receipt["candidate_digest"] = candidate_digest_document(value["candidate_digest"])
+        receipt["candidate_digest"] = candidate_digest_document(
+            value["candidate_digest"], allowed_algorithms=dialect.candidate_algorithms,
+        )
         receipt["device_group"] = device_group_document(value["device_group"])
     else:
         receipt["candidate_sha256"] = _hex64(value["candidate_sha256"], "candidate_sha256")
@@ -942,6 +1088,7 @@ def npu_timing_evidence_document(
     measurement_kind: str | None = None,
     publication_allowed: bool | None = None,
     report_status: str | None = None,
+    dialect: ContractDialect = NPU_SOURCE_DIALECT,
 ) -> dict[str, Any]:
     """Validate the P0 minimal TimingEvidence document.
 
@@ -963,7 +1110,10 @@ def npu_timing_evidence_document(
         raise ContractError("timing evidence has unknown fields")
     if value["schema_id"] != NPU_TIMING_EVIDENCE_SCHEMA_ID:
         raise ContractError("timing evidence schema_id is not supported by P0")
-    candidate = candidate_digest_document(value["candidate_digest"], source_bytes=source_bytes)
+    candidate = candidate_digest_document(
+        value["candidate_digest"], source_bytes=source_bytes,
+        allowed_algorithms=dialect.candidate_algorithms,
+    )
     group = device_group_document(value["device_group"])
     if device_group is not None and group != device_group_document(device_group):
         raise ContractError("timing evidence device group differs from the accepted capability")

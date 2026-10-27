@@ -155,15 +155,19 @@ class ExpectedIdentities:
 
 @dataclass(frozen=True)
 class CandidateDigest:
-    """P0 source candidate identity; algorithm is always sha256."""
+    """Candidate identity: ``sha256`` inline, ``sha256-blob-v1`` for a blob ref."""
 
     algorithm: str
     value: str
+    #: The algorithms this module can construct.  The contract dialect decides
+    #: which one a request may actually carry.
+    allowed_algorithms: tuple[str, ...] = ("sha256", contracts.BLOB_DIGEST_ALGORITHM)
 
     def __post_init__(self) -> None:
         try:
             document = contracts.candidate_digest_document(
-                {"algorithm": self.algorithm, "value": self.value}
+                {"algorithm": self.algorithm, "value": self.value},
+                allowed_algorithms=self.allowed_algorithms,
             )
         except contracts.ContractError as exc:
             raise JobError("invalid_argument", str(exc)) from exc
@@ -172,6 +176,58 @@ class CandidateDigest:
 
     def to_dict(self) -> dict[str, str]:
         return {"algorithm": self.algorithm, "value": self.value}
+
+
+@dataclass(frozen=True)
+class BlobDescriptor:
+    """Content-addressed reference to bytes stored in the blob channel.
+
+    The descriptor is the only artifact identity that crosses the control plane:
+    it never contains a path, a URL, or the bytes themselves.
+    """
+
+    content_id: str
+    sha256: str
+    size_bytes: int
+    media_type: str
+    chunk_size: int
+
+    def __post_init__(self) -> None:
+        try:
+            normalized = contracts.blob_descriptor_document(self.to_dict())
+        except contracts.ContractError as exc:
+            raise JobError("invalid_argument", str(exc)) from exc
+        if normalized != self.to_dict():
+            raise JobError("invalid_argument", "blob descriptor was not normalized")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "content_id": self.content_id,
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+            "media_type": self.media_type,
+            "chunk_size": self.chunk_size,
+        }
+
+    @classmethod
+    def from_dict(cls, document: Mapping[str, Any]) -> "BlobDescriptor":
+        if not isinstance(document, Mapping):
+            raise JobError("invalid_argument", "blob descriptor must be an object")
+        try:
+            normalized = contracts.blob_descriptor_document(document)
+        except contracts.ContractError as exc:
+            raise JobError("invalid_argument", str(exc)) from exc
+        return cls(**normalized)
+
+    @classmethod
+    def for_bytes(cls, data: bytes, *, media_type: str, chunk_size: int) -> "BlobDescriptor":
+        """Build the descriptor a client would declare for exact bytes."""
+
+        digest = hashlib.sha256(data).hexdigest()
+        return cls(
+            content_id=contracts.blob_content_id(digest), sha256=digest,
+            size_bytes=len(data), media_type=media_type, chunk_size=chunk_size,
+        )
 
 
 @dataclass(frozen=True)
@@ -253,34 +309,65 @@ class NpuExecutionSpec:
 
 @dataclass(frozen=True)
 class NpuSourceRequest:
-    """P0 NPU request payload: CandidateDigest plus source-only execution."""
+    """NPU request payload: CandidateDigest plus the source-only execution shape.
+
+    ``blob`` selects the artifact form: absent means the exact source bytes are
+    inline (the P0 ``npu-source`` contract), present means the bytes live in the
+    content-addressed blob channel (the P0b ``npu-blob`` contract).  The two forms
+    never coexist in one request.
+    """
 
     candidate_digest: CandidateDigest
     execution: NpuExecutionSpec
+    blob: BlobDescriptor | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.candidate_digest, CandidateDigest):
             raise JobError("invalid_argument", "NPU request requires a typed CandidateDigest")
         if not isinstance(self.execution, NpuExecutionSpec):
             raise JobError("invalid_argument", "NPU request requires a typed execution spec")
+        if self.blob is not None:
+            if not isinstance(self.blob, BlobDescriptor):
+                raise JobError("invalid_argument", "NPU blob reference must be typed")
+            if self.candidate_digest.algorithm != contracts.BLOB_DIGEST_ALGORITHM:
+                raise JobError("invalid_argument", "a blob candidate requires the sha256-blob-v1 digest algorithm")
+            if self.candidate_digest.value != self.blob.sha256:
+                raise JobError("invalid_argument", "a blob candidate digest must equal the blob descriptor digest")
+            if self.execution.source_media_type != self.blob.media_type:
+                raise JobError("invalid_argument", "blob media type differs from the execution media type")
+        elif self.candidate_digest.algorithm != "sha256":
+            raise JobError("invalid_argument", "an inline candidate requires the sha256 digest algorithm")
+
+    @property
+    def artifact_form(self) -> str:
+        return "blob" if self.blob is not None else "source"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        document: dict[str, Any] = {
             "candidate_digest": self.candidate_digest.to_dict(),
             "execution": self.execution.to_dict(),
         }
+        if self.blob is not None:
+            document["blob_ref"] = self.blob.to_dict()
+        return document
 
     @classmethod
     def from_dict(cls, document: Mapping[str, Any]) -> "NpuSourceRequest":
-        if not isinstance(document, Mapping) or set(document) != {"candidate_digest", "execution"}:
+        expected = {"candidate_digest", "execution"} | ({"blob_ref"} if "blob_ref" in document else set())
+        if not isinstance(document, Mapping) or set(document) != expected:
             raise JobError("invalid_argument", "NPU request fields are missing or unknown")
+        blob = None if "blob_ref" not in document else BlobDescriptor.from_dict(document["blob_ref"])
+        allowed = (contracts.BLOB_DIGEST_ALGORITHM,) if blob is not None else ("sha256",)
         try:
-            digest = contracts.candidate_digest_document(document["candidate_digest"])
+            digest = contracts.candidate_digest_document(
+                document["candidate_digest"], allowed_algorithms=allowed,
+            )
         except contracts.ContractError as exc:
             raise JobError("invalid_argument", str(exc)) from exc
         return cls(
-            candidate_digest=CandidateDigest(digest["algorithm"], digest["value"]),
+            candidate_digest=CandidateDigest(digest["algorithm"], digest["value"], allowed_algorithms=allowed),
             execution=NpuExecutionSpec.from_dict(document["execution"]),
+            blob=blob,
         )
 
 
@@ -324,6 +411,13 @@ class ExternalEvaluationRequest:
                 "invalid_argument",
                 "the NPU contract must not also carry the legacy candidate_sha256",
             )
+        # A blob candidate is referenced, never embedded: the request payload
+        # must stay metadata-sized even though the artifact may be huge.
+        if self.npu is not None and self.npu.blob is not None and self.source:
+            raise JobError(
+                "invalid_argument",
+                "a blob candidate must not also carry inline source bytes",
+            )
         # This performs all source, enum, integer, UTF-8 and explicit-default checks.
         self.digest_document()
 
@@ -351,11 +445,24 @@ class ExternalEvaluationRequest:
         }
         if self.npu is None:
             return {"candidate_sha256": self.candidate_sha256, **common}
-        return {"candidate_digest": self.npu.candidate_digest.to_dict(), "execution": self.npu.execution.to_dict(), **common}
+        fields: dict[str, Any] = {
+            "candidate_digest": self.npu.candidate_digest.to_dict(),
+            "execution": self.npu.execution.to_dict(),
+            **common,
+        }
+        if self.npu.blob is not None:
+            fields["blob_ref"] = self.npu.blob.to_dict()
+        return fields
 
     @property
     def contract(self) -> contracts.ContractDialect:
-        return contracts.NPU_SOURCE_DIALECT if self.npu is not None else contracts.LEGACY_DIALECT
+        if self.npu is None:
+            return contracts.LEGACY_DIALECT
+        return contracts.NPU_BLOB_DIALECT if self.npu.blob is not None else contracts.NPU_SOURCE_DIALECT
+
+    @property
+    def blob(self) -> BlobDescriptor | None:
+        return None if self.npu is None else self.npu.blob
 
     def digest_document(self) -> dict[str, Any]:
         try:
@@ -388,9 +495,15 @@ class ExternalEvaluationRequest:
         return {"request_id": self.request_id, **self.digest_fields()}
 
     def to_worker_dict(self) -> dict[str, Any]:
-        """Private worker representation; base64 preserves arbitrary bytes."""
+        """Private worker representation; base64 preserves arbitrary bytes.
 
-        return {**self.without_source(), "source_base64": base64.b64encode(self.source).decode("ascii")}
+        A blob candidate carries no bytes at all: the worker gets the trusted
+        content id and reads the store itself, so a large artifact never becomes
+        one base64 worker frame.
+        """
+
+        document = {**self.without_source(), "source_base64": base64.b64encode(self.source).decode("ascii")}
+        return document
 
     @classmethod
     def from_worker_dict(cls, document: Mapping[str, Any]) -> "ExternalEvaluationRequest":
@@ -401,22 +514,31 @@ class ExternalEvaluationRequest:
         except (ValueError, TypeError) as exc:
             raise JobError("invalid_argument", "worker source_base64 is invalid") from exc
         if "execution" in document or "candidate_digest" in document:
+            extra = {"blob_ref"} if "blob_ref" in document else set()
             allowed = (set(cls.without_source_fields()) - {"candidate_sha256"}) | {
                 "candidate_digest", "execution", "source_base64",
-            }
+            } | extra
             if set(document) != allowed:
                 raise JobError("invalid_argument", "worker NPU request fields are missing or unknown")
-            fields = {key: value for key, value in document.items() if key not in {"source_base64", "candidate_digest", "execution"}}
+            fields = {
+                key: value for key, value in document.items()
+                if key not in {"source_base64", "candidate_digest", "execution", "blob_ref"}
+            }
             if fields["cases"] is not None:
                 fields["cases"] = tuple(fields["cases"])
-            npu = NpuSourceRequest.from_dict({
+            npu_document: dict[str, Any] = {
                 "candidate_digest": document["candidate_digest"],
                 "execution": document["execution"],
-            })
-            request = cls(**fields, source=source, candidate_sha256="", npu=npu)
-            if request.npu.candidate_digest.value != hashlib.sha256(source).hexdigest():
+            }
+            if "blob_ref" in document:
+                npu_document["blob_ref"] = document["blob_ref"]
+            npu = NpuSourceRequest.from_dict(npu_document)
+            if npu.blob is not None:
+                if source:
+                    raise JobError("invalid_argument", "worker blob request must not carry source bytes")
+            elif npu.candidate_digest.value != hashlib.sha256(source).hexdigest():
                 raise JobError("invalid_argument", "worker NPU candidate digest does not match the source")
-            return request
+            return cls(**fields, source=source, candidate_sha256="", npu=npu)
         allowed = set(cls.without_source_fields()) | {"source_base64"}
         if set(document) != allowed:
             raise JobError("invalid_argument", "worker request fields are missing or unknown")
@@ -447,19 +569,25 @@ class ExternalEvaluationRequest:
                 # legacy field here would silently accept a mixed request, so it
                 # is a stored-state corruption instead.
                 raise JobError("invalid_argument", "stored NPU request also carries candidate_sha256")
+            extra = {"blob_ref"} if "blob_ref" in fields else set()
             allowed = (set(cls.without_source_fields()) - {"candidate_sha256"}) | {
                 "candidate_digest", "execution",
-            }
+            } | extra
             if set(fields) != allowed:
                 raise JobError("invalid_argument", "stored NPU request fields are missing or unknown")
-            npu = NpuSourceRequest.from_dict({
+            npu_document = {
                 "candidate_digest": fields.pop("candidate_digest"),
                 "execution": fields.pop("execution"),
-            })
-            request = cls(**fields, source=source, candidate_sha256="", npu=npu)
-            if request.npu.candidate_digest.value != hashlib.sha256(source).hexdigest():
+            }
+            if "blob_ref" in fields:
+                npu_document["blob_ref"] = fields.pop("blob_ref")
+            npu = NpuSourceRequest.from_dict(npu_document)
+            if npu.blob is not None:
+                if source:
+                    raise JobError("invalid_argument", "stored blob request carries unexpected source bytes")
+            elif npu.candidate_digest.value != hashlib.sha256(source).hexdigest():
                 raise JobError("invalid_argument", "stored NPU candidate digest does not match the source")
-            return request
+            return cls(**fields, source=source, candidate_sha256="", npu=npu)
         return cls(**fields, source=source)
 
     @classmethod

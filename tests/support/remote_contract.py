@@ -1,17 +1,228 @@
-"""Locations and loader for backend-neutral external evaluator contract goldens."""
+"""Locations, loaders and builders for backend-neutral evaluator goldens.
+
+Two frozen cross-language vectors live here:
+
+* ``evaluator_v1.json`` is the legacy Metal/source contract golden.
+* ``npu_blob_v3.json`` is the P0b blob-reference contract golden.  It is built by
+  :func:`build_blob_golden` from the production contract functions, so the Python
+  test can detect drift and the independent Go verifier can rebuild the same
+  documents from the raw fields.
+"""
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
+from tcenv.remote import contracts
+
 SUPPORT = Path(__file__).resolve().parent
 GOLDEN = SUPPORT / "golden" / "remote" / "evaluator_v1.json"
+BLOB_GOLDEN = SUPPORT / "golden" / "remote" / "npu_blob_v3.json"
 GO_VERIFIER = SUPPORT / "remotecontract"
+
+#: Fixed blob artifact for the cross-language vector (chunked, text media type).
+BLOB_SOURCE = b"blob-kernel relu_kernel\n"
+BLOB_MEDIA_TYPE = "text/plain; charset=utf-8"
+BLOB_CHUNK_SIZE = 4
+BLOB_REQUEST_ID = "blob-golden-1"
+BLOB_ATTEMPT_ID = "attempt-7-golden"
+BLOB_LEASE_FENCE = "7"
+BLOB_SESSION_SEQUENCE = "1"
+BLOB_ISSUED_AT = "2026-10-28T00:00:00Z"
+BLOB_KEY_ID = "npu-site/key-1"
+BLOB_KEY = b"b" * 32
+BLOB_DEVICE_GROUP = {
+    "device_group_id": "vendor-a-group-0",
+    "vendor_id": "vendor-a",
+    "profile_digest": "a" * 64,
+    "topology_digest": "b" * 64,
+    "resource_generation": "1",
+}
 
 
 def load_evaluator_golden() -> dict[str, Any]:
     """Load the frozen cross-language contract vectors without recording them."""
 
     return json.loads(GOLDEN.read_text(encoding="utf-8"))
+
+
+def load_blob_golden() -> dict[str, Any]:
+    return json.loads(BLOB_GOLDEN.read_text(encoding="utf-8"))
+
+
+def _descriptor(data: bytes, *, schema_id: str, media_type: str) -> dict[str, Any]:
+    return {
+        "schema_id": schema_id,
+        "media_type": media_type,
+        "size_bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+
+def build_blob_golden() -> dict[str, Any]:
+    """Return the complete P0b blob contract vector (request, receipt, signature)."""
+
+    digest = hashlib.sha256(BLOB_SOURCE).hexdigest()
+    blob_ref = {
+        "content_id": contracts.blob_content_id(digest),
+        "sha256": digest,
+        "size_bytes": len(BLOB_SOURCE),
+        "media_type": BLOB_MEDIA_TYPE,
+        "chunk_size": BLOB_CHUNK_SIZE,
+    }
+    execution = {
+        "artifact_kind": "source",
+        "launch_kind": "KERNEL",
+        "launch_subtype": "SIMT",
+        "source_media_type": BLOB_MEDIA_TYPE,
+        "device_group": dict(BLOB_DEVICE_GROUP),
+        "required_timing_sources": ["DEVICE_EVENT"],
+        "synchronization": "stream-event",
+    }
+    request = {
+        "kind": "formal_eval",
+        "run_id": "golden-run",
+        "session_id": "golden-session",
+        "task": "relu",
+        "dtype": "fp16",
+        "size": "small",
+        "target_id": "sim-npu-source",
+        "task_fingerprint": "d" * 64,
+        "candidate_digest": {"algorithm": contracts.BLOB_DIGEST_ALGORITHM, "value": digest},
+        "execution": execution,
+        "blob_ref": blob_ref,
+        "mode": "quick",
+        "seed": "3",
+        "reps": 2,
+        "queue_timeout_ms": 3000,
+        "candidate_timeout_ms": 3000,
+        "cases": None,
+        "fast_bench": False,
+        "require_contract_launch": False,
+        "validate": False,
+        "measure_serial": False,
+        "cache_policy": "reuse",
+    }
+    request_document = contracts.request_digest_document(
+        request, source_bytes=b"", dialect=contracts.NPU_BLOB_DIALECT,
+    )
+    request_digest = contracts.request_digest(
+        request, source_bytes=b"", dialect=contracts.NPU_BLOB_DIALECT,
+    )
+    receipt = {
+        "receipt_id": contracts.attempt_receipt_id(
+            request_id=BLOB_REQUEST_ID, attempt_id=BLOB_ATTEMPT_ID,
+            request_digest=request_digest,
+            candidate_digest=request["candidate_digest"], device_group=BLOB_DEVICE_GROUP,
+            dialect=contracts.NPU_BLOB_DIALECT,
+        ),
+        "request_id": BLOB_REQUEST_ID,
+        "attempt_id": BLOB_ATTEMPT_ID,
+        "request_digest": request_digest,
+        "lease_fence": BLOB_LEASE_FENCE,
+        "session_sequence": BLOB_SESSION_SEQUENCE,
+        "issued_at": BLOB_ISSUED_AT,
+        "candidate_digest": request["candidate_digest"],
+        "device_group": dict(BLOB_DEVICE_GROUP),
+    }
+    receipt_document = contracts.receipt_id_document(
+        request_id=BLOB_REQUEST_ID, attempt_id=BLOB_ATTEMPT_ID, request_digest=request_digest,
+        candidate_digest=request["candidate_digest"], device_group=BLOB_DEVICE_GROUP,
+        dialect=contracts.NPU_BLOB_DIALECT,
+    )
+    provenance = {
+        "schema_version": 1,
+        "evaluator_epoch": "e" * 64,
+        "site_id": "sim-npu-site",
+        "device_id": "sim-npu-device",
+        "backend": "vendor-a",
+        "backend_version": "1",
+        "target_id": "sim-npu-source",
+        "worker_build": "fake-vendor-a-worker-1",
+        "task_pack_digest": "f" * 64,
+        "calibration_digest": "c" * 64,
+        "protocol_version": "3",
+        "api_contract_id": contracts.NPU_BLOB_API_CONTRACT_ID,
+        "evidence_contract_id": contracts.NPU_BLOB_EVIDENCE_CONTRACT_ID,
+        "measurement_kind": "simulated",
+        "publication_allowed": False,
+        "device_group": dict(BLOB_DEVICE_GROUP),
+        "artifact_kind": "source",
+        "launch_kind": "KERNEL",
+        "launch_subtype": "SIMT",
+        "timing_sources": ["DEVICE_EVENT"],
+        "attempt_id": BLOB_ATTEMPT_ID,
+        "request_digest": request_digest,
+    }
+    report = b'{"status":"ok","simulated":true}'
+    evidence = json.dumps({
+        "schema_id": contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID,
+        "candidate_digest": request["candidate_digest"],
+        "device_group": dict(BLOB_DEVICE_GROUP),
+        "timing": {
+            "source": "DEVICE_EVENT", "clock_domain": "vendor-a-device-event-clock-v1",
+            "synchronization_completed": True, "device_elapsed_ns": 1_250_000,
+            "host_api_elapsed_ns": 2_500_000, "launches": 1,
+        },
+        "measurement_kind": "simulated",
+        "publication_allowed": False,
+        "complete": True,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    unsigned = {
+        "provenance": provenance,
+        "report": _descriptor(report, schema_id="tcenv.eval-report.v3", media_type="application/json"),
+        "evidence": _descriptor(
+            evidence, schema_id=contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID,
+            media_type=contracts.NPU_EVIDENCE_MEDIA_TYPE,
+        ),
+        "receipt": receipt,
+    }
+    signature_document = contracts.result_signature_document(
+        unsigned, key_id=BLOB_KEY_ID, dialect=contracts.NPU_BLOB_DIALECT,
+    )
+    signature = contracts.sign_result(
+        unsigned, key_id=BLOB_KEY_ID, key=BLOB_KEY, dialect=contracts.NPU_BLOB_DIALECT,
+    )
+    return {
+        "schema_id": "tcenv.remote.npu-blob.contract-golden.1",
+        "npu_blob": {
+            "request": request,
+            "request_digest_document": request_document,
+            "request_canonical_json": contracts.canonical_digest_document(request_document).decode("utf-8"),
+            "request_digest": request_digest,
+            "receipt": {
+                "request_id": BLOB_REQUEST_ID,
+                "attempt_id": BLOB_ATTEMPT_ID,
+                "document": receipt_document,
+                "canonical_json": contracts.canonical_digest_document(receipt_document).decode("utf-8"),
+                "receipt_id": receipt["receipt_id"],
+            },
+            "signature": {
+                "key_id": BLOB_KEY_ID,
+                "key_hex": BLOB_KEY.hex(),
+                "report_base64": base64.b64encode(report).decode("ascii"),
+                "evidence_base64": base64.b64encode(evidence).decode("ascii"),
+                "unsigned_result": contracts.result_signature_document(
+                    unsigned, key_id=BLOB_KEY_ID, dialect=contracts.NPU_BLOB_DIALECT,
+                ),
+                "document": signature_document,
+                "canonical_json": contracts.canonical_digest_document(signature_document).decode("utf-8"),
+                "hmac_sha256": signature,
+            },
+        },
+    }
+
+
+def write_blob_golden(path: Path | None = None) -> Path:
+    """Write the P0b vector (fixture maintenance only; the test never records)."""
+
+    target = path or BLOB_GOLDEN
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(build_blob_golden(), indent=2, sort_keys=True) + "\n", encoding="utf-8",
+    )
+    return target

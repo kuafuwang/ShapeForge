@@ -17,6 +17,7 @@ from tcenv.children import forget, kill_group, popen_group, scrubbed_env
 from tcenv.schema import PROTOCOL_VERSION as EXECUTION_PROTOCOL_VERSION
 
 from . import contracts
+from .blob_channel import BlobError, BlobScope, BlobStore
 from .contracts import API_CONTRACT_ID, EVIDENCE_CONTRACT_ID
 from .drivers.base import CleanupProof, DeviceController, HealthProof, VendorFacts
 from .identity import ServiceIdentity, SessionGrant
@@ -271,6 +272,21 @@ class _StartGate:
             self._engine._active_lock.release()
 
 
+#: Blob-channel refusals keep their classification when they surface as job errors.
+_BLOB_JOB_ERRORS = {
+    "not_found": "not_found",
+    "permission_denied": "permission_denied",
+    "failed_precondition": "failed_precondition",
+    "resource_exhausted": "resource_exhausted",
+    "out_of_range": "out_of_range",
+    "unavailable": "unavailable",
+}
+
+
+#: Private worker variable naming the engine-owned blob store root.
+BLOB_ROOT_ENV = "TCENV_BLOB_ROOT"
+
+
 class JobEngine:
     """One persistent queue and one active attempt for one device frontend."""
 
@@ -297,6 +313,7 @@ class JobEngine:
         npu_execution: NpuExecutionSpec | None = None,
         device_controller: DeviceController | None = None,
         device_call_timeout_s: float = 2.0,
+        blob_store: Any | None = None,
         **store_options: Any,
     ) -> None:
         if not worker_command or not all(isinstance(part, str) and part for part in worker_command):
@@ -319,6 +336,13 @@ class JobEngine:
             raise ValueError("the NPU contract requires a worker-external device controller")
         if device_controller is not None and not contract.npu_source:
             raise ValueError("a device controller is only valid with the NPU contract")
+        if contract.npu_blob:
+            if not isinstance(blob_store, BlobStore):
+                # Without the data plane a blob-reference job could never be
+                # verified or dispatched: a composition error, not a degraded mode.
+                raise ValueError("the NPU blob contract requires a blob channel store")
+        elif blob_store is not None:
+            raise ValueError("a blob channel store is only valid with the NPU blob contract")
         if (
             isinstance(device_call_timeout_s, bool)
             or not isinstance(device_call_timeout_s, (int, float))
@@ -376,6 +400,7 @@ class JobEngine:
         self.npu_execution = npu_execution
         self.device_controller = device_controller
         self.device_call_timeout_s = float(device_call_timeout_s)
+        self.blob_store: BlobStore | None = blob_store
         # Device-operation state: an attempt may not start while a controller
         # call is still in flight (including a call the RPC already timed out
         # on), and a probe may not start while an attempt owns the group.
@@ -417,6 +442,14 @@ class JobEngine:
             state_dir, signing_key=signing_key, signing_key_id=signing_key_id,
             signing_keyring=signing_keyring, contract=contract, **store_options,
         )
+        if (
+            self.blob_store is not None
+            and self.blob_store.root.resolve() != (self.store.state_dir / "blobs").resolve()
+        ):
+            # The worker-side blob root is injected by this engine, so the store
+            # must live inside the frontend's own state directory.  A caller
+            # supplied path would turn the trusted read into an arbitrary file read.
+            raise ValueError("the blob channel store must live in <state_dir>/blobs")
         try:
             configured_scopes: set[str] = set()
             for grant in grants:
@@ -732,6 +765,103 @@ class JobEngine:
             }],
         }
 
+    # -- blob data plane (P0b) ---------------------------------------------
+    def _blob_scope(self, grant_token: str) -> BlobScope:
+        """Bind the blob scope to this frontend's identity plus the live grant."""
+
+        scope = self.store.blob_scope(grant_token)
+        return BlobScope(
+            site_id=self.identity.site_id, device_id=self.identity.device_id,
+            target_id=scope["target_id"], subject=scope["subject"],
+            run_id=scope["run_id"], session_id=scope["session_id"],
+        )
+
+    def _lease_blob(self, request: ExternalEvaluationRequest, grant_token: str) -> bool:
+        """Require a ready, in-scope blob before anything durable is written.
+
+        An unfinished upload, another scope's content id, or a descriptor that
+        disagrees with the bytes on disk can never be submitted as a complete
+        artifact.  The lease is what later releases (or safely keeps) the bytes.
+        Returns whether a lease was taken, so a rejected Submit can drop it.
+        """
+
+        if self.blob_store is None:
+            return False
+        if request.blob is None:
+            return False
+        scope = self._blob_scope(grant_token)
+        try:
+            state = self.blob_store.state(scope, request.blob.content_id)
+            if not state.ready:
+                raise JobError(
+                    "failed_precondition",
+                    f"blob is {state.state}; only a committed blob can be submitted",
+                )
+            if state.descriptor != request.blob.to_dict():
+                raise JobError(
+                    "failed_precondition",
+                    "request blob descriptor differs from the committed blob",
+                )
+            self.blob_store.attach(scope, request.blob.content_id, request.request_id)
+        except BlobError as exc:
+            raise JobError(_BLOB_JOB_ERRORS.get(exc.code, "failed_precondition"), exc.detail) from exc
+        return True
+
+    def _release_blob_lease(self, request_id: str, *, attempt: Attempt | None = None) -> None:
+        """Release a terminal job's blob lease and record a failed cleanup.
+
+        A cleanup failure is never swallowed: the blob stays durable in the
+        ``quarantine`` state and the job records the hazard, so a later reader
+        cannot mistake a half-deleted artifact for a clean one.
+        """
+
+        if self.blob_store is None:
+            return
+        try:
+            records = self.blob_store.release(request_id)
+        except BlobError as exc:
+            self._record_blob_hazard(request_id, attempt, f"blob release failed: {exc.detail}")
+            return
+        failed = [record for record in records if record.get("cleanup") == "quarantine"]
+        if failed:
+            reason = str(failed[0].get("error") or "blob cleanup did not complete")
+            self._record_blob_hazard(request_id, attempt, f"blob cleanup failed: {reason}")
+
+    def _record_blob_hazard(self, request_id: str, attempt: Attempt | None, detail: str) -> None:
+        if self._close_error is None:
+            self._close_error = RuntimeError(detail[:1000])
+        if attempt is None:
+            return
+        try:
+            self.store.record_cleanup_hazard(request_id, attempt, detail[:1000])
+        except Exception as exc:  # noqa: BLE001 - defensive durable boundary
+            self._record_close_error(f"could not persist blob cleanup hazard: {exc}")
+
+    def reconcile_blobs(self) -> dict[str, list[dict[str, Any]]]:
+        """Release leases of jobs that can never use their blob again.
+
+        Runs on start (after a crash) and on shutdown: a crash between commit and
+        cleanup then cannot leak bytes, while a live job keeps its lease.
+        """
+
+        if self.blob_store is None:
+            return {}
+        try:
+            return self.blob_store.reconcile(self.store.live_request_ids())
+        except BlobError as exc:
+            self._record_close_error(f"blob reconciliation failed: {exc.detail}")
+            return {}
+
+    def blob_state(self, content_id: str, grant_token: str) -> Any:
+        """Return the durable blob state for one grant (testing/ops surface)."""
+
+        if self.blob_store is None:
+            raise JobError("failed_precondition", "this evaluator has no blob channel")
+        try:
+            return self.blob_store.state(self._blob_scope(grant_token), content_id)
+        except BlobError as exc:
+            raise JobError(_BLOB_JOB_ERRORS.get(exc.code, "failed_precondition"), exc.detail) from exc
+
     def _validate_submission(self, request: ExternalEvaluationRequest) -> None:
         if request.contract != self.contract:
             raise JobError(
@@ -760,11 +890,24 @@ class JobEngine:
     ) -> JobSnapshot:
         self._validate_submission(request)
         self._required_features(required_features)
-        snapshot, _created = self.store.submit(
-            request=request, request_digest=request.request_digest, expected=expected,
-            provenance=self._base_provenance(), capability_id=capability_id,
-            required_features=required_features, grant_token=grant_token,
-        )
+        leased = self._lease_blob(request, grant_token)
+        try:
+            snapshot, _created = self.store.submit(
+                request=request, request_digest=request.request_digest, expected=expected,
+                provenance=self._base_provenance(), capability_id=capability_id,
+                required_features=required_features, grant_token=grant_token,
+            )
+        except BaseException:
+            if leased and not self.store.job_exists(request.request_id):
+                # A rejected Submit must not leave a lease behind; the bytes stay
+                # (the caller may fix the request and retry the same upload).
+                # An existing accepted job keeps its lease: a failed replay is
+                # not a terminal outcome.
+                try:
+                    self.blob_store.release(request.request_id, cleanup=False)
+                except BlobError:
+                    pass
+            raise
         if snapshot.state == "accepted" and not snapshot.quarantined:
             snapshot = self.store.enqueue_accepted(request.request_id)
             self._condition.acquire()
@@ -822,6 +965,8 @@ class JobEngine:
             if running is not None and running.request.request_id == request_id:
                 running.cancel_requested = True
             self._cancel_device_for(snapshot)
+            if snapshot.state in {"completed", "failed", "cancelled"}:
+                self._release_blob_lease(request_id, attempt=snapshot.current_attempt)
         self._wake()
         if (
             running is not None
@@ -894,6 +1039,10 @@ class JobEngine:
 
     # -- recovery -----------------------------------------------------------
     def _recover(self) -> None:
+        # Blob leases whose request is terminal or gone are released before any
+        # job is dispatched: a crash between commit and cleanup cannot strand
+        # bytes, and a live job keeps its lease.
+        self.reconcile_blobs()
         for request_id, attempt, _quarantined in self.store.running_attempts():
             error = self._cleanup_recovered_worker(attempt)
             if error:
@@ -1161,6 +1310,10 @@ class JobEngine:
         # Engine-owned, so a caller cannot point the private worker temp root at
         # another attempt's state directory.
         env[STATE_DIR_ENV] = str(self.store.state_dir)
+        if self.blob_store is not None:
+            # Engine-owned: the worker reads the committed artifact by content id,
+            # never a path a caller supplied.
+            env[BLOB_ROOT_ENV] = str(self.blob_store.root)
         root = str(Path(__file__).resolve().parents[2])
         env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
         return popen_group(
@@ -1470,14 +1623,20 @@ class JobEngine:
         if error:
             self._record_device_cleanup_failure(request_id, attempt, error)
             return False
-        return self.store.finish_cancellation(request_id, attempt)
+        finished = self.store.finish_cancellation(request_id, attempt)
+        if finished:
+            self._release_blob_lease(request_id, attempt=attempt)
+        return finished
 
     def _fail_attempt(self, request_id: str, attempt: Attempt, failure: JobFailure) -> bool:
         error = self._reconcile_device(attempt)
         if error:
             self._record_device_cleanup_failure(request_id, attempt, error)
             return False
-        return self.store.fail_attempt(request_id, attempt, failure)
+        failed = self.store.fail_attempt(request_id, attempt, failure)
+        if failed:
+            self._release_blob_lease(request_id, attempt=attempt)
+        return failed
 
     def _complete_worker_result(
         self, running: _Running, *, report: dict[str, Any], evidence: dict[str, Any] | None,
@@ -1509,6 +1668,8 @@ class JobEngine:
         # prevents a still-running response from wedging the single-active queue.
         if snapshot.state in {"queued", "running"} and snapshot.cancel_requested:
             self._finish_cancellation(request.request_id, attempt)
+        if snapshot.state in {"completed", "failed", "cancelled"}:
+            self._release_blob_lease(request.request_id, attempt=attempt)
 
     def _supervisor_daemon(self) -> tuple[str, str]:
         """Return ``(error, daemon_identity)`` for the current execution engine."""
@@ -2315,6 +2476,9 @@ class JobEngine:
                 scheduler.join()
         except Exception as exc:  # pragma: no cover - defensive shutdown boundary
             self._close_error = exc
+        # Release terminal job leases before the store closes; a failing cleanup
+        # is recorded (and the blob stays quarantined) instead of being hidden.
+        self.reconcile_blobs()
         try:
             store.close()
         except Exception as exc:  # pragma: no cover - defensive shutdown boundary

@@ -682,12 +682,17 @@ def build_server(
     credentials: grpc.ServerCredentials | None = None,
     logger: logging.Logger | None = None,
     service_factory: type[EvaluatorService] | None = None,
+    blob_channel: Any | None = None,
 ) -> RunningServer:
     """Build the authenticated ingress over one durable engine.
 
     ``service_factory`` is an extension point for the test-only composition root
     that injects acceptance faults (for example, withholding the result
     signature) at the RPC boundary.  Production passes ``None``.
+
+    ``blob_channel`` optionally registers the independent P0b BlobChannel service
+    on the same listener.  It is a different proto package and a different
+    service: the six Evaluator RPCs and their messages are unaffected.
     """
     config = config or GrpcServerConfig()
     if credentials is None and not config.allow_insecure:
@@ -716,6 +721,12 @@ def build_server(
         options=options,
     )
     pb_grpc.add_EvaluatorServicer_to_server(service, server)
+    if blob_channel is not None:
+        from .blob.v1 import blob_pb2_grpc as blob_grpc
+
+        if not isinstance(blob_channel, blob_grpc.BlobChannelServicer):
+            raise ValueError("blob_channel must be a BlobChannel servicer")
+        blob_grpc.add_BlobChannelServicer_to_server(blob_channel, server)
     if credentials is None:
         port = server.add_insecure_port(config.address)
     else:

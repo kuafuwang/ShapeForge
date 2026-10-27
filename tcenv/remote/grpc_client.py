@@ -363,6 +363,7 @@ class GrpcEvaluator:
         job_margin_s: float,
         progress_publisher: Callable[[Path, dict[str, Any]], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        blob_descriptor: Callable[[Any], Any] | None = None,
     ) -> None:
         self.stub = stub
         self.token_provider = token_provider
@@ -382,6 +383,10 @@ class GrpcEvaluator:
         self.job_margin_s = float(job_margin_s)
         self.progress_publisher = progress_publisher
         self.clock = clock
+        # Host-side hook that returns the descriptor of an already-uploaded blob
+        # for a request.  It is composition-root configuration, never a request
+        # field, so a caller cannot point the evaluator at arbitrary content.
+        self.blob_descriptor = blob_descriptor
         self._lock = threading.RLock()
         self._provenance: dict[str, Any] | None = None
         self._epoch = ""
@@ -436,6 +441,20 @@ class GrpcEvaluator:
 
         self._handshake()
         return self._wire_request(self._external_request(request)).request_digest
+
+    def wire_candidate_digest(self, request: EvaluationRequest) -> str:
+        """Return the CandidateDigest this evaluator will actually submit.
+
+        Inline candidates hash ``source``; the blob contract uses the uploaded
+        descriptor's digest, which only the composition-root hook knows.  The host
+        outbox binds this value so its row, receipt and resume share one identity.
+        """
+
+        self._handshake()
+        wired = self._wire_request(self._external_request(request))
+        if wired.npu is None:
+            return ""
+        return wired.npu.candidate_digest.value
 
     def cancel(self, request_id: str) -> None:
         with self._lock:
@@ -545,12 +564,49 @@ class GrpcEvaluator:
             self._handshake()
         if self._npu_execution is None:
             raise EvaluationUnavailable("capability_invalid", "capabilities omitted the NPU device group")
+        if self.contract.npu_blob:
+            blob = self._blob_descriptor_for(external)
+            npu = NpuSourceRequest(
+                candidate_digest=CandidateDigest(
+                    contracts.BLOB_DIGEST_ALGORITHM, blob.sha256,
+                    allowed_algorithms=(contracts.BLOB_DIGEST_ALGORITHM,),
+                ),
+                execution=self._npu_execution,
+                blob=blob,
+            )
+            if external.source:
+                raise EvaluationUnavailable(
+                    "evaluation_request_invalid",
+                    "a blob candidate must not also carry inline source bytes",
+                )
+            return replace(external, candidate_sha256="", npu=npu)
         digest = hashlib.sha256(external.source).hexdigest()
         npu = NpuSourceRequest(
             candidate_digest=CandidateDigest("sha256", digest),
             execution=self._npu_execution,
         )
         return replace(external, candidate_sha256="", npu=npu)
+
+    def _blob_descriptor_for(self, external: Any) -> Any:
+        """Return the uploaded descriptor for this candidate (host-owned hook)."""
+
+        from .job_types import BlobDescriptor
+
+        if self.blob_descriptor is None:
+            raise EvaluationUnavailable(
+                "blob_missing",
+                "the blob contract requires an uploaded candidate descriptor from the composition root",
+            )
+        try:
+            value = self.blob_descriptor(external)
+        except EvaluationUnavailable:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a host hook failure is not a result
+            raise EvaluationUnavailable("blob_missing", f"blob descriptor lookup failed: {exc}") from exc
+        try:
+            return value if isinstance(value, BlobDescriptor) else BlobDescriptor.from_dict(value)
+        except (JobError, TypeError, ValueError) as exc:
+            raise EvaluationUnavailable("blob_missing", f"blob descriptor is invalid: {exc}") from exc
 
     def _attach_contract(self, external: Any, *, expected_digest: str = "") -> Any:
         """Bind the request to the exact wire identity the host recorded.
@@ -1024,11 +1080,14 @@ class GrpcEvaluator:
             try:
                 contracts.npu_timing_evidence_document(
                     evidence,
-                    source_bytes=external.source,
+                    # A blob candidate has no inline bytes: its digest was bound by
+                    # the request digest and verified by the blob channel.
+                    source_bytes=None if external.blob is not None else external.source,
                     device_group=external.npu.execution.device_group.to_dict(),
                     measurement_kind=provenance["measurement_kind"],
                     publication_allowed=provenance["publication_allowed"],
                     report_status=report.get("status") if isinstance(report, dict) else None,
+                    dialect=self.contract,
                 )
                 contracts.npu_report_timing_check(evidence, report)
             except contracts.ContractError as exc:
@@ -1090,6 +1149,7 @@ class GrpcEvaluatorFactory:
         channel: grpc.Channel | None = None,
         channel_key: str = "",
         progress_publisher: Callable[[Path, dict[str, Any]], None] | None = None,
+        blob_descriptor: Callable[[Any], Any] | None = None,
     ) -> None:
         if not isinstance(run_id, str) or not run_id:
             raise ValueError("gRPC evaluator run_id is required")
@@ -1124,6 +1184,7 @@ class GrpcEvaluatorFactory:
         self.job_margin_s = float(job_margin_s)
         self.max_message_bytes = int(max_message_bytes)
         self.progress_publisher = progress_publisher
+        self.blob_descriptor = blob_descriptor
         self._lock = threading.RLock()
         self._sessions: dict[tuple[str, str, str], GrpcEvaluator] = {}
         self._closed = False
@@ -1216,6 +1277,7 @@ class GrpcEvaluatorFactory:
                     watch_slice_s=self.watch_slice_s,
                     job_margin_s=self.job_margin_s,
                     progress_publisher=self.progress_publisher,
+                    blob_descriptor=self.blob_descriptor,
                 )
                 self._sessions[key] = client
             return client
@@ -1246,6 +1308,11 @@ class GrpcEvaluatorFactory:
         """Expose the wire digest so the host outbox binds the same request."""
 
         return self._for_request(request).wire_request_digest(request)
+
+    def wire_candidate_digest(self, request: EvaluationRequest) -> str:
+        """Expose the wire CandidateDigest so the outbox binds the same candidate."""
+
+        return self._for_request(request).wire_candidate_digest(request)
 
     def formal(self, request: EvaluationRequest) -> EvaluationResult:
         if request.kind != "formal_eval":

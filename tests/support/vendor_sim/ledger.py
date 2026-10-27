@@ -69,7 +69,7 @@ class VendorLedger:
         if not self.path.is_file():
             return {
                 "schema_version": 1, "resources": {}, "cancelled": [],
-                "device_running": [], "running_scope": {}, "probes": [],
+                "device_running": [], "running_scope": {}, "probes": [], "blob_reads": [],
             }
         try:
             document = json.loads(self.path.read_text(encoding="utf-8"))
@@ -77,7 +77,8 @@ class VendorLedger:
             raise LedgerError(f"fake vendor ledger is unreadable: {exc}") from exc
         if not isinstance(document, dict) or document.get("schema_version") != 1:
             raise LedgerError("fake vendor ledger schema is unsupported")
-        for key in ("resources", "cancelled", "device_running", "probes"):
+        document.setdefault("blob_reads", [])
+        for key in ("resources", "cancelled", "device_running", "probes", "blob_reads"):
             if not isinstance(document.get(key), (dict, list)):
                 raise LedgerError("fake vendor ledger is corrupt")
         # A running marker is only meaningful with the binding it was taken
@@ -154,6 +155,40 @@ class VendorLedger:
             marker = f"{attempt_id}:{lease_fence}"
             if marker not in document["cancelled"]:
                 document["cancelled"].append(marker)
+
+    def record_blob_read(
+        self, *, attempt_id: str, lease_fence: int, content_id: str,
+        chunks: int, size_bytes: int, digest: str, max_chunk_bytes: int,
+        binding: Mapping[str, str],
+    ) -> None:
+        """Record how the worker consumed a content-addressed artifact.
+
+        The row proves the read was chunked and verifies the exact content id, so
+        a test can assert both byte identity and the absence of a whole-file
+        buffer without trusting a log line.
+        """
+
+        with self._locked() as document:
+            reads = document.setdefault("blob_reads", [])
+            if not isinstance(reads, list):
+                raise LedgerError("fake vendor ledger is corrupt")
+            reads.append({
+                "attempt_id": attempt_id,
+                "lease_fence": lease_fence,
+                "content_id": content_id,
+                "chunks": chunks,
+                "size_bytes": size_bytes,
+                "digest": digest,
+                "max_chunk_bytes": max_chunk_bytes,
+                "binding": {key: binding.get(key) for key in _BINDING_KEYS},
+            })
+
+    def blob_reads(self) -> list[dict[str, Any]]:
+        with self._locked(create=False) as document:
+            reads = document.get("blob_reads", [])
+            if not isinstance(reads, list):
+                raise LedgerError("fake vendor ledger is corrupt")
+            return json.loads(json.dumps(reads))
 
     def record_probe(self, *, vendor_version: str, resource_generation: str) -> None:
         with self._locked() as document:

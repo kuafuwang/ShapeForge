@@ -18,6 +18,7 @@ golden/
 │   └── fixtures/
 └── remote/
     ├── evaluator_v1.json
+    ├── npu_blob_v3.json            # P0b blob-reference contract 向量（Go 独立重建）
     └── evaluator_v1_baseline.desc  # v1 schema compatibility baseline，不是运行时输入
 ```
 
