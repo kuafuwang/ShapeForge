@@ -663,9 +663,21 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   写入 fail closed 且零落盘、非整除末尾块重放）与 gRPC 用例（BeginUpload 预留 scope/全局配额、
   跨多个后续 chunk 重放 offset 0/4、非边界与不同字节拒绝）；并发相同 content id 在幂等重放下
   不再报错，断言改为前缀连续、可提交、逐字节一致。
+- 幂等 replay 与 outbox 身份的复审修复（`35d8364` 之后）：
+  `JobEngine.submit` 先查持久 job 行，只有**新** accepted job 才要求 ready blob 并取 lease；终态
+  清理已删除字节的 job 再以相同 request/digest `Submit` 时从已提交行回放（同一 attempt/receipt，
+  不新建 lease、不重建字节），不同 digest 或另一 grant scope 仍按原语义拒绝。原先先取 lease 再查
+  重放，导致 completed 之后重复 `Submit` 得到 `not_found: blob does not exist`。
+  `EvaluationOutbox._expected_candidate` 对 blob contract 不再回退到 host `candidate_sha256`
+  （空 source 摘要），缺 `wire_candidate_digest` 即 `request_digest_missing`；`unavailable` 在
+  新建或改写任何 blob 行之前执行同一身份门（缺 wire digest 或缺 wire CandidateDigest 都拒绝；
+  无持久接受记录时不写行、静默返回，沿用既有 missing-wire 语义）。原先 `unavailable` 只检查
+  wire digest，会写入一行伪造的 `sha256-blob-v1` 空内容摘要。
 - 变异核验（临时改动后复原）：跳过 commit 摘要校验、忽略 cleanup 失败、接受旧 attempt/fence、
-  跳过 scope 校验、同时去掉两道 ready 守卫，对应测试全部转为失败；另外把配额改回只算落盘字节
-  会让新增的预留用例失败。FaultIO 记录的 chunk/offset、台账与 `io.crashes` 证明故障确实触发。
+  跳过 scope 校验、同时去掉两道 ready 守卫，对应测试全部转为失败；把配额改回只算落盘字节会让
+  预留用例失败；把 submit 改回先取 lease 会让 completed/failed/重启后的 replay 用例失败；把
+  outbox 的候选回退与 `unavailable` 门去掉会让缺 candidate 的用例失败。FaultIO 记录的
+  chunk/offset、台账与 `io.crashes` 证明故障确实触发。
 - 验证证据（每条命令单独跑）：
   `tests/shared/test_remote_blob_channel.py` **36 passed**（边界、二进制、读写峰值、崩溃续传、
   任意已确认块重放与短尾块、乱序、错误 digest、同 id 不同大小、未 ready、跨 scope、旧 attempt、
@@ -675,11 +687,12 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   空文件、缺失/过期/撤销/越权 grant 零落盘或零读取、越界/超 chunk/乱序拒绝、断点续传、
   重复 chunk/commit、digest 不符 fail closed、同 id 不同大小、abort、慢消费者有界预取、
   message 无路径/URL/命令、BlobChannel 与六 RPC 分离且 field number 不变）；
-  `tests/shared/test_remote_blob_contract.py` **14 passed**（未 ready/跨 scope 不可 Submit、
-  端到端 digest 链与 fake worker 分块读取台账、outbox 绑定/replay 与缺字段/篡改/换 candidate
-  拒绝、store 内 `blob_ref` 的 sha/size/chunk/media 篡改在直读与重开都 fail closed、interrupted
-  attempt 用同一 blob Retry、cleanup 失败 quarantine、重启释放孤儿 lease、npu-source 拒绝
-  `blob_ref` 而旧 Metal digest 仍是 version 1）；
+  `tests/shared/test_remote_blob_contract.py` **18 passed**（未 ready/跨 scope 不可 Submit、
+  端到端 digest 链与 fake worker 分块读取台账、completed/failed/重启后的同 request 重复 Submit
+  从持久行回放且不新建 lease、outbox 绑定/replay 与缺字段/篡改/换 candidate 拒绝、`unavailable`
+  缺 wire CandidateDigest 不写行/不伪造空内容摘要、store 内 `blob_ref` 的 sha/size/chunk/media
+  篡改在直读与重开都 fail closed、interrupted attempt 用同一 blob Retry、cleanup 失败
+  quarantine、重启释放孤儿 lease、npu-source 拒绝 `blob_ref` 而旧 Metal digest 仍是 version 1）；
   `tests/shared/test_remote_blob_go_conformance.py` **7 passed**（Go 独立重建 canonical
   request/receipt/签名并拒绝 candidate/blob size/canonical JSON/receipt id/HMAC 五类篡改）。
   既有 P0 回归：`test_remote_npu_{contract,grpc,cleanup}.py` **88 passed**；旧
@@ -689,7 +702,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `test_evaluation_outbox.py` + `test_orchestrator_runtime.py` **283 passed, 1 skipped**
   （Linux-only 跳过项不变）；`test_selfcheck_bridge.py` 在 `TMPDIR=/tmp` 下 **19 passed**，
   在本机 hmz 围栏默认 TMPDIR 下仍是 **18 failed / 1 passed**（AF_UNIX 路径超长，未改测试）。
-  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2362 passed / 6 skipped /
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2366 passed / 6 skipped /
   32 failed**，32 项仍全是本机围栏环境（selfcheck AF_UNIX 路径、`ps` 被禁、HOME 权威日志
   不可写），失败文件不 import remote/NPU/blob 新代码。
 - 未做（不得据此宣称）：大文件/GB 模型吞吐与容量、真实对象存储、跨站点性能、真实 NPU 大工件

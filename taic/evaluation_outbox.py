@@ -185,8 +185,20 @@ class EvaluationOutbox:
         return document
 
     def _expected_candidate(self, request: EvaluationRequest) -> dict[str, str]:
-        """Return the wire CandidateDigest this row/result must carry."""
+        """Return the wire CandidateDigest this row/result must carry.
 
+        The blob contract has no inline bytes, so ``candidate_sha256`` (the empty
+        host source) is never a fallback: without the bound wire CandidateDigest
+        there is no artifact identity to record, and writing one would fabricate
+        a blob nobody uploaded.
+        """
+
+        if self.dialect.npu_blob and not request.wire_candidate_digest:
+            raise EvaluationUnavailable(
+                "request_digest_missing",
+                "the blob outbox requires the wire CandidateDigest; bind it from the "
+                "uploaded descriptor before begin/complete/unavailable",
+            )
         algorithm = self.dialect.candidate_algorithms[0]
         value = request.wire_candidate_digest or request.candidate_sha256
         try:
@@ -496,16 +508,28 @@ class EvaluationOutbox:
         write_json_atomic(self._receipt_index_path, self._receipts)
 
     def unavailable(self, request: EvaluationRequest, error: BaseException) -> None:
-        """Record an infrastructure/policy failure without inventing a report."""
-        if self.npu_contract and not request.contract_request_digest:
-            if not self._state_path(request.request_id).is_file():
-                # A missing wire digest means nothing was durably accepted, so
-                # there is no row to reconcile; never overwrite the failure the
-                # caller is already reporting with a second one.
-                return
-            raise EvaluationUnavailable(
-                "request_digest_missing", "the NPU outbox row is not keyed by the wire request digest",
-            )
+        """Record an infrastructure/policy failure without inventing a report.
+
+        The same identity gate as ``begin``/``complete`` runs before any row is
+        created or rewritten.  A blob request without the wire CandidateDigest has
+        no artifact identity, so it may not seed a row with the empty-source
+        digest; with no durable row there is nothing to reconcile and nothing is
+        written (the caller already reports the original failure).
+        """
+
+        if self.npu_contract:
+            detail = ""
+            if not request.contract_request_digest:
+                detail = "the NPU outbox row is not keyed by the wire request digest"
+            elif self.dialect.npu_blob and not request.wire_candidate_digest:
+                detail = "the blob outbox row is not keyed by the wire CandidateDigest"
+            if detail:
+                if not self._state_path(request.request_id).is_file():
+                    # A missing wire identity means nothing was durably accepted,
+                    # so there is no row to reconcile; never overwrite the failure
+                    # the caller is already reporting with a second one.
+                    return
+                raise EvaluationUnavailable("request_digest_missing", detail)
         path = self._state_path(request.request_id)
         try:
             import json

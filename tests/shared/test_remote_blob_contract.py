@@ -316,6 +316,100 @@ def test_outbox_refuses_a_missing_rewritten_or_mismatched_blob_candidate(tmp_pat
         harness.close()
 
 
+# -- idempotent replay after terminal cleanup ------------------------------
+def _resubmit(harness, request):
+    """Re-issue GetCapabilities + Submit for the same request/digest."""
+
+    capability = npu_capabilities(harness.engine)
+    return harness.engine.submit(
+        request=request, expected=harness.engine.expected_identities,
+        capability_id=capability.capability_id,
+        required_features=list(npu_features(contracts.NPU_BLOB_DIALECT)),
+        grant_token=NPU_TOKEN,
+    )
+
+
+def test_a_completed_job_replays_after_the_terminal_cleanup(tmp_path):
+    harness = BlobNpuGrpcHarness(tmp_path / "blob-replay-done")
+    try:
+        descriptor = harness.upload(SOURCE, chunk_size=4)
+        request, first = submit_blob_job(harness, descriptor)
+        completed = wait_for(harness, request, {"completed"})
+        # Terminal cleanup really removed the artifact and dropped the lease.
+        assert harness.engine.blob_store.usage()["blobs"] == 0
+        assert harness.engine.blob_store.leases() == {}
+
+        replay = _resubmit(harness, request)
+        assert replay.state == "completed"
+        assert replay.current_attempt.attempt_id == completed.current_attempt.attempt_id
+        assert replay.result.receipt["receipt_id"] == completed.result.receipt["receipt_id"]
+        assert replay.result.receipt["candidate_digest"]["value"] == descriptor.sha256
+        # The replay came from the committed row: no new lease, no new bytes.
+        assert harness.engine.blob_store.leases() == {}
+        assert harness.engine.blob_store.usage()["blobs"] == 0
+        assert first.state in {"accepted", "queued", "running", "completed"}
+    finally:
+        harness.close()
+
+
+def test_a_failed_job_replays_after_the_terminal_cleanup(tmp_path):
+    harness = BlobNpuGrpcHarness(
+        tmp_path / "blob-replay-failed", worker_env={"TCENV_VENDOR_A_BAD_REPORT": "1"},
+    )
+    try:
+        descriptor = harness.upload(SOURCE, chunk_size=4)
+        request, _ = submit_blob_job(harness, descriptor)
+        failed = wait_for(harness, request, {"failed", "completed"})
+        assert failed.state == "failed"
+        assert harness.engine.blob_store.usage()["blobs"] == 0
+        assert harness.engine.blob_store.leases() == {}
+
+        replay = _resubmit(harness, request)
+        assert replay.state == "failed"
+        assert replay.current_attempt.attempt_id == failed.current_attempt.attempt_id
+        assert replay.failure is not None and replay.failure.code == failed.failure.code
+        assert harness.engine.blob_store.leases() == {}
+        assert harness.engine.blob_store.usage()["blobs"] == 0
+    finally:
+        harness.close()
+
+
+def test_a_terminal_job_replays_after_a_frontend_restart(tmp_path):
+    root = tmp_path / "blob-replay-restart"
+    harness = BlobNpuGrpcHarness(root)
+    try:
+        descriptor = harness.upload(SOURCE, chunk_size=4)
+        request, _ = submit_blob_job(harness, descriptor)
+        completed = wait_for(harness, request, {"completed"})
+        assert harness.engine.blob_store.usage()["blobs"] == 0
+    finally:
+        harness.close()
+
+    reopened = BlobNpuGrpcHarness(root)
+    try:
+        # The artifact is gone, but the durable row still answers the replay.
+        assert reopened.engine.blob_store.usage()["blobs"] == 0
+        replay = _resubmit(reopened, request)
+        assert replay.state == "completed"
+        assert replay.result.receipt["receipt_id"] == completed.result.receipt["receipt_id"]
+        # A replay never re-creates the lease or the bytes.
+        assert reopened.engine.blob_store.leases() == {}
+        assert reopened.engine.blob_store.usage()["blobs"] == 0
+
+        # A different digest for the same request id is still refused, and it also
+        # does not take a lease for content that was never uploaded.
+        conflicted = npu_request(
+            request.request_id,
+            blob=BlobDescriptor.for_bytes(os.urandom(8), media_type="text/plain; charset=utf-8", chunk_size=4),
+        )
+        with pytest.raises(JobError) as reused:
+            _resubmit(reopened, conflicted)
+        assert reused.value.code in {"already_exists", "not_found"}
+        assert reopened.engine.blob_store.leases() == {}
+    finally:
+        reopened.close()
+
+
 # -- durable tamper --------------------------------------------------------
 def _rewrite_request_json(state: Path, request_id: str, mutate) -> None:
     connection = sqlite3.connect(state / "jobs.sqlite3")
@@ -459,6 +553,62 @@ def test_a_restart_releases_an_orphaned_blob_lease(tmp_path):
         assert reopened.engine.blob_store.usage()["blobs"] == 0
     finally:
         reopened.close()
+
+
+# -- the blob outbox never invents a candidate ------------------------------
+EMPTY_SOURCE_SHA256 = hashlib.sha256(b"").hexdigest()
+
+
+def test_unavailable_without_the_wire_candidate_writes_no_blob_row(tmp_path):
+    harness = BlobNpuGrpcHarness(tmp_path / "blob-unavailable")
+    outbox = blob_outbox(tmp_path / "run")
+    try:
+        # No durable row: nothing was accepted, so nothing is written and the
+        # empty-source digest must never become a blob identity.
+        request = host_request("blob-unavailable-1")
+        outbox.unavailable(request, EvaluationUnavailable("transport_timeout", "boom"))
+        assert not outbox._state_path(request.request_id).is_file()
+        assert outbox.pending() == []
+        assert not any(
+            path for path in (tmp_path / "run" / "evaluation_outbox").glob("*.json")
+            if path.name != "receipts.json"
+        )
+
+        # A durable row exists: an unbound candidate is refused and the row keeps
+        # its committed identity and pending status.
+        descriptor = harness.upload(SOURCE, chunk_size=4)
+        harness.blob_ref = descriptor
+        bound = bind_wire_digest(host_request("blob-unavailable-2"), harness.factory, outbox)
+        assert outbox.begin(bound) is None
+        state = outbox._state_path(bound.request_id)
+        before = state.read_bytes()
+
+        unbound_candidate = replace(bound, wire_candidate_digest="")
+        with pytest.raises(EvaluationUnavailable) as missing_candidate:
+            outbox.unavailable(unbound_candidate, EvaluationUnavailable("transport_timeout", "boom"))
+        assert missing_candidate.value.code == "request_digest_missing"
+        assert state.read_bytes() == before
+
+        # Neither wire identity bound (a fresh host request carrying the same
+        # request id): the pre-existing missing-wire-digest rule still applies.
+        unbound_digest = host_request(bound.request_id)
+        with pytest.raises(EvaluationUnavailable) as missing_digest:
+            outbox.unavailable(unbound_digest, EvaluationUnavailable("transport_timeout", "boom"))
+        assert missing_digest.value.code == "request_digest_missing"
+        assert state.read_bytes() == before
+
+        # The correctly bound request still records the real candidate, never the
+        # empty-source digest.
+        outbox.unavailable(bound, EvaluationUnavailable("transport_timeout", "boom"))
+        row = json.loads(state.read_text(encoding="utf-8"))
+        assert row["status"] == "unavailable"
+        assert row["candidate_digest"] == {
+            "algorithm": contracts.BLOB_DIGEST_ALGORITHM, "value": descriptor.sha256,
+        }
+        assert row["candidate_digest"]["value"] != EMPTY_SOURCE_SHA256
+        assert json.dumps(row).count(EMPTY_SOURCE_SHA256) == 0
+    finally:
+        harness.close()
 
 
 # -- the old contracts are unchanged --------------------------------------

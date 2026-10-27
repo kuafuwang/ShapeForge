@@ -119,6 +119,10 @@ def main() -> int:
         "protocol_version": PROTOCOL_VERSION,
         "simulated": True,
     }
+    if os.environ.get("TCENV_VENDOR_A_BAD_REPORT") == "1":
+        # Test-only fault: a worker result the frontend must reject.  It makes a
+        # candidate fail deterministically (not just time out).
+        report["task"] = "forged-task"
     worker_protocol.write_result(
         sys.stdout.buffer, request_id=request_id, attempt_id=attempt_id,
         lease_fence=fence, report=report, evidence=evidence,

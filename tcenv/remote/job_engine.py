@@ -890,7 +890,16 @@ class JobEngine:
     ) -> JobSnapshot:
         self._validate_submission(request)
         self._required_features(required_features)
-        leased = self._lease_blob(request, grant_token)
+        # Only a *new* accepted job needs a ready artifact.  A durable replay is
+        # identified by the existing (request_id, request_digest) row, and a
+        # terminal job's bytes have already been cleaned up; requiring the blob
+        # here would turn an idempotent Submit into not_found and break the six
+        # RPC's replay semantics.  The store still re-validates every identity
+        # and answers a replay from the committed row, so a different digest or
+        # another grant scope is refused exactly as before.
+        leased = False
+        if self.blob_store is not None and not self.store.job_exists(request.request_id):
+            leased = self._lease_blob(request, grant_token)
         try:
             snapshot, _created = self.store.submit(
                 request=request, request_digest=request.request_digest, expected=expected,
