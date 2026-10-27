@@ -296,7 +296,7 @@ class JobEngine:
         contract: contracts.ContractDialect = contracts.LEGACY_DIALECT,
         npu_execution: NpuExecutionSpec | None = None,
         device_controller: DeviceController | None = None,
-        device_probe_timeout_s: float = 2.0,
+        device_call_timeout_s: float = 2.0,
         **store_options: Any,
     ) -> None:
         if not worker_command or not all(isinstance(part, str) and part for part in worker_command):
@@ -320,12 +320,12 @@ class JobEngine:
         if device_controller is not None and not contract.npu_source:
             raise ValueError("a device controller is only valid with the NPU contract")
         if (
-            isinstance(device_probe_timeout_s, bool)
-            or not isinstance(device_probe_timeout_s, (int, float))
-            or not math.isfinite(device_probe_timeout_s)
-            or not 0.05 <= device_probe_timeout_s <= 30.0
+            isinstance(device_call_timeout_s, bool)
+            or not isinstance(device_call_timeout_s, (int, float))
+            or not math.isfinite(device_call_timeout_s)
+            or not 0.05 <= device_call_timeout_s <= 30.0
         ):
-            raise ValueError("device_probe_timeout_s must be a finite number between 0.05 and 30 seconds")
+            raise ValueError("device_call_timeout_s must be a finite number between 0.05 and 30 seconds")
         if isinstance(selfcheck_age_s, bool) or not isinstance(selfcheck_age_s, (int, float)) or not math.isfinite(selfcheck_age_s) or selfcheck_age_s <= 0:
             raise ValueError("selfcheck_age_s must be finite and positive")
         if signing_key is not None and (not isinstance(signing_key, bytes) or len(signing_key) < 32):
@@ -375,7 +375,7 @@ class JobEngine:
         self.contract = contract
         self.npu_execution = npu_execution
         self.device_controller = device_controller
-        self.device_probe_timeout_s = float(device_probe_timeout_s)
+        self.device_call_timeout_s = float(device_call_timeout_s)
         self.execution_protocol_version = execution_protocol_version
         self.supported_features = frozenset(supported_features)
         self.supported_modes = frozenset(supported_modes)
@@ -528,9 +528,9 @@ class JobEngine:
 
         thread = threading.Thread(target=run, name=f"device-{name}", daemon=True)
         thread.start()
-        thread.join(self.device_probe_timeout_s)
+        thread.join(self.device_call_timeout_s)
         if thread.is_alive():
-            return None, f"{name} did not return within {self.device_probe_timeout_s:.3f}s"
+            return None, f"{name} did not return within {self.device_call_timeout_s:.3f}s"
         if "error" in outcome:
             return None, str(outcome["error"])
         return outcome.get("value"), ""
@@ -1231,10 +1231,14 @@ class JobEngine:
         accepted, lease_error = self._lease_device_error(attempt)
         if lease_error:
             return lease_error
-        try:
-            proof = controller.reconcile(attempt.attempt_id, attempt.lease_fence)
-        except Exception as exc:  # noqa: BLE001 - a controller failure is infrastructure
-            return f"device reconcile raised {type(exc).__name__}: {exc}"[:1000]
+        # Bounded: a wedged controller must not stall the scheduler, the result
+        # commit or the Cancel RPC.  A timeout is an infrastructure failure and
+        # therefore leaves the job quarantined instead of claiming cleanup.
+        proof, reconcile_error = self._bounded_device_call(
+            "reconcile", lambda: controller.reconcile(attempt.attempt_id, attempt.lease_fence),
+        )
+        if reconcile_error:
+            return f"device reconcile failed: {reconcile_error}"[:1000]
         if not isinstance(proof, CleanupProof):
             return "device controller returned an untyped cleanup proof"
         if proof.attempt_id != attempt.attempt_id or proof.lease_fence != attempt.lease_fence:
@@ -1303,10 +1307,15 @@ class JobEngine:
         if lease_error:
             self._record_close_error(f"device cancel was not delivered: {lease_error}")
             return
-        try:
-            self.device_controller.cancel(attempt.attempt_id, attempt.lease_fence)
-        except Exception as exc:  # noqa: BLE001 - reconcile decides, not the RPC
-            self._record_close_error(f"device cancel could not be delivered: {exc}")
+        controller = self.device_controller
+        # Bounded and best effort: reconcile still decides whether the device
+        # resources are gone, so a hung cancel can never become a "cancelled"
+        # claim on its own.
+        _value, cancel_error = self._bounded_device_call(
+            "cancel", lambda: controller.cancel(attempt.attempt_id, attempt.lease_fence),
+        )
+        if cancel_error:
+            self._record_close_error(f"device cancel could not be delivered: {cancel_error}")
 
     def _interrupt_attempt(
         self, request_id: str, attempt: Attempt, failure: JobFailure,

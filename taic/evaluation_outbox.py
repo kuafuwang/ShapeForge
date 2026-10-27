@@ -18,11 +18,13 @@ from typing import Any
 from tcenv.evaluation import EvaluationRequest, EvaluationResult, EvaluationUnavailable, validate_receipt, verify_result_signature
 from tcenv.remote.contracts import (
     NPU_SOURCE_API_CONTRACT_ID,
+    NPU_SOURCE_DIALECT,
     NPU_SOURCE_EVIDENCE_CONTRACT_ID,
     NPU_TIMING_EVIDENCE_SCHEMA_ID,
     ContractError,
     device_group_document,
     npu_timing_evidence_document,
+    receipt_document,
 )
 
 from .control import write_json_atomic
@@ -52,6 +54,15 @@ def bind_wire_digest(
     if not isinstance(digest, str) or not digest:
         raise EvaluationUnavailable("request_digest_missing", "evaluator returned no wire request digest")
     return replace(request, contract_request_digest=digest)
+
+
+#: The wire (signed) NPU receipt fields.  The host envelope adds its own
+#: metadata (measurement kind, signature algorithm/key id), which is not part of
+#: the wire receipt and must not be validated as if it were.
+_NPU_WIRE_RECEIPT_FIELDS = (
+    "receipt_id", "request_id", "attempt_id", "request_digest",
+    "candidate_digest", "device_group", "lease_fence", "session_sequence", "issued_at",
+)
 
 
 class EvaluationOutbox:
@@ -168,24 +179,45 @@ class EvaluationOutbox:
                     f"{key}_mismatch", f"evaluation outbox {key} differs from the current evaluator"
                 )
 
+    def _wire_receipt(self, request: EvaluationRequest, result: EvaluationResult) -> dict[str, Any]:
+        """Validate the signed NPU wire receipt and recompute its id.
+
+        ``complete`` and a later replay share this check, so a retained result
+        whose receipt was rewritten (including its ``receipt_id``) can never be
+        replayed under a different identity.  Host-only envelope metadata is
+        excluded, exactly as the adapter added it.
+        """
+
+        receipt = result.receipt if isinstance(result.receipt, dict) else {}
+        document = {key: receipt.get(key) for key in _NPU_WIRE_RECEIPT_FIELDS}
+        try:
+            wire = receipt_document(document, dialect=NPU_SOURCE_DIALECT)
+        except ContractError as exc:
+            raise EvaluationUnavailable(
+                "receipt_mismatch", f"outbox NPU receipt is invalid: {exc}",
+            ) from exc
+        if wire["request_id"] != request.request_id or wire["request_digest"] != request.request_digest:
+            raise EvaluationUnavailable("receipt_mismatch", "outbox NPU receipt does not bind this request")
+        if wire["candidate_digest"]["value"] != request.candidate_sha256:
+            raise EvaluationUnavailable("receipt_mismatch", "outbox NPU receipt CandidateDigest does not match")
+        return wire
+
     def _validate_result(self, request: EvaluationRequest, result: EvaluationResult) -> None:
         receipt_id = validate_receipt(result, request)
         if self.npu_contract:
             receipt = result.receipt if isinstance(result.receipt, dict) else {}
-            candidate = receipt.get("candidate_digest")
-            if not isinstance(candidate, dict) or candidate.get("value") != request.candidate_sha256:
-                raise EvaluationUnavailable("receipt_mismatch", "outbox NPU receipt CandidateDigest does not match")
             if "candidate_sha256" in receipt:
                 raise EvaluationUnavailable("receipt_mismatch", "outbox NPU receipt dual-writes candidate_sha256")
+            wire = self._wire_receipt(request, result)
+            candidate = wire["candidate_digest"]
+            receipt_group = wire["device_group"]
             evidence = result.evidence
             if not isinstance(evidence, dict) or evidence.get("schema_id") != NPU_TIMING_EVIDENCE_SCHEMA_ID:
                 raise EvaluationUnavailable("evidence_mismatch", "outbox NPU result has no timing evidence")
             if evidence.get("candidate_digest") != candidate:
                 raise EvaluationUnavailable("evidence_mismatch", "outbox NPU evidence CandidateDigest differs from receipt")
-            receipt_group = receipt.get("device_group")
-            if not isinstance(receipt_group, dict) or evidence.get("device_group") != receipt_group:
+            if evidence.get("device_group") != receipt_group:
                 raise EvaluationUnavailable("evidence_mismatch", "outbox NPU device group binding differs")
-            self._device_group(receipt_group, where="receipt")
             report = result.report if isinstance(result.report, dict) else {}
             try:
                 npu_timing_evidence_document(
@@ -280,13 +312,14 @@ class EvaluationOutbox:
                     raise EvaluationUnavailable("outbox_corrupt", "completed result request digest does not match")
                 evidence = result.evidence
                 if self.npu_contract:
-                    candidate = result.receipt.get("candidate_digest") if isinstance(result.receipt, dict) else None
+                    try:
+                        candidate = self._wire_receipt(request, result)["candidate_digest"]
+                    except EvaluationUnavailable as exc:
+                        raise EvaluationUnavailable("outbox_corrupt", str(exc)) from exc
                     if (
                         not isinstance(evidence, dict)
                         or evidence.get("schema_id") != NPU_TIMING_EVIDENCE_SCHEMA_ID
-                        or not isinstance(candidate, dict)
                         or evidence.get("candidate_digest") != candidate
-                        or candidate.get("value") != request.candidate_sha256
                     ):
                         raise EvaluationUnavailable("outbox_corrupt", "completed NPU result evidence does not match")
                 elif not isinstance(evidence, dict) or evidence.get("candidate_sha256") != request.candidate_sha256:

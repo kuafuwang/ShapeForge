@@ -1191,6 +1191,75 @@ def test_schema_v2_database_migrates_to_v3_and_keeps_container_identity(tmp_path
         migrated.close()
 
 
+def test_schema_v3_database_migrates_to_v4_and_keeps_results(tmp_path):
+    """@brief 既有 v3 库（没有 device_binding_json）必须原位升到 v4，并保留任务/结果/attempt。"""
+    state = tmp_path / "state"
+    service = engine(state)
+    req = request("schema-v3-migration")
+    try:
+        submit(service, req)
+        completed = wait_state(service, req, {"completed"})
+    finally:
+        service.close()
+    attempt_id = completed.current_attempt.attempt_id
+    receipt_id = completed.result.receipt["receipt_id"]
+    connection = sqlite3.connect(state / "jobs.sqlite3")
+    try:
+        connection.execute("ALTER TABLE attempts DROP COLUMN device_binding_json")
+        connection.execute("PRAGMA user_version=3")
+        connection.commit()
+    finally:
+        connection.close()
+    migrated = engine(state)
+    try:
+        assert migrated.store._conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        snapshot = get(migrated, req)
+        assert snapshot.state == "completed" and snapshot.result is not None
+        assert snapshot.result.receipt["receipt_id"] == receipt_id
+        assert snapshot.current_attempt.attempt_id == attempt_id
+        # The pre-upgrade lease never recorded a device binding, so it can never
+        # be reconciled against a group this frontend merely runs with.
+        assert snapshot.current_attempt.device_binding is None
+        columns = {
+            row[1] for row in migrated.store._conn.execute("PRAGMA table_info(attempts)")
+        }
+        assert "device_binding_json" in columns
+    finally:
+        migrated.close()
+
+
+def test_v3_backup_restores_and_keeps_the_durable_result(tmp_path):
+    """@brief v3 备份（缺 device_binding_json）可恢复，并在打开时升到 v4。"""
+    state = tmp_path / "state"
+    backup = tmp_path / "backup-v3.sqlite3"
+    service = engine(state)
+    req = request("schema-v3-backup")
+    try:
+        submit(service, req)
+        completed = wait_state(service, req, {"completed"})
+        service.backup(backup)
+    finally:
+        service.close()
+    connection = sqlite3.connect(backup)
+    try:
+        connection.execute("ALTER TABLE attempts DROP COLUMN device_binding_json")
+        connection.execute("PRAGMA user_version=3")
+        connection.commit()
+    finally:
+        connection.close()
+    restored_dir = tmp_path / "restored"
+    JobStore.restore_backup(backup, restored_dir)
+    restored = engine(restored_dir)
+    try:
+        assert restored.store._conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        snapshot = get(restored, req)
+        assert snapshot.state == "completed" and snapshot.result is not None
+        assert snapshot.result.receipt["receipt_id"] == completed.result.receipt["receipt_id"]
+        assert snapshot.current_attempt.attempt_id == completed.current_attempt.attempt_id
+    finally:
+        restored.close()
+
+
 def test_v2_backup_restores_with_signed_history_and_key_rotation(tmp_path):
     key1 = b"rotation-key-one-32-bytes-long!!!!"
     key2 = b"rotation-key-two-32-bytes-long!!!!"

@@ -343,7 +343,7 @@ def test_a_hanging_device_probe_is_bounded(tmp_path):
 
     engine = npu_engine(
         root / "state", ledger_path=ledger_path, controller=_Hanging(ledger_path),
-        device_probe_timeout_s=0.2,
+        device_call_timeout_s=0.2,
         signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
     )
     try:
@@ -506,3 +506,99 @@ def test_legacy_test_composition_roots_cannot_serve_fake_npu_traffic():
     npu_target[npu_target.index("--target-id") + 1] = "sim-npu-target"
     with pytest.raises(SystemExit, match="legacy Metal/source contract"):
         grpc_service_entry.main(npu_target)
+
+
+# -- controller calls are bounded -----------------------------------------
+class _HangingController(FakeVendorAController):
+    """A controller whose named calls never return (acceptance fault)."""
+
+    def __init__(self, ledger_path, *, hang=("reconcile",), **kwargs):
+        super().__init__(ledger_path, **kwargs)
+        self._hang = frozenset(hang)
+
+    def cancel(self, attempt_id, lease_fence):
+        if "cancel" in self._hang:
+            time.sleep(10.0)
+        return super().cancel(attempt_id, lease_fence)
+
+    def reconcile(self, attempt_id, lease_fence):
+        if "reconcile" in self._hang:
+            time.sleep(10.0)
+        return super().reconcile(attempt_id, lease_fence)
+
+
+def test_a_hanging_reconcile_cannot_commit_the_result(tmp_path):
+    """@brief reconcile 挂起时结果不得提交，job 保持 quarantine 且不卡死调度。"""
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path,
+        controller=_HangingController(ledger_path, hang=("reconcile",)),
+        device_call_timeout_s=0.2,
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-hang-reconcile-1", source=SOURCE)
+        started = time.monotonic()
+        npu_submit(engine, request)
+        deadline = time.monotonic() + 10
+        snapshot = npu_get(engine, request)
+        while not snapshot.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = npu_get(engine, request)
+        assert snapshot.quarantined is True
+        assert "did not return within" in snapshot.recovery_error
+        assert snapshot.result is None
+        assert engine.close_error is not None
+        # The scheduler stayed responsive despite the wedged controller.
+        assert time.monotonic() - started < 9.0
+        # Retry stays refused while cleanup is unproven.
+        with pytest.raises(JobError) as excinfo:
+            npu_retry(engine, request, snapshot.current_attempt.attempt_id)
+        assert excinfo.value.code == "failed_precondition"
+    finally:
+        engine.close(wait=5)
+
+
+def test_a_hanging_cancel_and_reconcile_cannot_claim_cancellation(tmp_path):
+    """@brief cancel/reconcile 都挂起时，Cancel 有界返回且不得宣告 cancelled。"""
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path,
+        controller=_HangingController(ledger_path, hang=("cancel", "reconcile")),
+        worker_env={"TCENV_VENDOR_A_SLOW": "1"},
+        device_call_timeout_s=0.2,
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-hang-cancel-1", source=SOURCE)
+        npu_submit(engine, request)
+        ledger = VendorLedger(ledger_path)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not ledger.live_resources():
+            time.sleep(0.02)
+        assert ledger.live_resources(), "fake vendor A never prepared device resources"
+
+        started = time.monotonic()
+        snapshot = engine.cancel(
+            request_id=request.request_id, request_digest=request.request_digest,
+            expected=engine.expected_identities, grant_token=NPU_TOKEN,
+            reason="hanging controller",
+        )
+        assert time.monotonic() - started < 5.0, "Cancel must be bounded"
+        assert snapshot.state != "cancelled"
+        assert engine.close_error is not None
+
+        final = npu_get(engine, request)
+        deadline = time.monotonic() + 10
+        while not final.quarantined and time.monotonic() < deadline:
+            time.sleep(0.02)
+            final = npu_get(engine, request)
+        assert final.quarantined is True
+        assert final.state == "running", "an unproven cleanup cannot become cancelled"
+        assert final.cancel_requested is True
+        assert final.result is None
+        assert "did not return within" in final.recovery_error
+    finally:
+        engine.close(wait=5)

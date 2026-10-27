@@ -387,3 +387,52 @@ def test_npu_timing_evidence_requires_honest_completion(tmp_path):
     # A timeout report must not claim a completed device event.
     with pytest.raises(contracts.ContractError, match="timeout report"):
         contracts.npu_timing_evidence_document(complete, report_status="timeout")
+
+
+def test_npu_outbox_rejects_a_rewritten_wire_receipt_on_replay(tmp_path):
+    """@brief retained result 的 wire receipt 被改写（含 receipt_id）后，replay 必须拒绝。"""
+    root = tmp_path / "run"
+    with NpuGrpcHarness(tmp_path) as harness:
+        outbox = _npu_outbox(root)
+        request = bind_wire_digest(_legacy_request("npu-receipt-tamper-1"), harness.factory, outbox)
+        assert outbox.begin(request, epoch=harness.factory.epoch) is None
+        result = harness.factory.formal(request)
+        outbox.complete(request, result)
+        assert _npu_outbox(root).begin(request, epoch=harness.factory.epoch) is not None
+
+        result_path = outbox._result_path(request.request_id)
+        original = json.loads(result_path.read_text(encoding="utf-8"))
+
+        # 1. A rewritten receipt_id is refused even though every other field is
+        #    intact: the id must recompute from request/attempt/candidate/group.
+        tampered = copy.deepcopy(original)
+        tampered["receipt"]["receipt_id"] = "not-a-valid-receipt"
+        result_path.write_text(json.dumps(tampered), encoding="utf-8")
+        with pytest.raises(EvaluationUnavailable, match="receipt"):
+            _npu_outbox(root).begin(request, epoch=harness.factory.epoch)
+
+        # 2. Re-signing the tampered receipt does not help: the wire fields are
+        #    validated independently of the host signature.
+        tampered["signature"] = ""
+        result_path.write_text(json.dumps(tampered), encoding="utf-8")
+        with pytest.raises(EvaluationUnavailable, match="receipt"):
+            _npu_outbox(root).begin(request, epoch=harness.factory.epoch)
+
+        # 3. A host-only metadata rewrite is still accepted (it is not wire data).
+        metadata_only = copy.deepcopy(original)
+        metadata_only["receipt"]["signature_key_id"] = "sim-npu-site/key-1"
+        metadata_only["receipt"]["measurement_kind"] = "simulated"
+        result_path.write_text(json.dumps(metadata_only), encoding="utf-8")
+        assert _npu_outbox(root).begin(request, epoch=harness.factory.epoch) is not None
+
+        # 4. The wire receipt's normative fields are validated too (the fence
+        #    must stay a decimal string; the fence-to-attempt cross-check lives
+        #    in the durable job store, which has the attempt row).
+        malformed_fence = copy.deepcopy(original)
+        malformed_fence["receipt"]["lease_fence"] = "not-a-fence"
+        result_path.write_text(json.dumps(malformed_fence), encoding="utf-8")
+        with pytest.raises(EvaluationUnavailable, match="receipt"):
+            _npu_outbox(root).begin(request, epoch=harness.factory.epoch)
+
+        result_path.write_text(json.dumps(original), encoding="utf-8")
+        assert _npu_outbox(root).begin(request, epoch=harness.factory.epoch) is not None

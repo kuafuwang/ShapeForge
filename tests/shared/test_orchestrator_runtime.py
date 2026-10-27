@@ -432,6 +432,7 @@ class NpuShapedEvaluator(RecordingEvaluator):
         return self._provenance
 
     def formal(self, request):
+        from tcenv.remote import contracts
         from tcenv.remote.contracts import NPU_TIMING_EVIDENCE_SCHEMA_ID
 
         assert request.contract_request_digest == self.WIRE_DIGEST, "host must bind the wire digest first"
@@ -453,12 +454,24 @@ class NpuShapedEvaluator(RecordingEvaluator):
             "publication_allowed": True,
             "complete": True,
         }
+        candidate = {"algorithm": "sha256", "value": request.candidate_sha256}
+        attempt_id, issued_at = "attempt-1", "2026-01-01T00:00:00Z"
+        # Mirror the real host adapter: the signed wire receipt plus host-only
+        # envelope metadata.  The receipt id must bind the NPU identity.
         receipt = {
-            "receipt_id": receipt_id_for(request), "request_id": request.request_id,
+            "receipt_id": contracts.attempt_receipt_id(
+                request_id=request.request_id, attempt_id=attempt_id,
+                request_digest=request.request_digest, candidate_digest=candidate,
+                device_group=self.DEVICE_GROUP, dialect=contracts.NPU_SOURCE_DIALECT,
+            ),
+            "request_id": request.request_id, "attempt_id": attempt_id,
             "request_digest": request.request_digest,
-            "candidate_digest": {"algorithm": "sha256", "value": request.candidate_sha256},
+            "candidate_digest": candidate,
             "device_group": dict(self.DEVICE_GROUP),
+            "lease_fence": "1", "session_sequence": "1", "issued_at": issued_at,
             "measurement_kind": "measured",
+            "signature_key_id": "sim-site/key-1",
+            "signature_algorithm": "hmac-sha256-v1",
         }
         provenance = replace(
             local_provenance(request), publication_allowed=True,

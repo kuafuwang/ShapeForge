@@ -388,7 +388,10 @@ class JobStore:
         with self._lock:
             conn = self._conn
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, SCHEMA_VERSION):
+            # Every supported older version must be listed here or the
+            # in-place migration branch below can never run.  A version that is
+            # neither current nor one of these is corrupt.
+            if version not in (0, 1, 2, 3, SCHEMA_VERSION):
                 raise StateCorrupt(f"unsupported job-store schema version {version}")
             if version == 0 and conn.execute("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1").fetchone():
                 raise StateCorrupt("unversioned job-store tables are not accepted")
@@ -2203,7 +2206,7 @@ class JobStore:
                 version = source.execute("PRAGMA user_version").fetchone()[0]
                 # A backup taken before a schema upgrade is migrated in place
                 # by the normal open path; refuse only unknown versions.
-                if len(rows) != 1 or rows[0][0] != "ok" or version not in (1, 2, SCHEMA_VERSION):
+                if len(rows) != 1 or rows[0][0] != "ok" or version not in (1, 2, 3, SCHEMA_VERSION):
                     raise StateCorrupt("backup is corrupt or has an unsupported schema")
             finally:
                 source.close()
