@@ -1,181 +1,20 @@
-"""Tests for the explicit remote composition, using the real service and fake device."""
+"""Tests for the explicit gRPC remote composition and self-check bridge."""
 
 from __future__ import annotations
 
-import hashlib
 import json
-import os
-import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from taic.remote_runtime import RemoteEvaluationConfig
-from taic.selfcheck_bridge import SelfCheckClient
-from tcenv.evaluation import EvaluationRequest
-from tests.support.npu_sim.service_entry import TASK_FINGERPRINT, TASK_PACK_DIGEST, TOKEN
+from tcenv.remote.grpc_client import GrpcEvaluatorFactory
+from tests.support.remote_pki import make_pki
 
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def _config(tmp_path: Path) -> RemoteEvaluationConfig:
-    token_file = tmp_path / "grant.token"
-    token_file.write_text(TOKEN)
-    selfcheck_file = tmp_path / "selfcheck-grant.token"
-    selfcheck_file.write_text("selfcheck-token")
-    command = [
-        sys.executable, "-m", "tests.support.npu_sim.service_entry",
-        "--state-dir", str(tmp_path / "state" / "{evaluation_kind}" / "{session_id}"),
-        "--run-id", "{run_id}", "--session-id", "{session_id}", "--token", TOKEN,
-        "--selfcheck-token", "selfcheck-token",
-    ]
-    path = tmp_path / "remote.json"
-    path.write_text(json.dumps({
-        "command": command,
-        "token_file": str(token_file),
-        "selfcheck_token_file": str(selfcheck_file),
-        "target_id": "sim-npu-test",
-        "expected_site_id": "sim-site",
-        "expected_worker_build": "sim-build-1",
-        "expected_task_pack_digest": TASK_PACK_DIGEST,
-        "task_fingerprint": TASK_FINGERPRINT,
-        "publishable_site_ids": [],
-        "socket_root": tempfile.mkdtemp(prefix="taic-remote-", dir="/tmp"),
-        "timeout_s": 2,
-    }))
-    return RemoteEvaluationConfig.from_file(path)
-
-
-def _request() -> EvaluationRequest:
-    source = "kernel void demo() {}"
-    return EvaluationRequest(
-        task="relu", dtype="fp16", size="small", source=source,
-        candidate_sha256=hashlib.sha256(source.encode()).hexdigest(),
-        kind="formal_eval", mode="quick", seed=3, reps=2,
-        run_id="run-1", session_id="session-1", target_id="sim-npu-test",
-        task_fingerprint=TASK_FINGERPRINT, cache_policy="disabled",
-        candidate_timeout_s=2, queue_timeout_s=2,
-    )
-
-
-def test_explicit_remote_config_builds_pool_and_per_session_bridge(tmp_path):
-    """@brief 配置文件创建真实 pool 和 host bridge，自测保留 simulated 标记并清理 token。"""
-    config = _config(tmp_path)
-    evaluator = config.make_evaluator("run-1")
-    try:
-        result = evaluator.formal(_request())
-        assert result.report["simulated"] is True
-        factory = config.make_bridge_factory(task="relu", dtype="fp16", size="small", task_fingerprint=TASK_FINGERPRINT, run_id="run-1")
-        work = tmp_path / "work"
-        work.mkdir()
-        seed_json = json.dumps({"speedup": 1.0, "benchmark": {"candidate": {"cv": 0.01}}})
-        (work / "report.json").write_text(seed_json)
-        server, token_file = factory("session-1", work, evaluator)
-        assert not server._usage_path.is_relative_to(work)
-        assert server.config.seed_report_path is not None
-        assert not server.config.seed_report_path.is_relative_to(work)
-        (work / "report.json").write_text(json.dumps({"speedup": 1000.0}))
-        assert server.config.seed_report_path.read_text() == seed_json
-        try:
-            checked = SelfCheckClient(server.socket_path, token_file=token_file).check("kernel void demo() {}", "quick")
-            assert checked.report["simulated"] is True
-            # The credential is host-owned, outside the agent-writable
-            # workspace, so a session prune cannot archive or delete it.
-            assert not Path(token_file).is_relative_to(work)
-            assert Path(token_file).parent == server.socket_path.parent
-            from taic.kernel_agent import prune_work
-            (work / "scratch.txt").write_text("x")
-            pruned = prune_work(work, label="init", keep={"candidate.metal"})
-            assert "token" not in pruned.get("archived", [])
-            assert Path(token_file).is_file()
-        finally:
-            server.stop()
-        assert not Path(token_file).exists()
-    finally:
-        evaluator.close()
-
-
-def test_remote_config_can_use_separate_formal_and_selfcheck_grants(tmp_path):
-    """@brief 正式与自测可以使用不同远端 grant；自测 grant 不能冒充 formal。"""
-    formal_token = tmp_path / "formal.token"
-    selfcheck_token = tmp_path / "selfcheck.token"
-    formal_token.write_text("formal-token")
-    selfcheck_token.write_text("selfcheck-token")
-    command = [
-        sys.executable, "-m", "tests.support.npu_sim.service_entry",
-        "--state-dir", str(tmp_path / "state" / "{evaluation_kind}" / "{session_id}"),
-        "--run-id", "{run_id}", "--session-id", "{session_id}",
-        "--formal-token", "formal-token", "--selfcheck-token", "selfcheck-token",
-    ]
-    path = tmp_path / "remote.json"
-    path.write_text(json.dumps({
-        "command": command,
-        "token_file": str(formal_token),
-        "selfcheck_token_file": str(selfcheck_token),
-        "target_id": "sim-npu-test",
-        "expected_site_id": "sim-site",
-        "expected_worker_build": "sim-build-1",
-        "expected_task_pack_digest": TASK_PACK_DIGEST,
-        "task_fingerprint": TASK_FINGERPRINT,
-        "publishable_site_ids": [],
-        "socket_root": tempfile.mkdtemp(prefix="taic-remote-", dir="/tmp"),
-        "timeout_s": 2,
-    }))
-    config = RemoteEvaluationConfig.from_file(path)
-    evaluator = config.make_evaluator("run-1")
-    selfcheck_pool = config.make_selfcheck_evaluator("run-1")
-    try:
-        assert evaluator.formal(_request()).report["simulated"] is True
-        from tcenv.remote.client import RemoteError
-        try:
-            selfcheck_pool.formal(_request())
-        except RemoteError as exc:
-            assert "selfcheck" in str(exc) or "formal" in str(exc)
-        else:
-            raise AssertionError("a selfcheck-only grant submitted formal evaluation")
-        # The bridge owns a new frontend for the same per-kind state path;
-        # release this explicit probe before opening that frontend.
-        selfcheck_pool.close()
-        work = tmp_path / "work"
-        work.mkdir()
-        server, token_file = config.make_bridge_factory(
-            task="relu", dtype="fp16", size="small",
-            task_fingerprint=TASK_FINGERPRINT, run_id="run-1",
-        )("session-1", work, evaluator)
-        try:
-            checked = SelfCheckClient(server.socket_path, token_file=token_file).check("kernel void demo() {}", "quick")
-            assert checked.report["simulated"] is True
-        finally:
-            server.stop()
-    finally:
-        selfcheck_pool.close()
-        evaluator.close()
-
-
-def test_remote_selfcheck_never_falls_back_to_the_formal_grant(tmp_path):
-    """@brief 缺少独立 selfcheck grant 时必须拒绝，而不是复用 formal evaluator。"""
-    from dataclasses import replace
-    import pytest
-
-    config = replace(_config(tmp_path), selfcheck_token_file=None)
-    with pytest.raises(ValueError, match="selfcheck_token_file"):
-        config.make_bridge_factory(
-            task="relu", dtype="fp16", size="small",
-            task_fingerprint=TASK_FINGERPRINT, run_id="run-1",
-        )
-    with pytest.raises(ValueError, match="selfcheck_token_file"):
-        config.make_selfcheck_evaluator("run-1")
-
-
-def test_remote_config_rejects_unknown_fields(tmp_path):
-    """@brief 配置中的未知字段必须在创建连接前拒绝。"""
-    path = tmp_path / "bad.json"
-    path.write_text(json.dumps({"command": ["echo"], "token_file": "token", "target_id": "sim-npu-test", "shell": True}))
-    try:
-        RemoteEvaluationConfig.from_file(path)
-    except ValueError as exc:
-        assert "unknown" in str(exc)
-    else:
-        raise AssertionError("unknown remote config field was accepted")
+TASK_FINGERPRINT = "a" * 64
+TASK_PACK_DIGEST = "b" * 64
+TOKEN = "test-session-token"
 
 
 def _grpc_document(tmp_path: Path, pki, **overrides) -> Path:
@@ -257,7 +96,7 @@ def test_grpc_remote_config_rejects_missing_tls_material_or_mixed_transports(tmp
         else:
             raise AssertionError(f"gRPC config without {field} was accepted")
     mixed = dict(base)
-    mixed["command"] = [sys.executable, "-c", "pass"]
+    mixed["command"] = ["python3", "-c", "pass"]
     path = tmp_path / "mixed.json"
     path.write_text(json.dumps(mixed))
     try:
@@ -276,3 +115,77 @@ def test_grpc_remote_config_rejects_missing_tls_material_or_mixed_transports(tmp
         assert "together" in str(exc)
     else:
         raise AssertionError("half a client identity was accepted")
+
+
+def test_remote_config_rejects_unknown_fields(tmp_path):
+    """@brief 配置中的未知字段必须在创建连接前拒绝。"""
+    pki = make_pki(tmp_path / "pki")
+    base = json.loads(_grpc_document(tmp_path, pki).read_text())
+    base["shell"] = True
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(base))
+    with pytest.raises(ValueError, match="unknown remote evaluation fields"):
+        RemoteEvaluationConfig.from_file(path)
+
+
+def test_remote_config_requires_an_explicit_grpc_transport(tmp_path):
+    """@brief 省略 transport 或写 legacy-ssh 必须拒绝，不得默认或静默换协议。"""
+    pki = make_pki(tmp_path / "pki")
+    base = json.loads(_grpc_document(tmp_path, pki).read_text())
+    cases = [
+        ("missing", lambda document: document.pop("transport"), "must declare transport='grpc'"),
+        ("legacy", lambda document: document.update(transport="legacy-ssh"), "no longer supported"),
+        ("other", lambda document: document.update(transport="local"), "must be 'grpc'"),
+        ("command", lambda document: document.update(command=["ssh", "evaluator"]), "does not accept a command"),
+        ("pool-knob", lambda document: document.update(idle_timeout_s=1.0), "unknown remote evaluation fields"),
+    ]
+    for name, mutate, match in cases:
+        document = dict(base)
+        mutate(document)
+        path = tmp_path / f"rejected-{name}.json"
+        path.write_text(json.dumps(document))
+        with pytest.raises(ValueError, match=match):
+            RemoteEvaluationConfig.from_file(path)
+
+
+def test_remote_evaluation_config_cannot_be_constructed_with_legacy_ssh(tmp_path):
+    """@brief 直接构造 dataclass 也不能绕开 gRPC-only 约束。"""
+    with pytest.raises(ValueError, match="only transport='grpc'"):
+        RemoteEvaluationConfig(
+            token_file=tmp_path / "grant.token",
+            target_id="sim-npu-test",
+            transport="legacy-ssh",
+        )
+
+
+def test_legacy_remote_data_plane_modules_are_gone():
+    """@brief 旧 SSH 客户端和服务端入口不再可导入。"""
+    import importlib.util
+
+    assert importlib.util.find_spec("tcenv.remote.client") is None
+    assert importlib.util.find_spec("tcenv.remote.service") is None
+
+
+def test_grpc_selfcheck_bridge_uses_the_grpc_factory_and_releases_it(tmp_path):
+    """@brief 显式 gRPC 配置能启动 per-session bridge，并在停止时释放共享 channel。"""
+    from tcenv.remote import grpc_client as grpc_client_module
+
+    pki = make_pki(tmp_path / "pki")
+    config = RemoteEvaluationConfig.from_file(_grpc_document(tmp_path, pki))
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "report.json").write_text(json.dumps({"speedup": 1.0, "benchmark": {"candidate": {"cv": 0.01}}}))
+    factory = config.make_bridge_factory(
+        task="relu", dtype="fp16", size="small",
+        task_fingerprint=TASK_FINGERPRINT, run_id="run-1",
+    )
+    server, token_file = factory("session-1", work, None)
+    try:
+        assert isinstance(server.evaluator, GrpcEvaluatorFactory)
+        assert server.config.close_evaluator_on_stop is True
+        assert Path(token_file).is_file()
+        assert grpc_client_module._SHARED_CHANNELS
+    finally:
+        server.stop()
+    assert not Path(token_file).exists()
+    assert not grpc_client_module._SHARED_CHANNELS

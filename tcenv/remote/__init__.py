@@ -1,6 +1,9 @@
-"""Remote evaluator protocol and service primitives.
+"""Remote evaluator production primitives.
 
-The package contains the production service core.  Test-only fake backends and
+The external data plane is gRPC (``tcenv.remote.grpc_service`` and
+``tcenv.remote.grpc_client``); the legacy SSH frame client and frontend were
+removed.  The length-prefixed frame codec remains because the private
+service-to-worker boundary still uses it.  Test-only fake backends and
 composition roots live under ``tests/support/npu_sim`` and are deliberately not
 imported here.
 """
@@ -17,7 +20,6 @@ from .protocol import (
     read_frame,
     write_frame,
 )
-from .client import CommandTransport, RemoteError, RemoteEvaluator, RemoteEvaluatorPool, Transport, remote_evaluator_from_command, remote_evaluator_pool_from_command
 from .identity import ServiceIdentity, SessionGrant
 from .job_engine import JobEngine
 from .job_store import JobStore
@@ -33,7 +35,6 @@ from .job_types import (
     JobResult,
     JobSnapshot,
 )
-from .service import RemoteService
 
 __all__ = [
     "EvaluationRequest",
@@ -43,14 +44,6 @@ __all__ = [
     "FrameDecoder",
     "HelloRequest",
     "ProtocolError",
-    "CommandTransport",
-    "RemoteError",
-    "RemoteEvaluator",
-    "RemoteEvaluatorPool",
-    "RemoteService",
-    "Transport",
-    "remote_evaluator_from_command",
-    "remote_evaluator_pool_from_command",
     "ServiceIdentity",
     "SessionGrant",
     "JobEngine",

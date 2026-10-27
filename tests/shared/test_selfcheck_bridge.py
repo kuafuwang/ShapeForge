@@ -187,11 +187,11 @@ def test_bridge_quota_and_hang_usage_survive_restart(tmp_path):
 
 def test_bridge_remote_error_does_not_kill_accept_loop(tmp_path):
     """@brief 远程不可用返回结构化错误，accept loop 仍能服务后续请求。"""
-    from tcenv.remote.client import RemoteError
+    from tcenv.evaluation import EvaluationUnavailable
 
     class Failing:
         def selfcheck(self, request):
-            raise RemoteError("transport_closed", "remote went away")
+            raise EvaluationUnavailable("transport_closed", "remote went away")
 
     server = SelfCheckServer(_config(tmp_path), Failing(), _short_socket())
     with server:

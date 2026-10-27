@@ -1,6 +1,6 @@
 # 执行运行时与设备扩展计划
 
-状态：设计计划；Phase 0a/0b/1a/1b/2A/2B/2.5/2C/2D1 已实现，2D2 的本地 Docker 模拟验收已按 49 项必需矩阵全部通过（2026-10-25 复审后重跑）；其中 2A/2B/2.5 是 `legacy-ssh` 基线与历史模拟验收，当前实现记录见 [执行运行时与设备扩展.md](执行运行时与设备扩展.md)，部署/轮换见 [远程评测部署与轮换](远程评测部署与轮换.md)。**远程评测服务是对外交付物，协议为 gRPC + TLS + Protobuf；2C 合约/核心/adapter、2D1 制品与本机 Docker 模拟已交付。** 本机 2D2 的 49/49 是**模拟基线**，不是生产验收。**长期生产执行面已实现：每次 attempt 一个一次性容器**，Docker Engine/containerd 管生命周期（`AttemptSupervisor` + `DockerAttemptSupervisor`），并在既有 Ubuntu ARM VM 上用 CPU-only fake backend 通过 12 项必需 check（`runs/container-sim-20261026/report.json`，`simulated=true`、`publication_allowed=false`）；该验收只证明容器生命周期、清理与结果合约，不是真实设备/性能/发布验收。SSH 只允许带外管理，**不是**生产评测数据面；Phase 3 的可选 SSH workspace transport 仍是 transport，且其超时问题未被本次容器执行面修复。Phase 3 的可选 SSH workspace transport 与 Phase 4 的隔离 agent 运行时已实现；Phase 4 的 Docker 隔离 fake-agent 模拟已通过（13/13，`simulated=true`）。两者仍是 **transport/模拟**：真实主机、生产围栏与真实凭据 helper 验收 blocked（缺 SSH 私钥）；真实远程站点发布、真实设备与真实 NPU 仍是计划；`legacy-ssh` 数据面与 `RemoteEvaluatorPool` 尚未删除。已吸收多轮评审，详见 §15。日期：2026-10-24（实现记录更新于 2026-10-26，Phase 3 状态见 §11）。默认保持现有 local 行为；旧 Phase 2.5 只证明 SSH/自定义帧链路，不能充当 gRPC 对外生产门禁。对外生产仍需真实站点/设备验收，真实站点发布另有门禁，不做真实 NPU。
+状态：设计计划；Phase 0a/0b/1a/1b/2A/2B/2.5/2C/2D1 已实现，2D2 的本地 Docker 模拟验收已按 49 项必需矩阵全部通过（2026-10-25 复审后重跑）；其中 2A/2B/2.5 是 `legacy-ssh` 基线与历史模拟验收，当前实现记录见 [执行运行时与设备扩展.md](执行运行时与设备扩展.md)，部署/轮换见 [远程评测部署与轮换](远程评测部署与轮换.md)。**远程评测服务是对外交付物，协议为 gRPC + TLS + Protobuf；2C 合约/核心/adapter、2D1 制品与本机 Docker 模拟已交付。** 本机 2D2 的 49/49 是**模拟基线**，不是生产验收。**长期生产执行面已实现：每次 attempt 一个一次性容器**，Docker Engine/containerd 管生命周期（`AttemptSupervisor` + `DockerAttemptSupervisor`），并在既有 Ubuntu ARM VM 上用 CPU-only fake backend 通过 12 项必需 check（`runs/container-sim-20261026/report.json`，`simulated=true`、`publication_allowed=false`）；该验收只证明容器生命周期、清理与结果合约，不是真实设备/性能/发布验收。SSH 只允许带外管理，**不是**生产评测数据面；Phase 3 的可选 SSH workspace transport 仍是 transport，且其超时问题未被本次容器执行面修复。Phase 3 的可选 SSH workspace transport 与 Phase 4 的隔离 agent 运行时已实现；Phase 4 的 Docker 隔离 fake-agent 模拟已通过（13/13，`simulated=true`）。两者仍是 **transport/模拟**：真实主机、生产围栏与真实凭据 helper 验收 blocked（缺 SSH 私钥）；真实远程站点发布、真实设备与真实 NPU 仍是计划。2026-10-27 已删除 `legacy-ssh` 对外数据面、`CommandTransport`/`RemoteEvaluator`/`RemoteEvaluatorPool`、forced-command/service-entry 入口和 Phase 2.5 可运行验收脚本；历史证据读取、私有 worker 帧和 selfcheck bridge 保留。已吸收多轮评审，详见 §15。日期：2026-10-24（实现记录更新于 2026-10-26；删除记录 2026-10-27，Phase 3 状态见 §11）。默认保持现有 local 行为；旧 Phase 2.5 只证明 SSH/自定义帧链路，不能充当 gRPC 对外生产门禁。对外生产仍需真实站点/设备验收，真实站点发布另有门禁，不做真实 NPU。
 
 本文只规划执行隔离和设备扩展，不批准实现 NPU、CUDA、ROCm 或第二个 target，不批准付费搜索，也不批准运行 GPU。
 
@@ -38,7 +38,7 @@
 └────────────────────────────────────────────────────────────┘
 ```
 
-**对外协议边界已经定死：control_host 到远程受信评测服务只暴露版本化的 gRPC + TLS + Protobuf API。** 首版 evaluator 是**单租户 + single-active + non-HA** 的：每个 `device_id` 由一个 frontend/设备信任域服务一个客户组织的多个 run/session，不引入 tenant id、跨租户共享队列或租户计费；多设备使用独立 frontend、endpoint、队列和持久状态，不在 v1 隐藏多设备路由。结果签名固定为 **host-controlled HMAC-SHA256 verifier**，不承诺第三方独立验签或不可否认性。现有 SSH forced command + 长度前缀 JSON 帧保留为 `legacy-ssh`，只用于旧 run 兼容和历史回归，不是对外交付目标；agent 到 host 的 Unix-socket selfcheck bridge，以及 service 到一次性 worker 的私有进程边界不属于对外协议。
+**对外协议边界已经定死：control_host 到远程受信评测服务只暴露版本化的 gRPC + TLS + Protobuf API。** 首版 evaluator 是**单租户 + single-active + non-HA** 的：每个 `device_id` 由一个 frontend/设备信任域服务一个客户组织的多个 run/session，不引入 tenant id、跨租户共享队列或租户计费；多设备使用独立 frontend、endpoint、队列和持久状态，不在 v1 隐藏多设备路由。结果签名固定为 **host-controlled HMAC-SHA256 verifier**，不承诺第三方独立验签或不可否认性。旧 SSH forced command 与外部长度前缀 JSON 帧已删除，不再是可配置或可 resume 的数据面；`tcenv.remote.protocol` 的长度前缀编解码只保留给 service 到一次性 worker 的私有进程边界与 `legacy_worker_bridge`。agent 到 host 的 Unix-socket selfcheck bridge，以及 service 到一次性 worker 的私有进程边界不属于对外协议。
 
 也就是说，`taic + hmz + pi` 留在 control_host，pi 写的候选源码、结构化自测请求与正式评测请求发给远程受信评测服务，服务在其设备侧用 GPU/NPU worker 执行并回传报告。只要这条通道能做到设备侧闭合计时、独占租约、身份与配额分离、报告绑定源码/设备/构建摘要，pi 就**不需要**去 GPU/NPU 主机，不需要把 provider 登录态带到设备主机，也不需要本计划去实现 VM、设备直通或远程 agent 生命周期。
 
@@ -679,7 +679,7 @@ network = "deny"
 reset = "per_session"
 
 [evaluation]
-transport = "local"           # local | grpc | legacy-ssh（仅旧 run 兼容）
+transport = "local"           # local | grpc；legacy-ssh 已删除，旧 manifest resume 会明确拒绝
 endpoint = ""                 # gRPC endpoint，不含凭据；local 时为空
 api_version = ""              # 外部为 tcenv.remote.v1
 api_contract_id = ""          # 外部 API/descriptor + required features
@@ -750,7 +750,7 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 ### 10.1 Schema 与缓存的升级纪律
 
 - Phase 0a–2D 不因传输迁移改 `EvalReport` 顶层 schema。execution manifest 只进 `run_config.json` 的可选块与 session 记录；`run_config` 现有读取不因可选块拒绝旧文件，resume 必须显式校验它，不能靠未知键被忽略就假装已绑定。`evaluator_epoch`、`api_contract_id`、`evidence_contract_id` 分开进入 manifest/outbox；跨 transport、API 或 evidence contract 不得隐式续跑，但只有执行语义变化才强制新测量基线。
-- 旧 `execution.json` 的 `evaluation=remote` 且缺少 transport/API/evidence 字段时，只能按 `legacy-ssh` + legacy evidence 读取；`evaluation=local` 仍是 local。新 gRPC run 的三类身份、attempt_id 和 keyring 规则缺一不可，不能用缺省值伪装。旧 JSON `signature_key_file` 仅作为 legacy 单 key verifier，新 gRPC 使用 keyring。
+- 旧 `execution.json` 的 `evaluation=remote` 且缺少 transport/API/evidence 字段时，历史上按 `legacy-ssh` + legacy evidence 解释；该数据面已删除，现在 resume 必须明确拒绝且不改写 manifest，不自动换成 gRPC 或 local。`evaluation=local` 仍是 local。新 gRPC run 的三类身份、attempt_id 和 keyring 规则缺一不可，不能用缺省值伪装。旧 JSON `signature_key_file` 仅作为 legacy 单 key verifier，新 gRPC 使用 keyring。
 - Protobuf field number 不复用，删除字段 reserve；`optional`/wrapper/`oneof` 表达 presence，未知 critical enum 与不支持的必需 feature fail closed。proto/descriptor 是外部兼容合约，生成代码可重复；普通 Protobuf bytes 不作为 digest 或签名输入。
 - 接入远程评测时若要给报告加执行端身份，优先用报告外层信封承载 `provenance` 与签名。只有评测结果本体确需新字段时，才一次性把 `REPORT_SCHEMA_VERSION` 从 3 升到 4，并写清旧报告读取规则。
 - SQLite 索引不因单 run 展示而升版。只有看板或查询确实要按 placement、evaluator site 或评测构建筛选时，才评估 `INDEX_SCHEMA_VERSION` 升版与全量重建成本。
@@ -854,7 +854,7 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 
 **2C 离线验收：** Protobuf breaking-change、required features 与新旧客户端矩阵通过；至少两种独立语言实现的 digest/signature/receipt golden 一致；presence、未知 critical enum、溢出和消息大小 fail closed；task pack/task fingerprint 重算通过；三类身份分别校验，无关 API 改动不迫使测量 rebaseline。Submit 只创建/回放，Retry 只创建新 attempt；同 receipt 不同字节、旧 fence、旧 worker、并发 Retry 和重复终态全部拒绝。按 accepted 后、enqueue 前、worker 启动后、result 提交前后等崩溃点验证 SQLite 恢复、quota、备份/恢复和 attempt 状态。Watch/GetJob、grant 续期/撤销、keyring 轮换和时钟偏移通过；现有 local/legacy CPU 回归通过，不调用模型、不跑 GPU/NPU。
 
-**2C 实现记录（2026-10-25）：** 2C1 合约已由 `proto/tcenv/remote/v1/evaluator.proto`、descriptor、`tcenv/remote/contracts.py` 和 Python/Go golden 交付；2C2 在 `job_store.py`/`job_engine.py` 交付 SQLite WAL 持久 job/attempt、lease fence、quota、receipt、backup/restore、隔离恢复与 grant 权威集合（缺失 token 重启即撤销、同 scope 新 token 续期）；2C3 在 `grpc_contract.py`/`grpc_server.py`/`grpc_client.py` 交付六 RPC、每 RPC grant、TLS/mTLS、required features、Watch/GetJob 对账、`GrpcEvaluatorFactory`、keyring 轮换/撤销与 clock skew。离线验收由 `tests/shared/test_remote_grpc_adapter.py`、`test_remote_grpc_tls.py`、`test_remote_job_engine.py`、`test_remote_job_recovery.py` 覆盖；`legacy-ssh` 与 `RemoteEvaluatorPool` 为历史 resume 保留，尚未删除（见删除纪律）。
+**2C 实现记录（2026-10-25）：** 2C1 合约已由 `proto/tcenv/remote/v1/evaluator.proto`、descriptor、`tcenv/remote/contracts.py` 和 Python/Go golden 交付；2C2 在 `job_store.py`/`job_engine.py` 交付 SQLite WAL 持久 job/attempt、lease fence、quota、receipt、backup/restore、隔离恢复与 grant 权威集合（缺失 token 重启即撤销、同 scope 新 token 续期）；2C3 在 `grpc_contract.py`/`grpc_server.py`/`grpc_client.py` 交付六 RPC、每 RPC grant、TLS/mTLS、required features、Watch/GetJob 对账、`GrpcEvaluatorFactory`、keyring 轮换/撤销与 clock skew。离线验收由 `tests/shared/test_remote_grpc_adapter.py`、`test_remote_grpc_tls.py`、`test_remote_job_engine.py`、`test_remote_job_recovery.py` 覆盖；`legacy-ssh` 与 `RemoteEvaluatorPool` 已按删除纪律删除（2026-10-27），见下方删除状态。
 
 #### Phase 2D：外部交付物、真实 gRPC/TLS 集成与迁移门禁（2D1 已实现；2D2 本机 Docker 模拟已通过；真实站点/设备未验收）
 
@@ -924,16 +924,16 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 
 引入 gRPC 是为了消除重复实现，不是再维护一套协议。2C/2D 完成后必须执行以下删除，不能把旧路径永久留成第二套产品：
 
-- 对外数据面删除 `CommandTransport`、`SSH forced-command` evaluator 入口、`FrameDecoder`/自定义长度前缀读写和手写 hello/cancel/progress 帧；旧路径只保留在一个隔离的 `legacy-ssh` 迁移 adapter 中，且不得接收新配置。
+- 对外数据面删除 `CommandTransport`、`SSH forced-command` evaluator 入口和手写 hello/cancel/progress 帧；`FrameDecoder`/长度前缀编解码保留给 service→一次性 worker 的私有边界与 `legacy_worker_bridge`，不对外暴露，也不接收远程配置。
 - 删除连接级 `_authenticated/_grant` 和重复的队列/幂等实现；gRPC 与 legacy adapter 必须调用同一个 job engine，不能各自实现业务规则。
-- 整个删除 `RemoteEvaluatorPool`，不再保留另一层 idle/LRU/reconnect。共享 host mTLS identity 下每个 host 进程对每 endpoint 共用一个 channel，`GrpcEvaluatorFactory` 只负责 per-call grant、三类身份与结果校验；不再引入每场 client certificate。
+- `RemoteEvaluatorPool` 已整个删除，不再保留另一层 idle/LRU/reconnect。共享 host mTLS identity 下每个 host 进程对每 endpoint 共用一个 channel，`GrpcEvaluatorFactory` 只负责 per-call grant、三类身份与结果校验；不再引入每场 client certificate。
 - 删除重复的 protobuf/domain 映射：`.proto` 是唯一外部 schema，generated message 只在 adapter 边界出现，业务校验仍只在 `tcenv/evaluation.py` 或明确的 transport-neutral 核心中。
-- 旧 Phase 2.5 的 forced-command/service-entry 测试代码、自定义帧测试和旧报告生成脚本在 legacy 保留期结束后删除；历史报告保留为只读 artifact，不保留可运行的第二套服务。删除 transport 前先把旧 `provenance_epoch`、legacy digest 和 HMAC verifier 移到独立的历史证据模块；**删除的是旧数据面，不是旧证据读取与验证能力**。
+- 旧 Phase 2.5 的 forced-command/service-entry、legacy 客户端/服务端测试和可运行验收脚本已删除；历史报告保留为只读 artifact，不保留可运行的第二套服务。旧 `provenance_epoch`、legacy digest 和 HMAC verifier 仍由 `tcenv.evaluation` 与 `tests/shared/test_remote_evidence_contract.py` 的 legacy golden 覆盖；**删除的是旧数据面，不是旧证据读取与验证能力**。
 - 明确**不删除**：local `LocalEvaluator`、agent→host Unix-socket selfcheck bridge、service→一次性 worker 的私有帧、SSH workspace/P2 隔离和 provider 隧道。它们不是外部 gRPC 的替代实现。
 
-删除的前置条件是：2D 外部验收通过、所有可 resume 的历史 `legacy-ssh` run 已过期或完成、gRPC conformance 与故障矩阵有独立报告。删除前 `legacy-ssh` 只能用于旧 run，配置加载器必须拒绝新外部 run；不保留静默 fallback。短期重构成本由本期承担，不用“以后再统一”换取长期双栈维护。
+删除旧数据面的前置条件经 2026-10-27 明确决定修正为：gRPC conformance 与故障矩阵已有独立报告、当前仓库没有可 resume 的 `legacy-ssh` run（`runs/` 全部为 local）、用户明确批准删除。真实站点/设备的 2D 验收仍是生产门禁，但不是删除旧数据面的前置条件；本次删除不构成生产验收。删除前 `legacy-ssh` 只能用于旧 run，配置加载器必须拒绝新外部 run；不保留静默 fallback。短期重构成本由本期承担，不用“以后再统一”换取长期双栈维护。
 
-**本次删除状态：** 前置条件尚未满足（真实站点/设备 2D 未验收、历史 `legacy-ssh` run 未逐条确认过期/完成），因此**未删除** `CommandTransport`、forced-command 入口、自定义帧、`RemoteEvaluatorPool` 或旧 Phase 2.5 测试代码；它们只保留历史 resume 兼容，不被新 gRPC run 使用。gRPC 与 legacy adapter 已经共用同一个 `JobEngine`，没有第二套队列/幂等/worker 业务实现。
+**本次删除状态（2026-10-27）：** 经用户明确决定并核对当前仓库后执行删除。`runs/` 中现有 4 份 `execution.json` 全部为 `evaluation=local`，`run_config`/`control`/`state` 没有 legacy-ssh 或 remote evaluator 引用，也没有已知需要 legacy resume 的 run；因此不再等待未来 NPU 或真实站点。已删除 `CommandTransport`、`RemoteEvaluator`、`RemoteEvaluatorPool`、`remote_evaluator_pool_from_command`、`python -m tcenv.remote.service` forced-command 前端、`RemoteService`、Phase 2.5 的 forced-command/service-entry/验收 runner 及 legacy-only 测试；`tcenv.remote.client` 与 `tcenv.remote.service` 不再可导入。远程配置现在必须显式 `transport=grpc`，省略 transport、写 `legacy-ssh` 或带 `command` 都在加载时拒绝；旧 `execution.json` 声明 `legacy-ssh`（或 remote 缺 transport）时 resume 明确失败且不修改 transport。保留项：`tcenv.remote.protocol` 的 `FrameDecoder`/帧编解码（service→一次性 worker 与 `legacy_worker_bridge`）、私有 worker 协议、容器 supervisor/engine、Unix-socket selfcheck bridge、local evaluator 默认组合，以及历史 legacy digest/provenance/HMAC 读取验证。gRPC 与删除前的 legacy adapter 共用同一个 `JobEngine`，没有第二套队列/幂等/worker 业务实现。真实站点/设备 2D 仍未验收，本次删除不构成生产或发布声明。
 
 #### Phase 3：一个 SSH workspace 的 transport spike（可选，Phase 2 之后）
 
@@ -1046,7 +1046,7 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 - 远端组合只通过统一 runner 接口接入，失败不得改变 local；
 - 任何 local prompt、报告 schema 或 Metal 行为变化都视为单独变更，不能用本计划的名义合入；
 - P2 隔离 runner 失败时保留 local runner，但不可信 patch 不得因此自动改跑 local；
-- 每个 run 固定 `local`、`grpc` 或限期保留的 `legacy-ssh`，禁止失败后静默换协议或改跑 local；`legacy-ssh` 只允许 resume 已固定的历史 run，新外部 run 必须拒绝该选项，保留期结束后删除旧数据面。旧 `execution.json` 缺少新字段时只按 legacy 解释，新 gRPC 的三类身份和 attempt/keyring 元数据不可缺省；旧 outbox 只按旧算法恢复，gRPC outbox 只按匹配测量 epoch、API/evidence contract 恢复，跨协议恢复必须显式新 run/rebaseline；
+- 每个 run 固定 `local` 或 `grpc`，禁止失败后静默换协议或改跑 local；`legacy-ssh` 数据面已删除，旧 manifest resume 明确拒绝，不回退到 gRPC/local。新 gRPC 的三类身份和 attempt/keyring 元数据不可缺省；旧 outbox 只按旧算法恢复，gRPC outbox 只按匹配测量 epoch、API/evidence contract 恢复，跨协议恢复必须显式新 run/rebaseline；
 - gRPC 回滚先停止新 Submit/Retry，再 drain 或显式 Cancel 并核对 attempt 终态、旧 fence、worker 与租约清理；已完成证据与 outbox 保留。服务端二进制回滚必须仍读懂持久 job/attempt store schema，不能靠删状态恢复；
 - `local-integrated` 回滚或默认启动不要求证书、token、gRPC server 或网络监听，local TASK、Metal、缓存、报告 schema 与确认门不变；
 - `verify-code --static` 可独立回滚，不得因为动态 runner 不可用而跳过人工审阅直接执行 patch。
@@ -1059,11 +1059,11 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 | --- | --- |
 | 对外支持几种拓扑 | 只支持 §4.2 的三个命名 Profile（`local-integrated` / `split-control` / `device-site-colocated`）；远程设备默认 `split-control`，底层维度只作证据与扩展点，非法组合在配置加载时拒绝 |
 | workspace reset | 默认 `per_session`；reset 前必须完成工件与 epic 回收 |
-| 对外评测协议 | **gRPC + TLS + Protobuf**；远程 evaluator 是独立对外交付物。旧 SSH/自定义帧仅为 `legacy-ssh`，不是目标接口。2C/2D1 已实现、2D2 本机模拟通过；真实站点/设备未验收，不得声称对外生产就绪 |
+| 对外评测协议 | **gRPC + TLS + Protobuf**；远程 evaluator 是独立对外交付物。旧 SSH/自定义帧数据面已删除，私有 worker 长度前缀帧保留。2C/2D1 已实现、2D2 本机模拟通过；真实站点/设备未验收，不得声称对外生产就绪 |
 | 租户模型 | **单租户**：一个 evaluator frontend/设备信任域只服务一个客户组织；多租户、跨租户队列和计费不在 v1 |
 | 可用性与设备范围 | v1 明确 **single-active + non-HA**，每个 device_id 一个 frontend/queue/lease/SQLite；多设备独立 frontend，多副本另案。持久卷、备份恢复、RPO/RTO 是 2D 门禁 |
 | 测量与合约身份 | `evaluator_epoch` 只决定测量可比性；`api_contract_id` 决定通信兼容；`evidence_contract_id` 决定 digest/receipt/HMAC 验证。key/cert 轮换不自动改变测量 epoch |
-| 客户端凭证与 channel | 共享 host mTLS identity + 每 RPC grant；host 进程每 endpoint 一个 channel，删除 RemoteEvaluatorPool，不使用每场 client certificate |
+| 客户端凭证与 channel | 共享 host mTLS identity + 每 RPC grant；host 进程每 endpoint 一个 channel，`RemoteEvaluatorPool` 已删除，不使用每场 client certificate |
 | 结果验证 | **仅 host-controlled HMAC-SHA256 verifier**；不承诺第三方独立验签或不可否认性，不设计 Ed25519/ECDSA 公钥分发 |
 | 自测通道 | agent→host 可保留 Unix socket bridge；control_host→evaluator 的 formal/selfcheck 都走 gRPC + TLS + Protobuf。跨机不再以 SSH forced command/socket forwarding 为目标数据面 |
 | 自测命令 | local-integrated 保留现有 `tcenv eval`；split-control 使用稳定的 `taic-selfcheck`，由 runner 提供且不可被代理替换 |
@@ -1142,5 +1142,5 @@ execution manifest 必须区分三层，不能把用户写的配置直接当运�
 | 2D2 最终验收复审（真实回滚、逐证书撤销、未签名结果、外部 Retry、完整矩阵、cleanup 证据、passed 判定） | 采纳并落地：新增重启加载的静态叶子证书撤销表（真实被撤销证书验证）；未签名结果由测试 composition root 在 RPC 边界扣留签名；Python/Go conformance 强制中断后显式 Retry，并实际执行 grant 续期重接与 HMAC 正常轮换/撤销；模拟矩阵扩到 49 项必需 check，含真实前一镜像回滚与容器删除后的最终 cleanup 证据；`status=passed` 只由“必需项全部运行且通过 + cleanup final”推出。重跑 2D2 通过，报告仍为 `simulated=true`、`publication_allowed=false`。CRL/OCSP 网络获取仍不验收 | §11 Phase 2C/2D、§12、§15 |
 | 生产容器执行面与真实 VM 验收（AttemptSupervisor、镜像 digest、清理/隔离、crash 恢复、无 socket/凭据、plain Docker vs gVisor/Kata） | 采纳并落地：新增 `AttemptSupervisor` 与 `DockerAttemptSupervisor`（create/start/wait/kill/delete/status），job store 升 v3 并迁入 `execution_kind/container_id/image/runtime/daemon`；生产 gRPC 入口默认容器并要求 `worker_build=...+img:<digest>`；timeout/Cancel/正常退出 Kill→Delete→verify，未确认清理 quarantine 并阻断 Retry；crash 重启只清理不重跑；旧 fence 结果被拒；local/selfcheck/Phase 3/4 配置未删。真实 Ubuntu ARM VM 的 CPU fake-backend 容器验收 12/12（`simulated=true`、`publication_allowed=false`、cleanup final），plain Docker/runc 明确不是完整安全边界，gVisor/Kata 未实现未验收；SSH 仍只是带外管理 | §11 Phase 2D 容器执行面、§12、§15、[部署与轮换](远程评测部署与轮换.md) §2.5 |
 | 服务端合约复审（fingerprint 绑定、未知字段/UTF-8、撤销 key 重启、认证限速、receipt 精度、Watch filter、capabilities 必填） | 采纳并修复：fingerprint 绑定 `(task,dtype,size)`；未知 Protobuf 字段和非 UTF-8 source 在 durable accept 前拒绝；撤销历史 HMAC key 只隔离受影响结果、不阻止 frontend 重启；合法但未知的 grant 计入认证失败限速；receipt `issued_at` 拒绝亚毫秒；旧 attempt 的 Watch filter 不跨 attempt；capabilities 必须提供 expected 与非空 contract offers。已补回归测试并重跑 targeted/full safe + 2D2 | §6.4.1、§11 Phase 2C/2D、§15 |
-| 共享 host 身份与删除 pool | 采纳。固定共享 host mTLS identity + per-call grant，不使用每场证书；每 host 进程每 endpoint 一个 channel，删除 RemoteEvaluatorPool；旧传输删除后仍保留历史证据只读验证 | §6.4.1、§10、§11 删除纪律、§13 |
+| 共享 host 身份与删除 pool | 采纳并落地。固定共享 host mTLS identity + per-call grant，不使用每场证书；每 host 进程每 endpoint 一个 channel，`RemoteEvaluatorPool` 与 legacy SSH 数据面已删除；历史证据只读验证保留 | §6.4.1、§10、§11 删除纪律、§13 |
 | 宿主 attach 扫描 fail-closed（不可读 argv、`proc_pidinfo` 失败、sandbox `EPERM`、内核线程） | 采纳并落地。`hostprocs` 不再按可执行文件名收窄（脚本/`env`/解释器/framework launcher 无法证明集合完整）：可跳过的只有 Linux `Z`/Darwin `SZOMB` 僵尸、Linux `PF_KTHREAD`、属主记录证明的其它账号、`kill(pid,0)` 的 `ESRCH`/实际消失；Darwin 状态由 `KERN_PROC_PID`（`p_stat` + `p_pid` 自校验）提供，`proc_pidinfo` 失败与 `EPERM` 都不再是证明；瞬时 `EIO` 做有界重读，仍不确定就 `HostProcsError`，清理失败、job quarantine、Retry 被拒。新增真实 fake-Docker attach（只注入 argv）、`/usr/bin/vim` 路径、sandbox EPERM、pidinfo 拒绝、伪造 `KERN_PROC` 记录、瞬时重读、NUL 边界截断缺末项、cap 只截环境等回归（在 `4c2d80a`/`08df811` 上先失败），Darwin 有界记录改为逐字段解析（缺一项即 fail closed，不再用 `split` 长度补齐），保留 zombie/其它 UID/`PF_KTHREAD`/operator release 语义，并在真实 VM root+`--pid=host` 前端上验证扫描可用 | §6.4、§11 Phase 2D 容器执行面、§12、§15 |

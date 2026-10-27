@@ -751,7 +751,7 @@ class Orchestrator:
         self._outbox = None if self._local_evaluator else EvaluationOutbox(
             self.run_dir,
             signature_key=getattr(self.evaluator, "signature_key", None),
-            transport=transport_metadata.get("transport", "legacy-ssh"),
+            transport=transport_metadata["transport"],
             api_contract_id=transport_metadata.get("api_contract_id", ""),
             evidence_contract_id=transport_metadata.get("evidence_contract_id", ""),
             external_trusted_key_ids=trusted_external_keys,
@@ -759,7 +759,7 @@ class Orchestrator:
         execution_document = {
             "schema_version": 1,
             "evaluation": "local" if self._local_evaluator else "remote",
-            "transport": "" if self._local_evaluator else transport_metadata.get("transport", "legacy-ssh"),
+            "transport": transport_metadata["transport"],
             "publishable_site_ids": sorted(self.publishable_site_ids),
             "publishable_epochs": None if self.publishable_epochs is None else sorted(self.publishable_epochs),
             "observed": {},
@@ -811,8 +811,17 @@ class Orchestrator:
                 raise RunStartError("cannot resume a remote run without an explicit publication epoch allowlist")
             if previous_epochs is not None and (current_epochs is None or set(previous_epochs) != set(current_epochs)):
                 raise RunStartError("cannot resume with a different publication epoch allowlist")
-            previous_transport = previous_execution.get("transport") or "legacy-ssh"
-            current_transport = execution_document["transport"] or "legacy-ssh"
+            previous_transport = previous_execution.get("transport") or ""
+            current_transport = execution_document["transport"]
+            if previous_execution["evaluation"] == "remote" and not previous_transport:
+                raise RunStartError(
+                    "cannot resume: execution.json has no explicit evaluator transport; "
+                    "the historical legacy-ssh default is no longer supported"
+                )
+            if previous_transport == "legacy-ssh":
+                raise RunStartError(
+                    "cannot resume: the legacy-ssh evaluator transport is no longer supported"
+                )
             if previous_transport != current_transport:
                 raise RunStartError("cannot resume with a different evaluator transport")
             previous_workspace = previous_execution.get("workspace")
@@ -1351,15 +1360,27 @@ class Orchestrator:
         return replace(request, request_id=request_id)
 
     def _evaluator_transport_metadata(self) -> dict:
-        """Return transport/contract metadata the evaluator reports about itself."""
+        """Return transport/contract metadata the evaluator reports about itself.
+
+        A remote evaluator must declare its transport.  There is deliberately no
+        legacy default: a missing or non-gRPC declaration fails the run instead
+        of silently pinning a protocol the host did not choose.
+        """
 
         if self._local_evaluator:
             return {"transport": ""}
         getter = getattr(self.evaluator, "execution_metadata", None)
         metadata = getter() if callable(getter) else None
         if not isinstance(metadata, dict):
-            return {"transport": getattr(self.evaluator, "transport_kind", "legacy-ssh") or "legacy-ssh"}
-        transport = metadata.get("transport") or getattr(self.evaluator, "transport_kind", "legacy-ssh") or "legacy-ssh"
+            metadata = {}
+        transport = metadata.get("transport") or getattr(self.evaluator, "transport_kind", "")
+        if not isinstance(transport, str) or not transport:
+            raise RunStartError("a remote evaluator must declare its transport")
+        if transport != "grpc":
+            raise RunStartError(
+                f"remote evaluator transport {transport!r} is not supported; "
+                "the legacy-ssh data plane has been removed"
+            )
         result = {"transport": transport}
         for key in (
             "api_contract_id", "evidence_contract_id", "request_digest_algorithm",

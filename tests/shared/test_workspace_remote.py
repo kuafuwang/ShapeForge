@@ -292,6 +292,8 @@ def test_the_outer_loop_evaluates_the_remote_submission_through_the_executor(tmp
     from tests.support.orchestrator import code, llm_script, make_orch, run
 
     class Evaluator:
+        transport_kind = "grpc"
+
         def __init__(self) -> None:
             self.requests: list[EvaluationRequest] = []
 

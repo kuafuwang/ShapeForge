@@ -1,10 +1,12 @@
 """Explicit production composition for remote evaluation and self-check.
 
 The default search remains local. This module is used only when the caller
-selects ``--remote-evaluator-config``. It builds a per-session RemoteEvaluatorPool
-and a per-session SelfCheckServer factory; no provider credential is read or
-stored here. The remote grant token and the agent bridge token are separate
-credentials.
+selects ``--remote-evaluator-config``. Remote evaluation is gRPC only: the
+legacy SSH frame transport was removed, so a config that omits ``transport`` or
+names ``legacy-ssh`` is rejected instead of falling back. The module builds a
+shared-channel gRPC factory and a per-session SelfCheckServer; no provider
+credential is read or stored here. The remote grant token and the agent bridge
+token are separate credentials.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from tcenv.remote.client import RemoteError, RemoteEvaluatorPool, remote_evaluator_pool_from_command
+from tcenv.evaluation import EvaluationUnavailable
 
 from .selfcheck_bridge import SelfCheckConfig, SelfCheckServer
 
@@ -39,10 +41,9 @@ def _default_socket_root() -> Path:
 class RemoteEvaluationConfig:
     """Validated host-owned remote evaluation settings."""
 
-    command: tuple[str, ...]
     token_file: Path
     target_id: str
-    transport: str = "legacy-ssh"
+    transport: str
     endpoint: str = ""
     tls_server_name: str = ""
     ca_file: Path | None = None
@@ -72,9 +73,13 @@ class RemoteEvaluationConfig:
     selfcheck_allow_validate: bool = True
     selfcheck_min_improvement: float = 1.005
     selfcheck_noise_z: float = 2.0
-    idle_timeout_s: float | None = 300.0
-    max_clients: int | None = 32
-    timeout_s: float = 480.0
+
+    def __post_init__(self) -> None:
+        if self.transport != "grpc":
+            raise ValueError(
+                f"remote transport {self.transport!r} is not supported; "
+                "only transport='grpc' is accepted"
+            )
 
     @classmethod
     def from_file(cls, path: Path | str) -> "RemoteEvaluationConfig":
@@ -94,44 +99,45 @@ class RemoteEvaluationConfig:
             "expected_task_pack_digest", "task_fingerprint", "publishable_site_ids", "publishable_epochs",
             "socket_root", "selfcheck_reps", "selfcheck_max_timed", "selfcheck_max_gpu_s",
             "selfcheck_allow_validate", "selfcheck_min_improvement", "selfcheck_noise_z",
-            "idle_timeout_s", "max_clients", "timeout_s",
         }
         unknown = set(document) - allowed
         if unknown:
             raise ValueError(f"unknown remote evaluation fields: {sorted(unknown)}")
-        transport = document.get("transport", "legacy-ssh")
-        if transport not in {"legacy-ssh", "grpc"}:
-            raise ValueError("remote transport must be legacy-ssh or grpc")
-        command_value = document.get("command")
+        transport = document.get("transport")
+        if transport is None:
+            raise ValueError(
+                "remote evaluation config must declare transport='grpc'; "
+                "legacy-ssh is no longer supported"
+            )
         if transport == "legacy-ssh":
-            if not isinstance(command_value, list) or not command_value or any(not isinstance(part, str) or not part for part in command_value):
-                raise ValueError("remote command must be a non-empty argv list")
-            command = list(command_value)
-        else:
-            if command_value is not None:
-                raise ValueError("gRPC transport does not accept a command")
-            for name in ("expected_site_id", "expected_device_id"):
-                value = document.get(name)
-                if not isinstance(value, str) or not value:
-                    raise ValueError(f"gRPC transport requires {name}")
-            command = []
-            for name in ("endpoint", "ca_file", "signature_keyring_file"):
-                value = document.get(name)
-                if not isinstance(value, str) or not value:
-                    raise ValueError(f"gRPC transport requires {name}")
-            endpoint = document["endpoint"]
-            if any(character in endpoint for character in "/ \t\n"):
-                raise ValueError("gRPC endpoint must be host:port without credentials")
-            certificate = document.get("client_certificate_file")
-            private_key = document.get("client_private_key_file")
-            if (certificate is None) != (private_key is None):
-                raise ValueError("client_certificate_file and client_private_key_file must be supplied together")
-            if certificate is not None and (not isinstance(certificate, str) or not certificate or not isinstance(private_key, str) or not private_key):
-                raise ValueError("client certificate paths must be non-empty strings")
-            for name in ("api_contract_ids", "evidence_contract_ids", "required_features"):
-                value = document.get(name)
-                if value is not None and (not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value)):
-                    raise ValueError(f"{name} must be a list of non-empty strings")
+            raise ValueError(
+                "remote transport 'legacy-ssh' is no longer supported; use transport='grpc'"
+            )
+        if transport != "grpc":
+            raise ValueError("remote transport must be 'grpc'")
+        if document.get("command") is not None:
+            raise ValueError("gRPC transport does not accept a command")
+        for name in ("expected_site_id", "expected_device_id"):
+            value = document.get(name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"gRPC transport requires {name}")
+        for name in ("endpoint", "ca_file", "signature_keyring_file"):
+            value = document.get(name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"gRPC transport requires {name}")
+        endpoint = document["endpoint"]
+        if any(character in endpoint for character in "/ \t\n"):
+            raise ValueError("gRPC endpoint must be host:port without credentials")
+        certificate = document.get("client_certificate_file")
+        private_key = document.get("client_private_key_file")
+        if (certificate is None) != (private_key is None):
+            raise ValueError("client_certificate_file and client_private_key_file must be supplied together")
+        if certificate is not None and (not isinstance(certificate, str) or not certificate or not isinstance(private_key, str) or not private_key):
+            raise ValueError("client certificate paths must be non-empty strings")
+        for name in ("api_contract_ids", "evidence_contract_ids", "required_features"):
+            value = document.get(name)
+            if value is not None and (not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value)):
+                raise ValueError(f"{name} must be a list of non-empty strings")
         token_file = document.get("token_file")
         target_id = document.get("target_id")
         if not isinstance(token_file, str) or not token_file:
@@ -154,18 +160,11 @@ class RemoteEvaluationConfig:
             value = document.get(name, 15 if name == "selfcheck_reps" else 20)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
-        for name in ("selfcheck_max_gpu_s", "timeout_s"):
-            value = document.get(name, 120.0 if name == "selfcheck_max_gpu_s" else 480.0)
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= 86_400:
-                raise ValueError(f"{name} must be positive")
+        value = document.get("selfcheck_max_gpu_s", 120.0)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= 86_400:
+            raise ValueError("selfcheck_max_gpu_s must be positive")
         if not isinstance(document.get("selfcheck_allow_validate", True), bool):
             raise ValueError("selfcheck_allow_validate must be boolean")
-        idle = document.get("idle_timeout_s", 300.0)
-        if idle is not None and (isinstance(idle, bool) or not isinstance(idle, (int, float)) or not math.isfinite(idle) or idle <= 0):
-            raise ValueError("idle_timeout_s must be positive or null")
-        max_clients = document.get("max_clients", 32)
-        if max_clients is not None and (isinstance(max_clients, bool) or not isinstance(max_clients, int) or max_clients < 1):
-            raise ValueError("max_clients must be positive or null")
         for name, default, lower in (("selfcheck_min_improvement", 1.005, 1.0), ("selfcheck_noise_z", 2.0, 0.0)):
             value = document.get(name, default)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < lower:
@@ -175,7 +174,6 @@ class RemoteEvaluationConfig:
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value <= 86_400:
                 raise ValueError(f"{name} must be positive and bounded")
         return cls(
-            command=tuple(command),
             transport=transport,
             endpoint=str(document.get("endpoint") or ""),
             tls_server_name=str(document.get("tls_server_name") or ""),
@@ -208,9 +206,6 @@ class RemoteEvaluationConfig:
             selfcheck_allow_validate=document.get("selfcheck_allow_validate", True),
             selfcheck_min_improvement=float(document.get("selfcheck_min_improvement", 1.005)),
             selfcheck_noise_z=float(document.get("selfcheck_noise_z", 2.0)),
-            idle_timeout_s=idle,
-            max_clients=max_clients,
-            timeout_s=float(document.get("timeout_s", 480.0)),
         )
 
     def _format(self, value: str, run_id: str, session_id: str, evaluation_kind: str) -> str:
@@ -221,60 +216,33 @@ class RemoteEvaluationConfig:
             evaluation_kind=evaluation_kind,
         )
 
-    def command_for_session(self, key: tuple[str, str, str], evaluation_kind: str = "formal_eval") -> list[str]:
-        """Build one legacy frontend command.
-
-        Concurrent formal/selfcheck processes are independent legacy frontends.
-        Configurations which keep their SQLite state in the command can use the
-        ``{evaluation_kind}`` placeholder to give each frontend its own
-        single-active store instead of violating the owner lock.
-        """
-
-        run_id, session_id, _target = key
-        return [self._format(part, run_id, session_id, evaluation_kind) for part in self.command]
-
     def token_for_session(self, run_id: str, session_id: str) -> str:
         path = Path(self._format(str(self.token_file), run_id, session_id, "formal_eval"))
         try:
             token = path.read_text(encoding="utf-8").strip()
         except OSError as exc:
-            raise RemoteError("session_mismatch", f"cannot read the remote session grant: {exc}", retryable=True) from exc
+            raise EvaluationUnavailable("session_mismatch", f"cannot read the remote session grant: {exc}", retryable=True) from exc
         if not token:
-            raise RemoteError("session_mismatch", "remote session grant is empty")
+            raise EvaluationUnavailable("session_mismatch", "remote session grant is empty")
         return token
 
     def selfcheck_token_for_session(self, run_id: str, session_id: str) -> str:
         if self.selfcheck_token_file is None:
-            raise RemoteError("selfcheck_grant_required", "remote selfcheck requires a separate selfcheck_token_file")
+            raise EvaluationUnavailable("selfcheck_grant_required", "remote selfcheck requires a separate selfcheck_token_file")
         path = Path(self._format(str(self.selfcheck_token_file), run_id, session_id, "selfcheck"))
         try:
             token = path.read_text(encoding="utf-8").strip()
         except OSError as exc:
-            raise RemoteError("session_mismatch", f"cannot read the selfcheck session grant: {exc}", retryable=True) from exc
+            raise EvaluationUnavailable("session_mismatch", f"cannot read the selfcheck session grant: {exc}", retryable=True) from exc
         if not token:
-            raise RemoteError("session_mismatch", "selfcheck session grant is empty")
+            raise EvaluationUnavailable("session_mismatch", "selfcheck session grant is empty")
         return token
 
     def make_selfcheck_evaluator(self, run_id: str):
         """Create a selfcheck-only evaluator; never silently reuse the formal grant."""
         if self.selfcheck_token_file is None:
             raise ValueError("remote selfcheck requires selfcheck_token_file")
-        if self.transport == "grpc":
-            return self._make_grpc_factory(run_id, selfcheck=True)
-        return remote_evaluator_pool_from_command(
-            lambda key: self.command_for_session(key, evaluation_kind="selfcheck"),
-            token=self.selfcheck_token_for_session,
-            run_id=run_id,
-            target_id=self.target_id,
-            expected_site_id=self.expected_site_id,
-            expected_worker_build=self.expected_worker_build,
-            expected_task_pack_digest=self.expected_task_pack_digest,
-            task_fingerprint=self.task_fingerprint,
-            timeout_s=self.timeout_s,
-            signature_key=self._signature_key(),
-            idle_timeout_s=self.idle_timeout_s,
-            max_clients=self.max_clients,
-        )
+        return self._make_grpc_factory(run_id, selfcheck=True)
 
     def _signature_key(self) -> bytes | None:
         if self.signature_key_file is None:
@@ -322,23 +290,8 @@ class RemoteEvaluationConfig:
         )
 
     def make_evaluator(self, run_id: str):
-        """Create an executor whose connections are keyed by run/session/target."""
-        if self.transport == "grpc":
-            return self._make_grpc_factory(run_id, selfcheck=False)
-        return remote_evaluator_pool_from_command(
-            self.command_for_session,
-            token=self.token_for_session,
-            run_id=run_id,
-            target_id=self.target_id,
-            expected_site_id=self.expected_site_id,
-            expected_worker_build=self.expected_worker_build,
-            expected_task_pack_digest=self.expected_task_pack_digest,
-            task_fingerprint=self.task_fingerprint,
-            timeout_s=self.timeout_s,
-            signature_key=self._signature_key(),
-            idle_timeout_s=self.idle_timeout_s,
-            max_clients=self.max_clients,
-        )
+        """Create the gRPC executor; the shared channel is keyed by endpoint/TLS."""
+        return self._make_grpc_factory(run_id, selfcheck=False)
 
     def make_bridge_factory(
         self,

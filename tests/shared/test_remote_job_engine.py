@@ -101,8 +101,6 @@ def test_external_identity_is_separate_from_legacy_epoch_and_digest():
     assert external["evaluator_epoch"] != value.epoch
     assert external["api_contract_id"] == "tcenv.remote.v1.evaluator-api.1"
     assert external["evidence_contract_id"] == "tcenv.remote.v1.evidence.1"
-    from tcenv.remote.service import ServiceIdentity as LegacyIdentity, SessionGrant as LegacyGrant
-    assert LegacyIdentity is ServiceIdentity and LegacyGrant is SessionGrant
 
 
 @pytest.mark.parametrize("source,status", [

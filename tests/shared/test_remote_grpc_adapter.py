@@ -13,7 +13,6 @@ import pytest
 from tcenv.evaluation import EvaluationRequest, verify_result_signature
 from tcenv.remote import contracts
 from tcenv.remote import grpc_contract as gc
-from tcenv.remote.client import RemoteEvaluatorPool
 from tcenv.remote.grpc_client import (
     GrpcEvaluatorFactory,
     GrpcExpected,
@@ -873,8 +872,65 @@ def test_grpc_watch_rejects_an_old_attempt_filter(harness):
     assert excinfo.value.code() == grpc.StatusCode.FAILED_PRECONDITION
 
 
-def test_grpc_does_not_replace_the_legacy_ssh_pool():
-    """The legacy pool remains importable for historical resume compatibility."""
 
-    assert RemoteEvaluatorPool is not None
-    assert "grpc" not in Path("tcenv/remote/client.py").read_text(encoding="utf-8")
+
+class _StubServer:
+    def __init__(self) -> None:
+        self.stops: list[float] = []
+
+    def stop(self, *, grace_s: float = 2.0) -> None:
+        self.stops.append(grace_s)
+
+
+class _StubEngine:
+    """A shutdown that never finishes but must be reported, not swallowed."""
+
+    close_error = RuntimeError("the finalizer is still running")
+
+    def __init__(self) -> None:
+        self.waits: list[float | None] = []
+
+    def close(self, *, wait: float | None = None) -> bool:
+        self.waits.append(wait)
+        return False
+
+
+def test_production_stop_fails_visibly_when_the_shutdown_is_not_verified():
+    from tcenv.remote.grpc_service import ProductionStack
+
+    server = _StubServer()
+    stub = _StubEngine()
+    stack = ProductionStack(engine=stub, server=server, identity=None, task_pack=None)
+    with pytest.raises(TimeoutError, match="verified shutdown"):
+        stack.stop(grace_s=0.2)
+    assert server.stops == [0.2]
+    # It waited for a verified cleanup before declaring the failure.
+    assert stub.waits and stub.waits[0] is not None and stub.waits[0] >= 1.0
+
+
+def test_production_stop_closes_the_engine_store(tmp_path):
+    from tcenv.remote.grpc_service import ProductionStack
+
+    service = make_engine(tmp_path / "state")
+    server = _StubServer()
+    stack = ProductionStack(engine=service, server=server, identity=None, task_pack=None)
+    stack.stop(grace_s=0.2)
+    assert server.stops == [0.2]
+    assert service.closed is True
+    # A second stop is a harmless no-op, not a second cleanup.
+    stack.stop(grace_s=0.2)
+
+
+def test_production_stop_closes_the_engine_even_when_ingress_fails(tmp_path):
+    from tcenv.remote.grpc_service import ProductionStack
+
+    class _ExplodingServer:
+        def stop(self, *, grace_s: float = 2.0) -> None:
+            del grace_s
+            raise RuntimeError("ingress exploded")
+
+    service = make_engine(tmp_path / "state")
+    stack = ProductionStack(engine=service, server=_ExplodingServer(), identity=None, task_pack=None)
+    with pytest.raises(TimeoutError, match="ingress stop failed"):
+        stack.stop(grace_s=0.2)
+    assert service.closed is True

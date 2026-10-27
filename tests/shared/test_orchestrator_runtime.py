@@ -8,7 +8,6 @@ import json
 import pytest
 
 from taic.kernel_agent import AgentResult
-from tcenv.remote.client import RemoteError
 from tcenv.evaluation import EvaluationUnavailable
 from tcenv.evaluation import EvaluationResult, local_provenance, receipt_id_for
 
@@ -16,6 +15,8 @@ from ..support.orchestrator import code, fake_eval, llm_script, make_orch, run
 
 
 class RecordingEvaluator:
+    transport_kind = "grpc"
+
     def __init__(self) -> None:
         self.requests = []
         self.base = fake_eval([])
@@ -93,8 +94,10 @@ def test_fixed_selfcheck_socket_is_bound_as_host_bridge(tmp_path):
 
 
 class FailingEvaluator:
+    transport_kind = "grpc"
+
     def formal(self, request):
-        raise RemoteError("transport_closed", "simulated disconnect")
+        raise EvaluationUnavailable("transport_closed", "simulated disconnect")
 
     def selfcheck(self, request):
         raise AssertionError
@@ -329,3 +332,63 @@ def test_resume_rejects_a_grpc_run_without_its_contract_identities(tmp_path):
             evaluate_fn=fake_eval([]), evaluator=GrpcShapedEvaluator(),
             publishable_site_ids={"local"}, publishable_epochs={"e" * 64},
         )
+
+
+class NoTransportEvaluator(RecordingEvaluator):
+    transport_kind = ""
+
+
+def test_a_remote_evaluator_must_declare_its_transport(tmp_path):
+    """@brief 远程 evaluator 不声明 transport 时失败，不能再默认成 legacy-ssh。"""
+    from taic.orchestrator import RunStartError
+
+    with pytest.raises(RunStartError, match="must declare its transport"):
+        make_orch(
+            tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0,
+            evaluator=NoTransportEvaluator(), publishable_site_ids={"local"},
+            publishable_epochs={_test_epoch()},
+        )
+
+
+def test_resume_rejects_a_legacy_ssh_manifest_without_rewriting_it(tmp_path):
+    """@brief 旧 legacy-ssh execution.json 的 resume 明确失败且不改写 manifest。"""
+    from taic.orchestrator import RunStartError
+    from tests.support.fakes import FakeClient
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0)
+    manifest = orch.run_dir / "execution.json"
+    manifest.write_text(json.dumps({
+        "schema_version": 1, "evaluation": "remote", "transport": "legacy-ssh",
+        "publishable_site_ids": ["local"], "publishable_epochs": ["e" * 64],
+    }))
+    before = manifest.read_text()
+    with pytest.raises(RunStartError, match="legacy-ssh"):
+        type(orch)(
+            orch.task_name, orch.dtype, orch.size, orch.cfg, orch.search,
+            run_dir=orch.run_dir, resuming=True, client=FakeClient([]),
+            evaluate_fn=fake_eval([]), evaluator=GrpcShapedEvaluator(),
+            publishable_site_ids={"local"}, publishable_epochs={"e" * 64},
+        )
+    assert manifest.read_text() == before
+
+
+def test_resume_rejects_a_remote_manifest_without_a_transport(tmp_path):
+    """@brief 缺 transport 的旧远程 manifest 按 legacy 解释后拒绝，不换成 gRPC。"""
+    from taic.orchestrator import RunStartError
+    from tests.support.fakes import FakeClient
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0)
+    manifest = orch.run_dir / "execution.json"
+    manifest.write_text(json.dumps({
+        "schema_version": 1, "evaluation": "remote",
+        "publishable_site_ids": ["local"], "publishable_epochs": ["e" * 64],
+    }))
+    before = manifest.read_text()
+    with pytest.raises(RunStartError, match="no explicit evaluator transport"):
+        type(orch)(
+            orch.task_name, orch.dtype, orch.size, orch.cfg, orch.search,
+            run_dir=orch.run_dir, resuming=True, client=FakeClient([]),
+            evaluate_fn=fake_eval([]), evaluator=GrpcShapedEvaluator(),
+            publishable_site_ids={"local"}, publishable_epochs={"e" * 64},
+        )
+    assert manifest.read_text() == before

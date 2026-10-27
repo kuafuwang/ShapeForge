@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import select
@@ -790,3 +791,48 @@ def test_the_bridge_streams_the_child_instead_of_buffering_with_communicate(tmp_
     # result frame is written by ``main`` and never carries the legacy bytes.
     assert output.getvalue() == b""
     assert report["legacy_report_marker"] == "report-from-legacy-worker"
+
+
+def _production_request(*, cache_policy: str):
+    from tcenv.remote.protocol import EvaluationRequest
+
+    source = "kernel void demo() {}"
+    return EvaluationRequest(
+        kind="formal_eval",
+        request_id=f"production-{cache_policy}",
+        run_id="run-1",
+        session_id="session-1",
+        task="relu",
+        dtype="fp16",
+        size="small",
+        target_id="sim-npu-test",
+        task_fingerprint="a" * 64,
+        candidate_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        source=source,
+        mode="quick",
+        seed=3,
+        reps=2,
+        queue_timeout_s=2.0,
+        candidate_timeout_s=2.0,
+        cache_policy=cache_policy,
+    )
+
+
+def test_production_cache_policy_is_mapped(monkeypatch):
+    """@brief reuse/refresh/disabled 映射到 eval_cache，不静默改变评测缓存语义。"""
+    from tcenv.evaluate import EvalReport
+    from tcenv.remote.production import ProductionBackend
+
+    seen = []
+    def fake(*args, **kwargs):
+        seen.append(kwargs)
+        request = args[3] if len(args) > 3 else None
+        del request
+        return EvalReport(task="relu", dtype="fp16", size="small", mode=kwargs.get("mode", "quick"), target_id="sim-npu-test")
+    monkeypatch.setattr("tcenv.evaluate.evaluate", fake)
+    ProductionBackend().evaluate(_production_request(cache_policy="reuse"))
+    assert seen[-1]["eval_cache"] is True and seen[-1]["eval_cache_refresh"] is False
+    ProductionBackend().evaluate(_production_request(cache_policy="disabled"))
+    assert seen[-1]["eval_cache"] is False and seen[-1]["eval_cache_refresh"] is False
+    ProductionBackend().evaluate(_production_request(cache_policy="refresh"))
+    assert seen[-1]["eval_cache"] is True and seen[-1]["eval_cache_refresh"] is True

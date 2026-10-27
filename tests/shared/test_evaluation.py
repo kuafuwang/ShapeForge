@@ -157,3 +157,13 @@ def test_kernel_source_alias_matches_source():
     """@brief 旧 API 的 kernel_source 拼写可作为只读兼容属性使用。"""
     request = EvaluationRequest(task="relu", dtype="fp16", size="small", source="body")
     assert request.kernel_source == "body"
+
+
+def test_provenance_from_dict_rejects_missing_fields():
+    """@brief provenance 缺字段必须是结构化错误，不能静默接受。"""
+    import pytest
+
+    from tcenv.evaluation import EvaluationError
+
+    with pytest.raises(EvaluationError):
+        EvaluatorProvenance.from_dict({})
