@@ -1041,3 +1041,71 @@ def test_a_health_proof_without_the_known_good_probe_fails_capabilities(tmp_path
         assert engine.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
     finally:
         engine.close(wait=5)
+
+
+# -- GetCapabilities must not probe a leased device group -------------------
+def test_capabilities_refuses_while_an_attempt_leases_the_group(tmp_path):
+    """@brief 有活跃 attempt 时 GetCapabilities 不得执行 probe/health，也不广告 available。"""
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    controller = _CountingController(ledger_path)
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=controller,
+        worker_env={"TCENV_VENDOR_A_SLOW": "1"},
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-lease-busy-1", source=SOURCE)
+        npu_submit(engine, request)                     # probes once before running
+        ledger = VendorLedger(ledger_path)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not ledger.read()["device_running"]:
+            time.sleep(0.02)
+        assert ledger.read()["device_running"], "the attempt never started"
+        probe_before = controller.probe_calls
+        health_before = controller.health_calls
+        probes_before = len(ledger.read()["probes"])
+
+        with pytest.raises(JobError) as excinfo:
+            npu_capabilities(engine)
+        assert excinfo.value.code == "failed_precondition"
+        assert "executing an attempt" in str(excinfo.value)
+        # No device operation ran while the lease was held.
+        assert controller.probe_calls == probe_before
+        assert controller.health_calls == health_before
+        assert len(ledger.read()["probes"]) == probes_before
+        assert engine.store._conn.execute(
+            "SELECT COUNT(*) FROM capabilities WHERE issued_at_ms > 0",
+        ).fetchone()[0] >= 1  # only the pre-submit capability exists
+    finally:
+        engine.close(wait=5)
+
+
+def test_the_controller_refuses_the_known_good_probe_while_running(tmp_path):
+    """@brief 设备边界也不在 running marker 存在时执行 known-good 探针。"""
+    from tests.support.vendor_sim.vendor_a import FakeVendorADriver
+
+    ledger_path = tmp_path / "ledger.json"
+    ledger = VendorLedger(ledger_path)
+    driver = FakeVendorADriver(ledger)
+    prepared = driver.prepare(
+        build_execution(), SOURCE, {"attempt_id": "attempt-live", "lease_fence": 1},
+    )
+    driver.execute(prepared, deadline_monotonic=time.monotonic() + 5)
+    controller = FakeVendorAController(ledger_path)
+    profile = build_execution().device_group.to_dict()
+
+    probes_before = len(ledger.read()["probes"])
+    facts = controller.probe({"device_group_id": profile["device_group_id"]})
+    assert facts.state == "busy"
+    health = controller.health_check({"device_group_id": profile["device_group_id"]})
+    assert health.ok is False
+    assert health.executed_known_good is False
+    assert "executing an attempt" in health.detail
+    assert len(ledger.read()["probes"]) == probes_before
+
+    # Once the lease is released the known-good probe runs again.
+    driver.close(prepared)
+    healthy = controller.health_check({"device_group_id": profile["device_group_id"]})
+    assert healthy.ok is True and healthy.executed_known_good is True
+    assert len(ledger.read()["probes"]) == probes_before + 1

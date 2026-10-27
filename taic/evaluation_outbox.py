@@ -179,10 +179,55 @@ class EvaluationOutbox:
             ("evidence_contract_id", self.evidence_contract_id),
         ):
             previous = document.get(key)
-            if previous and expected and previous != expected:
+            if self.npu_contract:
+                # The NPU row must carry every identity field: a missing field
+                # is a rewritten row, not an older one.
+                if previous != expected:
+                    raise EvaluationUnavailable(
+                        f"{key}_mismatch",
+                        f"evaluation outbox {key} differs from the current evaluator",
+                    )
+            elif previous and expected and previous != expected:
                 raise EvaluationUnavailable(
                     f"{key}_mismatch", f"evaluation outbox {key} differs from the current evaluator"
                 )
+
+    def _check_npu_row(
+        self, request: EvaluationRequest, document: Any, *, immutable_completed: bool,
+    ) -> None:
+        """Validate an existing NPU row before any state or result rewrite.
+
+        Every NPU write path (`begin`, `complete`, `unavailable`) runs this on
+        the row it found, so a tampered version, contract id, request id,
+        request digest or CandidateDigest can never be silently rewritten, and
+        a completed row cannot be replaced by a second `complete()`.
+        """
+
+        if not self.npu_contract:
+            return
+        if not isinstance(document, dict):
+            raise EvaluationUnavailable("outbox_corrupt", "evaluation outbox row is not an object")
+        self._check_binding(document)
+        if document.get("request_id") != request.request_id:
+            raise EvaluationUnavailable("outbox_conflict", "outbox request id is bound to a different request")
+        if document.get("request_digest") != request.request_digest:
+            raise EvaluationUnavailable("outbox_conflict", "outbox request id is bound to a different request digest")
+        candidate = document.get("candidate_digest")
+        if (
+            not isinstance(candidate, dict)
+            or candidate.get("algorithm") != "sha256"
+            or candidate.get("value") != request.candidate_sha256
+        ):
+            raise EvaluationUnavailable(
+                "outbox_corrupt", "outbox CandidateDigest does not bind the request source",
+            )
+        status = document.get("status")
+        if status not in {"pending", "unavailable", "completed"}:
+            raise EvaluationUnavailable("outbox_corrupt", "unknown evaluation outbox status")
+        if immutable_completed and status == "completed":
+            raise EvaluationUnavailable(
+                "outbox_conflict", "a completed evaluation outbox row is immutable",
+            )
 
     def _wire_receipt(self, request: EvaluationRequest, result: EvaluationResult) -> dict[str, Any]:
         """Validate the signed NPU wire receipt and recompute its id.
@@ -283,19 +328,14 @@ class EvaluationOutbox:
                 document = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError) as exc:
                 raise EvaluationUnavailable("outbox_corrupt", f"cannot read evaluation outbox: {exc}") from exc
-            if not isinstance(document, dict) or document.get("request_digest") != request.request_digest:
+            if not isinstance(document, dict):
                 raise EvaluationUnavailable("outbox_conflict", "outbox request id is bound to a different request")
-            self._check_binding(document)
             if self.npu_contract:
-                candidate = document.get("candidate_digest")
-                if (
-                    not isinstance(candidate, dict)
-                    or candidate.get("algorithm") != "sha256"
-                    or candidate.get("value") != request.candidate_sha256
-                ):
-                    raise EvaluationUnavailable(
-                        "outbox_corrupt", "outbox CandidateDigest does not bind the request source",
-                    )
+                self._check_npu_row(request, document, immutable_completed=False)
+            else:
+                if document.get("request_digest") != request.request_digest:
+                    raise EvaluationUnavailable("outbox_conflict", "outbox request id is bound to a different request")
+                self._check_binding(document)
             self.previous_status = str(document.get("status") or "")
             previous_epoch = document.get("evaluator_epoch")
             if epoch and previous_epoch and previous_epoch != epoch:
@@ -369,13 +409,22 @@ class EvaluationOutbox:
         self._validate_result(request, result)
         path = self._state_path(request.request_id)
         result_path = self._result_path(request.request_id)
-        write_json_atomic(result_path, result.to_dict())
+        # Validate the durable row *before* any result or state byte is written:
+        # a tampered or already completed row must not gain a result file.
         try:
             import json
 
-            document = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else self._document(request, epoch=result.provenance.epoch, status="pending", created_at=time.time())
+            if path.is_file():
+                document = json.loads(path.read_text(encoding="utf-8"))
+                self._check_npu_row(request, document, immutable_completed=True)
+            else:
+                document = self._document(
+                    request, epoch=result.provenance.epoch, status="pending",
+                    created_at=time.time(),
+                )
         except (OSError, ValueError) as exc:
             raise EvaluationUnavailable("outbox_corrupt", f"cannot update evaluation outbox: {exc}") from exc
+        write_json_atomic(result_path, result.to_dict())
         receipt = result.receipt if isinstance(result.receipt, dict) else {}
         document.update({
             "evaluator_epoch": result.provenance.epoch,
@@ -409,8 +458,18 @@ class EvaluationOutbox:
         try:
             import json
 
-            document = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else self._document(request, epoch="", status="pending", created_at=time.time())
-        except (OSError, ValueError):
+            if path.is_file():
+                document = json.loads(path.read_text(encoding="utf-8"))
+                self._check_npu_row(request, document, immutable_completed=False)
+            else:
+                document = self._document(request, epoch="", status="pending", created_at=time.time())
+        except (OSError, ValueError) as exc:
+            if self.npu_contract:
+                # A corrupt NPU row must never be silently re-initialized: its
+                # identity is unknowable, so the caller sees the corruption.
+                raise EvaluationUnavailable(
+                    "outbox_corrupt", f"cannot read evaluation outbox: {exc}",
+                ) from exc
             document = self._document(request, epoch="", status="pending", created_at=time.time())
         code = getattr(error, "code", "evaluation_unavailable")
         retryable = bool(getattr(error, "retryable", False))

@@ -238,9 +238,29 @@ class FakeVendorAController:
         self.healthy = bool(healthy)
         self.generation = generation
 
+    def _busy(self) -> bool:
+        try:
+            return bool(self.ledger.running_markers())
+        except LedgerError:
+            # An unreadable ledger cannot prove the group is idle.
+            return True
+
     def probe(self, profile: Mapping[str, Any]) -> VendorFacts:
         if profile.get("device_group_id") != DEVICE_GROUP_ID:
             raise ValueError("fake vendor A probe received another device group")
+        if self._busy():
+            # A device group that is executing an attempt is not probed and does
+            # not record a probe entry; the engine refuses to advertise it.
+            return VendorFacts(
+                vendor_id=VENDOR_ID, device_group_id=DEVICE_GROUP_ID,
+                profile_digest=PROFILE_DIGEST, topology_digest=TOPOLOGY_DIGEST,
+                resource_generation=self.generation, logical_devices=1,
+                driver_version="fake-a-driver-1", firmware_version="fake-a-fw-1",
+                runtime_version="fake-a-runtime-1",
+                timing_sources=("DEVICE_EVENT",),
+                state="busy",
+                diagnostics={"simulated": True, "busy": True},
+            )
         self.ledger.record_probe(
             vendor_version="fake-a-1", resource_generation=self.generation,
         )
@@ -390,6 +410,14 @@ class FakeVendorAController:
     def health_check(self, profile: Mapping[str, Any]) -> HealthProof:
         if profile.get("device_group_id") != DEVICE_GROUP_ID:
             return HealthProof(False, DEVICE_GROUP_ID, self.generation, "wrong device group")
+        if self._busy():
+            # The known-good probe must not run concurrently with a candidate
+            # execution (plan §5); report it unexecuted so the engine refuses.
+            return HealthProof(
+                False, DEVICE_GROUP_ID, self.generation,
+                "the device group is executing an attempt; the known-good probe is not run",
+                executed_known_good=False,
+            )
         self.ledger.record_probe(
             vendor_version="fake-a-1", resource_generation=self.generation,
         )

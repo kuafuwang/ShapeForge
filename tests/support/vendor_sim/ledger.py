@@ -117,6 +117,21 @@ class VendorLedger:
                 key: binding.get(key) for key in _BINDING_KEYS
             }
 
+    def running_markers(self) -> list[dict[str, Any]]:
+        """Every running marker with the binding it was taken under."""
+
+        with self._locked() as document:
+            return [
+                {
+                    "marker": marker,
+                    "binding": (
+                        None if document["running_scope"].get(marker) is None
+                        else dict(document["running_scope"][marker])
+                    ),
+                }
+                for marker in document["device_running"]
+            ]
+
     def attempt_running(self, attempt_id: str, lease_fence: int) -> list[dict[str, Any]]:
         """Return this attempt/fence's running markers with their binding."""
 

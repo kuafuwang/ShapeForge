@@ -746,3 +746,86 @@ def test_a_stored_request_with_two_candidate_identities_is_rejected():
     document["candidate_sha256"] = request.candidate_digest["value"]
     with pytest.raises(JobError, match="also carries candidate_sha256"):
         ExternalEvaluationRequest.from_stored(document, request.source)
+
+
+def _begin_npu_row(tmp_path, harness, request_id: str):
+    outbox = _npu_outbox(tmp_path / "run")
+    request = bind_wire_digest(_legacy_request(request_id), harness.factory, outbox)
+    assert outbox.begin(request, epoch=harness.factory.epoch) is None
+    return outbox, request
+
+
+def test_npu_complete_rejects_a_tampered_pending_row_before_writing_the_result(tmp_path):
+    """@brief complete 在任何 result/state 写入前必须核对既有行，篡改或已完成行都不可改写。"""
+    with NpuGrpcHarness(tmp_path) as harness:
+        outbox, request = _begin_npu_row(tmp_path, harness, "npu-row-guard-1")
+        result = harness.factory.formal(request)
+        state_path = outbox._state_path(request.request_id)
+        result_path = outbox._result_path(request.request_id)
+
+        for mutate in (
+            lambda row: row.update(schema_version=1),
+            lambda row: row.update(request_digest="0" * 64),
+            lambda row: row.pop("api_contract_id"),
+            lambda row: row.update(candidate_digest={"algorithm": "sha256", "value": "0" * 64}),
+        ):
+            row = json.loads(state_path.read_text(encoding="utf-8"))
+            mutate(row)
+            state_path.write_text(json.dumps(row), encoding="utf-8")
+            assert not result_path.exists()
+            with pytest.raises(EvaluationUnavailable):
+                outbox.complete(request, result)
+            # The rejected complete wrote neither the result nor a completed row.
+            assert not result_path.exists()
+            assert json.loads(state_path.read_text(encoding="utf-8")).get("status") != "completed"
+
+        # Restore a valid pending row, then complete once.
+        state_path.write_text(json.dumps(outbox._document(
+            request, epoch=harness.factory.epoch, status="pending", created_at=1.0,
+        )), encoding="utf-8")
+        outbox.complete(request, result)
+        completed = json.loads(state_path.read_text(encoding="utf-8"))
+        assert completed["status"] == "completed"
+
+        # A completed row is immutable: no second complete may rewrite it.
+        with pytest.raises(EvaluationUnavailable, match="immutable"):
+            outbox.complete(request, result)
+
+
+def test_npu_begin_and_unavailable_reject_a_tampered_or_corrupt_row(tmp_path):
+    """@brief begin 与 unavailable 也核对既有行；损坏行不得被静默重建。"""
+    with NpuGrpcHarness(tmp_path) as harness:
+        outbox, request = _begin_npu_row(tmp_path, harness, "npu-row-guard-2")
+        state_path = outbox._state_path(request.request_id)
+
+        # Missing contract identity fields are not "older rows" for the NPU.
+        row = json.loads(state_path.read_text(encoding="utf-8"))
+        row.pop("api_contract_id")
+        row.pop("evidence_contract_id")
+        state_path.write_text(json.dumps(row), encoding="utf-8")
+        with pytest.raises(EvaluationUnavailable, match="api_contract_id"):
+            _npu_outbox(tmp_path / "run").begin(request, epoch=harness.factory.epoch)
+        with pytest.raises(EvaluationUnavailable):
+            _npu_outbox(tmp_path / "run").unavailable(request, EvaluationUnavailable("transport_timeout", "boom"))
+
+        # A corrupt row is a hard error, never re-initialized.
+        state_path.write_text("{not json", encoding="utf-8")
+        with pytest.raises(EvaluationUnavailable, match="corrupt|outbox"):
+            _npu_outbox(tmp_path / "run").begin(request, epoch=harness.factory.epoch)
+        with pytest.raises(EvaluationUnavailable, match="corrupt|outbox"):
+            _npu_outbox(tmp_path / "run").unavailable(
+                request, EvaluationUnavailable("transport_timeout", "boom"),
+            )
+        assert state_path.read_text(encoding="utf-8") == "{not json"
+
+
+def test_legacy_outbox_binding_still_tolerates_older_rows(tmp_path):
+    """@brief 旧 Metal 行为不变：缺 contract 字段的历史行仍按原规则处理。"""
+    request = _legacy_request("legacy-binding-1")
+    outbox = EvaluationOutbox(tmp_path, transport="grpc")
+    outbox.begin(request, epoch="e" * 64)
+    path = outbox._state_path(request.request_id)
+    row = json.loads(path.read_text(encoding="utf-8"))
+    row.pop("api_contract_id")
+    path.write_text(json.dumps(row), encoding="utf-8")
+    assert EvaluationOutbox(tmp_path, transport="grpc").begin(request, epoch="e" * 64) is None

@@ -488,6 +488,9 @@ class JobEngine:
             # read-only (no nonce use, no capability row); the durable write
             # still happens in store.get_capabilities below.
             self.store.require_grant(grant_token)
+            # The known-good probe owns the device group: it never runs while a
+            # candidate attempt is active (the controller re-checks the lease).
+            self._require_idle_device_group()
         # Then probe the trusted device: a group that cannot be verified must
         # not consume the client nonce or leave a durable capability behind.
         device_target = self._device_capability() if self.contract.npu_source else {}
@@ -516,6 +519,18 @@ class JobEngine:
         return replace(capabilities, target_capabilities=(target,))
 
     # -- trusted device facts ----------------------------------------------
+    def _require_idle_device_group(self) -> None:
+        """Refuse capability probing while an attempt leases the device group."""
+
+        with self._active_lock:
+            active = self._active
+        if active is not None or self.store.running_attempts():
+            raise JobError(
+                "failed_precondition",
+                "the device group is executing an attempt; GetCapabilities does not "
+                "probe it until the lease is released",
+            )
+
     def _device_profile(self) -> dict[str, str]:
         if self.npu_execution is None:
             raise JobError("failed_precondition", "this evaluator has no NPU device binding")

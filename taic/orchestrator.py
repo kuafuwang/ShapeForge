@@ -1500,9 +1500,13 @@ class Orchestrator:
             # durable row, Submit, the receipt and any later resume.
             request = bind_wire_digest(request, self.evaluator, self._outbox)
             result = None
+            replayed_from_outbox = False
             resume_interrupted = False
             if self._outbox is not None:
                 result = self._outbox.begin(request, epoch=current_epoch)
+                # A completed outbox row already owns a durable result envelope;
+                # rewriting it is neither needed nor allowed.
+                replayed_from_outbox = result is not None
                 resume_interrupted = result is None and self._outbox.previous_status in {"pending", "unavailable"}
             if result is None:
                 resume_fn = getattr(self.evaluator, "formal_resume", None)
@@ -1555,7 +1559,7 @@ class Orchestrator:
                 raise EvaluationUnavailable("result_mismatch", "report target does not match the request")
             self._check_publication(result)
             self._observe_evaluator(provenance)
-            if self._outbox is not None:
+            if self._outbox is not None and not replayed_from_outbox:
                 self._outbox.complete(request, result)
             return parsed
         except EvaluationUnavailable as exc:
