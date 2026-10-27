@@ -203,14 +203,17 @@ def npu_request(
     run_id: str = "npu-run-1", session_id: str = "npu-session-1",
     candidate_timeout_ms: int = 3000, queue_timeout_ms: int = 3000,
     reps: int = 2, mode: str = "quick", kind: str = "formal_eval",
+    generation: str = "1",
 ) -> ExternalEvaluationRequest:
     from tcenv.remote.job_types import (
         CandidateDigest, DeviceGroupBinding, NpuExecutionSpec, NpuSourceRequest,
     )
     from tests.support.vendor_sim.vendor_a import VENDOR_A_GROUP
 
+    from tests.support.vendor_sim.vendor_a import build_execution
+
     group = VENDOR_A_GROUP
-    execution = NpuExecutionSpec(device_group=group)
+    execution = build_execution(generation) if generation != "1" else NpuExecutionSpec(device_group=group)
     npu = NpuSourceRequest(
         candidate_digest=CandidateDigest("sha256", hashlib.sha256(source).hexdigest()),
         execution=execution,
@@ -247,6 +250,7 @@ def npu_engine(
 
     env = dict(worker_env or {})
     env["TCENV_VENDOR_LEDGER"] = str(ledger_path)
+    env["TCENV_VENDOR_A_GENERATION"] = generation
     return JobEngine(
         identity=npu_identity(), grants=grants or [npu_grant()],
         worker_command=[sys.executable, "-m", "tests.support.vendor_sim.worker_a"],

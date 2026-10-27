@@ -378,7 +378,10 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
 - 设备组绑定：`device_group_id/vendor_id/profile_digest/topology_digest/resource_generation`
   进入 capability（target.device_groups + provenance）、request digest、receipt、provenance
   与 Retry（Retry capability 的 device group 必须与 job 记录一致，串组即
-  `failed_precondition`）。attempt/lease 把接受时的完整绑定持久化到
+  `failed_precondition`）。Submit 也在写入任何 job 之前逐项复核 capability 的完整绑定与
+  request execution、accepted provenance 一致（含 artifact/launch/subtype/timing），幂等回放
+  还要求与既有 job 的绑定一致，因此旧 generation 的 capability 不能为新 generation 的
+  请求建立 job，也不会创建 attempt 或启动 worker。attempt/lease 把接受时的完整绑定持久化到
   `attempts.device_binding_json`（store schema v4），`CleanupProof` 携带同一组
   vendor/profile/topology/generation；cancel/reconcile 只对“该 lease 接受时的绑定”生效，
   重启换组时既不向新组 controller 发取消，也不能把旧 attempt 标成 interrupted，只能
@@ -417,17 +420,19 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   controller 发取消。Host API 时间与 device event 时间分开记录，`candidate_us` 取自
   device event。
 - 验证证据（每条命令各自单独跑）：
-  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **50 passed**
-  （含 v3→v4 迁移/备份恢复、wire receipt 与 host HMAC 篡改、时钟/候选时间自相矛盾、
-  hanging cancel/reconcile、终态 request/provenance/attempt 绑定篡改回归）；
+  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **51 passed**
+  （wire receipt 与 host HMAC 篡改、时钟/候选时间自相矛盾、hanging cancel/reconcile、
+  终态 request/provenance/attempt 绑定篡改、Submit 跨 generation capability）；
   `test_remote_grpc_{adapter,tls,contract,revocation}.py` 与
   `test_remote_{conformance,go_conformance}.py` 六个旧文件 **62 passed**；
   `test_orchestrator_runtime.py` **18 passed**（含 NPU host 接线回归）；
   `test_remote_{job_engine,job_recovery,legacy_worker_bridge,container_engine,
   container_supervisor,runtime}.py` + `test_evaluation_outbox.py` **265 passed, 1 skipped**
-  （跳过项是 Linux-only 的 `PF_KTHREAD` 检查）；`test_selfcheck_bridge.py` 在本机围栏里
-  **18 failed, 1 passed**（全部是短 TMPDIR 导致的 AF_UNIX 路径超长，非围栏环境应全通过）。
-  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2249 passed / 6 skipped /
+  （跳过项是 Linux-only 的 `PF_KTHREAD` 检查；v3→v4 原位迁移与 v3 备份恢复回归在
+  `test_remote_job_recovery.py`，`_validate_durable_state` 的终态读校验同文件覆盖）；
+  `test_selfcheck_bridge.py` 在本机围栏默认 TMPDIR 下 **18 failed, 1 passed**（全部是
+  短 TMPDIR 导致的 AF_UNIX 路径超长），`TMPDIR=/tmp` 下 **19 passed**。
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2250 passed / 6 skipped /
   32 failed**。这批失败全部
   是本机 hmz 围栏环境造成：`test_selfcheck_bridge.py` 的 AF_UNIX 路径超长（短 TMPDIR），
   `ps` 被禁（`test_children`、`test_run_detached`、`test_triton_baseline`）与 HOME 权威

@@ -99,8 +99,9 @@ class FakeVendorADriver:
 
     vendor_id = VENDOR_ID
 
-    def __init__(self, ledger: VendorLedger | None = None) -> None:
+    def __init__(self, ledger: VendorLedger | None = None, *, generation: str | None = None) -> None:
         self.ledger = ledger or VendorLedger(_ledger_path())
+        self.generation = generation or os.environ.get("TCENV_VENDOR_A_GENERATION") or RESOURCE_GENERATION
 
     def _compile_source_to_elf(self, source: bytes) -> bytes:
         # A deterministic fake ELF/SIMT container; not a real ABI or compiler.
@@ -114,7 +115,8 @@ class FakeVendorADriver:
         if not isinstance(spec, NpuExecutionSpec):
             raise ValueError("vendor A requires the typed NpuExecutionSpec")
         normalized = npu_execution_document(spec.to_dict())
-        if normalized["device_group"] != VENDOR_A_GROUP.to_dict():
+        expected_group = {**VENDOR_A_GROUP.to_dict(), "resource_generation": self.generation}
+        if normalized["device_group"] != expected_group:
             raise ValueError("vendor A received a different device group/profile/topology/generation")
         attempt_id = attempt_context.get("attempt_id")
         lease_fence = attempt_context.get("lease_fence")
@@ -191,7 +193,7 @@ class FakeVendorADriver:
                 "algorithm": "sha256",
                 "value": prepared.handles["source_sha256"],
             },
-            "device_group": VENDOR_A_GROUP.to_dict(),
+            "device_group": {**VENDOR_A_GROUP.to_dict(), "resource_generation": self.generation},
             "timing": {
                 "source": "DEVICE_EVENT",
                 "clock_domain": CLOCK_DOMAIN,
@@ -223,21 +225,25 @@ class FakeVendorAController:
 
     vendor_id = VENDOR_ID
 
-    def __init__(self, ledger_path: Path | str, *, release_supported: bool = True, healthy: bool = True) -> None:
+    def __init__(
+        self, ledger_path: Path | str, *, release_supported: bool = True,
+        healthy: bool = True, generation: str = RESOURCE_GENERATION,
+    ) -> None:
         self.ledger = VendorLedger(ledger_path)
         self.release_supported = bool(release_supported)
         self.healthy = bool(healthy)
+        self.generation = generation
 
     def probe(self, profile: Mapping[str, Any]) -> VendorFacts:
         if profile.get("device_group_id") != DEVICE_GROUP_ID:
             raise ValueError("fake vendor A probe received another device group")
         self.ledger.record_probe(
-            vendor_version="fake-a-1", resource_generation=RESOURCE_GENERATION,
+            vendor_version="fake-a-1", resource_generation=self.generation,
         )
         return VendorFacts(
             vendor_id=VENDOR_ID, device_group_id=DEVICE_GROUP_ID,
             profile_digest=PROFILE_DIGEST, topology_digest=TOPOLOGY_DIGEST,
-            resource_generation=RESOURCE_GENERATION, logical_devices=1,
+            resource_generation=self.generation, logical_devices=1,
             driver_version="fake-a-driver-1", firmware_version="fake-a-fw-1",
             runtime_version="fake-a-runtime-1",
             timing_sources=("DEVICE_EVENT",),
@@ -254,7 +260,7 @@ class FakeVendorAController:
             "launch_subtypes": ["SIMT"],
             "timing_sources": ["DEVICE_EVENT"],
             "device_groups": [{
-                **VENDOR_A_GROUP.to_dict(),
+                **{**VENDOR_A_GROUP.to_dict(), "resource_generation": self.generation},
                 "logical_devices": 1,
                 "state": "available" if self.healthy else "quarantined",
                 "timing_sources": ["DEVICE_EVENT"],
@@ -271,7 +277,7 @@ class FakeVendorAController:
         return CleanupProof(
             attempt_id=attempt_id, lease_fence=lease_fence,
             device_group_id=group.device_group_id,
-            resource_generation=group.resource_generation,
+            resource_generation=self.generation,
             vendor_id=group.vendor_id,
             profile_digest=group.profile_digest,
             topology_digest=group.topology_digest,
@@ -330,11 +336,11 @@ class FakeVendorAController:
         if profile.get("device_group_id") != DEVICE_GROUP_ID:
             return HealthProof(False, DEVICE_GROUP_ID, RESOURCE_GENERATION, "wrong device group")
         self.ledger.record_probe(
-            vendor_version="fake-a-1", resource_generation=RESOURCE_GENERATION,
+            vendor_version="fake-a-1", resource_generation=self.generation,
         )
         return HealthProof(
             ok=self.healthy, device_group_id=DEVICE_GROUP_ID,
-            resource_generation=RESOURCE_GENERATION,
+            resource_generation=self.generation,
             detail="fake known-good probe" if self.healthy else "fake known-good probe failed",
             executed_known_good=True,
         )

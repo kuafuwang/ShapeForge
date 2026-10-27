@@ -33,11 +33,12 @@ class NpuGrpcHarness:
         signing_key: bytes | None = NPU_SIGNING_KEY,
         required_features: tuple[str, ...] = NPU_FEATURES,
         token: str = NPU_TOKEN,
+        generation: str = "1",
     ) -> None:
         self.root = root
         self.ledger_path = ledger or (root / "vendor-ledger.json")
         self.controller = controller or FakeVendorAController(
-            self.ledger_path, release_supported=release_supported,
+            self.ledger_path, release_supported=release_supported, generation=generation,
         )
         self.key = signing_key
         keyring = {} if signing_key is None else {NPU_SIGNING_KEY_ID: signing_key}
@@ -45,7 +46,7 @@ class NpuGrpcHarness:
             root / "state", ledger_path=self.ledger_path, controller=self.controller,
             worker_env=worker_env, signing_key=signing_key,
             signing_key_id=NPU_SIGNING_KEY_ID if signing_key is not None else "",
-            signing_keyring=keyring,
+            signing_keyring=keyring, generation=generation,
         )
         self.server = build_server(
             self.engine,

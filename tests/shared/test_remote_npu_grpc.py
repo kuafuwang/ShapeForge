@@ -13,6 +13,7 @@ from grpc_status import rpc_status
 from tcenv.remote import contracts
 from tcenv.remote import grpc_contract as gc
 from tcenv.remote.v1 import evaluator_pb2 as pb
+from tcenv.remote.job_types import JobError
 from tests.support.job_engine import (
     NPU_FEATURES,
     NPU_TARGET,
@@ -53,9 +54,12 @@ def _capabilities(harness: NpuGrpcHarness, *, features=NPU_FEATURES):
 
 def _submit(
     harness: NpuGrpcHarness, capability, request_id: str, *, source: bytes = SOURCE,
-    candidate_timeout_ms: int = 3000,
+    candidate_timeout_ms: int = 3000, generation: str = "1",
 ):
-    external = npu_request(request_id, source=source, candidate_timeout_ms=candidate_timeout_ms)
+    external = npu_request(
+        request_id, source=source, candidate_timeout_ms=candidate_timeout_ms,
+        generation=generation,
+    )
     snapshot = harness.factory.stub.Submit(
         pb.SubmitRequest(
             request=gc.request_to_proto(external, dialect=contracts.NPU_SOURCE_DIALECT),
@@ -454,3 +458,71 @@ def test_npu_selfcheck_hang_still_records_a_timeout_report(tmp_path):
         assert report["simulated"] is True
         evidence = gc.evidence_json(gc.blob_from_proto(final.result.evidence, allow_empty=True)[0])
         assert evidence["complete"] is False and evidence["publication_allowed"] is False
+
+
+def test_submit_rejects_a_capability_from_another_resource_generation(tmp_path):
+    """@brief 旧 generation 的 capability 不能为新 generation 的请求建立持久 job。"""
+    import dataclasses
+
+    from tests.support.vendor_sim.vendor_a import build_execution
+
+    with NpuGrpcHarness(tmp_path) as harness:
+        capability = _capabilities(harness)          # generation 1
+        assert capability.provenance.device_group.resource_generation == "1"
+
+        # The frontend is reconfigured (or the device was reset) into another
+        # generation; the request and the accepted provenance follow it.
+        upgraded = build_execution("2")
+        harness.engine.npu_execution = upgraded
+        external = npu_request("npu-cross-generation-1", source=SOURCE)
+        external = dataclasses.replace(
+            external,
+            npu=type(external.npu)(
+                candidate_digest=external.npu.candidate_digest, execution=upgraded,
+            ),
+        )
+        with pytest.raises(grpc.RpcError) as excinfo:
+            harness.factory.stub.Submit(
+                pb.SubmitRequest(
+                    request=gc.request_to_proto(external, dialect=contracts.NPU_SOURCE_DIALECT),
+                    request_digest=external.request_digest,
+                    expected=gc.expected_identities_to_proto(harness.engine.expected_identities),
+                    capability_id=capability.capability_id,
+                    required_features=list(NPU_FEATURES),
+                ),
+                metadata=METADATA, timeout=10,
+            )
+        assert excinfo.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+        assert _error_detail(excinfo.value) is not None
+
+        # The store refuses with the specific reason, before any durable write.
+        with pytest.raises(JobError) as store_error:
+            harness.engine.store.submit(
+                request=external, request_digest=external.request_digest,
+                expected=harness.engine.expected_identities,
+                provenance=harness.engine._base_provenance(),
+                capability_id=capability.capability_id,
+                required_features=list(NPU_FEATURES), grant_token=NPU_TOKEN,
+            )
+        assert store_error.value.code == "failed_precondition"
+        assert "device group" in str(store_error.value)
+
+        # Nothing durable was written and no worker was ever created for it.
+        assert harness.engine.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+        assert harness.engine.store._conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0] == 0
+        assert VendorLedger(harness.ledger_path).read()["device_running"] == []
+
+    # A frontend actually deployed on the new generation serves it normally.
+    with NpuGrpcHarness(tmp_path / "generation-2", generation="2") as upgraded_harness:
+        fresh = _capabilities(upgraded_harness)
+        assert fresh.provenance.device_group.resource_generation == "2"
+        submitted_external, submitted = _submit(
+            upgraded_harness, fresh, "npu-cross-generation-2", generation="2",
+        )
+        assert submitted.request_digest == submitted_external.request_digest
+        final = _wait_state(upgraded_harness, submitted_external, {"completed"})
+        assert final.HasField("result")
+        receipt = gc.receipt_from_proto(
+            final.result.receipt, dialect=contracts.NPU_SOURCE_DIALECT,
+        )
+        assert receipt["device_group"]["resource_generation"] == "2"

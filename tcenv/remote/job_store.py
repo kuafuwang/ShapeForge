@@ -926,6 +926,88 @@ class JobStore:
         return row
 
     # -- request and snapshot helpers --------------------------------------
+    def _check_npu_submit_binding(
+        self, capability: sqlite3.Row, request: ExternalEvaluationRequest,
+        provenance: Mapping[str, Any], *, existing: sqlite3.Row | None = None,
+    ) -> None:
+        """Re-check the full NPU device binding before Submit persists a job.
+
+        GetCapabilities bound one device group/profile/topology/resource
+        generation into the capability row.  Submit must prove that capability,
+        the request execution and the accepted provenance still describe that
+        same group and execution shape; otherwise an old capability could admit
+        a request for another generation.  A replay must also stay inside the
+        binding its existing job was accepted with.
+        """
+
+        if not self.contract.npu_source:
+            return
+        if request.npu is None:
+            raise JobError("invalid_argument", "NPU request has no CandidateDigest/execution binding")
+        try:
+            capability_provenance = contracts.provenance_document(
+                _loads(capability["provenance_json"]), require_attempt=False,
+                dialect=self.contract,
+            )
+            accepted_provenance = contracts.provenance_document(
+                provenance, require_attempt=False, dialect=self.contract,
+            )
+        except contracts.ContractError as exc:
+            raise JobError(
+                "invalid_argument", f"capability or accepted provenance is invalid: {exc}",
+            ) from exc
+        execution = request.npu.execution.to_dict()
+        accepted_group = accepted_provenance["device_group"]
+        capability_group = capability_provenance["device_group"]
+        if accepted_group != execution["device_group"]:
+            raise JobError(
+                "failed_precondition",
+                "the request execution device group differs from the accepted provenance",
+            )
+        if capability_group != accepted_group:
+            changed = sorted(key for key in accepted_group if capability_group.get(key) != accepted_group[key])
+            raise JobError(
+                "failed_precondition",
+                "the Submit capability names another device group "
+                f"({','.join(changed) or 'unknown'}); re-hello for the served group",
+            )
+        for key in ("artifact_kind", "launch_kind", "launch_subtype"):
+            if capability_provenance[key] != execution[key] or accepted_provenance[key] != execution[key]:
+                raise JobError(
+                    "failed_precondition",
+                    f"the Submit capability/accepted provenance {key} differs from the request execution",
+                )
+        expected_timing = execution["required_timing_sources"]
+        if (
+            sorted(capability_provenance["timing_sources"]) != expected_timing
+            or sorted(accepted_provenance["timing_sources"]) != expected_timing
+        ):
+            raise JobError(
+                "failed_precondition",
+                "the Submit capability/accepted provenance timing sources differ from the request execution",
+            )
+        if existing is not None:
+            try:
+                stored_provenance = contracts.provenance_document(
+                    _loads(existing["provenance_json"]), require_attempt=False,
+                    dialect=self.contract,
+                )
+            except contracts.ContractError as exc:
+                raise JobError("invalid_argument", f"stored job provenance is invalid: {exc}") from exc
+            if (
+                stored_provenance["device_group"] != capability_group
+                or stored_provenance["launch_kind"] != capability_provenance["launch_kind"]
+                or stored_provenance["artifact_kind"] != capability_provenance["artifact_kind"]
+                or stored_provenance["launch_subtype"] != capability_provenance["launch_subtype"]
+                or sorted(stored_provenance["timing_sources"])
+                != sorted(capability_provenance["timing_sources"])
+            ):
+                raise JobError(
+                    "failed_precondition",
+                    "the existing job was accepted under another device binding; re-hello",
+                    request_id=request.request_id,
+                )
+
     def _request(self, conn: sqlite3.Connection, job: sqlite3.Row) -> ExternalEvaluationRequest:
         if job["source"] is None:
             raise StateCorrupt("active job source bytes are unavailable")
@@ -1283,7 +1365,10 @@ class JobStore:
         self.expire_jobs(now_ms=now)
         with self._write() as conn:
             grant = self._grant_row(conn, grant_token, now)
-            self._capability(conn, capability_id, grant, expected, features, now)
+            capability = self._capability(conn, capability_id, grant, expected, features, now)
+            # The capability is only valid for the device binding it was
+            # exchanged for: check it before anything durable is written.
+            self._check_npu_submit_binding(capability, request, provenance)
             scope = _loads(grant["scope_json"])
             if request.kind not in scope["kinds"] or request.mode not in scope["modes"] or request.run_id != scope["run_id"] or request.session_id != scope["session_id"] or request.target_id != scope["target_id"]:
                 raise JobError("permission_denied", "request is outside the grant run/session/kind/target/mode scope")
@@ -1297,6 +1382,9 @@ class JobStore:
                     raise JobError("already_exists", "request_id was reused with a different digest", request_id=request.request_id)
                 if existing["expected_json"] != _json(expected.to_dict()) or existing["grant_scope_id"] != grant["scope_id"]:
                     raise JobError("failed_precondition", "idempotent replay identities or grant scope differ", request_id=request.request_id)
+                # An idempotent replay also has to stay inside the binding the
+                # job was accepted with.
+                self._check_npu_submit_binding(capability, request, provenance, existing=existing)
                 return self._snapshot(conn, existing), False
             depth = conn.execute("SELECT COUNT(*) FROM jobs WHERE state IN ('accepted','queued','running')").fetchone()[0]
             if depth >= self.max_queue_depth:
