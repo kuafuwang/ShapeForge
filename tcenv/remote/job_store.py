@@ -593,9 +593,12 @@ class JobStore:
                         # from them; a tampered task/execution/identity is a
                         # durable-state corruption, not a replayable job.
                         try:
-                            stored_digest = contracts.npu_stored_request_digest(
-                                _loads(job["request_json"]),
-                            )
+                            stored_document = _loads(job["request_json"])
+                            stored_digest = contracts.npu_stored_request_digest(stored_document)
+                            if stored_document.get("request_id") != job["request_id"]:
+                                raise contracts.ContractError(
+                                    "stored request_id differs from the durable job",
+                                )
                             contracts.provenance_document(
                                 _loads(job["provenance_json"]), require_attempt=False,
                                 dialect=self.contract,
@@ -1116,6 +1119,10 @@ class JobStore:
                 stored_digest = contracts.npu_stored_request_digest(request_document)
             except contracts.ContractError as exc:
                 raise StateCorrupt(f"stored NPU request document is invalid: {exc}") from exc
+            if request_document.get("request_id") != job["request_id"]:
+                # request_id is not part of the digest, so it needs its own
+                # comparison with the durable job identity.
+                raise StateCorrupt("stored NPU request_id differs from the accepted job")
             if stored_digest != job["request_digest"]:
                 raise StateCorrupt("stored NPU request digest does not match the accepted request digest")
             accepted = stored_request["request"]

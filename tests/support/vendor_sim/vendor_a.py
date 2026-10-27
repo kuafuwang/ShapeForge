@@ -25,7 +25,7 @@ from tcenv.remote.drivers.base import (
 )
 from tcenv.remote.job_types import DeviceGroupBinding, NpuExecutionSpec
 
-from .ledger import LedgerError, VendorLedger
+from .ledger import LedgerError, VendorLedger, resource_matches_binding
 
 VENDOR_ID = "vendor-a"
 DEVICE_GROUP_ID = "vendor-a-group-0"
@@ -103,6 +103,11 @@ class FakeVendorADriver:
         self.ledger = ledger or VendorLedger(_ledger_path())
         self.generation = generation or os.environ.get("TCENV_VENDOR_A_GENERATION") or RESOURCE_GENERATION
 
+    def binding(self) -> dict[str, str]:
+        """The single device binding this driver serves and records."""
+
+        return {**VENDOR_A_GROUP.to_dict(), "resource_generation": self.generation}
+
     def _compile_source_to_elf(self, source: bytes) -> bytes:
         # A deterministic fake ELF/SIMT container; not a real ABI or compiler.
         header = b"\x7fELF\x02\x01\x01\x00SIMT\x00"
@@ -115,7 +120,7 @@ class FakeVendorADriver:
         if not isinstance(spec, NpuExecutionSpec):
             raise ValueError("vendor A requires the typed NpuExecutionSpec")
         normalized = npu_execution_document(spec.to_dict())
-        expected_group = {**VENDOR_A_GROUP.to_dict(), "resource_generation": self.generation}
+        expected_group = self.binding()
         if normalized["device_group"] != expected_group:
             raise ValueError("vendor A received a different device group/profile/topology/generation")
         attempt_id = attempt_context.get("attempt_id")
@@ -128,30 +133,26 @@ class FakeVendorADriver:
             digest=hashlib.sha256(self._compile_source_to_elf(source)).hexdigest(),
             size=len(source) + 18,
         )
-        group = VENDOR_A_GROUP
-        self.ledger.record_resource(
-            attempt_id=attempt_id, lease_fence=lease_fence,
-            device_group_id=group.device_group_id,
-            resource_generation=group.resource_generation,
-            kind="module", detail={"format": "ELF/SIMT", "sha256": module.digest, "size": module.size},
-        )
-        self.ledger.record_resource(
-            attempt_id=attempt_id, lease_fence=lease_fence,
-            device_group_id=group.device_group_id,
-            resource_generation=group.resource_generation,
-            kind="stream", detail={"synchronization": "stream-event"},
-        )
-        self.ledger.record_resource(
-            attempt_id=attempt_id, lease_fence=lease_fence,
-            device_group_id=group.device_group_id,
-            resource_generation=group.resource_generation,
-            kind="event", detail={"timing_source": "DEVICE_EVENT"},
-        )
+        group = self.binding()
+        for kind, detail in (
+            ("module", {"format": "ELF/SIMT", "sha256": module.digest, "size": module.size}),
+            ("stream", {"synchronization": "stream-event"}),
+            ("event", {"timing_source": "DEVICE_EVENT"}),
+        ):
+            self.ledger.record_resource(
+                attempt_id=attempt_id, lease_fence=lease_fence,
+                device_group_id=group["device_group_id"],
+                vendor_id=group["vendor_id"],
+                profile_digest=group["profile_digest"],
+                topology_digest=group["topology_digest"],
+                resource_generation=group["resource_generation"],
+                kind=kind, detail=detail,
+            )
         return PreparedAttempt(
             attempt_id=attempt_id,
             lease_fence=lease_fence,
-            device_group_id=group.device_group_id,
-            resource_generation=group.resource_generation,
+            device_group_id=group["device_group_id"],
+            resource_generation=group["resource_generation"],
             module_format="ELF/SIMT",
             module_sha256=module.digest,
             handles={
@@ -217,7 +218,9 @@ class FakeVendorADriver:
     def close(self, prepared: PreparedAttempt) -> None:
         if os.environ.get("TCENV_VENDOR_A_SKIP_CLOSE") == "1":
             return
-        self.ledger.release_attempt(prepared.attempt_id, prepared.lease_fence)
+        self.ledger.release_attempt(
+            prepared.attempt_id, prepared.lease_fence, binding=self.binding(),
+        )
 
 
 class FakeVendorAController:
@@ -270,6 +273,9 @@ class FakeVendorAController:
     def cancel(self, attempt_id: str, lease_fence: int) -> None:
         self.ledger.mark_cancelled(attempt_id=attempt_id, lease_fence=lease_fence)
 
+    def binding(self) -> dict[str, str]:
+        return {**VENDOR_A_GROUP.to_dict(), "resource_generation": self.generation}
+
     def _proof(self, attempt_id: str, lease_fence: int, **fields: Any) -> CleanupProof:
         """Every proof names the exact device binding it was produced for."""
 
@@ -309,6 +315,23 @@ class FakeVendorAController:
                 attempt_id, lease_fence,
                 complete=True, detail="no live resources for this attempt/fence",
             )
+        foreign = [
+            resource for resource in resources
+            if not resource_matches_binding(resource, self.binding())
+        ]
+        if foreign:
+            # Never free (or claim to have freed) another device binding's
+            # resources: the proof stays incomplete and the rows stay observable
+            # so the job is quarantined instead.
+            return self._proof(
+                attempt_id, lease_fence,
+                complete=False,
+                live_resources=tuple(sorted(r["kind"] for r in foreign)),
+                detail=(
+                    "resources belong to another device group/profile/topology/"
+                    "resource generation; this controller cannot release them"
+                ),
+            )
         if not self.release_supported:
             return self._proof(
                 attempt_id, lease_fence,
@@ -316,7 +339,9 @@ class FakeVendorAController:
                 live_resources=tuple(sorted(r["kind"] for r in resources)),
                 detail="fake controller cannot prove external release",
             )
-        released = self.ledger.release_attempt(attempt_id, lease_fence)
+        released = self.ledger.release_attempt(
+            attempt_id, lease_fence, binding=self.binding(),
+        )
         remaining = self.ledger.attempt_resources(attempt_id, lease_fence)
         if remaining:
             return self._proof(
@@ -334,7 +359,7 @@ class FakeVendorAController:
 
     def health_check(self, profile: Mapping[str, Any]) -> HealthProof:
         if profile.get("device_group_id") != DEVICE_GROUP_ID:
-            return HealthProof(False, DEVICE_GROUP_ID, RESOURCE_GENERATION, "wrong device group")
+            return HealthProof(False, DEVICE_GROUP_ID, self.generation, "wrong device group")
         self.ledger.record_probe(
             vendor_version="fake-a-1", resource_generation=self.generation,
         )

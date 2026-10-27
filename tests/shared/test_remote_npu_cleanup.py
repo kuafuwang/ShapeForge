@@ -65,6 +65,9 @@ def test_controller_probe_capabilities_health_cancel_and_reconcile(tmp_path):
     ledger.record_resource(
         attempt_id="attempt-probe", lease_fence=7,
         device_group_id=profile["device_group_id"],
+        vendor_id=profile["vendor_id"],
+        profile_digest=profile["profile_digest"],
+        topology_digest=profile["topology_digest"],
         resource_generation=profile["resource_generation"],
         kind="module", detail={"format": "ELF/SIMT"},
     )
@@ -602,3 +605,103 @@ def test_a_hanging_cancel_and_reconcile_cannot_claim_cancellation(tmp_path):
         assert "did not return within" in final.recovery_error
     finally:
         engine.close(wait=5)
+
+
+# -- the fake vendor records and releases exactly its served binding --------
+def test_generation_two_prepare_records_the_served_binding(tmp_path):
+    """@brief generation 2 的 prepare 必须把当前绑定写进 attempt 与资源台账。"""
+    from tests.support.vendor_sim.ledger import resource_matches_binding
+    from tests.support.vendor_sim.vendor_a import FakeVendorADriver
+
+    ledger_path = tmp_path / "ledger.json"
+    ledger = VendorLedger(ledger_path)
+    driver = FakeVendorADriver(ledger, generation="2")
+    execution = build_execution("2")
+    prepared = driver.prepare(
+        execution, SOURCE, {"attempt_id": "attempt-gen2", "lease_fence": 3},
+    )
+    assert prepared.resource_generation == "2"
+    assert prepared.device_group_id == execution.device_group.device_group_id
+    resources = ledger.attempt_resources("attempt-gen2", 3)
+    assert len(resources) == 3
+    for resource in resources:
+        assert resource["resource_generation"] == "2"
+        assert resource_matches_binding(resource, driver.binding())
+    # Closing releases exactly that binding.
+    driver.close(prepared)
+    assert ledger.attempt_resources("attempt-gen2", 3) == []
+
+
+def test_generation_two_run_records_and_releases_only_its_own_generation(tmp_path):
+    """@brief 端到端 generation 2 运行的台账与清理证明都只含 generation 2。"""
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    controller = FakeVendorAController(ledger_path, generation="2")
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=controller,
+        generation="2", signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        request = npu_request("npu-gen2-ledger-1", source=SOURCE, generation="2")
+        npu_submit(engine, request)
+        snapshot = _wait_engine(engine, request, {"completed"})
+        assert snapshot.result is not None
+        ledger = VendorLedger(ledger_path)
+        assert ledger.live_resources() == []
+        proof = controller.reconcile(
+            snapshot.current_attempt.attempt_id, snapshot.current_attempt.lease_fence,
+        )
+        assert proof.complete is True
+        assert proof.resource_generation == "2"
+        assert snapshot.result.evidence_json()["device_group"]["resource_generation"] == "2"
+    finally:
+        engine.close(wait=5)
+
+
+def test_reconcile_refuses_another_generation_and_keeps_its_resources(tmp_path):
+    """@brief 异代际 controller 不能释放也不能声称已释放别人的资源。"""
+    from tests.support.vendor_sim.vendor_a import FakeVendorADriver
+
+    ledger_path = tmp_path / "ledger.json"
+    ledger = VendorLedger(ledger_path)
+    FakeVendorADriver(ledger, generation="1").prepare(
+        build_execution("1"), SOURCE, {"attempt_id": "attempt-cross-gen", "lease_fence": 5},
+    )
+    controller = FakeVendorAController(ledger_path, generation="2")
+    proof = controller.reconcile("attempt-cross-gen", 5)
+    assert proof.complete is False
+    assert proof.resource_generation == "2"
+    assert "another device group/profile/topology/resource generation" in proof.detail
+    assert len(proof.live_resources) == 3
+    # Nothing was deleted: the quarantine evidence stays observable.
+    resources = ledger.attempt_resources("attempt-cross-gen", 5)
+    assert len(resources) == 3
+    assert all(resource["resource_generation"] == "1" for resource in resources)
+    # The ledger's own scoped release refuses them too.
+    assert ledger.release_attempt(
+        "attempt-cross-gen", 5, binding=controller.binding(),
+    ) == []
+    assert len(ledger.attempt_resources("attempt-cross-gen", 5)) == 3
+    # The matching generation 1 controller can still release them.
+    assert controller.__class__(ledger_path, generation="1").reconcile("attempt-cross-gen", 5).complete is True
+    assert ledger.attempt_resources("attempt-cross-gen", 5) == []
+
+
+def test_reconcile_refuses_resources_from_another_device_group(tmp_path):
+    """@brief 异设备组（同代际）资源同样不得被释放或证明已清理。"""
+    ledger_path = tmp_path / "ledger.json"
+    ledger = VendorLedger(ledger_path)
+    group = build_execution().device_group.to_dict()
+    ledger.record_resource(
+        attempt_id="attempt-cross-group", lease_fence=9,
+        device_group_id="vendor-a-group-1",
+        vendor_id=group["vendor_id"],
+        profile_digest=group["profile_digest"],
+        topology_digest=group["topology_digest"],
+        resource_generation=group["resource_generation"],
+        kind="stream", detail={},
+    )
+    proof = FakeVendorAController(ledger_path).reconcile("attempt-cross-group", 9)
+    assert proof.complete is False
+    assert "another device group/profile/topology/resource generation" in proof.detail
+    assert ledger.attempt_resources("attempt-cross-group", 9)

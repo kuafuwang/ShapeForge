@@ -16,8 +16,19 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping
 
 
+_BINDING_KEYS = (
+    "device_group_id", "vendor_id", "profile_digest", "topology_digest", "resource_generation",
+)
+
+
 class LedgerError(RuntimeError):
     pass
+
+
+def resource_matches_binding(resource: Mapping[str, Any], binding: Mapping[str, str]) -> bool:
+    """True only when a ledger row belongs to exactly this device binding."""
+
+    return all(resource.get(key) == binding.get(key) for key in _BINDING_KEYS)
 
 
 class VendorLedger:
@@ -68,6 +79,7 @@ class VendorLedger:
     def record_resource(
         self, *, attempt_id: str, lease_fence: int, device_group_id: str,
         resource_generation: str, kind: str, detail: Mapping[str, Any] | None = None,
+        vendor_id: str = "", profile_digest: str = "", topology_digest: str = "",
     ) -> str:
         if kind not in {"module", "function", "stream", "event"}:
             raise ValueError("unknown fake device resource kind")
@@ -77,6 +89,9 @@ class VendorLedger:
                 "attempt_id": attempt_id,
                 "lease_fence": lease_fence,
                 "device_group_id": device_group_id,
+                "vendor_id": vendor_id,
+                "profile_digest": profile_digest,
+                "topology_digest": topology_digest,
                 "resource_generation": resource_generation,
                 "kind": kind,
                 "detail": dict(detail or {}),
@@ -113,16 +128,30 @@ class VendorLedger:
         with self._locked() as document:
             return list(document["resources"].values())
 
-    def release_attempt(self, attempt_id: str, lease_fence: int) -> list[str]:
+    def release_attempt(
+        self, attempt_id: str, lease_fence: int,
+        *, binding: Mapping[str, str] | None = None,
+    ) -> list[str]:
+        """Delete this attempt/fence's rows, never another device binding's.
+
+        ``binding`` scopes the deletion to the exact device group/profile/
+        topology/resource generation, so a controller for one generation can
+        never free (or claim to have freed) another generation's resources.
+        """
+
         released: list[str] = []
         with self._locked() as document:
             for resource_id, resource in list(document["resources"].items()):
-                if resource["attempt_id"] == attempt_id and resource["lease_fence"] == lease_fence:
-                    released.append(resource_id)
-                    del document["resources"][resource_id]
-            marker = f"{attempt_id}:{lease_fence}"
-            if marker in document["device_running"]:
-                document["device_running"].remove(marker)
+                if resource["attempt_id"] != attempt_id or resource["lease_fence"] != lease_fence:
+                    continue
+                if binding is not None and not resource_matches_binding(resource, binding):
+                    continue
+                released.append(resource_id)
+                del document["resources"][resource_id]
+            if binding is None:
+                marker = f"{attempt_id}:{lease_fence}"
+                if marker in document["device_running"]:
+                    document["device_running"].remove(marker)
         return sorted(released)
 
     def clear(self) -> None:

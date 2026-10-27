@@ -667,6 +667,10 @@ def _tamper_request_dual_identity(document):
     document["candidate_sha256"] = document["candidate_digest"]["value"]
 
 
+def _tamper_request_id(document):
+    document["request_id"] = "another-request-id"
+
+
 def _tamper_job_provenance_generation(document):
     document["device_group"]["resource_generation"] = "999"
 
@@ -683,6 +687,7 @@ def _tamper_binding_generation(document):
     _tamper_request_task,
     _tamper_request_execution,
     _tamper_request_dual_identity,
+    _tamper_request_id,
     _tamper_job_provenance_generation,
     _tamper_job_provenance_launch,
 ])
@@ -690,8 +695,10 @@ def test_a_tampered_npu_durable_identity_is_never_served(tmp_path, mutate):
     """@brief 持久化 request/provenance 被篡改后，直接读取与重开都必须 fail closed。"""
     engine, request, state, ledger_path = _completed_npu_job(tmp_path, "npu-durable-tamper-1")
     try:
-        if mutate is _tamper_request_task or mutate is _tamper_request_execution \
-                or mutate is _tamper_request_dual_identity:
+        if mutate in (
+            _tamper_request_task, _tamper_request_execution,
+            _tamper_request_dual_identity, _tamper_request_id,
+        ):
             _rewrite_json_column(state, "jobs", "request_json", request.request_id, mutate)
         else:
             _rewrite_json_column(state, "jobs", "provenance_json", request.request_id, mutate)

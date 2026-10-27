@@ -592,6 +592,10 @@ def npu_stored_request_document(document: Mapping[str, Any]) -> dict[str, Any]:
         missing = sorted(expected - set(document))
         unknown = sorted(set(document) - expected)
         raise ContractError(f"stored request fields are missing or unknown: missing={missing} unknown={unknown}")
+    # ``request_id`` is transport identity, so it is not part of the canonical
+    # digest; it still has to be a well-formed identifier and the caller must
+    # compare it with the durable job row.
+    _identifier(document["request_id"], "request_id")
     request = _common_request_fields(document)
     request["candidate_digest"] = candidate_digest_document(document["candidate_digest"])
     request["execution"] = npu_execution_document(document["execution"])
