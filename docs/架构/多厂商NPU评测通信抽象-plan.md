@@ -106,6 +106,8 @@ control_host
 - `backends/<id>/`、`targets/<id>/`：公开元数据、skills、芯片/设备 profile。
 - `deploy/vendors/<vendor_id>/`：受信镜像、依赖清单、provision/health 脚本与部署 profile。
 - `tests/support/vendor_sim/`：至少两种不同形态的 fake vendor 与 golden；不进入生产组合根。
+- `tests/support/tsm_sim/`：P2a 的清微 runtime/SMI/profiler 模拟器与故障注入（见 §8 P2a），
+  只在测试 composition root 注入。
 
 ## 4. 厂商中立模型
 
@@ -344,7 +346,154 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
 - unknown Protobuf field 由服务端按 contract 明确拒绝；不得改变旧 Metal source 请求、六 RPC
   或旧结果验证。
 
+### P2a：TSM 模拟验收（无真实设备）
+
+位置：P1 之后、P2 之前。近期没有清微设备，因此先假设设备存在，用 TSM simulator 模拟
+runtime/SMI/profiler 与设备资源状态，验证 GetCapabilities → Submit → Watch/GetJob →
+Cancel/Retry、attempt/fence、超时/取消/恢复与证据闭环。P2a 只覆盖通信、状态机与清理逻辑，
+不验证真实 NPU 计算、驱动 ABI、容器设备映射或硬件性能。它是 P2 的前置模拟，**不替代**真实
+P2；通过后也不得把任何 capability 写成“TSM 已支持”或“可发布”。
+
+P0/P1 的 fake 在 worker 内直接给报告；P2a 的 sim 位于 `VendorDriver` 之下，也就是厂商 SDK
+边界。P2a 要实现真正的 TSM adapter（`prepare`/`execute`/`close`、资源登记、错误映射、
+evidence 映射），只把 SDK 调用与设备状态换成 sim；其上的 `VendorDriver` 骨架、
+`DeviceController`、gRPC 六 RPC、`JobEngine`/`JobStore`、`AttemptSupervisor`、worker 进程、
+签名/outbox/resume 都是真实代码。P2 把 sim 绑定换成真实 SDK 绑定并重新验证；若真实 SDK
+迫使改变上层语义，按设计变更处理，不静默改写。sim 不是返回固定 JSON 的假函数：它维护
+句柄、设备时间线、资源台账和故障状态机，未知或越界调用一律 typed 失败。
+
+**实现边界**
+
+- `tests/support/tsm_sim/`（规划，当前不存在）：`runtime/`（module/function/launch/
+  stream/event/IPC）、`smi/`（probe/health/topology/reset/discovery）、`profiler/`（Host 与
+  Device span、correlation、双 buffer、flush）、`ledger/`（attempt 资源账本）、`faults/`、
+  `clock.py`（虚拟时钟）、`known_good/`（module 字节 + manifest + digest）、`facade.py`
+  （对 driver 暴露的 typed 协议）。
+- 注入点只能是测试 composition root：复用 P0/P1 的 test-only entry 骨架与
+  `tests/support/npu_sim/`、`tests/support/remote_pki.py`、`tests/support/remotegrpc/`；生产
+  组合根不得 import `tests.support.tsm_sim`，由 import/结构检查断言，而不是靠约定。
+- 不允许为迁就 sim 修改生产错误分类、放宽校验或加测试专用分支。错误映射测试以生产分类为
+  准，sim 只产生厂商错误码与原始诊断（脱敏、有界）。
+- sim 不新增厂商专用 RPC、不新增任意 vendor key-value、不接受路径/命令/BDF/rank。
+- 测试文件按现有分层放 `tests/shared/test_tsm_sim_*.py`：driver 不是 backend，与
+  `tests/shared/test_remote_*.py` 同类；sim 本体仍在 `tests/support/`。
+
+**状态机覆盖**
+
+1. module：`txModuleLoad` → `txModuleGetFunction` → `txModuleUnload`；重复 load、卸载后
+   launch、失效句柄必须被拒。
+2. launch：入队立即返回，设备时间线独立推进；完成只能经 `txStreamSynchronize`、
+   `txEventSynchronize` 或 `txEventQuery` 观察。资料中 `txDeviceSynchronize` 仍标为未来实现，
+   sim 不提供这条捷径。
+3. stream/event：create/destroy/sync/query 与 event record/elapsed/query 的完整状态迁移；
+   跨 attempt 复用必须被 attempt/fence 绑定拒绝。
+4. IPC：`txIpcGetMemHandle`/`txIpcOpenMemHandle`/`txIpcCloseMemHandle` 计入台账；open 未
+   close 即泄漏。
+5. 资源：module/function/stream/event/IPC handle/device memory/profiler buffer 都带
+   `attempt_id`、`lease_fence`、`generation` 与创建/销毁时间；`close` 只释放本 attempt 的。
+6. probe：报告 driver/firmware/runtime/SDK/profiler/OS 版本、device/die/rank 形状与
+   topology digest，供 `capabilities` 判定可用性。
+7. worker 已死、设备仍 running：sim 保留设备侧状态；`DeviceController.reconcile` 必须按
+   attempt/fence 核对并给出 `CleanupProof`；不能证明就 quarantine，不能报告自动清理成功。
+
+**故障注入**
+
+每个注入都必须先证明故障真的发生，再断言结果：fault 提供 `assert_fired()`，注入未触发即
+测试失败，不允许只把错误字符串写进预期。
+
+| 注入 | 位置 | 先断言的触发证据 | 期望 |
+| --- | --- | --- | --- |
+| AP/SDK hang | `prepare` 内加载或 launch 前 | 调用记录有 entered、无 returned | JobEngine deadline 到期，基础设施 timeout；不自动重跑 |
+| launch 后 hang | launch 已返回、event 永不 signal | 状态含 `launch_started` 与 `device_running` | 设备侧超时；Host elapsed 不进入 device elapsed |
+| worker SIGKILL | prepare / execute / close 各一次 | pid 消失且台账仍有 live 资源 | reconcile 成功或 quarantine，二者必居其一且附证据 |
+| C2C down | 执行中对端链路 up→down | 链路状态确实为 down，执行已开始 | 基础设施错误；不映射成候选 crash/timeout/ok |
+| discovery 失败 | probe / capability 计算 | discovery 调用已执行并失败 | capabilities 不可用；Submit 在 create/start 前拒绝 |
+| 版本或 profile 不匹配 | probe 返回值 vs profile | 逐项比对失败（driver/firmware/runtime/profiler） | capabilities 不可用；Submit 在 create/start 前拒绝；不记候选错误 |
+| 拓扑代际变化 | attempt 中途 generation++ | 旧与新 generation 同时可观察 | 旧 capability/fence 的提交与结果被拒；影响测量则新 epoch |
+| IPC/stream/module 泄漏 | close 吞掉 close/destroy/unload | close 后 ledger live 计数仍 > 0 | `CleanupProof` 不完整 → quarantine |
+| profiler 异常 | 缺 span、丢 Buffer-HW 半区或 Buffer-CPU 覆盖、跳过 flush | drop/flush-error 计数被 evidence 读到 | 证据不完整，只作诊断，不发布 |
+| 健康探针失败 | known-good module 在健康设备上失败 | 探针确实被执行 | 设备组 quarantine，暂停接新 job |
+| reset 的全设备影响 | 运行中 reset | 占用检查与 generation++ 均被记录 | 有占用时拒绝 reset；reset 后 in-flight 结果作废，无单卡/单 job 语义 |
+
+**计时与发布**
+
+- `host_api_elapsed` 与 `device_elapsed` 是分开的字段；Host 只作诊断，不能写成设备耗时。
+- sim 的“完整证据”= 同步完成 + event 或 profiler span + 声明拓扑要求的 rank/die span +
+  flush 完成 + 时钟域已知；缺 rank/die（仅当 profile 声明需要）、缺 span、丢缓冲、flush
+  不完整、时钟域未知，任一项都只能诊断，不得发布。
+- 所有 P2a 结果固定 `simulated=true`、`publication_allowed=false`：不进入 confirmed/catalog/
+  brief，不产生性能数字，不绑定确认门。
+
+**安全负例**
+
+- agent 请求不能携带 `tsm-shell`、MPI、`fabric_manager`、root discovery、任意路径、裸
+  BDF/rank 或任意 vendor 参数；三层断言：schema 拒绝、策略在 create/start 前拒绝、sim
+  台账中这类调用为零。
+- 不能借 simulator 放行 privileged、host 凭据或 host HOME；测试 composition root 不放松
+  容器策略，sim 拒绝来自 env 的提权开关。
+- sim 接口只接受 typed 值：越界路径、root 操作、未知 API 一律 typed 失败，不得默默成功。
+
+**可证伪性**
+
+| 变异 | 必须失败的测试 |
+| --- | --- |
+| 删除 `reconcile` | worker 被杀后的资源对账 |
+| `close` 跳过 cleanup | 泄漏检测与 `CleanupProof` |
+| 用 Host elapsed 充当 device elapsed | Host/Device 分离 |
+| 接受旧 fence 的提交或旧 fence 的结果 | fence 与恢复 |
+| 跨 attempt 复用 module/stream | 资源归属 |
+| 单卡/单 job 语义做 reset | reset 全设备影响 |
+| 证据缺 span 仍发布 | 发布门 |
+
+**模拟无法证明**
+
+- 真实 TX SDK/driver/firmware ABI、真实错误码取值与 AP 内部调度；
+- 容器 `/dev/accel_drv_mgr`、`/dev/accel/dev-*`、host-hal、`--network=host` 与 `/tmp`、
+  `/sys`、`/lib/modules` 挂载是否真的可用；
+- 物理机 root discovery、fabric_manager、真实 C2C 链路与 MPI 绑定；
+- `tsm_smi --reset` 的真实全设备影响、驱动卸载/重装与同站其他 job 误伤；
+- 真实设备内存/句柄是否真的释放（sim 只证明台账与调用序列自洽）；
+- 真实时钟域、event 精度、raPTI 的 intercept queue、双 buffer、flush 与丢缓冲行为；
+- source→TX ELF 的编译器/ABI/正确性，以及硬件性能与 profiler 开销。
+
+因此真实 P2 必须重新验证以上全部；P2a 通过只说明抽象、状态机、清理与证据判定自洽。
+
+**测试清单与验收**
+
+| 组 | 内容 | 来源 | 关键断言 |
+| --- | --- | --- | --- |
+| G1 注入契约 | sim 只在测试根注入；未知 API typed 失败；无新 RPC/字段 | P2a 新增（复用 P0/P1 contract 版本化） | 生产根 import 检查为空；proto 无新增 RPC |
+| G2 module/launch/stream/event | 句柄生命周期基本闭环 | P2a 新增 | 校验顺序与失效句柄拒绝 |
+| G3 Host 先返回 | 异步完成语义 | P2a 新增（P1 已单列 Host launch） | Host 完成不等于执行完成 |
+| G4 资源归属 | module/stream/IPC/profiler buffer 账本 | P2a 新增 | close 只释放本 attempt；泄漏可检出 |
+| G5 reconcile | 三阶段 SIGKILL | P2a 新增（复用 supervisor kill/absence） | reconcile 或 quarantine，无第三种结论 |
+| G6 topology/version | probe、generation、epoch | P1 已有 topology digest | 不匹配即不可用；代际变化拒旧 fence |
+| G7 Cancel/Retry/fence | 取消与 interrupted 恢复 | P0/P1 已覆盖 JobEngine 语义 | P2a 只补设备资源随取消/重试释放 |
+| G8 计时与证据 | event/profiler/rank-die/flush | P1 已有完整性判定 | 缺项只作诊断；`simulated=true` |
+| G9 安全负例 | tsm-shell/MPI/fabric/root/路径/BDF/rank/vendor 参数 | P0/P1 已有 shell/path/feature 负例 | 三层拒绝且台账零调用 |
+| G10 conformance 与回归 | Python/Go conformance、Metal/local | P1 已建立 | 旧 contract 与旧验证不变 |
+
+G7、G9 与 P0/P1 重叠的部分直接复用，不重复建设：P2a 只加设备侧资源、异步完成与证据部分。
+
+验收条件：
+
+1. G1–G9 离线通过，不需要 SDK、GPU/NPU 或真实 provider，可带 `-m 'not gpu and not llm'`；
+   虚拟时钟，无长 sleep 轮询，结果确定。
+2. 每条故障注入先证明触发再断言结果；变异表逐条能复现失败。
+3. 跑完 P2a 后 confirmed/catalog/brief 与基线一致，没有新增性能数字。
+4. G10 回归与 conformance：以下三条命令通过，且旧 contract/旧验证未改：
+
+   ```bash
+   uv run pytest -q -n 0 tests/shared/test_remote_conformance.py tests/shared/test_remote_go_conformance.py tests/shared/test_remote_grpc_tls.py
+   uv run pytest -q -m 'not gpu and not llm and not slow'
+   uv run pytest -q -n 0 tests/shared/test_structure.py
+   ```
+5. sim 调用轨迹、状态转换、台账与故障计数留在 pytest tmp，不新建 review/report 文档。
+
 ### P2：清微单节点通信试点（另行授权真实设备）
+
+P2a 的模拟结果不构成本阶段证据：下面每一项仍须在真实设备与真实 driver/firmware/runtime 上
+重新验证。
 
 先用厂商提供的 known-good executable module，不先假设 Triton 源码工具链已通：
 
@@ -377,7 +526,8 @@ device/rank/die 证据，并验证租约互斥、C2C 故障、取消/恢复与 r
 
 ## 9. 跨厂商验收矩阵
 
-每一家都必须逐项提供证据，不能以“另一个厂商已过”豁免：
+每一家都必须逐项提供证据，不能以“另一个厂商已过”豁免。P2a 的模拟结果（§8）不能填任何
+一行：`simulated=true` 只说明抽象、状态机与清理逻辑自洽。
 
 | 维度 | 必须证明 |
 | --- | --- |
