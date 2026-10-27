@@ -869,6 +869,9 @@ def test_malformed_darwin_records_fail_closed(monkeypatch, payload, full_size, m
     monkeypatch.setattr(hostprocs, "_darwin_pids", lambda: [4242])
     monkeypatch.setattr(hostprocs, "_executable_path", lambda pid: "/usr/local/bin/docker")
     monkeypatch.setattr(hostprocs, "_owner_and_state", lambda pid: (os.geteuid(), "S"))
+    # ``kill(pid, 0)`` answering 0 keeps the pid live; ``ESRCH``/``EPERM`` would
+    # legitimately skip it, and this test is about the malformed record.
+    monkeypatch.setattr(hostprocs.os, "kill", lambda pid, sig: None)
     with pytest.raises(hostprocs.HostProcsError, match=message):
         hostprocs.pids_mentioning(
             "c" * 64, "--attach", executable_names=frozenset({"docker"}),
@@ -876,100 +879,151 @@ def test_malformed_darwin_records_fail_closed(monkeypatch, payload, full_size, m
 
 
 _ATTACH_NAMES = frozenset({"docker", "python3", "python3.13"})
+_EIO = "injected EIO: the kernel refused the argument read"
 
 
-def _injected_candidate(monkeypatch, **overrides):
-    """Make pid 4242 look like a process whose argv the kernel refuses."""
+def _live_child():
+    import subprocess
+
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+
+def _deny_argv(monkeypatch, pid: int, *, owner, state, path: str = "") -> object:
+    """Deny ``pid``'s argv and pin its owner/state/path for the classification."""
 
     from tcenv.remote import hostprocs
 
-    settings = {
-        "path": "/usr/local/bin/docker",
-        "owner": os.geteuid(),
-        "state": "S",
-        "no_live_record": False,
-        "detail": "injected EIO: the kernel refused the argument read",
-    }
-    settings.update(overrides)
+    original = hostprocs._read_argv
 
-    def read_argv(pid):
-        if pid != 4242:
-            raise AssertionError(f"unexpected pid {pid}")
-        raise hostprocs._Unreadable(settings["detail"])
+    def denied(candidate):
+        if candidate == pid:
+            raise hostprocs._Unreadable(_EIO)
+        return original(candidate)
 
-    monkeypatch.setattr(hostprocs, "_read_argv", read_argv)
-    monkeypatch.setattr(
-        hostprocs, "_executable_path",
-        lambda pid: settings["path"] if pid == 4242 else "",
-    )
-    monkeypatch.setattr(
-        hostprocs, "_owner_and_state",
-        lambda pid: (settings["owner"], settings["state"]),
-    )
-    monkeypatch.setattr(
-        hostprocs, "_no_live_record", lambda pid: bool(settings["no_live_record"]),
-    )
+    monkeypatch.setattr(hostprocs, "_read_argv", denied)
+    monkeypatch.setattr(hostprocs, "_owner_and_state", lambda _pid: (owner, state))
+    monkeypatch.setattr(hostprocs, "_executable_path", lambda _pid: path)
     return hostprocs
 
 
-@pytest.mark.parametrize("path", ["/usr/local/bin/docker", ""])
+@pytest.mark.parametrize("path", ["/usr/local/bin/docker", "/usr/bin/vim", ""])
 @pytest.mark.parametrize("names", [_ATTACH_NAMES, frozenset()])
 def test_an_uninspectable_candidate_process_fails_the_scan_closed(
     monkeypatch, path, names,
 ):
-    """An unreadable candidate argv, or an unnameable process, is unknown."""
+    """No readable path may narrow the scan: a real client has an arbitrary one.
 
-    hostprocs = _injected_candidate(monkeypatch, path=path)
-    with pytest.raises(hostprocs.HostProcsError, match="could not inspect live process 4242"):
-        list(hostprocs._yield_inspectable([4242], names))
+    A surviving client is whatever the configured CLI execs - a script, ``env``,
+    an interpreter symlink, a framework launcher - so a readable path that is
+    not the configured Docker CLI (or an empty path) is *not* evidence.  Only the
+    host's own proofs (zombie / kernel thread / other owner / ``ESRCH``) may skip.
+    """
 
-
-@pytest.mark.parametrize(
-    ("path", "owner", "state", "no_live_record"),
-    [
-        # A readable executable that this supervisor never spawns: not a client.
-        ("/usr/bin/vim", os.geteuid(), "S", False),
-        # Another account's process cannot be a child of this frontend.
-        ("/usr/local/bin/docker", os.geteuid() + 1, "S", False),
-        ("", os.geteuid() + 1, "S", False),
-        # An unreaped zombie holds no descriptor and no task.
-        ("", os.geteuid(), "Z", False),
-        # The kernel has no live record at all for the pid (Darwin reports a
-        # zombie as missing from both bsd-info records, never as "mine").
-        ("", None, None, True),
-    ],
-)
-def test_an_uninspectable_process_outside_the_candidate_set_is_skipped(
-    monkeypatch, path, owner, state, no_live_record,
-):
-    """Only provably non-candidates may be skipped; the rest fail closed."""
-
-    hostprocs = _injected_candidate(
-        monkeypatch, path=path, owner=owner, state=state, no_live_record=no_live_record,
-    )
-    assert list(hostprocs._yield_inspectable([4242], _ATTACH_NAMES)) == []
+    child = _live_child()
+    try:
+        hostprocs = _deny_argv(
+            monkeypatch, child.pid, owner=os.geteuid(), state="R", path=path,
+        )
+        with pytest.raises(
+            hostprocs.HostProcsError, match=f"could not inspect live process {child.pid}",
+        ):
+            list(hostprocs._yield_inspectable([child.pid], names))
+        with pytest.raises(hostprocs.HostProcsError, match="could not read the arguments"):
+            hostprocs.pid_mentions(child.pid, "c" * 64, "--attach")
+    finally:
+        child.kill()
+        child.wait(timeout=15)
 
 
-def test_an_uninspectable_process_of_unknown_ownership_fails_closed(monkeypatch):
-    """If the platform cannot even name the owner, the candidate set is unknown."""
+def test_a_transient_argv_refusal_is_re_read_not_dropped(monkeypatch):
+    """Darwin answers ``EIO`` for a live process while its address space changes.
 
-    hostprocs = _injected_candidate(monkeypatch, path="", owner=None, state=None)
-    monkeypatch.setattr(hostprocs, "_owner_and_state", lambda pid: (None, None))
-    # ``kill(pid, 0)`` succeeds: the process is alive and ours (or root's).
-    monkeypatch.setattr(hostprocs.os, "kill", lambda pid, sig: None)
-    with pytest.raises(hostprocs.HostProcsError, match="owner and executable cannot be read"):
-        list(hostprocs._yield_inspectable([4242], _ATTACH_NAMES))
+    The scan re-reads instead of treating the first refusal as a decision, so a
+    real client that becomes readable again is still matched (and reaped); only
+    a process that stays unknown, or that the kernel proves is gone/zombie, may
+    be skipped.
+    """
+
+    from tcenv.remote import hostprocs
+
+    child = _live_child()
+    calls = {"count": 0}
+    original = hostprocs._read_argv
+    try:
+        def flaky(pid):
+            if pid == child.pid:
+                calls["count"] += 1
+                if calls["count"] <= 2:
+                    raise hostprocs._Unreadable("injected transient EIO")
+                return ("docker", "start", "--attach", "c" * 64)
+            return original(pid)
+
+        monkeypatch.setattr(hostprocs, "_read_argv", flaky)
+        assert hostprocs.pid_mentions(child.pid, "c" * 64, "--attach") is True
+        assert hostprocs.pids_mentioning(
+            "c" * 64, "--attach", executable_names=frozenset({"docker"}),
+        ) == [child.pid]
+        assert calls["count"] >= 3
+    finally:
+        child.kill()
+        child.wait(timeout=15)
+
+
+def test_an_uninspectable_process_of_another_account_is_skipped(monkeypatch):
+    """The owner record proves a process is not this frontend's child."""
+
+    child = _live_child()
+    try:
+        hostprocs = _deny_argv(
+            monkeypatch, child.pid, owner=os.geteuid() + 1, state="R",
+            path="/usr/local/bin/docker",
+        )
+        assert list(hostprocs._yield_inspectable([child.pid], _ATTACH_NAMES)) == []
+        assert hostprocs.pid_mentions(child.pid, "c" * 64, "--attach") is False
+    finally:
+        child.kill()
+        child.wait(timeout=15)
 
 
 def test_an_uninspectable_process_proven_gone_by_kill_is_skipped(monkeypatch):
-    hostprocs = _injected_candidate(monkeypatch, path="", owner=None, state=None)
-    monkeypatch.setattr(hostprocs, "_owner_and_state", lambda pid: (None, None))
+    """``kill(pid, 0)`` answering ``ESRCH`` is the only "gone" proof."""
 
-    def vanished(pid, sig):
-        raise ProcessLookupError(pid)
+    child = _live_child()
+    child.kill()
+    child.wait(timeout=15)
+    pid = child.pid
+    hostprocs = _deny_argv(monkeypatch, pid, owner=None, state=None)
+    # The pid is really gone: no kill patch, the real ``ESRCH`` decides.
+    assert list(hostprocs._yield_inspectable([pid], _ATTACH_NAMES)) == []
+    assert hostprocs.pid_mentions(pid, "c" * 64, "--attach") is False
 
-    monkeypatch.setattr(hostprocs.os, "kill", vanished)
-    assert list(hostprocs._yield_inspectable([4242], _ATTACH_NAMES)) == []
+
+def test_kill_eperm_with_an_unknown_owner_fails_closed(monkeypatch):
+    """``EPERM`` is what a sandbox answers for a same-uid child, not a proof."""
+
+    child = _live_child()
+    try:
+        hostprocs = _deny_argv(monkeypatch, child.pid, owner=None, state=None)
+        real_kill = hostprocs.os.kill
+
+        def denied(pid, sig):
+            if pid == child.pid:
+                raise PermissionError(1, "injected sandbox denial")
+            return real_kill(pid, sig)
+
+        monkeypatch.setattr(hostprocs.os, "kill", denied)
+        assert child.poll() is None
+        with pytest.raises(
+            hostprocs.HostProcsError, match=f"could not inspect live process {child.pid}",
+        ):
+            list(hostprocs._yield_inspectable([child.pid], _ATTACH_NAMES))
+        with pytest.raises(hostprocs.HostProcsError, match="could not read the arguments"):
+            hostprocs.pid_mentions(child.pid, "c" * 64, "--attach")
+    finally:
+        # ``os.kill`` is patched for this pid, so restore it before reaping.
+        monkeypatch.undo()
+        child.kill()
+        child.wait(timeout=15)
 
 
 def _unreaped_child() -> "subprocess.Popen":
@@ -996,14 +1050,15 @@ def _unreaped_child() -> "subprocess.Popen":
 
 
 def test_a_really_uninspectable_child_is_a_zombie_and_never_a_survivor():
-    """The real platform probes: an exited child has no argv and no task."""
+    """The real platform probes: an exited child has no argv but a zombie state."""
 
     from tcenv.remote import hostprocs
 
     child = _unreaped_child()
     try:
         names = frozenset({os.path.basename(sys.executable), "python3"})
-        assert hostprocs._provably_gone(child.pid) is True
+        assert hostprocs._owner_and_state(child.pid)[1] == "Z"
+        assert hostprocs._no_live_record(child.pid) is True
         with pytest.raises(hostprocs._Unreadable):
             hostprocs._read_argv(child.pid)
         assert list(hostprocs._yield_inspectable([child.pid], names)) == []
@@ -1053,12 +1108,12 @@ def test_cleanup_never_claims_verified_cleanup_when_a_candidate_is_unreadable(
     supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
     handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "pass")))
     supervisor.start(handle)
-    # A live process of this account whose executable is the Docker CLI but whose
-    # argv the kernel refuses: it could be this frontend's attach client, so
-    # neither ``cleanup`` nor ``cleanup_residue`` may report a verified result.
+    # A live process of this account (whatever its executable path) whose argv the
+    # kernel refuses: it could be this frontend's attach client, so neither
+    # ``cleanup`` nor ``cleanup_residue`` may report a verified result.  The
+    # executable is *not* faked to look like Docker: the path is never a proof.
     blocker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     original_read = hostprocs._read_argv
-    original_path = hostprocs._executable_path
     try:
         def denied(pid):
             if pid == blocker.pid:
@@ -1066,10 +1121,6 @@ def test_cleanup_never_claims_verified_cleanup_when_a_candidate_is_unreadable(
             return original_read(pid)
 
         monkeypatch.setattr(hostprocs, "_read_argv", denied)
-        monkeypatch.setattr(
-            hostprocs, "_executable_path",
-            lambda pid: "/usr/local/bin/docker" if pid == blocker.pid else original_path(pid),
-        )
         error = supervisor.cleanup(handle)
         assert "could not inspect host processes" in error
         assert f"could not inspect live process {blocker.pid}" in error
@@ -1088,8 +1139,81 @@ def test_cleanup_never_claims_verified_cleanup_when_a_candidate_is_unreadable(
         supervisor.release(handle)
 
 
+def test_a_real_attach_client_with_unreadable_argv_is_not_dropped(tmp_path, monkeypatch):
+    """The real attach executable is outside any predictable name set.
+
+    ``_attach_executable_names`` holds the configured CLI basename and its
+    shebang interpreter, but the kernel reports what the CLI actually execs:
+    the fake Docker here is a Python script, so the survivor's executable is the
+    interpreter (``.../MacOS/Python`` on macOS, ``python3.12`` on Linux).
+    Injecting *only* the argv failure must fail the survivor scan, the cleanup
+    proof and the reaping proof; once the kernel answers again the client is
+    still reaped, so the failure was the injection, not a lost ability.
+    """
+
+    from tcenv.remote import hostprocs
+
+    docker, _fake = install_fake_docker(
+        tmp_path / "docker", image_digest=IMAGE_DIGEST, control={"hang_attach": True},
+    )
+    supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+    handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "pass")))
+    supervisor.start(handle)
+    attach = handle.attach
+    assert attach is not None
+    pid = attach.pid
+    original_read = hostprocs._read_argv
+    try:
+        deadline = time.monotonic() + 20.0
+        while True:
+            survivors, error = supervisor._attach_survivors(handle.container_id)
+            assert not error, error
+            if pid in survivors:
+                break
+            if time.monotonic() >= deadline:
+                raise AssertionError("the real attach client was never visible")
+            time.sleep(0.05)
+        assert attach.poll() is None
+        if sys.platform == "darwin":
+            # The exact fail-open this regression replaces: the real executable
+            # is a framework launcher whose basename is not in the name set, and
+            # that used to be treated as "not a candidate".
+            assert os.path.basename(hostprocs._executable_path(pid)) not in (
+                supervisor._attach_executable_names()
+            )
+
+        def denied(candidate):
+            if candidate == pid:
+                raise hostprocs._Unreadable("injected EIO")
+            return original_read(candidate)
+
+        monkeypatch.setattr(hostprocs, "_read_argv", denied)
+        survivors, error = supervisor._attach_survivors(handle.container_id)
+        assert survivors == []
+        assert "could not inspect host processes" in error
+        assert f"could not inspect live process {pid}" in error
+        assert attach.poll() is None
+        # The residue proof must not report a clean result either; it may stop at
+        # the still-running attach handle before it even scans.
+        assert supervisor.cleanup_residue(handle) != ""
+        # Restoring the kernel read makes the same scan pass and reaps the real
+        # client, so the earlier error was the injected unreadability, not a
+        # lost ability to reap survivors.
+        monkeypatch.undo()
+        assert supervisor._reap_attach_survivors(handle.container_id) == ""
+        assert attach.poll() is not None
+        assert supervisor.cleanup(handle) == ""
+        assert supervisor.cleanup_residue(handle) == ""
+    finally:
+        monkeypatch.undo()
+        if attach.poll() is None:
+            attach.kill()
+        attach.wait(timeout=15)
+        supervisor.release(handle)
+
+
 class _DeniedSysctl:
-    """``sysctl(KERN_PROCARGS2)`` failing the way a hardened host does."""
+    """``sysctl`` failing the way a hardened host does (KERN_PROCARGS2 too)."""
 
     def sysctl(self, mib, namelen, oldp, oldlenp, newp, newlen):
         import ctypes
@@ -1119,8 +1243,9 @@ class _PidPath:
 class _PidInfo:
     """``proc_pidinfo`` answering ``PROC_PIDTBSDINFO`` for one live process."""
 
-    def __init__(self, pid: int) -> None:
+    def __init__(self, pid: int, uid: int | None = None) -> None:
         self.pid = pid
+        self.uid = os.geteuid() if uid is None else uid
 
     def __call__(self, pid, kind, arg, buffer, size):
         import ctypes
@@ -1132,7 +1257,7 @@ class _PidInfo:
             return 0
         info = hostprocs._ProcBsdInfo()
         info.pbi_pid = pid
-        info.pbi_uid = os.geteuid()
+        info.pbi_uid = self.uid
         info.pbi_status = 2  # SRUN
         # ``proc_pidinfo`` is handed either a ``byref`` of a structure or a
         # writable buffer, and both are copied into by the kernel.
@@ -1145,30 +1270,41 @@ class _PidInfo:
 
 
 class _SinglePidLibProc:
-    """libproc that names at most one pid, with a chosen executable path.
+    """libproc that names at most one pid, with a chosen executable path/owner.
 
-    ``proc_pidinfo`` answers ``PROC_PIDTBSDINFO`` for that pid as the caller's
-    own live process, which is what a hardened host does even when it refuses
-    the argument vector.  The callables are instances (not bound methods)
-    because the real prototype setup assigns ``argtypes``/``restype`` to them.
+    ``proc_pidinfo`` answers ``PROC_PIDTBSDINFO`` for that pid, which is what a
+    hardened host does even when it refuses the argument vector.  The callables
+    are instances (not bound methods) because the real prototype setup assigns
+    ``argtypes``/``restype`` to them.
     """
 
-    def __init__(self, pid: int, executable: str = "") -> None:
+    def __init__(self, pid: int, executable: str = "", uid: int | None = None) -> None:
         self.pid = pid
         self.proc_pidpath = _PidPath(pid, executable)
-        self.proc_pidinfo = _PidInfo(pid)
+        self.proc_pidinfo = _PidInfo(pid, uid)
 
     @staticmethod
     def proc_listpids(kind, subtype, buffer, size):
         raise AssertionError("the enumerator is patched in these tests")
 
 
-def _denied_darwin_scan(monkeypatch, pid: int, executable: str):
+class _RefusedLibProc:
+    """libproc refusing both bsd-info records (EPERM/EIO/short records)."""
+
+    class _Refused:
+        def __call__(self, *args):
+            return 0
+
+    proc_pidpath = _Refused()
+    proc_pidinfo = _Refused()
+
+
+def _denied_darwin_scan(monkeypatch, pid: int, executable: str, uid: int | None = None):
     from tcenv.remote import hostprocs
 
     monkeypatch.setattr(
         hostprocs, "_darwin_libraries",
-        lambda: (_DeniedSysctl(), _SinglePidLibProc(pid, executable)),
+        lambda: (_DeniedSysctl(), _SinglePidLibProc(pid, executable, uid)),
     )
     monkeypatch.setattr(hostprocs, "_darwin_pids", lambda: [pid])
     return hostprocs
@@ -1178,14 +1314,12 @@ def _denied_darwin_scan(monkeypatch, pid: int, executable: str):
 def test_darwin_refused_record_without_a_readable_path_fails_the_scan(monkeypatch):
     """EPERM plus an empty ``proc_pidpath`` is unknown, not "no attach client".
 
-    This is the residual fail-open: an unreadable candidate whose executable
-    path the kernel also refuses used to be dropped, so ``cleanup`` reported a
-    verified result over a possibly surviving ``docker start --attach`` client.
+    This was a residual fail-open: an unreadable same-uid process whose
+    executable path the kernel also refused used to be dropped, so ``cleanup``
+    reported a verified result over a possibly surviving attach client.
     """
 
-    import subprocess
-
-    live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    live = _live_child()
     try:
         hostprocs = _denied_darwin_scan(monkeypatch, live.pid, "")
         with pytest.raises(hostprocs.HostProcsError, match="could not inspect live process"):
@@ -1202,25 +1336,110 @@ def test_darwin_refused_record_without_a_readable_path_fails_the_scan(monkeypatc
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="KERN_PROCARGS2 is Darwin-only")
-def test_darwin_refused_record_of_a_non_candidate_is_still_skipped(monkeypatch):
+def test_darwin_refused_record_of_another_accounts_process_is_skipped(monkeypatch):
     """A hardened host's unreadable ``login`` must not fail every scan.
 
-    The candidate set is what keeps the fail-closed rule usable: a process whose
-    executable is readable and is not the Docker CLI cannot be this frontend's
-    attach client, so its refused argv is not an unknown survivor.
+    The owner record, not the executable path, is the proof: another account's
+    process can never be a child this frontend spawned - even when its path is
+    unreadable and its argv is refused.
     """
 
-    import subprocess
-
-    live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    live = _live_child()
     try:
-        hostprocs = _denied_darwin_scan(monkeypatch, live.pid, "/usr/sbin/login")
+        hostprocs = _denied_darwin_scan(monkeypatch, live.pid, "", uid=0)
         assert hostprocs.pids_mentioning(
             "c" * 64, "--attach", executable_names=frozenset({"docker"}),
         ) == []
+        assert hostprocs.pid_mentions(live.pid, "c" * 64, "--attach") is False
     finally:
         live.kill()
         live.wait(timeout=15)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="libproc is Darwin-only")
+def test_darwin_proc_pidinfo_refusals_are_not_a_dead_process(monkeypatch):
+    """Both bsd-info probes refusing says nothing about liveness or the owner.
+
+    A live, signalable same-uid process whose argv, path and owner are all
+    unreadable must fail the scan and the kill-time re-verification; it used to
+    be reported as a zombie because ``proc_pidinfo`` failures were flattened
+    into "no record".
+    """
+
+    from tcenv.remote import hostprocs
+
+    live = _live_child()
+    try:
+        original = hostprocs._read_argv
+
+        def denied(pid):
+            if pid == live.pid:
+                raise hostprocs._Unreadable(_EIO)
+            return original(pid)
+
+        monkeypatch.setattr(hostprocs, "_read_argv", denied)
+        monkeypatch.setattr(hostprocs, "_executable_path", lambda pid: "")
+        # Neither bsd-info record answers; the fake libc cannot answer
+        # ``KERN_PROC_PID`` either, so the state is unknown, not "gone".
+        monkeypatch.setattr(
+            hostprocs, "_darwin_libraries", lambda: (None, _RefusedLibProc()),
+        )
+        assert hostprocs._no_live_record(live.pid) is False
+        with pytest.raises(hostprocs.HostProcsError, match="could not inspect live process"):
+            list(hostprocs._yield_inspectable([live.pid], _ATTACH_NAMES))
+        with pytest.raises(hostprocs.HostProcsError, match="could not read the arguments"):
+            hostprocs.pid_mentions(live.pid, "c" * 64, "--attach")
+    finally:
+        live.kill()
+        live.wait(timeout=15)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="KERN_PROC_PID is Darwin-only")
+def test_darwin_proc_state_rejects_a_record_for_another_process(monkeypatch):
+    """The ``p_stat`` layout is self-checked against ``p_pid``."""
+
+    import ctypes
+    import struct
+
+    from tcenv.remote import hostprocs
+
+    live = _live_child()
+    real_libc, real_libproc = hostprocs._darwin_libraries()
+
+    class _ForeignRecord:
+        """A well-formed record whose ``p_pid`` is not the pid we asked for."""
+
+        def sysctl(self, mib, namelen, oldp, oldlenp, newp, newlen):
+            raw = bytearray(648)
+            raw[hostprocs._KINFO_PROC_STAT_OFFSET] = 5  # SZOMB
+            struct.pack_into(
+                "<i", raw, hostprocs._KINFO_PROC_PID_OFFSET, live.pid + 1,
+            )
+            ctypes.memmove(oldp, bytes(raw), len(raw))
+            oldlenp._obj.value = len(raw)
+            return 0
+
+    try:
+        original = hostprocs._read_argv
+
+        def denied(pid):
+            if pid == live.pid:
+                raise hostprocs._Unreadable(_EIO)
+            return original(pid)
+
+        monkeypatch.setattr(hostprocs, "_read_argv", denied)
+        monkeypatch.setattr(hostprocs, "_executable_path", lambda pid: "")
+        monkeypatch.setattr(
+            hostprocs, "_darwin_libraries", lambda: (_ForeignRecord(), real_libproc),
+        )
+        found, state, detail = hostprocs._darwin_proc_state(live.pid)
+        assert found is False and state is None and "another process" in detail
+        with pytest.raises(hostprocs.HostProcsError, match="could not inspect live process"):
+            list(hostprocs._yield_inspectable([live.pid], _ATTACH_NAMES))
+    finally:
+        live.kill()
+        live.wait(timeout=15)
+        del real_libc
 
 
 def test_a_live_process_always_has_a_task_record_and_an_owner():

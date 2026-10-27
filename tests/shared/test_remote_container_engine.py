@@ -647,12 +647,12 @@ def test_recovery_quarantines_when_a_candidate_attach_client_cannot_be_inspected
     state = tmp_path / "state"
     req = request("container-recovery-uninspectable", source=b"SLEEP", candidate_timeout_ms=60_000)
     attempt, _handle, _supervisor = _crashed_running_attempt(state, docker, req)
-    # A live process of this account running the executable the supervisor
-    # spawns, whose argv the kernel refuses: it could be the attach client the
-    # dead frontend left behind, so "cannot tell" must not read as "gone".
+    # A live process of this account, whatever its executable, whose argv the
+    # kernel refuses: it could be the attach client the dead frontend left
+    # behind, so "cannot tell" must not read as "gone".  The executable path is
+    # not faked to look like Docker: a readable non-Docker path is not a proof.
     blocker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     original_read = hostprocs._read_argv
-    original_path = hostprocs._executable_path
 
     def denied(pid):
         if pid == blocker.pid:
@@ -660,10 +660,6 @@ def test_recovery_quarantines_when_a_candidate_attach_client_cannot_be_inspected
         return original_read(pid)
 
     monkeypatch.setattr(hostprocs, "_read_argv", denied)
-    monkeypatch.setattr(
-        hostprocs, "_executable_path",
-        lambda pid: "/usr/local/bin/docker" if pid == blocker.pid else original_path(pid),
-    )
     recovered = container_engine(state, docker)
     try:
         snapshot = get(recovered, req)

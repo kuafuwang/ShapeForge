@@ -6,31 +6,47 @@ leftover ``docker start --attach`` client is gone.  The same kernel information
 is read directly: ``/proc/<pid>/cmdline`` on Linux and ``sysctl(KERN_PROCARGS2)``
 plus ``proc_listpids``/``proc_pidpath`` on macOS.  Reads are bounded.
 
-**Unknown is not "no attach client".**  A process that cannot be inspected is
-classified against the *candidate set* a caller can actually have spawned: an
-attach client runs with this frontend's effective uid and its executable is the
-configured Docker CLI (or the interpreter of its shebang).  Only a process that
-is provably outside that set may be skipped: one that really disappeared, an
-unreaped zombie (Darwin reports no bsd-info record and Linux ``Z``), a process
-owned by another account, or one whose executable is readable and is not the
-Docker CLI.  Anything else fails the scan with :class:`HostProcsError`, so a
-caller never reads an unknown scan as an empty one and never reports verified
-cleanup over a possibly surviving attach client.
+**Unknown is not "no attach client".**  A process whose argv cannot be read is
+skipped only when the host *proves* it cannot be a live ``docker start --attach``
+client: the kernel reports a zombie (Linux ``Z``, Darwin ``SZOMB`` from
+``sysctl(KERN_PROC, KERN_PROC_PID)``), a Linux ``PF_KTHREAD`` thread (no
+user-space executable at all), the owner record names another account (an attach
+client is a child of this frontend and shares its euid), or ``kill(pid, 0)``
+reports ``ESRCH`` (the pid is gone).  Everything else fails the scan with
+:class:`HostProcsError`, so a caller never reads an unknown scan as an empty one
+and never reports verified cleanup over a possibly surviving attach client.
 
-Narrowing by executable and owner is what keeps the normal path working: a
-hardened host always has processes nobody may inspect (``login``, other
-accounts' daemons, kernel threads), and none of them can be a child this
-frontend spawned.  When the platform cannot tell whether a process belongs to
-the candidate set, the scan still fails closed with a readable error.
+A refusal is retried for a bounded moment before it is decided: Darwin answers
+``EIO`` for a live process while its address space changes (exec, fork, exit) and
+reads fine again a few milliseconds later.  The retry makes a real survivor
+visible (and matched) and lets an exiting process reach a positive zombie/gone
+proof; a process that stays unknown still fails the scan.
+
+The executable name is deliberately **not** used to narrow the scan.  A
+surviving client's executable is whatever the configured Docker CLI ends up
+execing: a script's shebang may go through ``/usr/bin/env``, an interpreter
+symlink can land on ``python3.12``, and a macOS framework launcher reports a
+completely different path (``.../Python.app/Contents/MacOS/Python``).  No
+offline computation proves that set complete, so "the readable path is not the
+Docker CLI" is not evidence, and :func:`iter_processes` keeps
+``executable_names`` only to report which executables the caller spawns.
+``EPERM`` from ``kill(pid, 0)`` is likewise not proof of another owner: a
+hardened or sandboxed host denies signals to same-uid processes too, so an
+unknown owner stays unknown and the scan fails closed.
+
+What keeps the normal path usable is the kernel's own state plus the owner
+record: a hardened host always carries uninspectable processes (``login``,
+other accounts' daemons, kernel threads, unreaped zombies), and each of them is
+proven non-candidate above without reading its argv.
 """
 
 from __future__ import annotations
 
 import ctypes
 import ctypes.util
-import errno
 import os
 import sys
+import time
 from typing import Iterable, Iterator
 
 _MAX_CMDLINE_BYTES = 4096
@@ -46,6 +62,17 @@ _MAX_PROCS = 200_000
 _PF_KTHREAD = 0x00200000
 _CTL_KERN = 1
 _KERN_PROCARGS2 = 49
+# ``sysctl({CTL_KERN, KERN_PROC, KERN_PROC_PID, pid})`` (``KERN_PROC`` is 14 on
+# Darwin, unlike the Linux ``CTL_KERN``/``KERN_PROC`` pair) returns a
+# ``struct kinfo_proc`` even for an unreaped zombie, which ``proc_pidinfo``
+# refuses.  ``p_stat``/``p_pid`` sit after ``p_un`` (16), ``p_vmspace`` (8),
+# ``p_sigacts`` (8) and ``p_flag`` (4); ``p_pid`` is self-checked so a layout
+# change fails closed instead of reporting another process's state.
+_KERN_PROC = 14
+_KERN_PROC_PID = 1
+_KINFO_PROC_BYTES = 1024
+_KINFO_PROC_STAT_OFFSET = 36
+_KINFO_PROC_PID_OFFSET = 40
 _PROC_ALL_PIDS = 1
 
 _LIBC = None
@@ -74,11 +101,10 @@ def _linux_argv(pid: int) -> tuple[str, ...]:
         with open(f"/proc/{pid}/cmdline", "rb") as handle:
             raw = handle.read(_MAX_CMDLINE_BYTES + 1)
     except OSError as exc:
-        # The process may have exited between the listing and this read; that is
-        # the only case in which an unreadable argv is not evidence of a process
-        # the scan has to account for.
-        if exc.errno in {errno.ENOENT, errno.ESRCH}:
-            return ()
+        # The process may have exited between the listing and this read, but
+        # that is decided from positive evidence (:func:`_no_live_record`:
+        # ``kill(pid, 0)`` answering ``ESRCH``), never from this errno: a hidden
+        # or sandbox-denied ``/proc`` entry looks the same as a vanished one.
         raise _Unreadable(
             f"could not read its command line ({exc.strerror or exc})"
         ) from exc
@@ -115,17 +141,14 @@ def _darwin_libraries():
 
 
 def _darwin_unreadable() -> tuple[str, ...]:
-    """Darwin per-process ``KERN_PROCARGS2`` failures.
+    """Darwin per-process ``KERN_PROCARGS2`` failure.
 
-    ``ESRCH``/``ENOENT`` prove the process is gone.  Everything else is
-    *unknown*: whether it may be skipped is decided by
-    :func:`_undecidable` from the executable path and the owner, never here.
+    No errno is special-cased here.  ``ESRCH`` looks like "gone", but the same
+    answer is what a sandboxed or hardened kernel can give for a live process;
+    :func:`_no_live_record` re-proves gone/zombie/owner independently.
     """
 
-    error = ctypes.get_errno()
-    if error in {errno.ESRCH, errno.ENOENT}:
-        return ()
-    raise _Unreadable(f"inspection failed with errno {error}")
+    raise _Unreadable(f"inspection failed with errno {ctypes.get_errno()}")
 
 
 def _darwin_argv(pid: int) -> tuple[str, ...]:
@@ -255,41 +278,93 @@ class _ProcBsdShortInfo(ctypes.Structure):
     ]
 
 
-def _darwin_pidinfo(pid: int, kind: int, size: int) -> bytes:
-    _libc, libproc = _darwin_libraries()
-    if not hasattr(libproc, "proc_pidinfo"):
-        return b""
-    libproc.proc_pidinfo.argtypes = [
-        ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int,
-    ]
-    libproc.proc_pidinfo.restype = ctypes.c_int
-    buffer = ctypes.create_string_buffer(size)
-    written = int(libproc.proc_pidinfo(pid, kind, 0, buffer, size))
-    if written <= 0:
-        return b""
+def _darwin_pidinfo_raw(pid: int, kind: int, size: int) -> bytes | None:
+    """Raw ``proc_pidinfo`` record, or ``None`` when the probe answered nothing.
+
+    ``None`` means *unknown*: EPERM/EIO, a short record and a missing task all
+    look like this, so the caller must never turn it into "the process is
+    gone".  Only :func:`_darwin_proc_state` can prove a zombie, and only
+    ``kill(pid, 0)`` can prove the pid disappeared.
+    """
+
+    try:
+        _libc, libproc = _darwin_libraries()
+        if not hasattr(libproc, "proc_pidinfo"):
+            return None
+        libproc.proc_pidinfo.argtypes = [
+            ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int,
+        ]
+        libproc.proc_pidinfo.restype = ctypes.c_int
+        buffer = ctypes.create_string_buffer(size)
+        written = int(libproc.proc_pidinfo(pid, kind, 0, buffer, size))
+    except (AttributeError, OSError, TypeError, ValueError, ctypes.ArgumentError):
+        return None
+    if written <= 0 or written > size:
+        return None
     return buffer.raw[:written]
 
 
-def _darwin_bsdinfo(pid: int) -> tuple[int, str | None] | None:
-    raw = _darwin_pidinfo(pid, _PROC_PIDTBSDINFO, ctypes.sizeof(_ProcBsdInfo))
-    if len(raw) < ctypes.sizeof(_ProcBsdInfo):
-        return None
-    info = _ProcBsdInfo.from_buffer_copy(raw)
-    return int(info.pbi_uid), _MACOS_STATES.get(int(info.pbi_status))
+def _darwin_owner(pid: int) -> int | None:
+    """Owner uid of ``pid`` from the bsd-info records (``None`` when refused)."""
+
+    for kind, structure in (
+        (_PROC_PIDTBSDINFO, _ProcBsdInfo),
+        (_PROC_PIDT_SHORTBSDINFO, _ProcBsdShortInfo),
+    ):
+        size = ctypes.sizeof(structure)
+        raw = _darwin_pidinfo_raw(pid, kind, size)
+        if raw is None or len(raw) < size:
+            continue
+        info = structure.from_buffer_copy(raw)
+        return int(info.pbi_uid if kind == _PROC_PIDTBSDINFO else info.pbsi_uid)
+    return None
 
 
-def _darwin_short_bsdinfo(pid: int) -> tuple[int, str | None] | None:
-    raw = _darwin_pidinfo(pid, _PROC_PIDT_SHORTBSDINFO, ctypes.sizeof(_ProcBsdShortInfo))
-    if len(raw) < ctypes.sizeof(_ProcBsdShortInfo):
-        return None
-    info = _ProcBsdShortInfo.from_buffer_copy(raw)
-    return int(info.pbsi_uid), _MACOS_STATES.get(int(info.pbsi_status))
+def _darwin_proc_state(pid: int) -> tuple[bool, str | None, str]:
+    """``(found, state, detail)`` from ``sysctl(KERN_PROC, KERN_PROC_PID)``.
+
+    This is the one Darwin probe that describes an unreaped zombie (``SZOMB``)
+    instead of refusing it, so a zombie can be skipped on positive evidence.  A
+    zero-length answer is *no record*, not proof the pid is gone (``kernel_task``
+    answers that way while it runs); a refused or short probe is unknown, and its
+    state is not guessed from ``proc_pidinfo`` failures.  The layout is
+    self-checked against ``p_pid``, so a kernel that moves ``p_stat`` makes the
+    scan fail closed instead of reporting some other process's state.
+    """
+
+    try:
+        libc, _libproc = _darwin_libraries()
+        mib = (ctypes.c_int * 4)(_CTL_KERN, _KERN_PROC, _KERN_PROC_PID, pid)
+        buffer = ctypes.create_string_buffer(_KINFO_PROC_BYTES)
+        sized = ctypes.c_size_t(_KINFO_PROC_BYTES)
+        ctypes.set_errno(0)
+        result = int(libc.sysctl(mib, 4, buffer, ctypes.byref(sized), None, 0))
+    except (AttributeError, OSError, TypeError, ValueError, ctypes.ArgumentError) as exc:
+        return False, None, f"KERN_PROC_PID is unavailable ({exc})"
+    if result != 0:
+        return False, None, f"KERN_PROC_PID failed with errno {ctypes.get_errno()}"
+    raw = buffer.raw[: sized.value]
+    if not raw:
+        return False, None, "KERN_PROC_PID has no record"
+    if len(raw) < _KINFO_PROC_PID_OFFSET + 4:
+        return False, None, "KERN_PROC_PID returned a short record"
+    reported = int.from_bytes(
+        raw[_KINFO_PROC_PID_OFFSET:_KINFO_PROC_PID_OFFSET + 4], sys.byteorder, signed=True,
+    )
+    if reported != pid:
+        return False, None, "KERN_PROC_PID returned another process"
+    return True, _MACOS_STATES.get(raw[_KINFO_PROC_STAT_OFFSET]), ""
 
 
 def _darwin_owner_and_state(pid: int) -> tuple[int | None, str | None]:
-    """Owner uid and state of ``pid``, to prove exit/ownership when argv is unreadable."""
+    """Owner uid and kernel state of ``pid`` when argv cannot be read.
 
-    return _darwin_bsdinfo(pid) or _darwin_short_bsdinfo(pid) or (None, None)
+    The owner comes from the bsd-info records (the short one answers for other
+    accounts' processes); the state comes from ``KERN_PROC_PID`` only.
+    """
+
+    found, state, _detail = _darwin_proc_state(pid)
+    return _darwin_owner(pid), (state if found else None)
 
 
 
@@ -349,107 +424,102 @@ def _kernel_thread(pid: int) -> bool:
 
 
 def _no_live_record(pid: int) -> bool:
-    """Whether the kernel holds no live bsd-info record for ``pid``.
+    """Whether the host *proves* ``pid`` is not a live attach client.
 
-    Darwin refuses both ``PROC_PIDTBSDINFO`` and ``PROC_PIDT_SHORTBSDINFO`` for
-    a process with no task left (an unreaped zombie) or for a pid that vanished,
-    while every live process answers at least one of them - including root-owned
-    processes that a non-root caller may not read argv for.  A process the
-    kernel cannot even describe is not executing ``docker start --attach``, so it
-    may be skipped.  When the probes are unavailable this returns False and the
-    caller stays fail-closed.
+    Only positive evidence counts: the kernel state is a zombie (Linux ``Z``,
+    Darwin ``SZOMB`` from ``KERN_PROC_PID``), the process is a Linux
+    ``PF_KTHREAD`` thread, the owner record names another account (an attach
+    client is a child of this frontend and shares its euid), or ``kill(pid, 0)``
+    answers ``ESRCH``.  Nothing else does: ``EPERM`` is what a hardened or
+    sandboxed host answers for same-uid processes too, and a failed
+    ``proc_pidinfo``/``KERN_PROCARGS2``/``/proc`` read says nothing about the
+    owner or the state.  Those cases stay unknown and the caller fails closed.
     """
 
-    if sys.platform != "darwin":
-        return False
-    _libc, libproc = _darwin_libraries()
-    if not hasattr(libproc, "proc_pidinfo"):
-        return False
-    return _darwin_bsdinfo(pid) is None and _darwin_short_bsdinfo(pid) is None
-
-
-# -- classification ---------------------------------------------------------
-
-
-def _undecidable(
-    pid: int, executable_names: frozenset[str], detail: str,
-) -> tuple[str, ...]:
-    """Decide what an uninspectable process means for the caller's scan.
-
-    Returns ``()`` only when the process is provably *not* a candidate attach
-    client: its executable is readable and is not one this supervisor spawns, it
-    is a zombie, it is owned by another account, or it is gone.  A live process
-    owned by this account whose executable is the Docker CLI (or which cannot be
-    named at all) could still be this frontend's ``docker start --attach``
-    client, so it raises :class:`HostProcsError` instead of being skipped.
-    """
-
-    path = _executable_path(pid)
-    if path and executable_names and os.path.basename(path) not in executable_names:
-        # Decisive: attach clients are spawned from a fixed executable, so a
-        # process running anything else cannot be one, whatever its argv is.
-        return ()
     owner, state = _owner_and_state(pid)
     if state == "Z":
         # A zombie holds no descriptor and cannot be attaching to a container.
-        return ()
+        return True
     if _kernel_thread(pid):
-        # ``PF_KTHREAD``: the kernel proves there is no user-space executable
-        # (and thus no argv) that could be the Docker CLI.
-        return ()
-    if owner is None:
-        if _no_live_record(pid):
-            # The kernel has no task record for this pid: it is a zombie whose
-            # parent has not reaped it, or it is already gone.
-            return ()
-        # Neither the path nor the owner is known.  ``kill(pid, 0)`` still
-        # separates "gone" and "another account's process" from "ours".
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return ()
-        except PermissionError:
-            return ()
-        raise HostProcsError(
-            f"could not inspect live process {pid}, whose owner and executable cannot be read: {detail}"
-        )
-    if owner != os.geteuid():
+        # ``PF_KTHREAD``: no user-space executable and therefore no argv.
+        return True
+    if owner is not None and owner != os.geteuid():
         # Attach clients are children of this frontend, so they share its
         # effective uid; another account's process can never be one.
-        return ()
-    raise HostProcsError(
-        "could not inspect live process "
-        f"{pid} ({path or 'executable unknown'}) owned by this account, "
-        f"which could still be an attach client of this frontend: {detail}"
-    )
-
-
-def _provably_gone(pid: int) -> bool:
-    """Whether ``pid`` provably cannot be a live attach client any more."""
-
-    _owner, state = _owner_and_state(pid)
-    if state == "Z" or _no_live_record(pid):
         return True
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return True
-    except PermissionError:
-        # Not signalable by this account: it is not a child of this frontend.
-        return True
+    except OSError:
+        # ``PermissionError`` included: a sandbox can deny signals to our own
+        # children, so it is not proof of another owner or of a vanished pid.
+        return False
     return False
 
 
+# A live process can refuse ``KERN_PROCARGS2``/``/proc/<pid>/cmdline`` for a few
+# milliseconds while its address space changes (exec, fork, exit on Darwin
+# answers ``EIO`` and then reads fine again).  A refusal is therefore not yet a
+# decision: re-read it while the answer is still unknown, so a real survivor is
+# matched and an exiting one is skipped only once the kernel proves it.
+_SCAN_SETTLE_ATTEMPTS = 7
+_SCAN_SETTLE_S = 0.03
+
+
+# -- classification ---------------------------------------------------------
+
+
+def _inspect(pid: int) -> tuple[tuple[str, ...] | None, str]:
+    """``(argv, detail)`` for ``pid``, settling a transient refusal.
+
+    ``argv`` is the process's argument vector, ``()`` when the host proves the
+    process cannot be a live attach client (:func:`_no_live_record`: zombie,
+    kernel thread, another account, or ``ESRCH``), and ``None`` when it is still
+    unknown after the bounded settle.  A refusal is retried rather than treated
+    as a decision, so a live client that was momentarily unreadable is read (and
+    matched) instead of being dropped, while an exiting process is only skipped
+    after the kernel reports it as a zombie or gone.
+    """
+
+    detail = "the kernel refused the argument read"
+    for attempt in range(_SCAN_SETTLE_ATTEMPTS):
+        try:
+            return _read_argv(pid), ""
+        except _Unreadable as exc:
+            detail = str(exc)
+        if _no_live_record(pid):
+            return (), ""
+        if attempt + 1 < _SCAN_SETTLE_ATTEMPTS:
+            time.sleep(_SCAN_SETTLE_S)
+    return None, detail
+
+
+def _inspection_error(pid: int, detail: str, executable_names: frozenset[str]) -> str:
+    """Error text for a live process that is still unknown after settling."""
+
+    owner, _state = _owner_and_state(pid)
+    path = _executable_path(pid)
+    hint = f"; this caller spawns {sorted(executable_names)}" if executable_names else ""
+    return (
+        f"could not inspect live process {pid} "
+        f"({path or 'executable unknown'}, "
+        f"uid {owner if owner is not None else 'unknown'}): {detail}{hint}"
+    )
+
+
 def _yield_inspectable(
-    pids: Iterable[int], executable_names: frozenset[str],
+    pids: Iterable[int], executable_names: frozenset[str] = frozenset(),
 ) -> Iterator[tuple[int, tuple[str, ...]]]:
     for pid in pids:
         if pid <= 0 or pid == os.getpid():
             continue
-        try:
-            argv = _read_argv(pid)
-        except _Unreadable as exc:
-            argv = _undecidable(pid, executable_names, str(exc))
+        argv, detail = _inspect(pid)
+        if argv is None:
+            # Unknown is not "no survivor": never narrow by executable name
+            # (an interpreter or framework launcher has an arbitrary path) and
+            # never treat ``EPERM`` as an owner proof.
+            raise HostProcsError(_inspection_error(pid, detail, executable_names))
         if argv:
             yield pid, argv
 
@@ -517,13 +587,14 @@ def iter_processes(
 ) -> Iterator[tuple[int, tuple[str, ...]]]:
     """Yield ``(pid, argv)`` for every process whose argv can be read.
 
-    ``executable_names`` is the set of executable basenames a caller can spawn
-    (the Docker CLI and its launcher).  A process outside that candidate set, or
-    one owned by another account, is not an attach client and may be skipped
-    when its argv cannot be read; an owned process that cannot be excluded fails
-    the scan with :class:`HostProcsError`.  With an empty ``executable_names``
-    the caller claims no candidate set at all, so every uninspectable process
-    except a proven-gone/zombie/other-account one fails the scan.
+    An uninspectable process is skipped only when the host *proves* it cannot be
+    a live attach client (zombie, kernel thread, another account, or ``ESRCH``);
+    otherwise the scan fails with :class:`HostProcsError`.
+    ``executable_names`` is **not** used to narrow the scan - a client's
+    executable is whatever the configured CLI execs (script, ``env``,
+    interpreter symlink, framework launcher), so that set cannot be proven
+    complete.  It is accepted only so the failure can report which executables
+    this caller spawns.
     """
 
     if sys.platform == "darwin":
@@ -538,21 +609,19 @@ def pid_mentions(pid: int, *needles: str) -> bool:
     Used immediately before signalling a survivor: a PID reused between the
     table scan and the signal must never be killed as if it were an attach
     client.  A vanished, zombied or other-account process returns False; an
-    unreadable live one raises :class:`HostProcsError` so the caller fails
-    closed instead of skipping the signal.
+    unreadable live one - including one whose owner cannot be read and whose
+    ``kill(pid, 0)`` answer is ``EPERM`` - raises :class:`HostProcsError` so the
+    caller fails closed instead of skipping the signal.
     """
 
     wanted = [needle for needle in needles if needle]
     if not wanted or pid <= 0:
         return False
-    try:
-        argv = _read_argv(pid)
-    except _Unreadable as exc:
-        if _provably_gone(pid):
-            return False
+    argv, detail = _inspect(pid)
+    if argv is None:
         raise HostProcsError(
-            f"could not read the arguments of live process {pid}: {exc}"
-        ) from None
+            f"could not read the arguments of live process {pid}: {detail}"
+        )
     return bool(argv) and all(any(needle == argument for argument in argv) for needle in wanted)
 
 
@@ -563,8 +632,9 @@ def pids_mentioning(
 
     Matching on whole arguments keeps an identifier (a 64-character container
     id) from matching inside an unrelated path or environment string.  Raises
-    :class:`HostProcsError` when the process table cannot be read, so callers
-    never mistake an unknown scan for an empty one.
+    :class:`HostProcsError` when the process table cannot be read *or* when a
+    process that could be a surviving attach client cannot be inspected, so
+    callers never mistake an unknown scan for an empty one.
     """
 
     wanted = [needle for needle in needles if needle]

@@ -853,15 +853,19 @@ class DockerAttemptSupervisor:
         return ""
 
     def _attach_executable_names(self) -> frozenset[str]:
-        """Executables whose processes can be this supervisor's attach clients.
+        """Executables whose processes *could* be this supervisor's attach clients.
 
-        ``_attach_argv`` spawns ``self.config.docker`` directly, so a surviving
-        attach client is that executable - or, when the CLI is a script, the
-        interpreter named by its shebang.  The name is resolved through ``PATH``
-        as well (``#!/usr/bin/env python3`` execs ``python3.12``), because the
-        kernel reports the interpreter's real basename.  The set is only used to
-        decide whether a process whose argv cannot be read is a candidate; a
-        name that cannot be determined simply cannot narrow the scan.
+        ``_attach_argv`` spawns ``self.config.docker``, so a surviving client is
+        that executable - or, when the CLI is a script, whatever its shebang
+        eventually execs (``/usr/bin/env``, an interpreter symlink, a macOS
+        framework launcher).
+
+        The set is **diagnostic only**: it is reported in a scan failure so an
+        operator can see which executables a survivor could be, and it never
+        narrows the scan.  ``realpath``/``which``/basename cannot prove the set
+        complete (a framework Python answers with ``.../Python.app/Contents/
+        MacOS/Python``), so treating a readable path outside this set as "not a
+        client" was a fail-open and has been removed.
         """
 
         configured = self.config.docker
