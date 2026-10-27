@@ -1114,12 +1114,14 @@ class GrpcEvaluator:
             raise EvaluationUnavailable("result_invalid", "report schema is not accepted by this host")
         if evidence_descriptor is None:
             raise EvaluationUnavailable("result_invalid", "external results require candidate-binding evidence")
-        expected_evidence_schema = (
-            contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID if self.contract.npu_source
-            else gc.EVIDENCE_SCHEMA_ID
-        )
+        expected_evidence_schema = self.contract.evidence_schema_id or gc.EVIDENCE_SCHEMA_ID
         if evidence_descriptor["schema_id"] != expected_evidence_schema:
             raise EvaluationUnavailable("result_invalid", "evidence schema is not accepted by this host")
+        if (
+            self.contract.enforce_evidence_identity
+            and evidence_descriptor["media_type"] != self.contract.evidence_media_type
+        ):
+            raise EvaluationUnavailable("result_invalid", "evidence media type is not accepted by this host")
         if provenance["request_digest"] != external.request_digest:
             raise EvaluationUnavailable("provenance_mismatch", "result request digest does not match")
         if receipt["request_id"] != external.request_id:

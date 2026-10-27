@@ -181,6 +181,10 @@ def test_a_blob_job_completes_and_the_whole_digest_chain_agrees(tmp_path):
         )
         assert evidence["candidate_digest"] == candidate
         assert evidence["device_group"] == receipt["device_group"]
+        # The P0b wire descriptor keeps the version-1 evidence identity frozen
+        # before P1: schema id and ``application/json`` must not drift.
+        assert result.evidence_descriptor["schema_id"] == contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID
+        assert result.evidence_descriptor["media_type"] == "application/json"
         assert contracts.verify_result_signature(
             {"provenance": result.provenance, "report": result.report_descriptor,
              "evidence": result.evidence_descriptor, "receipt": receipt},

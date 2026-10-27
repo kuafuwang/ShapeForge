@@ -28,6 +28,7 @@ from tests.support.job_engine import (
     NPU_TOKEN,
     npu_bundle_features,
 )
+from tests.support.remote_contract import load_bundle_golden
 from tests.support.vendor_sim.harness import (
     BundleSourceGrpcHarness,
     GraphGrpcHarness,
@@ -136,6 +137,19 @@ def test_the_six_rpcs_complete_a_graph_artifact_set(tmp_path):
         final = _wait_snapshot(harness, request, {"completed", "failed", "interrupted"})
         assert gc.state_from_proto(final.state) == "completed", final.failure
         assert final.HasField("result")
+        # Read the descriptor the way a wire consumer does: straight off the
+        # protobuf OpaqueBlob, not through the internal document.  The schema id
+        # and the media type must be the version-2 identity the golden pins, so
+        # a version-1 consumer can never mistake a bundle result for its own.
+        golden = load_bundle_golden()["npu_bundle"]["signature"]["unsigned_result"]
+        envelope_evidence = final.result.evidence
+        assert envelope_evidence.schema_id == golden["evidence"]["schema_id"]
+        assert envelope_evidence.schema_id == contracts.NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID
+        assert envelope_evidence.media_type == golden["evidence"]["media_type"]
+        assert envelope_evidence.media_type == contracts.NPU_BUNDLE_EVIDENCE_MEDIA_TYPE
+        assert envelope_evidence.size_bytes == len(bytes(envelope_evidence.data))
+        assert envelope_evidence.sha256 == hashlib.sha256(bytes(envelope_evidence.data)).hexdigest()
+        assert envelope_evidence.schema_id != contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID
         report_bytes, _report_descriptor, evidence_bytes, _evidence_descriptor, provenance, receipt, _signature = (
             gc.result_from_proto(final.result, dialect=harness.factory.contract)
         )

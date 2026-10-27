@@ -218,6 +218,77 @@ def test_the_bundle_payload_round_trips_and_refuses_a_swapped_payload():
         payload_bundle(tampered)
 
 
+def test_materialize_writes_every_inline_entry_under_the_attempt_root(tmp_path):
+    bundle = _bundle()
+    written = bundle.materialize(tmp_path / "attempt")
+    assert sorted(written) == ["graph/main.json", "graph/params.bin"]
+    for path, role, media_type, data in GRAPH_ENTRIES:
+        assert written[path].read_bytes() == data
+
+
+def test_materialize_refuses_a_symlinked_parent_instead_of_writing_through_it(tmp_path):
+    """A planted ``graph -> elsewhere`` must not become an out-of-root write.
+
+    Checking only the final target is not enough: ``mkdir(parents=True)``
+    happily accepts an existing symlinked directory and the ``open`` that
+    follows would land outside the attempt scope.  The assertion is on the real
+    escape (bytes appearing outside the root), not on a message.
+    """
+
+    root = tmp_path / "attempt"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root.mkdir()
+    (root / "graph").symlink_to(outside, target_is_directory=True)
+    bundle = _bundle()
+    with pytest.raises(BundleError, match="symbolic link"):
+        bundle.materialize(root)
+    assert list(outside.iterdir()) == []
+
+
+def test_materialize_refuses_a_symlink_at_the_target_name(tmp_path):
+    outside_file = tmp_path / "victim.txt"
+    outside_file.write_bytes(b"original")
+    root = tmp_path / "attempt"
+    (root / "graph").mkdir(parents=True)
+    (root / "graph" / "main.json").symlink_to(outside_file)
+    with pytest.raises(BundleError, match="symbolic link"):
+        _bundle().materialize(root)
+    assert outside_file.read_bytes() == b"original"
+
+
+def test_materialize_refuses_a_symlinked_root_or_a_file_in_the_way(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(BundleError, match="must not be a symbolic link"):
+        _bundle().materialize(linked_root)
+    assert list(outside.iterdir()) == []
+    # A regular file where a directory component belongs is refused, not replaced.
+    root = tmp_path / "attempt"
+    root.mkdir()
+    (root / "graph").write_bytes(b"not a directory")
+    with pytest.raises(BundleError, match="not a directory"):
+        _bundle().materialize(root)
+    assert (root / "graph").read_bytes() == b"not a directory"
+    assert sorted(item.name for item in root.iterdir()) == ["graph"]
+    # An existing target is never overwritten by a second attempt.
+    root = tmp_path / "again"
+    _bundle().materialize(root)
+    with pytest.raises(BundleError, match="already exists"):
+        _bundle().materialize(root)
+
+
+def test_an_entry_cannot_be_the_parent_of_another_entry():
+    parent = BundleEntry(path="graph", role="AUXILIARY", media_type="text/plain",
+                         size_bytes=1, sha256=hashlib.sha256(b"a").hexdigest(), data=b"a")
+    child = BundleEntry(path="graph/main.json", role="AUXILIARY", media_type="text/plain",
+                        size_bytes=1, sha256=hashlib.sha256(b"b").hexdigest(), data=b"b")
+    with pytest.raises(BundleError, match="parent of another entry"):
+        ArtifactBundle(entries=(parent, child))
+
+
 # -- version 4 request identity -------------------------------------------
 def test_the_source_bundle_oneof_is_exactly_one_branch():
     bundle = build_graph_bundle()
@@ -359,6 +430,120 @@ def test_incomplete_or_contradictory_evidence_is_never_complete(mutation, match)
     mutation(document)
     with pytest.raises(contracts.ContractError, match=match):
         contracts.npu_timing_evidence_document_v2(document)
+
+
+def _span(device: str, *, rank=None, die=None, elapsed: int = 1_250_000) -> dict:
+    return {"device_id": device, "rank": rank, "die": die,
+            "clock_domain": "svc-clock", "elapsed_ns": elapsed}
+
+
+def test_a_device_with_two_ranks_reports_one_span_per_rank():
+    """One device with two ranks is two spans, not a duplicated device.
+
+    The old rule keyed uniqueness on ``device_id`` alone, so a topology with
+    ``required_rank_spans=2`` could never be complete: the second rank of the
+    same device was refused as a duplicate span.
+    """
+
+    from tcenv.remote.job_types import NpuResources
+
+    resources = NpuResources(required_rank_spans=2)
+    top = _evidence()["topology"]
+    top["required_rank_spans"] = 2
+    document = _evidence(
+        topology=top, spans=[_span("device-0", rank=0, elapsed=1_250_000),
+                             _span("device-0", rank=1, elapsed=1_300_000)],
+        timing={"source": "DEVICE_EVENT", "clock_domain": "svc-clock",
+                "synchronization_completed": True, "device_elapsed_ns": 1_300_000,
+                "host_api_elapsed_ns": 2_500_000, "launches": 2},
+    )
+    checked = contracts.npu_timing_evidence_document_v2(
+        document, expected_resources=resources.to_dict(),
+    )
+    assert checked["complete"] is True
+    assert [(span["device_id"], span["rank"]) for span in checked["spans"]] == [
+        ("device-0", 0), ("device-0", 1),
+    ]
+    # The aggregate is still the slowest span, not the average or the first.
+    assert checked["timing"]["device_elapsed_ns"] == 1_300_000
+
+
+def test_completeness_is_the_cartesian_product_of_the_declared_topology():
+    """Every declared ``device x rank x die`` coordinate needs exactly one span."""
+
+    base = _evidence()
+    topology = dict(base["topology"], logical_devices=2,
+                    declared_devices=["device-0", "device-1"], required_rank_spans=2)
+    complete = [
+        _span("device-0", rank=0), _span("device-0", rank=1, ),
+        _span("device-1", rank=0), _span("device-1", rank=1),
+    ]
+    timing = {"source": "DEVICE_EVENT", "clock_domain": "svc-clock",
+              "synchronization_completed": True, "device_elapsed_ns": 1_250_000,
+              "host_api_elapsed_ns": 2_500_000, "launches": 1}
+    checked = contracts.npu_timing_evidence_document_v2(
+        _evidence(topology=topology, spans=complete, timing=timing),
+    )
+    assert checked["complete"] is True
+    # A missing device is named as a missing device.
+    with pytest.raises(contracts.ContractError, match="missing a declared device span: device-1"):
+        contracts.npu_timing_evidence_document_v2(_evidence(
+            topology=topology, timing=timing,
+            spans=[_span("device-0", rank=0), _span("device-0", rank=1)],
+        ))
+    # A device that kept its rank 0 span but lost rank 1 is a missing rank, and
+    # it is missing for *that* device -- not for the group as a whole.
+    with pytest.raises(contracts.ContractError, match="missing a declared rank span: device-1/rank 1"):
+        contracts.npu_timing_evidence_document_v2(_evidence(
+            topology=topology, timing=timing,
+            spans=complete[:3],
+        ))
+    # The same coordinate twice is refused even when the count looks right.
+    with pytest.raises(contracts.ContractError, match="coordinate twice"):
+        contracts.npu_timing_evidence_document_v2(_evidence(
+            topology=topology, timing=timing,
+            spans=[complete[0], complete[0], complete[2], complete[3]],
+        ))
+    # A rank the topology does not declare is refused instead of widening it.
+    with pytest.raises(contracts.ContractError, match="does not cover"):
+        contracts.npu_timing_evidence_document_v2(_evidence(
+            topology=topology, timing=timing,
+            spans=complete[:3] + [_span("device-1", rank=2)],
+        ))
+    # A span for a device the topology never declared is refused.
+    with pytest.raises(contracts.ContractError, match="declared topology does not have"):
+        contracts.npu_timing_evidence_document_v2(_evidence(
+            topology=topology, timing=timing,
+            spans=complete + [_span("device-2", rank=0)],
+        ))
+
+
+def test_a_graph_only_vendor_is_not_penalised_for_absent_rank_or_die_spans():
+    checked = contracts.npu_timing_evidence_document_v2(_evidence())
+    assert checked["complete"] is True
+    assert checked["spans"] == [{
+        "device_id": "device-0", "rank": None, "die": None,
+        "clock_domain": "svc-clock", "elapsed_ns": 1_250_000,
+    }]
+    assert checked["topology"]["required_rank_spans"] is None
+    assert checked["topology"]["required_die_spans"] is None
+
+
+def test_a_topology_no_evidence_row_could_cover_is_refused_up_front():
+    from tcenv.remote.job_types import NpuExecutionSpec, NpuResources
+
+    # The execution spec cannot declare 8 devices x 64 ranks: no bounded row
+    # could ever report those 512 coordinates, so the request is refused before
+    # a device is touched instead of failing every result afterwards.
+    with pytest.raises(contracts.ContractError, match="device x rank x die spans"):
+        contracts.device_group_requirements(
+            {"logical_devices": 8, "required_rank_spans": 64, "required_die_spans": 2},
+        )
+    with pytest.raises(contracts.ContractError, match="device x rank x die spans"):
+        contracts.npu_bundle_execution_document(dict(
+            build_graph_execution().to_dict(),
+            resources={"logical_devices": 8, "required_rank_spans": 64, "required_die_spans": 2},
+        ))
 
 
 def test_a_declared_rank_shape_requires_every_rank_span():
@@ -603,6 +788,82 @@ def test_a_tampered_bundle_receipt_or_evidence_breaks_the_signed_chain(tmp_path)
         outbox._result_path(request.request_id).write_text(json.dumps(payload), encoding="utf-8")
         with pytest.raises(EvaluationUnavailable):
             _outbox(root).begin(request, epoch=harness.factory.epoch)
+
+
+def test_the_signed_evidence_descriptor_is_the_version_two_identity():
+    """A version-2 document must not be labelled with the version-1 descriptor.
+
+    The descriptor is what a consumer reads *before* parsing the bytes, and it
+    is part of the signed envelope.  Labelling a version-2 TimingEvidence with
+    the P0/P0b schema id (and ``application/json``) makes a version-1 consumer
+    accept a document it does not understand -- the old frontend and the old
+    client agreed on the wrong value, so neither end noticed.
+    """
+
+    bundle = build_graph_bundle()
+    group = build_graph_execution().device_group.to_dict()
+    candidate = {"algorithm": contracts.BUNDLE_DIGEST_ALGORITHM,
+                 "value": bundle.artifact_set_digest}
+    evidence = json.dumps(
+        contracts.npu_timing_evidence_document_v2(_evidence()), sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    envelope = {
+        "provenance": {
+            "schema_version": 1, "evaluator_epoch": "e" * 64, "site_id": "sim-npu-site",
+            "device_id": "sim-npu-graph-device", "backend": "vendor-b",
+            "backend_version": "1", "target_id": "sim-npu-graph",
+            "worker_build": "fake-vendor-b-worker-1", "task_pack_digest": "f" * 64,
+            "calibration_digest": "c" * 64, "protocol_version": "3",
+            "api_contract_id": contracts.NPU_BUNDLE_API_CONTRACT_ID,
+            "evidence_contract_id": contracts.NPU_BUNDLE_EVIDENCE_CONTRACT_ID,
+            "measurement_kind": "simulated", "publication_allowed": False,
+            "device_group": group,
+            "artifact_kind": "bundle", "launch_kind": "GRAPH",
+            "launch_subtype": "SERVICE", "timing_sources": ["DEVICE_EVENT"],
+            "attempt_id": "attempt-1", "request_digest": "0" * 64,
+        },
+        "receipt": {
+            "receipt_id": contracts.attempt_receipt_id(
+                request_id="bundle-descriptor-1", attempt_id="attempt-1",
+                request_digest="0" * 64, candidate_digest=candidate, device_group=group,
+                dialect=contracts.NPU_BUNDLE_DIALECT,
+            ),
+            "request_id": "bundle-descriptor-1",
+            "attempt_id": "attempt-1", "request_digest": "0" * 64,
+            "lease_fence": "1", "session_sequence": "1",
+            "issued_at": "2026-10-29T00:00:00Z",
+            "candidate_digest": candidate,
+            "device_group": group,
+        },
+        "report": {"schema_id": "tcenv.eval-report.v3", "media_type": "application/json",
+                   "size_bytes": 2, "sha256": hashlib.sha256(b"{}").hexdigest()},
+        "evidence": {
+            "schema_id": contracts.NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
+            "media_type": contracts.NPU_BUNDLE_EVIDENCE_MEDIA_TYPE,
+            "size_bytes": len(evidence), "sha256": hashlib.sha256(evidence).hexdigest(),
+        },
+    }
+    contracts.result_signature_document(
+        envelope, key_id="sim-npu-site/key-1", dialect=contracts.NPU_BUNDLE_DIALECT,
+    )
+    for schema_id, media_type in (
+        (contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID, "application/json"),
+        (contracts.NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID, "application/json"),
+        ("tcenv.remote.v1.selfcheck-evidence", contracts.NPU_BUNDLE_EVIDENCE_MEDIA_TYPE),
+    ):
+        mislabelled = copy.deepcopy(envelope)
+        mislabelled["evidence"]["schema_id"] = schema_id
+        mislabelled["evidence"]["media_type"] = media_type
+        with pytest.raises(contracts.ContractError, match="not the TimingEvidence identity"):
+            contracts.result_signature_document(
+                mislabelled, key_id="sim-npu-site/key-1", dialect=contracts.NPU_BUNDLE_DIALECT,
+            )
+        with pytest.raises(contracts.ContractError, match="not the TimingEvidence identity"):
+            contracts.sign_result(
+                mislabelled, key_id="sim-npu-site/key-1", key=b"k" * 32,
+                dialect=contracts.NPU_BUNDLE_DIALECT,
+            )
 
 
 # -- fence and retry ------------------------------------------------------

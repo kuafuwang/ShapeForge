@@ -12,10 +12,11 @@ Two frozen cross-language vectors live here:
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from tcenv.remote import contracts
 
@@ -259,6 +260,82 @@ def load_bundle_golden() -> dict[str, Any]:
     return json.loads(BUNDLE_GOLDEN.read_text(encoding="utf-8"))
 
 
+def bundle_completeness_vectors(
+    evidence_document: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """TimingEvidence completeness vectors shared with the Go verifier.
+
+    ``valid`` is decided by the production validator here, and re-derived
+    independently in Go, so the device/rank/die coverage rule cannot drift
+    between the two languages: the wire ``spans`` of one device with two ranks
+    are two spans, a missing coordinate is a missing span, and a graph-only
+    vendor is not asked for a dimension it does not have.
+    """
+
+    base = copy.deepcopy(dict(evidence_document))
+    clock = base["timing"]["clock_domain"]
+
+    def span(device: str, *, rank=None, die=None, elapsed: int) -> dict[str, Any]:
+        return {"device_id": device, "rank": rank, "die": die,
+                "clock_domain": clock, "elapsed_ns": elapsed}
+
+    def with_shape(*, devices, ranks, dies, spans, elapsed) -> dict[str, Any]:
+        document = copy.deepcopy(base)
+        document["topology"] = {
+            "logical_devices": len(devices), "declared_devices": list(devices),
+            "required_rank_spans": ranks, "required_die_spans": dies,
+        }
+        document["spans"] = spans
+        document["timing"] = dict(
+            document["timing"], device_elapsed_ns=elapsed, launches=len(spans),
+        )
+        return document
+
+    two_devices = ["device-0", "device-1"]
+    rank_complete = [
+        span("device-0", rank=0, elapsed=1_100), span("device-0", rank=1, elapsed=1_250),
+        span("device-1", rank=0, elapsed=1_150), span("device-1", rank=1, elapsed=1_300),
+    ]
+    documents = [
+        ("graph-service-one-device", with_shape(
+            devices=["device-0"], ranks=None, dies=None,
+            spans=[span("device-0", elapsed=1_250)], elapsed=1_250,
+        )),
+        ("two-devices-two-ranks", with_shape(
+            devices=two_devices, ranks=2, dies=None, spans=rank_complete, elapsed=1_300,
+        )),
+        ("missing-second-rank-of-one-device", with_shape(
+            devices=two_devices, ranks=2, dies=None,
+            spans=[rank_complete[0], rank_complete[1], rank_complete[2]], elapsed=1_250,
+        )),
+        ("duplicate-device-rank-coordinate", with_shape(
+            devices=two_devices, ranks=2, dies=None,
+            spans=[rank_complete[0], rank_complete[0], rank_complete[2], rank_complete[3]],
+            elapsed=1_300,
+        )),
+        ("graph-only-vendor-invents-a-rank", with_shape(
+            devices=["device-0"], ranks=None, dies=None,
+            spans=[span("device-0", rank=0, elapsed=1_250)], elapsed=1_250,
+        )),
+        ("rank-the-topology-does-not-cover", with_shape(
+            devices=two_devices, ranks=2, dies=None,
+            spans=rank_complete[:3] + [span("device-1", rank=2, elapsed=1_300)], elapsed=1_300,
+        )),
+    ]
+    vectors: list[dict[str, Any]] = []
+    for name, document in documents:
+        try:
+            checked = contracts.npu_timing_evidence_document_v2(document)
+        except contracts.ContractError:
+            vectors.append({"name": name, "valid": False, "document": document})
+        else:
+            vectors.append({
+                "name": name, "valid": True, "document": checked,
+                "device_elapsed_ns": checked["timing"]["device_elapsed_ns"],
+            })
+    return vectors
+
+
 def build_bundle_golden() -> dict[str, Any]:
     """Return the complete P1 bundle contract vector.
 
@@ -439,6 +516,7 @@ def build_bundle_golden() -> dict[str, Any]:
                 "receipt_id": receipt["receipt_id"],
             },
             "evidence": evidence_document,
+            "completeness_vectors": bundle_completeness_vectors(evidence_document),
             "signature": {
                 "key_id": BUNDLE_KEY_ID,
                 "key_hex": BUNDLE_KEY.hex(),

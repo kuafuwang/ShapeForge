@@ -218,32 +218,32 @@ class ArtifactBundle:
     def materialize(self, root: Path) -> dict[str, Path]:
         """Write the inline entries under ``root`` and re-verify the written bytes.
 
-        The directory belongs to one attempt.  An existing target, a planted
-        symlink or a non-regular file is refused instead of being followed, so a
-        materialized bundle cannot write outside its attempt scope.
+        The directory belongs to one attempt.  Every path component is checked
+        with ``lstat`` before it is used and each file is opened with
+        ``O_NOFOLLOW``/``O_EXCL``, so a planted symbolic link at *any* level --
+        the root, an intermediate directory or the final name -- is refused
+        instead of being followed.  Checking only the final target would let
+        ``graph -> /somewhere/else`` write outside the attempt scope.
         """
 
         written: dict[str, Path] = {}
-        root = Path(root)
-        root.mkdir(parents=True, exist_ok=True)
-        if root.is_symlink():
-            raise BundleError("the bundle target directory must not be a symbolic link")
+        root = _prepare_materialize_root(Path(root))
         for entry in self.entries:
             if entry.data is None:
                 if entry.described:
                     raise BundleError("a described bundle has no inline bytes to materialize")
                 continue
-            target = root.joinpath(*entry.path.split("/"))
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if target.is_symlink() or target.exists():
-                raise BundleError(f"bundle target already exists: {entry.path!r}")
-            # ``xb`` fails if anything appeared between the check and the write.
-            with open(target, "xb") as handle:
+            *parents, name = entry.path.split("/")
+            directory = _descend_without_symlinks(root, parents)
+            target = directory / name
+            _refuse_existing_target(target, entry.path)
+            # ``O_NOFOLLOW`` closes the check-then-open race: if a symbolic link
+            # appeared at the final name, the open itself fails.
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(target, flags, 0o600)
+            with os.fdopen(descriptor, "wb") as handle:
                 handle.write(entry.data)
-            mode = os.lstat(target).st_mode
-            if not stat.S_ISREG(mode):
-                raise BundleError(f"materialized bundle entry is not a regular file: {entry.path!r}")
-            verify_entry_bytes(entry, target.read_bytes())
+            verify_entry_bytes(entry, _read_without_following(target))
             written[entry.path] = target
         return written
 
@@ -440,6 +440,95 @@ def _blob_descriptor(value: Any) -> dict[str, Any]:
         raise BundleError(f"bundle entry blob reference is invalid: {exc}") from exc
 
 
+def _check_path_prefixes(paths: Iterable[str]) -> None:
+    """Refuse a bundle where one entry's path is another entry's parent.
+
+    ``graph`` and ``graph/main.json`` cannot both be materialized: one of them
+    would have to be a file and a directory at the same time.  Refusing it at
+    manifest validation keeps ``materialize`` from failing half way through an
+    attempt directory.
+    """
+
+    seen = set(paths)
+    for path in seen:
+        segments = path.split("/")
+        for index in range(1, len(segments)):
+            if "/".join(segments[:index]) in seen:
+                raise BundleError(
+                    f"bundle entry path is the parent of another entry: {path!r}"
+                )
+
+
+def _prepare_materialize_root(root: Path) -> Path:
+    """Create the attempt directory or refuse a symlink/non-directory root."""
+
+    try:
+        info = os.lstat(root)
+    except FileNotFoundError:
+        try:
+            os.makedirs(root, 0o700)
+        except FileExistsError:
+            pass
+        info = os.lstat(root)
+    if stat.S_ISLNK(info.st_mode):
+        raise BundleError("the bundle target directory must not be a symbolic link")
+    if not stat.S_ISDIR(info.st_mode):
+        raise BundleError("the bundle target is not a directory")
+    return root
+
+
+def _descend_without_symlinks(root: Path, segments: Iterable[str]) -> Path:
+    """Return ``root/segments...``, creating plain directories only.
+
+    Each existing component is examined with ``lstat``: a symbolic link, a
+    regular file or a device node where a directory belongs is refused rather
+    than written through.
+    """
+
+    current = root
+    for name in segments:
+        current = current / name
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError:
+            os.mkdir(current, 0o700)
+            info = os.lstat(current)
+        if stat.S_ISLNK(info.st_mode):
+            raise BundleError(
+                f"bundle target parent must not be a symbolic link: {name!r}"
+            )
+        if not stat.S_ISDIR(info.st_mode):
+            raise BundleError(
+                f"bundle target parent is not a directory: {name!r}"
+            )
+    return current
+
+
+def _refuse_existing_target(target: Path, path: str) -> None:
+    try:
+        info = os.lstat(target)
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(info.st_mode):
+        raise BundleError(f"bundle target must not be a symbolic link: {path!r}")
+    raise BundleError(f"bundle target already exists: {path!r}")
+
+
+def _read_without_following(target: Path) -> bytes:
+    """Read back the bytes of a file that must not be a symbolic link."""
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(target, flags)
+    except OSError as exc:
+        raise BundleError(f"materialized bundle entry is not a plain file: {exc}") from exc
+    with os.fdopen(descriptor, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise BundleError("materialized bundle entry is not a regular file")
+        return handle.read()
+
+
 def _check_entry_rules(
     *, path: str, size: int, digest: str, media_type: str, content: str,
     blob_ref: Mapping[str, Any] | None, seen: dict[str, str],
@@ -534,6 +623,7 @@ def normalize_entries(entries: Iterable[BundleEntry]) -> dict[str, Any]:
         raise BundleError("the inline bundle exceeds the total inline byte limit")
     if total > MAX_BUNDLE_TOTAL_BYTES:
         raise BundleError("a bundle exceeds the declared total byte limit")
+    _check_path_prefixes(entry.path for entry in kept)
     kept.sort(key=lambda item: item.path)
     return {
         "schema_id": BUNDLE_SCHEMA_ID,
@@ -606,6 +696,7 @@ def bundle_document(value: Any) -> dict[str, Any]:
         raise BundleError("the inline bundle exceeds the total inline byte limit")
     if total > MAX_BUNDLE_TOTAL_BYTES:
         raise BundleError("a bundle exceeds the declared total byte limit")
+    _check_path_prefixes(document["path"] for document in documents)
     documents.sort(key=lambda item: item["path"])
     manifest = canonical_manifest(BUNDLE_SCHEMA_ID, documents)
     computed = artifact_set_digest(BUNDLE_SCHEMA_ID, documents)

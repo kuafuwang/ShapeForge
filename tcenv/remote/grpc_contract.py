@@ -101,8 +101,8 @@ STAGE_TO_PROTO = {
     "done": pb.PROGRESS_STAGE_FINALIZING,
 }
 
-REPORT_SCHEMA_ID = "tcenv.eval-report.v3"
-EVIDENCE_SCHEMA_ID = "tcenv.remote.v1.selfcheck-evidence"
+REPORT_SCHEMA_ID = contracts.REPORT_SCHEMA_ID
+EVIDENCE_SCHEMA_ID = contracts.LEGACY_EVIDENCE_SCHEMA_ID
 BLOB_MEDIA_TYPE = "application/json"
 
 

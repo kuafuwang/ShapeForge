@@ -827,24 +827,48 @@ class JobEngine:
             return ()
         return tuple(dict(entry.blob_ref or {}) for entry in request.npu.bundle.blob_entries)
 
+    def _refuse_unservable_artifact(self, request: ExternalEvaluationRequest) -> None:
+        """Refuse an artifact this frontend has no channel for, before any job.
+
+        A request that references content-addressed entries needs the P0b
+        channel on *this* frontend.  Accepting it and letting the worker discover
+        the missing ``TCENV_BLOB_ROOT`` turns a permanent configuration error
+        into a retryable infrastructure failure after a durable job, an attempt
+        and a device lease were already spent.
+        """
+
+        if self.blob_store is not None:
+            return
+        if self._artifact_blobs(request):
+            raise JobError(
+                "failed_precondition",
+                "this evaluator has no blob channel; a blob-backed artifact cannot be served",
+            )
+
     def _lease_blob(self, request: ExternalEvaluationRequest, grant_token: str) -> bool:
         """Require ready, in-scope artifacts before anything durable is written.
 
         An unfinished upload, another scope's content id, or a descriptor that
         disagrees with the bytes on disk can never be submitted as a complete
         artifact.  The lease is what later releases (or safely keeps) the bytes.
-        A multi-entry bundle leases every blob it references; the first failure
-        drops the leases already taken here so a rejected Submit never leaves an
-        orphan behind.
+        A multi-entry bundle leases every blob it references; a failure drops only
+        the leases this call took, so a request that already owns a live lease
+        keeps it.
         Returns whether a lease was taken, so a rejected Submit can drop it.
         """
 
-        if self.blob_store is None:
-            return False
         descriptors = self._artifact_blobs(request)
         if not descriptors:
             return False
+        if self.blob_store is None:
+            # Unreachable through Submit (``_validate_submission`` refuses first),
+            # but a future caller must not silently skip the lease.
+            raise JobError(
+                "failed_precondition",
+                "this evaluator has no blob channel; a blob-backed artifact cannot be served",
+            )
         scope = self._blob_scope(grant_token)
+        taken: list[str] = []
         try:
             for descriptor in descriptors:
                 content_id = descriptor["content_id"]
@@ -859,28 +883,39 @@ class JobEngine:
                         "failed_precondition",
                         "request blob descriptor differs from the committed blob",
                     )
+                if request.request_id not in state.leases:
+                    # Remember exactly which leases this loop creates, so a
+                    # failure below can drop only those.
+                    taken.append(content_id)
                 self.blob_store.attach(scope, content_id, request.request_id)
         except BlobError as exc:
-            self._drop_attached_blobs(request.request_id)
+            self._drop_attached_blobs(scope, request.request_id, taken)
             raise JobError(_BLOB_JOB_ERRORS.get(exc.code, "failed_precondition"), exc.detail) from exc
         except BaseException:
-            self._drop_attached_blobs(request.request_id)
+            self._drop_attached_blobs(scope, request.request_id, taken)
             raise
         return True
 
-    def _drop_attached_blobs(self, request_id: str) -> None:
-        """Best-effort rollback of leases taken by a Submit that never landed.
+    def _drop_attached_blobs(
+        self, scope: BlobScope, request_id: str, content_ids: Iterable[str],
+    ) -> None:
+        """Best-effort rollback of the leases *this* attach loop took.
 
-        Only a *new* Submit reaches here (a replay never leases), and Submit
-        holds ``_submit_lock``, so every lease dropped here is one this call took.
+        The rollback is scoped to the content ids the current operation newly
+        attached: releasing by request id alone would also drop a lease bound to
+        an earlier attempt/fence of the same request, which another execution may
+        still be reading.  Only a *new* Submit reaches here and Submit holds
+        ``_submit_lock``, so no concurrent Submit of this request can observe the
+        half-taken state.
         """
 
         if self.blob_store is None:
             return
-        try:
-            self.blob_store.release(request_id, cleanup=False)
-        except Exception:  # noqa: BLE001 - rollback is best effort by design
-            pass
+        for content_id in content_ids:
+            try:
+                self.blob_store.detach(scope, content_id, request_id)
+            except Exception:  # noqa: BLE001 - rollback is best effort by design
+                pass
 
     def _release_blob_lease(self, request_id: str, *, attempt: Attempt | None = None) -> None:
         """Release a terminal job's blob lease and record a failed cleanup.
@@ -945,6 +980,7 @@ class JobEngine:
             )
         if request.target_id != self.identity.target_id:
             raise JobError("failed_precondition", "target is not served by this evaluator")
+        self._refuse_unservable_artifact(request)
         if self.contract.npu_source:
             if request.npu is None or self.npu_execution is None:
                 raise JobError("invalid_argument", "NPU request has no execution binding")
@@ -1077,6 +1113,12 @@ class JobEngine:
         required_features: list[str] | tuple[str, ...] = (), grant_token: str,
     ) -> JobSnapshot:
         self._required_features(required_features)
+        # A Retry must not resurrect a blob-backed artifact this frontend has no
+        # channel for: the durable job would be re-dispatched into a worker that
+        # can only fail on the missing blob root.
+        stored = self.store.stored_request(request_id)
+        if stored is not None:
+            self._refuse_unservable_artifact(stored)
         snapshot = self.store.retry(
             grant_token=grant_token, request_id=request_id, request_digest=request_digest,
             expected=expected, interrupted_attempt_id=interrupted_attempt_id,

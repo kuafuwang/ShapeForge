@@ -833,6 +833,93 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   生产发布；`python -m tcenv.remote.grpc_service` 仍对 NPU contract 直接报错，fake vendor 只在
   `tests/support/vendor_sim/`。所有结果 `simulated=true`、`publication_allowed=false`。
 
+**P1 复核修复（2026-10-29，Cursor 中断后的独立复核；仍无真实设备）**
+
+每条都先写出能失败的复现，再改代码，最后做变异核验（把修复临时改回旧行为，确认对应测试转
+失败）。逐项结论：
+
+1. **`materialize` 的父目录符号链接逃逸（确认，已修）**。复现：在 attempt 目录里放
+   `graph -> <bundle 根之外>`，旧实现 `target.parent.mkdir(parents=True, exist_ok=True)` 成功
+   跟随该链接，`open("xb")` 把字节写到了根之外（实测外层目录真的出现 `main.json`）。旧代码只
+   检查最终 target 与 root 本身，没检查中间段。修复：`_descend_without_symlinks` 逐段 `lstat`
+   （链接/普通文件/设备节点一律拒绝），最终文件用 `O_CREAT|O_EXCL|O_NOFOLLOW` 打开，回读也用
+   `O_NOFOLLOW` 并 `fstat` 复核是普通文件；root 本身也按 `lstat` 拒绝链接或非目录。回归：
+   `test_materialize_refuses_a_symlinked_parent_instead_of_writing_through_it`（断言根外目录仍为
+   空）、`..._at_the_target_name`、`..._a_symlinked_root_or_a_file_in_the_way`。同时把
+   「一个条目路径是另一个的父目录」在 manifest 校验期就拒绝（否则 materialize 会写一半）。
+2. **v4 result evidence descriptor 误标 v1（确认，已修）**。复现：走真实六 RPC 跑完一个
+   graph job，直接读 `EvaluationResult.evidence`（不经过内部 document）——旧值
+   `schema_id=tcenv.remote.npu-source.timing-evidence.1` + `media_type=application/json`，而
+   实际字节是 v2 document。两端都用同一个错值（`job_store` 按 `npu_source` 选 v1，
+   `grpc_client` 也按 `npu_source` 期待 v1），所以互不报警；Python golden 里却是 v2 schema +
+   v2 media，签名文档也用 v2，于是 wire 与 golden 互相矛盾。修复：`ContractDialect` 显式带
+   `evidence_schema_id`/`evidence_media_type`，v4 取 v2/v2；`job_store` 生成与持久读、
+   `grpc_client` 校验、`result_signature_document`（两端与持久读共用的签名入口）都按 dialect
+   核对，report descriptor 也只能是 `tcenv.eval-report.v3`。v4 是第一个「强制自己写出的身份」的
+   版本（`enforce_evidence_identity=True`）；v1–v3 仍写历史 `application/json` 但不再由
+   `npu_source` 猜 schema，而是每个 dialect 显式声明，且 P0/P0b 的真实 envelope 断言把这两个
+   身份钉住（否则同样会被下一次改动悄悄带上 v1/legacy id——本轮复核时确实先写坏过一次，
+   被新增断言当场抓住）。回归：六 RPC 测试直接断言 `final.result.evidence` 的 schema/media
+   等于 golden 的 `unsigned_result.evidence`，`test_the_signed_evidence_descriptor_is_the_version_two_identity`
+   证明三种误标都被签名入口拒绝，P0/P0b 各加一条 descriptor 身份断言。v1–v3 的 media type 与
+   旧 golden 的不一致仍在（冻结），风险写进剩余风险。
+3. **TimingEvidence 的设备×rank 唯一性与完整性（确认，已修）**。复现：一设备两 rank、
+   `required_rank_spans=2` 的完整证据被旧规则「timing evidence reports a device span twice」
+   拒绝——即 `required_rank_spans>1` 永远无法 complete；而「2 设备只报 device-0 的两个 rank」
+   这类缺设备组合旧规则只会给出「重复设备」，rank 集合 + `len(spans)%R` 的启发式根本看不到
+   device×rank 坐标。修复：span 唯一性改成 `(device_id, rank, die)` 坐标；完整性改成声明拓扑的
+   精确笛卡尔积（每设备 × 每 rank × 每 die 恰好一条，多一条/少一条都拒）；span 只能命名
+   `declared_devices` 里的设备，rank/die 超出声明范围即拒；`null` 维度仍不要求、也不许编造，
+   graph-only 厂商不受 rank/die 惩罚。`device_group_requirements`/`_topology_document` 增加
+   「坐标数 ≤ 64」上界，一个永远无法覆盖的拓扑在 request 阶段就被拒。回归：
+   `test_a_device_with_two_ranks_reports_one_span_per_rank`、
+   `test_completeness_is_the_cartesian_product_of_the_declared_topology`（缺设备/缺某设备某
+   rank/重复坐标/超范围 rank/未声明设备）、
+   `test_a_graph_only_vendor_is_not_penalised_for_absent_rank_or_die_spans`、
+   `test_a_topology_no_evidence_row_could_cover_is_refused_up_front`；Go verifier 用同一组
+   golden 向量（`npu_bundle.completeness_vectors`，6 个含 4 个应拒）独立复算，Python 侧也断言
+   两边判决一致。
+4. **多 blob entry attach 失败的回滚范围（部分证伪，已收紧）**。复现尝试：job A 已持有 X 的
+   lease，再提交引用 X + 未 commit 的 Y 的 job B——旧实现 `release(B)` 只删 B 的 lease，A 的
+   lease 保留（按 request id 释放，不会跨 request）。真正的隐患是同一 request id 上**不同
+   attempt** 的 lease（P0b 通道把 lease 绑 attempt/fence，P2a 会用到）：旧回滚按 request id
+   释放会把旧 attempt 的 lease 一起删掉。修复：`BlobStore.detach(scope, content_id,
+   request_id)` 只删单个 (blob, request) 的 lease（字节保留、不删文件），`_lease_blob` 记录本次
+   循环真正新增的 content id 并只回滚这些。回归：
+   `test_a_rejected_multi_entry_submit_only_rolls_back_its_own_leases`（旧 attempt 的绑定 lease
+   存活、本次新 lease 回收、被拒 Submit 不留 job、字节仍可用）。诚实结论：按字面「释放同
+   request 已接受 job 的 lease」在现实现里不可达（`job_exists` 为真时根本不 lease，且
+   `_submit_lock` 串行化），已在此说明而不是当成已发生的 bug。
+5. **没有 blob 通道时 blob 形态 bundle 仍被接受（确认，已修）**。复现：无 `blob_store` 的 v4
+   frontend 提交带 blob entry 的 bundle，旧实现照常建 job/attempt、lease 设备，worker 才因缺
+   `TCENV_BLOB_ROOT` 返回 17，被记成可重试的 infrastructure failure。修复：`submit` 在
+   `_validate_submission` 里先拒绝（`failed_precondition`），`retry` 在重派前用持久化 request
+   做同一判断，`_lease_blob` 也不再无声跳过。回归：
+   `test_a_bundle_that_needs_the_blob_channel_is_refused_before_it_exists`（断言无 job row、服务
+   无 submission，同前端 inline bundle 仍可完成）。
+6. **同类变体排查**：async completion token（丢失/重复/错误/never_complete，worker 被杀，服务
+   拒绝释放）与资源账本本轮复核未发现新漏洞，对应回归在原文件保持；report descriptor 的
+   schema 身份此前无人校验，已并入第 2 项的签名入口检查；bundle 终态 blob 清理失败原先只有
+   P0b 单 blob 的回归，现补 `test_a_failing_bundle_blob_cleanup_is_quarantined_not_hidden`
+   （注入 `remove` I/O 失败 → blob quarantine + job 记录 hazard，不伪装成干净清理）。
+
+修复后证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **52 passed**、
+`test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **17 passed**、
+`test_remote_npu_bundle_go_conformance.py` **14 passed**（合计 91）；P0/P0b 回归
+`test_remote_npu_{contract,grpc,cleanup}.py` +
+`test_remote_blob_{channel,contract,grpc,go_conformance}.py` **170 passed**；
+`test_remote_grpc_{adapter,tls,contract,revocation}.py` + `test_remote_{conformance,
+go_conformance,evidence_contract}.py` **87 passed**；`test_remote_{job_engine,job_recovery,
+legacy_worker_bridge,container_engine,container_supervisor,runtime}.py` +
+`test_evaluation_outbox.py` **265 passed, 1 skipped**；`test_selfcheck_bridge.py` 在默认围栏
+TMPDIR 下 **18 failed / 1 passed**（AF_UNIX 路径超长，未改测试），`TMPDIR=/tmp` **19 passed**；
+`scripts/generate_evaluator_proto.py --check` 通过（本轮未改 proto）。
+
+剩余风险（不得据此宣称）：v1–v3 的 evidence descriptor media type 与旧 golden 仍不一致（冻结，
+不修）；per-device span 的**设备 id 命名**仍由 vendor 自报、frontend 只核对数量与坐标，没有
+profile 侧的物理 id 绑定；`declared_devices` 与 profile 的 rank/die 事实只核对「有没有该维度 +
+数量」，没有逐 die 的拓扑摘要绑定；P2a/真实设备、真实 rank/die 聚合、真实 SDK 计时仍全部未做。
+
 ### P2a：TSM 模拟验收（无真实设备）
 
 位置：P1 之后、P2 之前。近期没有清微设备，因此先假设设备存在，用 TSM simulator 模拟

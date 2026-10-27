@@ -52,15 +52,26 @@ type BlobGolden struct {
 // the canonical manifest, the artifact-set digest, the request document, the
 // receipt and the signed result from the raw fields.
 type BundleGolden struct {
-	Request               map[string]any  `json:"request"`
-	BundleManifest        map[string]any  `json:"bundle_manifest"`
-	ArtifactSetDigest     string          `json:"artifact_set_digest"`
-	RequestDigestDocument map[string]any  `json:"request_digest_document"`
-	RequestCanonicalJSON  string          `json:"request_canonical_json"`
-	RequestDigest         string          `json:"request_digest"`
-	Receipt               ReceiptGolden   `json:"receipt"`
-	Evidence              map[string]any  `json:"evidence"`
-	Signature             SignatureGolden `json:"signature"`
+	Request               map[string]any   `json:"request"`
+	BundleManifest        map[string]any   `json:"bundle_manifest"`
+	ArtifactSetDigest     string           `json:"artifact_set_digest"`
+	RequestDigestDocument map[string]any   `json:"request_digest_document"`
+	RequestCanonicalJSON  string           `json:"request_canonical_json"`
+	RequestDigest         string           `json:"request_digest"`
+	Receipt               ReceiptGolden    `json:"receipt"`
+	Evidence              map[string]any   `json:"evidence"`
+	CompletenessVectors   []EvidenceVector `json:"completeness_vectors"`
+	Signature             SignatureGolden  `json:"signature"`
+}
+
+// EvidenceVector is one TimingEvidence document plus the verdict the Python
+// implementation reached for it.  Go re-derives the verdict from the declared
+// topology instead of trusting the flag, so the device/rank/die coverage rule
+// cannot drift between the two languages.
+type EvidenceVector struct {
+	Name     string         `json:"name"`
+	Valid    bool           `json:"valid"`
+	Document map[string]any `json:"document"`
 }
 
 type ReceiptGolden struct {
@@ -731,9 +742,10 @@ func bundleResultDocument(unsigned map[string]any, keyID string) map[string]any 
 }
 
 // verifyBundleEvidence independently checks the P1 completeness rules that make
-// a device measurement publishable: one span per declared device, an aggregate
-// that is the slowest span, no invented rank/die dimension, and a device time
-// that is the one the report claims -- never the host launch time.
+// a device measurement publishable: exact coverage of the declared
+// device x rank x die coordinates, an aggregate that is the slowest span, no
+// invented rank/die dimension, and a device time that is the one the report
+// claims -- never the host launch time.
 func verifyBundleEvidence(evidence map[string]any, artifactSet string) error {
 	if evidence["schema_id"] != "tcenv.remote.npu-bundle.timing-evidence.2" {
 		return errors.New("evidence schema id is not the version 2 schema")
@@ -751,41 +763,8 @@ func verifyBundleEvidence(evidence map[string]any, artifactSet string) error {
 	if evidence["publication_allowed"] != false {
 		return errors.New("a simulated vector must not be publishable")
 	}
-	topology, ok := evidence["topology"].(map[string]any)
-	if !ok {
-		return errors.New("evidence topology is missing")
-	}
-	declared, ok := topology["declared_devices"].([]any)
-	if !ok || len(declared) != 1 {
-		return errors.New("this vector declares exactly one device")
-	}
-	spans, ok := evidence["spans"].([]any)
-	if !ok || len(spans) != len(declared) {
-		return errors.New("evidence is missing a declared device span")
-	}
-	var aggregate int64
-	for _, raw := range spans {
-		span, ok := raw.(map[string]any)
-		if !ok {
-			return errors.New("span is not an object")
-		}
-		if span["rank"] != nil || span["die"] != nil {
-			return errors.New("a service vendor must not invent rank/die spans")
-		}
-		if span["device_id"] != declared[0] {
-			return errors.New("span device id differs from the declared device")
-		}
-		elapsed, ok := span["elapsed_ns"].(json.Number)
-		if !ok {
-			return errors.New("span elapsed is not an integer")
-		}
-		value, err := strconv.ParseInt(elapsed.String(), 10, 64)
-		if err != nil {
-			return err
-		}
-		if value > aggregate {
-			aggregate = value
-		}
+	if err := verifyEvidenceCompleteness(evidence); err != nil {
+		return err
 	}
 	timing, ok := evidence["timing"].(map[string]any)
 	if !ok {
@@ -798,6 +777,22 @@ func verifyBundleEvidence(evidence map[string]any, artifactSet string) error {
 	device, err := strconv.ParseInt(deviceElapsed.String(), 10, 64)
 	if err != nil {
 		return err
+	}
+	spans := evidence["spans"].([]any)
+	var aggregate int64
+	for _, raw := range spans {
+		span := raw.(map[string]any)
+		elapsed, ok := span["elapsed_ns"].(json.Number)
+		if !ok {
+			return errors.New("span elapsed is not an integer")
+		}
+		value, err := strconv.ParseInt(elapsed.String(), 10, 64)
+		if err != nil {
+			return err
+		}
+		if value > aggregate {
+			aggregate = value
+		}
 	}
 	if device != aggregate {
 		return errors.New("device_elapsed_ns is not the aggregate of the declared spans")
@@ -818,6 +813,162 @@ func verifyBundleEvidence(evidence map[string]any, artifactSet string) error {
 	}
 	if timing["clock_domain"] != spans[0].(map[string]any)["clock_domain"] {
 		return errors.New("span and aggregate clock domains differ")
+	}
+	return nil
+}
+
+// verifyEvidenceCompleteness re-derives the declared topology coverage: every
+// declared device, times every declared rank (when the topology has ranks),
+// times every declared die, exactly once.  A shape without a rank or die
+// dimension needs one span per device and must not report the dimension it
+// does not have.
+func verifyEvidenceCompleteness(evidence map[string]any) error {
+	topology, ok := evidence["topology"].(map[string]any)
+	if !ok {
+		return errors.New("evidence topology is missing")
+	}
+	rawDevices, ok := topology["declared_devices"].([]any)
+	if !ok || len(rawDevices) == 0 {
+		return errors.New("evidence declares no device")
+	}
+	declared := make([]string, 0, len(rawDevices))
+	for _, raw := range rawDevices {
+		name, ok := raw.(string)
+		if !ok || name == "" {
+			return errors.New("declared device id is not text")
+		}
+		declared = append(declared, name)
+	}
+	dimension := func(name string) (int64, bool, error) {
+		raw := topology[name]
+		if raw == nil {
+			return 0, false, nil
+		}
+		value, ok := raw.(json.Number)
+		if !ok {
+			return 0, false, fmt.Errorf("topology %s is not an integer", name)
+		}
+		parsed, err := strconv.ParseInt(value.String(), 10, 64)
+		if err != nil || parsed < 1 {
+			return 0, false, fmt.Errorf("topology %s is out of range", name)
+		}
+		return parsed, true, nil
+	}
+	ranks, hasRanks, err := dimension("required_rank_spans")
+	if err != nil {
+		return err
+	}
+	dies, hasDies, err := dimension("required_die_spans")
+	if err != nil {
+		return err
+	}
+	type coordinate struct {
+		device  string
+		rank    int64
+		die     int64
+		present bool
+	}
+	// -1 marks "this dimension does not exist for this vendor shape".
+	coordinateValue := func(span map[string]any, name string) (int64, error) {
+		raw := span[name]
+		if raw == nil {
+			return -1, nil
+		}
+		value, ok := raw.(json.Number)
+		if !ok {
+			return 0, fmt.Errorf("span %s is not an integer", name)
+		}
+		return strconv.ParseInt(value.String(), 10, 64)
+	}
+	rawSpans, ok := evidence["spans"].([]any)
+	if !ok || len(rawSpans) == 0 {
+		return errors.New("evidence is missing a declared device span")
+	}
+	seen := map[coordinate]bool{}
+	for _, raw := range rawSpans {
+		span, ok := raw.(map[string]any)
+		if !ok {
+			return errors.New("span is not an object")
+		}
+		device, ok := span["device_id"].(string)
+		if !ok {
+			return errors.New("span device id is not text")
+		}
+		rank, err := coordinateValue(span, "rank")
+		if err != nil {
+			return err
+		}
+		die, err := coordinateValue(span, "die")
+		if err != nil {
+			return err
+		}
+		if rank >= 0 && !hasRanks {
+			return errors.New("a service vendor must not invent rank spans")
+		}
+		if die >= 0 && !hasDies {
+			return errors.New("a service vendor must not invent die spans")
+		}
+		if hasRanks && rank >= ranks {
+			return errors.New("a span reports a rank the declared topology does not cover")
+		}
+		if hasDies && die >= dies {
+			return errors.New("a span reports a die the declared topology does not cover")
+		}
+		key := coordinate{device: device, rank: rank, die: die, present: true}
+		if seen[key] {
+			return errors.New("the same device/rank/die coordinate is reported twice")
+		}
+		seen[key] = true
+	}
+	expected := map[coordinate]bool{}
+	rankValues := []int64{-1}
+	if hasRanks {
+		rankValues = make([]int64, 0, ranks)
+		for index := int64(0); index < ranks; index++ {
+			rankValues = append(rankValues, index)
+		}
+	}
+	dieValues := []int64{-1}
+	if hasDies {
+		dieValues = make([]int64, 0, dies)
+		for index := int64(0); index < dies; index++ {
+			dieValues = append(dieValues, index)
+		}
+	}
+	for _, device := range declared {
+		for _, rank := range rankValues {
+			for _, die := range dieValues {
+				expected[coordinate{device: device, rank: rank, die: die, present: true}] = true
+			}
+		}
+	}
+	for key := range expected {
+		if !seen[key] {
+			if key.rank >= 0 {
+				return fmt.Errorf("completed evidence is missing a declared rank span for %s/rank %d", key.device, key.rank)
+			}
+			return fmt.Errorf("completed evidence is missing a declared device span for %s", key.device)
+		}
+	}
+	if len(seen) != len(expected) {
+		return errors.New("evidence reports a span the declared topology does not cover")
+	}
+	return nil
+}
+
+// verifyCompletenessVectors re-derives every shared vector's verdict.
+func verifyCompletenessVectors(vectors []EvidenceVector) error {
+	if len(vectors) == 0 {
+		return errors.New("the bundle golden carries no completeness vectors")
+	}
+	for _, vector := range vectors {
+		err := verifyEvidenceCompleteness(vector.Document)
+		if vector.Valid && err != nil {
+			return fmt.Errorf("vector %q is valid but Go refuses it: %w", vector.Name, err)
+		}
+		if !vector.Valid && err == nil {
+			return fmt.Errorf("vector %q is invalid but Go accepts it", vector.Name)
+		}
 	}
 	return nil
 }
@@ -859,6 +1010,9 @@ func verifyBundle(golden *BundleGolden) error {
 		return errors.New("independently constructed bundle manifest differs")
 	}
 	if err := verifyBundleEvidence(golden.Evidence, golden.ArtifactSetDigest); err != nil {
+		return err
+	}
+	if err := verifyCompletenessVectors(golden.CompletenessVectors); err != nil {
 		return err
 	}
 	if golden.Evidence["artifact_set_digest"] != golden.ArtifactSetDigest {

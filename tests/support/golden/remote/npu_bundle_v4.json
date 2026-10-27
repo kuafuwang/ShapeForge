@@ -21,6 +21,379 @@
       "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1",
       "schema_version": 1
     },
+    "completeness_vectors": [
+      {
+        "device_elapsed_ns": 1250,
+        "document": {
+          "artifact_set_digest": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b",
+          "buffer": null,
+          "candidate_digest": {
+            "algorithm": "sha256-bundle-v1",
+            "value": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b"
+          },
+          "complete": true,
+          "device_group": {
+            "device_group_id": "vendor-b-group-0",
+            "profile_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "resource_generation": "1",
+            "topology_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "vendor_id": "vendor-b"
+          },
+          "measurement_kind": "simulated",
+          "publication_allowed": false,
+          "schema_id": "tcenv.remote.npu-bundle.timing-evidence.2",
+          "spans": [
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-0",
+              "die": null,
+              "elapsed_ns": 1250,
+              "rank": null
+            }
+          ],
+          "timing": {
+            "clock_domain": "vendor-b-service-clock-v1",
+            "device_elapsed_ns": 1250,
+            "host_api_elapsed_ns": 2500000,
+            "launches": 1,
+            "source": "DEVICE_EVENT",
+            "synchronization_completed": true
+          },
+          "topology": {
+            "declared_devices": [
+              "device-0"
+            ],
+            "logical_devices": 1,
+            "required_die_spans": null,
+            "required_rank_spans": null
+          }
+        },
+        "name": "graph-service-one-device",
+        "valid": true
+      },
+      {
+        "device_elapsed_ns": 1300,
+        "document": {
+          "artifact_set_digest": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b",
+          "buffer": null,
+          "candidate_digest": {
+            "algorithm": "sha256-bundle-v1",
+            "value": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b"
+          },
+          "complete": true,
+          "device_group": {
+            "device_group_id": "vendor-b-group-0",
+            "profile_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "resource_generation": "1",
+            "topology_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "vendor_id": "vendor-b"
+          },
+          "measurement_kind": "simulated",
+          "publication_allowed": false,
+          "schema_id": "tcenv.remote.npu-bundle.timing-evidence.2",
+          "spans": [
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-0",
+              "die": null,
+              "elapsed_ns": 1100,
+              "rank": 0
+            },
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-0",
+              "die": null,
+              "elapsed_ns": 1250,
+              "rank": 1
+            },
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-1",
+              "die": null,
+              "elapsed_ns": 1150,
+              "rank": 0
+            },
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-1",
+              "die": null,
+              "elapsed_ns": 1300,
+              "rank": 1
+            }
+          ],
+          "timing": {
+            "clock_domain": "vendor-b-service-clock-v1",
+            "device_elapsed_ns": 1300,
+            "host_api_elapsed_ns": 2500000,
+            "launches": 4,
+            "source": "DEVICE_EVENT",
+            "synchronization_completed": true
+          },
+          "topology": {
+            "declared_devices": [
+              "device-0",
+              "device-1"
+            ],
+            "logical_devices": 2,
+            "required_die_spans": null,
+            "required_rank_spans": 2
+          }
+        },
+        "name": "two-devices-two-ranks",
+        "valid": true
+      },
+      {
+        "document": {
+          "artifact_set_digest": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b",
+          "buffer": null,
+          "candidate_digest": {
+            "algorithm": "sha256-bundle-v1",
+            "value": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b"
+          },
+          "complete": true,
+          "device_group": {
+            "device_group_id": "vendor-b-group-0",
+            "profile_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "resource_generation": "1",
+            "topology_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "vendor_id": "vendor-b"
+          },
+          "measurement_kind": "simulated",
+          "publication_allowed": false,
+          "schema_id": "tcenv.remote.npu-bundle.timing-evidence.2",
+          "spans": [
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-0",
+              "die": null,
+              "elapsed_ns": 1100,
+              "rank": 0
+            },
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-0",
+              "die": null,
+              "elapsed_ns": 1250,
+              "rank": 1
+            },
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-1",
+              "die": null,
+              "elapsed_ns": 1150,
+              "rank": 0
+            }
+          ],
+          "timing": {
+            "clock_domain": "vendor-b-service-clock-v1",
+            "device_elapsed_ns": 1250,
+            "host_api_elapsed_ns": 2500000,
+            "launches": 3,
+            "source": "DEVICE_EVENT",
+            "synchronization_completed": true
+          },
+          "topology": {
+            "declared_devices": [
+              "device-0",
+              "device-1"
+            ],
+            "logical_devices": 2,
+            "required_die_spans": null,
+            "required_rank_spans": 2
+          }
+        },
+        "name": "missing-second-rank-of-one-device",
+        "valid": false
+      },
+      {
+        "document": {
+          "artifact_set_digest": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b",
+          "buffer": null,
+          "candidate_digest": {
+            "algorithm": "sha256-bundle-v1",
+            "value": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b"
+          },
+          "complete": true,
+          "device_group": {
+            "device_group_id": "vendor-b-group-0",
+            "profile_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "resource_generation": "1",
+            "topology_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "vendor_id": "vendor-b"
+          },
+          "measurement_kind": "simulated",
+          "publication_allowed": false,
+          "schema_id": "tcenv.remote.npu-bundle.timing-evidence.2",
+          "spans": [
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-0",
+              "die": null,
+              "elapsed_ns": 1100,
+              "rank": 0
+            },
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-0",
+              "die": null,
+              "elapsed_ns": 1100,
+              "rank": 0
+            },
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-1",
+              "die": null,
+              "elapsed_ns": 1150,
+              "rank": 0
+            },
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-1",
+              "die": null,
+              "elapsed_ns": 1300,
+              "rank": 1
+            }
+          ],
+          "timing": {
+            "clock_domain": "vendor-b-service-clock-v1",
+            "device_elapsed_ns": 1300,
+            "host_api_elapsed_ns": 2500000,
+            "launches": 4,
+            "source": "DEVICE_EVENT",
+            "synchronization_completed": true
+          },
+          "topology": {
+            "declared_devices": [
+              "device-0",
+              "device-1"
+            ],
+            "logical_devices": 2,
+            "required_die_spans": null,
+            "required_rank_spans": 2
+          }
+        },
+        "name": "duplicate-device-rank-coordinate",
+        "valid": false
+      },
+      {
+        "document": {
+          "artifact_set_digest": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b",
+          "buffer": null,
+          "candidate_digest": {
+            "algorithm": "sha256-bundle-v1",
+            "value": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b"
+          },
+          "complete": true,
+          "device_group": {
+            "device_group_id": "vendor-b-group-0",
+            "profile_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "resource_generation": "1",
+            "topology_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "vendor_id": "vendor-b"
+          },
+          "measurement_kind": "simulated",
+          "publication_allowed": false,
+          "schema_id": "tcenv.remote.npu-bundle.timing-evidence.2",
+          "spans": [
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-0",
+              "die": null,
+              "elapsed_ns": 1250,
+              "rank": 0
+            }
+          ],
+          "timing": {
+            "clock_domain": "vendor-b-service-clock-v1",
+            "device_elapsed_ns": 1250,
+            "host_api_elapsed_ns": 2500000,
+            "launches": 1,
+            "source": "DEVICE_EVENT",
+            "synchronization_completed": true
+          },
+          "topology": {
+            "declared_devices": [
+              "device-0"
+            ],
+            "logical_devices": 1,
+            "required_die_spans": null,
+            "required_rank_spans": null
+          }
+        },
+        "name": "graph-only-vendor-invents-a-rank",
+        "valid": false
+      },
+      {
+        "document": {
+          "artifact_set_digest": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b",
+          "buffer": null,
+          "candidate_digest": {
+            "algorithm": "sha256-bundle-v1",
+            "value": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b"
+          },
+          "complete": true,
+          "device_group": {
+            "device_group_id": "vendor-b-group-0",
+            "profile_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "resource_generation": "1",
+            "topology_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "vendor_id": "vendor-b"
+          },
+          "measurement_kind": "simulated",
+          "publication_allowed": false,
+          "schema_id": "tcenv.remote.npu-bundle.timing-evidence.2",
+          "spans": [
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-0",
+              "die": null,
+              "elapsed_ns": 1100,
+              "rank": 0
+            },
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-0",
+              "die": null,
+              "elapsed_ns": 1250,
+              "rank": 1
+            },
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-1",
+              "die": null,
+              "elapsed_ns": 1150,
+              "rank": 0
+            },
+            {
+              "clock_domain": "vendor-b-service-clock-v1",
+              "device_id": "device-1",
+              "die": null,
+              "elapsed_ns": 1300,
+              "rank": 2
+            }
+          ],
+          "timing": {
+            "clock_domain": "vendor-b-service-clock-v1",
+            "device_elapsed_ns": 1300,
+            "host_api_elapsed_ns": 2500000,
+            "launches": 4,
+            "source": "DEVICE_EVENT",
+            "synchronization_completed": true
+          },
+          "topology": {
+            "declared_devices": [
+              "device-0",
+              "device-1"
+            ],
+            "logical_devices": 2,
+            "required_die_spans": null,
+            "required_rank_spans": 2
+          }
+        },
+        "name": "rank-the-topology-does-not-cover",
+        "valid": false
+      }
+    ],
     "evidence": {
       "artifact_set_digest": "509091b906ebdbc8ebfeda9991da033c7dbfc936e635f5f7b083cd756717e20b",
       "buffer": null,

@@ -76,6 +76,10 @@ NPU_TIMING_EVIDENCE_SCHEMA_ID = "tcenv.remote.npu-source.timing-evidence.1"
 NPU_EVIDENCE_MEDIA_TYPE = "application/vnd.tcenv.npu-source.timing-evidence.v1+json"
 # Clock domain recorded when no device clock was ever observed (killed worker).
 NPU_UNOBSERVED_CLOCK_DOMAIN = "unobserved"
+#: The candidate report schema every contract version signs.  It is shared by
+#: all versions (`tcenv.eval-report.v3`), so a rewritten descriptor can never
+#: relabel the report as another schema without breaking the envelope check.
+REPORT_SCHEMA_ID = "tcenv.eval-report.v3"
 REQUEST_DIGEST_ALGORITHM = "sha256-rfc8785-v1"
 RECEIPT_DIGEST_ALGORITHM = "sha256-rfc8785-v1"
 RESULT_SIGNATURE_ALGORITHM = "hmac-sha256-v1"
@@ -107,6 +111,19 @@ class ContractDialect:
     #: reference) or ``bundle`` (versioned artifact set).  The contract identity
     #: selects the admissible form; a request shape never does.
     artifact_form: str = "source"
+    #: The identity this contract version *writes* into the result evidence
+    #: descriptor.  Both ends (frontend, client, durable read, outbox) take it
+    #: from here, so the schema id of a version-2 evidence document can never be
+    #: the version-1 id.
+    evidence_schema_id: str = ""
+    evidence_media_type: str = ""
+    #: Whether a descriptor that names *another* identity is refused at the
+    #: signing/durable-read boundary.  The legacy and P0/P0b wire froze
+    #: ``application/json`` before the versioned media type existed, and their
+    #: signed goldens document a different media type, so rewriting them is out of
+    #: scope; ``document_version=4`` is the first version that enforces what it
+    #: writes.
+    enforce_evidence_identity: bool = False
 
     @property
     def identity_pair(self) -> tuple[str, str]:
@@ -133,6 +150,7 @@ class ContractDialect:
         return (BLOB_DIGEST_ALGORITHM,) if self.npu_blob else ("sha256",)
 
 
+LEGACY_EVIDENCE_SCHEMA_ID = "tcenv.remote.v1.selfcheck-evidence"
 LEGACY_DIALECT = ContractDialect(
     api_contract_id=API_CONTRACT_ID,
     evidence_contract_id=EVIDENCE_CONTRACT_ID,
@@ -141,6 +159,8 @@ LEGACY_DIALECT = ContractDialect(
     result_document_type=RESULT_DOCUMENT_TYPE,
     document_version=CONTRACT_DOCUMENT_VERSION,
     npu_source=False,
+    evidence_schema_id=LEGACY_EVIDENCE_SCHEMA_ID,
+    evidence_media_type="application/json",
 )
 NPU_SOURCE_DIALECT = ContractDialect(
     api_contract_id=NPU_SOURCE_API_CONTRACT_ID,
@@ -151,6 +171,8 @@ NPU_SOURCE_DIALECT = ContractDialect(
     document_version=NPU_SOURCE_DOCUMENT_VERSION,
     npu_source=True,
     artifact_form="source",
+    evidence_schema_id=NPU_TIMING_EVIDENCE_SCHEMA_ID,
+    evidence_media_type="application/json",
 )
 NPU_BLOB_DIALECT = ContractDialect(
     api_contract_id=NPU_BLOB_API_CONTRACT_ID,
@@ -161,6 +183,8 @@ NPU_BLOB_DIALECT = ContractDialect(
     document_version=NPU_BLOB_DOCUMENT_VERSION,
     npu_source=True,
     artifact_form="blob",
+    evidence_schema_id=NPU_TIMING_EVIDENCE_SCHEMA_ID,
+    evidence_media_type="application/json",
 )
 NPU_BUNDLE_DIALECT = ContractDialect(
     api_contract_id=NPU_BUNDLE_API_CONTRACT_ID,
@@ -171,6 +195,11 @@ NPU_BUNDLE_DIALECT = ContractDialect(
     document_version=NPU_BUNDLE_DOCUMENT_VERSION,
     npu_source=True,
     artifact_form="bundle",
+    # The version-2 evidence document and its descriptor are one identity: the
+    # schema id, the media type and the signed bytes must not disagree.
+    evidence_schema_id=NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
+    evidence_media_type=NPU_BUNDLE_EVIDENCE_MEDIA_TYPE,
+    enforce_evidence_identity=True,
 )
 NPU_DIALECTS = (NPU_SOURCE_DIALECT, NPU_BLOB_DIALECT, NPU_BUNDLE_DIALECT)
 NPU_API_CONTRACT_IDS = frozenset(dialect.api_contract_id for dialect in NPU_DIALECTS)
@@ -1237,6 +1266,20 @@ def result_signature_document(
     report = _blob_descriptor(document["report"], "report", allow_empty=False)
     evidence_value = document["evidence"]
     evidence = None if evidence_value is None else _blob_descriptor(evidence_value, "evidence", allow_empty=True)
+    if report["schema_id"] != REPORT_SCHEMA_ID:
+        raise ContractError("result report descriptor is not the candidate report schema")
+    if evidence is not None and dialect.enforce_evidence_identity:
+        # A contract that fixes the evidence identity refuses a descriptor that
+        # names another schema (for example the version-1 id on a version-2
+        # document) or another media type, on both ends of the chain.
+        if (
+            evidence["schema_id"] != dialect.evidence_schema_id
+            or evidence["media_type"] != dialect.evidence_media_type
+        ):
+            raise ContractError(
+                "result evidence descriptor is not the TimingEvidence identity "
+                "this contract version signs"
+            )
     receipt = _receipt_document(document["receipt"], dialect=dialect)
     if provenance["attempt_id"] != receipt["attempt_id"]:
         raise ContractError("provenance and receipt attempt_id differ")
@@ -1469,6 +1512,26 @@ _NPU_V2_EVIDENCE_FIELDS = frozenset({
 MAX_EVIDENCE_SPANS = 64
 
 
+def _coverable_shape(
+    logical_devices: int, rank_spans: int | None, die_spans: int | None,
+) -> int:
+    """Return the number of ``device x rank x die`` spans a topology needs.
+
+    Completeness is a coordinate question, not a count: one span per
+    ``(device_id, rank, die)`` combination the declared topology names.  A shape
+    whose product cannot fit in one bounded evidence array is inadmissible, so a
+    request can never declare a topology that no vendor could ever satisfy.
+    """
+
+    needed = logical_devices * (rank_spans or 1) * (die_spans or 1)
+    if needed > MAX_EVIDENCE_SPANS:
+        raise ContractError(
+            f"the declared topology needs {needed} device x rank x die spans; "
+            f"one evidence row carries at most {MAX_EVIDENCE_SPANS}"
+        )
+    return needed
+
+
 def _topology_document(value: Any) -> dict[str, Any]:
     """Validate the declared topology an evidence row claims to cover."""
 
@@ -1495,34 +1558,57 @@ def _topology_document(value: Any) -> dict[str, Any]:
             None if raw is None
             else _integer(raw, f"topology.{name}", 1, MAX_DECLARED_SPANS)
         )
+    _coverable_shape(
+        logical_devices, document["required_rank_spans"], document["required_die_spans"],
+    )
     return document
 
 
 def _span_documents(value: Any, topology: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Validate the spans one measurement reports.
+
+    A span is one ``(device_id, rank, die)`` observation, so one device with two
+    ranks reports two spans.  The identity is the whole coordinate: a duplicated
+    coordinate is refused, an undeclared device is refused, and a vendor shape
+    without a rank/die dimension must report ``null`` instead of inventing one.
+    """
+
     if not isinstance(value, (list, tuple)) or len(value) > MAX_EVIDENCE_SPANS:
         raise ContractError("timing evidence spans must be a bounded array")
+    declared = set(topology["declared_devices"])
     spans: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, int | None, int | None]] = set()
     for item in value:
         if not isinstance(item, Mapping) or set(item) != _NPU_V2_SPAN_FIELDS:
             raise ContractError("timing evidence span fields are missing or unknown")
         device_id = _identifier(item["device_id"], "span.device_id")
-        if device_id in seen:
-            raise ContractError("timing evidence reports a device span twice")
-        seen.add(device_id)
+        if device_id not in declared:
+            raise ContractError("a span names a device the declared topology does not have")
         rank = item["rank"]
         die = item["die"]
         if rank is not None:
             rank = _integer(rank, "span.rank", 0, MAX_DECLARED_SPANS - 1)
         if die is not None:
             die = _integer(die, "span.die", 0, MAX_DECLARED_SPANS - 1)
-        if topology["required_rank_spans"] is None and rank is not None:
+        required_ranks = topology["required_rank_spans"]
+        required_dies = topology["required_die_spans"]
+        if required_ranks is None and rank is not None:
             # A vendor shape without a rank dimension must not invent ranks: the
             # field is not required, and fabricating it would fake topology
             # evidence the trusted profile never declared.
             raise ContractError("a span must not report a rank the topology does not declare")
-        if topology["required_die_spans"] is None and die is not None:
+        if required_dies is None and die is not None:
             raise ContractError("a span must not report a die the topology does not declare")
+        if required_ranks is not None and rank is not None and rank >= required_ranks:
+            raise ContractError("a span reports a rank the declared topology does not cover")
+        if required_dies is not None and die is not None and die >= required_dies:
+            raise ContractError("a span reports a die the declared topology does not cover")
+        coordinate = (device_id, rank, die)
+        if coordinate in seen:
+            raise ContractError(
+                "timing evidence reports the same device/rank/die coordinate twice"
+            )
+        seen.add(coordinate)
         spans.append({
             "device_id": device_id,
             "rank": rank,
@@ -1643,13 +1729,44 @@ def npu_timing_evidence_document_v2(
             raise ContractError("completed timing evidence requires a positive device elapsed time")
         if clock_domain == NPU_UNOBSERVED_CLOCK_DOMAIN:
             raise ContractError("completed timing evidence requires an observed clock domain")
-        if [span["device_id"] for span in spans] != topology["declared_devices"]:
-            missing = sorted(
-                set(topology["declared_devices"]) - {span["device_id"] for span in spans}
-            )
+        # Completeness is exact coverage of the declared topology's coordinates:
+        # every declared device, times every declared rank, times every declared
+        # die.  A shape without a rank/die dimension needs exactly one span per
+        # device and must not be penalised for the dimension it does not have.
+        required_ranks = topology["required_rank_spans"]
+        required_dies = topology["required_die_spans"]
+        expected = {
+            (device, rank, die)
+            for device in topology["declared_devices"]
+            for rank in (range(required_ranks) if required_ranks is not None else (None,))
+            for die in (range(required_dies) if required_dies is not None else (None,))
+        }
+        reported = {(span["device_id"], span["rank"], span["die"]) for span in spans}
+        missing_devices = sorted(
+            set(topology["declared_devices"]) - {span["device_id"] for span in spans}
+        )
+        if missing_devices:
             raise ContractError(
                 "completed timing evidence is missing a declared device span: "
-                + (",".join(missing) or "duplicate/unknown span")
+                + ",".join(missing_devices)
+            )
+        missing_ranks = sorted(coordinate for coordinate in expected - reported if coordinate[1] is not None)
+        if missing_ranks:
+            raise ContractError(
+                "completed timing evidence is missing a declared rank span: "
+                + ",".join(f"{device}/rank {rank}" for device, rank, _die in missing_ranks)
+            )
+        missing_dies = sorted(coordinate for coordinate in expected - reported if coordinate[2] is not None)
+        if missing_dies:
+            raise ContractError(
+                "completed timing evidence is missing a declared die span: "
+                + ",".join(
+                    f"{device}/die {die}" for device, _rank, die in missing_dies
+                )
+            )
+        if reported - expected:
+            raise ContractError(
+                "completed timing evidence reports a span the declared topology does not cover"
             )
         for span in spans:
             if span["clock_domain"] == NPU_UNOBSERVED_CLOCK_DOMAIN:
@@ -1662,22 +1779,6 @@ def npu_timing_evidence_document_v2(
                 "device_elapsed_ns is not the aggregate of the declared device spans "
                 f"({device_elapsed} vs {aggregate})"
             )
-        required_ranks = topology["required_rank_spans"]
-        if required_ranks is not None:
-            ranks = {span["rank"] for span in spans}
-            if None in ranks or ranks != set(range(required_ranks)):
-                raise ContractError(
-                    "completed timing evidence is missing a declared rank span"
-                )
-            if len(spans) % required_ranks:
-                raise ContractError("span count does not cover the declared rank shape")
-        required_dies = topology["required_die_spans"]
-        if required_dies is not None:
-            dies = {span["die"] for span in spans}
-            if None in dies or dies != set(range(required_dies)):
-                raise ContractError(
-                    "completed timing evidence is missing a declared die span"
-                )
         if buffer_document is not None:
             if not buffer_document["flushed"]:
                 raise ContractError("completed timing evidence requires a flushed buffer")
@@ -1745,6 +1846,10 @@ def device_group_requirements(value: Any) -> dict[str, Any]:
         declared[name] = (
             None if raw is None else _integer(raw, f"execution.resources.{name}", 1, MAX_DECLARED_SPANS)
         )
+    _coverable_shape(
+        declared["logical_devices"], declared["required_rank_spans"],
+        declared["required_die_spans"],
+    )
     return declared
 
 

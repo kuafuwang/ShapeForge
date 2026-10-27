@@ -279,3 +279,200 @@ def test_an_unprovable_cancel_is_quarantined_not_reported_as_cancelled(tmp_path)
         assert engine.close_error is not None
     finally:
         engine.close(wait=5)
+
+
+# -- artifact channel presence --------------------------------------------
+def _blob_descriptor(data: bytes, *, chunk_size: int = 8192) -> dict:
+    from tcenv.remote.job_types import BlobDescriptor
+
+    return BlobDescriptor.for_bytes(
+        data, media_type="application/octet-stream", chunk_size=chunk_size,
+    ).to_dict()
+
+
+def _blob_bundle(descriptors, data):
+    """A graph bundle plus one blob-backed entry per descriptor."""
+
+    from tcenv.remote.artifact_bundle import BundleEntry
+    from tests.support.vendor_sim.vendor_b import build_graph_bundle
+
+    template = build_graph_bundle()
+    entries = [template.entries[0]]
+    for index, descriptor in enumerate(descriptors):
+        entries.append(BundleEntry(
+            path=f"graph/params-{index}.bin", role="PARAMETER_TABLE",
+            media_type="application/octet-stream", size_bytes=descriptor["size_bytes"],
+            sha256=descriptor["sha256"], blob_ref=descriptor,
+        ))
+    return type(template)(entries=tuple(entries))
+
+
+def test_a_bundle_that_needs_the_blob_channel_is_refused_before_it_exists(tmp_path):
+    """No channel means no durable job -- not a worker that fails later.
+
+    Without this check the Submit was accepted, an attempt leased the device and
+    the worker only discovered the missing blob root, so a permanent
+    configuration error looked like a retryable infrastructure failure.
+    """
+
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+
+    engine, controller, service = _engine(tmp_path / "run")
+    try:
+        assert engine.blob_store is None
+        data = b"P" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 64)
+        request = npu_bundle_request(
+            "bundle-no-channel", bundle=_blob_bundle([_blob_descriptor(data)], data),
+        )
+        with pytest.raises(JobError, match="no blob channel"):
+            npu_bundle_submit(engine, request)
+        # Nothing durable was created and the device was never given a job.
+        assert engine.store.job_exists(request.request_id) is False
+        assert controller.service.submissions() == {}
+        # An inline bundle on the same frontend is still served.
+        npu_bundle_submit(engine, npu_bundle_request("bundle-inline-only"))
+        snapshot = _run(engine, npu_bundle_request("bundle-inline-only"))
+        assert snapshot.state == "completed", snapshot.failure
+    finally:
+        engine.close(wait=5)
+
+
+# -- lease rollback scope -------------------------------------------------
+def _blob_engine(root):
+    """A bundle frontend with the real P0b channel attached."""
+
+    from tcenv.remote.blob_channel import BlobLimits, BlobStore
+
+    service = root / "graph-service.json"
+    controller = FakeVendorBController(service)
+    store = BlobStore(root / "state" / "blobs", limits=BlobLimits(
+        max_size_bytes=4 << 20, max_chunk_size=65536, min_chunk_size=1,
+        max_chunks=8192, max_uploads_per_scope=8,
+    ))
+    engine = npu_bundle_engine(
+        root / "state", service_path=service, controller=controller,
+        blob_store=store, **SIGNING,
+    )
+    return engine, controller, store
+
+
+def _upload(engine, data: bytes, *, commit: bool = True) -> dict:
+    from tcenv.remote.job_types import BlobDescriptor
+
+    descriptor = BlobDescriptor.for_bytes(
+        data, media_type="application/octet-stream", chunk_size=8192,
+    )
+    scope = _scope(engine)
+    engine.blob_store.begin(scope, descriptor.to_dict())
+    offset = 0
+    while offset < len(data):
+        engine.blob_store.write_chunk(scope, descriptor.content_id, offset, data[offset:offset + 8192])
+        offset += 8192
+    if commit:
+        engine.blob_store.commit(scope, descriptor.content_id)
+    return descriptor.to_dict()
+
+
+def _scope(engine):
+    from tcenv.remote.blob_channel import BlobScope
+
+    grant = engine.store.blob_scope(NPU_TOKEN)
+    identity = engine.identity
+    return BlobScope(
+        site_id=identity.site_id, device_id=identity.device_id,
+        target_id=grant["target_id"], subject=grant["subject"],
+        run_id=grant["run_id"], session_id=grant["session_id"],
+    )
+
+
+def test_a_rejected_multi_entry_submit_only_rolls_back_its_own_leases(tmp_path):
+    """Rollback is scoped to the attach loop, never to the request id.
+
+    A request id may already own a lease taken under an earlier attempt/fence
+    (the P0b channel binds leases to attempts).  A failed multi-entry Submit must
+    drop only the leases *it* created: releasing by request id would also free
+    the earlier attempt's lease, which another execution may still be reading.
+    """
+
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+    from tcenv.remote.blob_channel import BlobAttempt
+
+    engine, controller, store = _blob_engine(tmp_path / "run")
+    del controller
+    try:
+        older = _upload(engine, b"O" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 16))
+        fresh = _upload(engine, b"F" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 24))
+        pending = _upload(engine, b"P" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 32), commit=False)
+        scope = _scope(engine)
+        # An earlier attempt of this request still holds ``older``.
+        store.attach(
+            scope, older["content_id"], "bundle-rollback-1",
+            attempt=BlobAttempt(attempt_id="attempt-old", lease_fence=1),
+        )
+        assert store.state(scope, older["content_id"]).leases == ("bundle-rollback-1",)
+
+        request = npu_bundle_request(
+            "bundle-rollback-1",
+            bundle=_blob_bundle([fresh, pending], b"unused"),
+        )
+        with pytest.raises(JobError, match="only a committed blob can be submitted"):
+            npu_bundle_submit(engine, request)
+
+        # The Submit attached ``fresh`` and then failed: only that lease is gone.
+        assert store.state(scope, fresh["content_id"]).leases == ()
+        # The earlier attempt's *bound* lease survived the rejected Submit: the
+        # same request cannot take the blob under a different attempt identity.
+        assert store.state(scope, older["content_id"]).leases == ("bundle-rollback-1",)
+        from tcenv.remote.blob_channel import BlobError
+
+        with pytest.raises(BlobError, match="another attempt/fence"):
+            store.attach(scope, older["content_id"], "bundle-rollback-1")
+        # And the rejected Submit left no durable job behind.
+        assert engine.store.job_exists(request.request_id) is False
+        # The blob that was never attached has no lease either.
+        assert store.state(scope, pending["content_id"]).leases == ()
+
+        # The bytes the caller uploaded are still available for a corrected
+        # Submit: the rollback dropped the lease, not the artifact.
+        corrected = npu_bundle_request(
+            "bundle-rollback-1", bundle=_blob_bundle([fresh], b"unused"),
+        )
+        npu_bundle_submit(engine, corrected)
+        assert store.state(scope, fresh["content_id"]).leases == ("bundle-rollback-1",)
+    finally:
+        engine.close(wait=5)
+
+
+def test_a_failing_bundle_blob_cleanup_is_quarantined_not_hidden(tmp_path):
+    """A terminal bundle job must not look clean if its blob bytes remain."""
+
+    from tcenv.remote.blob_channel import BlobLimits, BlobStore
+    from tests.support.blob_sim.faults import FaultIO
+
+    engine, controller, _store = _blob_engine(tmp_path / "run")
+    del controller
+    io = FaultIO()
+    engine.blob_store = BlobStore(
+        engine.store.state_dir / "blobs",
+        limits=BlobLimits(max_size_bytes=2 << 20, max_chunk_size=65536),
+        io=io,
+    )
+    try:
+        blob = _upload(engine, b"Q" * (262_144 + 64))
+        request = npu_bundle_request(
+            "bundle-quarantine-1", bundle=_blob_bundle([blob], b"unused"),
+        )
+        npu_bundle_submit(engine, request)
+        scope = _scope(engine)
+        assert engine.blob_store.state(scope, blob["content_id"]).leases
+        io.fail("remove", times=1)
+        snapshot = _run(engine, request)
+        assert snapshot.state == "completed", snapshot.failure
+        state = engine.blob_store.state(scope, blob["content_id"])
+        assert state.state == "quarantine"
+        assert state.cleanup["state"] == "quarantine"
+        # The job records the hazard instead of claiming a clean teardown.
+        assert engine.close_error is not None
+        assert "blob cleanup failed" in str(engine.close_error)
+    finally:
+        engine.close(wait=5)

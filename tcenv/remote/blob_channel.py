@@ -913,6 +913,35 @@ class BlobStore:
                     result.setdefault(entry["request_id"], []).append(manifest["descriptor"]["content_id"])
         return result
 
+    def detach(
+        self, scope: BlobScope, content_id: str, request_id: str,
+    ) -> dict[str, Any]:
+        """Drop one request's lease on one blob without touching its bytes.
+
+        This is the narrow rollback a rejected multi-entry Submit needs: it must
+        not release another blob's lease for the same request (a request may
+        already own a live lease from an earlier admission) and it must not
+        delete bytes the caller may reference again.  ``release`` remains the
+        whole-request cleanup used at a terminal state.
+        """
+
+        _require_identifier(request_id, "request_id")
+        now = self.now_ms()
+        with self._lock:
+            digest, manifest = self._load_owned(scope, content_id, now=now, allow_failed=True)
+            remaining = [item for item in manifest["leases"] if item["request_id"] != request_id]
+            released = len(remaining) != len(manifest["leases"])
+            if released:
+                manifest["leases"] = remaining
+                manifest["updated_at_ms"] = now
+                self._files.store(digest, manifest)
+            return {
+                "content_id": manifest["descriptor"]["content_id"],
+                "released": released,
+                "cleanup": CLEANUP_PENDING,
+                "remaining_leases": len(remaining),
+            }
+
     def release(self, request_id: str, *, cleanup: bool | None = None) -> list[dict[str, Any]]:
         """Drop one request's leases and clean up what no longer has an owner.
 

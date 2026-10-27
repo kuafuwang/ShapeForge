@@ -132,6 +132,10 @@ def test_capabilities_submit_getjob_watch_and_simulated_publication(tmp_path):
         assert submitted.request_digest == external.request_digest
         snapshot = _wait_state(harness, external, {"completed"})
         assert snapshot.HasField("result")
+        # The P0 wire descriptor is the version-1 identity frozen before P1; a
+        # version-2 schema id or media type here would mislabel the document.
+        assert snapshot.result.evidence.schema_id == contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID
+        assert snapshot.result.evidence.media_type == "application/json"
         receipt = gc.receipt_from_proto(
             snapshot.result.receipt, dialect=contracts.NPU_SOURCE_DIALECT,
         )

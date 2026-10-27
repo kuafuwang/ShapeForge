@@ -17,8 +17,10 @@ from typing import Any
 
 from tcenv.evaluation import EvaluationRequest, EvaluationResult, EvaluationUnavailable, validate_receipt, verify_result_signature
 from tcenv.remote.contracts import (
+    BUNDLE_DIGEST_ALGORITHM,
     LEGACY_DIALECT,
     NPU_API_CONTRACT_IDS,
+    NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
     NPU_EVIDENCE_CONTRACT_IDS,
     NPU_TIMING_EVIDENCE_SCHEMA_ID,
     ContractError,
@@ -34,9 +36,11 @@ from .control import write_json_atomic
 from .redact import redact_text
 
 #: CandidateDigest algorithm of an artifact set (bundle contract).
-BUNDLE_ALGORITHM = "sha256-bundle-v1"
-#: TimingEvidence schema of the P1 bundle contract (version 2).
-BUNDLE_EVIDENCE_SCHEMA_ID = "tcenv.remote.npu-bundle.timing-evidence.2"
+BUNDLE_ALGORITHM = BUNDLE_DIGEST_ALGORITHM
+#: TimingEvidence schema of the P1 bundle contract (version 2).  It is imported
+#: from the contract module rather than repeated, so the outbox cannot accept an
+#: evidence identity the frontend never signs.
+BUNDLE_EVIDENCE_SCHEMA_ID = NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID
 
 
 def bind_wire_digest(

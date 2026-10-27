@@ -3,8 +3,9 @@
 The independent Go verifier (``tests/support/remotecontract``) rebuilds the
 canonical bundle manifest, the artifact-set digest, the request document, the
 receipt and the signed result from the raw fields; it also re-decides the
-version-2 evidence completeness rules (declared device spans, aggregate device
-time, host/device separation).  It never imports Python.
+version-2 evidence completeness rules (exact device x rank x die coverage, one
+span per coordinate, aggregate device time, host/device separation) against the
+shared vectors.  It never imports Python.
 """
 
 from __future__ import annotations
@@ -63,6 +64,37 @@ def test_the_frozen_bundle_vector_matches_the_production_documents():
     assert bundle["evidence"]["artifact_set_digest"] == bundle["artifact_set_digest"]
 
 
+def test_every_completeness_vector_agrees_with_the_production_validator():
+    """The shared device/rank/die vectors must decide the same way on both sides.
+
+    The golden carries the documents *and* the verdict the production validator
+    reached; the Go verifier re-derives each verdict from the declared topology.
+    A drift in either implementation turns one of them into a disagreement.
+    """
+
+    from tcenv.remote import contracts
+
+    vectors = load_bundle_golden()["npu_bundle"]["completeness_vectors"]
+    names = {vector["name"] for vector in vectors}
+    assert {"two-devices-two-ranks", "graph-service-one-device"} <= names
+    assert any(vector["valid"] for vector in vectors)
+    assert not all(vector["valid"] for vector in vectors)
+    for vector in vectors:
+        try:
+            checked = contracts.npu_timing_evidence_document_v2(vector["document"])
+        except contracts.ContractError:
+            assert vector["valid"] is False, vector["name"]
+        else:
+            assert vector["valid"] is True, vector["name"]
+            assert checked["complete"] is True
+            assert checked["timing"]["device_elapsed_ns"] == vector["device_elapsed_ns"]
+            # One span per declared device x rank x die coordinate, no extras.
+            topology = checked["topology"]
+            ranks = topology["required_rank_spans"] or 1
+            dies = topology["required_die_spans"] or 1
+            assert len(checked["spans"]) == len(topology["declared_devices"]) * ranks * dies
+
+
 def test_the_go_verifier_rebuilds_the_bundle_request_receipt_and_signature():
     result = _run_verifier(BUNDLE_GOLDEN)
     assert result.returncode == 0, result.stderr
@@ -77,6 +109,7 @@ def test_the_go_verifier_rebuilds_the_bundle_request_receipt_and_signature():
     "request_digest",
     "receipt_id",
     "evidence_span",
+    "evidence_missing_rank",
     "evidence_host_as_device",
     "signature",
 ])
@@ -99,6 +132,15 @@ def test_the_go_verifier_rejects_a_tampered_bundle_vector(tmp_path, mutation):
         bundle["receipt"]["receipt_id"] = "0" * 64
     elif mutation == "evidence_span":
         bundle["evidence"]["spans"] = []
+    elif mutation == "evidence_missing_rank":
+        topology = bundle["evidence"]["topology"]
+        topology["logical_devices"] = 2
+        topology["declared_devices"] = ["device-0", "device-1"]
+        topology["required_rank_spans"] = 2
+        bundle["evidence"]["spans"] = [
+            dict(bundle["evidence"]["spans"][0], rank=0),
+            dict(bundle["evidence"]["spans"][0], rank=1),
+        ]
     elif mutation == "evidence_host_as_device":
         bundle["evidence"]["timing"]["device_elapsed_ns"] = bundle["evidence"]["timing"][
             "host_api_elapsed_ns"

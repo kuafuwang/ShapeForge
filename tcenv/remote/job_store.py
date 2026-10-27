@@ -117,12 +117,15 @@ def _rfc3339(ms: int) -> str:
     return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def _blob_descriptor(data: bytes, *, schema_id: str, allow_empty: bool = False) -> dict[str, Any]:
+def _blob_descriptor(
+    data: bytes, *, schema_id: str, allow_empty: bool = False,
+    media_type: str = "application/json",
+) -> dict[str, Any]:
     if (not data and not allow_empty) or len(data) > contracts.MAX_BLOB_BYTES:
         raise JobError("invalid_argument", "result blob exceeds its bounds")
     return {
         "schema_id": schema_id,
-        "media_type": "application/json",
+        "media_type": media_type,
         "size_bytes": len(data),
         "sha256": _sha256(data),
     }
@@ -1104,6 +1107,14 @@ class JobStore:
                 raise StateCorrupt("result evidence bytes and descriptor presence differ")
             if result.evidence_descriptor is not None:
                 contracts.validate_blob(result.evidence_descriptor, result.evidence or b"", allow_empty=True)
+                if dialect.enforce_evidence_identity and (
+                    result.evidence_descriptor["schema_id"] != dialect.evidence_schema_id
+                    or result.evidence_descriptor["media_type"] != dialect.evidence_media_type
+                ):
+                    raise StateCorrupt(
+                        "persisted evidence descriptor is not the TimingEvidence "
+                        "identity this contract version signs"
+                    )
             signature = result.signature
             if signature is not None:
                 if not isinstance(signature, Mapping) or set(signature) != {"algorithm", "key_id", "signature"}:
@@ -1538,6 +1549,28 @@ class JobStore:
                     "WHERE state IN ('accepted','queued','running','interrupted')"
                 )
             ]
+
+    def stored_request(self, request_id: str) -> ExternalEvaluationRequest | None:
+        """The typed request of a durable job (read-only artifact guard).
+
+        Retry has to refuse an artifact this frontend cannot serve *before* it
+        re-dispatches the durable job, so it needs the request document that was
+        accepted, not the one a caller claims now.  ``None`` means the request can
+        no longer be decoded (a terminal job's artifact bytes are cleaned up):
+        Retry itself already refuses such a job, so the guard has nothing to add.
+        """
+
+        with self._lock:
+            self._ensure_available()
+            row = self._conn.execute(
+                "SELECT * FROM jobs WHERE request_id=?", (request_id,),
+            ).fetchone()
+            if row is None:
+                raise JobError("not_found", "job does not exist", request_id=request_id)
+            try:
+                return self._request(self._conn, row)
+            except StateCorrupt:
+                return None
 
     def accepted_jobs(self) -> list[str]:
         with self._lock:
@@ -2169,13 +2202,17 @@ class JobStore:
                 receipt["device_group"] = device_group
             else:
                 receipt["candidate_sha256"] = request.candidate_sha256
-            report_descriptor = _blob_descriptor(report_bytes, schema_id="tcenv.eval-report.v3")
-            evidence_schema = (
-                contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID if self.contract.npu_source
-                else "tcenv.remote.v1.selfcheck-evidence"
+            report_descriptor = _blob_descriptor(report_bytes, schema_id=contracts.REPORT_SCHEMA_ID)
+            # The evidence descriptor identity belongs to the contract version:
+            # a version-2 TimingEvidence document is signed under the version-2
+            # schema id and media type, never the P0/P0b one.
+            evidence_identity = (
+                self.contract.evidence_schema_id,
+                self.contract.evidence_media_type,
             )
             evidence_descriptor = None if evidence_bytes is None else _blob_descriptor(
-                evidence_bytes, schema_id=evidence_schema, allow_empty=True,
+                evidence_bytes, schema_id=evidence_identity[0], allow_empty=True,
+                media_type=evidence_identity[1],
             )
             signature = self._make_signature({
                 "provenance": provenance, "report": report_descriptor,
