@@ -52,7 +52,9 @@ from typing import Iterable, Iterator
 _MAX_CMDLINE_BYTES = 4096
 # Darwin's KERN_PROCARGS2 returns argc, the exec path, argv and then the whole
 # environment.  The environment can be arbitrarily large, so only a bounded
-# prefix is read; it must still contain every argv string (fail closed if not).
+# prefix is read; the argv fields are parsed one by one out of that prefix, so a
+# prefix that ends inside the environment is fine and one that ends inside argv
+# raises instead of inventing the missing argument.
 _MAX_ARGS_BYTES = 1024 * 1024
 _MAX_STAT_BYTES = 4096
 _MAX_PROCS = 200_000
@@ -152,6 +154,16 @@ def _darwin_unreadable() -> tuple[str, ...]:
 
 
 def _darwin_argv(pid: int) -> tuple[str, ...]:
+    """``pid``'s argv from a bounded ``KERN_PROCARGS2`` prefix.
+
+    The record ends with the whole environment, so a large one is normal and the
+    bounded read may cut it.  Every argv entry is therefore parsed up to its own
+    NUL terminator: counting ``split`` elements instead would turn the record's
+    final stop (or the capped prefix's last NUL) into a phantom empty argument
+    and could hide a missing trailing entry - and the last entry of
+    ``docker start --attach --interactive <id>`` is the container id.
+    """
+
     libc, _libproc = _darwin_libraries()
     mib = (ctypes.c_int * 3)(_CTL_KERN, _KERN_PROCARGS2, pid)
     size = ctypes.c_size_t(0)
@@ -173,27 +185,31 @@ def _darwin_argv(pid: int) -> tuple[str, ...]:
     argc = int.from_bytes(raw[:4], sys.byteorder)
     if argc <= 0 or argc > 4096:
         raise _Unreadable(f"it returned a malformed argument count ({argc})")
-    # If the bounded read cut the record, drop the partial trailing string; the
-    # argv completeness check below then decides whether the prefix was enough.
-    truncated = sized.value >= read_size and not raw.endswith(b"\x00")
-    parts = raw[4:].split(b"\x00")
-    if truncated:
-        parts = parts[:-1]
-    # parts[0] is the exec path (its terminator was consumed by the split);
-    # the kernel may then insert zero or more NUL padding bytes before argv.
-    # Skipping *every* non-empty part here would swallow argv0 and argv1, so
-    # only the padding NULs are skipped.
-    index = 1
-    while index < len(parts) and not parts[index]:
-        index += 1
-    argv = tuple(
-        part.decode("utf-8", errors="replace") for part in parts[index:index + argc]
-    )
-    if len(argv) != argc:
-        raise _Unreadable("its argument vector exceeds the bounded read limit")
+    rest = raw[4:]
+    terminator = rest.find(b"\x00")
+    if terminator < 0:
+        raise _Unreadable("its executable path is not terminated within the bounded read")
+    rest = rest[terminator + 1:]
+    # The kernel may pad with NULs before argv (after the exec path); they are
+    # not arguments.  The padding is indistinguishable from an empty argv[0],
+    # which no real CLI has.
+    while rest.startswith(b"\x00"):
+        rest = rest[1:]
+    argv: list[str] = []
+    for _index in range(argc):
+        terminator = rest.find(b"\x00")
+        if terminator < 0:
+            # The bounded prefix ended before this entry's terminator: the argv
+            # is not proven complete, so it is unknown (fail closed), never
+            # shorter-and-therefore-not-matching.
+            raise _Unreadable(
+                "its argument vector is not complete within the bounded read limit"
+            )
+        argv.append(rest[:terminator].decode("utf-8", errors="replace"))
+        rest = rest[terminator + 1:]
     if not argv:
         raise _Unreadable("its argument vector is empty")
-    return argv
+    return tuple(argv)
 
 
 def _read_argv(pid: int) -> tuple[str, ...]:

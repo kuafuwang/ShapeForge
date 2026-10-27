@@ -634,10 +634,23 @@ def test_container_crash_with_unverified_cleanup_quarantines_without_retry(tmp_p
         recovered.close()
 
 
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "injected EIO: the kernel refused the argument read",
+        "its argument vector is not complete within the bounded read limit",
+    ],
+)
 def test_recovery_quarantines_when_a_candidate_attach_client_cannot_be_inspected(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, detail,
 ):
-    """An unreadable candidate process means unverified cleanup, so no Retry."""
+    """An unreadable candidate process means unverified cleanup, so no Retry.
+
+    Both verdicts that the scan can produce for a live same-uid process are
+    covered: a refused kernel read (EIO) and a bounded ``KERN_PROCARGS2`` record
+    that ends before the container id (an incomplete argument vector).  Neither
+    may be read as "no survivor".
+    """
 
     import subprocess
 
@@ -656,7 +669,7 @@ def test_recovery_quarantines_when_a_candidate_attach_client_cannot_be_inspected
 
     def denied(pid):
         if pid == blocker.pid:
-            raise hostprocs._Unreadable("injected EIO: the kernel refused the argument read")
+            raise hostprocs._Unreadable(detail)
         return original_read(pid)
 
     monkeypatch.setattr(hostprocs, "_read_argv", denied)
@@ -667,6 +680,7 @@ def test_recovery_quarantines_when_a_candidate_attach_client_cannot_be_inspected
         assert snapshot.current_attempt.attempt_id == attempt.attempt_id
         assert "could not inspect host processes" in snapshot.recovery_error
         assert f"could not inspect live process {blocker.pid}" in snapshot.recovery_error
+        assert detail in snapshot.recovery_error
         # The container itself was killed and removed: exactly the state in which
         # the old code would have claimed a verified cleanup and offered Retry.
         assert fake.records() == []

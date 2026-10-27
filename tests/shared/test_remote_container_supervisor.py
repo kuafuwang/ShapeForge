@@ -846,7 +846,7 @@ def _record(payload: bytes) -> bytes:
     [
         (b"", 4, "malformed argument record"),
         (b"\x00\x00\x00\x00execpath\x00", None, "malformed argument count"),
-        (_record(b"/bin/x\x00a\x00b\x00"), None, "exceeds the bounded read limit"),
+        (_record(b"/bin/x\x00a\x00b\x00"), None, "argument vector is not complete"),
     ],
 )
 def test_malformed_darwin_records_fail_closed(monkeypatch, payload, full_size, message):
@@ -1440,6 +1440,131 @@ def test_darwin_proc_state_rejects_a_record_for_another_process(monkeypatch):
         live.kill()
         live.wait(timeout=15)
         del real_libc
+
+
+def _install_capped_record(monkeypatch, pid: int, record: bytes):
+    """Answer ``pid``'s ``KERN_PROCARGS2`` from ``record``; other pids stay real.
+
+    Mirrors the kernel: the size query reports the full record, a data read
+    copies at most the caller's buffer, so ``_MAX_ARGS_BYTES`` decides where the
+    bounded prefix ends.
+    """
+
+    import ctypes
+
+    from tcenv.remote import hostprocs
+
+    real_libc, _real_libproc = hostprocs._darwin_libraries()
+
+    class _CappedSysctl:
+        def sysctl(self, mib, namelen, oldp, oldlenp, newp, newlen):
+            if namelen != 3 or int(mib[2]) != pid:
+                return real_libc.sysctl(mib, namelen, oldp, oldlenp, newp, newlen)
+            size = oldlenp._obj
+            if oldp is None:
+                size.value = len(record)
+                return 0
+            count = min(size.value, len(record))
+            ctypes.memmove(oldp, record, count)
+            size.value = count
+            return 0
+
+    monkeypatch.setattr(
+        hostprocs, "_darwin_libraries", lambda: (_CappedSysctl(), _RefusedLibProc()),
+    )
+    monkeypatch.setattr(hostprocs, "_darwin_pids", lambda: [pid])
+    return hostprocs
+
+
+def _record(argc: int, exec_path: bytes, argv: tuple[bytes, ...], env: bytes = b"") -> bytes:
+    return (
+        argc.to_bytes(4, sys.byteorder)
+        + exec_path + b"\x00" + b"\x00"
+        + b"\x00".join(argv) + b"\x00"
+        + env
+    )
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="KERN_PROCARGS2 is Darwin-only")
+def test_darwin_capped_record_that_loses_the_last_argument_fails_closed(
+    tmp_path, monkeypatch,
+):
+    """A prefix that stops before argv[-1] must not invent an empty argument.
+
+    The last argument of ``docker start --attach --interactive <id>`` is the
+    container id.  A bounded record that ends exactly on the NUL after
+    ``--interactive`` used to be parsed by ``split`` into one phantom empty
+    entry, which satisfied the ``argc`` check and hid the missing id; the scan
+    then reported "no survivor" with no error.  Each argv entry is now read to
+    its own terminator, so an incomplete prefix is unknown and fails closed.
+    """
+
+    live = _live_child()
+    argv = (b"docker", b"start", b"--attach", b"--interactive", b"c" * 64)
+    full = _record(len(argv), b"/bin/x", argv)
+    prefix = full[: full.rfind(argv[-1])]
+    assert prefix.endswith(b"\x00") and prefix != full
+    try:
+        hostprocs = _install_capped_record(monkeypatch, live.pid, full)
+        monkeypatch.setattr(hostprocs, "_MAX_ARGS_BYTES", len(prefix))
+        with pytest.raises(hostprocs._Unreadable, match="argument vector is not complete"):
+            hostprocs._darwin_argv(live.pid)
+        with pytest.raises(hostprocs.HostProcsError, match="could not inspect live process"):
+            hostprocs.pids_mentioning(
+                "c" * 64, "--attach", executable_names=frozenset({"docker"}),
+            )
+        # The cleanup proof must not report a verified result either.
+        docker, _fake = install_fake_docker(
+            tmp_path / "docker", image_digest=IMAGE_DIGEST, control={"hang_attach": True},
+        )
+        supervisor = DockerAttemptSupervisor(_config(tmp_path, docker))
+        handle = supervisor.create(_spec(tmp_path, (sys.executable, "-c", "pass")))
+        supervisor.start(handle)
+        try:
+            assert "could not inspect host processes" in supervisor.cleanup(handle)
+            assert "could not inspect host processes" in supervisor.cleanup_residue(handle)
+        finally:
+            if handle.attach is not None and handle.attach.poll() is None:
+                handle.attach.kill()
+                handle.attach.wait(timeout=15)
+            supervisor.release(handle)
+    finally:
+        live.kill()
+        live.wait(timeout=15)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="KERN_PROCARGS2 is Darwin-only")
+def test_darwin_capped_environment_still_yields_the_complete_argv(monkeypatch):
+    """The cap may cut the environment without losing a single argv entry."""
+
+    live = _live_child()
+    argv = (b"docker", b"start")
+    env = b"BIG=" + b"x" * 4096 + b"\x00"
+    record = _record(len(argv), b"/bin/x", argv, env)
+    try:
+        hostprocs = _install_capped_record(monkeypatch, live.pid, record)
+        monkeypatch.setattr(hostprocs, "_MAX_ARGS_BYTES", 48)
+        assert hostprocs._darwin_argv(live.pid) == ("docker", "start")
+    finally:
+        live.kill()
+        live.wait(timeout=15)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="KERN_PROCARGS2 is Darwin-only")
+def test_darwin_capped_record_that_cuts_inside_an_argument_fails_closed(monkeypatch):
+    """A single huge argument (the 1MB case) is unknown, not a short argv."""
+
+    live = _live_child()
+    argv = (b"x" * 4096,)
+    record = _record(1, b"/bin/x", argv)
+    try:
+        hostprocs = _install_capped_record(monkeypatch, live.pid, record)
+        monkeypatch.setattr(hostprocs, "_MAX_ARGS_BYTES", 64)
+        with pytest.raises(hostprocs._Unreadable, match="argument vector is not complete"):
+            hostprocs._darwin_argv(live.pid)
+    finally:
+        live.kill()
+        live.wait(timeout=15)
 
 
 def test_a_live_process_always_has_a_task_record_and_an_owner():
