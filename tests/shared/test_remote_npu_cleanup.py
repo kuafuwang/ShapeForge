@@ -1345,3 +1345,114 @@ def test_a_contradictory_device_group_capability_is_refused(tmp_path):
             assert engine.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
         finally:
             engine.close(wait=5)
+
+
+def test_a_timed_out_probe_keeps_the_device_until_it_really_returns(tmp_path):
+    """@brief RPC 超时不会释放设备：卡住的 health 返回前不得有任何候选启动。"""
+    import threading
+
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+    entered = threading.Event()
+    release = threading.Event()
+
+    class _SlowHealth(FakeVendorAController):
+        gated = False
+
+        def health_check(self, profile):
+            if self.gated:
+                entered.set()
+                release.wait(10.0)
+            return super().health_check(profile)
+
+    controller = _SlowHealth(ledger_path)
+    engine = npu_engine(
+        root / "state", ledger_path=ledger_path, controller=controller,
+        worker_env={"TCENV_VENDOR_A_SLOW": "1"}, device_call_timeout_s=0.2,
+        signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+    )
+    try:
+        stale_capability = npu_capabilities(engine)
+        controller.gated = True
+        outcome: dict[str, object] = {}
+
+        def slow_probe() -> None:
+            try:
+                outcome["capability"] = npu_capabilities(engine)
+            except BaseException as exc:  # noqa: BLE001 - recorded for the assertion
+                outcome["error"] = exc
+
+        prober = threading.Thread(target=slow_probe, name="slow-probe")
+        prober.start()
+        assert entered.wait(10.0), "the probe never entered health_check"
+
+        # The RPC times out after 0.2s, but the controller call is still running.
+        prober.join(5.0)
+        assert "error" in outcome, "the bounded probe should have timed out"
+
+        request = npu_request("npu-lease-timeout-1", source=SOURCE)
+        engine.submit(
+            request=request, expected=engine.expected_identities,
+            capability_id=stale_capability.capability_id,
+            required_features=list(NPU_FEATURES), grant_token=NPU_TOKEN,
+        )
+        for _ in range(30):
+            assert engine.store._conn.execute(
+                "SELECT COUNT(*) FROM attempts WHERE state='running'",
+            ).fetchone()[0] == 0, "a candidate started while the probe was still running"
+            ledger = VendorLedger(ledger_path)
+            if ledger.exists():
+                assert ledger.read()["device_running"] == [], "a device ran while the probe was still running"
+                assert ledger.live_resources() == [], "device resources appeared during the probe"
+            time.sleep(0.02)
+
+        # Only after the real call returns may the candidate start and finish.
+        release.set()
+        final = _wait_engine(engine, request, {"completed"}, timeout=20.0)
+        assert final.result is not None
+        ledger = VendorLedger(ledger_path)
+        assert ledger.read()["device_running"] == []
+        assert ledger.live_resources() == []
+    finally:
+        release.set()
+        engine.close(wait=5)
+
+
+def test_probe_facts_must_match_the_served_cardinality_and_timing(tmp_path):
+    """@brief 事实里的 logical_devices/timing 与实际绑定不符时也要拒绝。"""
+    root = tmp_path / "run"
+    ledger_path = root / "ledger.json"
+
+    class _BadFacts(FakeVendorAController):
+        def __init__(self, path, *, devices=1, timing=("DEVICE_EVENT",)):
+            super().__init__(path)
+            self._devices = devices
+            self._timing = tuple(timing)
+
+        def probe(self, profile):
+            facts = super().probe(profile)
+            return VendorFacts(
+                vendor_id=facts.vendor_id, device_group_id=facts.device_group_id,
+                profile_digest=facts.profile_digest, topology_digest=facts.topology_digest,
+                resource_generation=facts.resource_generation,
+                logical_devices=self._devices, timing_sources=self._timing,
+            )
+
+    for devices, timing, match in (
+        (2, ("DEVICE_EVENT",), "one logical device"),
+        (0, ("DEVICE_EVENT",), "one logical device"),
+        (1, ("HOST_WALL",), "DEVICE_EVENT"),
+        (1, ("DEVICE_EVENT", "HOST_WALL"), "DEVICE_EVENT"),
+    ):
+        engine = npu_engine(
+            root / "state", ledger_path=ledger_path,
+            controller=_BadFacts(ledger_path, devices=devices, timing=timing),
+            signing_key=b"k" * 32, signing_key_id="sim-npu-site/key-1",
+        )
+        try:
+            with pytest.raises(JobError, match=match) as excinfo:
+                npu_capabilities(engine)
+            assert excinfo.value.code == "failed_precondition"
+            assert engine.store._conn.execute("SELECT COUNT(*) FROM capabilities").fetchone()[0] == 0
+        finally:
+            engine.close(wait=5)

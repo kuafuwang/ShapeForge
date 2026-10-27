@@ -602,6 +602,8 @@ def test_the_client_rejects_a_device_group_that_contradicts_its_binding(tmp_path
             if field == "timing":
                 del doctored.targets[0].device_groups[0].timing_sources[:]
                 doctored.targets[0].device_groups[0].timing_sources.append(value)
+            elif field == "launch_subtypes":
+                del doctored.targets[0].launch_subtypes[:]
             else:
                 setattr(doctored.targets[0].device_groups[0], field, value)
             return doctored
@@ -612,6 +614,7 @@ def test_the_client_rejects_a_device_group_that_contradicts_its_binding(tmp_path
             ("logical_devices", 0),
             ("logical_devices", 2),
             ("vendor_id", "vendor-b"),
+            ("launch_subtypes", ()),
         ):
             with pytest.raises(EvaluationUnavailable):
                 evaluator._validate_capabilities(

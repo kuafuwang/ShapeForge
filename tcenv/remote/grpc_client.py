@@ -652,6 +652,10 @@ class GrpcEvaluator:
                 raise EvaluationUnavailable("capability_invalid", "capabilities omitted the served target")
             if "source" not in target.artifact_kinds or "KERNEL" not in target.launch_kinds:
                 raise EvaluationUnavailable("capability_invalid", "NPU capability omitted source/KERNEL")
+            if "SIMT" not in target.launch_subtypes:
+                # The execution binding this client builds is SIMT; never claim a
+                # subtype the evaluator did not advertise.
+                raise EvaluationUnavailable("capability_invalid", "NPU capability omitted the SIMT launch subtype")
             if "DEVICE_EVENT" not in target.timing_sources:
                 raise EvaluationUnavailable("capability_invalid", "NPU capability omitted DEVICE_EVENT timing")
             matched = [

@@ -376,10 +376,12 @@ class JobEngine:
         self.npu_execution = npu_execution
         self.device_controller = device_controller
         self.device_call_timeout_s = float(device_call_timeout_s)
-        # Covers the whole device-operation sequence, not just a check: the
-        # scheduler holds it from the durable claim to attempt teardown, and
-        # GetCapabilities takes it (non-blocking) around probe/health/capabilities.
-        self._device_lease = threading.Lock()
+        # Device-operation state: an attempt may not start while a controller
+        # call is still in flight (including a call the RPC already timed out
+        # on), and a probe may not start while an attempt owns the group.
+        self._device_condition = threading.Condition()
+        self._device_inflight = 0
+        self._device_attempt_active = False
         self.execution_protocol_version = execution_protocol_version
         self.supported_features = frozenset(supported_features)
         self.supported_modes = frozenset(supported_modes)
@@ -492,22 +494,18 @@ class JobEngine:
             # read-only (no nonce use, no capability row); the durable write
             # still happens in store.get_capabilities below.
             self.store.require_grant(grant_token)
-            # The known-good probe owns the device group for its whole sequence:
-            # the scheduler holds the same lease from claim to teardown, so a
-            # probe can never overlap a candidate start.
-            if not self._device_lease.acquire(blocking=False):
-                raise JobError(
-                    "failed_precondition",
-                    "the device group is executing an attempt; GetCapabilities does not "
-                    "probe it until the lease is released",
-                )
-        try:
-            # Probe the trusted device: a group that cannot be verified must not
-            # consume the client nonce or leave a durable capability behind.
-            device_target = self._device_capability() if self.contract.npu_source else {}
-        finally:
-            if self.contract.npu_source:
-                self._device_lease.release()
+        # Probe the trusted device: a group that cannot be verified must not
+        # consume the client nonce or leave a durable capability behind.  The
+        # whole sequence holds one device-group slot, and each controller call
+        # adds a reference that outlives a timed-out RPC, so a candidate can
+        # never start while any part of the probe is still touching the device.
+        device_target: dict[str, Any] = {}
+        if self.contract.npu_source:
+            self._begin_device_operation()
+            try:
+                device_target = self._device_capability()
+            finally:
+                self._end_device_operation()
         capabilities = self.store.get_capabilities(
             grant_token=grant_token, client_nonce=client_nonce, expected=expected,
             expected_identities=self._expected, provenance=self._base_provenance(),
@@ -538,21 +536,67 @@ class JobEngine:
             raise JobError("failed_precondition", "this evaluator has no NPU device binding")
         return self.npu_execution.device_group.to_dict()
 
-    def _bounded_device_call(self, name: str, call: Callable[[], Any]) -> tuple[Any, str]:
-        """Run one trusted controller call with a bounded wall-clock wait."""
+    def _begin_device_operation(self, *, nested: bool = False) -> None:
+        """Claim the device group for one controller call, or refuse.
+
+        ``nested`` is used inside an already-claimed probe sequence: it only adds
+        a reference (so a timed-out call keeps the group claimed until it really
+        returns) without the exclusive refusal.
+        """
+
+        with self._device_condition:
+            if not nested and (self._device_inflight or self._device_attempt_active):
+                raise JobError(
+                    "failed_precondition",
+                    "the device group is executing an attempt or a device probe is "
+                    "still in flight; GetCapabilities will not probe it",
+                )
+            self._device_inflight += 1
+
+    def _end_device_operation(self) -> None:
+        with self._device_condition:
+            self._device_inflight = max(0, self._device_inflight - 1)
+            self._device_condition.notify_all()
+
+    def _bounded_device_call(
+        self, name: str, call: Callable[[], Any], *, owner: bool = False,
+        nested: bool = False,
+    ) -> tuple[Any, str]:
+        """Run one trusted controller call with a bounded wall-clock wait.
+
+        The device stays marked in-flight until the underlying call really
+        returns: a timeout only bounds the RPC, it does not let a candidate start
+        while the controller is still touching the device.  The worker thread
+        therefore owns the release, and the caller never releases early.
+
+        ``owner=True`` marks the call as the active attempt's own cleanup
+        (cancel/reconcile), which the attempt already owns; it must not take the
+        probe slot and must not be refused by it.
+        """
 
         outcome: dict[str, Any] = {}
+        done = threading.Event()
 
         def run() -> None:
             try:
                 outcome["value"] = call()
             except BaseException as exc:  # noqa: BLE001 - a controller failure is infrastructure
                 outcome["error"] = f"{name} raised {type(exc).__name__}: {exc}"[:500]
+            finally:
+                if not owner:
+                    self._end_device_operation()
+                done.set()
 
-        thread = threading.Thread(target=run, name=f"device-{name}", daemon=True)
-        thread.start()
-        thread.join(self.device_call_timeout_s)
-        if thread.is_alive():
+        if not owner:
+            self._begin_device_operation(nested=nested)
+        try:
+            thread = threading.Thread(target=run, name=f"device-{name}", daemon=True)
+            thread.start()
+        except BaseException:
+            if not owner:
+                self._end_device_operation()
+            raise
+        if not done.wait(self.device_call_timeout_s):
             return None, f"{name} did not return within {self.device_call_timeout_s:.3f}s"
         if "error" in outcome:
             return None, str(outcome["error"])
@@ -583,13 +627,25 @@ class JobEngine:
         if controller is None:
             raise JobError("failed_precondition", "no device controller is configured")
         profile = self._device_profile()
-        facts, error = self._bounded_device_call("probe", lambda: controller.probe(profile))
+        facts, error = self._bounded_device_call(
+            "probe", lambda: controller.probe(profile), nested=True,
+        )
         if error:
             raise JobError("failed_precondition", f"device probe failed: {error}")
         if not isinstance(facts, VendorFacts):
             raise JobError("failed_precondition", "device controller returned untyped probe facts")
         if facts.state != "available":
             raise JobError("failed_precondition", f"device group is {facts.state!r}, not available")
+        if isinstance(facts.logical_devices, bool) or facts.logical_devices != 1:
+            raise JobError(
+                "failed_precondition",
+                f"P0 serves exactly one logical device; the probe reports {facts.logical_devices!r}",
+            )
+        if tuple(facts.timing_sources) != tuple(self.npu_execution.required_timing_sources if self.npu_execution else ()):
+            raise JobError(
+                "failed_precondition",
+                "the probe does not report the served DEVICE_EVENT timing source",
+            )
         self._check_device_binding(
             {
                 "device_group_id": facts.device_group_id,
@@ -600,7 +656,9 @@ class JobEngine:
             },
             where="device probe",
         )
-        health, error = self._bounded_device_call("health_check", lambda: controller.health_check(profile))
+        health, error = self._bounded_device_call(
+            "health_check", lambda: controller.health_check(profile), nested=True,
+        )
         if error:
             raise JobError("failed_precondition", f"device health check failed: {error}")
         if not isinstance(health, HealthProof):
@@ -619,7 +677,7 @@ class JobEngine:
             where="device health proof", keys=("device_group_id", "resource_generation"),
         )
         advertised, error = self._bounded_device_call(
-            "capabilities", lambda: controller.capabilities(facts),
+            "capabilities", lambda: controller.capabilities(facts), nested=True,
         )
         if error:
             raise JobError("failed_precondition", f"device capabilities failed: {error}")
@@ -916,9 +974,13 @@ class JobEngine:
             # The device-group lease is taken before the durable claim and held
             # for the whole attempt, so a capability probe can never run
             # concurrently with a candidate start or execution.
-            self._device_lease.acquire()
-            idle = False
-            try:
+            claimed = None
+            with self._device_condition:
+                while self._device_inflight and not self._stop.is_set():
+                    # A timed-out controller call still owns the device.
+                    self._device_condition.wait(timeout=0.05)
+                if self._stop.is_set():
+                    break
                 try:
                     claimed = self.store.claim_next(
                         selfcheck_age_ms=self.selfcheck_age_ms,
@@ -930,16 +992,20 @@ class JobEngine:
                     self.store.mark_unavailable(exc)
                     self._stop.set()
                     break
-                if claimed is None:
-                    idle = True
-                else:
-                    self._run_claimed(claimed)
-            finally:
-                self._device_lease.release()
-            if idle:
-                # Never sleep while holding the device-group lease.
+                if claimed is not None:
+                    # Claiming and taking the device group are one atomic step:
+                    # a probe can never start between them.
+                    self._device_attempt_active = True
+            if claimed is None:
                 with self._condition:
                     self._condition.wait(timeout=0.05)
+                continue
+            try:
+                self._run_claimed(claimed)
+            finally:
+                with self._device_condition:
+                    self._device_attempt_active = False
+                    self._device_condition.notify_all()
 
     def _run_claimed(self, claimed: tuple[ExternalEvaluationRequest, Attempt]) -> None:
         request, attempt = claimed
@@ -1295,6 +1361,7 @@ class JobEngine:
         # therefore leaves the job quarantined instead of claiming cleanup.
         proof, reconcile_error = self._bounded_device_call(
             "reconcile", lambda: controller.reconcile(attempt.attempt_id, attempt.lease_fence),
+            owner=True,
         )
         if reconcile_error:
             return f"device reconcile failed: {reconcile_error}"[:1000]
@@ -1380,6 +1447,7 @@ class JobEngine:
         # claim on its own.
         _value, cancel_error = self._bounded_device_call(
             "cancel", lambda: controller.cancel(attempt.attempt_id, attempt.lease_fence),
+            owner=True,
         )
         if cancel_error:
             self._record_close_error(f"device cancel could not be delivered: {cancel_error}")

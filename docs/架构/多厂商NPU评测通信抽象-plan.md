@@ -373,10 +373,14 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `bind_wire_digest(..., npu_contract=...)` 绑定（selfcheck 没有 outbox 行），
   `GrpcEvaluator.selfcheck`/`selfcheck_resume` 在请求缺 wire digest 时用
   `wire_request_digest()` 绑定即将提交并返回的同一身份；旧 Metal selfcheck 路径不变。
-- 设备组 lease：scheduler 在 durable claim 之前取得、直到 attempt teardown 才释放，
-  `GetCapabilities` 用非阻塞方式取同一把锁并覆盖 probe/health/capabilities 整个序列，
-  因此探测不会与候选启动/执行并发（busy 时直接 `failed_precondition`，controller 也会在
-  running marker 存在时拒绝 probe/known-good 探针且不记录 probe）。
+- 设备组占用：是一个带引用计数的 in-flight 状态而不是普通锁。`GetCapabilities` 为整个
+  probe/health/capabilities 序列占一个槽，每个 controller 调用再加一个引用，只有底层调用
+  真正返回才减少引用——RPC 超时只结束等待，卡住的调用仍占着设备，scheduler 因此不会在
+  探测未结束时 claim 或启动候选（bounded 超时后仍不得出现 running attempt/device
+  resource/running marker）；调用真正返回后候选才启动并正常完成。scheduler 的 claim 与
+  “attempt 占用设备组”在同一临界区内完成，probe 不会插进两者之间；`cancel`/`reconcile`
+  属于该 attempt 自己的 owner 调用，不占 probe 槽。controller 也会在 running marker 存在时
+  拒绝 probe/known-good 探针且不记录 probe。
 - 清理证据必须存在：fake ledger 被删除时 `reconcile` 返回 `complete=False`
   （「ledger is missing」），读取/释放不会重建文件，`clear()` 只有测试装配
   （`operator=True`）可用；结果提交、Cancel、恢复路径都因此 quarantine。
@@ -408,8 +412,9 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   未通过时直接返回 `unauthenticated`/`permission_denied` 且完全不触发设备操作；随后才用
   worker 外 controller 做有界
   `probe`/`health_check`/`capabilities`（`device_call_timeout_s`，默认 2s），并先确认该
-  设备组没有活跃 attempt lease（engine 查 `_active`/durable running attempts，controller
-  再按 ledger 的 running marker 复核，busy 时设备侧连 probe 都不记录），逐项核对
+  设备组没有活跃 attempt 或仍在 in-flight 的探测（scheduler 的 claim 与 attempt 占用同临界区，
+  controller 再按 ledger 的 running marker 复核，busy 时设备侧连 probe 都不记录），核对
+  事实里的 `logical_devices == 1` 与 `DEVICE_EVENT` timing，再逐项核对
   vendor/profile/topology/resource generation 与 P0 执行形状；探测失败、超时、不健康
   （含 `ok=True` 但没有真正执行 known-good 探针的 `executed_known_good=False`）或
   绑定不一致都 `failed_precondition`，且在消耗 nonce、写入 capability 之前失败。NPU 组合根
@@ -455,7 +460,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `_validate_durable_state` 都把它与 `jobs.request_id` 比对；篡改后直接读与重开都
   fail closed。
 - 验证证据（每条命令各自单独跑）：
-  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **86 passed**
+  `tests/shared/test_remote_npu_{contract,grpc,cleanup}.py` **88 passed**
   （wire receipt 与 host HMAC 篡改、时钟/候选时间自相矛盾、hanging cancel/reconcile、
   终态 request_id/task/execution/provenance/attempt 绑定篡改、Submit 跨 generation
   capability、fake vendor 的代际 prepare/台账、运行 marker 与异组/异代际
@@ -464,7 +469,8 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   未执行 known-good 探针的健康证明不广告 available、outbox 行篡改/已完成行不可改写/
   损坏行不被静默重建、活跃 lease 下 GetCapabilities 零设备调用、宿主 selfcheck/adapter
   绑定 wire digest、probe 序列与候选启动互斥、缺失台账不算清理、组内 timing/设备数矛盾
-  被拒）；
+  被拒）、探测超时后设备仍被占用直到真实调用返回、capability 缺 launch_subtypes/事实
+  多设备或 HOST_WALL 被拒）；
   `test_remote_grpc_{adapter,tls,contract,revocation}.py` 与
   `test_remote_{conformance,go_conformance}.py` 六个旧文件 **62 passed**；
   `test_orchestrator_runtime.py` **18 passed**（含 NPU host 接线回归）；
@@ -474,7 +480,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `test_remote_job_recovery.py`，`_validate_durable_state` 的终态读校验同文件覆盖）；
   `test_selfcheck_bridge.py` 在本机围栏默认 TMPDIR 下 **18 failed, 1 passed**（全部是
   短 TMPDIR 导致的 AF_UNIX 路径超长），`TMPDIR=/tmp` 下 **19 passed**。
-  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2285 passed / 6 skipped /
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`：**2287 passed / 6 skipped /
   32 failed**。这批失败全部
   是本机 hmz 围栏环境造成：`test_selfcheck_bridge.py` 的 AF_UNIX 路径超长（短 TMPDIR），
   `ps` 被禁（`test_children`、`test_run_detached`、`test_triton_baseline`）与 HOME 权威
