@@ -547,6 +547,48 @@ def _apply_mutation(golden: dict, mutation: str) -> None:
             evidence["timing"]["unexpected"] = "x"
         else:
             evidence["buffer"] = []
+    elif mutation in {
+        "evidence_candidate_digest", "evidence_top_level_artifact_digest",
+        "evidence_device_group_id", "timing_source_host_wall",
+        "timing_launches_over_limit", "diagnostics_not_scalar",
+        "incomplete_with_synchronization", "complete_without_spans", "aggregate_mismatch",
+    }:
+        evidence = vector["evidence"]
+        if mutation == "evidence_candidate_digest":
+            evidence["candidate_digest"]["value"] = "0" * 64
+        elif mutation == "evidence_top_level_artifact_digest":
+            evidence["artifact_set_digest"] = "0" * 64
+        elif mutation == "evidence_device_group_id":
+            evidence["device_group"]["device_group_id"] = "other-group"
+        elif mutation == "timing_source_host_wall":
+            evidence["timing"]["source"] = "HOST_WALL"
+        elif mutation == "timing_launches_over_limit":
+            evidence["timing"]["launches"] = 1_000_001
+        elif mutation == "diagnostics_not_scalar":
+            evidence["diagnostics"] = {"bad": []}
+        elif mutation == "incomplete_with_synchronization":
+            evidence["complete"] = False
+        elif mutation == "complete_without_spans":
+            evidence["spans"] = []
+        else:
+            evidence["timing"]["device_elapsed_ns"] = 1
+    elif mutation == "resources_uncoverable":
+        def declare_uncoverable(request):
+            resources = request["execution"]["resources"]
+            resources["logical_devices"] = 8
+            resources["required_rank_spans"] = 64
+            resources["required_die_spans"] = 64
+        _resign_request_change(golden, declare_uncoverable)
+    elif mutation == "inline_total_over_limit":
+        entries = copy.deepcopy(vector["request"]["artifact"]["bundle"]["entries"])
+        for index in range(4):
+            payload = bytes([index]) * 250_000
+            entries.append(
+                _inline_entry(
+                    f"aux/bulk-{index}.bin", "AUXILIARY", "application/octet-stream", payload,
+                )
+            )
+        _rebuild_artifact_set_unchecked(golden, entries)
     elif mutation == "device_group_digest_not_hex":
         _resign_request_change(
             golden,
@@ -781,6 +823,20 @@ def _apply_mutation(golden: dict, mutation: str) -> None:
     ("span_unknown_field", "span fields are missing or unknown"),
     ("timing_unknown_field", "timing evidence timing fields are missing or unknown"),
     ("buffer_not_object", "buffer must be an object or null"),
+    # The evidence is bound to the accepted request, not just structurally valid.
+    ("evidence_candidate_digest", "candidate_digest differs from the accepted request"),
+    ("evidence_top_level_artifact_digest", "artifact_set_digest differs from the candidate digest"),
+    ("evidence_device_group_id", "device group differs from the accepted capability"),
+    # ...and the completion rules are real rules.
+    ("timing_source_host_wall", "P1 timing source must be DEVICE_EVENT"),
+    ("timing_launches_over_limit", "timing.launches is outside its integer bounds"),
+    ("diagnostics_not_scalar", "timing diagnostics must be scalar"),
+    ("incomplete_with_synchronization", "cannot claim completed synchronization"),
+    ("complete_without_spans", "missing a declared device span"),
+    ("aggregate_mismatch", "not the aggregate of the declared device spans"),
+    # Resource and inline-byte declarations are coverable/bounded at the request.
+    ("resources_uncoverable", "device x rank x die spans"),
+    ("inline_total_over_limit", "total inline byte limit"),
 ])
 def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, reason):
     golden = copy.deepcopy(load_build_golden())
@@ -854,6 +910,17 @@ def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, rea
     ("span_unknown_field", "evidence"),
     ("timing_unknown_field", "evidence"),
     ("buffer_not_object", "evidence"),
+    ("evidence_candidate_digest", "evidence"),
+    ("evidence_top_level_artifact_digest", "evidence"),
+    ("evidence_device_group_id", "evidence"),
+    ("timing_source_host_wall", "evidence"),
+    ("timing_launches_over_limit", "evidence"),
+    ("diagnostics_not_scalar", "evidence"),
+    ("incomplete_with_synchronization", "evidence"),
+    ("complete_without_spans", "evidence"),
+    ("aggregate_mismatch", "evidence"),
+    ("resources_uncoverable", "request"),
+    ("inline_total_over_limit", "request"),
 ])
 def test_the_python_contract_rejects_the_same_tampered_vector(mutation, level):
     """The Go verifier is not stricter or looser than the production contract.
@@ -896,6 +963,9 @@ def test_the_uint64_boundary_generation_is_valid_on_both_sides(tmp_path):
         lambda request: request["execution"]["device_group"].__setitem__(
             "resource_generation", "18446744073709551615",
         ),
+    )
+    golden["npu_build"]["evidence"]["device_group"] = copy.deepcopy(
+        golden["npu_build"]["request"]["execution"]["device_group"]
     )
     path = tmp_path / "boundary_generation.json"
     path.write_text(json.dumps(golden), encoding="utf-8")
@@ -940,4 +1010,34 @@ def test_a_duplicated_timing_source_normalises_like_the_contract(tmp_path):
     assert document["request"]["execution"]["required_timing_sources"] == ["DEVICE_EVENT"]
     assert contracts.canonical_digest_document(document).decode("utf-8") == (
         vector["request_canonical_json"]
+    )
+
+
+
+def test_a_sixty_five_byte_clock_domain_is_accepted_on_both_sides(tmp_path):
+    """The clock-domain limit is 96 bytes, not 64: a 65-byte name is legal."""
+
+    golden = copy.deepcopy(load_build_golden())
+    vector = golden["npu_build"]
+    clock = "c" * 65
+    vector["timing_evidence_clock"] = clock
+    vector["evidence"]["timing"]["clock_domain"] = clock
+    for span in vector["evidence"]["spans"]:
+        span["clock_domain"] = clock
+    path = tmp_path / "long_clock_domain.json"
+    path.write_text(json.dumps(golden), encoding="utf-8")
+    result = _run_verifier(path)
+    assert result.returncode == 0, result.stderr
+    assert "ok build" in result.stdout
+
+    from tcenv.remote import contracts
+
+    contracts.npu_evidence_document(
+        vector["evidence"], source_bytes=None,
+        device_group=vector["request"]["execution"]["device_group"],
+        expected_resources=vector["request"]["execution"]["resources"],
+        expected_build=vector["request"]["build"],
+        request_artifact=vector["request"]["artifact"],
+        measurement_kind="simulated", publication_allowed=False,
+        report_status="ok", dialect=contracts.NPU_BUILD_DIALECT,
     )

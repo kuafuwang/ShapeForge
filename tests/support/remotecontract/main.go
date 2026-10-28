@@ -703,6 +703,7 @@ func bundleManifest(schemaID string, entries []any, withTransport bool) (map[str
 	manifest := make([]any, 0, len(entries))
 	seen := map[string]string{}
 	manifestPaths := make([]string, 0, len(entries))
+	rawInlineTotal := int64(0)
 	for _, raw := range entries {
 		entry, ok := raw.(map[string]any)
 		if !ok {
@@ -748,6 +749,11 @@ func bundleManifest(schemaID string, entries []any, withTransport bool) (map[str
 			// enter the canonical manifest).
 			if err := checkEntryTransport(entry); err != nil {
 				return nil, err
+			}
+			if content, _ := entry["content"].(string); content == "inline" {
+				if size, err := buildNumber(entry["size_bytes"], "bundle entry size"); err == nil {
+					rawInlineTotal += size
+				}
 			}
 		}
 		// The entry domain is part of the manifest identity: a role the contract
@@ -799,11 +805,15 @@ func bundleManifest(schemaID string, entries []any, withTransport bool) (map[str
 	}
 	total := int64(0)
 	for _, raw := range manifest {
-		size, err := buildNumber(raw.(map[string]any)["size_bytes"], "bundle entry size")
+		entry := raw.(map[string]any)
+		size, err := buildNumber(entry["size_bytes"], "bundle entry size")
 		if err != nil {
 			return nil, err
 		}
 		total += size
+	}
+	if rawInlineTotal > maxBundleInlineBytes {
+		return nil, errors.New("the inline bundle exceeds the total inline byte limit")
 	}
 	if total > maxBundleTotalBytes {
 		return nil, errors.New("a bundle exceeds the declared total byte limit")
@@ -1765,15 +1775,29 @@ func buildRequestDocument(request map[string]any) (map[string]any, error) {
 	); err != nil {
 		return nil, err
 	}
+	logicalDevices, _ := boundedBuildNumber(
+		resources["logical_devices"], "execution.resources.logical_devices", 1, 8,
+	)
+	spans := int64(1)
 	for _, name := range []string{"required_rank_spans", "required_die_spans"} {
 		if resources[name] == nil {
 			continue
 		}
-		if _, err := boundedBuildNumber(
-			resources[name], "execution.resources."+name, 1, 64,
-		); err != nil {
+		count, err := boundedBuildNumber(resources[name], "execution.resources."+name, 1, 64)
+		if err != nil {
 			return nil, err
 		}
+		spans *= count
+	}
+	// Completeness is a coordinate question: a topology whose
+	// device x rank x die product cannot fit in one bounded evidence row is
+	// inadmissible, so the request can never declare one.
+	if logicalDevices*spans > 64 {
+		return nil, fmt.Errorf(
+			"the declared topology needs %d device x rank x die spans; "+
+				"one evidence row carries at most 64",
+			logicalDevices*spans,
+		)
 	}
 	candidateDocument, ok := canonicalRequest["candidate_digest"].(map[string]any)
 	if !ok {
@@ -2092,12 +2116,13 @@ var requestModes = map[string]map[string]bool{
 var requestCachePolicies = map[string]bool{"reuse": true, "refresh": true, "disabled": true}
 
 const (
-	maxRequestCases     = 128
-	maxRequestReps      = 10_000
-	maxRequestTimeoutMs = 3_600_000
-	maxInlineEntryBytes = 262_144
-	maxBlobChunkBytes   = 4 * 1024 * 1024
-	buildBlobContentID  = "blob-sha256-v1:"
+	maxRequestCases      = 128
+	maxRequestReps       = 10_000
+	maxRequestTimeoutMs  = 3_600_000
+	maxInlineEntryBytes  = 262_144
+	maxBundleInlineBytes = 1_000_000
+	maxBlobChunkBytes    = 4 * 1024 * 1024
+	buildBlobContentID   = "blob-sha256-v1:"
 )
 
 // The build contract's integer domains, mirrored from the production validator:
@@ -2517,10 +2542,40 @@ func deviceGroupDocument(value any) error {
 	return nil
 }
 
-// verifyTimingEvidence validates the evidence document itself: the field sets
-// and the value domains of the topology, the spans, the timing block and the
-// buffer.  The completeness/aggregate rules are checked separately.
-func verifyTimingEvidence(evidence map[string]any) error {
+// scalarDiagnostics validates the optional diagnostics block: a bounded object of
+// scalar values (string, boolean, safe integer or null).
+func scalarDiagnostics(value any) error {
+	document, ok := value.(map[string]any)
+	if !ok || len(document) > 32 {
+		return errors.New("timing diagnostics must be a bounded object")
+	}
+	for key, item := range document {
+		if key == "" || len(key) > 64 || !isASCII(key) {
+			return errors.New("timing diagnostic key is invalid")
+		}
+		switch typed := item.(type) {
+		case string:
+			if len([]byte(typed)) > 512 {
+				return errors.New("timing diagnostic exceeds its UTF-8 byte limit")
+			}
+		case bool, nil:
+		case json.Number:
+			parsed, err := strconv.ParseInt(typed.String(), 10, 64)
+			if err != nil || parsed > maxBuildSafeInteger || parsed < -maxBuildSafeInteger {
+				return errors.New("timing diagnostic integer is unsafe")
+			}
+		default:
+			return errors.New("timing diagnostics must be scalar")
+		}
+	}
+	return nil
+}
+
+// verifyTimingEvidence validates the evidence document against the accepted
+// request: the candidate/artifact/group binding, the declared topology, and the
+// timing/topology/spans/buffer value domains plus the completion rules that make
+// a row publishable.
+func verifyTimingEvidence(evidence, execution map[string]any) error {
 	required := append(append([]string{}, evidenceFields...), "build")
 	for _, name := range required {
 		if _, present := evidence[name]; !present {
@@ -2540,22 +2595,9 @@ func verifyTimingEvidence(evidence map[string]any) error {
 	if evidence["schema_id"] != "tcenv.remote.npu-build.timing-evidence.3" {
 		return errors.New("timing evidence schema_id is not the version 3 build identity")
 	}
-	kind, err := buildText(evidence["measurement_kind"], "measurement_kind", 32)
-	if err != nil {
-		return err
-	}
-	if kind != "measured" && kind != "simulated" {
-		return errors.New("measurement_kind must be measured or simulated")
-	}
-	for _, name := range []string{"publication_allowed", "complete"} {
-		if _, ok := evidence[name].(bool); !ok {
-			return fmt.Errorf("%s must be boolean", name)
-		}
-	}
-	if digest := evidence["artifact_set_digest"]; digest != nil {
-		text, ok := digest.(string)
-		if !ok || !isHex64(text) {
-			return errors.New("artifact_set_digest must be 64 lowercase hexadecimal characters")
+	if diagnostics, present := evidence["diagnostics"]; present {
+		if err := scalarDiagnostics(diagnostics); err != nil {
+			return err
 		}
 	}
 	candidate, ok := evidence["candidate_digest"].(map[string]any)
@@ -2568,8 +2610,42 @@ func verifyTimingEvidence(evidence map[string]any) error {
 	if value, ok := candidate["value"].(string); !ok || !isHex64(value) {
 		return errors.New("candidate_digest.value must be 64 lowercase hexadecimal characters")
 	}
+	requestCandidate, ok := execution["_request_candidate"].(map[string]any)
+	if ok {
+		same, err := sameDocument(candidate, requestCandidate)
+		if err != nil {
+			return err
+		}
+		if !same {
+			return errors.New("timing evidence candidate_digest differs from the accepted request")
+		}
+	}
+	artifactSet := evidence["artifact_set_digest"]
+	if candidate["algorithm"] == "sha256-bundle-v1" {
+		text, ok := artifactSet.(string)
+		if !ok {
+			return errors.New("a bundle candidate requires artifact_set_digest evidence")
+		}
+		if !isHex64(text) {
+			return errors.New("artifact_set_digest must be 64 lowercase hexadecimal characters")
+		}
+		if text != candidate["value"] {
+			return errors.New("artifact_set_digest differs from the candidate digest")
+		}
+	} else if artifactSet != nil {
+		return errors.New("an inline source candidate must not claim an artifact_set_digest")
+	}
 	if err := deviceGroupDocument(evidence["device_group"]); err != nil {
 		return err
+	}
+	if requestGroup, ok := execution["device_group"].(map[string]any); ok {
+		same, err := sameDocument(evidence["device_group"], requestGroup)
+		if err != nil {
+			return err
+		}
+		if !same {
+			return errors.New("timing evidence device group differs from the accepted capability")
+		}
 	}
 	topology, ok := evidence["topology"].(map[string]any)
 	if !ok {
@@ -2588,32 +2664,69 @@ func verifyTimingEvidence(evidence map[string]any) error {
 	if !ok || len(rawDevices) == 0 || len(rawDevices) > 64 {
 		return errors.New("topology.declared_devices must be a bounded non-empty array")
 	}
-	seenDevices := map[string]bool{}
+	declaredDevices := make(map[string]bool, len(rawDevices))
 	for _, item := range rawDevices {
 		device, err := buildIdentifier(item, "topology.declared_devices")
 		if err != nil {
 			return err
 		}
-		if seenDevices[device] {
+		if declaredDevices[device] {
 			return errors.New("topology.declared_devices must be unique")
 		}
-		seenDevices[device] = true
+		declaredDevices[device] = true
 	}
-	if int64(len(seenDevices)) != logicalDevices {
+	if int64(len(declaredDevices)) != logicalDevices {
 		return errors.New("topology.declared_devices disagrees with logical_devices")
 	}
+	var requiredRanks, requiredDies int64
 	for _, name := range []string{"required_rank_spans", "required_die_spans"} {
 		if topology[name] == nil {
 			continue
 		}
-		if _, err := boundedBuildNumber(topology[name], "topology."+name, 1, 64); err != nil {
+		count, err := boundedBuildNumber(topology[name], "topology."+name, 1, 64)
+		if err != nil {
 			return err
 		}
+		if name == "required_rank_spans" {
+			requiredRanks = count
+		} else {
+			requiredDies = count
+		}
+	}
+	if resources, ok := execution["resources"].(map[string]any); ok {
+		requestDevices, _ := boundedBuildNumber(
+			resources["logical_devices"], "execution.resources.logical_devices", 1, 8,
+		)
+		requestRanks, requestDies := int64(0), int64(0)
+		if resources["required_rank_spans"] != nil {
+			requestRanks, _ = boundedBuildNumber(
+				resources["required_rank_spans"], "execution.resources.required_rank_spans", 1, 64,
+			)
+		}
+		if resources["required_die_spans"] != nil {
+			requestDies, _ = boundedBuildNumber(
+				resources["required_die_spans"], "execution.resources.required_die_spans", 1, 64,
+			)
+		}
+		if requestDevices != logicalDevices || requestRanks != requiredRanks ||
+			requestDies != requiredDies {
+			return errors.New(
+				"timing evidence topology differs from the declared execution resources",
+			)
+		}
+	}
+	type coordinate struct {
+		device string
+		rank   int64
+		die    int64
+		hasR   bool
+		hasD   bool
 	}
 	spans, ok := evidence["spans"].([]any)
 	if !ok {
 		return errors.New("timing evidence spans must be an array")
 	}
+	reported := make(map[coordinate]bool, len(spans))
 	for _, raw := range spans {
 		span, ok := raw.(map[string]any)
 		if !ok {
@@ -2622,23 +2735,37 @@ func verifyTimingEvidence(evidence map[string]any) error {
 		if err := closedFields(span, spanFields, nil, "timing evidence span"); err != nil {
 			return err
 		}
-		if _, err := buildIdentifier(span["device_id"], "span.device_id"); err != nil {
+		device, err := buildIdentifier(span["device_id"], "span.device_id")
+		if err != nil {
 			return err
 		}
-		for _, name := range []string{"rank", "die"} {
-			if span[name] == nil {
-				continue
-			}
-			if _, err := boundedBuildNumber(span[name], "span."+name, 0, 64); err != nil {
+		entry := coordinate{device: device}
+		if span["rank"] != nil {
+			entry.rank, err = boundedBuildNumber(span["rank"], "span.rank", 0, 64)
+			if err != nil {
 				return err
 			}
+			entry.hasR = true
 		}
-		if _, err := buildText(span["clock_domain"], "span.clock_domain", 64); err != nil {
+		if span["die"] != nil {
+			entry.die, err = boundedBuildNumber(span["die"], "span.die", 0, 64)
+			if err != nil {
+				return err
+			}
+			entry.hasD = true
+		}
+		if _, err := buildText(span["clock_domain"], "span.clock_domain", 96); err != nil {
 			return err
 		}
-		if _, err := boundedBuildNumber(span["elapsed_ns"], "span.elapsed_ns", 0, 1<<62); err != nil {
+		if _, err := boundedBuildNumber(
+			span["elapsed_ns"], "span.elapsed_ns", 0, maxBuildSafeInteger,
+		); err != nil {
 			return err
 		}
+		if reported[entry] {
+			return errors.New("timing evidence reports the same coordinate twice")
+		}
+		reported[entry] = true
 	}
 	timing, ok := evidence["timing"].(map[string]any)
 	if !ok {
@@ -2647,46 +2774,206 @@ func verifyTimingEvidence(evidence map[string]any) error {
 	if err := closedFields(timing, timingFields, nil, "timing evidence timing"); err != nil {
 		return err
 	}
-	if _, err := buildText(timing["source"], "timing.source", 32); err != nil {
+	source, err := buildText(timing["source"], "timing.source", 32)
+	if err != nil {
 		return err
 	}
-	if _, err := buildText(timing["clock_domain"], "timing.clock_domain", 64); err != nil {
+	if source != "DEVICE_EVENT" {
+		return errors.New("P1 timing source must be DEVICE_EVENT")
+	}
+	clockDomain, err := buildText(timing["clock_domain"], "timing.clock_domain", 96)
+	if err != nil {
 		return err
 	}
-	if _, ok := timing["synchronization_completed"].(bool); !ok {
+	synchronized, ok := timing["synchronization_completed"].(bool)
+	if !ok {
 		return errors.New("timing.synchronization_completed must be boolean")
 	}
-	for _, name := range []string{"device_elapsed_ns", "host_api_elapsed_ns", "launches"} {
-		if _, err := boundedBuildNumber(timing[name], "timing."+name, 0, 1<<62); err != nil {
-			return err
-		}
+	deviceElapsed, err := boundedBuildNumber(
+		timing["device_elapsed_ns"], "timing.device_elapsed_ns", 0, maxBuildSafeInteger,
+	)
+	if err != nil {
+		return err
 	}
-	if buffer := evidence["buffer"]; buffer != nil {
-		document, ok := buffer.(map[string]any)
+	if _, err := boundedBuildNumber(
+		timing["host_api_elapsed_ns"], "timing.host_api_elapsed_ns", 0, maxBuildSafeInteger,
+	); err != nil {
+		return err
+	}
+	launches, err := boundedBuildNumber(timing["launches"], "timing.launches", 0, 1_000_000)
+	if err != nil {
+		return err
+	}
+	kind, err := buildText(evidence["measurement_kind"], "measurement_kind", 32)
+	if err != nil {
+		return err
+	}
+	if kind != "measured" && kind != "simulated" {
+		return errors.New("measurement_kind must be measured or simulated")
+	}
+	publish, ok := evidence["publication_allowed"].(bool)
+	if !ok {
+		return errors.New("publication_allowed must be boolean")
+	}
+	complete, ok := evidence["complete"].(bool)
+	if !ok {
+		return errors.New("complete must be boolean")
+	}
+	hasBuffer := false
+	type bufferCounts struct {
+		flushed, dropped, overwritten bool
+		written, delivered            int64
+	}
+	var buffer bufferCounts
+	if raw := evidence["buffer"]; raw != nil {
+		document, ok := raw.(map[string]any)
 		if !ok {
 			return errors.New("timing evidence buffer must be an object or null")
 		}
 		if err := closedFields(document, bufferFields, nil, "timing evidence buffer"); err != nil {
 			return err
 		}
-		if _, ok := document["flushed"].(bool); !ok {
+		if buffer.flushed, ok = document["flushed"].(bool); !ok {
 			return errors.New("buffer.flushed must be boolean")
 		}
-		for _, name := range []string{
-			"records_written", "records_delivered", "dropped", "overwritten",
-		} {
-			if _, err := boundedBuildNumber(document[name], "buffer."+name, 0, 1<<31); err != nil {
-				return err
+		if buffer.written, err = boundedBuildNumber(
+			document["records_written"], "buffer.records_written", 0, 1_000_000,
+		); err != nil {
+			return err
+		}
+		if buffer.delivered, err = boundedBuildNumber(
+			document["records_delivered"], "buffer.records_delivered", 0, 1_000_000,
+		); err != nil {
+			return err
+		}
+		dropped, err := boundedBuildNumber(document["dropped"], "buffer.dropped", 0, 1_000_000)
+		if err != nil {
+			return err
+		}
+		overwritten, err := boundedBuildNumber(
+			document["overwritten"], "buffer.overwritten", 0, 1_000_000,
+		)
+		if err != nil {
+			return err
+		}
+		buffer.dropped, buffer.overwritten = dropped > 0, overwritten > 0
+		hasBuffer = true
+	}
+	if kind == "simulated" && publish {
+		return errors.New("simulated timing evidence cannot be publishable")
+	}
+	if complete {
+		if !synchronized {
+			return errors.New("timing evidence requires completed synchronization")
+		}
+		if launches < 1 {
+			return errors.New("completed timing evidence requires at least one launch")
+		}
+		if deviceElapsed <= 0 {
+			return errors.New("completed timing evidence requires a positive device elapsed time")
+		}
+		if clockDomain == "unobserved" {
+			return errors.New("completed timing evidence requires an observed clock domain")
+		}
+		// Exact coverage of device x rank x die, no extras.
+		expected := map[coordinate]bool{}
+		for device := range declaredDevices {
+			ranks := []int64{0}
+			if requiredRanks > 0 {
+				ranks = ranks[:0]
+				for rank := int64(0); rank < requiredRanks; rank++ {
+					ranks = append(ranks, rank)
+				}
 			}
+			dies := []int64{0}
+			if requiredDies > 0 {
+				dies = dies[:0]
+				for die := int64(0); die < requiredDies; die++ {
+					dies = append(dies, die)
+				}
+			}
+			for _, rank := range ranks {
+				for _, die := range dies {
+					expected[coordinate{
+						device: device, rank: rank, die: die,
+						hasR: requiredRanks > 0, hasD: requiredDies > 0,
+					}] = true
+				}
+			}
+		}
+		missing := make([]string, 0)
+		for item := range expected {
+			if !reported[item] {
+				missing = append(missing, item.device)
+			}
+		}
+		if len(missing) > 0 {
+			sort.Strings(missing)
+			return fmt.Errorf(
+				"completed timing evidence is missing a declared device span: %s",
+				strings.Join(missing, ","),
+			)
+		}
+		for item := range reported {
+			if !expected[item] {
+				return errors.New(
+					"completed timing evidence reports a span the declared topology does not cover",
+				)
+			}
+		}
+		aggregate := int64(0)
+		for _, raw := range spans {
+			span := raw.(map[string]any)
+			if span["clock_domain"] == "unobserved" {
+				return errors.New("a completed span requires an observed clock domain")
+			}
+			if span["clock_domain"] != clockDomain {
+				return errors.New(
+					"all spans of one measurement must share the reported clock domain",
+				)
+			}
+			elapsed, _ := boundedBuildNumber(span["elapsed_ns"], "span.elapsed_ns", 0, maxBuildSafeInteger)
+			if elapsed > aggregate {
+				aggregate = elapsed
+			}
+		}
+		if aggregate != deviceElapsed {
+			return fmt.Errorf(
+				"device_elapsed_ns is not the aggregate of the declared device spans (%d vs %d)",
+				deviceElapsed, aggregate,
+			)
+		}
+		if hasBuffer {
+			if !buffer.flushed {
+				return errors.New("completed timing evidence requires a flushed buffer")
+			}
+			if buffer.dropped || buffer.overwritten {
+				return errors.New("completed timing evidence requires an intact buffer")
+			}
+			if buffer.delivered < buffer.written {
+				return errors.New(
+					"completed timing evidence requires every record to be delivered",
+				)
+			}
+		}
+	} else {
+		if synchronized {
+			return errors.New("incomplete timing evidence cannot claim completed synchronization")
+		}
+		if launches != 0 || deviceElapsed != 0 {
+			return errors.New("incomplete timing evidence cannot report device time or a launch")
+		}
+		if clockDomain != "unobserved" {
+			return errors.New("incomplete timing evidence must name the unobserved clock domain")
+		}
+		if publish {
+			return errors.New("incomplete timing evidence cannot be publishable")
 		}
 	}
 	return nil
 }
 
 func verifyBuild(golden *BuildGolden) error {
-	if err := verifyTimingEvidence(golden.Evidence); err != nil {
-		return err
-	}
 	requestDoc, err := buildRequestDocument(golden.Request)
 	if err != nil {
 		return err
@@ -2695,6 +2982,16 @@ func verifyBuild(golden *BuildGolden) error {
 		requestDoc, golden.RequestDigestDocument, golden.RequestCanonicalJSON,
 		golden.RequestDigest, "build request",
 	); err != nil {
+		return err
+	}
+	requestFields := requestDoc["request"].(map[string]any)
+	execution := requestFields["execution"].(map[string]any)
+	executionCopy := make(map[string]any, len(execution)+1)
+	for name, value := range execution {
+		executionCopy[name] = value
+	}
+	executionCopy["_request_candidate"] = requestFields["candidate_digest"]
+	if err := verifyTimingEvidence(golden.Evidence, executionCopy); err != nil {
 		return err
 	}
 	artifactSet, ok := golden.Request["candidate_digest"].(map[string]any)["value"].(string)
