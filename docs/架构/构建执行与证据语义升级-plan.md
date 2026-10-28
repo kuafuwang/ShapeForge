@@ -1,14 +1,19 @@
 # 构建、执行与证据语义升级计划
 
-状态：设计计划，2026-10-28。**尚未实施。** 基线是已提交的
-`2e02088909799d801cc7c07696335ac2e33b42c5`，不是工作区里未提交的 diff。
-通信、六 RPC、BlobChannel、VendorDriver、fake TSM 与真实 NPU 属于
-`多厂商NPU评测通信抽象-plan.md`。本文只规定：从这份 HEAD 把本地评测改成
-一条构建路径，再把这次构建的身份写进新报告、缓存和确认循环。
+状态：设计计划，2026-10-28。**尚未实施。** 代码基线是
+`2e02088909799d801cc7c07696335ac2e33b42c5`。其后的 `65717ad` 与 `b95043b`
+只改了别的文档，没有改 `tcenv/`、`taic/`、`tests/`。行号按这份代码核对，
+不按工作区里未提交的 diff。
+
+通信计划拥有六 RPC、BlobChannel、VendorDriver、fake TSM、真实 NPU 的 wire
+contract，以及 NPU 证据能不能发布。本文只规定本地 Metal：一条构建路径，
+以及本地新报告的 schema 4。不编造 Metal native full 去填远端报告。
 
 已定方向：生产构建只保留 `backend.artifact_builder()` → `ArtifactBuilder.build`；
 删除 `Backend.compile` / `compile_all` 与 `MetalBackend` 上的同名方法，不做
-委托包装。旧文件只读，不回填、不改写、不重签。版本差异只在读取时分支。
+委托包装。旧文件只读，不回填、不改写、不重签。已经落盘的文件只在读取时按
+它自己的整数版本解释。本计划新写的数据只有本地 Metal 的 schema 4。远端 /
+NPU 不在这个写入范围内，也不把「继续写 schema 3」称作本文的新数据路由。
 不统一各厂商 ABI、launch 或容差。Metal 验收必须跑真实设备上的
 `MetalSourceBuilder`，不能用替身类代替。
 
@@ -52,7 +57,9 @@ P0 另写测试。开始 P1 或 P2 的验收时，`tests/shared/test_*.py` 不�
 2. 一次成功的 `BuildOutcome` 带三种构建身份：候选源码、build profile、工件集
    （native digest 属于这次工件，不另算一种执行环境）。执行环境仍是
    `EvaluationResult.provenance`，不放进 `BuildOutcome`。
-3. 新报告用 schema 4 记下本 worker 是否拿到了 outcome。确认循环按 batch 比较。
+3. 本计划新写的本地 Metal 报告用 schema 4 记下本 worker 是否拿到了
+   outcome。读入的旧本地文件保持原版本。远端 / NPU 的报告与发布不在这个
+   目标里，见 §4.1。
 4. 缓存键升到 schema 3，使升级前的 ok 报告不再被这条键打开。键里仍然没有
    现场工具链。
 
@@ -130,7 +137,8 @@ schema 4 的顶层必须有 `build` 键。schema 5，或对象里多出来的键
 `null` 只用于这份报告没有 outcome：编译前拒绝、父进程新建的 timeout/crash、
 以及 `unchanged` / `duplicate` / `external_duplicate`。这些 status 不是 `ok`。
 schema 4 且 `status=ok` 必须是 full。`build: null` 的 schema 4 `ok` 不能进入
-发布确认。schema ≤3 的旧报告没有 `build` 键，才走兼容路径。测试里的假
+本地确认。schema ≤3 且没有 `build` 键的兼容路径只用于续跑读入的历史本地
+文件，见 §5。远端 / NPU 新报告不走这条兼容路径。测试里的假
 `EvalReport(status="ok")` 不是生产例外：要让编排测试仍能走到确认成功，夹具
 必须自带一份合成的 full `build`（固定 hex，不编译 Metal）。生产 `_confirm`
 不判断自己是不是测试。
@@ -146,10 +154,50 @@ schema 4 且 `status=ok` 必须是 full。`build: null` 的 schema 4 `ok` 不能
 | 父进程发现没有报告或报告损坏：`evaluate.py:950-967` | 否 | `null` |
 | 父进程 `EvalReport.from_json` 成功：`evaluate.py:949`，以及随后可能把 status 改成 `unsafe` 的 `969-976` | 沿用子进程写好的 `build` | 不改 `build`，不清成 `null` |
 | `tcenv/worker.py:73` 请求读失败；`worker.py:141` 框架异常 | 否 | `null` |
-| `tcenv/remote/job_engine.py:1836` `_timeout_report` | 否 | `null` |
+| `tcenv/remote/job_engine.py:1836` `_timeout_report` | 否。本文不把这里当成 Metal outcome | 本文不改这个生产者的报告版本。隔离约束见 §4.1：不要被全局 schema 4 带成带 `build` 的新报告。证据 JSON 里的 NPU `build`（例如 `status=not_run`）仍属通信计划 |
 | `taic/orchestrator.py:2110,2118,2130` 的 `unchanged` / `duplicate` / `external_duplicate` | 否，不上 GPU | `null` |
 | `tests/support/fake_worker_*.py`、`tests/support/orchestrator.py`、`tests/support/backend_neutral_driver.py` 以及各测试里直接 `EvalReport(...)` | 否 | 不进入 `_confirm` 的报告可以是 `"build": null`。凡是 `status=ok` 且测试期望确认成功的夹具，在测试里写上合成 full（固定 hex）。生产代码不为这些夹具开旁路 |
+| 厂商 / NPU worker 交回的成功报告 | 本文不读取它的 `BuildEvidence` 来填 `EvalReport.build` | 本文不改这份报告的 schema，也不编 Metal 的 8 键。`JobStore._validate_report`（`job_store.py:2345`）继续接受它今天的形状 |
 | outbox（`taic/evaluation_outbox.py`） | 不自己构建 | 保存调用方给的报告字节。不发明 `build`，不把 schema 3 行改写成 4 |
+
+### 4.1 新语义的边界：只写本地 Metal
+
+`REPORT_SCHEMA_VERSION` 升到 4 之后，它是两件事：`from_json` 接受的最大
+版本，以及**本地 Metal 新报告的写入版本**。读取旧文件时按文件里的整数
+分支。这不是两条都在写新数据的生产格式。
+
+本计划新写的报告只有这些：
+
+- `evaluate.py` 新建的本地 Metal 报告：版本 4，顶层始终有 `build`
+  （`null` / partial / full，按 §4）。`status=ok` 只能是 full。本地搜索里
+  不上 GPU 的复制报告（`unchanged` / `duplicate` / `external_duplicate`）
+  同样写 schema 4 且 `build` 为 `null`；它们的 status 不是 `ok`。
+- 从历史 schema ≤3 读入的对象：`to_json()` 仍写出那个整数，且不加入 `build`。
+  这只约束序列化结果，避免误写时升级。它不是写回旧路径的许可，见 §5.1。
+  本地实施之后不得再新写 schema ≤3 的候选报告。
+
+远端 / NPU **不在本计划的新语义里**。不要把它们的 `BuildEvidence` 映射成
+Metal 的 8 键 full，也不要新规定它们「继续写 schema 3」作为本文的路由。
+它们的报告字节保持各自今天的生产者。P2 只加一条隔离：`EvalReport.to_json()`
+的默认版本不得把 `JobEngine._timeout_report` 或厂商交回的文档改成 schema 4
+或加上顶层 `build`。证据 JSON 里已有的 NPU `build` 对象保持通信计划的字段。
+
+这些结果的发布门也不换成 §5：
+
+- 能不能进入搜索，仍只由 `Orchestrator._check_publication`
+  （`taic/orchestrator.py:1443-1453`）决定：`measurement_kind == "measured"`、
+  `provenance.publication_allowed`、site 白名单、epoch 白名单。这个函数不看
+  `EvalReport.build`。
+- NPU 设备证据能不能当作可发布结果，仍由通信计划里的证据
+  `publication_allowed`、receipt，以及 `JobStore._validate_report` 决定。
+
+若某条远端执行调用的就是这份 `evaluate.py`（Metal worker，不是 NPU 适配器），
+那份报告是本地 Metal 语义，写 schema 4。`_timeout_report` 不是这条路径。
+
+`from_json` 同时接受历史 schema ≤3（没有 `build`）和 schema 4（`build` 符合
+闭集）。schema 3 带 `build`、schema 4 缺 `build`、schema 4 `ok` 不是 full，
+都拒绝。§5 的确认只处理本地 Metal 的 schema 4，以及续跑读入的历史本地文件。
+不把远端新报告放进「schema ≤3 所以走旧发布」这一支。
 
 `full` 与 `timed` 且需要校验时，HEAD 的 `evaluate()` 先跑 validation worker，
 再跑测量 worker。两份进程各构建一次。测量报告只带测量 worker 的 outcome。
@@ -172,25 +220,32 @@ validation 那次如果失败并被返回，带的是 validation worker 自己�
 
 在 `if rep.status == "ok" and rep.speedup` 为真、`values.append` 之前插入
 身份检查。搜索期报告是 `c.report`。`from_json` 必须把读到的整数版本留在
-报告上（缺 `schema_version` 记为 0），否则加载后无法区分旧文件和新的
-`build: null`。
+报告上（缺 `schema_version` 记为 0），并记住这份对象是不是续跑时从已有
+`report.json` 读入的。不能只看 `build is None`。
 
-- 搜索期报告的文件版本 ≤3：不拿它和 batch 比 digest，因为它没有 `build`。
-  每个将进入中位数的确认 batch 仍是一次新测量。该 batch 的 `status=ok`
-  必须是 schema 4 full，且 `candidate_sha256` 等于 `source_sha256`。
-  同一候选各个成功 batch 的五个 digest 必须彼此相同：
-  `candidate_sha256`、`assembled_sha256`、`build_profile_digest`、
-  `artifact_set_digest`、`native_digest`。否则不得 append。
+本节只处理本地候选。远端 / NPU 结果的发布门是 §4.1 的
+`_check_publication` 与通信计划，不进入下面的 digest 比较，也不因文件版本
+≤3 被当成历史本地文件放行。本进程从远端执行器拿到的报告若出现在确认池里：
+不 append，走下面的失败出口，`entry["status"]` 写 `not_local_build_report`。
+
+- 搜索期报告是续跑读入的历史本地文件（schema ≤3，没有 `build`）：不拿它和
+  batch 比 digest。本轮本地复测写出的 batch 必须是 schema 4 full，
+  `candidate_sha256` 等于 `source_sha256`，且同一候选各个 batch 的五个
+  digest 彼此相同：`candidate_sha256`、`assembled_sha256`、
+  `build_profile_digest`、`artifact_set_digest`、`native_digest`。schema 4
+  的 `null` 或 partial 不得 append。本计划不新写 schema ≤3 的确认 batch。
 - 搜索期报告是 schema 4 且曾以 `ok` 写入：必须已是 full。`build` 为 `null`
   或 partial 时，这个候选直接走下面的失败出口，不得跳过检查。batch 也必须
-  是 full，五个 digest 与搜索期报告相同，且两边的 `candidate_sha256` 都等于
-  `source_sha256`。
-- 搜索期报告缺失：与 schema 4 的空身份一样失败，不当作旧数据。旧数据的
-  标志是文件版本 ≤3，不是内存里碰巧没有 `build`。
-- 不匹配时走现有的失败出口，不要新开发布通道：调用已有的
-  `_failure_record`，写入 `rechecks/confirm_<label>.json`，
-  `failed_batches` 加一，`stop = True` 并 `break`。`entry["status"]` 写
-  `build_identity_mismatch`，不要写成 `ok`。不要改 `rep.status`：
+  是 schema 4 full，五个 digest 与搜索期报告相同，且两边的
+  `candidate_sha256` 都等于 `source_sha256`。schema ≤3 的 batch 不能配一份
+  schema 4 的搜索期报告。
+- 搜索期报告缺失，或 schema ≤3 但不是续跑读入的历史文件：不当作旧数据。
+  走失败出口，`entry["status"]` 写 `not_local_build_report`。
+- digest 不符时 `entry["status"]` 写 `build_identity_mismatch`。上面已经
+  写明 `not_local_build_report` 的情况不要改成这个字符串。两种都走现有的
+  失败出口，不要新开发布通道：调用已有的 `_failure_record`，写入
+  `rechecks/confirm_<label>.json`，`failed_batches` 加一，`stop = True`
+  并 `break`。不要写成 `ok`。不要改 `rep.status`：
   `_failure_record` 只在 `incorrect` / `unsafe` / `timeout` / `crash` 时
   把记录的 `class` 设成该 status，其余（包括仍为 `ok` 的身份不符）已经落成
   `"other"`。不要因此增加 `hangs`（`hangs` 只在 `rep.status == "timeout"`
@@ -203,24 +258,28 @@ validation 那次如果失败并被返回，带的是 validation worker 自己�
 
 `eval_cache=False` 保持。
 
-### 5.1 旧 run 续跑、写回与 outbox
+### 5.1 旧 run 续跑：禁止写回，以及 outbox
 
 `taic/resume.py:563` 用 `EvalReport.from_json` 读 `candidates/*/report.json`。
 schema 0–3（缺版本视为 0）读入后只保留旧语义：内存对象没有 `build`，
 文件版本记为读到的那个整数。这次读入不写盘。
 
-已有候选文件不得经 `to_json()` 升级：
+已有候选的 `report.json` 不得重写。版本仍是 3、没有 `build`，也不允许写回。
 
-- 从 schema ≤3 读入的报告，`to_json()` 仍写出原来的 `schema_version`，并且
-  不加入 `build`。`orchestrator._save`（`taic/orchestrator.py:1302`）以及
-  `_session_brief` 里对种子报告的 `to_json()`（约 2908 行）都走这条。
-  给旧报告补 `benchmark["seed_gpu_us_median"]` 可以继续写回，但写回字节的
-  版本号不得变成 4，也不得出现 `build`。
-- 续跑之后新评的候选是一次新的 worker 调用，写入新的候选目录，schema 4。
-  不打开旧目录把旧 `report.json` 换成 schema 4。
-- 同一 run 里因此可以同时有 schema ≤3 与 schema 4 的不同 `report.json`。
-  确认按 §5：旧文件走「版本 ≤3」分支；新的 `ok` 必须是 full。不要按 run
-  的年龄选一套规则。
+- `resume.py` 只读。读入后不要调用 `to_json()` 把结果写回同一路径。
+- `orchestrator._save`（`taic/orchestrator.py:1302`）若目标 `report.json`
+  已存在且当前对象是从该文件读入的，直接返回，不写 `report.json`。禁止先改
+  `benchmark["seed_gpu_us_median"]` 再序列化回这份旧文件。其他路径同样不得
+  替换这份字节，包括先读入再原子替换。
+- `_session_brief`（约 2908 行）可以在内存里序列化一份给会话提示用的副本。
+  该副本不得写到 `candidates/*/report.json`。
+- 只有新的本地 Metal worker 结果才能写**新的** `candidates/*/report.json`
+  （该路径上还没有文件），版本为 4。不要打开旧目录覆盖旧报告。远端 /
+  NPU 执行器自己的结果文件不由本文规定新 schema；本地续跑也不得把它们
+  抄成一份新的 schema 3 候选来走 §5 的历史分支。
+- 同一 run 里因此可以同时有续跑留下的历史 schema ≤3 文件，和本次新写的
+  schema 4 文件。确认按 §5：历史文件必须是续跑读入的那一份；新的本地
+  `ok` 必须是 full。不按 run 的年龄，也不按「凡是 schema 3 都兼容」。
 
 outbox 里 `status=completed` 的行只重放存储内容。`complete()` 不得改写
 已完成行（现有 `outbox_conflict` / immutable completed）。重放出来的报告
@@ -230,7 +289,9 @@ unavailable 也不得在本地把已存报告升级成 schema 4；若以后重�
 
 ## 6. 阶段
 
-P0 必须先于 P2 合入。P1 只依赖 HEAD 里已有的 `BuildProfile`，可以在 P0
+P0 可以先于 P2 合入。P0 只改构建入口、诊断文本和 `status`。`EvalReport`
+上还没有 `build` 字段，P0 的代码和测试都不得读写它。partial / `null` /
+full 要到 P2 才写入。P1 只依赖 HEAD 里已有的 `BuildProfile`，可以在 P0
 之前合入，但验收命令包含 `test_structure.py` 且必须全绿。工作区若仍有
 未跟踪的 `tests/shared/test_single_build_path.py`，先把它移出 `tests/shared/`
 （不要提交进该目录）再跑 P1。这是 P1 的开始条件，不是 P1 里允许的红。
@@ -270,24 +331,107 @@ P0 必须先于 P2 合入。P1 只依赖 HEAD 里已有的 `BuildProfile`，可�
   `BuildOutcome.executable_handles()` 在 HEAD 不存在，P0 添加：有
   `handle.kernels` 时返回该 tuple，否则返回 `(handle,)`。handle 不进任何
   digest。descriptor 顶层字段数必须仍低于现有的 32 个上限。
-- `probes.py:39` 与 `profile.py:87` 改为调用 builder 里的探针入口（无任务
-  契约、不写 `EvalReport`）。生产树里除 `runtime.py`（定义）和
-  `source_builder.py`（调用）外，不再出现 `ctx.compile(` /
-  `context.compile(` / `backend.compile(`。
+- `build()` 与下面的 `compile_fixed` 都接收调用方已经拿着的
+  `MetalContext`，类型为必填参数 `context`，没有默认值。编译只调用这个
+  对象的 `compile` / `compile_all`。函数体内禁止 `get_context()`、
+  `backend.context()` 和 `self.backend.context()`。HEAD `source_builder.py:201`
+  的 `self.backend.context()` 删掉。`evaluate.py:347` 已经取出的 `ctx` 原样
+  传入 `build(..., context=ctx)`。`xcworker.py:37` 的 `ctx` 同样传入，随后
+  `ArgSet(ctx, ...)` 与 `ctx.run` 用的是同一个对象。
+- `evaluate.py:421` 今天捕获的是 `backend.compile_error()`（Metal 上即
+  `MetalCompileError`），并在 423 行用当时的 `header_lines` 调用
+  `rewrite_compiler_lines`。改由 builder 内部 assemble 之后，evaluator 不再
+  持有 `header_lines`。HEAD `source_builder.py:218-235` 已经在构造
+  `BuildError` 之前改写过一次。evaluator 不得再改写。
+  `BuildError` 增加 `report_detail: str`。`error_class == "compile"` 且来自
+  `MetalCompileError` 时：builder 只调用一次 `rewrite_compiler_lines`，
+  `report_detail` 等于改写后的编译器文本，不含异常类前缀，也不使用
+  `detail` 上 `[:500]` 的截断。`detail` 仍是
+  `f"{type(exc).__name__}: {report_detail}"[:500]`，只给日志和 `str()`。
+  非 UTF-8（HEAD 183 行）没有编译器行号，`report_detail` 就是
+  `Metal source is not UTF-8 text: ...`，同样不带类前缀，也不调用 rewrite。
+  evaluator 只捕获 `BuildError`：
+  - `compile`：`rep.compile = {"ok": False, "errors": exc.report_detail}`，
+    然后 `finish("compile_error", "Metal compiler rejected the kernel")`。
+    不调用 `rewrite_compiler_lines`，不把 `str(exc)` 或 `exc.detail` 写入
+    `compile.errors`。无效 MSL 走这里。P0 不写 `build`。
+  - `toolchain_profile`：不是候选失败。不要写成 `compile_error` 或
+    `rejected`。重新抛出，由 `worker.py:141` 变成框架 `crash`。设备不存在、
+    契约头拼不出来、编译器语言版本与 probe 不一致，都属这一类（HEAD
+    187–198 行与 248–252 行）。P0 不写 `build`。
+  - `deadline`：`finish("timeout", …)`，不是 `compile_error`。P0 不写 `build`。
+  - `context.compile` 抛出的其他异常不要包成 `BuildError("compile")`。它们
+    继续落到 `worker.py:141` 的框架 `crash`。
+- 探针不走 `build()`。`build()` 必须 `assemble` 且需要 contract，不能编译
+  `probes.py` 的原始 MSL，也不能编译 `profile.py` 里没有契约头的固定源码。
+  在 `MetalSourceBuilder` 上增加唯一的固定源码入口：
+
+  `compile_fixed(self, source: str, kernel_names: Sequence[str], *, context: MetalContext, math: str = "fast") -> tuple[CompiledKernel, ...]`
+
+  `context` 必填。不 `assemble`，不接收 contract，不返回 `BuildOutcome`，
+  不写 `EvalReport`。`kernel_names` 为空时抛 `ValueError`。长度为 1 时调用
+  一次 `context.compile(source, kernel_names[0], math=math)`；多于一个时
+  调用一次 `context.compile_all(source, list(kernel_names), math=math)`，
+  顺序与参数相同。异常原样抛出 `MetalCompileError`，不翻译成 `BuildError`。
+  `probes.py` 在 35 行已经取出的那个 `ctx` 继续用于 `ctx.info()`、
+  `compile_fixed(..., context=ctx)` 和 `ctx.new_buffer`。不要为编译再取一次
+  singleton。`profile.py` 的 `measure_peak_bandwidth(ctx)` 保持「调用方可以
+  传入非默认 context」：`ctx = ctx or get_context()` 之后，`new_buffer` 与
+  两次 `compile_fixed(_COPY_SRC, (name,), context=ctx)` 都用这个 `ctx`。
+  不要合并成一次 `compile_all`：HEAD 87 行是两次单独编译。除此之外不要再
+  添编译入口。生产树里除 `runtime.py`（定义）和 `source_builder.py`
+  （`build` 与 `compile_fixed` 内部，且只编译传入的那个 `context`）外，
+  不再出现 `ctx.compile(` / `context.compile(` / `backend.compile(`。
 - 不增加编译次数。今天 `full` 与带校验的 `timed` 已经是两个 worker，各编译
-  一次；xcworker 再编译一次。P0 只替换每一次的入口。
+  一次；xcworker 再编译一次。P0 只替换每一次的入口。带宽探针仍是两次
+  `compile_fixed`，次数与 HEAD 的两次 `ctx.compile` 相同。P0 不把 `build`
+  写进 `EvalReport`。`compile` / `toolchain_profile` / `deadline` 对应的
+  partial 或 `null` 由 P2 在字段存在之后再写，见该阶段。
 
 验收（无 GPU）：
 
 ```bash
-uv run --no-sync pytest -q -n 0 \
+uv run --no-sync pytest -q -n 0 -m 'not gpu and not llm and not slow' \
   tests/shared/test_structure.py \
-  tests/shared/test_build_path_structure.py
+  tests/shared/test_build_path_structure.py \
+  tests/backends/metal/test_source_builder.py
 ```
 
 `test_build_path_structure.py` 只读源码，不 import `tcenv.backends`。断言
 上一段的调用关系，包括 `kernel_names` 与 `spec.math` 被传进
-`artifact_builder`，以及多阶段 descriptor 含 `kernels`。真实 Mac 另获 GPU
+`artifact_builder`，`compile_fixed` 的签名，以及多阶段 descriptor 含
+`kernels`。`test_source_builder.py` 里不带 `gpu` 标记的用例同一条命令跑，
+并按新入口改写，至少包括：
+
+- `test_only_the_metal_compile_error_is_classified_as_a_compile_failure`
+  （约 168 行）：失败从 `StubContext.compile` 抛出真实的 `MetalCompileError`，
+  断言变成 `BuildError("compile")`；其他异常不得变成 `compile`。不再通过
+  `backend.compile_error()` 注册一个替身异常类。
+- `test_the_native_handle_is_never_hashed_serialized_or_transported`
+  （约 592 行）：handle 仍不进 digest、不进序列化。多阶段时 digest 覆盖
+  descriptor 里的 `kernels`，不覆盖 live handle。
+- `test_one_build_outcome_must_name_one_live_executable`（约 691 行）：
+  一个 outcome 仍只有一个 `NativeExecutable`。多阶段的 handle 是那个
+  容器对象；`executable_handles()` 返回其中的 pipeline。
+- 新增无 GPU 用例 `test_report_detail_is_rewritten_once`：stub 的
+  `rewrite_compiler_lines` 对
+  `program_source:12:1: error: expected unqualified-id`、`header_lines=11`
+  只被调用一次，结果精确等于
+  `kernel.metal:1:1: error: expected unqualified-id`（`contract.py:271-274`
+  的规则：12−11=1）。`report_detail` 与该字符串逐字相同，且不含
+  `MetalCompileError`。`detail` 以 `MetalCompileError: ` 开头且含这段文本
+  一次。evaluator 把 `compile["errors"]` 设成 `report_detail` 之后，文本
+  仍是这一份，不得变成 `kernel.metal` 被再减一次行号，也不得带上类前缀。
+  `evaluate.py` 的 `except BuildError` 分支源码里不得出现
+  `rewrite_compiler_lines`。
+- 新增无 GPU 用例 `test_compile_fixed_uses_the_given_context`：两个假
+  context，`A.compile` 记录调用，`backend.context()` 返回 `B`。
+  `compile_fixed(..., context=A)` 只调用 `A.compile`，不调用 `B`，也不调用
+  `backend.context()`。`build(..., context=A)` 同样只编译 `A`。覆盖
+  `measure_peak_bandwidth` 传入非默认 context 时 pipeline 与 buffer 同属
+  一个对象这条约束；测试本身不创建 Metal 设备。
+
+该文件里已有的 `@gpu` 用例不要放进这条无 GPU 命令。真实 Mac 另获 GPU
 许可后跑 `tests/backends/metal/test_build_path_metal.py`（`-m gpu`），三条
 都要有，不能只测单核：
 
@@ -301,6 +445,10 @@ uv run --no-sync pytest -q -n 0 \
   两个核都进入 `run_pipeline`，输出里的 kernel 名与去重列表一致。
 
 做不到就整段标 blocked，不用假 Metal 填。不要跑 benchmark，不要写加速比。
+同一份 GPU 许可下再跑 `tests/backends/metal/test_source_builder.py -m gpu`。
+`test_invalid_msl_is_a_typed_compile_failure_not_infrastructure` 仍断言
+`BuildError.error_class == "compile"`；经 evaluator 的那条则断言报告
+`status` 为 `compile_error`，文案仍是 `Metal compiler rejected the kernel`。
 
 ### P1：digest 函数
 
@@ -334,9 +482,12 @@ uv run --no-sync pytest -q -n 0 \
 
 同一提交：
 
-- `REPORT_SCHEMA_VERSION` 改为 4。`EvalReport` 增加 `build`，默认 `None`。
-  `to_json` 在没有 outcome 时写 `"build": null`。
-- worker 按 §4 填写。父进程按 §4 保留或新建。
+- `REPORT_SCHEMA_VERSION` 改为 4，含义见 §4.1。`EvalReport` 增加 `build`。
+  本地 Metal 按 §4 填写：`compile_error` 写 partial；`toolchain_profile`
+  变成的框架 `crash` 与 `deadline` 变成的 `timeout` 写 `null`；成功的
+  outcome 写 full。这些是 P2 才有的字段，不回写到 P0。远端生产者按 §4.1
+  隔离，不改成 schema 4，也不新增顶层 `build`。
+- worker 与父进程按 §4 填写本地报告。历史文件的读入按 §5.1，不回写。
 - `EVAL_CACHE_SCHEMA` 改为 3。键的其余字段不增加，尤其不要加入
   `build_profile_digest`。
 - `_confirm` 按 §5 改。`from_json` / `to_json` 按 §5.1 保留旧文件版本。
@@ -358,17 +509,23 @@ uv run --no-sync pytest -q -n 0 \
   tests/shared/test_evaluation_outbox.py \
   tests/shared/test_publication.py \
   tests/backends/metal/test_backend_phase0.py \
-  -m 'not gpu'
+  tests/shared/test_remote_npu_grpc.py \
+  tests/shared/test_remote_npu_build_grpc.py \
+  -m 'not gpu and not llm and not slow'
 ```
 
-`test_confirm_build_identity.py` 不 import backend。至少覆盖：搜索期文件
-版本 ≤3 时，两个 schema 4 full 且 digest 彼此相同的 batch 可以进入中位数；
-其中一份 `build` 为 `null` 则该候选失败；搜索期已是 schema 4 `ok` 但
-`build` 为 `null` 时直接 `build_identity_mismatch`，不得进入中位数；搜索期
-为 full 时，一个 batch digest 不同则失败；两个 batch 都匹配时，中位数报告
-是这两份之一；换 winner 时胜者只对过自己的搜索期报告。另加一条续跑测试：
-`resume.py` 读入 schema 3 报告后 `to_json()` 仍是 schema 3 且没有 `build`，
-不写回升级。
+`test_confirm_build_identity.py` 不 import backend。至少覆盖：续跑读入的
+历史 schema ≤3 上，两个 schema 4 full 且 digest 彼此相同的 batch 可以进入
+中位数；其中一份 `build` 为 `null` 则该候选失败；本进程新来的 schema 3
+报告（不是续跑历史文件）得到 `not_local_build_report`，不得进入中位数；
+搜索期已是 schema 4 `ok` 但 `build` 为 `null` 时直接
+`build_identity_mismatch`；搜索期为 full 时，一个 batch digest 不同则失败；
+两个 batch 都匹配时，中位数报告是这两份之一；换 winner 时胜者只对过自己的
+搜索期报告。另加续跑测试：
+准备一份 schema 3 的 `report.json`，记下整文件 sha256；`resume.py` 读入后
+走 `_save`（以及会给内存报告补 `seed_gpu_us_median` 的路径）。断言该文件
+字节与读入前一致，而不是只断言版本仍为 3。内存里给会话提示用的副本可以
+含别的字段，但不得写回这个路径。
 
 `test_eval_cache.py` 增加：键 body 的 `schema` 为 3，且 body 没有
 `build_profile_digest`。现有的「改 seed / 源码 / backend 则键变化」保持。
@@ -397,6 +554,17 @@ git grep -n 'REPORT_SCHEMA_VERSION == 3' tests docs
 
 命中的 EvalReport 整数断言在同一提交改掉，或说明它指的是历史基线文件里的
 3，而不是当前写入版本。`result.json` 的 schema 1 不要改。
+无设备回归只检查隔离，不把远端报告说成 schema 4 或历史兼容发布。上面
+两条现有 grpc 测试不新开设备：
+`test_npu_candidate_timeout_completes_a_diagnostic_timeout_report` 与
+`test_a_candidate_timeout_reports_a_not_run_build_not_a_compile_failure`
+断言 `_timeout_report` 的 EvalReport 与升级前一样没有顶层 `build`，也没有
+被写成 schema 4。证据里的 NPU `build.status == "not_run"` 保持原断言。
+`JobStore._validate_report` 仍接受厂商今天交回的那份报告，拒绝一份编造的
+Metal full。不把 NPU `BuildEvidence` 抄进 `EvalReport.build`，不导入 Metal
+backend。`test_publication.py` 继续只断言 `_check_publication` 的
+provenance 条件，不为远端结果增加五个 digest 的要求。
+
 `tests/support/golden/` 里已有向量的字节和 HMAC 必须与 HEAD 逐字节相同，
 包括 `tcenv.eval-report.v3` 这个字符串。schema 4 的覆盖用新文件，不重算、
 不替换旧 golden。旧测试若因新报告字段变红，修的是生产路径不要把 schema 4
@@ -420,6 +588,16 @@ P0 若在父进程再编译一次来填 `build`，就会在上述次数之外多
 缓存从 schema 2 升到 3 之后，旧的 ok 文件还在磁盘上，新键不会读它们。
 新搜索要重编、重测。这是缓存冷启动，不是发布基线推倒重来。旧 run 里已经
 确认的 speedup 保持原字节。
+
+混合版本旧数据的审计就是下面三件可重复的检查，不另做人工盘点：
+
+- 旧 `report.json` 字节不变：§6 续跑测试比较读入前后的整文件 sha256。
+  `_save` 之后仍然相同。
+- 写入边界：本地新报告是 schema 4。远端 / NPU 生产者的报告字节不被改成
+  schema 4，也不被送进 §5。用 P2 的无设备 grpc 断言做隔离，不跑真实 NPU。
+  历史 schema ≤3 只在续跑读取时分支。
+- outbox 已完成行只重放：`test_evaluation_outbox.py` 断言完成行重放出来的
+  报告字节与写入时相同，schema 3 行不会变成 schema 4。
 
 不重建测量基线的原因：本计划不改计时窗口、确认 batch 的统计定义、目标
 限额或 `PROTOCOL_VERSION`。`backend-phase0-baseline.json` 整份保持原字节，
