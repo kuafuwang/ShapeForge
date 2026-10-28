@@ -201,7 +201,13 @@ Protobuf message，允许另带 `schema_id + digest` 的厂商说明 blob 供诊
 ### 4.2.1 ArtifactBuilder：统一 local/remote 构建
 
 `ArtifactBuilder` 负责把 source 变成可执行工件，是 Backend/任务语义层的一部分，不属于
-BlobChannel 或 VendorDriver。建议边界：
+BlobChannel 或 VendorDriver。**它是唯一生产构建入口**：evaluator 必须通过
+`backend.artifact_builder()` 获取构建器，Backend 协议删除旧 `compile()`，各 backend 不得再
+暴露另一条编译路径。`MetalContext.compile` 这类底层 runtime primitive 只能由对应 builder
+内部调用，禁止 evaluator 或其他生产代码绕过 builder 直接调用，也禁止用
+`backend.compile → builder` 的委托包装制造双轨兼容。
+
+建议边界：
 
 ```text
 ArtifactBuilder:
@@ -1219,10 +1225,13 @@ profile 侧的物理 id 绑定；`declared_devices` 与 profile 的 rank/die 事
 - 实现 `ArtifactBuilder` 的 probe/build/BuildOutcome 与 deadline/错误分类，构建过程只接受
   登记的 build_profile/toolchain；source digest、builder/toolchain/profile 与实际 artifact
   字节都进入 BuildProvenance/BuildEvidence，并接入 canonical request、outbox、签名和 resume。
-- **Metal 必须是具体生产实现，不是概念映射**：在 `tcenv/backends/metal/` 实现
-  `MetalSourceBuilder`，probe 返回真实 macOS/Metal runtime/device 能力与版本；build 复用
-  现有 `MTLDevice.newLibraryWithSource_options_error_` 的 MSL 编译和 pipeline 创建路径，
-  返回 backend-native pipeline handle + manifest + BuildProvenance + BuildEvidence。旧
+- **Metal 必须是真实路径中的唯一构建实现，不是概念映射或测试专用类**：在
+  `tcenv/backends/metal/` 实现 `MetalSourceBuilder`，probe 返回真实 macOS/Metal runtime/device
+  能力与版本；`tcenv/evaluate.py` 必须通过 `backend.artifact_builder()` 调用它，Backend 协议
+  删除旧 `compile()`，并移除 `MetalBackend.compile`，不保留委托/兼容第二路径。除 builder 外，
+  生产代码不得直接调用 `MetalContext.compile`。build 复用现有
+  `MTLDevice.newLibraryWithSource_options_error_` 的 MSL 编译和 pipeline 创建路径，返回
+  backend-native pipeline handle + manifest + BuildProvenance + BuildEvidence。旧
   candidate_sha256、compile/pipeline 报告字段、缓存、执行与发布语义不变，不改走 NPU
   contract，不把 pipeline 强行序列化成文件。若现有 ArtifactBundle 只支持文件，按 §4.2.1
   的 backend-native payload 扩展中立模型，而不是让 Metal 迁就文件模型。
@@ -1248,7 +1257,7 @@ profile 侧的物理 id 绑定；`declared_devices` 与 profile 的 rank/die 事
 | 工件篡改 | 修改 manifest、ELF 字节、blob digest、builder 版本或 BuildProvenance 任一环节均被拒 |
 | 中断与恢复 | 构建/上传中断后续传与 resume 不重复构建、不混用旧 artifact；旧 attempt/fence 结果被拒 |
 | 清理 | 构建临时文件、blob 引用与设备 module 都按 job 生命周期清理；无法证明时 quarantine |
-| 具体 MetalSourceBuilder | 真实 Mac 上有效 MSL 编译+pipeline、无效 MSL compile failure、真实 provenance/evidence；旧 Metal/local 编译、缓存、报告和发布语义不变 |
+| 单路径 MetalSourceBuilder | 真实 `tcenv.evaluate` 经 `backend.artifact_builder()` 构建；生产中无 `backend.compile(...)`，除 builder 外无直接 `MetalContext.compile`；真实 Mac 上有效 MSL 编译+pipeline、无效 MSL compile failure、真实 provenance/evidence；旧 Metal/local 编译、缓存、报告和发布语义不变 |
 
 验收必须包含真实六 RPC 与 BlobChannel，而不是只测 builder 函数；编译日志、artifact
 manifest、BuildProvenance 与 fake NPU 的加载记录形成闭环。小文件只证明抽象和状态机，
