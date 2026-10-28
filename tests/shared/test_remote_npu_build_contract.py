@@ -303,3 +303,59 @@ def test_the_producer_link_and_the_received_row_share_the_integer_domains():
         # The receiver cannot repeat such a link either.
         with pytest.raises(contracts.ContractError, match=reason):
             contracts.build_producer_record(tampered["build"]["producer"])
+
+
+def test_a_received_row_may_not_copy_the_producer_log_identity():
+    """The receiver records what it verified; it is not a copy of the producer.
+
+    The producer's log identity (sha256 + size) is already authenticated by the
+    producer link inside the request digest.  If the receiver repeats exactly
+    that identity, the row no longer shows that this attempt read anything back
+    from the channel, and the two rows become indistinguishable.
+    """
+
+    vector = _vector()
+    evidence = vector["evidence"]
+    producer_log = evidence["build"]["producer"]["log"]
+    assert producer_log is not None
+    assert evidence["build"]["log"] != producer_log
+    evidence["build"]["log"] = copy.deepcopy(producer_log)
+    with pytest.raises(contracts.ContractError, match="producer's log identity"):
+        contracts.npu_evidence_document(
+            evidence, source_bytes=None,
+            device_group=vector["request"]["execution"]["device_group"],
+            expected_resources=vector["request"]["execution"]["resources"],
+            expected_build=vector["request"]["build"],
+            request_artifact=vector["request"]["artifact"],
+            measurement_kind="simulated", publication_allowed=False,
+            report_status="ok", dialect=contracts.NPU_BUILD_DIALECT,
+        )
+
+
+def test_a_prebuilt_request_names_a_control_host_build_and_a_prebuilt_mode():
+    """``mode`` and ``build_host`` are one identity, and a prebuilt request
+    carries the producer link; an evaluator request has neither."""
+
+    vector = _vector()
+    request = vector["request"]
+
+    evaluator_mode = copy.deepcopy(request)
+    evaluator_mode["build"]["mode"] = "evaluator"
+    with pytest.raises(contracts.ContractError):
+        contracts.request_digest_document(
+            evaluator_mode, source_bytes=b"", dialect=contracts.NPU_BUILD_DIALECT,
+        )
+
+    wrong_host = copy.deepcopy(request)
+    wrong_host["build"]["provenance"]["build_host"] = "evaluator"
+    with pytest.raises(contracts.ContractError, match="requires build_host"):
+        contracts.request_digest_document(
+            wrong_host, source_bytes=b"", dialect=contracts.NPU_BUILD_DIALECT,
+        )
+
+    without_producer = copy.deepcopy(request)
+    without_producer["build"].pop("producer")
+    with pytest.raises(contracts.ContractError, match="producer"):
+        contracts.request_digest_document(
+            without_producer, source_bytes=b"", dialect=contracts.NPU_BUILD_DIALECT,
+        )

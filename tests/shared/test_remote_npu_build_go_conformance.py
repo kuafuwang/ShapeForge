@@ -115,37 +115,24 @@ def test_the_go_verifier_rebuilds_the_build_request_producer_link_and_evidence()
     assert str(vector["producer_record"]["evidence_sha256"]) in result.stdout
 
 
-def _resign_after_producer_change(golden: dict) -> None:
-    """Re-sign a producer-record change so only its bound can reject the vector.
+def _resign_request_change(golden: dict, mutate) -> None:
+    """Apply ``mutate`` to the request and to everything that authenticates it.
 
-    The producer link is authenticated twice: by the request digest and by the
-    digest of the producer's own evidence document.  A test that wants to check
-    the *bounds* (rather than the digests) has to keep both consistent, which is
-    what a hostile-but-consistent sender would do.
+    The request document is authenticated twice over: the raw request is
+    canonicalized into the digest document, and the receipt id is the digest of
+    the receipt document that binds that request digest.  A mutation that wants
+    to test a *rule* (rather than the digest) has to keep all of it consistent,
+    which is what a hostile-but-consistent sender would do.
     """
 
     from tcenv.remote import contracts
 
     vector = golden["npu_build"]
-    evidence_document = vector["producer_evidence"]
-    old_record = copy.deepcopy(vector["producer_record"])
-    record = vector["producer_record"]
-    record["duration_ms"] = evidence_document["duration_ms"]
-    record["log"] = copy.deepcopy(evidence_document["log"])
-    record["evidence_sha256"] = hashlib.sha256(
-        contracts.canonical_digest_document(evidence_document)
-    ).hexdigest()
-    vector["request"]["build"]["producer"] = copy.deepcopy(record)
-    vector["evidence"]["build"]["producer"] = copy.deepcopy(record)
-    # The frozen expected digest document has to describe the same request, or
-    # the vector would be rejected for disagreeing with itself instead of for
-    # the rule under test.
-    vector["request_digest_document"]["request"]["build"]["producer"] = copy.deepcopy(record)
-
-    old_json = contracts.canonical_digest_document(old_record).decode("utf-8")
-    new_json = contracts.canonical_digest_document(record).decode("utf-8")
-    canonical_json = vector["request_canonical_json"].replace(old_json, new_json, 1)
-    assert canonical_json != vector["request_canonical_json"]
+    mutate(vector["request"])
+    mutate(vector["request_digest_document"]["request"])
+    canonical_json = contracts.canonical_digest_document(
+        vector["request_digest_document"]
+    ).decode("utf-8")
     vector["request_canonical_json"] = canonical_json
     digest = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
     vector["request_digest"] = digest
@@ -163,13 +150,36 @@ def _resign_after_producer_change(golden: dict) -> None:
     ).hexdigest()
 
 
+def _resign_after_producer_change(golden: dict) -> None:
+    """Re-sign a producer-record change so only its bound can reject the vector."""
+
+    from tcenv.remote import contracts
+
+    vector = golden["npu_build"]
+    evidence_document = vector["producer_evidence"]
+    record = vector["producer_record"]
+    record["duration_ms"] = evidence_document["duration_ms"]
+    record["log"] = copy.deepcopy(evidence_document["log"])
+    record["evidence_sha256"] = hashlib.sha256(
+        contracts.canonical_digest_document(evidence_document)
+    ).hexdigest()
+    vector["request"]["build"]["producer"] = copy.deepcopy(record)
+    vector["evidence"]["build"]["producer"] = copy.deepcopy(record)
+    # The frozen expected digest document has to describe the same request, or
+    # the vector would be rejected for disagreeing with itself instead of for
+    # the rule under test.
+    vector["request_digest_document"]["request"]["build"]["producer"] = copy.deepcopy(record)
+    _resign_request_change(golden, lambda request: None)
+
+
 @pytest.mark.parametrize("mutation,reason", [
     # The build identity is part of the request digest.
     ("provenance_builder_version", "build request"),
     ("provenance_toolchain_version", "build request"),
     ("provenance_source_sha256", "source_sha256 does not bind the SOURCE entry"),
     ("provenance_compile_profile", "build request"),
-    ("build_mode", "build request"),
+    ("build_mode", "requires the prebuilt build shape"),
+    ("provenance_build_host", "requires build_host"),
     ("build_schema_id", "build schema id is not the version 1 identity"),
     ("artifact_set_digest", "artifact_set_digest does not bind the artifact set"),
     # The producer link binds status/duration/log/digest of the producer row.
@@ -219,7 +229,19 @@ def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, rea
     elif mutation == "provenance_compile_profile":
         provenance["compile_profile"]["opt_level"] = "O0"
     elif mutation == "build_mode":
-        build["mode"] = "evaluator"
+        # Consistently re-signed: only the prebuilt-shape rule can see it.
+        _resign_request_change(
+            golden, lambda request: request["build"].__setitem__("mode", "evaluator"),
+        )
+    elif mutation == "provenance_build_host":
+        # Neither side may pair prebuilt with an evaluator build host.
+        _resign_request_change(
+            golden,
+            lambda request: request["build"]["provenance"].__setitem__(
+                "build_host", "evaluator",
+            ),
+        )
+        vector["evidence"]["build"]["provenance"]["build_host"] = "evaluator"
     elif mutation == "build_schema_id":
         build["schema_id"] = "tcenv.remote.npu-build.build-request.2"
     elif mutation == "artifact_set_digest":

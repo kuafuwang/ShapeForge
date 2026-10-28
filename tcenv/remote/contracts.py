@@ -1300,6 +1300,15 @@ def build_evidence_document(
             raise ContractError(
                 "a received artifact set that was loaded must record its own log"
             )
+        if producer is not None and log == producer["log"]:
+            # The producer's log identity is already authenticated by the link
+            # inside the request digest.  Repeating it byte for byte would claim
+            # the producer's diagnostics as this attempt's own record and make
+            # the two rows indistinguishable, so the receiver must log its own
+            # verify/load pass instead.
+            raise ContractError(
+                "the receiver's log is the producer's log identity"
+            )
         if error_class is not None:
             raise ContractError("a reused artifact set has no build error")
         if artifacts is None or provenance["artifact_set_digest"] is None:

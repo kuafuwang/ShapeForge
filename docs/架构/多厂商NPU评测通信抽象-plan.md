@@ -1412,8 +1412,8 @@ request 不再要求 producer、让接收方重新丢掉 producer log/duration�
    `tests/support/golden/remote/npu_build_v5.json`）重建 v5 request digest 文档（`build`
    是 v4 之外唯一新增字段）、按闭集重建 provenance/producer 记录、重算
    `producer.evidence_sha256 = SHA256(canonical(producer evidence 文档))`，并复核 received
-   行的 reused/producer/artifacts/loaded/自有 duration/log 规则；28 条变异各自以**对应理由**
-   被拒（provenance 版本/工具链/source sha/compile profile、build mode/schema、
+   行的 reused/producer/artifacts/loaded/自有 duration/log 规则；30 条变异各自以**对应理由**
+   被拒（provenance 版本/工具链/source sha/compile profile/build_host、build mode/schema、
    producer evidence_sha256/duration/log/status、evidence status/producer/provenance/
    loaded/log 复制/duration 0/未知字段/SOURCE entry sha/自洽改写 manifest、log 尺寸越界、
    duration 越界、log 缺失、producer 数值越界、artifact set、receipt）。
@@ -1442,6 +1442,20 @@ request 不再要求 producer、让接收方重新丢掉 producer log/duration�
    后两条把 producer 链接、`evidence_sha256`、request canonical JSON/digest 与 receipt 一起重签，
    因此只有边界能拒绝它们（旧 Go 对两条都打印 `ok build`，已复现）；Python 侧同样断言这五个
    输入被拒（旧 `contracts.py` 对 `log=null` 是接受的，已复现）。
+   **本轮（`0cc2a6b` 之后）复核**又发现两处分叉：(a) Go 以「the receiver's log is the producer's log identity」
+   拒绝直接复制 producer 日志身份的 received 行，Python 只查 log 非空，因此实测把
+   `evidence.build.log` 设成 `producer_evidence.log` 时 Python 仍接受；现在 Python 的 reused
+   分支按同一语义拒绝（producer 日志身份已由 request digest 认证，原样重复会让这一行不再
+   证明本次真的从通道读回了字节），并新增 Python 回归。(b) Go 的 request 校验同时允许
+   `mode=evaluator` 与 producer 链接，`verifyBuildEvidence` 也不核对 request/evidence mode；
+   把 `request.build.mode` 与 digest 文档一起改成 `evaluator` 并重算 canonical JSON/digest/
+   receipt 后，Python 拒绝而 Go 打印 `ok build`（已复现）。现在 Go 对这条 prebuilt 向量
+   fail closed 到 `prebuilt`、要求 producer 存在且 `producer.mode == build.mode`，
+   `buildProvenanceDocument` 带上 mode 并强制 `prebuilt⇒control_host` / `evaluator⇒evaluator`
+   的对偶，`verifyBuildEvidence` 再核对 request/evidence mode 一致；`build_mode` 变异改为
+   一致重签（旧实现因此只靠 digest 失败，测不到语义），新增 `provenance_build_host` 重签变异。
+   P1c 组因此变为 build grpc 28 / outbox 3 / contract 11 / go conformance 32 /
+   `test_source_builder.py` 15。
 6. **文档层缺陷与契约回归**：`_npu_execution_document` 的 media type 错误信息索引了旧表，
    `task_family=kernel_module` 配错 `source_media_type` 会抛 `KeyError` 而非 `ContractError`；
    已修并新增回归。另新增契约层回归：prebuilt build request 必须有 producer 链接、
@@ -1453,8 +1467,8 @@ request 不再要求 producer、让接收方重新丢掉 producer log/duration�
    **已登记 profile 名**从登记表解析，请求命名另一个 compile profile 会在 worker 内被
    `toolchain_profile` 拒绝（不静默沿用），未知 profile 名按名拒绝。
 
-本轮测试：P1c 组（build grpc 28 / outbox 3 / contract 9 / go conformance 31 /
-`test_source_builder.py` 15 其中 7 条 `gpu`）合计 **86 passed**；P0/P0b/P1
+本轮测试：P1c 组（build grpc 28 / outbox 3 / contract 11 / go conformance 32 /
+`test_source_builder.py` 15 其中 7 条 `gpu`）合计 **89 passed**；P0/P0b/P1
 contract/grpc/cleanup/bundle + Go bundle conformance **214 passed**；旧 remote/gRPC/
 blob/conformance 组 **170 passed**；job/container/outbox 组 **265 passed, 1 skipped**；
 Metal 非 `gpu` 组 **449 passed, 2 skipped**（`test_triton_baseline` 按围栏 `ps` 限制失败）；

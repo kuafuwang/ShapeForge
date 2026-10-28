@@ -1274,7 +1274,9 @@ var buildProducerRecordFields = []string{
 // buildProvenanceDocument rebuilds the provenance identity field by field.  The
 // closed field set is the point: a provenance that grew a field the request
 // digest does not cover would be an unreviewed identity.
-func buildProvenanceDocument(value any, artifactSet string, sourceSHA string) (map[string]any, error) {
+func buildProvenanceDocument(
+	value any, mode string, artifactSet string, sourceSHA string,
+) (map[string]any, error) {
 	provenance, ok := value.(map[string]any)
 	if !ok {
 		return nil, errors.New("build provenance is not an object")
@@ -1297,6 +1299,15 @@ func buildProvenanceDocument(value any, artifactSet string, sourceSHA string) (m
 	}
 	if document["build_host"] != "control_host" && document["build_host"] != "evaluator" {
 		return nil, errors.New("build provenance build_host is not a known placement")
+	}
+	// ``mode`` and ``build_host`` are one identity: a prebuilt artifact set was
+	// compiled on the control host, an evaluator build inside the attempt.  The
+	// pairing is not negotiable, so it is checked with the provenance.
+	if mode == "prebuilt" && document["build_host"] != "control_host" {
+		return nil, errors.New("build mode prebuilt requires build_host control_host")
+	}
+	if mode == "evaluator" && document["build_host"] != "evaluator" {
+		return nil, errors.New("build mode evaluator requires build_host evaluator")
 	}
 	toolchain, ok := document["toolchain"].(map[string]any)
 	if !ok || len(toolchain) != 3 {
@@ -1414,13 +1425,21 @@ func buildRequestDocument(request map[string]any) (map[string]any, error) {
 	if build["schema_id"] != "tcenv.remote.npu-build.build-request.1" {
 		return nil, errors.New("build schema id is not the version 1 identity")
 	}
-	if build["mode"] != "prebuilt" && build["mode"] != "evaluator" {
-		return nil, errors.New("build mode is not prebuilt or evaluator")
+	buildMode, modeIsString := build["mode"].(string)
+	if !modeIsString || buildMode != "prebuilt" {
+		// This vector carries a prebuilt artifact set and its producer link, so
+		// an evaluator mode is not another legal encoding of the same request:
+		// an evaluator request has no artifact set and no producer at all.
+		return nil, errors.New(
+			"this vector requires the prebuilt build shape (mode prebuilt and a producer link)",
+		)
 	}
-	if build["mode"] == "prebuilt" && build["producer"] == nil {
+	if build["producer"] == nil {
 		return nil, errors.New("a prebuilt build request requires the producer evidence link")
 	}
-	if _, err := buildProvenanceDocument(build["provenance"], artifactSet, sourceSHA); err != nil {
+	if _, err := buildProvenanceDocument(
+		build["provenance"], buildMode, artifactSet, sourceSHA,
+	); err != nil {
 		return nil, err
 	}
 	if raw, present := build["producer"]; present && raw != nil {
@@ -1436,7 +1455,7 @@ func buildRequestDocument(request map[string]any) (map[string]any, error) {
 		if record["schema_id"] != "tcenv.remote.npu-build.producer-evidence-link.1" {
 			return nil, errors.New("producer link schema id is not the version 1 identity")
 		}
-		if record["status"] != "ok" || record["mode"] != "prebuilt" {
+		if record["status"] != "ok" || record["mode"] != buildMode {
 			return nil, errors.New(
 				"a prebuilt producer link must describe a successful control-host compile",
 			)
@@ -1601,8 +1620,12 @@ func verifyBuildEvidence(
 	if build["schema_id"] != "tcenv.remote.npu-build.evidence.1" {
 		return errors.New("build evidence schema id is not the version 1 identity")
 	}
-	if build["mode"] != "prebuilt" {
+	requestMode, ok := requestBuild["mode"].(string)
+	if !ok || requestMode != "prebuilt" {
 		return errors.New("this vector carries the prebuilt timing")
+	}
+	if build["mode"] != requestMode {
+		return errors.New("build evidence mode differs from the accepted request")
 	}
 	if build["status"] != "reused" {
 		return errors.New("a received prebuilt artifact set must be reported as reused")
@@ -1610,11 +1633,15 @@ func verifyBuildEvidence(
 	if build["error_class"] != nil {
 		return errors.New("a reused artifact set has no build error")
 	}
-	provenance, err := buildProvenanceDocument(build["provenance"], artifactSet, "")
+	provenance, err := buildProvenanceDocument(
+		build["provenance"], requestMode, artifactSet, "",
+	)
 	if err != nil {
 		return err
 	}
-	expectedProvenance, err := buildProvenanceDocument(requestBuild["provenance"], artifactSet, "")
+	expectedProvenance, err := buildProvenanceDocument(
+		requestBuild["provenance"], requestMode, artifactSet, "",
+	)
 	if err != nil {
 		return err
 	}
