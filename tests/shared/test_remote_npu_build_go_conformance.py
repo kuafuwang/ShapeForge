@@ -136,17 +136,22 @@ def _resign_request_change(golden: dict, mutate) -> None:
     vector["request_canonical_json"] = canonical_json
     digest = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
     vector["request_digest"] = digest
+    # The receipt document is assembled here instead of through the production
+    # helper: a mutation may target the very field that helper validates (the
+    # device group, the candidate digest), and the vector still has to be signed
+    # consistently enough for the rule under test to be the only reason it fails.
+    receipt_document = {
+        "document_type": contracts.NPU_BUILD_RECEIPT_DOCUMENT_TYPE,
+        "document_version": contracts.NPU_BUILD_DOCUMENT_VERSION,
+        "digest_algorithm": contracts.RECEIPT_DIGEST_ALGORITHM,
+        "request_id": vector["receipt"]["request_id"],
+        "attempt_id": vector["receipt"]["attempt_id"],
+        "request_digest": digest,
+        "candidate_digest": vector["request"]["candidate_digest"],
+        "device_group": vector["request"]["execution"]["device_group"],
+    }
     vector["receipt"]["receipt_id"] = hashlib.sha256(
-        contracts.canonical_digest_document(
-            contracts.receipt_id_document(
-                request_id=vector["receipt"]["request_id"],
-                attempt_id=vector["receipt"]["attempt_id"],
-                request_digest=digest,
-                candidate_digest=vector["request"]["candidate_digest"],
-                device_group=vector["request"]["execution"]["device_group"],
-                dialect=contracts.NPU_BUILD_DIALECT,
-            )
-        )
+        contracts.canonical_digest_document(receipt_document)
     ).hexdigest()
 
 
@@ -431,6 +436,55 @@ def _apply_mutation(golden: dict, mutation: str) -> None:
                 {"path": module["path"], "sha256": module["sha256"]},
             ],
         )
+    elif mutation == "device_group_digest_not_hex":
+        _resign_request_change(
+            golden,
+            lambda request: request["execution"]["device_group"].__setitem__(
+                "profile_digest", "z" * 64,
+            ),
+        )
+    elif mutation == "resource_generation_not_decimal":
+        _resign_request_change(
+            golden,
+            lambda request: request["execution"]["device_group"].__setitem__(
+                "resource_generation", "01",
+            ),
+        )
+    elif mutation == "logical_devices_out_of_bounds":
+        _resign_request_change(
+            golden,
+            lambda request: request["execution"]["resources"].__setitem__(
+                "logical_devices", 9,
+            ),
+        )
+    elif mutation == "execution_unknown_field":
+        _resign_request_change(
+            golden,
+            lambda request: request["execution"].__setitem__(
+                "unexpected", "not-in-the-contract",
+            ),
+        )
+    elif mutation == "device_group_unknown_field":
+        _resign_request_change(
+            golden,
+            lambda request: request["execution"]["device_group"].__setitem__(
+                "unexpected", "not-in-the-contract",
+            ),
+        )
+    elif mutation == "resources_unknown_field":
+        _resign_request_change(
+            golden,
+            lambda request: request["execution"]["resources"].__setitem__(
+                "unexpected", "not-in-the-contract",
+            ),
+        )
+    elif mutation == "candidate_digest_unknown_field":
+        _resign_request_change(
+            golden,
+            lambda request: request["candidate_digest"].__setitem__(
+                "unexpected", "not-in-the-contract",
+            ),
+        )
     elif mutation == "bundle_unknown_field":
         _resign_request_change(
             golden,
@@ -564,6 +618,15 @@ def _apply_mutation(golden: dict, mutation: str) -> None:
     # different document, even though it never enters the manifest digest.
     ("bundle_unknown_field", "bundle fields are missing or unknown"),
     ("entry_unknown_field", "bundle entry has unknown fields"),
+    # ...and so is every other document the request binds.
+    ("execution_unknown_field", "execution spec fields are missing or unknown"),
+    ("device_group_unknown_field", "device_group fields are missing or unknown"),
+    ("resources_unknown_field", "execution.resources fields are missing or unknown"),
+    ("candidate_digest_unknown_field", "candidate_digest fields are missing or unknown"),
+    # ...and the values inside those documents are typed too.
+    ("device_group_digest_not_hex", "device_group.profile_digest must be 64 lowercase hexadecimal characters"),
+    ("resource_generation_not_decimal", "resource_generation must be a canonical unsigned decimal string"),
+    ("logical_devices_out_of_bounds", "execution.resources.logical_devices"),
 ])
 def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, reason):
     golden = copy.deepcopy(load_build_golden())
@@ -604,6 +667,13 @@ def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, rea
     ("entry_total_bytes_over_limit", "request"),
     ("bundle_unknown_field", "request"),
     ("entry_unknown_field", "request"),
+    ("execution_unknown_field", "request"),
+    ("device_group_unknown_field", "request"),
+    ("resources_unknown_field", "request"),
+    ("candidate_digest_unknown_field", "request"),
+    ("device_group_digest_not_hex", "request"),
+    ("resource_generation_not_decimal", "request"),
+    ("logical_devices_out_of_bounds", "request"),
 ])
 def test_the_python_contract_rejects_the_same_tampered_vector(mutation, level):
     """The Go verifier is not stricter or looser than the production contract.

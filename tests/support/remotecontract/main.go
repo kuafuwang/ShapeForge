@@ -1492,6 +1492,73 @@ func buildRequestDocument(request map[string]any) (map[string]any, error) {
 		execution["synchronization"] != "stream-event" {
 		return nil, errors.New("execution shape is not the prebuilt kernel_module shape")
 	}
+	// Every document the request binds is closed and typed: an extra field or a
+	// digest that is not a digest is a different request, not an unusual one.
+	if err := closedFields(
+		execution, buildExecutionFields, nil, "execution spec",
+	); err != nil {
+		return nil, err
+	}
+	deviceGroup, ok := execution["device_group"].(map[string]any)
+	if !ok {
+		return nil, errors.New("device_group is not an object")
+	}
+	if err := closedFields(deviceGroup, deviceGroupFields, nil, "device_group"); err != nil {
+		return nil, err
+	}
+	if _, err := buildIdentifier(deviceGroup["device_group_id"], "device_group.device_group_id"); err != nil {
+		return nil, err
+	}
+	if _, err := buildIdentifier(deviceGroup["vendor_id"], "device_group.vendor_id"); err != nil {
+		return nil, err
+	}
+	for _, name := range []string{"profile_digest", "topology_digest"} {
+		value, ok := deviceGroup[name].(string)
+		if !ok || !isHex64(value) {
+			return nil, fmt.Errorf(
+				"device_group.%s must be 64 lowercase hexadecimal characters", name,
+			)
+		}
+	}
+	generation, ok := deviceGroup["resource_generation"].(string)
+	if !ok || !buildDecimalPattern.MatchString(generation) || len(generation) > 20 ||
+		generation != strings.TrimLeft(generation, "0") && generation != "0" {
+		return nil, errors.New(
+			"device_group.resource_generation must be a canonical unsigned decimal string",
+		)
+	}
+	resources, ok := execution["resources"].(map[string]any)
+	if !ok {
+		return nil, errors.New("execution.resources is not an object")
+	}
+	if err := closedFields(resources, resourceFields, nil, "execution.resources"); err != nil {
+		return nil, err
+	}
+	if _, err := boundedBuildNumber(
+		resources["logical_devices"], "execution.resources.logical_devices", 1, 8,
+	); err != nil {
+		return nil, err
+	}
+	for _, name := range []string{"required_rank_spans", "required_die_spans"} {
+		if resources[name] == nil {
+			continue
+		}
+		if _, err := boundedBuildNumber(
+			resources[name], "execution.resources."+name, 1, 64,
+		); err != nil {
+			return nil, err
+		}
+	}
+	candidateDocument, ok := canonicalRequest["candidate_digest"].(map[string]any)
+	if !ok {
+		return nil, errors.New("candidate_digest is not an object")
+	}
+	if err := closedFields(candidateDocument, candidateDigestFields, nil, "candidate_digest"); err != nil {
+		return nil, err
+	}
+	if value, ok := candidateDocument["value"].(string); !ok || !isHex64(value) {
+		return nil, errors.New("candidate_digest.value must be 64 lowercase hexadecimal characters")
+	}
 	// The task family derives the source media type; it is not negotiated.  A
 	// kernel_module payload is text (the module itself is an artifact entry).
 	if execution["source_media_type"] != buildModuleMediaType {
@@ -1753,6 +1820,20 @@ var bundleDocumentFields = []string{"schema_id", "artifact_set_digest", "entries
 // the two content-form fields.  Neither of those enters the manifest digest.
 var bundleEntryExtraFields = []string{"content", "blob_ref"}
 
+var buildExecutionFields = []string{
+	"schema_id", "task_family", "artifact_kind", "launch_kind", "launch_subtype",
+	"source_media_type", "device_group", "resources", "required_timing_sources",
+	"synchronization",
+}
+
+var deviceGroupFields = []string{
+	"device_group_id", "vendor_id", "profile_digest", "topology_digest", "resource_generation",
+}
+
+var resourceFields = []string{"logical_devices", "required_rank_spans", "required_die_spans"}
+
+var candidateDigestFields = []string{"algorithm", "value"}
+
 // The build contract's integer domains, mirrored from the production validator:
 // a duration is a bounded wall-clock value (0 means "this never ran") and a log
 // size is a bounded byte count.
@@ -1775,6 +1856,10 @@ var bundleRoles = map[string]bool{
 // bundleMediaTypePattern is the bounded ASCII media type a bundle entry may
 // declare (same character class as the production validator).
 var bundleMediaTypePattern = regexp.MustCompile(`^[A-Za-z0-9!#$&^_.+*/;= -]{1,160}$`)
+
+// buildDecimalPattern is the canonical unsigned decimal form (no sign, no
+// fraction, no leading zero unless the value is "0").
+var buildDecimalPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
 
 // closedFields refuses a document whose field set is not exactly the versioned
 // one.  A build evidence that grew a field is an unreviewed identity even when
