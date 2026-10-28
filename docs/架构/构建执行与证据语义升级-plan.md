@@ -162,20 +162,21 @@ schema 3、无顶层 `build`、两个 ok batch → 确认成功，中位数是�
 对照 `taic/orchestrator.py` 的 `_confirm`（约 3191–3256 行）与下面的 `_finish`
 （约 3441 行）：只有 `ok` 且有 `speedup` 的 batch 进 `values` / `reports`；全部
 成功后中位数是 `statistics.median(values)`，留下最接近中位数的那份。
-`confirmation_source_sha256` 要到 `_finish` 才赋值，循环里用局部
-`source_sha256 = sha256(c.source.encode("utf-8"))` 重算。
+`confirmation_source_sha256` 要到 `_finish` 才赋值，循环里用局部 `source_sha256` 重算。
 
 在 `if rep.status == "ok" and rep.speedup` 为真、`values.append` 之前，只对
-`c.report.origin` 为 `local-*` 的候选做身份检查：
+`c.report.origin` 为 `local-*` 的候选做身份检查；本地分支先看搜索期报告有没有
+`build`（即文件版本是不是 4），再看它是不是续跑读入的：
 
-- `local-resume`（搜索期是历史 schema ≤3）：不拿旧文件和 batch 比 digest。
-  本轮 batch 必须是 schema 4 full，`candidate_sha256` 等于 `source_sha256`，
-  且同一候选各 batch 的五个 digest 彼此相同：`candidate_sha256`、
-  `assembled_sha256`、`build_profile_digest`、`artifact_set_digest`、
-  `native_digest`。
-- `local-new`：搜索期报告必须是 schema 4 full（混合版本 worker 交回 schema 3
-  时直接失败），batch 同样 full，五个 digest 与搜索期相同，两边
-  `candidate_sha256` 都等于 `source_sha256`。
+- 搜索期报告是 schema 4（新评的或续跑读回的）：必须 full；每个 batch 也必须
+  schema 4 full，五个 digest（`candidate_sha256`、`assembled_sha256`、
+  `build_profile_digest`、`artifact_set_digest`、`native_digest`）与搜索期相同，
+  两边 `candidate_sha256` 都等于 `source_sha256`。`local-new` 与 `local-resume`
+  都走这条，续跑不会因为 origin 变宽。
+- 搜索期报告是 schema ≤3（无 `build`）：只有 `local-resume` 走兼容分支——不与
+  旧文件比 digest；本轮 batch 必须是 schema 4 full、`candidate_sha256` 等于
+  `source_sha256`，且同一候选各 batch 的五个 digest 彼此相同。
+- `local-new` 且搜索期报告是 schema ≤3：失败（`build_identity_mismatch`）。
 - `null` 或 partial 的 batch 不得 append。
 
 不符时 `entry["status"]` 写 `build_identity_mismatch`，走现有失败出口：
@@ -195,8 +196,7 @@ digest 比较——胜者进入 `confirmed` 前，它自己的每个成功 batch
 - `taic/resume.py:563` 读入后写 `origin`：`run_dir/execution.json` 的
   `evaluation`（`orchestrator.py:761` 写下的 `"local"` / `"remote"`）决定
   `local-resume` / `remote-resume`。缺这份字段就 `NeedsInspection`，不要猜。
-- `_evaluate_report` 拿到新报告时写 `local-new`（`self._local_evaluator` 为真）
-  或 `remote-new`。
+- `_evaluate_report` 拿到新报告时写 `local-new`（本地执行器）或 `remote-new`。
 
 `_save`（`orchestrator.py:1292`）在 `1296` 行重写候选源码之前返回：`origin`
 以 `-resume` 结尾时，不写源码、`report.json`、`feedback.txt`，也不改内存报告后
@@ -342,11 +342,11 @@ uv run --no-sync pytest -q -n 0 -m 'not gpu and not llm and not slow' \
 ```
 
 `test_confirm_build_identity.py` 不 import backend，至少覆盖：`local-resume`
-上两个 schema 4 full 且 digest 相同的 batch 进入中位数，其中一份为 `null` 则
-失败；`local-new` 的搜索期报告是 schema 3 时 `build_identity_mismatch`；full 时
-digest 不同则失败，两份匹配时中位数是其中一份；换 winner 只对过该候选自己的
-搜索期报告；`remote-new` 的确认按 §4.1。`test_eval_cache.py` 增加「键的
-`schema` 为 3 且没有 `build_profile_digest`」。
+且搜索期是 schema 4 时仍要比五个 digest（不同即失败，两份相同则中位数是其中
+一份），不能因 origin 绕开；`local-new` 的搜索期是 schema 3、或 batch 为 `null`
+时 `build_identity_mismatch`；换 winner 只对过该候选自己的搜索期报告；
+`remote-new` 的确认按 §4.1；`test_eval_cache.py` 断言键的 `schema` 为 3 且没有
+`build_profile_digest`。
 
 另外在本提交里：
 
@@ -356,9 +356,9 @@ git grep -n 'REPORT_SCHEMA_VERSION == 3' tests docs
 ```
 
 命中项在同一提交改掉，或说明它指的是历史基线文件里的 3 而不是当前写入版本。
-两条 grpc 测试里的超时报告断言没有顶层 `build`、证据里的
-`build.status == "not_run"` 保持原样（`_validate_report` 不因 `build` 拒绝任何
-一端）；`test_publication.py` 仍只断言 `_check_publication`。
+两条 grpc 测试里，新建的 JobEngine 超时报告断言 schema 4 + `build: null`，证据
+里的 `build.status == "not_run"` 不变；重放的旧报告不改字节（§5.1）。
+`test_publication.py` 仍只断言 `_check_publication`。
 `tests/support/golden/` 里已有向量的字节和 HMAC 必须与 HEAD 逐字节相同（含
 `tcenv.eval-report.v3` 这个字符串）；schema 4 的覆盖用新文件，不重算、不替换
 旧 golden。旧测试若因新字段变红，修的是生产路径不要把 schema 4 写进旧向量。
