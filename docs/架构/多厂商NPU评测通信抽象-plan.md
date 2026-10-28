@@ -1822,3 +1822,4 @@ device/rank/die 证据，并验证租约互斥、C2C 故障、取消/恢复与 r
 - 不引入全局多租户调度、跨 frontend HA、自动 failover 或跨厂商统一性能排名。
 - 不把 tsm-shell、免密 root、MPI discovery 或设备 passthrough 当成 agent 可请求的能力。
 - 不以 fake vendor、known-good module 或 Host wall time 的结果宣称真实 NPU 性能或发布许可。
+- 不把图级设备硬套进现有 `Task` / `Backend` 协议：本仓库的 kernel 级承诺只覆盖「单个具名 kernel + 启动几何 + 命名 buffer 张量进出 + 逐元素容差」。只能跑图/IR、没有 kernel 启动模型的设备需要 `GraphTask` 一类的兄弟抽象，搜索层级也要从 kernel 改成 graph/operator，属于另一份计划；安全语义若在新设备上没有保护带等价物，也要单独定义，不能默认沿用。
