@@ -216,6 +216,16 @@ ArtifactBuilder:
   编译 profile、artifact_set_digest；
 - `BuildEvidence`：compile/pipeline 状态、日志、耗时和错误分类。
 
+工件载荷必须同时支持两种表示，不能让抽象只适用于文件：
+
+- **bytes**：ELF/bin/graph/model 等可序列化字节，可 inline 或经 BlobChannel 传输；
+- **backend-native executable handle**：例如 Metal runtime 的 pipeline handle。它只在创建它的
+  后端/进程语义内有效，manifest 记录 handle 类型、source/build 身份与后端元数据，不能拿
+  空字节或伪造 digest 冒充 file artifact，也不能未经专门合约就交给 BlobChannel/另一个后端。
+
+因此 ArtifactTransport 还必须区分“可传输字节”和“仅限本地的后端原生句柄”；Metal 不需要
+为了统一而序列化 pipeline，NPU 的 bytes/blob 路径也不需要理解 Metal handle。
+
 placement 只改变构建位置，不改变产物语义：
 
 | 模式 | 构建位置与时序 | 后续路径 |
@@ -1197,19 +1207,29 @@ TMPDIR 下 **18 failed / 1 passed**（AF_UNIX 路径超长，未改测试），`
 profile 侧的物理 id 绑定；`declared_devices` 与 profile 的 rank/die 事实只核对「有没有该维度 +
 数量」，没有逐 die 的拓扑摘要绑定；P2a/真实设备、真实 rank/die 聚合、真实 SDK 计时仍全部未做。
 
-### P1c：统一 ArtifactBuilder 与 control_host 工件交接（无真实设备）
+### P1c：统一 ArtifactBuilder 与 control_host 工件交接（无真实 NPU，使用真实 Mac/Metal）
 
 位置：P1 之后、P2a 之前。用统一 ArtifactBuilder 把 local/remote 构建与传输/执行分开，
 再用小文件证明 control_host 预编译工件可以进入 NPU 评测。此阶段不访问真实 NPU，也不要求
-在 NPU 服务器上安装编译器、git 或 LLM 凭据。
+在 NPU 服务器上安装编译器、git 或 LLM 凭据；但会使用真实 Mac/Metal 编译与 pipeline，
+检验 backend-native artifact 抽象，不能用 fake Metal 代替。
 
 **实现与映射**
 
 - 实现 `ArtifactBuilder` 的 probe/build/BuildOutcome 与 deadline/错误分类，构建过程只接受
   登记的 build_profile/toolchain；source digest、builder/toolchain/profile 与实际 artifact
   字节都进入 BuildProvenance/BuildEvidence，并接入 canonical request、outbox、签名和 resume。
-- 现有 Metal 只建立概念映射：MetalSourceBuilder 仍在 control_host 编译并创建 pipeline，
-  旧 candidate_sha256、compile/pipeline 报告字段与执行行为不变，不为了统一接口重写 Metal。
+- **Metal 必须是具体生产实现，不是概念映射**：在 `tcenv/backends/metal/` 实现
+  `MetalSourceBuilder`，probe 返回真实 macOS/Metal runtime/device 能力与版本；build 复用
+  现有 `MTLDevice.newLibraryWithSource_options_error_` 的 MSL 编译和 pipeline 创建路径，
+  返回 backend-native pipeline handle + manifest + BuildProvenance + BuildEvidence。旧
+  candidate_sha256、compile/pipeline 报告字段、缓存、执行与发布语义不变，不改走 NPU
+  contract，不把 pipeline 强行序列化成文件。若现有 ArtifactBundle 只支持文件，按 §4.2.1
+  的 backend-native payload 扩展中立模型，而不是让 Metal 迁就文件模型。
+- **真实 Mac 验收**：有效 MSL 实际编译并创建 pipeline，无效 MSL 映射为 compile failure；
+  核对真实 source digest、builder/runtime/device 版本、BuildEvidence，以及与旧路径相同的
+  行为和错误分类。可做小规模正确性验证，但不跑性能 benchmark、不做发布加速比、不跑完整
+  GPU suite。真实 Mac/Metal 不可用或权限不足必须标 blocked，不能用 fake 代替。
 - TSM 主路径使用 control_host 的 TsmModuleBuilder：小 source → 小 ELF/module →
   ArtifactBundle/manifest → BlobChannel → fake NPU VendorDriver。NPU 侧只校验并加载，
   不拉源码、不调用编译器。
@@ -1228,7 +1248,7 @@ profile 侧的物理 id 绑定；`declared_devices` 与 profile 的 rank/die 事
 | 工件篡改 | 修改 manifest、ELF 字节、blob digest、builder 版本或 BuildProvenance 任一环节均被拒 |
 | 中断与恢复 | 构建/上传中断后续传与 resume 不重复构建、不混用旧 artifact；旧 attempt/fence 结果被拒 |
 | 清理 | 构建临时文件、blob 引用与设备 module 都按 job 生命周期清理；无法证明时 quarantine |
-| local Metal 回归 | 现有 Metal/local 编译、报告和发布语义不变 |
+| 具体 MetalSourceBuilder | 真实 Mac 上有效 MSL 编译+pipeline、无效 MSL compile failure、真实 provenance/evidence；旧 Metal/local 编译、缓存、报告和发布语义不变 |
 
 验收必须包含真实六 RPC 与 BlobChannel，而不是只测 builder 函数；编译日志、artifact
 manifest、BuildProvenance 与 fake NPU 的加载记录形成闭环。小文件只证明抽象和状态机，
