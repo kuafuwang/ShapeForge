@@ -1387,3 +1387,39 @@ def test_a_rejected_bundle_submit_leaves_another_jobs_lease_and_bytes(tmp_path):
         assert final.state == "completed", final.failure
     finally:
         reopened.close(wait=5)
+
+
+def test_the_fake_vendor_b_driver_reports_a_verification_failure_as_value_error(tmp_path, monkeypatch):
+    """A handle that cannot re-prove its bytes is a vendor failure, not a crash.
+
+    The driver converts ``BundleError`` into the typed ``ValueError`` the worker
+    maps to an infrastructure outcome; an un-imported name would surface as a
+    ``NameError`` and hide the real reason.
+    """
+
+    from tcenv.remote import artifact_bundle
+    from tests.support.vendor_sim.vendor_b import (
+        FakeVendorBDriver,
+        GraphService,
+        build_graph_bundle,
+        build_graph_execution,
+    )
+
+    service = tmp_path / "graph-service.json"
+    monkeypatch.setenv("TCENV_VENDOR_B_SERVICE", str(service))
+    monkeypatch.setenv("TCENV_REMOTE_STATE_DIR", str(tmp_path))
+    bundle = build_graph_bundle()
+
+    def broken(self):
+        raise artifact_bundle.BundleError("materialized bytes no longer match")
+
+    monkeypatch.setattr(artifact_bundle.MaterializedEntry, "_read_and_verify", broken)
+    driver = FakeVendorBDriver(GraphService(service))
+    context = {
+        "attempt_id": "attempt-verify-1", "lease_fence": 1,
+        "candidate_digest": {
+            "algorithm": "sha256-bundle-v1", "value": bundle.artifact_set_digest,
+        },
+    }
+    with pytest.raises(ValueError, match="could not verify graph/main.json"):
+        driver.prepare(build_graph_execution(), bundle, context)

@@ -125,12 +125,14 @@ class BundleEntry:
 
 @dataclass(frozen=True)
 class MaterializedEntry:
-    """One entry written and verified under an attempt root.
+    """One entry written under an attempt root, readable only as verified bytes.
 
-    It is a *handle*, not a path: reading through it re-walks the attempt
-    directory with ``O_DIRECTORY|O_NOFOLLOW`` per component and re-verifies the
-    exact size/digest, so a name that changed after ``materialize`` is refused
-    instead of followed.
+    It is a *handle*, not a path: reading re-walks the attempt directory with
+    ``O_DIRECTORY|O_NOFOLLOW`` per component and checks the exact size and
+    SHA-256 **on the same bytes it returns**, so a name that was replaced after
+    ``materialize`` (by a symbolic link, or by a plain directory holding a plain
+    attacker file) is refused instead of handed back.  ``verify`` is the same
+    operation without returning the bytes, not a second read.
     """
 
     root: Path
@@ -139,19 +141,26 @@ class MaterializedEntry:
     sha256: str
 
     def read_bytes(self) -> bytes:
+        """Return the entry's bytes only after they match its descriptor."""
+
+        return self._read_and_verify()
+
+    def verify(self) -> None:
+        self._read_and_verify()
+
+    def _read_and_verify(self) -> bytes:
         root_fd = _open_attempt_root(self.root, create=False)
         try:
             *parents, name = self.path.split("/")
             directory_fd = _descend_without_symlinks(root_fd, parents, self.path)
             try:
-                return _read_entry_at(directory_fd, name, self.path)
+                data = _read_entry_at(directory_fd, name, self.path)
             finally:
                 os.close(directory_fd)
         finally:
             os.close(root_fd)
-
-    def verify(self) -> None:
-        data = self.read_bytes()
+        # Verify the bytes that were just read; a caller never receives bytes
+        # this check has not seen, and ``verify`` cannot pass on a second read.
         if len(data) != self.size_bytes:
             raise BundleError(
                 f"materialized bundle entry {self.path!r} size {len(data)} differs "
@@ -161,6 +170,7 @@ class MaterializedEntry:
             raise BundleError(
                 f"materialized bundle entry {self.path!r} no longer matches its digest"
             )
+        return data
 
 
 @dataclass(frozen=True)

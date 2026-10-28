@@ -308,6 +308,37 @@ def test_materialize_handles_cannot_be_talked_into_reading_a_swapped_path(tmp_pa
     assert (root / "graph-real" / "main.json").read_bytes() == GRAPH_ENTRIES[0][3]
 
 
+def test_materialize_handles_verify_the_bytes_they_return(tmp_path):
+    """The replacement here is a *plain* directory and a *plain* file.
+
+    No symbolic link is involved, so refusing the name is not enough: a handle
+    that re-resolves ``root/path`` and returns whatever it finds would hand back
+    the attacker's bytes.  Reading and verifying have to be one operation.
+    """
+
+    root = tmp_path / "attempt"
+    written = _bundle().materialize(root)
+    handle = written["graph/main.json"]
+    original = GRAPH_ENTRIES[0][3]
+    assert handle.read_bytes() == original
+    # Move the real tree away and put a plain directory with a plain file there.
+    os.rename(root, tmp_path / "attempt-moved")
+    (root / "graph").mkdir(parents=True)
+    (root / "graph" / "main.json").write_bytes(b"attacker-bytes")
+    with pytest.raises(BundleError, match="differs from its declared size"):
+        handle.read_bytes()
+    with pytest.raises(BundleError):
+        handle.verify()
+    # Same size, different content: the digest check, not just the length.
+    (root / "graph" / "main.json").write_bytes(b"X" * len(original))
+    with pytest.raises(BundleError, match="no longer matches its digest"):
+        handle.read_bytes()
+    with pytest.raises(BundleError, match="no longer matches its digest"):
+        handle.verify()
+    # The bytes that were really written are still available from the moved tree.
+    assert (tmp_path / "attempt-moved" / "graph" / "main.json").read_bytes() == original
+
+
 def test_materialize_handles_read_and_verify_the_exact_bytes(tmp_path):
     written = _bundle().materialize(tmp_path / "attempt")
     for path, _role, _media_type, data in GRAPH_ENTRIES:

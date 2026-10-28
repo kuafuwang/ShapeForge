@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from tcenv.remote.artifact_bundle import ArtifactBundle, BundleEntry
+from tcenv.remote.artifact_bundle import ArtifactBundle, BundleEntry, BundleError
 from tcenv.remote.contracts import (
     BUNDLE_DIGEST_ALGORITHM,
     NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,

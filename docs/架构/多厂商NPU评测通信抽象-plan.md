@@ -1095,6 +1095,12 @@ gRPC/conformance/evidence 87、job/recovery/container/outbox 265 passed/1 skippe
    `MaterializedEntry`（root + 相对路径 + size/sha），`read_bytes`/`verify` 用 dir-fd 逐段
    `O_NOFOLLOW` 重新读取并复核 digest；`vendor_b` 消费端改用 handle 复核，不再 `is_file()`。
    回归 `test_materialize_handles_cannot_be_talked_into_reading_a_swapped_path`。
+   第五轮复核发现该 handle 仍未闭合：`read_bytes` 只按保存的路径重新解析、返回前不校验，把
+   `root` 换成普通目录并在原位置放普通攻击者文件后原样返回外部字节（`verify` 才另报错、且是
+   第二次读取）。修复：读取与校验合并为同一次原子操作，`read_bytes` 只返回已校验的字节，
+   `verify` 复用同一操作；回归 `test_materialize_handles_verify_the_bytes_they_return` 覆盖
+   普通文件替换与「同尺寸不同内容」两种变体。同时修掉 `vendor_b` 里 `BundleError` 未导入导致
+   校验失败抛 `NameError` 的问题，回归 `test_the_fake_vendor_b_driver_reports_a_verification_failure_as_value_error`。
 4. **`entry_from_file` 仍有 check/read TOCTOU（确认，已修）**。lstat 之后按路径 `read_bytes()`，
    换成外部 symlink 后返回并哈希了外部字节。修复：逐组件 dir-fd、最终 `O_NOFOLLOW`，`fstat` 与
    读取都来自同一 FD；回归父目录与最终组件两种换名。
@@ -1127,9 +1133,9 @@ gRPC/conformance/evidence 87、job/recovery/container/outbox 265 passed/1 skippe
    X+未 ready Y 被拒后，A 的 job/lease/字节不变且随后仍能完成；它是对「按 request id 释放会误伤
    别的 job」这一字面场景的证伪控制，不能由同 request 的旧 attempt 测试替代。
 
-第四轮证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **57**、
-`test_remote_npu_bundle_grpc.py` **8**、`test_remote_npu_bundle_cleanup.py` **38**、
-`test_remote_npu_bundle_go_conformance.py` **17**（合计 **120**）；P0/P0b **171**（blob_channel
+第四轮证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **58**、
+`test_remote_npu_bundle_grpc.py` **8**、`test_remote_npu_bundle_cleanup.py` **39**、
+`test_remote_npu_bundle_go_conformance.py` **17**（合计 **122**）；P0/P0b **171**（blob_channel
 新增 leased-TTL 对照）；旧 gRPC/conformance/evidence 87；job/recovery/container/outbox 265
 passed/1 skipped；`selfcheck_bridge` 默认围栏 18 failed/1 passed、`TMPDIR=/tmp` 19 passed；
 `generate_evaluator_proto.py --check` 通过（未改 proto）；全套安全套件 **2492 passed / 6 skipped /
