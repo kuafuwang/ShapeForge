@@ -1293,6 +1293,13 @@ def build_evidence_document(
             raise ContractError(
                 "a received artifact set that was loaded must record its own duration"
             )
+        if log is None:
+            # The receiver records what it verified and loaded, exactly as it
+            # records its own duration: a reused row with no log cannot show
+            # that anything was read back from the channel.
+            raise ContractError(
+                "a received artifact set that was loaded must record its own log"
+            )
         if error_class is not None:
             raise ContractError("a reused artifact set has no build error")
         if artifacts is None or provenance["artifact_set_digest"] is None:

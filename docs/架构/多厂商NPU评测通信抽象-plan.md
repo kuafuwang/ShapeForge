@@ -1412,10 +1412,11 @@ request 不再要求 producer、让接收方重新丢掉 producer log/duration�
    `tests/support/golden/remote/npu_build_v5.json`）重建 v5 request digest 文档（`build`
    是 v4 之外唯一新增字段）、按闭集重建 provenance/producer 记录、重算
    `producer.evidence_sha256 = SHA256(canonical(producer evidence 文档))`，并复核 received
-   行的 reused/producer/artifacts/loaded/自有 duration/log 规则；23 条变异各自以**对应理由**
+   行的 reused/producer/artifacts/loaded/自有 duration/log 规则；28 条变异各自以**对应理由**
    被拒（provenance 版本/工具链/source sha/compile profile、build mode/schema、
    producer evidence_sha256/duration/log/status、evidence status/producer/provenance/
-   loaded/log 复制/duration 0/未知字段/SOURCE entry sha/自洽改写 manifest、artifact set、receipt）。
+   loaded/log 复制/duration 0/未知字段/SOURCE entry sha/自洽改写 manifest、log 尺寸越界、
+   duration 越界、log 缺失、producer 数值越界、artifact set、receipt）。
    **复核后补强**：Go 侧 `build evidence` 之前不校验字段闭集，也只比较声明的
    `artifact_set_digest`，因此「加一个 `build.unexpected` 字段」与「把 evidence 的 SOURCE entry
    sha 改成 64 个 0」两份输入会被 Go 接受而 Python 拒绝（分别是 `build evidence fields are
@@ -1429,6 +1430,18 @@ request 不再要求 producer、让接收方重新丢掉 producer log/duration�
    在起作用（旧实现靠「声明摘要 != 候选摘要」拒绝，加严后只有 entry 比较能发现）。跨语言语义也
    统一：`0` 表示「没跑」，所以 Python 的 `build_evidence_document` 现在同样拒绝 `reused` 行
    `duration_ms=0`（`not_run` 行仍为 0），不是 Go 单方面加严。
+   **再一轮复核（`883cdfd` 之后）**仍有 5 条存活变异：Go 只把 `log.size_bytes` 解析成整数而不设
+   边界、`duration_ms` 只查 `> 0`，所以 `log.size_bytes=-1` 与 `duration_ms=3600001` 两份输入
+   Go 打印 `ok build ...` 而 Python 拒绝（`is outside its integer bounds`）；反向地，
+   `evidence.build.log=null` 被 Go 拒绝而 Python 接受。修复：Go 引入
+   `boundedBuildNumber`，received 行的 `duration_ms` 取 `[1, 3600000]`、`log.size_bytes` 取
+   `[0, 1000000]`，producer 记录的 `duration_ms` 取 `[0, 3600000]`、可选 log 用同一闭集
+   + `sha256` 64 位小写 + `size_bytes` 边界；Python 的 `reused` 分支补上「必须记录自己的 log」
+   （与文档和 Go 一致）。新增 `evidence_log_size_negative`、`evidence_duration_over_limit`、
+   `evidence_log_null`、`producer_duration_over_limit`、`producer_log_size_over_limit` 五条回归；
+   后两条把 producer 链接、`evidence_sha256`、request canonical JSON/digest 与 receipt 一起重签，
+   因此只有边界能拒绝它们（旧 Go 对两条都打印 `ok build`，已复现）；Python 侧同样断言这五个
+   输入被拒（旧 `contracts.py` 对 `log=null` 是接受的，已复现）。
 6. **文档层缺陷与契约回归**：`_npu_execution_document` 的 media type 错误信息索引了旧表，
    `task_family=kernel_module` 配错 `source_media_type` 会抛 `KeyError` 而非 `ContractError`；
    已修并新增回归。另新增契约层回归：prebuilt build request 必须有 producer 链接、
@@ -1440,8 +1453,8 @@ request 不再要求 producer、让接收方重新丢掉 producer log/duration�
    **已登记 profile 名**从登记表解析，请求命名另一个 compile profile 会在 worker 内被
    `toolchain_profile` 拒绝（不静默沿用），未知 profile 名按名拒绝。
 
-本轮测试：P1c 组（build grpc 28 / outbox 3 / contract 7 / go conformance 26 /
-`test_source_builder.py` 15 其中 7 条 `gpu`）合计 **79 passed**；P0/P0b/P1
+本轮测试：P1c 组（build grpc 28 / outbox 3 / contract 9 / go conformance 31 /
+`test_source_builder.py` 15 其中 7 条 `gpu`）合计 **86 passed**；P0/P0b/P1
 contract/grpc/cleanup/bundle + Go bundle conformance **214 passed**；旧 remote/gRPC/
 blob/conformance 组 **170 passed**；job/container/outbox 组 **265 passed, 1 skipped**；
 Metal 非 `gpu` 组 **449 passed, 2 skipped**（`test_triton_baseline` 按围栏 `ps` 限制失败）；

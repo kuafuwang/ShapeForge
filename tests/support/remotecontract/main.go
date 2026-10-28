@@ -1441,6 +1441,32 @@ func buildRequestDocument(request map[string]any) (map[string]any, error) {
 				"a prebuilt producer link must describe a successful control-host compile",
 			)
 		}
+		if _, err := boundedBuildNumber(
+			record["duration_ms"], "build.producer.duration_ms", 0, maxBuildDurationMs,
+		); err != nil {
+			return nil, err
+		}
+		// The producer's log is optional (a builder may emit no diagnostics) but
+		// a present one is the same bounded shape the receiver has to produce.
+		if rawLog := record["log"]; rawLog != nil {
+			producerLog, ok := rawLog.(map[string]any)
+			if !ok {
+				return nil, errors.New("build.producer.log is not an object")
+			}
+			if err := closedFields(producerLog, buildLogFields, nil, "build.producer.log"); err != nil {
+				return nil, err
+			}
+			if digest, ok := producerLog["sha256"].(string); !ok || !isHex64(digest) {
+				return nil, errors.New(
+					"build.producer.log sha256 is not a lowercase 64-character digest",
+				)
+			}
+			if _, err := boundedBuildNumber(
+				producerLog["size_bytes"], "build.producer.log.size_bytes", 0, maxBuildSourceBytes,
+			); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return map[string]any{
 		"document_type":    "tcenv.remote.npu-build.request-digest",
@@ -1499,6 +1525,14 @@ var buildLogFields = []string{"sha256", "size_bytes"}
 
 var buildLoadedFields = []string{"path", "sha256"}
 
+// The build contract's integer domains, mirrored from the production validator:
+// a duration is a bounded wall-clock value (0 means "this never ran") and a log
+// size is a bounded byte count.
+const (
+	maxBuildDurationMs  = 3_600_000
+	maxBuildSourceBytes = 1_000_000
+)
+
 // closedFields refuses a document whose field set is not exactly the versioned
 // one.  A build evidence that grew a field is an unreviewed identity even when
 // every field it does have is valid, which is why the check runs before any
@@ -1520,6 +1554,20 @@ func closedFields(value map[string]any, required, optional []string, name string
 		}
 	}
 	return nil
+}
+
+// boundedBuildNumber parses a build-contract integer and applies its domain.
+// Parsing alone would accept a negative log size or a duration the contract
+// does not allow, which is exactly the gap a value-only check leaves open.
+func boundedBuildNumber(value any, name string, low, high int64) (int64, error) {
+	parsed, err := buildNumber(value, name)
+	if err != nil {
+		return 0, err
+	}
+	if parsed < low || parsed > high {
+		return 0, fmt.Errorf("%s is outside its integer bounds", name)
+	}
+	return parsed, nil
 }
 
 func buildNumber(value any, name string) (int64, error) {
@@ -1720,7 +1768,9 @@ func verifyBuildEvidence(
 	}
 	// The receiver records its own verify/load cost; reusing the producer's
 	// duration or log identity would make the two rows indistinguishable.
-	receiverDuration, err := buildNumber(build["duration_ms"], "build.duration_ms")
+	receiverDuration, err := boundedBuildNumber(
+		build["duration_ms"], "build.duration_ms", 0, maxBuildDurationMs,
+	)
 	if err != nil {
 		return err
 	}
@@ -1737,7 +1787,9 @@ func verifyBuildEvidence(
 	if digest, ok := log["sha256"].(string); !ok || !isHex64(digest) {
 		return errors.New("build.log sha256 is not a lowercase 64-character digest")
 	}
-	if _, err := buildNumber(log["size_bytes"], "build.log.size_bytes"); err != nil {
+	if _, err := boundedBuildNumber(
+		log["size_bytes"], "build.log.size_bytes", 0, maxBuildSourceBytes,
+	); err != nil {
 		return err
 	}
 	copiedLog, err := sameDocument(log, producerEvidence["log"])

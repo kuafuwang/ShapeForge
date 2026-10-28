@@ -243,3 +243,63 @@ def test_a_received_row_must_record_its_own_duration_not_the_not_run_sentinel():
         measurement_kind="simulated", publication_allowed=False,
         report_status="timeout", dialect=contracts.NPU_BUILD_DIALECT,
     )
+
+
+def test_a_received_row_records_a_bounded_own_duration_and_log():
+    """The received row's own numbers live in the same domains as the producer's.
+
+    ``duration_ms`` is milliseconds of the receiver's own verify/load pass and
+    ``log.size_bytes`` is a bounded byte count; a negative size or a duration
+    beyond the contract's ceiling is not "unusual", it is a different document.
+    The receiver must also carry its own log at all: a reused row with no log
+    cannot show that anything was read back.
+    """
+
+    vector = _vector()
+    for name, reason in (
+        ("duration_over_limit", "build.duration_ms"),
+        ("log_size_negative", "build.log.size_bytes"),
+        ("log_missing", "must record its own log"),
+    ):
+        evidence = copy.deepcopy(vector["evidence"])
+        if name == "duration_over_limit":
+            evidence["build"]["duration_ms"] = 3_600_001
+        elif name == "log_size_negative":
+            evidence["build"]["log"]["size_bytes"] = -1
+        else:
+            evidence["build"]["log"] = None
+        with pytest.raises(contracts.ContractError, match=reason):
+            contracts.npu_evidence_document(
+                evidence, source_bytes=None,
+                device_group=vector["request"]["execution"]["device_group"],
+                expected_resources=vector["request"]["execution"]["resources"],
+                expected_build=vector["request"]["build"],
+                request_artifact=vector["request"]["artifact"],
+                measurement_kind="simulated", publication_allowed=False,
+                report_status="ok", dialect=contracts.NPU_BUILD_DIALECT,
+            )
+
+
+def test_the_producer_link_and_the_received_row_share_the_integer_domains():
+    """One domain for both sides: a producer value the receiver may not repeat is
+    not a valid link, and the request digest refuses it."""
+
+    vector = _vector()
+    for field, value, reason in (
+        (("duration_ms",), 3_600_001, "build.producer.duration_ms"),
+        (("log", "size_bytes"), 1_000_001, "build.producer.log.size_bytes"),
+        (("log", "size_bytes"), -1, "build.producer.log.size_bytes"),
+        (("duration_ms",), -1, "build.producer.duration_ms"),
+    ):
+        tampered = copy.deepcopy(vector["request"])
+        target = tampered["build"]["producer"]
+        for key in field[:-1]:
+            target = target[key]
+        target[field[-1]] = value
+        with pytest.raises(contracts.ContractError, match=reason):
+            contracts.request_digest_document(
+                tampered, source_bytes=b"", dialect=contracts.NPU_BUILD_DIALECT,
+            )
+        # The receiver cannot repeat such a link either.
+        with pytest.raises(contracts.ContractError, match=reason):
+            contracts.build_producer_record(tampered["build"]["producer"])

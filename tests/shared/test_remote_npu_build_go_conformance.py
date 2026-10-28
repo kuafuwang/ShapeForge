@@ -115,6 +115,54 @@ def test_the_go_verifier_rebuilds_the_build_request_producer_link_and_evidence()
     assert str(vector["producer_record"]["evidence_sha256"]) in result.stdout
 
 
+def _resign_after_producer_change(golden: dict) -> None:
+    """Re-sign a producer-record change so only its bound can reject the vector.
+
+    The producer link is authenticated twice: by the request digest and by the
+    digest of the producer's own evidence document.  A test that wants to check
+    the *bounds* (rather than the digests) has to keep both consistent, which is
+    what a hostile-but-consistent sender would do.
+    """
+
+    from tcenv.remote import contracts
+
+    vector = golden["npu_build"]
+    evidence_document = vector["producer_evidence"]
+    old_record = copy.deepcopy(vector["producer_record"])
+    record = vector["producer_record"]
+    record["duration_ms"] = evidence_document["duration_ms"]
+    record["log"] = copy.deepcopy(evidence_document["log"])
+    record["evidence_sha256"] = hashlib.sha256(
+        contracts.canonical_digest_document(evidence_document)
+    ).hexdigest()
+    vector["request"]["build"]["producer"] = copy.deepcopy(record)
+    vector["evidence"]["build"]["producer"] = copy.deepcopy(record)
+    # The frozen expected digest document has to describe the same request, or
+    # the vector would be rejected for disagreeing with itself instead of for
+    # the rule under test.
+    vector["request_digest_document"]["request"]["build"]["producer"] = copy.deepcopy(record)
+
+    old_json = contracts.canonical_digest_document(old_record).decode("utf-8")
+    new_json = contracts.canonical_digest_document(record).decode("utf-8")
+    canonical_json = vector["request_canonical_json"].replace(old_json, new_json, 1)
+    assert canonical_json != vector["request_canonical_json"]
+    vector["request_canonical_json"] = canonical_json
+    digest = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+    vector["request_digest"] = digest
+    vector["receipt"]["receipt_id"] = hashlib.sha256(
+        contracts.canonical_digest_document(
+            contracts.receipt_id_document(
+                request_id=vector["receipt"]["request_id"],
+                attempt_id=vector["receipt"]["attempt_id"],
+                request_digest=digest,
+                candidate_digest=vector["request"]["candidate_digest"],
+                device_group=vector["request"]["execution"]["device_group"],
+                dialect=contracts.NPU_BUILD_DIALECT,
+            )
+        )
+    ).hexdigest()
+
+
 @pytest.mark.parametrize("mutation,reason", [
     # The build identity is part of the request digest.
     ("provenance_builder_version", "build request"),
@@ -145,6 +193,14 @@ def test_the_go_verifier_rebuilds_the_build_request_producer_link_and_evidence()
     # other entry) cannot survive by keeping the declared artifact-set digest.
     ("evidence_source_entry_sha256", "does not bind its entries"),
     ("evidence_manifest_rewritten_consistently", "entries differ from the accepted prebuilt bundle"),
+    # Integer bounds and the receiver's own log are contract rules, not cosmetics.
+    ("evidence_log_size_negative", "build.log.size_bytes"),
+    ("evidence_duration_over_limit", "build.duration_ms"),
+    ("evidence_log_null", "must record its own log"),
+    # The producer link is a bounded record too; these vectors are re-signed so
+    # only the bound can reject them.
+    ("producer_duration_over_limit", "build.producer.duration_ms"),
+    ("producer_log_size_over_limit", "build.producer.log.size_bytes"),
     ("receipt_request_digest", "receipt id does not bind the request"),
 ])
 def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, reason):
@@ -204,6 +260,18 @@ def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, rea
             item for item in evidence_build["artifacts"]["entries"] if item["role"] == "SOURCE"
         )
         entry["sha256"] = "0" * 64
+    elif mutation == "evidence_log_size_negative":
+        evidence_build["log"]["size_bytes"] = -1
+    elif mutation == "evidence_duration_over_limit":
+        evidence_build["duration_ms"] = 3_600_001
+    elif mutation == "evidence_log_null":
+        evidence_build["log"] = None
+    elif mutation == "producer_duration_over_limit":
+        vector["producer_evidence"]["duration_ms"] = 3_600_001
+        _resign_after_producer_change(golden)
+    elif mutation == "producer_log_size_over_limit":
+        vector["producer_evidence"]["log"]["size_bytes"] = 1_000_001
+        _resign_after_producer_change(golden)
     elif mutation == "evidence_manifest_rewritten_consistently":
         # The declared digest is recomputed, so the evidence is internally
         # consistent: only the comparison with the accepted bundle can see it.
