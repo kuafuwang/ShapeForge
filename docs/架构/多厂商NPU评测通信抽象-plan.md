@@ -1065,7 +1065,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
 
 第二轮证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **57 passed**、
 `test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **38 passed**、
-`test_remote_npu_bundle_go_conformance.py` **17 passed**（合计 120）；P0/P0b 171、旧
+`test_remote_npu_bundle_go_conformance.py` **18 passed**（合计 126）；P0/P0b 171、旧
 gRPC/conformance/evidence 87、job/recovery/container/outbox 265 passed/1 skipped 与本轮一致；
 `selfcheck_bridge` 默认围栏 18 failed/1 passed（未改测试）、`TMPDIR=/tmp` 19 passed；
 `generate_evaluator_proto.py --check` 通过（未改 proto）；全套安全套件 **2474 passed / 6 skipped
@@ -1134,8 +1134,8 @@ gRPC/conformance/evidence 87、job/recovery/container/outbox 265 passed/1 skippe
    别的 job」这一字面场景的证伪控制，不能由同 request 的旧 attempt 测试替代。
 
 第四轮证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **58**、
-`test_remote_npu_bundle_grpc.py` **8**、`test_remote_npu_bundle_cleanup.py` **39**、
-`test_remote_npu_bundle_go_conformance.py` **17**（合计 **122**）；P0/P0b **171**（blob_channel
+`test_remote_npu_bundle_grpc.py` **8**、`test_remote_npu_bundle_cleanup.py` **42**、
+`test_remote_npu_bundle_go_conformance.py` **18**（合计 **126**）；P0/P0b **171**（blob_channel
 新增 leased-TTL 对照）；旧 gRPC/conformance/evidence 87；job/recovery/container/outbox 265
 passed/1 skipped；`selfcheck_bridge` 默认围栏 18 failed/1 passed、`TMPDIR=/tmp` 19 passed；
 `generate_evaluator_proto.py --check` 通过（未改 proto）；全套安全套件 **2492 passed / 6 skipped /
@@ -1144,9 +1144,44 @@ passed/1 skipped；`selfcheck_bridge` 默认围栏 18 failed/1 passed、`TMPDIR=
 interrupt/recover/retry 的终态释放、reconcile 改回 attempt=None、release 只捕 BlobError、过期
 判定忽略 lease、Go 换回上一版——对应回归分别转失败。
 
+**P1 复核修复（第六轮，2026-10-29；仍无真实设备）**
+
+e14c758 之后又确认三处同类缺口，仍先复现再修：
+
+1. **回滚失败被静默吞掉（确认，已修）**。复现：ready blob attach 后以无效 capability 让
+   `store.submit` 拒绝，并让 `store.detach` 抛 `OSError`——Submit 正确报 `failed_precondition`、
+   `job_exists=False`，但 lease 仍在该 request 名下且 `close_error is None`；由于 leased blob
+   不过期，这条无 job 的 lease 会一直留着。修复：`_drop_attached_blobs` 对每次失败的 detach 记
+   一条显式 hazard（不扩大回滚范围、不掩盖原始 Submit/attach 异常）。回归：
+   `test_a_failing_rollback_after_an_attach_error_is_recorded`（attach 循环在半途失败）与
+   `test_a_failing_rollback_after_a_store_rejection_is_recorded`（post-attach store 拒绝），
+   两者都断言原异常、无 job、lease 仍在、`close_error` 记录回滚失败，并断言随后 shutdown
+   reconcile 会释放该 lease 与字节。
+2. **默认 `close()` 快路径绕过 reconcile（确认，已修）**。复现：孤儿 lease + `FaultIO` 的
+   `remove` 失败，`close()`（无 wait）返回 True、`closed=True`、`close_error=None`，lease 仍在、
+   blob 仍 ready；只有 `close(wait=...)` 的后台路径会 reconcile。修复：抽出
+   `_finish_shutdown`（兜底 reconcile → `store.close()` → 置 `closed`），快路径与后台路径共用。
+   回归 `test_the_default_close_reconciles_an_orphan_lease`（先停 scheduler 确保走快路径）。
+3. **Go 未校验 report descriptor 身份（确认，已修）**。复现：把 `unsigned_result` 与 `document`
+   两处 report schema 同时改成 v1 evidence schema、重算 canonical 并重签，Go 返回 0，而 Python
+   `result_signature_document` 抛 `result report descriptor is not the candidate report schema`。
+   修复：Go `verifyBundle` 固定 report descriptor 为 `tcenv.eval-report.v3`（与 Python 同一规则，
+   不额外发明 media type 约束）；回归
+   `test_the_go_verifier_rejects_a_consistently_resigned_report_schema`（只保留合法向量、断言失败
+   原因是 report 身份而不是 HMAC）。
+
+第六轮证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **58**、
+`test_remote_npu_bundle_grpc.py` **8**、`test_remote_npu_bundle_cleanup.py` **42**、
+`test_remote_npu_bundle_go_conformance.py` **18**（合计 **126**）；P0/P0b **171**；旧
+gRPC/conformance/evidence 87；job/recovery/container/outbox 265 passed/1 skipped；
+`generate_evaluator_proto.py --check` 通过（未改 proto）；安全全套 **2496 passed / 6 skipped /
+32 failed**（32 项仍是既有围栏环境）。变异核验：把 detach 异常改回静默 `pass`（两条回滚回归转
+失败）、把快路径改回直接 `store.close()`（默认 close 回归转失败）、Go 换回上一版（report 身份
+回归转失败）。
+
 修复后证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **57 passed**、
 `test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **38 passed**、
-`test_remote_npu_bundle_go_conformance.py` **17 passed**（合计 120）；P0/P0b 回归
+`test_remote_npu_bundle_go_conformance.py` **18 passed**（合计 126）；P0/P0b 回归
 `test_remote_npu_{contract,grpc,cleanup}.py` +
 `test_remote_blob_{channel,contract,grpc,go_conformance}.py` **171 passed**；
 `test_remote_grpc_{adapter,tls,contract,revocation}.py` + `test_remote_{conformance,

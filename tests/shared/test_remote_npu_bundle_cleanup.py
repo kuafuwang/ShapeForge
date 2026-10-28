@@ -1423,3 +1423,128 @@ def test_the_fake_vendor_b_driver_reports_a_verification_failure_as_value_error(
     }
     with pytest.raises(ValueError, match="could not verify graph/main.json"):
         driver.prepare(build_graph_execution(), bundle, context)
+
+
+# -- a failed rollback is a hazard, not a silent leak ---------------------
+def test_a_failing_rollback_after_an_attach_error_is_recorded(tmp_path):
+    """The attach loop fails on ``Y``; dropping ``X``'s lease then fails too.
+
+    The Submit error must stay the attach error, the rollback must not widen its
+    scope, and the leftover lease must be recorded: a leased blob never expires,
+    so a silent failure leaks it until an operator notices.
+    """
+
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+
+    root = tmp_path / "run"
+    engine, controller, store = _blob_engine(root)
+    del controller
+    scope = None
+    shared_content_id = None
+    try:
+        shared = _upload(engine, b"A" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 8))
+        shared_content_id = shared["content_id"]
+        pending = _upload(engine, b"B" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 16), commit=False)
+        scope = _scope(engine)
+        request = npu_bundle_request(
+            "bundle-rollback-fails", bundle=_blob_bundle([shared, pending], b"unused"),
+        )
+        real_detach = store.detach
+
+        def broken_detach(*args, **kwargs):
+            raise OSError("detach failed while rolling back")
+
+        store.detach = broken_detach
+        try:
+            with pytest.raises(JobError, match="only a committed blob can be submitted"):
+                _submit_when_idle(engine, request)
+        finally:
+            del store.detach
+        assert engine.store.job_exists(request.request_id) is False
+        # The rollback really did not happen, and that is what was recorded.
+        assert request.request_id in store.state(scope, shared["content_id"]).leases
+        assert engine.close_error is not None
+        assert "could not roll back the lease" in str(engine.close_error)
+        assert "detach failed" in str(engine.close_error)
+        del real_detach
+    finally:
+        engine.close(wait=5)
+    # The shutdown reconciliation releases the jobless lease and its bytes (the
+    # uncommitted upload is a separate artifact the TTL owns).
+    if scope is not None and shared_content_id is not None:
+        from tcenv.remote.blob_channel import BlobError, BlobLimits, BlobStore
+
+        reopened = BlobStore(root / "state" / "blobs", limits=BlobLimits())
+        assert reopened.leases() == {}
+        with pytest.raises(BlobError, match="does not exist"):
+            reopened.state(scope, shared_content_id)
+
+
+def test_a_failing_rollback_after_a_store_rejection_is_recorded(tmp_path):
+    """A rejected Submit (bad capability) after attach, with detach failing."""
+
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+
+    root = tmp_path / "run"
+    engine, controller, store = _blob_engine(root)
+    del controller
+    try:
+        blob = _upload(engine, b"C" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 8))
+        scope = _scope(engine)
+        request = npu_bundle_request("bundle-post-attach-fails", bundle=_blob_bundle([blob], b"unused"))
+
+        def broken_detach(*args, **kwargs):
+            raise OSError("detach failed while rolling back")
+
+        store.detach = broken_detach
+        try:
+            with pytest.raises(JobError, match="capability is expired"):
+                engine.submit(
+                    request=request, expected=engine.expected_identities,
+                    capability_id="capability-never-issued",
+                    required_features=list(npu_bundle_features(blob=True)),
+                    grant_token=NPU_TOKEN,
+                )
+        finally:
+            del store.detach
+        assert engine.store.job_exists(request.request_id) is False
+        assert request.request_id in store.state(scope, blob["content_id"]).leases
+        assert engine.close_error is not None
+        assert "could not roll back the lease" in str(engine.close_error)
+    finally:
+        engine.close(wait=5)
+
+
+# -- the default close() also reconciles ---------------------------------
+def test_the_default_close_reconciles_an_orphan_lease(tmp_path):
+    """``close()`` without a wait used to skip the reconciliation entirely.
+
+    An orphan lease plus a failing delete then looked like a clean shutdown:
+    ``close()`` returned True, ``closed`` was set, ``close_error`` was None and
+    the blob stayed ready.  The fast path now ends in the same guarded
+    reconciliation as the background finalizer.
+    """
+
+    from tests.support.blob_sim.faults import FaultIO
+
+    io = FaultIO()
+    root = tmp_path / "run"
+    engine, controller, store = _fault_blob_engine(root, io)
+    del controller
+    blob = _upload(engine, b"Z" * (262_144 + 32))
+    scope = _scope(engine)
+    store.attach(scope, blob["content_id"], "vanished-default-close")
+    assert store.leases() == {"vanished-default-close": [blob["content_id"]]}
+    io.fail("remove", times=1)
+    # Stop the scheduler first so the close really takes the fast path.
+    engine._stop.set()
+    try:
+        assert engine.close() is False
+        assert engine.closed is True
+        assert engine.close_error is not None
+        assert "blob cleanup failed" in str(engine.close_error)
+        state = engine.blob_store.state(scope, blob["content_id"])
+        assert state.state == "quarantine"
+        assert state.leases == ()
+    finally:
+        engine.close(wait=5)

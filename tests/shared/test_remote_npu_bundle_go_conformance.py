@@ -266,6 +266,42 @@ def test_the_go_verifier_rejects_a_payload_with_a_contradictory_aggregate(tmp_pa
     assert "signed evidence payload differs" in result.stderr, result.stderr
 
 
+def test_the_go_verifier_rejects_a_consistently_resigned_report_schema(tmp_path):
+    """The report descriptor identity is signed too, and checked on both sides.
+
+    Both descriptor copies are rewritten to another schema, the canonical
+    document is rebuilt and the result is re-signed with the golden key, so only
+    the report identity check can catch it (the Python envelope validator refuses
+    exactly this).
+    """
+
+    import hashlib
+    import hmac as hmaclib
+
+    from tcenv.remote import contracts
+
+    golden = copy.deepcopy(load_bundle_golden())
+    bundle = golden["npu_bundle"]
+    unsigned = bundle["signature"]["unsigned_result"]
+    document = bundle["signature"]["document"]
+    for target in (unsigned, document):
+        target["report"]["schema_id"] = contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID
+    bundle["completeness_vectors"] = [
+        vector for vector in bundle["completeness_vectors"] if vector["valid"]
+    ]
+    canonical = contracts.canonical_digest_document(document)
+    key = bytes.fromhex(bundle["signature"]["key_hex"])
+    bundle["signature"]["canonical_json"] = canonical.decode("utf-8")
+    bundle["signature"]["hmac_sha256"] = hmaclib.new(key, canonical, hashlib.sha256).hexdigest()
+    path = tmp_path / "resigned_report_schema.json"
+    path.write_text(json.dumps(golden), encoding="utf-8")
+
+    result = _run_verifier(path)
+    assert result.returncode != 0, "a rewritten report schema was accepted"
+    assert "report descriptor is not the candidate report schema" in result.stderr, result.stderr
+    assert "HMAC" not in result.stderr, result.stderr
+
+
 def test_the_go_verifier_still_accepts_the_earlier_contract_vectors(tmp_path):
     from tests.support.remote_contract import BLOB_GOLDEN, GOLDEN
 

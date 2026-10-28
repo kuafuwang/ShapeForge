@@ -997,8 +997,15 @@ class JobEngine:
         for content_id in content_ids:
             try:
                 self.blob_store.detach(scope, content_id, request_id)
-            except Exception:  # noqa: BLE001 - rollback is best effort by design
-                pass
+            except Exception as exc:  # noqa: BLE001 - never mask the original error
+                # A rollback that did not happen leaves a lease with no job, and
+                # a leased blob does not expire; the caller's own exception is
+                # still what it raises, so the failure is recorded here instead.
+                self._record_blob_hazard(
+                    request_id, None,
+                    "could not roll back the lease on "
+                    f"{content_id}: {type(exc).__name__}: {exc}",
+                )
 
     def _drop_lease_if_uncommitted(
         self, lease: _ArtifactLease, request_id: str, *,
@@ -2855,11 +2862,9 @@ class JobEngine:
                 # joins here, because its return must be bounded by wait.
                 scheduler.join(timeout=probe)
                 if not scheduler.is_alive():
-                    try:
-                        self.store.close()
-                    except Exception as exc:
-                        self._close_error = exc
-                    self._closed_event.set()
+                    # The fast path must end exactly like the background one:
+                    # terminal leases are released before the store closes.
+                    self._finish_shutdown(self.store)
                     return
             threading.Thread(
                 target=self._close_store_after_scheduler,
@@ -2886,12 +2891,23 @@ class JobEngine:
             if scheduler is not None:
                 scheduler.join()
         except Exception as exc:  # pragma: no cover - defensive shutdown boundary
-            self._close_error = exc
+            self._record_close_error(f"could not join the scheduler during close: {exc}")
+        self._finish_shutdown(store)
+
+    def _finish_shutdown(self, store: JobStore) -> None:
+        """Release terminal leases, close the store and set the closed event.
+
+        Every shutdown path ends here (the fast path when an idle scheduler
+        joined within the close probe, and the background finalizer).  Skipping
+        the reconciliation on the fast path left terminal leases and ready blobs
+        behind while ``close()`` reported a clean shutdown, so this is the one
+        place that must never be bypassed.  Nothing may stop the store from
+        closing or the ``closed`` event from being set: a close that never
+        completes is worse than a recorded reconciliation failure.
+        """
+
         # Release terminal job leases before the store closes; a failing cleanup
         # is recorded (and the blob stays quarantined) instead of being hidden.
-        # Nothing here may stop the store from closing or the ``closed`` event
-        # from being set: a close that never completes is worse than a recorded
-        # reconciliation failure.
         try:
             self.reconcile_blobs()
         except Exception as exc:  # noqa: BLE001 - defensive shutdown boundary
@@ -2899,7 +2915,8 @@ class JobEngine:
         try:
             store.close()
         except Exception as exc:  # pragma: no cover - defensive shutdown boundary
-            self._close_error = exc
+            if self._close_error is None:
+                self._close_error = exc
         finally:
             self._closed_event.set()
 

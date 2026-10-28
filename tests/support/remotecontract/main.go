@@ -1050,6 +1050,17 @@ func verifyBundle(golden *BundleGolden) error {
 	if evidenceDescriptor["media_type"] != "application/vnd.tcenv.npu-bundle.timing-evidence.v2+json" {
 		return errors.New("bundle evidence descriptor is not the version 2 media type")
 	}
+	// The report descriptor is the other signed identity.  Python's
+	// ``result_signature_document`` refuses any report schema other than
+	// ``tcenv.eval-report.v3``, so a consistently rewritten and re-signed vector
+	// must fail here for the same reason instead of only by an HMAC mismatch.
+	reportDescriptor, ok := golden.Signature.UnsignedResult["report"].(map[string]any)
+	if !ok {
+		return errors.New("bundle result is missing the report descriptor")
+	}
+	if reportDescriptor["schema_id"] != "tcenv.eval-report.v3" {
+		return errors.New("bundle report descriptor is not the candidate report schema")
+	}
 	if err := verifyBundleEvidence(golden.Evidence, golden.ArtifactSetDigest); err != nil {
 		return err
 	}
