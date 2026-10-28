@@ -365,6 +365,7 @@ class GrpcEvaluator:
         clock: Callable[[], float] = time.monotonic,
         blob_descriptor: Callable[[Any], Any] | None = None,
         bundle_provider: Callable[[Any], Any] | None = None,
+        build_provider: Callable[[Any], Any] | None = None,
     ) -> None:
         self.stub = stub
         self.token_provider = token_provider
@@ -392,6 +393,10 @@ class GrpcEvaluator:
         # Like the blob descriptor hook it is composition-root configuration, so a
         # caller can never point the evaluator at an arbitrary artifact set.
         self.bundle_provider = bundle_provider
+        # Host-side hook returning the typed NpuBuildRequest this candidate was
+        # built with (or must be built with).  The build profile is a registered
+        # identity, so a caller cannot turn it into an arbitrary command.
+        self.build_provider = build_provider
         self._lock = threading.RLock()
         self._provenance: dict[str, Any] | None = None
         self._epoch = ""
@@ -600,6 +605,27 @@ class GrpcEvaluator:
                     "a blob candidate must not also carry inline source bytes",
                 )
             return replace(external, candidate_sha256="", npu=npu)
+        if self.contract.build_contract and self._npu_execution.artifact_kind == "bundle":
+            # A prebuilt artifact set: the host built it and the provenance says
+            # which registered builder/toolchain produced exactly these bytes.
+            bundle = self._bundle_for(external)
+            if external.source:
+                raise EvaluationUnavailable(
+                    "evaluation_request_invalid",
+                    "a prebuilt bundle must not also carry inline source bytes",
+                )
+            npu = NpuSourceRequest(
+                candidate_digest=CandidateDigest(
+                    contracts.BUNDLE_DIGEST_ALGORITHM, bundle.artifact_set_digest,
+                    allowed_algorithms=(contracts.BUNDLE_DIGEST_ALGORITHM,),
+                ),
+                execution=self._npu_execution,
+                bundle=bundle,
+            )
+            return replace(
+                external, candidate_sha256="", source=b"", npu=npu,
+                contract_dialect=self.contract, build=self._build_for(external),
+            )
         if self.contract.npu_bundle and self._npu_execution.artifact_kind == "bundle":
             bundle = self._bundle_for(external)
             if external.source:
@@ -618,6 +644,18 @@ class GrpcEvaluator:
             return replace(
                 external, candidate_sha256="", source=b"", npu=npu,
                 contract_dialect=self.contract,
+            )
+        if self.contract.build_contract:
+            # An evaluator-side build: the source travels inline and the build
+            # document names the registered profile this attempt must use.
+            digest = hashlib.sha256(external.source).hexdigest()
+            npu = NpuSourceRequest(
+                candidate_digest=CandidateDigest("sha256", digest),
+                execution=self._npu_execution,
+            )
+            return replace(
+                external, candidate_sha256="", npu=npu,
+                contract_dialect=self.contract, build=self._build_for(external),
             )
         digest = hashlib.sha256(external.source).hexdigest()
         npu = NpuSourceRequest(
@@ -652,6 +690,51 @@ class GrpcEvaluator:
         except BundleError as exc:
             raise EvaluationUnavailable("bundle_missing", f"artifact bundle is invalid: {exc}") from exc
         return value
+
+    def _build_for(self, external: Any) -> Any:
+        """Return the typed build identity for this candidate (host-owned hook)."""
+
+        from .job_types import NpuBuildRequest
+
+        if self.build_provider is None:
+            raise EvaluationUnavailable(
+                "build_missing",
+                "the build contract requires a composition-root build provenance provider",
+            )
+        try:
+            value = self.build_provider(external)
+        except EvaluationUnavailable:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a host hook failure is not a result
+            raise EvaluationUnavailable("build_missing", f"build provenance lookup failed: {exc}") from exc
+        if not isinstance(value, NpuBuildRequest):
+            raise EvaluationUnavailable("build_missing", "the build provider returned an untyped build request")
+        if value.mode not in ("prebuilt", "evaluator"):
+            raise EvaluationUnavailable("build_missing", "the build provider returned an unknown mode")
+        if self._npu_execution is None:
+            raise EvaluationUnavailable("capability_invalid", "capabilities omitted the NPU execution binding")
+        if value.mode == "prebuilt" and self._npu_execution.artifact_kind != "bundle":
+            raise EvaluationUnavailable(
+                "build_missing", "a prebuilt artifact set requires a bundle execution binding"
+            )
+        if value.mode == "evaluator" and self._npu_execution.artifact_kind != "source":
+            raise EvaluationUnavailable(
+                "build_missing", "an evaluator build requires an inline-source execution binding"
+            )
+        return value
+
+    def wire_build_provenance(self, request: EvaluationRequest) -> dict[str, Any] | None:
+        """Return the BuildProvenance document this evaluator will submit.
+
+        The host outbox stores it as an independent field so a resumed row and
+        its signed BuildEvidence describe one build identity, not two.
+        """
+
+        if not self.contract.build_contract:
+            return None
+        self._handshake()
+        wired = self._wire_request(self._external_request(request))
+        return None if wired.build is None else wired.build.to_dict()
 
     def _blob_descriptor_for(self, external: Any) -> Any:
         """Return the uploaded descriptor for this candidate (host-owned hook)."""
@@ -763,11 +846,16 @@ class GrpcEvaluator:
             try:
                 group = DeviceGroupBinding(**provenance["device_group"])
                 if self.contract.npu_bundle:
-                    # The bundle contract binds the full version 4 execution
-                    # shape the evaluator advertised, never a guessed default.
-                    task_family = {"KERNEL": "kernel", "GRAPH": "graph"}.get(
-                        provenance["launch_kind"]
-                    )
+                    # The bundle contract binds the full execution shape the
+                    # evaluator advertised, never a guessed default.  The build
+                    # contract adds the prebuilt ``kernel_module`` family.
+                    if self.contract.build_contract and provenance["artifact_kind"] == "bundle":
+                        task_family, spec_version = "kernel_module", 5
+                    else:
+                        task_family = {"KERNEL": "kernel", "GRAPH": "graph"}.get(
+                            provenance["launch_kind"]
+                        )
+                        spec_version = 4
                     if task_family is None:
                         raise ValueError("unsupported launch kind")
                     execution = NpuExecutionSpec(
@@ -776,14 +864,14 @@ class GrpcEvaluator:
                         launch_kind=provenance["launch_kind"],
                         launch_subtype=provenance["launch_subtype"],
                         source_media_type=(
-                            "text/plain; charset=utf-8" if task_family == "kernel"
+                            "text/plain; charset=utf-8" if task_family != "graph"
                             else "application/octet-stream"
                         ),
                         synchronization=(
-                            "stream-event" if task_family == "kernel"
+                            "stream-event" if task_family != "graph"
                             else "service-completion-token"
                         ),
-                        spec_version=4,
+                        spec_version=spec_version,
                         task_family=task_family,
                     )
                 else:
@@ -1197,6 +1285,14 @@ class GrpcEvaluator:
                         external.npu.execution.declared_resources.to_dict()
                         if self.contract.npu_bundle else None
                     ),
+                    expected_build=(
+                        None if not self.contract.build_contract or external.build is None
+                        else external.build.to_dict()
+                    ),
+                    request_artifact=(
+                        external.artifact_document()
+                        if self.contract.build_contract else None
+                    ),
                     measurement_kind=provenance["measurement_kind"],
                     publication_allowed=provenance["publication_allowed"],
                     report_status=report.get("status") if isinstance(report, dict) else None,
@@ -1264,6 +1360,7 @@ class GrpcEvaluatorFactory:
         progress_publisher: Callable[[Path, dict[str, Any]], None] | None = None,
         blob_descriptor: Callable[[Any], Any] | None = None,
         bundle_provider: Callable[[Any], Any] | None = None,
+        build_provider: Callable[[Any], Any] | None = None,
     ) -> None:
         if not isinstance(run_id, str) or not run_id:
             raise ValueError("gRPC evaluator run_id is required")
@@ -1303,6 +1400,9 @@ class GrpcEvaluatorFactory:
         # Like the blob descriptor hook it is composition-root configuration, so a
         # caller can never point the evaluator at an arbitrary artifact set.
         self.bundle_provider = bundle_provider
+        # Host-side hook returning the typed build identity (a registered build
+        # profile), never a command or a path.
+        self.build_provider = build_provider
         self._lock = threading.RLock()
         self._sessions: dict[tuple[str, str, str], GrpcEvaluator] = {}
         self._closed = False
@@ -1397,6 +1497,7 @@ class GrpcEvaluatorFactory:
                     progress_publisher=self.progress_publisher,
                     blob_descriptor=self.blob_descriptor,
                     bundle_provider=self.bundle_provider,
+                    build_provider=self.build_provider,
                 )
                 self._sessions[key] = client
             return client

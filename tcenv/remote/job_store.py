@@ -1240,6 +1240,8 @@ class JobStore:
                     expected_resources=(
                         execution["resources"] if dialect.npu_bundle else None
                     ),
+                    expected_build=accepted.get("build") if dialect.build_contract else None,
+                    request_artifact=accepted.get("artifact") if dialect.build_contract else None,
                     measurement_kind=provenance["measurement_kind"],
                     publication_allowed=provenance["publication_allowed"],
                     report_status=report_status,
@@ -2320,6 +2322,13 @@ class JobStore:
                     expected_resources=(
                         request.npu.execution.declared_resources.to_dict()
                         if self.contract.npu_bundle else None
+                    ),
+                    expected_build=(
+                        request.build.to_dict()
+                        if self.contract.build_contract and request.build is not None else None
+                    ),
+                    request_artifact=(
+                        request.artifact_document() if self.contract.build_contract else None
                     ),
                     measurement_kind=provenance.get("measurement_kind"),
                     publication_allowed=provenance.get("publication_allowed"),

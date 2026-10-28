@@ -291,6 +291,9 @@ class NpuExecutionSpec:
     ``spec_version=1`` is the P0/P0b source/KERNEL/SIMT shape and serializes to
     exactly the seven original fields.  ``spec_version=4`` is the P1 shape and
     adds the execution schema id, the task family and the declared resources.
+    ``spec_version=5`` keeps that document but adds the ``kernel_module`` task
+    family (a prebuilt executable module launched as KERNEL/SIMT); the earlier
+    contract versions reject that family, so the version is explicit here.
     """
 
     device_group: DeviceGroupBinding
@@ -308,11 +311,18 @@ class NpuExecutionSpec:
     def __post_init__(self) -> None:
         if not isinstance(self.device_group, DeviceGroupBinding):
             raise JobError("invalid_argument", "execution requires a typed DeviceGroupBinding")
-        if self.spec_version not in (1, 4):
-            raise JobError("invalid_argument", "execution spec_version must be 1 or 4")
-        if self.spec_version == 4:
-            if self.task_family not in ("kernel", "graph"):
-                raise JobError("invalid_argument", "execution task_family must be kernel or graph")
+        if self.spec_version not in (1, 4, 5):
+            raise JobError("invalid_argument", "execution spec_version must be 1, 4 or 5")
+        if self.spec_version == 5:
+            if self.task_family != "kernel_module":
+                raise JobError(
+                    "invalid_argument", "execution spec_version 5 is the kernel_module build shape"
+                )
+        if self.spec_version >= 4:
+            if self.task_family not in ("kernel", "kernel_module", "graph"):
+                raise JobError(
+                    "invalid_argument", "execution task_family must be kernel, kernel_module or graph"
+                )
             if self.resources is None:
                 object.__setattr__(self, "resources", NpuResources())
             elif not isinstance(self.resources, NpuResources):
@@ -327,6 +337,21 @@ class NpuExecutionSpec:
             raise JobError("invalid_argument", str(exc)) from exc
 
     def _normalized(self) -> dict[str, Any]:
+        if self.spec_version == 5:
+            return contracts.npu_build_execution_document(
+                {
+                    "schema_id": contracts.NPU_BUNDLE_EXECUTION_SCHEMA_ID,
+                    "task_family": self.task_family,
+                    "artifact_kind": self.artifact_kind,
+                    "launch_kind": self.launch_kind,
+                    "launch_subtype": self.launch_subtype,
+                    "source_media_type": self.source_media_type,
+                    "device_group": self.device_group.to_dict(),
+                    "resources": self.resources.to_dict(),
+                    "required_timing_sources": list(self.required_timing_sources),
+                    "synchronization": self.synchronization,
+                }
+            )
         if self.spec_version == 4:
             return contracts.npu_bundle_execution_document(
                 {
@@ -364,7 +389,7 @@ class NpuExecutionSpec:
         return self.resources or NpuResources()
 
     def to_dict(self) -> dict[str, Any]:
-        if self.spec_version != 4:
+        if self.spec_version < 4:
             return self._p0_dict()
         return {
             "schema_id": contracts.NPU_BUNDLE_EXECUTION_SCHEMA_ID,
@@ -384,14 +409,18 @@ class NpuExecutionSpec:
         if not isinstance(document, Mapping):
             raise JobError("invalid_argument", "execution spec must be an object")
         version = 4 if "schema_id" in document else 1
+        if version == 4 and document.get("task_family") == "kernel_module":
+            version = 5
         try:
-            if version == 4:
+            if version == 5:
+                normalized = contracts.npu_build_execution_document(document)
+            elif version == 4:
                 normalized = contracts.npu_bundle_execution_document(document)
             else:
                 normalized = contracts.npu_execution_document(document)
             group = DeviceGroupBinding(**normalized["device_group"])
             resources = None
-            if version == 4:
+            if version >= 4:
                 resources = NpuResources(**normalized["resources"])
             return cls(
                 device_group=group,
@@ -402,7 +431,7 @@ class NpuExecutionSpec:
                 required_timing_sources=tuple(normalized["required_timing_sources"]),
                 synchronization=normalized["synchronization"],
                 spec_version=version,
-                task_family=normalized["task_family"] if version == 4 else None,
+                task_family=normalized["task_family"] if version >= 4 else None,
                 resources=resources,
             )
         except contracts.ContractError as exc:
@@ -558,6 +587,73 @@ class NpuSourceRequest:
 
 
 @dataclass(frozen=True)
+class NpuBuildRequest:
+    """The request-level BuildProvenance identity (P1c / document version 5).
+
+    A ``prebuilt`` row names the artifact set the control host built and the
+    exact provenance it produced; an ``evaluator`` row names the registered
+    build profile this attempt must use and leaves the artifact digest unset.
+    Only a registered profile can run it: the fields here are an expectation to
+    verify, never an authorization to run an arbitrary command.
+    """
+
+    mode: str
+    builder_id: str
+    builder_version: str
+    build_host: str
+    build_profile: str
+    toolchain: Mapping[str, str]
+    compile_profile: Mapping[str, Any]
+    source_sha256: str
+    artifact_set_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        try:
+            contracts.build_request_document(self.to_dict())
+        except contracts.ContractError as exc:
+            raise JobError("invalid_argument", f"build request is invalid: {exc}") from exc
+
+    def provenance_document(self) -> dict[str, Any]:
+        return {
+            "schema_id": contracts.NPU_BUILD_PROVENANCE_SCHEMA_ID,
+            "builder_id": self.builder_id,
+            "builder_version": self.builder_version,
+            "build_host": self.build_host,
+            "build_profile": self.build_profile,
+            "toolchain": dict(self.toolchain),
+            "compile_profile": dict(self.compile_profile),
+            "source_sha256": self.source_sha256,
+            "artifact_set_digest": self.artifact_set_digest,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_id": contracts.NPU_BUILD_REQUEST_SCHEMA_ID,
+            "mode": self.mode,
+            "provenance": self.provenance_document(),
+        }
+
+    @classmethod
+    def from_dict(cls, document: Mapping[str, Any]) -> "NpuBuildRequest":
+        try:
+            normalized = contracts.build_request_document(document)
+        except contracts.ContractError as exc:
+            raise JobError("invalid_argument", f"build request is invalid: {exc}") from exc
+        provenance = normalized["provenance"]
+        return cls(
+            mode=normalized["mode"],
+            builder_id=provenance["builder_id"],
+            builder_version=provenance["builder_version"],
+            build_host=provenance["build_host"],
+            build_profile=provenance["build_profile"],
+            toolchain=provenance["toolchain"],
+            compile_profile=provenance["compile_profile"],
+            source_sha256=provenance["source_sha256"],
+            artifact_set_digest=provenance["artifact_set_digest"],
+        )
+
+
+@dataclass(frozen=True)
 class ExternalEvaluationRequest:
     """The validated v1 execution request with exact candidate bytes."""
 
@@ -589,6 +685,10 @@ class ExternalEvaluationRequest:
     #: version cannot be inferred from the payload; the server still rejects a
     #: request whose dialect differs from its own configured one.
     contract_dialect: contracts.ContractDialect | None = None
+    #: Independent BuildProvenance identity for the P1c build contract.  It is
+    #: part of the canonical request digest, the durable row and the resume
+    #: identity, but never part of ``artifact_set_digest``.
+    build: NpuBuildRequest | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.request_id, str) or not _ID.fullmatch(self.request_id):
@@ -638,6 +738,17 @@ class ExternalEvaluationRequest:
                 raise JobError(
                     "invalid_argument", "the blob contract does not accept an inline source candidate"
                 )
+            if dialect.build_contract:
+                if self.build is None:
+                    raise JobError(
+                        "invalid_argument", "the build contract requires a BuildProvenance identity"
+                    )
+                if not isinstance(self.build, NpuBuildRequest):
+                    raise JobError("invalid_argument", "build provenance must be typed")
+            elif self.build is not None:
+                raise JobError(
+                    "invalid_argument", "build provenance belongs to the build contract version"
+                )
         # This performs all source, enum, integer, UTF-8 and explicit-default checks.
         self.digest_document()
 
@@ -674,6 +785,10 @@ class ExternalEvaluationRequest:
             fields["blob_ref"] = self.npu.blob.to_dict()
         if self.contract.npu_bundle:
             fields["artifact"] = self.artifact_document()
+        if self.contract.build_contract:
+            if self.build is None:
+                raise JobError("invalid_argument", "the build contract requires a BuildProvenance identity")
+            fields["build"] = self.build.to_dict()
         return fields
 
     def artifact_document(self) -> dict[str, Any]:
@@ -766,6 +881,8 @@ class ExternalEvaluationRequest:
         document.pop("artifact", None)
         if self.npu is not None and self.npu.bundle is not None:
             document["bundle"] = self.npu.bundle.to_worker_dict()
+        if self.build is not None:
+            document["build"] = self.build.to_dict()
         return document
 
     @classmethod
@@ -779,7 +896,7 @@ class ExternalEvaluationRequest:
         if "execution" in document or "candidate_digest" in document:
             from .artifact_bundle import ArtifactBundle, BundleError
 
-            extra = {key for key in ("blob_ref", "bundle") if key in document}
+            extra = {key for key in ("blob_ref", "bundle", "build") if key in document}
             allowed = (set(cls.without_source_fields()) - {"candidate_sha256"}) | {
                 "candidate_digest", "execution", "source_base64",
             } | extra
@@ -787,14 +904,19 @@ class ExternalEvaluationRequest:
                 raise JobError("invalid_argument", "worker NPU request fields are missing or unknown")
             fields = {
                 key: value for key, value in document.items()
-                if key not in {"source_base64", "candidate_digest", "execution", "blob_ref", "bundle"}
+                if key not in {
+                    "source_base64", "candidate_digest", "execution", "blob_ref", "bundle", "build",
+                }
             }
             if fields["cases"] is not None:
                 fields["cases"] = tuple(fields["cases"])
             execution = NpuExecutionSpec.from_dict(document["execution"])
+            build = (
+                NpuBuildRequest.from_dict(document["build"]) if "build" in document else None
+            )
             bundle = None
             if "bundle" in document:
-                if execution.version != 4 or execution.artifact_kind != "bundle":
+                if execution.version < 4 or execution.artifact_kind != "bundle":
                     raise JobError(
                         "invalid_argument", "an artifact bundle requires the version 4 bundle execution spec"
                     )
@@ -835,12 +957,15 @@ class ExternalEvaluationRequest:
             )
             if bundle is None and npu.candidate_digest.value != hashlib.sha256(source).hexdigest():
                 raise JobError("invalid_argument", "worker NPU candidate digest does not match the source")
-            dialect = (
-                contracts.NPU_BUNDLE_DIALECT if execution.version == 4
-                else contracts.NPU_SOURCE_DIALECT
-            )
+            if build is not None:
+                dialect = contracts.NPU_BUILD_DIALECT
+            elif execution.version >= 4:
+                dialect = contracts.NPU_BUNDLE_DIALECT
+            else:
+                dialect = contracts.NPU_SOURCE_DIALECT
             return cls(
                 **fields, source=source, candidate_sha256="", npu=npu, contract_dialect=dialect,
+                build=build,
             )
         allowed = set(cls.without_source_fields()) | {"source_base64"}
         if set(document) != allowed:
@@ -872,12 +997,15 @@ class ExternalEvaluationRequest:
                 # legacy field here would silently accept a mixed request, so it
                 # is a stored-state corruption instead.
                 raise JobError("invalid_argument", "stored NPU request also carries candidate_sha256")
-            extra = {key for key in ("blob_ref", "artifact") if key in fields}
+            extra = {key for key in ("blob_ref", "artifact", "build") if key in fields}
             allowed = (set(cls.without_source_fields()) - {"candidate_sha256"}) | {
                 "candidate_digest", "execution",
             } | extra
             if set(fields) != allowed:
                 raise JobError("invalid_argument", "stored NPU request fields are missing or unknown")
+            build = (
+                NpuBuildRequest.from_dict(fields.pop("build")) if "build" in fields else None
+            )
             npu_document = {
                 "candidate_digest": fields.pop("candidate_digest"),
                 "execution": fields.pop("execution"),
@@ -915,13 +1043,15 @@ class ExternalEvaluationRequest:
                 raise JobError("invalid_argument", "stored NPU candidate digest does not match the source")
             if npu.blob is not None:
                 dialect = contracts.NPU_BLOB_DIALECT
-            elif npu.execution.version == 4:
+            elif build is not None:
+                dialect = contracts.NPU_BUILD_DIALECT
+            elif npu.execution.version >= 4:
                 dialect = contracts.NPU_BUNDLE_DIALECT
             else:
                 dialect = contracts.NPU_SOURCE_DIALECT
             return cls(
                 **fields, source=request_source, candidate_sha256="", npu=npu,
-                contract_dialect=dialect,
+                contract_dialect=dialect, build=build,
             )
         return cls(**fields, source=source)
 

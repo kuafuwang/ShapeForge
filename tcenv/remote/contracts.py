@@ -74,6 +74,38 @@ NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID = "tcenv.remote.npu-bundle.timing-evidence.
 NPU_BUNDLE_EVIDENCE_MEDIA_TYPE = "application/vnd.tcenv.npu-bundle.timing-evidence.v2+json"
 NPU_TIMING_EVIDENCE_SCHEMA_ID = "tcenv.remote.npu-source.timing-evidence.1"
 NPU_EVIDENCE_MEDIA_TYPE = "application/vnd.tcenv.npu-source.timing-evidence.v1+json"
+# P1c NPU contract: the same artifact-set contract with a *build* identity.  The
+# request declares how the executable artifact set was (or will be) produced and
+# the result carries a BuildEvidence document in the signed evidence.  It is a
+# later document version, not an optional field on `npu-bundle`, and the build
+# provenance is an independent document: `artifact_set_digest` keeps describing
+# only the artifact manifest/bytes.
+NPU_BUILD_API_CONTRACT_ID = "tcenv.remote.npu-build.evaluator-api.1"
+NPU_BUILD_EVIDENCE_CONTRACT_ID = "tcenv.remote.npu-build.evidence.1"
+NPU_BUILD_REQUEST_DOCUMENT_TYPE = "tcenv.remote.npu-build.request-digest"
+NPU_BUILD_RECEIPT_DOCUMENT_TYPE = "tcenv.remote.npu-build.receipt-id"
+NPU_BUILD_RESULT_DOCUMENT_TYPE = "tcenv.remote.npu-build.result-signature"
+NPU_BUILD_DOCUMENT_VERSION = 5
+NPU_BUILD_REQUEST_SCHEMA_ID = "tcenv.remote.npu-build.build-request.1"
+NPU_BUILD_PROVENANCE_SCHEMA_ID = "tcenv.remote.npu-build.provenance.1"
+NPU_BUILD_EVIDENCE_SCHEMA_ID = "tcenv.remote.npu-build.evidence.1"
+NPU_BUILD_TIMING_EVIDENCE_SCHEMA_ID = "tcenv.remote.npu-build.timing-evidence.3"
+NPU_BUILD_EVIDENCE_MEDIA_TYPE = "application/vnd.tcenv.npu-build.timing-evidence.v3+json"
+#: How the executable artifact set is produced.  ``prebuilt`` means the control
+#: host built it before Submit and the evaluator only verifies/loads it;
+#: ``evaluator`` means this attempt builds the source it received.
+BUILD_MODES = frozenset({"prebuilt", "evaluator"})
+#: Where the build ran.  The two values are distinct host identities, never a
+#: free-form label.
+BUILD_HOSTS = {"prebuilt": "control_host", "evaluator": "evaluator"}
+#: Outcome of a build.  ``reused`` is a verified prebuilt artifact set (no
+#: compile happened in this attempt); the other values are one attempt's own
+#: build status.  ``not_run`` is a diagnostic row (timeout before the build).
+BUILD_STATUSES = frozenset({"reused", "ok", "compile_failed", "not_run"})
+#: The shared error classification.  A build failure is a *candidate* compile
+#: failure, never an infrastructure timeout; a toolchain/profile mismatch is
+#: refused before Submit/create/start and never reaches a result at all.
+BUILD_ERROR_CLASSES = frozenset({"compile", "toolchain_profile", "deadline"})
 # Clock domain recorded when no device clock was ever observed (killed worker).
 NPU_UNOBSERVED_CLOCK_DOMAIN = "unobserved"
 #: The candidate report schema every contract version signs.  It is shared by
@@ -124,6 +156,11 @@ class ContractDialect:
     #: scope; ``document_version=4`` is the first version that enforces what it
     #: writes.
     enforce_evidence_identity: bool = False
+    #: Whether this contract version binds a BuildProvenance document in the
+    #: canonical request and a BuildEvidence document in the signed evidence.
+    #: It is a later version of the artifact-set contract; the earlier versions
+    #: reject both fields as unknown and their digests never change.
+    build_contract: bool = False
 
     @property
     def identity_pair(self) -> tuple[str, str]:
@@ -141,7 +178,7 @@ class ContractDialect:
     def candidate_algorithms(self) -> tuple[str, ...]:
         """CandidateDigest algorithms this dialect accepts."""
 
-        if self.npu_bundle:
+        if self.npu_bundle or self.build_contract:
             # The bundle contract exposes the source/bundle artifact oneof, so
             # both candidate identities are legitimate *under* the same
             # contract: an inline source keeps `sha256`, an artifact set uses
@@ -201,7 +238,24 @@ NPU_BUNDLE_DIALECT = ContractDialect(
     evidence_media_type=NPU_BUNDLE_EVIDENCE_MEDIA_TYPE,
     enforce_evidence_identity=True,
 )
-NPU_DIALECTS = (NPU_SOURCE_DIALECT, NPU_BLOB_DIALECT, NPU_BUNDLE_DIALECT)
+NPU_BUILD_DIALECT = ContractDialect(
+    api_contract_id=NPU_BUILD_API_CONTRACT_ID,
+    evidence_contract_id=NPU_BUILD_EVIDENCE_CONTRACT_ID,
+    request_document_type=NPU_BUILD_REQUEST_DOCUMENT_TYPE,
+    receipt_document_type=NPU_BUILD_RECEIPT_DOCUMENT_TYPE,
+    result_document_type=NPU_BUILD_RESULT_DOCUMENT_TYPE,
+    document_version=NPU_BUILD_DOCUMENT_VERSION,
+    npu_source=True,
+    # A build request still carries exactly one artifact branch: inline source
+    # for an evaluator build, the artifact set for a prebuilt one.  The build
+    # document says which, and the two must agree.
+    artifact_form="bundle",
+    evidence_schema_id=NPU_BUILD_TIMING_EVIDENCE_SCHEMA_ID,
+    evidence_media_type=NPU_BUILD_EVIDENCE_MEDIA_TYPE,
+    enforce_evidence_identity=True,
+    build_contract=True,
+)
+NPU_DIALECTS = (NPU_SOURCE_DIALECT, NPU_BLOB_DIALECT, NPU_BUNDLE_DIALECT, NPU_BUILD_DIALECT)
 NPU_API_CONTRACT_IDS = frozenset(dialect.api_contract_id for dialect in NPU_DIALECTS)
 NPU_EVIDENCE_CONTRACT_IDS = frozenset(dialect.evidence_contract_id for dialect in NPU_DIALECTS)
 CONTRACT_DIALECTS = {
@@ -209,6 +263,7 @@ CONTRACT_DIALECTS = {
     NPU_SOURCE_DIALECT.api_contract_id: NPU_SOURCE_DIALECT,
     NPU_BLOB_DIALECT.api_contract_id: NPU_BLOB_DIALECT,
     NPU_BUNDLE_DIALECT.api_contract_id: NPU_BUNDLE_DIALECT,
+    NPU_BUILD_DIALECT.api_contract_id: NPU_BUILD_DIALECT,
 }
 
 
@@ -678,6 +733,9 @@ _NPU_BLOB_REQUEST_FIELDS = _NPU_SOURCE_REQUEST_FIELDS | {"blob_ref"}
 _NPU_BUNDLE_REQUEST_FIELDS = frozenset(
     (set(_REQUEST_FIELD_SET) - {"candidate_sha256"}) | {"candidate_digest", "execution", "artifact"}
 )
+#: P1c adds exactly one independent document to the artifact-set request: the
+#: BuildProvenance identity (mode plus the builder/toolchain/profile it declares).
+_NPU_BUILD_REQUEST_FIELDS = _NPU_BUNDLE_REQUEST_FIELDS | {"build"}
 ARTIFACT_SOURCE = "source"
 ARTIFACT_BUNDLE = "bundle"
 _NPU_BUNDLE_EXECUTION_FIELDS = frozenset({
@@ -710,8 +768,54 @@ MAX_LOGICAL_DEVICES = 8
 MAX_DECLARED_SPANS = 64
 
 
+#: P1c adds one derived shape: a *prebuilt* executable module is an artifact set
+#: launched as KERNEL/SIMT with stream-event synchronization.  It is a new task
+#: family precisely so the earlier contract versions keep rejecting it.
+_TASK_FAMILIES_BUILD = {
+    **_TASK_FAMILIES,
+    "kernel_module": ("bundle", "KERNEL", "SIMT", "stream-event"),
+}
+_TASK_FAMILY_MEDIA_TYPE_BUILD = {
+    **_TASK_FAMILY_MEDIA_TYPE,
+    "kernel_module": "text/plain; charset=utf-8",
+}
+
+
 def npu_bundle_execution_document(value: Any) -> dict[str, Any]:
-    """Validate the versioned P1 ExecutionSpec document.
+    """Validate the version 4 P1 ExecutionSpec document."""
+
+    return _npu_execution_document(
+        value, families=_TASK_FAMILIES, media_types=_TASK_FAMILY_MEDIA_TYPE,
+        error_families="kernel or graph",
+    )
+
+
+def npu_build_execution_document(value: Any) -> dict[str, Any]:
+    """Validate the version 5 ExecutionSpec document (adds ``kernel_module``)."""
+
+    return _npu_execution_document(
+        value, families=_TASK_FAMILIES_BUILD, media_types=_TASK_FAMILY_MEDIA_TYPE_BUILD,
+        error_families="kernel, kernel_module or graph",
+    )
+
+
+def npu_execution_document_for(
+    value: Any, *, dialect: ContractDialect = NPU_SOURCE_DIALECT,
+) -> dict[str, Any]:
+    """Validate an execution document with the schema its contract version owns."""
+
+    if dialect.build_contract:
+        return npu_build_execution_document(value)
+    if dialect.npu_bundle:
+        return npu_bundle_execution_document(value)
+    return npu_execution_document(value)
+
+
+def _npu_execution_document(
+    value: Any, *, families: Mapping[str, tuple[str, str, str, str]],
+    media_types: Mapping[str, str], error_families: str,
+) -> dict[str, Any]:
+    """Validate the versioned artifact-set ExecutionSpec document.
 
     It states the task family, the launch kind, the logical device group, the
     declared resource/topology requirements, the synchronization strategy and
@@ -725,9 +829,9 @@ def npu_bundle_execution_document(value: Any) -> dict[str, Any]:
     if value["schema_id"] != NPU_BUNDLE_EXECUTION_SCHEMA_ID:
         raise ContractError("execution spec schema_id is not supported by this contract version")
     task_family = _text(value["task_family"], "execution.task_family", max_bytes=32)
-    shape = _TASK_FAMILIES.get(task_family)
+    shape = families.get(task_family)
     if shape is None:
-        raise ContractError("execution.task_family must be kernel or graph")
+        raise ContractError(f"execution.task_family must be {error_families}")
     artifact_kind = _text(value["artifact_kind"], "execution.artifact_kind", max_bytes=32)
     launch_kind = _text(value["launch_kind"], "execution.launch_kind", max_bytes=32)
     launch_subtype = _text(value["launch_subtype"], "execution.launch_subtype", max_bytes=32)
@@ -747,7 +851,7 @@ def npu_bundle_execution_document(value: Any) -> dict[str, Any]:
     # it is not the same as declaring zero spans.
     declared = device_group_requirements(value["resources"])
     media_type = _text(value["source_media_type"], "execution.source_media_type", max_bytes=64)
-    if media_type != _TASK_FAMILY_MEDIA_TYPE[task_family]:
+    if media_type != media_types[task_family]:
         raise ContractError(
             f"execution.task_family {task_family!r} requires source_media_type "
             f"{_TASK_FAMILY_MEDIA_TYPE[task_family]!r}"
@@ -806,18 +910,399 @@ def npu_artifact_document(value: Any, *, execution: Mapping[str, Any]) -> dict[s
     }}
 
 
+_BUILD_TOOLCHAIN_FIELDS = frozenset({"id", "version", "sdk_version"})
+_BUILD_PROVENANCE_FIELDS = frozenset({
+    "schema_id", "builder_id", "builder_version", "build_host", "build_profile",
+    "toolchain", "compile_profile", "source_sha256", "artifact_set_digest",
+})
+_BUILD_REQUEST_FIELDS = frozenset({"schema_id", "mode", "provenance"})
+_BUILD_ARTIFACTS_FIELDS = frozenset({"schema_id", "entries"})
+_BUILD_LOG_FIELDS = frozenset({"sha256", "size_bytes"})
+_BUILD_EVIDENCE_FIELDS = frozenset({
+    "schema_id", "mode", "status", "error_class", "provenance", "artifacts",
+    "duration_ms", "log", "loaded",
+})
+_BUILD_LOADED_FIELDS = frozenset({"path", "sha256"})
+MAX_BUILD_DURATION_MS = 3_600_000
+
+
+def _build_toolchain_document(value: Any) -> dict[str, str]:
+    if not isinstance(value, Mapping) or set(value) != _BUILD_TOOLCHAIN_FIELDS:
+        raise ContractError("build.toolchain fields are missing or unknown")
+    return {
+        "id": _identifier(value["id"], "build.toolchain.id"),
+        "version": _text(value["version"], "build.toolchain.version", max_bytes=64),
+        "sdk_version": _text(value["sdk_version"], "build.toolchain.sdk_version", max_bytes=64),
+    }
+
+
+def build_provenance_document(
+    value: Any, *, mode: str | None = None,
+) -> dict[str, Any]:
+    """Validate a BuildProvenance document.
+
+    The provenance names *who built what with which toolchain*: builder identity
+    and version, the build host/profile, the toolchain/SDK versions, the exact
+    source digest, the compile profile and the resulting ``artifact_set_digest``.
+    It is deliberately a separate document from the artifact manifest: the
+    artifact digest keeps describing only the manifest/bytes, while a changed
+    build environment is visible as a different provenance.  Nothing here can
+    name a shell, a host path or a free-form build command.
+    """
+
+    if not isinstance(value, Mapping) or set(value) != _BUILD_PROVENANCE_FIELDS:
+        raise ContractError("build.provenance fields are missing or unknown")
+    if value["schema_id"] != NPU_BUILD_PROVENANCE_SCHEMA_ID:
+        raise ContractError("build.provenance schema_id is not supported by this contract version")
+    build_host = _text(value["build_host"], "build.provenance.build_host", max_bytes=32)
+    if build_host not in set(BUILD_HOSTS.values()):
+        raise ContractError("build.provenance.build_host must be control_host or evaluator")
+    if mode is not None and build_host != BUILD_HOSTS[mode]:
+        raise ContractError(
+            f"build mode {mode!r} requires build_host {BUILD_HOSTS[mode]!r}"
+        )
+    artifact_set_digest = value["artifact_set_digest"]
+    if artifact_set_digest is not None:
+        _hex64(artifact_set_digest, "build.provenance.artifact_set_digest")
+    compile_profile = value["compile_profile"]
+    if not isinstance(compile_profile, Mapping) or len(compile_profile) > 16:
+        raise ContractError("build.provenance.compile_profile must be a bounded object")
+    return {
+        "schema_id": NPU_BUILD_PROVENANCE_SCHEMA_ID,
+        "builder_id": _identifier(value["builder_id"], "build.provenance.builder_id"),
+        "builder_version": _text(value["builder_version"], "build.provenance.builder_version", max_bytes=64),
+        "build_host": build_host,
+        "build_profile": _identifier(value["build_profile"], "build.provenance.build_profile"),
+        "toolchain": _build_toolchain_document(value["toolchain"]),
+        "compile_profile": _npu_diagnostics(compile_profile),
+        "source_sha256": _hex64(value["source_sha256"], "build.provenance.source_sha256"),
+        "artifact_set_digest": artifact_set_digest,
+    }
+
+
+def build_request_document(value: Any) -> dict[str, Any]:
+    """Validate the request-level build document (mode plus provenance).
+
+    A ``prebuilt`` request states the complete BuildProvenance the control host
+    produced, including the artifact set digest.  An ``evaluator`` request states
+    the build identity the evaluator must use and leaves the artifact digest
+    ``null``: the artifact does not exist yet.  The profile is an expectation,
+    not an authorization: only a registered build_profile/toolchain may run it.
+    """
+
+    if not isinstance(value, Mapping) or set(value) != _BUILD_REQUEST_FIELDS:
+        raise ContractError("build fields are missing or unknown")
+    if value["schema_id"] != NPU_BUILD_REQUEST_SCHEMA_ID:
+        raise ContractError("build schema_id is not supported by this contract version")
+    mode = _text(value["mode"], "build.mode", max_bytes=32)
+    if mode not in BUILD_MODES:
+        raise ContractError("build.mode must be prebuilt or evaluator")
+    provenance = build_provenance_document(value["provenance"], mode=mode)
+    if mode == "evaluator" and provenance["artifact_set_digest"] is not None:
+        raise ContractError("an evaluator build request must not claim an artifact_set_digest")
+    if mode == "prebuilt" and provenance["artifact_set_digest"] is None:
+        raise ContractError("a prebuilt build request requires the artifact_set_digest it produced")
+    return {
+        "schema_id": NPU_BUILD_REQUEST_SCHEMA_ID,
+        "mode": mode,
+        "provenance": provenance,
+    }
+
+
+def _build_artifacts_document(value: Any) -> dict[str, Any] | None:
+    """Validate a produced artifact set and recompute its manifest digest."""
+
+    if value is None:
+        return None
+    allowed_fields = _BUILD_ARTIFACTS_FIELDS | {"artifact_set_digest"}
+    if not isinstance(value, Mapping) or set(value) - allowed_fields or not _BUILD_ARTIFACTS_FIELDS <= set(value):
+        raise ContractError("build.artifacts fields are missing or unknown")
+    from .artifact_bundle import BUNDLE_SCHEMA_ID, BundleError, artifact_set_digest as manifest_digest, bundle_document
+
+    if value["schema_id"] != BUNDLE_SCHEMA_ID:
+        raise ContractError("build.artifacts schema_id is not an artifact bundle schema")
+    entries = value["entries"]
+    if not isinstance(entries, (list, tuple)) or not entries:
+        raise ContractError("build.artifacts must list the produced entries")
+    from .artifact_bundle import (
+        MAX_BUNDLE_ENTRIES, MAX_BUNDLE_TOTAL_BYTES, _alias_key, _check_path_prefixes,
+        canonical_manifest,
+    )
+
+    if len(entries) > MAX_BUNDLE_ENTRIES:
+        raise ContractError("build.artifacts exceeds the entry-count limit")
+    total = 0
+    seen: dict[str, str] = {}
+    manifest_entries = []
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            raise ContractError("build.artifacts entries must be objects")
+        try:
+            manifest_entry = canonical_manifest(BUNDLE_SCHEMA_ID, (entry,))["entries"][0]
+        except (BundleError, TypeError, KeyError) as exc:
+            raise ContractError(f"build.artifacts is not a valid artifact manifest: {exc}") from exc
+        alias = _alias_key(manifest_entry["path"])
+        if alias in seen:
+            raise ContractError("build.artifacts lists the same artifact path twice")
+        seen[alias] = manifest_entry["path"]
+        total += manifest_entry["size_bytes"]
+        manifest_entries.append(manifest_entry)
+    if total > MAX_BUNDLE_TOTAL_BYTES:
+        raise ContractError("build.artifacts exceeds the declared total byte limit")
+    _check_path_prefixes(item["path"] for item in manifest_entries)
+    manifest_entries.sort(key=lambda item: item["path"])
+    computed = manifest_digest(BUNDLE_SCHEMA_ID, manifest_entries)
+    declared = value.get("artifact_set_digest")
+    if declared is not None:
+        _hex64(declared, "build.artifacts.artifact_set_digest")
+        if declared != computed:
+            raise ContractError("build.artifacts artifact_set_digest does not bind its entries")
+    return {
+        "schema_id": BUNDLE_SCHEMA_ID,
+        "entries": manifest_entries,
+        "artifact_set_digest": computed,
+    }
+
+
+def _build_loaded_document(value: Any, artifacts: Mapping[str, Any] | None) -> list[dict[str, str]]:
+    """Validate the artifacts the receiver actually loaded.
+
+    A vendor that reports an artifact it never loaded (or a different digest)
+    cannot claim a successful run: every loaded digest must be one of the
+    produced entries, and a prebuilt receiver must load every executable entry.
+    """
+
+    if not isinstance(value, (list, tuple)):
+        raise ContractError("build.loaded must be an array")
+    known = {} if artifacts is None else {
+        entry["path"]: entry["sha256"] for entry in artifacts["entries"]
+    }
+    loaded: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, Mapping) or set(item) != _BUILD_LOADED_FIELDS:
+            raise ContractError("build.loaded entries are missing or unknown")
+        from .artifact_bundle import MAX_BUNDLE_PATH_BYTES, validate_relative_path
+
+        path = validate_relative_path(item["path"])
+        digest = _hex64(item["sha256"], "build.loaded.sha256")
+        if path in seen:
+            raise ContractError("build.loaded reports the same artifact twice")
+        seen.add(path)
+        loaded.append({"path": path, "sha256": digest})
+    if known:
+        unknown = [item["path"] for item in loaded if item["path"] not in known]
+        if unknown:
+            raise ContractError("build.loaded names an artifact the build did not produce: " + ",".join(sorted(unknown)))
+        wrong = [item["path"] for item in loaded if known[item["path"]] != item["sha256"]]
+        if wrong:
+            raise ContractError("build.loaded digest differs from the produced artifact: " + ",".join(sorted(wrong)))
+    return loaded
+
+
+def npu_build_evidence_document(
+    value: Any, *, expected_build: Mapping[str, Any] | None = None,
+    request_artifact: Mapping[str, Any] | None = None,
+    report_status: str | None = None, complete: bool | None = None,
+) -> dict[str, Any]:
+    """Validate the signed BuildEvidence document.
+
+    The classification is shared by both timings: a build that failed to compile
+    is ``compile_failed``/``compile`` and may only accompany a ``compile_error``
+    report; a timeout that never built is ``not_run``.  A ``prebuilt`` row must
+    reuse the artifact set named by the accepted request, and its ``loaded``
+    list must cover every executable entry, so a vendor cannot load other bytes
+    and still claim the candidate.
+
+    The provenance is compared with the accepted request's build document field
+    by field (builder, builder version, host, profile, toolchain, compile
+    profile, source digest); only the artifact set digest may be filled in by an
+    evaluator-side build, because the request could not know it before Submit.
+    """
+
+    if not isinstance(value, Mapping) or set(value) != _BUILD_EVIDENCE_FIELDS:
+        raise ContractError("build evidence fields are missing or unknown")
+    if value["schema_id"] != NPU_BUILD_EVIDENCE_SCHEMA_ID:
+        raise ContractError("build evidence schema_id is not supported by this contract version")
+    mode = _text(value["mode"], "build.mode", max_bytes=32)
+    if mode not in BUILD_MODES:
+        raise ContractError("build.mode must be prebuilt or evaluator")
+    status = _text(value["status"], "build.status", max_bytes=32)
+    if status not in BUILD_STATUSES:
+        raise ContractError("build.status is not a supported build outcome")
+    error_class = value["error_class"]
+    if error_class is not None:
+        error_class = _text(error_class, "build.error_class", max_bytes=32)
+        if error_class not in BUILD_ERROR_CLASSES:
+            raise ContractError("build.error_class is not a supported build error class")
+    provenance = build_provenance_document(value["provenance"], mode=mode)
+    if expected_build is not None:
+        expected = build_request_document(expected_build)
+        if expected["mode"] != mode:
+            raise ContractError("build evidence mode differs from the accepted request")
+        for field in (
+            "builder_id", "builder_version", "build_host", "build_profile",
+            "toolchain", "compile_profile", "source_sha256",
+        ):
+            if provenance[field] != expected["provenance"][field]:
+                raise ContractError(f"build evidence {field} differs from the accepted request")
+        if mode == "prebuilt" and provenance["artifact_set_digest"] != expected["provenance"]["artifact_set_digest"]:
+            raise ContractError(
+                "prebuilt build evidence artifact_set_digest differs from the accepted request"
+            )
+        if mode == "evaluator" and provenance["artifact_set_digest"] is None and status == "ok":
+            raise ContractError("a completed evaluator build requires an artifact_set_digest")
+    artifacts = _build_artifacts_document(value["artifacts"])
+    loaded = _build_loaded_document(value["loaded"], artifacts)
+    duration_ms = _integer(value["duration_ms"], "build.duration_ms", 0, MAX_BUILD_DURATION_MS)
+    log = value["log"]
+    if log is not None:
+        if not isinstance(log, Mapping) or set(log) != _BUILD_LOG_FIELDS:
+            raise ContractError("build.log fields are missing or unknown")
+        log = {
+            "sha256": _hex64(log["sha256"], "build.log.sha256"),
+            "size_bytes": _integer(log["size_bytes"], "build.log.size_bytes", 0, MAX_SOURCE_BYTES),
+        }
+    if artifacts is not None:
+        if provenance["artifact_set_digest"] != artifacts["artifact_set_digest"]:
+            raise ContractError("build evidence artifacts do not add up to the provenance digest")
+    if status == "reused":
+        if mode != "prebuilt":
+            raise ContractError("only a prebuilt artifact set can be reported as reused")
+        if error_class is not None:
+            raise ContractError("a reused artifact set has no build error")
+        if artifacts is None or provenance["artifact_set_digest"] is None:
+            raise ContractError("a reused artifact set requires its manifest identity")
+        if not loaded:
+            raise ContractError("a reused artifact set requires the receiver's load record")
+        if request_artifact is not None and ARTIFACT_BUNDLE in request_artifact:
+            tried = request_artifact[ARTIFACT_BUNDLE]
+            if artifacts["artifact_set_digest"] != tried["artifact_set_digest"]:
+                raise ContractError(
+                    "build evidence artifact set differs from the accepted prebuilt bundle"
+                )
+            tried_entries = [
+                {key: entry[key] for key in ("path", "role", "media_type", "size_bytes", "sha256")}
+                for entry in tried["entries"]
+            ]
+            if artifacts["entries"] != tried_entries:
+                raise ContractError(
+                    "build evidence entries differ from the accepted prebuilt bundle"
+                )
+        executable = {
+            entry["path"]: entry["sha256"]
+            for entry in artifacts["entries"] if entry["role"] == "EXECUTABLE_MODULE"
+        }
+        if not executable:
+            raise ContractError("a prebuilt artifact set requires an executable module")
+        missing = sorted(set(executable) - {item["path"] for item in loaded})
+        if missing:
+            raise ContractError(
+                "the prebuilt artifact set was not fully loaded: " + ",".join(missing)
+            )
+    elif status == "ok":
+        if mode != "evaluator":
+            raise ContractError("only an evaluator build can report a fresh compile as ok")
+        if error_class is not None:
+            raise ContractError("a successful build has no build error")
+        if artifacts is None:
+            raise ContractError("a successful build requires the produced artifact manifest")
+        if not loaded:
+            raise ContractError("a successful build requires the receiver's load record")
+    elif status == "compile_failed":
+        if mode != "evaluator":
+            raise ContractError("only an evaluator build can report a compile failure")
+        if error_class != "compile":
+            raise ContractError("a compile failure must be classified as compile")
+        if artifacts is not None or provenance["artifact_set_digest"] is not None:
+            raise ContractError("a failed build must not claim a produced artifact set")
+        if loaded:
+            raise ContractError("a failed build must not claim a loaded module")
+        if report_status is not None and report_status != "compile_error":
+            raise ContractError("a compile failure requires a compile_error candidate report")
+        if complete:
+            raise ContractError("a failed build cannot also claim a completed device event")
+    else:  # not_run
+        if error_class is not None:
+            raise ContractError("a build that never ran has no build error class")
+        if artifacts is not None or loaded:
+            raise ContractError("a build that never ran must not claim artifacts or loads")
+        if mode == "evaluator" and provenance["artifact_set_digest"] is not None:
+            raise ContractError("an evaluator build that never ran cannot claim an artifact set")
+        if complete:
+            raise ContractError("a build that never ran cannot claim a completed device event")
+    return {
+        "schema_id": NPU_BUILD_EVIDENCE_SCHEMA_ID,
+        "mode": mode,
+        "status": status,
+        "error_class": error_class,
+        "provenance": provenance,
+        "artifacts": artifacts,
+        "duration_ms": duration_ms,
+        "log": log,
+        "loaded": loaded,
+    }
+
+
+def _build_request_consistency(
+    build: Mapping[str, Any], *, execution: Mapping[str, Any], artifact: Mapping[str, Any],
+    candidate: Mapping[str, Any], source: bytes, bytes_available: bool,
+) -> None:
+    """Cross-check the build document against the artifact branch and execution."""
+
+    mode = build["mode"]
+    provenance = build["provenance"]
+    if mode == "prebuilt":
+        if ARTIFACT_BUNDLE not in artifact:
+            raise ContractError("a prebuilt build must submit the artifact set it built")
+        if execution["task_family"] != "kernel_module":
+            raise ContractError("a prebuilt executable module requires task_family kernel_module")
+        bundle = artifact[ARTIFACT_BUNDLE]
+        if provenance["artifact_set_digest"] != candidate["value"]:
+            raise ContractError("build provenance artifact_set_digest differs from the CandidateDigest")
+        if bundle["artifact_set_digest"] != provenance["artifact_set_digest"]:
+            raise ContractError("build provenance artifact_set_digest differs from the submitted bundle")
+        sources = [entry for entry in bundle["entries"] if entry["role"] == "SOURCE"]
+        modules = [entry for entry in bundle["entries"] if entry["role"] == "EXECUTABLE_MODULE"]
+        if len(sources) != 1:
+            raise ContractError("a prebuilt artifact set requires exactly one SOURCE entry")
+        if not modules:
+            raise ContractError("a prebuilt artifact set requires an EXECUTABLE_MODULE entry")
+        if provenance["source_sha256"] != sources[0]["sha256"]:
+            raise ContractError("build provenance source_sha256 is not the bundled SOURCE digest")
+        if source:
+            raise ContractError("a prebuilt request must not embed inline source bytes")
+        return
+    if ARTIFACT_SOURCE not in artifact:
+        raise ContractError("an evaluator build must submit the inline source it will build")
+    if execution["task_family"] != "kernel":
+        raise ContractError("an evaluator build requires task_family kernel")
+    if provenance["source_sha256"] != candidate["value"]:
+        raise ContractError("build provenance source_sha256 differs from the CandidateDigest")
+    if bytes_available and not source:
+        raise ContractError("an evaluator build requires the exact source bytes")
+    if source and hashlib.sha256(source).hexdigest() != provenance["source_sha256"]:
+        raise ContractError("build provenance source_sha256 is not the exact source bytes")
+
+
 def _npu_bundle_request_fields(
     document: Mapping[str, Any], source: bytes, *, bytes_available: bool = True,
+    build_contract: bool = False,
 ) -> dict[str, Any]:
     """Validate one bundle-contract request (source branch or bundle branch).
 
     ``bytes_available=False`` is the terminal-storage path: the source bytes are
     gone, so only the persisted descriptor is re-checked.  The digest is
-    unaffected because the canonical document never contained the bytes.
+    unaffected because the canonical document never contained the bytes.  A
+    build-contract request additionally carries its BuildProvenance document,
+    which is cross-checked against the artifact branch.
     """
 
     request = _common_request_fields(document)
-    execution = npu_bundle_execution_document(document["execution"])
+    execution = (
+        npu_build_execution_document(document["execution"]) if build_contract
+        else npu_bundle_execution_document(document["execution"])
+    )
     artifact = npu_artifact_document(document["artifact"], execution=execution)
     if ARTIFACT_BUNDLE in artifact:
         if source:
@@ -846,6 +1331,13 @@ def _npu_bundle_request_fields(
     request["candidate_digest"] = digest
     request["execution"] = execution
     request["artifact"] = artifact
+    if build_contract:
+        build = build_request_document(document["build"])
+        _build_request_consistency(
+            build, execution=execution, artifact=artifact, candidate=digest,
+            source=source, bytes_available=bytes_available,
+        )
+        request["build"] = build
     return request
 
 
@@ -895,18 +1387,22 @@ def request_digest_document(
         raise ContractError("request source and source_bytes differ")
 
     if dialect.npu_bundle:
-        allowed = _NPU_BUNDLE_REQUEST_FIELDS | _EXCLUDED_REQUEST_FIELDS | {"source"}
+        build_contract = bool(dialect.build_contract)
+        fields = _NPU_BUILD_REQUEST_FIELDS if build_contract else _NPU_BUNDLE_REQUEST_FIELDS
+        allowed = fields | _EXCLUDED_REQUEST_FIELDS | {"source"}
         unknown = set(document) - allowed
         if unknown:
             raise ContractError(f"unknown request fields: {sorted(unknown)}")
-        missing = _NPU_BUNDLE_REQUEST_FIELDS - set(document)
+        missing = fields - set(document)
         if missing:
             raise ContractError(f"missing explicit request fields/defaults: {sorted(missing)}")
         return {
             "document_type": dialect.request_document_type,
             "document_version": dialect.document_version,
             "digest_algorithm": REQUEST_DIGEST_ALGORITHM,
-            "request": _npu_bundle_request_fields(document, source),
+            "request": _npu_bundle_request_fields(
+                document, source, build_contract=build_contract,
+            ),
         }
 
     if dialect.npu_blob:
@@ -984,7 +1480,8 @@ def npu_stored_request_document(
     if any(not isinstance(key, str) for key in document):
         raise ContractError("stored request field names must be strings")
     fields = (
-        _NPU_BUNDLE_REQUEST_FIELDS if dialect.npu_bundle
+        (_NPU_BUILD_REQUEST_FIELDS if dialect.build_contract else _NPU_BUNDLE_REQUEST_FIELDS)
+        if dialect.npu_bundle
         else _NPU_BLOB_REQUEST_FIELDS if dialect.npu_blob
         else _NPU_SOURCE_REQUEST_FIELDS
     )
@@ -1005,7 +1502,9 @@ def npu_stored_request_document(
         # ``artifact_set_digest`` and is refused inside the validator.
         if "blob_ref" in document:
             raise ContractError("the bundle contract does not accept a request-level blob reference")
-        request = _npu_bundle_request_fields(document, b"", bytes_available=False)
+        request = _npu_bundle_request_fields(
+            document, b"", bytes_available=False, build_contract=bool(dialect.build_contract),
+        )
     elif dialect.npu_blob:
         request = _npu_blob_request_fields(document, b"")
     else:
@@ -1174,8 +1673,9 @@ def _provenance_document(
         shape = (
             document["artifact_kind"], document["launch_kind"], document["launch_subtype"],
         )
+        families = _TASK_FAMILIES_BUILD if dialect.build_contract else _TASK_FAMILIES
         allowed_shapes = (
-            {shape for shape in _TASK_FAMILIES.values()} if dialect.npu_bundle
+            {shape for shape in families.values()} if dialect.npu_bundle
             else {("source", "KERNEL", "SIMT")}
         )
         if shape not in {tuple(item[:3]) for item in allowed_shapes}:
@@ -1648,7 +2148,60 @@ def npu_timing_evidence_document_v2(
     report_status: str | None = None,
     dialect: ContractDialect = NPU_BUNDLE_DIALECT,
 ) -> dict[str, Any]:
-    """Validate P1 TimingEvidence (schema version 2).
+    """Validate P1 TimingEvidence (schema version 2)."""
+
+    return _npu_timing_evidence_document(
+        value, source_bytes=source_bytes, device_group=device_group,
+        expected_artifact_set_digest=expected_artifact_set_digest,
+        expected_resources=expected_resources, measurement_kind=measurement_kind,
+        publication_allowed=publication_allowed, report_status=report_status,
+        dialect=dialect, schema_id=NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
+    )
+
+
+def npu_build_timing_evidence_document(
+    value: Any, *, source_bytes: bytes | bytearray | memoryview | None = None,
+    device_group: Mapping[str, Any] | None = None,
+    expected_artifact_set_digest: str | None = None,
+    expected_resources: Mapping[str, Any] | None = None,
+    expected_build: Mapping[str, Any] | None = None,
+    request_artifact: Mapping[str, Any] | None = None,
+    measurement_kind: str | None = None,
+    publication_allowed: bool | None = None,
+    report_status: str | None = None,
+    dialect: ContractDialect = NPU_BUILD_DIALECT,
+) -> dict[str, Any]:
+    """Validate P1c TimingEvidence (schema version 3: version 2 plus BuildEvidence).
+
+    The timing rules are the version-2 rules; the build document is the shared
+    BuildEvidence contract, and it must agree with the accepted request's build
+    provenance and artifact branch.
+    """
+
+    return _npu_timing_evidence_document(
+        value, source_bytes=source_bytes, device_group=device_group,
+        expected_artifact_set_digest=expected_artifact_set_digest,
+        expected_resources=expected_resources, measurement_kind=measurement_kind,
+        publication_allowed=publication_allowed, report_status=report_status,
+        dialect=dialect, schema_id=NPU_BUILD_TIMING_EVIDENCE_SCHEMA_ID,
+        expected_build=expected_build, request_artifact=request_artifact,
+    )
+
+
+def _npu_timing_evidence_document(
+    value: Any, *, source_bytes: bytes | bytearray | memoryview | None = None,
+    device_group: Mapping[str, Any] | None = None,
+    expected_artifact_set_digest: str | None = None,
+    expected_resources: Mapping[str, Any] | None = None,
+    measurement_kind: str | None = None,
+    publication_allowed: bool | None = None,
+    report_status: str | None = None,
+    dialect: ContractDialect = NPU_BUNDLE_DIALECT,
+    schema_id: str = NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
+    expected_build: Mapping[str, Any] | None = None,
+    request_artifact: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate the artifact-set TimingEvidence document (schema 2 or 3).
 
     Completeness is decided by the *declared* topology, not by a fixed field
     list: a single-device or service-style vendor with no rank/die dimension is
@@ -1663,12 +2216,16 @@ def npu_timing_evidence_document_v2(
     measurement, not an average).
     """
 
+    build_expected = expected_build is not None or schema_id == NPU_BUILD_TIMING_EVIDENCE_SCHEMA_ID
+    allowed_extra = {"diagnostics"} | ({"build"} if build_expected else set())
     if not isinstance(value, Mapping) or not _NPU_V2_EVIDENCE_FIELDS <= set(value):
         raise ContractError("timing evidence fields are missing")
-    if set(value) - (_NPU_V2_EVIDENCE_FIELDS | {"diagnostics"}):
+    if set(value) - (_NPU_V2_EVIDENCE_FIELDS | allowed_extra):
         raise ContractError("timing evidence has unknown fields")
-    if value["schema_id"] != NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID:
+    if value["schema_id"] != schema_id:
         raise ContractError("timing evidence schema_id is not supported by this contract version")
+    if build_expected and "build" not in value:
+        raise ContractError("this timing evidence version requires build evidence")
     candidate = candidate_digest_document(
         value["candidate_digest"], source_bytes=source_bytes,
         allowed_algorithms=dialect.candidate_algorithms,
@@ -1806,8 +2363,15 @@ def npu_timing_evidence_document_v2(
             raise ContractError("an ok report requires completed device timing evidence")
         if report_status == "timeout" and complete:
             raise ContractError("a timeout report cannot claim a completed device event")
+    build_document = None
+    if build_expected:
+        build_document = npu_build_evidence_document(
+            value["build"], expected_build=expected_build,
+            request_artifact=request_artifact, report_status=report_status,
+            complete=complete,
+        )
     document: dict[str, Any] = {
-        "schema_id": NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
+        "schema_id": schema_id,
         "candidate_digest": candidate,
         "artifact_set_digest": artifact_set_digest,
         "device_group": group,
@@ -1826,6 +2390,8 @@ def npu_timing_evidence_document_v2(
         "publication_allowed": publish,
         "complete": complete,
     }
+    if build_document is not None:
+        document["build"] = build_document
     if "diagnostics" in value:
         document["diagnostics"] = _npu_diagnostics(value["diagnostics"])
     return document
@@ -1880,18 +2446,31 @@ def npu_evidence_document(
     device_group: Mapping[str, Any] | None = None,
     expected_artifact_set_digest: str | None = None,
     expected_resources: Mapping[str, Any] | None = None,
+    expected_build: Mapping[str, Any] | None = None,
+    request_artifact: Mapping[str, Any] | None = None,
     measurement_kind: str | None = None,
     publication_allowed: bool | None = None,
     report_status: str | None = None,
 ) -> dict[str, Any]:
     """Validate TimingEvidence with the schema the contract version defines.
 
-    One dispatch point keeps the version-1 (P0/P0b) and version-2 (P1) schemas
-    from drifting apart at the four places that validate a result: the job
-    store's durable read and worker-result paths, the host outbox and the gRPC
-    client.
+    One dispatch point keeps the version-1 (P0/P0b), version-2 (P1) and
+    version-3 (P1c) schemas from drifting apart at the four places that validate
+    a result: the job store's durable read and worker-result paths, the host
+    outbox and the gRPC client.
     """
 
+    if dialect.build_contract:
+        if expected_build is None:
+            raise ContractError("a build-contract result requires the accepted build provenance")
+        return npu_build_timing_evidence_document(
+            value, source_bytes=source_bytes, device_group=device_group,
+            expected_artifact_set_digest=expected_artifact_set_digest,
+            expected_resources=expected_resources, expected_build=expected_build,
+            request_artifact=request_artifact,
+            measurement_kind=measurement_kind, publication_allowed=publication_allowed,
+            report_status=report_status, dialect=dialect,
+        )
     if dialect.npu_bundle:
         return npu_timing_evidence_document_v2(
             value, source_bytes=source_bytes, device_group=device_group,
@@ -1902,6 +2481,8 @@ def npu_evidence_document(
         )
     if expected_artifact_set_digest is not None or expected_resources is not None:
         raise ContractError("this contract version has no artifact set or resource requirements")
+    if expected_build is not None or request_artifact is not None:
+        raise ContractError("this contract version has no build evidence")
     return npu_timing_evidence_document(
         value, source_bytes=source_bytes, device_group=device_group,
         measurement_kind=measurement_kind, publication_allowed=publication_allowed,

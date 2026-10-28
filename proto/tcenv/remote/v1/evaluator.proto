@@ -172,6 +172,38 @@ message ArtifactBundle {
   repeated ArtifactBundleEntry entries = 2;
 }
 
+// P1c build identity (document version 5).  It names a *registered* build
+// profile and toolchain; there is deliberately no field for a shell, a host
+// path or a build command.
+message BuildProvenance {
+  string schema_id = 1;
+  string builder_id = 2;
+  string builder_version = 3;
+  // "control_host" for a prebuilt artifact set, "evaluator" for this attempt.
+  string build_host = 4;
+  string build_profile = 5;
+  BuildToolchain toolchain = 6;
+  // Bounded scalar build options (for example optimization level or target ABI
+  // label); never a free-form command or path.
+  map<string, string> compile_profile = 7;
+  string source_sha256 = 8;
+  // Empty/unset for an evaluator build request: the artifact does not exist yet.
+  optional string artifact_set_digest = 9;
+}
+
+message BuildToolchain {
+  string id = 1;
+  string version = 2;
+  string sdk_version = 3;
+}
+
+message BuildRequest {
+  string schema_id = 1;
+  // "prebuilt" or "evaluator".
+  string mode = 2;
+  BuildProvenance provenance = 3;
+}
+
 message DeviceGroupCapability {
   string device_group_id = 1;
   string vendor_id = 2;
@@ -223,6 +255,10 @@ message EvaluationRequest {
   // together with inline `source` bytes: the artifact payload is one of the two
   // branches, exactly one.  The earlier contract versions reject this field.
   ArtifactBundle bundle = 26;
+  // Present exactly for the P1c build contract (document version 5) and never
+  // for the earlier versions: the independent BuildProvenance document is part
+  // of the canonical request digest, the durable row and the resume identity.
+  BuildRequest build = 27;
 }
 
 // Handshake expectations. Empty worker_build/task_pack_digest/evaluator_epoch

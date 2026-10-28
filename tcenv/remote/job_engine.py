@@ -20,6 +20,7 @@ from tcenv.schema import PROTOCOL_VERSION as EXECUTION_PROTOCOL_VERSION
 from . import contracts
 from .blob_channel import BlobError, BlobScope, BlobStore
 from .contracts import API_CONTRACT_ID, EVIDENCE_CONTRACT_ID
+from .artifact_builder import ArtifactBuilderRegistry, BuildError
 from .drivers.base import CleanupProof, DeviceController, HealthProof, VendorFacts
 from .identity import ServiceIdentity, SessionGrant
 from .job_store import JobStore
@@ -331,6 +332,7 @@ class JobEngine:
         device_controller: DeviceController | None = None,
         device_call_timeout_s: float = 2.0,
         blob_store: Any | None = None,
+        build_registry: Any | None = None,
         **store_options: Any,
     ) -> None:
         if not worker_command or not all(isinstance(part, str) and part for part in worker_command):
@@ -364,6 +366,14 @@ class JobEngine:
             # The bundle contract reuses the content-addressed channel for large
             # entries, so a supplied store must still be the real one.
             raise ValueError("a blob channel store must be a BlobStore")
+        if build_registry is not None and not isinstance(build_registry, ArtifactBuilderRegistry):
+            raise ValueError("build_registry must be an ArtifactBuilderRegistry")
+        if contract.build_contract and build_registry is None:
+            # The build contract cannot be served without at least one
+            # registered builder: accepting a job would only fail in the worker.
+            raise ValueError("the NPU build contract requires a registered artifact builder")
+        if build_registry is not None and not contract.build_contract:
+            raise ValueError("a build registry is only valid with the NPU build contract")
         if (
             isinstance(device_call_timeout_s, bool)
             or not isinstance(device_call_timeout_s, (int, float))
@@ -422,6 +432,7 @@ class JobEngine:
         self.device_controller = device_controller
         self.device_call_timeout_s = float(device_call_timeout_s)
         self.blob_store: BlobStore | None = blob_store
+        self.build_registry = build_registry
         # Device-operation state: an attempt may not start while a controller
         # call is still in flight (including a call the RPC already timed out
         # on), and a probe may not start while an attempt owns the group.
@@ -466,6 +477,11 @@ class JobEngine:
             state_dir, signing_key=signing_key, signing_key_id=signing_key_id,
             signing_keyring=signing_keyring, contract=contract, **store_options,
         )
+        # Any build scratch left by an attempt that is no longer live is a
+        # temporary build artifact, not a candidate.  Sweep it at startup and at
+        # close; a directory that cannot be removed is recorded as an unverified
+        # teardown (never hidden).
+        self._sweep_build_scratch()
         if (
             self.blob_store is not None
             and self.blob_store.root.resolve() != (self.store.state_dir / "blobs").resolve()
@@ -557,6 +573,14 @@ class JobEngine:
         # adds a reference that outlives a timed-out RPC, so a candidate can
         # never start while any part of the probe is still touching the device.
         device_target: dict[str, Any] = {}
+        if self.contract.build_contract:
+            # A builder/toolchain that cannot prove itself makes the *capability*
+            # unavailable, so a Submit is refused before a job, an attempt or a
+            # device lease exists.
+            try:
+                self.build_registry.require_available()
+            except BuildError as exc:
+                raise JobError("failed_precondition", f"artifact builder is unavailable: {exc}") from exc
         if self.contract.npu_source:
             self._begin_device_operation()
             try:
@@ -856,6 +880,12 @@ class JobEngine:
         and a device lease were already spent.
         """
 
+        # The build profile is re-proved on every new attempt, not only at
+        # Submit: a toolchain that disappeared must not leave a queued Retry or
+        # a recovered accepted row that can only fail inside the worker.  A
+        # prebuilt artifact set does not compile, but it still has to name a
+        # registered builder identity.
+        self._require_build_profile(request)
         if self.blob_store is not None:
             return
         if self._artifact_blobs(request):
@@ -875,6 +905,17 @@ class JobEngine:
         only exit on a deleted blob.
         """
 
+        if (
+            self.contract.build_contract and request.build is not None
+            and request.build.mode == "evaluator"
+        ):
+            # An evaluator-side build needs a live registered builder at
+            # dispatch time; a recovered accepted row whose toolchain vanished
+            # must fail before a worker or container is created.
+            try:
+                self.build_registry.builder_for(request.build.provenance_document())
+            except BuildError as exc:
+                return f"the build profile cannot be served: {exc}"
         descriptors = self._artifact_blobs(request)
         if not descriptors:
             return ""
@@ -1182,6 +1223,26 @@ class JobEngine:
         except BlobError as exc:
             raise JobError(_BLOB_JOB_ERRORS.get(exc.code, "failed_precondition"), exc.detail) from exc
 
+    def _require_build_profile(self, request: ExternalEvaluationRequest) -> None:
+        """Refuse an unregistered build_profile/toolchain before anything durable.
+
+        The request may name a profile, but only the composition root registers
+        one.  A profile the builder probe does not reproduce (another builder
+        version, toolchain, SDK or compile profile) is a ``failed_precondition``,
+        never a candidate compile failure and never a device call.
+        """
+
+        if not self.contract.build_contract:
+            return
+        if request.build is None:
+            raise JobError("invalid_argument", "the build contract requires a build identity")
+        try:
+            self.build_registry.builder_for(request.build.provenance_document())
+        except BuildError as exc:
+            raise JobError(
+                "failed_precondition", f"build profile is not served by this evaluator: {exc}",
+            ) from exc
+
     def _validate_submission(self, request: ExternalEvaluationRequest) -> None:
         if request.contract != self.contract:
             raise JobError(
@@ -1201,6 +1262,7 @@ class JobEngine:
                     "failed_precondition",
                     "request device group/profile/topology/resource generation differs from the served group",
                 )
+            self._require_build_profile(request)
         if not self.identity.accepts_task(request.task, request.dtype, request.size, request.task_fingerprint):
             raise JobError("failed_precondition", "task fingerprint does not match the deployed task pack")
         if request.mode not in self.supported_modes:
@@ -1746,6 +1808,49 @@ class JobEngine:
             "host_api_elapsed_ns": request.candidate_timeout_ms * 1_000_000,
             "launches": 0,
         }
+        if self.contract.build_contract:
+            # The build document is part of the signed evidence even when the
+            # attempt never built: ``not_run`` claims no artifact and no load, so
+            # a timeout can never be mistaken for a completed build.
+            if request.build is None:
+                raise StateCorrupt("the build contract has no build identity for a timeout report")
+            declared = request.npu.execution.declared_resources
+            candidate = request.npu.candidate_digest
+            return {
+                "schema_id": contracts.NPU_BUILD_TIMING_EVIDENCE_SCHEMA_ID,
+                "candidate_digest": candidate.to_dict(),
+                "artifact_set_digest": (
+                    candidate.value
+                    if candidate.algorithm == contracts.BUNDLE_DIGEST_ALGORITHM else None
+                ),
+                "device_group": request.npu.execution.device_group.to_dict(),
+                "topology": {
+                    "logical_devices": declared.logical_devices,
+                    "declared_devices": [
+                        f"device-{index}" for index in range(declared.logical_devices)
+                    ],
+                    "required_rank_spans": declared.required_rank_spans,
+                    "required_die_spans": declared.required_die_spans,
+                },
+                "spans": [],
+                "timing": timing,
+                "buffer": None,
+                "build": {
+                    "schema_id": contracts.NPU_BUILD_EVIDENCE_SCHEMA_ID,
+                    "mode": request.build.mode,
+                    "status": "not_run",
+                    "error_class": None,
+                    "provenance": request.build.provenance_document(),
+                    "artifacts": None,
+                    "duration_ms": 0,
+                    "log": None,
+                    "loaded": [],
+                },
+                "measurement_kind": self.identity.measurement_kind,
+                "publication_allowed": False,
+                "complete": False,
+                "diagnostics": {"timeout": True, "detail": message[:400]},
+            }
         if self.contract.npu_bundle:
             # The version 2 evidence still states the declared topology, so the
             # row is comparable with a completed measurement; no span exists
@@ -2894,6 +2999,45 @@ class JobEngine:
             self._record_close_error(f"could not join the scheduler during close: {exc}")
         self._finish_shutdown(store)
 
+    def _build_scratch_root(self) -> Path:
+        return self.store.state_dir / "build"
+
+    def _sweep_build_scratch(self, *, keep_live: bool = True) -> None:
+        """Remove build scratch of attempts that can no longer be using it.
+
+        The build itself is memory-only in the fake toolchain, but an attempt
+        materializes its artifact set under ``<state_dir>/build/<attempt_id>``
+        to load verified bytes.  A killed worker leaves that directory behind;
+        it must be removed by the job lifecycle, and a removal that cannot be
+        proven is recorded as a close hazard instead of being reported as a
+        clean teardown.
+        """
+
+        import shutil
+
+        root = self._build_scratch_root()
+        if not root.is_dir():
+            return
+        live: set[str] = set()
+        if keep_live:
+            try:
+                live = {attempt.attempt_id for _request_id, attempt, _q in self.store.running_attempts()}
+            except Exception as exc:  # noqa: BLE001 - unknown live set means no proof
+                self._record_close_error(f"build scratch cannot be swept safely: {exc}")
+                return
+        for child in sorted(root.iterdir()):
+            if child.name in live:
+                continue
+            try:
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+            except OSError as exc:
+                self._record_close_error(
+                    f"build scratch {child.name!r} could not be removed: {exc}"[:1000]
+                )
+
     def _finish_shutdown(self, store: JobStore) -> None:
         """Release terminal leases, close the store and set the closed event.
 
@@ -2912,6 +3056,12 @@ class JobEngine:
             self.reconcile_blobs()
         except Exception as exc:  # noqa: BLE001 - defensive shutdown boundary
             self._record_close_error(f"blob reconciliation failed during close: {exc}")
+        # No attempt can be live once the scheduler stopped; every remaining
+        # build scratch is leftover temporary state.
+        try:
+            self._sweep_build_scratch(keep_live=False)
+        except Exception as exc:  # noqa: BLE001 - defensive shutdown boundary
+            self._record_close_error(f"build scratch sweep failed during close: {exc}")
         try:
             store.close()
         except Exception as exc:  # pragma: no cover - defensive shutdown boundary

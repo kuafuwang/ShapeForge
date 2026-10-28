@@ -243,7 +243,80 @@ def request_to_proto(
             raise JobError("invalid_argument", "the bundle contract requires exactly one artifact branch")
         if dialect.npu_bundle and request.npu.bundle is not None and request.source:
             raise JobError("invalid_argument", "a bundle request must not embed inline source bytes")
+        if dialect.build_contract:
+            if request.build is None:
+                raise JobError("invalid_argument", "the build contract requires a BuildProvenance identity")
+            message.build.CopyFrom(build_request_to_proto(request.build))
+        elif request.build is not None:
+            raise JobError("invalid_argument", "only the build contract carries a build identity")
     return message
+
+
+def build_request_to_proto(value) -> pb.BuildRequest:
+    provenance = value.provenance_document()
+    message = pb.BuildRequest(
+        schema_id=contracts.NPU_BUILD_REQUEST_SCHEMA_ID, mode=value.mode,
+    )
+    message.provenance.CopyFrom(pb.BuildProvenance(
+        schema_id=provenance["schema_id"],
+        builder_id=provenance["builder_id"],
+        builder_version=provenance["builder_version"],
+        build_host=provenance["build_host"],
+        build_profile=provenance["build_profile"],
+        source_sha256=provenance["source_sha256"],
+    ))
+    message.provenance.toolchain.CopyFrom(pb.BuildToolchain(
+        id=provenance["toolchain"]["id"],
+        version=provenance["toolchain"]["version"],
+        sdk_version=provenance["toolchain"]["sdk_version"],
+    ))
+    message.provenance.compile_profile.update(
+        {key: str(item) for key, item in provenance["compile_profile"].items()}
+    )
+    if provenance["artifact_set_digest"] is not None:
+        message.provenance.artifact_set_digest = provenance["artifact_set_digest"]
+    return message
+
+
+def build_request_from_proto(message: pb.BuildRequest):
+    """Rebuild the typed build request from the wire message (fail closed)."""
+
+    from .job_types import NpuBuildRequest
+
+    if not isinstance(message, pb.BuildRequest):
+        raise JobError("invalid_argument", "build is not a BuildRequest message")
+    reject_unknown_fields(message, "EvaluationRequest.build")
+    reject_unknown_fields(message.provenance, "BuildRequest.provenance")
+    if message.HasField("provenance") is False:
+        raise JobError("invalid_argument", "build request has no provenance")
+    reject_unknown_fields(message.provenance.toolchain, "BuildProvenance.toolchain")
+    try:
+        return NpuBuildRequest.from_dict({
+            "schema_id": message.schema_id,
+            "mode": message.mode,
+            "provenance": {
+                "schema_id": message.provenance.schema_id,
+                "builder_id": message.provenance.builder_id,
+                "builder_version": message.provenance.builder_version,
+                "build_host": message.provenance.build_host,
+                "build_profile": message.provenance.build_profile,
+                "toolchain": {
+                    "id": message.provenance.toolchain.id,
+                    "version": message.provenance.toolchain.version,
+                    "sdk_version": message.provenance.toolchain.sdk_version,
+                },
+                "compile_profile": dict(message.provenance.compile_profile),
+                "source_sha256": message.provenance.source_sha256,
+                "artifact_set_digest": (
+                    message.provenance.artifact_set_digest
+                    if message.provenance.HasField("artifact_set_digest") else None
+                ),
+            },
+        })
+    except JobError:
+        raise
+    except (TypeError, ValueError, contracts.ContractError) as exc:
+        raise JobError("invalid_argument", f"build request is invalid: {exc}") from exc
 
 
 def bundle_entry_to_proto(value) -> pb.ArtifactBundleEntry:
@@ -345,9 +418,9 @@ def execution_to_proto(
         synchronization=value.synchronization,
     )
     message.device_group.CopyFrom(device_group_to_proto(value.device_group))
-    if value.spec_version == 4:
+    if value.spec_version >= 4:
         resources = value.declared_resources
-        message.spec_version = 4
+        message.spec_version = value.spec_version
         message.task_family = value.task_family or ""
         message.execution_schema_id = contracts.NPU_BUNDLE_EXECUTION_SCHEMA_ID
         message.resources.logical_devices = resources.logical_devices
@@ -392,9 +465,11 @@ def execution_from_proto(
         "synchronization": message.synchronization,
     }
     if dialect.npu_bundle:
-        if message.spec_version != 4 or message.execution_schema_id != contracts.NPU_BUNDLE_EXECUTION_SCHEMA_ID:
+        allowed_versions = (4, 5) if dialect.build_contract else (4,)
+        if message.spec_version not in allowed_versions or message.execution_schema_id != contracts.NPU_BUNDLE_EXECUTION_SCHEMA_ID:
             raise JobError(
-                "invalid_argument", "the bundle contract requires the version 4 execution spec"
+                "invalid_argument",
+                f"this contract version requires an execution spec in {sorted(allowed_versions)}",
             )
         if not has_resources:
             raise JobError("invalid_argument", "the version 4 execution spec requires declared resources")
@@ -451,11 +526,16 @@ def request_from_proto(
         raise JobError("invalid_argument", "request blob reference presence differs from the contract")
     if message.HasField("bundle") and not dialect.npu_bundle:
         raise JobError("invalid_argument", "only the bundle contract accepts an artifact bundle")
+    if message.HasField("build") != dialect.build_contract:
+        raise JobError(
+            "invalid_argument", "request build provenance presence differs from the contract"
+        )
     if dialect.npu_bundle and message.HasField("blob_ref"):
         raise JobError(
             "invalid_argument",
             "the bundle contract transports artifact bytes inline or per entry, not as one request blob",
         )
+    build = None
     if dialect.npu_source:
         if message.candidate_sha256:
             raise JobError("invalid_argument", "the NPU contract does not accept candidate_sha256")
@@ -468,6 +548,7 @@ def request_from_proto(
         )
         blob = None if not message.HasField("blob_ref") else blob_ref_from_proto(message.blob_ref)
         bundle = None if not message.HasField("bundle") else bundle_from_proto(message.bundle)
+        build = None if not message.HasField("build") else build_request_from_proto(message.build)
         execution = execution_from_proto(message.execution, dialect=dialect)
         if bundle is not None and bytes(message.source):
             raise JobError(
@@ -537,6 +618,7 @@ def request_from_proto(
             cache_policy=cache_policy,
             npu=npu,
             contract_dialect=dialect if npu is not None else None,
+            build=build,
         )
     except contracts.ContractError as exc:
         raise JobError("invalid_argument", str(exc)) from exc

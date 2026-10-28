@@ -20,6 +20,7 @@ from tcenv.remote.contracts import (
     BUNDLE_DIGEST_ALGORITHM,
     LEGACY_DIALECT,
     NPU_API_CONTRACT_IDS,
+    NPU_BUILD_TIMING_EVIDENCE_SCHEMA_ID,
     NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
     NPU_EVIDENCE_CONTRACT_IDS,
     NPU_TIMING_EVIDENCE_SCHEMA_ID,
@@ -41,6 +42,36 @@ BUNDLE_ALGORITHM = BUNDLE_DIGEST_ALGORITHM
 #: from the contract module rather than repeated, so the outbox cannot accept an
 #: evidence identity the frontend never signs.
 BUNDLE_EVIDENCE_SCHEMA_ID = NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID
+#: TimingEvidence schema of the P1c build contract (version 3).
+BUILD_EVIDENCE_SCHEMA_ID = NPU_BUILD_TIMING_EVIDENCE_SCHEMA_ID
+
+
+def _bind_build_provenance(request: EvaluationRequest, evaluator: Any) -> dict[str, Any] | None:
+    """Return the build identity document this evaluator will submit, or ``None``.
+
+    It is the request-level build document (``mode`` plus the independent
+    BuildProvenance).  The P1c outbox stores it as its own field so a resumed row
+    and the signed BuildEvidence describe one build identity.  An evaluator that
+    does not expose the hook (every earlier contract) contributes ``None``; the
+    build identity is never inferred from the artifact set digest.
+    """
+
+    hook = getattr(evaluator, "wire_build_provenance", None)
+    if not callable(hook):
+        return None
+    value = hook(request)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise EvaluationUnavailable(
+            "request_digest_missing", "evaluator returned an invalid BuildProvenance document"
+        )
+    if request.wire_build_provenance is not None and value != request.wire_build_provenance:
+        raise EvaluationUnavailable(
+            "request_digest_mismatch",
+            "the bound BuildProvenance differs from the evaluator's build identity",
+        )
+    return value
 
 
 def bind_wire_digest(
@@ -119,6 +150,7 @@ def bind_wire_digest(
         return replace(
             request, contract_request_digest=digest, wire_candidate_digest=candidate,
             wire_candidate_algorithm=bound_algorithm,
+            wire_build_provenance=_bind_build_provenance(request, evaluator),
         )
     if request.wire_candidate_digest:
         if candidate and candidate != request.wire_candidate_digest:
@@ -126,7 +158,11 @@ def bind_wire_digest(
                 "request_digest_mismatch",
                 "the bound wire CandidateDigest differs from the evaluator's candidate",
             )
-        return replace(request, contract_request_digest=digest, wire_candidate_digest=request.wire_candidate_digest)
+        return replace(
+            request, contract_request_digest=digest,
+            wire_candidate_digest=request.wire_candidate_digest,
+            wire_build_provenance=_bind_build_provenance(request, evaluator),
+        )
     if candidate and candidate != request.candidate_sha256:
         # The inline contract must bind the same bytes the request carries.
         raise EvaluationUnavailable(
@@ -213,6 +249,8 @@ class EvaluationOutbox:
     def evidence_schema_id(self) -> str:
         """The TimingEvidence schema this contract version signs."""
 
+        if self.dialect.build_contract:
+            return BUILD_EVIDENCE_SCHEMA_ID
         return (
             BUNDLE_EVIDENCE_SCHEMA_ID if self.dialect.npu_bundle
             else NPU_TIMING_EVIDENCE_SCHEMA_ID
@@ -249,6 +287,18 @@ class EvaluationOutbox:
         }
         if self.npu_contract:
             document["candidate_digest"] = self._expected_candidate(request)
+            if self.dialect.build_contract:
+                # The build provenance is an independent row field: the wire
+                # request digest binds it, and a resume must not silently swap
+                # the build identity behind an otherwise equal candidate.
+                if request.wire_build_provenance is None:
+                    raise EvaluationUnavailable(
+                        "request_digest_missing",
+                        "the build outbox requires the wire build identity document "
+                        "(mode plus BuildProvenance); call the evaluator's "
+                        "wire_build_provenance() before begin",
+                    )
+                document["build_provenance"] = request.wire_build_provenance
         else:
             document["candidate_sha256"] = request.candidate_sha256
         return document
@@ -353,6 +403,18 @@ class EvaluationOutbox:
             raise EvaluationUnavailable(
                 "outbox_corrupt", "outbox CandidateDigest does not bind the request candidate",
             )
+        if self.dialect.build_contract:
+            stored_build = document.get("build_provenance")
+            if not isinstance(stored_build, dict):
+                raise EvaluationUnavailable(
+                    "outbox_corrupt",
+                    "outbox row has no build identity document for the build contract",
+                )
+            if stored_build != request.wire_build_provenance:
+                raise EvaluationUnavailable(
+                    "outbox_conflict",
+                    "outbox build identity is bound to a different BuildProvenance",
+                )
         status = document.get("status")
         if status not in {"pending", "unavailable", "completed"}:
             raise EvaluationUnavailable("outbox_corrupt", "unknown evaluation outbox status")
@@ -421,6 +483,14 @@ class EvaluationOutbox:
                         candidate["value"]
                         if self.dialect.npu_bundle
                         and candidate["algorithm"] == BUNDLE_ALGORITHM else None
+                    ),
+                    # The host outbox has no artifact manifest, so it validates
+                    # the build identity (builder/toolchain/profile/source) and
+                    # the evidence's own manifest digest; the frontend also
+                    # compares the prebuilt entries byte for byte.
+                    expected_build=(
+                        request.wire_build_provenance
+                        if self.dialect.build_contract else None
                     ),
                     report_status=report.get("status"),
                     dialect=self.dialect,

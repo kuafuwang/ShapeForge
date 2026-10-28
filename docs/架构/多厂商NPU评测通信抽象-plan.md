@@ -1254,6 +1254,98 @@ profile 侧的物理 id 绑定；`declared_devices` 与 profile 的 rank/die 事
 manifest、BuildProvenance 与 fake NPU 的加载记录形成闭环。小文件只证明抽象和状态机，
 不证明真实 TX 编译器 ABI、跨版本兼容、真实 NPU 加载或构建性能。
 
+**P1c 实施记录（2026-10-28；NPU 侧无真实设备，Metal 侧为真实 Mac/Metal）**
+
+*统一 ArtifactBuilder 与中立模型*
+
+- `tcenv/remote/artifact_builder.py`：`ArtifactBuilder`（`probe`/`build`）、`BuildProfile`、
+  `BuildCapabilities`、`SourceBundle`、`BuildProvenance`、`BuildEvidence`、`BuildOutcome`
+  与 `ArtifactBuilderRegistry`。profile 是**登记身份**（builder id/version、构建主机、
+  profile 名、toolchain/SDK、有界 `compile_profile`）；请求可以点名 profile，但不能新增、
+  不能给 shell/路径/构建命令。registry 在构建前检查 deadline、构建后逐字段复核产出
+  provenance（builder/host/profile/toolchain/compile profile/source digest），不一致即
+  `toolchain_profile` 拒绝。
+- 错误分类只有 `compile`（候选失败）、`toolchain_profile`（环境/身份不匹配，Submit/create/
+  start 前拒绝）、`deadline`（超预算）。无类型的 builder 崩溃不会被写成 compile failure。
+  deadline 到期的预编译不启动、不 Submit；worker 内 deadline 是 attempt 失败而非 compile。
+- `artifact_set_digest` 仍只覆盖 manifest 与字节；BuildProvenance 是独立字段，进入
+  canonical request digest、持久 request JSON、outbox 行（`build_provenance`）与签名
+  BuildEvidence。构建环境变化（toolchain/profile 变了）不会被 digest 相同掩盖。
+- `tcenv/remote/artifact_bundle.py` 新增 `NativeExecutable`：后端原生可执行以「live
+  handle + canonical descriptor + `SHA256(RFC8785(descriptor))`」表达，不塞进 manifest。
+  带 native 的 bundle 是 local-only：`to_dict`/`to_worker_dict` 明确拒绝，本机 pipeline 无法
+  进入 NPU 请求。`BuildEvidence.native_document()` 是本地记录，wire 文档字段集不变。
+
+*contract 与两种时序*
+
+- `tcenv.remote.npu-build.{evaluator-api,evidence}.1`，`document_version=5`；
+  `EvaluationRequest.build = 27`（`mode=prebuilt|evaluator` + BuildProvenance），ExecutionSpec
+  新增 `kernel_module`（bundle/KERNEL/SIMT/stream-event），TimingEvidence 升为 v3
+  （`tcenv.remote.npu-build.timing-evidence.3`）并携带签名 `build` 文档。六 RPC 名称、
+  1..26 号字段、旧 v1–v4 文档、digest 算法与 HMAC 一个字节不变；`scripts/generate_
+  evaluator_proto.py --check` 通过。
+- prebuilt：control_host 的 `FakeTsmModuleBuilder`（tests/support，fake TX toolchain，非真实
+  ABI）把 source 编成小 ELF module；module 超过 inline 上限，所以 ArtifactBundle 引用
+  per-entry blob，经真实 BlobChannel 分块上传并 commit。Submit 前引擎按 descriptor lease
+  并复核 ready/descriptor/lease；worker 只复核字节并交给 fake NPU vendor C load，NPU 侧不拉
+  source、不编译、不需要 git/LLM 凭据。ledger 记录 `build` 身份与 `module_loads`。
+- evaluator：source 内联经六 RPC 提交，worker 用登记 profile 在**同一 attempt** 内构建，
+  再进入同一 driver；编译失败写 `compile_error`/`build.status=compile_failed`（`complete=
+  false`、`launches=0`、无模块 load），超时写 `build.status=not_run`（不声称工件或 load）。
+  两种时序共用同一 Bundle 角色、provenance/evidence 形状与错误分类。
+- 闭环：请求 `build` → request digest → 持久行 → outbox `build_provenance` → 签名证据
+  `build` → NPU ledger `builds`（含 provenance 与 loads）逐字段一致；resume 时 provenance
+  不同即 `outbox_conflict`，旧 attempt/fence 的结果被拒，构建/上传中断后重试不重复构建。
+- 生命周期：worker 每 attempt 写 `<state_dir>/build/<attempt>` 并复核字节，成功后删除并清掉
+  空父目录；引擎启动/关闭清扫孤儿 scratch，删不掉则记 close hazard（不谎称清理完成）；
+  终态释放 blob lease（字节删除）；设备 module 清理无法证明时 quarantine。
+
+*真实 Metal（生产实现，不是 fake）*
+
+- `tcenv/backends/metal/source_builder.py::MetalSourceBuilder` 是具体生产实现：`probe` 读真实
+  `MetalContext.info()`（device/family/MSL 版本/unified memory）；`build` 调用现有
+  `MetalBackend.assemble` + `MetalBackend.compile`（即
+  `MTLDevice.newLibraryWithSource_options_error_` + `newComputePipelineState...`）得到真实
+  library/pipeline。旧 `MetalBackend.compile`、report 的 `compile_s`/`pipeline_s`/
+  `language_version`、`candidate_sha256`、执行与发布路径均未改。
+- 产物用 `NativeExecutable(kind=compute-pipeline)` 表达：descriptor 固定 kernel 名、MSL 版本、
+  math、设备/GPU family、thread limits、static tg bytes、反射 bindings、assembled digest 与
+  header 行数；计时只进 BuildEvidence log/duration，不进 descriptor digest。SOURCE entry 是
+  候选原始 MSL，其 sha256 与旧 `candidate_sha256` 完全相等。
+- 真机证据（macOS 26.7.1 arm64，Apple M4 Max/Apple9，MSL 4.0）：relu small 的有效 MSL 真实
+  编译（compile_s=0.004032，pipeline_s=0.016921，duration_ms=21）并建立可用 pipeline，
+  做了一次小规模正确性运行（输出与参考一致、无安全违规）；同一 source 与旧
+  `MetalBackend.compile` 的 pipeline 形状逐字段一致；无效 MSL 先由真实
+  `MetalContext.compile` 抛 `MetalCompileError`，builder 再分类为 `compile`；probe 与 build
+  身份不一致被 `toolchain_profile` 拒绝。没有跑 benchmark、没有发布加速比。
+- 真实实现反过来修正了抽象：Metal 的编译输入是「契约头 + 候选源码」，而身份必须是候选
+  原始字节，所以 SOURCE digest 用候选字节、assembled digest 只进 descriptor；live pipeline
+  不能序列化，所以中立模型增加 backend-native handle，而不是把 pipeline 伪造成文件或让
+  Metal 走 NPU contract。
+
+*测试与结果（本机为围栏环境）*
+
+- `test_remote_npu_build_grpc.py` **23 passed**、`test_remote_npu_build_outbox.py`
+  **3 passed**、`test_source_builder.py` **7 passed**（其中 4 条 `gpu` 为真实 Metal）。
+  P1c + P0/P0b/P1 contract/grpc/cleanup/evidence + Go bundle conformance 合计
+  **265 passed**；旧 remote/gRPC/job/container/outbox 组 **333 passed, 5 skipped**；
+  Metal 非 gpu 回归 **289 passed, 1 skipped**（`test_triton_baseline` 因围栏禁止 `ps` 失败）。
+- 全套安全套件：**2527 passed / 6 skipped / 32 failed**。32 项均不在 P1c 触碰的文件里，为
+  既有围栏限制：`selfcheck_bridge` 的 AF_UNIX 路径超长、`children`/`triton_baseline` 的
+  `ps` PermissionError、`selfcheck`/`harness`/`kernel_agent` 的权威 selfcheck 缓存不可写、
+  `run_detached` 的进程分离受限；非围栏环境需父会话复跑。
+- 变异核验（临时改动后复原，对应测试转失败）：去掉 provenance↔CandidateDigest/bundle 的
+  digest 绑定；去掉证据 provenance 与已接受请求的逐字段比较；把 `build` 排除出 request
+  digest；把 in-attempt compile failure 改成基础设施退出；去掉 `_lease_blob`/`attach` 两层
+  未 commit 上传守卫（单删一层为冗余防御，两层都删才转失败）；接受旧 attempt/fence 结果；
+  删 worker 的 build scratch 清理；删关闭期 scratch 清扫；跳过构建后 provenance 复核；
+  允许 native bundle 序列化；跳过 `_require_build_profile`。以上分别由对应回归捕获。
+
+全部结果是 `simulated=true`、`publication_allowed=false`，不进入 confirmed/catalog/brief。
+**未做/未证明**：P2a TSM simulator、真实 TX 编译器/ABI/ELF、真实 NPU driver/firmware/加载、
+真实容器设备映射、构建性能与构建缓存、跨版本工具链兼容、真实 Metal 性能与 profiler；
+Metal 仍只走本地执行，不参与 NPU contract。
+
 ### P2a：TSM 模拟验收（无真实设备）
 
 位置：P1 之后、P2 之前。近期没有清微设备，因此先假设设备存在，用 TSM simulator 模拟

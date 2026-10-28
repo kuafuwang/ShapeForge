@@ -43,6 +43,18 @@ BUNDLE_SCHEMA_VERSION = 1
 #: CandidateDigest algorithm for a bundle artifact.
 BUNDLE_DIGEST_ALGORITHM = "sha256-bundle-v1"
 
+#: A backend-native executable (for example a live Metal compute pipeline) is
+#: described by this schema.  It is *not* a portable artifact: its descriptor is
+#: canonical and digestible, its handle is a live in-process object, and it can
+#: never be serialized onto the NPU wire.  ``artifact_set_digest`` keeps
+#: describing only the manifest/bytes; the native descriptor digest is bound by
+#: the BuildProvenance of the build that produced it.
+NATIVE_EXECUTABLE_SCHEMA_ID = "tcenv.remote.backend-native.executable.1"
+NATIVE_EXECUTABLE_KINDS = frozenset({"compute-pipeline"})
+MAX_NATIVE_DESCRIPTOR_FIELDS = 32
+MAX_NATIVE_DESCRIPTOR_BYTES = 8192
+
+
 BUNDLE_ROLES = frozenset({
     "SOURCE",
     "EXECUTABLE_MODULE",
@@ -174,11 +186,84 @@ class MaterializedEntry:
 
 
 @dataclass(frozen=True)
+class NativeExecutable:
+    """A backend-native executable (a live pipeline handle plus its descriptor).
+
+    Metal compiles MSL into a ``MTLLibrary`` + ``MTLComputePipelineState`` in the
+    control host's process; those objects are neither bytes nor portable.  The
+    neutral model therefore keeps two things apart:
+
+    * the artifact set (the exact source bytes and their manifest/digest), and
+    * this descriptor + handle, which records the *backend facts* of the
+      executable that source produced: backend id, kind, the source entry it was
+      built from, compiler/language version, kernel name and the reflected ABI
+      shape.  ``digest`` is ``SHA256(RFC8785(descriptor))`` and is bound by the
+      BuildProvenance of the build, never folded into ``artifact_set_digest``.
+
+    ``handle`` is the real in-process object (for Metal a ``CompiledKernel``
+    carrying the pipeline and library).  It is excluded from equality and repr
+    and is never serialized, so a native artifact set cannot be smuggled into a
+    remote request document.
+    """
+
+    backend_id: str
+    kind: str
+    entry_path: str
+    entry_sha256: str
+    descriptor: Mapping[str, Any]
+    handle: Any = field(default=None, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.backend_id, str) or not self.backend_id or len(self.backend_id) > 32:
+            raise BundleError("native executable backend_id is invalid")
+        if self.kind not in NATIVE_EXECUTABLE_KINDS:
+            raise BundleError("native executable kind is not supported")
+        object.__setattr__(self, "entry_path", validate_relative_path(self.entry_path))
+        object.__setattr__(self, "entry_sha256", _sha256(self.entry_sha256, "native executable entry sha256"))
+        if not isinstance(self.descriptor, Mapping):
+            raise BundleError("native executable descriptor must be an object")
+        if len(self.descriptor) > MAX_NATIVE_DESCRIPTOR_FIELDS:
+            raise BundleError("native executable descriptor has too many fields")
+        document = json.dumps(
+            dict(self.descriptor), sort_keys=True, separators=(",", ":"), allow_nan=False,
+        )
+        if len(document.encode("utf-8")) > MAX_NATIVE_DESCRIPTOR_BYTES:
+            raise BundleError("native executable descriptor is too large")
+        object.__setattr__(self, "descriptor", json.loads(document))
+
+    def document(self) -> dict[str, Any]:
+        """The canonical, handle-free descriptor document."""
+
+        return {
+            "schema_id": NATIVE_EXECUTABLE_SCHEMA_ID,
+            "backend_id": self.backend_id,
+            "kind": self.kind,
+            "entry_path": self.entry_path,
+            "entry_sha256": self.entry_sha256,
+            "descriptor": dict(self.descriptor),
+        }
+
+    @property
+    def digest(self) -> str:
+        """``SHA256(RFC8785(descriptor))``: the native executable's identity."""
+
+        from .contracts import canonical_digest_document
+
+        return hashlib.sha256(canonical_digest_document(self.document())).hexdigest()
+
+
+@dataclass(frozen=True)
 class ArtifactBundle:
-    """A validated bundle; ``entries`` are kept in canonical (path) order."""
+    """A validated bundle; ``entries`` are kept in canonical (path) order.
+
+    ``native`` describes a backend-local executable built from one entry.  It is
+    local placement only: a bundle carrying it has no portable artifact set to
+    submit, so its request/worker documents are refused.
+    """
 
     entries: tuple[BundleEntry, ...] = field(default_factory=tuple)
     schema_id: str = BUNDLE_SCHEMA_ID
+    native: NativeExecutable | None = None
 
     def __post_init__(self) -> None:
         if self.schema_id != BUNDLE_SCHEMA_ID:
@@ -193,6 +278,24 @@ class ArtifactBundle:
         # One canonical order (by path) so the request document and the digest
         # manifest are the same list in every language.
         object.__setattr__(self, "entries", tuple(normalized["entries"]))
+        if self.native is not None:
+            if not isinstance(self.native, NativeExecutable):
+                raise BundleError("bundle native executable must be typed")
+            entry = self.entry(self.native.entry_path)
+            if entry.sha256 != self.native.entry_sha256:
+                raise BundleError(
+                    "the native executable was not built from this bundle's source bytes"
+                )
+            if entry.data is None:
+                raise BundleError("a native executable requires its source bytes in the bundle")
+
+    @property
+    def local_only(self) -> bool:
+        return self.native is not None
+
+    @property
+    def native_digest(self) -> str | None:
+        return None if self.native is None else self.native.digest
 
     # -- identity ----------------------------------------------------------
     @property
@@ -225,9 +328,17 @@ class ArtifactBundle:
         return tuple(sorted({entry.role for entry in self.entries}))
 
     # -- documents ---------------------------------------------------------
+    def _reject_local_only(self) -> None:
+        if self.native is not None:
+            raise BundleError(
+                "a bundle with a backend-native executable is local-only: "
+                "it has no portable artifact set to submit"
+            )
+
     def to_dict(self) -> dict[str, Any]:
         """The canonical request/receipt document (no bytes anywhere)."""
 
+        self._reject_local_only()
         return {
             "schema_id": self.schema_id,
             "artifact_set_digest": self.artifact_set_digest,
@@ -237,6 +348,7 @@ class ArtifactBundle:
     def to_worker_dict(self) -> dict[str, Any]:
         """Private worker form: base64 inline bytes plus blob references."""
 
+        self._reject_local_only()
         document = self.to_dict()
         entries = []
         for entry, rendered in zip(self.entries, document["entries"]):

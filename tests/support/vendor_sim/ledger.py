@@ -70,6 +70,7 @@ class VendorLedger:
             return {
                 "schema_version": 1, "resources": {}, "cancelled": [],
                 "device_running": [], "running_scope": {}, "probes": [], "blob_reads": [],
+                "builds": [], "module_loads": [],
             }
         try:
             document = json.loads(self.path.read_text(encoding="utf-8"))
@@ -78,7 +79,12 @@ class VendorLedger:
         if not isinstance(document, dict) or document.get("schema_version") != 1:
             raise LedgerError("fake vendor ledger schema is unsupported")
         document.setdefault("blob_reads", [])
-        for key in ("resources", "cancelled", "device_running", "probes", "blob_reads"):
+        document.setdefault("builds", [])
+        document.setdefault("module_loads", [])
+        for key in (
+            "resources", "cancelled", "device_running", "probes", "blob_reads",
+            "builds", "module_loads",
+        ):
             if not isinstance(document.get(key), (dict, list)):
                 raise LedgerError("fake vendor ledger is corrupt")
         # A running marker is only meaningful with the binding it was taken
@@ -113,6 +119,53 @@ class VendorLedger:
                 "detail": dict(detail or {}),
             }
         return resource_id
+
+    def record_build(
+        self, *, attempt_id: str, lease_fence: int, binding: Mapping[str, str],
+        mode: str, provenance: Mapping[str, Any], artifacts: list[Mapping[str, Any]],
+        load_records: list[Mapping[str, Any]],
+    ) -> None:
+        """Record the build identity the receiver accepted (KPI: closed loop).
+
+        The handler only stores the identity fields, never source bytes or a host
+        path: a test can compare this record with the control_host builder
+        outcome and with the signed BuildEvidence.
+        """
+
+        entry = {
+            "attempt_id": attempt_id,
+            "lease_fence": lease_fence,
+            "binding": {key: binding.get(key) for key in _BINDING_KEYS},
+            "mode": mode,
+            "provenance": dict(provenance),
+            "artifacts": [dict(artifact) for artifact in artifacts],
+            "loads": [dict(load) for load in load_records],
+        }
+        with self._locked() as document:
+            document["builds"].append(entry)
+
+    def builds(self) -> list[dict[str, Any]]:
+        with self._locked(create=False) as document:
+            return json.loads(json.dumps(document["builds"]))
+
+    def record_module_load(
+        self, *, attempt_id: str, lease_fence: int, binding: Mapping[str, str],
+        path: str, sha256: str, size_bytes: int,
+    ) -> None:
+        entry = {
+            "attempt_id": attempt_id,
+            "lease_fence": lease_fence,
+            "binding": {key: binding.get(key) for key in _BINDING_KEYS},
+            "path": path,
+            "sha256": sha256,
+            "size_bytes": size_bytes,
+        }
+        with self._locked() as document:
+            document["module_loads"].append(entry)
+
+    def module_loads(self) -> list[dict[str, Any]]:
+        with self._locked(create=False) as document:
+            return json.loads(json.dumps(document["module_loads"]))
 
     def mark_device_running(
         self, *, attempt_id: str, lease_fence: int, binding: Mapping[str, str],

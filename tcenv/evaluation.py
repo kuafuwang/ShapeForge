@@ -106,6 +106,11 @@ class EvaluationRequest:
     # the contract nor the value identifies it; empty keeps the historical
     # ``sha256``/``sha256-blob-v1`` choice from the contract identity.
     wire_candidate_algorithm: str = ""
+    # Host-only BuildProvenance document of the P1c build contract.  It is an
+    # independent field of the outbox row and the resume identity (the wire
+    # request digest binds it), never part of the artifact set digest; empty
+    # keeps every earlier contract byte-identical.
+    wire_build_provenance: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, str):
@@ -161,6 +166,13 @@ class EvaluationRequest:
             # A blob candidate only makes sense on the contract that binds its
             # descriptor; a bare candidate digest would be an unreviewed identity.
             raise EvaluationError("wire_candidate_digest requires the contract_request_digest identity")
+        if self.wire_build_provenance is not None:
+            if not isinstance(self.wire_build_provenance, dict):
+                raise EvaluationError("wire_build_provenance must be a document or None")
+            if not self.wire_candidate_digest or not self.contract_request_digest:
+                # A build provenance without the wire identity it belongs to
+                # would be an unreviewed field on a legacy row.
+                raise EvaluationError("wire_build_provenance requires the contract wire identity")
         if self.wire_candidate_algorithm and not _IDENTIFIER.fullmatch(self.wire_candidate_algorithm):
             # The algorithm may be bound before (or without) a value: the durable
             # outbox is what refuses an artifact candidate with no digest, so this

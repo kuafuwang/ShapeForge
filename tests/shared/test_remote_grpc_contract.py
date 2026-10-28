@@ -172,11 +172,18 @@ def test_checked_in_descriptor_set_matches_generated_message_schema():
     runtime = descriptor_pb2.FileDescriptorProto.FromString(pb2.DESCRIPTOR.serialized_pb)
     # The runtime pool omits default json_name values; the descriptor set records
     # them explicitly. Compare every other schema field after normalizing that
-    # derivable serialization detail rather than comparing container bytes.
+    # derivable serialization detail rather than comparing container bytes.  The
+    # normalization is recursive because a map field contributes a *nested*
+    # entry message whose fields carry the same derivable json_name.
+    def _clear_json_names(message) -> None:
+        for field in message.field:
+            field.ClearField("json_name")
+        for nested in message.nested_type:
+            _clear_json_names(nested)
+
     for file in (generated, runtime):
         for message in file.message_type:
-            for field in message.field:
-                field.ClearField("json_name")
+            _clear_json_names(message)
     assert generated == runtime
 
 

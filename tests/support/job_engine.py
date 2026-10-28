@@ -557,3 +557,166 @@ def npu_bundle_retry(
         required_features=list(npu_bundle_features(blob=engine.blob_store is not None)),
         grant_token=token,
     )
+
+
+# -- P1c NPU build contract fixtures ---------------------------------------
+NPU_BUILD_TARGET = "sim-npu-build-module"
+NPU_BUILD_DEVICE = "sim-npu-build-device"
+NPU_BUILD_WORKER_BUILD = "fake-vendor-c-worker-1"
+#: Features advertised by the P1c build-contract fake frontend.
+NPU_BUILD_FEATURES = (
+    "durable-jobs", "attempt-receipts", "progress", "artifact-bundle",
+    "build-provenance", "device-event-timing",
+)
+
+
+def npu_build_features(*, blob: bool = False) -> tuple[str, ...]:
+    return (*NPU_BUILD_FEATURES, "blob-artifact") if blob else NPU_BUILD_FEATURES
+
+
+def npu_build_identity() -> ServiceIdentity:
+    """Identity of the P1c fake module vendor frontend."""
+
+    return ServiceIdentity(
+        site_id=NPU_SITE, device_id=NPU_BUILD_DEVICE, backend="vendor-c",
+        backend_version="1", target_id=NPU_BUILD_TARGET,
+        worker_build=NPU_BUILD_WORKER_BUILD, task_pack_digest=TASK_PACK_DIGEST,
+        calibration_digest="c" * 64,
+        task_fingerprints=frozenset({NPU_TASK_FINGERPRINT}),
+        task_bindings={NPU_TASK_FINGERPRINT: ("relu", "fp16", "small")},
+        measurement_kind="simulated", publication_allowed=False,
+    )
+
+
+def npu_build_execution(mode: str = "prebuilt", *, generation: str = "1", resources=None):
+    """The served execution binding for one P1c timing."""
+
+    from tests.support.vendor_sim.vendor_c import (
+        build_evaluator_execution, build_module_execution,
+    )
+
+    if mode == "prebuilt":
+        return build_module_execution(generation, resources=resources)
+    if mode == "evaluator":
+        return build_evaluator_execution(generation, resources=resources)
+    raise ValueError(f"unknown P1c build mode {mode!r}")
+
+
+def npu_build_grant(
+    token: str = NPU_TOKEN, *, run_id: str = "npu-run-1",
+    session_id: str = "npu-session-1", subject: str = "npu-subject-1",
+    expires_at: float | None = None,
+) -> SessionGrant:
+    return SessionGrant(
+        token=token, run_id=run_id, session_id=session_id, target_id=NPU_BUILD_TARGET,
+        allowed_kinds=frozenset({"formal_eval", "selfcheck"}),
+        allowed_modes=frozenset({"quick", "full"}),
+        expires_at=expires_at, max_timed=20, max_gpu_s=120.0, subject=subject,
+    )
+
+
+def npu_build_engine(
+    state_dir: Path, *, ledger_path: Path, controller,
+    grants: list[SessionGrant] | None = None,
+    worker_env: dict[str, str] | None = None, generation: str = "1",
+    mode: str = "prebuilt", build_registry=None, blob_store=None, **options,
+):
+    """One P1c frontend: the build contract over fake vendor C."""
+
+    from tcenv.remote import contracts
+
+    env = dict(worker_env or {})
+    env["TCENV_VENDOR_LEDGER"] = str(ledger_path)
+    env["TCENV_VENDOR_C_GENERATION"] = generation
+    return JobEngine(
+        identity=npu_build_identity(),
+        grants=grants or [npu_build_grant()],
+        worker_command=[sys.executable, "-m", "tests.support.vendor_sim.worker_c"],
+        worker_cwd=Path(__file__).resolve().parents[2],
+        state_dir=state_dir, worker_env=env,
+        supported_features=frozenset(npu_build_features(blob=blob_store is not None)),
+        supported_modes=frozenset({"quick", "full"}),
+        contract=contracts.NPU_BUILD_DIALECT,
+        npu_execution=npu_build_execution(mode, generation=generation),
+        device_controller=controller,
+        build_registry=build_registry,
+        blob_store=blob_store,
+        **options,
+    )
+
+
+def npu_build_capabilities(engine: JobEngine, *, token: str = NPU_TOKEN, nonce: str | None = None):
+    features = tuple(npu_build_features(blob=engine.blob_store is not None))
+    nonce = (secrets.token_hex(16) if nonce is None else nonce).ljust(16, "0")
+    expected = engine.expected_identities
+    return engine.get_capabilities(
+        grant_token=token, client_nonce=nonce, expected=expected.evaluator.to_dict(),
+        api_contract_ids=[expected.api_contract_id],
+        evidence_contract_ids=[expected.evidence_contract_id],
+        required_features=list(features),
+    )
+
+
+def npu_build_submit(
+    engine: JobEngine, req: ExternalEvaluationRequest, *, token: str = NPU_TOKEN,
+) -> JobSnapshot:
+    cap = npu_build_capabilities(engine, token=token)
+    return engine.submit(
+        request=req, expected=engine.expected_identities,
+        capability_id=cap.capability_id,
+        required_features=list(npu_build_features(blob=engine.blob_store is not None)),
+        grant_token=token,
+    )
+
+
+def npu_build_get(
+    engine: JobEngine, req: ExternalEvaluationRequest, *, token: str = NPU_TOKEN,
+) -> JobSnapshot:
+    return engine.get_job(
+        request_id=req.request_id, request_digest=req.request_digest,
+        expected=engine.expected_identities, grant_token=token,
+    )
+
+
+def npu_build_request(
+    request_id: str = "npu-build-request-1", *, build, source: bytes = b"npu-kernel relu_kernel\n",
+    bundle=None, run_id: str = "npu-run-1", session_id: str = "npu-session-1",
+    candidate_timeout_ms: int = 3000, queue_timeout_ms: int = 3000,
+    reps: int = 2, mode: str = "quick", kind: str = "formal_eval",
+    generation: str = "1", resources=None, execution=None,
+) -> ExternalEvaluationRequest:
+    """Build a document-version-5 request: prebuilt artifact set or evaluator build."""
+
+    from tcenv.remote import contracts
+    from tcenv.remote.job_types import CandidateDigest, NpuSourceRequest
+
+    mode_name = build.mode
+    execution = execution or npu_build_execution(
+        "prebuilt" if mode_name == "prebuilt" else "evaluator",
+        generation=generation, resources=resources,
+    )
+    if mode_name == "prebuilt":
+        if bundle is None:
+            raise ValueError("a prebuilt request requires an artifact bundle")
+        npu = NpuSourceRequest(
+            candidate_digest=CandidateDigest(
+                contracts.BUNDLE_DIGEST_ALGORITHM, bundle.artifact_set_digest,
+                allowed_algorithms=(contracts.BUNDLE_DIGEST_ALGORITHM,),
+            ),
+            execution=execution, bundle=bundle,
+        )
+        payload = b""
+    else:
+        npu = NpuSourceRequest(
+            candidate_digest=CandidateDigest("sha256", hashlib.sha256(source).hexdigest()),
+            execution=execution,
+        )
+        payload = source
+    return ExternalEvaluationRequest(
+        kind=kind, request_id=request_id, run_id=run_id, session_id=session_id,
+        task="relu", dtype="fp16", size="small", target_id=NPU_BUILD_TARGET,
+        task_fingerprint=NPU_TASK_FINGERPRINT, candidate_sha256="", source=payload,
+        mode=mode, seed="3", reps=reps, queue_timeout_ms=queue_timeout_ms,
+        candidate_timeout_ms=candidate_timeout_ms, cases=None, npu=npu,
+        contract_dialect=contracts.NPU_BUILD_DIALECT, build=build,
+    )
