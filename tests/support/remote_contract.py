@@ -291,6 +291,16 @@ def bundle_completeness_vectors(
         )
         return document
 
+    duplicate_device = with_shape(
+        devices=["device-0", "device-1"], ranks=None, dies=None,
+        spans=[span("device-0", elapsed=1_250)], elapsed=1_250,
+    )
+    duplicate_device["topology"]["declared_devices"] = ["device-0", "device-0"]
+    mismatch = with_shape(
+        devices=["device-0"], ranks=None, dies=None,
+        spans=[span("device-0", elapsed=1_250)], elapsed=1_250,
+    )
+    mismatch["topology"]["logical_devices"] = 2
     two_devices = ["device-0", "device-1"]
     rank_complete = [
         span("device-0", rank=0, elapsed=1_100), span("device-0", rank=1, elapsed=1_250),
@@ -321,6 +331,11 @@ def bundle_completeness_vectors(
             devices=two_devices, ranks=2, dies=None,
             spans=rank_complete[:3] + [span("device-1", rank=2, elapsed=1_300)], elapsed=1_300,
         )),
+        # The declared device list is itself part of the topology contract: a
+        # count that disagrees with it, or the same device listed twice, must be
+        # refused before any span is even considered.
+        ("logical-devices-disagree-with-the-list", mismatch),
+        ("duplicate-declared-device", duplicate_device),
     ]
     vectors: list[dict[str, Any]] = []
     for name, document in documents:

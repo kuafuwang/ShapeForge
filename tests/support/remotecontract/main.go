@@ -832,12 +832,30 @@ func verifyEvidenceCompleteness(evidence map[string]any) error {
 		return errors.New("evidence declares no device")
 	}
 	declared := make([]string, 0, len(rawDevices))
+	declaredSeen := map[string]bool{}
 	for _, raw := range rawDevices {
 		name, ok := raw.(string)
 		if !ok || name == "" {
 			return errors.New("declared device id is not text")
 		}
+		if declaredSeen[name] {
+			return errors.New("the declared topology lists the same device twice")
+		}
+		declaredSeen[name] = true
 		declared = append(declared, name)
+	}
+	// ``logical_devices`` is part of the declared topology, so it has to agree
+	// with the device list the spans are checked against.
+	logicalValue, ok := topology["logical_devices"].(json.Number)
+	if !ok {
+		return errors.New("evidence topology has no logical device count")
+	}
+	logicalDevices, err := strconv.ParseInt(logicalValue.String(), 10, 64)
+	if err != nil || logicalDevices < 1 {
+		return errors.New("evidence topology logical device count is out of range")
+	}
+	if int(logicalDevices) != len(declared) {
+		return errors.New("logical_devices disagrees with the declared device list")
 	}
 	dimension := func(name string) (int64, bool, error) {
 		raw := topology[name]
@@ -1008,6 +1026,19 @@ func verifyBundle(golden *BundleGolden) error {
 	}
 	if !bytes.Equal(manifestBytes, expectedManifest) {
 		return errors.New("independently constructed bundle manifest differs")
+	}
+	evidenceDescriptor, ok := golden.Signature.UnsignedResult["evidence"].(map[string]any)
+	if !ok {
+		return errors.New("bundle result is missing the evidence descriptor")
+	}
+	// The descriptor names what the bytes are before anything parses them.  A
+	// consistently re-signed vector with the version-1 schema/media type must be
+	// refused here, not merely by an HMAC that happens to disagree.
+	if evidenceDescriptor["schema_id"] != "tcenv.remote.npu-bundle.timing-evidence.2" {
+		return errors.New("bundle evidence descriptor is not the version 2 schema identity")
+	}
+	if evidenceDescriptor["media_type"] != "application/vnd.tcenv.npu-bundle.timing-evidence.v2+json" {
+		return errors.New("bundle evidence descriptor is not the version 2 media type")
 	}
 	if err := verifyBundleEvidence(golden.Evidence, golden.ArtifactSetDigest); err != nil {
 		return err

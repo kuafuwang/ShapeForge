@@ -62,6 +62,8 @@ _DEADLINE_SLICE_S = 1.0
 # verify).  The scheduler performs the same teardown asynchronously if this
 # window expires; the job is already durably cancelled either way.
 CONTAINER_CANCEL_TEARDOWN_S = 20.0
+#: Job states that can never use their leased artifact again.
+_TERMINAL_JOB_STATES = frozenset({"completed", "failed", "cancelled", "expired"})
 _PROC_PIDTBSDINFO = 3
 _MACOS_BSDPROC_INFO = None
 
@@ -859,6 +861,22 @@ class JobEngine:
                 "this evaluator has no blob channel; a blob-backed artifact cannot be served",
             )
 
+    def _unservable_artifact_error(self, request: ExternalEvaluationRequest) -> str:
+        """Why this frontend cannot run the request's artifact (empty = it can).
+
+        The submit/retry paths check this before a job or attempt exists; the
+        scheduler asks again before ``supervisor.create`` so a job recovered from
+        a crash (or a frontend whose configuration changed) can never spawn a
+        worker that is guaranteed to fail on the missing artifact channel.
+        """
+
+        descriptors = self._artifact_blobs(request)
+        if not descriptors:
+            return ""
+        if self.blob_store is None:
+            return "this evaluator has no blob channel; a blob-backed artifact cannot be run"
+        return ""
+
     def _lease_blob(
         self, request: ExternalEvaluationRequest, grant_token: str,
     ) -> _ArtifactLease | None:
@@ -933,6 +951,31 @@ class JobEngine:
             except Exception:  # noqa: BLE001 - rollback is best effort by design
                 pass
 
+    def _release_terminal_leases(self, *, scope_id: str | None = None) -> None:
+        """Release leases whose job is already terminal, without touching bytes.
+
+        ``cancel_scope`` finishes the non-running jobs of a revoked scope
+        immediately and only returns the running ones, so the revocation path
+        would otherwise keep their artifact leases until shutdown.  Only a
+        terminal job is released; a live or unknown request keeps its lease.
+        """
+
+        if self.blob_store is None:
+            return
+        try:
+            leased = self.blob_store.leases()
+        except Exception as exc:  # noqa: BLE001 - a lease listing must not break revocation
+            self._record_close_error(f"could not list blob leases: {exc}")
+            return
+        for request_id in sorted(leased):
+            try:
+                snapshot = self.store._job_by_id(request_id)
+            except Exception:  # noqa: BLE001 - an unknown request keeps its lease
+                continue
+            if snapshot.state not in _TERMINAL_JOB_STATES:
+                continue
+            self._release_blob_lease(request_id, attempt=snapshot.current_attempt)
+
     def _release_blob_lease(self, request_id: str, *, attempt: Attempt | None = None) -> None:
         """Release a terminal job's blob lease and record a failed cleanup.
 
@@ -973,10 +1016,28 @@ class JobEngine:
         if self.blob_store is None:
             return {}
         try:
-            return self.blob_store.reconcile(self.store.live_request_ids())
+            live = self.store.live_request_ids()
+        except Exception as exc:  # noqa: BLE001 - shutdown must still make progress
+            self._record_close_error(f"could not list live jobs for blob reconciliation: {exc}")
+            return {}
+        try:
+            released = self.blob_store.reconcile(live)
         except BlobError as exc:
             self._record_close_error(f"blob reconciliation failed: {exc.detail}")
             return {}
+        except Exception as exc:  # noqa: BLE001 - shutdown must still make progress
+            self._record_close_error(f"blob reconciliation failed: {exc}")
+            return {}
+        # A lease that was dropped but whose bytes could not be deleted is a
+        # quarantine, not a clean release: it has to surface like any other
+        # unverified cleanup instead of being hidden in the returned records.
+        for request_id, records in sorted(released.items()):
+            failed = [record for record in records if record.get("cleanup") == "quarantine"]
+            if not failed:
+                continue
+            reason = str(failed[0].get("error") or "blob cleanup did not complete")
+            self._record_blob_hazard(request_id, None, f"blob cleanup failed: {reason}")
+        return released
 
     def blob_state(self, content_id: str, grant_token: str) -> Any:
         """Return the durable blob state for one grant (testing/ops surface)."""
@@ -996,7 +1057,9 @@ class JobEngine:
             )
         if request.target_id != self.identity.target_id:
             raise JobError("failed_precondition", "target is not served by this evaluator")
-        self._refuse_unservable_artifact(request)
+        # The artifact channel is checked where a *new* job is admitted: a
+        # durable replay of an accepted/terminal job must still answer from the
+        # committed row after the frontend's configuration changed.
         if self.contract.npu_source:
             if request.npu is None or self.npu_execution is None:
                 raise JobError("invalid_argument", "NPU request has no execution binding")
@@ -1032,8 +1095,11 @@ class JobEngine:
         # request id (releasing it would also risk the winner's lease).
         with self._submit_lock:
             lease: _ArtifactLease | None = None
-            if self.blob_store is not None and not self.store.job_exists(request.request_id):
-                lease = self._lease_blob(request, grant_token)
+            if not self.store.job_exists(request.request_id):
+                # A *new* job needs an artifact this frontend can actually serve.
+                self._refuse_unservable_artifact(request)
+                if self.blob_store is not None:
+                    lease = self._lease_blob(request, grant_token)
             try:
                 snapshot, _created = self.store.submit(
                     request=request, request_digest=request.request_digest, expected=expected,
@@ -1041,16 +1107,32 @@ class JobEngine:
                     required_features=required_features, grant_token=grant_token,
                 )
             except BaseException:
-                if lease is not None and not self.store.job_exists(request.request_id):
-                    # A rejected new Submit must not leave a lease behind; the
-                    # bytes stay (the caller may fix the request and retry the
-                    # same upload).  Only the leases this operation created are
-                    # dropped -- releasing by request id here would also free a
-                    # lease an earlier attempt/fence still owns.  A durable job
-                    # keeps its lease: a failed replay is not a terminal outcome.
-                    self._drop_attached_blobs(
-                        lease.scope, request.request_id, lease.content_ids,
-                    )
+                if lease is not None:
+                    committed: bool | None
+                    try:
+                        committed = self.store.job_exists(request.request_id)
+                    except Exception as exc:  # noqa: BLE001 - never mask the real cause
+                        # The store cannot say whether the job landed.  Freeing the
+                        # lease on a guess could remove bytes a committed job still
+                        # needs, so keep it for reconciliation and record that the
+                        # rollback was not verified.  The original Submit error is
+                        # re-raised unchanged.
+                        self._record_blob_hazard(
+                            request.request_id, None,
+                            "could not verify whether the Submit committed; lease kept "
+                            f"for reconciliation: {exc}",
+                        )
+                        committed = None
+                    if committed is False:
+                        # A rejected new Submit must not leave a lease behind; the
+                        # bytes stay (the caller may fix the request and retry the
+                        # same upload).  Only the leases this operation created are
+                        # dropped -- releasing by request id here would also free a
+                        # lease an earlier attempt/fence still owns.  A durable job
+                        # keeps its lease: a failed replay is not a terminal outcome.
+                        self._drop_attached_blobs(
+                            lease.scope, request.request_id, lease.content_ids,
+                        )
                 raise
         if snapshot.state == "accepted" and not snapshot.quarantined:
             snapshot = self.store.enqueue_accepted(request.request_id)
@@ -1095,6 +1177,11 @@ class JobEngine:
                 self._cancel_device_for(snapshot)
             finally:
                 self._active_lock.release()
+            if snapshot.state in _TERMINAL_JOB_STATES:
+                # A queued/accepted job is cancelled straight to a terminal state
+                # without going through ``_finish_cancellation``; its artifact
+                # lease has to be released here or it survives until shutdown.
+                self._release_blob_lease(request_id, attempt=snapshot.current_attempt)
         else:
             # A spawn is holding the lock: never let cancel_teardown_s become
             # unbounded.  Commit the durable cancellation without the lock and
@@ -1130,17 +1217,28 @@ class JobEngine:
         required_features: list[str] | tuple[str, ...] = (), grant_token: str,
     ) -> JobSnapshot:
         self._required_features(required_features)
-        # A Retry must not resurrect a blob-backed artifact this frontend has no
-        # channel for: the durable job would be re-dispatched into a worker that
-        # can only fail on the missing blob root.
+        # A Retry is a *new* execution of the same artifact, so it re-proves the
+        # whole artifact before a new attempt exists: the channel must be there,
+        # every blob must still be ready with the descriptor the request names,
+        # and the lease must be (re)taken.  Without this a Retry created a queued
+        # attempt whose worker could only exit on a missing or deleted blob.
         stored = self.store.stored_request(request_id)
-        if stored is not None:
-            self._refuse_unservable_artifact(stored)
-        snapshot = self.store.retry(
-            grant_token=grant_token, request_id=request_id, request_digest=request_digest,
-            expected=expected, interrupted_attempt_id=interrupted_attempt_id,
-            capability_id=capability_id, required_features=required_features,
-        )
+        lease: _ArtifactLease | None = None
+        with self._submit_lock:
+            if stored is not None:
+                self._refuse_unservable_artifact(stored)
+                if self.blob_store is not None:
+                    lease = self._lease_blob(stored, grant_token)
+            try:
+                snapshot = self.store.retry(
+                    grant_token=grant_token, request_id=request_id, request_digest=request_digest,
+                    expected=expected, interrupted_attempt_id=interrupted_attempt_id,
+                    capability_id=capability_id, required_features=required_features,
+                )
+            except BaseException:
+                if lease is not None:
+                    self._drop_attached_blobs(lease.scope, request_id, lease.content_ids)
+                raise
         self._wake()
         return snapshot
 
@@ -1159,6 +1257,10 @@ class JobEngine:
             for request_id in running:
                 active = self._cancel_active_locked(request_id)
                 self._cancel_device(active.attempt if active is not None else None)
+            # ``cancel_scope`` finishes every non-running job in the scope
+            # immediately; those never reach ``_finish_cancellation``, so release
+            # the artifact leases of everything in the scope that is terminal now.
+            self._release_terminal_leases(scope_id=scope_id)
         self._wake()
 
     def release_quarantine(self, request_id: str) -> JobSnapshot:
@@ -2051,6 +2153,17 @@ class JobEngine:
                 quarantine=True, recovery_error=identity_error[:1000],
             )
             return
+        artifact_error = self._unservable_artifact_error(request)
+        if artifact_error:
+            # A recovered accepted job, or any other dispatch that reached this
+            # frontend without the artifact channel: fail the attempt durably
+            # *before* ``supervisor.create`` instead of spawning a worker that can
+            # only exit on the missing blob root.
+            self._interrupt_attempt(
+                request.request_id, attempt,
+                JobFailure("infrastructure", True, "artifact_unavailable", artifact_error[:1000]),
+            )
+            return
         if self.supervisor.kind == EXECUTION_CONTAINER:
             # Bind the attempt to this Docker daemon before any container can
             # exist, so a crash between create and the id attach is recoverable
@@ -2659,7 +2772,13 @@ class JobEngine:
             self._close_error = exc
         # Release terminal job leases before the store closes; a failing cleanup
         # is recorded (and the blob stays quarantined) instead of being hidden.
-        self.reconcile_blobs()
+        # Nothing here may stop the store from closing or the ``closed`` event
+        # from being set: a close that never completes is worse than a recorded
+        # reconciliation failure.
+        try:
+            self.reconcile_blobs()
+        except Exception as exc:  # noqa: BLE001 - defensive shutdown boundary
+            self._record_close_error(f"blob reconciliation failed during close: {exc}")
         try:
             store.close()
         except Exception as exc:  # pragma: no cover - defensive shutdown boundary

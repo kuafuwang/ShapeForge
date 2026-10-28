@@ -155,6 +155,46 @@ def test_the_go_verifier_rejects_a_tampered_bundle_vector(tmp_path, mutation):
     assert "verification failed" in result.stderr
 
 
+def test_the_go_verifier_rejects_a_consistently_resigned_version_one_descriptor(tmp_path):
+    """A descriptor identity is not proved by the HMAC alone.
+
+    The tampered vector is internally consistent: both descriptor copies are
+    rewritten, the canonical document is rebuilt and the result is re-signed with
+    the golden key.  Only the version-2 descriptor identity can catch it, so this
+    must fail for that reason instead of by an HMAC mismatch.
+    """
+
+    import hashlib
+    import hmac as hmaclib
+
+    from tcenv.remote import contracts
+
+    golden = copy.deepcopy(load_bundle_golden())
+    bundle = golden["npu_bundle"]
+    unsigned = bundle["signature"]["unsigned_result"]
+    document = bundle["signature"]["document"]
+    for target in (unsigned, document):
+        target["evidence"]["schema_id"] = contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID
+        target["evidence"]["media_type"] = "application/json"
+    # Keep only the admissible vectors: otherwise the shared completeness
+    # vectors would reject the file for an unrelated reason and hide whether the
+    # descriptor identity itself is checked.
+    bundle["completeness_vectors"] = [
+        vector for vector in bundle["completeness_vectors"] if vector["valid"]
+    ]
+    canonical = contracts.canonical_digest_document(document)
+    key = bytes.fromhex(bundle["signature"]["key_hex"])
+    bundle["signature"]["canonical_json"] = canonical.decode("utf-8")
+    bundle["signature"]["hmac_sha256"] = hmaclib.new(key, canonical, hashlib.sha256).hexdigest()
+    path = tmp_path / "resigned_v1_descriptor.json"
+    path.write_text(json.dumps(golden), encoding="utf-8")
+
+    result = _run_verifier(path)
+    assert result.returncode != 0, "a version-1 descriptor on version-2 bytes was accepted"
+    assert "evidence descriptor" in result.stderr, result.stderr
+    assert "HMAC" not in result.stderr, result.stderr
+
+
 def test_the_go_verifier_still_accepts_the_earlier_contract_vectors(tmp_path):
     from tests.support.remote_contract import BLOB_GOLDEN, GOLDEN
 

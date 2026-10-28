@@ -991,9 +991,83 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
    （注入 `remove` I/O 失败 → blob quarantine + job 记录 hazard，不伪装成干净清理）。“回滚只
    覆盖本次 lease”这条同类漏洞确实还有第二条路径（见第 4 项第二轮），已一并修掉并补回归。
 
-修复后证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **52 passed**、
-`test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **18 passed**、
-`test_remote_npu_bundle_go_conformance.py` **14 passed**（合计 92）；P0/P0b 回归
+**P1 复核修复（第二轮，2026-10-29；仍无真实设备）**
+
+第二轮独立复核又逐项复现了 7 个问题，全部先留下能失败的回归再修：
+
+1. **`materialize` 仍有父目录 symlink 的 TOCTOU（确认，已修）**。复现：在「逐段检查」之后、
+   写入之前把已检查的 `graph` 目录换成指向根外的链接（脚本注入），旧实现虽随后因第二项报
+   `BundleError`，根外已经真的出现 `main.json`——`O_NOFOLLOW` 只保护最后一段，路径名在
+   `open` 时被重新解析。修复：改用 **dir-fd**：root 相对其父目录 `open(O_DIRECTORY|O_NOFOLLOW)`
+   打开（不存在则 `mkdirat`），每段父目录用 `openat(O_DIRECTORY|O_NOFOLLOW)` 逐级下钻、
+   缺失则 `mkdirat`，文件用 `openat` + `O_CREAT|O_EXCL|O_NOFOLLOW` 创建，写入后从**同一个 fd**
+   `fstat`/回读复核；任何一步都不再做路径名二次解析。回归：
+   `test_materialize_cannot_be_raced_into_writing_through_a_swapped_parent`（确定性换名竞争，
+   断言根外目录为空、字节留在真正被打开的目录），旧实现下该竞争会真实写出根外文件。
+2. **无通道守卫破坏终态幂等 replay（确认，已修）**。复现：blob-backed bundle 跑完 `completed`
+   后关闭，以无 `blob_store` 的前端重开，同一 request/digest 的 Submit 得到
+   `failed_precondition no blob channel`，而不是 completed + 原 receipt。修复：artifact 通道
+   检查从 `_validate_submission` 移到「这是新 job」的分支（`not job_exists`）里，既有 job 的
+   replay 仍从持久行回答；新 job 仍 fail closed。回归：
+   `test_a_terminal_bundle_job_replays_without_the_blob_channel`（completed 与 cancelled 两种
+   终态都 replay 出原 receipt/状态，同一前端上新的 blob job 仍被拒且不留 job）。
+3. **create/start 前的 fail-closed 仍不全（确认，已修）**。(a) `retry` 只查通道，不查
+   ready/descriptor：复现是首次 attempt `interrupted` 后释放并删除 blob，Retry 仍写新 queued
+   attempt、worker 退 17。修复：Retry 在写新 attempt 前用持久化 request 重新 `_lease_blob`
+   （逐项 ready + descriptor 一致 + 重取 lease），失败即拒且不建 attempt；正常路径仍只回滚本次
+   新增的 lease。回归：`test_retry_refuses_a_blob_that_is_no_longer_ready`（job 仍是同一个
+   interrupted attempt）。(b) 崩溃留下 `accepted`、尚未 enqueue 的 blob job，无 `blob_store`
+   重开时仍会调度并真的 create 出 worker。修复：`_run_worker` 在 `supervisor.create` 前再查一次
+   artifact（`_unservable_artifact_error`），不可服务就把 attempt 以
+   `artifact_unavailable` 失败掉，不建进程、不碰设备。回归：
+   `test_a_recovered_accepted_bundle_job_never_spawns_a_worker_without_the_channel`（直接建
+   accepted 行再重开，断言 `worker_pid is None`、服务无 submission、failure code 正确）。
+4. **Go conformance 两处语义缺口（确认，已修）**。(a) `verifyEvidenceCompleteness` 不检查
+   `topology.logical_devices` 与 declared 列表长度、不拒重复设备：把主 evidence 的
+   `logical_devices` 改成 2（仍只有一个设备/span）后 Python 拒绝而 `go run .` 仍 `ok`。修复：
+   Go 增加数量一致与重复设备检查，并把 `logical-devices-disagree-with-the-list` /
+   `duplicate-declared-device` 两个负向量放进共享 golden（Python 侧同样拒绝）。(b) `verifyBundle`
+   不校验 v4 evidence descriptor 身份：把 unsigned/document 两处 descriptor 一致改成 v1 schema +
+   `application/json`、重算 canonical 并用 golden key 重签后，Python 以 identity 拒绝而 Go 仍
+   `ok`。修复：Go 固定校验 v2 schema 与 v2 media type，回归
+   `test_the_go_verifier_rejects_a_consistently_resigned_version_one_descriptor`（只保留合法
+   向量，确保失败原因是 identity 而不是 HMAC 或向量）。
+5. **queued/accepted Cancel 的 lease 清理缺口（确认，已修）**。复现：停止 scheduler 后 Submit
+   再 Cancel，snapshot 已 `cancelled`，但 `blob_store.leases()` 仍保留 request/blob，直到
+   shutdown/restart。修复：`cancel()` 的快路径在终态时释放该 request 的 lease；`revoke_grant`
+   的 `cancel_scope` 只返回 running 的那些、其余在 scope 内直接终态，因此补
+   `_release_terminal_leases(scope_id=...)` 扫描已终态 job 的 lease。回归：
+   `test_cancelling_a_queued_bundle_releases_its_artifact_lease`、
+   `test_revoking_a_grant_releases_the_leases_of_the_jobs_it_cancels`（lease 与字节都被释放）。
+6. **`reconcile_blobs` 忽略 quarantine 记录（确认，已修）**。复现：孤儿 lease 注入 `remove`
+   失败后 `close(wait=5)` 返回 True、`close_error=None`，manifest 实际已是 quarantine。修复：
+   逐条检查 `reconcile` 返回的记录，`cleanup=quarantine` 转成显式 hazard（`close_error`）；
+   同时把 `live_request_ids()` 的异常也收进 `close_error` 而不是抛出。回归：启动与关闭两条
+   `test_a_quarantining_{startup,shutdown}_reconciliation_*`。
+7. **post-attach 的致命 store 错误路径（确认，已修）**。复现：attach 后 `job_exists` 因 store
+   `mark_unavailable` 抛错，原 `submit` 错误被新的 `unavailable` 掩盖；同时 close 线程在
+   `live_request_ids` 抛 `JobError` 时因没有兜底而不关 store、不置 `closed` 事件。修复：存在性
+   未知时**不 detach**（保留 lease 交后续 reconcile）并把未验证回滚记进 hazard，原异常原样抛出；
+   close 路径对 reconcile 和其它清理一律兜底，无论如何都执行 `store.close()` 并置
+   `closed`。回归：`test_an_unknown_store_state_keeps_the_lease_and_the_original_error`、
+   `test_close_finishes_even_when_the_store_cannot_list_live_jobs`。
+
+第二轮证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **53 passed**、
+`test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **27 passed**、
+`test_remote_npu_bundle_go_conformance.py` **15 passed**（合计 103）；P0/P0b 170、旧
+gRPC/conformance/evidence 87、job/recovery/container/outbox 265 passed/1 skipped 与本轮一致；
+`selfcheck_bridge` 默认围栏 18 failed/1 passed（未改测试）、`TMPDIR=/tmp` 19 passed；
+`generate_evaluator_proto.py --check` 通过（未改 proto）；全套安全套件 **2474 passed / 6 skipped
+/ 32 failed**，32 项仍是既有围栏环境（`ps` 被禁、AF_UNIX、HOME 权威日志）。第二轮变异核验：
+把 artifact 守卫放回 `_validate_submission`（replay 回归转失败）、去掉 Retry 的重新 lease
+（retry 回归转失败）、去掉 dispatch 守卫（恢复回归转失败）、去掉 cancel/revoke 的 lease 释放
+（两条 lease 回归转失败）、去掉 reconcile 的 quarantine 转 hazard（两条 quarantine 回归转
+失败）、把 `job_exists` 改回裸调用（致命 store 回归转失败）、去掉 `live_request_ids` 的兜底
+（close 回归转失败）、把 Go 换回上一版（两个 Go 回归分别转失败）。
+
+修复后证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **53 passed**、
+`test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **27 passed**、
+`test_remote_npu_bundle_go_conformance.py` **15 passed**（合计 103）；P0/P0b 回归
 `test_remote_npu_{contract,grpc,cleanup}.py` +
 `test_remote_blob_{channel,contract,grpc,go_conformance}.py` **170 passed**；
 `test_remote_grpc_{adapter,tls,contract,revocation}.py` + `test_remote_{conformance,
@@ -1001,7 +1075,8 @@ go_conformance,evidence_contract}.py` **87 passed**；`test_remote_{job_engine,j
 legacy_worker_bridge,container_engine,container_supervisor,runtime}.py` +
 `test_evaluation_outbox.py` **265 passed, 1 skipped**；`test_selfcheck_bridge.py` 在默认围栏
 TMPDIR 下 **18 failed / 1 passed**（AF_UNIX 路径超长，未改测试），`TMPDIR=/tmp` **19 passed**；
-`scripts/generate_evaluator_proto.py --check` 通过（本轮未改 proto）。
+`scripts/generate_evaluator_proto.py --check` 通过（未改 proto）；全套安全套件 **2474 passed /
+6 skipped / 32 failed**（32 项仍是既有围栏环境）。
 
 剩余风险（不得据此宣称）：v1–v3 的 evidence descriptor media type 与旧 golden 仍不一致（冻结，
 不修）；per-device span 的**设备 id 命名**仍由 vendor 自报、frontend 只核对数量与坐标，没有

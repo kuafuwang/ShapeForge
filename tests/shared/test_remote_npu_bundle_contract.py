@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -224,6 +225,46 @@ def test_materialize_writes_every_inline_entry_under_the_attempt_root(tmp_path):
     assert sorted(written) == ["graph/main.json", "graph/params.bin"]
     for path, role, media_type, data in GRAPH_ENTRIES:
         assert written[path].read_bytes() == data
+
+
+def test_materialize_cannot_be_raced_into_writing_through_a_swapped_parent(tmp_path, monkeypatch):
+    """The parent is resolved once, through a descriptor -- not by path name.
+
+    The race is deterministic instead of timing based: the checked directory's
+    name is replaced by a symbolic link *after* it was opened and before the
+    entry is written, which is exactly the window an ``lstat`` + ``open(path)``
+    implementation loses.  With ``openat`` the descriptor still names the
+    checked directory, so nothing may appear outside the attempt root.
+    """
+
+    from tcenv.remote import artifact_bundle
+
+    root = tmp_path / "attempt"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root.mkdir()
+    real = artifact_bundle._descend_without_symlinks
+    swapped = {"done": False}
+
+    def raced(root_fd, segments, path):
+        directory_fd = real(root_fd, segments, path)
+        if not swapped["done"]:
+            swapped["done"] = True
+            os.rename(root / "graph", root / "graph-real")
+            (root / "graph").symlink_to(outside, target_is_directory=True)
+        return directory_fd
+
+    monkeypatch.setattr(artifact_bundle, "_descend_without_symlinks", raced)
+    # The first entry goes to the directory that was really opened (it is now
+    # named ``graph-real``); the second entry is refused because the swapped name
+    # is a symbolic link.
+    with pytest.raises(BundleError, match="symbolic link"):
+        _bundle().materialize(root)
+    assert swapped["done"] is True
+    # The escape the old implementation allowed: a file under the swapped target.
+    assert list(outside.iterdir()) == []
+    # The bytes landed in the directory that was really checked.
+    assert (root / "graph-real" / "main.json").read_bytes() == GRAPH_ENTRIES[0][3]
 
 
 def test_materialize_refuses_a_symlinked_parent_instead_of_writing_through_it(tmp_path):
