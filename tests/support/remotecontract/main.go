@@ -583,6 +583,77 @@ func verifyBlob(golden *BlobGolden) error {
 
 var bundleManifestFields = []string{"path", "role", "media_type", "size_bytes", "sha256"}
 
+// checkEntryTransport validates the content form of one bundle entry and, for a
+// blob-backed entry, the descriptor bindings.  The transport fields never enter
+// the manifest or its digest.
+func checkEntryTransport(entry map[string]any) error {
+	content, present := entry["content"]
+	blobRef, hasBlobRef := entry["blob_ref"]
+	if !present {
+		return errors.New("bundle entry content must be inline or blob")
+	}
+	text, ok := content.(string)
+	if !ok || (text != "inline" && text != "blob") {
+		return errors.New("bundle entry content must be inline or blob")
+	}
+	size, err := buildNumber(entry["size_bytes"], "bundle entry size")
+	if err != nil {
+		return err
+	}
+	digest, _ := entry["sha256"].(string)
+	mediaType, _ := entry["media_type"].(string)
+	if text == "inline" {
+		if hasBlobRef {
+			return errors.New("an inline bundle entry must not carry a blob reference")
+		}
+		if size > maxInlineEntryBytes {
+			return errors.New("an inline bundle entry exceeds the inline byte limit")
+		}
+		return nil
+	}
+	if !hasBlobRef {
+		return errors.New("a blob-backed bundle entry requires a blob reference")
+	}
+	descriptor, ok := blobRef.(map[string]any)
+	if !ok {
+		return errors.New("bundle entry blob reference is invalid")
+	}
+	if err := closedFields(descriptor, blobRefFields, nil, "blob_ref"); err != nil {
+		return err
+	}
+	sha, ok := descriptor["sha256"].(string)
+	if !ok || !isHex64(sha) {
+		return errors.New("blob_ref.sha256 must be 64 lowercase hexadecimal characters")
+	}
+	contentID, err := buildText(descriptor["content_id"], "blob_ref.content_id", 96)
+	if err != nil {
+		return err
+	}
+	if contentID != buildBlobContentID+sha {
+		return errors.New("blob_ref.content_id does not bind blob_ref.sha256")
+	}
+	if sha != digest || descriptor["size_bytes"] != entry["size_bytes"] {
+		return errors.New("bundle entry blob reference does not match its manifest identity")
+	}
+	if descriptor["media_type"] != mediaType {
+		return errors.New("bundle entry blob media type differs from the manifest media type")
+	}
+	if _, err := boundedBuildNumber(
+		descriptor["size_bytes"], "blob_ref.size_bytes", 0, 16_000_000,
+	); err != nil {
+		return err
+	}
+	if _, err := boundedBuildNumber(
+		descriptor["chunk_size"], "blob_ref.chunk_size", 1, maxBlobChunkBytes,
+	); err != nil {
+		return err
+	}
+	if size <= maxInlineEntryBytes {
+		return errors.New("a bundle entry within the inline limit must be inlined, not blob-referenced")
+	}
+	return nil
+}
+
 // bundleManifest rebuilds the canonical manifest the artifact-set digest covers.
 // It sorts entries by path and never looks at the content form: the manifest is
 // the stable identity of the exact bytes, not of how they were transported.
@@ -625,12 +696,13 @@ func safeBundlePath(path string) error {
 	return nil
 }
 
-func bundleManifest(schemaID string, entries []any) (map[string]any, error) {
+func bundleManifest(schemaID string, entries []any, withTransport bool) (map[string]any, error) {
 	if schemaID != "tcenv.remote.npu-bundle.artifact-bundle.1" {
 		return nil, fmt.Errorf("unsupported bundle schema %q", schemaID)
 	}
 	manifest := make([]any, 0, len(entries))
-	seen := map[string]bool{}
+	seen := map[string]string{}
+	manifestPaths := make([]string, 0, len(entries))
 	for _, raw := range entries {
 		entry, ok := raw.(map[string]any)
 		if !ok {
@@ -663,10 +735,21 @@ func bundleManifest(schemaID string, entries []any) (map[string]any, error) {
 		if err := safeBundlePath(path); err != nil {
 			return nil, err
 		}
-		if seen[strings.ToLower(path)] {
-			return nil, fmt.Errorf("duplicate bundle path %q", path)
+		alias := aliasKey(path)
+		if previous, taken := seen[alias]; taken {
+			return nil, fmt.Errorf(
+				"bundle entry path is duplicated: %q (aliases %q)", path, previous,
+			)
 		}
-		seen[strings.ToLower(path)] = true
+		seen[alias] = path
+		manifestPaths = append(manifestPaths, path)
+		if withTransport {
+			// The transport check needs the raw entry (content/blob_ref never
+			// enter the canonical manifest).
+			if err := checkEntryTransport(entry); err != nil {
+				return nil, err
+			}
+		}
 		// The entry domain is part of the manifest identity: a role the contract
 		// does not know, a media type that is not a bounded ASCII media type, a
 		// digest that is not 64 lowercase hex characters or a size outside the
@@ -692,6 +775,24 @@ func bundleManifest(schemaID string, entries []any) (map[string]any, error) {
 	}
 	if len(manifest) == 0 {
 		return nil, errors.New("bundle has no entries")
+	}
+	// One entry may not be the parent of another: they could never both be
+	// materialized (a path would have to be a file and a directory).
+	aliases := make(map[string]string, len(manifestPaths))
+	for _, path := range manifestPaths {
+		aliases[aliasKey(path)] = path
+	}
+	for _, path := range manifestPaths {
+		segments := strings.Split(path, "/")
+		for index := 1; index < len(segments); index++ {
+			prefix := strings.Join(segments[:index], "/")
+			if clash, taken := aliases[aliasKey(prefix)]; taken {
+				return nil, fmt.Errorf(
+					"bundle entry path is the parent of another entry: %q (aliases %q)",
+					path, clash,
+				)
+			}
+		}
 	}
 	if len(manifest) > maxBundleEntries {
 		return nil, errors.New("a bundle exceeds the entry-count limit")
@@ -769,7 +870,7 @@ func bundleRequestDocument(request map[string]any) (map[string]any, error) {
 	if !ok {
 		return nil, errors.New("bundle entries are not an array")
 	}
-	manifest, err := bundleManifest(schemaID, entries)
+	manifest, err := bundleManifest(schemaID, entries, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1100,6 +1201,7 @@ func verifyBundle(golden *BundleGolden) error {
 	manifest, err := bundleManifest(
 		golden.BundleManifest["schema_id"].(string),
 		golden.Request["artifact"].(map[string]any)["bundle"].(map[string]any)["entries"].([]any),
+		true,
 	)
 	if err != nil {
 		return err
@@ -1351,6 +1453,137 @@ var buildProducerRecordFields = []string{
 	"schema_id", "status", "mode", "duration_ms", "log", "evidence_sha256",
 }
 
+// commonRequestFields mirrors the production validator for every shared request
+// field: enums, identifiers, digests, decimals, integers, booleans, the bounded
+// cases array and the text limits.  Rebuilding only the field set would accept a
+// request whose values the contract refuses.
+func commonRequestFields(document map[string]any) (map[string]any, error) {
+	kind, err := buildText(document["kind"], "kind", 32)
+	if err != nil {
+		return nil, err
+	}
+	if !requestKinds[kind] {
+		return nil, errors.New("kind must be formal_eval or selfcheck")
+	}
+	mode, err := buildText(document["mode"], "mode", 32)
+	if err != nil {
+		return nil, err
+	}
+	if !requestModes[kind][mode] {
+		return nil, fmt.Errorf("mode %q is not allowed for %s", mode, kind)
+	}
+	var seed any
+	if raw := document["seed"]; raw != nil {
+		text, ok := raw.(string)
+		if !ok || len([]byte(text)) > 20 || !buildDecimalPattern.MatchString(text) {
+			return nil, errors.New("seed must be a canonical unsigned decimal string")
+		}
+		if _, err := strconv.ParseUint(text, 10, 64); err != nil {
+			return nil, errors.New("seed is outside its unsigned 64-bit bounds")
+		}
+		seed = text
+	}
+	var cases any
+	if raw := document["cases"]; raw != nil {
+		items, ok := raw.([]any)
+		if !ok || len(items) > maxRequestCases {
+			return nil, errors.New("cases must be a bounded array or null")
+		}
+		normalized := make([]any, 0, len(items))
+		for _, item := range items {
+			text, err := buildText(item, "case", 256)
+			if err != nil {
+				return nil, err
+			}
+			normalized = append(normalized, text)
+		}
+		cases = normalized
+	}
+	cachePolicy, err := buildText(document["cache_policy"], "cache_policy", 32)
+	if err != nil {
+		return nil, err
+	}
+	if !requestCachePolicies[cachePolicy] {
+		return nil, errors.New("cache_policy must be reuse, refresh or disabled")
+	}
+	runID, err := buildIdentifier(document["run_id"], "run_id")
+	if err != nil {
+		return nil, err
+	}
+	sessionID, err := buildIdentifier(document["session_id"], "session_id")
+	if err != nil {
+		return nil, err
+	}
+	task, err := buildText(document["task"], "task", 256)
+	if err != nil {
+		return nil, err
+	}
+	dtype, err := buildText(document["dtype"], "dtype", 64)
+	if err != nil {
+		return nil, err
+	}
+	size, err := buildText(document["size"], "size", 128)
+	if err != nil {
+		return nil, err
+	}
+	targetID, err := buildIdentifier(document["target_id"], "target_id")
+	if err != nil {
+		return nil, err
+	}
+	fingerprint, ok := document["task_fingerprint"].(string)
+	if !ok || !isHex64(fingerprint) {
+		return nil, errors.New("task_fingerprint must be 64 lowercase hexadecimal characters")
+	}
+	reps, err := boundedBuildNumber(document["reps"], "reps", 1, maxRequestReps)
+	if err != nil {
+		return nil, err
+	}
+	queueTimeout, err := boundedBuildNumber(
+		document["queue_timeout_ms"], "queue_timeout_ms", 1, maxRequestTimeoutMs,
+	)
+	if err != nil {
+		return nil, err
+	}
+	candidateTimeout, err := boundedBuildNumber(
+		document["candidate_timeout_ms"], "candidate_timeout_ms", 1, maxRequestTimeoutMs,
+	)
+	if err != nil {
+		return nil, err
+	}
+	booleans := make(map[string]bool, 4)
+	for _, name := range []string{
+		"fast_bench", "require_contract_launch", "validate", "measure_serial",
+	} {
+		value, ok := document[name].(bool)
+		if !ok {
+			return nil, fmt.Errorf("%s must be boolean", name)
+		}
+		booleans[name] = value
+	}
+	return map[string]any{
+		"kind": kind, "run_id": runID, "session_id": sessionID, "task": task,
+		"dtype": dtype, "size": size, "target_id": targetID,
+		"task_fingerprint": fingerprint, "mode": mode, "seed": seed,
+		"reps": reps, "queue_timeout_ms": queueTimeout,
+		"candidate_timeout_ms": candidateTimeout, "cases": cases,
+		"fast_bench":              booleans["fast_bench"],
+		"require_contract_launch": booleans["require_contract_launch"],
+		"validate":                booleans["validate"], "measure_serial": booleans["measure_serial"],
+		"cache_policy": cachePolicy,
+	}, nil
+}
+
+// aliasKey is the filesystem-alias key of a path, used only for conflict
+// detection (the manifest keeps the exact original path).  The production key is
+// NFC composition plus Unicode case folding; the standalone verifier has no
+// Unicode tables, so it applies the Unicode-aware simple lowercase mapping.
+// That catches every ASCII case alias and the case aliases of scripts with
+// simple lowercase forms; a composed/decomposed pair or a full case-folding
+// expansion is left to the production validator (declared residual).
+func aliasKey(path string) string {
+	return strings.ToLower(path)
+}
+
 // buildProvenanceDocument rebuilds the provenance identity field by field.  The
 // closed field set is the point: a provenance that grew a field the request
 // digest does not cover would be an unreviewed identity.
@@ -1458,8 +1691,15 @@ func buildRequestDocument(request map[string]any) (map[string]any, error) {
 			"build request has %d fields, want %d", len(request), len(buildRequestFields),
 		)
 	}
+	common, err := commonRequestFields(request)
+	if err != nil {
+		return nil, err
+	}
 	canonicalRequest := make(map[string]any, len(buildRequestFields))
-	for _, name := range buildRequestFields {
+	for name, value := range common {
+		canonicalRequest[name] = value
+	}
+	for _, name := range []string{"candidate_digest", "execution", "artifact", "build"} {
 		value, present := request[name]
 		if !present {
 			return nil, fmt.Errorf("build request field %s is missing", name)
@@ -1510,40 +1750,8 @@ func buildRequestDocument(request map[string]any) (map[string]any, error) {
 	normalizedExecution["required_timing_sources"] = sources
 	canonicalRequest["execution"] = normalizedExecution
 	execution = normalizedExecution
-	deviceGroup, ok := execution["device_group"].(map[string]any)
-	if !ok {
-		return nil, errors.New("device_group is not an object")
-	}
-	if err := closedFields(deviceGroup, deviceGroupFields, nil, "device_group"); err != nil {
+	if err := deviceGroupDocument(execution["device_group"]); err != nil {
 		return nil, err
-	}
-	if _, err := buildIdentifier(deviceGroup["device_group_id"], "device_group.device_group_id"); err != nil {
-		return nil, err
-	}
-	if _, err := buildIdentifier(deviceGroup["vendor_id"], "device_group.vendor_id"); err != nil {
-		return nil, err
-	}
-	for _, name := range []string{"profile_digest", "topology_digest"} {
-		value, ok := deviceGroup[name].(string)
-		if !ok || !isHex64(value) {
-			return nil, fmt.Errorf(
-				"device_group.%s must be 64 lowercase hexadecimal characters", name,
-			)
-		}
-	}
-	generation, ok := deviceGroup["resource_generation"].(string)
-	if !ok || !buildDecimalPattern.MatchString(generation) ||
-		(generation != strings.TrimLeft(generation, "0") && generation != "0") {
-		return nil, errors.New(
-			"device_group.resource_generation must be a canonical unsigned decimal string",
-		)
-	}
-	// The shape check above is not the bound: "0" and 2^64 both have a legal
-	// decimal form.  The generation is a uint64 with a minimum of one.
-	if parsed, err := strconv.ParseUint(generation, 10, 64); err != nil || parsed < 1 {
-		return nil, errors.New(
-			"device_group.resource_generation is outside its unsigned 64-bit bounds",
-		)
 	}
 	resources, ok := execution["resources"].(map[string]any)
 	if !ok {
@@ -1593,7 +1801,7 @@ func buildRequestDocument(request map[string]any) (map[string]any, error) {
 	if !ok {
 		return nil, errors.New("bundle entries are not an array")
 	}
-	manifest, err := bundleManifest(schemaID, entries)
+	manifest, err := bundleManifest(schemaID, entries, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1852,6 +2060,46 @@ var resourceFields = []string{"logical_devices", "required_rank_spans", "require
 
 var candidateDigestFields = []string{"algorithm", "value"}
 
+var spanFields = []string{"device_id", "rank", "die", "clock_domain", "elapsed_ns"}
+
+var bufferFields = []string{
+	"flushed", "records_written", "records_delivered", "dropped", "overwritten",
+}
+
+var timingFields = []string{
+	"source", "clock_domain", "synchronization_completed",
+	"device_elapsed_ns", "host_api_elapsed_ns", "launches",
+}
+
+var topologyFields = []string{
+	"logical_devices", "declared_devices", "required_rank_spans", "required_die_spans",
+}
+
+var evidenceFields = []string{
+	"schema_id", "candidate_digest", "artifact_set_digest", "device_group", "topology",
+	"spans", "timing", "buffer", "measurement_kind", "publication_allowed", "complete",
+}
+
+var blobRefFields = []string{"content_id", "sha256", "size_bytes", "media_type", "chunk_size"}
+
+var requestKinds = map[string]bool{"formal_eval": true, "selfcheck": true}
+
+var requestModes = map[string]map[string]bool{
+	"formal_eval": {"quick": true, "full": true, "validate": true},
+	"selfcheck":   {"quick": true, "timed": true},
+}
+
+var requestCachePolicies = map[string]bool{"reuse": true, "refresh": true, "disabled": true}
+
+const (
+	maxRequestCases     = 128
+	maxRequestReps      = 10_000
+	maxRequestTimeoutMs = 3_600_000
+	maxInlineEntryBytes = 262_144
+	maxBlobChunkBytes   = 4 * 1024 * 1024
+	buildBlobContentID  = "blob-sha256-v1:"
+)
+
 // The build contract's integer domains, mirrored from the production validator:
 // a duration is a bounded wall-clock value (0 means "this never ran") and a log
 // size is a bounded byte count.
@@ -1877,7 +2125,7 @@ var bundleMediaTypePattern = regexp.MustCompile(`^[A-Za-z0-9!#$&^_.+*/;= -]{1,16
 
 // buildDecimalPattern is the canonical unsigned decimal form (no sign, no
 // fraction, no leading zero unless the value is "0").
-var buildDecimalPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
+var buildDecimalPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 
 // buildTimingSources is the only timing source this contract can corroborate.
 var buildTimingSources = map[string]bool{"DEVICE_EVENT": true}
@@ -2069,7 +2317,7 @@ func verifyBuildEvidence(
 	if !ok {
 		return errors.New("build.artifacts schema_id is not a string")
 	}
-	manifest, err := bundleManifest(artifactsSchema, entries)
+	manifest, err := bundleManifest(artifactsSchema, entries, false)
 	if err != nil {
 		return err
 	}
@@ -2102,7 +2350,7 @@ func verifyBuildEvidence(
 	if !ok {
 		return errors.New("the accepted prebuilt bundle schema id is not a string")
 	}
-	acceptedManifest, err := bundleManifest(acceptedSchema, acceptedEntries)
+	acceptedManifest, err := bundleManifest(acceptedSchema, acceptedEntries, true)
 	if err != nil {
 		return err
 	}
@@ -2230,7 +2478,215 @@ func verifyBuildEvidence(
 	return nil
 }
 
+// deviceGroupDocument validates the logical device-group binding (closed set,
+// typed digests, canonical generation with its uint64 domain).
+func deviceGroupDocument(value any) error {
+	deviceGroup, ok := value.(map[string]any)
+	if !ok {
+		return errors.New("device_group is not an object")
+	}
+	if err := closedFields(deviceGroup, deviceGroupFields, nil, "device_group"); err != nil {
+		return err
+	}
+	if _, err := buildIdentifier(deviceGroup["device_group_id"], "device_group.device_group_id"); err != nil {
+		return err
+	}
+	if _, err := buildIdentifier(deviceGroup["vendor_id"], "device_group.vendor_id"); err != nil {
+		return err
+	}
+	for _, name := range []string{"profile_digest", "topology_digest"} {
+		digest, ok := deviceGroup[name].(string)
+		if !ok || !isHex64(digest) {
+			return fmt.Errorf("device_group.%s must be 64 lowercase hexadecimal characters", name)
+		}
+	}
+	generation, ok := deviceGroup["resource_generation"].(string)
+	if !ok || len([]byte(generation)) > 20 || !buildDecimalPattern.MatchString(generation) ||
+		(generation != strings.TrimLeft(generation, "0") && generation != "0") {
+		return errors.New(
+			"device_group.resource_generation must be a canonical unsigned decimal string",
+		)
+	}
+	// The shape check above is not the bound: "0" and 2^64 both have a legal
+	// decimal form.  The generation is a uint64 with a minimum of one.
+	if parsed, err := strconv.ParseUint(generation, 10, 64); err != nil || parsed < 1 {
+		return errors.New(
+			"device_group.resource_generation is outside its unsigned 64-bit bounds",
+		)
+	}
+	return nil
+}
+
+// verifyTimingEvidence validates the evidence document itself: the field sets
+// and the value domains of the topology, the spans, the timing block and the
+// buffer.  The completeness/aggregate rules are checked separately.
+func verifyTimingEvidence(evidence map[string]any) error {
+	required := append(append([]string{}, evidenceFields...), "build")
+	for _, name := range required {
+		if _, present := evidence[name]; !present {
+			return errors.New("timing evidence fields are missing")
+		}
+	}
+	allowed := make(map[string]bool, len(required)+1)
+	for _, name := range required {
+		allowed[name] = true
+	}
+	allowed["diagnostics"] = true
+	for name := range evidence {
+		if !allowed[name] {
+			return errors.New("timing evidence has unknown fields")
+		}
+	}
+	if evidence["schema_id"] != "tcenv.remote.npu-build.timing-evidence.3" {
+		return errors.New("timing evidence schema_id is not the version 3 build identity")
+	}
+	kind, err := buildText(evidence["measurement_kind"], "measurement_kind", 32)
+	if err != nil {
+		return err
+	}
+	if kind != "measured" && kind != "simulated" {
+		return errors.New("measurement_kind must be measured or simulated")
+	}
+	for _, name := range []string{"publication_allowed", "complete"} {
+		if _, ok := evidence[name].(bool); !ok {
+			return fmt.Errorf("%s must be boolean", name)
+		}
+	}
+	if digest := evidence["artifact_set_digest"]; digest != nil {
+		text, ok := digest.(string)
+		if !ok || !isHex64(text) {
+			return errors.New("artifact_set_digest must be 64 lowercase hexadecimal characters")
+		}
+	}
+	candidate, ok := evidence["candidate_digest"].(map[string]any)
+	if !ok {
+		return errors.New("candidate_digest is not an object")
+	}
+	if err := closedFields(candidate, candidateDigestFields, nil, "candidate_digest"); err != nil {
+		return err
+	}
+	if value, ok := candidate["value"].(string); !ok || !isHex64(value) {
+		return errors.New("candidate_digest.value must be 64 lowercase hexadecimal characters")
+	}
+	if err := deviceGroupDocument(evidence["device_group"]); err != nil {
+		return err
+	}
+	topology, ok := evidence["topology"].(map[string]any)
+	if !ok {
+		return errors.New("timing evidence topology fields are missing or unknown")
+	}
+	if err := closedFields(topology, topologyFields, nil, "timing evidence topology"); err != nil {
+		return err
+	}
+	logicalDevices, err := boundedBuildNumber(
+		topology["logical_devices"], "topology.logical_devices", 1, 8,
+	)
+	if err != nil {
+		return err
+	}
+	rawDevices, ok := topology["declared_devices"].([]any)
+	if !ok || len(rawDevices) == 0 || len(rawDevices) > 64 {
+		return errors.New("topology.declared_devices must be a bounded non-empty array")
+	}
+	seenDevices := map[string]bool{}
+	for _, item := range rawDevices {
+		device, err := buildIdentifier(item, "topology.declared_devices")
+		if err != nil {
+			return err
+		}
+		if seenDevices[device] {
+			return errors.New("topology.declared_devices must be unique")
+		}
+		seenDevices[device] = true
+	}
+	if int64(len(seenDevices)) != logicalDevices {
+		return errors.New("topology.declared_devices disagrees with logical_devices")
+	}
+	for _, name := range []string{"required_rank_spans", "required_die_spans"} {
+		if topology[name] == nil {
+			continue
+		}
+		if _, err := boundedBuildNumber(topology[name], "topology."+name, 1, 64); err != nil {
+			return err
+		}
+	}
+	spans, ok := evidence["spans"].([]any)
+	if !ok {
+		return errors.New("timing evidence spans must be an array")
+	}
+	for _, raw := range spans {
+		span, ok := raw.(map[string]any)
+		if !ok {
+			return errors.New("timing evidence span is not an object")
+		}
+		if err := closedFields(span, spanFields, nil, "timing evidence span"); err != nil {
+			return err
+		}
+		if _, err := buildIdentifier(span["device_id"], "span.device_id"); err != nil {
+			return err
+		}
+		for _, name := range []string{"rank", "die"} {
+			if span[name] == nil {
+				continue
+			}
+			if _, err := boundedBuildNumber(span[name], "span."+name, 0, 64); err != nil {
+				return err
+			}
+		}
+		if _, err := buildText(span["clock_domain"], "span.clock_domain", 64); err != nil {
+			return err
+		}
+		if _, err := boundedBuildNumber(span["elapsed_ns"], "span.elapsed_ns", 0, 1<<62); err != nil {
+			return err
+		}
+	}
+	timing, ok := evidence["timing"].(map[string]any)
+	if !ok {
+		return errors.New("timing evidence timing block is missing")
+	}
+	if err := closedFields(timing, timingFields, nil, "timing evidence timing"); err != nil {
+		return err
+	}
+	if _, err := buildText(timing["source"], "timing.source", 32); err != nil {
+		return err
+	}
+	if _, err := buildText(timing["clock_domain"], "timing.clock_domain", 64); err != nil {
+		return err
+	}
+	if _, ok := timing["synchronization_completed"].(bool); !ok {
+		return errors.New("timing.synchronization_completed must be boolean")
+	}
+	for _, name := range []string{"device_elapsed_ns", "host_api_elapsed_ns", "launches"} {
+		if _, err := boundedBuildNumber(timing[name], "timing."+name, 0, 1<<62); err != nil {
+			return err
+		}
+	}
+	if buffer := evidence["buffer"]; buffer != nil {
+		document, ok := buffer.(map[string]any)
+		if !ok {
+			return errors.New("timing evidence buffer must be an object or null")
+		}
+		if err := closedFields(document, bufferFields, nil, "timing evidence buffer"); err != nil {
+			return err
+		}
+		if _, ok := document["flushed"].(bool); !ok {
+			return errors.New("buffer.flushed must be boolean")
+		}
+		for _, name := range []string{
+			"records_written", "records_delivered", "dropped", "overwritten",
+		} {
+			if _, err := boundedBuildNumber(document[name], "buffer."+name, 0, 1<<31); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func verifyBuild(golden *BuildGolden) error {
+	if err := verifyTimingEvidence(golden.Evidence); err != nil {
+		return err
+	}
 	requestDoc, err := buildRequestDocument(golden.Request)
 	if err != nil {
 		return err
@@ -2247,7 +2703,7 @@ func verifyBuild(golden *BuildGolden) error {
 	}
 	bundleDocument := golden.Request["artifact"].(map[string]any)["bundle"].(map[string]any)
 	manifest, err := bundleManifest(
-		bundleDocument["schema_id"].(string), bundleDocument["entries"].([]any),
+		bundleDocument["schema_id"].(string), bundleDocument["entries"].([]any), true,
 	)
 	if err != nil {
 		return err

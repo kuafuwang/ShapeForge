@@ -464,6 +464,89 @@ def _apply_mutation(golden: dict, mutation: str) -> None:
                 "required_timing_sources", ["HOST_WALL"],
             ),
         )
+    elif mutation.startswith("provenance_"):
+        raise AssertionError(f"unhandled provenance mutation {mutation}")
+    elif mutation in {
+        "kind_unknown", "mode_not_allowed", "seed_not_canonical", "cache_policy_unknown",
+        "reps_out_of_bounds", "task_fingerprint_not_hex", "run_id_not_identifier",
+        "fast_bench_not_boolean", "cases_too_many",
+    }:
+        values = {
+            "kind_unknown": ("kind", "unknown"),
+            "mode_not_allowed": ("mode", "timed"),
+            "seed_not_canonical": ("seed", "03"),
+            "cache_policy_unknown": ("cache_policy", "always"),
+            "reps_out_of_bounds": ("reps", 0),
+            "task_fingerprint_not_hex": ("task_fingerprint", "z" * 64),
+            "run_id_not_identifier": ("run_id", "bad run id"),
+            "fast_bench_not_boolean": ("fast_bench", "yes"),
+            "cases_too_many": ("cases", [f"case-{index}" for index in range(129)]),
+        }
+        field, value = values[mutation]
+        _resign_request_change(
+            golden, lambda request: request.__setitem__(field, value),
+        )
+    elif mutation in {
+        "entry_blob_without_reference", "entry_inline_with_reference",
+        "entry_content_unknown", "blob_ref_content_id_mismatch", "blob_ref_small_size",
+        "alias_duplicate_path", "path_prefix_conflict",
+    }:
+        entries = copy.deepcopy(vector["request"]["artifact"]["bundle"]["entries"])
+        source = next(entry for entry in entries if entry["role"] == "SOURCE")
+        module = next(entry for entry in entries if entry["role"] == "EXECUTABLE_MODULE")
+        if mutation == "entry_blob_without_reference":
+            module.pop("blob_ref")
+        elif mutation == "entry_inline_with_reference":
+            source["blob_ref"] = copy.deepcopy(module["blob_ref"])
+        elif mutation == "entry_content_unknown":
+            source["content"] = "base64"
+        elif mutation == "blob_ref_content_id_mismatch":
+            module["blob_ref"]["content_id"] = (
+                "blob-sha256-v1:" + "0" * 64
+            )
+        elif mutation == "blob_ref_small_size":
+            # A blob reference for an artifact that fits the inline limit.
+            payload = b"small fake module\n"
+            digest = hashlib.sha256(payload).hexdigest()
+            module["content"] = "blob"
+            module["size_bytes"] = len(payload)
+            module["sha256"] = digest
+            module["blob_ref"] = {
+                "content_id": "blob-sha256-v1:" + digest,
+                "sha256": digest,
+                "size_bytes": len(payload),
+                "media_type": module["media_type"],
+                "chunk_size": 8192,
+            }
+        elif mutation == "alias_duplicate_path":
+            # Same file on a case-insensitive filesystem.
+            clone = copy.deepcopy(source)
+            clone["path"] = "Kernel.tx"
+            entries.append(clone)
+        else:
+            # One entry is the parent directory of another entry's path.
+            clone = copy.deepcopy(module)
+            clone["path"] = "module"
+            clone["role"] = "AUXILIARY"
+            entries.append(clone)
+        _rebuild_artifact_set_unchecked(golden, entries)
+    elif mutation in {
+        "evidence_unknown_field", "topology_not_object", "topology_unknown_field",
+        "span_unknown_field", "timing_unknown_field", "buffer_not_object",
+    }:
+        evidence = vector["evidence"]
+        if mutation == "evidence_unknown_field":
+            evidence["unexpected"] = "not-in-the-contract"
+        elif mutation == "topology_not_object":
+            evidence["topology"] = []
+        elif mutation == "topology_unknown_field":
+            evidence["topology"]["unexpected"] = "x"
+        elif mutation == "span_unknown_field":
+            evidence["spans"][0]["unexpected"] = "x"
+        elif mutation == "timing_unknown_field":
+            evidence["timing"]["unexpected"] = "x"
+        else:
+            evidence["buffer"] = []
     elif mutation == "device_group_digest_not_hex":
         _resign_request_change(
             golden,
@@ -554,15 +637,26 @@ def _apply_mutation(golden: dict, mutation: str) -> None:
                     )
                 )
         else:
-            # 60 entries of 300 kB declare 18 MB, over the 16 MB total limit.
-            entries = [
-                _inline_entry(
-                    f"bulk/{index:02d}.bin", "AUXILIARY", "application/octet-stream", b"x",
-                )
-                for index in range(60)
-            ]
-            for entry in entries:
-                entry["size_bytes"] = 300_000
+            # 60 blob-backed entries of 300 kB declare 18 MB, over the 16 MB total
+            # limit (an inline entry of that size would be refused earlier).
+            entries = []
+            for index in range(60):
+                digest = hashlib.sha256(f"bulk-{index}".encode("ascii")).hexdigest()
+                entries.append({
+                    "path": f"bulk/{index:02d}.bin",
+                    "role": "AUXILIARY",
+                    "media_type": "application/octet-stream",
+                    "size_bytes": 300_000,
+                    "sha256": digest,
+                    "content": "blob",
+                    "blob_ref": {
+                        "content_id": f"blob-sha256-v1:{digest}",
+                        "sha256": digest,
+                        "size_bytes": 300_000,
+                        "media_type": "application/octet-stream",
+                        "chunk_size": 8192,
+                    },
+                })
             entries.append(
                 _inline_entry(
                     "module/kernel.txelf", "EXECUTABLE_MODULE", "application/x-tx-elf", b"y",
@@ -661,6 +755,32 @@ def _apply_mutation(golden: dict, mutation: str) -> None:
     # required_timing_sources is a non-empty array of known sources.
     ("timing_sources_empty", "requires at least one timing source"),
     ("timing_sources_not_device_event", "supports only DEVICE_EVENT timing"),
+    # The shared request fields are typed and enumerated too.
+    ("kind_unknown", "kind must be formal_eval or selfcheck"),
+    ("mode_not_allowed", "is not allowed for"),
+    ("seed_not_canonical", "seed must be a canonical unsigned decimal string"),
+    ("cache_policy_unknown", "cache_policy must be reuse, refresh or disabled"),
+    ("reps_out_of_bounds", "reps is outside its integer bounds"),
+    ("task_fingerprint_not_hex", "task_fingerprint must be 64 lowercase"),
+    ("run_id_not_identifier", "run_id must be a bounded opaque identifier"),
+    ("fast_bench_not_boolean", "fast_bench must be boolean"),
+    ("cases_too_many", "cases must be a bounded array or null"),
+    # The entry transport form and its content descriptor are bound to the entry.
+    ("entry_blob_without_reference", "requires a blob reference"),
+    ("entry_inline_with_reference", "must not carry a blob reference"),
+    ("entry_content_unknown", "content must be inline or blob"),
+    ("blob_ref_content_id_mismatch", "content_id does not bind"),
+    ("blob_ref_small_size", "within the inline limit must be inlined"),
+    # Alias collisions and parent/child paths cannot both be materialized.
+    ("alias_duplicate_path", "path is duplicated"),
+    ("path_prefix_conflict", "is the parent of another entry"),
+    # The evidence document is closed and its nested documents are typed.
+    ("evidence_unknown_field", "timing evidence has unknown fields"),
+    ("topology_not_object", "topology fields are missing or unknown"),
+    ("topology_unknown_field", "topology fields are missing or unknown"),
+    ("span_unknown_field", "span fields are missing or unknown"),
+    ("timing_unknown_field", "timing evidence timing fields are missing or unknown"),
+    ("buffer_not_object", "buffer must be an object or null"),
 ])
 def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, reason):
     golden = copy.deepcopy(load_build_golden())
@@ -712,6 +832,28 @@ def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, rea
     ("resource_generation_over_uint64", "request"),
     ("timing_sources_empty", "request"),
     ("timing_sources_not_device_event", "request"),
+    ("kind_unknown", "request"),
+    ("mode_not_allowed", "request"),
+    ("seed_not_canonical", "request"),
+    ("cache_policy_unknown", "request"),
+    ("reps_out_of_bounds", "request"),
+    ("task_fingerprint_not_hex", "request"),
+    ("run_id_not_identifier", "request"),
+    ("fast_bench_not_boolean", "request"),
+    ("cases_too_many", "request"),
+    ("entry_blob_without_reference", "request"),
+    ("entry_inline_with_reference", "request"),
+    ("entry_content_unknown", "request"),
+    ("blob_ref_content_id_mismatch", "request"),
+    ("blob_ref_small_size", "request"),
+    ("alias_duplicate_path", "request"),
+    ("path_prefix_conflict", "request"),
+    ("evidence_unknown_field", "evidence"),
+    ("topology_not_object", "evidence"),
+    ("topology_unknown_field", "evidence"),
+    ("span_unknown_field", "evidence"),
+    ("timing_unknown_field", "evidence"),
+    ("buffer_not_object", "evidence"),
 ])
 def test_the_python_contract_rejects_the_same_tampered_vector(mutation, level):
     """The Go verifier is not stricter or looser than the production contract.
