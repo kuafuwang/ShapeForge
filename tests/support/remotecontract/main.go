@@ -636,6 +636,18 @@ func bundleManifest(schemaID string, entries []any) (map[string]any, error) {
 		if !ok {
 			return nil, errors.New("bundle entry is not an object")
 		}
+		allowed := make(map[string]bool, len(bundleManifestFields)+len(bundleEntryExtraFields))
+		for _, name := range bundleManifestFields {
+			allowed[name] = true
+		}
+		for _, name := range bundleEntryExtraFields {
+			allowed[name] = true
+		}
+		for name := range entry {
+			if !allowed[name] {
+				return nil, errors.New("bundle entry has unknown fields")
+			}
+		}
 		canonicalEntry := make(map[string]any, len(bundleManifestFields))
 		for _, name := range bundleManifestFields {
 			value, present := entry[name]
@@ -731,6 +743,12 @@ func bundleRequestDocument(request map[string]any) (map[string]any, error) {
 	bundle, ok := artifact["bundle"].(map[string]any)
 	if !ok {
 		return nil, errors.New("this vector must carry the bundle branch")
+	}
+	// The bundle document is closed: schema id, artifact-set digest and the
+	// entry list.  A fourth field is a different document even when the manifest
+	// digest is unchanged.
+	if err := closedFields(bundle, bundleDocumentFields, nil, "bundle"); err != nil {
+		return nil, err
 	}
 	execution, ok := canonicalRequest["execution"].(map[string]any)
 	if !ok {
@@ -1456,6 +1474,12 @@ func buildRequestDocument(request map[string]any) (map[string]any, error) {
 	if !ok {
 		return nil, errors.New("this vector must carry the bundle branch")
 	}
+	// The bundle document is closed: schema id, artifact-set digest and the
+	// entry list.  A fourth field is a different document even when the manifest
+	// digest is unchanged.
+	if err := closedFields(bundle, bundleDocumentFields, nil, "bundle"); err != nil {
+		return nil, err
+	}
 	execution, ok := canonicalRequest["execution"].(map[string]any)
 	if !ok {
 		return nil, errors.New("execution is not an object")
@@ -1722,6 +1746,12 @@ var buildArtifactsFields = []string{"schema_id", "entries"}
 var buildLogFields = []string{"sha256", "size_bytes"}
 
 var buildLoadedFields = []string{"path", "sha256"}
+
+var bundleDocumentFields = []string{"schema_id", "artifact_set_digest", "entries"}
+
+// bundleEntryFields is the manifest field set; a transport entry may also carry
+// the two content-form fields.  Neither of those enters the manifest digest.
+var bundleEntryExtraFields = []string{"content", "blob_ref"}
 
 // The build contract's integer domains, mirrored from the production validator:
 // a duration is a bounded wall-clock value (0 means "this never ran") and a log

@@ -431,6 +431,20 @@ def _apply_mutation(golden: dict, mutation: str) -> None:
                 {"path": module["path"], "sha256": module["sha256"]},
             ],
         )
+    elif mutation == "bundle_unknown_field":
+        _resign_request_change(
+            golden,
+            lambda request: request["artifact"]["bundle"].__setitem__(
+                "unexpected", "not-in-the-contract",
+            ),
+        )
+    elif mutation == "entry_unknown_field":
+        _resign_request_change(
+            golden,
+            lambda request: request["artifact"]["bundle"]["entries"][0].__setitem__(
+                "unexpected", "not-in-the-contract",
+            ),
+        )
     elif mutation.startswith("entry_") or mutation == "too_many_entries":
         entries = copy.deepcopy(vector["request"]["artifact"]["bundle"]["entries"])
         source = next(entry for entry in entries if entry["role"] == "SOURCE")
@@ -546,6 +560,10 @@ def _apply_mutation(golden: dict, mutation: str) -> None:
     ("entry_path_too_deep", "path is too deep"),
     ("too_many_entries", "entry-count limit"),
     ("entry_total_bytes_over_limit", "declared total byte limit"),
+    # The bundle and each entry are closed documents: an added field is a
+    # different document, even though it never enters the manifest digest.
+    ("bundle_unknown_field", "bundle fields are missing or unknown"),
+    ("entry_unknown_field", "bundle entry has unknown fields"),
 ])
 def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, reason):
     golden = copy.deepcopy(load_build_golden())
@@ -584,6 +602,8 @@ def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, rea
     ("entry_path_too_deep", "request"),
     ("too_many_entries", "request"),
     ("entry_total_bytes_over_limit", "request"),
+    ("bundle_unknown_field", "request"),
+    ("entry_unknown_field", "request"),
 ])
 def test_the_python_contract_rejects_the_same_tampered_vector(mutation, level):
     """The Go verifier is not stricter or looser than the production contract.
