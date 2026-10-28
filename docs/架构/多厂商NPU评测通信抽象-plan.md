@@ -1391,24 +1391,44 @@ request 不再要求 producer、让接收方重新丢掉 producer log/duration�
    `kernel.metal:12:1: error: expected unqualified-id` 与原始 `program_source:20:1`，
    `compile_s=0.002093`、`duration_ms=2`。
 3. **probe 的语义如实记录**：`MetalSourceBuilder.probe` → `MetalContext.info()` →
-   `language_version()` 会试编一个**固定 4 行 MSL**的 probe library 以选最高可用 MSL；
-   它不建 pipeline、不看候选源码、不启动 kernel，也不是 NPU 编译路径。新增真机回归用
-   计数 device 代理断言：一次 probe 只发生 1 次 `newLibraryWithSource`、0 次
-   pipeline 创建，第二次 probe 命中缓存不再编译。probe 需要与 build 相同的 Metal 设备
-   访问权，设备不可用时只返回 `available=False`（Submit 前拒绝），不会变成候选编译失败。
+   `language_version()` 会试编一个**固定 2 行 MSL**（一行 `#include <metal_stdlib>` 加一行
+   标量写回的 `kernel void k`）的 probe library 以选最高可用 MSL；它不建 pipeline、不看候选
+   源码、不启动 kernel，也不是 NPU 编译路径。真机回归用计数 device 代理捕获实际送给编译器的
+   字符串，断言正好 2 行、首行是 `#include`、次行是 `kernel void k(`、不含候选标识符，并断言
+   一次 probe 只发生 1 次 `newLibraryWithSource`、0 次 pipeline 创建、第二次 probe 命中缓存。
+   （最初写成「4 行」是错的，已按实际 probe 源文本改正。）probe 需要与 build 相同的 Metal
+   设备访问权，设备不可用时只返回 `available=False`（Submit 前拒绝），不会变成候选编译失败。
 4. **backend-native handle 的不可误传/不可误 digest 断言**：两条新回归断言 descriptor
    相同的两个 native executable（live handle 不同）比较相等、digest 相同、`document()` /
    `repr()` 无 handle、descriptor 试图塞入 live 对象无法构造、生产者链接与 evidence 文档
    逐字节相同（measurement 之外的字段）、local-only bundle 没有可传输 payload；真机回归
    两次编译同一 source 得到两个不同 handle 与相同 native/artifact-set digest。
+   **复核后补强**：`BuildOutcome` 之前只比较 `evidence.native != bundle.native`，而
+   `NativeExecutable.handle` 是 `compare=False`，所以「同一 descriptor + 两个不同 `object()`
+   handle」会被接受（实测 bundle 与 evidence 的 handle 不是同一对象）。现在 `BuildOutcome`
+   额外要求两者是**同一个 live handle 对象**（handle 仍不参与相等与 digest 的既定规则），并加
+   回归：错配拒绝、同一 handle 的不同包装仍接受。
 5. **Go conformance 补 P1c 字段**：新增独立 Go 校验器路径（`npu_build` 向量，
    `tests/support/golden/remote/npu_build_v5.json`）重建 v5 request digest 文档（`build`
    是 v4 之外唯一新增字段）、按闭集重建 provenance/producer 记录、重算
    `producer.evidence_sha256 = SHA256(canonical(producer evidence 文档))`，并复核 received
-   行的 reused/producer/artifacts/loaded/自有 duration/log 规则；20 条变异各自以**对应理由**
+   行的 reused/producer/artifacts/loaded/自有 duration/log 规则；23 条变异各自以**对应理由**
    被拒（provenance 版本/工具链/source sha/compile profile、build mode/schema、
    producer evidence_sha256/duration/log/status、evidence status/producer/provenance/
-   loaded/log 复制/duration 0、artifact set、receipt）。
+   loaded/log 复制/duration 0/未知字段/SOURCE entry sha/自洽改写 manifest、artifact set、receipt）。
+   **复核后补强**：Go 侧 `build evidence` 之前不校验字段闭集，也只比较声明的
+   `artifact_set_digest`，因此「加一个 `build.unexpected` 字段」与「把 evidence 的 SOURCE entry
+   sha 改成 64 个 0」两份输入会被 Go 接受而 Python 拒绝（分别是 `build evidence fields are
+   missing or unknown` 与 `build.artifacts artifact_set_digest does not bind its entries`）。
+   现在 Go 按闭集校验 `build`/`artifacts`/`log`/`loaded`，从 evidence 自己的 entries 重建 canonical
+   manifest 并重算摘要，且与已接受 request 的 bundle 逐 entry 比较（`build evidence entries
+   differ from the accepted prebuilt bundle`）；新增 `evidence_unexpected_field`、
+   `evidence_source_entry_sha256` 两条回归先在旧 Go 实现上**错误通过**（已用 `0fab0e1` 的
+   Go 校验器复现：两条都输出 `ok build ...`），修复后按对应理由被拒；第三条
+   `evidence_manifest_rewritten_consistently`（连声明摘要一起改写）用来证明逐 entry 比较本身
+   在起作用（旧实现靠「声明摘要 != 候选摘要」拒绝，加严后只有 entry 比较能发现）。跨语言语义也
+   统一：`0` 表示「没跑」，所以 Python 的 `build_evidence_document` 现在同样拒绝 `reused` 行
+   `duration_ms=0`（`not_run` 行仍为 0），不是 Go 单方面加严。
 6. **文档层缺陷与契约回归**：`_npu_execution_document` 的 media type 错误信息索引了旧表，
    `task_family=kernel_module` 配错 `source_media_type` 会抛 `KeyError` 而非 `ContractError`；
    已修并新增回归。另新增契约层回归：prebuilt build request 必须有 producer 链接、
@@ -1420,8 +1440,8 @@ request 不再要求 producer、让接收方重新丢掉 producer log/duration�
    **已登记 profile 名**从登记表解析，请求命名另一个 compile profile 会在 worker 内被
    `toolchain_profile` 拒绝（不静默沿用），未知 profile 名按名拒绝。
 
-本轮测试：P1c 组（build grpc 28 / outbox 3 / contract 6 / go conformance 23 /
-`test_source_builder.py` 14 其中 7 条 `gpu`）合计 **74 passed**；P0/P0b/P1
+本轮测试：P1c 组（build grpc 28 / outbox 3 / contract 7 / go conformance 26 /
+`test_source_builder.py` 15 其中 7 条 `gpu`）合计 **79 passed**；P0/P0b/P1
 contract/grpc/cleanup/bundle + Go bundle conformance **214 passed**；旧 remote/gRPC/
 blob/conformance 组 **170 passed**；job/container/outbox 组 **265 passed, 1 skipped**；
 Metal 非 `gpu` 组 **449 passed, 2 skipped**（`test_triton_baseline` 按围栏 `ps` 限制失败）；
@@ -1429,7 +1449,7 @@ Metal 非 `gpu` 组 **449 passed, 2 skipped**（`test_triton_baseline` 按围栏
 `scripts/generate_evaluator_proto.py --check` 通过（本轮未改 proto）。
 
 剩余风险：真机证据仍只有一次有效/一次无效编译与两条身份回归，没有 benchmark；
-`language_version` 的 4 行 probe 是 Metal 自身的版本探测（已如实记录，未做设备权限隔离）；
+`language_version` 的 2 行 probe 是 Metal 自身的版本探测（已如实记录，未做设备权限隔离）；
 Metal 仍不进入 NPU contract，也不参与远端构建；P2a/真实 TX 编译器/ABI/ELF、真实 NPU
 加载与容器设备映射、构建性能与缓存、跨版本工具链兼容全部未做。
 

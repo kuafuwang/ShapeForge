@@ -516,7 +516,7 @@ def test_the_probe_only_compiles_the_fixed_msl_version_probe():
     """``probe`` measures the device's MSL version, never the candidate.
 
     ``MetalContext.info()`` -> ``language_version()`` does compile a fixed
-    four-line MSL library (that is how the highest usable MSL version is chosen
+    two-line MSL library (that is how the highest usable MSL version is chosen
     on this machine) but it never creates a pipeline, never sees the candidate
     source and never runs a kernel.  The candidate is only compiled by
     ``build``, which this test never calls.
@@ -531,12 +531,16 @@ def test_the_probe_only_compiles_the_fixed_msl_version_probe():
             self._device = device
             self.library_calls = 0
             self.pipeline_calls = 0
+            #: The exact source string handed to the compiler, so the fixed
+            #: probe text is what the assertion checks (not just a call count).
+            self.library_sources: list[str] = []
 
         def __getattr__(self, name):
             attribute = getattr(self._device, name)
             if name == "newLibraryWithSource_options_error_":
                 def counted(*args, **kwargs):
                     self.library_calls += 1
+                    self.library_sources.append(args[0])
                     return attribute(*args, **kwargs)
                 return counted
             if name.startswith("newComputePipelineState"):
@@ -562,6 +566,15 @@ def test_the_probe_only_compiles_the_fixed_msl_version_probe():
     # version it reported, and created no pipeline.
     assert counting.library_calls == 1
     assert counting.pipeline_calls == 0
+    # The compiled source is the runtime's fixed version probe: one include plus
+    # one `kernel void k`, no candidate code, exactly two lines.
+    probe_source = counting.library_sources[0]
+    probe_lines = [line for line in probe_source.splitlines() if line.strip()]
+    assert len(probe_lines) == 2, probe_lines
+    assert probe_lines[0].startswith("#include <metal_stdlib>")
+    assert "kernel void k(" in probe_lines[1]
+    assert "relu_kernel" not in probe_source
+    assert "threadposition" not in probe_source
     assert capabilities.profile.toolchain_version == context.language_version()
     assert capabilities.profile.toolchain_version in {"4.0", "3.2", "3.1", "3.0", "2.4"}
     # The result is cached: a second probe does no further compile.
@@ -668,3 +681,54 @@ def test_two_real_compiles_of_one_source_share_an_identity_and_not_a_handle():
             {key: value for key, value in document.items() if key not in ("duration_ms", "log")}
         )
     assert documents[0] == documents[1]
+
+
+def test_one_build_outcome_must_name_one_live_executable():
+    """Descriptor equality is not enough: the outcome closes over one handle.
+
+    ``NativeExecutable`` deliberately excludes the live handle from equality and
+    from the digest (a handle is a process-local capability, not a document
+    field).  That means two executables with the same descriptor compare equal,
+    so `BuildOutcome` has to check the handle *identity* as well: a bundle
+    carrying one pipeline and evidence claiming another would otherwise describe
+    two different live executables as one build.
+    """
+
+    source = SourceBundle(b"kernel void relu_kernel() {}\n")
+    entry = source.entry()
+    handles = [object(), object()]
+
+    def native(handle):
+        return NativeExecutable(
+            backend_id="metal", kind="compute-pipeline",
+            entry_path=entry.path, entry_sha256=entry.sha256,
+            descriptor={"kernel_name": "relu_kernel", "language_version": "4.0"},
+            handle=handle,
+        )
+
+    bundle_native, evidence_native = native(handles[0]), native(handles[1])
+    # The two are the same *documented* identity...
+    assert bundle_native == evidence_native and bundle_native.digest == evidence_native.digest
+    bundle = ArtifactBundle(entries=(entry,), native=bundle_native)
+    provenance = BuildProvenance(
+        profile=_profile(), source_sha256=source.sha256,
+        artifact_set_digest=bundle.artifact_set_digest,
+    )
+
+    def evidence_for(candidate):
+        return BuildEvidence(
+            mode="prebuilt", status="ok", provenance=provenance,
+            artifacts=(BuildArtifact.from_entry(entry),), native=candidate,
+            placement="control_host",
+        )
+
+    # ...but one outcome may not pair two live executables.
+    with pytest.raises(ValueError, match="live executable"):
+        BuildOutcome(
+            bundle=bundle, provenance=provenance, evidence=evidence_for(evidence_native),
+        )
+    # The same live handle (even through another equal wrapper) is coherent.
+    coherent = BuildOutcome(
+        bundle=bundle, provenance=provenance, evidence=evidence_for(native(handles[0])),
+    )
+    assert coherent.bundle.native.handle is coherent.evidence.native.handle

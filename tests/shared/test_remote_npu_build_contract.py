@@ -195,3 +195,51 @@ def test_the_worker_resolves_only_the_registered_profile_not_the_request_one():
     ).to_dict()
     with pytest.raises(BuildError, match="not registered"):
         mb.builder_for_provenance(unknown)
+
+
+def test_a_received_row_must_record_its_own_duration_not_the_not_run_sentinel():
+    """Both languages agree that a loaded artifact set cost real time.
+
+    ``0`` is the duration of a row that never ran (a timeout's ``not_run``).  A
+    ``reused`` row that verified and loaded an artifact set must record its own
+    cost; otherwise an all-zero receiver row would look like an attempt that
+    never touched the artifact.
+    """
+
+    vector = _vector()
+    evidence = vector["evidence"]
+    assert evidence["build"]["status"] == "reused"
+    evidence["build"]["duration_ms"] = 0
+    with pytest.raises(contracts.ContractError, match="must record its own duration"):
+        contracts.npu_evidence_document(
+            evidence, source_bytes=None,
+            device_group=vector["request"]["execution"]["device_group"],
+            expected_resources=vector["request"]["execution"]["resources"],
+            expected_build=vector["request"]["build"],
+            request_artifact=vector["request"]["artifact"],
+            measurement_kind="simulated", publication_allowed=False,
+            report_status="ok", dialect=contracts.NPU_BUILD_DIALECT,
+        )
+    # A row that never ran keeps the sentinel: that is what it means.
+    not_run = copy.deepcopy(vector["evidence"])
+    not_run["build"] = {
+        "schema_id": contracts.NPU_BUILD_EVIDENCE_SCHEMA_ID,
+        "mode": "prebuilt", "status": "not_run", "error_class": None,
+        "provenance": vector["request"]["build"]["provenance"],
+        "artifacts": None, "duration_ms": 0, "log": None, "loaded": [],
+    }
+    not_run["complete"] = False
+    not_run["timing"] = dict(
+        not_run["timing"], launches=0, device_elapsed_ns=0,
+        synchronization_completed=False, clock_domain=contracts.NPU_UNOBSERVED_CLOCK_DOMAIN,
+    )
+    not_run["spans"] = []
+    contracts.npu_evidence_document(
+        not_run, source_bytes=None,
+        device_group=vector["request"]["execution"]["device_group"],
+        expected_resources=vector["request"]["execution"]["resources"],
+        expected_build=vector["request"]["build"],
+        request_artifact=vector["request"]["artifact"],
+        measurement_kind="simulated", publication_allowed=False,
+        report_status="timeout", dialect=contracts.NPU_BUILD_DIALECT,
+    )

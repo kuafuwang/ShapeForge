@@ -1462,6 +1462,19 @@ func buildProducerDigest(document map[string]any) (string, error) {
 	return shaHex(encoded), nil
 }
 
+// isHex64 reports whether value is 64 lowercase hexadecimal characters.
+func isHex64(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, char := range value {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
 // sameDocument compares two raw JSON values by their canonical encodings.
 func sameDocument(left, right any) (bool, error) {
 	leftBytes, err := canonical(left)
@@ -1473,6 +1486,40 @@ func sameDocument(left, right any) (bool, error) {
 		return false, err
 	}
 	return bytes.Equal(leftBytes, rightBytes), nil
+}
+
+var buildEvidenceFields = []string{
+	"schema_id", "mode", "status", "error_class", "provenance", "artifacts",
+	"duration_ms", "log", "loaded",
+}
+
+var buildArtifactsFields = []string{"schema_id", "entries"}
+
+var buildLogFields = []string{"sha256", "size_bytes"}
+
+var buildLoadedFields = []string{"path", "sha256"}
+
+// closedFields refuses a document whose field set is not exactly the versioned
+// one.  A build evidence that grew a field is an unreviewed identity even when
+// every field it does have is valid, which is why the check runs before any
+// value is compared.
+func closedFields(value map[string]any, required, optional []string, name string) error {
+	allowed := make(map[string]bool, len(required)+len(optional))
+	for _, field := range required {
+		allowed[field] = true
+		if _, present := value[field]; !present {
+			return fmt.Errorf("%s fields are missing or unknown", name)
+		}
+	}
+	for _, field := range optional {
+		allowed[field] = true
+	}
+	for field := range value {
+		if !allowed[field] {
+			return fmt.Errorf("%s fields are missing or unknown", name)
+		}
+	}
+	return nil
 }
 
 func buildNumber(value any, name string) (int64, error) {
@@ -1492,11 +1539,16 @@ func buildNumber(value any, name string) (int64, error) {
 // hashes its own producer evidence, the manifest and load record cover the
 // executable module, and the receiver recorded its own verify/load cost.
 func verifyBuildEvidence(
-	evidence, requestBuild, producerEvidence map[string]any, artifactSet string,
+	evidence, requestBuild, requestArtifact, producerEvidence map[string]any, artifactSet string,
 ) error {
 	build, ok := evidence["build"].(map[string]any)
 	if !ok {
 		return errors.New("evidence build document is missing")
+	}
+	if err := closedFields(
+		build, buildEvidenceFields, []string{"producer"}, "build evidence",
+	); err != nil {
+		return err
 	}
 	if build["schema_id"] != "tcenv.remote.npu-build.evidence.1" {
 		return errors.New("build evidence schema id is not the version 1 identity")
@@ -1566,8 +1618,66 @@ func verifyBuildEvidence(
 	if !ok {
 		return errors.New("a reused artifact set requires its manifest identity")
 	}
+	if err := closedFields(
+		artifacts, buildArtifactsFields, []string{"artifact_set_digest"}, "build.artifacts",
+	); err != nil {
+		return err
+	}
 	entries, ok := artifacts["entries"].([]any)
-	if !ok || artifacts["artifact_set_digest"] != artifactSet {
+	if !ok || len(entries) == 0 {
+		return errors.New("a reused artifact set requires its manifest entries")
+	}
+	// The evidence manifest is rebuilt from its own entries, so the digest it
+	// declares is a claim this verifier can check instead of a value it trusts.
+	artifactsSchema, ok := artifacts["schema_id"].(string)
+	if !ok {
+		return errors.New("build.artifacts schema_id is not a string")
+	}
+	manifest, err := bundleManifest(artifactsSchema, entries)
+	if err != nil {
+		return err
+	}
+	manifestBytes, err := canonical(manifest)
+	if err != nil {
+		return err
+	}
+	computed := shaHex(manifestBytes)
+	// The declared digest is a claim about the entries that are actually here.
+	if declared, present := artifacts["artifact_set_digest"]; present && declared != nil {
+		declaredDigest, ok := declared.(string)
+		if !ok {
+			return errors.New("build.artifacts artifact_set_digest is not a string")
+		}
+		if declaredDigest != computed {
+			return errors.New("build.artifacts artifact_set_digest does not bind its entries")
+		}
+	}
+	// ...and the manifest has to be the artifact set the request was accepted
+	// for, entry by entry: a receiver may not describe other bytes.
+	acceptedBundle, ok := requestArtifact["bundle"].(map[string]any)
+	if !ok {
+		return errors.New("the accepted request has no prebuilt artifact set")
+	}
+	acceptedEntries, ok := acceptedBundle["entries"].([]any)
+	if !ok {
+		return errors.New("the accepted prebuilt bundle has no entries")
+	}
+	acceptedSchema, ok := acceptedBundle["schema_id"].(string)
+	if !ok {
+		return errors.New("the accepted prebuilt bundle schema id is not a string")
+	}
+	acceptedManifest, err := bundleManifest(acceptedSchema, acceptedEntries)
+	if err != nil {
+		return err
+	}
+	acceptedBytes, err := canonical(acceptedManifest)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(manifestBytes, acceptedBytes) {
+		return errors.New("build evidence entries differ from the accepted prebuilt bundle")
+	}
+	if computed != artifactSet {
 		return errors.New("build evidence artifacts do not add up to the artifact set")
 	}
 	modules := map[string]string{}
@@ -1600,6 +1710,9 @@ func verifyBuildEvidence(
 		if !ok {
 			return errors.New("load record is not an object")
 		}
+		if err := closedFields(record, buildLoadedFields, nil, "build.loaded"); err != nil {
+			return err
+		}
 		path, _ := record["path"].(string)
 		if modules[path] != record["sha256"] {
 			return errors.New("load record does not name the built module")
@@ -1617,6 +1730,15 @@ func verifyBuildEvidence(
 	log, ok := build["log"].(map[string]any)
 	if !ok {
 		return errors.New("a receiver that loaded an artifact set must record its own log")
+	}
+	if err := closedFields(log, buildLogFields, nil, "build.log"); err != nil {
+		return err
+	}
+	if digest, ok := log["sha256"].(string); !ok || !isHex64(digest) {
+		return errors.New("build.log sha256 is not a lowercase 64-character digest")
+	}
+	if _, err := buildNumber(log["size_bytes"], "build.log.size_bytes"); err != nil {
+		return err
 	}
 	copiedLog, err := sameDocument(log, producerEvidence["log"])
 	if err != nil {
@@ -1681,7 +1803,8 @@ func verifyBuild(golden *BuildGolden) error {
 		return errors.New("the producer link does not bind the producer evidence document")
 	}
 	if err := verifyBuildEvidence(
-		golden.Evidence, build, golden.ProducerEvidence, golden.ArtifactSetDigest,
+		golden.Evidence, build, golden.Request["artifact"].(map[string]any),
+		golden.ProducerEvidence, golden.ArtifactSetDigest,
 	); err != nil {
 		return err
 	}

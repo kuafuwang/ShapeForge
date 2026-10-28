@@ -477,6 +477,18 @@ class BuildOutcome:
             raise ValueError(
                 "the build evidence native executable is not the artifact set's executable"
             )
+        if self.evidence.native is not None and (
+            self.evidence.native.handle is not self.bundle.native.handle
+        ):
+            # The descriptor equality above cannot see the live object: the
+            # handle is excluded from equality and from every digest (it is a
+            # process-local capability, not a document field).  Inside one
+            # outcome the two records must still name the *same* live
+            # executable, otherwise the bundle would carry one pipeline and the
+            # evidence another while both claim the same build.
+            raise ValueError(
+                "the build evidence native executable is not the artifact set's live executable"
+            )
         self.bundle.verify_bytes()
         if self.provenance.artifact_set_digest != self.bundle.artifact_set_digest:
             raise ValueError("build provenance artifact_set_digest does not bind the artifact set")

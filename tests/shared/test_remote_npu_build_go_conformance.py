@@ -13,6 +13,7 @@ emitted it.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import shutil
@@ -136,7 +137,14 @@ def test_the_go_verifier_rebuilds_the_build_request_producer_link_and_evidence()
     ("evidence_loaded", "load record does not cover the executable modules"),
     ("evidence_receiver_log_is_producer_log", "log is the producer's log identity"),
     ("evidence_receiver_duration_zero", "must record its own duration"),
-    ("evidence_artifact_set_digest", "do not add up to the artifact set"),
+    ("evidence_artifact_set_digest", "artifact_set_digest does not bind its entries"),
+    # A field the version-1 build evidence does not have is not extra credit.
+    ("evidence_unexpected_field", "fields are missing or unknown"),
+    # The evidence manifest is recomputed from its own entries and compared with
+    # the accepted bundle, entry by entry: rewriting the SOURCE digest (or any
+    # other entry) cannot survive by keeping the declared artifact-set digest.
+    ("evidence_source_entry_sha256", "does not bind its entries"),
+    ("evidence_manifest_rewritten_consistently", "entries differ from the accepted prebuilt bundle"),
     ("receipt_request_digest", "receipt id does not bind the request"),
 ])
 def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, reason):
@@ -189,6 +197,26 @@ def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, rea
         evidence_build["duration_ms"] = 0
     elif mutation == "evidence_artifact_set_digest":
         evidence_build["artifacts"]["artifact_set_digest"] = "3" * 64
+    elif mutation == "evidence_unexpected_field":
+        evidence_build["unexpected"] = "x"
+    elif mutation == "evidence_source_entry_sha256":
+        entry = next(
+            item for item in evidence_build["artifacts"]["entries"] if item["role"] == "SOURCE"
+        )
+        entry["sha256"] = "0" * 64
+    elif mutation == "evidence_manifest_rewritten_consistently":
+        # The declared digest is recomputed, so the evidence is internally
+        # consistent: only the comparison with the accepted bundle can see it.
+        from tcenv.remote.artifact_bundle import BUNDLE_SCHEMA_ID, canonical_manifest
+        from tcenv.remote.contracts import canonical_digest_document
+
+        entries = evidence_build["artifacts"]["entries"]
+        entry = next(item for item in entries if item["role"] == "SOURCE")
+        entry["sha256"] = "5" * 64
+        manifest = canonical_manifest(BUNDLE_SCHEMA_ID, entries)
+        evidence_build["artifacts"]["artifact_set_digest"] = hashlib.sha256(
+            canonical_digest_document(manifest)
+        ).hexdigest()
     else:
         vector["receipt"]["receipt_id"] = "4" * 64
     path = tmp_path / "tampered_build.json"

@@ -1284,6 +1284,15 @@ def build_evidence_document(
     elif status == "reused":
         if mode != "prebuilt":
             raise ContractError("only a prebuilt artifact set can be reported as reused")
+        if duration_ms < 1:
+            # ``0`` is the contract's "this never ran" duration (a ``not_run``
+            # row).  A receiver that verified and loaded an artifact set spent
+            # its own time doing so, and must record it instead of reusing that
+            # sentinel -- otherwise an all-zero row is indistinguishable from an
+            # attempt that never touched the artifact.
+            raise ContractError(
+                "a received artifact set that was loaded must record its own duration"
+            )
         if error_class is not None:
             raise ContractError("a reused artifact set has no build error")
         if artifacts is None or provenance["artifact_set_digest"] is None:

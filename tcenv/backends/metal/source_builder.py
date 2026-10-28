@@ -144,7 +144,7 @@ class MetalSourceBuilder:
 
         The probe allocates the real context (that is what "can this host build"
         means) but never compiles a candidate.  ``MetalContext.info()`` calls
-        ``language_version()``, which compiles one *fixed* four-line MSL library
+        ``language_version()``, which compiles one *fixed* two-line MSL library
         in order to pick the highest MSL version this device accepts; that is a
         version probe (library only, no pipeline, no candidate bytes, no kernel
         launch), not a build.  It needs the same Metal device access a build
