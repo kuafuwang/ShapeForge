@@ -240,9 +240,10 @@ placement 只改变构建位置，不改变产物语义：
 | 构建并评测 | source 提交给 evaluator，在同一 attempt 内构建并执行 | evaluator worker 内构建后进入 VendorDriver |
 | 本地构建执行 | control_host 本地构建并执行，如现有 Metal | 无远程传输，保持现有 local 语义 |
 
-`BuildProvenance` 不改变 `artifact_set_digest` 只描述工件 manifest/字节的规则；它作为独立
-字段进入 canonical request、outbox/resume 和签名 BuildEvidence。若构建环境变化会影响测量
-可比性，host 还必须按新测量基线处理，不能只换 artifact digest 就继续比较。
+`BuildProvenance` 不改变 `artifact_set_digest` 只描述工件 manifest/字节的规则；它只作为
+BuildOutcome 的构建证据保留。后续 canonical request、receipt、outbox、执行、缓存和发布
+继续沿用各路径既有语义，**不要求为了统一构建而再造一套下游统一抽象**。若构建环境变化
+影响测量可比性，host 按现有规则处理即可。
 
 builder 只能使用登记的 build_profile/toolchain，不接受任意 shell、路径或构建命令。接收方
 仍要复核 artifact digest、厂商签名/ABI 与任务契约，BuildProvenance 不是免验证证明。
@@ -1224,7 +1225,8 @@ profile 侧的物理 id 绑定；`declared_devices` 与 profile 的 rank/die 事
 
 - 实现 `ArtifactBuilder` 的 probe/build/BuildOutcome 与 deadline/错误分类，构建过程只接受
   登记的 build_profile/toolchain；source digest、builder/toolchain/profile 与实际 artifact
-  字节都进入 BuildProvenance/BuildEvidence，并接入 canonical request、outbox、签名和 resume。
+  字节都保留在 BuildProvenance/BuildEvidence 中。后续 request/receipt/outbox/执行/发布仍走
+  现有路径，不要求为了构建统一而改变它们的语义。
 - **Metal 必须是真实路径中的唯一构建实现，不是概念映射或测试专用类**：在
   `tcenv/backends/metal/` 实现 `MetalSourceBuilder`，probe 返回真实 macOS/Metal runtime/device
   能力与版本；`tcenv/evaluate.py` 必须通过 `backend.artifact_builder()` 调用它，Backend 协议
@@ -1243,8 +1245,8 @@ profile 侧的物理 id 绑定；`declared_devices` 与 profile 的 rank/die 事
   ArtifactBundle/manifest → BlobChannel → fake NPU VendorDriver。NPU 侧只校验并加载，
   不拉源码、不调用编译器。
 - 另测 evaluator 端构建：source 经六 RPC 提交后由 evaluator 内 ArtifactBuilder 构建并
-  进入 VendorDriver；两种时序的 ArtifactBundle、BuildProvenance、BuildEvidence 和错误
-  分类一致。
+  进入 VendorDriver；两种时序只要求构建产物与构建证据语义一致，不要求统一后续执行、
+  缓存或发布抽象。
 
 **模拟验收**
 
