@@ -197,11 +197,31 @@ message BuildToolchain {
   string sdk_version = 3;
 }
 
+message BuildLog {
+  string sha256 = 1;
+  uint64 size_bytes = 2;
+}
+
+// The bounded link to the control host's own BuildEvidence document.  A
+// prebuilt request carries it so the receiver's signed evidence can repeat the
+// producer status/duration/log identity and the digest of the document the host
+// kept; the log bytes never travel to the NPU.
+message BuildProducerEvidence {
+  string schema_id = 1;
+  string status = 2;
+  string mode = 3;
+  uint64 duration_ms = 4;
+  optional BuildLog log = 5;
+  string evidence_sha256 = 6;
+}
+
 message BuildRequest {
   string schema_id = 1;
   // "prebuilt" or "evaluator".
   string mode = 2;
   BuildProvenance provenance = 3;
+  // Exactly for a prebuilt build: the producer build-evidence link.
+  optional BuildProducerEvidence producer_evidence = 4;
 }
 
 message DeviceGroupCapability {

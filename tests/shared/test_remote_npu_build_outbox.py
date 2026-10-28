@@ -81,6 +81,13 @@ def test_the_build_provenance_is_its_own_row_field_and_resume_identity(tmp_path)
         assert len(rows) == 1
         assert rows[0]["status"] == "pending"
         assert rows[0]["build_provenance"] == provenance
+        # The producer link is part of the request build document, so the
+        # durable/resume identity carries the original build record.
+        assert provenance["producer"] == outcome.evidence.producer_record()
+        assert rows[0]["build_provenance"]["producer"]["status"] == "ok"
+        assert rows[0]["build_provenance"]["producer"]["duration_ms"] == (
+            outcome.evidence.duration_ms
+        )
         assert rows[0]["candidate_digest"]["value"] == outcome.bundle.artifact_set_digest
 
         # A resume that claims another build identity under the same candidate is
@@ -120,6 +127,7 @@ def test_the_request_digest_changes_when_only_the_build_identity_changes(tmp_pat
         harness.build = mb.request_build(
             mb.control_host_profile(builder_version="1.4.1"), source=SOURCE,
             mode="prebuilt", artifact_set_digest=outcome.bundle.artifact_set_digest,
+            producer=outcome.evidence.producer_record(),
         )
         second = bind_wire_digest(host, evaluator, npu_contract=True)
         assert first.wire_candidate_digest == second.wire_candidate_digest

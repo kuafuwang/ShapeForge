@@ -39,6 +39,7 @@ from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
 
 from . import contracts
 from .artifact_bundle import ArtifactBundle, BundleEntry, NativeExecutable, payload_bytes
+from .contracts import canonical_digest_document
 
 #: The shared error classification.  A typed ``compile`` failure is a candidate
 #: failure and becomes a ``compile_error`` report; ``toolchain_profile`` is
@@ -209,7 +210,16 @@ class BuildEvidence:
     ``reused`` is a prebuilt artifact set that this attempt verified and loaded;
     ``ok`` is this attempt's own successful build; ``compile_failed`` is a typed
     candidate compile failure; ``not_run`` is a diagnostic row (the attempt was
-    terminated before the build).
+    terminated before the build).  A typed value models a producer's successful
+    outcome (``ok``) or a received prebuilt set (``reused``/``not_run``); the
+    signed ``compile_failed`` row is a frontend/worker document validated by the
+    same contract, not a ``BuildOutcome``.
+
+    ``placement`` decides which of those combinations is coherent: a control-host
+    producer may report ``prebuilt``/``ok`` because it really compiled the set,
+    while a *received* prebuilt row must be ``reused`` and repeat the producer's
+    build-evidence link.  The remote NPU rule is never relaxed by the producer
+    placement.
 
     ``native`` records a backend-native executable that was produced and kept in
     this process (the Metal pipeline).  It never enters the wire document: the
@@ -227,6 +237,16 @@ class BuildEvidence:
     log: bytes = b""
     loaded: tuple[tuple[str, str], ...] = ()
     native: NativeExecutable | None = None
+    #: Where this row was produced: ``control_host`` (fresh producer build),
+    #: ``evaluator`` (fresh build in an attempt) or ``received`` (a prebuilt
+    #: artifact set this attempt verified and loaded).  It is neutral model
+    #: semantics, not a wire field: the remote validator derives the same
+    #: placement from the accepted request's mode.
+    placement: str = ""
+    #: The producer build-evidence link a ``received`` row repeats.  It is the
+    #: control host's own record (status/duration/log digest/evidence digest),
+    #: authenticated by the request digest; the NPU never receives the log bytes.
+    producer: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.mode not in contracts.BUILD_MODES:
@@ -242,6 +262,41 @@ class BuildEvidence:
                 raise ValueError("a successful build must list its artifacts")
         elif self.artifacts:
             raise ValueError("a failed or unrun build must not claim artifacts")
+        placement = self.placement
+        if not placement:
+            placement = (
+                "received" if self.mode == "prebuilt" and self.status in {"reused", "not_run"}
+                else "control_host" if self.mode == "prebuilt"
+                else "evaluator"
+            )
+            object.__setattr__(self, "placement", placement)
+        if placement not in contracts.BUILD_PLACEMENTS:
+            raise ValueError("build evidence placement is not supported")
+        if placement == "control_host":
+            if self.mode != "prebuilt" or self.status != "ok":
+                raise ValueError(
+                    "a control-host producer build must be a fresh prebuilt compile (ok)"
+                )
+        elif placement == "evaluator":
+            if self.mode != "evaluator" or self.status != "ok":
+                raise ValueError(
+                    "an evaluator producer build must be a fresh evaluator compile (ok)"
+                )
+        else:
+            if self.mode != "prebuilt" or self.status not in {"reused", "not_run"}:
+                raise ValueError(
+                    "a received placement only describes a reused (or not_run) prebuilt set"
+                )
+        if placement == "received" and self.status == "reused":
+            if self.producer is None:
+                raise ValueError("a received prebuilt artifact requires the producer link")
+            try:
+                normalized = contracts.build_producer_record(self.producer)
+            except contracts.ContractError as exc:
+                raise ValueError(f"producer build-evidence link is invalid: {exc}") from exc
+            object.__setattr__(self, "producer", normalized)
+        elif self.producer is not None:
+            raise ValueError("only a received prebuilt artifact repeats a producer link")
         if self.native is not None:
             if not isinstance(self.native, NativeExecutable):
                 raise ValueError("build evidence native executable must be typed")
@@ -262,6 +317,43 @@ class BuildEvidence:
             return None
         return {**self.native.document(), "digest": self.native.digest}
 
+    def producer_record(self) -> dict[str, Any]:
+        """The producer link a prebuilt request carries (control-host build).
+
+        It binds the *whole* producer evidence document by digest and repeats the
+        status, duration and log identity.  A received row must repeat this
+        record unchanged, which is what closes the original build record over
+        the signed result without shipping the log bytes to the NPU.
+        """
+
+        if self.placement != "control_host" or self.status != "ok":
+            raise ValueError("only a successful control-host producer build has a producer link")
+        document = self.to_dict()
+        try:
+            contracts.build_producer_evidence_document(document, placement="control_host")
+        except contracts.ContractError as exc:
+            raise ValueError(f"producer build evidence is invalid: {exc}") from exc
+        record = {
+            "schema_id": contracts.NPU_BUILD_PRODUCER_RECORD_SCHEMA_ID,
+            "status": self.status,
+            "mode": self.mode,
+            "duration_ms": self.duration_ms,
+            "log": document["log"],
+            "evidence_sha256": hashlib.sha256(canonical_digest_document(document)).hexdigest(),
+        }
+        try:
+            return contracts.build_producer_record(record)
+        except contracts.ContractError as exc:  # pragma: no cover - defensive
+            raise ValueError(f"producer build-evidence link is invalid: {exc}") from exc
+
+    def matches_producer_record(self, record: Mapping[str, Any]) -> bool:
+        """True only for the link this exact producer evidence would emit."""
+
+        try:
+            return contracts.build_producer_record(record) == self.producer_record()
+        except (ValueError, contracts.ContractError):
+            return False
+
     def artifacts_document(self) -> dict[str, Any] | None:
         if not self.artifacts:
             return None
@@ -278,7 +370,7 @@ class BuildEvidence:
         """The raw BuildEvidence document (validated by :meth:`verified`)."""
 
         artifacts = self.artifacts_document()
-        return {
+        document = {
             "schema_id": contracts.NPU_BUILD_EVIDENCE_SCHEMA_ID,
             "mode": self.mode,
             "status": self.status,
@@ -295,15 +387,32 @@ class BuildEvidence:
             ),
             "loaded": [{"path": path, "sha256": digest} for path, digest in self.loaded],
         }
+        if self.producer is not None:
+            document["producer"] = dict(self.producer)
+        return document
 
     def verified(
         self, *, expected_build: Mapping[str, Any] | None = None,
         request_artifact: Mapping[str, Any] | None = None,
         report_status: str | None = None, complete: bool | None = None,
     ) -> dict[str, Any]:
-        """Validate against the accepted request and return the signed document."""
+        """Validate this row under its own placement and return the document.
+
+        A producer row (control host or evaluator) is validated with the local
+        producer rule, which is what makes ``prebuilt``/``ok`` coherent for the
+        machine that compiled it.  A received row is validated with the remote
+        NPU rule (prebuilt must be ``reused`` and repeat the producer link).
+        """
 
         try:
+            if self.placement in ("control_host", "evaluator"):
+                if expected_build is not None or request_artifact is not None:
+                    raise contracts.ContractError(
+                        "a producer build evidence is not a received artifact receipt"
+                    )
+                return contracts.build_producer_evidence_document(
+                    self.to_dict(), placement=self.placement,
+                )
             return contracts.npu_build_evidence_document(
                 self.to_dict(), expected_build=expected_build,
                 request_artifact=request_artifact, report_status=report_status, complete=complete,

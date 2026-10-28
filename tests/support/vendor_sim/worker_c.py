@@ -34,7 +34,7 @@ from tcenv.remote.blob_channel import BlobReader
 from tcenv.schema import PROTOCOL_VERSION
 
 from .module_builder import builder_for_provenance
-from .vendor_c import FakeModuleVendorDriver, prebuilt_build_evidence
+from .vendor_c import FakeModuleVendorDriver, received_build_evidence
 
 BLOB_ROOT_ENV = "TCENV_BLOB_ROOT"
 STATE_DIR_ENV = "TCENV_REMOTE_STATE_DIR"
@@ -186,15 +186,25 @@ def main() -> int:
         # Prebuilt: the control host already compiled; this attempt only verifies
         # and loads.  The source branch is empty by contract.
         bundle = request.npu.bundle
+        load_started = time.monotonic()
         try:
             loaded = _artifact_bytes(bundle, blob_root, scratch=scratch)
         except Exception:  # noqa: BLE001 - an unreadable artifact is infrastructure
             return 17
+        load_ms = max(1, int(round((time.monotonic() - load_started) * 1000)))
+        module = next(
+            entry for entry in bundle.entries if entry.role == "EXECUTABLE_MODULE"
+        )
         try:
-            evidence = prebuilt_build_evidence(
+            evidence = received_build_evidence(
                 bundle=bundle, provenance=build_document["provenance"],
+                producer=build_document["producer"], duration_ms=load_ms,
+                log=(
+                    f"npu: verified {len(loaded)} artifact(s) for device load; "
+                    f"{module.path} sha256={module.sha256} in {load_ms}ms\n"
+                ).encode("ascii"),
             )
-        except Exception:  # noqa: BLE001 - an inconsistent build identity is refused
+        except (KeyError, ValueError) as exc:  # noqa: BLE001 - inconsistent request
             return 18
     else:
         # Evaluator build: only a registered profile can run, and the build is

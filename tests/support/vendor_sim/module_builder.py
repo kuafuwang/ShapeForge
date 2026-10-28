@@ -208,6 +208,9 @@ class FakeTsmModuleBuilder:
             artifacts=tuple(BuildArtifact.from_entry(entry) for entry in bundle.entries),
             duration_ms=max(1, int((time.monotonic() - started) * 1000)),
             log=log,
+            placement=(
+                "control_host" if self.profile.build_host == "control_host" else "evaluator"
+            ),
         )
         outcome = BuildOutcome(
             bundle=bundle, provenance=provenance, evidence=evidence, payloads=payloads,
@@ -243,6 +246,7 @@ def builder_for_provenance(
 
 def request_build(
     profile: BuildProfile, *, source: bytes, mode: str, artifact_set_digest: str | None,
+    producer: Mapping[str, Any] | None = None,
 ):
     """The typed NpuBuildRequest for one mode (test helper)."""
 
@@ -253,4 +257,7 @@ def request_build(
         profile=profile, source_sha256=hashlib.sha256(source).hexdigest(),
         artifact_set_digest=artifact_set_digest,
     )
-    return NpuBuildRequest.from_dict(provenance.request_document(mode=mode))
+    document = provenance.request_document(mode=mode)
+    if producer is not None:
+        document["producer"] = dict(producer)
+    return NpuBuildRequest.from_dict(document)

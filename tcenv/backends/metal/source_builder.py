@@ -154,9 +154,14 @@ class MetalSourceBuilder:
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
             raise BuildError("deadline", "the Metal compile deadline expired before compiling")
         context = self.backend.context()
+        # Only the backend's own compile error is a *candidate* failure.  The
+        # legacy evaluator catches exactly ``backend.compile_error()`` too; an
+        # unexpected exception (device lost, driver bug, MemoryError) must stay
+        # an infrastructure failure and must not be blamed on the candidate.
+        compile_error = self.backend.compile_error()
         try:
             compiled = self.backend.compile(context, assembled, contract, math=self.math)
-        except Exception as exc:  # noqa: BLE001 - a compiler rejection is a candidate failure
+        except compile_error as exc:
             # The legacy evaluator turns this same exception into
             # `status=compile_error`, so the unified classification is `compile`
             # and never infrastructure/timeout.
@@ -239,8 +244,11 @@ class MetalSourceBuilder:
             artifacts=(BuildArtifact.from_entry(entry),),
             duration_ms=max(0, int(round((compile_s + pipeline_s) * 1000))),
             log=log,
-            loaded=((entry.path, entry.sha256),),
+            # A producer has not loaded the artifact onto a device; the local
+            # executor is the same process and runs the live handle directly.
+            loaded=(),
             native=native,
+            placement="control_host",
         )
         return BuildOutcome(
             bundle=bundle, provenance=provenance, evidence=evidence, payloads={},

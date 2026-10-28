@@ -257,6 +257,20 @@ def build_request_to_proto(value) -> pb.BuildRequest:
     message = pb.BuildRequest(
         schema_id=contracts.NPU_BUILD_REQUEST_SCHEMA_ID, mode=value.mode,
     )
+    producer = getattr(value, "producer", None)
+    if producer is not None:
+        message.producer_evidence.CopyFrom(pb.BuildProducerEvidence(
+            schema_id=producer["schema_id"],
+            status=producer["status"],
+            mode=producer["mode"],
+            duration_ms=producer["duration_ms"],
+            evidence_sha256=producer["evidence_sha256"],
+        ))
+        if producer["log"] is not None:
+            message.producer_evidence.log.CopyFrom(pb.BuildLog(
+                sha256=producer["log"]["sha256"],
+                size_bytes=producer["log"]["size_bytes"],
+            ))
     message.provenance.CopyFrom(pb.BuildProvenance(
         schema_id=provenance["schema_id"],
         builder_id=provenance["builder_id"],
@@ -290,8 +304,27 @@ def build_request_from_proto(message: pb.BuildRequest):
     if message.HasField("provenance") is False:
         raise JobError("invalid_argument", "build request has no provenance")
     reject_unknown_fields(message.provenance.toolchain, "BuildProvenance.toolchain")
+    producer = None
+    if message.HasField("producer_evidence"):
+        reject_unknown_fields(message.producer_evidence, "BuildProducerEvidence")
+        if message.producer_evidence.HasField("log"):
+            reject_unknown_fields(message.producer_evidence.log, "BuildProducerEvidence.log")
+        producer = {
+            "schema_id": message.producer_evidence.schema_id,
+            "status": message.producer_evidence.status,
+            "mode": message.producer_evidence.mode,
+            "duration_ms": message.producer_evidence.duration_ms,
+            "log": (
+                {
+                    "sha256": message.producer_evidence.log.sha256,
+                    "size_bytes": message.producer_evidence.log.size_bytes,
+                }
+                if message.producer_evidence.HasField("log") else None
+            ),
+            "evidence_sha256": message.producer_evidence.evidence_sha256,
+        }
     try:
-        return NpuBuildRequest.from_dict({
+        document = {
             "schema_id": message.schema_id,
             "mode": message.mode,
             "provenance": {
@@ -312,7 +345,10 @@ def build_request_from_proto(message: pb.BuildRequest):
                     if message.provenance.HasField("artifact_set_digest") else None
                 ),
             },
-        })
+        }
+        if producer is not None:
+            document["producer"] = producer
+        return NpuBuildRequest.from_dict(document)
     except JobError:
         raise
     except (TypeError, ValueError, contracts.ContractError) as exc:

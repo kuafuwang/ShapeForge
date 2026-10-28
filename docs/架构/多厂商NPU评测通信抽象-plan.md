@@ -1325,12 +1325,12 @@ manifest、BuildProvenance 与 fake NPU 的加载记录形成闭环。小文件�
 
 *测试与结果（本机为围栏环境）*
 
-- `test_remote_npu_build_grpc.py` **23 passed**、`test_remote_npu_build_outbox.py`
-  **3 passed**、`test_source_builder.py` **7 passed**（其中 4 条 `gpu` 为真实 Metal）。
+- `test_remote_npu_build_grpc.py` **24 passed**、`test_remote_npu_build_outbox.py`
+  **3 passed**、`test_source_builder.py` **9 passed**（其中 4 条 `gpu` 为真实 Metal）。
   P1c + P0/P0b/P1 contract/grpc/cleanup/evidence + Go bundle conformance 合计
-  **265 passed**；旧 remote/gRPC/job/container/outbox 组 **333 passed, 5 skipped**；
-  Metal 非 gpu 回归 **289 passed, 1 skipped**（`test_triton_baseline` 因围栏禁止 `ps` 失败）。
-- 全套安全套件：**2527 passed / 6 skipped / 32 failed**。32 项均不在 P1c 触碰的文件里，为
+  **275 passed**；旧 remote/gRPC/job/container/outbox 组 **333 passed, 5 skipped**；
+  Metal 非 gpu 回归 **291 passed, 1 skipped**（`test_triton_baseline` 因围栏禁止 `ps` 失败）。
+- 全套安全套件：**2530 passed / 6 skipped / 32 failed**。32 项均不在 P1c 触碰的文件里，为
   既有围栏限制：`selfcheck_bridge` 的 AF_UNIX 路径超长、`children`/`triton_baseline` 的
   `ps` PermissionError、`selfcheck`/`harness`/`kernel_agent` 的权威 selfcheck 缓存不可写、
   `run_detached` 的进程分离受限；非围栏环境需父会话复跑。
@@ -1340,6 +1340,33 @@ manifest、BuildProvenance 与 fake NPU 的加载记录形成闭环。小文件�
   未 commit 上传守卫（单删一层为冗余防御，两层都删才转失败）；接受旧 attempt/fence 结果；
   删 worker 的 build scratch 清理；删关闭期 scratch 清扫；跳过构建后 provenance 复核；
   允许 native bundle 序列化；跳过 `_require_build_profile`。以上分别由对应回归捕获。
+
+**P1c 缺口修复（同日复核后）**
+
+1. **placement 语义与本地/远端规则分开**：`BuildEvidence` 新增中性 `placement`
+   （`control_host` / `evaluator` / `received`，不进入 wire 文档）。控制主机刚编译完的
+   producer 行允许 `mode=prebuilt,status=ok`，由本地 producer 规则校验（
+   `build_producer_evidence_document`）；远端收到的 prebuilt 行仍必须是 `status=reused`
+   且重复 producer 记录，`npu_build_evidence_document` 的严格规则没有放宽。Metal 与
+   prebuilt TSM builder 的 outcome 现在都显式 `placement=control_host`，并有一条真实 Mac
+   回归分别验证「本地合法 / 远端拒绝」。
+2. **producer BuildEvidence 不再被丢弃**：prebuilt request 的 build 文档新增
+   `producer` 链接记录（status/mode/duration/log sha256+size/整份 evidence 文档的
+   `evidence_sha256`；wire 上是 `BuildRequest.producer_evidence = 4`，只新增
+   `BuildProducerEvidence`/`BuildLog` 消息，旧字段不变），由 request digest 认证；接收方的签名 `build` 必须原样重复该记录，
+   outbox/持久行/resume 与 `expected_build` 比较都绑定它。`BuildEvidence.producer_record()`
+   从真实 outcome 生成链接，`matches_producer_record()` 让控制主机在上传前核对。接收方另记
+   自己的校验耗时与 load 日志（不再硬编码 `duration_ms=0`、无 log），测试断言
+   `BuildOutcome` 的 status/duration/log digest/evidence digest 一直闭合到签名 evidence。
+3. **只把 Metal 编译器错误当候选失败**：`MetalSourceBuilder` 现在只捕获
+   `backend.compile_error()`（`MetalCompileError`），与旧 `tcenv/evaluate.py` 一致；
+   `RuntimeError(device lost)` 等设备/基础设施异常原样抛出，不再被误分类为 `compile`，
+   并有设备无关回归。真实无效 MSL 仍先由真实 `MetalCompileContext.compile` 抛
+   `MetalCompileError`，再判为 `compile`。
+
+变异核验：把 Metal 改回 catch-all、允许远端 prebuilt/ok、从签名 evidence 去掉 producer、
+去掉 producer 与已接受 request 的比较、让 producer 链接的 duration 不绑定、让 prebuilt
+request 不再要求 producer、让接收方重新丢掉 producer log/duration——对应回归分别转失败。
 
 全部结果是 `simulated=true`、`publication_allowed=false`，不进入 confirmed/catalog/brief。
 **未做/未证明**：P2a TSM simulator、真实 TX 编译器/ABI/ELF、真实 NPU driver/firmware/加载、

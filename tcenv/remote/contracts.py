@@ -106,6 +106,18 @@ BUILD_STATUSES = frozenset({"reused", "ok", "compile_failed", "not_run"})
 #: failure, never an infrastructure timeout; a toolchain/profile mismatch is
 #: refused before Submit/create/start and never reaches a result at all.
 BUILD_ERROR_CLASSES = frozenset({"compile", "toolchain_profile", "deadline"})
+#: Where a BuildEvidence row was produced, which decides which combination of
+#: mode/status is coherent:
+#: ``control_host`` is a fresh producer build on the control host (the local
+#: Metal pipeline and the prebuilt TSM module), ``evaluator`` is a fresh build
+#: inside an attempt, and ``received`` is an evaluator-side row for a prebuilt
+#: artifact set it verified and loaded (it never compiled).
+BUILD_PLACEMENTS = frozenset({"control_host", "evaluator", "received"})
+#: A prebuilt request must carry the producer's build-evidence link so the
+#: receiver's signed evidence closes over the original log digest, duration and
+#: status.  It is a bounded record, not the producer's whole document: the
+#: digest binds the document the control host kept.
+NPU_BUILD_PRODUCER_RECORD_SCHEMA_ID = "tcenv.remote.npu-build.producer-evidence-link.1"
 # Clock domain recorded when no device clock was ever observed (killed worker).
 NPU_UNOBSERVED_CLOCK_DOMAIN = "unobserved"
 #: The candidate report schema every contract version signs.  It is shared by
@@ -916,6 +928,10 @@ _BUILD_PROVENANCE_FIELDS = frozenset({
     "toolchain", "compile_profile", "source_sha256", "artifact_set_digest",
 })
 _BUILD_REQUEST_FIELDS = frozenset({"schema_id", "mode", "provenance"})
+_BUILD_PREBUILT_REQUEST_FIELDS = _BUILD_REQUEST_FIELDS | {"producer"}
+_BUILD_PRODUCER_FIELDS = frozenset({
+    "schema_id", "status", "mode", "duration_ms", "log", "evidence_sha256",
+})
 _BUILD_ARTIFACTS_FIELDS = frozenset({"schema_id", "entries"})
 _BUILD_LOG_FIELDS = frozenset({"sha256", "size_bytes"})
 _BUILD_EVIDENCE_FIELDS = frozenset({
@@ -980,33 +996,88 @@ def build_provenance_document(
     }
 
 
+def build_producer_record(value: Any) -> dict[str, Any]:
+    """Validate the producer build-evidence link carried by a prebuilt request.
+
+    The control host keeps its complete ``BuildEvidence`` document (artifacts,
+    log bytes, duration).  What crosses the wire is this bounded link: the
+    producer's status/mode, build duration, log digest/size and the digest of
+    that document.  The receiver's signed evidence must repeat the link
+    unchanged, so the original build record is authenticated by the request
+    digest and closed over by the result -- without shipping the log bytes to
+    the NPU.
+    """
+
+    if not isinstance(value, Mapping) or set(value) != _BUILD_PRODUCER_FIELDS:
+        raise ContractError("build.producer fields are missing or unknown")
+    if value["schema_id"] != NPU_BUILD_PRODUCER_RECORD_SCHEMA_ID:
+        raise ContractError("build.producer schema_id is not supported by this contract version")
+    status = _text(value["status"], "build.producer.status", max_bytes=32)
+    if status != "ok":
+        raise ContractError("a producer build-evidence link must describe a successful build")
+    mode = _text(value["mode"], "build.producer.mode", max_bytes=32)
+    if mode != "prebuilt":
+        raise ContractError("a producer build-evidence link describes a control-host build")
+    duration_ms = _integer(value["duration_ms"], "build.producer.duration_ms", 0, MAX_BUILD_DURATION_MS)
+    log = value["log"]
+    if log is not None:
+        if not isinstance(log, Mapping) or set(log) != _BUILD_LOG_FIELDS:
+            raise ContractError("build.producer.log fields are missing or unknown")
+        log = {
+            "sha256": _hex64(log["sha256"], "build.producer.log.sha256"),
+            "size_bytes": _integer(log["size_bytes"], "build.producer.log.size_bytes", 0, MAX_SOURCE_BYTES),
+        }
+    evidence_sha256 = _hex64(value["evidence_sha256"], "build.producer.evidence_sha256")
+    return {
+        "schema_id": NPU_BUILD_PRODUCER_RECORD_SCHEMA_ID,
+        "status": status,
+        "mode": mode,
+        "duration_ms": duration_ms,
+        "log": log,
+        "evidence_sha256": evidence_sha256,
+    }
+
+
 def build_request_document(value: Any) -> dict[str, Any]:
     """Validate the request-level build document (mode plus provenance).
 
     A ``prebuilt`` request states the complete BuildProvenance the control host
-    produced, including the artifact set digest.  An ``evaluator`` request states
-    the build identity the evaluator must use and leaves the artifact digest
-    ``null``: the artifact does not exist yet.  The profile is an expectation,
-    not an authorization: only a registered build_profile/toolchain may run it.
+    produced, including the artifact set digest, plus the producer's
+    build-evidence link.  An ``evaluator`` request states the build identity the
+    evaluator must use and leaves the artifact digest ``null``: the artifact does
+    not exist yet.  The profile is an expectation, not an authorization: only a
+    registered build_profile/toolchain may run it.
     """
 
-    if not isinstance(value, Mapping) or set(value) != _BUILD_REQUEST_FIELDS:
+    if not isinstance(value, Mapping):
         raise ContractError("build fields are missing or unknown")
-    if value["schema_id"] != NPU_BUILD_REQUEST_SCHEMA_ID:
+    if value.get("schema_id") != NPU_BUILD_REQUEST_SCHEMA_ID:
         raise ContractError("build schema_id is not supported by this contract version")
-    mode = _text(value["mode"], "build.mode", max_bytes=32)
+    mode = _text(value.get("mode"), "build.mode", max_bytes=32)
     if mode not in BUILD_MODES:
         raise ContractError("build.mode must be prebuilt or evaluator")
+    expected_fields = (
+        _BUILD_PREBUILT_REQUEST_FIELDS if mode == "prebuilt" else _BUILD_REQUEST_FIELDS
+    )
+    if set(value) != expected_fields:
+        if mode == "prebuilt" and set(value) == _BUILD_REQUEST_FIELDS:
+            raise ContractError(
+                "a prebuilt build request requires the producer build-evidence link"
+            )
+        raise ContractError("build fields are missing or unknown")
     provenance = build_provenance_document(value["provenance"], mode=mode)
     if mode == "evaluator" and provenance["artifact_set_digest"] is not None:
         raise ContractError("an evaluator build request must not claim an artifact_set_digest")
     if mode == "prebuilt" and provenance["artifact_set_digest"] is None:
         raise ContractError("a prebuilt build request requires the artifact_set_digest it produced")
-    return {
+    document = {
         "schema_id": NPU_BUILD_REQUEST_SCHEMA_ID,
         "mode": mode,
         "provenance": provenance,
     }
+    if mode == "prebuilt":
+        document["producer"] = build_producer_record(value["producer"])
+    return document
 
 
 def _build_artifacts_document(value: Any) -> dict[str, Any] | None:
@@ -1100,27 +1171,38 @@ def _build_loaded_document(value: Any, artifacts: Mapping[str, Any] | None) -> l
     return loaded
 
 
-def npu_build_evidence_document(
-    value: Any, *, expected_build: Mapping[str, Any] | None = None,
+def build_evidence_document(
+    value: Any, *, placement: str, remote: bool = False,
+    expected_build: Mapping[str, Any] | None = None,
     request_artifact: Mapping[str, Any] | None = None,
     report_status: str | None = None, complete: bool | None = None,
 ) -> dict[str, Any]:
-    """Validate the signed BuildEvidence document.
+    """Validate one BuildEvidence row under its placement semantics.
 
-    The classification is shared by both timings: a build that failed to compile
-    is ``compile_failed``/``compile`` and may only accompany a ``compile_error``
-    report; a timeout that never built is ``not_run``.  A ``prebuilt`` row must
-    reuse the artifact set named by the accepted request, and its ``loaded``
-    list must cover every executable entry, so a vendor cannot load other bytes
-    and still claim the candidate.
+    ``placement`` decides which producer/receiver combination is coherent:
 
-    The provenance is compared with the accepted request's build document field
-    by field (builder, builder version, host, profile, toolchain, compile
-    profile, source digest); only the artifact set digest may be filled in by an
-    evaluator-side build, because the request could not know it before Submit.
+    * ``control_host`` — a fresh producer build on the control host (local Metal,
+      or the prebuilt TSM module).  It is allowed to report ``ok`` there; the
+      remote NPU rule (a received prebuilt artifact is ``reused``) does not apply
+      to the machine that actually compiled it.
+    * ``evaluator`` — a fresh build inside an attempt.  A *remote* row (the
+      signed result) must also show what was loaded; a local producer row is the
+      builder's own outcome and need not.
+    * ``received`` — an evaluator-side row for a prebuilt artifact set.  It must
+      be ``reused`` (never ``ok``) and must repeat the producer's
+      build-evidence link unchanged.
+
+    The classification is shared by every placement: a build that failed to
+    compile is ``compile_failed``/``compile`` and may only accompany a
+    ``compile_error`` report; a timeout that never built is ``not_run``.  A
+    ``prebuilt`` row must reuse the artifact set named by the accepted request,
+    and its ``loaded`` list must cover every executable entry, so a vendor
+    cannot load other bytes and still claim the candidate.
     """
 
-    if not isinstance(value, Mapping) or set(value) != _BUILD_EVIDENCE_FIELDS:
+    if not isinstance(value, Mapping):
+        raise ContractError("build evidence fields are missing or unknown")
+    if not _BUILD_EVIDENCE_FIELDS <= set(value) or set(value) - (_BUILD_EVIDENCE_FIELDS | {"producer"}):
         raise ContractError("build evidence fields are missing or unknown")
     if value["schema_id"] != NPU_BUILD_EVIDENCE_SCHEMA_ID:
         raise ContractError("build evidence schema_id is not supported by this contract version")
@@ -1130,12 +1212,22 @@ def npu_build_evidence_document(
     status = _text(value["status"], "build.status", max_bytes=32)
     if status not in BUILD_STATUSES:
         raise ContractError("build.status is not a supported build outcome")
+    if placement not in BUILD_PLACEMENTS:
+        raise ContractError("build evidence placement is not supported")
+    if placement == "control_host" and mode != "prebuilt":
+        raise ContractError("a control-host producer build must be mode prebuilt")
+    if placement == "evaluator" and mode != "evaluator":
+        raise ContractError("an evaluator build must be mode evaluator")
+    if placement == "received" and mode != "prebuilt":
+        raise ContractError("a received prebuilt artifact must be mode prebuilt")
     error_class = value["error_class"]
     if error_class is not None:
         error_class = _text(error_class, "build.error_class", max_bytes=32)
         if error_class not in BUILD_ERROR_CLASSES:
             raise ContractError("build.error_class is not a supported build error class")
     provenance = build_provenance_document(value["provenance"], mode=mode)
+    producer = value.get("producer")
+    producer = None if producer is None else build_producer_record(producer)
     if expected_build is not None:
         expected = build_request_document(expected_build)
         if expected["mode"] != mode:
@@ -1152,6 +1244,11 @@ def npu_build_evidence_document(
             )
         if mode == "evaluator" and provenance["artifact_set_digest"] is None and status == "ok":
             raise ContractError("a completed evaluator build requires an artifact_set_digest")
+        if mode == "prebuilt" and status == "reused":
+            if producer != expected["producer"]:
+                raise ContractError(
+                    "the received build evidence does not repeat the accepted producer record"
+                )
     artifacts = _build_artifacts_document(value["artifacts"])
     loaded = _build_loaded_document(value["loaded"], artifacts)
     duration_ms = _integer(value["duration_ms"], "build.duration_ms", 0, MAX_BUILD_DURATION_MS)
@@ -1166,7 +1263,25 @@ def npu_build_evidence_document(
     if artifacts is not None:
         if provenance["artifact_set_digest"] != artifacts["artifact_set_digest"]:
             raise ContractError("build evidence artifacts do not add up to the provenance digest")
-    if status == "reused":
+    if placement == "control_host":
+        if status != "ok":
+            raise ContractError("a control-host producer build must report a fresh compile as ok")
+        if error_class is not None:
+            raise ContractError("a successful build has no build error")
+        if artifacts is None:
+            raise ContractError("a successful build requires the produced artifact manifest")
+        if producer is not None:
+            raise ContractError("a producer build has no received producer record")
+    elif placement == "evaluator" and not remote:
+        if status != "ok":
+            raise ContractError("a local evaluator producer build must report a fresh compile as ok")
+        if error_class is not None:
+            raise ContractError("a successful build has no build error")
+        if artifacts is None:
+            raise ContractError("a successful build requires the produced artifact manifest")
+        if producer is not None:
+            raise ContractError("a producer build has no received producer record")
+    elif status == "reused":
         if mode != "prebuilt":
             raise ContractError("only a prebuilt artifact set can be reported as reused")
         if error_class is not None:
@@ -1175,6 +1290,8 @@ def npu_build_evidence_document(
             raise ContractError("a reused artifact set requires its manifest identity")
         if not loaded:
             raise ContractError("a reused artifact set requires the receiver's load record")
+        if producer is None:
+            raise ContractError("a reused artifact set requires the producer build-evidence link")
         if request_artifact is not None and ARTIFACT_BUNDLE in request_artifact:
             tried = request_artifact[ARTIFACT_BUNDLE]
             if artifacts["artifact_set_digest"] != tried["artifact_set_digest"]:
@@ -1209,6 +1326,8 @@ def npu_build_evidence_document(
             raise ContractError("a successful build requires the produced artifact manifest")
         if not loaded:
             raise ContractError("a successful build requires the receiver's load record")
+        if producer is not None:
+            raise ContractError("a reused producer row cannot accompany a fresh evaluator build")
     elif status == "compile_failed":
         if mode != "evaluator":
             raise ContractError("only an evaluator build can report a compile failure")
@@ -1218,6 +1337,8 @@ def npu_build_evidence_document(
             raise ContractError("a failed build must not claim a produced artifact set")
         if loaded:
             raise ContractError("a failed build must not claim a loaded module")
+        if producer is not None:
+            raise ContractError("a failed build has no producer build-evidence link")
         if report_status is not None and report_status != "compile_error":
             raise ContractError("a compile failure requires a compile_error candidate report")
         if complete:
@@ -1227,11 +1348,13 @@ def npu_build_evidence_document(
             raise ContractError("a build that never ran has no build error class")
         if artifacts is not None or loaded:
             raise ContractError("a build that never ran must not claim artifacts or loads")
+        if producer is not None:
+            raise ContractError("a build that never ran has no producer build-evidence link")
         if mode == "evaluator" and provenance["artifact_set_digest"] is not None:
             raise ContractError("an evaluator build that never ran cannot claim an artifact set")
         if complete:
             raise ContractError("a build that never ran cannot claim a completed device event")
-    return {
+    document = {
         "schema_id": NPU_BUILD_EVIDENCE_SCHEMA_ID,
         "mode": mode,
         "status": status,
@@ -1242,6 +1365,46 @@ def npu_build_evidence_document(
         "log": log,
         "loaded": loaded,
     }
+    if producer is not None:
+        document["producer"] = producer
+    return document
+
+
+def build_producer_evidence_document(value: Any, *, placement: str) -> dict[str, Any]:
+    """Validate a *producer's own* BuildEvidence (control host or evaluator).
+
+    This is the local placement rule: the machine that compiled the artifact is
+    allowed to report ``ok``, and it has not received anything from a producer.
+    The remote NPU rule is unchanged and lives in
+    :func:`npu_build_evidence_document`.
+    """
+
+    if placement not in {"control_host", "evaluator"}:
+        raise ContractError("producer placement must be control_host or evaluator")
+    return build_evidence_document(value, placement=placement, remote=False)
+
+
+def npu_build_evidence_document(
+    value: Any, *, expected_build: Mapping[str, Any] | None = None,
+    request_artifact: Mapping[str, Any] | None = None,
+    report_status: str | None = None, complete: bool | None = None,
+) -> dict[str, Any]:
+    """Validate the signed BuildEvidence of the remote NPU result.
+
+    A prebuilt artifact received by the evaluator must be ``reused`` and must
+    repeat the producer link named by the accepted request; an evaluator build
+    must report its own fresh compile.  The remote rule is deliberately *not*
+    relaxed for the control-host producer: that producer never sends this
+    document as a received result.
+    """
+
+    mode = value.get("mode") if isinstance(value, Mapping) else None
+    placement = "evaluator" if mode == "evaluator" else "received"
+    return build_evidence_document(
+        value, placement=placement, remote=True,
+        expected_build=expected_build, request_artifact=request_artifact,
+        report_status=report_status, complete=complete,
+    )
 
 
 def _build_request_consistency(

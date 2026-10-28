@@ -131,6 +131,84 @@ def test_the_metal_builder_refuses_a_source_that_cannot_reach_a_compiler():
     assert missing.value.error_class == "toolchain_profile"
 
 
+def test_a_local_producer_evidence_is_valid_but_the_remote_rule_is_not_weakened():
+    from tests.support.vendor_sim import module_builder as mb
+    from tcenv.remote import contracts
+
+    for profile, placement in (
+        (mb.control_host_profile(), "control_host"),
+        (mb.evaluator_profile(), "evaluator"),
+    ):
+        builder = mb.FakeTsmModuleBuilder(profile)
+        outcome = builder.build(
+            SourceBundle(b"npu-kernel relu_kernel\n  tx_thread_id\n"), task_contract={},
+        )
+        evidence = outcome.evidence
+        assert evidence.placement == placement
+        # The local producer rule accepts a fresh compile with its own log and
+        # duration, under both placements.
+        document = evidence.verified(report_status="ok", complete=True)
+        assert document["status"] == "ok"
+        assert document["mode"] == evidence.mode
+        assert document["log"] is not None and document["duration_ms"] >= 1
+        if placement == "control_host":
+            record = evidence.producer_record()
+            assert record["status"] == "ok" and record["duration_ms"] == document["duration_ms"]
+            assert evidence.matches_producer_record(record)
+            assert not evidence.matches_producer_record({**record, "duration_ms": record["duration_ms"] + 1})
+            # A prebuilt producer row is still not a valid *received* result.
+            with pytest.raises(contracts.ContractError, match="only an evaluator build"):
+                contracts.npu_build_evidence_document(evidence.to_dict())
+        else:
+            with pytest.raises(ValueError):
+                evidence.producer_record()
+
+
+def test_only_the_metal_compile_error_is_classified_as_a_compile_failure():
+    from tcenv.backends.metal.source_builder import MetalSourceBuilder
+
+    class MetalCompileLike(Exception):
+        pass
+
+    class StubContext:
+        def info(self):
+            return {
+                "name": "stub", "gpu_family": "Apple9", "language_version": "4.0",
+                "unified_memory": True,
+            }
+
+    class StubBackend:
+        version = "stub-1"
+
+        def __init__(self, failure):
+            self.failure = failure
+
+        def assemble(self, contract, source):
+            return source, 0
+
+        def context(self):
+            return StubContext()
+
+        def compile_error(self):
+            return MetalCompileLike
+
+        def compile(self, context, source, contract, *, math="fast"):
+            raise self.failure
+
+    contract = {"kernel_name": "relu_kernel"}
+    # A compiler rejection is the only exception classified as a candidate
+    # compile failure.
+    builder = MetalSourceBuilder(backend=StubBackend(MetalCompileLike("bad MSL")))
+    with pytest.raises(BuildError) as classified:
+        builder.build(SourceBundle(b"kernel void relu_kernel() {}"), task_contract=contract)
+    assert classified.value.error_class == "compile"
+    # An unexpected/device/infrastructure exception is not masked as a compile
+    # failure (the legacy Metal evaluator only catches its compile error too).
+    builder = MetalSourceBuilder(backend=StubBackend(RuntimeError("device lost")))
+    with pytest.raises(RuntimeError, match="device lost"):
+        builder.build(SourceBundle(b"kernel void relu_kernel() {}"), task_contract=contract)
+
+
 def _profile():
     from tcenv.remote.artifact_builder import BuildProfile
 
@@ -167,7 +245,15 @@ def test_the_real_metal_builder_compiles_msl_and_creates_a_usable_pipeline():
     provenance = evidence.provenance
     bundle = outcome.bundle
     assert evidence.status == "ok" and evidence.mode == "prebuilt"
+    assert evidence.placement == "control_host"
     assert evidence.error_class is None
+    # The producer's own placement is coherent and validated; the remote NPU
+    # rule that a *received* prebuilt set is `reused` is tested separately.
+    assert evidence.verified(report_status="ok", complete=True)["status"] == "ok"
+    producer = evidence.producer_record()
+    assert producer["status"] == "ok"
+    assert producer["duration_ms"] == evidence.duration_ms
+    assert evidence.matches_producer_record(producer)
     assert provenance.source_sha256 == hashlib.sha256(source.encode("utf-8")).hexdigest()
     assert provenance.source_sha256 == SourceBundle(source.encode("utf-8")).sha256
     assert provenance.artifact_set_digest == bundle.artifact_set_digest

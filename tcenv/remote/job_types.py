@@ -606,6 +606,10 @@ class NpuBuildRequest:
     compile_profile: Mapping[str, Any]
     source_sha256: str
     artifact_set_digest: str | None = None
+    #: The producer build-evidence link a prebuilt request carries (status,
+    #: duration, log identity and the digest of the control host's evidence
+    #: document).  ``None`` for an evaluator build, which has no producer.
+    producer: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -627,11 +631,14 @@ class NpuBuildRequest:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        document = {
             "schema_id": contracts.NPU_BUILD_REQUEST_SCHEMA_ID,
             "mode": self.mode,
             "provenance": self.provenance_document(),
         }
+        if self.producer is not None:
+            document["producer"] = dict(self.producer)
+        return document
 
     @classmethod
     def from_dict(cls, document: Mapping[str, Any]) -> "NpuBuildRequest":
@@ -650,6 +657,7 @@ class NpuBuildRequest:
             compile_profile=provenance["compile_profile"],
             source_sha256=provenance["source_sha256"],
             artifact_set_digest=provenance["artifact_set_digest"],
+            producer=normalized.get("producer"),
         )
 
 

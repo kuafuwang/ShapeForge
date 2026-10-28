@@ -250,10 +250,8 @@ class FakeModuleVendorDriver:
         evidence = attempt_context.get("build_evidence")
         if not isinstance(evidence, BuildEvidence):
             raise ValueError("vendor C requires the typed build evidence")
-        evidence = BuildEvidence(
-            mode=evidence.mode, status=evidence.status, provenance=evidence.provenance,
-            artifacts=evidence.artifacts, error_class=evidence.error_class,
-            detail=evidence.detail, duration_ms=evidence.duration_ms, log=evidence.log,
+        evidence = replace(
+            evidence,
             loaded=tuple((record["path"], record["sha256"]) for record in load_records),
         )
         received_provenance = evidence.provenance.to_dict()
@@ -571,10 +569,16 @@ class FakeModuleVendorController:
         )
 
 
-def prebuilt_build_evidence(
+def received_build_evidence(
     *, bundle: ArtifactBundle, provenance: Mapping[str, Any],
+    producer: Mapping[str, Any], duration_ms: int, log: bytes,
 ) -> BuildEvidence:
-    """The ``reused`` evidence for a control-host-built artifact set."""
+    """The receiver's ``reused`` evidence for a control-host-built artifact set.
+
+    It repeats the producer's build-evidence link unchanged (so the original
+    status/duration/log digest close over the signed result) and records this
+    attempt's own verify/load duration and log.  It never claims a compile.
+    """
 
     profile_document = build_provenance_document(provenance)
     profile = BuildProfile(
@@ -595,7 +599,10 @@ def prebuilt_build_evidence(
             artifact_set_digest=profile_document["artifact_set_digest"],
         ),
         artifacts=tuple(BuildArtifact.from_entry(entry) for entry in bundle.entries),
-        duration_ms=0,
+        duration_ms=max(0, int(duration_ms)),
+        log=bytes(log),
+        placement="received",
+        producer=producer,
     )
 
 
@@ -607,5 +614,5 @@ __all__ = [
     "VENDOR_C_GROUP",
     "build_evaluator_execution",
     "build_module_execution",
-    "prebuilt_build_evidence",
+    "received_build_evidence",
 ]

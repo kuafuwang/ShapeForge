@@ -605,7 +605,12 @@ class ModuleBuildGrpcHarness(_BundleHarnessBase):
         )
 
     def set_prebuilt(self, outcome: Any, bundle: Any, source: bytes) -> None:
-        """Publish the built (and uploaded) artifact set + build identity."""
+        """Publish the built (and uploaded) artifact set + build identity.
+
+        The prebuilt request carries the producer's build-evidence link, so the
+        receiver's signed evidence repeats the control-host status/duration/log
+        identity and the digest of the evidence document the host kept.
+        """
 
         from tests.support.vendor_sim.module_builder import request_build
 
@@ -613,6 +618,7 @@ class ModuleBuildGrpcHarness(_BundleHarnessBase):
         self.build = request_build(
             self.profile, source=source, mode="prebuilt",
             artifact_set_digest=bundle.artifact_set_digest,
+            producer=outcome.evidence.producer_record(),
         )
         self.outcome = outcome
 

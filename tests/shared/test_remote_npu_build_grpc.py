@@ -212,6 +212,37 @@ def test_the_control_host_builds_once_uploads_the_module_and_the_npu_only_loads(
         assert build["loaded"] == [{
             "path": module.path, "sha256": module.sha256,
         }]
+        # The producer's own build record is not discarded: the received row
+        # repeats its status/duration/log identity and the digest of the
+        # evidence document the control host kept.
+        producer = outcome.evidence.producer_record()
+        assert build["producer"] == producer
+        assert producer["status"] == "ok" and producer["mode"] == "prebuilt"
+        assert producer["duration_ms"] == outcome.evidence.duration_ms >= 1
+        assert producer["log"] == {
+            "sha256": hashlib.sha256(outcome.evidence.log).hexdigest(),
+            "size_bytes": len(outcome.evidence.log),
+        }
+        assert producer["log"]["size_bytes"] > 0
+        assert producer["evidence_sha256"] == hashlib.sha256(
+            contracts.canonical_digest_document(outcome.evidence.to_dict())
+        ).hexdigest()
+        assert outcome.evidence.matches_producer_record(build["producer"])
+        assert harness.build.to_dict()["producer"] == producer
+        # The receiver's own verification is recorded too: a positive duration
+        # and a load log, never the old hardcoded zero/empty row.
+        assert build["duration_ms"] >= 1
+        assert build["log"] is not None and build["log"]["size_bytes"] > 0
+        # The producer's local placement is coherent (fresh prebuilt compile),
+        # while the remote NPU rule still refuses that row as a received result.
+        assert outcome.evidence.placement == "control_host"
+        assert outcome.evidence.verified(report_status="ok", complete=True)["status"] == "ok"
+        with pytest.raises(contracts.ContractError, match="only an evaluator build"):
+            contracts.npu_build_evidence_document(
+                outcome.evidence.to_dict(),
+                expected_build=harness.build.to_dict(),
+                request_artifact={"bundle": outcome.bundle.to_dict()},
+            )
         loads = harness.controller.ledger.module_loads()
         assert loads and loads[-1]["sha256"] == module.sha256
         builds = harness.controller.ledger.builds()
@@ -237,7 +268,10 @@ def test_the_two_build_timings_share_the_build_contract_and_differ_only_by_host(
 
     prebuilt_build = prebuilt_result.evidence["build"]
     evaluator_build = evaluator_result.evidence["build"]
-    assert set(prebuilt_build) == set(evaluator_build)
+    # The two rows share one contract; the prebuilt one additionally carries the
+    # producer link (the received set never claims a fresh compile).
+    assert set(prebuilt_build) - {"producer"} == set(evaluator_build)
+    assert "producer" not in evaluator_build
     assert prebuilt_build["schema_id"] == evaluator_build["schema_id"]
     assert prebuilt_build["provenance"]["builder_id"] == evaluator_build["provenance"]["builder_id"]
     assert prebuilt_build["provenance"]["toolchain"] == evaluator_build["provenance"]["toolchain"]
@@ -252,7 +286,12 @@ def test_the_two_build_timings_share_the_build_contract_and_differ_only_by_host(
     assert prebuilt_build["status"] == "reused"
     assert evaluator_build["duration_ms"] >= 1
     assert evaluator_build["log"]["size_bytes"] > 0
-    assert prebuilt_build["duration_ms"] == 0
+    # The control-host compile duration/log are not lost: the receiver repeats
+    # the producer link and its own verification takes measurable time.
+    assert prebuilt_build["producer"]["status"] == "ok"
+    assert prebuilt_build["producer"]["duration_ms"] >= 1
+    assert prebuilt_build["producer"]["log"]["size_bytes"] > 0
+    assert prebuilt_build["duration_ms"] >= 1
     assert evaluator_build["provenance"]["artifact_set_digest"] != (
         prebuilt_build["provenance"]["artifact_set_digest"]
     )
@@ -317,6 +356,7 @@ def test_a_rewritten_build_provenance_artifact_digest_is_refused_before_a_job(tm
         harness.build = mb.request_build(
             harness.profile, source=SOURCE + b"// extra\n", mode="prebuilt",
             artifact_set_digest=outcome.bundle.artifact_set_digest,
+            producer=other.evidence.producer_record(),
         )
         host = _host_request(harness, "build-tamper-digest-1", source=b"")
         with pytest.raises(JobError) as refused:
@@ -456,6 +496,57 @@ def test_a_blob_reference_that_does_not_bind_the_manifest_is_refused(tmp_path):
         _assert_no_device_work(harness)
 
 
+def test_a_prebuilt_request_without_or_with_a_rewritten_producer_link_is_refused(tmp_path):
+    with ModuleBuildGrpcHarness(tmp_path / "prebuilt") as harness:
+        from tcenv.remote.job_types import NpuBuildRequest
+
+        outcome = harness.host_build(SOURCE)
+        harness.upload_module(outcome)
+        harness.set_prebuilt(outcome, outcome.bundle, SOURCE)
+        document = harness.build.to_dict()
+        assert document["producer"] == outcome.evidence.producer_record()
+        # The producer link is required for a prebuilt request.
+        with pytest.raises(JobError, match="producer build-evidence link"):
+            NpuBuildRequest.from_dict({k: v for k, v in document.items() if k != "producer"})
+
+        host = _host_request(harness, "build-producer-tamper-1", source=b"")
+        external = _wire(harness, host)
+        _submit_wire(harness, external, _capabilities(harness))
+        final = _wait(harness, external, {"completed"})
+        assert final.HasField("result")
+        signed = gc.evidence_json(gc.blob_from_proto(final.result.evidence, allow_empty=True)[0])
+        assert signed["build"]["producer"] == outcome.evidence.producer_record()
+        # Rewriting the producer link in the signed evidence no longer repeats
+        # the record the accepted request bound: the validator refuses it.
+        tampered = json.loads(json.dumps(signed))
+        tampered["build"]["producer"]["duration_ms"] += 1
+        with pytest.raises(contracts.ContractError, match="producer record"):
+            contracts.npu_evidence_document(
+                tampered,
+                device_group=harness.engine.npu_execution.device_group.to_dict(),
+                expected_artifact_set_digest=outcome.bundle.artifact_set_digest,
+                expected_resources=harness.engine.npu_execution.declared_resources.to_dict(),
+                expected_build=harness.build.to_dict(),
+                request_artifact={"bundle": outcome.bundle.to_dict()},
+                measurement_kind="simulated", publication_allowed=False,
+                report_status="ok", dialect=contracts.NPU_BUILD_DIALECT,
+            )
+        # A received row must always carry the link.
+        without = json.loads(json.dumps(signed))
+        without["build"].pop("producer")
+        with pytest.raises(contracts.ContractError, match="producer"):
+            contracts.npu_evidence_document(
+                without,
+                device_group=harness.engine.npu_execution.device_group.to_dict(),
+                expected_artifact_set_digest=outcome.bundle.artifact_set_digest,
+                expected_resources=harness.engine.npu_execution.declared_resources.to_dict(),
+                expected_build=harness.build.to_dict(),
+                request_artifact={"bundle": outcome.bundle.to_dict()},
+                measurement_kind="simulated", publication_allowed=False,
+                report_status="ok", dialect=contracts.NPU_BUILD_DIALECT,
+            )
+
+
 def test_a_manifest_rewritten_on_the_wire_is_refused_before_a_job(tmp_path):
     with ModuleBuildGrpcHarness(tmp_path / "prebuilt") as harness:
         outcome = harness.host_build(SOURCE)
@@ -497,6 +588,7 @@ def test_a_request_naming_another_builder_version_is_refused_before_a_job(tmp_pa
         harness.build = mb.request_build(
             wrong, source=SOURCE, mode="prebuilt",
             artifact_set_digest=outcome.bundle.artifact_set_digest,
+            producer=outcome.evidence.producer_record(),
         )
         host = _host_request(harness, "build-version-tamper-1", source=b"")
         with pytest.raises(EvaluationUnavailable) as refused:
@@ -560,6 +652,7 @@ def test_an_unregistered_build_profile_is_refused_by_the_evaluator(tmp_path):
         harness.build = mb.request_build(
             unknown, source=SOURCE, mode="prebuilt",
             artifact_set_digest=outcome.bundle.artifact_set_digest,
+            producer=outcome.evidence.producer_record(),
         )
         host = _host_request(harness, "build-unregistered-1", source=b"")
         with pytest.raises(EvaluationUnavailable) as refused:
