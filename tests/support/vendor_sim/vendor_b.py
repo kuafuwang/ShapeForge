@@ -213,9 +213,14 @@ class FakeVendorBDriver:
         workdir = Path(os.environ.get("TCENV_REMOTE_STATE_DIR", ".")) / "vendor-b" / attempt_id
         written = artifact.materialize(workdir)
         graph_digest = graph_sha256(artifact)
-        for path, target in sorted(written.items()):
-            if not target.is_file():
-                raise ValueError(f"vendor B could not materialize {path}")
+        for path, handle in sorted(written.items()):
+            # Re-verify through the returned handle: it walks the attempt
+            # directory with O_NOFOLLOW and re-hashes the bytes, so a path name
+            # swapped after materialize can never be followed here.
+            try:
+                handle.verify()
+            except BundleError as exc:
+                raise ValueError(f"vendor B could not verify {path}: {exc}") from exc
         device_elapsed_ns = 900_000 + int(graph_digest[:6], 16) % 400_000
         submission = _Submission(**self._submit(
             attempt_id, lease_fence, graph_digest, device_elapsed_ns,

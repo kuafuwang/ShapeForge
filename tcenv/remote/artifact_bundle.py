@@ -31,6 +31,7 @@ import json
 import os
 import re
 import stat
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -120,6 +121,46 @@ class BundleEntry:
         else:
             document["content"] = "inline"
         return document
+
+
+@dataclass(frozen=True)
+class MaterializedEntry:
+    """One entry written and verified under an attempt root.
+
+    It is a *handle*, not a path: reading through it re-walks the attempt
+    directory with ``O_DIRECTORY|O_NOFOLLOW`` per component and re-verifies the
+    exact size/digest, so a name that changed after ``materialize`` is refused
+    instead of followed.
+    """
+
+    root: Path
+    path: str
+    size_bytes: int
+    sha256: str
+
+    def read_bytes(self) -> bytes:
+        root_fd = _open_attempt_root(self.root, create=False)
+        try:
+            *parents, name = self.path.split("/")
+            directory_fd = _descend_without_symlinks(root_fd, parents, self.path)
+            try:
+                return _read_entry_at(directory_fd, name, self.path)
+            finally:
+                os.close(directory_fd)
+        finally:
+            os.close(root_fd)
+
+    def verify(self) -> None:
+        data = self.read_bytes()
+        if len(data) != self.size_bytes:
+            raise BundleError(
+                f"materialized bundle entry {self.path!r} size {len(data)} differs "
+                f"from its declared size {self.size_bytes}"
+            )
+        if hashlib.sha256(data).hexdigest() != self.sha256:
+            raise BundleError(
+                f"materialized bundle entry {self.path!r} no longer matches its digest"
+            )
 
 
 @dataclass(frozen=True)
@@ -216,8 +257,14 @@ class ArtifactBundle:
             if entry.blob_ref is not None:
                 raise BundleError(f"bundle entry {entry.path!r} must not be inline and blob-backed")
 
-    def materialize(self, root: Path) -> dict[str, Path]:
-        """Write the inline entries under ``root`` and re-verify the written bytes.
+    def materialize(self, root: Path) -> dict[str, "MaterializedEntry"]:
+        """Write the inline entries under ``root`` and return verified handles.
+
+        The handles are deliberately not bare paths: a caller that re-reads
+        ``root/graph/main.json`` resolves whatever that name points at *now*, so a
+        parent renamed to a symbolic link after the write would hand the caller
+        the attacker's bytes.  ``MaterializedEntry.read_bytes``/``verify`` walk the
+        attempt directory again with ``O_DIRECTORY|O_NOFOLLOW`` per component.
 
         The directory belongs to one attempt.  Everything below it is traversed
         through *directory file descriptors*: every segment is opened with
@@ -231,7 +278,7 @@ class ArtifactBundle:
         cannot redirect the write.
         """
 
-        written: dict[str, Path] = {}
+        written: dict[str, MaterializedEntry] = {}
         root = Path(root)
         root_fd = _open_attempt_root(root)
         try:
@@ -246,7 +293,10 @@ class ArtifactBundle:
                     _write_entry_at(directory_fd, name, entry)
                 finally:
                     os.close(directory_fd)
-                written[entry.path] = root.joinpath(*entry.path.split("/"))
+                written[entry.path] = MaterializedEntry(
+                    root=root, path=entry.path,
+                    size_bytes=entry.size_bytes, sha256=entry.sha256,
+                )
         finally:
             os.close(root_fd)
         return written
@@ -444,22 +494,40 @@ def _blob_descriptor(value: Any) -> dict[str, Any]:
         raise BundleError(f"bundle entry blob reference is invalid: {exc}") from exc
 
 
+def _alias_key(path: str) -> str:
+    """The filesystem-alias key of a path: Unicode composition plus case fold.
+
+    Two paths with the same key would be one file on a case-insensitive or
+    normalization-insensitive filesystem, so a bundle may not contain both.  The
+    key is used *only* for conflict detection: the manifest and the digest keep
+    the exact original path and no byte or path is ever normalized.
+    """
+
+    return unicodedata.normalize("NFC", path).casefold()
+
+
 def _check_path_prefixes(paths: Iterable[str]) -> None:
     """Refuse a bundle where one entry's path is another entry's parent.
 
     ``graph`` and ``graph/main.json`` cannot both be materialized: one of them
-    would have to be a file and a directory at the same time.  Refusing it at
-    manifest validation keeps ``materialize`` from failing half way through an
-    attempt directory.
+    would have to be a file and a directory at the same time.  The comparison
+    uses the same alias key as the full-path check, so ``Graph`` and
+    ``graph/main.json`` (or a composed and a decomposed ``café``) are refused on
+    every platform instead of failing half way through an attempt directory on a
+    case-insensitive or normalization-insensitive filesystem.
     """
 
-    seen = set(paths)
-    for path in seen:
+    paths = list(paths)
+    alias_by_key = {_alias_key(path): path for path in paths}
+    for path in paths:
         segments = path.split("/")
         for index in range(1, len(segments)):
-            if "/".join(segments[:index]) in seen:
+            prefix = "/".join(segments[:index])
+            clash = alias_by_key.get(_alias_key(prefix))
+            if clash is not None:
                 raise BundleError(
-                    f"bundle entry path is the parent of another entry: {path!r}"
+                    f"bundle entry path is the parent of another entry: {path!r} "
+                    f"(aliases {clash!r})"
                 )
 
 
@@ -498,8 +566,8 @@ def _is_symlink_at(directory_fd: int, name: str) -> bool:
     return stat.S_ISLNK(info.st_mode)
 
 
-def _open_attempt_root(root: Path) -> int:
-    """Open (creating if needed) the attempt directory without following links.
+def _open_attempt_root(root: Path, *, create: bool = True) -> int:
+    """Open (creating if asked) the attempt directory without following links.
 
     The parent chain above the attempt directory is engine-owned state, so it is
     created by path; the attempt directory itself is opened relative to that
@@ -516,6 +584,8 @@ def _open_attempt_root(root: Path) -> int:
         try:
             return _open_directory_at(parent_fd, root.name)
         except FileNotFoundError:
+            if not create:
+                raise BundleError("the bundle target directory does not exist")
             try:
                 os.mkdir(root.name, 0o700, dir_fd=parent_fd)
             except FileExistsError:
@@ -585,16 +655,35 @@ def _write_entry_at(directory_fd: int, name: str, entry: BundleEntry) -> None:
         verify_entry_bytes(entry, handle.read())
 
 
+def _read_entry_at(directory_fd: int, name: str, path: str) -> bytes:
+    """Open one entry with ``O_NOFOLLOW`` under a verified directory fd and read it."""
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(name, flags, dir_fd=directory_fd)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise BundleError(f"bundle entry must not be a symbolic link: {path!r}") from exc
+        raise BundleError(f"bundle entry is not readable: {path!r}") from exc
+    with os.fdopen(descriptor, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise BundleError(f"bundle entry is not a regular file: {path!r}")
+        return handle.read()
+
+
 def _check_entry_rules(
     *, path: str, size: int, digest: str, media_type: str, content: str,
     blob_ref: Mapping[str, Any] | None, seen: dict[str, str],
 ) -> None:
-    if path in seen or path.casefold() in seen:
+    alias = _alias_key(path)
+    if alias in seen:
         # Two entries a case-insensitive or normalization-insensitive filesystem
         # would collapse into one file must never both exist.
-        raise BundleError(f"bundle entry path is duplicated: {path!r}")
-    seen[path] = path
-    seen.setdefault(path.casefold(), path)
+        raise BundleError(
+            f"bundle entry path is duplicated: {path!r} (aliases {seen[alias]!r})"
+        )
+    seen[alias] = path
     if content == "inline":
         if blob_ref is not None:
             raise BundleError("an inline bundle entry must not carry a blob reference")
@@ -797,30 +886,38 @@ def payload_bundle(data: bytes) -> ArtifactBundle:
 def entry_from_file(
     root: Path | str, relative: str, *, role: str, media_type: str,
 ) -> BundleEntry:
-    """Read one artifact from a trusted host directory.
+    """Read one artifact from a trusted host directory, through descriptors.
 
-    This is the only place a host path is ever used, and it re-checks the host
-    file type: a symbolic link, device node, FIFO or socket is refused instead
-    of being read through.  Nothing is normalized; bytes are hashed exactly.
+    This is the only place a host path is ever used.  The base directory and
+    every component below it is opened with ``O_DIRECTORY|O_NOFOLLOW`` relative
+    to its already-verified parent and the file itself with ``O_NOFOLLOW``; the
+    bytes and the ``fstat`` come from the *same* descriptor.  A version that
+    checked with ``lstat`` and then read by path would hand back the bytes of a
+    symbolic link that appeared in between.  Nothing is normalized; bytes are
+    hashed exactly.
     """
 
     base = Path(root)
     path = validate_relative_path(relative)
     if base.is_symlink():
         raise BundleError("bundle source directory must not be a symbolic link")
-    target = base.joinpath(*path.split("/"))
-    resolved_base = base.resolve()
-    parent = target.parent.resolve()
-    if parent != resolved_base and resolved_base not in parent.parents:
-        raise BundleError(f"bundle source path escapes its root: {path!r}")
-    if target.is_symlink():
-        raise BundleError(f"bundle source is a symbolic link: {path!r}")
-    mode = os.lstat(target).st_mode
-    if stat.S_ISLNK(mode):
-        raise BundleError(f"bundle source is a symbolic link: {path!r}")
-    if not stat.S_ISREG(mode):
-        raise BundleError(f"bundle source is not a regular file: {path!r}")
-    data = target.read_bytes()
+    try:
+        base_fd = os.open(base, _directory_flags() | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError as exc:
+        raise BundleError("bundle source directory does not exist") from exc
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise BundleError("bundle source directory must not be a symbolic link") from exc
+        raise BundleError(f"bundle source directory is not readable: {exc}") from exc
+    *parents, name = path.split("/")
+    try:
+        directory_fd = _descend_without_symlinks(base_fd, parents, path)
+    finally:
+        os.close(base_fd)
+    try:
+        data = _read_entry_at(directory_fd, name, path)
+    finally:
+        os.close(directory_fd)
     return BundleEntry(
         path=path, role=validate_role(role), media_type=validate_media_type(media_type),
         size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest(), data=data,

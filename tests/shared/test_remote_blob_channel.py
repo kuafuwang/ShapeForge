@@ -635,3 +635,32 @@ def test_the_worker_reader_detects_a_corrupted_chunk(tmp_path):
     with pytest.raises(BlobError) as corrupt:
         list(BlobReader(root).iter_chunks(descriptor["content_id"]))
     assert corrupt.value.code == "unavailable"
+
+
+def test_a_leased_blob_does_not_expire_underneath_its_job(tmp_path):
+    """``ready_ttl_ms`` is the lifetime of an *unleased* committed blob.
+
+    ``sweep`` already skips leased blobs; the read path used to expire them
+    anyway, so a long attempt lost its own artifact after the TTL.
+    """
+
+    clock = Clock()
+    store = make_store(tmp_path / "blobs", clock=clock, ready_ttl_ms=1000)
+    data = os.urandom(8)
+    descriptor = upload(store, data, chunk_size=4)
+    store.attach(SCOPE, descriptor["content_id"], "request-leased")
+
+    clock.value = 5.0  # well past ready_ttl_ms
+    state = store.state(SCOPE, descriptor["content_id"])
+    assert state.ready is True
+    assert state.leases == ("request-leased",)
+    collected = b"".join(store.iter_chunks(SCOPE, descriptor["content_id"]))
+    assert collected == data
+    assert store.read_chunk(SCOPE, descriptor["content_id"], 0, 4) == data[:4]
+    # ``sweep`` keeps it too (unchanged), and an unleased blob still expires.
+    assert store.sweep() == []
+    store.detach(SCOPE, descriptor["content_id"], "request-leased")
+    with pytest.raises(BlobError) as expired:
+        store.state(SCOPE, descriptor["content_id"])
+    assert expired.value.code == "not_found"
+    assert "expired" in expired.value.detail

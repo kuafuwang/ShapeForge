@@ -15,7 +15,7 @@ import time
 import pytest
 
 from tcenv.remote.job_store import JobStore
-from tcenv.remote.job_types import JobError, NpuResources, StateCorrupt
+from tcenv.remote.job_types import JobError, JobFailure, NpuResources, StateCorrupt
 from tests.support.job_engine import (
     NPU_TOKEN,
     npu_bundle_capabilities,
@@ -854,7 +854,7 @@ def test_an_unknown_store_state_keeps_the_lease_and_the_original_error(tmp_path)
         # The lease was not dropped on a guess, and the rollback is recorded.
         assert store.leases() == {request.request_id: [blob["content_id"]]}
         assert engine.close_error is not None
-        assert "could not verify whether the Submit committed" in str(engine.close_error)
+        assert "could not verify whether the operation committed" in str(engine.close_error)
     finally:
         engine.store.submit = JobStore.submit.__get__(engine.store, type(engine.store))
         engine.store.job_exists = real_job_exists
@@ -981,5 +981,409 @@ def test_a_recovered_accepted_job_with_a_quarantined_blob_is_refused_at_dispatch
         assert current.failure.code == "artifact_unavailable", current.failure
         assert current.current_attempt.worker_pid is None
         assert reopened_controller.service.submissions() == {}
+    finally:
+        reopened.close(wait=5)
+
+
+# -- dispatch proves the bytes, not the manifest ---------------------------
+def _accepted_with_lease(engine, request, *, blob):
+    """Put a job in the crash window: lease, durable accepted row, no enqueue."""
+
+    capability = npu_bundle_capabilities(engine)
+    lease = engine._lease_blob(request, NPU_TOKEN)
+    assert lease is not None
+    snapshot, created = engine.store.submit(
+        request=request, request_digest=request.request_digest,
+        expected=engine.expected_identities, provenance=engine._base_provenance(),
+        capability_id=capability.capability_id,
+        required_features=list(npu_bundle_features(blob=True)), grant_token=NPU_TOKEN,
+    )
+    assert created is True and snapshot.state == "accepted"
+    return snapshot
+
+
+def _wait_terminal(engine, request, timeout: float = 20.0):
+    deadline = time.monotonic() + timeout
+    current = None
+    while time.monotonic() < deadline:
+        current = npu_bundle_get(engine, request)
+        if current.state in {"interrupted", "failed", "completed", "cancelled"}:
+            return current
+        time.sleep(0.02)
+    raise AssertionError(f"job did not reach a terminal state: {current}")
+
+
+def test_a_ready_manifest_with_a_missing_chunk_is_refused_at_dispatch(tmp_path):
+    """``state.ready`` is a manifest field; the worker reads the chunks.
+
+    A store whose chunk file disappeared (a half-deleted or corrupted artifact)
+    still looks ready.  The dispatch guard has to stream and hash the content
+    before ``supervisor.create``, otherwise the failure only appears as
+    ``worker_failed`` after a process and a device attempt.
+    """
+
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+    from tcenv.remote.blob_channel import _content_digest
+
+    root = tmp_path / "run"
+    engine, controller, store = _blob_engine(root)
+    del controller
+    blob = _upload(engine, b"M" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 8))
+    request = npu_bundle_request("bundle-missing-chunk", bundle=_blob_bundle([blob], b"unused"))
+    _accepted_with_lease(engine, request, blob=blob)
+    scope = _scope(engine)
+    # The manifest still says ready; one chunk is gone.
+    digest = _content_digest(blob["content_id"])
+    chunk = store.files.chunk_path(digest, 0)
+    chunk.unlink()
+    assert store.state(scope, blob["content_id"]).ready is True
+    engine.close(wait=5)
+
+    reopened, reopened_controller, _reopened_store = _blob_engine(root)
+    try:
+        current = _wait_terminal(reopened, request)
+        assert current.state == "interrupted", current
+        assert current.failure.code == "artifact_unavailable", current.failure
+        assert current.current_attempt.worker_pid is None
+        assert reopened_controller.service.submissions() == {}
+    finally:
+        reopened.close(wait=5)
+
+
+def test_a_ready_manifest_with_a_corrupted_chunk_is_refused_at_dispatch(tmp_path):
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+    from tcenv.remote.blob_channel import _content_digest
+
+    root = tmp_path / "run"
+    engine, controller, store = _blob_engine(root)
+    del controller
+    blob = _upload(engine, b"N" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 8))
+    request = npu_bundle_request("bundle-corrupt-chunk", bundle=_blob_bundle([blob], b"unused"))
+    _accepted_with_lease(engine, request, blob=blob)
+    digest = _content_digest(blob["content_id"])
+    chunk = store.files.chunk_path(digest, 0)
+    data = bytearray(chunk.read_bytes())
+    data[0] ^= 0xFF
+    chunk.write_bytes(bytes(data))
+    engine.close(wait=5)
+
+    reopened, reopened_controller, _reopened_store = _blob_engine(root)
+    try:
+        current = _wait_terminal(reopened, request)
+        assert current.state == "interrupted", current
+        assert current.failure.code == "artifact_unavailable", current.failure
+        assert current.current_attempt.worker_pid is None
+        assert reopened_controller.service.submissions() == {}
+    finally:
+        reopened.close(wait=5)
+
+
+# -- a Retry that commits must keep its lease ------------------------------
+def test_a_retry_that_committed_before_failing_keeps_its_lease(tmp_path):
+    """Only a proven non-commit may roll the lease back.
+
+    ``store.retry`` can commit the new queued attempt and still raise; releasing
+    the lease then would strip a live job of the artifact it is about to read.
+    """
+
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+
+    engine, controller, store = _blob_engine(tmp_path / "run")
+    del controller
+    engine.worker_env["TCENV_VENDOR_B_FAULT"] = "lost_token"
+    try:
+        blob = _upload(engine, b"P" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 8))
+        request = npu_bundle_request(
+            "bundle-retry-commit", bundle=_blob_bundle([blob], b"unused"),
+            candidate_timeout_ms=4000,
+        )
+        npu_bundle_submit(engine, request)
+        interrupted = _run(engine, request)
+        assert interrupted.state == "interrupted"
+        engine.worker_env["TCENV_VENDOR_B_FAULT"] = ""
+        # The lease was dropped (bytes kept), so the Retry really takes a fresh
+        # one: that is the lease a naive rollback would then strip.
+        scope = _scope(engine)
+        store.detach(scope, blob["content_id"], request.request_id)
+        assert store.state(scope, blob["content_id"]).leases == ()
+        real = engine.store.retry
+
+        def commits_then_raises(**kwargs):
+            real(**kwargs)
+            raise StateCorrupt("the retry committed the new attempt, then the writer failed")
+
+        engine.store.retry = commits_then_raises
+        try:
+            with pytest.raises(StateCorrupt, match="retry committed"):
+                npu_bundle_retry(engine, request, interrupted.current_attempt.attempt_id)
+        finally:
+            del engine.store.retry
+        snapshot = engine.store._job_by_id(request.request_id)
+        assert snapshot.state == "queued"
+        # The commit was proven, so the freshly taken lease is kept and nothing
+        # is left unverified (the *unknown* outcome is the one that records a
+        # hazard).
+        assert request.request_id in store.state(scope, blob["content_id"]).leases
+        assert store.usage()["blobs"] == 1
+        assert engine.close_error is None
+    finally:
+        engine.close(wait=5)
+
+
+# -- every transition that ends terminal releases the lease ---------------
+def _claimed_running(engine, request):
+    """Claim a queued job by hand, so the scheduler cannot race the test."""
+
+    engine._stop.set()
+    npu_bundle_submit(engine, request)
+    engine.store.enqueue_accepted(request.request_id)
+    claimed = engine.store.claim_next(
+        selfcheck_age_ms=engine.selfcheck_age_ms,
+        execution_kind=engine.supervisor.kind,
+    )
+    assert claimed is not None
+    return claimed
+
+
+def test_interrupting_a_job_whose_cancel_won_the_race_releases_the_lease(tmp_path):
+    """``interrupt_attempt`` can end the row ``cancelled``; release from the row."""
+
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+
+    engine, controller, store = _blob_engine(tmp_path / "run")
+    del controller
+    try:
+        blob = _upload(engine, b"I" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 8))
+        request = npu_bundle_request("bundle-interrupt-race", bundle=_blob_bundle([blob], b"unused"))
+        _request, attempt = _claimed_running(engine, request)
+        # A durable cancellation arrives while the attempt is owned.
+        cancelled = engine.store.cancel(
+            grant_token=NPU_TOKEN, request_id=request.request_id,
+            request_digest=request.request_digest, expected=engine.expected_identities,
+        )
+        assert cancelled.state == "running" and cancelled.cancel_requested is True
+        changed = engine._interrupt_attempt(
+            request.request_id, attempt,
+            JobFailure("infrastructure", True, "overdue", "test interruption"),
+        )
+        assert changed is True
+        snapshot = engine.store._job_by_id(request.request_id)
+        assert snapshot.state == "cancelled"
+        assert store.leases() == {}
+        assert store.usage()["blobs"] == 0
+    finally:
+        engine.close(wait=5)
+
+
+def test_recovery_that_finishes_a_cancelled_job_releases_the_lease(tmp_path, monkeypatch):
+    from tcenv.remote import job_engine as je
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+
+    root = tmp_path / "run"
+    engine, controller, store = _blob_engine(root)
+    del controller
+    blob = _upload(engine, b"R2" * (MAX_BUNDLE_INLINE_ENTRY_BYTES // 2 + 8))
+    request = npu_bundle_request("bundle-recover-cancel", bundle=_blob_bundle([blob], b"unused"))
+    _request, attempt = _claimed_running(engine, request)
+    engine.store.cancel(
+        grant_token=NPU_TOKEN, request_id=request.request_id,
+        request_digest=request.request_digest, expected=engine.expected_identities,
+    )
+    engine.close(wait=5)
+
+    # The process cleanup of a hand-claimed attempt has no durable PID; that path
+    # is covered elsewhere, so only the cancellation decision is exercised here.
+    monkeypatch.setattr(je.JobEngine, "_cleanup_recovered_process", staticmethod(lambda attempt: ""))
+    reopened, _controller, reopened_store = _blob_engine(root)
+    try:
+        snapshot = reopened.store._job_by_id(request.request_id)
+        assert snapshot.state == "cancelled"
+        assert reopened_store.leases() == {}
+        assert reopened_store.usage()["blobs"] == 0
+        del attempt
+    finally:
+        reopened.close(wait=5)
+
+
+def test_a_retry_of_a_cancelled_interrupted_job_releases_the_lease(tmp_path):
+    """A legacy interrupted row with a durable cancel bit ends ``cancelled``."""
+
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+
+    engine, controller, store = _blob_engine(tmp_path / "run")
+    del controller
+    try:
+        blob = _upload(engine, b"Q" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 8))
+        request = npu_bundle_request("bundle-retry-cancelled", bundle=_blob_bundle([blob], b"unused"))
+        engine._stop.set()
+        npu_bundle_submit(engine, request)
+        engine.store.enqueue_accepted(request.request_id)
+        claimed = engine.store.claim_next(
+            selfcheck_age_ms=engine.selfcheck_age_ms,
+            execution_kind=engine.supervisor.kind,
+        )
+        assert claimed is not None
+        _request, attempt = claimed
+        # Simulate a legacy row: the attempt is interrupted but the durable
+        # cancel bit was written by an older frontend.
+        interrupted = engine.store.interrupt_attempt(
+            request.request_id, attempt,
+            JobFailure("infrastructure", True, "frontend_restarted", "test"),
+        )
+        assert interrupted is True
+        with engine.store._write() as conn:
+            conn.execute(
+                "UPDATE jobs SET cancel_requested=1 WHERE request_id=?", (request.request_id,),
+            )
+        assert store.leases()  # the interrupted job still owns its artifact
+        snapshot = npu_bundle_retry(engine, request, attempt.attempt_id)
+        assert snapshot.state == "cancelled"
+        assert store.leases() == {}
+        assert store.usage()["blobs"] == 0
+    finally:
+        engine.close(wait=5)
+
+
+# -- a cleanup hazard always reaches the job or the close ------------------
+def test_a_quarantining_startup_reconcile_marks_the_completed_job(tmp_path):
+    """A terminal job whose bytes could not be deleted is not a clean job.
+
+    The lease left over for a completed job (a crash between the terminal commit
+    and its cleanup) fails to delete: ``close_error`` alone is not enough, the job
+    row must carry the quarantine so a later reader can see it.
+    """
+
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+    from tests.support.blob_sim.faults import FaultIO
+
+    root = tmp_path / "run"
+    engine, controller, store = _blob_engine(root)
+    del controller
+    blob = _upload(engine, b"H" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 8))
+    request = npu_bundle_request("bundle-hazard-job", bundle=_blob_bundle([blob], b"unused"))
+    npu_bundle_submit(engine, request)
+    final = _run(engine, request, states={"completed", "failed", "interrupted"})
+    assert final.state == "completed", final.failure
+    scope = _scope(engine)
+    engine.close(wait=5)
+
+    # A leftover lease for the *completed* request, created after the frontend
+    # closed so only the next startup's reconciliation can find it.
+    from tcenv.remote.blob_channel import BlobLimits, BlobStore
+    from tcenv.remote.job_types import BlobDescriptor
+
+    leftover_store = BlobStore(
+        root / "state" / "blobs",
+        limits=BlobLimits(max_size_bytes=2 << 20, max_chunk_size=65536),
+    )
+    data = b"J" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 8)
+    descriptor = BlobDescriptor.for_bytes(
+        data, media_type="application/octet-stream", chunk_size=65536,
+    )
+    leftover_store.begin(scope, descriptor.to_dict())
+    offset = 0
+    while offset < len(data):
+        chunk = data[offset:offset + descriptor.chunk_size]
+        leftover_store.write_chunk(scope, descriptor.content_id, offset, chunk)
+        offset += len(chunk)
+    leftover_store.commit(scope, descriptor.content_id)
+    leftover_store.attach(scope, descriptor.content_id, request.request_id)
+    extra = descriptor.to_dict()
+
+    io2 = FaultIO()
+    io2.fail("remove", times=1)
+    reopened, _controller2, reopened_store = _fault_blob_engine(root, io2)
+    try:
+        assert reopened.close_error is not None
+        assert "blob cleanup failed" in str(reopened.close_error)
+        snapshot = npu_bundle_get(reopened, request)
+        assert snapshot.state == "completed"
+        assert snapshot.quarantined is True
+        assert "blob cleanup failed" in snapshot.recovery_error
+        assert reopened_store.state(scope, extra["content_id"]).state == "quarantine"
+    finally:
+        reopened.close(wait=5)
+
+
+def test_a_raw_io_error_while_releasing_is_recorded_not_raised(tmp_path):
+    """Cancel already committed; a filesystem error must not replace the answer."""
+
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+
+    engine, controller, store = _blob_engine(tmp_path / "run")
+    del controller
+    try:
+        blob = _upload(engine, b"O" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 8))
+        request = npu_bundle_request("bundle-io-hazard", bundle=_blob_bundle([blob], b"unused"))
+        engine._stop.set()
+        npu_bundle_submit(engine, request)
+        real = store.release
+
+        def broken(request_id, **kwargs):
+            raise OSError("listdir failed while releasing")
+
+        store.release = broken
+        try:
+            snapshot = engine.cancel(
+                request_id=request.request_id, request_digest=request.request_digest,
+                expected=engine.expected_identities, grant_token=NPU_TOKEN, reason="test",
+            )
+        finally:
+            del store.release
+        assert snapshot.state == "cancelled"
+        # The hazard is recorded on both the close and the job.
+        assert engine.close_error is not None
+        assert "blob release failed" in str(engine.close_error)
+        assert npu_bundle_get(engine, request).quarantined is True
+        del real
+    finally:
+        engine.close(wait=5)
+
+
+# -- cross-job rollback with two real durable jobs -------------------------
+def test_a_rejected_bundle_submit_leaves_another_jobs_lease_and_bytes(tmp_path):
+    """The literal cross-job case: one durable job, one rejected Submit.
+
+    Job A holds ``X``.  Job B references ``X`` and an uncommitted ``Y``, so its
+    attach loop takes ``X`` for B and then fails on ``Y``.  A's job, lease and
+    bytes must be untouched.
+    """
+
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+
+    root = tmp_path / "run"
+    engine, controller, store = _blob_engine(root)
+    del controller
+    try:
+        shared = _upload(engine, b"X" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 8))
+        pending = _upload(engine, b"Y" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 16), commit=False)
+        scope = _scope(engine)
+        job_a = npu_bundle_request("cross-job-a", bundle=_blob_bundle([shared], b"unused"))
+        # Job A is queued and keeps its lease: the scheduler is stopped so the
+        # artifact cannot be released by A finishing before B is submitted.
+        engine._stop.set()
+        _submit_when_idle(engine, job_a)
+        assert store.state(scope, shared["content_id"]).leases == ("cross-job-a",)
+        size_before = store.usage()["blobs"]
+
+        job_b = npu_bundle_request(
+            "cross-job-b", bundle=_blob_bundle([shared, pending], b"unused"),
+        )
+        with pytest.raises(JobError, match="only a committed blob can be submitted"):
+            _submit_when_idle(engine, job_b)
+
+        # A's durable job, lease and bytes are exactly as they were.
+        assert store.state(scope, shared["content_id"]).leases == ("cross-job-a",)
+        assert engine.store.job_exists("cross-job-a") is True
+        assert engine.store.job_exists("cross-job-b") is False
+        assert store.usage()["blobs"] == size_before
+        assert store.state(scope, shared["content_id"]).ready is True
+    finally:
+        engine.close(wait=5)
+    # And A still completes from its own durable row once a frontend schedules it.
+    reopened, _controller, _reopened_store = _blob_engine(root)
+    try:
+        final = _run(reopened, job_a, states={"completed", "failed", "interrupted"})
+        assert final.state == "completed", final.failure
     finally:
         reopened.close(wait=5)

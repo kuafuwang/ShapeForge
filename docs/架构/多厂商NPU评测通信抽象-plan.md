@@ -1063,9 +1063,9 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
    `closed`。回归：`test_an_unknown_store_state_keeps_the_lease_and_the_original_error`、
    `test_close_finishes_even_when_the_store_cannot_list_live_jobs`。
 
-第二轮证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **53 passed**、
-`test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **29 passed**、
-`test_remote_npu_bundle_go_conformance.py` **15 passed**（合计 105）；P0/P0b 170、旧
+第二轮证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **57 passed**、
+`test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **38 passed**、
+`test_remote_npu_bundle_go_conformance.py` **17 passed**（合计 120）；P0/P0b 171、旧
 gRPC/conformance/evidence 87、job/recovery/container/outbox 265 passed/1 skipped 与本轮一致；
 `selfcheck_bridge` 默认围栏 18 failed/1 passed（未改测试）、`TMPDIR=/tmp` 19 passed；
 `generate_evaluator_proto.py --check` 通过（未改 proto）；全套安全套件 **2474 passed / 6 skipped
@@ -1076,11 +1076,73 @@ gRPC/conformance/evidence 87、job/recovery/container/outbox 265 passed/1 skippe
 失败）、把 `job_exists` 改回裸调用（致命 store 回归转失败）、去掉 `live_request_ids` 的兜底
 （close 回归转失败）、把 Go 换回上一版（两个 Go 回归分别转失败）。
 
-修复后证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **53 passed**、
-`test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **29 passed**、
-`test_remote_npu_bundle_go_conformance.py` **15 passed**（合计 105）；P0/P0b 回归
+**P1 复核修复（第四轮，2026-10-29；仍无真实设备）**
+
+第三轮之后又独立复现出 11 类缺口（多数是「同一语义只修了一条路径」），仍全部先写成会失败的
+回归再修：
+
+1. **Go 验的是脱离签名字节的另一份 evidence（确认，已修）**。复现：把 `evidence_base64`
+   解码后的 `complete` 改成 false，同步更新 descriptor、canonical JSON 并用 golden key 重签，
+   分离副本仍保持 true——旧 Go 返回 0。修复：解析签名里的真实 payload，对它执行全部语义检查
+   （`verifyBundleEvidence`），并要求它与分离副本 canonical 相等；回归
+   `test_the_go_verifier_reads_the_signed_evidence_payload`、`..._payload_with_a_contradictory_aggregate`。
+2. **Go 把 `rank:-1`/`die:-1` 当成 null（确认，已修）**。`-1` 原本只是内部哨兵却被当成合法输入；
+   Python 以 out-of-bounds 拒绝而 Go 接受。修复：区分 `null` 与整数，负数一律拒绝；共享向量新增
+   `graph-only-rank-negative`、`graph-only-die-negative`，以及 `die-only-two-dies`、
+   `rank-and-die-two-by-two` 两个合法形状。
+3. **`materialize` 把未绑定 FD 的路径名交回调用方（确认，已修）**。单条目真实换名复现：FD 写入的
+   正确字节在 `graph-real/main`，但返回的 Path 读到外部 attacker 字节。修复：返回
+   `MaterializedEntry`（root + 相对路径 + size/sha），`read_bytes`/`verify` 用 dir-fd 逐段
+   `O_NOFOLLOW` 重新读取并复核 digest；`vendor_b` 消费端改用 handle 复核，不再 `is_file()`。
+   回归 `test_materialize_handles_cannot_be_talked_into_reading_a_swapped_path`。
+4. **`entry_from_file` 仍有 check/read TOCTOU（确认，已修）**。lstat 之后按路径 `read_bytes()`，
+   换成外部 symlink 后返回并哈希了外部字节。修复：逐组件 dir-fd、最终 `O_NOFOLLOW`，`fstat` 与
+   读取都来自同一 FD；回归父目录与最终组件两种换名。
+5. **祖先冲突只看精确前缀、没有 Unicode alias（确认，已修）**。`Graph` 与 `graph/child`、组合/分解
+   `café` 都能通过 manifest，实际写一半后 EEXIST。修复：`_alias_key`（NFC + casefold）同时用于
+   全路径重复与祖先检查，manifest/digest 仍保留原路径；回归在 manifest 期拒绝且零部分输出。
+6. **dispatch 守卫只证明 manifest 可读（确认，已修）**。保留 ready manifest、删掉首个 chunk 或改
+   一个字节后恢复 accepted job，旧守卫仍 create/start worker（`worker_failed`、pid 非空）。修复：
+   在 `supervisor.create` 前用 `iter_chunks` 流式读取并整体 sha256/size 复核；回归缺失与损坏
+   两种 chunk 变体，都断言 `artifact_unavailable`、`worker_pid is None`、服务无 submission。
+7. **Retry 回滚没有未知提交保护（确认，已修）**。让 `store.retry` 提交新 queued attempt 后再抛错，
+   旧实现仍 detach，把 live job 的 lease 删掉。修复：与 Submit 共用
+   `_drop_lease_if_uncommitted`（retry 用「是否换了 attempt」判定），只有证明未提交才回滚，未知则
+   保留 lease 并记录 hazard；回归 `test_a_retry_that_committed_before_failing_keeps_its_lease`。
+8. **仍有 cancelled 状态绕过 lease 清理（确认，已修）**。`_interrupt_row`/`fail_attempt`/
+   `recovered_attempt`/cancelled-Retry 都可能把行改成 cancelled，而旧代码只在自己预期的终态上
+   释放。修复：新增 `_release_if_terminal`，按**提交后的行**统一决定释放，接在 interrupt、fail、
+   finish_cancellation、recover、retry 与 cancel 快路径上；三条回归分别覆盖 interrupt 竞态、
+   恢复、cancelled Retry。
+9. **清理 hazard 两处丢失（确认，已修）**。(a) 启动 reconcile 用 `attempt=None`，终态 job 的残留
+   lease 删除失败只写 `close_error`，job 仍 `quarantined=False`；现按 job 是否存在持久化 hazard。
+   (b) `_release_blob_lease` 只捕 `BlobError`，注入 listdir `OSError` 后 Cancel 已终态却裸抛；
+   现捕获所有异常并记录 hazard。两条真实故障回归。
+10. **leased ready blob 仍按 TTL 过期（确认，已修）**。`ready_ttl_ms` 的语义是「无 lease 的
+    committed blob 存活时间」，但读路径不看 lease，`sweep` 却看，于是长期 attempt 在 TTL 后失去
+   自己的工件。修复：只在无 lease 时过期；对照回归覆盖 leased（state/iter_chunks/read_chunk 仍可用、
+    `sweep` 跳过）与 unleased（仍过期）。未改 P0b 授权或清理语义。
+11. **跨 job 回滚回归（补齐）**。新增两个真实 durable job 的控制回归：
+   `test_a_rejected_bundle_submit_leaves_another_jobs_lease_and_bytes`——A queued 持 X，B 引用
+   X+未 ready Y 被拒后，A 的 job/lease/字节不变且随后仍能完成；它是对「按 request id 释放会误伤
+   别的 job」这一字面场景的证伪控制，不能由同 request 的旧 attempt 测试替代。
+
+第四轮证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **57**、
+`test_remote_npu_bundle_grpc.py` **8**、`test_remote_npu_bundle_cleanup.py` **38**、
+`test_remote_npu_bundle_go_conformance.py` **17**（合计 **120**）；P0/P0b **171**（blob_channel
+新增 leased-TTL 对照）；旧 gRPC/conformance/evidence 87；job/recovery/container/outbox 265
+passed/1 skipped；`selfcheck_bridge` 默认围栏 18 failed/1 passed、`TMPDIR=/tmp` 19 passed；
+`generate_evaluator_proto.py --check` 通过（未改 proto）；全套安全套件 **2492 passed / 6 skipped /
+32 failed**（32 项仍是既有围栏环境）。变异核验（复原后重跑）：materialize 返回 Path、entry_from_file
+改回路径读取、祖先检查改回精确匹配、去掉 dispatch 内容复核、Retry 改回无条件 detach、去掉
+interrupt/recover/retry 的终态释放、reconcile 改回 attempt=None、release 只捕 BlobError、过期
+判定忽略 lease、Go 换回上一版——对应回归分别转失败。
+
+修复后证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **57 passed**、
+`test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **38 passed**、
+`test_remote_npu_bundle_go_conformance.py` **17 passed**（合计 120）；P0/P0b 回归
 `test_remote_npu_{contract,grpc,cleanup}.py` +
-`test_remote_blob_{channel,contract,grpc,go_conformance}.py` **170 passed**；
+`test_remote_blob_{channel,contract,grpc,go_conformance}.py` **171 passed**；
 `test_remote_grpc_{adapter,tls,contract,revocation}.py` + `test_remote_{conformance,
 go_conformance,evidence_contract}.py` **87 passed**；`test_remote_{job_engine,job_recovery,
 legacy_worker_bridge,container_engine,container_supervisor,runtime}.py` +

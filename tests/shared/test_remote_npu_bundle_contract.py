@@ -267,6 +267,143 @@ def test_materialize_cannot_be_raced_into_writing_through_a_swapped_parent(tmp_p
     assert (root / "graph-real" / "main.json").read_bytes() == GRAPH_ENTRIES[0][3]
 
 
+def test_materialize_handles_cannot_be_talked_into_reading_a_swapped_path(tmp_path, monkeypatch):
+    """The consumer gets a verified handle, not a path name to re-resolve.
+
+    One entry makes the write itself succeed (unlike the two-entry race above,
+    where the second entry always fails), so the returned value is the only thing
+    that could hand the caller the bytes behind the swapped name.
+    """
+
+    from tcenv.remote import artifact_bundle
+
+    single = _bundle((GRAPH_ENTRIES[0],))
+    root = tmp_path / "attempt"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "main.json").write_bytes(b"attacker bytes")
+    root.mkdir()
+    real = artifact_bundle._descend_without_symlinks
+    swapped = {"done": False}
+
+    def raced(root_fd, segments, path):
+        directory_fd = real(root_fd, segments, path)
+        if not swapped["done"]:
+            swapped["done"] = True
+            os.rename(root / "graph", root / "graph-real")
+            (root / "graph").symlink_to(outside, target_is_directory=True)
+        return directory_fd
+
+    monkeypatch.setattr(artifact_bundle, "_descend_without_symlinks", raced)
+    written = single.materialize(root)
+    assert swapped["done"] is True
+    handle = written["graph/main.json"]
+    # The handle re-walks with O_NOFOLLOW: the swapped name is refused instead
+    # of being read.  A bare Path here would return the attacker's bytes.
+    with pytest.raises(BundleError, match="symbolic link"):
+        handle.read_bytes()
+    with pytest.raises(BundleError, match="symbolic link"):
+        handle.verify()
+    # And the write itself never left the root.
+    assert (root / "graph-real" / "main.json").read_bytes() == GRAPH_ENTRIES[0][3]
+
+
+def test_materialize_handles_read_and_verify_the_exact_bytes(tmp_path):
+    written = _bundle().materialize(tmp_path / "attempt")
+    for path, _role, _media_type, data in GRAPH_ENTRIES:
+        handle = written[path]
+        assert handle.path == path
+        assert handle.read_bytes() == data
+        handle.verify()
+    # The handle refuses to invent bytes for an entry that is gone.
+    (tmp_path / "attempt" / "graph" / "params.bin").unlink()
+    with pytest.raises(BundleError):
+        written["graph/params.bin"].read_bytes()
+
+
+def test_entry_from_file_reads_through_checked_descriptors(tmp_path, monkeypatch):
+    """A swap between the check and the read must never yield outside bytes."""
+
+    from tcenv.remote import artifact_bundle
+
+    source = tmp_path / "artifacts"
+    (source / "sub").mkdir(parents=True)
+    (source / "sub" / "a.bin").write_bytes(b"trusted")
+    (source / "flat.bin").write_bytes(b"trusted-flat")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "a.bin").write_bytes(b"attacker")
+    (outside / "flat.bin").write_bytes(b"attacker-flat")
+
+    real = artifact_bundle._descend_without_symlinks
+    mode = {"value": "parent"}
+
+    def raced(root_fd, segments, path):
+        directory_fd = real(root_fd, segments, path)
+        if mode["value"] == "parent" and segments:
+            mode["value"] = "parent-done"
+            os.rename(source / "sub", source / "sub-real")
+            (source / "sub").symlink_to(outside, target_is_directory=True)
+        return directory_fd
+
+    monkeypatch.setattr(artifact_bundle, "_descend_without_symlinks", raced)
+    entry = entry_from_file(
+        source, "sub/a.bin", role="AUXILIARY", media_type="application/octet-stream",
+    )
+    assert entry.data == b"trusted", entry.data
+
+    # Final-component swap: the name becomes a symlink after the directory was
+    # opened, so the descriptor-based read has to refuse it.
+    def raced_final(root_fd, segments, path):
+        directory_fd = real(root_fd, segments, path)
+        if mode["value"] == "parent-done" and not segments:
+            mode["value"] = "final-done"
+            os.rename(source / "flat.bin", source / "flat-real.bin")
+            (source / "flat.bin").symlink_to(outside / "flat.bin")
+        return directory_fd
+
+    monkeypatch.setattr(artifact_bundle, "_descend_without_symlinks", raced_final)
+    with pytest.raises(BundleError, match="symbolic link"):
+        entry_from_file(
+            source, "flat.bin", role="AUXILIARY", media_type="application/octet-stream",
+        )
+
+
+def test_alias_collisions_between_an_ancestor_and_a_path_are_refused(tmp_path):
+    """One alias key decides full-path and ancestor conflicts alike.
+
+    ``Graph`` and ``graph/child`` are the same directory on a case-insensitive
+    filesystem, and composed/decomposed ``café`` are the same name on APFS/HFS+.
+    Both have to fail at manifest time, before ``materialize`` writes anything.
+    """
+
+    def entry(path: str) -> BundleEntry:
+        data = path.encode("utf-8")
+        return BundleEntry(path=path, role="AUXILIARY", media_type="text/plain",
+                           size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest(),
+                           data=data)
+
+    with pytest.raises(BundleError, match="parent of another entry"):
+        ArtifactBundle(entries=(entry("Graph"), entry("graph/child")))
+    # A file whose name is the composed form of a decomposed parent would make
+    # the filesystem create a directory where the file already is (EEXIST after
+    # the first entry was written).
+    composed = "café"
+    decomposed = "café/other.bin"
+    with pytest.raises(BundleError, match="parent of another entry"):
+        ArtifactBundle(entries=(entry(composed), entry(decomposed)))
+    # A full-path alias is the same conflict, not a second rule.
+    with pytest.raises(BundleError, match="duplicated"):
+        ArtifactBundle(entries=(entry("café/main.bin"), entry("café/main.bin")))
+    # The rejection happens before any output exists: the target root was never
+    # created because no bundle survived construction.
+    assert not (tmp_path / "attempt").exists()
+    # A legal bundle still keeps its exact (non-normalized) path in the manifest.
+    legal = _bundle((("café/main.bin", "AUXILIARY", "text/plain", b"x"),))
+    assert legal.manifest["entries"][0]["path"] == "café/main.bin"
+    assert legal.entries[0].sha256 == hashlib.sha256(b"x").hexdigest()
+
+
 def test_materialize_refuses_a_symlinked_parent_instead_of_writing_through_it(tmp_path):
     """A planted ``graph -> elsewhere`` must not become an out-of-root write.
 

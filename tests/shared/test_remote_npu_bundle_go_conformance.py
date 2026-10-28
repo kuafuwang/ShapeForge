@@ -195,6 +195,77 @@ def test_the_go_verifier_rejects_a_consistently_resigned_version_one_descriptor(
     assert "HMAC" not in result.stderr, result.stderr
 
 
+def _reencode_evidence(golden: dict, mutate) -> None:
+    """Rewrite the *signed* evidence payload and keep the envelope consistent."""
+
+    import base64
+    import hashlib
+    import hmac as hmaclib
+
+    from tcenv.remote import contracts
+
+    bundle = golden["npu_bundle"]
+    payload = json.loads(base64.b64decode(bundle["signature"]["evidence_base64"]))
+    mutate(payload)
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    bundle["signature"]["evidence_base64"] = base64.b64encode(encoded).decode("ascii")
+    for target in (bundle["signature"]["unsigned_result"], bundle["signature"]["document"]):
+        target["evidence"]["size_bytes"] = len(encoded)
+        target["evidence"]["sha256"] = hashlib.sha256(encoded).hexdigest()
+    # Keep the descriptor identity out of the way: only the payload semantics
+    # differ, everything else is re-signed consistently.
+    bundle["completeness_vectors"] = [
+        vector for vector in bundle["completeness_vectors"] if vector["valid"]
+    ]
+    canonical = contracts.canonical_digest_document(bundle["signature"]["document"])
+    key = bytes.fromhex(bundle["signature"]["key_hex"])
+    bundle["signature"]["canonical_json"] = canonical.decode("utf-8")
+    bundle["signature"]["hmac_sha256"] = hmaclib.new(key, canonical, hashlib.sha256).hexdigest()
+
+
+def test_the_go_verifier_reads_the_signed_evidence_payload(tmp_path):
+    """The bytes under signature are verified, not a detached copy of them.
+
+    The payload says the measurement is incomplete while the detached document
+    still says complete, and descriptor, canonical document and HMAC are all
+    recomputed consistently.  Verifying the detached copy would accept this.
+    """
+
+    golden = copy.deepcopy(load_bundle_golden())
+
+    def incomplete(payload: dict) -> None:
+        payload["complete"] = False
+
+    _reencode_evidence(golden, incomplete)
+    path = tmp_path / "payload_complete_false.json"
+    path.write_text(json.dumps(golden), encoding="utf-8")
+
+    result = _run_verifier(path)
+    assert result.returncode != 0, "a false payload was verified against the detached copy"
+    assert "signed evidence payload differs" in result.stderr, result.stderr
+    assert "HMAC" not in result.stderr, result.stderr
+
+
+def test_the_go_verifier_rejects_a_payload_with_a_contradictory_aggregate(tmp_path):
+    """A payload-level contradiction is refused by the *signed* document's rules."""
+
+    golden = copy.deepcopy(load_bundle_golden())
+
+    def inflated(payload: dict) -> None:
+        # Keep the aggregate consistent but claim more device time than the
+        # spans support: the semantic check has to run on the payload.
+        payload["timing"]["device_elapsed_ns"] = int(payload["timing"]["device_elapsed_ns"]) + 1
+
+    _reencode_evidence(golden, inflated)
+    # The detached copy stays untouched, so only the payload can fail.
+    path = tmp_path / "payload_aggregate.json"
+    path.write_text(json.dumps(golden), encoding="utf-8")
+
+    result = _run_verifier(path)
+    assert result.returncode != 0
+    assert "signed evidence payload differs" in result.stderr, result.stderr
+
+
 def test_the_go_verifier_still_accepts_the_earlier_contract_vectors(tmp_path):
     from tests.support.remote_contract import BLOB_GOLDEN, GOLDEN
 

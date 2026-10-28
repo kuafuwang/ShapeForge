@@ -886,9 +886,15 @@ func verifyEvidenceCompleteness(evidence map[string]any) error {
 		die     int64
 		present bool
 	}
-	// -1 marks "this dimension does not exist for this vendor shape".
+	// -1 is only the *internal* marker for "this dimension does not exist for
+	// this vendor shape"; it is never accepted as input.  A span that reports
+	// ``rank: -1`` must be rejected exactly like the Python validator does
+	// instead of being folded into "no rank dimension".
 	coordinateValue := func(span map[string]any, name string) (int64, error) {
-		raw := span[name]
+		raw, present := span[name]
+		if !present {
+			return 0, fmt.Errorf("span %s is missing", name)
+		}
 		if raw == nil {
 			return -1, nil
 		}
@@ -896,7 +902,11 @@ func verifyEvidenceCompleteness(evidence map[string]any) error {
 		if !ok {
 			return 0, fmt.Errorf("span %s is not an integer", name)
 		}
-		return strconv.ParseInt(value.String(), 10, 64)
+		parsed, err := strconv.ParseInt(value.String(), 10, 64)
+		if err != nil || parsed < 0 {
+			return 0, fmt.Errorf("span %s is outside its integer bounds", name)
+		}
+		return parsed, nil
 	}
 	rawSpans, ok := evidence["spans"].([]any)
 	if !ok || len(rawSpans) == 0 {
@@ -1079,7 +1089,32 @@ func verifyBundle(golden *BundleGolden) error {
 	if err := reportDecoder.Decode(&reportDocument); err != nil {
 		return fmt.Errorf("bundle report is not JSON: %w", err)
 	}
-	timing := golden.Evidence["timing"].(map[string]any)
+	// The signed bytes are what a consumer actually reads.  Decode them, run the
+	// full semantic checks on *that* document, and require it to be the same
+	// document the golden keeps separately -- otherwise a tampered payload with a
+	// matching descriptor, canonical document and HMAC would be verified against
+	// an untouched detached copy.
+	var signedEvidence map[string]any
+	evidenceDecoder := json.NewDecoder(bytes.NewReader(evidence))
+	evidenceDecoder.UseNumber()
+	if err := evidenceDecoder.Decode(&signedEvidence); err != nil {
+		return fmt.Errorf("bundle evidence payload is not JSON: %w", err)
+	}
+	signedCanonical, err := canonical(signedEvidence)
+	if err != nil {
+		return err
+	}
+	detachedCanonical, err := canonical(golden.Evidence)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(signedCanonical, detachedCanonical) {
+		return errors.New("signed evidence payload differs from the documented evidence")
+	}
+	if err := verifyBundleEvidence(signedEvidence, golden.ArtifactSetDigest); err != nil {
+		return err
+	}
+	timing := signedEvidence["timing"].(map[string]any)
 	deviceElapsed := timing["device_elapsed_ns"].(json.Number)
 	candidateUs, ok := reportDocument["candidate_us"].(json.Number)
 	if !ok {

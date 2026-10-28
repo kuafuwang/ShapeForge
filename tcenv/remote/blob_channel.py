@@ -421,8 +421,12 @@ class BlobStore:
             if manifest["state"] == STATE_QUARANTINE:
                 raise BlobError("failed_precondition", "blob is quarantined and cannot be reused")
             raise BlobError("failed_precondition", "blob is failed")
+        # ``ready_ttl_ms`` is documented as the lifetime of an *unleased*
+        # committed blob; a lease is what keeps the bytes readable, so an
+        # attached artifact must not expire underneath the job that owns it.
+        # ``sweep`` already skips leased blobs for the same reason.
         expires = manifest.get("expires_at_ms")
-        if isinstance(expires, int) and now >= expires:
+        if isinstance(expires, int) and now >= expires and not manifest.get("leases"):
             raise BlobError("not_found", "blob has expired")
 
     @staticmethod

@@ -336,6 +336,29 @@ def bundle_completeness_vectors(
         # refused before any span is even considered.
         ("logical-devices-disagree-with-the-list", mismatch),
         ("duplicate-declared-device", duplicate_device),
+        # ``null`` means "this vendor has no such dimension"; a negative number
+        # is not the same thing and must not be folded into it.
+        ("graph-only-rank-negative", with_shape(
+            devices=["device-0"], ranks=None, dies=None,
+            spans=[span("device-0", rank=-1, elapsed=1_250)], elapsed=1_250,
+        )),
+        ("graph-only-die-negative", with_shape(
+            devices=["device-0"], ranks=None, dies=None,
+            spans=[span("device-0", die=-1, elapsed=1_250)], elapsed=1_250,
+        )),
+        # Die-only and rank x die shapes are complete on their own coordinates.
+        ("die-only-two-dies", with_shape(
+            devices=["device-0"], ranks=None, dies=2,
+            spans=[span("device-0", die=0, elapsed=1_100),
+                   span("device-0", die=1, elapsed=1_300)], elapsed=1_300,
+        )),
+        ("rank-and-die-two-by-two", with_shape(
+            devices=["device-0"], ranks=2, dies=2,
+            spans=[span("device-0", rank=0, die=0, elapsed=1_100),
+                   span("device-0", rank=0, die=1, elapsed=1_150),
+                   span("device-0", rank=1, die=0, elapsed=1_250),
+                   span("device-0", rank=1, die=1, elapsed=1_300)], elapsed=1_300,
+        )),
     ]
     vectors: list[dict[str, Any]] = []
     for name, document in documents:
