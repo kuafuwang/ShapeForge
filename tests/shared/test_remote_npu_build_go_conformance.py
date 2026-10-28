@@ -436,6 +436,34 @@ def _apply_mutation(golden: dict, mutation: str) -> None:
                 {"path": module["path"], "sha256": module["sha256"]},
             ],
         )
+    elif mutation == "resource_generation_zero":
+        _resign_request_change(
+            golden,
+            lambda request: request["execution"]["device_group"].__setitem__(
+                "resource_generation", "0",
+            ),
+        )
+    elif mutation == "resource_generation_over_uint64":
+        _resign_request_change(
+            golden,
+            lambda request: request["execution"]["device_group"].__setitem__(
+                "resource_generation", "18446744073709551616",
+            ),
+        )
+    elif mutation == "timing_sources_empty":
+        _resign_request_change(
+            golden,
+            lambda request: request["execution"].__setitem__(
+                "required_timing_sources", [],
+            ),
+        )
+    elif mutation == "timing_sources_not_device_event":
+        _resign_request_change(
+            golden,
+            lambda request: request["execution"].__setitem__(
+                "required_timing_sources", ["HOST_WALL"],
+            ),
+        )
     elif mutation == "device_group_digest_not_hex":
         _resign_request_change(
             golden,
@@ -627,6 +655,12 @@ def _apply_mutation(golden: dict, mutation: str) -> None:
     ("device_group_digest_not_hex", "device_group.profile_digest must be 64 lowercase hexadecimal characters"),
     ("resource_generation_not_decimal", "resource_generation must be a canonical unsigned decimal string"),
     ("logical_devices_out_of_bounds", "execution.resources.logical_devices"),
+    # resource_generation is a uint64 with minimum 1, not a 20-digit shape.
+    ("resource_generation_zero", "resource_generation is outside its unsigned 64-bit bounds"),
+    ("resource_generation_over_uint64", "resource_generation is outside its unsigned 64-bit bounds"),
+    # required_timing_sources is a non-empty array of known sources.
+    ("timing_sources_empty", "requires at least one timing source"),
+    ("timing_sources_not_device_event", "supports only DEVICE_EVENT timing"),
 ])
 def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, reason):
     golden = copy.deepcopy(load_build_golden())
@@ -674,6 +708,10 @@ def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, rea
     ("device_group_digest_not_hex", "request"),
     ("resource_generation_not_decimal", "request"),
     ("logical_devices_out_of_bounds", "request"),
+    ("resource_generation_zero", "request"),
+    ("resource_generation_over_uint64", "request"),
+    ("timing_sources_empty", "request"),
+    ("timing_sources_not_device_event", "request"),
 ])
 def test_the_python_contract_rejects_the_same_tampered_vector(mutation, level):
     """The Go verifier is not stricter or looser than the production contract.
@@ -705,3 +743,59 @@ def test_the_python_contract_rejects_the_same_tampered_vector(mutation, level):
             measurement_kind="simulated", publication_allowed=False,
             report_status="ok", dialect=contracts.NPU_BUILD_DIALECT,
         )
+
+
+def test_the_uint64_boundary_generation_is_valid_on_both_sides(tmp_path):
+    """The bound is inclusive: 18446744073709551615 is a legal generation."""
+
+    golden = copy.deepcopy(load_build_golden())
+    _resign_request_change(
+        golden,
+        lambda request: request["execution"]["device_group"].__setitem__(
+            "resource_generation", "18446744073709551615",
+        ),
+    )
+    path = tmp_path / "boundary_generation.json"
+    path.write_text(json.dumps(golden), encoding="utf-8")
+    result = _run_verifier(path)
+    assert result.returncode == 0, result.stderr
+    assert "ok build" in result.stdout
+
+    from tcenv.remote import contracts
+
+    vector = golden["npu_build"]
+    document = contracts.request_digest_document(
+        vector["request"], source_bytes=b"", dialect=contracts.NPU_BUILD_DIALECT,
+    )
+    assert contracts.canonical_digest_document(document).decode("utf-8") == (
+        vector["request_canonical_json"]
+    )
+
+
+def test_a_duplicated_timing_source_normalises_like_the_contract(tmp_path):
+    """Both sides canonicalise the array (sorted, unique), not just validate it.
+
+    The frozen digest document already holds the canonical ``["DEVICE_EVENT"]``,
+    so a raw request that repeats the source can only verify when the verifier
+    applies the same normalisation the production contract applies.
+    """
+
+    golden = copy.deepcopy(load_build_golden())
+    vector = golden["npu_build"]
+    vector["request"]["execution"]["required_timing_sources"] = [
+        "DEVICE_EVENT", "DEVICE_EVENT",
+    ]
+    path = tmp_path / "duplicate_timing_source.json"
+    path.write_text(json.dumps(golden), encoding="utf-8")
+    result = _run_verifier(path)
+    assert result.returncode == 0, result.stderr
+
+    from tcenv.remote import contracts
+
+    document = contracts.request_digest_document(
+        vector["request"], source_bytes=b"", dialect=contracts.NPU_BUILD_DIALECT,
+    )
+    assert document["request"]["execution"]["required_timing_sources"] == ["DEVICE_EVENT"]
+    assert contracts.canonical_digest_document(document).decode("utf-8") == (
+        vector["request_canonical_json"]
+    )

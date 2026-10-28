@@ -1499,6 +1499,17 @@ func buildRequestDocument(request map[string]any) (map[string]any, error) {
 	); err != nil {
 		return nil, err
 	}
+	sources, err := normalizedTimingSources(execution["required_timing_sources"])
+	if err != nil {
+		return nil, err
+	}
+	normalizedExecution := make(map[string]any, len(execution))
+	for name, field := range execution {
+		normalizedExecution[name] = field
+	}
+	normalizedExecution["required_timing_sources"] = sources
+	canonicalRequest["execution"] = normalizedExecution
+	execution = normalizedExecution
 	deviceGroup, ok := execution["device_group"].(map[string]any)
 	if !ok {
 		return nil, errors.New("device_group is not an object")
@@ -1521,10 +1532,17 @@ func buildRequestDocument(request map[string]any) (map[string]any, error) {
 		}
 	}
 	generation, ok := deviceGroup["resource_generation"].(string)
-	if !ok || !buildDecimalPattern.MatchString(generation) || len(generation) > 20 ||
-		generation != strings.TrimLeft(generation, "0") && generation != "0" {
+	if !ok || !buildDecimalPattern.MatchString(generation) ||
+		(generation != strings.TrimLeft(generation, "0") && generation != "0") {
 		return nil, errors.New(
 			"device_group.resource_generation must be a canonical unsigned decimal string",
+		)
+	}
+	// The shape check above is not the bound: "0" and 2^64 both have a legal
+	// decimal form.  The generation is a uint64 with a minimum of one.
+	if parsed, err := strconv.ParseUint(generation, 10, 64); err != nil || parsed < 1 {
+		return nil, errors.New(
+			"device_group.resource_generation is outside its unsigned 64-bit bounds",
 		)
 	}
 	resources, ok := execution["resources"].(map[string]any)
@@ -1860,6 +1878,40 @@ var bundleMediaTypePattern = regexp.MustCompile(`^[A-Za-z0-9!#$&^_.+*/;= -]{1,16
 // buildDecimalPattern is the canonical unsigned decimal form (no sign, no
 // fraction, no leading zero unless the value is "0").
 var buildDecimalPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
+
+// buildTimingSources is the only timing source this contract can corroborate.
+var buildTimingSources = map[string]bool{"DEVICE_EVENT": true}
+
+// normalizedTimingSources validates the declared timing sources and returns the
+// canonical form (sorted, unique) the digest document carries, mirroring the
+// production contract instead of only checking the value in place.
+func normalizedTimingSources(value any) ([]any, error) {
+	raw, ok := value.([]any)
+	if !ok || len(raw) == 0 {
+		return nil, errors.New("execution requires at least one timing source")
+	}
+	seen := make(map[string]bool, len(raw))
+	for _, item := range raw {
+		source, err := buildText(item, "execution.required_timing_sources", 32)
+		if err != nil {
+			return nil, err
+		}
+		if !buildTimingSources[source] {
+			return nil, errors.New("P1 supports only DEVICE_EVENT timing")
+		}
+		seen[source] = true
+	}
+	names := make([]string, 0, len(seen))
+	for source := range seen {
+		names = append(names, source)
+	}
+	sort.Strings(names)
+	sources := make([]any, 0, len(names))
+	for _, source := range names {
+		sources = append(sources, source)
+	}
+	return sources, nil
+}
 
 // closedFields refuses a document whose field set is not exactly the versioned
 // one.  A build evidence that grew a field is an unreviewed identity even when

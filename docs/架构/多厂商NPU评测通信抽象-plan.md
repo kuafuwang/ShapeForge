@@ -1412,7 +1412,7 @@ request 不再要求 producer、让接收方重新丢掉 producer log/duration�
    `tests/support/golden/remote/npu_build_v5.json`）重建 v5 request digest 文档（`build`
    是 v4 之外唯一新增字段）、按闭集重建 provenance/producer 记录、重算
    `producer.evidence_sha256 = SHA256(canonical(producer evidence 文档))`，并复核 received
-   行的 reused/producer/artifacts/loaded/自有 duration/log 规则；55 条变异各自以**对应理由**
+   行的 reused/producer/artifacts/loaded/自有 duration/log 规则；59 条变异各自以**对应理由**
    被拒（provenance 版本/工具链/source sha/compile profile/build_host、build mode/schema、
    producer evidence_sha256/duration/log/status、evidence status/producer/provenance/
    loaded/log 复制/duration 0/未知字段/SOURCE entry sha/自洽改写 manifest、log 尺寸越界、
@@ -1480,13 +1480,22 @@ request 不再要求 producer、让接收方重新丢掉 producer log/duration�
    `resource_generation`）、`resources`（3 字段 + `logical_devices` 1..8、rank/die 1..64 或
    null）、`candidate_digest`（2 字段 + hex64）；新增 7 条一致重签变异（四类未知字段 +
    digest 非 hex + 非规范十进制 + logical_devices 越界），修复前同样都是 `rc=0`（已复现）。
+   **第七轮复核**又指出两处值域/语义缺口：`resource_generation` 只查十进制字形与长度，没有
+   `minimum=1` 与 uint64 上界，所以 `0` 与 `18446744073709551616` 都被接受（Python 报
+   `is outside its unsigned 64-bit bounds`，边界值 `18446744073709551615` 两端都接受）；
+   `required_timing_sources` 完全没校验，空数组与 `["HOST_WALL"]` 都被接受。修复：Go 用
+   `strconv.ParseUint` 实现 1..2^64-1（不再只靠 20 位长度），并对 timing source 实现与 Python
+   相同的数组、非空、元素为非空字符串且 ≤32 字节、只允许 `DEVICE_EVENT`、以及「排序去重」的
+   规范化（规范化后的数组才进入 request digest 文档）；新增 4 条负向一致重签变异（generation 0 /
+   2^64、空 sources、`HOST_WALL`）与 2 条正向用例（uint64 上界被两端接受、重复 source 被两端
+   规范化为 `["DEVICE_EVENT"]` 且 canonical JSON 与冻结值一致）。
    同一轮还把 artifact entry 的值域补进 Go：`bundleManifest` 现在校验 role 闭集
    （6 个公开 role）、media type 正则（`[A-Za-z0-9!#$&^_.+*/;= -]{1,160}`）、sha256 必须
    64 位小写 hex、size 在 `[0, 16000000]`、条目数 ≤64、声明总字节 ≤16 MB、path 的 240 字节 /
    16 段 / 控制字符 / 段首尾空白限制。新增 7 条一致重签的变异（未知 role、空 media type、
    非 hex sha、负 size、17 段 path、65 条目、18 MB 总字节）在 `19e5a41` 上全部 `rc=0`
    （role 那条改为「保留一个 SOURCE 与一个 module，只让额外条目 role 非法」后复现），修复后各自
-   按目标规则被拒。P1c 组因此变为 build grpc 28 / outbox 3 / contract 11 / go conformance 86 /
+   按目标规则被拒。P1c 组因此变为 build grpc 28 / outbox 3 / contract 11 / go conformance 96 /
    `test_source_builder.py` 15。
 6. **文档层缺陷与契约回归**：`_npu_execution_document` 的 media type 错误信息索引了旧表，
    `task_family=kernel_module` 配错 `source_media_type` 会抛 `KeyError` 而非 `ContractError`；
@@ -1499,8 +1508,8 @@ request 不再要求 producer、让接收方重新丢掉 producer log/duration�
    **已登记 profile 名**从登记表解析，请求命名另一个 compile profile 会在 worker 内被
    `toolchain_profile` 拒绝（不静默沿用），未知 profile 名按名拒绝。
 
-本轮测试：P1c 组（build grpc 28 / outbox 3 / contract 11 / go conformance 86 /
-`test_source_builder.py` 15 其中 7 条 `gpu`）合计 **143 passed**；P0/P0b/P1
+本轮测试：P1c 组（build grpc 28 / outbox 3 / contract 11 / go conformance 96 /
+`test_source_builder.py` 15 其中 7 条 `gpu`）合计 **153 passed**；P0/P0b/P1
 contract/grpc/cleanup/bundle + Go bundle conformance **214 passed**；旧 remote/gRPC/
 blob/conformance 组 **170 passed**；job/container/outbox 组 **265 passed, 1 skipped**；
 Metal 非 `gpu` 组 **449 passed, 2 skipped**（`test_triton_baseline` 按围栏 `ps` 限制失败）；
@@ -1511,7 +1520,7 @@ Metal 非 `gpu` 组 **449 passed, 2 skipped**（`test_triton_baseline` 按围栏
 transport 值域（inline 不许带 blob 引用、blob 描述符的 content_id/size/media_type/chunk_size
 绑定）、大小写/NFKC 别名去重与「一个 path 是另一个 path 的父」冲突
 （`_alias_key`/`_check_path_prefixes`）、以及 evidence 文档自身的字段闭集与
-`topology`/`spans`/`buffer` 的值域和 evaluator 内构建、`compile_failed`、`not_run` 三种
+`topology`/`spans`/`buffer` 的值域（request 侧的值域与字段闭集已补齐）和 evaluator 内构建、`compile_failed`、`not_run` 三种
 evidence 形态，目前仍只由 Python 侧校验；Go 只覆盖 prebuilt+reused 向量。这些是已知缺口，
 不是已验证等价。真机证据仍只有一次有效/一次无效编译与两条身份回归，没有 benchmark；
 `language_version` 的 2 行 probe 是 Metal 自身的版本探测（已如实记录，未做设备权限隔离）；
