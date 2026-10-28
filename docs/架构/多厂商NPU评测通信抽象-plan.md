@@ -993,7 +993,8 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
 
 **P1 复核修复（第二轮，2026-10-29；仍无真实设备）**
 
-第二轮独立复核又逐项复现了 7 个问题，全部先留下能失败的回归再修：
+第二轮独立复核又逐项复现了 7 个问题，全部先留下能失败的回归再修（第 3 项的 dispatch 守卫在
+第三轮被补全，见该项末尾；其余各项在第二轮即闭合）：
 
 1. **`materialize` 仍有父目录 symlink 的 TOCTOU（确认，已修）**。复现：在「逐段检查」之后、
    写入之前把已检查的 `graph` 目录换成指向根外的链接（脚本注入），旧实现虽随后因第二项报
@@ -1018,10 +1019,20 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
    新增的 lease。回归：`test_retry_refuses_a_blob_that_is_no_longer_ready`（job 仍是同一个
    interrupted attempt）。(b) 崩溃留下 `accepted`、尚未 enqueue 的 blob job，无 `blob_store`
    重开时仍会调度并真的 create 出 worker。修复：`_run_worker` 在 `supervisor.create` 前再查一次
-   artifact（`_unservable_artifact_error`），不可服务就把 attempt 以
-   `artifact_unavailable` 失败掉，不建进程、不碰设备。回归：
+   artifact，不可服务就把 attempt 以 `artifact_unavailable` 失败掉，不建进程、不碰设备。回归：
    `test_a_recovered_accepted_bundle_job_never_spawns_a_worker_without_the_channel`（直接建
    accepted 行再重开，断言 `worker_pid is None`、服务无 submission、failure code 正确）。
+   第三轮复核补：该 dispatch 守卫当时只查 `blob_store is None`，没有逐项复验 blob。复现：上传
+   ready blob → 按真实 Submit 顺序 `_lease_blob` 后直接建 accepted 行（崩溃窗口）→
+   `store.release(request_id)` 删除 artifact → 关闭并在**保留 channel** 的前端重开，实际仍
+   create 并启动了 worker（`failure.code=worker_failed`、message 为 worker exited 17、
+   `worker_pid` 非空）。修复：`_unservable_artifact_error` 通过新增的
+   `JobStore.job_blob_scope` 取 job 行的 blob scope，对每个 descriptor 复核 ready、descriptor
+   一致、lease 仍属本 request，失败原因写进 `artifact_unavailable` 的 message。回归：
+   `test_a_recovered_accepted_job_with_a_deleted_blob_is_refused_at_dispatch` 与
+   `test_a_recovered_accepted_job_with_a_quarantined_blob_is_refused_at_dispatch`（都断言
+   `worker_pid is None`、服务无 submission、failure 为 `artifact_unavailable`）；新 job 的
+   ready/scope/descriptor/lease 校验与终态无 channel replay 语义保持不变。
 4. **Go conformance 两处语义缺口（确认，已修）**。(a) `verifyEvidenceCompleteness` 不检查
    `topology.logical_devices` 与 declared 列表长度、不拒重复设备：把主 evidence 的
    `logical_devices` 改成 2（仍只有一个设备/span）后 Python 拒绝而 `go run .` 仍 `ok`。修复：
@@ -1053,8 +1064,8 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
    `test_close_finishes_even_when_the_store_cannot_list_live_jobs`。
 
 第二轮证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **53 passed**、
-`test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **27 passed**、
-`test_remote_npu_bundle_go_conformance.py` **15 passed**（合计 103）；P0/P0b 170、旧
+`test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **29 passed**、
+`test_remote_npu_bundle_go_conformance.py` **15 passed**（合计 105）；P0/P0b 170、旧
 gRPC/conformance/evidence 87、job/recovery/container/outbox 265 passed/1 skipped 与本轮一致；
 `selfcheck_bridge` 默认围栏 18 failed/1 passed（未改测试）、`TMPDIR=/tmp` 19 passed；
 `generate_evaluator_proto.py --check` 通过（未改 proto）；全套安全套件 **2474 passed / 6 skipped
@@ -1066,8 +1077,8 @@ gRPC/conformance/evidence 87、job/recovery/container/outbox 265 passed/1 skippe
 （close 回归转失败）、把 Go 换回上一版（两个 Go 回归分别转失败）。
 
 修复后证据（每条命令单独跑）：`test_remote_npu_bundle_contract.py` **53 passed**、
-`test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **27 passed**、
-`test_remote_npu_bundle_go_conformance.py` **15 passed**（合计 103）；P0/P0b 回归
+`test_remote_npu_bundle_grpc.py` **8 passed**、`test_remote_npu_bundle_cleanup.py` **29 passed**、
+`test_remote_npu_bundle_go_conformance.py` **15 passed**（合计 105）；P0/P0b 回归
 `test_remote_npu_{contract,grpc,cleanup}.py` +
 `test_remote_blob_{channel,contract,grpc,go_conformance}.py` **170 passed**；
 `test_remote_grpc_{adapter,tls,contract,revocation}.py` + `test_remote_{conformance,

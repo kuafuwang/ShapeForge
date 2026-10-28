@@ -822,7 +822,9 @@ class JobEngine:
     def _blob_scope(self, grant_token: str) -> BlobScope:
         """Bind the blob scope to this frontend's identity plus the live grant."""
 
-        scope = self.store.blob_scope(grant_token)
+        return self._blob_scope_document(self.store.blob_scope(grant_token))
+
+    def _blob_scope_document(self, scope: Mapping[str, str]) -> BlobScope:
         return BlobScope(
             site_id=self.identity.site_id, device_id=self.identity.device_id,
             target_id=scope["target_id"], subject=scope["subject"],
@@ -864,10 +866,12 @@ class JobEngine:
     def _unservable_artifact_error(self, request: ExternalEvaluationRequest) -> str:
         """Why this frontend cannot run the request's artifact (empty = it can).
 
-        The submit/retry paths check this before a job or attempt exists; the
-        scheduler asks again before ``supervisor.create`` so a job recovered from
-        a crash (or a frontend whose configuration changed) can never spawn a
-        worker that is guaranteed to fail on the missing artifact channel.
+        The submit/retry paths prove the whole artifact through ``_lease_blob``
+        before a job or attempt exists.  The scheduler asks again before
+        ``supervisor.create``, and it has to re-prove the *bytes*, not just the
+        channel's presence: a job recovered from a crash (or an artifact an
+        operator released) must fail closed instead of spawning a worker that can
+        only exit on a deleted blob.
         """
 
         descriptors = self._artifact_blobs(request)
@@ -875,6 +879,29 @@ class JobEngine:
             return ""
         if self.blob_store is None:
             return "this evaluator has no blob channel; a blob-backed artifact cannot be run"
+        try:
+            scope = self._blob_scope_document(
+                self.store.job_blob_scope(request.request_id),
+            )
+        except Exception as exc:  # noqa: BLE001 - no scope means no proof
+            return f"the job's blob scope cannot be resolved: {exc}"
+        for descriptor in descriptors:
+            content_id = str(descriptor.get("content_id") or "")
+            try:
+                state = self.blob_store.state(scope, content_id)
+            except BlobError as exc:
+                return f"blob {content_id} is not available: {exc.detail}"
+            except Exception as exc:  # noqa: BLE001 - an unreadable artifact is not proof
+                return f"blob {content_id} is not readable: {exc}"
+            if not state.ready:
+                return f"blob {content_id} is {state.state}; only a ready artifact can run"
+            if state.descriptor != descriptor:
+                return (
+                    f"blob {content_id} no longer matches the descriptor this job "
+                    "was admitted with"
+                )
+            if request.request_id not in state.leases:
+                return f"blob {content_id} is not leased to this job any more"
         return ""
 
     def _lease_blob(

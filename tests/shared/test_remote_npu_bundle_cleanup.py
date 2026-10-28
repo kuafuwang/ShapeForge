@@ -880,3 +880,106 @@ def test_close_finishes_even_when_the_store_cannot_list_live_jobs(tmp_path):
     # The store was still closed, so a later read fails closed instead of hanging.
     with pytest.raises(JobError, match="closed"):
         engine.store.live_request_ids()
+
+
+def test_a_recovered_accepted_job_with_a_deleted_blob_is_refused_at_dispatch(tmp_path):
+    """Keeping the channel is not enough: every blob must still be runnable.
+
+    The crash window is between the durable insert and ``enqueue_accepted``, and
+    the operator has since released (deleted) the artifact.  The frontend keeps
+    its blob channel, so a guard that only asks "is there a store?" would let the
+    scheduler create and start a worker that can only exit on the missing bytes.
+    """
+
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+
+    root = tmp_path / "run"
+    engine, controller, store = _blob_engine(root)
+    del controller
+    blob = _upload(engine, b"G" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 8))
+    request = npu_bundle_request("bundle-recovered-gone", bundle=_blob_bundle([blob], b"unused"))
+    capability = npu_bundle_capabilities(engine)
+    # Real Submit order: lease first, then the durable insert.  The row is left
+    # ``accepted`` on purpose, which is exactly the crash window.
+    lease = engine._lease_blob(request, NPU_TOKEN)
+    assert lease is not None and lease.content_ids == (blob["content_id"],)
+    snapshot, created = engine.store.submit(
+        request=request, request_digest=request.request_digest,
+        expected=engine.expected_identities, provenance=engine._base_provenance(),
+        capability_id=capability.capability_id,
+        required_features=list(npu_bundle_features(blob=True)), grant_token=NPU_TOKEN,
+    )
+    assert created is True and snapshot.state == "accepted"
+    # The artifact is gone before the recovered frontend ever dispatches it.
+    store.release(request.request_id)
+    assert store.usage()["blobs"] == 0
+    engine.close(wait=5)
+
+    reopened, reopened_controller, _reopened_store = _blob_engine(root)
+    try:
+        assert reopened.blob_store is not None
+        deadline = time.monotonic() + 20
+        current = None
+        while time.monotonic() < deadline:
+            current = npu_bundle_get(reopened, request)
+            if current.state in {"interrupted", "failed", "completed", "cancelled"}:
+                break
+            time.sleep(0.02)
+        assert current.state == "interrupted", current
+        # No worker was created or started for a blob that no longer exists.
+        assert current.failure.code == "artifact_unavailable", current.failure
+        assert current.current_attempt.worker_pid is None
+        assert reopened_controller.service.submissions() == {}
+    finally:
+        reopened.close(wait=5)
+
+
+def test_a_recovered_accepted_job_with_a_quarantined_blob_is_refused_at_dispatch(tmp_path):
+    """A channel plus an unreadable artifact is still not a runnable attempt.
+
+    The bytes could not be deleted when the operator released the lease, so the
+    blob sits in quarantine: the dispatch guard must refuse it for the same
+    reason as a deleted one, before any worker exists.
+    """
+
+    from tcenv.remote.artifact_bundle import MAX_BUNDLE_INLINE_ENTRY_BYTES
+    from tests.support.blob_sim.faults import FaultIO
+
+    root = tmp_path / "run"
+    io = FaultIO()
+    engine, controller, store = _fault_blob_engine(root, io)
+    del controller
+    blob = _upload(engine, b"Z" * (MAX_BUNDLE_INLINE_ENTRY_BYTES + 8))
+    request = npu_bundle_request("bundle-recovered-bad", bundle=_blob_bundle([blob], b"unused"))
+    capability = npu_bundle_capabilities(engine)
+    lease = engine._lease_blob(request, NPU_TOKEN)
+    assert lease is not None
+    snapshot, created = engine.store.submit(
+        request=request, request_digest=request.request_digest,
+        expected=engine.expected_identities, provenance=engine._base_provenance(),
+        capability_id=capability.capability_id,
+        required_features=list(npu_bundle_features(blob=True)), grant_token=NPU_TOKEN,
+    )
+    assert created is True and snapshot.state == "accepted"
+    io.fail("remove", times=1)
+    records = store.release(request.request_id)
+    assert records and records[0]["cleanup"] == "quarantine"
+    scope = _scope(engine)
+    assert store.state(scope, blob["content_id"]).state == "quarantine"
+    engine.close(wait=5)
+
+    reopened, reopened_controller, _reopened_store = _blob_engine(root)
+    try:
+        deadline = time.monotonic() + 20
+        current = None
+        while time.monotonic() < deadline:
+            current = npu_bundle_get(reopened, request)
+            if current.state in {"interrupted", "failed", "completed", "cancelled"}:
+                break
+            time.sleep(0.02)
+        assert current.state == "interrupted", current
+        assert current.failure.code == "artifact_unavailable", current.failure
+        assert current.current_attempt.worker_pid is None
+        assert reopened_controller.service.submissions() == {}
+    finally:
+        reopened.close(wait=5)

@@ -1550,6 +1550,33 @@ class JobStore:
                 )
             ]
 
+    def job_blob_scope(self, request_id: str) -> dict[str, str]:
+        """The blob scope a durable job was admitted under, without its token.
+
+        ``Cancel``/``Retry`` and the dispatch guard run after the grant may be
+        gone, so the artifact check reads the scope the row was accepted with
+        instead of asking for a token again.  It is the same document the grant
+        scope produced, so the blob store's scope comparison still applies.
+        """
+
+        with self._lock:
+            self._ensure_available()
+            row = self._conn.execute(
+                "SELECT grant_subject, grant_scope_json FROM jobs WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            if row is None:
+                raise JobError("not_found", "job does not exist", request_id=request_id)
+            scope = _loads(row["grant_scope_json"])
+            if not isinstance(scope, dict):
+                raise StateCorrupt("stored job grant scope is corrupt")
+            return {
+                "subject": str(row["grant_subject"]),
+                "run_id": str(scope["run_id"]),
+                "session_id": str(scope["session_id"]),
+                "target_id": str(scope["target_id"]),
+            }
+
     def stored_request(self, request_id: str) -> ExternalEvaluationRequest | None:
         """The typed request of a durable job (read-only artifact guard).
 
