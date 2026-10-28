@@ -19,6 +19,8 @@ golden/
 └── remote/
     ├── evaluator_v1.json
     ├── npu_blob_v3.json            # P0b blob-reference contract 向量（Go 独立重建）
+    ├── npu_bundle_v4.json          # P1 bundle contract 向量（Go 独立重建）
+    ├── npu_build_v5.json           # P1c build contract 向量（Go 独立重建 request/producer/evidence）
     └── evaluator_v1_baseline.desc  # v1 schema compatibility baseline，不是运行时输入
 ```
 

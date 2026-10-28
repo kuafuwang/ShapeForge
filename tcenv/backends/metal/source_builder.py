@@ -10,6 +10,9 @@ in this process.  This builder is a production implementation of the unified
   behaviour, the ``MetalCompileError`` classification and the measured
   ``compile_s``/``pipeline_s``/``language_version`` values are the ones the Metal
   evaluator already reports;
+* a candidate compile failure is a typed ``compile`` failure that keeps the
+  compiler's own diagnostic as a bounded log *and* the real elapsed compile
+  time, so a failed build is never a bare one-liner with ``duration_ms=0``;
 * the executable is expressed as a backend-native artifact
   (``NativeExecutable``: a live pipeline handle plus a canonical descriptor and
   digest), never as fabricated module bytes and never as an NPU artifact set;
@@ -44,6 +47,44 @@ from ...remote.artifact_bundle import ArtifactBundle, NativeExecutable
 METAL_BUILDER_ID = "metal-source-builder"
 METAL_TOOLCHAIN_ID = "apple-metal"
 METAL_PROFILE_NAME = "metal-msl-control-host-v1"
+#: A compile-failure log is a diagnostic, not an artifact: it is bounded so a
+#: pathological compiler message cannot grow the attempt's memory without limit.
+MAX_COMPILE_FAILURE_LOG_BYTES = 64 * 1024
+
+
+def _compile_failure_log(
+    *, kernel_name: str, math: str, device: str, language: str,
+    header_lines: int, assembled_sha256: str, error_name: str,
+    message: str, raw_message: str, compile_s: float,
+) -> bytes:
+    """The real compiler diagnostic of a failed Metal build, as a durable log.
+
+    The successful path records ``compile_s``/``pipeline_s``/``language`` and the
+    assembled digest in its log; a failed compilation has to carry the same kind
+    of provenance or the only record of *why* the candidate failed would be a
+    truncated one-line message.  The diagnostic is the compiler's own text (the
+    rewritten form the evaluator reports, plus the raw text when the rewrite
+    changed it), never a summary invented here.
+    """
+
+    lines = [
+        f"metal: kernel={kernel_name} math={math} device={device} "
+        f"language={language} header_lines={header_lines} "
+        f"assembled_sha256={assembled_sha256}\n",
+        f"metal: status=compile_failed error={error_name} "
+        f"compile_s={compile_s:.6f} pipeline=not_run\n",
+        "metal: diagnostic:\n",
+        message if message.endswith("\n") else f"{message}\n",
+    ]
+    if raw_message and raw_message != message:
+        lines.append("metal: raw diagnostic:\n")
+        lines.append(raw_message if raw_message.endswith("\n") else f"{raw_message}\n")
+    log = "".join(lines).encode("utf-8", "replace")
+    if len(log) > MAX_COMPILE_FAILURE_LOG_BYTES:
+        # Keep the head (identity + first diagnostics) and say it was cut.
+        marker = b"\nmetal: diagnostic truncated by the builder\n"
+        log = log[: MAX_COMPILE_FAILURE_LOG_BYTES - len(marker)] + marker
+    return log
 
 
 def _binding_document(binding: Any) -> dict[str, Any]:
@@ -102,9 +143,13 @@ class MetalSourceBuilder:
         """Report the identity of the Metal toolchain on *this* machine.
 
         The probe allocates the real context (that is what "can this host build"
-        means) but never compiles a candidate.  An unavailable device makes the
-        profile unavailable, which is a pre-Submit refusal, never a compile
-        failure attributed to the candidate.
+        means) but never compiles a candidate.  ``MetalContext.info()`` calls
+        ``language_version()``, which compiles one *fixed* four-line MSL library
+        in order to pick the highest MSL version this device accepts; that is a
+        version probe (library only, no pipeline, no candidate bytes, no kernel
+        launch), not a build.  It needs the same Metal device access a build
+        needs, so on a host without a device the profile is unavailable, which is
+        a pre-Submit refusal, never a compile failure attributed to the candidate.
         """
 
         try:
@@ -159,21 +204,41 @@ class MetalSourceBuilder:
         # unexpected exception (device lost, driver bug, MemoryError) must stay
         # an infrastructure failure and must not be blamed on the candidate.
         compile_error = self.backend.compile_error()
+        compile_started = time.monotonic()
         try:
             compiled = self.backend.compile(context, assembled, contract, math=self.math)
         except compile_error as exc:
             # The legacy evaluator turns this same exception into
             # `status=compile_error`, so the unified classification is `compile`
-            # and never infrastructure/timeout.
-            message = str(exc)
+            # and never infrastructure/timeout.  The report text is unchanged
+            # (``type: message``, rewritten compiler lines), but the failure now
+            # also carries the real diagnostic as a bounded log and the real
+            # elapsed time, so a compile failure is not a bare one-liner with
+            # ``duration_ms=0``.
+            raw_message = str(exc)
+            message = raw_message
             rewrite = getattr(self.backend, "rewrite_compiler_lines", None)
             if callable(rewrite):
                 try:
                     message = rewrite(contract, message, header_lines)
                 except Exception:  # noqa: BLE001 - diagnostics must not mask the failure
-                    pass
+                    message = raw_message
+            elapsed_s = max(0.0, time.monotonic() - compile_started)
             raise BuildError(
                 "compile", f"{type(exc).__name__}: {message}"[:500],
+                log=_compile_failure_log(
+                    kernel_name=kernel_name, math=self.math,
+                    device=str(info.get("name") or "unknown"),
+                    language=str(info.get("language_version") or "unknown"),
+                    header_lines=header_lines,
+                    assembled_sha256=hashlib.sha256(assembled.encode("utf-8")).hexdigest(),
+                    error_name=type(exc).__name__, message=message,
+                    raw_message=raw_message, compile_s=elapsed_s,
+                ),
+                # A build that ran is at least one millisecond: ``0`` is the
+                # contract's "did not run" duration and must not be reused for
+                # a real failure.
+                duration_ms=max(1, int(round(elapsed_s * 1000))),
             ) from exc
         compiled_language = str(getattr(compiled, "language_version", "") or "")
         if compiled_language and profile.toolchain_version not in ("unknown", compiled_language):

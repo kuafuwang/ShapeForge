@@ -25,6 +25,7 @@ import (
 type Golden struct {
 	Blob                  *BlobGolden     `json:"npu_blob"`
 	Bundle                *BundleGolden   `json:"npu_bundle"`
+	Build                 *BuildGolden    `json:"npu_build"`
 	SourceBase64          string          `json:"source_base64"`
 	Request               map[string]any  `json:"request"`
 	RequestDigestDocument map[string]any  `json:"request_digest_document"`
@@ -1195,6 +1196,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "golden has trailing JSON")
 		os.Exit(1)
 	}
+	if golden.Build != nil {
+		if err := verifyBuild(golden.Build); err != nil {
+			fmt.Fprintln(os.Stderr, "Go build contract verification failed:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("ok build artifact_set=%s request=%s receipt=%s producer=%s\n",
+			golden.Build.ArtifactSetDigest, golden.Build.RequestDigest,
+			golden.Build.Receipt.ReceiptID, golden.Build.ProducerRecord["evidence_sha256"])
+		return
+	}
 	if golden.Bundle != nil {
 		if err := verifyBundle(golden.Bundle); err != nil {
 			fmt.Fprintln(os.Stderr, "Go bundle contract verification failed:", err)
@@ -1220,4 +1231,482 @@ func main() {
 	}
 	fmt.Printf("ok request=%s receipt=%s signature=%s\n",
 		golden.RequestDigest, golden.Receipt.ReceiptID, golden.Signature.HMACSHA256)
+}
+
+// -- P1c build contract (document version 5) ------------------------------
+
+// BuildGolden freezes the P1c build-contract documents.  The Go side rebuilds
+// the request digest document (including the independent `build` field), the
+// producer evidence link and the received build-evidence rules from the raw
+// fields, so the Python validator is not the only implementation of this
+// contract.
+type BuildGolden struct {
+	Request               map[string]any `json:"request"`
+	ProducerEvidence      map[string]any `json:"producer_evidence"`
+	ProducerRecord        map[string]any `json:"producer_record"`
+	BundleManifest        map[string]any `json:"bundle_manifest"`
+	ArtifactSetDigest     string         `json:"artifact_set_digest"`
+	RequestDigestDocument map[string]any `json:"request_digest_document"`
+	RequestCanonicalJSON  string         `json:"request_canonical_json"`
+	RequestDigest         string         `json:"request_digest"`
+	Receipt               ReceiptGolden  `json:"receipt"`
+	Evidence              map[string]any `json:"evidence"`
+}
+
+var buildRequestFields = []string{
+	"kind", "run_id", "session_id", "task", "dtype", "size", "target_id",
+	"task_fingerprint", "candidate_digest", "execution", "artifact", "build",
+	"mode", "seed", "reps", "queue_timeout_ms", "candidate_timeout_ms", "cases",
+	"fast_bench", "require_contract_launch", "validate", "measure_serial", "cache_policy",
+}
+
+var buildDocumentFields = []string{"schema_id", "mode", "provenance", "producer"}
+
+var buildProvenanceFields = []string{
+	"schema_id", "builder_id", "builder_version", "build_host", "build_profile",
+	"toolchain", "compile_profile", "source_sha256", "artifact_set_digest",
+}
+
+var buildProducerRecordFields = []string{
+	"schema_id", "status", "mode", "duration_ms", "log", "evidence_sha256",
+}
+
+// buildProvenanceDocument rebuilds the provenance identity field by field.  The
+// closed field set is the point: a provenance that grew a field the request
+// digest does not cover would be an unreviewed identity.
+func buildProvenanceDocument(value any, artifactSet string, sourceSHA string) (map[string]any, error) {
+	provenance, ok := value.(map[string]any)
+	if !ok {
+		return nil, errors.New("build provenance is not an object")
+	}
+	if len(provenance) != len(buildProvenanceFields) {
+		return nil, fmt.Errorf(
+			"build provenance has %d fields, want %d", len(provenance), len(buildProvenanceFields),
+		)
+	}
+	document := make(map[string]any, len(buildProvenanceFields))
+	for _, name := range buildProvenanceFields {
+		field, present := provenance[name]
+		if !present {
+			return nil, fmt.Errorf("build provenance field %s is missing", name)
+		}
+		document[name] = field
+	}
+	if document["schema_id"] != "tcenv.remote.npu-build.provenance.1" {
+		return nil, errors.New("build provenance schema id is not the version 1 identity")
+	}
+	if document["build_host"] != "control_host" && document["build_host"] != "evaluator" {
+		return nil, errors.New("build provenance build_host is not a known placement")
+	}
+	toolchain, ok := document["toolchain"].(map[string]any)
+	if !ok || len(toolchain) != 3 {
+		return nil, errors.New("build provenance toolchain is not {id,version,sdk_version}")
+	}
+	for _, name := range []string{"id", "version", "sdk_version"} {
+		if _, present := toolchain[name]; !present {
+			return nil, fmt.Errorf("build provenance toolchain field %s is missing", name)
+		}
+	}
+	if sourceSHA != "" && document["source_sha256"] != sourceSHA {
+		return nil, errors.New("build provenance source_sha256 does not bind the SOURCE entry")
+	}
+	if artifactSet != "" && document["artifact_set_digest"] != artifactSet {
+		return nil, errors.New("build provenance artifact_set_digest does not bind the artifact set")
+	}
+	return document, nil
+}
+
+// buildRequestDocument rebuilds the version-5 request digest document.  It is
+// the version-4 bundle document plus exactly one independent field, `build`;
+// every other field set and the digest algorithm are unchanged.
+func buildRequestDocument(request map[string]any) (map[string]any, error) {
+	if len(request) != len(buildRequestFields) {
+		return nil, fmt.Errorf(
+			"build request has %d fields, want %d", len(request), len(buildRequestFields),
+		)
+	}
+	canonicalRequest := make(map[string]any, len(buildRequestFields))
+	for _, name := range buildRequestFields {
+		value, present := request[name]
+		if !present {
+			return nil, fmt.Errorf("build request field %s is missing", name)
+		}
+		canonicalRequest[name] = value
+	}
+	artifact, ok := canonicalRequest["artifact"].(map[string]any)
+	if !ok || len(artifact) != 1 {
+		return nil, errors.New("artifact must carry exactly one branch")
+	}
+	bundle, ok := artifact["bundle"].(map[string]any)
+	if !ok {
+		return nil, errors.New("this vector must carry the bundle branch")
+	}
+	execution, ok := canonicalRequest["execution"].(map[string]any)
+	if !ok {
+		return nil, errors.New("execution is not an object")
+	}
+	if execution["schema_id"] != "tcenv.remote.npu-bundle.execution.1" ||
+		execution["task_family"] != "kernel_module" ||
+		execution["artifact_kind"] != "bundle" ||
+		execution["launch_kind"] != "KERNEL" ||
+		execution["launch_subtype"] != "SIMT" ||
+		execution["synchronization"] != "stream-event" {
+		return nil, errors.New("execution shape is not the prebuilt kernel_module shape")
+	}
+	schemaID, ok := bundle["schema_id"].(string)
+	if !ok {
+		return nil, errors.New("bundle schema id is not a string")
+	}
+	entries, ok := bundle["entries"].([]any)
+	if !ok {
+		return nil, errors.New("bundle entries are not an array")
+	}
+	manifest, err := bundleManifest(schemaID, entries)
+	if err != nil {
+		return nil, err
+	}
+	manifestBytes, err := canonical(manifest)
+	if err != nil {
+		return nil, fmt.Errorf("bundle manifest canonicalization: %w", err)
+	}
+	artifactSet := shaHex(manifestBytes)
+	if bundle["artifact_set_digest"] != artifactSet {
+		return nil, errors.New("bundle artifact_set_digest does not bind the manifest")
+	}
+	candidate, ok := canonicalRequest["candidate_digest"].(map[string]any)
+	if !ok {
+		return nil, errors.New("candidate_digest is not an object")
+	}
+	if candidate["algorithm"] != "sha256-bundle-v1" || candidate["value"] != artifactSet {
+		return nil, errors.New("candidate digest does not bind the artifact set")
+	}
+	sourceSHA := ""
+	for _, raw := range entries {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			return nil, errors.New("bundle entry is not an object")
+		}
+		if entry["role"] == "SOURCE" {
+			sha, ok := entry["sha256"].(string)
+			if !ok {
+				return nil, errors.New("SOURCE entry sha256 is not a string")
+			}
+			sourceSHA = sha
+		}
+	}
+	if sourceSHA == "" {
+		return nil, errors.New("a prebuilt artifact set requires a SOURCE entry")
+	}
+	build, ok := canonicalRequest["build"].(map[string]any)
+	if !ok {
+		return nil, errors.New("build is not an object")
+	}
+	if len(build) != len(buildDocumentFields) {
+		return nil, fmt.Errorf(
+			"build document has %d fields, want %d", len(build), len(buildDocumentFields),
+		)
+	}
+	for _, name := range buildDocumentFields {
+		if _, present := build[name]; !present {
+			return nil, fmt.Errorf("build field %s is missing", name)
+		}
+	}
+	if build["schema_id"] != "tcenv.remote.npu-build.build-request.1" {
+		return nil, errors.New("build schema id is not the version 1 identity")
+	}
+	if build["mode"] != "prebuilt" && build["mode"] != "evaluator" {
+		return nil, errors.New("build mode is not prebuilt or evaluator")
+	}
+	if build["mode"] == "prebuilt" && build["producer"] == nil {
+		return nil, errors.New("a prebuilt build request requires the producer evidence link")
+	}
+	if _, err := buildProvenanceDocument(build["provenance"], artifactSet, sourceSHA); err != nil {
+		return nil, err
+	}
+	if raw, present := build["producer"]; present && raw != nil {
+		record, ok := raw.(map[string]any)
+		if !ok || len(record) != len(buildProducerRecordFields) {
+			return nil, errors.New("producer link is not the closed record shape")
+		}
+		for _, name := range buildProducerRecordFields {
+			if _, present := record[name]; !present {
+				return nil, fmt.Errorf("producer link field %s is missing", name)
+			}
+		}
+		if record["schema_id"] != "tcenv.remote.npu-build.producer-evidence-link.1" {
+			return nil, errors.New("producer link schema id is not the version 1 identity")
+		}
+		if record["status"] != "ok" || record["mode"] != "prebuilt" {
+			return nil, errors.New(
+				"a prebuilt producer link must describe a successful control-host compile",
+			)
+		}
+	}
+	return map[string]any{
+		"document_type":    "tcenv.remote.npu-build.request-digest",
+		"document_version": 5,
+		"digest_algorithm": "sha256-rfc8785-v1",
+		"request":          canonicalRequest,
+	}, nil
+}
+
+// buildProducerDigest recomputes the producer link's evidence digest from the
+// producer's own evidence document.  This is the cross-language half of the
+// closure the Python side emits: the link is only a link if the document it
+// names hashes to the value it carries.
+func buildProducerDigest(document map[string]any) (string, error) {
+	encoded, err := canonical(document)
+	if err != nil {
+		return "", err
+	}
+	return shaHex(encoded), nil
+}
+
+// sameDocument compares two raw JSON values by their canonical encodings.
+func sameDocument(left, right any) (bool, error) {
+	leftBytes, err := canonical(left)
+	if err != nil {
+		return false, err
+	}
+	rightBytes, err := canonical(right)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(leftBytes, rightBytes), nil
+}
+
+func buildNumber(value any, name string) (int64, error) {
+	number, ok := value.(json.Number)
+	if !ok {
+		return 0, fmt.Errorf("%s is not an integer", name)
+	}
+	parsed, err := strconv.ParseInt(number.String(), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s is not an integer: %w", name, err)
+	}
+	return parsed, nil
+}
+
+// verifyBuildEvidence re-derives the received (prebuilt) build-evidence rules:
+// the artifact set is reused, it repeats the accepted producer link, the link
+// hashes its own producer evidence, the manifest and load record cover the
+// executable module, and the receiver recorded its own verify/load cost.
+func verifyBuildEvidence(
+	evidence, requestBuild, producerEvidence map[string]any, artifactSet string,
+) error {
+	build, ok := evidence["build"].(map[string]any)
+	if !ok {
+		return errors.New("evidence build document is missing")
+	}
+	if build["schema_id"] != "tcenv.remote.npu-build.evidence.1" {
+		return errors.New("build evidence schema id is not the version 1 identity")
+	}
+	if build["mode"] != "prebuilt" {
+		return errors.New("this vector carries the prebuilt timing")
+	}
+	if build["status"] != "reused" {
+		return errors.New("a received prebuilt artifact set must be reported as reused")
+	}
+	if build["error_class"] != nil {
+		return errors.New("a reused artifact set has no build error")
+	}
+	provenance, err := buildProvenanceDocument(build["provenance"], artifactSet, "")
+	if err != nil {
+		return err
+	}
+	expectedProvenance, err := buildProvenanceDocument(requestBuild["provenance"], artifactSet, "")
+	if err != nil {
+		return err
+	}
+	for _, name := range buildProvenanceFields {
+		if name == "artifact_set_digest" {
+			continue
+		}
+		same, err := sameDocument(provenance[name], expectedProvenance[name])
+		if err != nil {
+			return err
+		}
+		if !same {
+			return fmt.Errorf("build evidence %s differs from the accepted request", name)
+		}
+	}
+	producer, ok := build["producer"].(map[string]any)
+	if !ok {
+		return errors.New("a reused artifact set requires the producer evidence link")
+	}
+	requestProducer, ok := requestBuild["producer"].(map[string]any)
+	if !ok {
+		return errors.New("the accepted request has no producer link")
+	}
+	same, err := sameDocument(producer, requestProducer)
+	if err != nil {
+		return err
+	}
+	if !same {
+		return errors.New("the received build evidence does not repeat the accepted producer link")
+	}
+	digest, err := buildProducerDigest(producerEvidence)
+	if err != nil {
+		return err
+	}
+	if producer["evidence_sha256"] != digest {
+		return errors.New("the producer link does not bind its own evidence document")
+	}
+	if producer["duration_ms"] != producerEvidence["duration_ms"] {
+		return errors.New("the producer link duration differs from the producer evidence")
+	}
+	sameLog, err := sameDocument(producer["log"], producerEvidence["log"])
+	if err != nil {
+		return err
+	}
+	if !sameLog {
+		return errors.New("the producer link log differs from the producer evidence")
+	}
+	artifacts, ok := build["artifacts"].(map[string]any)
+	if !ok {
+		return errors.New("a reused artifact set requires its manifest identity")
+	}
+	entries, ok := artifacts["entries"].([]any)
+	if !ok || artifacts["artifact_set_digest"] != artifactSet {
+		return errors.New("build evidence artifacts do not add up to the artifact set")
+	}
+	modules := map[string]string{}
+	for _, raw := range entries {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			return errors.New("build evidence entry is not an object")
+		}
+		if entry["role"] == "EXECUTABLE_MODULE" {
+			sha, ok := entry["sha256"].(string)
+			if !ok {
+				return errors.New("executable module sha256 is not a string")
+			}
+			path, ok := entry["path"].(string)
+			if !ok {
+				return errors.New("executable module path is not a string")
+			}
+			modules[path] = sha
+		}
+	}
+	if len(modules) == 0 {
+		return errors.New("a reused artifact set requires an executable module")
+	}
+	loaded, ok := build["loaded"].([]any)
+	if !ok || len(loaded) != len(modules) {
+		return errors.New("the receiver's load record does not cover the executable modules")
+	}
+	for _, raw := range loaded {
+		record, ok := raw.(map[string]any)
+		if !ok {
+			return errors.New("load record is not an object")
+		}
+		path, _ := record["path"].(string)
+		if modules[path] != record["sha256"] {
+			return errors.New("load record does not name the built module")
+		}
+	}
+	// The receiver records its own verify/load cost; reusing the producer's
+	// duration or log identity would make the two rows indistinguishable.
+	receiverDuration, err := buildNumber(build["duration_ms"], "build.duration_ms")
+	if err != nil {
+		return err
+	}
+	if receiverDuration <= 0 {
+		return errors.New("a receiver that loaded an artifact set must record its own duration")
+	}
+	log, ok := build["log"].(map[string]any)
+	if !ok {
+		return errors.New("a receiver that loaded an artifact set must record its own log")
+	}
+	copiedLog, err := sameDocument(log, producerEvidence["log"])
+	if err != nil {
+		return err
+	}
+	if copiedLog {
+		return errors.New("the receiver's log is the producer's log identity")
+	}
+	return nil
+}
+
+func verifyBuild(golden *BuildGolden) error {
+	requestDoc, err := buildRequestDocument(golden.Request)
+	if err != nil {
+		return err
+	}
+	if err := checkDocument(
+		requestDoc, golden.RequestDigestDocument, golden.RequestCanonicalJSON,
+		golden.RequestDigest, "build request",
+	); err != nil {
+		return err
+	}
+	artifactSet, ok := golden.Request["candidate_digest"].(map[string]any)["value"].(string)
+	if !ok || artifactSet != golden.ArtifactSetDigest {
+		return errors.New("build artifact-set digest differs from the candidate digest")
+	}
+	bundleDocument := golden.Request["artifact"].(map[string]any)["bundle"].(map[string]any)
+	manifest, err := bundleManifest(
+		bundleDocument["schema_id"].(string), bundleDocument["entries"].([]any),
+	)
+	if err != nil {
+		return err
+	}
+	manifestBytes, err := canonical(manifest)
+	if err != nil {
+		return err
+	}
+	if shaHex(manifestBytes) != golden.ArtifactSetDigest {
+		return errors.New("artifact-set digest does not bind the canonical manifest")
+	}
+	frozenManifestBytes, err := canonical(golden.BundleManifest)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(manifestBytes, frozenManifestBytes) {
+		return errors.New("independently constructed build manifest differs")
+	}
+	build := golden.Request["build"].(map[string]any)
+	producer := golden.ProducerRecord
+	sameProducer, err := sameDocument(build["producer"], producer)
+	if err != nil {
+		return err
+	}
+	if !sameProducer {
+		return errors.New("the request does not carry the frozen producer link")
+	}
+	digest, err := buildProducerDigest(golden.ProducerEvidence)
+	if err != nil {
+		return err
+	}
+	if producer["evidence_sha256"] != digest {
+		return errors.New("the producer link does not bind the producer evidence document")
+	}
+	if err := verifyBuildEvidence(
+		golden.Evidence, build, golden.ProducerEvidence, golden.ArtifactSetDigest,
+	); err != nil {
+		return err
+	}
+	evidenceBuild := golden.Evidence["build"].(map[string]any)
+	if evidenceBuild["artifacts"].(map[string]any)["artifact_set_digest"] != golden.ArtifactSetDigest {
+		return errors.New("evidence build artifacts differ from the artifact set")
+	}
+	// The build identity is inside the request digest, so the receipt that binds
+	// the request binds the build too.
+	receiptDoc := map[string]any{
+		"document_type":    "tcenv.remote.npu-build.receipt-id",
+		"document_version": 5,
+		"digest_algorithm": "sha256-rfc8785-v1",
+		"request_id":       golden.Receipt.RequestID,
+		"attempt_id":       golden.Receipt.AttemptID,
+		"request_digest":   golden.RequestDigest,
+		"candidate_digest": golden.Request["candidate_digest"],
+		"device_group":     golden.Request["execution"].(map[string]any)["device_group"],
+	}
+	receiptBytes, err := canonical(receiptDoc)
+	if err != nil {
+		return err
+	}
+	if shaHex(receiptBytes) != golden.Receipt.ReceiptID {
+		return errors.New("build receipt id does not bind the request")
+	}
+	return nil
 }

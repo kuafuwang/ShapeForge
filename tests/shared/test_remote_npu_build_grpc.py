@@ -517,20 +517,28 @@ def test_a_prebuilt_request_without_or_with_a_rewritten_producer_link_is_refused
         signed = gc.evidence_json(gc.blob_from_proto(final.result.evidence, allow_empty=True)[0])
         assert signed["build"]["producer"] == outcome.evidence.producer_record()
         # Rewriting the producer link in the signed evidence no longer repeats
-        # the record the accepted request bound: the validator refuses it.
-        tampered = json.loads(json.dumps(signed))
-        tampered["build"]["producer"]["duration_ms"] += 1
-        with pytest.raises(contracts.ContractError, match="producer record"):
-            contracts.npu_evidence_document(
-                tampered,
-                device_group=harness.engine.npu_execution.device_group.to_dict(),
-                expected_artifact_set_digest=outcome.bundle.artifact_set_digest,
-                expected_resources=harness.engine.npu_execution.declared_resources.to_dict(),
-                expected_build=harness.build.to_dict(),
-                request_artifact={"bundle": outcome.bundle.to_dict()},
-                measurement_kind="simulated", publication_allowed=False,
-                report_status="ok", dialect=contracts.NPU_BUILD_DIALECT,
-            )
+        # the record the accepted request bound: the validator refuses it.  The
+        # link is a whole record, so its duration, its log identity and its
+        # evidence digest are each bound on their own.
+        for name, mutate in (
+            ("duration_ms", lambda producer: producer.__setitem__("duration_ms", producer["duration_ms"] + 1)),
+            ("log.sha256", lambda producer: producer["log"].__setitem__("sha256", "0" * 64)),
+            ("log.size_bytes", lambda producer: producer["log"].__setitem__("size_bytes", 1)),
+            ("evidence_sha256", lambda producer: producer.__setitem__("evidence_sha256", "1" * 64)),
+        ):
+            tampered = json.loads(json.dumps(signed))
+            mutate(tampered["build"]["producer"])
+            with pytest.raises(contracts.ContractError, match="producer record"):
+                contracts.npu_evidence_document(
+                    tampered,
+                    device_group=harness.engine.npu_execution.device_group.to_dict(),
+                    expected_artifact_set_digest=outcome.bundle.artifact_set_digest,
+                    expected_resources=harness.engine.npu_execution.declared_resources.to_dict(),
+                    expected_build=harness.build.to_dict(),
+                    request_artifact={"bundle": outcome.bundle.to_dict()},
+                    measurement_kind="simulated", publication_allowed=False,
+                    report_status="ok", dialect=contracts.NPU_BUILD_DIALECT,
+                ), name
         # A received row must always carry the link.
         without = json.loads(json.dumps(signed))
         without["build"].pop("producer")
@@ -715,6 +723,9 @@ def test_an_in_attempt_build_failure_is_a_compile_failure_not_a_timeout(tmp_path
         assert build["error_class"] == "compile"
         assert build["artifacts"] is None and build["loaded"] == []
         assert build["log"]["size_bytes"] > 0
+        # A build that really ran records the compiler's own duration, never the
+        # contract's "did not run" sentinel (0).
+        assert build["duration_ms"] >= 1
         assert evidence["complete"] is False
         assert evidence["timing"]["launches"] == 0
         assert evidence["timing"]["device_elapsed_ns"] == 0
@@ -926,3 +937,114 @@ def test_a_leftover_build_scratch_is_swept_and_an_unprovable_one_is_recorded(tmp
             harness.close()
     finally:
         os.chmod(stuck, 0o700)
+
+
+def test_a_symlinked_build_scratch_root_never_deletes_outside_the_state_dir(tmp_path):
+    """The sweep root is worker-reachable: a planted link must never be followed.
+
+    ``<state_dir>/build`` is created by the worker (``mkdir(parents=True)``), so a
+    compromised or racing worker can make it a symbolic link.  A sweep that
+    followed it would recursively delete an arbitrary directory outside the
+    state directory while ``close()`` reported a clean teardown.
+    """
+
+    root = tmp_path / "root"
+    state = root / "state"
+    state.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    victim = outside / "user-data"
+    victim.mkdir(parents=True)
+    (victim / "important.txt").write_text("not the engine's to delete", encoding="utf-8")
+    (outside / "sibling").mkdir()
+    (outside / "sibling" / "also-important.txt").write_text("keep", encoding="utf-8")
+    link = state / "build"
+    os.symlink(outside, link, target_is_directory=True)
+
+    harness = ModuleBuildGrpcHarness(root)
+    try:
+        # Nothing outside the state directory was touched.
+        assert (victim / "important.txt").read_text(encoding="utf-8") == (
+            "not the engine's to delete"
+        )
+        assert (outside / "sibling" / "also-important.txt").read_text() == "keep"
+        # The link itself is refused, not silently accepted as the scratch root.
+        assert link.is_symlink()
+        error = harness.engine.close_error
+        assert error is not None and "build scratch root" in str(error)
+        assert "not a plain directory" in str(error)
+    finally:
+        harness.close()
+    assert (victim / "important.txt").exists()
+    assert link.is_symlink()
+
+
+def test_a_planted_symlink_inside_the_build_scratch_is_left_alone_and_recorded(tmp_path):
+    """An entry the builder never creates is quarantined, never followed."""
+
+    root = tmp_path / "root"
+    state = root / "state"
+    outside = tmp_path / "outside"
+    victim = outside / "kept"
+    victim.mkdir(parents=True)
+    (victim / "payload.bin").write_bytes(b"outside bytes")
+    orphan = state / "build" / "dead-attempt"
+    orphan.mkdir(parents=True)
+    (orphan / "kernel.tx").write_bytes(SOURCE)
+    planted = orphan / "escape"
+    os.symlink(outside, planted, target_is_directory=True)
+
+    harness = ModuleBuildGrpcHarness(root)
+    try:
+        # The planted link is neither followed nor removed; the engine cannot
+        # prove what it points at, so it records an unverified cleanup.
+        assert planted.is_symlink()
+        assert (victim / "payload.bin").read_bytes() == b"outside bytes"
+        error = harness.engine.close_error
+        assert error is not None and "build scratch" in str(error)
+        assert "symbolic link" in str(error)
+    finally:
+        harness.close()
+    assert (victim / "payload.bin").read_bytes() == b"outside bytes"
+    assert planted.is_symlink()
+
+
+def test_a_regular_file_as_the_build_scratch_root_is_refused_not_deleted(tmp_path):
+    root = tmp_path / "root"
+    state = root / "state"
+    state.mkdir(parents=True)
+    (state / "build").write_bytes(b"not a directory")
+
+    harness = ModuleBuildGrpcHarness(root)
+    try:
+        assert (state / "build").read_bytes() == b"not a directory"
+        error = harness.engine.close_error
+        assert error is not None and "not a plain directory" in str(error)
+    finally:
+        harness.close()
+    assert (state / "build").read_bytes() == b"not a directory"
+
+
+def test_an_absurdly_deep_build_scratch_is_refused_instead_of_walked(tmp_path):
+    """The sweep must not recurse over a depth the worker invented."""
+
+    from tcenv.remote.job_engine import MAX_SCRATCH_DEPTH
+
+    root = tmp_path / "root"
+    state = root / "state"
+    deep = state / "build" / "deep-attempt"
+    deep.mkdir(parents=True)
+    cursor = deep
+    for index in range(MAX_SCRATCH_DEPTH + 5):
+        cursor = cursor / f"level-{index}"
+    cursor.mkdir(parents=True)
+    (cursor / "kernel.tx").write_bytes(SOURCE)
+
+    harness = ModuleBuildGrpcHarness(root)
+    try:
+        # The whole tree is left alone (fail closed) and the refusal is visible.
+        assert cursor.is_dir() and (cursor / "kernel.tx").read_bytes() == SOURCE
+        error = harness.engine.close_error
+        assert error is not None and "build scratch" in str(error)
+        assert "deeper than" in str(error)
+    finally:
+        harness.close()

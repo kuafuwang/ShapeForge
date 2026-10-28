@@ -866,7 +866,7 @@ def _npu_execution_document(
     if media_type != media_types[task_family]:
         raise ContractError(
             f"execution.task_family {task_family!r} requires source_media_type "
-            f"{_TASK_FAMILY_MEDIA_TYPE[task_family]!r}"
+            f"{media_types[task_family]!r}"
         )
     return {
         "schema_id": NPU_BUNDLE_EXECUTION_SCHEMA_ID,

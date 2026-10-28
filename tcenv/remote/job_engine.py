@@ -6,6 +6,7 @@ import hashlib
 import math
 import os
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -205,6 +206,63 @@ def _group_exists(pgid: int) -> bool:
         return False
     except PermissionError:
         return True
+
+
+def _scratch_dir_flags() -> int:
+    return os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+
+
+class _ScratchRefusal(Exception):
+    """One build-scratch entry whose type cannot be proven, so it is not deleted."""
+
+
+#: An attempt's scratch is a flat set of bundle paths (a hand full of levels).  A
+#: tree deeper than this was not built by an attempt, so the sweep refuses it
+#: instead of walking an attacker-controlled depth on the recursion stack.
+MAX_SCRATCH_DEPTH = 64
+
+
+def _open_scratch_dir(parent_fd: int, name: str) -> int:
+    """Open one child directory by name relative to a verified parent, no links."""
+
+    return os.open(
+        name, _scratch_dir_flags() | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd,
+    )
+
+
+def _remove_scratch_entry(parent_fd: int, name: str, depth: int = 0) -> None:
+    """Remove one build-scratch entry without ever following a symbolic link.
+
+    ``name`` is resolved relative to the descriptor of the directory that was
+    already verified, never by path, so swapping a parent name for a symbolic
+    link cannot redirect the delete.  A nested directory is opened with
+    ``O_DIRECTORY|O_NOFOLLOW`` and checked against the ``lstat`` that typed it, so
+    a directory renamed in between is refused instead of swept.  Anything that is
+    not a regular file or a directory (a symbolic link, a socket, a fifo) is
+    refused and left in place: an entry the builder never created is not ours to
+    delete, and a link here would otherwise point the delete at its target.
+    """
+
+    if depth > MAX_SCRATCH_DEPTH:
+        raise _ScratchRefusal(f"the tree is deeper than {MAX_SCRATCH_DEPTH} levels")
+    info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    if stat.S_ISLNK(info.st_mode):
+        raise _ScratchRefusal("the entry is a symbolic link")
+    if not stat.S_ISDIR(info.st_mode):
+        if not stat.S_ISREG(info.st_mode):
+            raise _ScratchRefusal("the entry is neither a regular file nor a directory")
+        os.unlink(name, dir_fd=parent_fd)
+        return
+    child_fd = _open_scratch_dir(parent_fd, name)
+    try:
+        opened = os.fstat(child_fd)
+        if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+            raise _ScratchRefusal("the directory changed while it was swept")
+        for entry in sorted(os.listdir(child_fd)):
+            _remove_scratch_entry(child_fd, entry, depth + 1)
+    finally:
+        os.close(child_fd)
+    os.rmdir(name, dir_fd=parent_fd)
 
 
 @dataclass(frozen=True)
@@ -3011,13 +3069,19 @@ class JobEngine:
         it must be removed by the job lifecycle, and a removal that cannot be
         proven is recorded as a close hazard instead of being reported as a
         clean teardown.
+
+        The scratch tree is worker-writable, so a path name there is not a
+        capability.  The root is opened relative to the already validated state
+        directory with ``O_DIRECTORY|O_NOFOLLOW`` and every entry is typed with
+        ``lstat``/``fstat`` and removed relative to a verified directory
+        descriptor (recursively, one descriptor at a time).  A ``build`` root
+        that is a symbolic link, a file or an unreadable directory is never
+        followed: nothing below it is removed and the refusal is recorded, so a
+        planted link can neither redirect the sweep outside the state directory
+        nor be reported as a completed cleanup.
         """
 
-        import shutil
-
         root = self._build_scratch_root()
-        if not root.is_dir():
-            return
         live: set[str] = set()
         if keep_live:
             try:
@@ -3025,18 +3089,48 @@ class JobEngine:
             except Exception as exc:  # noqa: BLE001 - unknown live set means no proof
                 self._record_close_error(f"build scratch cannot be swept safely: {exc}")
                 return
-        for child in sorted(root.iterdir()):
-            if child.name in live:
-                continue
+        try:
+            state_fd = os.open(self.store.state_dir, _scratch_dir_flags())
+        except OSError as exc:
+            self._record_close_error(f"build scratch cannot be swept safely: {exc}"[:1000])
+            return
+        try:
             try:
-                if child.is_dir() and not child.is_symlink():
-                    shutil.rmtree(child)
-                else:
-                    child.unlink()
+                root_fd = _open_scratch_dir(state_fd, root.name)
+            except FileNotFoundError:
+                return
             except OSError as exc:
+                # The root is not the plain directory this engine would create,
+                # so nothing below it may be deleted.
                 self._record_close_error(
-                    f"build scratch {child.name!r} could not be removed: {exc}"[:1000]
+                    f"build scratch root {str(root)!r} is not a plain directory: {exc}"[:1000]
                 )
+                return
+            try:
+                try:
+                    names = sorted(os.listdir(root_fd))
+                except OSError as exc:
+                    self._record_close_error(
+                        f"build scratch root {str(root)!r} could not be listed: {exc}"[:1000]
+                    )
+                    return
+                for name in names:
+                    if name in live:
+                        continue
+                    try:
+                        _remove_scratch_entry(root_fd, name)
+                    except _ScratchRefusal as exc:
+                        self._record_close_error(
+                            f"build scratch {name!r} was not removed: {exc}"[:1000]
+                        )
+                    except OSError as exc:
+                        self._record_close_error(
+                            f"build scratch {name!r} could not be removed: {exc}"[:1000]
+                        )
+            finally:
+                os.close(root_fd)
+        finally:
+            os.close(state_fd)
 
     def _finish_shutdown(self, store: JobStore) -> None:
         """Release terminal leases, close the store and set the closed event.

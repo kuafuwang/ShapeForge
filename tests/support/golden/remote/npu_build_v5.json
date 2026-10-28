@@ -1,0 +1,439 @@
+{
+  "npu_build": {
+    "artifact_set_digest": "c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe",
+    "bundle_manifest": {
+      "entries": [
+        {
+          "media_type": "text/plain; charset=utf-8",
+          "path": "kernel.tx",
+          "role": "SOURCE",
+          "sha256": "638dc7cee77db3236141a8be5512ed9f3c30a72c19701597b61ce0f5fdfaeef7",
+          "size_bytes": 38
+        },
+        {
+          "media_type": "application/x-tx-elf",
+          "path": "module/kernel.txelf",
+          "role": "EXECUTABLE_MODULE",
+          "sha256": "f63ebb445d2a4ef3db5273177dc0fdb1bda65641c21449d35b5eb430463cbb2d",
+          "size_bytes": 327680
+        }
+      ],
+      "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1",
+      "schema_version": 1
+    },
+    "evidence": {
+      "artifact_set_digest": "c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe",
+      "buffer": null,
+      "build": {
+        "artifacts": {
+          "artifact_set_digest": "c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe",
+          "entries": [
+            {
+              "media_type": "text/plain; charset=utf-8",
+              "path": "kernel.tx",
+              "role": "SOURCE",
+              "sha256": "638dc7cee77db3236141a8be5512ed9f3c30a72c19701597b61ce0f5fdfaeef7",
+              "size_bytes": 38
+            },
+            {
+              "media_type": "application/x-tx-elf",
+              "path": "module/kernel.txelf",
+              "role": "EXECUTABLE_MODULE",
+              "sha256": "f63ebb445d2a4ef3db5273177dc0fdb1bda65641c21449d35b5eb430463cbb2d",
+              "size_bytes": 327680
+            }
+          ],
+          "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+        },
+        "duration_ms": 7,
+        "error_class": null,
+        "loaded": [
+          {
+            "path": "module/kernel.txelf",
+            "sha256": "f63ebb445d2a4ef3db5273177dc0fdb1bda65641c21449d35b5eb430463cbb2d"
+          }
+        ],
+        "log": {
+          "sha256": "9b8623bd0953a730461fbc87d6bfdc65980eb50048077c9475ee0b8369b49b06",
+          "size_bytes": 44
+        },
+        "mode": "prebuilt",
+        "producer": {
+          "duration_ms": 12,
+          "evidence_sha256": "7901621c33d9710b03f8a8ac71ebb29fa53e49a0038deee5c75a6b19c0afc5ae",
+          "log": {
+            "sha256": "994b1ed5fdf6d40e4adf2875636baa832c5023240852206929bb6f5dac21116f",
+            "size_bytes": 55
+          },
+          "mode": "prebuilt",
+          "schema_id": "tcenv.remote.npu-build.producer-evidence-link.1",
+          "status": "ok"
+        },
+        "provenance": {
+          "artifact_set_digest": "c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe",
+          "build_host": "control_host",
+          "build_profile": "tsm-module-debug-v1",
+          "builder_id": "fake-tsm-module-builder",
+          "builder_version": "1.4.0",
+          "compile_profile": {
+            "debug_sections": "on",
+            "opt_level": "O2",
+            "target_abi": "tx-fake-elf-v1"
+          },
+          "schema_id": "tcenv.remote.npu-build.provenance.1",
+          "source_sha256": "638dc7cee77db3236141a8be5512ed9f3c30a72c19701597b61ce0f5fdfaeef7",
+          "toolchain": {
+            "id": "fake-tx-toolchain",
+            "sdk_version": "0.9.4-sim",
+            "version": "0.9.4"
+          }
+        },
+        "schema_id": "tcenv.remote.npu-build.evidence.1",
+        "status": "reused"
+      },
+      "candidate_digest": {
+        "algorithm": "sha256-bundle-v1",
+        "value": "c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe"
+      },
+      "complete": true,
+      "device_group": {
+        "device_group_id": "vendor-c-group-0",
+        "profile_digest": "7a8ade8bf5ad18e7d41b0dca690d46ffea4f9575ecfa7d6f334040657eb8e9f5",
+        "resource_generation": "1",
+        "topology_digest": "be9d9cd9ffa9bc4da6d7811a604013046b7b106997d5de1ab69ed23bdc35303f",
+        "vendor_id": "vendor-c"
+      },
+      "measurement_kind": "simulated",
+      "publication_allowed": false,
+      "schema_id": "tcenv.remote.npu-build.timing-evidence.3",
+      "spans": [
+        {
+          "clock_domain": "vendor-c-simt-clock-v1",
+          "device_id": "device-0",
+          "die": null,
+          "elapsed_ns": 1500000,
+          "rank": null
+        }
+      ],
+      "timing": {
+        "clock_domain": "vendor-c-simt-clock-v1",
+        "device_elapsed_ns": 1500000,
+        "host_api_elapsed_ns": 2000000,
+        "launches": 1,
+        "source": "DEVICE_EVENT",
+        "synchronization_completed": true
+      },
+      "topology": {
+        "declared_devices": [
+          "device-0"
+        ],
+        "logical_devices": 1,
+        "required_die_spans": null,
+        "required_rank_spans": null
+      }
+    },
+    "producer_evidence": {
+      "artifacts": {
+        "artifact_set_digest": "c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe",
+        "entries": [
+          {
+            "media_type": "text/plain; charset=utf-8",
+            "path": "kernel.tx",
+            "role": "SOURCE",
+            "sha256": "638dc7cee77db3236141a8be5512ed9f3c30a72c19701597b61ce0f5fdfaeef7",
+            "size_bytes": 38
+          },
+          {
+            "media_type": "application/x-tx-elf",
+            "path": "module/kernel.txelf",
+            "role": "EXECUTABLE_MODULE",
+            "sha256": "f63ebb445d2a4ef3db5273177dc0fdb1bda65641c21449d35b5eb430463cbb2d",
+            "size_bytes": 327680
+          }
+        ],
+        "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+      },
+      "duration_ms": 12,
+      "error_class": null,
+      "loaded": [],
+      "log": {
+        "sha256": "994b1ed5fdf6d40e4adf2875636baa832c5023240852206929bb6f5dac21116f",
+        "size_bytes": 55
+      },
+      "mode": "prebuilt",
+      "provenance": {
+        "artifact_set_digest": "c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe",
+        "build_host": "control_host",
+        "build_profile": "tsm-module-debug-v1",
+        "builder_id": "fake-tsm-module-builder",
+        "builder_version": "1.4.0",
+        "compile_profile": {
+          "debug_sections": "on",
+          "opt_level": "O2",
+          "target_abi": "tx-fake-elf-v1"
+        },
+        "schema_id": "tcenv.remote.npu-build.provenance.1",
+        "source_sha256": "638dc7cee77db3236141a8be5512ed9f3c30a72c19701597b61ce0f5fdfaeef7",
+        "toolchain": {
+          "id": "fake-tx-toolchain",
+          "sdk_version": "0.9.4-sim",
+          "version": "0.9.4"
+        }
+      },
+      "schema_id": "tcenv.remote.npu-build.evidence.1",
+      "status": "ok"
+    },
+    "producer_record": {
+      "duration_ms": 12,
+      "evidence_sha256": "7901621c33d9710b03f8a8ac71ebb29fa53e49a0038deee5c75a6b19c0afc5ae",
+      "log": {
+        "sha256": "994b1ed5fdf6d40e4adf2875636baa832c5023240852206929bb6f5dac21116f",
+        "size_bytes": 55
+      },
+      "mode": "prebuilt",
+      "schema_id": "tcenv.remote.npu-build.producer-evidence-link.1",
+      "status": "ok"
+    },
+    "receipt": {
+      "attempt_id": "attempt-9-golden",
+      "receipt_id": "e02da3de7e01a7c9026193fdcce40763db9a90920bee5f35c137cb17a6ec6ed2",
+      "request_id": "build-golden-1"
+    },
+    "request": {
+      "artifact": {
+        "bundle": {
+          "artifact_set_digest": "c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe",
+          "entries": [
+            {
+              "content": "inline",
+              "media_type": "text/plain; charset=utf-8",
+              "path": "kernel.tx",
+              "role": "SOURCE",
+              "sha256": "638dc7cee77db3236141a8be5512ed9f3c30a72c19701597b61ce0f5fdfaeef7",
+              "size_bytes": 38
+            },
+            {
+              "blob_ref": {
+                "chunk_size": 8192,
+                "content_id": "blob-sha256-v1:f63ebb445d2a4ef3db5273177dc0fdb1bda65641c21449d35b5eb430463cbb2d",
+                "media_type": "application/x-tx-elf",
+                "sha256": "f63ebb445d2a4ef3db5273177dc0fdb1bda65641c21449d35b5eb430463cbb2d",
+                "size_bytes": 327680
+              },
+              "content": "blob",
+              "media_type": "application/x-tx-elf",
+              "path": "module/kernel.txelf",
+              "role": "EXECUTABLE_MODULE",
+              "sha256": "f63ebb445d2a4ef3db5273177dc0fdb1bda65641c21449d35b5eb430463cbb2d",
+              "size_bytes": 327680
+            }
+          ],
+          "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+        }
+      },
+      "build": {
+        "mode": "prebuilt",
+        "producer": {
+          "duration_ms": 12,
+          "evidence_sha256": "7901621c33d9710b03f8a8ac71ebb29fa53e49a0038deee5c75a6b19c0afc5ae",
+          "log": {
+            "sha256": "994b1ed5fdf6d40e4adf2875636baa832c5023240852206929bb6f5dac21116f",
+            "size_bytes": 55
+          },
+          "mode": "prebuilt",
+          "schema_id": "tcenv.remote.npu-build.producer-evidence-link.1",
+          "status": "ok"
+        },
+        "provenance": {
+          "artifact_set_digest": "c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe",
+          "build_host": "control_host",
+          "build_profile": "tsm-module-debug-v1",
+          "builder_id": "fake-tsm-module-builder",
+          "builder_version": "1.4.0",
+          "compile_profile": {
+            "debug_sections": "on",
+            "opt_level": "O2",
+            "target_abi": "tx-fake-elf-v1"
+          },
+          "schema_id": "tcenv.remote.npu-build.provenance.1",
+          "source_sha256": "638dc7cee77db3236141a8be5512ed9f3c30a72c19701597b61ce0f5fdfaeef7",
+          "toolchain": {
+            "id": "fake-tx-toolchain",
+            "sdk_version": "0.9.4-sim",
+            "version": "0.9.4"
+          }
+        },
+        "schema_id": "tcenv.remote.npu-build.build-request.1"
+      },
+      "cache_policy": "reuse",
+      "candidate_digest": {
+        "algorithm": "sha256-bundle-v1",
+        "value": "c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe"
+      },
+      "candidate_timeout_ms": 3000,
+      "cases": null,
+      "dtype": "fp16",
+      "execution": {
+        "artifact_kind": "bundle",
+        "device_group": {
+          "device_group_id": "vendor-c-group-0",
+          "profile_digest": "7a8ade8bf5ad18e7d41b0dca690d46ffea4f9575ecfa7d6f334040657eb8e9f5",
+          "resource_generation": "1",
+          "topology_digest": "be9d9cd9ffa9bc4da6d7811a604013046b7b106997d5de1ab69ed23bdc35303f",
+          "vendor_id": "vendor-c"
+        },
+        "launch_kind": "KERNEL",
+        "launch_subtype": "SIMT",
+        "required_timing_sources": [
+          "DEVICE_EVENT"
+        ],
+        "resources": {
+          "logical_devices": 1,
+          "required_die_spans": null,
+          "required_rank_spans": null
+        },
+        "schema_id": "tcenv.remote.npu-bundle.execution.1",
+        "source_media_type": "text/plain; charset=utf-8",
+        "synchronization": "stream-event",
+        "task_family": "kernel_module"
+      },
+      "fast_bench": false,
+      "kind": "formal_eval",
+      "measure_serial": false,
+      "mode": "quick",
+      "queue_timeout_ms": 3000,
+      "reps": 2,
+      "require_contract_launch": false,
+      "run_id": "golden-run",
+      "seed": "3",
+      "session_id": "golden-session",
+      "size": "small",
+      "target_id": "sim-npu-module",
+      "task": "relu",
+      "task_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "validate": false
+    },
+    "request_canonical_json": "{\"digest_algorithm\":\"sha256-rfc8785-v1\",\"document_type\":\"tcenv.remote.npu-build.request-digest\",\"document_version\":5,\"request\":{\"artifact\":{\"bundle\":{\"artifact_set_digest\":\"c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe\",\"entries\":[{\"content\":\"inline\",\"media_type\":\"text/plain; charset=utf-8\",\"path\":\"kernel.tx\",\"role\":\"SOURCE\",\"sha256\":\"638dc7cee77db3236141a8be5512ed9f3c30a72c19701597b61ce0f5fdfaeef7\",\"size_bytes\":38},{\"blob_ref\":{\"chunk_size\":8192,\"content_id\":\"blob-sha256-v1:f63ebb445d2a4ef3db5273177dc0fdb1bda65641c21449d35b5eb430463cbb2d\",\"media_type\":\"application/x-tx-elf\",\"sha256\":\"f63ebb445d2a4ef3db5273177dc0fdb1bda65641c21449d35b5eb430463cbb2d\",\"size_bytes\":327680},\"content\":\"blob\",\"media_type\":\"application/x-tx-elf\",\"path\":\"module/kernel.txelf\",\"role\":\"EXECUTABLE_MODULE\",\"sha256\":\"f63ebb445d2a4ef3db5273177dc0fdb1bda65641c21449d35b5eb430463cbb2d\",\"size_bytes\":327680}],\"schema_id\":\"tcenv.remote.npu-bundle.artifact-bundle.1\"}},\"build\":{\"mode\":\"prebuilt\",\"producer\":{\"duration_ms\":12,\"evidence_sha256\":\"7901621c33d9710b03f8a8ac71ebb29fa53e49a0038deee5c75a6b19c0afc5ae\",\"log\":{\"sha256\":\"994b1ed5fdf6d40e4adf2875636baa832c5023240852206929bb6f5dac21116f\",\"size_bytes\":55},\"mode\":\"prebuilt\",\"schema_id\":\"tcenv.remote.npu-build.producer-evidence-link.1\",\"status\":\"ok\"},\"provenance\":{\"artifact_set_digest\":\"c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe\",\"build_host\":\"control_host\",\"build_profile\":\"tsm-module-debug-v1\",\"builder_id\":\"fake-tsm-module-builder\",\"builder_version\":\"1.4.0\",\"compile_profile\":{\"debug_sections\":\"on\",\"opt_level\":\"O2\",\"target_abi\":\"tx-fake-elf-v1\"},\"schema_id\":\"tcenv.remote.npu-build.provenance.1\",\"source_sha256\":\"638dc7cee77db3236141a8be5512ed9f3c30a72c19701597b61ce0f5fdfaeef7\",\"toolchain\":{\"id\":\"fake-tx-toolchain\",\"sdk_version\":\"0.9.4-sim\",\"version\":\"0.9.4\"}},\"schema_id\":\"tcenv.remote.npu-build.build-request.1\"},\"cache_policy\":\"reuse\",\"candidate_digest\":{\"algorithm\":\"sha256-bundle-v1\",\"value\":\"c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe\"},\"candidate_timeout_ms\":3000,\"cases\":null,\"dtype\":\"fp16\",\"execution\":{\"artifact_kind\":\"bundle\",\"device_group\":{\"device_group_id\":\"vendor-c-group-0\",\"profile_digest\":\"7a8ade8bf5ad18e7d41b0dca690d46ffea4f9575ecfa7d6f334040657eb8e9f5\",\"resource_generation\":\"1\",\"topology_digest\":\"be9d9cd9ffa9bc4da6d7811a604013046b7b106997d5de1ab69ed23bdc35303f\",\"vendor_id\":\"vendor-c\"},\"launch_kind\":\"KERNEL\",\"launch_subtype\":\"SIMT\",\"required_timing_sources\":[\"DEVICE_EVENT\"],\"resources\":{\"logical_devices\":1,\"required_die_spans\":null,\"required_rank_spans\":null},\"schema_id\":\"tcenv.remote.npu-bundle.execution.1\",\"source_media_type\":\"text/plain; charset=utf-8\",\"synchronization\":\"stream-event\",\"task_family\":\"kernel_module\"},\"fast_bench\":false,\"kind\":\"formal_eval\",\"measure_serial\":false,\"mode\":\"quick\",\"queue_timeout_ms\":3000,\"reps\":2,\"require_contract_launch\":false,\"run_id\":\"golden-run\",\"seed\":\"3\",\"session_id\":\"golden-session\",\"size\":\"small\",\"target_id\":\"sim-npu-module\",\"task\":\"relu\",\"task_fingerprint\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"validate\":false}}",
+    "request_digest": "86b69743f8a38365191d76fae0156a6e4b8c1c4154247a1bb0e10a44427d7bdc",
+    "request_digest_document": {
+      "digest_algorithm": "sha256-rfc8785-v1",
+      "document_type": "tcenv.remote.npu-build.request-digest",
+      "document_version": 5,
+      "request": {
+        "artifact": {
+          "bundle": {
+            "artifact_set_digest": "c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe",
+            "entries": [
+              {
+                "content": "inline",
+                "media_type": "text/plain; charset=utf-8",
+                "path": "kernel.tx",
+                "role": "SOURCE",
+                "sha256": "638dc7cee77db3236141a8be5512ed9f3c30a72c19701597b61ce0f5fdfaeef7",
+                "size_bytes": 38
+              },
+              {
+                "blob_ref": {
+                  "chunk_size": 8192,
+                  "content_id": "blob-sha256-v1:f63ebb445d2a4ef3db5273177dc0fdb1bda65641c21449d35b5eb430463cbb2d",
+                  "media_type": "application/x-tx-elf",
+                  "sha256": "f63ebb445d2a4ef3db5273177dc0fdb1bda65641c21449d35b5eb430463cbb2d",
+                  "size_bytes": 327680
+                },
+                "content": "blob",
+                "media_type": "application/x-tx-elf",
+                "path": "module/kernel.txelf",
+                "role": "EXECUTABLE_MODULE",
+                "sha256": "f63ebb445d2a4ef3db5273177dc0fdb1bda65641c21449d35b5eb430463cbb2d",
+                "size_bytes": 327680
+              }
+            ],
+            "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+          }
+        },
+        "build": {
+          "mode": "prebuilt",
+          "producer": {
+            "duration_ms": 12,
+            "evidence_sha256": "7901621c33d9710b03f8a8ac71ebb29fa53e49a0038deee5c75a6b19c0afc5ae",
+            "log": {
+              "sha256": "994b1ed5fdf6d40e4adf2875636baa832c5023240852206929bb6f5dac21116f",
+              "size_bytes": 55
+            },
+            "mode": "prebuilt",
+            "schema_id": "tcenv.remote.npu-build.producer-evidence-link.1",
+            "status": "ok"
+          },
+          "provenance": {
+            "artifact_set_digest": "c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe",
+            "build_host": "control_host",
+            "build_profile": "tsm-module-debug-v1",
+            "builder_id": "fake-tsm-module-builder",
+            "builder_version": "1.4.0",
+            "compile_profile": {
+              "debug_sections": "on",
+              "opt_level": "O2",
+              "target_abi": "tx-fake-elf-v1"
+            },
+            "schema_id": "tcenv.remote.npu-build.provenance.1",
+            "source_sha256": "638dc7cee77db3236141a8be5512ed9f3c30a72c19701597b61ce0f5fdfaeef7",
+            "toolchain": {
+              "id": "fake-tx-toolchain",
+              "sdk_version": "0.9.4-sim",
+              "version": "0.9.4"
+            }
+          },
+          "schema_id": "tcenv.remote.npu-build.build-request.1"
+        },
+        "cache_policy": "reuse",
+        "candidate_digest": {
+          "algorithm": "sha256-bundle-v1",
+          "value": "c53368a21cfb78a590ac8b802c536334eece20270fdb38b0aeec52e8868d6bbe"
+        },
+        "candidate_timeout_ms": 3000,
+        "cases": null,
+        "dtype": "fp16",
+        "execution": {
+          "artifact_kind": "bundle",
+          "device_group": {
+            "device_group_id": "vendor-c-group-0",
+            "profile_digest": "7a8ade8bf5ad18e7d41b0dca690d46ffea4f9575ecfa7d6f334040657eb8e9f5",
+            "resource_generation": "1",
+            "topology_digest": "be9d9cd9ffa9bc4da6d7811a604013046b7b106997d5de1ab69ed23bdc35303f",
+            "vendor_id": "vendor-c"
+          },
+          "launch_kind": "KERNEL",
+          "launch_subtype": "SIMT",
+          "required_timing_sources": [
+            "DEVICE_EVENT"
+          ],
+          "resources": {
+            "logical_devices": 1,
+            "required_die_spans": null,
+            "required_rank_spans": null
+          },
+          "schema_id": "tcenv.remote.npu-bundle.execution.1",
+          "source_media_type": "text/plain; charset=utf-8",
+          "synchronization": "stream-event",
+          "task_family": "kernel_module"
+        },
+        "fast_bench": false,
+        "kind": "formal_eval",
+        "measure_serial": false,
+        "mode": "quick",
+        "queue_timeout_ms": 3000,
+        "reps": 2,
+        "require_contract_launch": false,
+        "run_id": "golden-run",
+        "seed": "3",
+        "session_id": "golden-session",
+        "size": "small",
+        "target_id": "sim-npu-module",
+        "task": "relu",
+        "task_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "validate": false
+      }
+    }
+  },
+  "schema_id": "tcenv.remote.npu-build.contract-golden.1"
+}

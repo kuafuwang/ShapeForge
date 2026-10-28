@@ -1368,6 +1368,71 @@ manifest、BuildProvenance 与 fake NPU 的加载记录形成闭环。小文件�
 去掉 producer 与已接受 request 的比较、让 producer 链接的 duration 不绑定、让 prebuilt
 request 不再要求 producer、让接收方重新丢掉 producer log/duration——对应回归分别转失败。
 
+**P1c 第二轮复核修复（同日，接手被中断的评审）**
+
+1. **build scratch 清扫不再跟随符号链接（安全修复）**：`<state_dir>/build` 由 worker 创建
+   （`mkdir(parents=True)`），因此其路径名不是能力边界。旧实现用 `Path.is_dir()` /
+   `iterdir()`（会跟随链接）判定并 `shutil.rmtree` 子目录：当 worker 或竞争者把
+   `<state_dir>/build` 换成指向 state 外的链接时，启动/关闭清扫会逐个删除**根外目录**且
+   `close_error` 仍为空。真实复现：把 `state/build -> <临时根外目录>` 后构造引擎，根外
+   `user-data/` 被删而 `close_error=None`。现在改为描述符相对删除：以已校验的 `state_dir`
+   为基准用 `O_DIRECTORY|O_NOFOLLOW` 打开 `build`，逐项 `lstat` 定类型、子目录再以
+   `O_DIRECTORY|O_NOFOLLOW` 打开并核对 `dev/ino`，普通文件 `unlinkat`、目录递归后
+   `rmdir`；根为符号链接/普通文件/不可读目录时**不跟随也不删除**，记 close hazard。
+   符号链接、fifo、socket 等非普通文件/目录条目一律拒绝并记录（quarantine 语义），
+   深度超过 64 层的树同样拒绝（不在递归栈上走完 attacker 给的深度），正常清理行为保持不变。
+   变异核验：把清扫换回旧实现后，根链接逃逸、嵌套链接被静默删除、`build` 为普通文件被静默
+   忽略、超过 64 层的树未被拒绝四条新回归分别转失败。
+2. **Metal 无效 MSL 保留真实诊断与耗时**：`BuildError("compile", ...)` 之前只有
+   `log=b""`、`duration_ms=0`。现在失败路径记录真实编译器诊断日志（身份行 + 评估器会显示的
+   改写后诊断 + 改写前的原始诊断 + `compile_s` + assembled sha256/header 行数，上限 64 KiB）
+   与真实耗时（≥1 ms，0 仍只表示「没跑」）；报告面的 `detail` 文本形状（`type: message`）
+   与旧 evaluator 的分类都不变。真机无效 MSL 的诊断日志含
+   `kernel.metal:12:1: error: expected unqualified-id` 与原始 `program_source:20:1`，
+   `compile_s=0.002093`、`duration_ms=2`。
+3. **probe 的语义如实记录**：`MetalSourceBuilder.probe` → `MetalContext.info()` →
+   `language_version()` 会试编一个**固定 4 行 MSL**的 probe library 以选最高可用 MSL；
+   它不建 pipeline、不看候选源码、不启动 kernel，也不是 NPU 编译路径。新增真机回归用
+   计数 device 代理断言：一次 probe 只发生 1 次 `newLibraryWithSource`、0 次
+   pipeline 创建，第二次 probe 命中缓存不再编译。probe 需要与 build 相同的 Metal 设备
+   访问权，设备不可用时只返回 `available=False`（Submit 前拒绝），不会变成候选编译失败。
+4. **backend-native handle 的不可误传/不可误 digest 断言**：两条新回归断言 descriptor
+   相同的两个 native executable（live handle 不同）比较相等、digest 相同、`document()` /
+   `repr()` 无 handle、descriptor 试图塞入 live 对象无法构造、生产者链接与 evidence 文档
+   逐字节相同（measurement 之外的字段）、local-only bundle 没有可传输 payload；真机回归
+   两次编译同一 source 得到两个不同 handle 与相同 native/artifact-set digest。
+5. **Go conformance 补 P1c 字段**：新增独立 Go 校验器路径（`npu_build` 向量，
+   `tests/support/golden/remote/npu_build_v5.json`）重建 v5 request digest 文档（`build`
+   是 v4 之外唯一新增字段）、按闭集重建 provenance/producer 记录、重算
+   `producer.evidence_sha256 = SHA256(canonical(producer evidence 文档))`，并复核 received
+   行的 reused/producer/artifacts/loaded/自有 duration/log 规则；20 条变异各自以**对应理由**
+   被拒（provenance 版本/工具链/source sha/compile profile、build mode/schema、
+   producer evidence_sha256/duration/log/status、evidence status/producer/provenance/
+   loaded/log 复制/duration 0、artifact set、receipt）。
+6. **文档层缺陷与契约回归**：`_npu_execution_document` 的 media type 错误信息索引了旧表，
+   `task_family=kernel_module` 配错 `source_media_type` 会抛 `KeyError` 而非 `ContractError`；
+   已修并新增回归。另新增契约层回归：prebuilt build request 必须有 producer 链接、
+   provenance 的 artifact_set_digest 必须绑定提交的 bundle（request 级一致性）、producer
+   记录是闭集；v4 bundle 方言拒绝 `build` 字段与 `kernel_module` family，v5 证据的 build
+   块在 v4 方言下不被接受；六 RPC 名与 `build = 27`/`producer_evidence = 4` 字段号冻结。
+7. **fake 工具链的 worker 侧 profile 解析**：`builder_for_provenance` 之前用请求里的
+   `compile_profile` 重建 profile，使 worker 内 `capabilities.matches()` 永不失败。现在按
+   **已登记 profile 名**从登记表解析，请求命名另一个 compile profile 会在 worker 内被
+   `toolchain_profile` 拒绝（不静默沿用），未知 profile 名按名拒绝。
+
+本轮测试：P1c 组（build grpc 28 / outbox 3 / contract 6 / go conformance 23 /
+`test_source_builder.py` 14 其中 7 条 `gpu`）合计 **74 passed**；P0/P0b/P1
+contract/grpc/cleanup/bundle + Go bundle conformance **214 passed**；旧 remote/gRPC/
+blob/conformance 组 **170 passed**；job/container/outbox 组 **265 passed, 1 skipped**；
+Metal 非 `gpu` 组 **449 passed, 2 skipped**（`test_triton_baseline` 按围栏 `ps` 限制失败）；
+`test_selfcheck_bridge.py` 围栏 `TMPDIR` 下 18 failed、`TMPDIR=/tmp` 19 passed；
+`scripts/generate_evaluator_proto.py --check` 通过（本轮未改 proto）。
+
+剩余风险：真机证据仍只有一次有效/一次无效编译与两条身份回归，没有 benchmark；
+`language_version` 的 4 行 probe 是 Metal 自身的版本探测（已如实记录，未做设备权限隔离）；
+Metal 仍不进入 NPU contract，也不参与远端构建；P2a/真实 TX 编译器/ABI/ELF、真实 NPU
+加载与容器设备映射、构建性能与缓存、跨版本工具链兼容全部未做。
+
 全部结果是 `simulated=true`、`publication_allowed=false`，不进入 confirmed/catalog/brief。
 **未做/未证明**：P2a TSM simulator、真实 TX 编译器/ABI/ELF、真实 NPU driver/firmware/加载、
 真实容器设备映射、构建性能与构建缓存、跨版本工具链兼容、真实 Metal 性能与 profiler；

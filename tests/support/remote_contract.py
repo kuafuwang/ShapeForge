@@ -580,3 +580,177 @@ def write_bundle_golden(path: Path | None = None) -> Path:
         json.dumps(build_bundle_golden(), indent=2, sort_keys=True) + "\n", encoding="utf-8",
     )
     return target
+
+
+# -- P1c build contract (document version 5) -------------------------------
+BUILD_GOLDEN = SUPPORT / "golden" / "remote" / "npu_build_v5.json"
+BUILD_REQUEST_ID = "build-golden-1"
+BUILD_TARGET_ID = "sim-npu-module"
+BUILD_CLOCK_DOMAIN = "vendor-c-simt-clock-v1"
+BUILD_DEVICE_ELAPSED_NS = 1_500_000
+BUILD_HOST_ELAPSED_NS = 2_000_000
+#: Fixed producer/receiver build records: the vector is frozen, so the durations
+#: and logs are constants of the vector, not measurements.  The tests that check
+#: real timing bind them to a real ``BuildOutcome`` instead.
+BUILD_PRODUCER_DURATION_MS = 12
+BUILD_PRODUCER_LOG = b"--txcc: compiling kernel.tx\n--txcc: emitted module.elf\n"
+BUILD_RECEIVE_DURATION_MS = 7
+BUILD_RECEIVE_LOG = b"npu: verified 2 artifact(s) for device load\n"
+BUILD_SOURCE = b"npu-kernel relu_kernel\n  tx_thread_id\n"
+BUILD_KEY_ID = "npu-build-site/key-1"
+BUILD_KEY = b"m" * 32
+
+
+def load_build_golden() -> dict[str, Any]:
+    return json.loads(BUILD_GOLDEN.read_text(encoding="utf-8"))
+
+
+def build_build_golden() -> dict[str, Any]:
+    """Return the complete P1c build-contract vector.
+
+    It is built from the production functions (the fake toolchain, the contract
+    validators, the received-evidence helper) so the Python test detects drift,
+    while the independent Go verifier rebuilds the request digest document, the
+    producer link and the signed build-evidence rules from the raw fields.
+    """
+
+    from dataclasses import replace
+
+    from tests.support.vendor_sim import module_builder as mb
+    from tests.support.vendor_sim.vendor_c import build_module_execution, received_build_evidence
+    from tcenv.remote.artifact_builder import SourceBundle
+
+    profile = mb.control_host_profile()
+    outcome = mb.FakeTsmModuleBuilder(profile).build(
+        SourceBundle(BUILD_SOURCE), task_contract={},
+    )
+    bundle = outcome.bundle
+    artifact_set = bundle.artifact_set_digest
+    # Freeze the producer record: the fake toolchain measures its own duration,
+    # which must not leak into a checked-in vector.
+    producer_evidence = replace(
+        outcome.evidence, duration_ms=BUILD_PRODUCER_DURATION_MS, log=BUILD_PRODUCER_LOG,
+    )
+    producer = producer_evidence.producer_record()
+    build = mb.request_build(
+        profile, source=BUILD_SOURCE, mode="prebuilt",
+        artifact_set_digest=artifact_set, producer=producer,
+    ).to_dict()
+    execution = build_module_execution().to_dict()
+    # The device group of the execution document is the one the receipt, the
+    # evidence and the ledger close over (its profile/topology digests are
+    # derived, not hand-written).
+    device_group = execution["device_group"]
+    request = {
+        "kind": "formal_eval",
+        "run_id": "golden-run",
+        "session_id": "golden-session",
+        "task": "relu",
+        "dtype": "fp16",
+        "size": "small",
+        "target_id": BUILD_TARGET_ID,
+        "task_fingerprint": "d" * 64,
+        "candidate_digest": {"algorithm": contracts.BUNDLE_DIGEST_ALGORITHM, "value": artifact_set},
+        "execution": execution,
+        "artifact": {"bundle": bundle.to_dict()},
+        "build": build,
+        "mode": "quick",
+        "seed": "3",
+        "reps": 2,
+        "queue_timeout_ms": 3000,
+        "candidate_timeout_ms": 3000,
+        "cases": None,
+        "fast_bench": False,
+        "require_contract_launch": False,
+        "validate": False,
+        "measure_serial": False,
+        "cache_policy": "reuse",
+    }
+    request_document = contracts.request_digest_document(
+        request, source_bytes=b"", dialect=contracts.NPU_BUILD_DIALECT,
+    )
+    request_digest = contracts.request_digest(
+        request, source_bytes=b"", dialect=contracts.NPU_BUILD_DIALECT,
+    )
+    receipt = contracts.attempt_receipt_id(
+        request_id=BUILD_REQUEST_ID, attempt_id=BUNDLE_ATTEMPT_ID,
+        request_digest=request_digest, candidate_digest=request["candidate_digest"],
+        device_group=device_group, dialect=contracts.NPU_BUILD_DIALECT,
+    )
+    received = received_build_evidence(
+        bundle=bundle, provenance=build["provenance"], producer=producer,
+        duration_ms=BUILD_RECEIVE_DURATION_MS, log=BUILD_RECEIVE_LOG,
+    )
+    received = replace(
+        received,
+        loaded=tuple((entry.path, entry.sha256) for entry in bundle.entries
+                     if entry.role == "EXECUTABLE_MODULE"),
+    )
+    evidence_document = {
+        "schema_id": contracts.NPU_BUILD_TIMING_EVIDENCE_SCHEMA_ID,
+        "candidate_digest": dict(request["candidate_digest"]),
+        "artifact_set_digest": artifact_set,
+        "device_group": device_group,
+        "topology": {
+            "logical_devices": 1,
+            "declared_devices": ["device-0"],
+            "required_rank_spans": None,
+            "required_die_spans": None,
+        },
+        "spans": [{
+            "device_id": "device-0", "rank": None, "die": None,
+            "clock_domain": BUILD_CLOCK_DOMAIN, "elapsed_ns": BUILD_DEVICE_ELAPSED_NS,
+        }],
+        "timing": {
+            "source": "DEVICE_EVENT",
+            "clock_domain": BUILD_CLOCK_DOMAIN,
+            "synchronization_completed": True,
+            "device_elapsed_ns": BUILD_DEVICE_ELAPSED_NS,
+            "host_api_elapsed_ns": BUILD_HOST_ELAPSED_NS,
+            "launches": 1,
+        },
+        "buffer": None,
+        "build": received.to_dict(),
+        "measurement_kind": "simulated",
+        "publication_allowed": False,
+        "complete": True,
+    }
+    # The vector must be admissible under the production validator, not merely
+    # self-consistent: this is the same call the frontend and the outbox make.
+    contracts.npu_evidence_document(
+        evidence_document, source_bytes=None, device_group=device_group,
+        expected_resources=execution["resources"], expected_build=build,
+        request_artifact=request["artifact"], measurement_kind="simulated",
+        publication_allowed=False, report_status="ok",
+        dialect=contracts.NPU_BUILD_DIALECT,
+    )
+    return {
+        "schema_id": "tcenv.remote.npu-build.contract-golden.1",
+        "npu_build": {
+            "request": request,
+            "producer_evidence": producer_evidence.to_dict(),
+            "producer_record": producer,
+            "bundle_manifest": bundle.manifest,
+            "artifact_set_digest": artifact_set,
+            "request_digest_document": request_document,
+            "request_canonical_json": contracts.canonical_digest_document(request_document).decode("utf-8"),
+            "request_digest": request_digest,
+            "receipt": {
+                "request_id": BUILD_REQUEST_ID,
+                "attempt_id": BUNDLE_ATTEMPT_ID,
+                "receipt_id": receipt,
+            },
+            "evidence": evidence_document,
+        },
+    }
+
+
+def write_build_golden(path: Path | None = None) -> Path:
+    """Write the P1c vector (fixture maintenance only; the test never records)."""
+
+    target = path or BUILD_GOLDEN
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(build_build_golden(), indent=2, sort_keys=True) + "\n", encoding="utf-8",
+    )
+    return target

@@ -220,27 +220,40 @@ class FakeTsmModuleBuilder:
         return outcome
 
 
+#: The profiles this fake toolchain registers.  A worker resolves the profile by
+#: name from *this* table, never from the request: rebuilding the identity out of
+#: the request's own `compile_profile` would make the registry's probe/build
+#: comparison vacuous (any declared profile would be adopted as its own baseline).
+REGISTERED_PROFILES = {
+    profile.build_profile: profile
+    for profile in (control_host_profile(), evaluator_profile())
+}
+
+
 def builder_for_provenance(
     provenance: Mapping[str, Any],
 ) -> tuple[FakeTsmModuleBuilder, ArtifactBuilder]:
     """Return the fake builder a test worker uses for one build identity.
 
     The worker resolves the *registered* profile by identity, exactly like a
-    production composition root would; an unknown builder id is a typed failure,
-    never an arbitrary toolchain invocation.
+    production composition root would; an unknown builder id or profile name is a
+    typed failure, never an arbitrary toolchain invocation.  Because the profile
+    comes from the registry table and not from the request, the registry's
+    ``capabilities.matches()`` check refuses a request that names another
+    toolchain/compile profile instead of silently building with it.
     """
 
     if provenance.get("builder_id") != BUILDER_ID:
         raise BuildError(
             "toolchain_profile", f"builder {provenance.get('builder_id')!r} is not registered"
         )
-    host = provenance.get("build_host")
-    compile_profile = dict(provenance.get("compile_profile") or {})
-    profile = (
-        control_host_profile(compile_profile=compile_profile) if host == "control_host"
-        else evaluator_profile(compile_profile=compile_profile)
-    )
-    builder = FakeTsmModuleBuilder(profile)
+    name = provenance.get("build_profile")
+    registered = REGISTERED_PROFILES.get(name) if isinstance(name, str) else None
+    if registered is None:
+        raise BuildError(
+            "toolchain_profile", f"build profile {name!r} is not registered on this worker"
+        )
+    builder = FakeTsmModuleBuilder(registered)
     return builder, builder
 
 

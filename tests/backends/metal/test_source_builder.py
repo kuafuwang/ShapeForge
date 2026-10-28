@@ -397,3 +397,274 @@ def test_the_registered_metal_profile_gates_a_changed_toolchain_identity():
         task_contract=contract, provenance=genuine,
     )
     assert outcome.provenance.profile.build_profile == capabilities.build_profile
+
+
+def test_a_compile_failure_carries_the_real_diagnostic_and_duration():
+    """A typed compile failure is not a bare message: it keeps log and duration.
+
+    The successful path records the compiler identity and the measured
+    ``compile_s``/``pipeline_s``; the failure path has to record the compiler's
+    own diagnostic and the real elapsed time, otherwise the only durable record
+    of why a candidate failed is a truncated one-liner with ``duration_ms=0``.
+    """
+
+    from tcenv.backends.metal.source_builder import MetalSourceBuilder
+
+    class StubCompileError(Exception):
+        pass
+
+    class StubContext:
+        def info(self):
+            return {
+                "name": "stub-device", "gpu_family": "Apple9", "language_version": "4.0",
+                "unified_memory": True,
+            }
+
+    class StubBackend:
+        version = "stub-1"
+
+        def assemble(self, contract, source):
+            return source, 3
+
+        def context(self):
+            return StubContext()
+
+        def compile_error(self):
+            return StubCompileError
+
+        def rewrite_compiler_lines(self, contract, message, header_lines):
+            return f"rewritten: {message}"
+
+        def compile(self, context, source, contract, *, math="fast"):
+            raise StubCompileError("program_source:9:1: error: unknown type name 'tx_bad'")
+
+    builder = MetalSourceBuilder(backend=StubBackend())
+    with pytest.raises(BuildError) as error:
+        builder.build(
+            SourceBundle(b"kernel void relu_kernel() {}\n"),
+            task_contract={"kernel_name": "relu_kernel"},
+        )
+    failure = error.value
+    assert failure.error_class == "compile"
+    # The report-facing text keeps the historical ``type: rewritten message``
+    # shape the evaluator already reports.
+    assert failure.detail.startswith("StubCompileError: rewritten: ")
+    assert "unknown type name 'tx_bad'" in failure.detail
+    # The failure now carries a real log: the compiler identity, the diagnostic
+    # the evaluator would report, and the raw text when the rewrite changed it.
+    log = failure.log.decode("utf-8")
+    assert "metal: kernel=relu_kernel" in log
+    assert "status=compile_failed error=StubCompileError" in log
+    assert "rewritten: program_source:9:1: error: unknown type name 'tx_bad'" in log
+    assert "metal: raw diagnostic:" in log
+    assert "program_source:9:1" in log.split("metal: raw diagnostic:", 1)[1]
+    assert "assembled_sha256=" + hashlib.sha256(
+        b"kernel void relu_kernel() {}\n"
+    ).hexdigest() in log
+    # A build that ran never reports the contract's "did not run" duration (0).
+    assert failure.duration_ms >= 1
+
+
+@gpu
+def test_invalid_msl_keeps_the_real_compiler_diagnostic_and_the_legacy_report_text():
+    """Real Metal: the failure log holds the compiler's own diagnostics."""
+
+    from tasks import get_task
+    from tcenv.backends.metal.runtime import MetalCompileError
+    from tcenv.backends.metal.source_builder import MetalSourceBuilder
+
+    task = get_task("relu", "fp16", "small")
+    contract = task.contract
+    broken = task.naive_msl + "\nthis is not valid metal;\n"
+    assembled = contract.assemble(broken)[0]
+    # The legacy path is untouched: the same exception type with the same text.
+    with pytest.raises(MetalCompileError) as legacy:
+        MetalSourceBuilder().backend.context().compile(assembled, contract.kernel_name)
+    legacy_text = str(legacy.value)
+    assert "program_source" in legacy_text
+
+    builder = MetalSourceBuilder(kernel_contract=contract)
+    with pytest.raises(BuildError) as error:
+        builder.build(SourceBundle(broken.encode("utf-8")), task_contract=contract)
+    failure = error.value
+    assert failure.error_class == "compile"
+    # The report text the evaluator would surface is the compiler's diagnostic
+    # (rewritten back to candidate line numbers), unchanged in shape.
+    assert "MetalCompileError" in failure.detail
+    assert "error:" in failure.detail and "kernel.metal:" in failure.detail
+    log = failure.log.decode("utf-8")
+    # The log carries the real diagnostic: the rewritten line the evaluator
+    # reports *and* the compiler's raw text (which still names program_source),
+    # not a synthesised summary.
+    assert "metal: status=compile_failed error=MetalCompileError" in log
+    assert "kernel.metal:12:1: error:" in log
+    raw_section = log.split("metal: raw diagnostic:", 1)[1]
+    assert "program_source" in raw_section
+    assert "expected unqualified-id" in raw_section
+    assert f"metal: kernel={contract.kernel_name}" in log
+    # The real elapsed compile time is recorded (never 0 = "did not run").
+    assert failure.duration_ms >= 1
+    match = next(
+        line for line in log.splitlines() if line.startswith("metal: status=compile_failed")
+    )
+    compile_s = float(match.split("compile_s=")[1].split()[0])
+    assert compile_s > 0.0
+
+
+@gpu
+def test_the_probe_only_compiles_the_fixed_msl_version_probe():
+    """``probe`` measures the device's MSL version, never the candidate.
+
+    ``MetalContext.info()`` -> ``language_version()`` does compile a fixed
+    four-line MSL library (that is how the highest usable MSL version is chosen
+    on this machine) but it never creates a pipeline, never sees the candidate
+    source and never runs a kernel.  The candidate is only compiled by
+    ``build``, which this test never calls.
+    """
+
+    from tcenv.backends.metal.backend import MetalBackend
+    from tcenv.backends.metal.runtime import MetalContext
+    from tcenv.backends.metal.source_builder import MetalSourceBuilder
+
+    class CountingDevice:
+        def __init__(self, device):
+            self._device = device
+            self.library_calls = 0
+            self.pipeline_calls = 0
+
+        def __getattr__(self, name):
+            attribute = getattr(self._device, name)
+            if name == "newLibraryWithSource_options_error_":
+                def counted(*args, **kwargs):
+                    self.library_calls += 1
+                    return attribute(*args, **kwargs)
+                return counted
+            if name.startswith("newComputePipelineState"):
+                def counted(*args, **kwargs):
+                    self.pipeline_calls += 1
+                    return attribute(*args, **kwargs)
+                return counted
+            return attribute
+
+    context = MetalContext()
+    context._lang_cache = None
+    counting = CountingDevice(context.device)
+    context.device = counting
+
+    class FixedContextBackend(MetalBackend):
+        def context(self):
+            return context
+
+    builder = MetalSourceBuilder(backend=FixedContextBackend())
+    capabilities = builder.probe()
+    assert capabilities.available is True
+    # The version probe compiled exactly one fixed MSL library, selected the
+    # version it reported, and created no pipeline.
+    assert counting.library_calls == 1
+    assert counting.pipeline_calls == 0
+    assert capabilities.profile.toolchain_version == context.language_version()
+    assert capabilities.profile.toolchain_version in {"4.0", "3.2", "3.1", "3.0", "2.4"}
+    # The result is cached: a second probe does no further compile.
+    assert builder.probe().profile == capabilities.profile
+    assert counting.library_calls == 1
+    # No candidate was compiled: that only happens in ``build``.
+    assert counting.pipeline_calls == 0
+
+
+def test_the_native_handle_is_never_hashed_serialized_or_transported():
+    """The live pipeline is a local capability, not a document field.
+
+    Two executables with the same descriptor and different live handles are the
+    same *executable identity*: the handle is excluded from equality and from
+    every digest, it never appears in a document, and a local-only artifact set
+    has no transport payload to mistake for one.
+    """
+
+    class Handle:
+        def __init__(self, name):
+            self.name = name
+
+        def __repr__(self):  # pragma: no cover - only used if the invariant breaks
+            return f"<live pipeline {self.name}>"
+
+    source = SourceBundle(b"kernel void relu_kernel() {}\n")
+    entry = source.entry()
+    made = [
+        NativeExecutable(
+            backend_id="metal", kind="compute-pipeline",
+            entry_path=entry.path, entry_sha256=entry.sha256,
+            descriptor={"kernel_name": "relu_kernel", "language_version": "4.0"},
+            handle=Handle(name),
+        )
+        for name in ("first", "second")
+    ]
+    first, second = made
+    assert first.handle is not second.handle
+    # Same executable identity: the live object is not part of it.
+    assert first == second
+    assert first.digest == second.digest
+    assert "handle" not in first.document()
+    assert "live pipeline" not in repr(first)
+
+    # A descriptor that tries to carry the live object is not a document at all.
+    with pytest.raises((TypeError, ValueError)):
+        NativeExecutable(
+            backend_id="metal", kind="compute-pipeline",
+            entry_path=entry.path, entry_sha256=entry.sha256,
+            descriptor={"kernel_name": "relu_kernel", "pipeline": Handle("x")},
+        )
+
+    # The producer link of the evidence is a digest of the evidence document, so
+    # it too is unmoved by the handle: a local digest can never depend on a
+    # capability that only exists in this process.
+    def _evidence(native):
+        bundle = ArtifactBundle(entries=(entry,), native=native)
+        provenance = BuildProvenance(
+            profile=_profile(), source_sha256=source.sha256,
+            artifact_set_digest=bundle.artifact_set_digest,
+        )
+        return BuildOutcome(
+            bundle=bundle, provenance=provenance,
+            evidence=BuildEvidence(
+                mode="prebuilt", status="ok", provenance=provenance,
+                artifacts=(BuildArtifact.from_entry(entry),), native=native,
+                loaded=(), placement="control_host",
+            ),
+        )
+
+    outcome = _evidence(first)
+    other = _evidence(second)
+    assert outcome.evidence.producer_record() == other.evidence.producer_record()
+    assert outcome.evidence.to_dict() == other.evidence.to_dict()
+    assert "native" not in outcome.evidence.to_dict()
+    # ...and there is no portable payload to send it with.
+    with pytest.raises(BundleError, match="local-only"):
+        outcome.payload()
+
+
+@gpu
+def test_two_real_compiles_of_one_source_share_an_identity_and_not_a_handle():
+    """Real Metal: a second build is a second pipeline with the same identity."""
+
+    from tasks import get_task
+    from tcenv.backends.metal.source_builder import MetalSourceBuilder
+
+    task = get_task("relu", "fp16", "small")
+    contract = task.contract
+    source = SourceBundle(task.naive_msl.encode("utf-8"))
+    first = MetalSourceBuilder(kernel_contract=contract).build(source, task_contract=contract)
+    second = MetalSourceBuilder(kernel_contract=contract).build(source, task_contract=contract)
+    assert first.bundle.native.handle is not second.bundle.native.handle
+    assert first.bundle.native.digest == second.bundle.native.digest
+    assert first.artifact_set_digest == second.artifact_set_digest
+    # The evidence documents are identical apart from this build's own measured
+    # duration and log: nothing about the live pipeline entered either document.
+    documents = []
+    for outcome in (first, second):
+        document = outcome.evidence.to_dict()
+        assert "native" not in document
+        assert "pso" not in json.dumps(document)
+        documents.append(
+            {key: value for key, value in document.items() if key not in ("duration_ms", "log")}
+        )
+    assert documents[0] == documents[1]
