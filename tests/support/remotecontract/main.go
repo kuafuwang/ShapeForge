@@ -587,15 +587,39 @@ var bundleManifestFields = []string{"path", "role", "media_type", "size_bytes", 
 // It sorts entries by path and never looks at the content form: the manifest is
 // the stable identity of the exact bytes, not of how they were transported.
 // safeBundlePath refuses a manifest path that could escape the attempt
-// directory (absolute, backslashes, empty/dot segments).
+// directory (absolute, backslashes, control characters, empty/dot segments,
+// surrounding whitespace) or that exceeds the path limits.
 func safeBundlePath(path string) error {
-	if strings.HasPrefix(path, "/") || strings.Contains(path, "\\") ||
-		strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
-		return fmt.Errorf("unsafe bundle path %q", path)
+	if path == "" {
+		return errors.New("bundle entry path must be a non-empty string")
 	}
-	for _, segment := range strings.Split(path, "/") {
+	if len([]byte(path)) > maxBundlePathBytes {
+		return errors.New("bundle entry path exceeds its UTF-8 byte limit")
+	}
+	if strings.HasPrefix(path, "/") {
+		return errors.New("bundle entry path must be relative")
+	}
+	if strings.Contains(path, "\\") {
+		return errors.New("bundle entry path must use POSIX separators")
+	}
+	if strings.HasSuffix(path, "/") {
+		return errors.New("bundle entry path must name a file")
+	}
+	for _, r := range path {
+		if r < ' ' || r == 0x7f {
+			return errors.New("bundle entry path must not contain control characters")
+		}
+	}
+	segments := strings.Split(path, "/")
+	if len(segments) > maxBundlePathSegments {
+		return errors.New("bundle entry path is too deep")
+	}
+	for _, segment := range segments {
 		if segment == "" || segment == "." || segment == ".." {
 			return fmt.Errorf("unsafe bundle path segment in %q", path)
+		}
+		if strings.TrimSpace(segment) != segment {
+			return errors.New("bundle entry path segment must not have surrounding whitespace")
 		}
 	}
 	return nil
@@ -631,16 +655,45 @@ func bundleManifest(schemaID string, entries []any) (map[string]any, error) {
 			return nil, fmt.Errorf("duplicate bundle path %q", path)
 		}
 		seen[strings.ToLower(path)] = true
-		if _, ok := canonicalEntry["size_bytes"].(json.Number); !ok {
-			return nil, fmt.Errorf("bundle entry %q size is not an integer", path)
+		// The entry domain is part of the manifest identity: a role the contract
+		// does not know, a media type that is not a bounded ASCII media type, a
+		// digest that is not 64 lowercase hex characters or a size outside the
+		// declared total are all different documents, not unusual values.
+		role, ok := canonicalEntry["role"].(string)
+		if !ok || !bundleRoles[role] {
+			return nil, errors.New("bundle entry role is not a supported public role")
 		}
-		if digest, ok := canonicalEntry["sha256"].(string); !ok || len(digest) != 64 {
-			return nil, fmt.Errorf("bundle entry %q SHA-256 is invalid", path)
+		mediaType, ok := canonicalEntry["media_type"].(string)
+		if !ok || !bundleMediaTypePattern.MatchString(mediaType) {
+			return nil, errors.New("bundle entry media type is not a bounded ASCII media type")
+		}
+		size, err := buildNumber(canonicalEntry["size_bytes"], "bundle entry size")
+		if err != nil || size < 0 || size > maxBundleTotalBytes {
+			return nil, errors.New("bundle entry size is outside its integer bounds")
+		}
+		if digest, ok := canonicalEntry["sha256"].(string); !ok || !isHex64(digest) {
+			return nil, errors.New(
+				"bundle entry sha256 must be 64 lowercase hexadecimal characters",
+			)
 		}
 		manifest = append(manifest, canonicalEntry)
 	}
 	if len(manifest) == 0 {
 		return nil, errors.New("bundle has no entries")
+	}
+	if len(manifest) > maxBundleEntries {
+		return nil, errors.New("a bundle exceeds the entry-count limit")
+	}
+	total := int64(0)
+	for _, raw := range manifest {
+		size, err := buildNumber(raw.(map[string]any)["size_bytes"], "bundle entry size")
+		if err != nil {
+			return nil, err
+		}
+		total += size
+	}
+	if total > maxBundleTotalBytes {
+		return nil, errors.New("a bundle exceeds the declared total byte limit")
 	}
 	sort.Slice(manifest, func(i, j int) bool {
 		return manifest[i].(map[string]any)["path"].(string) <
@@ -1674,11 +1727,24 @@ var buildLoadedFields = []string{"path", "sha256"}
 // a duration is a bounded wall-clock value (0 means "this never ran") and a log
 // size is a bounded byte count.
 const (
-	maxBuildDurationMs   = 3_600_000
-	maxBuildSourceBytes  = 1_000_000
-	maxBuildSafeInteger  = 9_007_199_254_740_991
-	buildModuleMediaType = "text/plain; charset=utf-8"
+	maxBuildDurationMs    = 3_600_000
+	maxBuildSourceBytes   = 1_000_000
+	maxBuildSafeInteger   = 9_007_199_254_740_991
+	buildModuleMediaType  = "text/plain; charset=utf-8"
+	maxBundleEntries      = 64
+	maxBundlePathBytes    = 240
+	maxBundlePathSegments = 16
+	maxBundleTotalBytes   = 16_000_000
 )
+
+var bundleRoles = map[string]bool{
+	"SOURCE": true, "EXECUTABLE_MODULE": true, "GRAPH_DEFINITION": true,
+	"MODEL_DEFINITION": true, "PARAMETER_TABLE": true, "AUXILIARY": true,
+}
+
+// bundleMediaTypePattern is the bounded ASCII media type a bundle entry may
+// declare (same character class as the production validator).
+var bundleMediaTypePattern = regexp.MustCompile(`^[A-Za-z0-9!#$&^_.+*/;= -]{1,160}$`)
 
 // closedFields refuses a document whose field set is not exactly the versioned
 // one.  A build evidence that grew a field is an unreviewed identity even when

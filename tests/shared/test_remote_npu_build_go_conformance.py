@@ -162,8 +162,43 @@ def _mutate_provenance(golden: dict, mutate) -> None:
     mutate(golden["npu_build"]["evidence"]["build"]["provenance"])
 
 
+def _manifest_core(entries: list[dict]) -> tuple[dict, str]:
+    """The canonical manifest and its digest, computed without the entry domain.
+
+    The vectors for the entry domain (an unknown role, a non-hex digest, a
+    negative size, ...) cannot be built through the production helper, because it
+    refuses exactly those entries.  The independent verifier still has to see
+    them, so this builds the same canonical document by hand.
+    """
+
+    from tcenv.remote.artifact_bundle import BUNDLE_SCHEMA_ID, BUNDLE_SCHEMA_VERSION
+    from tcenv.remote.contracts import canonical_digest_document
+
+    manifest = {
+        "schema_id": BUNDLE_SCHEMA_ID,
+        "schema_version": BUNDLE_SCHEMA_VERSION,
+        "entries": sorted(
+            (
+                {key: entry[key] for key in ("path", "role", "media_type", "size_bytes", "sha256")}
+                for entry in entries
+            ),
+            key=lambda item: item["path"],
+        ),
+    }
+    return manifest, hashlib.sha256(canonical_digest_document(manifest)).hexdigest()
+
+
 def _rebuild_artifact_set(golden: dict, entries: list[dict], *, loaded=None) -> None:
-    """Rewrite the artifact set through every document that binds it.
+    """Rewrite a *valid* artifact set through every document that binds it."""
+
+    from tcenv.remote.artifact_bundle import BUNDLE_SCHEMA_ID, canonical_manifest
+
+    canonical_manifest(BUNDLE_SCHEMA_ID, entries)
+    _rebuild_artifact_set_unchecked(golden, entries, loaded=loaded)
+
+
+def _rebuild_artifact_set_unchecked(golden: dict, entries: list[dict], *, loaded=None) -> None:
+    """Rewrite the artifact set even when its entries are outside the domain.
 
     The bundle manifest, the artifact-set digest, the CandidateDigest, the build
     provenance, the signed evidence artifacts and the receiver's load record are
@@ -171,14 +206,15 @@ def _rebuild_artifact_set(golden: dict, entries: list[dict], *, loaded=None) -> 
     chain would only prove that some digest mismatch is detected.
     """
 
-    from tcenv.remote.artifact_bundle import (
-        BUNDLE_SCHEMA_ID, artifact_set_digest, canonical_manifest,
-    )
+    from tcenv.remote.artifact_bundle import BUNDLE_SCHEMA_ID
 
     vector = golden["npu_build"]
-    manifest = canonical_manifest(BUNDLE_SCHEMA_ID, entries)
-    digest = artifact_set_digest(BUNDLE_SCHEMA_ID, entries)
-    first_source = next(entry for entry in manifest["entries"] if entry["role"] == "SOURCE")
+    manifest, digest = _manifest_core(entries)
+    # A vector that removes the SOURCE role on purpose has nothing to bind; the
+    # provenance keeps its digest and the entry-domain rule is what must refuse it.
+    first_source = next(
+        (entry for entry in manifest["entries"] if entry["role"] == "SOURCE"), None,
+    )
 
     def mutate(request):
         bundle = request["artifact"]["bundle"]
@@ -187,7 +223,8 @@ def _rebuild_artifact_set(golden: dict, entries: list[dict], *, loaded=None) -> 
         request["candidate_digest"]["value"] = digest
         provenance = request["build"]["provenance"]
         provenance["artifact_set_digest"] = digest
-        provenance["source_sha256"] = first_source["sha256"]
+        if first_source is not None:
+            provenance["source_sha256"] = first_source["sha256"]
 
     _resign_request_change(golden, mutate)
 
@@ -394,6 +431,53 @@ def _apply_mutation(golden: dict, mutation: str) -> None:
                 {"path": module["path"], "sha256": module["sha256"]},
             ],
         )
+    elif mutation.startswith("entry_") or mutation == "too_many_entries":
+        entries = copy.deepcopy(vector["request"]["artifact"]["bundle"]["entries"])
+        source = next(entry for entry in entries if entry["role"] == "SOURCE")
+        if mutation == "entry_role_unsupported":
+            # Keep exactly one SOURCE and one module: only the extra entry's role
+            # is outside the domain, so nothing else can refuse the vector.
+            entries.append(
+                _inline_entry("aux/extra.bin", "AUXILIARY", "application/octet-stream", b"x")
+            )
+            entries[-1]["role"] = "NOT_A_ROLE"
+        elif mutation == "entry_media_type_invalid":
+            source["media_type"] = ""
+        elif mutation == "entry_sha256_not_hex":
+            source["sha256"] = "z" * 64
+        elif mutation == "entry_size_negative":
+            source["size_bytes"] = -1
+        elif mutation == "entry_path_too_deep":
+            source["path"] = "/".join(f"d{index}" for index in range(17)) + "/kernel.tx"
+        elif mutation == "too_many_entries":
+            for index in range(64):
+                entries.append(
+                    _inline_entry(
+                        f"aux/{index:02d}.bin", "AUXILIARY", "application/octet-stream",
+                        b"x",
+                    )
+                )
+        else:
+            # 60 entries of 300 kB declare 18 MB, over the 16 MB total limit.
+            entries = [
+                _inline_entry(
+                    f"bulk/{index:02d}.bin", "AUXILIARY", "application/octet-stream", b"x",
+                )
+                for index in range(60)
+            ]
+            for entry in entries:
+                entry["size_bytes"] = 300_000
+            entries.append(
+                _inline_entry(
+                    "module/kernel.txelf", "EXECUTABLE_MODULE", "application/x-tx-elf", b"y",
+                )
+            )
+            entries.append(
+                _inline_entry(
+                    "kernel.tx", "SOURCE", "text/plain; charset=utf-8", b"z",
+                )
+            )
+        _rebuild_artifact_set_unchecked(golden, entries)
     else:
         vector["receipt"]["receipt_id"] = "4" * 64
 
@@ -452,6 +536,16 @@ def _apply_mutation(golden: dict, mutation: str) -> None:
     ("second_source_entry", "requires exactly one SOURCE entry"),
     # The receiver's load record is a set: no duplicates, full coverage.
     ("duplicate_loaded_module", "build.loaded reports the same artifact twice"),
+    # The artifact entries themselves are a closed domain: an unknown role, an
+    # empty media type, a non-hex digest, a negative size, a too-deep path, too
+    # many entries and an over-limit total are different documents.
+    ("entry_role_unsupported", "role is not a supported public role"),
+    ("entry_media_type_invalid", "media type is not a bounded ASCII media type"),
+    ("entry_sha256_not_hex", "sha256 must be 64 lowercase hexadecimal characters"),
+    ("entry_size_negative", "size is outside its integer bounds"),
+    ("entry_path_too_deep", "path is too deep"),
+    ("too_many_entries", "entry-count limit"),
+    ("entry_total_bytes_over_limit", "declared total byte limit"),
 ])
 def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, reason):
     golden = copy.deepcopy(load_build_golden())
@@ -482,6 +576,14 @@ def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, rea
     ("provenance_build_host", "request"),
     # The receiver's load record is checked with the signed evidence.
     ("duplicate_loaded_module", "evidence"),
+    # The artifact-entry domain is a request-level rule.
+    ("entry_role_unsupported", "request"),
+    ("entry_media_type_invalid", "request"),
+    ("entry_sha256_not_hex", "request"),
+    ("entry_size_negative", "request"),
+    ("entry_path_too_deep", "request"),
+    ("too_many_entries", "request"),
+    ("entry_total_bytes_over_limit", "request"),
 ])
 def test_the_python_contract_rejects_the_same_tampered_vector(mutation, level):
     """The Go verifier is not stricter or looser than the production contract.
