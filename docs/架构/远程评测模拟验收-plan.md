@@ -13,7 +13,7 @@ runner 已删除。本文只保留当时的证据与边界，**不再提供可�
   transport 时 resume 明确失败，不改写 manifest，也不自动换成 gRPC/local。
 - 历史报告仍作为只读 artifact 保留；旧 digest/provenance/HMAC 的验证能力没有删除。
   这不表示旧服务仍然存在或旧 run 仍可 resume。
-- `tcenv.remote.protocol` 中仍供一次性 worker 与 `legacy_worker_bridge` 使用的私有
+- `tcenv.remote.protocol` 中仍供一次性 worker 与 `job_worker_bridge` 使用的私有
   帧不是旧 SSH 对外协议；agent→host Unix selfcheck bridge 也不属于旧数据面。
 
 ## 2. 当时做了什么

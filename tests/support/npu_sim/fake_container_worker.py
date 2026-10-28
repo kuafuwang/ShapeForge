@@ -1,9 +1,9 @@
 """CPU-only fake evaluator worker for the real-VM container acceptance.
 
-Test-only.  It plugs into the *existing legacy worker protocol* exactly like
+Test-only.  It plugs into the *existing job worker protocol* exactly like
 ``tcenv.remote.worker`` does (the container runs the production
-``tcenv.remote.legacy_worker_bridge`` around this module), so the private
-engine protocol, the legacy bridge and the result envelope are all exercised
+``tcenv.remote.job_worker_bridge`` around this module), so the private
+engine protocol, the job bridge and the result envelope are all exercised
 unchanged.
 
 ``SLEEP60`` starts a child process with a deterministic argv token and then
@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-from tcenv.remote import worker as legacy_worker
+from tcenv.remote import worker as job_worker
 from tcenv.remote.protocol import EvaluationRequest
 
 
@@ -76,7 +76,7 @@ class FakeContainerBackend:
 
 
 def main() -> int:
-    return legacy_worker.run_once(FakeContainerBackend(), sys.stdin.buffer, sys.stdout.buffer)
+    return job_worker.run_once(FakeContainerBackend(), sys.stdin.buffer, sys.stdout.buffer)
 
 
 if __name__ == "__main__":

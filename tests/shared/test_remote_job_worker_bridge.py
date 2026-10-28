@@ -1,4 +1,4 @@
-"""Real-subprocess tests for the private JobEngine-to-legacy worker bridge."""
+"""Real-subprocess tests for the private JobEngine-to-job worker bridge."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from tcenv.remote.job_types import Attempt, ExternalEvaluationRequest
-from tcenv.remote.legacy_worker_bridge import _translate_progress
+from tcenv.remote.job_worker_bridge import _translate_progress
 from tcenv.remote.protocol import FrameDecoder, ProtocolError, read_frame
 from tcenv.remote.worker_protocol import (
     MAX_WORKER_FRAME_PAYLOAD,
@@ -22,13 +22,13 @@ from tcenv.remote.worker_protocol import (
     encode_request,
 )
 
-from ..support.fake_worker_legacy_bridge import LONG_DETAIL
+from ..support.fake_worker_job_bridge import LONG_DETAIL
 from ..support.job_engine import request as make_request
 from ..support.process_state import process_state
 
 ROOT = Path(__file__).resolve().parents[2]
 NPU_WORKER = [sys.executable, "-m", "tests.support.npu_sim.worker_entry"]
-FAKE_WORKER = [sys.executable, "-m", "tests.support.fake_worker_legacy_bridge"]
+FAKE_WORKER = [sys.executable, "-m", "tests.support.fake_worker_job_bridge"]
 
 
 def _attempt() -> Attempt:
@@ -51,20 +51,20 @@ def _spawn_bridge(
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     env["TMPDIR"] = str(temp_root)
-    env.pop("TCENV_LEGACY_WORKER_COMMAND", None)
+    env.pop("TCENV_JOB_WORKER_COMMAND", None)
     env.pop("TCENV_REMOTE_STATE_DIR", None)
-    env.pop("FAKE_LEGACY_BEHAVIOR", None)
-    env.pop("FAKE_LEGACY_RECORD", None)
-    env.pop("FAKE_LEGACY_RELEASE", None)
+    env.pop("FAKE_JOB_BEHAVIOR", None)
+    env.pop("FAKE_JOB_RECORD", None)
+    env.pop("FAKE_JOB_RELEASE", None)
     env.pop("NPU_SIM_WORKER_EXIT", None)
     if command_json is not None:
-        env["TCENV_LEGACY_WORKER_COMMAND"] = command_json
+        env["TCENV_JOB_WORKER_COMMAND"] = command_json
     elif command is not None:
-        env["TCENV_LEGACY_WORKER_COMMAND"] = json.dumps(command)
+        env["TCENV_JOB_WORKER_COMMAND"] = json.dumps(command)
     if extra_env:
         env.update(extra_env)
     process = subprocess.Popen(
-        [sys.executable, "-m", "tcenv.remote.legacy_worker_bridge"],
+        [sys.executable, "-m", "tcenv.remote.job_worker_bridge"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -72,7 +72,7 @@ def _spawn_bridge(
         cwd=ROOT,
         env=env,
         # The test gives the bridge its own group.  The production bridge must
-        # not give its legacy child another one.
+        # not give its job child another one.
         start_new_session=True,
     )
     return process, temp_root
@@ -203,14 +203,14 @@ def test_npu_worker_result_progress_binding_and_temp_cleanup(tmp_path):
     assert b"TCENV_REMOTE_PROGRESS_PATH" not in output
 
 
-def test_exact_legacy_request_same_process_group_and_success_reap(tmp_path):
+def test_exact_job_request_same_process_group_and_success_reap(tmp_path):
     source_text = "// π 🚀\r\nkernel void demo() {} \r\n"
     request = _request(source=source_text.encode("utf-8"))
     attempt = _attempt()
-    record_path = tmp_path / "legacy-record.json"
+    record_path = tmp_path / "job-record.json"
     process, temp_root = _spawn_bridge(
         tmp_path, FAKE_WORKER,
-        extra_env={"FAKE_LEGACY_RECORD": str(record_path)},
+        extra_env={"FAKE_JOB_RECORD": str(record_path)},
     )
     try:
         returncode, output, error = _communicate(process, request, attempt)
@@ -235,8 +235,8 @@ def test_exact_legacy_request_same_process_group_and_success_reap(tmp_path):
         assert len(decoded) == 1
         result_frame, kind, result = decoded[0]
         assert kind == "result"
-        assert result["report"]["legacy_report_marker"] == "report-from-legacy-worker"
-        assert result["evidence"]["legacy_evidence_marker"] == "evidence-from-legacy-worker"
+        assert result["report"]["job_report_marker"] == "report-from-job-worker"
+        assert result["evidence"]["job_evidence_marker"] == "evidence-from-job-worker"
         assert "receipt" not in result_frame.payload
         assert "signature" not in result_frame.payload
     finally:
@@ -258,7 +258,7 @@ def test_state_scoped_temp_root_prunes_residue_and_cleans_the_attempt(tmp_path):
     returncode, output, error, _temp_root = _run_bridge(
         tmp_path, request, _attempt(), FAKE_WORKER,
         extra_env={
-            "FAKE_LEGACY_RECORD": str(record_path),
+            "FAKE_JOB_RECORD": str(record_path),
             "TCENV_REMOTE_STATE_DIR": str(state_dir),
         },
     )
@@ -274,7 +274,7 @@ def test_state_scoped_temp_root_prunes_residue_and_cleans_the_attempt(tmp_path):
 
 def test_non_lowercase_state_dir_is_not_used_for_temp_root(tmp_path):
     """@brief 非绝对路径不能悄悄把临时目录指到当前工作目录之外的相对位置。"""
-    from tcenv.remote.legacy_worker_bridge import _bridge_temp_root
+    from tcenv.remote.job_worker_bridge import _bridge_temp_root
 
     assert _bridge_temp_root({"TCENV_REMOTE_STATE_DIR": "relative/state"}) is None
     assert _bridge_temp_root({}) is None
@@ -287,24 +287,24 @@ def test_nonexistent_child_command_fails_without_a_result(tmp_path):
     )
     assert returncode != 0
     assert output == b""
-    assert b"could not start legacy worker" in error
+    assert b"could not start job worker" in error
 
 
 def test_nonzero_child_is_reaped_and_emits_no_result(tmp_path):
     request = _request()
-    record_path = tmp_path / "failed-legacy-record.json"
+    record_path = tmp_path / "failed-job-record.json"
     process, _temp_root = _spawn_bridge(
         tmp_path, FAKE_WORKER,
         extra_env={
-            "FAKE_LEGACY_BEHAVIOR": "nonzero",
-            "FAKE_LEGACY_RECORD": str(record_path),
+            "FAKE_JOB_BEHAVIOR": "nonzero",
+            "FAKE_JOB_RECORD": str(record_path),
         },
     )
     try:
         returncode, output, error = _communicate(process, request, _attempt())
         assert returncode != 0
         assert output == b""
-        assert b"legacy worker exited 23" in error
+        assert b"job worker exited 23" in error
         record = json.loads(record_path.read_text(encoding="utf-8"))
         assert _ps_state(record["pid"]) is None
     finally:
@@ -323,13 +323,13 @@ def test_nonzero_child_is_reaped_and_emits_no_result(tmp_path):
     '["python", 3]',
     '[true]',
 ])
-def test_malformed_or_missing_legacy_command_is_rejected(tmp_path, configured):
+def test_malformed_or_missing_job_command_is_rejected(tmp_path, configured):
     returncode, output, error, temp_root = _run_bridge(
         tmp_path, _request(), _attempt(), None, command_json=configured,
     )
     assert returncode != 0
     assert output == b""
-    assert b"TCENV_LEGACY_WORKER_COMMAND" in error
+    assert b"TCENV_JOB_WORKER_COMMAND" in error
     assert list(temp_root.iterdir()) == []
 
 
@@ -342,12 +342,12 @@ def test_malformed_or_missing_legacy_command_is_rejected(tmp_path, configured):
     ("wrong_type", b"exactly one result"),
     ("invalid_evidence", b"evidence"),
 ])
-def test_invalid_legacy_results_fail_without_an_engine_result(
+def test_invalid_job_results_fail_without_an_engine_result(
     tmp_path, behavior, error_fragment,
 ):
     returncode, output, error, temp_root = _run_bridge(
         tmp_path, _request(), _attempt(), FAKE_WORKER,
-        extra_env={"FAKE_LEGACY_BEHAVIOR": behavior},
+        extra_env={"FAKE_JOB_BEHAVIOR": behavior},
     )
     assert returncode != 0
     assert output == b""
@@ -359,13 +359,13 @@ def test_bench_done_progress_is_bounded_and_terminal_is_before_result(tmp_path):
     request = _request()
     attempt = _attempt()
     release = tmp_path / "release-progress"
-    record_path = tmp_path / "progress-legacy-record.json"
+    record_path = tmp_path / "progress-job-record.json"
     process, temp_root = _spawn_bridge(
         tmp_path, FAKE_WORKER,
         extra_env={
-            "FAKE_LEGACY_BEHAVIOR": "progress_handshake",
-            "FAKE_LEGACY_RELEASE": str(release),
-            "FAKE_LEGACY_RECORD": str(record_path),
+            "FAKE_JOB_BEHAVIOR": "progress_handshake",
+            "FAKE_JOB_RELEASE": str(release),
+            "FAKE_JOB_RECORD": str(record_path),
         },
     )
     try:
@@ -379,7 +379,7 @@ def test_bench_done_progress_is_bounded_and_terminal_is_before_result(tmp_path):
         }
         assert len(progress["detail"]) == 300
         assert str(temp_root) not in progress["detail"]
-        # Hold the legacy child in bench until the first frame is consumed, so
+        # Hold the job child in bench until the first frame is consumed, so
         # this covers bench without relying on scheduler-sensitive sleeps.
         release.write_text("release", encoding="utf-8")
 
@@ -409,18 +409,18 @@ def test_bench_done_progress_is_bounded_and_terminal_is_before_result(tmp_path):
 def test_unknown_progress_stage_uses_safe_fallback(tmp_path):
     returncode, output, error, _temp_root = _run_bridge(
         tmp_path, _request(), _attempt(), FAKE_WORKER,
-        extra_env={"FAKE_LEGACY_BEHAVIOR": "unknown_progress"},
+        extra_env={"FAKE_JOB_BEHAVIOR": "unknown_progress"},
     )
     assert returncode == 0, error.decode("utf-8", errors="replace")
     decoded = _decode_engine_frames(output, _request(), _attempt())
     assert [kind for _frame, kind, _payload in decoded] == ["progress", "result"]
     assert decoded[0][2] == {
         "stage": "queued",
-        "detail": "unknown legacy stage",
+        "detail": "unknown job stage",
     }
 
 
-def test_every_documented_legacy_stage_alias_maps_to_an_engine_stage():
+def test_every_documented_job_stage_alias_maps_to_an_engine_stage():
     expected = {
         "queued": "queued",
         "static": "static_check",
@@ -434,9 +434,9 @@ def test_every_documented_legacy_stage_alias_maps_to_an_engine_stage():
         "finalizing": "finalizing",
         "finished": "finalizing",
     }
-    for legacy_stage, engine_stage in expected.items():
+    for job_stage, engine_stage in expected.items():
         assert _translate_progress({
-            "stage": legacy_stage, "message": "detail", "updated_at": 1.25,
+            "stage": job_stage, "message": "detail", "updated_at": 1.25,
         }) == {
             "stage": engine_stage, "detail": "detail", "observed_at_ms": 1250,
         }
@@ -451,15 +451,15 @@ def test_sustained_stderr_flood_keeps_the_report_and_reaps_the_child(tmp_path):
     returncode, output, error, temp_root = _run_bridge(
         tmp_path, request, attempt, FAKE_WORKER,
         extra_env={
-            "FAKE_LEGACY_RECORD": str(record_path),
-            "FAKE_LEGACY_BEHAVIOR": "stderr_flood",
-            "FAKE_LEGACY_FLOOD_BLOCKS": "128",
+            "FAKE_JOB_RECORD": str(record_path),
+            "FAKE_JOB_BEHAVIOR": "stderr_flood",
+            "FAKE_JOB_FLOOD_BLOCKS": "128",
         },
     )
     assert returncode == 0, error.decode("utf-8", errors="replace")[-2000:]
     decoded = _decode_engine_frames(output, request, attempt)
     assert len(decoded) == 1 and decoded[0][1] == "result"
-    assert decoded[0][2]["report"]["legacy_report_marker"] == "report-from-legacy-worker"
+    assert decoded[0][2]["report"]["job_report_marker"] == "report-from-job-worker"
     record = json.loads(record_path.read_text(encoding="utf-8"))
     assert _ps_state(record["pid"]) is None, "the flooding child was not reaped"
     assert list(temp_root.iterdir()) == []
@@ -474,9 +474,9 @@ def test_sustained_stdout_flood_fails_bounded_and_reaps_the_child(tmp_path):
     returncode, output, error, temp_root = _run_bridge(
         tmp_path, request, attempt, FAKE_WORKER,
         extra_env={
-            "FAKE_LEGACY_RECORD": str(record_path),
-            "FAKE_LEGACY_BEHAVIOR": "stdout_garbage_flood",
-            "FAKE_LEGACY_FLOOD_BLOCKS": "64",
+            "FAKE_JOB_RECORD": str(record_path),
+            "FAKE_JOB_BEHAVIOR": "stdout_garbage_flood",
+            "FAKE_JOB_FLOOD_BLOCKS": "64",
         },
     )
     assert returncode == 1
@@ -495,7 +495,7 @@ def test_a_descendant_holding_the_pipe_cannot_block_the_bridge(tmp_path, monkeyp
     import threading
     import time
 
-    import tcenv.remote.legacy_worker_bridge as bridge
+    import tcenv.remote.job_worker_bridge as bridge
 
     monkeypatch.setattr(bridge, "_PIPE_JOIN_S", 0.05)
     holder_file = tmp_path / "holder.pid"
@@ -503,14 +503,14 @@ def test_a_descendant_holding_the_pipe_cannot_block_the_bridge(tmp_path, monkeyp
     output = io.BytesIO()
     environ = dict(os.environ)
     environ["PYTHONPATH"] = str(ROOT) + os.pathsep + environ.get("PYTHONPATH", "")
-    environ["FAKE_LEGACY_BEHAVIOR"] = "exit_with_pipe_holder"
-    environ["FAKE_LEGACY_HOLDER_PID"] = str(holder_file)
-    environ["FAKE_LEGACY_HOLD_S"] = "5"
+    environ["FAKE_JOB_BEHAVIOR"] = "exit_with_pipe_holder"
+    environ["FAKE_JOB_HOLDER_PID"] = str(holder_file)
+    environ["FAKE_JOB_HOLD_S"] = "5"
     environ.pop("TCENV_REMOTE_STATE_DIR", None)
     started = time.monotonic()
     try:
         with pytest.raises(bridge._BridgeFailure, match="did not finish"):
-            bridge._run_legacy_worker(
+            bridge._run_job_worker(
                 FAKE_WORKER, request, output,
                 attempt_id=_attempt().attempt_id,
                 lease_fence=_attempt().lease_fence,
@@ -537,17 +537,17 @@ def test_a_request_write_epipe_with_a_success_result_is_not_accepted(tmp_path):
     import io
     import threading
 
-    import tcenv.remote.legacy_worker_bridge as bridge
+    import tcenv.remote.job_worker_bridge as bridge
 
     request_obj = _request(source=b"x" * 900_000)
     output = io.BytesIO()
     environ = dict(os.environ)
     environ["PYTHONPATH"] = str(ROOT) + os.pathsep + environ.get("PYTHONPATH", "")
-    environ["FAKE_LEGACY_BEHAVIOR"] = "result_without_reading"
-    environ["FAKE_LEGACY_REQUEST_ID"] = request_obj.request_id
+    environ["FAKE_JOB_BEHAVIOR"] = "result_without_reading"
+    environ["FAKE_JOB_REQUEST_ID"] = request_obj.request_id
     environ.pop("TCENV_REMOTE_STATE_DIR", None)
     with pytest.raises(bridge._BridgeFailure, match="request write failed"):
-        bridge._run_legacy_worker(
+        bridge._run_job_worker(
             FAKE_WORKER, request_obj, output,
             attempt_id=_attempt().attempt_id,
             lease_fence=_attempt().lease_fence,
@@ -564,7 +564,7 @@ def test_a_descendant_holding_stdin_cannot_block_the_bridge(tmp_path, monkeypatc
     import threading
     import time
 
-    import tcenv.remote.legacy_worker_bridge as bridge
+    import tcenv.remote.job_worker_bridge as bridge
 
     monkeypatch.setattr(bridge, "_PIPE_JOIN_S", 0.2)
     holder_file = tmp_path / "holder.pid"
@@ -573,15 +573,15 @@ def test_a_descendant_holding_stdin_cannot_block_the_bridge(tmp_path, monkeypatc
     output = io.BytesIO()
     environ = dict(os.environ)
     environ["PYTHONPATH"] = str(ROOT) + os.pathsep + environ.get("PYTHONPATH", "")
-    environ["FAKE_LEGACY_BEHAVIOR"] = "exit_with_stdin_holder"
-    environ["FAKE_LEGACY_HOLDER_PID"] = str(holder_file)
-    environ["FAKE_LEGACY_HOLD_S"] = "5"
+    environ["FAKE_JOB_BEHAVIOR"] = "exit_with_stdin_holder"
+    environ["FAKE_JOB_HOLDER_PID"] = str(holder_file)
+    environ["FAKE_JOB_HOLD_S"] = "5"
     environ.pop("TCENV_REMOTE_STATE_DIR", None)
     outcome: list[BaseException] = []
 
     def run() -> None:
         try:
-            bridge._run_legacy_worker(
+            bridge._run_job_worker(
                 FAKE_WORKER, request_obj, output,
                 attempt_id=_attempt().attempt_id,
                 lease_fence=_attempt().lease_fence,
@@ -592,7 +592,7 @@ def test_a_descendant_holding_stdin_cannot_block_the_bridge(tmp_path, monkeypatc
             outcome.append(exc)
 
     started = time.monotonic()
-    thread = threading.Thread(target=run, name="legacy-writer-probe", daemon=True)
+    thread = threading.Thread(target=run, name="job-writer-probe", daemon=True)
     thread.start()
     thread.join(5.0)
     elapsed = time.monotonic() - started
@@ -618,24 +618,24 @@ def test_a_stderr_reader_failure_fails_the_bridge(tmp_path, monkeypatch):
     import io
     import threading
 
-    import tcenv.remote.legacy_worker_bridge as bridge
+    import tcenv.remote.job_worker_bridge as bridge
 
-    original_run = bridge._LegacyPipe._run
+    original_run = bridge._JobPipe._run
 
     def run_or_fail(self):
         if self._decode:
             return original_run(self)
-        self._fail("could not read legacy worker output: injected stderr failure")
+        self._fail("could not read job worker output: injected stderr failure")
 
-    monkeypatch.setattr(bridge._LegacyPipe, "_run", run_or_fail)
+    monkeypatch.setattr(bridge._JobPipe, "_run", run_or_fail)
     request_obj = _request(source=b"// STREAM\r\nkernel void demo() {} \r\n")
     output = io.BytesIO()
     environ = dict(os.environ)
     environ["PYTHONPATH"] = str(ROOT) + os.pathsep + environ.get("PYTHONPATH", "")
-    environ["FAKE_LEGACY_BEHAVIOR"] = "success"
+    environ["FAKE_JOB_BEHAVIOR"] = "success"
     environ.pop("TCENV_REMOTE_STATE_DIR", None)
     with pytest.raises(bridge._BridgeFailure, match="injected stderr failure"):
-        bridge._run_legacy_worker(
+        bridge._run_job_worker(
             FAKE_WORKER, request_obj, output,
             attempt_id=_attempt().attempt_id,
             lease_fence=_attempt().lease_fence,
@@ -648,15 +648,15 @@ def test_a_stderr_reader_failure_fails_the_bridge(tmp_path, monkeypatch):
 def test_streaming_pipes_keep_their_buffers_bounded():
     import io
 
-    from tcenv.remote.legacy_worker_bridge import _MAX_BRIDGE_STDERR_TAIL, _LegacyPipe
+    from tcenv.remote.job_worker_bridge import _MAX_BRIDGE_STDERR_TAIL, _JobPipe
 
-    stderr_pipe = _LegacyPipe(io.BytesIO(b"e" * (4 * 1024 * 1024)), decode=False)
+    stderr_pipe = _JobPipe(io.BytesIO(b"e" * (4 * 1024 * 1024)), decode=False)
     stderr_pipe.start()
     assert stderr_pipe.join(30)
     assert stderr_pipe.error == ""
     assert len(stderr_pipe.tail.encode("utf-8")) <= _MAX_BRIDGE_STDERR_TAIL
 
-    stdout_pipe = _LegacyPipe(io.BytesIO(b"g" * (4 * 1024 * 1024)), decode=True)
+    stdout_pipe = _JobPipe(io.BytesIO(b"g" * (4 * 1024 * 1024)), decode=True)
     stdout_pipe.start()
     assert stdout_pipe.join(30)
     # The first four bytes are not a frame header, so the decoder fails at once
@@ -697,14 +697,14 @@ class _BlockingStream:
 def test_a_reader_exception_after_a_frame_is_an_error_not_a_result():
     import io
 
-    from tcenv.remote.legacy_worker_bridge import _LegacyPipe
+    from tcenv.remote.job_worker_bridge import _JobPipe
     from tcenv.remote.protocol import encode_frame
 
     frame = encode_frame(
         "result", "bridge-request-1",
         {"report": {"status": "ok"}, "evidence": {"candidate_sha256": "a" * 64}},
     )
-    pipe = _LegacyPipe(_ExplodingStream(frame), decode=True)
+    pipe = _JobPipe(_ExplodingStream(frame), decode=True)
     pipe.start()
     assert pipe.join(10.0) is True
     # The frame was decoded, but the reader never finished cleanly: accepting it
@@ -716,10 +716,10 @@ def test_a_reader_exception_after_a_frame_is_an_error_not_a_result():
 def test_a_reader_that_never_finishes_is_not_reported_as_complete():
     import threading
 
-    from tcenv.remote.legacy_worker_bridge import _LegacyPipe
+    from tcenv.remote.job_worker_bridge import _JobPipe
 
     release = threading.Event()
-    pipe = _LegacyPipe(_BlockingStream(release), decode=True)
+    pipe = _JobPipe(_BlockingStream(release), decode=True)
     pipe.start()
     assert pipe.join(0.1) is False
     release.set()
@@ -732,23 +732,23 @@ def test_the_bridge_refuses_a_result_when_the_reader_did_not_finish(tmp_path, mo
     import io
     import threading
 
-    import tcenv.remote.legacy_worker_bridge as bridge
+    import tcenv.remote.job_worker_bridge as bridge
 
-    original_join = bridge._LegacyPipe.join
+    original_join = bridge._JobPipe.join
 
     def unfinished_decode_reader(self, timeout=bridge._PIPE_JOIN_S):
         finished = original_join(self, timeout)
         return False if self._decode else finished
 
-    monkeypatch.setattr(bridge._LegacyPipe, "join", unfinished_decode_reader)
+    monkeypatch.setattr(bridge._JobPipe, "join", unfinished_decode_reader)
     request = _request(source=b"// STREAM\r\nkernel void demo() {} \r\n")
     output = io.BytesIO()
     environ = dict(os.environ)
     environ["PYTHONPATH"] = str(ROOT) + os.pathsep + environ.get("PYTHONPATH", "")
-    environ["FAKE_LEGACY_BEHAVIOR"] = "success"
+    environ["FAKE_JOB_BEHAVIOR"] = "success"
     environ.pop("TCENV_REMOTE_STATE_DIR", None)
     with pytest.raises(bridge._BridgeFailure, match="did not finish"):
-        bridge._run_legacy_worker(
+        bridge._run_job_worker(
             FAKE_WORKER, request, output,
             attempt_id=_attempt().attempt_id,
             lease_fence=_attempt().lease_fence,
@@ -764,7 +764,7 @@ def test_the_bridge_streams_the_child_instead_of_buffering_with_communicate(tmp_
     import io
     import threading
 
-    import tcenv.remote.legacy_worker_bridge as bridge
+    import tcenv.remote.job_worker_bridge as bridge
 
     def forbidden(*args, **kwargs):
         raise AssertionError(
@@ -776,21 +776,21 @@ def test_the_bridge_streams_the_child_instead_of_buffering_with_communicate(tmp_
     output = io.BytesIO()
     environ = dict(os.environ)
     environ["PYTHONPATH"] = str(ROOT) + os.pathsep + environ.get("PYTHONPATH", "")
-    environ["FAKE_LEGACY_BEHAVIOR"] = "success"
+    environ["FAKE_JOB_BEHAVIOR"] = "success"
     environ.pop("TCENV_REMOTE_STATE_DIR", None)
-    report, evidence = bridge._run_legacy_worker(
+    report, evidence = bridge._run_job_worker(
         FAKE_WORKER, request, output,
         attempt_id=_attempt().attempt_id,
         lease_fence=_attempt().lease_fence,
         environ=environ,
         write_lock=threading.Lock(),
     )
-    assert report["legacy_report_marker"] == "report-from-legacy-worker"
-    assert evidence["legacy_evidence_marker"] == "evidence-from-legacy-worker"
-    # ``_run_legacy_worker`` returns the validated report/evidence; the engine
-    # result frame is written by ``main`` and never carries the legacy bytes.
+    assert report["job_report_marker"] == "report-from-job-worker"
+    assert evidence["job_evidence_marker"] == "evidence-from-job-worker"
+    # ``_run_job_worker`` returns the validated report/evidence; the engine
+    # result frame is written by ``main`` and never carries the job bytes.
     assert output.getvalue() == b""
-    assert report["legacy_report_marker"] == "report-from-legacy-worker"
+    assert report["job_report_marker"] == "report-from-job-worker"
 
 
 def _production_request(*, cache_policy: str, mode: str = "quick"):

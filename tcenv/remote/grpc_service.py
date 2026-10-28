@@ -237,12 +237,12 @@ def build_stack(
     active_key_id, active_key = keyring.require_active()
     if _worker_execution(args) == "container":
         python = args.worker_python
-        worker_command = [python, "-m", "tcenv.remote.legacy_worker_bridge"]
-        worker_env = {"TCENV_LEGACY_WORKER_COMMAND": json.dumps([python, "-m", args.worker_module])}
+        worker_command = [python, "-m", "tcenv.remote.job_worker_bridge"]
+        worker_env = {"TCENV_JOB_WORKER_COMMAND": json.dumps([python, "-m", args.worker_module])}
     else:
-        worker_command = [sys.executable, "-m", "tcenv.remote.legacy_worker_bridge"]
+        worker_command = [sys.executable, "-m", "tcenv.remote.job_worker_bridge"]
         worker_env = {
-            "TCENV_LEGACY_WORKER_COMMAND": json.dumps([sys.executable, "-m", args.worker_module]),
+            "TCENV_JOB_WORKER_COMMAND": json.dumps([sys.executable, "-m", args.worker_module]),
         }
     engine = JobEngine(
         identity=identity,

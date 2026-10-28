@@ -115,9 +115,9 @@ def engine(
     python = WORKER_PYTHON
     return JobEngine(
         identity=identity(digest), grants=[grant()],
-        worker_command=[python, "-m", "tcenv.remote.legacy_worker_bridge"],
+        worker_command=[python, "-m", "tcenv.remote.job_worker_bridge"],
         worker_env={
-            "TCENV_LEGACY_WORKER_COMMAND": json.dumps([python, "-m", WORKER_MODULE]),
+            "TCENV_JOB_WORKER_COMMAND": json.dumps([python, "-m", WORKER_MODULE]),
         },
         supervisor=supervisor(digest, docker=docker, image=image),
         state_dir=state_dir, signing_key=signing_key, signing_key_id=signing_key_id,

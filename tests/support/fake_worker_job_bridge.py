@@ -1,4 +1,4 @@
-"""Scriptable CPU-only legacy worker used by legacy-worker bridge tests."""
+"""Scriptable CPU-only job worker used by job-worker bridge tests."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ LONG_DETAIL = "benchmark:" + "x" * 1000 + ":END"
 
 
 def _record(request: EvaluationRequest, stdin_eof: bool) -> None:
-    destination = os.environ.get("FAKE_LEGACY_RECORD")
+    destination = os.environ.get("FAKE_JOB_RECORD")
     if not destination:
         return
     parent = os.getppid()
@@ -36,7 +36,7 @@ def _record(request: EvaluationRequest, stdin_eof: bool) -> None:
 def _progress(document: dict[str, Any]) -> None:
     path = os.environ.get("TCENV_REMOTE_PROGRESS_PATH")
     if not path:
-        raise RuntimeError("bridge did not provide a legacy progress path")
+        raise RuntimeError("bridge did not provide a job progress path")
     Path(path).write_text(json.dumps(document), encoding="utf-8")
 
 
@@ -55,15 +55,15 @@ def _result(request: EvaluationRequest, *, request_id: str | None = None) -> Non
         "target_id": request.target_id,
         "protocol_version": "3",
         "simulated": True,
-        "legacy_report_marker": "report-from-legacy-worker",
+        "job_report_marker": "report-from-job-worker",
     }
     evidence = {
         "request_id": request.request_id,
         "candidate_sha256": request.candidate_sha256,
         "measurement_kind": "simulated",
-        "legacy_evidence_marker": "evidence-from-legacy-worker",
+        "job_evidence_marker": "evidence-from-job-worker",
     }
-    behavior = os.environ.get("FAKE_LEGACY_BEHAVIOR", "success")
+    behavior = os.environ.get("FAKE_JOB_BEHAVIOR", "success")
     if behavior == "target_mismatch":
         report["target_id"] = "other-target"
     elif behavior == "seed_mismatch":
@@ -76,13 +76,13 @@ def _result(request: EvaluationRequest, *, request_id: str | None = None) -> Non
     write_frame(sys.stdout.buffer, "result", request_id or request.request_id, {
         "report": report,
         "evidence": evidence,
-        "receipt": {"receipt_id": "legacy-receipt-must-not-cross-the-bridge"},
-        "signature": "legacy-signature-must-not-cross-the-bridge",
+        "receipt": {"receipt_id": "job-receipt-must-not-cross-the-bridge"},
+        "signature": "job-signature-must-not-cross-the-bridge",
     })
 
 
 def _wait_for_release() -> bool:
-    release = os.environ.get("FAKE_LEGACY_RELEASE")
+    release = os.environ.get("FAKE_JOB_RELEASE")
     if not release:
         return False
     deadline = time.monotonic() + 10.0
@@ -94,13 +94,13 @@ def _wait_for_release() -> bool:
 
 
 def main() -> int:
-    behavior = os.environ.get("FAKE_LEGACY_BEHAVIOR", "success")
+    behavior = os.environ.get("FAKE_JOB_BEHAVIOR", "success")
     if behavior == "result_without_reading":
         # Emit a success result without reading the request, then exit: the
         # bridge's large write gets EPIPE and must not accept the result.
-        request_id = os.environ.get("FAKE_LEGACY_REQUEST_ID", "bridge-request-1")
+        request_id = os.environ.get("FAKE_JOB_REQUEST_ID", "bridge-request-1")
         write_frame(sys.stdout.buffer, "result", request_id, {
-            "report": {"status": "ok", "legacy_report_marker": "unread"},
+            "report": {"status": "ok", "job_report_marker": "unread"},
             "evidence": None,
         })
         sys.stdout.buffer.flush()
@@ -112,23 +112,23 @@ def main() -> int:
         # stderr are closed in the descendant so the readers still see EOF.
         holder = subprocess.Popen(
             [sys.executable, "-c", "import sys, time; time.sleep(float(sys.argv[1]))",
-             os.environ.get("FAKE_LEGACY_HOLD_S", "5")],
+             os.environ.get("FAKE_JOB_HOLD_S", "5")],
             stdin=sys.stdin, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        destination = os.environ.get("FAKE_LEGACY_HOLDER_PID")
+        destination = os.environ.get("FAKE_JOB_HOLDER_PID")
         if destination:
             Path(destination).write_text(str(holder.pid), encoding="utf-8")
         return 0
     frame = read_frame(sys.stdin.buffer)
     if frame.frame_type != "request":
-        raise RuntimeError("fake legacy worker expected a request")
+        raise RuntimeError("fake job worker expected a request")
     request = EvaluationRequest.from_dict(frame.payload)
     if request.request_id != frame.request_id:
-        raise RuntimeError("fake legacy worker request id mismatch")
+        raise RuntimeError("fake job worker request id mismatch")
     # communicate(input=...) must send exactly one frame and then close stdin.
     stdin_eof = sys.stdin.buffer.read(1) == b""
     _record(request, stdin_eof)
-    behavior = os.environ.get("FAKE_LEGACY_BEHAVIOR", "success")
+    behavior = os.environ.get("FAKE_JOB_BEHAVIOR", "success")
 
     if behavior == "nonzero":
         return 23
@@ -136,7 +136,7 @@ def main() -> int:
         time.sleep(60.0)
         return 0
     if behavior == "malformed":
-        sys.stdout.buffer.write(b"not-a-legacy-frame")
+        sys.stdout.buffer.write(b"not-a-job-frame")
         sys.stdout.buffer.flush()
         return 0
     if behavior == "exit_with_pipe_holder":
@@ -146,9 +146,9 @@ def main() -> int:
         holder = subprocess.Popen([
             sys.executable, "-c",
             "import sys,time; time.sleep(float(sys.argv[1]))",
-            os.environ.get("FAKE_LEGACY_HOLD_S", "2"),
+            os.environ.get("FAKE_JOB_HOLD_S", "2"),
         ])
-        destination = os.environ.get("FAKE_LEGACY_HOLDER_PID")
+        destination = os.environ.get("FAKE_JOB_HOLDER_PID")
         if destination:
             Path(destination).write_text(str(holder.pid), encoding="utf-8")
         _result(request)
@@ -180,7 +180,7 @@ def main() -> int:
         # A sustained stderr stream must not be buffered by the bridge, and it
         # must not cost the attempt its valid report.
         block = b"e" * 65536
-        for _ in range(int(os.environ.get("FAKE_LEGACY_FLOOD_BLOCKS", "128"))):
+        for _ in range(int(os.environ.get("FAKE_JOB_FLOOD_BLOCKS", "128"))):
             sys.stderr.buffer.write(block)
         sys.stderr.buffer.flush()
         _result(request)
@@ -189,7 +189,7 @@ def main() -> int:
         # Unbounded stdout that is not a frame: the bridge must fail bounded and
         # still reap this child instead of buffering whatever it writes.
         block = b"g" * 65536
-        for _ in range(int(os.environ.get("FAKE_LEGACY_FLOOD_BLOCKS", "64"))):
+        for _ in range(int(os.environ.get("FAKE_JOB_FLOOD_BLOCKS", "64"))):
             sys.stdout.buffer.write(block)
         sys.stdout.buffer.flush()
         return 0
@@ -214,7 +214,7 @@ def main() -> int:
     elif behavior == "unknown_progress":
         _progress({
             "stage": "not-a-real-stage",
-            "message": "unknown legacy stage",
+            "message": "unknown job stage",
             "updated_at": "not-a-timestamp",
         })
     elif behavior not in {"success", "target_mismatch", "seed_mismatch", "missing_evidence", "candidate_crash"}:

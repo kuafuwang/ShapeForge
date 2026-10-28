@@ -1,12 +1,12 @@
-"""Private JobEngine-worker adapter for the existing legacy evaluator worker.
+"""Private JobEngine-worker adapter for the existing job evaluator worker.
 
 The bridge itself is the JobEngine worker.  It accepts one private worker
-request, starts ``TCENV_LEGACY_WORKER_COMMAND`` without a shell or a new process
-group, and translates the legacy worker's one-result protocol.  In particular,
+request, starts ``TCENV_JOB_WORKER_COMMAND`` without a shell or a new process
+group, and translates the job worker's one-result protocol.  In particular,
 the child inherits this process's group so JobEngine timeout/cancellation kills
 both processes together.
 
-Legacy progress files are deliberately treated as untrusted, lossy telemetry.
+Worker progress files are deliberately treated as untrusted, lossy telemetry.
 Oversized or partially written snapshots are ignored.  Unknown stages map to
 ``queued`` (the safe stage which claims no evaluation advancement), while only
 bounded stage/detail/timestamp fields cross the private worker boundary.
@@ -30,7 +30,7 @@ from .job_types import ExternalEvaluationRequest
 from .protocol import FrameDecoder, ProtocolError, encode_frame
 from .worker_protocol import STATE_DIR_ENV, read_request, write_progress, write_result
 
-_LEGACY_COMMAND_ENV = "TCENV_LEGACY_WORKER_COMMAND"
+_JOB_COMMAND_ENV = "TCENV_JOB_WORKER_COMMAND"
 _PROGRESS_ENV = "TCENV_REMOTE_PROGRESS_PATH"
 _BRIDGE_TMP_DIRNAME = "bridge-tmp"
 _ATTEMPT_TMP_PREFIX = "attempt-"
@@ -38,7 +38,7 @@ _MAX_PROGRESS_BYTES = 65_536
 _PROGRESS_POLL_S = 0.05
 _MAX_DETAIL_CHARS = 300
 _MAX_OBSERVED_AT_MS = 2**63 - 1
-# The legacy child's pipes are read as a stream: a sustained flood costs a
+# The job child's pipes are read as a stream: a sustained flood costs a
 # fixed-size chunk buffer plus one result frame, never the whole stream.
 _BRIDGE_CHUNK = 65_536
 _MAX_BRIDGE_STDOUT_BYTES = 16_000_000
@@ -64,14 +64,14 @@ class _BridgeFailure(ValueError):
     """A sanitized, nonzero bridge outcome; no engine result is written."""
 
 
-def _legacy_command(environ: Mapping[str, str]) -> list[str]:
-    raw = environ.get(_LEGACY_COMMAND_ENV)
+def _job_command(environ: Mapping[str, str]) -> list[str]:
+    raw = environ.get(_JOB_COMMAND_ENV)
     if raw is None:
-        raise _BridgeFailure(f"{_LEGACY_COMMAND_ENV} is missing")
+        raise _BridgeFailure(f"{_JOB_COMMAND_ENV} is missing")
     try:
         value = json.loads(raw)
     except (json.JSONDecodeError, TypeError) as exc:
-        raise _BridgeFailure(f"{_LEGACY_COMMAND_ENV} is not a JSON array") from exc
+        raise _BridgeFailure(f"{_JOB_COMMAND_ENV} is not a JSON array") from exc
     if (
         not isinstance(value, list)
         or not value
@@ -79,7 +79,7 @@ def _legacy_command(environ: Mapping[str, str]) -> list[str]:
         or any("\x00" in argument for argument in value)
     ):
         raise _BridgeFailure(
-            f"{_LEGACY_COMMAND_ENV} must be a JSON array of non-empty strings"
+            f"{_JOB_COMMAND_ENV} must be a JSON array of non-empty strings"
         )
     return value
 
@@ -137,14 +137,14 @@ def _bridge_temp_root(environ: Mapping[str, str]) -> Path | None:
 
 
 def _translate_progress(document: Any) -> dict[str, Any] | None:
-    """Project one legacy JSON object onto the bounded engine progress schema."""
+    """Project one job JSON object onto the bounded engine progress schema."""
 
     if not isinstance(document, dict):
         return None
-    legacy_stage = document.get("stage")
+    job_stage = document.get("stage")
     # Unknown (including non-text) stages deliberately make no advancement
     # claim.  Malformed telemetry must not crash an otherwise valid evaluation.
-    stage = _STAGE_MAP.get(legacy_stage, "queued") if isinstance(legacy_stage, str) else "queued"
+    stage = _STAGE_MAP.get(job_stage, "queued") if isinstance(job_stage, str) else "queued"
     message = document.get("message")
     progress: dict[str, Any] = {
         "stage": stage,
@@ -161,7 +161,7 @@ def _translate_progress(document: Any) -> dict[str, Any] | None:
 
 
 class _ProgressRelay:
-    """Poll a bounded legacy snapshot and serialize writes with the result."""
+    """Poll a bounded job snapshot and serialize writes with the result."""
 
     def __init__(
         self,
@@ -190,7 +190,7 @@ class _ProgressRelay:
             if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_PROGRESS_BYTES:
                 return None
             # The second bound closes the race where a writer grows the file
-            # after stat().  No legacy-controlled unbounded read is performed.
+            # after stat().  No job-controlled unbounded read is performed.
             with self._path.open("rb") as handle:
                 raw = handle.read(_MAX_PROGRESS_BYTES + 1)
             if len(raw) > _MAX_PROGRESS_BYTES:
@@ -229,7 +229,7 @@ class _ProgressRelay:
     def start(self) -> None:
         self._thread = threading.Thread(
             target=self._run,
-            name="tcenv-legacy-worker-progress",
+            name="tcenv-job-worker-progress",
             daemon=True,
         )
         self._thread.start()
@@ -244,26 +244,26 @@ class _ProgressRelay:
             raise _BridgeFailure(f"could not write engine progress: {self._error}") from self._error
 
 
-def _decode_legacy_result_frame(frame: Any, request_id: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """Validate the one result frame a legacy worker may return."""
+def _decode_job_result_frame(frame: Any, request_id: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Validate the one result frame a job worker may return."""
 
     if frame.frame_type != "result":
-        raise _BridgeFailure("legacy worker did not emit exactly one result frame")
+        raise _BridgeFailure("job worker did not emit exactly one result frame")
     if frame.request_id != request_id:
-        raise _BridgeFailure("legacy worker result request_id does not match the request")
+        raise _BridgeFailure("job worker result request_id does not match the request")
     report = frame.payload.get("report")
     if not isinstance(report, dict):
-        raise _BridgeFailure("legacy worker result has no valid report object")
+        raise _BridgeFailure("job worker result has no valid report object")
     evidence = frame.payload.get("evidence")
     if evidence is not None and not isinstance(evidence, dict):
-        raise _BridgeFailure("legacy worker evidence must be an object or null")
-    # Legacy receipts/signatures intentionally stop here.  JobEngine binds and
+        raise _BridgeFailure("job worker evidence must be an object or null")
+    # Worker receipts/signatures intentionally stop here.  JobEngine binds and
     # signs its own attempt-scoped external receipt from report/evidence only.
     return report, evidence
 
 
-class _LegacyPipe:
-    """One bounded streaming reader for a legacy child pipe.
+class _JobPipe:
+    """One bounded streaming reader for a job child pipe.
 
     ``decode`` marks the stdout stream: frames are decoded as they arrive and at
     most one result frame is retained.  Once a limit or a protocol error is hit
@@ -281,7 +281,7 @@ class _LegacyPipe:
         self._bytes = 0
         self._tail = bytearray()
         self._thread = threading.Thread(
-            target=self._run, name="tcenv-legacy-worker-pipe", daemon=True,
+            target=self._run, name="tcenv-job-worker-pipe", daemon=True,
         )
 
     @property
@@ -322,7 +322,7 @@ class _LegacyPipe:
                 try:
                     chunk = self._stream.read(_BRIDGE_CHUNK)
                 except (OSError, ValueError) as exc:
-                    self._fail(f"could not read legacy worker output: {exc}")
+                    self._fail(f"could not read job worker output: {exc}")
                     return
                 if not chunk:
                     break
@@ -331,17 +331,17 @@ class _LegacyPipe:
                 try:
                     self._decoder.finish()
                 except ProtocolError as exc:
-                    self._fail(f"legacy worker emitted malformed frames: {exc}")
+                    self._fail(f"job worker emitted malformed frames: {exc}")
         except BaseException as exc:  # noqa: BLE001 - the thread boundary must not swallow
             self._fail(
-                "legacy worker output reader failed: "
+                "job worker output reader failed: "
                 f"{type(exc).__name__}: {exc}"[:1000]
             )
 
     def _consume(self, chunk: bytes) -> None:
         self._bytes += len(chunk)
         if self._decode and not self._error and self._bytes > _MAX_BRIDGE_STDOUT_BYTES:
-            self._fail("legacy worker output exceeded the bridge limit")
+            self._fail("job worker output exceeded the bridge limit")
         if self._decoder is None:
             self._tail = (self._tail + chunk)[-_MAX_BRIDGE_STDERR_TAIL:]
             return
@@ -350,15 +350,15 @@ class _LegacyPipe:
         try:
             frames = self._decoder.feed(chunk)
         except ProtocolError as exc:
-            self._fail(f"legacy worker emitted malformed frames: {exc}")
+            self._fail(f"job worker emitted malformed frames: {exc}")
             return
         for frame in frames:
             if frame.frame_type != "result":
-                self._fail("legacy worker did not emit exactly one result frame")
+                self._fail("job worker did not emit exactly one result frame")
                 return
             self._results.append(frame)
             if len(self._results) > 1:
-                self._fail("legacy worker did not emit exactly one result frame")
+                self._fail("job worker did not emit exactly one result frame")
                 return
 
 
@@ -386,7 +386,7 @@ def _close_process(
                 pass
 
 
-def _run_legacy_worker(
+def _run_job_worker(
     command: list[str],
     request: ExternalEvaluationRequest,
     writer: BinaryIO,
@@ -396,8 +396,8 @@ def _run_legacy_worker(
     environ: Mapping[str, str],
     write_lock: threading.Lock,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    legacy = request.to_legacy()
-    legacy_request = encode_frame("request", legacy.request_id, legacy.to_dict())
+    job = request.to_legacy()
+    job_request = encode_frame("request", job.request_id, job.to_dict())
     temp_root = _bridge_temp_root(environ)
     with tempfile.TemporaryDirectory(prefix=_ATTEMPT_TMP_PREFIX, dir=temp_root) as temporary:
         progress_path = Path(temporary) / "progress.json"
@@ -412,8 +412,8 @@ def _run_legacy_worker(
             write_lock=write_lock,
         )
         process: subprocess.Popen | None = None
-        stdout_pipe: _LegacyPipe | None = None
-        stderr_pipe: _LegacyPipe | None = None
+        stdout_pipe: _JobPipe | None = None
+        stderr_pipe: _JobPipe | None = None
         # Only proven-done writers may have their stdin closed.
         writer_done = False
         try:
@@ -429,11 +429,11 @@ def _run_legacy_worker(
                     shell=False,
                 )
             except OSError as exc:
-                raise _BridgeFailure(f"could not start legacy worker: {exc}") from exc
+                raise _BridgeFailure(f"could not start job worker: {exc}") from exc
             assert process.stdin is not None and process.stdout is not None and process.stderr is not None
             relay.start()
-            stdout_pipe = _LegacyPipe(process.stdout, decode=True)
-            stderr_pipe = _LegacyPipe(process.stderr, decode=False)
+            stdout_pipe = _JobPipe(process.stdout, decode=True)
+            stderr_pipe = _JobPipe(process.stderr, decode=False)
             stdout_pipe.start()
             stderr_pipe.start()
 
@@ -441,7 +441,7 @@ def _run_legacy_worker(
 
             def write_request() -> None:
                 try:
-                    process.stdin.write(legacy_request)
+                    process.stdin.write(job_request)
                     process.stdin.flush()
                     process.stdin.close()
                 except BaseException as exc:
@@ -452,7 +452,7 @@ def _run_legacy_worker(
                     write_error.append(exc)
 
             writer = threading.Thread(
-                target=write_request, name="tcenv-legacy-worker-stdin", daemon=True,
+                target=write_request, name="tcenv-job-worker-stdin", daemon=True,
             )
             writer.start()
             # Reap the child first; the pipes then reach EOF and every reader
@@ -509,23 +509,23 @@ def _run_legacy_worker(
         assert process is not None and stdout_pipe is not None
         if not writer_done:
             raise _BridgeFailure(
-                "legacy worker request writer did not finish before the bounded join deadline"
+                "job worker request writer did not finish before the bounded join deadline"
             )
         if write_error:
             error = write_error[0]
             raise _BridgeFailure(
-                "legacy worker request write failed: "
+                "job worker request write failed: "
                 f"{type(error).__name__}: {error}"[:1000]
             )
         if process.returncode != 0:
-            raise _BridgeFailure(f"legacy worker exited {process.returncode}")
+            raise _BridgeFailure(f"job worker exited {process.returncode}")
         if not stdout_done:
             raise _BridgeFailure(
-                "legacy worker output reader did not finish before the bounded join deadline"
+                "job worker output reader did not finish before the bounded join deadline"
             )
         if not stderr_done:
             raise _BridgeFailure(
-                "legacy worker stderr reader did not finish before the bounded join deadline"
+                "job worker stderr reader did not finish before the bounded join deadline"
             )
         if stdout_pipe.error:
             raise _BridgeFailure(stdout_pipe.error)
@@ -535,8 +535,8 @@ def _run_legacy_worker(
             # report as a clean success.
             raise _BridgeFailure(stderr_pipe.error)
         if len(stdout_pipe.results) != 1:
-            raise _BridgeFailure("legacy worker did not emit exactly one result frame")
-        report, evidence = _decode_legacy_result_frame(
+            raise _BridgeFailure("job worker did not emit exactly one result frame")
+        report, evidence = _decode_job_result_frame(
             stdout_pipe.results[0], request.request_id,
         )
         # The terminal write often happens immediately before child exit.
@@ -551,13 +551,13 @@ def main(argv: list[str] | None = None) -> int:
 
     arguments = sys.argv[1:] if argv is None else list(argv)
     if arguments:
-        print("legacy worker bridge accepts no command-line arguments", file=sys.stderr, flush=True)
+        print("job worker bridge accepts no command-line arguments", file=sys.stderr, flush=True)
         return 2
     write_lock = threading.Lock()
     try:
         attempt_id, request, request_id, lease_fence = read_request(sys.stdin.buffer)
-        command = _legacy_command(os.environ)
-        report, evidence = _run_legacy_worker(
+        command = _job_command(os.environ)
+        report, evidence = _run_job_worker(
             command,
             request,
             sys.stdout.buffer,
@@ -578,7 +578,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except Exception as exc:  # a worker/protocol failure is a nonzero attempt, never a result
         detail = str(exc) or type(exc).__name__
-        print(f"legacy worker bridge failed: {detail[:1000]}", file=sys.stderr, flush=True)
+        print(f"job worker bridge failed: {detail[:1000]}", file=sys.stderr, flush=True)
         return 1
 
 

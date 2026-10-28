@@ -694,7 +694,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `test_remote_{conformance,go_conformance}.py` 六个旧文件 **62 passed**；
   `test_orchestrator_runtime.py` **20 passed**（含 NPU host 接线回归与 blob wire-candidate 证据
   校验：合法 blob 结果通过、证据换 candidate 被拒）；
-  `test_remote_{job_engine,job_recovery,legacy_worker_bridge,container_engine,
+  `test_remote_{job_engine,job_recovery,job_worker_bridge,container_engine,
   container_supervisor,runtime}.py` + `test_evaluation_outbox.py` **265 passed, 1 skipped**
   （跳过项是 Linux-only 的 `PF_KTHREAD` 检查；v3→v4 原位迁移与 v3 备份恢复回归在
   `test_remote_job_recovery.py`，`_validate_durable_state` 的终态读校验同文件覆盖）；
@@ -803,7 +803,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   既有 P0 回归：`test_remote_npu_{contract,grpc,cleanup}.py` **88 passed**；旧
   `test_remote_grpc_{adapter,tls,contract,revocation}.py` + `test_remote_{conformance,
   go_conformance}.py` **62 passed**；`test_remote_{job_engine,job_recovery,
-  legacy_worker_bridge,container_engine,container_supervisor,runtime}.py` +
+  job_worker_bridge,container_engine,container_supervisor,runtime}.py` +
   `test_evaluation_outbox.py` + `test_orchestrator_runtime.py` **283 passed, 1 skipped**
   （Linux-only 跳过项不变）；`test_selfcheck_bridge.py` 在 `TMPDIR=/tmp` 下 **19 passed**，
   在本机 hmz 围栏默认 TMPDIR 下仍是 **18 failed / 1 passed**（AF_UNIX 路径超长，未改测试）。
@@ -908,7 +908,7 @@ contract。P0 不验收 bundle、graph-only 异步 fake、多 rank/die 或 profi
   `test_remote_blob_{channel,contract,grpc,go_conformance}.py` **170 passed**；旧
   `test_remote_grpc_{adapter,tls,contract,revocation}.py` + `test_remote_{conformance,
   go_conformance}.py` **62 passed**；`test_remote_{job_engine,job_recovery,
-  legacy_worker_bridge,container_engine,container_supervisor,runtime}.py` +
+  job_worker_bridge,container_engine,container_supervisor,runtime}.py` +
   `test_evaluation_outbox.py` **265 passed, 1 skipped**；`test_selfcheck_bridge.py` 在本机
   围栏默认 TMPDIR 下 **18 failed / 1 passed**（AF_UNIX 路径超长，未改测试），`TMPDIR=/tmp` 下
   **19 passed**。`uv run pytest -q -m 'not gpu and not llm and not slow'`：**2447 passed /
@@ -1202,7 +1202,7 @@ gRPC/conformance/evidence 87；job/recovery/container/outbox 265 passed/1 skippe
 `test_remote_blob_{channel,contract,grpc,go_conformance}.py` **171 passed**；
 `test_remote_grpc_{adapter,tls,contract,revocation}.py` + `test_remote_{conformance,
 go_conformance,evidence_contract}.py` **87 passed**；`test_remote_{job_engine,job_recovery,
-legacy_worker_bridge,container_engine,container_supervisor,runtime}.py` +
+job_worker_bridge,container_engine,container_supervisor,runtime}.py` +
 `test_evaluation_outbox.py` **265 passed, 1 skipped**；`test_selfcheck_bridge.py` 在默认围栏
 TMPDIR 下 **18 failed / 1 passed**（AF_UNIX 路径超长，未改测试），`TMPDIR=/tmp` **19 passed**；
 `scripts/generate_evaluator_proto.py --check` 通过（未改 proto）；全套安全套件 **2474 passed /

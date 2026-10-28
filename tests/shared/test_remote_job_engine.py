@@ -1504,28 +1504,28 @@ def test_close_never_reports_closed_while_the_finalizer_is_running(tmp_path):
 
 
 def _bridge_engine(tmp_path: Path, behavior: str, *, extra_env: dict[str, str] | None = None, state_dir: Path | None = None):
-    """Run the production bridge command over the scriptable legacy worker."""
+    """Run the production bridge command over the scriptable job worker."""
     from tcenv.remote.job_engine import JobEngine
 
     env = {
-        "TCENV_LEGACY_WORKER_COMMAND": json.dumps([
-            sys.executable, "-m", "tests.support.fake_worker_legacy_bridge",
+        "TCENV_JOB_WORKER_COMMAND": json.dumps([
+            sys.executable, "-m", "tests.support.fake_worker_job_bridge",
         ]),
-        "FAKE_LEGACY_BEHAVIOR": behavior,
+        "FAKE_JOB_BEHAVIOR": behavior,
     }
     if extra_env:
         env.update(extra_env)
     return JobEngine(
         identity=identity(),
         grants=[grant()],
-        worker_command=[sys.executable, "-m", "tcenv.remote.legacy_worker_bridge"],
+        worker_command=[sys.executable, "-m", "tcenv.remote.job_worker_bridge"],
         worker_env=env,
         worker_cwd=Path(__file__).resolve().parents[2],
         state_dir=Path(state_dir) if state_dir is not None else tmp_path / "state",
     )
 
 
-def _assert_legacy_bridge_binding_failure(tmp_path: Path, behavior: str, needle: str, request_id: str) -> None:
+def _assert_job_bridge_binding_failure(tmp_path: Path, behavior: str, needle: str, request_id: str) -> None:
     service = _bridge_engine(tmp_path, behavior)
     try:
         req = request(request_id, source=b"OK")
@@ -1539,16 +1539,16 @@ def _assert_legacy_bridge_binding_failure(tmp_path: Path, behavior: str, needle:
         service.close()
 
 
-def test_legacy_bridge_report_target_mismatch_is_not_committed(tmp_path):
+def test_job_bridge_report_target_mismatch_is_not_committed(tmp_path):
     """@brief worker 报告 target 与请求不符时由保留的 bridge 链路拒绝，不提交结果。"""
-    _assert_legacy_bridge_binding_failure(
+    _assert_job_bridge_binding_failure(
         tmp_path, "target_mismatch", "target_id", "bridge-target-mismatch",
     )
 
 
-def test_legacy_bridge_report_seed_mismatch_is_not_committed(tmp_path):
+def test_job_bridge_report_seed_mismatch_is_not_committed(tmp_path):
     """@brief worker 报告 seed 与请求不符时由保留的 bridge 链路拒绝，不提交结果。"""
-    _assert_legacy_bridge_binding_failure(
+    _assert_job_bridge_binding_failure(
         tmp_path, "seed_mismatch", "seed", "bridge-seed-mismatch",
     )
 
@@ -1578,11 +1578,11 @@ def test_cancellation_after_commit_does_not_refund_or_rewrite_usage(tmp_path):
         service.close()
 
 
-def test_legacy_bridge_cancel_kills_child_and_store_reopens(tmp_path):
-    """@brief cancel 杀掉 bridge/legacy 子进程，close 后同一 store 可重新打开。"""
+def test_job_bridge_cancel_kills_child_and_store_reopens(tmp_path):
+    """@brief cancel 杀掉 bridge/job 子进程，close 后同一 store 可重新打开。"""
     record = tmp_path / "cancel-worker-record.json"
     service = _bridge_engine(
-        tmp_path, "sleep", extra_env={"FAKE_LEGACY_RECORD": str(record)},
+        tmp_path, "sleep", extra_env={"FAKE_JOB_RECORD": str(record)},
     )
     worker_pid = None
     try:
@@ -1591,7 +1591,7 @@ def test_legacy_bridge_cancel_kills_child_and_store_reopens(tmp_path):
         deadline = time.monotonic() + 5.0
         while not record.is_file() and time.monotonic() < deadline:
             time.sleep(0.02)
-        assert record.is_file(), "fake legacy worker did not record its PID"
+        assert record.is_file(), "fake job worker did not record its PID"
         worker_pid = json.loads(record.read_text())["pid"]
         service.cancel(
             request_id=req.request_id, request_digest=req.request_digest,
@@ -1605,7 +1605,7 @@ def test_legacy_bridge_cancel_kills_child_and_store_reopens(tmp_path):
     deadline = time.monotonic() + 5.0
     while process_is_alive(worker_pid) and time.monotonic() < deadline:
         time.sleep(0.02)
-    assert not process_is_alive(worker_pid), "legacy child survived cancellation"
+    assert not process_is_alive(worker_pid), "job child survived cancellation"
 
     reopened = _bridge_engine(tmp_path, "success")
     try:
