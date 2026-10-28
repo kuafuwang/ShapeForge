@@ -150,6 +150,74 @@ def _resign_request_change(golden: dict, mutate) -> None:
     ).hexdigest()
 
 
+def _mutate_provenance(golden: dict, mutate) -> None:
+    """Apply ``mutate`` to the accepted and the signed provenance alike.
+
+    The request's provenance is authenticated by the request digest and repeated
+    field for field in the signed evidence, so a provenance rule can only be
+    tested when both copies (and the digest) agree.
+    """
+
+    _resign_request_change(golden, lambda request: mutate(request["build"]["provenance"]))
+    mutate(golden["npu_build"]["evidence"]["build"]["provenance"])
+
+
+def _rebuild_artifact_set(golden: dict, entries: list[dict], *, loaded=None) -> None:
+    """Rewrite the artifact set through every document that binds it.
+
+    The bundle manifest, the artifact-set digest, the CandidateDigest, the build
+    provenance, the signed evidence artifacts and the receiver's load record are
+    all one chain; replacing a transport entry without recomputing the whole
+    chain would only prove that some digest mismatch is detected.
+    """
+
+    from tcenv.remote.artifact_bundle import (
+        BUNDLE_SCHEMA_ID, artifact_set_digest, canonical_manifest,
+    )
+
+    vector = golden["npu_build"]
+    manifest = canonical_manifest(BUNDLE_SCHEMA_ID, entries)
+    digest = artifact_set_digest(BUNDLE_SCHEMA_ID, entries)
+    first_source = next(entry for entry in manifest["entries"] if entry["role"] == "SOURCE")
+
+    def mutate(request):
+        bundle = request["artifact"]["bundle"]
+        bundle["entries"] = copy.deepcopy(entries)
+        bundle["artifact_set_digest"] = digest
+        request["candidate_digest"]["value"] = digest
+        provenance = request["build"]["provenance"]
+        provenance["artifact_set_digest"] = digest
+        provenance["source_sha256"] = first_source["sha256"]
+
+    _resign_request_change(golden, mutate)
+
+    vector["artifact_set_digest"] = digest
+    vector["bundle_manifest"] = manifest
+    evidence = vector["evidence"]
+    evidence["artifact_set_digest"] = digest
+    evidence["candidate_digest"]["value"] = digest
+    evidence["build"]["provenance"] = copy.deepcopy(vector["request"]["build"]["provenance"])
+    evidence["build"]["artifacts"] = {
+        "schema_id": BUNDLE_SCHEMA_ID,
+        "entries": copy.deepcopy(manifest["entries"]),
+        "artifact_set_digest": digest,
+    }
+    if loaded is None:
+        loaded = [
+            {"path": entry["path"], "sha256": entry["sha256"]}
+            for entry in manifest["entries"] if entry["role"] == "EXECUTABLE_MODULE"
+        ]
+    evidence["build"]["loaded"] = copy.deepcopy(loaded)
+
+
+def _inline_entry(path: str, role: str, media_type: str, data: bytes) -> dict:
+    return {
+        "path": path, "role": role, "media_type": media_type,
+        "size_bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+        "content": "inline",
+    }
+
+
 def _resign_after_producer_change(golden: dict) -> None:
     """Re-sign a producer-record change so only its bound can reject the vector."""
 
@@ -172,49 +240,9 @@ def _resign_after_producer_change(golden: dict) -> None:
     _resign_request_change(golden, lambda request: None)
 
 
-@pytest.mark.parametrize("mutation,reason", [
-    # The build identity is part of the request digest.
-    ("provenance_builder_version", "build request"),
-    ("provenance_toolchain_version", "build request"),
-    ("provenance_source_sha256", "source_sha256 does not bind the SOURCE entry"),
-    ("provenance_compile_profile", "build request"),
-    ("build_mode", "requires the prebuilt build shape"),
-    ("provenance_build_host", "requires build_host"),
-    ("build_schema_id", "build schema id is not the version 1 identity"),
-    ("artifact_set_digest", "artifact_set_digest does not bind the artifact set"),
-    # The producer link binds status/duration/log/digest of the producer row.
-    ("producer_evidence_sha256", "build request"),
-    ("producer_duration", "build request"),
-    ("producer_log_size", "build request"),
-    ("producer_status", "must describe a successful control-host compile"),
-    ("producer_evidence_document", "does not bind the producer evidence document"),
-    # The received build evidence must repeat the accepted row and cover the load.
-    ("evidence_status_ok", "must be reported as reused"),
-    ("evidence_producer_duration", "does not repeat the accepted producer link"),
-    ("evidence_provenance_version", "differs from the accepted request"),
-    ("evidence_loaded", "load record does not cover the executable modules"),
-    ("evidence_receiver_log_is_producer_log", "log is the producer's log identity"),
-    ("evidence_receiver_duration_zero", "must record its own duration"),
-    ("evidence_artifact_set_digest", "artifact_set_digest does not bind its entries"),
-    # A field the version-1 build evidence does not have is not extra credit.
-    ("evidence_unexpected_field", "fields are missing or unknown"),
-    # The evidence manifest is recomputed from its own entries and compared with
-    # the accepted bundle, entry by entry: rewriting the SOURCE digest (or any
-    # other entry) cannot survive by keeping the declared artifact-set digest.
-    ("evidence_source_entry_sha256", "does not bind its entries"),
-    ("evidence_manifest_rewritten_consistently", "entries differ from the accepted prebuilt bundle"),
-    # Integer bounds and the receiver's own log are contract rules, not cosmetics.
-    ("evidence_log_size_negative", "build.log.size_bytes"),
-    ("evidence_duration_over_limit", "build.duration_ms"),
-    ("evidence_log_null", "must record its own log"),
-    # The producer link is a bounded record too; these vectors are re-signed so
-    # only the bound can reject them.
-    ("producer_duration_over_limit", "build.producer.duration_ms"),
-    ("producer_log_size_over_limit", "build.producer.log.size_bytes"),
-    ("receipt_request_digest", "receipt id does not bind the request"),
-])
-def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, reason):
-    golden = copy.deepcopy(load_build_golden())
+def _apply_mutation(golden: dict, mutation: str) -> None:
+    """Apply one named tamper to a copy of the frozen build vector."""
+
     vector = golden["npu_build"]
     request = vector["request"]
     build = request["build"]
@@ -307,8 +335,127 @@ def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, rea
         evidence_build["artifacts"]["artifact_set_digest"] = hashlib.sha256(
             canonical_digest_document(manifest)
         ).hexdigest()
+    elif mutation.startswith("provenance_") and mutation not in (
+        "provenance_builder_version", "provenance_toolchain_version",
+        "provenance_source_sha256", "provenance_compile_profile",
+        "provenance_build_host",
+    ):
+        if mutation == "provenance_builder_id_type":
+            _mutate_provenance(golden, lambda prov: prov.__setitem__("builder_id", 7))
+        elif mutation == "provenance_builder_version_too_long":
+            _mutate_provenance(golden, lambda prov: prov.__setitem__("builder_version", "v" * 65))
+        elif mutation == "provenance_build_profile_type":
+            _mutate_provenance(golden, lambda prov: prov.__setitem__("build_profile", 7))
+        elif mutation == "provenance_toolchain_id_type":
+            _mutate_provenance(golden, lambda prov: prov["toolchain"].__setitem__("id", 7))
+        elif mutation == "provenance_toolchain_version_type":
+            _mutate_provenance(golden, lambda prov: prov["toolchain"].__setitem__("version", []))
+        elif mutation == "provenance_compile_profile_type":
+            _mutate_provenance(golden, lambda prov: prov.__setitem__("compile_profile", []))
+        else:
+            _mutate_provenance(
+                golden,
+                lambda prov: prov.__setitem__(
+                    "compile_profile", {f"opt_{index}": "v" for index in range(17)},
+                ),
+            )
+    elif mutation == "kernel_module_source_media_type":
+        _resign_request_change(
+            golden,
+            lambda request: request["execution"].__setitem__(
+                "source_media_type", "application/octet-stream",
+            ),
+        )
+    elif mutation == "second_source_entry":
+        entries = copy.deepcopy(vector["request"]["artifact"]["bundle"]["entries"])
+        entries.append(
+            _inline_entry(
+                # Same bytes as the first SOURCE, so the only illegal thing about
+                # this vector is that there are two of them: a verifier that binds
+                # whichever SOURCE it sees last still accepts it.
+                "kernel2.tx", "SOURCE", "text/plain; charset=utf-8",
+                b"npu-kernel relu_kernel\n  tx_thread_id\n",
+            )
+        )
+        _rebuild_artifact_set(golden, entries)
+    elif mutation == "duplicate_loaded_module":
+        entries = copy.deepcopy(vector["request"]["artifact"]["bundle"]["entries"])
+        entries.append(
+            _inline_entry(
+                "module/extra.txelf", "EXECUTABLE_MODULE", "application/x-tx-elf",
+                b"TXELF-SIM\x00second fake module\n",
+            )
+        )
+        module = next(entry for entry in entries if entry["role"] == "EXECUTABLE_MODULE")
+        _rebuild_artifact_set(
+            golden, entries,
+            loaded=[
+                {"path": module["path"], "sha256": module["sha256"]},
+                {"path": module["path"], "sha256": module["sha256"]},
+            ],
+        )
     else:
         vector["receipt"]["receipt_id"] = "4" * 64
+
+
+@pytest.mark.parametrize("mutation,reason", [
+    # The build identity is part of the request digest.
+    ("provenance_builder_version", "build request"),
+    ("provenance_toolchain_version", "build request"),
+    ("provenance_source_sha256", "source_sha256 does not bind the SOURCE entry"),
+    ("provenance_compile_profile", "build request"),
+    ("build_mode", "requires the prebuilt build shape"),
+    ("provenance_build_host", "requires build_host"),
+    ("build_schema_id", "build schema id is not the version 1 identity"),
+    ("artifact_set_digest", "artifact_set_digest does not bind the artifact set"),
+    # The producer link binds status/duration/log/digest of the producer row.
+    ("producer_evidence_sha256", "build request"),
+    ("producer_duration", "build request"),
+    ("producer_log_size", "build request"),
+    ("producer_status", "must describe a successful control-host compile"),
+    ("producer_evidence_document", "does not bind the producer evidence document"),
+    # The received build evidence must repeat the accepted row and cover the load.
+    ("evidence_status_ok", "must be reported as reused"),
+    ("evidence_producer_duration", "does not repeat the accepted producer link"),
+    ("evidence_provenance_version", "differs from the accepted request"),
+    ("evidence_loaded", "load record does not cover the executable modules"),
+    ("evidence_receiver_log_is_producer_log", "log is the producer's log identity"),
+    ("evidence_receiver_duration_zero", "must record its own duration"),
+    ("evidence_artifact_set_digest", "artifact_set_digest does not bind its entries"),
+    # A field the version-1 build evidence does not have is not extra credit.
+    ("evidence_unexpected_field", "fields are missing or unknown"),
+    # The evidence manifest is recomputed from its own entries and compared with
+    # the accepted bundle, entry by entry: rewriting the SOURCE digest (or any
+    # other entry) cannot survive by keeping the declared artifact-set digest.
+    ("evidence_source_entry_sha256", "does not bind its entries"),
+    ("evidence_manifest_rewritten_consistently", "entries differ from the accepted prebuilt bundle"),
+    # Integer bounds and the receiver's own log are contract rules, not cosmetics.
+    ("evidence_log_size_negative", "build.log.size_bytes"),
+    ("evidence_duration_over_limit", "build.duration_ms"),
+    ("evidence_log_null", "must record its own log"),
+    # The producer link is a bounded record too; these vectors are re-signed so
+    # only the bound can reject them.
+    ("producer_duration_over_limit", "build.producer.duration_ms"),
+    ("producer_log_size_over_limit", "build.producer.log.size_bytes"),
+    ("receipt_request_digest", "receipt id does not bind the request"),
+    # Provenance value domains: identifiers, bounded text, toolchain and the
+    # bounded compile profile.  Each is reached only after a consistent re-sign.
+    ("provenance_builder_id_type", "build.provenance.builder_id must be a bounded opaque identifier"),
+    ("provenance_builder_version_too_long", "build.provenance.builder_version exceeds its UTF-8 byte limit"),
+    ("provenance_build_profile_type", "build.provenance.build_profile must be a bounded opaque identifier"),
+    ("provenance_toolchain_id_type", "build.toolchain.id must be a bounded opaque identifier"),
+    ("provenance_toolchain_version_type", "build.toolchain.version must be a non-empty string"),
+    ("provenance_compile_profile_type", "compile_profile must be a bounded object"),
+    ("provenance_compile_profile_too_many", "compile_profile must be a bounded object"),
+    # The prebuilt module shape has one media type and exactly one SOURCE entry.
+    ("kernel_module_source_media_type", "requires source_media_type"),
+    ("second_source_entry", "requires exactly one SOURCE entry"),
+    # The receiver's load record is a set: no duplicates, full coverage.
+    ("duplicate_loaded_module", "build.loaded reports the same artifact twice"),
+])
+def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, reason):
+    golden = copy.deepcopy(load_build_golden())
+    _apply_mutation(golden, mutation)
     path = tmp_path / "tampered_build.json"
     path.write_text(json.dumps(golden), encoding="utf-8")
 
@@ -317,3 +464,52 @@ def test_the_go_verifier_rejects_a_tampered_build_vector(tmp_path, mutation, rea
     assert "verification failed" in result.stderr
     # Rejected for the reason under test, not incidentally by another check.
     assert reason in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("mutation,level", [
+    # Request-level rules: the provenance value domains, the derived media type
+    # and the single-SOURCE identity all live in the request document.
+    ("provenance_builder_id_type", "request"),
+    ("provenance_builder_version_too_long", "request"),
+    ("provenance_build_profile_type", "request"),
+    ("provenance_toolchain_id_type", "request"),
+    ("provenance_toolchain_version_type", "request"),
+    ("provenance_compile_profile_type", "request"),
+    ("provenance_compile_profile_too_many", "request"),
+    ("kernel_module_source_media_type", "request"),
+    ("second_source_entry", "request"),
+    ("build_mode", "request"),
+    ("provenance_build_host", "request"),
+    # The receiver's load record is checked with the signed evidence.
+    ("duplicate_loaded_module", "evidence"),
+])
+def test_the_python_contract_rejects_the_same_tampered_vector(mutation, level):
+    """The Go verifier is not stricter or looser than the production contract.
+
+    Each vector here is the frozen golden with one named mutation applied (and,
+    where the mutation targets an authenticated field, consistently re-signed).
+    The Python contract must refuse the same input at the same layer, otherwise
+    the two languages disagree about what the document means.
+    """
+
+    from tcenv.remote import contracts
+
+    golden = copy.deepcopy(load_build_golden())
+    _apply_mutation(golden, mutation)
+    vector = golden["npu_build"]
+    if level == "request":
+        with pytest.raises(contracts.ContractError):
+            contracts.request_digest_document(
+                vector["request"], source_bytes=b"", dialect=contracts.NPU_BUILD_DIALECT,
+            )
+        return
+    with pytest.raises(contracts.ContractError):
+        contracts.npu_evidence_document(
+            vector["evidence"], source_bytes=None,
+            device_group=vector["request"]["execution"]["device_group"],
+            expected_resources=vector["request"]["execution"]["resources"],
+            expected_build=vector["request"]["build"],
+            request_artifact=vector["request"]["artifact"],
+            measurement_kind="simulated", publication_allowed=False,
+            report_status="ok", dialect=contracts.NPU_BUILD_DIALECT,
+        )

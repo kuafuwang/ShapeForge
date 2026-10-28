@@ -586,6 +586,21 @@ var bundleManifestFields = []string{"path", "role", "media_type", "size_bytes", 
 // bundleManifest rebuilds the canonical manifest the artifact-set digest covers.
 // It sorts entries by path and never looks at the content form: the manifest is
 // the stable identity of the exact bytes, not of how they were transported.
+// safeBundlePath refuses a manifest path that could escape the attempt
+// directory (absolute, backslashes, empty/dot segments).
+func safeBundlePath(path string) error {
+	if strings.HasPrefix(path, "/") || strings.Contains(path, "\\") ||
+		strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
+		return fmt.Errorf("unsafe bundle path %q", path)
+	}
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return fmt.Errorf("unsafe bundle path segment in %q", path)
+		}
+	}
+	return nil
+}
+
 func bundleManifest(schemaID string, entries []any) (map[string]any, error) {
 	if schemaID != "tcenv.remote.npu-bundle.artifact-bundle.1" {
 		return nil, fmt.Errorf("unsupported bundle schema %q", schemaID)
@@ -609,14 +624,8 @@ func bundleManifest(schemaID string, entries []any) (map[string]any, error) {
 		if !ok || path == "" {
 			return nil, errors.New("bundle entry path is not a non-empty string")
 		}
-		if strings.HasPrefix(path, "/") || strings.Contains(path, "\\") ||
-			strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
-			return nil, fmt.Errorf("unsafe bundle path %q", path)
-		}
-		for _, segment := range strings.Split(path, "/") {
-			if segment == "" || segment == "." || segment == ".." {
-				return nil, fmt.Errorf("unsafe bundle path segment in %q", path)
-			}
+		if err := safeBundlePath(path); err != nil {
+			return nil, err
 		}
 		if seen[strings.ToLower(path)] {
 			return nil, fmt.Errorf("duplicate bundle path %q", path)
@@ -1318,6 +1327,48 @@ func buildProvenanceDocument(
 			return nil, fmt.Errorf("build provenance toolchain field %s is missing", name)
 		}
 	}
+	// The identity fields are bounded, not free text: an id is an opaque
+	// identifier, a version is bounded text, and the compile profile is a
+	// bounded scalar object.  Without this the provenance would accept values
+	// the production contract refuses (a number as a builder id, a 65-byte
+	// version, a list as a compile profile, ...).
+	if _, err := buildIdentifier(document["builder_id"], "build.provenance.builder_id"); err != nil {
+		return nil, err
+	}
+	if _, err := buildText(document["builder_version"], "build.provenance.builder_version", 64); err != nil {
+		return nil, err
+	}
+	if buildHost, err := buildText(document["build_host"], "build.provenance.build_host", 32); err != nil {
+		return nil, err
+	} else if buildHost != "control_host" && buildHost != "evaluator" {
+		return nil, errors.New("build.provenance.build_host must be control_host or evaluator")
+	}
+	if _, err := buildIdentifier(document["build_profile"], "build.provenance.build_profile"); err != nil {
+		return nil, err
+	}
+	if _, err := buildIdentifier(toolchain["id"], "build.toolchain.id"); err != nil {
+		return nil, err
+	}
+	if _, err := buildText(toolchain["version"], "build.toolchain.version", 64); err != nil {
+		return nil, err
+	}
+	if _, err := buildText(toolchain["sdk_version"], "build.toolchain.sdk_version", 64); err != nil {
+		return nil, err
+	}
+	if _, err := buildCompileProfile(document["compile_profile"]); err != nil {
+		return nil, err
+	}
+	if digest, ok := document["source_sha256"].(string); !ok || !isHex64(digest) {
+		return nil, errors.New("build.provenance.source_sha256 must be 64 lowercase hexadecimal characters")
+	}
+	if digest := document["artifact_set_digest"]; digest != nil {
+		text, ok := digest.(string)
+		if !ok || !isHex64(text) {
+			return nil, errors.New(
+				"build.provenance.artifact_set_digest must be 64 lowercase hexadecimal characters",
+			)
+		}
+	}
 	if sourceSHA != "" && document["source_sha256"] != sourceSHA {
 		return nil, errors.New("build provenance source_sha256 does not bind the SOURCE entry")
 	}
@@ -1364,6 +1415,14 @@ func buildRequestDocument(request map[string]any) (map[string]any, error) {
 		execution["synchronization"] != "stream-event" {
 		return nil, errors.New("execution shape is not the prebuilt kernel_module shape")
 	}
+	// The task family derives the source media type; it is not negotiated.  A
+	// kernel_module payload is text (the module itself is an artifact entry).
+	if execution["source_media_type"] != buildModuleMediaType {
+		return nil, fmt.Errorf(
+			"execution.task_family 'kernel_module' requires source_media_type %q",
+			buildModuleMediaType,
+		)
+	}
 	schemaID, ok := bundle["schema_id"].(string)
 	if !ok {
 		return nil, errors.New("bundle schema id is not a string")
@@ -1391,22 +1450,36 @@ func buildRequestDocument(request map[string]any) (map[string]any, error) {
 	if candidate["algorithm"] != "sha256-bundle-v1" || candidate["value"] != artifactSet {
 		return nil, errors.New("candidate digest does not bind the artifact set")
 	}
+	// A prebuilt artifact set describes exactly one candidate: one SOURCE entry
+	// and at least one executable module.  Two SOURCE entries would leave the
+	// candidate identity ambiguous (the provenance can only bind one digest).
 	sourceSHA := ""
+	sourceCount := 0
+	moduleCount := 0
 	for _, raw := range entries {
 		entry, ok := raw.(map[string]any)
 		if !ok {
 			return nil, errors.New("bundle entry is not an object")
 		}
-		if entry["role"] == "SOURCE" {
+		switch entry["role"] {
+		case "SOURCE":
+			sourceCount++
 			sha, ok := entry["sha256"].(string)
 			if !ok {
 				return nil, errors.New("SOURCE entry sha256 is not a string")
 			}
-			sourceSHA = sha
+			if sourceCount == 1 {
+				sourceSHA = sha
+			}
+		case "EXECUTABLE_MODULE":
+			moduleCount++
 		}
 	}
-	if sourceSHA == "" {
-		return nil, errors.New("a prebuilt artifact set requires a SOURCE entry")
+	if sourceCount != 1 {
+		return nil, errors.New("a prebuilt artifact set requires exactly one SOURCE entry")
+	}
+	if moduleCount == 0 {
+		return nil, errors.New("a prebuilt artifact set requires an EXECUTABLE_MODULE entry")
 	}
 	build, ok := canonicalRequest["build"].(map[string]any)
 	if !ok {
@@ -1507,6 +1580,59 @@ func buildProducerDigest(document map[string]any) (string, error) {
 	return shaHex(encoded), nil
 }
 
+// buildIdentifier is the bounded opaque identifier the build contract allows for
+// builder/profile/toolchain ids: 1..160 characters from [A-Za-z0-9._:-].
+var buildIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,160}$`)
+
+func buildIdentifier(value any, name string) (string, error) {
+	text, ok := value.(string)
+	if !ok || !buildIdentifierPattern.MatchString(text) {
+		return "", fmt.Errorf("%s must be a bounded opaque identifier", name)
+	}
+	return text, nil
+}
+
+func buildText(value any, name string, maxBytes int) (string, error) {
+	text, ok := value.(string)
+	if !ok || text == "" {
+		return "", fmt.Errorf("%s must be a non-empty string", name)
+	}
+	if len([]byte(text)) > maxBytes {
+		return "", fmt.Errorf("%s exceeds its UTF-8 byte limit", name)
+	}
+	return text, nil
+}
+
+// buildCompileProfile mirrors the bounded scalar object the compile profile is:
+// at most 16 fields, ASCII keys of at most 64 bytes, and scalar values (string,
+// boolean, safe integer or null).
+func buildCompileProfile(value any) (map[string]any, error) {
+	profile, ok := value.(map[string]any)
+	if !ok || len(profile) > 16 {
+		return nil, errors.New("build.provenance.compile_profile must be a bounded object")
+	}
+	for key, item := range profile {
+		if key == "" || len(key) > 64 || !isASCII(key) {
+			return nil, errors.New("timing diagnostic key is invalid")
+		}
+		switch typed := item.(type) {
+		case string:
+			if len([]byte(typed)) > 512 {
+				return nil, errors.New("timing diagnostic exceeds its UTF-8 byte limit")
+			}
+		case bool, nil:
+		case json.Number:
+			parsed, err := strconv.ParseInt(typed.String(), 10, 64)
+			if err != nil || parsed > maxBuildSafeInteger || parsed < -maxBuildSafeInteger {
+				return nil, errors.New("timing diagnostic integer is unsafe")
+			}
+		default:
+			return nil, errors.New("timing diagnostics must be scalar")
+		}
+	}
+	return profile, nil
+}
+
 // isHex64 reports whether value is 64 lowercase hexadecimal characters.
 func isHex64(value string) bool {
 	if len(value) != 64 {
@@ -1548,8 +1674,10 @@ var buildLoadedFields = []string{"path", "sha256"}
 // a duration is a bounded wall-clock value (0 means "this never ran") and a log
 // size is a bounded byte count.
 const (
-	maxBuildDurationMs  = 3_600_000
-	maxBuildSourceBytes = 1_000_000
+	maxBuildDurationMs   = 3_600_000
+	maxBuildSourceBytes  = 1_000_000
+	maxBuildSafeInteger  = 9_007_199_254_740_991
+	buildModuleMediaType = "text/plain; charset=utf-8"
 )
 
 // closedFields refuses a document whose field set is not exactly the versioned
@@ -1776,10 +1904,25 @@ func verifyBuildEvidence(
 	if len(modules) == 0 {
 		return errors.New("a reused artifact set requires an executable module")
 	}
-	loaded, ok := build["loaded"].([]any)
-	if !ok || len(loaded) != len(modules) {
-		return errors.New("the receiver's load record does not cover the executable modules")
+	known := map[string]string{}
+	for _, raw := range entries {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			return errors.New("build evidence entry is not an object")
+		}
+		path, _ := entry["path"].(string)
+		sha, _ := entry["sha256"].(string)
+		known[path] = sha
 	}
+	loaded, ok := build["loaded"].([]any)
+	if !ok {
+		return errors.New("build.loaded must be an array")
+	}
+	// The load record is a set of artifacts this attempt read back: each path
+	// once, each digest the built one, and every executable module covered.  A
+	// count check plus membership alone accepts a record that lists one module
+	// twice and silently omits another.
+	loadedPaths := map[string]bool{}
 	for _, raw := range loaded {
 		record, ok := raw.(map[string]any)
 		if !ok {
@@ -1788,9 +1931,34 @@ func verifyBuildEvidence(
 		if err := closedFields(record, buildLoadedFields, nil, "build.loaded"); err != nil {
 			return err
 		}
-		path, _ := record["path"].(string)
-		if modules[path] != record["sha256"] {
+		path, ok := record["path"].(string)
+		if !ok {
+			return errors.New("build.loaded path is not a string")
+		}
+		if err := safeBundlePath(path); err != nil {
+			return err
+		}
+		sha, ok := record["sha256"].(string)
+		if !ok || !isHex64(sha) {
+			return errors.New("build.loaded.sha256 must be 64 lowercase hexadecimal characters")
+		}
+		if loadedPaths[path] {
+			return errors.New("build.loaded reports the same artifact twice")
+		}
+		loadedPaths[path] = true
+		knownSHA, produced := known[path]
+		if !produced {
+			return fmt.Errorf(
+				"build.loaded names an artifact the build did not produce: %s", path,
+			)
+		}
+		if knownSHA != sha {
 			return errors.New("load record does not name the built module")
+		}
+	}
+	for path := range modules {
+		if !loadedPaths[path] {
+			return errors.New("the receiver's load record does not cover the executable modules")
 		}
 	}
 	// The receiver records its own verify/load cost; reusing the producer's
