@@ -74,6 +74,93 @@ LLM、committee 或会话不同而改变 verdict。
 
 ## 2. 目标架构
 
+### 2.0 总体图：上游移植 + 候选交付 + 本地证据
+
+```mermaid
+flowchart TB
+  subgraph UP["上游真实实现（按 upstream-map 选择性移植）"]
+    KW["KDA workflow<br/>流程、打包与哈希"]
+    KK["KDA candidates<br/>prepare/run、调度与 state handoff"]
+    CK["CAKE2<br/>reference、数值指标、CANN 构建/PyBind/msprof"]
+  end
+
+  MAP["upstream-map.json<br/>reuse / port / adapt / local<br/>repo + commit + path + license"]
+  KW --> MAP
+  KK --> MAP
+  CK --> MAP
+
+  subgraph TC["任务合同与目标 ABI（本地补齐）"]
+    OS["OpSpec v2<br/>张量、attrs、cases、容差、work accounting"]
+    RF["reference.py<br/>独立数学语义与正确性 Oracle"]
+    BL["baselines<br/>可选厂商基线"]
+    SI["SemanticInstance"]
+    ABI["TargetAbiDeriver"]
+    TMC["TensorMemoryContract<br/>只锁 ABI、内存与数值约束"]
+    OS --> SI
+    RF --> SI
+    BL --> SI
+    SI --> ABI --> TMC
+  end
+
+  MAP -->|"真实 reference / 采样 / 构建与 profiler 适配"| TC
+
+  subgraph CT["候选与 task-agnostic Track"]
+    TR["TrackRegistry<br/>正式 track_id + 能力校验"]
+    PR["统一题面<br/>OpSpec + 只读 reference + ABI"]
+    CA["人或 LLM 候选<br/>算法、融合、Tiling、workspace、Host Tiling"]
+    MS["msl-single<br/>单文件 MSL + taic-launch"]
+    MB["msl-bundle<br/>候选 Host Tiling + MSL Device Kernel"]
+    NP["NPU Candidate Bundle<br/>Host Tiling + AscendC Device Kernel"]
+    TR --> PR --> CA
+    CA --> MS
+    CA --> MB
+    CA --> NP
+  end
+
+  SI --> PR
+  TMC --> PR
+
+  subgraph EX["几何与唯一构建入口"]
+    GV["Geometry Parser / Validator<br/>target.toml 硬件与资源上限"]
+    EG["typed ExecutionGeometry<br/>候选拥有；fallback 独立"]
+    AB["唯一 artifact_builder"]
+    BO["BuildOutcome"]
+    GE["AUXILIARY entry<br/>execution_geometry.json"]
+    AD["provenance.artifact_set_digest<br/>搜索/确认主比较"]
+    ND["native.descriptor / native_digest<br/>交叉审计"]
+    GV --> EG --> AB --> BO
+    EG --> GE --> BO
+    BO --> AD
+    BO --> ND
+  end
+
+  MS --> GV
+  MB --> GV
+  NP --> GV
+
+  subgraph EV["正确性、计时与发布证据"]
+    CR["Correctness<br/>fresh clone + reference + scaled_error"]
+    TM["Benchmark<br/>baseline + 明确计时边界"]
+    R4["schema 4 EvalReport"]
+    CF["fresh 三方确认<br/>candidate/build/evaluation identity"]
+    PB["发布 / correctness_only / 拒绝"]
+    CR --> R4
+    TM --> R4
+    AD --> R4
+    R4 --> CF --> PB
+  end
+
+  RF --> CR
+  BO --> CR
+  BL --> TM
+  BO --> TM
+```
+
+读图要点：上游只提供经审计存在的实现，不把通用 Task Contract、Candidate 或 Geometry 框架
+想象成现成代码；候选拥有实现与几何，Track 不提供逐题算法；确认几何的主机制是
+`provenance.artifact_set_digest`，`native.descriptor/native_digest` 只做交叉审计。知识与技能只进入
+`run_config.agent_guidance`，不进入 `task_pack_digest`。
+
 ### 2.1 任务合同与 reference
 
 - 源码审计已经证明上游没有完整通用 Task Contract：KDA `docs/agent-flow.md` 只有文字要求，CAKE2
