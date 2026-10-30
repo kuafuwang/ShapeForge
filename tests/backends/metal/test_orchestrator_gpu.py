@@ -8,7 +8,7 @@ import re
 import pytest
 
 from tasks import get_task
-from tcenv.evaluate import evaluate
+from tcenv.evaluate import confirmation_expected_document, evaluate
 
 from ...support.fakes import FakeClient, make_response
 from ...support.orchestrator import PLAN, make_orch
@@ -30,7 +30,7 @@ def test_real_environment_end_to_end_with_scripted_llm(tmp_path):
 
     @param tmp_path pytest 提供的临时目录。
     """
-    naive = get_task("relu", "fp16", "small").naive_msl
+    naive = get_task("relu", "fp16", "paper").naive_msl
     broken = naive.replace("y[j] = half(v < 0.0f ? 0.0f : v)", "y[j] = undefined_symbol")
     wrong = naive.replace("v < 0.0f ? 0.0f : v", "v < 0.0f ? 0.1f * v : v")
     vector = """
@@ -39,8 +39,14 @@ kernel void relu_kernel(device const half* x [[buffer(0)]], device half* y [[buf
     uint base = tg * BLOCK_SIZE + lid * 8;                       // 128 threads x 8 halves = BLOCK_SIZE
     half4 a = *reinterpret_cast<device const half4*>(x + base);
     half4 b = *reinterpret_cast<device const half4*>(x + base + 4);
-    *reinterpret_cast<device half4*>(y + base) = max(a, half4(0));
-    *reinterpret_cast<device half4*>(y + base + 4) = max(b, half4(0));
+    y[base + 0] = half(a[0] < 0.0f ? 0.0f : a[0]);
+    y[base + 1] = half(a[1] < 0.0f ? 0.0f : a[1]);
+    y[base + 2] = half(a[2] < 0.0f ? 0.0f : a[2]);
+    y[base + 3] = half(a[3] < 0.0f ? 0.0f : a[3]);
+    y[base + 4] = half(b[0] < 0.0f ? 0.0f : b[0]);
+    y[base + 5] = half(b[1] < 0.0f ? 0.0f : b[1]);
+    y[base + 6] = half(b[2] < 0.0f ? 0.0f : b[2]);
+    y[base + 7] = half(b[3] < 0.0f ? 0.0f : b[3]);
 }
 """
 
@@ -53,15 +59,19 @@ kernel void relu_kernel(device const half* x [[buffer(0)]], device half* y [[buf
                 assert "undefined_symbol" in last and "kernel.metal:" in last  # the real compiler diagnostics reach the model
             else:
                 assert "STATUS: incorrect" in last and "out of tolerance" in last
-            return make_response(fenced(naive))
+            return make_response(fenced(vector))
         if "Diagnose the dominant bottleneck" in last:
             return make_response(PLAN)
         title = re.search(r"\*\*(.+?)\*\*", last).group(1)
         return make_response(fenced({"A": naive, "B": wrong, "C": vector}[title]))
 
     assert broken != naive and wrong != naive
-    orch = make_orch(tmp_path, route, [], max_rounds=0, evaluate_fn=evaluate)
-    orch.search.eval_reps = 5
+    orch = make_orch(
+        tmp_path, route, [], max_rounds=0, evaluate_fn=evaluate,
+        expected_identity=lambda **kw: confirmation_expected_document(**kw, probe=True),
+        size="paper",
+    )
+    orch.search.eval_reps = 50
     res = asyncio.run(orch.run())
     statuses = [c["status"] for c in res.candidates]
     assert statuses[:2] == ["compile_error", "ok"]

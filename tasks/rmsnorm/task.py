@@ -8,7 +8,7 @@ from tcenv.distributions import sample
 from tcenv.lowering import derive_specialization
 from tcenv.opspec.model import instantiate, load_opspec
 from tcenv.task import BaselineImpl, Task
-from tcenv.track import REPO_ROOT, TrackBinding, load_track
+from tcenv.track import REPO_ROOT, TrackBinding, load_track, pack_digest
 
 TASK_DIR = "rmsnorm"
 TRACK_NAME = "track.json"
@@ -150,6 +150,10 @@ def build(dtype: str, size: str) -> Task:
         semantic_instance=instance,
         specialization=specialization,
         evaluation_implementations={
+            "task_pack": {
+                "pack_files": list(track.pack_files),
+                "digest": pack_digest(track.pack_files),
+            },
             "gen_inputs": dict(implementations["gen_inputs"]),
             "reference": dict(implementations["reference"]),
             "error_scale": implementations["error_scale"],

@@ -174,7 +174,7 @@ def agent_from_script(script, kernel: str = KERNEL):
 
     return run
 
-def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, max_rounds=2, max_repair=2, evaluate_fn=None, max_hangs=1, log=None, from_run=None, evaluator=None, session_runner=None, workspace_config=None, selfcheck_bridge_factory=None, publishable_site_ids=None, publishable_epochs=None, **search_kw):
+def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, max_rounds=2, max_repair=2, evaluate_fn=None, max_hangs=1, log=None, from_run=None, evaluator=None, expected_identity=None, session_runner=None, workspace_config=None, selfcheck_bridge_factory=None, publishable_site_ids=None, publishable_epochs=None, task_name="relu", dtype="fp16", size="small", **search_kw):
     """@brief 用假客户端与假评估器搭一个 Orchestrator，并默认关掉生产环境开着的附加提示开关。
 
     测试只在显式传入时打开某个开关，这样提示断言不会被额外段落干扰。
@@ -191,6 +191,8 @@ def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, ma
     @param log 日志回调，缺省丢弃。
     @param from_run 续跑来源 run 目录。
     @param evaluator 可选的统一评测执行器；None 时走 evaluate_fn 的本地适配器。
+    @param expected_identity 可选的当前身份提供器；真实 evaluate 必须传真实文档，不能用 structural fixture。
+    @param task_name/dtype/size 任务定位；需要稳定真实计时的测试可显式选择 paper 负载。
     @param session_runner 可选的单场会话执行器。
     @param workspace_config 可选的显式远端 workspace 配置。
     @param search_kw 覆盖其余 SearchConfig 字段。
@@ -208,9 +210,9 @@ def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, ma
 
         from tests.support.report_build import structural_expected
 
-        evaluator = LocalEvaluator(fn, expected_identity=structural_expected)
+        evaluator = LocalEvaluator(fn, expected_identity=expected_identity or structural_expected)
     return Orchestrator(
-        "relu", "fp16", "small", llm_cfg, search, run_dir=tmp_path / "run",
+        task_name, dtype, size, llm_cfg, search, run_dir=tmp_path / "run",
         evaluate_fn=fn, client=FakeClient(script), log=log or (lambda s: None), from_run=from_run,
         evaluator=evaluator, session_runner=session_runner, workspace_config=workspace_config, selfcheck_bridge_factory=selfcheck_bridge_factory,
         publishable_site_ids=publishable_site_ids, publishable_epochs=publishable_epochs,

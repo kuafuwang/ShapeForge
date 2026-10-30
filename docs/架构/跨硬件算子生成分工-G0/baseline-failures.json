@@ -47,9 +47,17 @@
     "command": "uv run python docs/架构/构建执行与证据语义升级-R0/verify.py --replay",
     "result": "OK before G0; 20 archived files and adopted subset reproduced"
   },
+  "resolved_gpu_suite": {
+    "command": "uv run pytest -q -n 0 -m gpu",
+    "result": "153 passed, 1 skipped, 3207 deselected",
+    "date": "2026-10-30",
+    "direct_evaluate_pack_defect": "fixed by registering RMSNorm task_pack and verifying its digest",
+    "confirmation_identity_defect": "fixed by using the real probed expected document; final identity match and confirmed_status=ok",
+    "a4_blocking": false
+  },
   "rules": [
     "Do not claim a fully green suite from focused tests.",
     "Do not delete or weaken failing tests to obtain a green baseline.",
-    "A4 cannot pass until both GPU blocking defects are fixed and rerun with explicit GPU authorization."
+    "The two former GPU A4 blockers are resolved and the full GPU suite passes; unrelated CPU draft/flaky failures remain separately classified."
   ]
 }

@@ -3,7 +3,7 @@ name: 跨硬件算子生成分工
 overview: 学习 KDA / CAKE2 已验证的分工，不闭门造车，不限制 LLM 或人所写候选内核的表达力。采用选择性移植而非必须 fork：只学习上游架构、流程、处理方法论和硬件中立实现；目标平台只有 Mac GPU 与清微 NPU，CUDA 与 Huawei Ascend/CANN 的代码、工具链、芯片知识、平台约束和专用 skills 不进入本地交付或 guidance。功能等价实现去重，职责互补的组件可以组合，但不形成 KDA/CAKE2 双路径。每个组件先在 G0 登记上游 repo/commit/path/license 和 reference/reuse/port/adapt/local 决策；同职责实现去重，互补职责可组合且必须有明确接口，不按上游来源形成两条运行路径。上游已有且适用的实现不得再自研一套。候选拥有算法、融合、Tiling 与 ExecutionGeometry，Track 只做 task-agnostic 交付，harness 拥有 ABI、安全、测量边界和证据。G0 未完成前不得开始 A1–A6。
 todos:
   - id: gate
-    content: G0 冻结当前代码与旧路径语料、既有失败和 NPU 性能合同输入；KDA/CAKE2 初次源码盘点已完成并写入 upstream-map.json。只接受架构/流程/方法论与硬件中立实现，目标仅 Mac GPU 和清微 NPU；CUDA 与 Ascend/CANN 代码、工具链、芯片知识和专用 guidance 一律标记 reference/rejected，不进入生产、pack 或 agent_guidance。按 responsibility 去重并允许互补组合，未证明上游缺位不得选择 local。G0 不跑模型 kernel 或 GPU/NPU，Mac 侧已通过（比例 1.10 已批准）；清微按 Clang、无真机仅模拟，NPU-P0 保持 blocked
+    content: G0 冻结当前代码与旧路径语料、既有失败和 NPU 性能合同输入；KDA/CAKE2 初次源码盘点已完成并写入 upstream-map.json。只接受架构/流程/方法论与硬件中立实现，目标仅 Mac GPU 和清微 NPU；CUDA 与 Ascend/CANN 代码、工具链、芯片知识和专用 guidance 一律标记 reference/rejected，不进入生产、pack 或 agent_guidance。按 responsibility 去重并允许互补组合，未证明上游缺位不得选择 local。G0 不跑模型 kernel 或 GPU/NPU，Mac 侧已通过（比例 1.10 已批准）；A4 原 GPU 阻断已修复并全量复测通过；清微按 Clang、无真机仅模拟，NPU-P0 保持 blocked
     status: completed
   - id: contract-and-tracks
     content: A1 源码审计已证明 KDA 只有合同文字说明、CAKE2 op_desc 只是不完整示例，因此本地实现 OpSpec v2 主合同与 loader；移植真实 reference 和采样器，CAKE2 precision/ulp 仅作诊断统计，pass/fail 唯一公式仍是本仓库 tolerances + scaled_error，既有种子流/cases/error_scale 不变。op_desc 仅作互操作摘要；v1/v2 无 fallback，语义冲突判 semantic_unresolved
@@ -18,7 +18,7 @@ todos:
     content: A3 将移植的 Candidate/Track 执行结果接入本仓库证据底座：CandidateArtifact、artifact_set_digest、BuildOutcome、schema 4、run_config schema 3、TaskLocator/evaluate_task、Reference/BaselineRegistry、pack 静态闭包和任务自动发现。冻结几何以 AUXILIARY entry 进入 bundle.entries/artifacts 并重算 provenance.artifact_set_digest，确认门以该 digest 比较几何；native.descriptor 只作交叉审计。知识只进 agent_guidance
     status: pending
   - id: vertical-slice
-    content: A4 用 RMSNorm、全新算子与融合算子做真实 Mac 垂直切片。首批本地 Metal track 为 msl-single 与 msl-bundle（仅因上游无 Metal 交付）：同一 OpSpec+reference+ABI 题面，分别验证单文件与候选 Host Tiling+Device Kernel Bundle，不是双 Prompt。符号几何、派生标量、多阶段绑定、read_write、workspace、作者中立均有回归；直接 evaluate 缺 pack 与 build_identity_mismatch 未修复并 GPU 复测前不得通过
+    content: A4 用 RMSNorm、全新算子与融合算子做真实 Mac 垂直切片。首批本地 Metal track 为 msl-single 与 msl-bundle（仅因上游无 Metal 交付）：同一 OpSpec+reference+ABI 题面，分别验证单文件与候选 Host Tiling+Device Kernel Bundle，不是双 Prompt。符号几何、派生标量、多阶段绑定、read_write、workspace、作者中立均有回归；直接 evaluate 缺 pack 与 build_identity_mismatch 已修复并经完整 GPU 复测通过，后续保持回归绿色
     status: pending
   - id: npu-performance-gate
     content: NPU-P0 与 Mac A5/A6 分叉并行：目标仅为清微 NPU，使用人类冻结的清微设备/toolchain/track、厂商 baseline 和计时口径；不引入 CANN msopgen/build/install/EasyAsc/msprof、AscendC 示例或 CUDA 代码。复用上游架构与方法论，本地绑定 CandidateArtifact/ExecutionGeometry，在简单与复杂融合算子上验证真实构建、正确性、计时边界和冻结阈值。需用户单独授权真实清微 NPU；当前无真机，只允许流程/数据/协议模拟，NPU-P0 保持 blocked，模拟不解除阻断或形成性能证据
@@ -34,8 +34,8 @@ isProject: false
 
 # 跨硬件算子生成：上游实现移植与证据底座集成计划
 
-状态：**目标设计，Mac 侧 G0 已通过，A1–A3 可开始；A4 受当前 GPU 缺陷阻断，NPU-P0 无真机阻断**。R5/R6 已通过，但当前 GPU 基线仍登记直接 evaluate 缺 task-pack 与
-`build_identity_mismatch`。阶段验收见 `跨硬件算子生成分工-阶段验收/G0.md`。此前停止时留下的 G0 快照草稿已过期，必须按本版
+状态：**目标设计，Mac 侧 G0 已通过，A4 前置 GPU 阻断已解除；A1–A3 可开始，A4 待实施，NPU-P0 无真机阻断**。R5/R6 已通过；原直接 evaluate 缺 task-pack 与
+`build_identity_mismatch` 已修复，完整 GPU 复测为 153 passed、1 skipped。阶段验收见 `跨硬件算子生成分工-阶段验收/G0.md`。此前停止时留下的 G0 快照草稿已过期，必须按本版
 重新生成。
 
 已完成的上游源码对照见 `跨硬件算子生成分工-G0/upstream-map.json`（KDA workflow
@@ -342,7 +342,7 @@ worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
 
 ### A4. 真实 Mac 垂直切片
 
-先修复并经授权 GPU 复测直接 evaluate 缺 pack 与 build_identity_mismatch，否则 A4 不通过。
+原直接 evaluate 缺 pack 与 build_identity_mismatch 已修复并经完整 GPU 复测通过（153 passed、1 skipped）；A4 后续实施仍须保持这些回归为绿色。
 
 1. RMSNorm：只交任务合同、reference 与可选 baseline，在 msl-single 和 msl-bundle 分别真实
    build/ABI/safety/correctness；msl-bundle 必须真实交付 Host Tiling+Device Kernel 和构建后几何证据。

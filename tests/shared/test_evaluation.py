@@ -137,6 +137,19 @@ def test_local_provenance_binds_the_registered_task_pack_digest():
     assert len(provenance.task_pack_digest) == 64
 
 
+def test_rmsnorm_registers_its_pack_and_computes_an_evaluation_fingerprint():
+    """RMSNorm 的自定义装配也必须提供 task-pack，不能只在 worker 路径偶然可用。"""
+    from tasks import get_task
+    from tcenv.evaluate import _evaluation_fingerprint
+    from tcenv.track import pack_digest
+
+    task = get_task("rmsnorm", "fp16", "small")
+    pack = task.evaluation_implementations["task_pack"]
+    assert pack["digest"] == pack_digest(pack["pack_files"])
+    assert "tasks/rmsnorm/opspec.json" in pack["pack_files"]
+    assert isinstance(_evaluation_fingerprint(task), str)
+
+
 def test_local_provenance_is_typed_and_stable_for_an_unchanged_request(tmp_path):
     """@brief 同一请求的本地 provenance 类型/epoch 稳定，且不伪装成远程站点。"""
     request = EvaluationRequest(
