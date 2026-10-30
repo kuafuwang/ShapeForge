@@ -180,6 +180,100 @@ flowchart TB
 `provenance.artifact_set_digest`，`native.descriptor/native_digest` 只做交叉审计。知识与技能只进入
 `run_config.agent_guidance`，不进入 `task_pack_digest`。
 
+### 2.0.1 标准目录入口（A6 完成态）
+
+A1–A6 全部完成后，普通算子的标准入口只有两项必需文件：
+
+```text
+tasks/<op>/
+  opspec.json       必需：任务合同
+  reference.py      必需：独立参考实现
+```
+
+按需可选：
+
+```text
+  reference.json    reference 版本、采样与误差尺度 profile
+  baselines.json    性能 baseline 登记
+  baselines.py      有 baselines.json 时必需的 baseline runner
+  display.json      description、核名等表示覆盖
+  known_good.metal  harness 自检核
+```
+
+已迁移任务不再包含 `task.py`、`track.json`、`kernel_triton.py`、逐题 LoweringProfile、
+专用题面模板、手写 `pack_files` 或中央任务名登记。`naive.metal` 只有主动保留为
+`known_good.metal` 时才存在，不是加题门槛。
+
+文件职责固定如下：
+
+| 文件 | 唯一职责 | 明确禁止 |
+| --- | --- | --- |
+| `opspec.json` | 张量及顺序、shape/dtype/layout/access、语义 attrs、cases/sizes、容差、work accounting、发现元数据 | grid/threads/tile、num_warps、Track 选择、候选优化参数 |
+| `reference.py` | 独立正确性实现；可选输入生成与误差尺度 | import 候选、renderer 或 known-good 来生成答案 |
+| `reference.json` | reference 版本、采样/error-scale profile | 第二份任务语义、无结构顶层 `params` |
+| `baselines.*` | 性能比较对象与实现身份 | 充当正确性 oracle 或加题必填项 |
+| `display.json` | 表示层覆盖 | 改变 reference、cases、容差、ABI 或启动 |
+| `known_good.*` | harness 自检 | 充当 reference、baseline 或新算子前置条件 |
+
+`reference.py` 的标准接口为：
+
+```python
+def reference(inputs, attrs):
+    return {"y": ...}
+
+# 可选：
+def gen_inputs(case, seed, instance): ...
+def error_scale(inputs, reference_outputs, instance, tolerances): ...
+```
+
+`read_write` 张量的最终值也是结果，reference 必须返回其期望终值并纳入差分。没有
+`baselines.json` 时 `Task.baselines` 为空，自动走 `effective_correctness_only`，不发布 speedup。
+
+### 2.0.2 作者工作流（A6 完成态）
+
+**新增普通算子或融合算子。** 作者只提供 `opspec.json + reference.py`，有厂商 baseline 时才加
+`baselines.*`。无需修改后端、注册 pattern、写 Triton、写 task.py/track.json、写 naive kernel 或
+改中央任务清单。融合算子（包括 `MatMul → Softmax → MatMul`）入口完全相同，不产生
+`matmul_softmax_matmul.pattern`、StagePartitioner、TileConnector 或专用 LoweringRule。
+
+**候选作者（人或 LLM）。** 候选作者不修改任务目录，而是根据 TrackRenderer 渲染的
+`OpSpec + 只读 reference + TensorMemoryContract` 提交实现：
+
+- `msl-single`：单个 `.metal` 文件与可选 `taic-launch` 几何声明；
+- `msl-bundle`：候选 Host Tiling + MSL Device Kernel + Schedule/资源声明。
+
+候选拥有算法分解、融合、Tiling、grid/threads、workspace、多阶段流水、Host Tiling、
+Derived Scalars 与 stage 参数绑定；系统不规定候选应采用哪一种内核写法。
+
+**工具/平台作者。** 只有新增 Track 或 target 才修改系统侧：
+
+- 新 Track：`tracks.json` + renderer + validator + build adapter + 独立真实证据；
+- 新清微 target：清微 backend/target 档案 + Clang 工具链适配 + ABI/资源限制 +
+  baseline/profiler + 真实设备证据。
+
+算子目录不因新增 Track/target 而改变。清微无真机时只能做流程、数据和协议模拟，Track 不得标
+available，也不得发布性能。
+
+**从作者到发布的完整链路：**
+
+```text
+opspec.json + reference.py
+→ 自动发现与 SemanticInstance
+→ TargetAbiDeriver 派生 TensorMemoryContract
+→ TrackRegistry 选择交付 Track
+→ TrackRenderer 渲染统一题面
+→ 人或 LLM 候选自主决定算法、融合、Tiling 与 ExecutionGeometry
+→ 几何校验与唯一 artifact_builder
+→ fresh-clone correctness + reference/scaled_error
+→ 有 baseline 才测速，否则 correctness_only
+→ 几何进入构建产物 artifact_set_digest
+→ schema 4 + fresh 三方确认
+→ 发布 / correctness_only / 拒绝
+```
+
+一句话：**加算子只写 `opspec.json + reference.py`；写候选就实现算法和几何；加 Track/target
+才改系统侧。**
+
 ### 2.1 任务合同与 reference
 
 - 源码审计已经证明上游没有完整通用 Task Contract：KDA `docs/agent-flow.md` 只有文字要求，CAKE2
