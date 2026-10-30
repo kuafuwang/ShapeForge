@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "cpu_fast_suite": {
+    "command": "uv run pytest -q -m 'not gpu and not llm and not slow'",
+    "result": "3191 passed, 7 skipped, 2 failed",
+    "failures": [
+      {
+        "nodeid": "tests/shared/test_remote_npu_bundle_contract.py::test_materialize_handles_read_and_verify_the_exact_bytes",
+        "kind": "deterministic unrelated draft defect",
+        "reason": "ArtifactBundle.materialize() missing required keyword-only argument anchor",
+        "a4_blocking": false
+      },
+      {
+        "nodeid": "tests/shared/test_remote_job_worker_bridge.py::test_a_descendant_holding_the_pipe_cannot_block_the_bridge",
+        "kind": "parallel timing flake",
+        "reason": "Parallel elapsed 2.175s exceeded 2s; serial rerun passed in 1.84s",
+        "a4_blocking": false
+      }
+    ]
+  },
+  "gpu_suite": {
+    "command": "uv run pytest -q -n 0 -m gpu",
+    "result": "149 passed, 1 skipped, 4 failed, 3206 deselected",
+    "user_authorized": true,
+    "failures": [
+      {
+        "nodeids": [
+          "tests/backends/metal/test_ieee.py::test_naive_kernels_of_all_tasks_pass_the_full_case_list_including_ieee[fp16]",
+          "tests/backends/metal/test_ieee.py::test_naive_kernels_of_all_tasks_pass_the_full_case_list_including_ieee[bf16]",
+          "tests/backends/metal/test_tcenv.py::test_all_tasks_are_self_consistent_small"
+        ],
+        "kind": "direct evaluate assembly defect",
+        "reason": "rmsnorm task-pack digest is not registered",
+        "a4_blocking": true
+      },
+      {
+        "nodeids": [
+          "tests/backends/metal/test_orchestrator_gpu.py::test_real_environment_end_to_end_with_scripted_llm"
+        ],
+        "kind": "confirmation identity defect",
+        "reason": "confirmed_status=build_identity_mismatch despite a measured best candidate",
+        "a4_blocking": true
+      }
+    ]
+  },
+  "r0_replay": {
+    "command": "uv run python docs/架构/构建执行与证据语义升级-R0/verify.py --replay",
+    "result": "OK before G0; 20 archived files and adopted subset reproduced"
+  },
+  "rules": [
+    "Do not claim a fully green suite from focused tests.",
+    "Do not delete or weaken failing tests to obtain a green baseline.",
+    "A4 cannot pass until both GPU blocking defects are fixed and rerun with explicit GPU authorization."
+  ]
+}

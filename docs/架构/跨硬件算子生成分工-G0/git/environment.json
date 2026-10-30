@@ -1,0 +1,15 @@
+{
+  "gitignore": {
+    "bytes": 698,
+    "path": ".gitignore",
+    "sha256": "f4c723d116492d8b1effed739e0727f13a61b808877d0ed70cf2cc490e72fc16"
+  },
+  "machine": "arm64",
+  "macos_version": "26.7.1",
+  "note": "语料里的 paper 摘要由本 torch 版本的 CPU RNG 生成；换 torch 版本后重放 paper 摘要可能不同，small 语料以冻结的原始字节为准，不依赖 RNG。",
+  "numpy_version": "2.5.3",
+  "python_implementation": "CPython",
+  "python_version": "3.13.1",
+  "torch_version": "2.14.1",
+  "uv_version": "uv 0.11.8 (0e961dd9a 2026-04-27 aarch64-apple-darwin)"
+}

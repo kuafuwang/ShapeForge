@@ -1,0 +1,50 @@
+{
+  "by_bucket": {
+    ".pi/": 11,
+    ".pytest_cache/": 9,
+    ".venv/": 25031,
+    ".venvs/": 18717,
+    "__pycache__/": 6818,
+    "data/": 1477,
+    "local-build-artefacts": 12,
+    "logs/": 60936,
+    "runs/": 6183
+  },
+  "categories": [
+    {
+      "bucket": "logs/",
+      "reason": "pytest 会话/单测日志、GPU 冒烟与 taic 运行日志；运行状态，不入快照。"
+    },
+    {
+      "bucket": "runs/",
+      "reason": "本地 taic 运行目录；运行状态与模型花费记录，不入快照。"
+    },
+    {
+      "bucket": "data/",
+      "reason": "本地花费账本 data/books.sqlite；运行状态，不入快照。"
+    },
+    {
+      "bucket": "__pycache__/",
+      "reason": "Python 字节码缓存；构建副产物，不入快照。"
+    },
+    {
+      "bucket": ".venv/",
+      "reason": "本地虚拟环境；不随仓库交付。"
+    },
+    {
+      "bucket": ".venvs/",
+      "reason": "本地虚拟环境（triton-msl 等）；不随仓库交付。"
+    },
+    {
+      "bucket": ".pi/",
+      "reason": "pi agent 会话与运行状态；不入快照（G0 不复用任何 .pi 状态）。"
+    },
+    {
+      "bucket": ".pytest_cache/",
+      "reason": "pytest 缓存；构建副产物。"
+    }
+  ],
+  "command": "git ls-files --others --ignored --exclude-standard -z",
+  "note": "这些路径被 .gitignore 排除，git 从不把它们算作未跟踪文件；它们不是构建输入，G0 不逐个枚举（运行状态可达十万级），只冻结分类与计数。上表的 293 个未跟踪文件才是非忽略的未跟踪全集。",
+  "total_ignored_files": 119194
+}

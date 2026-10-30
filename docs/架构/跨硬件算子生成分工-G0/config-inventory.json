@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "scope": "cross-hardware-g0-current-readers",
+  "rules": [
+    "Each configuration class has exactly one current reader; no TOML+JSON dual-read is introduced.",
+    "In-scope new task/track metadata will use versioned JSON; out-of-scope device, authorization and search files keep their current readers.",
+    "CUDA and Ascend/CANN configuration is out of scope. 清微 NPU configuration is human_pending and must not reuse CANN files."
+  ],
+  "entries": [
+    {
+      "path": "tasks/<op>/opspec.json",
+      "format": "JSON with spec_version 1",
+      "reader": "tcenv/opspec + tasks/_assembly.py",
+      "role": "Current v1 task semantic document",
+      "migration": "A1 introduces a separate v2 loader; v1 remains authoritative for unmigrated tasks"
+    },
+    {
+      "path": "tasks/<op>/track.json",
+      "format": "JSON with track v1 schema",
+      "reader": "tcenv/track + tasks/_assembly.py",
+      "role": "Current v1 task assembly, implementations, baselines, pack_files and template_literals",
+      "migration": "Delete atomically per migrated task in A5; no v2 fallback"
+    },
+    {
+      "path": "tasks/__init__.py and tasks/_assembly.py",
+      "format": "reviewed Python",
+      "reader": "tasks.get_task",
+      "role": "Current static task discovery and assembly",
+      "migration": "A3 automatic discovery; migrated static names retire in A6"
+    },
+    {
+      "path": "tcenv/backends/metal/lowering.py",
+      "format": "reviewed Python",
+      "reader": "tcenv/lowering.py profile-type dispatch",
+      "role": "Current per-task v1 LoweringProfile definitions",
+      "migration": "Preserved for unmigrated v1 tasks; migrated entries retire in A6"
+    },
+    {
+      "path": "tcenv/lowering.py",
+      "format": "reviewed Python",
+      "reader": "unique lower/profile digest entry",
+      "role": "Current lowerer and variant-factory registration",
+      "migration": "v2 uses TargetAbiDeriver, not per-task pattern rules"
+    },
+    {
+      "path": "tcenv/backends/metal/source_builder.py::DIAGNOSTIC_BUILD_PROFILES",
+      "format": "reviewed Python data",
+      "reader": "Metal SourceBuilder",
+      "role": "Current diagnostic build profiles",
+      "migration": "A2 one-shot move to backends/metal/build_profiles.json and delete Python data/fallback"
+    },
+    {
+      "path": "backends/metal/backend.toml",
+      "format": "TOML",
+      "reader": "tcenv/backends/registry.py",
+      "role": "Backend entrypoint and code version",
+      "migration": "Out of scope; unchanged"
+    },
+    {
+      "path": "backends/metal/tools.json and backends/metal/tools/*.toml",
+      "format": "JSON manifest plus TOML implementations",
+      "reader": "tcenv/tools/registry.py and tcenv/tools/manifest.py",
+      "role": "Backend tool registration",
+      "migration": "Out of scope; unchanged"
+    },
+    {
+      "path": "targets/apple-m4-max/target.toml",
+      "format": "TOML",
+      "reader": "tcenv/target.py",
+      "role": "Metal device identity and hardware/resource limits",
+      "migration": "Out of scope; reused as target facts, not converted"
+    },
+    {
+      "path": "targets/apple-m4-max/calibration.json",
+      "format": "JSON",
+      "reader": "tcenv/target.py",
+      "role": "Legacy calibration seed",
+      "migration": "Out of scope; not a new measurement location"
+    },
+    {
+      "path": "targets/apple-m4-max/trust.toml",
+      "format": "TOML",
+      "reader": "taic/trust.py",
+      "role": "Human authorization registry",
+      "migration": "Out of scope and security-sensitive; unchanged"
+    },
+    {
+      "path": "taic.toml and taic.paper.toml",
+      "format": "TOML",
+      "reader": "taic/llm.py::load_config",
+      "role": "Search budgets, committees and presets",
+      "migration": "Out of scope; unchanged"
+    },
+    {
+      "path": "targets/qingmicro-*/**",
+      "format": "human_pending",
+      "reader": "none registered",
+      "role": "Future 清微 NPU target, toolchain, trust, baseline and profiler contracts",
+      "migration": "NPU-P0 only after human freeze and explicit device authorization; no CANN path"
+    }
+  ]
+}

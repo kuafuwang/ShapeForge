@@ -1,0 +1,2361 @@
+{
+  "files": [
+    {
+      "category": "research-kda-notes",
+      "in_scope": false,
+      "path": "docs/KDA 怎么做.md",
+      "reason": "KDA 方法与分析笔记；不参与构建、评测或语料生成，只冻结 path/size/sha256。",
+      "sha256": "24720a1e8261ea262b4eb9a0474e9c89c8549eba4fc3861ca3c874dcc0b11667",
+      "size": 6545
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2026_hotchips_openai_jalapeno.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "1ae0e3aa6d80781e08609926b8161c171edc30ec36b88547a6bfed6b7ee5bcf8",
+      "size": 3064163
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2026_hotchips_openai_jalapeno.zh-CN.md",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "5bda28ad34527c7f211aadd7e4c464415657316564a007801d55fdbfde73f710",
+      "size": 35819
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2305.16291_voyager-an-open-ended-embodied-agent-with-large-language.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "769a4e33ddeeb73870849232eece49afe882c2d146362e33917ccb432ba0efb8",
+      "size": 18830859
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2305.16291_voyager-an-open-ended-embodied-agent-with-large-language.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "d1ba734dc56fc983510013bdc42c2fa2c06c220b219df85f88159d39f1eeeab9",
+      "size": 521612
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2311.00176_chipnemo-domain-adapted-llms-for-chip-design.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "37f0f9ea58849626db1736bdeead8663ca87638c42caa32ed7b37d8f26a94b12",
+      "size": 1135269
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2311.00176_chipnemo-domain-adapted-llms-for-chip-design.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "1b770b591346456806fead94c73521efada695dd528c8f43f4f51d027cca7cd2",
+      "size": 352488
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2404.18249_tenspiler-a-verified-lifting-based-compiler-for-tensor-operations.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "abe8750386f522421421ed12590368fdfb5341902577c88472f9d62e94c15be5",
+      "size": 6678796
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2404.18249_tenspiler-a-verified-lifting-based-compiler-for-tensor-operations.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "a9ea5b7a32f2a91e9901342749c1f8bc3084ae4362583eb63f6b9713efbbbe38",
+      "size": 365489
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2502.10517_kernelbench-can-llms-write-efficient-gpu-kernels.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "fb1765807098915b853cca7a007aaa4bccdcd1a45eb1baef0d3919948abd7a6b",
+      "size": 3029709
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2502.10517_kernelbench-can-llms-write-efficient-gpu-kernels.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "d3295aa666e676f5aa996f36a4d8686f65f62beb426c60071460762f5cf90365",
+      "size": 461240
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2502.14752_tritonbench-benchmarking-large-language-model-capabilities-for-generatin.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "f7ccc961119a7eee1fc70612d4bdd58436e3113eaf491ac753fe5c963118a042",
+      "size": 890083
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2502.14752_tritonbench-benchmarking-large-language-model-capabilities-for-generatin.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "3fce405cd65b13f5071d6acd5bd38badf46690876ff8e847a2ed5759f47b5a7d",
+      "size": 239466
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2505.09388_qwen3-technical-report.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "84a5e2b1fa04bb774bf12ae606d1e6d9dd2147ed2ebe78a4cfeb91ba380ffdd5",
+      "size": 779424
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2505.09388_qwen3-technical-report.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "50701ebc2216f87b20a1dd643d242aeb0dd80eccc860a7cee75ac22f7d42b433",
+      "size": 398291
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2506.09092_cuda-llm-llms-can-write-efficient-cuda-kernels.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "8c5f5882ab064ba220dc57caef491d3028006fba0cfaf17a88c19494678af13d",
+      "size": 866673
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2506.09092_cuda-llm-llms-can-write-efficient-cuda-kernels.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "fbb11ce86f7226da3d49132f89161e5cacf332101dc8687ee2884e20ce8169fd",
+      "size": 257926
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2506.20807_gpu-kernel-scientist-an-llm-driven-framework-for-iterative.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "0d15e1924a0a177d538acdf59f845e45224da2723a576e96215c956f4ae1e0d7",
+      "size": 276880
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2506.20807_gpu-kernel-scientist-an-llm-driven-framework-for-iterative.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "1e700257da402cd946c62b992a2f147babac58612008bc5b2d72a7878944f6de",
+      "size": 251428
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2507.05687_autotriton-automatic-triton-programming-with-reinforcement-learning-in-l.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "180fe1c30236b56763a3d2147fef01a35ffabc024ee3756c40495074d5e22f6b",
+      "size": 1452483
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2507.05687_autotriton-automatic-triton-programming-with-reinforcement-learning-in-l.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "c0e61b09a6aef17b7e2d06c40149eddda373ce4a67d5ce0bbf6a2ecd23eada7f",
+      "size": 274585
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2507.17773_multikernelbench-a-multi-platform-benchmark-for-kernel-generation.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "08963c30e7afd8560a255b782bdc9026e7474c496593e8fa2f0296b01dec5a73",
+      "size": 804564
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2507.17773_multikernelbench-a-multi-platform-benchmark-for-kernel-generation.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "ca71dc3edcf097f7480c831d4f64331f35d5ac9fdfb4c730495ddebc47b3c04c",
+      "size": 323635
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2507.23194_geak-introducing-triton-kernel-ai-agent-evaluation-benchmarks.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "48f42050c77df3e89dbd93f508a920941b08e58292cb1a5e4a8058769b9e5e12",
+      "size": 440649
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2507.23194_geak-introducing-triton-kernel-ai-agent-evaluation-benchmarks.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "7f7d160fefe8574ac4bd67e27623cde16fda060870ecb1126711c5ad667526d3",
+      "size": 264788
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2509.07506_astra-a-multi-agent-system-for-gpu-kernel-performance.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "c4d4731ef8f95fb6f2bf179fa268cee8608680beae237f69743bc13f1a1f0674",
+      "size": 636483
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2509.07506_astra-a-multi-agent-system-for-gpu-kernel-performance.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "fb1904d3c9c30b9c035e601f564c2e6f91bc2174de62aaf928cfa74c150faf2e",
+      "size": 248737
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2510.26692_kimi-linear-an-expressive-efficient-attention-architecture.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "e2e23a449fc9bb27e34e783d20b2e6cd0f1ac67d58efdc0479c03c54db956a17",
+      "size": 1354769
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2510.26692_kimi-linear-an-expressive-efficient-attention-architecture.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "5b5b53d41f318982a91ec05affc210b601b673928749180b19bb87912d910e6d",
+      "size": 446973
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2511.01884_cudaforge-an-agent-framework-with-hardware-feedback-for-cuda.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "e33ba906fff2ac64b2898c3e0960bfaaa11f6b9dfd0591115970bcd40c9cdd61",
+      "size": 2290673
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2511.01884_cudaforge-an-agent-framework-with-hardware-feedback-for-cuda.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "baf06dde8f13faefa1579b2281a982b822f568e1bee2f08483020e6fd7a753ac",
+      "size": 431712
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2511.18868_kernelband-steering-llm-based-kernel-optimization-via-hardware-aware.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "2c8a00026e66c13da1c43000a68cb252ea93db7b3e2ae3d7fc4c538161dc04cd",
+      "size": 601893
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2511.18868_kernelband-steering-llm-based-kernel-optimization-via-hardware-aware.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "d92226407c0b33935a133aaebeec1dc663ed8b1840f36b0acc12104313cbefef",
+      "size": 313873
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2511.20100_qimeng-kernel-macro-thinking-micro-coding-paradigm-for-llm.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "5037691b3f0514acd6a00cd6191bec3f0fd5b2184d951629fc72929e11a4ecf7",
+      "size": 827563
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2511.20100_qimeng-kernel-macro-thinking-micro-coding-paradigm-for-llm.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "e72999b6f72c3f6320b01f3af0ec1b899f9c6f5bd4c0c3814fa147b328b6df23",
+      "size": 229105
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2512.22147_gpu-kernel-optimization-beyond-full-builds-an-llm-framework.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "30eb161996d9df7af1976b0e94b8b6719408106b192a37f785649c1e11794d2c",
+      "size": 966633
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2512.22147_gpu-kernel-optimization-beyond-full-builds-an-llm-framework.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "9711f1d8ee846bfb66f0633ea078a84350e05501990e2396e1709e8b7328992f",
+      "size": 163800
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2512.23424_akg-kernel-agent-a-multi-agent-framework-for-cross.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "071a2d18fa570b7e9e2a4c085ce61f8440a69201b8dc2c3c53e38122ac34fbbe",
+      "size": 761894
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2512.23424_akg-kernel-agent-a-multi-agent-framework-for-cross.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "92ce73ae485f9b2454ce5615878e1a51525ef416e6087befc2daf372a85447e0",
+      "size": 260387
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2512.24880_mhc-manifold-constrained-hyper-connections.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "d849f4709ed29bfb2751f51e24dc836403f31271d1764dddfba0768d326a75d9",
+      "size": 635294
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2512.24880_mhc-manifold-constrained-hyper-connections.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "f4f33779ef77000f15fa7d402f04d0dc31856cf7ad78ddfe48260f6a2687af49",
+      "size": 233968
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2601.07160_ascendkernelgen-a-systematic-study-of-llm-based-kernel-generation.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "3b23f0b2d910aa97588e1e2e1f1e2049cc1d6074d68347d37f1ef82ddccabd32",
+      "size": 908204
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2601.07160_ascendkernelgen-a-systematic-study-of-llm-based-kernel-generation.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "d51215a1ba1710792fd487f2231155eafd0c614422fa325a1e60a1a4922c7427",
+      "size": 442926
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2601.22760_ascendcraft-automatic-ascend-npu-kernel-generation-via-dsl-guided.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "fbeca8e844b17436b18c0f588623035563b1b56165e985af8e1aba2e16d0a4a1",
+      "size": 956789
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2601.22760_ascendcraft-automatic-ascend-npu-kernel-generation-via-dsl-guided.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "e3668b739a6e26d7e9217c653300f32a3f37230d2289f3f9106ab2f516bff730",
+      "size": 221347
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2602.08234_skillrl-evolving-agents-via-recursive-skill-augmented-reinforcement-lear.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "ea284fb1a8809640eb151a6667470ed412b33fd3ae8d77be4a33ca9e38608c77",
+      "size": 13170763
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2602.08234_skillrl-evolving-agents-via-recursive-skill-augmented-reinforcement-lear.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "8fd2864930325c70decdb68260e34f2e74d15e5ae9deb50336049677ebbdafa4",
+      "size": 372284
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2602.19128_k-search-llm-kernel-generation-via-co-evolving-intrinsic-world-model.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "bb7c52042664173039bf8c453f105c19ae3a1ce6116d7307bfaed2e806926cef",
+      "size": 938200
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2603.02637_stitchcuda-an-automated-multi-agents-end-to-end-gpu.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "29e89dd27c2edd0c386a0154c7165e152811233285ea8c089b6863b35dca0c9b",
+      "size": 1602583
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2603.02637_stitchcuda-an-automated-multi-agents-end-to-end-gpu.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "91993fda9c293df87801c8487899c0d07aa67d49edc73a091c08feacb3460e57",
+      "size": 293651
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2603.08721_kernelcraft-benchmarking-for-agentic-close-to-metal-kernel-generation.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "c675646e6f6010dc215e2460425fb34da2284a35e46444c265d0ab3429e3992e",
+      "size": 4748724
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2603.08721_kernelcraft-benchmarking-for-agentic-close-to-metal-kernel-generation.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "f7b46fa32f0bc5afd112cf0f5fdde8c4696ae6efaaffc072a76d83173077de0a",
+      "size": 338814
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2603.28052_meta-harness-end-to-end-optimization-of-model-harnesses.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "7d9b90f53a9f4801a090f1a4acb843340cde81e4f865f97d53fff2a6a570eb73",
+      "size": 1078140
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2603.28052_meta-harness-end-to-end-optimization-of-model-harnesses.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "c62da32591ae747a7577c76df4a0a6e33b9d83542e5d0606567cbcf353aa5c86",
+      "size": 312410
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2605.05023_cubridge-an-llm-based-framework-for-understanding-and-reconstructing.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "250347e6fe0f76348b8397cc226856bce212aef0ee87eba4b972df48d19fb637",
+      "size": 793147
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2605.05023_cubridge-an-llm-based-framework-for-understanding-and-reconstructing.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "5df5f152b8d33097b90ce54b3ba897311880dc64325d21c089b6f146f01b2757",
+      "size": 337107
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2605.26329_jobbench-aligning-agent-work-with-human-will.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "e953d19425eb92a95cb07a43b4efdd37fada966b4ec76ff57ae633cf15261d38",
+      "size": 4103504
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2605.26329_jobbench-aligning-agent-work-with-human-will.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "2ae6993579862458d7c9455e8d0c5ddf504e7f8fa686c5a85c56fb9e26868b9c",
+      "size": 314264
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2606.04847_musacoder-native-gpu-kernel-generation-with-full-stack-training.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "7bafe8551737d8c70b7c49223923715dd96eb94d3f9c43752ffa388a0b53b050",
+      "size": 6007261
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2606.04847_musacoder-native-gpu-kernel-generation-with-full-stack-training.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "ad54b78feccbbdabb39a86463f14728de53ea8313d5233f2e66a255cfb66f2c3",
+      "size": 359834
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2606.07665_agentcompile-an-llm-guided-compiler-for-direct-cuda-inference.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "70697d5c917e6acac4da53c728eddae77103bbbcf4f83499b8aa93905f2673e9",
+      "size": 9744077
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2606.07665_agentcompile-an-llm-guided-compiler-for-direct-cuda-inference.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "288abfd143e9ed82ced11f217d14ebc7733f23620cf4d476cac95e75fad29725",
+      "size": 244323
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2606.16497_davinci-kernel-co-evolving-skill-selection-summarization-and-utilization.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "569498007bf8d7c18c5f07cbcc5624379ea98dfe3ed75b2dff0c3ad76cb10241",
+      "size": 1422288
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2606.16497_davinci-kernel-co-evolving-skill-selection-summarization-and-utilization.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "3fefad3ccc762977812c7c13906045d4b14af2f8c69c9a48a28562935194ac3a",
+      "size": 285854
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2606.26383_solar-ai-powered-speed-of-light-performance-analysis.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "456c9a496e7ae01a7f10a6d546a50ac92e764bd5703a83114ac26cf87f6535be",
+      "size": 617157
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2606.26383_solar-ai-powered-speed-of-light-performance-analysis.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "529f742e3fa7255db112ebd645f77d617570b4972f4ce9a9346115e45a7ab5de",
+      "size": 222966
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2606.26453_optimizing-cuda-like-a-human-micro-profiling-tools-as.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "5ac19d5732abcea8729c862965a9f903419296b4a68136ff48568055abc82b11",
+      "size": 875369
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2606.26453_optimizing-cuda-like-a-human-micro-profiling-tools-as.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "feebab823bdd6ddee82d9c264e44d313ac41af588afbe9c80b7a413d9935254c",
+      "size": 481003
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2606.26758_egg-an-expert-guided-agent-framework-for-kernel-generation.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "69dee51c8e2a61fb894a7b124cb5876eeea5ccb431ad1f5c676788ae1f9aaa2f",
+      "size": 684960
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2606.26758_egg-an-expert-guided-agent-framework-for-kernel-generation.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "7b96d13dabb2c0b04fd08281396e492b516d3d3c222b8b9b6f5c976daa1903d5",
+      "size": 255243
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2607.04454_correct-but-slow-an-empirical-study-of-the-gpu.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "3258cbc1878ac8aa399ebff279d73207e72d9f09b03fffabe9f86c5613926581",
+      "size": 456369
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2607.04454_correct-but-slow-an-empirical-study-of-the-gpu.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "d96a52d2603c1cd2b2079c9d48c74f4af4a93cc57953b84651e4dc770a41a74b",
+      "size": 372060
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2607.24762_kernel-forge-an-agent-harness-for-llm-based-generation.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "0f8559827cf47ac7c209ec1c681a66454642c9231664f6e323679e226fa76917",
+      "size": 15313520
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2607.24762_kernel-forge-an-agent-harness-for-llm-based-generation.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "657268d30f16bd9f2897685209ca7098dddbe6b719bf4b48bf1218839616f895",
+      "size": 226383
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2607.26661_agenticcann-automated-ascend-c-operator-generation-via-knowledge-augment.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "5e74de50a1484d3440ac146bc8b5df1d0599faa20af0bbfaf6c92b90e708c82e",
+      "size": 886292
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2607.26661_agenticcann-automated-ascend-c-operator-generation-via-knowledge-augment.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "64c3a3123718d792b69c205876aea82ca9ab874cb6b99107fdebcff288625ff2",
+      "size": 279674
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2610.13632_humanize-olympiad-agents-a-multi-session-workflow-for-olympiad.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "587e4bcfea3cc20c56a8453b3bba14be109b3238b700b32e34c3aa456204827a",
+      "size": 2686282
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/2610.13632_humanize-olympiad-agents-a-multi-session-workflow-for-olympiad.zh.pdf",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "e249a7378494c8a204bde9a44bdd9d26bbaa93a6969f27d64ebeaffd64c06f8f",
+      "size": 218584
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/CAKE2机制清单与证据分级.md",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "babd9b1232b56ec82b23934ba543d361b99af38a87d3437f4de9d042e45c45cf",
+      "size": 21513
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/LLM与NPU-DSL：为什么被选中、如何为LLM设计.md",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "407a074e3e3c751ddbb2049e144386b287ef0cd5faa97708c71dd438044beeac",
+      "size": 99881
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/NPU-DSL-for-LLM：人类DSL与Agent-IR的比较.md",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "dd44dd46823600f209420ca45491f25e60ca972d8e8a4fef9ea4fd1682c51164",
+      "size": 72708
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/NPU与昇腾资料.md",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "2d49026aa380d351fe6cd90409915c605dcbc4ad686e42d101f2720b3bcb9ab8",
+      "size": 15500
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/NPU算子生成：KDA经验与工程实践路线.md",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "781cc196d58790a06fdd20f8248664957a3650ce5e3578e7bdb5ece92be77976",
+      "size": 17573
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/P0-P1设计草案.md",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "fdfbcc84db312e137994169898aac8b916a4fda81027181c581042e847f1204e",
+      "size": 15659
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/README.md",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "d870af4c6ccae41ead5faf767cb919aa4ecdefafb03777f90609ca7f9af82b23",
+      "size": 16859
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-01.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "8d74b4dce69e7730e4b39d72c5a22ff77300c9fd18b6012ed1fd5e42ad47a043",
+      "size": 340825
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-02.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "290a8486c94eb3d80c1f03f218e4af60feb5d5fa6aa1260918da88f159156e8b",
+      "size": 1533648
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-03.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "928225162075ff2e4e357f70c610defcaa12bed3142c3998a2764d8726da342b",
+      "size": 107185
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-04.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "3ede463998050c74a2a32589d3e30acb691f1137fa273dfcdf4a7ed6f8f881b2",
+      "size": 327418
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-05.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "4300a4a13c7594a620e0878a6c3a7b4f11c7b2fa4de4cc8009623014fb0c4a82",
+      "size": 169910
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-06.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "3d2ec96897fcd41cfd5523eddfca6cb997ce4943a2764ad09fd52cf17df3ed97",
+      "size": 181580
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-07.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "19eab8e0707bf12b9179726dbeae9770db36f984d5992a612d6f32835cc4169b",
+      "size": 203811
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-08.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "d83523e05a003c142a794e201ee3d8cb0b514c9fad51617c4c0dcc679444e50c",
+      "size": 168416
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-09.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "c82584f18611d455095636e427ff730261f7f188b010aba525fc9b74710a4d6d",
+      "size": 418678
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-10.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "5183e4cb314a9af9e5273c7b0fe29085f400e93ec211dd31b6917caca78eedb5",
+      "size": 325619
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-11.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "d7827685ec79fd0972cdc1d75e280e2505d9391ae3ffdba4a38c56be436d552b",
+      "size": 431429
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-12.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "8f2ff0f00b0c404fc31e8181ab55d031a22699a0498c09efe3559ec521093480",
+      "size": 332051
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-13.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "465e66de1adc2fdfdf6c21482cf688ee7ae368ac472a8313be15ca0113832b2c",
+      "size": 424058
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-14.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "4a7672ed3cd528da426671ef8057fe10daa679a3fca5583c4e8749a268b99014",
+      "size": 334112
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-15.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "8f6de03b96d1fd83d423db7f718ed1b1c2c6a13647bc45810d8bead250962f19",
+      "size": 418872
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-16.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "3040479dd1acc8e3fa00152e16d226ad00bbeff7d402c422509f1b7b50c9bc0e",
+      "size": 331908
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-17.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "937ddd7318d83825b8bcb0ce4d450e0fd2368e0980af95e13fcabdd618db3013",
+      "size": 118714
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-18.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "38aef20ab338e1dce36b058a68725a147ec45d1d0c52abed2bea599687195d25",
+      "size": 334553
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-19.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "71d7fd0769fc36e7cd09bb80dc0b80788c7f056733f69c6f996fd37cd8f06715",
+      "size": 207594
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-20.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "c58c6fb8e2a13852584c4d1b1420c37eb4fa7274827ce2d6aa7469f7718ed2fb",
+      "size": 181723
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-21.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "0301f97289703e3286301fbc8ac6ead2570e43e61917d208fff6521ccf9729e9",
+      "size": 167187
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-22.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "762685a43a4258ac34282585e6f0803a27d57b638e87fb629a015c4363c66e9b",
+      "size": 331496
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-23.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "1879434397ccd6db827e7472acd7984b7bbd78ca6150851507e90d5b9d8d926f",
+      "size": 125790
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-24.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "6b634efd9f760bad187f5d5dd8f9a7a719c46d1929dd13f6f28b82b53d0d2c6c",
+      "size": 134816
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-25.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "093daf6815caad6ca1f1c32cf3b913056e998572f79efefe804a94d09034d44a",
+      "size": 180825
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-26.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "7cbcb3fa285315f3efc4b8c17e1f4ef360a34ee93590768457ea2ea4b8dce112",
+      "size": 158558
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-27.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "f52644dde3387a5422e9c1d2f6fd289ff5285c5628cab3fc0667264e42d536e2",
+      "size": 149168
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-28.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "c410c8616608cfd07f7b56b4d0b2a369de60db9d6a9cbdccb44b56d8e8d0bf85",
+      "size": 180205
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-29.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "b2e6860ff5cb0df3b9f5816824cf1aea1c828411f3d67c70f25aa43b6d3d1bdb",
+      "size": 146806
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-30.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "6bc9cc3bf1e33f5586eead8073154e0f2c817c5e053056cf0c2bf883e6fde206",
+      "size": 163104
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-31.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "67e5ece69281123c7ee1127c7cb553776ba3c479f5bbe927ddd6441042d85d32",
+      "size": 295175
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-32.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "8366381fa62c42148c37ee2abd806cd47e83caeee7bc0c6648e2cc70f7eddc7d",
+      "size": 626781
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-33.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "6be052c1b60cb2ab8c1ac097ef6c6678efdae4ac49b834729bfde78726972916",
+      "size": 337028
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-34.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "c2aec43bf7e1586341ca5b923f16d47e5ecf67aaf09babb19362c4dbd67152c5",
+      "size": 176094
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-35.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "426a2cfe7344f51655e07a154f3d5420964b25936582eb15075a17ad15b76a8c",
+      "size": 405502
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/2026_hotchips_openai_jalapeno/page-36.png",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "6765ea78194bcbdab5727cf4864371611ba86ed1321c5efc3347ec5556389d79",
+      "size": 276621
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/01-five-layer-validation.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "808c485c3f61ef25227e2784b4d91c101db5f3e05ade8ff925ac5ad39921a3b2",
+      "size": 392
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/01-five-layer-validation.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "fd52bb89a0b045f041263747b76bb4e31481dd4439977524e128fda9f38aec1a",
+      "size": 16602
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/02-kda-harness-layers.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "bd3a8e57757c654fb78e8f1a0eb6ad26cdb639e8cd04ec1b7dd6cb3446eb7c59",
+      "size": 501
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/02-kda-harness-layers.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "e397b9dff5be9df5092bfd2e87f132aa8342f33be01b983c6740c092495fcc19",
+      "size": 20855
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/03-kernelwiki-dataflow.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "144b6a53767124933cb585d5206e3b7ddd167a06db7423d92f774b1b2b499699",
+      "size": 937
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/03-kernelwiki-dataflow.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "0ffe8162fa671e60c61d2d9c417579f88680749fe32528e7cd120e3bc31f6b31",
+      "size": 30360
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/04-pr3106-provenance.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "b66342f2d630b262ac32bbf80e74382a029db18f020db54563ce86549c6e2b9e",
+      "size": 618
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/04-pr3106-provenance.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "f4e191f58e00db8c2980251b337f4c50b6e52264d5ffa5118ed3f9dfccf0d529",
+      "size": 19564
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/05-six-design-decisions.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "67b1032dfdb2cd908cc1aed77786e2e333f6b8d7fc81e325440dc9ea36e11a0f",
+      "size": 400
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/05-six-design-decisions.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "b72322497daf6f346b6f25d52b8d67d13382e1a4979d8eef42e2ef6c4e821f9f",
+      "size": 18065
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/06-judgment-execution-retirement.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "4c4be635d640ea1f03d62c4825cf2081aa5ab53979fc82a3b6c581668c608b99",
+      "size": 1748
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/06-judgment-execution-retirement.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "56d372970513eb9fbdae90724b8b731b1fbca14a9369262396b02b86005429aa",
+      "size": 45140
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/07-two-write-paths.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "b96d185fe664681c003a6d32e268438c138e88df43a39e85060f6d3c09a4392a",
+      "size": 1067
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/07-two-write-paths.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "3e6d5ff7b4cfa0f09c58b530b8759816348182278aafe7184307c06d24e83a5e",
+      "size": 32922
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/08-three-engineering-paths.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "c16eb9264f022fe46dee5e5fbfa9dd85c519d233eefc91dfea270c8484db9c59",
+      "size": 1773
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/08-three-engineering-paths.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "a56961b33dd9b47aeb308695dbca5e890ec3791f9ab5ff9c6567257e91a29bb8",
+      "size": 38754
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/09-variant-to-library.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "e651741bbbc7bccbfbad3beb6f6d0245cd0d55af94e6ae2ff41c2e4d40caf22b",
+      "size": 681
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/09-variant-to-library.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "313a314428edecb9d2b23fa28227e678f002e26d4124411f428d2c3173b19b1f",
+      "size": 22691
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/10-evidence-derived-architecture.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "c5f1fc777c0eebd07472f63b6b642a6f5645ae63ffa8aa1eb98b1ff93124debf",
+      "size": 1197
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/10-evidence-derived-architecture.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "8c3651a057308f82099f877d6039a865ca5ef0da682b5b12944492d5b8196a18",
+      "size": 37659
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/11-knowledge-lifecycle.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "18153248194fe27718a19ecd4d82dfec9ecf9b7175d567c965f1bd56074c99f5",
+      "size": 910
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/11-knowledge-lifecycle.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "4b2166f6590ee198de055f1e6817bd09fd8463887e94dc8c7a015c9e93858073",
+      "size": 45379
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/12-retrieval-gates.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "9a061dcc0bfd68f22415e6cc2c38ea3f580ec1deff2d08512e808e9788e8b957",
+      "size": 577
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/12-retrieval-gates.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "0a10fe3fb02e61005754babcddc5096719cafbedb8faa32e735ca92bb7985fb7",
+      "size": 22134
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/13-heldout-one-way.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "ec5ca1fcced4b8b0f9fc2b79f3ad76af79f9b70974092f7d49f7dcb2287f0199",
+      "size": 510
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/13-heldout-one-way.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "2782d0c93b5f6c0c21ad19d72929e0e5befd0261097e37d250641ddba5ebfbff",
+      "size": 24354
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/14-revocation-protocol.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "06ca7fa80fd4d92a531533e2a4bdb126973743941b08a84eab6bd394744c5659",
+      "size": 556
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/14-revocation-protocol.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "bb7b8c9f0219ebfc0e1b893c6d7d8b86722dc5af4f8a35b41387b8d883cc0c3f",
+      "size": 26996
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/15-rmsnorm-lifecycle.mmd",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "2179adbe2713b8587811af323ea331b15aab81855762bf3b41b215f7ece566b8",
+      "size": 1127
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/assets/kernelwiki-npu/15-rmsnorm-lifecycle.svg",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "c9423978a707c6a79d299dfe91a80b19f31b5c3a36fd5662049a0c6ac7591801",
+      "size": 32646
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/论文价值评估.md",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "8c2b319bdd6456b47e95146ee2b84cb73dfcc9cd0f02927cf32b7b1e01d51b71",
+      "size": 222721
+    },
+    {
+      "category": "research-papers",
+      "in_scope": false,
+      "path": "docs/paper/面向Agent的领域知识库：KernelWiki建设与NPU验证方法.md",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。",
+      "sha256": "5369bd8ea6cd69254c2cc16751043f919a4ea070532854cfd70de88cebd529d5",
+      "size": 131417
+    },
+    {
+      "category": "research-tsm-notes",
+      "in_scope": false,
+      "path": "docs/tsm/105065061_c0d2e82ddb11488e8a79670e3138904e-261026-2124-981.pdf",
+      "reason": "TSM 相关研究笔记；研究资料，不参与构建与评测。",
+      "sha256": "150affaf0beeccddf7921494a6ecaab19e943148e2472dea7a19a39b0ef4f417",
+      "size": 64423
+    },
+    {
+      "category": "research-tsm-notes",
+      "in_scope": false,
+      "path": "docs/tsm/68816768_801e8d22c01d42f684ad306779d0c67d-261026-2113-975.pdf",
+      "reason": "TSM 相关研究笔记；研究资料，不参与构建与评测。",
+      "sha256": "080a88fe85e924bf23cd27fcba7ed6889e4ce995d9f36321e450a419ce17633c",
+      "size": 505560
+    },
+    {
+      "category": "research-tsm-notes",
+      "in_scope": false,
+      "path": "docs/tsm/68828350_48eacc2d25d445c1870bf2aa4c9e5736-261026-2113-973.pdf",
+      "reason": "TSM 相关研究笔记；研究资料，不参与构建与评测。",
+      "sha256": "648cc1060db6acb2645f59ec84b89f913cce4f8367569c3f9142ad66d2aa51d2",
+      "size": 623017
+    },
+    {
+      "category": "research-tsm-notes",
+      "in_scope": false,
+      "path": "docs/tsm/SMI工具使用指南_V1.4.docx",
+      "reason": "TSM 相关研究笔记；研究资料，不参与构建与评测。",
+      "sha256": "bedc69d4c9fae9e32af1cae917984d9c2ce6e9d35b873de71ac53552235b803e",
+      "size": 1442733
+    },
+    {
+      "category": "research-tsm-notes",
+      "in_scope": false,
+      "path": "docs/tsm/TX81平台软件安装部署指南_V3.0 (V5.8.0).docx",
+      "reason": "TSM 相关研究笔记；研究资料，不参与构建与评测。",
+      "sha256": "463b4cbced71891055cf5f45d07802619050ecd3ada4185c4fdd616fcbc2a97f",
+      "size": 3899582
+    },
+    {
+      "category": "research-tsm-notes",
+      "in_scope": false,
+      "path": "docs/tsm/lld-tx82-profiler-ch01.pdf",
+      "reason": "TSM 相关研究笔记；研究资料，不参与构建与评测。",
+      "sha256": "30752e1b697a5bca214af6f9b27342d5f2c963f2ddd9a91c848e346da014feb4",
+      "size": 4375078
+    },
+    {
+      "category": "research-tsm-notes",
+      "in_scope": false,
+      "path": "docs/tsm/raPTI_LLD.pdf",
+      "reason": "TSM 相关研究笔记；研究资料，不参与构建与评测。",
+      "sha256": "e037acc34fcff318e1daa7a57dd89d77730b6a3ca6e52ac05a166e57fa2d3647",
+      "size": 3163093
+    },
+    {
+      "category": "research-tsm-notes",
+      "in_scope": false,
+      "path": "docs/tsm/tsm-shell使用指南_V1.1.docx",
+      "reason": "TSM 相关研究笔记；研究资料，不参与构建与评测。",
+      "sha256": "40060e54e1858ac9de771457c23d897cac1dfcbd7ab80f0132e3abf0d1a1028a",
+      "size": 221742
+    },
+    {
+      "category": "research-tsm-notes",
+      "in_scope": false,
+      "path": "docs/tsm/tsm_smi FAQ_9318b4554f3344b381c290c59c8aa238-261026-2113-977.pdf",
+      "reason": "TSM 相关研究笔记；研究资料，不参与构建与评测。",
+      "sha256": "996ab3291cc3a0280003f4ad7287614bac7fdc20a58d2d7393e098fe95bf4a99",
+      "size": 1300566
+    },
+    {
+      "category": "research-tsm-notes",
+      "in_scope": false,
+      "path": "docs/tsm/tsm_smi Profilling_180e2d55d6a84b8cb98cd5abaeca98b9-261026-2114-979.pdf",
+      "reason": "TSM 相关研究笔记；研究资料，不参与构建与评测。",
+      "sha256": "e5dea308015db254cc0df7ad2fe8957f7914e17fa865724f2eb106898516418a",
+      "size": 218430
+    },
+    {
+      "category": "research-tsm-notes",
+      "in_scope": false,
+      "path": "docs/tsm/tx82_profiler_hld.pdf",
+      "reason": "TSM 相关研究笔记；研究资料，不参与构建与评测。",
+      "sha256": "513bea179336d8b8642891ef84345e299acbb06c6f8c463c5f8e69a4d9b96bee",
+      "size": 1533879
+    },
+    {
+      "category": "research-tsm-notes",
+      "in_scope": false,
+      "path": "docs/tsm/tx_runtime.cn_v1.4.0.pdf",
+      "reason": "TSM 相关研究笔记；研究资料，不参与构建与评测。",
+      "sha256": "1a4224f81bda20d10de1afbc6866289ea4c9c31df74ef1d68173fa76ea2bd6ef",
+      "size": 566635
+    },
+    {
+      "category": "research-article-notes",
+      "in_scope": false,
+      "path": "docs/一个公众号的论文解读/Harness²：让 Agent 递归重写自己的外壳.pdf",
+      "reason": "公众号论文解读的中文笔记与配图；研究资料，不参与构建与评测。",
+      "sha256": "fbafb0fc95ca5967fb066d8fec43e7caa7882ed191febbd049c4375e080d0332",
+      "size": 1768022
+    },
+    {
+      "category": "research-article-notes",
+      "in_scope": false,
+      "path": "docs/一个公众号的论文解读/打平 CAKE、领先 KDA！ForgeKernel打破 Agent 优化天花板，覆盖 H100、B200 与昇腾 910C.pdf",
+      "reason": "公众号论文解读的中文笔记与配图；研究资料，不参与构建与评测。",
+      "sha256": "af784e8073b43cbd6a3c66d034b47ee57eafe841e2cdf1a262577b17fa4c33eb",
+      "size": 3983444
+    },
+    {
+      "category": "research-article-notes",
+      "in_scope": false,
+      "path": "docs/一个公众号的论文解读/让 LLM 写 GPU 算子：从_能编译_到_快过 PyTorch_——LLM 驱动的算子自动生成与性能优化全景综述.pdf",
+      "reason": "公众号论文解读的中文笔记与配图；研究资料，不参与构建与评测。",
+      "sha256": "85f123704b0caed224e802951db90c49abf741e9ab32aee16260f157baf14937",
+      "size": 2000084
+    },
+    {
+      "category": "research-article-notes",
+      "in_scope": false,
+      "path": "docs/一个公众号的论文解读/论文解读汇总.md",
+      "reason": "公众号论文解读的中文笔记与配图；研究资料，不参与构建与评测。",
+      "sha256": "ff42fcef84543e8a2f496f806657b80c1eb55900268894cff76a8b697765aa04",
+      "size": 104746
+    },
+    {
+      "category": "research-article-notes",
+      "in_scope": false,
+      "path": "docs/一个公众号的论文解读/论文解读：AgentCompile —— 让 LLM 在编译器合同下直接写 CUDA 推理内核.pdf",
+      "reason": "公众号论文解读的中文笔记与配图；研究资料，不参与构建与评测。",
+      "sha256": "aaf4be196afad3e3b8a16a11b1af699307e1108fec45d16ad6b1a606b1e91685",
+      "size": 1341616
+    },
+    {
+      "category": "research-article-notes",
+      "in_scope": false,
+      "path": "docs/一个公众号的论文解读/论文解读：AscendCraft——DSL 引导的跨编译，让 LLM 自动生成昇腾 NPU 算子.pdf",
+      "reason": "公众号论文解读的中文笔记与配图；研究资料，不参与构建与评测。",
+      "sha256": "d31bbd710e6925f3a69c85bef5aee5abf7ae7d0dc3f99dfee02b47ea1c7a83d0",
+      "size": 1290482
+    },
+    {
+      "category": "research-article-notes",
+      "in_scope": false,
+      "path": "docs/一个公众号的论文解读/论文解读：CAKE，让 Agent 与编译器共同进化，写出专家级 GPU Kernel.pdf",
+      "reason": "公众号论文解读的中文笔记与配图；研究资料，不参与构建与评测。",
+      "sha256": "aa7ab4521d51b4735d3e549f3fa82a2b35ff2f03f6e079f09e67e378693f99f1",
+      "size": 2092751
+    },
+    {
+      "category": "research-article-notes",
+      "in_scope": false,
+      "path": "docs/一个公众号的论文解读/论文解读：CUDA Agent——字节、清华用强化学习，让大模型写出比 torch.compile 更快的 CUDA 内核.pdf",
+      "reason": "公众号论文解读的中文笔记与配图；研究资料，不参与构建与评测。",
+      "sha256": "1533fd19e4ade7237186ccdd22bb72b32ac081d4811323d0386f2d40cc414fcb",
+      "size": 1412703
+    },
+    {
+      "category": "research-article-notes",
+      "in_scope": false,
+      "path": "docs/一个公众号的论文解读/论文解读：Kernel Forge——让 LLM Agent 为真实 PyTorch 模型自动生成并优化 CUDA 内核.pdf",
+      "reason": "公众号论文解读的中文笔记与配图；研究资料，不参与构建与评测。",
+      "sha256": "c4200ade92095df172e5bb9882c6c36fa4402a39a9a72b5e8798423dd6f908c8",
+      "size": 1225126
+    },
+    {
+      "category": "research-article-notes",
+      "in_scope": false,
+      "path": "docs/一个公众号的论文解读/论文解读：KernelCraft——让 AI Agent 为新型芯片手写汇编内核.pdf",
+      "reason": "公众号论文解读的中文笔记与配图；研究资料，不参与构建与评测。",
+      "sha256": "b64d368f4d2534d65af8957da0269a29f38950ba5db360ca21a64960f86abf27",
+      "size": 1174948
+    },
+    {
+      "category": "research-article-notes",
+      "in_scope": false,
+      "path": "docs/一个公众号的论文解读/论文解读：ModularRSI，让 Agent 自己进化 Harness 的模块化自改进框架.pdf",
+      "reason": "公众号论文解读的中文笔记与配图；研究资料，不参与构建与评测。",
+      "sha256": "e2b5e9a4682480ab842b0cf217fb61dcaf756278b7c213d70e40a75383407800",
+      "size": 2334966
+    },
+    {
+      "category": "research-article-notes",
+      "in_scope": false,
+      "path": "docs/一个公众号的论文解读/论文解读：daVinci-kernel —— 让「技能库」与「策略」共同进化的 GPU Kernel 强化学习框架.pdf",
+      "reason": "公众号论文解读的中文笔记与配图；研究资料，不参与构建与评测。",
+      "sha256": "b881a305716897d4018ba27c4cbf45e1ace1d2c70caa269fd882c47956dc650c",
+      "size": 2017975
+    },
+    {
+      "category": "research-article-notes",
+      "in_scope": false,
+      "path": "docs/一个公众号的论文解读/跑掉四五千万人民币等值 Token 之后，两位英伟达工程师重新理解了 Agent：代码不是护城河，时间才是.pdf",
+      "reason": "公众号论文解读的中文笔记与配图；研究资料，不参与构建与评测。",
+      "sha256": "a055a5d8fde4b2a7bc3a5ec142acbe4822ddc2176143763836719e43d2d2c3af",
+      "size": 1464857
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/ForgeKernel-调研.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "ffe90330ad959b2baad58e4cfcb8dec0f85c692bfb2ad7bbf361499532705935",
+      "size": 19960
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/README.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "033f0112ad19c69995978cfeded5e7d5facbd305d419c84c45c793e9ee14b4c9",
+      "size": 11747
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/archive/README.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "624fd803af38a4b412c18f1936ef89734cf1a0e5e5609ef93ba9783d819895a9",
+      "size": 2120
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/archive/plan-02-可证伪预测与效果实验.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "84e8142cdae6c20fff33cd2717ac328e6ea80c1cbe3d46aa87235f3e39709d64",
+      "size": 28584
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/archive/plan-04-证据链与可信执行记录.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "64151dc7200e0636393edb131b5d4f197a204119c3a6c152ae2357b5acce7c9e",
+      "size": 22422
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/archive/plan-05-独立评审与反共识.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "166ad4fe5e7a388485585573102439d0b80a6e5b99cc60a22554455f93b9fba5",
+      "size": 25607
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/archive/plan-07-经验知识生命周期.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "8689b5e654fb10ce310b3e8e5e7c1072c0d480686aa2a56c398865b4df01060f",
+      "size": 28083
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/archive/plan-08-观测采纳成本与运营.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "9744660260c4d2567dca0667b602573f37d00276df3e72135bcad613bd18c8dc",
+      "size": 37080
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/archive/确认性效果实验-另纸.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "71f1c1cf2727f967cc58e961d8b6551d98687da4146024db3c8aa72bbccea3ce",
+      "size": 3363
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/archive/评分可信计算基-另纸.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "a299fa1e7469dadf70da61ab996a44ad6cbb2948ede1e6fa4fe9e0de2723ea16",
+      "size": 9649
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2406.13352_agentdojo.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "349884fffbf43282591c5accffd57bb651632f38e412fe303114941bdd111b05",
+      "size": 1042076
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2406.13352_agentdojo.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "d8b51467c813840f9e69679ec84506c345940bbce0399520f600ac9803558bba",
+      "size": 381304
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2407.01502_ai-agents-that-matter.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "1681013e0421f9d193ca5bb556b566f50d1e5eaa43d7a9700a31ca3dd0e2ff7a",
+      "size": 1235369
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2407.01502_ai-agents-that-matter.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "a1af49e6fddc78808cd19b32a50596500389bed7feabb50fbf3b79b387f7ed43",
+      "size": 424806
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2410.04444_godel-agent.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "f3e8e090d16bc53048cf9a2f20557c217ea0d52ea1d33e496f7ee1be07241a95",
+      "size": 1150916
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2410.04444_godel-agent.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "09e3e0c054fe580a66605b80986336b3a39f673f6e37b2003726d726e35d3d5c",
+      "size": 483074
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2503.11926_cot-monitoring.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "2547162c549d70e02beca2687903a8fce75fd950269a3ee479d5b8ebbb53ff38",
+      "size": 5643216
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2503.11926_cot-monitoring.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "8946fb236b1f5ff9eab2715b0e98b772cf15de33d30260c0a0a661e24e8b60fd",
+      "size": 5475283
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2503.18666_agentspec.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "a8ef39247392eb49e275768c19aca11a111c997e432225dcbcf74dfbf31abae7",
+      "size": 751025
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2503.18666_agentspec.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "4572459044de038bcb8ba7b4f1682739274ceab2e448f4e4bbf1af72dc78d4ca",
+      "size": 308855
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2504.11703_progent.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "6b96e0a25ddd5df8afc368e8f8f3798bf911caf40db23945617cc5d1f2f36f26",
+      "size": 975363
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2504.11703_progent.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "70d96c395ff8451cfc6bafde785e21c8ffb76f8b63a734e3318df4521610b0b6",
+      "size": 357573
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2504.15228_self-improving-coding-agent.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "97781b82ed43a330f491a35f772360bc3a9e7b47c5817e8889a0e1fec1115a15",
+      "size": 1211610
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2504.15228_self-improving-coding-agent.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "c473914c508992179fe324792caa6955a27685eec8aa759ab449ec522b44303f",
+      "size": 298474
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2505.22954_darwin-godel-machine.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "13ff4abe0c7ad4a7dd3b4876d19a8bf940e39e70dabbf06065aa774a6c3457de",
+      "size": 3825399
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2505.22954_darwin-godel-machine.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "b6d8c3e7fbc99373b9c0468d326139dc13a05a879e910b75b6851495e8f45b1e",
+      "size": 1004192
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2509.14279_robust-kbench.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "dc2369f7d202fa438ae4b1fd72ddc6e8f6b9515fd8f24aec2f7926c549d3ac1b",
+      "size": 2457794
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2509.14279_robust-kbench.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "d5aa153fcb5ee073dd8d1c581f38b44a859a4a3a8e90fd62dccc933788a11b0f",
+      "size": 2253742
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2510.11977_holistic-agent-leaderboard.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "f224b5ef6ec2a9e1606878e39e81acd4e0ed8ac9f4d80b120f17266c5c281d0f",
+      "size": 12428285
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2510.11977_holistic-agent-leaderboard.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "221aa489c5524e507f1cacef6085bdcd2bcceaec640358f2fab3d88687ceb933",
+      "size": 498112
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2510.21614_huxley-godel-machine.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "06cbf326c605e59777d3f8550e01d41e6b49f78bf0d850f2d173c9f06f6cc254",
+      "size": 938853
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2510.21614_huxley-godel-machine.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "1aef678c7c73c65342742b2b6515ed5da8a91b7f186560c5c55898a7e6c07947",
+      "size": 436544
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2602.05885_dr-kernel.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "e7e957741c843e76f8d11e767f6f760be5f6ce28eb12529b95f0d206327a3d91",
+      "size": 1266552
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2602.24286_cuda-agent.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "a6b960d87a15bcac85dd97266d021832d03017b519cb0dcfb760358089fed23e",
+      "size": 4687953
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2603.21465_drtriton.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "951c485676b5b6eba0ce4c4353ccb86b42b6017511cbf35cb1ba09bcb8cecee5",
+      "size": 960947
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2603.23566_ascendoptimizer.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "018f39d321ce19a61ca4dab9e3e0fe127747355623d8ca8fdb8884cddd03c9d5",
+      "size": 1285805
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2603.25723_natural-language-agent-harnesses.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "8de9eb2456a52487f3db5839e2cab6ae044017260d700183c99de9c14dcbf8dc",
+      "size": 2744087
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2603.25723_natural-language-agent-harnesses.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "05a9383eadb4f3666566a2b52690bf8f5adfc4d8c3d7bbe38a43df2c50c1ecd0",
+      "size": 1124732
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2604.02268_skill0.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "60449922ad4990806cdba4775f07dc772c8a5b5c2db48ffdf7cee26235a449c0",
+      "size": 2072291
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2604.25850_agentic-harness-engineering.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "299f2633b4c13db7bed52434b4db7c48ea621993581014d30e7bcd036d3464df",
+      "size": 1432986
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2604.25850_agentic-harness-engineering.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "5db0f7119cfff871f2bc5ee32939de39f45328e99183f35ea55393e4866a6192",
+      "size": 437414
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2605.04956_kernelbenchx.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "9ad10e25655bb7a5f5eaa11f6870e2f5dd2dee35efb2e538681273a460b16c8f",
+      "size": 669720
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2605.14271_auditing-agent-harness-safety.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "957f46e6eee0b9e44b310f60e84698d25ffa3a3c0890ba6b756ccdf921a40723",
+      "size": 13019195
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2605.14271_auditing-agent-harness-safety.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "822e61d9a00f29a82aa7025254ffae1346e9eefc0455f9dfade816f1d7b5d387",
+      "size": 406365
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2605.26118_xe-forge.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "7f5734db55eafd2743a5168e6858bcae2203bab1231c6b16cd98b6e227a35fe9",
+      "size": 837001
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2605.27922_harness-bench.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "b2ec0c042c4738cd99ace87150af6ed175c098b39fd24f36b1b6ce141e2b5d34",
+      "size": 7218628
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2605.27922_harness-bench.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "3c5a6bc06714ba37a9ef1c4ad581556f0b18ba1a921417add0b925b3cd511d50",
+      "size": 457217
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2606.08960_hacker-fixer-loops.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "9bb9a301ecb8e9e94c0f2b6ffe8b985bcdb2eea08a061680a51c8c305f2ee4fb",
+      "size": 1018765
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2606.08960_hacker-fixer-loops.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "773f31a8ee96005b1091f4ce12af5ad7d1b17deb59bb30ee0a9b6a46eae7e331",
+      "size": 406091
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2606.09498_self-harness.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "eb38452b5d357499ff3a2f7aa8bd7b8c1c1409dbafadaff3624071b2f7b1b302",
+      "size": 9572735
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2606.09498_self-harness.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "228e48cf389acec3d3dad69a5a1b003f7f6d538b36250075712912bb2e1f10d9",
+      "size": 4444143
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2606.10749_secure-llm-agents.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "878b26db78805a0edd186b004826227dcea007cdc9c45c4b756394f0674c4f89",
+      "size": 1611101
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2606.10749_secure-llm-agents.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "46bbcc8d3e0d46565524109923e18c7a4d7f3fef88ab26ce148b0d8cd7ed7bed",
+      "size": 486509
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2606.20128_correctness-illusion.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "139a0b5d55006646dd1fa29e3fe27ba19ea70b070234ed91a14ba0c9a4786d3b",
+      "size": 281624
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2606.29920_llm-judge-rubrics-agentic.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "8a21400859349c38bc30c5d8c34aa303f80cf8f4d19009003bcc4b7a0242ee77",
+      "size": 1272869
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2606.29920_llm-judge-rubrics-agentic.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "610f78ea2b33e3f5f30bfb73e8428aaf7caeef7c0c0607a5628ee82a3567095b",
+      "size": 338631
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2607.07663_rsi-survey-bounded-to-autonomous.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "a7622a4816c873ea45d511de909b5cbbf5c8f366a4515ea31e00ef2362e2a3f7",
+      "size": 5049523
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2607.07663_rsi-survey-bounded-to-autonomous.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "f4a79956f9c3a53e02429ee4664acffe0382751ad288d5c39f4da44b4b1de77c",
+      "size": 482069
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2607.08028_prompts-to-contracts.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "d90ad4ee4e445512e930a291fee7d10ec43c662e7a920eccafd6740cd6f8eb64",
+      "size": 1686826
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2607.08028_prompts-to-contracts.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "18c1e1e43c460a9f3e47e3794d1381e30af9ea9b2afb475814921fee9d334daa",
+      "size": 349084
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2607.15524_recursive-harness-self-improvement.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "8043e7f589369be5d59ff8a77100c70846cea3c8de7c0cc676ea5d280789d3d4",
+      "size": 3399142
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2607.15524_recursive-harness-self-improvement.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "bb83d57128b49675047fc9fa91af6f25a3769df27bb917229ef7ccc9e2e0a17c",
+      "size": 870196
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2607.16241_kernelbench-verified.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "d9a84040c2d4691b6bbfa8f7a9c9017abd9ece0d9443a8af48c56851b7e1b56d",
+      "size": 712496
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2607.20501_mkevolve.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "346d280698076c1f1acb606257a0a90fffc21bbc0d41075b6ea8e160db80d2c0",
+      "size": 557541
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2607.23089_compiler-grounded-hierarchical-diagnosis.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "ee924efc06a4fd80c3f22fa49be3d0fbed9fce27e784690cb3bc2daf3ce0f993",
+      "size": 378480
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2608.08311_ouroboros-reviewed-core-evolution.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "8f5fd495b6ea56b928bc9be78bc8d259f5abbd4d4e428d107b5c10802ca00a41",
+      "size": 1179327
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2608.08311_ouroboros-reviewed-core-evolution.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "933d7c9832d50dcb8909e52d75fbe570410d9ebcb77a03a0207218c2ba98fc31",
+      "size": 278476
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2608.10178_one-recipe-many-harnesses.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "c0c45bc3f8cea011cddaad35ebbf6fea8876c9710c04a8d87edb608dbbfde830",
+      "size": 1053109
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2608.10178_one-recipe-many-harnesses.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "72187f55c22884d05778cdf43cc9fdcb4ff34982e0f5960fc6294bc3d348c9ed",
+      "size": 433728
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2608.12629_cake-compiler-agent-codesign.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "41c74b241c37cb259724d558002254bdc1c6d151665b5eb14235931a8738ea7c",
+      "size": 1468028
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2609.00006_harness-engineering-anatomy.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "e81b5a4855adda8cc5e46db0a05cd69e0d0d542bd49cec6b157c17e6001395d7",
+      "size": 963456
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2609.00006_harness-engineering-anatomy.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "3c01f6e0be0a6855c271fc813eec590f6c241e83310b3ced980b77a1273ab532",
+      "size": 890211
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2609.01437_harnessdev.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "1231454f0ae5ccffdb3d031dc8f42eae0cbbaeb61dcd25dddb1855074697dfc0",
+      "size": 1800192
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2609.01437_harnessdev.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "8b1d3ec05fc664fa596b21cc75700283ed3816c9b24721499016248ccc1626c4",
+      "size": 456003
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2609.05736_beyond-prompts-tool-agent-harness.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "37cb537a53b2e76133bd5f8cc930c9147cd668fe601f28cacf8d87adb2038d4a",
+      "size": 2790756
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2609.05736_beyond-prompts-tool-agent-harness.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "5d939a4dbf46031028b761a4421669bf9070d8873e0af3dfbaf138dad2916558",
+      "size": 344257
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2609.11677_ecdysis-runtime-harness-training.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "e80c82da22fde3586599156b5f975fe4a1f87f05dc86f7f9060611a893fa6bff",
+      "size": 387682
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2609.11677_ecdysis-runtime-harness-training.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "0afc35c467f574398d6958804b7b916c8a06816150c86b2a3bb81898ae6f0dcb",
+      "size": 325088
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2609.14857_modularrsi.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "4f5592c3605821072842e7408e20d3b2c662cde5e1914f3be80239d186d8244f",
+      "size": 490384
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2609.20519_sol-pi.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "7f3910c43a4927c7504ae14d20ee34bdaa51b755ec5d9db69c2cd6ead6fc72b9",
+      "size": 6137365
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2609.24972_rrsi-regularized-harness-rsi.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "26f8b5417f8a60c9284bb4a36d3981c41b8e071134aea0bf3402fe9584c8cd76",
+      "size": 968169
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2609.24972_rrsi-regularized-harness-rsi.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "5576fd12191fd1f4767dbebe009ca8873c52621d34871ab32fbcdf7c284eb36b",
+      "size": 346735
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2609.32423_pluginrsi.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "b5dc89d5c8d1f1f4be8e652d430ae348fc0c2bef89b7bfd2fbc2832f8a7aad2d",
+      "size": 4482591
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2609.32423_pluginrsi.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "a56881dd319556a9dd2a6e4de02cbbfe932d1d63deb5f3804d5bb16826cc8a78",
+      "size": 403647
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2610.08900_humanize-judgement-engineering.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "be9c8aff9a2b06dd4ac553e46d5c3b1761a831cf0c4e306b4743f9235b0411e5",
+      "size": 324914
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2610.14224_harness-squared-recursive.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "440be1f694f3b0fdfb8e612e9b2288ff0d8ab38641cfd1064fd77052ba360282",
+      "size": 8101889
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2610.14224_harness-squared-recursive.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "753c999b01c9737cff9e34d53873f336dd75d7258832cf016f65719a2b13453e",
+      "size": 439603
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2610.15150_harmony-harness-multiobjective.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "3fa04df2ad4b01c3cd616af7e8cec37fda9e04a2df09e3816133985374724e6c",
+      "size": 945532
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2610.15150_harmony-harness-multiobjective.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "49e3cad5fae7c6c346b8e2548d3690d73d741eab3583d8650363fb5ceb9b5d42",
+      "size": 503360
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/2610.31034_cannbot-cake.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "7e74bece58c9d3de489edd1729047b882bea28c8509be5287156a784e76a486c",
+      "size": 597352
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/59558_ForgeKernel_Self_Evolvin.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "4f0251783647cb4be97ba57e921f4e6bef2bcae02f82fab6bd8271cc83bd0872",
+      "size": 611918
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/59558_ForgeKernel_Self_Evolvin.zh-CN.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "0a415ec022f4e8e8fc757f60ffb558cbf657c709f72bb515c5f33dea7ea74625",
+      "size": 63050
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/59558_ForgeKernel_Self_Evolvin.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "e50f30970b90064e6db684a3e02f497a66375ba7df460866c3de58cb7ca71bd9",
+      "size": 311121
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/acl2025_judging-with-many-minds.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "ec53677dcab82c14822291aae3fd12b05ce373088731bffbffa920322aa47af4",
+      "size": 3555219
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/acl2025_judging-with-many-minds.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "fedeca51c27c89069bfdf980f6b19f4a5ec8423a3808431405852c65595d76ee",
+      "size": 513322
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/acl2026_auditing-multiagent-reasoning-trees.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "ccd1ba7c7d56722a117f67c123123d191f5a4b952d178da17003fda8f565c05a",
+      "size": 1792425
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/acl2026_auditing-multiagent-reasoning-trees.zh.pdf",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "444f9d0f68e069ea34a09fe8a14b75c04e36295e1d270272d8e156deb3126418",
+      "size": 313143
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/articles/contextos_agent-harness-benchmark-protocol.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "3ab257d39806db6486fb882ed525719f92e050e2eb97598b88b98674af42aa7f",
+      "size": 16851
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/articles/hugobowne_how-evals-are-central-to-harness-engineering.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "d6f3e5e774721f1f4148dbaf5f9545b230e66fc84b9a2bd0d6ea7dcfa6bc9534",
+      "size": 20515
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/trustworthy-llm-harnesses-笔记.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "1ecbe7e1993074466dbe9b2a8bae89772f4c36c0f37f6bb7f3dae7aa3fe1766b",
+      "size": 8255
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/papers/导读.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "187641980291f23f34201537bfe27fd7318a8093812c629a530bbff6732e1a59",
+      "size": 91886
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/plan-01-验收器抗作弊.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "f5e20cbd835338ecbe6b29074db3fab69c676625a6d32351598ea81efd4f2f98",
+      "size": 34572
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/plan-02-可证伪预测与效果实验.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "9c842d7043c1dc7255ec372a60a301ef4879eb69b8893110de555dd479c80c59",
+      "size": 7348
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/plan-03-信任与权限治理.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "a512cef792ffbbe55f8e579bdff725db02f5025caa3ddd14635a1890ad50dd93",
+      "size": 29121
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/plan-04-证据链与可信执行记录.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "660f7c007897492c4dc275f65c59a3760cbf77ae8bad764f08e685ed94604fe5",
+      "size": 1215
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/plan-05-独立评审与反共识.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "d50ce92144adf430d4e75be94be230bfb66670cc38db5b8720183bc1891489a8",
+      "size": 8236
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/plan-06-注入面与运行时安全.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "43b3984e4235c18dd133f4ca35147a02e15f1eb2566931aa86a7f817c80200da",
+      "size": 37375
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/plan-07-经验知识生命周期.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "b27ea5e0b44042eadc6de14702701ab9db9a39105bee8a6cbd6a40a79577bcb0",
+      "size": 5893
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/plan-08-观测采纳成本与运营.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "55bbd9c3a15e363ca8c622fb0dd072e12be6a859c211a9e1f67154a747a4ab9e",
+      "size": 7902
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/plan-09-文档一致性与可核验性.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "39340bb54f336ab9a714ecb607a08b5a0172de9cec34b179ee90cf48aab8e154",
+      "size": 26738
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/plan-10-决策账本与平台期重规划.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "0ecf1ebc370bb0b28de827114348f38876911bb8120911deb44742e5e7bb4d48",
+      "size": 7521
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/合理性审核-plan-01至09.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "c6ab91dd1c6e6996dfbfaa16fe613c7402c3e05a2a1300b978da07d662058d0c",
+      "size": 22213
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/审核意见-plan-01至09.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "8dc5053e0253924f6eac232b5209b5a44840789f310c8f3608f3eac3c6a90380",
+      "size": 19176
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/案例-开发者提案误入overlay.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "f247275be1c49f9f9ac9b8d2e17253a2224041ac8dc6153b358c16658022149b",
+      "size": 6327
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/确认性效果实验-另纸.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "2f463bdbac641747898f7a59c4412e2ce031724f55e05fd54c739cf5d86cb4af",
+      "size": 793
+    },
+    {
+      "category": "research-harness-notes",
+      "in_scope": false,
+      "path": "docs/可信harness/评分可信计算基-另纸.md",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。",
+      "sha256": "4d7f9584b614a9305ad1aa59da1da7c6b233efbba59f3281431dc6e28506b3da",
+      "size": 1172
+    }
+  ],
+  "g0_package_note": "G0 包自身的文件不在本表的既有未跟踪文件里；它们逐个列在 manifest.json::files.package（path/size/sha256），由 gen_manifest.py 冻结。",
+  "g0_package_prefix": "docs/架构/跨硬件算子生成分工-G0/",
+  "head": "b6d6a7160fd504fd5e9803590b198e190981090b",
+  "snapshot_kind": "cross-hardware-g0-code-snapshot",
+  "untracked_rule_note": "每个既有未跟踪路径都恰好命中一条规则；未命中即生成失败，不允许静默范围外。"
+}

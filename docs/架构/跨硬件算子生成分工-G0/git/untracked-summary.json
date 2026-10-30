@@ -1,0 +1,39 @@
+{
+  "by_category": {
+    "research-article-notes": 13,
+    "research-harness-notes": 116,
+    "research-kda-notes": 1,
+    "research-papers": 152,
+    "research-tsm-notes": 12
+  },
+  "claim": "这 294 个未跟踪文件全部在范围外，并按 path/size/sha256 逐个冻结；不声称仓库没有未跟踪文件，也不声称这些目录是干净的。",
+  "rules": [
+    {
+      "category": "research-kda-notes",
+      "prefix": "docs/KDA 怎么做.md",
+      "reason": "KDA 方法与分析笔记；不参与构建、评测或语料生成，只冻结 path/size/sha256。"
+    },
+    {
+      "category": "research-papers",
+      "prefix": "docs/paper/",
+      "reason": "外部论文 PDF 与中文翻译/导读；只作研究资料，不参与构建、评测或语料生成，按版权与体积不复制进 G0 包，只冻结 path/size/sha256。"
+    },
+    {
+      "category": "research-harness-notes",
+      "prefix": "docs/可信harness/",
+      "reason": "可信 harness 的规划/评审笔记（plan-01..10、审核意见、案例），属于另一条文档流的未提交草稿；不参与 G0 语料与快照语义，只冻结 path/size/sha256。"
+    },
+    {
+      "category": "research-article-notes",
+      "prefix": "docs/一个公众号的论文解读/",
+      "reason": "公众号论文解读的中文笔记与配图；研究资料，不参与构建与评测。"
+    },
+    {
+      "category": "research-tsm-notes",
+      "prefix": "docs/tsm/",
+      "reason": "TSM 相关研究笔记；研究资料，不参与构建与评测。"
+    }
+  ],
+  "untracked_bytes": 335848000,
+  "untracked_files": 294
+}

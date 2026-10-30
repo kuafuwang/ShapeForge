@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "status": "human_pending",
+  "mac_performance_regression_gate": {
+    "metric": "geomean(v2_us / v1_us) over comparable tasks with baselines on the same device and baseline",
+    "proposed_max_ratio": 1.10,
+    "approved_max_ratio": null,
+    "approved_by": null,
+    "note": "1.10 is only a proposal, not an approved threshold. Correctness-only tasks have no speedup claim."
+  },
+  "qingmicro_npu_p0": {
+    "vendor": "清微",
+    "device_id": null,
+    "device_model": null,
+    "toolchain_id": null,
+    "toolchain_version": null,
+    "track_id": "qingmicro-npu-bundle",
+    "track_version": 1,
+    "simple_operator": null,
+    "performance_sensitive_operator": null,
+    "shape_dtype_domains": null,
+    "vendor_baseline_implementation": null,
+    "vendor_baseline_version": null,
+    "required_speedup_or_latency_threshold": null,
+    "max_search_budget": null,
+    "timing": {
+      "host_us": null,
+      "device_us": null,
+      "end_to_end_us": null,
+      "workspace_prepare_policy": null,
+      "input_restore_policy": null
+    },
+    "confirmation": {
+      "fresh_batches": null,
+      "reps_per_batch": null,
+      "independent_rebuild_required": true
+    },
+    "profiler_metrics": null,
+    "real_device_authorized": false,
+    "cuda_or_cann_substitute_allowed": false
+  },
+  "human_pending_fields": [
+    "mac_performance_regression_gate.approved_max_ratio and approver",
+    "清微 device_id/device_model and toolchain/version",
+    "simple and performance-sensitive representative operators with shape/dtype domains",
+    "vendor baseline implementation/version and required threshold",
+    "maximum search budget",
+    "Host/Device/end-to-end timing and workspace/input restore policies",
+    "fresh confirmation batches and reps",
+    "profiler metrics and explicit real-device authorization"
+  ],
+  "rule": "No value in this file is an approved NPU performance claim. NPU-P0 remains blocked until every human_pending field is frozen."
+}

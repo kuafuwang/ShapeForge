@@ -1,0 +1,4 @@
+b6d6a7160fd504fd5e9803590b198e190981090b
+2026-10-30T16:18:22+08:00
+test: verify upstream port provenance and hardware boundaries
+short=b6d6a71

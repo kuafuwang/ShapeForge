@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the upstream selective-port ledger without network or device access."""
+"""Verify the upstream ledger and the complete G0 freeze package without devices."""
 
 from __future__ import annotations
 
@@ -123,9 +123,52 @@ def verify_map(document: dict) -> tuple[dict[str, dict], list[dict], list[dict]]
     return sources, groups, entries
 
 
+def verify_auxiliary_documents() -> None:
+    config = json.loads((ROOT / "config-inventory.json").read_text(encoding="utf-8"))
+    require(config["schema_version"] == 1 and config["entries"], "config inventory missing")
+    paths = [entry["path"] for entry in config["entries"]]
+    require(len(paths) == len(set(paths)), "duplicate config path")
+    require(all(entry["reader"] for entry in config["entries"]), "config reader missing")
+
+    boundary = json.loads((ROOT / "migration-boundary.json").read_text(encoding="utf-8"))
+    require(boundary["current"] == {"all_tasks_spec_version": 1, "v2_implemented": False, "fallback_allowed": False}, "bad v1/v2 boundary")
+    candidates = boundary["migration_candidates"]
+    require(len(candidates) == 16, "migration inventory must contain 16 tasks")
+    combo_count = sum(len(c["sizes"]) * len(c["variants"]) * 2 for c in candidates)
+    require(combo_count == 82, f"migration inventory has {combo_count} combos, expected 82")
+    require(boundary["npu"]["vendor"] == "清微", "NPU vendor must be 清微")
+    require(boundary["npu"]["cuda_allowed"] is False and boundary["npu"]["cann_allowed"] is False, "hardware filter failed")
+
+    performance = json.loads((ROOT / "performance-contract.json").read_text(encoding="utf-8"))
+    require(performance["status"] == "human_pending", "NPU contract must remain human_pending")
+    require(performance["mac_performance_regression_gate"]["approved_max_ratio"] is None, "performance ratio is not human-approved")
+    require(performance["qingmicro_npu_p0"]["vendor"] == "清微", "NPU contract vendor mismatch")
+    require(performance["qingmicro_npu_p0"]["real_device_authorized"] is False, "NPU authorization must be explicit")
+    require(performance["qingmicro_npu_p0"]["cuda_or_cann_substitute_allowed"] is False, "CUDA/CANN substitute allowed")
+
+    failures = json.loads((ROOT / "baseline-failures.json").read_text(encoding="utf-8"))
+    gpu_failures = failures["gpu_suite"]["failures"]
+    require(len(gpu_failures) == 2 and all(item["a4_blocking"] for item in gpu_failures), "GPU A4 blockers changed")
+    require("149 passed" in failures["gpu_suite"]["result"], "GPU baseline result changed")
+
+    corpus = json.loads((ROOT / "corpus" / "index.json").read_text(encoding="utf-8"))
+    require(corpus["schema_version"] == 1 and len(corpus["combos"]) == 82, "corpus combo count mismatch")
+    records = [record for combo in corpus["combos"] for record in combo["case_records"]]
+    require(len(records) == 1506, "corpus case/seed count mismatch")
+    require(sum(record["archive"] is not None for record in records) == 732, "raw archive count mismatch")
+    require(sum(record["archive"] is None for record in records) == 774, "digest-only count mismatch")
+    require(corpus["source_head"] == (ROOT / "git" / "head.txt").read_text().splitlines()[0], "corpus/snapshot HEAD mismatch")
+    defective = [combo for combo in corpus["combos"] if combo["assembly_defects"]]
+    require(len(defective) == 4 and all(combo["name"] == "rmsnorm" for combo in defective), "RMSNorm pack defect not frozen")
+
+
 def verify_manifest() -> None:
     lines = MANIFEST_PATH.read_text().splitlines()
-    require(len(lines) == 2, "manifest must contain two files")
+    expected = {
+        str(path.relative_to(ROOT))
+        for path in ROOT.rglob("*")
+        if path.is_file() and path.name != MANIFEST_PATH.name and "__pycache__" not in path.parts and path.suffix != ".pyc"
+    }
     seen: set[str] = set()
     for line in lines:
         digest, name = line.split("  ", 1)
@@ -133,7 +176,7 @@ def verify_manifest() -> None:
         require(name not in seen, f"duplicate manifest entry: {name}")
         seen.add(name)
         require(sha256(ROOT / name) == digest, f"manifest mismatch: {name}")
-    require(seen == {"upstream-map.json", "verify.py"}, "manifest file set is wrong")
+    require(seen == expected, f"manifest file set differs: missing={sorted(expected - seen)}, extra={sorted(seen - expected)}")
 
 
 def self_test(document: dict) -> None:
@@ -175,8 +218,14 @@ def main() -> None:
     args = parser.parse_args()
     document = json.loads(MAP_PATH.read_text(encoding="utf-8"))
     sources, groups, entries = verify_map(document)
+    verify_auxiliary_documents()
     if args.write_manifest:
-        lines = [f"{sha256(ROOT / name)}  {name}" for name in ("upstream-map.json", "verify.py")]
+        names = sorted(
+            str(path.relative_to(ROOT))
+            for path in ROOT.rglob("*")
+            if path.is_file() and path.name != MANIFEST_PATH.name and "__pycache__" not in path.parts and path.suffix != ".pyc"
+        )
+        lines = [f"{sha256(ROOT / name)}  {name}" for name in names]
         MANIFEST_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
     verify_manifest()
     if args.self_test:

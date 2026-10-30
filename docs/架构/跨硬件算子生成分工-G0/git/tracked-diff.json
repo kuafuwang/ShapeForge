@@ -1,0 +1,15 @@
+{
+  "head": "b6d6a7160fd504fd5e9803590b198e190981090b",
+  "staged": {
+    "bytes": 0,
+    "empty": true,
+    "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "paths": []
+  },
+  "unstaged": {
+    "bytes": 0,
+    "empty": true,
+    "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "paths": []
+  }
+}

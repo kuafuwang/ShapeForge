@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "current": {
+    "all_tasks_spec_version": 1,
+    "v2_implemented": false,
+    "fallback_allowed": false
+  },
+  "migration_candidates": [
+    {"task": "sigmoid", "sizes": ["paper", "small"], "variants": [null]},
+    {"task": "relu", "sizes": ["paper", "small"], "variants": [null]},
+    {"task": "silu", "sizes": ["paper", "small"], "variants": [null]},
+    {"task": "swiglu", "sizes": ["paper", "small"], "variants": [null]},
+    {"task": "rmsnorm", "sizes": ["paper", "small"], "variants": [null], "assembly_defect": "task_pack_not_registered"},
+    {"task": "softmax", "sizes": ["paper", "small"], "variants": [null]},
+    {"task": "reduction_sum", "sizes": ["paper", "small", "plan"], "variants": [null]},
+    {"task": "gemm", "sizes": ["paper", "small"], "variants": [null, "128x64x32t256", "64x64x32t256", "32x32x16t128", "128x128x32t512"]},
+    {"task": "gemm_silu", "sizes": ["paper", "small"], "variants": [null]},
+    {"task": "sem_gemm_neg", "sizes": ["paper", "small"], "variants": [null]},
+    {"task": "sem_relu_gelu_comment", "sizes": ["paper", "small"], "variants": [null]},
+    {"task": "sem_gelu_named_relu", "sizes": ["paper", "small"], "variants": [null]},
+    {"task": "gen_relu", "sizes": ["paper", "small"], "variants": [null]},
+    {"task": "gen_sigmoid", "sizes": ["paper", "small"], "variants": [null]},
+    {"task": "gen_silu", "sizes": ["paper", "small"], "variants": [null]},
+    {"task": "gen_swiglu", "sizes": ["paper", "small"], "variants": [null]}
+  ],
+  "preserved_v1_out_of_scope": [
+    "rope",
+    "gemv",
+    "conv2d",
+    "flash_attention",
+    "lion",
+    "bitdelta_gemm",
+    "mamba2_chunk_scan",
+    "sem_attention_odd_scale",
+    "sem_int dynamic family"
+  ],
+  "a4_new_task": {
+    "name": null,
+    "status": "human_pending",
+    "rule": "A4 chooses one genuinely new task; it is not silently added to the G0 migration inventory"
+  },
+  "npu": {
+    "vendor": "清微",
+    "status": "human_pending",
+    "cuda_allowed": false,
+    "cann_allowed": false
+  }
+}
