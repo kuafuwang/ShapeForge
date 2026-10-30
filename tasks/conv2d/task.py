@@ -1,110 +1,117 @@
-# 3×3 卷积。description：stride 1、无 padding、无 bias，激活是 NHWC，权重是 [OC, KH, KW, C]，fp32 累加后舍入一次。KH = KW = 3。
-# 标准答案是 reference。输入都有限时走 F.conv2d（先换成 NCHW）；出现 NaN 或 Inf 时改成逐 tap 的 fp32 乘加，与函数里避开 Winograd 的分支一致。
-# 基线是 baselines：mlx 的 mx.conv2d(x, w)；torch_mps 把 NHWC 换成 NCHW 后调用 F.conv2d。
-# 模型不能改 contract：核名 conv2d_kernel，grid=(OC/BLOCK_N, M_TOTAL/BLOCK_M, 1)，threads=(128, 1, 1)，缓冲 x/w/y，以及常量 N/H/W/C/OC/KH/KW/OH/OW/M_TOTAL/K_TOTAL/BLOCK_*。
+# 3x3 卷积。语义只写在 opspec.json；契约与启动事实来自登记的 metal-conv2d profile。
 import torch
 import torch.nn.functional as F
 
-from tcenv.contract import AbiArg, Contract
 from tcenv.distributions import sample
-from tcenv.task import BaselineImpl, Task, default_tolerances
-from tasks._common import check_dtype, load_text
+from tasks._assembly import build_task, derive
 
-KH = KW = 3
-BLOCK_M, BLOCK_N, BLOCK_K = 64, 64, 32
-# (N, H, W, C, OC)
-SHAPES = {"paper": (32, 56, 56, 64, 128), "small": (4, 18, 18, 32, 64)}
-MAGS = {"normal": 1.0, "wide_range": 0.1}
+TASK_DIR = "conv2d"
 
 
-def _mlx(x, w):
-    """@brief mlx 侧的卷积基线。
+def _gen_inputs(params: dict, shapes: dict, dtype: str):
+    """@brief 按 track 登记参数构造 x/w 生成闭包。
 
-    @param x NHWC 激活，mlx 数组。
-    @param w ``[OC, KH, KW, C]`` 权重，mlx 数组。
-    @return ``mx.conv2d(x, w)``。
+    @param params ``implementations.gen_inputs.params``。
+    @param shapes 输入名 → 形状。
+    @param dtype 元素类型。
+    @return ``(case, seed) -> {"x", "w"}``。
     """
-    import mlx.core as mx
-
-    return mx.conv2d(x, w)
-
-
-def _torch(x, w):
-    """@brief torch 侧的卷积基线，两边各自换一次布局再换回来。
-
-    @param x NHWC 激活。
-    @param w ``[OC, KH, KW, C]`` 权重。
-    @return NHWC 结果。
-    """
-    return F.conv2d(x.permute(0, 3, 1, 2), w.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
-
-
-def build(dtype: str, size: str) -> Task:
-    """@brief 装配 3x3 卷积题。
-
-    核名 ``conv2d_kernel``，``grid=(OC/BLOCK_N, M_TOTAL/BLOCK_M, 1)``，``threads=(128, 1, 1)``，
-    缓冲 x/w/y，常量 N/H/W/C/OC/KH/KW/OH/OW/M_TOTAL/K_TOTAL/BLOCK_*。
-
-    @param dtype 元素类型，``fp16`` 或 ``bf16``。
-    @param size 尺寸档位，``paper`` 或 ``small``。
-    @return 装配好的 ``Task``。
-    """
-    check_dtype(dtype)
-    N, H, W, C, OC = SHAPES[size]
-    OH, OW = H - KH + 1, W - KW + 1
-    M_TOTAL, K_TOTAL = N * OH * OW, KH * KW * C
-    assert M_TOTAL % BLOCK_M == 0 and OC % BLOCK_N == 0 and C % BLOCK_K == 0
-    contract = Contract(
-        kernel_name="conv2d_kernel",
-        grid=(OC // BLOCK_N, M_TOTAL // BLOCK_M, 1),
-        threads=(128, 1, 1),
-        args=(
-            AbiArg("x", 0, "input", dtype, (N, H, W, C), doc="NHWC"),
-            AbiArg("w", 1, "input", dtype, (OC, KH, KW, C), doc="[OC, KH, KW, C]"),
-            AbiArg("y", 2, "output", dtype, (N, OH, OW, OC), doc="NHWC, stride 1, no padding, no bias"),
-        ),
-        constants=(
-            ("N", "uint", N), ("H", "uint", H), ("W", "uint", W), ("C", "uint", C), ("OC", "uint", OC),
-            ("KH", "uint", KH), ("KW", "uint", KW), ("OH", "uint", OH), ("OW", "uint", OW),
-            ("M_TOTAL", "uint", M_TOTAL), ("K_TOTAL", "uint", K_TOTAL),
-            ("BLOCK_M", "uint", BLOCK_M), ("BLOCK_N", "uint", BLOCK_N), ("BLOCK_K", "uint", BLOCK_K),
-        ),
-    )
+    mags = dict(params["mags"])
+    default_mag = float(params["default_mag"])
+    large = float(params["large"])
+    spike = float(params["spike"])
+    offsets = dict(params["seed_offsets"])
 
     def gen_inputs(case, seed):
-        mag = MAGS.get(case, 1.0)
+        mag = mags.get(case, default_mag)
         return {
-            "x": sample(case, (N, H, W, C), seed, dtype, mag=mag, large=20.0, spike=5.0),
-            "w": sample(case, (OC, KH, KW, C), seed + 31, dtype, mag=mag, large=20.0, spike=5.0),
+            name: sample(case, shapes[name], seed + int(offsets[name]), dtype, mag=mag, large=large, spike=spike)
+            for name in ("x", "w")
         }
 
-    # 标准答案的两支：输入有限时用 F.conv2d；出现 NaN 或 Inf 时改成逐 tap 的 fp32 乘加。
+    return gen_inputs
+
+
+def _reference(params: dict, dims: dict):
+    """@brief 卷积参考实现：有限输入走 ``F.conv2d``，含 NaN/Inf 时逐 tap 累加。
+
+    @param params ``implementations.reference.params``。
+    @param dims ``N/OH/OW/OC/KH/KW``。
+    @return ``inp -> {"y"}``。
+    """
+    if params.get("accumulate") != "double_output" or params.get("finite") != "conv2d" or params.get("non_finite") != "tap_sum":
+        raise ValueError(f"conv2d reference registration changed: {params}")
+    n, oh, ow, oc = dims["N"], dims["OH"], dims["OW"], dims["OC"]
+    kh, kw, kc = dims["KH"], dims["KW"], dims["C"]
+
     def reference(inp):
         if not (torch.isfinite(inp["x"]).all() and torch.isfinite(inp["w"]).all()):
-            # CPU conv2d may use a Winograd transform, which smears one Inf over a whole tile as NaN (Inf * 0); IEEE semantics
-            # are those of the sum of products, so for inputs with NaN/Inf take the same fp32 sum tap by tap.
+            # CPU conv2d may use a Winograd transform, which smears one Inf over a whole tile as NaN;
+            # IEEE semantics are those of the sum of products, so take the same fp32 sum tap by tap.
             x, w = inp["x"].float(), inp["w"].float()
-            y = torch.zeros((N, OH, OW, OC), dtype=torch.float32)
-            for kh in range(KH):
-                for kw in range(KW):
-                    y += x[:, kh:kh + OH, kw:kw + OW, :] @ w[:, kh, kw, :].T
+            y = torch.zeros((n, oh, ow, oc), dtype=torch.float32)
+            for i in range(kh):
+                for j in range(kw):
+                    y += x[:, i:i + oh, j:j + ow, :] @ w[:, i, j, :].T
             return {"y": y.double()}
         x = inp["x"].permute(0, 3, 1, 2).contiguous().float()
         w = inp["w"].permute(0, 3, 1, 2).contiguous().float()
         return {"y": F.conv2d(x, w).permute(0, 2, 3, 1).contiguous().double()}
 
-    rtol, atol_rel = default_tolerances(dtype)
-    return Task(
-        name="conv2d", dtype=dtype, size=size, contract=contract,
-        triton_source=load_text("conv2d", "kernel_triton.py", dtype, {"N": str(N), "H": str(H), "W": str(W), "C": str(C), "OC": str(OC), "OH": str(OH), "OW": str(OW), "M_TOTAL": str(M_TOTAL), "K_TOTAL": str(K_TOTAL)}),
-        description="3x3 convolution, stride 1, no padding, no bias, NHWC activations and [OC,KH,KW,C] weights; fp32 accumulation, result rounded once.",
-        cases=("normal", "wide_range", "large", "tiny", "outlier", "ieee"),
-        gen_inputs=gen_inputs, reference=reference,
-        baselines=(BaselineImpl("mlx", "mlx", _mlx), BaselineImpl("torch_mps", "torch", _torch)),
-        meta={"ieee_max": {"x": max(8, M_TOTAL // 100), "w": 4},  # a special in x poisons 9 pixels, one in w a whole output channel; keep most outputs finite
-              "triton_baseline_variant": {"source": load_text("conv2d", "kernel_triton_msl.py", dtype, {"N": str(N), "H": str(H), "W": str(W), "C": str(C), "OC": str(OC), "OH": str(OH), "OW": str(OW), "M_TOTAL": str(M_TOTAL), "K_TOTAL": str(K_TOTAL)}), "note": "explicit im2col gather kernel + weight transpose + plain GEMM (the backend refuses the gathered implicit-GEMM operand)"}},
-        flops=2.0 * M_TOTAL * OC * K_TOTAL,
-        min_bytes=float((N * H * W * C + OC * KH * KW * C + N * OH * OW * OC) * 2),
-        rtol=rtol, atol_rel=atol_rel,
-        naive_msl=load_text("conv2d", "naive.metal", dtype),
+    return reference
+
+
+def _mlx(params: dict):
+    """@brief mlx 侧卷积基线（``mx.conv2d``）。
+
+    @param params track 登记参数。
+    @return ``(x, w) -> mx.conv2d(x, w)``。
+    """
+    if params.get("kernel") != "mx.conv2d":
+        raise ValueError(f"conv2d mlx baseline registration changed: {params}")
+
+    def _mlx(x, w):
+        import mlx.core as mx
+
+        return mx.conv2d(x, w)
+
+    return _mlx
+
+
+def _torch(params: dict):
+    """@brief torch 侧卷积基线：NHWC→NCHW→conv2d→NHWC。
+
+    @param params track 登记参数。
+    @return ``(x, w) -> NHWC``。
+    """
+    if params.get("kernel") != "torch.nn.functional.conv2d" or params.get("layout") != "nchw_roundtrip":
+        raise ValueError(f"conv2d torch baseline registration changed: {params}")
+    return lambda x, w: F.conv2d(x.permute(0, 3, 1, 2), w.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+
+
+def build(dtype: str, size: str):
+    """@brief 装配 3x3 卷积题。
+
+    @param dtype 元素类型，``fp16`` 或 ``bf16``。
+    @param size 尺寸档位，``paper`` 或 ``small``。
+    @return 装配好的 ``Task``。
+    """
+    derived = derive(TASK_DIR, dtype, size)
+    track, instance, _specialization = derived
+    shapes = {"x": instance.tensor("x").shape, "w": instance.tensor("w").shape}
+    dims = {name: int(instance.symbols[name]) for name in ("N", "H", "W", "C", "OC", "KH", "KW", "OH", "OW")}
+    return build_task(
+        TASK_DIR,
+        dtype,
+        size,
+        implementations={
+            "gen_inputs": _gen_inputs(dict(track.implementations["gen_inputs"]["params"]), shapes, dtype),
+            "reference": _reference(dict(track.implementations["reference"]["params"]), dims),
+            "error_scale": None,
+        },
+        baseline_fns={
+            "mlx": _mlx(dict(track.baselines[0]["params"])),
+            "torch_mps": _torch(dict(track.baselines[1]["params"])),
+        },
+        derived=derived,
     )

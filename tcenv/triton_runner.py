@@ -80,7 +80,7 @@ def spec_fingerprint(task) -> str:
 
     h = hashlib.sha256()
     for part in (spec_source(task)[0], repr(task.contract.constants), repr(task.contract.grid), repr(task.contract.threads), repr(task.cases),
-                 task.dtype, task.size, repr(sorted((task.meta.get("ieee_max") or {}).items()))):
+                 task.dtype, task.size, repr(sorted((task.evaluation_domain.get("ieee_max") or {}).items()))):
         h.update(part.encode())
         h.update(b"\0")
     return h.hexdigest()[:16]

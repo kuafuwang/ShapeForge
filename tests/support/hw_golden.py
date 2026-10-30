@@ -149,6 +149,121 @@ def user_messages() -> dict[str, str]:
     return out
 
 
+def schema4_build(name: str, report: dict) -> dict:
+    """Rebuild one fixture's schema-4 ``build`` record from its own recorded facts.
+
+    The fixtures were recorded on a real Mac and only kept the report; the assembled text and
+    the live pipeline are gone, so nothing here claims a native executable.  ``ok`` is a
+    ``full`` native build with ``native_absent_reason=portable_artifact_set`` (a re-read report,
+    not a fresh outcome); a recorded compile failure is a ``partial`` whose assembled digest is
+    honestly unknown (``null``), never a copy of the candidate.
+
+    @param name fixture 名（``<name>.metal`` 是候选源码）。
+    @param report 旧报告字典（提供 status/compile 与任务字段）。
+    @return ``build`` 对象。
+    """
+    import hashlib
+
+    from tcenv.backends.metal.source_builder import (
+        METAL_BUILDER_ID, METAL_PROFILE_NAME, METAL_TOOLCHAIN_ID,
+    )
+    from tcenv.build_projection import project_partial, project_received
+    from tcenv.remote import contracts
+    from tcenv.remote.artifact_builder import (
+        BuildArtifact, BuildError, BuildEvidence, BuildProvenance, BuildProfile,
+    )
+    from tcenv.remote.artifact_bundle import BundleEntry
+    from tasks import get_task
+
+    source = (FIXTURES / f"{name}.metal").read_bytes()
+    entry = BundleEntry(
+        path="kernel.metal", role="SOURCE", media_type="text/plain; charset=utf-8",
+        size_bytes=len(source), sha256=hashlib.sha256(source).hexdigest(), data=source,
+    )
+    compile_doc = report.get("compile") if isinstance(report.get("compile"), dict) else {}
+    profile = BuildProfile(
+        build_profile=METAL_PROFILE_NAME,
+        builder_id=METAL_BUILDER_ID,
+        builder_version="1",
+        build_host="control_host",
+        toolchain_id=METAL_TOOLCHAIN_ID,
+        toolchain_version=str(compile_doc.get("language_version") or "unknown"),
+        sdk_version="macos-recorded",
+        compile_profile={"math": str(compile_doc.get("math_mode") or "fast")},
+    )
+    specialization = get_task(report["task"], report["dtype"], report["size"]).specialization
+    identity = {
+        "opspec_digest": specialization.opspec_digest,
+        "lowering_profile_digest": specialization.lowering_profile_digest,
+    }
+    if report["status"] == "ok":
+        provenance = BuildProvenance(
+            profile=profile, source_sha256=entry.sha256,
+            artifact_set_digest=None,
+        )
+        # A received/prebuilt set is the only full shape that may omit a native executable for a
+        # native build, so the fixture is recorded as a verified, loaded artifact set.
+        from tcenv.remote.artifact_bundle import ArtifactBundle
+        bundle = ArtifactBundle(entries=(entry,))
+        provenance = BuildProvenance(
+            profile=profile, source_sha256=entry.sha256,
+            artifact_set_digest=bundle.artifact_set_digest,
+        )
+        evidence = BuildEvidence(
+            mode="prebuilt", status="reused", provenance=provenance,
+            artifacts=(BuildArtifact.from_entry(entry),),
+            duration_ms=max(1, int(round(float(compile_doc.get("compile_s") or 0.0) * 1000))),
+            log=None, loaded=(), placement="received",
+            producer={
+                "schema_id": contracts.NPU_BUILD_PRODUCER_RECORD_SCHEMA_ID,
+                "status": "ok", "mode": "prebuilt",
+                "duration_ms": max(1, int(round(float(compile_doc.get("compile_s") or 0.0) * 1000))),
+                "log": None,
+                "evidence_sha256": hashlib.sha256(b"recorded-metal-fixture").hexdigest(),
+            },
+        )
+        return project_received(evidence, build_kind="native", identity=identity)
+    # A recorded compile failure: the diagnostic text stays in ``compile``.
+    provenance = BuildProvenance(
+        profile=profile, source_sha256=entry.sha256, artifact_set_digest=None,
+    )
+    error = BuildError(
+        "compile", str(compile_doc.get("errors") or "recorded compile failure"),
+        provenance=provenance, assembled_sha256=None, duration_ms=1,
+    )
+    return project_partial(error, build_kind="native", identity=identity)
+
+
+def rebuild_fixture(name: str, report: dict) -> dict:
+    """Return one recorded fixture as a schema-4 report (idempotent).
+
+    Fields the old record never wrote are filled with honest defaults (unknown device, empty
+    timeline), never invented measurements.
+
+    @param name fixture 名。
+    @param report 旧报告字典。
+    @return schema 4 报告字典。
+    """
+    from tcenv.schema import PROTOCOL_VERSION
+
+    out = dict(report)
+    out["schema_version"] = 4
+    out.setdefault("target_id", "apple-m4-max")
+    out.setdefault("backend", "metal")
+    out.setdefault("backend_version", "1")
+    out.setdefault("device_name", "")
+    out.setdefault("gpu_family", "")
+    out.setdefault("device_warnings", [])
+    out.setdefault("timeline", [])
+    out.setdefault("cache_hit", False)
+    out.setdefault("protocol_version", PROTOCOL_VERSION)
+    out["evaluation_fingerprint"] = None
+    out["baseline_implementation_digest"] = None
+    out["baseline_environment_digest"] = None
+    out["build"] = schema4_build(name, out)
+    return out
+
+
 def feedback_texts() -> dict[str, str]:
     """@brief 把每份 fixture 报告渲染成反馈文本，并另存一份截断到 6000 字符的版本。
 

@@ -198,7 +198,7 @@ def test_the_control_host_builds_once_uploads_the_module_and_the_npu_only_loads(
         result, host = _formal(harness, "build-prebuilt-1", source=b"")
 
         assert result.report["status"] == "ok"
-        assert result.report["simulated"] is True
+        assert result.report["build"]["build_kind"] == "simulator"
         evidence = result.evidence
         assert evidence["schema_id"] == contracts.NPU_BUILD_TIMING_EVIDENCE_SCHEMA_ID
         assert evidence["publication_allowed"] is False
@@ -295,8 +295,8 @@ def test_the_two_build_timings_share_the_build_contract_and_differ_only_by_host(
     assert evaluator_build["provenance"]["artifact_set_digest"] != (
         prebuilt_build["provenance"]["artifact_set_digest"]
     )
-    assert prebuilt_result.report["simulated"] is True
-    assert evaluator_result.report["simulated"] is True
+    assert prebuilt_result.report["build"]["build_kind"] == "simulator"
+    assert evaluator_result.report["build"]["build_kind"] == "simulator"
 
 
 def test_the_control_host_build_failure_never_submits(tmp_path):
@@ -679,7 +679,7 @@ def test_the_evaluator_builds_the_source_in_the_attempt_and_signs_the_evidence(t
         harness.set_evaluator_build(SOURCE)
         result, _host = _formal(harness, "build-evaluator-1")
         assert result.report["status"] == "ok"
-        assert result.report["simulated"] is True
+        assert result.report["build"]["build_kind"] == "simulator"
         evidence = result.evidence
         build = evidence["build"]
         assert build["status"] == "ok" and build["mode"] == "evaluator"

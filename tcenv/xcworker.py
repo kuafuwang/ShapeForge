@@ -35,8 +35,11 @@ def main() -> int:
     _install_heartbeat(req.get("heartbeat"), backend)
     task = get_task(req["task"], req["dtype"], req["size"])
     ctx = get_context()
+    # Composition root: inject the internal zero-fill kernel built through the factory.
+    prepare = getattr(backend, "prepare_context", None)
+    if callable(prepare):
+        prepare(ctx)
     candidate = Path(req["kernel_path"]).read_text()
-    src, _ = task.contract.assemble(candidate)
     from .backends.metal.launch import LaunchRejected, parse_launch_spec
 
     constants = {name: int(value) for name, _typ, value in task.contract.constants if isinstance(value, int) and not isinstance(value, bool)}
@@ -46,8 +49,25 @@ def main() -> int:
         print(f"taic-launch rejected: {e}", file=sys.stderr)
         return 1
     data = prepare_case(task, task.cases[0], 4242)
+    # Profiling launches an already-validated kernel through the same registered
+    # ArtifactBuilder the evaluator used, not through a second compile path.
+    from .remote.artifact_builder import SourceBundle
+
+    names = None if spec is None else list(dict.fromkeys(stage.kernel for stage in spec.stages))
+    builder = backend.artifact_builder(
+        kernel_contract=task.contract,
+        specialization=task.specialization,
+        math=("fast" if spec is None else spec.math),
+        kernel_names=names,
+    )
+    outcome = builder.build(
+        SourceBundle(candidate.encode("utf-8")), task_contract=task.contract,
+    )
+    compiled = list(outcome.executable_handles())
+    if not compiled:
+        raise RuntimeError("the backend builder returned no executable handle")
     if spec is None:
-        kernel = ctx.compile(src, task.contract.kernel_name, math="fast")
+        kernel = compiled[0]
         argset = ArgSet(ctx, task.contract)
         argset.load_inputs(data.raw)
         argset.poison_outputs()
@@ -56,8 +76,6 @@ def main() -> int:
         launch = lambda iters: ctx.run(kernel, args, task.contract.grid, task.contract.threads, iters=iters)
         group, kernels_launched = 1, [task.contract.kernel_name]
     else:
-        names = list(dict.fromkeys(stage.kernel for stage in spec.stages))
-        compiled = ctx.compile_all(src, names, math=spec.math)
         by_name = {k.name: k for k in compiled}
         ordered = [by_name[stage.kernel] for stage in spec.stages]
         argset = ArgSet(ctx, task.contract, workspaces=spec.workspaces)

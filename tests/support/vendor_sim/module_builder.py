@@ -70,6 +70,8 @@ def control_host_profile(**overrides: Any) -> BuildProfile:
         "toolchain_version": TOOLCHAIN_VERSION,
         "sdk_version": SDK_VERSION,
         "compile_profile": dict(CONTROL_HOST_COMPILE_PROFILE),
+        # A test-only fake toolchain never compiles for a real device (§6.2).
+        "build_kind": "simulator",
     }
     values.update(overrides)
     return BuildProfile(**values)
@@ -87,6 +89,7 @@ def evaluator_profile(**overrides: Any) -> BuildProfile:
         "toolchain_version": TOOLCHAIN_VERSION,
         "sdk_version": SDK_VERSION,
         "compile_profile": dict(EVALUATOR_COMPILE_PROFILE),
+        "build_kind": "simulator",
     }
     values.update(overrides)
     return BuildProfile(**values)
@@ -143,6 +146,10 @@ class FakeTsmModuleBuilder:
         self.builds = 0
         self.sources: list[bytes] = []
 
+    @property
+    def build_kind(self) -> str:
+        return self.profile.build_kind
+
     def probe(self) -> BuildCapabilities:
         profile = self.profile
         if self.reported_version is not None:
@@ -165,7 +172,17 @@ class FakeTsmModuleBuilder:
                 b"--txcc: error: undefined symbol 'tx_fail' in kernel.tx\n"
                 b"--txcc: 1 error generated\n"
             )
-            raise BuildError("compile", "fake txcc rejected the source", log=log, duration_ms=1)
+            # A simulated candidate compile failure is shaped like the real one (R3 §5.1): the
+            # typed provenance of the build that ran (no artifact set) plus the assembled digest,
+            # so the evaluator can project it without parsing text or probing in ``except``.
+            raise BuildError(
+                "compile", "fake txcc rejected the source", log=log, duration_ms=1,
+                provenance=BuildProvenance(
+                    profile=self.profile, source_sha256=source_bundle.sha256,
+                    artifact_set_digest=None,
+                ),
+                assembled_sha256=source_bundle.sha256,
+            )
         debug = self.profile.compile_profile.get("debug_sections") == "on"
         module = compile_module(source, debug_sections=debug)
         log = (
@@ -214,6 +231,8 @@ class FakeTsmModuleBuilder:
         )
         outcome = BuildOutcome(
             bundle=bundle, provenance=provenance, evidence=evidence, payloads=payloads,
+            # A direct-source fake toolchain compiles exactly the source bundle it received.
+            assembled_sha256=source_bundle.sha256,
         )
         if deadline_monotonic is not None and time.monotonic() > deadline_monotonic:
             raise BuildError("deadline", "the build did not finish before the attempt deadline")

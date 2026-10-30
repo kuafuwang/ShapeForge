@@ -227,22 +227,36 @@ def spearman(first: list[float], second: list[float]) -> float | None:
 
 
 def _confirm_stats(directory: Path | None, run_id: str) -> tuple[float | None, int | None]:
-    """@brief 从确认报告取 cv 与批次数；报告缺失/旧格式时退回候选表里的 cv。
+    """@brief 只从 schema-4 确认报告取 cv 与批次数；旧格式/缺失报告时批次数不可判（None）。
+
+    A schema-3 confirm report has no per-batch identity and no frozen expected, so it is not current
+    evidence: neither its statistics nor the batch count may be recovered from ``result.json`` — a
+    number that no current report supports is ``null`` here, not a remembered 2.  ``cv`` may still
+    fall back to the winner candidate's own report in the index (that report's own statistic).
 
     @param directory 运行目录，可为 None。
     @param run_id 运行 id（退回索引时用）。
-    @return ``(cv, n_batches)``。
+    @return ``(cv, n_batches)``；旧格式运行的第二项是 ``None``。
     """
     cv = None
     batches = None
     winner = ""
+    current = False
     if directory is not None:
+        from taic.artifacts import document_state
+
         path = directory / "confirm_report.json"
         try:
             with path.open("r", encoding="utf-8", errors="replace") as handle:
                 doc = json.loads(handle.read(CONFIRM_READ_LIMIT))
         except (OSError, ValueError):
             doc = None
+        # Only a current (schema-4, type-strict) confirm report is evidence: an older one has no
+        # per-batch identity and no frozen expected, so its ``cv``/batch count must not be shown as
+        # today's statistics.  ``document_state`` keeps ``4.0``/``true`` from passing as 4.
+        if document_state(doc) != "current":
+            doc = None
+        current = doc is not None
         if isinstance(doc, dict):
             benchmark = doc.get("benchmark") if isinstance(doc.get("benchmark"), dict) else {}
             candidate = benchmark.get("candidate") if isinstance(benchmark.get("candidate"), dict) else {}
@@ -257,8 +271,8 @@ def _confirm_stats(directory: Path | None, run_id: str) -> tuple[float | None, i
         except (OSError, ValueError):
             result = None
         if isinstance(result, dict):
-            if batches is None and isinstance(result.get("confirmed_values"), list):
-                batches = len(result["confirmed_values"])
+            # No batch count from ``result.confirmed_values``: with an old-format report that number
+            # is the run's own memory of a confirmation, not evidence this reader can check.
             winner = str(result.get("confirm_winner_label") or result.get("winner_label") or "")
     if cv is None and winner:
         # 旧格式确认报告没有 cv 时，退回胜者候选报告里的 benchmark.candidate.cv（索引窄列）。

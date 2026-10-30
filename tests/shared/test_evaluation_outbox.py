@@ -21,7 +21,15 @@ def _request() -> EvaluationRequest:
 
 
 def _result(request: EvaluationRequest) -> EvaluationResult:
-    report = EvalReport(task=request.task, dtype=request.dtype, size=request.size, mode=request.mode, seed=3, status="ok", message="ok")
+    # A completed outbox row retains a whole schema-4 report (status ``ok`` requires its build
+    # record); the fixture is one so the read boundary can validate it.
+    from ..support.report_build import report_for_request
+
+    report = report_for_request(
+        {"task": request.task, "dtype": request.dtype, "size": request.size,
+         "mode": request.mode, "seed": 3, "target_id": request.target_id or "apple-m4-max"},
+        source=request.source.encode("utf-8"), build_kind="native",
+    )
     return EvaluationResult(report=report, provenance=local_provenance(request), evidence={"candidate_sha256": request.candidate_sha256}, receipt={"receipt_id": receipt_id_for(request), "request_id": request.request_id, "request_digest": request.request_digest, "measurement_kind": "measured"})
 
 
@@ -77,6 +85,28 @@ def test_outbox_refuses_to_replay_a_result_from_another_epoch(tmp_path):
     outbox.complete(request, result)
     with pytest.raises(EvaluationUnavailable, match="epoch"):
         outbox.begin(request, epoch="f" * 64)
+
+
+def test_outbox_refuses_a_completed_replay_signed_by_a_revoked_key(tmp_path):
+    """@brief 撤销外部 HMAC key 后，completed outbox 只能 fail closed，不能改写结果或继续发布。"""
+    request = _request()
+    outbox = EvaluationOutbox(tmp_path)
+    outbox.begin(request)
+    result = _result(request)
+    result.receipt["signature_key_id"] = "site/key-1"
+    outbox.complete(request, result)
+    revoked = EvaluationOutbox(tmp_path, external_trusted_key_ids=frozenset({"site/key-2"}))
+    with pytest.raises(EvaluationUnavailable, match="no longer trusts") as excinfo:
+        revoked.begin(request)
+    # This is the orchestrator's failure path: the completed row stays intact
+    # and only records the revoked-key diagnostic.
+    revoked.unavailable(request, excinfo.value)
+    state = json.loads(next(path for path in (tmp_path / "evaluation_outbox").glob("*.json") if not path.name.endswith(".result.json") and path.name != "receipts.json").read_text())
+    assert state["status"] == "completed"
+    assert state["report_path"]
+    assert state["error"]["code"] == "signature_key_revoked"
+    rotated = EvaluationOutbox(tmp_path, external_trusted_key_ids=frozenset({"site/key-1", "site/key-2"}))
+    assert rotated.begin(request) is not None
 
 
 def test_outbox_rejects_reusing_a_receipt_for_another_digest(tmp_path):

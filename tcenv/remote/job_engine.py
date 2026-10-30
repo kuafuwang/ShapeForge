@@ -1841,8 +1841,9 @@ class JobEngine:
             backend_version=self.identity.backend_version,
             elapsed_s=request.candidate_timeout_ms / 1000.0,
         ).to_json()
-        if self.identity.measurement_kind == "simulated":
-            report["simulated"] = True
+        # Simulated-ness is carried by the evaluator provenance (measurement_kind) and the
+        # report's own ``build.build_kind``; the retired top-level ``simulated`` key is gone, so
+        # a timeout report is a legal schema-4 report with ``build: null``.
         return report
 
     def _timeout_evidence(self, running: _Running, message: str) -> dict[str, Any]:

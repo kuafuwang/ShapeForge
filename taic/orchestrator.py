@@ -38,18 +38,20 @@ from typing import Any, Callable
 from tasks import get_task
 from tcenv.evaluate import EvalReport, evaluate
 from tcenv.evaluation import EvaluationError, EvaluationRequest, EvaluationResult, EvaluationExecutor, EvaluationUnavailable, LocalEvaluator
+from tcenv.lowering import LoweringError, require_target_profile
+from tcenv.remote.contracts import ContractError
 from tcenv.task import task_fingerprint
-from tcenv.schema import SchemaError
+from tcenv.schema import REPORT_SCHEMA_VERSION, SchemaError
 from tcenv.report import format_feedback
 
 from . import control, prompts
-from .artifacts import LEDGER_SCHEMA_VERSION, PROTOCOL_VERSION, RESULT_SCHEMA_VERSION, RUN_CONFIG_SCHEMA_VERSION, STATE_SCHEMA_VERSION
+from .artifacts import EVALUATION_CONTEXT_FILE_NAME, LEDGER_SCHEMA_VERSION, PROTOCOL_VERSION, RESULT_SCHEMA_VERSION, RUN_CONFIG_SCHEMA_VERSION, STATE_SCHEMA_VERSION, NeedsInspection
 from .feedback_extra import abi_signature, at_roofline, failure_phrase, status_lines, target_note, threadgroup_limit_note
 from .llm import LLM, BudgetExhausted, CostLedger, LLMConfig, LLMError, SearchConfig, Transcript
-from .policy import candidate_eligible, choose_confirmed, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain, session_budget_floor
+from .policy import candidate_eligible, choose_confirmed, comparison_speedup, expected_drift_reason, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain, session_budget_floor
 from .committees import committees_record, default_committees, handoff_for, order_committees
 from .parse import parse_plans
-from .evaluation_outbox import EvaluationOutbox, bind_wire_digest
+from .evaluation_outbox import CompletedEvaluationContext, EvaluationOutbox, bind_wire_digest
 from .session_runtime import (
     HmzKernelSessionRunner,
     HmzSessionPlacement,
@@ -261,6 +263,13 @@ class Candidate:
     # 写这版内核的会话归属：origin=session/prior，provider/model/committee,
     # session_label 与 attempt。旧运行没有这一项时为空。
     origin: dict = field(default_factory=dict)
+    # 远端评测的上下文：``_read_candidates`` 读到的是 ``evaluation_context.json`` 投影（未校验），
+    # ``restore`` 用 ``EvaluationOutbox.load_completed_context`` 把它换成**已校验**的行/result；
+    # 本地候选、缺行/pending 都是 None（unknown）。投影本身不是上下文，不能拿它做身份比较。
+    evaluation_context: "CompletedEvaluationContext | None" = None
+    # 搜索期写下的投影原样保留：确认 expected 的“冻结环境分量”只能取这里（行里没有它），
+    # 而投影与行/result 的对账也要求两份都在。
+    evaluation_context_projection: dict | None = None
 
     # 安全且数值正确（EvalReport.status 为 ok）才算合格。正式搜索还要求报告里真有 speedup；缺计时的候选不能换种子。规则在 policy.candidate_eligible。
     @property
@@ -305,6 +314,22 @@ class Candidate:
             "cost_usd": self.cost_usd, "t_s": self.t_s, "is_best": self.is_best,
             "message": (r.message[:300] if r else ""), "origin": dict(self.origin),
         }
+
+
+# 一次评测的返回值：报告，加上这次评测自己的远端上下文（已完成的行/result）。本地评测没有上下文。
+# 确认门必须用**这一批**的上下文做身份比较，而不能拿搜索期那一份顶替；搜索路径把它挂到候选上，
+# 由 ``_save`` 写成 ``evaluation_context.json`` 投影。
+@dataclass
+class EvaluatedReport:
+    """@brief 一份被接受的报告，以及产生它的那次远端评测的已校验上下文。
+
+    ``context`` 是 ``EvaluationOutbox.load_completed_context`` 的返回值：行、result、receipt、
+    evidence、host HMAC 都已校验。本地评测（没有 outbox）恒为 ``None``———那不是 unknown，
+    而是“这次评测本来就没有远端上下文”。
+    """
+
+    report: EvalReport
+    context: "CompletedEvaluationContext | None" = None
 
 
 # 整次搜索的收尾记录。best_speedup 是被选中时的测量；confirmed_speedup 是结束时新种子、更多重复测出来的。budget_usd 是结束时的上限，中途加过预算后会高于 initial_budget_usd。
@@ -620,8 +645,15 @@ class Orchestrator:
         except TargetError as e:
             raise RunStartError(str(e)) from e
         self.target_id = self.target.id
-        # get_task 有缓存。replace 出一份新的 Task，不改缓存里那份的 contract。
-        self.task = replace(cached, contract=replace(cached.contract, gpu=self.target.display_name))
+        # R1/R2: the contract defaults (including `gpu`) come from the registered LoweringProfile.
+        # A target without a registered profile is refused here instead of falling back to a default.
+        try:
+            require_target_profile(self.target.backend, self.target.id)
+        except LoweringError as e:
+            raise RunStartError(str(e)) from e
+        # R2: the task's contract already carries the registered profile's ``gpu`` (R1 refused a
+        # target without a profile), so there is no second source to overwrite here.
+        self.task = cached
         self.task_name, self.dtype, self.size = task_name, dtype, size
         self.cfg, self.search = llm_cfg, search
         from tcenv.backends.registry import load_backend
@@ -748,14 +780,23 @@ class Orchestrator:
             if evaluator_keyring is not None and hasattr(evaluator_keyring, "key_ids")
             else None
         )
-        self._outbox = None if self._local_evaluator else EvaluationOutbox(
-            self.run_dir,
-            signature_key=getattr(self.evaluator, "signature_key", None),
-            transport=transport_metadata["transport"],
-            api_contract_id=transport_metadata.get("api_contract_id", ""),
-            evidence_contract_id=transport_metadata.get("evidence_contract_id", ""),
-            external_trusted_key_ids=trusted_external_keys,
-        )
+        # A damaged ``receipts.json`` (or a missing host signature key) reaches this composition
+        # root as a ``ValueError`` from the outbox; normalise it here, so a resume reports a refused
+        # start instead of an uncaught traceback.
+        if self._local_evaluator:
+            self._outbox = None
+        else:
+            try:
+                self._outbox = EvaluationOutbox(
+                    self.run_dir,
+                    signature_key=getattr(self.evaluator, "signature_key", None),
+                    transport=transport_metadata["transport"],
+                    api_contract_id=transport_metadata.get("api_contract_id", ""),
+                    evidence_contract_id=transport_metadata.get("evidence_contract_id", ""),
+                    external_trusted_key_ids=trusted_external_keys,
+                )
+            except ValueError as exc:
+                raise RunStartError(f"the evaluation outbox cannot be opened: {exc}") from exc
         execution_document = {
             "schema_version": 1,
             "evaluation": "local" if self._local_evaluator else "remote",
@@ -887,6 +928,9 @@ class Orchestrator:
         self._provider_retry = ProviderRetryController(getattr(self.search, "provider_retries", 0))
         self._provider_attempts: dict[str, int] = self._provider_retry.attempts
         self._candidate_origins: dict[str, dict] = {}
+        # Pointers of the remote evaluation contexts already validated by ``restore``; a second
+        # ``restore`` on the same instance reuses them instead of re-reading the outbox.
+        self._restored_contexts: dict[tuple, CompletedEvaluationContext] = {}
         self._sleep = asyncio.sleep  # tests replace this to avoid waiting through retry backoff
         self._failure_feedback = ""
         self._notes_summary = ""
@@ -1009,6 +1053,9 @@ class Orchestrator:
         body = {
                 "schema_version": RUN_CONFIG_SCHEMA_VERSION,
                 "protocol_version": PROTOCOL_VERSION,
+                # Run-level report epoch: written before any evaluation or outbox row, so a
+                # pre-R4 run is refused by its run_config alone (not by "has a report yet").
+                "report_schema_epoch": REPORT_SCHEMA_VERSION,
                 "target": {
                     "id": self.target_id,
                     "backend": self.target.backend,
@@ -1022,9 +1069,19 @@ class Orchestrator:
                 "triton_source_sha256": hashlib.sha256(triton_text.encode("utf-8")).hexdigest(),
                 "task_fingerprint": task_fingerprint(self.task, self.target.backend),
                 "hash_scope": (
-                    "task_fingerprint hashes the contract, the triton source, the naive kernel, cases, tolerances, flops, min_bytes and the ieee/domain meta. The two hashes above are contract.describe() and task.triton_source. reference and baseline implementations are not included"
+                    "task_fingerprint is the RFC8785/SHA-256 canonical document (fingerprint_version 2) over the complete "
+                    "SemanticInstance and Specialization derived from tasks/<op>/opspec.json and the registered Metal "
+                    "LoweringProfile: opspec_digest, lowering_profile_digest, shapes, resolved attrs, tolerances, work "
+                    "accounting (flops/min_bytes) and every Contract field including gpu, plus the triton source, the "
+                    "description and the reference kernel. The two hashes above are contract.describe() and "
+                    "task.triton_source. baseline implementations are not included; tasks that have no OpSpec yet still use "
+                    "the transitional pre-R2 fingerprint"
                     if self.target.backend == "metal" else
-                    "task_fingerprint hashes the contract, the triton source, the reference kernel for the target backend, cases, tolerances, flops, min_bytes and the ieee/domain meta. The two hashes above are contract.describe() and task.triton_source. reference and baseline implementations are not included"
+                    "task_fingerprint is the RFC8785/SHA-256 canonical document (fingerprint_version 2) over the complete "
+                    "SemanticInstance and Specialization derived from tasks/<op>/opspec.json and the registered lowering "
+                    "profile, plus the triton source, the description and the reference kernel for the target backend. The two "
+                    "hashes above are contract.describe() and task.triton_source. baseline implementations are not included; "
+                    "tasks that have no OpSpec yet still use the transitional pre-R2 fingerprint"
                 ),
                 "git_commit": commit,
                 "git_dirty": dirty,
@@ -1196,6 +1253,78 @@ class Orchestrator:
 
     # ------------------------------------------------------------------ resume
     # 把上一会话装回来再继续，而不是从头生成。已评过的稳定结论进缓存；timeout 与 crash 不进。上一会话的 hangs 一并恢复，已经触达 max_hangs 的运行，续跑后第一次完整评测仍会停掉整次搜索。
+    def _restored_evaluation_context(self, c: dict) -> "CompletedEvaluationContext | None":
+        """@brief 把一颗远端候选的上下文投影换成已校验的行/result；缺行/pending 是 unknown。
+
+        ``_read_candidates`` 只解析投影并用公开只读 helper 看那一行是否 completed（不做 HMAC）；
+        这里在 outbox 已经可用、且签名 key 已在组合根装配好之后，才做行/result/receipt/evidence 校验。
+
+        @param c ``taic.resume._read_candidates`` 读出的候选字典。
+        @return 校验过的上下文；本地候选、缺行或 pending 时为 ``None``。
+        @raises NeedsInspection 上下文损坏，或候选有投影却没有 outbox 时。
+        """
+        from .artifacts import NeedsInspection
+
+        pointer = c.get("evaluation_context")
+        if not pointer:
+            return None
+        key = (c.get("label"), pointer["request_id"], pointer["request_digest"], _sha(c["source"]))
+        cached = self._restored_contexts.get(key)
+        if cached is not None:
+            return cached
+        if self._outbox is None:
+            # A remote evaluation's pointer in a run resumed as local must not be skipped: the
+            # confirmed identity would silently lose its search-period context.
+            raise NeedsInspection(
+                f"candidate {c.get('label')!r} carries a remote evaluation context "
+                f"({pointer['request_id']}) but this run has no evaluation outbox: "
+                "resume it with the remote evaluator configuration it was measured with"
+            )
+        context = self._outbox.load_completed_context(
+            pointer["request_id"], pointer["request_digest"], source_bytes=c["source"].encode("utf-8"),
+        )
+        if context is None:
+            # The row is missing or pending now (it was completed when the pointer was read).
+            # Unknown, not damage; the candidate simply cannot be confirmed from this context.
+            self.log(
+                f"candidate {c.get('label')}: its remote evaluation row is no longer completed; "
+                "the evaluation context is unknown"
+            )
+            return None
+        self._reconcile_projection(pointer, context, c)
+        self._restored_contexts[key] = context
+        return context
+
+    def _reconcile_projection(
+        self, pointer: dict, context: "CompletedEvaluationContext", candidate: dict,
+    ) -> None:
+        """@brief 把磁盘上的投影与已校验的行/报告逐项对账（F-36）。
+
+        ``load_completed_context`` validates the row and its result against each other; it cannot
+        know what ``evaluation_context.json`` claims, because the projection is a separate file.  A
+        projection that names a different request, candidate, epoch, device group or build identity
+        than the completed row — or a different frozen environment digest than the accepted report
+        — is damage, not an ``unknown`` context.
+
+        @param pointer ``_read_candidates`` 读回的投影。
+        @param context 已校验的行/result。
+        @param candidate ``_read_candidates`` 的候选字典（取其 ``report``）。
+        @raises NeedsInspection 投影与行/报告不一致时。
+        """
+        from tcenv.schema import SchemaError
+
+        from .artifacts import NeedsInspection, reconcile_evaluation_context
+
+        report = candidate.get("report")
+        report = report.to_json() if hasattr(report, "to_json") else report
+        try:
+            reconcile_evaluation_context(pointer, row=context.row, report=report)
+        except SchemaError as exc:
+            raise NeedsInspection(
+                f"candidate {candidate.get('label')!r}: {EVALUATION_CONTEXT_FILE_NAME} disagrees with "
+                f"its evaluation outbox row: {exc}"
+            ) from exc
+
     def restore(self, snap: Any, *, dry_run: bool = False) -> None:
         """@brief 把上一场会话装回来，让 ``run()`` 接着跑而不是从头生成。
 
@@ -1207,8 +1336,15 @@ class Orchestrator:
 
         ``dry_run`` 只把状态装进内存，什么都不写（不写会话记录 marker，也不写 ``state.json``）。
 
+        远端候选的 ``evaluation_context.json`` 投影在这里换成**已校验**的行/result：
+        ``EvaluationOutbox.load_completed_context`` 校验行、result、receipt、evidence、host HMAC 与 receipt
+        index；缺行/pending 是未知上下文（``None``），损坏/不一致抛 ``NeedsInspection``。候选有投影而
+        ``self._outbox is None``（远端 run 被当成本地续跑）不得静默跳过。第一次（``dry_run=True``）已校验过的
+        上下文按指针缓存，第二次 ``restore(dry_run=False)`` 复用，不重读也不改写。
+
         @param snap 续跑快照。
         @param dry_run 只装载不落盘（跳过快照会话记录与 ``state.json``）。
+        @raises NeedsInspection 远端上下文损坏、候选有投影而没有 outbox 时。
         """
         self.ledger.restore(snap.requests)
         self.ledger.initial_budget_usd = snap.initial_budget_usd
@@ -1220,7 +1356,9 @@ class Orchestrator:
             t = by_idx.get(c["idx"], {})
             cand = Candidate(idx=c["idx"], label=c["label"], source=c["source"], report=c["report"], plan=c.get("plan"), cost_usd=t.get("cost_usd", 0.0), t_s=t.get("t_s", 0.0),
                              is_best=False, within_noise=bool(t.get("within_noise")), correctness_only=self.search.correctness_only,
-                             recheck_rejected=bool(c.get("recheck_rejected")), recheck_pending=bool(c.get("recheck_pending")), origin=dict(self._candidate_origins.get(c["label"]) or {}))
+                             recheck_rejected=bool(c.get("recheck_rejected")), recheck_pending=bool(c.get("recheck_pending")), origin=dict(self._candidate_origins.get(c["label"]) or {}),
+                             evaluation_context=self._restored_evaluation_context(c),
+                             evaluation_context_projection=dict(c.get("evaluation_context") or {}) or None)
             self.candidates.append(cand)
             # 与 _eval 相同：超时和 worker 崩溃是环境故障，不能当成这颗内核的永久判决。
             if cand.report is not None and cand.report.status not in ("timeout", "crash") and self._cache_this(cand.source):
@@ -1301,6 +1439,12 @@ class Orchestrator:
                     c.report.benchmark["seed_gpu_us_median"] = float(seed_gpu)
             control.write_json_atomic(d / "report.json", c.report.to_json())
             control.write_text_atomic(d / "feedback.txt", format_feedback(c.report))
+            # 远端评测的上下文投影：固定 schema v1，与 outbox 行/result 逐项一致。本地候选没有
+            # 这项，也**不**写空文档——“没有远端上下文”和“上下文被写成空壳”必须可区分。
+            if c.evaluation_context_projection is not None:
+                control.write_json_atomic(
+                    d / EVALUATION_CONTEXT_FILE_NAME, c.evaluation_context_projection
+                )
 
     def _evaluation_request(
         self,
@@ -1465,12 +1609,16 @@ class Orchestrator:
         fast_bench: bool = False,
         require_contract_launch: bool = False,
         cases: tuple[str, ...] | None = None,
-    ) -> EvalReport:
+    ) -> EvaluatedReport:
         """@brief 通过当前执行器评测一颗候选并还原成已有 ``EvalReport``。
 
         默认执行器是 ``LocalEvaluator``，所以 Search 循环对结果的使用方式没有变化；
         注入的远程执行器只需返回同一 ``EvaluationResult`` 形状。适配器抛出的
         ``EvaluationError`` 不在这里改写成内核错误，交给上层按基础设施故障处理。
+
+        远程评测在 ``complete`` 之后把自己**这一批**的 outbox 行/result 读回来校验一遍，作为本次
+        评测的上下文一起返回：确认门比较的是本批上下文，而不是搜索期的那一份。读回失败说明刚写下的
+        行/result 已经不可信，转成 ``evaluation_context_invalid`` 而不是静默当成 unknown。
 
         @param source 内核正文。
         @param mode 评测模式。
@@ -1482,7 +1630,7 @@ class Orchestrator:
         @param fast_bench 是否快速基准。
         @param require_contract_launch 是否要求契约启动检查。
         @param cases 评测用例；None 表示评测器默认。
-        @return 评测报告。
+        @return 报告，以及这次评测自己的已校验远端上下文（本地为 ``None``）。
         """
         request = self._evaluation_request(
             source, mode=mode, seed=seed, reps=reps, label=label,
@@ -1490,6 +1638,7 @@ class Orchestrator:
             fast_bench=fast_bench, require_contract_launch=require_contract_launch, cases=cases,
         )
         current_epoch = getattr(self.evaluator, "epoch", "")
+        completed = False
         try:
             ensure_epoch = getattr(self.evaluator, "ensure_epoch", None)
             if callable(ensure_epoch):
@@ -1557,7 +1706,9 @@ class Orchestrator:
                 elif not isinstance(evidence, dict) or evidence.get("candidate_sha256") != request.candidate_sha256:
                     raise EvaluationUnavailable("provenance_mismatch", "result evidence does not bind the candidate source")
             report = result.report
-            if provenance.measurement_kind != "measured" or (isinstance(report, dict) and report.get("simulated") is True):
+            if provenance.measurement_kind != "measured":
+                # A simulated evaluator says so in its provenance; the report itself is a plain
+                # schema-4 document whose ``build.build_kind`` says how it was built.
                 raise EvaluationUnavailable("simulated_result", "simulated evaluation cannot enter a search")
             try:
                 if isinstance(report, dict):
@@ -1580,11 +1731,82 @@ class Orchestrator:
             self._observe_evaluator(provenance)
             if self._outbox is not None and not replayed_from_outbox:
                 self._outbox.complete(request, result)
-            return parsed
+            completed = True
         except EvaluationUnavailable as exc:
-            if self._outbox is not None:
+            # Only the request/result path marks the row unavailable.  A failure *after* the row
+            # was completed (reading the context back) concerns the row's readability, not the
+            # evaluation, so it must not be recorded as an unavailable evaluation.
+            if self._outbox is not None and not completed:
                 self._outbox.unavailable(request, exc)
             raise
+        return EvaluatedReport(
+            report=parsed,
+            context=self._retain_evaluation_context(request),
+        )
+
+    def _retain_evaluation_context(
+        self, request: EvaluationRequest,
+    ) -> "CompletedEvaluationContext | None":
+        """@brief 把本次评测自己的已完成行/result 读回来，作为这一批的上下文。
+
+        The row was written by ``begin``/``complete`` (or replayed by ``begin``) microseconds ago, so
+        reading it back is not a second opinion: it is the only way to hand the confirmation gate the
+        *validated* context for this batch.  A replayed row was also validated by ``begin``; re-reading
+        it keeps one code path for both cases.  Damage here is an infrastructure error, never an
+        ``unknown`` context: an accepted report whose own row cannot be read back must not quietly
+        become unpublishable.
+
+        @param request 本次评测请求。
+        @return 已校验的上下文；本地评测（无 outbox）时为 ``None``。
+        @raises EvaluationUnavailable 行/result 读回失败时（``evaluation_context_invalid``）。
+        """
+        from .artifacts import NeedsInspection
+
+        if self._outbox is None:
+            return None
+        try:
+            context = self._outbox.load_completed_context(
+                request.request_id, request.request_digest, source_bytes=request.source.encode("utf-8"),
+            )
+        except NeedsInspection as exc:
+            raise EvaluationUnavailable(
+                "evaluation_context_invalid",
+                f"the completed evaluation row for {request.request_id} is not usable: {exc}",
+            ) from exc
+        if context is None:
+            raise EvaluationUnavailable(
+                "evaluation_context_invalid",
+                f"the completed evaluation row for {request.request_id} disappeared after complete",
+            )
+        return context
+
+    def _evaluation_context_projection(
+        self, context: "CompletedEvaluationContext | None",
+    ) -> dict | None:
+        """@brief 把本批上下文投影成固定 schema v1 的 ``evaluation_context.json`` 文档。
+
+        @param context ``_retain_evaluation_context`` 的返回值。
+        @return 投影文档；本地评测或投影不合法时为 ``None``（后者不可能静默发生）。
+        @raises EvaluationUnavailable 投影无法按固定 schema 组装时。
+        """
+        if context is None or self._outbox is None:
+            return None
+        from tcenv.schema import SchemaError
+
+        from .artifacts import reconcile_evaluation_context
+
+        try:
+            document = self._outbox.projection_document(context)
+            report = context.result.report
+            if hasattr(report, "to_json"):
+                report = report.to_json()
+            # Reconcile before writing: a projection that disagrees with its own row must never
+            # become the file a later resume trusts (F-36).
+            return reconcile_evaluation_context(document, row=context.row, report=report)
+        except (EvaluationUnavailable, SchemaError) as exc:
+            raise EvaluationUnavailable(
+                "evaluation_context_invalid", f"the evaluation context projection is not writable: {exc}",
+            ) from exc
 
     # a 必须比 b 快出这么多倍才算真正变快：至少 min_improvement，并且要盖过两者加速比标准误合成后再乘 noise_z。差一点只记 within_noise，不能当下一轮种子。
     def _required_gain(self, a: Candidate, b: Candidate) -> float:
@@ -1650,16 +1872,21 @@ class Orchestrator:
                     eval_cache=bool(self.search.eval_cache),
                 )
                 self.evaluations += 1
-            cand.report = rep
+            cand.report = rep.report
+            # The context belongs to this evaluation, not to the source: a duplicate or a cached
+            # source has no row of its own, so its context stays ``None`` (unknown) rather than
+            # borrowing another candidate's row.
+            cand.evaluation_context = rep.context
+            cand.evaluation_context_projection = self._evaluation_context_projection(rep.context)
             seed_from = "search" if phase_seed is not None else "random"
-            used_seed = phase_seed if phase_seed is not None else rep.seed
+            used_seed = phase_seed if phase_seed is not None else rep.report.seed
             # timeout / crash 不进缓存：那是环境故障，不能当成这颗内核的永久判决。
-            if rep.status not in ("timeout", "crash"):
-                self.cache[key] = rep
+            if rep.report.status not in ("timeout", "crash"):
+                self.cache[key] = rep.report
             # 默认 max_hangs 为 1：这一次 timeout 就够让函数末尾抛 StopRun。quick_check 的超时也记在同一个 hangs 上。
-            if rep.status == "timeout":
+            if rep.report.status == "timeout":
                 self.hangs += 1
-            self.crashes_in_a_row = self.crashes_in_a_row + 1 if rep.status == "crash" else 0
+            self.crashes_in_a_row = self.crashes_in_a_row + 1 if rep.report.status == "crash" else 0
         cand.cost_usd, cand.t_s = self.ledger.total_usd, self._elapsed()
         async with self._promote_lock:
             best = self.best
@@ -1757,16 +1984,16 @@ class Orchestrator:
                 eval_cache=bool(self.search.eval_cache),
             )
         self.evaluations += 1
-        if rep.status == "ok":
+        if rep.report.status == "ok":
             return None
-        kernel_error = rep.status not in ("timeout", "crash")
-        if rep.status == "timeout":
+        kernel_error = rep.report.status not in ("timeout", "crash")
+        if rep.report.status == "timeout":
             self.hangs += 1
-        elif rep.status == "crash":
+        elif rep.report.status == "crash":
             self.crashes_in_a_row += 1
         else:
             self.crashes_in_a_row = 0
-        return self._failure_record(cand, rep, phase_seed, speed_relation, kernel_error)
+        return self._failure_record(cand, rep.report, phase_seed, speed_relation, kernel_error)
 
     def _failure_record(self, cand: Candidate, rep: EvalReport, phase_seed: int | None, speed_relation: str, kernel_error: bool) -> dict:
         """@brief 为一次失败的重测整理一份记录。
@@ -1907,6 +2134,13 @@ class Orchestrator:
             res.stop_reason = "evaluation_unavailable"
             res.confirmed_status = "evaluation_unavailable"
             self.log(f"== stop: evaluation unavailable during confirmation ({getattr(e, 'code', 'evaluation_unavailable')}): {e}")
+        except NeedsInspection as e:
+            # §7.2: a context/outbox that cannot be inspected is not a kernel failure and not a
+            # publishable number.  ``confirm_error`` keeps the process exit code non-zero (6) and
+            # ``_finish`` writes result.json without a confirm_report.json.
+            res.stop_reason = f"confirm_error: needs_inspection: {e}"
+            res.confirmed_status = "needs_inspection"
+            self.log(f"== stop: confirmation needs inspection: {e}")
         except Exception as e:  # noqa: BLE001 - the run is over; its files still have to be written
             previous_stop = res.stop_reason
             res.stop_reason = f"confirm_error: {type(e).__name__}: {e}"
@@ -2657,6 +2891,13 @@ class Orchestrator:
                     "protocol_version": cand.report.protocol_version,
                     "kernel_sha256": kernel_sha,
                     "trusted_source": "outer candidate report",
+                    # The premise gate refuses a simulated measurement or a non-native build; a
+                    # local candidate report reaches this point only through a fresh native build.
+                    "measurement_kind": "measured",
+                    "build_kind": (
+                        cand.report.build.get("build_kind")
+                        if isinstance(cand.report.build, dict) else None
+                    ),
                 }
             proposals = harness.record_proposals(
                 self.run_dir, record=record, parsed=parsed,
@@ -3137,7 +3378,7 @@ class Orchestrator:
 
         @param win 确认后的优胜者。
         """
-        if not (self.task.meta or {}).get("domain_case"):
+        if not self.task.evaluation_domain.get("domain_case"):
             return
         phase_seed = self._phase_seed("domain", win.label, win.source)
         try:
@@ -3151,16 +3392,181 @@ class Orchestrator:
                     require_contract_launch=bool(self.search.require_contract_launch),
                     eval_cache=bool(self.search.eval_cache),
                 )
-            if rep.status == "timeout":
+            if rep.report.status == "timeout":
                 self.hangs += 1
                 self._publish_state("confirm", inflight=None)
-            doc = rep.to_json()
+            doc = rep.report.to_json()
         except Exception as e:  # noqa: BLE001 - the sweep is evidence, not a second chance to lose the confirmation
             doc = {"status": f"error: {type(e).__name__}: {e}", "correctness": {"coverage": {"kind": "sampling", "scope": ""}}}
             self.log(f"   domain sweep failed: {doc['status']}")
         control.write_json_atomic(self.run_dir / "domain_report.json", doc)
         kind = ((doc.get("correctness") or {}).get("coverage") or {}).get("kind")
         self.log(f"   domain sweep: {doc.get('status')} ({kind})")
+
+    def _confirmation_expected(self, cand: "Candidate") -> dict:
+        """@brief 实时确认的 expected：由执行器给出当前可重算身份，绝不复制 search report。
+
+        The local evaluator resolves the current target/backend registry and its own builder
+        profile; ``LocalEvaluator.confirmation_expected`` is the only source.  Values that only a
+        build can produce (assembled/artifact/native digests) are not in this document at all —
+        the comparator compares them between the two reports.  No handle, host path or report
+        field is taken from ``cand.report``.
+
+        @param cand 即将重测的候选。
+        @return ``{"build": {...}, "evaluation": {...}, "protocol_version": ..., "target_id": ...}``。
+        """
+        provider = getattr(self.evaluator, "confirmation_expected", None)
+        if provider is None and not self._local_evaluator:
+            # The remote expected: host-recomputable implementation components, the deployed pack
+            # from the validated evaluator provenance, and the **frozen** search-period environment
+            # component.  The host's own library versions never enter it (plan §7.2).
+            return self._remote_confirmation_expected(cand)
+        if provider is None:
+            from tcenv.evaluate import confirmation_expected_document
+
+            return confirmation_expected_document(
+                self.task_name, self.dtype, self.size, self.target_id, cand.source, probe=False,
+            )
+        expected = provider(
+            task=self.task_name, dtype=self.dtype, size=self.size,
+            target_id=self.target_id, source=cand.source,
+        )
+        if not isinstance(expected, dict) or "build" not in expected or "evaluation" not in expected:
+            raise TypeError("the evaluator's confirmation expected is not a build/evaluation document")
+        expected.setdefault("protocol_version", expected["evaluation"].get("protocol_version"))
+        expected.setdefault("target_id", expected["evaluation"].get("target_id"))
+        return expected
+
+    def _remote_confirmation_expected(self, cand: "Candidate") -> dict:
+        """@brief 远端确认 expected：host 重算实现分量，pack/环境/设备分量取自已校验上下文。
+
+        The evaluator may provide its own document (``confirmation_expected``); when it does not,
+        this assembles the same shape from what the resume already validated:
+
+        * ``task_pack_digest``: the **deployed** pack the measurement ran with, from the accepted
+          report's evaluator provenance — never the host's own registered pack;
+        * ``baseline_environment_digest``: the frozen search-period value from the projection (the
+          accepted report).  An evaluator that later upgraded a baseline library therefore shows a
+          different environment, which the comparator reports as a mismatch;
+        * ``build_provenance``/``device_group``/``evaluator_epoch``/``candidate_digest``: the
+          persisted outbox row.  These are *persisted* values, not a fresh probe: this process has
+          no way to probe the evaluator's toolchain, and inventing one would be worse than unknown.
+
+        A candidate without a validated context returns an expected whose remote components are
+        ``None``: every remote-only comparison is then unknown and the batch cannot publish.
+
+        @param cand 即将重测的候选。
+        @return 与 ``confirmation_expected_document`` 同形状、另含远端分量的 expected。
+        """
+        from tcenv.evaluate import remote_confirmation_expected
+
+        context = cand.evaluation_context
+        row = context.row if context is not None and isinstance(context.row, dict) else {}
+        provenance = getattr(getattr(context, "result", None), "provenance", None)
+        report_document = cand.report.to_json() if cand.report is not None else {}
+        projection = getattr(cand, "evaluation_context_projection", None) or {}
+        # The frozen environment component: the projection the search period wrote next to the
+        # candidate, falling back to the accepted report's own top-level field.
+        frozen_environment = projection.get("baseline_environment_digest")
+        if frozen_environment is None:
+            frozen_environment = report_document.get("baseline_environment_digest")
+        pack = getattr(provenance, "task_pack_digest", None)
+        candidate = row.get("candidate_digest")
+        if candidate is None:
+            candidate = projection.get("candidate")
+        return remote_confirmation_expected(
+            self.task_name, self.dtype, self.size, self.target_id, cand.source,
+            task_pack_digest=pack if isinstance(pack, str) and pack else None,
+            baseline_environment_digest=(
+                frozen_environment if isinstance(frozen_environment, str) and frozen_environment else None
+            ),
+            build_provenance=row.get("build_provenance"),
+            device_group=row.get("device_group"),
+            evaluator_epoch=row.get("evaluator_epoch") or projection.get("evaluator_epoch"),
+            candidate_digest=candidate if isinstance(candidate, dict) else None,
+        )
+
+    def _confirmation_batch(self, cand: "Candidate", evaluated: "EvaluatedReport", expected: dict) -> dict:
+        """@brief 判定一批确认报告的资格与身份，返回写进 ``result.confirmations`` 的记录。
+
+        A batch is publishable only when it is a ``full``, ``native``, ``measured``, uncached,
+        quiet re-measurement whose build and evaluation identities match the search report and the
+        frozen expected.  Everything else is recorded with its own status so the read-disk
+        predicate can see *why* a run is not publishable.
+
+        The confirmation side of a remote comparison is **this batch's own validated context**
+        (``EvaluatedReport.context``), never the search-period row: a batch measured under a
+        different evaluator epoch, device group or build identity must show up as a mismatch.  A
+        batch without one (a local run, or a row that is no longer completed) leaves the remote
+        fields unknown — which cannot publish.
+
+        @param cand 被重测的候选。
+        @param evaluated 本批的报告与它自己的已校验上下文。
+        @param expected 冻结 expected。
+        @return ``{label, shape, build_kind, measurement_kind, cache_hit, timing_uncertain, identity}``。
+        """
+        from taic.policy import compare_confirmation_identity
+        from tcenv.bench import timing_is_uncertain
+
+        rep = evaluated.report
+        document = rep.to_json()
+        build = document.get("build") or {}
+        if self._local_evaluator:
+            measurement_kind = "measured"
+        else:
+            # This batch's own provenance, not the executor's last-known value: a confirmed batch
+            # must say what *it* measured.  A batch without a validated context has no provenance
+            # to show, and ``unknown`` is then the honest answer (it cannot publish anyway).
+            batch_provenance = getattr(getattr(evaluated.context, "result", None), "provenance", None)
+            measurement_kind = str(getattr(batch_provenance, "measurement_kind", "") or "unknown")
+        # ``scope`` is explicit: a local run has no remote context, and a remote one compares the
+        # persisted outbox context (the validated search context plus this batch's context) as a
+        # third party.  A batch that lost its context is ``unknown`` — which is exactly "cannot
+        # publish", never "the host's library agrees".
+        identity = compare_confirmation_identity(
+            candidate_sha256=hashlib.sha256(cand.source.encode("utf-8")).hexdigest(),
+            expected=expected,
+            search=cand.report.to_json() if cand.report is not None else None,
+            confirmation=document,
+            scope="local" if self._local_evaluator else "remote",
+            search_context=cand.evaluation_context,
+            confirmation_context=evaluated.context,
+        )
+        # The identity record written to ``result.confirmations`` and to the confirm report must be
+        # byte-identical in both places: the read-disk predicate compares them directly.
+        identity = {
+            **identity,
+            "shape": build.get("shape"),
+            "build_kind": build.get("build_kind"),
+            "measurement_kind": measurement_kind,
+            "cache_hit": bool(rep.cache_hit),
+            "timing_uncertain": timing_is_uncertain(document),
+        }
+        return {
+            "label": cand.label,
+            "shape": identity["shape"],
+            "build_kind": identity["build_kind"],
+            "measurement_kind": identity["measurement_kind"],
+            "cache_hit": identity["cache_hit"],
+            "timing_uncertain": identity["timing_uncertain"],
+            "identity": identity,
+        }
+
+    def _confirmation_batch_status(self, batch: dict) -> str | None:
+        """@brief 把一批记录的失败原因压成 ``entry["status"]``；合格时返回 ``None``。
+
+        @param batch ``_confirmation_batch`` 的记录。
+        @return 状态码或 ``None``（可进入 ``confirmed``）。
+        """
+        if batch["shape"] != "full":
+            return "build_identity_unknown"
+        if batch["build_kind"] != "native" or batch["measurement_kind"] != "measured" or batch["cache_hit"]:
+            return "confirmation_ineligible"
+        if batch["identity"]["kind"] != "match":
+            return batch["identity"]["kind"]
+        if batch["timing_uncertain"]:
+            return "timing_uncertain"
+        return None
 
     async def _confirm(self, res: RunResult) -> None:
         """@brief 用新种子、更多重复次数重测优胜者与它的统计并列者。
@@ -3172,6 +3578,12 @@ class Orchestrator:
         复测超时就停下剩余的批次与并列者，搜索已经结束，这里只停止继续占 GPU。确认是「再测一次」
         而不是取回上一次的结果，所以 ``eval_cache=False``。确认成功后调用 ``_domain_sweep``。
         评测本身抛 ``SchemaError`` 时直接上抛，不把它当成一次可忽略的批次失败。
+
+        Each candidate's batches are compared against **one frozen** expected document; that same
+        document is written into ``confirm_report.json``.  Finalization recomputes it only as a
+        check: any drift from the frozen copy is an identity failure (``build_identity_mismatch``/
+        ``evaluation_identity_mismatch``) and nothing is published, because a confirm report must not
+        freeze an identity its batches never proved (plan §7.2).
 
         @param res 收尾记录（写 ``confirmations``、``confirmed_*``、``candidate_us`` 与 ``baseline_us``）。
         @raises SchemaError 当评测报告不符合 schema 时（直接上抛）。
@@ -3189,6 +3601,9 @@ class Orchestrator:
         batches = max(1, int(getattr(self.search, "confirm_batches", 1) or 1))
         # (候选, 中位数, 每一批的值, 与中位数一致的那份报告)
         confirmed: list[tuple[Candidate, float, list[float], EvalReport]] = []
+        batch_records_by_label: dict[str, list[dict]] = {}
+        # (label -> the expected every one of its batches was compared against)
+        frozen_expected: dict[str, dict] = {}
         for c in pool:
             entry: dict[str, Any] = {"label": c.label, "search_speedup": c.speedup, "failed_batches": 0}
             res.confirmations.append(entry)
@@ -3198,10 +3613,11 @@ class Orchestrator:
             reports: list[EvalReport] = []
             seeds: list[int | None] = []
             stop = False
-            for batch in range(batches):
+            batch_records: list[dict] = []
+            for batch_index in range(batches):
                 # 同一批里的并列候选共用一个种子，比的是同一套输入。批次之间换种子。
                 # 种子不掺内核正文，所以换一颗核不会换掉这一批的输入。
-                seed_label = f"b{batch + 1}"
+                seed_label = f"b{batch_index + 1}"
                 try:
                     async with self.gpu_lock:
                         phase_seed = self._phase_seed("confirm", seed_label, "")
@@ -3213,32 +3629,81 @@ class Orchestrator:
                             # 或同一个 --seed 的重跑在 2 ms 内复述旧报告，而发布门会把它当成复测。
                             eval_cache=False,
                         )
-                    seeds.append(phase_seed if phase_seed is not None else rep.seed)
-                    if batch == 0:
+                    seeds.append(phase_seed if phase_seed is not None else rep.report.seed)
+                    if batch_index == 0:
                         entry["eval_seed"] = seeds[-1]
                         entry["eval_seed_from"] = "confirm" if phase_seed is not None else "random"
-                except SchemaError:
+                except NeedsInspection:
+                    # A damaged evaluation context / outbox row is not a candidate failure: §7.2
+                    # hands it to ``run()``'s finish face (``needs_inspection``/``confirm_error``),
+                    # which writes result.json but no confirm_report.json.
                     raise
-                except Exception as e:  # noqa: BLE001 - a failed confirmation must not lose the run
-                    entry["status"] = f"error: {type(e).__name__}: {e}"
-                    entry["failed_batches"] = batches - batch
-                    self.log(f"   {c.label}: confirmation batch {batch + 1} failed: {type(e).__name__}: {str(e)[:160]}")
+                except (EvaluationUnavailable, EvaluationError, ContractError, SchemaError) as e:
+                    # §7.2: a confirmation that could not be evaluated is its own outcome, not
+                    # ``error: <type>: <text>``.  Structural damage (the evaluator's report, receipt
+                    # or HMAC does not parse/verify) is ``result_invalid``; ``EvaluationUnavailable``
+                    # keeps its own closed-set code.  Nothing is appended, the kernel is not blamed
+                    # (``kernel_error`` stays false), the remaining batches are not measured.
+                    unavailable = e if isinstance(e, EvaluationUnavailable) else EvaluationUnavailable(
+                        "result_invalid", f"damaged confirmation result: {e}"
+                    )
+                    entry["status"] = "evaluation_unavailable"
+                    entry["failed_batches"] = batches - batch_index
+                    self.log(
+                        f"   {c.label}: confirmation batch {batch_index + 1} unavailable "
+                        f"({getattr(unavailable, 'code', 'result_invalid')}): {str(unavailable)[:160]}"
+                    )
                     self._confirmations = res.confirmations
                     self._publish_state("confirm", inflight=c.label)
                     stop = True
                     break
-                if rep.status == "ok" and rep.speedup:
-                    values.append(float(rep.speedup))
-                    reports.append(rep)
+                except Exception:  # noqa: BLE001 - §7.2: unclassified failures go to run()'s finish face
+                    # An unclassified confirmation failure is ``confirm_error``: it must reach
+                    # ``run()``'s finish face, which records ``confirm_error: <type>: <text>``, writes
+                    # result.json without a confirm_report.json and makes the process exit 6.
+                    # Swallowing it here (with a free-text ``error: ...`` batch status) let the run
+                    # finish as ``max_rounds`` with a non-zero exit the caller never saw.
+                    self._confirmations = res.confirmations
+                    self._publish_state("confirm", inflight=c.label)
+                    raise
+                if rep.report.status == "ok" and rep.report.speedup:
+                    # §7.2: one frozen expected per candidate.  Every batch of this candidate is
+                    # compared against the same document, and that document is the one that gets
+                    # frozen into the confirm report — finalization never substitutes a later,
+                    # unvalidated recompute for what the batches actually proved.
+                    expected = frozen_expected.get(c.label)
+                    if expected is None:
+                        expected = self._confirmation_expected(c)
+                        frozen_expected[c.label] = expected
+                    batch = self._confirmation_batch(c, rep, expected)
+                    entry["identity"] = batch["identity"]
+                    status = self._confirmation_batch_status(batch)
+                    if status is not None:
+                        entry["status"] = status
+                        failed = self._failure_record(c, rep.report, phase_seed, "confirm", False)
+                        failed["status"] = status
+                        failed["identity"] = entry["identity"]
+                        folder = self.run_dir / "rechecks"
+                        folder.mkdir(exist_ok=True)
+                        (folder / f"confirm_{c.label}{'' if batch_index == 0 else f'.b{batch_index + 1}'}.json").write_text(
+                            json.dumps(failed, indent=1, default=str)
+                        )
+                        entry["failed_batches"] = batches - batch_index
+                        self.log(f"   {c.label}: confirmation {status} - not publishable")
+                        stop = True
+                        break
+                    values.append(float(rep.report.speedup))
+                    reports.append(rep.report)
+                    batch_records.append(batch)
                     continue
-                failed = self._failure_record(c, rep, phase_seed, "confirm", rep.status not in ("timeout", "crash"))
+                failed = self._failure_record(c, rep.report, phase_seed, "confirm", rep.report.status not in ("timeout", "crash"))
                 folder = self.run_dir / "rechecks"
                 folder.mkdir(exist_ok=True)
-                (folder / f"confirm_{c.label}{'' if batch == 0 else f'.b{batch + 1}'}.json").write_text(json.dumps(failed, indent=1, default=str))
+                (folder / f"confirm_{c.label}{'' if batch_index == 0 else f'.b{batch_index + 1}'}.json").write_text(json.dumps(failed, indent=1, default=str))
                 entry["failed_batches"] = int(entry["failed_batches"]) + 1
-                entry["status"] = rep.status
-                self.log(f"   {c.label}: confirmation {rep.status} {rep.message[:120]}")
-                if rep.status == "timeout":
+                entry["status"] = rep.report.status
+                self.log(f"   {c.label}: confirmation {rep.report.status} {rep.report.message[:120]}")
+                if rep.report.status == "timeout":
                     # 复测超时就不再测剩下的批次与并列者。搜索已经结束，这里只停止继续占 GPU。
                     self.hangs += 1
                 stop = True
@@ -3254,6 +3719,7 @@ class Orchestrator:
                 entry["confirmed_best"] = max(values)
                 rep = min(reports, key=lambda r: abs(float(r.speedup) - median))
                 confirmed.append((c, median, values, rep))
+                batch_records_by_label[c.label] = batch_records
                 self.log(f"   {c.label}: confirmed {median:.3f}x (median of {len(values)} batch(es): " + ", ".join(f"{v:.3f}" for v in values) + ")")
             self._confirmations = res.confirmations
             self._publish_state("confirm", inflight=c.label)
@@ -3272,24 +3738,76 @@ class Orchestrator:
             self.log("   confirmation did not separate a winner from the noise")
             return
         win, median, values, rep = chosen["candidate"], chosen["median"], chosen["values"], chosen["report"]
+        expected = frozen_expected.get(win.label)
+        if expected is None:
+            # A winner always completed at least one batch, so this is a programming error, not a
+            # data condition: refuse rather than fabricate a document.
+            res.confirmed_status = "not_confirmed"
+            self.log(f"   {win.label}: no frozen expected for the confirmed batches - not publishable")
+            return
+        # Recompute once as a *check* only.  If the executor/registry identity moved since the
+        # batches were compared, the frozen document is no longer current: refuse instead of
+        # publishing a frozen expected the batches never proved (plan §7.2).
+        drifted = expected_drift_reason(expected, self._confirmation_expected(win))
+        if drifted is not None:
+            res.confirmed_status = drifted
+            for entry in res.confirmations:
+                if isinstance(entry, dict) and entry.get("label") == win.label:
+                    entry["status"] = drifted
+            self.log(
+                f"   {win.label}: the current expected drifted from the one its batches were "
+                f"compared against ({drifted}) - not publishable"
+            )
+            return
         self._confirm_winner = win
         if win is not self.best:
             self.log(f"   {win.label} clears the noise gate against {self.best.label}; it becomes the result")
             self.best.is_best, win.is_best = False, True
             self.best = win
-        res.confirmed_status, res.confirmed_speedup = "ok", median
+        res.confirmed_speedup = median
         res.confirmed_values, res.confirmed_worst, res.confirmed_best = list(values), min(values), max(values)
         res.candidate_us, res.baseline_us = rep.candidate_us, rep.baseline_us
         report_doc = rep.to_json()
+        winner_sha = hashlib.sha256(win.source.encode("utf-8")).hexdigest()
+        # ``expected`` is still the document the batches were compared against (checked above).
         benchmark = dict(report_doc.get("benchmark") or {})
         benchmark["confirmation"] = {
-            "kernel_sha256": hashlib.sha256(win.source.encode("utf-8")).hexdigest(),
+            "kernel_sha256": winner_sha,
             "winner_label": win.label,
             "confirmed_values": list(values),
             "speedup": median,
             "candidate_us": rep.candidate_us,
+            "expected": expected,
+            "batches": batch_records_by_label.get(win.label, []),
         }
         report_doc["benchmark"] = benchmark
+        from taic.policy import confirmation_publication
+
+        decision = confirmation_publication(
+            result={
+                "confirmed_status": "ok",
+                "confirmation_source_sha256": winner_sha,
+                "confirm_winner_label": win.label,
+                "confirmed_speedup": median,
+                "confirmed_values": list(values),
+                "candidate_us": rep.candidate_us,
+                "target_id": self.target_id,
+                "confirmations": res.confirmations,
+            },
+            confirm_report=report_doc,
+            batches=batch_records_by_label.get(win.label, []),
+            expected=expected,
+            bindings={
+                "confirmation_source_sha256": winner_sha,
+                "confirm_report_status": "ok",
+                "best_source_sha256": hashlib.sha256(self.best.source.encode("utf-8")).hexdigest(),
+                "winner_source_sha256": winner_sha,
+            },
+        )
+        res.confirmed_status = "ok" if decision["allowed"] else decision["status"]
+        if not decision["allowed"]:
+            self.log(f"   confirmation is not publishable: {decision['status']} ({decision['reason']})")
+            return
         control.write_json_atomic(self.run_dir / "confirm_report.json", report_doc)
         if self.hangs >= self.search.max_hangs:
             self.log("   domain sweep skipped: confirmation already hit the hang limit")

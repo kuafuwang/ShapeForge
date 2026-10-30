@@ -122,12 +122,13 @@ def _seed(runs: Path) -> str:
     candidate = directory / "candidates" / "000_r1.p0"
     candidate.mkdir(parents=True)
     (candidate / "kernel.metal").write_text("kernel void k() {}\n", encoding="utf-8")
-    (candidate / "report.json").write_text(json.dumps({"status": "ok", "speedup": 1.2}), encoding="utf-8")
+    (candidate / "report.json").write_text(json.dumps({"schema_version": 4, "status": "ok", "speedup": 1.2}), encoding="utf-8")
     # 一颗失败的候选：失败簇详情端点只有在有成员时才是 200，否则只能测到 404 错误体。
     failing = directory / "candidates" / "001_r1.p1"
     failing.mkdir(parents=True)
     (failing / "kernel.metal").write_text("kernel void k() {}\n", encoding="utf-8")
     (failing / "report.json").write_text(json.dumps({
+        "schema_version": 4,
         "status": "incorrect", "stage": "correctness", "speedup": 0.5,
         "message": "worst: out got 1.5e-3",
     }), encoding="utf-8")

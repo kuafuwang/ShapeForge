@@ -74,10 +74,22 @@ def _run(root: Path, name: str, record: dict, *, started_at: float) -> Path:
     (directory / "feedback.jsonl").write_text(json.dumps(record, ensure_ascii=False) + "\n")
     folder = directory / "candidates" / f"000_{record['label']}"
     folder.mkdir(parents=True)
-    (folder / "report.json").write_text(json.dumps({
-        "status": "ok", "candidate_us": 770, "benchmark": {"candidate": {"median_us": 770, "cv": 0.01}},
-        "roofline": {"lower_bound_us": 414, "bound_kind": "reference_algorithm"},
-    }))
+    # Schema 4 only: the review panel refuses to quote an old-format report's numbers as current
+    # evidence, so the fixture builds the document the current evaluator would write.
+    from tcenv.evaluate import EvalReport
+
+    from ..support.orchestrator import stamp_report
+
+    report = EvalReport(
+        task="conv2d", dtype="fp16", size="small", mode="full", seed=1, stage="done",
+        status="ok", message="ok", speedup=1.2, target_id="apple-m4-max",
+    )
+    report.candidate_us = 770
+    report.benchmark = {"candidate": {"median_us": 770, "cv": 0.01}}
+    report.roofline = {"lower_bound_us": 414, "bound_kind": "reference_algorithm"}
+    stamp_report(report, "conv2d", "fp16", "small", "kernel void hit() {}\n")
+    (folder / "kernel.metal").write_text("kernel void hit() {}\n", encoding="utf-8")
+    (folder / "report.json").write_text(json.dumps(report.to_json()))
     return directory
 
 

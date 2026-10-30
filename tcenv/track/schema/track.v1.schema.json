@@ -1,0 +1,445 @@
+{
+  "$comment": "Registered structural schema for a track binding v1 (plan §4.4/§7.2). A track binding carries what the model reads and what the harness assembles for evaluation: the spec text template, the known-good template, the description, the dtype spelling table, the registered implementations and the task-pack file set. It carries no semantics (that is tasks/<op>/opspec.json) and no launch facts (that is the registered LoweringProfile).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "track",
+    "opspec",
+    "backend_id",
+    "lowering_profile",
+    "spec_text",
+    "known_good",
+    "description",
+    "dtype_spelling",
+    "implementations",
+    "baselines",
+    "pack_files",
+    "template_literals"
+  ],
+  "properties": {
+    "track": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "[a-z][a-z0-9-]*"
+    },
+    "opspec": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "backend_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "[a-z][a-z0-9-]*"
+    },
+    "lowering_profile": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "spec_text": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "template",
+            "placeholders"
+          ],
+          "properties": {
+            "template": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "placeholders": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "enum": [
+                  "spec_params",
+                  "dtype_spelling",
+                  "backend_params"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "generator"
+          ],
+          "properties": {
+            "generator": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "implementation_id",
+                "implementation_version",
+                "params"
+              ],
+              "properties": {
+                "implementation_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "implementation_version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "params": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "known_good": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "template",
+            "placeholders"
+          ],
+          "properties": {
+            "template": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "placeholders": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "enum": [
+                  "spec_params",
+                  "dtype_spelling",
+                  "backend_params"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "generator"
+          ],
+          "properties": {
+            "generator": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "implementation_id",
+                "implementation_version",
+                "params"
+              ],
+              "properties": {
+                "implementation_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "implementation_version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "params": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "variant_factory": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      ]
+    },
+    "baseline_variant": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "template",
+            "placeholders",
+            "note"
+          ],
+          "properties": {
+            "template": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "placeholders": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "enum": [
+                  "spec_params",
+                  "dtype_spelling",
+                  "backend_params"
+                ]
+              }
+            },
+            "note": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 400
+            }
+          }
+        }
+      ]
+    },
+    "dtype_spelling": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "minProperties": 1,
+        "additionalProperties": {
+          "type": "string"
+        }
+      }
+    },
+    "implementations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gen_inputs",
+        "reference",
+        "error_scale"
+      ],
+      "properties": {
+        "gen_inputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "implementation_id",
+            "implementation_version",
+            "params"
+          ],
+          "properties": {
+            "implementation_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "implementation_version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "params": {
+              "type": "object"
+            }
+          }
+        },
+        "reference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "implementation_id",
+            "implementation_version",
+            "params"
+          ],
+          "properties": {
+            "implementation_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "implementation_version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "params": {
+              "type": "object"
+            }
+          }
+        },
+        "error_scale": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "implementation_id",
+                "implementation_version",
+                "params"
+              ],
+              "properties": {
+                "implementation_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "implementation_version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "params": {
+                  "type": "object"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "baselines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "framework",
+          "implementation_id",
+          "implementation_version",
+          "params"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "framework": {
+            "type": "string",
+            "enum": [
+              "mlx",
+              "torch"
+            ]
+          },
+          "implementation_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "implementation_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "params": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "pack_files": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      }
+    },
+    "template_literals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "launch",
+        "semantic"
+      ],
+      "properties": {
+        "launch": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "template",
+              "text",
+              "threads_per_threadgroup"
+            ],
+            "properties": {
+              "template": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "threads_per_threadgroup": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        },
+        "semantic": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "template",
+              "text",
+              "attr"
+            ],
+            "properties": {
+              "template": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "attr": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

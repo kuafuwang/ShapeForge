@@ -777,7 +777,7 @@ def _candidate_report(directory: Path, label: str) -> tuple[dict | None, str]:
 
     @param directory 运行目录。
     @param label 候选标签。
-    @return 二元组（报告字典或 None, 报告路径文本）。
+    @return 二元组（schema-4 报告字典或 None, 报告路径文本）。
     """
     root = directory / "candidates"
     if not label or not root.is_dir():
@@ -794,6 +794,13 @@ def _candidate_report(directory: Path, label: str) -> tuple[dict | None, str]:
         return None, ""
     if not isinstance(doc, dict):
         return None, ""
+    from taic.artifacts import document_state
+
+    # Type-strict currentness (``document_state``): ``4.0 == 4`` in Python, so a plain ``!=`` would
+    # accept a float version.  An older report is not current evidence: no build identity, no
+    # comparable statistics.  The review row keeps the path it consulted but quotes no number.
+    if document_state(doc) != "current":
+        return None, str(path)
     return doc, str(path)
 
 

@@ -281,7 +281,8 @@ def test_failed_candidates_and_unknown_tasks_get_no_block():
     assert block("compile_error") is None
     idx, src, rep = G.fixture("relu_best")
     assert hf.hw_feedback(get_task("sem_gemm_neg", "fp16", "paper"), src, EvalReport.from_json(rep), backend_id="metal") is None  # no expectations for the semantic tests
-    bad = dict(rep, status="incorrect")
+    bad = {key: value for key, value in rep.items() if key != "eligible"}
+    bad["status"] = "incorrect"
     assert hf.hw_feedback(get_task("relu", "fp16", "paper"), src, EvalReport.from_json(bad), backend_id="metal") is None
 
 
@@ -561,3 +562,170 @@ def test_the_ab_analysis_computes_the_list_for_a_control_run_that_had_no_block(t
     assert r["feedback_in_run"] is False
     assert r["rounds"] == []
     assert ab.listed_features("- matrix unit: x\n- (+2 lower-priority item(s) omitted)\n- tg padding: y") == ["matrix_unit", "tg_padding"]
+
+
+def test_an_old_report_forms_no_measured_text_or_performance_verdict():
+    """旧格式报告（直接传字典）既不给 measured，也不给 roofline/峰值/bound-beaten 文本。
+
+    The reviewer's repro: ``measured_from_report`` returned ``None`` for a schema-3 dict, but
+    ``_compute`` still read ``rep["roofline"]`` and ``format_block`` printed
+    "Measured: 490 GB/s = 98% ...", claiming the kernel was at the roofline.  Any non-current report
+    now produces no block at all.
+    """
+    idx, src, _rep = G.fixture("fa_flash_best")
+    old = {
+        "schema_version": 3, "status": "ok", "speedup": 1.4, "candidate_us": 100.0,
+        "roofline": {"achieved_gbps": 490.0, "bound": "memory", "bandwidth_fraction": 0.98,
+                     "peak_gbps_measured": 500.0},
+        "pipeline": {"max_total_threads_per_threadgroup": 256, "launch_threads_per_threadgroup": 64},
+    }
+    task = get_task(idx["task"], idx["dtype"], idx["size"])
+    assert hf.hw_feedback(task, src, old, backend_id="metal") is None
+    assert hf._compute(task, src, old) is None
+    assert "Measured:" not in (hf.hw_feedback(task, src, old, backend_id="metal") or "")
+
+    # The gate is the format, not the data: the same numbers at schema 4 still reach ``_compute``
+    # (this minimal document has no sections, so the block is empty — but it is not refused), and a
+    # complete current report still prints its measured line.
+    current = {"schema_version": 4, **{k: v for k, v in old.items() if k != "schema_version"}}
+    assert hf._compute(task, src, current) is not None
+    full = hf.hw_feedback(task, src, EvalReport.from_json(_rep), backend_id="metal")
+    assert full and "Measured:" in full
+
+
+def test_a_warm_cache_never_hands_an_old_report_the_measured_block():
+    """暖缓存后把同一源码/速度的报告改成 schema 3：不得取回带 ``Measured:`` 的块。
+
+    The reviewer's repro: ``_CACHE`` is keyed by (backend, task, source, speedup) and read *before*
+    ``_compute``'s currency gate, so a current report's block came back for an old report with the
+    same source and speedup (``old_result_is_same_cached_block=True``, ``old_has_measured=True``).
+    Currency is now judged before the cache, and only current reports ever write to it.
+    """
+    idx, src, rep = G.fixture("fa_flash_best")
+    task = get_task(idx["task"], idx["dtype"], idx["size"])
+
+    current = hf.hw_feedback(task, src, EvalReport.from_json(rep), backend_id="metal")
+    assert current and "Measured:" in current
+
+    old = {**rep, "schema_version": 3}
+    assert hf.hw_feedback(task, src, old, backend_id="metal") is None
+    assert hf._CACHE, "当前报告的块仍在缓存里，旧报告只是取不到它"
+
+    # And with the cache cleared the old report is still refused: the gate is not the cache.
+    hf._CACHE.clear()
+    assert hf.hw_feedback(task, src, old, backend_id="metal") is None
+
+
+def test_an_old_report_does_not_poison_the_cache_for_the_current_one():
+    """旧报告先来：既不缓存 ``None``，也不让同键的当前报告误判成「没有块」。
+
+    The reverse direction of the same hole: the old report used to warm the key with ``None``, so a
+    later current report with the same source and speedup returned ``None`` without ever computing.
+    """
+    idx, src, rep = G.fixture("fa_flash_best")
+    task = get_task(idx["task"], idx["dtype"], idx["size"])
+    old = {**rep, "schema_version": 3}
+
+    assert hf.hw_feedback(task, src, old, backend_id="metal") is None
+    assert not hf._CACHE, "旧报告不得写缓存（连 None 都不写）"
+    current = hf.hw_feedback(task, src, EvalReport.from_json(rep), backend_id="metal")
+    assert current and "Measured:" in current
+
+
+def test_the_ab_analysis_does_not_count_an_old_report_as_a_correct_branch(tmp_path):
+    """旧格式候选不得进入 A/B 的 correct/speedup 统计：它只以 ``old_format`` 出现在明细里。
+
+    The reviewer's repro: a minimal schema-3 run through ``analyze(..., would_be=False)`` produced
+    ``correct=True, speedup=9.9`` because the branch check was a plain ``status == "ok"``.  Currency
+    is now judged per branch; undecidable branches are listed but excluded from every total.
+    """
+    from experiments import hw_feedback_ab as ab
+
+    run = tmp_path / "run"
+    branch = run / "candidates" / "000_r1.p0"
+    branch.mkdir(parents=True)
+    seed_source = "kernel void fa() {}\n"
+    (branch / "kernel.metal").write_text(seed_source)
+    (run / "result.json").write_text(json.dumps({
+        "task": "flash_attention", "dtype": "fp16", "size": "paper", "backend": "metal",
+    }))
+    plan = '```json\n{"bottleneck":"x","plans":[{"title":"MMA","change":"use simdgroup_matrix"}]}\n```'
+    user = (f"```metal\n{seed_source}```\n\nEvaluation feedback of this kernel:\n\n"
+            f"{HEADER}\n\n- matrix unit: not found\n\ndecides.\n\nplan here")
+    (run / "transcript.jsonl").write_text(json.dumps({
+        "event": "chat", "label": "r1.plan",
+        "messages": [{"role": "user", "content": user}],
+        "reply": {"content": plan},
+    }) + "\n")
+
+    def write(version) -> None:
+        (branch / "report.json").write_text(json.dumps({
+            "schema_version": version, "status": "ok", "speedup": 9.9,
+        }))
+
+    write(3)
+    old = ab.analyze(run, would_be=False)
+    row = old["rounds"][0]["branches"][0]
+    assert row["report_state"] == "old_format"
+    assert row["correct"] is False and row["speedup"] is None
+    assert old["total"]["branches"] == 0 and old["total"]["branches_correct"] == 0
+    assert old["total"]["branches_undecidable"] == 1
+    assert "undecidable branches (not counted)" in ab.markdown([old])
+
+    # A current report in the same slot is counted.
+    write(4)
+    current = ab.analyze(run, would_be=False)
+    row = current["rounds"][0]["branches"][0]
+    assert row["report_state"] == "current" and row["correct"] is True
+    assert row["speedup"] == pytest.approx(9.9)
+    assert current["total"]["branches"] == 1 and current["total"]["branches_correct"] == 1
+    assert current["total"]["branches_undecidable"] == 0
+
+
+def test_the_ab_analysis_computes_the_missing_list_from_a_current_seed(tmp_path):
+    """当前 seed 报告 + 转录里没有已记录块：默认与显式 would-be 都必须现算且不抛异常。
+
+    The regression the reviewer caught: ``seed_rep`` is already a parsed dict (``_read`` →
+    ``loads_strict``) but the would-be branch re-parsed it as report *text* through
+    ``read_report_json``, so the ordinary "current report, no recorded block" path raised
+    ``SchemaError: seed report is not JSON text``.  ``from_json`` takes the dict directly.
+    """
+    from experiments import hw_feedback_ab as ab
+
+    # ``fa_flash_init`` is a candidate whose block has a real missing list, so the computed list is
+    # observable (``fa_flash_best`` sits at the roofline and has nothing missing).
+    _idx, seed_source, seed_report = G.fixture("fa_flash_init")
+    run = tmp_path / "run"
+    branch = run / "candidates" / "000_r1.p0"
+    branch.mkdir(parents=True)
+    (branch / "kernel.metal").write_text(seed_source)
+    (branch / "report.json").write_text(json.dumps(seed_report))
+    (run / "result.json").write_text(json.dumps({
+        "task": _idx["task"], "dtype": _idx["dtype"], "size": _idx["size"], "backend": "metal",
+    }))
+    plan = '```json\n{"bottleneck":"x","plans":[{"title":"MMA","change":"use simdgroup_matrix"}]}\n```'
+    # A planner request with the seed source and the feedback preamble, but **no** recorded
+    # HEADER block: the analyser has to compute it from the seed.
+    user = (f"```metal\n{seed_source}\n```\n\nEvaluation feedback of this kernel:\n\n"
+            "bench 1.2x\n\ndecides.\n\nplan here")
+    (run / "transcript.jsonl").write_text(json.dumps({
+        "event": "chat", "label": "r1.plan",
+        "messages": [{"role": "user", "content": user}],
+        "reply": {"content": plan},
+    }) + "\n")
+
+    computed = "computed from the seed (not shown to the model)"
+    default = ab.analyze(run)  # would_be=None → compute only when the run has no block
+    round_row = default["rounds"][0]
+    assert round_row["list_source"] == computed
+    assert round_row["list"], "当前报告应能现算出所列特性"
+    assert default["feedback_in_run"] is False
+
+    explicit = ab.analyze(run, would_be=True)
+    assert explicit["rounds"][0]["list_source"] == computed
+    assert explicit["rounds"][0]["list"] == round_row["list"]
+
+    # Negative kept: a schema-3 seed is not evidence, so no block is computed from it.
+    (branch / "report.json").write_text(json.dumps({**seed_report, "schema_version": 3}))
+    old = ab.analyze(run, would_be=True)
+    assert old["rounds"][0]["list"] == [] and old["rounds"][0]["list_source"] == ""

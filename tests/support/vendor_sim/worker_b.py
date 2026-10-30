@@ -121,25 +121,25 @@ def main() -> int:
     if timing.get("source") != "DEVICE_EVENT":
         return 15
     device_elapsed_ns = int(timing["device_elapsed_ns"])
-    report = {
-        "task": request.task,
-        "dtype": request.dtype,
-        "size": request.size,
-        "mode": request.mode,
-        "seed": request.seed_int,
-        "status": "ok",
-        "stage": "done",
+    from tests.support.report_build import report_for_request
+
+    # The bundle's SOURCE entry is the candidate bytes; an inline entry carries them.
+    source_entry = next(
+        (entry for entry in request.npu.bundle.entries if entry.role == "SOURCE"), None,
+    )
+    source_bytes = (
+        bytes(source_entry.data)
+        if source_entry is not None and source_entry.data is not None
+        else b"kernel void demo() {}\n"
+    )
+    report = report_for_request(request, status="ok", source=source_bytes)
+    report.update({
         # The candidate time is the *device* completion time reported by the
         # service, never the host poll time.
         "candidate_us": device_elapsed_ns / 1000.0,
         "speedup": 1.0,
         "elapsed_s": 0.0,
-        "target_id": request.target_id,
-        "protocol_version": PROTOCOL_VERSION,
-        "simulated": True,
-    }
-    if request.npu.execution.task_family == "graph":
-        report["graph_entries"] = len(request.npu.bundle.entries)
+    })
     # A test-only fault: the report claims a device time the service never
     # produced, which the frontend must reject instead of publishing.
     if (evidence.get("diagnostics") or {}).get("degradation") == "wrong_report_time":

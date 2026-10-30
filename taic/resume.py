@@ -527,20 +527,30 @@ def _kernel_name(run_dir: Path) -> str:
 
 
 def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
-    """@brief 读出 ``candidates/*`` 里的全部候选及其报告。
+    """@brief 读出 ``candidates/*`` 里的全部候选及其报告，以及远端评测的上下文投影。
 
     目录名须匹配 ``<idx>_<label>`` 且含候选源文件；缺 ``report.json`` 的候选记 note 后跳过。
     测量协议与当前 ``PROTOCOL_VERSION`` 不一致时拒绝续跑：加速比只在同一协议内可比。
     ``differential_recheck.json`` 存在且标记 ``counts_as_kernel_error``（或已损坏）时，该候选视为已被判错，
     不会在续跑时回到种子位。
 
+    远端评测的候选旁边有一份 ``evaluation_context.json`` 投影（固定 schema v1）。这里只**解析并挂载**
+    它，再用 outbox 的公开只读 path helper 看那一行是否 completed（D43）：不构造 outbox、不校验
+    HMAC、不重建请求。缺投影文件、缺行或行还 pending 都是**未知**上下文（``evaluation_context``
+    为 ``None``、``evaluation_context_state`` 为 ``unknown``），记一条 note 而不是拒绝续跑；投影或行
+    文件损坏是 ``NeedsInspection``，因为那说明有人改过它们，不是“这次没做远端评测”。
+
     @param run_dir 运行目录
     @param notes 收集重建说明的列表，会被就地追加
-    @return 按 idx 升序的候选字典列表（idx、label、source、report、plan、recheck_rejected）
-    @raises NeedsInspection 报告损坏、schema 不符或测量协议与当前版本不一致时
+    @return 按 idx 升序的候选字典列表（idx、label、source、report、plan、recheck_rejected、
+        evaluation_context、evaluation_context_state）
+    @raises NeedsInspection 报告/投影/outbox 行损坏、schema 不符或测量协议与当前版本不一致时
     """
     from tcenv.evaluate import EvalReport
-    from tcenv.schema import SchemaError
+    from tcenv.schema import SchemaError, read_report_json
+
+    from .artifacts import EVALUATION_CONTEXT_FILE_NAME, read_evaluation_context
+    from .evaluation_outbox import row_state
 
     out = []
     root = Path(run_dir) / "candidates"
@@ -556,7 +566,7 @@ def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
             notes.append(f"candidate {d.name} has no report.json: skipped")
             continue
         try:
-            rep = json.loads(report_path.read_text(encoding="utf-8"))
+            rep = read_report_json(report_path.read_text(encoding="utf-8"), what=str(report_path))
         except (OSError, ValueError) as e:
             raise NeedsInspection(f"{report_path} is damaged and needs human inspection") from e
         try:
@@ -589,7 +599,32 @@ def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
                 rejected = True
                 pending = True
                 notes.append(f"candidate {d.name}: differential_recheck.json is damaged; it is treated as rejected")
-        out.append({"idx": int(m["idx"]), "label": m["label"], "source": (d / kernel_name).read_text(), "report": report, "plan": None, "recheck_rejected": rejected, "recheck_pending": pending})
+        # Remote evaluations leave a projection next to the candidate.  It is read here only as a
+        # fixed-schema document plus a row-existence probe: the HMAC/result checks belong to
+        # ``Orchestrator.restore`` -> ``EvaluationOutbox.load_completed_context``, which runs after
+        # the outbox (and its signature key) exists.  A local candidate simply has no projection.
+        context = read_evaluation_context(d / EVALUATION_CONTEXT_FILE_NAME)
+        context_state = "local"
+        if context is not None:
+            # ``row_state`` reports a damaged row as NeedsInspection; a missing or pending row is
+            # an unknown context, never a silent local candidate.  The projection is *not* mounted
+            # in that case: a pointer without a completed row is evidence of nothing, and the next
+            # resume re-reads the file and re-probes the row anyway.
+            state = row_state(run_dir, context["request_id"])
+            if state == "completed":
+                context_state = "completed"
+            else:
+                context_state = "unknown"
+                notes.append(
+                    f"candidate {d.name}: the remote evaluation row is {state}; its evaluation context "
+                    "is unknown and the candidate cannot be confirmed from it"
+                )
+                context = None
+        out.append({
+            "idx": int(m["idx"]), "label": m["label"], "source": (d / kernel_name).read_text(),
+            "report": report, "plan": None, "recheck_rejected": rejected, "recheck_pending": pending,
+            "evaluation_context": context, "evaluation_context_state": context_state,
+        })
     out.sort(key=lambda c: c["idx"])
     return out
 
@@ -685,10 +720,29 @@ def _loop_protocol(run_dir: Path) -> str | None:
 
 
 def _check_run_config_version(run_dir: Path) -> None:
-    """A run_config.json newer than this code needs human inspection, like result/state/ledger."""
-    from .artifacts import RUN_CONFIG_SCHEMA_VERSION, read_versioned
+    """Refuse a run whose file format or report epoch this code cannot continue.
 
-    read_versioned(Path(run_dir) / "run_config.json", RUN_CONFIG_SCHEMA_VERSION)
+    The report epoch is a run-level marker written into ``run_config.json`` before any
+    evaluation or outbox row exists.  A pre-R4 run (missing, non-integer or != current epoch)
+    is refused here — the first step of ``_load_flame_chase`` — so rejection happens before
+    ``Orchestrator.__init__`` / ``EvaluationOutbox.__init__`` and before any replay or
+    ``formal_resume``.  It never rewrites the directory.
+    """
+    from .artifacts import RUN_CONFIG_SCHEMA_VERSION, read_versioned
+    from tcenv.schema import REPORT_SCHEMA_VERSION
+
+    path = Path(run_dir) / "run_config.json"
+    document = read_versioned(path, RUN_CONFIG_SCHEMA_VERSION)
+    if not isinstance(document, dict) or document.get("loop_protocol") != "flame_chase_1":
+        # A run of another loop protocol is already refused by the protocol gate (readable, not
+        # continuable); the report epoch only governs runs this code would otherwise continue.
+        return
+    epoch = document.get("report_schema_epoch")
+    if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch != REPORT_SCHEMA_VERSION:
+        raise NeedsInspection(
+            f"{path} has report_schema_epoch {epoch!r}, not {REPORT_SCHEMA_VERSION}; "
+            "a run from another report schema is not continued"
+        )
 
 
 def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:

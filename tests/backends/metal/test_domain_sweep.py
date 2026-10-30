@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from experiments.common import publication_role
@@ -65,13 +67,71 @@ def test_a_failing_domain_result_is_not_a_domain_sweep():
     assert "tail paths" in " ".join(got["not_covered"])
 
 
-def test_changing_the_tolerance_changes_the_task_fingerprint():
-    """@brief 验证相同任务指纹稳定，而修改 rtol 后任务指纹随之改变。"""
+def test_a_forked_effective_tolerance_is_refused_and_a_real_change_changes_identity():
+    """@brief 有效容差不得与语义实例分叉；真实容差改变必须换身份。
+
+    ``Task.rtol``/``atol_rel``/``exact`` 是 ``SemanticInstance`` 的派生投影，``scaled_error`` 与
+    发布判定直接读它们，而 ``task_fingerprint`` v2 只读语义实例（§3.1）。因此：
+    同一语义实例的 task 指纹稳定；事后改写派生字段被拒绝（否则同一身份能对应两套评测语义）；
+    构造时不一致被拒绝；由语义实例真实产生的容差变化会改变指纹 **且** 改变实际判决。
+    """
     first = build_relu("fp16", "small")
     second = build_relu("fp16", "small")
     assert task_fingerprint(first) == task_fingerprint(second)
-    second.rtol = first.rtol + 1
-    assert task_fingerprint(first) != task_fingerprint(second)
+    with pytest.raises(AttributeError):
+        second.rtol = first.rtol + 1
+    with pytest.raises(AttributeError):
+        second.exact = True
+    with pytest.raises(ValueError):
+        dataclasses.replace(second, rtol=first.rtol + 1)
+
+    # The identity authority itself is sealed too: swapping the SemanticInstance after
+    # construction would make ``task_fingerprint`` hash one instance while the task keeps the
+    # other's effective tolerance (reviewer reproduction), which is exactly the fork.  The same
+    # holds for its Specialization and the projected Contract/case list.
+    swapped = dataclasses.replace(
+        first.semantic_instance,
+        tolerances=dataclasses.replace(first.semantic_instance.tolerances, rtol=first.rtol + 1),
+    )
+    with pytest.raises(AttributeError):
+        second.semantic_instance = swapped
+    with pytest.raises(AttributeError):
+        second.specialization = first.specialization
+    with pytest.raises(AttributeError):
+        second.contract = first.contract
+    with pytest.raises(AttributeError):
+        second.cases = ("normal",)
+    assert second.semantic_instance.tolerances.rtol == second.rtol
+    assert task_fingerprint(second) == task_fingerprint(first)
+    # A fresh, internally consistent construction (the atomic-rebuild path) is allowed and
+    # carries the new identity together with the new effective tolerance.
+    with pytest.raises(ValueError):
+        dataclasses.replace(second, semantic_instance=swapped)
+
+    looser = dataclasses.replace(
+        second.semantic_instance,
+        tolerances=dataclasses.replace(second.semantic_instance.tolerances, rtol=1.0),
+    )
+    third = dataclasses.replace(
+        second,
+        semantic_instance=looser,
+        rtol=looser.tolerances.rtol,
+        atol_rel=looser.tolerances.atol_rel,
+        exact=looser.tolerances.exact,
+    )
+    assert task_fingerprint(first) != task_fingerprint(third)
+
+    # The two identities are not interchangeable: a 50% high output fails the registered
+    # tolerance and passes the loosened one.
+    data = prepare_case(first, "normal", 1)
+    off = {name: value * 1.5 for name, value in data.ref.items()}
+
+    def passes(task) -> bool:
+        err = scaled_error(off["y"], data.ref["y"], data.scale["y"], task.rtol, task.atol_rel, task.exact, _floor("fp16"))
+        return bool(torch.nan_to_num(err, nan=0.0, posinf=1e9).max() <= 1.0)
+
+    assert passes(first) is False
+    assert passes(third) is True
 
 
 def test_a_failed_domain_sweep_writes_a_report_and_no_result(tmp_path):
@@ -108,3 +168,32 @@ def test_primary_needs_the_gain_and_a_bound_sweep():
     assert publication_role({"publication": "旧版未绑定源码"}, None, source_sha256=None, task_fingerprint=None, recorded_fingerprint=None) == "fallback"
     other = {**cov, "source_sha256": "nope"}
     assert publication_role(confirmed, {"coverage": other}, source_sha256="abc", task_fingerprint="fp", recorded_fingerprint="fp") == "fallback"
+
+
+def test_the_publication_meta_is_a_read_only_view_of_the_opspec():
+    """@brief H-17：``Task.meta`` 是 OpSpec 的只读视图，不能就地改、也不能换成别的语义键。"""
+    import dataclasses
+    from types import MappingProxyType
+
+    import pytest
+
+    from tasks import get_task
+
+    task = get_task("reduction_sum", "fp16", "small")
+    assert isinstance(task.meta, MappingProxyType)
+    with pytest.raises(TypeError):
+        task.meta["domain_case"] = True
+    with pytest.raises(AttributeError):
+        task.meta = {}
+    # A diagnostic key is allowed, a semantic fact must come from the OpSpec.
+    assert "baseline_note" not in task.meta
+    with pytest.raises(ValueError, match="unregistered keys"):
+        dataclasses.replace(task, meta={"source": "second-copy"})
+    with pytest.raises(ValueError, match="semantic keys must be the SemanticInstance"):
+        dataclasses.replace(task, meta={"domain_case": True})
+    # The semantic keys must equal the instance's evaluation domain (no second copy).
+    assert {key: task.meta[key] for key in ("domain_case", "ieee_base") if key in task.meta} == {
+        key: value for key, value in task.semantic_instance.evaluation_meta().items() if key in ("domain_case", "ieee_base")
+    }
+    migrated = get_task("bitdelta_gemm", "fp16", "small")
+    assert dict(migrated.meta) == {"ieee_base": "random", "baseline_note": dict(migrated.meta)["baseline_note"]}

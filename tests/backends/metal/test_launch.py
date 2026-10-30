@@ -260,6 +260,9 @@ def test_a_pipeline_warning_names_the_stage_that_is_at_the_register_limit():
     from taic.hwfeedback import _warnings
 
     report = {
+        # A candidate report is current evidence only at schema 4; the pipeline block below is the
+        # part this test is about, but the document still has to look like today's report.
+        "schema_version": 4,
         "pipeline": {
             "stages": [
                 {"kernel": "gemm", "max_total_threads_per_threadgroup": 128, "launch_threads_per_threadgroup": 128},

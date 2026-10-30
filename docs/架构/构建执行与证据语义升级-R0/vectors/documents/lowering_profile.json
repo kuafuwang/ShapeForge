@@ -1,0 +1,22 @@
+{
+  "fingerprint_kind": "lowering_profile",
+  "fingerprint_version": 1,
+  "lowerer": {"id": "metal-rmsnorm-lowerer", "version": "1"},
+  "variant_factory": null,
+  "profile": {
+    "profile_schema_version": 1,
+    "name": "metal-rmsnorm",
+    "backend_id": "metal",
+    "target_class": "apple-m4-max",
+    "contract_defaults": {
+      "kernel_name": "rmsnorm_kernel",
+      "launch_form": "single",
+      "grid": [{"symbol": "M"}, {"const": 1}, {"const": 1}],
+      "threads": [{"const": 256}, {"const": 1}, {"const": 1}],
+      "display_name": "Apple M4 Max (Apple9 GPU family)"
+    },
+    "constant_types": {"M": "uint", "H": "uint", "EPS": "float"},
+    "backend_params": {},
+    "build_time_tiling": {}
+  }
+}

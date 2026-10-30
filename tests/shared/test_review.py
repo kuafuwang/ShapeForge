@@ -86,11 +86,19 @@ def _bundle_run(tmp_path, *, probe_text: str = "print('probe')\n") -> tuple:
     }) + "\n")
     folder = run / "candidates" / "000_r1"
     folder.mkdir(parents=True)
-    (folder / "report.json").write_text(json.dumps({
-        "status": "ok", "speedup": 1.2,
-        "benchmark": {"candidate": {"median_us": 770, "cv": 0.01}},
-        "roofline": {"lower_bound_us": 414, "bound_kind": "reference_algorithm"},
-    }))
+    # Schema 4 only: the review view refuses to quote an old-format report's numbers.
+    from tcenv.evaluate import EvalReport
+
+    from ..support.orchestrator import stamp_report
+
+    report = EvalReport(
+        task="relu", dtype="fp16", size="small", mode="full", seed=1, stage="done",
+        status="ok", message="ok", speedup=1.2, target_id="apple-m4-max",
+    )
+    report.benchmark = {"candidate": {"median_us": 770, "cv": 0.01}}
+    report.roofline = {"lower_bound_us": 414, "bound_kind": "reference_algorithm"}
+    stamp_report(report, "relu", "fp16", "small", "kernel void k() {}\n")
+    (folder / "report.json").write_text(json.dumps(report.to_json()))
     row = {
         "run_id": "apple-m4-max/flash-attention-test", "seq": 1, "label": "r1",
         "proposal_key": "key", "target_id": "apple-m4-max", "task": "flash_attention",

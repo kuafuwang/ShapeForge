@@ -1212,7 +1212,17 @@ class JobResult:
     signature: dict[str, Any] | None = None
 
     def report_json(self) -> dict[str, Any]:
-        value = json.loads(self.report.decode("utf-8"))
+        # The report bytes come off the wire/out of the store: parse them with the duplicate-key
+        # refusing loader *before* any schema check, or two different ``build`` objects would
+        # silently collapse to the last one.
+        from tcenv.schema import SchemaError, loads_strict
+
+        try:
+            value = loads_strict(self.report.decode("utf-8"), what="stored report")
+        except UnicodeDecodeError as exc:
+            raise StateCorrupt(f"stored report is not UTF-8: {exc}") from exc
+        except SchemaError as exc:
+            raise StateCorrupt(f"stored report needs human inspection: {exc}") from exc
         if not isinstance(value, dict):
             raise StateCorrupt("stored report is not an object")
         return value

@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import hwfeatures as hw
+from .artifacts import document_state
 
 LOG = logging.getLogger("taic.hwfeedback")
 
@@ -265,13 +266,20 @@ def _compute(task: Any, source: str, report: Any) -> str | None:
     @param task ``tcenv.task.Task`` 或任务名；没有 ``contract`` 属性时按名字与 (dtype, size) 加载任务
     @param source 候选 kernel 源码（不含 contract 头）
     @param report ``EvalReport`` 或 ``report.json`` 的字典
-    @return 特征文本块；任务族没有预期特征（语义测试、未知任务名）时返回 None
+    @return 特征文本块；任务族没有预期特征（语义测试、未知任务名），或报告不是当前 schema（4，
+        见 ``taic.artifacts.document_state``）时返回 None
     """
     task_obj = task if hasattr(task, "contract") else hw._get_task(str(task), getattr(report, "dtype", "fp16") or "fp16", getattr(report, "size", "paper") or "paper")
     name = task_obj.name
     if hw.base_task(name) not in hw.EXPECTED:
         return None  # no expectations for this task (semantic tests, unknown names): nothing useful to say
     rep = report.to_json() if hasattr(report, "to_json") else dict(report)
+    # §8: only a current (schema-4) report is evidence.  An old or damaged report cannot contribute
+    # roofline, peaks or a bound-beaten claim either — the whole measured/perf text is dropped, not
+    # just ``measured`` (the reviewer's repro still printed "Measured: 490 GB/s = 98%" from an old
+    # report's roofline block).
+    if document_state(rep) != "current":
+        return None
     measured = hw.measured_from_report(rep)
     roof = rep.get("roofline") or {}
     ceil = hw.Ceilings(peak_tflops=roof.get("peak_tflops_measured"), peak_gbps=roof.get("peak_gbps_measured"))
@@ -289,6 +297,8 @@ def hw_feedback(task: Any, source: str, report: Any, *, log: Callable[[str], Non
     （或 ``report.json`` 的字典）。以下情形返回 None：后端不支持硬件特征（能力门）、候选不正确（反馈保持原样、
     不留占位）、任务没有预期特征、以及任何失败或超时（记为 warning）。反馈绝不允许打断或拖慢搜索循环。
     结果按 (后端, 任务名, 源码 sha1, speedup) 缓存，容量 ``_CACHE_MAX``，满了按插入顺序淘汰最旧一项。
+    缓存**只存当前（schema-4）报告**的块：报告当前性在查缓存之前判定，所以旧格式既不会取回一份由当前
+    报告暖好的实测文本，也不会把 ``None`` 写进同一把键、让后来的当前报告误判为「没有块」。
 
     @param task 任务对象或任务名
     @param source 候选 kernel 源码
@@ -304,6 +314,13 @@ def hw_feedback(task: Any, source: str, report: Any, *, log: Callable[[str], Non
             return None
         status = getattr(report, "status", None) if not isinstance(report, dict) else report.get("status")
         if status != "ok":
+            return None
+        # §8: judge currency **before** the cache.  The key is (backend, task, source, speedup), so an
+        # old report with the same source and speedup would otherwise read back a block that a
+        # current report warmed ("Measured: …" for undecidable evidence), and an old report warmed
+        # first would poison the key with ``None`` for the current one.
+        rep_document = report.to_json() if hasattr(report, "to_json") else report
+        if document_state(rep_document) != "current":
             return None
         sp = getattr(report, "speedup", None) if not isinstance(report, dict) else report.get("speedup")
         key = (backend_id, getattr(task, "name", str(task)), hashlib.sha1(source.encode()).hexdigest(), round(sp, 4) if isinstance(sp, (int, float)) else None)
@@ -351,7 +368,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--backend", default="metal", help="target backend for the capability gate")
     a = ap.parse_args(argv)
     task = hw._get_task(a.task, a.dtype, a.size)
-    text = hw_feedback(task, Path(a.source).read_text(), EvalReport.from_json(json.loads(Path(a.report).read_text())), backend_id=a.backend)
+    from tcenv.schema import read_report_json
+
+    text = hw_feedback(task, Path(a.source).read_text(), EvalReport.from_json(read_report_json(Path(a.report).read_text(encoding="utf-8"), what=str(a.report))), backend_id=a.backend)
     print(text if text is not None else "(no block: the candidate is not correct, the task has no expectations, or the analysis failed; see the warning above)")
     return 0
 

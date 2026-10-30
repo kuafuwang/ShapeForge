@@ -80,7 +80,8 @@ def _candidate(directory: Path, index: int, label: str, report: dict) -> Path:
     folder = directory / "candidates" / f"{index:03d}_{label}"
     folder.mkdir(parents=True)
     (folder / "kernel.metal").write_text("kernel void k() {}\n", encoding="utf-8")
-    (folder / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    # A candidate report is current evidence only at schema 4 (plan §8); fixtures say so.
+    (folder / "report.json").write_text(json.dumps({"schema_version": 4, **report}), encoding="utf-8")
     return folder
 
 
@@ -219,7 +220,7 @@ def test_an_in_place_candidate_rewrite_refreshes_message_and_members_on_sync(tmp
     folder = directory / "candidates" / "000_r1.p0"
     directory_mtime = directory.stat().st_mtime_ns
     (folder / "report.json").write_text(json.dumps({
-        "status": "ok", "stage": "done", "speedup": 1.1, "message": "fixed and benchmarked",
+        "schema_version": 4, "status": "ok", "stage": "done", "speedup": 1.1, "message": "fixed and benchmarked",
     }), encoding="utf-8")
     # 改写文件不会改父目录 mtime——这正是本测试要守住的前提，所以必须分别取改写前后两次。
     assert directory.stat().st_mtime_ns == directory_mtime

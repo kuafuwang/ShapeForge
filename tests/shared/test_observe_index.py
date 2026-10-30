@@ -159,7 +159,7 @@ def test_a_ledger_write_failure_aborts_the_rebuild_and_keeps_the_old_database(tm
     monkeypatch.setattr(index_mod.os, "replace", real_replace)
     index = index_mod.Index(path)
     assert index.total_usd() == pytest.approx(2.5)
-    assert index.conn.execute("SELECT value FROM meta WHERE key = 'index_schema_version'").fetchone()[0] == "12"
+    assert index.conn.execute("SELECT value FROM meta WHERE key = 'index_schema_version'").fetchone()[0] == "13"
 
 
 def test_a_ledger_read_failure_aborts_the_rebuild_and_keeps_the_old_database(tmp_path, monkeypatch):
@@ -220,7 +220,7 @@ def test_an_old_schema_database_is_discarded_and_rebuilt_with_its_ledger(tmp_pat
 
     index = Index(path)
     version = index.conn.execute("SELECT value FROM meta WHERE key = 'index_schema_version'").fetchone()[0]
-    assert version == str(INDEX_SCHEMA_VERSION) == "12"
+    assert version == str(INDEX_SCHEMA_VERSION) == "13"
     assert index.conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0, "旧行随旧库一起丢掉，由发现重建"
     assert index.total_usd() == pytest.approx(2.5), "重建不能丢掉已记录的花费"
     assert not preserved_ledger_path(path).exists(), "回放后旁路文件应该被删掉"
@@ -273,15 +273,15 @@ def _schema_index(tmp_path, monkeypatch) -> Index:
     return Index(tmp_path / "observe.sqlite")
 
 
-def test_schema_12_declares_every_new_column_index_and_table(tmp_path, monkeypatch):
-    """@brief §12.1：schema 12 的新列、新索引与新表都在建库时出现。
+def test_schema_13_declares_every_new_column_index_and_table(tmp_path, monkeypatch):
+    """@brief §12.1 + §8：schema 13 的新列、新索引与新表都在建库时出现。
 
     @param tmp_path pytest 提供的临时目录。
     @param monkeypatch pytest 的环境变量夹具。
     """
     index = _schema_index(tmp_path, monkeypatch)
-    assert INDEX_SCHEMA_VERSION == 12
-    assert index.conn.execute("SELECT value FROM meta WHERE key = 'index_schema_version'").fetchone()[0] == "12"
+    assert INDEX_SCHEMA_VERSION == 13
+    assert index.conn.execute("SELECT value FROM meta WHERE key = 'index_schema_version'").fetchone()[0] == "13"
 
     def columns(table):
         return {row[1]: row for row in index.conn.execute(f"PRAGMA table_info({table})")}
@@ -292,6 +292,9 @@ def test_schema_12_declares_every_new_column_index_and_table(tmp_path, monkeypat
     # PR4 不依赖新列：result-only 的目录 mtime 依赖折进 schema-11 就有的 fp_state。
     assert "dir_mtime_ns" not in runs
     assert {"message", "failure_sig", "cv", "reps", "cache_hit"} <= set(columns("candidates"))
+    # Schema 13: only a schema-4 report can state a build/evaluation identity; the state column
+    # says which reports are current and the other three stay NULL for an old one.
+    assert {"report_state", "build_shape", "build_kind", "evaluation_fingerprint"} <= set(columns("candidates"))
     assert "failure_sig" in columns("sessions")
     turns = columns("turns")
     assert turns["grp"][4] == "0" and turns["grp"][3] == 1  # dflt_value / notnull
@@ -597,22 +600,15 @@ def _confirmed_schema_run(root: Path) -> Path:
     (directory / "run_config.json").write_text(json.dumps({
         "target": {"id": "apple-m4-max", "backend": "metal", "backend_version": "v1"},
     }), encoding="utf-8")
-    values = [1.1]
-    (directory / "result.json").write_text(json.dumps({
-        "task": "conv2d", "dtype": "fp16", "size": "paper", "stop_reason": "max_rounds",
-        "started_at": 10.0, "spent_usd": 0.2, "target_id": "apple-m4-max",
-        "confirmed_speedup": 1.1, "confirmed_status": "ok", "confirm_winner_label": "r1.p0",
-        "confirmation_source_sha256": digest, "confirmed_values": values,
-        "confirmed_worst": 1.1, "confirmed_best": 1.1,
-    }), encoding="utf-8")
-    (directory / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": 1.1,
-        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15},
-                      "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx",
-                      "confirmation": {"kernel_sha256": digest, "winner_label": "r1.p0",
-                                       "confirmed_values": values, "speedup": 1.1, "candidate_us": None}},
-        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
-    }), encoding="utf-8")
+    from experiments.common import synthetic_confirmation_documents
+
+    result, report = synthetic_confirmation_documents(
+        task="conv2d", dtype="fp16", size="paper", target_id="apple-m4-max",
+        speedup=1.1, label="r1.p0", kernel_sha256=digest,
+    )
+    result.update({"stop_reason": "max_rounds", "started_at": 10.0, "spent_usd": 0.2})
+    (directory / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    (directory / "confirm_report.json").write_text(json.dumps(report), encoding="utf-8")
     return directory
 
 
@@ -914,7 +910,8 @@ def test_feature_grid_keeps_the_fastest_in_each_cell(tmp_path, monkeypatch):
     for path, speed in ((slow, 0.4), (fast, 1.2)):
         path.mkdir(parents=True)
         (path / "kernel.metal").write_text("kernel void k() {}\n")
-        (path / "report.json").write_text(json.dumps({"speedup": speed, "status": "ok"}))
+        # Current schema: the grid only takes a speedup from a report it can validate.
+        (path / "report.json").write_text(json.dumps({"schema_version": 4, "speedup": speed, "status": "ok"}))
     detail = run_detail("gemm")
     assert len(detail["feature_grid"]) == 1
     assert detail["feature_grid"][0]["label"] == "r1.p0"
@@ -1011,17 +1008,16 @@ def test_editing_the_winner_kernel_drops_the_confirmed_speedup(tmp_path, monkeyp
     cand.mkdir(parents=True)
     (cand / "kernel.metal").write_text(metal)
     (directory / "best.metal").write_text(metal)
-    (directory / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": 1.4,
-        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx", "confirmation": {"kernel_sha256": digest, "winner_label": "r1.p0", "confirmed_values": [1.4], "speedup": 1.4, "candidate_us": None}},
-        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
-    }))
+    from experiments.common import synthetic_confirmation_documents
+
+    result, report = synthetic_confirmation_documents(
+        task="gemm", dtype="fp16", size="small", target_id="apple-m4-max",
+        speedup=1.4, label="r1.p0", kernel_sha256=digest,
+    )
+    result.update({"stop_reason": "max_rounds", "spent_usd": 0.1, "budget_usd": 1})
+    (directory / "confirm_report.json").write_text(json.dumps(report))
     (directory / "state.json").write_text(json.dumps({"task": "gemm", "dtype": "fp16", "phase": "done", "started_at": 1, "updated_at": 1}))
-    (directory / "result.json").write_text(json.dumps({
-        "task": "gemm", "dtype": "fp16", "stop_reason": "max_rounds", "spent_usd": 0.1, "budget_usd": 1,
-        "confirmed_status": "ok", "confirmed_speedup": 1.4, "confirm_winner_label": "r1.p0",
-        "confirmation_source_sha256": digest, "confirmed_values": [1.4], "target_id": "apple-m4-max",
-    }))
+    (directory / "result.json").write_text(json.dumps(result))
     index = Index(tmp_path / "observe.sqlite")
     index.sync_known()
     got = index.conn.execute("SELECT publication, published_speedup FROM runs").fetchone()
@@ -1165,6 +1161,7 @@ def test_candidates_are_indexed_and_a_list_page_carries_the_next_cursor(tmp_path
             (folder / "kernel.metal").write_text(f"kernel void {task}_{idx}() {{}}\n")
             status = "ok" if label == "init" else "abi_error"
             (folder / "report.json").write_text(json.dumps({
+                "schema_version": 4,
                 "status": status, "stage": "bench" if status == "ok" else "abi",
                 "speedup": 1.0 if status == "ok" else None, "eligible": status == "ok",
             }))
@@ -1225,7 +1222,7 @@ def test_sessions_and_model_totals_come_from_agent_rows(tmp_path, monkeypatch):
     directory.mkdir(parents=True)
     (directory / "state.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "phase": "done"}))
     (directory / "result.json").write_text(json.dumps({"task": "relu", "dtype": "fp16"}))
-    (directory / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1"}))
+    (directory / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
     (directory / "transcript.jsonl").write_text("\n".join(json.dumps(row) for row in [
         {"event": "agent", "label": "init", "committee": "first", "provider": "deepseek", "model": "deepseek-flash",
          "outcome": "evaluated", "cost_usd": 1.0, "tokens": {"input": 10, "output": 20, "cache_read": 30, "cache_write": 40}},
@@ -1274,10 +1271,12 @@ def test_migrating_a_run_does_not_create_a_second_index_row(tmp_path, monkeypatc
     directory = runs / "one"
     directory.mkdir(parents=True)
     (directory / "result.json").write_text(json.dumps({
+        "report_schema_epoch": 4,
         "schema_version": 1, "task": "relu", "dtype": "fp16", "size": "small",
         "stop_reason": "max_rounds", "spent_usd": 1.0, "budget_usd": 2.0, "started_at": 100.0,
     }))
     (directory / "state.json").write_text(json.dumps({
+        "report_schema_epoch": 4,
         "schema_version": 1, "task": "relu", "dtype": "fp16", "phase": "done",
         "started_at": 100.0, "updated_at": 110.0, "pid": 0,
     }))

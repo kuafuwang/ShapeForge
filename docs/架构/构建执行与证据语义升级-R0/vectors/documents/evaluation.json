@@ -1,0 +1,27 @@
+{
+  "baseline_environment_digest": "52144470e493eb0b5cc340583e99b6c0a673bb4988ad84f36388791ee6165a2e",
+  "baseline_implementation_digest": "d67e667ed6f1fb2257a090c7269b60539b833e37ad8ea95322d929d172e897bd",
+  "error_scale": {
+    "implementation_id": "rmsnorm.error_scale",
+    "implementation_version": 1,
+    "params": {
+      "dtype": "fp16"
+    }
+  },
+  "fingerprint_kind": "evaluation",
+  "fingerprint_version": 1,
+  "gen_inputs": {
+    "implementation_id": "rmsnorm.gen_inputs",
+    "implementation_version": 1,
+    "params": {
+      "cases": "declared-domain"
+    }
+  },
+  "reference": {
+    "implementation_id": "rmsnorm.reference",
+    "implementation_version": 1,
+    "params": {}
+  },
+  "task_fingerprint": "d1c314cd04ace6a76e2332d11175616ae822faf8a5ed19bf346066cef8f94f19",
+  "task_pack_digest": "76d45f7d7df155600b230dce3a2b3bf735a816711179692bf61dae1614ffdf0f"
+}

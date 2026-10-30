@@ -234,7 +234,14 @@ def _confirmed_timings(run: Path) -> dict:
     @param run 运行目录。
     @return 含 ``candidate_us`` 与 ``baseline_us`` 的字典。
     """
-    confirm = _read_obj(run / "confirm_report.json") or {}
+    # Schema 4 only (type-strict): an older confirm report has no per-batch identity and no frozen
+    # expected, so its timings are not current evidence.  The L1 panel then simply has no number.
+    from taic.artifacts import document_state
+
+    confirm = _read_obj(run / "confirm_report.json")
+    # Type-strict currentness (``4.0 == 4`` must not pass) and no numbers from an old report.
+    if document_state(confirm) != "current":
+        confirm = {}
     return {"candidate_us": _number(confirm.get("candidate_us")), "baseline_us": _baseline_us(confirm.get("baseline_us"))}
 
 
@@ -371,7 +378,17 @@ def _cands(run: Path, state: dict | None, result: dict | None) -> list[dict]:
     """
     trace = _trace(state, result)
     if trace is not None:
-        rows = [_cand_from_trace(item) for item in trace if isinstance(item, dict)]
+        # A trace row is only evidence when the candidate's own report is current (§8): the trace
+        # carries its own ``status``/``speedup``, so without this binding an old report's numbers
+        # would come back through the trace even though the report itself is undecidable.
+        by_label = _candidate_states(run)
+        rows = []
+        for item in trace:
+            if not isinstance(item, dict):
+                continue
+            row = _cand_from_trace(item)
+            row.update(_state_fields(by_label.get(row["label"], "missing")))
+            rows.append(row)
         return rows[-CAP:]
     root = run / "candidates"
     if not root.is_dir():
@@ -379,6 +396,41 @@ def _cands(run: Path, state: dict | None, result: dict | None) -> list[dict]:
     dirs = [p for p in root.iterdir() if _cand_dir(p)]
     dirs.sort(key=lambda p: p.name)
     return [_cand_from_dir(p) for p in dirs[-CAP:]]
+
+
+def _candidate_states(run: Path) -> dict[str, str]:
+    """@brief 每个候选标签对应报告的当前性（``taic.artifacts.report_state``）。
+
+    只在 trace 主路径上用：trace 自带 ``status``/``speedup``，必须与候选自己的报告绑定，
+    旧格式/损坏/缺失的报告不能借 trace 把测量结论带回来。
+
+    @param run 运行目录。
+    @return ``{label: state}``；没有 ``candidates/`` 时为空表。
+    """
+    root = run / "candidates"
+    if not root.is_dir():
+        return {}
+    from taic.artifacts import report_state
+
+    states: dict[str, str] = {}
+    for folder in root.iterdir():
+        if not _cand_dir(folder):
+            continue
+        path = folder / "report.json"
+        states[folder.name[4:]] = report_state(path, _read_obj(path))
+    return states
+
+
+def _state_fields(state: str) -> dict:
+    """@brief 把报告当前性映射成候选摘要里该显示/该清空的字段。
+
+    @param state ``report_state`` 的分类结果。
+    @return 直接 ``update`` 进摘要行的字典。
+    """
+    if state == "current":
+        return {"report_state": "current"}
+    # Undecidable: the format marker replaces the status, and no measurement survives.
+    return {"status": state, "speedup": None, "report_state": state}
 
 
 def _trace(state: dict | None, result: dict | None) -> list | None:
@@ -426,18 +478,30 @@ def _cand_from_trace(item: dict) -> dict:
 def _cand_from_dir(path: Path) -> dict:
     """@brief 从候选目录里的 ``report.json`` 与 ``differential_recheck.json`` 生成摘要。
 
+    Only a schema-4 report is current evidence (§8).  An older one still carries its own historical
+    ``status``/``speedup``, but that is not a measurement this reader can check: the row says
+    ``report_state="old_format"`` and drops the status/speedup instead of presenting ``ok 9.9x`` as
+    if it were today's.  A damaged file is ``unreadable``, a missing one ``missing``.
+
     @param path 候选目录。
-    @return 含 ``label``/``status``/``speedup``/``within_noise``/``differential_recheck`` 的摘要。
+    @return 含 ``label``/``status``/``speedup``/``within_noise``/``differential_recheck``/``report_state`` 的摘要。
     """
-    report = _read_obj(path / "report.json") or {}
+    from taic.artifacts import report_state
+
+    report_path = path / "report.json"
+    report = _read_obj(report_path)
+    state = report_state(report_path, report)
+    current = state == "current"
+    document = report if current and isinstance(report, dict) else {}
     recheck = _read_obj(path / "differential_recheck.json") or {}
     return {
         "label": _text(path.name[4:]),
-        "status": _text(report.get("status")),
-        "speedup": _number(report.get("speedup")),
+        "status": _text(document.get("status")) if current else state,
+        "speedup": _number(document.get("speedup")) if current else None,
         "within_noise": None,
         "differential_recheck": _text(recheck.get("class")),
         "origin": {},
+        **_state_fields(state),
     }
 
 

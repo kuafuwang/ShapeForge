@@ -269,7 +269,12 @@ class SelfCheckServer:
         if request.mode != "timed":
             return
         self._usage["count"] = int(self._usage.get("count", 0)) + 1
-        report = result.report if isinstance(result.report, dict) else result.report.to_json()
+        if isinstance(result.report, EvalReport):
+            report = result.report.to_json()
+        else:
+            # A decoded report must be a legal schema 4 before any of its fields are read; the
+            # retired ``simulated`` key is not an input and there is no bypass.
+            report = EvalReport.from_json(result.report).to_json()
         elapsed = report.get("elapsed_s", 0.0)
         if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) and math.isfinite(elapsed) and elapsed >= 0:
             self._usage["gpu_s"] = float(self._usage.get("gpu_s", 0.0)) + float(elapsed)
@@ -301,7 +306,13 @@ class SelfCheckServer:
                 "request_digest": request.request_digest,
                 "receipt_id": receipt.get("receipt_id"),
                 "measurement_kind": result.provenance.measurement_kind,
-                "simulated": result.provenance.measurement_kind == "simulated" or report.get("simulated") is True,
+                # The row's simulated flag is derived from the evaluator provenance only; the
+                # build kind is what the report's one build record says (None = no build ran).
+                "simulated": result.provenance.measurement_kind == "simulated",
+                "build_kind": (
+                    report["build"].get("build_kind")
+                    if isinstance(report.get("build"), dict) else None
+                ),
             })
 
     def _presentation(self, request: EvaluationRequest, result: EvaluationResult) -> dict[str, str]:
@@ -513,7 +524,12 @@ class SelfCheckClient:
                 raw = _read_line(sock, MAX_MESSAGE_BYTES)
         except (OSError, socket.timeout) as exc:
             raise SelfCheckBridgeError("evaluation_unavailable", f"selfcheck bridge unavailable: {exc}", retryable=True) from exc
-        document = json.loads(raw.decode("utf-8"))
+        from tcenv.schema import SchemaError, loads_strict
+
+        try:
+            document = loads_strict(raw.decode("utf-8"), what="selfcheck response")
+        except (UnicodeDecodeError, SchemaError) as exc:
+            raise SelfCheckBridgeError("invalid_response", f"selfcheck response is not valid JSON: {exc}") from exc
         if not isinstance(document, dict):
             raise SelfCheckBridgeError("invalid_response", "bridge response must be an object")
         if document.get("ok") is not True:
@@ -641,12 +657,6 @@ def main(argv: list[str] | None = None) -> int:
         # candidate itself; this process never chooses the authoritative root.
         result = client.check_path(args.kernel, args.mode, validate=args.validate, workspace=args.workspace)
         report = result.report if isinstance(result.report, EvalReport) else result.report
-        if isinstance(report, dict) and report.get("simulated") is True:
-            if args.json:
-                print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
-            else:
-                print(f"simulated selfcheck: {report.get('status')} {report.get('message', '')}")
-            return 0 if report.get("status") == "ok" else 1
         if not isinstance(report, EvalReport):
             report = EvalReport.from_json(report)
     except (OSError, ValueError, SelfCheckBridgeError, EvaluationError, json.JSONDecodeError) as exc:

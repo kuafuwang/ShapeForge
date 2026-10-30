@@ -12,7 +12,7 @@ kernel void flash_attention_kernel(device const {{T}}* q [[buffer(0)]],
     float qv[DP], acc[DP];
     for (uint i = 0; i < DP; ++i) { qv[i] = float(q[base + (ulong)row * D + p * DP + i]); acc[i] = 0.0f; }
     float m = -3.0e38f, l = 0.0f;
-    const float c = {{QK_SCALE_MSL}};
+    const float c = SM_SCALE * 1.4426950408889634f;
     for (uint j = 0; j < S; ++j) {
         float s = 0.0f;
         for (uint i = 0; i < DP; ++i) s += qv[i] * float(k[base + (ulong)j * D + p * DP + i]);

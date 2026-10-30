@@ -29,10 +29,12 @@ explicitly out of scope.
 from __future__ import annotations
 
 import dataclasses
+import errno
 import hashlib
 import json
 import os
 import re
+import stat
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -253,6 +255,33 @@ class BlobIO:
         with path.open("rb") as handle:
             return handle.read(limit)
 
+    def read_opened(self, path: Path, descriptor: int, limit: int) -> bytes:
+        """Read from an already-opened, type-checked descriptor.
+
+        The path is passed only for the fault-injection boundary; the bytes come
+        from the descriptor that was opened with ``O_NOFOLLOW`` under a verified
+        parent, so a name swapped after the open cannot redirect the read.
+        """
+
+        del path
+        chunks = bytearray()
+        while len(chunks) < limit:
+            data = os.read(descriptor, limit - len(chunks))
+            if not data:
+                break
+            chunks += data
+        return bytes(chunks)
+
+    def unlink_at(self, parent_fd: int, name: str, path: Path) -> None:
+        """Unlink one entry relative to an already-verified directory fd.
+
+        ``path`` exists for the fault-injection boundary; the removal itself is
+        relative to the descriptor so it can never follow a swapped path name.
+        """
+
+        del path
+        os.unlink(name, dir_fd=parent_fd)
+
     def write_atomic(self, path: Path, data: bytes) -> None:
         temporary = path.with_name(path.name + ".tmp")
         with temporary.open("wb") as handle:
@@ -351,6 +380,55 @@ class _BlobFiles:
         if not self.io.exists(path):
             return []
         return [path / name for name in self.io.listdir(path)]
+
+    # -- descriptor-relative access ----------------------------------------
+    def _open_directory(self, parent_fd: int, name: str, label: str) -> int:
+        """Open one plain child directory; a symlink or non-directory fails."""
+
+        try:
+            return os.open(
+                name, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=parent_fd,
+            )
+        except OSError as exc:
+            if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                raise BlobError(
+                    "unavailable",
+                    f"blob {label} is a symbolic link or not a directory",
+                ) from exc
+            raise
+
+    def open_blob_dir(self, digest: str) -> int:
+        """Open ``root/blobs/<prefix>/<digest>`` component by component.
+
+        The blob root is trusted configuration, but every component below it is
+        opened relative to its verified parent with ``O_DIRECTORY|O_NOFOLLOW``.
+        Cleanup and reads therefore fail closed before touching any byte when a
+        prefix or the digest directory was swapped for a symbolic link.
+        """
+
+        root_fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            blobs_fd = self._open_directory(root_fd, "blobs", "root")
+        finally:
+            os.close(root_fd)
+        try:
+            prefix_fd = self._open_directory(blobs_fd, digest[:2], f"prefix {digest[:2]!r}")
+        finally:
+            os.close(blobs_fd)
+        try:
+            return self._open_directory(prefix_fd, digest, f"directory {digest!r}")
+        finally:
+            os.close(prefix_fd)
+
+    def open_chunks_dir(self, digest: str) -> int:
+        """Open the ``chunks`` directory of one blob without following links."""
+
+        blob_fd = self.open_blob_dir(digest)
+        try:
+            return self._open_directory(blob_fd, BLOB_CHUNKS_DIR, f"chunks of {digest!r}")
+        finally:
+            os.close(blob_fd)
 
     def iter_file_blocks(self, path: Path, *, block: int = BLOB_HASH_BLOCK_BYTES) -> Iterator[bytes]:
         with path.open("rb") as handle:
@@ -986,24 +1064,76 @@ class BlobStore:
             return records
 
     def _delete_locked(self, digest: str, manifest: dict[str, Any], now: int, reason: str) -> str:
+        """Delete one unleased blob without following a planted link.
+
+        The former path-based cleanup called ``Path.exists()``/``iterdir()`` on
+        ``<blob>/chunks`` and then removed the paths: a ``chunks`` symbolic link
+        made it delete files outside the store while still returning
+        ``quarantine`` (after the damage).  Every component is now opened from
+        the trusted root with ``O_DIRECTORY|O_NOFOLLOW``, every chunk is typed as
+        a regular file, and *nothing* is unlinked until that whole tree has been
+        validated.  A refusal before the first unlink leaves the victim bytes in
+        place and quarantines the blob.
+        """
+
+        blob_fd: int | None = None
+        chunks_fd: int | None = None
+        chunks_dir = self._files.directory(digest) / BLOB_CHUNKS_DIR
+        manifest_path = self._files.manifest_path(digest)
         try:
-            for path in self._files.chunks(digest):
-                self.io.remove(path)
-            chunks_dir = self._files.directory(digest) / BLOB_CHUNKS_DIR
-            if self.io.exists(chunks_dir):
-                self.io.remove_tree(chunks_dir)
-            if self.io.exists(self._files.manifest_path(digest)):
-                self.io.remove(self._files.manifest_path(digest))
-        except OSError as exc:
+            blob_fd = self._files.open_blob_dir(digest)
+            chunks_fd = self._files._open_directory(
+                blob_fd, BLOB_CHUNKS_DIR, f"chunks of {digest!r}",
+            )
+            names = sorted(os.listdir(chunks_fd))
+            for name in names:
+                info = os.stat(name, dir_fd=chunks_fd, follow_symlinks=False)
+                if not stat.S_ISREG(info.st_mode):
+                    raise BlobError(
+                        "unavailable",
+                        f"blob chunk {name!r} is not a regular file",
+                    )
+            try:
+                manifest_info = os.stat(
+                    BLOB_MANIFEST_NAME, dir_fd=blob_fd, follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                manifest_info = None
+            if manifest_info is not None and not stat.S_ISREG(manifest_info.st_mode):
+                raise BlobError(
+                    "unavailable", "blob manifest is not a regular file",
+                )
+            # The whole tree is proven to be exactly the store's own plain
+            # files/directories.  Only now may bytes be removed, relative to the
+            # descriptors that were checked.
+            for name in names:
+                self.io.unlink_at(chunks_fd, name, chunks_dir / name)
+            try:
+                os.rmdir(BLOB_CHUNKS_DIR, dir_fd=blob_fd)
+            except FileNotFoundError:
+                pass
+            if manifest_info is not None:
+                self.io.unlink_at(blob_fd, BLOB_MANIFEST_NAME, manifest_path)
+        except (OSError, BlobError) as exc:
             manifest["state"] = STATE_QUARANTINE
             manifest["quarantine"] = {"reason": f"cleanup failed ({reason}): {exc}", "at_ms": now}
             manifest["cleanup"] = {"state": CLEANUP_QUARANTINE, "attempts": int(manifest["cleanup"]["attempts"]) + 1, "last_error": str(exc)}
             manifest["updated_at_ms"] = now
-            try:
-                self._files.store(digest, manifest)
-            except OSError:
-                pass
+            if blob_fd is not None:
+                # The digest directory itself was verified as a plain directory,
+                # so recording the quarantine stays inside the store.  When it
+                # was not (a symlinked prefix/digest), no manifest is written at
+                # all: that path may point outside the store.
+                try:
+                    self._files.store(digest, manifest)
+                except OSError:
+                    pass
             return CLEANUP_QUARANTINE
+        finally:
+            if chunks_fd is not None:
+                os.close(chunks_fd)
+            if blob_fd is not None:
+                os.close(blob_fd)
         return CLEANUP_DONE
 
     def reconcile(self, active_request_ids: Iterable[str]) -> dict[str, list[dict[str, Any]]]:
@@ -1106,24 +1236,48 @@ def _iter_verified_files(
     files: _BlobFiles, digest: str, manifest: Mapping[str, Any], offset: int,
 ) -> Iterator[bytes]:
     descriptor = manifest["descriptor"]
+    descriptor_size = descriptor["chunk_size"]
     if offset < 0 or offset > descriptor["size_bytes"]:
         raise BlobError("out_of_range", "offset is outside the blob")
     computed = hashlib.sha256()
     total = 0
-    for index in range(len(manifest["verified_chunks"])):
-        path = files.chunk_path(digest, index)
-        if not files.io.exists(path):
-            raise BlobError("unavailable", "declared chunk is missing from the store")
-        try:
-            chunk = files.io.read(path, descriptor["chunk_size"] + 1)
-        except OSError as exc:
-            raise BlobError("unavailable", f"chunk could not be read: {exc}") from exc
-        if len(chunk) > descriptor["chunk_size"]:
-            raise BlobError("unavailable", "stored chunk exceeds its declared boundary")
-        computed.update(chunk)
-        total += len(chunk)
-        if total <= offset:
-            continue
-        yield chunk[max(0, offset - (total - len(chunk))):]
+    chunks_fd = files.open_chunks_dir(digest)
+    try:
+        for index in range(len(manifest["verified_chunks"])):
+            name = f"{index:08d}.chunk"
+            path = files.chunk_path(digest, index)
+            try:
+                chunk_fd = os.open(
+                    name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                    dir_fd=chunks_fd,
+                )
+            except FileNotFoundError as exc:
+                raise BlobError("unavailable", "declared chunk is missing from the store") from exc
+            except OSError as exc:
+                if exc.errno in (errno.ELOOP, errno.ENOTDIR, errno.EISDIR):
+                    raise BlobError(
+                        "unavailable", "declared chunk is a symbolic link or not a file",
+                    ) from exc
+                raise BlobError("unavailable", f"chunk could not be read: {exc}") from exc
+            try:
+                info = os.fstat(chunk_fd)
+                if not stat.S_ISREG(info.st_mode):
+                    raise BlobError("unavailable", "declared chunk is not a regular file")
+                chunk = files.io.read_opened(
+                    path, chunk_fd, descriptor_size + 1,
+                )
+            except OSError as exc:
+                raise BlobError("unavailable", f"chunk could not be read: {exc}") from exc
+            finally:
+                os.close(chunk_fd)
+            if len(chunk) > descriptor_size:
+                raise BlobError("unavailable", "stored chunk exceeds its declared boundary")
+            computed.update(chunk)
+            total += len(chunk)
+            if total <= offset:
+                continue
+            yield chunk[max(0, offset - (total - len(chunk))):]
+    finally:
+        os.close(chunks_fd)
     if total != descriptor["size_bytes"] or computed.hexdigest() != descriptor["sha256"]:
         raise BlobError("unavailable", "blob content does not verify against its descriptor")

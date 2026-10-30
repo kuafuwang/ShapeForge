@@ -596,6 +596,59 @@ def test_releasing_the_last_lease_cleans_up_and_a_failing_cleanup_quarantines(tm
         store.read_chunk(SCOPE, descriptor["content_id"], 0, 4)
 
 
+def test_release_refuses_a_symlinked_chunks_directory_before_deleting_anything(tmp_path):
+    """A planted ``chunks -> outside`` must not delete the victim's bytes.
+
+    The old cleanup followed the link, removed the outside files and only then
+    failed while removing the link itself (so ``release`` reported quarantine
+    after the damage).  Cleanup now walks ``blobs/<prefix>/<digest>/chunks`` from
+    the trusted root with no-follow and types every chunk before the first
+    unlink.
+    """
+
+    root = tmp_path / "blobs"
+    store = make_store(root)
+    data = os.urandom(8)
+    descriptor = upload(store, data, chunk_size=4)
+    digest = _content_digest(descriptor["content_id"])
+    store.attach(SCOPE, descriptor["content_id"], "request-symlink")
+
+    chunks = root / "blobs" / digest[:2] / digest / "chunks"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    victim = outside / "victim.chunk"
+    victim.write_bytes(b"must survive")
+    os.rename(chunks, chunks.with_name("chunks-real"))
+    chunks.symlink_to(outside, target_is_directory=True)
+
+    records = store.release("request-symlink")
+    assert records[0]["cleanup"] == "quarantine"
+    assert records[0]["error"]
+    assert victim.read_bytes() == b"must survive"
+    assert store.state(SCOPE, descriptor["content_id"]).state == "quarantine"
+
+
+def test_a_reader_refuses_a_symlinked_chunks_directory(tmp_path):
+    """Reading also fails closed instead of returning the victim's bytes."""
+
+    root = tmp_path / "blobs"
+    store = make_store(root)
+    data = os.urandom(8)
+    descriptor = upload(store, data, chunk_size=4)
+    digest = _content_digest(descriptor["content_id"])
+    chunks = root / "blobs" / digest[:2] / digest / "chunks"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "00000000.chunk").write_bytes(data[:4])
+    os.rename(chunks, chunks.with_name("chunks-real"))
+    chunks.symlink_to(outside, target_is_directory=True)
+
+    reader = BlobReader(root)
+    with pytest.raises(BlobError, match="symbolic link|not a directory"):
+        list(reader.iter_chunks(descriptor["content_id"]))
+    assert (outside / "00000000.chunk").read_bytes() == data[:4]
+
+
 def test_release_keeps_a_blob_that_another_request_still_leases(tmp_path):
     store = make_store(tmp_path / "blobs")
     data = os.urandom(8)

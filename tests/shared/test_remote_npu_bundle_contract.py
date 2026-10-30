@@ -221,7 +221,7 @@ def test_the_bundle_payload_round_trips_and_refuses_a_swapped_payload():
 
 def test_materialize_writes_every_inline_entry_under_the_attempt_root(tmp_path):
     bundle = _bundle()
-    written = bundle.materialize(tmp_path / "attempt")
+    written = bundle.materialize(tmp_path / "attempt", anchor=tmp_path)
     assert sorted(written) == ["graph/main.json", "graph/params.bin"]
     for path, role, media_type, data in GRAPH_ENTRIES:
         assert written[path].read_bytes() == data
@@ -259,7 +259,7 @@ def test_materialize_cannot_be_raced_into_writing_through_a_swapped_parent(tmp_p
     # named ``graph-real``); the second entry is refused because the swapped name
     # is a symbolic link.
     with pytest.raises(BundleError, match="symbolic link"):
-        _bundle().materialize(root)
+        _bundle().materialize(root, anchor=tmp_path)
     assert swapped["done"] is True
     # The escape the old implementation allowed: a file under the swapped target.
     assert list(outside.iterdir()) == []
@@ -295,7 +295,7 @@ def test_materialize_handles_cannot_be_talked_into_reading_a_swapped_path(tmp_pa
         return directory_fd
 
     monkeypatch.setattr(artifact_bundle, "_descend_without_symlinks", raced)
-    written = single.materialize(root)
+    written = single.materialize(root, anchor=tmp_path)
     assert swapped["done"] is True
     handle = written["graph/main.json"]
     # The handle re-walks with O_NOFOLLOW: the swapped name is refused instead
@@ -317,7 +317,7 @@ def test_materialize_handles_verify_the_bytes_they_return(tmp_path):
     """
 
     root = tmp_path / "attempt"
-    written = _bundle().materialize(root)
+    written = _bundle().materialize(root, anchor=tmp_path)
     handle = written["graph/main.json"]
     original = GRAPH_ENTRIES[0][3]
     assert handle.read_bytes() == original
@@ -451,7 +451,7 @@ def test_materialize_refuses_a_symlinked_parent_instead_of_writing_through_it(tm
     (root / "graph").symlink_to(outside, target_is_directory=True)
     bundle = _bundle()
     with pytest.raises(BundleError, match="symbolic link"):
-        bundle.materialize(root)
+        bundle.materialize(root, anchor=tmp_path)
     assert list(outside.iterdir()) == []
 
 
@@ -462,8 +462,43 @@ def test_materialize_refuses_a_symlink_at_the_target_name(tmp_path):
     (root / "graph").mkdir(parents=True)
     (root / "graph" / "main.json").symlink_to(outside_file)
     with pytest.raises(BundleError, match="symbolic link"):
-        _bundle().materialize(root)
+        _bundle().materialize(root, anchor=tmp_path)
     assert outside_file.read_bytes() == b"original"
+
+
+def test_materialize_refuses_a_symlinked_parent_above_the_attempt_root(tmp_path):
+    """A link at ``<state>/build`` must not redirect the write outside state.
+
+    Checking only the final attempt directory is not enough: ``build`` is a
+    worker-writable component under the trusted state anchor.  The attempt root
+    and every component below it are walked from that anchor, so the planted
+    link fails before the first byte is written, and a handle returned by a
+    normal materialize refuses to read through it later.
+    """
+
+    state = tmp_path / "state"
+    state.mkdir()
+    outside = tmp_path / "outside"
+    (outside / "attempt").mkdir(parents=True)
+    state.joinpath("build").symlink_to(outside, target_is_directory=True)
+    root = state / "build" / "attempt"
+
+    with pytest.raises(BundleError, match="symbolic link"):
+        _bundle().materialize(root, anchor=state)
+    assert list((outside / "attempt").iterdir()) == []
+
+    # Normal materialize from the same anchor works; then the parent is swapped
+    # for a link and read_bytes must re-check every component, not just the
+    # final attempt name.
+    # Remove the planted link so the normal write can create the real build dir.
+    state.joinpath("build").unlink()
+    written = _bundle().materialize(state / "build" / "attempt", anchor=state)
+    assert written["graph/main.json"].read_bytes() == GRAPH_ENTRIES[0][3]
+    os.rename(state / "build", state / "build-original")
+    state.joinpath("build").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(BundleError, match="symbolic link"):
+        written["graph/main.json"].read_bytes()
+    assert list((outside / "attempt").iterdir()) == []
 
 
 def test_materialize_refuses_a_symlinked_root_or_a_file_in_the_way(tmp_path):
@@ -472,21 +507,21 @@ def test_materialize_refuses_a_symlinked_root_or_a_file_in_the_way(tmp_path):
     linked_root = tmp_path / "linked-root"
     linked_root.symlink_to(outside, target_is_directory=True)
     with pytest.raises(BundleError, match="must not be a symbolic link"):
-        _bundle().materialize(linked_root)
+        _bundle().materialize(linked_root, anchor=tmp_path)
     assert list(outside.iterdir()) == []
     # A regular file where a directory component belongs is refused, not replaced.
     root = tmp_path / "attempt"
     root.mkdir()
     (root / "graph").write_bytes(b"not a directory")
     with pytest.raises(BundleError, match="not a directory"):
-        _bundle().materialize(root)
+        _bundle().materialize(root, anchor=tmp_path)
     assert (root / "graph").read_bytes() == b"not a directory"
     assert sorted(item.name for item in root.iterdir()) == ["graph"]
     # An existing target is never overwritten by a second attempt.
     root = tmp_path / "again"
-    _bundle().materialize(root)
+    _bundle().materialize(root, anchor=tmp_path)
     with pytest.raises(BundleError, match="already exists"):
-        _bundle().materialize(root)
+        _bundle().materialize(root, anchor=tmp_path)
 
 
 def test_an_entry_cannot_be_the_parent_of_another_entry():
@@ -1045,7 +1080,7 @@ def test_the_signed_evidence_descriptor_is_the_version_two_identity():
             "candidate_digest": candidate,
             "device_group": group,
         },
-        "report": {"schema_id": "tcenv.eval-report.v3", "media_type": "application/json",
+        "report": {"schema_id": contracts.REPORT_SCHEMA_ID, "media_type": "application/json",
                    "size_bytes": 2, "sha256": hashlib.sha256(b"{}").hexdigest()},
         "evidence": {
             "schema_id": contracts.NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,

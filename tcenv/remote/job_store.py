@@ -2295,8 +2295,21 @@ class JobStore:
         JobStore._validate_report(request, report, evidence)
         if report.get("protocol_version") != provenance.get("protocol_version"):
             raise JobError("invalid_argument", "worker report execution protocol differs from the evaluator epoch")
-        if (report.get("simulated") is True) != (provenance.get("measurement_kind") == "simulated"):
-            raise JobError("invalid_argument", "worker report measurement kind differs from evaluator provenance")
+        # The report's build kind and the evaluator's measurement kind must not contradict each
+        # other.  ``build=null`` carries no build kind, so a synthesized timeout stays legal on a
+        # measured evaluator (§6.1/§6.2).
+        build = report.get("build")
+        if isinstance(build, dict):
+            kind = build.get("build_kind")
+            if kind not in {"native", "simulator", "source_only"}:
+                raise JobError("invalid_argument", "worker report build kind is not a registered kind")
+            if kind != "native" and provenance.get("measurement_kind") == "measured":
+                raise JobError(
+                    "invalid_argument",
+                    "a non-native build cannot claim a measured evaluation",
+                )
+        if self.contract.build_contract:
+            self._check_report_against_signed_build(report, evidence)
         if self.contract.npu_source:
             if request.npu is None:
                 raise JobError("invalid_argument", "NPU request has no candidate/execution binding")
@@ -2356,12 +2369,55 @@ class JobStore:
                     raise JobError("invalid_argument", "worker evidence does not bind the exact candidate bytes")
             elif not isinstance(evidence, dict) or evidence.get("candidate_digest") != request.candidate_digest:
                 raise JobError("invalid_argument", "worker evidence does not bind the exact CandidateDigest")
-        if report.get("simulated") is not True:
-            from tcenv.evaluate import EvalReport
-            try:
-                EvalReport.from_json(report)
-            except Exception as exc:
-                raise JobError("invalid_argument", f"worker report fails EvalReport validation: {exc}") from exc
+        # Every report is validated, including a simulated one: the schema-4 closed set is the
+        # only gate, and ``build.build_kind`` (not a report-level flag) says how it was built.
+        from tcenv.evaluate import EvalReport
+        try:
+            EvalReport.from_json(report)
+        except Exception as exc:
+            raise JobError("invalid_argument", f"worker report fails EvalReport validation: {exc}") from exc
+
+    @staticmethod
+    def _check_report_against_signed_build(report: dict[str, Any], evidence: dict[str, Any] | None) -> None:
+        """The report ``build`` must agree with the signed ``BuildEvidence`` (§6.2).
+
+        ``ok``/``reused`` evidence is a ``full`` build, ``compile_failed`` is ``partial`` and
+        ``not_run`` (including a synthesized timeout) is ``null``.  The provenance and artifact
+        manifest are compared field by field, not just by status.
+
+        @param report worker report dict.
+        @param evidence decoded timing/build evidence.
+        @raises JobError 两者不一致时。
+        """
+        if not isinstance(evidence, dict):
+            raise JobError("invalid_argument", "the build contract requires signed build evidence")
+        signed = evidence.get("build")
+        if not isinstance(signed, dict):
+            raise JobError("invalid_argument", "the build contract requires a signed build document")
+        status = signed.get("status")
+        build = report.get("build")
+        if status in {"ok", "reused"}:
+            expected_shape = "full"
+        elif status == "compile_failed":
+            expected_shape = "partial"
+        elif status == "not_run":
+            expected_shape = None
+        else:
+            raise JobError("invalid_argument", f"unknown signed build status {status!r}")
+        shape = build.get("shape") if isinstance(build, dict) else None
+        if shape != expected_shape:
+            raise JobError(
+                "invalid_argument",
+                f"signed build status {status!r} does not match the report build {shape!r}",
+            )
+        if expected_shape is None:
+            return
+        if build.get("provenance") != signed.get("provenance"):
+            raise JobError("invalid_argument", "report build provenance differs from the signed evidence")
+        if expected_shape == "partial":
+            return
+        if expected_shape == "full" and build.get("artifacts") != signed.get("artifacts"):
+            raise JobError("invalid_argument", "report build artifacts differ from the signed evidence")
 
     # -- crash recovery, retention and backup -------------------------------
     def running_attempts(self) -> list[tuple[str, Attempt, bool]]:

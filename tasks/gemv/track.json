@@ -1,0 +1,123 @@
+{
+  "track": "triton-spec-to-msl",
+  "opspec": "tasks/gemv/opspec.json",
+  "backend_id": "metal",
+  "lowering_profile": "metal-gemv",
+  "spec_text": {
+    "template": "tasks/gemv/kernel_triton.py",
+    "placeholders": {
+      "M": "spec_params",
+      "K": "spec_params",
+      "TL": "dtype_spelling"
+    }
+  },
+  "known_good": {
+    "template": "tasks/gemv/naive.metal",
+    "placeholders": {
+      "T": "dtype_spelling"
+    }
+  },
+  "description": "y = A @ x with A[M, K] row-major; products accumulated in fp32, result rounded once.",
+  "dtype_spelling": {
+    "fp16": {
+      "T": "half",
+      "TL": "tl.float16",
+      "TORCH": "torch.float16"
+    },
+    "bf16": {
+      "T": "bfloat",
+      "TL": "tl.bfloat16",
+      "TORCH": "torch.bfloat16"
+    }
+  },
+  "implementations": {
+    "gen_inputs": {
+      "implementation_id": "gemv.gen_inputs",
+      "implementation_version": 1,
+      "params": {
+        "mags": {
+          "normal": 1.0,
+          "wide_range": 0.1
+        },
+        "default_mag": 1.0,
+        "large": 20.0,
+        "spike": 5.0,
+        "seed_offsets": {
+          "A": 0,
+          "x": 31
+        }
+      }
+    },
+    "reference": {
+      "implementation_id": "gemv.reference",
+      "implementation_version": 1,
+      "params": {
+        "accumulate": "float64",
+        "operation": "matmul_vector"
+      }
+    },
+    "error_scale": null
+  },
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "gemv.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "matmul"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "gemv.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "torch.mv"
+      }
+    }
+  ],
+  "template_literals": {
+    "launch": [
+      {
+        "template": "tasks/gemv/kernel_triton.py",
+        "text": "num_warps = 4",
+        "threads_per_threadgroup": 128
+      }
+    ],
+    "semantic": []
+  },
+  "baseline_variant": {
+    "template": "tasks/gemv/kernel_triton_msl.py",
+    "placeholders": {
+      "M": "spec_params",
+      "K": "spec_params",
+      "TL": "dtype_spelling"
+    },
+    "note": "one program per row, 1-D accumulator"
+  },
+  "pack_files": [
+    "tasks/_assembly.py",
+    "tasks/_common.py",
+    "tasks/gemv/__init__.py",
+    "tasks/gemv/kernel_triton.py",
+    "tasks/gemv/naive.metal",
+    "tasks/gemv/opspec.json",
+    "tasks/gemv/task.py",
+    "tasks/gemv/track.json",
+    "tcenv/backends/metal/lowering.py",
+    "tcenv/contract.py",
+    "tcenv/distributions.py",
+    "tcenv/dtypes.py",
+    "tcenv/identity.py",
+    "tcenv/lowering.py",
+    "tcenv/opspec/__init__.py",
+    "tcenv/opspec/model.py",
+    "tcenv/opspec/schema/opspec.v1.schema.json",
+    "tcenv/opspec/validator.py",
+    "tcenv/task.py",
+    "tcenv/track/__init__.py",
+    "tcenv/track/schema/track.v1.schema.json"
+  ]
+}

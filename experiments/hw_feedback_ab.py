@@ -46,15 +46,41 @@ KEYWORDS: dict[str, str] = {
 
 
 def _read(p: Path):
-    """@brief 读一个 JSON 文件，读不出来时返回 ``None``。
+    """@brief 严格读一个 JSON 文件（拒绝重复键），读不出来时返回 ``None``。
+
+    Plan §6.4: report/state/result reads go through the strict loader — duplicate keys are refused
+    instead of silently keeping the last value.  Currency is judged separately
+    (:func:`taic.artifacts.document_state`); this helper only parses.
 
     @param p JSON 文件路径。
-    @return 解析结果；文件缺失或不是合法 JSON 时为 ``None``。
+    @return 解析结果；文件缺失、损坏或含重复键时为 ``None``。
     """
+    from tcenv.schema import loads_strict
+
     try:
-        return json.loads(p.read_text())
+        return loads_strict(p.read_text(encoding="utf-8"), what=str(p))
     except (OSError, ValueError):
         return None
+
+
+def _state(report: dict | None) -> str:
+    """@brief 一份候选报告的当前性；没有报告时是 ``missing``。
+
+    @param report 已解析的报告，可为 None。
+    @return ``current`` / ``old_format`` / ``unreadable`` / ``missing``。
+    """
+    from taic.artifacts import document_state
+
+    return "missing" if report is None else document_state(report)
+
+
+def _current(report: dict | None) -> bool:
+    """@brief 这份报告是不是当前证据（schema 4，类型严格）。
+
+    @param report 已解析的报告，可为 None。
+    @return 是当前格式时为 ``True``。
+    """
+    return report is not None and _state(report) == "current"
 
 
 def listed_features(block: str) -> list[str]:
@@ -74,18 +100,10 @@ def _chats(run_dir: Path) -> list[dict]:
     @param run_dir 运行目录。
     @return chat 事件列表；文件读不到时为空列表。
     """
-    out = []
-    try:
-        for line in (run_dir / "transcript.jsonl").read_text().splitlines():
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            if e.get("event") == "chat":
-                out.append(e)
-    except OSError:
-        pass
-    return out
+    from taic.reads import iter_jsonl
+
+    # Same line reader as the rest of the tree: bad lines are skipped, not fatal.
+    return [e for e in iter_jsonl(run_dir / "transcript.jsonl") if isinstance(e, dict) and e.get("event") == "chat"]
 
 
 def _plans_of(chats: list[dict], rnd: int) -> list[dict]:
@@ -143,7 +161,7 @@ def analyze(run_dir: Path, *, would_be: bool | None = None) -> dict:
             by_sha[hashlib.sha1(src.rstrip().encode()).hexdigest()] = (src, rep)
             cands[d.name.split("_", 1)[1]] = (src, rep)
     rounds = []
-    tot = {"rounds": 0, "rounds_with_list": 0, "plans": 0, "plans_mentioning": 0, "branches": 0, "branches_gaining": 0, "branches_correct": 0, "branches_correct_gaining": 0}
+    tot = {"rounds": 0, "rounds_with_list": 0, "plans": 0, "plans_mentioning": 0, "branches": 0, "branches_gaining": 0, "branches_correct": 0, "branches_correct_gaining": 0, "branches_undecidable": 0}
     plan_reqs = {}
     for e in chats:
         m = re.match(r"^r(\d+)\.plan(?:#t0)?$", str(e.get("label", "")))
@@ -155,7 +173,10 @@ def analyze(run_dir: Path, *, would_be: bool | None = None) -> dict:
         seed_src, seed_rep = by_sha.get(hashlib.sha1(sm.group(1).rstrip().encode()).hexdigest(), (None, None)) if sm else (None, None)
         bm = re.search(re.escape(HEADER) + r".*?decides\.", user, re.S)
         block, source_of_list = (bm.group(0), "recorded in the planner request") if bm else (None, "")
-        if (block is None) and (would_be is not False) and seed_src and seed_rep and seed_rep.get("status") == "ok":
+        if (block is None) and (would_be is not False) and seed_src and seed_rep and seed_rep.get("status") == "ok" and _current(seed_rep):
+            # ``seed_rep`` is already the parsed document (``_read`` → ``loads_strict``): hand it to
+            # ``from_json`` directly.  Re-parsing it as report *text* would raise SchemaError, since
+            # the strict report reader takes a string, not a dict.
             block = hf.hw_feedback(task, seed_src, EvalReport.from_json(seed_rep), backend_id=backend_id)
             source_of_list = "computed from the seed (not shown to the model)"
         listed = listed_features(block) if block else []
@@ -169,22 +190,31 @@ def analyze(run_dir: Path, *, would_be: bool | None = None) -> dict:
                 continue
             last = labels[-1]
             src, rep = cands[last]
-            ok = bool(rep and rep.get("status") == "ok")
+            # §8: an old/damaged candidate report is not evidence.  It is listed (so a reader sees
+            # it happened) but it cannot be counted as correct, carry a speedup, or enter the A/B
+            # totals — a plain ``status == "ok"`` check would let a schema-3 report do exactly that.
+            current = rep is not None and _current(rep)
+            ok = bool(current and rep.get("status") == "ok")
             gained: list[str] = []
             if seed_feats is not None and listed:
                 f = hw.build_report(src, label=last, task=task.name, dtype=dtype, size=size, compile_evidence=False, task_obj=task).features
                 gained = [x for x in listed if x in f and f[x]["present"] and not seed_feats[x]["present"]]
-            branches.append({"label": last, "correct": ok, "speedup": (rep or {}).get("speedup"), "gained_listed": gained})
+            branches.append({
+                "label": last, "correct": ok, "speedup": rep.get("speedup") if current else None,
+                "gained_listed": gained, "report_state": _state(rep),
+            })
         rounds.append({"round": rnd, "seed_found": seed_src is not None, "list": listed, "list_source": source_of_list, "plans": [p.get("title") for p in plans], "plans_mentioning_listed": [p.get("title") for p in mentioning], "branches": branches})
         tot["rounds"] += 1
         if listed:
             tot["rounds_with_list"] += 1
             tot["plans"] += len(plans)
             tot["plans_mentioning"] += len(mentioning)
-            tot["branches"] += len(branches)
-            tot["branches_gaining"] += sum(1 for b in branches if b["gained_listed"])
-            tot["branches_correct"] += sum(1 for b in branches if b["correct"])
-            tot["branches_correct_gaining"] += sum(1 for b in branches if b["correct"] and b["gained_listed"])
+            counted = [b for b in branches if b["report_state"] == "current"]
+            tot["branches"] += len(counted)
+            tot["branches_undecidable"] += len(branches) - len(counted)
+            tot["branches_gaining"] += sum(1 for b in counted if b["gained_listed"])
+            tot["branches_correct"] += sum(1 for b in counted if b["correct"])
+            tot["branches_correct_gaining"] += sum(1 for b in counted if b["correct"] and b["gained_listed"])
     return {"run": str(run_dir), "task": task_name, "feedback_in_run": any(HEADER in (e["messages"][-1]["content"] if e.get("messages") else "") for e in plan_reqs.values()), "total": tot, "rounds": rounds}
 
 
@@ -194,10 +224,10 @@ def markdown(results: list[dict]) -> str:
     @param results ``analyze`` 返回的字典列表。
     @return 报告文本。
     """
-    L = ["| run | hw block in the run | rounds with a missing list | plans | plans mentioning a listed feature | branches | branches gaining a listed feature | correct branches gaining one |", "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
+    L = ["| run | hw block in the run | rounds with a missing list | plans | plans mentioning a listed feature | branches | branches gaining a listed feature | correct branches gaining one | undecidable branches (not counted) |", "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for r in results:
         t = r["total"]
-        L.append(f"| {Path(r['run']).name} | {'yes' if r['feedback_in_run'] else 'no (list computed from the seed)'} | {t['rounds_with_list']} / {t['rounds']} | {t['plans']} | {t['plans_mentioning']} | {t['branches']} | {t['branches_gaining']} | {t['branches_correct_gaining']} / {t['branches_correct']} |")
+        L.append(f"| {Path(r['run']).name} | {'yes' if r['feedback_in_run'] else 'no (list computed from the seed)'} | {t['rounds_with_list']} / {t['rounds']} | {t['plans']} | {t['plans_mentioning']} | {t['branches']} | {t['branches_gaining']} | {t['branches_correct_gaining']} / {t['branches_correct']} | {t['branches_undecidable']} |")
     L.append("")
     for r in results:
         L += [f"**{Path(r['run']).name}**", ""]

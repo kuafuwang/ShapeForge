@@ -1,0 +1,77 @@
+{
+  "backend_params": {},
+  "contract": {
+    "args": [
+      {
+        "doc": "input tensor",
+        "dtype": "fp16",
+        "index": 0,
+        "name": "x",
+        "role": "input",
+        "shape": [
+          64,
+          512
+        ],
+        "value": null
+      },
+      {
+        "doc": "scale vector",
+        "dtype": "fp16",
+        "index": 1,
+        "name": "w",
+        "role": "input",
+        "shape": [
+          512
+        ],
+        "value": null
+      },
+      {
+        "doc": "output tensor",
+        "dtype": "fp16",
+        "index": 2,
+        "name": "y",
+        "role": "output",
+        "shape": [
+          64,
+          512
+        ],
+        "value": null
+      }
+    ],
+    "constants": [
+      {
+        "msl_type": "uint",
+        "name": "M",
+        "value": 64
+      },
+      {
+        "msl_type": "uint",
+        "name": "H",
+        "value": 512
+      },
+      {
+        "msl_type": "float",
+        "name": "EPS",
+        "value": "1e-06"
+      }
+    ],
+    "gpu": "Apple M4 Max (Apple9 GPU family)",
+    "grid": [
+      64,
+      1,
+      1
+    ],
+    "kernel_name": "rmsnorm_kernel",
+    "threads": [
+      256,
+      1,
+      1
+    ]
+  },
+  "lowering_profile_digest": "0d20dc3c941d81ae438d7492fe80427dba09cad74c0782bcbae2a10f857e557e",
+  "opspec_digest": "561459b4f0b5c4225da5a8be4a6e9b08119e93842ac91b23945890d6231e297d",
+  "spec_params": {
+    "H": "512",
+    "M": "64"
+  }
+}

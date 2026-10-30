@@ -61,7 +61,7 @@ def _run(root: Path, name: str, *, candidates: int = 0, transcript: bool = False
             cand = folder / f"{index:03d}_r1.p0"
             cand.mkdir()
             (cand / "kernel.metal").write_text("kernel void k() {}\n", encoding="utf-8")
-            (cand / "report.json").write_text(json.dumps({"status": "ok", "speedup": 1.0}), encoding="utf-8")
+            (cand / "report.json").write_text(json.dumps({"schema_version": 4, "status": "ok", "speedup": 1.0}), encoding="utf-8")
     if transcript:
         (directory / "transcript.jsonl").write_text(
             json.dumps({"event": "chat", "reply": "hi"}) + "\n", encoding="utf-8")
@@ -117,7 +117,7 @@ def test_only_the_whitelisted_files_reach_the_journal_and_the_shard_is_per_pid(t
     control.write_json_atomic(directory / "confirm_report.json", {"status": "ok"})
     control.write_json_atomic(directory / "run_config.json", {"task": "relu"})
     control.write_text_atomic(directory / "best.metal", "kernel void k() {}\n")
-    control.write_json_atomic(directory / "candidates" / "000_r1.p0" / "report.json", {"status": "ok"})
+    control.write_json_atomic(directory / "candidates" / "000_r1.p0" / "report.json", {"schema_version": 4, "status": "ok"})
     control.write_text_atomic(directory / "candidates" / "000_r1.p0" / "kernel.metal", "kernel void k() {}\n")
     control.append_jsonl(directory / "feedback.jsonl", {"seq": 1})
     control.write_json_atomic(directory / "ledger.json", {"summary": {}})
@@ -278,29 +278,16 @@ def _confirmed_run(root: Path, name: str = "confirmed") -> Path:
     candidate = directory / "candidates" / "000_r1.p0"
     candidate.mkdir(parents=True)
     (candidate / "kernel.metal").write_text(kernel, encoding="utf-8")
-    (candidate / "report.json").write_text(json.dumps({"status": "ok", "speedup": 1.5}), encoding="utf-8")
-    (directory / "result.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "size": "paper", "stop_reason": "max_rounds",
-        "started_at": 1, "spent_usd": 0.1, "target_id": "apple-m4-max",
-        "confirmed_speedup": 1.5, "confirmed_status": "ok", "confirm_winner_label": "r1.p0",
-        "confirmation_source_sha256": digest, "confirmed_values": [1.5],
-        "confirmed_worst": 1.5, "confirmed_best": 1.5,
-    }), encoding="utf-8")
-    (directory / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": 1.5,
-        "benchmark": {
-            "noisy": False,
-            "candidate": {"cv": 0.01, "reps": 15},
-            "baselines": {"mlx": {"cv": 0.01, "reps": 15}},
-            "best_baseline": "mlx",
-            "confirmation": {
-                "kernel_sha256": digest, "winner_label": "r1.p0",
-                "confirmed_values": [1.5], "speedup": 1.5, "candidate_us": None,
-            },
-        },
-        "protocol_version": PROTOCOL_VERSION,
-        "target_id": "apple-m4-max",
-    }), encoding="utf-8")
+    (candidate / "report.json").write_text(json.dumps({"schema_version": 4, "status": "ok", "speedup": 1.5}), encoding="utf-8")
+    from experiments.common import synthetic_confirmation_documents
+
+    result, report = synthetic_confirmation_documents(
+        task="relu", dtype="fp16", size="paper", target_id="apple-m4-max",
+        speedup=1.5, label="r1.p0", kernel_sha256=digest,
+    )
+    result.update({"stop_reason": "max_rounds", "started_at": 1, "spent_usd": 0.1})
+    (directory / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    (directory / "confirm_report.json").write_text(json.dumps(report), encoding="utf-8")
     return directory
 
 
@@ -355,10 +342,10 @@ def test_one_tick_sees_a_non_winner_candidate_edit_with_and_without_the_journal(
     winning = directory / "candidates" / "001_r1.p0"
     winning.mkdir()
     (winning / "kernel.metal").write_text("kernel void w() {}\n", encoding="utf-8")
-    (winning / "report.json").write_text(json.dumps({"status": "ok", "speedup": 2.0}), encoding="utf-8")
+    (winning / "report.json").write_text(json.dumps({"schema_version": 4, "status": "ok", "speedup": 2.0}), encoding="utf-8")
     failing = directory / "candidates" / "000_r1.p0"
     (failing / "report.json").write_text(json.dumps({
-        "status": "error", "message": "abi_error: undefined symbol a", "stage": "compile",
+        "schema_version": 4, "status": "error", "message": "abi_error: undefined symbol a", "stage": "compile",
     }), encoding="utf-8")
     index = Index(tmp_path / "observe.sqlite")
     index.sync_known(force=True)
@@ -373,14 +360,14 @@ def test_one_tick_sees_a_non_winner_candidate_edit_with_and_without_the_journal(
         if mode == "no-journal":
             _remove_journal(runs)
         (failing / "report.json").write_text(json.dumps({
-            "status": "error", "message": "abi_error: undefined symbol b", "stage": "link",
+            "schema_version": 4, "status": "error", "message": "abi_error: undefined symbol b", "stage": "link",
         }), encoding="utf-8")
         index.tick()
         after = failure_rows()
         assert after[0]["sig"] != before[0]["sig"], (mode, after)
         # 恢复原内容，下一轮再变回来。
         (failing / "report.json").write_text(json.dumps({
-            "status": "error", "message": "abi_error: undefined symbol a", "stage": "compile",
+            "schema_version": 4, "status": "error", "message": "abi_error: undefined symbol a", "stage": "compile",
         }), encoding="utf-8")
         index.tick()
         assert failure_rows()[0]["sig"] == before[0]["sig"], mode

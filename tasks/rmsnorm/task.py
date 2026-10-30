@@ -1,84 +1,158 @@
-# 按行 RMSNorm。description：y[r, :] = x[r, :] * rsqrt(mean(x[r, :]^2) + eps) * w，平方和在 fp32 累加，结果舍入一次。EPS = 1e-6。
-# 标准答案是 reference：在 float64 上计算 x * torch.rsqrt((x * x).mean(-1) + EPS) * w。
-# 基线是 baselines：mlx 的 mx.fast.rms_norm(x, w, EPS)，torch_mps 的 F.rms_norm。
-# 模型不能改 contract：核名 rmsnorm_kernel，grid=(M, 1, 1)，threads=(256, 1, 1)，缓冲 x/w/y，常量 M、H、EPS。
+# 按行 RMSNorm。语义只写在 opspec.json；这里只做表示/oracle 装配。
+# 题面模板、description、dtype 拼写、known-good 与登记实现身份都在 track.json；
+# 契约（核名、grid、threads、常量、gpu）由登记的 Metal LoweringProfile 经 lower 派生。
 import torch
 import torch.nn.functional as F
 
-from tcenv.contract import AbiArg, Contract
 from tcenv.distributions import sample
-from tcenv.task import BaselineImpl, Task, default_tolerances
-from tasks._common import check_dtype, load_text
+from tcenv.lowering import derive_specialization
+from tcenv.opspec.model import instantiate, load_opspec
+from tcenv.task import BaselineImpl, Task
+from tcenv.track import REPO_ROOT, TrackBinding, load_track
 
-EPS = 1e-6
-SHAPES = {"paper": (4096, 4096), "small": (64, 512)}
-MAGS = {"normal": 1.0, "wide_range": 1.0, "outlier": 1.0}
+TASK_DIR = "rmsnorm"
+TRACK_NAME = "track.json"
 
 
-def _mlx(x, w):
-    """@brief mlx 侧的 RMSNorm 基线，走厂商融合实现。
+def _track() -> TrackBinding:
+    """@brief 读取本题的 track 绑定。
 
-    @param x 激活，mlx 数组。
-    @param w 每通道权重，mlx 数组。
-    @return ``mx.fast.rms_norm(x, w, EPS)``。
+    @return 通过校验的 :class:`TrackBinding`。
     """
-    import mlx.core as mx
-
-    return mx.fast.rms_norm(x, w, EPS)
+    return load_track(REPO_ROOT / "tasks" / TASK_DIR / TRACK_NAME)
 
 
-def _torch(x, w):
-    """@brief torch 侧的 RMSNorm 基线。
+def _gen_inputs(params: dict, shape: tuple[int, int], dtype: str):
+    """@brief 按登记参数构造输入生成闭包（参数来自 track 登记，不是第二份字面量）。
 
-    @param x 激活。
-    @param w 每通道权重。
-    @return ``F.rms_norm(x, (H,), w, EPS)``。
+    @param params track 里 ``implementations.gen_inputs.params``。
+    @param shape ``(M, H)``。
+    @param dtype 元素类型。
+    @return ``(case, seed) -> {"x", "w"}``。
     """
-    return F.rms_norm(x, (x.shape[-1],), w, EPS)
+    mags = dict(params["mags"])
+    default_mag = float(params["default_mag"])
+    large = float(params["large"])
+    weight_offset = float(params["weight_offset"])
+    weight_scale = float(params["weight_scale"])
+    weight_seed_offset = int(params["weight_seed_offset"])
+
+    def gen_inputs(case, seed):
+        x = sample(case, shape, seed, dtype, mag=mags.get(case, default_mag), large=large)
+        w = weight_offset + weight_scale * sample("normal", (shape[1],), seed + weight_seed_offset, dtype)
+        return {"x": x, "w": w}
+
+    return gen_inputs
+
+
+def _reference(params: dict, eps: float):
+    """@brief 按登记参数构造参考实现闭包；EPS 来自语义实例。
+
+    @param params track 里 ``implementations.reference.params``。
+    @param eps 已物化的 ``EPS`` attr。
+    @return ``inp -> {"y"}``。
+    """
+    if params["accumulate"] != "float64":
+        raise ValueError(f"rmsnorm reference only implements float64 accumulation, got {params['accumulate']!r}")
+
+    def reference(inp):
+        x, w = inp["x"].double(), inp["w"].double()
+        return {"y": x * torch.rsqrt((x * x).mean(-1, keepdim=True) + eps) * w}
+
+    return reference
+
+
+def _mlx_baseline(eps: float):
+    """@brief mlx 侧 RMSNorm 基线，走厂商融合实现。
+
+    @param eps 已物化的 ``EPS`` attr。
+    @return ``(x, w) -> mx.fast.rms_norm(x, w, eps)``。
+    """
+
+    def _mlx(x, w):
+        import mlx.core as mx
+
+        return mx.fast.rms_norm(x, w, eps)
+
+    return _mlx
+
+
+def _torch_baseline(eps: float):
+    """@brief torch 侧 RMSNorm 基线。
+
+    @param eps 已物化的 ``EPS`` attr。
+    @return ``(x, w) -> F.rms_norm(x, (H,), w, eps)``。
+    """
+
+    def _torch(x, w):
+        return F.rms_norm(x, (x.shape[-1],), w, eps)
+
+    return _torch
 
 
 def build(dtype: str, size: str) -> Task:
     """@brief 装配按行 RMSNorm 题。
 
-    核名 ``rmsnorm_kernel``，``grid=(M, 1, 1)``，``threads=(256, 1, 1)``，缓冲 x/w/y，常量 M、H、EPS。
+    ``instantiate`` 产生语义实例，``lower`` 由登记的 ``metal-rmsnorm`` profile 派生契约；
+    题面、known-good、description 与登记实现身份来自 track 绑定。
 
     @param dtype 元素类型，``fp16`` 或 ``bf16``。
     @param size 尺寸档位，``paper`` 或 ``small``。
     @return 装配好的 ``Task``。
+    @raises tcenv.opspec.model.OpSpecError dtype/size 不在声明域内。
+    @raises tcenv.lowering.LoweringError 未登记 profile 或派生非法。
     """
-    check_dtype(dtype)
-    M, H = SHAPES[size]
-    contract = Contract(
-        kernel_name="rmsnorm_kernel",
-        grid=(M, 1, 1),
-        threads=(256, 1, 1),
-        args=(
-            AbiArg("x", 0, "input", dtype, (M, H), doc="activations, row-major [M, H]"),
-            AbiArg("w", 1, "input", dtype, (H,), doc="per-channel weight"),
-            AbiArg("y", 2, "output", dtype, (M, H)),
-        ),
-        constants=(("M", "uint", M), ("H", "uint", H), ("EPS", "float", EPS)),
+    track = _track()
+    spec = load_opspec(track.opspec_path)
+    instance = instantiate(spec, dtype, size)
+    specialization = derive_specialization(
+        instance, backend_id=track.backend_id, profile_name=track.lowering_profile
     )
+    eps = float(instance.resolved_attrs["EPS"])
+    implementations = track.implementations
+    gen_params = dict(implementations["gen_inputs"]["params"])
+    ref_params = dict(implementations["reference"]["params"])
+    shape = (int(instance.symbols["M"]), int(instance.symbols["H"]))
 
-    def gen_inputs(case, seed):
-        x = sample(case, (M, H), seed, dtype, mag=MAGS.get(case, 1.0), large=300.0)
-        w = 1.0 + 0.1 * sample("normal", (H,), seed + 99, dtype)
-        return {"x": x, "w": w}
+    baselines = []
+    for entry in track.baselines:
+        params = dict(entry["params"])
+        if params.get("eps_attr") != "EPS":
+            raise ValueError(f"baseline {entry['name']!r} must take EPS from the semantic instance")
+        fn = _mlx_baseline(eps) if entry["framework"] == "mlx" else _torch_baseline(eps)
+        baselines.append(
+            BaselineImpl(
+                str(entry["name"]),
+                str(entry["framework"]),
+                fn,
+                implementation_id=str(entry["implementation_id"]),
+                implementation_version=int(entry["implementation_version"]),
+                params=params,
+            )
+        )
 
-    def reference(inp):
-        x, w = inp["x"].double(), inp["w"].double()
-        return {"y": x * torch.rsqrt((x * x).mean(-1, keepdim=True) + EPS) * w}
-
-    rtol, atol_rel = default_tolerances(dtype)
-    eb = 2 if dtype != "fp32" else 4
     return Task(
-        name="rmsnorm", dtype=dtype, size=size, contract=contract,
-        triton_source=load_text("rmsnorm", "kernel_triton.py", dtype, {"M": str(M), "H": str(H)}),
-        description="Row-wise RMSNorm: y[r, :] = x[r, :] * rsqrt(mean(x[r, :]^2) + eps) * w; the sum of squares is accumulated in fp32 and the result rounded once.",
-        cases=("normal", "wide_range", "large", "tiny", "outlier", "ieee"),
-        gen_inputs=gen_inputs, reference=reference,
-        baselines=(BaselineImpl("mlx", "mlx", _mlx), BaselineImpl("torch_mps", "torch", _torch)),
-        flops=4.0 * M * H, min_bytes=float((2 * M * H + H) * eb),
-        rtol=rtol, atol_rel=atol_rel,
-        naive_msl=load_text("rmsnorm", "naive.metal", dtype),
+        name="rmsnorm",
+        dtype=dtype,
+        size=size,
+        contract=specialization.contract,
+        triton_source=track.render_spec_text(instance, specialization),
+        description=track.description,
+        cases=tuple(instance.case_domain.cases),
+        gen_inputs=_gen_inputs(gen_params, shape, dtype),
+        reference=_reference(ref_params, eps),
+        baselines=tuple(baselines),
+        flops=instance.work_accounting.flops,
+        min_bytes=instance.work_accounting.min_bytes,
+        rtol=instance.tolerances.rtol,
+        atol_rel=instance.tolerances.atol_rel,
+        naive_msl=track.render_known_good(instance, specialization),
+        semantic_instance=instance,
+        specialization=specialization,
+        evaluation_implementations={
+            "gen_inputs": dict(implementations["gen_inputs"]),
+            "reference": dict(implementations["reference"]),
+            "error_scale": implementations["error_scale"],
+            "baselines": [dict(entry) for entry in track.baselines],
+        },
     )

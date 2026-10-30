@@ -197,44 +197,47 @@ def _rich_run(root: Path, name: str = "conv2d/rich", *, candidates: int = 2) -> 
         {"label": "r1.p0", "status": "ok", "speedup": 1.25, "best_speedup": 1.25, "cost_usd": 0.3},
     ]
     labels = ["init", "r1.p0"][:candidates]
+    from tcenv.evaluate import EvalReport
+
+    from ..support.orchestrator import stamp_report
+
     for index, label in enumerate(labels):
         folder = directory / "candidates" / f"{index:03d}_{label}"
         folder.mkdir(parents=True)
         (folder / "kernel.metal").write_text(_SOURCE, encoding="utf-8")
-        (folder / "report.json").write_text(json.dumps({
-            "status": "ok", "stage": "bench", "mode": "paper", "speedup": 1.0 + index * 0.25,
-            "candidate_us": 770.0 - index * 10, "message": f"report {label}",
-            "benchmark": {"noisy": False, "attempts": 3, "noise_cv": 0.01},
-            "roofline": {"lower_bound_us": 414.0, "bound_kind": "reference_algorithm"},
-        }), encoding="utf-8")
+        # Schema 4: the detail/review surfaces only quote a report they can validate.
+        report = EvalReport(
+            task="conv2d", dtype="fp16", size="paper", mode="full", seed=1, stage="bench",
+            status="ok", message=f"report {label}", speedup=1.0 + index * 0.25,
+            target_id="apple-m4-max",
+        )
+        report.candidate_us = 770.0 - index * 10
+        report.benchmark = {"noisy": False, "attempts": 3, "noise_cv": 0.01}
+        report.roofline = {"lower_bound_us": 414.0, "bound_kind": "reference_algorithm"}
+        stamp_report(report, "conv2d", "fp16", "paper", _SOURCE)
+        (folder / "report.json").write_text(json.dumps(report.to_json()), encoding="utf-8")
     (directory / "state.json").write_text(json.dumps({
         "pid": 1, "phase": "done", "started_at": T0, "updated_at": T0 + 30, "task": "conv2d",
         "dtype": "fp16", "spent_usd": 0.4, "budget_usd": 2.0, "best_label": "r1.p0",
         "inflight_label": "r1.p0", "committee": "first", "round": 1, "model": "deepseek-flash",
         "trace": trace,
     }), encoding="utf-8")
-    confirmation = {
-        "kernel_sha256": digest, "winner_label": "r1.p0", "confirmed_values": [1.25],
-        "speedup": 1.25, "candidate_us": None,
-    }
-    (directory / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": 1.25,
-        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15},
-                      "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx",
-                      "confirmation": confirmation},
-        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
-    }), encoding="utf-8")
-    (directory / "result.json").write_text(json.dumps({
-        "task": "conv2d", "dtype": "fp16", "size": "paper", "stop_reason": "max_rounds",
-        "started_at": T0, "spent_usd": 0.5, "budget_usd": 2.0, "best_speedup": 9.9,
-        "confirmed_speedup": 1.25, "confirmed_status": "ok", "confirm_winner_label": "r1.p0",
-        "confirmation_source_sha256": digest, "confirmed_values": [1.25], "confirmed_worst": 1.25,
-        "confirmed_best": 1.25, "target_id": "apple-m4-max", "winner_label": "r1.p0",
+    from experiments.common import synthetic_confirmation_documents
+
+    result, report = synthetic_confirmation_documents(
+        task="conv2d", dtype="fp16", size="paper", target_id="apple-m4-max",
+        speedup=1.25, label="r1.p0", kernel_sha256=digest,
+    )
+    result.update({
+        "stop_reason": "max_rounds", "started_at": T0, "spent_usd": 0.5, "budget_usd": 2.0,
+        "best_speedup": 9.9, "winner_label": "r1.p0",
         "winner_provider": "deepseek", "winner_model": "deepseek-flash", "winner_committee": "first",
         "winner_origin": "session", "model_totals": [{"provider": "deepseek", "model": "deepseek-flash",
         "committee": "first", "sessions": 1, "cost_usd": 0.3, "output_tokens": 10}],
         "trace": trace,
-    }), encoding="utf-8")
+    })
+    (directory / "confirm_report.json").write_text(json.dumps(report), encoding="utf-8")
+    (directory / "result.json").write_text(json.dumps(result), encoding="utf-8")
     (directory / "run_config.json").write_text(json.dumps({
         "target": {"id": "apple-m4-max", "backend": "metal", "backend_version": "v1"},
         "search": {"kernel_agent": "pi", "plan_ledger": True},
@@ -998,7 +1001,7 @@ def test_filtered_candidates_use_current_reports_and_page(tmp_path, monkeypatch)
     fresh = directory / "candidates" / "002_r2.p0"
     fresh.mkdir()
     (fresh / "kernel.metal").write_text(_SOURCE, encoding="utf-8")
-    (fresh / "report.json").write_text(json.dumps({"status": "ok", "stage": "bench", "speedup": 1.4}),
+    (fresh / "report.json").write_text(json.dumps({"schema_version": 4, "status": "ok", "stage": "bench", "speedup": 1.4}),
                                         encoding="utf-8")
 
     ok = query.candidates_panel("conv2d/rich", status="ok")
@@ -1114,24 +1117,17 @@ def _write_confirmation(directory: Path, speedup: float) -> None:
     @param directory 运行目录。
     @param speedup 确认加速比。
     """
-    digest = _digest()
-    values = [speedup]
-    directory.joinpath("result.json").write_text(json.dumps({
-        "task": "conv2d", "dtype": "fp16", "size": "paper", "stop_reason": "max_rounds",
-        "started_at": 10.0, "spent_usd": 0.5, "target_id": "apple-m4-max",
-        "confirmed_speedup": speedup, "confirmed_status": "ok", "confirm_winner_label": "r1.p0",
-        "confirmation_source_sha256": digest, "confirmed_values": values,
-        "confirmed_worst": speedup, "confirmed_best": speedup,
-    }), encoding="utf-8")
-    directory.joinpath("confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": speedup,
-        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15},
-                      "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx",
-                      "confirmation": {"kernel_sha256": digest, "winner_label": "r1.p0",
-                                       "confirmed_values": values, "speedup": speedup,
-                                       "candidate_us": None}},
-        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
-    }), encoding="utf-8")
+    from experiments.common import synthetic_confirmation_documents
+
+    # The documents must pass the one publication gate: a synthetic run may not claim a conclusion
+    # the real gate would refuse (plan §8).  Schema 4 only — an older confirm report is undecidable.
+    result, report = synthetic_confirmation_documents(
+        task="conv2d", dtype="fp16", size="paper", target_id="apple-m4-max",
+        speedup=speedup, label="r1.p0", kernel_sha256=_digest(),
+    )
+    result.update({"stop_reason": "max_rounds", "started_at": 10.0, "spent_usd": 0.5})
+    directory.joinpath("result.json").write_text(json.dumps(result), encoding="utf-8")
+    directory.joinpath("confirm_report.json").write_text(json.dumps(report), encoding="utf-8")
 
 
 def test_best_reingests_only_the_confirmed_run_whose_fingerprint_changed(tmp_path, monkeypatch):
@@ -1548,21 +1544,15 @@ def _two_candidate_confirmed_run(root: Path, name: str, *, winner: str = "b") ->
                                             encoding="utf-8")
     digest = hashlib.sha256(kernels[winner].encode()).hexdigest()
     directory.joinpath("best.metal").write_text(kernels[winner], encoding="utf-8")
-    directory.joinpath("result.json").write_text(json.dumps({
-        "task": "conv2d", "dtype": "fp16", "size": "paper", "stop_reason": "max_rounds",
-        "started_at": T0, "spent_usd": 0.5, "target_id": "apple-m4-max",
-        "confirmed_speedup": 1.25, "confirmed_status": "ok", "confirm_winner_label": winner,
-        "confirmation_source_sha256": digest, "confirmed_values": [1.25],
-        "confirmed_worst": 1.25, "confirmed_best": 1.25,
-    }), encoding="utf-8")
-    directory.joinpath("confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": 1.25,
-        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15},
-                      "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx",
-                      "confirmation": {"kernel_sha256": digest, "winner_label": winner,
-                                       "confirmed_values": [1.25], "speedup": 1.25, "candidate_us": None}},
-        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
-    }), encoding="utf-8")
+    from experiments.common import synthetic_confirmation_documents
+
+    result, report = synthetic_confirmation_documents(
+        task="conv2d", dtype="fp16", size="paper", target_id="apple-m4-max",
+        speedup=1.25, label=winner, kernel_sha256=digest,
+    )
+    result.update({"stop_reason": "max_rounds", "started_at": T0, "spent_usd": 0.5})
+    directory.joinpath("result.json").write_text(json.dumps(result), encoding="utf-8")
+    directory.joinpath("confirm_report.json").write_text(json.dumps(report), encoding="utf-8")
     return directory
 
 
@@ -2015,7 +2005,7 @@ def test_a_250_candidate_run_keeps_the_summary_bounded_and_its_stamp_off_the_can
     # winner 是 candidates/001_r1.p0；改写 000_init 这颗非 winner。
     report = directory / "candidates" / "000_init" / "report.json"
     report.write_text(json.dumps({
-        "status": "ok", "stage": "bench", "speedup": 9.5, "message": "非 winner 就地改写",
+        "schema_version": 4, "status": "ok", "stage": "bench", "speedup": 9.5, "message": "非 winner 就地改写",
     }), encoding="utf-8")
     os.utime(report, ns=(report.stat().st_atime_ns, report.stat().st_mtime_ns + 1_000_000))
     Index(tmp_path / "observe.sqlite").sync_known()
@@ -2368,7 +2358,7 @@ def test_every_cli_filter_reaches_the_same_where_clause(tmp_path, monkeypatch, c
         folder.mkdir(parents=True)
         (folder / "kernel.metal").write_text(_SOURCE, encoding="utf-8")
         (folder / "report.json").write_text(json.dumps({
-            "status": "abi_error", "stage": "abi", "message": message,
+            "schema_version": 4, "status": "abi_error", "stage": "abi", "message": message,
         }), encoding="utf-8")
     Index(tmp_path / "observe.sqlite").sync_known()
 

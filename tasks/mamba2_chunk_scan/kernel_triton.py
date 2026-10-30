@@ -6,7 +6,7 @@
 # Layouts (all contiguous): x, y [BATCH, SEQLEN, NHEADS, HEADDIM]; dt [BATCH, SEQLEN, NHEADS]; dA_cumsum [BATCH, NHEADS, NCHUNKS, CHUNK]
 # (inclusive cumulative sum of dt * A inside each chunk, non-increasing); Bmat, Cmat [BATCH, SEQLEN, DSTATE] (one group, shared by all heads);
 # Dskip [NHEADS]; states [BATCH, NCHUNKS, NHEADS, HEADDIM, DSTATE] (the SSM state entering each chunk).
-# Launch: grid = (NCHUNKS, BATCH * NHEADS), num_warps = 4, BATCH = {{BATCH}}, SEQLEN = {{SEQLEN}}, NHEADS = {{NHEADS}}, HEADDIM = {{HEADDIM}}, DSTATE = {{DSTATE}}, CHUNK = {{CHUNK}}, NCHUNKS = {{NCHUNKS}}
+# Launch: grid = (NCHUNKS, BATCH * NHEADS), num_warps = {{NW}}, BATCH = {{BATCH}}, SEQLEN = {{SEQLEN}}, NHEADS = {{NHEADS}}, HEADDIM = {{HEADDIM}}, DSTATE = {{DSTATE}}, CHUNK = {{CHUNK}}, NCHUNKS = {{NCHUNKS}}
 import triton
 import triton.language as tl
 

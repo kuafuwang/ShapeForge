@@ -1,0 +1,120 @@
+{
+  "spec_version": 1,
+  "op_name": "gen_sigmoid",
+  "category": "elementwise",
+  "formula": "sigmoid(x)",
+  "uses": [],
+  "type_vars": {
+    "T": [
+      "fp16",
+      "bf16"
+    ]
+  },
+  "symbols": {
+    "N": {
+      "min": 1
+    }
+  },
+  "tensors": {
+    "x": {
+      "role": "input",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "y": {
+      "role": "output",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "write"
+    }
+  },
+  "numerics": {
+    "acc_dtype": "fp32",
+    "rounding": "single_round_at_output",
+    "tolerances": {
+      "fp16": {
+        "rtol": 0.002,
+        "atol_rel": 0.001
+      },
+      "bf16": {
+        "rtol": 0.016,
+        "atol_rel": 0.008
+      }
+    },
+    "exact": false
+  },
+  "attrs": {},
+  "cases": {
+    "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+    ],
+    "inputs": {
+      "normal": {
+        "_domain_case": [
+          "fp16"
+        ]
+      }
+    }
+  },
+  "sizes": {
+    "paper": {
+      "N": 16777216,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "small": {
+      "N": 65536,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    }
+  },
+  "spec_params": [
+    "N"
+  ],
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "coefficient": 4,
+          "symbols": [
+            "N"
+          ]
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {
+          "tensor": "x"
+        },
+        {
+          "tensor": "y"
+        }
+      ]
+    }
+  }
+}

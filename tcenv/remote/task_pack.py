@@ -19,7 +19,7 @@ import os
 import re
 import stat
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping
 
 from . import contracts
@@ -108,6 +108,59 @@ def _fingerprint_entries(document: Any) -> tuple[dict[str, str], ...]:
     if not entries:
         raise TaskPackError("task pack must declare at least one task fingerprint")
     return tuple(entries)
+
+
+def local_pack_digest(pack_files, *, root: Path | str) -> str:
+    """@brief 本地 task-pack 文件集的 manifest 摘要（与部署侧同一文档形状）。
+
+    The local repository has no deployed pack directory, so the *registered* pack file set
+    (from the track binding) is hashed with the same manifest document
+    ``{schema_version, files:[{path,size,sha256}]}`` and the same canonical encoder that
+    :func:`load_task_pack` uses.  Missing, duplicated or symlinked files and paths that are
+    not repository-relative fail closed: a skipped file would silently change the identity.
+
+    @param pack_files 仓库相对 POSIX 路径序列。
+    @param root 解析这些路径的根目录。
+    @return 十六进制 sha256。
+    @raises TaskPackError 文件集非法。
+    """
+    root = Path(os.path.abspath(Path(root)))
+    if root.is_symlink() or not root.is_dir():
+        raise TaskPackError("local task pack root must be a real directory")
+    values: list[str] = []
+    folded: dict[str, str] = {}
+    for raw in pack_files:
+        if not isinstance(raw, str) or not raw or os.path.isabs(raw) or "\\" in raw:
+            raise TaskPackError(f"local pack file {raw!r} must be a relative POSIX path")
+        normalized = str(PurePosixPath(raw))
+        if normalized != raw or normalized in (".", "..") or normalized.startswith("../"):
+            raise TaskPackError(f"local pack file {raw!r} must be a normalized relative path")
+        key = raw.casefold()
+        if key in folded:
+            raise TaskPackError(f"local pack file {raw!r} collides with {folded[key]!r}")
+        folded[key] = raw
+        values.append(raw)
+    if not values:
+        raise TaskPackError("the local task pack file set is empty")
+    if len(values) > MAX_FILES:
+        raise TaskPackError("local task pack has too many files")
+    entries: list[dict[str, Any]] = []
+    total = 0
+    for relative in sorted(values):
+        absolute = root / relative
+        if absolute.is_symlink() or not absolute.is_file():
+            raise TaskPackError(f"local pack file {relative!r} must be an existing regular file")
+        data = absolute.read_bytes()
+        total += len(data)
+        if total > MAX_TOTAL_BYTES:
+            raise TaskPackError("local task pack exceeds its byte budget")
+        entries.append({
+            "path": relative,
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        })
+    manifest = {"schema_version": SCHEMA_VERSION, "files": entries}
+    return hashlib.sha256(contracts.canonical_digest_document(manifest)).hexdigest()
 
 
 def load_task_pack(

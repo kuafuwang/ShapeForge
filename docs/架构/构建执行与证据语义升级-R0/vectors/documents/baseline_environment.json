@@ -1,0 +1,28 @@
+{
+  "backend_id": "metal",
+  "baselines": [
+    {
+      "available": true,
+      "framework": "mlx",
+      "kind": "task",
+      "library": {
+        "name": "mlx",
+        "version": "0.29.3"
+      },
+      "name": "mlx"
+    },
+    {
+      "available": true,
+      "framework": "torch",
+      "kind": "task",
+      "library": {
+        "name": "torch",
+        "version": "2.9.0"
+      },
+      "name": "torch_mps"
+    }
+  ],
+  "fingerprint_kind": "baseline_environment",
+  "fingerprint_version": 1,
+  "target_id": "apple-m4-max"
+}

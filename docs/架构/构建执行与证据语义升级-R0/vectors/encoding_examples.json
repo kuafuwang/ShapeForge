@@ -1,0 +1,86 @@
+{
+  "note": "Strict JSON. Values are given as Python literals in text form so that NaN/Infinity never appear in a JSON document. distinct_canonical_documents are hashed as canonical bytes: the three pairs must produce different canonical bytes and different SHA-256 digests.",
+  "float_examples": [
+    {
+      "literal": "1e-06",
+      "canonical": "1e-06"
+    },
+    {
+      "literal": "0.000001",
+      "canonical": "1e-06"
+    },
+    {
+      "literal": "0.002",
+      "canonical": "0.002"
+    },
+    {
+      "literal": "-0.0",
+      "canonical": "-0.0"
+    },
+    {
+      "literal": "0.0",
+      "canonical": "0.0"
+    },
+    {
+      "literal": "16777216.0",
+      "canonical": "16777216.0"
+    },
+    {
+      "literal": "0.016",
+      "canonical": "0.016"
+    }
+  ],
+  "integer_examples": [
+    {
+      "literal": "1",
+      "canonical_value": 1
+    },
+    {
+      "literal": "16777216",
+      "canonical_value": 16777216
+    }
+  ],
+  "rejected_literals": [
+    {
+      "literal": "nan",
+      "reason": "NaN is not a canonical value"
+    },
+    {
+      "literal": "inf",
+      "reason": "Infinity is not a canonical value"
+    },
+    {
+      "literal": "1.0",
+      "reason": "a bare float that was not normalised to its decimal string first"
+    }
+  ],
+  "distinct_canonical_documents": [
+    {
+      "label": "signed_zero",
+      "left": {
+        "value": "0.0"
+      },
+      "right": {
+        "value": "-0.0"
+      }
+    },
+    {
+      "label": "int_vs_float_string",
+      "left": {
+        "value": 1
+      },
+      "right": {
+        "value": "1.0"
+      }
+    },
+    {
+      "label": "int_vs_integral_float",
+      "left": {
+        "value": 16777216
+      },
+      "right": {
+        "value": "16777216.0"
+      }
+    }
+  ]
+}

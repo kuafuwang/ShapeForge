@@ -103,6 +103,8 @@ def _trusted_row(work: Path, *, kernel_sha256: str = "abc", candidate_us: float 
         "status": "ok", "candidate_us": candidate_us, "speedup": 1.0, "elapsed_s": 0.1,
         "target_id": "apple-m4-max", "protocol_version": trust.current_protocol_version(),
         "kernel_sha256": kernel_sha256,
+        # The premise gate only trusts a native build's summary (§6.1).
+        "build_kind": "native", "measurement_kind": "measured",
     })
 
 
@@ -384,7 +386,7 @@ def test_a_premise_needs_a_matching_harness_record_not_just_a_probe(tmp_path):
     append(work / ".selfcheck", {
         "status": "ok", "candidate_us": 463.46, "speedup": 1.2,
         "target_id": "apple-m4-max", "protocol_version": trust.current_protocol_version(),
-        "kernel_sha256": "abc",
+        "kernel_sha256": "abc", "build_kind": "native", "measurement_kind": "measured",
     })
     ok, why = harness.trusted_premise_record(
         work, target_id="apple-m4-max", protocol_version=trust.current_protocol_version(),
@@ -427,6 +429,31 @@ def test_a_forged_workspace_selfcheck_row_cannot_activate_a_premise(tmp_path):
     )[0]
 
 
+def test_a_non_native_or_simulated_summary_never_activates_a_premise(tmp_path):
+    """@brief 非 native 构建或模拟测量的摘要不能当作可信 premise 证据。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
+    work = tmp_path / "work"
+    work.mkdir()
+    for extra in (
+        {"build_kind": "simulator", "measurement_kind": "simulated"},
+        {"build_kind": "source_only", "measurement_kind": "measured"},
+        {"measurement_kind": "measured"},  # no build kind at all
+    ):
+        report = {
+            "status": "ok", "candidate_us": 12.5, "speedup": 1.04,
+            "target_id": "apple-m4-max", "protocol_version": trust.current_protocol_version(),
+            "kernel_sha256": "abc", "trusted_source": "outer candidate report",
+            **extra,
+        }
+        ok, _ = harness.trusted_premise_record(
+            work, target_id="apple-m4-max", protocol_version=trust.current_protocol_version(),
+            kernel_sha256="abc", measurement="12.5 us", trusted_report=report,
+        )
+        assert not ok
+
+
 def test_an_outer_candidate_report_can_be_the_trusted_record_without_a_selfcheck(tmp_path):
     """@brief 验证没有 self_checks.jsonl 时，外层候选报告也能充当 premise 的可信记录，但测量值必须与它一致。
 
@@ -438,6 +465,7 @@ def test_an_outer_candidate_report_can_be_the_trusted_record_without_a_selfcheck
         "status": "ok", "candidate_us": 12.5, "speedup": 1.04,
         "target_id": "apple-m4-max", "protocol_version": trust.current_protocol_version(),
         "kernel_sha256": "abc", "trusted_source": "outer candidate report",
+        "build_kind": "native", "measurement_kind": "measured",
     }
     ok, why = harness.trusted_premise_record(
         work, target_id="apple-m4-max", protocol_version=trust.current_protocol_version(),

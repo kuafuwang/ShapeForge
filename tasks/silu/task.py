@@ -1,22 +1,33 @@
-# 逐元素 SiLU。description：y[i] = x[i] * sigmoid(x[i])，在 fp32 里算完再舍入一次。
-# 标准答案是 ref_fn：x * torch.sigmoid(x)。共享骨架先把 x 转成 float64。
-# 基线是 baselines：mlx 用 mx.compile 包住 a * mx.sigmoid(a)，torch_mps 用 F.silu。
-# 契约由 build_elementwise 按名字 "silu" 和 input_names=("x",) 生成。核名 silu_kernel、缓冲 x/y、grid、threads、常量 N 与 BLOCK_SIZE 模型都不能改。
+# 逐元素 SiLU。语义只写在 opspec.json；契约与启动事实来自登记的 Metal LoweringProfile。
 import torch
 import torch.nn.functional as F
 
-from tcenv.task import BaselineImpl
 from tasks._common import mlx_compiled
-from tasks._elementwise import build_elementwise
+from tasks._pointwise import build_pointwise
+
+TASK_DIR = "silu"
 
 
-def _mlx(x):
-    """@brief mlx 侧的 SiLU 基线，整个式子走一次 ``mx.compile``。
+def _mlx(params: dict):
+    """@brief mlx 侧 SiLU 基线，整个式子走一次 ``mx.compile``。
 
-    @param x mlx 数组。
-    @return ``x * sigmoid(x)``。
+    @param params track 登记参数。
+    @return ``x -> mx.compile(a * mx.sigmoid(a))(x)``。
     """
-    return mlx_compiled("silu", lambda mx: (lambda a: a * mx.sigmoid(a)))(x)
+    if params.get("kernel") != "mx.compile" or params.get("expression") != "a * mx.sigmoid(a)":
+        raise ValueError(f"silu mlx baseline registration changed: {params}")
+    return lambda x: mlx_compiled("silu", lambda mx: (lambda a: a * mx.sigmoid(a)))(x)
+
+
+def _torch(params: dict):
+    """@brief torch 侧 SiLU 基线（``F.silu``）。
+
+    @param params track 登记参数。
+    @return ``x -> F.silu(x)``。
+    """
+    if params.get("kernel") != "torch.nn.functional.silu":
+        raise ValueError(f"silu torch baseline registration changed: {params}")
+    return lambda x: F.silu(x)
 
 
 def build(dtype: str, size: str):
@@ -26,14 +37,10 @@ def build(dtype: str, size: str):
     @param size 尺寸档位，``paper`` 或 ``small``。
     @return 装配好的 ``Task``。
     """
-    return build_elementwise(
-        "silu",
+    return build_pointwise(
+        TASK_DIR,
         dtype,
         size,
-        input_names=("x",),
-        ref_fn=lambda x: x * torch.sigmoid(x),
-        baselines=(BaselineImpl("mlx", "mlx", _mlx), BaselineImpl("torch_mps", "torch", F.silu)),
-        flops_per_elem=5,
-        description="y[i] = x[i] * sigmoid(x[i]), evaluated in fp32 and rounded once.",
-        domain_case=dtype == "fp16",
+        references={"silu": lambda x: x * torch.sigmoid(x)},
+        baseline_builders={"mlx": _mlx, "torch_mps": _torch},
     )

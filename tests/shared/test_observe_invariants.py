@@ -57,9 +57,10 @@ def _run(root: Path, name: str, *, started_at: float, candidates: int = 1,
         cand = folder / f"{index:03d}_r1.p0"
         cand.mkdir()
         (cand / "kernel.metal").write_text("kernel void k() {}\n", encoding="utf-8")
-        report = {"status": "ok", "speedup": 1.0 + index / 10}
+        # 派生表只从当前（schema-4）报告重建，夹具按真实运行写。
+        report = {"schema_version": 4, "status": "ok", "speedup": 1.0 + index / 10}
         if index == 0 and not confirmed:
-            report = {"status": "error", "stage": "compile", "message": f"abi_error: missing {name}"}
+            report = {"schema_version": 4, "status": "error", "stage": "compile", "message": f"abi_error: missing {name}"}
         (cand / "report.json").write_text(json.dumps(report), encoding="utf-8")
     result = {
         "task": "relu", "dtype": "fp16", "size": "small", "stop_reason": "max_rounds",
@@ -69,21 +70,17 @@ def _run(root: Path, name: str, *, started_at: float, candidates: int = 1,
         kernel = "kernel void k() {}\n"
         digest = hashlib.sha256(kernel.encode("utf-8")).hexdigest()
         (directory / "best.metal").write_text(kernel, encoding="utf-8")
-        result.update({
-            "confirmed_speedup": 1.5, "confirmed_status": "ok", "confirm_winner_label": "r1.p0",
-            "confirmation_source_sha256": digest, "confirmed_values": [1.5],
-            "confirmed_worst": 1.5, "confirmed_best": 1.5,
-        })
-        from tcenv.schema import PROTOCOL_VERSION
+        from experiments.common import synthetic_confirmation_documents
 
-        (directory / "confirm_report.json").write_text(json.dumps({
-            "status": "ok", "speedup": 1.5,
-            "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15},
-                          "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx",
-                          "confirmation": {"kernel_sha256": digest, "winner_label": "r1.p0",
-                                           "confirmed_values": [1.5], "speedup": 1.5, "candidate_us": None}},
-            "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
-        }), encoding="utf-8")
+        confirmed_result, report = synthetic_confirmation_documents(
+            task="relu", dtype="fp16", size="small", target_id="apple-m4-max",
+            speedup=1.5, label="r1.p0", kernel_sha256=digest,
+        )
+        result.update({
+            key: value for key, value in confirmed_result.items()
+            if key.startswith("confirm")
+        })
+        (directory / "confirm_report.json").write_text(json.dumps(report), encoding="utf-8")
     (directory / "result.json").write_text(json.dumps(result), encoding="utf-8")
     if transcript:
         (directory / "transcript.jsonl").write_text(transcript, encoding="utf-8")

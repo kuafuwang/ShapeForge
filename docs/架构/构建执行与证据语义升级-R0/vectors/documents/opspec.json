@@ -1,0 +1,44 @@
+{
+  "fingerprint_kind": "opspec",
+  "fingerprint_version": 1,
+  "semantic_rules_version": "registered-semantic-rules-1",
+  "work_accounting_version": "registered-work-accounting-1",
+  "document": {
+    "spec_version": 1,
+    "op_name": "rmsnorm",
+    "category": "normalization",
+    "formula": "y[r,:] = x[r,:] * rsqrt(mean(x[r,:]^2, axis=H) + EPS) * w",
+    "uses": ["EPS"],
+    "type_vars": {
+      "T": ["fp16", "bf16"]
+    },
+    "symbols": {
+      "M": {"min": 0},
+      "H": {"min": 1, "note": "tail must be covered"}
+    },
+    "tensors": {
+      "x": {"role": "input", "dims": ["M", "H"], "dtype": "T", "layout": "row_major", "strides": ["H", "1"], "space": "global", "access": "read"},
+      "w": {"role": "input", "dims": ["H"], "dtype": "T", "layout": "contiguous", "strides": ["1"], "space": "global", "access": "read"},
+      "y": {"role": "output", "dims": ["M", "H"], "dtype": "T", "layout": "row_major", "strides": ["H", "1"], "space": "global", "access": "write"}
+    },
+    "numerics": {
+      "acc_dtype": "fp32",
+      "rounding": "single_round_at_output",
+      "tolerances": {
+        "fp16": {"rtol": "0.002", "atol_rel": "0.001"},
+        "bf16": {"rtol": "0.016", "atol_rel": "0.008"}
+      },
+      "exact": false
+    },
+    "attrs": {
+      "EPS": {"dtype": "float", "default": "1e-06", "domain": {"gt": 0}}
+    },
+    "cases": {
+      "names": ["normal", "wide_range", "large", "tiny", "outlier", "ieee"]
+    },
+    "sizes": {
+      "paper": {"M": 4096, "H": 4096, "usage": ["golden", "benchmark"]},
+      "small": {"M": 64, "H": 512, "usage": ["golden", "benchmark"]}
+    }
+  }
+}

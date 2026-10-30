@@ -19,6 +19,7 @@ from observe.cluster_names import cluster_name
 from observe.compare_key import config_key
 from observe.failure_sig import SESSION_FAILURE_OUTCOMES
 from observe.index import borrow, get_index, split_extra_fingerprint
+from taic.artifacts import report_state
 from taic.modelcost import efficiency_fields
 from taic.plan_ledger import nodes_from_trace
 from taic.policy import feature_signature
@@ -492,8 +493,13 @@ def feature_grid(directory: Path, result: dict | None) -> list[dict]:
             source = source_path.read_text(encoding="utf-8")
         except OSError:
             continue
-        report = detail._load(path / "report.json") or {}
-        speed = report.get("speedup")
+        # Only a current (schema-4) report may contribute a speedup to a cell: an old-format
+        # report's number is its own memory of a measurement this panel cannot check.
+        report_path = path / "report.json"
+        report = detail._load(report_path)
+        speed = None
+        if report_state(report_path, report) == "current" and isinstance(report, dict):
+            speed = report.get("speedup")
         if isinstance(speed, bool) or not isinstance(speed, (int, float)):
             speed = None
         digest = hashlib.sha1(source.encode("utf-8")).hexdigest()
@@ -927,12 +933,17 @@ def candidates_panel(
 
 
 def candidate_panel(run_id: str, label: str, *, stamp: str = "") -> dict | None:
-    """@brief 单颗候选：完整 ``report.json``、有界内核片段与相对 ``runs/`` 的报告路径。
+    """@brief 单颗候选：当前（schema-4）报告的正文、有界内核片段与相对 ``runs/`` 的报告路径。
+
+    Only a schema-4 report is current candidate evidence (§8).  An older report has no build or
+    evaluation identity, so the panel marks it (``report_state``) and returns an empty ``report``
+    body: its own ``status``/``speedup`` must not be shown as today's measurement.  The raw bytes
+    stay reachable through the explicit ``/raw`` route, which is a debugging surface and says so.
 
     @param run_id 运行 id。
     @param label 候选标签。
     @param stamp 客户端持有的面板戳。
-    @return 含 ``report``、``excerpt`` 与 ``report_path`` 的字典；运行或候选不存在时返回 None。
+    @return 含 ``report``/``report_state``/``excerpt``/``report_path`` 的字典；运行或候选不存在时返回 None。
     """
     directory = _read_run(run_id)
     if directory is None:
@@ -954,15 +965,20 @@ def candidate_panel(run_id: str, label: str, *, stamp: str = "") -> dict | None:
     if same is not None:
         return {**same, "label": label}
     kernel = detail.target_file_names(directory)[0]
+    report_path = path / "report.json"
+    document = detail._load(report_path)
+    state = report_state(report_path, document)
     return {
         "run_id": run_id,
         "label": label,
         "idx": idx,
         "same": False,
         "stamp": current,
-        "report_path": detail._rel(path / "report.json"),
+        "report_state": state,
+        "report_path": detail._rel(report_path),
         "excerpt": detail._excerpt(path / kernel) if (path / kernel).is_file() else "",
-        "report": detail._load(path / "report.json") or {},
+        # Current evidence only: an old/damaged report contributes no body here.
+        "report": document if state == "current" else {},
     }
 
 
@@ -1448,7 +1464,8 @@ def candidates_page(run_id: str, *, status: str | None = None, limit: int = 200)
         args.append(status)
     with borrow() as index:
         rows = [dict(row) for row in index.conn.execute(
-            "SELECT run_id, idx, label, status, stage, speedup, within_noise, eligible, kernel_sha256, updated_at "
+            "SELECT run_id, idx, label, status, stage, speedup, within_noise, eligible, kernel_sha256, updated_at, "
+            "report_state, build_shape, build_kind, evaluation_fingerprint "
             f"FROM candidates WHERE {' AND '.join(clauses)} ORDER BY idx LIMIT ?",
             [*args, limit],
         )]
@@ -2065,7 +2082,9 @@ def failures(
     """
     tick()
     limit = max(1, min(int(limit or 20), PAGE_LIMIT))
-    clauses = ["c.status != ''", "c.status != 'ok'"]
+    # An old/damaged report is undecidable, not a failure: it is not a claim this reader can make
+    # (its ``status`` column holds the format marker).  Only current (schema-4) rows are listed.
+    clauses = ["c.status != ''", "c.status != 'ok'", "c.report_state = 'current'"]
     args: list = []
     if status:
         clauses.append("c.status = ?")
@@ -2085,7 +2104,8 @@ def failures(
     with borrow() as index:
         rows = [dict(row) for row in index.conn.execute(
             "SELECT c.run_id, c.idx, c.label, c.status, c.stage, c.speedup, c.within_noise, c.kernel_sha256, "
-            "c.failure_sig, c.message, r.task, r.dtype, r.target_id, r.started_at "
+            "c.failure_sig, c.message, c.report_state, c.build_shape, c.build_kind, "
+            "r.task, r.dtype, r.target_id, r.started_at "
             f"FROM candidates c JOIN runs r ON r.run_id = c.run_id WHERE {' AND '.join(clauses)} "
             "ORDER BY COALESCE(r.started_at, 0) DESC, c.run_id, c.idx LIMIT ?",
             [*args, limit],

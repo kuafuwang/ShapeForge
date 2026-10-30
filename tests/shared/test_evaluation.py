@@ -126,6 +126,17 @@ def test_local_adapter_refuses_unsupported_validate_mode():
         raise AssertionError("validate must be refused rather than run as quick")
 
 
+def test_local_provenance_binds_the_registered_task_pack_digest():
+    """本地测量上下文的 ``task_pack_digest`` 是登记的 pack 摘要，不是空串。"""
+    from tasks import get_task
+
+    request = EvaluationRequest(task="relu", dtype="fp16", size="small", source="body")
+    provenance = local_provenance(request)
+    registered = get_task("relu", "fp16", "small").evaluation_implementations["task_pack"]["digest"]
+    assert provenance.task_pack_digest == registered
+    assert len(provenance.task_pack_digest) == 64
+
+
 def test_local_provenance_is_typed_and_stable_for_an_unchanged_request(tmp_path):
     """@brief 同一请求的本地 provenance 类型/epoch 稳定，且不伪装成远程站点。"""
     request = EvaluationRequest(

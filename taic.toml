@@ -53,5 +53,5 @@ model = "deepseek-flash"
 name = "second"
 
 [[committees.members]]
-provider = "moonshot"
-model = "kimi-k3"
+provider = "kimi-code"
+model = "k3.1-pro"

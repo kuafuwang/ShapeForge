@@ -15,6 +15,17 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from tcenv.backends.base import BenchHarness, Capabilities, DeviceInfo
+from tcenv.remote.artifact_builder import (
+    BuildArtifact,
+    BuildCapabilities,
+    BuildError,
+    BuildEvidence,
+    BuildOutcome,
+    BuildProfile,
+    BuildProvenance,
+    SourceBundle,
+)
+from tcenv.remote.artifact_bundle import ArtifactBundle, NativeExecutable
 from tcenv.remote.protocol import EvaluationRequest
 
 
@@ -60,6 +71,108 @@ class _FakeCompileError(RuntimeError):
 
 class _FakeRuntimeError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class _FakeKernelSet:
+    kernels: tuple[_FakeKernel, ...]
+
+
+class _FakeSourceBuilder:
+    """Test-only ``ArtifactBuilder`` for the CPU backend.
+
+    It produces the same neutral ``BuildOutcome`` shape as the production Metal
+    builder: the SOURCE artifact is the exact source bytes and the executable is
+    a backend-native handle.  This lives in tests/support and is never part of a
+    production composition root.
+    """
+
+    #: A test-only simulator: it never compiles with a vendor toolchain (§6.2).
+    build_kind = "simulator"
+
+    def __init__(
+        self, backend: "FakeNpuBackend", *, kernel_contract: Any = None, math: str = "fast",
+        kernel_names: Any = None, specialization: Any = None,
+    ) -> None:
+        self.backend = backend
+        self.kernel_contract = kernel_contract
+        self.math = math
+        self.kernel_names = None if kernel_names is None else tuple(kernel_names)
+        self.specialization = specialization
+        if specialization is not None and kernel_contract is not None:
+            if kernel_contract != specialization.contract:
+                raise ValueError("kernel_contract must be the Specialization's contract")
+        self.profile = BuildProfile(
+            build_profile="fake-npu-source-v1",
+            builder_id="fake-npu-builder",
+            builder_version=backend.version,
+            build_host="control_host",
+            toolchain_id="fake-npu",
+            toolchain_version="1",
+            sdk_version="fake",
+            compile_profile={"language": "fake-npu", "math": math},
+            build_kind="simulator",
+        )
+
+    @property
+    def lowering_identity(self) -> dict[str, str] | None:
+        """The task Specialization identity (``None`` for a taskless fixture)."""
+        if self.specialization is None:
+            return None
+        return {
+            "opspec_digest": self.specialization.opspec_digest,
+            "lowering_profile_digest": self.specialization.lowering_profile_digest,
+        }
+
+    def probe(self) -> BuildCapabilities:
+        return BuildCapabilities(profile=self.profile, available=True)
+
+    def build(self, source_bundle: SourceBundle, *, task_contract: Any, deadline_monotonic: float | None = None) -> BuildOutcome:
+        name = getattr(task_contract, "kernel_name", None) or "npu_main"
+        # A simulated *candidate* compile failure must be shaped like the real one: the typed
+        # provenance of the build that ran (no artifact set) plus the assembled digest, so the
+        # evaluator can project it without parsing text (R3 §5.1).
+        if b"COMPILE_FAIL" in source_bundle.source:
+            import hashlib
+
+            raise BuildError(
+                "compile", "sim-npu: the fake compiler rejected the kernel",
+                report_detail="sim-npu: kernel rejected at line 1",
+                provenance=BuildProvenance(
+                    profile=self.profile, source_sha256=source_bundle.sha256, artifact_set_digest=None,
+                ),
+                assembled_sha256=hashlib.sha256(source_bundle.source).hexdigest(),
+                duration_ms=1,
+            )
+        names = list(self.kernel_names or [name])
+        kernels = tuple(_FakeKernel(kernel_name) for kernel_name in names)
+        entry = source_bundle.entry()
+        handle: Any = kernels[0] if len(kernels) == 1 else _FakeKernelSet(kernels)
+        native = NativeExecutable(
+            backend_id="sim-npu", kind="compute-pipeline",
+            entry_path=entry.path, entry_sha256=entry.sha256,
+            descriptor={
+                "backend": "sim-npu", "kernel_names": names,
+                "language_version": kernels[0].language_version, "math": self.math,
+            },
+            handle=handle,
+        )
+        bundle = ArtifactBundle(entries=(entry,), native=native)
+        provenance = BuildProvenance(
+            profile=self.profile, source_sha256=source_bundle.sha256,
+            artifact_set_digest=bundle.artifact_set_digest,
+        )
+        evidence = BuildEvidence(
+            mode="prebuilt", status="ok", provenance=provenance,
+            artifacts=(BuildArtifact.from_entry(entry),), duration_ms=0,
+            log=b"sim-npu: fake build\n", native=native, placement="control_host",
+        )
+        # A direct-source simulator has no separate assembled representation: the compilation
+        # unit is exactly the source bundle it hands to the fake compiler.
+        return BuildOutcome(
+            bundle=bundle, provenance=provenance, evidence=evidence,
+            assembled_sha256=source_bundle.sha256,
+        )
 
 
 class FakeNpuBackend:
@@ -187,11 +300,15 @@ class FakeNpuBackend:
     def abi_stub(self, contract: Any) -> str:
         return f"npu-kernel {contract.kernel_name}"
 
-    def compile(self, ctx: Any, source: str, contract: Any, *, math: str = "fast") -> _FakeKernel:
-        return _FakeKernel(contract.kernel_name)
-
-    def compile_all(self, ctx: Any, source: str, contract: Any, *, names: list[str] | None = None, math: str = "fast") -> list[_FakeKernel]:
-        return [_FakeKernel(name) for name in (names or [contract.kernel_name])]
+    def artifact_builder(
+        self, *, kernel_contract: Any = None, math: str = "fast", kernel_names: Any = None,
+        diagnostic_profile: str | None = None, specialization: Any = None,
+    ) -> _FakeSourceBuilder:
+        self.calls.append(("artifact_builder", str(math)))
+        return _FakeSourceBuilder(
+            self, kernel_contract=kernel_contract, math=math,
+            kernel_names=kernel_names, specialization=specialization,
+        )
 
     def check_abi(self, contract: Any, kernels: list[Any], *, target: Any = None, device_info: Mapping[str, Any] | None = None, spec: Any = None, validation: bool = False, **legacy: Any) -> list[str]:
         self.calls.append(("check_abi", target.id if target is not None else ""))

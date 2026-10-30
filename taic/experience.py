@@ -61,9 +61,14 @@ def build_experience_index(roots: list[Path], *, exclude_runs: set[str] | None =
 
     @param roots 需要扫描的根目录；每个根可以是单个运行目录，也可以是包含多个运行的上级目录。
     @param exclude_runs 要排除的运行目录名集合，使重复性试验可以把自己排除在外。
-    @return 含 ``entries``（按瓶颈类别与特征聚合）、``wins``（成对样本数）与 ``pairs``（原始成对记录）的字典。
+    @return 含 ``entries``（按瓶颈类别与特征聚合）、``wins``（成对样本数）、``pairs``（原始成对记录）
+        与 ``skipped``（``old_format``/``unreadable`` 计数）的字典。
     """
     blocked = exclude_runs or set()
+    # An old-format or unreadable report is *not* evidence.  It never enters a hint, and the count
+    # is reported instead of being silently absorbed: "no samples" and "the corpus is old format"
+    # are different facts.
+    skipped = {"old_format": 0, "unreadable": 0}
     wins: list[dict] = []
     for root in roots:
         root = Path(root)
@@ -85,12 +90,27 @@ def build_experience_index(roots: list[Path], *, exclude_runs: set[str] | None =
                     kernel_path = next(iter(sorted(folder.glob("kernel.*"))), folder / "kernel.metal")
                 if not report_path.is_file() or not kernel_path.is_file():
                     continue
+                # Experience mining reads *schema 4* reports only: an old report (or one no
+                # reader can validate) is not evidence, and it is skipped rather than upgraded.
+                from tcenv.evaluate import EvalReport
+                from tcenv.schema import REPORT_SCHEMA_VERSION, SchemaError, read_report_json
+
                 try:
-                    report = json.loads(report_path.read_text())
-                except ValueError:
+                    document = read_report_json(report_path.read_text(encoding="utf-8"), what=str(report_path))
+                except (OSError, ValueError, SchemaError):
+                    skipped["unreadable"] += 1
                     continue
-                if not isinstance(report, dict) or report.get("status") != "ok":
+                if not isinstance(document, dict) or document.get("schema_version") != REPORT_SCHEMA_VERSION:
+                    skipped["old_format"] += 1
                     continue
+                try:
+                    parsed = EvalReport.from_json(document)
+                except SchemaError:
+                    skipped["unreadable"] += 1
+                    continue
+                if parsed.status != "ok":
+                    continue
+                report = parsed.to_json()
                 speed = report.get("speedup")
                 if not isinstance(speed, (int, float)) or isinstance(speed, bool):
                     continue
@@ -100,7 +120,7 @@ def build_experience_index(roots: list[Path], *, exclude_runs: set[str] | None =
                     wins.append({"task": report.get("task"), "bound": _bound(report), "added": added, "ratio": speed / best_speed})
                 if best_speed is None or speed > best_speed:
                     best_source, best_speed = source, float(speed)
-    return {"entries": _aggregate(wins), "wins": len(wins), "pairs": wins}
+    return {"entries": _aggregate(wins), "wins": len(wins), "pairs": wins, "skipped": skipped}
 
 
 def load_index(path: Path) -> dict:

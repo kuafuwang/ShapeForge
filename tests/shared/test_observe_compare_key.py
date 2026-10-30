@@ -220,25 +220,19 @@ def _confirmed_run(experiment: Path, arm: str, relative: str, *, speedup: float,
         "task": "relu", "dtype": "fp16", "phase": "done", "started_at": 10.0, "updated_at": 20.0,
         "spent_usd": 0.1, "best_speedup": speedup,
     }), encoding="utf-8")
-    (directory / "result.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "size": size, "stop_reason": "max_rounds",
-        "spent_usd": 0.1, "budget_usd": budget, "best_speedup": speedup, "target_id": "apple-m4-max",
-        "confirmation_source_sha256": digest, "confirm_winner_label": "r1.p0",
-        "confirmed_status": "ok", "confirmed_speedup": speedup, "confirmed_values": values,
-        "candidate_us": None,
-    }), encoding="utf-8")
-    (directory / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": speedup, "protocol_version": PROTOCOL_VERSION,
-        "target_id": "apple-m4-max",
-        "benchmark": {
-            "noisy": False, "candidate": {"cv": 0.01, "reps": 15},
-            "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx",
-            "confirmation": {
-                "kernel_sha256": digest, "winner_label": "r1.p0", "confirmed_values": values,
-                "speedup": speedup, "candidate_us": None,
-            },
-        },
-    }), encoding="utf-8")
+    from experiments.common import synthetic_confirmation_documents
+
+    result, report = synthetic_confirmation_documents(
+        task="relu", dtype="fp16", size=size, target_id="apple-m4-max",
+        speedup=speedup, label="r1.p0", kernel_sha256=digest, values=values,
+        protocol_version=PROTOCOL_VERSION,
+    )
+    result.update({
+        "stop_reason": "max_rounds", "spent_usd": 0.1, "budget_usd": budget,
+        "best_speedup": speedup,
+    })
+    (directory / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    (directory / "confirm_report.json").write_text(json.dumps(report), encoding="utf-8")
     (directory / "run_config.json").write_text(json.dumps({
         "task": "relu", "dtype": "fp16", "size": size,
         "target": {"id": "apple-m4-max", "backend": "metal", "backend_version": "v1"},

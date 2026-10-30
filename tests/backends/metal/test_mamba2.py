@@ -6,9 +6,33 @@ import pytest
 import torch
 
 from tasks import get_task
-from tasks.mamba2_chunk_scan.task import A_HI, CHUNK, DT_HI, DT_LO
 from tcenv.evaluate import evaluate
 from tcenv.backends.metal.testing import prepare_case
+
+# The generator's ranges and the chunk length are *registered* facts now (R2): the task module no
+# longer carries them as module constants, so the test reads the same source the generator does.
+from tcenv.track import REPO_ROOT
+
+_TRACK = REPO_ROOT / "tasks" / "mamba2_chunk_scan" / "track.json"
+
+
+def _registered() -> tuple[float, float, float, int]:
+    """@brief 取登记的 ``(DT_LO, DT_HI, A_HI, CHUNK)``。
+
+    @return 步长区间、衰减上界与 chunk 长度。
+    """
+    from tcenv.opspec.model import instantiate, load_opspec
+    from tcenv.track import load_track
+
+    track = load_track(_TRACK)
+    params = dict(track.implementations["gen_inputs"]["params"])
+    dt_lo, dt_hi = (float(value) for value in params["dt_range"])
+    a_hi = float(params["decay_range"][1])
+    chunk = int(instantiate(load_opspec(track.opspec_path), "fp16", "small").symbols["CHUNK"])
+    return dt_lo, dt_hi, a_hi, chunk
+
+
+DT_LO, DT_HI, A_HI, CHUNK = _registered()
 
 
 def sequential_scan(inp, B, S, H, P, N):

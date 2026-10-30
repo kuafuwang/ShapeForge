@@ -277,7 +277,7 @@ def test_the_failure_row_is_redacted_truncated_and_carries_a_signature_and_path(
     folder.mkdir(parents=True)
     (folder / "kernel.metal").write_text("kernel void k() {}\n")
     (folder / "report.json").write_text(json.dumps({
-        "status": "compile_error", "stage": "compile", "speedup": None, "message": message,
+        "schema_version": 4, "status": "compile_error", "stage": "compile", "speedup": None, "message": message,
     }))
     index.sync_known()
 
@@ -321,10 +321,17 @@ def test_the_brief_defaults_to_l1_and_expand_restores_the_heavy_sections(tmp_pat
     }), encoding="utf-8")
     # 真实 schema：candidate_us 是标量，baseline_us 是 {基线名: 微秒} 字典（36/36 份真实确认报告
     # 都是这样；下面这两组数抄自 runs/apple-m4-max/20261024-065432_conv2d_fp16_deepseek-flash）。
-    (run / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": 1.0366541502131137, "candidate_us": 448.4129672431771,
-        "baseline_us": {"mlx": 991.1041389304128, "torch_mps": 779.4236039949789},
-    }), encoding="utf-8")
+    from experiments.common import synthetic_confirmation_documents
+
+    _result, report = synthetic_confirmation_documents(
+        task="flash_attention", dtype="fp16", size="paper", target_id="apple-m4-max",
+        speedup=1.0366541502131137, label="c7", kernel_sha256="a" * 64,
+        candidate_us=448.4129672431771,
+    )
+    # L1 的两个顶层耗时字段；文档本身是 schema 4，brief 才肯引用它。
+    report["candidate_us"] = 448.4129672431771
+    report["baseline_us"] = {"mlx": 991.1041389304128, "torch_mps": 779.4236039949789}
+    (run / "confirm_report.json").write_text(json.dumps(report), encoding="utf-8")
     rows = [
         {"event": "agent", "label": "c0", "candidate_label": "c0", "provider": "deepseek",
          "model": "deepseek-flash", "committee": "first", "cost_usd": 0.2, "outcome": "provider_failed",
@@ -411,6 +418,14 @@ def _scenario_root(tmp_path: Path, name: str) -> Path:
     """
     run = tmp_path / name
     run.mkdir(parents=True)
+    # trace 行必须绑定到候选自己的当前（schema-4）报告，否则它是不可判的（§8）。
+    for index, (label, speed) in enumerate((("init", 1.0), ("r1.p0", 1.25))):
+        folder = run / "candidates" / f"{index:03d}_{label}"
+        folder.mkdir(parents=True)
+        (folder / "kernel.metal").write_text("kernel void k() {}\n", encoding="utf-8")
+        (folder / "report.json").write_text(json.dumps({
+            "schema_version": 4, "status": "ok", "speedup": speed,
+        }), encoding="utf-8")
     trace = [
         {"label": "init", "status": "ok", "speedup": 1.0, "within_noise": False, "differential_recheck": None},
         {"label": "r1.p0", "status": "ok", "speedup": 1.25, "within_noise": False,
@@ -544,10 +559,15 @@ def test_expand_restores_the_old_default_sections_on_the_four_scenarios(tmp_path
         "confirmed_speedup": 1.25, "confirmed_status": "ok",
         "trace": json.loads((normal / "state.json").read_text())["trace"],
     }), encoding="utf-8")
-    (normal / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": 1.25, "candidate_us": 448.41,
-        "baseline_us": {"mlx": 991.10, "torch_mps": 779.42},
-    }), encoding="utf-8")
+    from experiments.common import synthetic_confirmation_documents
+
+    _normal_result, normal_report = synthetic_confirmation_documents(
+        task="conv2d", dtype="fp16", size="paper", target_id="apple-m4-max",
+        speedup=1.25, label="r1.p0", kernel_sha256="a" * 64, candidate_us=448.41,
+    )
+    normal_report["candidate_us"] = 448.41
+    normal_report["baseline_us"] = {"mlx": 991.10, "torch_mps": 779.42}
+    (normal / "confirm_report.json").write_text(json.dumps(normal_report), encoding="utf-8")
     scenarios["normal"] = normal
 
     # cost_incomplete：停止原因就是它，转录里只有一次没有 token 账单的 chat。

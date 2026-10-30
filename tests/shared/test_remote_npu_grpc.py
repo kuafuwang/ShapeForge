@@ -16,6 +16,7 @@ from tcenv.remote import contracts
 from tcenv.remote import grpc_contract as gc
 from tcenv.remote.v1 import evaluator_pb2 as pb
 from tcenv.remote.job_types import JobError
+from tests.support.report_build import report_for_request
 from tests.support.job_engine import (
     NPU_FEATURES,
     NPU_TARGET,
@@ -292,12 +293,9 @@ def test_stale_attempt_fence_result_is_rejected(tmp_path):
         # new attempt.  The store records a stale-result diagnostic instead.
         stale = harness.engine.store.complete_attempt(
             external.request_id, old_attempt,
-            report={
-                "task": "relu", "dtype": "fp16", "size": "small", "mode": "quick",
-                "seed": 3, "status": "ok", "stage": "done", "candidate_us": 1.0,
-                "speedup": 1.0, "elapsed_s": 0.0, "target_id": NPU_TARGET,
-                "protocol_version": "3", "simulated": True,
-            },
+            report=report_for_request(
+                external, status="ok", source=external.source,
+            ),
             evidence=None,
         )
         assert stale.result is None
@@ -462,7 +460,10 @@ def test_npu_selfcheck_hang_still_records_a_timeout_report(tmp_path):
         final = _wait_state(harness, external, {"completed"})
         report = gc.report_json(gc.blob_from_proto(final.result.report, allow_empty=False)[0])
         assert report["status"] == "timeout"
-        assert report["simulated"] is True
+        # A synthesized timeout never built anything: ``build`` is null (§6.2), and the
+        # evaluator provenance (not a report flag) says the measurement is simulated.
+        assert report["build"] is None
+        assert final.result.provenance.measurement_kind == pb.MEASUREMENT_KIND_SIMULATED
         evidence = gc.evidence_json(gc.blob_from_proto(final.result.evidence, allow_empty=True)[0])
         assert evidence["complete"] is False and evidence["publication_allowed"] is False
 

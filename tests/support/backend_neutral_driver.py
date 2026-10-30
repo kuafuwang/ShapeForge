@@ -12,10 +12,19 @@ from pathlib import Path
 import sys
 
 
+#: The registered LoweringProfile/lowerer registry is *pure data* (no Metal API, no device) and
+#: R1/R2 place it under the backend package; a task's track names a registered profile, so task
+#: assembly consults it.  Everything else under ``tcenv.backends.metal`` is runtime/device code
+#: and stays out of the generic path.
+ALLOWED = frozenset({"tcenv.backends.metal", "tcenv.backends.metal.lowering"})
+
+
 class _BlockMetalImports:
     blocked: list[str] = []
 
     def find_spec(self, fullname, path=None, target=None):
+        if fullname in ALLOWED:
+            return None
         if fullname == "tcenv.backends.metal" or fullname.startswith("tcenv.backends.metal."):
             self.blocked.append(fullname)
             raise AssertionError(f"generic path imported {fullname}")
@@ -97,7 +106,8 @@ def main() -> int:
         ev._run_worker = original_run_worker
     metal_modules = sorted(
         name for name in sys.modules
-        if name == "tcenv.backends.metal" or name.startswith("tcenv.backends.metal.")
+        if (name == "tcenv.backends.metal" or name.startswith("tcenv.backends.metal."))
+        and name not in ALLOWED
     )
     result = {
         "status": report.status,
@@ -108,6 +118,7 @@ def main() -> int:
         "device_warnings": list(report.device_warnings or []),
         "speedup": report.speedup,
         "metal_modules": metal_modules,
+        "metal_lowering_loaded": "tcenv.backends.metal.lowering" in sys.modules,
         "blocked": list(_BlockMetalImports.blocked),
         "calls": list(backend.calls),
     }

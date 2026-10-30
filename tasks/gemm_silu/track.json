@@ -1,0 +1,127 @@
+{
+  "track": "triton-spec-to-msl",
+  "opspec": "tasks/gemm_silu/opspec.json",
+  "backend_id": "metal",
+  "lowering_profile": "metal-gemm-silu",
+  "spec_text": {
+    "template": "tasks/gemm_silu/kernel_triton.py",
+    "placeholders": {
+      "M": "spec_params",
+      "N": "spec_params",
+      "K": "spec_params",
+      "TL": "dtype_spelling"
+    }
+  },
+  "known_good": {
+    "template": "tasks/gemm_silu/naive.metal",
+    "placeholders": {
+      "T": "dtype_spelling",
+      "THREADS": "backend_params",
+      "TM": "backend_params",
+      "TPR": "backend_params"
+    }
+  },
+  "description": "C = silu(A @ B), silu(v) = v * sigmoid(v) applied to the fp32 accumulator before the single rounding to the element type.",
+  "dtype_spelling": {
+    "fp16": {
+      "T": "half",
+      "TL": "tl.float16",
+      "TORCH": "torch.float16"
+    },
+    "bf16": {
+      "T": "bfloat",
+      "TL": "tl.bfloat16",
+      "TORCH": "torch.bfloat16"
+    }
+  },
+  "implementations": {
+    "gen_inputs": {
+      "implementation_id": "gemm_silu.gen_inputs",
+      "implementation_version": 1,
+      "params": {
+        "mags": {
+          "normal": 1.0,
+          "wide_range": 0.1
+        },
+        "default_mag": 1.0,
+        "large": 20.0,
+        "spike": 5.0,
+        "seed_offsets": {
+          "A": 0,
+          "B": 31
+        }
+      }
+    },
+    "reference": {
+      "implementation_id": "gemm_silu.reference",
+      "implementation_version": 1,
+      "params": {
+        "accumulate": "float64",
+        "matmul": "float32_cpu",
+        "epilogue": "silu"
+      }
+    },
+    "error_scale": null
+  },
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "gemm_silu.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "mx.compile",
+        "expression": "silu(a @ b)"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "gemm_silu.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "torch.nn.functional.silu",
+        "combine": "matmul"
+      }
+    }
+  ],
+  "template_literals": {
+    "launch": [],
+    "semantic": []
+  },
+  "baseline_variant": {
+    "template": "tasks/gemm_silu/kernel_triton_msl.py",
+    "placeholders": {
+      "M": "spec_params",
+      "N": "spec_params",
+      "K": "spec_params",
+      "TL": "dtype_spelling",
+      "TORCH": "dtype_spelling"
+    },
+    "note": "GEMM storing the fp32 accumulator + a separate SiLU kernel (the backend refuses the fused epilogue)"
+  },
+  "pack_files": [
+    "tasks/_assembly.py",
+    "tasks/_common.py",
+    "tasks/gemm_silu/__init__.py",
+    "tasks/gemm_silu/kernel_triton.py",
+    "tasks/gemm_silu/naive.metal",
+    "tasks/gemm_silu/opspec.json",
+    "tasks/gemm_silu/task.py",
+    "tasks/gemm_silu/track.json",
+    "tcenv/backends/metal/lowering.py",
+    "tcenv/contract.py",
+    "tcenv/distributions.py",
+    "tcenv/dtypes.py",
+    "tcenv/identity.py",
+    "tcenv/lowering.py",
+    "tcenv/opspec/__init__.py",
+    "tcenv/opspec/model.py",
+    "tcenv/opspec/schema/opspec.v1.schema.json",
+    "tcenv/opspec/validator.py",
+    "tcenv/task.py",
+    "tcenv/terms.py",
+    "tcenv/track/__init__.py",
+    "tcenv/track/schema/track.v1.schema.json"
+  ]
+}

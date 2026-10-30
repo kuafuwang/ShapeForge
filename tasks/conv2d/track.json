@@ -1,0 +1,141 @@
+{
+  "track": "triton-spec-to-msl",
+  "opspec": "tasks/conv2d/opspec.json",
+  "backend_id": "metal",
+  "lowering_profile": "metal-conv2d",
+  "spec_text": {
+    "template": "tasks/conv2d/kernel_triton.py",
+    "placeholders": {
+      "N": "spec_params",
+      "H": "spec_params",
+      "W": "spec_params",
+      "C": "spec_params",
+      "OC": "spec_params",
+      "OH": "spec_params",
+      "OW": "spec_params",
+      "M_TOTAL": "backend_params",
+      "K_TOTAL": "backend_params",
+      "TL": "dtype_spelling"
+    }
+  },
+  "known_good": {
+    "template": "tasks/conv2d/naive.metal",
+    "placeholders": {
+      "T": "dtype_spelling"
+    }
+  },
+  "description": "3x3 convolution, stride 1, no padding, no bias, NHWC activations and [OC,KH,KW,C] weights; fp32 accumulation, result rounded once.",
+  "dtype_spelling": {
+    "fp16": {
+      "T": "half",
+      "TL": "tl.float16",
+      "TORCH": "torch.float16"
+    },
+    "bf16": {
+      "T": "bfloat",
+      "TL": "tl.bfloat16",
+      "TORCH": "torch.bfloat16"
+    }
+  },
+  "implementations": {
+    "gen_inputs": {
+      "implementation_id": "conv2d.gen_inputs",
+      "implementation_version": 1,
+      "params": {
+        "mags": {
+          "normal": 1.0,
+          "wide_range": 0.1
+        },
+        "default_mag": 1.0,
+        "large": 20.0,
+        "spike": 5.0,
+        "seed_offsets": {
+          "x": 0,
+          "w": 31
+        }
+      }
+    },
+    "reference": {
+      "implementation_id": "conv2d.reference",
+      "implementation_version": 1,
+      "params": {
+        "accumulate": "double_output",
+        "finite": "conv2d",
+        "non_finite": "tap_sum"
+      }
+    },
+    "error_scale": null
+  },
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "conv2d.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "mx.conv2d"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "conv2d.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "torch.nn.functional.conv2d",
+        "layout": "nchw_roundtrip"
+      }
+    }
+  ],
+  "template_literals": {
+    "launch": [
+      {
+        "template": "tasks/conv2d/kernel_triton.py",
+        "text": "num_warps = 4",
+        "threads_per_threadgroup": 128
+      }
+    ],
+    "semantic": []
+  },
+  "baseline_variant": {
+    "template": "tasks/conv2d/kernel_triton_msl.py",
+    "placeholders": {
+      "N": "spec_params",
+      "H": "spec_params",
+      "W": "spec_params",
+      "C": "spec_params",
+      "OC": "spec_params",
+      "OH": "spec_params",
+      "OW": "spec_params",
+      "M_TOTAL": "backend_params",
+      "K_TOTAL": "backend_params",
+      "TL": "dtype_spelling",
+      "TORCH": "dtype_spelling"
+    },
+    "note": "explicit im2col gather kernel + weight transpose + plain GEMM (the backend refuses the gathered implicit-GEMM operand)"
+  },
+  "pack_files": [
+    "tasks/_assembly.py",
+    "tasks/_common.py",
+    "tasks/conv2d/__init__.py",
+    "tasks/conv2d/kernel_triton.py",
+    "tasks/conv2d/naive.metal",
+    "tasks/conv2d/opspec.json",
+    "tasks/conv2d/task.py",
+    "tasks/conv2d/track.json",
+    "tcenv/backends/metal/lowering.py",
+    "tcenv/contract.py",
+    "tcenv/distributions.py",
+    "tcenv/dtypes.py",
+    "tcenv/identity.py",
+    "tcenv/lowering.py",
+    "tcenv/opspec/__init__.py",
+    "tcenv/opspec/model.py",
+    "tcenv/opspec/schema/opspec.v1.schema.json",
+    "tcenv/opspec/validator.py",
+    "tcenv/task.py",
+    "tcenv/terms.py",
+    "tcenv/track/__init__.py",
+    "tcenv/track/schema/track.v1.schema.json"
+  ]
+}

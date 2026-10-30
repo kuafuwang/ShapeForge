@@ -64,6 +64,90 @@ def _descriptor(data: bytes, *, schema_id: str, media_type: str) -> dict[str, An
     }
 
 
+def schema4_report_payload(
+    *, task: str, dtype: str, size: str, mode: str, seed: int, target_id: str,
+    candidate_us: float | None = None,
+) -> bytes:
+    """Return a deterministic, schema-4-valid candidate report for a signed vector.
+
+    The report descriptor in a signed result names the candidate report schema, so the frozen
+    payload has to *be* that schema: the retired top-level ``simulated`` key is gone and an
+    ``ok`` report carries a ``full`` build projected from the registered simulator builder.
+
+    @param task 任务名。
+    @param dtype 元素类型短名。
+    @param size 问题规模名。
+    @param mode 评测模式。
+    @param seed 随机种子。
+    @param target_id 目标 id。
+    @param candidate_us 可选的候选微秒数（向量用它保存计时值）。
+    @return 报告 JSON 字节。
+    """
+    import json as _json
+
+    from tasks import get_task
+    from tcenv.evaluate import EvalReport
+    from tests.support.report_build import simulated_build
+
+    task_obj = get_task(task, dtype, size)
+    report = EvalReport(
+        task=task, dtype=dtype, size=size, mode=mode, seed=seed, status="ok", stage="done",
+        target_id=target_id, backend="sim-npu", backend_version="1",
+        candidate_us=candidate_us,
+    )
+    report.build = simulated_build(task_obj, b"kernel void demo() {}\n")
+    # The evaluation identities stay null: they depend on the host's library versions, and a
+    # frozen cross-language vector must not change with the verification machine.
+    return _json.dumps(
+        report.to_json(), sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def report_descriptor(report: bytes) -> dict[str, Any]:
+    """The one descriptor shape for a candidate report payload.
+
+    @param report 报告字节。
+    @return descriptor 文档。
+    """
+    return {
+        "schema_id": contracts.REPORT_SCHEMA_ID,
+        "media_type": "application/vnd.tcenv.eval-report.v4+json",
+        "size_bytes": len(report),
+        "sha256": hashlib.sha256(report).hexdigest(),
+    }
+
+
+def write_evaluator_golden(path: Path | None = None) -> Path:
+    """Rebuild the legacy Metal/source vector with a schema-4 report payload.
+
+    The frozen vector predates schema 4: its report bytes carried the retired top-level
+    ``simulated`` key and the v3 descriptor.  R4 rebuilds the payload and re-signs the same
+    envelope; the provenance, receipt and request are unchanged.
+
+    @param path 目标路径；缺省为冻结向量文件。
+    @return 写入的路径。
+    """
+    target = path or GOLDEN
+    golden = json.loads(target.read_text(encoding="utf-8"))
+    signature = golden["signature"]
+    report = schema4_report_payload(
+        task="relu", dtype="fp16", size="small", mode="quick", seed=3, target_id="contract-target",
+    )
+    unsigned = dict(signature["unsigned_result"])
+    unsigned["report"] = report_descriptor(report)
+    key = bytes.fromhex(signature["key_hex"])
+    document = contracts.result_signature_document(unsigned, key_id=signature["key_id"])
+    signature["report_base64"] = base64.b64encode(report).decode("ascii")
+    signature["unsigned_result"] = unsigned
+    signature["document"] = document
+    signature["canonical_json"] = contracts.canonical_digest_document(document).decode("utf-8")
+    signature["hmac_sha256"] = contracts.sign_result(
+        unsigned, key_id=signature["key_id"], key=key,
+    )
+    target.write_text(json.dumps(golden, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    return target
+
+
 def build_blob_golden() -> dict[str, Any]:
     """Return the complete P0b blob contract vector (request, receipt, signature)."""
 
@@ -159,7 +243,9 @@ def build_blob_golden() -> dict[str, Any]:
         "attempt_id": BLOB_ATTEMPT_ID,
         "request_digest": request_digest,
     }
-    report = b'{"status":"ok","simulated":true}'
+    report = schema4_report_payload(
+        task="relu", dtype="fp16", size="small", mode="quick", seed=3, target_id="sim-npu-source",
+    )
     evidence = json.dumps({
         "schema_id": contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID,
         "candidate_digest": request["candidate_digest"],
@@ -175,7 +261,7 @@ def build_blob_golden() -> dict[str, Any]:
     }, sort_keys=True, separators=(",", ":")).encode("utf-8")
     unsigned = {
         "provenance": provenance,
-        "report": _descriptor(report, schema_id="tcenv.eval-report.v3", media_type="application/json"),
+        "report": report_descriptor(report),
         "evidence": _descriptor(
             evidence, schema_id=contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID,
             media_type=contracts.NPU_EVIDENCE_MEDIA_TYPE,
@@ -488,8 +574,10 @@ def build_bundle_golden() -> dict[str, Any]:
         "attempt_id": BUNDLE_ATTEMPT_ID,
         "request_digest": request_digest,
     }
-    report = (b'{"status":"ok","simulated":true,"candidate_us":%d}'
-              % (BUNDLE_DEVICE_ELAPSED_NS // 1000))
+    report = schema4_report_payload(
+        task="relu", dtype="fp16", size="small", mode="quick", seed=3, target_id="sim-npu-graph",
+        candidate_us=float(BUNDLE_DEVICE_ELAPSED_NS // 1000),
+    )
     evidence_document = {
         "schema_id": contracts.NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
         "candidate_digest": request["candidate_digest"],
@@ -522,7 +610,7 @@ def build_bundle_golden() -> dict[str, Any]:
     ).encode("utf-8")
     unsigned = {
         "provenance": provenance,
-        "report": _descriptor(report, schema_id="tcenv.eval-report.v3", media_type="application/json"),
+        "report": report_descriptor(report),
         "evidence": _descriptor(
             evidence, schema_id=contracts.NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
             media_type=contracts.NPU_BUNDLE_EVIDENCE_MEDIA_TYPE,

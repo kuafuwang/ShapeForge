@@ -1,0 +1,133 @@
+{
+  "spec_version": 1,
+  "op_name": "reduction_sum",
+  "category": "reduction",
+  "formula": "y[r] = sum_c x[r,c]",
+  "uses": [],
+  "type_vars": {
+    "T": [
+      "fp16",
+      "bf16"
+    ]
+  },
+  "symbols": {
+    "M": {
+      "min": 0
+    },
+    "N": {
+      "min": 1
+    }
+  },
+  "tensors": {
+    "x": {
+      "role": "input",
+      "dims": [
+        "M",
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+        "N",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "row-major [M, N]"
+    },
+    "y": {
+      "role": "output",
+      "dims": [
+        "M"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "write",
+      "doc": "row sums"
+    }
+  },
+  "numerics": {
+    "acc_dtype": "fp32",
+    "rounding": "single_round_at_output",
+    "tolerances": {
+      "fp16": {
+        "rtol": 0.002,
+        "atol_rel": 3e-06
+      },
+      "bf16": {
+        "rtol": 0.016,
+        "atol_rel": 3e-06
+      }
+    },
+    "exact": false
+  },
+  "attrs": {},
+  "cases": {
+    "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "cancel",
+      "ieee"
+    ]
+  },
+  "sizes": {
+    "paper": {
+      "M": 4096,
+      "N": 4096,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "small": {
+      "M": 64,
+      "N": 1024,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "plan": {
+      "M": 256,
+      "N": 4096,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    }
+  },
+  "spec_params": [
+    "M",
+    "N"
+  ],
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "coefficient": 1,
+          "symbols": [
+            "M",
+            "N"
+          ]
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {
+          "tensor": "x"
+        },
+        {
+          "tensor": "y"
+        }
+      ]
+    }
+  }
+}

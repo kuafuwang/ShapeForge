@@ -79,6 +79,21 @@ class FaultIO(LocalBlobIO):
             self.read_log.append((path.name, len(data)))
         return data
 
+    def read_opened(self, path: Path, descriptor: int, limit: int) -> bytes:
+        self._maybe_fail("read", path)
+        data = super().read_opened(path, descriptor, limit)
+        with self.lock:
+            self.ops.append(("read", path.name))
+            self.read_sizes.append(len(data))
+            self.read_log.append((path.name, len(data)))
+        return data
+
+    def unlink_at(self, parent_fd: int, name: str, path: Path) -> None:
+        self._maybe_fail("remove", path)
+        super().unlink_at(parent_fd, name, path)
+        with self.lock:
+            self.ops.append(("remove", path.name))
+
     def write_atomic(self, path: Path, data: bytes) -> None:
         self._maybe_fail("write_atomic", path)
         super().write_atomic(path, data)

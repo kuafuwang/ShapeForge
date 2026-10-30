@@ -95,15 +95,35 @@ def main() -> int:
         status = "incorrect"
     elif b"CRASH" in source:
         status = "crash"
-    report = {
-        "task": "wrong-task" if b"BAD_REPORT" in source else request.task,
-        "dtype": request.dtype, "size": request.size, "mode": request.mode,
-        "seed": request.seed_int, "status": status, "stage": "done",
-        "candidate_us": 10.0, "speedup": 1.0,
-        "elapsed_s": 0.5 if request.mode == "timed" else 0.0,
-        "target_id": request.target_id, "protocol_version": "3",
-        "simulated": True,
-    }
+    # A schema-4 report: the one build record comes from the registered simulator builder, and
+    # the retired top-level ``simulated`` key is gone (simulated-ness is in the evaluator
+    # provenance + ``build.build_kind``).
+    from tasks import get_task
+
+    from tests.support.report_build import (
+        attach_identity, simulated_build, simulated_compile_failure,
+    )
+
+    from tcenv.evaluate import EvalReport
+    from tcenv.schema import PROTOCOL_VERSION
+
+    task_obj = get_task(request.task, request.dtype, request.size)
+    report_object = EvalReport(
+        task=request.task, dtype=request.dtype, size=request.size, mode=request.mode,
+        seed=request.seed_int, status=status, stage="done",
+        candidate_us=10.0, speedup=1.0,
+        elapsed_s=0.5 if request.mode == "timed" else 0.0,
+        target_id=request.target_id, backend="sim-npu", backend_version="1",
+        protocol_version=PROTOCOL_VERSION,
+    )
+    if status in {"ok", "incorrect"}:
+        report_object.build = simulated_build(task_obj, source)
+    elif status == "compile_error":
+        report_object.build = simulated_compile_failure(task_obj, b"// COMPILE_FAIL\n" + source)
+    attach_identity(report_object, task_obj)
+    report = report_object.to_json()
+    if b"BAD_REPORT" in source:
+        report["task"] = "wrong-task"
     evidence = None if b"NO_EVIDENCE" in source else {
         "candidate_sha256": request.candidate_sha256,
         "measurement_kind": "simulated",

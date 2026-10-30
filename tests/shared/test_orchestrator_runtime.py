@@ -310,8 +310,8 @@ def test_resume_uses_explicit_retry_only_for_a_pending_outbox_row(tmp_path):
     with pytest.raises(EvaluationUnavailable):
         orch._evaluate_report(source, mode="quick", seed=3, reps=1, label="init")
     assert evaluator.resume_calls == 0
-    report = orch._evaluate_report(source, mode="quick", seed=3, reps=1, label="init")
-    assert report.status == "ok"
+    evaluated = orch._evaluate_report(source, mode="quick", seed=3, reps=1, label="init")
+    assert evaluated.report.status == "ok"
     assert evaluator.resume_calls == 1
 
 
@@ -592,8 +592,8 @@ def test_blob_contract_result_binds_the_wire_candidate_digest(tmp_path):
         evaluator=evaluator, publishable_site_ids={"local"}, publishable_epochs={_test_epoch()},
     )
     # A blob candidate is referenced: the host source is empty.
-    report = orch._evaluate_report("", mode="quick", seed=3, reps=1, label="init")
-    assert report.status == "ok"
+    evaluated = orch._evaluate_report("", mode="quick", seed=3, reps=1, label="init")
+    assert evaluated.report.status == "ok"
     assert evaluator.requests[0].candidate_sha256 == hashlib.sha256(b"").hexdigest()
     assert evaluator.requests[0].wire_candidate_digest == BlobShapedEvaluator.BLOB_SHA
 
@@ -639,8 +639,8 @@ def test_npu_contract_run_binds_the_wire_digest_before_the_durable_row(tmp_path)
         evaluator=evaluator, publishable_site_ids={"local"}, publishable_epochs={_test_epoch()},
     )
     source = "// speed=1.2\nkernel void demo() {}"
-    report = orch._evaluate_report(source, mode="quick", seed=3, reps=1, label="init")
-    assert report.status == "ok"
+    evaluated = orch._evaluate_report(source, mode="quick", seed=3, reps=1, label="init")
+    assert evaluated.report.status == "ok"
     assert evaluator.wire_calls == 1
     assert evaluator.requests[0].request_digest == NpuShapedEvaluator.WIRE_DIGEST
 
@@ -659,5 +659,8 @@ def test_npu_contract_run_binds_the_wire_digest_before_the_durable_row(tmp_path)
     # Resume replays the retained envelope under the same identity: no second
     # Submit and no silently different digest.
     replay = orch._evaluate_report(source, mode="quick", seed=3, reps=1, label="init")
-    assert replay.status == "ok"
+    assert replay.report.status == "ok"
+    # The replayed row's report is a schema-4 report with its build record: a legacy payload
+    # would have been refused as ``result_invalid`` instead of being replayed.
+    assert replay.report.build["shape"] == "full"
     assert len(evaluator.requests) == 1

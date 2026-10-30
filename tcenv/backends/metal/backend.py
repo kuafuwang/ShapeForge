@@ -386,28 +386,64 @@ class MetalBackend:
             warnings=warnings,
         )
 
-    def compile(self, ctx: Any, source: str, contract: Any, *, math: str = "fast"):
-        """@brief 编译契约指定的那个核。
+    def prepare_context(self, context: Any) -> None:
+        """@brief 组合根钩子：经 backend 工厂构建并注入 runtime 需要的内部核（清零核）。
 
-        @param ctx Metal 上下文。
-        @param source 完整 MSL 源码。
-        @param contract 任务契约，提供 kernel 名字。
-        @param math 数学模式，``fast`` 或 ``safe``。
-        @return 已建 pipeline 的 CompiledKernel。
+        The runtime must not compile on its own (plan §5.2): the caller that owns the context
+        builds the fixed internal fill kernel through ``artifact_builder`` with the registered
+        ``metal.internal-fill`` diagnostic profile (raw source, no task header) and injects the
+        pipeline.  A backend without internal kernels simply does not implement this hook.
+
+        @param context 该 backend 的 runtime 上下文。
         """
-        return ctx.compile(source, contract.kernel_name, math=math)
+        from tcenv.remote.artifact_builder import SourceBundle
 
-    def compile_all(self, ctx: Any, source: str, contract: Any, *, names: list[str] | None = None, math: str = "fast"):
-        """@brief 一次编译多个核名，共用一个 Metal library。
+        from .source_builder import DiagnosticContract
 
-        @param ctx Metal 上下文。
-        @param source 完整 MSL 源码。
-        @param contract 任务契约，提供默认 kernel 名字。
-        @param names 需要编译的核名列表；省略时只用契约核名。
-        @param math 数学模式。
-        @return 与 ``names`` 同序的 CompiledKernel 列表。
+        # A context that cannot accept an injection is a test double (it has no internal kernels
+        # and no runtime of its own); the real ``MetalContext`` always exposes the hook.
+        if not hasattr(context, "inject_fill_kernel"):
+            return
+        if getattr(context, "_fill", None) is not None:
+            return
+        contract = DiagnosticContract(kernel_name=context.FILL_KERNEL_NAME)
+        builder = self.artifact_builder(
+            kernel_contract=contract, diagnostic_profile="metal.internal-fill"
+        )
+        outcome = builder.build(
+            SourceBundle(source=context.FILL_KERNEL_SOURCE.encode("utf-8")),
+            task_contract=contract,
+            deadline_monotonic=None,
+        )
+        handles = outcome.executable_handles()
+        if len(handles) != 1:
+            raise ValueError("the internal fill build must produce exactly one pipeline")
+        context.inject_fill_kernel(handles[0])
+
+    def artifact_builder(
+        self, *, kernel_contract: Any = None, math: str = "fast", kernel_names: Any = None,
+        diagnostic_profile: str | None = None, specialization: Any = None,
+    ):
+        """Return the one Metal ``ArtifactBuilder`` this backend compiles through.
+
+        There is deliberately no ``compile``/``compile_all`` hook on the backend:
+        the evaluator gets this builder from the backend and calls the unified
+        ``ArtifactBuilder.build``.  The builder holds the contract/math/declared
+        kernel names as configuration; a caller cannot hand it a command or a
+        path.  ``diagnostic_profile`` selects a *registered* diagnostic profile
+        (raw-source assemble, no task header) for probes/calibration, which have
+        no task contract.  A candidate build passes ``specialization``: the
+        contract and the lowering identity then come from that one object
+        (plan §5.1/§5.3-2).
         """
-        return ctx.compile_all(source, names or [contract.kernel_name], math=math)
+
+        from .source_builder import MetalSourceBuilder
+
+        return MetalSourceBuilder(
+            backend=self, kernel_contract=kernel_contract, math=math,
+            kernel_names=kernel_names, diagnostic_profile=diagnostic_profile,
+            specialization=specialization,
+        )
 
     def check_abi(
         self,

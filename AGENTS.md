@@ -26,6 +26,8 @@ A speedup is published only when the confirmation gate binds the remeasured kern
 
 The data layer (run layout, SQLite index, retrieval, protocol epochs, cost and retention) is documented in `docs/架构/数据层.md`. `taic query` is the CLI for it: no model call and no GPU, but `best`/`failures`/`sessions`/`models` first refresh the derived index, so it is not a strictly read-only process.
 
+The execution runtime (local vs split-control evaluation, `execution.json`, evaluation outbox, evaluator epoch, self-check bridge and P2 isolated verification) is documented in `docs/架构/执行运行时与设备扩展.md`. The default remains local; remote evaluation requires an explicit `--remote-evaluator-config` and a human-registered site allowlist.
+
 Credentials are never committed.
 
 ## Agent skills

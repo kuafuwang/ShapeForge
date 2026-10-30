@@ -121,9 +121,9 @@ NPU_BUILD_PRODUCER_RECORD_SCHEMA_ID = "tcenv.remote.npu-build.producer-evidence-
 # Clock domain recorded when no device clock was ever observed (killed worker).
 NPU_UNOBSERVED_CLOCK_DOMAIN = "unobserved"
 #: The candidate report schema every contract version signs.  It is shared by
-#: all versions (`tcenv.eval-report.v3`), so a rewritten descriptor can never
+#: all versions (`tcenv.eval-report.v4`), so a rewritten descriptor can never
 #: relabel the report as another schema without breaking the envelope check.
-REPORT_SCHEMA_ID = "tcenv.eval-report.v3"
+REPORT_SCHEMA_ID = "tcenv.eval-report.v4"
 REQUEST_DIGEST_ALGORITHM = "sha256-rfc8785-v1"
 RECEIPT_DIGEST_ALGORITHM = "sha256-rfc8785-v1"
 RESULT_SIGNATURE_ALGORITHM = "hmac-sha256-v1"

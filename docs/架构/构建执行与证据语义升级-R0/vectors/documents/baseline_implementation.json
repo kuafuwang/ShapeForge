@@ -1,0 +1,32 @@
+{
+  "backend_id": "metal",
+  "baselines": [
+    {
+      "framework": "mlx",
+      "implementation": {
+        "implementation_id": "rmsnorm.mlx",
+        "implementation_version": 1,
+        "params": {
+          "dtype": "fp16"
+        }
+      },
+      "kind": "task",
+      "name": "mlx"
+    },
+    {
+      "framework": "torch",
+      "implementation": {
+        "implementation_id": "rmsnorm.torch",
+        "implementation_version": 1,
+        "params": {
+          "dtype": "fp16"
+        }
+      },
+      "kind": "task",
+      "name": "torch_mps"
+    }
+  ],
+  "fingerprint_kind": "baseline_implementation",
+  "fingerprint_version": 1,
+  "registry_version": "task-baselines-1"
+}

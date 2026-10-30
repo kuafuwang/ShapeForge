@@ -1,0 +1,152 @@
+{
+  "spec_version": 1,
+  "op_name": "sem_gemm_neg",
+  "category": "linear_algebra",
+  "formula": "C[m,n] = -sum_k A[m,k] * B[k,n] (the specification's code accumulates with acc -= tl.dot(a, b))",
+  "uses": [],
+  "type_vars": {
+    "T": [
+      "fp16",
+      "bf16"
+    ]
+  },
+  "symbols": {
+    "M": {
+      "min": 1
+    },
+    "N": {
+      "min": 1
+    },
+    "K": {
+      "min": 1
+    }
+  },
+  "tensors": {
+    "A": {
+      "role": "input",
+      "dims": [
+        "M",
+        "K"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+        "K",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "row-major [M, K]"
+    },
+    "B": {
+      "role": "input",
+      "dims": [
+        "K",
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+        "N",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "row-major [K, N]"
+    },
+    "C": {
+      "role": "output",
+      "dims": [
+        "M",
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+        "N",
+        "1"
+      ],
+      "space": "global",
+      "access": "write",
+      "doc": "row-major [M, N]"
+    }
+  },
+  "numerics": {
+    "acc_dtype": "fp32",
+    "rounding": "single_round_at_output",
+    "tolerances": {
+      "fp16": {
+        "rtol": 0.002,
+        "atol_rel": 0.001
+      },
+      "bf16": {
+        "rtol": 0.016,
+        "atol_rel": 0.008
+      }
+    },
+    "exact": false
+  },
+  "attrs": {},
+  "cases": {
+    "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+    ]
+  },
+  "sizes": {
+    "paper": {
+      "M": 2048,
+      "N": 2048,
+      "K": 2048,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "small": {
+      "M": 256,
+      "N": 256,
+      "K": 128,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    }
+  },
+  "spec_params": [
+    "M",
+    "N",
+    "K"
+  ],
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "coefficient": 2,
+          "symbols": [
+            "M",
+            "N",
+            "K"
+          ]
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {
+          "tensor": "A"
+        },
+        {
+          "tensor": "B"
+        },
+        {
+          "tensor": "C"
+        }
+      ]
+    }
+  }
+}

@@ -25,7 +25,20 @@ class FakeExecutor:
 
     def selfcheck(self, request):
         self.requests.append(request)
-        report = EvalReport(task=request.task, dtype=request.dtype, size=request.size, mode=request.mode, seed=1, status="ok", message="ok", elapsed_s=0.5)
+        # This executor stands in for the *measured* local Metal executor, so its report carries
+        # the native structural fixture (explicitly; the helper default is the simulator).
+        from tasks import get_task
+
+        from tests.support.report_build import attach_build, attach_identity
+
+        task_obj = get_task(request.task, request.dtype, request.size)
+        report = EvalReport(
+            task=request.task, dtype=request.dtype, size=request.size, mode=request.mode,
+            seed=1, status="ok", message="ok", elapsed_s=0.5, target_id=request.target_id,
+            backend="metal", backend_version="1",
+        )
+        attach_build(report, task_obj, source=request.source.encode("utf-8"))
+        attach_identity(report, task_obj, backend_id="metal")
         provenance = EvaluatorProvenance(
             schema_version=1, epoch="e" * 64, site_id="local", device_id=request.target_id,
             backend="metal", backend_version="1", target_id=request.target_id,
@@ -222,7 +235,9 @@ def test_bridge_allows_simulated_selfcheck_but_keeps_marker(tmp_path):
     class SimulatedExecutor(FakeExecutor):
         def selfcheck(self, request):
             self.requests.append(request)
-            report = {"task": request.task, "dtype": request.dtype, "size": request.size, "mode": request.mode, "status": "ok", "simulated": True, "target_id": request.target_id}
+            from tests.support.report_build import report_for_request
+
+            report = report_for_request(request, status="ok")
             provenance = EvaluatorProvenance(
                 schema_version=1, epoch="e" * 64, site_id="sim", device_id="sim", backend="sim-npu", backend_version="1", target_id=request.target_id,
                 worker_build="sim", task_pack_digest="p" * 64, calibration_digest="c" * 64, protocol_version="1", request_digest=request.request_digest,
@@ -233,7 +248,10 @@ def test_bridge_allows_simulated_selfcheck_but_keeps_marker(tmp_path):
     server = SelfCheckServer(_config(tmp_path), SimulatedExecutor(), _short_socket())
     with server:
         result = SelfCheckClient(server.socket_path, token="test-token").check("kernel void demo() {}", "quick")
-    assert result.report["simulated"] is True
+    # The simulated marker is carried by the evaluator provenance and the report's build kind,
+    # not by a retired top-level report key.
+    assert result.report["build"]["build_kind"] == "simulator"
+    assert result.report.get("simulated") is None
 
 
 def test_bridge_validate_is_host_controlled_and_reaches_the_evaluator(tmp_path):
@@ -371,3 +389,23 @@ def test_bridge_rejects_a_usage_path_inside_the_agent_workspace(tmp_path):
     config = _config(tmp_path, usage_path=tmp_path / "checks" / "usage.json")
     with pytest.raises(ValueError, match="usage_path"):
         SelfCheckServer(config, FakeExecutor(), _short_socket())
+
+
+def test_the_selfcheck_fixture_build_kinds_are_selected_without_a_socket():
+    """helper 级断言：实测替身是 native 结构 fixture，模拟路由默认是 simulator。
+
+    不启动 server、不绑定 AF_UNIX，避免沙箱路径过长把这组语义检查遮住。
+    """
+    from tests.support.report_build import report_for_request
+
+    request = EvaluationRequest(
+        task="relu", dtype="fp16", size="small", source="kernel void demo() {}\n",
+        target_id="apple-m4-max",
+    )
+    measured = FakeExecutor().selfcheck(request).report
+    assert measured.build["build_kind"] == "native"
+    assert measured.build["provenance"]["builder_id"] == "metal-native-structural-fixture"
+
+    simulated = report_for_request(request, status="ok")
+    assert simulated["build"]["build_kind"] == "simulator"
+    assert simulated["build"]["provenance"]["builder_id"] == "fake-npu-builder"

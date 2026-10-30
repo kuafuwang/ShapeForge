@@ -235,7 +235,7 @@ def test_exact_job_request_same_process_group_and_success_reap(tmp_path):
         assert len(decoded) == 1
         result_frame, kind, result = decoded[0]
         assert kind == "result"
-        assert result["report"]["job_report_marker"] == "report-from-job-worker"
+        assert result["report"]["message"] == "report-from-job-worker"
         assert result["evidence"]["job_evidence_marker"] == "evidence-from-job-worker"
         assert "receipt" not in result_frame.payload
         assert "signature" not in result_frame.payload
@@ -459,7 +459,7 @@ def test_sustained_stderr_flood_keeps_the_report_and_reaps_the_child(tmp_path):
     assert returncode == 0, error.decode("utf-8", errors="replace")[-2000:]
     decoded = _decode_engine_frames(output, request, attempt)
     assert len(decoded) == 1 and decoded[0][1] == "result"
-    assert decoded[0][2]["report"]["job_report_marker"] == "report-from-job-worker"
+    assert decoded[0][2]["report"]["message"] == "report-from-job-worker"
     record = json.loads(record_path.read_text(encoding="utf-8"))
     assert _ps_state(record["pid"]) is None, "the flooding child was not reaped"
     assert list(temp_root.iterdir()) == []
@@ -785,12 +785,12 @@ def test_the_bridge_streams_the_child_instead_of_buffering_with_communicate(tmp_
         environ=environ,
         write_lock=threading.Lock(),
     )
-    assert report["job_report_marker"] == "report-from-job-worker"
+    assert report["message"] == "report-from-job-worker"
     assert evidence["job_evidence_marker"] == "evidence-from-job-worker"
     # ``_run_job_worker`` returns the validated report/evidence; the engine
     # result frame is written by ``main`` and never carries the job bytes.
     assert output.getvalue() == b""
-    assert report["job_report_marker"] == "report-from-job-worker"
+    assert report["message"] == "report-from-job-worker"
 
 
 def _production_request(*, cache_policy: str, mode: str = "quick"):

@@ -210,8 +210,9 @@ class FakeVendorBDriver:
             raise ValueError("vendor B requires a graph definition and a parameter table")
         # Materialize and re-verify the exact bytes in this attempt's scope; the
         # instance never sees a caller-supplied path.
-        workdir = Path(os.environ.get("TCENV_REMOTE_STATE_DIR", ".")) / "vendor-b" / attempt_id
-        written = artifact.materialize(workdir)
+        state_dir = Path(os.environ.get("TCENV_REMOTE_STATE_DIR", "."))
+        workdir = state_dir / "vendor-b" / attempt_id
+        written = artifact.materialize(workdir, anchor=state_dir)
         graph_digest = graph_sha256(artifact)
         for path, handle in sorted(written.items()):
             # Re-verify through the returned handle: it walks the attempt

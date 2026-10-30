@@ -15,7 +15,7 @@ from tcenv.evaluate import EvalReport
 from tcenv.schema import PROTOCOL_VERSION
 
 from ..support.fakes import FakeClient, make_response, make_usage
-from ..support.orchestrator import KERNEL, agent_from_script, code, fake_eval, llm_script, make_orch, run, _user_prompts
+from ..support.orchestrator import KERNEL, agent_from_script, code, fake_eval, llm_script, make_orch, run, stamp_report, _user_prompts
 
 
 # ------------------------------------------------------------------------------------------------
@@ -65,7 +65,7 @@ def test_happy_path_selects_the_fastest_eligible_candidate_and_confirms_it(tmp_p
     assert json.loads((tmp_path / "run" / "run_config.json").read_text())["loop_protocol"] == "flame_chase_1"
     transcript = (tmp_path / "run" / "transcript.jsonl").read_text()
     assert transcript and json.loads((tmp_path / "run" / "ledger.json").read_text())["schema_version"] == 1
-    assert json.loads((tmp_path / "run" / "candidates" / "000_init" / "report.json").read_text())["schema_version"] == 3
+    assert json.loads((tmp_path / "run" / "candidates" / "000_init" / "report.json").read_text())["schema_version"] == 4
     assert json.loads((tmp_path / "run" / "state.json").read_text())["schema_version"] == 1
     assert (tmp_path / "run" / "candidates" / "000_init" / "kernel.metal").exists()
 
@@ -327,7 +327,7 @@ def timed_eval(calls: list):
             "baselines": {"mlx": {"median_us": 100.0, "cv": cv, "reps": reps}},
             "best_baseline": "mlx",
         }
-        return r
+        return stamp_report(r, task, dtype, size, source)
 
     return ev
 
@@ -766,7 +766,7 @@ def test_the_confirmation_does_not_read_the_evaluation_cache(tmp_path):
         rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=1, stage="done", status="ok", message="ok")
         rep.speedup, rep.speedups, rep.candidate_us, rep.baseline_us = 1.2, {"mlx": 1.2}, 100.0, {"mlx": 120.0}
         rep.benchmark = {"candidate": {"median_us": 100.0, "cv": 0.01, "reps": reps}, "baselines": {"mlx": {"median_us": 120.0, "cv": 0.01, "reps": reps}}, "best_baseline": "mlx"}
-        return rep
+        return stamp_report(rep, task, dtype, size, source)
 
     orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1, evaluate_fn=ev)
     run(orch)
@@ -791,10 +791,11 @@ def test_confirmation_reports_the_median_of_independent_batches(tmp_path):
         seen = sum(1 for _m, s in calls if s == source)
         sp = {1: 1.30, 2: 1.10, 3: 1.40, 4: 1.20}.get(seen, 1.20)
         rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=1, stage="done", status="ok", message="ok",
-                         target_id="apple-m4-max", protocol_version=PROTOCOL_VERSION)
+                         target_id="apple-m4-max", protocol_version=PROTOCOL_VERSION,
+                         backend="metal", backend_version="1")
         rep.speedup, rep.speedups, rep.candidate_us, rep.baseline_us = sp, {"mlx": sp}, 100.0 / sp, {"mlx": 100.0}
         rep.benchmark = {"candidate": {"median_us": 100.0 / sp, "cv": 0.01, "reps": reps}, "baselines": {"mlx": {"median_us": 100.0, "cv": 0.01, "reps": reps}}, "best_baseline": "mlx"}
-        return rep
+        return stamp_report(rep, task, dtype, size, source)
 
     script = llm_script(code("speed=1.30"), patches={"A": code("speed=0.7")})
     orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=1, evaluate_fn=ev)
@@ -809,7 +810,12 @@ def test_confirmation_reports_the_median_of_independent_batches(tmp_path):
     from experiments.common import conclusion_of_run
 
     stored = json.loads((orch.run_dir / "result.json").read_text())
-    assert conclusion_of_run(orch.run_dir, stored) == {"speedup": None, "publication": "不确定"}
+    # The live predicate calls this 不确定 (batches_disagree) and by design writes no confirm
+    # report; the disk predicate therefore has no report to bind against and says 未确认.  Both
+    # refuse to publish a number.
+    assert res.confirmed_status == "不确定"
+    assert not (orch.run_dir / "confirm_report.json").exists()
+    assert conclusion_of_run(orch.run_dir, stored) == {"speedup": None, "publication": "未确认"}
 
 
 def test_a_new_run_freezes_guidance_and_an_old_run_still_copies_the_repo(tmp_path):

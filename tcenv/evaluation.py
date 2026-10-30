@@ -443,18 +443,48 @@ def _epoch(*, site_id: str, device_id: str, backend: str, backend_version: str,
     }))
 
 
+def local_task_pack_digest(request: EvaluationRequest) -> str:
+    """@brief 本地测量上下文的 task-pack 摘要（与部署侧同一 manifest 形状）。
+
+    The local process has no deployed pack directory, so it uses the pack file set registered
+    in the task's track binding.  A task that cannot be resolved or has no registration is a
+    task-assembly/deployment error: leaving the digest empty would keep an old evaluator epoch
+    that no longer describes the measurement context.
+
+    @param request 评测请求。
+    @return 十六进制 sha256。
+    @raises EvaluationError 任务无法解析或没有 pack 登记。
+    """
+    from tasks import get_task
+
+    try:
+        task = get_task(request.task, request.dtype, request.size)
+    except Exception as exc:  # noqa: BLE001 - an unknown task is not a measurement context
+        raise EvaluationError(
+            f"local task pack: cannot resolve {request.task}/{request.dtype}/{request.size}: {exc}"
+        ) from exc
+    pack = (task.evaluation_implementations or {}).get("task_pack")
+    digest = str(pack.get("digest") or "") if isinstance(pack, dict) else ""
+    if not digest:
+        raise EvaluationError(
+            f"local task pack: {request.task}/{request.dtype}/{request.size} has no registered pack digest"
+        )
+    return digest
+
+
 def local_provenance(request: EvaluationRequest) -> EvaluatorProvenance:
     backend, backend_version = _backend_identity(request)
+    pack_digest = local_task_pack_digest(request)
     epoch = _epoch(
         site_id="local", device_id=request.target_id, backend=backend,
         backend_version=backend_version, target_id=request.target_id,
-        worker_build="", task_pack_digest="", calibration_digest="",
+        worker_build="", task_pack_digest=pack_digest, calibration_digest="",
         protocol_version=PROTOCOL_VERSION,
     )
     return EvaluatorProvenance(
         schema_version=1, epoch=epoch, site_id="local", device_id=request.target_id,
         backend=backend, backend_version=backend_version, target_id=request.target_id,
-        worker_build="", task_pack_digest="", calibration_digest="",
+        worker_build="", task_pack_digest=pack_digest, calibration_digest="",
         protocol_version=PROTOCOL_VERSION, request_digest=request_digest(request),
         measurement_kind="measured", publication_allowed=True,
     )
@@ -463,8 +493,36 @@ def local_provenance(request: EvaluationRequest) -> EvaluatorProvenance:
 class LocalEvaluator:
     """Adapter for the existing trusted local evaluator."""
 
-    def __init__(self, evaluate_fn: Callable[..., EvalReport] | None = None) -> None:
+    def __init__(
+        self, evaluate_fn: Callable[..., EvalReport] | None = None, *,
+        expected_identity: Callable[..., dict] | None = None,
+    ) -> None:
         self._evaluate_fn = evaluate_fn or evaluate
+        #: The current, recomputable confirmation expected.  The real local path resolves it from
+        #: the target/backend registry; a test double may inject its own (the orchestrator must
+        #: never take the search report's own values as today's expectation).
+        self._expected_identity = expected_identity
+
+    def confirmation_expected(self, *, task: str, dtype: str, size: str, target_id: str, source: str) -> dict:
+        """@brief 当前执行器下的冻结 expected（探测失败时返回 identity 不完整的文档）。
+
+        @param task 任务名。
+        @param dtype 元素类型短名。
+        @param size 问题规模名。
+        @param target_id 目标设备 id。
+        @param source 候选源码。
+        @return expected 文档；不可重算的分量为 ``None``（读方按 unknown 处理）。
+        """
+        if self._expected_identity is not None:
+            return self._expected_identity(task=task, dtype=dtype, size=size, target_id=target_id, source=source)
+        from .evaluate import confirmation_expected_document
+
+        # Only the real local executor can state today's toolchain profile.  A custom evaluate
+        # function is not the Metal executor; claiming its profile would be the same fabrication
+        # as copying the search report, so it probes nothing and the build identity stays unknown.
+        return confirmation_expected_document(
+            task, dtype, size, target_id, source, probe=self._evaluate_fn is evaluate,
+        )
 
     def _evaluate(self, request: EvaluationRequest) -> EvaluationResult:
         if request.mode == "validate":

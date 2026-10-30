@@ -147,21 +147,16 @@ def main() -> int:
     if evidence.get("candidate_digest") != request.npu.candidate_digest.to_dict():
         return 14
     device_elapsed_ns = int(evidence["timing"]["device_elapsed_ns"])
-    report = {
-        "task": request.task,
-        "dtype": request.dtype,
-        "size": request.size,
-        "mode": request.mode,
-        "seed": request.seed_int,
-        "status": "ok",
-        "stage": "done",
+    from tests.support.report_build import report_for_request
+
+    report = report_for_request(
+        request, status="ok", source=source,
+    )
+    report.update({
         "candidate_us": device_elapsed_ns / 1000.0,
         "speedup": 1.0,
         "elapsed_s": 0.0,
-        "target_id": request.target_id,
-        "protocol_version": PROTOCOL_VERSION,
-        "simulated": True,
-    }
+    })
     if os.environ.get("TCENV_VENDOR_A_BAD_REPORT") == "1":
         # Test-only fault: a worker result the frontend must reject.  It makes a
         # candidate fail deterministically (not just time out).

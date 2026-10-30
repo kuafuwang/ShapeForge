@@ -329,28 +329,28 @@ class Backend(Protocol):
         """
         ...
 
-    def compile(self, ctx: Any, source: str, contract: Any, *, math: str = "fast"):
-        """@brief 编译单个内核。
+    def artifact_builder(
+        self, *, kernel_contract: Any = None, math: str = "fast",
+        kernel_names: Any = None, diagnostic_profile: str | None = None,
+        specialization: Any = None,
+    ):
+        """@brief 取得该后端唯一的 ``ArtifactBuilder``。
 
-        @param ctx 运行时上下文。
-        @param source 完整源码。
-        @param contract 编译契约。
+        评测器只通过 ``ArtifactBuilder.build`` 构建工件，不再调用后端的
+        编译入口。契约、math 与已声明的多段核名只是构建器的配置，
+        不构成第二条构建路径。
+
+        @param kernel_contract 任务编译契约。
         @param math 数学模式。
-        @return 编译后的内核对象。
+        @param kernel_names ``taic-launch`` 声明的核名序列。
+        @param diagnostic_profile 已登记的诊断 profile 名（无任务契约的 probe/标定）；
+            非登记名一律拒绝。
+        @param specialization 候选 build 的 ``Specialization``（与 R1 ``lower`` 同一对象）；
+            契约与 lowering 身份必须同源，诊断 build 不得携带。
+        @return 实现 ``tcenv.remote.artifact_builder.ArtifactBuilder`` 的对象。
         """
         ...
 
-    def compile_all(self, ctx: Any, source: str, contract: Any, *, names: list[str] | None = None, math: str = "fast"):
-        """@brief 编译流水线中的多个内核。
-
-        @param ctx 运行时上下文。
-        @param source 完整源码。
-        @param contract 编译契约。
-        @param names 要编译的内核名；为 None 时全部。
-        @param math 数学模式。
-        @return 内核对象列表。
-        """
-        ...
     def check_abi(
         self,
         contract: Any,

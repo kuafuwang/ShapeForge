@@ -30,5 +30,46 @@
   "counterexample": null
  },
  "elapsed_s": 0.7326527090008312,
- "eligible": false
+ "eligible": false,
+ "schema_version": 4,
+ "evaluation_fingerprint": null,
+ "baseline_implementation_digest": null,
+ "baseline_environment_digest": null,
+ "build": {
+  "shape": "partial",
+  "build_kind": "native",
+  "candidate_sha256": "4139c4d6e5e1367caea5e77ede23acd3621bf00a3b93937b0fbf0c3f4162e725",
+  "assembled_sha256": null,
+  "opspec_digest": "9ca730cb953a4193e1250de0d35e8b3379f06d7527a3c0aa3eececbb795ef713",
+  "lowering_profile_digest": "976d8a4a56e02e5ffbfdba5b76c68a68e9936307f356d04f69447f117e0d2da8",
+  "provenance": {
+   "schema_id": "tcenv.remote.npu-build.provenance.1",
+   "builder_id": "metal-source-builder",
+   "builder_version": "1",
+   "build_host": "control_host",
+   "build_profile": "metal-msl-control-host-v1",
+   "toolchain": {
+    "id": "apple-metal",
+    "version": "unknown",
+    "sdk_version": "macos-recorded"
+   },
+   "compile_profile": {
+    "math": "fast"
+   },
+   "source_sha256": "4139c4d6e5e1367caea5e77ede23acd3621bf00a3b93937b0fbf0c3f4162e725",
+   "artifact_set_digest": null
+  },
+  "error_class": "compile",
+  "duration_ms": 1,
+  "log": null
+ },
+ "target_id": "apple-m4-max",
+ "backend": "metal",
+ "backend_version": "1",
+ "device_name": "",
+ "gpu_family": "",
+ "device_warnings": [],
+ "timeline": [],
+ "cache_hit": false,
+ "protocol_version": "3"
 }

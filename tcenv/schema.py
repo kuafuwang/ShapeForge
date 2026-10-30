@@ -10,7 +10,7 @@ import os
 import time
 from pathlib import Path
 
-REPORT_SCHEMA_VERSION = 3
+REPORT_SCHEMA_VERSION = 4
 # Measurement protocol, separate from the file schema. Bump when the timing window,
 # confirmation batches or target limits change, so aggregates can group by epoch.
 PROTOCOL_VERSION = "3"
@@ -65,34 +65,62 @@ def document_version(doc: object, *, max_version: int, what: str) -> int:
     return version
 
 
-def migrate_report(doc: dict, known_fields: set[str]) -> dict:
-    """@brief 把版本 0/1 的报告迁移成构造函数字段。
+def loads_strict(text: str, *, what: str = "document", reject_constants: bool = False) -> object:
+    """@brief 解析 JSON，并拒绝重复键。
 
-    Copy a version 0 or 1 report into constructor fields.
+    Parse JSON text and refuse duplicate object keys.
 
-    Version 0 and version 1 store the same fields. The only migration is to drop the derived ``eligible`` flag.
-    Any other field is refused, including on a version 0 file, so it is not silently ignored.
+    ``json.loads`` silently keeps the last value of a duplicated key, so a file can carry two
+    different ``build`` objects and every later check sees only one of them.  Report readers must
+    parse through this loader *before* handing the object to ``EvalReport.from_json``: a dict no
+    longer remembers that a key was repeated.
 
-    @param doc 原始报告字典。
-    @param known_fields 本版本认识的字段集合。
-    @return 可传给 ``EvalReport(**...)`` 的字段字典。
-    @raises SchemaError 版本过新、含未知字段或缺少必要字段时抛出。
+    @param text JSON 文本。
+    @param what 文档的人类可读名称，用于错误信息。
+    @param reject_constants 是否拒绝 ``NaN``/``Infinity``/``-Infinity`` 字面量（身份文档用）。
+    @return 解析出的 JSON 值。
+    @raises SchemaError 重复键、非有限字面量或 JSON 语法错误时抛出。
     """
-    document_version(doc, max_version=REPORT_SCHEMA_VERSION, what="report")
-    out = dict(doc)
-    eligible = out.pop("eligible", None)
-    unknown = set(out) - set(known_fields) - {"schema_version"}
-    if unknown:
-        names = ", ".join(sorted(unknown))
-        raise SchemaError(f"report has fields this process does not know ({names})")
-    out.pop("schema_version", None)
-    missing = [name for name in ("task", "dtype", "size", "mode") if name not in out]
-    if missing:
-        raise SchemaError(f"report is missing {missing}")
-    # 老文件有时只写了 eligible，没有 status。eligible 为真就当成当时的 ok，否则读出来会变成 pending、不能当种子。
-    if "status" not in out and eligible is True:
-        out["status"] = "ok"
-    return out
+
+    def _no_duplicates(pairs: list[tuple[str, object]]) -> dict:
+        out: dict = {}
+        for key, value in pairs:
+            if key in out:
+                raise SchemaError(f"{what} repeats the key {key!r}")
+            out[key] = value
+        return out
+
+    def _no_constant(name: str) -> object:
+        raise SchemaError(f"{what} contains the non-finite literal {name}")
+
+    if not isinstance(text, str):
+        raise SchemaError(f"{what} is not JSON text")
+    try:
+        return json.loads(
+            text,
+            object_pairs_hook=_no_duplicates,
+            **({"parse_constant": _no_constant} if reject_constants else {}),
+        )
+    except SchemaError:
+        raise
+    except ValueError as exc:
+        raise SchemaError(f"{what} is not valid JSON: {exc}") from exc
+
+
+def read_report_json(text: str, *, what: str = "report") -> dict:
+    """@brief 严格解析一份报告 JSON 文本，返回原始对象（不构造报告）。
+
+    Parse a report file strictly; the caller passes the object to ``EvalReport.from_json``.
+
+    @param text 报告 JSON 文本。
+    @param what 人类可读名称，用于错误信息。
+    @return 顶层对象。
+    @raises SchemaError 不是 JSON 对象或含重复键时抛出。
+    """
+    doc = loads_strict(text, what=what)
+    if not isinstance(doc, dict):
+        raise SchemaError(f"{what} is not a JSON object")
+    return doc
 
 
 def read_request(doc: dict) -> dict:

@@ -1,4 +1,8 @@
-"""experiments/plan_type_analysis.py on hand-built run directories: no GPU, no LLM, no network, no tcenv/taic import.
+"""experiments/plan_type_analysis.py on hand-built run directories: no GPU, no LLM, no network.
+
+The module itself imports no tcenv/taic code; the publication tests below deliberately call the
+shared predicate (``experiments.common.conclusion_of_run``) and its builder so their documents go
+through the same gate as production instead of a local copy.
 
 The fixtures write tiny runs in the on-disk layout of a real search (``candidates/NNN_<label>/report.json`` + ``kernel.metal``,
 ``transcript.jsonl`` chat events with ``finish_reason`` and ``usage``, ``result.json``) so that the classification of plans and of the
@@ -7,6 +11,7 @@ first attempt of every patch request, the cause of a reply without code, the sta
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -253,6 +258,113 @@ def fa_run(tmp_path):
     @return 运行目录路径。
     """
     return build_fa_run(tmp_path / "runs")
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# published speed: the one publication predicate, never a local copy
+# ----------------------------------------------------------------------------------------------------------------------
+_KERNEL = "kernel void published(device const half* x [[buffer(0)]], device half* y [[buffer(1)]]) {}\n"
+
+
+def _published_run(root: Path) -> Path:
+    """A run whose confirmation documents are built to pass the shared predicate."""
+    from experiments.common import synthetic_confirmation_documents
+
+    run = root / "published"
+    (run / "candidates" / "000_r1.p0").mkdir(parents=True)
+    (run / "best.metal").write_text(_KERNEL, encoding="utf-8")
+    (run / "candidates" / "000_r1.p0" / "kernel.metal").write_text(_KERNEL, encoding="utf-8")
+    (run / "transcript.jsonl").write_text("", encoding="utf-8")
+    digest = hashlib.sha256(_KERNEL.encode("utf-8")).hexdigest()
+    result, report = synthetic_confirmation_documents(
+        task="flash_attention", dtype="fp16", size="paper", target_id="apple-m4-max",
+        speedup=1.25, label="r1.p0", kernel_sha256=digest,
+    )
+    (run / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    (run / "confirm_report.json").write_text(json.dumps(report), encoding="utf-8")
+    return run
+
+
+def test_a_confirmation_that_passes_the_shared_gate_is_reported(tmp_path):
+    """能通过共同谓词的确认才给数字：``q2_row`` 的值与 ``conclusion_of_run`` 同源。
+
+    The positive control: a document the shared predicate accepts must still print, otherwise the
+    fix would only have made the analysis blind.
+    """
+    from experiments.common import conclusion_of_run
+
+    run_dir = _published_run(tmp_path)
+    run = pta.load_run(run_dir, "published", "root")
+    assert conclusion_of_run(run_dir, run.result) == {"speedup": 1.25, "publication": "confirmed"}
+    assert pta._published_speed(run) == 1.25
+    assert pta.q2_row(run, sat=0.9)["speedup"] == 1.25
+
+
+def test_an_old_format_confirmation_never_yields_a_published_speed(tmp_path):
+    """评审复现：schema-3、无 expected/batches/benchmark 的确认报告即使哈希匹配也不发布。
+
+    ``_published_speed`` only checked ``confirmed_status``, the report's ``status``, the source
+    hashes and its own copy of the noise cutoff, so this document printed ``9.9`` while the shared
+    predicate refused it.  It now returns nothing, and ``q2_row`` inherits that.
+    """
+    from experiments.common import conclusion_of_run
+
+    source = _KERNEL
+    run_dir = tmp_path / "old"
+    (run_dir / "candidates" / "000_r1.p0").mkdir(parents=True)
+    (run_dir / "best.metal").write_text(source, encoding="utf-8")
+    (run_dir / "candidates" / "000_r1.p0" / "kernel.metal").write_text(source, encoding="utf-8")
+    (run_dir / "transcript.jsonl").write_text("", encoding="utf-8")
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    (run_dir / "confirm_report.json").write_text(json.dumps({
+        "schema_version": 3, "status": "ok", "speedup": 9.9,
+        "benchmark": {"candidate": {"cv": 0.01, "reps": 15}},
+    }), encoding="utf-8")
+    (run_dir / "result.json").write_text(json.dumps({
+        "task": "flash_attention", "dtype": "fp16", "model": "m", "rounds": 1,
+        "stop_reason": "max_rounds", "spent_usd": 0.1, "budget_usd": 1.0,
+        "best_speedup": 1.3, "confirmed_speedup": 9.9, "confirmed_status": "ok",
+        "confirm_winner_label": "r1.p0", "confirmation_source_sha256": digest,
+        "confirmed_values": [9.9],
+    }), encoding="utf-8")
+    run = pta.load_run(run_dir, "old", "root")
+    assert conclusion_of_run(run_dir, run.result) == {"speedup": None, "publication": "未确认"}
+    assert pta._published_speed(run) is None
+    assert pta.q2_row(run, sat=0.9)["speedup"] is None
+
+
+def test_a_result_claiming_confirmation_without_its_evidence_is_not_reported(tmp_path):
+    """schema-4、``status=ok`` 但没有 ``benchmark.confirmation``（冻结 expected/逐批记录）时不发布。
+
+    The old local decision only looked at the report's ``status``, so an evidence-free document with
+    a matching source hash printed its number.  The shared predicate refuses it
+    (``missing_confirmation_block``), and the analysis must follow.
+    """
+    from experiments.common import conclusion_of_run
+
+    source = _KERNEL
+    run_dir = tmp_path / "unsupported"
+    (run_dir / "candidates" / "000_r1.p0").mkdir(parents=True)
+    (run_dir / "best.metal").write_text(source, encoding="utf-8")
+    (run_dir / "candidates" / "000_r1.p0" / "kernel.metal").write_text(source, encoding="utf-8")
+    (run_dir / "transcript.jsonl").write_text("", encoding="utf-8")
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    (run_dir / "confirm_report.json").write_text(json.dumps({
+        "schema_version": 4, "status": "ok", "speedup": 1.2, "cache_hit": False,
+        "benchmark": {"candidate": {"cv": 0.01, "reps": 15}, "best_baseline": "mlx",
+                      "baselines": {"mlx": {"cv": 0.01, "reps": 15}}},
+        "protocol_version": "3", "target_id": "apple-m4-max",
+    }), encoding="utf-8")
+    (run_dir / "result.json").write_text(json.dumps({
+        "task": "flash_attention", "dtype": "fp16", "model": "m", "rounds": 1,
+        "stop_reason": "max_rounds", "spent_usd": 0.1, "budget_usd": 1.0,
+        "best_speedup": 1.3, "confirmed_speedup": 1.2, "confirmed_status": "ok",
+        "confirm_winner_label": "r1.p0", "confirmation_source_sha256": digest,
+        "confirmed_values": [1.2],
+    }), encoding="utf-8")
+    run = pta.load_run(run_dir, "unsupported", "root")
+    assert conclusion_of_run(run_dir, run.result) == {"speedup": None, "publication": "未确认"}
+    assert pta._published_speed(run) is None
 
 
 def test_branches_of_a_hand_built_run(fa_run):

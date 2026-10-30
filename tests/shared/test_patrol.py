@@ -335,23 +335,17 @@ def _bad_state_runs(tmp_path, monkeypatch):
     (folder / "kernel.metal").write_bytes(source)
     (folder / "report.json").write_text(json.dumps({"status": "ok", "stage": "bench", "speedup": 1.30}))
     (directory / "best.metal").write_bytes(source)
-    (directory / "result.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "size": "paper", "target_id": "apple-m4-max",
+    from experiments.common import synthetic_confirmation_documents
+
+    result, report = synthetic_confirmation_documents(
+        task="relu", dtype="fp16", size="paper", target_id="apple-m4-max",
+        speedup=1.30, label="r1.p0", kernel_sha256=digest, protocol_version="3",
+    )
+    result.update({
         "protocol_version": "3", "stop_reason": "max_rounds", "spent_usd": 0.1, "budget_usd": 1.0,
-        "confirmation_source_sha256": digest, "confirm_winner_label": "r1.p0", "confirmed_status": "ok",
-        "confirmed_values": [1.30], "confirmed_speedup": 1.30, "candidate_us": None,
-    }))
-    (directory / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": 1.30, "protocol_version": "3", "target_id": "apple-m4-max",
-        "benchmark": {
-            "noisy": False, "candidate": {"cv": 0.01, "reps": 15},
-            "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx",
-            "confirmation": {
-                "kernel_sha256": digest, "winner_label": "r1.p0", "confirmed_values": [1.30],
-                "speedup": 1.30, "candidate_us": None,
-            },
-        },
-    }))
+    })
+    (directory / "result.json").write_text(json.dumps(result))
+    (directory / "confirm_report.json").write_text(json.dumps(report))
     index.sync_known()
     # 待评测不可用只有索引侧的状态（outbox 计数），摄取之后补上。
     for number in range(2):
@@ -666,7 +660,7 @@ def test_every_alert_locates_its_run_and_failure_alerts_carry_the_label(tmp_path
     folder.mkdir(parents=True)
     (folder / "kernel.metal").write_text("kernel void k() {}\n")
     (folder / "report.json").write_text(json.dumps({
-        "status": "compile_error", "stage": "compile", "message": "Metal compiler rejected the kernel",
+        "schema_version": 4, "status": "compile_error", "stage": "compile", "message": "Metal compiler rejected the kernel",
     }))
     index.sync_known()
     run_id = "relu/failed"

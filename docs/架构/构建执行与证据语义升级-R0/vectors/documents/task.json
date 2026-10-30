@@ -1,0 +1,143 @@
+{
+  "backend_id": "metal",
+  "description": "Row-wise RMSNorm: y[r, :] = x[r, :] * rsqrt(mean(x[r, :]^2) + eps) * w; the sum of squares is accumulated in fp32 and the result rounded once.",
+  "dtype": "fp16",
+  "fingerprint_kind": "task",
+  "fingerprint_version": 2,
+  "reference_source": "# fixture: tasks/rmsnorm reference rendered for fp16\n",
+  "semantic_instance": {
+    "case_domain": {
+      "cases": [
+        "normal",
+        "wide_range",
+        "large",
+        "tiny",
+        "outlier",
+        "ieee"
+      ],
+      "inputs": {
+        "ieee": {
+          "special_values": "inf, nan, denormal"
+        }
+      }
+    },
+    "dtype": "fp16",
+    "opspec_digest": "561459b4f0b5c4225da5a8be4a6e9b08119e93842ac91b23945890d6231e297d",
+    "resolved_attrs": {
+      "EPS": "1e-06"
+    },
+    "shapes": {
+      "symbols": {
+        "H": 512,
+        "M": 64
+      },
+      "tensors": {
+        "w": [
+          512
+        ],
+        "x": [
+          64,
+          512
+        ],
+        "y": [
+          64,
+          512
+        ]
+      }
+    },
+    "size": "small",
+    "spec_params": {
+      "H": "512",
+      "M": "64"
+    },
+    "tolerances": {
+      "atol_rel": "0.001",
+      "exact": false,
+      "rtol": "0.002"
+    },
+    "work_accounting": {
+      "flops": "131072.0",
+      "min_bytes": "133120.0"
+    }
+  },
+  "size": "small",
+  "specialization": {
+    "backend_params": {},
+    "contract": {
+      "args": [
+        {
+          "doc": "input tensor",
+          "dtype": "fp16",
+          "index": 0,
+          "name": "x",
+          "role": "input",
+          "shape": [
+            64,
+            512
+          ],
+          "value": null
+        },
+        {
+          "doc": "scale vector",
+          "dtype": "fp16",
+          "index": 1,
+          "name": "w",
+          "role": "input",
+          "shape": [
+            512
+          ],
+          "value": null
+        },
+        {
+          "doc": "output tensor",
+          "dtype": "fp16",
+          "index": 2,
+          "name": "y",
+          "role": "output",
+          "shape": [
+            64,
+            512
+          ],
+          "value": null
+        }
+      ],
+      "constants": [
+        {
+          "msl_type": "uint",
+          "name": "M",
+          "value": 64
+        },
+        {
+          "msl_type": "uint",
+          "name": "H",
+          "value": 512
+        },
+        {
+          "msl_type": "float",
+          "name": "EPS",
+          "value": "1e-06"
+        }
+      ],
+      "gpu": "Apple M4 Max (Apple9 GPU family)",
+      "grid": [
+        64,
+        1,
+        1
+      ],
+      "kernel_name": "rmsnorm_kernel",
+      "threads": [
+        256,
+        1,
+        1
+      ]
+    },
+    "lowering_profile_digest": "0d20dc3c941d81ae438d7492fe80427dba09cad74c0782bcbae2a10f857e557e",
+    "opspec_digest": "561459b4f0b5c4225da5a8be4a6e9b08119e93842ac91b23945890d6231e297d",
+    "spec_params": {
+      "H": "512",
+      "M": "64"
+    }
+  },
+  "task": "rmsnorm",
+  "triton_source": "import triton\nimport triton.language as tl\n\n# fixture: tasks/rmsnorm/kernel_triton.py rendered for fp16/M=64/H=512\n"
+}

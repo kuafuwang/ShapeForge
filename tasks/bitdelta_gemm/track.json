@@ -1,0 +1,152 @@
+{
+  "track": "triton-spec-to-msl",
+  "opspec": "tasks/bitdelta_gemm/opspec.json",
+  "backend_id": "metal",
+  "lowering_profile": "metal-bitdelta-gemm",
+  "spec_text": {
+    "template": "tasks/bitdelta_gemm/kernel_triton.py",
+    "placeholders": {
+      "M": "spec_params",
+      "N": "spec_params",
+      "K": "spec_params",
+      "TL": "dtype_spelling",
+      "NW": "backend_params",
+      "BM": "backend_params",
+      "BN": "backend_params",
+      "BK": "backend_params"
+    }
+  },
+  "known_good": {
+    "template": "tasks/bitdelta_gemm/naive.metal",
+    "placeholders": {
+      "T": "dtype_spelling"
+    }
+  },
+  "description": "y = scale * (x @ W) where W is a +-1 matrix stored as packed sign bits (BitDelta). The bits must be decoded inside the kernel; products accumulate in fp32 and the result is rounded once. Note: no fused library kernel exists for this operator. The baselines unpack the bits into an fp16 matrix and call a dense matmul; the strongest ones (mx.compile, torch.compile = Inductor on Metal) fuse the decode into one elementwise kernel, so the cost to beat is that decode pass plus the matmul.",
+  "dtype_spelling": {
+    "fp16": {
+      "T": "half",
+      "TL": "tl.float16",
+      "TORCH": "torch.float16"
+    },
+    "bf16": {
+      "T": "bfloat",
+      "TL": "tl.bfloat16",
+      "TORCH": "torch.bfloat16"
+    }
+  },
+  "implementations": {
+    "gen_inputs": {
+      "implementation_id": "bitdelta_gemm.gen_inputs",
+      "implementation_version": 1,
+      "params": {
+        "seed_mask": 2147483647,
+        "edge_words": [
+          0,
+          -1,
+          1431655765,
+          -1431655766,
+          1,
+          -2147483648,
+          252645135,
+          -252645136
+        ],
+        "bits_case": "edge_bits",
+        "x_case_map": {
+          "random": "normal",
+          "edge_bits": "normal"
+        },
+        "x_seed_offset": 5,
+        "x_mag": 1.0,
+        "x_large": 20.0,
+        "x_spike": 5.0
+      }
+    },
+    "reference": {
+      "implementation_id": "bitdelta_gemm.reference",
+      "implementation_version": 1,
+      "params": {
+        "unpack": "pm1_bits_int64",
+        "accumulate": "float64",
+        "rounding": "single_round_at_output"
+      }
+    },
+    "error_scale": null
+  },
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "bitdelta_gemm.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "decode": "separate",
+        "matmul": "mx.matmul"
+      }
+    },
+    {
+      "name": "mlx_compile",
+      "framework": "mlx",
+      "implementation_id": "bitdelta_gemm.baseline.mlx_compile",
+      "implementation_version": 1,
+      "params": {
+        "decode": "compiled",
+        "matmul": "mx.matmul"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "bitdelta_gemm.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "decode": "separate",
+        "matmul": "torch.matmul"
+      }
+    },
+    {
+      "name": "torch_compile",
+      "framework": "torch",
+      "implementation_id": "bitdelta_gemm.baseline.torch_compile",
+      "implementation_version": 1,
+      "params": {
+        "decode": "compiled",
+        "matmul": "torch.matmul"
+      }
+    }
+  ],
+  "pack_files": [
+    "tasks/_assembly.py",
+    "tasks/_common.py",
+    "tasks/bitdelta_gemm/__init__.py",
+    "tasks/bitdelta_gemm/kernel_triton.py",
+    "tasks/bitdelta_gemm/naive.metal",
+    "tasks/bitdelta_gemm/opspec.json",
+    "tasks/bitdelta_gemm/task.py",
+    "tasks/bitdelta_gemm/track.json",
+    "tcenv/backends/metal/lowering.py",
+    "tcenv/contract.py",
+    "tcenv/distributions.py",
+    "tcenv/dtypes.py",
+    "tcenv/identity.py",
+    "tcenv/lowering.py",
+    "tcenv/opspec/__init__.py",
+    "tcenv/opspec/model.py",
+    "tcenv/opspec/schema/opspec.v1.schema.json",
+    "tcenv/opspec/validator.py",
+    "tcenv/task.py",
+    "tcenv/terms.py",
+    "tcenv/track/__init__.py",
+    "tcenv/track/schema/track.v1.schema.json"
+  ],
+  "template_literals": {
+    "launch": [
+      {
+        "template": "tasks/bitdelta_gemm/naive.metal",
+        "text": "i += 128",
+        "threads_per_threadgroup": 128
+      }
+    ],
+    "semantic": []
+  }
+}

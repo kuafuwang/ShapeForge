@@ -1,55 +1,50 @@
-# 矩阵乘后再做 SiLU。description：C = silu(A @ B)，silu(v) = v * sigmoid(v)，作用在 fp32 累加器上，再舍入一次到元素类型。
-# 标准答案沿用 gemm 的 reference：A、B 先用 float 做 @，转成 double 后交给本文件的 epilogue_ref，即 c * torch.sigmoid(c)。
-# 基线是 baselines：mlx 把 a @ b 送进 mx.compile 的 t * mx.sigmoid(t)；torch_mps 是 F.silu(torch.matmul(a, b))。
-# 启动契约在 build_gemm 里。核名 gemm_silu_kernel，缓冲 A/B/C，grid、threads 以及常量 M/N/K/BLOCK_* 都由环境锁定。
+# 矩阵乘后再做 SiLU。语义只写在 opspec.json；默认 tile 与启动事实来自登记的 metal-gemm-silu profile。
 import torch
 import torch.nn.functional as F
 
-from tcenv.task import BaselineImpl
 from tasks._common import mlx_compiled
-from tasks.gemm.task import build_gemm
+from tasks._matmul import build_matmul
 
-# 这段填进 gemm/naive.metal 的结尾定义，朴素 Metal 用 silu_f 做乘积之后的 SiLU。模型读到的 Triton 题面是 kernel_triton.py。
-SIGMOID_DEF = """inline float sigmoid_f(float v) {
-    float e = exp(-fabs(v));
-    return v >= 0.0f ? 1.0f / (1.0f + e) : e / (1.0f + e);
-}
-inline float silu_f(float v) { return v * sigmoid_f(v); }
-"""
+TASK_DIR = "gemm_silu"
 
 
-def _mlx(a, b):
-    """@brief mlx 侧的 GEMM + SiLU 基线，乘积送进一次 ``mx.compile`` 的 SiLU。
+def _mlx(params: dict, epilogues: dict):
+    """@brief mlx 侧 GEMM+SiLU 基线，乘积送进一次 ``mx.compile`` 的 SiLU。
 
-    @param a 左矩阵，mlx 数组。
-    @param b 右矩阵，mlx 数组。
-    @return ``silu(a @ b)``。
+    @param params track 登记参数。
+    @param epilogues 收尾函数表（用到 ``silu``）。
+    @return ``(a, b) -> silu(a @ b)``。
     """
-    return mlx_compiled("silu", lambda mx: (lambda t: t * mx.sigmoid(t)))(a @ b)
+    if params.get("kernel") != "mx.compile" or params.get("expression") != "silu(a @ b)":
+        raise ValueError(f"gemm_silu mlx baseline registration changed: {params}")
+    silu = epilogues["silu"]
+    return lambda a, b: mlx_compiled("silu", lambda mx: (lambda t: t * mx.sigmoid(t)))(a @ b)
 
 
-def _torch(a, b):
-    """@brief torch 侧的 GEMM + SiLU 基线。
+def _torch(params: dict, _epilogues: dict):
+    """@brief torch 侧 GEMM+SiLU 基线。
 
-    @param a 左矩阵。
-    @param b 右矩阵。
-    @return ``F.silu(torch.matmul(a, b))``。
+    @param params track 登记参数。
+    @param _epilogues 未使用（``F.silu`` 自带实现）。
+    @return ``(a, b) -> F.silu(torch.matmul(a, b))``。
     """
-    return F.silu(torch.matmul(a, b))
+    if params.get("kernel") != "torch.nn.functional.silu" or params.get("combine") != "matmul":
+        raise ValueError(f"gemm_silu torch baseline registration changed: {params}")
+    return lambda a, b: F.silu(torch.matmul(a, b))
 
 
 def build(dtype: str, size: str):
-    """@brief 装配 GEMM + SiLU 题，启动契约沿用 ``build_gemm``。
+    """@brief 装配 GEMM+SiLU 题（默认 tile）。
 
     @param dtype 元素类型，``fp16`` 或 ``bf16``。
     @param size 尺寸档位，``paper`` 或 ``small``。
     @return 装配好的 ``Task``。
     """
-    return build_gemm(
-        "gemm_silu", dtype, size,
-        epilogue_ref=lambda c: c * torch.sigmoid(c),
-        epilogue_msl="silu_f", epilogue_def=SIGMOID_DEF,
-        baselines=(BaselineImpl("mlx", "mlx", _mlx), BaselineImpl("torch_mps", "torch", _torch)),
-        description="C = silu(A @ B), silu(v) = v * sigmoid(v) applied to the fp32 accumulator before the single rounding to the element type.",
-        extra_flops=5.0,
+    return build_matmul(
+        TASK_DIR,
+        dtype,
+        size,
+        epilogues={"silu": lambda c: c * torch.sigmoid(c)},
+        baseline_builders={"mlx": _mlx, "torch_mps": _torch},
     )
+

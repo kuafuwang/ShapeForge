@@ -309,7 +309,7 @@ def test_grpc_selfcheck_runs_through_the_unix_bridge_with_its_own_grant(tmp_path
     selfcheck_probe = config.make_selfcheck_evaluator("run-1")
     try:
         result = formal.formal(_mtls_request())
-        assert result.report["simulated"] is True
+        assert result.report["build"]["build_kind"] == "simulator"
         with pytest.raises(EvaluationUnavailable) as caught:
             selfcheck_probe.formal(_mtls_request("grpc-e2e-probe-formal"))
         message = str(caught.value).lower()
@@ -333,7 +333,7 @@ def test_grpc_selfcheck_runs_through_the_unix_bridge_with_its_own_grant(tmp_path
             checked = SelfCheckClient(bridge.socket_path, token_file=token_file).check(
                 "kernel void demo() {}", "quick",
             )
-            assert checked.report["simulated"] is True
+            assert checked.report["build"]["build_kind"] == "simulator"
             assert checked.report["status"] == "ok"
             assert checked.receipt["attempt_id"]
             # The credential is host-owned, outside the agent-writable

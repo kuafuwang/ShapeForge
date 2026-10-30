@@ -1,72 +1,100 @@
-# 按行 softmax。description：y = exp(x - max(x)) / sum(exp(x - max(x)))，统计量在 fp32，结果舍入一次。SHAPES 的 paper 是 (8192, 2048)。
-# 标准答案是 reference：对转成 float64 的 x 做 torch.softmax(..., dim=-1)。
-# 基线是 baselines：mlx 的 mx.softmax(axis=-1, precise=True)，torch_mps 的 torch.softmax(dim=-1)。
-# 模型不能改 contract：核名 softmax_kernel，grid=(M, 1, 1)，threads=(256, 1, 1)，缓冲 x/y，常量 M、N。
+# 按行 softmax。语义只写在 opspec.json；契约由登记的 Metal LoweringProfile 派生。
 import torch
 
-from tcenv.contract import AbiArg, Contract
 from tcenv.distributions import sample
-from tcenv.task import BaselineImpl, Task, default_tolerances
-from tasks._common import check_dtype, load_text
+from tasks._assembly import build_task, derive
 
-SHAPES = {"paper": (8192, 2048), "small": (64, 512)}
-MAGS = {"normal": 2.0}
+TASK_DIR = "softmax"
 
 
-def _mlx(x):
-    """@brief mlx 侧的 softmax 基线，用 ``precise=True``。
+def _gen_inputs(params: dict, shape: tuple[int, int], dtype: str):
+    """@brief 按登记参数构造输入生成闭包。
 
-    @param x logits，mlx 数组。
-    @return ``mx.softmax(x, axis=-1, precise=True)``。
+    @param params track 里 ``implementations.gen_inputs.params``。
+    @param shape ``(M, N)``。
+    @param dtype 元素类型。
+    @return ``(case, seed) -> {"x"}``。
     """
-    import mlx.core as mx
+    mags = dict(params["mags"])
+    default_mag = float(params["default_mag"])
+    large = float(params["large"])
 
-    return mx.softmax(x, axis=-1, precise=True)
+    def gen_inputs(case, seed):
+        return {"x": sample(case, shape, seed, dtype, mag=mags.get(case, default_mag), large=large)}
+
+    return gen_inputs
 
 
-def _torch(x):
-    """@brief torch 侧的 softmax 基线。
+def _reference(params: dict):
+    """@brief 按登记参数构造参考实现。
 
-    @param x logits。
-    @return ``torch.softmax(x, dim=-1)``。
+    @param params track 里 ``implementations.reference.params``。
+    @return ``inp -> {"y"}``。
     """
-    return torch.softmax(x, dim=-1)
+    if params["accumulate"] != "float64" or params["dim"] != "last":
+        raise ValueError(f"softmax reference only implements float64 softmax on the last dim, got {params}")
+
+    def reference(inp):
+        return {"y": torch.softmax(inp["x"].double(), dim=-1)}
+
+    return reference
 
 
-def build(dtype: str, size: str) -> Task:
+def _mlx(params: dict):
+    """@brief mlx 侧 softmax 基线（``precise=True``）。
+
+    @param params 登记参数。
+    @return ``x -> mx.softmax(x, axis=-1, precise=True)``。
+    """
+    if params["kernel"] != "mx.softmax" or params["axis"] != "last" or params["precise"] is not True:
+        raise ValueError(f"softmax mlx baseline registration changed: {params}")
+
+    def _mlx_softmax(x):
+        import mlx.core as mx
+
+        return mx.softmax(x, axis=-1, precise=True)
+
+    return _mlx_softmax
+
+
+def _torch(params: dict):
+    """@brief torch 侧 softmax 基线。
+
+    @param params 登记参数。
+    @return ``x -> torch.softmax(x, dim=-1)``。
+    """
+    if params["kernel"] != "torch.softmax" or params["dim"] != "last":
+        raise ValueError(f"softmax torch baseline registration changed: {params}")
+
+    def _torch_softmax(x):
+        return torch.softmax(x, dim=-1)
+
+    return _torch_softmax
+
+
+def build(dtype: str, size: str):
     """@brief 装配按行 softmax 题。
-
-    核名 ``softmax_kernel``，``grid=(M, 1, 1)``，``threads=(256, 1, 1)``，缓冲 x/y，常量 M、N。
 
     @param dtype 元素类型，``fp16`` 或 ``bf16``。
     @param size 尺寸档位，``paper`` 或 ``small``。
     @return 装配好的 ``Task``。
     """
-    check_dtype(dtype)
-    M, N = SHAPES[size]
-    contract = Contract(
-        kernel_name="softmax_kernel",
-        grid=(M, 1, 1),
-        threads=(256, 1, 1),
-        args=(AbiArg("x", 0, "input", dtype, (M, N), doc="logits, row-major [M, N]"), AbiArg("y", 1, "output", dtype, (M, N))),
-        constants=(("M", "uint", M), ("N", "uint", N)),
-    )
-
-    def gen_inputs(case, seed):
-        return {"x": sample(case, (M, N), seed, dtype, mag=MAGS.get(case, 1.0), large=1.0e4)}
-
-    def reference(inp):
-        return {"y": torch.softmax(inp["x"].double(), dim=-1)}
-
-    rtol, atol_rel = default_tolerances(dtype)
-    return Task(
-        name="softmax", dtype=dtype, size=size, contract=contract,
-        triton_source=load_text("softmax", "kernel_triton.py", dtype, {"M": str(M), "N": str(N)}),
-        description="Numerically stable row-wise softmax: y = exp(x - max(x)) / sum(exp(x - max(x))); statistics in fp32, result rounded once.",
-        cases=("normal", "wide_range", "large", "tiny", "outlier", "const", "ieee"),
-        gen_inputs=gen_inputs, reference=reference,
-        baselines=(BaselineImpl("mlx", "mlx", _mlx), BaselineImpl("torch_mps", "torch", _torch)),
-        flops=5.0 * M * N, min_bytes=float(2 * M * N * 2),
-        rtol=rtol, atol_rel=atol_rel,
-        naive_msl=load_text("softmax", "naive.metal", dtype),
+    derived = derive(TASK_DIR, dtype, size)
+    track, instance, _specialization = derived
+    shape = (int(instance.symbols["M"]), int(instance.symbols["N"]))
+    impls = track.implementations
+    return build_task(
+        TASK_DIR,
+        dtype,
+        size,
+        implementations={
+            "gen_inputs": _gen_inputs(dict(impls["gen_inputs"]["params"]), shape, dtype),
+            "reference": _reference(dict(impls["reference"]["params"])),
+            "error_scale": None,
+        },
+        baseline_fns={
+            "mlx": _mlx(dict(track.baselines[0]["params"])),
+            "torch_mps": _torch(dict(track.baselines[1]["params"])),
+        },
+        derived=derived,
     )

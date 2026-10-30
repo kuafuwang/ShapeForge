@@ -1,6 +1,6 @@
 # Triton specification: FlashAttention forward (non-causal), element type {{TL}}
 # Layouts: q, k, v, o are [B, H, S, D] contiguous. One program handles BLOCK_M query rows of one (batch, head).
-# Launch: grid = (S // BLOCK_M, B * H), num_warps = {{NW}}, B = {{B}}, H = {{H}}, S = {{S}}, D = {{D}}, BLOCK_M = {{BM}}, BLOCK_N = {{BN}}, SM_SCALE = {{SM_SCALE}}
+# Launch: grid = (S // BLOCK_M, B * H), num_warps = {{NW}}, B = {{B}}, H = {{H}}, S = {{S}}, D = {{D}}, BLOCK_M = {{BM}}, BLOCK_N = {{BN}}, SM_SCALE = 0.125
 import triton
 import triton.language as tl
 
@@ -18,7 +18,7 @@ def flash_attention_kernel(q_ptr, k_ptr, v_ptr, o_ptr, S: tl.constexpr, D: tl.co
     m_i = tl.full([BLOCK_M], float("-inf"), dtype=tl.float32)
     l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
     acc = tl.zeros([BLOCK_M, D], dtype=tl.float32)
-    qk_scale = {{QK_SCALE_EXPR}}                                                    # log2(e) is folded in so exp2 can be used
+    qk_scale = SM_SCALE * 1.4426950408889634                                                    # log2(e) is folded in so exp2 can be used
     for start_n in range(0, S, BLOCK_N):
         k = tl.load(k_ptr + base + (start_n + offs_n)[None, :] * D + offs_d[:, None])   # [D, BLOCK_N]
         qk = tl.dot(q, k) * qk_scale                                                # fp32 scores

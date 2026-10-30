@@ -1,0 +1,307 @@
+{
+  "note": "R0 adopts nothing permanently: 'adopt-as-r3-input' means the worktree draft file is registered as the starting point for R3, not merged, staged or committed. Every verdict below is backed by code read statically plus the CPU-only test runs recorded in verification.json.",
+  "decisions": [
+    {
+      "id": "D-A1",
+      "path": "tcenv/backends/base.py",
+      "symbols": ["Backend.compile", "Backend.compile_all", "Backend.artifact_builder"],
+      "decision": "adopt-as-r3-input",
+      "rationale": "Plan §5.1/§5.3 requires the Backend protocol to expose artifact_builder() and to have no compile/compile_all hook. The draft removes both methods from the Protocol and adds artifact_builder(kernel_contract, math, kernel_names), so the only way to obtain a builder is the factory the plan mandates.",
+      "evidence": [
+        "AST/grep: after the draft the only remaining `def compile(`/`def compile_all(` in the tree are the runtime primitives tcenv/backends/metal/runtime.py::MetalContext.compile and ::MetalContext.compile_all plus two test stubs; no Backend implementation keeps the removed hook.",
+        "Plan §2.1 row 3 lists Backend.compile/compile_all as an R3 deletion; this draft performs exactly that deletion and nothing else on the protocol."
+      ],
+      "r3_requirements": [
+        "Keep the factory as the only entry; R3 must not re-add a convenience compile wrapper for any caller.",
+        "R3 must add the structural check that no Backend subclass defines compile/compile_all, by AST rather than by hasattr only."
+      ]
+    },
+    {
+      "id": "D-A2",
+      "path": "tcenv/backends/metal/backend.py",
+      "symbols": ["MetalBackend.compile", "MetalBackend.compile_all", "MetalBackend.artifact_builder"],
+      "decision": "adopt-as-r3-input",
+      "rationale": "The Metal backend becomes a pure factory returning MetalSourceBuilder configured with the contract, math mode and declared kernel names. That matches §5.1 (factory takes Specialization + candidate math/names, no shell/path/command).",
+      "evidence": [
+        "The factory passes only kernel_contract/math/kernel_names into MetalSourceBuilder; it accepts no arbitrary command, path or build string.",
+        "tests/support/npu_sim/fake_backend.py migrates the only other Backend implementation to the same shape, so the protocol change is not Metal-only in practice."
+      ],
+      "r3_requirements": [
+        "R1 gives the factory the registered LoweringProfile name; R3 must keep the factory from recomputing lowering configuration.",
+        "R3 must prove the factory is reached from evaluate/xcworker/probes/profile/fill (spy on backend.artifact_builder), not a directly constructed builder."
+      ]
+    },
+    {
+      "id": "D-A3",
+      "path": "tcenv/backends/metal/source_builder.py",
+      "symbols": [
+        "MetalSourceBuilder._compile_assembled",
+        "MetalSourceBuilder.__init__",
+        "MetalKernelSet",
+        "BuildError(report_detail=...) at the compile-failure site",
+        "native descriptor kernel_names/kernels for multi-stage builds"
+      ],
+      "decision": "adopt-as-r3-input",
+      "rationale": "These parts concentrate the source→pipeline call in one builder method and let one build own a multi-stage pipeline set, which is what §5.1/§5.2 want. The same file also adds MetalSourceBuilder.compile_source, which is discarded (D-D3).",
+      "evidence": [
+        "_compile_assembled is the only place in the builder that calls MetalContext.compile/compile_all; §5.2 makes MetalSourceBuilder._compile_assembled the sole legitimate owner of those calls.",
+        "tcenv/backends/metal/runtime.py::MetalContext.compile_all calls self.compile for the first name, so the draft's 1-name branch (context.compile) and the multi-name branch (context.compile_all) are behaviourally the same call sequence.",
+        "candidate_sha256 is unaffected: SourceBundle carries the candidate bytes and build() assembles the contract header internally, so provenance.source_sha256 stays the candidate text (F-3 / §3 identity table)."
+      ],
+      "r3_requirements": [
+        "Delete MetalSourceBuilder.compile_source (D-D3) so the primitive has exactly one caller inside the builder.",
+        "Replace the MetalKernelSet + getattr(handle, 'kernels') convention with an explicit typed handle-set contract in the neutral model; do not keep two handle vocabularies.",
+        "Add the §5.1 BuildError attachments (typed BuildProvenance with artifact_set_digest=null, assembled_sha256) at the compile-failure site; the draft sets report_detail but attaches no provenance (see X-2).",
+        "Move the typed profile acquisition ahead of any candidate-level compile judgement (non-UTF-8 path, X-1)."
+      ]
+    },
+    {
+      "id": "D-A4",
+      "path": "tcenv/evaluate.py",
+      "symbols": ["_evaluate_in_process"],
+      "decision": "adopt-as-r3-input",
+      "rationale": "_evaluate_in_process stops calling backend.assemble/compile/compile_all and instead asks the backend for its builder and calls build(). The compile_error report text keeps its pre-refactor shape (rewritten diagnostic only) and the candidate bytes remain the SOURCE artifact.",
+      "evidence": [
+        "The builder receives SourceBundle(kernel_source.encode('utf-8')) and task_contract=contract; the contract header is assembled inside build(), so candidate_sha256 still describes exactly what the model wrote.",
+        "Only BuildError(error_class='compile') is mapped to status=compile_error; other classes are re-raised, matching the legacy 'toolchain failures are not candidate failures' rule (§5.3 item 4).",
+        "The report keeps rep.compile = {ok: False, errors: ...} with rewrite_compiler_lines applied inside the builder, i.e. the same text as HEAD's evaluate path."
+      ],
+      "r3_requirements": [
+        "Keep exactly one build() call per candidate and use BuildOutcome.executable_handles() only for local handles.",
+        "Map BuildError(deadline) to timeout before any crash path if a local deadline is ever introduced (§5.3 item 3); today local callers pass no deadline.",
+        "Pass deadline_monotonic=None explicitly at every local call site (R3 spy assertion)."
+      ]
+    },
+    {
+      "id": "D-A5",
+      "path": "tcenv/xcworker.py",
+      "symbols": ["main"],
+      "decision": "adopt-as-r3-input",
+      "rationale": "Profiling used to compile through ctx.compile/ctx.compile_all, i.e. a second source→pipeline path. The draft routes it through the same factory and build(), keeps the multi-stage ordering from the parsed taic-launch spec, and stops calling assemble itself.",
+      "evidence": [
+        "After the draft xcworker.py contains no ctx.compile/ctx.compile_all and builds the name list from spec.stages, matching what evaluate.py passes to the builder.",
+        "The multi-stage launch is still one build; by_name ordering is preserved for stage execution."
+      ],
+      "r3_requirements": [
+        "R3 must spy backend.artifact_builder -> build for the profiling path and assert one outcome for the multi-stage launch."
+      ]
+    },
+    {
+      "id": "D-A6",
+      "path": "tcenv/remote/artifact_builder.py",
+      "symbols": ["BuildError.report_detail", "BuildOutcome.__post_init__", "BuildOutcome.executable_handles"],
+      "decision": "adopt-as-r3-input",
+      "rationale": "report_detail separates the builder-facing classification message from the report diagnostic text, which is needed to keep the local compile_error text byte-identical. The live-handle invariant closes a real hole: two records that both omit the handle compare equal only because the handle is excluded from equality and digests.",
+      "evidence": [
+        "BuildOutcome.__post_init__ now rejects an outcome whose evidence.native and bundle.native both carry handle=None, so a handle-less 'success' cannot be constructed.",
+        "tests/backends/metal/test_source_builder.py::test_one_build_outcome_must_name_one_live_executable extends the existing invariant test with the both-None case.",
+        "executable_handles() is the single unwrap point used by evaluate.py and xcworker.py."
+      ],
+      "r3_requirements": [
+        "Replace the getattr(handle, 'kernels') heuristic with an explicit handle-set contract (X-3); a duck-typed convention is a second vocabulary.",
+        "Keep BuildError as the failure attachment; do not add a second outcome DTO (§2.1 row 11)."
+      ]
+    },
+    {
+      "id": "D-A7",
+      "path": "tests/backends/metal/test_source_builder.py",
+      "symbols": [
+        "test_the_builder_reports_the_same_pipeline_shape_as_the_legacy_compile",
+        "test_a_compile_failure_carries_the_real_diagnostic_and_duration",
+        "test_one_build_outcome_must_name_one_live_executable",
+        "_native(handle=...)"
+      ],
+      "decision": "adopt-as-r3-input",
+      "rationale": "The test file follows the protocol change: the legacy comparison now calls the runtime primitive directly (ctx.compile) instead of the deleted backend hook, and the stub backends grow a compile method on the context. Placement is correct (tests/backends/metal).",
+      "evidence": [
+        "The file lives under tests/backends/metal and imports tcenv.backends.metal, which satisfies tests/README.md layering.",
+        "The CPU-only subset of this file passes in the adopted-subset replay (verification.json / V-4)."
+      ],
+      "r3_requirements": [
+        "Add the builder-conformance check from §5.1 (every registered builder that can produce a candidate report must attach typed provenance on compile errors) and the AST/call-graph checks from §5.3.1."
+      ]
+    },
+    {
+      "id": "D-A8",
+      "path": "tests/support/npu_sim/fake_backend.py",
+      "symbols": ["_FakeSourceBuilder", "FakeNpuBackend.artifact_builder"],
+      "decision": "adopt-as-r3-input",
+      "rationale": "The fake evaluator backend must implement the same single entry point as the real one, otherwise remote/simulated paths silently keep a second compile hook. The fake builder produces a neutral BuildOutcome with a fake live handle, which is the shape §6.3 describes for simulators.",
+      "evidence": [
+        "FakeNpuBackend no longer defines compile/compile_all and returns _FakeSourceBuilder from artifact_builder.",
+        "The fake handle set uses a dataclass with a kernels attribute, mirroring MetalKernelSet, so the same unwrap path is exercised on CPU tests."
+      ],
+      "r3_requirements": [
+        "Give the fake a compile-failure path that attaches provenance, or declare it source_only/simulator in R4 so the §5.1 conformance check can exempt it explicitly (X-8).",
+        "R4 must register build_kind for builder_id fake-npu-builder and confirm the reported build is simulator/source_only, never confirmable."
+      ]
+    },
+    {
+      "id": "D-D1",
+      "path": "tcenv/backends/metal/probes.py",
+      "symbols": ["_compile_probe_source", "time_msl"],
+      "decision": "discard",
+      "rationale": "The draft replaces ctx.compile with MetalSourceBuilder().compile_source(...): it constructs a builder directly (forbidden by §5.3 item 2) and returns a bare CompiledKernel with no BuildOutcome, which is exactly the 'convenience compile' bypass §5.1 forbids. Plan §5.2 also names probes.py::_compile_probe_source as a工作树 addition to delete. Keeping the change would additionally break the registered tool manifest.",
+      "evidence": [
+        "Measured: the file change invalidates backends/metal/tools/tool_impl.toml::handler_source_sha256 (registered d5c69e1f… for HEAD, worktree md5 2defe4ab…), so 13 CPU tests in tests/backends/metal/test_tool_protocol.py fail with ToolError 'handler source differs from its registered digest'; they pass on a pristine HEAD export.",
+        "MetalSourceBuilder() with backend=None constructs a new MetalBackend, i.e. the composition root bypass §5.3 item 2 calls out.",
+        "compile_source() creates a second call site for MetalContext.compile outside _compile_assembled (D-D3)."
+      ],
+      "r3_requirements": [
+        "Start from HEAD behaviour and implement §5.2: typed probe source/kernel name from the validated request, built through backend.artifact_builder with an independently registered diagnostic profile whose contract declares raw-source/no-task-header assemble, and keep the BuildOutcome.",
+        "If probes.py changes again, regenerate the tool manifest digest in the same change."
+      ]
+    },
+    {
+      "id": "D-D2",
+      "path": "tcenv/backends/metal/profile.py",
+      "symbols": ["measure_peak_bandwidth"],
+      "decision": "discard",
+      "rationale": "Same two defects as D-D1: it constructs MetalSourceBuilder directly and compiles the fixed _COPY_SRC through compile_source with no BuildOutcome, while §5.2 requires the bandwidth calibration to use an independently registered raw-source diagnostic contract/profile through the factory and to retain its BuildOutcome.",
+      "evidence": [
+        "The draft's body is `builder = MetalSourceBuilder(); ... builder.compile_source(_COPY_SRC, [name])[0]` — no factory, no outcome, no provenance.",
+        "The MLX/measure_peak_flops path is untouched, so this file's diff only affects the diagnostic bandwidth line; reverting it restores HEAD behaviour exactly."
+      ],
+      "r3_requirements": [
+        "Implement §5.2's registered diagnostic profile path in R3; do not reuse a task LoweringProfile for calibration."
+      ]
+    },
+    {
+      "id": "D-D3",
+      "path": "tcenv/backends/metal/source_builder.py",
+      "symbols": ["MetalSourceBuilder.compile_source"],
+      "decision": "discard",
+      "rationale": "This is the entry point plan §2.1/§5.2 requires R3 to delete: it compiles already-assembled text for a caller that holds no task contract, returns bare handles, and duplicates the primitive call that _compile_assembled already owns. Adopting it would freeze a second build vocabulary into the R3 baseline.",
+      "evidence": [
+        "Only two production callers exist in the draft (probes.py::_compile_probe_source, profile.py::measure_peak_bandwidth); both are discarded here, so nothing in the adopted subset depends on compile_source.",
+        "Adopted-subset replay (V-4) removes compile_source and keeps all other adopted files, and introduces no new CPU test failures."
+      ],
+      "r3_requirements": [
+        "R3 deletes compile_source; diagnostic callers use build() with a registered diagnostic profile."
+      ]
+    },
+    {
+      "id": "D-D4",
+      "path": "tests/shared/test_single_build_path.py",
+      "symbols": [
+        "test_production_does_not_call_a_backend_compile_hook_or_the_runtime_primitive",
+        "test_the_backend_protocol_has_no_compile_entry_point",
+        "test_the_evaluator_and_profiler_call_the_unified_builder",
+        "test_the_real_evaluator_builds_through_the_registered_builder",
+        "test_an_invalid_kernel_reaches_compile_error_through_the_builder"
+      ],
+      "decision": "discard",
+      "rationale": "The structural half is a regex text search, which plan §2.1 row 5 and §5.3 item 1 explicitly reject as proof; the GPU half imports tcenv.backends.metal inside tests/shared, which breaks tests/shared/README.md and makes tests/shared/test_structure.py::test_backend_free_tests_do_not_import_a_backend fail. Its claims are worth keeping, its form is not.",
+      "evidence": [
+        "Regex scope holes (read from the file): receiver whitelist backend|ctx|context|metal_context|MetalContext misses self.compile( in tcenv/backends/metal/runtime.py::MetalContext._fill_kernel — the very bypass §5.2 still requires deleting; whole-file exclusions BUILD_PRIMITIVE_FILES hide any future call added to runtime.py/source_builder.py; the scan root is tcenv/ only, so experiments/dispatch_ab.py's direct ctx.compile call is invisible; aliases and getattr are not matched at all.",
+        "Measured: 6 AST ImportFrom hits of tcenv.backends.metal in tests/shared/test_single_build_path.py make tests/shared/test_structure.py::test_backend_free_tests_do_not_import_a_backend fail with 'shared/test_single_build_path.py:53' (triage log in verification.json).",
+        "The two GPU cases were not run and cannot run in R0 (gpu marker, explicit permission required), so they are not evidence of anything yet."
+      ],
+      "r3_requirements": [
+        "Replace with AST/call-graph checks per §5.3 item 1 (aliases, delegation, getattr) plus spy assertions on backend.artifact_builder -> build.",
+        "Split placement: structural, backend-free checks may stay in tests/shared; the real-Mac evaluator cases move to tests/backends/metal and keep their gpu marker."
+      ]
+    },
+    {
+      "id": "D-S1",
+      "path": "docs/架构/构建执行与证据语义升级-plan.md",
+      "symbols": ["§0", "§2.1", "§3.1", "§5.1-§5.3", "§6", "§7.2", "§9"],
+      "decision": "reference-spec",
+      "rationale": "Main specification for R0-R7; archived byte-exactly so later stages compare against the frozen text. R0 synchronised three factual statements (status line, worktree attribution, the placement requirement of the structural test) and nothing about the technical route.",
+      "evidence": ["R0 doc sync is listed in verification.json V-6 with the exact edits."],
+      "r3_requirements": []
+    },
+    {
+      "id": "D-S2",
+      "path": "docs/架构/构建执行与证据语义升级-plan-附录A-OpSpec与specialize.md",
+      "symbols": ["§1 RMSNorm OpSpec", "§2 track binding", "§4 negative cases F-1..F-41"],
+      "decision": "reference-spec",
+      "rationale": "Fixture and negative-case catalogue the R1-R5 registers cite; unchanged by R0.",
+      "evidence": ["No contradiction with the frozen R0 products found (V-6)."],
+      "r3_requirements": []
+    },
+    {
+      "id": "D-S3",
+      "path": "docs/架构/构建执行与证据语义升级-决策与对比记录.md",
+      "symbols": ["§1 D01-D11", "§2 D12-D18", "§3b D25-D44", "§7 迁移与追溯门", "§8 尚未关闭的问题"],
+      "decision": "reference-spec",
+      "rationale": "Decision record; R0 updated only the §8 row about the concurrent worktree baseline, which R0 closes.",
+      "evidence": ["No contradiction with the frozen R0 products found (V-6)."],
+      "r3_requirements": []
+    }
+  ],
+  "defects": [
+    {
+      "id": "X-1",
+      "title": "non-UTF-8 candidate is classified as compile failure before a typed provenance exists",
+      "location": "tcenv/backends/metal/source_builder.py::MetalSourceBuilder.build",
+      "detail": "source_bundle.source.decode('utf-8') raises BuildError('compile', ...) before _device_info()/_profile_for(), so the only identity the failure carries is the candidate digest (no typed BuildProvenance, no assembled_sha256). Plan §5.1 and F-40 require either provenance-first ordering or a pre-build 'rejected' verdict.",
+      "stage": "R3",
+      "negative_case": "F-40"
+    },
+    {
+      "id": "X-2",
+      "title": "compile-failure BuildError carries no typed provenance attachment",
+      "location": "tcenv/backends/metal/source_builder.py::MetalSourceBuilder.build (compile_error branch)",
+      "detail": "The draft sets report_detail + log + duration_ms but does not attach the typed BuildProvenance/assembled_sha256 that §5.1 requires R3 to add for schema 4 partial projection. R4's partial shape cannot be produced from this failure without probing inside except.",
+      "stage": "R3",
+      "negative_case": "F-26 / §5.1"
+    },
+    {
+      "id": "X-3",
+      "title": "handle set is a duck-typed convention, not a neutral type",
+      "location": "tcenv/remote/artifact_builder.py::BuildOutcome.executable_handles",
+      "detail": "getattr(native.handle, 'kernels', None) decides whether a handle is a set. Any handle object that happens to expose kernels changes the meaning, and the neutral model gains an implicit second vocabulary.",
+      "stage": "R3",
+      "negative_case": "§5.1 '裸 handle' rule"
+    },
+    {
+      "id": "X-4",
+      "title": "internal fill kernel still compiles through the runtime primitive",
+      "location": "tcenv/backends/metal/runtime.py::MetalContext._fill_kernel",
+      "detail": "Unchanged by the draft; it calls self.compile with a fixed source and caches the pipeline, so a pipeline exists with no BuildOutcome. §5.2 requires it to be built by a builder obtained from the factory and injected, with no lazy self.compile.",
+      "stage": "R3",
+      "negative_case": "§5.2 row 'MetalContext._fill_kernel'"
+    },
+    {
+      "id": "X-5",
+      "title": "experiments tree still compiles through the runtime primitive",
+      "location": "experiments/dispatch_ab.py",
+      "detail": "ctx.compile(full, c.kernel_name) is a direct source→pipeline call outside tcenv/. Not covered by the draft or by its regex test (which scans tcenv/ only). R3 must decide ownership: route it through a builder or declare the experiments tree out of the production surface explicitly.",
+      "stage": "R3",
+      "negative_case": "§5.3 item 1"
+    },
+    {
+      "id": "X-6",
+      "title": "editing a registered tool handler invalidates the tool manifest digest",
+      "location": "backends/metal/tools/tool_impl.toml::handler_source_sha256",
+      "detail": "probes.py is a registered tool handler source. The draft changed it without regenerating handler_source_sha256/manifest_sha256, which fails 13 CPU tests (tests/backends/metal/test_tool_protocol.py). R0 discards the probes.py change, so HEAD's digest is valid again; any future probes.py change must regenerate the registration in the same change.",
+      "stage": "R3",
+      "negative_case": "measured: tests/backends/metal/test_tool_protocol.py (13 failures)"
+    },
+    {
+      "id": "X-7",
+      "title": "multi-stage native descriptor grows new keys",
+      "location": "tcenv/backends/metal/source_builder.py::MetalSourceBuilder.build (descriptor)",
+      "detail": "The draft adds descriptor.kernel_names and descriptor.kernels when more than one pipeline is compiled. The descriptor feeds NativeExecutable.digest (canonical_digest_document, which rejects floats), so R3/R4 must keep it float-free and bounded and must not let it become a second artifact/evidence vocabulary.",
+      "stage": "R3",
+      "negative_case": "§6.3 native descriptor rule"
+    },
+    {
+      "id": "X-8",
+      "title": "fake builder has no compile-failure path",
+      "location": "tests/support/npu_sim/fake_backend.py::_FakeSourceBuilder.build",
+      "detail": "_FakeSourceBuilder always succeeds, so the §5.1 builder-conformance check (every builder that can produce a candidate report must attach provenance on compile errors) would either fail or need an explicit source_only/simulator exemption. R4 must decide which, and must report build_kind for builder_id fake-npu-builder.",
+      "stage": "R4",
+      "negative_case": "§5.1 builder conformance"
+    },
+    {
+      "id": "X-9",
+      "title": "report diagnostic text must stay prefix-free",
+      "location": "tcenv/remote/artifact_builder.py::BuildError.report_detail",
+      "detail": "evaluate.py writes report_detail into rep.compile['errors']; the draft keeps it equal to the rewritten compiler message with no exception-class prefix. R4 must not re-introduce a prefix when the field becomes part of schema 4, otherwise the compile diagnostics change text.",
+      "stage": "R4",
+      "negative_case": "§6.2 compile dict is diagnostic only"
+    }
+  ]
+}

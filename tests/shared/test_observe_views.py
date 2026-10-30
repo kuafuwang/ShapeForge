@@ -47,11 +47,13 @@ def test_scan_reads_timeline_marks_confirmed_point_and_handoff(tmp_path, monkeyp
     winner = directory / "candidates" / "000_r1.p0"
     winner.mkdir(parents=True)
     (winner / "kernel.metal").write_text(SOURCE)
-    (directory / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": 1.25,
-        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx", "confirmation": {"kernel_sha256": digest, "winner_label": "r1.p0", "confirmed_values": [1.25], "speedup": 1.25, "candidate_us": None}},
-        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
-    }))
+    from experiments.common import synthetic_confirmation_documents
+
+    result, report = synthetic_confirmation_documents(
+        task="gemm", dtype="fp16", size="small", target_id="apple-m4-max",
+        speedup=1.25, label="r1.p0", kernel_sha256=digest,
+    )
+    (directory / "confirm_report.json").write_text(json.dumps(report))
     trace = [
         {"label": "init", "status": "ok", "speedup": 1.0, "best_speedup": 1.0, "cost_usd": 0.1, "within_noise": True, "differential_recheck": None},
         {"label": "r1.p0", "status": "ok", "speedup": 1.4, "best_speedup": 1.4, "cost_usd": 0.3, "within_noise": False, "differential_recheck": "incorrect"},
@@ -61,15 +63,13 @@ def test_scan_reads_timeline_marks_confirmed_point_and_handoff(tmp_path, monkeyp
         "task": "gemm", "dtype": "fp16", "model": "model-b", "committee": "second", "round": 2,
         "spent_usd": 0.4, "best_speedup": 1.4, "trace": trace,
     }))
-    (directory / "result.json").write_text(json.dumps({
-        "task": "gemm", "dtype": "fp16", "stop_reason": "max_rounds", "spent_usd": 0.5,
-        "best_speedup": 9.9, "confirmed_speedup": 1.25, "confirmed_status": "ok",
-        "confirm_winner_label": "r1.p0", "confirmation_source_sha256": digest, "trace": trace,
-        "confirmed_values": [1.25], "confirmed_worst": 1.25, "confirmed_best": 1.25, "target_id": "apple-m4-max",
+    result.update({
+        "stop_reason": "max_rounds", "spent_usd": 0.5, "best_speedup": 9.9, "trace": trace,
         "winner_label": "r1.p0", "winner_provider": "b", "winner_model": "model-b", "winner_committee": "second", "winner_origin": "session",
         "model_totals": [{"provider": "b", "model": "model-b", "committee": "second", "sessions": 1, "cost_usd": 0.3,
                           "input_tokens": 5, "output_tokens": 10, "cache_read_tokens": 20, "cache_write_tokens": 0}],
-    }))
+    })
+    (directory / "result.json").write_text(json.dumps(result))
     (directory / "run_config.json").write_text(json.dumps({"committees": [
         {"name": "first", "members": [{"provider": "a", "model": "model-a"}]},
         {"name": "second", "members": [{"provider": "b", "model": "model-b"}]},

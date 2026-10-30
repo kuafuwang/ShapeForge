@@ -28,8 +28,16 @@ from ..support.npu_sim.fake_backend import FakeNpuBackend
 SOURCE = "npu-kernel npu_main\nnpu-launch threads=4096 threadgroup=1073741824\n"
 
 
+#: ``tcenv.backends.metal.lowering`` is the registered LoweringProfile/lowerer *data* (no Metal
+#: API, no device).  R1/R2 put it under the backend package and a task's track names a profile
+#: there, so task assembly reads it; every other module under the prefix is runtime/device code.
+ALLOWED_METAL_MODULES = frozenset({"tcenv.backends.metal", "tcenv.backends.metal.lowering"})
+
+
 class _BlockMetalImports:
     def find_spec(self, fullname, path=None, target=None):
+        if fullname in ALLOWED_METAL_MODULES:
+            return None
         if fullname == "tcenv.backends.metal" or fullname.startswith("tcenv.backends.metal."):
             raise AssertionError(f"generic fake-backend path imported {fullname}")
         return None
@@ -42,7 +50,8 @@ def no_metal_imports(monkeypatch):
     yield
     imported = {
         name for name in set(sys.modules) - before
-        if name == "tcenv.backends.metal" or name.startswith("tcenv.backends.metal.")
+        if (name == "tcenv.backends.metal" or name.startswith("tcenv.backends.metal."))
+        and name not in ALLOWED_METAL_MODULES
     }
     assert imported == set()
 
@@ -149,53 +158,35 @@ def test_backend_declaration_pattern_drives_source_extraction(no_metal_imports):
     assert kernel_text("kernel void npu_main() {}", "npu_main", source_fence="npu", source_name_pattern=pattern) is None
 
 
-def _fingerprint_task():
-    references = {"metal": "metal-reference-v1", "sim-npu": "npu-reference-v1"}
-    return SimpleNamespace(
+def test_the_pre_r2_fingerprint_path_is_deleted_not_merely_unused():
+    """@brief R2 删除了 pre-R2 哈希分支：没有语义实例的 task 被拒绝，而不是走第二套哈希。
+
+    过渡 golden（``c645aa7b…``/``bdf31ed4…``）随分支一起退场；R1 重置的 v2 golden 在
+    ``tests/shared/test_task_fingerprint.py``，backend 分量现在是 v2 文档里的 ``backend_id``。
+    """
+    import pytest
+
+    from tcenv.evaluate import _evaluation_fingerprint
+    from tcenv.evaluation import EvaluationError
+
+    duck = SimpleNamespace(
+        name="duck",
         contract=SimpleNamespace(describe=lambda: "contract-v1"),
         triton_source="triton-v1",
         cases=("case-v1",),
-        rtol=0.125,
-        atol_rel=0.25,
-        exact=False,
-        flops=3.0,
-        min_bytes=5.0,
         dtype="fp16",
         size="small",
-        meta={"source": "unit-golden"},
-        reference_for=lambda backend_id: references.get(backend_id, ""),
+        meta={},
+        reference_for=lambda backend_id: "",
+        evaluation_implementations={},
     )
-
-
-def test_task_fingerprint_golden_is_backend_aware_and_metal_compatible():
-    task = _fingerprint_task()
-    metal = task_fingerprint(task, "metal")
-    simulated = task_fingerprint(task, "sim-npu")
-    assert metal == task_fingerprint(task) == "c645aa7b004a2dbcb98b67984ccd6fc8d5520483d0fc5d7d3b48ee3b46558a5c"
-    assert simulated == "bdf31ed40ace2e3f516c69c49938fa1e16b42558d5f3acc9e9ae8b64efb2ed02"
-    assert simulated != metal
-    assert task_fingerprint(task, "future-npu") != simulated
-
-    # Independently recompute the pre-B0.5 Metal input tuple as a compatibility golden.
-    recorded = {
-        "ieee_base": None,
-        "ieee_inputs": None,
-        "ieee_max": None,
-        "domain_case": False,
-        "source": "unit-golden",
-    }
-    import json
-
-    legacy_parts = (
-        "contract-v1", "triton-v1", "metal-reference-v1", "('case-v1',)",
-        repr((0.125, 0.25, False)), repr((3.0, 5.0)), "fp16", "small",
-        json.dumps(recorded, sort_keys=True, ensure_ascii=False),
-    )
-    digest = hashlib.sha256()
-    for part in legacy_parts:
-        digest.update(part.encode())
-        digest.update(b"\0")
-    assert metal == digest.hexdigest()
+    with pytest.raises(ValueError, match="transitional pre-R2 hash path is gone"):
+        task_fingerprint(duck, "metal")
+    with pytest.raises(ValueError, match="transitional pre-R2 hash path is gone"):
+        task_fingerprint(duck, "sim-npu")
+    # The evaluation identity refuses an unregistered task too (no closure ``repr`` fallback).
+    with pytest.raises(EvaluationError, match="no registered evaluation implementations"):
+        _evaluation_fingerprint(duck)
 
 
 def test_target_loader_does_not_require_metal_limit_keys(monkeypatch, tmp_path):
@@ -244,6 +235,9 @@ def test_fresh_interpreter_never_imports_metal_on_the_generic_path(tmp_path):
     assert result["backend"] == "sim-npu"
     assert result["metal_modules"] == []
     assert result["blocked"] == []
+    # Only the registered lowering profile data may be imported for a Metal-track task; the
+    # runtime/device modules must stay out of the generic evaluation path (R2 §4.4).
+    assert result["metal_lowering_loaded"] is True
     assert ("validate_launch", SOURCE) in {tuple(call) for call in result["calls"]}
     assert ("worker_env", "True") in {tuple(call) for call in result["calls"]}
 
@@ -310,10 +304,21 @@ def test_fake_eval_cache_miss_then_hit_does_not_execute_twice(monkeypatch, tmp_p
 
     def fake_run_worker(*args, **kwargs):
         worker_calls.append((args, kwargs))
-        return EvalReport(
+        # The cache value *is* an EvalReport (§7.1): a schema-4 report with its one build
+        # record, or the next read would (correctly) be a miss.
+        from tasks import get_task
+
+        from tests.support.report_build import attach_build, attach_identity
+
+        task_obj = get_task("relu", "fp16", "small")
+        report = EvalReport(
             task="relu", dtype="fp16", size="small", mode="quick",
             seed=23, status="ok", speedup=2.0, candidate_us=1.0,
+            target_id=profile.id, backend="sim-npu",
         )
+        attach_build(report, task_obj, source=SOURCE.encode("utf-8"))
+        attach_identity(report, task_obj)
+        return report
 
     monkeypatch.setattr(ev, "_run_worker", fake_run_worker)
     first = ev.evaluate(
@@ -331,3 +336,56 @@ def test_fake_eval_cache_miss_then_hit_does_not_execute_twice(monkeypatch, tmp_p
     assert second.speedup == first.speedup
     assert len(worker_calls) == 1
     assert len(backend.calls) == calls_after_miss
+
+
+def test_a_build_deadline_is_a_timeout_not_a_crash(no_metal_imports, monkeypatch, tmp_path):
+    """@brief R3 §5.3-3：``BuildError(deadline)`` 落成 timeout，不得经异常处理变成 crash。"""
+    from tcenv.remote.artifact_builder import BuildError
+
+    backend, profile, _task = _install_fake(monkeypatch, tmp_path)
+    real_builder = backend.artifact_builder
+
+    def deadline_builder(**kwargs):
+        builder = real_builder(**kwargs)
+
+        def build(source_bundle, *, task_contract, deadline_monotonic=None):
+            raise BuildError("deadline", "the build did not finish before the attempt deadline")
+
+        builder.build = build
+        return builder
+
+    monkeypatch.setattr(backend, "artifact_builder", deadline_builder)
+    report = ev._evaluate_in_process(
+        "relu", "fp16", "small", SOURCE,
+        mode="quick", seed=7, reps=2, measure_serial=False, target_id=profile.id,
+    )
+    assert report.status == "timeout", report.message
+    assert report.stage == "compile"
+    assert "deadline" in report.message
+
+
+def test_a_toolchain_failure_is_not_blamed_on_the_candidate(no_metal_imports, monkeypatch, tmp_path):
+    """@brief 只有带齐附件的 ``compile`` 失败归责候选；``toolchain_profile`` 仍然向上抛。"""
+    import pytest
+
+    from tcenv.remote.artifact_builder import BuildError
+
+    backend, profile, _task = _install_fake(monkeypatch, tmp_path)
+    real_builder = backend.artifact_builder
+
+    def toolchain_builder(**kwargs):
+        builder = real_builder(**kwargs)
+
+        def build(source_bundle, *, task_contract, deadline_monotonic=None):
+            raise BuildError("toolchain_profile", "the toolchain is unavailable on this host")
+
+        builder.build = build
+        return builder
+
+    monkeypatch.setattr(backend, "artifact_builder", toolchain_builder)
+    with pytest.raises(BuildError) as excinfo:
+        ev._evaluate_in_process(
+            "relu", "fp16", "small", SOURCE,
+            mode="quick", seed=7, reps=2, measure_serial=False, target_id=profile.id,
+        )
+    assert excinfo.value.error_class == "toolchain_profile"

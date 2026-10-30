@@ -1664,73 +1664,33 @@ def nocode_tables(runs: list[Run], branches: list[dict], small_n: int) -> dict:
 # ----------------------------------------------------------------------------------------------------------------------
 # Question 2
 # ----------------------------------------------------------------------------------------------------------------------
-def _file_sha256(path: Path) -> str | None:
-    """@brief 算文件的 sha256。
-
-    @param path 文件路径。
-    @return 十六进制摘要；文件读不到时返回 ``None``。
-    """
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except OSError:
-        return None
-
-
-def _timing_uncertain(report: dict | None) -> bool:
-    """@brief 判断一次复测的计时是不是不够安静。
-
-    Same cutoff as ``tcenv.bench.QUIET_CV``. This module does not import the evaluator.
-
-    @param report 复测报告；可以为 ``None``。
-    @return 噪声大或统计量缺失时为 ``True``。
-    """
-    bench = (report or {}).get("benchmark") if isinstance(report, dict) else None
-    if not isinstance(bench, dict) or not bench:
-        return False
-    if bench.get("noisy") is True:
-        return True
-    candidate = bench.get("candidate")
-    if not isinstance(candidate, dict) or "cv" not in candidate:
-        return True
-    try:
-        cvs = [float(candidate["cv"])]
-        bases = bench.get("baselines") or {}
-        base = bases.get(bench.get("best_baseline")) if isinstance(bases, dict) else None
-        if isinstance(base, dict) and "cv" in base:
-            cvs.append(float(base["cv"]))
-    except (TypeError, ValueError):
-        return True
-    return any(cv > 0.05 for cv in cvs)
-
-
 def _published_speed(run: Run) -> float | None:
-    """@brief 取这次运行可以对外报的确认加速比。
+    """@brief 取这次运行可以对外报的确认加速比；判定只来自唯一发布谓词。
 
-    The confirmation this run may print. Missing, unbound, failed or noisy confirmations print nothing.
+    This module used to decide publication by itself (``confirmed_status`` + the report's
+    ``status`` + source hashes + a local copy of the ``QUIET_CV`` cutoff).  That is a second
+    publication path: it never looked at schema 4, the frozen expected, the per-batch identity
+    records or the measurement eligibility, so an old-format or evidence-free confirmation could
+    still be printed as a result.  Plan §7.2 has exactly one final predicate, so the number now
+    comes from ``experiments.common.conclusion_of_run`` — the same function ``taic brief`` and
+    ``observe`` use, with the frozen expected and the per-batch records read from the run
+    directory.  Anything it does not publish yields no number here.
 
     @param run 已加载的运行。
-    @return 确认过的加速比；没通过确认门槛时返回 ``None``。
+    @return 共同谓词确认过的加速比；未发布时返回 ``None``。
     """
     res = run.result or {}
-    if "confirmation_source_sha256" not in res or res.get("confirmed_status") != "ok":
+    if not res:
         return None
-    recorded = res.get("confirmation_source_sha256")
-    winner = res.get("confirm_winner_label")
-    if not isinstance(recorded, str) or not recorded or not isinstance(winner, str) or not winner:
+    from experiments.common import conclusion_of_run
+
+    conclusion = conclusion_of_run(Path(run.path), res)
+    if conclusion.get("publication") != "confirmed":
         return None
-    if (run.confirm or {}).get("status") != "ok":
-        return None
-    root = Path(run.path)
-    best = _file_sha256(root / "best.metal")
-    folder = root / "candidates"
-    found = [p for p in folder.iterdir() if p.is_dir() and len(p.name) > 4 and p.name[3] == "_" and p.name[4:] == winner] if folder.is_dir() else []
-    winner_hash = _file_sha256(found[0] / "kernel.metal") if len(found) == 1 else None
-    if recorded != best or recorded != winner_hash:
-        return None
-    if _timing_uncertain(run.confirm):
-        return None
-    speed = res.get("confirmed_speedup")
+    speed = conclusion.get("speedup")
     if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+        return None
+    if not math.isfinite(float(speed)) or float(speed) <= 0:
         return None
     return float(speed)
 

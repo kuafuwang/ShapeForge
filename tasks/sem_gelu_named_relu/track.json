@@ -1,0 +1,106 @@
+{
+  "track": "triton-spec-to-msl",
+  "opspec": "tasks/sem_gelu_named_relu/opspec.json",
+  "backend_id": "metal",
+  "lowering_profile": "metal-relu",
+  "spec_text": {
+    "template": "tasks/sem_gelu_named_relu/kernel_triton.py",
+    "placeholders": {
+      "N": "spec_params",
+      "BLOCK_SIZE": "backend_params",
+      "NUM_WARPS": "backend_params",
+      "TL": "dtype_spelling"
+    }
+  },
+  "known_good": {
+    "template": "tasks/sem_gelu_named_relu/naive.metal",
+    "placeholders": {
+      "T": "dtype_spelling"
+    }
+  },
+  "description": "Implement exactly what the kernel body computes; names and comments of this specification are unreliable.",
+  "dtype_spelling": {
+    "fp16": {
+      "T": "half",
+      "TL": "tl.float16",
+      "TORCH": "torch.float16"
+    },
+    "bf16": {
+      "T": "bfloat",
+      "TL": "tl.bfloat16",
+      "TORCH": "torch.bfloat16"
+    }
+  },
+  "implementations": {
+    "gen_inputs": {
+      "implementation_id": "sem_gelu_named_relu.gen_inputs",
+      "implementation_version": 1,
+      "params": {
+        "normal_mag": 3.0,
+        "default_mag": 1.0,
+        "large": 30.0,
+        "seed_stride": 1000003
+      }
+    },
+    "reference": {
+      "implementation_id": "sem_gelu_named_relu.reference",
+      "implementation_version": 1,
+      "params": {
+        "op": "gelu_tanh",
+        "accumulate": "float64"
+      }
+    },
+    "error_scale": null
+  },
+  "baselines": [],
+  "pack_files": [
+    "tasks/_assembly.py",
+    "tasks/_common.py",
+    "tasks/_pointwise.py",
+    "tasks/sem_gelu_named_relu/__init__.py",
+    "tasks/sem_gelu_named_relu/kernel_triton.py",
+    "tasks/sem_gelu_named_relu/naive.metal",
+    "tasks/sem_gelu_named_relu/opspec.json",
+    "tasks/sem_gelu_named_relu/task.py",
+    "tasks/sem_gelu_named_relu/track.json",
+    "tcenv/backends/metal/lowering.py",
+    "tcenv/contract.py",
+    "tcenv/distributions.py",
+    "tcenv/dtypes.py",
+    "tcenv/identity.py",
+    "tcenv/lowering.py",
+    "tcenv/opspec/__init__.py",
+    "tcenv/opspec/model.py",
+    "tcenv/opspec/schema/opspec.v1.schema.json",
+    "tcenv/opspec/validator.py",
+    "tcenv/task.py",
+    "tcenv/track/__init__.py",
+    "tcenv/track/schema/track.v1.schema.json"
+  ],
+  "template_literals": {
+    "launch": [
+      {
+        "template": "tasks/sem_gelu_named_relu/kernel_triton.py",
+        "text": "num_warps = {{NUM_WARPS}}",
+        "threads_per_threadgroup": 128
+      },
+      {
+        "template": "tasks/sem_gelu_named_relu/naive.metal",
+        "text": "i += 128",
+        "threads_per_threadgroup": 128
+      }
+    ],
+    "semantic": [
+      {
+        "template": "tasks/sem_gelu_named_relu/kernel_triton.py",
+        "text": "0.7978845608028654",
+        "attr": "GELU_C"
+      },
+      {
+        "template": "tasks/sem_gelu_named_relu/kernel_triton.py",
+        "text": "0.044715",
+        "attr": "GELU_K"
+      }
+    ]
+  }
+}

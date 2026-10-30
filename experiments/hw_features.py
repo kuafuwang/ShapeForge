@@ -100,6 +100,18 @@ def discover_runs(roots: Iterable[Path]) -> list[Path]:
     return found
 
 
+def _finite(value: Any) -> float | None:
+    """@brief 只把有限数值当数字：布尔、字符串、NaN/inf 都当作没有。
+
+    @param value 任意值。
+    @return 有限浮点数或 ``None``。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
 def load_run(run_dir: Path, runs_root: Path) -> tuple[dict, list[KernelRef]]:
     """@brief 读一次运行的概况与每个候选内核的引用。
 
@@ -125,8 +137,18 @@ def load_run(run_dir: Path, runs_root: Path) -> tuple[dict, list[KernelRef]]:
     except ValueError:
         rel = run_dir.name
     best_label = info.get("best_label")
+    # The published number comes from the one predicate that binds the remeasured kernel to the
+    # frozen expected — never from ``result.confirmed_speedup`` (§8: search best is a separate
+    # column, and a run whose confirmation is old/damaged publishes nothing).
+    from experiments.common import conclusion_verdict
+
+    conclusion, publication_reason = conclusion_verdict(run_dir, res) if res else (
+        {"speedup": None, "publication": "in_progress"}, "no_result_json",
+    )
     run = {"run": rel, "task": task, "dtype": dtype, "size": size, "partial": partial, "model": info.get("model"), "best_label": best_label, "stop_reason": info.get("stop_reason"),
-           "budget_usd": info.get("budget_usd"), "spent_usd": info.get("spent_usd"), "confirmed_speedup": info.get("confirmed_speedup"), "best_speedup": info.get("best_speedup"),
+           "budget_usd": info.get("budget_usd"), "spent_usd": info.get("spent_usd"),
+           "published_speedup": conclusion["speedup"], "publication": conclusion["publication"],
+           "publication_reason": publication_reason, "search_best_speedup": _finite(info.get("best_speedup")),
            "rounds": info.get("rounds", info.get("round")), "has_trace": bool(trace)}
     refs: list[KernelRef] = []
     best_running = -1.0
@@ -140,17 +162,30 @@ def load_run(run_dir: Path, runs_root: Path) -> tuple[dict, list[KernelRef]]:
             src = km.read_text()
         except OSError:
             continue
-        rep = _read_json(cd / "report.json")
+        report_path = cd / "report.json"
+        rep = _read_json(report_path)
+        # Only a schema-4 report is current evidence: the row keeps the classification so the
+        # analyser can mark an old report instead of quoting its measurement as today's.
+        from taic.artifacts import report_state
+
+        state = report_state(report_path, rep)
         tr = dict(trace.get(idx) or {})
         sp = (rep or {}).get("speedup")
-        if not tr and rep is not None:  # no trace on disk: reconstruct the acceptance order
+        if state != "current":
+            # An old/damaged report is not evidence at all: it is not passed on, and neither a
+            # recorded nor a reconstructed trace may make it count as correct / improved / first.
+            tr = {}
+            report_for_ref = None
+        else:
+            report_for_ref = rep
+        if state == "current" and not tr and rep is not None:  # no trace on disk: reconstruct the acceptance order
             ok = rep.get("status") == "ok" and sp is not None
             improved = bool(ok and sp > best_running * 1.0)
             if ok and sp > best_running:
                 best_running = sp
             tr = {"status": rep.get("status"), "speedup": sp, "improved": improved, "reconstructed": True}
-        refs.append(KernelRef(kid=f"{rel}/{cd.name}", run=rel, label=label, kind="best" if label == best_label else "candidate", source=src, task=task, dtype=dtype, size=size, report=rep,
-                              trace=tr or None, partial=partial, idx=idx))
+        refs.append(KernelRef(kid=f"{rel}/{cd.name}", run=rel, label=label, kind="best" if label == best_label else "candidate", source=src, task=task, dtype=dtype, size=size, report=report_for_ref,
+                              trace=tr or None, partial=partial, idx=idx, meta={"report_state": state}))
     return run, refs
 
 
@@ -302,12 +337,20 @@ def analyze_refs(refs: list[KernelRef], *, naive: dict, calib: dict | None, runs
             except Exception:  # noqa: BLE001
                 tobj = None
         rep = r.report
+        # Clearly separated input paths (§8): a candidate/best report must be the current schema,
+        # while a hand-written naive summary or a generated reference GEMM row has no schema at all.
+        # An old candidate report yields no measured numbers and is marked ``old_format``.
+        source = r.kind if r.kind in ("naive", "reference") else "candidate"
         if rep is None and r.kind == "naive":
             nv = naive.get((r.task, r.dtype or "fp16"))
             rep = {"status": nv.get("status", "ok"), "speedup": nv.get("speedup"), "candidate_us": nv.get("candidate_us"), "baseline_us": nv.get("baseline_us")} if nv else None
-        meas = measured_from_report(rep, tobj, calib)
+        meas = measured_from_report(rep, tobj, calib, source=source)
+        # ``report_state`` when the row had a candidate report path (``current``/``old_format``/…),
+        # otherwise the independent input path itself (``naive``/``reference``/``synthetic``).
+        state = r.meta.get("report_state") or (source if r.report is not None else r.kind)
         return r, build_report(r.source, label=r.kid, task=r.task, dtype=r.dtype, size=r.size, measured=meas, ceilings=ceil_cache[key], compile_evidence=compile_evidence, cache_dir=cache_dir,
-                               partial=r.partial, extra={"run": r.run, "kind": r.kind, "idx": r.idx, "trace": r.trace})
+                               partial=r.partial, extra={"run": r.run, "kind": r.kind, "idx": r.idx, "trace": r.trace,
+                                                         "report_state": state})
 
     out: list[tuple[KernelRef, HardwareFeatureReport]] = []
     t0 = time.time()
@@ -337,7 +380,11 @@ def winrate_table(items: list[tuple[KernelRef, HardwareFeatureReport]], feature_
     @param feature_ids 要统计的特征 id。
     @return ``{特征: {"with": ..., "without": ...}}``。
     """
-    cands = [(r, h) for r, h in items if r.kind in ("candidate", "best") and r.trace and r.run != "negative" and not (r.task or "").startswith("sem_")]
+    cands = [(r, h) for r, h in items
+             if r.kind in ("candidate", "best") and r.trace and r.run != "negative"
+             and not (r.task or "").startswith("sem_")
+             # A trace row is only evidence when its candidate's own report is current (§8).
+             and r.meta.get("report_state") == "current"]
     tab = {}
     for fid in feature_ids:
         rows = {}
@@ -363,7 +410,9 @@ def best_kernel_rows(items: list[tuple[KernelRef, HardwareFeatureReport]], runs:
         if r.kind != "best":
             continue
         info = runs.get(r.run, {})
-        rows.append({"run": r.run, "task": r.task, "label": r.label, "partial": info.get("partial", True), "confirmed_speedup": info.get("confirmed_speedup"), "best_speedup": info.get("best_speedup"),
+        rows.append({"run": r.run, "task": r.task, "label": r.label, "partial": info.get("partial", True),
+                     "published_speedup": info.get("published_speedup"), "publication": info.get("publication"),
+                     "publication_reason": info.get("publication_reason"), "search_best_speedup": info.get("search_best_speedup"),
                      "kid": r.kid, "summary": h.summary, "missing": h.missing, "perf": h.performance_test, "measured": {k: (h.measured or {}).get(k) for k in ("candidate_us", "speedup", "achieved_tflops", "compute_fraction", "achieved_gbps", "bandwidth_fraction", "max_total_threads", "static_threadgroup_bytes")},
                      "features": {fid: f["verdict"] for fid, f in h.features.items() if f["present"] or f["expectation"] in ("required", "recommended")}, "present": sorted(fid for fid, f in h.features.items() if f["present"])})
     return rows
@@ -382,7 +431,8 @@ def discovery_table(items: list[tuple[KernelRef, HardwareFeatureReport]], runs: 
     """
     by_run: dict[str, list[tuple[KernelRef, HardwareFeatureReport]]] = {}
     for r, h in items:
-        if r.kind in ("candidate", "best") and base_task(r.task) in tasks and r.idx is not None:
+        if (r.kind in ("candidate", "best") and base_task(r.task) in tasks and r.idx is not None
+                and r.meta.get("report_state") == "current"):
             by_run.setdefault(r.run, []).append((r, h))
     out = {f: {"runs": 0, "first": 0, "best": 0, "gained": 0, "lost": 0} for f in feature_ids}
     for run, lst in by_run.items():
@@ -534,9 +584,9 @@ def render_report(items: list[tuple[KernelRef, HardwareFeatureReport]], runs: di
     L += ["## 2. Best kernel of every run: which hardware features it uses", "",
           "`best` = the run's winning candidate (confirmed result when the run finished, best-so-far when `partial`). One line per run; the summary string is what the dashboard would show. "
           "`missing` lists expected features (required first) that the source does not contain.", "",
-          "| run | task | best | partial | confirmed speedup | summary | missing |", "| --- | --- | --- | --- | ---: | --- | --- |"]
+          "| run | task | best | partial | published | search best | summary | missing |", "| --- | --- | --- | --- | ---: | ---: | --- | --- |"]
     for b in sorted(best, key=lambda b: (b["task"] or "", b["run"])):
-        L.append(f"| {b['run']} | {b['task']} | {b['label']} | {'yes' if b['partial'] else 'no'} | {fmt(b.get('confirmed_speedup'), 3)} | {cell(b['summary'])} | {', '.join(x.replace('_', ' ') for x in b['missing']) or '-'} |")
+        L.append(f"| {b['run']} | {b['task']} | {b['label']} | {'yes' if b['partial'] else 'no'} | {fmt(b.get('published_speedup'), 3)} | {fmt(b.get('search_best_speedup'), 3)} | {cell(b['summary'])} | {', '.join(x.replace('_', ' ') for x in b['missing']) or '-'} |")
     L += [""]
 
     # --- effectiveness ----------------------------------------------------------------------------------------------------------------

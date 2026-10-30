@@ -33,6 +33,7 @@ instead of silently reusing an old measurement baseline.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
@@ -48,21 +49,84 @@ from .contracts import canonical_digest_document
 #: failure, and is therefore not mapped into this classification.
 BUILD_ERROR_CLASSES = contracts.BUILD_ERROR_CLASSES
 
+_HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+
 
 class BuildError(ValueError):
-    """A typed build outcome that is not a successful artifact set."""
+    """A typed build outcome that is not a successful artifact set.
 
-    def __init__(self, error_class: str, detail: str, *, log: bytes = b"", duration_ms: int = 0) -> None:
+    ``detail`` is the builder-facing classification message (it may name the
+    compiler exception).  ``report_detail`` is the text the *evaluator report*
+    shows when a compile failure is mapped to ``compile_error``: the legacy
+    report carries only the rewritten compiler diagnostic, so changing that text
+    would be a report-schema change rather than a build abstraction.
+    """
+
+    def __init__(
+        self, error_class: str, detail: str, *, log: bytes = b"",
+        duration_ms: int = 0, report_detail: str | None = None,
+        provenance: "BuildProvenance | None" = None,
+        assembled_sha256: str | None = None,
+    ) -> None:
         if error_class not in BUILD_ERROR_CLASSES:
             raise ValueError(f"unknown build error class {error_class!r}")
         super().__init__(detail)
         self.error_class = error_class
         self.detail = detail
+        self.report_detail = detail if report_detail is None else str(report_detail)
         self.log = bytes(log)
         self.duration_ms = int(duration_ms)
+        # R3 §5.1: a build failure carries the *typed* identity it already holds, so R4 can
+        # project a failure without parsing exception text and without probing inside ``except``.
+        # ``provenance`` is the same BuildProvenance type the success path emits, with
+        # ``artifact_set_digest=None`` (there is no artifact set); ``assembled_sha256`` is
+        # non-null once assembly happened and null before it (e.g. non-UTF-8 bytes at the API).
+        self.provenance = provenance
+        self.assembled_sha256 = assembled_sha256
 
     def __str__(self) -> str:  # pragma: no cover - formatting only
         return f"{self.error_class}: {self.detail}"
+
+
+def require_build_error_projection(error: BuildError, *, require_assembled: bool = False) -> None:
+    """@brief 校验失败构建带齐 §5.1 的投影附件（只为 ``compile`` 类要求）。
+
+    A candidate compile failure must carry the typed provenance of the build that ran (with
+    ``artifact_set_digest=None``) and the assembled digest, so the failure can be projected
+    without re-deriving anything.  ``toolchain_profile``/infrastructure failures are not the
+    candidate's and are not required to carry it; ``source_only`` builders never compile.
+
+    ``assembled_sha256=None`` is legal **only** for a build that failed before assembly — the
+    builder API receiving non-UTF-8 bytes.  A caller that knows assembly cannot have been skipped
+    (the evaluator starts from ``str`` and encodes it itself) passes ``require_assembled=True``, so
+    a null digest there is not projected as a candidate failure.
+
+    @param error 构建失败。
+    @param require_assembled 是否要求 ``assembled_sha256`` 非空（候选报告映射路径）。
+    @raises ValueError 附件缺失或形状非法。
+    """
+    if error.error_class != "compile":
+        return
+    provenance = error.provenance
+    if provenance is None:
+        raise ValueError(
+            f"a compile BuildError must carry the typed BuildProvenance: {error.detail[:120]}"
+        )
+    if provenance.artifact_set_digest is not None:
+        raise ValueError("a failed build has no artifact set: provenance.artifact_set_digest must be None")
+    if not str(provenance.source_sha256 or ""):
+        raise ValueError("a failed build's provenance must carry the source digest")
+    if error.assembled_sha256 is None:
+        if require_assembled:
+            raise ValueError(
+                "this build path always assembles before compiling, so the failure must carry "
+                "assembled_sha256 (a null digest only describes a pre-assembly refusal at the "
+                "builder API)"
+            )
+        return
+    digest = str(error.assembled_sha256)
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise ValueError(f"assembled_sha256 must be a hex sha256 or None, got {digest!r}")
 
 
 @dataclass(frozen=True)
@@ -82,10 +146,16 @@ class BuildProfile:
     toolchain_version: str
     sdk_version: str
     compile_profile: Mapping[str, Any] = field(default_factory=dict)
+    #: What kind of build/evidence this registered builder produces (§6.2).  It is
+    #: *not* a wire field: the provenance document is built explicitly below, and a
+    #: reader without the builder registry never re-derives it from ``builder_id``.
+    build_kind: str = "native"
 
     def __post_init__(self) -> None:
         if self.build_host not in set(contracts.BUILD_HOSTS.values()):
             raise ValueError("build profile build_host must be control_host or evaluator")
+        if self.build_kind not in ("native", "simulator", "source_only"):
+            raise ValueError("build profile build_kind must be native, simulator or source_only")
         # Validate the identity through the same contract later used on the wire.
         contracts.build_provenance_document(self.provenance_document(
             source_sha256="0" * 64, artifact_set_digest=None,
@@ -465,8 +535,16 @@ class BuildOutcome:
     provenance: BuildProvenance
     evidence: BuildEvidence
     payloads: Mapping[str, bytes] = field(default_factory=dict)
+    #: The digest of the bytes that actually entered the compiler, when the builder has a
+    #: separate assembled representation (Metal prepends the contract header).  A
+    #: direct-source builder records its compilation unit (the source bundle); a builder
+    #: with no assembled representation at all leaves it ``None`` (§6.2).
+    assembled_sha256: str | None = None
 
     def __post_init__(self) -> None:
+        if self.assembled_sha256 is not None:
+            if not isinstance(self.assembled_sha256, str) or not _HEX64.match(self.assembled_sha256):
+                raise ValueError("assembled_sha256 must be a hex sha256 or None")
         if not isinstance(self.bundle, ArtifactBundle):
             raise ValueError("a build outcome requires a typed ArtifactBundle")
         if not isinstance(self.provenance, BuildProvenance):
@@ -476,6 +554,17 @@ class BuildOutcome:
         if self.evidence.native != self.bundle.native:
             raise ValueError(
                 "the build evidence native executable is not the artifact set's executable"
+            )
+        if self.evidence.native is not None and (
+            self.evidence.native.handle is None
+            or self.bundle.native.handle is None
+        ):
+            # A successful native outcome is a *live* executable.  Two records
+            # that both omit the handle would compare equal only because the
+            # handle is excluded from equality and from every digest, so they
+            # must never pass as one build.
+            raise ValueError(
+                "a native build outcome requires a non-empty live executable handle"
             )
         if self.evidence.native is not None and (
             self.evidence.native.handle is not self.bundle.native.handle
@@ -516,6 +605,24 @@ class BuildOutcome:
     @property
     def artifact_set_digest(self) -> str:
         return self.bundle.artifact_set_digest
+
+    def executable_handles(self) -> tuple[Any, ...]:
+        """The backend-native executable handles of a successful local build.
+
+        The neutral model cannot name a Metal ``CompiledKernel`` or a multi-stage
+        pipeline, so a builder may put one handle or a handle set (an object with
+        a ``kernels`` attribute) in ``NativeExecutable.handle``.  This helper is
+        the one place the local evaluator unwraps it; the handle itself never
+        enters a document, a digest or a remote request.
+        """
+
+        native = self.bundle.native
+        if native is None or native.handle is None:
+            return ()
+        nested = getattr(native.handle, "kernels", None)
+        if nested is not None:
+            return tuple(nested)
+        return (native.handle,)
 
     def payload(self) -> bytes:
         """The exact persisted bytes of the portable artifact set container.

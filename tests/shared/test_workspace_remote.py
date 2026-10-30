@@ -344,13 +344,18 @@ def test_the_outer_loop_evaluates_the_remote_submission_through_the_executor(tmp
 
 def _report(request):
     from tcenv.evaluate import EvalReport
+    from tests.support.orchestrator import stamp_report
 
-    return EvalReport(
+    report = EvalReport(
         task=request.task, dtype=request.dtype, size=request.size, mode=request.mode,
         seed=1, stage="done", status="ok", target_id=request.target_id,
         speedup=1.2, speedups={"mlx": 1.2}, candidate_us=100.0 / 1.2, baseline_us={"mlx": 100.0},
         benchmark={"candidate": {"median_us": 100.0 / 1.2, "cv": 0.01}, "baselines": {"mlx": {"median_us": 100.0}}, "best_baseline": "mlx"},
     )
+    # A completed outbox row retains a whole schema-4 report: ``status="ok"`` requires the build
+    # record (and the top-level evaluation identity) the read boundary now validates.
+    stamp_report(report, request.task, request.dtype, request.size, request.source)
+    return report
 
 
 # ------------------------------------------------------------------------- typed failures

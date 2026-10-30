@@ -44,7 +44,7 @@ def native_language_version(builder) -> str:
     return builder.probe().profile.toolchain_version
 
 
-def _native(entry, *, kernel: str = "relu_kernel", language: str = "3.1") -> NativeExecutable:
+def _native(entry, *, kernel: str = "relu_kernel", language: str = "3.1", handle=None) -> NativeExecutable:
     return NativeExecutable(
         backend_id="metal",
         kind="compute-pipeline",
@@ -54,6 +54,7 @@ def _native(entry, *, kernel: str = "relu_kernel", language: str = "3.1") -> Nat
             "backend": "metal", "kernel_name": kernel, "language_version": language,
             "bindings": [{"name": "out", "index": 0, "access": "write"}],
         },
+        handle=handle,
     )
 
 
@@ -61,7 +62,7 @@ def _native(entry, *, kernel: str = "relu_kernel", language: str = "3.1") -> Nat
 def test_a_backend_native_artifact_is_local_only_and_its_identity_is_canonical():
     source = SourceBundle(b"kernel void relu_kernel() {}\n")
     entry = source.entry()
-    native = _native(entry)
+    native = _native(entry, handle=object())
     bundle = ArtifactBundle(entries=(entry,), native=native)
 
     # The artifact-set digest still describes only the manifest/bytes; the
@@ -171,11 +172,17 @@ def test_only_the_metal_compile_error_is_classified_as_a_compile_failure():
         pass
 
     class StubContext:
+        def __init__(self, failure):
+            self.failure = failure
+
         def info(self):
             return {
                 "name": "stub", "gpu_family": "Apple9", "language_version": "4.0",
                 "unified_memory": True,
             }
+
+        def compile(self, source, kernel_name, *, math="fast"):
+            raise self.failure
 
     class StubBackend:
         version = "stub-1"
@@ -187,13 +194,10 @@ def test_only_the_metal_compile_error_is_classified_as_a_compile_failure():
             return source, 0
 
         def context(self):
-            return StubContext()
+            return StubContext(self.failure)
 
         def compile_error(self):
             return MetalCompileLike
-
-        def compile(self, context, source, contract, *, math="fast"):
-            raise self.failure
 
     contract = {"kernel_name": "relu_kernel"}
     # A compiler rejection is the only exception classified as a candidate
@@ -316,8 +320,9 @@ def test_the_builder_reports_the_same_pipeline_shape_as_the_legacy_compile():
     source = task.naive_msl
     assembled, _header = contract.assemble(source)
     backend = MetalBackend()
-    # The legacy path the evaluator uses, unchanged.
-    legacy = backend.compile(ctx, assembled, contract)
+    # The runtime primitive itself: the builder calls exactly this, so the test
+    # can compare the builder's output with the pre-refactor compiler result.
+    legacy = ctx.compile(assembled, contract.kernel_name, math="fast")
     built = MetalSourceBuilder(backend=backend, kernel_contract=contract).build(
         SourceBundle(source.encode("utf-8")), task_contract=contract,
     )
@@ -420,6 +425,9 @@ def test_a_compile_failure_carries_the_real_diagnostic_and_duration():
                 "unified_memory": True,
             }
 
+        def compile(self, source, kernel_name, *, math="fast"):
+            raise StubCompileError("program_source:9:1: error: unknown type name 'tx_bad'")
+
     class StubBackend:
         version = "stub-1"
 
@@ -434,9 +442,6 @@ def test_a_compile_failure_carries_the_real_diagnostic_and_duration():
 
         def rewrite_compiler_lines(self, contract, message, header_lines):
             return f"rewritten: {message}"
-
-        def compile(self, context, source, contract, *, math="fast"):
-            raise StubCompileError("program_source:9:1: error: unknown type name 'tx_bad'")
 
     builder = MetalSourceBuilder(backend=StubBackend())
     with pytest.raises(BuildError) as error:
@@ -726,6 +731,24 @@ def test_one_build_outcome_must_name_one_live_executable():
     with pytest.raises(ValueError, match="live executable"):
         BuildOutcome(
             bundle=bundle, provenance=provenance, evidence=evidence_for(evidence_native),
+        )
+    # A success that omits the live handle on *both* records is still not a
+    # build: equality ignores the handle, so both-None would otherwise pass as
+    # two records of one executable.
+    missing = native(None)
+    missing_bundle = ArtifactBundle(entries=(entry,), native=missing)
+    missing_provenance = BuildProvenance(
+        profile=_profile(), source_sha256=source.sha256,
+        artifact_set_digest=missing_bundle.artifact_set_digest,
+    )
+    with pytest.raises(ValueError, match="non-empty live executable handle"):
+        BuildOutcome(
+            bundle=missing_bundle, provenance=missing_provenance,
+            evidence=BuildEvidence(
+                mode="prebuilt", status="ok", provenance=missing_provenance,
+                artifacts=(BuildArtifact.from_entry(entry),), native=missing,
+                placement="control_host",
+            ),
         )
     # The same live handle (even through another equal wrapper) is coherent.
     coherent = BuildOutcome(

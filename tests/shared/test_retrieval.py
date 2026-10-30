@@ -38,7 +38,10 @@ def _candidate(runs: Path, name: str, label: str, status: str) -> None:
     folder = runs / name / "candidates" / f"000_{label}"
     folder.mkdir(parents=True)
     (folder / "kernel.metal").write_text("kernel void k() {}\n")
-    (folder / "report.json").write_text(json.dumps({"status": status, "stage": "abi", "speedup": None}))
+    # A current candidate report: only schema 4 is evidence for a failure row.
+    (folder / "report.json").write_text(json.dumps({
+        "schema_version": 4, "status": status, "stage": "abi", "speedup": None,
+    }))
 
 
 def test_query_reads_the_index_and_prints_one_row_per_line(tmp_path, monkeypatch, capsys):

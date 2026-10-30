@@ -652,7 +652,10 @@ def make_run(root: Path, name: str, *, finished: bool) -> Path:
         d = run / "candidates" / f"{i:03d}_{label}"
         d.mkdir(parents=True)
         (d / "kernel.metal").write_text(src)
-        (d / "report.json").write_text(json.dumps({"status": status, "speedup": sp, "candidate_us": 100.0 if sp else None}))
+        # A current candidate report: only schema 4 is evidence for the measured verdict.
+        (d / "report.json").write_text(json.dumps({
+            "schema_version": 4, "status": status, "speedup": sp, "candidate_us": 100.0 if sp else None,
+        }))
     trace = [{"idx": 0, "label": "init", "status": "ok", "speedup": 0.5, "improved": True}, {"idx": 1, "label": "r1.p0", "status": "ok", "speedup": 0.9, "improved": True},
              {"idx": 2, "label": "r1.p1", "status": "incorrect", "speedup": None, "improved": False}]
     base = {"task": "gemm", "dtype": "fp16", "size": "paper", "trace": trace, "best_label": "r1.p0", "best_speedup": 0.9}
@@ -718,3 +721,147 @@ def test_cli_single_source(tmp_path, capsys):
     assert H.main(["--source", str(p), "--no-compile"]) == 0
     assert "vector: 16B ld / 16B st" in capsys.readouterr().out
     assert H.main(["--ablate"]) == 0
+
+
+def test_an_old_candidate_report_forms_no_measured_evidence(tmp_path):
+    """旧候选报告（schema 3）不形成 MEASURED：分析结果标 ``old_format``、无实测数字。
+
+    The reviewer's repro: ``measured_from_report({'schema_version': 3, 'status': 'ok', 'speedup': 9.9,
+    'candidate_us': 1.0})`` returned a measured dict with ``speedup=9.9``.  A schema-3 report has no
+    build/evaluation identity, so it cannot support a measured verdict or an experience conclusion.
+    """
+    from taic.hwfeatures import measured_from_report
+
+    old = {"schema_version": 3, "status": "ok", "speedup": 9.9, "candidate_us": 1.0}
+    assert measured_from_report(old) is None
+    current = {"schema_version": 4, **{k: v for k, v in old.items() if k != "schema_version"}}
+    assert measured_from_report(current)["speedup"] == pytest.approx(9.9)
+    # A hand-written naive summary has no schema at all: it is a *different* input path, not a
+    # looser candidate gate.
+    assert measured_from_report({"status": "ok", "candidate_us": 1.0}, source="naive")["candidate_us"] == 1.0
+    assert measured_from_report({"status": "ok", "candidate_us": 1.0}) is None
+
+    run = tmp_path / "runs" / "old_gemm"
+    folder = run / "candidates" / "000_r1.p0"
+    folder.mkdir(parents=True)
+    (folder / "kernel.metal").write_text(MATRIX)
+    (folder / "report.json").write_text(json.dumps(old))
+    (run / "result.json").write_text(json.dumps({
+        "task": "gemm", "dtype": "fp16", "size": "paper", "best_label": "r1.p0",
+    }))
+    info, refs = H.load_run(run, tmp_path / "runs")
+    assert refs[0].meta["report_state"] == "old_format"
+    rows = H.analyze_refs(refs, naive={}, calib=None, runs_root=tmp_path / "runs",
+                          compile_evidence=False, cache_dir=None, jobs=1, progress=False)
+    _ref, report = rows[0]
+    assert report.measured is None, "旧报告不得形成 MEASURED 数字"
+    assert report.extra["report_state"] == "old_format"
+    assert report.performance_test["result"] == "unmeasured"
+
+
+def test_an_old_report_cannot_reach_the_winrate_or_discovery_tables(tmp_path):
+    """非 current 候选不得通过「重建 trace」或「既有 trace」进入 correct/win/discovery 统计。
+
+    The reviewer's repro: a schema-3 candidate with ``speedup=9.9`` produced
+    ``measured=None`` but still ``n=1, correct=1, wins=1, median_speedup_ok=9.9`` in the win-rate
+    table, because ``load_run`` rebuilt a trace from the old report and the tables only looked at
+    the trace.  Both routes (reconstructed and recorded) must be neutralised.
+    """
+    from experiments.hw_features import KernelRef, analyze_refs, discovery_table, winrate_table
+
+    def write(name: str, report: dict | None, result: dict | None) -> Path:
+        run = tmp_path / "runs" / name
+        folder = run / "candidates" / "000_r1.p0"
+        folder.mkdir(parents=True)
+        (folder / "kernel.metal").write_text(MATRIX)
+        if report is not None:
+            (folder / "report.json").write_text(json.dumps(report))
+        (run / "result.json").write_text(json.dumps({
+            "task": "gemm", "dtype": "fp16", "size": "paper", "best_label": "r1.p0",
+            "best_speedup": 9.9, "confirmed_speedup": 9.9, "confirmed_status": "ok", **(result or {}),
+        }))
+        return run
+
+    old_report = {"schema_version": 3, "status": "ok", "speedup": 9.9}
+    # 1) no trace on disk → the old report must not be rebuilt into one
+    rebuilt = write("old_rebuilt", old_report, None)
+    _info, refs = H.load_run(rebuilt, tmp_path / "runs")
+    assert refs[0].trace is None and refs[0].report is None
+    assert refs[0].meta["report_state"] == "old_format"
+
+    # 2) a recorded trace must not make the old candidate count either
+    recorded = write("old_recorded", old_report, {"trace": [
+        {"idx": 0, "label": "r1.p0", "status": "ok", "speedup": 9.9, "improved": True},
+    ]})
+    _info2, refs2 = H.load_run(recorded, tmp_path / "runs")
+    assert refs2[0].trace is None, "旧报告的 trace 不作为证据"
+
+    items = analyze_refs(refs + refs2, naive={}, calib=None, runs_root=tmp_path / "runs",
+                         compile_evidence=False, cache_dir=None, jobs=1, progress=False)
+    table = winrate_table(items, ["matrix_unit"])
+    for side in ("with", "without"):
+        assert table["matrix_unit"][side]["n"] == 0, table
+        assert table["matrix_unit"][side]["median_speedup_ok"] is None
+    assert discovery_table(items, {}, ["matrix_unit"], {"gemm"})["matrix_unit"]["runs"] == 0
+
+    # 3) A current report still counts: the gate is about the format, not about hiding data.
+    current = write("current", {"schema_version": 4, "status": "ok", "speedup": 1.1}, None)
+    _info3, refs3 = H.load_run(current, tmp_path / "runs")
+    assert refs3[0].trace and refs3[0].trace["reconstructed"] is True
+    items3 = analyze_refs(refs3, naive={}, calib=None, runs_root=tmp_path / "runs",
+                          compile_evidence=False, cache_dir=None, jobs=1, progress=False)
+    assert winrate_table(items3, ["matrix_unit"])["matrix_unit"]["with"]["n"] == 1
+
+
+def test_the_confirmed_column_is_the_publication_value_not_the_result_field(tmp_path):
+    """`confirmed_speedup` 只能来自共同发布谓词；result 里的伪装值不得显示成 confirmed。
+
+    The reviewer's repro: ``load_run`` copied ``result.confirmed_speedup`` and ``render_report``
+    printed it as “confirmed speedup” with no gate at all.  A run whose confirmation report is old
+    format (or whose kernel/report binding does not hold) publishes nothing, even when
+    ``result.confirmed_status == "ok"`` and ``confirmed_speedup == 9.9``.
+    """
+    from experiments.hw_features import best_kernel_rows
+
+    run = tmp_path / "runs" / "fake"
+    folder = run / "candidates" / "000_r1.p0"
+    folder.mkdir(parents=True)
+    (folder / "kernel.metal").write_text(MATRIX)
+    (folder / "report.json").write_text(json.dumps({"schema_version": 4, "status": "ok", "speedup": 1.1}))
+    (run / "best.metal").write_text(MATRIX)
+    (run / "test.metal").write_text(MATRIX)
+    # A schema-3 confirmation report plus a result that claims success.
+    (run / "confirm_report.json").write_text(json.dumps({"status": "ok", "speedup": 9.9}))
+    (run / "result.json").write_text(json.dumps({
+        "task": "gemm", "dtype": "fp16", "size": "paper", "best_label": "r1.p0",
+        "best_speedup": 1.1, "confirmed_speedup": 9.9, "confirmed_status": "ok",
+        "confirmation_source_sha256": "a" * 64, "confirm_winner_label": "r1.p0",
+    }))
+    info, refs = H.load_run(run, tmp_path / "runs")
+    assert info["published_speedup"] is None
+    assert info["publication"] != "confirmed"
+    assert info["search_best_speedup"] == pytest.approx(1.1)
+    assert info["publication_reason"] == "not_confirmed"
+    rows = H.analyze_refs(refs, naive={}, calib=None, runs_root=tmp_path / "runs",
+                          compile_evidence=False, cache_dir=None, jobs=1, progress=False)
+    best = best_kernel_rows(rows, {info["run"]: info})
+    assert best and best[0]["published_speedup"] is None
+    assert best[0]["search_best_speedup"] == pytest.approx(1.1)
+    assert "confirmed_speedup" not in best[0]
+
+
+def test_reference_summaries_keep_their_own_measured_path(tmp_path):
+    """参考 GEMM 的实测行不是候选报告：它走 `source="reference"`，不得被 schema-4 门误伤。"""
+    from experiments.hw_features import KernelRef, analyze_refs
+
+    summary = {"status": "ok", "speedup": 1.4, "candidate_us": 100.0,
+               "roofline": {"achieved_tflops": 12.0}}
+    ref = KernelRef(kid="reference/gemm", run="reference", label="gemm", kind="reference",
+                    source=MATRIX, task="gemm", dtype="fp16", report=summary)
+    refs = [ref]
+    items = analyze_refs(refs, naive={}, calib=None, runs_root=tmp_path,
+                         compile_evidence=False, cache_dir=None, jobs=1, progress=False)
+    _r, report = items[0]
+    assert report.measured is not None, "参考摘要没有 schema，但它是独立输入路径"
+    assert report.measured["candidate_us"] == pytest.approx(100.0)
+    assert report.extra["report_state"] == "reference"

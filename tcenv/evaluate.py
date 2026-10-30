@@ -33,7 +33,10 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from .schema import PROTOCOL_VERSION, REPORT_SCHEMA_VERSION, REQUEST_SCHEMA_VERSION, SchemaError, migrate_report, write_json_atomic
+from .schema import (
+    PROTOCOL_VERSION, REPORT_SCHEMA_VERSION, REQUEST_SCHEMA_VERSION, SchemaError,
+    document_version, read_report_json, write_json_atomic,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -100,6 +103,14 @@ class EvalReport:
     baseline_us: dict = field(default_factory=dict)
     compiler_baseline: dict = field(default_factory=dict)  # optional triton-msl comparison (see tcenv.backends.metal.triton_baseline)
     verification: dict = field(default_factory=dict)  # formal equivalence check (tcenv.verify); always 'unsupported' for now
+    #: The one build record (§6.2): ``None`` or a closed ``partial``/``full`` object.
+    #: Projected from ``BuildOutcome``/``BuildError`` in the process that holds them.
+    build: dict | None = None
+    #: Top-level evaluation identity (§7.2).  Required keys, hex or ``null``; never part of
+    #: ``build`` and never folded into ``artifact_set_digest``.
+    evaluation_fingerprint: str | None = None
+    baseline_implementation_digest: str | None = None
+    baseline_environment_digest: str | None = None
     protocol_version: str = ""
     target_id: str = ""
     backend: str = ""
@@ -132,17 +143,55 @@ class EvalReport:
         d["schema_version"] = REPORT_SCHEMA_VERSION
         return d
 
-    # 读回子进程写的 JSON。没有 schema_version 的旧文件按版本 0 迁移。更新的版本或本版本不认识的字段直接拒绝，不再丢掉后照常构造。
+    # 读回子进程写的 JSON。只接受 schema 4；旧版本（含没有 schema_version 的版本 0）一律拒绝，不迁移、
+    # 不补默认值。重复键必须在读取层先拒绝：dict 已经不记得某个键出现过两次。
     @staticmethod
     def from_json(d: dict) -> "EvalReport":
-        """@brief 从 JSON 字典构造报告，必要时做版本迁移。
+        """@brief 从 JSON 字典构造报告（只读 schema 4，闭集校验）。
 
-        @param d 已反序列化的报告字典。
+        Only schema 4 is read.  There is no migration and no default status: a v0–v3 report,
+        a missing/duplicate ``build``, a top-level key this version does not know (including the
+        retired ``simulated``) or a status/shape combination outside the closed table is refused.
+
+        @param d 已由拒绝重复键的 loader 解析出的报告字典。
         @return 构造出的 ``EvalReport``。
-        @raises SchemaError 版本过新、含未知字段或缺少必要字段时抛出。
+        @raises SchemaError 版本、字段闭集、状态或 ``build`` 非法时抛出。
         """
+        from .build_projection import validate_for_status
+        from .remote.job_types import CANDIDATE_STATUSES
+
+        if not isinstance(d, dict):
+            raise SchemaError("report is not a JSON object")
+        version = document_version(d, max_version=REPORT_SCHEMA_VERSION, what="report")
+        if version != REPORT_SCHEMA_VERSION:
+            raise SchemaError(
+                f"report schema_version {version} is not the schema this process reads "
+                f"({REPORT_SCHEMA_VERSION}); old reports are not migrated"
+            )
         known = {f.name for f in fields(EvalReport)}
-        return EvalReport(**migrate_report(d, known))
+        unknown = set(d) - known - {"schema_version", "eligible"}
+        if unknown:
+            raise SchemaError(f"report has fields this process does not know ({', '.join(sorted(unknown))})")
+        missing = known - set(d)
+        if missing:
+            raise SchemaError(f"report is missing {sorted(missing)}")
+        status = d["status"]
+        if status not in CANDIDATE_STATUSES:
+            raise SchemaError(f"report status {status!r} is not a persisted candidate status")
+        if "eligible" in d and (
+            not isinstance(d["eligible"], bool) or d["eligible"] != (status == STATUS_OK)
+        ):
+            raise SchemaError("report eligible must be a boolean equal to status == 'ok'")
+        for name in ("evaluation_fingerprint", "baseline_implementation_digest", "baseline_environment_digest"):
+            value = d[name]
+            if value is not None and (
+                not isinstance(value, str) or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise SchemaError(f"report {name} must be 64 lowercase hex characters or null")
+        body = {key: value for key, value in d.items() if key not in ("schema_version", "eligible")}
+        body["build"] = validate_for_status(d["build"], status=status)
+        return EvalReport(**body)
 
 
 # ---------------------------------------------------------------------------
@@ -345,12 +394,23 @@ def _evaluate_in_process(
 
     backend = load_backend(profile.backend)
     ctx = backend.context()
+    # Composition root: build and inject any internal kernel this backend's runtime needs
+    # (Metal's zero-fill) through the registered factory, before the runtime is used.
+    prepare = getattr(backend, "prepare_context", None)
+    if callable(prepare):
+        prepare(ctx)
     try:
         device = backend.probe(ctx, profile)
     except TargetError as exc:
         return reject_device(str(exc))
     dev_info = device.raw
+    # §7.2: the three top-level evaluation identities are computed here, in the measuring
+    # process.  The parent computes the same functions for the cache key/expected; a null
+    # environment component makes the evaluation fingerprint null (unknown, never equality).
     rep.backend = profile.backend
+    rep.evaluation_fingerprint = _evaluation_fingerprint(task, profile.backend, target_id)
+    rep.baseline_implementation_digest = baseline_implementation_digest(task, profile.backend)
+    rep.baseline_environment_digest = baseline_environment_digest(task, profile.backend, target_id)
     rep.backend_version = profile.backend_version
     rep.device_name = str(dev_info.get("name") or "")
     rep.gpu_family = str(dev_info.get("gpu_family") or "")
@@ -411,18 +471,79 @@ def _evaluate_in_process(
     rep.stage = "compile"
     _enter("compile")
     _note_stage(stage="compile", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
-    full_src, header_lines = backend.assemble(contract, kernel_source)
+    # One build path: the evaluator asks the backend for its registered
+    # ArtifactBuilder and calls the neutral build entry point.  Metal's builder
+    # assembles the contract header and calls ``MetalContext.compile`` itself;
+    # no production code here (or elsewhere) calls the backend/runtime compile
+    # primitive directly.  The candidate bytes are the SOURCE artifact identity,
+    # so ``candidate_sha256`` keeps describing exactly the text the model wrote.
+    from .remote.artifact_builder import BuildError, SourceBundle
+
+    kernel_names = (
+        None if spec is None
+        else list(dict.fromkeys(stage.kernel for stage in spec.stages))
+    )
+    builder = backend.artifact_builder(
+        kernel_contract=contract,
+        specialization=task.specialization,
+        math=("fast" if spec is None else spec.math),
+        kernel_names=kernel_names,
+    )
+    # The builder registers what kind of build it makes; the projector takes it from there, never
+    # from the request or the model.  The lowering identity comes from the same Specialization the
+    # builder was constructed with (§6.2/§6.3).
+    from .build_projection import project_full, project_partial
+
+    build_kind = getattr(builder, "build_kind", None)
+    identity = getattr(builder, "lowering_identity", None)
+    if build_kind not in ("native", "simulator", "source_only"):
+        raise BuildError("toolchain_profile", "the builder does not declare a registered build_kind")
     try:
-        if spec is None:
-            kernels = [backend.compile(ctx, full_src, contract)]
-        else:
-            names = list(dict.fromkeys(stage.kernel for stage in spec.stages))
-            kernels = backend.compile_all(ctx, full_src, contract, names=names, math=spec.math)
-    except backend.compile_error() as e:
-        # 编译器诊断的是「契约头 + 候选正文」。行号减掉文件头，模型才对得上自己写的那几行。
-        msg = backend.rewrite_compiler_lines(contract, str(e), header_lines)
-        rep.compile = {"ok": False, "errors": msg}
+        outcome = builder.build(
+            SourceBundle(kernel_source.encode("utf-8")), task_contract=contract,
+        )
+    except BuildError as e:
+        if e.error_class == "compile":
+            # §5.1: only a *projectable* compile failure is the candidate's.  A builder that did
+            # not carry the typed provenance/assembled digest is a build implementation or
+            # infrastructure fault; blaming the candidate would fabricate a partial projection.
+            from .remote.artifact_builder import require_build_error_projection
+
+            try:
+                # ``require_assembled=True``: this path encodes a Python ``str`` itself, so a
+                # build that reached the compiler always has assembled bytes; a null digest here
+                # is a builder defect, not a candidate failure (§5.1).
+                require_build_error_projection(e, require_assembled=True)
+            except ValueError as exc:
+                raise BuildError(
+                    "toolchain_profile",
+                    f"the builder's compile failure is not projectable: {exc}",
+                ) from e
+        if e.error_class == "deadline":
+            # A build that ran out of time is a timeout, not a crash and not a candidate compile
+            # error (plan §5.3-3).  Local callers pass ``deadline_monotonic=None``, so this only
+            # fires for a caller that asked for a deadline; the mapping must exist *before* one
+            # does, otherwise the worker's exception handler would record it as ``crash``.
+            return finish("timeout", f"the build did not finish before the deadline: {e.detail}"[:400])
+        if e.error_class != "compile":
+            # Toolchain/profile failures are environment failures; the legacy
+            # evaluator let those propagate rather than blaming the candidate.
+            raise
+        # The builder already rewrote compiler line numbers against the contract
+        # header.  The report keeps the legacy text shape: the rewritten
+        # diagnostic only, not the exception class prefix.
+        rep.compile = {"ok": False, "errors": e.report_detail}
+        # Only the attachments above are projected; the diagnostic text stays in ``compile``.
+        # ``project_partial`` re-checks the attachments and the shape, so a partial can never
+        # claim an artifact set, evidence or a native executable.
+        rep.build = project_partial(e, build_kind=build_kind, identity=identity)
         return finish("compile_error", "Metal compiler rejected the kernel")
+    # The one successful build record: projected from the neutral outcome while this process
+    # still holds it.  A later abi/correctness/runtime failure keeps it (the build really ran).
+    rep.build = project_full(outcome, build_kind=build_kind, identity=identity)
+    kernels = list(outcome.executable_handles())
+    if not kernels:
+        raise RuntimeError("the backend builder returned no executable handle")
     kernel = kernels[0]
     rep.compile = {
         "ok": True,
@@ -946,7 +1067,7 @@ def _run_worker(
         stderr = err_path.read_text(errors="replace")
         if out_path.exists():
             try:
-                rep = EvalReport.from_json(json.loads(out_path.read_text()))
+                rep = EvalReport.from_json(read_report_json(out_path.read_text(encoding="utf-8"), what="worker report"))
             except SchemaError as e:
                 # 比这份代码新、或不是对象的报告留在返回值里给人看。再抛出去会连临时目录一起删掉，续跑会当成这次评测还没做过。
                 base.status = "crash"
@@ -978,7 +1099,7 @@ def _run_worker(
 
 
 
-EVAL_CACHE_SCHEMA = 2
+EVAL_CACHE_SCHEMA = 3
 
 
 def _eval_cache_dir() -> Path:
@@ -989,58 +1110,470 @@ def _eval_cache_dir() -> Path:
     return Path(os.environ.get("TCENV_EVAL_CACHE_DIR", Path.home() / ".cache" / "ai_lowerling" / "evals"))
 
 
-def _callable_identity(fn) -> str:
-    """@brief 为缓存键提取可执行函数的源码、闭包和默认值身份。"""
-    if fn is None:
-        return ""
-    import functools
-    import inspect
+def _registered_identity(entry, role: str) -> dict:
+    """@brief 取一个角色的**登记**实现身份（缺登记或字段非法立即失败）。
 
-    if isinstance(fn, functools.partial):
-        return repr({"partial": _callable_identity(fn.func), "args": fn.args, "keywords": fn.keywords})
-    body = {
-        "module": getattr(fn, "__module__", ""),
-        "name": getattr(fn, "__qualname__", getattr(fn, "__name__", repr(fn))),
-        "defaults": repr(getattr(fn, "__defaults__", None)),
-        "kwdefaults": repr(getattr(fn, "__kwdefaults__", None)),
-    }
+    The evaluation identity is ``{implementation_id, implementation_version, params}``: a
+    closure's ``repr`` (its source text, defaults, closed-over values) is not an identity — it
+    changes with the wording of the code, and two structurally different callables can print
+    the same text.  A task without a registration cannot be evaluated into a cache entry.
+
+    @param entry track 登记块。
+    @param role 角色名（诊断用）。
+    @return 可 canonical 化的身份字典。
+    @raises EvaluationError 未登记、版本非法或 params 不可 canonical 化。
+    """
+    from .evaluation import EvaluationError
+
+    if not isinstance(entry, dict):
+        raise EvaluationError(f"evaluation identity: {role} is not registered")
+    implementation_id = str(entry.get("implementation_id") or "").strip()
+    version = entry.get("implementation_version")
+    params = entry.get("params")
+    if not implementation_id:
+        raise EvaluationError(f"evaluation identity: {role} has no implementation_id")
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        raise EvaluationError(f"evaluation identity: {role} has an illegal implementation_version {version!r}")
+    if params is None:
+        params = {}
+    if not isinstance(params, dict):
+        raise EvaluationError(f"evaluation identity: {role} params must be an object")
     try:
-        body["source"] = inspect.getsource(fn)
-    except (OSError, TypeError):
-        code = getattr(fn, "__code__", None)
-        body["source"] = repr(code.co_code) if code is not None else ""
-    closure = getattr(fn, "__closure__", None)
-    if closure:
-        body["closure"] = repr([cell.cell_contents for cell in closure])
-    return repr(body)
+        # Round-trip through the canonical encoder so a non-JSON value is refused here rather
+        # than silently stringified into the key.
+        encoded = json.dumps(params, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise EvaluationError(f"evaluation identity: {role} params are not canonical: {exc}") from exc
+    return {"implementation_id": implementation_id, "implementation_version": version, "params": json.loads(encoded)}
 
 
-def _evaluation_fingerprint(task, backend_id: str = "metal") -> str:
-    """@brief 计算影响评测结果的可执行语义指纹，而不只任务规格文本。"""
+#: The framework registry: for each baseline framework, the module to probe and the
+#: distribution whose version is declared.  It is part of the evaluator, not the task, so a
+#: task cannot silently declare a version of something the host never checks.
+FRAMEWORK_LIBRARIES: dict[str, tuple[str, str]] = {
+    "mlx": ("mlx", "mlx"),
+    "torch": ("torch", "torch"),
+}
+
+#: Version of the baseline registration itself; it enters the implementation digest.
+BASELINE_REGISTRY_VERSION = 1
+
+
+def _baseline_registrations(task) -> list[dict]:
+    """@brief 取该任务**完整**的 baseline 登记表（不因 ``fast_bench`` 缩水）。
+
+    The complete ``Task.baselines`` registry, sorted by ``(name, framework, kind)`` so both
+    sides of a comparison hash the same list.
+
+    @param task 任务。
+    @return 排序后的登记行。
+    @raises EvaluationError 没有 baseline 登记。
+    """
+    from .evaluation import EvaluationError
+
+    registrations = dict(task.evaluation_implementations or {})
+    baselines = registrations.get("baselines") or []
+    if not isinstance(baselines, list):
+        raise EvaluationError(f"task {task.name}: baseline identities must be a list")
+    # An empty registry is a real identity (the semantic test family has no baselines); the
+    # digest is over the empty list rather than an error or a fabricated row.
+    rows = []
+    for entry in baselines:
+        name = str(entry.get("name"))
+        framework = str(entry.get("framework"))
+        if framework not in FRAMEWORK_LIBRARIES:
+            raise EvaluationError(
+                f"task {task.name}: baseline {name!r} declares unregistered framework {framework!r}"
+            )
+        rows.append({
+            "name": name,
+            "framework": framework,
+            "kind": "task",
+            "implementation": _registered_identity(entry, f"baseline {name}"),
+        })
+    rows.sort(key=lambda row: (row["name"], row["framework"], row["kind"]))
+    return rows
+
+
+def _canonical_digest(document) -> str:
+    """@brief 按 §3.1 的 canonical 值编码哈希一个身份文档。
+
+    The one §3.1 encoder (``tcenv.identity.fingerprint``) normalises floats to their shortest
+    round-trip decimal text first; a bare ``canonical_digest_document`` rejects them.
+
+    @param document 可 canonical 化的 JSON 文档。
+    @return 十六进制 sha256。
+    """
+    from . import identity
+
+    return identity.fingerprint(document)
+
+
+def baseline_implementation_digest(task, backend_id: str = "metal") -> str:
+    """@brief baseline **实现**摘要：登记身份，不看宿主是否安装。
+
+    The implementation identity is what the task pack registers; whether the library is
+    installed on this host belongs to the environment digest and never changes this one.
+
+    @param task 任务。
+    @param backend_id 后端 id。
+    @return 十六进制 sha256。
+    @raises EvaluationError 登记缺失或不可 canonical 化。
+    """
+    return _canonical_digest({
+        "fingerprint_kind": "baseline_implementation",
+        "fingerprint_version": 1,
+        "registry_version": BASELINE_REGISTRY_VERSION,
+        "backend_id": backend_id,
+        "baselines": _baseline_registrations(task),
+    })
+
+
+def baseline_environment_digest(task, backend_id: str = "metal", target_id: str = "apple-m4-max") -> str | None:
+    """@brief baseline **环境**摘要：宿主上的可用性与库版本。
+
+    Availability uses ``importlib.util.find_spec`` and the version comes from
+    ``importlib.metadata.version``; no framework is imported and no device is opened.  An
+    installed framework with an unreadable version makes this ``None`` (unknown), which also
+    makes the evaluation fingerprint ``None``: it is not evidence of equality.
+
+    @param task 任务。
+    @param backend_id 后端 id。
+    @param target_id 目标设备 id。
+    @return 十六进制 sha256；版本不可识别时为 ``None``。
+    @raises EvaluationError 登记缺失。
+    """
+    import importlib.metadata
+    import importlib.util
+
+    rows = []
+    for row in _baseline_registrations(task):
+        module_name, distribution = FRAMEWORK_LIBRARIES[row["framework"]]
+        try:
+            available = importlib.util.find_spec(module_name) is not None
+        except (ImportError, ValueError):
+            available = False
+        library = None
+        if available:
+            try:
+                version = importlib.metadata.version(distribution)
+            except importlib.metadata.PackageNotFoundError:
+                return None
+            except Exception:  # noqa: BLE001 - an unreadable version is unknown, not equality
+                return None
+            if not isinstance(version, str) or not version:
+                return None
+            library = {"name": distribution, "version": version}
+        rows.append({
+            "name": row["name"],
+            "framework": row["framework"],
+            "kind": row["kind"],
+            "available": available,
+            "library": library,
+        })
+    return _canonical_digest({
+        "fingerprint_kind": "baseline_environment",
+        "fingerprint_version": 1,
+        "backend_id": backend_id,
+        "target_id": target_id,
+        "baselines": rows,
+    })
+
+
+#: "The caller did not override this component" — distinct from an explicit ``None``, which means
+#: "this component is unknown".  Conflating them would let a remote expected silently fall back to
+#: the host's own library versions, which is exactly what plan §7.2 forbids.
+_UNSET = object()
+
+
+def _evaluation_fingerprint(
+    task, backend_id: str = "metal", target_id: str = "apple-m4-max", *,
+    task_pack_digest=_UNSET, environment_digest=_UNSET,
+) -> str | None:
+    """@brief 计算影响评测结果的可执行语义指纹：登记身份 + task-pack 摘要。
+
+    Registered identities only (no closure ``repr``): the task fingerprint, the task-pack
+    digest, the registered gen/reference/error-scale implementations and both baseline
+    digests.  ``None`` means the host side of the identity could not be established, which is
+    ``evaluation_identity_unknown`` at confirmation time, never a match.
+
+    The two keyword overrides exist for the *remote* confirmation expected (plan §7.2): the pack
+    component then comes from the validated evaluator provenance (the deployed pack the measurement
+    ran with) and the environment component from the **frozen** search-period value, so the host
+    never substitutes its own library versions.  Both default to the locally recomputed values.
+
+    @param task 任务。
+    @param backend_id 后端 id。
+    @param target_id 目标设备 id。
+    @param task_pack_digest 覆盖 pack 分量；``None`` 时用本机登记的 task-pack 摘要。
+    @param environment_digest 覆盖环境分量；``None`` 时用本机安装的库版本重算。
+    @return 十六进制 sha256 或 ``None``（环境分量不可识别）。
+    @raises EvaluationError 任务没有登记评测实现或 task-pack 身份。
+    """
+    from .evaluation import EvaluationError
     from .task import task_fingerprint
 
-    body = {
-        "task": task_fingerprint(task, backend_id),
-        "gen_inputs": _callable_identity(task.gen_inputs),
-        "reference": _callable_identity(task.reference),
-        "error_scale": _callable_identity(task.error_scale),
-        "baselines": [
-            {"name": impl.name, "framework": impl.framework, "fn": _callable_identity(impl.fn)}
-            for impl in task.baselines
-        ],
+    registrations = dict(task.evaluation_implementations or {})
+    if not registrations:
+        raise EvaluationError(
+            f"task {task.name}: no registered evaluation implementations; a closure repr is not an identity"
+        )
+    pack = registrations.get("task_pack")
+    if not isinstance(pack, dict) or not str(pack.get("digest") or ""):
+        raise EvaluationError(f"task {task.name}: the task-pack digest is not registered")
+    implementation = baseline_implementation_digest(task, backend_id)
+    environment = (
+        baseline_environment_digest(task, backend_id, target_id)
+        if environment_digest is _UNSET else environment_digest
+    )
+    if environment is None:
+        return None
+    resolved_pack = str(pack["digest"]) if task_pack_digest is _UNSET else task_pack_digest
+    if not resolved_pack:
+        # An explicitly unknown pack digest is not a licence to use the host's registered pack.
+        return None
+    return _canonical_digest({
+        "fingerprint_kind": "evaluation",
+        "fingerprint_version": 1,
+        "task_fingerprint": task_fingerprint(task, backend_id),
+        "task_pack_digest": resolved_pack,
+        "gen_inputs": _registered_identity(registrations.get("gen_inputs"), "gen_inputs"),
+        "reference": _registered_identity(registrations.get("reference"), "reference"),
+        "error_scale": (
+            None
+            if registrations.get("error_scale") is None
+            else _registered_identity(registrations.get("error_scale"), "error_scale")
+        ),
+        "baseline_implementation_digest": implementation,
+        "baseline_environment_digest": environment,
+    })
+
+
+def remote_confirmation_expected(
+    task: str, dtype: str, size: str, target_id: str, source: str, *,
+    task_pack_digest: str | None,
+    baseline_environment_digest: str | None,
+    build_provenance: dict | None = None,
+    device_group: dict | None = None,
+    evaluator_epoch: str | None = None,
+    candidate_digest: dict | None = None,
+) -> dict:
+    """@brief 远端确认 expected：host 重算实现分量，pack/环境分量取冻结值，绝不使用 host 的库版本。
+
+    Plan §7.2: the host may recompute the task/implementation components (task fingerprint,
+    registered gen/reference/error-scale identities, baseline *implementation* digest) because they
+    come from the registered task pack.  It must not recompute the **environment** component — an
+    evaluator that upgraded a baseline library between search and confirmation then looks equal to
+    a host that never had that library.  So:
+
+    * ``task_pack_digest`` comes from the validated evaluator provenance (the deployed pack);
+    * ``baseline_environment_digest`` is the **frozen** search-period value (an evaluator that
+      reports ``null`` makes the whole document unable to publish, which is ``unknown``);
+    * ``build_provenance``/``device_group``/``evaluator_epoch``/``candidate_digest`` come from the
+      current validated capability, never from the search report's self-reported fields.
+
+    A missing host-recomputable component is a deployment error (``EvaluationError``), not a
+    publishable unknown.
+
+    @param task 任务名。
+    @param dtype 元素类型短名。
+    @param size 问题规模名。
+    @param target_id 目标设备 id。
+    @param source 当前候选源码。
+    @param task_pack_digest 已校验 evaluator provenance 里的部署 pack 摘要；``None`` 表示未知。
+    @param baseline_environment_digest 搜索期冻结的 baseline 环境摘要；``None`` 表示未知。
+    @param build_provenance 当前 evaluator 的 BuildProvenance（或请求级 build 文档）；可为 ``None``。
+    @param device_group 当前 evaluator 能力声明的 device group；可为 ``None``。
+    @param evaluator_epoch 当前 evaluator epoch；可为 ``None``。
+    @param candidate_digest 当前 evaluator 绑定的 CandidateDigest；可为 ``None``。
+    @return 与 :func:`confirmation_expected_document` 同形状的 expected，另含远端分量。
+    @raises EvaluationError 任务没有登记评测实现、gen/reference 身份或 task-pack 身份时。
+    """
+    import hashlib
+
+    from tasks import get_task
+
+    from .schema import PROTOCOL_VERSION
+
+    task_obj = get_task(task, dtype, size)
+    source_sha256 = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    registrations = dict(task_obj.evaluation_implementations or {})
+    if not registrations:
+        from .evaluation import EvaluationError
+
+        raise EvaluationError(
+            f"task {task}: no registered evaluation implementations; a closure repr is not an identity"
+        )
+    backend_id = "metal"
+    backend_version = None
+    try:
+        from .backends.registry import load_backend
+        from .target import load_target
+
+        target = load_target(target_id)
+        backend = load_backend(target.backend)
+        backend_id = str(getattr(backend, "id", "") or backend_id)
+        backend_version = str(getattr(backend, "version", "") or "") or None
+    except Exception:
+        backend_id, backend_version = "metal", None
+    specialization = getattr(task_obj, "specialization", None)
+    build: dict = {"candidate_sha256": source_sha256}
+    if specialization is not None:
+        build["opspec_digest"] = specialization.opspec_digest
+        build["lowering_profile_digest"] = specialization.lowering_profile_digest
+    # A request-level build document wraps the provenance; the report's ``build.provenance`` is
+    # the inner document.  Both are accepted, and neither is copied out of the search report.
+    inner = build_provenance.get("provenance") if isinstance(build_provenance, dict) else None
+    build["provenance"] = dict(inner) if isinstance(inner, dict) else (
+        dict(build_provenance) if isinstance(build_provenance, dict) else None
+    )
+    build["candidate_digest"] = dict(candidate_digest) if isinstance(candidate_digest, dict) else None
+    build["device_group"] = dict(device_group) if isinstance(device_group, dict) else None
+    build["build_provenance"] = dict(build_provenance) if isinstance(build_provenance, dict) else None
+    evaluation = {
+        "evaluation_fingerprint": _evaluation_fingerprint(
+            task_obj, backend_id, target_id,
+            task_pack_digest=task_pack_digest,
+            environment_digest=baseline_environment_digest,
+        ),
+        "baseline_implementation_digest": baseline_implementation_digest(task_obj, backend_id),
+        "baseline_environment_digest": baseline_environment_digest,
+        "task_pack_digest": task_pack_digest,
+        "protocol_version": PROTOCOL_VERSION,
+        "target_id": target_id,
+        "backend": backend_id,
+        "backend_version": backend_version,
+        "evaluator_epoch": evaluator_epoch,
+        "device_group": dict(device_group) if isinstance(device_group, dict) else None,
     }
-    return hashlib.sha256(json.dumps(body, ensure_ascii=False, sort_keys=True, default=repr, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return {
+        "build": build,
+        "evaluation": evaluation,
+        "protocol_version": PROTOCOL_VERSION,
+        "target_id": target_id,
+    }
 
 
-def _eval_cache_key(
+def confirmation_expected_document(
+    task: str, dtype: str, size: str, target_id: str, source: str, *, probe: bool = False,
+) -> dict:
+    """@brief 当前任务、注册表与执行器能重算的确认 expected（不读任何报告）。
+
+    The document never contains a value copied out of a report.  Build fields only a build can
+    produce (``assembled_sha256``, ``artifact_set_digest``, ``native_digest``) are *omitted*.
+    With ``probe=False`` the current BuildProvenance and device fields stay ``None``; with
+    ``probe=True`` they come only from an *available* executor probe.  Outcome-only fields are
+    compared between the search and confirmation reports, never filled from either report.
+    The candidate's launch math is parsed from the same source before probing, so a safe-math
+    candidate cannot accidentally get a fast-math expected profile.
+
+    @param task 任务名。
+    @param dtype 元素类型短名。
+    @param size 问题规模名。
+    @param target_id 目标设备 id。
+    @param source 当前候选源码。
+    @param probe 是否向执行器探测当前工具链 profile（真实运行使用；CPU 侧默认不探测）。
+    @return ``{"build": ..., "evaluation": ..., "protocol_version": ..., "target_id": ...}``。
+    """
+    import hashlib
+
+    from tasks import get_task
+
+    from .schema import PROTOCOL_VERSION
+
+    task_obj = get_task(task, dtype, size)
+    source_sha256 = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    specialization = getattr(task_obj, "specialization", None)
+    build: dict = {"candidate_sha256": source_sha256}
+    if specialization is not None:
+        build["opspec_digest"] = specialization.opspec_digest
+        build["lowering_profile_digest"] = specialization.lowering_profile_digest
+    build["provenance"] = None
+    backend_id = "metal"
+    backend_version = None
+    device_name = None
+    gpu_family = None
+    evaluation = {}
+    try:
+        # Registry facts only (module import + target profile).  A device probe happens only when
+        # the caller explicitly asks for it: the real executor does (it is about to evaluate), a
+        # CPU-side caller does not.
+        from .backends.registry import load_backend
+        from .target import load_target
+
+        target = load_target(target_id)
+        backend = load_backend(target.backend)
+        backend_id = str(getattr(backend, "id", "") or backend_id)
+        backend_version = str(getattr(backend, "version", "") or "") or None
+        if probe:
+            launch = backend.parse_launch(source, task_obj.contract)
+            math = "fast" if launch is None else launch.math
+            builder = backend.artifact_builder(
+                kernel_contract=getattr(task_obj, "contract", None),
+                specialization=specialization,
+                math=math,
+            )
+            capabilities = builder.probe()
+            # A fallback profile returned for an unavailable toolchain is diagnostic, never an
+            # authoritative current identity.  Only a live probe may fill these expected fields.
+            if capabilities.available:
+                build["provenance"] = capabilities.profile.provenance_document(
+                    source_sha256=source_sha256, artifact_set_digest=None,
+                )
+                compile_profile = capabilities.profile.compile_profile
+                device_name = str(compile_profile.get("device") or "") or None
+                gpu_family = str(compile_profile.get("gpu_family") or "") or None
+    except Exception:
+        build["provenance"] = None
+        device_name = None
+        gpu_family = None
+    evaluation.update(
+        evaluation_fingerprint=_evaluation_fingerprint(task_obj, backend_id, target_id),
+        baseline_implementation_digest=baseline_implementation_digest(task_obj, backend_id),
+        baseline_environment_digest=baseline_environment_digest(task_obj, backend_id, target_id),
+        protocol_version=PROTOCOL_VERSION,
+        target_id=target_id,
+        backend=backend_id,
+        backend_version=backend_version or None,
+        device_name=device_name,
+        gpu_family=gpu_family,
+    )
+    return {
+        "build": build,
+        "evaluation": evaluation,
+        "protocol_version": PROTOCOL_VERSION,
+        "target_id": target_id,
+    }
+
+
+def _host_sdk_version(backend_id: str) -> str:
+    """@brief 取缓存键里的宿主 SDK 版本（Metal 为 ``platform.mac_ver()``）。
+
+    The value has the same form the Metal ``BuildProfile`` records (``macos-<release>``), so
+    the cache key and the cached report's toolchain identity are directly comparable.
+
+    @param backend_id 后端 id。
+    @return 版本字符串；非 Metal 或不可读时为空串（空串使 Metal 缓存不可用）。
+    """
+    if backend_id != "metal":
+        return ""
+    import platform
+
+    release = str(platform.mac_ver()[0] or "")
+    return f"macos-{release}" if release else ""
+
+
+def _eval_cache_identity(
     *, task: str, dtype: str, size: str, mode: str, seed: int, reps: int,
     cases: tuple[str, ...] | None, fast_bench: bool, require_contract_launch: bool,
     validate: bool, measure_serial: bool, target_id: str, kernel_source: str,
     backend_id: str = "", backend_version: str = "", evaluation_fingerprint: str | None = None,
-) -> str:
-    """@brief 计算一次评测的缓存键。
+) -> dict | None:
+    """@brief 组装评测缓存的键与期望身份；任一身份无法生成时返回 ``None``（禁用缓存）。
 
-    键覆盖文件 schema、测量协议、任务指纹、内核哈希与全部影响结果的评测参数。
+    The key and the expected report identity are the same document: the parent computes it
+    before spawning the worker, and a cached value may only be reused when its report fields
+    equal it.  A ``null``/``"unknown"`` component is never hashed into a reusable key (§7.1).
 
     @param task 任务名。
     @param dtype 元素类型短名。
@@ -1055,10 +1588,10 @@ def _eval_cache_key(
     @param measure_serial 是否测串行 dispatch。
     @param target_id 目标设备 id。
     @param kernel_source 候选源码。
-    @param backend_id 后端身份；后端变化不能复用旧报告。
-    @param backend_version 后端版本；版本变化不能复用旧报告。
-    @param evaluation_fingerprint 可覆盖的评测语义指纹；默认从任务的可执行输入、参考和基线计算。
-    @return 十六进制 sha256 缓存键。
+    @param backend_id 后端身份。
+    @param backend_version 后端版本。
+    @param evaluation_fingerprint 可覆盖的评测语义指纹。
+    @return 键文档；任一身份缺失时为 ``None``。
     """
     from .schema import PROTOCOL_VERSION
     from .task import task_fingerprint
@@ -1066,12 +1599,26 @@ def _eval_cache_key(
 
     task_obj = get_task(task, dtype, size)
     fingerprint_backend = backend_id or "metal"
-    body = {
+    host_sdk = _host_sdk_version(fingerprint_backend)
+    if fingerprint_backend == "metal" and not host_sdk:
+        return None
+    implementation = baseline_implementation_digest(task_obj, fingerprint_backend)
+    environment = baseline_environment_digest(task_obj, fingerprint_backend, target_id)
+    fingerprint = (
+        _evaluation_fingerprint(task_obj, fingerprint_backend, target_id)
+        if evaluation_fingerprint is None else evaluation_fingerprint
+    )
+    if not environment or not fingerprint:
+        return None
+    return {
         "schema": EVAL_CACHE_SCHEMA,
         "protocol": PROTOCOL_VERSION,
         "task": task, "dtype": dtype, "size": size, "mode": mode,
         "task_fingerprint": task_fingerprint(task_obj, fingerprint_backend),
-        "evaluation_fingerprint": _evaluation_fingerprint(task_obj, fingerprint_backend) if evaluation_fingerprint is None else evaluation_fingerprint,
+        "evaluation_fingerprint": fingerprint,
+        "baseline_implementation_digest": implementation,
+        "baseline_environment_digest": environment,
+        "host_sdk_version": host_sdk,
         "backend": backend_id,
         "backend_version": backend_version,
         "kernel_sha256": hashlib.sha256(kernel_source.encode("utf-8")).hexdigest(),
@@ -1079,7 +1626,71 @@ def _eval_cache_key(
         "fast_bench": bool(fast_bench), "require_contract_launch": bool(require_contract_launch),
         "validate": bool(validate), "measure_serial": bool(measure_serial), "target_id": target_id,
     }
+
+
+def _eval_cache_key(
+    *, task: str, dtype: str, size: str, mode: str, seed: int, reps: int,
+    cases: tuple[str, ...] | None, fast_bench: bool, require_contract_launch: bool,
+    validate: bool, measure_serial: bool, target_id: str, kernel_source: str,
+    backend_id: str = "", backend_version: str = "", evaluation_fingerprint: str | None = None,
+) -> str | None:
+    """@brief 计算一次评测的缓存键；身份不完整时返回 ``None``。
+
+    @param 同 :func:`_eval_cache_identity`。
+    @return 十六进制 sha256；身份不完整（禁用缓存）时为 ``None``。
+    """
+    body = _eval_cache_identity(
+        task=task, dtype=dtype, size=size, mode=mode, seed=seed, reps=reps, cases=cases,
+        fast_bench=fast_bench, require_contract_launch=require_contract_launch,
+        validate=validate, measure_serial=measure_serial, target_id=target_id,
+        kernel_source=kernel_source, backend_id=backend_id, backend_version=backend_version,
+        evaluation_fingerprint=evaluation_fingerprint,
+    )
+    if body is None:
+        return None
     return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _cache_value_matches(report: "EvalReport", expected: dict, *, backend_id: str) -> bool:
+    """@brief 缓存值是否仍描述本次评测（schema 与身份都必须相符）。
+
+    A hit is a *reuse of the same measurement context*: the cached report must be schema 4,
+    ``ok``, carry a full build whose candidate/opspec/lowering/sdk identity equals the key,
+    and (for the local Metal evaluator) be a native build with a native digest.  Anything else
+    is a miss and is recompiled/re-measured.
+
+    @param report 读回的报告。
+    @param expected 键文档。
+    @param backend_id 后端 id。
+    @return 可复用时为 True。
+    """
+    build = report.build
+    if report.status != STATUS_OK or not isinstance(build, dict) or build.get("shape") != "full":
+        return False
+    if report.evaluation_fingerprint != expected["evaluation_fingerprint"]:
+        return False
+    if report.baseline_implementation_digest != expected["baseline_implementation_digest"]:
+        return False
+    if report.baseline_environment_digest != expected["baseline_environment_digest"]:
+        return False
+    if build.get("candidate_sha256") != expected["kernel_sha256"]:
+        return False
+    from tasks import get_task
+
+    specialization = get_task(expected["task"], expected["dtype"], expected["size"]).specialization
+    if specialization is not None:
+        if build.get("opspec_digest") != specialization.opspec_digest:
+            return False
+        if build.get("lowering_profile_digest") != specialization.lowering_profile_digest:
+            return False
+    if backend_id == "metal":
+        toolchain = (build.get("provenance") or {}).get("toolchain") or {}
+        if toolchain.get("sdk_version") != expected["host_sdk_version"]:
+            return False
+        # A simulator/source_only value is never a local Metal measurement.
+        if build.get("build_kind") != "native" or not build.get("native_digest"):
+            return False
+    return True
 
 
 def _cache_read(key: str) -> "EvalReport | None":
@@ -1094,7 +1705,7 @@ def _cache_read(key: str) -> "EvalReport | None":
     try:
         from .schema import SchemaError
 
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc = read_report_json(path.read_text(encoding="utf-8"), what=f"cached report {path}")
         return EvalReport.from_json(doc)
     except (OSError, ValueError, SchemaError):
         return None
@@ -1228,14 +1839,24 @@ def evaluate(
         return _checked(rep)
 
     cache_key = None
+    expected = None
     if eval_cache and not fast_bench and seed is not None:
-        cache_key = _eval_cache_key(
+        expected = _eval_cache_identity(
             task=task, dtype=dtype, size=size, mode=mode, seed=seed, reps=reps, cases=cases,
             fast_bench=fast_bench, require_contract_launch=require_contract_launch, validate=validate,
             measure_serial=measure_serial, target_id=target_id, kernel_source=kernel_source,
             backend_id=getattr(backend, "id", ""), backend_version=getattr(backend, "version", ""),
         )
-        cached = None if eval_cache_refresh else _cache_read(cache_key)
+        # An incomplete evaluation identity disables the cache; a null/"unknown" component is
+        # never hashed into a reusable key (§7.1).
+        cache_key = None if expected is None else hashlib.sha256(
+            json.dumps(expected, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        cached = None if (cache_key is None or eval_cache_refresh) else _cache_read(cache_key)
+        if cached is not None and not _cache_value_matches(
+            cached, expected, backend_id=getattr(backend, "id", ""),
+        ):
+            cached = None
         if cached is not None:
             cached.cache_hit = True
             if self_check_dir is not None and mode == "timed" and cached.status == "ok":

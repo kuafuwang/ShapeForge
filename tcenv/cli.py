@@ -233,10 +233,9 @@ def cmd_show(a: argparse.Namespace) -> int:
     @param a 已解析的命令行参数。
     @return 成功为 0；目标不可用时为 5。
     """
-    from dataclasses import replace
-
     from tasks import get_task
 
+    from .lowering import LoweringError, require_target_profile
     from .target import TargetError, require_active
 
     try:
@@ -244,11 +243,17 @@ def cmd_show(a: argparse.Namespace) -> int:
     except TargetError as exc:
         print(str(exc), file=sys.stderr)
         return 5
+    try:
+        require_target_profile(target.backend, target.id)
+    except LoweringError as exc:
+        print(str(exc), file=sys.stderr)
+        return 5
     cached = get_task(a.task, a.dtype, a.size)
-    contract = replace(cached.contract, gpu=target.display_name)
+    # R2: ``contract.gpu`` comes from the registered LoweringProfile (the target was checked
+    # above), so this display-only command no longer rewrites it.
     print(cached.description, "\n")
-    print(contract.describe(), "\n")
-    print(contract.abi_stub(), "\n")
+    print(cached.contract.describe(), "\n")
+    print(cached.contract.abi_stub(), "\n")
     print(cached.triton_source)
     return 0
 

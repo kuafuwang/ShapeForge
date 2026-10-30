@@ -1,23 +1,21 @@
-"""Build a pointwise task from one expression in ``elementwise.toml``.
+"""The registered generator behind the ``gen_*`` family: closed expression grammar, no TOML.
 
-The expression is parsed with ``ast`` and evaluated by a fixed table of operators. There is no ``eval``. A name that is
-not an input, a numeric constant, arithmetic, or a listed operator is rejected. ``gen_`` tasks do not replace the
-hand-written ones; a field-by-field comparison has to pass before that is even discussed.
+Each ``gen_<op>`` task owns ``tasks/generated/<op>/opspec.json``.  The expression *is* the
+document's ``formula`` and is parsed by the fixed operator table below (no ``eval``, no free
+text: an input name, a numeric constant, arithmetic, a comparison or a listed operator, and
+nothing else).  The three views -- Triton prompt, naive Metal, reference/baselines -- are
+rendered from that document, and the launch facts (kernel name, ``BLOCK_SIZE``/``N``, warp
+count, thread count, dtype spellings) come from the registered LoweringProfile and the track.
+``elementwise.toml`` and the manifest-driven ``build()`` are gone (R2).
+
 """
 
 from __future__ import annotations
 
 import ast
-import hashlib
-import tomllib
-from pathlib import Path
 
 import torch
 
-from tcenv.task import BaselineImpl
-from tasks._elementwise import BLOCK_SIZE, NUM_WARPS, build_elementwise
-
-MANIFEST = Path(__file__).with_name("elementwise.toml")
 _CMP = {ast.Lt: "<", ast.Gt: ">", ast.LtE: "<=", ast.GtE: ">="}
 _BIN = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/"}
 
@@ -302,80 +300,12 @@ def _render(node, lang: str, prefix: str) -> str:
     raise ValueError(f"cannot render {type(node).__name__}")
 
 
-def _validate(entry: dict) -> None:
-    """@brief 检查清单的一条 ``[[kernel]]`` 条目。
+# ---------------------------------------------------------------------------------------------
+# Registered generator (R2): the same renderers, driven by an OpSpec document instead of the
+# retired ``elementwise.toml``.  The expression is the document's ``formula`` and is parsed by
+# the closed grammar above; launch facts come from the registered LoweringProfile.
 
-    @param entry 清单里的一项。
-    @raises ValueError 输入名非法、一元题以外的题声明了 ``domain_case``，或表达式不合法时抛出。
-    """
-    inputs = list(entry["inputs"])
-    if not inputs or any(not str(n).isidentifier() for n in inputs):
-        raise ValueError(f"bad inputs on {entry.get('task')!r}")
-    if entry.get("domain_case") and len(inputs) != 1:
-        raise ValueError(f"{entry.get('task')!r} declares domain_case with {len(inputs)} inputs")
-    parse_expr(entry["expr"], inputs)
-
-
-def load_manifest(path: Path | None = None) -> tuple[list[dict], str]:
-    """@brief 读并校验生成式任务的清单文件。
-
-    @param path 清单路径；为 None 时用 ``MANIFEST``。
-    @return ``(条目列表, 带内容摘要的来源标记)``。
-    @raises ValueError 清单里没有 ``[[kernel]]`` 条目、题目名重复或条目校验不通过时抛出。
-    """
-    path = Path(path or MANIFEST)
-    text = path.read_text(encoding="utf-8")
-    doc = tomllib.loads(text)
-    entries = doc.get("kernel") or []
-    if not isinstance(entries, list) or not entries:
-        raise ValueError(f"{path} has no [[kernel]] entries")
-    seen = set()
-    for entry in entries:
-        if entry["task"] in seen:
-            raise ValueError(f"duplicate generated task {entry['task']!r}")
-        seen.add(entry["task"])
-        _validate(entry)
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
-    return entries, f"{path.as_posix().split('tasks/generated/')[-1]}#{digest}" if "tasks/generated/" in path.as_posix() else f"{path.name}#{digest}"
-
-
-def _source_tag(path: Path, digest12: str) -> str:
-    """@brief 拼出清单来源标记。
-
-    @param path 清单路径。
-    @param digest12 清单文本的 sha256 前 12 位。
-    @return 写进 ``meta['source']`` 的标记文本。
-    """
-    return f"tasks/generated/elementwise.toml#{digest12}"
-
-
-def _triton(kernel: str, inputs: list[str], expr: str, n: int) -> str:
-    """@brief 生成该条目的 Triton 题面正文。
-
-    @param kernel 算子名，用来拼核名。
-    @param inputs 输入名，按契约槽位顺序。
-    @param expr 清单里的表达式。
-    @param n 元素总数，写进头注释。
-    @return 完整的 Triton 源码文本。
-    """
-    ptrs = ", ".join(f"{name}_ptr" for name in inputs)
-    loads = "\n    ".join(f"{name} = tl.load({name}_ptr + offsets, mask=mask)" for name in inputs)
-    body = render(parse_expr(expr, inputs), "tl", inputs)
-    return (
-        f"# Triton specification: {kernel}, element type tl.float16\n"
-        f"# Launch: grid = (N // BLOCK_SIZE,), num_warps = {NUM_WARPS}, N = {n}, BLOCK_SIZE = {BLOCK_SIZE}\n"
-        "import triton\nimport triton.language as tl\n\n\n"
-        "@triton.jit\n"
-        f"def {kernel}_kernel({ptrs}, y_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):\n"
-        "    pid = tl.program_id(axis=0)\n"
-        "    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)\n"
-        "    mask = offsets < N\n"
-        f"    {loads}\n"
-        f"    y = {body}\n"
-        "    tl.store(y_ptr + offsets, y.to(tl.float16), mask=mask)\n"
-    )
-
-
+#: Metal helper for the ``sigmoid`` operator (shared by ``sigmoid``/``silu``/``swiglu``).
 _SIGMOID_MSL = """inline float sigmoid_f(float v) {
     float e = exp(-fabs(v));
     return v >= 0.0f ? 1.0f / (1.0f + e) : e / (1.0f + e);
@@ -383,17 +313,91 @@ _SIGMOID_MSL = """inline float sigmoid_f(float v) {
 
 """
 
+#: Generator identity (recorded in ``track.json``'s ``spec_text``/``known_good`` blocks).
+GENERATOR_ID = "generated.elementwise"
+GENERATOR_VERSION = 1
+#: Version of the expression grammar/operator table above (enters the generator params).
+GRAMMAR_VERSION = 1
 
-def _metal(kernel: str, inputs: list[str], expr: str, dtype_msl: str) -> str:
-    """@brief 生成该条目的朴素 Metal 正文。
 
-    @param kernel 算子名，用来拼核名。
-    @param inputs 输入名，按契约槽位顺序。
-    @param expr 清单里的表达式。
-    @param dtype_msl Metal 元素类型名，例如 ``half``。
-    @return 完整的 Metal 源码文本。
+def document_expression(document: dict) -> tuple[ast.Expression, list[str]]:
+    """@brief 从 OpSpec 文档取表达式与输入名并校验闭集文法。
+
+    @param document OpSpec 文档。
+    @return ``(语法树, 输入名列表)``。
+    @raises ValueError 表达式超出算子表，或输入不是声明的输入张量。
     """
-    tree = parse_expr(expr, inputs)
+    inputs = [str(name) for name, tensor in document["tensors"].items() if tensor["role"] == "input"]
+    if not inputs:
+        raise ValueError("generated.elementwise: the document declares no input tensor")
+    return parse_expr(str(document["formula"]), inputs), inputs
+
+
+def triton_source(
+    document: dict, *, kernel_name: str, n: int, num_warps: int, block_size: int, tl_dtype: str
+) -> str:
+    """@brief 视图一：由 OpSpec 文档渲染的 Triton 题面。
+
+    @param document OpSpec 文档。
+    @param kernel_name 契约核名（``<stem>_kernel``，来自登记 profile）。
+    @param n 元素总数。
+    @param num_warps 登记的 warp 数。
+    @param block_size 登记的 ``BLOCK_SIZE`` 常量。
+    @param tl_dtype Triton 元素类型拼写（dtype 拼写表）。
+    @return 完整题面文本。
+    """
+    tree, inputs = document_expression(document)
+    stem = str(kernel_name).removesuffix("_kernel")
+    ptrs = ", ".join(f"{name}_ptr" for name in inputs)
+    loads = "\n    ".join(f"{name} = tl.load({name}_ptr + offsets, mask=mask)" for name in inputs)
+    body = render(tree, "tl", inputs)
+    return (
+        f"# Triton specification: {stem}, element type {tl_dtype}\n"
+        f"# Launch: grid = (N // BLOCK_SIZE,), num_warps = {num_warps}, N = {n}, BLOCK_SIZE = {block_size}\n"
+        "import triton\nimport triton.language as tl\n\n\n"
+        "@triton.jit\n"
+        f"def {kernel_name}({ptrs}, y_ptr, N: tl.constexpr, BLOCK_SIZE: tl.constexpr):\n"
+        "    pid = tl.program_id(axis=0)\n"
+        "    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)\n"
+        "    mask = offsets < N\n"
+        f"    {loads}\n"
+        f"    y = {body}\n"
+        f"    tl.store(y_ptr + offsets, y.to({tl_dtype}), mask=mask)\n"
+    )
+
+
+def _constant_names(constants) -> tuple[str, str]:
+    """@brief 从契约常量里取 ``N``/``BLOCK_SIZE`` 的名字（不写死标识符）。
+
+    @param constants 契约的 ``constants``（``(name, msl_type, value)`` 序列）。
+    @return ``(n_name, block_name)``。
+    @raises ValueError 常量不是登记的两项 ``uint``。
+    """
+    names = [str(name) for name, msl_type, _value in constants]
+    if len(names) != 2 or names[0] != "N" or names[1] != "BLOCK_SIZE":
+        raise ValueError(f"generated.elementwise: expected the registered N/BLOCK_SIZE constants, got {names}")
+    for name, msl_type, _value in constants:
+        if str(msl_type) != "uint":
+            raise ValueError(f"generated.elementwise: constant {name} must be uint, got {msl_type}")
+    return names[0], names[1]
+
+
+def msl(document: dict, *, kernel_name: str, constants, dtype_msl: str, threads: int) -> str:
+    """@brief 视图二：由 OpSpec 文档渲染的朴素 Metal。
+
+    ``N``/``BLOCK_SIZE`` stay as identifiers: the contract header declares them as
+    ``constant constexpr`` when the source is assembled, so the text names the same constants
+    the contract binds instead of copying their values.
+
+    @param document OpSpec 文档。
+    @param kernel_name 契约核名（``<stem>_kernel``）。
+    @param constants 契约的 ``constants``（名字/类型/值）。
+    @param dtype_msl Metal 元素类型拼写。
+    @param threads 每个 threadgroup 的线程数（登记 profile）。
+    @return 完整 known-good 文本。
+    """
+    tree, inputs = document_expression(document)
+    n_name, block_name = _constant_names(constants)
     body = render(tree, "msl", inputs)
     prelude = _SIGMOID_MSL if "sigmoid_f(" in body else ""
     args = ", ".join(f"device const {dtype_msl}* {name} [[buffer({i})]]" for i, name in enumerate(inputs))
@@ -401,108 +405,122 @@ def _metal(kernel: str, inputs: list[str], expr: str, dtype_msl: str) -> str:
     locals_ = " ".join(f"float v_{name} = float({name}[j]);" for name in inputs)
     return (
         prelude
-        + f"kernel void {kernel}_kernel({args}, uint tg [[threadgroup_position_in_grid]], uint lid [[thread_index_in_threadgroup]]) {{\n"
-        + "    uint base = tg * BLOCK_SIZE;\n"
-        + "    for (uint i = lid; i < BLOCK_SIZE; i += 128) {\n"
+        + f"kernel void {kernel_name}({args}, uint tg [[threadgroup_position_in_grid]], uint lid [[thread_index_in_threadgroup]]) {{\n"
+        + f"    uint base = tg * {block_name};\n"
+        + f"    for (uint i = lid; i < {block_name}; i += {threads}) {{\n"
         + "        uint j = base + i;\n"
-        + f"        if (j < N) {{ {locals_} y[j] = {dtype_msl}({body}); }}\n"
+        + f"        if (j < {n_name}) {{ {locals_} y[j] = {dtype_msl}({body}); }}\n"
         + "    }\n}\n"
     )
 
 
-def _baselines(tree: ast.Expression, inputs: list[str]) -> tuple[BaselineImpl, ...]:
-    """@brief 造出该条目的 mlx 与 torch 两条基线。
+def reference_for(document: dict):
+    """@brief 视图三：由 OpSpec 文档渲染的标准答案（float64 求值，单次舍入）。
 
-    @param tree 已解析的语法树。
-    @param inputs 输入名，按位置绑定到参数。
-    @return 基线实现元组。
+    @param document OpSpec 文档。
+    @return ``(*inputs) -> 输出张量``。
     """
-    def torch_fn(*args):
+    tree, inputs = document_expression(document)
+
+    def reference(*args):
         return evaluate(tree, dict(zip(inputs, args)), "torch")
 
-    def mlx_fn(*args):
-        return evaluate(tree, dict(zip(inputs, args)), "mlx")
-
-    return (BaselineImpl("mlx", "mlx", mlx_fn), BaselineImpl("torch_mps", "torch", torch_fn))
+    reference.input_names = tuple(inputs)
+    return reference
 
 
-def build(task_name: str, dtype: str, size: str, *, manifest: Path | None = None):
-    """@brief 按清单里的一条条目装配出一个 ``gen_`` 任务。
+def baseline_for(document: dict, backend: str):
+    """@brief 由 OpSpec 文档渲染的基线（``torch``/``mlx`` 走同一算子表）。
 
-    @param task_name 题目名，对应清单的 ``task`` 字段。
+    @param document OpSpec 文档。
+    @param backend ``torch`` 或 ``mlx``。
+    @return ``(*inputs) -> 输出``。
+    @raises ValueError backend 未登记。
+    """
+    if backend not in ("torch", "mlx"):
+        raise ValueError(f"generated.elementwise: unregistered baseline backend {backend!r}")
+    tree, inputs = document_expression(document)
+
+    def baseline(*args):
+        return evaluate(tree, dict(zip(inputs, args)), backend)
+
+    baseline.input_names = tuple(inputs)
+    return baseline
+
+
+def build_generated(task_dir: str, dtype: str, size: str):
+    """@brief 装配一道生成式逐元素题：OpSpec 文档 → 登记生成器 → 登记 profile → ``Task``。
+
+    @param task_dir ``tasks/`` 下的目录名（如 ``generated/relu``）。
     @param dtype 元素类型，``fp16`` 或 ``bf16``。
     @param size 尺寸档位，``paper`` 或 ``small``。
-    @param manifest 清单路径；为 None 时用 ``MANIFEST``。
     @return 装配好的 ``Task``。
-    @raises KeyError 清单里没有该题目名时抛出。
+    @raises ValueError track 登记与文档不符（表达式、基线后端或启动事实）。
     """
-    path = Path(manifest or MANIFEST)
-    text = path.read_text(encoding="utf-8")
-    entries, _tag = load_manifest(path)
-    digest12 = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
-    entry = next((e for e in entries if e["task"] == task_name), None)
-    if entry is None:
-        known = ", ".join(e["task"] for e in entries)
-        raise KeyError(f"unknown generated task {task_name!r}; known: {known}")
-    inputs = list(entry["inputs"])
-    tree = parse_expr(entry["expr"], inputs)
-    _check_names(tree, inputs)
-    from tcenv.dtypes import get_dtype
+    import torch
 
-    from tasks._common import TL_DTYPES, check_dtype
-    from tasks._elementwise import SIZES
+    from tcenv.lowering import derive_specialization
+    from tcenv.opspec.model import instantiate, load_opspec
+    from tcenv.track import REPO_ROOT, load_track
+    from tasks._assembly import GeneratedText, build_task
+    from tasks._pointwise import gen_inputs_from_params
 
-    check_dtype(dtype)
-    n = SIZES[size]
-    # 清单文本写成 fp16。bf16 只替换题面里的元素类型，公式不变。
-    triton = _triton(entry["kernel"], inputs, entry["expr"], n).replace("tl.float16", TL_DTYPES[dtype])
-    naive = _metal(entry["kernel"], inputs, entry["expr"], get_dtype(dtype).msl)
-
-    def ref_fn(*args):
-        return evaluate(tree, dict(zip(inputs, args)), "torch")
-
-    task = build_elementwise(
-        entry["kernel"], dtype, size,
-        input_names=tuple(inputs),
-        ref_fn=ref_fn,
-        baselines=_baselines(tree, inputs),
-        flops_per_elem=float(entry["flops_per_elem"]),
-        description=entry["description"],
-        large=float(entry.get("large", 1.0e4)),
-        normal_mag=float(entry.get("normal_mag", 3.0)),
-        triton_source=triton,
-        naive_msl=naive,
-        task_name=task_name,
-        domain_case=bool(entry.get("domain_case")) and dtype == "fp16",
+    track = load_track(REPO_ROOT / "tasks" / task_dir / "track.json")
+    spec = load_opspec(track.opspec_path)
+    instance = instantiate(spec, dtype, size)
+    specialization = derive_specialization(
+        instance, backend_id=track.backend_id, profile_name=track.lowering_profile
     )
-    task.meta = {**task.meta, "source": _source_tag(path, digest12)}
-    return task
+    document = dict(spec.document)
+    tree, names = document_expression(document)
+    contract = specialization.contract
+    n = int(instance.symbols["N"])
+    num_warps = int(specialization.backend_params["NUM_WARPS"])
+    block_size = next(int(value) for name, _type, value in contract.constants if name == "BLOCK_SIZE")
+    spelling = track.dtype_spelling[dtype]
+    source = triton_source(
+        document,
+        kernel_name=contract.kernel_name,
+        n=n,
+        num_warps=num_warps,
+        block_size=block_size,
+        tl_dtype=str(spelling["TL"]),
+    )
+    known_good = msl(
+        document,
+        kernel_name=contract.kernel_name,
+        constants=contract.constants,
+        dtype_msl=str(spelling["T"]),
+        threads=int(contract.threads[0]),
+    )
 
+    ref = reference_for(document)
+    ref_params = dict(track.implementations["reference"]["params"])
+    if ref_params.get("expression") != document["formula"] or ref_params.get("accumulate") != "float64":
+        raise ValueError(f"{task_dir}: the registered reference does not match the document expression {document['formula']!r}")
 
-def mismatches(hand, generated) -> list[str]:
-    """@brief 比较生成式任务与手写任务的字段，列出不一致项。
+    def reference(inp: dict) -> dict:
+        return {"y": ref(*[inp[name].to(torch.float64) for name in names])}
 
-    Fields that must agree. The manifest path in ``meta['source']`` is allowed to differ.
+    baseline_fns = {}
+    for entry in track.baselines:
+        params = dict(entry["params"])
+        backend = str(params["backend"])
+        if params.get("expression") != document["formula"]:
+            raise ValueError(f"{task_dir}: baseline {entry['name']!r} registers a different expression")
+        baseline_fns[str(entry["name"])] = baseline_for(document, backend)
 
-    @param hand 手写题目的 ``Task``。
-    @param generated 生成式题目的 ``Task``。
-    @return 不一致的字段名列表，完全一致时为空列表。
-    """
-    bad = []
-    hc, gc = hand.contract, generated.contract
-    for field in ("kernel_name", "grid", "threads", "constants"):
-        if getattr(hc, field) != getattr(gc, field):
-            bad.append(field)
-    if len(hc.args) != len(gc.args):
-        bad.append("args")
-    else:
-        for a, b in zip(hc.args, gc.args):
-            if (a.name, a.index, a.role, a.dtype, a.shape) != (b.name, b.index, b.role, b.dtype, b.shape):
-                bad.append(f"arg {a.name}")
-    for field in ("cases", "rtol", "atol_rel", "exact", "flops", "min_bytes"):
-        if getattr(hand, field) != getattr(generated, field):
-            bad.append(field)
-    for key in ("ieee_base", "ieee_inputs", "ieee_max", "domain_case"):
-        if (hand.meta or {}).get(key) != (generated.meta or {}).get(key):
-            bad.append(f"meta.{key}")
-    return bad
+    shapes = {name: instance.tensor(name).shape for name in names}
+    return build_task(
+        task_dir,
+        dtype,
+        size,
+        implementations={
+            "gen_inputs": gen_inputs_from_params(dict(track.implementations["gen_inputs"]["params"]), names, shapes, dtype),
+            "reference": reference,
+            "error_scale": None,
+        },
+        baseline_fns=baseline_fns,
+        derived=(track, instance, specialization),
+        generated=GeneratedText(spec_text=source, known_good=known_good),
+    )

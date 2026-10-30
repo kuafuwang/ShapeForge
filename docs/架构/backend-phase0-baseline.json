@@ -9,9 +9,9 @@
     "skipped": 1,
     "deselected": 133
   },
-  "report_schema_version": 3,
+  "report_schema_version": 4,
   "protocol_version": "3",
-  "index_schema_version": 11,
+  "index_schema_version": 13,
   "top_level_fields": [
     "task",
     "dtype",
@@ -34,6 +34,10 @@
     "baseline_us",
     "compiler_baseline",
     "verification",
+    "build",
+    "evaluation_fingerprint",
+    "baseline_implementation_digest",
+    "baseline_environment_digest",
     "protocol_version",
     "target_id",
     "backend",

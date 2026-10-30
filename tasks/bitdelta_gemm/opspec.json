@@ -1,0 +1,172 @@
+{
+  "spec_version": 1,
+  "op_name": "bitdelta_gemm",
+  "category": "gemm",
+  "formula": "y[i,j] = scale * sum_k x[i,k] * W[k,j], W[k,j] = +1 if bit (k mod 32) of bits[k//32, j] is set else -1",
+  "uses": [
+    "SCALE"
+  ],
+  "type_vars": {
+    "T": [
+      "fp16",
+      "bf16"
+    ]
+  },
+  "symbols": {
+    "M": {
+      "min": 1
+    },
+    "N": {
+      "min": 1
+    },
+    "K": {
+      "min": 32
+    },
+    "KB": {
+      "min": 1
+    }
+  },
+  "tensors": {
+    "x": {
+      "role": "input",
+      "dims": [
+        "M",
+        "K"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "K",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "activations, row-major [M, K]"
+    },
+    "bits": {
+      "role": "input",
+      "dims": [
+        "KB",
+        "N"
+      ],
+      "dtype": "u32",
+      "layout": "contiguous",
+      "strides": [
+        "N",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "packed signs: bit j of bits[kb, n] is the sign of W[kb*32 + j, n] (1 -> +1, 0 -> -1)"
+    },
+    "y": {
+      "role": "output",
+      "dims": [
+        "M",
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "N",
+        "1"
+      ],
+      "space": "global",
+      "access": "write"
+    }
+  },
+  "numerics": {
+    "acc_dtype": "fp32",
+    "rounding": "single_round_at_output",
+    "tolerances": {
+      "fp16": {
+        "rtol": 0.002,
+        "atol_rel": 0.001
+      },
+      "bf16": {
+        "rtol": 0.016,
+        "atol_rel": 0.008
+      }
+    },
+    "exact": false
+  },
+  "attrs": {
+    "SCALE": {
+      "dtype": "float",
+      "default": 0.02,
+      "domain": {
+        "gt": 0
+      },
+      "doc": "per-matrix scale"
+    }
+  },
+  "cases": {
+    "names": [
+      "random",
+      "edge_bits",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+    ],
+    "inputs": {
+      "ieee": {
+        "_base": "random"
+      }
+    }
+  },
+  "sizes": {
+    "paper": {
+      "M": 512,
+      "N": 4096,
+      "K": 4096,
+      "KB": 128,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "small": {
+      "M": 128,
+      "N": 256,
+      "K": 256,
+      "KB": 8,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    }
+  },
+  "spec_params": [
+    "M",
+    "N",
+    "K"
+  ],
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "coefficient": 2,
+          "symbols": [
+            "M",
+            "N",
+            "K"
+          ]
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {
+          "tensor": "x"
+        },
+        {
+          "tensor": "bits"
+        },
+        {
+          "tensor": "y"
+        }
+      ]
+    }
+  }
+}

@@ -1,5 +1,5 @@
-{{EPILOGUE_DEF}}
-kernel void {{KERNEL}}(device const {{T}}* A [[buffer(0)]],
+
+kernel void gemm_kernel(device const {{T}}* A [[buffer(0)]],
                        device const {{T}}* B [[buffer(1)]],
                        device {{T}}* C [[buffer(2)]],
                        uint2 tg [[threadgroup_position_in_grid]],
@@ -30,5 +30,5 @@ kernel void {{KERNEL}}(device const {{T}}* A [[buffer(0)]],
     }
     for (uint i = 0; i < {{TM}}; ++i)
         for (uint j = 0; j < 8; ++j)
-            C[(ulong)(m0 + tr * {{TM}} + i) * N + n0 + tc * 8 + j] = {{T}}({{EPILOGUE}}(acc[i][j]));
+            C[(ulong)(m0 + tr * {{TM}} + i) * N + n0 + tc * 8 + j] = {{T}}((acc[i][j]));
 }

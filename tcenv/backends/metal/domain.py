@@ -135,7 +135,7 @@ def coverage_for_report(task, results, kernel_source: str, toolchain: dict) -> d
     ``domain_sweep`` only when the task declared the sweep and every domain result passed. Otherwise sampling.
     """
     domain = [r for r in results if r.case == DOMAIN_CASE]
-    if not domain or not (task.meta or {}).get("domain_case") or not all(r.ok for r in domain):
+    if not domain or not task.evaluation_domain.get("domain_case") or not all(r.ok for r in domain):
         return sampling_coverage()
     import hashlib
 

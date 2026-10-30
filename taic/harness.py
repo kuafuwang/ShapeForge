@@ -550,6 +550,11 @@ def trusted_premise_record(
             continue
         if row.get("simulated") is True or row.get("measurement_kind") == "simulated":
             continue
+        # The premise summary must name how the measurement and the build were produced.  A row
+        # that cannot say it, or that says anything but a native build, is not trusted evidence
+        # (§6.1: this summary is not an EvalReport, but it cannot lack the refusal bit).
+        if row.get("build_kind") != "native":
+            continue
         if str(row.get("target_id") or "") != str(target_id):
             continue
         if str(row.get("protocol_version") or "") != str(protocol_version):

@@ -450,20 +450,44 @@ class MetalContext:
             raise MetalRuntimeError(str(err.localizedDescription()) if err is not None else f"command buffer status {cb.status()}")
         return RunTiming(wall_s=wall, gpu_s=float(cb.GPUEndTime() - cb.GPUStartTime()), iters=iters)
 
+    #: The one internal kernel the runtime may need (zero-filling a workspace buffer).  It is a
+    #: fixed raw-source kernel with no task contract; the composition root builds it through the
+    #: backend factory's registered ``metal.internal-fill`` diagnostic profile and *injects* the
+    #: pipeline here, so the runtime never compiles on its own (plan §5.2).
+    FILL_KERNEL_SOURCE = (
+        "#include <metal_stdlib>\nusing namespace metal;\n"
+        "kernel void taic_fill_zero(device uint* p [[buffer(0)]], constant uint& nwords [[buffer(1)]], "
+        "uint gid [[thread_position_in_grid]]) { if (gid < nwords) p[gid] = 0u; }\n"
+    )
+    FILL_KERNEL_NAME = "taic_fill_zero"
+
+    def inject_fill_kernel(self, kernel: Any) -> None:
+        """@brief 注入由 backend 工厂构建的清零核（runtime 不再自己编译）。
+
+        @param kernel 已构建的 ``CompiledKernel``。
+        @raises ValueError 核名与登记的内部 fill 核不一致。
+        """
+        name = str(getattr(kernel, "name", ""))
+        if name != self.FILL_KERNEL_NAME:
+            raise ValueError(
+                f"the injected fill kernel is {name!r}, expected {self.FILL_KERNEL_NAME!r}"
+            )
+        self._fill = kernel
+        self._fill_outcome = getattr(kernel, "_build_outcome", None)
+
     def _fill_kernel(self) -> CompiledKernel:
-        """@brief 返回（并缓存）把 workspace 清零用的内部核。
+        """@brief 返回已注入（并缓存）的清零核；未注入是内部执行错误。
 
         @return 清零核的 CompiledKernel。
+        @raises MetalRuntimeError 清零核未被注入（组合根没有经 backend 工厂构建）。
         """
         cached = getattr(self, "_fill", None)
         if cached is None:
-            src = (
-                "#include <metal_stdlib>\nusing namespace metal;\n"
-                "kernel void taic_fill_zero(device uint* p [[buffer(0)]], constant uint& nwords [[buffer(1)]], "
-                "uint gid [[thread_position_in_grid]]) { if (gid < nwords) p[gid] = 0u; }\n"
+            raise MetalRuntimeError(
+                "the internal zero-fill kernel was not injected: the composition root must build it "
+                "through the backend factory (metal.internal-fill) before running a fill"
             )
-            self._fill = self.compile(src, "taic_fill_zero", math="safe")
-        return self._fill
+        return cached
 
     def run_pipeline(
         self,

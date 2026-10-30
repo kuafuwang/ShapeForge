@@ -53,12 +53,23 @@ def test_suite_runs_resumes_summarizes_and_plots(tmp_path):
     # run_suite builds its client inside run_one; patch the scripted client in through the module hook
     import experiments.run_suite as rs
 
+    # The scripted evaluator reports the structural native fixture, so the confirmation gate needs
+    # that fixture's *current* expected (the CPU process has no Metal probe).  Injecting it is the
+    # same seam `make_orch` uses; without it a local run is `build_identity_unknown`, by design.
+    from tcenv.evaluation import LocalEvaluator
+
+    from ..support.report_build import structural_expected
+
     def one(task, dtype, size, run_dir, **kw):
         kw.pop("client", None)
         from experiments.common import run_one as real
 
         c = lambda m: code(m, kernel_of(task))
-        return real(task, dtype, size, run_dir, client=FakeClient(llm_script(c("speed=0.9"), patches={"A": c("speed=1.2"), "B": c("speed=1.1"), "C": c("speed=0.5")})), **kw)
+        return real(
+            task, dtype, size, run_dir,
+            client=FakeClient(llm_script(c("speed=0.9"), patches={"A": c("speed=1.2"), "B": c("speed=1.1"), "C": c("speed=0.5")})),
+            evaluator=LocalEvaluator(evf, expected_identity=structural_expected), **kw,
+        )
 
     rs.run_one = one
     rows = rs.run_suite(["relu", "sigmoid"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
@@ -90,12 +101,21 @@ def test_repeatability_table(tmp_path):
 
     seq = iter([1.0, 1.2, 1.1])
 
+    from tcenv.evaluation import LocalEvaluator
+
+    from ..support.report_build import structural_expected
+
     def one(task, dtype, size, run_dir, **kw):
         kw.pop("client", None)
         from experiments.common import run_one as real
 
         s = next(seq)
-        return real(task, dtype, size, run_dir, client=FakeClient(llm_script(code(f"speed={s}"))), **kw)
+        fn = kw.get("evaluate_fn")
+        # The repeatability table reads the *published* value (D44), so the synthetic trials must be
+        # able to confirm: give the local executor the structural expected its reports are built from.
+        extra = {"evaluator": LocalEvaluator(fn, expected_identity=structural_expected)} if fn is not None else {}
+        return real(task, dtype, size, run_dir, client=FakeClient(llm_script(code(f"speed={s}"))),
+                    **extra, **kw)
 
     rp.run_one = one
     calls = []

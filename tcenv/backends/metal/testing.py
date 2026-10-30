@@ -109,13 +109,14 @@ def prepare_case(task: Task, case: str, seed: int) -> CaseData:
         return CaseData(case, seed, rounded, raw, ref, scale, tensor_sha256(values))
 
     ieee = case == IEEE_CASE
-    logical = task.gen_inputs(task.meta.get("ieee_base", "normal") if ieee else case, seed)
+    domain = task.evaluation_domain
+    logical = task.gen_inputs(domain.get("ieee_base", "normal") if ieee else case, seed)
     rounded: dict[str, torch.Tensor] = {}
     raw: dict[str, bytes] = {}
     for j, a in enumerate(task.contract.inputs):
         t = logical[a.name].reshape(a.shape)
-        if ieee and get_dtype(a.dtype).is_float and a.name in task.meta.get("ieee_inputs", (a.name,)):
-            t = inject_specials(t, seed + 104_729 * (j + 1), task.meta.get("ieee_max", {}).get(a.name))
+        if ieee and get_dtype(a.dtype).is_float and a.name in domain.get("ieee_inputs", (a.name,)):
+            t = inject_specials(t, seed + 104_729 * (j + 1), domain.get("ieee_max", {}).get(a.name))
         rounded[a.name] = round_to(t, a.dtype)
         raw[a.name] = to_raw(rounded[a.name], a.dtype)
     ref = {k: v.reshape(task.contract.arg(k).shape) for k, v in task.reference(rounded).items()}

@@ -52,7 +52,7 @@ def _run(root: Path, name: str, *, candidates: int = 1) -> None:
         cand = folder / f"{index:03d}_r1.p0"
         cand.mkdir()
         (cand / "kernel.metal").write_text("kernel void k() {}\n", encoding="utf-8")
-        (cand / "report.json").write_text(json.dumps({"status": "ok", "speedup": 1.0}), encoding="utf-8")
+        (cand / "report.json").write_text(json.dumps({"schema_version": 4, "status": "ok", "speedup": 1.0}), encoding="utf-8")
 
 
 def _tables(index: Index) -> dict[str, list[dict]]:
@@ -88,24 +88,16 @@ def _make_confirmed(directory: Path) -> None:
     (directory / "best.metal").write_text(kernel, encoding="utf-8")
     candidate = directory / "candidates" / "000_r1.p0"
     (candidate / "kernel.metal").write_text(kernel, encoding="utf-8")
-    (candidate / "report.json").write_text(json.dumps({"status": "ok", "speedup": 1.5}), encoding="utf-8")
-    (directory / "result.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "size": "small", "stop_reason": "max_rounds",
-        "started_at": 1, "spent_usd": 0.1, "budget_usd": 1, "target_id": "apple-m4-max",
-        "confirmed_speedup": 1.5, "confirmed_status": "ok", "confirm_winner_label": "r1.p0",
-        "confirmation_source_sha256": digest, "confirmed_values": [1.5],
-        "confirmed_worst": 1.5, "confirmed_best": 1.5,
-    }), encoding="utf-8")
-    (directory / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": 1.5,
-        "benchmark": {
-            "noisy": False, "candidate": {"cv": 0.01, "reps": 15},
-            "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx",
-            "confirmation": {"kernel_sha256": digest, "winner_label": "r1.p0",
-                             "confirmed_values": [1.5], "speedup": 1.5, "candidate_us": None},
-        },
-        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
-    }), encoding="utf-8")
+    (candidate / "report.json").write_text(json.dumps({"schema_version": 4, "status": "ok", "speedup": 1.5}), encoding="utf-8")
+    from experiments.common import synthetic_confirmation_documents
+
+    result, report = synthetic_confirmation_documents(
+        task="relu", dtype="fp16", size="small", target_id="apple-m4-max",
+        speedup=1.5, label="r1.p0", kernel_sha256=digest,
+    )
+    result.update({"stop_reason": "max_rounds", "started_at": 1, "spent_usd": 0.1, "budget_usd": 1})
+    (directory / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    (directory / "confirm_report.json").write_text(json.dumps(report), encoding="utf-8")
 
 
 def _make_failing_candidate(directory: Path) -> None:
@@ -114,6 +106,7 @@ def _make_failing_candidate(directory: Path) -> None:
     @param directory 运行目录。
     """
     (directory / "candidates" / "000_r1.p0" / "report.json").write_text(json.dumps({
+        "schema_version": 4,
         "status": "error", "stage": "compile", "message": "abi_error: missing symbol",
     }), encoding="utf-8")
 

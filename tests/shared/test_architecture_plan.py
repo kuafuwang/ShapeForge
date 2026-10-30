@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from experiments.committee_ab import matrix, nominal_usd
@@ -132,7 +133,22 @@ def test_experience_index_names_an_added_feature(tmp_path: Path):
         folder = run / "candidates" / f"{idx:03d}_c"
         folder.mkdir(parents=True)
         (folder / "kernel.metal").write_text(body)
-        (folder / "report.json").write_text('{"status": "ok", "speedup": %s, "task": "relu", "roofline": {"bound": "memory"}}' % speed)
+        from tests.support.report_build import report_for_request
+
+        report = report_for_request(
+            {"task": "relu", "dtype": "fp16", "size": "small", "mode": "full", "seed": 1},
+            source=body.encode("utf-8"),
+        )
+        report["speedup"] = speed
+        report["roofline"] = {"bound": "memory"}
+        (folder / "report.json").write_text(json.dumps(report))
+    # An old (schema 3) report in the same run is not evidence and must be skipped.
+    legacy = run / "candidates" / "002_legacy"
+    legacy.mkdir(parents=True)
+    (legacy / "kernel.metal").write_text("kernel void k() { simdgroup_matrix<float, 8, 8> acc[4]; }\n")
+    (legacy / "report.json").write_text(
+        '{"status": "ok", "speedup": 9.0, "task": "relu", "roofline": {"bound": "memory"}}'
+    )
     index = build_experience_index([tmp_path])
     text = retrieve_experience_hints(index, "relu", "memory")
     assert "matrix_unit" in text

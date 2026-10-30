@@ -39,12 +39,10 @@ from tcenv.remote import worker_protocol
 mode = os.environ.get("FAULT_WORKER_MODE", "")
 ready = os.environ.get("FAULT_WORKER_READY", "")
 attempt_id, request, request_id, fence = worker_protocol.read_request(sys.stdin.buffer)
-report = {
-    "task": request.task, "dtype": request.dtype, "size": request.size,
-    "mode": request.mode, "seed": request.seed_int, "status": "ok", "stage": "done",
-    "candidate_us": 1.0, "speedup": 1.0, "elapsed_s": 0.0,
-    "target_id": request.target_id, "protocol_version": "3", "simulated": True,
-}
+from tests.support.report_build import report_for_request
+
+report = report_for_request(request, status="ok", source=b"kernel void demo() {}\n")
+report.update({"candidate_us": 1.0, "speedup": 1.0, "elapsed_s": 0.0})
 evidence = {"candidate_sha256": request.candidate_sha256}
 if mode in {"wrong_task_hang", "wrong_task_second_result"}:
     report["task"] = "not-the-requested-task"
@@ -244,7 +242,7 @@ def test_container_cancel_tears_down_and_old_fence_cannot_commit(tmp_path):
         forged = {
             "task": req.task, "dtype": req.dtype, "size": req.size, "mode": req.mode,
             "seed": req.seed_int, "status": "ok", "stage": "done",
-            "target_id": req.target_id, "protocol_version": "3", "simulated": True,
+            "target_id": req.target_id, "protocol_version": "3",
         }
         late = service.store.complete_attempt(
             req.request_id, attempt, report=forged,

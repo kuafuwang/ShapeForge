@@ -47,16 +47,23 @@ SLOW_ENV = "TCENV_VENDOR_C_SLOW"
 
 def _artifact_bytes(
     bundle, root: str | None, *, scratch: Path | None = None,
+    scratch_anchor: Path | None = None,
 ) -> dict[str, bytes]:
     """Read every entry and verify the exact bytes before the driver loads them.
 
     Inline entries are materialized into this attempt's build scratch directory
     and read back through the verified handles (a path swapped after the write is
-    refused).  The scratch directory is a real temporary build artifact and the
-    attempt removes it after loading; a crash leaves it for the engine's sweep.
+    refused).  ``scratch_anchor`` is the engine-owned state directory: the
+    ``build`` and attempt components are checked from it with no-follow, so a
+    planted ``<state>/build`` link cannot redirect the write.  The scratch
+    directory is a real temporary build artifact and the attempt removes it after
+    loading; a crash leaves it for the engine's sweep.
     """
 
-    handles = bundle.materialize(scratch) if scratch is not None else {}
+    handles = (
+        bundle.materialize(scratch, anchor=scratch_anchor)
+        if scratch is not None else {}
+    )
     reader = BlobReader(Path(root)) if bundle.blob_entries else None
     written: dict[str, bytes] = {}
     for entry in bundle.entries:
@@ -82,7 +89,9 @@ def _artifact_bytes(
     return written
 
 
-def _compile_failure_report(request, attempt_id: str, fence: int, exc: BuildError) -> int:
+def _compile_failure_report(
+    request, attempt_id: str, fence: int, exc: BuildError, *, identity: dict[str, str],
+) -> int:
     """Emit the candidate compile failure (no device event, no claim of ok)."""
 
     build = request.build
@@ -143,14 +152,28 @@ def _compile_failure_report(request, attempt_id: str, fence: int, exc: BuildErro
         )
     except contracts.ContractError:
         return 26
-    report = {
-        "task": request.task, "dtype": request.dtype, "size": request.size,
-        "mode": request.mode, "seed": request.seed_int, "status": "compile_error",
-        "stage": "compile", "message": f"fake txcc: {exc.detail}"[:300],
-        "candidate_us": 0.0, "speedup": 1.0, "elapsed_s": 0.0,
-        "target_id": request.target_id, "protocol_version": PROTOCOL_VERSION,
-        "simulated": True,
-    }
+    from tcenv.build_projection import project_partial
+    from tcenv.evaluate import EvalReport
+
+    try:
+        failure_builder, _ = builder_for_provenance(build.to_dict()["provenance"])
+    except BuildError:
+        return 27
+    try:
+        build_record = project_partial(
+            exc, build_kind=failure_builder.build_kind, identity=identity,
+        )
+    except ValueError:
+        return 28
+    report_object = EvalReport(
+        task=request.task, dtype=request.dtype, size=request.size,
+        mode=request.mode, seed=request.seed_int, status="compile_error",
+        stage="compile", message=f"fake txcc: {exc.detail}"[:300],
+        candidate_us=0.0, speedup=1.0, elapsed_s=0.0,
+        target_id=request.target_id, protocol_version=PROTOCOL_VERSION,
+    )
+    report_object.build = build_record
+    report = report_object.to_json()
     worker_protocol.write_result(
         sys.stdout.buffer, request_id=request.request_id, attempt_id=attempt_id,
         lease_fence=fence, report=report, evidence=evidence,
@@ -167,6 +190,9 @@ def main() -> int:
     if request.npu is None or request.build is None:
         return 12
     build_document = request.build.to_dict()
+    from tests.support.report_build import task_identity
+
+    identity = task_identity(request.task, request.dtype, request.size)
     source = request.source
     context = {
         "attempt_id": attempt_id,
@@ -181,6 +207,7 @@ def main() -> int:
     scratch = (
         Path(state_dir) / "build" / attempt_id if state_dir else None
     )
+    scratch_anchor = Path(state_dir) if state_dir else None
     deadline = time.monotonic() + request.candidate_timeout_ms / 1000.0
     if request.npu.bundle is not None:
         # Prebuilt: the control host already compiled; this attempt only verifies
@@ -188,7 +215,9 @@ def main() -> int:
         bundle = request.npu.bundle
         load_started = time.monotonic()
         try:
-            loaded = _artifact_bytes(bundle, blob_root, scratch=scratch)
+            loaded = _artifact_bytes(
+                bundle, blob_root, scratch=scratch, scratch_anchor=scratch_anchor,
+            )
         except Exception:  # noqa: BLE001 - an unreadable artifact is infrastructure
             return 17
         load_ms = max(1, int(round((time.monotonic() - load_started) * 1000)))
@@ -206,6 +235,12 @@ def main() -> int:
             )
         except (KeyError, ValueError) as exc:  # noqa: BLE001 - inconsistent request
             return 18
+        try:
+            received_builder, _ = builder_for_provenance(build_document["provenance"])
+        except BuildError:
+            return 25
+        build_kind = received_builder.build_kind
+        build_outcome = None
     else:
         # Evaluator build: only a registered profile can run, and the build is
         # part of this attempt (no prebuilt artifact is mixed in).
@@ -223,15 +258,21 @@ def main() -> int:
             )
         except BuildError as exc:
             if exc.error_class == "compile":
-                return _compile_failure_report(request, attempt_id, fence, exc)
+                return _compile_failure_report(
+                    request, attempt_id, fence, exc, identity=identity,
+                )
             # A toolchain/profile/deadline refusal is not a candidate compile
             # failure: no result is reported and the frontend treats it as an
             # infrastructure/attempt failure.
             return 24
         bundle = outcome.bundle
         evidence = outcome.evidence
+        build_outcome = outcome  # the BuildOutcome, before ``outcome`` names the device run
+        build_kind = builder.build_kind
         try:
-            loaded = _artifact_bytes(bundle, None, scratch=scratch)
+            loaded = _artifact_bytes(
+            bundle, None, scratch=scratch, scratch_anchor=scratch_anchor,
+        )
         except Exception:  # noqa: BLE001 - a freshly built set must verify
             return 19
         if os.environ.get(ABORT_AFTER_BUILD_ENV) == "1" and fence == 1:
@@ -306,15 +347,24 @@ def main() -> int:
         )
     except contracts.ContractError:
         return 22
-    report = {
-        "task": request.task, "dtype": request.dtype, "size": request.size,
-        "mode": request.mode, "seed": request.seed_int,
-        "status": "ok", "stage": "done",
-        "candidate_us": device_elapsed_ns / 1000.0,
-        "speedup": 1.0, "elapsed_s": 0.0,
-        "target_id": request.target_id, "protocol_version": PROTOCOL_VERSION,
-        "simulated": True,
-    }
+    from tcenv.build_projection import project_full, project_received
+    from tcenv.evaluate import EvalReport
+
+    if request.npu.bundle is not None:
+        # This attempt verified and loaded a prebuilt set; it holds no BuildOutcome.
+        build_record = project_received(evidence, build_kind=build_kind, identity=identity)
+    else:
+        build_record = project_full(build_outcome, build_kind=build_kind, identity=identity)
+    report_object = EvalReport(
+        task=request.task, dtype=request.dtype, size=request.size,
+        mode=request.mode, seed=request.seed_int,
+        status="ok", stage="done",
+        candidate_us=device_elapsed_ns / 1000.0,
+        speedup=1.0, elapsed_s=0.0,
+        target_id=request.target_id, protocol_version=PROTOCOL_VERSION,
+    )
+    report_object.build = build_record
+    report = report_object.to_json()
     worker_protocol.write_result(
         sys.stdout.buffer, request_id=request_id, attempt_id=attempt_id,
         lease_fence=fence, report=report, evidence=device_evidence,

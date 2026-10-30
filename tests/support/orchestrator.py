@@ -26,6 +26,36 @@ def code(marker: str, kernel: str = KERNEL) -> str:
     """
     return f"```metal\n// {marker}\nkernel void {kernel}(device const half* x [[buffer(0)]], device half* y [[buffer(1)]]) {{}}\n```"
 
+def stamp_report(report, task: str, dtype: str, size: str, source: str, *, build_kind: str = "native"):
+    """Give an ad-hoc test evaluator's report the build record and identity its status needs.
+
+    A hand-built ``EvalReport`` has no build record; schema 4 and the confirmation gate require
+    one.  CPU tests stand in for the local Metal build with the native projection fixture.
+
+    @param report 评测报告。
+    @param task 任务名。
+    @param dtype 元素类型短名。
+    @param size 问题规模名。
+    @param source 候选源码。
+    @param build_kind ``native``（默认替身）或 ``simulator``。
+    @return 同一份报告。
+    """
+    from tasks import get_task
+
+    from tests.support.report_build import attach_identity, native_build, simulated_build
+
+    from tcenv.schema import PROTOCOL_VERSION
+
+    task_obj = get_task(task, dtype, size)
+    report.build = native_build(task_obj, source.encode("utf-8")) if build_kind == "native" else simulated_build(task_obj, source.encode("utf-8"))
+    report.target_id = report.target_id or "apple-m4-max"
+    report.protocol_version = report.protocol_version or PROTOCOL_VERSION
+    report.backend = report.backend or "metal"
+    report.backend_version = report.backend_version or "1"
+    attach_identity(report, task_obj, backend_id="metal")
+    return report
+
+
 def fake_eval(calls: list):
     """@brief 用源码里的 "// speed=1.3" 或 "// status=compile_error" 标记伪造一次评估结果。
 
@@ -40,7 +70,18 @@ def fake_eval(calls: list):
         m = re.search(r"// (\w+)=([\w.]+)", source)
         key, val = m.group(1), m.group(2)
         r = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=1, stage="done",
-                       target_id="apple-m4-max", protocol_version=PROTOCOL_VERSION)
+                       target_id="apple-m4-max", protocol_version=PROTOCOL_VERSION,
+                       backend="metal", backend_version="1")
+        # A schema-4 report always carries the one build record for its status, projected from
+        # the registered simulator builder (a test double, never publishable).
+        from tasks import get_task
+
+        from tests.support.report_build import (
+            attach_identity, native_build, simulated_compile_failure,
+        )
+
+        task_obj = get_task(task, dtype, size)
+        attach_identity(r, task_obj, backend_id="metal")
         if key == "speed":
             sp = float(val)
             r.status, r.message, r.speedup, r.speedups, r.candidate_us, r.baseline_us = "ok", "ok", sp, {"mlx": sp}, 100.0 / sp, {"mlx": 100.0}
@@ -51,6 +92,17 @@ def fake_eval(calls: list):
             r.status, r.stage, r.message = "timeout", "timeout", "a single GPU launch ran for more than 3s"
         else:
             r.status, r.message = val, f"{val} happened"
+        from tcenv.build_projection import STATUS_SHAPES
+
+        shapes = STATUS_SHAPES.get(r.status, frozenset())
+        if "full" in shapes and shapes == frozenset({"full"}):
+            r.build = native_build(task_obj, source.encode("utf-8"))
+        elif "partial" in shapes:
+            r.build = simulated_compile_failure(
+                task_obj, b"// COMPILE_FAIL\n" + source.encode("utf-8"),
+            )
+        else:
+            r.build = None
         return r
 
     return ev
@@ -148,9 +200,18 @@ def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, ma
     # The production default is on. Scripted tests pin the switches off unless the test passes one, so a prompt assertion stays about the thing it names.
     off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False, plan_ledger=False)
     search = SearchConfig(budget_usd=budget, branches=branches, max_rounds=max_rounds, max_repair_tries=max_repair, max_hangs=max_hangs, eval_reps=3, kernel_agent="pi", **{**off, **search_kw})
+    fn = evaluate_fn or fake_eval(calls)
+    if evaluator is None:
+        # The fake local evaluator stands in for the Metal executor: it also provides that
+        # executor's *current* expected identity (never derived from a report).
+        from tcenv.evaluation import LocalEvaluator
+
+        from tests.support.report_build import structural_expected
+
+        evaluator = LocalEvaluator(fn, expected_identity=structural_expected)
     return Orchestrator(
         "relu", "fp16", "small", llm_cfg, search, run_dir=tmp_path / "run",
-        evaluate_fn=evaluate_fn or fake_eval(calls), client=FakeClient(script), log=log or (lambda s: None), from_run=from_run,
+        evaluate_fn=fn, client=FakeClient(script), log=log or (lambda s: None), from_run=from_run,
         evaluator=evaluator, session_runner=session_runner, workspace_config=workspace_config, selfcheck_bridge_factory=selfcheck_bridge_factory,
         publishable_site_ids=publishable_site_ids, publishable_epochs=publishable_epochs,
         agent_runner=agent_for_script(script, KERNEL),

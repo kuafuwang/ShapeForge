@@ -73,26 +73,21 @@ def _published_run(runs: Path, name: str, *, task: str = "conv2d", speedup: floa
         "task": task, "dtype": dtype, "phase": "done", "started_at": 10.0, "updated_at": 20.0,
         "spent_usd": spent, "budget_usd": 10.0, "best_speedup": search_best,
     }), encoding="utf-8")
-    (directory / "result.json").write_text(json.dumps({
-        "task": task, "dtype": dtype, "size": size, "stop_reason": "max_rounds", "spent_usd": spent,
-        "budget_usd": 10.0, "best_speedup": search_best, "target_id": "apple-m4-max",
-        "protocol_version": protocol, "confirmation_source_sha256": digest,
-        "confirm_winner_label": "r1.p0", "confirmed_status": "ok",
-        "confirmed_speedup": speedup, "confirmed_values": values, "candidate_us": None,
-    }), encoding="utf-8")
-    (directory / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": speedup, "protocol_version": (
-            PROTOCOL_VERSION if protocol == "flame_chase_1" else protocol),
-        "target_id": "apple-m4-max",
-        "benchmark": {
-            "noisy": False, "candidate": {"cv": 0.01, "reps": 15},
-            "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx",
-            "confirmation": {
-                "kernel_sha256": digest, "winner_label": "r1.p0", "confirmed_values": values,
-                "speedup": speedup, "candidate_us": None,
-            },
-        },
-    }), encoding="utf-8")
+    from experiments.common import synthetic_confirmation_documents
+
+    # Both sides of the fixture say the same protocol, so the frozen expected and the confirm
+    # report agree: the "epoch" these tests group by is a real published epoch, not a mismatch.
+    result, report = synthetic_confirmation_documents(
+        task=task, dtype=dtype, size=size, target_id="apple-m4-max",
+        speedup=speedup, label="r1.p0", kernel_sha256=digest, values=values,
+        protocol_version=PROTOCOL_VERSION if protocol == "flame_chase_1" else protocol,
+    )
+    result.update({
+        "stop_reason": "max_rounds", "spent_usd": spent, "budget_usd": 10.0,
+        "best_speedup": search_best, "protocol_version": protocol,
+    })
+    (directory / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    (directory / "confirm_report.json").write_text(json.dumps(report), encoding="utf-8")
     (directory / "run_config.json").write_text(json.dumps({
         "task": task, "dtype": dtype, "size": size,
         "target": {"id": "apple-m4-max", "backend": "metal", "backend_version": "v1"},
@@ -332,7 +327,8 @@ def _candidate_file(directory: Path, index: int, *, cv, reps, cache_hit) -> None
     folder = directory / "candidates" / f"{index:03d}_{label}"
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "kernel.metal").write_text(_SOURCE, encoding="utf-8")
-    report = {"status": "ok", "stage": "bench", "speedup": 1.0}
+    # 噪声面板只从当前（schema-4）报告取 cv/reps/cache_hit。
+    report = {"schema_version": 4, "status": "ok", "stage": "bench", "speedup": 1.0}
     if cv is not None or reps is not None:
         report["benchmark"] = {"candidate": {key: value for key, value in (("cv", cv), ("reps", reps)) if value is not None}}
     if cache_hit is not None:
@@ -891,3 +887,32 @@ def test_noise_reports_more_reps_than_it_shows(tmp_path, monkeypatch):
     assert doc["reps_total"] == 21
     assert doc["truncated"]["reps"] is True
     assert sum(row["n"] for row in doc["reps"]) == analysis.PANEL_COLUMNS
+
+
+def test_an_old_format_confirmation_supplies_no_batch_count(tmp_path):
+    """schema-3 确认报告不是当前证据：批次数不可判，不能从 ``result.confirmed_values`` 回填。
+
+    The reviewer's repro: a schema-3 confirm report plus two ``confirmed_values`` used to yield
+    ``(None, 2)``.  That 2 is the run's own memory of a confirmation whose records this reader
+    cannot check, so the panel must show ``null`` rather than a remembered number.
+    """
+    run = _unpublished_run(tmp_path, "conv2d/old", speedup=1.2)
+    result = json.loads((run / "result.json").read_text())
+    result["confirmed_values"] = [1.2, 1.21]
+    (run / "result.json").write_text(json.dumps(result))
+
+    cv, batches = analysis._confirm_stats(run, "conv2d/old")
+    assert batches is None, "旧格式确认报告的批次数不得由 result.json 回退"
+    assert cv is None or isinstance(cv, float)
+
+    # And a current (schema-4) report still supplies the count: the gate is about the format, not
+    # about hiding numbers.
+    from experiments.common import synthetic_confirmation_documents
+
+    _, report = synthetic_confirmation_documents(
+        task="conv2d", dtype="fp16", size="paper", target_id="apple-m4-max",
+        speedup=1.2, label="r1.p0", kernel_sha256="a" * 64, values=[1.2, 1.21],
+    )
+    (run / "confirm_report.json").write_text(json.dumps(report))
+    _cv, batches = analysis._confirm_stats(run, "conv2d/old")
+    assert batches == 2

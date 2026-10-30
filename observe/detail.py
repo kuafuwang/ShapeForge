@@ -14,6 +14,7 @@ from pathlib import Path
 
 from experiments.common import conclusion_of_run
 from observe.budget import budget_status
+from taic.artifacts import REPORT_STATES, report_state
 from taic.reads import head_text, iter_jsonl, tail_rows, tail_rows_across, tail_text
 from taic.redact import redact_text
 from observe.publish import gpu_dir, gpu_events_path, observe_dir
@@ -249,16 +250,35 @@ def candidate_kernel_files(candidates_dir: Path) -> list[str]:
         return []
 
 
+def candidate_report_state(report_path: Path) -> str:
+    """@brief 读一次 ``report.json`` 并返回它的当前性（不返回报告本身）。
+
+    @param report_path ``report.json`` 路径。
+    @return ``report_state`` 的分类结果。
+    """
+    return report_state(report_path, _load(report_path))
+
+
 def candidate_row(directory: Path, path: Path) -> dict:
     """@brief 把一颗候选目录读成面板/详情的一行（报告字段 + 权威内核片段）。
 
-    内核片段按 target 的权威文件名取（``target_file_names``），不按字典序猜。
+    内核片段按 target 的权威文件名取（``target_file_names``），不按字典序猜。``report_state`` 与
+    ``build`` 只在 schema-4 报告上出现；旧格式报告标成 ``old_format`` 且不产生 build/评测身份。
 
     @param directory 运行目录。
     @param path 候选目录。
     @return 候选行字典。
     """
-    report = _load(path / "report.json") or {}
+    report_path = path / "report.json"
+    report_document = _load(report_path)
+    state = report_state(report_path, report_document)
+    current = state == "current"
+    # Only a current (schema-4) report is evidence.  An old/damaged one contributes no status,
+    # speedup, cases or roofline: the row says *which* state it is instead of quoting a measurement
+    # this reader cannot check (the raw bytes stay behind the explicit ``/raw`` route).
+    report = report_document if current and isinstance(report_document, dict) else {}
+    raw_build = report.get("build")
+    raw_build = raw_build if isinstance(raw_build, dict) else {}
     prefix, _, label = path.name.partition("_")
     try:
         idx = int(prefix)
@@ -272,7 +292,7 @@ def candidate_row(directory: Path, path: Path) -> dict:
     return {
         "idx": idx,
         "label": label,
-        "status": report.get("status"),
+        "status": report.get("status") if current else state,
         "stage": report.get("stage"),
         "mode": report.get("mode"),
         "speedup": report.get("speedup"),
@@ -281,6 +301,18 @@ def candidate_row(directory: Path, path: Path) -> dict:
         "cases": _cases(report),
         "roofline": {key: roof.get(key) for key in ("achieved_tflops", "achieved_gbps", "compute_fraction", "bandwidth_fraction", "bound")},
         "benchmark": {key: bench.get(key) for key in ("noisy", "attempts", "noise_cv")},
+        # Schema 4 only: an old report has no build identity and must not look like it does.
+        "report_state": state,
+        "build": (
+            {
+                "shape": raw_build.get("shape"),
+                "build_kind": raw_build.get("build_kind"),
+                "native_digest": raw_build.get("native_digest"),
+                "artifact_set_digest": raw_build.get("artifact_set_digest"),
+            }
+            if current else {}
+        ),
+        "evaluation_fingerprint": report.get("evaluation_fingerprint") if current else None,
         "excerpt": _excerpt(path / kernel) if (path / kernel).is_file() else "",
     }
 

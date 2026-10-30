@@ -6,10 +6,11 @@ in this process.  This builder is a production implementation of the unified
 ``ArtifactBuilder`` contract, not a mock and not a concept adapter:
 
 * it calls the existing runtime path (``MetalBackend.assemble`` then
-  ``MetalBackend.compile`` -> ``MetalContext.compile``), so the compile/pipeline
-  behaviour, the ``MetalCompileError`` classification and the measured
+  ``MetalContext.compile``/``compile_all``), so the compile/pipeline behaviour,
+  the ``MetalCompileError`` classification and the measured
   ``compile_s``/``pipeline_s``/``language_version`` values are the ones the Metal
-  evaluator already reports;
+  evaluator already reports.  ``MetalContext.compile`` is reached only from this
+  builder; the evaluator and profiling paths enter through the builder;
 * a candidate compile failure is a typed ``compile`` failure that keeps the
   compiler's own diagnostic as a bounded log *and* the real elapsed compile
   time, so a failed build is never a bare one-liner with ``duration_ms=0``;
@@ -30,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import platform
 import time
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 from ...remote.artifact_builder import (
@@ -47,6 +49,59 @@ from ...remote.artifact_bundle import ArtifactBundle, NativeExecutable
 METAL_BUILDER_ID = "metal-source-builder"
 METAL_TOOLCHAIN_ID = "apple-metal"
 METAL_PROFILE_NAME = "metal-msl-control-host-v1"
+
+#: Registered **diagnostic** build profiles: probes and bandwidth calibration have no task
+#: contract, so they build already-assembled source.  ``assemble: raw_source`` means the
+#: contract header is *not* prepended, which keeps the probe's byte offsets and diagnostic line
+#: numbers exactly what the caller sent.  They are not task LoweringProfiles and a diagnostic
+#: outcome never becomes candidate build evidence (plan §5.2).
+DIAGNOSTIC_BUILD_PROFILES: dict[str, dict[str, str]] = {
+    "metal.raw-source-probe": {"assemble": "raw_source", "math": "safe"},
+    "metal.raw-source-calibration": {"assemble": "raw_source", "math": "fast"},
+    # The runtime's own zero-fill kernel: fixed source, no task contract, built by the
+    # composition root and injected into the context (never compiled inside the runtime).
+    "metal.internal-fill": {"assemble": "raw_source", "math": "safe"},
+}
+
+
+@dataclass(frozen=True)
+class DiagnosticContract:
+    """The minimum a diagnostic build needs: a kernel name and no header.
+
+    It is deliberately *not* a ``Contract``/LoweringProfile: it declares no ABI, no constants
+    and no launch facts, so it cannot be mistaken for a task contract.
+    """
+
+    kernel_name: str
+
+    def assemble(self, kernel_code: str) -> tuple[str, int]:
+        """@brief raw-source assemble：不加契约头，行号偏移为 0。
+
+        @param kernel_code 已经装配好的源文本。
+        @return ``(源文本, 0)``。
+        """
+        return kernel_code, 0
+
+    def render_header(self) -> str:
+        """@brief 诊断契约没有头。
+
+        @return 空串。
+        """
+        return ""
+
+
+@dataclass(frozen=True)
+class MetalKernelSet:
+    """Several live pipelines of one multi-stage Metal build.
+
+    ``NativeExecutable.handle`` holds one pipeline for the common single-kernel
+    case, so a declared ``taic-launch`` pipeline uses this local container
+    instead of pretending the other stages do not exist.  It is never serialized
+    and never enters a digest.
+    """
+
+    kernels: tuple[Any, ...]
+
 #: A compile-failure log is a diagnostic, not an artifact: it is bounded so a
 #: pathological compiler message cannot grow the attempt's memory without limit.
 MAX_COMPILE_FAILURE_LOG_BYTES = 64 * 1024
@@ -122,12 +177,43 @@ class MetalSourceBuilder:
     second contract type.
     """
 
+    #: This builder compiles with the real toolchain for the real device (§6.2).
+    build_kind = "native"
+
     def __init__(
         self, *, backend: Any | None = None, kernel_contract: Any | None = None,
-        math: str = "fast",
+        math: str = "fast", kernel_names: Any | None = None,
+        diagnostic_profile: str | None = None, specialization: Any | None = None,
     ) -> None:
         if math not in ("fast", "safe", "relaxed"):
             raise ValueError("Metal math mode must be fast, safe or relaxed")
+        # A diagnostic profile is a *registered* name, never caller-chosen options: it decides
+        # whether a contract header is assembled and which math mode is used.
+        self.diagnostic_profile = diagnostic_profile
+        self.assemble_mode = "task_header"
+        # §5.1: a candidate factory receives the Specialization (the same object ``lower``
+        # produced), so the contract it assembles and the lowering identity it reports come from
+        # one source.  A diagnostic build has no task and must not carry one.
+        self.specialization = specialization
+        if diagnostic_profile is not None and specialization is not None:
+            raise ValueError(
+                "a diagnostic build profile has no task: pass either diagnostic_profile or "
+                "specialization, not both"
+            )
+        if specialization is not None and kernel_contract is not None:
+            if kernel_contract != specialization.contract:
+                raise ValueError(
+                    "kernel_contract must be the Specialization's contract (one source, not two)"
+                )
+        if diagnostic_profile is not None:
+            if diagnostic_profile not in DIAGNOSTIC_BUILD_PROFILES:
+                raise ValueError(
+                    f"unregistered diagnostic build profile {diagnostic_profile!r}; "
+                    f"known: {sorted(DIAGNOSTIC_BUILD_PROFILES)}"
+                )
+            registered = DIAGNOSTIC_BUILD_PROFILES[diagnostic_profile]
+            self.assemble_mode = registered["assemble"]
+            math = registered["math"]
         if backend is None:
             from .backend import MetalBackend
 
@@ -135,6 +221,14 @@ class MetalSourceBuilder:
         self.backend = backend
         self.kernel_contract = kernel_contract
         self.math = math
+        names = () if kernel_names is None else tuple(str(name) for name in kernel_names)
+        if any(not name for name in names):
+            raise ValueError("a Metal build kernel name must not be empty")
+        # The builder *configuration* (contract, math, the names of a declared
+        # multi-stage pipeline) is chosen by the composition root.  `build` is
+        # still the only build entry point: the evaluator does not call the
+        # runtime's compile primitive itself, and there is no second path.
+        self.kernel_names = tuple(dict.fromkeys(names))
         self._profile: BuildProfile | None = None
         self._info: dict[str, Any] | None = None
 
@@ -162,6 +256,39 @@ class MetalSourceBuilder:
             )
         return BuildCapabilities(profile=self._profile_for(info), available=True)
 
+    def _compile_assembled(self, context: Any, assembled: str, names: list[str]) -> list[Any]:
+        """The Metal runtime primitive: one library, one pipeline per name.
+
+        Only the builder calls this; the evaluator reaches it through
+        ``ArtifactBuilder.build``.  Keeping the runtime call here is what makes
+        ``MetalContext.compile`` an implementation detail of the builder rather
+        than a second production compile path.
+        """
+
+        if not names:
+            raise BuildError("toolchain_profile", "a Metal build needs at least one kernel name")
+        if len(names) == 1:
+            return [context.compile(assembled, names[0], math=self.math)]
+        return list(context.compile_all(assembled, names, math=self.math))
+
+    @property
+    def lowering_identity(self) -> dict[str, str] | None:
+        """@brief 候选 build 的语义/启动身份（任务外部/诊断 build 为 ``None``）。
+
+        The candidate composition roots (``evaluate``/``xcworker``) pass the task's
+        ``Specialization``; a builder-level test that constructs a synthetic contract has none, and
+        gets ``None`` here so it can never claim a task identity it does not have.  Giving a
+        Specialization whose contract differs from the build contract is refused in ``build``.
+
+        @return ``{"opspec_digest", "lowering_profile_digest"}`` 或 ``None``。
+        """
+        if self.specialization is None:
+            return None
+        return {
+            "opspec_digest": self.specialization.opspec_digest,
+            "lowering_profile_digest": self.specialization.lowering_profile_digest,
+        }
+
     # -- build -------------------------------------------------------------
     def build(
         self, source_bundle: SourceBundle, *, task_contract: Any,
@@ -173,14 +300,15 @@ class MetalSourceBuilder:
         if deadline_monotonic is not None and started >= deadline_monotonic:
             raise BuildError("deadline", "the Metal compile deadline expired before compilation")
         contract = task_contract if task_contract is not None else self.kernel_contract
+        if self.specialization is not None and contract is not self.specialization.contract:
+            raise BuildError(
+                "toolchain_profile",
+                "the build contract is not the Specialization's contract (two sources)",
+            )
         kernel_name = self._kernel_name(contract)
-        try:
-            text = source_bundle.source.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            # Metal consumes text; non-UTF-8 source cannot even reach the
-            # compiler, so it is a candidate compile failure (the legacy
-            # evaluator reports it as compile_error).
-            raise BuildError("compile", f"Metal source is not UTF-8 text: {exc}") from exc
+        # The typed toolchain profile is established *before* any candidate-level decision, so a
+        # candidate compile failure can carry its provenance (plan §5.1).  A host without the
+        # toolchain is an infrastructure failure and stays one, whatever the source bytes are.
         try:
             info = self._device_info()
         except Exception as exc:  # noqa: BLE001 - an absent device is not the candidate's fault
@@ -190,8 +318,25 @@ class MetalSourceBuilder:
             ) from exc
         profile = self._profile_for(info)
         self._check_probed_identity(profile)
+        failed_provenance = BuildProvenance(
+            profile=profile, source_sha256=source_bundle.sha256, artifact_set_digest=None,
+        )
         try:
-            assembled, header_lines = self.backend.assemble(contract, text)
+            text = source_bundle.source.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            # Metal consumes text; non-UTF-8 source cannot even reach the compiler, so it is a
+            # candidate compile failure (the legacy evaluator reports it as compile_error).  It
+            # happens before assembly, so ``assembled_sha256`` is null — the one case §5.1 allows.
+            raise BuildError(
+                "compile", f"Metal source is not UTF-8 text: {exc}",
+                provenance=failed_provenance, assembled_sha256=None,
+            ) from exc
+        try:
+            if self.assemble_mode == "raw_source":
+                # Diagnostic build: the caller's bytes are the compilation unit.
+                assembled, header_lines = text, 0
+            else:
+                assembled, header_lines = self.backend.assemble(contract, text)
         except Exception as exc:  # noqa: BLE001 - assembly is pure string work
             raise BuildError(
                 "toolchain_profile", f"the Metal contract header could not be assembled: {exc}"[:400],
@@ -205,8 +350,9 @@ class MetalSourceBuilder:
         # an infrastructure failure and must not be blamed on the candidate.
         compile_error = self.backend.compile_error()
         compile_started = time.monotonic()
+        names = list(self.kernel_names) or [kernel_name]
         try:
-            compiled = self.backend.compile(context, assembled, contract, math=self.math)
+            kernels = self._compile_assembled(context, assembled, names)
         except compile_error as exc:
             # The legacy evaluator turns this same exception into
             # `status=compile_error`, so the unified classification is `compile`
@@ -226,8 +372,11 @@ class MetalSourceBuilder:
             elapsed_s = max(0.0, time.monotonic() - compile_started)
             raise BuildError(
                 "compile", f"{type(exc).__name__}: {message}"[:500],
+                report_detail=message[:500],
+                provenance=failed_provenance,
+                assembled_sha256=hashlib.sha256(assembled.encode("utf-8")).hexdigest(),
                 log=_compile_failure_log(
-                    kernel_name=kernel_name, math=self.math,
+                    kernel_name=",".join(names), math=self.math,
                     device=str(info.get("name") or "unknown"),
                     language=str(info.get("language_version") or "unknown"),
                     header_lines=header_lines,
@@ -240,7 +389,7 @@ class MetalSourceBuilder:
                 # a real failure.
                 duration_ms=max(1, int(round(elapsed_s * 1000))),
             ) from exc
-        compiled_language = str(getattr(compiled, "language_version", "") or "")
+        compiled_language = str(getattr(kernels[0], "language_version", "") or "")
         if compiled_language and profile.toolchain_version not in ("unknown", compiled_language):
             # The compiler used a different language version than the identity
             # the probe advertised: the build environment changed, so the result
@@ -253,33 +402,52 @@ class MetalSourceBuilder:
         if deadline_monotonic is not None and time.monotonic() > deadline_monotonic:
             raise BuildError("deadline", "the Metal build did not finish before the attempt deadline")
 
-        compile_s = float(getattr(compiled, "compile_s", 0.0) or 0.0)
-        pipeline_s = float(getattr(compiled, "pipeline_s", 0.0) or 0.0)
+        compile_s = float(getattr(kernels[0], "compile_s", 0.0) or 0.0)
+        pipeline_s = sum(float(getattr(kernel, "pipeline_s", 0.0) or 0.0) for kernel in kernels)
+        handle = kernels[0] if len(kernels) == 1 else MetalKernelSet(tuple(kernels))
         entry = source_bundle.entry()
+        descriptor = {
+            "backend": "metal",
+            "compiler": "apple-metal-msl",
+            "kernel_name": kernel_name,
+            "language_version": compiled_language or "unknown",
+            "math": self.math,
+            "device": str(info.get("name") or "unknown"),
+            "gpu_family": str(info.get("gpu_family") or "unknown"),
+            "max_total_threads": int(getattr(kernels[0], "max_total_threads", 0) or 0),
+            "execution_width": int(getattr(kernels[0], "execution_width", 0) or 0),
+            "static_tg_bytes": int(getattr(kernels[0], "static_tg_bytes", 0) or 0),
+            "assembled_sha256": hashlib.sha256(assembled.encode("utf-8")).hexdigest(),
+            "header_lines": int(header_lines),
+            "bindings": [
+                _binding_document(binding)
+                for binding in (getattr(kernels[0], "bindings", None) or ())
+            ],
+        }
+        if len(kernels) > 1:
+            # A multi-stage build names every compiled kernel.  This is a local
+            # descriptor detail, not a new artifact-set or report field.
+            descriptor["kernel_names"] = [str(getattr(kernel, "name", "")) for kernel in kernels]
+            descriptor["kernels"] = [
+                {
+                    "name": str(getattr(kernel, "name", "")),
+                    "max_total_threads": int(getattr(kernel, "max_total_threads", 0) or 0),
+                    "execution_width": int(getattr(kernel, "execution_width", 0) or 0),
+                    "static_tg_bytes": int(getattr(kernel, "static_tg_bytes", 0) or 0),
+                    "bindings": [
+                        _binding_document(binding)
+                        for binding in (getattr(kernel, "bindings", None) or ())
+                    ],
+                }
+                for kernel in kernels
+            ]
         native = NativeExecutable(
             backend_id="metal",
             kind="compute-pipeline",
             entry_path=entry.path,
             entry_sha256=entry.sha256,
-            descriptor={
-                "backend": "metal",
-                "compiler": "apple-metal-msl",
-                "kernel_name": kernel_name,
-                "language_version": str(getattr(compiled, "language_version", "") or "unknown"),
-                "math": self.math,
-                "device": str(info.get("name") or "unknown"),
-                "gpu_family": str(info.get("gpu_family") or "unknown"),
-                "max_total_threads": int(getattr(compiled, "max_total_threads", 0) or 0),
-                "execution_width": int(getattr(compiled, "execution_width", 0) or 0),
-                "static_tg_bytes": int(getattr(compiled, "static_tg_bytes", 0) or 0),
-                "assembled_sha256": hashlib.sha256(assembled.encode("utf-8")).hexdigest(),
-                "header_lines": int(header_lines),
-                "bindings": [
-                    _binding_document(binding)
-                    for binding in (getattr(compiled, "bindings", None) or ())
-                ],
-            },
-            handle=compiled,
+            descriptor=descriptor,
+            handle=handle,
         )
         bundle = ArtifactBundle(entries=(entry,), native=native)
         provenance = BuildProvenance(
@@ -317,6 +485,9 @@ class MetalSourceBuilder:
         )
         return BuildOutcome(
             bundle=bundle, provenance=provenance, evidence=evidence, payloads={},
+            # The compilation unit is the assembled text (contract header + candidate),
+            # so this is the digest of what the compiler actually saw.
+            assembled_sha256=hashlib.sha256(assembled.encode("utf-8")).hexdigest(),
         )
 
     # -- identity ----------------------------------------------------------
@@ -386,4 +557,4 @@ class MetalSourceBuilder:
             )
 
 
-__all__ = ["MetalSourceBuilder"]
+__all__ = ["MetalKernelSet", "MetalSourceBuilder"]

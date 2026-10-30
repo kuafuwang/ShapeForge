@@ -40,23 +40,33 @@ def _progress(document: dict[str, Any]) -> None:
     Path(path).write_text(json.dumps(document), encoding="utf-8")
 
 
+def _schema4_report(request: EvaluationRequest) -> dict[str, Any]:
+    """A legal schema-4 report produced through the registered simulator builder.
+
+    The bridge tests need a report the engine will accept; the retired top-level
+    ``simulated`` key and any foreign marker key are gone, so the marker lives in the
+    free-text ``message`` field (a legal report field).
+    """
+    from tasks import get_task
+
+    from tests.support.report_build import attach_build, attach_identity
+
+    from tcenv.evaluate import EvalReport
+
+    task_obj = get_task(request.task, request.dtype, request.size)
+    report = EvalReport(
+        task=request.task, dtype=request.dtype, size=request.size, mode=request.mode,
+        seed=request.seed, status="ok", stage="done", target_id=request.target_id,
+        backend="sim-npu", backend_version="1", candidate_us=1.0, speedup=1.0,
+        elapsed_s=0.0, message="report-from-job-worker",
+    )
+    attach_build(report, task_obj)
+    attach_identity(report, task_obj)
+    return report.to_json()
+
+
 def _result(request: EvaluationRequest, *, request_id: str | None = None) -> None:
-    report = {
-        "task": request.task,
-        "dtype": request.dtype,
-        "size": request.size,
-        "mode": request.mode,
-        "seed": request.seed,
-        "status": "ok",
-        "stage": "done",
-        "candidate_us": 1.0,
-        "speedup": 1.0,
-        "elapsed_s": 0.0,
-        "target_id": request.target_id,
-        "protocol_version": "3",
-        "simulated": True,
-        "job_report_marker": "report-from-job-worker",
-    }
+    report = _schema4_report(request)
     evidence = {
         "request_id": request.request_id,
         "candidate_sha256": request.candidate_sha256,

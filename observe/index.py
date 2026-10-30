@@ -26,7 +26,12 @@ from observe.ledger import month_of, operator_name
 from taic.redact import redact_text
 from tcenv import index_journal
 
-INDEX_SCHEMA_VERSION = 12
+INDEX_SCHEMA_VERSION = 13
+
+#: Per-candidate report state.  Only ``current`` (schema 4) is current evidence; an older report is
+#: marked ``old_format`` and an unreadable one ``unreadable`` — this index never infers the build or
+#: evaluation identity of a report it cannot validate, and it never upgrades one.
+from taic.artifacts import REPORT_STATES  # noqa: F401 - re-exported for the index schema docs/tests
 
 # ``stop_code`` 的重算规则版本：规则变了就改这个串，打开索引时会把旧行重算一次（只改这一列）。
 STOP_CODE_RULE = "first-word-24"
@@ -489,26 +494,45 @@ def _candidate_payload(directory: Path, result: dict | None, state: dict | None,
         name = path.name
         idx = int(name[:3]) if len(name) >= 3 and name[:3].isdigit() else -1
         label = name[4:] if len(name) > 4 and name[3] == "_" else name
-        report = read(path / "report.json")
+        report_path = path / "report.json"
+        report = read(report_path)
         if not isinstance(report, dict) and not (path / kernel_name).is_file():
             continue
-        status = str(report.get("status") or "") if isinstance(report, dict) else ""
-        stage = str(report.get("stage") or "") if isinstance(report, dict) else ""
-        benchmark = report.get("benchmark") if isinstance(report, dict) else None
+        # One definition of "which reports are current evidence", shared with the detail panel.
+        report_state = detail.report_state(report_path, report)
+        current = report_state == "current"
+        build = report.get("build") if current and isinstance(report, dict) else None
+        build = build if isinstance(build, dict) else {}
+        # An old/damaged report states no measurement: ``status`` is the format marker, the numeric
+        # columns stay empty and it joins no failure cluster (a signature would be a claim about a
+        # report this reader cannot validate).  The message stays as redacted diagnostic text.
+        raw_status = str(report.get("status") or "") if isinstance(report, dict) else ""
+        status = raw_status if current else report_state
+        stage = str(report.get("stage") or "") if current and isinstance(report, dict) else ""
+        benchmark = report.get("benchmark") if current and isinstance(report, dict) else None
         candidate = benchmark.get("candidate") if isinstance(benchmark, dict) else None
         reps = candidate.get("reps") if isinstance(candidate, dict) else None
-        cache_hit = report.get("cache_hit") if isinstance(report, dict) else None
-        failed = isinstance(report, dict) and status not in ("", "ok")
+        cache_hit = report.get("cache_hit") if current and isinstance(report, dict) else None
+        failed = current and isinstance(report, dict) and raw_status not in ("", "ok")
         rows.append({
             "idx": idx,
             "label": label,
             "status": status,
             "stage": stage,
-            "speedup": _num(report.get("speedup")) if isinstance(report, dict) else None,
+            "speedup": _num(report.get("speedup")) if current and isinstance(report, dict) else None,
             "within_noise": 1 if flags.get(label) else 0,
-            "eligible": 1 if isinstance(report, dict) and report.get("eligible") is True else 0,
+            "eligible": 1 if current and isinstance(report, dict) and report.get("eligible") is True else 0,
             "sha": _sha256_file(path / kernel_name),
-            "protocol_version": str(report.get("protocol_version") or "") if isinstance(report, dict) else "",
+            "protocol_version": str(report.get("protocol_version") or "") if current and isinstance(report, dict) else "",
+            # Only a schema-4 report can state its build/evaluation identity.  Older ones keep the
+            # columns empty and are marked ``old_format``; nothing is inferred from ``status`` or
+            # ``result.json``.
+            "report_state": report_state,
+            "build_shape": (str(build.get("shape") or "") or None) if current else None,
+            "build_kind": (str(build.get("build_kind") or "") or None) if current else None,
+            "evaluation_fingerprint": (
+                (str(report.get("evaluation_fingerprint") or "") or None) if current else None
+            ),
             "updated": _safe_mtime(path),
             # message 对所有候选都存（脱敏、有界）：失败簇与 §10.3 的候选搜索共用这一列。
             "message": redact_text(report.get("message"), limit=MESSAGE_CHARS) if isinstance(report, dict) else "",
@@ -1052,6 +1076,10 @@ class Index:
                 eligible INTEGER NOT NULL DEFAULT 0,
                 kernel_sha256 TEXT,
                 protocol_version TEXT,
+                report_state TEXT,
+                build_shape TEXT,
+                build_kind TEXT,
+                evaluation_fingerprint TEXT,
                 updated_at REAL,
                 PRIMARY KEY (run_id, idx)
             );
@@ -1374,6 +1402,9 @@ class Index:
             # §8.3：种子链从 trace 的 ``improved`` 序列推导；它在摄入时写进窄列，读时不必再翻
             # ``result.json`` / ``state.json``（否则详情面板会重新读整份轨迹）。
             ("improved", "INTEGER"),
+            # §8：只有 schema 4 报告能给出 build/评测身份；旧报告标 ``old_format``，四列留空。
+            ("report_state", "TEXT"), ("build_shape", "TEXT"), ("build_kind", "TEXT"),
+            ("evaluation_fingerprint", "TEXT"),
         ):
             if name not in candidate_columns:
                 self.conn.execute(f"ALTER TABLE candidates ADD COLUMN {name} {declaration}")
@@ -3291,8 +3322,9 @@ class Index:
                 """
                 INSERT INTO candidates (
                     run_id, idx, label, status, stage, speedup, within_noise, eligible, kernel_sha256,
-                    protocol_version, updated_at, message, failure_sig, cv, reps, cache_hit, improved
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    protocol_version, updated_at, message, failure_sig, cv, reps, cache_hit, improved,
+                    report_state, build_shape, build_kind, evaluation_fingerprint
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(run_id, idx) DO UPDATE SET
                     label = excluded.label, status = excluded.status, stage = excluded.stage,
                     speedup = excluded.speedup, within_noise = excluded.within_noise,
@@ -3300,12 +3332,15 @@ class Index:
                     protocol_version = excluded.protocol_version, updated_at = excluded.updated_at,
                     message = excluded.message, failure_sig = excluded.failure_sig,
                     cv = excluded.cv, reps = excluded.reps, cache_hit = excluded.cache_hit,
-                    improved = excluded.improved
+                    improved = excluded.improved, report_state = excluded.report_state,
+                    build_shape = excluded.build_shape, build_kind = excluded.build_kind,
+                    evaluation_fingerprint = excluded.evaluation_fingerprint
                 """,
                 (run_id, item["idx"], item["label"], item["status"], item["stage"], item["speedup"],
                  item["within_noise"], item["eligible"], item["sha"], item["protocol_version"],
                  item["updated"], item["message"], item["sig"], item["cv"], item["reps"],
-                 item["cache_hit"], item["improved"]),
+                 item["cache_hit"], item["improved"], item["report_state"], item["build_shape"],
+                 item["build_kind"], item["evaluation_fingerprint"]),
             )
             if item["sig"] and members:
                 self.conn.execute(

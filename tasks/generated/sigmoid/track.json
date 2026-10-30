@@ -1,0 +1,112 @@
+{
+  "track": "triton-spec-to-msl",
+  "opspec": "tasks/generated/sigmoid/opspec.json",
+  "backend_id": "metal",
+  "lowering_profile": "metal-sigmoid",
+  "spec_text": {
+    "generator": {
+      "implementation_id": "generated.elementwise.triton",
+      "implementation_version": 1,
+      "params": {
+        "grammar_version": 1,
+        "renderer": "pointwise-expression",
+        "view": "triton"
+      }
+    }
+  },
+  "known_good": {
+    "generator": {
+      "implementation_id": "generated.elementwise.msl",
+      "implementation_version": 1,
+      "params": {
+        "grammar_version": 1,
+        "renderer": "pointwise-expression",
+        "view": "msl"
+      }
+    }
+  },
+  "description": "y[i] = 1 / (1 + exp(-x[i])), evaluated in fp32 and rounded to the element type once.",
+  "dtype_spelling": {
+    "fp16": {
+      "T": "half",
+      "TL": "tl.float16",
+      "TORCH": "torch.float16"
+    },
+    "bf16": {
+      "T": "bfloat",
+      "TL": "tl.bfloat16",
+      "TORCH": "torch.bfloat16"
+    }
+  },
+  "implementations": {
+    "gen_inputs": {
+      "implementation_id": "generated.elementwise.gen_inputs",
+      "implementation_version": 1,
+      "params": {
+        "normal_mag": 3.0,
+        "default_mag": 1.0,
+        "large": 10000.0,
+        "seed_stride": 1000003
+      }
+    },
+    "reference": {
+      "implementation_id": "generated.elementwise.reference",
+      "implementation_version": 1,
+      "params": {
+        "expression": "sigmoid(x)",
+        "accumulate": "float64"
+      }
+    },
+    "error_scale": null
+  },
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "generated.elementwise.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "backend": "mlx",
+        "expression": "sigmoid(x)"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "generated.elementwise.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "backend": "torch",
+        "expression": "sigmoid(x)"
+      }
+    }
+  ],
+  "pack_files": [
+    "tasks/_assembly.py",
+    "tasks/_common.py",
+    "tasks/_pointwise.py",
+    "tasks/generated/__init__.py",
+    "tasks/generated/elementwise.py",
+    "tasks/generated/sigmoid/opspec.json",
+    "tasks/generated/sigmoid/task.py",
+    "tasks/generated/sigmoid/track.json",
+    "tcenv/backends/metal/lowering.py",
+    "tcenv/contract.py",
+    "tcenv/distributions.py",
+    "tcenv/dtypes.py",
+    "tcenv/identity.py",
+    "tcenv/lowering.py",
+    "tcenv/opspec/__init__.py",
+    "tcenv/opspec/model.py",
+    "tcenv/opspec/schema/opspec.v1.schema.json",
+    "tcenv/opspec/validator.py",
+    "tcenv/task.py",
+    "tcenv/terms.py",
+    "tcenv/track/__init__.py",
+    "tcenv/track/schema/track.v1.schema.json"
+  ],
+  "template_literals": {
+    "launch": [],
+    "semantic": []
+  }
+}

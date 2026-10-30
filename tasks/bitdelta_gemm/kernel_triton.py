@@ -1,6 +1,6 @@
 # Triton specification: GEMM with 1-bit packed weights (BitDelta-style): y = scale * (x @ W), W[k, n] = +1 if bit k of column n is set else -1
 # Layouts: x[M, K] row-major, bits[K // 32, N] uint32 (word kb of column n holds the signs of rows kb*32 .. kb*32+31, bit j = row kb*32 + j), y[M, N].
-# Launch: grid = (N // BLOCK_N, M // BLOCK_M), num_warps = 4, M = {{M}}, N = {{N}}, K = {{K}}, BLOCK_M = 64, BLOCK_N = 64, BLOCK_K = 32
+# Launch: grid = (N // BLOCK_N, M // BLOCK_M), num_warps = {{NW}}, M = {{M}}, N = {{N}}, K = {{K}}, BLOCK_M = {{BM}}, BLOCK_N = {{BN}}, BLOCK_K = {{BK}}
 import triton
 import triton.language as tl
 

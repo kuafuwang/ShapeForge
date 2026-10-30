@@ -290,7 +290,8 @@ def test_feature_grid_signs_a_source_once_and_then_uses_the_cache(tmp_path, monk
         path = directory / "candidates" / name
         path.mkdir(parents=True)
         (path / "kernel.metal").write_text(source)
-        (path / "report.json").write_text(json.dumps({"speedup": speed, "status": "ok"}))
+        # Current schema: the grid only takes a speedup from a report it can validate.
+        (path / "report.json").write_text(json.dumps({"schema_version": 4, "speedup": speed, "status": "ok"}))
     import observe.query as query
 
     calls = {"n": 0}

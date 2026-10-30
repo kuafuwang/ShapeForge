@@ -82,9 +82,32 @@ def measure_peak_bandwidth(ctx: MetalContext | None = None, nbytes: int = 512 * 
     n4 = nbytes // 16
     bx, by = ctx.new_buffer(nbytes), ctx.new_buffer(nbytes)
     ctx.view(bx)[:] = bytes(nbytes)
+    # Calibration has no task contract: it goes through the backend factory with the registered
+    # ``metal.raw-source-calibration`` diagnostic profile (raw-source assemble, no header), and
+    # the fixed copy/read kernels are built as *one* BuildOutcome (plan §5.2).
+    from tcenv.backends.registry import load_backend
+    from tcenv.remote.artifact_builder import SourceBundle
+
+    from .source_builder import DiagnosticContract
+
+    names = ("copy4", "read4")
+    contract = DiagnosticContract(kernel_name=names[0])
+    builder = load_backend("metal").artifact_builder(
+        kernel_contract=contract,
+        kernel_names=names,
+        diagnostic_profile="metal.raw-source-calibration",
+    )
+    outcome = builder.build(
+        SourceBundle(source=_COPY_SRC.encode("utf-8")), task_contract=contract, deadline_monotonic=None
+    )
+    handles = outcome.executable_handles()
+    if tuple(str(getattr(handle, "name", "")) for handle in handles) != names:
+        raise RuntimeError(
+            "the calibration build did not return the registered kernels: "
+            f"{[str(getattr(handle, 'name', '')) for handle in handles]}"
+        )
     out = {}
-    for name in ("copy4", "read4"):
-        k = ctx.compile(_COPY_SRC, name)
+    for name, k in zip(names, handles):
         grid = (n4 // 256, 1, 1)
         args = [[(0, BufferArg(bx)), (1, BufferArg(by))]]
         ctx.run(k, args, grid, (256, 1, 1), iters=2)

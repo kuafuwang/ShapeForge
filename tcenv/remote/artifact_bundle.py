@@ -151,6 +151,13 @@ class MaterializedEntry:
     path: str
     size_bytes: int
     sha256: str
+    #: The trusted anchor this attempt directory was opened from (normally the
+    #: engine's validated state directory), and the root's components below it.
+    #: Re-reading re-walks *every* component from the anchor with no-follow, so a
+    #: parent such as ``<state>/build`` cannot be swapped for a symbolic link
+    #: after the write and redirect the read.
+    anchor: Path | None = None
+    root_parts: tuple[str, ...] = ()
 
     def read_bytes(self) -> bytes:
         """Return the entry's bytes only after they match its descriptor."""
@@ -161,7 +168,14 @@ class MaterializedEntry:
         self._read_and_verify()
 
     def _read_and_verify(self) -> bytes:
-        root_fd = _open_attempt_root(self.root, create=False)
+        anchor, root_parts = _materialization_location(
+            self.root, self.anchor, self.root_parts,
+        )
+        anchor_fd = _open_state_anchor(anchor)
+        try:
+            root_fd = _walk_root_chain(anchor_fd, root_parts, create=False)
+        finally:
+            os.close(anchor_fd)
         try:
             *parents, name = self.path.split("/")
             directory_fd = _descend_without_symlinks(root_fd, parents, self.path)
@@ -379,14 +393,24 @@ class ArtifactBundle:
             if entry.blob_ref is not None:
                 raise BundleError(f"bundle entry {entry.path!r} must not be inline and blob-backed")
 
-    def materialize(self, root: Path) -> dict[str, "MaterializedEntry"]:
+    def materialize(self, root: Path, *, anchor: Path) -> dict[str, "MaterializedEntry"]:
         """Write the inline entries under ``root`` and return verified handles.
+
+        ``anchor`` is the trusted state directory the attempt root lives under
+        (``<state>/build/<attempt>`` for the worker scratch) and is required:
+        every component from it to ``root`` is opened with
+        ``O_DIRECTORY|O_NOFOLLOW`` before any byte is written.  Only the final
+        attempt directory used to be checked, which let a planted
+        ``<state>/build -> elsewhere`` symbolic link redirect the write outside
+        the state directory.  The caller cannot omit the anchor, because the
+        root's own parent is exactly the untrusted component.
 
         The handles are deliberately not bare paths: a caller that re-reads
         ``root/graph/main.json`` resolves whatever that name points at *now*, so a
         parent renamed to a symbolic link after the write would hand the caller
         the attacker's bytes.  ``MaterializedEntry.read_bytes``/``verify`` walk the
-        attempt directory again with ``O_DIRECTORY|O_NOFOLLOW`` per component.
+        attempt directory again with ``O_DIRECTORY|O_NOFOLLOW`` per component,
+        starting from the same trusted anchor.
 
         The directory belongs to one attempt.  Everything below it is traversed
         through *directory file descriptors*: every segment is opened with
@@ -402,7 +426,12 @@ class ArtifactBundle:
 
         written: dict[str, MaterializedEntry] = {}
         root = Path(root)
-        root_fd = _open_attempt_root(root)
+        anchor_path, root_parts = _materialization_location(root, anchor, ())
+        anchor_fd = _open_state_anchor(anchor_path)
+        try:
+            root_fd = _walk_root_chain(anchor_fd, root_parts, create=True)
+        finally:
+            os.close(anchor_fd)
         try:
             for entry in self.entries:
                 if entry.data is None:
@@ -418,6 +447,7 @@ class ArtifactBundle:
                 written[entry.path] = MaterializedEntry(
                     root=root, path=entry.path,
                     size_bytes=entry.size_bytes, sha256=entry.sha256,
+                    anchor=anchor_path, root_parts=root_parts,
                 )
         finally:
             os.close(root_fd)
@@ -699,22 +729,88 @@ def _open_attempt_root(root: Path, *, create: bool = True) -> int:
 
     if not root.name or root.name in (".", ".."):
         raise BundleError("the bundle target must name a directory")
-    parent = root.parent
-    parent.mkdir(parents=True, exist_ok=True)
-    parent_fd = os.open(parent, _directory_flags())
+    anchor, parts = _materialization_location(root, None, ())
+    anchor_fd = _open_state_anchor(anchor)
     try:
-        try:
-            return _open_directory_at(parent_fd, root.name)
-        except FileNotFoundError:
-            if not create:
-                raise BundleError("the bundle target directory does not exist")
-            try:
-                os.mkdir(root.name, 0o700, dir_fd=parent_fd)
-            except FileExistsError:
-                pass
-            return _open_directory_at(parent_fd, root.name)
+        return _walk_root_chain(anchor_fd, parts, create=create)
     finally:
-        os.close(parent_fd)
+        os.close(anchor_fd)
+
+
+def _open_state_anchor(anchor: Path) -> int:
+    """Open the trusted state anchor (its own path is already validated)."""
+
+    try:
+        return os.open(anchor, _directory_flags())
+    except OSError as exc:
+        raise BundleError(
+            f"the bundle state anchor is not an accessible directory: {anchor!r}: {exc}"
+        ) from exc
+
+
+def _materialization_location(
+    root: Path, anchor: Path | None, recorded: tuple[str, ...],
+) -> tuple[Path, tuple[str, ...]]:
+    """Return the trusted anchor and the root's components below it."""
+
+    root = Path(root)
+    if not root.name or root.name in (".", ".."):
+        raise BundleError("the bundle target must name a directory")
+    if anchor is None:
+        # Only an entry's recorded location takes this path: read_bytes keeps
+        # the anchor the write used, so a handle can never silently fall back to
+        # an untrusted parent.
+        if not recorded:
+            raise BundleError("the bundle target requires a trusted state anchor")
+        return root.parent, tuple(recorded)
+    anchor = Path(anchor)
+    parts = tuple(recorded) if recorded else ()
+    if not parts:
+        try:
+            relative = root.relative_to(anchor)
+        except ValueError:
+            relative = Path(os.path.relpath(root, anchor))
+        if relative.is_absolute():
+            raise BundleError("the bundle target must live under the trusted state anchor")
+        parts = tuple(relative.parts)
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        raise BundleError("the bundle target must be a directory under the trusted state anchor")
+    return anchor, parts
+
+
+def _walk_root_chain(anchor_fd: int, parts: Iterable[str], *, create: bool) -> int:
+    """Walk every component of the attempt root relative to the anchor.
+
+    Opening is one component at a time with ``O_DIRECTORY|O_NOFOLLOW``, so a
+    ``build`` or attempt component that is a symbolic link, a regular file or a
+    non-directory is refused *before* any entry is written or read.  Missing
+    directories are created with ``mkdirat`` only when ``create`` is set; a name
+    that appears between the failed open and the mkdir is opened again and
+    checked, so creating one cannot silently adopt a planted link.
+    """
+
+    names = tuple(parts)
+    if not names or any(name in ("", ".", "..") for name in names):
+        raise BundleError("the bundle target must be a directory under the trusted state anchor")
+    current_fd = os.dup(anchor_fd)
+    try:
+        for name in names:
+            try:
+                next_fd = _open_directory_at(current_fd, name)
+            except FileNotFoundError:
+                if not create:
+                    raise BundleError("the bundle target directory does not exist") from None
+                try:
+                    os.mkdir(name, 0o700, dir_fd=current_fd)
+                except FileExistsError:
+                    pass
+                next_fd = _open_directory_at(current_fd, name)
+            os.close(current_fd)
+            current_fd = next_fd
+        return current_fd
+    except BaseException:
+        os.close(current_fd)
+        raise
 
 
 def _descend_without_symlinks(root_fd: int, segments: Iterable[str], path: str) -> int:

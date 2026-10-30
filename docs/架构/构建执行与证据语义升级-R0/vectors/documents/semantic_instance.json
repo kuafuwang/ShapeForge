@@ -1,0 +1,55 @@
+{
+  "case_domain": {
+    "cases": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+    ],
+    "inputs": {
+      "ieee": {
+        "special_values": "inf, nan, denormal"
+      }
+    }
+  },
+  "dtype": "fp16",
+  "opspec_digest": "561459b4f0b5c4225da5a8be4a6e9b08119e93842ac91b23945890d6231e297d",
+  "resolved_attrs": {
+    "EPS": "1e-06"
+  },
+  "shapes": {
+    "symbols": {
+      "H": 512,
+      "M": 64
+    },
+    "tensors": {
+      "w": [
+        512
+      ],
+      "x": [
+        64,
+        512
+      ],
+      "y": [
+        64,
+        512
+      ]
+    }
+  },
+  "size": "small",
+  "spec_params": {
+    "H": "512",
+    "M": "64"
+  },
+  "tolerances": {
+    "atol_rel": "0.001",
+    "exact": false,
+    "rtol": "0.002"
+  },
+  "work_accounting": {
+    "flops": "131072.0",
+    "min_bytes": "133120.0"
+  }
+}

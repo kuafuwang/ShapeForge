@@ -284,5 +284,106 @@
   "counterexample": null
  },
  "elapsed_s": 3.1385305839976354,
- "eligible": true
+ "eligible": true,
+ "schema_version": 4,
+ "target_id": "apple-m4-max",
+ "backend": "metal",
+ "backend_version": "1",
+ "device_name": "",
+ "gpu_family": "",
+ "device_warnings": [],
+ "timeline": [],
+ "cache_hit": false,
+ "protocol_version": "3",
+ "evaluation_fingerprint": null,
+ "baseline_implementation_digest": null,
+ "baseline_environment_digest": null,
+ "build": {
+  "shape": "full",
+  "build_kind": "native",
+  "candidate_sha256": "ff91c381a94f0e4c75e4aefbfa53bdb74e2b326fc483a7e4f42ef33054a97120",
+  "assembled_sha256": null,
+  "opspec_digest": "1e42f0ab4d233b595add3e6e2a1b915dd202996c11988f3f248a2db3235f5953",
+  "lowering_profile_digest": "85b34427de5a35d495dd40d109e70e08b5d97638689daf72b02051720f55df9f",
+  "provenance": {
+   "schema_id": "tcenv.remote.npu-build.provenance.1",
+   "builder_id": "metal-source-builder",
+   "builder_version": "1",
+   "build_host": "control_host",
+   "build_profile": "metal-msl-control-host-v1",
+   "toolchain": {
+    "id": "apple-metal",
+    "version": "4.0",
+    "sdk_version": "macos-recorded"
+   },
+   "compile_profile": {
+    "math": "fast"
+   },
+   "source_sha256": "ff91c381a94f0e4c75e4aefbfa53bdb74e2b326fc483a7e4f42ef33054a97120",
+   "artifact_set_digest": "b0c38fd56f8616d0e0f243db853db470f2c128283c6338b20aed6659a1b54dc5"
+  },
+  "placement": "received",
+  "artifacts": {
+   "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1",
+   "entries": [
+    {
+     "path": "kernel.metal",
+     "role": "SOURCE",
+     "media_type": "text/plain; charset=utf-8",
+     "size_bytes": 7822,
+     "sha256": "ff91c381a94f0e4c75e4aefbfa53bdb74e2b326fc483a7e4f42ef33054a97120"
+    }
+   ],
+   "artifact_set_digest": "b0c38fd56f8616d0e0f243db853db470f2c128283c6338b20aed6659a1b54dc5"
+  },
+  "evidence": {
+   "schema_id": "tcenv.remote.npu-build.evidence.1",
+   "mode": "prebuilt",
+   "status": "reused",
+   "error_class": null,
+   "provenance": {
+    "schema_id": "tcenv.remote.npu-build.provenance.1",
+    "builder_id": "metal-source-builder",
+    "builder_version": "1",
+    "build_host": "control_host",
+    "build_profile": "metal-msl-control-host-v1",
+    "toolchain": {
+     "id": "apple-metal",
+     "version": "4.0",
+     "sdk_version": "macos-recorded"
+    },
+    "compile_profile": {
+     "math": "fast"
+    },
+    "source_sha256": "ff91c381a94f0e4c75e4aefbfa53bdb74e2b326fc483a7e4f42ef33054a97120",
+    "artifact_set_digest": "b0c38fd56f8616d0e0f243db853db470f2c128283c6338b20aed6659a1b54dc5"
+   },
+   "artifacts": {
+    "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1",
+    "entries": [
+     {
+      "path": "kernel.metal",
+      "role": "SOURCE",
+      "media_type": "text/plain; charset=utf-8",
+      "size_bytes": 7822,
+      "sha256": "ff91c381a94f0e4c75e4aefbfa53bdb74e2b326fc483a7e4f42ef33054a97120"
+     }
+    ],
+    "artifact_set_digest": "b0c38fd56f8616d0e0f243db853db470f2c128283c6338b20aed6659a1b54dc5"
+   },
+   "duration_ms": 1,
+   "log": null,
+   "loaded": [],
+   "producer": {
+    "schema_id": "tcenv.remote.npu-build.producer-evidence-link.1",
+    "status": "ok",
+    "mode": "prebuilt",
+    "duration_ms": 1,
+    "log": null,
+    "evidence_sha256": "497c748a06c9d295e17291101a48e19d0033dad621b5274ecd75ba691ed4df50"
+   }
+  },
+  "native_digest": null,
+  "native_absent_reason": "portable_artifact_set"
+ }
 }

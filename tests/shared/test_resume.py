@@ -18,6 +18,8 @@ from tcenv.evaluate import EvalReport
 
 from ..support.fakes import FakeClient, make_response, make_usage
 from ..support.orchestrator import KERNEL, code, fake_eval, llm_script, make_orch, run
+from ..support.fakes import FakeClient
+from ..support.orchestrator import fake_eval
 from ..support.resume import mark_dead, ns, script_for
 
 CFG = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
@@ -202,7 +204,7 @@ def test_a_budget_that_clears_the_file_spend_but_not_the_transcript_is_refused(t
         "trace": [{"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0}],
     }))
     (run / "transcript.jsonl").write_text(json.dumps({"event": "chat", "label": "init", "cost_usd": 4.0, "total_usd": 4.0, "usage": {}}) + "\n")
-    (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1"}))
+    (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
     with pytest.raises(cli.ResumeRefused) as caught:
         cli.prepare_resume(ns(run, dry_run=True, budget=2.0), log=lambda _s: None)
     assert caught.value.code == 5 and "4.0000" in str(caught.value)
@@ -550,7 +552,7 @@ def test_a_live_run_and_a_held_lock_cannot_be_resumed(tmp_path):
     assert info["can_topup_live"] is False and "older version" in info["live_reason"]
     (tmp_path / "state.json").write_text(json.dumps({"pid": 2**22 + 777, "phase": "llm", "task": "relu", "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0}))
     # 只有 flame_chase_1 的目录可以续（见下面的 old_protocol 用例）。
-    (tmp_path / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1"}))
+    (tmp_path / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
     assert rs.inspect_run(tmp_path)["kind"] == "interrupted" and rs.inspect_run(tmp_path)["resumable"]
     # 锁上是本进程或它的父进程：这是看板刚拉起的续跑，不是别人占着。
     (tmp_path / "resume.lock").write_text(json.dumps({"pid": os.getppid(), "starting": True}))
@@ -757,10 +759,17 @@ def _ok_report(speed: float):
     @param speed 该报告的加速比。
     @return 填好 speedups 的 EvalReport 实例。
     """
+    from tasks import get_task
+
+    from tests.support.report_build import attach_build, attach_identity
+
     from tcenv.evaluate import EvalReport
 
-    report = EvalReport(task="relu", dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done", speedup=speed)
+    task_obj = get_task("relu", "fp16", "small")
+    report = EvalReport(task="relu", dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done", speedup=speed, target_id="apple-m4-max")
     report.speedups = {"mlx": speed}
+    attach_build(report, task_obj)
+    attach_identity(report, task_obj)
     return report
 
 
@@ -800,7 +809,7 @@ def test_a_stale_search_seed_does_not_hide_a_newer_kernel(tmp_path):
         "task": "relu", "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
         "trace": [{"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0}],
     }))
-    (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1"}))
+    (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
     snap = rs.load_snapshot(run, SearchConfig(branches=1, max_repair_tries=1, min_improvement=1.005, noise_z=0), "k")
     assert snap.best_label == "r1.p0"
     assert any("older than r1.p0" in note for note in snap.notes)
@@ -821,7 +830,7 @@ def test_a_slower_kernel_written_after_state_does_not_become_the_seed(tmp_path):
         "task": "relu", "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
         "trace": [{"idx": 0, "label": "init", "improved": True, "speedup": 1.8, "cost_usd": 0.01, "t_s": 1.0}],
     }))
-    (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1"}))
+    (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
     snap = rs.load_snapshot(run, SearchConfig(branches=1, min_improvement=1.005, noise_z=0), "k")
     assert snap.best_label == "init"
     assert snap.trace[-1]["improved"] is False
@@ -1135,6 +1144,7 @@ def test_resume_rejects_a_legacy_ssh_execution_manifest(tmp_path):
     mark_dead(run_dir)
     manifest = run_dir / "execution.json"
     manifest.write_text(json.dumps({
+        "report_schema_epoch": 4,
         "schema_version": 1, "evaluation": "remote", "transport": "legacy-ssh",
         "publishable_site_ids": ["local"], "publishable_epochs": ["e" * 64],
     }))
@@ -1145,3 +1155,86 @@ def test_resume_rejects_a_legacy_ssh_execution_manifest(tmp_path):
             evaluate_fn=fake_eval([]), log=lambda _s: None,
         )
     assert manifest.read_text() == before
+
+
+# -- R4: the run-level report epoch ------------------------------------------
+def _r4_run(run: Path, *, epoch, outbox_rows: bool = True) -> None:
+    """造一个旧报告代次的运行目录：可读、有 transcript/state，但没有可续的候选。
+
+    @param run 运行目录。
+    @param epoch ``run_config.json`` 里的 ``report_schema_epoch``；``None`` 表示缺键。
+    @param outbox_rows 是否放旧版本的 outbox 行（pending 与 completed 各一条）。
+    """
+    run.mkdir(parents=True)
+    config = {"loop_protocol": "flame_chase_1"}
+    if epoch is not None:
+        config["report_schema_epoch"] = epoch
+    (run / "run_config.json").write_text(json.dumps(config))
+    (run / "state.json").write_text(json.dumps({
+        "task": "relu", "dtype": "fp16", "size": "small", "model": "fake",
+        "spent_usd": 0.2, "round": 0, "best_label": None, "requests": [],
+    }))
+    (run / "transcript.jsonl").write_text(json.dumps({
+        "event": "chat", "label": "init", "usage": {}, "cost_usd": 0.2, "total_usd": 0.2,
+    }) + "\n")
+    (run / "candidates").mkdir()
+    if outbox_rows:
+        outbox = run / "evaluation_outbox"
+        outbox.mkdir()
+        for key, status in (("a" * 64, "pending"), ("b" * 64, "completed")):
+            (outbox / f"{key}.json").write_text(json.dumps({
+                "schema_version": 1, "request_id": f"req-{key[:4]}", "request_digest": "0" * 64,
+                "status": status, "attempt_id": "attempt-1",
+                "report_path": f"candidates/000_init/report.json",
+            }))
+
+
+@pytest.mark.parametrize("epoch", [None, 0, 3, "4", 4.0, True, 5])
+def test_a_pre_r4_run_is_refused_before_any_orchestrator_or_outbox_exists(tmp_path, monkeypatch, epoch):
+    """@brief 报告代次不是当前整数的 run 在 prepare_resume 里被拒；编排器与 outbox 都没被构造，目录未被改写。"""
+    from taic import cli
+    from taic.evaluation_outbox import EvaluationOutbox
+    from taic.orchestrator import Orchestrator
+
+    run = tmp_path / "run"
+    _r4_run(run, epoch=epoch)
+    calls: list[str] = []
+    real_orch_init = Orchestrator.__init__
+    real_outbox_init = EvaluationOutbox.__init__
+
+    def spy_orch(self, *args, **kwargs):
+        calls.append("orchestrator")
+        return real_orch_init(self, *args, **kwargs)
+
+    def spy_outbox(self, *args, **kwargs):
+        calls.append("outbox")
+        return real_outbox_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(Orchestrator, "__init__", spy_orch)
+    monkeypatch.setattr(EvaluationOutbox, "__init__", spy_outbox)
+    before = {path: path.read_bytes() for path in run.rglob("*") if path.is_file()}
+
+    with pytest.raises(cli.ResumeRefused) as caught:
+        cli.prepare_resume(
+            ns(run, remote_evaluator_config=str(tmp_path / "does-not-exist.json")),
+            client=FakeClient([]), evaluate_fn=fake_eval([]), log=lambda _s: None,
+        )
+    assert "report_schema_epoch" in str(caught.value)
+    assert calls == []
+    after = {path: path.read_bytes() for path in run.rglob("*") if path.is_file()}
+    assert after == before
+    assert not (run / "resume.lock").exists()
+
+
+def test_a_current_epoch_run_is_not_refused_by_the_epoch_gate(tmp_path):
+    """@brief 报告代次为 4 的 run 不会被 epoch 闸门拒绝（缺 best 才是它自己的续跑理由）。"""
+    from taic import cli
+    from tcenv.schema import REPORT_SCHEMA_VERSION
+
+    run = tmp_path / "run"
+    _r4_run(run, epoch=REPORT_SCHEMA_VERSION)
+    with pytest.raises(cli.ResumeRefused) as caught:
+        cli.prepare_resume(
+            ns(run), client=FakeClient([]), evaluate_fn=fake_eval([]), log=lambda _s: None,
+        )
+    assert "report_schema_epoch" not in str(caught.value)

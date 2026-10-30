@@ -1,0 +1,26 @@
+{
+  "target_id": "apple-m4-max",
+  "backend": "metal",
+  "device_name": "Apple M4 Max",
+  "gpu_family": "Apple9",
+  "task": "conv2d",
+  "dtype": "fp16",
+  "size": "paper",
+  "task_fingerprint": "948afc68d38e54203bf4c7f104275f4351d1b7d324dab09fa4f5d2a22837079d",
+  "calibration_sha256": "14ca4274acd3a6582b687ea0b0b6f82d71d2c7a89c7eaee418c07f99019a0591",
+  "run_id": "20261024-065432_conv2d_fp16_deepseek-flash",
+  "winner_label": "r2.p0",
+  "source_sha256": "f06d90107084e38151ec89f1b6263060fd7f751a9b3bcd62419c4b35c2b83011",
+  "confirmed_speedup": 1.7381825703811387,
+  "confirmed_values": [
+    1.739145860395608,
+    1.7381825703811387,
+    1.7314397543848195
+  ],
+  "candidate_us": 448.4129672431771,
+  "baseline_us": {
+    "mlx": 991.1041389304128,
+    "torch_mps": 779.4236039949789
+  },
+  "updated_at": 1792798819.1807559
+}

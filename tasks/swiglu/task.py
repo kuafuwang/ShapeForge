@@ -1,33 +1,33 @@
-# 逐元素 SwiGLU。description：y[i] = silu(gate[i]) * up[i]，silu(g) = g * sigmoid(g)，fp32 计算后舍入一次。
-# 标准答案是 ref_fn：g * torch.sigmoid(g) * u。共享骨架按 input_names 的顺序把 gate、up 转成 float64。
-# 基线是 baselines：mlx 是 mx.compile 的 (a * mx.sigmoid(a)) * b，torch_mps 是 F.silu(g) * u。
-# 契约由 build_elementwise 按名字 "swiglu" 和 input_names=("gate", "up") 生成。核名 swiglu_kernel，缓冲 gate、up、y，以及 grid、threads、常量 N 与 BLOCK_SIZE，模型都不能改。
+# 逐元素 SwiGLU。语义只写在 opspec.json；契约与启动事实来自登记的 Metal LoweringProfile。
 import torch
 import torch.nn.functional as F
 
-from tcenv.task import BaselineImpl
 from tasks._common import mlx_compiled
-from tasks._elementwise import build_elementwise
+from tasks._pointwise import build_pointwise
+
+TASK_DIR = "swiglu"
 
 
-def _mlx(g, u):
-    """@brief mlx 侧的 SwiGLU 基线，整个式子走一次 ``mx.compile``。
+def _mlx(params: dict):
+    """@brief mlx 侧 SwiGLU 基线，整个式子走一次 ``mx.compile``。
 
-    @param g gate 输入（mlx 数组）。
-    @param u up 输入（mlx 数组）。
-    @return ``silu(g) * u``。
+    @param params track 登记参数。
+    @return ``(g, u) -> mx.compile((a * mx.sigmoid(a)) * b)(g, u)``。
     """
-    return mlx_compiled("swiglu", lambda mx: (lambda a, b: (a * mx.sigmoid(a)) * b))(g, u)
+    if params.get("kernel") != "mx.compile" or params.get("expression") != "(a * mx.sigmoid(a)) * b":
+        raise ValueError(f"swiglu mlx baseline registration changed: {params}")
+    return lambda g, u: mlx_compiled("swiglu", lambda mx: (lambda a, b: (a * mx.sigmoid(a)) * b))(g, u)
 
 
-def _torch(g, u):
-    """@brief torch 侧的 SwiGLU 基线。
+def _torch(params: dict):
+    """@brief torch 侧 SwiGLU 基线（``F.silu(g) * u``）。
 
-    @param g gate 输入。
-    @param u up 输入。
-    @return ``F.silu(g) * u``。
+    @param params track 登记参数。
+    @return ``(g, u) -> F.silu(g) * u``。
     """
-    return F.silu(g) * u
+    if params.get("kernel") != "torch.nn.functional.silu" or params.get("combine") != "multiply":
+        raise ValueError(f"swiglu torch baseline registration changed: {params}")
+    return lambda g, u: F.silu(g) * u
 
 
 def build(dtype: str, size: str):
@@ -37,14 +37,10 @@ def build(dtype: str, size: str):
     @param size 尺寸档位，``paper`` 或 ``small``。
     @return 装配好的 ``Task``。
     """
-    return build_elementwise(
-        "swiglu",
+    return build_pointwise(
+        TASK_DIR,
         dtype,
         size,
-        input_names=("gate", "up"),
-        ref_fn=lambda g, u: g * torch.sigmoid(g) * u,
-        baselines=(BaselineImpl("mlx", "mlx", _mlx), BaselineImpl("torch_mps", "torch", _torch)),
-        flops_per_elem=7,
-        large=200.0,
-        description="y[i] = silu(gate[i]) * up[i] with silu(g) = g * sigmoid(g); evaluated in fp32, rounded once.",
+        references={"swiglu": lambda g, u: g * torch.sigmoid(g) * u},
+        baseline_builders={"mlx": _mlx, "torch_mps": _torch},
     )

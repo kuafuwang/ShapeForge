@@ -1,6 +1,6 @@
 # Baseline variant for the triton-msl backend (same computation and I/O as kernel_triton.py). The backend recognizes FlashAttention only in the
 # form of the Triton tutorial: runtime batch/head/row/column strides, runtime Z/H/N_CTX, the softmax scale folded into q before the first dot.
-# Launch: grid = (N_CTX // BLOCK_M, Z * H), num_warps = {{NW}}, Z = {{B}}, H = {{H}}, N_CTX = {{S}}, HEAD_DIM = {{D}}, BLOCK_M = {{BM}}, BLOCK_N = {{BN}}, SM_SCALE = {{SM_SCALE}}
+# Launch: grid = (N_CTX // BLOCK_M, Z * H), num_warps = {{NW}}, Z = {{B}}, H = {{H}}, N_CTX = {{S}}, HEAD_DIM = {{D}}, BLOCK_M = {{BM}}, BLOCK_N = {{BN}}, SM_SCALE = 0.125
 #         stride_qz = {{SZ}}, stride_qh = {{SH}}, stride_qm = {{SR}}, stride_qk = 1, stride_kz = {{SZ}}, stride_kh = {{SH}}, stride_kn = {{SR}}, stride_kk = 1
 #         stride_vz = {{SZ}}, stride_vh = {{SH}}, stride_vn = {{SR}}, stride_vk = 1, stride_oz = {{SZ}}, stride_oh = {{SH}}, stride_om = {{SR}}, stride_on = 1
 import triton

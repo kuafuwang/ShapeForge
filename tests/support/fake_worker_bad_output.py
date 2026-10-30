@@ -16,12 +16,11 @@ from tcenv.remote import worker_protocol
 
 
 def _report(request) -> dict:
-    return {
-        "task": request.task, "dtype": request.dtype, "size": request.size,
-        "mode": request.mode, "seed": request.seed_int, "status": "ok", "stage": "done",
-        "candidate_us": 1.0, "speedup": 1.0, "elapsed_s": 0.0,
-        "target_id": request.target_id, "protocol_version": "3", "simulated": True,
-    }
+    from tests.support.report_build import report_for_request
+
+    report = report_for_request(request, status="ok", source=b"kernel void demo() {}\n")
+    report.update({"candidate_us": 1.0, "speedup": 1.0, "elapsed_s": 0.0})
+    return report
 
 
 def main() -> int:

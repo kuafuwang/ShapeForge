@@ -1973,23 +1973,49 @@ def _read_json(p: Path) -> Any:
         return None
 
 
-def measured_from_report(rep: dict | None, task_obj: Any = None, calib: dict | None = None) -> dict | None:
+#: Where a ``measured_from_report`` input came from.  A **candidate** report is harness evidence and
+#: must be the current schema (4); **naive** (a hand-written cache summary) and **reference** (a
+#: generated reference GEMM's stored timing) are independent summaries with no schema at all, so they
+#: have their own input paths instead of loosening the candidate gate.
+MEASURED_SOURCES = ("candidate", "naive", "reference")
+
+
+def measured_from_report(
+    rep: dict | None, task_obj: Any = None, calib: dict | None = None, *, source: str = "candidate",
+) -> dict | None:
     """@brief 把 harness 的 ``report.json``（或 naive kernel 的摘要）拉平成判定需要的数字。
 
     roofline 块存在时直接用它的字段；没有但给了 ``task_obj`` 且有 ``candidate_us`` 时，用任务的
     ``flops`` / ``min_bytes`` 现算，并在有 ``calib`` 时补上峰值与占比（``derived_from`` 会注明这一来源）。
 
+    ``source="candidate"``（默认）只接受**当前** schema（4）的候选报告：旧格式没有 build/评测身份，
+    它的 ``status``/``speedup`` 只是那一轮自己的记忆，不能形成 MEASURED 或经验结论，这里返回 ``None``
+    （调用方把 ``report_state`` 标在报告里）。``source="naive"``（手写朴素核的缓存摘要）与
+    ``source="reference"``（生成的参考 GEMM 的实测行）本来就没有 schema，走各自明确的输入路径，
+    而不是把候选门控放宽。
+
     @param rep ``report.json`` 的内容（或 naive kernel 的摘要），可为 None
     @param task_obj 任务对象，用来在没有 roofline 时现算
     @param calib 标定数据（``peak_gbps`` 与按 dtype 的 ``peak_tflops``）
+    @param source 输入路径：``candidate``（要求 schema 4）、``naive`` 或 ``reference``（无 schema 的独立摘要）
     @return 扁平化的实测字典：``status`` / ``speedup`` / ``candidate_us`` / ``baseline_us``、roofline 系列
         （``bound``、``achieved_tflops``、``compute_fraction``、``achieved_gbps``、``bandwidth_fraction``、
         ``time_over_lower_bound``、``peak_tflops_measured``、``peak_gbps_measured``）、``derived_from``、pipeline 系列
         （``max_total_threads``、``static_threadgroup_bytes``、``launch_threads`` 或 ``stages``）与 benchmark 系列
-        （``cv``、``noisy``）；``rep`` 为空时返回 None
+        （``cv``、``noisy``）；``rep`` 为空、或候选报告不是当前 schema 时返回 None
     """
     if not rep:
         return None
+    if source not in MEASURED_SOURCES:
+        raise ValueError(f"unknown measured source: {source!r}")
+    if source == "candidate":
+        from tcenv.schema import REPORT_SCHEMA_VERSION
+
+        recorded = rep.get("schema_version")
+        if isinstance(recorded, bool) or not isinstance(recorded, int) or recorded != REPORT_SCHEMA_VERSION:
+            # An old-format candidate report is undecidable evidence: no measured numbers, no
+            # performance-test verdict, no experience conclusion.
+            return None
     m: dict[str, Any] = {"status": rep.get("status"), "speedup": rep.get("speedup"), "candidate_us": rep.get("candidate_us"), "baseline_us": rep.get("baseline_us")}
     r = rep.get("roofline") or {}
     if r:

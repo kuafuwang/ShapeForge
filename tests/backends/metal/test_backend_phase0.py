@@ -46,15 +46,24 @@ def test_the_phase0_baseline_still_matches_the_source_and_prompt():
     assert path.is_file(), f"tracked phase-0 source is missing: {path}"
     assert hashlib.sha256(path.read_bytes()).hexdigest() == source["sha256"]
     task = get_task(doc["task"], doc["dtype"], doc["size"])
-    assert doc["report_schema_version"] == REPORT_SCHEMA_VERSION == 3
+    assert doc["report_schema_version"] == REPORT_SCHEMA_VERSION == 4
     assert doc["protocol_version"] == PROTOCOL_VERSION == "3"
-    assert doc["index_schema_version"] == INDEX_SCHEMA_VERSION == 11
+        # Index schema 13 adds the report state and the build/evaluation identity columns (§8):
+    # only a schema-4 report is current evidence, so the columns exist and stay NULL for an old one.
+    assert doc["index_schema_version"] == INDEX_SCHEMA_VERSION == 13
     assert doc["top_level_fields"] == [field.name for field in fields(EvalReport)]
     assert doc["prompt_sha1"] == current_prompt_sha1()
     prompt = prompts.system_prompt(task, use_tools=False, target_id=doc["target_id"])
     assert doc["system_prompt_sha256"] == hashlib.sha256(prompt.encode()).hexdigest()
     assert doc["contract_description_sha256"] == hashlib.sha256(task.contract.describe().encode()).hexdigest()
-    assert doc["task_fingerprint"] == task_fingerprint(task)
+    if task.semantic_instance is None:
+        assert doc["task_fingerprint"] == task_fingerprint(task)
+    else:
+        # R1/R2 deliberately reset the task identity to the versioned canonical document
+        # (§3.1): this record is a frozen historical baseline that must not be rewritten or
+        # recomputed (plan §2.1), so the recorded pre-v2 hash must *differ* from the live one.
+        # The live identity is covered by tests/shared/test_task_fingerprint.py.
+        assert doc["task_fingerprint"] != task_fingerprint(task)
 
 
 def test_the_recorded_gpu_delta_is_recomputed_and_within_a_fixed_gate():

@@ -21,7 +21,7 @@ _KEYS = {
 }
 _EXPANDED_KEYS = _KEYS | {"model_totals", "cands", "agent_failures"}
 _EXPAND = ("--expand", "cands,models,failures")
-_CAND = {"label", "status", "speedup", "within_noise", "differential_recheck", "origin"}
+_CAND = {"label", "status", "speedup", "within_noise", "differential_recheck", "origin", "report_state"}
 
 
 def _brief(capsys, run_dir=None, *extra):
@@ -53,6 +53,15 @@ def test_a_run_dir_brief_keeps_search_best_off_the_published_number(tmp_path, ca
             "differential_recheck": "incorrect" if i == 9 else None,
             "message": f"{MARKER} {SECRET}",
         })
+    # 每个 trace 行都要有对应的当前（schema-4）候选报告：trace 自带的 status/speedup 只有和
+    # 报告绑定后才算证据（§8）。这里建目录，另外用一条负例测旧格式。
+    for i in range(10):
+        folder = run / "candidates" / f"{i:03d}_c{i}"
+        folder.mkdir(parents=True)
+        (folder / "kernel.metal").write_text("kernel void k() {}\n", encoding="utf-8")
+        (folder / "report.json").write_text(json.dumps({
+            "schema_version": 4, "status": "ok", "speedup": i,
+        }), encoding="utf-8")
     (run / "state.json").write_text(json.dumps({
         "schema_version": 1, "task": "relu", "dtype": "fp16", "size": "small", "committee": "second",
         "model": "model-live", "phase": "evaluate", "stop_reason": "", "round": 3,
@@ -113,7 +122,9 @@ def test_candidate_dirs_supply_outcomes_when_the_trace_is_absent(tmp_path, capsy
         folder = run / "candidates" / f"{i:03d}_c{i}"
         folder.mkdir(parents=True)
         (folder / "kernel.metal").write_text(f"kernel void k() {{}}\n// {SECRET} {MARKER}\n")
-        (folder / "report.json").write_text(json.dumps({"status": "ok", "speedup": i, "message": f"{SECRET} {MARKER}"}))
+        (folder / "report.json").write_text(json.dumps({
+            "schema_version": 4, "status": "ok", "speedup": i, "message": f"{SECRET} {MARKER}",
+        }))
     last = run / "candidates" / "008_c8"
     (last / "differential_recheck.json").write_text(json.dumps({"class": "timeout", "recheck_report": {"message": SECRET}}))
 
@@ -124,6 +135,7 @@ def test_candidate_dirs_supply_outcomes_when_the_trace_is_absent(tmp_path, capsy
     assert doc["published"] is None and doc["publication"] is None and doc["search_best"] == 1.5
     assert [c["label"] for c in doc["cands"]] == [f"c{i}" for i in range(1, 9)]
     assert doc["cands"][-1]["status"] == "ok" and doc["cands"][-1]["speedup"] == 8
+    assert doc["cands"][-1]["report_state"] == "current"
     assert doc["cands"][-1]["within_noise"] is None and doc["cands"][-1]["differential_recheck"] == "timeout"
     assert doc["counts"] == {"chat": None, "retry": None, "truncation_retries": None, "eval_stage": None}
     assert "kernel void" not in out
@@ -141,11 +153,17 @@ def test_a_bound_confirmation_publishes_the_remeasure_not_the_search_best(tmp_pa
     (run / "candidates" / "000_win").mkdir(parents=True)
     (run / "best.metal").write_text(source)
     (run / "candidates" / "000_win" / "kernel.metal").write_text(source)
-    (run / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": 1.25,
-        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx", "confirmation": {"kernel_sha256": digest, "winner_label": "win", "confirmed_values": [1.25], "speedup": 1.25, "candidate_us": None}},
-        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
-    }))
+    batch = {
+        "label": "win", "shape": "full", "build_kind": "native", "measurement_kind": "measured",
+        "cache_hit": False, "timing_uncertain": False,
+        "identity": {"kind": "match", "differences": [], "shape": "full", "build_kind": "native",
+                     "measurement_kind": "measured", "cache_hit": False, "timing_uncertain": False},
+    }
+    from ..support.report_build import confirmation_report
+
+    (run / "confirm_report.json").write_text(json.dumps(confirmation_report(
+        "relu", "fp16", "small", source=source.encode(), label="win", values=[1.25], speedup=1.25,
+    )))
     (run / "state.json").write_text(json.dumps({
         "task": "relu", "dtype": "fp16", "size": "small", "committee": "first", "model": "m",
         "phase": "done", "stop_reason": "max_rounds", "round": 2, "spent_usd": 0.5, "budget_usd": 2, "best_speedup": 9.5,
@@ -156,6 +174,7 @@ def test_a_bound_confirmation_publishes_the_remeasure_not_the_search_best(tmp_pa
         "best_speedup": 8.5, "confirmed_speedup": 1.25, "confirmed_status": "ok",
         "confirm_winner_label": "win", "confirmation_source_sha256": digest,
         "confirmed_values": [1.25], "target_id": "apple-m4-max",
+        "confirmations": [dict(batch, status="ok", failed_batches=0)],
     }))
 
     code, out, _err = _brief(capsys, run)
@@ -386,3 +405,75 @@ def test_brief_shows_pending_evaluation_without_report_body(tmp_path):
     assert doc["pending_evaluation"]["requests"][0]["request_id"] == "ev-1"
     assert doc["pending_evaluation"]["requests"][0]["error_code"] == "transport_closed"
     assert "secret body" not in json.dumps(doc)
+
+
+def test_an_old_format_candidate_report_is_marked_undecidable(tmp_path, capsys):
+    """schema-3 候选报告不是当前证据：brief 标 ``old_format``，不照常给 ``ok`` 和数值。
+
+    The report still holds its own historical ``status``/``speedup``; those are that run's memory of
+    a measurement this reader cannot check (no build identity, no evaluation identity), so the row
+    says so instead of presenting them as today's outcome.
+    """
+    run = tmp_path / "run"
+    (run / "state.json").parent.mkdir()
+    (run / "state.json").write_text(json.dumps({
+        "task": "gemm", "dtype": "bf16", "size": "paper", "phase": "llm", "round": 1,
+        "spent_usd": 0.5, "budget_usd": 2, "best_speedup": 1.5,
+    }))
+    folder = run / "candidates" / "000_old"
+    folder.mkdir(parents=True)
+    (folder / "kernel.metal").write_text("kernel void k() {}\n")
+    (folder / "report.json").write_text(json.dumps({"schema_version": 3, "status": "ok", "speedup": 9.9}))
+    broken = run / "candidates" / "001_broken"
+    broken.mkdir(parents=True)
+    (broken / "kernel.metal").write_text("kernel void k() {}\n")
+    (broken / "report.json").write_text("{not json")
+    empty = run / "candidates" / "002_empty"
+    empty.mkdir(parents=True)
+    (empty / "kernel.metal").write_text("kernel void k() {}\n")
+
+    code, out, _err = _brief(capsys, run, *_EXPAND)
+    assert code == 0
+    rows = {row["label"]: row for row in json.loads(out)["cands"]}
+    assert rows["old"]["report_state"] == "old_format"
+    assert rows["old"]["status"] == "old_format" and rows["old"]["speedup"] is None
+    assert rows["broken"]["report_state"] == "unreadable" and rows["broken"]["speedup"] is None
+    assert rows["empty"]["report_state"] == "missing" and rows["empty"]["speedup"] is None
+
+
+def test_a_trace_row_cannot_carry_an_old_reports_numbers(tmp_path, capsys):
+    """trace 主路径也要与候选报告的 current 性绑定：旧报告不能借 trace 输出 ``ok 9.9``。
+
+    The reviewer's repro: a schema-3 candidate plus ``result.trace=[{status:'ok',speedup:9.9}]``
+    returned ``status='ok', speedup=9.9`` from ``summarize_run(..., expand={'cands'})``, because the
+    trace path never read the candidate report.  Every trace row is now bound to its candidate's
+    report state; a missing report is undecidable too, not ``ok``.
+    """
+    run = tmp_path / "run"
+    run.mkdir()
+    old = run / "candidates" / "000_r1.p0"
+    old.mkdir(parents=True)
+    (old / "kernel.metal").write_text("kernel void k() {}\n", encoding="utf-8")
+    (old / "report.json").write_text(json.dumps({"schema_version": 3, "status": "ok", "speedup": 9.9}))
+    (run / "state.json").write_text(json.dumps({
+        "schema_version": 1, "task": "relu", "dtype": "fp16", "size": "small", "phase": "done",
+        "spent_usd": 0.5, "budget_usd": 2, "best_speedup": 1.5,
+        "trace": [
+            {"label": "r1.p0", "status": "ok", "speedup": 9.9, "within_noise": False},
+            {"label": "ghost", "status": "ok", "speedup": 8.8, "within_noise": False},
+        ],
+    }))
+    (run / "result.json").write_text(json.dumps({
+        "schema_version": 1, "task": "relu", "dtype": "fp16", "size": "small",
+        "stop_reason": "max_rounds", "spent_usd": 0.5, "budget_usd": 2, "best_speedup": 1.5,
+    }))
+
+    code, out, _err = _brief(capsys, run, *_EXPAND)
+    assert code == 0
+    rows = {row["label"]: row for row in json.loads(out)["cands"]}
+    assert rows["r1.p0"]["report_state"] == "old_format"
+    assert rows["r1.p0"]["status"] == "old_format" and rows["r1.p0"]["speedup"] is None
+    # No candidate directory at all: undecidable, not "ok".
+    assert rows["ghost"]["report_state"] == "missing"
+    assert rows["ghost"]["status"] == "missing" and rows["ghost"]["speedup"] is None
+    assert "9.9" not in out and "8.8" not in out

@@ -37,38 +37,31 @@ _CONFIRMED = 20
 def _confirm(directory: Path, speedup: float) -> None:
     """@brief 给一场合成运行补上能通过发布门的确认材料。
 
-    没有这些文件，``best_confirmed()`` 的 ``best_rows`` 永远是 0，量到的不是定向确认路径。
+    没有这些文件，``best_confirmed()`` 的 ``best_rows`` 永远是 0，量到的不是定向确认路径。文档由
+    ``experiments.common.synthetic_confirmation_documents`` 组装：它必须通过唯一的发布谓词，所以这份
+    fixture 不能比真实运行更宽松。
 
     @param directory 运行目录。
     @param speedup 确认加速比。
     """
     import hashlib
 
-    from tcenv.schema import PROTOCOL_VERSION
+    from experiments.common import synthetic_confirmation_documents
 
     digest = hashlib.sha256(_KERNEL.encode()).hexdigest()
     (directory / "best.metal").write_text(_KERNEL, encoding="utf-8")
     candidate = directory / "candidates" / "000_r1.p0"
     candidate.mkdir(parents=True)
     (candidate / "kernel.metal").write_text(_KERNEL, encoding="utf-8")
+    result, report = synthetic_confirmation_documents(
+        task="relu", dtype="fp16", size="small", target_id="apple-m4-max",
+        speedup=speedup, label="r1.p0", kernel_sha256=digest,
+    )
+    result.update({"stop_reason": "max_rounds", "started_at": 1, "spent_usd": 1.0})
     # result.json 是和模板硬链接的：先摘链接，否则会改写所有 run 共享的 inode。
     (directory / "result.json").unlink()
-    (directory / "result.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "size": "small", "stop_reason": "max_rounds",
-        "started_at": 1, "spent_usd": 1.0, "target_id": "apple-m4-max",
-        "confirmed_speedup": speedup, "confirmed_status": "ok", "confirm_winner_label": "r1.p0",
-        "confirmation_source_sha256": digest, "confirmed_values": [speedup],
-        "confirmed_worst": speedup, "confirmed_best": speedup,
-    }), encoding="utf-8")
-    (directory / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": speedup,
-        "benchmark": {"noisy": False, "candidate": {"cv": 0.01, "reps": 15},
-                      "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx",
-                      "confirmation": {"kernel_sha256": digest, "winner_label": "r1.p0",
-                                       "confirmed_values": [speedup], "speedup": speedup,
-                                       "candidate_us": None}},
-        "protocol_version": PROTOCOL_VERSION, "target_id": "apple-m4-max",
-    }), encoding="utf-8")
+    (directory / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    (directory / "confirm_report.json").write_text(json.dumps(report), encoding="utf-8")
 
 
 def _make_root(root: Path, count: int) -> None:

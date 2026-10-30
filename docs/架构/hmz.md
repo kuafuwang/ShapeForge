@@ -19,6 +19,8 @@ flowchart LR
   E --> EP["epic<br/>~/.hmz/epics/.../epic.jsonl"]
 ```
 
+`taic` 现在经 `taic/session_runtime.py` 的 `LocalHmzKernelSessionRunner` 调用上面这一场；当前 runner 只接受 local harness/workspace。选择 `split-control` 时，`pi` 仍在 control_host，只有正式评测和自测经 `EvaluationExecutor` 去设备侧受信服务；`hmz` 本身不搬进容器或 VM。详见 [执行运行时与设备扩展.md](执行运行时与设备扩展.md)。
+
 源码不进入本仓库。2026-10-19 装上的发布包是 PyPI 的 `hmz` 0.2.0；2026-10-24 已升级到 0.2.2（PyPI 2026-10-24 的最新发布）。本机源码已快进到 `19b3dc59`（2026-10-24）；PyPI 0.2.2 的 release tag 是 `c2946aa`，两者是不同分支。其中 `flame_chase` 与 `e2013a4` 相同，仍是 48 行。搜索仍只调用 `kernel_once`；`run_config.json` 的 `loop_protocol: flame_chase_1` 只是续跑协议标签。搜索循环、上下文和判卷仍在 [搜索.md](搜索.md)。
 
 ## 它是什么
@@ -58,7 +60,7 @@ hmz exec -f taic/flows/kernel_once
 | 流程 | `flame_chase` 或本仓库的 `kernel_once` | 决定几个角色、每场是否新开会话、任务句子是什么。`flame_chase` 只有一个循环：两个角色轮流，每场 `spawn` 再 `run` 同一句任务 |
 | 代理会话 | `pi --mode rpc` | 模型在这里。`pi` 用自己的 `read`、`write`、`bash` 改文件、跑命令 |
 | 权限围栏 | `hmz internal fence` | 限制这场能读哪些路径、能写哪些路径、能连哪些主机。`/tmp` 可写。`~/.cache` 和 Clang 的默认模块缓存不可写。`TMPDIR` 指到这场自己的临时目录 |
-| epic | `~/.hmz/epics/<工作区>/<时间>-<编号>/epic.jsonl` | 一行一件事：开始、打开了哪个会话、花费、结束。不另抄 `pi` 说过的话。那些话在 `~/.pi/agent/sessions` |
+| epic | `~/.hmz/epics/<工作区>/<时间>-<编号>/epic.jsonl` | 一行一件事：开始、打开了哪个会话、花费、结束。不另抄 `pi` 说过的话。那些话在 `<epic>/<场次>/sessions/pi/sessions/` 下（0.2.2 起；更早的 hmz 把它们放在 `~/.pi/agent/sessions`） |
 
 `hmz` 的网页按 epic 显示一场：谁上场、何时开始和结束、怎么结束、花了多少。搜索看板读同样的四行，并另读 `pi` 会话的末尾。两边都不把 epic 当成成绩单。
 

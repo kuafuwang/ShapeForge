@@ -16,6 +16,7 @@ from typing import Any, Callable
 from taic.committees import load_committees
 from taic.llm import PAPER_BUDGET_USD, SearchConfig, load_config, load_raw_config
 from taic.orchestrator import Orchestrator, RunResult
+from taic.policy import confirmation_publication
 
 # Per-kernel USD budgets: the paper's, in dollars, whatever the model. Every kernel gets the paper's $15 (Sections 4.3 and 4.4 of
 # arXiv 2609.36800; the 12-kernel grid of Figure 4 states no cap, so the same ceiling is used). Runs that converge earlier (``patience``) spend less.
@@ -224,6 +225,7 @@ def run_one(
     preset: str | None = None,
     client: Any = None,
     evaluate_fn: Callable | None = None,
+    evaluator: Any = None,
     agent_runner: Callable | None = None,
     log: Callable[[str], None] = print,
     use_tools: bool | None = None,
@@ -248,6 +250,7 @@ def run_one(
     @param preset 配置预设名；为 ``None`` 时用默认。
     @param client LLM 客户端；为 ``None`` 时由编排器自建。
     @param evaluate_fn 评测函数；为 ``None`` 时用默认实现。
+    @param evaluator 统一的评测执行器；为 ``None`` 时由 ``evaluate_fn`` 包成 ``LocalEvaluator``。
     @param agent_runner 自定义的写内核进程；为 ``None`` 时用默认。
     @param log 进度输出函数。
     @param use_tools 是否开工具；为 ``None`` 时不覆盖预设。
@@ -266,9 +269,9 @@ def run_one(
     # 显式 model 让两个委员会都用它。否则用配置里的两名成员。RunStartError（目录已有文件，或 run_config.json 写失败）从这里原样抛给调用方，不进入 run()。
     if _looks_resumable(Path(run_dir)):
         log(f"(resume interrupted cell {run_dir})")
-        return _resume_one(task, dtype, size, Path(run_dir), cfg, search, raw, model, client, evaluate_fn, agent_runner, log)
+        return _resume_one(task, dtype, size, Path(run_dir), cfg, search, raw, model, client, evaluate_fn, agent_runner, log, evaluator=evaluator)
     committees = load_committees(raw, active=cfg, model_override=model)
-    orch = Orchestrator(task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log, committees=committees, agent_runner=agent_runner, target_id=target_id or "apple-m4-max", seed=seed)
+    orch = Orchestrator(task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, evaluator=evaluator, log=log, committees=committees, agent_runner=agent_runner, target_id=target_id or "apple-m4-max", seed=seed)
     return asyncio.run(orch.run())
 
 
@@ -283,7 +286,7 @@ def _looks_resumable(run_dir: Path) -> bool:
     return (run_dir / "run_config.json").is_file() and (run_dir / "state.json").is_file() and (run_dir / "transcript.jsonl").is_file()
 
 
-def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, evaluate_fn, agent_runner, log) -> RunResult:
+def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, evaluate_fn, agent_runner, log, *, evaluator=None) -> RunResult:
     """@brief 接着一份已中断的快照继续跑，而不是拒绝非空目录。
 
     Continue an interrupted batch cell instead of refusing the non-empty directory.
@@ -300,18 +303,21 @@ def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, eva
     @param evaluate_fn 评测函数。
     @param agent_runner 自定义的写内核进程。
     @param log 进度输出函数。
+    @param evaluator 统一的评测执行器；为 ``None`` 时由 ``evaluate_fn`` 包成 ``LocalEvaluator``。
     @return 续跑后的结果对象。
-    @raises taic.orchestrator.RunStartError 快照读不出来时。
+    @raises taic.orchestrator.RunStartError 快照读不出来、远端上下文损坏，或 outbox 打不开时。
     """
     from tasks import get_task
 
     from taic import resume as rs
+    from taic.artifacts import NeedsInspection
     from taic.orchestrator import RunStartError
 
     task_obj = get_task(task, dtype, size)
     try:
         snap = rs.load_snapshot(run_dir, search, task_obj.contract.kernel_name)
-    except rs.ResumeError as exc:
+    except (rs.ResumeError, NeedsInspection) as exc:
+        # A snapshot that is damaged (not merely absent) is a refused start, not a traceback.
         raise RunStartError(f"{run_dir} is not resumable: {exc}") from exc
     recorded = {}
     try:
@@ -323,15 +329,262 @@ def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, eva
         committees = load_committees({"llm": raw.get("llm") or {}, "committees": recorded_committees}, active=cfg)
     else:
         committees = load_committees(raw, active=cfg, model_override=model)
-    orch = Orchestrator(
-        task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn,
-        log=log, committees=committees, agent_runner=agent_runner, resuming=True,
-    )
-    orch.restore(snap, dry_run=False)
+    try:
+        orch = Orchestrator(
+            task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn,
+            evaluator=evaluator, log=log, committees=committees, agent_runner=agent_runner, resuming=True,
+        )
+        # Same boundary as ``taic.cli.prepare_resume``: a damaged remote evaluation context or a
+        # damaged outbox refuses the resume instead of escaping as a traceback.
+        orch.restore(snap, dry_run=False)
+    except (NeedsInspection, RunStartError) as exc:
+        raise RunStartError(f"{run_dir} is not resumable: {exc}") from exc
     return asyncio.run(orch.run())
 
 
 # 各脚本的 --resume 只在 result.json 不存在时才开新的一次搜索。文件在，但损坏或版本更新，要人来看，不能当成还没跑过。
+def _synthetic_native_build(candidate_sha256: str, identity: dict) -> dict:
+    """@brief 为合成确认报告组装一份**形状合法**的 native/``full`` build 文档。
+
+    A confirmation report is a schema-4 ``EvalReport`` document, so its ``build`` record must pass
+    the same closed-shape validation as a real one.  The record is projected through the production
+    projector from a *portable* artifact set (the described SOURCE manifest only): it is structurally
+    a real build and makes no claim that anything was compiled or loaded here.
+
+    @param candidate_sha256 胜者源码摘要；报告的 ``build.candidate_sha256`` 必须就是它。
+    @param identity ``{"opspec_digest", "lowering_profile_digest"}``。
+    @return ``build`` 文档（已通过 ``validate_shape``）。
+    """
+    from tcenv.build_projection import project_full
+    from tcenv.remote.artifact_builder import (
+        BuildArtifact, BuildEvidence, BuildOutcome, BuildProfile, BuildProvenance,
+    )
+    from tcenv.remote.artifact_bundle import ArtifactBundle, BundleEntry
+
+    profile = BuildProfile(
+        build_profile="synthetic-confirmation-fixture",
+        builder_id="synthetic-confirmation-fixture", builder_version="0",
+        build_host="control_host", toolchain_id="none", toolchain_version="0",
+        sdk_version="fixture",
+        compile_profile={"fixture": True, "compiled": False}, build_kind="native",
+    )
+    entry = BundleEntry(
+        path="kernel.tx", role="SOURCE", media_type="text/plain; charset=utf-8",
+        size_bytes=0, sha256=candidate_sha256, described=True,
+    )
+    bundle = ArtifactBundle(entries=(entry,))
+    artifacts = tuple(BuildArtifact.from_entry(item) for item in bundle.entries)
+    provenance = BuildProvenance(
+        profile=profile, source_sha256=candidate_sha256,
+        artifact_set_digest=bundle.artifact_set_digest,
+    )
+    evidence = BuildEvidence(
+        mode="prebuilt", status="ok", provenance=provenance, artifacts=artifacts,
+        placement="control_host",
+    )
+    outcome = BuildOutcome(bundle=bundle, provenance=provenance, evidence=evidence, payloads={})
+    return project_full(outcome, build_kind="native", identity=identity)
+
+
+def synthetic_confirmation_documents(
+    *, task: str, dtype: str, size: str, target_id: str,
+    speedup: float, label: str, kernel_sha256: str,
+    candidate_us: float | None = None,
+    values: list[float] | None = None,
+    protocol_version: str | None = None,
+) -> tuple[dict, dict]:
+    """@brief 造一对能通过**唯一发布谓词**的 ``(result.json, confirm_report.json)`` 合成文档。
+
+    This is a fixture builder for synthetic runs (the scale probe and the observe/read-path tests),
+    **not evidence**: it fabricates the per-batch identity a real confirmation would have recorded,
+    because a synthetic run never confirmed anything.  Its one hard rule is that the documents pass
+    :func:`taic.policy.confirmation_publication` — the same predicate a real run goes through:
+
+    * if the gate tightens (a new required field, a new identity state), this builder raises and the
+      fixtures stop working instead of silently keeping a second publication path;
+    * the read side (``conclusion_of_run`` / ``observe``) sees exactly the documents a real run
+      writes, so the confirmed path it measures is the production one.
+
+    A ``schema_version`` other than 4 is an old-format report and is refused by every reader, so the
+    fixture is schema 4 by construction.
+
+    The frozen expected is always **complete**: the current task/registry identity when the registry
+    covers the configuration, otherwise a deterministic fixture identity (some observe-analysis
+    fixtures use dtypes the registry does not cover to build distinct comparability keys).  It is
+    never left with ``None`` identity fields — an incomplete expected is ``*_identity_unknown`` and
+    must not publish, and this builder must not be the place that hides it.
+
+    @param task 任务名。
+    @param dtype 元素类型短名。
+    @param size 问题规模名。
+    @param target_id 目标设备 id。
+    @param speedup 确认加速比（单批时同时是各批中位数）。
+    @param label 胜者候选标签。
+    @param kernel_sha256 胜者内核的 sha256（``best.metal`` 与该候选文件必须同哈希）。
+    @param candidate_us 确认批的候选微秒数；``None`` 表示不记。
+    @param values 逐批加速比；缺省为 ``[speedup]``。
+    @param protocol_version 冻结 expected 与报告里的测量协议；缺省为当前 ``PROTOCOL_VERSION``。
+    @return ``(result, confirm_report)`` 两份文档。
+    @raises ValueError 生成的文档仍被发布谓词拒绝时（谓词收紧后的回归信号）。
+    """
+    from tcenv.evaluate import confirmation_expected_document
+    from tcenv.evaluation import EvaluationError
+    from tcenv.opspec.model import OpSpecError
+    from tcenv.schema import REPORT_SCHEMA_VERSION, PROTOCOL_VERSION
+
+    protocol = str(protocol_version or PROTOCOL_VERSION)
+    batches_values = list(values) if values else [float(speedup)]
+    median = float(statistics.median(batches_values))
+    identity = {
+        "kind": "match",
+        "differences": [],
+        "shape": "full",
+        "build_kind": "native",
+        "measurement_kind": "measured",
+        "cache_hit": False,
+        "timing_uncertain": False,
+    }
+    # One batch record per confirmed value: the gate pairs the records with the values one to one
+    # (§7.2), so a two-batch fixture must carry two records, not one shared record.
+    batch = {
+        "label": label,
+        "shape": "full",
+        "build_kind": "native",
+        "measurement_kind": "measured",
+        "cache_hit": False,
+        "timing_uncertain": False,
+        "identity": dict(identity),
+    }
+    batches = [dict(batch) for _value in batches_values]
+    entry = {
+        "label": label,
+        "search_speedup": median,
+        "failed_batches": 0,
+        "status": "ok",
+        "confirmed_speedup": median,
+        "confirmed_values": list(batches_values),
+        "identity": dict(identity),
+    }
+    # The frozen expected must be **complete and consistent** with the report it binds (§7.2).
+    # The CPU-side expected builder gives the current task/registry identity; a synthetic run for a
+    # configuration the registry does not cover (observe-analysis fixtures use dtypes such as
+    # ``fp32``/``int8`` to build distinct comparability keys) has no real identity to state, so it
+    # gets a deterministic fixture identity instead.  Either way the document is complete: an
+    # expected with ``None`` fields is ``*_identity_unknown`` and can never publish, and this
+    # builder must not be the place that hides that.
+    evaluation_identity = None
+    try:
+        expected = confirmation_expected_document(task, dtype, size, target_id, "", probe=False)
+        evaluation_identity = expected["evaluation"]
+    except (EvaluationError, OpSpecError, KeyError, ValueError):
+        # The registry cannot state an identity for this configuration (out-of-domain dtype/size,
+        # unknown task name in a budget fixture): a fixture identity is the honest stand-in.
+        expected = None
+    if expected is None:
+        import hashlib
+
+        def _fixture_digest(what: str) -> str:
+            seed = f"synthetic:{what}:{task}/{dtype}/{size}/{target_id}"
+            return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+        # Fixture-only identity: complete and consistent, but not a deployable measurement claim
+        # (this module's synthetic documents are explicitly *not evidence*).
+        expected = {
+            "build": {
+                "candidate_sha256": kernel_sha256,
+                "opspec_digest": _fixture_digest("opspec"),
+                "lowering_profile_digest": _fixture_digest("lowering"),
+                "provenance": None,
+            },
+            "evaluation": {
+                "evaluation_fingerprint": _fixture_digest("evaluation"),
+                "baseline_implementation_digest": _fixture_digest("baseline_implementation"),
+                "baseline_environment_digest": _fixture_digest("baseline_environment"),
+                "backend": "metal", "backend_version": "1",
+                # Required identity in the projection too: the predicate checks both the top-level
+                # pair and ``evaluation.protocol_version``/``target_id`` (§7.2).
+                "protocol_version": protocol, "target_id": target_id,
+                "device_name": None, "gpu_family": None,
+            },
+        }
+        evaluation_identity = expected["evaluation"]
+    else:
+        expected["build"]["candidate_sha256"] = kernel_sha256
+    expected["protocol_version"] = protocol
+    expected["target_id"] = target_id
+    if any(evaluation_identity.get(field) is None for field in (
+        "evaluation_fingerprint", "baseline_implementation_digest",
+        "baseline_environment_digest", "backend", "backend_version",
+    )):
+        raise ValueError(
+            "the synthetic confirmation cannot state a current evaluation identity on this host; "
+            "an incomplete expected is unknown and must not be fabricated"
+        )
+    result = {
+        "task": task, "dtype": dtype, "size": size, "target_id": target_id,
+        "confirmed_speedup": median, "confirmed_status": "ok", "confirm_winner_label": label,
+        "confirmation_source_sha256": kernel_sha256, "confirmed_values": list(batches_values),
+        "confirmed_worst": min(batches_values), "confirmed_best": max(batches_values),
+        "candidate_us": candidate_us, "confirmations": [entry],
+    }
+    # The confirm report on disk is a whole schema-4 ``EvalReport`` document (the orchestrator
+    # writes ``rep.to_json()``), so the fixture is one too: a reduced dictionary would be refused by
+    # the publication read boundary, which now runs the full schema closure.
+    from tcenv.evaluate import EvalReport
+
+    identity_document = {
+        "opspec_digest": expected["build"].get("opspec_digest"),
+        "lowering_profile_digest": expected["build"].get("lowering_profile_digest"),
+    }
+    build_document = _synthetic_native_build(kernel_sha256, identity_document)
+    # A publishable frozen expected states the same recomputable BuildProvenance the report carries
+    # (a real run gets it from the live executor probe; a CPU fixture has no probe, so it repeats the
+    # fixture profile).  ``artifact_set_digest`` is outcome-only and stays out of the expected.
+    expected["build"]["provenance"] = {
+        key: value for key, value in build_document["provenance"].items() if key != "artifact_set_digest"
+    }
+    report_object = EvalReport(
+        task=task, dtype=dtype, size=size, mode="full", status="ok", stage="done", seed=0,
+        build=build_document,
+        speedup=median, candidate_us=candidate_us,
+        evaluation_fingerprint=evaluation_identity["evaluation_fingerprint"],
+        baseline_implementation_digest=evaluation_identity["baseline_implementation_digest"],
+        baseline_environment_digest=evaluation_identity["baseline_environment_digest"],
+        backend=evaluation_identity["backend"],
+        backend_version=evaluation_identity["backend_version"],
+        protocol_version=protocol, target_id=target_id,
+        benchmark={
+            "noisy": False,
+            "candidate": {"cv": 0.01, "reps": 15},
+            "baselines": {"mlx": {"cv": 0.01, "reps": 15}},
+            "best_baseline": "mlx",
+        },
+    )
+    report = report_object.to_json()
+    report["benchmark"]["confirmation"] = {
+        "kernel_sha256": kernel_sha256, "winner_label": label,
+        "confirmed_values": list(batches_values), "speedup": median,
+        "candidate_us": candidate_us,
+        "expected": expected, "batches": batches,
+    }
+    assert report["schema_version"] == REPORT_SCHEMA_VERSION
+    decision = confirmation_publication(
+        result=result, confirm_report=report, batches=batches, expected=expected,
+        bindings={
+            "confirmation_source_sha256": kernel_sha256,
+            "confirm_report_status": "ok",
+            "best_source_sha256": kernel_sha256,
+            "winner_source_sha256": kernel_sha256,
+        },
+    )
+    if not decision["allowed"]:
+        raise ValueError(
+            "the synthetic confirmation no longer passes the publication gate: "
+            f"{decision['status']} ({decision['reason']})"
+        )
+    return result, report
+
+
 def read_result(run_dir: Path) -> dict | None:
     """@brief 读一次运行的 ``result.json``，并按版本校验。
 
@@ -352,10 +605,12 @@ def read_confirm(run_dir: Path) -> dict | None:
     @return 复测报告字典；没测过时返回 ``None``。
     @raises taic.artifacts.NeedsInspection 报告损坏或版本对不上时，不能当成没测过。
     """
-    from taic.artifacts import read_versioned
+    from taic.artifacts import read_versioned_exact
     from tcenv.schema import REPORT_SCHEMA_VERSION
 
-    return read_versioned(Path(run_dir) / "confirm_report.json", REPORT_SCHEMA_VERSION)
+    # Exactly the current report schema.  A schema-3 confirm report has no per-batch identity and
+    # no frozen expected, so it is undecidable evidence — not a slightly older current report.
+    return read_versioned_exact(Path(run_dir) / "confirm_report.json", version=REPORT_SCHEMA_VERSION)
 
 
 # 一行里同时留下搜索期加速比、换种子确认后的加速比，以及手写朴素核，后面才能把「基线弱」和「搜索强」分开。
@@ -371,6 +626,41 @@ def _sha256_file(path: Path) -> str | None:
         return None
 
 
+def _read_confirm_report(run_dir: Path) -> dict | None:
+    """@brief 用拒绝重复键的 loader 读确认报告，并要求 schema 恰为**整数** 4。
+
+    A confirm report of any other schema is *old format*: the run is not publishable through the
+    current gate, and it is not migrated or double-read.  The version test is
+    :func:`taic.artifacts.document_state` — ``4.0 == 4`` in Python, so a plain ``!=`` comparison
+    would accept a float version and publish through a document no reader would call current.
+
+    @param run_dir 搜索目录。
+    @return 报告字典；缺失、损坏、重复键或版本不是非 bool 的整数 4 时返回 ``None``。
+    """
+    from taic.artifacts import NeedsInspection, read_versioned_exact
+    from tcenv.evaluate import EvalReport
+    from tcenv.schema import REPORT_SCHEMA_VERSION, SchemaError
+
+    try:
+        # Same reader as ``read_confirm``: strict JSON (duplicate keys refused) and a type-strict
+        # integer version.  Undecidable is "not publishable" here, never a guess or a migration.
+        document = read_versioned_exact(Path(run_dir) / "confirm_report.json", version=REPORT_SCHEMA_VERSION)
+    except NeedsInspection:
+        return None
+    try:
+        # The version check alone accepts any body.  A publication read must use the same schema-4
+        # closure every other reader uses (closed key set, status table, build shape, digest/type
+        # rules): otherwise a document that ``EvalReport.from_json`` refuses — an integer
+        # ``evaluation_fingerprint``, a missing field, a float version — could still publish through
+        # the readers that only compare a few keys.
+        EvalReport.from_json(document)
+    except (SchemaError, TypeError, ValueError):
+        # Damaged/unreadable evidence is ``unknown``, exactly like a schema-3 report: nothing here
+        # repairs, migrates or partially trusts the document.
+        return None
+    return document
+
+
 def _confirmation_files(run_dir: Path, winner_label: str | None) -> tuple[str | None, str | None, str | None]:
     """@brief 取出确认门需要比对的三份证据。
 
@@ -381,13 +671,8 @@ def _confirmation_files(run_dir: Path, winner_label: str | None) -> tuple[str | 
     @return ``(best.metal 摘要, 胜者候选摘要, 复测报告状态)``，缺的那项为 ``None``。
     """
     best = _sha256_file(run_dir / "best.metal")
-    report = None
-    try:
-        doc = json.loads((run_dir / "confirm_report.json").read_text())
-        if isinstance(doc, dict):
-            report = doc.get("status")
-    except (OSError, ValueError):
-        report = None
+    document = _read_confirm_report(run_dir)
+    report = document.get("status") if isinstance(document, dict) else None
     winner = None
     if isinstance(winner_label, str) and winner_label:
         root = run_dir / "candidates"
@@ -407,79 +692,69 @@ def conclusion_of_run(run_dir: Path, result: dict | None) -> dict:
     @param result 该目录的结果字典；可以为 None。
     @return ``{"speedup": ..., "publication": ...}``；缓存命中、计时不稳或各批不一致时标为 ``不确定``。
     """
-    return _conclusion_verdict(run_dir, result)[0]
+    return conclusion_verdict(run_dir, result)[0]
 
 
 def publication_reason(run_dir: Path, result: dict | None) -> dict:
     """@brief 发布判定 + 原因码（只给观测用；``conclusion_of_run`` 仍只返回两个键）。
 
     原因码按代码顺序给出“第一个命中的分支”，可直接映射到行动（重新确认、修协议、等安静测量等），
-    不发明组合码。旧格式确认报告只报 ``missing_confirmation_block``，协议缺失等其他问题不进 reason。
+    不发明组合码。旧格式（schema ≠ 4）的确认报告根本读不成当前文档，因此只报 ``not_confirmed``；
+    缺 ``confirmation`` 块的 schema-4 报告才报 ``missing_confirmation_block``。
 
     @param run_dir 搜索目录。
     @param result 该目录的结果字典；可以为 None。
     @return ``{"publication": ..., "reason": ...}``。
     """
-    got, reason = _conclusion_verdict(run_dir, result)
+    got, reason = conclusion_verdict(run_dir, result)
     return {"publication": got["publication"], "reason": reason}
 
 
-def _conclusion_verdict(run_dir: Path, result: dict | None) -> tuple[dict, str]:
-    """@brief ``conclusion_of_run`` 的内部实现：返回（结论, 原因码）。
+def conclusion_verdict(run_dir: Path, result: dict | None) -> tuple[dict, str]:
+    """@brief 读盘绑定组 + 唯一发布谓词，返回 ``(结论, 原因码)``。
+
+    The bindings are derived here (``best.metal``, the winner candidate file, the confirm report's
+    status and the result's recorded hash) and the decision is made by
+    :func:`taic.policy.confirmation_publication` — the same function the live confirmation calls.
+    The *frozen* expected and the per-batch identity records come from the confirm report; nothing
+    is re-probed on today's host.
 
     @param run_dir 搜索目录。
-    @param result 该目录的结果字典；可以为 None。
+    @param result 结果字典；可以为 ``None``。
     @return ``({"speedup": ..., "publication": ...}, reason)``。
     """
     if not result:
         return published_conclusion(None), "no_result_json"
-    best, winner, status = _confirmation_files(Path(run_dir), result.get("confirm_winner_label"))
-    got, reason = _published_verdict(
-        result, best_metal_sha256=best, confirm_status=status, winner_metal_sha256=winner,
+    run_dir = Path(run_dir)
+    best, winner, status = _confirmation_files(run_dir, result.get("confirm_winner_label"))
+    document = _read_confirm_report(run_dir)
+    expected = None
+    batches = None
+    if isinstance(document, dict):
+        benchmark = document.get("benchmark")
+        confirmation = benchmark.get("confirmation") if isinstance(benchmark, dict) else None
+        if isinstance(confirmation, dict):
+            expected = confirmation.get("expected")
+            batches = confirmation.get("batches")
+    decision = confirmation_publication(
+        result=result,
+        confirm_report=document,
+        batches=batches,
+        expected=expected,
+        bindings={
+            "confirmation_source_sha256": result.get("confirmation_source_sha256"),
+            "confirm_report_status": status,
+            "best_source_sha256": best,
+            "winner_source_sha256": winner,
+        },
     )
-    if got["publication"] != "confirmed":
-        return got, reason
-    try:
-        doc = json.loads((Path(run_dir) / "confirm_report.json").read_text())
-    except (OSError, ValueError):
-        doc = None
-    from tcenv.bench import timing_is_uncertain
-
-    from tcenv.schema import PROTOCOL_VERSION
-
-    if isinstance(doc, dict) and doc.get("cache_hit") is True:
-        # 确认报告若来自评测缓存，它只是复述了上一次的测量，不是这一次的复测。
-        # 缓存键不含设备、macOS 与 MSL 版本，也不能证明是同一台机器上量的。
-        return {"speedup": None, "publication": "不确定"}, "cache_hit"
-    if not isinstance(doc, dict):
-        return {"speedup": None, "publication": "未确认"}, "missing_confirmation_block"
-    benchmark = doc.get("benchmark")
-    confirmation = benchmark.get("confirmation") if isinstance(benchmark, dict) else None
-    if not isinstance(confirmation, dict):
-        return {"speedup": None, "publication": "未确认"}, "missing_confirmation_block"
-    if confirmation.get("kernel_sha256") != result.get("confirmation_source_sha256"):
-        return {"speedup": None, "publication": "未确认"}, "sha_mismatch"
-    if confirmation.get("winner_label") != result.get("confirm_winner_label"):
-        return {"speedup": None, "publication": "未确认"}, "label_mismatch"
-    if confirmation.get("confirmed_values") != result.get("confirmed_values"):
-        return {"speedup": None, "publication": "未确认"}, "values_mismatch"
-    if confirmation.get("speedup") != result.get("confirmed_speedup") or doc.get("speedup") != result.get("confirmed_speedup"):
-        return {"speedup": None, "publication": "未确认"}, "speedup_mismatch"
-    if result.get("candidate_us") is not None and confirmation.get("candidate_us") != result.get("candidate_us"):
-        return {"speedup": None, "publication": "未确认"}, "candidate_us_mismatch"
-    # 数字只在同一个测量协议、同一台目标机上可比。缺字段按不可核对处理。
-    if str(doc.get("protocol_version") or "") != str(PROTOCOL_VERSION):
-        return {"speedup": None, "publication": "未确认"}, "protocol_mismatch"
-    if str(doc.get("target_id") or "") != str(result.get("target_id") or ""):
-        return {"speedup": None, "publication": "未确认"}, "target_mismatch"
-    if timing_is_uncertain(doc):
-        return {"speedup": None, "publication": "不确定"}, "timing_uncertain"
-    from taic.policy import batches_agree
-
-    # 同一颗核各批极差超过 2% 时，中位数仍留在 result.json，对外不把它当成精确值。
-    if not batches_agree(result.get("confirmed_values")):
-        return {"speedup": None, "publication": "不确定"}, "batches_disagree"
-    return got, "confirmed"
+    speedup = None
+    if decision["allowed"]:
+        values = result.get("confirmed_values") or []
+        numbers = [float(item) for item in values if isinstance(item, (int, float)) and not isinstance(item, bool)]
+        if numbers:
+            speedup = statistics.median(numbers)
+    return {"speedup": speedup, "publication": decision["status"]}, decision["reason"]
 
 
 def _finite_positive(value) -> bool:
@@ -509,40 +784,28 @@ def published_conclusion(result: dict | None, *, best_metal_sha256: str | None =
 
 
 def _published_verdict(result: dict | None, *, best_metal_sha256: str | None = None, confirm_status: str | None = None, winner_metal_sha256: str | None = None) -> tuple[dict, str]:
-    """@brief ``published_conclusion`` 的内部实现：返回（结论, 原因码）。
+    """Deprecated compatibility shim: a result without its confirm report cannot be published.
 
-    @param result 结果字典；可以为 ``None``。
-    @param best_metal_sha256 ``best.metal`` 的摘要。
-    @param confirm_status 复测报告的状态。
-    @param winner_metal_sha256 胜者候选内核的摘要。
-    @return ``({"speedup": ..., "publication": ...}, reason)``。
+    The single predicate needs the confirm report (frozen expected + per-batch records).  Callers
+    that only hold ``result.json`` therefore get ``未确认`` instead of a bypass.
     """
-    if not result:
-        return {"speedup": None, "publication": "in_progress"}, "no_result_json"
-    if "confirmation_source_sha256" not in result:
-        return {"speedup": None, "publication": "旧版未绑定源码"}, "not_confirmed"
-    recorded = result.get("confirmation_source_sha256")
-    winner = result.get("confirm_winner_label")
-    if result.get("confirmed_status") != "ok" or confirm_status != "ok":
-        return {"speedup": None, "publication": "未确认"}, "not_confirmed"
-    if not isinstance(recorded, str) or recorded == "" or recorded != best_metal_sha256 or recorded != winner_metal_sha256:
-        return {"speedup": None, "publication": "未确认"}, "sha_mismatch"
-    if not isinstance(winner, str) or winner == "":
-        return {"speedup": None, "publication": "未确认"}, "label_mismatch"
-    value = result.get("confirmed_speedup")
-    if not _finite_positive(value):
-        return {"speedup": None, "publication": "未确认"}, "not_confirmed"
-    values = result.get("confirmed_values")
-    if not isinstance(values, list) or not values:
-        return {"speedup": None, "publication": "未确认"}, "values_mismatch"
-    numbers = [float(item) for item in values if isinstance(item, (int, float)) and not isinstance(item, bool)]
-    if len(numbers) != len(values) or not all(_finite_positive(item) for item in numbers):
-        return {"speedup": None, "publication": "未确认"}, "values_mismatch"
-    # 公布的数字必须是各批的中位数本身，而不是与它们无关的另一个字段。
-    median = statistics.median(numbers)
-    if abs(float(value) - median) > 1e-9 * max(1.0, abs(median)):
-        return {"speedup": None, "publication": "未确认"}, "speedup_mismatch"
-    return {"speedup": median, "publication": "confirmed"}, "confirmed"
+
+    decision = confirmation_publication(
+        result=result, confirm_report=None, batches=None, expected=None,
+        bindings={
+            "confirmation_source_sha256": result.get("confirmation_source_sha256") if isinstance(result, dict) else None,
+            "confirm_report_status": confirm_status,
+            "best_source_sha256": best_metal_sha256,
+            "winner_source_sha256": winner_metal_sha256,
+        },
+    )
+    speedup = None
+    if decision["allowed"] and isinstance(result, dict):
+        values = result.get("confirmed_values") or []
+        numbers = [float(item) for item in values if isinstance(item, (int, float)) and not isinstance(item, bool)]
+        if numbers:
+            speedup = statistics.median(numbers)
+    return {"speedup": speedup, "publication": decision["status"]}, decision["reason"]
 
 
 def publication_role(

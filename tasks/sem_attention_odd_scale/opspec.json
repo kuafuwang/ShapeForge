@@ -1,0 +1,210 @@
+{
+  "spec_version": 1,
+  "op_name": "sem_attention_odd_scale",
+  "category": "attention",
+  "formula": "o[b,h,m,:] = softmax_n(q[b,h,m,:] . k[b,h,n,:] * (SM_SCALE + LOG2E)) v[b,h,n,:] where LOG2E = log2(e) (the specification forms the qk scale as a sum, not the usual product); online softmax, fp32 statistics/accumulator, one rounding",
+  "uses": [
+    "SM_SCALE"
+  ],
+  "type_vars": {
+    "T": [
+      "fp16",
+      "bf16"
+    ]
+  },
+  "symbols": {
+    "B": {
+      "min": 1
+    },
+    "H": {
+      "min": 1
+    },
+    "S": {
+      "min": 1
+    },
+    "D": {
+      "min": 1
+    }
+  },
+  "tensors": {
+    "q": {
+      "role": "input",
+      "dims": [
+        "B",
+        "H",
+        "S",
+        "D"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+        "H*S*D",
+        "S*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "[B, H, S, D]"
+    },
+    "k": {
+      "role": "input",
+      "dims": [
+        "B",
+        "H",
+        "S",
+        "D"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+        "H*S*D",
+        "S*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "v": {
+      "role": "input",
+      "dims": [
+        "B",
+        "H",
+        "S",
+        "D"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+        "H*S*D",
+        "S*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "o": {
+      "role": "output",
+      "dims": [
+        "B",
+        "H",
+        "S",
+        "D"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+        "H*S*D",
+        "S*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "write"
+    }
+  },
+  "numerics": {
+    "acc_dtype": "fp32",
+    "rounding": "single_round_at_output",
+    "tolerances": {
+      "fp16": {
+        "rtol": 0.002,
+        "atol_rel": 0.001
+      },
+      "bf16": {
+        "rtol": 0.016,
+        "atol_rel": 0.008
+      }
+    },
+    "exact": false
+  },
+  "attrs": {
+    "SM_SCALE": {
+      "dtype": "float",
+      "default": 0.125,
+      "domain": {
+        "gt": 0
+      },
+      "doc": "softmax scale 1/sqrt(D) (D = 64 in every declared size)"
+    }
+  },
+  "cases": {
+    "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+    ],
+    "inputs": {
+      "ieee": {
+        "_inject": [
+          "q"
+        ]
+      }
+    }
+  },
+  "sizes": {
+    "paper": {
+      "B": 2,
+      "H": 8,
+      "S": 1024,
+      "D": 64,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "small": {
+      "B": 1,
+      "H": 2,
+      "S": 128,
+      "D": 64,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    }
+  },
+  "spec_params": [
+    "B",
+    "H",
+    "S",
+    "D"
+  ],
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "coefficient": 4,
+          "symbols": [
+            "B",
+            "H",
+            "S",
+            "S",
+            "D"
+          ]
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {
+          "tensor": "q"
+        },
+        {
+          "tensor": "k"
+        },
+        {
+          "tensor": "v"
+        },
+        {
+          "tensor": "o"
+        }
+      ]
+    }
+  }
+}

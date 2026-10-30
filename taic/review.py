@@ -298,6 +298,12 @@ def _report_view(run_dir: Path, label: str) -> dict:
         return {}
     if not isinstance(doc, dict):
         return {}
+    from taic.artifacts import document_state
+
+    # Type-strict currentness: ``4.0 == 4`` must not pass.  An old-format report is not current
+    # evidence, so the review view quotes no number from it.
+    if document_state(doc) != "current":
+        return {}
     benchmark = doc.get("benchmark") if isinstance(doc.get("benchmark"), dict) else {}
     candidate = benchmark.get("candidate") if isinstance(benchmark.get("candidate"), dict) else {}
     roof = doc.get("roofline") if isinstance(doc.get("roofline"), dict) else {}

@@ -71,29 +71,23 @@ def _run(runs: Path, name: str, *, task: str = "conv2d", dtype: str = "fp16", si
         "task": task, "dtype": dtype, "size": size, "phase": "done", "started_at": 10.0,
         "updated_at": 20.0, "spent_usd": 0.1, "budget_usd": 1.0, "best_speedup": speedup,
     }), encoding="utf-8")
-    result = {
-        "task": task, "dtype": dtype, "size": size, "stop_reason": "max_rounds", "spent_usd": 0.1,
-        "budget_usd": 1.0, "best_speedup": speedup, "target_id": target,
-        "protocol_version": protocol, "confirmation_source_sha256": digest,
-        "confirm_winner_label": "r1.p0", "confirmed_status": "ok", "confirmed_values": values,
-        "candidate_us": None,
-    }
-    if run_confirmed is not None:
+    from experiments.common import synthetic_confirmation_documents
+
+    result, report = synthetic_confirmation_documents(
+        task=task, dtype=dtype, size=size, target_id=target,
+        speedup=speedup, label="r1.p0", kernel_sha256=digest, values=values,
+        protocol_version=PROTOCOL_VERSION if protocol == "flame_chase_1" else protocol,
+    )
+    result.update({
+        "stop_reason": "max_rounds", "spent_usd": 0.1, "budget_usd": 1.0,
+        "best_speedup": speedup, "protocol_version": protocol,
+    })
+    if run_confirmed is None:
+        result.pop("confirmed_speedup", None)
+    else:
         result["confirmed_speedup"] = run_confirmed
     (directory / "result.json").write_text(json.dumps(result), encoding="utf-8")
-    (directory / "confirm_report.json").write_text(json.dumps({
-        "status": "ok", "speedup": speedup,
-        "protocol_version": PROTOCOL_VERSION if protocol == "flame_chase_1" else protocol,
-        "target_id": "apple-m4-max",
-        "benchmark": {
-            "noisy": False, "candidate": {"cv": 0.01, "reps": 15},
-            "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx",
-            "confirmation": {
-                "kernel_sha256": digest, "winner_label": "r1.p0", "confirmed_values": values,
-                "speedup": speedup, "candidate_us": None,
-            },
-        },
-    }), encoding="utf-8")
+    (directory / "confirm_report.json").write_text(json.dumps(report), encoding="utf-8")
     (directory / "run_config.json").write_text(json.dumps({
         "task": task, "dtype": dtype, "size": size, "protocol_version": protocol,
         "target": {"id": target, "backend": "metal", "backend_version": "v1"},
@@ -130,8 +124,14 @@ def _archive(catalog: Path, *, task: str = "conv2d", speedup: float, run_id: str
         }) + "\n")
 
 
-def test_the_real_catalog_gives_three_conv2d_points_and_two_lost_publications(tmp_path, monkeypatch):
-    """@brief 真实语料验收（§8.1）：conv2d 三点三值、环比 +20.21%/−5.15%、publication_lost 恰好 2 条。
+def test_the_real_catalog_keeps_the_points_and_refuses_every_old_format_confirmation(tmp_path, monkeypatch):
+    """@brief 真实语料验收（§8.1）：conv2d 三点三值与环比不变；旧格式确认报告一律不可判。
+
+    The catalog history keeps the numbers it published.  What changed is ``current_publication``:
+    every real ``confirm_report.json`` is schema 3, and R6 refuses an old-format confirmation
+    outright instead of treating its ``status`` as current evidence.  So every such run is a
+    publication the current gate cannot reproduce — ``not_confirmed``, counted in
+    ``publication_lost``, never backfilled.
 
     只读真实 ``runs/`` 与 ``kernels/``；索引复制到临时目录再投影，避免并行测试写同一份派生库。
 
@@ -165,10 +165,14 @@ def test_the_real_catalog_gives_three_conv2d_points_and_two_lost_publications(tm
         None, pytest.approx(20.2097, abs=1e-3), pytest.approx(-5.1518, abs=1e-3),
     ]
     assert [row["is_best_so_far"] for row in conv2d] == [True, True, False]
-    assert conv2d[2]["current_publication"] == "confirmed"
-    lost = [row for row in doc["rows"] if row["publication_reason"] == "missing_confirmation_block"]
-    assert len(lost) == 2, "两条旧格式确认报告就是 publication_lost 的两条"
-    assert all(row["current_publication"] != "confirmed" for row in lost)
+    # 真实语料里的 confirm_report.json 全部是 schema 3。R6 之后旧格式确认报告是**不可判**证据，
+    # 不迁移、不猜字段：`current_publication` 只能是 `未确认`，目录史里的历史数字原样保留。
+    assert [row["current_publication"] for row in conv2d] == ["in_progress", "未确认", "未确认"]
+    assert all(row["current_publication"] != "confirmed" for row in doc["rows"])
+    assert all(row["publication_reason"] != "confirmed" for row in doc["rows"])
+    lost = [row for row in doc["rows"] if row["current_publication"] == "未确认" and row["catalog_confirmed_speedup"]]
+    assert len(lost) == 4, "每一份旧格式确认报告都是 publishing_lost，而不是被当成当前证据"
+    assert {row["publication_reason"] for row in lost} == {"not_confirmed"}
     unknown = [row for row in doc["rows"] if row["source_unknown"]]
     assert len(unknown) == 4 and all(row["delta_vs_prev"] is None for row in unknown)
     assert len(doc["rows"]) == 9
@@ -177,15 +181,17 @@ def test_the_real_catalog_gives_three_conv2d_points_and_two_lost_publications(tm
     # 计数必须来自完整过滤集：limit 只是每类样本上限，不能用“样本条数”冒充“丢失条数”。
     report = publications.publication_alert_report(limit=2)
     assert report["counts"] == {
-        "confirmation_regressed": 1, "publication_lost": 2, "catalog_mismatch": 0,
+        "confirmation_regressed": 1, "publication_lost": 4, "catalog_mismatch": 0,
     }, report["counts"]
-    assert report["truncated"] is False and report["total"] == 3, (report["truncated"], report["total"])
+    # 4 条 publication_lost 超过 `limit=2` 的样本上限，但 `counts` 仍是完整过滤集。
+    assert report["truncated"] is True and report["total"] == 5, (report["truncated"], report["total"])
     lost_alerts = [alert for alert in report["alerts"] if alert["kind"] == "publication_lost"]
+    # `limit=2` 是每类**样本**上限：完整条数在 `counts` 里，样本必须先落在最近的 conv2d 上。
     assert {alert["run"] for alert in lost_alerts} == {
         "apple-m4-max/20261024-065432_conv2d_fp16_deepseek-flash",
-        "apple-m4-max/flash_attention-20261022-2",
-    }, "publication_lost 必须点名那两条旧格式确认报告"
-    assert {alert["reason"] for alert in lost_alerts} == {"missing_confirmation_block"}
+        "apple-m4-max/20261025-070409_conv2d_fp16_deepseek-flash_g5yab2vc",
+    }, "publication_lost 的样本要点名那两条旧格式确认报告"
+    assert {alert["reason"] for alert in lost_alerts} == {"not_confirmed"}
     assert [alert["kind"] for alert in report["alerts"]].count("confirmation_regressed") == 1
     assert all(alert["reason"] for alert in report["alerts"])
 
@@ -382,10 +388,26 @@ def test_publication_reason_covers_every_branch(tmp_path, monkeypatch):
     noisy = mutated(lambda doc: doc["benchmark"]["candidate"].update({"cv": 0.5}))
     assert _write_reason(directory, noisy, dict(result))["reason"] == "timing_uncertain"
 
-    disagree = mutated(lambda doc: (doc["benchmark"]["confirmation"].update(
+    def with_batches(change):
+        """改确认值时同步补出**逐值一条**的批次记录：谓词要求两者一一对应（§7.2）。"""
+        doc = json.loads(json.dumps(report))
+        change(doc)
+        confirmation = doc["benchmark"]["confirmation"]
+        confirmation["batches"] = [json.loads(json.dumps(confirmation["batches"][0]))
+                                   for _value in confirmation["confirmed_values"]]
+        return doc
+
+    disagree = with_batches(lambda doc: (doc["benchmark"]["confirmation"].update(
         {"confirmed_values": [1.0, 1.1], "speedup": 1.05}), doc.__setitem__("speedup", 1.05)))
     disagree_result = {**result, "confirmed_values": [1.0, 1.1], "confirmed_speedup": 1.05}
     assert _write_reason(directory, disagree, disagree_result)["reason"] == "batches_disagree"
+
+    # 两个测量值、只有一条身份记录：批次记录不全，不发布（不是“两处不一致”，是缺证据）。
+    incomplete = with_batches(lambda doc: (doc["benchmark"]["confirmation"].update(
+        {"confirmed_values": [1.0, 1.01], "speedup": 1.005}), doc.__setitem__("speedup", 1.005)))
+    incomplete["benchmark"]["confirmation"]["batches"].pop()
+    incomplete_result = {**result, "confirmed_values": [1.0, 1.01], "confirmed_speedup": 1.005}
+    assert _write_reason(directory, incomplete, incomplete_result)["reason"] == "not_confirmed"
 
     cached = mutated(lambda doc: doc.__setitem__("cache_hit", True))
     assert _write_reason(directory, cached, dict(result))["reason"] == "cache_hit"

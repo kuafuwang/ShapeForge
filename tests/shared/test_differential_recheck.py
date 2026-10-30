@@ -31,7 +31,7 @@ def _cfg(on: bool, hangs: int = 3) -> tuple[LLMConfig, SearchConfig]:
     return cfg, search
 
 
-def _report(task, dtype, size, *, mode, seed, status, speed):
+def _report(task, dtype, size, *, mode, seed, status, speed, source="kernel void demo() {}\n"):
     """@brief 造一份带速度数据与基准数据的 EvalReport；状态为 incorrect 时补上失败用例。
 
     @param task 任务名。
@@ -41,9 +41,18 @@ def _report(task, dtype, size, *, mode, seed, status, speed):
     @param seed 评测种子，None 时记为 0。
     @param status 报告状态。
     @param speed 报告的速度值，假值表示无速度。
+    @param source 这次评测的候选源码（build 记录必须绑定它）。
     @return 填好的 EvalReport。
     """
-    report = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=0 if seed is None else int(seed), status=status, stage="done", speedup=speed, message=status)
+    from tasks import get_task
+
+    from tests.support.report_build import attach_build, attach_identity
+
+    task_obj = get_task(task, dtype, size)
+    report = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=0 if seed is None else int(seed), status=status, stage="done", speedup=speed, message=status, target_id="apple-m4-max",
+                        backend="metal", backend_version="1", protocol_version="3")
+    attach_build(report, task_obj, source=source.encode("utf-8"))
+    attach_identity(report, task_obj, backend_id="metal")
     report.speedups = {"mlx": speed} if speed else {}
     report.candidate_us = 10.0 if speed else None
     report.baseline_us = {"mlx": 12.0} if speed else {}
@@ -64,7 +73,14 @@ def _orch(tmp_path, name, ev, *, on: bool, hangs: int = 3):
     @return 构造好的 Orchestrator。
     """
     cfg, search = _cfg(on, hangs)
-    return Orchestrator("relu", "fp16", "small", cfg, search, run_dir=tmp_path / name, client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None, seed=1)
+    from tcenv.evaluation import LocalEvaluator
+
+    from tests.support.report_build import structural_expected
+
+    # The injection stands in for the local Metal executor *and* for its current expected
+    # identity (the default executor over a custom function cannot state today's profile).
+    evaluator = LocalEvaluator(ev, expected_identity=structural_expected)
+    return Orchestrator("relu", "fp16", "small", cfg, search, run_dir=tmp_path / name, client=FakeClient([]), evaluate_fn=ev, evaluator=evaluator, log=lambda _s: None, seed=1)
 
 
 def test_the_gate_off_promotes_a_candidate_without_a_second_evaluation(tmp_path):
@@ -76,7 +92,7 @@ def test_the_gate_off_promotes_a_candidate_without_a_second_evaluation(tmp_path)
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
         calls.append(mode)
-        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=1.3)
+        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=1.3, source=source)
 
     orch = _orch(tmp_path, "off", ev, on=False)
     cand = asyncio.run(orch._eval(SOURCE, "init"))
@@ -95,7 +111,7 @@ def test_a_second_seed_that_is_incorrect_does_not_become_the_seed(tmp_path):
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
         calls.append((mode, seed))
         status = "incorrect" if mode == "quick" else "ok"
-        return _report(task, dtype, size, mode=mode, seed=seed, status=status, speed=1.3 if status == "ok" else None)
+        return _report(task, dtype, size, mode=mode, seed=seed, status=status, speed=1.3 if status == "ok" else None, source=source)
 
     orch = _orch(tmp_path, "fail", ev, on=True)
     cand = asyncio.run(orch._eval(SOURCE, "init"))
@@ -119,7 +135,7 @@ def test_a_second_seed_that_passes_still_becomes_the_seed(tmp_path):
     @param tmp_path pytest 提供的临时目录。
     """
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
-        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=1.2)
+        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=1.2, source=source)
 
     orch = _orch(tmp_path, "pass", ev, on=True)
     cand = asyncio.run(orch._eval(SOURCE, "init"))
@@ -135,7 +151,7 @@ def test_a_recheck_timeout_stops_the_search_and_is_not_stored_as_a_wrong_kernel(
     """
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
         status = "timeout" if mode == "quick" else "ok"
-        return _report(task, dtype, size, mode=mode, seed=seed, status=status, speed=1.2 if status == "ok" else None)
+        return _report(task, dtype, size, mode=mode, seed=seed, status=status, speed=1.2 if status == "ok" else None, source=source)
 
     orch = _orch(tmp_path, "hang", ev, on=True, hangs=1)
     with pytest.raises(StopRun, match="gpu_hang"):
@@ -153,7 +169,7 @@ def test_an_unresolved_recheck_is_pending_on_resume(tmp_path):
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
         status = "timeout" if mode == "quick" else "ok"
-        return _report(task, dtype, size, mode=mode, seed=seed, status=status, speed=1.2 if status == "ok" else None)
+        return _report(task, dtype, size, mode=mode, seed=seed, status=status, speed=1.2 if status == "ok" else None, source=source)
 
     orch = _orch(tmp_path, "pending", ev, on=True, hangs=1)
     with pytest.raises(StopRun):
@@ -173,7 +189,7 @@ def test_a_failed_confirmation_keeps_a_retest_record_and_does_not_run_it(tmp_pat
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
         calls.append(reps)
         status = "incorrect" if reps > 3 else "ok"
-        return _report(task, dtype, size, mode=mode, seed=seed, status=status, speed=1.2 if status == "ok" else None)
+        return _report(task, dtype, size, mode=mode, seed=seed, status=status, speed=1.2 if status == "ok" else None, source=source)
 
     orch = _orch(tmp_path, "confirm", ev, on=False)
 
@@ -204,7 +220,7 @@ def test_overlapping_branches_keep_the_faster_kernel(tmp_path):
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
         speed = 2.0 if "fast" in source else 1.2
-        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=speed)
+        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=speed, source=source)
 
     orch = _orch(tmp_path, "race", ev, on=True)
 
@@ -225,8 +241,8 @@ def test_a_later_failed_batch_does_not_publish_the_earlier_success(tmp_path):
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
         seen["n"] += 1
         if reps > 3 and seen["n"] >= 3:
-            return _report(task, dtype, size, mode=mode, seed=seed, status="incorrect", speed=None)
-        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=1.2)
+            return _report(task, dtype, size, mode=mode, seed=seed, status="incorrect", speed=None, source=source)
+        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=1.2, source=source)
 
     orch = _orch(tmp_path, "partial", ev, on=False)
 
@@ -258,7 +274,7 @@ def test_tied_candidates_share_one_confirm_seed(tmp_path):
         if reps > 3:
             seeds.append((source, seed))
         speed = 1.20 if "slow" in source else 1.21
-        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=speed)
+        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=speed, source=source)
 
     orch = _orch(tmp_path, "same-seed", ev, on=False)
     slow = SOURCE + "// slow\n"
@@ -292,9 +308,9 @@ def test_a_rejected_recheck_is_left_out_of_confirmation(tmp_path):
         if reps > 3:
             confirmed.append(source)
         if "bad" in source and (mode == "quick" or reps > 3):
-            return _report(task, dtype, size, mode=mode, seed=seed, status="incorrect", speed=None)
+            return _report(task, dtype, size, mode=mode, seed=seed, status="incorrect", speed=None, source=source)
         speed = 2.0 if "bad" in source else 1.4
-        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=speed)
+        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=speed, source=source)
 
     orch = _orch(tmp_path, "pool", ev, on=True)
 

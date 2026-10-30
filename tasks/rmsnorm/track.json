@@ -1,0 +1,89 @@
+{
+  "track": "triton-spec-to-msl",
+  "opspec": "tasks/rmsnorm/opspec.json",
+  "backend_id": "metal",
+  "lowering_profile": "metal-rmsnorm",
+  "spec_text": {
+    "template": "tasks/rmsnorm/kernel_triton.py",
+    "placeholders": {
+      "M": "spec_params",
+      "H": "spec_params",
+      "TL": "dtype_spelling"
+    }
+  },
+  "known_good": {
+    "template": "tasks/rmsnorm/naive.metal",
+    "placeholders": {
+      "T": "dtype_spelling"
+    }
+  },
+  "description": "Row-wise RMSNorm: y[r, :] = x[r, :] * rsqrt(mean(x[r, :]^2) + eps) * w; the sum of squares is accumulated in fp32 and the result rounded once.",
+  "dtype_spelling": {
+    "fp16": { "T": "half", "TL": "tl.float16", "TORCH": "torch.float16" },
+    "bf16": { "T": "bfloat", "TL": "tl.bfloat16", "TORCH": "torch.bfloat16" }
+  },
+  "implementations": {
+    "gen_inputs": {
+      "implementation_id": "rmsnorm.gen_inputs",
+      "implementation_version": 1,
+      "params": {
+        "mags": { "normal": 1.0, "wide_range": 1.0, "outlier": 1.0 },
+        "default_mag": 1.0,
+        "large": 300.0,
+        "weight_offset": 1.0,
+        "weight_scale": 0.1,
+        "weight_seed_offset": 99
+      }
+    },
+    "reference": {
+      "implementation_id": "rmsnorm.reference",
+      "implementation_version": 1,
+      "params": { "accumulate": "float64", "eps_attr": "EPS" }
+    },
+    "error_scale": null
+  },
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "rmsnorm.baseline.mlx",
+      "implementation_version": 1,
+      "params": { "eps_attr": "EPS", "kernel": "mx.fast.rms_norm" }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "rmsnorm.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": { "eps_attr": "EPS", "kernel": "F.rms_norm", "normalized_shape": "last_dim" }
+    }
+  ],
+  "pack_files": [
+    "tasks/rmsnorm/__init__.py",
+    "tasks/rmsnorm/kernel_triton.py",
+    "tasks/rmsnorm/naive.metal",
+    "tasks/rmsnorm/opspec.json",
+    "tasks/rmsnorm/task.py",
+    "tasks/rmsnorm/track.json",
+    "tcenv/backends/metal/lowering.py",
+    "tcenv/distributions.py",
+    "tcenv/dtypes.py",
+    "tcenv/identity.py",
+    "tcenv/lowering.py",
+    "tcenv/opspec/__init__.py",
+    "tcenv/opspec/model.py",
+    "tcenv/opspec/schema/opspec.v1.schema.json",
+    "tcenv/opspec/validator.py",
+    "tcenv/track/__init__.py",
+    "tcenv/track/schema/track.v1.schema.json"
+  ],
+  "template_literals": {
+    "launch": [
+      { "template": "tasks/rmsnorm/kernel_triton.py", "text": "num_warps = 8", "threads_per_threadgroup": 256 },
+      { "template": "tasks/rmsnorm/naive.metal", "text": "i += 256", "threads_per_threadgroup": 256 }
+    ],
+    "semantic": [
+      { "template": "tasks/rmsnorm/kernel_triton.py", "text": "eps = 1e-6", "attr": "EPS" }
+    ]
+  }
+}

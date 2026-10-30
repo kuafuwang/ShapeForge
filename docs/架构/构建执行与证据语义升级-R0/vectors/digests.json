@@ -1,0 +1,30 @@
+{
+  "baseline_environment": {
+    "digest": "52144470e493eb0b5cc340583e99b6c0a673bb4988ad84f36388791ee6165a2e",
+    "document": "vectors/documents/baseline_environment.json"
+  },
+  "baseline_implementation": {
+    "digest": "d67e667ed6f1fb2257a090c7269b60539b833e37ad8ea95322d929d172e897bd",
+    "document": "vectors/documents/baseline_implementation.json"
+  },
+  "evaluation_fingerprint": {
+    "digest": "dcaad58b0f106213aa65d36d4c105d5d903d0ff5e3fb0b4558b69f7bf4faaa4e",
+    "document": "vectors/documents/evaluation.json"
+  },
+  "lowering_profile": {
+    "digest": "0d20dc3c941d81ae438d7492fe80427dba09cad74c0782bcbae2a10f857e557e",
+    "document": "vectors/documents/lowering_profile.json"
+  },
+  "opspec": {
+    "digest": "561459b4f0b5c4225da5a8be4a6e9b08119e93842ac91b23945890d6231e297d",
+    "document": "vectors/documents/opspec.json"
+  },
+  "task_fingerprint": {
+    "digest": "d1c314cd04ace6a76e2332d11175616ae822faf8a5ed19bf346066cef8f94f19",
+    "document": "vectors/documents/task.json"
+  },
+  "task_pack_manifest": {
+    "digest": "76d45f7d7df155600b230dce3a2b3bf735a816711179692bf61dae1614ffdf0f",
+    "document": "vectors/documents/task_pack.json"
+  }
+}

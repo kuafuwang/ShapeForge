@@ -533,14 +533,22 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
                 observed_epoch = observed.get("epoch")
                 if remote.publishable_epochs is not None and observed_epoch and observed_epoch not in remote.publishable_epochs:
                     raise ResumeRefused("observed evaluator epoch is not in the resume publication allowlist", 5)
-    orch = Orchestrator(
-        snap.task, snap.dtype, snap.size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log,
-        resuming=True, committees=committees, target_id=_recorded_target(run_dir, getattr(a, "target", None)),
-        evaluator_factory=None if remote is None else remote.make_evaluator,
-        publishable_site_ids=None if remote is None else remote.publishable_site_ids,
-        publishable_epochs=None if remote is None else remote.publishable_epochs,
-        workspace_config=workspace,
-    )
+    from .artifacts import NeedsInspection
+    from .orchestrator import RunStartError
+
+    try:
+        orch = Orchestrator(
+            snap.task, snap.dtype, snap.size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log,
+            resuming=True, committees=committees, target_id=_recorded_target(run_dir, getattr(a, "target", None)),
+            evaluator_factory=None if remote is None else remote.make_evaluator,
+            publishable_site_ids=None if remote is None else remote.publishable_site_ids,
+            publishable_epochs=None if remote is None else remote.publishable_epochs,
+            workspace_config=workspace,
+        )
+    except RunStartError as exc:
+        # A damaged ``receipts.json`` or a missing signature key is refused here, not re-raised as a
+        # traceback: the run directory was not touched.
+        raise ResumeRefused(f"cannot resume {run_dir}: {exc}", 5) from exc
     try:
         bridge_factory = _selfcheck_bridge_for(orch, remote, workspace)
     except ValueError as exc:
@@ -550,8 +558,12 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
     variants = {prompts.system_prompt(orch.task, use_tools=cfg.use_tools, profiler_evidence=pe, hw_feedback=hw) for pe in (False, True) for hw in (False, True)}
     # 系统提示若已和现在的 prompts.py 不同，仍用转录里的原文。换提示会让同一次实验的前后轮次对着不同契约说话。
     prompt_changed = bool(snap.system) and snap.system not in variants  # False: the prompt files still produce the prompt the run began with
-    # dry_run 只装内存。restore 在这个开关下不写转录、不改 state.json。
-    orch.restore(snap, dry_run=True)
+    # dry_run 只装内存。restore 在这个开关下不写转录、不改 state.json。远端上下文的行/result/HMAC 校验
+    # 也在这里发生：它损坏时是「不能续」，不是 traceback，也不是一份可以静默忽略的 unknown。
+    try:
+        orch.restore(snap, dry_run=True)
+    except (NeedsInspection, RunStartError) as exc:
+        raise ResumeRefused(f"cannot resume {run_dir}: {exc}", 5) from exc
     report = rs.describe(snap)
     report.update(
         dry_run=bool(a.dry_run), kind=info["kind"], budget_before_usd=info["budget_usd"], budget_after_usd=new_budget, remaining_usd=round(new_budget - snap.spent_usd, 6),
@@ -633,12 +645,18 @@ def run_prepared(a: argparse.Namespace, orch, snap, info: dict, new_budget: floa
             raise ResumeRefused(f"cannot resume {run_dir}: {exc}", 5) from exc
         if moved:
             orch.log(f"kept the earlier results as {', '.join(moved)}")
-        orch.restore(snap, dry_run=False)
+        # The first (dry-run) restore already validated the remote evaluation contexts; this second
+        # one reuses them.  If it still fails, the earlier results are put back before the refusal
+        # leaves this function, so a refused resume never leaves the run directory rewritten.
+        try:
+            orch.restore(snap, dry_run=False)
+        except (rs.NeedsInspection, RunStartError) as exc:
+            raise ResumeRefused(f"cannot resume {run_dir}: {exc}", 5) from exc
         event = control.record_event(run_dir, "resume", info["budget_usd"], new_budget, who=a.who, note=f"{info['kind']} run continued at round {first}", spent_usd=snap.spent_usd)
         if not event.get("persisted"):
             orch.log("budget event was not saved; budget_events.json is not a complete record")
         return asyncio.run(orch.run())
-    except RunStartError:
+    except (RunStartError, ResumeRefused):
         rs.restore_snapshot(run_dir, moved)
         raise
     finally:

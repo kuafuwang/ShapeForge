@@ -54,7 +54,7 @@ def _flame_chase(d):
     @param d 运行目录。
     @return 同一个目录，便于链式使用。
     """
-    (d / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1"}))
+    (d / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
     return d
 
 

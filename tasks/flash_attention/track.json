@@ -1,0 +1,151 @@
+{
+  "track": "triton-spec-to-msl",
+  "opspec": "tasks/flash_attention/opspec.json",
+  "backend_id": "metal",
+  "lowering_profile": "metal-flash-attention",
+  "spec_text": {
+    "template": "tasks/flash_attention/kernel_triton.py",
+    "placeholders": {
+      "B": "spec_params",
+      "H": "spec_params",
+      "S": "spec_params",
+      "D": "spec_params",
+      "BM": "backend_params",
+      "BN": "backend_params",
+      "NW": "backend_params",
+      "TL": "dtype_spelling"
+    }
+  },
+  "known_good": {
+    "template": "tasks/flash_attention/naive.metal",
+    "placeholders": {
+      "T": "dtype_spelling",
+      "TPR": "backend_params",
+      "SHUFFLES": "backend_params"
+    }
+  },
+  "description": "Non-causal scaled dot-product attention o = softmax(q k^T * scale) v per (batch, head), computed with the online-softmax (FlashAttention) recurrence; scores, statistics and the accumulator in fp32, output rounded once.",
+  "dtype_spelling": {
+    "fp16": {
+      "T": "half",
+      "TL": "tl.float16",
+      "TORCH": "torch.float16"
+    },
+    "bf16": {
+      "T": "bfloat",
+      "TL": "tl.bfloat16",
+      "TORCH": "torch.bfloat16"
+    }
+  },
+  "implementations": {
+    "gen_inputs": {
+      "implementation_id": "flash_attention.gen_inputs",
+      "implementation_version": 1,
+      "params": {
+        "mags": {
+          "normal": 1.0,
+          "wide_range": 0.1
+        },
+        "default_mag": 1.0,
+        "large": 6.0,
+        "spike": 5.0,
+        "seed_offsets": {
+          "q": 0,
+          "k": 31,
+          "v": 62
+        }
+      }
+    },
+    "reference": {
+      "implementation_id": "flash_attention.reference",
+      "implementation_version": 1,
+      "params": {
+        "accumulate": "double_output",
+        "kernel": "torch.nn.functional.scaled_dot_product_attention",
+        "scale": "eff_scale"
+      }
+    },
+    "error_scale": null
+  },
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "flash_attention.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "mx.fast.scaled_dot_product_attention",
+        "scale": "eff_scale"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "flash_attention.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "torch.nn.functional.scaled_dot_product_attention",
+        "scale": "eff_scale"
+      }
+    }
+  ],
+  "template_literals": {
+    "launch": [
+      {
+        "template": "tasks/flash_attention/kernel_triton.py",
+        "text": "num_warps = {{NW}}",
+        "threads_per_threadgroup": 128
+      }
+    ],
+    "semantic": [
+      {
+        "template": "tasks/flash_attention/kernel_triton.py",
+        "text": "SM_SCALE = 0.125",
+        "attr": "SM_SCALE"
+      }
+    ]
+  },
+  "variant_factory": "metal.flash-attention.variant",
+  "baseline_variant": {
+    "template": "tasks/flash_attention/kernel_triton_msl.py",
+    "placeholders": {
+      "B": "spec_params",
+      "H": "spec_params",
+      "S": "spec_params",
+      "D": "spec_params",
+      "BM": "backend_params",
+      "BN": "backend_params",
+      "NW": "backend_params",
+      "SZ": "backend_params",
+      "SH": "backend_params",
+      "SR": "backend_params",
+      "TL": "dtype_spelling"
+    },
+    "note": "tutorial form: runtime strides and Z/H/N_CTX, scale folded into q"
+  },
+  "pack_files": [
+    "tasks/_assembly.py",
+    "tasks/_attention.py",
+    "tasks/_common.py",
+    "tasks/flash_attention/__init__.py",
+    "tasks/flash_attention/kernel_triton.py",
+    "tasks/flash_attention/naive.metal",
+    "tasks/flash_attention/opspec.json",
+    "tasks/flash_attention/task.py",
+    "tasks/flash_attention/track.json",
+    "tcenv/backends/metal/lowering.py",
+    "tcenv/contract.py",
+    "tcenv/distributions.py",
+    "tcenv/dtypes.py",
+    "tcenv/identity.py",
+    "tcenv/lowering.py",
+    "tcenv/opspec/__init__.py",
+    "tcenv/opspec/model.py",
+    "tcenv/opspec/schema/opspec.v1.schema.json",
+    "tcenv/opspec/validator.py",
+    "tcenv/task.py",
+    "tcenv/terms.py",
+    "tcenv/track/__init__.py",
+    "tcenv/track/schema/track.v1.schema.json"
+  ]
+}
