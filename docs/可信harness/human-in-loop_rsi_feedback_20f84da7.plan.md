@@ -98,7 +98,7 @@ flowchart LR
 
 ### 合同：加一节「这个系统怎么工作」
 
-在 [taic/kernel_agent.py](taic/kernel_agent.py) 的 `render_contract` 里，「# 晋升标准」之后、「# 当前现场」之前加一节「# 这个系统怎么工作」（最小不变式说明）：
+在 [taic/kernel_agent.py](../../taic/kernel_agent.py) 的 `render_contract` 里，「# 晋升标准」之后、「# 当前现场」之前加一节「# 这个系统怎么工作」（最小不变式说明）：
 
 - 你在一场接力里：两个委员会轮流，一轮一场新会话，对话不带过去；往下传的有 `kernel.metal`、`NOTES.md`、外层成绩单，以及本运行内的「队友避坑提示」。
 - 外层判卷是机械的：全量评测、三级贴核检查、确认计时绑源码指纹；你自报的数字不进种子、不进发布加速比。
@@ -112,7 +112,7 @@ flowchart LR
 
 - 固定警示抬头：`本任务前序避坑提示（队友交接，仅限本运行参考；凡未附探针文件名与实测数字的硬件/算法上限断言，一律按未验证处理，鼓励你写探针翻案）：`
 - 下接现算的条目（每条带来源场次、委员会/模型与当时结局，如 `[r5 first/deepseek-flash, evaluated 0.818x]`）。
-- 不排除上一场：上一场的 NOTES 传下去时截断在 4000 字（[taic/orchestrator.py](taic/orchestrator.py) 的 `_notes_for_next`，292–297 行），排除会让超长部分两头都丢；每条才 250 字，重复成本远小于丢失。
+- 不排除上一场：上一场的 NOTES 传下去时截断在 4000 字（[taic/orchestrator.py](../../taic/orchestrator.py) 的 `_notes_for_next`，292–297 行），排除会让超长部分两头都丢；每条才 250 字，重复成本远小于丢失。
 
 ### 读回 `FEEDBACK.md`
 
@@ -123,7 +123,7 @@ flowchart LR
 
 ### wrap 提示写收尾顺序
 
-在 [taic/flows/kernel_once/__init__.py](taic/flows/kernel_once/__init__.py) 的 `_WRAP` 提示里写明收尾顺序：先保存最好的 `kernel.metal`，再写 `NOTES.md`，最后用几行写 `FEEDBACK.md`。
+在 [taic/flows/kernel_once/__init__.py](../../taic/flows/kernel_once/__init__.py) 的 `_WRAP` 提示里写明收尾顺序：先保存最好的 `kernel.metal`，再写 `NOTES.md`，最后用几行写 `FEEDBACK.md`。
 
 ## 第二步：FEEDBACK 的双通道格式约定与解析器
 
@@ -171,7 +171,7 @@ flowchart LR
 
 ## 第三步：编排器收集、落盘与 `peer_tips` 现算
 
-在 [taic/orchestrator.py](taic/orchestrator.py) 里：
+在 [taic/orchestrator.py](../../taic/orchestrator.py) 里：
 
 ### 1. 分发前清理陈旧文件
 
@@ -203,7 +203,7 @@ flowchart LR
 
 ### 4. `run_dir/feedback.jsonl`：单写者，直接追加
 
-- 写者只有编排器一个进程，照 `Transcript.log`（[taic/llm.py](taic/llm.py) 443–447 行）打开后追加一行即可，不加锁、不整文件重写。
+- 写者只有编排器一个进程，照 `Transcript.log`（[taic/llm.py](../../taic/llm.py) 443–447 行）打开后追加一行即可，不加锁、不整文件重写。
 - `seq`（1-based，与 `run_id` 组成追溯键 `run_id#seq`）由编排器在内存维护：启动/续跑时扫一遍已有文件取最大 `seq`，之后每记一条自增。所有读这个文件的代码（现算、索引同步）都**跳过任何解析失败的行**，不只容忍末尾半行——进程中途被杀留下的半行在续跑追加后会变成中间坏行。
 - 仅当反馈文本非空时追加。字段：`format: "agent_feedback"`、`v: 1`、`seq`、`t`、`task`、`dtype`、`size`、`label`、`round`（从标签解析，`init` 类标签记 `null`）、`committee`、`provider`、`model`、`effort`、`outcome`、`exit`、`candidate_status`、`candidate_us`、`seed_label`、`best_speedup`、`kinds`、`truncated`、`work_dir`、`sections`、`items`、`unverified_premises`、`raw`。
   - `work_dir`：相对路径 `agent_work/<tag>`，里面有代理当时看到的原版 `TASK.md`。
@@ -236,7 +236,7 @@ flowchart TD
     F -->|"否"| E
 ```
 
-- 开关：[taic/llm.py](taic/llm.py) 的 `SearchConfig`（与 `max_hangs`、`relay_budget_usd` 同一个 dataclass，152–173 行）加 `peer_tips: bool = True`。它随 `asdict(self.search)` 自动写进 `run_config.json`（516 行），可以用 `search_ab` 对比开和关；关掉时 `SessionBrief.peer_tips` 恒为空串。
+- 开关：[taic/llm.py](../../taic/llm.py) 的 `SearchConfig`（与 `max_hangs`、`relay_budget_usd` 同一个 dataclass，152–173 行）加 `peer_tips: bool = True`。它随 `asdict(self.search)` 自动写进 `run_config.json`（516 行），可以用 `search_ab` 对比开和关；关掉时 `SessionBrief.peer_tips` 恒为空串。
 
 ### 6. 顺带补上续跑丢失的交接
 
@@ -244,19 +244,19 @@ flowchart TD
 
 ## 第四步：索引瘦表与看板展示（1b）
 
-为守住 [docs/架构/可观测.md](docs/架构/可观测.md) 的热路径纪律（空闲帧只看 `runs/` 自身 mtime，绝不逐个扫目录），把反馈元数据纳入 SQLite 索引。
+为守住 [docs/架构/可观测.md](../../docs/架构/可观测.md) 的热路径纪律（空闲帧只看 `runs/` 自身 mtime，绝不逐个扫目录），把反馈元数据纳入 SQLite 索引。
 
-### 1. 升级 [observe/index.py](observe/index.py)（`INDEX_SCHEMA_VERSION = 3`，自动删库重建）
+### 1. 升级 [observe/index.py](../../observe/index.py)（`INDEX_SCHEMA_VERSION = 3`，自动删库重建）
 
-- `_fingerprints`（459 行）的 `extra` 加上 `feedback.jsonl` 和 `feedback_review.json`。这同时会改变 `detail_stamp`（[observe/query.py](observe/query.py) 79–87 行含 `fp_extra`，已核实），审查后已打开的详情页也会刷新。
+- `_fingerprints`（459 行）的 `extra` 加上 `feedback.jsonl` 和 `feedback_review.json`。这同时会改变 `detail_stamp`（[observe/query.py](../../observe/query.py) 79–87 行含 `fp_extra`，已核实），审查后已打开的详情页也会刷新。
 - 新表 `feedback_items`（每场一行）：`run_id, seq, t, task, dtype, size, label, committee, provider, model, outcome, exit, kinds, has_system, pending_claims, unverified_premises, PRIMARY KEY (run_id, seq)`，并建 `task`、`model` 索引。其中 `pending_claims`、`unverified_premises` 在同步时由条目级状态汇总得出。
   - `has_system`：`kinds` 含非 `none` 值，或「需要帮助 / 对系统的建议」任一非空（卡住的原因不算，见第二步）。
 - 新表 `feedback_claims`（每条一行，审查状态落在这里）：`run_id, seq, digest, section, audience, premise, status, verification, topic, change_ref, reviewed_at, PRIMARY KEY (run_id, seq, digest)`，并建 `digest`、`topic`、`status` 索引。`status` 默认：`system` 与前提条目为 `pending`，`diagnostic` 条目为 `info`。
 - `_ingest(directory)` 在该运行指纹变化时调用 `observe.feedback.sync_run_index(conn, run_id, directory)`：读该运行的 `feedback.jsonl` 与 `feedback_review.json`，**先按 `run_id` 删掉两张表的旧行再重写**，不存大文本。
 - 暴露 `get_index().refresh_feedback(run_id, directory)`：审查写接口落盘后立即同步并 `_bump()` revision，因为已结束的运行不会在 `tick()` 空闲帧里被重扫。
-- **删除与重置同步清理**：`drop_archived`（958–960 行，删除只有 [observe/deletions.py](observe/deletions.py) 这一条调用路径）与切换 `runs_root` 时的重置（368 行）都要清掉两张新表的对应行，否则已删的运行会一直占着计数。
+- **删除与重置同步清理**：`drop_archived`（958–960 行，删除只有 [observe/deletions.py](../../observe/deletions.py) 这一条调用路径）与切换 `runs_root` 时的重置（368 行）都要清掉两张新表的对应行，否则已删的运行会一直占着计数。
 
-### 2. 新增 [observe/feedback.py](observe/feedback.py)（只做合并、聚合与展示，解析在 `taic/agent_feedback.py`）
+### 2. 新增 [observe/feedback.py](../../observe/feedback.py)（只做合并、聚合与展示，解析在 `taic/agent_feedback.py`）
 
 - `entries(run_dir)`：打开单场详情时合并 `feedback.jsonl` 与 `feedback_review.json`；每条附证据预填用的数字：该场候选目录（按条目的 `label` 定位 `candidates/*_<label>/report.json`）的微秒数、cv 与 roofline，找不到候选报告时退回种子报告，并带上来源路径字段供界面标注；另附 `targets/apple-m4-max/calibration.json` 峰值。
 - `summary_from_index(conn, *, task=None, model=None, kind=None, status=None)` 用 SQL 返回（`kind` 筛选用 `(',' || kinds || ',') LIKE '%,tool,%'` 形式的分词匹配，不用子串）：
@@ -267,7 +267,7 @@ flowchart TD
 
 ### 3. 接线
 
-接线 [observe/detail.py](observe/detail.py)、[observe/query.py](observe/query.py)、[observe/app.py](observe/app.py) 与 [observe/static/index.html](observe/static/index.html)：
+接线 [observe/detail.py](../../observe/detail.py)、[observe/query.py](../../observe/query.py)、[observe/app.py](../../observe/app.py) 与 [observe/static/index.html](../../observe/static/index.html)：
 
 - `overview` 增加 `feedback_pending`（从索引读，O(1)）与高频/修后新提出摘要；顶栏显示「N 条代理反馈待审查」徽标，支持按 `task`、`model`、`kind` 筛选定位到运行。
 - `run_detail` 增加 `feedback` 键（完整条目、校准峰值、当场报告摘要及来源）。
@@ -278,7 +278,7 @@ flowchart TD
 
 ### 写接口
 
-在 [observe/actions.py](observe/actions.py) 增加写接口（沿用回环 Host、`X-Observe-Token`、同源检查和 `resolve_run` 路径校验）：
+在 [observe/actions.py](../../observe/actions.py) 增加写接口（沿用回环 Host、`X-Observe-Token`、同源检查和 `resolve_run` 路径校验）：
 
 - `POST /api/runs/<run>/feedback/<seq>/claims/<digest>/review`
 - 请求体：`{status, verification, evidence_source, evidence, note, topic, change_ref}`
@@ -326,20 +326,20 @@ flowchart TD
 
 ### 文档更新（随代码同步落）
 
-- [docs/架构/搜索.md](docs/架构/搜索.md)：补双通道反馈（`taic/agent_feedback.py`、`feedback.jsonl` 落盘、`peer_tips` 按序号现算与 `search.peer_tips` 开关、不改换种子与失败计数规则、续跑补回 NOTES 交接）。
-- [docs/架构/可观测.md](docs/架构/可观测.md)：补两张表（`INDEX_SCHEMA_VERSION = 3`）、待审计数（按条）、按条 review 接口与状态组合，文件表加 `observe/feedback.py`。
+- [docs/架构/搜索.md](../../docs/架构/搜索.md)：补双通道反馈（`taic/agent_feedback.py`、`feedback.jsonl` 落盘、`peer_tips` 按序号现算与 `search.peer_tips` 开关、不改换种子与失败计数规则、续跑补回 NOTES 交接）。
+- [docs/架构/可观测.md](../../docs/架构/可观测.md)：补两张表（`INDEX_SCHEMA_VERSION = 3`）、待审计数（按条）、按条 review 接口与状态组合，文件表加 `observe/feedback.py`。
 
 ### 自动化测试（1a 过闸后才做 1b）
 
-- [tests/shared/test_kernel_agent.py](tests/shared/test_kernel_agent.py)：`FEEDBACK.md` 读入 `AgentResult.feedback` 且限长；合同含系统说明、"核是主产出"、五个小节名与"断言写进被否决的前提节"；传入 `peer_tips` 时带警示抬头；无 `FEEDBACK.md` 时完全兼容。
+- [tests/shared/test_kernel_agent.py](../../tests/shared/test_kernel_agent.py)：`FEEDBACK.md` 读入 `AgentResult.feedback` 且限长；合同含系统说明、"核是主产出"、五个小节名与"断言写进被否决的前提节"；传入 `peer_tips` 时带警示抬头；无 `FEEDBACK.md` 时完全兼容。
 - `tests/shared/test_agent_feedback.py`（新）：纯避坑条目不产生空指纹、不互相顶掉；中文数字（"约790µs"）被剥离、`fp16`/`fp32` 保留；升级标记不改指纹；不同节同文不撞指纹；`kind` 多值规范化与非法值兜底；探针文件不存在或路径逃逸时降级；超长文件里系统节被封顶后避坑与前提两节仍完整；未知版本 `v: 99` 只展示原文不报错。
-- [tests/shared/test_orchestrator.py](tests/shared/test_orchestrator.py) 与 [tests/shared/test_relay.py](tests/shared/test_relay.py)：
+- [tests/shared/test_orchestrator.py](../../tests/shared/test_orchestrator.py) 与 [tests/shared/test_relay.py](../../tests/shared/test_relay.py)：
   - 分发前陈旧 `NOTES.md` / `FEEDBACK.md` 被删，启动失败读到的不是上一场文件；
   - 留下 `FEEDBACK.md` 后，`feedback.jsonl` 字段齐全、候选目录有副本、转录带瘦字段；
   - **五条退出路径都只记一次且字段正确**：正常、`cost_incomplete`（`outcome` 留空、候选为空）、`gpu_hang_circuit_breaker`、`agent_exception`、`_eval` 抛异常（`exit = eval_error`）；
   - 坏行容忍：`feedback.jsonl` 中间有一行截断 JSON 时，后续记录仍能解析、`seq` 继续自增；
   - **现算与隔离**：`init` 失败留下的避坑出现在 `init2` 的 `peer_tips` 里；第 1 场避坑出现在第 3 场；同指纹新替旧但未验证按首次出现计龄（r1 写、r2/r3 复述、r4 消失，升级为已实测后留下）；超过 8 条淘汰最旧；另一个 `run_dir` 时为空；`search.peer_tips = false` 时为空。
-- [tests/shared/test_resume.py](tests/shared/test_resume.py)：续跑后的 `peer_tips` 与不中断时一致；`_notes_summary` / `_failure_feedback` 被补回；`seq` 接着已有最大值。
+- [tests/shared/test_resume.py](../../tests/shared/test_resume.py)：续跑后的 `peer_tips` 与不中断时一致；`_notes_summary` / `_failure_feedback` 被补回；`seq` 接着已有最大值。
 - `tests/shared/test_observe*.py`：
   - 两张表入库且重同步不留重复行；`feedback_pending` 只计 `system` 与前提条目中 `pending` 的条数，`diagnostic` 不计；按条标审后计数立即下降、纯交接的未验证前提也能被关掉；热帧 `tick()` 不扫目录；
   - `drop_archived` 与切换 `runs_root` 后两张表对应行清空、计数归零；
@@ -348,11 +348,11 @@ flowchart TD
   - 修后新提出：标 `done` 后另一个更晚启动的运行提出同一 `topic` 时被标记，同运行内不算；
   - 证据预填取候选目录报告并带来源，缺失时退种子报告且标注；
   - 含 `<img onerror=...>` 的反馈在页面渲染时被转义。
-- 按 [tests/support/hw_golden.py](tests/support/hw_golden.py) 运行 `--record` 更新 golden；跑通除 `test_orchestrator_gpu.py` 外的全套离线测试。
+- 按 [tests/support/hw_golden.py](../../tests/support/hw_golden.py) 运行 `--record` 更新 golden；跑通除 `test_orchestrator_gpu.py` 外的全套离线测试。
 
 ## 第八步：第二批（积累真实条目后执行）——代理教程与管理章程合册
 
-等第一批通道跑起来、收到真实条目后，按实际出现的卡点类型补齐两篇文档并登记进 [docs/README.md](docs/README.md)：
+等第一批通道跑起来、收到真实条目后，按实际出现的卡点类型补齐两篇文档并登记进 [docs/README.md](../../docs/README.md)：
 
 - 新增 `docs/给写核代理的教程.md`（运行启动时冻结为 `run_dir/system_tutorial.md` 快照，每场复制到工作区供代理查阅，续跑读快照）。
 - 新增 `docs/代理反馈.md`（前半为管理章程：追溯键 `run_id#seq` 与条目键 `run_id#seq#digest`、`work_dir` 与 `run_config.json` 的版本关联、状态组合与 `change_ref` 闭环、审查 `history`、`topic` 合并、修后新提出的判定口径、版本兼容规则；后半为给 AI 与人的拼读指南，配 `conv2d` fp32 探针实操样板）。

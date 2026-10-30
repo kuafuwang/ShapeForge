@@ -57,8 +57,10 @@ uv run python -m taic.cli brief RUN_DIR
 | [架构/数据层.md](架构/数据层.md) | 一次搜索留下什么、SQLite 索引怎样建、`taic query` 怎样查、协议版本/成本/保留期。 |
 | [架构/可观测.md](架构/可观测.md) | 实验怎样分组，看板怎样读。 |
 | [架构/hmz.md](架构/hmz.md) | `hmz` 是别人写的启动器。搜索写内核只走它，再由它调用 `pi`。`--kernel-agent off` 拒绝启动。 |
+| [架构/执行运行时与设备扩展.md](架构/执行运行时与设备扩展.md) | 当前的执行运行时：本地/远程评测、`execution.json`、outbox、epoch、自检桥、P2 静态/隔离动态验收与设备 backend 边界。 |
 | [架构/多厂商NPU评测通信抽象-plan.md](架构/多厂商NPU评测通信抽象-plan.md) | 未来多厂商 NPU infra 的通信抽象：统一 gRPC 控制面、厂商 driver、工件/能力/计时证据与验收；未实现。 |
-| [架构/构建执行与证据语义升级-plan.md](架构/构建执行与证据语义升级-plan.md) | 本地报告与缓存如何记录同一次构建的身份；旧文件只读，不回填。计划未实施。 |
+| [架构/构建执行与证据语义升级-plan.md](架构/构建执行与证据语义升级-plan.md) | 任务语义 OpSpec、唯一构建入口、本地报告 schema 4 与确认门如何证明测量来自同一次构建；旧 run 与旧报告不兼容。计划未实施。 |
+| [架构/跨硬件算子生成分工_9aef8d3a.plan.md](架构/跨硬件算子生成分工_9aef8d3a.plan.md) | typed Semantic IR、整图 pattern、共享下降规则、reference/baseline 标准入口与零配置新增算子；无 baseline 只做正确性。计划未实施。 |
 | [架构/远程评测模拟验收-plan.md](架构/远程评测模拟验收-plan.md) | Phase 2.5 历史验收证据与边界；旧 SSH 数据面和 runner 已删除，当前远程评测见执行运行时文档。 |
 
 ### 一条内核与一道题的具体问题
@@ -74,12 +76,15 @@ uv run python -m taic.cli brief RUN_DIR
 
 | 文档 | 回答什么 |
 | --- | --- |
-| [架构/可信harness.md](架构/可信harness.md) | RSI 外层循环、证据/harness 两条流水线、权限梯度、信任、双来源、影子与 P2 提升的理论和流程图。 |
-| [可信harness实现.md](可信harness实现.md) | 可信 harness 的实现交接：提交、已验证行为、已知边界和审阅清单。 |
-| [可信harness试点结果.md](可信harness试点结果.md) | 2026-10-22 的三次 conv2d 试点：第一次 4 场/0 提案；第二次 1 条 tip + kimi review；第三次自动 review 生成 `reviewed_active`，但 4 场中 r2 未交核、确认值因批次差异未发布。 |
+| [可信harness/README.md](可信harness/README.md) | 这个方向的文档索引与九份独立角度的 plan（plan-01…09），以及三条当前现状。 |
+| [可信harness/架构与理论.md](可信harness/架构与理论.md) | RSI 外层循环、证据/harness 两条流水线、权限梯度、信任、双来源、影子与 P2 提升的理论和流程图。 |
+| [可信harness/实现交接.md](可信harness/实现交接.md) | 可信 harness 的实现交接：提交、已验证行为、已知边界和审阅清单。 |
+| [可信harness/试点方案.md](可信harness/试点方案.md) | 当时试点的设计与授权边界；设计新试点前配合 plan-08 读。 |
+| [可信harness/试点结果.md](可信harness/试点结果.md) | 2026-10-22 的三次 conv2d 试点：第一次 4 场/0 提案；第二次 1 条 tip + kimi review；第三次自动 review 生成 `reviewed_active`，但 4 场中 r2 未交核、确认值因批次差异未发布。 |
 | [写核代理读什么.md](写核代理读什么.md) | 写核代理要守的每条规则写在哪个文件里，对应哪一次真实反馈。 |
 | [代理反馈.md](代理反馈.md) | 一条反馈怎么编号、怎么过期、人怎么复核。 |
 | [架构改进评估.md](架构改进评估.md) | 相对公开框架还缺什么，以及已经写进代码的开关。计划账本默认开着。 |
+| [可信harness/papers/导读.md](可信harness/papers/导读.md) | 可信 harness 的外部论文导读（34 篇 PDF + 2 篇博客 + 1 篇未取得全文的笔记，含 RSI/harness 自我改进专题 14 篇），逐篇给出结论、口径与对应机制。 |
 | [实验批准单-搜索开关.md](实验批准单-搜索开关.md) | 搜索开关这组对照，磁盘上有什么、名义费用是多少。它不是开工批准。 |
 
 ### 别人的框架与理论笔记

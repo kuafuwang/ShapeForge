@@ -61,34 +61,39 @@ flowchart LR
 
 ## P2 code agent
 
-代码 patch 在 detached worktree 中生成，不 commit、不自动 apply。默认先做不执行代码的静态验收；只有看过 diff 后，才用实名人工批准执行补丁测试：
+代码 patch 在 detached worktree 中生成，不 commit、不自动 apply。默认先做不执行代码的静态验收；人工看过 diff 之后，才用实名审阅记录和隔离容器执行补丁测试：
 
 ```bash
 # 默认：只查路径、allowed_paths、spec、hash 和 claims，不运行补丁代码
-uv run python -m taic.cli harness verify-code RUN --key KEY
+uv run python -m taic.cli harness verify-code RUN --key KEY --static
 
-# 看过 diff 后：才执行补丁测试
-uv run python -m taic.cli harness verify-code RUN --key KEY --execute --by HUMAN
+# 人工看 diff，只记录，不执行
+uv run python -m taic.cli harness review-code RUN --key KEY --by HUMAN
+
+# 看过 diff 后：才在隔离 Docker 中执行补丁测试
+uv run python -m taic.cli harness verify-code RUN --key KEY --execute --by HUMAN --docker-image IMAGE
 
 uv run python -m taic.cli harness apply-code RUN --key KEY --check
 uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 ```
 
-`--execute` 不接受默认的 `cli` 作为审阅人。动态测试仍会执行补丁代码，所以它不是 VM 沙箱；不可信 patch 应先做人工 diff review，再决定是否在隔离环境执行。
+`--execute` 不接受默认的 `cli` 作为审阅人，并消费 `review-code` 记录的 patch/spec/base 摘要；三者任一变化，旧批准失效。隔离容器使用 `--network none`、`--read-only`、`--cap-drop ALL`、`--no-new-privileges`、pids/memory 限制和非 root 用户；只挂源码快照（rw）、patch/request（ro）和只读 harness，不挂 host HOME、provider key、Docker socket 或主仓库 `.git`。它不是 VM 沙箱，但比 host worktree 强；不可信 patch 仍应先人工 review。
+
+`apply-code` 还有默认的 effect 门：它要求 implementation 记录 `accepted`/`host_verified` 且有 host checks；风险级别不是 `offline_only` 时，默认还要求同 spec/patch 的 `validate-effect` 记录。只有显式 `--legacy-unvalidated` 才豁免 effect 验证；它不是“跳过所有验收”的开关。
 
 ### 永远禁止自动 patch 的路径
 
 `taic/code_agent.py::SECURITY_CRITICAL` 现在拒绝：
 
 - `tests/`
-- `tcenv/evaluate.py`、`tcenv/schema.py`、`tcenv/bench.py`、`tcenv/backends/`
-- `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py`、`taic/review.py`、`taic/trust.py`、`taic/code_agent.py`、`taic/acceptance.py`、`taic/orchestrator.py`、`taic/policy.py`、`taic/control.py`、`taic/llm.py`、`taic/artifacts.py`、`taic/harness_experiment.py`、`taic/resume.py`、`taic/committees.py`、`taic/cli.py`
+- `tcenv/evaluate.py`、`tcenv/schema.py`、`tcenv/bench.py`、`tcenv/backends/`、`tcenv/gpulock.py`
+- `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py`、`taic/review.py`、`taic/trust.py`、`taic/code_agent.py`、`taic/acceptance.py`、`taic/acceptance_checks.py`、`taic/orchestrator.py`、`taic/policy.py`、`taic/control.py`、`taic/llm.py`、`taic/artifacts.py`、`taic/harness_experiment.py`、`taic/resume.py`、`taic/committees.py`、`taic/cli.py`、`taic/flows/`
 - `experiments/common.py`、`experiments/harness_runner.py`、`experiments/harness_cell.py`
 - `observe/`、`targets/`、`backends/`、`.pi/`、`.git/`、`.github/`
 - `conftest.py`、`sitecustomize.py`、`pytest.ini`、`tox.ini`、`setup.cfg`
 - `taic.toml`、`taic.paper.toml`、`control.json`、`pyproject.toml`、`uv.lock`
 
-这些文件如果确实要改，应走单独的人工安全 review，而不是 P2 自动 patch。
+这些文件如果确实要改，应走单独的人工安全 review，而不是 P2 自动 patch。另：`forbidden_path()` 还拒绝 `tasks/`、仓库外 `..`、凭据/私钥文件（`.env`、`credentials*`、`id_rsa*`、`*.pem`、`*.key` 等），这些不在 `SECURITY_CRITICAL` 常量里，但同样不能经 P2 自动改。
 
 补丁的 `allowed_paths` 现在必须非空，并覆盖补丁触及的每个路径。没有验收契约、或契约里允许列表为空的旧 patch，`apply-code` 会拒绝落地；不再用空列表表示“不限制”。
 
@@ -96,9 +101,25 @@ uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 
 - code agent 补丁未触及上述路径时，仍可能改变行为；必须看 diff，不能只看 tests。
 - 没有非空 `allowed_paths` 的 patch 会被拒绝；新提案必须显式列出允许路径。
-- 动态 `verify-code --execute` 和 `apply-code --run-tests` 会在 host 上执行补丁代码；worktree 隔离不是安全沙箱，必须先人工看 diff。
+- 动态 `verify-code --execute` 在隔离 Docker 中执行补丁代码；`apply-code --run-tests` 仍在 host 的 worktree 中执行。worktree 隔离不是安全沙箱；两者都必须先人工看 diff。
+- `code_patch` 生成阶段仍使用 `LocalEnv`，属于受信开发路径；“未审阅 patch 不经过 `verify-code --execute` 执行”不等于生成阶段零执行。
 - `--run-tests` 使用补丁后的工作树，测试被禁改，但仍应检查测试命令和覆盖范围。
 - 人和 reviewer 都可能被提案文本社会工程；不要照着建议里给的命令直接执行。
+
+## 远程评测与自测
+
+远程评测把“写核”和“判卷”分在两个信任域：`pi` 在 control_host，受信评测服务在设备侧。边界靠结构而不是物理距离：
+
+- `pi` 只能提交候选和结构化自测请求；control_host 到 evaluator 只走 gRPC/TLS/Protobuf，任何 shell、`docker exec`、任意路径或报告改写入口都不在合约内。旧 SSH 数据面已删除。
+- `hmz`/`pi` 不持有设备锁、评测代码、任务参考实现或报告目录的写权限；生产 worker 每次 attempt 使用一个一次性容器。formal mTLS 私钥、formal grant 和 HMAC verifier keyring 由 fence 外的 host evaluator/client 持有，同 UID 的 0600 不能单独当作能力边界。
+- formal 与 selfcheck 使用独立 grant、模式白名单、配额和审计，每个 RPC 都重新授权；agent 侧 bridge token 只授权 host 侧 selfcheck，不能冒用 formal。
+- 每个 device 只有一个 single-active frontend 和一个持久 `JobEngine`；formal 优先并按 run/session aging，旧 worker/fence 未验证清理前不启动新 attempt。
+- 报告带 provenance（site/device/backend/build/task pack/calibration/协议）与 `hmac-sha256-v1`；可发布结果必须由 host keyring 验签，且 `measurement_kind=measured`、`publication_allowed=true`、site/epoch 在 allowlist 内。模拟结果永远不进入候选或发布。
+- split-control 自测经每场一个 host-owned Unix socket，短期 token 文件在 host-owned 的 `${XDG_CACHE_HOME:-~/.cache}/taic-selfcheck/`（0600），通过会话环境注入而不进入 argv/TASK/workspace；配额由 host 与服务端各记一份。timed 结果会写 `.selfcheck/self_checks.jsonl` 和 host 权威日志，可参与 `premise`；quick 和基础设施错误不写。仍缺 `tool_probe` 执行证据。
+- 同机不同账号不是强隔离：pi 若有 sudo/root、宿主管理接口或评测目录写权限，受信域即失效。候选 kernel 仍可能攻击驱动；timeout/crash 后应先跑轻量 known-good 健康探针，失败才隔离设备，不直接恢复正式计时。
+- split-control 启用时必须登记数据接收方、可读者、保留/删除时间及训练或其他二次用途；发给第三方前需要人的明确授权。日志不记完整源码或凭据，临时源码按 job 清理，回传 evidence 只保留验收所需最小内容。
+
+完整协议、outbox 和字段见 [架构/执行运行时与设备扩展.md](架构/执行运行时与设备扩展.md)。
 
 ## 可选远端 workspace（Phase 3，transport-only）
 
@@ -111,6 +132,7 @@ uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 - 费用按 `began.workspace + envs/used + 开始时间` 绑定 hmz epic；绑定不上时记 `cost_incomplete`，不借别的会话账单。
 - **未证明**：hmz 围栏能否阻止内循环读取/改写 control_host 文件。真机逃逸测试与真实 SSH 验收都还没跑（本机 VM 可连通但 SSH 私钥缺失），所以不能把这条路径写成“隔离”或“不可信 P2 的默认环境”。
 - 远端 workspace 不持有 provider 凭据：凭据仍只在 control_host 的 pi/hmz 一侧；也不把 `~/.pi`、ssh agent、Docker socket 或仓库挂进远端工作目录。
+
 
 ## 可选隔离 agent（Phase 4，离线/模拟）
 
