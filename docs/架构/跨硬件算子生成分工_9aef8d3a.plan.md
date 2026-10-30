@@ -1,9 +1,9 @@
 ---
 name: 跨硬件算子生成分工
-overview: 学习 KDA / CAKE2 已验证的分工，不闭门造车，不限制 LLM 或人所写候选内核的表达力。采用选择性移植而非必须 fork：优先复用上游真实存在的参考实现、数值评测、构建/打包/PyBind、profiler、候选 prepare/run 与调度范式；通用 Task Contract、Candidate/TrackRegistry、ExecutionGeometry 和证据协议按源码盘点由本地补齐。每个组件先在 G0 登记上游 repo/commit/path/license 和 reuse/port/adapt/local 决策；上游已有且适用的实现不得再自研一套。候选拥有算法、融合、Tiling 与 ExecutionGeometry，Track 只做 task-agnostic 交付，harness 拥有 ABI、安全、测量边界和证据。G0 未完成前不得开始 A1–A6。
+overview: 学习 KDA / CAKE2 已验证的分工，不闭门造车，不限制 LLM 或人所写候选内核的表达力。采用选择性移植而非必须 fork：优先复用上游真实存在的参考实现、数值评测、构建/打包/PyBind、profiler、候选 prepare/run 与调度范式；通用 Task Contract、Candidate/TrackRegistry、ExecutionGeometry 和证据协议按源码盘点由本地补齐。每个组件先在 G0 登记上游 repo/commit/path/license 和 reuse/port/adapt/local 决策；功能等价的 KDA/CAKE2 组件必须单选，不按上游来源形成两条运行路径。上游已有且适用的实现不得再自研一套。候选拥有算法、融合、Tiling 与 ExecutionGeometry，Track 只做 task-agnostic 交付，harness 拥有 ABI、安全、测量边界和证据。G0 未完成前不得开始 A1–A6。
 todos:
   - id: gate
-    content: G0 冻结当前代码与旧路径语料、既有失败和 NPU 性能合同输入；KDA/CAKE2 初次源码盘点已完成并写入 upstream-map.json，仍需复核维护该台账。每项记录 repo/commit/path/license、reuse|port|adapt|local、本地落点、理由与验收；未证明上游缺位不得选择 local。G0 不跑模型 kernel 或 GPU/NPU，未完成前不改生产路径
+    content: G0 冻结当前代码与旧路径语料、既有失败和 NPU 性能合同输入；KDA/CAKE2 初次源码盘点已完成并写入 upstream-map.json，仍需复核维护该台账。每项记录 repo/commit/path/license、reuse|port|adapt|local、本地落点、理由与验收；未证明上游缺位不得选择 local；功能等价组件按 selection_group 单选，未采用来源只记 alternatives_rejected，不进入运行期或 pack。G0 不跑模型 kernel 或 GPU/NPU，未完成前不改生产路径
     status: pending
   - id: contract-and-tracks
     content: A1 源码审计已证明 KDA 只有合同文字说明、CAKE2 op_desc 只是不完整示例，因此本地实现 OpSpec v2 主合同与 loader；移植真实 reference 和采样器，CAKE2 precision/ulp 仅作诊断统计，pass/fail 唯一公式仍是本仓库 tolerances + scaled_error，既有种子流/cases/error_scale 不变。op_desc 仅作互操作摘要；v1/v2 无 fallback，语义冲突判 semantic_unresolved
@@ -58,6 +58,9 @@ LLM、committee 或会话不同而改变 verdict。
 3. 只有 G0 证明上游缺位或许可证/硬件/安全约束确实不适用时，才选择本地实现；
 4. 每个本地实现必须登记上游差距、保留原因和退出条件，不能变成默认自研路线；
 5. 不追求同时兼容整个 KDA 与 CAKE2，不为它们再建一层庞大兼容框架。按组件选择最合适来源。
+6. **功能位单选**：同一功能在 KDA 与 CAKE2 中都有实现时，只选一个进入运行期；另一个仅作为
+   `alternatives_rejected` 留在台账，不得同时保留两个 reader、builder、validator 或 evaluator。多 Track
+   只用于真正不同的交付机制（如 single_source 与 host_device_bundle），不用于按上游来源分轨。
 
 ## 1. 复用边界：上游交付 + 本地证据
 
@@ -84,7 +87,7 @@ flowchart TB
     CK["CAKE2<br/>reference、数值指标、CANN 构建/PyBind/msprof"]
   end
 
-  MAP["upstream-map.json<br/>reuse / port / adapt / local<br/>repo + commit + path + license"]
+  MAP["upstream-map.json<br/>功能位单选 + reuse / port / adapt / local<br/>repo + commit + path + license"]
   KW --> MAP
   KK --> MAP
   CK --> MAP
@@ -257,8 +260,12 @@ worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
 - 本地新增的注册元数据继续使用带 JSON Schema 的版本化 JSON，未知版本/字段/实现引用拒绝；但不为了
   格式偏好重写上游合同。每类配置只有一个权威和读取器，不上游/本地双读。
 - `upstream-map.json` 是移植台账，不是运行期第二注册表。每项至少包含：
-  `{component, upstream_repo, upstream_commit, upstream_path, license, action, local_path, reason, verification}`，
-  其中 `action ∈ reuse|port|adapt|local`。选择 local 必须有上游缺位或不适用证据。
+  `{component, source, upstream_path, action, local_path, reason, verification}`，其中
+  `action ∈ reuse|port|adapt|local`。功能重叠时必须另写 `selection_group`、`selected_source` 与
+  `alternatives_rejected`；同一 `selection_group` 只能有一个 `selected_source` 和一个运行期实现，
+  其他来源不进入 pack 或运行路径。local 必须有上游缺位或不适用证据。
+  唯一允许的并存是交付机制不同（msl-single/msl-bundle）或职责不同（正确性判决 vs 诊断统计），
+  不是 KDA 路径与 CAKE2 路径并存。
 - pack 文件集由注册关系与仓库内静态 import 闭包自动派生；知识只进 guidance_catalog 和
   `run_config.agent_guidance` 哈希，不进 task_pack_digest。
 - v1/v2 按 `spec_version` 分派，混合目录装配错误，v2 失败不回退 v1。历史 run/R0 保留为不可变档案，
@@ -280,7 +287,8 @@ worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
   的直接 evaluate 缺 pack 和 `build_identity_mismatch`。G0 不为冻结语料重跑 GPU/NPU。
 - 盘点 KDA/CAKE2 的实际仓库、commit、license、Task Contract、reference、Candidate、prepare/run、
   Host Tiling、Bundle、Track adapter、构建与 profiler。形成 `upstream-map.json`，明确 reuse/port/adapt/
-  local 与本地落点；不得在未盘点时默认本地重写。
+  local 与本地落点；不得在未盘点时默认本地重写。功能等价组件必须完成单选并记录未采用项；
+  同一 selection_group 不得保留两个运行期 reader/builder/validator/evaluator。
 - 冻结 v1/v2 性能登记比例；由人类冻结 NPU 设备/toolchain/track、代表算子、厂商 baseline、阈值、预算、
   Host/Device/端到端口径与确认批次。缺失项标 human_pending，NPU-P0 不得开始。
 
@@ -349,8 +357,9 @@ CandidateArtifact/ExecutionGeometry 后，在简单算子和复杂融合算子�
 
 ## 6. 最终验收
 
-1. **移植真实发生**：upstream-map 的每项都有来源、license、action、本地落点和验证；上游已有适用实现的
-   组件没有本地重复版本，local 项都有缺位证据。
+1. **移植真实发生且功能位单选**：upstream-map 的每项都有来源、license、action、本地落点和验证；
+   同一 selection_group 只有一个运行期实现，未采用来源只留台账，不形成 KDA/CAKE2 双路径；
+   上游已有适用实现的组件没有本地重复版本，local 项都有缺位证据。
 2. **候选表达力未被限制**：无 pattern/拓扑/循环/goto 风格闸门，符号几何、派生标量、多阶段、read_write、
    workspace 与 SDK 原生能力可用；相同候选字节不因作者或来源改变 verdict。
 3. **Track 是交付而非算法库**：msl-single 与 msl-bundle 经正式 track_id 分别真实成证，Host Tiling 属于

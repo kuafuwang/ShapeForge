@@ -2,6 +2,58 @@
   "schema_version": 1,
   "status": "source_audit_complete_integration_pending",
   "g0_complete": false,
+  "selection_policy": {
+    "rule": "one_runtime_implementation_per_function",
+    "runtime_dual_read": false,
+    "alternatives": "recorded_but_not_imported",
+    "allowed_coexistence": [
+      "different delivery mechanisms such as msl-single and msl-bundle",
+      "different responsibilities such as scaled_error verdict versus ULP diagnostics"
+    ],
+    "forbidden": "KDA path and CAKE2 path for the same function"
+  },
+  "selection_groups": [
+    {
+      "selection_group": "task_contract",
+      "selected_source": "local",
+      "alternatives_rejected": [
+        "KDA docs/agent-flow.md is prose only",
+        "CAKE2 op_desc_template.json is an incomplete interoperability summary, not a second contract"
+      ]
+    },
+    {
+      "selection_group": "numeric_verdict",
+      "selected_source": "local tolerances + scaled_error",
+      "alternatives_rejected": [
+        "CAKE2 precision.py/ulp.py may be diagnostic only and cannot become a second verdict"
+      ]
+    },
+    {
+      "selection_group": "candidate_lifecycle",
+      "selected_source": "kda-kernels prepare/run idiom adapted behind local timing identity",
+      "alternatives_rejected": [
+        "CAKE2 direct PyTorch module invocation is not adopted as a second candidate lifecycle"
+      ]
+    },
+    {
+      "selection_group": "npu_build_and_packaging",
+      "selected_source": "cake2 build_and_install.py + generate_pybind.py adapted behind the unique local artifact_builder",
+      "alternatives_rejected": [
+        "KDA Hugging Face export is not a second NPU builder; only its generic hashing/validation primitives may be ported"
+      ]
+    },
+    {
+      "selection_group": "easyasc_route",
+      "selected_source": null,
+      "status": "pending_single_choice",
+      "candidates": [
+        "skills/easyasc-codegen/scripts/run_codegen.py",
+        "skills/dsl-easyasc-codegen/scripts/run_smoke.py",
+        "skills/dsl-easyasc-post/scripts/verify.py"
+      ],
+      "rule": "Select at most one route before NPU-P0; overlapping routes never become separate Tracks"
+    }
+  ],
   "audit_date": "2026-10-30",
   "sources": [
     {
