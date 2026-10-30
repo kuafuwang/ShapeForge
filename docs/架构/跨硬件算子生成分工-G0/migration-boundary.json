@@ -41,7 +41,7 @@
   },
   "npu": {
     "vendor": "清微",
-    "status": "human_pending",
+    "status": "simulation_only_no_real_device",
     "cuda_allowed": false,
     "cann_allowed": false
   }

@@ -96,7 +96,7 @@
       "format": "human_pending",
       "reader": "none registered",
       "role": "Future 清微 NPU target, toolchain, trust, baseline and profiler contracts",
-      "migration": "NPU-P0 only after human freeze and explicit device authorization; no CANN path"
+      "migration": "Clang toolchain family; simulation only for process/data/protocol. NPU-P0 remains blocked without a real 清微 device; no CANN path"
     }
   ]
 }

@@ -1,21 +1,38 @@
 {
   "schema_version": 1,
-  "status": "human_pending",
+  "status": "mac_complete_npu_p0_blocked_no_real_device",
   "mac_performance_regression_gate": {
     "metric": "geomean(v2_us / v1_us) over comparable tasks with baselines on the same device and baseline",
     "proposed_max_ratio": 1.10,
-    "approved_max_ratio": null,
-    "approved_by": null,
-    "note": "1.10 is only a proposal, not an approved threshold. Correctness-only tasks have no speedup claim."
+    "approved_max_ratio": 1.10,
+    "approved_by": "user",
+    "approved_date": "2026-10-30",
+    "note": "Approved by the user. Correctness-only tasks have no speedup claim."
   },
   "qingmicro_npu_p0": {
     "vendor": "清微",
     "device_id": null,
-    "device_model": null,
-    "toolchain_id": null,
+    "device_model": "unavailable",
+    "real_device_available": false,
+    "real_device_authorized": false,
+    "toolchain_id": "clang",
     "toolchain_version": null,
     "track_id": "qingmicro-npu-bundle",
     "track_version": 1,
+    "execution_mode": "simulation_only",
+    "allowed_simulation_uses": [
+      "process validation",
+      "data validation",
+      "protocol validation",
+      "offline candidate/bundle and identity tests"
+    ],
+    "prohibited_simulation_claims": [
+      "real NPU correctness on device",
+      "real NPU performance or speedup",
+      "performance_below_target or performance_unproven resolved",
+      "NPU-P0 passed",
+      "production publication"
+    ],
     "simple_operator": null,
     "performance_sensitive_operator": null,
     "shape_dtype_domains": null,
@@ -36,18 +53,14 @@
       "independent_rebuild_required": true
     },
     "profiler_metrics": null,
-    "real_device_authorized": false,
     "cuda_or_cann_substitute_allowed": false
   },
-  "human_pending_fields": [
-    "mac_performance_regression_gate.approved_max_ratio and approver",
-    "清微 device_id/device_model and toolchain/version",
-    "simple and performance-sensitive representative operators with shape/dtype domains",
-    "vendor baseline implementation/version and required threshold",
-    "maximum search budget",
-    "Host/Device/end-to-end timing and workspace/input restore policies",
-    "fresh confirmation batches and reps",
-    "profiler metrics and explicit real-device authorization"
+  "human_pending_fields": [],
+  "npu_p0_blocked_reasons": [
+    "No real 清微 NPU is currently available",
+    "Only process/data/protocol simulation is allowed",
+    "Clang is the declared toolchain family; no real-device compiler/run evidence exists",
+    "No simulated result may resolve NPU-P0 or publish NPU performance"
   ],
-  "rule": "No value in this file is an approved NPU performance claim. NPU-P0 remains blocked until every human_pending field is frozen."
+  "rule": "Mac G0 may close with the approved 1.10 regression ratio. NPU-P0 remains blocked until a real 清微 device, toolchain and measurement contract are explicitly authorized. Simulation is evidence only for process/data/protocol behavior."
 }

@@ -3,8 +3,8 @@ name: 跨硬件算子生成分工
 overview: 学习 KDA / CAKE2 已验证的分工，不闭门造车，不限制 LLM 或人所写候选内核的表达力。采用选择性移植而非必须 fork：只学习上游架构、流程、处理方法论和硬件中立实现；目标平台只有 Mac GPU 与清微 NPU，CUDA 与 Huawei Ascend/CANN 的代码、工具链、芯片知识、平台约束和专用 skills 不进入本地交付或 guidance。功能等价实现去重，职责互补的组件可以组合，但不形成 KDA/CAKE2 双路径。每个组件先在 G0 登记上游 repo/commit/path/license 和 reference/reuse/port/adapt/local 决策；同职责实现去重，互补职责可组合且必须有明确接口，不按上游来源形成两条运行路径。上游已有且适用的实现不得再自研一套。候选拥有算法、融合、Tiling 与 ExecutionGeometry，Track 只做 task-agnostic 交付，harness 拥有 ABI、安全、测量边界和证据。G0 未完成前不得开始 A1–A6。
 todos:
   - id: gate
-    content: G0 冻结当前代码与旧路径语料、既有失败和 NPU 性能合同输入；KDA/CAKE2 初次源码盘点已完成并写入 upstream-map.json。只接受架构/流程/方法论与硬件中立实现，目标仅 Mac GPU 和清微 NPU；CUDA 与 Ascend/CANN 代码、工具链、芯片知识和专用 guidance 一律标记 reference/rejected，不进入生产、pack 或 agent_guidance。按 responsibility 去重并允许互补组合，未证明上游缺位不得选择 local。G0 不跑模型 kernel 或 GPU/NPU，未完成前不改生产路径
-    status: pending
+    content: G0 冻结当前代码与旧路径语料、既有失败和 NPU 性能合同输入；KDA/CAKE2 初次源码盘点已完成并写入 upstream-map.json。只接受架构/流程/方法论与硬件中立实现，目标仅 Mac GPU 和清微 NPU；CUDA 与 Ascend/CANN 代码、工具链、芯片知识和专用 guidance 一律标记 reference/rejected，不进入生产、pack 或 agent_guidance。按 responsibility 去重并允许互补组合，未证明上游缺位不得选择 local。G0 不跑模型 kernel 或 GPU/NPU，Mac 侧已通过（比例 1.10 已批准）；清微按 Clang、无真机仅模拟，NPU-P0 保持 blocked
+    status: completed
   - id: contract-and-tracks
     content: A1 源码审计已证明 KDA 只有合同文字说明、CAKE2 op_desc 只是不完整示例，因此本地实现 OpSpec v2 主合同与 loader；移植真实 reference 和采样器，CAKE2 precision/ulp 仅作诊断统计，pass/fail 唯一公式仍是本仓库 tolerances + scaled_error，既有种子流/cases/error_scale 不变。op_desc 仅作互操作摘要；v1/v2 无 fallback，语义冲突判 semantic_unresolved
     status: pending
@@ -21,7 +21,7 @@ todos:
     content: A4 用 RMSNorm、全新算子与融合算子做真实 Mac 垂直切片。首批本地 Metal track 为 msl-single 与 msl-bundle（仅因上游无 Metal 交付）：同一 OpSpec+reference+ABI 题面，分别验证单文件与候选 Host Tiling+Device Kernel Bundle，不是双 Prompt。符号几何、派生标量、多阶段绑定、read_write、workspace、作者中立均有回归；直接 evaluate 缺 pack 与 build_identity_mismatch 未修复并 GPU 复测前不得通过
     status: pending
   - id: npu-performance-gate
-    content: NPU-P0 与 Mac A5/A6 分叉并行：目标仅为清微 NPU，使用人类冻结的清微设备/toolchain/track、厂商 baseline 和计时口径；不引入 CANN msopgen/build/install/EasyAsc/msprof、AscendC 示例或 CUDA 代码。复用上游架构与方法论，本地绑定 CandidateArtifact/ExecutionGeometry，在简单与复杂融合算子上验证真实构建、正确性、计时边界和冻结阈值。需用户单独授权真实清微 NPU
+    content: NPU-P0 与 Mac A5/A6 分叉并行：目标仅为清微 NPU，使用人类冻结的清微设备/toolchain/track、厂商 baseline 和计时口径；不引入 CANN msopgen/build/install/EasyAsc/msprof、AscendC 示例或 CUDA 代码。复用上游架构与方法论，本地绑定 CandidateArtifact/ExecutionGeometry，在简单与复杂融合算子上验证真实构建、正确性、计时边界和冻结阈值。需用户单独授权真实清微 NPU；当前无真机，只允许流程/数据/协议模拟，NPU-P0 保持 blocked，模拟不解除阻断或形成性能证据
     status: pending
   - id: migrate
     content: A5 在 Mac A4 通过后逐题原子切迁到移植后的标准任务合同与 reference，使用 G0 独立语料对照输入、输出、容差、error scale、work accounting 和 baseline 身份；同变更删除 task.py/track.json/kernel_triton.py/专用题面/手写 pack_files，不保留 Triton 题面兼容。known_good 仅可选自检；记录 v1/v2 性能对照，超比例须人工批准
@@ -34,8 +34,8 @@ isProject: false
 
 # 跨硬件算子生成：上游实现移植与证据底座集成计划
 
-状态：**目标设计，未实施**。R5/R6 已通过，但当前 GPU 基线仍登记直接 evaluate 缺 task-pack 与
-`build_identity_mismatch`。G0 未完成前不得开始 A1–A6。此前停止时留下的 G0 快照草稿已过期，必须按本版
+状态：**目标设计，Mac 侧 G0 已通过，A1–A3 可开始；A4 受当前 GPU 缺陷阻断，NPU-P0 无真机阻断**。R5/R6 已通过，但当前 GPU 基线仍登记直接 evaluate 缺 task-pack 与
+`build_identity_mismatch`。阶段验收见 `跨硬件算子生成分工-阶段验收/G0.md`。此前停止时留下的 G0 快照草稿已过期，必须按本版
 重新生成。
 
 已完成的上游源码对照见 `跨硬件算子生成分工-G0/upstream-map.json`（KDA workflow
@@ -311,8 +311,9 @@ worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
   local 与本地落点；不得在未盘点时默认本地重写。按 responsibility 去重，互补职责登记组合接口；
   同一 responsibility 不得保留两个运行期实现。CUDA/CANN 相关项只能标 reference/rejected，
   不得进入生产、pack 或 agent_guidance。
-- 冻结 v1/v2 性能登记比例；由人类冻结 NPU 设备/toolchain/track、代表算子、厂商 baseline、阈值、预算、
-  Host/Device/端到端口径与确认批次。缺失项标 human_pending，NPU-P0 不得开始。
+- Mac v1/v2 性能登记比例已由人类批准为 **1.10**。清微按 Clang 工具链处理，当前无真机，
+  只允许流程、数据、协议和模拟验证；NPU-P0 保持 blocked，模拟不得作为 NPU 性能或发布证据。
+  未来真机合同仍需单独冻结设备、代表算子、baseline、阈值、预算、计时口径与确认批次。
 
 ### A1. 移植任务合同与 reference
 
@@ -359,7 +360,8 @@ v1/v2 同设备性能对照。
 
 与 Mac A5/A6 分叉并行，需单独授权真实**清微 NPU**。只复用上游架构、流程和方法论；设备、
 toolchain、Candidate ABI、profiler、厂商 baseline 和计时口径均由清微目标合同冻结。不得引入 CUDA、
-AscendC、CANN、EasyAsc、msopgen 或 msprof。未授权、未实测、
+AscendC、CANN、EasyAsc、msopgen 或 msprof。**当前没有清微真机，只允许流程/数据/协议模拟，NPU-P0
+保持 blocked；模拟不得解除阻断或形成性能/发布证据。**未授权、未实测、
 未达标分别标 blocked/performance_unproven/performance_below_target；Mac、模拟与 correctness_only
 不替代 NPU 性能结论。
 

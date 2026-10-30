@@ -140,9 +140,13 @@ def verify_auxiliary_documents() -> None:
     require(boundary["npu"]["cuda_allowed"] is False and boundary["npu"]["cann_allowed"] is False, "hardware filter failed")
 
     performance = json.loads((ROOT / "performance-contract.json").read_text(encoding="utf-8"))
-    require(performance["status"] == "human_pending", "NPU contract must remain human_pending")
-    require(performance["mac_performance_regression_gate"]["approved_max_ratio"] is None, "performance ratio is not human-approved")
+    require(performance["status"] == "mac_complete_npu_p0_blocked_no_real_device", "NPU contract must be simulation-only blocked")
+    require(performance["mac_performance_regression_gate"]["approved_max_ratio"] == 1.10, "approved Mac ratio must be 1.10")
+    require(performance["mac_performance_regression_gate"]["approved_by"] == "user", "Mac ratio approver missing")
     require(performance["qingmicro_npu_p0"]["vendor"] == "清微", "NPU contract vendor mismatch")
+    require(performance["qingmicro_npu_p0"]["toolchain_id"] == "clang", "NPU toolchain must be clang")
+    require(performance["qingmicro_npu_p0"]["execution_mode"] == "simulation_only", "NPU execution must be simulation-only")
+    require(performance["qingmicro_npu_p0"]["real_device_available"] is False, "NPU device availability changed")
     require(performance["qingmicro_npu_p0"]["real_device_authorized"] is False, "NPU authorization must be explicit")
     require(performance["qingmicro_npu_p0"]["cuda_or_cann_substitute_allowed"] is False, "CUDA/CANN substitute allowed")
 
