@@ -451,3 +451,54 @@ __all__ = [
     "load_track",
     "pack_digest",
 ]
+
+# The A1 track plane is re-exported from the same package as the v1 binding.  The two are
+# different objects: ``TrackBinding`` is the per-task v1 representation/oracle binding, while
+# ``TrackRegistry``/``TrackSpec`` describe task-agnostic *delivery mechanisms*.
+from .plane import (  # noqa: E402  (kept after the v1 binding to keep its import order stable)
+    CANDIDATE_ARTIFACT_SCHEMA_VERSION,
+    CANDIDATE_MANIFEST_SCHEMA_ID,
+    CANDIDATE_ROLES,
+    EXECUTION_GEOMETRY_SCHEMA_VERSION,
+    TENSOR_MEMORY_SCHEMA_VERSION,
+    CandidateArtifact,
+    CandidateEntry,
+    ExecutionGeometry,
+    GeometryStage,
+    TensorMemoryArg,
+    TensorMemoryContract,
+    TrackRenderer,
+)
+from .registry import (  # noqa: E402
+    METAL_TRACKS_PATH,
+    TRACKS_SCHEMA_PATH,
+    TRACKS_SCHEMA_VERSION,
+    TrackImplementation,
+    TrackRegistry,
+    TrackSpec,
+    load_track_registry,
+    registry_from_document,
+)
+
+__all__ += [
+    "CANDIDATE_ARTIFACT_SCHEMA_VERSION",
+    "CANDIDATE_MANIFEST_SCHEMA_ID",
+    "CANDIDATE_ROLES",
+    "EXECUTION_GEOMETRY_SCHEMA_VERSION",
+    "METAL_TRACKS_PATH",
+    "TENSOR_MEMORY_SCHEMA_VERSION",
+    "TRACKS_SCHEMA_PATH",
+    "TRACKS_SCHEMA_VERSION",
+    "CandidateArtifact",
+    "CandidateEntry",
+    "ExecutionGeometry",
+    "GeometryStage",
+    "TensorMemoryArg",
+    "TensorMemoryContract",
+    "TrackImplementation",
+    "TrackRegistry",
+    "TrackRenderer",
+    "TrackSpec",
+    "load_track_registry",
+    "registry_from_document",
+]

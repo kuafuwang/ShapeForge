@@ -1,0 +1,165 @@
+{
+  "$comment": "Registered v1 Track registry. A track is a delivery mechanism, not an algorithm library: the closed schema has no op_name/shape/tile/grid/threads/lowering_profile field, and the semantic checks in tcenv.track.registry refuse op-specific metadata. A1 ships msl-single/msl-bundle as interface_only skeletons; availability requires real evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "backend_id",
+    "tracks"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "backend_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "[a-z][a-z0-9_-]*"
+    },
+    "tracks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "track_id",
+          "track_version",
+          "delivery",
+          "status",
+          "candidate_roles",
+          "capabilities",
+          "renderer",
+          "validator",
+          "build_adapter"
+        ],
+        "properties": {
+          "track_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "[a-z][a-z0-9-]*"
+          },
+          "track_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "delivery": {
+            "type": "string",
+            "enum": [
+              "single_source",
+              "candidate_bundle"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "interface_only",
+              "available",
+              "unavailable"
+            ]
+          },
+          "candidate_roles": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "enum": [
+                "device_kernel",
+                "host_tiling",
+                "schedule",
+                "launch"
+              ]
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "enum": [
+                "single_file_msl",
+                "candidate_host_tiling",
+                "candidate_device_kernel",
+                "workspace",
+                "multi_stage"
+              ]
+            }
+          },
+          "renderer": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "implementation_id",
+              "implementation_version"
+            ],
+            "properties": {
+              "implementation_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "implementation_version": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "validator": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "implementation_id",
+              "implementation_version"
+            ],
+            "properties": {
+              "implementation_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "implementation_version": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "build_adapter": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "implementation_id",
+              "implementation_version"
+            ],
+            "properties": {
+              "implementation_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "implementation_version": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          }
+        }
+      }
+    }
+  }
+}

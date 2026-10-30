@@ -1,0 +1,57 @@
+{
+  "$comment": "Registered schema for optional v2 performance baselines. A baseline is a measurement comparison object, never a correctness oracle; without this file Task.baselines is empty and the task is correctness_only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "baselines"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "baselines": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "framework",
+          "implementation_id",
+          "implementation_version",
+          "params"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "[a-z][a-z0-9_]*"
+          },
+          "framework": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "[A-Za-z][A-Za-z0-9_]*"
+          },
+          "implementation_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "implementation_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "params": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  }
+}

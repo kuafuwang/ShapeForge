@@ -1,0 +1,501 @@
+{
+  "$comment": "Registered structural schema for OpSpec v2 (cross-hardware A1). Semantic rules (domain membership, layout/stride agreement, attr materialisation, reference-output agreement) are checked by tcenv.opspec.v2; this document fixes the closed tree shape. v2 has no `uses` list: every declared attr is materialised into resolved_attrs, and no attr participates in launch geometry.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "spec_version",
+    "op_name",
+    "category",
+    "type_vars",
+    "symbols",
+    "tensors",
+    "numerics",
+    "attrs",
+    "cases",
+    "sizes",
+    "spec_params",
+    "work_accounting"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "op_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "[a-z][a-z0-9_]*"
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "[a-z][a-z0-9_]*"
+    },
+    "formula": {
+      "$comment": "A human-readable summary only. No semantic rule, resolver, renderer, reference or verdict path reads it as authority.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "type_vars": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "T"
+      ],
+      "properties": {
+        "T": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "enum": [
+              "fp16",
+              "bf16",
+              "fp32",
+              "i8",
+              "i32",
+              "u8",
+              "u32"
+            ]
+          }
+        }
+      }
+    },
+    "symbols": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "min": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          }
+        }
+      }
+    },
+    "tensors": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "dims",
+          "dtype",
+          "layout",
+          "strides",
+          "space",
+          "access"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "input",
+              "output"
+            ]
+          },
+          "dims": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "dtype": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "layout": {
+            "type": "string",
+            "enum": [
+              "row_major",
+              "contiguous",
+              "strided"
+            ]
+          },
+          "strides": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "space": {
+            "type": "string",
+            "enum": [
+              "global",
+              "workspace"
+            ]
+          },
+          "access": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "read_write"
+            ]
+          },
+          "doc": {
+            "type": "string",
+            "maxLength": 400
+          }
+        }
+      }
+    },
+    "numerics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "acc_dtype",
+        "rounding",
+        "tolerances",
+        "exact"
+      ],
+      "properties": {
+        "acc_dtype": {
+          "type": "string",
+          "enum": [
+            "fp16",
+            "bf16",
+            "fp32",
+            "i32"
+          ]
+        },
+        "rounding": {
+          "type": "string",
+          "enum": [
+            "single_round_at_output",
+            "per_operation",
+            "exact_integer"
+          ]
+        },
+        "tolerances": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "rtol",
+              "atol_rel"
+            ],
+            "properties": {
+              "rtol": {
+                "type": "number",
+                "minimum": 0
+              },
+              "atol_rel": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "exact": {
+          "type": "boolean"
+        }
+      }
+    },
+    "attrs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dtype",
+          "default"
+        ],
+        "properties": {
+          "dtype": {
+            "type": "string",
+            "enum": [
+              "float",
+              "int"
+            ]
+          },
+          "default": {
+            "type": [
+              "number",
+              "integer"
+            ]
+          },
+          "domain": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "gt": {
+                "type": "number"
+              },
+              "ge": {
+                "type": "number"
+              },
+              "lt": {
+                "type": "number"
+              },
+              "le": {
+                "type": "number"
+              },
+              "enum": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": [
+                    "number",
+                    "integer"
+                  ]
+                }
+              }
+            }
+          },
+          "doc": {
+            "type": "string",
+            "maxLength": 400
+          }
+        }
+      }
+    },
+    "cases": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "names"
+      ],
+      "properties": {
+        "names": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "[A-Za-z][A-Za-z0-9_]*"
+          }
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {
+              "type": [
+                "number",
+                "integer",
+                "string",
+                "boolean",
+                "array",
+                "object"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "sizes": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "spec_params": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    },
+    "work_accounting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "flops",
+        "min_bytes"
+      ],
+      "properties": {
+        "flops": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "terms"
+          ],
+          "properties": {
+            "terms": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "minProperties": 1,
+                "properties": {
+                  "coefficient": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "symbols": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    }
+                  },
+                  "tensor": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "literal": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "min_bytes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "terms"
+          ],
+          "properties": {
+            "terms": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "minProperties": 1,
+                "properties": {
+                  "coefficient": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "symbols": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    }
+                  },
+                  "tensor": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "literal": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "discovery": {
+      "$comment": "Document-level discovery metadata. It enters opspec_digest but never typed semantics, ABI, launch selection or verdict.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase"
+      ],
+      "properties": {
+        "phase": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "default_instance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "dtype",
+            "size"
+          ],
+          "properties": {
+            "dtype": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "size": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "[a-z][a-z0-9-]*"
+          }
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        },
+        "variant_acceptance": {
+          "$comment": "Reserved discovery field. A1 assembly refuses a v2 document that declares it: v2 @variant assembly is out of the A1 contract.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "factory_id",
+            "implementation_version"
+          ],
+          "properties": {
+            "factory_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "implementation_version": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

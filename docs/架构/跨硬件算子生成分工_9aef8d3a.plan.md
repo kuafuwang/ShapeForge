@@ -6,8 +6,8 @@ todos:
     content: G0 冻结当前代码与旧路径语料、既有失败和 NPU 性能合同输入；KDA/CAKE2 初次源码盘点已完成并写入 upstream-map.json。只接受架构/流程/方法论与硬件中立实现，目标仅 Mac GPU 和清微 NPU；CUDA 与 Ascend/CANN 代码、工具链、芯片知识和专用 guidance 一律标记 reference/rejected，不进入生产、pack 或 agent_guidance。按 responsibility 去重并允许互补组合，未证明上游缺位不得选择 local。G0 不跑模型 kernel 或 GPU/NPU，Mac 侧已通过（比例 1.10 已批准）；A4 原 GPU 阻断已修复并全量复测通过；清微按 Clang、无真机仅模拟，NPU-P0 保持 blocked
     status: completed
   - id: contract-and-tracks
-    content: A1 源码审计已证明 KDA 只有合同文字说明、CAKE2 op_desc 只是不完整示例，因此本地实现 OpSpec v2 主合同与 loader；移植真实 reference 和采样器，CAKE2 precision/ulp 仅作诊断统计，pass/fail 唯一公式仍是本仓库 tolerances + scaled_error，既有种子流/cases/error_scale 不变。op_desc 仅作互操作摘要；v1/v2 无 fallback，语义冲突判 semantic_unresolved
-    status: pending
+    content: A1 源码审计已证明 KDA 只有合同文字说明、CAKE2 op_desc 只是不完整示例，因此本地实现 OpSpec v2 主合同与 loader；建立标准 reference 入口、只读边界与硬件中立采样器（A1 已完成 24 个 shipped OpSpec/98 个组合的 v2 映射，以及 RMSNorm/sigmoid 的采样器与 fp64 reference 对 G0 的逐字节对照；其余逐题 port 在 A5），CAKE2 precision/ulp 未接入判决，pass/fail 唯一公式仍是本仓库 tolerances + scaled_error，既有种子流/cases/error_scale 不变。op_desc 仅作只读互操作摘要；v1/v2 无 fallback，语义冲突判 semantic_unresolved。已通过：本地 v2 合同/loader、标准目录、reference 边界、Track 接口骨架与 tracks.json v1 元数据冻结；A1 验收见跨硬件算子生成分工-阶段验收/A1.md
+    status: completed
   - id: target-abi-and-geometry
     content: A2 通用 Candidate/Geometry/Canonical Bundle 经审计在上游缺位，由本地实现；只适配硬件中立的 KDA prepare/run 生命周期与 Host+Device 布局方法论，不移植 CUDA 调度/内核或 Ascend 项目代码。A2 只要求 Mac 与通用层：TensorMemoryContract、独立 fallback ExecutionGeometry、符号几何、when、Derived Scalars、MSL 反射按名绑定、多阶段与 output 读写；清微 NPU 工具链接入归 NPU-P0，CANN 工具不进入任何阶段
     status: pending
@@ -34,7 +34,7 @@ isProject: false
 
 # 跨硬件算子生成：上游实现移植与证据底座集成计划
 
-状态：**目标设计，Mac 侧 G0 已通过，A4 前置 GPU 阻断已解除；A1–A3 可开始，A4 待实施，NPU-P0 无真机阻断**。R5/R6 已通过；原直接 evaluate 缺 task-pack 与
+状态：**目标设计，Mac 侧 G0 已通过，A4 前置 GPU 阻断已解除；A1 已通过（验收见跨硬件算子生成分工-阶段验收/A1.md），A2/A3 可开始，A4 待实施，NPU-P0 无真机阻断**。R5/R6 已通过；原直接 evaluate 缺 task-pack 与
 `build_identity_mismatch` 已修复，完整 GPU 复测为 153 passed、1 skipped。阶段验收见 `跨硬件算子生成分工-阶段验收/G0.md`。此前停止时留下的 G0 快照草稿已过期，必须按本版
 重新生成。
 
@@ -411,10 +411,23 @@ worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
 
 ### A1. 移植任务合同与 reference
 
-- 按 upstream-map 实现本地 OpSpec v2 主合同与 loader，移植真实 reference 与采样器；op_desc 仅作互操作
-  摘要，不写“上游已有完整合同”的兼容层。pass/fail 只认本仓库 tolerances + scaled_error，CAKE2
+**A1 已通过**（验收：`跨硬件算子生成分工-阶段验收/A1.md`、`A1/verify.py` 与 `A1/manifest.sha256`）。
+
+- 按 upstream-map 实现本地 OpSpec v2 主合同与 loader，移植真实 reference 与采样器；A1 以 RMSNorm/
+  sigmoid 为代表题，把 v1 采样器移植进标准 `gen_inputs`，将 v2 reference 输出与 G0 档案逐字节对照；
+  其余题目的完整 port 在 A5。op_desc 只实现只读互操作摘要（闭集模板、确定性、不进入身份/判决），
+  不写“上游已有完整合同”的兼容层。pass/fail 只认本仓库 tolerances + scaled_error，CAKE2
   precision/ulp 仅作诊断，不得改变 G0/A5 的判决与种子流。
-- 完成现有任务到所选合同的映射与 G0 对照、语义冲突和 v1/v2 负例。
+- 已完成 24 个 shipped v1 OpSpec 到 v2 的映射（98 个 dtype/size 组合逐字段语义比较）、上述代表题的
+  G0 输出/输入字节对照、语义冲突和 v1/v2 负例；没有迁移任何 shipped v1 题。
+- `display.spec_text` 只允许 G0 固定的 `sem_*` 与 `sem_int_<1..18 位 ASCII 十进制种子>`，后缀按登记
+  语法校验；冻结面包含 `tcenv/task.py`（任务身份）与 `tcenv/contract.py`（Contract 投影）。
+- reference 初值合同包含 `role=input` 与所有 `read_write`（包括 `role=output` 的初值）；生成、输入
+  校验、reference 执行和采样计划共用该定义。`load_task_contract(..., variant=...)` 对任何非 `None`
+  值（含空字符串）在装配期拒绝。v2 attr 标识符冻结为 `^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$` 并拒绝几何
+  拼写变体；候选路径逐段拒绝 `.`/`..`；默认 dtype/size 只在 `None` 时应用。
+- `error_scale` 与 reference 共用工作副本和 `_version` 边界；整数采样按每个声明 case 的有效
+  `tensor > case > default` profile 在装配期校验，避免默认/case 优先级不一致。
 
 ### A2. 移植候选交付并补 Metal 缺口
 

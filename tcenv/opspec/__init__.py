@@ -23,25 +23,46 @@ from .model import (
     opspec_from_document,
     validate_opspec,
 )
+from .op_desc import OP_DESC_TEMPLATE_KEYS, render_op_desc
+from .v2 import (
+    OPSPEC_V2_SCHEMA_PATH,
+    OPSPEC_V2_SCHEMA_VERSION,
+    SEMANTIC_RULES_VERSION_V2,
+    SemanticInstanceV2,
+    instantiate_v2,
+    load_opspec_v2,
+    opspec_v2_from_document,
+    validate_opspec_v2,
+)
 from .validator import SchemaFailure, validate
 
 __all__ = [
+    "OP_DESC_TEMPLATE_KEYS",
     "OPSPEC_SCHEMA_PATH",
     "OPSPEC_SCHEMA_VERSION",
+    "OPSPEC_V2_SCHEMA_PATH",
+    "OPSPEC_V2_SCHEMA_VERSION",
     "PROGRAM_KINDS",
     "SEMANTIC_RULES_VERSION",
+    "SEMANTIC_RULES_VERSION_V2",
     "WORK_ACCOUNTING_VERSION",
     "CaseDomain",
     "OpSpec",
     "OpSpecError",
     "SchemaFailure",
     "SemanticInstance",
+    "SemanticInstanceV2",
     "TensorBinding",
     "Tolerances",
     "WorkAccounting",
     "instantiate",
+    "instantiate_v2",
     "load_opspec",
+    "load_opspec_v2",
     "opspec_from_document",
+    "opspec_v2_from_document",
+    "render_op_desc",
     "validate",
     "validate_opspec",
+    "validate_opspec_v2",
 ]

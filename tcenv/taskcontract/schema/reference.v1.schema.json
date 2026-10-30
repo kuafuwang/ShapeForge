@@ -1,0 +1,191 @@
+{
+  "$comment": "Registered schema for the optional v2 reference profile (reference version, sampling and error-scale declaration). It is not a second task semantics: no tensors, cases, tolerances or attrs are representable, and a top-level `params` object is refused.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "reference_version"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "reference_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sampling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default"
+      ],
+      "properties": {
+        "default": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "mean",
+                "std"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "normal"
+                },
+                "mean": {
+                  "type": "number"
+                },
+                "std": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "low",
+                "high"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "uniform"
+                },
+                "low": {
+                  "type": "number"
+                },
+                "high": {
+                  "type": "number"
+                }
+              }
+            }
+          ]
+        },
+        "cases": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "mean",
+                  "std"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "normal"
+                  },
+                  "mean": {
+                    "type": "number"
+                  },
+                  "std": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "low",
+                  "high"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "uniform"
+                  },
+                  "low": {
+                    "type": "number"
+                  },
+                  "high": {
+                    "type": "number"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "tensors": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "mean",
+                  "std"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "normal"
+                  },
+                  "mean": {
+                    "type": "number"
+                  },
+                  "std": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "low",
+                  "high"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "uniform"
+                  },
+                  "low": {
+                    "type": "number"
+                  },
+                  "high": {
+                    "type": "number"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "error_scale": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "none",
+            "module"
+          ]
+        }
+      }
+    }
+  }
+}

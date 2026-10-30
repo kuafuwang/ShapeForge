@@ -1,0 +1,30 @@
+{
+  "$comment": "Registered structural schema for the v2 representation layer. It may only override description, statement text (G0 sem_* allowlist) and a redundant formula; semantics, cases, tolerances, tensors, ABI and launch are not representable here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version"
+  ],
+  "minProperties": 2,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "spec_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000
+    },
+    "formula": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    }
+  }
+}

@@ -235,6 +235,17 @@ class OpSpec:
     digest: str
 
     @property
+    def spec_version(self) -> int:
+        """@brief 文档结构版本（v1 或 v2）。
+
+        The version is read from the document itself, so v1 and v2 are dispatched explicitly
+        and no loader falls back from one to the other.
+
+        @return ``document["spec_version"]``。
+        """
+        return int(self.document["spec_version"])
+
+    @property
     def op_name(self) -> str:
         """@brief 算子名。
 
@@ -267,10 +278,17 @@ class OpSpec:
         return self.document["sizes"]
 
     def digest_document(self) -> dict[str, Any]:
-        """@brief §3.1 冻结的 ``opspec_digest`` canonical envelope。
+        """@brief §3.1 ``opspec_digest`` canonical envelope（按 spec_version 分派）。
+
+        The public projection must recompute to the same digest the loader stored; a v2
+        document therefore returns the v2 envelope instead of the v1 rules/version.
 
         @return 含 kind/version/规则版本与整份 OpSpec 的文档。
         """
+        if self.spec_version == 2:
+            from . import v2
+
+            return v2.digest_envelope(self.document)
         return {
             "fingerprint_kind": "opspec",
             "fingerprint_version": 1,
@@ -370,12 +388,22 @@ def _resolve_domain(attr: str, spec: Mapping[str, Any], value: Any, where: str) 
 
 
 def validate_opspec(document: Any, *, source: str = "<opspec>") -> None:
-    """@brief 结构 schema + 语义规则校验一份 OpSpec。
+    """@brief 按 ``spec_version`` 显式分派的结构 schema + 语义规则校验。
 
     @param document 已由严格 JSON loader 解析的文档。
     @param source 诊断用的来源名。
-    @raises OpSpecError 结构或语义非法。
+    @raises OpSpecError 结构、版本或语义非法。
     """
+    version = document.get("spec_version") if isinstance(document, Mapping) else None
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise OpSpecError(f"{source}: spec_version must be the integer 1 or 2, got {version!r}")
+    if version == 2:
+        from . import v2
+
+        v2.validate_opspec_v2(document, source=source)
+        return
+    if version != 1:
+        raise OpSpecError(f"{source}: unsupported spec_version {version!r}; registered versions are 1 and 2")
     try:
         schema = load_strict_json(OPSPEC_SCHEMA_PATH)
     except IdentityError as exc:  # pragma: no cover - the registered schema is shipped
@@ -731,6 +759,10 @@ def opspec_from_document(document: Mapping[str, Any], *, source: str) -> OpSpec:
     @raises OpSpecError 结构或语义非法。
     """
     validate_opspec(document, source=source)
+    if document.get("spec_version") == 2:
+        from . import v2
+
+        return v2._opspec_v2(document, source=source, where=source)
     return _opspec(document, source=source, where=source)
 
 
@@ -747,6 +779,10 @@ def load_opspec(path: str | Path) -> OpSpec:
     except IdentityError as exc:
         raise OpSpecError(f"{resolved}: {exc}") from exc
     validate_opspec(document, source=str(resolved))
+    if document.get("spec_version") == 2:
+        from . import v2
+
+        return v2._opspec_v2(document, source=str(resolved), where=str(resolved))
     return _opspec(document, source=str(resolved), where=str(resolved))
 
 
@@ -812,6 +848,10 @@ def instantiate(spec: OpSpec, dtype: str, size: str) -> SemanticInstance:
     @return 唯一的 :class:`SemanticInstance`。
     @raises OpSpecError dtype/size 不在声明域内，或 attrs/shape 非法。
     """
+    if spec.spec_version == 2:
+        from . import v2
+
+        return v2.instantiate_v2(spec, dtype, size)
     if dtype not in spec.dtypes:
         raise OpSpecError(f"{spec.op_name}: dtype {dtype!r} is not in the declared coverage {list(spec.dtypes)}")
     if size not in spec.sizes:

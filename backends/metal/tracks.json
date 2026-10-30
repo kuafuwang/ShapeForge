@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "backend_id": "metal",
+  "tracks": [
+    {
+      "track_id": "msl-single",
+      "track_version": 1,
+      "delivery": "single_source",
+      "status": "interface_only",
+      "candidate_roles": ["device_kernel"],
+      "capabilities": ["single_file_msl"],
+      "renderer": {
+        "implementation_id": "metal.track.msl-single.renderer",
+        "implementation_version": 1
+      },
+      "validator": {
+        "implementation_id": "metal.track.msl-single.validator",
+        "implementation_version": 1
+      },
+      "build_adapter": {
+        "implementation_id": "metal.track.msl-single.build",
+        "implementation_version": 1
+      }
+    },
+    {
+      "track_id": "msl-bundle",
+      "track_version": 1,
+      "delivery": "candidate_bundle",
+      "status": "interface_only",
+      "candidate_roles": ["device_kernel", "host_tiling", "schedule"],
+      "capabilities": ["candidate_host_tiling", "candidate_device_kernel", "workspace", "multi_stage"],
+      "renderer": {
+        "implementation_id": "metal.track.msl-bundle.renderer",
+        "implementation_version": 1
+      },
+      "validator": {
+        "implementation_id": "metal.track.msl-bundle.validator",
+        "implementation_version": 1
+      },
+      "build_adapter": {
+        "implementation_id": "metal.track.msl-bundle.build",
+        "implementation_version": 1
+      }
+    }
+  ]
+}
