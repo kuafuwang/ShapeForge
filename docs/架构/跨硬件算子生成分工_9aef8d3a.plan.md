@@ -1,15 +1,15 @@
 ---
 name: 跨硬件算子生成分工
-overview: 学习 KDA / CAKE2 已验证的分工，不闭门造车，不限制 LLM 或人所写候选内核的表达力。采用选择性移植而非必须 fork：优先复用上游 Task Contract、reference、Candidate/Host Tiling、prepare/run 与 Track 交付实现，保留本仓库 Metal/NPU 运行时、唯一 artifact_builder、schema 4、evaluation identity、fresh confirmation、resume 与审计证据。每个组件先在 G0 登记上游 repo/commit/path/license 和 reuse/port/adapt/local 决策；上游已有且适用的实现不得再自研一套。候选拥有算法、融合、Tiling 与 ExecutionGeometry，Track 只做 task-agnostic 交付，harness 拥有 ABI、安全、测量边界和证据。G0 未完成前不得开始 A1–A6。
+overview: 学习 KDA / CAKE2 已验证的分工，不闭门造车，不限制 LLM 或人所写候选内核的表达力。采用选择性移植而非必须 fork：优先复用上游真实存在的参考实现、数值评测、构建/打包/PyBind、profiler、候选 prepare/run 与调度范式；通用 Task Contract、Candidate/TrackRegistry、ExecutionGeometry 和证据协议按源码盘点由本地补齐。每个组件先在 G0 登记上游 repo/commit/path/license 和 reuse/port/adapt/local 决策；上游已有且适用的实现不得再自研一套。候选拥有算法、融合、Tiling 与 ExecutionGeometry，Track 只做 task-agnostic 交付，harness 拥有 ABI、安全、测量边界和证据。G0 未完成前不得开始 A1–A6。
 todos:
   - id: gate
-    content: G0 冻结当前代码与旧路径语料、既有失败、NPU 性能合同输入，并完成 KDA/CAKE2 上游组件盘点。形成 upstream-map.json：每项记录 repo/commit/path/license、reuse|port|adapt|local、本地落点、理由与验收；未证明上游缺位不得选择 local。G0 不跑模型 kernel 或 GPU/NPU，未完成前不改生产路径
+    content: G0 冻结当前代码与旧路径语料、既有失败和 NPU 性能合同输入；KDA/CAKE2 初次源码盘点已完成并写入 upstream-map.json，仍需复核维护该台账。每项记录 repo/commit/path/license、reuse|port|adapt|local、本地落点、理由与验收；未证明上游缺位不得选择 local。G0 不跑模型 kernel 或 GPU/NPU，未完成前不改生产路径
     status: pending
   - id: contract-and-tracks
-    content: A1 优先移植上游 Task Contract + reference + baseline 协议，将现有任务适配到所选合同，不默认新造 OpSpec v2。公式只作摘要，默认题面展示任务合同、只读 reference 与 TensorMemoryContract；attrs 只表达语义，v2 无 IR 时删除 uses 并全部物化。v1/v2 按 spec_version 分派且无 fallback，语义冲突判 semantic_unresolved
+    content: A1 源码审计已证明 KDA 只有合同文字说明、CAKE2 op_desc 只是不完整示例，因此本地实现 OpSpec v2 主合同与 loader；移植真实 reference、采样和数值评测。op_desc 仅作互操作摘要，不充当权威。公式只作摘要，题面展示合同、只读 reference 与 TensorMemoryContract；attrs 纯语义、无 IR 删除 uses；v1/v2 无 fallback，语义冲突判 semantic_unresolved
     status: pending
   - id: target-abi-and-geometry
-    content: A2 优先移植上游 Candidate、Host Tiling、prepare/run、workspace 与原生交付实现，只补 Metal 缺口：TensorMemoryContract 不锁 grid/threads/tile，fallback 是独立 ExecutionGeometry；支持符号几何、when、Derived Scalars、MSL 反射按名绑定、多阶段与 output 读写。删除循环/goto 风格审查，SDK 原生能力不由 harness 额外设风格白名单
+    content: A2 通用 Candidate/Geometry/Canonical Bundle 经审计在上游缺位，由本地实现；适配 KDA 具体候选的 prepare/run 范式，移植 CAKE2 Host+Device 项目布局、msopgen/build/install/PyBind 和 profiler。Metal 补 TensorMemoryContract、独立 fallback ExecutionGeometry、符号几何、when、Derived Scalars、MSL 反射按名绑定、多阶段与 output 读写；删除循环/goto 风格审查
     status: pending
   - id: expressiveness-charter
     content: A2 同批闭合 read_write、workspace 与计时协议：out1/out2/out3 前恢复 read_write 初值、跳过 poison/unwritten 并用 GUARD_PATTERN；连续 reps 后仅 guard/硬件状态检查，fresh-rotation 与 stateful timing 不串口径；workspace_fills 只清声明 zero 的区域；Host Tiling/prepare 不把输入相关工作藏到计时外
@@ -21,7 +21,7 @@ todos:
     content: A4 用 RMSNorm、全新算子与融合算子做真实 Mac 垂直切片。首批本地 Metal track 为 msl-single 与 msl-bundle（仅因上游无 Metal 交付）：同一 OpSpec+reference+ABI 题面，分别验证单文件与候选 Host Tiling+Device Kernel Bundle，不是双 Prompt。符号几何、派生标量、多阶段绑定、read_write、workspace、作者中立均有回归；直接 evaluate 缺 pack 与 build_identity_mismatch 未修复并 GPU 复测前不得通过
     status: pending
   - id: npu-performance-gate
-    content: NPU-P0 与 Mac A5/A6 分叉并行：优先复用 CAKE2 的真实 NPU Host Tiling+Device Kernel 交付，在简单算子与复杂融合算子上验证真实构建、正确性、构建后几何冻结、计时边界、厂商 baseline 与冻结性能阈值。需用户单独授权真实 NPU，Mac/模拟/correctness_only 不冒充 NPU 性能证据
+    content: NPU-P0 与 Mac A5/A6 分叉并行：复用 CAKE2 真实 msopgen/build/install/PyBind/msprof 适配器和 Host+Device 示例，不假定上游存在通用 Candidate 或几何协议；本地绑定 CandidateArtifact/ExecutionGeometry 后，在简单与复杂融合算子上验证真实构建、正确性、计时边界、厂商 baseline 与冻结阈值。需用户单独授权真实 NPU
     status: pending
   - id: migrate
     content: A5 在 Mac A4 通过后逐题原子切迁到移植后的标准任务合同与 reference，使用 G0 独立语料对照输入、输出、容差、error scale、work accounting 和 baseline 身份；同变更删除 task.py/track.json/kernel_triton.py/专用题面/手写 pack_files，不保留 Triton 题面兼容。known_good 仅可选自检；记录 v1/v2 性能对照，超比例须人工批准
@@ -37,6 +37,11 @@ isProject: false
 状态：**目标设计，未实施**。R5/R6 已通过，但当前 GPU 基线仍登记直接 evaluate 缺 task-pack 与
 `build_identity_mismatch`。G0 未完成前不得开始 A1–A6。此前停止时留下的 G0 快照草稿已过期，必须按本版
 重新生成。
+
+已完成的上游源码对照见 `跨硬件算子生成分工-G0/upstream-map.json`（KDA workflow
+`acdd79343c5e`、KDA kernels `f539baab8e46`、CAKE2 `b699c3247241`）。它只证明组件存在性与
+reuse/port/adapt/local 决策，**不代表 G0 已整体完成**：旧路径语料、manifest/replay、性能比例和人类
+NPU 合同仍未封口。
 
 ## 0. 第一原则与实施策略
 
@@ -58,9 +63,9 @@ LLM、committee 或会话不同而改变 verdict。
 
 | 平面 | 优先移植/复用 | 本地保留或补齐 | 禁止 |
 | --- | --- | --- | --- |
-| 任务合同 | CAKE2 `op_desc`/PyTorch reference、KDA Task Contract 中适用的 schema、cases、baseline 与评测协议 | 现有任务迁移、G0 对照、张量/数值事实与任务发现 | 未盘点上游就另造 OpSpec/IR/pattern |
-| 候选交付 | `prepare/run`、Host Tiling+Device Kernel、workspace、原生 C/C++/汇编交付、Track validator/adapter | Metal 运行时、MSL 单文件与 Bundle 适配、缺失的几何解析 | Track 拥有逐题 tiling、限制候选写法 |
-| Track | CAKE2 Ascend 交付路线；KDA CuTe/TIRx/PTX 的可复用交付机制 | 上游没有的 Metal track 注册与适配 | 双 Prompt 冒充多交付、按 op_name/shape 路由算法 |
+| 任务合同 | CAKE2 `op_desc` 互操作摘要、真实 PyTorch reference、采样与数值指标；KDA 仅有合同文字说明 | **本地 OpSpec v2 主合同与 loader**（上游没有完整合同）、现有任务迁移和 G0 对照 | 把 op_desc 示例当完整 schema，或另造 IR/pattern |
+| 候选交付 | KDA 具体候选的 `prepare/run` 与调度/state-handoff 范式；CAKE2 Host+Device 项目布局和真实构建适配 | **本地 Candidate/ExecutionGeometry/Canonical Bundle**、Metal 运行时与几何解析 | 假定上游有通用 Candidate，或让 Track 拥有逐题 tiling |
+| Track | CAKE2 可复用的 Ascend 构建/绑定/EasyAsc 适配器；KDA 候选交付范式仅作参考 | **本地 TrackRegistry** 与上游没有的 Metal track；每条 Track 独立证据 | 双 Prompt 冒充多交付、按 op_name/shape 路由算法 |
 | 构建与证据 | 上游可复用的构建诊断、profiler 与测量工具 | 唯一 artifact_builder、BuildOutcome、schema 4、evaluation identity、fresh confirmation、resume、远程安全与审计 | 用上游结论替代本地证据，削弱发布门 |
 | 知识与技能 | 适用的优化指南、诊断技能和硬件文档 | guidance_catalog 与 agent_guidance 哈希 | 知识正文进入 task_pack_digest |
 
@@ -71,9 +76,11 @@ LLM、committee 或会话不同而改变 verdict。
 
 ### 2.1 任务合同与 reference
 
-- 优先采用上游 Task Contract + reference。只有上游合同无法表达现有张量、read_write 终值、cases、容差、
-  work accounting 或 baseline 身份时，才增加本地 `opspec.json` v2 适配层；该适配层是缺口补丁，不是
-  另起一套全局 IR/语义编译体系。
+- 源码审计已经证明上游没有完整通用 Task Contract：KDA `docs/agent-flow.md` 只有文字要求，CAKE2
+  `op_desc_template.json` 只是缺少 read_write、alias、workspace、容差、work accounting 和 baseline 身份的
+  示例。因此本地必须实现 `opspec.json` v2 主合同与 loader；这不是绕过移植原则，而是
+  `upstream-map.json` 中有证据的 local 项。上游真实 reference、采样与数值指标仍优先移植，op_desc 仅作
+  互操作摘要，不能成为第二权威。
 - 默认题面统一展示任务合同、只读 `reference.py` 与 `TensorMemoryContract`。formula 只是简短摘要，
   reference 提供无歧义数学语义；候选不能 import reference 充当自己的实现。只有 G0 冻结的 `sem_*`
   白名单可用 `display.json.spec_text` 覆盖题面。
@@ -111,7 +118,8 @@ Track 必须 task-agnostic：不得按 `op_name` 或 shape 提供 tiling 算法�
 2. `msl-bundle`/`1`：候选 Host Tiling/Launch + MSL Device Kernel Bundle。
 
 两者使用同一任务合同、reference 与 ABI 题面，独立构建、正确性与确认，speedup/cache/confirmation 不串用。
-优先复用上游 Candidate Bundle 与交卷协议；若现有单文本 agent 链需要传输适配，可使用固定 manifest +
+优先复用上游真实 Host+Device 项目布局、构建和绑定适配器；上游没有通用 CandidateArtifact、canonical
+ArtifactBundle 或几何摘要协议，这些必须由本地实现。若现有单文本 agent 链需要传输适配，可使用固定 manifest +
 `taic-file` 文件段的**单提交分段 envelope**。它只是传输格式，不是新的候选语义或第二套 Bundle：
 解析为受控 ArtifactBundle 后，candidate_sha256 使用 canonical artifact_set_digest，prune_work、自检、
 worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
@@ -185,14 +193,14 @@ worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
 
 ### A1. 移植任务合同与 reference
 
-- 按 upstream-map 移植合同、reference、输入生成、error scale 与 baseline 协议；只写必要适配器。
-- 若确需本地 OpSpec v2，先证明上游缺口并保持薄适配，不新增 IR/pattern/lowering 编译体系。
+- 按 upstream-map 实现本地 OpSpec v2 主合同与 loader，移植真实 reference、采样、error scale 与数值评测；
+  op_desc 仅作互操作摘要，不写“上游已有完整合同”的兼容层。
 - 完成现有任务到所选合同的映射与 G0 对照、语义冲突和 v1/v2 负例。
 
 ### A2. 移植候选交付并补 Metal 缺口
 
-- 接入 Candidate、prepare/run、Host Tiling、workspace、Track validator/build adapter；落实候选表达力、
-  read_write、workspace 和计时协议。
+- 本地实现通用 Candidate/ExecutionGeometry/Canonical Bundle；适配 KDA 具体候选的 prepare/run 范式，
+  移植 CAKE2 Host+Device 布局、msopgen/build/install/PyBind、EasyAsc 与 profiler 适配器。
 - 只实现上游缺失的 Metal ABI/几何/反射绑定能力，以及 `build_profiles.json` 一次性切换。不得借适配之名
   新建逐题 tiling 或 pattern 规则库。
 
@@ -222,8 +230,10 @@ v1/v2 同设备性能对照。
 
 ### NPU-P0. 真实 NPU 性能风险门
 
-与 Mac A5/A6 分叉并行，需单独授权真实 NPU。优先复用 CAKE2 Host Tiling+Device Kernel 交付，在简单算子
-和复杂融合算子上验证真实构建、正确性、构建后几何、计时边界、厂商 baseline 与冻结阈值。未授权、未实测、
+与 Mac A5/A6 分叉并行，需单独授权真实 NPU。复用 CAKE2 的真实 msopgen/build/install/PyBind/msprof
+适配器和 Host+Device 示例，不把文档中的 Host Tiling 或 EvoOrchestrator 当作现成通用实现。本地绑定
+CandidateArtifact/ExecutionGeometry 后，在简单算子和复杂融合算子上验证真实构建、正确性、计时边界、
+厂商 baseline 与冻结阈值。未授权、未实测、
 未达标分别标 blocked/performance_unproven/performance_below_target；Mac、模拟与 correctness_only
 不替代 NPU 性能结论。
 

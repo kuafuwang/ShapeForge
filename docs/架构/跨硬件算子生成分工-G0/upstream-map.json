@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "status": "source_audit_complete_integration_pending",
+  "g0_complete": false,
+  "audit_date": "2026-10-30",
+  "sources": [
+    {
+      "id": "kda-workflow",
+      "repo": "https://github.com/NVlabs/kda.git",
+      "root": "/Users/kuafu/CLionProjects/kda",
+      "commit": "acdd79343c5e9d0c7cb96289f26fd3f1051ce785",
+      "license": "Apache-2.0; also review THIRD_PARTY_NOTICES.md and third_party_licenses/"
+    },
+    {
+      "id": "kda-kernels",
+      "repo": "https://github.com/NVlabs/kda.git",
+      "root": "/Users/kuafu/CLionProjects/kda-260927-kda",
+      "commit": "f539baab8e46712eb03c88562fc9d9c4b0798aa3",
+      "license": "Apache-2.0 per source headers; review LICENSE and per-file provenance"
+    },
+    {
+      "id": "cake2",
+      "repo": "https://gitcode.com/cann/cannbot.git",
+      "root": "/Users/kuafu/CLionProjects/dsl_for_llm/cannbot",
+      "commit": "b699c3247241dbe0884f0ea95c619d0cc85d30f4",
+      "license": "Mixed: plugin LICENSE-APACHE plus CANN Open Software License Agreement 2.0 per-file headers; per-file review required"
+    }
+  ],
+  "entries": [
+    {
+      "component": "agent_workflow_guidance",
+      "source": "kda-workflow",
+      "upstream_path": "docs/agent-flow.md",
+      "action": "reuse",
+      "local_path": "guidance only; no production registry",
+      "reason": "Generic task-contract checklist and promotion loop exist only as prose, not as a schema or evaluator.",
+      "verification": "Keep out of task_pack_digest; record guidance hash only."
+    },
+    {
+      "component": "snapshot_hash_and_python_packaging",
+      "source": "kda-workflow",
+      "upstream_path": "scripts/export_huggingface.py",
+      "action": "port",
+      "local_path": "tcenv packaging/build helpers behind the unique artifact_builder",
+      "reason": "Real snapshot hashing, Python/JSON validation and import rewriting exist; final export is CuTe/CUDA-specific.",
+      "verification": "tests/test_export_huggingface.py equivalents plus local build identity tests in A3."
+    },
+    {
+      "component": "candidate_prepare_run_idiom",
+      "source": "kda-kernels",
+      "upstream_path": "kda-tirx/kernel.py; kda-cake-ptx/kernel.py",
+      "action": "adapt",
+      "local_path": "tcenv candidate lifecycle adapter",
+      "reason": "Concrete candidates expose prepare/run, but there is no generic Candidate framework or timing identity.",
+      "verification": "A2/A3 prepare-cache-timing identity and replay negatives."
+    },
+    {
+      "component": "candidate_scheduler_state_handoff_idioms",
+      "source": "kda-kernels",
+      "upstream_path": "kda-cake-cute/impl/planner.py; kda-cake-ptx/kda_ptx/scheduler.py; kda-tirx/kda_fwd_varlen.py",
+      "action": "adapt",
+      "local_path": "candidate-owned implementations only",
+      "reason": "Useful scheduling, varlen and state-handoff implementations are deliberately KDA/shape-specific and must not enter a task-agnostic Track.",
+      "verification": "Static check forbids op_name/shape algorithm routing in Track; candidate evidence remains separate."
+    },
+    {
+      "component": "dual_reference_baseline_and_antihacking_cases",
+      "source": "kda-kernels",
+      "upstream_path": "bench.py; scripts/real_workload_error_plots.py; hacking_example/README.md",
+      "action": "adapt",
+      "local_path": "task references, baselines and G0 case corpus",
+      "reason": "Real workload/reference/baseline designs exist but are KDA-specific and historical, not a generic registry or fresh local proof.",
+      "verification": "G0 differential comparison and fresh local confirmation; upstream speedups are never imported as evidence."
+    },
+    {
+      "component": "task_contract_schema_and_loader",
+      "source": "kda-workflow + cake2",
+      "upstream_path": "kda docs/agent-flow.md; CAKE2 skills/op-desc-generation/references/op_desc_template.json",
+      "action": "local",
+      "local_path": "tcenv/opspec v2 and task loader",
+      "reason": "KDA has prose only; CAKE2 op_desc is an unversioned exemplar without read_write, alias, workspace, tolerance, work accounting or baseline identity. No complete upstream contract exists.",
+      "verification": "A1 schema/domain negatives and G0 task-corpus equivalence."
+    },
+    {
+      "component": "op_desc_interoperability_summary",
+      "source": "cake2",
+      "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/op-desc-generation/references/op_desc_template.json",
+      "action": "adapt",
+      "local_path": "read-only summary renderer, not the authoritative contract",
+      "reason": "Useful op_name/category/shape_info/attributes/test_cases summary, but insufficient as the local task authority.",
+      "verification": "A1 renderer comparison; semantic authority remains local OpSpec+reference."
+    },
+    {
+      "component": "reference_examples",
+      "source": "cake2",
+      "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/dsl-baseline-generation/references/input_example/rms_norm.py; skills/reference-generation/references/linear_softplus.py",
+      "action": "port",
+      "local_path": "selected tasks/<op>/reference.py after semantic review",
+      "reason": "Real PyTorch reference implementations exist; generation SKILL.md files are prompts, not implementations.",
+      "verification": "G0 reference output comparison before adoption."
+    },
+    {
+      "component": "input_generation_and_numeric_metrics",
+      "source": "cake2",
+      "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/datagen.py; precision.py; ulp.py; constants.py",
+      "action": "port",
+      "local_path": "tcenv evaluation/sampling helpers",
+      "reason": "Substantial seeded generation and numerical metrics exist; main evaluator acceptance differs from local tolerance/fail-closed rules.",
+      "verification": "A1/A3 numeric golden vectors, IEEE and multi-output negatives."
+    },
+    {
+      "component": "candidate_geometry_and_canonical_bundle",
+      "source": "kda-kernels + cake2",
+      "upstream_path": "audited source trees",
+      "action": "local",
+      "local_path": "tcenv CandidateArtifact, ExecutionGeometry and ArtifactBundle adapters",
+      "reason": "Neither source has a generic CandidateArtifact, canonical ArtifactBundle, artifact digest, ExecutionGeometry or post-build geometry freeze.",
+      "verification": "A2/A3 geometry artifact, native.descriptor/native_digest and replay tests."
+    },
+    {
+      "component": "host_device_project_layout",
+      "source": "cake2",
+      "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/docs/EVALUATION_INSTRUCTION.md; skills/dsl-easyasc-post/references/migration_examples/",
+      "action": "adapt",
+      "local_path": "NPU Candidate Bundle layout and local Metal msl-bundle adapter",
+      "reason": "Real op_host/op_kernel/build_out layouts and worked examples exist, but they are task-specific rather than a generic candidate abstraction.",
+      "verification": "A3/A4 bundle manifest and real build tests."
+    },
+    {
+      "component": "npu_msopgen_scaffold",
+      "source": "cake2",
+      "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascend-call-generation/scripts/gen_project.py",
+      "action": "adapt",
+      "local_path": "NPU builder adapter behind unique artifact_builder",
+      "reason": "Real msopgen scaffold adapter exists; device discovery and CLI assumptions need local target/authorization handling.",
+      "verification": "NPU-P0 toolchain and provenance checks; no simulated publication."
+    },
+    {
+      "component": "npu_build_install_and_packaging",
+      "source": "cake2",
+      "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/build_and_install.py",
+      "action": "adapt",
+      "local_path": "NPU build/install adapter behind unique artifact_builder",
+      "reason": "Real CANN build, .run extraction/install and verification code exists; .run installer is not a canonical CandidateBundle.",
+      "verification": "NPU-P0 real build identity, artifact and native digest checks."
+    },
+    {
+      "component": "python_binding_and_acl_bridge",
+      "source": "cake2",
+      "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/generate_pybind.py; skills/easyasc-dsl-bridge/scripts/gen_bridge.py",
+      "action": "adapt",
+      "local_path": "NPU host/Python binding adapters",
+      "reason": "Real PyBind and ACLNN header-driven bridge generation exists; generated binding must use local ABI and isolation.",
+      "verification": "A3/NPU-P0 per-workdir isolation, ABI and digest tests."
+    },
+    {
+      "component": "easyasc_adapters",
+      "source": "cake2",
+      "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/easyasc-codegen/scripts/run_codegen.py; skills/dsl-easyasc-codegen/scripts/run_smoke.py; skills/dsl-easyasc-post/scripts/verify.py",
+      "action": "adapt",
+      "local_path": "one selected EasyAsc track adapter",
+      "reason": "Real adapters exist but overlap and depend on external EasyAsc; do not port overlapping routes as separate evidence-equivalent Tracks.",
+      "verification": "G0 route selection record and NPU-P0 independent track evidence."
+    },
+    {
+      "component": "device_timing_and_msprof",
+      "source": "cake2",
+      "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/ascend_performance_test.py; performance.py",
+      "action": "adapt",
+      "local_path": "NPU profiler/measurement adapter",
+      "reason": "Real ACL/msprof, cache marker, cold-start exclusion and median device timing exists; read_write restore, workspace and prepare boundaries are absent.",
+      "verification": "NPU-P0 timing boundary, fresh confirmation and Host/Device/end-to-end comparison."
+    },
+    {
+      "component": "evaluation_reporting_and_dashboard",
+      "source": "cake2",
+      "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/reporting.py; skills/op-dashboard/scripts/gen_dashboard.py; dashboard_parsers.py",
+      "action": "adapt",
+      "local_path": "observe/reporting adapters",
+      "reason": "Reusable raw reporting and parsing code exists, but it lacks local schema 4, build/evaluation identity and replay semantics.",
+      "verification": "A3 schema 4 projection and read-path identity tests."
+    },
+    {
+      "component": "generic_candidate_and_track_registry",
+      "source": "kda-workflow + kda-kernels + cake2",
+      "upstream_path": "audited source trees",
+      "action": "local",
+      "local_path": "tcenv TrackRegistry and Candidate lifecycle",
+      "reason": "No generic TrackRegistry, task-agnostic Candidate validator/adapter or canonical delivery abstraction exists. CAKE2 is primarily a Claude plugin and KDA examples are candidate-specific.",
+      "verification": "A3 formal track_id, locator, run_config and independent track evidence."
+    },
+    {
+      "component": "read_write_workspace_and_timing_hardening",
+      "source": "kda-kernels + cake2",
+      "upstream_path": "audited evaluator and candidate implementations",
+      "action": "local",
+      "local_path": "tcenv correctness and benchmark protocols",
+      "reason": "No upstream three-run read_write restoration, guard-band protocol, workspace zero-only fills, fresh rotation or stateful timing identity exists.",
+      "verification": "A2/A4 out1/out2/out3, guard, zero-only fills and timing negatives."
+    },
+    {
+      "component": "metal_tracks",
+      "source": "kda-kernels + cake2",
+      "upstream_path": "audited source trees",
+      "action": "local",
+      "local_path": "msl-single and msl-bundle",
+      "reason": "Neither upstream contains Metal/MSL delivery.",
+      "verification": "A4 real Metal build/ABI/safety/correctness for both tracks."
+    },
+    {
+      "component": "build_evaluation_identity_confirmation_resume",
+      "source": "kda-workflow + kda-kernels + cake2",
+      "upstream_path": "audited source trees",
+      "action": "local",
+      "local_path": "existing artifact_builder, schema 4, evaluation identity, confirmation and resume",
+      "reason": "Upstream has raw evidence and promotion guidance but no equivalent local identity and publication protocol.",
+      "verification": "Preserve R0-R6 vectors and current GPU direct-evaluation/confirmation gates."
+    },
+    {
+      "component": "evolution_engine",
+      "source": "cake2",
+      "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/agents/cake-evo.md; skills/cake-evo/",
+      "action": "local",
+      "local_path": "existing taic search/orchestrator; upstream material is guidance only",
+      "reason": "CAKE2 documents parallel variants and tiered inspiration, but the documented EvoOrchestrator implementation is absent.",
+      "verification": "Reuse guidance only; existing search evidence and budgets remain authoritative."
+    }
+  ]
+}
