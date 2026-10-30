@@ -92,6 +92,10 @@
       "component": "snapshot_hash_and_python_packaging",
       "source": "kda-workflow",
       "upstream_path": "scripts/export_huggingface.py",
+      "upstream_files": [
+        "scripts/export_huggingface.py",
+        "tests/test_export_huggingface.py"
+      ],
       "action": "port",
       "local_path": "tcenv packaging/build helpers behind the unique artifact_builder",
       "reason": "Real snapshot hashing, Python/JSON validation and import rewriting exist; final export is CuTe/CUDA-specific.",
@@ -103,6 +107,10 @@
       "composition_role": "candidate_lifecycle",
       "source": "kda-kernels",
       "upstream_path": "kda-tirx/kernel.py; kda-cake-ptx/kernel.py",
+      "upstream_files": [
+        "kda-tirx/kernel.py",
+        "kda-cake-ptx/kernel.py"
+      ],
       "action": "adapt",
       "local_path": "tcenv candidate lifecycle adapter",
       "reason": "Concrete candidates expose prepare/run, but there is no generic Candidate framework or timing identity.",
@@ -143,6 +151,9 @@
       "composition_role": "interoperability_summary_only",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/op-desc-generation/references/op_desc_template.json",
+      "upstream_files": [
+        "plugins-community/collaborative-agent-kernel-evolution/skills/op-desc-generation/references/op_desc_template.json"
+      ],
       "action": "adapt",
       "local_path": "read-only summary renderer, not the authoritative contract",
       "reason": "Useful op_name/category/shape_info/attributes/test_cases summary, but insufficient as the local task authority.",
@@ -154,6 +165,10 @@
       "composition_role": "independent_reference",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/dsl-baseline-generation/references/input_example/rms_norm.py; skills/reference-generation/references/linear_softplus.py",
+      "upstream_files": [
+        "plugins-community/collaborative-agent-kernel-evolution/skills/dsl-baseline-generation/references/input_example/rms_norm.py",
+        "plugins-community/collaborative-agent-kernel-evolution/skills/reference-generation/references/linear_softplus.py"
+      ],
       "action": "port",
       "local_path": "selected tasks/<op>/reference.py after semantic review",
       "reason": "Real PyTorch reference implementations exist; generation SKILL.md files are prompts, not implementations.",
@@ -165,6 +180,12 @@
       "composition_role": "sampling_and_diagnostics_only",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/datagen.py; precision.py; ulp.py; constants.py",
+      "upstream_files": [
+        "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/datagen.py",
+        "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/precision.py",
+        "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/ulp.py",
+        "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/constants.py"
+      ],
       "action": "adapt",
       "local_path": "only hardware-neutral sampling and diagnostic helpers; no torch_npu or second verdict",
       "reason": "Seeded generation and numerical metrics may have reusable hardware-neutral functions; any Ascend/NPU acceptance or runtime dependency is excluded.",
