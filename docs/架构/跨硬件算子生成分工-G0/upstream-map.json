@@ -3,21 +3,29 @@
   "status": "source_audit_complete_integration_pending",
   "g0_complete": false,
   "selection_policy": {
-    "rule": "one_runtime_implementation_per_function",
+    "rule": "one_authority_per_responsibility_plus_complementary_composition",
     "runtime_dual_read": false,
     "alternatives": "recorded_but_not_imported",
-    "allowed_coexistence": [
-      "different delivery mechanisms such as msl-single and msl-bundle",
-      "different responsibilities such as scaled_error verdict versus ULP diagnostics"
+    "composition": "allowed only for disjoint responsibilities with an explicit interface and independent verification",
+    "hardware_targets": [
+      "Mac GPU / Metal / MSL",
+      "清微 NPU / locally frozen toolchain"
     ],
-    "forbidden": "KDA path and CAKE2 path for the same function"
+    "hardware_filter": {
+      "allowed": "architecture, workflow, methodology, and hardware-neutral implementation",
+      "rejected_from_production_pack_and_guidance": [
+        "CUDA, PTX, CuTe, TIRx and NVIDIA-specific scheduling or shape rules",
+        "AscendC, EasyAsc, CANN, msopgen, ACL/PyBind, msprof and Huawei-specific platform knowledge"
+      ]
+    },
+    "forbidden": "KDA path and CAKE2 path for the same responsibility, or any CUDA/CANN delivery path"
   },
   "selection_groups": [
     {
       "selection_group": "task_contract",
       "selected_source": "local",
       "alternatives_rejected": [
-        "KDA docs/agent-flow.md is prose only",
+        "KDA docs/agent-flow.md is methodology only",
         "CAKE2 op_desc_template.json is an incomplete interoperability summary, not a second contract"
       ]
     },
@@ -25,33 +33,25 @@
       "selection_group": "numeric_verdict",
       "selected_source": "local tolerances + scaled_error",
       "alternatives_rejected": [
-        "CAKE2 precision.py/ulp.py may be diagnostic only and cannot become a second verdict"
+        "CAKE2 precision.py/ulp.py may provide hardware-neutral diagnostics only and cannot become a second verdict"
       ]
     },
     {
       "selection_group": "candidate_lifecycle",
-      "selected_source": "kda-kernels prepare/run idiom adapted behind local timing identity",
+      "selected_source": "hardware-neutral KDA prepare/run idiom adapted behind local timing identity",
+      "composition_role": "candidate lifecycle only; CUDA schedulers and kernels are not imported",
       "alternatives_rejected": [
         "CAKE2 direct PyTorch module invocation is not adopted as a second candidate lifecycle"
       ]
     },
     {
-      "selection_group": "npu_build_and_packaging",
-      "selected_source": "cake2 build_and_install.py + generate_pybind.py adapted behind the unique local artifact_builder",
+      "selection_group": "npu_build_execution_and_profiling",
+      "selected_source": "local 清微 NPU toolchain, ABI, builder and profiler",
+      "composition_role": "NPU-P0 local implementation guided by upstream methodology only",
       "alternatives_rejected": [
-        "KDA Hugging Face export is not a second NPU builder; only its generic hashing/validation primitives may be ported"
+        "CAKE2 msopgen/build_and_install/generate_pybind/EasyAsc/msprof are Ascend-specific and rejected",
+        "KDA CUDA/CuTe/TIRx/PTX build and scheduling code is NVIDIA-specific and rejected"
       ]
-    },
-    {
-      "selection_group": "easyasc_route",
-      "selected_source": null,
-      "status": "pending_single_choice",
-      "candidates": [
-        "skills/easyasc-codegen/scripts/run_codegen.py",
-        "skills/dsl-easyasc-codegen/scripts/run_smoke.py",
-        "skills/dsl-easyasc-post/scripts/verify.py"
-      ],
-      "rule": "Select at most one route before NPU-P0; overlapping routes never become separate Tracks"
     }
   ],
   "audit_date": "2026-10-30",
@@ -83,10 +83,10 @@
       "component": "agent_workflow_guidance",
       "source": "kda-workflow",
       "upstream_path": "docs/agent-flow.md",
-      "action": "reuse",
-      "local_path": "guidance only; no production registry",
-      "reason": "Generic task-contract checklist and promotion loop exist only as prose, not as a schema or evaluator.",
-      "verification": "Keep out of task_pack_digest; record guidance hash only."
+      "action": "reference",
+      "local_path": "architecture/process methodology only; no production registry",
+      "reason": "Generic task-contract checklist and promotion loop are methodology, not a schema or evaluator.",
+      "verification": "Only hardware-neutral methodology may enter guidance; never enters task_pack_digest."
     },
     {
       "component": "snapshot_hash_and_python_packaging",
@@ -110,19 +110,19 @@
       "component": "candidate_scheduler_state_handoff_idioms",
       "source": "kda-kernels",
       "upstream_path": "kda-cake-cute/impl/planner.py; kda-cake-ptx/kda_ptx/scheduler.py; kda-tirx/kda_fwd_varlen.py",
-      "action": "adapt",
-      "local_path": "candidate-owned implementations only",
-      "reason": "Useful scheduling, varlen and state-handoff implementations are deliberately KDA/shape-specific and must not enter a task-agnostic Track.",
-      "verification": "Static check forbids op_name/shape algorithm routing in Track; candidate evidence remains separate."
+      "action": "reference",
+      "local_path": "study only; no CUDA scheduler code, shape rules or hardware-specific guidance",
+      "reason": "Scheduling and state handoff are useful methodology, but the implementations are NVIDIA/KDA-specific and outside the Mac/清微 targets.",
+      "verification": "Static provenance check: no CUDA scheduler/kernel or NVIDIA shape rule is imported into production, pack or guidance."
     },
     {
       "component": "dual_reference_baseline_and_antihacking_cases",
       "source": "kda-kernels",
       "upstream_path": "bench.py; scripts/real_workload_error_plots.py; hacking_example/README.md",
-      "action": "adapt",
-      "local_path": "task references, baselines and G0 case corpus",
-      "reason": "Real workload/reference/baseline designs exist but are KDA-specific and historical, not a generic registry or fresh local proof.",
-      "verification": "G0 differential comparison and fresh local confirmation; upstream speedups are never imported as evidence."
+      "action": "reference",
+      "local_path": "methodology for dual reference, final-state checks and anti-hacking tests only",
+      "reason": "The methodology is useful, but workloads and implementations are CUDA/KDA-specific and historical.",
+      "verification": "Local tasks define their own inputs/baselines and fresh confirmation; no CUDA workload, speedup or kernel is imported."
     },
     {
       "component": "task_contract_schema_and_loader",
@@ -155,9 +155,9 @@
       "component": "input_generation_and_numeric_metrics",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/datagen.py; precision.py; ulp.py; constants.py",
-      "action": "port",
-      "local_path": "tcenv evaluation/sampling helpers",
-      "reason": "Substantial seeded generation and numerical metrics exist; main evaluator acceptance differs from local tolerance/fail-closed rules.",
+      "action": "adapt",
+      "local_path": "only hardware-neutral sampling and diagnostic helpers; no torch_npu or second verdict",
+      "reason": "Seeded generation and numerical metrics may have reusable hardware-neutral functions; any Ascend/NPU acceptance or runtime dependency is excluded.",
       "verification": "A1/A3 numeric golden vectors, IEEE and multi-output negatives; pass/fail remains local tolerances + scaled_error, CAKE2 metrics are diagnostic only and existing seed streams are unchanged."
     },
     {
@@ -173,64 +173,64 @@
       "component": "host_device_project_layout",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/docs/EVALUATION_INSTRUCTION.md; skills/dsl-easyasc-post/references/migration_examples/",
-      "action": "adapt",
-      "local_path": "NPU Candidate Bundle layout and local Metal msl-bundle adapter",
-      "reason": "Real op_host/op_kernel/build_out layouts and worked examples exist, but they are task-specific rather than a generic candidate abstraction.",
-      "verification": "A3/A4 bundle manifest and real build tests."
+      "action": "reference",
+      "local_path": "Host+Device decomposition methodology only; no CANN project or example files",
+      "reason": "op_host/op_kernel/build_out is a useful architectural layout, but the examples are Ascend-specific and not imported.",
+      "verification": "Only the layout methodology informs local Bundle design; no CANN/Ascend file enters production, pack or guidance."
     },
     {
       "component": "npu_msopgen_scaffold",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascend-call-generation/scripts/gen_project.py",
-      "action": "adapt",
-      "local_path": "NPU builder adapter behind unique artifact_builder",
-      "reason": "Real msopgen scaffold adapter exists; device discovery and CLI assumptions need local target/authorization handling.",
-      "verification": "NPU-P0 toolchain and provenance checks; no simulated publication."
+      "action": "reference",
+      "local_path": "rejected for production; 清微 builder is local",
+      "reason": "msopgen and device discovery are Ascend/CANN-specific and outside the target platforms.",
+      "verification": "NPU-P0 uses only the frozen 清微 toolchain; this file is not imported or adapted."
     },
     {
       "component": "npu_build_install_and_packaging",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/build_and_install.py",
-      "action": "adapt",
-      "local_path": "NPU build/install adapter behind unique artifact_builder",
-      "reason": "Real CANN build, .run extraction/install and verification code exists; .run installer is not a canonical CandidateBundle.",
-      "verification": "NPU-P0 real build identity, artifact and native digest checks."
+      "action": "reference",
+      "local_path": "rejected for production; 清微 build/install is local",
+      "reason": "CANN .run build/install is Ascend-specific and is not a target delivery mechanism.",
+      "verification": "NPU-P0 real build uses only 清微 tools and local artifact identity; no CANN installer or knowledge is imported."
     },
     {
       "component": "python_binding_and_acl_bridge",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/generate_pybind.py; skills/easyasc-dsl-bridge/scripts/gen_bridge.py",
-      "action": "adapt",
-      "local_path": "NPU host/Python binding adapters",
-      "reason": "Real PyBind and ACLNN header-driven bridge generation exists; generated binding must use local ABI and isolation.",
-      "verification": "A3/NPU-P0 per-workdir isolation, ABI and digest tests."
+      "action": "reference",
+      "local_path": "rejected for production; local 清微 ABI/binding only",
+      "reason": "ACLNN and Ascend binding generators are platform-specific and not reusable for the targets.",
+      "verification": "Only 清微 ABI and local bindings are accepted; no ACL/CANN bridge or header is imported."
     },
     {
       "component": "easyasc_adapters",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/easyasc-codegen/scripts/run_codegen.py; skills/dsl-easyasc-codegen/scripts/run_smoke.py; skills/dsl-easyasc-post/scripts/verify.py",
-      "action": "adapt",
-      "local_path": "one selected EasyAsc track adapter",
-      "reason": "Real adapters exist but overlap and depend on external EasyAsc; do not port overlapping routes as separate evidence-equivalent Tracks.",
-      "verification": "G0 route selection record and NPU-P0 independent track evidence."
+      "action": "reference",
+      "local_path": "rejected for production and TrackRegistry",
+      "reason": "EasyAsc is an Ascend-specific delivery route and is outside the Mac/清微 targets.",
+      "verification": "No EasyAsc route is selected, imported or registered; only multi-Track methodology is retained."
     },
     {
       "component": "device_timing_and_msprof",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/ascend_performance_test.py; performance.py",
-      "action": "adapt",
-      "local_path": "NPU profiler/measurement adapter",
-      "reason": "Real ACL/msprof, cache marker, cold-start exclusion and median device timing exists; read_write restore, workspace and prepare boundaries are absent.",
-      "verification": "NPU-P0 timing boundary, fresh confirmation and Host/Device/end-to-end comparison."
+      "action": "reference",
+      "local_path": "profiling methodology only; 清微 profiler and timing implementation are local",
+      "reason": "Cold-start exclusion and device timing methodology is useful, but ACL/msprof is Ascend-specific.",
+      "verification": "NPU-P0 uses frozen 清微 timing tools and local boundary checks; no ACL/msprof code or guidance is imported."
     },
     {
       "component": "evaluation_reporting_and_dashboard",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/reporting.py; skills/op-dashboard/scripts/gen_dashboard.py; dashboard_parsers.py",
-      "action": "adapt",
-      "local_path": "observe/reporting adapters",
-      "reason": "Reusable raw reporting and parsing code exists, but it lacks local schema 4, build/evaluation identity and replay semantics.",
-      "verification": "A3 schema 4 projection and read-path identity tests."
+      "action": "reference",
+      "local_path": "evidence/dashboard methodology only; local observe implementation",
+      "reason": "Reporting structure is useful methodology, but formats and parsers are tied to the Ascend evaluation pipeline and lack local identity.",
+      "verification": "Local schema 4 and read paths are authoritative; no Ascend report/parser or platform knowledge is imported."
     },
     {
       "component": "generic_candidate_and_track_registry",

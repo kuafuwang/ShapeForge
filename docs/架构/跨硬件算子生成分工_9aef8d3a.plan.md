@@ -1,15 +1,15 @@
 ---
 name: 跨硬件算子生成分工
-overview: 学习 KDA / CAKE2 已验证的分工，不闭门造车，不限制 LLM 或人所写候选内核的表达力。采用选择性移植而非必须 fork：优先复用上游真实存在的参考实现、数值评测、构建/打包/PyBind、profiler、候选 prepare/run 与调度范式；通用 Task Contract、Candidate/TrackRegistry、ExecutionGeometry 和证据协议按源码盘点由本地补齐。每个组件先在 G0 登记上游 repo/commit/path/license 和 reuse/port/adapt/local 决策；功能等价的 KDA/CAKE2 组件必须单选，不按上游来源形成两条运行路径。上游已有且适用的实现不得再自研一套。候选拥有算法、融合、Tiling 与 ExecutionGeometry，Track 只做 task-agnostic 交付，harness 拥有 ABI、安全、测量边界和证据。G0 未完成前不得开始 A1–A6。
+overview: 学习 KDA / CAKE2 已验证的分工，不闭门造车，不限制 LLM 或人所写候选内核的表达力。采用选择性移植而非必须 fork：只学习上游架构、流程、处理方法论和硬件中立实现；目标平台只有 Mac GPU 与清微 NPU，CUDA 与 Huawei Ascend/CANN 的代码、工具链、芯片知识、平台约束和专用 skills 不进入本地交付或 guidance。功能等价实现去重，职责互补的组件可以组合，但不形成 KDA/CAKE2 双路径。每个组件先在 G0 登记上游 repo/commit/path/license 和 reference/reuse/port/adapt/local 决策；同职责实现去重，互补职责可组合且必须有明确接口，不按上游来源形成两条运行路径。上游已有且适用的实现不得再自研一套。候选拥有算法、融合、Tiling 与 ExecutionGeometry，Track 只做 task-agnostic 交付，harness 拥有 ABI、安全、测量边界和证据。G0 未完成前不得开始 A1–A6。
 todos:
   - id: gate
-    content: G0 冻结当前代码与旧路径语料、既有失败和 NPU 性能合同输入；KDA/CAKE2 初次源码盘点已完成并写入 upstream-map.json，仍需复核维护该台账。每项记录 repo/commit/path/license、reuse|port|adapt|local、本地落点、理由与验收；未证明上游缺位不得选择 local；功能等价组件按 selection_group 单选，未采用来源只记 alternatives_rejected，不进入运行期或 pack。G0 不跑模型 kernel 或 GPU/NPU，未完成前不改生产路径
+    content: G0 冻结当前代码与旧路径语料、既有失败和 NPU 性能合同输入；KDA/CAKE2 初次源码盘点已完成并写入 upstream-map.json。只接受架构/流程/方法论与硬件中立实现，目标仅 Mac GPU 和清微 NPU；CUDA 与 Ascend/CANN 代码、工具链、芯片知识和专用 guidance 一律标记 reference/rejected，不进入生产、pack 或 agent_guidance。按 responsibility 去重并允许互补组合，未证明上游缺位不得选择 local。G0 不跑模型 kernel 或 GPU/NPU，未完成前不改生产路径
     status: pending
   - id: contract-and-tracks
     content: A1 源码审计已证明 KDA 只有合同文字说明、CAKE2 op_desc 只是不完整示例，因此本地实现 OpSpec v2 主合同与 loader；移植真实 reference 和采样器，CAKE2 precision/ulp 仅作诊断统计，pass/fail 唯一公式仍是本仓库 tolerances + scaled_error，既有种子流/cases/error_scale 不变。op_desc 仅作互操作摘要；v1/v2 无 fallback，语义冲突判 semantic_unresolved
     status: pending
   - id: target-abi-and-geometry
-    content: A2 通用 Candidate/Geometry/Canonical Bundle 经审计在上游缺位，由本地实现；适配 KDA 具体候选的 prepare/run 生命周期与 CAKE2 op_host/op_kernel 布局。A2 只要求 Mac 与通用层：TensorMemoryContract、独立 fallback ExecutionGeometry、符号几何、when、Derived Scalars、MSL 反射按名绑定、多阶段与 output 读写；CAKE2 msopgen/build/install/PyBind/EasyAsc/msprof 的真实适配归 NPU-P0，不阻塞 Mac A4
+    content: A2 通用 Candidate/Geometry/Canonical Bundle 经审计在上游缺位，由本地实现；只适配硬件中立的 KDA prepare/run 生命周期与 Host+Device 布局方法论，不移植 CUDA 调度/内核或 Ascend 项目代码。A2 只要求 Mac 与通用层：TensorMemoryContract、独立 fallback ExecutionGeometry、符号几何、when、Derived Scalars、MSL 反射按名绑定、多阶段与 output 读写；清微 NPU 工具链接入归 NPU-P0，CANN 工具不进入任何阶段
     status: pending
   - id: expressiveness-charter
     content: A2 同批闭合 read_write、workspace 与计时协议：out1/out2/out3 前恢复 read_write 初值、跳过 poison/unwritten 并用 GUARD_PATTERN；连续 reps 后仅 guard/硬件状态检查，fresh-rotation 与 stateful timing 不串口径；workspace_fills 只清声明 zero 的区域；Host Tiling/prepare 不把输入相关工作藏到计时外
@@ -21,7 +21,7 @@ todos:
     content: A4 用 RMSNorm、全新算子与融合算子做真实 Mac 垂直切片。首批本地 Metal track 为 msl-single 与 msl-bundle（仅因上游无 Metal 交付）：同一 OpSpec+reference+ABI 题面，分别验证单文件与候选 Host Tiling+Device Kernel Bundle，不是双 Prompt。符号几何、派生标量、多阶段绑定、read_write、workspace、作者中立均有回归；直接 evaluate 缺 pack 与 build_identity_mismatch 未修复并 GPU 复测前不得通过
     status: pending
   - id: npu-performance-gate
-    content: NPU-P0 与 Mac A5/A6 分叉并行：复用 CAKE2 真实 msopgen/build/install/PyBind/msprof 适配器和 Host+Device 示例，不假定上游存在通用 Candidate 或几何协议；本地绑定 CandidateArtifact/ExecutionGeometry 后，在简单与复杂融合算子上验证真实构建、正确性、计时边界、厂商 baseline 与冻结阈值。需用户单独授权真实 NPU
+    content: NPU-P0 与 Mac A5/A6 分叉并行：目标仅为清微 NPU，使用人类冻结的清微设备/toolchain/track、厂商 baseline 和计时口径；不引入 CANN msopgen/build/install/EasyAsc/msprof、AscendC 示例或 CUDA 代码。复用上游架构与方法论，本地绑定 CandidateArtifact/ExecutionGeometry，在简单与复杂融合算子上验证真实构建、正确性、计时边界和冻结阈值。需用户单独授权真实清微 NPU
     status: pending
   - id: migrate
     content: A5 在 Mac A4 通过后逐题原子切迁到移植后的标准任务合同与 reference，使用 G0 独立语料对照输入、输出、容差、error scale、work accounting 和 baseline 身份；同变更删除 task.py/track.json/kernel_triton.py/专用题面/手写 pack_files，不保留 Triton 题面兼容。known_good 仅可选自检；记录 v1/v2 性能对照，超比例须人工批准
@@ -58,17 +58,33 @@ LLM、committee 或会话不同而改变 verdict。
 3. 只有 G0 证明上游缺位或许可证/硬件/安全约束确实不适用时，才选择本地实现；
 4. 每个本地实现必须登记上游差距、保留原因和退出条件，不能变成默认自研路线；
 5. 不追求同时兼容整个 KDA 与 CAKE2，不为它们再建一层庞大兼容框架。按组件选择最合适来源。
-6. **功能位单选**：同一功能在 KDA 与 CAKE2 中都有实现时，只选一个进入运行期；另一个仅作为
-   `alternatives_rejected` 留在台账，不得同时保留两个 reader、builder、validator 或 evaluator。多 Track
-   只用于真正不同的交付机制（如 single_source 与 host_device_bundle），不用于按上游来源分轨。
+6. **职责去重、互补组合**：同一职责的等价实现只保留一个权威和运行路径；不同职责可以来自
+   不同上游并与本地组件组合，但必须有清晰接口和独立验收。组合不是形成 KDA 路径与 CAKE2 路径，
+   而是形成一条去重后的本地交付链。多 Track 只用于真正不同的交付机制。
 
 ## 1. 复用边界：上游交付 + 本地证据
+
+### 1.0 硬件与知识过滤
+
+目标平台只有 **Mac GPU（Metal/MSL）**与**清微 NPU（本地冻结的工具链）**。学习分为三层：
+
+| 层级 | 允许 | 禁止进入生产、pack 或 guidance |
+| --- | --- | --- |
+| 架构与流程 | Task Contract、reference、Candidate 生命周期、Track 分工、验证/晋级方法 | 把上游具体项目结构当成必须照搬的本地目录 |
+| 方法论 | 候选拥有融合/Tiling、prepare/run、Host+Device 分工、差分与性能分析、反作弊设计 | CUDA/CANN 的调度规则、shape 特化、芯片技巧、专有优化模板 |
+| 硬件中立实现 | 通用哈希/打包、纯 Python 工具、经语义核对的 reference、通用采样与诊断函数 | CUDA、PTX、CuTe/TIRx、AscendC、EasyAsc、msopgen、CANN build/install、ACL/PyBind、msprof 及其专用知识 |
+
+上游源码即使被读作方法论证据，也不等于允许移植。`reference` 仅表示研究来源，`reuse/port/adapt`
+才允许代码进入本地，而且必须逐文件通过硬件中立检查。清微 NPU 的设备、工具链、profiler、ABI 与 baseline
+一律由本地 G0 和人类合同决定，不能用 CUDA 或 CANN 代替。
+
+### 1.1 组件复用与本地边界
 
 | 平面 | 优先移植/复用 | 本地保留或补齐 | 禁止 |
 | --- | --- | --- | --- |
 | 任务合同 | CAKE2 `op_desc` 互操作摘要、真实 PyTorch reference、采样与数值指标；KDA 仅有合同文字说明 | **本地 OpSpec v2 主合同与 loader**（上游没有完整合同）、现有任务迁移和 G0 对照 | 把 op_desc 示例当完整 schema，或另造 IR/pattern |
-| 候选交付 | KDA 具体候选的 `prepare/run` 与调度/state-handoff 范式；CAKE2 Host+Device 项目布局和真实构建适配 | **本地 Candidate/ExecutionGeometry/Canonical Bundle**、Metal 运行时与几何解析 | 假定上游有通用 Candidate，或让 Track 拥有逐题 tiling |
-| Track | CAKE2 可复用的 Ascend 构建/绑定/EasyAsc 适配器；KDA 候选交付范式仅作参考 | **本地 TrackRegistry** 与上游没有的 Metal track；每条 Track 独立证据 | 双 Prompt 冒充多交付、按 op_name/shape 路由算法 |
+| 候选交付 | KDA `prepare/run` 生命周期与通用反作弊方法；Host+Device 分工仅作方法论 | **本地 Candidate/ExecutionGeometry/Canonical Bundle**、Metal 与清微运行时；不移植 CUDA 调度或 Ascend 项目代码 | 把 CUDA/CANN 候选或芯片知识带入 Track/production/guidance |
+| Track | 上游多交付路线的方法论；硬件中立校验思想 | **本地 TrackRegistry**、Metal track 与清微 NPU track | 以 CUDA/CANN 交付路线充当本地路线，或按 op_name/shape 路由算法 |
 | 构建与证据 | 上游可复用的构建诊断、profiler 与测量工具 | 唯一 artifact_builder、BuildOutcome、schema 4、evaluation identity、fresh confirmation、resume、远程安全与审计 | 用上游结论替代本地证据，削弱发布门 |
 | 知识与技能 | 适用的优化指南、诊断技能和硬件文档 | guidance_catalog 与 agent_guidance 哈希 | 知识正文进入 task_pack_digest |
 
@@ -83,11 +99,11 @@ LLM、committee 或会话不同而改变 verdict。
 flowchart TB
   subgraph UP["上游真实实现（按 upstream-map 选择性移植）"]
     KW["KDA workflow<br/>流程、打包与哈希"]
-    KK["KDA candidates<br/>prepare/run、调度与 state handoff"]
-    CK["CAKE2<br/>reference、数值指标、CANN 构建/PyBind/msprof"]
+    KK["KDA candidates<br/>prepare/run 与候选方法论<br/>CUDA 实现不移植"]
+    CK["CAKE2<br/>reference、数值与流程方法论<br/>CANN 实现不移植"]
   end
 
-  MAP["upstream-map.json<br/>功能位单选 + reuse / port / adapt / local<br/>repo + commit + path + license"]
+  MAP["upstream-map.json<br/>职责去重 + 互补组合<br/>reference / reuse / port / adapt / local"]
   KW --> MAP
   KK --> MAP
   CK --> MAP
@@ -113,7 +129,7 @@ flowchart TB
     CA["人或 LLM 候选<br/>算法、融合、Tiling、workspace、Host Tiling"]
     MS["msl-single<br/>单文件 MSL + taic-launch"]
     MB["msl-bundle<br/>候选 Host Tiling + MSL Device Kernel"]
-    NP["NPU Candidate Bundle<br/>Host Tiling + AscendC Device Kernel"]
+    NP["清微 NPU Candidate Bundle<br/>Host Tiling + 清微 Device Kernel"]
     TR --> PR --> CA
     CA --> MS
     CA --> MB
@@ -261,9 +277,11 @@ worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
   格式偏好重写上游合同。每类配置只有一个权威和读取器，不上游/本地双读。
 - `upstream-map.json` 是移植台账，不是运行期第二注册表。每项至少包含：
   `{component, source, upstream_path, action, local_path, reason, verification}`，其中
-  `action ∈ reuse|port|adapt|local`。功能重叠时必须另写 `selection_group`、`selected_source` 与
-  `alternatives_rejected`；同一 `selection_group` 只能有一个 `selected_source` 和一个运行期实现，
-  其他来源不进入 pack 或运行路径。local 必须有上游缺位或不适用证据。
+  `action ∈ reference|reuse|port|adapt|local`。`reference` 只作方法论证据，代码与专用知识均不进入本地；
+  `reuse|port|adapt` 仅可用于通过硬件中立检查的内容。功能重叠时必须另写 `selection_group`、
+  `selected_source` 与 `alternatives_rejected`；同一 responsibility 只能有一个权威实现，其他来源不进入
+  pack 或运行路径。职责互补时另写 `composition_role` 与接口，允许组合但不得重复承担同一职责。
+  local 必须有上游缺位或不适用证据。
   唯一允许的并存是交付机制不同（msl-single/msl-bundle）或职责不同（正确性判决 vs 诊断统计），
   不是 KDA 路径与 CAKE2 路径并存。
 - pack 文件集由注册关系与仓库内静态 import 闭包自动派生；知识只进 guidance_catalog 和
@@ -287,8 +305,9 @@ worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
   的直接 evaluate 缺 pack 和 `build_identity_mismatch`。G0 不为冻结语料重跑 GPU/NPU。
 - 盘点 KDA/CAKE2 的实际仓库、commit、license、Task Contract、reference、Candidate、prepare/run、
   Host Tiling、Bundle、Track adapter、构建与 profiler。形成 `upstream-map.json`，明确 reuse/port/adapt/
-  local 与本地落点；不得在未盘点时默认本地重写。功能等价组件必须完成单选并记录未采用项；
-  同一 selection_group 不得保留两个运行期 reader/builder/validator/evaluator。
+  local 与本地落点；不得在未盘点时默认本地重写。按 responsibility 去重，互补职责登记组合接口；
+  同一 responsibility 不得保留两个运行期实现。CUDA/CANN 相关项只能标 reference/rejected，
+  不得进入生产、pack 或 agent_guidance。
 - 冻结 v1/v2 性能登记比例；由人类冻结 NPU 设备/toolchain/track、代表算子、厂商 baseline、阈值、预算、
   Host/Device/端到端口径与确认批次。缺失项标 human_pending，NPU-P0 不得开始。
 
@@ -301,10 +320,10 @@ worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
 
 ### A2. 移植候选交付并补 Metal 缺口
 
-- 本地实现通用 Candidate/ExecutionGeometry/Canonical Bundle；适配 KDA 具体候选的 prepare/run 生命周期和
-  CAKE2 `op_host/op_kernel` 布局。A2 的通过门只包含 Mac 与通用层，不包含 Ascend 工具链。
-- CAKE2 `gen_project.py`/`build_and_install.py`/`generate_pybind.py`/EasyAsc/msprof 的真实适配归 NPU-P0；
-  A2 至多覆盖其离线协议单测，不阻塞 Mac A4。
+- 本地实现通用 Candidate/ExecutionGeometry/Canonical Bundle；只适配硬件中立的 KDA prepare/run 生命周期
+  和 Host+Device 分工方法论，不移植 CUDA 调度/内核或 Ascend 项目文件。A2 通过门只含 Mac 与通用层。
+- 清微 NPU 的工具链、ABI、profiler 与构建适配归 NPU-P0；CANN msopgen/build/install/EasyAsc/msprof
+  不属于任何阶段的移植范围。
 - 只实现上游缺失的 Metal ABI/几何/反射绑定能力，以及 `build_profiles.json` 一次性切换。不得借适配之名
   新建逐题 tiling 或 pattern 规则库。
 
@@ -335,10 +354,9 @@ v1/v2 同设备性能对照。
 
 ### NPU-P0. 真实 NPU 性能风险门
 
-与 Mac A5/A6 分叉并行，需单独授权真实 NPU。复用 CAKE2 的真实 msopgen/build/install/PyBind/msprof
-适配器和 Host+Device 示例，不把文档中的 Host Tiling 或 EvoOrchestrator 当作现成通用实现。本地绑定
-CandidateArtifact/ExecutionGeometry 后，在简单算子和复杂融合算子上验证真实构建、正确性、计时边界、
-厂商 baseline 与冻结阈值。未授权、未实测、
+与 Mac A5/A6 分叉并行，需单独授权真实**清微 NPU**。只复用上游架构、流程和方法论；设备、
+toolchain、Candidate ABI、profiler、厂商 baseline 和计时口径均由清微目标合同冻结。不得引入 CUDA、
+AscendC、CANN、EasyAsc、msopgen 或 msprof。未授权、未实测、
 未达标分别标 blocked/performance_unproven/performance_below_target；Mac、模拟与 correctness_only
 不替代 NPU 性能结论。
 
@@ -357,9 +375,9 @@ CandidateArtifact/ExecutionGeometry 后，在简单算子和复杂融合算子�
 
 ## 6. 最终验收
 
-1. **移植真实发生且功能位单选**：upstream-map 的每项都有来源、license、action、本地落点和验证；
-   同一 selection_group 只有一个运行期实现，未采用来源只留台账，不形成 KDA/CAKE2 双路径；
-   上游已有适用实现的组件没有本地重复版本，local 项都有缺位证据。
+1. **移植真实发生且职责去重**：upstream-map 的每项都有来源、license、action、本地落点和验证；
+   同一 responsibility 只有一个权威实现，互补组件有清晰接口，未形成 KDA/CAKE2 双路径；
+   CUDA 与 Ascend/CANN 的代码、工具链、芯片知识和专用 guidance 未进入生产、pack 或 agent_guidance。
 2. **候选表达力未被限制**：无 pattern/拓扑/循环/goto 风格闸门，符号几何、派生标量、多阶段、read_write、
    workspace 与 SDK 原生能力可用；相同候选字节不因作者或来源改变 verdict。
 3. **Track 是交付而非算法库**：msl-single 与 msl-bundle 经正式 track_id 分别真实成证，Host Tiling 属于
