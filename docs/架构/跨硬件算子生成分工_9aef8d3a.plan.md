@@ -85,7 +85,7 @@ LLM、committee 或会话不同而改变 verdict。
 | 任务合同 | CAKE2 `op_desc` 互操作摘要、真实 PyTorch reference、采样与数值指标；KDA 仅有合同文字说明 | **本地 OpSpec v2 主合同与 loader**（上游没有完整合同）、现有任务迁移和 G0 对照 | 把 op_desc 示例当完整 schema，或另造 IR/pattern |
 | 候选交付 | KDA `prepare/run` 生命周期与通用反作弊方法；Host+Device 分工仅作方法论 | **本地 Candidate/ExecutionGeometry/Canonical Bundle**、Metal 与清微运行时；不移植 CUDA 调度或 Ascend 项目代码 | 把 CUDA/CANN 候选或芯片知识带入 Track/production/guidance |
 | Track | 上游多交付路线的方法论；硬件中立校验思想 | **本地 TrackRegistry**、Metal track 与清微 NPU track | 以 CUDA/CANN 交付路线充当本地路线，或按 op_name/shape 路由算法 |
-| 构建与证据 | 上游可复用的构建诊断、profiler 与测量工具 | 唯一 artifact_builder、BuildOutcome、schema 4、evaluation identity、fresh confirmation、resume、远程安全与审计 | 用上游结论替代本地证据，削弱发布门 |
+| 构建与证据 | KDA 通用打包/快照哈希的硬件中立部分，以及上游冷启动剔除与计时方法论 | 唯一 artifact_builder、BuildOutcome、Metal/清微构建与 profiler 适配、schema 4、evaluation identity、fresh confirmation、resume、远程安全与审计 | 用上游结论替代本地证据，或移植 CUDA/CANN 构建与 profiler |
 | 知识与技能 | 适用的优化指南、诊断技能和硬件文档 | guidance_catalog 与 agent_guidance 哈希 | 知识正文进入 task_pack_digest |
 
 **上游不是许可证或证据的替代品。** 移植文件必须保留 license/notice 与 repo/commit/path；上游性能结论
@@ -121,7 +121,7 @@ flowchart TB
     SI --> ABI --> TMC
   end
 
-  MAP -->|"真实 reference / 采样 / 构建与 profiler 适配"| TC
+  MAP -->|"真实 reference / 硬件中立采样与数值诊断"| TC
 
   subgraph CT["候选与 task-agnostic Track"]
     TR["TrackRegistry<br/>正式 track_id + 能力校验"]
@@ -226,26 +226,28 @@ Track 必须 task-agnostic：不得按 `op_name` 或 shape 提供 tiling 算法�
 2. `msl-bundle`/`1`：候选 Host Tiling/Launch + MSL Device Kernel Bundle。
 
 两者使用同一任务合同、reference 与 ABI 题面，独立构建、正确性与确认，speedup/cache/confirmation 不串用。
-优先复用上游真实 Host+Device 项目布局、构建和绑定适配器；上游没有通用 CandidateArtifact、canonical
-ArtifactBundle 或几何摘要协议，这些必须由本地实现。若现有单文本 agent 链需要传输适配，可使用固定 manifest +
+只复用上游 Host+Device 分工方法论；构建、绑定与运行时适配器均针对本地 Metal 与清微 NPU 实现，
+不引入 CANN/CUDA 适配器。上游没有通用 CandidateArtifact、canonical ArtifactBundle 或几何摘要协议，
+这些必须由本地实现。若现有单文本 agent 链需要传输适配，可使用固定 manifest +
 `taic-file` 文件段的**单提交分段 envelope**。它只是传输格式，不是新的候选语义或第二套 Bundle：
-解析为受控 ArtifactBundle 后，candidate_sha256 使用 canonical artifact_set_digest，prune_work、自检、
+解析为受控 ArtifactBundle 后，candidate_sha256 使用**仅候选源 entries** 的 canonical manifest digest，prune_work、自检、
 worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
 
 ### 2.4 构建、执行证据与发布
 
 - 候选只经唯一 artifact_builder，报告只用 schema 4；full+native+measured、逐批 identity match 与唯一
   发布谓词不因移植而改变。
-- `msl-single` 保持现有 candidate_sha256；Bundle 使用 artifact_set_digest。builder、worker、evaluator
-  共用同一 typed ExecutionGeometry，确认期漂移即 mismatch。
-- 构建后物化几何的统一归属是：完整 canonical ExecutionGeometry 以 `AUXILIARY` entry
-  （`execution_geometry.json`）同时进入 `BuildOutcome.bundle.entries` 与 `BuildOutcome.artifacts`，随后重算
-  `provenance.artifact_set_digest`。**现有确认门通过比较该 digest 拦截几何漂移**，它覆盖源码/候选 Bundle
-  与冻结几何等完整构建产物；`source_sha256/candidate_sha256` 仍只表示提交的候选。`native.descriptor`
-  另存几何 `schema_id/path/sha256` 并计入 `native_digest`，只作交叉审计，因为当前 policy 不直接比较
-  native_digest。顺序固定为编译 → 候选 Host Tiling → 冻结几何 entry → 重算 artifact_set_digest 与
-  descriptor/native_digest → correctness/benchmark/confirmation。不得事后修改 entry/descriptor，也不新增
-  EvalReport 自由字段。
+- **提交身份在构建前固定**：`candidate_sha256 == provenance.source_sha256`。`msl-single` 是单文件字节
+  SHA-256；`msl-bundle` 与清微 Bundle 是**仅含候选提交源文件 entries** 的 manifest digest。候选 Host
+  Tiling、Device Kernel、Schedule 均包含在内，builder 尚未追加任何构建产物。
+- **构建产物身份在构建后生成**：完整 canonical ExecutionGeometry 以 `AUXILIARY` entry
+  （`execution_geometry.json`）同时加入 `BuildOutcome.bundle.entries` 与 `BuildOutcome.artifacts`，随后重算
+  `provenance.artifact_set_digest`。它表示候选 entries + 冻结几何等完整构建产物，与提交身份不是同一个值。
+  现有确认门通过 `two_period` 比较该 digest 拦截几何漂移。`native.descriptor` 另存几何
+  `schema_id/path/sha256` 并计入 `native_digest`，只作交叉审计，因为当前 policy 不直接比较 native_digest。
+  顺序固定为编译 → 候选 Host Tiling → 冻结几何 entry → 重算 artifact_set_digest 与
+  descriptor/native_digest → correctness/benchmark/confirmation。builder、worker、evaluator 共用同一份
+  typed ExecutionGeometry。不得事后修改 entry/descriptor，也不新增 EvalReport 自由字段。
 - 没有 baseline 就走 `effective_correctness_only`，不发布 speedup；reference、known_good 或模拟结果不能
   冒充 baseline 或真实设备证据。
 
@@ -278,10 +280,11 @@ worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
 - `upstream-map.json` 是移植台账，不是运行期第二注册表。每项至少包含：
   `{component, source, upstream_path, action, local_path, reason, verification}`，其中
   `action ∈ reference|reuse|port|adapt|local`。`reference` 只作方法论证据，代码与专用知识均不进入本地；
-  `reuse|port|adapt` 仅可用于通过硬件中立检查的内容。功能重叠时必须另写 `selection_group`、
-  `selected_source` 与 `alternatives_rejected`；同一 responsibility 只能有一个权威实现，其他来源不进入
-  pack 或运行路径。职责互补时另写 `composition_role` 与接口，允许组合但不得重复承担同一职责。
-  local 必须有上游缺位或不适用证据。
+  `reuse|port|adapt` 仅可用于通过硬件中立检查的内容。功能重叠时必须在顶层 `selection_groups`
+  或对应条目上登记 `selection_group`、`selected_source` 与 `alternatives_rejected`；同一 responsibility
+  只能有一个权威实现，其他来源不进入 pack 或运行路径。职责互补时在顶层或条目上写
+  `composition_role` 与组合接口，条目可通过 `selection_group` 链接到顶层职责组，允许组合但不得重复
+  承担同一职责。local 必须有上游缺位或不适用证据。
   唯一允许的并存是交付机制不同（msl-single/msl-bundle）或职责不同（正确性判决 vs 诊断统计），
   不是 KDA 路径与 CAKE2 路径并存。
 - pack 文件集由注册关系与仓库内静态 import 闭包自动派生；知识只进 guidance_catalog 和

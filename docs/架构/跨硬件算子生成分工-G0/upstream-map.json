@@ -99,6 +99,8 @@
     },
     {
       "component": "candidate_prepare_run_idiom",
+      "selection_group": "candidate_lifecycle",
+      "composition_role": "candidate_lifecycle",
       "source": "kda-kernels",
       "upstream_path": "kda-tirx/kernel.py; kda-cake-ptx/kernel.py",
       "action": "adapt",
@@ -126,6 +128,8 @@
     },
     {
       "component": "task_contract_schema_and_loader",
+      "selection_group": "task_contract",
+      "composition_role": "authoritative_contract",
       "source": "kda-workflow + cake2",
       "upstream_path": "kda docs/agent-flow.md; CAKE2 skills/op-desc-generation/references/op_desc_template.json",
       "action": "local",
@@ -135,6 +139,8 @@
     },
     {
       "component": "op_desc_interoperability_summary",
+      "selection_group": "task_contract",
+      "composition_role": "interoperability_summary_only",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/op-desc-generation/references/op_desc_template.json",
       "action": "adapt",
@@ -144,6 +150,8 @@
     },
     {
       "component": "reference_examples",
+      "selection_group": "task_contract",
+      "composition_role": "independent_reference",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/dsl-baseline-generation/references/input_example/rms_norm.py; skills/reference-generation/references/linear_softplus.py",
       "action": "port",
@@ -153,6 +161,8 @@
     },
     {
       "component": "input_generation_and_numeric_metrics",
+      "selection_group": "numeric_verdict",
+      "composition_role": "sampling_and_diagnostics_only",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/datagen.py; precision.py; ulp.py; constants.py",
       "action": "adapt",
@@ -180,6 +190,8 @@
     },
     {
       "component": "npu_msopgen_scaffold",
+      "selection_group": "npu_build_execution_and_profiling",
+      "composition_role": "rejected_reference_only",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascend-call-generation/scripts/gen_project.py",
       "action": "reference",
@@ -189,6 +201,8 @@
     },
     {
       "component": "npu_build_install_and_packaging",
+      "selection_group": "npu_build_execution_and_profiling",
+      "composition_role": "rejected_reference_only",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/build_and_install.py",
       "action": "reference",
@@ -198,6 +212,8 @@
     },
     {
       "component": "python_binding_and_acl_bridge",
+      "selection_group": "npu_build_execution_and_profiling",
+      "composition_role": "rejected_reference_only",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/generate_pybind.py; skills/easyasc-dsl-bridge/scripts/gen_bridge.py",
       "action": "reference",
@@ -207,6 +223,8 @@
     },
     {
       "component": "easyasc_adapters",
+      "selection_group": "npu_build_execution_and_profiling",
+      "composition_role": "rejected_reference_only",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/easyasc-codegen/scripts/run_codegen.py; skills/dsl-easyasc-codegen/scripts/run_smoke.py; skills/dsl-easyasc-post/scripts/verify.py",
       "action": "reference",
@@ -216,6 +234,8 @@
     },
     {
       "component": "device_timing_and_msprof",
+      "selection_group": "npu_build_execution_and_profiling",
+      "composition_role": "rejected_reference_only",
       "source": "cake2",
       "upstream_path": "plugins-community/collaborative-agent-kernel-evolution/skills/ascendc-evaluation/scripts/ascend_performance_test.py; performance.py",
       "action": "reference",
