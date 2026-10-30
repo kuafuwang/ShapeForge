@@ -106,7 +106,7 @@
       "action": "port",
       "local_path": "tcenv evaluation/sampling helpers",
       "reason": "Substantial seeded generation and numerical metrics exist; main evaluator acceptance differs from local tolerance/fail-closed rules.",
-      "verification": "A1/A3 numeric golden vectors, IEEE and multi-output negatives."
+      "verification": "A1/A3 numeric golden vectors, IEEE and multi-output negatives; pass/fail remains local tolerances + scaled_error, CAKE2 metrics are diagnostic only and existing seed streams are unchanged."
     },
     {
       "component": "candidate_geometry_and_canonical_bundle",
@@ -115,7 +115,7 @@
       "action": "local",
       "local_path": "tcenv CandidateArtifact, ExecutionGeometry and ArtifactBundle adapters",
       "reason": "Neither source has a generic CandidateArtifact, canonical ArtifactBundle, artifact digest, ExecutionGeometry or post-build geometry freeze.",
-      "verification": "A2/A3 geometry artifact, native.descriptor/native_digest and replay tests."
+      "verification": "A2/A3 geometry entry, provenance.artifact_set_digest confirmation comparison, native.descriptor cross-audit and replay tests."
     },
     {
       "component": "host_device_project_layout",

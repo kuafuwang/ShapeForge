@@ -6,16 +6,16 @@ todos:
     content: G0 冻结当前代码与旧路径语料、既有失败和 NPU 性能合同输入；KDA/CAKE2 初次源码盘点已完成并写入 upstream-map.json，仍需复核维护该台账。每项记录 repo/commit/path/license、reuse|port|adapt|local、本地落点、理由与验收；未证明上游缺位不得选择 local。G0 不跑模型 kernel 或 GPU/NPU，未完成前不改生产路径
     status: pending
   - id: contract-and-tracks
-    content: A1 源码审计已证明 KDA 只有合同文字说明、CAKE2 op_desc 只是不完整示例，因此本地实现 OpSpec v2 主合同与 loader；移植真实 reference、采样和数值评测。op_desc 仅作互操作摘要，不充当权威。公式只作摘要，题面展示合同、只读 reference 与 TensorMemoryContract；attrs 纯语义、无 IR 删除 uses；v1/v2 无 fallback，语义冲突判 semantic_unresolved
+    content: A1 源码审计已证明 KDA 只有合同文字说明、CAKE2 op_desc 只是不完整示例，因此本地实现 OpSpec v2 主合同与 loader；移植真实 reference 和采样器，CAKE2 precision/ulp 仅作诊断统计，pass/fail 唯一公式仍是本仓库 tolerances + scaled_error，既有种子流/cases/error_scale 不变。op_desc 仅作互操作摘要；v1/v2 无 fallback，语义冲突判 semantic_unresolved
     status: pending
   - id: target-abi-and-geometry
-    content: A2 通用 Candidate/Geometry/Canonical Bundle 经审计在上游缺位，由本地实现；适配 KDA 具体候选的 prepare/run 范式，移植 CAKE2 Host+Device 项目布局、msopgen/build/install/PyBind 和 profiler。Metal 补 TensorMemoryContract、独立 fallback ExecutionGeometry、符号几何、when、Derived Scalars、MSL 反射按名绑定、多阶段与 output 读写；删除循环/goto 风格审查
+    content: A2 通用 Candidate/Geometry/Canonical Bundle 经审计在上游缺位，由本地实现；适配 KDA 具体候选的 prepare/run 生命周期与 CAKE2 op_host/op_kernel 布局。A2 只要求 Mac 与通用层：TensorMemoryContract、独立 fallback ExecutionGeometry、符号几何、when、Derived Scalars、MSL 反射按名绑定、多阶段与 output 读写；CAKE2 msopgen/build/install/PyBind/EasyAsc/msprof 的真实适配归 NPU-P0，不阻塞 Mac A4
     status: pending
   - id: expressiveness-charter
     content: A2 同批闭合 read_write、workspace 与计时协议：out1/out2/out3 前恢复 read_write 初值、跳过 poison/unwritten 并用 GUARD_PATTERN；连续 reps 后仅 guard/硬件状态检查，fresh-rotation 与 stateful timing 不串口径；workspace_fills 只清声明 zero 的区域；Host Tiling/prepare 不把输入相关工作藏到计时外
     status: pending
   - id: registries-and-discovery
-    content: A3 将移植的 Candidate/Track 执行结果接入本仓库证据底座：CandidateArtifact、artifact_set_digest、BuildOutcome、schema 4、run_config schema 3、TaskLocator/evaluate_task、Reference/BaselineRegistry、pack 静态闭包和任务自动发现。构建后几何作为 artifact，由 native.descriptor 引用并计入 native_digest；知识只进 agent_guidance，Track 证据不串用
+    content: A3 将移植的 Candidate/Track 执行结果接入本仓库证据底座：CandidateArtifact、artifact_set_digest、BuildOutcome、schema 4、run_config schema 3、TaskLocator/evaluate_task、Reference/BaselineRegistry、pack 静态闭包和任务自动发现。冻结几何以 AUXILIARY entry 进入 bundle.entries/artifacts 并重算 provenance.artifact_set_digest，确认门以该 digest 比较几何；native.descriptor 只作交叉审计。知识只进 agent_guidance
     status: pending
   - id: vertical-slice
     content: A4 用 RMSNorm、全新算子与融合算子做真实 Mac 垂直切片。首批本地 Metal track 为 msl-single 与 msl-bundle（仅因上游无 Metal 交付）：同一 OpSpec+reference+ABI 题面，分别验证单文件与候选 Host Tiling+Device Kernel Bundle，不是双 Prompt。符号几何、派生标量、多阶段绑定、read_write、workspace、作者中立均有回归；直接 evaluate 缺 pack 与 build_identity_mismatch 未修复并 GPU 复测前不得通过
@@ -79,8 +79,10 @@ LLM、committee 或会话不同而改变 verdict。
 - 源码审计已经证明上游没有完整通用 Task Contract：KDA `docs/agent-flow.md` 只有文字要求，CAKE2
   `op_desc_template.json` 只是缺少 read_write、alias、workspace、容差、work accounting 和 baseline 身份的
   示例。因此本地必须实现 `opspec.json` v2 主合同与 loader；这不是绕过移植原则，而是
-  `upstream-map.json` 中有证据的 local 项。上游真实 reference、采样与数值指标仍优先移植，op_desc 仅作
-  互操作摘要，不能成为第二权威。
+  `upstream-map.json` 中有证据的 local 项。上游真实 reference 与采样器优先移植，op_desc 仅作互操作摘要，
+  不能成为第二权威。**正确性 pass/fail 的唯一公式仍是本仓库 tolerances + `scaled_error`**；CAKE2
+  `precision.py/ulp.py` 只作诊断统计，`datagen.py` 仅作 `sampling_profiles.json` 的可选采样器，
+  不改变既有种子流、cases、error scale 或 R0–R6/G0 黄金向量。
 - 默认题面统一展示任务合同、只读 `reference.py` 与 `TensorMemoryContract`。formula 只是简短摘要，
   reference 提供无歧义数学语义；候选不能 import reference 充当自己的实现。只有 G0 冻结的 `sem_*`
   白名单可用 `display.json.spec_text` 覆盖题面。
@@ -130,10 +132,14 @@ worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
   发布谓词不因移植而改变。
 - `msl-single` 保持现有 candidate_sha256；Bundle 使用 artifact_set_digest。builder、worker、evaluator
   共用同一 typed ExecutionGeometry，确认期漂移即 mismatch。
-- 构建后物化几何的统一归属是：完整 canonical ExecutionGeometry 进入 `BuildOutcome.artifacts`，
-  `BuildOutcome.bundle.native.descriptor` 记录 `schema_id/path/sha256` 并计入 `native_digest`。顺序固定为
-  编译 → 候选 Host Tiling → 冻结几何 artifact → descriptor/native_digest → correctness/benchmark/
-  confirmation。不得事后修改 descriptor，也不新增 EvalReport 自由字段。
+- 构建后物化几何的统一归属是：完整 canonical ExecutionGeometry 以 `AUXILIARY` entry
+  （`execution_geometry.json`）同时进入 `BuildOutcome.bundle.entries` 与 `BuildOutcome.artifacts`，随后重算
+  `provenance.artifact_set_digest`。**现有确认门通过比较该 digest 拦截几何漂移**，它覆盖源码/候选 Bundle
+  与冻结几何等完整构建产物；`source_sha256/candidate_sha256` 仍只表示提交的候选。`native.descriptor`
+  另存几何 `schema_id/path/sha256` 并计入 `native_digest`，只作交叉审计，因为当前 policy 不直接比较
+  native_digest。顺序固定为编译 → 候选 Host Tiling → 冻结几何 entry → 重算 artifact_set_digest 与
+  descriptor/native_digest → correctness/benchmark/confirmation。不得事后修改 entry/descriptor，也不新增
+  EvalReport 自由字段。
 - 没有 baseline 就走 `effective_correctness_only`，不发布 speedup；reference、known_good 或模拟结果不能
   冒充 baseline 或真实设备证据。
 
@@ -193,14 +199,17 @@ worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
 
 ### A1. 移植任务合同与 reference
 
-- 按 upstream-map 实现本地 OpSpec v2 主合同与 loader，移植真实 reference、采样、error scale 与数值评测；
-  op_desc 仅作互操作摘要，不写“上游已有完整合同”的兼容层。
+- 按 upstream-map 实现本地 OpSpec v2 主合同与 loader，移植真实 reference 与采样器；op_desc 仅作互操作
+  摘要，不写“上游已有完整合同”的兼容层。pass/fail 只认本仓库 tolerances + scaled_error，CAKE2
+  precision/ulp 仅作诊断，不得改变 G0/A5 的判决与种子流。
 - 完成现有任务到所选合同的映射与 G0 对照、语义冲突和 v1/v2 负例。
 
 ### A2. 移植候选交付并补 Metal 缺口
 
-- 本地实现通用 Candidate/ExecutionGeometry/Canonical Bundle；适配 KDA 具体候选的 prepare/run 范式，
-  移植 CAKE2 Host+Device 布局、msopgen/build/install/PyBind、EasyAsc 与 profiler 适配器。
+- 本地实现通用 Candidate/ExecutionGeometry/Canonical Bundle；适配 KDA 具体候选的 prepare/run 生命周期和
+  CAKE2 `op_host/op_kernel` 布局。A2 的通过门只包含 Mac 与通用层，不包含 Ascend 工具链。
+- CAKE2 `gen_project.py`/`build_and_install.py`/`generate_pybind.py`/EasyAsc/msprof 的真实适配归 NPU-P0；
+  A2 至多覆盖其离线协议单测，不阻塞 Mac A4。
 - 只实现上游缺失的 Metal ABI/几何/反射绑定能力，以及 `build_profiles.json` 一次性切换。不得借适配之名
   新建逐题 tiling 或 pattern 规则库。
 
@@ -208,8 +217,9 @@ worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
 
 - 贯通 CandidateArtifact、Reference/BaselineRegistry、自动发现、静态 pack 闭包、TaskLocator 与
   evaluate_task；支持暂存任务跨本地 worker 重建并校验指纹。
-- 接入 BuildOutcome、native.descriptor 几何引用、schema 4、run_config schema 3、resume/replay 与
-  agent_guidance；正式 track_id 未知/不支持即拒绝，v1 仅允许 track_id=None。
+- 接入 BuildOutcome、几何 entry/provenance.artifact_set_digest 的确认比较与 native.descriptor 交叉审计、
+  schema 4、run_config schema 3、resume/replay 与 agent_guidance；正式 track_id 未知/不支持即拒绝，
+  v1 仅允许 track_id=None。
 - 若使用单提交分段 envelope，完成 kernel_agent/prune_work/自检/worker 全链验收。
 
 ### A4. 真实 Mac 垂直切片
@@ -258,8 +268,7 @@ CandidateArtifact/ExecutionGeometry 后，在简单算子和复杂融合算子�
    workspace 与 SDK 原生能力可用；相同候选字节不因作者或来源改变 verdict。
 3. **Track 是交付而非算法库**：msl-single 与 msl-bundle 经正式 track_id 分别真实成证，Host Tiling 属于
    候选，Track 不按 op_name/shape 提供 tiling，证据不串用。
-4. **证据门没有降级**：唯一 builder、schema 4、evaluation identity、native.descriptor 几何引用、fresh
-   confirmation 与唯一发布谓词完整有效；缺 pack 和 build_identity_mismatch 已修复并经 GPU 复测。
+4. **证据门没有降级**：唯一 builder、schema 4、evaluation identity、fresh confirmation 与唯一发布谓词完整有效；冻结几何 entry 已纳入 provenance.artifact_set_digest 的搜索/确认比较，native.descriptor 仅作交叉审计；缺 pack 和 build_identity_mismatch 已修复并经 GPU 复测。
 5. **正确性与计时诚实**：read_write 三连跑/终值/隔离、workspace 清零、fresh-rotation/stateful timing、
    prepare/run 和 Host Tiling 计时边界全部通过固定负例，无计时外隐藏工作。
 6. **迁移可重放且无性能暗退**：G0 对照、阶段 verify/manifest/负例和 A5 性能记录齐全；超比例退化有原因
