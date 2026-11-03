@@ -1,6 +1,6 @@
 ---
 name: taic-tools
-description: Read the Metal notes, check a kernel with the commands in TASK.md, and leave NOTES.md.
+description: The kernel-session tool contract inside a TAIC task directory — read the Metal reference, run the check and evaluation commands written in TASK.md, and leave NOTES.md. Use when writing, checking or timing a candidate kernel in a task working directory, or when deciding whether a Metal API, dtype or instruction is available on this chip. Do not use for editing Triton sources, changing harness code, or starting paid searches — those go through the repository's normal contribution path.
 ---
 
 # taic tools

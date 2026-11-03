@@ -57,8 +57,13 @@ Candidates may use persistent kernels, multi-stage state machines and public nat
 
 Requirements: macOS on Apple Silicon, Xcode/Metal toolchain, `uv`, and the Python environment described by `pyproject.toml`.
 
+If any of that is missing, `uv run python scripts/doctor.py` checks it in one command and prints the single next action for each problem.
+
 ```bash
 uv sync
+
+# Prove this checkout can run at all (toolchain, GPU, tasks, runs dir, dashboard)
+uv run python scripts/doctor.py
 
 # Discover standard task contracts
 uv run python -m tcenv.cli tasks
@@ -70,6 +75,23 @@ uv run python -m tcenv.cli naive gemm
 uv run python -m taic.cli brief
 uv run python -m taic.cli brief RUN_DIR
 ```
+
+### What success looks like
+
+| Command | Expected output |
+| --- | --- |
+| `scripts/doctor.py` | ten `[PASS]` lines, then `Next:` only if something is off; exit code 0 |
+| `tcenv.cli tasks` | one line per task with `grid=`, `threads=`, `args=`, `flops=` |
+| `tcenv.cli naive gemm` | a correctness verdict, then microseconds and the speedup |
+| `taic.cli brief` | the search best and the confirmation number, kept separate |
+
+### If something fails
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `[Errno 48] error while attempting to bind on address ('127.0.0.1', 8765)` | another dashboard already owns the port | use `OBSERVE_PORT=8766 uv run python -m observe`, or stop the old one: `lsof -nP -tiTCP:8765 -sTCP:LISTEN \| xargs kill` |
+| `ModuleNotFoundError: No module named 'tcenv'` | not running inside the project environment | `uv sync`, then prefix commands with `uv run` |
+| a `code=` you do not recognise | a typed failure from the task contract or evidence plane | look it up in [docs/失败码.md](docs/失败码.md): meaning, common causes, next action |
 
 ### Tests
 

@@ -58,8 +58,13 @@ Harness
 
 环境要求：Apple Silicon macOS、Xcode/Metal 工具链、`uv`，以及 `pyproject.toml` 声明的 Python 依赖。
 
+缺东西时，先跑一条命令自检：`uv run python scripts/doctor.py` 会逐项检查并只给出每条问题的下一步。
+
 ```bash
 uv sync
+
+# 一份自检：工具链、GPU、任务、运行目录、看板
+uv run python scripts/doctor.py
 
 # 查看标准任务合同
 uv run python -m tcenv.cli tasks
@@ -71,6 +76,23 @@ uv run python -m tcenv.cli naive gemm
 uv run python -m taic.cli brief
 uv run python -m taic.cli brief RUN_DIR
 ```
+
+### 跑对了长什么样
+
+| 命令 | 该看到的输出 |
+| --- | --- |
+| `scripts/doctor.py` | 十行 `[PASS]`；有问题时才有 `Next:`；退出码 0 |
+| `tcenv.cli tasks` | 每个任务一行，带 `grid=`、`threads=`、`args=`、`flops=` |
+| `tcenv.cli naive gemm` | 先给正确性结论，再给微秒数和加速比 |
+| `taic.cli brief` | 搜索最优与确认加速比分开列出 |
+
+### 报错怎么办
+
+| 报错 | 原因 | 怎么修 |
+| --- | --- | --- |
+| `[Errno 48] error while attempting to bind on address ('127.0.0.1', 8765)` | 已经有一个看板占着这个端口 | 换端口 `OBSERVE_PORT=8766 uv run python -m observe`，或停掉旧的：`lsof -nP -tiTCP:8765 -sTCP:LISTEN \| xargs kill` |
+| `ModuleNotFoundError: No module named 'tcenv'` | 没在项目环境里跑 | 先 `uv sync`，命令前加 `uv run` |
+| 不认识的 `code=` | 任务合同或证据平面的 typed 失败 | 查 [docs/失败码.md](docs/失败码.md)：含义、常见原因、下一步 |
 
 ### 测试
 

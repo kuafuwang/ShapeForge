@@ -67,6 +67,11 @@ The living plan is `docs/架构/shape-portfolio实施计划.md`. Read it before 
 | Model/P2 security | `docs/security.md` |
 | Test layout and failure protocol | `tests/README.md` and layer READMEs |
 | Agent skill entry points | `docs/agent-skills.md` |
+| Kernel-writing agent reading list | `docs/写核代理读什么.md` |
+| Feedback and harness review | `docs/代理反馈.md` |
+| Trusted-harness plan index | `docs/可信harness/README.md` |
+| Typed failure codes and what to do next | `docs/失败码.md` |
+| Environment self-check | `scripts/doctor.py` |
 
 Backend code lives under `tcenv/backends/<id>/`; backend metadata, skills and wiki under `backends/<id>/`; chip profiles, measurements and trust under `targets/<id>/`.
 

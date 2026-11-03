@@ -14,8 +14,8 @@ This skill is **not** permission to change the harness. The human confirmation g
 Before acting, read:
 
 - [docs/代理反馈.md](../../../docs/代理反馈.md), especially **结构化提案、信任与 overlay** and **自由文本 → 人确认 → 结构化 → review**
-- [docs/架构/可信harness.md](../../../docs/架构/可信harness.md), especially §2.3 and §7
-- [docs/可信harness实现.md](../../../docs/可信harness实现.md), for the current CLI/API.
+- [docs/可信harness/README.md](../../../docs/可信harness/README.md)，这一组文档的索引；架构与理论看同目录的 `架构与理论.md`
+- [docs/可信harness/实现交接.md](../../../docs/可信harness/实现交接.md)，当前的 CLI/API。
 
 The canonical distinction: a free-text suggestion is a human-reviewed claim, not a proposal. It has a `run_id#seq#digest` identity, no `proposal_key`, and no automatic overlay or LLM review. A structured `harness-proposal` has `surface`, `scope`, `action`, `evidence`, `rationale`, a `proposal_key`, and machine checks.
 

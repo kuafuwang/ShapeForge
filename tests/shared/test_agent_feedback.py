@@ -492,12 +492,16 @@ def test_the_fixed_contract_names_the_rules_and_stays_inside_the_budget():
 
 
 def test_the_new_doc_links_resolve():
-    """@brief 验证 docs/README.md 的两个链接指向真实文件，且两份新文档互链并写着同一组数字。"""
+    """@brief 两份新文档都在、互链、被 AGENTS.md 收录，且写着同一组数字。
+
+    项目只保留一个入口，AGENTS.md 就是那个入口：删掉 docs/README.md 之后，
+    这两份文档的可达性由它保证，所以断言对象换成 AGENTS.md。
+    """
     root = Path(__file__).resolve().parents[2]
-    readme = (root / "docs" / "README.md").read_text(encoding="utf-8")
+    agents = (root / "AGENTS.md").read_text(encoding="utf-8")
     for name in ("写核代理读什么.md", "代理反馈.md"):
-        assert f"({name})" in readme or f"]({name})" in readme
-        assert (root / "docs" / name).is_file()
+        assert (root / "docs" / name).is_file(), f"docs/{name} 不存在"
+        assert name in agents, f"AGENTS.md 没有指向 docs/{name}"
     charter = (root / "docs" / "代理反馈.md").read_text(encoding="utf-8")
     guide = (root / "docs" / "写核代理读什么.md").read_text(encoding="utf-8")
     assert "写核代理读什么.md" in charter
