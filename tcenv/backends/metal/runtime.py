@@ -588,7 +588,7 @@ class MetalContext:
             from .native_batch import eligible
 
             if eligible(stages=list(stages), arg_sets=arg_sets, fills=fills):
-                wall, gpu = native.run(
+                wall, gpu = native.run_pipeline(
                     started=t0,
                     stages=list(stages),
                     grids=list(grids),

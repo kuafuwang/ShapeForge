@@ -195,6 +195,11 @@ def _install_heartbeat(path: str, target_id: str) -> None:
     )
     backend = load_backend(load_target(target_id).backend)
     backend.set_heartbeat_hooks(on_compile=compile_hooks, on_launch=launch_hooks)
+    # 与 v1 评测同一个组合根：原生批量编码器（launch-bound 小算子的计时不再被 PyObjC 主导）
+    # 与内部清零核都在任何计时窗口之前准备好；v2 路径此前漏了这一步，一直走 PyObjC。
+    prepare = getattr(backend, "prepare_context", None)
+    if callable(prepare):
+        prepare(backend.context())
     set_wait_hooks(
         lambda: os.pwrite(fd, f"W{time.time():020.6f}\n".encode(), 0),
         lambda: os.pwrite(fd, f"E{time.time():020.6f}\n".encode(), 0),

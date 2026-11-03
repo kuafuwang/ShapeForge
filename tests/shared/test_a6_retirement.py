@@ -155,7 +155,10 @@ ensure_lowerings("metal")
 live = {p.name: p.to_dict() for p in registered_profiles("metal")}
 lowering.register_lowerer = lambda *a, **k: None
 lowering.register_variant_factory = lambda *a, **k: None
-src = subprocess.check_output(["git", "show", "HEAD:tcenv/backends/metal/lowering.py"], text=True)
+# A6 的基线提交（见 docs/架构/跨硬件算子生成分工-阶段验收/A5.md、A6.md）：
+# 与「当前工作树」对比，而不是与「当前 HEAD」对比——HEAD 已经是 A6 之后的提交，
+# 其中 lowering.py 已不含退役 profile，head_only 自然为空。
+src = subprocess.check_output(["git", "show", "4a93ed2a4934fe526eedfcf4577de5dbd366e24a:tcenv/backends/metal/lowering.py"], text=True)
 mod = types.ModuleType("tcenv.backends.metal._head_lowering")
 mod.__package__ = "tcenv.backends.metal"
 sys.modules[mod.__name__] = mod

@@ -163,6 +163,8 @@ def launch_math(source: str) -> str | None:
         return None
     if re.search(r"(?m)^\s*math\s+safe\s*$", source or ""):
         return "safe"
+    if re.search(r"(?m)^\s*math\s+relaxed\s*$", source or ""):
+        return "relaxed"
     if "taic-launch" in (source or ""):
         return "fast"
     return None
@@ -324,8 +326,8 @@ def _parse_body(body: str, constants: dict[str, int]) -> LaunchSpec:
         parts = line.split()
         kind = parts[0]
         if kind == "math":
-            if seen_math or len(parts) != 2 or parts[1] not in ("fast", "safe"):
-                raise LaunchRejected("math must be a single `math fast` or `math safe` line")
+            if seen_math or len(parts) != 2 or parts[1] not in ("fast", "safe", "relaxed"):
+                raise LaunchRejected("math must be a single `math fast`, `math safe` or `math relaxed` line")
             math = parts[1]
             seen_math = True
         elif kind == "workspace":

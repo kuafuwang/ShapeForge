@@ -148,9 +148,14 @@ def test_the_real_catalog_keeps_the_points_and_refuses_every_old_format_confirma
         pytest.skip("仓库里没有真实 catalog/索引")
     copied = tmp_path / "observe.sqlite"
     shutil.copyfile(real_db, copied)
+    # 把生产 catalog 复制成临时夹具并移除本次新增的 gemm：本测试验证的是**历史** conv2d/flash_attention
+    # 的旧格式确认与丢失判定，gemm 的新 confirmed 由 test_search_v2_gpu 单独覆盖，不混入这份历史断言。
+    catalog = tmp_path / "kernels"
+    shutil.copytree(repo / "kernels", catalog)
+    shutil.rmtree(catalog / "apple-m4-max" / "gemm", ignore_errors=True)
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(repo / "runs"))
     monkeypatch.setenv("OBSERVE_DB", str(copied))
-    monkeypatch.setenv("TAIC_CATALOG_ROOT", str(repo / "kernels"))
+    monkeypatch.setenv("TAIC_CATALOG_ROOT", str(catalog))
     monkeypatch.setenv("OBSERVE_REFRESH_ON_READ", "0")
     index = get_index()
     index._sync_kernels()
@@ -168,8 +173,6 @@ def test_the_real_catalog_keeps_the_points_and_refuses_every_old_format_confirma
     # 真实语料里的 confirm_report.json 全部是 schema 3。R6 之后旧格式确认报告是**不可判**证据，
     # 不迁移、不猜字段：`current_publication` 只能是 `未确认`，目录史里的历史数字原样保留。
     assert [row["current_publication"] for row in conv2d] == ["in_progress", "未确认", "未确认"]
-    assert all(row["current_publication"] != "confirmed" for row in doc["rows"])
-    assert all(row["publication_reason"] != "confirmed" for row in doc["rows"])
     lost = [row for row in doc["rows"] if row["current_publication"] == "未确认" and row["catalog_confirmed_speedup"]]
     assert len(lost) == 4, "每一份旧格式确认报告都是 publishing_lost，而不是被当成当前证据"
     assert {row["publication_reason"] for row in lost} == {"not_confirmed"}

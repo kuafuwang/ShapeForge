@@ -53,6 +53,29 @@ class NativeBatchExecutor:
             ctypes.c_uint64,
         ]
         self._run.restype = ctypes.c_int
+        self._run_pipeline = library.taic_metal_run_pipeline
+        self._run_pipeline.argtypes = [
+            ctypes.c_void_p,                 # queue
+            ctypes.POINTER(ctypes.c_void_p), # pso_ptrs
+            ctypes.c_uint64,                 # nstages
+            ctypes.c_void_p,                 # fill_pso_ptr
+            ctypes.POINTER(ctypes.c_void_p), # buffers
+            ctypes.POINTER(ctypes.c_uint64), # offsets
+            ctypes.POINTER(ctypes.c_uint64), # slots
+            ctypes.POINTER(ctypes.c_uint64), # arg_counts
+            ctypes.c_uint64,                 # nsets
+            ctypes.c_uint64,                 # iters
+            ctypes.POINTER(_Size),           # grids
+            ctypes.POINTER(_Size),           # threads
+            ctypes.c_int,                    # concurrent
+            ctypes.POINTER(ctypes.c_void_p), # fill_buffers
+            ctypes.POINTER(ctypes.c_uint64), # fill_offsets
+            ctypes.POINTER(ctypes.c_uint64), # fill_sizes
+            ctypes.POINTER(ctypes.c_double), # gpu_s
+            ctypes.c_char_p,                 # error
+            ctypes.c_uint64,                 # error_capacity
+        ]
+        self._run_pipeline.restype = ctypes.c_int
 
     def run(
         self,
@@ -139,22 +162,128 @@ class NativeBatchExecutor:
         return time.perf_counter() - started, float(gpu.value)
 
 
+    def run_pipeline(
+        self,
+        *,
+        started: float,
+        stages: list[Any],
+        grids: list[tuple[int, int, int]],
+        threads: list[tuple[int, int, int]],
+        threadgroup_bytes: list[int],
+        arg_sets: list[list[list[tuple[int, Any]]]],
+        iters: int,
+        dispatch: str,
+        dispatch_recorder: Any,
+        dispatch_workspace: list[tuple[str, ...]] | None,
+    ) -> tuple[float, float]:
+        """@brief 多阶段、纯 buffer、无 fill 的整批 pipeline（与 PyObjC run_pipeline 同语义）。
+
+        @param started Python 侧计时起点。
+        @param stages 每段的 CompiledKernel。
+        @param grids 每段 grid。
+        @param threads 每段 threads。
+        @param threadgroup_bytes 每段动态 threadgroup 字节（本路径不支持，需为 0）。
+        @param arg_sets ``[set][stage][(slot, BufferArg)]``。
+        @param iters 轮数。
+        @param dispatch ``serial``/``concurrent``。
+        @param dispatch_recorder dispatch 审计回调（在实际 dispatch 前逐次调用）。
+        @param dispatch_workspace 各段 workspace 名（审计用）。
+        @return ``(outer_wall_s, gpu_s)``。
+        """
+        import time
+
+        from .runtime import MetalRuntimeError
+
+        nstages = len(stages)
+        arg_counts = (ctypes.c_uint64 * nstages)(*[len(one) for one in arg_sets[0]])
+        total_args = sum(arg_counts)
+        pso_ptrs = (ctypes.c_void_p * nstages)(*[objc.pyobjc_id(stage.pso) for stage in stages])
+        slots = (ctypes.c_uint64 * total_args)()
+        for si, one in enumerate(arg_sets[0]):
+            base = sum(arg_counts[:si])
+            for a, (slot, _arg) in enumerate(one):
+                slots[base + a] = slot
+        buffers = (ctypes.c_void_p * (len(arg_sets) * total_args))()
+        offsets = (ctypes.c_uint64 * (len(arg_sets) * total_args))()
+        retained = []
+        for s, one_set in enumerate(arg_sets):
+            arg_base = 0
+            for si, one in enumerate(one_set):
+                for a, (_slot, arg) in enumerate(one):
+                    index = s * total_args + arg_base + a
+                    retained.append(arg.buf)
+                    buffers[index] = objc.pyobjc_id(arg.buf)
+                    offsets[index] = arg.offset
+                arg_base += len(one)
+        grid_arr = (_Size * nstages)(*[_Size(*g) for g in grids])
+        thread_arr = (_Size * nstages)(*[_Size(*t) for t in threads])
+        if dispatch_recorder is not None:
+            for _ in range(iters):
+                for si, stage in enumerate(stages):
+                    dispatch_recorder(
+                        si, stage, grids[si], threads[si], int(threadgroup_bytes[si]),
+                        tuple(dispatch_workspace[si]) if dispatch_workspace is not None else (),
+                    )
+        gpu = ctypes.c_double()
+        error = ctypes.create_string_buffer(512)
+        from . import runtime as runtime_module
+
+        if runtime_module._LAUNCH_HOOKS:
+            runtime_module._LAUNCH_HOOKS[0]()
+        try:
+            result = self._run_pipeline(
+                objc.pyobjc_id(self.context.queue),
+                pso_ptrs,
+                nstages,
+                None,
+                buffers,
+                offsets,
+                slots,
+                arg_counts,
+                len(arg_sets),
+                iters,
+                grid_arr,
+                thread_arr,
+                int(dispatch == "concurrent"),
+                None,
+                None,
+                None,
+                ctypes.byref(gpu),
+                error,
+                len(error),
+            )
+        finally:
+            if runtime_module._LAUNCH_HOOKS:
+                runtime_module._LAUNCH_HOOKS[1]()
+        if result != 0:
+            raise MetalRuntimeError(error.value.decode(errors="replace") or f"native pipeline failed rc={result}")
+        self.calls += 1
+        return time.perf_counter() - started, float(gpu.value)
+
+
 def eligible(
     *,
     stages: list[Any],
     arg_sets: list[list[list[tuple[int, Any]]]],
     fills: list[list[tuple]],
 ) -> bool:
-    """@brief 仅接受与原生固定实现完全等价的单阶段无 fill buffer batch。"""
+    """@brief 多阶段、纯 buffer、无 fill 的 pipeline 可走原生编码器。"""
     from .runtime import BufferArg
 
-    if len(stages) != 1 or any(fills) or not arg_sets:
+    if not stages or any(fills) or not arg_sets:
         return False
+    # 动态 threadgroup 内存的原生路径尚未支持：有这些段的批次退回 PyObjC。
+    if any(any(binding.kind == "threadgroup" for binding in getattr(stage, "bindings", ())) for stage in stages):
+        return False
+    nstages = len(stages)
     return all(
         one_set
-        and len(one_set) == 1
-        and 0 < len(one_set[0]) <= 31
-        and all(isinstance(arg, BufferArg) and 0 <= slot <= 30 for slot, arg in one_set[0])
+        and len(one_set) == nstages
+        and all(
+            0 < len(stage_args) <= 31
+            and all(isinstance(arg, BufferArg) and 0 <= slot <= 30 for slot, arg in stage_args)
+            for stage_args in one_set
+        )
         for one_set in arg_sets
     )
 

@@ -96,4 +96,47 @@ Confidence: verified
 本机实测: `no_reasoning`（当时仍是 high）20 次里 14 次再截断、4 颗核；`low_effort` 10 次、6 颗核，均价 $0.0474 对 $0.0490。
 边界: deepseek-flash、48000 token 上限。换模型要重测。
 反例: 换到本来就少思考的模型时这条不适用。
+## small GEMM 与 MLX 的 steel kernel 性能相当，不是「打不过」
+
+Keywords: gemm small launch bound mlx steel baseline probe buffer slot measurement artifact
+Confidence: verified
+观察: `gemm` 的 small 档（M=256,N=256,K=128，fp16）加速比在 0.74–0.96 之间剧烈波动，中心约 0.8。但这**不是**因为 MLX 的 steel kernel 更强：把 MLX 的 steel kernel 和我们的复刻版放进**同一进程、同一 GPU 窗口**对比，两者 GPU 时间基本一样。
+来源: `runs/apple-m4-max/20261103-103008_gemm_fp16_deepseek-flash_mwfqjgna/`；探针 `targets/apple-m4-max/probes/`。
+本机实测: （同窗口、各自正确的 grid/threads、独立输出 buffer、带正确性检查）
+- MLX `steel_gemm_fused_nn_float16_float16_bm64_bn64_bk16_wm1_wn2` ≈ 2.68 µs，我们的复刻版（同一编译器 clang -O3）≈ 2.57 µs，**性能相当甚至复刻版略快**。
+- 本机编译器与 MLX 的 metallib 是**同一个 Apple metal 编译器家族**（本机 32023.921，MLX 32023.883），不存在「MLX 用了更好的工具链」。
+- 官方 `eval-v2` 的加速比在这个尺寸随 GPU 时钟大幅波动（同一份 init 候选多次测得 0.74、0.79、0.96），单次数值不能当结论。
+边界: 早先我们一度误判「MLX kernel 快 20–40%」，那是**探针把输出槽位写错**导致的假象——MLX fused kernel 的输出 D 在 **buffer(3)**（buffer(2) 是可选输入源 C）、params 在 **buffer(4)**，放错槽位会让它提前 return、什么都没算，于是显得「快」。用独立输出 buffer + 正确性检查才暴露这一点。
+反例: 这个尺寸加速比不稳，不等于 paper（2048³）也打不赢；paper 时固定成本可忽略，比较才有意义。
+
+## 手写 32 fragment 的 GEMM 在本机 clang 下溢出，8 fragment 反而最快
+
+Keywords: gemm fragment tile register spill simdgroup accumulator occupancy
+Confidence: verified
+观察: 手写每 SIMD 组 64×32（32 个 fp32 累加器 fragment）的 GEMM，在本机 clang 下寄存器溢出（roofline 读数归零/结果异常）；降到 init 的 8 fragment（每 SG 16×32）才正确且最快。
+来源: `runs/apple-m4-max/20261103-103008_gemm_fp16_deepseek-flash_mwfqjgna/candidates/000_init/`；`targets/apple-m4-max/probes/steel_direct_16x32.metal`。
+本机实测: 32 fragment 版本 roofline NaN、结果错误；8 fragment 版本 6 个用例全过、官方 candidate ≈2.5–3.6 µs。
+边界: 这是**本机 clang 的寄存器分配**限制，不是「32 fragment 这个 tile 结构本身不行」——MLX 预编译的 32 fragment kernel 能跑，说明不同编译产物下它可行。
+反例: 用 MLX 的编译器/配置编译 32 fragment 源码能达到可用的性能，所以不能据此排除大 tile 方向。
+
+## 多阶段批次的计时固定成本可降约 75%（native 编码器已支持多阶段）
+
+Keywords: timing multi stage pipeline native batch fixed cost launch bound flash attention
+Confidence: verified
+观察: 多阶段、纯 buffer、无 fill 的批次现在和单阶段一样走 harness 自有的 ObjC 编码器，固定成本大幅下降。这是 launch-bound 小算子（gemm、flash-attention 等）计时改善的主要来源，与 kernel 写法无关。
+来源: `tcenv/backends/metal/native_batch.{m,py}`（`taic_metal_run_pipeline`）、`tcenv/backends/metal/runtime.py`。
+本机实测: 同一 2 段 pipeline（纯 buffer、无 fill），PyObjC 编码 fixed ≈5.26 µs/iter，native 编码 fixed ≈1.33 µs/iter（约 -75%）；单阶段 GEMM fixed ≈1.0 µs/iter。正确性与 PyObjC 逐值一致（`tests/backends/metal/test_native_batch.py` 的多阶段对照）。
+边界: 只覆盖「纯 buffer、无 fill、无动态 threadgroup 参数」的批次；带 fill/workspace 或动态 threadgroup 的批次仍走 PyObjC，那部分固定成本还在。
+反例: 给 `ctx.run` 加 native 快路径对官方发布数字没有影响（官方走 run_pipeline），且曾引入 unsafe，已回退，不要再走这条路。
+
+## launch-bound 小算子的计时路径：run_pipeline 走 native，ctx.run 走 PyObjC
+
+Keywords: timing dispatch overhead pyobjc native batch fixed cost launch bound harness
+Confidence: verified
+观察: 候选计时有两条路径。官方 `run_pipeline`（评测/发布用）对「单阶段、纯 buffer、无 fill」的批次本来就走 harness 自有的 ObjC 编码器（`tcenv/backends/metal/native_batch.m`），固定成本低；而 `MetalContext.run`（探针、自测、部分 v1 路径）走 PyObjC，空核固定成本约 2.2 µs。
+来源: `tcenv/backends/metal/runtime.py`、`native_batch.py`、`tcenv/v2_worker.py`。
+本机实测: 同脚本同轮，空核 PyObjC ≈2.35 µs，直接调 native 编码器 ≈0.95 µs。
+边界: `v2_worker` 此前漏了 `backend.prepare_context`，导致 worker 里的 run_pipeline 也只能走 PyObjC（已补上，见 `tcenv/v2_worker.py`）。给 `ctx.run` 加 native 快路径对官方发布数字没有影响（官方走 run_pipeline），且曾引入 unsafe，已回退，不要再走这条路。
+反例: 带 fill/workspace 的批次不走 native（`eligible` 拒绝），那部分的固定成本仍在 PyObjC 侧；要降它得再扩展 fill 支持（本次尝试后已回退，见 `native_batch.m` 的接口预留）。
+
 - [harness b4131be13c4750c8] Add a tcenv.cli ab subcommand that compiles several kernel files, times them interleaved in one process over rotating buffer sets, and prints per-file median wall time and cv.

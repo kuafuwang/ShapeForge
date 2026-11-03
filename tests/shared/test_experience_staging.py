@@ -69,7 +69,7 @@ def test_no_verified_entry_means_no_invented_experience():
 def test_the_current_target_file_no_longer_ships_the_developer_tool_request():
     """@brief 当前经验库过滤后仍含 9 条 verified，但 b413 的工具请求不进入提示面。"""
     got = filter_experience_for_prompt(EXPERIENCE.read_text(encoding="utf-8"))
-    assert got.count("Confidence: verified") == 9
+    assert got.count("Confidence: verified") == 13
     assert "累加器片段到 32 会溢出" in got
     assert "tcenv.cli ab" not in got and "b4131be13c4750c8" not in got
     # 源文件本身不被这个函数修改：b413 仍留在库里，等人审随一次性重签删除。
