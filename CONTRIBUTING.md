@@ -77,6 +77,8 @@ Keep `README.md` and `README.zh-CN.md` conceptually aligned, but do not create a
 
 ## 6. Commit and publish
 
+CI runs deterministic smoke and portfolio checks on `macos-latest`; the manual `full-safe` option runs the complete CPU safe suite. Metal GPU checks live in a separate manual self-hosted workflow, never on GitHub-hosted runners. See `.github/workflows/ci.yml` and `.github/workflows/metal-gpu.yml`.
+
 Before committing:
 
 ```bash

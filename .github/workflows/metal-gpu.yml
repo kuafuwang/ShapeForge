@@ -1,0 +1,65 @@
+name: Metal GPU (self-hosted)
+
+# Never runs on GitHub-hosted runners: the Metal GPU also drives the display.
+# Start only on a trusted, quiet Apple Silicon runner with an idle GPU and no paid-model credentials.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Metal scope
+        required: true
+        default: smoke
+        type: choice
+        options: [smoke, full]
+
+permissions:
+  contents: read
+
+jobs:
+  metal:
+    name: ${{ inputs.suite == 'full' && 'Full Metal suite' || 'Metal smoke and native batch' }}
+    runs-on: [self-hosted, macOS, AppleSilicon, shapeforge-metal]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: uv
+
+      - name: Check runner safety
+        run: |
+          test "$(uname)" = Darwin
+          test "$(uname -m)" = arm64
+          xcrun --find metal
+          echo "GPU execution is allowed only on an intentionally idle, trusted runner."
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Run Metal smoke tests
+        if: ${{ inputs.suite != 'full' }}
+        run: |
+          uv run pytest -q -n 0 \
+            tests/backends/metal/test_native_batch.py \
+            tests/backends/metal/test_shape_portfolio_performance_gpu.py \
+            tests/backends/metal/test_shape_portfolio_confirmation_gpu.py
+
+      - name: Run full Metal suite
+        if: ${{ inputs.suite == 'full' }}
+        run: uv run pytest -q -n 0 -m gpu
+
+      - name: Upload failure triage
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metal-triage-${{ inputs.suite == 'full' && 'full' || 'smoke' }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: logs/pytest/triage/
+          if-no-files-found: ignore
+          retention-days: 7

@@ -157,6 +157,15 @@ Shape portfolio 使用两本账：
 
 这些是证据记录，不表示所有计划阶段已经完成。
 
+## CI
+
+GitHub Actions 分为两条路径：
+
+- **CI**（`.github/workflows/ci.yml`）：在 `macos-latest` 上为每次 push/PR 运行确定性 smoke 和 portfolio 测试；手动 `workflow_dispatch` 还可运行完整 CPU 安全套件，不调用付费模型，也不运行 GPU 测试。
+- **Metal GPU**（`.github/workflows/metal-gpu.yml`）：仅手动触发，使用可信的 self-hosted Apple Silicon runner，不在 GitHub-hosted runner 上执行；要求 GPU 空闲且无付费模型凭据。
+
+所有 workflow 均不使用 `continue-on-error`，失败和 `logs/pytest/triage/` 证据会保留。self-hosted Metal runner 需要 `macOS`、`AppleSilicon` 和 `shapeforge-metal` 标签。
+
 ## AI 协助贡献
 
 其他参与者和 AI 应先读 `AGENTS.md`，它是权威项目上下文与安全边界。`CONTRIBUTING.md` 说明人类/AI 协作流程，`.agents/skills/shapeforge/SKILL.md` 提供简短的上手 skill。通过这些文件可以快速理解候选自由、证据不变量、当前状态、测试方式和授权边界，不必再从旧的 Triton 历史推断项目。

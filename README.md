@@ -160,6 +160,15 @@ Stage acceptance material is under:
 
 These are evidence records, not claims that every planned stage is complete.
 
+## CI
+
+GitHub Actions provides two separate paths:
+
+- **CI** (`.github/workflows/ci.yml`): `macos-latest`, safe deterministic smoke and portfolio tests on every push/PR. `workflow_dispatch` also exposes the full safe CPU suite, with no paid model calls or GPU tests.
+- **Metal GPU** (`.github/workflows/metal-gpu.yml`): manual-only, trusted self-hosted Apple Silicon runner. It never runs on GitHub-hosted runners and requires an intentionally idle GPU and no paid-model credentials.
+
+No workflow uses `continue-on-error`; failures and `logs/pytest/triage/` artifacts remain visible. Self-hosted Metal execution needs the labels `macOS`, `AppleSilicon`, and `shapeforge-metal`.
+
 ## For AI-assisted contributors
 
 Start with `AGENTS.md`, the canonical project context and safety boundary. `CONTRIBUTING.md` describes the human/AI workflow, and `.agents/skills/shapeforge/SKILL.md` provides a short onboarding skill for other agents. These files explain candidate freedom, evidence invariants, current status, tests and authorization boundaries so another AI does not have to infer the project from its Triton history.
