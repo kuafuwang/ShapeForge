@@ -71,6 +71,7 @@ The living plan is `docs/架构/shape-portfolio实施计划.md`. Read it before 
 | Feedback and harness review | `docs/代理反馈.md` |
 | Trusted-harness plan index | `docs/可信harness/README.md` |
 | Typed failure codes and what to do next | `docs/失败码.md` |
+| Run-time and agent incident notes | `docs/运维/README.md` |
 | Environment self-check | `scripts/doctor.py` |
 
 Backend code lives under `tcenv/backends/<id>/`; backend metadata, skills and wiki under `backends/<id>/`; chip profiles, measurements and trust under `targets/<id>/`.
