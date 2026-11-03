@@ -1,7 +1,8 @@
 """Local dashboard. Binds to 127.0.0.1 and never starts a kernel.
 
 Reads come from the SQLite index. The idle stream polls about once a second and sends a revision,
-not a fresh copy of every run. Restart the process after changing this file or the page; the HTML is read at import.
+not a fresh copy of every run. Changing this file still needs a restart; changing ``static/index.html``
+no longer does, because the template is read per request (mtime-keyed) instead of at import.
 """
 
 from __future__ import annotations
@@ -71,9 +72,38 @@ class ETagMiddleware:
         await send({"type": "http.response.body", "body": body})
 
 
-_PAGE = (Path(__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
+_PAGE_PATH = Path(__file__).parent / "static" / "index.html"
 _BANNER_SLOT = "<!--BUDGET_BANNER-->"
 _TOKEN_SLOT = "<!--OBSERVE_TOKEN-->"
+# (路径, mtime_ns, size) -> 模板全文。改文件不用重启进程，下一次请求就重读。
+_page_cache: tuple[tuple[Path, int, int], str] | None = None
+
+
+def _page_template() -> str:
+    """@brief 读首页模板，文件一变就重读，所以改 ``static/index.html`` 后刷新即生效。
+
+    以前这份 HTML 在 import 期被读成模块常量，看板进程常驻几天就会一直吐启动那天的界面。
+    编辑器原地替换文件的一瞬间可能读到残缺内容或 OSError，此时沿用上一份好的模板。
+
+    @return 页面模板全文。
+    """
+    global _page_cache
+    try:
+        stat = _PAGE_PATH.stat()
+    except OSError:
+        if _page_cache is not None:
+            return _page_cache[1]
+        raise
+    key = (_PAGE_PATH, stat.st_mtime_ns, stat.st_size)
+    if _page_cache is None or _page_cache[0] != key:
+        try:
+            text = _PAGE_PATH.read_text(encoding="utf-8")
+        except OSError:
+            if _page_cache is not None:
+                return _page_cache[1]
+            raise
+        _page_cache = (key, text)
+    return _page_cache[1]
 
 
 def _json(data: dict | list, status: int = 200) -> JSONResponse:
@@ -111,7 +141,8 @@ async def index(request) -> HTMLResponse:
     except Exception:  # noqa: BLE001  a damaged run directory must never take the page down
         banner = ""
     token = actions.page_token(request.headers)
-    page = _PAGE.replace(_BANNER_SLOT, banner).replace(_TOKEN_SLOT, f'<meta name="observe-token" content="{token}">')
+    template = await asyncio.to_thread(_page_template)
+    page = template.replace(_BANNER_SLOT, banner).replace(_TOKEN_SLOT, f'<meta name="observe-token" content="{token}">')
     return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
 

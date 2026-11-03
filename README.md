@@ -283,8 +283,8 @@ In the next table, only the plan ledger is on by default. The live task file sti
 
 ## Dashboard and budget alerts
 
-`uv run python -m observe` serves a local dashboard (default `http://127.0.0.1:8765`; restart it after updating the code, the page is
-read at start-up). Views: experiments, arm comparison (published speedup, `fast_p`, dollars per unit of gain), a paged run list, best/failure retrieval, one run, a spend ledger, and a cross-run review queue. The page can add budget, reset budgets, stop runs, change the two committees used by the next search, delete a record, review feedback claims, and convert or promote structured harness proposals.
+`uv run python -m observe` serves a local dashboard (default `http://127.0.0.1:8765`). The page template is re-read when
+`static/index.html` changes, so an HTML edit shows up on refresh; editing `observe/app.py` still needs a restart. Views: experiments, arm comparison (published speedup, `fast_p`, dollars per unit of gain), a paged run list, best/failure retrieval, one run, a spend ledger, and a cross-run review queue. The page can add budget, reset budgets, stop runs, change the two committees used by the next search, delete a record, review feedback claims, and convert or promote structured harness proposals.
 Runs grouped from an old directory name are marked inferred and are not given a winner. The read API is `/api/v2`. It shows every run's budget next to what it spent, and raises an alert for runs that crossed it.
 
 The rule is one pure function, `observe.budget.budget_status(spent, budget, stop_reason, running)`:
