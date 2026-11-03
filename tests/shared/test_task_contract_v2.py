@@ -46,7 +46,7 @@ from ..support.v2_tasks import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-V1_TASK = ROOT / "tasks" / "rope"  # a preserved_v1_out_of_scope task (A5 migrated rmsnorm)
+V1_TASK = ROOT / "tasks" / "conv2d"  # a preserved v1 task (B1 migrated rope/gemv)
 
 
 def _task(tmp_path: Path, **kwargs) -> Path:

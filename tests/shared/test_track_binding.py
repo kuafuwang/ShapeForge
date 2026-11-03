@@ -20,7 +20,7 @@ from tcenv.track import REPO_ROOT, TrackBinding, TrackError, load_track
 from tests.support.v1_tasks import V1_TASK
 
 # A5 retired the migrated rmsnorm v1 track; this file pins the *v1 TrackBinding mechanism*, so it
-# runs on the preserved v1 rope task.  The v2 track plane has its own tests (tests/shared/test_track_*).
+# runs on the preserved v1 conv2d task (B1 moved rope/gemv to v2).  The v2 track plane has its own tests (tests/shared/test_track_*).
 TRACK_PATH = REPO_ROOT / "tasks" / V1_TASK / "track.json"
 
 
@@ -49,7 +49,7 @@ def test_the_shipped_binding_renders_exactly_what_the_legacy_loader_rendered():
     track = load_track(TRACK_PATH)
     for dtype, size in (("fp16", "paper"), ("bf16", "small")):
         task = get_task(V1_TASK, dtype, size)
-        extra = dict(task.semantic_instance.spec_params)
+        extra = dict(task.semantic_instance.spec_params) | dict(task.specialization.backend_params)
         assert task.triton_source == load_text(V1_TASK, "kernel_triton.py", dtype, extra)
         assert task.naive_msl == load_text(V1_TASK, "naive.metal", dtype)
 
@@ -57,19 +57,23 @@ def test_the_shipped_binding_renders_exactly_what_the_legacy_loader_rendered():
 def test_spec_params_and_dtype_spelling_come_from_their_declared_sources():
     """@brief ``{{M}}``/``{{H}}`` 只来自 spec_params，``{{TL}}``/``{{T}}`` 只来自拼写表。"""
     track = load_track(TRACK_PATH)
-    assert track.spec_text.placeholders == {"B": "spec_params", "H": "spec_params", "S": "spec_params", "D": "spec_params", "TL": "dtype_spelling"}
+    assert track.spec_text.placeholders == {
+        "N": "spec_params", "H": "spec_params", "W": "spec_params", "C": "spec_params",
+        "OC": "spec_params", "OH": "spec_params", "OW": "spec_params",
+        "M_TOTAL": "backend_params", "K_TOTAL": "backend_params", "TL": "dtype_spelling",
+    }
     assert track.known_good.placeholders == {"T": "dtype_spelling"}
     assert track.dtype_spelling["fp16"]["TL"] == "tl.float16"
     assert track.dtype_spelling["bf16"]["T"] == "bfloat"
     assert track.backend_id == "metal"
-    assert track.lowering_profile == "metal-rope"
+    assert track.lowering_profile == "metal-conv2d"
     assert track.opspec_path == REPO_ROOT / "tasks" / V1_TASK / "opspec.json"
 
 
 def test_an_undeclared_placeholder_in_the_template_is_refused(tmp_path):
     """@brief 模板里有未声明的占位符 → 装配失败（不会渲染出 ``{{...}}`` 给模型看）。"""
     document = _document()
-    document["spec_text"]["placeholders"].pop("B")
+    document["spec_text"]["placeholders"].pop("N")
     with pytest.raises(TrackError):
         load_track(_write(tmp_path, document))
 
@@ -85,7 +89,7 @@ def test_a_declared_placeholder_that_is_absent_from_the_template_is_refused(tmp_
 def test_a_placeholder_that_two_sources_provide_is_refused():
     """@brief F-22：同名占位符在两个来源都有值时拒绝（不猜来源）。"""
     document = _document()
-    document["dtype_spelling"]["fp16"]["B"] = "fp16-iota"
+    document["dtype_spelling"]["fp16"]["N"] = "fp16-iota"
     track = TrackBinding(path=TRACK_PATH, document=document)
     task = get_task(V1_TASK, "fp16", "small")
     with pytest.raises(TrackError) as excinfo:
@@ -156,10 +160,10 @@ def test_registered_implementations_and_baselines_are_closed_sets(tmp_path):
     """@brief gen/reference/error_scale 与 baseline 登记必须齐备（缺登记 → R1 失败）。"""
     track = load_track(TRACK_PATH)
     implementations = track.implementations
-    assert implementations["gen_inputs"]["implementation_id"] == "rope.gen_inputs"
-    assert implementations["reference"]["implementation_id"] == "rope.reference"
+    assert implementations["gen_inputs"]["implementation_id"] == "conv2d.gen_inputs"
+    assert implementations["reference"]["implementation_id"] == "conv2d.reference"
     assert implementations["error_scale"] is None
-    assert [entry["name"] for entry in track.baselines] == ["mlx"]
+    assert [entry["name"] for entry in track.baselines] == ["mlx", "torch_mps"]
     for entry in track.baselines:
         assert entry["implementation_id"] and entry["implementation_version"] >= 1
         assert entry["params"]
@@ -182,7 +186,7 @@ def _generated_document() -> dict:
 
     A5 migrated the whole ``gen_*`` family, so no shipped v1 generated track remains.  The
     generated-block *mechanism* is still exercised on a synthetic document built from the
-    preserved v1 rope track (same fixture shape the retired ``gen_relu`` used).
+    preserved v1 conv2d track (same fixture shape the retired ``gen_relu`` used).
     """
     document = _document()
     document["spec_text"] = {"generator": {
@@ -209,7 +213,7 @@ def test_a_half_generated_track_is_refused(tmp_path):
     """@brief 一份生成、一份模板 → 拒绝（否则题面与 known-good 会来自两套事实）。"""
     document = _generated_document()
     document["known_good"] = {
-        "template": "tasks/rope/naive.metal",
+        "template": "tasks/conv2d/naive.metal",
         "placeholders": {"T": "dtype_spelling"},
     }
     with pytest.raises(TrackError, match="both be generated or both be templates"):
@@ -221,7 +225,7 @@ def test_a_fully_generated_track_still_requires_both_blocks(tmp_path):
     document = _generated_document()
     document["opspec"] = None
     document["known_good"] = {
-        "template": "tasks/rope/naive.metal",
+        "template": "tasks/conv2d/naive.metal",
         "placeholders": {"T": "dtype_spelling"},
     }
     with pytest.raises(TrackError, match="only valid for a fully generated track"):

@@ -160,10 +160,10 @@ def test_experience_index_names_an_added_feature(tmp_path: Path):
     assert "matrix_unit" in text
     assert index["wins"] == 1
     assert retrieve_experience_hints(index, V1_TASK, "memory", exclude_task=True) == ""
-    other = retrieve_experience_hints(index, "conv2d", "memory", exclude_task=True)
+    other = retrieve_experience_hints(index, "lion", "memory", exclude_task=True)
     assert "matrix_unit" in other
     leaked = {"entries": index["entries"]}
-    assert retrieve_experience_hints(leaked, "conv2d", "memory", exclude_task=True) == ""
+    assert retrieve_experience_hints(leaked, "lion", "memory", exclude_task=True) == ""
 
 
 def test_repeatability_drops_an_experience_index(tmp_path: Path, monkeypatch):

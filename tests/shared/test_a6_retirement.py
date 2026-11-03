@@ -45,13 +45,14 @@ CONFIG_INVENTORY = ROOT / "docs/架构/跨硬件算子生成分工-G0/config-inv
 UPSTREAM_MAP = ROOT / "docs/架构/跨硬件算子生成分工-G0/upstream-map.json"
 PHASE0 = ROOT / "docs/架构/backend-phase0-baseline.json"
 
-_BOUNDARY = json.loads(BOUNDARY.read_text(encoding="utf-8"))
-#: The 16 G0 migration candidates, from the frozen boundary (not a second list).
-MIGRATED: tuple[str, ...] = tuple(str(item["task"]) for item in _BOUNDARY["migration_candidates"])
-#: The static tasks the boundary keeps on the v1 path.
-PRESERVED: tuple[str, ...] = tuple(
-    name for name in _BOUNDARY["preserved_v1_out_of_scope"] if not name.startswith("sem_int ")
-)
+from tests.support.boundaries import migrated_tasks as _migrated_tasks
+from tests.support.boundaries import preserved_v1 as _preserved_v1
+
+#: The migrated set is the frozen G0 inventory *plus each later batch's own boundary file*
+#: (B1 added gemv/rope).  G0's boundary document is closed evidence and is never edited.
+MIGRATED: tuple[str, ...] = tuple(_migrated_tasks())
+#: The static tasks still on the v1 path, derived the same way.
+PRESERVED: tuple[str, ...] = tuple(name for name in _preserved_v1() if not name.startswith("sem_int "))
 #: Profiles the migrated tasks used and A6 deleted (proved against the pre-A6 file below).
 RETIRED_PROFILES: tuple[str, ...] = (
     "metal-gemm",
@@ -67,6 +68,9 @@ RETIRED_PROFILES: tuple[str, ...] = (
 #: Registration identities that existed only for the migrated family.
 RETIRED_LOWERERS: tuple[str, ...] = ("metal.elementwise", "metal.gemm")
 RETIRED_VARIANT_FACTORY = "metal.gemm.variant"
+#: Profiles B1 deleted when gemv/rope moved to the v2 standard entry (same rule as A6: the
+#: migration and the profile retirement land in one change).
+B1_RETIRED_PROFILES: tuple[str, ...] = ("metal-gemv", "metal-rope")
 #: Files/directories A6 deleted (a task or helper, never a historical record).
 DELETED_PATHS: tuple[str, ...] = (
     "tasks/generated",
@@ -105,8 +109,8 @@ def test_a6_the_v1_registry_registers_exactly_the_preserved_tasks():
     # The two removed name lists must be gone, not emptied under the same name.
     assert not hasattr(task_package, "GENERATED_NAMES")
     assert not hasattr(task_package, "SEMANTIC_NAMES")
-    assert list_tasks() == ("rope", "gemv", "conv2d")
-    assert list_tasks(True) == ("rope", "gemv", "conv2d", "flash_attention", "lion", "bitdelta_gemm", "mamba2_chunk_scan")
+    assert list_tasks() == ("conv2d",)
+    assert list_tasks(True) == ("conv2d", "flash_attention", "lion", "bitdelta_gemm", "mamba2_chunk_scan")
     for task in MIGRATED:
         for spelling in (task, f"{task}@128x64x32t256"):
             with pytest.raises(TaskContractError) as refused:
@@ -182,11 +186,11 @@ print(json.dumps({
     assert result.returncode == 0, result.stderr[-4000:]
     payload = json.loads(result.stdout.strip().splitlines()[-1])
     assert "error" not in payload, payload
-    assert payload["head_only"] == sorted(RETIRED_PROFILES), payload
+    assert payload["head_only"] == sorted(RETIRED_PROFILES + B1_RETIRED_PROFILES), payload
     assert payload["live_only"] == [], payload
     assert payload["changed"] == [], payload
     assert payload["live"] == sorted(
-        {"metal-rope", "metal-gemv", "metal-lion", "metal-conv2d", "metal-flash-attention",
+        {"metal-lion", "metal-conv2d", "metal-flash-attention",
          "metal-bitdelta-gemm", "metal-mamba2-chunk-scan", "metal-sem-int"}
     ), payload
     # The retired identities are not registered under another name either.

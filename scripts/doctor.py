@@ -165,19 +165,23 @@ def check_tasks(root: Path) -> dict:
         return _result("tasks.discovery", "fail", f"{root / 'tasks'} is missing",
                        "restore tasks/ from git: `git checkout -- tasks`")
     try:
-        from tasks import list_tasks
-    except Exception as exc:  # noqa: BLE001  tasks/ 坏了时给出可执行的下一步，而不是 traceback
-        return _result("tasks.discovery", "fail", f"cannot import tasks: {type(exc).__name__}: {exc}",
-                       "restore tasks/ from git: `git checkout -- tasks`")
-    try:
-        names = list_tasks(include_phase2=True)
-    except Exception as exc:  # noqa: BLE001
-        return _result("tasks.discovery", "fail", f"list_tasks raised {type(exc).__name__}: {exc}",
+        from tcenv.taskcontract import discover_standard_tasks
+
+        v2 = [locator.task_id for locator in discover_standard_tasks()]
+    except Exception as exc:  # noqa: BLE001  v2 发现失败要给出可执行的下一步
+        return _result("tasks.discovery", "fail", f"v2 discovery raised {type(exc).__name__}: {exc}",
                        "uv run python -m tcenv.cli tasks to see the failing contract")
-    if not names:
-        return _result("tasks.discovery", "fail", "no standard task directories found",
+    if not v2:
+        return _result("tasks.discovery", "fail", "no v2 standard task directories found",
                        "uv run python -m tcenv.cli tasks to see what discovery rejected")
-    return _result("tasks.discovery", "pass", f"{len(names)} tasks: {', '.join(names)}")
+    from tasks import list_tasks
+
+    legacy = list_tasks(include_phase2=True)
+    return _result(
+        "tasks.discovery",
+        "pass",
+        f"{len(v2)} v2 tasks ({', '.join(v2[:4])}, …); {len(legacy)} preserved v1 tasks (`tcenv.cli tasks --legacy`)",
+    )
 
 
 def check_runs_dir(root: Path) -> dict:

@@ -12,7 +12,12 @@ from pathlib import Path
 import pytest
 
 from experiments import hw_features as H
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v1_tasks import V1_TASK as _UNUSED_V1_TASK  # noqa: F401
+
+# B1 moved rope/gemv (the previous elementwise/rowwise specimens) to v2.  These tests exercise
+# the elementwise *family* rules, so they name lion explicitly instead of taking the global
+# default v1 task (conv2d, which belongs to the compute family).
+V1_TASK = "lion"
 
 CONSTS = {"BLOCK_M": 64, "BLOCK_N": 64, "BLOCK_K": 32, "M": 2048, "N": 2048, "K": 2048}
 

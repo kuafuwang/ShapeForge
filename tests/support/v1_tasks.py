@@ -19,13 +19,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BOUNDARY = ROOT / "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json"
-_BOUNDARY = json.loads(BOUNDARY.read_text(encoding="utf-8"))
-_PRESERVED = tuple(str(name) for name in _BOUNDARY["preserved_v1_out_of_scope"])
+from tests.support.boundaries import preserved_v1 as _current_preserved
 
-#: The simplest preserved v1 task: one input, one output, one ``mlx`` baseline, the standard
-#: case list.  A v1-mechanism test wants "a real v1 task", not this task's mathematics, so a
-#: test that also asserts a shape-dependent fact must say so explicitly and use its own task.
-V1_TASK = "rope"
+_PRESERVED = tuple(str(name) for name in _current_preserved())
+
+#: The simplest preserved v1 task: the remaining phase-1 static entry, with the standard
+#: case list and both vendor baselines.  A v1-mechanism test wants "a real v1 task", not this
+#: task's mathematics, so a test that also asserts a shape-dependent fact must say so
+#: explicitly and use its own task.  B1 moved rope/gemv to v2, so the default moved from rope
+#: to conv2d; the boundary file remains the only inventory.
+V1_TASK = "conv2d"
 #: The static tasks the boundary keeps on the v1 path.  This is derived from the frozen
 #: migration boundary, not a second list: adding/removing a preserved task is a boundary edit.
 V1_TASKS: tuple[str, ...] = tuple(name for name in _PRESERVED if not name.startswith("sem_int "))

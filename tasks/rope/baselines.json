@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "rope.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "mx.fast.rope",
+        "traditional": false,
+        "base_attr": "BASE",
+        "scale": 1.0,
+        "offset": 0
+      }
+    }
+  ]
+}

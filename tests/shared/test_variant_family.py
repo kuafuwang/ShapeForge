@@ -158,7 +158,7 @@ def test_an_empty_variant_suffix_is_the_default_profile_on_both_sides(frozen: Fr
 
 def test_a_task_without_a_registered_variant_family_refuses_the_suffix(frozen: FrozenSnapshot):
     """@brief 只有 GEMM/FlashAttention 登记了 variant 族；其他题带 ``@`` 一律拒绝（含 gemm_silu）。"""
-    for name in ("rope@1x1x1t32", "conv2d@64x64x32t128", "lion@1x1t32", "gemv@1x1t32"):
+    for name in ("conv2d@64x64x32t128", "lion@1x1t32", "mamba2_chunk_scan@1x1t32"):
         with frozen_tasks(frozen.root):
             with pytest.raises((ValueError, KeyError)) as old_exc:
                 deep_import_build(name)

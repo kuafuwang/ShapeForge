@@ -44,12 +44,15 @@ def r0_commit() -> str:
 #: Static entries that still build their own Contract.  Both the equivalence harness and the
 #: Metal tolerance sweep import this single inventory, so a batch cannot be migrated in one place
 #: and silently stay "remaining" (or vice versa) in the other.
-#: A5 moved the 16 G0 migration candidates to the v2 standard entry.  Everything else stays on
-#: the v1 path, so the inventory is exactly ``migration-boundary.json.preserved_v1_out_of_scope``.
-REMAINING_STATIC = frozenset({
-    "rope", "gemv", "conv2d", "flash_attention", "lion", "bitdelta_gemm", "mamba2_chunk_scan",
-    "sem_attention_odd_scale",
-})
+#: A5 moved the 16 G0 migration candidates to the v2 standard entry; B1 moved gemv/rope after
+#: it.  The inventory is *derived* from the frozen G0 boundary plus each batch's own boundary
+#: file (``tests.support.boundaries``), never re-typed here: a batch that migrates a task without
+#: writing its boundary fails the inventory tests instead of passing silently.
+from tests.support.boundaries import preserved_v1 as _current_preserved
+
+REMAINING_STATIC = frozenset(
+    name for name in _current_preserved() if not name.startswith("sem_int ")
+)
 #: ``gen_*`` family migrated to per-op OpSpec documents; the frozen TOML list stays the oracle.
 REMAINING_GEN = False
 #: The dynamic ``sem_int`` family has no standard directory and stays v1.

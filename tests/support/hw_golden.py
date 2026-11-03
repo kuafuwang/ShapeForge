@@ -366,13 +366,14 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
     out: dict[str, object] = {}
     import tempfile
 
-    # A5 retired the migrated v1 assemblies.  The golden records the *v1 prompt mechanism* on
-    # preserved v1 tasks of the same family: rope (elementwise) and conv2d (compute).  The
-    # recorded feedback fixtures keep their bytes; only the task object that supplies the
+    # The golden records the *v1 prompt mechanism* on preserved v1 tasks of two families:
+    # an elementwise one and a compute one.  B1 migrated rope/gemv, so the elementwise specimen
+    # is lion now (the global default v1 task is conv2d, which would duplicate the compute case).
+    # The recorded feedback fixtures keep their bytes; only the task object that supplies the
     # contract words to the brief changes.
     cases = (
-        (V1_TASK, v1_kernel_name(), "relu_best", False),
-        (V1_TASK, v1_kernel_name(), "relu_best", True),
+        ("lion", v1_kernel_name("lion"), "relu_best", False),
+        ("lion", v1_kernel_name("lion"), "relu_best", True),
         ("flash_attention", "flash_attention_kernel", "fa_flash_best", False),
         ("conv2d", "conv2d_kernel", "gemm_paper_best", True),
     )

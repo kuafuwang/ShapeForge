@@ -137,6 +137,7 @@ def test_a6_the_preserved_lowering_module_exports_only_names_that_exist():
     from tcenv.backends.metal import lowering as metal_lowering
 
     retired = {
+        "ROPE_PROFILE", "GEMV_PROFILE",  # B1 retired these two with the gemv/rope migration
         "ELEMENTWISE_LOWERER_ID", "ELEMENTWISE_LOWERER_VERSION", "DEFAULT_GEMM_VARIANT",
         "GEMM_PROFILE", "GEMM_SILU_PROFILE", "RELU_PROFILE", "SIGMOID_PROFILE", "SILU_PROFILE",
         "SWIGLU_PROFILE", "REDUCTION_SUM_PROFILE", "RMSNORM_PROFILE", "RMSNORM_PROFILE_NAME",
@@ -150,7 +151,7 @@ def test_a6_the_preserved_lowering_module_exports_only_names_that_exist():
     exec("from tcenv.backends.metal.lowering import *", namespace)
     assert set(metal_lowering.__all__) <= set(namespace), set(metal_lowering.__all__) - set(namespace)
     # The preserved interface is the registered v1 surface, not a re-export of deleted internals.
-    assert {"ROPE_PROFILE", "GEMV_PROFILE", "CONV2D_PROFILE", "LION_PROFILE",
+    assert {"CONV2D_PROFILE", "LION_PROFILE",
             "FLASH_ATTENTION_PROFILE", "BITDELTA_PROFILE", "MAMBA2_PROFILE", "SEM_INT_PROFILE",
             "DEFAULT_FA_VARIANT", "LOWERER_ID"} <= exported
 

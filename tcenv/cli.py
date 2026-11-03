@@ -305,15 +305,37 @@ def cmd_calibrate(a: argparse.Namespace) -> int:
 def cmd_tasks(a: argparse.Namespace) -> int:
     """@brief 列出任务表及其契约摘要。
 
+    默认列 **v2 标准目录**（``discover_standard_tasks``），因为那是当前的任务入口；
+    ``--legacy`` 才列仍由 v1 装配的保留题。新人照着 README 敲的第一条命令不应再落在
+    退役路径上。
+
     @param a 已解析的命令行参数。
     @return 恒为 0。
     """
-    from tasks import get_task, list_tasks
+    if getattr(a, "legacy", False):
+        from tasks import get_task, list_tasks
 
-    for n in list_tasks(include_phase2=True):
-        t = get_task(n, "fp16", a.size)
-        c = t.contract
-        print(f"{n:14s} grid={c.grid} threads={c.threads} args={[x.name for x in c.args]} min_bytes={t.min_bytes/1e6:.1f}MB flops={t.flops/1e9:.2f}G")
+        for n in list_tasks(include_phase2=True):
+            t = get_task(n, "fp16", a.size)
+            c = t.contract
+            print(f"{n:14s} grid={c.grid} threads={c.threads} args={[x.name for x in c.args]} min_bytes={t.min_bytes/1e6:.1f}MB flops={t.flops/1e9:.2f}G")
+        return 0
+
+    from tcenv.contract_errors import TaskContractError
+    from tcenv.taskcontract import discover_standard_tasks, load_task_contract
+
+    for locator in discover_standard_tasks():
+        try:
+            contract = load_task_contract(locator.task_dir, size=a.size)
+        except TaskContractError:
+            contract = load_task_contract(locator.task_dir)  # 该题没有这个档位时退回它的默认实例
+        instance = contract.instance
+        work = instance.work_accounting
+        tensors = ", ".join(instance.reference_inputs)
+        print(
+            f"{locator.task_id:20s} v2 dtype={contract.dtype:4s} size={contract.size:6s} "
+            f"inputs=[{tensors}] min_bytes={work.min_bytes/1e6:.1f}MB flops={work.flops/1e9:.2f}G"
+        )
     return 0
 
 
@@ -437,8 +459,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--target", default="apple-m4-max")
     p.set_defaults(fn=cmd_calibrate)
 
-    p = sub.add_parser("tasks", help="list tasks")
+    p = sub.add_parser("tasks", help="list tasks (v2 standard entries; --legacy for the preserved v1 tasks)")
     p.add_argument("--size", default="paper", choices=["paper", "small", "plan"])
+    p.add_argument("--legacy", action="store_true", help="list the preserved v1 tasks instead of the v2 standard entries")
     p.set_defaults(fn=cmd_tasks)
 
     p = sub.add_parser("show", help="print the contract and Triton source of a task")

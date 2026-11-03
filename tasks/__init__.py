@@ -30,8 +30,6 @@ V2_ENTRY_FILES: tuple[str, ...] = ("reference.py", "reference.json", "baselines.
 # 只登记仍由 v1 装配的题（``preserved_v1_out_of_scope``）。A5 迁移的 9 道普通题已删除 v1 task.py，
 # A6 同时删除它们的名字条目：列一张本 registry 装不出来的名单，和 import 回退一样是假的多路径。
 TASK_NAMES = (
-    "rope",
-    "gemv",
     "conv2d",
 )
 

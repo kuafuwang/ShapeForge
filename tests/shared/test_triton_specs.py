@@ -52,7 +52,7 @@ from pathlib import Path  # noqa: E402
 VENV_PY = Path(__file__).resolve().parents[2] / ".venvs" / "triton-msl" / "bin" / "python"
 
 @pytest.mark.skipif(not VENV_PY.exists(), reason="isolated triton-msl environment not installed (scripts/install_triton_msl.sh)")
-@pytest.mark.parametrize("name", ["conv2d", "bitdelta_gemm", "flash_attention", "mamba2_chunk_scan", "gemv"])
+@pytest.mark.parametrize("name", ["conv2d", "bitdelta_gemm", "flash_attention", "mamba2_chunk_scan"])
 def test_specs_load_as_real_triton_and_bind_all_arguments(name, tmp_path):
     """@brief 在隔离环境 dry run：真实 Triton 能解析 spec 且每个 kernel 参数都拿到值。
 
@@ -110,14 +110,14 @@ def test_baseline_variants_declare_a_grid_and_keep_the_kernel_name():
     """
     from tcenv.triton_runner import parse_grid, spec_source
 
-    for name in ("gemv", "flash_attention"):
+    for name in ("flash_attention",):  # conv2d 的 baseline variant 是 im2col gather 核，不保留原 kernel 名；lion 没有 variant
         t = get_task(name, "fp16", "paper")
         src, note = spec_source(t)
         assert note and f"def {t.contract.kernel_name}(" in src
         header, nw = parse_launch_header(src)
         assert parse_grid(src, header) and nw
 
-@pytest.mark.parametrize("name", ["gemv", "conv2d", "flash_attention"])
+@pytest.mark.parametrize("name", ["conv2d", "flash_attention"])
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
 def test_variants_are_valid_python_with_every_placeholder_substituted(name, dtype):
     """@brief 后端能编译的 spec 是合法 Python，占位符全部替换，多 kernel 变体用 pipeline 按契约名取输入。
@@ -142,7 +142,7 @@ def test_variants_are_valid_python_with_every_placeholder_substituted(name, dtyp
     for a in t.contract.inputs:  # the pipeline reads inputs by their contract names
         assert f'inp["{a.name}"]' in src, (name, a.name)
 
-@pytest.mark.parametrize("name", ["gemv", "flash_attention"])
+@pytest.mark.parametrize("name", ["flash_attention"])  # B1: gemv migrated; conv2d's variant is an im2col gather kernel, not <op>_kernel
 def test_single_kernel_baseline_variants_bind_every_parameter(name):
     """@brief 编译器 baseline 跑的变体，其 kernel 参数都必须由自己的 header（或 contract scalar）绑定。
 
@@ -168,6 +168,6 @@ def test_a_preserved_v1_spec_is_still_rendered_for_the_model():
     NaN-preservation property itself is still checked for the migrated tasks' candidates in the
     G0 corpus (``naive_msl``) and by their v2 correctness cases.
     """
-    source = get_task("rope", "fp16", "paper").triton_source
-    assert "@triton.jit" in source and "def rope_kernel(" in source
+    source = get_task("conv2d", "fp16", "paper").triton_source
+    assert "@triton.jit" in source and "def conv2d_kernel(" in source
     assert "tl.store" in source

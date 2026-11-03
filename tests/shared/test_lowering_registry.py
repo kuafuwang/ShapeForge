@@ -47,18 +47,16 @@ def test_only_the_registered_target_and_profile_resolve():
 
     A5 把 16 道 G0 题迁到 v2 标准入口，A6 删除了它们在这里的 9 份 profile（普通算子的
     metal-rmsnorm/-softmax/-reduction-sum/-relu/-sigmoid/-silu/-swiglu/-gemm/-gemm-silu）。
-    剩下的必须恰好是 ``preserved_v1_out_of_scope``：v1 registry 只有这些 profile 可读。
+    剩下的必须恰好是当前保留题（B1 删去 metal-rope/metal-gemv）：v1 registry 只有这些 profile 可读。
     """
     assert lowering.registered_targets("metal") == frozenset({"apple-m4-max"})
     profiles = lowering.require_target_profile("metal", "apple-m4-max")
     assert {profile.name for profile in profiles} == {
         "metal-conv2d",
         "metal-flash-attention",
-        "metal-gemv",
         "metal-bitdelta-gemm",
         "metal-mamba2-chunk-scan",
         "metal-lion",
-        "metal-rope",
         "metal-sem-int",
     }
     assert {profile.target_id for profile in profiles} == {"apple-m4-max"}

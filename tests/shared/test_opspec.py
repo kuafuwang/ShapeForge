@@ -1,9 +1,9 @@
 """OpSpec: structural schema, semantic rules, ``instantiate`` and its negatives (plan §4.1/§4.2).
 
-CPU only, backend free: these tests load ``tasks/rope/opspec.json`` (a task the A5 migration
-boundary keeps on the v1 path) and call ``tcenv.opspec`` + ``tcenv.identity``; they never import a
-backend package.  The specimen is ``rope`` because A5 migrated ``rmsnorm`` to the v2 standard
-entry: a v1-mechanism test must use a preserved v1 task, not revive a migrated one.
+CPU only, backend free: these tests load a frozen v1 ``opspec.json`` (the pre-B1 rope
+document kept under ``tests/support/golden/shared/``) and call ``tcenv.opspec`` + ``tcenv.identity``; they never import a
+backend package.  The specimen is the pre-B1 rope document: B1 moved every simple v1 task to the v2 standard
+entry, so a v1-mechanism test reads the frozen document instead of reviving a v1 task.
 """
 
 from __future__ import annotations
@@ -19,7 +19,10 @@ from tcenv.opspec import model
 from tcenv.opspec.model import OpSpecError, instantiate, load_opspec, validate_opspec
 
 ROOT = Path(__file__).resolve().parents[2]
-OPSPEC = ROOT / "tasks" / "rope" / "opspec.json"  # a preserved v1 document (A5 migrated rmsnorm)
+# B1 migrated rope itself to v2, so the v1 *mechanism* tests no longer have a shipped v1
+# document to read.  This is the pre-B1 rope document, frozen byte-for-byte: it is a fixture
+# for the OpSpec schema/instantiate rules, not a task directory, and nothing assembles it.
+OPSPEC = ROOT / "tests" / "support" / "golden" / "shared" / "rope-v1-opspec.json"
 
 
 def _document() -> dict:

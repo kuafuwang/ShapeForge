@@ -40,8 +40,8 @@ from ...opspec.model import SemanticInstance
 BACKEND_ID = "metal"
 #: The only target the R1 registry covers.
 TARGET_ID = "apple-m4-max"
-#: Registered family-lowerer id/version shared by the row/broadcast v1 profiles (rope, gemv,
-#: lion).  The id string is part of ``lowering_profile_digest``, so it stays exactly as the
+#: Registered family-lowerer id/version shared by the remaining row/broadcast v1 profiles
+#: (lion; B1 removed rope/gemv).  The id string is part of ``lowering_profile_digest``, so it stays exactly as the
 #: preserved tasks' frozen identity recorded it; the implementation is the generic
 #: buffer/constant derivation below, not a per-task rule.
 LOWERER_ID = "metal.rmsnorm"
@@ -63,50 +63,6 @@ def _lower_buffers_and_constants(
 
 register_lowerer(LOWERER_ID, LOWERER_VERSION, _lower_buffers_and_constants)
 
-
-#: Rotary position embedding: one threadgroup per (BLOCK_S positions, batch*head), 128 threads.
-#: ``BASE`` is a semantic attr (it changes the values), ``BLOCK_S`` only changes the launch.
-ROPE_PROFILE = register_profile(
-    LoweringProfile(
-        schema_version=_lowering.LOWERING_PROFILE_SCHEMA_VERSION,
-        name="metal-rope",
-        backend_id=BACKEND_ID,
-        target_id=TARGET_ID,
-        display_name="Apple M4 Max (Apple9 GPU family)",
-        lowerer_id=LOWERER_ID,
-        kernel_name="rope_kernel",
-        grid=({"symbol": "S", "factor": 16}, {"product": ["B", "H"]}, 1),
-        threads=(128, 1, 1),
-        constants=(
-            ConstantSpec(name="B", msl_type="uint", source="symbol:B"),
-            ConstantSpec(name="H", msl_type="uint", source="symbol:H"),
-            ConstantSpec(name="S", msl_type="uint", source="symbol:S"),
-            ConstantSpec(name="D", msl_type="uint", source="symbol:D"),
-            ConstantSpec(name="BASE", msl_type="float", source="attr:BASE"),
-            ConstantSpec(name="BLOCK_S", msl_type="uint", source="literal:16"),
-        ),
-    )
-)
-
-#: Matrix-vector: four rows per threadgroup (``BLOCK_M=4``), 128 threads, constants M/K/BLOCK_M.
-GEMV_PROFILE = register_profile(
-    LoweringProfile(
-        schema_version=_lowering.LOWERING_PROFILE_SCHEMA_VERSION,
-        name="metal-gemv",
-        backend_id=BACKEND_ID,
-        target_id=TARGET_ID,
-        display_name="Apple M4 Max (Apple9 GPU family)",
-        lowerer_id=LOWERER_ID,
-        kernel_name="gemv_kernel",
-        grid=({"symbol": "M", "factor": 4}, 1, 1),
-        threads=(128, 1, 1),
-        constants=(
-            ConstantSpec(name="M", msl_type="uint", source="symbol:M"),
-            ConstantSpec(name="K", msl_type="uint", source="symbol:K"),
-            ConstantSpec(name="BLOCK_M", msl_type="uint", source="literal:4"),
-        ),
-    )
-)
 
 #: One Lion step: 1024 elements per threadgroup, 128 threads, LR/WD/BETA1/BETA2 are semantic attrs.
 LION_PROFILE = register_profile(
@@ -447,14 +403,12 @@ __all__ = [
     "FA_VARIANT_FACTORY_ID",
     "FA_VARIANT_FACTORY_VERSION",
     "FLASH_ATTENTION_PROFILE",
-    "GEMV_PROFILE",
     "LION_PROFILE",
     "LOWERER_ID",
     "LOWERER_VERSION",
     "MAMBA2_LOWERER_ID",
     "MAMBA2_LOWERER_VERSION",
     "MAMBA2_PROFILE",
-    "ROPE_PROFILE",
     "SEM_INT_BLOCK",
     "SEM_INT_LOWERER_ID",
     "SEM_INT_LOWERER_VERSION",

@@ -82,7 +82,7 @@ uv run python -m taic.cli brief RUN_DIR
 | 命令 | 该看到的输出 |
 | --- | --- |
 | `scripts/doctor.py` | 十行 `[PASS]`；有问题时才有 `Next:`；退出码 0 |
-| `tcenv.cli tasks` | 每个任务一行，带 `grid=`、`threads=`、`args=`、`flops=` |
+| `tcenv.cli tasks` | 每个 **v2** 任务一行，带 `dtype=`、`size=`、`inputs=`、`flops=`（保留的 v1 题在 `--legacy` 下） |
 | `tcenv.cli naive gemm` | 先给正确性结论，再给微秒数和加速比 |
 | `taic.cli brief` | 搜索最优与确认加速比分开列出 |
 

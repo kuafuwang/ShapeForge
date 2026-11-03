@@ -81,7 +81,7 @@ uv run python -m taic.cli brief RUN_DIR
 | Command | Expected output |
 | --- | --- |
 | `scripts/doctor.py` | ten `[PASS]` lines, then `Next:` only if something is off; exit code 0 |
-| `tcenv.cli tasks` | one line per task with `grid=`, `threads=`, `args=`, `flops=` |
+| `tcenv.cli tasks` | one line per **v2** task with `dtype=`, `size=`, `inputs=`, `flops=` (the preserved v1 tasks are under `--legacy`) |
 | `tcenv.cli naive gemm` | a correctness verdict, then microseconds and the speedup |
 | `taic.cli brief` | the search best and the confirmation number, kept separate |
 

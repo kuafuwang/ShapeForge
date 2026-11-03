@@ -554,9 +554,9 @@ def test_the_local_task_golden_is_byte_identical():
         target_id="apple-m4-max", scorecard="speedup 1.0", history="h", notes_summary="n", peer_tips="p",
         evidence="e", failure="f", bound_line="b", seed_report_json='{"a":1}',
     )
-    # A5 repointed this renderer fixture from the retired v1 relu to the preserved v1 rope
-    # (the brief is synthetic and resolves no task); the pin still catches renderer drift.
-    assert hashlib.sha256(render_contract(brief).encode()).hexdigest() == "4dc7055d3cc1245c3cae6c5b137f8dce731735162ba113670253d739f291be99"
+    # A5 repointed this renderer fixture to rope, B1 to conv2d (the brief is synthetic and
+    # resolves no task); the pin still catches renderer drift, re-recorded for the new specimen.
+    assert hashlib.sha256(render_contract(brief).encode()).hexdigest() == "a053a2bbfbc6562587e2f364f1ea4022e583c36e4198799fe9edb961b5eb56c6"
 
 
 def test_the_flow_declares_an_optional_remote_role_and_a_runtime_local_role():

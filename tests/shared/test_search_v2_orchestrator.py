@@ -55,8 +55,9 @@ class FakeV2Evaluator(V2LocalEvaluator):
         # （这只是结构替身，身份不参与本测试的断言）。
         from tasks import get_task
         from tests.support.report_build import native_build, simulated_compile_failure
+        from tests.support.v1_tasks import V1_TASK
 
-        task_obj = get_task("rope", "fp16", "small")
+        task_obj = get_task(V1_TASK, "fp16", "small")
         if report.status == "ok":
             report.build = native_build(task_obj, request.source.encode("utf-8"))
         else:

@@ -21,7 +21,11 @@ from ...support import hw_golden as G
 from ...support.fakes import FakeClient, make_response
 from ...support.orchestrator import code, fake_eval, llm_script, make_orch, run
 from ...support.resume import mark_dead, ns, script_for
-from ...support.v1_tasks import V1_TASK
+from ...support.v1_tasks import V1_TASK as _UNUSED_V1_TASK  # noqa: F401
+
+# See test_hw_features.py: the elementwise-family specimen after B1 is lion, not the global
+# default conv2d.
+V1_TASK = "lion"
 
 REPO = Path(__file__).resolve().parents[3]
 HEADER = "Hardware-feature analysis of this kernel"
@@ -104,7 +108,11 @@ def test_switch_off_is_byte_identical_to_the_behaviour_recorded_before_the_featu
     for name in V1_TASKS:
         assert any(key.startswith(f"{name}|") for key in golden["system_prompt"]), name
     assert len(golden["system_prompt"]) >= 8 * len(V1_TASKS)
-    assert len(golden["user_messages"]) >= 40 and len(golden["feedback"]) >= 12 and len(golden["outbound"]) >= 4 and len(golden["orchestrator"]) == 4
+    # B1 把保留集从 8 减到 6，user_messages 的绝对条数随保留集变化；逐题覆盖才是重点。
+    for name in V1_TASKS:
+        assert f"initial|{name}" in golden["user_messages"], name
+    assert len(golden["user_messages"]) >= 5 * len(V1_TASKS)
+    assert len(golden["feedback"]) >= 12 and len(golden["outbound"]) >= 4 and len(golden["orchestrator"]) == 4
     assert _diff(G.compute(), golden) == []
 
 

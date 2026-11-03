@@ -1,0 +1,7689 @@
+{
+ "schema_version": 1,
+ "phase": "B1",
+ "generator": "v1 tasks.get_task + tcenv.backends.metal.testing.prepare_case",
+ "seed_formula": "7919 * (case_index + 1) + {0, 7, 1234}",
+ "note": "B1 的等价性 oracle：G0 语料不含这两题，故在删除 v1 装配前现场冻结。",
+ "combos": [
+  {
+   "task": "gemv",
+   "dtype": "fp16",
+   "size": "paper",
+   "cases": [
+    "normal",
+    "wide_range",
+    "large",
+    "tiny",
+    "outlier",
+    "ieee"
+   ],
+   "opspec": {
+    "spec_version": 1,
+    "op_name": "gemv",
+    "category": "linear_algebra",
+    "formula": "y[r] = sum_k A[r, k] * x[k]",
+    "uses": [],
+    "type_vars": {
+     "T": [
+      "fp16",
+      "bf16"
+     ]
+    },
+    "symbols": {
+     "M": {
+      "min": 1
+     },
+     "K": {
+      "min": 1
+     }
+    },
+    "tensors": {
+     "A": {
+      "role": "input",
+      "dims": [
+       "M",
+       "K"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+       "K",
+       "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "row-major [M, K]"
+     },
+     "x": {
+      "role": "input",
+      "dims": [
+       "K"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "1"
+      ],
+      "space": "global",
+      "access": "read"
+     },
+     "y": {
+      "role": "output",
+      "dims": [
+       "M"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "1"
+      ],
+      "space": "global",
+      "access": "write"
+     }
+    },
+    "numerics": {
+     "acc_dtype": "fp32",
+     "rounding": "single_round_at_output",
+     "tolerances": {
+      "fp16": {
+       "rtol": 0.002,
+       "atol_rel": 0.001
+      },
+      "bf16": {
+       "rtol": 0.016,
+       "atol_rel": 0.008
+      }
+     },
+     "exact": false
+    },
+    "attrs": {},
+    "cases": {
+     "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+     ],
+     "inputs": {
+      "ieee": {
+       "_inject": [
+        "A"
+       ]
+      }
+     }
+    },
+    "sizes": {
+     "paper": {
+      "M": 4096,
+      "K": 4096,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     },
+     "small": {
+      "M": 256,
+      "K": 512,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     }
+    },
+    "spec_params": [
+     "M",
+     "K"
+    ],
+    "work_accounting": {
+     "flops": {
+      "terms": [
+       {
+        "coefficient": 2,
+        "symbols": [
+         "M",
+         "K"
+        ]
+       }
+      ]
+     },
+     "min_bytes": {
+      "terms": [
+       {
+        "tensor": "A"
+       },
+       {
+        "tensor": "x"
+       },
+       {
+        "tensor": "y"
+       }
+      ]
+     }
+    }
+   },
+   "description": "y = A @ x with A[M, K] row-major; products accumulated in fp32, result rounded once.",
+   "baselines": [
+    {
+     "name": "mlx",
+     "framework": "mlx",
+     "implementation_id": "gemv.baseline.mlx",
+     "implementation_version": 1,
+     "params": {
+      "kernel": "matmul"
+     }
+    },
+    {
+     "name": "torch_mps",
+     "framework": "torch",
+     "implementation_id": "gemv.baseline.torch_mps",
+     "implementation_version": 1,
+     "params": {
+      "kernel": "torch.mv"
+     }
+    }
+   ],
+   "implementations": {
+    "gen_inputs": {
+     "implementation_id": "gemv.gen_inputs",
+     "implementation_version": 1,
+     "params": {
+      "mags": {
+       "normal": 1.0,
+       "wide_range": 0.1
+      },
+      "default_mag": 1.0,
+      "large": 20.0,
+      "spike": 5.0,
+      "seed_offsets": {
+       "A": 0,
+       "x": 31
+      }
+     }
+    },
+    "reference": {
+     "implementation_id": "gemv.reference",
+     "implementation_version": 1,
+     "params": {
+      "accumulate": "float64",
+      "operation": "matmul_vector"
+     }
+    },
+    "error_scale": null
+   },
+   "lowering_profile": "metal-gemv",
+   "naive_msl": "kernel void gemv_kernel(device const {{T}}* A [[buffer(0)]],\n                        device const {{T}}* x [[buffer(1)]],\n                        device {{T}}* y [[buffer(2)]],\n                        uint tg [[threadgroup_position_in_grid]],\n                        uint lane [[thread_index_in_simdgroup]],\n                        uint sg [[simdgroup_index_in_threadgroup]]) {\n    uint row = tg * BLOCK_M + sg;\n    device const {{T}}* a = A + (ulong)row * K;\n    float acc = 0.0f;\n    for (uint k = lane; k < K; k += 32) acc += float(a[k]) * float(x[k]);\n    acc = simd_sum(acc);\n    if (lane == 0) y[row] = {{T}}(acc);\n}\n",
+   "work": {
+    "flops": {
+     "terms": [
+      {
+       "coefficient": 2,
+       "symbols": [
+        "M",
+        "K"
+       ]
+      }
+     ]
+    },
+    "min_bytes": {
+     "terms": [
+      {
+       "tensor": "A"
+      },
+      {
+       "tensor": "x"
+      },
+      {
+       "tensor": "y"
+      }
+     ]
+    }
+   },
+   "tolerances": {
+    "fp16": {
+     "rtol": 0.002,
+     "atol_rel": 0.001
+    },
+    "bf16": {
+     "rtol": 0.016,
+     "atol_rel": 0.008
+    }
+   },
+   "records": [
+    {
+     "case": "normal",
+     "seed": 7919,
+     "inputs": {
+      "A": {
+       "sha256": "bb0194c56762e2f3252f169854bd9c63912c67cea2857090d867fc00b4bbb3ea",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "0044766ddbcbe95f8204f7235f15ebd71f8edf86cdf688f44dbed7b802e98a7d",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "e0fbefd8e97ee3c01ae500e06a4cc8a7cdb41064bf20238352f03687fe6a7b5a",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "aa6f318e98315f8eb1b6126a63095862e7a804ffb05c322a13b91d2e3fdf157c",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 7926,
+     "inputs": {
+      "A": {
+       "sha256": "968de6393de7c2f9cba266d4d9f5356acca35ecd29c0972c08b06e0b43eaa622",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "c72d728ebdafba886c662d2bf522c27759c560d5cd1c1edecc381388c901689c",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "64528e2b4fda0472f6787aa3871bf3c752802e7697b61b4f4cc21c1634e36901",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "67bfb0eb8ce9ac47d18d8327e95e2d42390d74b0d8fa6b3eee1fd24167671985",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 9153,
+     "inputs": {
+      "A": {
+       "sha256": "d869b64877269b1ae5cd82b6d90204bec4d1944b6ded0585eb6d84b47dcf7095",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "e6e91231b7139239267b2443fcb76d8f460154eba9a4af88633aee50c9906160",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "fe9e34d623463225fa73165e6a12b79baf25662947b8e70bd48abd268e7e343a",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "dd60ed7a56a5a3d304563bc3a06827091ec59f394a06ed88f2eedcdba9161863",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15838,
+     "inputs": {
+      "A": {
+       "sha256": "83d0d3dbb17e769fa264b333da2ee309ff40fb44c0ad89827514e2e4c64b247f",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "a32633fa35681ed6964ab1aa30d0384cc949631bc344f6ec209750507de8950d",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "ac376c8a03f91619bae6c876a4ebfc3b615500c1ace9246c62dd01d955f13a65",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "07e80baa47dd1abb8d9c4affccb324a92bbb2b62f49e2ce9ecc7ede763f4ef6e",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15845,
+     "inputs": {
+      "A": {
+       "sha256": "99fe9eb5e155c1334a0cecde0c09ce20aa3b550e95b0802ec67bfc80ad3c6a63",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "28917d524fc5d380e63aa81bcea23078fe301e44e676013ee43c0289b0a5f8ae",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "9f07e00afecda6fe3eb10993123d9f7ab3e30ac26a03cd19af1af5660a8c2782",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "d54a5d23896be8c03778d11d147cd5b88430e6442951a98a6d5db3bdafaab88c",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 17072,
+     "inputs": {
+      "A": {
+       "sha256": "88f004cec014a880f8470687d4dd4897b7db9d467005c0f846b382701c07bac6",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "36d9af65f5a087c040c8ca67c003cbd6044d2587b0f389e7f91b1dfb52837581",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "9350d274f3fb0d23e90c9ad84a4319009d20cd65e1e17c457b7ecb28e62435c2",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "51dd9c2a8d41fa0b27ef9bc7287e2f17efbdfb2190cd8c525ace05802c25ad5e",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23757,
+     "inputs": {
+      "A": {
+       "sha256": "67884cea8498915ebc14774548cd5846c38e747956a1d9751a018f20fa71e06b",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "0e03d35f72475e4538bc040c492c21046195e5d463cc5e1dba4468709b6d3b53",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "1bd6198041e5e635f22576df870c4ed225e8d53655fde98f0d0a1319e66fdba7",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "d15715eacb2fe2564af8f92b9f79b6e532538050a0829bb24c3a2a16a77e8e5b",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23764,
+     "inputs": {
+      "A": {
+       "sha256": "2b7202738e7cebd904ee59fdbedf2db2fae3f88bbc2e3fd995cdbd6de702094e",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "36524ca6345322577da4c4c3cde4c097a4ae792934f5a7e02a1673ab88734d36",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "7f14143563999c734a71ee25b0576646a2017eb6df4f07fb926782f00bf84bb0",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "4e9a4a688790c8e2945289598bdf5e46bef5861526bef14d54acb5e527c405bc",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 24991,
+     "inputs": {
+      "A": {
+       "sha256": "17e793f8cfa17431a527628be3beebfc2a7d3006c54596abd983769833679bba",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "c229785c6ffad9524edc0b1e04d7d49a85946ad03f610b96b387fa0c5b13b188",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "616998f5acfa1eaca7eea6df5a2d0a67cfe52f5776264be85bd59a0e83bf53d7",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "f9a4d361319740de298f2d4a9d61b7ecd7fcc300ed42ee6679dec8fc07630b62",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31676,
+     "inputs": {
+      "A": {
+       "sha256": "68868ce7b9aa398ebe7e08ebdbfecb41a42aabf4a8bc9177995c27155396197d",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "1e91d8eba0bd15f581c0028024803dc2462b5d1619077f24ace0fa27733ca787",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "490825cfc0bda334d90373f5c3e33b30dc3b7c86d06bf51c8f00a8a47795d486",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "3a4fad29954442f4d698b31895417d64aa0362ddb5aea9251600b0f149cf784e",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31683,
+     "inputs": {
+      "A": {
+       "sha256": "6e7c061a6cecf4fa4b48ff7e1009449aaddaf74372ffdaa2674a7c03f94854a0",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "6009f7ac65edbf5436a1a4d08e63220ccc174966b348044c290b1ad1b99fc9c6",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "91a5803f2e258abfe29ccda96e315f12e853e8a086be9e34750f9cc9f81867ed",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "f61debfc8d5e9e7cde4f792d93b06db0faf28cbfc82b4864b42ff4f3669e6262",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 32910,
+     "inputs": {
+      "A": {
+       "sha256": "489f7e3b849f0507a7cfbf802eb77e5d10f9bef6cad9ce9fdc4991464a502818",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "6262423e822b57bdbe3b17c730a58d56a5d0e7c52e143ff0dc6297b4a525d6bd",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "6c11e38e01e03414ba93b6560b655c803c4f8dadfe789b81d7e0e5f8e6a82973",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "3ab9349592cfaa787f96ef030b245d72fa6f6a4f21530dbb4fedfd49063b426d",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39595,
+     "inputs": {
+      "A": {
+       "sha256": "88529ca2eeb633a4d1d60c0da4b0c167d396e4260f4fe5d30162f3b569ac68bb",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "9a77282a2aa8fadfd45a257f672208bcf7f017cf3d8d8152e48ef22759359a67",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "7382c7b86becfa109cc4b144fe3214991908a93b5a703d6747ad2ccad6786fc2",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "0685117e2cb64905e468aaa50e553ba7568e777e7e22275dabc0d25147576a99",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39602,
+     "inputs": {
+      "A": {
+       "sha256": "0dcf764b8e17f5328711fd5833771ef5ad37b1179da4b5c0b0898516d7443c73",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "28f5bd38c5daff22630e712427b475edf4764b8d8abf2e932c888d4c58d63ffd",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "8f0499410efb0d3fed40ad5b99080ed6731eafcad9456bc966a230c62fea8ec3",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "83e0a735ddf32f02d2c9df843a1f49a1d520f38ace756ed37e435a4941c281ce",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 40829,
+     "inputs": {
+      "A": {
+       "sha256": "c0cbb48202eb41a32114f614e0539ee4214d2e77462e5b87f43be6bd34583d9c",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "ac43b333ad7279f715292b2551f9fa227f1709960f11703725fd4277f0119c82",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "1116b3d94983e96b39f4de69222dedaf7b7489385049d7ec0f077d3e1391ad4c",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "f525fbd8733d67ca860b6d241ef60610d065621234ecd494aae3279659a53a79",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47514,
+     "inputs": {
+      "A": {
+       "sha256": "34345b6e6248655cf727552a047112ef98ae78ee54c240020c8bdec71d310403",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "477d54dae6b1458bbee6a564b1c9cb812ff6051ccd59a3b0b8c1f5069538b34e",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "0455732f12b43233168e32c7af6b2aeae3806b882217cf3fe168dea836e82832",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "f55e0e1629d916b4b920bff1e130c9229f8917fc88d31ebb09f5fbc23c6ed793",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47521,
+     "inputs": {
+      "A": {
+       "sha256": "6e29d5990725be5113bf3c7aad5a3b1dd6c497ad23da790b07424232458430a5",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "14c733ca96a5d97f85722f8dd34b5fe61fd5b34676ec66a2e239aef208e6fb86",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "3e6ee0a63fae765ae8e38314ddd37cabd5a7af0f71badcbed4a4abbdc4c0ca0e",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "efc10eddf6c1da4411ccfff6dffdf06b68eb47eca43c98e5a61ce239a76ad5db",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 48748,
+     "inputs": {
+      "A": {
+       "sha256": "5267d66a0f929125b794af767a4753149d097fdaabe9acf833cb8364b5851372",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "62760a2d523a6d50d9551500566ed6267647d13073d8fe1525d494c92a15e8a3",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "0eecedecc0b20af4e2433126ca3cc3b7663d6af5a2ec9d84ded2fa4bf2ed3782",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "c2c764263c3d0c3388efaae10f9a7164a58115a560cbb552947d2e6f2287d34d",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "task": "gemv",
+   "dtype": "fp16",
+   "size": "small",
+   "cases": [
+    "normal",
+    "wide_range",
+    "large",
+    "tiny",
+    "outlier",
+    "ieee"
+   ],
+   "opspec": {
+    "spec_version": 1,
+    "op_name": "gemv",
+    "category": "linear_algebra",
+    "formula": "y[r] = sum_k A[r, k] * x[k]",
+    "uses": [],
+    "type_vars": {
+     "T": [
+      "fp16",
+      "bf16"
+     ]
+    },
+    "symbols": {
+     "M": {
+      "min": 1
+     },
+     "K": {
+      "min": 1
+     }
+    },
+    "tensors": {
+     "A": {
+      "role": "input",
+      "dims": [
+       "M",
+       "K"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+       "K",
+       "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "row-major [M, K]"
+     },
+     "x": {
+      "role": "input",
+      "dims": [
+       "K"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "1"
+      ],
+      "space": "global",
+      "access": "read"
+     },
+     "y": {
+      "role": "output",
+      "dims": [
+       "M"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "1"
+      ],
+      "space": "global",
+      "access": "write"
+     }
+    },
+    "numerics": {
+     "acc_dtype": "fp32",
+     "rounding": "single_round_at_output",
+     "tolerances": {
+      "fp16": {
+       "rtol": 0.002,
+       "atol_rel": 0.001
+      },
+      "bf16": {
+       "rtol": 0.016,
+       "atol_rel": 0.008
+      }
+     },
+     "exact": false
+    },
+    "attrs": {},
+    "cases": {
+     "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+     ],
+     "inputs": {
+      "ieee": {
+       "_inject": [
+        "A"
+       ]
+      }
+     }
+    },
+    "sizes": {
+     "paper": {
+      "M": 4096,
+      "K": 4096,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     },
+     "small": {
+      "M": 256,
+      "K": 512,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     }
+    },
+    "spec_params": [
+     "M",
+     "K"
+    ],
+    "work_accounting": {
+     "flops": {
+      "terms": [
+       {
+        "coefficient": 2,
+        "symbols": [
+         "M",
+         "K"
+        ]
+       }
+      ]
+     },
+     "min_bytes": {
+      "terms": [
+       {
+        "tensor": "A"
+       },
+       {
+        "tensor": "x"
+       },
+       {
+        "tensor": "y"
+       }
+      ]
+     }
+    }
+   },
+   "description": "y = A @ x with A[M, K] row-major; products accumulated in fp32, result rounded once.",
+   "baselines": [
+    {
+     "name": "mlx",
+     "framework": "mlx",
+     "implementation_id": "gemv.baseline.mlx",
+     "implementation_version": 1,
+     "params": {
+      "kernel": "matmul"
+     }
+    },
+    {
+     "name": "torch_mps",
+     "framework": "torch",
+     "implementation_id": "gemv.baseline.torch_mps",
+     "implementation_version": 1,
+     "params": {
+      "kernel": "torch.mv"
+     }
+    }
+   ],
+   "implementations": {
+    "gen_inputs": {
+     "implementation_id": "gemv.gen_inputs",
+     "implementation_version": 1,
+     "params": {
+      "mags": {
+       "normal": 1.0,
+       "wide_range": 0.1
+      },
+      "default_mag": 1.0,
+      "large": 20.0,
+      "spike": 5.0,
+      "seed_offsets": {
+       "A": 0,
+       "x": 31
+      }
+     }
+    },
+    "reference": {
+     "implementation_id": "gemv.reference",
+     "implementation_version": 1,
+     "params": {
+      "accumulate": "float64",
+      "operation": "matmul_vector"
+     }
+    },
+    "error_scale": null
+   },
+   "lowering_profile": "metal-gemv",
+   "naive_msl": "kernel void gemv_kernel(device const {{T}}* A [[buffer(0)]],\n                        device const {{T}}* x [[buffer(1)]],\n                        device {{T}}* y [[buffer(2)]],\n                        uint tg [[threadgroup_position_in_grid]],\n                        uint lane [[thread_index_in_simdgroup]],\n                        uint sg [[simdgroup_index_in_threadgroup]]) {\n    uint row = tg * BLOCK_M + sg;\n    device const {{T}}* a = A + (ulong)row * K;\n    float acc = 0.0f;\n    for (uint k = lane; k < K; k += 32) acc += float(a[k]) * float(x[k]);\n    acc = simd_sum(acc);\n    if (lane == 0) y[row] = {{T}}(acc);\n}\n",
+   "work": {
+    "flops": {
+     "terms": [
+      {
+       "coefficient": 2,
+       "symbols": [
+        "M",
+        "K"
+       ]
+      }
+     ]
+    },
+    "min_bytes": {
+     "terms": [
+      {
+       "tensor": "A"
+      },
+      {
+       "tensor": "x"
+      },
+      {
+       "tensor": "y"
+      }
+     ]
+    }
+   },
+   "tolerances": {
+    "fp16": {
+     "rtol": 0.002,
+     "atol_rel": 0.001
+    },
+    "bf16": {
+     "rtol": 0.016,
+     "atol_rel": 0.008
+    }
+   },
+   "records": [
+    {
+     "case": "normal",
+     "seed": 7919,
+     "inputs": {
+      "A": {
+       "sha256": "11bae54101bdce8afb0e249b7391f36aab2d11a30b4799564b72f3a89f0483b9",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "46e12fb7ddf658b74ea71bc305e045c32bd5d08936fb8e58cc3de900258404d2",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "888d501dff5bf90758d5f82995121231e8942037d45d9ad9b9972bb6220c6978",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "7ba9b97ecc6ae802fd2ab9b741608dd93ebbfd240ac91f107a5d3967647fae69",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 7926,
+     "inputs": {
+      "A": {
+       "sha256": "a3742c98d9effd5b64fcba7060af495aa2c0b842f82089be64804575e3a4127f",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "92b58d98680806480d1277ba08fb3c3c7a7dbd1d2e0c9602c23690cf7ca759aa",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "c0f380f65dfeb26f1feeaf1221c12b3e4f95dcc0cf8d3fcd8aee6d16a3f96d72",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "b9daaaeb66bba8b08c8b795b725612f13e0cffd3b8e8a3e54ed96f3a1f254a08",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 9153,
+     "inputs": {
+      "A": {
+       "sha256": "f33302038199018979d8dc28abee15ec7edc558a41a9342552d0b1a1cbb5bb05",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "54feec47a478fcc0c2b58386b9a6d4b314ab19c0ead4cdef9ca36b01fbdf6357",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "7833ee693fd68a53acaffb6422c484558fedfb4e9bc985a3852a2e038a11dc00",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "c5119f61a593f54b773a8257349402151c6d81bc0ee88cdbe3af79e2ab7bc47b",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15838,
+     "inputs": {
+      "A": {
+       "sha256": "10fd209e7f7b5880b5638756187665522b674e29e95007b2bd827e19d62cb427",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "1d2e0f6621d0e34359fef060bae7765ea0a3fcb21cab371e26d1e36e7b687e16",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "20e1637b3bfd11b8a4a77232da15586046ed8e8f2a7aad62d61cfca3081ac52a",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "1fd47498d9b23944a31819529b515cf0d2de8f6aba70681acafd1dc1c11bd0fe",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15845,
+     "inputs": {
+      "A": {
+       "sha256": "6163fe2819a0706b4e65ce35453dcb755d67992a378017d655119a654e18b2f3",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "7cc2ce0e8a1b2aa752551a83e8b02fc22682e9ac6df2bf11ea424d99a740c6da",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "d38ff6c983b1a219462da968643ec8a44acc37f27e6b7bbd1d44a2107fdb6160",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "5f3862515e18a732f0a28a1c119ab8604b937a9fb765f8be534ba2056a31bbbe",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 17072,
+     "inputs": {
+      "A": {
+       "sha256": "c8fa23cdf7df42306842bc4dba5b93ab20feea8d785767e16358f9f062ccde54",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "51d869a5ef4d1e78519c9550858c63e33084acd42bf6b67541923f653f28cf7c",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "d91908edf75682493c24648a49adf847c873afee628ca9018f91806825bd49dc",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "0b6c227c3e4756449df51b2fdd5c2e5d5bbb2ed2f0bf6e32e7ea0c7bca449221",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23757,
+     "inputs": {
+      "A": {
+       "sha256": "ab45f78279bc3b41056c3befcfa6a18323919dab2b3ae776114ed8bf5bbaed0b",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "c691e6f69f6a51be63cea59b140e80b164c82013c35d0403f60c9c3418391607",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "9ffdd3c7357d2b86458685e06837b939b7bdb6afd193c256d5af374eecee18f1",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "41c5e2f7ece58ab60521c513c97bffb8e88f8145853eb67eb52063c83e70597b",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23764,
+     "inputs": {
+      "A": {
+       "sha256": "8f765a2a9e7e9946370b71a3ccf53bdba72403860c3763a6a40442b46ccb7615",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "67599ff6e1734a2db228487579c1059ecf7cdf8ddd89372396da2972bdd193d2",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "e3493e694b9b02045c1b1b3d802027045049e5093d511725c8637fa33c5af8ad",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "6b7bdb60ff186654f1ab3d57487f33cc8bae1c9a7220f2b3f31125bb8fc00858",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 24991,
+     "inputs": {
+      "A": {
+       "sha256": "3ee7433a3f87f6e2d04dbbf2d9dccb02e861a4cbe1f4b56079e8045bc8fcf416",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "76f5b12829caae4b5920c56ab10b4a45752adf79411a106eb6f22ce19f60ab77",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "bcd71f5925998c9045dcccacbccb5865125c77400069b3563b053f78890fe659",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "3fd1b9617a8ea67c3837a72ee8d29e508dbbffc07ac3a78ff43c4a7e9deb1b11",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31676,
+     "inputs": {
+      "A": {
+       "sha256": "e9612289b25a826f8e94d32e416510fa30f700dec71384c5e63b4914824d4bde",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "556393973f4d27661576bf90322a7d384172c737d02c0524d3fbc2dc4eea1c82",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "d105d86385945aca0693275593b06436584ec5bc61232e02db20e7491e6fb88f",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "78ff39e9c2dea9b2e4c5f9e4b64efc7bb86d365268258fb40433d3715e818dd1",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31683,
+     "inputs": {
+      "A": {
+       "sha256": "3976388b5c31228a32ffafb809b671b0c1ae9dcb88da7ac89b7acf26c376a747",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "b8a46be689202b027dda4cb2c10a018ed580e27b12b6e8c71a72cd37f192f53b",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "eb47b73b5a36caa1446b29b16f470c19031ed7aea32e442dd013788bfc98ac00",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "5cc0756b4cbb7bcc41b58ec077e9d803ad388abf6766486306254f0566fd7863",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 32910,
+     "inputs": {
+      "A": {
+       "sha256": "913b323d15c794c1db9ab55c2e48c3525ffb1058b0708559a00d587881529b8b",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "1b7345b6bfd46de0cae48f70543f5774784e2d426914ff137f684fca09387eee",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "f7d66e6283c0c3f19d236d30cc6908978125c13cf11471f2ea127b329536aa97",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "62305677e28556afb4145c9cca116f5873199386a5637df071dfb86a02a7f9a3",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39595,
+     "inputs": {
+      "A": {
+       "sha256": "2c9584f7bb6923ac166e15369bbc8c22bcd8c2cc791b248a98a8b3fe2e02ebdc",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "b0618246cd4ac92914718398781363cb72347c02d60b4faee65ef72055e98170",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "80b3a0eb824e84c54f9bd8fe7c8a2337d4fe251fde70fb481182bed1e976120d",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "d2f8b5a4dfba95fa9926772f614e240e72ae97555cc60a135a61b2e3a50bf052",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39602,
+     "inputs": {
+      "A": {
+       "sha256": "7eb89bc39f074cc103639c0c47cd6546fd35d257fc35eb277c7c316997314573",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "800fe63e0158155e2efe7b6d7a70b6627397a5d00d6050cae66bc025ded618f4",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "d05509e5c6a93f565a797b82e4c45e7d25de7fded191c8c43a841f9176e089ba",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "8e74caa118908f5d2363a44c1a6480948e02772a1d3db61853456b8ea2abc8c0",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 40829,
+     "inputs": {
+      "A": {
+       "sha256": "a18709725ac63143dfb060096012ffe28de78e335846b3bbf0caeaacd44ce128",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "c8daebd68a3870704fc6ea7041d74d35c79148c28f107948bdc28df745bc57f3",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "00fa28e97e6e39a5e9d6ad0b971f45e33d1d76f2f0a41e8443c2b5ef869122d0",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "b111f2d513d8805cc6932a1146484de4251eff6ee39b4ff05d4b7b8224de83bc",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47514,
+     "inputs": {
+      "A": {
+       "sha256": "f83febc673baee080d81d27a788a6380266c7490922f25c0ebecec274577c848",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "9b755021f5623e596a4bd821cb53ad5d71e343dce6e0f335431a3f095cd2c936",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "10c5116cf0b12bae18993f3893a1ff9f0eceb20db82ad07e2c64bc6dfa7575cc",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "5e2eec984715504c3fa432aa108abcc716db76f5ff430586a414e5fff435f19b",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47521,
+     "inputs": {
+      "A": {
+       "sha256": "ee8ddb0c5acd78241e4aad8971e7dae8ce7eb9a6f615975dc5a233bc1872adf0",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "a0fd2b09423ae9f1688519abd71331ed0a6a3a10da29f0345a0a2cf2b8472721",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "38a3e9409b5a8503a3ac37b4b41ea2ed3035044c3bacaa0ca7ddb2f89eba6d1a",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "3bc704de9843da7ed8713a6cb3fd39c2f498e280c0b194c4b12dd2436757b0ab",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 48748,
+     "inputs": {
+      "A": {
+       "sha256": "a70f7475d081178046acf312a5ce54d1d9c658c810de781caab0cbccd4a1edc3",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "f4d5a7ed51f4566146f57165a14201591dfbf7c0e671a7f13bbccda6ce631595",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "103a83bd1f9f890273a121c11c25f7854c0a327dba5b2ed4fbe777a340314d6a",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "b4a762fc04e24f1bcfc540b30a26344abeb6dd0bd85faa9eb7408d980b66b773",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "task": "gemv",
+   "dtype": "bf16",
+   "size": "paper",
+   "cases": [
+    "normal",
+    "wide_range",
+    "large",
+    "tiny",
+    "outlier",
+    "ieee"
+   ],
+   "opspec": {
+    "spec_version": 1,
+    "op_name": "gemv",
+    "category": "linear_algebra",
+    "formula": "y[r] = sum_k A[r, k] * x[k]",
+    "uses": [],
+    "type_vars": {
+     "T": [
+      "fp16",
+      "bf16"
+     ]
+    },
+    "symbols": {
+     "M": {
+      "min": 1
+     },
+     "K": {
+      "min": 1
+     }
+    },
+    "tensors": {
+     "A": {
+      "role": "input",
+      "dims": [
+       "M",
+       "K"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+       "K",
+       "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "row-major [M, K]"
+     },
+     "x": {
+      "role": "input",
+      "dims": [
+       "K"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "1"
+      ],
+      "space": "global",
+      "access": "read"
+     },
+     "y": {
+      "role": "output",
+      "dims": [
+       "M"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "1"
+      ],
+      "space": "global",
+      "access": "write"
+     }
+    },
+    "numerics": {
+     "acc_dtype": "fp32",
+     "rounding": "single_round_at_output",
+     "tolerances": {
+      "fp16": {
+       "rtol": 0.002,
+       "atol_rel": 0.001
+      },
+      "bf16": {
+       "rtol": 0.016,
+       "atol_rel": 0.008
+      }
+     },
+     "exact": false
+    },
+    "attrs": {},
+    "cases": {
+     "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+     ],
+     "inputs": {
+      "ieee": {
+       "_inject": [
+        "A"
+       ]
+      }
+     }
+    },
+    "sizes": {
+     "paper": {
+      "M": 4096,
+      "K": 4096,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     },
+     "small": {
+      "M": 256,
+      "K": 512,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     }
+    },
+    "spec_params": [
+     "M",
+     "K"
+    ],
+    "work_accounting": {
+     "flops": {
+      "terms": [
+       {
+        "coefficient": 2,
+        "symbols": [
+         "M",
+         "K"
+        ]
+       }
+      ]
+     },
+     "min_bytes": {
+      "terms": [
+       {
+        "tensor": "A"
+       },
+       {
+        "tensor": "x"
+       },
+       {
+        "tensor": "y"
+       }
+      ]
+     }
+    }
+   },
+   "description": "y = A @ x with A[M, K] row-major; products accumulated in fp32, result rounded once.",
+   "baselines": [
+    {
+     "name": "mlx",
+     "framework": "mlx",
+     "implementation_id": "gemv.baseline.mlx",
+     "implementation_version": 1,
+     "params": {
+      "kernel": "matmul"
+     }
+    },
+    {
+     "name": "torch_mps",
+     "framework": "torch",
+     "implementation_id": "gemv.baseline.torch_mps",
+     "implementation_version": 1,
+     "params": {
+      "kernel": "torch.mv"
+     }
+    }
+   ],
+   "implementations": {
+    "gen_inputs": {
+     "implementation_id": "gemv.gen_inputs",
+     "implementation_version": 1,
+     "params": {
+      "mags": {
+       "normal": 1.0,
+       "wide_range": 0.1
+      },
+      "default_mag": 1.0,
+      "large": 20.0,
+      "spike": 5.0,
+      "seed_offsets": {
+       "A": 0,
+       "x": 31
+      }
+     }
+    },
+    "reference": {
+     "implementation_id": "gemv.reference",
+     "implementation_version": 1,
+     "params": {
+      "accumulate": "float64",
+      "operation": "matmul_vector"
+     }
+    },
+    "error_scale": null
+   },
+   "lowering_profile": "metal-gemv",
+   "naive_msl": "kernel void gemv_kernel(device const {{T}}* A [[buffer(0)]],\n                        device const {{T}}* x [[buffer(1)]],\n                        device {{T}}* y [[buffer(2)]],\n                        uint tg [[threadgroup_position_in_grid]],\n                        uint lane [[thread_index_in_simdgroup]],\n                        uint sg [[simdgroup_index_in_threadgroup]]) {\n    uint row = tg * BLOCK_M + sg;\n    device const {{T}}* a = A + (ulong)row * K;\n    float acc = 0.0f;\n    for (uint k = lane; k < K; k += 32) acc += float(a[k]) * float(x[k]);\n    acc = simd_sum(acc);\n    if (lane == 0) y[row] = {{T}}(acc);\n}\n",
+   "work": {
+    "flops": {
+     "terms": [
+      {
+       "coefficient": 2,
+       "symbols": [
+        "M",
+        "K"
+       ]
+      }
+     ]
+    },
+    "min_bytes": {
+     "terms": [
+      {
+       "tensor": "A"
+      },
+      {
+       "tensor": "x"
+      },
+      {
+       "tensor": "y"
+      }
+     ]
+    }
+   },
+   "tolerances": {
+    "fp16": {
+     "rtol": 0.002,
+     "atol_rel": 0.001
+    },
+    "bf16": {
+     "rtol": 0.016,
+     "atol_rel": 0.008
+    }
+   },
+   "records": [
+    {
+     "case": "normal",
+     "seed": 7919,
+     "inputs": {
+      "A": {
+       "sha256": "54635e63a5c87ed2e8e03c7720efd50e92edf86a7da16083dcbec48e0d59494e",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "7e004c121572c82957e5ae0865f28a677f8c807f385ecfa3a4ad7f9e5af44756",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "8ec97215fe92f806a4a1573f71d935351358626f94cf3a0ea2162fbde0fe5436",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "efc65bc91a60636a8ae8772bd420687c68295b49ccffd18c799aa3e2765e5492",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 7926,
+     "inputs": {
+      "A": {
+       "sha256": "ab2309478a3bc58e2acaeb9aca558161f031aeb7c1f34c2064ce2321e99011af",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "32c3a5f5792e274d3812fd48435901aa60dcf6aa134f0686e01021d70dcf9176",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "1a5158b1847eb8d123ace6f3eacb5787d859542cb7477c7857000f7cc0399a61",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "f9acd410787503ad48d1f896fe8f692bc64efb0c14f6b3a48da2d8be9cc42745",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 9153,
+     "inputs": {
+      "A": {
+       "sha256": "ee4d6f7a5bdf7c6e128ce587e3f37d6c9c4e1f5a17866fa82968d5921807ef56",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "a093cb26133e02e079b7ab6bf7fc53c3e5f7fb22065f3ffce888aacf6382563f",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "2ae8aec66ad6e279c1321b53299b91885682945f185f94ecb9fcd3c03bb04bbf",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "dc0878a5d5aa5ce5763d2597c6a71b4c761dd128906fb2c806c1342ef08e6f9a",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15838,
+     "inputs": {
+      "A": {
+       "sha256": "8e370b0014c1ad0d63deefe84d8b773983aad30a5601d0a488c1f04dfddab327",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "fe9aad6faac4ce4975c2f7b2711cbd758e0e8bcb1f3e38d032cf6a0b4382225b",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "396f43512ce1afb01d5c2c413eea45c58135bb967688cf7999c5a7d0f8671101",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "0e92e788dcd774f2b52c0a098073fa86e204e431a8d37a5cea5bda78f9a7faf9",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15845,
+     "inputs": {
+      "A": {
+       "sha256": "e974aebe93bea4b3ad8a8fda6853f5829ed94aae9f308bcf22a2fe8da5e0a6ea",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "098e7cb71172fe7310b5073c6f98f76efa6f404425f0c398f9001bfa111d984a",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "0c669dc83f21080f3ed98ef337bd4221cab9afff504aa3505a6a1f12341cde5b",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "478a9726ea47ec8fc7ce391c8abceb9c292171c5293523ac1516ff9b38e2158d",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 17072,
+     "inputs": {
+      "A": {
+       "sha256": "93fb9cda761d02a439f463038b5b214bbd2e14eef7fa444871d3bf663d763713",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "73229992471f6fce94085fae49ac0490556857b87f18ac3e8a26453ac214ef63",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "fd315aa6bc8a4e791fcff4f06a52e9eb492bfe0f94ccc8b885614c5af56b1da9",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "4ad66e1173c076db561bcf9047522a08a4bb8f729becd17846f58fa2a394be48",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23757,
+     "inputs": {
+      "A": {
+       "sha256": "2061d53c939a7cc24dbd8cba64eb3d933769c4e63ae7a60991c5899ca544c3e1",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "e4d9bf21896fd46d04a046f7e37b71262e02a6bdd496446c02d7572dd1b07743",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "b0cc35b0f786a0920f601b1ecdc2a6ec4f933b112d8aedddcc0444e7bd0970d6",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "2b1cd196583128f3fa407cb2d9518099c48694e3b19c7e0d0e48af79eb72132c",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23764,
+     "inputs": {
+      "A": {
+       "sha256": "084dfed4a6c9e79990f517b19f0ddd92008ef221e2d548fe24f2d1b085565c1a",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "6d41abe13a0cf6c1f94c629c94838b1f4ba12a7150ff4ae6a7e8b5dacfb3cb33",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "3c2314fa30e07628657d5d6892a9b1af0bbdb462542904103abccc9aa7c4d6e4",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "a46e501bf372dd39396ceff015a397bde9f069824321d60661a68920d0a84d46",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 24991,
+     "inputs": {
+      "A": {
+       "sha256": "a5136a2163189998e320fc3e75cc3f9caef0f892150dbd9894b8423d87722235",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "c515707ce34843b9365778e17ad81fa032231d60f9325da4c25922774e62d223",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "3a15bc31ac5af7bcd0214434fb38977a9b38daae467ffcf5197324969aa62129",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "dd77a8745912c5474532cf69882efac43bbfaeebb1565d66a6206e0a3a2665d7",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31676,
+     "inputs": {
+      "A": {
+       "sha256": "39a148af7015d58dfc12e4619d270dc6e68846f0efbb9992581a032cac25f3fd",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "558e1c445e742c9b929e9ec9eb5268a475a55df5a7d65d5ece81569dbdee1ead",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "32daf4b1985a540a46f8b031aab4b0d08fc50a0de8f2054770d64b8c28209c09",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "d11ff6a9bd97219c3a019d17f004bc08fbe66bbcfab8b3cc79a093e03e453915",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31683,
+     "inputs": {
+      "A": {
+       "sha256": "7bf9b36320199bfaa769b3be4c719af54d56a6e3935adef3adcfb8584fe3f4bc",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "17314bf82ba9e632bd3276f1e3f6eb9e95f6749328f40133e4f361f172a180d7",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "a958bf2645318b4dd2f8340bf4baed1ff14a4294d9a59a681f3f196319b3128f",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "e1a218e3a215ed90e1ab572897ddd27e990dbc7b7fee86d3402f16c0f91ca282",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 32910,
+     "inputs": {
+      "A": {
+       "sha256": "024ff3bc4e7251cb6b7b7768c2f22fffcb837741bdacb8972c1405a9482f0633",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "d9a16ca079e1e18ee940a163e2d726d25d82fdbf521dee157f76906e6d67bccc",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "7df7fd787b7db93a084f11edc343cfadc3117bdd7ddabdd00f7289453554b17a",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "8d4bcdf0b04a0b6175cc81dd9a715baf86c2d91d6e4739006882017b367247ba",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39595,
+     "inputs": {
+      "A": {
+       "sha256": "4e6c4f30b53e55bd886240ddc0e6df6f54d9b8225e0f733b014ec7fe06b16245",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "0294145a466cd08a98ebd80c0f8e85884ca9999988cc6b9469d57129b40991c4",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "253ce42f150d54b2b30e9f2a30933aa54081a577ee853916f5ee79b6e59214ef",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "a74bea7abbde34f65b59c9e15ddc514ff844a60dc2f96989c825f346f3e70b26",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39602,
+     "inputs": {
+      "A": {
+       "sha256": "6ed3fd3675f688642472bf8bbe353e072dcd1835948dec4b061364c436dc25c2",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "2d27ad849a6e85d9a9edc0c39eb39b68d08bdc7cf3641b56d6defc587d55d584",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "548fff5b20af9ed2c5e62d3b3094d6f17d4497f396a32bf0c36d99cbbbb5ceaf",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "1c836ff08198dbdc21d0405cc20d138ce1682c97af5fe3d59647329b94111170",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 40829,
+     "inputs": {
+      "A": {
+       "sha256": "82f6a4f9d0f5427d04c266d33f57455e8c3a2b682742de511554a64123e35c8d",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "a43111001a38b74c502b49b8c60a12189e9e21c82da7708eb479fa3f1fb24cd1",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "bdf5d7c3675c95ec73258bab20423d749cb002414b8844b3f1e89ce834cff822",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "45cbc119740637f6450e4605e0e412d7ec497f507d2ada7da7ea3381051f700f",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47514,
+     "inputs": {
+      "A": {
+       "sha256": "0c2fc14d27dfaa00eb4775cab4deba283d63fdbb608c9fbf4924f7cc9900def7",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "15c5b58ba985424a3bcf748581340545670418f8d20f6f9bc2a963ae6a057adb",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "48440aa7d61cf23ab5e43d158906e27789063d2ec25b9458ef97f49ba45fbb03",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "618a01a72702ed6bf59e2f5a64b52afa5a20e9ca0cdf69a7fd11016f0b4b0a38",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47521,
+     "inputs": {
+      "A": {
+       "sha256": "1db377496f821bb0ac69d02e4081b40365fcb57fe47ebc05cf45fe4dbf09af08",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "a508ba8664afef9fe83cd4e3f11737e649ad4a650457496493cc0c87fba0183a",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "280ea035f315bd8e251391c08df0655ae526a1cd71cf540f7052595dff7beb63",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "7e79a73fcfea7707d4ddfb75f7133f9eff87641a0713cdb00575cb3643df9dfa",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 48748,
+     "inputs": {
+      "A": {
+       "sha256": "0bfe49e5ab2ee544279d796c8b7b3c59c89409282f355519b30a20ae9f148e5e",
+       "nbytes": 33554432,
+       "dtype": "torch.float32",
+       "shape": [
+        4096,
+        4096
+       ]
+      },
+      "x": {
+       "sha256": "a7f4278ad30b2125913053547c4280d833e12b4d72bb75bdd1c10233d058c0d7",
+       "nbytes": 8192,
+       "dtype": "torch.float32",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "96a1c7cd580f8c6eed1082f7dbf2d6c5b480d14314eb6dfe32c517eb1077f478",
+       "nbytes": 32768,
+       "dtype": "torch.float64",
+       "shape": [
+        4096
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "4acb561509c8dff3cee21282d865f4bc749a3dc301fc68072375a5f015dd321d",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "task": "gemv",
+   "dtype": "bf16",
+   "size": "small",
+   "cases": [
+    "normal",
+    "wide_range",
+    "large",
+    "tiny",
+    "outlier",
+    "ieee"
+   ],
+   "opspec": {
+    "spec_version": 1,
+    "op_name": "gemv",
+    "category": "linear_algebra",
+    "formula": "y[r] = sum_k A[r, k] * x[k]",
+    "uses": [],
+    "type_vars": {
+     "T": [
+      "fp16",
+      "bf16"
+     ]
+    },
+    "symbols": {
+     "M": {
+      "min": 1
+     },
+     "K": {
+      "min": 1
+     }
+    },
+    "tensors": {
+     "A": {
+      "role": "input",
+      "dims": [
+       "M",
+       "K"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+       "K",
+       "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "row-major [M, K]"
+     },
+     "x": {
+      "role": "input",
+      "dims": [
+       "K"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "1"
+      ],
+      "space": "global",
+      "access": "read"
+     },
+     "y": {
+      "role": "output",
+      "dims": [
+       "M"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "1"
+      ],
+      "space": "global",
+      "access": "write"
+     }
+    },
+    "numerics": {
+     "acc_dtype": "fp32",
+     "rounding": "single_round_at_output",
+     "tolerances": {
+      "fp16": {
+       "rtol": 0.002,
+       "atol_rel": 0.001
+      },
+      "bf16": {
+       "rtol": 0.016,
+       "atol_rel": 0.008
+      }
+     },
+     "exact": false
+    },
+    "attrs": {},
+    "cases": {
+     "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+     ],
+     "inputs": {
+      "ieee": {
+       "_inject": [
+        "A"
+       ]
+      }
+     }
+    },
+    "sizes": {
+     "paper": {
+      "M": 4096,
+      "K": 4096,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     },
+     "small": {
+      "M": 256,
+      "K": 512,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     }
+    },
+    "spec_params": [
+     "M",
+     "K"
+    ],
+    "work_accounting": {
+     "flops": {
+      "terms": [
+       {
+        "coefficient": 2,
+        "symbols": [
+         "M",
+         "K"
+        ]
+       }
+      ]
+     },
+     "min_bytes": {
+      "terms": [
+       {
+        "tensor": "A"
+       },
+       {
+        "tensor": "x"
+       },
+       {
+        "tensor": "y"
+       }
+      ]
+     }
+    }
+   },
+   "description": "y = A @ x with A[M, K] row-major; products accumulated in fp32, result rounded once.",
+   "baselines": [
+    {
+     "name": "mlx",
+     "framework": "mlx",
+     "implementation_id": "gemv.baseline.mlx",
+     "implementation_version": 1,
+     "params": {
+      "kernel": "matmul"
+     }
+    },
+    {
+     "name": "torch_mps",
+     "framework": "torch",
+     "implementation_id": "gemv.baseline.torch_mps",
+     "implementation_version": 1,
+     "params": {
+      "kernel": "torch.mv"
+     }
+    }
+   ],
+   "implementations": {
+    "gen_inputs": {
+     "implementation_id": "gemv.gen_inputs",
+     "implementation_version": 1,
+     "params": {
+      "mags": {
+       "normal": 1.0,
+       "wide_range": 0.1
+      },
+      "default_mag": 1.0,
+      "large": 20.0,
+      "spike": 5.0,
+      "seed_offsets": {
+       "A": 0,
+       "x": 31
+      }
+     }
+    },
+    "reference": {
+     "implementation_id": "gemv.reference",
+     "implementation_version": 1,
+     "params": {
+      "accumulate": "float64",
+      "operation": "matmul_vector"
+     }
+    },
+    "error_scale": null
+   },
+   "lowering_profile": "metal-gemv",
+   "naive_msl": "kernel void gemv_kernel(device const {{T}}* A [[buffer(0)]],\n                        device const {{T}}* x [[buffer(1)]],\n                        device {{T}}* y [[buffer(2)]],\n                        uint tg [[threadgroup_position_in_grid]],\n                        uint lane [[thread_index_in_simdgroup]],\n                        uint sg [[simdgroup_index_in_threadgroup]]) {\n    uint row = tg * BLOCK_M + sg;\n    device const {{T}}* a = A + (ulong)row * K;\n    float acc = 0.0f;\n    for (uint k = lane; k < K; k += 32) acc += float(a[k]) * float(x[k]);\n    acc = simd_sum(acc);\n    if (lane == 0) y[row] = {{T}}(acc);\n}\n",
+   "work": {
+    "flops": {
+     "terms": [
+      {
+       "coefficient": 2,
+       "symbols": [
+        "M",
+        "K"
+       ]
+      }
+     ]
+    },
+    "min_bytes": {
+     "terms": [
+      {
+       "tensor": "A"
+      },
+      {
+       "tensor": "x"
+      },
+      {
+       "tensor": "y"
+      }
+     ]
+    }
+   },
+   "tolerances": {
+    "fp16": {
+     "rtol": 0.002,
+     "atol_rel": 0.001
+    },
+    "bf16": {
+     "rtol": 0.016,
+     "atol_rel": 0.008
+    }
+   },
+   "records": [
+    {
+     "case": "normal",
+     "seed": 7919,
+     "inputs": {
+      "A": {
+       "sha256": "3c7aec9615c25f25353d0fbb4006f25b6ffdd548528769ae38b87f6d07f8a9b5",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "aee233bc01fba16014c21af1b8627eacf88b93e0eb49aea383e28995d5e1ace6",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "edc22530d0608ce8ce28dd64e5a20dd9d3cee425384982cf7851bddd7f65256e",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "da6c235cc2ed954a577bd27f8fb45eb5b38b762f44e5bb642c31f6fb83906124",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 7926,
+     "inputs": {
+      "A": {
+       "sha256": "70f9b2f08c655339370ccc7a7eee911862a7d6ee1b43cc8033b00aa5cfc1f5a1",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "19bf945ec8bd92f9d83f9f0fab821a5921a15c33f8d4a25ac37b0a3c51e17e10",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "746b57737310ab3cc3a3f121312593b68134661709dbbfe58c6ea57657249e35",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "9e8d4f1cee6481569dddd122deb3c51d2bf7ce432389ccafb2f7d54c530e6deb",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 9153,
+     "inputs": {
+      "A": {
+       "sha256": "9d9353411040ae66c287a4d4afad5a59b0552cb984d0b8357dae7d8cc2249b43",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "f599abc6d52f32a5231c90162d3329450ca9ca3c2bcc4f4d6991e72a6434899d",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "be16c804fa5a1128086e8659a54d9e81ce0eaa542c1d4358d3bbbd4629a69d9a",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "0ee8799464d61cfd896113b34c52c81db10f28d8c29b28c3fe17622a7f456851",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15838,
+     "inputs": {
+      "A": {
+       "sha256": "a69777979763d97f777dc01723b2d354329189d6764df0ad6b2d7a2bf9780663",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "91bd938f4df544d8a4d94b9b3aeed4fe6ddb7797343622a0c0c3643edeeb3a2e",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "cd97fca3ab8ae95293b3e39f4ec9fbe49b2a3b6170a0b4a7ca46689f15819faa",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "6a37592e76368040f49fc01a0e8c19b1791bbf16343bacfd8c3a6bea8dd2d0c4",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15845,
+     "inputs": {
+      "A": {
+       "sha256": "a30b0ade51a8036c9904fbe4d8b81d584b2107b2ed4e0e8e650b087ab088f388",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "658c723cfd5f03ea8f9f33c34c61bc9d17f823d64d45dadd72a99f58eb2d85ad",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "6b784d4d379e76cab4caf8f60d9d707be233914382c7612db78cbb8981f0bdba",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "e1554f13163716e1c289d0d1819a89ed5799a5ec2df637ec2e2e533443845b13",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 17072,
+     "inputs": {
+      "A": {
+       "sha256": "d0fdf48073754477ea21e315830157b8e239270aaa8e0cc8966cabafb0830def",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "985e854ff61135fbd16c3e535416c8b037c7c0c554c4da330f44fef7fe19beee",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "f9c15195389fe5bbf2b63eb02a454ba4bff1c97040fc4fb8b0fcbda5eeb42468",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "9ddb0b3d8c31ee957688fd1a771ff713620001c9b9b37383bec2c0d4f7cac665",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23757,
+     "inputs": {
+      "A": {
+       "sha256": "e89b1455666d8bbcc8b3722c714271d7194b4306e0c3c97617c2aa14f0813ff4",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "f6de743f5cfa6d8603f0a8ddd24fde6d634153fceb5f5927d611cb580ac152aa",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "bae10332353085bd531c368ce2a6900e0572b7c1890c9ff957df8a98bc3c2994",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "e35189f9aec58abe58244644ef52ecf6be169fa609c9b657a8d5433e36bae8a6",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23764,
+     "inputs": {
+      "A": {
+       "sha256": "b6d6aa08ff23e7641c00d16ff1f3d271e0c460507018ac8fc8536011ca5633be",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "ec8edd47c0928ee700cda5463ff483063dadba53a42226b249c61585eadb89d7",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "946e5679b51002f356440fc3f1129184c49d5226d8e926ce88a41fe8dc4fa9a5",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "5f8e75f59b866018d3560a52fe3a2529bc2acdac7bf4894928b403b6acb79dba",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 24991,
+     "inputs": {
+      "A": {
+       "sha256": "7608c367f5c752a8be16466c5d9a78153569f0631efbfc72fa3021ec468683be",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "11f99a4337def3e7ff1ae1ef94e81968275f4043404e1fd97651cf77a2e62bc2",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "9bb17dca9c3ba66a00b19997228eee3ccef4d6a31eb384521549ecbfdd550cf8",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "b11dea4952e64e0c8d74f4a75ac78cfd2b425b688ebfa9d79480cab05a3ab481",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31676,
+     "inputs": {
+      "A": {
+       "sha256": "c9e005e784065fd0b780174ff66f75508525050028f7c2b663ea5df9963f84c6",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "26aa97586a92dc0d9e62e9f04c897f1aad9aa607a46a681d23748e8d0de7143f",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "2227f745572ca55a41acf67f5b9536f9ff8a67f4734bcacedc932ccb7c3026f3",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "95fb6bbfccb33a584b2d1cd0e133015dd2b5043da9f271e0e32dd5b654a53853",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31683,
+     "inputs": {
+      "A": {
+       "sha256": "73a061735395a4512e2ab0a8723131c718a0fade45cc542f8129ef873bd90b47",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "56ddf4f97adbc77f386cc944627d7f23a5b6fbae15f574fdd683167c121edfd4",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "d1837c21c0009b309b230544e0f70c64ff11c482ba2a699b49ff80b7ce3f767a",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "a0eda361f67948b7619d4634321697aa20a004ef8027a0cf05ef0a547a31b4e0",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 32910,
+     "inputs": {
+      "A": {
+       "sha256": "18be0ccbf6734d0102ea75f44f0f041fd3d35467c0fd44c461d6a01eb6368171",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "cd4ed5658f32a75a1ba8bd2d44f00e6d84eac40ea14e46f85d429e39f0309d44",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "a3925b5d9be43a954551be78cf542254cbe51606ebed0478bbd3f0aee0367fdb",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "59c0466e5a2f2d23f7e0b59f2e3a3c2c539f21162971aaf09d74cc1fd6b497ce",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39595,
+     "inputs": {
+      "A": {
+       "sha256": "d05a4a0c0d307f6d8d719f94a6fab474a116079503be1b59c8753f6fcdf05d93",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "9a6a40aaeee605151de3cd32cd86dd495b39c0909acba2a3f77668809ce36ddf",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "5f9004e8dbe5d493f87710695ff3c0c82d1f939f96370f9a3fc417d154bc9a73",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "4dcbae6ae0703847bf0981c8ab2809054ed0bcf3f39c6011237148f8af849400",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39602,
+     "inputs": {
+      "A": {
+       "sha256": "eededdd999d42c670ef27b38b8028d59f2b4fd375403d4fa5deaa2d63487e3b6",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "4aae60359ad9efbf4f53909056991d73d03bacbe411f5041c3402a6737756076",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "775f009965197429e4c80bc1d242626b6c2cd4bbbcbe6fd923a952d37c5d1501",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "d05f981c16ea812b1a840d14abfda97d4d94963048c164c7a09c85ee02c45af1",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 40829,
+     "inputs": {
+      "A": {
+       "sha256": "795fb753da7f3afa236b1b9dcf59807be29f1d7197ab18c3d22a4e6e4a98062e",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "4905fb52a8ba4f8ddf59582502b67e8b44a9620e6523c8ebe68eeaf351c00ee6",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "a5810989e712c21a395316f90a59b1af86c6611a07113752b05f945dd252ec64",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "8fd13cfd17dc1d3c285099e63c8263f0dea854120c9642a13a4544b20195cd4d",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47514,
+     "inputs": {
+      "A": {
+       "sha256": "7a7f799b35f591dccff0d0508dab74b7aced9d226fbb1295427fc02146a95a79",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "6929c4d2ebf07a7f87b7b3936eafc6cd92c338e485cf2c73c44041629d850eec",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "5d4fcdb0a0d6eaff8956e186d4a6a2cc8d48b7175d8ce9c4fe0624c3537df442",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "06488685f300e518f2fafffc14848f09a9843e087b5d422036a6fcc46ad0fc2b",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47521,
+     "inputs": {
+      "A": {
+       "sha256": "e12852020154d31411c7da76da07371e58fbbd467ef0d1ffd87c974cb7a8f369",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "f1f9614eb8f916d29890b72fe0b5b880c9ba8046e1309641fbcde4c867b3eaac",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "e339737db2e930b5886b5d633458cc34aa860bd93d3fd66db7a0721d33d3cad1",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "6a883d9fc6b449a25920c248354b5a257fd464c868490288108d987cb29208d7",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 48748,
+     "inputs": {
+      "A": {
+       "sha256": "62fc99b2f5bc4d856d9bb4a5efa257daba3ea9509505a9ecae9ceae01ff723bf",
+       "nbytes": 262144,
+       "dtype": "torch.float32",
+       "shape": [
+        256,
+        512
+       ]
+      },
+      "x": {
+       "sha256": "77bdf576ef58f687d26edff48e33dcdb74de71d8214484c3b0ad78e27b8ff1db",
+       "nbytes": 1024,
+       "dtype": "torch.float32",
+       "shape": [
+        512
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "e42f4b1a030efbac3bf282cdd6c6ff512e473557ba118c62a91f39bb3915709c",
+       "nbytes": 2048,
+       "dtype": "torch.float64",
+       "shape": [
+        256
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "ca744829d9d06704371ffc3d5e5369b666d7f37abfcd4a4f0e4636c5edf9e217",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "task": "rope",
+   "dtype": "fp16",
+   "size": "paper",
+   "cases": [
+    "normal",
+    "wide_range",
+    "large",
+    "tiny",
+    "outlier",
+    "ieee"
+   ],
+   "opspec": {
+    "spec_version": 1,
+    "op_name": "rope",
+    "category": "positional",
+    "formula": "y[..., i] = x[..., i]*cos(pos*f_i) - x[..., i+D/2]*sin(pos*f_i); y[..., i+D/2] = x[..., i]*sin(pos*f_i) + x[..., i+D/2]*cos(pos*f_i); f_i = BASE^(-i/(D/2)); pos = index along S",
+    "uses": [
+     "BASE"
+    ],
+    "type_vars": {
+     "T": [
+      "fp16",
+      "bf16"
+     ]
+    },
+    "symbols": {
+     "B": {
+      "min": 1
+     },
+     "H": {
+      "min": 1
+     },
+     "S": {
+      "min": 1
+     },
+     "D": {
+      "min": 2
+     }
+    },
+    "tensors": {
+     "x": {
+      "role": "input",
+      "dims": [
+       "B",
+       "H",
+       "S",
+       "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "H*S*D",
+       "S*D",
+       "D",
+       "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "[B, H, S, D] contiguous"
+     },
+     "y": {
+      "role": "output",
+      "dims": [
+       "B",
+       "H",
+       "S",
+       "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "H*S*D",
+       "S*D",
+       "D",
+       "1"
+      ],
+      "space": "global",
+      "access": "write"
+     }
+    },
+    "numerics": {
+     "acc_dtype": "fp32",
+     "rounding": "single_round_at_output",
+     "tolerances": {
+      "fp16": {
+       "rtol": 0.002,
+       "atol_rel": 0.001
+      },
+      "bf16": {
+       "rtol": 0.016,
+       "atol_rel": 0.008
+      }
+     },
+     "exact": false
+    },
+    "attrs": {
+     "BASE": {
+      "dtype": "float",
+      "default": 10000.0,
+      "domain": {
+       "gt": 0
+      },
+      "doc": "rope frequency base"
+     }
+    },
+    "cases": {
+     "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+     ]
+    },
+    "sizes": {
+     "paper": {
+      "B": 2,
+      "H": 32,
+      "S": 1024,
+      "D": 128,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     },
+     "small": {
+      "B": 1,
+      "H": 2,
+      "S": 64,
+      "D": 64,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     }
+    },
+    "spec_params": [
+     "B",
+     "H",
+     "S",
+     "D"
+    ],
+    "work_accounting": {
+     "flops": {
+      "terms": [
+       {
+        "coefficient": 4,
+        "symbols": [
+         "B",
+         "H",
+         "S",
+         "D"
+        ]
+       }
+      ]
+     },
+     "min_bytes": {
+      "terms": [
+       {
+        "tensor": "x"
+       },
+       {
+        "tensor": "y"
+       }
+      ]
+     }
+    }
+   },
+   "description": "Rotary position embedding on x[B,H,S,D], position = index along S, frequencies BASE^(-i/(D/2)), pairs (x[..., i], x[..., i + D/2]) are rotated by angle pos*freq_i. Angles/trig are computed on the fly in fp32 (no tables).",
+   "baselines": [
+    {
+     "name": "mlx",
+     "framework": "mlx",
+     "implementation_id": "rope.baseline.mlx",
+     "implementation_version": 1,
+     "params": {
+      "kernel": "mx.fast.rope",
+      "traditional": false,
+      "base_attr": "BASE",
+      "scale": 1.0,
+      "offset": 0
+     }
+    }
+   ],
+   "implementations": {
+    "gen_inputs": {
+     "implementation_id": "rope.gen_inputs",
+     "implementation_version": 1,
+     "params": {
+      "mags": {
+       "normal": 1.0,
+       "wide_range": 1.0
+      },
+      "default_mag": 1.0,
+      "large": 40000.0
+     }
+    },
+    "reference": {
+     "implementation_id": "rope.reference",
+     "implementation_version": 1,
+     "params": {
+      "accumulate": "float64",
+      "base_attr": "BASE",
+      "layout": "half_split"
+     }
+    },
+    "error_scale": null
+   },
+   "lowering_profile": "metal-rope",
+   "naive_msl": "kernel void rope_kernel(device const {{T}}* x [[buffer(0)]],\n                        device {{T}}* y [[buffer(1)]],\n                        uint2 tg [[threadgroup_position_in_grid]],\n                        uint lid [[thread_index_in_threadgroup]]) {\n    const uint HALF = D / 2;\n    const float LOG_BASE = precise::log(BASE);\n    uint bh = tg.y;\n    for (uint ps = 0; ps < BLOCK_S; ++ps) {\n        uint s = tg.x * BLOCK_S + ps;\n        ulong row = ((ulong)bh * S + s) * D;\n        for (uint i = lid; i < HALF; i += 128) {\n            float inv_freq = precise::exp(-(float(i) / float(HALF)) * LOG_BASE);\n            float ang = float(s) * inv_freq;\n            float c = precise::cos(ang), sn = precise::sin(ang);\n            float x1 = float(x[row + i]), x2 = float(x[row + i + HALF]);\n            y[row + i] = {{T}}(x1 * c - x2 * sn);\n            y[row + i + HALF] = {{T}}(x1 * sn + x2 * c);\n        }\n    }\n}\n",
+   "work": {
+    "flops": {
+     "terms": [
+      {
+       "coefficient": 4,
+       "symbols": [
+        "B",
+        "H",
+        "S",
+        "D"
+       ]
+      }
+     ]
+    },
+    "min_bytes": {
+     "terms": [
+      {
+       "tensor": "x"
+      },
+      {
+       "tensor": "y"
+      }
+     ]
+    }
+   },
+   "tolerances": {
+    "fp16": {
+     "rtol": 0.002,
+     "atol_rel": 0.001
+    },
+    "bf16": {
+     "rtol": 0.016,
+     "atol_rel": 0.008
+    }
+   },
+   "records": [
+    {
+     "case": "normal",
+     "seed": 7919,
+     "inputs": {
+      "x": {
+       "sha256": "e8e32b4f7f18873db8de16d8b977e5350b6a7ade2c13ec44653993f7f727d2fd",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "f9be609b12dcf7c7af5c48e90b6aec9aed76bbf6a9359604f188d5670991c544",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "dce5a8d333ba0fe40e273e4f29d488f40db3fc65ea26c5bfb9f2c34a62fc52d3",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 7926,
+     "inputs": {
+      "x": {
+       "sha256": "b3571b694c18b2ca1d946fb672c4d66fa803a8ed6474b313060c26141b539ba5",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "44fb4682715d9194231ec2c7293876978ab8ce3738f455d472a1ee8a99d6025f",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "06ccec105897d57ad30fb71de2584aa9739dcf37c25f43e100e313ad4222ad18",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 9153,
+     "inputs": {
+      "x": {
+       "sha256": "53211cf640363e2df27523465c2d2192dbc3ddf252bc4272e8e166646c273923",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "3e36c5db6ec406fb5fc8bfed7ef800329b37a53fa5122c2e1e8976e30d435112",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "d1b2d9093d6da3c6a3f3d1574fa1c3acf82203c5db031173454fa161b2fde232",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15838,
+     "inputs": {
+      "x": {
+       "sha256": "9e6ae607067476b32bc1c70c364326f7614eae2acf2ef714b3076b191f8b36ea",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "31717fad022ed0a4bc9b3ca7400974f8d9173e8d188ca1915bcbdb7da12ff6dc",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "fa1098324ae1f82747030aba4c3763b678ac1106952d38087f1d3ed25bd575e1",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15845,
+     "inputs": {
+      "x": {
+       "sha256": "2a893b5b89c718ff02d8fa67206996f2a195549a5a0ba30dfadcfe2a71385e60",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "c74d76443f43544625abd3c48697bbc3ad6a678dc8f2a1e3c81e0b4938a7eabf",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "0214590dc947a19c3973686502d0bdb72804ca60fb8c9da33264b009fea3b5e3",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 17072,
+     "inputs": {
+      "x": {
+       "sha256": "d4af450e6a9abf7272c9f1d4cf6ff747ee51419575b7447aa1e086b92919eae9",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "c6017993bc5fc29f94ffa1f2ce40370fe61d2b14366ce89efc2c0e2ec357391d",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "faf12c58377d786a688ddb0938cdbdef0a661ea52dfbb5b6fa94fc5fdc21e8ee",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23757,
+     "inputs": {
+      "x": {
+       "sha256": "47f66d1c39a82cd6db8d68fef8365b45adfb5ccec584edeac165b21a10047b37",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "b437920c1291e734c557493732b2ef65b757ed90bf44cf2df3effa3f1858bb83",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "fe1fe404480e0652e9485d83a2b2887d61d6f92d27a2c6596f3942b762b5f983",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23764,
+     "inputs": {
+      "x": {
+       "sha256": "40fc09de026504af9075fe45c758966cfd9ba27a49dd4538227564e95f3c4748",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "faf884f2a6c014de32ef2eee4e6bb46ba79eec72557252259f8688213ee475b0",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "78475b01850d7d19e1cbb2e71726b9a0ed76555c0c4a41154be061cf75e0c69b",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 24991,
+     "inputs": {
+      "x": {
+       "sha256": "b8af533ad90900330c29bf07d74e1d2109af688a8dccf672733aaf510cd272d2",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "f64094fc1f1201cd7f9c6d43b3e441e81088bbc98e1941aedc8349d5c81a9991",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "138630d1b23428c0f14d4afb595d0b64db649aa3b85f09e63952ddff002a539e",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31676,
+     "inputs": {
+      "x": {
+       "sha256": "b57c388628f41f8b75d1482f32a5bdd82847b52077e77dc2546336a22bdc4f15",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "307400f6035616fe7d88e75e554d12dd352c6393b32ead58481e2456b659cb2b",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "86542bba4facc5d7a7f0489d96ca5768a3bdcf7fdb170bc6e41bf3b0234230d1",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31683,
+     "inputs": {
+      "x": {
+       "sha256": "5a39f14e95cb68812d31724f63c75c4a546a41bd6cc752dfd00f6aeb6c2d4b9b",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "aede957d0bb7fd9ac0bfe2b52a4b16130ec8c37115492c0e91d6874a7c4a29ee",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "4c95c1ab40fbb006776d67eec121b0a38baf22d178d97b2a8b88a4e56b84035b",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 32910,
+     "inputs": {
+      "x": {
+       "sha256": "895cac83e037e0617bd8e1b6d091aaed1b66cf34d9332ccaf9cb6940c7a2bce2",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "ce7d88481423e833522f8955e94086e6d09ca435016f3464c9a82683743cc886",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "2d36c0bd93f4ca41ab76482c635e4ec5fd9fc6d93c8dcccc9d81a930908269a0",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39595,
+     "inputs": {
+      "x": {
+       "sha256": "3a1a9edad06b9d63b6779ef2ce9582a264f7c8415ede5fc605d3bedf19acbd5f",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "7f8a3836f0f2c284f1b3bc6135a2f6ba734f501d1a519a905edc8b790e7ada24",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "06260b51760d087c9e4e72babce6b59eeb0fcc4f8b780b6c54d2fa9ca5af7051",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39602,
+     "inputs": {
+      "x": {
+       "sha256": "0bd666b18212d07187eae84a0a9d6d45b66b5dc1aa5e925a72e8671426061c98",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "42210149c48ea2aa9ae254efdf7269ae3bafdaa8a62d5ed81ddeead54b30f7cf",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "fc821ef84b1f1ba78bac7694f2027680e86d21bdaa9de95c7c702dc19ceabb67",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 40829,
+     "inputs": {
+      "x": {
+       "sha256": "33db01cbdb098c7ff9eb968bebc94ae4d1eaa9b7eea9d792c0fa7bd2f1914e1d",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "39f279c2878dc228a10e8bdcccb34c3711c693a45f39f5da0f319aef88a64c37",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "35f04156a89780d10556e1f9e7aa90326150fa03e4a5d66099ced2edfa8bb245",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47514,
+     "inputs": {
+      "x": {
+       "sha256": "fe25e28dc7f26872f683fe8fbe71f7b5632d57a1937508150ba5683dfebd1f89",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "402f073c82e2cd29888b2b86dbbbd7f3ffa99c6c071b6254043eccc56f6eb46f",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "114e872e737aa5fdab747bae0fc5e32de4205801fb1d1e185b624b9c5fc95fa8",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47521,
+     "inputs": {
+      "x": {
+       "sha256": "13af532616ea70861e7fe1f14547ea7676d37dde54a8838f215bc3b7d6a8804c",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "54fb8b610f148369a7337f69ba24b5ea9a04180c64139a9e7ce309124ecf06ec",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "2fc4aaaee68fa43045b3543acabe6ba39d1c1c4fb83f60ed5654c6ca0795c8f6",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 48748,
+     "inputs": {
+      "x": {
+       "sha256": "3969de3d7353beafda411f8468e072d482cd3aae2c7096d9dbcf48141bfdba41",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "cfd8be1c240621331c470144bf1e8c1950a6e46f37effd0fe5da85468408b21b",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "a67c1c4ffad44b308175e0f167a5e51c5e7d1339cc86c7ece3b3d221e25300e0",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "task": "rope",
+   "dtype": "fp16",
+   "size": "small",
+   "cases": [
+    "normal",
+    "wide_range",
+    "large",
+    "tiny",
+    "outlier",
+    "ieee"
+   ],
+   "opspec": {
+    "spec_version": 1,
+    "op_name": "rope",
+    "category": "positional",
+    "formula": "y[..., i] = x[..., i]*cos(pos*f_i) - x[..., i+D/2]*sin(pos*f_i); y[..., i+D/2] = x[..., i]*sin(pos*f_i) + x[..., i+D/2]*cos(pos*f_i); f_i = BASE^(-i/(D/2)); pos = index along S",
+    "uses": [
+     "BASE"
+    ],
+    "type_vars": {
+     "T": [
+      "fp16",
+      "bf16"
+     ]
+    },
+    "symbols": {
+     "B": {
+      "min": 1
+     },
+     "H": {
+      "min": 1
+     },
+     "S": {
+      "min": 1
+     },
+     "D": {
+      "min": 2
+     }
+    },
+    "tensors": {
+     "x": {
+      "role": "input",
+      "dims": [
+       "B",
+       "H",
+       "S",
+       "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "H*S*D",
+       "S*D",
+       "D",
+       "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "[B, H, S, D] contiguous"
+     },
+     "y": {
+      "role": "output",
+      "dims": [
+       "B",
+       "H",
+       "S",
+       "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "H*S*D",
+       "S*D",
+       "D",
+       "1"
+      ],
+      "space": "global",
+      "access": "write"
+     }
+    },
+    "numerics": {
+     "acc_dtype": "fp32",
+     "rounding": "single_round_at_output",
+     "tolerances": {
+      "fp16": {
+       "rtol": 0.002,
+       "atol_rel": 0.001
+      },
+      "bf16": {
+       "rtol": 0.016,
+       "atol_rel": 0.008
+      }
+     },
+     "exact": false
+    },
+    "attrs": {
+     "BASE": {
+      "dtype": "float",
+      "default": 10000.0,
+      "domain": {
+       "gt": 0
+      },
+      "doc": "rope frequency base"
+     }
+    },
+    "cases": {
+     "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+     ]
+    },
+    "sizes": {
+     "paper": {
+      "B": 2,
+      "H": 32,
+      "S": 1024,
+      "D": 128,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     },
+     "small": {
+      "B": 1,
+      "H": 2,
+      "S": 64,
+      "D": 64,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     }
+    },
+    "spec_params": [
+     "B",
+     "H",
+     "S",
+     "D"
+    ],
+    "work_accounting": {
+     "flops": {
+      "terms": [
+       {
+        "coefficient": 4,
+        "symbols": [
+         "B",
+         "H",
+         "S",
+         "D"
+        ]
+       }
+      ]
+     },
+     "min_bytes": {
+      "terms": [
+       {
+        "tensor": "x"
+       },
+       {
+        "tensor": "y"
+       }
+      ]
+     }
+    }
+   },
+   "description": "Rotary position embedding on x[B,H,S,D], position = index along S, frequencies BASE^(-i/(D/2)), pairs (x[..., i], x[..., i + D/2]) are rotated by angle pos*freq_i. Angles/trig are computed on the fly in fp32 (no tables).",
+   "baselines": [
+    {
+     "name": "mlx",
+     "framework": "mlx",
+     "implementation_id": "rope.baseline.mlx",
+     "implementation_version": 1,
+     "params": {
+      "kernel": "mx.fast.rope",
+      "traditional": false,
+      "base_attr": "BASE",
+      "scale": 1.0,
+      "offset": 0
+     }
+    }
+   ],
+   "implementations": {
+    "gen_inputs": {
+     "implementation_id": "rope.gen_inputs",
+     "implementation_version": 1,
+     "params": {
+      "mags": {
+       "normal": 1.0,
+       "wide_range": 1.0
+      },
+      "default_mag": 1.0,
+      "large": 40000.0
+     }
+    },
+    "reference": {
+     "implementation_id": "rope.reference",
+     "implementation_version": 1,
+     "params": {
+      "accumulate": "float64",
+      "base_attr": "BASE",
+      "layout": "half_split"
+     }
+    },
+    "error_scale": null
+   },
+   "lowering_profile": "metal-rope",
+   "naive_msl": "kernel void rope_kernel(device const {{T}}* x [[buffer(0)]],\n                        device {{T}}* y [[buffer(1)]],\n                        uint2 tg [[threadgroup_position_in_grid]],\n                        uint lid [[thread_index_in_threadgroup]]) {\n    const uint HALF = D / 2;\n    const float LOG_BASE = precise::log(BASE);\n    uint bh = tg.y;\n    for (uint ps = 0; ps < BLOCK_S; ++ps) {\n        uint s = tg.x * BLOCK_S + ps;\n        ulong row = ((ulong)bh * S + s) * D;\n        for (uint i = lid; i < HALF; i += 128) {\n            float inv_freq = precise::exp(-(float(i) / float(HALF)) * LOG_BASE);\n            float ang = float(s) * inv_freq;\n            float c = precise::cos(ang), sn = precise::sin(ang);\n            float x1 = float(x[row + i]), x2 = float(x[row + i + HALF]);\n            y[row + i] = {{T}}(x1 * c - x2 * sn);\n            y[row + i + HALF] = {{T}}(x1 * sn + x2 * c);\n        }\n    }\n}\n",
+   "work": {
+    "flops": {
+     "terms": [
+      {
+       "coefficient": 4,
+       "symbols": [
+        "B",
+        "H",
+        "S",
+        "D"
+       ]
+      }
+     ]
+    },
+    "min_bytes": {
+     "terms": [
+      {
+       "tensor": "x"
+      },
+      {
+       "tensor": "y"
+      }
+     ]
+    }
+   },
+   "tolerances": {
+    "fp16": {
+     "rtol": 0.002,
+     "atol_rel": 0.001
+    },
+    "bf16": {
+     "rtol": 0.016,
+     "atol_rel": 0.008
+    }
+   },
+   "records": [
+    {
+     "case": "normal",
+     "seed": 7919,
+     "inputs": {
+      "x": {
+       "sha256": "cefc4874662ecff5e5724cd1d9e5397aa6660a8f40201ace846326a1395f2c5c",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "b742cd71f6d2c55df6eed03b5f0bf4e5690d7654287ca0006b00a2b482ed7734",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "57bf6ba8257d7cfe51f147213df983e37c0fae73a86c1244ffabd2bc07680339",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 7926,
+     "inputs": {
+      "x": {
+       "sha256": "ee679b6d02342bf176ecee07eb9de4c1314d69b819f0243216320adf6868d482",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "85197cf4bd28ae4c06cd6d0f71e3e408e4e790fc0c8a9c5eeb4feb48e85bf261",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "8694a33fe9cd781a6b12dff513d3e5df05dc36a086c83167e1b6e4f49b59dc69",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 9153,
+     "inputs": {
+      "x": {
+       "sha256": "fcc447f06bc24f62b7a4452c9f0a5c69d16226a5a3e1737d1af7dc200788fa9d",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "97a4df1fd4efdd03e882a275b6ce3c88ebd1b12e1a52827990151185b8bb7c67",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "f229bb14800767a589d5ed95b5171ca8044cff29caa5ee34cab42ea86e1eeba5",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15838,
+     "inputs": {
+      "x": {
+       "sha256": "9ab216274298f976d636eeb63357cb003f4a5b682da089e6df0ef0fd27d04806",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "4b53df796bd8f124073878ae052a6e2a0e4ee3180e9b553e08381356fee0eec4",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "1ec950681fbfa40b1778a041003bc2bd3f88f6c891af88d1d77c4dbd0ea7c213",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15845,
+     "inputs": {
+      "x": {
+       "sha256": "bb4c4c12d9b12e02708319b0398dda98105dd8671fa68ebdfad9f0277b82ce69",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "95474542b450586ed0408bd2c3d801b181b0206347cdf6407f9613835c18c958",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "73634f8572e2d7fbc2718a0c9baf680b1c3aea976f0a53d5c81b3e8cef1ca3af",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 17072,
+     "inputs": {
+      "x": {
+       "sha256": "55937457eb226a7e980e69f042b2f016fcc5381cc58cd4573ec9ad54f9c68b4b",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "8e6ae8a15315e1c999932197bf5baeef096d0247b183d6ff44503b666c22bb95",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "c7d9bf75ac0ff4c3b5e30461e59d3c080b15236bb45d8ccc6f9f97c3500995d5",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23757,
+     "inputs": {
+      "x": {
+       "sha256": "5783262c29c6a7e8c44ba229e84af400d2d5c8e78ad448dc5348b91efda43c60",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "37b8f9653f4efc71920fcd90ac316d4d5f4848c905a8eba143e4cc2f9722d149",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "191b97259fd7b0362aec027537b8bbea1d85eac8c063bf4eeb1f640374d72d4b",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23764,
+     "inputs": {
+      "x": {
+       "sha256": "57129cd456d6ef55701ea97727f938f84a70130d62f8e42a890bfcd89657c608",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "f4816d19384a28216a8dd3855dba4e0a92e97616f2f557120a1d7dc176579e1d",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "99e1000b8c3e9a1df20cb99f2b9320b6e671aeb4c44c3fe714d772733a70ebb8",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 24991,
+     "inputs": {
+      "x": {
+       "sha256": "fde9b90322a1ae3b554553af755f3f5d6633750380fbcda6d931d59e88d05f7f",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "c355fb59c7eec0994110fecbb2fb3283a1ee75d74d0865cc7bf8a0a5df7a381e",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "df78a9a57a382cf46be3c992d024a007c6092fb7576a6d04dbae48076418c3d9",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31676,
+     "inputs": {
+      "x": {
+       "sha256": "861aca5c199fc29f2c35dcd5dd64e85a08ffb8433a2af5507448a2dac130fd8e",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "0fbaac7489bacb7d5f6d1dd4c01586bfc242df164d6a8a8b16b4db6e1b896462",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "0bdff661748b7fbcea2d6a65e3f29236e55b0c85231bb00e1fdee9647f9d0f18",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31683,
+     "inputs": {
+      "x": {
+       "sha256": "35b2843879cb89b08ec99dafcbbdaf040a432c7358f7811e4fce931b60b97ce6",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "7b97c3e8081c55fe0ea77656e52c5e2cc0256a2493f9fe9e8adc9c0d648103e6",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "15b8f73e73cdab5671c0af46b15413d42e461996dae748dbbf481fceaa2f5eaa",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 32910,
+     "inputs": {
+      "x": {
+       "sha256": "20b3fbbfba55c1f8f2d34e0254bcd5b3696c794153851fb19c5da48e25193237",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "6b5a92f2c21bc2178d18a69b8a71bb9b73a724ef6d0419553f0db45d8a938336",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "411a8cc5dbb24710d85d10028b89478340ae93ed29edf9edd0afa933bd037d6e",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39595,
+     "inputs": {
+      "x": {
+       "sha256": "35af86fb87bb419e06bccb7d83fc022e00e592825734e47b78c68f0a31c11aa9",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "f9da7dd98951e53ea294142d85e22f7948dd18432567af903dbe6aaf4f3ba266",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "445534946654aae937817e67327185fd134a51d733cc8ae08a9905c9e70aa2f2",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39602,
+     "inputs": {
+      "x": {
+       "sha256": "8f5fb96e84c622f1103cb94df1357a772af80a90f86c2aff2aa2e1f28a2259fc",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "563c8199e22e96f5e163aa87a4775ce4bd518d19d91f4eef14af2477c64dc878",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "2e4c19236fcaa1da7bab17376514d5ef916ee6299b537ca1c4b8d8b99a326d85",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 40829,
+     "inputs": {
+      "x": {
+       "sha256": "f1b0af46fb9074d082b6c64d8012551c1e66f74911e2897ee3c07e2bb69d6e9e",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "d0250aae7cd0fab0d10063af7a110d1079e997ac2204fe8692dd3e454ce0df83",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "3ecc1ccacaeb6143e0e281f4f0bf0bbe6d6e34c2a9c9172ffaa6cfbcdf368939",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47514,
+     "inputs": {
+      "x": {
+       "sha256": "27f820876d0e4a3958c79da9753d636d86f5e53edc3ed36a4d4e848bd2a52943",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "b319fc2a9a26c19f28c5d9cffa460f8e557eb3add6ce624e058f1fc6ab9c3362",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "a7c3eaf66061827cacc54b8fc4c6c61700cb5dcbc55c0a66fb2461ce3bc2b50b",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47521,
+     "inputs": {
+      "x": {
+       "sha256": "ec4a6c42d3bc774d22c4e99826f5838d902803399c9560deada93bff010fcda7",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "1f0eb29f0473893ef2143eae5edefd103b96d2cfd522e1ec02a52bc47566e9bc",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "a0d969b67c99543caa74f18665f87162dc57ce95fec20a5fd8d91be386192507",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 48748,
+     "inputs": {
+      "x": {
+       "sha256": "0174ec86455a2a7a4cccec7b394ced7ade659fd37cebcc361c0de0f108485ea2",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "e3f1dfe8987999ac93670d37380eba88d7b7a41f704f40de47081faf5a532b80",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "d7bf11108bf1e325e83d622a65efca62234aecf8b16eabe505da87586929b142",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "task": "rope",
+   "dtype": "bf16",
+   "size": "paper",
+   "cases": [
+    "normal",
+    "wide_range",
+    "large",
+    "tiny",
+    "outlier",
+    "ieee"
+   ],
+   "opspec": {
+    "spec_version": 1,
+    "op_name": "rope",
+    "category": "positional",
+    "formula": "y[..., i] = x[..., i]*cos(pos*f_i) - x[..., i+D/2]*sin(pos*f_i); y[..., i+D/2] = x[..., i]*sin(pos*f_i) + x[..., i+D/2]*cos(pos*f_i); f_i = BASE^(-i/(D/2)); pos = index along S",
+    "uses": [
+     "BASE"
+    ],
+    "type_vars": {
+     "T": [
+      "fp16",
+      "bf16"
+     ]
+    },
+    "symbols": {
+     "B": {
+      "min": 1
+     },
+     "H": {
+      "min": 1
+     },
+     "S": {
+      "min": 1
+     },
+     "D": {
+      "min": 2
+     }
+    },
+    "tensors": {
+     "x": {
+      "role": "input",
+      "dims": [
+       "B",
+       "H",
+       "S",
+       "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "H*S*D",
+       "S*D",
+       "D",
+       "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "[B, H, S, D] contiguous"
+     },
+     "y": {
+      "role": "output",
+      "dims": [
+       "B",
+       "H",
+       "S",
+       "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "H*S*D",
+       "S*D",
+       "D",
+       "1"
+      ],
+      "space": "global",
+      "access": "write"
+     }
+    },
+    "numerics": {
+     "acc_dtype": "fp32",
+     "rounding": "single_round_at_output",
+     "tolerances": {
+      "fp16": {
+       "rtol": 0.002,
+       "atol_rel": 0.001
+      },
+      "bf16": {
+       "rtol": 0.016,
+       "atol_rel": 0.008
+      }
+     },
+     "exact": false
+    },
+    "attrs": {
+     "BASE": {
+      "dtype": "float",
+      "default": 10000.0,
+      "domain": {
+       "gt": 0
+      },
+      "doc": "rope frequency base"
+     }
+    },
+    "cases": {
+     "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+     ]
+    },
+    "sizes": {
+     "paper": {
+      "B": 2,
+      "H": 32,
+      "S": 1024,
+      "D": 128,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     },
+     "small": {
+      "B": 1,
+      "H": 2,
+      "S": 64,
+      "D": 64,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     }
+    },
+    "spec_params": [
+     "B",
+     "H",
+     "S",
+     "D"
+    ],
+    "work_accounting": {
+     "flops": {
+      "terms": [
+       {
+        "coefficient": 4,
+        "symbols": [
+         "B",
+         "H",
+         "S",
+         "D"
+        ]
+       }
+      ]
+     },
+     "min_bytes": {
+      "terms": [
+       {
+        "tensor": "x"
+       },
+       {
+        "tensor": "y"
+       }
+      ]
+     }
+    }
+   },
+   "description": "Rotary position embedding on x[B,H,S,D], position = index along S, frequencies BASE^(-i/(D/2)), pairs (x[..., i], x[..., i + D/2]) are rotated by angle pos*freq_i. Angles/trig are computed on the fly in fp32 (no tables).",
+   "baselines": [
+    {
+     "name": "mlx",
+     "framework": "mlx",
+     "implementation_id": "rope.baseline.mlx",
+     "implementation_version": 1,
+     "params": {
+      "kernel": "mx.fast.rope",
+      "traditional": false,
+      "base_attr": "BASE",
+      "scale": 1.0,
+      "offset": 0
+     }
+    }
+   ],
+   "implementations": {
+    "gen_inputs": {
+     "implementation_id": "rope.gen_inputs",
+     "implementation_version": 1,
+     "params": {
+      "mags": {
+       "normal": 1.0,
+       "wide_range": 1.0
+      },
+      "default_mag": 1.0,
+      "large": 40000.0
+     }
+    },
+    "reference": {
+     "implementation_id": "rope.reference",
+     "implementation_version": 1,
+     "params": {
+      "accumulate": "float64",
+      "base_attr": "BASE",
+      "layout": "half_split"
+     }
+    },
+    "error_scale": null
+   },
+   "lowering_profile": "metal-rope",
+   "naive_msl": "kernel void rope_kernel(device const {{T}}* x [[buffer(0)]],\n                        device {{T}}* y [[buffer(1)]],\n                        uint2 tg [[threadgroup_position_in_grid]],\n                        uint lid [[thread_index_in_threadgroup]]) {\n    const uint HALF = D / 2;\n    const float LOG_BASE = precise::log(BASE);\n    uint bh = tg.y;\n    for (uint ps = 0; ps < BLOCK_S; ++ps) {\n        uint s = tg.x * BLOCK_S + ps;\n        ulong row = ((ulong)bh * S + s) * D;\n        for (uint i = lid; i < HALF; i += 128) {\n            float inv_freq = precise::exp(-(float(i) / float(HALF)) * LOG_BASE);\n            float ang = float(s) * inv_freq;\n            float c = precise::cos(ang), sn = precise::sin(ang);\n            float x1 = float(x[row + i]), x2 = float(x[row + i + HALF]);\n            y[row + i] = {{T}}(x1 * c - x2 * sn);\n            y[row + i + HALF] = {{T}}(x1 * sn + x2 * c);\n        }\n    }\n}\n",
+   "work": {
+    "flops": {
+     "terms": [
+      {
+       "coefficient": 4,
+       "symbols": [
+        "B",
+        "H",
+        "S",
+        "D"
+       ]
+      }
+     ]
+    },
+    "min_bytes": {
+     "terms": [
+      {
+       "tensor": "x"
+      },
+      {
+       "tensor": "y"
+      }
+     ]
+    }
+   },
+   "tolerances": {
+    "fp16": {
+     "rtol": 0.002,
+     "atol_rel": 0.001
+    },
+    "bf16": {
+     "rtol": 0.016,
+     "atol_rel": 0.008
+    }
+   },
+   "records": [
+    {
+     "case": "normal",
+     "seed": 7919,
+     "inputs": {
+      "x": {
+       "sha256": "6de3cb5ebb21730fa8cc3493ecfa57d199e018603a5efb752cf0b1e56c42a8ac",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "17b2b54c262e83369f974121945ba2a39b9a481a18ff1cf9ed26f7ba56f848f6",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "abd91bc453a8bdb86bc5a31260b4aa48200cd529e35a0f9ba0176fe5a8a2ddb6",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 7926,
+     "inputs": {
+      "x": {
+       "sha256": "a860de39d58475ff3260c833e6459231781b2b42b72bee3a5bbbf8c8e6e52bc2",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "06d9d7905d195f719886abbcc9b7ed5dbe2d537b43a2522d3f239e04555c25ad",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "57b9b44320fbdb094c43d3a6e46e428546891e1afee7bc90226563c6f10e4a8d",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 9153,
+     "inputs": {
+      "x": {
+       "sha256": "356943e48d75e0eaedf6a580a3628c6e650bd47915d6813e449655a5fec85fca",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "158f742a0ee69476048e6e55acf8294bfe453bdda2b9b30353e9f3ed711fe099",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "6170ef0140d3964ac6d0c783016f94ac1ee3dbdb04ed3900db479a228953a71d",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15838,
+     "inputs": {
+      "x": {
+       "sha256": "b8d620d5734dac94ca6838679831eb1574e0a0e066f983596a6838c7882189ff",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "5cb054cf881f7b73188783fbf9559935016250ca6c54b27536a359bc90afa1c8",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "4ae28f40fd9b2dc7666c804787e8f8c9850b88b69b6d5c6b72d207049fc84a5f",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15845,
+     "inputs": {
+      "x": {
+       "sha256": "bb4b43c2949d405c78e98fd720f093854f6bf15cd1f45f07c699c4c4ef3599d3",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "a72f7744347b36f9a52874d7cb41713cfcaeb991be7e657f45d43dd240e9e360",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "f1238b2721308c113d32624c8735813514e01ee31cadb272f7e61093e7b070ea",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 17072,
+     "inputs": {
+      "x": {
+       "sha256": "31c9290ac07c312efe5eee1805722b0851e78943cd22b97346bb9df4f1c021b0",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "11b82547b74aca83d5097622210f2afd356eaf8ec26d5252b8ceb01f17470ed3",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "b9e88a58128c99502dca4afbd3f42cc9b777836cc764c49d97b72089b7488bda",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23757,
+     "inputs": {
+      "x": {
+       "sha256": "485aabcb38e1383c2ef1a9ee232467a89a90cf43dba2e486fad18b9ba6a84a3b",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "615bd3ec96a6f63b7e76a582ee3eeffdd396e66be8d050cf5e6e86b0d311dd27",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "3fed66e23ed02147c23cf90a7b5ee5f7e3c3de18d2ecd63a31a1243f1ef1802d",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23764,
+     "inputs": {
+      "x": {
+       "sha256": "9cd153aad34eee686bc48e47e06e27d2ffcc417879c7e8223d06a1b30f74c535",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "5f2286806025b0999cc456b7106b1858134859ef8c9a086113abd55defa452ae",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "4e4bf81ecfd8423e3fc1e54b0cf31811cd784e38d52a52c03d51ec35ea8a412b",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 24991,
+     "inputs": {
+      "x": {
+       "sha256": "9709700bc6e1f38ddafc7dccf9725d787ab5fd5892692b644d6df0ace89d5087",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "1220e4128b9ce040465bdbbbacba7b3939d2b28865a31cbce4b607f48978e9a1",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "46202b198af5a9d32ed7641110f2a2939d3a38a869336bea636591ba8362ad1d",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31676,
+     "inputs": {
+      "x": {
+       "sha256": "e9a65611e3c75795abf7a1c0ee9c20278b6df61f0df07f4dad94fae9ad714638",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "b6d1b2234f4dec13cf3c72e48e74f9fa31eca73db14af494b909ce57ee7f1a6b",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "1c12129d53efc4c4ab37f205fd501b0f91b11903c47780f0357a6446cd154965",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31683,
+     "inputs": {
+      "x": {
+       "sha256": "4f16309b3d232739f564b659f299be86f9e08e6387e888d633f12b50fd2e3f7b",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "7fdbb5e1c146792b773d8cd87f1a7299e797fa418238b19f91c37451d02f3201",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "bd24b616d52a8bc2da06b5b98b16e7edd91928eefd47d60691281c5fdd542deb",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 32910,
+     "inputs": {
+      "x": {
+       "sha256": "914695a8dacfc01a545ea841e5b2d6e380a2048df4360a0e7cb19c3418d55da8",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "566318f7440f4793c5d1d5a2de6feb2d11f8d041860c8db1bf8709bf3beff70d",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "d1130cddbe4450a4151587c5ec0acb4da8bdcdb0e832f8236e666ddbb5554ec2",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39595,
+     "inputs": {
+      "x": {
+       "sha256": "321f692c0645cff14ed855e664d4e42f8a101084141a69461b1a5dc24bec8ef5",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "f1d2b7091f1c8d92341db00fe3e4ea38fcaeb7181b72e3dcb83e4f462fe5c76e",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "cb5086d904333cce2938233da9b1393c5e3b4f5f2e763f7938555fd3959d8535",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39602,
+     "inputs": {
+      "x": {
+       "sha256": "d49443b3fab5e9f5ef97757d157aedcfc247efabc3e277aebb4f69d628d9f488",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "d3429f0c677b2628ab277894c4b911a8ba14ecb3a373dbc76de1634863f86aff",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "6f7b2f0df581407559f94dd6cabbe54fd051a771cfdb8a347a9f026b0bc7bf7f",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 40829,
+     "inputs": {
+      "x": {
+       "sha256": "919c0b52f83a81d04d47014998d161c72551fc6659fa255c8b46e6f2b1c92c27",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "8008b0a02fae7bf552b174e671801c37258ea729dffd4fd6456f70112517ee9f",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "25c4770f33e900da077f62290e93c4fea818da21651dd5cbabc980f51dfc09d7",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47514,
+     "inputs": {
+      "x": {
+       "sha256": "716f19c5c0125794503cde5dc610fc2b76b06ae0dd1da6b20343c53b72dea19f",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "39de007e5177d2d0c729e275fbdb0724a57ba49a84d7d48d80de6ce62e446344",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "dd9f48f7fb6e28091f0f36be9def4253a58d633dbc7cd76948cb2f96bddad9f2",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47521,
+     "inputs": {
+      "x": {
+       "sha256": "b3f76013e3eecc277e90f57db08569ab4f2d5f71eb73a0c448a3f04e9451c5d8",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "a099ebc028fe17b8894abe38c642ebbd782fe4ad333c68e041631568f3b7ea66",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "7189daead94062f4e8780164d7a6653a3b8cc0dda9bda1eb3ffefaebcbd516c5",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 48748,
+     "inputs": {
+      "x": {
+       "sha256": "753b65b771dff65cfdf366ea23e74a03bdae97dad08cda3ad4ed2fd9e2f17646",
+       "nbytes": 16777216,
+       "dtype": "torch.float32",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "f362b3f73de68d4bc5689219fca2101764a159ef317032682b2e90327417476f",
+       "nbytes": 67108864,
+       "dtype": "torch.float64",
+       "shape": [
+        2,
+        32,
+        1024,
+        128
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "7e200916d491420ed662ec5d8298db4900703f82344024bf6a2ca92d5ccc4369",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "task": "rope",
+   "dtype": "bf16",
+   "size": "small",
+   "cases": [
+    "normal",
+    "wide_range",
+    "large",
+    "tiny",
+    "outlier",
+    "ieee"
+   ],
+   "opspec": {
+    "spec_version": 1,
+    "op_name": "rope",
+    "category": "positional",
+    "formula": "y[..., i] = x[..., i]*cos(pos*f_i) - x[..., i+D/2]*sin(pos*f_i); y[..., i+D/2] = x[..., i]*sin(pos*f_i) + x[..., i+D/2]*cos(pos*f_i); f_i = BASE^(-i/(D/2)); pos = index along S",
+    "uses": [
+     "BASE"
+    ],
+    "type_vars": {
+     "T": [
+      "fp16",
+      "bf16"
+     ]
+    },
+    "symbols": {
+     "B": {
+      "min": 1
+     },
+     "H": {
+      "min": 1
+     },
+     "S": {
+      "min": 1
+     },
+     "D": {
+      "min": 2
+     }
+    },
+    "tensors": {
+     "x": {
+      "role": "input",
+      "dims": [
+       "B",
+       "H",
+       "S",
+       "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "H*S*D",
+       "S*D",
+       "D",
+       "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "[B, H, S, D] contiguous"
+     },
+     "y": {
+      "role": "output",
+      "dims": [
+       "B",
+       "H",
+       "S",
+       "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+       "H*S*D",
+       "S*D",
+       "D",
+       "1"
+      ],
+      "space": "global",
+      "access": "write"
+     }
+    },
+    "numerics": {
+     "acc_dtype": "fp32",
+     "rounding": "single_round_at_output",
+     "tolerances": {
+      "fp16": {
+       "rtol": 0.002,
+       "atol_rel": 0.001
+      },
+      "bf16": {
+       "rtol": 0.016,
+       "atol_rel": 0.008
+      }
+     },
+     "exact": false
+    },
+    "attrs": {
+     "BASE": {
+      "dtype": "float",
+      "default": 10000.0,
+      "domain": {
+       "gt": 0
+      },
+      "doc": "rope frequency base"
+     }
+    },
+    "cases": {
+     "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+     ]
+    },
+    "sizes": {
+     "paper": {
+      "B": 2,
+      "H": 32,
+      "S": 1024,
+      "D": 128,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     },
+     "small": {
+      "B": 1,
+      "H": 2,
+      "S": 64,
+      "D": 64,
+      "usage": [
+       "golden",
+       "benchmark"
+      ]
+     }
+    },
+    "spec_params": [
+     "B",
+     "H",
+     "S",
+     "D"
+    ],
+    "work_accounting": {
+     "flops": {
+      "terms": [
+       {
+        "coefficient": 4,
+        "symbols": [
+         "B",
+         "H",
+         "S",
+         "D"
+        ]
+       }
+      ]
+     },
+     "min_bytes": {
+      "terms": [
+       {
+        "tensor": "x"
+       },
+       {
+        "tensor": "y"
+       }
+      ]
+     }
+    }
+   },
+   "description": "Rotary position embedding on x[B,H,S,D], position = index along S, frequencies BASE^(-i/(D/2)), pairs (x[..., i], x[..., i + D/2]) are rotated by angle pos*freq_i. Angles/trig are computed on the fly in fp32 (no tables).",
+   "baselines": [
+    {
+     "name": "mlx",
+     "framework": "mlx",
+     "implementation_id": "rope.baseline.mlx",
+     "implementation_version": 1,
+     "params": {
+      "kernel": "mx.fast.rope",
+      "traditional": false,
+      "base_attr": "BASE",
+      "scale": 1.0,
+      "offset": 0
+     }
+    }
+   ],
+   "implementations": {
+    "gen_inputs": {
+     "implementation_id": "rope.gen_inputs",
+     "implementation_version": 1,
+     "params": {
+      "mags": {
+       "normal": 1.0,
+       "wide_range": 1.0
+      },
+      "default_mag": 1.0,
+      "large": 40000.0
+     }
+    },
+    "reference": {
+     "implementation_id": "rope.reference",
+     "implementation_version": 1,
+     "params": {
+      "accumulate": "float64",
+      "base_attr": "BASE",
+      "layout": "half_split"
+     }
+    },
+    "error_scale": null
+   },
+   "lowering_profile": "metal-rope",
+   "naive_msl": "kernel void rope_kernel(device const {{T}}* x [[buffer(0)]],\n                        device {{T}}* y [[buffer(1)]],\n                        uint2 tg [[threadgroup_position_in_grid]],\n                        uint lid [[thread_index_in_threadgroup]]) {\n    const uint HALF = D / 2;\n    const float LOG_BASE = precise::log(BASE);\n    uint bh = tg.y;\n    for (uint ps = 0; ps < BLOCK_S; ++ps) {\n        uint s = tg.x * BLOCK_S + ps;\n        ulong row = ((ulong)bh * S + s) * D;\n        for (uint i = lid; i < HALF; i += 128) {\n            float inv_freq = precise::exp(-(float(i) / float(HALF)) * LOG_BASE);\n            float ang = float(s) * inv_freq;\n            float c = precise::cos(ang), sn = precise::sin(ang);\n            float x1 = float(x[row + i]), x2 = float(x[row + i + HALF]);\n            y[row + i] = {{T}}(x1 * c - x2 * sn);\n            y[row + i + HALF] = {{T}}(x1 * sn + x2 * c);\n        }\n    }\n}\n",
+   "work": {
+    "flops": {
+     "terms": [
+      {
+       "coefficient": 4,
+       "symbols": [
+        "B",
+        "H",
+        "S",
+        "D"
+       ]
+      }
+     ]
+    },
+    "min_bytes": {
+     "terms": [
+      {
+       "tensor": "x"
+      },
+      {
+       "tensor": "y"
+      }
+     ]
+    }
+   },
+   "tolerances": {
+    "fp16": {
+     "rtol": 0.002,
+     "atol_rel": 0.001
+    },
+    "bf16": {
+     "rtol": 0.016,
+     "atol_rel": 0.008
+    }
+   },
+   "records": [
+    {
+     "case": "normal",
+     "seed": 7919,
+     "inputs": {
+      "x": {
+       "sha256": "38332f9e7ff4ecb01d8e7595983cb580e0c6180226f1bae5ea24cf44f3a33543",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "69ad1b3af6595f6fa829f6d6ad90a041ad9add157b0297dad576a25f4b1a127c",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "61a0acf9fae21fe03debed3a8ce1a0415aea4ac74c5b7eb499e0ce005fe9e598",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 7926,
+     "inputs": {
+      "x": {
+       "sha256": "3f3959087f2075f22173066e4561a2b4ec68d15523ed9596a966f4629ad594c9",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "7741d5b3fc9cdcde73a70654436d6bbefaf173c74a469f085fb5778a2e026a27",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "0d211f2931fb278ea58ccb10ac92ce2bef4d04a811bf360dc2b35803e2230d63",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "normal",
+     "seed": 9153,
+     "inputs": {
+      "x": {
+       "sha256": "ed16051bc14c7e82dd214a64a018fe9aab6f95824b84406944102d0d2d4f1ea0",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "aa62c9f2333409bed9ea057ab20a52de287076d1071409ed8f06f3197e1d1a45",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "dc22a7a2d7ea7ac2bd1faf0e0ca15d0010ca26fc5b028329a388ea820a7eb87c",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15838,
+     "inputs": {
+      "x": {
+       "sha256": "910f4b70fbe0a30afc2796c08421e57f8af3ca7574965acc0be55bc9b4a4bf12",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "99ecdc11200e1a9cf21531ca76fe7f203ba46211c1b9993f1874d50c84eb62a9",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "68953484448b1b35fa0d68cac473936175708e3b0653ee45bb81567d5d490f86",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 15845,
+     "inputs": {
+      "x": {
+       "sha256": "d96e0cab95b2c0e362bf32993b2bc8bac30d2609c8e30576715ba4eee8d213e9",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "c37b93a9abf60a96a0e880e4d9f0e48dba6578055fb0f17cd2965db5d9b0ac85",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "a683af9871845efdcfb08a30493fba7d68990cd97df6be752a4832f29aa60699",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "wide_range",
+     "seed": 17072,
+     "inputs": {
+      "x": {
+       "sha256": "ed384c1b98f4621ac3636addbd4753e46e412b7f4947bea43661a71fafdf1f7c",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "d34593870323f945fcdd7be525883bc6a34a6ddc67ed6fa71b259eebfcf5f843",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "ae97436fedf515df05f5b436273c94258531c8975d3911f8182f98faba4e3305",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23757,
+     "inputs": {
+      "x": {
+       "sha256": "0615fcc939bc8411f716a1cdb8ff1ca893ac33cf9d52d56239f014c8e12bbc1c",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "25cd00ec37a004b1967356a5127269f2e5c74b276bbb3164201f2454ed8333f8",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "2cd685254aad781e50bb06e51766ac47957f450cb3f81c006d23fdd38d019ec4",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 23764,
+     "inputs": {
+      "x": {
+       "sha256": "f8b915bec350b09ffd82fd19453e7e8c8138ca94b39100a1cceee8f539a9d4c2",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "52c881490ea3a182b5aeb3a0b02b8b3dcf19aa9304c57433728a4d206d1e3352",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "5c09d2021d67440afef9a662e6016f71fc71f2e1efaa5480de78aaafa337b263",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "large",
+     "seed": 24991,
+     "inputs": {
+      "x": {
+       "sha256": "219c2304cc46295ec7f3189c4494bdc8f48e28697758bdf011f34bf05f8c8809",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "fd064a5da2b48afbaeb4b8f1dd9ebd5d1aeacc6288205c811cf0f75c82b5e238",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "71002eeebbc259687437ef4638b669b06285fafb6adef21ebf12bce6d0df5675",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31676,
+     "inputs": {
+      "x": {
+       "sha256": "90f0aae91b78e656d0edfab37aa37c7ca015a78d0354af00a821f5d1d9206b30",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "de4bdc024942108e226c22440d7d28ff57ea8fde93f2322459177f74a3eeff78",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "12f319ccf60cf4c42021eacb9455f20fefc8e0ed82df6f134c42de33ddc9f6eb",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 31683,
+     "inputs": {
+      "x": {
+       "sha256": "2092955e367d1768ee48f12d4a900150db55ed798b66aba2af47f1f98cae946e",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "d4b1fff0617d6f377e8d00e6bf0888edca4e27abdcdc91783d63070ef94a01a9",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "f5781177faacb31087606f95d0ff0baa3d1cb5176ae29f0880decd14373f6263",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "tiny",
+     "seed": 32910,
+     "inputs": {
+      "x": {
+       "sha256": "c11ae30c1f5d01bce1813a31b4113fce4da0e0086e943f2cf3c0dfcd49861442",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "e3a79fff8bff4ec21f57fc97457f1273e560f5760ada9b9cb1c60078b5d14e92",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "4e3b7b5c4c2b908bab307c5f9947760cc2aba308bcfac81850c24748da3d3dfd",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39595,
+     "inputs": {
+      "x": {
+       "sha256": "376980ad98f83d1f01f45b9598dabae918827eda5559c3d61a0cc811c1660eb3",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "2cb553482f525649756ac714b5c4071ee32d4ea88f930b458d620d6df8489bc5",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "fd3e68313fbb46270d1cc3a429d21627b9c05aa23b0ab278dd1f24367f61630b",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 39602,
+     "inputs": {
+      "x": {
+       "sha256": "f2deb4490295f9f888f6a02b38b8d08baef4fb5a4c3c24f08ed0924c8cf85cf0",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "2bf1b3b5ccb33fdae57c65bca73fe9fce230d328f8f1197cf3114ea9c3777932",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "79b89689f2cdcfd200c38150624639917f6a4c6c1517ee34eb3c6709bc95e7d6",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "outlier",
+     "seed": 40829,
+     "inputs": {
+      "x": {
+       "sha256": "67355beb6d672cabf3349e29cf5311dbbe6de7f470260f14b27af6ee0c61a0a3",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "fe161be3ff03da27945c8e5453da137d5d362caa1ffdc3bce30d8e1a0dfe9063",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "393b7ce32e2d4bc6aa400a09db96b52112db7bb324959c24e9864f82aaaae76a",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47514,
+     "inputs": {
+      "x": {
+       "sha256": "17115ecf1cddb528d1bf1c461861d3973611275aac8e1157c42521ffed5a11ad",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "796670983efd3f86ef2c019ffdc6a63343a43a269d8e9ff532c4a58d2e5009a1",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "ede7ea0b2c4830a61b38277ccdaccaabc30bf6a6ae743affb5abf31fa935ef02",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 47521,
+     "inputs": {
+      "x": {
+       "sha256": "90153590af22b2957929b923f0bff70661e0b60eebec45ada80c3d33880f4e91",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "2b48f871146b5a2df2668ced480ece21e5663b9ea40a07f6a8db92c1e70aa1c7",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "a6805a4ab0fc84cdbba1501594aed146a9443f1c6f4517b0e8b711b6e2957e51",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    },
+    {
+     "case": "ieee",
+     "seed": 48748,
+     "inputs": {
+      "x": {
+       "sha256": "57a895970729abefbcf6aa8f820438ae7c6ce4d170d099088d8aa9e7894e5d16",
+       "nbytes": 16384,
+       "dtype": "torch.float32",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "reference": {
+      "y": {
+       "sha256": "1db86c9b2f1117712310154a6d492e6b4f65b20d627dd132366cdb3199819aa6",
+       "nbytes": 65536,
+       "dtype": "torch.float64",
+       "shape": [
+        1,
+        2,
+        64,
+        64
+       ]
+      }
+     },
+     "scale": {
+      "y": {
+       "sha256": "75711d9634099b0f4a7dfd9267870076c11e7539c3722da80b582dd89783e4e9",
+       "nbytes": 8,
+       "dtype": "torch.float64",
+       "shape": []
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

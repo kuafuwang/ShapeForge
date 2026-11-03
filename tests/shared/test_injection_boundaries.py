@@ -205,7 +205,9 @@ def test_inherit_prompt_is_bounded_and_prefers_actionable_peer_fields(tmp_path):
 def test_inherit_prompt_reaches_next_task_without_extra_reviewer(tmp_path):
     """@brief harness_auto 关闭时也能作为待复核提示进入 TASK；seedless 首场不注入。"""
     from ..support.orchestrator import code, llm_script, make_orch
-    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [])
+    # lion 的题面比 conv2d 短：这个测试要让"队友建议"落在 TASK.md 的字节预算内，
+    # 而不是被 conv2d 的长契约描述挤掉（样本题在 B1 后换成了 conv2d）。
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], task_name="lion")
     run = orch.run_dir
     run.mkdir(parents=True, exist_ok=True)
     orch.search.inherit_prompt = True

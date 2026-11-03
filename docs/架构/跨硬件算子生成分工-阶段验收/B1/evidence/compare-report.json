@@ -1,0 +1,111 @@
+{
+ "schema_version": 1,
+ "phase": "B1",
+ "results": [
+  {
+   "combo": "gemv/fp16/paper",
+   "records": 18,
+   "exact_input_bytes": 36,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "gemv/fp16/small",
+   "records": 18,
+   "exact_input_bytes": 36,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "gemv/bf16/paper",
+   "records": 18,
+   "exact_input_bytes": 36,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "gemv/bf16/small",
+   "records": 18,
+   "exact_input_bytes": 36,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "rope/fp16/paper",
+   "records": 18,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:1",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "rope/fp16/small",
+   "records": 18,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:1",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "rope/bf16/paper",
+   "records": 18,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:1",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "rope/bf16/small",
+   "records": 18,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:1",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  }
+ ],
+ "ok": true
+}

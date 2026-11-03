@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "phase": "B1",
+  "epoch": "v1-retirement-b1",
+  "migrated": [
+    {"task": "gemv", "sizes": ["paper", "small"], "dtypes": ["fp16", "bf16"]},
+    {"task": "rope", "sizes": ["paper", "small"], "dtypes": ["fp16", "bf16"]}
+  ],
+  "base_boundary": "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json",
+  "rule": "B1 不编辑 G0/A5/A6 的任何文件。当前 v1 保留集 = G0 preserved_v1_out_of_scope 减去本批 migrated；当前已迁移集 = G0 migration_candidates 加上本批 migrated。",
+  "evidence": {
+    "frozen_v1": "evidence/v1-frozen.json",
+    "compare_report": "evidence/compare-report.json",
+    "candidates": "evidence/candidates/"
+  },
+  "deleted_v1_assembly": ["task.py", "track.json", "kernel_triton.py", "kernel_triton_msl.py", "naive.metal", "__init__.py"],
+  "deleted_lowering_profiles": ["metal-gemv", "metal-rope"]
+}

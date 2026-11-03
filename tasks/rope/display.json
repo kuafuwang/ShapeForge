@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "Rotary position embedding on x[B,H,S,D], position = index along S, frequencies BASE^(-i/(D/2)), pairs (x[..., i], x[..., i + D/2]) are rotated by angle pos*freq_i. Angles/trig are computed on the fly in fp32 (no tables)."
+}

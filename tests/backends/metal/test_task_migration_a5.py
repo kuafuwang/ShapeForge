@@ -166,14 +166,16 @@ def test_a5_the_shipped_standard_dirs_are_v2_and_carry_no_v1_assembly():
 
 
 def test_a5_the_out_of_scope_v1_tasks_keep_their_v1_assembly():
-    """@brief preserved_v1_out_of_scope 的题仍是 v1（含 track.json/task.py），不被 A5 触碰。"""
-    from tcenv.taskcontract import inspect_standard_entry
+    """@brief 当前仍保留的 v1 题仍是 v1（含 track.json/task.py），不被迁移批次触碰。
 
-    boundary = json.loads((ROOT / "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json").read_text())
-    preserved = [name for name in boundary["preserved_v1_out_of_scope"] if not name.startswith("sem_int ")]
+    G0 的 ``preserved_v1_out_of_scope`` 是冻结证据，B1 又迁走了 gemv/rope；这里读的是由
+    各批次边界派生的**当前**保留集，而不是那份历史名单。
+    """
+    from tcenv.taskcontract import inspect_standard_entry
+    from tests.support.boundaries import preserved_v1
+
+    preserved = [name for name in preserved_v1() if not name.startswith("sem_int ")]
     assert set(preserved) == {
-        "rope",
-        "gemv",
         "conv2d",
         "flash_attention",
         "lion",

@@ -97,22 +97,17 @@ def test_the_mapping_and_the_a5_migration_together_cover_the_frozen_g0_domain():
 
     from tcenv.taskcontract import inspect_standard_entry
 
-    boundary = json.loads(
-        (ROOT / "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json").read_text(encoding="utf-8")
-    )
-    preserved = tuple(
-        str(name) for name in boundary["preserved_v1_out_of_scope"] if not str(name).startswith("sem_int ")
-    )
+    from tests.support.boundaries import migrated_tasks, preserved_v1
+
+    preserved = tuple(name for name in preserved_v1() if not name.startswith("sem_int "))
     assert set(preserved) == {
-        "rope",
-        "gemv",
         "conv2d",
         "flash_attention",
         "lion",
         "bitdelta_gemm",
         "mamba2_chunk_scan",
         "sem_attention_odd_scale",
-    }
+    }, "B1 之后的 v1 保留集应由边界派生，而不是手写"
     mapped: set[tuple[str, str, str]] = set()
     for path in OPSPECS:
         spec = load_opspec(path)
@@ -120,13 +115,27 @@ def test_the_mapping_and_the_a5_migration_together_cover_the_frozen_g0_domain():
             for size in spec.sizes:
                 mapped.add((spec.op_name, str(dtype), str(size)))
     assert {name for name, _dtype, _size in mapped} == set(preserved), (
-        "the mapping covers a different task set than preserved_v1_out_of_scope"
+        "the mapping covers a different task set than the current preserved inventory"
     )
-    assert len(mapped) == 32, f"the preserved v1 domain is {len(mapped)} combinations, not 32"
     for name in preserved:
         assert {dtype for task, dtype, _size in mapped if task == name} == {"fp16", "bf16"}, name
         assert {size for task, _dtype, size in mapped if task == name} == {"paper", "small"}, name
 
+    # G0 的冻结域是 8 保留题/32 组合 + 16 迁移题/82 组合；B1 把其中 2 题/8 组合挪到 v2。
+    # 映射覆盖的组合 + B1 证据里的组合必须仍然恰好是原来的 32 个，一个也不能丢。
+    b1 = json.loads(
+        (ROOT / "docs/架构/跨硬件算子生成分工-阶段验收/B1/evidence/v1-frozen.json").read_text(encoding="utf-8")
+    )
+    b1_combos = {(combo["task"], combo["dtype"], combo["size"]) for combo in b1["combos"]}
+    assert {combo["task"] for combo in b1["combos"]} == {"gemv", "rope"}
+    assert len(mapped) + len(b1_combos) == 32, (
+        f"the original preserved domain is 32 combinations; mapping has {len(mapped)}, B1 has {len(b1_combos)}"
+    )
+    assert not (mapped & b1_combos), "a B1 task is still offered as a v1 document"
+
+    boundary = json.loads(
+        (ROOT / "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json").read_text(encoding="utf-8")
+    )
     migrated = {str(entry["task"]) for entry in boundary["migration_candidates"]}
     assert len(migrated) == 16, f"the frozen migration inventory has {len(migrated)} tasks"
     corpus = json.loads(
@@ -135,6 +144,6 @@ def test_the_mapping_and_the_a5_migration_together_cover_the_frozen_g0_domain():
     migrated_combos = [combo for combo in corpus["combos"] if combo["task"] in migrated]
     assert {combo["task"] for combo in migrated_combos} == migrated
     assert len(migrated_combos) == 82, f"the frozen corpus lost combinations: {len(migrated_combos)}"
-    for name in sorted(migrated):
+    for name in sorted(set(migrated_tasks())):
         entry = inspect_standard_entry(ROOT / "tasks" / name)
         assert entry.is_v2, f"{name}: the migrated task is not on the v2 standard entry"
