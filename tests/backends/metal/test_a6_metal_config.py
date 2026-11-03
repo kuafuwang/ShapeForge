@@ -137,7 +137,8 @@ def test_a6_the_preserved_lowering_module_exports_only_names_that_exist():
     from tcenv.backends.metal import lowering as metal_lowering
 
     retired = {
-        "ROPE_PROFILE", "GEMV_PROFILE",  # B1 retired these two with the gemv/rope migration
+        "ROPE_PROFILE", "GEMV_PROFILE",  # B1
+        "CONV2D_PROFILE", "LION_PROFILE", "LOWERER_ID", "LOWERER_VERSION",  # B2（共享 lowerer 随 lion 退役）
         "ELEMENTWISE_LOWERER_ID", "ELEMENTWISE_LOWERER_VERSION", "DEFAULT_GEMM_VARIANT",
         "GEMM_PROFILE", "GEMM_SILU_PROFILE", "RELU_PROFILE", "SIGMOID_PROFILE", "SILU_PROFILE",
         "SWIGLU_PROFILE", "REDUCTION_SUM_PROFILE", "RMSNORM_PROFILE", "RMSNORM_PROFILE_NAME",
@@ -151,9 +152,9 @@ def test_a6_the_preserved_lowering_module_exports_only_names_that_exist():
     exec("from tcenv.backends.metal.lowering import *", namespace)
     assert set(metal_lowering.__all__) <= set(namespace), set(metal_lowering.__all__) - set(namespace)
     # The preserved interface is the registered v1 surface, not a re-export of deleted internals.
-    assert {"CONV2D_PROFILE", "LION_PROFILE",
+    assert {
             "FLASH_ATTENTION_PROFILE", "BITDELTA_PROFILE", "MAMBA2_PROFILE", "SEM_INT_PROFILE",
-            "DEFAULT_FA_VARIANT", "LOWERER_ID"} <= exported
+            "DEFAULT_FA_VARIANT"} <= exported
 
 
 def test_a6_the_opt_in_hang_candidate_uses_the_preserved_lion_abi():
@@ -167,7 +168,9 @@ def test_a6_the_opt_in_hang_candidate_uses_the_preserved_lion_abi():
 
     from ...support.hang_candidate import HANG_BODY, LION_BODY, lion_hang_findings, lion_hang_source
 
-    naive = get_task("lion", "fp16", "small").naive_msl
+    from ...support.v1_specimen import specimen_task
+
+    naive = specimen_task("lion", "fp16", "small").naive_msl  # B2: lion 已迁，用归档夹具
     assert LION_BODY in naive
     hang = lion_hang_source(naive)
     assert lion_hang_findings(naive, hang) == []

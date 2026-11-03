@@ -29,13 +29,11 @@ V2_ENTRY_FILES: tuple[str, ...] = ("reference.py", "reference.json", "baselines.
 # 第一阶段算子。目录名必须和这里一致，get_task 靠 importlib 加载 tasks.<名字>.task。
 # 只登记仍由 v1 装配的题（``preserved_v1_out_of_scope``）。A5 迁移的 9 道普通题已删除 v1 task.py，
 # A6 同时删除它们的名字条目：列一张本 registry 装不出来的名单，和 import 回退一样是假的多路径。
-TASK_NAMES = (
-    "conv2d",
-)
+TASK_NAMES: tuple[str, ...] = ()  # B2: conv2d 迁往 v2，第一阶段静态题全部离开 v1 装配
 
 # Tasks added in phase 2 (recent-paper kernels).
 # 第二阶段算子。get_task 接受它们，list_tasks 默认不列出。
-PHASE2_TASK_NAMES: tuple[str, ...] = ("flash_attention", "lion", "bitdelta_gemm", "mamba2_chunk_scan")
+PHASE2_TASK_NAMES: tuple[str, ...] = ("flash_attention", "bitdelta_gemm", "mamba2_chunk_scan")  # B2: lion 迁往 v2
 
 
 def _keeps_v1(name: str) -> bool:

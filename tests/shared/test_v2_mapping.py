@@ -101,13 +101,11 @@ def test_the_mapping_and_the_a5_migration_together_cover_the_frozen_g0_domain():
 
     preserved = tuple(name for name in preserved_v1() if not name.startswith("sem_int "))
     assert set(preserved) == {
-        "conv2d",
         "flash_attention",
-        "lion",
         "bitdelta_gemm",
         "mamba2_chunk_scan",
         "sem_attention_odd_scale",
-    }, "B1 之后的 v1 保留集应由边界派生，而不是手写"
+    }, "B2 之后的 v1 保留集应由边界派生，而不是手写"
     mapped: set[tuple[str, str, str]] = set()
     for path in OPSPECS:
         spec = load_opspec(path)
@@ -121,23 +119,23 @@ def test_the_mapping_and_the_a5_migration_together_cover_the_frozen_g0_domain():
         assert {dtype for task, dtype, _size in mapped if task == name} == {"fp16", "bf16"}, name
         assert {size for task, _dtype, size in mapped if task == name} == {"paper", "small"}, name
 
-    # G0 的冻结域是 8 保留题/32 组合 + 16 迁移题/82 组合；B1 把其中 2 题/8 组合挪到 v2。
-    # 映射覆盖的组合 + B1 证据里的组合必须仍然恰好是原来的 32 个，一个也不能丢。
-    b1 = json.loads(
-        (ROOT / "docs/架构/跨硬件算子生成分工-阶段验收/B1/evidence/v1-frozen.json").read_text(encoding="utf-8")
+    # G0 的冻结域是 8 保留题/32 组合 + 16 迁移题/82 组合。B1/B2 各迁走 2 题/8 组合，
+    # 所以「当前 v1 文档的映射组合」+「各批次冻结证据里的组合」必须仍恰好是 32 个。
+    batch_combos: set[tuple[str, str, str]] = set()
+    for path in sorted((ROOT / "docs" / "架构" / "跨硬件算子生成分工-阶段验收").glob("B*/evidence/v1-frozen.json")):
+        document = json.loads(path.read_text(encoding="utf-8"))
+        batch_combos |= {(combo["task"], combo["dtype"], combo["size"]) for combo in document["combos"]}
+    assert {task for task, _dtype, _size in batch_combos} == {"gemv", "rope", "conv2d", "lion"}
+    assert len(mapped) + len(batch_combos) == 32, (
+        f"the original preserved domain is 32 combinations; mapping has {len(mapped)}, batches have {len(batch_combos)}"
     )
-    b1_combos = {(combo["task"], combo["dtype"], combo["size"]) for combo in b1["combos"]}
-    assert {combo["task"] for combo in b1["combos"]} == {"gemv", "rope"}
-    assert len(mapped) + len(b1_combos) == 32, (
-        f"the original preserved domain is 32 combinations; mapping has {len(mapped)}, B1 has {len(b1_combos)}"
-    )
-    assert not (mapped & b1_combos), "a B1 task is still offered as a v1 document"
+    assert not (mapped & batch_combos), "a migrated task is still offered as a v1 document"
 
     boundary = json.loads(
         (ROOT / "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json").read_text(encoding="utf-8")
     )
     migrated = {str(entry["task"]) for entry in boundary["migration_candidates"]}
-    assert len(migrated) == 16, f"the frozen migration inventory has {len(migrated)} tasks"
+    assert len(migrated) == 16, f"the frozen migration inventory has {len(migrated)} tasks"  # G0 文档本身不变
     corpus = json.loads(
         (ROOT / "docs/架构/跨硬件算子生成分工-G0/corpus/index.json").read_text(encoding="utf-8")
     )

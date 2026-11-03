@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import math
 
 import pytest
@@ -151,13 +153,56 @@ LION_NAN_DEPENDS_ON_OUTPUT = """if (j < N) {
         }"""
 
 
+
+
+def _evaluate_lion(source: str):
+    """@brief 在 v2 标准入口上评测一个 lion 候选（small/fp16）。
+
+    B2 之后 lion 不再有 v1 装配，这两个 IEEE 行为测试改走真实 v2 ``evaluate_task``。
+    注意必须显式给出完整 case 表：``quick`` 模式默认只跑 normal/wide_range/outlier，
+    不带 ieee 的话这两个测试会假性通过。
+    """
+    from tcenv.backends.metal.track_adapter import MetalTrackBuilder, MetalTrackEvaluator, msl_single_geometry_resolver
+    from tcenv.taskcontract import load_task_contract
+    from tcenv.taskcontract.locator import TaskLocator
+    from tcenv.taskcontract.pack import task_pack_closure
+    from tcenv.taskcontract.runner import evaluate_task
+    from tcenv.track import REPO_ROOT
+
+    directory = Path(__file__).resolve().parents[3] / "tasks" / "lion"
+    contract = load_task_contract(directory, dtype="fp16", size="small")
+    locator = TaskLocator(
+        task_id="lion", op_name=contract.op_name, dtype=contract.dtype, size=contract.size,
+        pack_digest=contract.pack_digest,
+        deployment_pack_digest=task_pack_closure(directory, root=REPO_ROOT).digest,
+        task_dir=directory, code_root=REPO_ROOT,
+    )
+    candidate = (
+        "/* taic-launch\nmath fast\nlaunch lion_kernel grid=64,1,1 threads=128,1,1\n*/\n"
+        "constant uint BLOCK_SIZE = 1024;\n" + source
+    )
+    return evaluate_task(
+        locator,
+        track_id="msl-single",
+        candidate_source=candidate,
+        builder=MetalTrackBuilder(),
+        evaluator=MetalTrackEvaluator(
+            mode="quick", seed=5, reps=1,
+            cases=("normal", "wide_range", "large", "tiny", "outlier", "ieee"),
+        ),
+        geometry_resolver=msl_single_geometry_resolver(contract),
+        track_registry_path=Path(__file__).resolve().parents[3] / "backends" / "metal" / "tracks.json",
+    )
+
 def lion_with(body: str) -> str:
     """@brief 把 lion naive 内核里的一段标准循环体替换成给定实现。
 
     @param body 替换后的内核循环体源码。
     @return 替换好的完整 MSL 源码。
     """
-    src = get_task("lion", "fp16", "small").naive_msl
+    from tests.support.v1_specimen import specimen_task
+
+    src = specimen_task("lion", "fp16", "small").naive_msl  # B2：lion 已迁，用归档候选文本
     assert LION_OK in src
     return src.replace(LION_OK, body)
 
@@ -168,15 +213,13 @@ def test_a_kernel_that_drops_nan_is_rejected_by_the_ieee_case_only():
 
     需要 GPU。
     """
-    from tcenv.evaluate import evaluate
-
-    rep = evaluate("lion", "fp16", "small", lion_with(LION_DROPS_NAN), mode="quick", seed=5)
-    assert rep.status == "incorrect"
-    assert [c["case"] for c in rep.correctness["cases"] if not c["ok"]] == ["ieee"]
+    report = _evaluate_lion(lion_with(LION_DROPS_NAN)).report
+    assert report["status"] == "incorrect"
+    assert [c["case"] for c in report["correctness"]["cases"] if not c["ok"]] == ["ieee"]
     # The report names the wrong value and the non-finite reference (the first injected special
     # in lion's ``p`` may be any of nan/-inf/inf, so all three spellings are accepted).
-    assert "got 0 want" in rep.message
-    assert any(spelling in rep.message for spelling in ("want nan", "want -inf", "want inf"))
+    assert "got 0 want" in report["message"]
+    assert any(spelling in report["message"] for spelling in ("want nan", "want -inf", "want inf"))
 
 
 @gpu
@@ -185,13 +228,12 @@ def test_determinism_is_checked_on_every_case_not_only_the_first():
 
     需要 GPU。
     """
-    from tcenv.evaluate import evaluate
-
-    rep = evaluate("lion", "fp16", "small", lion_with(LION_NAN_DEPENDS_ON_OUTPUT), mode="quick", seed=5)
-    assert rep.status == "unsafe" and "initial contents" in rep.message
+    report = _evaluate_lion(lion_with(LION_NAN_DEPENDS_ON_OUTPUT)).report
+    assert report["status"] == "unsafe" and "initial" in report["message"]
     # all the earlier cases passed, the problem only shows on the last one
-    assert [c["case"] for c in rep.correctness["cases"]][-1] == "ieee"
-    assert all(c["ok"] for c in rep.correctness["cases"])
+    cases = report["correctness"]["cases"]
+    assert cases[-1]["case"] == "ieee" and not cases[-1]["ok"]
+    assert all(c["ok"] for c in cases[:-1])
 
 
 @gpu
@@ -241,11 +283,17 @@ def test_building_a_task_for_one_dtype_does_not_change_another_dtypes_tolerances
     """@brief 回归用例：先构建一种 dtype 再构建另一种，不得改掉前者的容差。
 
     Lion 任务曾把 atol_rel 存在模块级全局变量里，导致最后构建的 dtype 覆盖了前面的值。
+    B2 之后 lion 在 v2 标准入口上，这个回归直接走 v2 的合同与 error_scale 钩子。
     """
+    from tcenv.backends.metal.v2_runtime import prepare_v2_case
+    from tcenv.taskcontract import load_task_contract
+
+    root = Path(__file__).resolve().parents[3]
+
     def scale(dtype):
-        t = get_task("lion", dtype, "small")
-        d = prepare_case(t, "tiny", 3)
-        return float(t.error_scale(d.rounded, d.ref)["p_out"].max())
+        contract = load_task_contract(root / "tasks" / "lion", dtype=dtype, size="small")
+        case = prepare_v2_case(contract, "tiny", 3)
+        return float(case.scale["p_out"].max())
 
     first = scale("fp16")
     scale("bf16")
@@ -274,17 +322,17 @@ def test_conv2d_ieee_reference_keeps_most_outputs_finite_and_matches_conv2d_on_f
     import torch
     import torch.nn.functional as F
 
-    from tasks import get_task
-    from tcenv.backends.metal.testing import prepare_case
+    from tcenv.backends.metal.v2_runtime import prepare_v2_case
+    from tcenv.taskcontract import load_task_contract
 
-    t = get_task("conv2d", "fp16", "small")
-    d = prepare_case(t, "ieee", 11)
+    contract = load_task_contract(Path(__file__).resolve().parents[3] / "tasks" / "conv2d", dtype="fp16", size="small")
+    d = prepare_v2_case(contract, "ieee", 11)
     y = d.ref["y"]
     assert torch.isfinite(y).double().mean() > 0.75
     assert torch.isinf(y).any() and torch.isnan(y).any()
     # finite inputs take the F.conv2d path; the tap-wise path must agree with it
-    n = prepare_case(t, "normal", 12)
-    ref = t.reference(n.rounded)["y"]
+    n = prepare_v2_case(contract, "normal", 12)
+    ref = contract.reference.execute(contract.instance, n.rounded)["y"]
     tap = torch.zeros_like(ref, dtype=torch.float32)
     x, w = n.rounded["x"].float(), n.rounded["w"].float()
     OH, OW = ref.shape[1], ref.shape[2]

@@ -207,7 +207,7 @@ def test_inherit_prompt_reaches_next_task_without_extra_reviewer(tmp_path):
     from ..support.orchestrator import code, llm_script, make_orch
     # lion 的题面比 conv2d 短：这个测试要让"队友建议"落在 TASK.md 的字节预算内，
     # 而不是被 conv2d 的长契约描述挤掉（样本题在 B1 后换成了 conv2d）。
-    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], task_name="lion")
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], task_name="bitdelta_gemm")
     run = orch.run_dir
     run.mkdir(parents=True, exist_ok=True)
     orch.search.inherit_prompt = True
@@ -217,7 +217,9 @@ def test_inherit_prompt_reaches_next_task_without_extra_reviewer(tmp_path):
     brief = orch._session_brief(seedless=False)
     assert PEER in brief.inherit_prompt
     from taic.kernel_agent import render_contract
-    task_text = render_contract(brief)
+    # 保留题的契约描述比 lion 长；放宽预算，让本测试聚焦"队友建议是否进入 TASK.md"，
+    # 而不是聚焦预算裁剪策略本身。
+    task_text = render_contract(brief, max_bytes=20000)
     assert "队友建议（待你复核" in task_text and PEER in task_text
     seedless = render_contract(orch._session_brief(seedless=True))
     assert "队友建议（待你复核" not in seedless

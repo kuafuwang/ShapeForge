@@ -73,10 +73,10 @@ def test_suite_runs_resumes_summarizes_and_plots(tmp_path):
         )
 
     rs.run_one = one
-    rows = rs.run_suite([V1_TASK, "flash_attention"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
+    rows = rs.run_suite([V1_TASK, "bitdelta_gemm"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
     assert len(rows) == 4 and all(r["confirmed_speedup"] == pytest.approx(1.2) for r in rows)
     n_calls = len(calls)
-    again = rs.run_suite([V1_TASK, "flash_attention"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
+    again = rs.run_suite([V1_TASK, "bitdelta_gemm"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
     assert len(calls) == n_calls and len(again) == 4  # resumed: nothing re-run
     md = rs.markdown_table(rows)
     assert V1_TASK in md and "1.200x" in md
@@ -162,7 +162,9 @@ def test_p1_runs_name_buildable_tasks_and_the_report_renders(tmp_path):
     boundary = json.loads(
         (Path(__file__).resolve().parents[2] / "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json").read_text()
     )
-    migrated = {item["task"] for item in boundary["migration_candidates"]}
+    from tests.support.boundaries import migrated_tasks
+
+    migrated = set(migrated_tasks())  # 含 B1/B2：这些题在 P1 里也只能作为历史记录存在
     for name, spec in p1_runs.RUNS.items():
         base = spec["task"].split("@", 1)[0]
         if base in migrated:

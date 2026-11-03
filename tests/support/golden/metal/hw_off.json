@@ -1,8 +1,8 @@
 {
 "_meta": {
-"git_commit": "658473c0e7af18dbf3779468aa51398f713a188d",
-"reason": "B1: gemv/rope migrated to v2; the elementwise v1 specimen is now lion, and the preserved-task inventory shrank from 8 to 6",
-"recorded_at": "2026-11-03T23:18:22+08:00"
+"git_commit": "1c023920c3b1db3366b39acddbb83fb211b3d32b",
+"reason": "B2: conv2d/lion migrated to v2; prompt specimens are now flash_attention/bitdelta_gemm/mamba2_chunk_scan, and the v1 inventory shrank to 3 static tasks plus the semantic family",
+"recorded_at": "2026-11-03T23:46:48+08:00"
 },
 "feedback": {
 "format_feedback_cut|compile_error": "STATUS: compile_error  (stage reached: compile)\nMetal compiler rejected the kernel\n\nMetal compiler errors (line numbers refer to your kernel source):\nkernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n",
@@ -19,19 +19,19 @@
 "format_feedback|relu_best": "STATUS: ok  (stage reached: done)\nMeasured:\n  bound: memory\n  candidate is 0.97x the lower bound\n  bandwidth utilization: 103%\n  timing cv: 0.9%\n  threadgroup memory: 0 B\n  threadgroup thread cap 1024, this launch 128\ncompiled, ABI ok, safe, correct and benchmarked\n\nCorrectness (randomized differential tests vs fp64/fp32 CPU reference):\n  tolerance: |out-ref| <= 0.002*|ref| + 0.001*scale (scaled error 1.0 == at tolerance)\n  PASS normal      worst scaled error        0  allowed 1\n  PASS wide_range  worst scaled error        0  allowed 1\n  PASS large       worst scaled error        0  allowed 1\n  PASS tiny        worst scaled error        0  allowed 1\n  PASS outlier     worst scaled error        0  allowed 1\n  PASS ieee        worst scaled error        0  allowed 1\n\nPerformance (interleaved benchmark, median per launch):\n  candidate : 145.63 us   (cv 0.9%, GPU-timestamp 141.75 us)\n  mlx       : 143.40 us   -> candidate is 0.985x slower than this baseline\n  torch_mps : 143.15 us   -> candidate is 0.983x slower than this baseline\n  speedup vs best baseline (torch_mps): 0.983x\n  triton_msl (Triton spec compiled to Metal by a community backend, estimated): 173.43 us -> candidate is 1.191x FASTER\n\nFormal verification: unsupported (eligibility rests on safety checks and randomized differential tests)\n\nRoofline (measured peaks on this machine):\n  bound: memory; achieved 461 GB/s (103% of 449 GB/s peak), 0.12 TFLOP/s (1% of 14.8)\n  roofline lower bound 149.4 us (reference algorithm); the candidate is 0.97x above it\n\nPipeline: maxTotalThreadsPerThreadgroup=1024 (launching 128), SIMD width 32, static threadgroup memory 0 B"
 },
 "orchestrator": {
-"orchestrator|conv2d|plan_mix=1": {
+"orchestrator|bitdelta_gemm|plan_mix=0": {
 "each": [
 {
 "label": "0",
-"sha": "f3a6b0996b37e772d27c234faaf0fc52f6da3243"
+"sha": "951a5fd9069c8e6ac4567dc63e617b49d1f51c71"
 },
 {
 "label": "1",
-"sha": "91cc2ff72861a27f12c22591784c3e383b92a789"
+"sha": "dc283fdeee140257398978a44b30b0e0c7f667c4"
 }
 ],
 "requests": 2,
-"sha": "db237d123f53b00bff0dc0fe50d06cde09ae7174"
+"sha": "5eb3c3a85770f7af028b4403ed0d181f1538716e"
 },
 "orchestrator|flash_attention|plan_mix=0": {
 "each": [
@@ -41,39 +41,39 @@
 },
 {
 "label": "1",
-"sha": "9f2d167446b51affeda6f76a535ad70283db285c"
+"sha": "f5982c7d43bad3ec5474136a02e42e6d26cbee46"
 }
 ],
 "requests": 2,
-"sha": "cec10a8afd05f1f84852ce926fd87b3d635a72ef"
+"sha": "feee5c44f33ea6a861232d9ab40c5a7bc2ab018f"
 },
-"orchestrator|lion|plan_mix=0": {
+"orchestrator|flash_attention|plan_mix=1": {
 "each": [
 {
 "label": "0",
-"sha": "84e317a3e9674a11039c49935db736b4369820a3"
+"sha": "99f17f5677c15c08b1b1c8e42a41ae5c1baad22d"
 },
 {
 "label": "1",
-"sha": "3908b93e920fcf451fe57c1132d48855b2cfa406"
+"sha": "f5982c7d43bad3ec5474136a02e42e6d26cbee46"
 }
 ],
 "requests": 2,
-"sha": "b4f469441491ae8eded97b09b7dc42925ee82c85"
+"sha": "feee5c44f33ea6a861232d9ab40c5a7bc2ab018f"
 },
-"orchestrator|lion|plan_mix=1": {
+"orchestrator|mamba2_chunk_scan|plan_mix=1": {
 "each": [
 {
 "label": "0",
-"sha": "84e317a3e9674a11039c49935db736b4369820a3"
+"sha": "6a6dfab63f4c4bb2058da2f41f0e7df564c28629"
 },
 {
 "label": "1",
-"sha": "3908b93e920fcf451fe57c1132d48855b2cfa406"
+"sha": "fcbdf38981e36382453e0cf86daa5081bab2f4ad"
 }
 ],
 "requests": 2,
-"sha": "b4f469441491ae8eded97b09b7dc42925ee82c85"
+"sha": "0d6b78114b2d7e59f187f1558ca9f17887671bfc"
 }
 },
 "outbound": {
@@ -92,14 +92,6 @@
 "bitdelta_gemm|fp16|paper|tools=0|pe=1": "2ac5bb9b400fe9a415b7ae82744b3f789a72c17c",
 "bitdelta_gemm|fp16|paper|tools=1|pe=0": "44389cfd9d123c4c46a38145d061fd206c9fe366",
 "bitdelta_gemm|fp16|paper|tools=1|pe=1": "dc314a95f7a900f654f4383ad2fd78f650266956",
-"conv2d|bf16|paper|tools=0|pe=0": "e4cdca8525a7ad7e17eb6e989da90ec92f18cf74",
-"conv2d|bf16|paper|tools=0|pe=1": "75d4081f6781bd1d3ec529c76e707fe1e46de299",
-"conv2d|bf16|paper|tools=1|pe=0": "f2633ba3ffd1d2ef97ed1049e6de1a8d0a121b93",
-"conv2d|bf16|paper|tools=1|pe=1": "8c61870f43e727a22848fb8ba00bbf0db51cd9f1",
-"conv2d|fp16|paper|tools=0|pe=0": "219ea919dab9ac7b0060cb69b3fa93a0a3d86614",
-"conv2d|fp16|paper|tools=0|pe=1": "4229131f0372ee6a595712cfae821ee343ff33da",
-"conv2d|fp16|paper|tools=1|pe=0": "23a812e1f1a19b471027798355bb95be3b39df1b",
-"conv2d|fp16|paper|tools=1|pe=1": "d21d0fd287a576f28d5af6f5fe7392a0cca959bb",
 "flash_attention@64x32t256|bf16|paper|tools=0|pe=0": "8b7e785de393d667555e0b180be78b1beb6236cc",
 "flash_attention@64x32t256|bf16|paper|tools=0|pe=1": "4acf2fa5d7768f85808b7b58d9c4eb4d4f7398d8",
 "flash_attention@64x32t256|bf16|paper|tools=1|pe=0": "45392340af801dc331889c59c4db6f43b18fe934",
@@ -116,14 +108,6 @@
 "flash_attention|fp16|paper|tools=0|pe=1": "0b9b50ed56461546a387b82105b2bc3101748ced",
 "flash_attention|fp16|paper|tools=1|pe=0": "ba98d6195d3fc7e1962a16abee6e127727607792",
 "flash_attention|fp16|paper|tools=1|pe=1": "b76467873e75bdc24b21f78ddd6d4f0b62f35ee0",
-"lion|bf16|paper|tools=0|pe=0": "62999fa0920bf50649b7a79b2f75ada6e3c12b9e",
-"lion|bf16|paper|tools=0|pe=1": "af8e60cc25f4f5cb342da096ab290da37842af67",
-"lion|bf16|paper|tools=1|pe=0": "e076c4e4bb8d566ec029563ce8a20e7493f08630",
-"lion|bf16|paper|tools=1|pe=1": "45e66c210325739926c03fb532e3d4d8844cd1d3",
-"lion|fp16|paper|tools=0|pe=0": "0e08353b2c9fb7e379cd4c49722bafd20a3c3938",
-"lion|fp16|paper|tools=0|pe=1": "e1c0e2b19e8200ff3d05f3ee419c31b02d520c73",
-"lion|fp16|paper|tools=1|pe=0": "3afaf2d9836e6c4a6334b65286cc978e4e15cebb",
-"lion|fp16|paper|tools=1|pe=1": "8e9dd1917911b88804cdd897f0cd0b71a71baca6",
 "mamba2_chunk_scan|bf16|paper|tools=0|pe=0": "f5326739eb913900130eadd62fa261be0b5f29e4",
 "mamba2_chunk_scan|bf16|paper|tools=0|pe=1": "ba0fce549137add1ecc84aa208dc9af652569d2e",
 "mamba2_chunk_scan|bf16|paper|tools=1|pe=0": "f130d8b9f295ff792b8592487a42ec66a43ad2f1",
@@ -143,38 +127,28 @@
 },
 "user_messages": {
 "initial|bitdelta_gemm": "50b97c4ee582ba8121a1ce2529b592989ca63275",
-"initial|conv2d": "ce117691c1dca3f03f0d757ce5af1aec435618d7",
 "initial|flash_attention": "413c81ce40764ef71084fd5b7c074c0e2f9f6b3f",
 "initial|flash_attention@64x32t256": "76b22772be084838f8ba839f0a7b67b2e1f6d9d4",
-"initial|lion": "ad00e74dfaccb02b0930fe0d6e3aaf3bbfc61b73",
 "initial|mamba2_chunk_scan": "e6bdb7a656c44fb982e5e210483c4206fddf24a3",
 "initial|sem_attention_odd_scale": "83402eee7cb544bb0924e06d8f353fcb7fb58a1b",
 "patch|bitdelta_gemm": "b72d217de0aa280f61de55ab1cf5c2a3ba6453a6",
-"patch|conv2d": "0a6c0432bf3f86f1d38588f505b9ca95cdde4d9e",
 "patch|flash_attention": "f3953f42bdc08b1604c6190a08d593ea30815544",
 "patch|flash_attention@64x32t256": "40e4598c516d4b18d500369f1a5c61c22fb111d8",
-"patch|lion": "9f6173c2a5eebb4d843bcb8aece8373e2a2f502f",
 "patch|mamba2_chunk_scan": "9ac1e139fd30ee8c0c7e300150a8f31cda6335fa",
 "patch|sem_attention_odd_scale": "f52c060d8725c777d4aafc4a2345e6c8c591c2a6",
 "plan|bitdelta_gemm|mixed=0": "be802d1b2a04d37f076271f5eb4fe3b2d0233aa8",
 "plan|bitdelta_gemm|mixed=1": "3599c8c055dda3e34f2ecbbacf04ad42fa031338",
-"plan|conv2d|mixed=0": "bea296a00cfdd3a1bb81fc2217c91006cf74810b",
-"plan|conv2d|mixed=1": "5fef8b18b1dee174198ea98c9bf79387fe86aad4",
 "plan|flash_attention@64x32t256|mixed=0": "265762fa47816f4d2922e6d57758007821486102",
 "plan|flash_attention@64x32t256|mixed=1": "dedca11fa7ee18d6651a4e35128ad56e139a4469",
 "plan|flash_attention|mixed=0": "ac355e5f590db40df4f0d602654b4606d469b257",
 "plan|flash_attention|mixed=1": "497bada1edcc869fd246c4c59c3d1cf901cfb6df",
-"plan|lion|mixed=0": "5db11b50d258489fcc73de0f010eca20fd7f0f75",
-"plan|lion|mixed=1": "1494c545bf9cc95f1ea148776485a8e0ca8548d9",
 "plan|mamba2_chunk_scan|mixed=0": "94cb3ee75a091f5010312b47a2c689a691b80686",
 "plan|mamba2_chunk_scan|mixed=1": "b8e76c62d4d763f37496b7eadbfe19b109c0bd64",
 "plan|sem_attention_odd_scale|mixed=0": "44188df65e2f0e431fbc53bf35ad80b73328a31b",
 "plan|sem_attention_odd_scale|mixed=1": "b52f35fcf46f5a71b79534af7c1c0b80a52b9913",
 "repair|bitdelta_gemm": "b3f14027e6271491443b02ec650c175d2da9959e",
-"repair|conv2d": "b3f14027e6271491443b02ec650c175d2da9959e",
 "repair|flash_attention": "b3f14027e6271491443b02ec650c175d2da9959e",
 "repair|flash_attention@64x32t256": "b3f14027e6271491443b02ec650c175d2da9959e",
-"repair|lion": "b3f14027e6271491443b02ec650c175d2da9959e",
 "repair|mamba2_chunk_scan": "b3f14027e6271491443b02ec650c175d2da9959e",
 "repair|sem_attention_odd_scale": "b3f14027e6271491443b02ec650c175d2da9959e"
 }

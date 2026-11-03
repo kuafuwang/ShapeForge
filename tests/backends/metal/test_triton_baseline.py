@@ -46,7 +46,7 @@ def test_only_trustworthy_cached_measurements_are_used(tmp_path, monkeypatch):
     # use the preserved v1 tasks only.
     # B1 removed rope/gemv; the cache-trust cases only need seven *distinct* v1 specs, so the
     # semantic-recovery task and the dynamic integer family fill the two slots.
-    names = ("lion", "conv2d", "flash_attention", "bitdelta_gemm", "mamba2_chunk_scan", "sem_attention_odd_scale", "sem_int_5")
+    names = ("flash_attention", "bitdelta_gemm", "mamba2_chunk_scan", "sem_attention_odd_scale", "sem_int_5", "sem_int_3", "sem_int_007")
     fp = {t: spec_fingerprint(get_task(t, "fp16", "paper")) for t in names}
     good = {"status": "ok", "consistent": True, "ratio_to": {"mlx": 1.3}, "median_us": {"triton_msl": 190.0, "mlx": 146.0}}
     cases = {

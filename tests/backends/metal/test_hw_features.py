@@ -523,14 +523,16 @@ def test_compiled_evidence_of_scalar_and_vector_kernels(tmp_path):
 
     @param tmp_path pytest 提供的临时目录，同时充当 AIR 缓存目录。
     """
-    from tasks import get_task
+    # B2 moved lion to v2; the specimen task rebuilds the v1 contract header from the
+    # migration evidence, so this compile-evidence test does not depend on a live v1 task.
+    from tests.support.v1_specimen import specimen_task
 
-    t = get_task(V1_TASK, "fp16", "paper")
+    t = specimen_task("lion", "fp16", "paper")
     head = t.contract.render_header()
     scalar = H.compile_air(head + t.naive_msl, cache_dir=tmp_path)
     assert scalar["ok"] and scalar["matrix"]["multiply_accumulate"] == 0 and not scalar["simd"]
     assert max((int(b) for b in scalar["device_load_bytes"]), default=0) <= 2
-    vec = H.compile_air(head + "kernel void relu_kernel(device const half* x [[buffer(0)]], device half* y [[buffer(1)]], uint i [[thread_position_in_grid]]) {\n"
+    vec = H.compile_air("kernel void relu_kernel(device const half* x [[buffer(0)]], device half* y [[buffer(1)]], uint i [[thread_position_in_grid]]) {\n"
                                "    *reinterpret_cast<device uint4*>(y + i * 8) = *reinterpret_cast<device const uint4*>(x + i * 8); }\n", cache_dir=tmp_path)
     assert vec["ok"] and "16" in vec["device_load_bytes"] and "16" in vec["device_store_bytes"]
 

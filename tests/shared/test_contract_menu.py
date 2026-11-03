@@ -91,7 +91,8 @@ def test_a_task_without_variants_is_refused_before_any_search(tmp_path):
         calls.append(1)
 
     with pytest.raises(ValueError, match="no contract variants"):
-        run_menu(V1_TASK, ["default", "32x16t128"], tmp_path / "m", trials=1, budget=3, run_fn=run_fn, log=lambda _s: None)
+        # 无 variant 族的保留题（默认 flash_attention 有 variant 族，不能用于这个拒绝路径）。
+        run_menu("bitdelta_gemm", ["default", "32x16t128"], tmp_path / "m", trials=1, budget=3, run_fn=run_fn, log=lambda _s: None)
     assert calls == []
     assert not (tmp_path / "m" / "menu.json").exists()
 

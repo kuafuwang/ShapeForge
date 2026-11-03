@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "One Lion optimizer step: c = b1*m + (1-b1)*g; p_out = p*(1 - lr*wd) - lr*sign(c); m_out = b2*m + (1-b2)*g (fp32 math, each output rounded once)."
+}

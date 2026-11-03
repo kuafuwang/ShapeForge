@@ -371,11 +371,12 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
     # is lion now (the global default v1 task is conv2d, which would duplicate the compute case).
     # The recorded feedback fixtures keep their bytes; only the task object that supplies the
     # contract words to the brief changes.
+    # B2 removed lion/conv2d as well, so the cases now use the remaining static v1 tasks.
     cases = (
-        ("lion", v1_kernel_name("lion"), "relu_best", False),
-        ("lion", v1_kernel_name("lion"), "relu_best", True),
-        ("flash_attention", "flash_attention_kernel", "fa_flash_best", False),
-        ("conv2d", "conv2d_kernel", "gemm_paper_best", True),
+        ("flash_attention", v1_kernel_name("flash_attention"), "relu_best", False),
+        ("flash_attention", v1_kernel_name("flash_attention"), "relu_best", True),
+        ("bitdelta_gemm", v1_kernel_name("bitdelta_gemm"), "fa_flash_best", False),
+        ("mamba2_chunk_scan", v1_kernel_name("mamba2_chunk_scan"), "gemm_paper_best", True),
     )
     for task, kernel, rep_name, plan_mix in cases:
         script = llm_script(code("speed=0.9", kernel), patches={"A": code("speed=1.0", kernel)})

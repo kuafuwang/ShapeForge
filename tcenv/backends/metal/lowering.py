@@ -2,7 +2,7 @@
 
 A5 moved 16 tasks to the v2 standard entry; A6 deleted the nine ``LoweringProfile`` entries,
 the two lowerers and the GEMM variant factory those tasks used.  What is registered here is the
-v1 geometry for the preserved tasks (rope/gemv/conv2d/flash_attention/lion/bitdelta_gemm/
+v1 geometry for the preserved tasks (flash_attention/bitdelta_gemm/
 mamba2_chunk_scan/sem_attention_odd_scale) plus the dynamic ``sem_int`` family and the
 ``@variant`` mechanism; a migrated task reads its contract from ``tasks/<op>/opspec.json`` and
 its geometry from the candidate, never from this module.
@@ -40,18 +40,12 @@ from ...opspec.model import SemanticInstance
 BACKEND_ID = "metal"
 #: The only target the R1 registry covers.
 TARGET_ID = "apple-m4-max"
-#: Registered family-lowerer id/version shared by the remaining row/broadcast v1 profiles
-#: (lion; B1 removed rope/gemv).  The id string is part of ``lowering_profile_digest``, so it stays exactly as the
-#: preserved tasks' frozen identity recorded it; the implementation is the generic
-#: buffer/constant derivation below, not a per-task rule.
-LOWERER_ID = "metal.rmsnorm"
-LOWERER_VERSION = "1"
 
 
 def _lower_buffers_and_constants(
     instance: SemanticInstance, profile: LoweringProfile
 ) -> tuple[Contract, dict[str, str]]:
-    """@brief RMSNorm 的 Metal lower：通用 buffer/常量派生（无 family 专属规则）。
+    """@brief 通用 buffer/常量派生（无 family 专属规则）。
 
     @param instance 语义实例。
     @param profile 登记的 profile。
@@ -60,32 +54,6 @@ def _lower_buffers_and_constants(
     contract, backend_params = build_contract(instance, profile)
     return contract, dict(backend_params)
 
-
-register_lowerer(LOWERER_ID, LOWERER_VERSION, _lower_buffers_and_constants)
-
-
-#: One Lion step: 1024 elements per threadgroup, 128 threads, LR/WD/BETA1/BETA2 are semantic attrs.
-LION_PROFILE = register_profile(
-    LoweringProfile(
-        schema_version=_lowering.LOWERING_PROFILE_SCHEMA_VERSION,
-        name="metal-lion",
-        backend_id=BACKEND_ID,
-        target_id=TARGET_ID,
-        display_name="Apple M4 Max (Apple9 GPU family)",
-        lowerer_id=LOWERER_ID,
-        kernel_name="lion_kernel",
-        grid=({"symbol": "N", "factor": 1024}, 1, 1),
-        threads=(128, 1, 1),
-        constants=(
-            ConstantSpec(name="N", msl_type="uint", source="symbol:N"),
-            ConstantSpec(name="BLOCK_SIZE", msl_type="uint", source="literal:1024"),
-            ConstantSpec(name="LR", msl_type="float", source="attr:LR"),
-            ConstantSpec(name="WD", msl_type="float", source="attr:WD"),
-            ConstantSpec(name="BETA1", msl_type="float", source="attr:BETA1"),
-            ConstantSpec(name="BETA2", msl_type="float", source="attr:BETA2"),
-        ),
-    )
-)
 
 #: The four pointwise profiles (metal-relu/-sigmoid/-silu/-swiglu) lived here.  A5 moved
 #: those tasks to the v2 standard entry and A6 deleted the profiles together with their
@@ -332,53 +300,6 @@ FLASH_ATTENTION_PROFILE = register_profile(
 )
 
 
-# ------------------------------------------------------------------------------- conv2d
-CONV2D_LOWERER_ID = "metal.conv2d"
-CONV2D_LOWERER_VERSION = "1"
-register_lowerer(CONV2D_LOWERER_ID, CONV2D_LOWERER_VERSION, _lower_buffers_and_constants)
-
-CONV2D_PROFILE = register_profile(
-    LoweringProfile(
-        schema_version=_lowering.LOWERING_PROFILE_SCHEMA_VERSION,
-        name="metal-conv2d",
-        backend_id=BACKEND_ID,
-        target_id=TARGET_ID,
-        display_name="Apple M4 Max (Apple9 GPU family)",
-        lowerer_id=CONV2D_LOWERER_ID,
-        kernel_name="conv2d_kernel",
-        grid=(
-            {"symbol": "OC", "factor": 64},
-            {"ceil_div": {"numerator": {"product": ["N", "OH", "OW"]}, "denominator": 64}},
-            1,
-        ),
-        threads=(128, 1, 1),
-        constants=(
-            ConstantSpec(name="N", msl_type="uint", source="symbol:N"),
-            ConstantSpec(name="H", msl_type="uint", source="symbol:H"),
-            ConstantSpec(name="W", msl_type="uint", source="symbol:W"),
-            ConstantSpec(name="C", msl_type="uint", source="symbol:C"),
-            ConstantSpec(name="OC", msl_type="uint", source="symbol:OC"),
-            ConstantSpec(name="KH", msl_type="uint", source="symbol:KH"),
-            ConstantSpec(name="KW", msl_type="uint", source="symbol:KW"),
-            ConstantSpec(name="OH", msl_type="uint", source="symbol:OH"),
-            ConstantSpec(name="OW", msl_type="uint", source="symbol:OW"),
-            ConstantSpec(name="M_TOTAL", msl_type="uint", source="product:N,OH,OW"),
-            ConstantSpec(name="K_TOTAL", msl_type="uint", source="product:KH,KW,C"),
-            ConstantSpec(name="BLOCK_M", msl_type="uint", source="literal:64"),
-            ConstantSpec(name="BLOCK_N", msl_type="uint", source="literal:64"),
-            ConstantSpec(name="BLOCK_K", msl_type="uint", source="literal:32"),
-        ),
-        variant_params={
-            "BM": "literal:64",
-            "BN": "literal:64",
-            "BK": "literal:32",
-            "NW": "literal:4",
-            "M_TOTAL": {"product": ["N", "OH", "OW"]},
-            "K_TOTAL": {"product": ["KH", "KW", "C"]},
-        },
-    )
-)
-
 #: The public interface of the *preserved* v1 lowering.
 #:
 #: A6 deleted nine migrated ``LoweringProfile`` entries (``metal-rmsnorm``, ``metal-softmax``,
@@ -394,18 +315,12 @@ __all__ = [
     "BITDELTA_LOWERER_ID",
     "BITDELTA_LOWERER_VERSION",
     "BITDELTA_PROFILE",
-    "CONV2D_LOWERER_ID",
-    "CONV2D_LOWERER_VERSION",
-    "CONV2D_PROFILE",
     "DEFAULT_FA_VARIANT",
     "FA_LOWERER_ID",
     "FA_LOWERER_VERSION",
     "FA_VARIANT_FACTORY_ID",
     "FA_VARIANT_FACTORY_VERSION",
     "FLASH_ATTENTION_PROFILE",
-    "LION_PROFILE",
-    "LOWERER_ID",
-    "LOWERER_VERSION",
     "MAMBA2_LOWERER_ID",
     "MAMBA2_LOWERER_VERSION",
     "MAMBA2_PROFILE",

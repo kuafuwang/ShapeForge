@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+from tests.support.v1_specimen import specimen_task  # B2：conv2d/lion 已迁 v2 的样本夹具
+
 from taic.agent_feedback import VERIFIED_TIPS_CHARS, _kinds, load_records, main, parse_feedback, peer_tips_for
 
 
@@ -185,7 +187,7 @@ def test_the_contract_tells_the_agent_to_write_nothing_rather_than_a_placeholder
 
     from taic.kernel_agent import SessionBrief, render_contract
 
-    task = get_task("conv2d", "fp16", "small")
+    task = specimen_task("conv2d", "fp16", "small")
     contract = task.contract
     brief = SessionBrief(
         task_name="conv2d", dtype="fp16", size="small", repo=Path("/repo"), label="r1.p0",
@@ -464,7 +466,7 @@ def test_the_fixed_contract_names_the_rules_and_stays_inside_the_budget():
 
     from taic.kernel_agent import SessionBrief, render_contract
 
-    task = get_task("conv2d", "fp16", "small")
+    task = specimen_task("conv2d", "fp16", "small")
     contract = task.contract
     brief = SessionBrief(
         task_name="conv2d", dtype="fp16", size="small", repo=Path("/repo"), label="r1.p0",

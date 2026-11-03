@@ -96,36 +96,38 @@ def test_b1_the_standard_directory_is_v2_only_and_has_no_launch_facts(task):
 
 
 def test_b1_the_retired_lowering_profiles_are_gone():
-    """@brief ``metal-gemv``/``metal-rope`` 与迁移同批退役；其余保留 profile 仍在。"""
+    """@brief 本批退役的 profile 不在；当前注册的 profile 恰好是当前保留题所拥有的。
+
+    不断言一个写死的保留 profile 清单：后续批次会继续退役，清单应由边界派生。
+    """
     from tcenv import lowering
+    from tests.support.boundaries import preserved_v1
 
     lowering.ensure_lowerings("metal")
     names = {profile.name for profile in lowering.registered_profiles("metal")}
-    assert "metal-gemv" not in names and "metal-rope" not in names
-    for name in ("metal-conv2d", "metal-lion", "metal-flash-attention", "metal-bitdelta-gemm", "metal-mamba2-chunk-scan", "metal-sem-int"):
-        assert name in names, name
+    for name in ('metal-gemv', 'metal-rope'):
+        assert name not in names, name
+    # 仍保留的 profile 只能属于仍在 v1 的题（sem_int 动态族单独占一席）。
+    assert names <= {"metal-flash-attention", "metal-bitdelta-gemm", "metal-mamba2-chunk-scan", "metal-sem-int"}, names
+    assert "sem_int dynamic family" in set(preserved_v1())
 
 
 def test_b1_the_current_inventory_comes_from_the_boundary_files():
-    """@brief 保留集 = G0 保留 − B1 迁移；已迁移集 = G0 16 题 + B1 两题；G0 文档本身未改。"""
-    assert set(migrated_tasks()) >= {"gemv", "rope"}
-    assert len(migrated_tasks()) == 18
+    """@brief 本批两题进入已迁移集并离开保留集；G0 的冻结边界不被后续批次改写。
+
+    全局数量与完整保留集由 ``tests.support.boundaries`` 和各批次边界文件决定，本测试只锁
+    本批事实，这样后续批次不必返工旧批次的断言。
+    """
+    migrated = set(migrated_tasks())
+    assert {"gemv", "rope"} <= migrated
     preserved = set(preserved_v1())
     assert "gemv" not in preserved and "rope" not in preserved
-    assert preserved == {
-        "conv2d",
-        "flash_attention",
-        "lion",
-        "bitdelta_gemm",
-        "mamba2_chunk_scan",
-        "sem_attention_odd_scale",
-        "sem_int dynamic family",
-    }
+    assert "sem_int dynamic family" in preserved
     g0 = json.loads(
         (ROOT / "docs" / "架构" / "跨硬件算子生成分工-G0" / "migration-boundary.json").read_text(encoding="utf-8")
     )
-    assert len(g0["migration_candidates"]) == 16
-    assert "gemv" in g0["preserved_v1_out_of_scope"], "G0 的冻结边界不应被 B1 改写"
+    assert len(g0["migration_candidates"]) == 16, "G0 的冻结清单不应变化"
+    assert "gemv" in g0["preserved_v1_out_of_scope"], "G0 的冻结边界不应被后续批次改写"
 
 
 def test_b1_discovery_finds_both_tasks_and_the_naive_candidates_are_preserved():

@@ -4,6 +4,8 @@ import json
 import stat
 from pathlib import Path
 
+from tests.support.v1_specimen import specimen_task  # B2：conv2d/lion 已迁 v2 的样本夹具
+
 import pytest
 
 from taic.kernel_agent import (
@@ -366,7 +368,10 @@ def _real_brief(tmp_path, task_name: str) -> SessionBrief:
     """
     from tasks import get_task
 
-    task = get_task(task_name, "fp16", "paper")
+    if task_name == "conv2d":
+        task = specimen_task(task_name, "fp16", "paper")  # B2：conv2d 已迁，保留同样的长契约用于预算场景
+    else:
+        task = get_task(task_name, "fp16", "paper")
     # The contract budget includes the absolute work path. Keep this rendering-only
     # fixture short so xdist's longer ``popen-gwN`` temp paths do not test the path
     # length instead of the block priority under test.
@@ -468,6 +473,8 @@ def test_an_active_harness_overlay_is_a_budgeted_task_block(tmp_path):
 
 def test_a_full_overlay_survives_a_contract_that_already_used_the_budget(tmp_path):
     """@brief 验证契约其他块已吃掉预算时，完整的 overlay 仍能整体保留并保持总长不超限。
+
+    conv2d 的夹具使用旧提交里真实 v1 合同的 describe/abi_stub 原文，所以预算行为与迁移前一致。
 
     @param tmp_path pytest 提供的临时目录。
     """

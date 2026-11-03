@@ -52,11 +52,9 @@ def test_only_the_registered_target_and_profile_resolve():
     assert lowering.registered_targets("metal") == frozenset({"apple-m4-max"})
     profiles = lowering.require_target_profile("metal", "apple-m4-max")
     assert {profile.name for profile in profiles} == {
-        "metal-conv2d",
         "metal-flash-attention",
         "metal-bitdelta-gemm",
         "metal-mamba2-chunk-scan",
-        "metal-lion",
         "metal-sem-int",
     }
     assert {profile.target_id for profile in profiles} == {"apple-m4-max"}

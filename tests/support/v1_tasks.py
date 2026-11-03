@@ -23,12 +23,12 @@ from tests.support.boundaries import preserved_v1 as _current_preserved
 
 _PRESERVED = tuple(str(name) for name in _current_preserved())
 
-#: The simplest preserved v1 task: the remaining phase-1 static entry, with the standard
-#: case list and both vendor baselines.  A v1-mechanism test wants "a real v1 task", not this
-#: task's mathematics, so a test that also asserts a shape-dependent fact must say so
-#: explicitly and use its own task.  B1 moved rope/gemv to v2, so the default moved from rope
-#: to conv2d; the boundary file remains the only inventory.
-V1_TASK = "conv2d"
+#: The default v1 specimen.  A v1-mechanism test wants "a real v1 task", not this task's
+#: mathematics, so a test that also asserts a shape-dependent fact must say so explicitly and
+#: use its own task.  B1 moved rope/gemv to v2 (default became conv2d); B2 moved conv2d/lion,
+#: so the default is flash_attention — the remaining static task with registered baselines and
+#: a variant family.  The boundary files remain the only inventory.
+V1_TASK = "flash_attention"
 #: The static tasks the boundary keeps on the v1 path.  This is derived from the frozen
 #: migration boundary, not a second list: adding/removing a preserved task is a boundary edit.
 V1_TASKS: tuple[str, ...] = tuple(name for name in _PRESERVED if not name.startswith("sem_int "))

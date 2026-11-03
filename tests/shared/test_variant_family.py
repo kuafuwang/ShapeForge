@@ -158,7 +158,9 @@ def test_an_empty_variant_suffix_is_the_default_profile_on_both_sides(frozen: Fr
 
 def test_a_task_without_a_registered_variant_family_refuses_the_suffix(frozen: FrozenSnapshot):
     """@brief 只有 GEMM/FlashAttention 登记了 variant 族；其他题带 ``@`` 一律拒绝（含 gemm_silu）。"""
-    for name in ("conv2d@64x64x32t128", "lion@1x1t32", "mamba2_chunk_scan@1x1t32"):
+    # bitdelta/mamba2 已随 B2 迁移（现在是 spec_version 拒绝）；本测试只覆盖仍在 v1 且无 variant 族的题。
+    # sem_int 动态族在 R2 后给了更清晰的 typed 错误，与 R0 的 int() 报错文案不同，不做新旧对比。
+    for name in ("sem_attention_odd_scale@1x1t32",):
         with frozen_tasks(frozen.root):
             with pytest.raises((ValueError, KeyError)) as old_exc:
                 deep_import_build(name)

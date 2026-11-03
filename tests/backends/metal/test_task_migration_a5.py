@@ -176,13 +176,11 @@ def test_a5_the_out_of_scope_v1_tasks_keep_their_v1_assembly():
 
     preserved = [name for name in preserved_v1() if not name.startswith("sem_int ")]
     assert set(preserved) == {
-        "conv2d",
         "flash_attention",
-        "lion",
         "bitdelta_gemm",
         "mamba2_chunk_scan",
         "sem_attention_odd_scale",
-    }
+    }  # B1 迁走 rope/gemv，B2 迁走 conv2d/lion
     from tasks import get_task
 
     for task in preserved:

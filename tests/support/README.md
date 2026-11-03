@@ -24,6 +24,7 @@
 | `shape_portfolio.py` | shape portfolio P0 的固定有限题/源/几何/证据 fixture | helper |
 | `remote_contract.py` | 对外 evaluator 合约 golden 的路径与只读 loader | helper |
 | `boundaries.py` | 当前迁移边界的唯一派生处：G0 冻结边界 + 各批次自己的 `boundary.json` | helper |
+| `v1_specimen.py` | 已迁移样本题（lion/conv2d）的任务形状夹具，供 v1 机制测试（含真实合同文本） | helper |
 | `golden/shared/` | backend 无关的冻结文档夹具（如 B1 前的 rope v1 opspec，供 v1 机制测试） | 数据 |
 | `remote_pki.py` | 用 openssl 生成一次性 CA/server/client 证书的测试 PKI | helper |
 | `process_state.py` | 不依赖 `ps` 的进程状态/回收探针（围栏环境） | helper |

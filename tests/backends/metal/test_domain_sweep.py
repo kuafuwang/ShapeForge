@@ -101,8 +101,8 @@ def test_a_forked_effective_tolerance_is_refused_and_a_real_change_changes_ident
     同一语义实例的 task 指纹稳定；事后改写派生字段被拒绝（否则同一身份能对应两套评测语义）；
     构造时不一致被拒绝；由语义实例真实产生的容差变化会改变指纹 **且** 改变实际判决。
     """
-    first = v1_task()
-    second = v1_task()
+    first = v1_task("bitdelta_gemm")  # 输出名为 y 的保留题（默认 flash_attention 的输出是 o）
+    second = v1_task("bitdelta_gemm")
     assert task_fingerprint(first) == task_fingerprint(second)
     with pytest.raises(AttributeError):
         second.rtol = first.rtol + 1

@@ -27,6 +27,34 @@ from ...support.v1_tasks import V1_TASK as _UNUSED_V1_TASK  # noqa: F401
 # default conv2d.
 V1_TASK = "lion"
 
+
+def _task(name, dtype, size):
+    """@brief 按题名取任务：保留题走真实 v1 装配，B2 迁走的样本题走归档夹具。
+
+    @param name 题名。
+    @param dtype 元素类型。
+    @param size 尺寸档位。
+    @return 任务对象或样本任务。
+    """
+    if name in ("lion", "conv2d"):
+        from tests.support.v1_specimen import specimen_task
+
+        return specimen_task(name, dtype, size)
+    return get_task(name, dtype, size)
+
+
+
+def _lion_naive() -> str:
+    """@brief B2 归档的 lion 标量 elementwise 内核文本。
+
+    B2 把 lion 迁到 v2 之后，v1 再也没有 elementwise 活题；这些测试要的是"一段标量
+    elementwise 内核源码"，不是 lion 的 v1 合同，所以直接读归档候选。
+    """
+    path = (Path(__file__).resolve().parents[3] / "docs" / "架构"
+            / "跨硬件算子生成分工-阶段验收" / "B2" / "evidence" / "candidates" / "lion-naive.msl")
+    return path.read_text(encoding="utf-8").replace("{{T}}", "half")
+
+
 REPO = Path(__file__).resolve().parents[3]
 HEADER = "Hardware-feature analysis of this kernel"
 SKILL_TITLE = "# Skill 2c: reading the hardware-feature analysis in the feedback"
@@ -57,19 +85,28 @@ def block(name: str, mutate=None, source: str | None = None, task: str | None = 
     if mutate:
         mutate(rep)
     base = (task or idx["task"]).split("@", 1)[0]
-    # A5 retired the migrated v1 assemblies.  The block under test is the v1 mechanism, so a
-    # fixture recorded for a migrated op is re-pointed at the preserved v1 op of the same family
-    # (elementwise -> rope, compute -> conv2d); the report bytes themselves stay the recorded ones.
-    name = {"relu": V1_TASK, "sigmoid": V1_TASK, "silu": V1_TASK, "swiglu": V1_TASK,
+    # The block under test is the v1 mechanism, so a fixture recorded for a migrated op is
+    # re-pointed at the specimen of the same family (elementwise -> lion, compute -> conv2d).
+    # B2 migrated both specimens, so they are rebuilt from the migration evidence
+    # (tests.support.v1_specimen) instead of being assembled through the retired v1 path;
+    # tasks still on the v1 path keep using the real assembly.
+    name = {"relu": "lion", "sigmoid": "lion", "silu": "lion", "swiglu": "lion",
             "gemm": "conv2d", "gemm_silu": "conv2d"}.get(base, base)
-    t = task_obj if task_obj is not None else get_task(name, idx["dtype"], idx["size"])
+    if task_obj is not None:
+        t = task_obj
+    elif name in ("lion", "conv2d"):
+        from tests.support.v1_specimen import specimen_task
+
+        t = specimen_task(name, idx["dtype"], idx["size"])
+    else:
+        t = _task(name, idx["dtype"], idx["size"])
     return hf.hw_feedback(t, src if source is None else source, EvalReport.from_json(rep), backend_id="metal")
 
 
 def test_a_non_metal_backend_does_not_run_the_metal_analysis():
     """@brief 验证 backend_id 不是 metal 时直接返回 None，不跑 Metal 专用的硬件特性分析。"""
     idx, src, rep = G.fixture("fa_flash_best")
-    t = get_task(idx["task"], idx["dtype"], idx["size"])
+    t = _task(idx["task"], idx["dtype"], idx["size"])
     assert hf.hw_feedback(t, src, EvalReport.from_json(rep), backend_id="other") is None
 
 
@@ -174,7 +211,7 @@ def test_skill_2c_is_in_the_prompt_only_with_the_switch():
     skill = (REPO / "backends" / "metal" / "skills" / "hardware_feedback.md").read_text()
     section = "\n\n" + SKILL_TITLE + "\n" + skill  # the part starts with a newline and "\n".join adds another one
     for name in (V1_TASK, "flash_attention"):
-        task = get_task(name, "fp16", "paper")
+        task = _task(name, "fp16", "paper")
         for tools in (False, True):
             for pe in (False, True):
                 off = prompts.system_prompt(task, use_tools=tools, profiler_evidence=pe)
@@ -247,7 +284,7 @@ def test_a_kernel_at_the_roofline_gets_no_missing_list():
 
 def test_saturated_elementwise_kernel_is_left_alone_even_when_it_is_scalar():
     """@brief 验证带宽已饱和（不低于 90%）的 elementwise kernel 即使全是标量访存也不给建议，只如实指出标量读写。"""
-    naive = get_task(V1_TASK, "fp16", "paper").naive_msl  # scalar loads, and a roofline fraction >= 90%
+    naive = _lion_naive()  # scalar loads, and a roofline fraction >= 90% (B2 archived lion candidate)
     b = block("relu_best", source=naive)
     assert "hardware features cannot help beyond the roofline" in b and "not found" not in b
     assert "device scalar loads / scalar stores" in b
@@ -260,7 +297,7 @@ def test_unsaturated_scalar_elementwise_kernel_gets_the_wide_access_hint_with_th
         rep["roofline"]["achieved_gbps"] = 280.0
         rep["roofline"]["bandwidth_fraction"] = 0.62
 
-    b = block("relu_best", mutate=slow, source=get_task(V1_TASK, "fp16", "paper").naive_msl)
+    b = block("relu_best", mutate=slow, source=_lion_naive())
     assert "- vector access:" in b and "scalar loads already reach about 85-90% of the bandwidth" in b
     assert "cannot help beyond the roofline" not in b
 
@@ -273,7 +310,7 @@ def test_scalar_gemm_is_told_that_the_matrix_product_runs_on_scalar_fma_and_by_h
     def slow(rep):
         rep["roofline"].update(time_over_lower_bound=3.0, achieved_tflops=5.5, compute_fraction=0.37, bound="compute")
 
-    b = block("gemm_paper_best", mutate=slow, source=get_task("conv2d", "fp16", "paper").naive_msl)
+    b = block("gemm_paper_best", mutate=slow, source=_task("conv2d", "fp16", "paper").naive_msl)
     assert "- matrix unit: no simdgroup_matrix: the matrix product runs on scalar FMA (the roofline shows 3.0x the lower bound)" in b
     items = [l for l in lines_of(b) if l.startswith("- ") and not l.startswith("- (+")]
     assert 1 <= len(items) <= 3 and len(lines_of(b)) <= 12 and b.rstrip().endswith(CAVEAT)
@@ -296,7 +333,7 @@ def test_too_many_fragments_and_the_register_pressure_limit_are_warned_about():
 
     # The recorded report uses the 128x128 tile; adapt a preserved v1 compute task's contract to
     # the same BLOCK_* constants so the fragment count is the source's, not the task's defaults.
-    base = get_task("conv2d", "fp16", "paper")
+    base = _task("conv2d", "fp16", "paper")
     constants = tuple(
         (name, kind, 128 if name in ("BLOCK_M", "BLOCK_N") else 32 if name == "BLOCK_K" else value)
         for name, kind, value in base.contract.constants
@@ -317,10 +354,10 @@ def test_failed_candidates_and_unknown_tasks_get_no_block():
     """@brief 验证编译失败、没有特性期望的语义测试任务、以及状态非 ok 的候选都不产出反馈块。"""
     assert block("compile_error") is None
     idx, src, rep = G.fixture("relu_best")
-    assert hf.hw_feedback(get_task("sem_attention_odd_scale", "fp16", "paper"), src, EvalReport.from_json(rep), backend_id="metal") is None  # no expectations for the semantic tests
+    assert hf.hw_feedback(_task("sem_attention_odd_scale", "fp16", "paper"), src, EvalReport.from_json(rep), backend_id="metal") is None  # no expectations for the semantic tests
     bad = {key: value for key, value in rep.items() if key != "eligible"}
     bad["status"] = "incorrect"
-    assert hf.hw_feedback(get_task(V1_TASK, "fp16", "paper"), src, EvalReport.from_json(bad), backend_id="metal") is None
+    assert hf.hw_feedback(_task("flash_attention", "fp16", "paper"), src, EvalReport.from_json(bad), backend_id="metal") is None
 
 
 def test_any_failure_returns_none_logs_a_warning_and_never_raises(monkeypatch, caplog):
@@ -336,7 +373,7 @@ def test_any_failure_returns_none_logs_a_warning_and_never_raises(monkeypatch, c
 
     monkeypatch.setattr(hw, "build_report", boom)
     idx, src, rep = G.fixture("fa_pro_best")
-    t = get_task("flash_attention", "fp16", "paper")
+    t = _task("flash_attention", "fp16", "paper")
     with caplog.at_level("WARNING", logger="taic.hwfeedback"):
         assert hf.hw_feedback(t, src, EvalReport.from_json(rep), log=seen.append, backend_id="metal") is None
     assert any("hw_feedback skipped: RuntimeError: detector exploded" in m for m in seen) and "hw_feedback skipped" in caplog.text
@@ -351,7 +388,7 @@ def test_a_slow_analysis_is_abandoned_after_the_time_limit(monkeypatch):
     monkeypatch.setattr(hf, "_compute", lambda *a: time.sleep(5))
     idx, src, rep = G.fixture("fa_pro_best")
     t0 = time.time()
-    assert hf.hw_feedback(get_task("flash_attention", "fp16", "paper"), src, EvalReport.from_json(rep), backend_id="metal") is None
+    assert hf.hw_feedback(_task("flash_attention", "fp16", "paper"), src, EvalReport.from_json(rep), backend_id="metal") is None
     assert time.time() - t0 < 2.0
 
 
@@ -616,7 +653,7 @@ def test_an_old_report_forms_no_measured_text_or_performance_verdict():
                      "peak_gbps_measured": 500.0},
         "pipeline": {"max_total_threads_per_threadgroup": 256, "launch_threads_per_threadgroup": 64},
     }
-    task = get_task(idx["task"], idx["dtype"], idx["size"])
+    task = _task(idx["task"], idx["dtype"], idx["size"])
     assert hf.hw_feedback(task, src, old, backend_id="metal") is None
     assert hf._compute(task, src, old) is None
     assert "Measured:" not in (hf.hw_feedback(task, src, old, backend_id="metal") or "")
@@ -639,7 +676,7 @@ def test_a_warm_cache_never_hands_an_old_report_the_measured_block():
     Currency is now judged before the cache, and only current reports ever write to it.
     """
     idx, src, rep = G.fixture("fa_flash_best")
-    task = get_task(idx["task"], idx["dtype"], idx["size"])
+    task = _task(idx["task"], idx["dtype"], idx["size"])
 
     current = hf.hw_feedback(task, src, EvalReport.from_json(rep), backend_id="metal")
     assert current and "Measured:" in current
@@ -660,7 +697,7 @@ def test_an_old_report_does_not_poison_the_cache_for_the_current_one():
     later current report with the same source and speedup returned ``None`` without ever computing.
     """
     idx, src, rep = G.fixture("fa_flash_best")
-    task = get_task(idx["task"], idx["dtype"], idx["size"])
+    task = _task(idx["task"], idx["dtype"], idx["size"])
     old = {**rep, "schema_version": 3}
 
     assert hf.hw_feedback(task, src, old, backend_id="metal") is None

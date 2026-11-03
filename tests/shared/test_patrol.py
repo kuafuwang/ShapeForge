@@ -201,25 +201,25 @@ def test_patrol_best_comes_from_the_catalog_history_through_the_real_write_path(
     """
     catalog = tmp_path / "kernels"
     monkeypatch.setenv("TAIC_CATALOG_ROOT", str(catalog))
-    _archive(monkeypatch, catalog, task="conv2d", dtype="fp16", size="paper", speedup=1.20,
-             run_id="conv2d-early", confirmed_at=1000.0)
-    _archive(monkeypatch, catalog, task="conv2d", dtype="fp16", size="paper", speedup=1.60,
-             run_id="conv2d-best", confirmed_at=2000.0)
-    _archive(monkeypatch, catalog, task="conv2d", dtype="fp16", size="paper", speedup=1.10,
-             run_id="conv2d-late", confirmed_at=3000.0)
-    _archive(monkeypatch, catalog, task="flash_attention", dtype="fp16", size="paper", speedup=1.03,
-             run_id="flash-best", confirmed_at=1500.0)
+    _archive(monkeypatch, catalog, task="flash_attention", dtype="fp16", size="paper", speedup=1.20,
+             run_id="flash_attention-early", confirmed_at=1000.0)
+    _archive(monkeypatch, catalog, task="flash_attention", dtype="fp16", size="paper", speedup=1.60,
+             run_id="flash_attention-best", confirmed_at=2000.0)
+    _archive(monkeypatch, catalog, task="flash_attention", dtype="fp16", size="paper", speedup=1.10,
+             run_id="flash_attention-late", confirmed_at=3000.0)
+    _archive(monkeypatch, catalog, task="bitdelta_gemm", dtype="fp16", size="paper", speedup=1.03,
+             run_id="bitdelta-best", confirmed_at=1500.0)
     _runs, index = _index(tmp_path, monkeypatch)
     index.ensure_kernel_history()
 
     assert index.conn.execute("SELECT COUNT(*) FROM kernel_history").fetchone()[0] == 4
     doc = query.patrol()
     rows = {(row["task"], row["target"]): row for row in doc["best"]}
-    assert set(rows) == {("conv2d", "apple-m4-max"), ("flash_attention", "apple-m4-max")}
-    best_conv2d = rows[("conv2d", "apple-m4-max")]
-    assert best_conv2d["published_speedup"] == pytest.approx(1.6), "当前最佳取该组最大值"
-    assert best_conv2d["confirmed_at"] == pytest.approx(3000.0), "最后确认取目录史的确认时刻"
-    assert rows[("flash_attention", "apple-m4-max")]["published_speedup"] == pytest.approx(1.03)
+    assert set(rows) == {("flash_attention", "apple-m4-max"), ("bitdelta_gemm", "apple-m4-max")}
+    best_fa = rows[("flash_attention", "apple-m4-max")]
+    assert best_fa["published_speedup"] == pytest.approx(1.6), "当前最佳取该组最大值"
+    assert best_fa["confirmed_at"] == pytest.approx(3000.0), "最后确认取目录史的确认时刻"
+    assert rows[("bitdelta_gemm", "apple-m4-max")]["published_speedup"] == pytest.approx(1.03)
     assert [row["published_speedup"] for row in doc["best"]] == pytest.approx([1.6, 1.03])
 
 
@@ -231,8 +231,8 @@ def test_patrol_best_is_durable_when_the_publication_disappears(tmp_path, monkey
     """
     catalog = tmp_path / "kernels"
     monkeypatch.setenv("TAIC_CATALOG_ROOT", str(catalog))
-    _archive(monkeypatch, catalog, task="conv2d", dtype="fp16", size="paper", speedup=1.4,
-             run_id="conv2d-x", confirmed_at=5000.0)
+    _archive(monkeypatch, catalog, task="flash_attention", dtype="fp16", size="paper", speedup=1.4,
+             run_id="flash_attention-x", confirmed_at=5000.0)
     _runs, index = _index(tmp_path, monkeypatch)
     index.conn.execute(
         "INSERT INTO confirmed_best (run_id, task, dtype, size, target_id, protocol_epoch,"
@@ -258,7 +258,7 @@ def test_kernel_history_is_rebuildable_from_the_catalog(tmp_path, monkeypatch):
     """
     catalog = tmp_path / "kernels"
     monkeypatch.setenv("TAIC_CATALOG_ROOT", str(catalog))
-    _archive(monkeypatch, catalog, task="conv2d", dtype="fp16", size="paper", speedup=1.25,
+    _archive(monkeypatch, catalog, task="flash_attention", dtype="fp16", size="paper", speedup=1.25,
              run_id="one", confirmed_at=10.0)
     _archive(monkeypatch, catalog, task=V1_TASK, dtype="fp16", size="small", speedup=1.5,
              run_id="two", confirmed_at=20.0)

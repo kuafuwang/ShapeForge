@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "3x3 convolution, stride 1, no padding, no bias, NHWC activations and [OC,KH,KW,C] weights; fp32 accumulation, result rounded once."
+}

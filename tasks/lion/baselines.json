@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "lion.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "mx.compile",
+        "expression": "simplified_lion_step"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "lion.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "eager_ops"
+      }
+    },
+    {
+      "name": "torch_compile",
+      "framework": "torch",
+      "implementation_id": "lion.baseline.torch_compile",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "torch.compile",
+        "expression": "eager_ops"
+      }
+    }
+  ]
+}

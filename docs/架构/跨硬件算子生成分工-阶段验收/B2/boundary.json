@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "phase": "B2",
+  "epoch": "v1-retirement-b2",
+  "migrated": [
+    {
+      "task": "conv2d",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "dtypes": [
+        "fp16",
+        "bf16"
+      ]
+    },
+    {
+      "task": "lion",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "dtypes": [
+        "fp16",
+        "bf16"
+      ]
+    }
+  ],
+  "base_boundary": "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json",
+  "rule": "不改 G0/A5/A6/B1 的任何文件。当前保留集 = G0 preserved 减去各批次 migrated。",
+  "evidence": {
+    "frozen_v1": "evidence/v1-frozen.json",
+    "compare_report": "evidence/compare-report.json",
+    "candidates": "evidence/candidates/"
+  },
+  "deleted_v1_assembly": [
+    "task.py",
+    "track.json",
+    "kernel_triton.py",
+    "kernel_triton_msl.py",
+    "naive.metal",
+    "__init__.py"
+  ],
+  "deleted_lowering_profiles": [
+    "metal-conv2d",
+    "metal-lion"
+  ],
+  "notes": "conv2d 的 ieee 注入上限随 shape 计算（max(8, N*OH*OW//100)）；lion 带模块级 error_scale 与三个 baseline（含 mx.compile/torch.compile 融合变体）。"
+}

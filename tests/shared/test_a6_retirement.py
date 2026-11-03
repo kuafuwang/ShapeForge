@@ -67,10 +67,14 @@ RETIRED_PROFILES: tuple[str, ...] = (
 )
 #: Registration identities that existed only for the migrated family.
 RETIRED_LOWERERS: tuple[str, ...] = ("metal.elementwise", "metal.gemm")
+#: B2 随 lion/conv2d 退役的 lowerer（metal.rmsnorm 的唯一使用者是 lion）。
+B2_RETIRED_LOWERERS: tuple[str, ...] = ("metal.rmsnorm", "metal.conv2d")
 RETIRED_VARIANT_FACTORY = "metal.gemm.variant"
 #: Profiles B1 deleted when gemv/rope moved to the v2 standard entry (same rule as A6: the
 #: migration and the profile retirement land in one change).
 B1_RETIRED_PROFILES: tuple[str, ...] = ("metal-gemv", "metal-rope")
+#: B2 退役的 profile（含 lion 独占的共享 lowerer metal.rmsnorm 与 conv2d 的 metal.conv2d）。
+B2_RETIRED_PROFILES: tuple[str, ...] = ("metal-conv2d", "metal-lion")
 #: Files/directories A6 deleted (a task or helper, never a historical record).
 DELETED_PATHS: tuple[str, ...] = (
     "tasks/generated",
@@ -109,8 +113,8 @@ def test_a6_the_v1_registry_registers_exactly_the_preserved_tasks():
     # The two removed name lists must be gone, not emptied under the same name.
     assert not hasattr(task_package, "GENERATED_NAMES")
     assert not hasattr(task_package, "SEMANTIC_NAMES")
-    assert list_tasks() == ("conv2d",)
-    assert list_tasks(True) == ("conv2d", "flash_attention", "lion", "bitdelta_gemm", "mamba2_chunk_scan")
+    assert list_tasks() == ()  # B2 后第一阶段静态题全部离开 v1
+    assert list_tasks(True) == ("flash_attention", "bitdelta_gemm", "mamba2_chunk_scan")
     for task in MIGRATED:
         for spelling in (task, f"{task}@128x64x32t256"):
             with pytest.raises(TaskContractError) as refused:
@@ -186,25 +190,24 @@ print(json.dumps({
     assert result.returncode == 0, result.stderr[-4000:]
     payload = json.loads(result.stdout.strip().splitlines()[-1])
     assert "error" not in payload, payload
-    assert payload["head_only"] == sorted(RETIRED_PROFILES + B1_RETIRED_PROFILES), payload
+    assert payload["head_only"] == sorted(RETIRED_PROFILES + B1_RETIRED_PROFILES + B2_RETIRED_PROFILES), payload
     assert payload["live_only"] == [], payload
     assert payload["changed"] == [], payload
     assert payload["live"] == sorted(
-        {"metal-lion", "metal-conv2d", "metal-flash-attention",
-         "metal-bitdelta-gemm", "metal-mamba2-chunk-scan", "metal-sem-int"}
+        {"metal-flash-attention", "metal-bitdelta-gemm", "metal-mamba2-chunk-scan", "metal-sem-int"}
     ), payload
     # The retired identities are not registered under another name either.
-    for name in RETIRED_PROFILES:
+    for name in RETIRED_PROFILES + B1_RETIRED_PROFILES + B2_RETIRED_PROFILES:
         with pytest.raises(lowering.LoweringError):
             lowering.profile_for("metal", name)
-    for lowerer_id in RETIRED_LOWERERS:
+    for lowerer_id in RETIRED_LOWERERS + B2_RETIRED_LOWERERS:
         with pytest.raises(lowering.LoweringError):
             lowering.lowerer_version(lowerer_id)
     with pytest.raises(lowering.LoweringError):
         lowering.variant_factory(RETIRED_VARIANT_FACTORY)
     # The preserved variant family still resolves through the one registration entry.
     assert lowering.variant_factory("metal.flash-attention.variant").version == "1"
-    assert lowering.lowerer_version("metal.rmsnorm") == "1"
+    assert lowering.lowerer_version("metal.flash-attention") == "1"  # B2 后仍保留的 lowerer
 
 
 # ------------------------------------------------------------------------ preserved v1 path
