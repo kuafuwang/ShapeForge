@@ -143,7 +143,6 @@ Historical v1 task fixtures are test-only. The old per-task `task.py`, `track.js
 
 Start here:
 
-- `docs/README.md` — document index and current status;
 - `docs/架构说明.md` — process and runtime overview;
 - `docs/架构/shape-portfolio实施计划.md` — authoritative portfolio plan and P0–P4 status;
 - `docs/架构/跨硬件算子生成分工_9aef8d3a.plan.md` — OpSpec v2 and migration architecture;
