@@ -160,6 +160,10 @@ Stage acceptance material is under:
 
 These are evidence records, not claims that every planned stage is complete.
 
+## For AI-assisted contributors
+
+Start with `AGENTS.md`, the canonical project context and safety boundary. `CONTRIBUTING.md` describes the human/AI workflow, and `.agents/skills/shapeforge/SKILL.md` provides a short onboarding skill for other agents. These files explain candidate freedom, evidence invariants, current status, tests and authorization boundaries so another AI does not have to infer the project from its Triton history.
+
 ## Historical origin
 
 ShapeForge began as an Apple M4 Max re-implementation of *AI as a compiler: compiling Triton kernels without the Triton compiler*. The original path lowered Triton text directly to MSL. That work remains visible in the Git history and in the optional `triton-msl` comparison path.

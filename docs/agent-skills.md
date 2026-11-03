@@ -10,16 +10,17 @@
 
 ```text
 .pi/skills/harness-feedback/                 # feedback triage
+.pi/skills/shapeforge/                        # project onboarding for other contributors
 taic/flows/kernel_once/skills/taic-tools/    # kernel-session tool guidance
 ```
 
 下面这些是指向上述权威源的相对符号链接：
 
 ```text
-.claude/skills/{harness-feedback,taic-tools}
-.codex/skills/{harness-feedback,taic-tools}
-.cursor/skills/{harness-feedback,taic-tools}
-.agents/skills/{harness-feedback,taic-tools}
+.claude/skills/{harness-feedback,shapeforge,taic-tools}
+.codex/skills/{harness-feedback,shapeforge,taic-tools}
+.cursor/skills/{harness-feedback,shapeforge,taic-tools}
+.agents/skills/{harness-feedback,shapeforge,taic-tools}
 ```
 
 各 agent 的入口文件和技能发现位置：

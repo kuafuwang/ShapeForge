@@ -157,6 +157,10 @@ Shape portfolio 使用两本账：
 
 这些是证据记录，不表示所有计划阶段已经完成。
 
+## AI 协助贡献
+
+其他参与者和 AI 应先读 `AGENTS.md`，它是权威项目上下文与安全边界。`CONTRIBUTING.md` 说明人类/AI 协作流程，`.agents/skills/shapeforge/SKILL.md` 提供简短的上手 skill。通过这些文件可以快速理解候选自由、证据不变量、当前状态、测试方式和授权边界，不必再从旧的 Triton 历史推断项目。
+
 ## 历史来源
 
 ShapeForge 起初是在 Apple M4 Max 上复现 *AI as a compiler: compiling Triton kernels without the Triton compiler*，早期路径是把 Triton 文本直接改写为 MSL。该历史保留在 Git 记录和可选 `triton-msl` 对照路径中。
