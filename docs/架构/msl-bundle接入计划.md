@@ -493,6 +493,24 @@ catalog 只存 `source_sha256`，没有 manifest、没有 track，所以「读�
 
 ## 2. 接入设计
 
+### 2.0 几何派生策略（保底 + 可覆盖 + 可选强制）
+
+这是与「不限制 LLM 后续内化能力」对齐的核心原则：**可机械推导的几何由 harness 派生（保底），但 LLM 可以选择覆盖它；只有用户通过配置特别标明强制时，才必须按 harness 派生。**
+
+| 模式 | 行为 | 配置 |
+|---|---|---|
+| **默认（auto，不特别标明）** | harness 派生几何作为**保底**写进题面（`grid/threads/workspace` 的默认实现），并**明确告诉 LLM「这是 harness 算的，你可以用也可以不用」**：LLM 可以直接采用（不写 `taic-launch`），也可以自己写 `taic-launch` 覆盖（想优化时自己选启动配置）。 | `search.geometry_mode = "auto"`（默认） |
+| **强制（forced，用户特别标明）** | 必须按 harness 派生的几何执行，LLM **不能覆盖**（写了 `taic-launch` 也会被忽略/拒绝）。 | `search.geometry_mode = "forced"` |
+
+要点：
+
+- **保底不是限制**：harness 派生的是一个**正确的默认几何**（`grid = shape/tile`、`threads = warp*32`、workspace 按声明求和），保证「不写启动配置也能跑对」。
+- **可覆盖不是放纵**：LLM 想写非标准但更快的启动配置时，**允许并鼓励**它自己写 `taic-launch` 覆盖默认——这正是「不限制 LLM 后续内化能力」：可推导的机械化（保底），需要创造力的留给 LLM（覆盖）。
+- **强制是用户的选择**：只有当用户通过配置特别标明强制时，才锁死为 harness 派生（比如做对照实验、固定几何以排除启动配置变量）。平时不强制。
+- **题面必须说清**：`TASK.md`/系统提示里明确写「harness 已为你算出默认几何 `grid=…, threads=…`，你可以直接采用，也可以自己写 `taic-launch` 覆盖；除非任务被配置为强制」，避免 LLM 误以为「只能照抄」。
+
+这条原则同时吸收 KDA/CAKE2「把可推导的机械化」的经验，又不锁死 LLM 发现非标准好配置的空间（比如 init 那版 16 TG 就不是 `M/BM` 规则能推出来的）。
+
 ### 2.1 track：取值、优先级与传播（一次说清）
 
 两个名字不许混：**`track_id`** = `"msl-single"` / `"msl-bundle"`；**`delivery`** = registry 的
